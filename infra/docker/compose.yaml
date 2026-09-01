@@ -1,0 +1,43 @@
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+    image: octane-erp:local
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      OERP_AUTH_DATABASE: /data/auth.db
+      OERP_AGENTS_DATABASE: /data/agents.db
+      OERP_AUTH_ALLOW_SIGN_UP: 'false'
+      # TLS terminates in front of this container. Only a plain-HTTP run on a
+      # workstation may set OERP_AUTH_SECURE_COOKIE=false in .env.
+      OERP_AUTH_SECURE_COOKIE: ${OERP_AUTH_SECURE_COOKIE:-true}
+      # Both keys come from infra/docker/.env (copy .env.example). Compose
+      # refuses to start without them; the app would refuse at boot anyway.
+      OERP_AGENT_CREDENTIAL_KEY: ${OERP_AGENT_CREDENTIAL_KEY:?Set OERP_AGENT_CREDENTIAL_KEY in infra/docker/.env (openssl rand -base64 32)}
+      OERP_AGENT_RUN_GRANT_KEY: ${OERP_AGENT_RUN_GRANT_KEY:?Set OERP_AGENT_RUN_GRANT_KEY in infra/docker/.env (openssl rand -base64 32)}
+    ports:
+      - '${OERP_PORT:-3000}:3000'
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    volumes:
+      - auth-data:/data
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  auth-data:

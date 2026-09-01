@@ -1,0 +1,7 @@
+schemaVersion: 1
+required:
+  - tests/module.test.ts (or a new tests/*.test.ts) containing the regression test
+changed:
+  - exactly the files of the owning layer named in the plan
+forbidden:
+  - unrelated refactors, renames, reformatting of untouched code

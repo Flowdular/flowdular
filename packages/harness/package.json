@@ -1,0 +1,25 @@
+{
+	"name": "@coreloom/harness",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./runtime": "./src/runtime.ts",
+		"./catalog": "./src/catalog.ts",
+		"./schema": "./schemas/task-packet.schema.json"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit -p tsconfig.json",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@coreloom/ai-provider": "workspace:*",
+		"@coreloom/contracts": "workspace:*",
+		"ai": "7.0.85"
+	},
+	"devDependencies": {
+		"typescript": "5.9.3",
+		"vitest": "4.1.10"
+	}
+}

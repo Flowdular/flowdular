@@ -1,0 +1,17 @@
+{
+	"$schema": "../../packages/contracts/schemas/module.schema.json",
+	"schemaVersion": 1,
+	"id": "system.core",
+	"package": "@coreloom/module-system",
+	"version": "0.4.0",
+	"profile": "full",
+	"capabilities": ["api", "client", "translations"],
+	"platform": {
+		"server": true,
+		"client": true
+	},
+	"dependencies": [],
+	"tenancy": "required",
+	"locales": ["en", "pl"],
+	"stability": "experimental"
+}

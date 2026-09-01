@@ -1,0 +1,9 @@
+{
+	"blueprint": "add-migration@1.0.0",
+	"moduleId": "parties.core",
+	"constant": "PARTIES_MIGRATION_002",
+	"upFile": "migrations/vat_id.sql",
+	"downFile": "migrations/vat_id.down.sql",
+	"guarded": false,
+	"gates": ["tests"]
+}

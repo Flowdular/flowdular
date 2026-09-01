@@ -1,0 +1,22 @@
+schemaVersion: 1
+# Read-only checks. Nothing executes this file.
+gates:
+  - id: raw-routes
+    command: grep -rn "new ServerRoute" modules/*/src | grep -v modules/auth
+    expect: no output
+    required: true
+  - id: tenant-from-input
+    command: grep -rn tenantId modules/*/src/api | grep -v principalFromContext
+    expect: no output
+    required: true
+  - id: unbounded-body
+    command: grep -rn "request.json()" modules/*/src
+    expect: no output outside modules/auth and modules/users
+    required: true
+  - id: public-endpoints
+    command: 'grep -rn "kind: ''public''" modules/*/src'
+    expect: each hit has a written reason
+    required: true
+  - id: tests
+    command: pnpm --filter @coreloom/module-{module} test
+    required: true

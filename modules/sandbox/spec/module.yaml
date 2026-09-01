@@ -1,0 +1,100 @@
+schemaVersion: 1
+id: sandbox.core
+specVersion: 0.1.0
+status: approved
+name: Sandbox Access
+description: Owns sandbox access grants, sandbox session records, and the audit evidence that lets an authorized account open the Coreloom sandbox, preview a draft module against live platform data, and eject an accepted module into the workspace.
+profile: full
+capabilities:
+  - api
+  - database
+  - client
+  - translations
+  - cli
+dependencies:
+  - id: system.core
+    range: ^0.1.0
+  - id: auth.core
+    range: ^0.1.0
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - Every access grant, session record, and audit event is owned by exactly one tenant, and every repository query receives the trusted tenant identifier.
+  - The sandbox is a separate application. It never receives platform authority implicitly; it must resolve an authenticated account, the sandbox.access.use scope on the selected membership, and an active grant before it opens a session.
+  - A grant is created only by an authorized owner through the platform API or through the sandbox CLI capability. Both paths write the same record and the same audit evidence.
+  - A grant is revocable and may carry an expiry. A revoked or expired grant denies sandbox sign-in and every sandbox capability check without further lookup.
+  - Grant capabilities are a subset of the sandbox scopes held by the granted membership. A grant can narrow authority and can never widen it beyond the account's platform scopes.
+  - Sandbox sessions are metadata only. Draft source code, chat transcripts, and provider credentials are owned by the sandbox application and never enter this module's database or API responses.
+  - Preview data bridging requires the sandbox.preview.data scope on the grant. Without it the sandbox serves fixtures and never forwards a request to the full application.
+  - Ejecting a draft module requires the sandbox.modules.eject scope, an explicit apply flag, and passing module and specification gates. The eject path never edits the platform composition by hand.
+  - Local coding agent binaries are offered only by a sandbox in loopback mode. A self-hosted sandbox exposes bring-your-own-key providers only.
+  - Access changes, session lifecycle transitions, and eject attempts are recorded as append-only tenant-scoped audit events with the actor, action, subject, timestamp, and safe metadata.
+  - Passwords, session tokens, provider credentials, and draft source contents are never stored, logged, or returned by this module.
+  - Sandbox navigation is development surface. It is visible to tenant owners, and server scopes remain authoritative.
+permissions:
+  - id: sandbox.access.use
+    description: Sign in to the sandbox and open sessions for the active tenant.
+  - id: sandbox.access.manage
+    description: Grant, narrow, and revoke sandbox access for members of the active tenant.
+  - id: sandbox.sessions.read
+    description: Read sandbox session records of the active tenant.
+  - id: sandbox.preview.data
+    description: Allow a sandbox preview to read live platform data through the bridge.
+  - id: sandbox.modules.eject
+    description: Eject an accepted sandbox module into the workspace module tree.
+dataOwnership:
+  - sandbox.core owns sandbox access grants, their capability subset, expiry, revocation state, and the identity of the granting actor.
+  - 'sandbox.core owns sandbox session records: identifier, owning account, target module identifier, blueprint, lifecycle state, driver identifier, and timestamps.'
+  - sandbox.core owns the append-only sandbox audit chain for access, session, and eject events.
+  - The sandbox application owns session workspaces, draft source files, chat transcripts, ephemeral preview databases, and provider credentials. Business modules own their records and answer bridged preview requests through their own services and ACL rules.
+acceptanceScenarios:
+  - id: SANDBOX-GRANT-API
+    given: An owner with sandbox.access.manage and a member of the active tenant.
+    when: The owner grants sandbox access with a capability subset.
+    then: A tenant-scoped grant is persisted, capabilities are intersected with the member's platform scopes, and an audit event records the actor and subject.
+  - id: SANDBOX-GRANT-CLI
+    given: A local operator running the sandbox CLI capability with an explicit apply flag.
+    when: The operator grants sandbox access to an existing account of a tenant.
+    then: The same grant record and audit event are written and the command returns the resulting capabilities as machine-readable evidence.
+  - id: SANDBOX-GRANT-DRY-RUN
+    given: A local operator running the sandbox grant capability without an apply flag.
+    when: The command executes.
+    then: The resolved account, tenant, and capability subset are reported, no record is written, and the response is marked as a dry run.
+  - id: SANDBOX-REVOKE
+    given: An active grant for a member.
+    when: An owner revokes it from the platform or from the CLI.
+    then: The grant is marked revoked with a timestamp, sandbox authorization fails immediately, and an audit event is appended.
+  - id: SANDBOX-AUTHORIZE
+    given: An authenticated account with sandbox.access.use and an active grant on the selected tenant.
+    when: The sandbox resolves sandbox authority for that account and tenant.
+    then: The effective capability set is returned as the intersection of platform scopes and grant capabilities.
+  - id: SANDBOX-AUTHORIZE-DENY
+    given: An account whose grant is missing, revoked, or expired, or whose membership lacks sandbox.access.use.
+    when: The sandbox resolves sandbox authority.
+    then: Authority is denied with a stable reason and no session is opened.
+  - id: SANDBOX-SESSION-RECORD
+    given: An authorized sandbox principal opens a session for a draft module.
+    when: The session is registered.
+    then: A tenant-scoped session record is persisted with its lifecycle state, and later state transitions update the same record with audit evidence.
+  - id: SANDBOX-BRIDGE-DENY
+    given: A sandbox session whose grant lacks sandbox.preview.data.
+    when: The preview requests platform data through the bridge.
+    then: The request is denied before any call to the full application and the preview continues on fixtures.
+  - id: SANDBOX-EJECT-DRY-RUN
+    given: A session in the accepted state and an operator with sandbox.modules.eject.
+    when: The eject capability runs without an apply flag.
+    then: Every target path and every gate that will run is reported and no file is written into the module tree.
+  - id: SANDBOX-EJECT-APPLY
+    given: The same session and operator with an explicit apply flag.
+    when: The eject capability runs.
+    then: The module is copied into the module tree, module and specification gates pass, module enable is invoked through the existing capability, and an audit event records the result.
+  - id: SANDBOX-TENANT-ISOLATION
+    given: Grants and sessions exist in two tenants.
+    when: Any read or write is executed with a tenant identifier.
+    then: Only records of that tenant are visible and cross-tenant access is denied by the server.
+  - id: SANDBOX-DENY-UNAUTHORIZED
+    given: A principal that is unauthenticated or lacks the required sandbox scope.
+    when: The principal reads grants, manages grants, or requests eject.
+    then: The server denies the operation before data or workspace effects are exposed.

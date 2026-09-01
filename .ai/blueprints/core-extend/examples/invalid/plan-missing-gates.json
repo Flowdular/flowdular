@@ -1,0 +1,7 @@
+{
+	"blueprint": "core-extend@1.0.0",
+	"package": "@coreloom/server",
+	"consumersMigrated": [],
+	"adr": false,
+	"gates": []
+}

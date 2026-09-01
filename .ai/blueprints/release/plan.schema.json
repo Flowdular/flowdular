@@ -1,0 +1,46 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"additionalProperties": false,
+	"required": ["blueprint", "branch", "files", "gates", "postMerge"],
+	"properties": {
+		"blueprint": {
+			"const": "release@1.0.0"
+		},
+		"branch": {
+			"type": "string",
+			"pattern": "^(sandbox|feat|fix|core|release)/[a-z0-9.-]+$"
+		},
+		"files": {
+			"type": "array",
+			"minItems": 1,
+			"items": {
+				"type": "string",
+				"minLength": 1
+			},
+			"uniqueItems": true
+		},
+		"gates": {
+			"type": "array",
+			"minItems": 1,
+			"items": {
+				"type": "string",
+				"enum": [
+					"pnpm verify",
+					"pnpm build",
+					"pnpm audit --prod --audit-level high",
+					"sandbox gates",
+					"pnpm --filter @coreloom/platform typecheck"
+				]
+			},
+			"uniqueItems": true
+		},
+		"postMerge": {
+			"type": "array",
+			"items": {
+				"type": "string",
+				"minLength": 1
+			}
+		}
+	}
+}

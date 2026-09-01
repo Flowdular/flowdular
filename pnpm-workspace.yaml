@@ -1,0 +1,16 @@
+packages:
+  - platform
+  - modules/*
+  - packages/*
+
+allowBuilds:
+  esbuild: true
+
+minimumReleaseAgeExclude:
+  - '@octanejs/app-core@0.0.46'
+  - '@octanejs/seo@0.0.35'
+  - '@octanejs/vite-plugin@0.1.50'
+  - octane@0.1.50
+
+patchedDependencies:
+  '@octanejs/seo@0.0.35': patches/@octanejs__seo@0.0.35.patch

@@ -1,0 +1,48 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://octane-erp.dev/schemas/task-packet.schema.json",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"schemaVersion",
+		"taskId",
+		"capability",
+		"blueprint",
+		"spec",
+		"specStatus",
+		"allowedPaths",
+		"steps",
+		"gates"
+	],
+	"properties": {
+		"schemaVersion": { "const": 1 },
+		"taskId": { "type": "string", "minLength": 8 },
+		"capability": {
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+		},
+		"blueprint": {
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9-]+@[0-9]+\\.[0-9]+\\.[0-9]+$"
+		},
+		"spec": { "type": "string", "minLength": 1 },
+		"specStatus": { "enum": ["approved"] },
+		"allowedPaths": {
+			"type": "array",
+			"minItems": 1,
+			"items": { "type": "string", "minLength": 1 },
+			"uniqueItems": true
+		},
+		"steps": {
+			"type": "array",
+			"minItems": 1,
+			"items": { "type": "string", "minLength": 1 }
+		},
+		"gates": {
+			"type": "array",
+			"minItems": 1,
+			"items": { "type": "string", "minLength": 1 },
+			"uniqueItems": true
+		}
+	}
+}

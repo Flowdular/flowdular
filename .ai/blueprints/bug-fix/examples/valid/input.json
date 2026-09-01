@@ -1,0 +1,6 @@
+{
+	"scope": "module",
+	"target": "catalog.core",
+	"symptom": "POST /api/catalog/items returns 500 when sku is longer than 64 characters.",
+	"reproduction": "createCatalogItem with a 70 character sku through route.handler(createContext(...))."
+}

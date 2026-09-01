@@ -1,0 +1,62 @@
+schemaVersion: 1
+steps:
+  - id: design
+    role: backend-engineer
+    action: Name the table or column, its type, CHECK, default and index; confirm the change is additive.
+    inputs:
+      - 'spec/module.yaml'
+    outputs:
+      - 'SQL draft'
+  - id: constant
+    role: backend-engineer
+    action: Append X_MIGRATION_00N in src/services/migration.ts; for a column split ADD COLUMN and backfill into two constants and guard the first with pragma_table_info in the repository constructor.
+    inputs:
+      - 'SQL draft'
+    outputs:
+      - 'src/services/migration.ts'
+      - 'src/services/sqlite-repository.ts'
+  - id: mirror
+    role: backend-engineer
+    action: Write migrations/000N_{module}_{name}.up.sql with the same SQL and .down.sql with the reverse.
+    inputs:
+      - 'src/services/migration.ts'
+    outputs:
+      - 'migrations/000N_*.up.sql'
+      - 'migrations/000N_*.down.sql'
+  - id: plumb
+    role: backend-engineer
+    action: Extend the row interface, fromRow, INSERT and SELECT lists, domain type, service validation and endpoint parsing.
+    inputs:
+      - 'SQL draft'
+    outputs:
+      - 'src/services/sqlite-repository.ts'
+      - 'src/domain/types.ts'
+      - 'src/services/*-service.ts'
+      - 'src/api/endpoints.ts'
+    gates:
+      - 'typecheck'
+      - 'tests'
+      - 'format'
+  - id: prove
+    role: backend-engineer
+    action: Tests on ':memory:' for the new rule, tenant isolation, and idempotence (open twice); run pnpm dev once against the existing .octane-erp/<module>.db.
+    inputs:
+      - 'tests/module.test.ts'
+    outputs:
+      - 'tests/module.test.ts'
+    gates:
+      - 'tests'
+  - id: land
+    role: orchestrator
+    action: 'Sandbox: eject. Direct path: pnpm verify, pull request stating that the schema applies on next boot.'
+    inputs:
+      - 'diff'
+    outputs:
+      - 'pull request'
+    gates:
+      - 'spec-schema'
+      - 'module-schema'
+      - 'dependencies'
+      - 'typecheck'
+      - 'tests'
+      - 'format'

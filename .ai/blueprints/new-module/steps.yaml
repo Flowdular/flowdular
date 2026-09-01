@@ -1,0 +1,128 @@
+schemaVersion: 1
+steps:
+  - id: spec
+    role: business-manager
+    action: Write spec/module.yaml with status draft, schema-valid, with permissions and acceptance scenarios; stop for approval.
+    inputs:
+      - 'brief'
+    outputs:
+      - 'spec/module.yaml'
+    gates:
+      - 'spec-schema'
+  - id: approve
+    role: operator
+    action: Set status to approved (sandbox approve button or a human edit). No agent does this.
+    inputs:
+      - 'spec/module.yaml'
+    outputs:
+      - 'spec/module.yaml'
+  - id: scaffold
+    role: orchestrator
+    action: pnpm oerp module new <id> --spec modules/<dir>/spec/module.yaml --apply (the sandbox runs it; at the root run the dry run first). Writes the composition entries, a list and a create endpoint, table or memory repository, view, api, state and tests for the first entity; other permissions get constants only.
+    inputs:
+      - 'spec/module.yaml'
+      - 'translations/*.json'
+    outputs:
+      - 'module.json'
+      - 'package.json'
+      - 'tsconfig.json'
+      - 'src/platform.ts'
+      - 'src/server/*.ts'
+      - 'src/acl/permissions.ts'
+      - 'src/api/endpoints.ts'
+      - 'src/domain/types.ts'
+      - 'src/services/*.ts'
+      - 'src/client/*.ts'
+      - 'src/client/*.tsrx'
+      - 'migrations/0001_*.sql'
+      - 'tests/module.test.ts'
+      - 'translations/*.json'
+  - id: server
+    role: backend-engineer
+    action: 'Extend the scaffold with the real domain: fields, validation and stable error codes, uniqueness rules and indexes, further endpoints and entities, settings and server tests per the module-new skill.'
+    inputs:
+      - 'spec/module.yaml'
+      - 'reference/example-module'
+    outputs:
+      - 'src/acl/permissions.ts'
+      - 'src/domain/types.ts'
+      - 'src/services/*.ts'
+      - 'src/server/*.ts'
+      - 'src/api/endpoints.ts'
+      - 'src/platform.ts'
+      - 'src/index.ts'
+      - 'migrations/0001_*.sql'
+      - 'tests/module.test.ts'
+      - 'module.json'
+      - 'package.json'
+    gates:
+      - 'module-schema'
+      - 'dependencies'
+      - 'typecheck'
+      - 'tests'
+      - 'format'
+  - id: screen
+    role: ux-designer
+    action: Skeleton of the record screen and drawer form with the five states, on @coreloom/ui only.
+    inputs:
+      - 'spec/module.yaml'
+      - 'reference/design-system.md'
+    outputs:
+      - 'src/client/XView.tsrx'
+      - 'src/client/XForm.tsrx'
+    gates:
+      - 'typecheck'
+      - 'format'
+  - id: client
+    role: frontend-engineer
+    action: createClientContribution(context) in src/client/index.ts, contribution.tsrx, api.ts with csrf and content-type, state.ts, data wiring, widget, client logic tests.
+    inputs:
+      - 'src/api/endpoints.ts'
+      - 'src/client/XView.tsrx'
+    outputs:
+      - 'src/client/index.ts'
+      - 'src/client/contribution.tsrx'
+      - 'src/client/api.ts'
+      - 'src/client/state.ts'
+      - 'tests/*.test.ts'
+      - 'package.json'
+    gates:
+      - 'dependencies'
+      - 'typecheck'
+      - 'tests'
+      - 'format'
+  - id: agent-surface
+    role: agentic-engineer
+    action: Only when the brief asks for agent tools; record the tool design in the spec and stop with the core change needed.
+    inputs:
+      - 'spec/module.yaml'
+      - 'src/api/endpoints.ts'
+    outputs:
+      - 'spec/module.yaml'
+    gates:
+      - 'spec-schema'
+  - id: land
+    role: orchestrator
+    action: 'Sandbox: eject (gates per module, copy and removals, pnpm install, module enable with scope grant, auth sync-scopes, platform typecheck, restart note). Direct path: module enable --apply (grants scopes), pnpm verify, pull request.'
+    inputs:
+      - 'modules/{module}/**'
+    outputs:
+      - 'coreloom.json'
+      - 'platform/package.json'
+      - 'platform/src/generated/modules.server.ts'
+      - 'platform/src/generated/modules.client.ts'
+    gates:
+      - 'spec-schema'
+      - 'module-schema'
+      - 'dependencies'
+      - 'typecheck'
+      - 'tests'
+      - 'format'
+  - id: review
+    role: reviewer
+    action: Review against the spec, AGENTS.md and the reviewer checklist; findings by severity; no fixes in the same run.
+    inputs:
+      - 'diff'
+      - 'gate evidence'
+    outputs:
+      - 'review report'

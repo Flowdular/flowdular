@@ -1,0 +1,90 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://octane-erp.dev/schemas/cli-extension.schema.json",
+	"type": "object",
+	"additionalProperties": false,
+	"required": ["protocolVersion", "moduleId", "commands"],
+	"properties": {
+		"protocolVersion": { "const": 1 },
+		"moduleId": {
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+		},
+		"commands": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": ["path", "capability"],
+				"properties": {
+					"path": {
+						"type": "array",
+						"minItems": 2,
+						"items": {
+							"type": "string",
+							"pattern": "^[a-z][a-z0-9-]*$"
+						}
+					},
+					"capability": {
+						"type": "object",
+						"additionalProperties": false,
+						"required": [
+							"id",
+							"version",
+							"summary",
+							"risk",
+							"requiresApprovedSpec",
+							"supportsDryRun"
+						],
+						"properties": {
+							"id": {
+								"type": "string",
+								"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+							},
+							"version": { "type": "integer", "minimum": 1 },
+							"summary": {
+								"type": "string",
+								"minLength": 1,
+								"maxLength": 240
+							},
+							"risk": {
+								"enum": [
+									"read",
+									"workspace-write",
+									"process",
+									"external",
+									"destructive"
+								]
+							},
+							"requiresApprovedSpec": { "type": "boolean" },
+							"supportsDryRun": { "type": "boolean" },
+							"localOnly": { "type": "boolean" },
+							"confirmation": {
+								"type": "string",
+								"pattern": "^[a-z][a-z0-9-]{2,63}$"
+							}
+						},
+						"allOf": [
+							{
+								"if": {
+									"properties": {
+										"risk": { "const": "destructive" },
+										"localOnly": { "const": true }
+									},
+									"required": ["risk", "localOnly"]
+								},
+								"then": {
+									"properties": {
+										"confirmation": true,
+										"supportsDryRun": { "const": true }
+									},
+									"required": ["confirmation"]
+								}
+							}
+						]
+					}
+				}
+			}
+		}
+	}
+}

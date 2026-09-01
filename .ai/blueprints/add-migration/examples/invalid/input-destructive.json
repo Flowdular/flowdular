@@ -1,0 +1,6 @@
+{
+	"moduleId": "parties.core",
+	"change": "column",
+	"name": "email",
+	"destructive": true
+}

@@ -1,0 +1,31 @@
+{
+	"name": "@coreloom/module-parties",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./client": "./src/client/index.ts",
+		"./server": "./src/server/index.ts",
+		"./platform": "./src/platform.ts"
+	},
+	"scripts": {
+		"typecheck": "tsrx-tsc --noEmit -p tsconfig.json",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@coreloom/client": "workspace:*",
+		"@coreloom/contracts": "workspace:*",
+		"@coreloom/module-auth": "workspace:*",
+		"@coreloom/server": "workspace:*",
+		"@coreloom/ui": "workspace:*",
+		"octane": "0.1.50",
+		"segment-state": "0.2.0"
+	},
+	"devDependencies": {
+		"@tsrx/typescript-plugin": "0.3.120",
+		"@types/node": "24.13.3",
+		"typescript": "5.9.3",
+		"vitest": "4.1.10"
+	}
+}

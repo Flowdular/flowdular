@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - auth-pvc.yaml
+  - deployment.yaml
+  - service.yaml
+images:
+  - name: ghcr.io/octane-erp/octane-erp
+    newTag: 0.1.0

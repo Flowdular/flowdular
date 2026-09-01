@@ -1,0 +1,14 @@
+{
+	"$schema": "../../../packages/contracts/schemas/blueprint.schema.json",
+	"schemaVersion": 1,
+	"id": "author-spec",
+	"version": "1.0.0",
+	"architecture": "0.2.0",
+	"risk": "workspace-write",
+	"owner": "platform-architecture",
+	"agentRoles": ["business-manager", "spec-author"],
+	"executorProfiles": ["sandbox-specialist", "repo-agent"],
+	"requiredReviewers": ["business-owner", "platform-owner"],
+	"requiresApprovedSpec": false,
+	"status": "approved"
+}

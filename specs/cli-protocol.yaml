@@ -1,0 +1,11 @@
+schemaVersion: 1
+id: cli.capability-protocol
+version: 0.1.0
+status: approved
+protocolVersion: 1
+requirements:
+  - stable-json-envelope
+  - typed-capability-descriptors
+  - default-dry-run-for-writes
+  - explicit-approval-for-external-and-destructive-actions
+  - evidence-and-audit-id

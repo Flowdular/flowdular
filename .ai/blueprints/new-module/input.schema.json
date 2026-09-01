@@ -1,0 +1,21 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"additionalProperties": false,
+	"required": ["moduleId", "specPath"],
+	"properties": {
+		"moduleId": {
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+		},
+		"specPath": {
+			"type": "string",
+			"pattern": "^modules/[a-z0-9-]+/spec/module\\.yaml$"
+		},
+		"brief": {
+			"type": "string",
+			"minLength": 8,
+			"maxLength": 20000
+		}
+	}
+}

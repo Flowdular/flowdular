@@ -1,0 +1,96 @@
+schemaVersion: 1
+id: system.core
+specVersion: 0.4.0
+status: approved
+name: System Core
+description: Provides the application shell, platform health, module discovery, and the administration surface for module settings.
+profile: full
+capabilities:
+  - api
+  - client
+  - translations
+dependencies: []
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - The application shell composes navigation and views from enabled module contributions without importing module implementation details.
+  - A module may contribute multiple navigation entries and views using globally unique stable identifiers.
+  - Navigation visibility is filtered by the authenticated principal scopes while server authorization remains authoritative.
+  - Development navigation and routes are available only to tenant owners, even if a non-owner session contains a stale development scope.
+  - Navigation group expansion is application-shell state and does not alter module registrations or route access.
+  - The application shell owns compact navigation density and exposes module entries without allowing modules to alter shell layout.
+  - Document metadata is rendered during SSR, adopted during hydration, and updated from the active authorized navigation entry.
+  - The module catalog exposed to administrators is read from workspace manifests and specifications; it never loads module code and never changes the enabled set.
+  - Module settings are declared by their owning module, stored per tenant by auth.core, and changed only through the settings administration API served by system.core, with an audit record.
+permissions:
+  - id: system.workspace.access
+    description: Open the authenticated ERP workspace.
+  - id: system.modules.read
+    description: Read installed module and platform development information.
+  - id: system.specs.read
+    description: Read approved platform specifications.
+  - id: system.runs.read
+    description: Read framework implementation runs.
+  - id: system.settings.read
+    description: Read the declared module settings and their current values.
+  - id: system.settings.manage
+    description: Change module settings for the workspace.
+dataOwnership:
+  - system.core owns application-shell layout, navigation behavior, route selection, and contribution composition.
+  - Feature modules own their navigation metadata and screen implementations.
+  - Module settings values are stored by auth.core on behalf of the declaring module; system.core owns the settings API, the per-module settings section of the Modules drawer, and the settings permissions.
+acceptanceScenarios:
+  - id: SYSTEM-MULTI-VIEW-MODULE
+    given: An enabled module contributes multiple valid navigation entries and matching views.
+    when: The application shell builds the client contribution registry.
+    then: Every authorized entry is rendered in deterministic order and opens its matching module view.
+  - id: SYSTEM-NAV-COLLAPSE
+    given: A navigation group contains one or more authorized entries.
+    when: The principal activates the group heading.
+    then: The application shell toggles that group's items without changing the active route or permissions.
+  - id: SYSTEM-NAV-DENSITY
+    given: The desktop application shell renders all authorized navigation groups.
+    when: Multiple modules contribute several screens.
+    then: The sidebar keeps compact item sizing and scrolls without stretching entries to fill available height.
+  - id: SYSTEM-DEVELOPMENT-OWNER-ONLY
+    given: A non-owner principal opens a Development URL or has a stale Development scope.
+    when: The application shell resolves authorized navigation and content.
+    then: No Development entry or view is rendered and the principal is returned to the business dashboard.
+  - id: SYSTEM-SEO-SSR
+    given: A public or authenticated platform route is rendered by the server.
+    when: The HTML document is produced.
+    then: The head contains one merged title, description, robots policy, and social metadata declaration without a competing static title.
+  - id: SYSTEM-SEO-NAVIGATION
+    given: An authenticated principal navigates between authorized shell views.
+    when: The active view changes without a full document load.
+    then: The document title and description update to match the active navigation contribution.
+  - id: SYSTEM-MODULES-LIST
+    given: An owner with system.modules.read opens Administration > Modules.
+    when: The module catalog is requested.
+    then: Every module in the workspace is listed with its id, name, version, permissions, platform surfaces, and enabled state, together with the CLI commands that change the enabled set.
+  - id: SYSTEM-MODULES-DENY
+    given: A principal without system.modules.read.
+    when: The principal requests the module catalog.
+    then: The server returns 401 or 403 and no manifest data is disclosed.
+  - id: SYSTEM-MODULES-DRAWER
+    given: A principal with system.modules.read opens a module row in Administration > Modules.
+    when: The drawer renders.
+    then: It shows the module overview, its declared permissions, and its declared settings; a module without settings shows a short empty state in the Settings section, and setting controls are disabled without system.settings.manage.
+  - id: SYSTEM-SETTINGS-READ
+    given: A principal with system.settings.read.
+    when: The principal requests the declared settings, from a module drawer or from GET /api/settings.
+    then: Every declared setting is listed with its current tenant value, platform-scoped rows are marked as applying to all workspaces, and secret values are never returned.
+  - id: SYSTEM-SETTINGS-MANAGE
+    given: A principal with system.settings.manage changes a declared setting.
+    when: The value passes the declared type, bounds, and enum validation.
+    then: The value is stored for the tenant, takes effect on the next read, and an audit event records the change.
+  - id: SYSTEM-SETTINGS-VALIDATE
+    given: A principal with system.settings.manage submits a value outside the declared type, bounds, or enum, or names an undeclared setting.
+    when: The update is processed.
+    then: The server rejects it with 400 or 404 and the stored value is unchanged.
+  - id: SYSTEM-SETTINGS-DENY
+    given: A principal without the required settings scope, or a mutation carrying an API token instead of a browser session.
+    when: The principal reads or changes a setting.
+    then: The server returns 401 or 403 and the stored value is unchanged.

@@ -1,0 +1,58 @@
+schemaVersion: 1
+# Consumed by nobody (zero references under packages/). Review guidance: who
+# answers for a path and which role may write it.
+owners:
+  packages/contracts/**: platform-architecture
+  packages/kernel/**: platform-architecture
+  packages/server/**: platform-runtime
+  packages/client/**: platform-ui
+  packages/ui/**: platform-ui
+  packages/dev-console/**: platform-ui
+  packages/cli/**: platform-tooling
+  packages/cli-protocol/**: platform-tooling
+  packages/sandbox/**: sandbox-runtime
+  packages/coding-agent/**: sandbox-runtime
+  packages/ai-provider/**: agent-runtime
+  packages/harness/**: agent-runtime
+  modules/auth/**: platform-runtime
+  modules/system/**: platform-architecture
+  modules/users/**: platform-runtime
+  modules/agents/**: agent-runtime
+  modules/sandbox/**: sandbox-runtime
+  modules/{module}/**: module:{module}
+  platform/**: platform-composition
+  infra/**: platform-operations
+  .github/**: platform-operations
+  docs/**: platform-architecture
+  specs/**: platform-architecture
+  .ai/**: platform-architecture
+  AGENTS.md: platform-architecture
+  CLAUDE.md: platform-architecture
+# Inside a module built or changed in the sandbox, the role front matter in
+# .ai/agents/sandbox/*.md says who writes what. Advisory at run time.
+moduleRoles:
+  modules/{module}/spec/**: [business-manager, agentic-engineer]
+  modules/{module}/translations/**: [business-manager]
+  modules/{module}/src/acl/**: [backend-engineer]
+  modules/{module}/src/api/**: [backend-engineer]
+  modules/{module}/src/server/**: [backend-engineer]
+  modules/{module}/src/services/**: [backend-engineer]
+  modules/{module}/src/domain/**: [backend-engineer]
+  modules/{module}/src/platform.ts: [backend-engineer, agentic-engineer]
+  modules/{module}/src/index.ts: [backend-engineer]
+  modules/{module}/migrations/**: [backend-engineer]
+  modules/{module}/src/client/**: [ux-designer, frontend-engineer]
+  modules/{module}/src/agent/**: [agentic-engineer]
+  modules/{module}/tests/**:
+    [backend-engineer, frontend-engineer, agentic-engineer]
+  modules/{module}/module.json: [backend-engineer, agentic-engineer]
+  modules/{module}/package.json:
+    [backend-engineer, frontend-engineer, agentic-engineer]
+cliOwned:
+  coreloom.json: pnpm oerp module enable|disable --apply
+  platform/package.json: pnpm oerp module enable --apply
+  platform/src/generated/**: pnpm oerp module sync --apply
+  packages/coding-agent/src/roles/defaults.ts: role defaults sync script (.ai/README.md)
+  packages/ui/src/brand/mark.ts: node packages/ui/scripts/gen-mark.mjs
+crossOwnerChanges:
+  requireReviewer: true

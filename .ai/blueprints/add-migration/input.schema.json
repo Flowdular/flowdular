@@ -1,0 +1,23 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"additionalProperties": false,
+	"required": ["moduleId", "change", "name", "destructive"],
+	"properties": {
+		"moduleId": {
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+		},
+		"change": {
+			"type": "string",
+			"enum": ["table", "column", "index", "constraint"]
+		},
+		"name": {
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9_]*$"
+		},
+		"destructive": {
+			"const": false
+		}
+	}
+}

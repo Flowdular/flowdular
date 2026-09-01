@@ -1,0 +1,7 @@
+schemaVersion: 1
+status:
+  allowed:
+    - approved
+onFix:
+  specVersion: patch bump when the fix changes observable behaviour named in a scenario
+  acceptanceScenarios: add one only when the bug shows a missing scenario; never rewrite existing ones

@@ -1,0 +1,17 @@
+schemaVersion: 1
+# Core changes have no module spec. A public boundary change records an ADR.
+status:
+  allowed: []
+adr:
+  requiredWhen:
+    - a type exported from packages/server, packages/client, packages/contracts, packages/ui or @coreloom/module-auth/server changes shape
+    - a JSON schema in packages/contracts/schemas gains or loses a key
+    - a gate id, role front matter key, or CLI command group changes
+  location: docs/adr/NNNN-<slug>.md
+schemas:
+  whenChanged:
+    - update packages/contracts/src/index.ts types
+    - update packages/cli/src/module-scaffold.ts and its test
+    - update every modules/*/module.json or spec/module.yaml affected
+    - update .ai/blueprints/*/required-files.yaml and spec-requirements.yaml
+    - update .ai/agents/sandbox/business-manager.md when spec keys change

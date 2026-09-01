@@ -1,0 +1,5 @@
+{
+	"moduleId": "parties.core",
+	"change": "rewrite",
+	"brief": "Rewrite the module in another framework."
+}

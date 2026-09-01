@@ -1,0 +1,67 @@
+schemaVersion: 1
+# The module already exists; these must still be present after the change.
+required:
+  - module.json
+  - package.json
+  - spec/module.yaml
+  - src/index.ts
+  - src/acl/permissions.ts
+  - src/api/endpoints.ts
+  - src/platform.ts
+  - src/server/index.ts
+  - src/client/index.ts
+  - tests/module.test.ts
+stable:
+  - src/platform.ts exports createServerComposition
+  - src/client/index.ts exports createClientContribution
+  - every name exported from src/index.ts, src/server/index.ts, src/client/index.ts
+byChange:
+  endpoint:
+    - 'src/services/*.ts'
+    - 'src/api/endpoints.ts'
+    - 'src/client/api.ts'
+    - 'tests/module.test.ts'
+    - 'spec/module.yaml'
+  table:
+    - 'src/services/migration.ts'
+    - 'src/services/sqlite-repository.ts'
+    - 'migrations/000N_{module}_{name}.up.sql'
+    - 'migrations/000N_{module}_{name}.down.sql'
+    - 'src/domain/types.ts'
+    - 'tests/module.test.ts'
+    - 'spec/module.yaml'
+  column:
+    - 'src/services/migration.ts'
+    - 'src/services/sqlite-repository.ts'
+    - 'migrations/000N_{module}_{name}.up.sql'
+    - 'migrations/000N_{module}_{name}.down.sql'
+    - 'src/domain/types.ts'
+    - 'src/api/endpoints.ts'
+    - 'src/client/*.tsrx'
+    - 'tests/module.test.ts'
+    - 'spec/module.yaml'
+  screen:
+    - 'src/client/XView.tsrx'
+    - 'src/client/contribution.tsrx'
+    - 'src/client/index.ts'
+  widget:
+    - 'src/client/*.tsrx'
+    - 'src/client/contribution.tsrx'
+  permission:
+    - 'spec/module.yaml'
+    - 'src/acl/permissions.ts'
+    - 'src/api/endpoints.ts'
+    - 'src/client/contribution.tsrx'
+  setting:
+    - 'src/settings.ts'
+    - 'src/platform.ts'
+    - 'src/server/runtime.ts'
+    - 'spec/module.yaml'
+  cross-module-read:
+    - 'module.json'
+    - 'spec/module.yaml'
+    - 'package.json'
+    - 'src/services/*.ts'
+  fix:
+    - 'tests/module.test.ts'
+    - 'the owning file'

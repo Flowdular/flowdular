@@ -1,0 +1,78 @@
+schemaVersion: 1
+steps:
+  - id: read
+    role: backend-engineer
+    action: Read the whole module (spec, acl, endpoints, services, client, tests) and the base copy before changing anything.
+    inputs:
+      - 'modules/{module}/**'
+    outputs: []
+  - id: classify
+    role: backend-engineer
+    action: Name the change class (endpoint, table, column, screen, widget, permission, setting, cross-module-read, fix) and take its touch list from required-files.yaml byChange.
+    inputs:
+      - 'brief'
+    outputs:
+      - 'touch list'
+  - id: server
+    role: backend-engineer
+    action: Service method, repository SQL with WHERE tenant_id = ?, idempotent migration constant plus guarded ALTER for a column, endpoint with access, resolveIdentity, sessionMutationDenial, readJsonObject; tests for denial and isolation.
+    inputs:
+      - 'touch list'
+    outputs:
+      - 'src/services/*.ts'
+      - 'src/api/endpoints.ts'
+      - 'migrations/*.sql'
+      - 'tests/module.test.ts'
+    gates:
+      - 'module-schema'
+      - 'dependencies'
+      - 'typecheck'
+      - 'tests'
+      - 'format'
+  - id: client
+    role: frontend-engineer
+    action: api.ts call, form field or column, contribution entry for a new screen or widget, client logic test.
+    inputs:
+      - 'src/api/endpoints.ts'
+    outputs:
+      - 'src/client/**'
+      - 'tests/*.test.ts'
+    gates:
+      - 'dependencies'
+      - 'typecheck'
+      - 'tests'
+      - 'format'
+  - id: spec
+    role: business-manager
+    action: Add the acceptance scenario and invariant, bump specVersion; module.json and package.json versions follow.
+    inputs:
+      - 'change'
+    outputs:
+      - 'spec/module.yaml'
+      - 'module.json'
+      - 'package.json'
+    gates:
+      - 'spec-schema'
+      - 'module-schema'
+  - id: land
+    role: orchestrator
+    action: 'Sandbox: eject (gates per module, copy and removals, pnpm install, auth sync-scopes, platform typecheck; stops at the first failed step). Direct path: pnpm verify, pull request; auth sync-scopes --apply when a permission was added.'
+    inputs:
+      - 'modules/{module}/**'
+    outputs:
+      - 'modules/{module}/**'
+    gates:
+      - 'spec-schema'
+      - 'module-schema'
+      - 'dependencies'
+      - 'typecheck'
+      - 'tests'
+      - 'format'
+  - id: review
+    role: reviewer
+    action: Diff against base, exported names unchanged, versions bumped together, migration idempotent against an existing database.
+    inputs:
+      - 'diff'
+      - 'gate evidence'
+    outputs:
+      - 'review report'

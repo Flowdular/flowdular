@@ -1,0 +1,71 @@
+* {
+	box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+	min-height: 100%;
+	margin: 0;
+}
+
+body {
+	min-width: 320px;
+	font-family: var(--font-sans);
+	font-size: var(--text-base);
+	line-height: 1.5;
+	color: var(--ink);
+	background: var(--bg);
+	font-synthesis: none;
+	text-rendering: optimizeLegibility;
+	-webkit-font-smoothing: antialiased;
+}
+
+/* Layout containment. A single long value must never widen the page: grid and
+   flex children default to min-width:auto, which lets unbreakable content push
+   the whole layout sideways. */
+:where(body) {
+	overflow-x: clip;
+}
+
+:where(p, h1, h2, h3, h4, h5, h6, li, dd, dt, td, th, label, small, b, span) {
+	overflow-wrap: break-word;
+}
+
+button,
+input,
+select,
+textarea {
+	font: inherit;
+	color: inherit;
+	max-width: 100%;
+}
+
+button,
+a {
+	-webkit-tap-highlight-color: transparent;
+}
+
+button {
+	cursor: pointer;
+}
+
+:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+}
+
+::selection {
+	color: var(--ink-0);
+	background: var(--primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		scroll-behavior: auto !important;
+		transition-duration: 0.01ms !important;
+		animation-duration: 0.01ms !important;
+	}
+}

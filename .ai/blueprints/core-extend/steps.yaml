@@ -1,0 +1,50 @@
+schemaVersion: 1
+steps:
+  - id: map
+    role: module-executor
+    action: Read the owning package end to end and list every consumer (grep the export name across modules/, platform/, packages/). Read .ai/skills/core-extend/SKILL.md.
+    inputs:
+      - 'brief'
+    outputs:
+      - 'consumer list'
+  - id: contract
+    role: module-executor
+    action: Change the type or schema first, optional members before required ones; write the ADR when a public boundary changes.
+    inputs:
+      - 'consumer list'
+    outputs:
+      - 'packages/**'
+      - 'docs/adr/NNNN-*.md'
+  - id: consumers
+    role: module-executor
+    action: Migrate every consumer in the same change, including the scaffold, the generated composition generator, reference copies, docs/design-system.md and the skills that describe the surface.
+    inputs:
+      - 'consumer list'
+    outputs:
+      - 'modules/*/src/platform.ts'
+      - 'packages/cli/src/module-scaffold.ts'
+      - 'packages/cli/src/module-sync.ts'
+      - '.ai/skills/**'
+  - id: regenerate
+    role: module-executor
+    action: pnpm oerp module sync --apply when the generated composition shape changed; never hand-edit platform/src/generated.
+    inputs:
+      - 'packages/cli/src/module-sync.ts'
+    outputs:
+      - 'platform/src/generated/modules.server.ts'
+      - 'platform/src/generated/modules.client.ts'
+  - id: verify
+    role: module-executor
+    action: pnpm verify, then pnpm build; pnpm --filter @coreloom/platform typecheck while iterating.
+    inputs:
+      - 'working tree'
+    outputs:
+      - 'gate evidence'
+  - id: review
+    role: reviewer
+    action: Dependency direction respected, consumers migrated, dead code not extended, ADR present when required.
+    inputs:
+      - 'diff'
+      - 'gate evidence'
+    outputs:
+      - 'review report'

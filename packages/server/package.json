@@ -1,0 +1,20 @@
+{
+	"name": "@coreloom/server",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit -p tsconfig.json",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@octanejs/app-core": "0.0.46"
+	},
+	"devDependencies": {
+		"typescript": "5.9.3",
+		"vitest": "4.1.10"
+	}
+}

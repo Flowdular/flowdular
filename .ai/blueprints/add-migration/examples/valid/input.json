@@ -1,0 +1,6 @@
+{
+	"moduleId": "parties.core",
+	"change": "column",
+	"name": "vat_id",
+	"destructive": false
+}

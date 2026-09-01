@@ -1,0 +1,14 @@
+schemaVersion: 1
+status:
+  allowed:
+    - approved
+    - in-review
+requiredKeys:
+  - acceptanceScenarios
+onChange:
+  specVersion: bump patch for fix, minor for endpoint, table, column, screen, widget, permission, cross-module-read
+  acceptanceScenarios: one new scenario per new behaviour, id pattern ^[A-Z][A-Z0-9-]+$
+  invariants: one new sentence per new rule (uniqueness, range, tenancy)
+  permissions: new ids must also appear in src/acl/permissions.ts and be granted with auth sync-scopes
+  dependencies: a cross-module read adds the owning module id and range
+  settings: a new setting gets an invariant or scenario naming its key, type, default and bounds

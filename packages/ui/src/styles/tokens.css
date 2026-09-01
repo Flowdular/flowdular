@@ -1,0 +1,105 @@
+/* Coreloom design tokens. Identity 1.0. Components must reference the
+   semantic layer only, so a future dark theme is one override block. */
+:root {
+	/* primitives */
+	--blue-50: #f1f5fe;
+	--blue-100: #e3ebfc;
+	--blue-200: #c3d3f8;
+	--blue-300: #98b3f2;
+	--blue-400: #6b8ff0;
+	--blue-500: #3c6be8;
+	--blue-600: #2557d6;
+	--blue-700: #1c45b3;
+	--blue-800: #17378c;
+	--blue-900: #142c6b;
+	--ink-0: #ffffff;
+	--ink-25: #f9fafc;
+	--ink-50: #f4f6fa;
+	--ink-100: #e7ebf2;
+	--ink-200: #d3dae5;
+	--ink-300: #b2bccc;
+	--ink-400: #8794ab;
+	--ink-500: #64738f;
+	--ink-600: #475572;
+	--ink-700: #2e3a55;
+	--ink-800: #1e2740;
+	--ink-900: #141b2e;
+	--ink-950: #0c1222;
+	--copper-50: #fbefe4;
+	--copper-300: #e08a45;
+	--copper-500: #c9722d;
+	--copper-600: #b4601f;
+	--green-50: #e6f5ec;
+	--green-200: #b7e3c8;
+	--green-600: #1b7f4e;
+	--amber-50: #fff4d6;
+	--amber-200: #f3dc9a;
+	--amber-600: #9a6700;
+	--red-50: #fce9e7;
+	--red-200: #f2bdb9;
+	--red-600: #c4322b;
+
+	/* semantic */
+	--bg: var(--ink-50);
+	--surface: var(--ink-0);
+	--surface-2: var(--ink-25);
+	--line: var(--ink-200);
+	--line-2: var(--ink-100);
+	--ink: var(--ink-900);
+	--ink-2: var(--ink-600);
+	--ink-3: var(--ink-500);
+	--ink-4: var(--ink-400);
+	--primary: var(--blue-600);
+	--primary-hover: var(--blue-700);
+	--primary-soft: var(--blue-100);
+	--primary-tint: var(--blue-50);
+	--focus: var(--blue-600);
+	--success: var(--green-600);
+	--success-bg: var(--green-50);
+	--success-line: var(--green-200);
+	--warning: var(--amber-600);
+	--warning-bg: var(--amber-50);
+	--warning-line: var(--amber-200);
+	--danger: var(--red-600);
+	--danger-bg: var(--red-50);
+	--danger-line: var(--red-200);
+	--brand: var(--blue-600);
+	--brand-weft: var(--copper-500);
+
+	/* typography */
+	--font-sans:
+		'IBM Plex Sans Variable', 'IBM Plex Sans', 'Segoe UI', system-ui,
+		-apple-system, sans-serif;
+	--font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+	--text-xs: 11px;
+	--text-sm: 12px;
+	--text-md: 13px;
+	--text-base: 14px;
+	--text-lg: 16px;
+	--text-xl: 18px;
+	--text-2xl: 22px;
+	--text-3xl: 28px;
+	--text-display: 36px;
+
+	/* dimensions */
+	--sidebar-w: 260px;
+	--rail-w: 60px;
+	--topbar-h: 52px;
+	--content-max: 1440px;
+	--content-pad: 28px;
+	--control-h: 36px;
+	--button-h: 32px;
+	--row-h: 44px;
+	--row-head-h: 36px;
+	--nav-item-h: 32px;
+	--r-sm: 4px;
+	--r: 6px;
+	--r-md: 8px;
+	--r-lg: 12px;
+	--shadow-sm: 0 1px 2px rgba(20, 27, 46, 0.06);
+	--shadow-md: 0 8px 24px rgba(20, 27, 46, 0.12);
+	--shadow-lg: 0 24px 64px rgba(12, 18, 34, 0.24);
+	--ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+	--t-fast: 120ms;
+	--t-base: 180ms;
+}

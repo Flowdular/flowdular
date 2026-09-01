@@ -1,0 +1,6 @@
+{
+	"plugins": ["@tsrx/prettier-plugin"],
+	"singleQuote": true,
+	"trailingComma": "all",
+	"useTabs": true
+}

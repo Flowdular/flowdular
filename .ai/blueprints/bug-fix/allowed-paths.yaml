@@ -1,0 +1,29 @@
+schemaVersion: 1
+write:
+  - modules/{module}/**
+deny:
+  - platform/**
+  - packages/**
+  - infra/**
+  - .github/**
+  - docs/**
+  - specs/**
+  - .ai/**
+  - coreloom.json
+  - pnpm-workspace.yaml
+  - modules/!({module})/**
+notes:
+  - a defect under packages/** follows core-extend allowed-paths.yaml
+# Written only by CLI commands, never by hand. The eject and the direct path
+# both run the commands; the files still travel in the same commit.
+cliOwned:
+  - path: coreloom.json
+    command: pnpm oerp module enable <id> --apply
+  - path: platform/package.json
+    command: pnpm oerp module enable <id> --apply
+  - path: platform/src/generated/modules.server.ts
+    command: pnpm oerp module sync --apply
+  - path: platform/src/generated/modules.client.ts
+    command: pnpm oerp module sync --apply
+  - path: pnpm-lock.yaml
+    command: pnpm install

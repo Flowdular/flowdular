@@ -1,0 +1,51 @@
+schemaVersion: 1
+id: catalog.core
+specVersion: 0.1.0
+status: approved
+name: Product Catalog Core
+description: Provides tenant-scoped products and services with stable SKUs, units, prices, currencies, and lifecycle state.
+profile: full
+capabilities:
+  - api
+  - database
+  - client
+  - translations
+dependencies:
+  - id: system.core
+    range: ^0.1.0
+  - id: auth.core
+    range: ^0.1.0
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - Every catalog item is owned by exactly one tenant and every query uses the trusted tenant identifier.
+  - SKU is unique inside a tenant and is never used as tenancy authority.
+  - Monetary values are stored as integer minor units with an explicit ISO currency code.
+  - Item kind is product or service and status is active or archived.
+permissions:
+  - id: catalog.items.read
+    description: Read products and services in the active tenant.
+  - id: catalog.items.manage
+    description: Create and update products and services in the active tenant.
+dataOwnership:
+  - catalog.core owns SKU, item identity, kind, unit, base price, currency, and lifecycle status.
+  - Sales and purchasing modules reference catalog item identifiers and snapshot commercial terms when required by their specs.
+acceptanceScenarios:
+  - id: CATALOG-LIST
+    given: Tenant-scoped products and services exist.
+    when: An authorized principal lists catalog items.
+    then: Only items owned by the active tenant are returned in deterministic SKU order.
+  - id: CATALOG-CREATE
+    given: An authorized principal supplies a unique SKU and valid product or service data.
+    when: The catalog item is created.
+    then: A tenant-owned active item is persisted with integer minor-unit pricing.
+  - id: CATALOG-DUPLICATE
+    given: An item already uses a SKU in the active tenant.
+    when: Another item is created with the same normalized SKU.
+    then: The server returns a stable conflict error and leaves existing data unchanged.
+  - id: CATALOG-DENY
+    given: A principal is unauthenticated or lacks the required catalog permission.
+    when: The principal reads or mutates catalog data.
+    then: The server denies the operation before repository access.

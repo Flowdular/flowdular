@@ -1,0 +1,7 @@
+{
+	"blueprint": "release@1.0.0",
+	"branch": "Michal/My Branch",
+	"files": ["modules/inventory/**"],
+	"gates": ["pnpm verify"],
+	"postMerge": []
+}

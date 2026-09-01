@@ -1,0 +1,35 @@
+schemaVersion: 1
+write:
+  - packages/**
+  - platform/octane.config.ts
+  - platform/src/**
+  - platform/scripts/**
+  - modules/auth/src/server/composition.ts
+  - modules/*/module.json
+  - modules/*/spec/module.yaml
+  - modules/*/src/platform.ts
+  - docs/**
+  - .ai/**
+  - AGENTS.md
+  - CLAUDE.md
+deny:
+  - platform/src/generated/**
+  - coreloom.json
+  - infra/**
+  - .github/**
+  - pnpm-lock.yaml (only through pnpm install)
+notes:
+  - modules/** beyond the listed files belong to edit-module; a consumer migration touches only the lines the contract change forces
+# Written only by CLI commands, never by hand. The eject and the direct path
+# both run the commands; the files still travel in the same commit.
+cliOwned:
+  - path: coreloom.json
+    command: pnpm oerp module enable <id> --apply
+  - path: platform/package.json
+    command: pnpm oerp module enable <id> --apply
+  - path: platform/src/generated/modules.server.ts
+    command: pnpm oerp module sync --apply
+  - path: platform/src/generated/modules.client.ts
+    command: pnpm oerp module sync --apply
+  - path: pnpm-lock.yaml
+    command: pnpm install

@@ -1,0 +1,35 @@
+schemaVersion: 1
+# Keys below exist in packages/contracts/schemas/module-spec.schema.json.
+status:
+  initial: draft
+  allowed:
+    - draft
+    - in-review
+  agentMayApprove: false
+requiredKeys:
+  - schemaVersion
+  - id
+  - specVersion
+  - status
+  - name
+  - description
+  - profile
+  - capabilities
+  - dependencies
+  - tenancy
+  - locales
+  - invariants
+  - permissions
+  - dataOwnership
+  - acceptanceScenarios
+identifiers:
+  id: ^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$
+  permissions: <module>.<entity>.read and <module>.<entity>.manage
+  acceptanceScenarios: ^[A-Z][A-Z0-9-]+$
+acceptanceScenarios:
+  minimum: 3
+  mustInclude:
+    - denial
+    - tenant isolation
+openQuestions:
+  policy: stay in the handoff message; never guessed into the file

@@ -1,0 +1,9 @@
+schemaVersion: 1
+# A review changes no spec. It checks that the spec and the code agree.
+status:
+  allowed:
+    - approved
+checks:
+  - permissions[].id equal the constants in src/acl/permissions.ts
+  - every endpoint permission appears in the spec
+  - a denial scenario and a tenant isolation scenario exist

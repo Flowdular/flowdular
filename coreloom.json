@@ -1,0 +1,34 @@
+{
+	"$schema": "./packages/contracts/schemas/project.schema.json",
+	"schemaVersion": 1,
+	"architectureVersion": "0.2.0",
+	"specs": {
+		"platformRoot": "specs",
+		"moduleDirectory": "spec"
+	},
+	"modules": {
+		"roots": [
+			"modules"
+		],
+		"enabled": [
+			"system.core",
+			"auth.core",
+			"users.core",
+			"parties.core",
+			"catalog.core",
+			"agents.core",
+			"sandbox.core",
+			"profile.core",
+			"expenses.core"
+		]
+	},
+	"locales": [
+		"en",
+		"pl"
+	],
+	"agent": {
+		"policy": ".ai/policies/capabilities.yaml",
+		"blueprints": ".ai/blueprints",
+		"modelRouting": ".ai/policies/model-routing.yaml"
+	}
+}

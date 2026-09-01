@@ -1,0 +1,19 @@
+schemaVersion: 1
+required: []
+inCommit:
+  sandbox-eject:
+    - modules/{module}/**
+    - coreloom.json (module enable)
+    - platform/package.json (module enable)
+    - platform/src/generated/modules.server.ts (module sync)
+    - platform/src/generated/modules.client.ts (module sync)
+    - pnpm-lock.yaml (pnpm install, when changed)
+  pull-request:
+    - the reviewed change plus the CLI outputs it required
+  tag:
+    - nothing; the tag points at main
+pullRequestBody:
+  - two sentences on what changed and why
+  - gate evidence: gate id, command, result
+  - post-merge step: pnpm oerp auth sync-scopes --module <id> --apply against the deployment database
+  - no AI attribution footer, no em or en dashes

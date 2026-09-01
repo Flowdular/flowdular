@@ -1,0 +1,19 @@
+schemaVersion: 1
+write: []
+deny:
+  - '**'
+notes:
+  - a release commits what the CLI produced; nothing is edited by hand
+# Written only by CLI commands, never by hand. The eject and the direct path
+# both run the commands; the files still travel in the same commit.
+cliOwned:
+  - path: coreloom.json
+    command: pnpm oerp module enable <id> --apply
+  - path: platform/package.json
+    command: pnpm oerp module enable <id> --apply
+  - path: platform/src/generated/modules.server.ts
+    command: pnpm oerp module sync --apply
+  - path: platform/src/generated/modules.client.ts
+    command: pnpm oerp module sync --apply
+  - path: pnpm-lock.yaml
+    command: pnpm install

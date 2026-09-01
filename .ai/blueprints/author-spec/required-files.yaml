@@ -1,0 +1,6 @@
+schemaVersion: 1
+create:
+  - modules/{module}/spec/module.yaml
+forbid:
+  - modules/{module}/src/**
+  - modules/{module}/module.json

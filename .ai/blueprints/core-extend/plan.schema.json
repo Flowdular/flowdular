@@ -1,0 +1,39 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"additionalProperties": false,
+	"required": ["blueprint", "package", "consumersMigrated", "adr", "gates"],
+	"properties": {
+		"blueprint": {
+			"const": "core-extend@1.0.0"
+		},
+		"package": {
+			"type": "string",
+			"pattern": "^@coreloom/[a-z-]+$"
+		},
+		"consumersMigrated": {
+			"type": "array",
+			"items": {
+				"type": "string",
+				"minLength": 1
+			},
+			"uniqueItems": true
+		},
+		"adr": {
+			"type": "boolean"
+		},
+		"gates": {
+			"type": "array",
+			"minItems": 1,
+			"items": {
+				"type": "string",
+				"enum": [
+					"pnpm verify",
+					"pnpm build",
+					"pnpm --filter @coreloom/platform typecheck"
+				]
+			},
+			"uniqueItems": true
+		}
+	}
+}

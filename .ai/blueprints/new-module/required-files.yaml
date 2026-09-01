@@ -1,0 +1,65 @@
+schemaVersion: 1
+# What modules/catalog has and packages/cli/src/module-sync.ts needs. The
+# scaffold (pnpm oerp module new) writes most of these; check the dry run.
+required:
+  - module.json
+  - package.json
+  - tsconfig.json
+  - spec/module.yaml
+  - src/index.ts
+  - src/acl/permissions.ts
+  - src/api/endpoints.ts
+  - src/client/index.ts
+  - src/services/index.ts
+  - migrations/README.md
+  - translations/en.json
+  - tests/module.test.ts
+manifest:
+  module.json:
+    - platform.server: true when capabilities include api
+    - platform.client: true when capabilities include client
+    - version equals spec specVersion and package.json version
+  package.json:
+    exports:
+      - '.'
+      - ./client
+      - ./server
+      - ./platform
+  src/platform.ts:
+    - createServerComposition(context) returns routes, optional settings (defineModuleSettings) and optional start()
+    - context carries auth, settings (ModuleSettingsRuntime) and agentTools (PlatformToolRegistry)
+conditional:
+  api:
+    whenCapability: api
+    required:
+      - src/platform.ts
+      - src/server/index.ts
+      - src/server/runtime.ts
+      - src/domain/types.ts
+  database:
+    whenCapability: database
+    required:
+      - src/services/migration.ts
+      - src/services/repository.ts
+      - src/services/sqlite-repository.ts
+      - migrations/0001_{module}_core.up.sql
+      - migrations/0001_{module}_core.down.sql
+  no-database:
+    whenCapabilityAbsent: database
+    required:
+      - src/services/memory-repository.ts
+  client:
+    whenCapability: client
+    required:
+      - src/client/contribution.tsrx
+      - src/client/api.ts
+      - src/client/state.ts
+  cli:
+    whenCapability: cli
+    required:
+      - src/cli/commands.json
+      - src/cli/index.ts
+  translations:
+    whenCapability: translations
+    required:
+      - translations/{locale}.json for every declared locale

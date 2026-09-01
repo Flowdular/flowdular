@@ -1,0 +1,19 @@
+{
+	"blueprint": "security-review@1.0.0",
+	"checksRun": [
+		"grep -rn \"new ServerRoute\" modules/inventory/src",
+		"grep -rn tenantId modules/inventory/src/api",
+		"pnpm --filter @coreloom/module-inventory test"
+	],
+	"findings": [
+		{
+			"severity": "blocker",
+			"claim": "Tenant id is read from the request body.",
+			"location": "modules/inventory/src/api/endpoints.ts:41",
+			"scenario": "A member of tenant A posts { tenantId: \"B\" } and creates a location in tenant B.",
+			"rule": "AGENTS.md rule 6",
+			"fix": "Use principalFromContext(octane)!.tenantId and remove the body field."
+		}
+	],
+	"verdict": "changes-required"
+}

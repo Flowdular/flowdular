@@ -1,0 +1,161 @@
+schemaVersion: 1
+id: agents.core
+specVersion: 0.2.0
+status: approved
+name: Agentic Core
+description: Provides tenant-scoped provider connections, reusable skills and agent definitions, durable streamed execution, workflow integration, run history, and a safe playground for automation across the platform.
+profile: full
+capabilities:
+  - api
+  - database
+  - client
+  - translations
+  - integration
+  - cli
+dependencies:
+  - id: system.core
+    range: ^0.1.0
+  - id: auth.core
+    range: ^0.1.0
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - Every agent definition and run is owned by exactly one tenant, and every repository query receives the trusted tenant identifier.
+  - Agent execution is durable and fire-and-forget. The enqueue request persists a queued run before returning and never waits for provider completion.
+  - Queued and interrupted runs are recovered after runtime restart without executing one run concurrently more than once inside a process.
+  - Browser lifecycle and authenticated session lifetime do not control a queued run after the enqueue transaction commits.
+  - Workers claim runs with expiring leases so an interrupted claim can be recovered without allowing two live workers to own the same run.
+  - Every claimed run receives a short-lived signed run grant bound to tenant, run, provider, model, worker, attempt, permission digest, tool-grant digest, and current lease. The provider broker atomically consumes the grant once and never returns the upstream credential.
+  - Run grants are stored only as hashes and safe identifiers. A replay, expired grant, wrong audience, invalid signature, or grant presented after lease loss is rejected before provider resolution.
+  - A single claimed execution can remain detached for up to 24 hours while the worker renews its lease. Provider calls and tools must still use narrower operation timeouts and idempotency controls where side effects are possible.
+  - Agent instructions never grant authority. Tools and platform capabilities require explicit server-side grants at execution time.
+  - Arbitrary source code, shell commands, raw secrets, and runtime-downloaded client code cannot be stored as agent configuration.
+  - Provider, model, instruction revision, limits, input, output, usage, and execution events are captured with every run.
+  - Authorization decisions use server-side RBAC scopes and persist the initiating subject plus a permission snapshot for audit without treating that snapshot as future authority.
+  - Playground runs use the same authorization, tenancy, budgets, provider adapter, and audit path as platform-triggered runs.
+  - The bundled local simulation provider has network access disabled and does not claim to be a production language model.
+  - Agent definitions, playground, and run history are contributed under one collapsible Agents navigation group owned by agents.core.
+  - Provider connections are configured through authenticated agents.core APIs and stored as tenant-owned metadata plus an encrypted credential envelope; raw credentials never enter client responses, logs, audit metadata, agent definitions, run snapshots, or harness events.
+  - The credential encryption key is external to the agents database. Production startup fails when no explicit key is configured, while local development may create a permission-restricted key file outside the database.
+  - Provider credentials are decrypted just in time for one claimed execution or readiness probe and are not retained by the harness after that operation.
+  - Provider adapters use the Vercel AI SDK language model contract. Bundled adapter kinds are Vercel AI Gateway, Azure OpenAI, OpenAI, OpenAI-compatible, Anthropic, and local simulation.
+  - An OpenAI-compatible base URL must use HTTPS and match a deployment-controlled outbound hostname allowlist; provider configuration cannot create arbitrary network access or target private infrastructure.
+  - A readiness probe performs a bounded server-side model request, records only safe status, latency, model, and error classification, and never returns provider response bodies or credentials.
+  - An agent can be activated only when its provider connection is enabled, its selected model is enabled, and the latest readiness result is healthy within the configured freshness window.
+  - Skills are versioned instruction and capability bundles. A skill cannot contain executable source code, credentials, or grant a tool that is not independently registered and authorized.
+  - Tool calls use validated input schemas, explicit grants, target-module server authorization, timeouts, output limits, and persisted start, completion, or denial events.
+  - Web search is disabled by default and requires an explicit agent policy plus a registered web search capability. Provider-native web search cannot bypass the same permission, budget, audit, and egress controls.
+  - Worker output is streamed into ordered durable run events. UI streaming observes persisted events and never owns or cancels the underlying run lifecycle.
+  - Workflow, service, and schedule triggers use the same durable enqueue contract as the playground and include a stable idempotency key and initiating principal or approved system principal.
+permissions:
+  - id: agents.definitions.read
+    description: Read agent definitions in the active tenant.
+  - id: agents.definitions.manage
+    description: Create and update agent definitions in the active tenant.
+  - id: agents.runs.read
+    description: Read agent runs and execution traces in the active tenant.
+  - id: agents.runs.execute
+    description: Queue playground and platform agent runs in the active tenant.
+  - id: agents.providers.read
+    description: Read safe provider connection metadata and readiness in the active tenant.
+  - id: agents.providers.manage
+    description: Create, rotate, enable, disable, and remove provider connections in the active tenant.
+  - id: agents.providers.test
+    description: Execute a bounded readiness probe against a configured provider model.
+  - id: agents.skills.read
+    description: Read reusable agent skills in the active tenant.
+  - id: agents.skills.manage
+    description: Create and version reusable agent skills in the active tenant.
+dataOwnership:
+  - agents.core owns agent identity, configuration revisions, provider and model selection, allowed tool identifiers, execution limits, and lifecycle status.
+  - agents.core owns durable run state, input and output snapshots, usage, timing, failure data, and append-only execution events.
+  - agents.core owns provider connection metadata, encrypted credential envelopes, configured model allowlists, readiness history, and credential revision identifiers.
+  - agents.core owns skill identity, versioned instructions, required tool identifiers, lifecycle status, and agent-to-skill assignments.
+  - Business modules own their records and expose narrowly scoped tools to the harness; agents.core never bypasses their services or ACL rules.
+acceptanceScenarios:
+  - id: AGENTS-LIST
+    given: Tenant-scoped agent definitions exist.
+    when: An authorized principal lists agents.
+    then: Only agents owned by the active tenant are returned in deterministic name order.
+  - id: AGENTS-CREATE
+    given: An authorized principal supplies valid instructions, provider, model, limits, and tool grants.
+    when: The agent is created.
+    then: A tenant-owned draft agent is persisted at revision one without storing credentials or executable source code.
+  - id: AGENTS-UPDATE
+    given: An authorized principal edits an agent owned by the active tenant.
+    when: The update is accepted.
+    then: The definition revision increments and future runs snapshot the new revision while historical runs remain unchanged.
+  - id: AGENTS-QUEUE
+    given: An active agent and a principal with execution permission.
+    when: A playground or platform run is requested.
+    then: A queued run is durably persisted and a 202 response is returned before provider execution completes.
+  - id: AGENTS-EXECUTE
+    given: A queued run with valid server-side grants and bounded execution settings.
+    when: The harness worker claims the run.
+    then: The run reaches succeeded or failed with output, usage, timestamps, and ordered execution events persisted.
+  - id: AGENTS-RECOVER
+    given: The process stops after a run was queued or claimed.
+    when: The runtime starts again.
+    then: Pending runs are recovered and scheduled without duplicate concurrent execution inside that runtime.
+  - id: AGENTS-DETACHED
+    given: A run was durably queued by an authorized principal.
+    when: The initiating browser disconnects or its session later expires.
+    then: The worker continues the run from persisted state using bounded execution grants captured by the server at enqueue time.
+  - id: AGENTS-AUDIT
+    given: An agent is created, changed, queued, claimed, completed, or failed.
+    when: The state transition commits.
+    then: An append-only tenant-scoped audit event records the actor, action, subject, timestamp, and safe metadata without raw credentials.
+  - id: AGENTS-PLAYGROUND
+    given: An authorized user enters test input for an active agent.
+    when: The playground queues the run.
+    then: The UI returns immediately, polls the durable run, and renders its final output or stable failure without a blocking request.
+  - id: AGENTS-DENY
+    given: A principal is unauthenticated, lacks the required scope, or targets another tenant.
+    when: The principal reads, configures, or executes an agent.
+    then: The server denies the operation before cross-tenant data or provider execution is exposed.
+  - id: AGENTS-PROVIDER-CREATE
+    given: An owner with provider management permission submits a supported provider kind, safe metadata, model allowlist, and credential.
+    when: The provider connection is created.
+    then: Tenant-owned metadata and an encrypted credential envelope are persisted while the response exposes only credential presence and revision.
+  - id: AGENTS-PROVIDER-ROTATE
+    given: An existing provider connection and a new credential.
+    when: An authorized owner rotates the credential.
+    then: The encrypted envelope and credential revision change, existing run history stays immutable, and no raw credential is logged or returned.
+  - id: AGENTS-PROVIDER-READINESS
+    given: An enabled provider connection, an enabled model, and a principal with provider test permission.
+    when: A readiness probe is requested.
+    then: A bounded Vercel AI SDK request verifies authentication and model execution and stores safe health, latency, timestamp, and error classification.
+  - id: AGENTS-PROVIDER-SSRF-DENY
+    given: An OpenAI-compatible connection targets a non-HTTPS, private, loopback, link-local, or non-allowlisted hostname.
+    when: Configuration or a readiness probe is attempted.
+    then: The operation is denied before any outbound request or credential use.
+  - id: AGENTS-PROVIDER-ACTIVATION
+    given: An agent references an unknown, disabled, stale, or unhealthy provider model.
+    when: Activation or enqueue is requested.
+    then: The server rejects the operation with a stable readiness error and no provider call starts.
+  - id: AGENTS-SKILL
+    given: An authorized owner defines a skill with bounded instructions and registered required tools.
+    when: The skill is attached to an agent and the agent runs.
+    then: The harness receives the approved skill revision, merges its instructions, intersects its tools with agent and run grants, and persists evidence of each capability invoked.
+  - id: AGENTS-WEB-SEARCH
+    given: An agent has web search disabled or lacks the registered web search permission and grant.
+    when: A model requests web search.
+    then: The harness denies the call and persists a safe denial event without making a network request.
+  - id: AGENTS-STREAM
+    given: A claimed run is producing model text or tool events.
+    when: An authorized client observes the run event stream.
+    then: Ordered persisted deltas and lifecycle events arrive without exposing credentials, hidden provider reasoning, or cross-tenant data.
+  - id: AGENTS-RUN-GRANT
+    given: A worker owns a live lease for a claimed run.
+    when: It requests provider execution.
+    then: A signed run grant is issued, atomically consumed once by the provider broker, recorded without its token, and rejected on replay or lease mismatch without returning provider credentials.
+  - id: AGENTS-LONG-RUN
+    given: An active agent has a bounded execution timeout of up to 24 hours.
+    when: Its run continues after the initiating browser closes or session expires.
+    then: The worker renews the lease and the persisted run continues independently until completion, bounded failure, or recoverable process interruption.
+  - id: AGENTS-WORKFLOW-TRIGGER
+    given: A workflow node references an active agent and supplies an idempotency key, bounded input, tenant, and approved execution principal.
+    when: The workflow enqueues agent work.
+    then: The same durable run contract returns immediately and the workflow can resume from the terminal run event.

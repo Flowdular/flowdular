@@ -1,0 +1,15 @@
+{
+	"blueprint": "edit-module@1.0.0",
+	"moduleId": "parties.core",
+	"change": "endpoint",
+	"touchList": ["platform/octane.config.ts"],
+	"specVersionBump": "minor",
+	"gates": [
+		"spec-schema",
+		"module-schema",
+		"dependencies",
+		"typecheck",
+		"tests",
+		"format"
+	]
+}

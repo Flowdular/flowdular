@@ -1,0 +1,31 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"additionalProperties": false,
+	"required": ["moduleId", "change", "brief"],
+	"properties": {
+		"moduleId": {
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+		},
+		"change": {
+			"type": "string",
+			"enum": [
+				"endpoint",
+				"table",
+				"column",
+				"screen",
+				"widget",
+				"permission",
+				"setting",
+				"cross-module-read",
+				"fix"
+			]
+		},
+		"brief": {
+			"type": "string",
+			"minLength": 8,
+			"maxLength": 20000
+		}
+	}
+}

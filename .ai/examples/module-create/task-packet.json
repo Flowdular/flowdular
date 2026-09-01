@@ -1,0 +1,11 @@
+{
+	"schemaVersion": 1,
+	"taskId": "example-sales-orders",
+	"capability": "module.create",
+	"blueprint": "new-module@1.0.0",
+	"spec": "modules/sales-orders/spec/module.yaml",
+	"specStatus": "approved",
+	"allowedPaths": ["modules/sales-orders/**"],
+	"steps": ["dry-run", "apply", "implement acceptance scenarios", "run gates"],
+	"gates": ["module-schema", "spec-schema", "typecheck", "tests", "format"]
+}

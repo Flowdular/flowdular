@@ -1,0 +1,6 @@
+schemaVersion: 1
+write: []
+deny:
+  - '**'
+notes:
+  - the review report is returned as text or a pull request review, not committed as a file

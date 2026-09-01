@@ -1,0 +1,54 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"blueprint",
+		"moduleId",
+		"constant",
+		"upFile",
+		"downFile",
+		"guarded",
+		"gates"
+	],
+	"properties": {
+		"blueprint": {
+			"const": "add-migration@1.0.0"
+		},
+		"moduleId": {
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+		},
+		"constant": {
+			"type": "string",
+			"pattern": "^[A-Z][A-Z0-9_]*_MIGRATION_[0-9]{3}[A-Z0-9_]*$"
+		},
+		"upFile": {
+			"type": "string",
+			"pattern": "^migrations/[0-9]{4}_[a-z0-9_]+\\.up\\.sql$"
+		},
+		"downFile": {
+			"type": "string",
+			"pattern": "^migrations/[0-9]{4}_[a-z0-9_]+\\.down\\.sql$"
+		},
+		"guarded": {
+			"type": "boolean"
+		},
+		"gates": {
+			"type": "array",
+			"minItems": 1,
+			"items": {
+				"type": "string",
+				"enum": [
+					"spec-schema",
+					"module-schema",
+					"dependencies",
+					"typecheck",
+					"tests",
+					"format"
+				]
+			},
+			"uniqueItems": true
+		}
+	}
+}

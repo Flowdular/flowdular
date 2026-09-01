@@ -1,0 +1,18 @@
+{
+	"blueprint": "release@1.0.0",
+	"branch": "sandbox/inventory-3f1c2d9e",
+	"files": [
+		"modules/inventory/**",
+		"coreloom.json",
+		"platform/package.json",
+		"platform/src/generated/modules.server.ts",
+		"platform/src/generated/modules.client.ts",
+		"pnpm-lock.yaml"
+	],
+	"gates": [
+		"sandbox gates",
+		"pnpm --filter @coreloom/platform typecheck",
+		"pnpm verify"
+	],
+	"postMerge": ["pnpm oerp auth sync-scopes --module inventory.core --apply"]
+}

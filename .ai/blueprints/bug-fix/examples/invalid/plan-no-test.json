@@ -1,0 +1,8 @@
+{
+	"blueprint": "bug-fix@1.0.0",
+	"rootCause": "A guess without reproduction.",
+	"owningLayer": "service",
+	"regressionTest": "",
+	"siblings": [],
+	"gates": ["typecheck"]
+}

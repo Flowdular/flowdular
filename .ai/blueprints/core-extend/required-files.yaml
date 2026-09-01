@@ -1,0 +1,36 @@
+schemaVersion: 1
+required: []
+byChange:
+  schema:
+    - packages/contracts/schemas/<name>.schema.json
+    - packages/contracts/src/index.ts
+    - packages/cli/src/module-scaffold.ts
+    - packages/cli/tests/module-scaffold.test.ts
+  server-contract:
+    - modules/auth/src/server/composition.ts
+    - packages/cli/src/module-sync.ts (when the generated composition changes)
+    - modules/*/src/platform.ts (when the new member is required)
+  client-contract:
+    - packages/client/src/contributions.ts
+    - packages/client/src/index.ts
+    - packages/client/src/ApplicationShell.tsrx
+    - modules/*/src/client/index.ts (when ModuleClientContext changes)
+  ui-primitive:
+    - packages/ui/src/components/<Name>.tsrx
+    - packages/ui/src/index.ts
+    - packages/ui/src/styles/components.css
+    - docs/design-system.md
+  cli:
+    - packages/cli/src/runner.ts
+    - packages/cli/src/capabilities.ts (core capability)
+    - packages/cli/tests/*.test.ts
+    - .ai/policies/capabilities.yaml
+  sandbox:
+    - packages/sandbox/src/server/gates.ts (gate ids match .ai/agents/sandbox/*.md)
+    - packages/sandbox/src/server/reference.ts (what sessions can read)
+  coding-agent:
+    - packages/coding-agent/src/roles/contract.ts
+    - packages/coding-agent/src/roles/defaults.ts (regenerated from .ai/agents/sandbox, never hand-edited)
+  composition:
+    - platform/octane.config.ts
+    - platform/src/App.tsrx

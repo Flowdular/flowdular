@@ -1,0 +1,14 @@
+{
+	"blueprint": "security-review@1.0.0",
+	"checksRun": ["grep -rn \"new ServerRoute\" modules/inventory/src"],
+	"findings": [
+		{
+			"severity": "blocker",
+			"claim": "Looks unsafe.",
+			"location": "modules/inventory/src/api/endpoints.ts",
+			"rule": "AGENTS.md rule 5",
+			"fix": "Rewrite it."
+		}
+	],
+	"verdict": "changes-required"
+}

@@ -1,0 +1,17 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://octane-erp.dev/schemas/platform-spec.schema.json",
+	"type": "object",
+	"required": ["schemaVersion", "id", "version", "status"],
+	"properties": {
+		"schemaVersion": { "const": 1 },
+		"id": {
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$"
+		},
+		"version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+		"status": {
+			"enum": ["draft", "in-review", "approved", "implemented", "deprecated"]
+		}
+	}
+}

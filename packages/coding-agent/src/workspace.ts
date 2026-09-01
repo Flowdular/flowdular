@@ -1,0 +1,170 @@
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
+import { isAbsolute, relative, resolve } from 'node:path';
+import { CodingAgentError } from './types.ts';
+
+/* Every path a driver touches is resolved against the session workspace and
+   rejected when it escapes, so a prompt cannot reach the real module tree. */
+export function resolveInsideWorkspace(
+	workspacePath: string,
+	candidate: string,
+): string {
+	const root = resolve(workspacePath);
+	const absolute = isAbsolute(candidate)
+		? resolve(candidate)
+		: resolve(root, candidate);
+	const fromRoot = relative(root, absolute);
+	if (fromRoot.startsWith('..') || isAbsolute(fromRoot)) {
+		throw new CodingAgentError(
+			'PATH_ESCAPES_WORKSPACE',
+			`Path escapes the session workspace: ${candidate}`,
+		);
+	}
+	return absolute;
+}
+
+export function workspaceRelative(
+	workspacePath: string,
+	candidate: string,
+): string {
+	const root = resolve(workspacePath);
+	const absolute = isAbsolute(candidate)
+		? resolve(candidate)
+		: resolve(root, candidate);
+	const fromRoot = relative(root, absolute);
+	return fromRoot === '' ? '.' : fromRoot;
+}
+
+export interface ProcessLineStream {
+	readonly lines: AsyncIterable<string>;
+	readonly finished: Promise<{
+		readonly code: number | null;
+		readonly stderr: string;
+		readonly aborted: boolean;
+	}>;
+}
+
+export interface SpawnJsonOptions {
+	readonly command: string;
+	readonly args: readonly string[];
+	readonly cwd: string;
+	readonly env?: NodeJS.ProcessEnv;
+	readonly signal?: AbortSignal | undefined;
+	readonly timeoutMs?: number | undefined;
+	readonly stderrLimit?: number;
+}
+
+/* Drivers stream newline-delimited JSON from a child process. The process is
+   killed on abort or timeout, and stderr is captured with a hard cap so a
+   failing binary cannot exhaust memory. */
+export function spawnLineStream(options: SpawnJsonOptions): ProcessLineStream {
+	const child = spawn(options.command, [...options.args], {
+		cwd: options.cwd,
+		env: options.env ?? process.env,
+		stdio: ['ignore', 'pipe', 'pipe'],
+	});
+	const stderrLimit = options.stderrLimit ?? 8_192;
+	let stderr = '';
+	let aborted = false;
+	child.stderr.setEncoding('utf8');
+	child.stderr.on('data', (chunk: string) => {
+		if (stderr.length < stderrLimit) {
+			stderr = (stderr + chunk).slice(0, stderrLimit);
+		}
+	});
+
+	const stop = () => {
+		aborted = true;
+		child.kill('SIGTERM');
+		setTimeout(() => child.kill('SIGKILL'), 2_000).unref();
+	};
+	const timer =
+		options.timeoutMs === undefined
+			? undefined
+			: setTimeout(stop, options.timeoutMs);
+	timer?.unref();
+	if (options.signal) {
+		if (options.signal.aborted) stop();
+		else options.signal.addEventListener('abort', stop, { once: true });
+	}
+
+	const finished = new Promise<{
+		code: number | null;
+		stderr: string;
+		aborted: boolean;
+	}>((resolvePromise, rejectPromise) => {
+		child.on('error', (error) => {
+			if (timer) clearTimeout(timer);
+			rejectPromise(
+				new CodingAgentError(
+					'DRIVER_PROCESS_FAILED',
+					`Could not start ${options.command}: ${error.message}`,
+				),
+			);
+		});
+		child.on('close', (code) => {
+			if (timer) clearTimeout(timer);
+			resolvePromise({ code, stderr, aborted });
+		});
+	});
+
+	return {
+		lines: createInterface({ input: child.stdout, crlfDelay: Infinity }),
+		finished,
+	};
+}
+
+export function parseJsonLine(line: string): Record<string, unknown> | null {
+	const trimmed = line.trim();
+	if (!trimmed.startsWith('{')) return null;
+	try {
+		const value = JSON.parse(trimmed) as unknown;
+		return value && typeof value === 'object' && !Array.isArray(value)
+			? (value as Record<string, unknown>)
+			: null;
+	} catch {
+		return null;
+	}
+}
+
+export async function probeCommand(
+	command: string,
+	args: readonly string[] = ['--version'],
+): Promise<{ available: boolean; detail: string; version: string | null }> {
+	try {
+		const stream = spawnLineStream({
+			command,
+			args,
+			cwd: process.cwd(),
+			timeoutMs: 10_000,
+		});
+		let first = '';
+		for await (const line of stream.lines) {
+			if (!first) first = line.trim();
+		}
+		const result = await stream.finished;
+		if (result.code !== 0) {
+			return {
+				available: false,
+				detail:
+					result.stderr.trim().slice(0, 200) ||
+					`${command} exited with code ${result.code}.`,
+				version: null,
+			};
+		}
+		return {
+			available: true,
+			detail: `${command} is installed.`,
+			version: first || null,
+		};
+	} catch (error) {
+		return {
+			available: false,
+			detail:
+				error instanceof CodingAgentError
+					? error.message
+					: `${command} is not installed.`,
+			version: null,
+		};
+	}
+}

@@ -1,0 +1,115 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://octane-erp.dev/schemas/module.schema.json",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"schemaVersion",
+		"id",
+		"package",
+		"version",
+		"profile",
+		"capabilities",
+		"dependencies",
+		"tenancy",
+		"locales",
+		"stability"
+	],
+	"properties": {
+		"$schema": { "type": "string" },
+		"schemaVersion": { "const": 1 },
+		"id": {
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+		},
+		"package": {
+			"type": "string",
+			"pattern": "^@coreloom/module-[a-z0-9-]+$"
+		},
+		"version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+		"profile": { "enum": ["full", "headless", "ui", "integration"] },
+		"capabilities": {
+			"type": "array",
+			"items": {
+				"enum": [
+					"api",
+					"database",
+					"client",
+					"translations",
+					"integration",
+					"cli"
+				]
+			},
+			"uniqueItems": true
+		},
+		"dependencies": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": ["id", "range"],
+				"properties": {
+					"id": {
+						"type": "string",
+						"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+					},
+					"range": { "type": "string", "minLength": 1 }
+				}
+			}
+		},
+		"tenancy": { "enum": ["required", "optional", "none"] },
+		"locales": {
+			"type": "array",
+			"items": { "type": "string", "pattern": "^[a-z]{2}(-[A-Z]{2})?$" },
+			"uniqueItems": true
+		},
+		"stability": { "enum": ["experimental", "stable", "deprecated"] },
+		"platform": {
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"server": { "type": "boolean" },
+				"client": { "type": "boolean" }
+			}
+		},
+		"cli": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["catalog", "entry"],
+			"properties": {
+				"catalog": {
+					"type": "string",
+					"pattern": "^src/cli/[a-z0-9-/]+\\.json$"
+				},
+				"entry": {
+					"type": "string",
+					"pattern": "^src/cli/[a-z0-9-/]+\\.ts$"
+				}
+			}
+		}
+	},
+	"allOf": [
+		{
+			"if": {
+				"properties": {
+					"capabilities": {
+						"type": "array",
+						"contains": { "const": "cli" }
+					}
+				}
+			},
+			"then": { "properties": { "cli": true }, "required": ["cli"] }
+		},
+		{
+			"if": { "properties": { "cli": true }, "required": ["cli"] },
+			"then": {
+				"properties": {
+					"capabilities": {
+						"type": "array",
+						"contains": { "const": "cli" }
+					}
+				}
+			}
+		}
+	]
+}

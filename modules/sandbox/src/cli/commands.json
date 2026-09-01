@@ -1,0 +1,84 @@
+{
+	"protocolVersion": 1,
+	"moduleId": "sandbox.core",
+	"commands": [
+		{
+			"path": ["sandbox", "access"],
+			"capability": {
+				"id": "sandbox.access.list",
+				"version": 1,
+				"summary": "List sandbox access grants and eligible members of a tenant.",
+				"risk": "read",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": false
+			}
+		},
+		{
+			"path": ["sandbox", "grant"],
+			"capability": {
+				"id": "sandbox.access.grant",
+				"version": 1,
+				"summary": "Grant sandbox access to an existing account of a tenant.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		},
+		{
+			"path": ["sandbox", "revoke"],
+			"capability": {
+				"id": "sandbox.access.revoke",
+				"version": 1,
+				"summary": "Revoke sandbox access for an account of a tenant.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		},
+		{
+			"path": ["sandbox", "sessions"],
+			"capability": {
+				"id": "sandbox.sessions.list",
+				"version": 1,
+				"summary": "List recorded sandbox sessions of a tenant.",
+				"risk": "read",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": false
+			}
+		},
+		{
+			"path": ["sandbox", "session-archive"],
+			"capability": {
+				"id": "sandbox.sessions.archive",
+				"version": 1,
+				"summary": "Archive a recorded sandbox session of a tenant.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		},
+		{
+			"path": ["sandbox", "session-delete"],
+			"capability": {
+				"id": "sandbox.sessions.delete",
+				"version": 1,
+				"summary": "Mark a recorded sandbox session deleted; the sandbox application removes its workspace.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		},
+		{
+			"path": ["sandbox", "audit-verify"],
+			"capability": {
+				"id": "sandbox.audit.verify",
+				"version": 1,
+				"summary": "Verify the local tenant-scoped sandbox audit hash chain.",
+				"risk": "read",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": false,
+				"localOnly": true
+			}
+		}
+	]
+}

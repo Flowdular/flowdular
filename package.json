@@ -1,0 +1,29 @@
+{
+	"name": "octane-erp",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"description": "Coreloom is an agentic foundation framework for OctaneJS: a production platform core that teams extend with modules built by AI agents.",
+	"packageManager": "pnpm@11.17.0",
+	"engines": {
+		"node": ">=22.22.2"
+	},
+	"scripts": {
+		"dev": "node platform/scripts/dev.mjs",
+		"build": "pnpm --filter @coreloom/cli build && pnpm --filter @coreloom/cli smoke && node packages/cli/dist/index.js module sync --apply && pnpm --filter @coreloom/platform build",
+		"preview": "pnpm --filter @coreloom/platform preview",
+		"sandbox": "node packages/sandbox/bin/coreloom-sandbox.mjs",
+		"typecheck": "pnpm -r --if-present typecheck",
+		"test": "pnpm -r --if-present test",
+		"format": "prettier --write .",
+		"format:check": "prettier --check .",
+		"oerp": "pnpm --filter @coreloom/cli dev",
+		"doctor": "pnpm run oerp doctor",
+		"validate": "pnpm oerp spec validate --all && pnpm oerp blueprint validate --all && pnpm oerp module validate",
+		"verify": "pnpm typecheck && pnpm test && pnpm validate && pnpm format:check"
+	},
+	"devDependencies": {
+		"@tsrx/prettier-plugin": "0.3.120",
+		"prettier": "3.6.2"
+	}
+}

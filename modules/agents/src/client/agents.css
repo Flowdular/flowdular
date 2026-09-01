@@ -1,0 +1,244 @@
+/* Agents module: composites specific to this module. Primitives (buttons,
+   fields, tags, cards) come from @coreloom/ui and are not restyled here. */
+
+.run-facts {
+	display: grid;
+	grid-template-columns: repeat(4, 1fr);
+	border-bottom: 1px solid var(--line-2);
+}
+
+.run-facts > span {
+	display: grid;
+	gap: 3px;
+	padding: 10px 12px;
+	border-right: 1px solid var(--line-2);
+}
+
+.run-facts > span:last-child {
+	border-right: 0;
+}
+
+.run-facts small {
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--ink-4);
+}
+
+.run-facts b {
+	overflow: hidden;
+	font-size: var(--text-sm);
+	font-weight: 500;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.run-block {
+	display: grid;
+	gap: 6px;
+	padding: 12px 16px;
+	border-bottom: 1px solid var(--line-2);
+}
+
+.run-block > span {
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--ink-4);
+}
+
+.run-timeline {
+	display: grid;
+	padding: 12px 16px 16px;
+}
+
+.run-timeline > span {
+	padding-bottom: 4px;
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--ink-4);
+}
+
+.run-timeline > p {
+	margin: 6px 0 0;
+	font-size: var(--text-sm);
+	color: var(--ink-3);
+}
+
+.run-event {
+	display: grid;
+	grid-template-columns: 26px minmax(0, 1fr) auto;
+	align-items: start;
+	gap: 10px;
+	padding: 9px 0;
+	border-bottom: 1px solid var(--line-2);
+}
+
+.run-event:last-child {
+	border-bottom: 0;
+}
+
+.run-event > span,
+.run-event time {
+	font-family: var(--font-mono);
+	font-size: var(--text-xs);
+	color: var(--ink-4);
+}
+
+.run-event .ui-cell b {
+	font-size: var(--text-md);
+	font-weight: 500;
+}
+
+.playground-live {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	font-size: var(--text-sm);
+	color: var(--ink-3);
+	white-space: nowrap;
+}
+
+.playground-live--offline {
+	color: var(--danger);
+}
+
+.agent-empty-note {
+	margin: 0;
+	padding: 12px;
+	font-size: var(--text-sm);
+	line-height: 1.5;
+	color: var(--ink-3);
+	background: var(--surface-2);
+	border: 1px solid var(--line-2);
+	border-radius: var(--r-md);
+}
+
+/* Model editor. One row per model instead of a delimited text block. */
+.model-editor {
+	display: grid;
+	gap: 8px;
+	min-width: 0;
+}
+
+.model-row {
+	display: grid;
+	gap: 8px;
+	min-width: 0;
+	padding: 10px 12px;
+	background: var(--surface-2);
+	border: 1px solid var(--line-2);
+	border-radius: var(--r-md);
+}
+
+.model-row__ids {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 8px;
+}
+
+.model-row__remove {
+	display: grid;
+	width: var(--control-h);
+	height: var(--control-h);
+	place-items: center;
+	color: var(--ink-3);
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: var(--r);
+	transition:
+		color var(--t-fast) var(--ease),
+		background var(--t-fast) var(--ease);
+}
+
+.model-row__remove:hover:not(:disabled) {
+	color: var(--danger);
+	background: var(--danger-bg);
+}
+
+.model-row__remove:disabled {
+	cursor: not-allowed;
+	opacity: 0.4;
+}
+
+.model-row__flags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px 16px;
+}
+
+.model-row__readiness {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	padding-top: 8px;
+	border-top: 1px solid var(--line-2);
+}
+
+.model-row__readiness small {
+	margin-right: auto;
+	font-size: var(--text-sm);
+	color: var(--ink-3);
+	overflow-wrap: anywhere;
+}
+
+.model-row__hint {
+	color: var(--ink-4);
+}
+
+.model-row__enabled {
+	margin-left: auto;
+}
+
+.provider-readiness__result {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.provider-readiness__result small {
+	font-size: var(--text-sm);
+	color: var(--ink-3);
+	overflow-wrap: anywhere;
+}
+
+.provider-enable {
+	padding: 12px;
+	background: var(--surface-2);
+	border: 1px solid var(--line-2);
+	border-radius: var(--r-md);
+}
+
+.provider-readiness {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: end;
+	gap: 10px;
+}
+
+.provider-local-note {
+	display: grid;
+	gap: 18px;
+	justify-items: start;
+	padding: 20px;
+}
+
+.provider-local-note p {
+	max-width: 56ch;
+	margin: 0;
+	line-height: 1.6;
+	color: var(--ink-3);
+}
+
+@media (max-width: 650px) {
+	.run-facts {
+		grid-template-columns: repeat(2, 1fr);
+	}
+}

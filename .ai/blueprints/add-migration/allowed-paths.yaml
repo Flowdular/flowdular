@@ -1,0 +1,23 @@
+schemaVersion: 1
+write:
+  - modules/{module}/src/services/migration.ts
+  - modules/{module}/src/services/sqlite-repository.ts
+  - modules/{module}/src/services/repository.ts
+  - modules/{module}/src/domain/types.ts
+  - modules/{module}/migrations/**
+  - modules/{module}/tests/**
+  - modules/{module}/spec/module.yaml
+  - modules/{module}/module.json
+  - modules/{module}/package.json
+deny:
+  - platform/**
+  - packages/**
+  - infra/**
+  - .github/**
+  - docs/**
+  - specs/**
+  - .ai/**
+  - coreloom.json
+  - pnpm-workspace.yaml
+  - modules/!({module})/**
+  - modules/{module}/src/services/migration.ts: editing an already shipped constant

@@ -1,0 +1,20 @@
+schemaVersion: 1
+id: platform.foundation
+version: 0.2.0
+status: approved
+principles:
+  - spec-before-implementation
+  - default-deny
+  - tenant-scoped-data
+  - versioned-blueprints
+boundaries:
+  - core-platform
+  - agentic-sandbox
+  - capability-cli
+  - agentic-harness
+repositoryRoots:
+  platform: platform
+  modules: modules
+  packages: packages
+  infrastructure: infra
+  agentConfiguration: .ai

@@ -1,0 +1,7 @@
+schemaVersion: 1
+write:
+  - modules/{module}/spec/**
+deny:
+  - modules/{module}/src/**
+  - modules/{module}/migrations/**
+  - .ai/**

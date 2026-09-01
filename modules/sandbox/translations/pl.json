@@ -1,0 +1,11 @@
+{
+	"module.name": "Dostęp do sandboxa",
+	"navigation.sandbox": "Sandbox",
+	"access.title": "Sandbox",
+	"access.description": "Przydziel dostęp do izolowanego budowania modułów i śledź powstające sesje.",
+	"access.grant": "Przydziel dostęp",
+	"access.revoke": "Odbierz",
+	"access.empty": "Żadne konto nie ma jeszcze dostępu do sandboxa w tej przestrzeni.",
+	"sessions.title": "Sesje",
+	"sessions.empty": "Nie otwarto jeszcze żadnej sesji sandboxa dla tej przestrzeni."
+}

@@ -1,0 +1,17 @@
+{
+	"protocolVersion": 1,
+	"moduleId": "customer.core",
+	"commands": [
+		{
+			"path": ["customer", "export"],
+			"capability": {
+				"id": "customer.export",
+				"version": 1,
+				"summary": "Export tenant-scoped customer records to an approved workspace path.",
+				"risk": "workspace-write",
+				"requiresApprovedSpec": true,
+				"supportsDryRun": true
+			}
+		}
+	]
+}

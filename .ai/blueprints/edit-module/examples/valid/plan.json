@@ -1,0 +1,25 @@
+{
+	"blueprint": "edit-module@1.0.0",
+	"moduleId": "parties.core",
+	"change": "column",
+	"touchList": [
+		"modules/parties/src/services/migration.ts",
+		"modules/parties/src/services/sqlite-repository.ts",
+		"modules/parties/migrations/0002_parties_vat_id.up.sql",
+		"modules/parties/migrations/0002_parties_vat_id.down.sql",
+		"modules/parties/src/domain/types.ts",
+		"modules/parties/src/api/endpoints.ts",
+		"modules/parties/src/client/PartyForm.tsrx",
+		"modules/parties/tests/module.test.ts",
+		"modules/parties/spec/module.yaml"
+	],
+	"specVersionBump": "minor",
+	"gates": [
+		"spec-schema",
+		"module-schema",
+		"dependencies",
+		"typecheck",
+		"tests",
+		"format"
+	]
+}

@@ -1,0 +1,22 @@
+{
+	"blueprint": "new-module@1.0.0",
+	"moduleId": "inventory.core",
+	"specDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+	"allowedPaths": ["modules/inventory/**"],
+	"steps": [
+		"spec",
+		"scaffold",
+		"server",
+		"client",
+		"tests",
+		"enable-and-grant"
+	],
+	"gates": [
+		"spec-schema",
+		"module-schema",
+		"dependencies",
+		"typecheck",
+		"tests",
+		"format"
+	]
+}

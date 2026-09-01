@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: octane-erp
+  labels:
+    app.kubernetes.io/name: octane-erp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: octane-erp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: octane-erp
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 1001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: ghcr.io/octane-erp/octane-erp:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: '3000'
+            - name: OERP_AUTH_DATABASE
+              value: /data/auth.db
+            - name: OERP_AGENTS_DATABASE
+              value: /data/agents.db
+            - name: OERP_AUTH_ALLOW_SIGN_UP
+              value: 'false'
+            - name: OERP_AUTH_SECURE_COOKIE
+              value: 'true'
+            # agents.core refuses to boot in production without both keys.
+            # See agents-secret.example.yaml for the Secret shape.
+            - name: OERP_AGENT_CREDENTIAL_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: octane-erp-agents
+                  key: credentialKey
+            - name: OERP_AGENT_RUN_GRANT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: octane-erp-agents
+                  key: runGrantKey
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: auth-data
+              mountPath: /data
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        - name: auth-data
+          persistentVolumeClaim:
+            claimName: octane-erp-auth

@@ -1,0 +1,13 @@
+schemaVersion: 1
+status:
+  allowed:
+    - approved
+requiredKeys:
+  - dataOwnership
+  - invariants
+capabilities:
+  mustInclude:
+    - database
+onChange:
+  invariants: one sentence per new uniqueness, range or tenancy rule
+  specVersion: minor bump

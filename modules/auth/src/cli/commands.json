@@ -1,0 +1,41 @@
+{
+	"protocolVersion": 1,
+	"moduleId": "auth.core",
+	"commands": [
+		{
+			"path": ["auth", "scopes"],
+			"capability": {
+				"id": "auth.scopes.list",
+				"version": 1,
+				"summary": "List authentication and platform scopes granted to new tenant owners.",
+				"risk": "read",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": false
+			}
+		},
+		{
+			"path": ["auth", "sync-scopes"],
+			"capability": {
+				"id": "auth.scopes.sync",
+				"version": 1,
+				"summary": "Grant the scopes an enabled module declares to every workspace owner.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		},
+		{
+			"path": ["auth", "greenfield"],
+			"capability": {
+				"id": "auth.greenfield.reset",
+				"version": 1,
+				"summary": "Reset local auth and seed demo tenants, an admin, and a reduced-scope user.",
+				"risk": "destructive",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true,
+				"localOnly": true,
+				"confirmation": "reset-local-auth"
+			}
+		}
+	]
+}

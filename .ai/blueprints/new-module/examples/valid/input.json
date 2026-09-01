@@ -1,0 +1,5 @@
+{
+	"moduleId": "inventory.core",
+	"specPath": "modules/inventory/spec/module.yaml",
+	"brief": "Track stock locations per tenant with a read and a manage scope."
+}

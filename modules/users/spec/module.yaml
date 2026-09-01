@@ -1,0 +1,75 @@
+schemaVersion: 1
+id: users.core
+specVersion: 0.3.0
+status: approved
+name: User Management Core
+description: Provides the tenant-scoped user directory and member administration (creation, display name, role assignment, per-member scopes, account status, password reset, session revocation, removal) through the public auth administration port.
+profile: full
+capabilities:
+  - api
+  - client
+  - translations
+dependencies:
+  - id: system.core
+    range: ^0.1.0
+  - id: auth.core
+    range: ^0.1.0
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - Every directory query and mutation is restricted to the authenticated tenant.
+  - Password hashes, session tokens, and CSRF tokens are never returned by user administration APIs.
+  - Roles are selected from the platform role catalog and determine server-side scope grants.
+  - The module contributes separate user-directory and role-catalog screens through its client contribution without editing the application shell.
+  - A tenant must retain at least one active owner.
+  - Account creation requires an explicit initial password and never logs it.
+  - Only an owner may create or promote an owner, change another owner, or hand out scopes it does not hold itself.
+  - Disabling, removing, or demoting a member never leaves the tenant without an active owner, and never targets the acting principal.
+  - Every member administration write is recorded in the auth audit trail with the acting principal.
+permissions:
+  - id: users.members.read
+    description: Read memberships in the active tenant.
+  - id: users.members.manage
+    description: Create and update memberships in the active tenant.
+dataOwnership:
+  - auth.core owns accounts, memberships, roles, scopes, credentials, and sessions.
+  - users.core owns the administration use cases and UI but writes only through the public auth administration port.
+acceptanceScenarios:
+  - id: USERS-LIST
+    given: An authenticated principal has users.members.read in an active tenant.
+    when: The principal requests the user directory.
+    then: Only memberships from the active tenant are returned without credential or session material.
+  - id: USERS-CREATE
+    given: An authenticated principal has users.members.manage and supplies valid account details and a supported role.
+    when: The principal creates a tenant member.
+    then: The account and tenant membership are created atomically with the role scope template.
+  - id: USERS-DENY
+    given: A principal is missing the required permission or targets another tenant.
+    when: The principal calls a user administration operation.
+    then: The server returns 401 or 403 and performs no write.
+  - id: USERS-MULTI-SCREEN
+    given: The user module is enabled and the principal has users.members.read.
+    when: The application shell builds its client registry.
+    then: Users and Roles appear as separate Administration navigation entries backed by views from the same module contribution.
+  - id: USERS-EDIT
+    given: A principal with users.members.manage selects a member of the active tenant.
+    when: The principal changes the display name, assigns a role from the tenant role list, replaces the member's scopes, disables or re-enables the account, sets a temporary password, signs the member out everywhere, or removes the member.
+    then: The change is applied through auth.core, the member row reflects it, and an audit event names the acting principal.
+  - id: USERS-OWNER-CAP
+    given: A principal with users.members.manage that is not an owner.
+    when: The principal creates or promotes an owner, edits an owner, or grants a scope it does not hold.
+    then: The server returns 403 and performs no write.
+  - id: USERS-LAST-OWNER
+    given: A tenant with exactly one active owner.
+    when: Anyone tries to disable, demote, or remove that owner.
+    then: The server returns 409 and the owner stays active.
+  - id: USERS-PASSWORD-RESET
+    given: An administrator sets a temporary password for a member.
+    when: The member signs in with it.
+    then: Every earlier session of the member is gone and the member must choose a new password before using the workspace.
+  - id: USERS-ROLE-CATALOG
+    given: The principal opens the Roles screen.
+    when: The built-in role catalog is rendered.
+    then: Owner and Member are shown separately with their effective permission scopes and immutable built-in status.

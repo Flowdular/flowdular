@@ -1,0 +1,47 @@
+schemaVersion: 1
+steps:
+  - id: gates
+    role: module-executor
+    action: 'Sandbox: the six gates in the eject stream. Working tree: pnpm verify, pnpm build, pnpm audit --prod --audit-level high.'
+    inputs:
+      - 'working tree'
+    outputs:
+      - 'gate evidence'
+  - id: compose
+    role: module-executor
+    action: pnpm oerp module enable <id> --apply for a new module (grants its scopes), pnpm oerp module sync --apply otherwise; pnpm oerp auth sync-scopes --module <id> --apply only to re-grant after a new permission.
+    inputs:
+      - 'modules/{module}/**'
+    outputs:
+      - 'coreloom.json'
+      - 'platform/package.json'
+      - 'platform/src/generated/*.ts'
+  - id: branch
+    role: module-executor
+    action: Branch sandbox/<module-dir>-<session-prefix> (or feat/, fix/, core/); commit only module files plus the CLI outputs; one logical change per commit.
+    inputs:
+      - 'diff'
+    outputs:
+      - 'branch'
+  - id: pull-request
+    role: module-executor
+    action: Short body, gate evidence, post-merge sync-scopes step, commands that produced generated files; no AI attribution.
+    inputs:
+      - 'branch'
+      - 'gate evidence'
+    outputs:
+      - 'pull request'
+  - id: review
+    role: reviewer
+    action: Reviewer checklist plus security-review when scopes or endpoints changed.
+    inputs:
+      - 'pull request'
+    outputs:
+      - 'review'
+  - id: post-merge
+    role: operator
+    action: Deploy; run pnpm oerp auth sync-scopes --module <id> --apply with OERP_AUTH_DATABASE pointing at the deployment; verify an owner sees the navigation entry. Tag v*.*.* to build the container.
+    inputs:
+      - 'merged main'
+    outputs:
+      - 'deployment'

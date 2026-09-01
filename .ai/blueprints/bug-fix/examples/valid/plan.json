@@ -1,0 +1,8 @@
+{
+	"blueprint": "bug-fix@1.0.0",
+	"rootCause": "requiredString max for sku is missing so the service throws a generic error after the HTTP layer accepted the value.",
+	"owningLayer": "http",
+	"regressionTest": "tests/module.test.ts: rejects a sku above 64 characters with INVALID_INPUT",
+	"siblings": ["modules/parties/src/api/endpoints.ts"],
+	"gates": ["typecheck", "tests", "format"]
+}

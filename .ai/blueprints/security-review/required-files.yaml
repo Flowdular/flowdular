@@ -1,0 +1,6 @@
+schemaVersion: 1
+required: []
+evidence:
+  - the exact grep commands run and their output
+  - the test commands run and their result
+  - one entry per finding with severity, claim, location, scenario, rule, fix

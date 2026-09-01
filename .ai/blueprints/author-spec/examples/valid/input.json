@@ -1,0 +1,6 @@
+{
+	"moduleId": "sales.orders",
+	"businessOutcome": "Let sales operators capture and confirm tenant-scoped customer orders.",
+	"actors": ["sales-operator", "sales-manager"],
+	"constraints": ["Every order belongs to exactly one tenant."]
+}

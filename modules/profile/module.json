@@ -1,0 +1,22 @@
+{
+	"$schema": "../../packages/contracts/schemas/module.schema.json",
+	"schemaVersion": 1,
+	"id": "profile.core",
+	"package": "@coreloom/module-profile",
+	"version": "1.1.0",
+	"profile": "full",
+	"capabilities": ["api", "database", "client", "translations", "integration"],
+	"platform": {
+		"server": true,
+		"client": true
+	},
+	"dependencies": [
+		{
+			"id": "auth.core",
+			"range": "^1.0.0"
+		}
+	],
+	"tenancy": "required",
+	"locales": ["en"],
+	"stability": "experimental"
+}

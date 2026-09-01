@@ -1,0 +1,9 @@
+{
+	"auth.signIn.title": "Zaloguj się do przestrzeni roboczej",
+	"auth.signUp.title": "Utwórz przestrzeń roboczą",
+	"auth.email": "Adres e-mail",
+	"auth.password": "Hasło",
+	"auth.signOut": "Wyloguj",
+	"auth.tenant.active": "Aktywny tenant",
+	"auth.tenant.switchFailed": "Nie udało się zmienić tenanta"
+}

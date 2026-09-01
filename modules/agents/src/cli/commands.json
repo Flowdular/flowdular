@@ -1,0 +1,29 @@
+{
+	"protocolVersion": 1,
+	"moduleId": "agents.core",
+	"commands": [
+		{
+			"path": ["agents", "status"],
+			"capability": {
+				"id": "agents.status",
+				"version": 1,
+				"summary": "Inspect the agents.core module status.",
+				"risk": "read",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": false
+			}
+		},
+		{
+			"path": ["agents", "audit-verify"],
+			"capability": {
+				"id": "agents.audit.verify",
+				"version": 1,
+				"summary": "Verify the local tenant-scoped agent audit hash chain.",
+				"risk": "read",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": false,
+				"localOnly": true
+			}
+		}
+	]
+}

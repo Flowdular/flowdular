@@ -1,0 +1,28 @@
+schemaVersion: 1
+steps:
+  - id: collect
+    role: business-manager
+    action: Validate the brief against input.schema.json (module id, outcome, actors); list the business facts still missing.
+    inputs: [brief]
+    outputs: [open questions]
+  - id: ask
+    role: business-manager
+    action: Stop and ask for every unresolved business or security decision instead of guessing.
+    inputs: [open questions]
+    outputs: [answers]
+  - id: draft
+    role: business-manager
+    action: Write spec/module.yaml from templates/module.yaml with status draft; permissions, invariants, dataOwnership, acceptanceScenarios complete.
+    inputs: [answers]
+    outputs: [spec/module.yaml]
+    gates: [spec-schema]
+  - id: validate
+    role: orchestrator
+    action: pnpm oerp spec validate --all --json (the sandbox spec-schema gate).
+    inputs: [spec/module.yaml]
+    outputs: [gate evidence]
+  - id: handoff
+    role: business-manager
+    action: Leave status as draft or in-review; end with HANDOFF to backend-engineer (or ux-designer for a ui profile) and let the operator approve.
+    inputs: [spec/module.yaml]
+    outputs: [handoff line]

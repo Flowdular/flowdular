@@ -1,0 +1,45 @@
+# Replace every {placeholder}. Keys are the ones module-spec.schema.json knows;
+# nothing else is accepted. Keep status: draft; a human approves.
+schemaVersion: 1
+id: '{moduleId}'
+specVersion: 0.1.0
+status: draft
+name: '{name}'
+description: '{businessOutcome}'
+profile: full
+capabilities:
+  - api
+  - database
+  - client
+  - translations
+dependencies:
+  - id: system.core
+    range: ^0.1.0
+  - id: auth.core
+    range: ^0.1.0
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - Every {entity} is owned by exactly one tenant and every query uses the trusted tenant identifier.
+permissions:
+  - id: '{module}.{entities}.read'
+    description: Read {entities} in the active tenant.
+  - id: '{module}.{entities}.manage'
+    description: Create and update {entities} in the active tenant.
+dataOwnership:
+  - '{moduleId} owns {entity} identity and lifecycle status.'
+acceptanceScenarios:
+  - id: '{MODULE}-LIST'
+    given: Tenant-scoped {entities} exist.
+    when: An authorized principal lists {entities}.
+    then: Only {entities} owned by the active tenant are returned in deterministic order.
+  - id: '{MODULE}-CREATE'
+    given: An authorized principal supplies valid {entity} data.
+    when: The {entity} is created.
+    then: A tenant-owned active {entity} is persisted and returned with a generated identifier.
+  - id: '{MODULE}-DENY'
+    given: A principal is unauthenticated or lacks the required permission.
+    when: The principal reads or mutates {entities}.
+    then: The server denies the operation before repository access.

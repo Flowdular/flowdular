@@ -1,0 +1,41 @@
+{
+	"name": "@coreloom/sandbox",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"bin": {
+		"coreloom-sandbox": "./bin/coreloom-sandbox.mjs"
+	},
+	"exports": {
+		".": "./src/index.ts",
+		"./server": "./src/server/index.ts"
+	},
+	"scripts": {
+		"dev": "node bin/coreloom-sandbox.mjs",
+		"typecheck": "tsrx-tsc --noEmit -p tsconfig.json",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@coreloom/ai-provider": "workspace:*",
+		"@coreloom/client": "workspace:*",
+		"@coreloom/coding-agent": "workspace:*",
+		"@coreloom/contracts": "workspace:*",
+		"@coreloom/dev-console": "workspace:*",
+		"@coreloom/kernel": "workspace:*",
+		"@coreloom/module-auth": "workspace:*",
+		"@coreloom/server": "workspace:*",
+		"@coreloom/ui": "workspace:*",
+		"@octanejs/seo": "0.0.35",
+		"@octanejs/vite-plugin": "0.1.50",
+		"octane": "0.1.50",
+		"segment-state": "0.2.0",
+		"vite": "8.1.5"
+	},
+	"devDependencies": {
+		"@octanejs/app-core": "0.0.46",
+		"@tsrx/typescript-plugin": "0.3.120",
+		"@types/node": "24.13.3",
+		"typescript": "5.9.3",
+		"vitest": "4.1.10"
+	}
+}

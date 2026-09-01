@@ -1,0 +1,72 @@
+schemaVersion: 1
+# Consumed by nobody: packages/cli/src/doctor.ts checks that the file exists
+# (policy.model-routing). The sandbox decides drivers, models and roles in code:
+# - driver per session, changeable per turn (packages/sandbox/src/server/routes.ts)
+# - model from the session (session.model) or the driver default
+#   (packages/sandbox/src/server/turns.ts, packages/coding-agent/src/drivers/*)
+# - role per turn by deterministic rules (packages/sandbox/src/server/planning.ts
+#   routeRole, planHandoff), overridable for one turn in the composer
+# This file documents that behaviour so nobody expects a policy engine.
+
+drivers:
+  claude-code:
+    binary: claude
+    modes: [loopback]
+    tools: [Read, Write, Edit, Glob, Grep]
+    commands: never (no Bash tool; gates run by the sandbox)
+    source: packages/coding-agent/src/drivers/claude-code.ts
+  codex:
+    binary: codex
+    modes: [loopback]
+    sandbox: workspace-write
+    commands: possible inside the workspace; the role contract forbids it but only the sandbox filesystem boundary enforces it
+    source: packages/coding-agent/src/drivers/codex.ts
+  byok:
+    modes: [loopback, self-hosted]
+    kinds: [anthropic, openai, azure, openai-compatible, vercel]
+    tools: sandbox-owned file tools (list 400 files, read 128 KB per file)
+    commands: never
+    source: packages/coding-agent/src/drivers/byok.ts, packages/ai-provider/src/catalog.ts
+
+# Profiles referenced by .ai/blueprints/*/blueprint.json executorProfiles.
+profiles:
+  sandbox-specialist:
+    runs: one of the five roles in .ai/agents/sandbox on the session driver
+    mayApproveSpecs: false
+    mayChangeArchitecture: false
+    mayRunCommands: false
+    landing: eject
+  repo-agent:
+    runs: .ai/agents/module-executor.md or spec-author.md in a checkout with a shell (Claude Code reads CLAUDE.md and AGENTS.md; Codex reads AGENTS.md)
+    mayApproveSpecs: false
+    mayChangeArchitecture: only through core-extend with an ADR
+    mayRunCommands: true
+    landing: pnpm verify, pull request
+  reviewer:
+    runs: .ai/agents/reviewer.md
+    mayImplement: false
+    output: findings by severity, verdict
+
+# Who takes the first sandbox turn (planning.ts classifyByRules) and how the
+# next role is chosen (planHandoff): the HANDOFF line when it names a
+# registered role, otherwise routeRole by module state, and a failed gate
+# always returns to the same role.
+routing:
+  new-module: business-manager
+  edit-module: backend-engineer
+  spec-words: business-manager
+  agent-words: agentic-engineer
+  ui-words: frontend-engineer when src/client/contribution.tsrx exists, else ux-designer
+  no-server: backend-engineer
+  no-client: frontend-engineer
+  default: backend-engineer
+
+enforced:
+  - gates listed in a role's front matter plus dependencies, per draft module (turns.ts runSessionGates)
+  - HANDOFF line parsing (packages/coding-agent/src/roles/handoff.ts) and the role's handoff list (planning.ts; self-handoff and roles outside the list fall back to state routing)
+  - approval stop for a draft spec in a new-module session
+  - message length 1 to 20000 characters, brief at least 8 characters
+  - at most four chained automatic turns per operator message (session chainDepth)
+notEnforced:
+  - allowedPaths (advisory text in the instruction)
+  - model choice per role (one model per session)

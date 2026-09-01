@@ -1,0 +1,8 @@
+schemaVersion: 1
+status:
+  allowed:
+    - approved
+    - implemented
+checks:
+  - module.json version, spec specVersion and package.json version are equal
+  - status may move from approved to implemented once the module is enabled in the deployment

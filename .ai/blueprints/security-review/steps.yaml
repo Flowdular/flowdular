@@ -1,0 +1,38 @@
+schemaVersion: 1
+steps:
+  - id: surface
+    role: reviewer
+    action: List every route in src/api/endpoints.ts and check access, resolveIdentity, sessionMutationDenial order, readJsonObject bounds, tenant source, bound SQL, error envelope.
+    inputs:
+      - 'target'
+    outputs:
+      - 'endpoint table'
+  - id: scopes
+    role: reviewer
+    action: Compare spec permissions, src/acl/permissions.ts, endpoint access and client scope; check whether auth sync-scopes is part of the landing.
+    inputs:
+      - 'spec/module.yaml'
+      - 'src/acl/permissions.ts'
+    outputs:
+      - 'scope findings'
+  - id: greps
+    role: reviewer
+    action: Run the greps in .ai/skills/auth-security-review/SKILL.md section 5 and record the output.
+    inputs:
+      - 'target'
+    outputs:
+      - 'grep evidence'
+  - id: tests
+    role: reviewer
+    action: Confirm the 401, 403, cross-tenant, CSRF and validation tests exist and fail when their guard is removed.
+    inputs:
+      - 'tests/'
+    outputs:
+      - 'test evidence'
+  - id: report
+    role: reviewer
+    action: Findings by severity with a concrete failure scenario each; verdict approved or changes-required; no code changes.
+    inputs:
+      - 'evidence'
+    outputs:
+      - 'review report'

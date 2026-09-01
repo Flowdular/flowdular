@@ -1,0 +1,37 @@
+schemaVersion: 1
+# Consumed by nobody (zero references under packages/). The values are the
+# review expectation for a change; the sandbox enforces only the limits marked
+# as code.
+defaults:
+  maxChangedFiles: 18
+  maxRepairLoops: 2
+  maxNewDependencies: 0
+  requireTests: true
+  requireTypecheck: true
+overrides:
+  new-module:
+    maxChangedFiles: 30
+    maxNewDependencies: 0
+    note: a full module is about 25 files (modules/catalog has 28 including migrations and translations)
+  edit-module:
+    maxChangedFiles: 12
+  add-migration:
+    maxChangedFiles: 8
+  bug-fix:
+    maxChangedFiles: 4
+    requireTests: true
+  author-spec:
+    maxChangedFiles: 1
+    requireTests: false
+  core-extend:
+    maxChangedFiles: 40
+    note: consumers migrate in the same change; count them
+sandbox:
+  code:
+    messageLength: 1 to 20000 characters (packages/sandbox/src/server/turns.ts)
+    briefLength: at least 8 characters (planning.ts assertBrief)
+    gateTimeout: 5 minutes per gate, output capped at 12000 characters (gates.ts)
+    gateFailure: the same role repairs; no automatic limit on repair turns
+    byokReads: 400 listed files, 128 KB per read (packages/coding-agent/src/drivers/byok.ts)
+  review:
+    chainedTurns: stop and read the transcript after four automatic handoffs on one brief

@@ -1,0 +1,9 @@
+{
+	"auth.signIn.title": "Sign in to your workspace",
+	"auth.signUp.title": "Create your workspace",
+	"auth.email": "Email address",
+	"auth.password": "Password",
+	"auth.signOut": "Sign out",
+	"auth.tenant.active": "Active tenant",
+	"auth.tenant.switchFailed": "Tenant switch failed"
+}

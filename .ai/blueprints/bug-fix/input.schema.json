@@ -1,0 +1,25 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"additionalProperties": false,
+	"required": ["scope", "target", "symptom"],
+	"properties": {
+		"scope": {
+			"type": "string",
+			"enum": ["module", "package"]
+		},
+		"target": {
+			"type": "string",
+			"minLength": 1
+		},
+		"symptom": {
+			"type": "string",
+			"minLength": 8,
+			"maxLength": 4000
+		},
+		"reproduction": {
+			"type": "string",
+			"maxLength": 4000
+		}
+	}
+}

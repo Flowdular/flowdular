@@ -1,0 +1,20 @@
+schemaVersion: 1
+# What CI runs (.github/workflows/ci.yml) plus the sandbox eject gates.
+gates:
+  - id: sandbox-gates
+    command: eject stream runs spec-schema and module-schema once, then dependencies, typecheck, tests, format per draft module
+    required: true
+    appliesTo: sandbox-eject
+  - id: verify
+    command: pnpm verify
+    required: true
+  - id: build
+    command: pnpm build
+    required: true
+  - id: audit
+    command: pnpm audit --prod --audit-level high
+    required: true
+  - id: platform-typecheck
+    command: pnpm --filter @coreloom/platform typecheck
+    required: true
+    appliesTo: sandbox-eject

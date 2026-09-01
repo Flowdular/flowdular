@@ -1,0 +1,5 @@
+{
+	"package": "@coreloom/module-catalog",
+	"change": "server-contract",
+	"brief": "Change a business module through the core blueprint."
+}

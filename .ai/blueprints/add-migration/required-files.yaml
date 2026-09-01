@@ -1,0 +1,14 @@
+schemaVersion: 1
+required:
+  - src/services/migration.ts (new constant appended, old constants untouched)
+  - src/services/sqlite-repository.ts (constructor runs the constant; guard for ALTER TABLE)
+  - migrations/000N_{module}_{name}.up.sql
+  - migrations/000N_{module}_{name}.down.sql
+  - tests/module.test.ts (':memory:' proves the constant runs and stays idempotent)
+  - spec/module.yaml (invariant, specVersion)
+rules:
+  - CREATE TABLE IF NOT EXISTS ... STRICT
+  - tenant_id TEXT NOT NULL on tenant-owned tables
+  - UNIQUE and indexes start with tenant_id, indexes end with id
+  - ALTER TABLE ADD COLUMN only behind a pragma_table_info check
+  - numbering 0001, 0002, ... per module, append-only

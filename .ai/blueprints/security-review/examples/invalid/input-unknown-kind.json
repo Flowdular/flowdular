@@ -1,0 +1,4 @@
+{
+	"kind": "deployment",
+	"target": "production"
+}

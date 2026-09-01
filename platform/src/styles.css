@@ -1,0 +1,39 @@
+/* Platform-specific styles. Tokens, base styles, and primitives come from
+   @coreloom/ui; the shell layout comes from @coreloom/client. */
+
+.access-denied {
+	display: grid;
+	min-height: 100vh;
+	place-items: center;
+	align-content: center;
+	gap: 12px;
+	padding: 32px;
+	text-align: center;
+	background: var(--bg);
+}
+
+.access-denied > span {
+	font-family: var(--font-mono);
+	font-size: var(--text-sm);
+	font-weight: 500;
+	color: var(--copper-600);
+	letter-spacing: 0.08em;
+}
+
+.access-denied h1 {
+	margin: 0;
+	font-size: var(--text-2xl);
+	font-weight: 600;
+	letter-spacing: -0.01em;
+}
+
+.access-denied p {
+	max-width: 52ch;
+	margin: 0;
+	font-size: var(--text-md);
+	color: var(--ink-3);
+}
+
+.access-denied button {
+	margin-top: 10px;
+}

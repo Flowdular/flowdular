@@ -1,0 +1,14 @@
+{
+	"$schema": "../../../packages/contracts/schemas/blueprint.schema.json",
+	"schemaVersion": 1,
+	"architecture": "0.2.0",
+	"owner": "platform-architecture",
+	"status": "approved",
+	"id": "core-extend",
+	"version": "1.0.0",
+	"risk": "workspace-write",
+	"agentRoles": ["module-executor"],
+	"executorProfiles": ["repo-agent"],
+	"requiredReviewers": ["reviewer", "platform-owner"],
+	"requiresApprovedSpec": false
+}

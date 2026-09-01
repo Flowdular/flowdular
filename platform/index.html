@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en" class="oerp-booting">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta name="theme-color" content="#141B2E" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<style id="oerp-critical-splash">
+			html,
+			body,
+			#root {
+				min-height: 100%;
+				margin: 0;
+				background: #0c1222;
+			}
+			.oerp-splash {
+				position: fixed;
+				inset: 0;
+				z-index: 2147483647;
+				display: grid;
+				place-items: center;
+				background: #0c1222;
+				color: #f4f6fa;
+				transition: opacity 180ms ease;
+			}
+			.oerp-splash__content {
+				display: grid;
+				justify-items: center;
+				gap: 16px;
+				font:
+					600 13px/1.2 ui-sans-serif,
+					system-ui,
+					sans-serif;
+				letter-spacing: 0.14em;
+				text-transform: uppercase;
+			}
+			.oerp-splash__stage {
+				min-width: 190px;
+				font-size: 10px;
+				font-weight: 500;
+				color: #8794ab;
+				letter-spacing: 0.08em;
+				text-align: center;
+				text-transform: none;
+			}
+			.oerp-splash__mark {
+				display: block;
+				width: 44px;
+				height: 44px;
+				animation: oerp-pulse 1.4s ease-in-out infinite alternate;
+			}
+			.oerp-splash--leaving {
+				opacity: 0;
+				pointer-events: none;
+			}
+			@keyframes oerp-pulse {
+				to {
+					opacity: 0.45;
+				}
+			}
+			@media (prefers-reduced-motion: reduce) {
+				.oerp-splash__mark {
+					animation: none;
+				}
+			}
+		</style>
+		<!--ssr-head-->
+	</head>
+	<body aria-busy="true">
+		<div id="oerp-splash" class="oerp-splash" role="status" aria-live="polite">
+			<div class="oerp-splash__content">
+				<svg class="oerp-splash__mark" viewBox="0 0 24 24" aria-hidden="true">
+					<g fill="#ffffff">
+						<circle cx="7.9" cy="3.4" r="1.7" />
+						<rect x="6.2" y="3.4" width="3.4" height="1.6" />
+						<rect x="6.2" y="10.8" width="3.4" height="9.8" />
+						<circle cx="7.9" cy="20.6" r="1.7" />
+						<circle cx="16.1" cy="3.4" r="1.7" />
+						<rect x="14.4" y="3.4" width="3.4" height="9.8" />
+						<rect x="14.4" y="19" width="3.4" height="1.6" />
+						<circle cx="16.1" cy="20.6" r="1.7" />
+					</g>
+					<g fill="#e08a45">
+						<circle cx="3.4" cy="7.9" r="1.7" />
+						<rect x="3.4" y="6.2" width="9.8" height="3.4" />
+						<rect x="19" y="6.2" width="1.6" height="3.4" />
+						<circle cx="20.6" cy="7.9" r="1.7" />
+						<circle cx="3.4" cy="16.1" r="1.7" />
+						<rect x="3.4" y="14.4" width="1.6" height="3.4" />
+						<rect x="10.8" y="14.4" width="9.8" height="3.4" />
+						<circle cx="20.6" cy="16.1" r="1.7" />
+					</g>
+				</svg>
+				<span>Coreloom</span>
+				<small id="oerp-splash-stage" class="oerp-splash__stage"
+					>Starting workspace</small
+				>
+			</div>
+		</div>
+		<div id="root"><!--ssr-body--></div>
+		<script>
+			(() => {
+				const startedAt = performance.now();
+				const stages = [
+					'Securing session',
+					'Selecting workspace',
+					'Loading modules',
+					'Preparing workspace',
+				];
+				let stageIndex = 0;
+				let ready = false;
+				let stageTimer;
+				const stage = document.getElementById('oerp-splash-stage');
+				const advance = () => {
+					if (!stage || ready) return;
+					stage.textContent = stages[Math.min(stageIndex, stages.length - 1)];
+					stageIndex += 1;
+				};
+				const finish = () => {
+					if (ready) return;
+					ready = true;
+					clearInterval(stageTimer);
+					const splash = document.getElementById('oerp-splash');
+					if (!splash) return;
+					const leave = () => {
+						splash.classList.add('oerp-splash--leaving');
+						document.documentElement.classList.remove('oerp-booting');
+						document.body.setAttribute('aria-busy', 'false');
+						setTimeout(() => splash.remove(), 200);
+					};
+					const remaining = Math.max(0, 850 - (performance.now() - startedAt));
+					setTimeout(leave, remaining);
+				};
+				window.addEventListener('DOMContentLoaded', () => {
+					advance();
+					stageTimer = setInterval(advance, 320);
+					/* The server-rendered page is already visible underneath; hydration
+					   in development can take seconds, so the splash never blocks longer
+					   than this. */
+					setTimeout(finish, 2500);
+				});
+				window.addEventListener('coreloom:ready', finish, { once: true });
+			})();
+		</script>
+		<noscript
+			><style>
+				.oerp-splash {
+					display: none;
+				}
+			</style></noscript
+		>
+	</body>
+</html>

@@ -1,0 +1,97 @@
+schemaVersion: 1
+id: profile.core
+specVersion: '1.1.0'
+status: approved
+name: Profile
+description: Allows a signed-in user to manage their own tenant-scoped display name, request a password change after confirming their current password, and review or end their own sessions.
+profile: full
+
+capabilities:
+  - api
+  - database
+  - client
+  - translations
+  - integration
+
+dependencies:
+  - id: auth.core
+    range: '^1.0.0'
+
+tenancy: required
+
+locales:
+  - en
+
+invariants:
+  - Every operation requires an authenticated principal and the declared profile permission.
+  - A user can read or change only the profile identified by their authenticated principal in the current tenant.
+  - The trusted tenant identifier and user identifier come from the authenticated principal and are never accepted from request data.
+  - Every profile query and mutation is scoped by both the trusted tenant identifier and authenticated principal identifier.
+  - A display-name change affects only the authenticated user's profile in the current tenant.
+  - Passwords, password hashes, current-password values, session tokens, and provider credentials are never stored, hashed, logged, audited, or returned by profile.core.
+  - A password change is delegated to the registered auth.core password-change endpoint and is never performed directly by profile.core.
+  - Session listing and revocation are delegated to the auth.core session endpoints; profile.core never reads or stores session tokens.
+  - The current password and proposed password are sent only to auth.core for the duration of the password-change request.
+  - A failed display-name change leaves the existing display name unchanged.
+  - A rejected or unavailable password-change request leaves the password unchanged and creates no local password state.
+  - Failure responses contain enough information for the user to correct the request without exposing credentials, password policy details beyond those returned for correction, or another account's existence.
+
+permissions:
+  - id: profile.self.manage
+    description: Allows a signed-in user to view and change only their own display name and request a password change for only their own account.
+
+dataOwnership:
+  - profile.core owns tenant-scoped profile records containing the display name for each user.
+  - profile.core reads the authenticated account identity and password-change result through auth.core services.
+  - auth.core owns passwords, password hashes, password history, password policy, sessions, session tokens, and provider credentials.
+
+acceptanceScenarios:
+  - id: CHANGE-OWN-DISPLAY-NAME
+    given: A user is signed in to a tenant, has profile.self.manage, and has an existing profile in that tenant.
+    when: The user submits a valid new display name for their own profile.
+    then: The display name is updated only for that user's profile in the current tenant and the response returns the updated non-secret profile data.
+
+  - id: REJECT-INVALID-DISPLAY-NAME
+    given: A user is signed in to a tenant, has profile.self.manage, and has an existing display name.
+    when: The user submits a display name that fails the declared profile validation rules.
+    then: The request fails with a corrective validation error and the existing display name remains unchanged.
+
+  - id: CHANGE-OWN-PASSWORD
+    given: A user is signed in to a tenant, has profile.self.manage, and provides their correct current password and an acceptable new password.
+    when: The user requests a password change for their own account.
+    then: profile.core delegates the request to the registered auth.core password-change endpoint, auth.core changes the password, and profile.core stores, logs, audits, and returns no password or password hash.
+
+  - id: REJECT-INCORRECT-CURRENT-PASSWORD
+    given: A user is signed in to a tenant, has profile.self.manage, and provides an incorrect current password.
+    when: The user requests a password change for their own account.
+    then: auth.core rejects the request, the password remains unchanged, profile.core creates no local password state, and the response does not expose credential material.
+
+  - id: HANDLE-AUTH-CORE-UNAVAILABLE
+    given: A user is signed in to a tenant, has profile.self.manage, and auth.core cannot complete the password-change request.
+    when: The user requests a password change for their own account.
+    then: The request fails with a non-success response, the password remains unchanged, no local password state is created, and the user can retry safely.
+
+  - id: DENY-UNAUTHENTICATED-REQUEST
+    given: No authenticated principal is available.
+    when: A request attempts to read or change a profile or change a password.
+    then: The request is denied, no profile or password state changes, and no account data is returned.
+
+  - id: DENY-REQUEST-WITHOUT-PERMISSION
+    given: A user is signed in but does not have profile.self.manage.
+    when: The user attempts to read or change their profile or change their password.
+    then: The request is denied and no profile or password state changes.
+
+  - id: DENY-EDITING-ANOTHER-ACCOUNT
+    given: A user is signed in to a tenant and has profile.self.manage.
+    when: The user attempts to target another user's profile or account.
+    then: The request is denied, the other user's profile and password remain unchanged, and the response does not reveal whether the targeted account exists.
+
+  - id: ISOLATE-PROFILES-BETWEEN-TENANTS
+    given: A signed-in user has profile.self.manage in one tenant and a profile record exists in another tenant.
+    when: The user attempts to read or change the profile record in the other tenant.
+    then: The request is denied or returns no record, the other tenant's data remains unchanged, and the response reveals no profile data from the other tenant.
+
+  - id: REVIEW-OWN-SESSIONS
+    given: A signed-in user with more than one live session.
+    when: The user opens Profile and ends a session that is not the current one.
+    then: The list marks the current device, the ended session no longer resolves, and the current session is unchanged.

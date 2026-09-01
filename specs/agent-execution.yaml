@@ -1,0 +1,16 @@
+schemaVersion: 1
+id: agent.execution
+version: 0.1.0
+status: approved
+sequence:
+  - approved-spec
+  - validated-task-packet
+  - dry-run
+  - bounded-implementation
+  - required-gates
+  - independent-review
+executorConstraints:
+  mayApproveSpec: false
+  mayChangeArchitecture: false
+  mayBroadenPaths: false
+  maxRepairLoops: 2

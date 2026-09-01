@@ -1,0 +1,24 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"additionalProperties": false,
+	"required": ["kind"],
+	"properties": {
+		"kind": {
+			"type": "string",
+			"enum": ["sandbox-eject", "pull-request", "tag"]
+		},
+		"moduleId": {
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+		},
+		"sessionId": {
+			"type": "string",
+			"minLength": 8
+		},
+		"version": {
+			"type": "string",
+			"pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+		}
+	}
+}

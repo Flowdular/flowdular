@@ -1,0 +1,14 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"type": "object",
+	"additionalProperties": false,
+	"required": ["specPath", "openQuestions", "acceptanceScenarioCount"],
+	"properties": {
+		"specPath": {
+			"type": "string",
+			"pattern": "^modules/[a-z0-9-]+/spec/module\\.yaml$"
+		},
+		"openQuestions": { "type": "array", "items": { "type": "string" } },
+		"acceptanceScenarioCount": { "type": "integer", "minimum": 1 }
+	}
+}

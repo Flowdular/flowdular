@@ -1,0 +1,5 @@
+{
+	"moduleId": "parties.core",
+	"change": "column",
+	"brief": "Add a vat_id column to parties with a list filter."
+}

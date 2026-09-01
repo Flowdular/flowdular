@@ -1,0 +1,11 @@
+{
+	"module.name": "Sandbox Access",
+	"navigation.sandbox": "Sandbox",
+	"access.title": "Sandbox",
+	"access.description": "Grant isolated module development access and follow the sessions it produces.",
+	"access.grant": "Grant access",
+	"access.revoke": "Revoke",
+	"access.empty": "No account has sandbox access in this workspace yet.",
+	"sessions.title": "Sessions",
+	"sessions.empty": "No sandbox session has been opened for this workspace."
+}

@@ -1,0 +1,150 @@
+schemaVersion: 1
+id: auth.core
+specVersion: 0.5.0
+status: approved
+name: Authentication Core
+description: Provides tenant-aware accounts, password authentication, sessions, scopes, tenant roles, API tokens for machine clients, the module settings store, the auth audit trail, security headers, authentication screens, and server authorization middleware.
+profile: full
+capabilities:
+  - api
+  - database
+  - client
+  - translations
+  - cli
+dependencies:
+  - id: system.core
+    range: ^0.1.0
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - Passwords are stored only as salted memory-hard hashes.
+  - Raw session tokens are never persisted and never exposed to browser JavaScript.
+  - Greenfield reset is restricted to the workspace-local development database and requires explicit typed confirmation.
+  - Authentication cookies are HttpOnly, same-site, host-only, and secure outside explicitly configured local development.
+  - Every authenticated principal belongs to exactly one active tenant context.
+  - An account may belong to multiple tenants, while every session is bound to one selected membership.
+  - Switching tenant context rotates the session and loads scopes from the target membership.
+  - Authorization is evaluated server-side and missing scopes are denied.
+  - Sign-up availability is controlled by the auth.allowSignUp module setting and is enforced by both the API and client.
+  - Bundled module scopes are assigned from explicit owner and member defaults and migrated for existing tenant memberships.
+  - An API token is a tenant-scoped machine credential bound to one membership. Only its hash is stored, the raw value is returned exactly once at creation, and it is never recoverable afterwards.
+  - API token authority is the intersection of its recorded scopes with the live membership scopes at every request. Revoking a scope or disabling the membership takes effect immediately without touching the token.
+  - An API token can never pass a session-guarded mutation. Requests carrying a token instead of a browser session are denied before the handler runs.
+  - Issuing, listing, and revoking API tokens require a browser session with the token management scope. A machine credential cannot mint or revoke another credential.
+  - A revoked or expired API token authenticates nothing, and token lifetime is bounded to one year.
+  - Sign-in attempts are throttled per submitted address and per trusted client address, and repeated failures lock the address for a fixed period with a stable error that never reveals whether an account exists.
+  - Sign-up and sign-in errors never confirm that an email address is registered.
+  - Every response carries the platform security headers; the content security policy is enforced in production and report-only in development.
+  - A session ends at its absolute lifetime or after the configured idle period, whichever comes first; expired rows are swept periodically.
+  - Every tenant carries the built-in owner and member roles as rows; custom roles are tenant-scoped, grant only grantable scopes, and cannot be edited, deleted, or shadowed when built in or in use.
+  - Assigning a role replaces the membership scopes with the role's scopes and keeps the role key on the membership in sync.
+  - Module settings are declared by their owning module, stored per tenant (or once for the platform), validated against the declaration on every write, and secret values are never returned.
+  - Email confirmation cannot be enabled without a composed mail transport.
+  - Authentication and administration events are appended to an auth audit trail that is readable per tenant and never contains credentials or raw tokens.
+permissions:
+  - id: auth.profile.read
+    description: Read the current account profile.
+  - id: auth.session.manage
+    description: Create, inspect, and revoke the current account session.
+  - id: auth.account.manage
+    description: Manage account security settings.
+  - id: auth.tenant.switch
+    description: Switch the active session to another granted tenant membership.
+  - id: auth.tokens.read
+    description: Read API token metadata of the active tenant.
+  - id: auth.tokens.manage
+    description: Issue and revoke API tokens for the active tenant.
+  - id: auth.roles.read
+    description: Read the tenant role catalog and the grantable scopes.
+  - id: auth.roles.manage
+    description: Create, change, and delete custom tenant roles.
+  - id: auth.audit.read
+    description: Read the authentication and administration audit trail of the active tenant.
+dataOwnership:
+  - Accounts, tenant memberships, scope grants, and hashed sessions are owned by auth.core.
+  - API token identity, hashed secret, recorded scopes, expiry, revocation state, and last use are owned by auth.core.
+  - Tenant roles, sign-in failure counters, module settings values, and the auth audit trail are owned by auth.core.
+  - Other modules may reference account and tenant identifiers but may not write authentication tables.
+acceptanceScenarios:
+  - id: AUTH-TOKEN-ISSUE
+    given: An owner with auth.tokens.manage and an active browser session.
+    when: The owner issues an API token with a label, a scope subset, and an optional expiry.
+    then: The raw token is returned once, only its hash and safe metadata are persisted, and the recorded scopes are the intersection with the membership scopes.
+  - id: AUTH-TOKEN-AUTHENTICATE
+    given: A live API token and a read endpoint that requires one of its scopes.
+    when: A client sends the token as a bearer credential without a session cookie.
+    then: The request is authorized as that membership with the token scopes, and the token's last use is recorded.
+  - id: AUTH-TOKEN-MUTATION-DENY
+    given: A live API token and an endpoint protected by the session mutation guard.
+    when: The client attempts the mutation with the token.
+    then: The server denies the request with a stable token error before the handler runs.
+  - id: AUTH-TOKEN-REVOKE
+    given: An issued API token.
+    when: An owner revokes it, or its expiry passes, or its membership loses the scope.
+    then: The next request carrying that token is unauthenticated, and no further lookup grants authority.
+  - id: AUTH-SIGNUP
+    given: A visitor provides a valid unique email, organization, display name, and password.
+    when: The visitor submits the sign-up form from the same origin.
+    then: An account, tenant membership, scoped session, and protected cookie are created atomically.
+  - id: AUTH-SIGNIN
+    given: An active account exists with a stored password hash.
+    when: Correct credentials are submitted from the same origin.
+    then: A new rotated session is returned without exposing its token to JavaScript.
+  - id: AUTH-DENY
+    given: A request has no valid session or lacks a required scope.
+    when: It reaches a protected middleware boundary.
+    then: The server returns 401 or 403 and does not invoke the protected handler.
+  - id: AUTH-SIGNOUT
+    given: An authenticated session and matching CSRF token exist.
+    when: The user signs out from the same origin.
+    then: The server revokes the session and expires the browser cookie.
+  - id: AUTH-GREENFIELD
+    given: A developer requests a fresh local authentication database while the application is stopped.
+    when: The developer supplies both apply authorization and the exact reset-local-auth confirmation token.
+    then: Only the workspace-local auth database is reset; documented admin and user accounts plus two isolated tenants are seeded.
+  - id: AUTH-TENANT-SWITCH
+    given: An authenticated account has memberships in more than one tenant.
+    when: The account selects another granted tenant with its current CSRF token.
+    then: The old session is revoked and a rotated session is bound to the selected tenant and its scopes.
+  - id: AUTH-SIGNUP-DISABLED
+    given: The auth.allowSignUp module setting is false.
+    when: A visitor opens or submits sign-up.
+    then: The client routes to sign-in and the server rejects account creation without writing authentication data.
+  - id: AUTH-AGENT-SCOPES
+    given: The bundled agents.core module is enabled.
+    when: Default owner and member scope grants are created or migrated.
+    then: Owners can manage and execute agents while members receive only the explicitly declared read and execute scopes.
+  - id: AUTH-LOCKOUT
+    given: Five failed sign-in attempts for one address within the window.
+    when: The next sign-in for that address arrives, correct or not.
+    then: The server returns the stable ACCOUNT_LOCKED error until the lock period passes, and the audit trail records the lock for a known account.
+  - id: AUTH-SECURITY-HEADERS
+    given: Any request served by the platform.
+    when: The response is produced.
+    then: It carries nosniff, frame denial, referrer, and permissions policies, HSTS when secure cookies are on, and a content security policy.
+  - id: AUTH-ROLE-CUSTOM
+    given: An owner with auth.roles.manage.
+    when: The owner creates a role with a subset of grantable scopes and assigns it to a member.
+    then: The role is listed for the tenant only, the member's scopes equal the role's scopes, and deleting the role is refused while a member holds it.
+  - id: AUTH-ROLE-BUILTIN
+    given: The built-in owner or member role.
+    when: Anyone tries to rename, rescope, delete, or recreate it.
+    then: The server refuses with a stable error and the role is unchanged.
+  - id: AUTH-SETTINGS-STORE
+    given: A module setting is written through the shared settings runtime by an identified actor.
+    when: The value passes the declared validation and the write commits.
+    then: The value is persisted in auth.db per tenant (or once for the platform), the next read returns it, and a settings.updated audit event records the actor, the setting, and whether the value was cleared.
+  - id: AUTH-WORKSPACE-SETTINGS
+    given: An owner with system.settings.manage on Administration > Settings.
+    when: The owner renames the workspace or picks a default locale.
+    then: The tenant name is updated and reflected in the session, the defaultLocale tenant setting is stored through the platform settings API, and the session payload serves it as tenantSettings.defaultLocale.
+  - id: AUTH-AUDIT-READ
+    given: A principal with auth.audit.read.
+    when: The principal pages through the audit trail with action and actor filters.
+    then: Only the active tenant's events are returned, newest first, with a cursor for the next page.
+  - id: AUTH-SESSIONS-OWN
+    given: An account with several live sessions.
+    when: The account lists its sessions and revokes one that is not current.
+    then: The revoked session no longer resolves and the current one is unchanged.

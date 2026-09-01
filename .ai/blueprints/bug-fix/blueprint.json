@@ -1,0 +1,14 @@
+{
+	"$schema": "../../../packages/contracts/schemas/blueprint.schema.json",
+	"schemaVersion": 1,
+	"architecture": "0.2.0",
+	"owner": "platform-architecture",
+	"status": "approved",
+	"id": "bug-fix",
+	"version": "1.0.0",
+	"risk": "workspace-write",
+	"agentRoles": ["backend-engineer", "frontend-engineer", "module-executor"],
+	"executorProfiles": ["sandbox-specialist", "repo-agent"],
+	"requiredReviewers": ["reviewer"],
+	"requiresApprovedSpec": false
+}

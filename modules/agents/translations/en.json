@@ -1,0 +1,6 @@
+{
+	"module.name": "Agentic Core",
+	"navigation.agents": "Agents",
+	"navigation.playground": "Agent playground",
+	"navigation.runs": "Agent runs"
+}

@@ -1,0 +1,51 @@
+schemaVersion: 1
+steps:
+  - id: reproduce
+    role: backend-engineer
+    action: Write the failing test with the gate runner (vitest; route.handler(createContext(new Request(...), {})) or the service on a ':memory:' repository).
+    inputs:
+      - 'symptom'
+      - 'reproduction'
+    outputs:
+      - 'tests/*.test.ts'
+    gates:
+      - 'tests'
+  - id: locate
+    role: backend-engineer
+    action: Map the symptom to the owning layer with the table in .ai/skills/bug-hunt/SKILL.md; state the root cause as input and state to wrong outcome.
+    inputs:
+      - 'failing test'
+    outputs:
+      - 'root cause'
+  - id: fix
+    role: backend-engineer
+    action: Smallest change in the owning file; no second guard in another layer.
+    inputs:
+      - 'root cause'
+    outputs:
+      - 'owning file'
+    gates:
+      - 'typecheck'
+      - 'tests'
+      - 'format'
+  - id: siblings
+    role: backend-engineer
+    action: grep the same pattern across modules/*/src and either fix or list the siblings.
+    inputs:
+      - 'pattern'
+    outputs:
+      - 'siblings list'
+  - id: land
+    role: orchestrator
+    action: 'Sandbox: eject. Direct path: pnpm verify, pull request with the root cause and the regression test name.'
+    inputs:
+      - 'diff'
+    outputs:
+      - 'pull request'
+    gates:
+      - 'spec-schema'
+      - 'module-schema'
+      - 'dependencies'
+      - 'typecheck'
+      - 'tests'
+      - 'format'

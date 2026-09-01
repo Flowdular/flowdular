@@ -1,0 +1,30 @@
+schemaVersion: 1
+# Every key below exists in packages/contracts/schemas/module-spec.schema.json.
+status:
+  allowed:
+    - approved
+requiredKeys:
+  - invariants
+  - permissions
+  - dataOwnership
+  - acceptanceScenarios
+byCapability:
+  api:
+    permissions: one read and one manage id per entity, pattern <module>.<entity>.read|manage
+  database:
+    invariants: tenancy and uniqueness rules stated in sentences
+    dataOwnership: what this module owns and what it reads through another module
+  client:
+    acceptanceScenarios: a list scenario and a create scenario name the screen states
+dependencies:
+  required:
+    - id: system.core
+      range: ^0.1.0
+    - id: auth.core
+      range: ^0.1.0
+acceptanceScenarios:
+  minimum: 4
+  mustInclude:
+    - denial (401 or 403 before repository access)
+    - tenant isolation
+    - create with a stable conflict code when uniqueness exists
