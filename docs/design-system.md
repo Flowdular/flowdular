@@ -121,7 +121,7 @@ Icon names (`packages/ui/src/icons/Icon.tsrx`): `dashboard`, `parties`, `catalog
 `user`, `users`, `shield`, `code`, `modules`, `file-text`, `play`, `bot`,
 `flask`, `activity`, `plug`, `search`, `chevron-down`, `chevrons-up-down`,
 `plus`, `panel-left`, `check`, `filter`, `download`, `more`, `external`,
-`alert`, `x`, `sign-out`, `refresh`, `help`, `key`. An unknown name renders
+`alert`, `x`, `sign-out`, `refresh`, `help`, `key`, `settings`. An unknown name renders
 `modules` without a warning; a new icon is one 24x24 stroke path added there.
 
 ## Classes

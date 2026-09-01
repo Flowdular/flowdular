@@ -1,8 +1,47 @@
-# Coreloom
+<div align="center">
 
-Coreloom is an agentic foundation framework for OctaneJS. It ships the platform core that every business system needs (accounts, workspaces, permissions, module composition, an agent runtime, a capability CLI, and a sandbox), and teams build their own platform on top of it: business modules created by AI specialists in the sandbox, or by developers using the skills in `.ai/skills` from their own coding tools. A fixed module contract, approved specifications, and gates keep everything that lands on the foundation explicit and reviewable.
+<img src="docs/assets/coreloom-logo.svg" alt="Coreloom" width="360" />
 
-Every module starts with an approved specification. Versioned blueprints then constrain its ACL, endpoints, migrations, services, client code, translations, tests, and allowed paths. Routine implementation can be delegated to cost-efficient executor models because architecture and verification decisions are already encoded.
+### The agentic foundation framework for OctaneJS
+
+Ship the platform core once. Let AI specialists build the rest, on top of it.
+
+![Node](https://img.shields.io/badge/Node-%E2%89%A5%2022.22.2-3A6BE0)
+![pnpm](https://img.shields.io/badge/pnpm-11.17.0-2557D6)
+![OctaneJS](https://img.shields.io/badge/built%20with-OctaneJS-141B2E)
+![Status](https://img.shields.io/badge/status-preview-8290A8)
+
+</div>
+
+Coreloom gives you a production platform core (accounts, workspaces, permissions, module composition, an in-product agent runtime, a capability CLI, and a chat-first sandbox) and a strict module contract on top of it. A business person describes what they need; AI specialists turn it into an approved spec, build it behind gates, preview it live inside the real app shell, and land it in one click. Developers get the same guardrails as skills they can run from their own coding tools.
+
+## What you get
+
+- **A real platform, not a starter.** Sign-in, tenants, roles and scopes, API tokens, per-module settings, and an audit trail are already there and configurable by an admin.
+- **A sandbox that builds modules.** Chat a brief; a planner routes it to specialists (business, UX, backend, frontend, agentic); each turn runs the same gates the platform runs; the draft previews inside the real shell before anything lands.
+- **One-click delivery.** Eject a finished module straight into `modules/` and enable it, or, in a git repo, open a ready pull request with the gate evidence attached.
+- **Safe by contract.** Every endpoint declares a permission, every query is tenant-scoped, generated composition files are CLI-owned, and no change ships without typecheck, tests, schema and format gates.
+- **Skills for your own tools.** The procedures in [`.ai/skills`](.ai/skills) (module-new, module-update, core-extend, bug-hunt, auth-security-review, and more) load as `/skill` in Claude Code and as `AGENTS.md` context in Codex, so the same rules apply whether an agent works in the sandbox or in your editor.
+- **A durable agent runtime.** `agents.core` runs reusable agents against registered tools with leases, recovery, idempotency, and an append-only audit, configurable per tenant.
+
+## See it in action
+
+<!-- Demo slots: replace each SVG with a GIF or MP4 recorded from the live app (keep the same path). -->
+
+|                                                                                                                                      |                                                                                                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| [<img src="docs/assets/demo/build-module.svg" alt="Build a module in the sandbox" width="420" />](docs/assets/demo/build-module.svg) | [<img src="docs/assets/demo/eject-to-app.svg" alt="Eject into the running app" width="420" />](docs/assets/demo/eject-to-app.svg) |
+| **Build a module in the sandbox**                                                                                                    | **Eject into the running app**                                                                                                    |
+| [<img src="docs/assets/demo/update-module.svg" alt="Update an existing module" width="420" />](docs/assets/demo/update-module.svg)   | [<img src="docs/assets/demo/admin-settings.svg" alt="Full admin control" width="420" />](docs/assets/demo/admin-settings.svg)     |
+| **Update an existing module**                                                                                                        | **Full admin control**                                                                                                            |
+
+## How a change ships
+
+```text
+brief -> approved spec -> gates -> live preview -> eject (or pull request)
+```
+
+Every module starts with an approved specification. Versioned blueprints then constrain its ACL, endpoints, migrations, services, client code, translations, tests, and allowed paths, so routine implementation can be delegated to cost-efficient executor models while architecture and verification decisions stay encoded.
 
 ## Start locally
 

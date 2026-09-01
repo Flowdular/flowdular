@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-label="Update an existing module">
+	<defs>
+		<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+			<stop offset="0" stop-color="#0C1222"/>
+			<stop offset="1" stop-color="#141B2E"/>
+		</linearGradient>
+	</defs>
+	<rect width="1280" height="720" fill="url(#bg)"/>
+	<g opacity="0.10" fill="#8FA6D8">
+		<circle cx="1090" cy="130" r="3"/><circle cx="1150" cy="210" r="2"/><circle cx="1040" cy="240" r="2"/>
+		<circle cx="190" cy="520" r="3"/><circle cx="250" cy="600" r="2"/><circle cx="130" cy="580" r="2"/>
+	</g>
+	<g transform="translate(640 208) scale(6) translate(-12 -12)" fill="#3A6BE0">
+		<circle cx="7.9" cy="3.4" r="1.7"/><rect x="6.2" y="3.4" width="3.4" height="1.6"/><rect x="6.2" y="10.8" width="3.4" height="9.8"/><circle cx="7.9" cy="20.6" r="1.7"/>
+		<circle cx="16.1" cy="3.4" r="1.7"/><rect x="14.4" y="3.4" width="3.4" height="9.8"/><rect x="14.4" y="19" width="3.4" height="1.6"/><circle cx="16.1" cy="20.6" r="1.7"/>
+		<circle cx="3.4" cy="7.9" r="1.7"/><rect x="3.4" y="6.2" width="9.8" height="3.4"/><rect x="19" y="6.2" width="1.6" height="3.4"/><circle cx="20.6" cy="7.9" r="1.7"/>
+		<circle cx="3.4" cy="16.1" r="1.7"/><rect x="3.4" y="14.4" width="1.6" height="3.4"/><rect x="10.8" y="14.4" width="9.8" height="3.4"/><circle cx="20.6" cy="16.1" r="1.7"/>
+	</g>
+	<circle cx="640" cy="418" r="44" fill="#2557D6"/>
+	<path d="M629 397 l28 21 -28 21 Z" fill="#fff"/>
+	<text x="640" y="524" text-anchor="middle" font-family="'IBM Plex Sans','Segoe UI',system-ui,sans-serif" font-size="40" font-weight="600" fill="#F4F6FB">Update an existing module</text>
+	<text x="640" y="568" text-anchor="middle" font-family="'IBM Plex Sans','Segoe UI',system-ui,sans-serif" font-size="20" font-weight="500" fill="#8290A8">Extend a live module and ship the change the same way</text>
+</svg>

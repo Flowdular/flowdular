@@ -41,7 +41,7 @@ export function createAuthClientContribution(
 				viewId: 'settings',
 				group: 'Administration',
 				label: 'Settings',
-				glyph: 'modules',
+				glyph: 'settings',
 				description: 'Workspace identity and defaults',
 				scope: PLATFORM_SCOPES.settingsRead,
 				order: 50,

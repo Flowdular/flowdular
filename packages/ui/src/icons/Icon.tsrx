@@ -29,8 +29,7 @@ export const ICON_PATHS: Readonly<Record<string, string>> = {
 	refresh: 'M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6',
 	help: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01',
 	key: 'M15.5 3a5.5 5.5 0 1 0-4.2 9.05L10 13.5H8v2H6v2H3v-3l6.4-6.4A5.5 5.5 0 0 0 15.5 3Zm1.2 4.3h.01',
-	settings:
-		'M4 8h10M18 8h2M14 8a2 2 0 1 0 4 0 2 2 0 1 0-4 0M4 16h4M12 16h8M8 16a2 2 0 1 0 4 0 2 2 0 1 0-4 0',
+	settings: 'M4 8h10M18 8h2M14 8a2 2 0 1 0 4 0 2 2 0 1 0-4 0M4 16h4M12 16h8M8 16a2 2 0 1 0 4 0 2 2 0 1 0-4 0',
 };
 
 export interface IconProps {
