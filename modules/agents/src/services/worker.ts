@@ -32,6 +32,8 @@ export interface AgentProviderResolver {
 }
 
 const CANCELLED = 'cancelled';
+const SHUTDOWN = 'worker-shutdown';
+const LEASE_LOST = 'lease-lost';
 
 function failure(error: unknown): { code: string; message: string } {
 	if (error instanceof Error) {
@@ -53,12 +55,14 @@ function validConcurrency(value: number): boolean {
 
 export class AgentWorker {
 	readonly #inFlight = new Map<string, AbortController>();
+	readonly #idleWaiters = new Set<() => void>();
 	readonly #now: () => number;
 	#concurrency: number;
 	#scheduled = false;
-	#stopped = false;
+	#stopped = true;
 	#lastDrainAt: number | null = null;
 	#poll: ReturnType<typeof setInterval> | undefined;
+	#kickTimer: ReturnType<typeof setTimeout> | undefined;
 
 	constructor(
 		private readonly repository: AgentRepository,
@@ -108,6 +112,20 @@ export class AgentWorker {
 		this.#stopped = true;
 		if (this.#poll !== undefined) clearInterval(this.#poll);
 		this.#poll = undefined;
+		if (this.#kickTimer !== undefined) clearTimeout(this.#kickTimer);
+		this.#kickTimer = undefined;
+		this.#scheduled = false;
+	}
+
+	/* Terminal worker teardown. In-flight provider calls are aborted but their
+	   persisted rows stay leased for recovery by the next worker generation. */
+	async dispose(): Promise<void> {
+		this.stop();
+		for (const controller of this.#inFlight.values()) {
+			controller.abort(SHUTDOWN);
+		}
+		if (this.#inFlight.size === 0) return;
+		await new Promise<void>((resolve) => this.#idleWaiters.add(resolve));
 	}
 
 	/* Online means the periodic drain runs, so queued and interrupted work
@@ -135,9 +153,19 @@ export class AgentWorker {
 	kick(): void {
 		if (this.#scheduled || this.#stopped) return;
 		this.#scheduled = true;
-		setTimeout(() => {
+		this.#kickTimer = setTimeout(() => {
+			this.#kickTimer = undefined;
 			this.#scheduled = false;
-			this.#drain();
+			try {
+				this.#drain();
+			} catch (error) {
+				/* A failed transactional claim leaves the run recoverable. The
+				   periodic poll retries it without crashing the host process. */
+				console.error(
+					'[agents] run worker drain failed:',
+					error instanceof Error ? error.message : error,
+				);
+			}
 		}, 0);
 	}
 
@@ -168,20 +196,20 @@ export class AgentWorker {
 				this.options.workerId,
 				now,
 				now + this.options.leaseMs,
+				{
+					tenantId: candidate.tenantId,
+					actorId: this.options.workerId,
+					action: 'agent-run.claimed',
+					subjectType: 'agent-run',
+					subjectId: candidate.runId,
+					metadata: {},
+					occurredAt: now,
+				},
 			);
 			if (!execution) continue;
 			claimed += 1;
 			const controller = new AbortController();
 			this.#inFlight.set(candidate.runId, controller);
-			this.repository.appendAuditEvent({
-				tenantId: candidate.tenantId,
-				actorId: this.options.workerId,
-				action: 'agent-run.claimed',
-				subjectType: 'agent-run',
-				subjectId: candidate.runId,
-				metadata: { attempt: execution.run.attempt },
-				occurredAt: now,
-			});
 			void this.#execute(candidate, execution, controller)
 				.catch((error: unknown) => {
 					console.error(
@@ -191,6 +219,10 @@ export class AgentWorker {
 				})
 				.finally(() => {
 					this.#inFlight.delete(candidate.runId);
+					if (this.#inFlight.size === 0) {
+						for (const resolve of this.#idleWaiters) resolve();
+						this.#idleWaiters.clear();
+					}
 					this.kick();
 				});
 		}
@@ -203,13 +235,19 @@ export class AgentWorker {
 	): Promise<void> {
 		const renewal = setInterval(
 			() => {
-				const renewed = this.repository.renewLease(
-					candidate.tenantId,
-					candidate.runId,
-					this.options.workerId,
-					this.#now() + this.options.leaseMs,
-				);
-				if (!renewed) controller.abort('lease-lost');
+				try {
+					const renewed = this.repository.renewLease(
+						candidate.tenantId,
+						candidate.runId,
+						this.options.workerId,
+						this.#now() + this.options.leaseMs,
+					);
+					if (!renewed) controller.abort(LEASE_LOST);
+				} catch {
+					/* A database error means ownership cannot be proven. Stop local work
+					   and leave the durable row for lease-based recovery. */
+					controller.abort(LEASE_LOST);
+				}
 			},
 			Math.max(500, Math.floor(this.options.leaseMs / 2)),
 		);
@@ -267,11 +305,16 @@ export class AgentWorker {
 					runId: execution.run.id,
 					tenantId: execution.run.tenantId,
 					requestedBy: execution.run.requestedBy,
+					requestedActor: execution.run.requestedActor,
+					...(execution.run.authorizationSubject
+						? { authorizationSubject: execution.run.authorizationSubject }
+						: {}),
 					trigger: execution.run.trigger,
 					input: execution.run.input,
 					definition: execution.definition,
 					permissionSnapshot: execution.run.permissionSnapshot,
 					toolGrants: execution.run.toolGrants,
+					outputContract: execution.run.outputContract,
 				},
 				provider
 					? { onEvent, provider, signal: controller.signal }
@@ -282,24 +325,33 @@ export class AgentWorker {
 				candidate.runId,
 				this.options.workerId,
 				result,
-			);
-			this.repository.appendAuditEvent({
-				tenantId: candidate.tenantId,
-				actorId: this.options.workerId,
-				action: 'agent-run.succeeded',
-				subjectType: 'agent-run',
-				subjectId: candidate.runId,
-				metadata: {
-					durationMs: result.completedAt - result.startedAt,
-					totalTokens: result.usage.totalTokens,
+				{
+					tenantId: candidate.tenantId,
+					actorId: this.options.workerId,
+					action: 'agent-run.succeeded',
+					subjectType: 'agent-run',
+					subjectId: candidate.runId,
+					metadata: {
+						durationMs: result.completedAt - result.startedAt,
+						totalTokens: result.usage.totalTokens,
+					},
+					occurredAt: result.completedAt,
 				},
-				occurredAt: result.completedAt,
-			});
+			);
 			this.#recordRunSuccess(execution, result.completedAt, result.startedAt);
 		} catch (error) {
 			/* The service already moved a cancelled row and wrote its audit event;
 			   the worker only had to stop. */
 			if (controller.signal.aborted && controller.signal.reason === CANCELLED) {
+				return;
+			}
+			if (controller.signal.aborted && controller.signal.reason === SHUTDOWN) {
+				return;
+			}
+			if (
+				controller.signal.aborted &&
+				controller.signal.reason === LEASE_LOST
+			) {
 				return;
 			}
 			const failed = controller.signal.aborted
@@ -319,16 +371,16 @@ export class AgentWorker {
 					failed.code,
 					failed.message,
 					completedAt,
+					{
+						tenantId: candidate.tenantId,
+						actorId: this.options.workerId,
+						action: 'agent-run.failed',
+						subjectType: 'agent-run',
+						subjectId: candidate.runId,
+						metadata: { code: failed.code },
+						occurredAt: completedAt,
+					},
 				);
-				this.repository.appendAuditEvent({
-					tenantId: candidate.tenantId,
-					actorId: this.options.workerId,
-					action: 'agent-run.failed',
-					subjectType: 'agent-run',
-					subjectId: candidate.runId,
-					metadata: { code: failed.code },
-					occurredAt: completedAt,
-				});
 			} catch (settleError) {
 				console.error(
 					`[agents] run ${candidate.runId} failed with ${failed.code} and could not be settled:`,

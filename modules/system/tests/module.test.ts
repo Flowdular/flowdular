@@ -76,7 +76,7 @@ describe('system.core', () => {
 		expect(denied.status).toBe(401);
 
 		const context = createContext(request, {});
-		context.state.set('octane-erp.auth.principal', {
+		context.state.set('coreloom.auth.principal', {
 			accountId: 'owner',
 			tenantId: 'tenant',
 			email: 'owner@example.com',
@@ -115,7 +115,7 @@ describe('system.core', () => {
 		expect(body.commands.enable).toContain('module enable');
 
 		const member = createContext(request, {});
-		member.state.set('octane-erp.auth.principal', {
+		member.state.set('coreloom.auth.principal', {
 			accountId: 'member',
 			tenantId: 'tenant',
 			email: 'member@example.com',

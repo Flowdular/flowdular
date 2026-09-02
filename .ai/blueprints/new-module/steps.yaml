@@ -18,7 +18,7 @@ steps:
       - 'spec/module.yaml'
   - id: scaffold
     role: orchestrator
-    action: pnpm oerp module new <id> --spec modules/<dir>/spec/module.yaml --apply (the sandbox runs it; at the root run the dry run first). Writes the composition entries, a list and a create endpoint, table or memory repository, view, api, state and tests for the first entity; other permissions get constants only.
+    action: pnpm coreloom module new <id> --spec modules/<dir>/spec/module.yaml --apply (the sandbox runs it; at the root run the dry run first). Writes the composition entries, a list and a create endpoint, table or memory repository, view, api, state and tests for the first entity; other permissions get constants only.
     inputs:
       - 'spec/module.yaml'
       - 'translations/*.json'
@@ -93,14 +93,24 @@ steps:
       - 'format'
   - id: agent-surface
     role: agentic-engineer
-    action: Only when the brief asks for agent tools; record the tool design in the spec and stop with the core change needed.
+    action: Only when the approved spec asks for agent tools or a module-owned business agent; follow agent-tool-design for tools and business-agent-design for defineAgent behavior, register both during composition, and prove the exact capability ceiling and refusals.
     inputs:
       - 'spec/module.yaml'
       - 'src/api/endpoints.ts'
     outputs:
-      - 'spec/module.yaml'
+      - 'src/agent/tools.ts when tools are required'
+      - 'src/agent/agents.ts when a business agent is required'
+      - 'src/platform.ts'
+      - 'tests/agent-tools.test.ts'
+      - 'tests/business-agents.test.ts'
+      - 'package.json'
+      - 'module.json'
     gates:
       - 'spec-schema'
+      - 'module-schema'
+      - 'dependencies'
+      - 'typecheck'
+      - 'tests'
   - id: land
     role: orchestrator
     action: 'Sandbox: eject (gates per module, copy and removals, pnpm install, module enable with scope grant, auth sync-scopes, platform typecheck, restart note). Direct path: module enable --apply (grants scopes), pnpm verify, pull request.'

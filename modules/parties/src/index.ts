@@ -6,10 +6,17 @@ export const moduleDefinition = {
 	manifest: manifest as ModuleManifest,
 	navigation: [
 		{
-			id: 'parties.navigation',
-			label: 'Customers & suppliers',
-			href: '/parties',
+			id: 'parties.navigation.customers',
+			label: 'Customers',
+			href: '/customers',
 			order: 10,
+			permission: PARTY_PERMISSIONS.read,
+		},
+		{
+			id: 'parties.navigation.suppliers',
+			label: 'Suppliers',
+			href: '/suppliers',
+			order: 15,
 			permission: PARTY_PERMISSIONS.read,
 		},
 	],
@@ -21,4 +28,9 @@ export {
 	PartiesService,
 	PartyServiceError,
 } from './services/parties-service.ts';
-export type { CreatePartyInput, Party, PartyKind } from './domain/types.ts';
+export type {
+	CreatePartyInput,
+	Party,
+	PartyKind,
+	UpdatePartyInput,
+} from './domain/types.ts';

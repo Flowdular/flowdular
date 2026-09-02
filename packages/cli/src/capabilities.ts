@@ -36,6 +36,45 @@ export const capabilities: readonly CapabilityDescriptor[] = [
 		supportsDryRun: false,
 	},
 	{
+		id: 'migration.status',
+		version: 1,
+		summary:
+			'Report the migration ledger of every module database: applied, adopted, pending, or mismatch.',
+		risk: 'read',
+		requiresApprovedSpec: false,
+		supportsDryRun: false,
+	},
+	{
+		id: 'migration.verify',
+		version: 1,
+		summary:
+			'Check every module ledger against the checksums of the migrations in the workspace.',
+		risk: 'read',
+		requiresApprovedSpec: false,
+		supportsDryRun: false,
+	},
+	{
+		id: 'migration.apply.local',
+		version: 1,
+		summary:
+			'Apply or adopt the outstanding migrations of one module against its local database.',
+		risk: 'process',
+		requiresApprovedSpec: false,
+		supportsDryRun: true,
+		localOnly: true,
+	},
+	{
+		id: 'workspace.state.migrate',
+		version: 1,
+		summary:
+			'Copy pre-Coreloom local databases and vault keys into .coreloom/data without deleting the source.',
+		risk: 'destructive',
+		requiresApprovedSpec: false,
+		supportsDryRun: true,
+		localOnly: true,
+		confirmation: 'migrate-legacy-state',
+	},
+	{
 		id: 'module.create',
 		version: 1,
 		summary:

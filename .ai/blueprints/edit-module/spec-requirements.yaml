@@ -1,6 +1,7 @@
 schemaVersion: 1
 status:
   allowed:
+    - draft
     - approved
     - in-review
 requiredKeys:

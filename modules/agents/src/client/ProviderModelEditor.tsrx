@@ -1,4 +1,5 @@
 import { useId } from 'octane';
+import { t } from '@coreloom/client';
 import { Button, Icon, Tag } from '@coreloom/ui';
 import {
 	AI_PROVIDER_CATALOG,
@@ -92,14 +93,14 @@ export function draftedModels(
 }
 
 export function modelDraftError(drafts: readonly ProviderModelDraft[]): string {
-	if (drafts.length === 0) return 'Configure at least one model.';
-	if (drafts.length > 50) return 'A provider can expose at most 50 models.';
+	if (drafts.length === 0) return t('agents.providers.models.error.required');
+	if (drafts.length > 50) return t('agents.providers.models.error.maximum');
 	if (drafts.some((draft) => !draft.id.trim() || !draft.label.trim())) {
-		return 'Every model needs an identifier and a label.';
+		return t('agents.providers.models.error.incomplete');
 	}
 	const ids = drafts.map((draft) => draft.id.trim());
 	if (new Set(ids).size !== ids.length) {
-		return 'Model identifiers must be unique.';
+		return t('agents.providers.models.error.duplicate');
 	}
 	return '';
 }
@@ -125,7 +126,7 @@ function readinessNote(
 	model: AgentProviderModel,
 ): string {
 	if (state === 'ready') return (model.readiness.latencyMs ?? 0) + ' ms';
-	if (state === 'stale') return 'Evidence expired';
+	if (state === 'stale') return t('agents.providers.models.evidenceExpired');
 	return model.readiness.errorCode ?? '';
 }
 
@@ -145,7 +146,10 @@ function ModelReadiness(props: ModelReadinessProps) @{
 						modelReadinessState(props.model.readiness, props.ttlMs),
 					)}
 					dot
-				>{modelReadinessState(props.model.readiness, props.ttlMs)}</Tag>
+				>{t(
+					'agents.providers.modelStatus.' +
+						modelReadinessState(props.model.readiness, props.ttlMs),
+				)}</Tag>
 				<small>{readinessNote(
 					modelReadinessState(props.model.readiness, props.ttlMs),
 					props.model,
@@ -155,13 +159,15 @@ function ModelReadiness(props: ModelReadinessProps) @{
 					disabled={props.onTest === null || props.testing}
 					onClick={() => props.onTest?.()}
 				>
-					{props.testing ? 'Testing…' : 'Test'}
+					{props.testing
+						? t('agents.providers.models.testing')
+						: t('agents.providers.models.test')}
 				</Button>
 			</>
 		} @else {
-			<small class="model-row__hint">
-				Save the connection to test this model.
-			</small>
+			<small class="model-row__hint">{t(
+				'agents.providers.models.saveBeforeTest',
+			)}</small>
 		}
 	</div>
 }
@@ -202,15 +208,15 @@ export function ProviderModelEditor(props: ProviderModelEditorProps) @{
 						value={draft.id}
 						list={knownModels.length > 0 ? listId : undefined}
 						placeholder={knownModels[0] ?? 'model-id'}
-						aria-label="Model identifier"
+						aria-label={t('agents.providers.models.identifier')}
 						maxlength={120}
 						onInput={(event) => setId(draft.uid, event.currentTarget.value)}
 					/>
 					<input
 						class="ui-input"
 						value={draft.label}
-						placeholder="Display label"
-						aria-label="Model label"
+						placeholder={t('agents.providers.models.labelPlaceholder')}
+						aria-label={t('agents.providers.models.label')}
 						maxlength={120}
 						onInput={(event) => patch(draft.uid, {
 							label: event.currentTarget.value,
@@ -219,7 +225,7 @@ export function ProviderModelEditor(props: ProviderModelEditorProps) @{
 					<button
 						class="model-row__remove"
 						type="button"
-						aria-label="Remove model"
+						aria-label={t('agents.providers.models.remove')}
 						disabled={props.drafts.length === 1}
 						onClick={() => props.onChange(
 							props.drafts.filter((item) => item.uid !== draft.uid),
@@ -237,7 +243,7 @@ export function ProviderModelEditor(props: ProviderModelEditorProps) @{
 								supportsTools: event.currentTarget.checked,
 							})}
 						/>
-						<span>Tools</span>
+						<span>{t('agents.providers.models.tools')}</span>
 					</label>
 					<label class="ui-checkbox">
 						<input
@@ -247,7 +253,7 @@ export function ProviderModelEditor(props: ProviderModelEditorProps) @{
 								supportsStreaming: event.currentTarget.checked,
 							})}
 						/>
-						<span>Streaming</span>
+						<span>{t('agents.providers.models.streaming')}</span>
 					</label>
 					<label class="ui-checkbox">
 						<input
@@ -257,11 +263,11 @@ export function ProviderModelEditor(props: ProviderModelEditorProps) @{
 								supportsWebSearch: event.currentTarget.checked,
 							})}
 						/>
-						<span>Web search</span>
+						<span>{t('agents.providers.models.webSearch')}</span>
 					</label>
 					<label
 						class="ui-checkbox"
-						title="Anthropic and OpenAI reasoning models reject a custom temperature. The default follows the model id."
+						title={t('agents.providers.models.temperatureHelp')}
 					>
 						<input
 							type="checkbox"
@@ -270,7 +276,7 @@ export function ProviderModelEditor(props: ProviderModelEditorProps) @{
 								supportsTemperature: event.currentTarget.checked,
 							})}
 						/>
-						<span>Temperature</span>
+						<span>{t('agents.providers.models.temperature')}</span>
 					</label>
 					<label class="ui-checkbox model-row__enabled">
 						<input
@@ -280,7 +286,7 @@ export function ProviderModelEditor(props: ProviderModelEditorProps) @{
 								enabled: event.currentTarget.checked,
 							})}
 						/>
-						<span>Available</span>
+						<span>{t('agents.providers.models.available')}</span>
 					</label>
 				</div>
 				<ModelReadiness
@@ -300,7 +306,7 @@ export function ProviderModelEditor(props: ProviderModelEditorProps) @{
 				onClick={() => props.onChange([...props.drafts, emptyModelDraft()])}
 			>
 				<Icon name="plus" size={14} />
-				Add model
+				{t('agents.providers.models.add')}
 			</Button>
 		</div>
 	</div>

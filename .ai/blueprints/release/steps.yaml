@@ -9,7 +9,7 @@ steps:
       - 'gate evidence'
   - id: compose
     role: module-executor
-    action: pnpm oerp module enable <id> --apply for a new module (grants its scopes), pnpm oerp module sync --apply otherwise; pnpm oerp auth sync-scopes --module <id> --apply only to re-grant after a new permission.
+    action: pnpm coreloom module enable <id> --apply for a new module (grants its scopes), pnpm coreloom module sync --apply otherwise; pnpm coreloom auth sync-scopes --module <id> --apply only to re-grant after a new permission.
     inputs:
       - 'modules/{module}/**'
     outputs:
@@ -40,7 +40,7 @@ steps:
       - 'review'
   - id: post-merge
     role: operator
-    action: Deploy; run pnpm oerp auth sync-scopes --module <id> --apply with OERP_AUTH_DATABASE pointing at the deployment; verify an owner sees the navigation entry. Tag v*.*.* to build the container.
+    action: Deploy; run pnpm coreloom auth sync-scopes --module <id> --apply with CL_AUTH_DATABASE pointing at the deployment; verify an owner sees the navigation entry. Tag v*.*.* to build the container.
     inputs:
       - 'merged main'
     outputs:

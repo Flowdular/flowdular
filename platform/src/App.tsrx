@@ -1,4 +1,9 @@
-import { ApplicationShell, shellLocationFromUrl } from '@coreloom/client';
+import {
+	ApplicationShell,
+	activeLocale,
+	shellLocationFromUrl,
+	t,
+} from '@coreloom/client';
 import {
 	AuthenticationCore,
 	authScreenFromUrl,
@@ -7,6 +12,7 @@ import type { AuthPrincipal } from '@coreloom/module-auth';
 import { Head, Seo } from '@octanejs/seo';
 import type { RenderRouteProps } from '@octanejs/vite-plugin';
 import { createModuleClientContributions } from './generated/modules.client.ts';
+import { applicationInitialUrl } from './routing.ts';
 import './styles.css';
 
 interface AuthenticatedAppProps {
@@ -31,6 +37,8 @@ function AuthenticatedApp(props: AuthenticatedAppProps) @{
 				contributions={createModuleClientContributions({
 					csrfToken: props.csrfToken,
 					scopes: props.principal.scopes,
+					locale: activeLocale(),
+					t,
 				})}
 				identity={props.principal}
 				onSignOut={props.signOut}
@@ -39,18 +47,13 @@ function AuthenticatedApp(props: AuthenticatedAppProps) @{
 		} @else {
 			<main class="access-denied">
 				<span>403</span>
-				<h1>Workspace access was not granted.</h1>
-				<p>
-					Your account is authenticated, but it does not have the
-					system.workspace.access scope.
-				</p>
+				<h1>{t('shell.accessDenied.title')}</h1>
+				<p>{t('shell.accessDenied.description')}</p>
 				<button
 					class="ui-btn ui-btn--primary"
 					type="button"
 					onClick={() => void props.signOut()}
-				>
-					Sign out
-				</button>
+				>{t('shell.account.signOut')}</button>
 			</main>
 		}
 	</div>
@@ -61,9 +64,9 @@ export function App(props?: RenderRouteProps) @{
 		props?.url ?? (typeof window === 'undefined' ? '/' : window.location.href);
 	<Head>
 		<Seo
-			title="Workspace"
+			title={t('shell.workspace.title')}
 			titleTemplate="%s · Coreloom"
-			description="An agentic foundation framework: a production platform core that teams extend with modules built by AI agents."
+			description={t('shell.seo.description')}
 			robots={{ index: false, follow: false, noarchive: true }}
 			openGraph={{
 				type: 'website',
@@ -73,7 +76,7 @@ export function App(props?: RenderRouteProps) @{
 						url: '/og.png',
 						width: 1200,
 						height: 630,
-						alt: 'Coreloom. Agentic foundation framework.',
+						alt: t('shell.seo.imageAlt'),
 					},
 				],
 			}}
@@ -83,7 +86,7 @@ export function App(props?: RenderRouteProps) @{
 			initialScreen={authScreenFromUrl(initialUrl)}
 			renderAuthenticated={(principal, controls) =>
 				<AuthenticatedApp
-					initialUrl={initialUrl}
+					initialUrl={applicationInitialUrl(initialUrl)}
 					principal={principal}
 					csrfToken={controls.csrfToken}
 					signOut={controls.signOut}

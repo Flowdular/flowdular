@@ -222,15 +222,49 @@ export function createSandboxRoutes(
 		id: 'sandbox.audit.snapshot',
 		path: '/api/sandbox/audit',
 		methods: ['GET'],
-		access: { kind: 'permission', permission: SANDBOX_PERMISSIONS.manage },
+		access: {
+			kind: 'permission',
+			permission: SANDBOX_PERMISSIONS.sessionsRead,
+		},
 		resolveIdentity: endpointIdentityFromContext,
 		handler: ({ octane }) => {
-			const principal = principalFromContext(octane)!;
-			const service = runtime.service(auth);
-			return jsonResponse({
-				events: service.listAuditEvents(principal.tenantId, 50),
-				chainValid: service.verifyAuditChain(principal.tenantId),
-			});
+			try {
+				const principal = principalFromContext(octane)!;
+				const url = new URL(octane.request.url);
+				const limit = Number(url.searchParams.get('limit') ?? '50');
+				return jsonResponse(
+					runtime
+						.service(auth)
+						.pageAuditEvents(
+							principal.tenantId,
+							url.searchParams.get('cursor'),
+							Number.isSafeInteger(limit) ? limit : 50,
+						),
+				);
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
+	const verifyAudit = defineEndpoint({
+		id: 'sandbox.audit.verify',
+		path: '/api/sandbox/audit/verify',
+		methods: ['GET'],
+		access: {
+			kind: 'permission',
+			permission: SANDBOX_PERMISSIONS.sessionsRead,
+		},
+		resolveIdentity: endpointIdentityFromContext,
+		handler: ({ octane }) => {
+			try {
+				const principal = principalFromContext(octane)!;
+				return jsonResponse(
+					runtime.service(auth).verifyAudit(principal.tenantId),
+				);
+			} catch (error) {
+				return failure(error);
+			}
 		},
 	});
 
@@ -379,6 +413,7 @@ export function createSandboxRoutes(
 		revoke.serverRoute,
 		sessions.serverRoute,
 		audit.serverRoute,
+		verifyAudit.serverRoute,
 	] as const;
 }
 
@@ -392,4 +427,5 @@ export const endpoints = [
 	'sandbox.access.revoke-grant',
 	'sandbox.sessions.snapshot',
 	'sandbox.audit.snapshot',
+	'sandbox.audit.verify',
 ] as const;

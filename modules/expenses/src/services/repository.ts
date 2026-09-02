@@ -1,4 +1,9 @@
-import type { ExpenseClaimStatus, ExpensesClaim } from '../domain/types.ts';
+import type { Actor, HistoryPage, HistoryQuery } from '@coreloom/kernel';
+import type {
+	ExpenseClaimHistoryAction,
+	ExpenseClaimStatus,
+	ExpensesClaim,
+} from '../domain/types.ts';
 
 export interface ExpenseClaimListQuery {
 	readonly tenantId: string;
@@ -10,7 +15,13 @@ export interface ExpenseClaimListQuery {
 export interface ExpensesRepository {
 	list(query: ExpenseClaimListQuery): readonly ExpensesClaim[];
 	find(tenantId: string, id: string): ExpensesClaim | null;
-	create(record: ExpensesClaim): ExpensesClaim;
-	update(record: ExpensesClaim): ExpensesClaim;
+	create(record: ExpensesClaim, actor: Actor): ExpensesClaim;
+	update(
+		record: ExpensesClaim,
+		action: ExpenseClaimHistoryAction,
+		actor: Actor,
+	): ExpensesClaim;
+	delete(tenantId: string, id: string, actor: Actor): boolean;
 	countAwaitingApproval(tenantId: string): number;
+	history(query: HistoryQuery): HistoryPage;
 }

@@ -102,7 +102,7 @@ export const cliExtension = defineCliExtension({
 					},
 					evidence: [
 						`modules/${declared.directory}/spec/module.yaml`,
-						'.octane-erp/auth.db',
+						'.coreloom/data/auth.db',
 					],
 				};
 			},

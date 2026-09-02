@@ -3,6 +3,8 @@ import type {
 	ExpenseClaimDecision,
 	ExpensesClaim,
 } from '../domain/types.ts';
+import { t } from '@coreloom/client/i18n';
+import type { HistoryPage } from '@coreloom/kernel';
 import type { ExpenseStatusFilter } from './expense-claims.ts';
 
 interface ErrorEnvelope {
@@ -12,7 +14,7 @@ interface ErrorEnvelope {
 async function payload<T>(response: Response): Promise<T> {
 	const value = (await response.json()) as T & ErrorEnvelope;
 	if (!response.ok) {
-		throw new Error(value.error?.message ?? 'The expenses operation failed.');
+		throw new Error(value.error?.message ?? t('expenses.error.request'));
 	}
 	return value;
 }
@@ -36,6 +38,19 @@ export async function loadAwaitingApprovalCount(): Promise<number> {
 		credentials: 'same-origin',
 	});
 	return (await payload<{ readonly count: number }>(response)).count;
+}
+
+export async function loadExpenseClaimHistory(
+	recordId: string,
+): Promise<HistoryPage> {
+	const response = await fetch(
+		`/api/expenses/claims/history?recordId=${encodeURIComponent(recordId)}&limit=100`,
+		{
+			headers: { accept: 'application/json' },
+			credentials: 'same-origin',
+		},
+	);
+	return payload<HistoryPage>(response);
 }
 
 async function mutateClaim(
@@ -67,6 +82,22 @@ export function submitExpensesClaim(
 	csrfToken: string,
 ): Promise<ExpensesClaim> {
 	return mutateClaim('/api/expenses/claims/submit', { claimId }, csrfToken);
+}
+
+export async function deleteExpensesClaim(
+	claimId: string,
+	csrfToken: string,
+): Promise<void> {
+	const response = await fetch('/api/expenses/claims/delete', {
+		method: 'POST',
+		headers: {
+			'content-type': 'application/json',
+			'x-csrf-token': csrfToken,
+		},
+		credentials: 'same-origin',
+		body: JSON.stringify({ claimId }),
+	});
+	await payload<{ readonly deleted: true }>(response);
 }
 
 export function decideExpensesClaim(

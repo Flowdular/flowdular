@@ -114,6 +114,31 @@ describe('agent roles', () => {
 		expect(instruction).toContain('Role: Backend engineer');
 		expect(instruction).toContain('Target module: sales.orders');
 		expect(instruction).toContain('src/services/**');
+		expect(instruction).toContain('operator approval of the exact spec hash');
+		expect(instruction).toContain('runModuleMigrations once');
+		expect(instruction).toContain('shared Table and TableCard');
+		expect(instruction).toContain("fully qualified t('<module>.<key>') keys");
+		expect(instruction).toContain('context.capabilities');
+		expect(instruction).toContain('Administration, Modules');
+	});
+
+	it('requires an approved exact spec delta before an edit-module implementation', () => {
+		const instruction = composeInstruction(
+			findRole(DEFAULT_AGENT_ROLES, 'backend-engineer'),
+			{
+				moduleId: 'parties.core',
+				modulePath: 'modules/parties',
+				sessionKind: 'edit-module',
+				blueprint: 'edit-module@1.0.0',
+				allowedPaths: ['src/services/**'],
+			},
+		);
+		expect(instruction).toContain(
+			'author its spec delta first, then wait for operator approval of the exact spec hash before implementation',
+		);
+		expect(instruction).toContain(
+			'Any later spec edit, request for changes, or added module invalidates the approval',
+		);
 	});
 });
 

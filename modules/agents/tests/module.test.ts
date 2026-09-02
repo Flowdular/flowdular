@@ -28,6 +28,7 @@ function runtime(provider: AgentProvider) {
 		concurrency: 1,
 		leaseMs: 1_000,
 	});
+	worker.start();
 	const service = new AgentService(repository, harness, worker);
 	return { repository, service, worker };
 }
@@ -71,6 +72,152 @@ describe('agents.core', () => {
 		expect(active.revision).toBe(2);
 		expect(repository.verifyAuditChain('tenant-a')).toBe(true);
 		expect(repository.listAuditEvents('tenant-a', 10)).toHaveLength(2);
+	});
+
+	it('archives and deletes only unused definitions and skills', () => {
+		const provider: AgentProvider = {
+			id: 'test-provider',
+			execute: async () => ({
+				output: 'ok',
+				usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+				finishReason: 'stop',
+			}),
+		};
+		const { repository, service } = runtime(provider);
+		const skill = service.createSkill('tenant-a', 'owner-a', {
+			key: 'safe-delete',
+			name: 'Safe delete',
+			description: 'Exercises lifecycle protections.',
+			instructions: 'Follow the bounded procedure.',
+			requiredTools: [],
+			status: 'draft',
+		});
+		const activeSkill = service.updateSkill('tenant-a', skill.id, 'owner-a', {
+			key: skill.key,
+			name: skill.name,
+			description: skill.description,
+			instructions: skill.instructions,
+			requiredTools: skill.requiredTools,
+			status: 'active',
+			expectedRevision: skill.revision,
+		});
+		const agent = service.createAgent('tenant-a', 'owner-a', {
+			...input,
+			key: 'safe-delete-agent',
+			skillIds: [activeSkill.id],
+		});
+		const activeAgent = service.updateAgent('tenant-a', agent.id, 'owner-a', {
+			...input,
+			key: agent.key,
+			skillIds: [activeSkill.id],
+			status: 'active',
+			expectedRevision: agent.revision,
+		});
+		expect(() =>
+			service.archiveSkill(
+				'tenant-a',
+				activeSkill.id,
+				'owner-a',
+				activeSkill.revision,
+			),
+		).toThrow('Remove this skill from every active agent');
+
+		const archivedAgent = service.archiveAgent(
+			'tenant-a',
+			activeAgent.id,
+			'owner-a',
+			activeAgent.revision,
+		);
+		const archivedSkill = service.archiveSkill(
+			'tenant-a',
+			activeSkill.id,
+			'owner-a',
+			activeSkill.revision,
+		);
+		expect(() =>
+			service.deleteSkill(
+				'tenant-a',
+				archivedSkill.id,
+				'owner-a',
+				archivedSkill.revision,
+			),
+		).toThrow('Remove this skill from every agent');
+
+		const detachedAgent = service.updateAgent(
+			'tenant-a',
+			archivedAgent.id,
+			'owner-a',
+			{
+				...input,
+				key: archivedAgent.key,
+				skillIds: [],
+				status: 'archived',
+				expectedRevision: archivedAgent.revision,
+			},
+		);
+		service.deleteSkill(
+			'tenant-a',
+			archivedSkill.id,
+			'owner-a',
+			archivedSkill.revision,
+		);
+		service.deleteAgent(
+			'tenant-a',
+			detachedAgent.id,
+			'owner-a',
+			detachedAgent.revision,
+		);
+		expect(service.listSkills('tenant-a')).toEqual([]);
+		expect(service.listAgents('tenant-a')).toEqual([]);
+		expect(
+			repository.listAuditEvents('tenant-a', 20).map((event) => event.action),
+		).toEqual(
+			expect.arrayContaining([
+				'agent.archived',
+				'agent.deleted',
+				'agent-skill.archived',
+				'agent-skill.deleted',
+			]),
+		);
+	});
+
+	it('refuses to delete an archived agent with durable run evidence', async () => {
+		const provider: AgentProvider = {
+			id: 'test-provider',
+			execute: async () => ({
+				output: 'ok',
+				usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+				finishReason: 'stop',
+			}),
+		};
+		const { service } = runtime(provider);
+		const created = service.createAgent('tenant-a', 'owner-a', input);
+		const active = service.updateAgent('tenant-a', created.id, 'owner-a', {
+			...input,
+			status: 'active',
+			expectedRevision: created.revision,
+		});
+		await service.enqueueRun('tenant-a', 'owner-a', [], {
+			agentId: active.id,
+			trigger: 'service',
+			input: 'Keep this evidence.',
+			toolGrants: [],
+			idempotencyKey: 'keep-run-evidence',
+		});
+		const archived = service.archiveAgent(
+			'tenant-a',
+			active.id,
+			'owner-a',
+			active.revision,
+		);
+		expect(() =>
+			service.deleteAgent(
+				'tenant-a',
+				archived.id,
+				'owner-a',
+				archived.revision,
+			),
+		).toThrow('run history');
 	});
 
 	it('returns a queued run before detached provider work completes', async () => {
@@ -146,5 +293,56 @@ describe('agents.core', () => {
 		const first = await service.enqueueRun('tenant-a', 'owner-a', [], request);
 		const second = await service.enqueueRun('tenant-a', 'owner-a', [], request);
 		expect(second.id).toBe(first.id);
+	});
+
+	it('resolves context variables into the run snapshot but keeps the raw template', async () => {
+		let seenInstructions = '';
+		const provider: AgentProvider = {
+			id: 'test-provider',
+			execute: async (context) => {
+				seenInstructions = context.request.definition.instructions;
+				return {
+					output: 'ok',
+					usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+					finishReason: 'stop',
+				};
+			},
+		};
+		const { service } = runtime(provider);
+		const template =
+			'You act for {{ context.tenantName }} on {{ context.today }} as {{ context.user.displayName }}.';
+		const created = service.createAgent('tenant-a', 'owner-a', {
+			...input,
+			instructions: template,
+		});
+		const active = service.updateAgent('tenant-a', created.id, 'owner-a', {
+			...input,
+			instructions: template,
+			status: 'active',
+			expectedRevision: created.revision,
+		});
+		const queued = await service.enqueueRun(
+			'tenant-a',
+			'owner-a',
+			['agents.runs.execute'],
+			{
+				agentId: active.id,
+				trigger: 'playground',
+				input: 'Draft the reply.',
+				toolGrants: [],
+			},
+			{
+				tenantName: 'Acme Manufacturing',
+				userDisplayName: 'Ada Lovelace',
+				userEmail: 'ada@acme.test',
+			},
+		);
+		await waitForTerminal(service, 'tenant-a', queued.id);
+		expect(seenInstructions).toContain('You act for Acme Manufacturing on ');
+		expect(seenInstructions).toContain('as Ada Lovelace.');
+		expect(seenInstructions).toMatch(/on \d{4}-\d{2}-\d{2} as/);
+		expect(seenInstructions).not.toContain('{{');
+		const stored = service.listAgents('tenant-a')[0];
+		expect(stored?.instructions).toBe(template);
 	});
 });

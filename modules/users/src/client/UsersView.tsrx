@@ -9,13 +9,16 @@ import {
 	Kpi,
 	PageHeader,
 	SearchField,
+	TableCard,
 } from '@coreloom/ui';
+import { activeLocale, t } from '@coreloom/client';
 import type { TenantMember } from '@coreloom/module-auth';
 import { cell, createStore, useValue } from 'segment-state';
 import {
 	ApiError,
 	assignMemberRole,
 	createTenantUser,
+	inviteTenantMember,
 	loadTenantUsers,
 	removeMember,
 	renameMember,
@@ -24,10 +27,11 @@ import {
 	setMemberScopes,
 	setMemberStatus,
 } from './api.ts';
+import { memberColumns } from './member-columns.tsrx';
 import { MemberDrawer } from './MemberDrawer.tsrx';
 import { createUsersClientState, replaceMember } from './state.ts';
 import { UserAccountForm } from './UserAccountForm.tsrx';
-import { UsersTable } from './UsersTable.tsrx';
+import { InviteMemberForm } from './InviteMemberForm.tsrx';
 
 export interface UsersViewProps {
 	readonly csrfToken: string;
@@ -57,6 +61,10 @@ export function UsersView(props: UsersViewProps) @{
 	const [query, setQuery] = useValue(usersState.state.query);
 	const [formOpen, setFormOpen] = useValue(usersState.state.formOpen);
 	const [formSession, setFormSession] = useValue(usersState.state.formSession);
+	const [inviteOpen, setInviteOpen] = useValue(usersState.state.inviteOpen);
+	const [inviteSession, setInviteSession] = useValue(
+		usersState.state.inviteSession,
+	);
 	const [selectedAccountId, setSelectedAccountId] = useValue(
 		usersState.state.selectedAccountId,
 	);
@@ -64,16 +72,19 @@ export function UsersView(props: UsersViewProps) @{
 	const [removeOpen, setRemoveOpen] = useValue(confirm.state.remove);
 	const selected =
 		users.find((user) => user.accountId === selectedAccountId) ?? null;
-	const roleNames = new Map(roles.map((role) => [role.key, role.name]));
+	const columns = memberColumns(
+		new Map(roles.map((role) => [role.key, role.name])),
+	);
 	const owners = users.filter((user) => user.role === 'owner');
-	const term = query.trim().toLocaleLowerCase('en-US');
+	const locale = activeLocale();
+	const term = query.trim().toLocaleLowerCase(locale);
 	const visible =
 		term === ''
 			? users
 			: users.filter(
 					(user) =>
-						user.displayName.toLocaleLowerCase('en-US').includes(term) ||
-							user.email.toLocaleLowerCase('en-US').includes(term),
+						user.displayName.toLocaleLowerCase(locale).includes(term) ||
+							user.email.toLocaleLowerCase(locale).includes(term),
 				);
 
 	const refresh = async () => {
@@ -96,7 +107,7 @@ export function UsersView(props: UsersViewProps) @{
 				transaction.set(usersState.state.status, 'idle');
 			}, 'users/loaded');
 		} catch (loadError) {
-			setError(message(loadError, 'Could not load users.'));
+			setError(message(loadError, t('users.error.load')));
 			setStatus(
 				loadError instanceof ApiError && loadError.status === 403
 					? 'denied'
@@ -132,7 +143,7 @@ export function UsersView(props: UsersViewProps) @{
 			setNotice(done);
 			setStatus('idle');
 		} catch (mutationError) {
-			setError(message(mutationError, 'The change could not be saved.'));
+			setError(message(mutationError, t('users.error.save')));
 			setStatus('idle');
 		}
 	};
@@ -165,7 +176,31 @@ export function UsersView(props: UsersViewProps) @{
 			setFormOpen(false);
 			setStatus('idle');
 		} catch (createError) {
-			setError(message(createError, 'Could not create the user.'));
+			setError(message(createError, t('users.error.create')));
+			setStatus('idle');
+		}
+	};
+
+	const submitInvite = async (event: SubmitEvent) => {
+		event.preventDefault();
+		const element = event.currentTarget as HTMLFormElement;
+		const form = new FormData(element);
+		const email = formValue(form, 'email');
+		setStatus('submitting');
+		setError('');
+		setNotice('');
+		try {
+			await inviteTenantMember(
+				{ email, role: formValue(form, 'role') },
+				props.csrfToken,
+			);
+			element.reset();
+			setInviteSession((current) => current + 1);
+			setInviteOpen(false);
+			setNotice(t('users.invite.sent', { email }));
+			setStatus('idle');
+		} catch (inviteError) {
+			setError(message(inviteError, t('users.invite.error')));
 			setStatus('idle');
 		}
 	};
@@ -200,95 +235,115 @@ export function UsersView(props: UsersViewProps) @{
 				transaction.set(usersState.state.status, 'idle');
 			}, 'users/removed');
 		} catch (removeError) {
-			setError(message(removeError, 'Could not remove the member.'));
+			setError(message(removeError, t('users.error.remove')));
 			setStatus('idle');
 		}
 	};
 
 	<div class="ui-view">
 		<PageHeader
-			eyebrow="Administration"
-			title="Users"
-			description="Accounts, roles, and scopes inside the active workspace."
+			eyebrow={t('users.page.eyebrow')}
+			title={t('users.page.title')}
+			description={t('users.page.description')}
 		>
 			<Button size="sm" onClick={() => void refresh()}>
 				<Icon name="refresh" size={14} />
-				Refresh
+				{t('users.action.refresh')}
 			</Button>
 			@if (props.canManage) {
-				<Button
-					size="sm"
-					variant="primary"
-					disabled={status === 'denied'}
-					onClick={() => {
-						setError('');
-						setFormOpen(true);
-					}}
-				>
-					<Icon name="plus" size={14} />
-					New account
-				</Button>
+				<>
+					<Button
+						size="sm"
+						disabled={status === 'denied'}
+						onClick={() => {
+							setError('');
+							setNotice('');
+							setInviteOpen(true);
+						}}
+					>
+						<Icon name="plus" size={14} />
+						{t('users.invite.action')}
+					</Button>
+					<Button
+						size="sm"
+						variant="primary"
+						disabled={status === 'denied'}
+						onClick={() => {
+							setError('');
+							setFormOpen(true);
+						}}
+					>
+						<Icon name="plus" size={14} />
+						{t('users.action.newAccount')}
+					</Button>
+				</>
 			}
 		</PageHeader>
 		@if (status === 'denied') {
 			<section class="ui-card">
-				<EmptyState icon="shield" title="Access denied">
-					Reading the user directory needs the users.members.read scope.
-				</EmptyState>
+				<EmptyState icon="shield" title={t('users.denied.title')}>{t(
+					'users.denied.members',
+				)}</EmptyState>
 			</section>
 		} @else {
 			<>
-				@if (error && !formOpen && !selected) {
+				@if (error && !formOpen && !inviteOpen && !selected) {
 					<Alert>{error}</Alert>
 				}
-				<section class="ui-card">
-					<div class="ui-card__head">
-						<span class="ui-card__title">
-							Members
-							<small>
-								{owners.length + ' owners · ' + users.length + ' accounts'}
-							</small>
-						</span>
-						<SearchField
-							value={query}
-							placeholder="Filter by name or email"
-							label="Filter members"
-							onInput={setQuery}
-						/>
-					</div>
-					@if (status === 'loading' && users.length === 0) {
-						<p class="ui-table__empty">Loading tenant accounts…</p>
-					} @else if (visible.length === 0) {
-						<EmptyState
-							icon="users"
-							title={term === '' ? 'No accounts yet' : 'No matching accounts'}
-						>
-							{term === ''
-								? 'Create the first account for this workspace.'
-								: 'No account in this workspace matches the current filter.'}
-						</EmptyState>
-					} @else {
-						<UsersTable
-							users={visible}
-							roleNames={roleNames}
-							canManage={props.canManage}
-							onSelect={openMember}
-						/>
-					}
-					<p class="ui-note">
-						<Icon name="shield" size={14} />
-						<span>
-							Roles decide what an account may reach. Owners administer the
-							workspace; every other role carries exactly the scopes it lists.
-						</span>
-					</p>
-				</section>
+				@if (notice && !selected) {
+					<Alert tone="info">{notice}</Alert>
+				}
+				<TableCard
+					title={t('users.table.title')}
+					count={t('users.table.count', {
+						owners: owners.length,
+						accounts: users.length,
+					})}
+					search={<SearchField
+						value={query}
+						placeholder={t('users.search.placeholder')}
+						label={t('users.search.label')}
+						onInput={setQuery}
+					/>}
+					caption={t('users.table.caption')}
+					columns={columns}
+					rows={visible}
+					rowKey={(user) => user.accountId}
+					status={status === 'loading' && users.length === 0
+						? 'loading'
+						: 'idle'}
+					loadingLabel={t('users.table.loading')}
+					filtered={term !== ''}
+					empty={{
+						icon: 'users',
+						title: t('users.table.emptyTitle'),
+						hint: t('users.table.emptyHint'),
+					}}
+					emptyFiltered={{
+						icon: 'users',
+						title: t('users.table.emptyFilteredTitle'),
+						hint: t('users.table.emptyFilteredHint'),
+					}}
+					actions={props.canManage
+						? (user) => [
+								{
+									id: 'manage',
+									label: t('users.action.manage'),
+									icon: 'user',
+									onSelect: () => openMember(user.accountId),
+								},
+							]
+						: undefined}
+					actionsLabel={t('users.table.actions')}
+					noteIcon="shield"
+					note={t('users.table.note')}
+				/>
 			</>
 		}
 		<Drawer
 			open={formOpen}
-			title="New account"
-			subtitle="Direct workspace access"
+			title={t('users.drawer.newTitle')}
+			subtitle={t('users.drawer.newSubtitle')}
 			onClose={() => setFormOpen(false)}
 		>
 			<UserAccountForm
@@ -303,8 +358,24 @@ export function UsersView(props: UsersViewProps) @{
 			/>
 		</Drawer>
 		<Drawer
+			open={inviteOpen}
+			title={t('users.invite.title')}
+			subtitle={t('users.invite.subtitle')}
+			onClose={() => setInviteOpen(false)}
+		>
+			<InviteMemberForm
+				key={'invite-form-' + inviteSession}
+				roles={roles}
+				canAssignOwner={actorIsOwner}
+				busy={status === 'submitting'}
+				error={inviteOpen ? error : ''}
+				onCancel={() => setInviteOpen(false)}
+				onSubmit={(event) => void submitInvite(event)}
+			/>
+		</Drawer>
+		<Drawer
 			open={selected !== null}
-			title={selected?.displayName ?? 'Member'}
+			title={selected?.displayName ?? t('users.drawer.member')}
 			subtitle={selected?.email ?? ''}
 			width="lg"
 			onClose={closeMember}
@@ -326,19 +397,21 @@ export function UsersView(props: UsersViewProps) @{
 							displayName,
 							props.csrfToken,
 						),
-						'Display name saved.',
+						t('users.notice.nameSaved'),
 					)}
 					onAssignRole={(role) => void mutate(
 						() => assignMemberRole(selected.accountId, role, props.csrfToken),
-						'Role assigned.',
+						t('users.notice.roleAssigned'),
 					)}
 					onSetScopes={(scopes) => void mutate(
 						() => setMemberScopes(selected.accountId, scopes, props.csrfToken),
-						'Scopes saved.',
+						t('users.notice.scopesSaved'),
 					)}
 					onSetStatus={(next) => void mutate(
 						() => setMemberStatus(selected.accountId, next, props.csrfToken),
-						next === 'disabled' ? 'Account disabled.' : 'Account enabled.',
+						next === 'disabled'
+							? t('users.notice.accountDisabled')
+							: t('users.notice.accountEnabled'),
 					)}
 					onResetPassword={(temporaryPassword) => void mutate(
 						() => resetMemberPassword(
@@ -346,16 +419,16 @@ export function UsersView(props: UsersViewProps) @{
 							temporaryPassword,
 							props.csrfToken,
 						),
-						'Temporary password set. The member must change it at sign-in.',
+						t('users.notice.passwordSet'),
 					)}
 					onRevokeSessions={() => void mutate(async () => {
 						const revoked = await revokeMemberSessions(
 							selected.accountId,
 							props.csrfToken,
 						);
-						setNotice(revoked + ' session(s) ended.');
+						setNotice(t('users.notice.sessionsCount', { count: revoked }));
 						return null;
-					}, 'Sessions ended.')}
+					}, t('users.notice.sessionsEnded'))}
 					onRemove={() => setRemoveOpen(true)}
 					onClose={closeMember}
 				/>
@@ -363,15 +436,14 @@ export function UsersView(props: UsersViewProps) @{
 		</Drawer>
 		<ConfirmDialog
 			open={removeOpen}
-			title="Remove this member?"
-			confirmLabel="Remove member"
+			title={t('users.remove.title')}
+			confirmLabel={t('users.member.remove')}
 			busy={status === 'submitting'}
 			onConfirm={() => void remove()}
 			onCancel={() => setRemoveOpen(false)}
-		>
-			{(selected?.displayName ?? 'The member') +
-				' loses access to this workspace immediately. Sessions and API tokens for this membership are revoked.'}
-		</ConfirmDialog>
+		>{t('users.remove.description', {
+			name: selected?.displayName ?? t('users.remove.fallbackName'),
+		})}</ConfirmDialog>
 	</div>
 }
 
@@ -392,11 +464,13 @@ export function UsersDashboardWidget() @{
 		}).catch(() => undefined).finally(() => setStatus('idle'));
 	}, []);
 	<Kpi
-		label="Team"
-		value={status === 'loading' ? '…' : String(users.length)}
-		note="Accounts with access to the current organization."
+		label={t('users.widget.label')}
+		value={status === 'loading'
+			? '…'
+			: new Intl.NumberFormat(activeLocale()).format(users.length)}
+		note={t('users.widget.note')}
 		href="/users"
-		linkLabel="Manage users"
+		linkLabel={t('users.widget.link')}
 	/>
 }
 
@@ -406,7 +480,7 @@ export function UsersSetupStep() @{
 		<span>
 			<Icon name="users" size={16} />
 		</span>
-		<strong>Invite your team</strong>
-		<small>Accounts, roles, and scoped access</small>
+		<strong>{t('users.setup.title')}</strong>
+		<small>{t('users.setup.description')}</small>
 	</a>
 }

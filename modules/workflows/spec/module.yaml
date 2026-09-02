@@ -1,0 +1,221 @@
+schemaVersion: 1
+id: workflows.core
+specVersion: 0.1.0
+status: approved
+name: Agentic Workflows
+description: Builds, publishes, simulates, and executes durable tenant-scoped DAG workflows whose versioned nodes coordinate pinned agents, deterministic decisions, validated data, and registered module actions.
+profile: full
+capabilities:
+  - api
+  - database
+  - client
+  - translations
+  - integration
+dependencies:
+  - id: system.core
+    range: ^0.1.0
+  - id: auth.core
+    range: ^0.6.0
+  - id: agents.core
+    range: ^0.6.0
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - Every workflow definition, revision, run, node attempt, edge transfer, and event is owned by exactly one trusted tenant.
+  - Version one executes directed acyclic graphs only. A graph with a cycle, unreachable node, dangling edge, incompatible port, or missing terminal output cannot be published or run.
+  - A published workflow revision is immutable and content-addressed. Editing creates a new draft revision without changing prior runs or their evidence.
+  - Publishing pins the exact revision of every referenced agent and the exact contract version of every referenced action. A missing pinned dependency refuses publication or execution instead of silently choosing the latest version.
+  - Workflows reaches agents.core only through versioned public capabilities for agent catalog, exact-revision enqueue, observation, cancellation, and registered action execution. It never reads or writes the agents database.
+  - A workflow definition grants no authority. Live execution intersects the immutable node plan with the initiating actor's trusted permission snapshot and every referenced agent or action permission.
+  - Manual and module-originated runs retain the real user or agent actor. Schedule and webhook runs retain a service actor with the configuring user snapshot, while trigger kind and identifier remain separate execution-origin fields.
+  - Graph configuration contains declarative typed literal, path, and template mappings only. Arbitrary JavaScript, expressions with side effects, source code, shell commands, dynamic imports, and runtime-downloaded code are forbidden.
+  - Input, output, agent-decision, gate, validator, action, merge, and terminal output nodes communicate only through declared, schema-bound ports and immutable JSON envelopes.
+  - An agent-decision node must return a schema-valid pass or fail decision with bounded structured data. Free-form text never decides a branch.
+  - Deterministic gate nodes use a versioned allowlisted logic language. Agentic judgment is represented by an explicit agent-decision node, never hidden inside a gate.
+  - A validator node emits pass only for data that satisfies its pinned schema and emits bounded structured validation errors on fail.
+  - An action node invokes only a registered, versioned action contract through agents.core, under the required permissions, input schema, timeout, output bound, idempotency key, and audit boundary.
+  - Version one admits only read and workspace-write actions. External and destructive actions are excluded from the workflow catalog, publication, and execution until a later approved human-approval and approval-receipt contract exists.
+  - Each live workflow run durably snapshots its workflow revision, actor, origin, permission digest, mode, input, limits, and idempotency key before enqueue returns.
+  - Workflow workers claim runs with expiring leases, renew live claims, and recover queued or expired work after restart without concurrently owning the same run.
+  - A node runs at most once successfully. Retries create immutable attempts and reuse a stable side-effect idempotency key so recovery cannot duplicate an agent enqueue or action mutation.
+  - Ready nodes execute in a deterministic topological order. Version one does not promise parallel branch execution, even when independent nodes are ready.
+  - Dry-run is a stateless validation request, not a workflow invocation. It returns a typed validation report without persisting run history, node attempts, events, payloads, usage, cost, or workflow audit evidence, calling a provider, invoking an action, or writing business data.
+  - Simulation executes deterministic gates, validation, and mappings against supplied fixtures, emits a virtual event plan with simulated durations, performs no real sleep, and never calls a provider or action. Its persisted events distinguish wall-clock recorded time from virtual elapsed time, and its usage and cost are explicitly not applicable.
+  - Live mode is the only mode that may enqueue an agent or invoke an action. It uses the same authorization, budgets, output bounds, tenancy, and audit controls as direct agent and tool execution.
+  - Workflow run and node histories are append-only while retained. Every status transition, attempt, edge settlement, refusal, retry schedule, cancellation request or acknowledgement, ignored late result, and terminal result receives a schema-versioned ordered durable event from the formal event catalog.
+  - Run status, node execution status, and immutable node-attempt technical status are separate projections. Pass or fail is a schema-bound outcome port of a technically successful decision attempt, never an execution status or error by itself.
+  - A retryable attempt failure durably records its error classification, semantic attempt group, selected backoff, and next attempt time before the worker waits. Recovery schedules the next immutable attempt from that evidence and never recomputes a different delay.
+  - Run history records workflow and agent revisions, actor, origin, mode, status, duration, usage and cost, safe redacted input and output, failures, node attempts, edge evidence, and audit correlation without storing credentials or unrestricted request bodies.
+  - Browser connections observe persisted workflow events and never own execution. A stream resumes after reload from one run-bound sequence cursor, replays a bounded page, emits non-advancing heartbeats, and closes only after a terminal event is flushed.
+  - Cancellation is durable and cooperative. It prevents new nodes, requests cancellation of an in-flight child agent or action through its public capability, records acknowledgement or non-acknowledgement, and records but never routes a result that arrives after cancellation.
+  - Execution payloads and evidence previews are separate. A bounded encrypted execution payload may be retained only while execution or recovery needs it; every response, event, history row, and audit record uses a scope-filtered redacted preview with an explicit available, redacted, truncated, expired, or absent state. Secrets, provider credentials, session tokens, hidden reasoning, and values marked secret never enter workflow definitions, evidence previews, events, or audit metadata.
+  - Automated payload retention may remove separately stored payload blobs only after appending a retention event. Run identity, status, revisions, attempts, durations, cost, hashes, and audit linkage remain queryable.
+  - Capability absence is detected through the platform registry returning null. A caller hides its optional workflow feature or refuses clearly before invocation; no absent module can return its own unavailable result.
+  - automations.core remains a separate optional clock and ingress module. It may trigger workflows through an integration capability but workflows.core owns no schedules, webhook secrets, or polling clock.
+  - A live run is bounded by graph size, payload size, node attempts, total duration, and lineage depth. Cross-workflow invocation and cycles between workflows are not supported in version one.
+  - Interactive history and audit pages use opaque versioned cursors bound to tenant, filters, sort order, and the first-page snapshot boundary. Malformed, foreign, or mismatched cursors are refused instead of being interpreted loosely.
+  - Usage and cost use a versioned typed rollup with integer token counts, integer micro-USD amounts, pricing snapshot references, provisional or final state, and explicit unpriced child and action counts. Dry-run has no rollup and simulation uses not-applicable rollups.
+  - Every state transition named as audit-required commits its run event, projection update, and hash-chained workflow audit event atomically. Edge data events remain ordered run evidence unless their transition also changes audited execution state.
+permissions:
+  - id: workflows.definitions.read
+    description: Read workflow definitions, drafts, published revisions, and validation reports in the active tenant.
+  - id: workflows.definitions.manage
+    description: Create, edit, archive, and delete eligible workflow drafts in the active tenant.
+  - id: workflows.definitions.publish
+    description: Publish a validated immutable workflow revision in the active tenant.
+  - id: workflows.runs.read
+    description: Read workflow runs, node attempts, edge evidence, safe payload previews, costs, and execution events in the active tenant.
+  - id: workflows.runs.execute
+    description: Dry-run drafts, simulate drafts or published workflows, and execute published workflows in the active tenant within the actor's existing scopes.
+  - id: workflows.runs.cancel
+    description: Request cooperative cancellation of live workflow runs in the active tenant.
+dataOwnership:
+  - workflows.core owns workflow identity, lifecycle status, mutable drafts, immutable published graph revisions, graph checksums, canvas layout, schemas, mappings, and pinned dependency references.
+  - workflows.core owns durable workflow runs, invocation idempotency records, node attempts, edge transfer evidence, ordered run events, safe redacted payload snapshots, usage and cost rollups, and workflow-local audit evidence.
+  - agents.core owns agent definitions, exact agent revisions, provider execution, child agent runs, model usage, provider costs, and registered action execution contracts. Workflows stores references and correlation identifiers only.
+  - Business modules own their records and service operations. An action node can reach them only through a registered action contract and never through their repositories or databases.
+  - auth.core owns accounts, memberships, sessions, scopes, and authorization evidence. Workflows stores the bounded invocation snapshot needed for durable execution, not credentials or session tokens.
+  - automations.core owns schedules, webhook definitions, trigger secrets, and ingress audit. A triggered workflow stores only the service actor, configuring user snapshot, origin kind, and source reference.
+acceptanceScenarios:
+  - id: WORKFLOW-CREATE
+    given: A principal with workflow definition management permission supplies a valid name and empty draft graph.
+    when: The workflow is created.
+    then: A tenant-owned draft at revision one is stored without publishing or starting execution.
+  - id: WORKFLOW-DRAFT-CONCURRENCY
+    given: Two editors opened the same draft revision.
+    when: Both submit changes with the same expected revision.
+    then: The first save creates the next draft revision and the second receives a stable revision conflict without overwriting it.
+  - id: WORKFLOW-GRAPH-VALIDATE
+    given: A draft contains a cycle, dangling edge, incompatible port, unreachable node, arbitrary script, or missing terminal output.
+    when: Validation or publication is requested.
+    then: The request returns node and edge addressed errors and persists no published revision.
+  - id: WORKFLOW-PUBLISH
+    given: A schema-valid DAG references active exact agent revisions and registered exact read or workspace-write action contract versions available to the publisher.
+    when: A principal with publication permission publishes it.
+    then: An immutable content-addressed revision is created and becomes the workflow's published revision.
+  - id: WORKFLOW-PINNED-DEPENDENCY
+    given: A draft references an agent without a retained exact revision or an action whose contract version no longer exists.
+    when: Publication or live preflight is requested.
+    then: The operation is refused with the missing dependency identified and no latest-version substitution occurs.
+  - id: WORKFLOW-MODULE-INVOKE
+    given: A module endpoint has a trusted tenant, real user or agent actor, permission snapshot, published workflow key, bounded JSON input, and stable idempotency key.
+    when: It resolves and invokes the public workflows.execution.v1 capability, or the registry reports that the capability is absent.
+    then: A present capability durably returns a queued run or stable refusal, while an absent capability is handled by the caller by hiding the optional feature or refusing clearly without direct access to workflow storage.
+  - id: WORKFLOW-AGENT-NODE
+    given: A live run reaches an agent node pinned to an active agent revision and its execution grant contains the required scopes.
+    when: The node starts.
+    then: It enqueues the exact revision once through agents.core, records the child run identifier, resumes from durable child events, and emits the bounded structured output to its success port.
+  - id: WORKFLOW-AGENT-DECISION
+    given: A live or simulated run reaches an agent-decision node with declared pass and fail output schemas.
+    when: The node returns a valid structured decision.
+    then: Exactly one of pass or fail emits with its validated data and a malformed or free-form response routes to the node error policy instead of choosing a branch.
+  - id: WORKFLOW-GATE
+    given: A deterministic gate receives a schema-valid input envelope.
+    when: Its versioned allowlisted predicate is evaluated.
+    then: Exactly one pass or fail port emits the unchanged input and the evaluation is reproducible from stored evidence.
+  - id: WORKFLOW-VALIDATOR
+    given: A validator node has a pinned JSON schema and receives an envelope.
+    when: The envelope is checked.
+    then: Valid data emits on pass and invalid data emits bounded path-addressed validation errors on fail without changing business data.
+  - id: WORKFLOW-ACTION
+    given: A live run reaches a read or workspace-write action node pinned to a registered contract version and the actor snapshot contains every required permission.
+    when: The node invokes the action with mapped schema-valid input.
+    then: agents.core enforces the contract, timeout, output bound, and stable idempotency key, and the workflow stores safe correlation evidence rather than target-module internals.
+  - id: WORKFLOW-ACTION-DENY
+    given: An action is unknown, version-mismatched, ungranted, input-invalid, not idempotency-capable, external, or destructive.
+    when: A live node attempts it.
+    then: It is denied before the action service runs and the workflow records a safe stable refusal code.
+  - id: WORKFLOW-DATA-FLOW
+    given: A node emits a payload to several compatible outgoing edges.
+    when: The execution advances.
+    then: Each edge records the same immutable payload hash and schema identity, target mappings use literal, path, or template bindings only, and no mapping can execute code.
+  - id: WORKFLOW-DETERMINISTIC-ORDER
+    given: Several nodes become ready in one DAG step.
+    when: Version one schedules them.
+    then: It starts them sequentially in the compiled stable topological order and records that order in the run plan.
+  - id: WORKFLOW-DURABLE
+    given: An authorized caller invokes a published workflow.
+    when: Enqueue succeeds.
+    then: The run, revision, actor, origin, permissions digest, input hash, limits, mode, and idempotency key commit before the accepted response returns.
+  - id: WORKFLOW-RECOVER
+    given: The process stops after an action or child agent was requested but before the node settled.
+    when: Another worker claims the expired workflow lease.
+    then: It uses the stored child identifier and node idempotency key to observe or resume the same work without duplicating the side effect.
+  - id: WORKFLOW-RETRY
+    given: A node fails with a declared retryable error and has attempts remaining.
+    when: The retry is scheduled and the worker restarts before its bounded backoff elapses.
+    then: The failed attempt and retry-scheduled event retain the error classification, semantic attempt group, selected backoff, and next attempt time, and recovery appends a new immutable attempt with the same side-effect idempotency key only at that time while never retrying a permanent refusal.
+  - id: WORKFLOW-DRY-RUN
+    given: An editor has a draft graph and sample input.
+    when: Dry-run is requested.
+    then: The server returns a typed validation response containing a report version, graph checksum, validity, node and edge addressed issues, compiled order, reference summary, permission summary, and limits without assigning a run id, persisting invocation history, or invoking any agent, provider, action, or business mutation.
+  - id: WORKFLOW-SIMULATE
+    given: An editor supplies bounded fixtures and simulated durations for nondeterministic nodes.
+    when: Simulation is requested.
+    then: Deterministic mappings, gates, validators, and branching produce a complete persisted simulation event plan whose events store recorded time separately from virtual offset, whose usage and cost are not applicable, and whose safe evidence is produced without provider calls, action calls, business writes, or real sleep.
+  - id: WORKFLOW-LIVE
+    given: A published revision passes live preflight and the initiating actor holds workflow execution plus every node permission.
+    when: Live execution is confirmed.
+    then: The worker executes the pinned plan under the durable grant and every real agent or action appears in both workflow evidence and its owning audit boundary.
+  - id: WORKFLOW-HISTORY
+    given: The tenant has workflow runs in queued, intermediate, refused, cancelled, failed, and succeeded states.
+    when: An authorized reader filters and pages run history.
+    then: Results are tenant-scoped, ordered by queued time and run id descending, and paged with an opaque versioned cursor bound to tenant, filters, sort, and the first-page snapshot boundary, while malformed, foreign, or mismatched cursors are refused and payload absence never changes row positions.
+  - id: WORKFLOW-NODE-HISTORY
+    given: A run contains retries, branching, skipped nodes, child agents, and actions.
+    when: An authorized reader opens the run.
+    then: Each node exposes its execution projection separately from immutable technically started or terminal attempts, with pass or fail represented only as a normal outcome port, plus duration, typed payload evidence state, failure or refusal, child correlation, usage, and cost without hidden reasoning or secrets.
+  - id: WORKFLOW-EDGE-EVIDENCE
+    given: A run traversed and closed graph branches.
+    when: Its execution detail is read.
+    then: Every edge shows emitted, closed, or skipped status with source attempt, target, outcome port, schema, payload hash, bounded redacted preview state, size, settled time, and stable settlement reason.
+  - id: WORKFLOW-STREAM-RESUME
+    given: A client observed workflow event sequence N and then reloaded or disconnected.
+    when: It reconnects with a run-bound Last-Event-ID cursor or matching afterSequence N.
+    then: Persisted schema-versioned events after N replay in bounded order before live events continue, non-advancing heartbeats do not change the cursor, a replay boundary tells a lagging client where to continue, a foreign or conflicting cursor is refused, and the stream closes only after flushing the terminal event without starting or cancelling the run.
+  - id: WORKFLOW-CANCEL
+    given: A queued or running live workflow exists.
+    when: An authorized principal requests cancellation twice.
+    then: One durable cancel request prevents new nodes, requests cancellation from an in-flight child agent or action, records acknowledgement, non-acknowledgement, or unsupported cancellation, observes accepted work to terminal, records and discards any late output, and settles once as cancelled.
+  - id: WORKFLOW-ACTOR
+    given: Runs originate from a user action, an agent tool, a schedule, and a webhook.
+    when: Their history and audit events are read.
+    then: User and agent origins retain their real actor, schedule and webhook origins retain a service actor plus configuring user, and origin kind and reference remain separate from actor identity.
+  - id: WORKFLOW-DENY
+    given: A principal is unauthenticated, lacks a workflow permission, targets another tenant, or lacks a referenced node permission.
+    when: The principal reads, edits, publishes, executes, observes, or cancels a workflow.
+    then: The server refuses before cross-tenant data, graph details, provider execution, or action execution is exposed.
+  - id: WORKFLOW-COST
+    given: A workflow run contains priced, unpriced, and retried child agent runs.
+    when: The workflow settles.
+    then: It stores a versioned final rollup that names included child run identifiers, uses integer token counts and integer micro-USD with pricing snapshot references, separates priced from unpriced usage, counts each settled child and action once, and never invents an action or model price.
+  - id: WORKFLOW-PAYLOAD-EVIDENCE
+    given: A run contains a null value, a secret value, an oversized safe value, and an evidence payload whose retention expired.
+    when: An authorized reader opens its history.
+    then: The response distinguishes available, redacted, truncated, expired, and absent evidence states while preserving schema, hash, and original byte size, and never returns the separately encrypted execution payload or treats an expired value as null.
+  - id: WORKFLOW-EVENT-PROJECTION
+    given: A run has ordered catalog events for start, child wait, retry, cancellation, edge settlement, and terminal settlement.
+    when: Its run and node projections are rebuilt from sequence one.
+    then: The same legal run status, node execution status, immutable attempt statuses, outcomes, and terminal state are reproduced, while an unknown event schema or illegal transition is refused instead of guessed.
+  - id: WORKFLOW-AUDIT-ATOMICITY
+    given: A transition requires workflow audit evidence and the audit append fails.
+    when: The transition attempts to commit.
+    then: Its projection change, ordered run event, and hash-chain entry all roll back together, while successful edge-only evidence remains in the ordered run stream without being misrepresented as a hash-chain action.
+  - id: WORKFLOW-RETENTION
+    given: A run's separately stored payload blobs exceed the configured retention period.
+    when: Retention runs.
+    then: It removes only those blobs after appending a retention event while keeping status, revisions, actor, mode, attempts, edge hashes, durations, costs, failures, and audit linkage queryable.
+  - id: WORKFLOW-AUTOMATION
+    given: An optional automation integration is installed with both automations.core and workflows.core.
+    when: A schedule or signed webhook invokes a published workflow.
+    then: The workflow uses the public execution capability and service actor contract while schedule, webhook, and secret ownership stays in automations.core.
+  - id: WORKFLOW-LIFECYCLE
+    given: A workflow is no longer used.
+    when: A manager archives or deletes it.
+    then: Archiving prevents new live runs, existing runs finish, and deletion is allowed only for an unpublished draft with no run history while published revisions and evidence remain immutable.
+  - id: WORKFLOW-LIMITS
+    given: A graph, mapping, input, output, fixture, retry policy, runtime, or lineage exceeds its declared bound.
+    when: It is saved, published, simulated, or executed.
+    then: The operation fails with a stable limit code before unbounded memory, storage, provider, or action work begins.

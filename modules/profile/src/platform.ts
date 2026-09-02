@@ -17,5 +17,8 @@ export function createServerComposition(
 			context.workspaceRoot,
 		),
 	);
-	return { routes: createProfileRoutes(context.auth, runtime) };
+	return {
+		routes: createProfileRoutes(context.auth, runtime),
+		dispose: () => runtime.dispose(),
+	};
 }

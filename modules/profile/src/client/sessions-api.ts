@@ -1,3 +1,5 @@
+import { t } from '@coreloom/client/i18n';
+
 export interface OwnSession {
 	readonly id: string;
 	readonly tenantId: string;
@@ -28,7 +30,7 @@ export async function loadOwnSessions(): Promise<readonly OwnSession[]> {
 	return (
 		await payload<{ readonly sessions: readonly OwnSession[] }>(
 			response,
-			'Could not load your sessions.',
+			t('profile.sessions.errorLoad'),
 		)
 	).sessions;
 }
@@ -46,5 +48,5 @@ export async function revokeOwnSession(
 		credentials: 'same-origin',
 		body: JSON.stringify({ id }),
 	});
-	await payload<unknown>(response, 'Could not end the session.');
+	await payload<unknown>(response, t('profile.sessions.errorRevoke'));
 }

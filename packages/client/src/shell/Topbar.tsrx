@@ -3,6 +3,7 @@ import type {
 	AccountMenuContribution,
 	WidgetContribution,
 } from '../contributions.ts';
+import { t } from '../i18n/runtime.ts';
 import { SlotOutlet } from './ContributionOutlets.tsrx';
 import type { NavigateToView, ShellIdentity } from './types.ts';
 import { UserMenu } from './UserMenu.tsrx';
@@ -28,7 +29,7 @@ export function Topbar(props: TopbarProps) @{
 		</div>
 		<button class="topbar__search" type="button" onClick={props.onOpenCommand}>
 			<Icon name="search" size={16} />
-			<span>Search workspace</span>
+			<span>{t('shell.topbar.search')}</span>
 			<span class="ui-kbd">⌘K</span>
 		</button>
 		<SlotOutlet className="module-slot--topbar" widgets={props.widgets} />

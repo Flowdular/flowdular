@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "catalog.core",
 	"package": "@coreloom/module-catalog",
-	"version": "0.1.0",
+	"version": "0.4.0",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations"],
 	"platform": {

@@ -1,11 +1,15 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { ModuleSettingRecord, ModuleSettingValue } from '@coreloom/kernel';
+import {
+	runModuleMigrations,
+	type ActorKind,
+	type ModuleSettingRecord,
+	type ModuleSettingValue,
+} from '@coreloom/kernel';
 import { BUILTIN_ROLES } from '../acl/scopes.ts';
 import type {
 	ApiTokenRecord,
-	AuditEvent,
 	AuditQuery,
 	AuthPrincipal,
 	AuthSession,
@@ -13,31 +17,13 @@ import type {
 	SessionSummary,
 	TenantRole,
 } from '../domain/types.ts';
-import {
-	AUTH_MIGRATION_001,
-	AUTH_MIGRATION_002,
-	AUTH_MIGRATION_003,
-	AUTH_MIGRATION_004,
-	AUTH_MIGRATION_005,
-	AUTH_MIGRATION_006_TENANT_SLUG_BACKFILL,
-	AUTH_MIGRATION_006_TENANT_SLUG_COLUMN,
-	AUTH_MIGRATION_007_SANDBOX_SCOPES,
-	AUTH_MIGRATION_008_API_TOKENS,
-	AUTH_MIGRATION_009_MODULE_SETTINGS,
-	AUTH_MIGRATION_010_SIGN_IN_LOCKOUT,
-	AUTH_MIGRATION_011_PASSWORD_RESET_COLUMN,
-	AUTH_MIGRATION_011_SESSION_ID_BACKFILL,
-	AUTH_MIGRATION_011_SESSION_ID_COLUMN,
-	AUTH_MIGRATION_012_ROLE_ID_COLUMN,
-	AUTH_MIGRATION_012_ROLES_BACKFILL,
-	AUTH_MIGRATION_012_ROLES_TABLE,
-	AUTH_MIGRATION_013_AUDIT,
-} from './migration.ts';
+import { migrations } from './migration.ts';
 import {
 	DuplicateAccountError,
 	DuplicateRoleKeyError,
 	DuplicateTenantSlugError,
 	type AccountCredential,
+	type AuditActorEvent,
 	type AuditRecord,
 	type AuthRepository,
 	type CreateAccountInTenantRecord,
@@ -166,6 +152,8 @@ interface AuditRow {
 	tenant_id: string;
 	actor_account_id: string | null;
 	actor_label: string;
+	actor_kind: ActorKind;
+	actor_run_id: string | null;
 	action: string;
 	subject_type: string;
 	subject_id: string;
@@ -188,48 +176,14 @@ export function builtinRoleId(tenantId: string, key: string): string {
 
 export class SqliteAuthRepository implements AuthRepository {
 	readonly #database: DatabaseSync;
+	#closed = false;
 
 	constructor(path: string) {
 		if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
 		this.#database = new DatabaseSync(path, { timeout: 5000 });
 		this.#database.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
-		this.#database.exec(AUTH_MIGRATION_001);
-		this.#database.exec(AUTH_MIGRATION_002);
-		this.#database.exec(AUTH_MIGRATION_003);
-		this.#database.exec(AUTH_MIGRATION_004);
-		this.#database.exec(AUTH_MIGRATION_005);
-		if (!this.#hasColumn('auth_tenants', 'slug')) {
-			this.#database.exec(AUTH_MIGRATION_006_TENANT_SLUG_COLUMN);
-		}
-		this.#database.exec(AUTH_MIGRATION_006_TENANT_SLUG_BACKFILL);
-		this.#database.exec(AUTH_MIGRATION_007_SANDBOX_SCOPES);
-		this.#database.exec(AUTH_MIGRATION_008_API_TOKENS);
-		this.#database.exec(AUTH_MIGRATION_009_MODULE_SETTINGS);
-		this.#database.exec(AUTH_MIGRATION_010_SIGN_IN_LOCKOUT);
-		if (!this.#hasColumn('auth_sessions', 'id')) {
-			this.#database.exec(AUTH_MIGRATION_011_SESSION_ID_COLUMN);
-		}
-		if (!this.#hasColumn('auth_accounts', 'password_change_required')) {
-			this.#database.exec(AUTH_MIGRATION_011_PASSWORD_RESET_COLUMN);
-		}
-		this.#database.exec(AUTH_MIGRATION_011_SESSION_ID_BACKFILL);
-		this.#database.exec(AUTH_MIGRATION_012_ROLES_TABLE);
-		if (!this.#hasColumn('auth_memberships', 'role_id')) {
-			this.#database.exec(AUTH_MIGRATION_012_ROLE_ID_COLUMN);
-		}
+		runModuleMigrations(this.#database, migrations);
 		this.#seedBuiltinRoles();
-		this.#database.exec(AUTH_MIGRATION_012_ROLES_BACKFILL);
-		this.#database.exec(AUTH_MIGRATION_013_AUDIT);
-	}
-
-	#hasColumn(table: string, column: string): boolean {
-		return (
-			this.#database
-				.prepare(
-					`SELECT 1 AS present FROM pragma_table_info('${table}') WHERE name = ?`,
-				)
-				.get(column) !== undefined
-		);
 	}
 
 	/* Every tenant carries the built-in roles as rows so custom roles and
@@ -675,6 +629,32 @@ export class SqliteAuthRepository implements AuthRepository {
 		return this.findAccountMembership(record.accountId, record.tenantId)!;
 	}
 
+	createMembershipInTenant(record: {
+		readonly accountId: string;
+		readonly tenantId: string;
+		readonly role: string;
+		readonly roleId: string | null;
+		readonly scopes: readonly string[];
+		readonly createdAt: number;
+	}): AccountCredential {
+		this.#database.exec('BEGIN IMMEDIATE');
+		try {
+			this.#insertMembership(
+				record.accountId,
+				record.tenantId,
+				record.role,
+				record.roleId,
+				record.createdAt,
+			);
+			this.#insertScopes(record.accountId, record.tenantId, record.scopes);
+			this.#database.exec('COMMIT');
+		} catch (error) {
+			this.#database.exec('ROLLBACK');
+			throw error;
+		}
+		return this.findAccountMembership(record.accountId, record.tenantId)!;
+	}
+
 	createApiToken(record: CreateApiTokenRecord): ApiTokenRecord {
 		this.#database
 			.prepare(
@@ -909,6 +889,230 @@ export class SqliteAuthRepository implements AuthRepository {
 		);
 	}
 
+	createPasswordResetToken(
+		record: import('./repository.ts').PasswordResetTokenRecord,
+	): void {
+		this.#database
+			.prepare(
+				'DELETE FROM auth_password_reset_tokens WHERE account_id = ? OR expires_at <= ?',
+			)
+			.run(record.accountId, record.createdAt);
+		this.#database
+			.prepare(
+				`INSERT INTO auth_password_reset_tokens (token_hash, account_id, expires_at, used_at, created_at)
+				 VALUES (?, ?, ?, NULL, ?)`,
+			)
+			.run(
+				record.tokenHash,
+				record.accountId,
+				record.expiresAt,
+				record.createdAt,
+			);
+	}
+
+	consumePasswordResetToken(tokenHash: string, now: number): string | null {
+		const row = this.#database
+			.prepare(
+				`SELECT account_id FROM auth_password_reset_tokens
+				 WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?`,
+			)
+			.get(tokenHash, now) as { account_id: string } | undefined;
+		if (!row) return null;
+		const changed = this.#database
+			.prepare(
+				`UPDATE auth_password_reset_tokens SET used_at = ?
+				 WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?`,
+			)
+			.run(now, tokenHash, now).changes;
+		return Number(changed) === 1 ? row.account_id : null;
+	}
+
+	createTenantInvitation(
+		record: import('./repository.ts').TenantInvitationRecord,
+	): void {
+		this.#database
+			.prepare(
+				`DELETE FROM auth_tenant_invitations
+				 WHERE tenant_id = ? AND email_normalized = ?`,
+			)
+			.run(record.tenantId, record.normalizedEmail);
+		this.#database
+			.prepare(
+				`INSERT INTO auth_tenant_invitations
+				 (id, tenant_id, email, email_normalized, role_key, token_hash, expires_at, accepted_at, created_by, created_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+			)
+			.run(
+				record.id,
+				record.tenantId,
+				record.email,
+				record.normalizedEmail,
+				record.roleKey,
+				record.tokenHash,
+				record.expiresAt,
+				record.createdBy,
+				record.createdAt,
+			);
+	}
+
+	consumeTenantInvitation(
+		tokenHash: string,
+		now: number,
+	): {
+		readonly tenantId: string;
+		readonly email: string;
+		readonly normalizedEmail: string;
+		readonly roleKey: string;
+	} | null {
+		const row = this.#database
+			.prepare(
+				`SELECT tenant_id, email, email_normalized, role_key FROM auth_tenant_invitations
+				 WHERE token_hash = ? AND accepted_at IS NULL AND expires_at > ?`,
+			)
+			.get(tokenHash, now) as
+			| {
+					tenant_id: string;
+					email: string;
+					email_normalized: string;
+					role_key: string;
+			  }
+			| undefined;
+		if (!row) return null;
+		const changed = this.#database
+			.prepare(
+				`UPDATE auth_tenant_invitations SET accepted_at = ?
+				 WHERE token_hash = ? AND accepted_at IS NULL AND expires_at > ?`,
+			)
+			.run(now, tokenHash, now).changes;
+		return Number(changed) === 1
+			? {
+					tenantId: row.tenant_id,
+					email: row.email,
+					normalizedEmail: row.email_normalized,
+					roleKey: row.role_key,
+				}
+			: null;
+	}
+
+	upsertMfaTotp(
+		accountId: string,
+		secretCiphertext: string,
+		createdAt: number,
+	): void {
+		this.#database
+			.prepare(
+				`INSERT INTO auth_mfa_totp (account_id, secret_ciphertext, confirmed_at, created_at)
+				 VALUES (?, ?, NULL, ?)
+				 ON CONFLICT(account_id) DO UPDATE SET secret_ciphertext = excluded.secret_ciphertext,
+				 confirmed_at = NULL, created_at = excluded.created_at`,
+			)
+			.run(accountId, secretCiphertext, createdAt);
+	}
+
+	findMfaTotp(accountId: string): {
+		readonly secretCiphertext: string;
+		readonly confirmedAt: number | null;
+	} | null {
+		const row = this.#database
+			.prepare(
+				'SELECT secret_ciphertext, confirmed_at FROM auth_mfa_totp WHERE account_id = ?',
+			)
+			.get(accountId) as
+			| { secret_ciphertext: string; confirmed_at: number | null }
+			| undefined;
+		return row
+			? {
+					secretCiphertext: row.secret_ciphertext,
+					confirmedAt: row.confirmed_at,
+				}
+			: null;
+	}
+
+	confirmMfaTotp(accountId: string, confirmedAt: number): void {
+		this.#database
+			.prepare('UPDATE auth_mfa_totp SET confirmed_at = ? WHERE account_id = ?')
+			.run(confirmedAt, accountId);
+	}
+
+	replaceMfaRecoveryCodes(
+		accountId: string,
+		codeHashes: readonly string[],
+		createdAt: number,
+	): void {
+		this.#database.exec('BEGIN IMMEDIATE');
+		try {
+			this.#database
+				.prepare('DELETE FROM auth_mfa_recovery_codes WHERE account_id = ?')
+				.run(accountId);
+			const insert = this.#database.prepare(
+				'INSERT INTO auth_mfa_recovery_codes (code_hash, account_id, used_at, created_at) VALUES (?, ?, NULL, ?)',
+			);
+			for (const codeHash of codeHashes)
+				insert.run(codeHash, accountId, createdAt);
+			this.#database.exec('COMMIT');
+		} catch (error) {
+			this.#database.exec('ROLLBACK');
+			throw error;
+		}
+	}
+
+	consumeMfaRecoveryCode(accountId: string, codeHash: string): boolean {
+		return (
+			Number(
+				this.#database
+					.prepare(
+						`UPDATE auth_mfa_recovery_codes SET used_at = unixepoch() * 1000
+					 WHERE account_id = ? AND code_hash = ? AND used_at IS NULL`,
+					)
+					.run(accountId, codeHash).changes,
+			) === 1
+		);
+	}
+
+	createMfaChallenge(
+		record: import('./repository.ts').MfaChallengeRecord,
+	): void {
+		this.#database
+			.prepare('DELETE FROM auth_mfa_challenges WHERE expires_at <= ?')
+			.run(record.createdAt);
+		this.#database
+			.prepare(
+				`INSERT INTO auth_mfa_challenges (token_hash, account_id, tenant_id, expires_at, used_at, created_at)
+				 VALUES (?, ?, ?, ?, NULL, ?)`,
+			)
+			.run(
+				record.tokenHash,
+				record.accountId,
+				record.tenantId,
+				record.expiresAt,
+				record.createdAt,
+			);
+	}
+
+	consumeMfaChallenge(
+		tokenHash: string,
+		now: number,
+	): { readonly accountId: string; readonly tenantId: string } | null {
+		const row = this.#database
+			.prepare(
+				`SELECT account_id, tenant_id FROM auth_mfa_challenges
+				 WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?`,
+			)
+			.get(tokenHash, now) as
+			| { account_id: string; tenant_id: string }
+			| undefined;
+		if (!row) return null;
+		const changed = this.#database
+			.prepare(
+				`UPDATE auth_mfa_challenges SET used_at = ?
+				 WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?`,
+			)
+			.run(now, tokenHash, now).changes;
+		return Number(changed) === 1
+			? { accountId: row.account_id, tenantId: row.tenant_id }
+			: null;
+	}
+
 	findSignInFailure(normalizedEmail: string): SignInFailureRecord | null {
 		const row = this.#database
 			.prepare(
@@ -1070,13 +1274,15 @@ export class SqliteAuthRepository implements AuthRepository {
 		this.#database
 			.prepare(
 				`INSERT INTO auth_audit
-				 (tenant_id, actor_account_id, actor_label, action, subject_type, subject_id, metadata_json, occurred_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				 (tenant_id, actor_account_id, actor_label, actor_kind, actor_run_id, action, subject_type, subject_id, metadata_json, occurred_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			)
 			.run(
 				record.tenantId,
 				record.actorAccountId,
 				record.actorLabel,
+				record.actorKind,
+				record.actorRunId,
 				record.action,
 				record.subjectType,
 				record.subjectId,
@@ -1085,7 +1291,7 @@ export class SqliteAuthRepository implements AuthRepository {
 			);
 	}
 
-	queryAudit(query: AuditQuery): readonly AuditEvent[] {
+	queryAudit(query: AuditQuery): readonly AuditActorEvent[] {
 		const conditions = ['tenant_id = ?'];
 		const parameters: (string | number)[] = [query.tenantId];
 		if (query.action) {
@@ -1116,6 +1322,8 @@ export class SqliteAuthRepository implements AuthRepository {
 			tenantId: row.tenant_id,
 			actorAccountId: row.actor_account_id,
 			actorLabel: row.actor_label,
+			actorKind: row.actor_kind,
+			actorRunId: row.actor_run_id,
 			action: row.action,
 			subjectType: row.subject_type,
 			subjectId: row.subject_id,
@@ -1178,6 +1386,8 @@ export class SqliteAuthRepository implements AuthRepository {
 	}
 
 	close(): void {
+		if (this.#closed) return;
+		this.#closed = true;
 		this.#database.close();
 	}
 }

@@ -7,8 +7,10 @@ import {
 	requiredInteger,
 	requiredString,
 } from '@coreloom/server';
+import { parseHistoryRequest } from '@coreloom/kernel';
 import type { AuthRuntime } from '@coreloom/module-auth/server';
 import {
+	actorFromContext,
 	endpointIdentityFromContext,
 	principalFromContext,
 	sessionMutationDenial,
@@ -17,6 +19,7 @@ import { CATALOG_PERMISSIONS } from '../acl/permissions.ts';
 import type {
 	CatalogItemKind,
 	CreateCatalogItemInput,
+	UpdateCatalogItemInput,
 } from '../domain/types.ts';
 import { CatalogServiceError } from '../services/catalog-service.ts';
 import type { CatalogRuntime } from '../server/runtime.ts';
@@ -29,6 +32,26 @@ function failure(error: unknown): Response {
 		);
 	}
 	return problemResponse(error, 'The catalog operation failed.');
+}
+
+function mutableInput(
+	value: Record<string, unknown>,
+): Omit<UpdateCatalogItemInput, 'id'> {
+	const kind = requiredString(value, 'kind');
+	if (kind !== 'product' && kind !== 'service') {
+		throw new HttpProblem(
+			'INVALID_ITEM_KIND',
+			'kind must be product or service.',
+			400,
+		);
+	}
+	return {
+		name: requiredString(value, 'name', { min: 2, max: 160 }),
+		kind: kind as CatalogItemKind,
+		unit: requiredString(value, 'unit', { max: 24 }),
+		basePriceMinor: requiredInteger(value, 'basePriceMinor', { min: 0 }),
+		currency: requiredString(value, 'currency', { min: 3, max: 3 }),
+	};
 }
 
 export function createCatalogRoutes(
@@ -57,27 +80,20 @@ export function createCatalogRoutes(
 			if (denial) return denial;
 			try {
 				const value = await readJsonObject(octane.request);
-				const kind = requiredString(value, 'kind');
-				if (kind !== 'product' && kind !== 'service') {
-					throw new HttpProblem(
-						'INVALID_ITEM_KIND',
-						'kind must be product or service.',
-						400,
-					);
-				}
+				const mutable = mutableInput(value);
 				const input: CreateCatalogItemInput = {
 					sku: requiredString(value, 'sku', { max: 64 }),
-					name: requiredString(value, 'name', { min: 2, max: 160 }),
-					kind: kind as CatalogItemKind,
-					unit: requiredString(value, 'unit', { max: 24 }),
-					basePriceMinor: requiredInteger(value, 'basePriceMinor', { min: 0 }),
-					currency: requiredString(value, 'currency', { min: 3, max: 3 }),
+					...mutable,
 				};
 				return jsonResponse(
 					{
 						item: runtime
 							.service()
-							.create(principalFromContext(octane)!.tenantId, input),
+							.create(
+								principalFromContext(octane)!.tenantId,
+								input,
+								actorFromContext(octane)!,
+							),
 					},
 					201,
 				);
@@ -86,10 +102,139 @@ export function createCatalogRoutes(
 			}
 		},
 	});
-	return [list.serverRoute, create.serverRoute] as const;
+	const update = defineEndpoint({
+		id: 'catalog.items.update',
+		path: '/api/catalog/items/update',
+		methods: ['POST'],
+		access: { kind: 'permission', permission: CATALOG_PERMISSIONS.manage },
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			const denial = sessionMutationDenial(octane, auth);
+			if (denial) return denial;
+			try {
+				const value = await readJsonObject(octane.request);
+				return jsonResponse({
+					item: runtime.service().update(
+						principalFromContext(octane)!.tenantId,
+						{
+							id: requiredString(value, 'id', { max: 128 }),
+							...mutableInput(value),
+						},
+						actorFromContext(octane)!,
+					),
+				});
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+	const lifecycle = (action: 'archive' | 'restore', path: string, id: string) =>
+		defineEndpoint({
+			id,
+			path,
+			methods: ['POST'],
+			access: { kind: 'permission', permission: CATALOG_PERMISSIONS.manage },
+			resolveIdentity: endpointIdentityFromContext,
+			handler: async ({ octane }) => {
+				const denial = sessionMutationDenial(octane, auth);
+				if (denial) return denial;
+				try {
+					const value = await readJsonObject(octane.request);
+					const service = runtime.service();
+					const item = service[action](
+						principalFromContext(octane)!.tenantId,
+						requiredString(value, 'id', { max: 128 }),
+						actorFromContext(octane)!,
+					);
+					return jsonResponse({ item });
+				} catch (error) {
+					return failure(error);
+				}
+			},
+		});
+	const archive = lifecycle(
+		'archive',
+		'/api/catalog/items/archive',
+		'catalog.items.archive',
+	);
+	const restore = lifecycle(
+		'restore',
+		'/api/catalog/items/restore',
+		'catalog.items.restore',
+	);
+	const remove = defineEndpoint({
+		id: 'catalog.items.delete',
+		path: '/api/catalog/items/delete',
+		methods: ['POST'],
+		access: { kind: 'permission', permission: CATALOG_PERMISSIONS.manage },
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			const denial = sessionMutationDenial(octane, auth);
+			if (denial) return denial;
+			try {
+				const value = await readJsonObject(octane.request);
+				runtime
+					.service()
+					.delete(
+						principalFromContext(octane)!.tenantId,
+						requiredString(value, 'id', { max: 128 }),
+						actorFromContext(octane)!,
+					);
+				return jsonResponse({ deleted: true });
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+	const history = defineEndpoint({
+		id: 'catalog.items.history',
+		path: '/api/catalog/items/history',
+		methods: ['GET'],
+		access: { kind: 'permission', permission: CATALOG_PERMISSIONS.read },
+		resolveIdentity: endpointIdentityFromContext,
+		handler: ({ octane }) => {
+			const request = parseHistoryRequest(
+				new URL(octane.request.url).searchParams,
+			);
+			if (!request) {
+				return jsonResponse(
+					{
+						error: {
+							code: 'INVALID_INPUT',
+							message: 'recordId is required.',
+						},
+					},
+					400,
+				);
+			}
+			try {
+				return jsonResponse(
+					runtime
+						.service()
+						.history(principalFromContext(octane)!.tenantId, request),
+				);
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+	return [
+		list.serverRoute,
+		create.serverRoute,
+		update.serverRoute,
+		archive.serverRoute,
+		restore.serverRoute,
+		remove.serverRoute,
+		history.serverRoute,
+	] as const;
 }
 
 export const endpoints = [
 	'catalog.items.list',
 	'catalog.items.create',
+	'catalog.items.update',
+	'catalog.items.archive',
+	'catalog.items.restore',
+	'catalog.items.delete',
+	'catalog.items.history',
 ] as const;

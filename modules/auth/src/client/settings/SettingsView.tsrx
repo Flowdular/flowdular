@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from 'octane';
+import { t } from '@coreloom/client';
 import { Alert, Button, EmptyState, Icon, PageHeader } from '@coreloom/ui';
 import { cell, createStore, useValue } from 'segment-state';
 import {
@@ -94,7 +95,7 @@ export function SettingsView(props: SettingsViewProps) @{
 				transaction.set(client.state.status, 'idle');
 			}, 'settings/loaded');
 		} catch (loadError) {
-			setError(message(loadError, 'Could not load settings.'));
+			setError(message(loadError, t('auth.settings.error.load')));
 			setStatus(
 				loadError instanceof ApiError && loadError.status === 403
 					? 'denied'
@@ -115,7 +116,7 @@ export function SettingsView(props: SettingsViewProps) @{
 				transaction.set(client.state.locale, updated);
 				transaction.set(client.state.localeResult, {
 					ok: true,
-					message: 'Saved.',
+					message: t('auth.common.saved'),
 				});
 				transaction.set(client.state.busyKey, null);
 			}, 'settings/locale-saved');
@@ -123,7 +124,7 @@ export function SettingsView(props: SettingsViewProps) @{
 			client.store.act((transaction) => {
 				transaction.set(client.state.localeResult, {
 					ok: false,
-					message: message(saveError, 'Could not save the default locale.'),
+					message: message(saveError, t('auth.settings.error.locale')),
 				});
 				transaction.set(client.state.busyKey, null);
 			}, 'settings/locale-save-failed');
@@ -141,7 +142,7 @@ export function SettingsView(props: SettingsViewProps) @{
 				});
 				transaction.set(client.state.workspaceResult, {
 					ok: true,
-					message: 'Saved.',
+					message: t('auth.common.saved'),
 				});
 				transaction.set(client.state.busyKey, null);
 			}, 'settings/workspace-renamed');
@@ -150,7 +151,7 @@ export function SettingsView(props: SettingsViewProps) @{
 			client.store.act((transaction) => {
 				transaction.set(client.state.workspaceResult, {
 					ok: false,
-					message: message(renameError, 'Could not rename the workspace.'),
+					message: message(renameError, t('auth.settings.error.rename')),
 				});
 				transaction.set(client.state.busyKey, null);
 			}, 'settings/workspace-rename-failed');
@@ -159,24 +160,24 @@ export function SettingsView(props: SettingsViewProps) @{
 
 	<div class="ui-view">
 		<PageHeader
-			eyebrow="Administration"
-			title="Workspace settings"
-			description="Identity and defaults of this organization."
+			eyebrow={t('auth.common.administration')}
+			title={t('auth.settings.title')}
+			description={t('auth.settings.description')}
 		>
 			<Button size="sm" onClick={() => void refresh()}>
 				<Icon name="refresh" size={14} />
-				Refresh
+				{t('auth.common.refresh')}
 			</Button>
 		</PageHeader>
 		@if (status === 'denied') {
 			<section class="ui-card">
-				<EmptyState icon="shield" title="Access denied">
-					Reading settings needs the system.settings.read scope.
-				</EmptyState>
+				<EmptyState icon="shield" title={t('auth.common.accessDenied')}>{t(
+					'auth.settings.denied',
+				)}</EmptyState>
 			</section>
 		} @else if (status === 'loading' && workspace === null) {
 			<section class="ui-card">
-				<p class="ui-table__empty">Loading settings…</p>
+				<p class="ui-table__empty">{t('auth.settings.loading')}</p>
 			</section>
 		} @else {
 			<>
@@ -184,10 +185,7 @@ export function SettingsView(props: SettingsViewProps) @{
 					<Alert>{error}</Alert>
 				}
 				@if (!props.canManage) {
-					<Alert tone="info">
-						You can review settings. Changing them needs the
-						system.settings.manage scope.
-					</Alert>
+					<Alert tone="info">{t('auth.settings.readOnly')}</Alert>
 				}
 				@if (workspace) {
 					<WorkspaceCard

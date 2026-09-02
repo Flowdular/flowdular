@@ -1,8 +1,14 @@
-import type { Profile, UpdateProfileInput } from '../domain/types.ts';
+import type {
+	Profile,
+	ProfileLanguagePreference,
+	UpdateProfileInput,
+	UpdateProfileLanguageInput,
+} from '../domain/types.ts';
 import type { ProfileRepository } from './repository.ts';
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
+const SUPPORTED_PROFILE_LOCALES = new Set(['en', 'pl']);
 
 export class ProfileServiceError extends Error {
 	constructor(
@@ -43,6 +49,18 @@ function displayName(value: string): string {
 	return normalized;
 }
 
+function locale(value: string): string {
+	const normalized =
+		typeof value === 'string' ? value.trim().toLowerCase() : '';
+	if (!SUPPORTED_PROFILE_LOCALES.has(normalized)) {
+		throw new ProfileServiceError(
+			'UNSUPPORTED_PROFILE_LOCALE',
+			'locale must be one of the supported interface languages.',
+		);
+	}
+	return normalized;
+}
+
 export class ProfileService {
 	constructor(private readonly repository: ProfileRepository) {}
 
@@ -65,5 +83,27 @@ export class ProfileService {
 			updatedAt: Date.now(),
 		};
 		return this.repository.save(profile);
+	}
+
+	readLanguage(tenantId: string, accountId: string): string | null {
+		return (
+			this.repository.findLanguage(
+				identifier(tenantId, 'tenantId'),
+				identifier(accountId, 'accountId'),
+			)?.locale ?? null
+		);
+	}
+
+	updateLanguage(
+		tenantId: string,
+		accountId: string,
+		input: UpdateProfileLanguageInput,
+	): ProfileLanguagePreference {
+		return this.repository.saveLanguage({
+			tenantId: identifier(tenantId, 'tenantId'),
+			accountId: identifier(accountId, 'accountId'),
+			locale: locale(input.locale),
+			updatedAt: Date.now(),
+		});
 	}
 }

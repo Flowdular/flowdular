@@ -1,4 +1,5 @@
 import { useMemo } from 'octane';
+import { useTranslation } from '@coreloom/client';
 import { Alert, BrandMark, Button, FormField } from '@coreloom/ui';
 import { cell, createStore, useValue } from 'segment-state';
 
@@ -19,6 +20,7 @@ function field(form: FormData, key: string): string {
    temporary password proves possession; the new one replaces it through the
    same auth.core endpoint the profile screen uses. */
 export function PasswordChangeRequired(props: PasswordChangeRequiredProps) @{
+	const { t } = useTranslation();
 	const form = useMemo(
 		() => createStore({
 			busy: cell(false),
@@ -34,7 +36,7 @@ export function PasswordChangeRequired(props: PasswordChangeRequiredProps) @{
 		const data = new FormData(event.currentTarget as HTMLFormElement);
 		const newPassword = field(data, 'newPassword');
 		if (newPassword !== field(data, 'confirmation')) {
-			setError('The new password and its confirmation differ.');
+			setError(t('auth.passwordChange.mismatch'));
 			return;
 		}
 		setBusy(true);
@@ -56,14 +58,14 @@ export function PasswordChangeRequired(props: PasswordChangeRequiredProps) @{
 				const body = await response.json() as {
 					error?: { message?: string };
 				};
-				throw new Error(body.error?.message ?? 'The password was not changed.');
+				throw new Error(body.error?.message ?? t('auth.passwordChange.error'));
 			}
 			await props.onChanged();
 		} catch (changeError) {
 			setError(
 				changeError instanceof Error
 					? changeError.message
-					: 'The password was not changed.',
+					: t('auth.passwordChange.error'),
 			);
 		} finally {
 			setBusy(false);
@@ -76,49 +78,50 @@ export function PasswordChangeRequired(props: PasswordChangeRequiredProps) @{
 				<header>
 					<span class="auth-kicker">
 						<BrandMark size={18} />
-						{' Password reset'}
+						{' ' + t('auth.passwordChange.kicker')}
 					</span>
-					<h2>Choose a new password</h2>
-					<p class="auth-card__sub">
-						{'An administrator reset the password for ' + props.email +
-							'. Pick a new one to continue.'}
-					</p>
+					<h2>{t('auth.passwordChange.title')}</h2>
+					<p class="auth-card__sub">{t('auth.passwordChange.description', {
+						email: props.email,
+					})}</p>
 				</header>
 				<form
 					style="display:grid;gap:14px"
 					onSubmit={(event) => void submit(event)}
 				>
-					<FormField label="Temporary password" required>
+					<FormField label={t('auth.passwordChange.temporary')} required>
 						<input
 							class="ui-input"
 							name="currentPassword"
 							type="password"
-							autoComplete="current-password"
+							autocomplete="current-password"
 							autoFocus
 							required
 						/>
 					</FormField>
 					<FormField
-						label="New password"
-						help={'At least ' + props.passwordMinLength + ' characters.'}
+						label={t('auth.passwordChange.new')}
+						help={t('auth.password.minimum', {
+							count: props.passwordMinLength,
+						})}
 						required
 					>
 						<input
 							class="ui-input"
 							name="newPassword"
 							type="password"
-							minLength={props.passwordMinLength}
-							autoComplete="new-password"
+							minlength={props.passwordMinLength}
+							autocomplete="new-password"
 							required
 						/>
 					</FormField>
-					<FormField label="Confirm new password" required>
+					<FormField label={t('auth.passwordChange.confirm')} required>
 						<input
 							class="ui-input"
 							name="confirmation"
 							type="password"
-							minLength={props.passwordMinLength}
-							autoComplete="new-password"
+							minlength={props.passwordMinLength}
+							autocomplete="new-password"
 							required
 						/>
 					</FormField>
@@ -126,11 +129,15 @@ export function PasswordChangeRequired(props: PasswordChangeRequiredProps) @{
 						<Alert>{error}</Alert>
 					}
 					<Button variant="primary" type="submit" block disabled={busy}>
-						{busy ? 'Saving…' : 'Set new password'}
+						{busy
+							? t('auth.passwordChange.saving')
+							: t('auth.passwordChange.submit')}
 					</Button>
-					<Button block variant="ghost" onClick={() => void props.onSignOut()}>
-						Sign out
-					</Button>
+					<Button
+						block
+						variant="ghost"
+						onClick={() => void props.onSignOut()}
+					>{t('auth.signOut')}</Button>
 				</form>
 			</div>
 		</section>

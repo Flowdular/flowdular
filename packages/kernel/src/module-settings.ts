@@ -13,7 +13,11 @@ export interface ModuleSettingDefinition {
 	/** Write-only: the API never returns the value, only whether one is set. */
 	readonly secret?: boolean;
 	readonly scope?: ModuleSettingScope;
+	/** Fully qualified client translation key; `label` remains the fallback. */
+	readonly labelKey?: string;
 	readonly label?: string;
+	/** Fully qualified client translation key; `description` remains the fallback. */
+	readonly descriptionKey?: string;
 	readonly description?: string;
 	/** Allowed values of a string setting. */
 	readonly enum?: readonly string[];
@@ -168,6 +172,21 @@ export function defineModuleSettings(
 	for (const [key, definition] of Object.entries(declaration.settings)) {
 		if (!/^[a-z][a-zA-Z0-9]*$/.test(key)) {
 			throw new Error(`Invalid module setting key: ${key}`);
+		}
+		const namespace = declaration.moduleId.split('.')[0] + '.';
+		for (const [field, translationKey] of [
+			['labelKey', definition.labelKey],
+			['descriptionKey', definition.descriptionKey],
+		] as const) {
+			if (translationKey === undefined) continue;
+			if (
+				!/^[a-z][a-zA-Z0-9]*(?:\.[a-z][a-zA-Z0-9]*)+$/.test(translationKey) ||
+				!translationKey.startsWith(namespace)
+			) {
+				throw new Error(
+					`Setting ${declaration.moduleId}.${key} has invalid ${field}: ${translationKey}`,
+				);
+			}
 		}
 		if (definition.enum !== undefined) {
 			if (definition.type !== 'string' || definition.enum.length === 0) {

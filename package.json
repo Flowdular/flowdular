@@ -1,5 +1,5 @@
 {
-	"name": "octane-erp",
+	"name": "coreloom",
 	"version": "0.1.0",
 	"private": true,
 	"type": "module",
@@ -13,13 +13,15 @@
 		"build": "pnpm --filter @coreloom/cli build && pnpm --filter @coreloom/cli smoke && node packages/cli/dist/index.js module sync --apply && pnpm --filter @coreloom/platform build",
 		"preview": "pnpm --filter @coreloom/platform preview",
 		"sandbox": "node packages/sandbox/bin/coreloom-sandbox.mjs",
+		"landing": "pnpm --filter @coreloom/landing dev",
 		"typecheck": "pnpm -r --if-present typecheck",
 		"test": "pnpm -r --if-present test",
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
-		"oerp": "pnpm --filter @coreloom/cli dev",
-		"doctor": "pnpm run oerp doctor",
-		"validate": "pnpm oerp spec validate --all && pnpm oerp blueprint validate --all && pnpm oerp module validate",
+		"coreloom": "pnpm --filter @coreloom/cli dev",
+		"cl": "pnpm coreloom",
+		"doctor": "pnpm coreloom doctor",
+		"validate": "pnpm coreloom spec validate --all && pnpm coreloom blueprint validate --all && pnpm coreloom module validate",
 		"verify": "pnpm typecheck && pnpm test && pnpm validate && pnpm format:check"
 	},
 	"devDependencies": {

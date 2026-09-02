@@ -10,88 +10,109 @@ default: deny
 # packages/cli/src/capabilities.ts
 core:
   workspace.doctor:
-    command: pnpm oerp doctor
+    command: pnpm coreloom doctor
     risk: read
   spec.validate:
-    command: pnpm oerp spec validate --all
+    command: pnpm coreloom spec validate --all
     risk: read
   blueprint.validate:
-    command: pnpm oerp blueprint validate --all
+    command: pnpm coreloom blueprint validate --all
     risk: read
     note: validates every .ai/blueprints/*/blueprint.json and checks the companion files exist
   module.validate:
-    command: pnpm oerp module validate
+    command: pnpm coreloom module validate
     risk: read
     note: 'schema plus composition entries (PLATFORM_SERVER_ENTRY_MISSING, PLATFORM_EXPORT_MISSING, PLATFORM_CLIENT_ENTRY_MISSING, PLATFORM_CLIENT_EXPORT_MISSING), PACKAGE_NAME_MISMATCH, SPEC_ID_MISMATCH, TRANSLATION_FILE_MISSING, TRANSLATION_KEYS_MISMATCH; warnings SPEC_VERSION_DRIFT, LOCALE_NOT_IN_PROJECT (packages/cli/src/module-validate.ts)'
   module.create:
-    command: pnpm oerp module new <id> --spec <path> [--apply]
+    command: pnpm coreloom module new <id> --spec <path> [--apply]
     risk: workspace-write
     requiresApprovedSpec: true
     supportsDryRun: true
+  migration.status:
+    command: pnpm coreloom migration status [--module <id>] [--json]
+    risk: read
+    note: 'per module database, each migration is applied, adopted (its objects already exist, so the runner will only record it), pending, or mismatch; fails with MIGRATION_CHECKSUM_MISMATCH when an applied migration was edited (packages/cli/src/migration.ts)'
+  migration.verify:
+    command: pnpm coreloom migration verify
+    risk: read
+    note: 'checks every ledger row against the checksum of the migration in the workspace; failure code MIGRATION_LEDGER_INVALID with mismatched and unknown ids per module'
+  migration.apply.local:
+    command: pnpm coreloom migration apply --module <id> [--apply]
+    risk: process
+    localOnly: true
+    supportsDryRun: true
+    effect: applies or adopts the outstanding migrations of one module against its local SQLite file and writes the _coreloom_migrations ledger; without --apply it opens the database read-only
+  workspace.state.migrate:
+    command: pnpm coreloom setup migrate-state [--apply --confirm migrate-legacy-state]
+    risk: destructive
+    localOnly: true
+    confirmation: migrate-legacy-state
+    supportsDryRun: true
+    effect: copies recognized pre-Coreloom databases and vault keys into .coreloom/data, verifies their hashes, and preserves every source file; refuses links, collisions, and SQLite sidecars
 
 # Commands dispatched by packages/cli/src/runner.ts without a capability descriptor.
 commandsWithoutDescriptor:
-  - pnpm oerp help
-  - pnpm oerp capability list|describe <id>|run <id>
-  - pnpm oerp blueprint list
-  - pnpm oerp module list
-  - pnpm oerp module sync [--apply]
-  - pnpm oerp module enable <id> [--apply] (with --apply also runs auth.scopes.sync; result field scopes, failure code MODULE_SCOPES_SYNC_FAILED)
-  - pnpm oerp module disable <id> [--apply]
-  - pnpm oerp setup check
-  - pnpm oerp setup quick (alias of auth.greenfield.reset)
+  - pnpm coreloom help
+  - pnpm coreloom capability list|describe <id>|run <id>
+  - pnpm coreloom blueprint list
+  - pnpm coreloom module list
+  - pnpm coreloom module sync [--apply]
+  - pnpm coreloom module enable <id> [--apply] (with --apply also runs auth.scopes.sync; result field scopes, failure code MODULE_SCOPES_SYNC_FAILED)
+  - pnpm coreloom module disable <id> [--apply]
+  - pnpm coreloom setup check
+  - pnpm coreloom setup quick (alias of auth.greenfield.reset)
 
 # modules/*/src/cli/commands.json, loaded only for modules enabled in coreloom.json
 modules:
   auth.core:
     auth.scopes.list:
-      command: pnpm oerp auth scopes
+      command: pnpm coreloom auth scopes
       risk: read
     auth.scopes.sync:
-      command: pnpm oerp auth sync-scopes --module <id> [--apply]
+      command: pnpm coreloom auth sync-scopes --module <id> [--apply]
       risk: process
       supportsDryRun: true
       effect: grants the module spec permissions to every tenant owner in the auth database
     auth.greenfield.reset:
-      command: pnpm oerp auth greenfield --apply --confirm reset-local-auth
+      command: pnpm coreloom auth greenfield --apply --confirm reset-local-auth
       risk: destructive
       localOnly: true
       confirmation: reset-local-auth
       supportsDryRun: true
-      effect: resets .octane-erp/auth.db and seeds demo tenants and accounts
+      effect: resets .coreloom/data/auth.db and seeds demo tenants and accounts
   agents.core:
     agents.status:
-      command: pnpm oerp agents status
+      command: pnpm coreloom agents status
       risk: read
     agents.audit.verify:
-      command: pnpm oerp agents audit-verify --tenant <id>
+      command: pnpm coreloom agents audit-verify --tenant <id>
       risk: read
       localOnly: true
   sandbox.core:
     sandbox.access.list:
-      command: pnpm oerp sandbox access
+      command: pnpm coreloom sandbox access
       risk: read
     sandbox.access.grant:
-      command: pnpm oerp sandbox grant [--apply]
+      command: pnpm coreloom sandbox grant [--apply]
       risk: process
       supportsDryRun: true
     sandbox.access.revoke:
-      command: pnpm oerp sandbox revoke [--apply]
+      command: pnpm coreloom sandbox revoke [--apply]
       risk: process
       supportsDryRun: true
     sandbox.sessions.list:
-      command: pnpm oerp sandbox sessions
+      command: pnpm coreloom sandbox sessions
       risk: read
     sandbox.sessions.archive:
-      command: pnpm oerp sandbox session-archive [--apply]
+      command: pnpm coreloom sandbox session-archive [--apply]
       risk: process
       supportsDryRun: true
     sandbox.sessions.delete:
-      command: pnpm oerp sandbox session-delete [--apply]
+      command: pnpm coreloom sandbox session-delete [--apply]
       risk: process
       supportsDryRun: true
     sandbox.audit.verify:
-      command: pnpm oerp sandbox audit-verify --tenant <id>
+      command: pnpm coreloom sandbox audit-verify --tenant <id>
       risk: read
       localOnly: true
 
@@ -99,7 +120,7 @@ modules:
 approvals:
   external: refused with APPROVAL_VERIFIER_REQUIRED (no signed approval verifier exists)
   destructive-not-local: refused with APPROVAL_VERIFIER_REQUIRED
-  localOnly: refused with LOCAL_ONLY_CAPABILITY unless OERP_ENV or NODE_ENV is development or test (unset counts as development)
+  localOnly: refused with LOCAL_ONLY_CAPABILITY unless CL_ENV or NODE_ENV is development or test (unset counts as development)
   requiresApprovedSpec: needs --spec <path>; APPROVED_SPEC_REQUIRED, SPEC_VALIDATION_FAILED or SPEC_NOT_APPROVED otherwise
   destructive-apply: --apply needs --confirm <descriptor.confirmation>; CONFIRMATION_REQUIRED otherwise
   non-read-without-dry-run: EXPLICIT_APPLY_REQUIRED without --apply
@@ -108,15 +129,13 @@ approvals:
 moduleExtensions:
   discovery: module.json cli.catalog (src/cli/commands.json), schema-validated without executing code
   loadImplementation: module.json cli.entry imported only when the command runs (packages/cli/src/extensions.ts loadCliCommand)
-  namespace: first segment of the module id; reserved groups help, doctor, capability, spec, blueprint, module, setup
+  namespace: first segment of the module id; reserved groups help, doctor, capability, spec, blueprint, module, migration, setup
   metadataIdentical: path and capability object must equal the catalog entry
   requireEnabledModule: true
 
 # Planned, no code today. Listed so nobody documents them as available.
 planned:
-  - migration.status
-  - migration.plan
-  - migration.apply.local
+  - migration.plan (served by "migration apply" without --apply, which is a read-only dry run)
   - migration.apply.remote
   - destructive.execute (signed approval receipts)
   - redaction of *_TOKEN, *_SECRET, *_PASSWORD, DATABASE_URL in a shared logger (only packages/ai-provider/src/errors.ts redactSecrets exists)

@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "parties.core",
 	"package": "@coreloom/module-parties",
-	"version": "0.1.0",
+	"version": "0.5.0",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations"],
 	"platform": {

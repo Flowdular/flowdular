@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'octane';
 import { Avatar, Icon } from '@coreloom/ui';
 import { useValue } from 'segment-state';
 import { cell, createStore } from 'segment-state';
+import { t } from '../i18n/runtime.ts';
 import type { ShellIdentity } from './types.ts';
 
 export interface OrganizationSwitcherProps {
@@ -17,7 +18,8 @@ export function OrganizationSwitcher(props: OrganizationSwitcherProps) @{
 	const activeTenant = props.identity.tenants.find(
 		(tenant) => tenant.tenantId === props.identity.tenantId,
 	);
-	const activeTenantName = activeTenant?.name ?? 'Active organization';
+	const activeTenantName =
+		activeTenant?.name ?? t('shell.workspace.fallbackName');
 	const activeTenantRole = activeTenant?.role ?? props.identity.role;
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
@@ -38,12 +40,12 @@ export function OrganizationSwitcher(props: OrganizationSwitcherProps) @{
 			<Avatar name={activeTenantName} square />
 			<span class="org-switcher__copy">
 				<b>{activeTenantName}</b>
-				<small>
-					{activeTenantRole + ' · ' + props.identity.tenants.length +
-						(props.identity.tenants.length === 1
-							? ' workspace'
-							: ' workspaces')}
-				</small>
+				<small>{t(
+					props.identity.tenants.length === 1
+						? 'shell.org.summary.one'
+						: 'shell.org.summary.other',
+					{ role: activeTenantRole, count: props.identity.tenants.length },
+				)}</small>
 			</span>
 			<Icon name="chevrons-up-down" size={16} />
 		</button>
@@ -52,15 +54,15 @@ export function OrganizationSwitcher(props: OrganizationSwitcherProps) @{
 				<button
 					class="menu-dismiss"
 					type="button"
-					aria-label="Close workspace selector"
+					aria-label={t('shell.org.close')}
 					onClick={() => setOpen(false)}
 				></button>
 				<div
 					class="ui-menu org-switcher__menu"
 					role="listbox"
-					aria-label="Available workspaces"
+					aria-label={t('shell.org.available')}
 				>
-					<div class="ui-menu__label">Switch workspace</div>
+					<div class="ui-menu__label">{t('shell.org.switch')}</div>
 					@for (const tenant of props.identity.tenants; key tenant.tenantId) {
 						<button
 							class={[

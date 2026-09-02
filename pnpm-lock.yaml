@@ -5,7 +5,9 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  '@octanejs/seo@0.0.35': 8e36553d5b8a6d0fe0b4426016fcf7840cdcdd631fbc2ddd3f6bf85cd39e04a5
+  '@octanejs/seo@0.0.36': 8e36553d5b8a6d0fe0b4426016fcf7840cdcdd631fbc2ddd3f6bf85cd39e04a5
+  '@octanejs/tanstack-store@0.0.45': c30b0d97537b5c25d25647790d8b766523f086ae6e97f4ee081282643367cdb1
+  '@octanejs/tanstack-table@0.1.48': 9bd99f78fc123b4c27ed0f18d7c6c9aaa737d04c4865b5105608510d02c3213b
 
 importers:
 
@@ -45,15 +47,21 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.1.50
-        version: 0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        specifier: 0.1.51
+        version: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
       segment-state:
         specifier: 0.2.0
-        version: 0.2.0(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        version: 0.2.0(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
     devDependencies:
+      '@coreloom/module-catalog':
+        specifier: workspace:*
+        version: link:../catalog
+      '@coreloom/module-parties':
+        specifier: workspace:*
+        version: link:../parties
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -62,7 +70,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   modules/auth:
     dependencies:
@@ -85,24 +93,24 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       '@octanejs/app-core':
-        specifier: 0.0.46
-        version: 0.0.46(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        specifier: 0.0.47
+        version: 0.0.47(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
       '@octanejs/seo':
-        specifier: 0.0.35
-        version: 0.0.35(patch_hash=8e36553d5b8a6d0fe0b4426016fcf7840cdcdd631fbc2ddd3f6bf85cd39e04a5)(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        specifier: 0.0.36
+        version: 0.0.36(patch_hash=8e36553d5b8a6d0fe0b4426016fcf7840cdcdd631fbc2ddd3f6bf85cd39e04a5)(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
       octane:
-        specifier: 0.1.50
-        version: 0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        specifier: 0.1.51
+        version: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
       segment-state:
         specifier: 0.2.0
-        version: 0.2.0(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        version: 0.2.0(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
       yaml:
         specifier: 2.9.0
         version: 2.9.0
     devDependencies:
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -111,7 +119,78 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+
+  modules/automations:
+    dependencies:
+      '@coreloom/client':
+        specifier: workspace:*
+        version: link:../../packages/client
+      '@coreloom/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@coreloom/kernel':
+        specifier: workspace:*
+        version: link:../../packages/kernel
+      '@coreloom/module-agents':
+        specifier: workspace:*
+        version: link:../agents
+      '@coreloom/module-auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@coreloom/server':
+        specifier: workspace:*
+        version: link:../../packages/server
+      '@coreloom/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
+      octane:
+        specifier: 0.1.51
+        version: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+      segment-state:
+        specifier: 0.2.0
+        version: 0.2.0(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+    devDependencies:
+      '@tsrx/typescript-plugin':
+        specifier: 0.3.120
+        version: 0.3.120(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.10
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+
+  modules/automations-workflows-integration:
+    dependencies:
+      '@coreloom/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@coreloom/kernel':
+        specifier: workspace:*
+        version: link:../../packages/kernel
+      '@coreloom/module-auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@coreloom/module-automations':
+        specifier: workspace:*
+        version: link:../automations
+      '@coreloom/module-workflows':
+        specifier: workspace:*
+        version: link:../workflows
+    devDependencies:
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.10
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   modules/catalog:
     dependencies:
@@ -121,6 +200,12 @@ importers:
       '@coreloom/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@coreloom/harness':
+        specifier: workspace:*
+        version: link:../../packages/harness
+      '@coreloom/kernel':
+        specifier: workspace:*
+        version: link:../../packages/kernel
       '@coreloom/module-auth':
         specifier: workspace:*
         version: link:../auth
@@ -131,15 +216,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.1.50
-        version: 0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        specifier: 0.1.51
+        version: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
       segment-state:
         specifier: 0.2.0
-        version: 0.2.0(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        version: 0.2.0(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
     devDependencies:
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -148,7 +233,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   modules/expenses:
     dependencies:
@@ -158,6 +243,9 @@ importers:
       '@coreloom/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@coreloom/kernel':
+        specifier: workspace:*
+        version: link:../../packages/kernel
       '@coreloom/module-auth':
         specifier: workspace:*
         version: link:../auth
@@ -168,15 +256,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.1.50
-        version: 0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        specifier: 0.1.51
+        version: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
       segment-state:
         specifier: 0.2.0
-        version: 0.2.0(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        version: 0.2.0(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
     devDependencies:
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -185,7 +273,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   modules/parties:
     dependencies:
@@ -195,6 +283,12 @@ importers:
       '@coreloom/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@coreloom/harness':
+        specifier: workspace:*
+        version: link:../../packages/harness
+      '@coreloom/kernel':
+        specifier: workspace:*
+        version: link:../../packages/kernel
       '@coreloom/module-auth':
         specifier: workspace:*
         version: link:../auth
@@ -205,15 +299,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.1.50
-        version: 0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        specifier: 0.1.51
+        version: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
       segment-state:
         specifier: 0.2.0
-        version: 0.2.0(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        version: 0.2.0(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
     devDependencies:
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -222,7 +316,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   modules/profile:
     dependencies:
@@ -232,6 +326,9 @@ importers:
       '@coreloom/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@coreloom/kernel':
+        specifier: workspace:*
+        version: link:../../packages/kernel
       '@coreloom/module-auth':
         specifier: workspace:*
         version: link:../auth
@@ -242,15 +339,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.1.50
-        version: 0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        specifier: 0.1.51
+        version: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
       segment-state:
         specifier: 0.2.0
-        version: 0.2.0(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        version: 0.2.0(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
     devDependencies:
+      '@octanejs/app-core':
+        specifier: 0.0.47
+        version: 0.0.47(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -259,7 +359,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   modules/sandbox:
     dependencies:
@@ -272,6 +372,9 @@ importers:
       '@coreloom/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@coreloom/kernel':
+        specifier: workspace:*
+        version: link:../../packages/kernel
       '@coreloom/module-auth':
         specifier: workspace:*
         version: link:../auth
@@ -282,18 +385,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       '@octanejs/app-core':
-        specifier: 0.0.46
-        version: 0.0.46(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        specifier: 0.0.47
+        version: 0.0.47(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
       octane:
-        specifier: 0.1.50
-        version: 0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        specifier: 0.1.51
+        version: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
       segment-state:
         specifier: 0.2.0
-        version: 0.2.0(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        version: 0.2.0(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
     devDependencies:
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -302,7 +405,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   modules/system:
     dependencies:
@@ -325,21 +428,21 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       '@octanejs/app-core':
-        specifier: 0.0.46
-        version: 0.0.46(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        specifier: 0.0.47
+        version: 0.0.47(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
       octane:
-        specifier: 0.1.50
-        version: 0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        specifier: 0.1.51
+        version: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
       segment-state:
         specifier: 0.2.0
-        version: 0.2.0(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        version: 0.2.0(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
       yaml:
         specifier: 2.9.0
         version: 2.9.0
     devDependencies:
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -348,7 +451,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   modules/users:
     dependencies:
@@ -368,21 +471,21 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.1.50
-        version: 0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        specifier: 0.1.51
+        version: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
       segment-state:
         specifier: 0.2.0
-        version: 0.2.0(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        version: 0.2.0(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
     devDependencies:
       '@coreloom/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel
       '@octanejs/app-core':
-        specifier: 0.0.46
-        version: 0.0.46(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        specifier: 0.0.47
+        version: 0.0.47(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -391,7 +494,50 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+
+  modules/workflows:
+    dependencies:
+      '@coreloom/client':
+        specifier: workspace:*
+        version: link:../../packages/client
+      '@coreloom/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@coreloom/kernel':
+        specifier: workspace:*
+        version: link:../../packages/kernel
+      '@coreloom/module-agents':
+        specifier: workspace:*
+        version: link:../agents
+      '@coreloom/module-auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@coreloom/server':
+        specifier: workspace:*
+        version: link:../../packages/server
+      '@coreloom/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
+      octane:
+        specifier: 0.1.51
+        version: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+      segment-state:
+        specifier: 0.2.0
+        version: 0.2.0(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+    devDependencies:
+      '@tsrx/typescript-plugin':
+        specifier: 0.3.120
+        version: 0.3.120(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.10
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   packages/ai-provider:
     dependencies:
@@ -419,7 +565,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   packages/cli:
     dependencies:
@@ -453,7 +599,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.27.4)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.27.4)(tsx@4.21.0)(yaml@2.9.0))
 
   packages/cli-protocol:
     devDependencies:
@@ -462,7 +608,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   packages/client:
     dependencies:
@@ -470,24 +616,24 @@ importers:
         specifier: workspace:*
         version: link:../ui
       '@octanejs/seo':
-        specifier: 0.0.35
-        version: 0.0.35(patch_hash=8e36553d5b8a6d0fe0b4426016fcf7840cdcdd631fbc2ddd3f6bf85cd39e04a5)(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        specifier: 0.0.36
+        version: 0.0.36(patch_hash=8e36553d5b8a6d0fe0b4426016fcf7840cdcdd631fbc2ddd3f6bf85cd39e04a5)(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
       octane:
-        specifier: 0.1.50
-        version: 0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        specifier: 0.1.51
+        version: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
       segment-state:
         specifier: 0.2.0
-        version: 0.2.0(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        version: 0.2.0(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
     devDependencies:
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
       typescript:
         specifier: 5.9.3
         version: 5.9.3
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   packages/coding-agent:
     dependencies:
@@ -509,7 +655,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   packages/contracts:
     devDependencies:
@@ -518,16 +664,16 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   packages/dev-console:
     devDependencies:
       vite:
-        specifier: 8.1.5
-        version: 8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)
+        specifier: 8.2.2
+        version: 8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   packages/harness:
     dependencies:
@@ -537,16 +683,22 @@ importers:
       '@coreloom/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@coreloom/kernel':
+        specifier: workspace:*
+        version: link:../kernel
       ai:
         specifier: 7.0.85
         version: 7.0.85(zod@4.5.4)
     devDependencies:
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
       typescript:
         specifier: 5.9.3
         version: 5.9.3
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   packages/kernel:
     dependencies:
@@ -554,12 +706,52 @@ importers:
         specifier: workspace:*
         version: link:../contracts
     devDependencies:
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
       typescript:
         specifier: 5.9.3
         version: 5.9.3
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+
+  packages/landing:
+    dependencies:
+      '@fontsource-variable/ibm-plex-sans':
+        specifier: 5.3.0
+        version: 5.3.0
+      '@fontsource/ibm-plex-mono':
+        specifier: 5.2.7
+        version: 5.2.7
+      '@octanejs/seo':
+        specifier: 0.0.36
+        version: 0.0.36(patch_hash=8e36553d5b8a6d0fe0b4426016fcf7840cdcdd631fbc2ddd3f6bf85cd39e04a5)(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+      '@octanejs/vite-plugin':
+        specifier: 0.1.51
+        version: 0.1.51(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+      octane:
+        specifier: 0.1.51
+        version: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+      vite:
+        specifier: 8.2.2
+        version: 8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)
+    devDependencies:
+      '@octanejs/app-core':
+        specifier: 0.0.47
+        version: 0.0.47(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+      '@tsrx/typescript-plugin':
+        specifier: 0.3.120
+        version: 0.3.120(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.10
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   packages/sandbox:
     dependencies:
@@ -591,27 +783,27 @@ importers:
         specifier: workspace:*
         version: link:../ui
       '@octanejs/seo':
-        specifier: 0.0.35
-        version: 0.0.35(patch_hash=8e36553d5b8a6d0fe0b4426016fcf7840cdcdd631fbc2ddd3f6bf85cd39e04a5)(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        specifier: 0.0.36
+        version: 0.0.36(patch_hash=8e36553d5b8a6d0fe0b4426016fcf7840cdcdd631fbc2ddd3f6bf85cd39e04a5)(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
       '@octanejs/vite-plugin':
-        specifier: 0.1.50
-        version: 0.1.50(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        specifier: 0.1.51
+        version: 0.1.51(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
       octane:
-        specifier: 0.1.50
-        version: 0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        specifier: 0.1.51
+        version: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
       segment-state:
         specifier: 0.2.0
-        version: 0.2.0(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        version: 0.2.0(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
       vite:
-        specifier: 8.1.5
-        version: 8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)
+        specifier: 8.2.2
+        version: 8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)
     devDependencies:
       '@octanejs/app-core':
-        specifier: 0.0.46
-        version: 0.0.46(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        specifier: 0.0.47
+        version: 0.0.47(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -620,42 +812,51 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   packages/server:
     dependencies:
       '@octanejs/app-core':
-        specifier: 0.0.46
-        version: 0.0.46(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        specifier: 0.0.47
+        version: 0.0.47(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
     devDependencies:
       typescript:
         specifier: 5.9.3
         version: 5.9.3
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   packages/ui:
     dependencies:
+      '@coreloom/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@fontsource-variable/ibm-plex-sans':
         specifier: 5.3.0
         version: 5.3.0
       '@fontsource/ibm-plex-mono':
         specifier: 5.2.7
         version: 5.2.7
+      '@octanejs/tanstack-table':
+        specifier: 0.1.48
+        version: 0.1.48(patch_hash=9bd99f78fc123b4c27ed0f18d7c6c9aaa737d04c4865b5105608510d02c3213b)(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+      chart.js:
+        specifier: ^4.5.1
+        version: 4.5.1
       octane:
-        specifier: 0.1.50
-        version: 0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        specifier: 0.1.51
+        version: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
     devDependencies:
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
       typescript:
         specifier: 5.9.3
         version: 5.9.3
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   platform:
     dependencies:
@@ -668,6 +869,12 @@ importers:
       '@coreloom/module-auth':
         specifier: workspace:*
         version: link:../modules/auth
+      '@coreloom/module-automations':
+        specifier: workspace:*
+        version: link:../modules/automations
+      '@coreloom/module-automations-workflows-integration':
+        specifier: workspace:*
+        version: link:../modules/automations-workflows-integration
       '@coreloom/module-catalog':
         specifier: workspace:*
         version: link:../modules/catalog
@@ -689,28 +896,34 @@ importers:
       '@coreloom/module-users':
         specifier: workspace:*
         version: link:../modules/users
+      '@coreloom/module-workflows':
+        specifier: workspace:*
+        version: link:../modules/workflows
       '@coreloom/server':
         specifier: workspace:*
         version: link:../packages/server
+      '@coreloom/ui':
+        specifier: workspace:*
+        version: link:../packages/ui
       '@octanejs/seo':
-        specifier: 0.0.35
-        version: 0.0.35(patch_hash=8e36553d5b8a6d0fe0b4426016fcf7840cdcdd631fbc2ddd3f6bf85cd39e04a5)(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        specifier: 0.0.36
+        version: 0.0.36(patch_hash=8e36553d5b8a6d0fe0b4426016fcf7840cdcdd631fbc2ddd3f6bf85cd39e04a5)(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
       '@octanejs/vite-plugin':
-        specifier: 0.1.50
-        version: 0.1.50(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        specifier: 0.1.51
+        version: 0.1.51(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
       octane:
-        specifier: 0.1.50
-        version: 0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        specifier: 0.1.51
+        version: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
     devDependencies:
       '@coreloom/dev-console':
         specifier: workspace:*
         version: link:../packages/dev-console
       '@octanejs/app-core':
-        specifier: 0.0.46
-        version: 0.0.46(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+        specifier: 0.0.47
+        version: 0.0.47(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -718,11 +931,11 @@ importers:
         specifier: 5.9.3
         version: 5.9.3
       vite:
-        specifier: 8.1.5
-        version: 8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)
+        specifier: 8.2.2
+        version: 8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)
       vitest:
         specifier: 4.1.10
-        version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+        version: 4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
 packages:
 
@@ -771,15 +984,6 @@ packages:
   '@ai-sdk/provider@4.0.9':
     resolution: {integrity: sha512-XnGXPWiBIfqjsVEud5pOaVneRByJQOu2sYNwlSVJTPCvakdCDkVuYKKfNuStkIpMUYl7JIkBZGBx+B5YfNeVjA==}
     engines: {node: '>=22'}
-
-  '@emnapi/core@1.11.1':
-    resolution: {integrity: sha512-RSvbQmHzdKzNsLYa/wHrbc3KN4sYLKAdPZxqiM2HATqv/SBk2/ENSHpvXGaLOMcsAyz0poEGqkmmKYG3OWiJEQ==}
-
-  '@emnapi/runtime@1.11.1':
-    resolution: {integrity: sha512-vgj7R3y3Wgx24IQaGPA/R6YFXLHVMOZ0uVEyIQPaWs+rd1AzfEMXlAC22FYwO1XkKR6NPsq7mUandH8oIRdZFw==}
-
-  '@emnapi/wasi-threads@1.2.2':
-    resolution: {integrity: sha512-c95qOXkHdydNKhscBTebqEC1CVAZpyqOfVfBzQ1qgzyl3gfeldUjIggDbIZgDKsHLgnsM+igH7TJ/eAasaVuMA==}
 
   '@esbuild/aix-ppc64@0.27.4':
     resolution: {integrity: sha512-cQPwL2mp2nSmHHJlCyoXgHGhbEPMrEEU5xhkcy3Hs/O7nGZqEpZ2sUtLaL9MORLtDfRvVl2/3PAuEkYZH0Ty8Q==}
@@ -1102,42 +1306,50 @@ packages:
   '@jridgewell/sourcemap-codec@1.6.0':
     resolution: {integrity: sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw==}
 
-  '@napi-rs/wasm-runtime@1.2.3':
-    resolution: {integrity: sha512-UMduMbqO5s5zF2NkNacMT/yK5Y5QiKvWr2+50bzIIxFDwVJ2h49b+oyjaCGPhJxd2/gC2x39EHv/gHVuu36x2Q==}
-    engines: {node: ^20.19.0 || ^22.13.0 || >=23.5.0}
-    peerDependencies:
-      '@emnapi/core': ^1.7.1 || ^2.0.0-alpha.4
-      '@emnapi/runtime': ^1.7.1 || ^2.0.0-alpha.4
+  '@kurkle/color@0.3.4':
+    resolution: {integrity: sha512-M5UknZPHRu3DEDWoipU6sE8PdkZ6Z/S+v4dD+Ke8IaNlpdSQah50lz1KtcFBa2vsdOnwbbnxJwVM4wty6udA5w==}
 
   '@noble/hashes@2.4.0':
     resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
     engines: {node: '>= 20.19.0'}
 
-  '@octanejs/app-core@0.0.46':
-    resolution: {integrity: sha512-/2f+YVPtXzrAOSePunXoBRmjSn5Z2Qty8iqQ4aDaLBYxw+jxBdIFwd1D/fE4Htr1xayPkQSHH03FcqZKLE6A7w==}
+  '@octanejs/app-core@0.0.47':
+    resolution: {integrity: sha512-V42+IeglvW5lbTfJpM9l7kGeF4poGgQR+g3haQ8IRq8AolvQ5mg/2001PZeHystWr3rjHak337jpIxgRFV55dg==}
     engines: {node: '>=22.22.2'}
     peerDependencies:
-      octane: 0.1.50
+      octane: 0.1.51
 
-  '@octanejs/seo@0.0.35':
-    resolution: {integrity: sha512-D+wAutuPvPJ5SDu2LWwwMWtIyUmG/H7vAsvrTn2qU75eMbDympNU2qtqaLuuI3Ky6MaRKudfANsXvxx+7vQW0g==}
+  '@octanejs/seo@0.0.36':
+    resolution: {integrity: sha512-3UxbKoKVe/NcYpuXsM5Bit188A1GI5hSLsMLjFe9miIBMVm/xK+w5mGGXTJm/Cr2zIUJYczNX1cIqbu1+wR/PA==}
     engines: {node: '>=22.22.2'}
     peerDependencies:
-      octane: 0.1.50
+      octane: 0.1.51
 
-  '@octanejs/vite-plugin@0.1.50':
-    resolution: {integrity: sha512-V1cUbzgB7Uosm0ajsg5khF2MNHl8db3rdS9E+BMK+XGJM+Jx3u+gDPsp7GT+1lZdiNgduJcOQhLEtsX1bugRQw==}
+  '@octanejs/tanstack-store@0.0.45':
+    resolution: {integrity: sha512-HgzSjoJUMltf3KZ3gewt9qY+mN2PY0HAjmykLKFq6P/hQIbXsUQHDs5fHrWeZ2owE940BOF1nrfILbwhFxSFRQ==}
+    engines: {node: '>=22.22.2'}
+    peerDependencies:
+      octane: 0.1.51
+
+  '@octanejs/tanstack-table@0.1.48':
+    resolution: {integrity: sha512-kaQjUbVUoNFjrVghTOjy7eCupM14+RJWfFUPjdbiseWbwh7q4Uqf9QNLv54YX0arAb1oSERf7Grt7jcC4nZa7g==}
+    engines: {node: '>=22.22.2'}
+    peerDependencies:
+      octane: 0.1.51
+
+  '@octanejs/vite-plugin@0.1.51':
+    resolution: {integrity: sha512-Qpl9d5V3Zz0iPiBb5t7wTaZq1Px6WyGIEPieSJ5ZqttSIf7pgSrsqVktppNlWsJKFAVPOInakbCPH3kdF8VFlA==}
     engines: {node: '>=22.22.2'}
     hasBin: true
     peerDependencies:
-      octane: 0.1.50
+      octane: 0.1.51
       vite: ^8.0.16
-
-  '@oxc-project/types@0.139.0':
-    resolution: {integrity: sha512-r9gHphtCs+1M7J0pw6Sn/hh/Wpa/iQrOOkrNAlVLF/gHq+/CJmHIWKKUUhdWjcD6CIa8idarspCsASiXCXvFUw==}
 
   '@oxc-project/types@0.140.0':
     resolution: {integrity: sha512-h5LUOzGArYemnW1NMz/DuuQhBi96J6JL2Bk8zE4kvqxB5Sg3jxmCiH4uyOWHDkiKSt5vWlG4FIwCR/DbstcNRQ==}
+
+  '@oxc-project/types@0.147.0':
+    resolution: {integrity: sha512-IJ3s6ltHLp45S0bh7phkX+gJO7A1Wuz2EaqpAhb8WjqDwbzMiWKHhyyT42tskaWjEYXtHtVCPpnBJVT9+dcRLg==}
 
   '@oxc-tsrx/native-darwin-arm64@0.5.0':
     resolution: {integrity: sha512-PRymiTwR4BGOp72HF8hLh7D1Hmmm1+xAgus3j7GSHDzKx7qic+BKXAReR4whlaJtgsHIhGKnJqnx5aJ6HRsrXA==}
@@ -1468,97 +1680,98 @@ packages:
   '@ripple-ts/adapter@0.3.125':
     resolution: {integrity: sha512-sNQhOfRn8WpBwYkJgCvnAG2G1QEFReW83zFe88t7tS1uqBA1mxf+ceLTm8RnFk34DGIv86D1/lWc2sfkulDjmA==}
 
-  '@rolldown/binding-android-arm64@1.1.5':
-    resolution: {integrity: sha512-lZg8fqIv2v7FF237bwMgzGZEJvGL79/s5knJ/i6FmsGF4XXlzccZ4jb+TrFIxtSSxFtIpdsgrPZeMk1I9AFcyQ==}
+  '@rolldown/binding-android-arm-eabi@1.2.6':
+    resolution: {integrity: sha512-b+jTcARdTiFLI6jB4a5XjTm0RWd6KcRfQj/I2356fxUZemiho9zQLxo0RtCuMDAyKcLo6cEltkgbQp6d1+sjjQ==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [arm]
+    os: [android]
+
+  '@rolldown/binding-android-arm64@1.2.6':
+    resolution: {integrity: sha512-lkWU8ZJaRk9q3CIEY1Tc7vIFALp3Xw5NfGJo2hQg5oIqNgxWi1zI+IiDEK3r70BF5Dzol1tcXsnzsRc8NLhG+Q==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [arm64]
     os: [android]
 
-  '@rolldown/binding-darwin-arm64@1.1.5':
-    resolution: {integrity: sha512-51Bnx9pNiMRKSUNtBfySkNJ9vMU9Hh3I1ozDd6gyPPYzaXCfnptUcEZxXGYFn+ul2dtcMUiqGR1Yai2K10uoTw==}
+  '@rolldown/binding-darwin-arm64@1.2.6':
+    resolution: {integrity: sha512-dgR56NYnvAszm7Ob1B2/Vn0e8bUQYZH2UjVaMMtMVOCKFSfjhfLmuA/9+O+F+ajUdG6B/bSssrKW6JJYASa8jA==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [arm64]
     os: [darwin]
 
-  '@rolldown/binding-darwin-x64@1.1.5':
-    resolution: {integrity: sha512-Tm+gbfC0aHu1tBA/JvKQh32S0K6YgCHkiAF4/W6xX0K0RmNuc94VeK419dJoE65R5aRxmo+noZQSWrAMF6yb6g==}
+  '@rolldown/binding-darwin-x64@1.2.6':
+    resolution: {integrity: sha512-vpVxFvUCFioJqug7OTvqptkc4yb8UX0AwfDmJpaR/0sWz+BUmqSVAf7c8JkUgnN8YLspb4a/N6NhTyMAmdyQ7Q==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [x64]
     os: [darwin]
 
-  '@rolldown/binding-freebsd-x64@1.1.5':
-    resolution: {integrity: sha512-JMzDKCCXq93YccG5gz3hvOs1oXRKAf0XYpfOS88e+wZrC8Iugj6j68867vrYZkvpDDpKn/KoKORThmchMpF6TA==}
+  '@rolldown/binding-freebsd-x64@1.2.6':
+    resolution: {integrity: sha512-h1wG6Y6K3JlRswxsI64qQJqBAy4vrLuHgRbc8CZMGSWTOFRY6ghMApM1NKzB2I0n5xV1fjkE18SuVl2QpLeNpA==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [x64]
     os: [freebsd]
 
-  '@rolldown/binding-linux-arm-gnueabihf@1.1.5':
-    resolution: {integrity: sha512-uML21j2K5TfPGutKxub+M+nLjZIrWjXQ5Grx4lCe/nimTj9B4L63zHpjXLl4y0L3mcm2htEQIb06oCG/szerNw==}
+  '@rolldown/binding-linux-arm-gnueabihf@1.2.6':
+    resolution: {integrity: sha512-tbCiqub0q2MVWJKgF5PoAlNWCtQydiOYSLIkd8sByqK/6MMYLJRcSXSYodqYtd0O+Fw7QaVmKKlS4oL94YRZ0w==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [arm]
     os: [linux]
 
-  '@rolldown/binding-linux-arm64-gnu@1.1.5':
-    resolution: {integrity: sha512-navSiuTMogvnQoZoM/v+l3ZWo50/NTwSHSzheABx/RCnmUPaKwq9qSo4Br2OYRs21+Fz8uFqITZM3H4opOB0/Q==}
+  '@rolldown/binding-linux-arm64-gnu@1.2.6':
+    resolution: {integrity: sha512-oxK9+baEBPhZG5HB4URY+uU04zJWeZlH6Tb9rB5DK4DF9XR1uXNLXt5Q5ZsugTKayNCNLhkcwz/ye74hRI98dg==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@rolldown/binding-linux-arm64-musl@1.1.5':
-    resolution: {integrity: sha512-lAryqH7IteztmCXQXk0etKj4wBQ7Gx5S6LjKhsgp9zb8I5bsuvU/2llH1hDQcjsFeqIsovMVN339/8pUDDBXxA==}
+  '@rolldown/binding-linux-arm64-musl@1.2.6':
+    resolution: {integrity: sha512-muWCk27FVBEZtv0MsK8gnfSmgczA8KQ0uRVJbTABKhkRfQc38aUrcb7fhi3BNiyseFmgcRsoMfQsSNJ+DbZdSw==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@rolldown/binding-linux-ppc64-gnu@1.1.5':
-    resolution: {integrity: sha512-fsK/sNBnxzBlL4O1JNrZakVQxPspqpED5dLtNsZS9oOKmtSpdNIzxH2kkol5HYTWJN47sE20ztMJPxfZ89qGOg==}
+  '@rolldown/binding-linux-ppc64-gnu@1.2.6':
+    resolution: {integrity: sha512-eWDoSfU7Co2qj3vgB3Dt4lj1mG6CoWbcJQkRMP3XJplyCMtuaq3LHvPFjS9QIPvMGWVadJC04Xiy0IdcVPtnwQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [ppc64]
     os: [linux]
     libc: [glibc]
 
-  '@rolldown/binding-linux-s390x-gnu@1.1.5':
-    resolution: {integrity: sha512-gLYb4BIadlfTOYT5gO503n8zQjXflgzpD0FcyKh0Mzx3rqCZKnHoJWV9xe1KXUJ5lx2JfcSHr/mhzS0PC/McAA==}
+  '@rolldown/binding-linux-s390x-gnu@1.2.6':
+    resolution: {integrity: sha512-2bWNjRSIayvupRKxXUY2tWG9fYdoUlTqWywHRvE8Eq3GvuQ+f2HeIkve697fIt+IQs/PV8yFsdWuhp1aJ1PdnA==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [s390x]
     os: [linux]
     libc: [glibc]
 
-  '@rolldown/binding-linux-x64-gnu@1.1.5':
-    resolution: {integrity: sha512-FjcpEKUyJygHgs1o50VYNvkt5+7Le/VEdYt0AkRpkL33MnyQfwr8l5mXwMmfmTbyMPr5vJLC+8/Gd9gXnwU1QQ==}
+  '@rolldown/binding-linux-x64-gnu@1.2.6':
+    resolution: {integrity: sha512-KekI0gS0wLxe1UBSQSjenBVwou/JkcQPDzBPICGZjxUv9k3RteHDPBQaiOicZUFKRIH2wKEimGwVpnJsbPzu7w==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@rolldown/binding-linux-x64-musl@1.1.5':
-    resolution: {integrity: sha512-Me+PfPI2TMeOQk0gYWfLQZtTktrmzbr8cDboqX83XKc7UrgAi55gF+2dUkWdxd19n55Essp2yeca+O9N5rBxHg==}
+  '@rolldown/binding-linux-x64-musl@1.2.6':
+    resolution: {integrity: sha512-TvtPnfVr+HtyGiDmPK4VWmlNm7QhNNAcK5Q9A7aOXsI8545yCyaoMaicXrFZ72JzeYjaUVk7yT243zT0jzjFKQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@rolldown/binding-openharmony-arm64@1.1.5':
-    resolution: {integrity: sha512-yc5WrLzXks6zCQfn9Oxr8pORKyl/pF+QjHmW/Qx3qu0oyrrNC+y2JLTU1E2rcWYAmzlnqngWXHQjy51VzW70Vw==}
+  '@rolldown/binding-openharmony-arm64@1.2.6':
+    resolution: {integrity: sha512-iOo0VEay2XFhaCcH0sps5XIimkSuOnNaZrf6+ZkoSOQBJPKNU48RkmJv0/lSpipexu5P+ouFgafe5IGr/DiQfg==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [arm64]
     os: [openharmony]
 
-  '@rolldown/binding-wasm32-wasi@1.1.5':
-    resolution: {integrity: sha512-VbQGPX2b4r48TAMIM2cjgluIM1HYutm4pcTEJsle7iEP7sB1dFqtPLBVbdLAZCxy1txCcPxf4QFf4v8uvltPqA==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    cpu: [wasm32]
-
-  '@rolldown/binding-win32-arm64-msvc@1.1.5':
-    resolution: {integrity: sha512-gHv82k63z4qpV5+Q1y/12KrK0ltWBukVDI8nZcbT7Tt/ZlOIVwppazneq0F93oDxTo3IgAMEDIoQh3E2n6mVsw==}
+  '@rolldown/binding-win32-arm64-msvc@1.2.6':
+    resolution: {integrity: sha512-y5NTmmasMS455JlOCO4ZM9krIchv3Mvm1crL1iUPGOPgEzSkves9n0SdC5Sjz6+qWDFhd8/JpfWMH8NSWNHe+A==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [arm64]
     os: [win32]
 
-  '@rolldown/binding-win32-x64-msvc@1.1.5':
-    resolution: {integrity: sha512-tTZuDBPw85tEN5PQi1pnEBzDy0Z49HtScLAbD5t6hyeU92A95pRWaSMw1GZZi/RwgSgUIl0xrSlXIT/9QzvYSA==}
+  '@rolldown/binding-win32-x64-msvc@1.2.6':
+    resolution: {integrity: sha512-np8iZSLfXlAD4kWhiyq/u0Yt8oZDtRQ8lGhQaCXo2rl37KNjeU0GjJuwr4P3oeZ++ROfofsKNBqR5LTO8aXyWQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [x64]
     os: [win32]
@@ -1573,6 +1786,16 @@ packages:
     resolution: {integrity: sha512-wgKggnhZVL9Bfx1OaKKTrYY9BFRk6C8UAkQNUcIv1+llzYrIqy+RZm5HPKzn0NpEBvTVhTqB4kQyllZywsRBRQ==}
     peerDependencies:
       acorn: ^8.9.0
+
+  '@tanstack/store@0.11.0':
+    resolution: {integrity: sha512-WlzzCt3xi0G6pCAJu1U+2jiECwabETDpQDi3hfkFZvJii9AuZqEKbOiVarX1/bWhTNjU486yQtJCCasi/0q+Cw==}
+
+  '@tanstack/store@0.11.1':
+    resolution: {integrity: sha512-mzTOBhypOuDJAy/D8n2MfUZ1HFkXnmSETviRyhqEC8LUE7/IZQExOTxMANj3KjTofYTkFNpBY67qaVrT41YccA==}
+
+  '@tanstack/table-core@9.0.0-beta.58':
+    resolution: {integrity: sha512-iP2N6AA4iU6NbLF/DOHoA/mJUDspz5cRIvPkqfTtuoURcjNp4MxbJPxTRUizuX8JejDL2PDfmLUMj3zU+znhyA==}
+    engines: {node: '>=20'}
 
   '@tsrx/core@0.1.58':
     resolution: {integrity: sha512-2dq/PYJZ5XDZ8nshfC4QHO/UACEivKegPQ4kmyse6sgxmE7Udsh56zX4v2KlNd2DjWaR34SELS3JnVr0XQzX8A==}
@@ -1612,9 +1835,6 @@ packages:
         optional: true
       octane:
         optional: true
-
-  '@tybys/wasm-util@0.10.3':
-    resolution: {integrity: sha512-F3fo1MYrRJYL3zER0OUOmkutjr1Vp23m7OsSgp7nq4SP6OqX6C/56XFIPAl5bt3zaBRjmW7SGz3u/6LwFpYcOg==}
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
@@ -1703,6 +1923,10 @@ packages:
   chai@6.2.2:
     resolution: {integrity: sha512-NUPRluOfOiTKBKvWPtSD4PhFvWCqOi0BGStNWs57X9js7XGTprSmFoz5F0tWhR4WPjNeR9jXqdC7/UpSJTnlRg==}
     engines: {node: '>=18'}
+
+  chart.js@4.5.1:
+    resolution: {integrity: sha512-GIjfiT9dbmHRiYi6Nl2yFCq7kkwdkp1W/lp2J99rX0yo9tgJGn3lKQATztIjb5tVtevcBtIdICNWqlq5+E8/Pw==}
+    engines: {pnpm: '>=8'}
 
   convert-source-map@2.0.0:
     resolution: {integrity: sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==}
@@ -1870,8 +2094,8 @@ packages:
     resolution: {integrity: sha512-4a+OsYv9UktOJKE+l1A4OufDgdRF9PifWj+tJnHURo/P+WOxpG4GzUFL9qCalmWauao6ogiG+QvnCovwPoyAWA==}
     engines: {node: '>=12.20.0'}
 
-  octane@0.1.50:
-    resolution: {integrity: sha512-NQ0qzMq2KZXSN9434QSoLK7CJ1OH54fyBK2/0CU2Lb+2bnPGbdHjJXtT5rdB01EesNIe0ME/avAGdi108s4e0A==}
+  octane@0.1.51:
+    resolution: {integrity: sha512-5bvE/0lZUQ4OTj43w6IoseuuiNB9P8n+VBGTr6xNGSosl0WxljZK6/8plLscjuQ96/Y4PYilBX5YHf8IItKDMQ==}
     engines: {node: '>=22.22.2'}
     peerDependencies:
       react: ^19.0.0
@@ -1952,8 +2176,8 @@ packages:
   resolve-pkg-maps@1.0.0:
     resolution: {integrity: sha512-seS2Tj26TBVOC2NIc2rOe2y2ZO7efxITtLZcGSOnHHNOQ7CkiUBfw0Iw2ck6xkIhPwLhKNLS8BO+hEpngQlqzw==}
 
-  rolldown@1.1.5:
-    resolution: {integrity: sha512-t9z29cJjXf/vxQ8dyhCSpt6H6aSwHTk8cT5I3iy6SMXuFpk5mB6PL6XfC8PCwrPTx93udwKUm9HRteAlTGBLiA==}
+  rolldown@1.2.6:
+    resolution: {integrity: sha512-vMM4q3aixf46GiF1Kok8jDPFsEpXgFWGjUHXNkNHNm+Y2adXAG2dbX91jkti3i0ZRsOlcmbuzAz1poObSHCmUA==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
 
@@ -2001,9 +2225,6 @@ packages:
     resolution: {integrity: sha512-yau8yJdTt989Mm0Bd/236QnzEiPf2xLLTqUZRUJOo/3CB078LSwzei343DgtJVmfJKJE3TMINY1u42SQsP6mXw==}
     engines: {node: '>=14.0.0'}
 
-  tslib@2.8.1:
-    resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
-
   tsx@4.21.0:
     resolution: {integrity: sha512-5C1sg4USs1lfG0GFb2RLXsdpXqBSEhAaA/0kPL01wxzpMqLILNxIxIOKiILz+cdg/pLnOUxFYOR5yhHU666wbw==}
     engines: {node: '>=18.0.0'}
@@ -2021,13 +2242,13 @@ packages:
     resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
     engines: {node: '>=20.18.1'}
 
-  vite@8.1.5:
-    resolution: {integrity: sha512-7ULLwsCdYx/nRyrpiEwvqb5TFHrMVZyBt+rg/OAXT7rgj/z+DtTDyKFeLAdDkubDVDKD8jOsndmy7m55XcfUsw==}
+  vite@8.2.2:
+    resolution: {integrity: sha512-cFKLV/PRgAUlIRm5WjMjJ86jrftzpqcgH+Us+DS8mI3CDNiH30Whrz8uHL3+MOLPAgqbMBAqWdAHAphOAM+z/Q==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
     peerDependencies:
       '@types/node': ^20.19.0 || >=22.12.0
-      '@vitejs/devtools': ^0.3.0
+      '@vitejs/devtools': ^0.4.0 || ^0.5.0
       esbuild: ^0.27.0 || ^0.28.0
       jiti: '>=1.21.0'
       less: ^4.0.0
@@ -2177,22 +2398,6 @@ snapshots:
   '@ai-sdk/provider@4.0.9':
     dependencies:
       json-schema: 0.4.0
-
-  '@emnapi/core@1.11.1':
-    dependencies:
-      '@emnapi/wasi-threads': 1.2.2
-      tslib: 2.8.1
-    optional: true
-
-  '@emnapi/runtime@1.11.1':
-    dependencies:
-      tslib: 2.8.1
-    optional: true
-
-  '@emnapi/wasi-threads@1.2.2':
-    dependencies:
-      tslib: 2.8.1
-    optional: true
 
   '@esbuild/aix-ppc64@0.27.4':
     optional: true
@@ -2356,35 +2561,41 @@ snapshots:
 
   '@jridgewell/sourcemap-codec@1.6.0': {}
 
-  '@napi-rs/wasm-runtime@1.2.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)':
-    dependencies:
-      '@emnapi/core': 1.11.1
-      '@emnapi/runtime': 1.11.1
-      '@tybys/wasm-util': 0.10.3
-    optional: true
+  '@kurkle/color@0.3.4': {}
 
   '@noble/hashes@2.4.0': {}
 
-  '@octanejs/app-core@0.0.46(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))':
+  '@octanejs/app-core@0.0.47(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))':
     dependencies:
       '@ripple-ts/adapter': 0.3.125
       esbuild: 0.28.2
-      octane: 0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+      octane: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
-  '@octanejs/seo@0.0.35(patch_hash=8e36553d5b8a6d0fe0b4426016fcf7840cdcdd631fbc2ddd3f6bf85cd39e04a5)(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))':
+  '@octanejs/seo@0.0.36(patch_hash=8e36553d5b8a6d0fe0b4426016fcf7840cdcdd631fbc2ddd3f6bf85cd39e04a5)(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))':
     dependencies:
-      octane: 0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+      octane: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
-  '@octanejs/vite-plugin@0.1.50(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))':
+  '@octanejs/tanstack-store@0.0.45(patch_hash=c30b0d97537b5c25d25647790d8b766523f086ae6e97f4ee081282643367cdb1)(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))':
     dependencies:
-      '@octanejs/app-core': 0.0.46(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+      '@tanstack/store': 0.11.0
+      octane: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+
+  '@octanejs/tanstack-table@0.1.48(patch_hash=9bd99f78fc123b4c27ed0f18d7c6c9aaa737d04c4865b5105608510d02c3213b)(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))':
+    dependencies:
+      '@octanejs/tanstack-store': 0.0.45(patch_hash=c30b0d97537b5c25d25647790d8b766523f086ae6e97f4ee081282643367cdb1)(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
+      '@tanstack/table-core': 9.0.0-beta.58
+      octane: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+
+  '@octanejs/vite-plugin@0.1.51(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))':
+    dependencies:
+      '@octanejs/app-core': 0.0.47(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))
       '@ripple-ts/adapter': 0.3.125
-      octane: 0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
-      vite: 8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)
-
-  '@oxc-project/types@0.139.0': {}
+      octane: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+      vite: 8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)
 
   '@oxc-project/types@0.140.0': {}
+
+  '@oxc-project/types@0.147.0': {}
 
   '@oxc-tsrx/native-darwin-arm64@0.5.0':
     optional: true
@@ -2544,53 +2755,49 @@ snapshots:
 
   '@ripple-ts/adapter@0.3.125': {}
 
-  '@rolldown/binding-android-arm64@1.1.5':
+  '@rolldown/binding-android-arm-eabi@1.2.6':
     optional: true
 
-  '@rolldown/binding-darwin-arm64@1.1.5':
+  '@rolldown/binding-android-arm64@1.2.6':
     optional: true
 
-  '@rolldown/binding-darwin-x64@1.1.5':
+  '@rolldown/binding-darwin-arm64@1.2.6':
     optional: true
 
-  '@rolldown/binding-freebsd-x64@1.1.5':
+  '@rolldown/binding-darwin-x64@1.2.6':
     optional: true
 
-  '@rolldown/binding-linux-arm-gnueabihf@1.1.5':
+  '@rolldown/binding-freebsd-x64@1.2.6':
     optional: true
 
-  '@rolldown/binding-linux-arm64-gnu@1.1.5':
+  '@rolldown/binding-linux-arm-gnueabihf@1.2.6':
     optional: true
 
-  '@rolldown/binding-linux-arm64-musl@1.1.5':
+  '@rolldown/binding-linux-arm64-gnu@1.2.6':
     optional: true
 
-  '@rolldown/binding-linux-ppc64-gnu@1.1.5':
+  '@rolldown/binding-linux-arm64-musl@1.2.6':
     optional: true
 
-  '@rolldown/binding-linux-s390x-gnu@1.1.5':
+  '@rolldown/binding-linux-ppc64-gnu@1.2.6':
     optional: true
 
-  '@rolldown/binding-linux-x64-gnu@1.1.5':
+  '@rolldown/binding-linux-s390x-gnu@1.2.6':
     optional: true
 
-  '@rolldown/binding-linux-x64-musl@1.1.5':
+  '@rolldown/binding-linux-x64-gnu@1.2.6':
     optional: true
 
-  '@rolldown/binding-openharmony-arm64@1.1.5':
+  '@rolldown/binding-linux-x64-musl@1.2.6':
     optional: true
 
-  '@rolldown/binding-wasm32-wasi@1.1.5':
-    dependencies:
-      '@emnapi/core': 1.11.1
-      '@emnapi/runtime': 1.11.1
-      '@napi-rs/wasm-runtime': 1.2.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)
+  '@rolldown/binding-openharmony-arm64@1.2.6':
     optional: true
 
-  '@rolldown/binding-win32-arm64-msvc@1.1.5':
+  '@rolldown/binding-win32-arm64-msvc@1.2.6':
     optional: true
 
-  '@rolldown/binding-win32-x64-msvc@1.1.5':
+  '@rolldown/binding-win32-x64-msvc@1.2.6':
     optional: true
 
   '@rolldown/pluginutils@1.0.1': {}
@@ -2600,6 +2807,14 @@ snapshots:
   '@sveltejs/acorn-typescript@1.0.13(acorn@8.18.0)':
     dependencies:
       acorn: 8.18.0
+
+  '@tanstack/store@0.11.0': {}
+
+  '@tanstack/store@0.11.1': {}
+
+  '@tanstack/table-core@9.0.0-beta.58':
+    dependencies:
+      '@tanstack/store': 0.11.1
 
   '@tsrx/core@0.1.58':
     dependencies:
@@ -2641,18 +2856,13 @@ snapshots:
 
   '@tsrx/runtime@0.1.2': {}
 
-  '@tsrx/typescript-plugin@0.3.120(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)':
+  '@tsrx/typescript-plugin@0.3.120(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)))(typescript@5.9.3)':
     dependencies:
       '@volar/language-core': 2.4.28
       '@volar/typescript': 2.4.28
       typescript: 5.9.3
     optionalDependencies:
-      octane: 0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
-
-  '@tybys/wasm-util@0.10.3':
-    dependencies:
-      tslib: 2.8.1
-    optional: true
+      octane: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   '@types/chai@5.2.3':
     dependencies:
@@ -2686,21 +2896,21 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.1
 
-  '@vitest/mocker@4.1.10(vite@8.1.5(@types/node@24.13.3)(esbuild@0.27.4)(tsx@4.21.0)(yaml@2.9.0))':
+  '@vitest/mocker@4.1.10(vite@8.2.2(@types/node@24.13.3)(esbuild@0.27.4)(tsx@4.21.0)(yaml@2.9.0))':
     dependencies:
       '@vitest/spy': 4.1.10
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 8.1.5(@types/node@24.13.3)(esbuild@0.27.4)(tsx@4.21.0)(yaml@2.9.0)
+      vite: 8.2.2(@types/node@24.13.3)(esbuild@0.27.4)(tsx@4.21.0)(yaml@2.9.0)
 
-  '@vitest/mocker@4.1.10(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))':
+  '@vitest/mocker@4.1.10(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))':
     dependencies:
       '@vitest/spy': 4.1.10
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)
+      vite: 8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)
 
   '@vitest/pretty-format@4.1.10':
     dependencies:
@@ -2761,6 +2971,10 @@ snapshots:
   assertion-error@2.0.1: {}
 
   chai@6.2.2: {}
+
+  chart.js@4.5.1:
+    dependencies:
+      '@kurkle/color': 0.3.4
 
   convert-source-map@2.0.0: {}
 
@@ -2924,7 +3138,7 @@ snapshots:
 
   obug@2.1.4: {}
 
-  octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)):
+  octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)):
     dependencies:
       '@tsrx/core': 0.1.63
       '@types/react': 19.2.18
@@ -2937,7 +3151,7 @@ snapshots:
       oxc-tsrx: 0.5.0
     optionalDependencies:
       typescript: 5.9.3
-      vite: 8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)
+      vite: 8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)
     transitivePeerDependencies:
       - '@typescript-eslint/types'
       - svelte
@@ -3040,30 +3254,30 @@ snapshots:
 
   resolve-pkg-maps@1.0.0: {}
 
-  rolldown@1.1.5:
+  rolldown@1.2.6:
     dependencies:
-      '@oxc-project/types': 0.139.0
+      '@oxc-project/types': 0.147.0
       '@rolldown/pluginutils': 1.0.1
     optionalDependencies:
-      '@rolldown/binding-android-arm64': 1.1.5
-      '@rolldown/binding-darwin-arm64': 1.1.5
-      '@rolldown/binding-darwin-x64': 1.1.5
-      '@rolldown/binding-freebsd-x64': 1.1.5
-      '@rolldown/binding-linux-arm-gnueabihf': 1.1.5
-      '@rolldown/binding-linux-arm64-gnu': 1.1.5
-      '@rolldown/binding-linux-arm64-musl': 1.1.5
-      '@rolldown/binding-linux-ppc64-gnu': 1.1.5
-      '@rolldown/binding-linux-s390x-gnu': 1.1.5
-      '@rolldown/binding-linux-x64-gnu': 1.1.5
-      '@rolldown/binding-linux-x64-musl': 1.1.5
-      '@rolldown/binding-openharmony-arm64': 1.1.5
-      '@rolldown/binding-wasm32-wasi': 1.1.5
-      '@rolldown/binding-win32-arm64-msvc': 1.1.5
-      '@rolldown/binding-win32-x64-msvc': 1.1.5
+      '@rolldown/binding-android-arm-eabi': 1.2.6
+      '@rolldown/binding-android-arm64': 1.2.6
+      '@rolldown/binding-darwin-arm64': 1.2.6
+      '@rolldown/binding-darwin-x64': 1.2.6
+      '@rolldown/binding-freebsd-x64': 1.2.6
+      '@rolldown/binding-linux-arm-gnueabihf': 1.2.6
+      '@rolldown/binding-linux-arm64-gnu': 1.2.6
+      '@rolldown/binding-linux-arm64-musl': 1.2.6
+      '@rolldown/binding-linux-ppc64-gnu': 1.2.6
+      '@rolldown/binding-linux-s390x-gnu': 1.2.6
+      '@rolldown/binding-linux-x64-gnu': 1.2.6
+      '@rolldown/binding-linux-x64-musl': 1.2.6
+      '@rolldown/binding-openharmony-arm64': 1.2.6
+      '@rolldown/binding-win32-arm64-msvc': 1.2.6
+      '@rolldown/binding-win32-x64-msvc': 1.2.6
 
-  segment-state@0.2.0(octane@0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))):
+  segment-state@0.2.0(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))):
     optionalDependencies:
-      octane: 0.1.50(typescript@5.9.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+      octane: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
 
   siginfo@2.0.0: {}
 
@@ -3086,9 +3300,6 @@ snapshots:
 
   tinyrainbow@3.1.1: {}
 
-  tslib@2.8.1:
-    optional: true
-
   tsx@4.21.0:
     dependencies:
       esbuild: 0.27.4
@@ -3102,12 +3313,12 @@ snapshots:
 
   undici@7.29.0: {}
 
-  vite@8.1.5(@types/node@24.13.3)(esbuild@0.27.4)(tsx@4.21.0)(yaml@2.9.0):
+  vite@8.2.2(@types/node@24.13.3)(esbuild@0.27.4)(tsx@4.21.0)(yaml@2.9.0):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.7
       postcss: 8.5.26
-      rolldown: 1.1.5
+      rolldown: 1.2.6
       tinyglobby: 0.2.17
     optionalDependencies:
       '@types/node': 24.13.3
@@ -3116,12 +3327,12 @@ snapshots:
       tsx: 4.21.0
       yaml: 2.9.0
 
-  vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0):
+  vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.7
       postcss: 8.5.26
-      rolldown: 1.1.5
+      rolldown: 1.2.6
       tinyglobby: 0.2.17
     optionalDependencies:
       '@types/node': 24.13.3
@@ -3130,10 +3341,10 @@ snapshots:
       tsx: 4.21.0
       yaml: 2.9.0
 
-  vitest@4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.27.4)(tsx@4.21.0)(yaml@2.9.0)):
+  vitest@4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.27.4)(tsx@4.21.0)(yaml@2.9.0)):
     dependencies:
       '@vitest/expect': 4.1.10
-      '@vitest/mocker': 4.1.10(vite@8.1.5(@types/node@24.13.3)(esbuild@0.27.4)(tsx@4.21.0)(yaml@2.9.0))
+      '@vitest/mocker': 4.1.10(vite@8.2.2(@types/node@24.13.3)(esbuild@0.27.4)(tsx@4.21.0)(yaml@2.9.0))
       '@vitest/pretty-format': 4.1.10
       '@vitest/runner': 4.1.10
       '@vitest/snapshot': 4.1.10
@@ -3150,17 +3361,17 @@ snapshots:
       tinyexec: 1.3.0
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.1
-      vite: 8.1.5(@types/node@24.13.3)(esbuild@0.27.4)(tsx@4.21.0)(yaml@2.9.0)
+      vite: 8.2.2(@types/node@24.13.3)(esbuild@0.27.4)(tsx@4.21.0)(yaml@2.9.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 24.13.3
     transitivePeerDependencies:
       - msw
 
-  vitest@4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)):
+  vitest@4.1.10(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)):
     dependencies:
       '@vitest/expect': 4.1.10
-      '@vitest/mocker': 4.1.10(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
+      '@vitest/mocker': 4.1.10(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0))
       '@vitest/pretty-format': 4.1.10
       '@vitest/runner': 4.1.10
       '@vitest/snapshot': 4.1.10
@@ -3177,7 +3388,7 @@ snapshots:
       tinyexec: 1.3.0
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.1
-      vite: 8.1.5(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)
+      vite: 8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.21.0)(yaml@2.9.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 24.13.3

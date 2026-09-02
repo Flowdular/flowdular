@@ -9,7 +9,14 @@ import {
 	type AiProviderKind,
 	type ProviderReadinessResult,
 } from '@coreloom/ai-provider';
-import { jsonSchema, stepCountIs, streamText, tool, type ToolSet } from 'ai';
+import {
+	jsonSchema,
+	Output,
+	stepCountIs,
+	streamText,
+	tool,
+	type ToolSet,
+} from 'ai';
 import { AgentHarnessError } from './errors.ts';
 import { withSystemPreamble } from './preamble.ts';
 import {
@@ -66,7 +73,10 @@ function toolsFor(context: AgentProviderContext): {
 		tools[name] = tool({
 			description: available.description,
 			inputSchema: jsonSchema(available.inputSchema),
-			execute: (input) => context.invokeTool(available.id, input),
+			execute: (input, options) =>
+				context.invokeTool(available.id, input, {
+					providerCallId: options.toolCallId,
+				}),
 		});
 	}
 	return { tools, ids };
@@ -78,9 +88,20 @@ export function createVercelAiSdkProvider(
 	const id = providerId(configuration.id);
 	return {
 		id,
+		capabilities: { structuredOutput: true },
 		async execute(context): Promise<AgentProviderResult> {
 			try {
 				const { tools, ids } = toolsFor(context);
+				const outputContract = context.request.outputContract ?? {
+					kind: 'text' as const,
+				};
+				const outputSpec =
+					outputContract.kind === 'json-schema'
+						? Output.object({
+								schema: jsonSchema(outputContract.schema),
+								name: outputContract.name,
+							})
+						: Output.text();
 				const result = streamText({
 					model: resolveLanguageModel(configuration),
 					instructions: withSystemPreamble(
@@ -99,6 +120,7 @@ export function createVercelAiSdkProvider(
 					abortSignal: context.signal,
 					stopWhen: stepCountIs(context.request.definition.maxSteps),
 					tools,
+					output: outputSpec,
 				});
 				let output = '';
 				let totalUsage: AgentUsage = {
@@ -110,8 +132,12 @@ export function createVercelAiSdkProvider(
 				for await (const part of result.fullStream) {
 					if (part.type === 'text-delta') {
 						output += part.text;
+						/* The text block id travels with every delta so a reader can fold
+						   one block into one answer and never merge two of them. */
 						for (const chunk of part.text.match(/.{1,450}/gs) ?? []) {
-							context.emit('provider.output.delta', chunk);
+							context.emit('provider.output.delta', chunk, {
+								stream: part.id,
+							});
 						}
 					}
 					/* The harness already recorded failures raised by its own tools.
@@ -136,9 +162,16 @@ export function createVercelAiSdkProvider(
 					}
 					if (part.type === 'error') throw part.error;
 				}
+				const structuredOutput =
+					outputContract.kind === 'json-schema'
+						? ((await result.output) as AgentProviderResult['structuredOutput'])
+						: undefined;
 				return {
 					output:
-						output.trim() || 'The provider completed without text output.',
+						outputContract.kind === 'json-schema'
+							? JSON.stringify(structuredOutput)
+							: output.trim() || 'The provider completed without text output.',
+					...(structuredOutput === undefined ? {} : { structuredOutput }),
 					usage: totalUsage,
 					finishReason: completedReason,
 				};

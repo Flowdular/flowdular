@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "expenses.core",
 	"package": "@coreloom/module-expenses",
-	"version": "0.1.0",
+	"version": "0.4.0",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations"],
 	"platform": {

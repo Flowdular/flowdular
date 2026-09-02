@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
+import { lstat, realpath } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { CodingAgentError } from './types.ts';
 
 /* Every path a driver touches is resolved against the session workspace and
@@ -33,6 +34,110 @@ export function workspaceRelative(
 		: resolve(root, candidate);
 	const fromRoot = relative(root, absolute);
 	return fromRoot === '' ? '.' : fromRoot;
+}
+
+const PROTECTED_WRITE_SEGMENTS = new Set([
+	'node_modules',
+	'.git',
+	'dist',
+	'.turbo',
+]);
+
+function normalPath(value: string): string {
+	return value.split(sep).join('/');
+}
+
+function matchesPath(path: string, pattern: string): boolean {
+	const source = pattern
+		.split(/(\*\*|\*)/)
+		.map((part) => {
+			if (part === '**') return '.*';
+			if (part === '*') return '[^/]*';
+			return part.replace(/[.+?^$()|[\]\\]/g, '\\$&');
+		})
+		.join('');
+	return new RegExp(`^${source}$`).test(path);
+}
+
+function assertUnprotected(path: string): void {
+	if (
+		path.split('/').some((segment) => PROTECTED_WRITE_SEGMENTS.has(segment))
+	) {
+		throw new CodingAgentError(
+			'PATH_NOT_ALLOWED',
+			`The coding agent cannot change protected workspace path: ${path}`,
+		);
+	}
+}
+
+function assertContained(root: string, candidate: string): void {
+	const fromRoot = relative(root, candidate);
+	if (fromRoot.startsWith('..') || isAbsolute(fromRoot)) {
+		throw new CodingAgentError(
+			'PATH_ESCAPES_WORKSPACE',
+			'The path resolves through a symbolic link outside the session workspace.',
+		);
+	}
+}
+
+/* Check every existing component rather than only the lexical path. Without
+	this, `module/node_modules/pkg/file` can follow a workspace symlink and let a
+	model read or overwrite the host package or pnpm store. */
+async function assertPhysicalContainment(
+	workspacePath: string,
+	absolute: string,
+): Promise<void> {
+	const lexicalRoot = resolve(workspacePath);
+	const physicalRoot = await realpath(lexicalRoot);
+	const fromRoot = relative(lexicalRoot, absolute);
+	let cursor = physicalRoot;
+	for (const segment of fromRoot.split(sep).filter(Boolean)) {
+		cursor = join(cursor, segment);
+		try {
+			const info = await lstat(cursor);
+			if (info.isSymbolicLink()) cursor = await realpath(cursor);
+			assertContained(physicalRoot, cursor);
+		} catch (error) {
+			if (
+				error &&
+				typeof error === 'object' &&
+				'code' in error &&
+				(error as { code?: string }).code === 'ENOENT'
+			) {
+				return;
+			}
+			throw error;
+		}
+	}
+}
+
+export async function resolveReadableInsideWorkspace(
+	workspacePath: string,
+	candidate: string,
+): Promise<string> {
+	const absolute = resolveInsideWorkspace(workspacePath, candidate);
+	const path = normalPath(workspaceRelative(workspacePath, absolute));
+	assertUnprotected(path);
+	await assertPhysicalContainment(workspacePath, absolute);
+	return absolute;
+}
+
+export async function resolveWritableInsideWorkspace(
+	workspacePath: string,
+	candidate: string,
+	allowedPaths: readonly string[],
+): Promise<string> {
+	const absolute = resolveInsideWorkspace(workspacePath, candidate);
+	const path = normalPath(workspaceRelative(workspacePath, absolute));
+	assertUnprotected(path);
+	if (!allowedPaths.some((pattern) => matchesPath(path, pattern))) {
+		throw new CodingAgentError(
+			'PATH_NOT_ALLOWED',
+			`The coding agent cannot change a path outside its role allowlist: ${path}`,
+		);
+	}
+	await assertPhysicalContainment(workspacePath, absolute);
+	return absolute;
 }
 
 export interface ProcessLineStream {

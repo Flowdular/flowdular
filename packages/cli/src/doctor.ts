@@ -103,7 +103,7 @@ export async function runDoctor(
 			message:
 				stale.length === 0
 					? `Generated composition matches ${sync.modules.length} enabled module(s).`
-					: `Generated composition is stale: ${stale.join(', ')}. Run "pnpm oerp module sync --apply".`,
+					: `Generated composition is stale: ${stale.join(', ')}. Run "pnpm coreloom module sync --apply".`,
 			evidence: 'platform/src/generated',
 		});
 	} catch (error) {

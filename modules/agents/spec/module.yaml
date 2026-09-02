@@ -1,9 +1,9 @@
 schemaVersion: 1
 id: agents.core
-specVersion: 0.2.0
+specVersion: 0.7.0
 status: approved
 name: Agentic Core
-description: Provides tenant-scoped provider connections, reusable skills and agent definitions, durable streamed execution, workflow integration, run history, and a safe playground for automation across the platform.
+description: Provides tenant-created and module-owned business agent definitions, tenant-scoped provider connections, reusable skills, durable streamed execution, run history, and the public run queue used by optional automation modules.
 profile: full
 capabilities:
   - api
@@ -22,7 +22,12 @@ locales:
   - en
   - pl
 invariants:
-  - Every agent definition and run is owned by exactly one tenant, and every repository query receives the trusted tenant identifier.
+  - Every agent managed by agents.core is a business agent with explicit ownership. A tenant-created definition is owned by one tenant; a module-owned definition is owned by one enabled module and receives a separate tenant-scoped execution binding. Sandbox coding specialists are outside agents.core. Every binding, run, and repository query receives the trusted tenant identifier.
+  - An enabled module may register immutable business agent behavior during platform composition with defineAgent. Its stable identity is derived from module id and agent key, its positive definition revision is supplied by the module, and malformed or duplicate identities fail platform boot before workers start.
+  - Module-owned instructions, names, maximum tool allowlists, and execution limits are read-only module source. A tenant administrator may bind an available provider and model, pause the binding, and reduce its enabled tool set, but cannot broaden the module allowlist or edit the module behavior in the Agents UI.
+  - An unconfigured module-owned agent is visible as unconfigured but cannot be activated, published in a workflow, or executed until its tenant binding names a usable provider and model.
+  - A module definition revision is content-stable. Reusing one revision with different executable content or moving backwards fails platform boot. A higher definition revision creates a new immutable tenant executable revision for every existing binding without changing retained revisions.
+  - Tenant-created and module-owned executable revisions share one exact-revision contract. A provider, model, module definition revision, instructions, limits, and effective maximum tools are retained before the revision can be used by a workflow.
   - Agent execution is durable and fire-and-forget. The enqueue request persists a queued run before returning and never waits for provider completion.
   - Queued and interrupted runs are recovered after runtime restart without executing one run concurrently more than once inside a process.
   - Browser lifecycle and authenticated session lifetime do not control a queued run after the enqueue transaction commits.
@@ -30,13 +35,14 @@ invariants:
   - Every claimed run receives a short-lived signed run grant bound to tenant, run, provider, model, worker, attempt, permission digest, tool-grant digest, and current lease. The provider broker atomically consumes the grant once and never returns the upstream credential.
   - Run grants are stored only as hashes and safe identifiers. A replay, expired grant, wrong audience, invalid signature, or grant presented after lease loss is rejected before provider resolution.
   - A single claimed execution can remain detached for up to 24 hours while the worker renews its lease. Provider calls and tools must still use narrower operation timeouts and idempotency controls where side effects are possible.
-  - Agent instructions never grant authority. Tools and platform capabilities require explicit server-side grants at execution time.
+  - Agent instructions never grant authority. Model execution can reach platform behavior only through registered agent tools and never receives the platform capability registry directly.
+  - Agent instructions are a variable template. The stored definition keeps the raw double-brace template; every run snapshot carries the instructions resolved against the run context (tenant name, principal, UTC date) before the harness executes. A variable is offered and resolved only when the principal holds the scope declared by its source.
   - Arbitrary source code, shell commands, raw secrets, and runtime-downloaded client code cannot be stored as agent configuration.
   - Provider, model, instruction revision, limits, input, output, usage, and execution events are captured with every run.
   - Authorization decisions use server-side RBAC scopes and persist the initiating subject plus a permission snapshot for audit without treating that snapshot as future authority.
   - Playground runs use the same authorization, tenancy, budgets, provider adapter, and audit path as platform-triggered runs.
   - The bundled local simulation provider has network access disabled and does not claim to be a production language model.
-  - Agent definitions, playground, and run history are contributed under one collapsible Agents navigation group owned by agents.core.
+  - Agent definitions, playground, run history, providers, skills, and usage are contributed under one collapsible Agents navigation group owned by agents.core.
   - Provider connections are configured through authenticated agents.core APIs and stored as tenant-owned metadata plus an encrypted credential envelope; raw credentials never enter client responses, logs, audit metadata, agent definitions, run snapshots, or harness events.
   - The credential encryption key is external to the agents database. Production startup fails when no explicit key is configured, while local development may create a permission-restricted key file outside the database.
   - Provider credentials are decrypted just in time for one claimed execution or readiness probe and are not retained by the harness after that operation.
@@ -45,10 +51,19 @@ invariants:
   - A readiness probe performs a bounded server-side model request, records only safe status, latency, model, and error classification, and never returns provider response bodies or credentials.
   - An agent can be activated only when its provider connection is enabled, its selected model is enabled, and the latest readiness result is healthy within the configured freshness window.
   - Skills are versioned instruction and capability bundles. A skill cannot contain executable source code, credentials, or grant a tool that is not independently registered and authorized.
-  - Tool calls use validated input schemas, explicit grants, target-module server authorization, timeouts, output limits, and persisted start, completion, or denial events.
+  - Archiving an agent prevents new runs while keeping durable run evidence. Deletion requires an archived, unreferenced record and never cascades through run history or active agent assignments.
+  - Tool calls use validated input schemas, explicit grants, target-module server authorization, timeouts, output limits, and persisted start, completion, or denial events. A run sees only the exact intersection of the definition allowlist, a module binding reduction when present, the invocation grants, and tools whose required permissions exist in the initiating actor's trusted permission snapshot. Wildcards never grant tools.
   - Web search is disabled by default and requires an explicit agent policy plus a registered web search capability. Provider-native web search cannot bypass the same permission, budget, audit, and egress controls.
   - Worker output is streamed into ordered durable run events. UI streaming observes persisted events and never owns or cancels the underlying run lifecycle.
-  - Workflow, service, and schedule triggers use the same durable enqueue contract as the playground and include a stable idempotency key and initiating principal or approved system principal.
+  - Workflow, service, and optional automation modules use the same durable enqueue capability as the playground and include a stable idempotency key and initiating principal or approved system principal.
+  - agents.core does not own automation schedules, webhook definitions, trigger secrets, or an automation clock. Optional modules reach it only through the public agents.run-queue capability.
+  - A run's cost is computed once, from its reported usage and a published per-model price, in the same transaction that settles the run. A model without a published price is recorded in tokens and left unpriced, never priced at a guess.
+  - Budget caps are tenant-scoped module settings checked when a run is enqueued. A run already executing is never stopped mid-way, so concurrent enqueues may overshoot a cap by the cost of the runs still in flight.
+  - Every saved agent revision is retained as an immutable executable snapshot, including its ownership, exact instructions, skills, tools, provider, model, and limits.
+  - Workflow agent nodes request an exact retained revision through agents.run-execution.v2. The request is workflow-bound, tenant-bound, idempotent, observable through persisted events, and cancellable through the same capability.
+  - A structured-output run starts only when its pinned provider can guarantee the declared JSON Schema contract. The harness validates the returned JSON again before the worker settles the run.
+  - Business actions exposed to workflows are explicit versioned contracts. Only read and workspace-write risks are eligible, input and output are schema checked, and every invocation is persisted before execution.
+  - Workflow action invocations receive a trusted actor, permission snapshot, idempotency key, and AbortSignal. Secrets, raw input, and raw output never enter audit metadata.
 permissions:
   - id: agents.definitions.read
     description: Read agent definitions in the active tenant.
@@ -69,16 +84,39 @@ permissions:
   - id: agents.skills.manage
     description: Create and version reusable agent skills in the active tenant.
 dataOwnership:
-  - agents.core owns agent identity, configuration revisions, provider and model selection, allowed tool identifiers, execution limits, and lifecycle status.
+  - Business modules own the current module-supplied definition and semantic revision of each module-owned business agent they register.
+  - agents.core owns tenant-created agent identity and configuration, tenant bindings for module-owned agents, provider and model selection, reduced tool grants, executable revisions, and lifecycle status.
   - agents.core owns durable run state, input and output snapshots, usage, timing, failure data, and append-only execution events.
   - agents.core owns provider connection metadata, encrypted credential envelopes, configured model allowlists, readiness history, and credential revision identifiers.
   - agents.core owns skill identity, versioned instructions, required tool identifiers, lifecycle status, and agent-to-skill assignments.
+  - agents.core owns the per-run cost projection, its per-day and per-agent rollups, and the budget caps declared as module settings.
+  - agents.core owns immutable agent revision snapshots, workflow-bound run output contracts, and durable versioned action invocation state.
   - Business modules own their records and expose narrowly scoped tools to the harness; agents.core never bypasses their services or ACL rules.
 acceptanceScenarios:
   - id: AGENTS-LIST
-    given: Tenant-scoped agent definitions exist.
+    given: Tenant-created business agents and enabled modules with module-owned business agents exist.
     when: An authorized principal lists agents.
-    then: Only agents owned by the active tenant are returned in deterministic name order.
+    then: The active tenant receives a deterministic catalog with an explicit tenant or module ownership discriminator and no definition from another tenant or disabled module.
+  - id: AGENTS-MODULE-REGISTER
+    given: An enabled module registers a valid defineAgent definition during composition.
+    when: The platform finishes composing modules before starting workers.
+    then: The agent registry seals a frozen definition with a stable module-derived identity, while a malformed definition, duplicate identity, wildcard tool, or conflicting same-revision content fails boot.
+  - id: AGENTS-MODULE-BIND
+    given: A module-owned agent is registered but has no tenant execution binding.
+    when: A tenant manager selects a healthy provider and model, chooses a subset of the code allowlist, and activates the binding.
+    then: agents.core creates a tenant-scoped immutable executable revision and the business agent becomes runnable without copying or editing its module-owned behavior.
+  - id: AGENTS-MODULE-READONLY
+    given: A principal can manage agent definitions in the active tenant.
+    when: The principal opens, updates, archives, or deletes a module-owned agent.
+    then: The UI and API allow only binding changes such as provider, model, paused state, and tool reduction, and refuse edits or deletion of the module-owned definition with a stable error.
+  - id: AGENTS-MODULE-REVISION
+    given: Existing tenant bindings point at a retained executable revision of a module-owned agent.
+    when: A deployment registers a higher module definition revision.
+    then: Existing bindings advance to a new immutable executable revision, old workflow references retain their exact snapshot, and a code downgrade or same-revision content drift fails boot.
+  - id: AGENTS-MODULE-UNAVAILABLE
+    given: A workflow or caller references a module-owned agent whose owning module is no longer registered.
+    when: It lists current agents or requests a new execution.
+    then: The agent is unavailable for new work and the request is refused without deleting retained revisions, completed runs, or audit evidence.
   - id: AGENTS-CREATE
     given: An authorized principal supplies valid instructions, provider, model, limits, and tool grants.
     when: The agent is created.
@@ -139,6 +177,14 @@ acceptanceScenarios:
     given: An authorized owner defines a skill with bounded instructions and registered required tools.
     when: The skill is attached to an agent and the agent runs.
     then: The harness receives the approved skill revision, merges its instructions, intersects its tools with agent and run grants, and persists evidence of each capability invoked.
+  - id: AGENTS-TOOL-BOUNDARY
+    given: An agent definition has an exact tool allowlist, a module binding may reduce it, an invocation requests explicit grants, and the actor carries a trusted permission snapshot.
+    when: The run is enqueued and the model requests tools.
+    then: The persisted and exposed tools are only the intersection of all four constraints, an out-of-allowlist or wildcard grant never expands access, and a tool lacking its required permission is denied before execution.
+  - id: AGENTS-LIFECYCLE
+    given: An agent definition, skill, or provider connection is no longer needed.
+    when: An authorized manager archives or deletes it.
+    then: Archiving records an audit event and prevents unsafe future use; deletion checks the trusted tenant, current revision, CSRF, and all active references without cascading run evidence or assignments.
   - id: AGENTS-WEB-SEARCH
     given: An agent has web search disabled or lacks the registered web search permission and grant.
     when: A model requests web search.
@@ -159,3 +205,51 @@ acceptanceScenarios:
     given: A workflow node references an active agent and supplies an idempotency key, bounded input, tenant, and approved execution principal.
     when: The workflow enqueues agent work.
     then: The same durable run contract returns immediately and the workflow can resume from the terminal run event.
+  - id: AGENTS-TEMPLATE
+    given: An agent definition whose instructions embed run context variables such as context.tenantName and context.today.
+    when: An authorized principal queues a run.
+    then: The run snapshot carries the instructions resolved to the active tenant, requesting principal, and UTC date while the stored definition keeps the raw template.
+  - id: AGENTS-AUDIT-READ
+    given: A principal reads the agent audit trail over HTTP.
+    when: The principal lacks agents.runs.read, or holds it and pages with a cursor.
+    then: The request is denied before any row is read without the scope, and with it only the active tenant's events are returned newest first with a stable occurred-at and sequence cursor and the chain fields.
+  - id: AGENTS-AUDIT-VERIFY
+    given: A stored agent audit row is altered after it was written.
+    when: A principal with agents.runs.read verifies the chain over HTTP, reusing the same walk as the audit-verify CLI.
+    then: The response reports the chain as not verified and names the identifier of the first broken row.
+  - id: AGENTS-COST
+    given: A run completes and reports its token usage.
+    when: The run is settled.
+    then: Its cost is written in the same transaction from the published price of its model, or left unpriced when the model has none, and appears in the tenant's per-day and per-agent rollups.
+  - id: AGENTS-BUDGET
+    given: A tenant or per-agent monthly budget is configured and the month's settled cost has reached it.
+    when: A further run is enqueued.
+    then: The enqueue is refused with a stable budget code before any provider call, while runs already executing continue to completion.
+  - id: AGENTS-EXACT-REVISION
+    given: A workflow references an active retained agent revision and that agent is edited later.
+    when: The workflow enqueues the pinned revision.
+    then: The run uses the retained instructions, skills, tools, provider, model, and limits exactly as saved for that revision.
+  - id: AGENTS-MODULE-WORKFLOW
+    given: A published workflow pins an active executable revision of a module-owned agent.
+    when: The module later registers a higher definition revision or a tenant manager changes its provider binding.
+    then: The published workflow continues to resolve the retained executable revision, while newly published workflows can select the new current revision.
+  - id: AGENTS-STRUCTURED-OUTPUT
+    given: A workflow requests JSON output with a bounded schema from a pinned provider model that supports structured output.
+    when: The provider completes the run.
+    then: The harness validates the structured value against the schema before the worker persists it, and a missing or invalid value fails with a stable code.
+  - id: AGENTS-WORKFLOW-OBSERVE
+    given: A workflow enqueued an exact agent revision with a stable idempotency key.
+    when: It observes events, reads the result, retries enqueue, or requests cancellation.
+    then: It sees only the same tenant and workflow run, retry returns the original run, events remain ordered, and cancellation does not cross an actor or tenant boundary.
+  - id: AGENTS-VERSIONED-ACTION
+    given: A registered tool opts into workflow use with schemas, a positive contract version, read or workspace-write risk, required idempotency, and a cancellation policy.
+    when: A workflow starts the action with a trusted actor and sufficient permission snapshot.
+    then: The invocation is persisted before execution, repeated input returns the original invocation, different input conflicts, and output is schema checked before settlement.
+  - id: AGENTS-ACTION-DENY
+    given: A tool is destructive, external, incomplete, targets another tenant, lacks a required permission, or receives invalid input.
+    when: A workflow attempts to list, start, observe, or cancel it.
+    then: The capability excludes or refuses it before execution without exposing secrets, cross-tenant state, or raw payloads in audit metadata.
+  - id: AGENTS-SERVICE-ACTOR
+    given: A schedule, webhook, or other service identity was configured by an authenticated user.
+    when: It initiates workflow agent work or a versioned action.
+    then: Durable state records the service actor and its configuring user so history never presents background work as an anonymous system mutation.

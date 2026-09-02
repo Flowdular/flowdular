@@ -1,12 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import { resolve } from 'node:path';
 import {
 	AgentHarness,
 	LocalSimulationProvider,
 	type AgentProvider,
 	type AgentTool,
+	type AgentToolAccessAuthorizer,
 } from '@coreloom/harness';
-import type { AgentWorkerStatus } from '../domain/types.ts';
+import { coreloomLocalDataPath } from '@coreloom/kernel/legacy-local-state';
+import type {
+	AgentWorkerStatus,
+	ModuleAgentDefinition,
+} from '../domain/types.ts';
 import { AgentService } from '../services/agent-service.ts';
 import {
 	credentialVaultFromEnvironment,
@@ -21,8 +25,19 @@ import {
 	type AgentRunGrantAuthority,
 } from '../services/run-grant.ts';
 import { SqliteAgentRepository } from '../services/sqlite-repository.ts';
+import { AgentUsageService } from '../services/usage-service.ts';
+import { preflightModuleAgentDefinitions } from '../services/module-agent-preflight.ts';
 import { AgentWorker } from '../services/worker.ts';
 import type { AgentSettingsReader } from '../settings.ts';
+import {
+	createAgentActionExecutionRuntime,
+	type AgentActionExecutionCapability,
+	type AgentActionRuntime,
+} from './action-execution.ts';
+import {
+	createAgentRevisionExecutionCapability,
+	type AgentRevisionExecutionCapability,
+} from './run-execution.ts';
 
 export interface AgentRuntimeOptions {
 	readonly databasePath: string;
@@ -32,6 +47,11 @@ export interface AgentRuntimeOptions {
 	/* A function is evaluated when the harness is first built, so tools that
 	   other modules register after this runtime was created are included. */
 	readonly tools?: readonly AgentTool[] | (() => readonly AgentTool[]);
+	/* Read at start after the platform seals the composition registry. */
+	readonly moduleAgents?:
+		| readonly ModuleAgentDefinition[]
+		| (() => readonly ModuleAgentDefinition[]);
+	readonly authorizeToolAccess?: AgentToolAccessAuthorizer;
 	readonly credentialVault?: CredentialVault;
 	readonly providerHostAllowlist: ReadonlySet<string>;
 	readonly providerReadinessTtlMs: number;
@@ -49,9 +69,15 @@ export interface AgentRuntimeOptions {
 export interface AgentRuntime {
 	service(): AgentService;
 	providerService(): AgentProviderService;
+	usageService(): AgentUsageService;
 	workerStatus(): AgentWorkerStatus;
+	revisionExecution(): AgentRevisionExecutionCapability;
+	actions(): AgentActionExecutionCapability;
+	prepare(): void;
 	start(): void;
 	stop(): void;
+	quiesce(): Promise<void>;
+	dispose(): Promise<void>;
 }
 
 function environmentInteger(
@@ -77,49 +103,51 @@ export function agentRuntimeOptionsFromEnvironment(
 ): AgentRuntimeOptions {
 	return {
 		databasePath:
-			environment.OERP_AGENTS_DATABASE ??
+			environment.CL_AGENTS_DATABASE ??
 			(environment.NODE_ENV === 'production'
 				? '/data/agents.db'
-				: resolve(workspaceRoot, '.octane-erp/agents.db')),
+				: environment.NODE_ENV === 'test'
+					? ':memory:'
+					: coreloomLocalDataPath(workspaceRoot, 'agents.db')),
 		workerConcurrency: environmentInteger(
-			environment.OERP_AGENT_WORKER_CONCURRENCY,
+			environment.CL_AGENT_WORKER_CONCURRENCY,
 			2,
 			1,
 			16,
-			'OERP_AGENT_WORKER_CONCURRENCY',
+			'CL_AGENT_WORKER_CONCURRENCY',
 		),
 		workerLeaseMs: environmentInteger(
-			environment.OERP_AGENT_WORKER_LEASE_MS,
+			environment.CL_AGENT_WORKER_LEASE_MS,
 			30_000,
 			1_000,
 			300_000,
-			'OERP_AGENT_WORKER_LEASE_MS',
+			'CL_AGENT_WORKER_LEASE_MS',
 		),
 		providerHostAllowlist: providerHostAllowlist(
-			environment.OERP_AGENT_PROVIDER_HOST_ALLOWLIST,
+			environment.CL_AGENT_PROVIDER_HOST_ALLOWLIST,
 		),
 		/* A human proves a model by clicking Test. A 15 minute window meant every
 		   run outside that window was rejected, so the default is a day. */
 		providerReadinessTtlMs: environmentInteger(
-			environment.OERP_AGENT_PROVIDER_READINESS_TTL_MS,
+			environment.CL_AGENT_PROVIDER_READINESS_TTL_MS,
 			86_400_000,
 			10_000,
 			86_400_000,
-			'OERP_AGENT_PROVIDER_READINESS_TTL_MS',
+			'CL_AGENT_PROVIDER_READINESS_TTL_MS',
 		),
 		providerReadinessTimeoutMs: environmentInteger(
-			environment.OERP_AGENT_PROVIDER_READINESS_TIMEOUT_MS,
+			environment.CL_AGENT_PROVIDER_READINESS_TIMEOUT_MS,
 			10_000,
 			1_000,
 			30_000,
-			'OERP_AGENT_PROVIDER_READINESS_TIMEOUT_MS',
+			'CL_AGENT_PROVIDER_READINESS_TIMEOUT_MS',
 		),
 		runGrantTtlMs: environmentInteger(
-			environment.OERP_AGENT_RUN_GRANT_TTL_MS,
+			environment.CL_AGENT_RUN_GRANT_TTL_MS,
 			30_000,
 			1_000,
 			300_000,
-			'OERP_AGENT_RUN_GRANT_TTL_MS',
+			'CL_AGENT_RUN_GRANT_TTL_MS',
 		),
 		environment,
 		workspaceRoot,
@@ -137,11 +165,11 @@ export function assertProductionAgentSecrets(
 ): void {
 	if (environment.NODE_ENV !== 'production') return;
 	const missing = [
-		...(!provided.credentialVault && !environment.OERP_AGENT_CREDENTIAL_KEY
-			? ['OERP_AGENT_CREDENTIAL_KEY']
+		...(!provided.credentialVault && !environment.CL_AGENT_CREDENTIAL_KEY
+			? ['CL_AGENT_CREDENTIAL_KEY']
 			: []),
-		...(!provided.runGrantAuthority && !environment.OERP_AGENT_RUN_GRANT_KEY
-			? ['OERP_AGENT_RUN_GRANT_KEY']
+		...(!provided.runGrantAuthority && !environment.CL_AGENT_RUN_GRANT_KEY
+			? ['CL_AGENT_RUN_GRANT_KEY']
 			: []),
 	];
 	if (missing.length === 0) return;
@@ -163,24 +191,47 @@ export function createAgentRuntime(
 	let service: AgentService | undefined;
 	let worker: AgentWorker | undefined;
 	let providers: AgentProviderService | undefined;
+	let usage: AgentUsageService | undefined;
+	let repository: SqliteAgentRepository | undefined;
+	let providerRepository: SqliteProviderRepository | undefined;
+	let actionRuntime: AgentActionRuntime | undefined;
 	let started = false;
+	let disposed = false;
+	let moduleAgentsReconciled = false;
+	let preparedModuleAgents: readonly ModuleAgentDefinition[] | undefined;
+	const moduleAgents = () =>
+		typeof options.moduleAgents === 'function'
+			? options.moduleAgents()
+			: (options.moduleAgents ?? []);
+	const prepare = () => {
+		if (disposed) throw new Error('Agent runtime is disposed.');
+		preparedModuleAgents = preflightModuleAgentDefinitions(
+			options.databasePath,
+			moduleAgents(),
+		);
+	};
 	const create = () => {
+		if (disposed) throw new Error('Agent runtime is disposed.');
 		if (!service) {
-			const repository = new SqliteAgentRepository(options.databasePath);
-			const providerRepository = new SqliteProviderRepository(
-				options.databasePath,
-			);
+			repository = new SqliteAgentRepository(options.databasePath);
+			providerRepository = new SqliteProviderRepository(options.databasePath);
+			const vault =
+				options.credentialVault ??
+				credentialVaultFromEnvironment(environment, workspaceRoot);
+			const tools =
+				typeof options.tools === 'function'
+					? options.tools()
+					: (options.tools ?? []);
 			const harness = new AgentHarness({
 				providers: options.providers ?? [new LocalSimulationProvider()],
-				tools:
-					typeof options.tools === 'function'
-						? options.tools()
-						: (options.tools ?? []),
+				tools,
+				...(options.authorizeToolAccess
+					? { authorizeToolAccess: options.authorizeToolAccess }
+					: {}),
 			});
 			const providerService = new AgentProviderService(
 				providerRepository,
-				options.credentialVault ??
-					credentialVaultFromEnvironment(environment, workspaceRoot),
+				vault,
 				repository,
 				{
 					hostAllowlist: settings
@@ -205,6 +256,8 @@ export function createAgentRuntime(
 				repository,
 				providerService,
 			);
+			const usageService = new AgentUsageService(repository, settings);
+			usage = usageService;
 			worker = new AgentWorker(
 				repository,
 				harness,
@@ -226,13 +279,48 @@ export function createAgentRuntime(
 				providerService,
 				Date.now,
 				settings,
+				usageService,
 			);
-		}
-		if (!started) {
-			started = true;
-			worker!.start();
+			actionRuntime = createAgentActionExecutionRuntime(repository, tools, {
+				leaseMs: options.workerLeaseMs,
+				...(options.authorizeToolAccess
+					? { authorizeToolAccess: options.authorizeToolAccess }
+					: {}),
+			});
 		}
 		return service;
+	};
+	const start = () => {
+		const currentService = create();
+		if (started) return;
+		if (!moduleAgentsReconciled) {
+			currentService.reconcileModuleAgents(
+				preparedModuleAgents ?? moduleAgents(),
+			);
+			moduleAgentsReconciled = true;
+		}
+		started = true;
+		worker!.start();
+		actionRuntime!.start();
+	};
+	const revisionCapability = createAgentRevisionExecutionCapability(
+		() => create(),
+		options.authorizeToolAccess,
+	);
+	const currentActions = () => {
+		void create();
+		return actionRuntime!.capability;
+	};
+	const actionCapability: AgentActionExecutionCapability = {
+		listWorkflowActions: () => currentActions().listWorkflowActions(),
+		start: (request, context) => currentActions().start(request, context),
+		getResult: (id, context) => currentActions().getResult(id, context),
+		requestCancel: (id, context) => currentActions().requestCancel(id, context),
+	};
+	const quiesce = async () => {
+		started = false;
+		await worker?.dispose();
+		await actionRuntime?.dispose();
 	};
 	return {
 		service: create,
@@ -240,14 +328,37 @@ export function createAgentRuntime(
 			void create();
 			return providers!;
 		},
+		usageService: () => {
+			void create();
+			return usage!;
+		},
 		workerStatus: () => {
 			void create();
 			return worker!.status();
 		},
-		start: () => void create(),
+		revisionExecution: () => revisionCapability,
+		actions: () => actionCapability,
+		prepare,
+		start,
 		stop: () => {
 			started = false;
 			worker?.stop();
+			actionRuntime?.stop();
+		},
+		quiesce,
+		async dispose() {
+			if (disposed) return;
+			disposed = true;
+			await quiesce();
+			providerRepository?.close();
+			repository?.close();
+			worker = undefined;
+			actionRuntime = undefined;
+			providers = undefined;
+			usage = undefined;
+			service = undefined;
+			providerRepository = undefined;
+			repository = undefined;
 		},
 	};
 }

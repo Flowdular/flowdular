@@ -40,6 +40,6 @@ jobs:
           context: .
           file: infra/docker/Dockerfile
           push: false
-          tags: octane-erp:ci
+          tags: coreloom:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max

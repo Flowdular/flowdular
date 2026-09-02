@@ -15,5 +15,5 @@ inCommit:
 pullRequestBody:
   - two sentences on what changed and why
   - gate evidence: gate id, command, result
-  - post-merge step: pnpm oerp auth sync-scopes --module <id> --apply against the deployment database
+  - post-merge step: pnpm coreloom auth sync-scopes --module <id> --apply against the deployment database
   - no AI attribution footer, no em or en dashes

@@ -1,8 +1,8 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { userActor, type Actor } from '@coreloom/kernel';
 import { AUTH_SCOPES, MEMBER_SCOPES, OWNER_SCOPES } from '../acl/scopes.ts';
 import type {
 	ApiTokenRecord,
-	AuditPage,
 	AuditQuery,
 	AuthActor,
 	AuthPrincipal,
@@ -36,10 +36,18 @@ import {
 	DuplicateRoleKeyError,
 	DuplicateTenantSlugError,
 	type AccountCredential,
+	type AuditActorEvent,
 	type AuthRepository,
 	type TenantMember,
 	type TenantSummary,
 } from './repository.ts';
+import type { AuthMailDelivery } from './mail-delivery.ts';
+import {
+	createTotpSecret,
+	decryptMfaSecret,
+	encryptMfaSecret,
+	verifyTotp,
+} from './totp.ts';
 import {
 	assertPasswordPolicy,
 	normalizeEmail,
@@ -60,12 +68,38 @@ export interface AuthPolicy {
 	readonly passwordMinLength: number;
 }
 
+/* The audit page plus the actor columns added by 0014; assignable wherever an
+   AuditPage was expected. */
+export interface AuditActorPage {
+	readonly events: readonly AuditActorEvent[];
+	readonly nextCursor: string | null;
+}
+
 export interface AuthServiceOptions {
 	readonly sessionTtlMs?: number;
 	/** Live policy; read on every call so settings changes apply immediately. */
 	readonly policy?: () => AuthPolicy;
 	readonly passwordHash?: PasswordHashOptions;
 	readonly now?: () => number;
+	/** AES-256-GCM key used only to protect enrolled TOTP secrets at rest. */
+	readonly mfaEncryptionKey?: string;
+	/** Deployment-owned delivery adapter. auth.core never selects an email vendor. */
+	readonly mailDelivery?: AuthMailDelivery;
+	/** Public origin used to form opaque, one-time delivery links. */
+	readonly publicBaseUrl?: string;
+}
+
+export interface MfaChallenge extends IssuedSession {
+	readonly mfaRequired: true;
+	/* This is a short-lived proof of a successful password check, never a session. */
+	readonly token: string;
+	readonly expiresAt: number;
+}
+
+export interface MfaStatus {
+	readonly available: boolean;
+	readonly enrolled: boolean;
+	readonly pending: boolean;
 }
 
 export interface SignInContext {
@@ -87,6 +121,10 @@ const LOCK_THRESHOLD = 5;
 const LOCK_MS = 15 * 60 * 1000;
 const FAILURE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const MAX_AUDIT_PAGE = 100;
+const PASSWORD_RESET_TTL_MS = 30 * 60 * 1000;
+const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const MFA_CHALLENGE_TTL_MS = 5 * 60 * 1000;
+const RECOVERY_CODE_COUNT = 10;
 
 export const AUDIT_ACTIONS = Object.freeze({
 	signInSucceeded: 'auth.sign-in.succeeded',
@@ -97,6 +135,13 @@ export const AUDIT_ACTIONS = Object.freeze({
 	passwordChanged: 'auth.password.changed',
 	tokenIssued: 'auth.token.issued',
 	tokenRevoked: 'auth.token.revoked',
+	passwordResetRequested: 'auth.password-reset.requested',
+	passwordResetCompleted: 'auth.password-reset.completed',
+	invitationCreated: 'auth.invitation.created',
+	invitationAccepted: 'auth.invitation.accepted',
+	mfaEnrolled: 'auth.mfa.enrolled',
+	mfaConfirmed: 'auth.mfa.confirmed',
+	mfaChallengeSucceeded: 'auth.mfa.challenge-succeeded',
 	tenantRenamed: 'auth.tenant.renamed',
 	memberCreated: 'users.member.created',
 	memberUpdated: 'users.member.updated',
@@ -132,6 +177,9 @@ export class AuthService {
 	readonly #policy: () => AuthPolicy;
 	readonly #passwordHash: PasswordHashOptions;
 	readonly #now: () => number;
+	readonly #mfaEncryptionKey: string | undefined;
+	readonly #mailDelivery: AuthMailDelivery | undefined;
+	readonly #publicBaseUrl: string;
 
 	constructor(repository: AuthRepository, options: AuthServiceOptions = {}) {
 		this.#repository = repository;
@@ -144,6 +192,12 @@ export class AuthService {
 		this.#policy = options.policy ?? (() => fallback);
 		this.#passwordHash = options.passwordHash ?? DEFAULT_PASSWORD_HASH_OPTIONS;
 		this.#now = options.now ?? Date.now;
+		this.#mfaEncryptionKey = options.mfaEncryptionKey;
+		this.#mailDelivery = options.mailDelivery;
+		this.#publicBaseUrl = (options.publicBaseUrl ?? 'http://localhost').replace(
+			/\/$/,
+			'',
+		);
 	}
 
 	get policy(): AuthPolicy {
@@ -154,7 +208,7 @@ export class AuthService {
 	   describe; a failing write is reported and swallowed. */
 	#audit(
 		tenantId: string,
-		actor: { readonly accountId: string | null; readonly label: string },
+		actor: Actor,
 		action: string,
 		subjectType: string,
 		subjectId: string,
@@ -163,8 +217,10 @@ export class AuthService {
 		try {
 			this.#repository.appendAudit({
 				tenantId,
-				actorAccountId: actor.accountId,
+				actorAccountId: actor.kind === 'user' ? actor.id : null,
 				actorLabel: actor.label,
+				actorKind: actor.kind,
+				actorRunId: actor.kind === 'agent' ? actor.runId : null,
 				action,
 				subjectType,
 				subjectId,
@@ -172,15 +228,15 @@ export class AuthService {
 				occurredAt: this.#now(),
 			});
 		} catch (error) {
-			console.error('[auth.core] audit write failed', error);
+			/* Audit failures must not leak a SQLite error, whose detail can include
+			   bound values from the operation being audited. */
+			void error;
+			console.error('[auth.core] audit write failed');
 		}
 	}
 
-	#actorOf(actor: AuthActor): {
-		readonly accountId: string;
-		readonly label: string;
-	} {
-		return { accountId: actor.accountId, label: actor.email };
+	#actorOf(actor: AuthActor): Actor {
+		return userActor(actor);
 	}
 
 	async #issue(account: AccountCredential): Promise<IssuedSession> {
@@ -236,7 +292,7 @@ export class AuthService {
 			const issued = await this.#issue(account);
 			this.#audit(
 				account.tenantId,
-				{ accountId: account.accountId, label: account.email },
+				{ kind: 'user', id: account.accountId, label: account.email },
 				AUDIT_ACTIONS.signInSucceeded,
 				'session',
 				issued.sessionId,
@@ -292,7 +348,7 @@ export class AuthService {
 	async signIn(
 		raw: SignInInput,
 		context: SignInContext = {},
-	): Promise<IssuedSession> {
+	): Promise<IssuedSession & { readonly mfaRequired?: true }> {
 		const input = validateSignIn(raw);
 		const now = this.#now();
 		const failure = this.#repository.findSignInFailure(input.email);
@@ -315,16 +371,51 @@ export class AuthService {
 			throw this.#invalidCredentials();
 		}
 		this.#repository.clearSignInFailures(input.email);
+		const mfa = this.#repository.findMfaTotp(account.accountId);
+		if (mfa?.confirmedAt !== null && mfa?.confirmedAt !== undefined)
+			return this.#issueMfaChallenge(account, now);
 		const issued = await this.#issue(account);
 		this.#audit(
 			account.tenantId,
-			{ accountId: account.accountId, label: account.email },
+			{ kind: 'user', id: account.accountId, label: account.email },
 			AUDIT_ACTIONS.signInSucceeded,
 			'session',
 			issued.sessionId,
 			context.address ? { address: context.address } : {},
 		);
 		return issued;
+	}
+
+	#issueMfaChallenge(
+		account: AccountCredential,
+		now = this.#now(),
+	): MfaChallenge {
+		const token = randomBytes(32).toString('base64url');
+		this.#repository.createMfaChallenge({
+			tokenHash: hashSessionToken(token),
+			accountId: account.accountId,
+			tenantId: account.tenantId,
+			expiresAt: now + MFA_CHALLENGE_TTL_MS,
+			createdAt: now,
+		});
+		/* `token` is a short-lived proof of the first factor, never a session. */
+		return {
+			mfaRequired: true,
+			token,
+			csrfToken: '',
+			sessionId: '',
+			expiresAt: now + MFA_CHALLENGE_TTL_MS,
+			passwordChangeRequired: account.passwordChangeRequired,
+			principal: {
+				accountId: account.accountId,
+				tenantId: account.tenantId,
+				email: account.email,
+				displayName: account.displayName,
+				role: account.role,
+				scopes: [],
+				tenants: [],
+			},
+		};
 	}
 
 	#invalidCredentials(): AuthServiceError {
@@ -351,7 +442,7 @@ export class AuthService {
 		const locked = record.failures >= LOCK_THRESHOLD;
 		this.#audit(
 			account.tenantId,
-			{ accountId: account.accountId, label: account.email },
+			{ kind: 'user', id: account.accountId, label: account.email },
 			locked ? AUDIT_ACTIONS.signInLocked : AUDIT_ACTIONS.signInFailed,
 			'account',
 			account.accountId,
@@ -436,7 +527,7 @@ export class AuthService {
 		);
 		this.#audit(
 			account.tenantId,
-			{ accountId: account.accountId, label: account.email },
+			{ kind: 'user', id: account.accountId, label: account.email },
 			AUDIT_ACTIONS.passwordChanged,
 			'account',
 			account.accountId,
@@ -1023,6 +1114,412 @@ export class AuthService {
 		);
 	}
 
+	/* Public reset requests intentionally have no observable distinction between
+	   a known and unknown address. A delivery failure is also treated as accepted
+	   so it cannot become an address-enumeration side channel. */
+	async requestPasswordReset(email: string): Promise<void> {
+		const normalized = normalizeEmail(email);
+		if (normalized.length > 254) return;
+		const account = this.#repository.findAccountByEmail(normalized);
+		if (!account || !this.#mailDelivery) return;
+		const now = this.#now();
+		const token = randomBytes(32).toString('base64url');
+		this.#repository.createPasswordResetToken({
+			tokenHash: hashSessionToken(token),
+			accountId: account.accountId,
+			expiresAt: now + PASSWORD_RESET_TTL_MS,
+			createdAt: now,
+		});
+		try {
+			await this.#mailDelivery.send({
+				to: account.email,
+				kind: 'password-reset',
+				url: `${this.#publicBaseUrl}/auth/reset-password?token=${encodeURIComponent(token)}`,
+			});
+			this.#audit(
+				account.tenantId,
+				{ kind: 'user', id: account.accountId, label: account.email },
+				AUDIT_ACTIONS.passwordResetRequested,
+				'account',
+				account.accountId,
+			);
+		} catch {
+			/* The response stays non-enumerating. A deployment-owned adapter owns
+			   its delivery retry and observability policy. */
+		}
+	}
+
+	async completePasswordReset(token: string, password: string): Promise<void> {
+		if (!/^[A-Za-z0-9_-]{43}$/.test(token)) {
+			throw new AuthServiceError(
+				'RESET_TOKEN_INVALID',
+				'This password reset link is invalid or has expired.',
+				400,
+			);
+		}
+		assertPasswordPolicy(password, this.#policy().passwordMinLength);
+		const accountId = this.#repository.consumePasswordResetToken(
+			hashSessionToken(token),
+			this.#now(),
+		);
+		if (!accountId) {
+			throw new AuthServiceError(
+				'RESET_TOKEN_INVALID',
+				'This password reset link is invalid or has expired.',
+				400,
+			);
+		}
+		const account = this.#repository.findAccountCredentialById(accountId);
+		if (!account || account.status !== 'active') {
+			throw new AuthServiceError(
+				'RESET_TOKEN_INVALID',
+				'This password reset link is invalid or has expired.',
+				400,
+			);
+		}
+		this.#repository.updatePasswordHash(
+			accountId,
+			await hashPassword(password, this.#passwordHash),
+			false,
+		);
+		this.#repository.deleteAccountSessions(accountId, null);
+		this.#repository.clearSignInFailures(normalizeEmail(account.email));
+		this.#audit(
+			account.tenantId,
+			{ kind: 'user', id: account.accountId, label: account.email },
+			AUDIT_ACTIONS.passwordResetCompleted,
+			'account',
+			account.accountId,
+		);
+	}
+
+	async createTenantInvitation(
+		actor: AuthActor,
+		email: string,
+		roleKey: string,
+	): Promise<{ readonly id: string; readonly expiresAt: number }> {
+		const normalized = normalizeEmail(email);
+		if (
+			normalized.length > 254 ||
+			!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)
+		) {
+			throw new AuthServiceError(
+				'INVALID_INPUT',
+				'Enter a valid email address.',
+				400,
+			);
+		}
+		/* Owner elevation through invitations follows the same rule as member creation. */
+		this.#roleForAssignment(actor, validateRoleKey(roleKey));
+		if (!this.#mailDelivery) {
+			throw new AuthServiceError(
+				'MAIL_NOT_CONFIGURED',
+				'Email delivery is not configured for this deployment.',
+				503,
+			);
+		}
+		const now = this.#now();
+		const token = randomBytes(32).toString('base64url');
+		const id = randomUUID();
+		this.#repository.createTenantInvitation({
+			id,
+			tenantId: actor.tenantId,
+			email: normalized,
+			normalizedEmail: normalized,
+			roleKey: roleKey.trim(),
+			tokenHash: hashSessionToken(token),
+			expiresAt: now + INVITATION_TTL_MS,
+			createdBy: actor.accountId,
+			createdAt: now,
+		});
+		try {
+			await this.#mailDelivery.send({
+				to: normalized,
+				kind: 'tenant-invitation',
+				url: `${this.#publicBaseUrl}/auth/accept-invitation?token=${encodeURIComponent(token)}`,
+			});
+		} catch {
+			throw new AuthServiceError(
+				'MAIL_DELIVERY_FAILED',
+				'The invitation could not be delivered.',
+				503,
+			);
+		}
+		this.#audit(
+			actor.tenantId,
+			this.#actorOf(actor),
+			AUDIT_ACTIONS.invitationCreated,
+			'invitation',
+			id,
+			{ role: roleKey.trim() },
+		);
+		return { id, expiresAt: now + INVITATION_TTL_MS };
+	}
+
+	async acceptTenantInvitation(input: {
+		readonly token: string;
+		readonly displayName: string;
+		readonly password: string;
+	}): Promise<void> {
+		if (!/^[A-Za-z0-9_-]{43}$/.test(input.token)) {
+			throw new AuthServiceError(
+				'INVITATION_INVALID',
+				'This invitation is invalid or has expired.',
+				400,
+			);
+		}
+		const invitation = this.#repository.consumeTenantInvitation(
+			hashSessionToken(input.token),
+			this.#now(),
+		);
+		if (!invitation)
+			throw new AuthServiceError(
+				'INVITATION_INVALID',
+				'This invitation is invalid or has expired.',
+				400,
+			);
+		const role = this.#repository.findRoleByKey(
+			invitation.tenantId,
+			invitation.roleKey,
+		);
+		if (!role)
+			throw new AuthServiceError(
+				'INVITATION_INVALID',
+				'This invitation is invalid or has expired.',
+				400,
+			);
+		const existing = this.#repository.findAccountByEmail(
+			invitation.normalizedEmail,
+		);
+		if (existing) {
+			if (
+				this.#repository.findAccountMembership(
+					existing.accountId,
+					invitation.tenantId,
+				)
+			) {
+				throw new AuthServiceError(
+					'INVITATION_INVALID',
+					'This invitation is invalid or has expired.',
+					400,
+				);
+			}
+			this.#repository.createMembershipInTenant({
+				accountId: existing.accountId,
+				tenantId: invitation.tenantId,
+				role: invitation.roleKey,
+				roleId: role.id,
+				scopes: role.scopes,
+				createdAt: this.#now(),
+			});
+		} else {
+			await this.createTenantMember({
+				tenantId: invitation.tenantId,
+				email: invitation.email,
+				displayName: input.displayName,
+				password: input.password,
+				role: invitation.roleKey,
+			});
+		}
+		this.#audit(
+			invitation.tenantId,
+			{
+				kind: 'user',
+				id: existing?.accountId ?? 'invited-account',
+				label: invitation.email,
+			},
+			AUDIT_ACTIONS.invitationAccepted,
+			'invitation',
+			invitation.email,
+		);
+	}
+
+	enrollTotp(
+		accountId: string,
+		issuer = 'Coreloom',
+	): {
+		readonly secret: string;
+		readonly otpauthUrl: string;
+		readonly recoveryCodes: readonly string[];
+	} {
+		const account = this.#repository.findAccountCredentialById(
+			this.#identifier(accountId, 'accountId'),
+		);
+		if (!account)
+			throw new AuthServiceError(
+				'ACCOUNT_NOT_FOUND',
+				'The account is not available.',
+				404,
+			);
+		if (this.#repository.findMfaTotp(account.accountId)?.confirmedAt != null) {
+			throw new AuthServiceError(
+				'MFA_ALREADY_CONFIGURED',
+				'Multi-factor authentication is already enabled for this account.',
+				409,
+			);
+		}
+		const secret = createTotpSecret();
+		const recoveryCodes = Array.from({ length: RECOVERY_CODE_COUNT }, () =>
+			randomBytes(10).toString('hex').toUpperCase(),
+		);
+		const now = this.#now();
+		this.#repository.upsertMfaTotp(
+			account.accountId,
+			encryptMfaSecret(secret, this.#mfaEncryptionKey),
+			now,
+		);
+		this.#repository.replaceMfaRecoveryCodes(
+			account.accountId,
+			recoveryCodes.map(hashSessionToken),
+			now,
+		);
+		this.#audit(
+			account.tenantId,
+			{ kind: 'user', id: account.accountId, label: account.email },
+			AUDIT_ACTIONS.mfaEnrolled,
+			'account',
+			account.accountId,
+		);
+		return {
+			secret,
+			otpauthUrl: `otpauth://totp/${encodeURIComponent(`${issuer}:${account.email}`)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`,
+			recoveryCodes,
+		};
+	}
+
+	mfaStatus(accountId: string): MfaStatus {
+		const account = this.#repository.findAccountCredentialById(
+			this.#identifier(accountId, 'accountId'),
+		);
+		if (!account)
+			throw new AuthServiceError(
+				'ACCOUNT_NOT_FOUND',
+				'The account is not available.',
+				404,
+			);
+		const factor = this.#repository.findMfaTotp(account.accountId);
+		return {
+			available: this.#mfaEncryptionKey !== undefined,
+			enrolled: factor?.confirmedAt != null,
+			pending: factor !== null && factor.confirmedAt === null,
+		};
+	}
+
+	confirmTotp(accountId: string, code: string): void {
+		const account = this.#repository.findAccountCredentialById(
+			this.#identifier(accountId, 'accountId'),
+		);
+		const record = account
+			? this.#repository.findMfaTotp(account.accountId)
+			: null;
+		if (
+			!account ||
+			!record ||
+			!verifyTotp(
+				decryptMfaSecret(record.secretCiphertext, this.#mfaEncryptionKey),
+				code,
+				this.#now(),
+			)
+		) {
+			throw new AuthServiceError(
+				'MFA_CODE_INVALID',
+				'The authentication code is invalid.',
+				400,
+			);
+		}
+		this.#repository.confirmMfaTotp(account.accountId, this.#now());
+		this.#audit(
+			account.tenantId,
+			{ kind: 'user', id: account.accountId, label: account.email },
+			AUDIT_ACTIONS.mfaConfirmed,
+			'account',
+			account.accountId,
+		);
+	}
+
+	async completeMfaChallenge(
+		token: string,
+		code?: string,
+		recoveryCode?: string,
+	): Promise<IssuedSession> {
+		if (!/^[A-Za-z0-9_-]{43}$/.test(token))
+			throw new AuthServiceError(
+				'MFA_CHALLENGE_INVALID',
+				'The sign-in challenge is invalid or has expired.',
+				401,
+			);
+		const challenge = this.#repository.consumeMfaChallenge(
+			hashSessionToken(token),
+			this.#now(),
+		);
+		if (!challenge)
+			throw new AuthServiceError(
+				'MFA_CHALLENGE_INVALID',
+				'The sign-in challenge is invalid or has expired.',
+				401,
+			);
+		const account = this.#repository.findAccountMembership(
+			challenge.accountId,
+			challenge.tenantId,
+		);
+		const record = account
+			? this.#repository.findMfaTotp(account.accountId)
+			: null;
+		const valid =
+			account &&
+			record?.confirmedAt !== null &&
+			record !== null &&
+			((typeof code === 'string' &&
+				verifyTotp(
+					decryptMfaSecret(record.secretCiphertext, this.#mfaEncryptionKey),
+					code,
+					this.#now(),
+				)) ||
+				(typeof recoveryCode === 'string' &&
+					/* Twelve-character codes were issued before 0.8.0. Keep them
+					   redeemable while all newly issued codes carry 80 bits. */
+					/^(?:[A-F0-9]{12}|[A-F0-9]{20})$/.test(recoveryCode) &&
+					this.#repository.consumeMfaRecoveryCode(
+						account.accountId,
+						hashSessionToken(recoveryCode),
+					)));
+		if (!valid)
+			throw new AuthServiceError(
+				'MFA_CODE_INVALID',
+				'The authentication code is invalid.',
+				401,
+			);
+		const issued = await this.#issue(account);
+		this.#audit(
+			account.tenantId,
+			{ kind: 'user', id: account.accountId, label: account.email },
+			AUDIT_ACTIONS.mfaChallengeSucceeded,
+			'session',
+			issued.sessionId,
+		);
+		return issued;
+	}
+
+	async signInVerifiedExternalEmail(
+		email: string,
+	): Promise<IssuedSession | MfaChallenge> {
+		const account = this.#repository.findAccountByEmail(normalizeEmail(email));
+		if (!account || account.status !== 'active')
+			throw this.#invalidCredentials();
+		if (this.#repository.findMfaTotp(account.accountId)?.confirmedAt != null)
+			return this.#issueMfaChallenge(account);
+		const issued = await this.#issue(account);
+		this.#audit(
+			account.tenantId,
+			{ kind: 'user', id: account.accountId, label: account.email },
+			AUDIT_ACTIONS.signInSucceeded,
+			'session',
+			issued.sessionId,
+			{ via: 'oidc' },
+		);
+		return issued;
+	}
+
 	resolveSession(token: string | null): AuthSession | null {
 		if (!token) return null;
 		return this.#repository.findSession(
@@ -1055,7 +1552,8 @@ export class AuthService {
 		this.#audit(
 			session.principal.tenantId,
 			{
-				accountId: session.principal.accountId,
+				kind: 'user',
+				id: session.principal.accountId,
 				label: session.principal.email,
 			},
 			AUDIT_ACTIONS.sessionRevoked,
@@ -1102,7 +1600,7 @@ export class AuthService {
 		);
 	}
 
-	queryAudit(query: AuditQuery): AuditPage {
+	queryAudit(query: AuditQuery): AuditActorPage {
 		const limit = Math.min(
 			Math.max(1, Math.trunc(query.limit)),
 			MAX_AUDIT_PAGE,
@@ -1235,7 +1733,7 @@ export class AuthService {
 		});
 		this.#audit(
 			tenantId,
-			{ accountId: createdBy, label: membership.email },
+			{ kind: 'user', id: createdBy, label: membership.email },
 			AUDIT_ACTIONS.tokenIssued,
 			'api-token',
 			record.id,
@@ -1270,7 +1768,7 @@ export class AuthService {
 		}
 		this.#audit(
 			record.tenantId,
-			{ accountId: revokedBy, label: revokedBy },
+			{ kind: 'user', id: revokedBy, label: revokedBy },
 			AUDIT_ACTIONS.tokenRevoked,
 			'api-token',
 			record.id,
@@ -1329,7 +1827,8 @@ export class AuthService {
 			this.#audit(
 				session.principal.tenantId,
 				{
-					accountId: session.principal.accountId,
+					kind: 'user',
+					id: session.principal.accountId,
 					label: session.principal.email,
 				},
 				AUDIT_ACTIONS.signOut,

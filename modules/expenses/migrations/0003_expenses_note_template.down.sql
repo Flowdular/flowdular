@@ -1,0 +1,1 @@
+-- SQLite cannot drop this column without rebuilding expenses_claims. The forward migration is additive.

@@ -5,6 +5,7 @@
 **/node_modules
 **/dist
 **/coverage
+# Never send preserved pre-Coreloom databases or keys to the build context.
 **/.octane-erp
 .octane-erp/
 **/.coreloom

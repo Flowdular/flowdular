@@ -128,8 +128,29 @@ function json(value: unknown): string {
 	return `${jsonValue(value, 0, 0)}\n`;
 }
 
-function jsxString(value: string): string {
-	return JSON.stringify(value);
+function clientLocales(spec: ModuleSpec): readonly string[] {
+	return [...new Set(['en', ...spec.locales])];
+}
+
+function translationVariable(locale: string): string {
+	return `translations${pascalCase(locale)}`;
+}
+
+function translationImports(spec: ModuleSpec): string {
+	return clientLocales(spec)
+		.map(
+			(locale) =>
+				`import ${translationVariable(locale)} from '../../translations/${locale}.json';`,
+		)
+		.join('\n');
+}
+
+function translationRegistry(spec: ModuleSpec): string {
+	return `{ ${clientLocales(spec)
+		.map(
+			(locale) => `${JSON.stringify(locale)}: ${translationVariable(locale)}`,
+		)
+		.join(', ')} }`;
 }
 
 const DEFAULT_ENTITY = 'records';
@@ -222,7 +243,7 @@ function manifest(model: ScaffoldModel): string {
 }
 
 function packageJson(model: ScaffoldModel): string {
-	const { spec, names, hasApi, hasClient, hasCli } = model;
+	const { spec, names, hasApi, hasClient, hasDatabase, hasCli } = model;
 	return json({
 		name: names.packageName,
 		version: spec.specVersion,
@@ -248,6 +269,7 @@ function packageJson(model: ScaffoldModel): string {
 			...(hasCli ? { '@coreloom/cli-protocol': 'workspace:*' } : {}),
 			...(hasClient ? { '@coreloom/client': 'workspace:*' } : {}),
 			'@coreloom/contracts': 'workspace:*',
+			...(hasDatabase ? { '@coreloom/kernel': 'workspace:*' } : {}),
 			...(hasApi
 				? {
 						'@coreloom/module-auth': 'workspace:*',
@@ -257,7 +279,7 @@ function packageJson(model: ScaffoldModel): string {
 			...(hasClient
 				? {
 						'@coreloom/ui': 'workspace:*',
-						octane: '0.1.50',
+						octane: '0.1.51',
 						'segment-state': '0.2.0',
 					}
 				: {}),
@@ -440,8 +462,15 @@ CREATE INDEX IF NOT EXISTS ${entity.table}_tenant_name_idx
 }
 
 function migrationFile(model: ScaffoldModel): string {
-	return `export const ${model.names.constant}_MIGRATION_001 = \`
-${migrationSql(model)}\`;
+	const { names } = model;
+	return `import type { ModuleMigration } from '@coreloom/kernel';
+
+/* Mirrors migrations/0001_${names.snake}_core.up.sql byte for byte. */
+export const ${names.constant}_MIGRATION_001 = \`${migrationSql(model)}\`;
+
+export const migrations: readonly ModuleMigration[] = [
+	{ id: '0001_${names.snake}_core', statements: ${names.constant}_MIGRATION_001 },
+];
 `;
 }
 
@@ -450,8 +479,9 @@ function sqliteRepositoryFile(model: ScaffoldModel): string {
 	return `import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { runModuleMigrations } from '@coreloom/kernel';
 import type { ${entity.type} } from '../domain/types.ts';
-import { ${names.constant}_MIGRATION_001 } from './migration.ts';
+import { migrations } from './migration.ts';
 import type { ${names.pascal}Repository } from './repository.ts';
 
 interface ${entity.type}Row {
@@ -474,12 +504,13 @@ function fromRow(row: ${entity.type}Row): ${entity.type} {
 
 export class Sqlite${names.pascal}Repository implements ${names.pascal}Repository {
 	readonly #database: DatabaseSync;
+	#closed = false;
 
 	constructor(path: string) {
 		if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
 		this.#database = new DatabaseSync(path, { timeout: 5000 });
 		this.#database.exec('PRAGMA journal_mode = WAL;');
-		this.#database.exec(${names.constant}_MIGRATION_001);
+		runModuleMigrations(this.#database, migrations);
 	}
 
 	list(tenantId: string): readonly ${entity.type}[] {
@@ -508,6 +539,12 @@ export class Sqlite${names.pascal}Repository implements ${names.pascal}Repositor
 				record.createdAt,
 			);
 		return record;
+	}
+
+	close(): void {
+		if (this.#closed) return;
+		this.#closed = true;
+		this.#database.close();
 	}
 }
 `;
@@ -562,20 +599,27 @@ import { Memory${names.pascal}Repository } from '../services/memory-repository.t
 
 export interface ${names.pascal}Runtime {
 	service(): ${names.pascal}Service;
+	dispose(): void;
 }
 
 export function create${names.pascal}Runtime(): ${names.pascal}Runtime {
 	let service: ${names.pascal}Service | undefined;
+	let disposed = false;
 	return {
 		service: () => {
+			if (disposed) throw new Error('${names.pascal} runtime is disposed.');
 			service ??= new ${names.pascal}Service(new Memory${names.pascal}Repository());
 			return service;
+		},
+		dispose() {
+			disposed = true;
+			service = undefined;
 		},
 	};
 }
 `;
 	}
-	return `import { resolve } from 'node:path';
+	return `import { coreloomLocalDataPath } from '@coreloom/kernel/legacy-local-state';
 import { ${names.pascal}Service } from '../services/${names.suffix}-service.ts';
 import { Sqlite${names.pascal}Repository } from '../services/sqlite-repository.ts';
 
@@ -585,6 +629,7 @@ export interface ${names.pascal}RuntimeOptions {
 
 export interface ${names.pascal}Runtime {
 	service(): ${names.pascal}Service;
+	dispose(): void;
 }
 
 export function ${names.camel}RuntimeOptionsFromEnvironment(
@@ -593,10 +638,12 @@ export function ${names.camel}RuntimeOptionsFromEnvironment(
 ): ${names.pascal}RuntimeOptions {
 	return {
 		databasePath:
-			environment.OERP_${names.constant}_DATABASE ??
+			environment.CL_${names.constant}_DATABASE ??
 			(environment.NODE_ENV === 'production'
 				? '/data/${names.suffix}.db'
-				: resolve(workspaceRoot, '.octane-erp/${names.suffix}.db')),
+				: environment.NODE_ENV === 'test'
+					? ':memory:'
+					: coreloomLocalDataPath(workspaceRoot, '${names.suffix}.db')),
 	};
 }
 
@@ -604,12 +651,21 @@ export function create${names.pascal}Runtime(
 	options: ${names.pascal}RuntimeOptions = ${names.camel}RuntimeOptionsFromEnvironment(),
 ): ${names.pascal}Runtime {
 	let service: ${names.pascal}Service | undefined;
+	let repository: Sqlite${names.pascal}Repository | undefined;
+	let disposed = false;
 	return {
 		service: () => {
-			service ??= new ${names.pascal}Service(
-				new Sqlite${names.pascal}Repository(options.databasePath),
-			);
+			if (disposed) throw new Error('${names.pascal} runtime is disposed.');
+			repository ??= new Sqlite${names.pascal}Repository(options.databasePath);
+			service ??= new ${names.pascal}Service(repository);
 			return service;
+		},
+		dispose() {
+			if (disposed) return;
+			disposed = true;
+			repository?.close();
+			repository = undefined;
+			service = undefined;
 		},
 	};
 }
@@ -658,7 +714,10 @@ export function createServerComposition(
 	context: PlatformServerContext,
 ): PlatformServerComposition {
 	${runtime}
-	return { routes: create${names.pascal}Routes(context.auth, runtime) };
+	return {
+		routes: create${names.pascal}Routes(context.auth, runtime),
+		dispose: () => runtime.dispose(),
+	};
 }
 `;
 }
@@ -816,9 +875,13 @@ function contributionFile(model: ScaffoldModel): string {
 				id: '${names.suffix}.navigation',
 				viewId: '${names.suffix}',
 				group: 'Operations',
-				label: ${stringLiteral(spec.name)},
+				get label() {
+					return t('${names.namespace}.navigation.label');
+				},
 				glyph: 'modules',
-				description: ${stringLiteral(spec.description)},
+				get description() {
+					return t('${names.namespace}.navigation.description');
+				},
 				scope: ${constant}.${readPermission.key},
 				order: 50,
 			},
@@ -828,7 +891,8 @@ function contributionFile(model: ScaffoldModel): string {
 	const view = listPermission
 		? `<${names.pascal}View csrfToken={options.csrfToken} />`
 		: `<${names.pascal}View />`;
-	return `import type { ModuleClientContribution } from '@coreloom/client';
+	return `import { t, type ModuleClientContribution } from '@coreloom/client';
+${translationImports(spec)}
 ${readPermission ? `import { ${constant} } from '../acl/permissions.ts';\n` : ''}import { ${names.pascal}View } from './${names.pascal}View.tsrx';
 
 export interface ${names.pascal}ClientContributionOptions {
@@ -840,6 +904,7 @@ export function create${names.pascal}ClientContribution(
 ): ModuleClientContribution {
 	return {
 		moduleId: '${names.id}',
+		translations: ${translationRegistry(spec)},
 ${navigation}		views: [
 			{
 				id: '${names.suffix}',
@@ -853,7 +918,8 @@ ${navigation}		views: [
 
 function clientApi(model: ScaffoldModel): string {
 	const { names, entity } = model;
-	return `import type { ${entity.type} } from '../domain/types.ts';
+	return `import { t } from '@coreloom/client/i18n';
+import type { ${entity.type} } from '../domain/types.ts';
 
 interface ErrorEnvelope {
 	readonly error?: { readonly message?: string };
@@ -863,7 +929,7 @@ async function payload<T>(response: Response): Promise<T> {
 	const value = (await response.json()) as T & ErrorEnvelope;
 	if (!response.ok) {
 		throw new Error(
-			value.error?.message ?? 'The ${names.suffix} operation failed.',
+			value.error?.message ?? t('${names.namespace}.error.request'),
 		);
 	}
 	return value;
@@ -900,22 +966,24 @@ export function create${names.pascal}ClientState() {
 }
 
 function viewFile(model: ScaffoldModel): string {
-	const { names, entity, spec, listPermission } = model;
-	const heading = pascalCase(entity.plural);
+	const { names, entity, listPermission } = model;
 	if (!listPermission) {
-		return `import { EmptyState, PageHeader } from '@coreloom/ui';
+		return `import { t } from '@coreloom/client';
+import { EmptyState, PageHeader } from '@coreloom/ui';
 
 export function ${names.pascal}View() @{
 	<div class="ui-view">
 		<PageHeader
-			eyebrow=${jsxString(spec.name)}
-			title=${jsxString(heading)}
-			description=${jsxString(spec.description)}
+			eyebrow={t('${names.namespace}.page.eyebrow')}
+			title={t('${names.namespace}.page.title')}
+			description={t('${names.namespace}.page.description')}
 		/>
 		<section class="ui-card">
-			<EmptyState icon="modules" title="Nothing to show yet">
-				This module exposes no list endpoint. Add one to the API layer
-				and load it from this view.
+			<EmptyState
+				icon="modules"
+				title={t('${names.namespace}.table.emptyTitle')}
+			>
+				{t('${names.namespace}.table.emptyHint')}
 			</EmptyState>
 		</section>
 	</div>
@@ -923,13 +991,39 @@ export function ${names.pascal}View() @{
 `;
 	}
 	return `import { useEffect, useMemo } from 'octane';
-import { Alert, Button, EmptyState, Icon, PageHeader } from '@coreloom/ui';
+import { t } from '@coreloom/client';
+import {
+	Alert,
+	Button,
+	Icon,
+	PageHeader,
+	TableCard,
+	type TableColumn,
+} from '@coreloom/ui';
 import { useValue } from 'segment-state';
+import type { ${entity.type} } from '../domain/types.ts';
 import { load${entity.type}s } from './api.ts';
 import { create${names.pascal}ClientState } from './state.ts';
 
 export interface ${names.pascal}ViewProps {
 	readonly csrfToken: string;
+}
+
+function columns(): readonly TableColumn<${entity.type}>[] {
+	return [
+		{
+			key: 'name',
+			header: t('${names.namespace}.table.column.name'),
+			width: '65%',
+			cell: (record) => <b>{record.name}</b>,
+		},
+		{
+			key: 'status',
+			header: t('${names.namespace}.table.column.status'),
+			width: '35%',
+			cell: (record) => t('${names.namespace}.status.' + record.status),
+		},
+	];
 }
 
 export function ${names.pascal}View(_props: ${names.pascal}ViewProps) @{
@@ -951,7 +1045,7 @@ export function ${names.pascal}View(_props: ${names.pascal}ViewProps) @{
 			setError(
 				loadError instanceof Error
 					? loadError.message
-					: 'Could not load ${entity.plural}.',
+					: t('${names.namespace}.error.load'),
 			);
 		} finally {
 			setStatus('idle');
@@ -964,52 +1058,37 @@ export function ${names.pascal}View(_props: ${names.pascal}ViewProps) @{
 
 	<div class="ui-view">
 		<PageHeader
-			eyebrow=${jsxString(spec.name)}
-			title=${jsxString(heading)}
-			description=${jsxString(spec.description)}
+			eyebrow={t('${names.namespace}.page.eyebrow')}
+			title={t('${names.namespace}.page.title')}
+			description={t('${names.namespace}.page.description')}
 		>
 			<Button size="sm" onClick={() => void refresh()}>
 				<Icon name="refresh" size={14} />
-				Refresh
+				{t('${names.namespace}.action.refresh')}
 			</Button>
 		</PageHeader>
 		@if (error) {
 			<Alert>{error}</Alert>
 		}
-		<section class="ui-card">
-			<div class="ui-card__head">
-				<span class="ui-card__title">
-					${heading}
-					<small>{${entity.plural}.length + ' ${entity.plural}'}</small>
-				</span>
-			</div>
-			@if (status === 'loading' && ${entity.plural}.length === 0) {
-				<p class="ui-table__empty">Loading ${entity.plural}…</p>
-			} @else if (${entity.plural}.length === 0) {
-				<EmptyState icon="modules" title="No ${entity.plural} yet">
-					${heading} created in this workspace appear here.
-				</EmptyState>
-			} @else {
-				<div class="ui-table-wrap">
-					<table class="ui-table" aria-label=${jsxString(heading)}>
-						<thead>
-							<tr>
-								<th>Name</th>
-								<th>Status</th>
-							</tr>
-						</thead>
-						<tbody>
-							@for (const record of ${entity.plural}; key record.id) {
-								<tr>
-									<td>{record.name}</td>
-									<td>{record.status}</td>
-								</tr>
-							}
-						</tbody>
-					</table>
-				</div>
-			}
-		</section>
+		<TableCard
+			title={t('${names.namespace}.table.title')}
+			count={t('${names.namespace}.table.count', {
+				count: ${entity.plural}.length,
+			})}
+			caption={t('${names.namespace}.table.caption')}
+			columns={columns()}
+			rows={${entity.plural}}
+			rowKey={(record) => record.id}
+			status={status === 'loading' && ${entity.plural}.length === 0
+				? 'loading'
+				: 'idle'}
+			loadingLabel={t('${names.namespace}.table.loading')}
+			empty={{
+				icon: 'modules',
+				title: t('${names.namespace}.table.emptyTitle'),
+				hint: t('${names.namespace}.table.emptyHint'),
+			}}
+		/>
 	</div>
 }
 `;
@@ -1095,11 +1174,56 @@ export default defineCliExtension({
 `;
 }
 
-/* The Polish label is a placeholder a translator replaces; it must not read as
-   the English name so an untranslated bundle is visible at a glance. */
-function translation(locale: string, name: string): string {
+/* The scaffold owns generic, complete runtime copy. A business-manager may
+   replace it with domain-specific wording before the module gates run. */
+function translation(
+	locale: string,
+	name: string,
+	description: string,
+): string {
+	if (locale === 'pl') {
+		return json({
+			'module.name': `Moduł ${name}`,
+			'navigation.label': name,
+			'navigation.description': `Dane modułu ${name}`,
+			'page.eyebrow': 'Dane operacyjne',
+			'page.title': name,
+			'page.description': `Obsługa danych modułu ${name}.`,
+			'action.refresh': 'Odśwież',
+			'table.title': 'Rekordy',
+			'table.caption': `Rekordy modułu ${name}`,
+			'table.count': 'Liczba rekordów: {count}',
+			'table.column.name': 'Nazwa',
+			'table.column.status': 'Status',
+			'table.loading': 'Wczytywanie rekordów…',
+			'table.emptyTitle': 'Brak rekordów',
+			'table.emptyHint': 'Utworzone rekordy pojawią się w tym miejscu.',
+			'status.active': 'Aktywny',
+			'status.archived': 'Zarchiwizowany',
+			'error.load': 'Nie udało się wczytać rekordów.',
+			'error.request': 'Operacja na rekordach nie powiodła się.',
+		});
+	}
 	return json({
-		'module.name': locale === 'pl' ? `Moduł ${name}` : name,
+		'module.name': name,
+		'navigation.label': name,
+		'navigation.description': description,
+		'page.eyebrow': 'Operations',
+		'page.title': name,
+		'page.description': description,
+		'action.refresh': 'Refresh',
+		'table.title': 'Records',
+		'table.caption': `${name} records`,
+		'table.count': '{count} records',
+		'table.column.name': 'Name',
+		'table.column.status': 'Status',
+		'table.loading': 'Loading records…',
+		'table.emptyTitle': 'No records yet',
+		'table.emptyHint': 'Records created in this workspace appear here.',
+		'status.active': 'Active',
+		'status.archived': 'Archived',
+		'error.load': 'Could not load records.',
+		'error.request': 'The records operation failed.',
 	});
 }
 
@@ -1161,7 +1285,10 @@ export function planScaffold(
 	}
 	files.set('tests/module.test.ts', testFile(model));
 	for (const locale of new Set(['en', ...spec.locales])) {
-		files.set(`translations/${locale}.json`, translation(locale, spec.name));
+		files.set(
+			`translations/${locale}.json`,
+			translation(locale, spec.name, spec.description),
+		);
 	}
 	return files;
 }

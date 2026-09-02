@@ -4,7 +4,12 @@ import type {
 	NavigationGroup,
 } from '../contributions.ts';
 import type { ShellView } from '../state.ts';
-import { NAVIGATION_GROUPS, viewHref } from './navigation.ts';
+import { t } from '../i18n/runtime.ts';
+import {
+	navigationGroupLabel,
+	NAVIGATION_GROUPS,
+	viewHref,
+} from './navigation.ts';
 import type { NavigateToView } from './types.ts';
 
 export interface PrimaryNavigationProps {
@@ -17,7 +22,7 @@ export interface PrimaryNavigationProps {
 }
 
 export function PrimaryNavigation(props: PrimaryNavigationProps) @{
-	<nav class="primary-nav" aria-label="Platform navigation">
+	<nav class="primary-nav" aria-label={t('shell.nav.label')}>
 		@for (const group of NAVIGATION_GROUPS; key group) {
 			@if (props.items.some((item) => item.group === group)) {
 				<section
@@ -32,7 +37,7 @@ export function PrimaryNavigation(props: PrimaryNavigationProps) @{
 						aria-expanded={!props.collapsedGroups.includes(group)}
 						onClick={() => props.onToggleGroup(group)}
 					>
-						<span>{group}</span>
+						<span>{navigationGroupLabel(t, group)}</span>
 						<span class="nav-group__chevron">
 							<Icon name="chevron-down" size={12} strokeWidth={2} />
 						</span>

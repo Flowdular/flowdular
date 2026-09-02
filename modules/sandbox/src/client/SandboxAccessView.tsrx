@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from 'octane';
 import { Alert, Button, Drawer, Icon, Kpi, PageHeader } from '@coreloom/ui';
+import { t } from '@coreloom/client';
 import { useValue } from 'segment-state';
 import {
 	grantSandboxAccess,
@@ -52,7 +53,7 @@ export function SandboxAccessView(props: SandboxAccessViewProps) @{
 				transaction.set(sandbox.state.sessions, records);
 			}, 'sandbox/loaded');
 		} catch (loadError) {
-			setError(message(loadError, 'Could not load sandbox access.'));
+			setError(message(loadError, t('sandbox.error.load')));
 		} finally {
 			setStatus('idle');
 		}
@@ -71,7 +72,7 @@ export function SandboxAccessView(props: SandboxAccessViewProps) @{
 			setFormOpen(false);
 			await refresh();
 		} catch (grantError) {
-			setError(message(grantError, 'Could not grant sandbox access.'));
+			setError(message(grantError, t('sandbox.error.grant')));
 			setStatus('idle');
 		}
 	};
@@ -83,20 +84,20 @@ export function SandboxAccessView(props: SandboxAccessViewProps) @{
 			await revokeSandboxAccess(accountId, props.csrfToken);
 			await refresh();
 		} catch (revokeError) {
-			setError(message(revokeError, 'Could not revoke sandbox access.'));
+			setError(message(revokeError, t('sandbox.error.revoke')));
 			setStatus('idle');
 		}
 	};
 
 	<div class="ui-view">
 		<PageHeader
-			eyebrow="Development"
-			title="Sandbox"
-			description="Grant isolated module development access and follow the sessions it produces."
+			eyebrow={t('sandbox.page.eyebrow')}
+			title={t('sandbox.access.title')}
+			description={t('sandbox.access.description')}
 		>
 			<Button size="sm" onClick={() => void refresh()}>
 				<Icon name="refresh" size={14} />
-				Refresh
+				{t('sandbox.action.refresh')}
 			</Button>
 			<Button
 				size="sm"
@@ -104,29 +105,33 @@ export function SandboxAccessView(props: SandboxAccessViewProps) @{
 				disabled={!sandboxUrl}
 			>
 				<Icon name="external" size={14} />
-				Open sandbox
+				{t('sandbox.action.open')}
 			</Button>
 			<Button size="sm" variant="primary" onClick={() => setFormOpen(true)}>
 				<Icon name="plus" size={14} />
-				Grant access
+				{t('sandbox.access.grant')}
 			</Button>
 		</PageHeader>
 		<div class="ui-kpi-grid">
 			<Kpi
-				label="Active access"
+				label={t('sandbox.kpi.activeAccess')}
 				value={status === 'loading' ? '…' : String(activeGrants.length)}
-				note="Accounts that can sign in to the sandbox right now."
+				note={t('sandbox.kpi.activeAccessNote')}
 			/>
 			<Kpi
-				label="Sessions"
-				value={props.canReadSessions ? String(sessions.length) : 'n/a'}
-				note="Module sessions registered by the sandbox application."
+				label={t('sandbox.sessions.title')}
+				value={props.canReadSessions
+					? String(sessions.length)
+					: t('sandbox.value.na')}
+				note={t('sandbox.kpi.sessionsNote')}
 			/>
 			<Kpi
-				label="Sandbox address"
-				value={sandboxUrl ? 'Configured' : 'Unset'}
+				label={t('sandbox.kpi.address')}
+				value={sandboxUrl
+					? t('sandbox.kpi.configured')
+					: t('sandbox.kpi.unset')}
 				note={<span class="ui-mono">
-					{sandboxUrl || 'Start it with npx @coreloom/sandbox.'}
+					{sandboxUrl || t('sandbox.kpi.startHint')}
 				</span>}
 			/>
 		</div>
@@ -136,10 +141,11 @@ export function SandboxAccessView(props: SandboxAccessViewProps) @{
 		<section class="ui-card">
 			<div class="ui-card__head">
 				<span class="ui-card__title">
-					Access
-					<small>
-						{activeGrants.length + ' active · ' + grants.length + ' granted'}
-					</small>
+					{t('sandbox.access.listTitle')}
+					<small>{t('sandbox.access.count', {
+						active: activeGrants.length,
+						total: grants.length,
+					})}</small>
 				</span>
 			</div>
 			<SandboxGrantList
@@ -149,18 +155,17 @@ export function SandboxAccessView(props: SandboxAccessViewProps) @{
 			/>
 			<p class="ui-note">
 				<Icon name="shield" size={14} />
-				<span>
-					A grant lets an account sign in to the sandbox with the listed
-					capabilities. Workspace data stays behind the same permissions.
-				</span>
+				<span>{t('sandbox.access.note')}</span>
 			</p>
 		</section>
 		@if (props.canReadSessions) {
 			<section class="ui-card">
 				<div class="ui-card__head">
 					<span class="ui-card__title">
-						Sessions
-						<small>{sessions.length + ' records, latest first'}</small>
+						{t('sandbox.sessions.title')}
+						<small>{t('sandbox.sessions.count', {
+							count: sessions.length,
+						})}</small>
 					</span>
 				</div>
 				<SandboxSessionList sessions={sessions} />
@@ -168,8 +173,8 @@ export function SandboxAccessView(props: SandboxAccessViewProps) @{
 		}
 		<Drawer
 			open={formOpen}
-			title="Grant sandbox access"
-			subtitle="Owner-only, auditable, revocable"
+			title={t('sandbox.drawer.title')}
+			subtitle={t('sandbox.drawer.subtitle')}
 			onClose={() => setFormOpen(false)}
 		>
 			<SandboxGrantForm

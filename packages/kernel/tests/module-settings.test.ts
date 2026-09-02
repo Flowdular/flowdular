@@ -44,7 +44,10 @@ const declaration = defineModuleSettings({
 			defaultValue: 2,
 			visibility: 'private',
 			client: false,
+			labelKey: 'agents.settings.workerConcurrency.label',
 			label: 'Worker concurrency',
+			descriptionKey: 'agents.settings.workerConcurrency.description',
+			description: 'Maximum concurrent runs.',
 			min: 1,
 			max: 16,
 		},
@@ -197,5 +200,40 @@ describe('module settings runtime', () => {
 				},
 			}),
 		).toThrow(/cannot be shared/);
+	});
+
+	it('accepts namespaced translation keys and rejects invalid ownership', () => {
+		expect(declaration.settings.workerConcurrency).toMatchObject({
+			labelKey: 'agents.settings.workerConcurrency.label',
+			descriptionKey: 'agents.settings.workerConcurrency.description',
+		});
+		expect(() =>
+			defineModuleSettings({
+				moduleId: 'agents.core',
+				settings: {
+					workerConcurrency: {
+						type: 'number',
+						defaultValue: 2,
+						visibility: 'private',
+						client: false,
+						labelKey: 'auth.settings.workerConcurrency.label',
+					},
+				},
+			}),
+		).toThrow(/invalid labelKey/);
+		expect(() =>
+			defineModuleSettings({
+				moduleId: 'agents.core',
+				settings: {
+					workerConcurrency: {
+						type: 'number',
+						defaultValue: 2,
+						visibility: 'private',
+						client: false,
+						descriptionKey: 'agents invalid key',
+					},
+				},
+			}),
+		).toThrow(/invalid descriptionKey/);
 	});
 });

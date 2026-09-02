@@ -138,7 +138,7 @@ export const cliExtension = defineCliExtension({
 						grants: service.listGrants(tenant.tenantId),
 						candidates: service.listCandidates(tenant.tenantId),
 					},
-					evidence: ['.octane-erp/sandbox.db'],
+					evidence: ['.coreloom/data/sandbox.db'],
 				};
 			},
 		},
@@ -208,7 +208,7 @@ export const cliExtension = defineCliExtension({
 							note: flag(context, 'note') ?? null,
 						}),
 					},
-					evidence: ['.octane-erp/sandbox.db'],
+					evidence: ['.coreloom/data/sandbox.db'],
 				};
 			},
 		},
@@ -252,7 +252,7 @@ export const cliExtension = defineCliExtension({
 							actorOf(context),
 						),
 					},
-					evidence: ['.octane-erp/sandbox.db'],
+					evidence: ['.coreloom/data/sandbox.db'],
 				};
 			},
 		},
@@ -274,7 +274,7 @@ export const cliExtension = defineCliExtension({
 						tenant,
 						sessions: service.listSessions(tenant.tenantId, 50),
 					},
-					evidence: ['.octane-erp/sandbox.db'],
+					evidence: ['.coreloom/data/sandbox.db'],
 				};
 			},
 		},
@@ -308,7 +308,7 @@ export const cliExtension = defineCliExtension({
 							actorOf(context),
 						),
 					},
-					evidence: ['.octane-erp/sandbox.db'],
+					evidence: ['.coreloom/data/sandbox.db'],
 				};
 			},
 		},
@@ -343,7 +343,7 @@ export const cliExtension = defineCliExtension({
 							actorOf(context),
 						),
 					},
-					evidence: ['.octane-erp/sandbox.db'],
+					evidence: ['.coreloom/data/sandbox.db'],
 				};
 			},
 		},
@@ -369,7 +369,7 @@ export const cliExtension = defineCliExtension({
 						eventsInspected: events.length,
 						latestSequence: events[0]?.sequence ?? 0,
 					},
-					evidence: ['.octane-erp/sandbox.db'],
+					evidence: ['.coreloom/data/sandbox.db'],
 				};
 			},
 		},

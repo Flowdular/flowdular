@@ -1,8 +1,10 @@
 import { useMemo } from 'octane';
 import { Button, SettingRow, Switch, Tag } from '@coreloom/ui';
+import { useTranslation, type Translate } from '@coreloom/client';
 import type { ModuleSettingValue } from '@coreloom/kernel';
 import { cell, createStore, useValue } from 'segment-state';
 import type { SettingsEntryPayload } from './settings-api.ts';
+import { translateSettingCopy } from './setting-copy.ts';
 
 export interface ModuleSettingRowProps {
 	readonly setting: SettingsEntryPayload;
@@ -19,25 +21,34 @@ function text(value: ModuleSettingValue | null): string {
 	return value === null ? '' : String(value);
 }
 
-function description(definition: SettingsEntryPayload): string {
+function description(
+	definition: SettingsEntryPayload,
+	localizedDescription: string,
+	localizedLocked: string | undefined,
+	translate: Translate,
+): string {
 	const extra =
-		definition.locked ??
+		localizedLocked ??
 			(!definition.secret && definition.hasValue
-				? 'Default: ' + text(definition.defaultValue) + '.'
+				? translate('system.settings.defaultValue', {
+						value: text(definition.defaultValue),
+					})
 				: '');
-	return [definition.description, extra].filter(Boolean).join(' ');
+	return [localizedDescription, extra].filter(Boolean).join(' ');
 }
 
 /* One declared setting: a switch for booleans, an input or select otherwise,
    and a write-only field for secrets. Booleans save on toggle; everything else
    waits for its Save button. */
 export function ModuleSettingRow(props: ModuleSettingRowProps) @{
+	const { t: translate } = useTranslation();
 	const draft = useMemo(
 		() => createStore({ value: cell(text(props.setting.value)) }),
 		[props.setting.value],
 	);
 	const [value, setValue] = useValue(draft.state.value);
 	const definition = props.setting;
+	const copy = translateSettingCopy(definition, translate);
 	const disabled =
 		!props.canManage || props.busy || definition.locked !== undefined;
 	const dirty = value !== text(definition.value);
@@ -53,17 +64,22 @@ export function ModuleSettingRow(props: ModuleSettingRowProps) @{
 	};
 
 	<SettingRow
-		label={definition.label}
-		description={description(definition)}
+		label={copy.label}
+		description={description(
+			definition,
+			copy.description,
+			copy.locked,
+			translate,
+		)}
 		scopeLabel={props.showScope && definition.scope === 'platform'
-			? 'All workspaces'
+			? translate('system.settings.allWorkspaces')
 			: undefined}
 		status={props.result}
 	>
 		@if (definition.type === 'boolean') {
 			<Switch
 				checked={definition.value === true}
-				label={definition.label}
+				label={copy.label}
 				disabled={disabled}
 				onChange={(checked) => props.onSave(checked)}
 			/>
@@ -72,9 +88,11 @@ export function ModuleSettingRow(props: ModuleSettingRowProps) @{
 				<input
 					class="ui-input"
 					type="password"
-					aria-label={definition.label}
-					autoComplete="off"
-					placeholder={definition.hasValue ? '••••••••' : 'Not set'}
+					aria-label={copy.label}
+					autocomplete="off"
+					placeholder={definition.hasValue
+						? '••••••••'
+						: translate('system.settings.notSet')}
 					value={value}
 					disabled={disabled}
 					onInput={(event) => setValue(
@@ -82,31 +100,29 @@ export function ModuleSettingRow(props: ModuleSettingRowProps) @{
 					)}
 				/>
 				<Tag tone={definition.hasValue ? 'success' : 'neutral'} dot>
-					{definition.hasValue ? 'Configured' : 'Empty'}
+					{definition.hasValue
+						? translate('system.settings.configured')
+						: translate('system.settings.emptyValue')}
 				</Tag>
 				<Button
 					size="sm"
 					variant="primary"
 					disabled={disabled || value.trim() === ''}
 					onClick={submit}
-				>
-					Set
-				</Button>
+				>{translate('system.action.set')}</Button>
 				@if (definition.hasValue) {
 					<Button
 						size="sm"
 						disabled={disabled}
 						onClick={() => props.onSave(null)}
-					>
-						Clear
-					</Button>
+					>{translate('system.action.clear')}</Button>
 				}
 			</>
 		} @else if (definition.enum) {
 			<>
 				<select
 					class="ui-select"
-					aria-label={definition.label}
+					aria-label={copy.label}
 					value={value}
 					disabled={disabled}
 					onInput={(event) => setValue(
@@ -122,15 +138,13 @@ export function ModuleSettingRow(props: ModuleSettingRowProps) @{
 					variant="primary"
 					disabled={disabled || !dirty}
 					onClick={submit}
-				>
-					Save
-				</Button>
+				>{translate('system.action.save')}</Button>
 			</>
 		} @else if (definition.multiline) {
 			<>
 				<textarea
 					class="ui-textarea"
-					aria-label={definition.label}
+					aria-label={copy.label}
 					value={value}
 					disabled={disabled}
 					onInput={(event) => setValue(
@@ -142,16 +156,14 @@ export function ModuleSettingRow(props: ModuleSettingRowProps) @{
 					variant="primary"
 					disabled={disabled || !dirty}
 					onClick={submit}
-				>
-					Save
-				</Button>
+				>{translate('system.action.save')}</Button>
 			</>
 		} @else {
 			<>
 				<input
 					class="ui-input"
 					type={definition.type === 'number' ? 'number' : 'text'}
-					aria-label={definition.label}
+					aria-label={copy.label}
 					min={definition.min}
 					max={definition.max}
 					value={value}
@@ -165,17 +177,13 @@ export function ModuleSettingRow(props: ModuleSettingRowProps) @{
 					variant="primary"
 					disabled={disabled || !dirty}
 					onClick={submit}
-				>
-					Save
-				</Button>
+				>{translate('system.action.save')}</Button>
 				@if (definition.hasValue) {
 					<Button
 						size="sm"
 						disabled={disabled}
 						onClick={() => props.onSave(null)}
-					>
-						Reset
-					</Button>
+					>{translate('system.action.reset')}</Button>
 				}
 			</>
 		}

@@ -40,11 +40,21 @@ export interface DeliveryGuardrails {
 }
 
 export type DeliveryProvider = 'github' | 'none';
+export type GitDeliveryMode = 'direct' | 'fork';
 
 export interface GitDeliveryPlan {
 	readonly remote: string;
+	/* GitHub owner/name that receives the pull request, when known. */
+	readonly repository: string | null;
 	readonly baseBranch: string;
 	readonly branch: string;
+	readonly deliveryMode: GitDeliveryMode;
+	/* Human-safe destination. A credential-bearing URL is never exposed. */
+	readonly pushTarget: string;
+	readonly forkOwner: string | null;
+	readonly forkRequired: boolean;
+	/* Pull request head, branch for direct delivery or owner:branch for a fork. */
+	readonly head: string;
 	/* Relative to the workspace root. Created for the delivery and removed when
 	   it ends, whatever the outcome. */
 	readonly worktreePath: string;

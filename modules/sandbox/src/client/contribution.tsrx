@@ -1,5 +1,7 @@
-import type { ModuleClientContribution } from '@coreloom/client';
+import { t, type ModuleClientContribution } from '@coreloom/client';
 import { SANDBOX_PERMISSIONS } from '../acl/permissions.ts';
+import translationsEn from '../../translations/en.json';
+import translationsPl from '../../translations/pl.json';
 import { SandboxAccessView } from './SandboxAccessView.tsrx';
 
 export interface SandboxClientContributionOptions {
@@ -12,14 +14,19 @@ export function createSandboxClientContribution(
 ): ModuleClientContribution {
 	return {
 		moduleId: 'sandbox.core',
+		translations: { en: translationsEn, pl: translationsPl },
 		navigation: [
 			{
 				id: 'sandbox.navigation.access',
 				viewId: 'sandbox',
 				group: 'Development',
-				label: 'Sandbox',
+				get label() {
+					return t('sandbox.navigation.sandbox');
+				},
 				glyph: 'flask',
-				description: 'Access and module sessions',
+				get description() {
+					return t('sandbox.navigation.description');
+				},
 				scope: SANDBOX_PERMISSIONS.manage,
 				order: 50,
 			},

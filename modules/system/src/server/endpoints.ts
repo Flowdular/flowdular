@@ -34,7 +34,9 @@ export interface SettingsEntryPayload {
 	readonly type: ModuleSettingEntry['definition']['type'];
 	readonly scope: 'platform' | 'tenant';
 	readonly label: string;
+	readonly labelKey?: string;
 	readonly description: string;
+	readonly descriptionKey?: string;
 	readonly value: ModuleSettingEntry['value'];
 	readonly hasValue: boolean;
 	readonly defaultValue: ModuleSettingEntry['value'];
@@ -45,6 +47,8 @@ export interface SettingsEntryPayload {
 	readonly multiline?: boolean;
 	/** Human-readable reason the value cannot be changed here. */
 	readonly locked?: string;
+	/** Client translation key for `locked`; the literal remains the fallback. */
+	readonly lockedKey?: string;
 }
 
 export interface SettingsModulePayload {
@@ -72,7 +76,11 @@ function entryPayload(
 		type: definition.type,
 		scope: definition.scope ?? 'tenant',
 		label: definition.label ?? entry.key,
+		...(definition.labelKey ? { labelKey: definition.labelKey } : {}),
 		description: definition.description ?? '',
+		...(definition.descriptionKey
+			? { descriptionKey: definition.descriptionKey }
+			: {}),
 		value: entry.value,
 		hasValue: entry.hasValue,
 		defaultValue: definition.secret ? null : definition.defaultValue,
@@ -81,7 +89,12 @@ function entryPayload(
 		...(definition.min !== undefined ? { min: definition.min } : {}),
 		...(definition.max !== undefined ? { max: definition.max } : {}),
 		...(definition.multiline ? { multiline: true } : {}),
-		...(locked ? { locked } : {}),
+		...(locked
+			? {
+					locked,
+					lockedKey: 'system.settings.mailTransportRequired',
+				}
+			: {}),
 	};
 }
 
@@ -93,6 +106,77 @@ function settingsProblem(error: unknown): Response {
 		);
 	}
 	return problemResponse(error, 'The settings request failed.');
+}
+
+export interface OverviewActivityPoint {
+	readonly date: string;
+	readonly count: number;
+}
+
+export interface OverviewModulePoint {
+	readonly id: string;
+	readonly name: string;
+	readonly permissions: number;
+}
+
+export interface SystemOverviewPayload {
+	readonly enabledModuleCount: number;
+	readonly moduleCount: number;
+	readonly activity: readonly OverviewActivityPoint[];
+	readonly modules: readonly OverviewModulePoint[];
+}
+
+const ACTIVITY_DAYS = 14;
+const DAY_MS = 86_400_000;
+const AUDIT_PAGE = 100;
+/* auth.core exposes the audit trail only as a newest-first paged query, so a
+   busy tenant's window is bounded by this page cap here; the precise fix is a
+   count-by-day aggregate on auth.core. */
+const MAX_ACTIVITY_PAGES = 50;
+
+function utcDayKey(timestamp: number): string {
+	return new Date(timestamp).toISOString().slice(0, 10);
+}
+
+/* Last 14 days of audit events per day for the tenant, read from the auth
+   runtime already available in the composition context. Events arrive
+   newest-first, so paging stops as soon as one predates the window. */
+function readActivity(
+	auth: AuthRuntime,
+	tenantId: string,
+): OverviewActivityPoint[] {
+	const now = new Date();
+	const todayStart = Date.UTC(
+		now.getUTCFullYear(),
+		now.getUTCMonth(),
+		now.getUTCDate(),
+	);
+	const windowStart = todayStart - (ACTIVITY_DAYS - 1) * DAY_MS;
+	const keys: string[] = [];
+	const counts = new Map<string, number>();
+	for (let index = 0; index < ACTIVITY_DAYS; index += 1) {
+		const key = utcDayKey(windowStart + index * DAY_MS);
+		keys.push(key);
+		counts.set(key, 0);
+	}
+	const service = auth.service();
+	let cursor: string | null = null;
+	for (let page = 0; page < MAX_ACTIVITY_PAGES; page += 1) {
+		const result = service.queryAudit({ tenantId, limit: AUDIT_PAGE, cursor });
+		let reachedWindowEnd = false;
+		for (const event of result.events) {
+			if (event.occurredAt < windowStart) {
+				reachedWindowEnd = true;
+				break;
+			}
+			const key = utcDayKey(event.occurredAt);
+			const current = counts.get(key);
+			if (current !== undefined) counts.set(key, current + 1);
+		}
+		if (reachedWindowEnd || result.nextCursor === null) break;
+		cursor = result.nextCursor;
+	}
+	return keys.map((date) => ({ date, count: counts.get(date) ?? 0 }));
 }
 
 /* Metadata only: manifests and specifications from the workspace. Enabling or
@@ -109,10 +193,10 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 				return jsonResponse({
 					modules: readModuleCatalog(options.workspaceRoot),
 					commands: {
-						enable: 'pnpm oerp module enable <id> --apply',
-						disable: 'pnpm oerp module disable <id> --apply',
-						sync: 'pnpm oerp module sync --apply',
-						grantScopes: 'pnpm oerp auth sync-scopes --module <id> --apply',
+						enable: 'pnpm coreloom module enable <id> --apply',
+						disable: 'pnpm coreloom module disable <id> --apply',
+						sync: 'pnpm coreloom module sync --apply',
+						grantScopes: 'pnpm coreloom auth sync-scopes --module <id> --apply',
 					},
 				});
 			} catch (error) {
@@ -138,6 +222,42 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 		}
 		return names.get(moduleId) ?? { name: moduleId, description: '' };
 	};
+
+	const overview = defineEndpoint({
+		id: 'system.overview.read',
+		path: '/api/system/overview',
+		methods: ['GET'],
+		access: {
+			kind: 'permission',
+			permission: SYSTEM_PERMISSIONS.workspaceAccess,
+		},
+		resolveIdentity: endpointIdentityFromContext,
+		handler: ({ octane }) => {
+			try {
+				const principal = principalFromContext(octane)!;
+				const catalog = readModuleCatalog(options.workspaceRoot);
+				const modules = catalog
+					.map((entry) => ({
+						id: entry.id,
+						name: entry.name,
+						permissions: entry.permissions.length,
+					}))
+					.sort(
+						(a, b) =>
+							b.permissions - a.permissions || a.name.localeCompare(b.name),
+					);
+				const payload: SystemOverviewPayload = {
+					enabledModuleCount: catalog.filter((entry) => entry.enabled).length,
+					moduleCount: catalog.length,
+					activity: readActivity(options.auth, principal.tenantId),
+					modules,
+				};
+				return jsonResponse(payload);
+			} catch (error) {
+				return problemResponse(error, 'The workspace overview is unavailable.');
+			}
+		},
+	});
 
 	const settingsList = defineEndpoint({
 		id: 'system.settings.list',
@@ -233,6 +353,7 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 
 	return [
 		modules.serverRoute,
+		overview.serverRoute,
 		settingsList.serverRoute,
 		settingsUpdate.serverRoute,
 	] as const;
@@ -240,6 +361,7 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 
 export const endpoints = [
 	'system.modules.list',
+	'system.overview.read',
 	'system.settings.list',
 	'system.settings.update',
 ] as const;

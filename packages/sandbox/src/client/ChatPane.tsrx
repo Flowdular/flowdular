@@ -1,15 +1,42 @@
-import { useEffect, useRef } from 'octane';
+import { useEffect, useRef, useState } from 'octane';
 import { Button, Icon, Tag } from '@coreloom/ui';
-import type { ChatEntry, HandoffPlan } from '../server/sessions.ts';
-import type { DriverSummary, RoleSummary } from './api.ts';
-import type { PreviewSelection } from './state.ts';
+import type {
+	ChatEntry,
+	HandoffPlan,
+	SessionAttachment,
+	SessionCheckpoint,
+	SessionModule,
+} from '../server/sessions.ts';
+import {
+	attachmentUrl,
+	deleteAttachment,
+	loadSession,
+	restoreCheckpoint,
+	uploadAttachment,
+	type DriverSummary,
+	type ModuleSpecReview,
+	type RoleSummary,
+} from './api.ts';
+import { SpecReviewCard } from './SpecReviewCard.tsrx';
+import { ATTACH_ACCEPT, attachmentKind, formatBytes } from './attachments.ts';
+import {
+	sessionIdFromUrl,
+	type PendingAttachment,
+	type PreviewSelection,
+} from './state.ts';
+import { t, useTranslation } from './i18n.ts';
 
 export interface ChatPaneProps {
 	readonly entries: readonly ChatEntry[];
 	readonly delivered: boolean;
 	readonly roles: readonly RoleSummary[];
 	readonly drivers: readonly DriverSummary[];
+	readonly modules: readonly SessionModule[];
+	/* One specification review per module, in session order. */
+	readonly specs: readonly ModuleSpecReview[];
 	readonly role: string;
+	/* The module the next turn targets; empty lets the sandbox decide. */
+	readonly module: string;
 	readonly driver: string;
 	readonly message: string;
 	readonly running: boolean;
@@ -20,8 +47,11 @@ export interface ChatPaneProps {
 	readonly onStart: () => void;
 	readonly onContinue: (handoff: HandoffPlan) => void;
 	readonly onApprove: (handoff: HandoffPlan) => void;
+	readonly onRequestChanges: (module: string, comment: string) => void;
+	readonly onEditSpec: (module: string) => void;
 	readonly onAutoContinue: (enabled: boolean) => void;
 	readonly onRole: (role: string) => void;
+	readonly onModule: (module: string) => void;
 	readonly onDriver: (driver: string) => void;
 	readonly onMessage: (message: string) => void;
 	readonly onSend: () => void;
@@ -34,19 +64,26 @@ function eventLabel(entry: ChatEntry): string {
 	if (!event) return entry.text ?? '';
 	switch (event.type) {
 		case 'turn.started':
-			return `${event.driver} started as ${event.role}`;
+			return t('sandbox.chat.event.started', {
+				driver: event.driver,
+				role: event.role,
+			});
 		case 'reasoning':
 			return event.text.slice(0, 160);
 		case 'tool.started':
 			return `${event.tool} ${event.detail}`;
 		case 'tool.completed':
-			return `${event.tool} ${event.detail} ${event.ok ? 'ok' : 'failed'}`;
+			return `${event.tool} ${event.detail} ${
+				event.ok ? t('sandbox.chat.event.ok') : t('sandbox.chat.event.failed')
+			}`;
 		case 'file.changed':
 			return `${event.change} ${event.path}`;
 		case 'error':
 			return `${event.code}: ${event.message}`;
 		case 'turn.completed':
-			return `finished, ${event.usage.totalTokens} tokens`;
+			return t('sandbox.chat.event.finished', {
+				count: event.usage.totalTokens,
+			});
 		default:
 			return event.type;
 	}
@@ -123,19 +160,256 @@ function handoffIcon(kind: HandoffPlan['kind']): string {
 }
 
 export function ChatPane(props: ChatPaneProps) @{
+	const { t } = useTranslation();
 	const offered = props.drivers.filter((driver) => driver.offered);
 	const stream = streamBlocks(props.entries);
+	/* Which module an entry belongs to only matters once a session has several;
+   with one module the transcript stays as quiet as it was. */
+	const moduleLabel = (entry: ChatEntry) => props.modules.length > 1 &&
+	entry.module
+		? <span class="ui-mono chat__module">{entry.module}</span>
+		: null;
 	/* Only the newest handoff can still be acted on. The older ones stay in the
    transcript as a record of who worked and why. */
 	const open =
 		props.entries.filter((entry) => entry.handoff).at(-1)?.sequence ?? -1;
 	const scroller = useRef<HTMLDivElement | null>(null);
+	const attachInput = useRef<HTMLInputElement | null>(null);
+	/* The composer manages its own attachments: App owns the transcript, but the
+   session id from the URL is enough to upload, list and remove them here. */
+	const sessionId =
+		typeof window === 'undefined'
+			? ''
+			: sessionIdFromUrl(window.location.pathname);
+	const [attachments, setAttachments] = useState<
+		readonly SessionAttachment[]
+	>([]);
+	const [pending, setPending] = useState<readonly PendingAttachment[]>([]);
+	const [attachError, setAttachError] = useState('');
+	const [checkpoints, setCheckpoints] = useState<
+		readonly SessionCheckpoint[]
+	>([]);
+	const [confirmRestore, setConfirmRestore] = useState<number | null>(null);
+	const [restoring, setRestoring] = useState(false);
+	const [restoreError, setRestoreError] = useState('');
+	const firstKey =
+		stream.length > 0 ? stream[0]!.key : -1;
+	/* A block is a restore point when a checkpoint shares its sequence; the start
+   checkpoint (sequence 0) has no block of its own, so it rides the first. */
+	const checkpointFor = (key: number): SessionCheckpoint | undefined =>
+		checkpoints.find((entry) => entry.sequence === key) ??
+			(key === firstKey
+				? checkpoints.find((entry) => entry.sequence === 0)
+				: undefined);
 
 	/* The newest message is the one being written, so the transcript follows it. */
 	useEffect(() => {
 		const node = scroller.current;
 		if (node) node.scrollTop = node.scrollHeight;
 	}, [props.entries.length, props.running]);
+
+	/* Seed the strip from the open session, and reset it when the session
+   changes so one session's attachments never show under another. */
+	useEffect(() => {
+		if (!sessionId) {
+			setAttachments([]);
+			setPending([]);
+			return;
+		}
+		let cancelled = false;
+		void loadSession(sessionId).then((loaded) => {
+			if (!cancelled) setAttachments(loaded.session.attachments ?? []);
+		}).catch(() => undefined);
+		return () => {
+			cancelled = true;
+		};
+	}, [sessionId, props.running]);
+
+	/* Restore points refresh when a turn ends, so the checkpoint a turn just wrote
+   becomes offerable without leaving the session. */
+	useEffect(() => {
+		if (!sessionId) {
+			setCheckpoints([]);
+			return;
+		}
+		let cancelled = false;
+		void loadSession(sessionId).then((loaded) => {
+			if (!cancelled) setCheckpoints(loaded.session.checkpoints ?? []);
+		}).catch(() => undefined);
+		return () => {
+			cancelled = true;
+		};
+	}, [sessionId, props.running]);
+
+	const uploadFiles = (files: readonly File[]) => {
+		if (!sessionId || files.length === 0) return;
+		setAttachError('');
+		for (const file of files) {
+			const key = `${file.name}-${Date.now()}-${Math.random().toString(
+				36,
+			).slice(2, 8)}`;
+			setPending(
+				(current) => [
+					...current,
+					{
+						key,
+						name: file.name,
+						kind: attachmentKind(file),
+						status: 'uploading',
+					},
+				],
+			);
+			void uploadAttachment(sessionId, file).then((result) => {
+				setAttachments((current) => [...current, result.attachment]);
+				setPending((current) => current.filter((item) => item.key !== key));
+			}).catch((error: unknown) => {
+				const reason =
+					error instanceof Error
+						? error.message
+						: t('sandbox.attachments.uploadFailed');
+				setPending(
+					(current) => current.map(
+						(item) => item.key === key
+							? { ...item, status: 'error', error: reason }
+							: item,
+					),
+				);
+			});
+		}
+	};
+
+	const onPaste = (event: ClipboardEvent) => {
+		const files = event.clipboardData?.files;
+		if (!files || files.length === 0) return;
+		const images = Array.from(files).filter(
+			(file) => file.type.startsWith('image/'),
+		);
+		if (images.length === 0) return;
+		event.preventDefault();
+		uploadFiles(images);
+	};
+
+	const onPick = (event: Event & { currentTarget: HTMLInputElement }) => {
+		const chosen = event.currentTarget.files;
+		if (chosen && chosen.length > 0) uploadFiles(Array.from(chosen));
+		event.currentTarget.value = '';
+	};
+
+	const removeAttachment = (id: string) => {
+		if (!sessionId) return;
+		void deleteAttachment(sessionId, id).then(
+			() => setAttachments(
+				(current) => current.filter((item) => item.id !== id),
+			),
+		).catch(
+			(error: unknown) => setAttachError(
+				error instanceof Error
+					? error.message
+					: t('sandbox.attachments.removeFailed'),
+			),
+		);
+	};
+
+	const dismissPending = (key: string) => setPending(
+		(current) => current.filter((item) => item.key !== key),
+	);
+
+	/* Restoring replaces the draft files, so a full reload lets the app re-open
+   the session from the URL: the transcript picks up the marker and the
+   preview nonce is bumped as the session mounts again. */
+	const doRestore = (sequence: number) => {
+		if (!sessionId || restoring) return;
+		setRestoring(true);
+		setRestoreError('');
+		void restoreCheckpoint(sessionId, sequence).then(() => {
+			window.location.reload();
+		}).catch((error: unknown) => {
+			setRestoring(false);
+			setRestoreError(
+				error instanceof Error
+					? error.message
+					: t('sandbox.chat.restore.failed'),
+			);
+		});
+	};
+
+	const restoreRow = (key: number) => {
+		const checkpoint = checkpointFor(key);
+		if (!checkpoint || props.running) return null;
+		return <div class="chat__restore">
+			{confirmRestore === checkpoint.sequence
+				? <>
+						<span class="chat__restore-ask">{t(
+							'sandbox.chat.restore.confirm',
+						)}</span>
+						<button
+							class="chat__restore-go"
+							type="button"
+							disabled={restoring}
+							onClick={() => doRestore(checkpoint.sequence)}
+						>
+							<Icon name="refresh" size={12} />
+							{restoring
+								? t('sandbox.chat.restore.restoring')
+								: t('sandbox.common.restore')}
+						</button>
+						<button
+							class="chat__restore-cancel"
+							type="button"
+							disabled={restoring}
+							onClick={() => setConfirmRestore(null)}
+						>{t('sandbox.common.cancel')}</button>
+						{restoreError
+							? <span class="chat__restore-error">{restoreError}</span>
+							: null}
+					</>
+				: <button
+						class="chat__restore-toggle"
+						type="button"
+						onClick={() => {
+							setRestoreError('');
+							setConfirmRestore(checkpoint.sequence);
+						}}
+					>
+						<Icon name="refresh" size={12} />
+						{checkpoint.sequence === 0
+							? t('sandbox.chat.restore.start')
+							: t('sandbox.chat.restore.here')}
+					</button>}
+		</div>;
+	};
+
+	/* An approval handoff is a specification review: the operator sees the
+   document and its delta, and answers with one of the three actions. The
+   plain approve button remains for a session whose review could not be
+   read. */
+	const specCard = (handoff: HandoffPlan) => {
+		const review =
+			props.specs.find((entry) => entry.module === handoff.module) ??
+				props.specs[0];
+		if (!review) {
+			return <div class="ui-form__actions">
+				<Button
+					size="sm"
+					variant="primary"
+					onClick={() => props.onApprove(handoff)}
+				>
+					<Icon name="check" size={14} />
+					{t('sandbox.chat.approveAndImplement')}
+				</Button>
+			</div>;
+		}
+		return <SpecReviewCard
+			review={review}
+			busy={props.running}
+			onApprove={() => props.onApprove(handoff)}
+			onRequestChanges={(comment) => props.onRequestChanges(
+				review.module,
+				comment,
+			)}
+			onEdit={() => props.onEditSpec(review.module)}
+		/>;
+	};
 
 	const submit = (event: SubmitEvent) => {
 		event.preventDefault();
@@ -154,9 +428,10 @@ export function ChatPane(props: ChatPaneProps) @{
 										'chat__event',
 										isError(entry) && 'chat__event--error',
 									]}
+									title={eventLabel(entry)}
 								>
 									<Icon name={isError(entry) ? 'alert' : 'check'} size={14} />
-									{eventLabel(entry)}
+									<span class="chat__event-text">{eventLabel(entry)}</span>
 								</li>
 							}
 						</ul>
@@ -174,31 +449,30 @@ export function ChatPane(props: ChatPaneProps) @{
 								/>
 								<span>{block.entry!.handoff!.roleName}</span>
 								<Tag mono>{block.entry!.handoff!.kind}</Tag>
+								{moduleLabel(block.entry!)}
 							</header>
 							<p class="chat__text">{block.entry!.text ?? ''}</p>
 							@if (block.entry!.sequence === open && !props.running) {
-								<div class="ui-form__actions">
-									@if (block.entry!.handoff!.kind === 'approval') {
-										<Button
-											size="sm"
-											variant="primary"
-											onClick={() => props.onApprove(block.entry!.handoff!)}
-										>
-											<Icon name="check" size={14} />
-											Approve and implement
-										</Button>
-									} @else if (block.entry!.handoff!.kind === 'continue') {
+								@if (block.entry!.handoff!.kind === 'approval') {
+									{
+										specCard(block.entry!.handoff!);
+									}
+								} @else if (block.entry!.handoff!.kind === 'continue') {
+									<div class="ui-form__actions">
 										<Button
 											size="sm"
 											variant="primary"
 											onClick={() => props.onContinue(block.entry!.handoff!)}
 										>
 											<Icon name="play" size={14} />
-											{'Continue with ' + block.entry!.handoff!.roleName}
+											{t('sandbox.chat.continueWith', {
+												role: block.entry!.handoff!.roleName,
+											})}
 										</Button>
-									}
-								</div>
+									</div>
+								}
 							}
+							{restoreRow(block.key)}
 						</article>
 					} @else {
 						<article
@@ -209,10 +483,14 @@ export function ChatPane(props: ChatPaneProps) @{
 						>
 							<header class="chat__meta">
 								<span>
-									{block.entry!.kind === 'user' ? 'You' : block.entry!.role}
+									{block.entry!.kind === 'user'
+										? t('sandbox.chat.you')
+										: block.entry!.role}
 								</span>
+								{moduleLabel(block.entry!)}
 							</header>
 							<p class="chat__text">{spoken(block.entry!)}</p>
+							{restoreRow(block.key)}
 						</article>
 					}
 				}
@@ -220,16 +498,15 @@ export function ChatPane(props: ChatPaneProps) @{
 					<article class="chat__handoff chat__handoff--continue">
 						<header class="chat__meta">
 							<Icon name="play" size={14} />
-							<span>Not started</span>
+							<span>{t('sandbox.chat.notStarted')}</span>
 						</header>
-						<p class="chat__text">
-							{'This session was created but never ran a turn. Start it from its brief: ' +
-								props.pendingBrief}
-						</p>
+						<p class="chat__text">{t('sandbox.chat.pendingBrief', {
+							brief: props.pendingBrief,
+						})}</p>
 						<div class="ui-form__actions">
 							<Button size="sm" variant="primary" onClick={props.onStart}>
 								<Icon name="play" size={14} />
-								Start the work
+								{t('sandbox.chat.startWork')}
 							</Button>
 						</div>
 					</article>
@@ -240,37 +517,144 @@ export function ChatPane(props: ChatPaneProps) @{
 		<form class="chat__composer" onSubmit={submit}>
 			@if (props.selection) {
 				<div class="chat__selection">
-					<b>{'Selected: ' + props.selection.label}</b>
+					<b>{t('sandbox.chat.selection', {
+						label: props.selection.label,
+					})}</b>
 					<span class="ui-mono">{props.selection.selector}</span>
 					<div class="ui-form__actions">
-						<Button size="sm" variant="ghost" onClick={props.onClearSelection}>
-							Clear selection
-						</Button>
+						<Button
+							size="sm"
+							variant="ghost"
+							onClick={props.onClearSelection}
+						>{t('sandbox.chat.clearSelection')}</Button>
 					</div>
+				</div>
+			}
+			@if (attachments.length > 0 || pending.length > 0 || attachError) {
+				<div class="chat__attachments">
+					@for (const item of attachments; key item.id) {
+						<div class="chat__attachment">
+							@if (item.kind === 'image') {
+								<img
+									class="chat__attachment-thumb"
+									src={attachmentUrl(sessionId, item.id)}
+									alt={item.name}
+								/>
+							} @else {
+								<span
+									class="chat__attachment-thumb chat__attachment-thumb--file"
+								>
+									<Icon name="file-text" size={18} />
+								</span>
+							}
+							<span class="chat__attachment-info">
+								<span class="chat__attachment-name">{item.name}</span>
+								<span class="chat__attachment-size">{formatBytes(
+									item.size,
+								)}</span>
+							</span>
+							<button
+								class="chat__attachment-remove"
+								type="button"
+								aria-label={t('sandbox.attachments.remove', {
+									name: item.name,
+								})}
+								onClick={() => removeAttachment(item.id)}
+							>
+								<Icon name="x" size={12} />
+							</button>
+						</div>
+					}
+					@for (const item of pending; key item.key) {
+						<div
+							class={[
+								'chat__attachment',
+								item.status === 'error' && 'chat__attachment--error',
+							]}
+						>
+							<span class="chat__attachment-thumb chat__attachment-thumb--file">
+								<Icon
+									name={item.status === 'error' ? 'alert' : 'file-text'}
+									size={18}
+								/>
+							</span>
+							<span class="chat__attachment-info">
+								<span class="chat__attachment-name">{item.name}</span>
+								<span class="chat__attachment-size">
+									{item.status === 'error'
+										? item.error ?? t('sandbox.attachments.uploadFailed')
+										: t('sandbox.attachments.uploading')}
+								</span>
+							</span>
+							<button
+								class="chat__attachment-remove"
+								type="button"
+								aria-label={t('sandbox.common.dismiss')}
+								onClick={() => dismissPending(item.key)}
+							>
+								<Icon name="x" size={12} />
+							</button>
+						</div>
+					}
+					@if (attachError) {
+						<span class="chat__attachment-error">{attachError}</span>
+					}
 				</div>
 			}
 			<textarea
 				class="ui-textarea"
 				rows={3}
-				placeholder="Describe the next change. The selected element is sent with your message."
+				placeholder={t('sandbox.chat.placeholder')}
 				value={props.message}
 				onInput={(event) => props.onMessage(event.currentTarget.value)}
+				onPaste={onPaste}
 			></textarea>
 			<div class="chat__composer-row">
+				<button
+					class="chat__attach"
+					type="button"
+					aria-label={t('sandbox.attachments.action')}
+					title={t('sandbox.attachments.help')}
+					disabled={!sessionId}
+					onClick={() => attachInput.current?.click()}
+				>
+					<Icon name="plus" size={16} />
+				</button>
+				<input
+					ref={attachInput}
+					class="chat__attach-input"
+					type="file"
+					multiple
+					accept={ATTACH_ACCEPT}
+					onChange={onPick}
+				/>
 				<select
 					class="chat__picker"
-					aria-label="Agent role"
+					aria-label={t('sandbox.chat.role')}
 					value={props.role}
 					onChange={(event) => props.onRole(event.currentTarget.value)}
 				>
-					<option value="auto">Auto</option>
+					<option value="auto">{t('sandbox.chat.auto')}</option>
 					@for (const role of props.roles; key role.id) {
 						<option value={role.id}>{role.name}</option>
 					}
 				</select>
+				@if (props.modules.length > 1) {
+					<select
+						class="chat__picker"
+						aria-label={t('sandbox.chat.targetModule')}
+						value={props.module}
+						onChange={(event) => props.onModule(event.currentTarget.value)}
+					>
+						<option value="">{t('sandbox.chat.auto')}</option>
+						@for (const module of props.modules; key module.id) {
+							<option value={module.directory}>{module.id}</option>
+						}
+					</select>
+				}
 				<select
 					class="chat__picker"
-					aria-label="Coding agent"
+					aria-label={t('sandbox.sessions.driver.label')}
 					value={props.driver}
 					onChange={(event) => props.onDriver(event.currentTarget.value)}
 				>
@@ -286,20 +670,13 @@ export function ChatPane(props: ChatPaneProps) @{
 							event.currentTarget.checked,
 						)}
 					/>
-					<span>Auto handoff</span>
+					<span>{t('sandbox.chat.autoHandoff')}</span>
 				</label>
 				<span class="sandbox__spacer"></span>
-				<span class="ui-help">
-					{props.running
-						? 'The agent is working.'
-						: props.delivered
-							? 'This session was delivered. Another turn changes the module again and needs a new delivery.'
-							: ''}
-				</span>
 				@if (props.running) {
-					<Button size="sm" variant="danger" onClick={props.onStop}>
-						Stop
-					</Button>
+					<Button size="sm" variant="danger" onClick={props.onStop}>{t(
+						'sandbox.chat.stop',
+					)}</Button>
 				} @else {
 					<Button
 						size="sm"
@@ -308,10 +685,17 @@ export function ChatPane(props: ChatPaneProps) @{
 						disabled={props.message.trim().length === 0}
 					>
 						<Icon name="play" size={14} />
-						Send
+						{t('sandbox.chat.send')}
 					</Button>
 				}
 			</div>
+			@if (props.running || props.delivered) {
+				<p class="chat__composer-status">
+					{props.running
+						? t('sandbox.chat.working')
+						: t('sandbox.chat.delivered')}
+				</p>
+			}
 		</form>
 	</section>
 }

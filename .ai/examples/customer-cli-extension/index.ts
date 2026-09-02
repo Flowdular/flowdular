@@ -22,7 +22,7 @@ export const cliExtension = defineCliExtension({
 				data: {
 					applied: apply,
 					format: arguments_[0] ?? 'json',
-					target: `${workspaceRoot}/.octane-erp/exports/customers.${arguments_[0] ?? 'json'}`,
+					target: `${workspaceRoot}/.coreloom/data/exports/customers.${arguments_[0] ?? 'json'}`,
 				},
 				evidence: ['modules/customer/spec/module.yaml'],
 				warnings: apply

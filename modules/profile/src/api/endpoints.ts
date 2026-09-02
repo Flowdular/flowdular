@@ -4,6 +4,7 @@ import {
 	jsonResponse,
 	problemResponse,
 	readJsonObject,
+	requiredString,
 } from '@coreloom/server';
 import type { AuthRuntime } from '@coreloom/module-auth/server';
 import {
@@ -113,7 +114,68 @@ export function createProfileRoutes(
 			}
 		},
 	});
-	return [read.serverRoute, update.serverRoute] as const;
+	const readLanguage = defineEndpoint({
+		id: 'profile.language.read',
+		path: '/api/profile/language',
+		methods: ['GET'],
+		access: {
+			kind: 'permission',
+			permission: PROFILE_PERMISSIONS.manageSelf,
+		},
+		resolveIdentity: endpointIdentityFromContext,
+		handler: ({ octane }) => {
+			try {
+				assertSelfOnlyProfileTarget(octane.request);
+				const principal = principalFromContext(octane)!;
+				return jsonResponse({
+					locale: runtime
+						.service()
+						.readLanguage(principal.tenantId, principal.accountId),
+				});
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+	const updateLanguage = defineEndpoint({
+		id: 'profile.language.update',
+		path: '/api/profile/language',
+		methods: ['PUT'],
+		access: {
+			kind: 'permission',
+			permission: PROFILE_PERMISSIONS.manageSelf,
+		},
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			const denial = sessionMutationDenial(octane, auth);
+			if (denial) return denial;
+			try {
+				const value = await readJsonObject(octane.request);
+				assertSelfOnlyProfileTarget(octane.request, value);
+				const principal = principalFromContext(octane)!;
+				return jsonResponse({
+					preference: runtime
+						.service()
+						.updateLanguage(principal.tenantId, principal.accountId, {
+							locale: requiredString(value, 'locale', { min: 2, max: 16 }),
+						}),
+				});
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+	return [
+		read.serverRoute,
+		update.serverRoute,
+		readLanguage.serverRoute,
+		updateLanguage.serverRoute,
+	] as const;
 }
 
-export const endpoints = ['profile.self.read', 'profile.self.update'] as const;
+export const endpoints = [
+	'profile.self.read',
+	'profile.self.update',
+	'profile.language.read',
+	'profile.language.update',
+] as const;

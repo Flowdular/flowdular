@@ -11,6 +11,6 @@ export default defineConfig({
 		port: 4310,
 		strictPort: true,
 		hmr: true,
-		watch: { ignored: ['**/.octane-erp/**'] },
+		watch: { ignored: ['**/.coreloom/data/**'] },
 	},
 });

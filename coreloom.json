@@ -7,25 +7,23 @@
 		"moduleDirectory": "spec"
 	},
 	"modules": {
-		"roots": [
-			"modules"
-		],
+		"roots": ["modules"],
 		"enabled": [
 			"system.core",
 			"auth.core",
-			"users.core",
-			"parties.core",
-			"catalog.core",
 			"agents.core",
-			"sandbox.core",
+			"automations.core",
+			"workflows.core",
+			"automations-workflows.integration",
+			"catalog.core",
+			"expenses.core",
+			"parties.core",
 			"profile.core",
-			"expenses.core"
+			"sandbox.core",
+			"users.core"
 		]
 	},
-	"locales": [
-		"en",
-		"pl"
-	],
+	"locales": ["en", "pl"],
 	"agent": {
 		"policy": ".ai/policies/capabilities.yaml",
 		"blueprints": ".ai/blueprints",

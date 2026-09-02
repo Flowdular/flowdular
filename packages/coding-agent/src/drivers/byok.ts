@@ -29,7 +29,12 @@ import {
 	type CodingAgentTurnRequest,
 	type FileChangeKind,
 } from '../types.ts';
-import { resolveInsideWorkspace, workspaceRelative } from '../workspace.ts';
+import {
+	resolveInsideWorkspace,
+	resolveReadableInsideWorkspace,
+	resolveWritableInsideWorkspace,
+	workspaceRelative,
+} from '../workspace.ts';
 
 export interface ByokDriverOptions {
 	readonly configuration: AiProviderConfiguration;
@@ -43,12 +48,7 @@ const DEFAULT_MAX_STEPS = 24;
 const DEFAULT_MAX_OUTPUT_TOKENS = 8_192;
 const DEFAULT_MAX_FILE_BYTES = 128 * 1024;
 const DEFAULT_MAX_LISTED_FILES = 400;
-const IGNORED_DIRECTORIES = new Set([
-	'node_modules',
-	'.git',
-	'dist',
-	'.octane-erp',
-]);
+const IGNORED_DIRECTORIES = new Set(['node_modules', '.git', 'dist']);
 
 interface PendingEvent {
 	readonly event: CodingAgentEvent;
@@ -82,6 +82,7 @@ export function createByokDriver(
 
 	function workspaceTools(
 		workspacePath: string,
+		allowedPaths: readonly string[],
 		emit: (event: CodingAgentEvent) => void,
 	): ToolSet {
 		const record = (
@@ -148,7 +149,10 @@ export function createByokDriver(
 				}),
 				execute: (input) =>
 					record('read_file', input.path, async () => {
-						const absolute = resolveInsideWorkspace(workspacePath, input.path);
+						const absolute = await resolveReadableInsideWorkspace(
+							workspacePath,
+							input.path,
+						);
 						const content = await readFile(absolute, 'utf8');
 						return content.length > maxFileBytes
 							? `${content.slice(0, maxFileBytes)}\n… truncated at ${maxFileBytes} bytes.`
@@ -174,7 +178,11 @@ export function createByokDriver(
 								`File content exceeds ${maxFileBytes} bytes for this workspace.`,
 							);
 						}
-						const absolute = resolveInsideWorkspace(workspacePath, input.path);
+						const absolute = await resolveWritableInsideWorkspace(
+							workspacePath,
+							input.path,
+							allowedPaths,
+						);
 						const change = await changed(input.path, absolute);
 						await mkdir(dirname(absolute), { recursive: true });
 						await writeFile(absolute, input.content, 'utf8');
@@ -196,7 +204,11 @@ export function createByokDriver(
 				}),
 				execute: (input) =>
 					record('delete_file', input.path, async () => {
-						const absolute = resolveInsideWorkspace(workspacePath, input.path);
+						const absolute = await resolveWritableInsideWorkspace(
+							workspacePath,
+							input.path,
+							allowedPaths,
+						);
 						await rm(absolute, { force: true });
 						emit({
 							type: 'file.changed',
@@ -267,7 +279,13 @@ export function createByokDriver(
 					maxRetries: 1,
 					...(request.signal ? { abortSignal: request.signal } : {}),
 					stopWhen: stepCountIs(options.maxSteps ?? DEFAULT_MAX_STEPS),
-					tools: workspaceTools(request.workspacePath, emit),
+					tools: workspaceTools(
+						request.workspacePath,
+						/* An omitted role boundary is no write authority. The sandbox always
+						   supplies an explicit allowlist for its selected specialist. */
+						request.allowedPaths ?? [],
+						emit,
+					),
 				});
 
 				let text = '';

@@ -66,6 +66,14 @@
 	--brand: var(--blue-600);
 	--brand-weft: var(--copper-500);
 
+	/* chart series: a categorical palette derived from the semantic hues. These
+	   name data categories, not state, so state color meanings do not apply. */
+	--chart-1: var(--blue-600);
+	--chart-2: var(--green-600);
+	--chart-3: var(--amber-600);
+	--chart-4: var(--ink-500);
+	--chart-5: var(--blue-400);
+
 	/* typography */
 	--font-sans:
 		'IBM Plex Sans Variable', 'IBM Plex Sans', 'Segoe UI', system-ui,
@@ -102,4 +110,15 @@
 	--ease: cubic-bezier(0.2, 0.7, 0.2, 1);
 	--t-fast: 120ms;
 	--t-base: 180ms;
+}
+
+/* Chart series need brighter values on a dark surface. The rest of the palette
+   flips through the same one override block a future app-wide dark theme adds,
+   so charts read whichever theme is active on the document. */
+:root[data-theme='dark'] {
+	--chart-1: var(--blue-400);
+	--chart-2: var(--green-200);
+	--chart-3: var(--amber-200);
+	--chart-4: var(--ink-300);
+	--chart-5: var(--blue-300);
 }

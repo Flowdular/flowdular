@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import type { AgentExecutionDefinition } from '@coreloom/harness';
 import type { AgentDefinition, AgentRun } from '../src/domain/types.ts';
@@ -58,9 +62,22 @@ function run(
 			status: 'queued',
 			input: 'Perform the security test.',
 			output: null,
+			structuredOutput: null,
+			outputContract: { kind: 'text' },
+			workflowRunId: null,
 			provider: agent.provider,
 			model: agent.model,
 			requestedBy: 'owner-security',
+			requestedActor: {
+				kind: 'user',
+				id: 'owner-security',
+				label: 'owner-security',
+			},
+			authorizationSubject: {
+				kind: 'user',
+				id: 'owner-security',
+				label: 'owner-security',
+			},
 			permissionSnapshot: ['agents.runs.execute'],
 			toolGrants: [],
 			skillSnapshots: [],
@@ -89,6 +106,70 @@ function run(
 }
 
 describe('agent security boundaries', () => {
+	it('rolls back run settlement when its audit evidence cannot be written', () => {
+		const directory = mkdtempSync(join(tmpdir(), 'agents-run-audit-'));
+		const path = join(directory, 'agents.db');
+		const repository = new SqliteAgentRepository(path);
+		const now = 10_000;
+		const agent = repository.createAgent(definition(now));
+		repository.enqueueRun(run(agent, now), null, {
+			tenantId,
+			actorId: 'owner-security',
+			action: 'agent-run.queued',
+			subjectType: 'agent-run',
+			subjectId: 'run-security',
+			metadata: {},
+			occurredAt: now,
+		});
+		repository.claimRun(tenantId, 'run-security', workerId, now, now + 5_000, {
+			tenantId,
+			actorId: workerId,
+			action: 'agent-run.claimed',
+			subjectType: 'agent-run',
+			subjectId: 'run-security',
+			metadata: {},
+			occurredAt: now,
+		});
+		const fault = new DatabaseSync(path);
+		fault.exec(`CREATE TRIGGER fail_run_audit
+		 BEFORE INSERT ON agent_audit_events_v4
+		 BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END;`);
+		fault.close();
+
+		expect(() =>
+			repository.completeRun(
+				tenantId,
+				'run-security',
+				workerId,
+				{
+					output: 'done',
+					usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+					finishReason: 'stop',
+					startedAt: now,
+					completedAt: now + 1,
+					events: [],
+				},
+				{
+					tenantId,
+					actorId: workerId,
+					action: 'agent-run.succeeded',
+					subjectType: 'agent-run',
+					subjectId: 'run-security',
+					metadata: {},
+					occurredAt: now + 1,
+				},
+			),
+		).toThrow('audit unavailable');
+		expect(repository.getRun(tenantId, 'run-security')?.status).toBe('running');
+		const inspect = new DatabaseSync(path, { readOnly: true });
+		expect(
+			inspect.prepare('SELECT count(*) AS count FROM agent_run_costs').get(),
+		).toEqual({ count: 0 });
+		inspect.close();
+		repository.close();
+		rmSync(directory, { recursive: true, force: true });
+	});
+
 	it('encrypts credentials with tenant-bound authenticated context', () => {
 		const vault = new AesGcmCredentialVault(Buffer.alloc(32, 7));
 		const secret = 'sk-security-boundary-value';
@@ -121,13 +202,30 @@ describe('agent security boundaries', () => {
 		let now = 10_000;
 		const repository = new SqliteAgentRepository(':memory:');
 		const agent = repository.createAgent(definition(now));
-		repository.enqueueRun(run(agent, now), null);
+		repository.enqueueRun(run(agent, now), null, {
+			tenantId,
+			actorId: 'owner-security',
+			action: 'agent-run.queued',
+			subjectType: 'agent-run',
+			subjectId: 'run-security',
+			metadata: {},
+			occurredAt: now,
+		});
 		const claimed = repository.claimRun(
 			tenantId,
 			'run-security',
 			workerId,
 			now,
 			now + 5_000,
+			{
+				tenantId,
+				actorId: workerId,
+				action: 'agent-run.claimed',
+				subjectType: 'agent-run',
+				subjectId: 'run-security',
+				metadata: {},
+				occurredAt: now,
+			},
 		)!;
 		const grants = new AgentRunGrantAuthority(
 			Buffer.alloc(32, 9),

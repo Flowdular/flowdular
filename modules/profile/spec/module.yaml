@@ -1,9 +1,9 @@
 schemaVersion: 1
 id: profile.core
-specVersion: '1.1.0'
+specVersion: '1.3.0'
 status: approved
 name: Profile
-description: Allows a signed-in user to manage their own tenant-scoped display name, request a password change after confirming their current password, and review or end their own sessions.
+description: Allows a signed-in user to manage their own tenant-scoped display name and interface language, request a password change after confirming their current password, and review or end their own sessions.
 profile: full
 
 capabilities:
@@ -21,12 +21,16 @@ tenancy: required
 
 locales:
   - en
+  - pl
 
 invariants:
   - Every operation requires an authenticated principal and the declared profile permission.
   - A user can read or change only the profile identified by their authenticated principal in the current tenant.
   - The trusted tenant identifier and user identifier come from the authenticated principal and are never accepted from request data.
   - Every profile query and mutation is scoped by both the trusted tenant identifier and authenticated principal identifier.
+  - A personal interface language is stored by authenticated account and tenant; a preference from another account or tenant is never returned or applied.
+  - The server preference is authoritative after authentication; a tenant-and-account-scoped browser value is only an unavailable-server cache.
+  - Only locales declared by profile.core can be stored as a personal interface language.
   - A display-name change affects only the authenticated user's profile in the current tenant.
   - Passwords, password hashes, current-password values, session tokens, and provider credentials are never stored, hashed, logged, audited, or returned by profile.core.
   - A password change is delegated to the registered auth.core password-change endpoint and is never performed directly by profile.core.
@@ -38,10 +42,10 @@ invariants:
 
 permissions:
   - id: profile.self.manage
-    description: Allows a signed-in user to view and change only their own display name and request a password change for only their own account.
+    description: Allows a signed-in user to view and change only their own display name and language, and request a password change for only their own account.
 
 dataOwnership:
-  - profile.core owns tenant-scoped profile records containing the display name for each user.
+  - profile.core owns tenant-scoped profile records containing the display name and personal interface-language preference for each user.
   - profile.core reads the authenticated account identity and password-change result through auth.core services.
   - auth.core owns passwords, password hashes, password history, password policy, sessions, session tokens, and provider credentials.
 
@@ -95,3 +99,18 @@ acceptanceScenarios:
     given: A signed-in user with more than one live session.
     when: The user opens Profile and ends a session that is not the current one.
     then: The list marks the current device, the ended session no longer resolves, and the current session is unchanged.
+
+  - id: SAVE-OWN-INTERFACE-LANGUAGE
+    given: A user is signed in to a tenant, has profile.self.manage, and selects a locale declared by profile.core.
+    when: The user changes their personal interface language.
+    then: The language is applied immediately, stored only for that account in the current tenant, and restored from the server on the next authenticated application start.
+
+  - id: ISOLATE-INTERFACE-LANGUAGE
+    given: The same account has different personal language preferences in two tenants.
+    when: The account opens either tenant.
+    then: The server returns and the client applies only the preference stored for the active tenant.
+
+  - id: REJECT-UNSUPPORTED-INTERFACE-LANGUAGE
+    given: A user is signed in and has profile.self.manage.
+    when: The user submits a locale that profile.core does not declare.
+    then: The request fails without changing the stored preference or active server-backed language.

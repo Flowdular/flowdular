@@ -17,5 +17,8 @@ export function createServerComposition(
 			context.workspaceRoot,
 		),
 	);
-	return { routes: createExpensesRoutes(context.auth, runtime) };
+	return {
+		routes: createExpensesRoutes(context.auth, runtime),
+		dispose: () => runtime.dispose(),
+	};
 }

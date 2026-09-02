@@ -1,16 +1,18 @@
 import { Seo } from '@octanejs/seo';
 import { useEffect, useMemo } from 'octane';
-import { useValue } from 'segment-state';
+import { cell, createStore, useValue } from 'segment-state';
 import {
 	createClientContributionRegistry,
 	type NavigationGroup,
 } from './contributions.ts';
 import { CommandPalette } from './shell/CommandPalette.tsrx';
 import { widgetsForSlot } from './shell/ContributionOutlets.tsrx';
+import { registerModuleTranslations, useTranslation } from './i18n/runtime.ts';
 import { MobileHeader } from './shell/MobileHeader.tsrx';
 import {
-	CORE_NAVIGATION,
+	coreNavigation,
 	navigationForIdentity,
+	navigationGroupLabel,
 	viewHref,
 } from './shell/navigation.ts';
 import { Sidebar } from './shell/Sidebar.tsrx';
@@ -31,6 +33,12 @@ export type { ApplicationShellProps } from './shell/types.ts';
 const SIDEBAR_STORAGE_KEY = 'coreloom.sidebar';
 
 export function ApplicationShell(props: ApplicationShellProps) @{
+	/* Register synchronously on every render. `useMemo` state may survive a Vite
+   replacement of the i18n runtime, so registration cannot live inside that
+   cache without exposing raw module keys after HMR. Rebuilding with the same
+   locale is side-effect free for subscribers. */
+	registerModuleTranslations(props.contributions ?? []);
+	const { t } = useTranslation();
 	const registry = useMemo(
 		() => createClientContributionRegistry(props.contributions ?? []),
 		[props.contributions],
@@ -38,6 +46,21 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 	const shell = useMemo(() => createShellState(props.initialView), [
 		props.initialView,
 	]);
+	const initialization = useMemo(
+		() => createStore({
+			tenantId: cell<string | null>(
+				(props.contributions ?? []).some(
+					(contribution) => contribution.initialize !== undefined,
+				)
+					? null
+					: props.identity.tenantId,
+			),
+		}),
+		[],
+	);
+	const [initializedTenant, setInitializedTenant] = useValue(
+		initialization.state.tenantId,
+	);
 	const [activeView, setActiveView] = useValue(shell.state.activeView);
 	const [commandOpen, setCommandOpen] = useValue(shell.state.commandOpen);
 	const [navigationOpen, setNavigationOpen] = useValue(
@@ -52,9 +75,10 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 	const [query, setQuery] = useValue(shell.state.query);
 	const [tenantBusy, setTenantBusy] = useValue(shell.state.tenantBusy);
 	const [tenantError, setTenantError] = useValue(shell.state.tenantError);
+	const workspaceInitialized = initializedTenant === props.identity.tenantId;
 	const grantedScopes = new Set(props.identity.scopes);
 	const visibleNavigation = navigationForIdentity(
-		[...CORE_NAVIGATION, ...registry.navigation],
+		[...coreNavigation(t), ...registry.navigation],
 		props.identity,
 	);
 	const visibleAccountMenu = registry.accountMenu.filter(
@@ -79,14 +103,16 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 			visibleNavigation[0];
 	const activeAccountItem =
 		visibleAccountMenu.find((item) => item.viewId === effectiveView) ?? null;
-	const activeGroup = activeAccountItem
-		? 'Account'
-		: activeDefinition?.group ?? 'Workspace';
+	const activeGroup = navigationGroupLabel(
+		t,
+		activeAccountItem ? 'Account' : activeDefinition?.group ?? 'Workspace',
+	);
 	const activeLabel =
-		activeAccountItem?.label ?? activeDefinition?.label ?? 'Workspace';
+		activeAccountItem?.label ?? activeDefinition?.label ??
+			t('shell.workspace.title');
 	const activeDescription =
 		activeAccountItem?.description ?? activeDefinition?.description ??
-			'Your business platform, built on the Coreloom foundation.';
+			t('shell.workspace.description');
 	const activeExtensionView = registry.views.find(
 		(view) => view.id === effectiveView,
 	);
@@ -98,7 +124,7 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 		props.identity.tenants.find(
 			(tenant) => tenant.tenantId === props.identity.tenantId,
 		)?.name ??
-			'Active organization';
+			t('shell.workspace.fallbackName');
 
 	const navigate = (viewId: ShellView) => {
 		history.pushState(null, '', viewHref(viewId, activeWorkspaceSlug));
@@ -112,7 +138,9 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 		setTenantError('');
 		void Promise.resolve(props.onSwitchTenant(tenantId)).catch(
 			(error) => setTenantError(
-				error instanceof Error ? error.message : 'Tenant switch failed.',
+				error instanceof Error
+					? error.message
+					: t('shell.workspace.switchFailed'),
 			),
 		).finally(() => setTenantBusy(false));
 	};
@@ -134,6 +162,34 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 			return next;
 		});
 	};
+
+	useEffect(() => {
+		const controller = new AbortController();
+		const initializers = (props.contributions ?? []).flatMap(
+			(contribution) => contribution.initialize
+				? [contribution.initialize]
+				: [],
+		);
+		setInitializedTenant(
+			initializers.length === 0 ? props.identity.tenantId : null,
+		);
+		if (initializers.length > 0) {
+			void Promise.allSettled(
+				initializers.map(
+					(initialize) => initialize({
+						accountId: props.identity.accountId,
+						tenantId: props.identity.tenantId,
+						signal: controller.signal,
+					}),
+				),
+			).then(() => {
+				if (!controller.signal.aborted) {
+					setInitializedTenant(props.identity.tenantId);
+				}
+			});
+		}
+		return () => controller.abort();
+	}, [props.identity.accountId, props.identity.tenantId]);
 
 	useEffect(() => {
 		try {
@@ -245,66 +301,74 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 		return () => document.removeEventListener('click', onInternalNavigation);
 	}, [setActiveView, setNavigationOpen, visibleNavigation, activeWorkspaceSlug]);
 
-	<div class={['app-shell', sidebarCollapsed && 'app-shell--rail']}>
-		<Seo title={activeLabel} description={activeDescription} />
-		<MobileHeader onToggle={() => setNavigationOpen((open) => !open)} />
-		<Sidebar
-			open={navigationOpen}
-			collapsed={sidebarCollapsed}
-			identity={props.identity}
-			items={visibleNavigation}
-			activeView={effectiveView}
-			workspaceSlug={activeWorkspaceSlug}
-			collapsedGroups={collapsedNavigationGroups}
-			tenantBusy={tenantBusy}
-			tenantError={tenantError}
-			onClose={() => setNavigationOpen(false)}
-			onToggleCollapsed={toggleSidebar}
-			onNavigate={navigate}
-			onToggleGroup={toggleGroup}
-			onSelectTenant={switchTenant}
-		/>
-		<main class="workspace">
-			{/* Module screens load their records once, on mount. Keying the
+	@if (!workspaceInitialized) {
+		<div class="app-shell" role="status" aria-busy="true">
+			<section class="ui-card">
+				<p class="ui-table__empty">{t('shell.workspace.initializing')}</p>
+			</section>
+		</div>
+	} @else {
+		<div class={['app-shell', sidebarCollapsed && 'app-shell--rail']}>
+			<Seo title={activeLabel} description={activeDescription} />
+			<MobileHeader onToggle={() => setNavigationOpen((open) => !open)} />
+			<Sidebar
+				open={navigationOpen}
+				collapsed={sidebarCollapsed}
+				identity={props.identity}
+				items={visibleNavigation}
+				activeView={effectiveView}
+				workspaceSlug={activeWorkspaceSlug}
+				collapsedGroups={collapsedNavigationGroups}
+				tenantBusy={tenantBusy}
+				tenantError={tenantError}
+				onClose={() => setNavigationOpen(false)}
+				onToggleCollapsed={toggleSidebar}
+				onNavigate={navigate}
+				onToggleGroup={toggleGroup}
+				onSelectTenant={switchTenant}
+			/>
+			<main class="workspace">
+				{/* Module screens load their records once, on mount. Keying the
     workspace by tenant remounts them after a switch, so a screen can
     never keep the previous organization's data on screen. */}
-			<Topbar
-				key={props.identity.tenantId}
-				activeGroup={activeGroup}
-				activeLabel={activeLabel}
-				identity={props.identity}
-				accountMenu={visibleAccountMenu}
-				activeView={effectiveView}
-				widgets={topbarWidgets}
-				onOpenCommand={() => setCommandOpen(true)}
-				onNavigate={navigate}
-				onSignOut={() => void props.onSignOut()}
-			/>
-			<WorkspaceContent
-				key={props.identity.tenantId}
-				activeView={effectiveView}
-				extensionView={activeExtensionView}
-				widgets={visibleWidgets}
-				tenantName={activeTenantName}
-				displayName={props.identity.displayName}
-			/>
-		</main>
-		@if (navigationOpen) {
-			<button
-				class="scrim"
-				type="button"
-				aria-label="Close navigation"
-				onClick={() => setNavigationOpen(false)}
-			></button>
-		}
-		@if (commandOpen) {
-			<CommandPalette
-				items={visibleNavigation}
-				query={query}
-				onQuery={setQuery}
-				onNavigate={navigate}
-				onClose={() => setCommandOpen(false)}
-			/>
-		}
-	</div>
+				<Topbar
+					key={props.identity.tenantId}
+					activeGroup={activeGroup}
+					activeLabel={activeLabel}
+					identity={props.identity}
+					accountMenu={visibleAccountMenu}
+					activeView={effectiveView}
+					widgets={topbarWidgets}
+					onOpenCommand={() => setCommandOpen(true)}
+					onNavigate={navigate}
+					onSignOut={() => void props.onSignOut()}
+				/>
+				<WorkspaceContent
+					key={props.identity.tenantId}
+					activeView={effectiveView}
+					extensionView={activeExtensionView}
+					widgets={visibleWidgets}
+					tenantName={activeTenantName}
+					displayName={props.identity.displayName}
+				/>
+			</main>
+			@if (navigationOpen) {
+				<button
+					class="scrim"
+					type="button"
+					aria-label={t('shell.nav.close')}
+					onClick={() => setNavigationOpen(false)}
+				></button>
+			}
+			@if (commandOpen) {
+				<CommandPalette
+					items={visibleNavigation}
+					query={query}
+					onQuery={setQuery}
+					onNavigate={navigate}
+					onClose={() => setCommandOpen(false)}
+				/>
+			}
+		</div>
+	}
 }

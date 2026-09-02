@@ -1,18 +1,18 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: octane-erp
+  name: coreloom
   labels:
-    app.kubernetes.io/name: octane-erp
+    app.kubernetes.io/name: coreloom
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: octane-erp
+      app.kubernetes.io/name: coreloom
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: octane-erp
+        app.kubernetes.io/name: coreloom
     spec:
       securityContext:
         runAsNonRoot: true
@@ -22,7 +22,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: app
-          image: ghcr.io/octane-erp/octane-erp:0.1.0
+          image: ghcr.io/moxxy-ai/coreloom:0.1.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -32,26 +32,38 @@ spec:
               value: production
             - name: PORT
               value: '3000'
-            - name: OERP_AUTH_DATABASE
+            - name: CL_AUTH_DATABASE
               value: /data/auth.db
-            - name: OERP_AGENTS_DATABASE
+            - name: CL_AGENTS_DATABASE
               value: /data/agents.db
-            - name: OERP_AUTH_ALLOW_SIGN_UP
+            - name: CL_WORKFLOWS_DATABASE
+              value: /data/workflows.db
+            - name: CL_AUTH_ALLOW_SIGN_UP
               value: 'false'
-            - name: OERP_AUTH_SECURE_COOKIE
+            - name: CL_AUTH_SECURE_COOKIE
               value: 'true'
             # agents.core refuses to boot in production without both keys.
             # See agents-secret.example.yaml for the Secret shape.
-            - name: OERP_AGENT_CREDENTIAL_KEY
+            - name: CL_AGENT_CREDENTIAL_KEY
               valueFrom:
                 secretKeyRef:
-                  name: octane-erp-agents
+                  name: coreloom-agents
                   key: credentialKey
-            - name: OERP_AGENT_RUN_GRANT_KEY
+            - name: CL_AGENT_RUN_GRANT_KEY
               valueFrom:
                 secretKeyRef:
-                  name: octane-erp-agents
+                  name: coreloom-agents
                   key: runGrantKey
+            - name: CL_WORKFLOWS_PAYLOAD_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: coreloom-agents
+                  key: workflowsPayloadKey
+            - name: CL_WORKFLOWS_CURSOR_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: coreloom-agents
+                  key: workflowsCursorKey
           readinessProbe:
             httpGet:
               path: /api/health
@@ -80,12 +92,12 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-            - name: auth-data
+            - name: coreloom-data
               mountPath: /data
       volumes:
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
-        - name: auth-data
+        - name: coreloom-data
           persistentVolumeClaim:
-            claimName: octane-erp-auth
+            claimName: coreloom-data

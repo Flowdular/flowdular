@@ -1,4 +1,5 @@
 import type { TenantMember } from '@coreloom/module-auth';
+import { t } from '@coreloom/client/i18n';
 import type {
 	CreateUserInput,
 	UserDirectory,
@@ -23,7 +24,7 @@ async function payload<T>(response: Response): Promise<T> {
 	if (!response.ok) {
 		throw new ApiError(
 			response.status,
-			value.error?.message ?? 'The user operation failed.',
+			value.error?.message ?? t('users.error.request'),
 		);
 	}
 	return value;
@@ -61,6 +62,17 @@ export async function createTenantUser(
 	return (
 		await post<{ readonly user: TenantMember }>('/api/users', input, csrfToken)
 	).user;
+}
+
+export async function inviteTenantMember(
+	input: { readonly email: string; readonly role: string },
+	csrfToken: string,
+): Promise<{ readonly id: string; readonly expiresAt: number }> {
+	return (
+		await post<{
+			readonly invitation: { readonly id: string; readonly expiresAt: number };
+		}>('/api/auth/invitations', input, csrfToken)
+	).invitation;
 }
 
 type MemberResponse = { readonly user: TenantMember };

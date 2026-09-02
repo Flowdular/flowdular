@@ -1,5 +1,6 @@
 import { useMemo } from 'octane';
 import { Alert, Button, CheckGrid, FormField, Tag } from '@coreloom/ui';
+import { t } from '@coreloom/client';
 import type { CheckGroup, CheckOption } from '@coreloom/ui';
 import type { TenantMember } from '@coreloom/module-auth';
 import { cell, createStore, useValue } from 'segment-state';
@@ -69,13 +70,9 @@ export function MemberDrawer(props: MemberDrawerProps) @{
 					<Alert tone="info">{props.notice}</Alert>
 				}
 				@if (locked) {
-					<Alert tone="warning">
-						Only an owner can change another owner.
-					</Alert>
+					<Alert tone="warning">{t('users.member.ownerLocked')}</Alert>
 				} @else if (props.isSelf) {
-					<Alert tone="info">
-						Your own role, scopes, and status change through another owner.
-					</Alert>
+					<Alert tone="info">{t('users.member.selfLocked')}</Alert>
 				}
 				<MemberIdentitySection
 					member={props.member}
@@ -97,10 +94,8 @@ export function MemberDrawer(props: MemberDrawerProps) @{
 				/>
 				<div class="ui-form__section">
 					<div class="ui-form__section-head">
-						<b>Scopes</b>
-						<small>
-							Exact scopes of this membership. Assigning a role replaces them.
-						</small>
+						<b>{t('users.member.scopes')}</b>
+						<small>{t('users.member.scopesDescription')}</small>
 					</div>
 					<CheckGrid
 						groups={groups}
@@ -115,9 +110,7 @@ export function MemberDrawer(props: MemberDrawerProps) @{
 							variant="primary"
 							disabled={locked || props.busy || props.isSelf || !scopesChanged}
 							onClick={() => props.onSetScopes(scopes)}
-						>
-							Save scopes
-						</Button>
+						>{t('users.member.saveScopes')}</Button>
 					</div>
 				</div>
 				@if (!props.isSelf) {
@@ -139,7 +132,7 @@ export function MemberDrawer(props: MemberDrawerProps) @{
 		</div>
 		<div class="ui-drawer__foot">
 			<div class="ui-form__actions">
-				<Button onClick={props.onClose}>Close</Button>
+				<Button onClick={props.onClose}>{t('users.action.close')}</Button>
 			</div>
 		</div>
 	</div>
@@ -156,27 +149,27 @@ function MemberIdentitySection(props: {
 		onSubmit={props.onSubmit}
 	>
 		<div class="ui-form__section-head">
-			<b>Identity</b>
-			<small>The email is the sign-in id and cannot change here.</small>
+			<b>{t('users.member.identity')}</b>
+			<small>{t('users.member.identityDescription')}</small>
 		</div>
-		<FormField label="Display name" required>
+		<FormField label={t('users.form.displayName')} required>
 			<input
 				class="ui-input"
 				name="displayName"
-				minLength={2}
-				maxLength={80}
+				minlength={2}
+				maxlength={80}
 				value={props.member.displayName}
 				disabled={props.disabled}
 				required
 			/>
 		</FormField>
-		<FormField label="Email">
+		<FormField label={t('users.form.email')}>
 			<input class="ui-input" value={props.member.email} disabled />
 		</FormField>
 		<div class="ui-form__actions">
-			<Button size="sm" type="submit" disabled={props.disabled}>
-				Save name
-			</Button>
+			<Button size="sm" type="submit" disabled={props.disabled}>{t(
+				'users.member.saveName',
+			)}</Button>
 		</div>
 	</form>
 }
@@ -194,12 +187,10 @@ function MemberRoleSection(props: {
 		onSubmit={props.onSubmit}
 	>
 		<div class="ui-form__section-head">
-			<b>Role</b>
-			<small>
-				A role sets the scopes below; custom roles live on the Roles screen.
-			</small>
+			<b>{t('users.form.role')}</b>
+			<small>{t('users.member.roleDescription')}</small>
 		</div>
-		<FormField label="Role">
+		<FormField label={t('users.form.role')}>
 			<select class="ui-select" name="role" disabled={props.disabled}>
 				@for (const role of props.roles; key role.id) {
 					@if (
@@ -215,9 +206,9 @@ function MemberRoleSection(props: {
 			</select>
 		</FormField>
 		<div class="ui-form__actions">
-			<Button size="sm" type="submit" disabled={props.disabled}>
-				Assign role
-			</Button>
+			<Button size="sm" type="submit" disabled={props.disabled}>{t(
+				'users.member.assignRole',
+			)}</Button>
 		</div>
 	</form>
 }
@@ -234,73 +225,65 @@ function MemberSecuritySection(props: {
 	<>
 		<div class="ui-form__section">
 			<div class="ui-form__section-head">
-				<b>Account</b>
-				<small>Disabling ends every session at once and blocks sign-in.</small>
+				<b>{t('users.member.account')}</b>
+				<small>{t('users.member.accountDescription')}</small>
 			</div>
 			<div class="ui-form__actions">
 				<Tag
 					tone={props.member.status === 'active' ? 'success' : 'neutral'}
 					dot
 				>
-					{props.member.status === 'active' ? 'Active' : 'Disabled'}
+					{props.member.status === 'active'
+						? t('users.status.active')
+						: t('users.status.disabled')}
 				</Tag>
 				@if (props.member.status === 'active') {
 					<Button
 						size="sm"
 						disabled={props.disabled}
 						onClick={() => props.onSetStatus('disabled')}
-					>
-						Disable account
-					</Button>
+					>{t('users.member.disable')}</Button>
 				} @else {
 					<Button
 						size="sm"
 						disabled={props.disabled}
 						onClick={() => props.onSetStatus('active')}
-					>
-						Enable account
-					</Button>
+					>{t('users.member.enable')}</Button>
 				}
 				<Button
 					size="sm"
 					disabled={props.disabled}
 					onClick={props.onRevokeSessions}
-				>
-					Sign out everywhere
-				</Button>
+				>{t('users.member.signOutEverywhere')}</Button>
 			</div>
 		</div>
 		<form class="ui-form__section" onSubmit={props.onResetPassword}>
 			<div class="ui-form__section-head">
-				<b>Temporary password</b>
-				<small>
-					{'At least ' + props.passwordMinLength +
-						' characters. The member picks a new one at the next sign-in.'}
-				</small>
+				<b>{t('users.member.temporaryPassword')}</b>
+				<small>{t('users.member.temporaryPasswordHelp', {
+					min: props.passwordMinLength,
+				})}</small>
 			</div>
 			<div class="ui-control-row">
 				<input
 					class="ui-input"
 					name="temporaryPassword"
 					type="password"
-					aria-label="Temporary password"
-					minLength={props.passwordMinLength}
-					autoComplete="new-password"
+					aria-label={t('users.member.temporaryPassword')}
+					minlength={props.passwordMinLength}
+					autocomplete="new-password"
 					disabled={props.disabled}
 					required
 				/>
-				<Button type="submit" disabled={props.disabled}>
-					Reset password
-				</Button>
+				<Button type="submit" disabled={props.disabled}>{t(
+					'users.member.resetPassword',
+				)}</Button>
 			</div>
 		</form>
 		<div class="ui-form__section ui-form__section--danger">
 			<div class="ui-form__section-head">
-				<b>Remove from workspace</b>
-				<small>
-					Ends the membership with its sessions and tokens; the account stays if
-					it belongs to another workspace.
-				</small>
+				<b>{t('users.member.removeTitle')}</b>
+				<small>{t('users.member.removeDescription')}</small>
 			</div>
 			<div class="ui-form__actions">
 				<Button
@@ -308,9 +291,7 @@ function MemberSecuritySection(props: {
 					variant="danger"
 					disabled={props.disabled}
 					onClick={props.onRemove}
-				>
-					Remove member
-				</Button>
+				>{t('users.member.remove')}</Button>
 			</div>
 		</div>
 	</>

@@ -36,8 +36,24 @@ export type {
 } from './components/SettingRow.tsrx';
 export { Tag } from './components/Tag.tsrx';
 export type { TagProps, TagTone } from './components/Tag.tsrx';
+export { Table } from './components/Table.tsrx';
+export type {
+	TableAction,
+	TableColumn,
+	TableEmpty,
+	TableProps,
+	TableStatus,
+} from './components/Table.tsrx';
+export { TableCard } from './components/TableCard.tsrx';
+export type { TableCardProps } from './components/TableCard.tsrx';
 export { Kpi } from './components/Kpi.tsrx';
 export type { KpiProps } from './components/Kpi.tsrx';
+export { Chart } from './components/Chart.tsrx';
+export type {
+	ChartProps,
+	ChartSeries,
+	ChartType,
+} from './components/Chart.tsrx';
 export { PageHeader } from './components/PageHeader.tsrx';
 export type { PageHeaderProps } from './components/PageHeader.tsrx';
 export { EmptyState } from './components/EmptyState.tsrx';
@@ -50,4 +66,16 @@ export { Switch } from './components/Switch.tsrx';
 export type { SwitchProps } from './components/Switch.tsrx';
 export { ConfirmDialog } from './components/ConfirmDialog.tsrx';
 export type { ConfirmDialogProps } from './components/ConfirmDialog.tsrx';
+export { Filters } from './components/Filters.tsrx';
+export type { FiltersProps } from './components/Filters.tsrx';
+export { VariableTextarea } from './components/VariableTextarea.tsrx';
+export type { VariableTextareaProps } from './components/VariableTextarea.tsrx';
+export { VariableInput } from './components/VariableInput.tsrx';
+export type { VariableInputProps } from './components/VariableInput.tsrx';
+export { VariableSelect } from './components/VariableSelect.tsrx';
+export type {
+	VariableSelectLiteralOption,
+	VariableSelectProps,
+} from './components/VariableSelect.tsrx';
+export type { VariableFieldProps } from './components/VariableField.tsrx';
 export { initials } from './initials.ts';

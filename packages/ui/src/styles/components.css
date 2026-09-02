@@ -156,11 +156,13 @@
 }
 
 .ui-input--error,
+.ui-select--error,
 .ui-textarea--error {
 	border-color: var(--danger);
 }
 
 .ui-input--error:focus,
+.ui-select--error:focus,
 .ui-textarea--error:focus {
 	box-shadow: 0 0 0 3px var(--danger-bg);
 }
@@ -253,6 +255,75 @@
 .ui-checkbox:has(input:disabled) {
 	color: var(--ink-4);
 	cursor: not-allowed;
+}
+
+/* The Filters dropdown: one button in a card head that opens a panel of
+   controls, so filters never break the head onto a second line. */
+.ui-filters {
+	position: relative;
+	display: inline-flex;
+}
+
+.ui-filters__button {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 34px;
+	padding: 0 12px;
+	font-family: var(--font-sans);
+	font-size: var(--text-sm);
+	font-weight: 500;
+	color: var(--ink-2);
+	background: var(--surface);
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	cursor: pointer;
+	transition:
+		border-color var(--t-fast) var(--ease),
+		background var(--t-fast) var(--ease);
+}
+
+.ui-filters__button:hover {
+	border-color: var(--line-strong, var(--ink-4));
+}
+
+.ui-filters__button--active {
+	color: var(--primary);
+	border-color: var(--primary);
+}
+
+.ui-filters__count {
+	display: inline-grid;
+	place-items: center;
+	min-width: 18px;
+	height: 18px;
+	padding: 0 5px;
+	font-size: var(--text-xs);
+	font-weight: 600;
+	color: var(--on-primary, #fff);
+	background: var(--primary);
+	border-radius: 9px;
+}
+
+.ui-filters__scrim {
+	position: fixed;
+	inset: 0;
+	z-index: 30;
+}
+
+.ui-filters__panel {
+	position: absolute;
+	top: calc(100% + 6px);
+	right: 0;
+	z-index: 31;
+	display: grid;
+	gap: 12px;
+	min-width: 240px;
+	padding: 14px;
+	background: var(--surface);
+	border: 1px solid var(--line);
+	border-radius: var(--r-lg);
+	box-shadow: var(--shadow-lg, 0 10px 30px rgb(16 24 40 / 12%));
 }
 
 /* A short set of checkboxes on one wrapping line. */
@@ -428,7 +499,8 @@
 .ui-form__row {
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: 10px;
+	align-items: start;
+	gap: 10px 16px;
 }
 
 .ui-form__row--4 {
@@ -494,7 +566,20 @@
 }
 
 .ui-form__section--danger {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
 	border-top-color: var(--danger-line);
+}
+
+.ui-form__section--danger .ui-form__section-head {
+	min-width: 0;
+}
+
+.ui-form__section--danger .ui-form__actions {
+	flex: 0 0 auto;
+	flex-wrap: nowrap;
 }
 
 .ui-form__section--danger .ui-form__section-head b {
@@ -658,6 +743,21 @@
 	gap: 8px;
 }
 
+/* Search paired with the Filters dropdown in a card head: one line, the search
+   shrinks before the filters button wraps under it. */
+.ui-card__filters {
+	display: flex;
+	flex-wrap: nowrap;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.ui-card__filters .ui-search {
+	min-width: 0;
+	width: min(280px, 100%);
+}
+
 .ui-card__body {
 	padding: 20px;
 }
@@ -692,7 +792,9 @@
 
 .ui-table {
 	width: 100%;
+	min-width: 640px;
 	font-size: var(--text-md);
+	table-layout: fixed;
 	border-collapse: separate;
 	border-spacing: 0;
 }
@@ -746,15 +848,40 @@
 	white-space: nowrap;
 }
 
-/* Row actions sit right, never wrap, and stay visible without hover. */
-.ui-table .ui-table__actions {
-	width: 1%;
+/* Row actions use visible buttons. Their width comes from the shared
+   colgroup, so one-action and two-action tables stay stable in every state. */
+.ui-table th.ui-table__actions,
+.ui-table td.ui-table__actions {
+	position: sticky;
+	right: 0;
 	white-space: nowrap;
 	text-align: right;
+	background: var(--surface);
+	box-shadow: -1px 0 var(--line-2);
 }
 
-.ui-table .ui-table__actions > * {
-	vertical-align: middle;
+.ui-table th.ui-table__actions {
+	z-index: 2;
+	background: var(--surface-2);
+}
+
+.ui-table td.ui-table__actions {
+	z-index: 1;
+}
+
+.ui-table tbody tr:hover td.ui-table__actions {
+	background: var(--surface-2);
+}
+
+.ui-table tbody tr.is-selected td.ui-table__actions {
+	background: var(--primary-tint);
+}
+
+.ui-table-action-buttons {
+	display: inline-flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 6px;
 }
 
 .ui-table__state {
@@ -774,6 +901,20 @@
 	font-size: var(--text-md);
 	color: var(--ink-3);
 	text-align: center;
+}
+
+/* The loading row and the empty state live inside the table, so the head keeps
+   its place while a screen moves between its states. */
+.ui-table tbody tr.ui-table__placeholder:hover td {
+	background: none;
+}
+
+.ui-table tbody tr.ui-table__placeholder > td {
+	padding: 0;
+}
+
+.ui-table tbody tr.ui-table__placeholder > td.ui-table__empty {
+	padding: 40px 16px;
 }
 
 .ui-cell {
@@ -931,6 +1072,23 @@
 	justify-items: center;
 	padding: 44px 24px;
 	text-align: center;
+}
+
+/* The Chart primitive wraps Chart.js on a canvas, mounted client-side; the
+   server and the empty state render only this container. */
+.ui-chart {
+	display: grid;
+	width: 100%;
+	margin: 0;
+}
+
+.ui-chart > .ui-empty {
+	align-self: center;
+}
+
+.ui-chart__canvas {
+	position: relative;
+	width: 100%;
 }
 
 .ui-empty__icon {
@@ -1345,6 +1503,15 @@
 	.ui-form__row--4 {
 		grid-template-columns: 1fr;
 	}
+
+	.ui-form__section--danger {
+		align-items: stretch;
+		flex-direction: column;
+	}
+
+	.ui-form__section--danger .ui-form__actions {
+		align-self: flex-end;
+	}
 }
 
 /* Switch: a boolean setting that applies on its own, unlike a checkbox that
@@ -1508,4 +1675,185 @@
 	.ui-setting__control {
 		justify-content: flex-start;
 	}
+}
+
+/* Variable fields: a textarea or single-line input whose {{ key }} tokens are
+   highlighted by an overlay layer sharing the control's exact box, with a menu
+   that inserts and previews the variables the principal may use. */
+.ui-varfield {
+	position: relative;
+	min-width: 0;
+}
+
+.ui-varfield__control {
+	position: relative;
+	min-width: 0;
+}
+
+.ui-varfield__input,
+.ui-varfield__highlight {
+	margin: 0;
+	width: 100%;
+	box-sizing: border-box;
+	padding: 8px 36px 8px 10px;
+	font-family: var(--font-sans);
+	font-size: var(--text-base);
+	line-height: 1.55;
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+	tab-size: 2;
+}
+
+.ui-varfield__highlight {
+	position: absolute;
+	inset: 0;
+	z-index: 0;
+	overflow: hidden;
+	color: var(--ink);
+	background: var(--surface);
+	pointer-events: none;
+	user-select: none;
+}
+
+.ui-varfield__input {
+	position: relative;
+	z-index: 1;
+	color: transparent;
+	background: transparent;
+	border-color: transparent;
+	caret-color: var(--ink);
+	transition: none;
+}
+
+.ui-varfield__input:focus {
+	outline: 0;
+}
+
+.ui-varfield__input::placeholder {
+	color: var(--ink-4);
+}
+
+.ui-varfield[data-multiline='true'] .ui-varfield__input,
+.ui-varfield[data-multiline='true'] .ui-varfield__highlight {
+	min-height: 120px;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+	word-break: break-word;
+}
+
+.ui-varfield[data-multiline='true'] .ui-varfield__input {
+	resize: vertical;
+}
+
+.ui-varfield[data-multiline='false'] .ui-varfield__input,
+.ui-varfield[data-multiline='false'] .ui-varfield__highlight {
+	height: var(--control-h);
+	white-space: pre;
+	overflow: hidden;
+}
+
+.ui-varfield__control:focus-within .ui-varfield__highlight {
+	border-color: var(--primary);
+	box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+.ui-varfield[data-error='true'] .ui-varfield__highlight {
+	border-color: var(--danger);
+}
+
+.ui-varfield[data-error='true']
+	.ui-varfield__control:focus-within
+	.ui-varfield__highlight {
+	box-shadow: 0 0 0 3px var(--danger-bg);
+}
+
+.ui-varfield__input:disabled {
+	cursor: not-allowed;
+}
+
+.ui-varfield__input:disabled + .ui-varfield__trigger {
+	cursor: not-allowed;
+}
+
+.ui-varfield:has(.ui-varfield__input:disabled) .ui-varfield__highlight {
+	color: var(--ink-3);
+	background: var(--surface-2);
+}
+
+/* A pill adds no horizontal size, so the highlighted token stays aligned with
+   the transparent text in the control behind it. */
+.ui-varfield__pill {
+	color: var(--primary);
+	background: var(--primary-tint);
+	border-radius: var(--r-sm);
+	box-decoration-break: clone;
+	-webkit-box-decoration-break: clone;
+}
+
+.ui-varfield__pill--error {
+	color: var(--danger);
+	background: var(--danger-bg);
+}
+
+.ui-varfield__trigger {
+	position: absolute;
+	top: 6px;
+	right: 6px;
+	z-index: 2;
+	display: inline-grid;
+	place-items: center;
+	width: 26px;
+	height: 26px;
+	color: var(--ink-3);
+	background: var(--surface);
+	border: 1px solid var(--line);
+	border-radius: var(--r-sm);
+	cursor: pointer;
+	transition:
+		color var(--t-fast) var(--ease),
+		border-color var(--t-fast) var(--ease);
+}
+
+.ui-varfield[data-multiline='false'] .ui-varfield__trigger {
+	top: 50%;
+	transform: translateY(-50%);
+}
+
+.ui-varfield__trigger:hover:not(:disabled) {
+	color: var(--primary);
+	border-color: var(--primary);
+}
+
+.ui-varfield__trigger:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.ui-varfield__menu {
+	position: absolute;
+	top: calc(100% + 6px);
+	left: 0;
+	right: 0;
+	z-index: 31;
+}
+
+.ui-varfield__menu > .ui-menu {
+	max-height: 260px;
+	overflow: auto;
+}
+
+.ui-varfield__menu .ui-varfield__value {
+	flex: 0 0 auto;
+	max-width: 45%;
+	overflow: hidden;
+	color: var(--ink-3);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ui-varfield__empty {
+	margin: 0;
+	padding: 10px;
+	font-size: var(--text-sm);
+	color: var(--ink-3);
 }

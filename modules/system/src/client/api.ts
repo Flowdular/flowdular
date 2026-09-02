@@ -1,4 +1,5 @@
 import type { ModuleCatalogEntry } from '../server/module-catalog.ts';
+import { t } from '@coreloom/client/i18n';
 
 export type { ModuleCatalogEntry };
 
@@ -28,7 +29,7 @@ export async function loadModuleCatalog(): Promise<ModuleCatalog> {
 	if (!response.ok) {
 		throw new ApiError(
 			response.status,
-			value.error?.message ?? 'Could not load the module catalog.',
+			value.error?.message ?? t('system.error.catalog'),
 		);
 	}
 	return value;

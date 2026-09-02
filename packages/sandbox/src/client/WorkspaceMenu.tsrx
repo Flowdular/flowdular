@@ -1,11 +1,13 @@
 import { Avatar, Icon, Tag } from '@coreloom/ui';
 import type { SandboxState } from './api.ts';
+import { setActiveLocale, SUPPORTED_LOCALES, useTranslation } from './i18n.ts';
 
 export interface WorkspaceMenuProps {
 	readonly state: SandboxState;
 	readonly open: boolean;
 	readonly onToggle: () => void;
 	readonly onChangeConnection: () => void;
+	readonly onGitHub: () => void;
 	readonly onDisconnect: () => void;
 }
 
@@ -13,8 +15,10 @@ export interface WorkspaceMenuProps {
    so this is not a tenant switcher: changing workspace means changing the
    connection, and the menu says so. */
 export function WorkspaceMenu(props: WorkspaceMenuProps) @{
+	const { locale, t } = useTranslation();
 	const principal = props.state.connection.authority?.principal;
-	const workspace = principal?.tenantName ?? 'Not connected';
+	const workspace =
+		principal?.tenantName ?? t('sandbox.workspace.notConnected');
 
 	<div class="workspace-menu">
 		<button
@@ -34,22 +38,26 @@ export function WorkspaceMenu(props: WorkspaceMenuProps) @{
 		</button>
 		@if (props.open) {
 			<div class="ui-menu workspace-menu__panel" role="menu">
-				<div class="ui-menu__label">Connection</div>
+				<div class="ui-menu__label">{t('sandbox.workspace.connection')}</div>
 				<div class="ui-menu__section">
 					<span class="ui-cell">
 						<b class="ui-mono">{props.state.configuration.platformUrl}</b>
 						<small>
 							{principal
-								? 'Signed in as ' + principal.displayName + ' · ' +
-									principal.role
-								: 'No application is connected.'}
+								? t('sandbox.workspace.signedIn', {
+										name: principal.displayName,
+										role: principal.role,
+									})
+								: t('sandbox.workspace.noConnection')}
 						</small>
 					</span>
 					<Tag
 						tone={props.state.connection.connected ? 'success' : 'warning'}
 						dot
 					>
-						{props.state.connection.connected ? 'connected' : 'offline'}
+						{props.state.connection.connected
+							? t('sandbox.workspace.connected')
+							: t('sandbox.workspace.offline')}
 					</Tag>
 				</div>
 				<div class="ui-menu__sep"></div>
@@ -57,10 +65,42 @@ export function WorkspaceMenu(props: WorkspaceMenuProps) @{
 					class="ui-menu__item"
 					type="button"
 					role="menuitem"
+					onClick={props.onGitHub}
+				>
+					<Icon name="code" size={16} />
+					<span class="ui-cell">
+						<b>{t('sandbox.workspace.github.title')}</b>
+						<small>
+							{props.state.configuration.github.enabled
+								? t('sandbox.workspace.github.enabled')
+								: t('sandbox.workspace.github.configure')}
+						</small>
+					</span>
+				</button>
+				<label class="ui-menu__item workspace-menu__language">
+					<Icon name="globe" size={16} />
+					<span>{t('sandbox.workspace.language')}</span>
+					<select
+						class="ui-select"
+						value={locale}
+						aria-label={t('sandbox.workspace.language')}
+						onChange={(event) => setActiveLocale(event.currentTarget.value)}
+					>
+						@for (const option of SUPPORTED_LOCALES; key option) {
+							<option value={option}>{t(
+								'sandbox.workspace.language.' + option,
+							)}</option>
+						}
+					</select>
+				</label>
+				<button
+					class="ui-menu__item"
+					type="button"
+					role="menuitem"
 					onClick={props.onChangeConnection}
 				>
 					<Icon name="plug" size={16} />
-					Change workspace or token
+					{t('sandbox.workspace.change')}
 				</button>
 				<button
 					class="ui-menu__item ui-menu__item--danger"
@@ -69,7 +109,7 @@ export function WorkspaceMenu(props: WorkspaceMenuProps) @{
 					onClick={props.onDisconnect}
 				>
 					<Icon name="sign-out" size={16} />
-					Disconnect this sandbox
+					{t('sandbox.workspace.disconnect')}
 				</button>
 			</div>
 		}

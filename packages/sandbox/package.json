@@ -2,6 +2,42 @@
 	"name": "@coreloom/sandbox",
 	"version": "0.1.0",
 	"private": true,
+	"description": "The Coreloom sandbox: chat a change, build it behind the gates, preview it in the real application, deliver it as code.",
+	"license": "MIT",
+	"homepage": "https://github.com/moxxy-ai/coreloom/tree/main/packages/sandbox#readme",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/moxxy-ai/coreloom.git",
+		"directory": "packages/sandbox"
+	},
+	"bugs": {
+		"url": "https://github.com/moxxy-ai/coreloom/issues"
+	},
+	"keywords": [
+		"coreloom",
+		"octanejs",
+		"agentic",
+		"coding-agent",
+		"sandbox",
+		"modules",
+		"erp"
+	],
+	"engines": {
+		"node": ">=22.22.2"
+	},
+	"files": [
+		"bin",
+		"src",
+		"public",
+		"index.html",
+		"octane.config.ts",
+		"vite.config.ts",
+		"tsconfig.json",
+		"README.md"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
 	"type": "module",
 	"bin": {
 		"coreloom-sandbox": "./bin/coreloom-sandbox.mjs"
@@ -25,14 +61,14 @@
 		"@coreloom/module-auth": "workspace:*",
 		"@coreloom/server": "workspace:*",
 		"@coreloom/ui": "workspace:*",
-		"@octanejs/seo": "0.0.35",
-		"@octanejs/vite-plugin": "0.1.50",
-		"octane": "0.1.50",
+		"@octanejs/seo": "0.0.36",
+		"@octanejs/vite-plugin": "0.1.51",
+		"octane": "0.1.51",
 		"segment-state": "0.2.0",
-		"vite": "8.1.5"
+		"vite": "8.2.2"
 	},
 	"devDependencies": {
-		"@octanejs/app-core": "0.0.46",
+		"@octanejs/app-core": "0.0.47",
 		"@tsrx/typescript-plugin": "0.3.120",
 		"@types/node": "24.13.3",
 		"typescript": "5.9.3",

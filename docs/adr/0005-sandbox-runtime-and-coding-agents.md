@@ -52,7 +52,7 @@ Preview data has two modes. `fixtures` is the default and is fully offline. `bri
 
 ### Access
 
-`sandbox.core` is a normal module of the full platform. It owns sandbox scopes, tenant-scoped access grants, session metadata, and its audit evidence. Access is created and assigned either from the full application, by an owner with the management scope, or from the CLI with `oerp sandbox` commands. Both paths write the same grant records.
+`sandbox.core` is a normal module of the full platform. It owns sandbox scopes, tenant-scoped access grants, session metadata, and its audit evidence. Access is created and assigned either from the full application, by an owner with the management scope, or from the CLI with `coreloom sandbox` commands. Both paths write the same grant records.
 
 Signing in to the sandbox requires an active `auth.core` account, the `sandbox.access.use` scope on the selected tenant membership, and a grant that is neither revoked nor expired. The sandbox issues its own cookie and never accepts the platform cookie as a sandbox session.
 
@@ -78,4 +78,4 @@ Ejecting a draft into `modules/` is a separate scope and a separate CLI capabili
   mutation, validates session ids as UUIDs, authenticates the state,
   configuration and preview routes, never accepts a mode change over HTTP, and
   reads capabilities from the acting principal. Sessions can be archived,
-  restored and deleted, from the sandbox and from `oerp sandbox` commands.
+  restored and deleted, from the sandbox and from `coreloom sandbox` commands.

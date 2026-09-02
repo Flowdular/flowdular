@@ -1,5 +1,13 @@
 import { useEffect, useMemo } from 'octane';
-import { Alert, Button, EmptyState, Icon, Tag } from '@coreloom/ui';
+import {
+	Alert,
+	Button,
+	Icon,
+	TableCard,
+	Tag,
+	type TableColumn,
+} from '@coreloom/ui';
+import { activeLocale, t } from '@coreloom/client';
 import { cell, createStore, useValue } from 'segment-state';
 import {
 	loadOwnSessions,
@@ -12,7 +20,40 @@ export interface SessionsCardProps {
 }
 
 function stamp(value: number): string {
-	return new Date(value).toISOString().slice(0, 16).replace('T', ' ');
+	return new Intl.DateTimeFormat(activeLocale(), {
+		dateStyle: 'medium',
+		timeStyle: 'short',
+	}).format(new Date(value));
+}
+
+function columns(): readonly TableColumn<OwnSession>[] {
+	return [
+		{
+			key: 'workspace',
+			header: t('profile.sessions.workspace'),
+			width: '36%',
+			cell: (session) => <span class="ui-table__state">
+				<span>{session.tenantName}</span>
+				{session.current
+					? <Tag tone="success" dot>{t('profile.sessions.thisDevice')}</Tag>
+					: null}
+			</span>,
+		},
+		{
+			key: 'lastSeen',
+			header: t('profile.sessions.lastSeen'),
+			width: '27%',
+			cell: (session) =>
+				<span class="ui-mono">{stamp(session.lastSeenAt)}</span>,
+		},
+		{
+			key: 'expires',
+			header: t('profile.sessions.expires'),
+			width: '27%',
+			cell: (session) =>
+				<span class="ui-mono">{stamp(session.expiresAt)}</span>,
+		},
+	];
 }
 
 export function SessionsCard(props: SessionsCardProps) @{
@@ -45,7 +86,7 @@ export function SessionsCard(props: SessionsCardProps) @{
 			setError(
 				loadError instanceof Error
 					? loadError.message
-					: 'Could not load your sessions.',
+					: t('profile.sessions.errorLoad'),
 			);
 			setStatus('error');
 		}
@@ -71,82 +112,47 @@ export function SessionsCard(props: SessionsCardProps) @{
 			setError(
 				revokeError instanceof Error
 					? revokeError.message
-					: 'Could not end the session.',
+					: t('profile.sessions.errorRevoke'),
 			);
 			setStatus('idle');
 		}
 	};
 
-	<section class="ui-card">
-		<div class="ui-card__head">
-			<span class="ui-card__title">
-				Sessions
-				<small>{sessions.length + ' signed in'}</small>
-			</span>
-			<Button size="sm" onClick={() => void refresh()}>
-				<Icon name="refresh" size={14} />
-				Refresh
-			</Button>
-		</div>
-		@if (error) {
-			<Alert>{error}</Alert>
-		}
-		@if (status === 'loading' && sessions.length === 0) {
-			<p class="ui-table__empty">Loading your sessions…</p>
-		} @else if (sessions.length === 0) {
-			<EmptyState icon="user" title="No active sessions">
-				Signing in again creates a new session.
-			</EmptyState>
-		} @else {
-			<div class="ui-table-wrap">
-				<table class="ui-table" aria-label="Your sessions">
-					<thead>
-						<tr>
-							<th>Workspace</th>
-							<th>Last seen</th>
-							<th>Expires</th>
-							<th class="ui-table__actions"></th>
-						</tr>
-					</thead>
-					<tbody>
-						@for (const session of sessions; key session.id) {
-							<tr>
-								<td>
-									<span class="ui-table__state">
-										<span>{session.tenantName}</span>
-										@if (session.current) {
-											<Tag tone="success" dot>This device</Tag>
-										}
-									</span>
-								</td>
-								<td class="ui-mono">{stamp(session.lastSeenAt)}</td>
-								<td class="ui-mono">{stamp(session.expiresAt)}</td>
-								<td class="ui-table__actions">
-									@if (!session.current) {
-										<Button
-											size="sm"
-											variant="danger"
-											disabled={status === 'submitting'}
-											onClick={() => void revoke(session.id)}
-										>
-											Revoke
-										</Button>
-									}
-								</td>
-							</tr>
-						}
-					</tbody>
-				</table>
-			</div>
-		}
-		<p class="ui-note">
-			<Icon name="shield" size={14} />
-			<span>
-				{others.length === 0
-					? 'Only this device is signed in. Changing your password also ends every other session.'
-					: others.length +
-						' other session(s) can use your account. Revoke the ones you do not recognise.'}
-			</span>
-		</p>
-	</section>
+	<TableCard
+		title={t('profile.sessions.title')}
+		count={t('profile.sessions.count', { count: sessions.length })}
+		head={<Button size="sm" onClick={() => void refresh()}>
+			<Icon name="refresh" size={14} />
+			{t('profile.action.refresh')}
+		</Button>}
+		before={error ? <Alert>{error}</Alert> : null}
+		caption={t('profile.sessions.caption')}
+		columns={columns()}
+		rows={sessions}
+		rowKey={(session) => session.id}
+		status={status === 'loading' && sessions.length === 0 ? 'loading' : 'idle'}
+		loadingLabel={t('profile.sessions.loading')}
+		empty={{
+			icon: 'user',
+			title: t('profile.sessions.emptyTitle'),
+			hint: t('profile.sessions.emptyHint'),
+		}}
+		actionsLabel={t('profile.sessions.actions')}
+		actions={(session) => session.current
+			? []
+			: [
+					{
+						id: 'revoke',
+						label: t('profile.sessions.revoke'),
+						icon: 'x',
+						tone: 'danger',
+						disabled: status === 'submitting',
+						onSelect: () => void revoke(session.id),
+					},
+				]}
+		noteIcon="shield"
+		note={others.length === 0
+			? t('profile.sessions.onlyThisDevice')
+			: t('profile.sessions.otherDevices', { count: others.length })}
+	/>
 }

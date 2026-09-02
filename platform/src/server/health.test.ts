@@ -12,6 +12,7 @@ describe('health endpoint', () => {
 		expect(response.status).toBe(200);
 		expect(await response.json()).toMatchObject({
 			status: 'ok',
+			service: 'coreloom',
 			architectureVersion: '0.2.0',
 		});
 	});

@@ -8,6 +8,13 @@ export {
 } from './catalog.ts';
 export type { AiProviderKind, AiProviderKindDescriptor } from './catalog.ts';
 export {
+	AI_MODEL_PRICES,
+	modelPrice,
+	unpricedCatalogModels,
+	usageCostMicros,
+} from './pricing.ts';
+export type { AiModelPrice, AiTokenUsage } from './pricing.ts';
+export {
 	AiProviderError,
 	classifyProviderFailure,
 	redactSecrets,

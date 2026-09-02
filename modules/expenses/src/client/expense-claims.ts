@@ -2,6 +2,7 @@ import type {
 	ExpenseClaimCategory,
 	ExpenseClaimStatus,
 } from '../domain/types.ts';
+import { activeLocale, t } from '@coreloom/client/i18n';
 
 export type ExpenseStatusFilter = 'all' | ExpenseClaimStatus;
 export type ExpenseStatusTone = 'neutral' | 'success' | 'warning' | 'danger';
@@ -19,17 +20,24 @@ export function formatExpenseAmount(
 	currency: string,
 ): string {
 	try {
-		return new Intl.NumberFormat('en', {
+		return new Intl.NumberFormat(activeLocale(), {
 			style: 'currency',
 			currency,
 		}).format(amountMinor / 100);
 	} catch {
-		return `${(amountMinor / 100).toFixed(2)} ${currency}`;
+		return (
+			new Intl.NumberFormat(activeLocale(), {
+				minimumFractionDigits: 2,
+				maximumFractionDigits: 2,
+			}).format(amountMinor / 100) +
+			' ' +
+			currency
+		);
 	}
 }
 
 export function expenseStatusLabel(status: ExpenseClaimStatus): string {
-	return status.charAt(0).toUpperCase() + status.slice(1);
+	return t('expenses.status.' + status);
 }
 
 export function expenseStatusTone(
@@ -48,5 +56,14 @@ export function expenseStatusTone(
 }
 
 export function expenseCategoryLabel(category: ExpenseClaimCategory): string {
-	return category.charAt(0).toUpperCase() + category.slice(1);
+	return t('expenses.category.' + category);
+}
+
+/* The action column follows capability, not the records in the current
+   filter, so changing status filters cannot resize the table. */
+export function showsExpenseActionColumn(
+	canManage: boolean,
+	canApprove: boolean,
+): boolean {
+	return canManage || canApprove;
 }

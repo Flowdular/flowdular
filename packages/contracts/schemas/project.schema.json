@@ -1,6 +1,6 @@
 {
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
-	"$id": "https://octane-erp.dev/schemas/project.schema.json",
+	"$id": "https://coreloom.dev/schemas/project.schema.json",
 	"type": "object",
 	"additionalProperties": false,
 	"required": [
@@ -84,12 +84,16 @@
 							"additionalProperties": false,
 							"properties": {
 								"remote": { "$ref": "#/$defs/gitName" },
+								"repository": { "$ref": "#/$defs/githubRepository" },
 								"baseBranch": { "$ref": "#/$defs/gitName" },
 								"branchPrefix": { "$ref": "#/$defs/gitName" },
 								"provider": { "enum": ["github", "none"] },
+								"mode": { "enum": ["auto", "direct", "fork"] },
+								"forkOwner": { "$ref": "#/$defs/githubAccount" },
 								"reviewers": {
 									"type": "array",
-									"items": { "type": "string", "minLength": 1 },
+									"maxItems": 20,
+									"items": { "$ref": "#/$defs/githubAccount" },
 									"uniqueItems": true
 								}
 							}
@@ -104,7 +108,16 @@
 		"deliveryTarget": { "enum": ["workspace", "git-pr"] },
 		"gitName": {
 			"type": "string",
+			"maxLength": 120,
 			"pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
+		},
+		"githubRepository": {
+			"type": "string",
+			"pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$"
+		},
+		"githubAccount": {
+			"type": "string",
+			"pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$"
 		}
 	}
 }

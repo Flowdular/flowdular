@@ -1,6 +1,6 @@
 schemaVersion: 1
 # What modules/catalog has and packages/cli/src/module-sync.ts needs. The
-# scaffold (pnpm oerp module new) writes most of these; check the dry run.
+# scaffold (pnpm coreloom module new) writes most of these; check the dry run.
 required:
   - module.json
   - package.json
@@ -26,8 +26,8 @@ manifest:
       - ./server
       - ./platform
   src/platform.ts:
-    - createServerComposition(context) returns routes, optional settings (defineModuleSettings) and optional start()
-    - context carries auth, settings (ModuleSettingsRuntime) and agentTools (PlatformToolRegistry)
+    - createServerComposition(context) returns routes, optional settings (defineModuleSettings), optional start() and optional dispose()
+    - context carries auth, settings (ModuleSettingsRuntime), agentTools (PlatformToolRegistry), agentDefinitions (PlatformAgentRegistry) and capabilities (PlatformCapabilityRegistry)
 conditional:
   api:
     whenCapability: api
@@ -63,3 +63,11 @@ conditional:
     whenCapability: translations
     required:
       - translations/{locale}.json for every declared locale
+  business-agent:
+    whenBriefRequests: module-owned business agent
+    required:
+      - src/agent/agents.ts
+      - tests/business-agents.test.ts
+      - agents.core in spec/module.yaml and module.json dependencies
+      - '@coreloom/module-agents in package.json dependencies'
+      - context.agentDefinitions.register(...) in src/platform.ts

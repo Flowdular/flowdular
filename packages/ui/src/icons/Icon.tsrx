@@ -19,6 +19,7 @@ export const ICON_PATHS: Readonly<Record<string, string>> = {
 	plus: 'M12 5v14M5 12h14',
 	'panel-left': 'M3 5h18v14H3zM9 5v14',
 	check: 'm5 12 5 5L20 7',
+	globe: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20',
 	filter: 'M3 5h18l-7 8v6l-4 2v-8z',
 	download: 'M12 3v12m0 0 4-4m-4 4-4-4M4 17v3h16v-3',
 	more: 'M12 5h.01M12 12h.01M12 19h.01',
@@ -30,6 +31,7 @@ export const ICON_PATHS: Readonly<Record<string, string>> = {
 	help: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01',
 	key: 'M15.5 3a5.5 5.5 0 1 0-4.2 9.05L10 13.5H8v2H6v2H3v-3l6.4-6.4A5.5 5.5 0 0 0 15.5 3Zm1.2 4.3h.01',
 	settings: 'M4 8h10M18 8h2M14 8a2 2 0 1 0 4 0 2 2 0 1 0-4 0M4 16h4M12 16h8M8 16a2 2 0 1 0 4 0 2 2 0 1 0-4 0',
+	braces: 'M8 3c-1.7 0-2.5.9-2.5 2.7V9c0 1.2-.8 2-2 2 1.2 0 2 .8 2 2v3.3c0 1.8.8 2.7 2.5 2.7M16 3c1.7 0 2.5.9 2.5 2.7V9c0 1.2.8 2 2 2-1.2 0-2 .8-2 2v3.3c0 1.8-.8 2.7-2.5 2.7',
 };
 
 export interface IconProps {

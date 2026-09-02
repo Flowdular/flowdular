@@ -1,6 +1,8 @@
 import type {
 	SandboxAccessGrant,
+	SandboxAuditChainVerification,
 	SandboxAuditEvent,
+	SandboxAuditPage,
 	SandboxSessionRecord,
 } from '../domain/types.ts';
 
@@ -30,6 +32,13 @@ export interface SandboxRepository {
 		tenantId: string,
 		limit: number,
 	): readonly SandboxAuditEvent[];
+	/* Keyset page over the tenant trail, newest first, cursor `occurredAt:sequence`. */
+	pageAuditEvents(
+		tenantId: string,
+		cursor: { readonly occurredAt: number; readonly sequence: number } | null,
+		limit: number,
+	): SandboxAuditPage;
 	verifyAuditChain(tenantId: string): boolean;
+	verifyAuditChainDetailed(tenantId: string): SandboxAuditChainVerification;
 	close(): void;
 }

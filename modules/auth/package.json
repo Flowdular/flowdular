@@ -1,6 +1,6 @@
 {
 	"name": "@coreloom/module-auth",
-	"version": "0.5.0",
+	"version": "0.8.1",
 	"private": true,
 	"type": "module",
 	"exports": {
@@ -20,9 +20,9 @@
 		"@coreloom/kernel": "workspace:*",
 		"@coreloom/server": "workspace:*",
 		"@coreloom/ui": "workspace:*",
-		"@octanejs/app-core": "0.0.46",
-		"@octanejs/seo": "0.0.35",
-		"octane": "0.1.50",
+		"@octanejs/app-core": "0.0.47",
+		"@octanejs/seo": "0.0.36",
+		"octane": "0.1.51",
 		"segment-state": "0.2.0",
 		"yaml": "2.9.0"
 	},

@@ -2,13 +2,16 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { runModuleMigrations } from '@coreloom/kernel';
 import type {
 	SandboxAccessGrant,
+	SandboxAuditChainVerification,
 	SandboxAuditEvent,
+	SandboxAuditPage,
 	SandboxGrantCapability,
 	SandboxSessionRecord,
 } from '../domain/types.ts';
-import { SANDBOX_MIGRATION_001, SANDBOX_MIGRATION_002 } from './migration.ts';
+import { migrations } from './migration.ts';
 import type { SandboxAuditDraft, SandboxRepository } from './repository.ts';
 
 interface GrantRow {
@@ -150,18 +153,13 @@ function auditHash(value: {
 
 export class SqliteSandboxRepository implements SandboxRepository {
 	readonly #database: DatabaseSync;
+	#closed = false;
 
 	constructor(path: string) {
 		if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
 		this.#database = new DatabaseSync(path, { timeout: 5000 });
 		this.#database.exec('PRAGMA journal_mode = WAL;');
-		this.#database.exec(SANDBOX_MIGRATION_001);
-		const columns = this.#database
-			.prepare('PRAGMA table_info(sandbox_sessions)')
-			.all() as unknown as readonly { name: string }[];
-		if (!columns.some((column) => column.name === 'archived_at')) {
-			this.#database.exec(SANDBOX_MIGRATION_002);
-		}
+		runModuleMigrations(this.#database, migrations);
 	}
 
 	findGrant(tenantId: string, accountId: string): SandboxAccessGrant | null {
@@ -365,7 +363,47 @@ export class SqliteSandboxRepository implements SandboxRepository {
 		).map(fromAuditRow);
 	}
 
+	pageAuditEvents(
+		tenantId: string,
+		cursor: { readonly occurredAt: number; readonly sequence: number } | null,
+		limit: number,
+	): SandboxAuditPage {
+		const rows = (cursor
+			? this.#database
+					.prepare(
+						`SELECT * FROM sandbox_audit_events WHERE tenant_id = ?
+							 AND (occurred_at < ? OR (occurred_at = ? AND sequence < ?))
+							 ORDER BY occurred_at DESC, sequence DESC LIMIT ?`,
+					)
+					.all(
+						tenantId,
+						cursor.occurredAt,
+						cursor.occurredAt,
+						cursor.sequence,
+						limit + 1,
+					)
+			: this.#database
+					.prepare(
+						`SELECT * FROM sandbox_audit_events WHERE tenant_id = ?
+							 ORDER BY occurred_at DESC, sequence DESC LIMIT ?`,
+					)
+					.all(tenantId, limit + 1)) as unknown as AuditRow[];
+		const page = rows.slice(0, limit).map(fromAuditRow);
+		const last = page[page.length - 1];
+		return {
+			events: page,
+			nextCursor:
+				rows.length > limit && last
+					? `${last.occurredAt}:${last.sequence}`
+					: null,
+		};
+	}
+
 	verifyAuditChain(tenantId: string): boolean {
+		return this.verifyAuditChainDetailed(tenantId).verified;
+	}
+
+	verifyAuditChainDetailed(tenantId: string): SandboxAuditChainVerification {
 		const events = (
 			this.#database
 				.prepare(
@@ -377,8 +415,12 @@ export class SqliteSandboxRepository implements SandboxRepository {
 		let previousHash: string | null = null;
 		let expectedSequence = 1;
 		for (const event of events) {
-			if (event.sequence !== expectedSequence) return false;
-			if (event.previousHash !== previousHash) return false;
+			if (event.sequence !== expectedSequence) {
+				return { verified: false, brokenAt: event.id };
+			}
+			if (event.previousHash !== previousHash) {
+				return { verified: false, brokenAt: event.id };
+			}
 			const expected = auditHash({
 				tenantId: event.tenantId,
 				sequence: event.sequence,
@@ -390,14 +432,18 @@ export class SqliteSandboxRepository implements SandboxRepository {
 				occurredAt: event.occurredAt,
 				previousHash: event.previousHash,
 			});
-			if (expected !== event.eventHash) return false;
+			if (expected !== event.eventHash) {
+				return { verified: false, brokenAt: event.id };
+			}
 			previousHash = event.eventHash;
 			expectedSequence += 1;
 		}
-		return true;
+		return { verified: true, brokenAt: null };
 	}
 
 	close(): void {
+		if (this.#closed) return;
+		this.#closed = true;
 		this.#database.close();
 	}
 }

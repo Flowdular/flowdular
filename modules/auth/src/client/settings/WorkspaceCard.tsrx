@@ -1,4 +1,5 @@
 import { useMemo } from 'octane';
+import { t } from '@coreloom/client';
 import { Button, SettingRow } from '@coreloom/ui';
 import { cell, createStore, useValue } from 'segment-state';
 
@@ -24,25 +25,24 @@ export function WorkspaceCard(props: WorkspaceCardProps) @{
 	<section class="ui-card">
 		<div class="ui-card__head">
 			<span class="ui-card__title">
-				Workspace
-				<small>Identity of the active organization</small>
+				{t('auth.settings.workspace.title')}
+				<small>{t('auth.settings.workspace.subtitle')}</small>
 			</span>
 		</div>
 		<SettingRow
-			label="Workspace name"
+			label={t('auth.settings.workspace.name')}
 			description={<>
-				{'Shown in the switcher and on the dashboard; the address keeps '}
+				{t('auth.settings.workspace.description') + ' '}
 				<code>{props.slug}</code>
-				{'.'}
 			</>}
 			status={props.result}
 		>
 			<input
 				class="ui-input"
-				aria-label="Workspace name"
+				aria-label={t('auth.settings.workspace.name')}
 				value={name}
-				minLength={2}
-				maxLength={120}
+				minlength={2}
+				maxlength={120}
 				disabled={!props.canManage || props.busy}
 				onInput={(event) => setName(
 					(event.currentTarget as HTMLInputElement).value,
@@ -53,9 +53,7 @@ export function WorkspaceCard(props: WorkspaceCardProps) @{
 				variant="primary"
 				disabled={!props.canManage || props.busy || !dirty}
 				onClick={() => props.onRename(trimmed)}
-			>
-				Save
-			</Button>
+			>{t('auth.common.save')}</Button>
 		</SettingRow>
 	</section>
 }

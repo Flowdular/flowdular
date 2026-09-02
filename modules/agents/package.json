@@ -1,6 +1,6 @@
 {
 	"name": "@coreloom/module-agents",
-	"version": "0.1.0",
+	"version": "0.7.0",
 	"private": true,
 	"type": "module",
 	"exports": {
@@ -22,10 +22,12 @@
 		"@coreloom/module-auth": "workspace:*",
 		"@coreloom/server": "workspace:*",
 		"@coreloom/ui": "workspace:*",
-		"octane": "0.1.50",
+		"octane": "0.1.51",
 		"segment-state": "0.2.0"
 	},
 	"devDependencies": {
+		"@coreloom/module-catalog": "workspace:*",
+		"@coreloom/module-parties": "workspace:*",
 		"@tsrx/typescript-plugin": "0.3.120",
 		"@types/node": "24.13.3",
 		"typescript": "5.9.3",

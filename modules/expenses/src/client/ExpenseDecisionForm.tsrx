@@ -1,4 +1,5 @@
 import { Alert, Button, FormField } from '@coreloom/ui';
+import { t } from '@coreloom/client';
 import type { ExpenseClaimDecision, ExpensesClaim } from '../domain/types.ts';
 
 export interface ExpenseDecisionFormProps {
@@ -19,11 +20,11 @@ export function ExpenseDecisionForm(props: ExpenseDecisionFormProps) @{
 					<b>{props.claim.title}</b>
 					<small>
 						{approving
-							? 'Confirm why this submitted claim is approved.'
-							: 'Explain why this submitted claim is rejected.'}
+							? t('expenses.decision.approveHelp')
+							: t('expenses.decision.rejectHelp')}
 					</small>
 				</div>
-				<FormField label="Decision comment" required>
+				<FormField label={t('expenses.decision.comment')} required>
 					<textarea
 						class="ui-textarea"
 						name="comment"
@@ -38,9 +39,9 @@ export function ExpenseDecisionForm(props: ExpenseDecisionFormProps) @{
 			</div>
 		</div>
 		<div class="ui-drawer__foot">
-			<small>This decision is recorded with the claim.</small>
+			<small>{t('expenses.decision.footer')}</small>
 			<div class="ui-form__actions">
-				<Button onClick={props.onCancel}>Cancel</Button>
+				<Button onClick={props.onCancel}>{t('expenses.action.cancel')}</Button>
 				<Button
 					variant={approving ? 'primary' : 'danger'}
 					type="submit"
@@ -48,11 +49,11 @@ export function ExpenseDecisionForm(props: ExpenseDecisionFormProps) @{
 				>
 					{props.busy
 						? approving
-							? 'Approving…'
-							: 'Rejecting…'
+							? t('expenses.action.approving')
+							: t('expenses.action.rejecting')
 						: approving
-							? 'Approve claim'
-							: 'Reject claim'}
+							? t('expenses.action.approveClaim')
+							: t('expenses.action.rejectClaim')}
 				</Button>
 			</div>
 		</div>

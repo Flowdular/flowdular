@@ -6,6 +6,20 @@ export interface SecurityHeadersOptions {
 	readonly contentSecurityPolicy: string | null;
 	/** Sends the policy as Content-Security-Policy-Report-Only. */
 	readonly reportOnly: boolean;
+	/** HTML marker replaced with the request CSP nonce, when the response is HTML. */
+	readonly noncePlaceholder?: string;
+}
+
+export const CSP_NONCE_PLACEHOLDER = '__CORELOOM_CSP_NONCE__';
+
+function cspNonce(): string {
+	const bytes = crypto.getRandomValues(new Uint8Array(16));
+	let value = '';
+	for (const byte of bytes) value += String.fromCharCode(byte);
+	return btoa(value)
+		.replaceAll('+', '-')
+		.replaceAll('/', '_')
+		.replaceAll('=', '');
 }
 
 const SHARED_DIRECTIVES = [
@@ -27,12 +41,9 @@ export const DEVELOPMENT_CONTENT_SECURITY_POLICY = [
 	"connect-src 'self' ws: wss:",
 ].join('; ');
 
-/* The built shell still carries an inline boot script in platform/index.html
-   that octane does not nonce, so script-src cannot drop 'unsafe-inline' yet.
-   Once that script carries the octane nonce, replace it with a nonce source. */
 export const PRODUCTION_CONTENT_SECURITY_POLICY = [
 	...SHARED_DIRECTIVES,
-	"script-src 'self' 'unsafe-inline'",
+	`script-src 'self' 'nonce-${CSP_NONCE_PLACEHOLDER}'`,
 	"img-src 'self' data:",
 	"connect-src 'self'",
 ].join('; ');
@@ -85,6 +96,35 @@ function withHeaders(
 export function createSecurityHeadersMiddleware(
 	options: SecurityHeadersOptions,
 ): Middleware {
-	const headers = Object.entries(securityHeaders(options));
-	return async (_context, next) => withHeaders(await next(), headers);
+	return async (_context, next) => {
+		const nonce = cspNonce();
+		const placeholder = options.noncePlaceholder ?? CSP_NONCE_PLACEHOLDER;
+		const policy =
+			options.contentSecurityPolicy?.replaceAll(placeholder, nonce) ?? null;
+		let response = await next();
+		/* The placeholder only exists in the platform shell. Avoid reading API or
+		   streamed responses, and preserve their body untouched. */
+		if (
+			policy !== null &&
+			response.headers.get('content-type')?.includes('text/html') &&
+			response.body !== null
+		) {
+			const html = await response.text();
+			const transformedHeaders = new Headers(response.headers);
+			/* The nonce changes the representation bytes. Any upstream length or
+			   validator describes the placeholder document and must not survive. */
+			transformedHeaders.delete('content-length');
+			transformedHeaders.delete('etag');
+			transformedHeaders.delete('content-md5');
+			response = new Response(html.replaceAll(placeholder, nonce), {
+				status: response.status,
+				statusText: response.statusText,
+				headers: transformedHeaders,
+			});
+		}
+		const headers = Object.entries(
+			securityHeaders({ ...options, contentSecurityPolicy: policy }),
+		);
+		return withHeaders(response, headers);
+	};
 }

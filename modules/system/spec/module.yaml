@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: system.core
-specVersion: 0.4.0
+specVersion: 0.5.0
 status: approved
 name: System Core
 description: Provides the application shell, platform health, module discovery, and the administration surface for module settings.
@@ -66,6 +66,14 @@ acceptanceScenarios:
     given: An authenticated principal navigates between authorized shell views.
     when: The active view changes without a full document load.
     then: The document title and description update to match the active navigation contribution.
+  - id: SYSTEM-OVERVIEW-READ
+    given: A principal with system.workspace.access opens the business dashboard.
+    when: The workspace overview is requested.
+    then: The server returns the enabled and total module counts, the last 14 days of audit events per day for the tenant, and the permissions declared per module, scoped to the principal's tenant.
+  - id: SYSTEM-OVERVIEW-DENY
+    given: A principal without system.workspace.access.
+    when: The principal requests the workspace overview.
+    then: The server returns 401 or 403 and no overview data is disclosed.
   - id: SYSTEM-MODULES-LIST
     given: An owner with system.modules.read opens Administration > Modules.
     when: The module catalog is requested.

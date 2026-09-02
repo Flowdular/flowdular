@@ -1,4 +1,4 @@
-import { resolve } from 'node:path';
+import { coreloomLocalDataPath } from '@coreloom/kernel/legacy-local-state';
 import type { AuthRuntime } from '@coreloom/module-auth/server';
 import { directoryFromAuthRuntime } from '../services/directory.ts';
 import { SandboxService } from '../services/sandbox-service.ts';
@@ -14,6 +14,7 @@ export interface SandboxRuntimeOptions {
 export interface SandboxRuntime {
 	readonly options: SandboxRuntimeOptions;
 	service(auth: AuthRuntime): SandboxService;
+	dispose(): void;
 }
 
 function sandboxUrl(value: string | undefined): string {
@@ -22,10 +23,10 @@ function sandboxUrl(value: string | undefined): string {
 	try {
 		url = new URL(candidate);
 	} catch {
-		throw new Error('OERP_SANDBOX_URL must be an absolute URL.');
+		throw new Error('CL_SANDBOX_URL must be an absolute URL.');
 	}
 	if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-		throw new Error('OERP_SANDBOX_URL must use http or https.');
+		throw new Error('CL_SANDBOX_URL must use http or https.');
 	}
 	return url.origin;
 }
@@ -36,11 +37,13 @@ export function sandboxRuntimeOptionsFromEnvironment(
 ): SandboxRuntimeOptions {
 	return {
 		databasePath:
-			environment.OERP_SANDBOX_DATABASE ??
+			environment.CL_SANDBOX_DATABASE ??
 			(environment.NODE_ENV === 'production'
 				? '/data/sandbox.db'
-				: resolve(workspaceRoot, '.octane-erp/sandbox.db')),
-		sandboxUrl: sandboxUrl(environment.OERP_SANDBOX_URL),
+				: environment.NODE_ENV === 'test'
+					? ':memory:'
+					: coreloomLocalDataPath(workspaceRoot, 'sandbox.db')),
+		sandboxUrl: sandboxUrl(environment.CL_SANDBOX_URL),
 	};
 }
 
@@ -48,14 +51,25 @@ export function createSandboxRuntime(
 	options: SandboxRuntimeOptions = sandboxRuntimeOptionsFromEnvironment(),
 ): SandboxRuntime {
 	let service: SandboxService | undefined;
+	let repository: SqliteSandboxRepository | undefined;
+	let disposed = false;
 	return {
 		options,
 		service: (auth) => {
+			if (disposed) throw new Error('Sandbox runtime is disposed.');
+			repository ??= new SqliteSandboxRepository(options.databasePath);
 			service ??= new SandboxService(
-				new SqliteSandboxRepository(options.databasePath),
+				repository,
 				directoryFromAuthRuntime(auth),
 			);
 			return service;
+		},
+		dispose() {
+			if (disposed) return;
+			disposed = true;
+			repository?.close();
+			repository = undefined;
+			service = undefined;
 		},
 	};
 }

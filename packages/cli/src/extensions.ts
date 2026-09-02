@@ -18,6 +18,7 @@ const reservedGroups = new Set([
 	'spec',
 	'blueprint',
 	'module',
+	'migration',
 	'setup',
 ]);
 

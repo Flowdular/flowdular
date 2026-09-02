@@ -17,19 +17,26 @@ export function toggleNavigationGroup(
 }
 
 export function shellViewFromUrl(value: string): ShellView {
-	const pathname = new URL(value, 'https://octane-erp.local').pathname;
-	return pathname.split('/').filter(Boolean)[0] ?? 'overview';
+	const pathname = new URL(value, 'https://coreloom.local').pathname;
+	const segments = pathname.split('/').filter(Boolean);
+	return (segments[0] === 'app' ? segments[2] : segments[0]) ?? 'overview';
 }
 
-/* Canonical workspace URLs are slug-first: /{workspaceSlug}/{viewId}. A first
-   segment that is not a known workspace slug is treated as a view id, so
-   legacy links like /parties keep working and get canonicalized by the shell. */
+/* Canonical workspace URLs live below /app. Slug-first and view-only links are
+   still read so bookmarks from before that prefix keep working. */
 export function shellLocationFromUrl(
 	value: string,
 	knownWorkspaceSlugs: readonly string[],
 ): ShellLocation {
-	const pathname = new URL(value, 'https://octane-erp.local').pathname;
+	const pathname = new URL(value, 'https://coreloom.local').pathname;
 	const segments = pathname.split('/').filter(Boolean);
+	if (segments[0] === 'app') {
+		const workspace = segments[1];
+		if (workspace !== undefined && knownWorkspaceSlugs.includes(workspace)) {
+			return { workspaceSlug: workspace, view: segments[2] ?? 'overview' };
+		}
+		return { workspaceSlug: null, view: segments[1] ?? 'overview' };
+	}
 	const first = segments[0];
 	if (first !== undefined && knownWorkspaceSlugs.includes(first)) {
 		return { workspaceSlug: first, view: segments[1] ?? 'overview' };

@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "sandbox.core",
 	"package": "@coreloom/module-sandbox",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations", "cli"],
 	"platform": {

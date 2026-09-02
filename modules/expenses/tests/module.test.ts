@@ -15,6 +15,11 @@ import { createExpensesRuntime } from '../src/server/runtime.ts';
 
 type ExpenseRoute = ReturnType<typeof createExpensesRoutes>[number];
 type ExpenseRouteContext = Parameters<ExpenseRoute['handler']>[0];
+const TEST_ACTOR = {
+	kind: 'user',
+	id: 'account-a',
+	label: 'Employee',
+} as const;
 
 const input = (
 	overrides: Partial<CreateExpensesClaimInput> = {},
@@ -64,6 +69,7 @@ function authRuntime(actor: AuthPrincipal): AuthRuntime {
 	};
 	return {
 		cookie: { name: 'test-session', secure: false, maxAgeSeconds: 3_600 },
+		authorizeAgentToolAccess: () => [],
 		service: () => ({
 			resolveSession: (token: string) => (token === 'token' ? session : null),
 		}),
@@ -117,8 +123,13 @@ describe('expenses.core service', () => {
 
 	it('creates tenant-owned drafts with unique server identities', () => {
 		const expenses = service();
-		const first = expenses.create('tenant-a', 'account-a', input());
-		const second = expenses.create('tenant-a', 'account-a', input());
+		const first = expenses.create('tenant-a', 'account-a', input(), TEST_ACTOR);
+		const second = expenses.create(
+			'tenant-a',
+			'account-a',
+			input(),
+			TEST_ACTOR,
+		);
 
 		expect(first).toMatchObject({
 			tenantId: 'tenant-a',
@@ -135,14 +146,55 @@ describe('expenses.core service', () => {
 		expect(first.id).not.toBe(second.id);
 	});
 
+	it('resolves a linked note once while retaining the raw template', () => {
+		const expenses = service();
+		const claim = expenses.create(
+			'tenant-a',
+			'account-a',
+			input({ note: 'Receipt for {{ expense.title }} on {{ expense.date }}.' }),
+			TEST_ACTOR,
+		);
+		expect(claim.noteTemplate).toBe(
+			'Receipt for {{ expense.title }} on {{ expense.date }}.',
+		);
+		expect(claim.note).toBe(
+			'Receipt for Train to customer site on 2026-08-20.',
+		);
+		expect(
+			expenses.list('tenant-a', 'account-a', null, false)[0],
+		).toMatchObject({
+			noteTemplate: 'Receipt for {{ expense.title }} on {{ expense.date }}.',
+			note: 'Receipt for Train to customer site on 2026-08-20.',
+		});
+	});
+
+	it('rejects unknown linked-note variables before persisting the claim', () => {
+		expect(
+			errorFrom(() =>
+				service().create(
+					'tenant-a',
+					'account-a',
+					input({ note: '{{ party.name }}' }),
+					TEST_ACTOR,
+				),
+			).code,
+		).toBe('UNKNOWN_TEMPLATE_VARIABLE');
+	});
+
 	it('isolates employee lists and direct actions by tenant', () => {
 		const expenses = service();
-		const foreign = expenses.create('tenant-b', 'account-b', input());
+		const foreign = expenses.create(
+			'tenant-b',
+			'account-b',
+			input(),
+			TEST_ACTOR,
+		);
 
 		expect(expenses.list('tenant-a', 'account-a', null, false)).toEqual([]);
 		expect(
-			errorFrom(() => expenses.submit('tenant-a', 'account-b', foreign.id))
-				.code,
+			errorFrom(() =>
+				expenses.submit('tenant-a', 'account-b', foreign.id, TEST_ACTOR),
+			).code,
 		).toBe('CLAIM_NOT_FOUND');
 	});
 
@@ -152,18 +204,21 @@ describe('expenses.core service', () => {
 			'tenant-a',
 			'account-a',
 			input({ title: 'Older', expenseDate: '2026-08-01' }),
+			TEST_ACTOR,
 		);
 		expenses.create(
 			'tenant-a',
 			'account-b',
 			input({ title: 'Another employee', expenseDate: '2026-08-31' }),
+			TEST_ACTOR,
 		);
 		const newer = expenses.create(
 			'tenant-a',
 			'account-a',
 			input({ title: 'Newer', expenseDate: '2026-08-20' }),
+			TEST_ACTOR,
 		);
-		expenses.submit('tenant-a', 'account-a', older.id);
+		expenses.submit('tenant-a', 'account-a', older.id, TEST_ACTOR);
 
 		expect(
 			expenses
@@ -179,12 +234,22 @@ describe('expenses.core service', () => {
 
 	it('shows approvers every submitted claim and counts only the active tenant', () => {
 		const expenses = service();
-		const first = expenses.create('tenant-a', 'account-a', input());
-		const second = expenses.create('tenant-a', 'account-b', input());
-		const foreign = expenses.create('tenant-b', 'account-c', input());
-		expenses.submit('tenant-a', 'account-a', first.id);
-		expenses.submit('tenant-a', 'account-b', second.id);
-		expenses.submit('tenant-b', 'account-c', foreign.id);
+		const first = expenses.create('tenant-a', 'account-a', input(), TEST_ACTOR);
+		const second = expenses.create(
+			'tenant-a',
+			'account-b',
+			input(),
+			TEST_ACTOR,
+		);
+		const foreign = expenses.create(
+			'tenant-b',
+			'account-c',
+			input(),
+			TEST_ACTOR,
+		);
+		expenses.submit('tenant-a', 'account-a', first.id, TEST_ACTOR);
+		expenses.submit('tenant-a', 'account-b', second.id, TEST_ACTOR);
+		expenses.submit('tenant-b', 'account-c', foreign.id, TEST_ACTOR);
 
 		expect(
 			expenses.list('tenant-a', 'manager', 'submitted', true),
@@ -194,7 +259,7 @@ describe('expenses.core service', () => {
 
 	it('allows only the claimant to update and submit a draft', () => {
 		const expenses = service();
-		const claim = expenses.create('tenant-a', 'account-a', input());
+		const claim = expenses.create('tenant-a', 'account-a', input(), TEST_ACTOR);
 
 		expect(
 			errorFrom(() =>
@@ -203,6 +268,7 @@ describe('expenses.core service', () => {
 					'account-b',
 					claim.id,
 					input({ title: 'Changed' }),
+					TEST_ACTOR,
 				),
 			).code,
 		).toBe('CLAIM_NOT_OWNED');
@@ -212,33 +278,137 @@ describe('expenses.core service', () => {
 			'account-a',
 			claim.id,
 			input({ title: 'Changed', note: null }),
+			TEST_ACTOR,
 		);
 		expect(changed).toMatchObject({ title: 'Changed', note: null });
-		expect(expenses.submit('tenant-a', 'account-a', claim.id).status).toBe(
-			'submitted',
-		);
+		expect(
+			expenses.submit('tenant-a', 'account-a', claim.id, TEST_ACTOR).status,
+		).toBe('submitted');
 		expect(
 			errorFrom(() =>
-				expenses.update('tenant-a', 'account-a', claim.id, input()),
+				expenses.update('tenant-a', 'account-a', claim.id, input(), TEST_ACTOR),
 			).code,
 		).toBe('CLAIM_NOT_DRAFT');
 	});
 
-	it('approves or rejects submitted claims with a required comment', () => {
-		const expenses = service();
-		const approved = expenses.create('tenant-a', 'account-a', input());
-		const rejected = expenses.create('tenant-a', 'account-b', input());
-		expenses.submit('tenant-a', 'account-a', approved.id);
-		expenses.submit('tenant-a', 'account-b', rejected.id);
+	it('deletes only the claimant own draft and retains its audit history', () => {
+		const repository = new SqliteExpensesRepository(':memory:');
+		const expenses = new ExpensesService(repository);
+		const draft = expenses.create('tenant-a', 'account-a', input(), TEST_ACTOR);
+		const submitted = expenses.create(
+			'tenant-a',
+			'account-a',
+			input({ title: 'Submitted' }),
+			TEST_ACTOR,
+		);
+		expenses.submit('tenant-a', 'account-a', submitted.id, TEST_ACTOR);
+		const approved = expenses.create(
+			'tenant-a',
+			'account-a',
+			input({ title: 'Approved' }),
+			TEST_ACTOR,
+		);
+		expenses.submit('tenant-a', 'account-a', approved.id, TEST_ACTOR);
+		expenses.decide(
+			'tenant-a',
+			approved.id,
+			'approved',
+			'Within policy',
+			TEST_ACTOR,
+		);
+		const rejected = expenses.create(
+			'tenant-a',
+			'account-a',
+			input({ title: 'Rejected' }),
+			TEST_ACTOR,
+		);
+		expenses.submit('tenant-a', 'account-a', rejected.id, TEST_ACTOR);
+		expenses.decide(
+			'tenant-a',
+			rejected.id,
+			'rejected',
+			'Missing receipt',
+			TEST_ACTOR,
+		);
 
 		expect(
-			expenses.decide('tenant-a', approved.id, 'approved', 'Within policy'),
+			errorFrom(() =>
+				expenses.delete('tenant-a', 'account-b', draft.id, TEST_ACTOR),
+			).code,
+		).toBe('CLAIM_NOT_OWNED');
+		expect(
+			errorFrom(() =>
+				expenses.delete('tenant-b', 'account-a', draft.id, TEST_ACTOR),
+			).code,
+		).toBe('CLAIM_NOT_FOUND');
+		expect(
+			errorFrom(() =>
+				expenses.delete('tenant-a', 'account-a', submitted.id, TEST_ACTOR),
+			).code,
+		).toBe('CLAIM_NOT_DRAFT');
+		for (const decided of [approved, rejected]) {
+			expect(
+				errorFrom(() =>
+					expenses.delete('tenant-a', 'account-a', decided.id, TEST_ACTOR),
+				).code,
+			).toBe('CLAIM_NOT_DRAFT');
+		}
+
+		expenses.delete('tenant-a', 'account-a', draft.id, TEST_ACTOR);
+		expect(
+			expenses
+				.list('tenant-a', 'account-a', null, false)
+				.map((claim) => claim.id),
+		).toEqual(expect.arrayContaining([submitted.id, approved.id, rejected.id]));
+		const history = repository.history({
+			tenantId: 'tenant-a',
+			recordId: draft.id,
+			limit: 20,
+			cursor: null,
+		});
+		expect(history.entries[0]).toMatchObject({
+			action: 'deleted',
+			actor: TEST_ACTOR,
+		});
+	});
+
+	it('approves or rejects submitted claims with a required comment', () => {
+		const expenses = service();
+		const approved = expenses.create(
+			'tenant-a',
+			'account-a',
+			input(),
+			TEST_ACTOR,
+		);
+		const rejected = expenses.create(
+			'tenant-a',
+			'account-b',
+			input(),
+			TEST_ACTOR,
+		);
+		expenses.submit('tenant-a', 'account-a', approved.id, TEST_ACTOR);
+		expenses.submit('tenant-a', 'account-b', rejected.id, TEST_ACTOR);
+
+		expect(
+			expenses.decide(
+				'tenant-a',
+				approved.id,
+				'approved',
+				'Within policy',
+				TEST_ACTOR,
+			),
 		).toMatchObject({
 			status: 'approved',
 			decisionComment: 'Within policy',
 		});
 		expect(
-			expenses.decide('tenant-a', rejected.id, 'rejected', 'Receipt missing'),
+			expenses.decide(
+				'tenant-a',
+				rejected.id,
+				'rejected',
+				'Receipt missing',
+				TEST_ACTOR,
+			),
 		).toMatchObject({
 			status: 'rejected',
 			decisionComment: 'Receipt missing',
@@ -246,7 +416,13 @@ describe('expenses.core service', () => {
 		expect(expenses.countAwaitingApproval('tenant-a')).toBe(0);
 		expect(
 			errorFrom(() =>
-				expenses.decide('tenant-a', approved.id, 'rejected', 'Again'),
+				expenses.decide(
+					'tenant-a',
+					approved.id,
+					'rejected',
+					'Again',
+					TEST_ACTOR,
+				),
 			).code,
 		).toBe('CLAIM_NOT_SUBMITTED');
 	});
@@ -271,6 +447,7 @@ describe('expenses.core service', () => {
 					'tenant-a',
 					'account-a',
 					invalid as CreateExpensesClaimInput,
+					TEST_ACTOR,
 				),
 			).code,
 		).toBe('INVALID_CLAIM_INPUT');
@@ -278,14 +455,20 @@ describe('expenses.core service', () => {
 
 	it('requires a bounded decision comment', () => {
 		const expenses = service();
-		const blank = expenses.create('tenant-a', 'account-a', input());
-		const oversized = expenses.create('tenant-a', 'account-a', input());
-		expenses.submit('tenant-a', 'account-a', blank.id);
-		expenses.submit('tenant-a', 'account-a', oversized.id);
+		const blank = expenses.create('tenant-a', 'account-a', input(), TEST_ACTOR);
+		const oversized = expenses.create(
+			'tenant-a',
+			'account-a',
+			input(),
+			TEST_ACTOR,
+		);
+		expenses.submit('tenant-a', 'account-a', blank.id, TEST_ACTOR);
+		expenses.submit('tenant-a', 'account-a', oversized.id, TEST_ACTOR);
 
 		expect(
-			errorFrom(() => expenses.decide('tenant-a', blank.id, 'approved', ''))
-				.code,
+			errorFrom(() =>
+				expenses.decide('tenant-a', blank.id, 'approved', '', TEST_ACTOR),
+			).code,
 		).toBe('INVALID_DECISION_COMMENT');
 		expect(
 			errorFrom(() =>
@@ -294,16 +477,76 @@ describe('expenses.core service', () => {
 					oversized.id,
 					'rejected',
 					'x'.repeat(2_001),
+					TEST_ACTOR,
 				),
 			).code,
 		).toBe('INVALID_DECISION_COMMENT');
+	});
+
+	it('records claim revisions with actors and hides them from other claimants', () => {
+		const expenses = service();
+		const claim = expenses.create('tenant-a', 'account-a', input(), TEST_ACTOR);
+		expenses.update(
+			'tenant-a',
+			'account-a',
+			claim.id,
+			input({ title: 'Train ticket', note: null }),
+			TEST_ACTOR,
+		);
+		expenses.submit('tenant-a', 'account-a', claim.id, TEST_ACTOR);
+		expenses.decide('tenant-a', claim.id, 'approved', 'Within policy', {
+			kind: 'agent',
+			id: 'approval-agent',
+			label: 'Expense approver',
+			runId: 'run-1',
+		});
+
+		const history = expenses.history('tenant-a', 'account-a', false, {
+			recordId: claim.id,
+			limit: 20,
+			cursor: null,
+		});
+		expect(history.entries.map((entry) => entry.action)).toEqual([
+			'approved',
+			'submitted',
+			'updated',
+			'created',
+		]);
+		expect(history.entries[0]?.actor).toEqual({
+			kind: 'agent',
+			id: 'approval-agent',
+			label: 'Expense approver',
+			runId: 'run-1',
+		});
+		expect(history.entries[0]?.changes).toEqual({
+			status: { from: 'submitted', to: 'approved' },
+			decisionComment: { from: null, to: 'Within policy' },
+		});
+		expect(
+			errorFrom(() =>
+				expenses.history('tenant-a', 'account-b', false, {
+					recordId: claim.id,
+					limit: 20,
+					cursor: null,
+				}),
+			).code,
+		).toBe('CLAIM_NOT_FOUND');
+		expect(
+			errorFrom(() =>
+				expenses.history('tenant-b', 'account-a', true, {
+					recordId: claim.id,
+					limit: 20,
+					cursor: null,
+				}),
+			).code,
+		).toBe('CLAIM_NOT_FOUND');
 	});
 });
 
 describe('expenses.core endpoints', () => {
 	it('returns 401 for every endpoint without a principal', async () => {
 		const routes = createExpensesRoutes(
-			{} as AuthRuntime,
+			{ authorizeAgentToolAccess: () => [] } as unknown as AuthRuntime,
 			createExpensesRuntime({ databasePath: ':memory:' }),
 		);
 		for (const endpoint of routes) {
@@ -331,7 +574,7 @@ describe('expenses.core endpoints', () => {
 	it('returns 403 for every endpoint without its permission', async () => {
 		const actor = principal([]);
 		const routes = createExpensesRoutes(
-			{} as AuthRuntime,
+			{ authorizeAgentToolAccess: () => [] } as unknown as AuthRuntime,
 			createExpensesRuntime({ databasePath: ':memory:' }),
 		);
 		for (const endpoint of routes) {
@@ -408,6 +651,53 @@ describe('expenses.core endpoints', () => {
 		expect(await response.json()).toMatchObject({
 			error: { code: 'CSRF_REJECTED' },
 		});
+		expect(
+			runtime.service().list('tenant-a', 'account-a', null, false),
+		).toEqual([]);
+	});
+
+	it('deletes an owned draft through the guarded endpoint', async () => {
+		const actor = principal([
+			EXPENSES_PERMISSIONS.read,
+			EXPENSES_PERMISSIONS.manage,
+		]);
+		const runtime = createExpensesRuntime({ databasePath: ':memory:' });
+		const claim = runtime
+			.service()
+			.create('tenant-a', 'account-a', input(), TEST_ACTOR);
+		const routes = createExpensesRoutes(authRuntime(actor), runtime);
+
+		const badCsrf = await route(
+			routes,
+			'/api/expenses/claims/delete',
+			'POST',
+		).handler(
+			context(
+				mutationRequest(
+					'/api/expenses/claims/delete',
+					{ claimId: claim.id },
+					'wrong-token',
+				),
+				actor,
+			),
+		);
+		expect(badCsrf.status).toBe(403);
+		expect(
+			runtime.service().list('tenant-a', 'account-a', null, false),
+		).toHaveLength(1);
+
+		const response = await route(
+			routes,
+			'/api/expenses/claims/delete',
+			'POST',
+		).handler(
+			context(
+				mutationRequest('/api/expenses/claims/delete', { claimId: claim.id }),
+				actor,
+			),
+		);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({ deleted: true });
 		expect(
 			runtime.service().list('tenant-a', 'account-a', null, false),
 		).toEqual([]);

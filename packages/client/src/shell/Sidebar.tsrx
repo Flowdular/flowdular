@@ -4,6 +4,7 @@ import type {
 	NavigationGroup,
 } from '../contributions.ts';
 import type { ShellView } from '../state.ts';
+import { t } from '../i18n/runtime.ts';
 import { SidebarBrand } from './BrandMark.tsrx';
 import { OrganizationSwitcher } from './OrganizationSwitcher.tsrx';
 import { PrimaryNavigation } from './PrimaryNavigation.tsrx';
@@ -33,10 +34,10 @@ export function Sidebar(props: SidebarProps) @{
 			<button
 				class="sidebar__collapse ui-btn ui-btn--ghost ui-btn--icon"
 				type="button"
-				aria-label={props.collapsed
-					? 'Expand navigation'
-					: 'Collapse navigation'}
-				title={props.collapsed ? 'Expand navigation' : 'Collapse navigation'}
+				aria-label={t(
+					props.collapsed ? 'shell.nav.expand' : 'shell.nav.collapse',
+				)}
+				title={t(props.collapsed ? 'shell.nav.expand' : 'shell.nav.collapse')}
 				onClick={props.onToggleCollapsed}
 			>
 				<Icon name="panel-left" size={16} />
@@ -44,7 +45,7 @@ export function Sidebar(props: SidebarProps) @{
 			<button
 				class="sidebar__close"
 				type="button"
-				aria-label="Close navigation"
+				aria-label={t('shell.nav.close')}
 				onClick={props.onClose}
 			>
 				<Icon name="x" size={16} />
@@ -67,7 +68,7 @@ export function Sidebar(props: SidebarProps) @{
 		<div class="sidebar__foot">
 			<span>
 				<i class="ui-dot" aria-hidden="true"></i>
-				<span class="sidebar__foot-label">Platform online</span>
+				<span class="sidebar__foot-label">{t('shell.sidebar.status')}</span>
 			</span>
 			<span class="ui-mono">0.1.0</span>
 		</div>

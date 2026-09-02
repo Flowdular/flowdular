@@ -102,7 +102,12 @@ export function defineEndpoint(
 				response.headers.set('x-request-id', requestId);
 				return response;
 			} catch (error) {
-				console.error(`[${requestId}] endpoint ${definition.id} failed`, error);
+				/* An unexpected error may carry SQL parameters, provider responses, or
+				   credentials in its message and attached fields. The request id and
+				   endpoint identify the failure without sending that value to a logger. */
+				console.error(
+					`[${requestId}] endpoint ${definition.id} failed (${error instanceof Error ? 'Error' : 'non-error'})`,
+				);
 				return problem(
 					500,
 					'INTERNAL_ERROR',

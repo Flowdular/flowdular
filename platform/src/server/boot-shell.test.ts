@@ -7,7 +7,7 @@ describe('initial HTML shell', () => {
 			new URL('../../index.html', import.meta.url),
 			'utf8',
 		);
-		expect(html.indexOf('id="oerp-splash"')).toBeLessThan(
+		expect(html.indexOf('id="coreloom-splash"')).toBeLessThan(
 			html.indexOf('id="root"'),
 		);
 		expect(html).toContain('role="status"');
@@ -17,7 +17,7 @@ describe('initial HTML shell', () => {
 		expect(html).toContain("'Preparing workspace'");
 		expect(html).not.toContain('requestAnimationFrame(() =>');
 		expect(html).toMatch(
-			/<noscript[\s\S]*\.oerp-splash\s*{\s*display:\s*none;/,
+			/<noscript[\s\S]*\.coreloom-splash\s*{\s*display:\s*none;/,
 		);
 	});
 });

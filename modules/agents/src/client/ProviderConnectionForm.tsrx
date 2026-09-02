@@ -1,4 +1,5 @@
 import { useMemo } from 'octane';
+import { t } from '@coreloom/client';
 import { Button, FormField } from '@coreloom/ui';
 import { cell, createStore, useValue } from 'segment-state';
 import type {
@@ -24,6 +25,7 @@ export interface ProviderConnectionFormProps {
 	readonly readinessTtlMs: number;
 	readonly testingModel: string;
 	readonly onCancel: () => void;
+	readonly onDelete: (() => void) | undefined;
 	readonly onSubmit: (input: | CreateAgentProviderInput
 	| UpdateAgentProviderInput) => Promise<void>;
 	readonly onTest: (providerId: string, modelId: string) => Promise<void>;
@@ -92,7 +94,7 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 		<div class="ui-drawer__body">
 			<div class="ui-form">
 				<div class="ui-form__row">
-					<FormField label="Name" required>
+					<FormField label={t('agents.providers.form.name')} required>
 						<input
 							class="ui-input"
 							name="name"
@@ -103,8 +105,10 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 						/>
 					</FormField>
 					<FormField
-						label="Stable key"
-						help={props.provider ? 'Fixed after creation.' : undefined}
+						label={t('agents.providers.form.key')}
+						help={props.provider
+							? t('agents.providers.form.keyFixed')
+							: undefined}
 						required
 					>
 						<input
@@ -119,7 +123,7 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 						/>
 					</FormField>
 				</div>
-				<FormField label="Provider type" required>
+				<FormField label={t('agents.providers.form.type')} required>
 					<select
 						class="ui-select"
 						name="kind"
@@ -129,15 +133,19 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 							event.currentTarget.value as MutableProviderKind,
 						)}
 					>
-						<option value="vercel">Vercel AI Gateway</option>
-						<option value="openai">OpenAI</option>
-						<option value="azure">Azure OpenAI</option>
-						<option value="anthropic">Anthropic</option>
-						<option value="openai-compatible">OpenAI-compatible</option>
+						<option value="vercel">{t('agents.providers.kind.vercel')}</option>
+						<option value="openai">{t('agents.providers.kind.openai')}</option>
+						<option value="azure">{t('agents.providers.kind.azure')}</option>
+						<option value="anthropic">{t(
+							'agents.providers.kind.anthropic',
+						)}</option>
+						<option value="openai-compatible">{t(
+							'agents.providers.kind.openai-compatible',
+						)}</option>
 					</select>
 				</FormField>
 				@if (kind === 'azure') {
-					<FormField label="Azure resource name" required>
+					<FormField label={t('agents.providers.form.azureResource')} required>
 						<input
 							class="ui-input"
 							name="resourceName"
@@ -148,7 +156,7 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 					</FormField>
 				}
 				@if (kind === 'openai-compatible') {
-					<FormField label="Allowlisted HTTPS base URL" required>
+					<FormField label={t('agents.providers.form.baseUrl')} required>
 						<input
 							class="ui-input"
 							name="baseURL"
@@ -161,10 +169,12 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 					</FormField>
 				}
 				<FormField
-					label={props.provider ? 'Rotate credential' : 'Provider credential'}
+					label={props.provider
+						? t('agents.providers.form.rotateCredential')
+						: t('agents.providers.form.credential')}
 					help={props.provider
-						? 'Leave blank to keep the current credential.'
-						: 'Encrypted server-side and never returned to this page.'}
+						? t('agents.providers.form.credentialKeep')
+						: t('agents.providers.form.credentialHelp')}
 					required={!props.provider}
 				>
 					<input
@@ -172,7 +182,9 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 						name="credential"
 						type="password"
 						autocomplete="new-password"
-						placeholder={props.provider ? '••••••••' : 'Paste the API key'}
+						placeholder={props.provider
+							? '••••••••'
+							: t('agents.providers.form.credentialPlaceholder')}
 						minlength={8}
 						maxlength={16_384}
 						required={!props.provider}
@@ -180,7 +192,7 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 				</FormField>
 				<div class="ui-field">
 					<span class="ui-label">
-						Models
+						{t('agents.providers.form.models')}
 						<em aria-hidden="true">{' *'}</em>
 					</span>
 					<ProviderModelEditor
@@ -197,11 +209,10 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 					@if (modelError) {
 						<span class="ui-help ui-help--error">{modelError}</span>
 					} @else {
-						<span class="ui-help">
-							{models.filter((model) => model.enabled).length + ' of ' +
-								models.length +
-								' models available to agents'}
-						</span>
+						<span class="ui-help">{t('agents.providers.form.modelsAvailable', {
+							enabled: models.filter((model) => model.enabled).length,
+							total: models.length,
+						})}</span>
 					}
 				</div>
 				@if (props.provider) {
@@ -214,17 +225,16 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 									defaultChecked={props.provider.enabled}
 									disabled={!proven}
 								/>
-								<span>Allow active agents to use this connection</span>
+								<span>{t('agents.providers.form.enable')}</span>
 							</label>
 							@if (proven) {
-								<span class="ui-help">
-									Agents may pick any model that passed its own test.
-								</span>
+								<span class="ui-help">{t(
+									'agents.providers.form.enableReady',
+								)}</span>
 							} @else {
-								<span class="ui-help">
-									Test at least one available model first. Evidence expires, so
-									a model that was proven long ago has to answer again.
-								</span>
+								<span class="ui-help">{t(
+									'agents.providers.form.enableBlocked',
+								)}</span>
 							}
 						</div>
 					</>
@@ -234,21 +244,28 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 		<div class="ui-drawer__foot">
 			<small>
 				{props.provider
-					? 'Rotating the credential invalidates readiness evidence.'
-					: 'New connections are created disabled.'}
+					? t('agents.providers.form.rotateNote')
+					: t('agents.providers.form.createNote')}
 			</small>
 			<div class="ui-form__actions">
-				<Button onClick={props.onCancel}>Cancel</Button>
+				@if (props.onDelete) {
+					<Button
+						variant="danger"
+						disabled={props.busy}
+						onClick={props.onDelete}
+					>{t('agents.providers.delete.confirm')}</Button>
+				}
+				<Button onClick={props.onCancel}>{t('agents.common.cancel')}</Button>
 				<Button
 					variant="primary"
 					type="submit"
 					disabled={props.busy || modelError !== ''}
 				>
 					{props.busy
-						? 'Saving…'
+						? t('agents.providers.form.saving')
 						: props.provider
-							? 'Save connection'
-							: 'Create connection'}
+							? t('agents.providers.form.save')
+							: t('agents.providers.form.create')}
 				</Button>
 			</div>
 		</div>

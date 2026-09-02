@@ -1,6 +1,6 @@
 {
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
-	"$id": "https://octane-erp.dev/schemas/cli-extension.schema.json",
+	"$id": "https://coreloom.dev/schemas/cli-extension.schema.json",
 	"type": "object",
 	"additionalProperties": false,
 	"required": ["protocolVersion", "moduleId", "commands"],

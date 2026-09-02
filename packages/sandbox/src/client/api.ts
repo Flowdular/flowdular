@@ -8,7 +8,17 @@ import type {
 	ChatEntry,
 	HandoffPlan,
 	SandboxSession,
+	SessionAttachment,
 } from '../server/sessions.ts';
+import type { ModuleSpecReview } from '../server/spec.ts';
+
+export type { ModuleSpecReview, SessionAttachment };
+
+export interface WorkspaceModuleSummary {
+	readonly id: string;
+	readonly directory: string;
+	readonly name: string;
+}
 
 export interface RoleSummary {
 	readonly id: string;
@@ -40,6 +50,8 @@ export interface SandboxState {
 	readonly drivers: readonly DriverSummary[];
 	readonly roles: readonly RoleSummary[];
 	readonly sessions: readonly SandboxSession[];
+	/* Every module of this workspace, so a session can add one to itself. */
+	readonly workspaceModules: readonly WorkspaceModuleSummary[];
 	/* Ids of the sessions with a turn in flight right now. */
 	readonly running: readonly string[];
 	/* A self-hosted sandbox that has not seen this browser yet. */
@@ -54,6 +66,8 @@ export interface SessionView {
 	};
 	readonly chat: readonly ChatEntry[];
 	readonly diffs: readonly (FileDiff & { readonly module: string })[];
+	/* One specification review per module, in session order. */
+	readonly specs: readonly ModuleSpecReview[];
 	/* True while the sandbox still has a turn in flight for this session, even
 	   when this browser is not the one that started it. */
 	readonly running: boolean;
@@ -128,6 +142,18 @@ export async function loadSandboxState(): Promise<SandboxState> {
 				driverModel: null,
 				previewData: 'fixtures',
 				byok: null,
+				github: {
+					enabled: true,
+					overridesProject: false,
+					remote: 'origin',
+					repository: null,
+					baseBranch: 'main',
+					branchPrefix: 'sandbox',
+					mode: 'auto',
+					forkOwner: null,
+					reviewers: [],
+					tokenFingerprint: null,
+				},
 			},
 			connection: {
 				connected: false,
@@ -140,6 +166,7 @@ export async function loadSandboxState(): Promise<SandboxState> {
 			drivers: [],
 			roles: [],
 			sessions: [],
+			workspaceModules: [],
 			running: [],
 			signInRequired: true,
 		};
@@ -159,6 +186,51 @@ export function loadSession(id: string): Promise<SessionView> {
 	);
 }
 
+/* The GET endpoint that serves an attachment's bytes, used as an <img> source
+   for the composer thumbnail. */
+export function attachmentUrl(sessionId: string, id: string): string {
+	return `/sandbox/api/sessions/${encodeURIComponent(
+		sessionId,
+	)}/attachments/${encodeURIComponent(id)}`;
+}
+
+function fileToBase64(file: Blob): Promise<string> {
+	return new Promise((resolveBase64, reject) => {
+		const reader = new FileReader();
+		reader.onload = () => {
+			const result = typeof reader.result === 'string' ? reader.result : '';
+			const comma = result.indexOf(',');
+			resolveBase64(comma >= 0 ? result.slice(comma + 1) : result);
+		};
+		reader.onerror = () =>
+			reject(reader.error ?? new Error('The file could not be read.'));
+		reader.readAsDataURL(file);
+	});
+}
+
+export async function uploadAttachment(
+	sessionId: string,
+	file: File,
+): Promise<{ readonly attachment: SessionAttachment }> {
+	const contentBase64 = await fileToBase64(file);
+	return post(
+		`/sandbox/api/sessions/${encodeURIComponent(sessionId)}/attachments`,
+		{ name: file.name, contentBase64 },
+	);
+}
+
+export function deleteAttachment(
+	sessionId: string,
+	id: string,
+): Promise<{ readonly deleted: boolean }> {
+	return post(
+		`/sandbox/api/sessions/${encodeURIComponent(
+			sessionId,
+		)}/attachments/${encodeURIComponent(id)}/delete`,
+		{},
+	);
+}
+
 export interface ConfigurationPatch {
 	readonly disconnect?: boolean;
 	readonly platformUrl?: string;
@@ -171,6 +243,17 @@ export interface ConfigurationPatch {
 	readonly byokCredential?: string;
 	readonly byokBaseUrl?: string;
 	readonly byokResourceName?: string;
+	readonly githubEnabled?: boolean;
+	readonly githubOverridesProject?: boolean;
+	readonly githubRemote?: string;
+	readonly githubRepository?: string;
+	readonly githubBaseBranch?: string;
+	readonly githubBranchPrefix?: string;
+	readonly githubMode?: 'auto' | 'direct' | 'fork';
+	readonly githubForkOwner?: string;
+	readonly githubReviewers?: readonly string[];
+	readonly githubToken?: string;
+	readonly githubClearToken?: boolean;
 }
 
 export function saveConfiguration(patch: ConfigurationPatch): Promise<{
@@ -215,6 +298,17 @@ export function createSandboxSession(
 	});
 }
 
+/* Materializes another workspace module into a running session and returns the
+   refreshed session view. */
+export function addSessionModule(
+	id: string,
+	moduleId: string,
+): Promise<SessionView> {
+	return post(`/sandbox/api/sessions/${encodeURIComponent(id)}/modules`, {
+		moduleId,
+	});
+}
+
 export function setAutoContinue(
 	id: string,
 	enabled: boolean,
@@ -224,10 +318,58 @@ export function setAutoContinue(
 	});
 }
 
+/* The three answers to a specification review, one module at a time. */
 export function approveSpecification(
 	id: string,
-): Promise<{ readonly session: SandboxSession; readonly status: string }> {
-	return post(`/sandbox/api/sessions/${encodeURIComponent(id)}/approve`, {});
+	module?: string,
+): Promise<{
+	readonly session: SandboxSession;
+	readonly status: string;
+	readonly module: string;
+}> {
+	return post(`/sandbox/api/sessions/${encodeURIComponent(id)}/approve`, {
+		...(module ? { module } : {}),
+	});
+}
+
+export function requestSpecChanges(
+	id: string,
+	module: string,
+	comment: string,
+): Promise<{
+	readonly session: SandboxSession;
+	readonly handoff: HandoffPlan;
+}> {
+	return post(`/sandbox/api/sessions/${encodeURIComponent(id)}/spec/changes`, {
+		...(module ? { module } : {}),
+		comment,
+	});
+}
+
+export function loadModuleSpec(
+	id: string,
+	module: string,
+): Promise<{
+	readonly module: string;
+	readonly moduleId: string;
+	readonly path: string;
+	readonly text: string;
+}> {
+	return request(
+		`/sandbox/api/sessions/${encodeURIComponent(id)}/spec?module=${encodeURIComponent(module)}`,
+		{ headers: { accept: 'application/json' } },
+	);
+}
+
+export function saveModuleSpec(
+	id: string,
+	module: string,
+	text: string,
+): Promise<SessionView> {
+	return post(`/sandbox/api/sessions/${encodeURIComponent(id)}/spec`, {
+		...(module ? { module } : {}),
+		text,
+	});
 }
 
 export function archiveSandboxSession(
@@ -240,6 +382,18 @@ export function restoreSandboxSession(
 	id: string,
 ): Promise<{ readonly session: SandboxSession }> {
 	return post(`/sandbox/api/sessions/${encodeURIComponent(id)}/restore`, {});
+}
+
+/* Rolls the session workspace back to an earlier checkpoint. Returns the
+   refreshed session view, so the caller can reload the transcript and preview. */
+export function restoreCheckpoint(
+	id: string,
+	sequence: number,
+): Promise<SessionView> {
+	return post(
+		`/sandbox/api/sessions/${encodeURIComponent(id)}/checkpoints/restore`,
+		{ sequence },
+	);
 }
 
 export function deleteSandboxSession(
@@ -325,6 +479,8 @@ export interface EjectStep {
 export interface EjectSummary {
 	readonly target: EjectTargetId;
 	readonly moduleId: string;
+	/* Every module the delivery applied, primary first. */
+	readonly modules: readonly string[];
 	readonly targetPath: string;
 	readonly files: number;
 	readonly removed: number;
@@ -383,6 +539,7 @@ async function readEvents(
 }
 
 const STEP_LABELS: Readonly<Record<string, string>> = {
+	fork: 'Prepare the GitHub fork',
 	fetch: 'Fetch the base branch',
 	worktree: 'Prepare a clean worktree',
 	branch: 'Create the session branch',
@@ -546,6 +703,9 @@ export function streamTurn(
 	input: {
 		readonly message: string;
 		readonly role: string;
+		/* The draft module directory the turn works in; absent lets the sandbox
+		   decide from the last handoff. */
+		readonly module?: string;
 		readonly driver: string;
 	},
 	handlers: TurnHandlers,

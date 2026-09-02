@@ -15,6 +15,16 @@ export interface PreviewSelection {
 	readonly text: string;
 }
 
+/* An attachment upload the composer is still waiting on, kept beside the
+   session's committed attachments so its chip shows a pending or error state. */
+export interface PendingAttachment {
+	readonly key: string;
+	readonly name: string;
+	readonly kind: 'image' | 'file';
+	readonly status: 'uploading' | 'error';
+	readonly error?: string;
+}
+
 export function createSandboxClientState() {
 	const store = createStore({
 		state: cell<SandboxState | null>(null),
@@ -29,12 +39,19 @@ export function createSandboxClientState() {
 		ejecting: false,
 		ejectBuild: false,
 		menuOpen: false,
+		githubSettingsOpen: false,
 		connecting: false,
 		activeSessionId: '',
 		role: 'auto',
+		/* Which module the panes show; empty means every module of the session. */
+		activeModule: '',
+		/* Which module the next turn targets; empty means the planner decides. */
+		turnModule: '',
 		driver: '',
 		message: '',
-		workbench: cell<'none' | 'preview' | 'diff'>('none'),
+		workbench: cell<'none' | 'preview' | 'diff' | 'spec'>('none'),
+		/* The module whose specification the workbench edits. */
+		specModule: '',
 		cardMode: cell<'preview' | 'code'>('preview'),
 		previewNonce: 0,
 		selecting: false,

@@ -1,4 +1,5 @@
 import { useMemo } from 'octane';
+import { t } from '@coreloom/client';
 import { Button, SettingRow } from '@coreloom/ui';
 import { cell, createStore, useValue } from 'segment-state';
 import type { LocaleSetting } from './api.ts';
@@ -26,21 +27,23 @@ export function PreferencesCard(props: PreferencesCardProps) @{
 	<section class="ui-card">
 		<div class="ui-card__head">
 			<span class="ui-card__title">
-				Preferences
-				<small>Defaults offered to members of this workspace</small>
+				{t('auth.settings.preferences.title')}
+				<small>{t('auth.settings.preferences.subtitle')}</small>
 			</span>
 		</div>
 		<SettingRow
-			label="Default locale"
-			description={'Language offered to new members of this workspace.' +
+			label={t('auth.settings.locale.label')}
+			description={t('auth.settings.locale.description') +
 				(props.locale.hasValue
-					? ' Default: ' + props.locale.defaultValue + '.'
+					? ' ' + t('auth.settings.locale.default', {
+							locale: props.locale.defaultValue,
+						})
 					: '')}
 			status={props.result}
 		>
 			<select
 				class="ui-select"
-				aria-label="Default locale"
+				aria-label={t('auth.settings.locale.label')}
 				value={value}
 				disabled={!props.canManage || props.busy}
 				onInput={(event) => setValue(
@@ -56,9 +59,7 @@ export function PreferencesCard(props: PreferencesCardProps) @{
 				variant="primary"
 				disabled={!props.canManage || props.busy || !dirty}
 				onClick={() => props.onSave(value)}
-			>
-				Save
-			</Button>
+			>{t('auth.common.save')}</Button>
 		</SettingRow>
 	</section>
 }

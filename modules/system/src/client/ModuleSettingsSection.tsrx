@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from 'octane';
 import type { ModuleSettingValue } from '@coreloom/kernel';
+import { t } from '@coreloom/client';
 import { cell, createStore, useValue } from 'segment-state';
 import { ApiError } from './api.ts';
 import { ModuleSettingRow } from './ModuleSettingRow.tsrx';
@@ -63,7 +64,7 @@ export function ModuleSettingsSection(props: ModuleSettingsSectionProps) @{
 			setError(
 				loadError instanceof Error
 					? loadError.message
-					: 'Could not load settings.',
+					: t('system.settings.errorLoad'),
 			);
 			setStatus(denied ? 'denied' : 'error');
 		}
@@ -95,7 +96,9 @@ export function ModuleSettingsSection(props: ModuleSettingsSectionProps) @{
 					client.state.results,
 					new Map(results).set(key, {
 						ok: true,
-						message: value === null ? 'Reset to default.' : 'Saved.',
+						message: value === null
+							? t('system.settings.resetDone')
+							: t('system.settings.saved'),
 					}),
 				);
 				transaction.set(client.state.busyKey, null);
@@ -108,7 +111,7 @@ export function ModuleSettingsSection(props: ModuleSettingsSectionProps) @{
 						ok: false,
 						message: saveError instanceof Error
 							? saveError.message
-							: 'Could not save the setting.',
+							: t('system.settings.errorSave'),
 					}),
 				);
 				transaction.set(client.state.busyKey, null);
@@ -118,25 +121,21 @@ export function ModuleSettingsSection(props: ModuleSettingsSectionProps) @{
 
 	<div class="ui-form__section">
 		<div class="ui-form__section-head">
-			<b>Settings</b>
-			<small>Declared by this module; a change applies at the next read.</small>
+			<b>{t('system.settings.title')}</b>
+			<small>{t('system.settings.description')}</small>
 		</div>
 		@if (status === 'denied') {
-			<span class="ui-help">
-				Reading settings needs the system.settings.read scope.
-			</span>
+			<span class="ui-help">{t('system.settings.deniedRead')}</span>
 		} @else if (status === 'error') {
 			<span class="ui-help ui-help--error">{error}</span>
 		} @else if (status === 'loading') {
-			<span class="ui-help">Loading settings…</span>
+			<span class="ui-help">{t('system.settings.loading')}</span>
 		} @else if (settings.length === 0) {
-			<span class="ui-help">This module declares no settings.</span>
+			<span class="ui-help">{t('system.settings.empty')}</span>
 		} @else {
 			<>
 				@if (!props.canManage) {
-					<span class="ui-help">
-						Changing settings needs the system.settings.manage scope.
-					</span>
+					<span class="ui-help">{t('system.settings.deniedManage')}</span>
 				}
 				<div>
 					@for (const setting of settings; key setting.key) {

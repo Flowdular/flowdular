@@ -12,7 +12,8 @@ import {
 	readFileSync,
 	writeFileSync,
 } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname } from 'node:path';
+import { coreloomLocalDataPath } from '@coreloom/kernel/legacy-local-state';
 
 const GRANT_ISSUER = 'coreloom-control-plane';
 const GRANT_AUDIENCE = 'agent-provider-broker';
@@ -72,7 +73,7 @@ function grantKey(value: string): Buffer {
 	if (key.byteLength !== 32) {
 		key.fill(0);
 		throw new Error(
-			'OERP_AGENT_RUN_GRANT_KEY must be a base64-encoded 32-byte key.',
+			'CL_AGENT_RUN_GRANT_KEY must be a base64-encoded 32-byte key.',
 		);
 	}
 	return key;
@@ -283,17 +284,20 @@ export function runGrantAuthorityFromEnvironment(
 	workspaceRoot = process.cwd(),
 	ttlMs = 30_000,
 ): AgentRunGrantAuthority {
-	const configured = environment.OERP_AGENT_RUN_GRANT_KEY;
+	const configured = environment.CL_AGENT_RUN_GRANT_KEY;
 	if (configured)
 		return new AgentRunGrantAuthority(grantKey(configured), ttlMs);
 	if (environment.NODE_ENV === 'production') {
 		throw new Error(
-			'OERP_AGENT_RUN_GRANT_KEY is required in production before agent runs can execute.',
+			'CL_AGENT_RUN_GRANT_KEY is required in production before agent runs can execute.',
 		);
+	}
+	if (environment.NODE_ENV === 'test') {
+		return new AgentRunGrantAuthority(Buffer.alloc(32, 0x47), ttlMs);
 	}
 	return new AgentRunGrantAuthority(
 		readOrCreateDevelopmentKey(
-			resolve(workspaceRoot, '.octane-erp/agent-run-grant.key'),
+			coreloomLocalDataPath(workspaceRoot, 'agent-run-grant.key'),
 		),
 		ttlMs,
 	);

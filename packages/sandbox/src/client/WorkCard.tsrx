@@ -1,16 +1,18 @@
 import { useEffect } from 'octane';
 import { Button, Icon, Tag } from '@coreloom/ui';
-import type { FileDiff } from '../server/diff.ts';
 import type { SandboxSession } from '../server/sessions.ts';
-import { DiffPane } from './DiffPane.tsrx';
+import { DiffPane, type ModuleDiff } from './DiffPane.tsrx';
+import { useTranslation } from './i18n.ts';
 
 export type WorkCardMode = 'preview' | 'code';
 
 export interface WorkCardProps {
 	readonly session: SandboxSession;
-	readonly diffs: readonly FileDiff[];
+	readonly diffs: readonly ModuleDiff[];
 	readonly mode: WorkCardMode;
 	readonly nonce: number;
+	/* The module the card shows; empty means every module of the session. */
+	readonly activeModule: string;
 	readonly previewData: 'fixtures' | 'bridge';
 	readonly onMode: (mode: WorkCardMode) => void;
 	readonly onOpen: () => void;
@@ -38,7 +40,14 @@ function fitPreview(): void {
 }
 
 export function WorkCard(props: WorkCardProps) @{
-	const source = '/preview/' + props.session.id + '?n=' + props.nonce;
+	const { t } = useTranslation();
+	const source =
+		'/preview/' + props.session.id + '?n=' + props.nonce +
+		(props.activeModule ? '&module=' + props.activeModule : '');
+	const shown =
+		props.activeModule
+			? props.diffs.filter((diff) => diff.module === props.activeModule)
+			: props.diffs;
 
 	useEffect(() => {
 		fitPreview();
@@ -54,21 +63,27 @@ export function WorkCard(props: WorkCardProps) @{
 				size="sm"
 				variant={props.mode === 'preview' ? 'primary' : 'ghost'}
 				onClick={() => props.onMode('preview')}
-			>
-				Preview
-			</Button>
+			>{t('sandbox.work.preview')}</Button>
 			<Button
 				size="sm"
 				variant={props.mode === 'code' ? 'primary' : 'ghost'}
 				onClick={() => props.onMode('code')}
-			>
-				{'Code (' + props.diffs.length + ')'}
-			</Button>
-			<span class="ui-mono">{props.session.moduleId}</span>
+			>{t('sandbox.work.code', { count: shown.length })}</Button>
+			<span class="ui-mono">
+				{props.activeModule
+					? 'modules/' + props.activeModule
+					: props.session.modules.length === 1
+						? props.session.moduleId
+						: t('sandbox.session.modules', {
+								count: props.session.modules.length,
+							})}
+			</span>
 			<span class="sandbox__spacer"></span>
 			@if (props.mode === 'preview') {
 				<Tag tone={props.previewData === 'bridge' ? 'info' : 'neutral'}>
-					{props.previewData === 'bridge' ? 'live data' : 'fixtures'}
+					{props.previewData === 'bridge'
+						? t('sandbox.work.liveData')
+						: t('sandbox.work.fixtures')}
 				</Tag>
 			}
 			<Button size="sm" variant="ghost" onClick={props.onReload}>
@@ -85,24 +100,28 @@ export function WorkCard(props: WorkCardProps) @{
 					<iframe
 						class="preview-frame"
 						src={source}
-						title="Module preview"
+						title={t('sandbox.work.previewTitle')}
 					></iframe>
 				</div>
 				<button
 					class="work-card__open"
 					type="button"
 					onClick={props.onOpen}
-					aria-label="Open the preview full screen"
+					aria-label={t('sandbox.work.openFull')}
 				>
 					<span class="work-card__hint">
 						<Icon name="external" size={14} />
-						Open full screen
+						{t('sandbox.work.open')}
 					</span>
 				</button>
 			</div>
 		} @else {
 			<div class="work-card__stage work-card__stage--code">
-				<DiffPane diffs={props.diffs} onAsk={props.onAskAbout} />
+				<DiffPane
+					diffs={props.diffs}
+					activeModule={props.activeModule}
+					onAsk={props.onAskAbout}
+				/>
 			</div>
 		}
 	</article>

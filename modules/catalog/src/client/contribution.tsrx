@@ -1,9 +1,16 @@
 import type { ModuleClientContribution } from '@coreloom/client';
 import { CATALOG_PERMISSIONS } from '../acl/permissions.ts';
+import translationsEn from '../../translations/en.json';
+import translationsPl from '../../translations/pl.json';
 import { CatalogDashboardWidget, CatalogView } from './CatalogView.tsrx';
+import {
+	catalogNavigationDescription,
+	catalogNavigationLabel,
+} from './navigation-copy.ts';
 
 export interface CatalogClientContributionOptions {
 	readonly csrfToken: string;
+	readonly scopes: readonly string[];
 }
 
 export function createCatalogClientContribution(
@@ -11,14 +18,22 @@ export function createCatalogClientContribution(
 ): ModuleClientContribution {
 	return {
 		moduleId: 'catalog.core',
+		translations: { en: translationsEn, pl: translationsPl },
 		navigation: [
 			{
 				id: 'catalog.navigation',
 				viewId: 'catalog',
 				group: 'Operations',
-				label: 'Catalog',
+				/* The shell registers this contribution's bundles after the factory
+   returns. Getters resolve copy only when the shell reads navigation,
+   after registration, and again when the active locale changes. */
+				get label() {
+					return catalogNavigationLabel();
+				},
 				glyph: 'catalog',
-				description: 'Products and services',
+				get description() {
+					return catalogNavigationDescription();
+				},
 				scope: CATALOG_PERMISSIONS.read,
 				order: 20,
 			},
@@ -26,7 +41,11 @@ export function createCatalogClientContribution(
 		views: [
 			{
 				id: 'catalog',
-				render: () => <CatalogView csrfToken={options.csrfToken} />,
+				render: () =>
+					<CatalogView
+						csrfToken={options.csrfToken}
+						canManage={options.scopes.includes(CATALOG_PERMISSIONS.manage)}
+					/>,
 			},
 		],
 		widgets: [

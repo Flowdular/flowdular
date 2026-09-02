@@ -1,15 +1,69 @@
-# Coreloom sandbox
+<div align="center">
 
-A chat with a live preview. The sandbox builds one module at a time in an
-isolated workspace, drives a coding agent inside it, runs the same gates the
-platform runs, and shows the result in the real application shell.
+<picture>
+	<source
+		media="(prefers-color-scheme: dark)"
+		srcset="https://raw.githubusercontent.com/moxxy-ai/coreloom/main/docs/assets/coreloom-logo-dark.svg"
+	/>
+	<img
+		src="https://raw.githubusercontent.com/moxxy-ai/coreloom/main/docs/assets/coreloom-logo.svg"
+		alt="Coreloom"
+		width="320"
+	/>
+</picture>
+
+### The Coreloom sandbox
+
+Chat a change, watch it build behind the gates, preview it in the real
+application, deliver it as code you own.
+
+![Node](https://img.shields.io/badge/Node-%E2%89%A5%2022.22.2-3A6BE0)
+![License](https://img.shields.io/badge/license-MIT-141B2E)
+![Built with OctaneJS](https://img.shields.io/badge/built%20with-OctaneJS-2557D6)
+![Status](https://img.shields.io/badge/status-preview-8290A8)
+
+</div>
+
+The sandbox is the workshop of [Coreloom](https://github.com/moxxy-ai/coreloom),
+the agentic foundation framework. It builds a change in an isolated workspace,
+drives the coding agent your team already uses inside it, runs the same gates
+the platform runs, and shows the result in the real application shell. A
+session carries as many modules as the work touches: one turn writes in one
+module, and the whole set is previewed and delivered together.
 
 ```bash
 npx @coreloom/sandbox            # from a Coreloom workspace
 npx @coreloom/sandbox --port 4320 --workspace /path/to/workspace
 ```
 
-The launcher finds the workspace by walking up to `coreloom.json`.
+The launcher finds the workspace by walking up to `coreloom.json`, then opens
+http://127.0.0.1:4320.
+
+## What it does
+
+- **Turns a brief into a module.** A planner names the modules and the first
+  specialist; business, UX, backend, frontend and agentic roles hand off inside
+  one session.
+- **Runs your coding agent.** Claude Code or Codex CLI on your machine, or a
+  key you bring yourself. The sandbox never ships a model of its own.
+- **Keeps the work isolated.** Every session gets its own pnpm workspace, its
+  own ephemeral databases, and a preview account that never touches your data.
+- **Gates every turn.** Spec schema, module schema, dependencies, typecheck,
+  tests and format run against the draft before anything can land.
+- **Delivers as code.** Eject into `modules/` and enable it, or open a pull
+  request with the gate evidence attached.
+
+## Requirements
+
+Node.js 22.22.2 or newer, pnpm 11, a Coreloom workspace (a directory with
+`coreloom.json`), and a running Coreloom application to connect to.
+
+## Documentation
+
+- [Coreloom repository](https://github.com/moxxy-ai/coreloom)
+- [Architecture blueprint](https://github.com/moxxy-ai/coreloom/blob/main/docs/architecture-blueprint.md)
+- [Module contract (AGENTS.md)](https://github.com/moxxy-ai/coreloom/blob/main/AGENTS.md)
+- [Design system](https://github.com/moxxy-ai/coreloom/blob/main/docs/design-system.md)
 
 ## Connecting
 
@@ -45,7 +99,7 @@ Every request to the sandbox API is checked before it does anything:
   browser sends it) and `Origin` must match the sandbox host, and the request
   must carry `x-coreloom-sandbox: 1`. A cross-site form post can do neither, so
   it is refused with 403 before any body is read.
-- The mode is the launcher's decision (`--mode`, `CORELOOM_SANDBOX_MODE`) and is
+- The mode is the launcher's decision (`--mode`, `CL_SANDBOX_MODE`) and is
   never accepted over HTTP. Changing the application address needs the token
   for that application in the same request, so a stored token is never replayed
   to another host.
@@ -117,12 +171,62 @@ A session owns a directory under `.coreloom/sandbox/sessions/<id>`:
 }
 ```
 
-`modules[0]` is the primary module and is repeated as `moduleId` and
-`moduleSuffix` for the current screen, which shows one module per session. A
-session may still carry several modules: every one is materialized in the
-workspace, diffed against its own base, gated, previewed (all server routes and
-all client contributions compose together) and delivered in one eject. Role
-`allowedPaths` apply relative to each draft module directory.
+`modules` is the session: every entry is materialized in the workspace, diffed
+against its own base, gated, previewed (all server routes and all client
+contributions compose together) and delivered in one eject. `modules[0]` is the
+primary module and is repeated as `moduleId` and `moduleSuffix`, which stay in
+sync with it; the primary never changes after creation, so everything keyed on
+it keeps working.
+
+### Modules of a session
+
+The planner names them from the brief. Rules first: every existing module the
+brief names by its whole dotted id (`parties.core`) or as `module parties` is a
+change to that module, in the order the brief names them, and a `<domain>.core`
+id the workspace does not have is a new module. A bare English word never
+selects a module, and a file name (`package.json`) is never read as one. The
+planner agent may name more than the rules found; it can never turn a known
+module into a new one, and it can never drop a module the brief named. The
+classification is the first system entry of the transcript.
+
+A session can gain a module afterwards:
+
+```
+POST /sandbox/api/sessions/:id/modules   { "moduleId": "catalog.core" }
+```
+
+It copies that workspace module into `workspace/modules/<directory>` and
+`base/modules/<directory>`, appends it to `modules`, regenerates the workspace
+manifests so the new draft is a project of the session's pnpm workspace (and no
+longer a `link:` override), re-runs the install when the new `package.json`
+changes the dependency signature, records a system entry, and answers with the
+refreshed session view. Refusals, each a stable error code: `404
+MODULE_NOT_FOUND` for a module this workspace does not have, `409
+MODULE_ALREADY_IN_SESSION`, `409 SESSION_RUNNING` while a turn is in flight,
+`409 SESSION_ARCHIVED`, and `409 SESSION_DELIVERED`. A checkpoint taken before
+the module joined has no snapshot of it, so a rollback to that point leaves the
+new module's files alone.
+
+### One turn, one module
+
+The specialist works in a single module per turn, while the session context
+lists all of them. The turn body takes an optional `module` (the draft module
+directory):
+
+```
+POST /sandbox/api/sessions/:id/turn   { "message": "...", "module": "catalog" }
+```
+
+Without it, the module the last handoff named decides, and otherwise the
+primary. A `module` the session does not carry is refused with
+`MODULE_NOT_IN_SESSION`. The active module is what the instruction calls the
+target module, its directory is what the role's `allowedPaths` resolve against
+(so a turn may write in that module only), and the state routing (specification,
+manifest, server, screen) reads that module. The instruction also lists every
+module of the session and says which one this turn owns. Each handoff carries
+the module it belongs to: a failed gate hands the fix back in the module the
+gate ran in, and an automatically continued turn stays there. Transcript entries
+carry their module, so the conversation says where each turn worked.
 
 ### Dependencies
 
@@ -152,8 +256,8 @@ settings right away. Files the business manager already wrote under the module
 ### Lifecycle
 
 A session can be archived, restored, and deleted from the session list menu,
-or from the platform CLI (`oerp sandbox session-archive`,
-`oerp sandbox session-delete`, dry run by default). Archived sessions are
+or from the platform CLI (`coreloom sandbox session-archive`,
+`coreloom sandbox session-delete`, dry run by default). Archived sessions are
 hidden until "Show archived" and refuse new turns until restored. Deleting
 removes the workspace, the base copy and the preview data; the record and the
 transcript stay as a tombstone unless `keepTranscript: false` is passed. Both
@@ -161,6 +265,90 @@ actions refuse a session with a running turn unless asked to stop it
 (`stop: true`), and both are recorded on the platform as
 `sandbox.session.archived`, `sandbox.session.restored`,
 `sandbox.session.deleted`.
+
+### Attachments
+
+An operator can paste a screenshot or attach files (concepts, mockups, specs)
+to a turn to show what they want changed. Attachments belong to the session:
+
+- The bytes are stored under `.coreloom/sandbox/sessions/<id>/attachments/<attachmentId>-<safeName>`
+  and copied into the session workspace at `workspace/reference/attachments/<safeName>`,
+  so the coding agent, which may only read inside the workspace, opens them by
+  name with its normal file tools.
+- `attachmentId` is a UUID. `safeName` is the original filename reduced to
+  `[A-Za-z0-9._-]` with no path segments, no `..` and no leading dot, capped at
+  128 characters and made unique within the session.
+- Limits: at most 10 per session, 5 MB per file, and only these extensions,
+  verified by extension plus a magic-byte sniff for the image and pdf/svg
+  formats: `png`, `jpg`, `jpeg`, `gif`, `webp`, `md`, `txt`, `json`, `csv`,
+  `pdf`, `svg`. Anything else is refused with a stable error code.
+- The record carries them as `attachments: [{ id, name, kind: 'image' | 'file',
+size, addedAt }]`, backfilled to `[]` for older sessions.
+
+The endpoints, each behind the same `authorize()`, same-origin and
+`x-coreloom-sandbox` boundary as every other mutation, and each validating the
+session id and attachment id before building a path:
+
+- `POST /sandbox/api/sessions/:id/attachments` with `{ name, contentBase64 }`
+  returns the created attachment metadata.
+- `POST /sandbox/api/sessions/:id/attachments/:attachmentId/delete` removes one.
+- `GET /sandbox/api/sessions/:id/attachments/:attachmentId` serves the bytes
+  with the right content type, `Content-Disposition: inline` and
+  `Cache-Control: private, no-store`, for the composer thumbnail.
+
+When a turn runs and the session has attachments, the instruction the driver
+receives is prefixed with a short note naming them and their kinds and pointing
+at `reference/attachments/`; the operator's own message follows it. The user
+entry in the transcript records which attachments were included. Both composers
+support paste and an attach button and show each file as a chip with a remove
+control. The new-session screen holds the files until the session exists: it
+creates the session, uploads them to it, and only then starts the first turn, so
+that turn's prompt already names them. It refuses a file the sandbox would
+refuse (wrong extension, empty, over 5 MB, more than 10) before uploading, and a
+failed upload keeps the created session and stops instead of starting a turn
+that cannot see the file.
+
+### Checkpoints
+
+Every turn that changes files leaves a restore point, so an operator can roll a
+session's workspace back to an earlier state when a coding agent goes wrong
+without losing the transcript.
+
+- A snapshot of each draft module tree is copied to
+  `.coreloom/sandbox/sessions/<id>/checkpoints/<sequence>/modules/<directory>`,
+  excluding `node_modules`; `base/`, `reference/` and attachments are never
+  snapshotted. One is taken at session creation as the pristine start
+  (`sequence` 0), and one after every turn that produced a diff, keyed by that
+  turn's handoff chat entry so the transcript line and its restore point share
+  one sequence.
+- The record carries them as `checkpoints: [{ sequence, at, label, role }]`,
+  oldest first, backfilled to `[]` for older sessions. `label` is a short human
+  line (the role that produced it, `the starting point` for the initial one).
+- Bounded to the last 24: when a new one exceeds the cap the oldest is pruned,
+  directory and all, except the start, which is never dropped.
+
+Restore replaces the draft files, keeps the transcript, and appends a marker:
+
+- `POST /sandbox/api/sessions/:id/checkpoints/restore` with `{ sequence }`,
+  behind the same `authorize()`, same-origin and `x-coreloom-sandbox` boundary
+  as every other mutation, validating the session id first. The path is distinct
+  from `/restore`, which un-archives a session.
+- It replaces `workspace/modules/<directory>` with the snapshot (the current
+  contents step aside, `node_modules` stays so the install survives), invalidates
+  the diff cache, appends a `system` entry (`Restored the workspace to the state
+after <label> (turn <sequence>).`), sets the state back to `editing`, and
+  returns the refreshed session view.
+- Refusals, each a stable error code: `400 INVALID_SESSION_ID` for a hostile id,
+  `400 INVALID_INPUT` for an absent or non-integer sequence,
+  `400 CHECKPOINT_NOT_FOUND` for a sequence the session has no snapshot for,
+  `409 SESSION_RUNNING` while a turn is in flight, `409 SESSION_ARCHIVED` for an
+  archived session, and `409 SESSION_DELIVERED` once the session was ejected
+  (start a new session to change the module again).
+
+Each agent turn and handoff block that has a matching checkpoint shows a quiet
+`Restore to here` affordance with an inline confirm; it is disabled while the
+session runs. Restoring reloads the session so the transcript picks up the
+marker and the preview refreshes.
 
 ## Roles and routing
 
@@ -170,22 +358,20 @@ agentic engineer. They are workspace configuration in `.ai/agents/sandbox` and
 can be edited per workspace.
 
 Nobody picks an agent to start. A session begins with one brief, and the
-planner classifies it: new module or change, which modules, what to call it,
-and which specialist takes the first turn. Rules answer first: a request that
-names an existing module by its whole dotted id (`auth.core`) or as
-"module auth" is a change to that module, and a bare English word such as
-"users" never selects one. The planner agent decides what the rules cannot; it
-may name several modules, and it can never turn a known module into a new one.
-The classification is the first system entry of the transcript, so a wrong
-guess is corrected in the first message.
+planner classifies it: new module or change, which modules, what to call them,
+and which specialist takes the first turn (see "Modules of a session" for the
+rules). The classification is the first system entry of the transcript, so a
+wrong guess is corrected in the first message.
 
-Later turns route the same way. The state of the module decides who works next
+Later turns route the same way, against the module the turn targets. Its state
+decides who works next
 (no specification means the business manager, no server means the backend
 engineer, no screen means the frontend engineer), and the words of the request
 only choose between specialists that are already valid for that state. An
 answer to a question goes back to the specialist who asked it. Every routed
-turn says who took it and why, and the role picker in the composer overrides
-it for one turn.
+turn says who took it and why; the role picker in the composer overrides it for
+one turn, and the module picker beside it overrides which module that turn
+works in.
 
 The role documents in `.ai/agents/sandbox` are the source of truth; the
 bundled defaults in `@coreloom/coding-agent` are regenerated from them with
@@ -210,15 +396,19 @@ next step:
   is the default, the server starts the next turn by itself on the same stream,
   up to four chained turns per operator message (`chainDepth` in the record).
   With it off, the transcript shows a `Continue with <role>` button instead.
-- **approval**: a new module whose specification is still a draft stops here.
-  The operator approves it in one click, which moves the `status` line to
-  `approved` and starts the implementer. Nothing else in the document is
-  touched.
+- **approval**: every new or edited module stops before implementation until
+  the operator approves its current specification. The approval route moves
+  the `status` line to `approved` and records the SHA-256 hash of that exact
+  text in the session. An `approved` line written by an agent is not authority.
+  Editing the specification or requesting changes makes the recorded hash
+  stale and opens the approval gate again. In a multi-module session each
+  affected module needs its own current approved hash.
 - **question**: the turn changed nothing and needs an answer, whatever the
   specification's status. The answer routes back to the specialist who asked.
 - **review**: the specialist reports the request satisfied. Run the gates and
-  eject when the change looks right. In a change session a business manager
-  who updated the specification hands on to the implementer instead.
+  eject when the change looks right. A business manager who updated a
+  specification stops at approval; only the approved handoff starts its
+  implementer.
 - **blocked**: the coding agent errored. Nothing continues on its own.
 
 A failed gate is its own handoff: the specialist that caused it fixes it before
@@ -245,10 +435,13 @@ conversation replayed.
 
 ## Eject
 
-Eject is a delivery with its own screen. The plan names every file that lands,
-what gets overwritten, what the session deleted and will be removed, the gates
-that run first, any package a module adds that the workspace does not have yet,
-and whether the connected application has to restart. Confirming runs it step
+Eject is a delivery with its own screen. It carries every module of the session
+in one delivery, and the plan lists them: per module the files that land, how
+many are overwritten, how many the session deleted and will be removed, the
+packages it adds that the workspace does not have yet, and whether it has to be
+enabled in the platform (new modules only). One confirmation applies them all.
+The plan also names the gates that run first and whether the connected
+application has to restart. Confirming runs it step
 by step and reports each step as it happens:
 
 1. every gate, one by one (module gates once per draft module),
@@ -286,9 +479,12 @@ The same change, committed on a branch and pushed, so review happens in the
 repository and nothing in this working tree moves. One pull request carries
 every module of the session, which makes it the unit for a change that spans
 modules. Available when the workspace is a git work tree with at least one
-commit and the configured remote exists; a pull request is opened when `gh` is
-signed in (or a provider token is sealed in the sandbox configuration),
-otherwise the branch is pushed and the compare link shown. The steps:
+commit, the configured remote exists, and the base branch can be read. A pull
+request is opened when `gh` is signed in or a provider token is sealed in the
+sandbox configuration. Without usable GitHub authentication the sandbox still
+pushes the branch and returns a compare link. Set
+`sandbox.delivery.git.provider` to `none` when that is always the intended
+result. The steps:
 
 1. every gate, as above,
 2. `git fetch <remote> <base>`, a detached worktree of `<remote>/<base>` under
@@ -299,30 +495,61 @@ otherwise the branch is pushed and the compare link shown. The steps:
 5. `module enable` for each new module, with the worktree as its root,
 6. a platform typecheck in the worktree,
 7. the guardrail check: `git status` in the worktree may list only
-   `modules/<dir>/**` of the session's modules, `coreloom.json`,
-   `platform/package.json`, `platform/src/generated/**` and `pnpm-lock.yaml`;
+   `modules/<dir>/**` of the session's modules and `pnpm-lock.yaml`. A delivery
+   with a new module may also change `coreloom.json`, `platform/package.json`
+   and `platform/src/generated/**`;
    the count stays within `sandbox.delivery.maxChangedFiles` (else the
    `.ai/policies/task-budgets.yaml` figure for the session kind); new packages
    stay within `maxNewDependencies`. A violation names the paths and stops
    before anything is committed,
-8. `git add` of the allowed paths, a commit `sandbox: add|update <module id>`
-   with the session id and the gate summary, `git push -u --force-with-lease`,
+8. a check that an existing local or remote session branch belongs to this
+   session, `git add` of the allowed paths, a commit
+   `sandbox: add|update <module id>` with the session id and the gate summary,
+   `git push -u --force-with-lease`,
 9. `gh pr create` with a plain body: what changed, the gate table, the file
-   list (added, modified, removed), the post-merge
-   `pnpm oerp auth sync-scopes --module <id> --apply`, the session id, and a
+   list (added, modified, removed), the specification versions and field diff,
+   detected deployment risks, the post-merge
+   `pnpm coreloom auth sync-scopes --module <id> --apply`, the session id, and a
    reviewer note when `.ai/policies/path-ownership.yaml` says a cross-owner
    change needs one. A second delivery of the same session updates the branch
    and keeps the open pull request.
 
 The worktree is removed whatever the outcome; the branch is kept on success
-and deleted on failure. `sync-scopes` is not run: it is a runtime action on
-the deployment's database, so it is the post-merge step in the body. git and
-gh run with an environment stripped of `*_TOKEN`, `*_SECRET`, `*_PASSWORD`
-and `OERP_*_KEY` variables; `GH_*` and `GIT_*` stay.
+and deleted on failure. A newly pushed remote branch is also removed when PR
+creation fails, while an earlier branch for the same session is preserved.
+`sync-scopes` is not run: it is a runtime action on
+the deployment's database, so it is the post-merge step in the body. Git,
+GitHub CLI and pnpm receive only an allowlisted process environment. The raw
+sealed token is passed only to GitHub CLI as `GH_TOKEN`; Git receives only a
+process-local authorization header. Command output and pull request summary
+text are redacted before they can reach the browser or GitHub.
 
 The done screen shows the pull request (or compare) link, and
 `.coreloom/sandbox/sessions/<id>/delivery.json` keeps the branch and the URL
 for the session.
+
+Open the workspace menu and choose **GitHub integration** to configure delivery
+for this sandbox operator. The form controls the source remote, repository,
+base branch, session branch prefix, reviewers, and one of three push modes:
+
+- `auto` uses direct delivery only after GitHub confirms push permission and
+  refuses otherwise,
+- `direct` pushes the session branch to the configured repository,
+- `fork` uses the configured fork owner or the account returned by GitHub, and
+  creates the fork only after the operator confirms the eject.
+
+The sandbox never creates a fork in `auto` mode. Selecting `fork` is the
+operator's explicit consent. The repository must ignore `.coreloom/`; delivery
+is refused otherwise so the temporary worktree cannot dirty the active
+checkout.
+
+The optional token is encrypted in `.coreloom/sandbox/config.json` with the
+local sandbox key. The browser receives only its eight-character fingerprint.
+Git receives it through process-local configuration, never in a command
+argument or remote URL. The repository settings below remain authoritative
+until the operator checks **Override the repository delivery settings on this
+machine**. That local override never modifies `coreloom.json` and can be turned
+off again from the same form.
 
 Configuration lives in `coreloom.json`, all of it optional (defaults shown):
 
@@ -348,24 +575,30 @@ Configuration lives in `coreloom.json`, all of it optional (defaults shown):
 `provider: "none"` pushes the branch without opening a pull request.
 `maxChangedFiles` is unset by default, which means the task budget applies.
 The block is validated by `packages/contracts/schemas/project.schema.json`
-(`pnpm oerp doctor`) and read at request time.
+(`pnpm coreloom doctor`) and read at request time.
 
 ## Gates
 
 Gates are a fixed list run by the sandbox: `spec-schema` and `module-schema`
 once per session workspace, `dependencies`, `typecheck`, `tests` and `format`
 once per draft module, with the module's own binaries from the session install.
-The `dependencies` gate runs after every turn that changed files, whatever the
-role lists. A failing gate is written back into the conversation, with its
+After a turn the module gates run for the modules that hold changes, not for
+every module of the session, and every result names the module it ran in. The
+`dependencies` gate runs after every turn that changed files, whatever the role
+lists. A failing gate is written back into the conversation, with its
 command and output, so the next turn can fix it. An agent whose driver has a
 shell may run the same commands itself; the sandbox still runs them after the
 turn.
 
 ## Preview
 
-The preview renders the draft module inside the real application shell, so a
-screen looks exactly as it will in production, including the navigation entry
-and dashboard widgets it contributes.
+The preview renders the session's draft modules inside the real application
+shell, so a screen looks exactly as it will in production, including the
+navigation entry and dashboard widgets each module contributes. Every draft with
+a client entry composes into the same shell, so the navigation shows all of
+them; the module selector in the preview head opens the preview on one module's
+first screen (`/preview/<session>?module=<directory>`), and the same selection
+filters the diff.
 
 The preview API is composed, not stubbed. A request from a preview screen is
 answered in this order:

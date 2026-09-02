@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from 'octane';
+import { t } from '@coreloom/client';
 import { Alert, Button, EmptyState, FormField, PageHeader } from '@coreloom/ui';
 import { useValue } from 'segment-state';
 import type { AgentRunDetail } from '../domain/types.ts';
@@ -56,7 +57,7 @@ export function AgentPlaygroundView(props: AgentPlaygroundViewProps) @{
 			(loadError) => setError(
 				loadError instanceof Error
 					? loadError.message
-					: 'Could not load agents.',
+					: t('agents.definitions.error.load'),
 			),
 		).finally(() => setStatus('idle'));
 		void refreshWorker();
@@ -66,7 +67,11 @@ export function AgentPlaygroundView(props: AgentPlaygroundViewProps) @{
 
 	useEffect(() => {
 		if (!selectedRun || terminal(selectedRun.status)) return;
-		return observeAgentRun(selectedRun.id, setSelectedRun, selectedRun.events);
+		return observeAgentRun(
+			selectedRun.id,
+			setSelectedRun,
+			selectedRun.timeline,
+		);
 	}, [selectedRun?.id, selectedRun?.status]);
 
 	const submit = async (event: SubmitEvent) => {
@@ -91,13 +96,13 @@ export function AgentPlaygroundView(props: AgentPlaygroundViewProps) @{
 				key,
 			);
 			setSubmissionKey('');
-			setSelectedRun({ ...queued, events: [] });
+			setSelectedRun({ ...queued, timeline: [] });
 			void refreshWorker();
 		} catch (runError) {
 			setError(
 				runError instanceof Error
 					? runError.message
-					: 'Could not queue the run.',
+					: t('agents.playground.error.queue'),
 			);
 		} finally {
 			setStatus('idle');
@@ -114,7 +119,7 @@ export function AgentPlaygroundView(props: AgentPlaygroundViewProps) @{
 			setError(
 				cancelError instanceof Error
 					? cancelError.message
-					: 'Could not cancel the run.',
+					: t('agents.runs.error.cancel'),
 			);
 		} finally {
 			setStatus('idle');
@@ -123,16 +128,16 @@ export function AgentPlaygroundView(props: AgentPlaygroundViewProps) @{
 
 	<div class="ui-view">
 		<PageHeader
-			eyebrow="Isolated test surface"
-			title="Agent playground"
-			description="Queue real harness runs while keeping execution detached from this browser session."
+			eyebrow={t('agents.playground.eyebrow')}
+			title={t('agents.playground.title')}
+			description={t('agents.playground.description')}
 		/>
 		<div class="ui-two-col ui-two-col--wide-aside">
 			<section class="ui-card">
 				<div class="ui-card__head">
 					<span class="ui-card__title">
-						New playground run
-						<small>Returns after the durable enqueue commit</small>
+						{t('agents.playground.form.title')}
+						<small>{t('agents.playground.form.subtitle')}</small>
 					</span>
 					<span
 						class={[
@@ -140,22 +145,27 @@ export function AgentPlaygroundView(props: AgentPlaygroundViewProps) @{
 							worker?.online !== true && 'playground-live--offline',
 						]}
 						title={worker
-							? worker.inFlight + ' of ' + worker.concurrency + ' slots busy'
-							: 'Worker status unavailable'}
+							? t('agents.playground.worker.slots', {
+									inFlight: worker.inFlight,
+									concurrency: worker.concurrency,
+								})
+							: t('agents.playground.worker.unavailable')}
 					>
 						<i
 							class={['ui-dot', worker?.online !== true && 'ui-dot--muted']}
 							aria-hidden="true"
 						></i>
 						{worker === null
-							? 'worker status unknown'
+							? t('agents.playground.worker.unknown')
 							: worker.online
-								? 'worker online · ' + worker.inFlight + ' running'
-								: 'worker offline'}
+								? t('agents.playground.worker.online', {
+										inFlight: worker.inFlight,
+									})
+								: t('agents.playground.worker.offline')}
 					</span>
 				</div>
 				<form class="ui-form" onSubmit={submit}>
-					<FormField label="Active agent">
+					<FormField label={t('agents.playground.form.agent')}>
 						<select
 							class="ui-select"
 							value={selectedAgentId}
@@ -166,7 +176,9 @@ export function AgentPlaygroundView(props: AgentPlaygroundViewProps) @{
 							disabled={activeAgents.length === 0}
 						>
 							@if (activeAgents.length === 0) {
-								<option value="">Activate an agent first</option>
+								<option value="">{t(
+									'agents.playground.form.activateFirst',
+								)}</option>
 							}
 							@for (const agent of activeAgents; key agent.id) {
 								<option value={agent.id}>
@@ -175,7 +187,7 @@ export function AgentPlaygroundView(props: AgentPlaygroundViewProps) @{
 							}
 						</select>
 					</FormField>
-					<FormField label="Test input" required>
+					<FormField label={t('agents.playground.form.input')} required>
 						<textarea
 							class="ui-textarea"
 							rows={10}
@@ -184,7 +196,7 @@ export function AgentPlaygroundView(props: AgentPlaygroundViewProps) @{
 								setInput(event.currentTarget.value);
 								setSubmissionKey('');
 							}}
-							placeholder="Describe the outcome and include only the data needed for this run."
+							placeholder={t('agents.playground.form.inputPlaceholder')}
 							maxlength={100_000}
 							required
 						></textarea>
@@ -193,10 +205,7 @@ export function AgentPlaygroundView(props: AgentPlaygroundViewProps) @{
 						<Alert>{error}</Alert>
 					}
 					<div class="ui-form__foot">
-						<small>
-							You can close this page after queuing. Progress and output remain
-							in Agent runs.
-						</small>
+						<small>{t('agents.playground.form.note')}</small>
 						<div class="ui-form__actions">
 							<Button
 								variant="primary"
@@ -204,7 +213,9 @@ export function AgentPlaygroundView(props: AgentPlaygroundViewProps) @{
 								disabled={status === 'submitting' || !selectedAgentId ||
 									!input.trim()}
 							>
-								{status === 'submitting' ? 'Queuing…' : 'Queue run'}
+								{status === 'submitting'
+									? t('agents.playground.form.queuing')
+									: t('agents.playground.form.queue')}
 							</Button>
 						</div>
 					</div>
@@ -218,11 +229,10 @@ export function AgentPlaygroundView(props: AgentPlaygroundViewProps) @{
 				/>
 			} @else {
 				<aside class="ui-card">
-					<EmptyState icon="flask" title="Ready for a durable run">
-						The local simulation provider never calls a model or the network.
-						Add a provider connection under Providers when credentials are
-						ready.
-					</EmptyState>
+					<EmptyState
+						icon="flask"
+						title={t('agents.playground.empty.title')}
+					>{t('agents.playground.empty.hint')}</EmptyState>
 				</aside>
 			}
 		</div>

@@ -72,7 +72,7 @@ const GATE_DEFINITIONS: readonly GateDefinition[] = [
 				'--dir',
 				context.workspaceRoot,
 				'--silent',
-				'oerp',
+				'coreloom',
 				'spec',
 				'validate',
 				'--all',
@@ -93,7 +93,7 @@ const GATE_DEFINITIONS: readonly GateDefinition[] = [
 				'--dir',
 				context.workspaceRoot,
 				'--silent',
-				'oerp',
+				'coreloom',
 				'module',
 				'validate',
 				'--json',
@@ -323,6 +323,9 @@ export interface RunGatesInput {
 	readonly paths: SessionPaths;
 	readonly session: SandboxSession;
 	readonly gates: readonly GateId[];
+	/* The draft modules to gate; every module of the session by default. A turn
+	   passes the ones that changed, so an untouched module is not re-checked. */
+	readonly modules?: readonly SessionModule[];
 }
 
 /* Workspace gates run once; module gates run once per draft module, so a
@@ -331,12 +334,11 @@ export async function runGates(
 	input: RunGatesInput,
 ): Promise<readonly GateResult[]> {
 	const results: GateResult[] = [];
+	const modules = input.modules ?? input.session.modules;
 	for (const id of input.gates) {
 		const definition = GATE_DEFINITIONS.find((gate) => gate.id === id)!;
 		const targets =
-			definition.scope === 'workspace'
-				? input.session.modules.slice(0, 1)
-				: input.session.modules;
+			definition.scope === 'workspace' ? modules.slice(0, 1) : modules;
 		for (const module of targets) {
 			results.push(
 				await runGate(definition, {

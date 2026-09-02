@@ -17,5 +17,8 @@ export function createServerComposition(
 			context.workspaceRoot,
 		),
 	);
-	return { routes: createSandboxRoutes(context.auth, runtime) };
+	return {
+		routes: createSandboxRoutes(context.auth, runtime),
+		dispose: () => runtime.dispose(),
+	};
 }

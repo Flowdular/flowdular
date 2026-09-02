@@ -1,3 +1,4 @@
+export { catalogAgentTools } from '../agent/tools.ts';
 export { createCatalogRoutes } from '../api/endpoints.ts';
 export {
 	createCatalogRuntime,

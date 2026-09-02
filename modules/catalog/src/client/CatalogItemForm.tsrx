@@ -1,19 +1,36 @@
 import { useMemo } from 'octane';
 import { Alert, Button, FormField } from '@coreloom/ui';
-import { createStore, useValue } from 'segment-state';
+import { t } from '@coreloom/client';
+import { cell, createStore, useValue } from 'segment-state';
+import type { CatalogItem, CatalogItemKind } from '../domain/types.ts';
 
 export interface CatalogItemFormProps {
+	readonly item: CatalogItem | null;
 	readonly busy: boolean;
 	readonly error: string;
 	readonly onCancel: () => void;
+	readonly onArchive: (() => void) | undefined;
+	readonly onRestore: (() => void) | undefined;
+	readonly onDelete: (() => void) | undefined;
+	readonly onHistory: (() => void) | undefined;
 	readonly onSubmit: (event: SubmitEvent) => void;
 }
 
 export function CatalogItemForm(props: CatalogItemFormProps) @{
 	const formState = useMemo(
-		() => createStore({ unit: 'each', basePriceMinor: '0', currency: 'EUR' }),
+		() => createStore({
+			name: props.item?.name ?? '',
+			sku: props.item?.sku ?? '',
+			kind: cell<CatalogItemKind>(props.item?.kind ?? 'product'),
+			unit: props.item?.unit ?? 'each',
+			basePriceMinor: String(props.item?.basePriceMinor ?? 0),
+			currency: props.item?.currency ?? 'EUR',
+		}),
 		[],
 	);
+	const [name, setName] = useValue(formState.state.name);
+	const [sku, setSku] = useValue(formState.state.sku);
+	const [kind, setKind] = useValue(formState.state.kind);
 	const [unit, setUnit] = useValue(formState.state.unit);
 	const [basePriceMinor, setBasePriceMinor] = useValue(
 		formState.state.basePriceMinor,
@@ -24,33 +41,45 @@ export function CatalogItemForm(props: CatalogItemFormProps) @{
 		<div class="ui-drawer__body">
 			<div class="ui-form">
 				<div class="ui-form__row">
-					<FormField label="Name" required>
+					<FormField label={t('catalog.form.name')} required>
 						<input
 							class="ui-input"
 							name="name"
+							value={name}
+							onInput={(event) => setName(event.currentTarget.value)}
 							minlength={2}
 							maxlength={160}
 							autoFocus
 							required
 						/>
 					</FormField>
-					<FormField label="SKU" required>
+					<FormField label={t('catalog.form.sku')} required>
 						<input
 							class="ui-input ui-mono"
 							name="sku"
+							value={sku}
+							onInput={(event) => setSku(event.currentTarget.value)}
+							disabled={props.item !== null}
 							maxlength={64}
 							required
 						/>
 					</FormField>
 				</div>
 				<div class="ui-form__row">
-					<FormField label="Kind">
-						<select class="ui-select" name="kind">
-							<option value="product">Product</option>
-							<option value="service">Service</option>
+					<FormField label={t('catalog.form.kind')}>
+						<select
+							class="ui-select"
+							name="kind"
+							value={kind}
+							onInput={(event) => setKind(
+								event.currentTarget.value as CatalogItemKind,
+							)}
+						>
+							<option value="product">{t('catalog.kind.product')}</option>
+							<option value="service">{t('catalog.kind.service')}</option>
 						</select>
 					</FormField>
-					<FormField label="Unit" required>
+					<FormField label={t('catalog.form.unit')} required>
 						<input
 							class="ui-input"
 							name="unit"
@@ -63,8 +92,8 @@ export function CatalogItemForm(props: CatalogItemFormProps) @{
 				</div>
 				<div class="ui-form__row">
 					<FormField
-						label="Price, minor units"
-						help="1000 is 10.00 in the currency below."
+						label={t('catalog.form.price')}
+						help={t('catalog.form.priceHelp')}
 						required
 					>
 						<input
@@ -78,7 +107,7 @@ export function CatalogItemForm(props: CatalogItemFormProps) @{
 							required
 						/>
 					</FormField>
-					<FormField label="Currency" required>
+					<FormField label={t('catalog.form.currency')} required>
 						<input
 							class="ui-input ui-mono"
 							name="currency"
@@ -93,14 +122,67 @@ export function CatalogItemForm(props: CatalogItemFormProps) @{
 				@if (props.error) {
 					<Alert>{props.error}</Alert>
 				}
+				@if (props.item) {
+					<>
+						<div class="ui-form__section">
+							<div class="ui-form__section-head">
+								<b>{t('catalog.lifecycle.title')}</b>
+								<small>{t('catalog.lifecycle.description')}</small>
+							</div>
+							<div class="ui-form__actions">
+								@if (props.onHistory) {
+									<Button
+										type="button"
+										disabled={props.busy}
+										onClick={props.onHistory}
+									>{t('catalog.lifecycle.history')}</Button>
+								}
+								@if (props.onArchive) {
+									<Button
+										type="button"
+										disabled={props.busy}
+										onClick={props.onArchive}
+									>{t('catalog.lifecycle.archive')}</Button>
+								}
+								@if (props.onRestore) {
+									<Button
+										type="button"
+										disabled={props.busy}
+										onClick={props.onRestore}
+									>{t('catalog.lifecycle.restore')}</Button>
+								}
+							</div>
+						</div>
+						@if (props.onDelete) {
+							<div class="ui-form__section ui-form__section--danger">
+								<div class="ui-form__section-head">
+									<b>{t('catalog.delete.title')}</b>
+									<small>{t('catalog.delete.drawerDescription')}</small>
+								</div>
+								<div class="ui-form__actions">
+									<Button
+										type="button"
+										variant="danger"
+										disabled={props.busy}
+										onClick={props.onDelete}
+									>{t('catalog.lifecycle.delete')}</Button>
+								</div>
+							</div>
+						}
+					</>
+				}
 			</div>
 		</div>
 		<div class="ui-drawer__foot">
-			<small>The SKU is tenant-scoped and cannot change later.</small>
+			<small>{t(
+				props.item ? 'catalog.form.editNote' : 'catalog.form.note',
+			)}</small>
 			<div class="ui-form__actions">
-				<Button onClick={props.onCancel}>Cancel</Button>
+				<Button onClick={props.onCancel}>{t('catalog.form.cancel')}</Button>
 				<Button variant="primary" type="submit" disabled={props.busy}>
-					{props.busy ? 'Creating…' : 'Create item'}
+					{props.busy
+						? t(props.item ? 'catalog.form.saving' : 'catalog.form.submitting')
+						: t(props.item ? 'catalog.form.save' : 'catalog.form.submit')}
 				</Button>
 			</div>
 		</div>

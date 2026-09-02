@@ -1,5 +1,6 @@
 import { Alert, Button, FormField, Tag } from '@coreloom/ui';
 import type { SandboxState } from './api.ts';
+import { useTranslation } from './i18n.ts';
 
 export interface ConnectViewProps {
 	readonly state: SandboxState;
@@ -17,6 +18,7 @@ function formValue(form: FormData, key: string): string {
 }
 
 export function ConnectView(props: ConnectViewProps) @{
+	const { t } = useTranslation();
 	const submit = (event: SubmitEvent) => {
 		event.preventDefault();
 		const form = new FormData(event.currentTarget as HTMLFormElement);
@@ -30,38 +32,33 @@ export function ConnectView(props: ConnectViewProps) @{
 		<section class="connect__card">
 			<div class="connect__head">
 				<Tag tone="info" mono>{props.state.configuration.mode}</Tag>
-				<h1>Connect the sandbox</h1>
-				<p>
-					The sandbox works against a running Coreloom application. Issue an API
-					token there under Administration, API tokens, and paste it here. The
-					token is encrypted on this machine and never sent to the browser
-					again.
-				</p>
+				<h1>{t('sandbox.connect.title')}</h1>
+				<p>{t('sandbox.connect.description')}</p>
 			</div>
 			<form class="ui-form" onSubmit={submit}>
 				<FormField
-					label="Application address"
-					help="Local development server or a deployed instance."
+					label={t('sandbox.connect.address.label')}
+					help={t('sandbox.connect.address.help')}
 					required
 				>
 					<input
 						class="ui-input"
 						name="platformUrl"
 						defaultValue={props.state.configuration.platformUrl}
-						placeholder="https://erp.example.com"
+						placeholder={t('sandbox.connect.address.placeholder')}
 						required
 					/>
 				</FormField>
 				<FormField
-					label="API token"
-					help="Needs sandbox.access.use, and sandbox.preview.data for live data."
+					label={t('sandbox.connect.token.label')}
+					help={t('sandbox.connect.token.help')}
 					required
 				>
 					<input
 						class="ui-input ui-mono"
 						name="platformToken"
 						type="password"
-						placeholder="clat_…"
+						placeholder={t('sandbox.connect.token.placeholder')}
 						required
 					/>
 				</FormField>
@@ -72,12 +69,14 @@ export function ConnectView(props: ConnectViewProps) @{
 					<Alert>{props.error}</Alert>
 				}
 				<div class="ui-form__foot">
-					<span class="ui-help">
-						{'Workspace agents: ' + props.state.roles.length + ' roles'}
-					</span>
+					<span class="ui-help">{t('sandbox.connect.roles', {
+						count: props.state.roles.length,
+					})}</span>
 					<div class="ui-form__actions">
 						<Button variant="primary" type="submit" disabled={props.busy}>
-							{props.busy ? 'Connecting…' : 'Connect'}
+							{props.busy
+								? t('sandbox.connect.connecting')
+								: t('sandbox.connect.action')}
 						</Button>
 					</div>
 				</div>

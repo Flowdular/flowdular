@@ -128,7 +128,7 @@ describe('settings API', () => {
 			organizationSlug: 'example-operations',
 		});
 		owner = {
-			cookie: `oerp_session_dev=${issued.token}`,
+			cookie: `coreloom_session_dev=${issued.token}`,
 			csrfToken: issued.csrfToken,
 			accountId: issued.principal.accountId,
 			tenantId: issued.principal.tenantId,
@@ -154,7 +154,7 @@ describe('settings API', () => {
 			password: 'member password long',
 		});
 		member = {
-			cookie: `oerp_session_dev=${memberSession.token}`,
+			cookie: `coreloom_session_dev=${memberSession.token}`,
 			csrfToken: memberSession.csrfToken,
 			accountId: memberSession.principal.accountId,
 			tenantId: memberSession.principal.tenantId,
@@ -198,12 +198,23 @@ describe('settings API', () => {
 			auth.settings.find((setting) => setting.key === 'allowSignUp')?.value,
 		).toBe(true);
 		expect(
+			auth.settings.find((setting) => setting.key === 'allowSignUp'),
+		).toMatchObject({
+			label: 'Allow sign-up',
+			labelKey: 'auth.moduleSettings.allowSignUp.label',
+			descriptionKey: 'auth.moduleSettings.allowSignUp.description',
+		});
+		expect(
 			auth.settings.find((setting) => setting.key === 'defaultLocale')?.enum,
 		).toEqual(['en', 'pl']);
 		expect(
 			auth.settings.find((setting) => setting.key === 'emailConfirmation')
 				?.locked,
 		).toMatch(/mail transport/);
+		expect(
+			auth.settings.find((setting) => setting.key === 'emailConfirmation')
+				?.lockedKey,
+		).toBe('system.settings.mailTransportRequired');
 		expect(body.modules.some((module) => module.moduleId === 'demo.core')).toBe(
 			true,
 		);

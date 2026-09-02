@@ -1,5 +1,6 @@
 import { useMemo } from 'octane';
 import { Alert, Button, CheckGrid, FormField } from '@coreloom/ui';
+import { t } from '@coreloom/client';
 import type { CheckGroup, CheckOption } from '@coreloom/ui';
 import type { TenantRole } from '@coreloom/module-auth';
 import { cell, createStore, useValue } from 'segment-state';
@@ -58,44 +59,44 @@ export function RoleForm(props: RoleFormProps) @{
 		<div class="ui-drawer__body">
 			<div class="ui-form">
 				<FormField
-					label="Key"
-					help="Stable identifier used by assignments and the API; cannot change later."
+					label={t('users.roleForm.key')}
+					help={t('users.roleForm.keyHelp')}
 					required
 				>
 					<input
 						class="ui-input ui-mono"
 						name="key"
 						pattern="[a-z][a-z0-9-]{1,31}"
-						minLength={2}
-						maxLength={32}
+						minlength={2}
+						maxlength={32}
 						value={props.role?.key ?? ''}
 						disabled={editing}
 						autoFocus={!editing}
 						required
 					/>
 				</FormField>
-				<FormField label="Name" required>
+				<FormField label={t('users.roleForm.name')} required>
 					<input
 						class="ui-input"
 						name="name"
-						minLength={2}
-						maxLength={60}
+						minlength={2}
+						maxlength={60}
 						value={props.role?.name ?? ''}
 						autoFocus={editing}
 						required
 					/>
 				</FormField>
-				<FormField label="Description">
+				<FormField label={t('users.roleForm.description')}>
 					<input
 						class="ui-input"
 						name="description"
-						maxLength={240}
+						maxlength={240}
 						value={props.role?.description ?? ''}
 					/>
 				</FormField>
 				<div class="ui-field">
 					<span class="ui-label">
-						Scopes
+						{t('users.member.scopes')}
 						<em aria-hidden="true">{' *'}</em>
 					</span>
 					<CheckGrid
@@ -104,10 +105,10 @@ export function RoleForm(props: RoleFormProps) @{
 						mono
 						onChange={setScopes}
 					/>
-					<span class="ui-help">
-						{scopes.length + ' of ' + props.grantableScopes.length +
-							' scopes selected. Members holding this role receive exactly these.'}
-					</span>
+					<span class="ui-help">{t('users.roleForm.scopeCount', {
+						selected: scopes.length,
+						total: props.grantableScopes.length,
+					})}</span>
 				</div>
 				@if (props.error) {
 					<Alert>{props.error}</Alert>
@@ -117,21 +118,21 @@ export function RoleForm(props: RoleFormProps) @{
 		<div class="ui-drawer__foot">
 			<small>
 				{editing
-					? 'Changing scopes updates every member that holds this role.'
-					: 'Built-in owner and member roles cannot be recreated.'}
+					? t('users.roleForm.editNote')
+					: t('users.roleForm.createNote')}
 			</small>
 			<div class="ui-form__actions">
-				<Button onClick={props.onCancel}>Cancel</Button>
+				<Button onClick={props.onCancel}>{t('users.action.cancel')}</Button>
 				<Button
 					variant="primary"
 					type="submit"
 					disabled={props.busy || scopes.length === 0}
 				>
 					{props.busy
-						? 'Saving…'
+						? t('users.action.saving')
 						: editing
-							? 'Save role'
-							: 'Create role'}
+							? t('users.roleForm.save')
+							: t('users.roleForm.create')}
 				</Button>
 			</div>
 		</div>

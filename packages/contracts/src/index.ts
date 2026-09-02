@@ -146,3 +146,22 @@ export {
 	platformSpecSchema,
 	projectSchema,
 } from './schemas.ts';
+
+export {
+	extractVariables,
+	isVariableKey,
+	resolveTemplate,
+	tokenizeTemplate,
+	validateTemplate,
+	variableDefinitions,
+	variablesForScopes,
+	VARIABLE_KEY_PATTERN,
+} from './variables.ts';
+export type {
+	ResolveTemplateOptions,
+	TemplateSegment,
+	TemplateValidation,
+	VariableDefinition,
+	VariableKind,
+	VariableSource,
+} from './variables.ts';

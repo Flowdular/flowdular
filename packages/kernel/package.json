@@ -4,7 +4,8 @@
 	"private": true,
 	"type": "module",
 	"exports": {
-		".": "./src/index.ts"
+		".": "./src/index.ts",
+		"./legacy-local-state": "./src/legacy-local-state.ts"
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit -p tsconfig.json",
@@ -14,6 +15,7 @@
 		"@coreloom/contracts": "workspace:*"
 	},
 	"devDependencies": {
+		"@types/node": "24.13.3",
 		"typescript": "5.9.3",
 		"vitest": "4.1.10"
 	}

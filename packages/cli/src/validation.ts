@@ -79,7 +79,6 @@ export async function validateFile(
 const SKIPPED_DIRECTORIES = new Set([
 	'.git',
 	'.coreloom',
-	'.octane-erp',
 	'node_modules',
 	'dist',
 ]);

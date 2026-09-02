@@ -1,8 +1,17 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { redactSecrets } from '@coreloom/ai-provider';
 import type { GateResult } from '../gates.ts';
-import { readChat, sessionPaths, type SandboxSession } from '../sessions.ts';
+import {
+	basePathOf,
+	findSessionModule,
+	modulePathOf,
+	readChat,
+	sessionPaths,
+	type SandboxSession,
+} from '../sessions.ts';
+import { readModuleSpecReview, type ModuleSpecReview } from '../spec.ts';
 import { SandboxSetupError } from '../workspace-root.ts';
 import {
 	DEFAULT_DELIVERY_CONFIGURATION,
@@ -43,6 +52,7 @@ import type {
 	DeliveryModulePlan,
 	DeliveryProvider,
 	DeliveryTarget,
+	GitDeliveryMode,
 	GitDeliveryPlan,
 } from './types.ts';
 
@@ -53,8 +63,8 @@ const COMPOSITION_PATHS = [
 	'coreloom.json',
 	'platform/package.json',
 	'platform/src/generated/**',
-	'pnpm-lock.yaml',
 ] as const;
+const LOCKFILE_PATH = 'pnpm-lock.yaml';
 const FALLBACK_BUDGET: DeliveryBudget = {
 	maxChangedFiles: 18,
 	maxNewDependencies: 0,
@@ -62,9 +72,29 @@ const FALLBACK_BUDGET: DeliveryBudget = {
 const NO_COMMITS =
 	'the repository has no commits yet; make the first commit before delivering as a pull request';
 const OFFENDING_LIMIT = 20;
-const PROVIDER_VARIABLE = /^(GH_|GIT_|GITHUB_)/;
 const GITHUB_REMOTE =
 	/^(?:https:\/\/(?:[^@/]+@)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com(?::\d+)?\/)([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/;
+
+const COMMAND_ENVIRONMENT_KEYS = new Set([
+	'HOME',
+	'LANG',
+	'LC_ALL',
+	'LC_CTYPE',
+	'LOGNAME',
+	'PATH',
+	'SHELL',
+	'SSH_AUTH_SOCK',
+	'SSL_CERT_DIR',
+	'SSL_CERT_FILE',
+	'TEMP',
+	'TMP',
+	'TMPDIR',
+	'USER',
+	'XDG_CACHE_HOME',
+	'XDG_CONFIG_HOME',
+	'XDG_DATA_HOME',
+	'XDG_STATE_HOME',
+]);
 
 type Run = (
 	command: string,
@@ -78,25 +108,72 @@ interface ChangeSet {
 	readonly removed: readonly string[];
 }
 
+interface GitDestination {
+	readonly repository: string | null;
+	readonly mode: GitDeliveryMode;
+	readonly pushTarget: string;
+	readonly forkOwner: string | null;
+	readonly forkRequired: boolean;
+	readonly head: string;
+	readonly compareUrl: string | null;
+}
+
+function sameStrings(
+	left: readonly string[],
+	right: readonly string[],
+): boolean {
+	return (
+		left.length === right.length &&
+		left.every((value, index) => value === right[index])
+	);
+}
+
+/* Apply never trusts an earlier preview blindly. In particular, a spec can be
+   edited after the operator opens the plan, which invalidates its approved
+   hash. Rebuild the module plan at the last boundary before delivery and fail
+   rather than commit a different set of files from the one reviewed. */
+function assertPlanStillCurrent(
+	planned: readonly DeliveryModulePlan[],
+	current: readonly DeliveryModulePlan[],
+): void {
+	const same =
+		planned.length === current.length &&
+		planned.every((module, index) => {
+			const refreshed = current[index];
+			return (
+				refreshed !== undefined &&
+				module.id === refreshed.id &&
+				module.directory === refreshed.directory &&
+				module.kind === refreshed.kind &&
+				module.targetPath === refreshed.targetPath &&
+				sameStrings(module.files, refreshed.files) &&
+				sameStrings(module.additions, refreshed.additions) &&
+				sameStrings(module.overwrites, refreshed.overwrites) &&
+				sameStrings(module.removes, refreshed.removes) &&
+				sameStrings(module.newPackages, refreshed.newPackages) &&
+				module.enable === refreshed.enable
+			);
+		});
+	if (!same) {
+		throw new SandboxSetupError(
+			'EJECT_PLAN_STALE',
+			'The session changed after this delivery was reviewed. Open a new delivery plan and approve the current specification before trying again.',
+		);
+	}
+}
+
 /* One delivery per session at a time: two would fight over the same worktree
    path and branch. */
 const inFlight = new Set<string>();
 
-function isSecretVariable(key: string): boolean {
-	if (PROVIDER_VARIABLE.test(key)) return false;
-	return (
-		/(TOKEN|SECRET|PASSWORD)$/i.test(key) ||
-		(key.startsWith('OERP_') && /KEY$/i.test(key))
-	);
-}
-
-/* git and gh see the operator's PATH, HOME, and their own settings, never the
-   platform's credentials. CI is dropped because pnpm freezes the lockfile
-   under it, and the worktree install has to be allowed to update it. */
-function commandEnvironment(providerToken: string | null): NodeJS.ProcessEnv {
+/* Delivery commands need only the operator's executable path, local Git
+   identity, SSH agent, locale, temporary directory, and certificate paths.
+   An allowlist prevents unrelated database URLs and cloud credentials from
+   reaching a package script or an external provider command. */
+function commandEnvironment(): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = {};
 	for (const [key, value] of Object.entries(process.env)) {
-		if (value === undefined || key === 'CI' || isSecretVariable(key)) continue;
+		if (value === undefined || !COMMAND_ENVIRONMENT_KEYS.has(key)) continue;
 		env[key] = value;
 	}
 	Object.assign(env, {
@@ -106,16 +183,56 @@ function commandEnvironment(providerToken: string | null): NodeJS.ProcessEnv {
 		GH_PROMPT_DISABLED: '1',
 		GH_NO_UPDATE_NOTIFIER: '1',
 	});
+	return env;
+}
+
+function githubEnvironment(providerToken: string | null): NodeJS.ProcessEnv {
+	const env = commandEnvironment();
 	if (providerToken) env.GH_TOKEN = providerToken;
 	return env;
+}
+
+function gitEnvironment(providerToken: string | null): NodeJS.ProcessEnv {
+	const env = commandEnvironment();
+	if (!providerToken) return env;
+	/* Keep the credential out of command arguments and remote URLs. Git reads
+	   this process-local config only for the delivery child process. */
+	env.GIT_CONFIG_COUNT = '1';
+	env.GIT_CONFIG_KEY_0 = 'http.https://github.com/.extraheader';
+	env.GIT_CONFIG_VALUE_0 = `AUTHORIZATION: basic ${Buffer.from(
+		`x-access-token:${providerToken}`,
+	).toString('base64')}`;
+	return env;
+}
+
+function safeExternalText(value: string, providerToken: string | null): string {
+	let safe = redactSecrets(value)
+		.replace(/\bgithub_pat_[A-Za-z0-9_]{8,}/gi, '[redacted]')
+		.replace(/\bgh[pousr]_[A-Za-z0-9_]{8,}/gi, '[redacted]')
+		.replace(/https:\/\/[^\s/@]+:[^\s/@]+@/gi, 'https://[redacted]@');
+	if (providerToken) {
+		safe = safe.split(providerToken).join('[redacted]');
+		const header = Buffer.from(`x-access-token:${providerToken}`).toString(
+			'base64',
+		);
+		safe = safe.split(header).join('[redacted]');
+	}
+	return safe;
 }
 
 async function runner(context: DeliveryContext): Promise<Run> {
 	const token = context.gitProviderToken
 		? await context.gitProviderToken()
 		: null;
-	const env = commandEnvironment(token);
-	return (command, args, cwd) => context.commands(command, args, cwd, { env });
+	const normalEnv = commandEnvironment();
+	const ghEnv = githubEnvironment(token);
+	const gitEnv = gitEnvironment(token);
+	return async (command, args, cwd) => {
+		const result = await context.commands(command, args, cwd, {
+			env: command === 'git' ? gitEnv : command === 'gh' ? ghEnv : normalEnv,
+		});
+		return { ...result, output: safeExternalText(result.output, token) };
+	};
 }
 
 function unavailable(reason: string): DeliveryAvailability {
@@ -200,9 +317,145 @@ function githubRepository(remoteUrl: string): string | null {
 function compareUrlFor(
 	repository: string,
 	baseBranch: string,
-	branch: string,
+	head: string,
 ): string {
-	return `https://github.com/${repository}/compare/${baseBranch}...${branch}?expand=1`;
+	return `https://github.com/${repository}/compare/${baseBranch}...${head}?expand=1`;
+}
+
+function githubRepositoryName(repository: string): string {
+	return repository.slice(repository.indexOf('/') + 1);
+}
+
+function githubPushUrl(owner: string, repository: string): string {
+	return `https://github.com/${owner}/${githubRepositoryName(repository)}.git`;
+}
+
+async function outputValue(
+	run: Run,
+	command: string,
+	args: readonly string[],
+	cwd: string,
+): Promise<string | null> {
+	const result = await run(command, args, cwd);
+	return result.code === 0 && result.output.trim() !== ''
+		? result.output.trim()
+		: null;
+}
+
+async function assertWorktreeDirectoryIgnored(
+	run: Run,
+	cwd: string,
+): Promise<void> {
+	const ignored = await run(
+		'git',
+		['check-ignore', '--quiet', '--no-index', `${WORKTREES_DIRECTORY}/.probe`],
+		cwd,
+	);
+	if (ignored.code !== 0) {
+		throw new SandboxSetupError(
+			'GIT_WORKTREE_DIRECTORY_NOT_IGNORED',
+			`The ${WORKTREES_DIRECTORY} directory is not ignored by Git. Add .coreloom/ to .gitignore before pull request delivery so the active checkout stays unchanged.`,
+		);
+	}
+}
+
+async function resolveDestination(
+	run: Run,
+	config: DeliveryConfiguration,
+	cwd: string,
+	remoteUrl: string,
+	provider: DeliveryProvider,
+	branch: string,
+): Promise<GitDestination> {
+	const detected = githubRepository(remoteUrl);
+	const repository = config.git.repository ?? detected;
+	if (
+		config.git.repository !== null &&
+		detected !== null &&
+		config.git.repository.toLowerCase() !== detected.toLowerCase()
+	) {
+		throw new SandboxSetupError(
+			'GITHUB_REPOSITORY_MISMATCH',
+			`The ${config.git.remote} remote points to ${detected}, not the configured ${config.git.repository}. Choose the matching remote before delivering.`,
+		);
+	}
+	let mode: GitDeliveryMode = 'direct';
+	if (config.git.mode === 'fork') mode = 'fork';
+	if (config.git.mode === 'auto' && repository && provider === 'github') {
+		const permission = await outputValue(
+			run,
+			'gh',
+			['api', `repos/${repository}`, '--jq', '.permissions.push // false'],
+			cwd,
+		);
+		if (permission !== 'true') {
+			throw new SandboxSetupError(
+				'GITHUB_FORK_OPT_IN_REQUIRED',
+				'GitHub did not confirm direct push access. Choose Use a fork to create or use a fork, or choose Direct to attempt the repository push explicitly.',
+			);
+		}
+	}
+	if (mode === 'fork') {
+		if (provider !== 'github' || repository === null) {
+			throw new SandboxSetupError(
+				'GITHUB_FORK_UNAVAILABLE',
+				'Fork delivery needs a GitHub repository and an authenticated GitHub integration.',
+			);
+		}
+		const forkOwner =
+			config.git.forkOwner ??
+			(await outputValue(run, 'gh', ['api', 'user', '--jq', '.login'], cwd));
+		if (!forkOwner) {
+			throw new SandboxSetupError(
+				'GITHUB_FORK_OWNER_MISSING',
+				'GitHub did not return the account that should own the fork.',
+			);
+		}
+		const forkRepository = `${forkOwner}/${githubRepositoryName(repository)}`;
+		const existing = await run(
+			'gh',
+			[
+				'repo',
+				'view',
+				forkRepository,
+				'--json',
+				'nameWithOwner,parent',
+				'--jq',
+				'[.nameWithOwner, (.parent.nameWithOwner // "")] | @tsv',
+			],
+			cwd,
+		);
+		if (existing.code === 0) {
+			const [, parent = ''] = existing.output.trim().split('\t');
+			if (parent.toLowerCase() !== repository.toLowerCase()) {
+				throw new SandboxSetupError(
+					'GITHUB_FORK_MISMATCH',
+					`${forkRepository} exists but is not a fork of ${repository}. Choose another fork owner or use direct delivery.`,
+				);
+			}
+		}
+		const head = `${forkOwner}:${branch}`;
+		return {
+			repository,
+			mode,
+			pushTarget: githubPushUrl(forkOwner, repository),
+			forkOwner,
+			forkRequired: existing.code !== 0,
+			head,
+			compareUrl: compareUrlFor(repository, config.git.baseBranch, head),
+		};
+	}
+	return {
+		repository,
+		mode,
+		pushTarget: config.git.remote,
+		forkOwner: null,
+		forkRequired: false,
+		head: branch,
+		compareUrl: repository
+			? compareUrlFor(repository, config.git.baseBranch, branch)
+			: null,
+	};
 }
 
 async function probeProvider(
@@ -222,8 +475,8 @@ async function probeProvider(
 		kind: 'none',
 		note:
 			status.code === null
-				? 'The gh command is not installed, so the branch is pushed without a pull request.'
-				: 'gh is not signed in (run gh auth login or seal a provider token), so the branch is pushed without a pull request.',
+				? 'The gh command is not installed. The branch is pushed and a compare link is shown instead of opening a pull request.'
+				: 'gh is not signed in. The branch is pushed and a compare link is shown instead of opening a pull request.',
 	};
 }
 
@@ -308,10 +561,23 @@ function capitalize(text: string): string {
 	return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
+function pullRequestTitle(modules: readonly DeliveryModulePlan[]): string {
+	const complete = capitalize(describeChange(modules, 'add'));
+	if (complete.length <= 70) return complete;
+	const primary = modules[0]!.id;
+	return modules.length === 1
+		? `${primary}: sandbox delivery`.slice(0, 70)
+		: `${primary}: update ${modules.length} modules`.slice(0, 70);
+}
+
 /* Plain sentences from free text: whitespace collapsed, dashes the repository
    rules forbid replaced, cut to a sentence count and a length. */
 function sentences(text: string, count: number, limit: number): string {
-	const clean = text
+	const clean = safeExternalText(text, null)
+		.replace(
+			/\b(token|password|secret|api[ _-]?key)\s*[:=]\s*[^\s,;]+/gi,
+			'$1: [redacted]',
+		)
 		.replace(/\s+/g, ' ')
 		.replace(/\s*\u2014\s*/g, ', ')
 		.replace(/\u2013/g, '-')
@@ -370,7 +636,9 @@ function pullRequestBody(input: {
 	readonly owners: readonly string[];
 	readonly requireReviewer: boolean;
 	readonly handoff: string | null;
+	readonly specs: readonly ModuleSpecReview[];
 }): string {
+	const testGates = input.gates.filter((gate) => gate.id === 'tests');
 	const summary = [
 		`${capitalize(describeChange(input.modules, 'adds'))}.`,
 		sentences(input.session.brief, 2, 400),
@@ -383,11 +651,35 @@ function pullRequestBody(input: {
 		'',
 		`Session ${input.session.id}.`,
 		'',
+		'## Specification',
+		'',
+		...input.specs.flatMap((spec) => {
+			const before = spec.base?.specVersion ?? 'new';
+			const after = spec.draft?.specVersion ?? 'unknown';
+			const changes = spec.changes.slice(0, 20).map((change) => {
+				const key = change.key ? ` ${change.key}` : '';
+				return `- ${change.kind}: ${change.field}${key}`;
+			});
+			return [
+				`### ${spec.moduleId}`,
+				'',
+				`Version: ${before} to ${after}. Status: ${spec.status ?? 'missing'}.`,
+				...(changes.length > 0 ? changes : ['- No field-level spec diff.']),
+				...(spec.changes.length > changes.length
+					? [`- ${spec.changes.length - changes.length} more spec changes.`]
+					: []),
+				'',
+			];
+		}),
+		'## Gates',
+		'',
 		'| Gate | Module | Result |',
 		'| --- | --- | --- |',
 		...input.gates.map(
 			(gate) => `| ${gate.id} | ${gate.module ?? ''} | ${gate.status} |`,
 		),
+		'',
+		`Verification: ${testGates.length} module test gate(s) passed. The platform typecheck passed in the delivery worktree.`,
 		'',
 	];
 	const groups: readonly [string, readonly string[]][] = [
@@ -395,15 +687,40 @@ function pullRequestBody(input: {
 		['Modified', input.changes.modified],
 		['Removed', input.changes.removed],
 	];
+	lines.push('## Files', '');
 	for (const [label, files] of groups) {
 		if (files.length === 0) continue;
 		lines.push(`${label} (${files.length}):`);
 		lines.push(...files.map((file) => `- ${file}`));
 		lines.push('');
 	}
+	lines.push('## Risks', '');
+	const migrations = [...input.changes.added, ...input.changes.modified].filter(
+		(file) => /\/migrations\//.test(file),
+	);
+	const removals = input.changes.removed.length;
+	const riskLines = [
+		...(migrations.length > 0
+			? [`- ${migrations.length} migration file(s) require deployment review.`]
+			: []),
+		...(removals > 0
+			? [`- ${removals} file(s) are removed by this change.`]
+			: []),
+		...(input.requireReviewer && input.owners.length > 1
+			? [`- Cross-owner review is required for ${input.owners.join(', ')}.`]
+			: []),
+	];
+	lines.push(
+		...(riskLines.length > 0
+			? riskLines
+			: [
+					'- No elevated delivery risks were detected by the sandbox guardrails.',
+				]),
+		'',
+	);
 	for (const module of input.modules) {
 		lines.push(
-			`Post-merge: \`pnpm oerp auth sync-scopes --module ${module.id} --apply\` against the deployment database.`,
+			`Post-merge: \`pnpm coreloom auth sync-scopes --module ${module.id} --apply\` against the deployment database.`,
 		);
 	}
 	if (input.requireReviewer && input.owners.length > 1) {
@@ -413,6 +730,23 @@ function pullRequestBody(input: {
 		);
 	}
 	return `${lines.join('\n')}\n`;
+}
+
+async function specificationEvidence(
+	workspaceRoot: string,
+	session: SandboxSession,
+): Promise<readonly ModuleSpecReview[]> {
+	const paths = sessionPaths(workspaceRoot, session.id, session.moduleSuffix);
+	return Promise.all(
+		session.modules.map((entry) => {
+			const module = findSessionModule(session, entry.directory);
+			return readModuleSpecReview(
+				module,
+				modulePathOf(paths, module.directory),
+				basePathOf(paths, module.directory),
+			);
+		}),
+	);
 }
 
 async function removeWorktree(
@@ -436,6 +770,68 @@ async function removeWorktree(
 	};
 }
 
+function pushDestination(git: GitDeliveryPlan): string {
+	if (git.deliveryMode === 'fork') {
+		return githubPushUrl(git.forkOwner!, git.repository!);
+	}
+	return git.remote;
+}
+
+async function remoteBranchOwner(
+	run: Run,
+	cwd: string,
+	destination: string,
+	branch: string,
+): Promise<{
+	readonly exists: boolean;
+	readonly message: string;
+	readonly commit: string | null;
+}> {
+	const listed = await run(
+		'git',
+		['ls-remote', '--heads', destination, `refs/heads/${branch}`],
+		cwd,
+	);
+	if (listed.code !== 0) {
+		throw new SandboxSetupError(
+			'GIT_REMOTE_UNREACHABLE',
+			`The push repository could not be checked before delivery. ${listed.output.trim()}`.trim(),
+		);
+	}
+	const commit = listed.output.trim().split(/\s+/)[0];
+	if (!commit) return { exists: false, message: '', commit: null };
+	const fetched = await run(
+		'git',
+		['fetch', '--quiet', destination, branch],
+		cwd,
+	);
+	if (fetched.code !== 0) {
+		throw new SandboxSetupError(
+			'GIT_BRANCH_CHECK_FAILED',
+			`The existing ${branch} branch could not be inspected.`,
+		);
+	}
+	const message = await outputValue(
+		run,
+		'git',
+		['show', '-s', '--format=%B', 'FETCH_HEAD'],
+		cwd,
+	);
+	return { exists: true, message: message ?? '', commit };
+}
+
+function assertSessionBranch(
+	branch: string,
+	message: string,
+	sessionId: string,
+): void {
+	if (message.includes(`Session ${sessionId}.`)) return;
+	throw new SandboxSetupError(
+		'GIT_BRANCH_CONFLICT',
+		`The ${branch} branch already exists but was not created for this sandbox session. Choose another branch prefix or remove the conflicting branch yourself.`,
+	);
+}
+
 async function openPullRequest(
 	run: Run,
 	worktree: string,
@@ -450,13 +846,18 @@ async function openPullRequest(
 		'gh',
 		[
 			'pr',
-			'view',
-			git.branch,
+			'list',
 			...repositoryArgs,
+			'--head',
+			git.head,
+			'--state',
+			'open',
+			'--limit',
+			'1',
 			'--json',
 			'url',
 			'--jq',
-			'.url',
+			'.[0].url',
 		],
 		worktree,
 	);
@@ -479,7 +880,7 @@ async function openPullRequest(
 				'--base',
 				git.baseBranch,
 				'--head',
-				git.branch,
+				git.head,
 				'--title',
 				title,
 				'--body-file',
@@ -531,6 +932,15 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 						: 'this workspace is not inside a git work tree.',
 				);
 			}
+			try {
+				await assertWorktreeDirectoryIgnored(run, root);
+			} catch (error) {
+				return unavailable(
+					error instanceof Error
+						? error.message
+						: 'the delivery worktree directory is not ignored by Git.',
+				);
+			}
 			const remote = await run(
 				'git',
 				['remote', 'get-url', config.git.remote],
@@ -539,6 +949,49 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 			if (remote.code !== 0) {
 				return unavailable(
 					`the ${config.git.remote} remote is not configured; add it with git remote add ${config.git.remote} <url>.`,
+				);
+			}
+			const base = await run(
+				'git',
+				[
+					'ls-remote',
+					'--exit-code',
+					'--heads',
+					config.git.remote,
+					`refs/heads/${config.git.baseBranch}`,
+				],
+				root,
+			);
+			if (base.code !== 0) {
+				return unavailable(
+					`the ${config.git.remote}/${config.git.baseBranch} base branch does not exist or cannot be read.`,
+				);
+			}
+			const detectedRepository = githubRepository(remote.output.trim());
+			if (
+				config.git.repository !== null &&
+				detectedRepository !== null &&
+				config.git.repository.toLowerCase() !== detectedRepository.toLowerCase()
+			) {
+				return unavailable(
+					`the ${config.git.remote} remote points to ${detectedRepository}, not ${config.git.repository}.`,
+				);
+			}
+			const provider = await probeProvider(run, config, root);
+			try {
+				await resolveDestination(
+					run,
+					config,
+					root,
+					remote.output.trim(),
+					provider.kind,
+					branchNameFor(config, context.session),
+				);
+			} catch (error) {
+				return unavailable(
+					error instanceof Error
+						? error.message
+						: 'the configured Git destination is not usable.',
 				);
 			}
 			return { available: true, reason: null };
@@ -561,8 +1014,7 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 			].sort();
 			/* module enable writes the four composition files; install rewrites
 			   the lockfile whenever a package is new to the workspace. */
-			const compositionFiles =
-				(enable ? 4 : 0) + (enable || newDependencies.length > 0 ? 1 : 0);
+			const compositionFiles = enable ? 5 : newDependencies.length > 0 ? 1 : 0;
 			const changedFiles = countChangedFiles(modules) + compositionFiles;
 			const owners = ownersOf(ownership, [
 				...modules.map((module) => `modules/${module.directory}/module.json`),
@@ -572,9 +1024,16 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 			const remoteUrl = (
 				await run('git', ['remote', 'get-url', config.git.remote], root)
 			).output.trim();
-			const repository = githubRepository(remoteUrl);
 			const branch = branchNameFor(config, context.session);
 			const provider = await probeProvider(run, config, root);
+			const destination = await resolveDestination(
+				run,
+				config,
+				root,
+				remoteUrl,
+				provider.kind,
+				branch,
+			);
 			return {
 				target: 'git-pr',
 				deliveredBy: 'git-pr',
@@ -599,12 +1058,22 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 				],
 				git: {
 					remote: config.git.remote,
+					repository: destination.repository,
 					baseBranch: config.git.baseBranch,
 					branch,
+					deliveryMode: destination.mode,
+					pushTarget:
+						destination.mode === 'fork'
+							? `${destination.forkOwner}/${githubRepositoryName(destination.repository!)}`
+							: config.git.remote,
+					forkOwner: destination.forkOwner,
+					forkRequired: destination.forkRequired,
+					head: destination.head,
 					worktreePath: join(WORKTREES_DIRECTORY, context.session.id),
 					allowedPaths: [
 						...modules.map((module) => `modules/${module.directory}/**`),
-						...COMPOSITION_PATHS,
+						...(enable ? COMPOSITION_PATHS : []),
+						LOCKFILE_PATH,
 					],
 					budget,
 					changedFiles,
@@ -620,9 +1089,7 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 					}),
 					provider: provider.kind,
 					providerNote: provider.note,
-					compareUrl: repository
-						? compareUrlFor(repository, config.git.baseBranch, branch)
-						: null,
+					compareUrl: destination.compareUrl,
 				},
 				applied: false,
 			};
@@ -654,10 +1121,77 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 				if (result.code !== 0) record(id, step(result));
 			};
 			let worktreeAdded = false;
-			let branchCreated = false;
+			let localBranchCommit: string | null = null;
+			let branchPrepared = false;
+			let remoteBranchExisted = false;
+			let remoteBranchCommit: string | null = null;
+			let pushedCommit: string | null = null;
+			let pushed = false;
 			let delivered = false;
 			try {
+				/* Re-check the approved spec hash and every planned file before any
+					   fork, worktree, branch, or remote mutation. */
+				assertPlanStillCurrent(plan.modules, await planSessionModules(context));
+				await assertWorktreeDirectoryIgnored(run, root);
 				const gates = await runDeliveryGates(context, plan.gates, emit);
+				const destination = pushDestination(git);
+
+				if (git.deliveryMode === 'fork') {
+					emit('fork.started', {});
+					if (git.forkRequired) {
+						const signedInOwner = await outputValue(
+							run,
+							'gh',
+							['api', 'user', '--jq', '.login'],
+							root,
+						);
+						if (!signedInOwner) {
+							throw new SandboxSetupError(
+								'GITHUB_IDENTITY_UNAVAILABLE',
+								'GitHub did not return the signed-in account before fork creation.',
+							);
+						}
+						const organization =
+							signedInOwner.toLowerCase() === git.forkOwner!.toLowerCase()
+								? []
+								: ['--org', git.forkOwner!];
+						record(
+							'fork',
+							step(
+								await run(
+									'gh',
+									[
+										'repo',
+										'fork',
+										git.repository!,
+										'--clone=false',
+										...organization,
+									],
+									root,
+								),
+								git.pushTarget,
+							),
+						);
+					} else {
+						record('fork', {
+							ok: true,
+							output: '',
+							detail: `${git.pushTarget} already exists`,
+						});
+					}
+				}
+
+				const remoteOwner = await remoteBranchOwner(
+					run,
+					root,
+					destination,
+					git.branch,
+				);
+				remoteBranchExisted = remoteOwner.exists;
+				remoteBranchCommit = remoteOwner.commit;
+				if (remoteOwner.exists) {
+					assertSessionBranch(git.branch, remoteOwner.message, session.id);
+				}
 
 				emit('fetch.started', {});
 				record(
@@ -696,6 +1230,27 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 				worktreeAdded = true;
 
 				emit('branch.started', {});
+				const localBranch = await run(
+					'git',
+					['show-ref', '--verify', '--quiet', `refs/heads/${git.branch}`],
+					root,
+				);
+				if (localBranch.code === 0) {
+					localBranchCommit = await outputValue(
+						run,
+						'git',
+						['rev-parse', git.branch],
+						root,
+					);
+					const localMessage =
+						(await outputValue(
+							run,
+							'git',
+							['show', '-s', '--format=%B', git.branch],
+							root,
+						)) ?? '';
+					assertSessionBranch(git.branch, localMessage, session.id);
+				}
 				record(
 					'branch',
 					step(
@@ -703,7 +1258,7 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 						git.branch,
 					),
 				);
-				branchCreated = true;
+				branchPrepared = true;
 
 				const paths = sessionPaths(root, session.id, session.moduleSuffix);
 				const { copied, removed } = await stageModules(
@@ -782,13 +1337,6 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 				);
 
 				emit('push.started', {});
-				/* Best effort: a remote branch from an earlier delivery of this
-				   session has to be known locally for the lease below to hold. */
-				await run(
-					'git',
-					['fetch', '--quiet', git.remote, git.branch],
-					worktree,
-				);
 				record(
 					'push',
 					step(
@@ -798,14 +1346,21 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 								'push',
 								'--quiet',
 								'-u',
-								'--force-with-lease',
-								git.remote,
+								`--force-with-lease=refs/heads/${git.branch}:${remoteOwner.commit ?? ''}`,
+								destination,
 								git.branch,
 							],
 							worktree,
 						),
-						`${git.remote}/${git.branch}`,
+						`${git.pushTarget}/${git.branch}`,
 					),
+				);
+				pushed = true;
+				pushedCommit = await outputValue(
+					run,
+					'git',
+					['rev-parse', 'HEAD'],
+					worktree,
 				);
 
 				emit('pr.started', {});
@@ -817,18 +1372,16 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 					owners,
 					requireReviewer: git.requireReviewer,
 					handoff: await lastReviewHandoff(root, session),
+					specs: await specificationEvidence(root, session),
 				});
 				let pullRequestUrl: string | null = null;
 				if (git.provider === 'github') {
-					const remoteUrl = (
-						await run('git', ['remote', 'get-url', git.remote], root)
-					).output.trim();
 					pullRequestUrl = await openPullRequest(
 						run,
 						worktree,
 						git,
-						githubRepository(remoteUrl),
-						capitalize(describeChange(plan.modules, 'add')),
+						git.repository,
+						pullRequestTitle(plan.modules),
 						body,
 						recorder,
 					);
@@ -861,8 +1414,40 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 					const result = await removeWorktree(run, root, worktree);
 					if (!result.ok) problems.push(result.output);
 				}
-				if (branchCreated && !delivered) {
-					const result = await run('git', ['branch', '-D', git.branch], root);
+				if (branchPrepared && !delivered) {
+					const result = localBranchCommit
+						? await run(
+								'git',
+								['branch', '-f', git.branch, localBranchCommit],
+								root,
+							)
+						: await run('git', ['branch', '-D', git.branch], root);
+					if (result.code !== 0) problems.push(result.output);
+				}
+				if (pushed && !delivered) {
+					const result = remoteBranchExisted
+						? await run(
+								'git',
+								[
+									'push',
+									'--quiet',
+									`--force-with-lease=refs/heads/${git.branch}:${pushedCommit ?? ''}`,
+									pushDestination(git),
+									`${remoteBranchCommit ?? ''}:refs/heads/${git.branch}`,
+								],
+								root,
+							)
+						: await run(
+								'git',
+								[
+									'push',
+									'--quiet',
+									pushDestination(git),
+									'--delete',
+									git.branch,
+								],
+								root,
+							);
 					if (result.code !== 0) problems.push(result.output);
 				}
 				emit('cleanup.completed', {

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-	CORE_NAVIGATION,
+	coreNavigation,
 	navigationForIdentity,
+	viewHref,
 } from '../src/shell/navigation.ts';
 import {
 	shellLocationFromUrl,
@@ -11,6 +12,9 @@ import {
 
 describe('shell route state', () => {
 	it.each([
+		['/app', 'overview'],
+		['/app/operations-demo', 'overview'],
+		['/app/operations-demo/modules', 'modules'],
 		['/', 'overview'],
 		['/modules', 'modules'],
 		['/specs?status=approved', 'specs'],
@@ -25,6 +29,9 @@ describe('workspace-first locations', () => {
 	const slugs = ['operations-demo', 'finance-demo'];
 
 	it.each([
+		['/app/operations-demo/parties', 'operations-demo', 'parties'],
+		['/app/operations-demo', 'operations-demo', 'overview'],
+		['/app', null, 'overview'],
 		['/operations-demo/parties', 'operations-demo', 'parties'],
 		['/operations-demo', 'operations-demo', 'overview'],
 		['/finance-demo/catalog?x=1', 'finance-demo', 'catalog'],
@@ -32,6 +39,18 @@ describe('workspace-first locations', () => {
 		['/', null, 'overview'],
 	])('resolves %s', (url, workspaceSlug, view) => {
 		expect(shellLocationFromUrl(url, slugs)).toEqual({ workspaceSlug, view });
+	});
+});
+
+describe('application links', () => {
+	it('builds every workspace link below the application prefix', () => {
+		expect(viewHref('overview', 'operations-demo')).toBe(
+			'/app/operations-demo',
+		);
+		expect(viewHref('parties', 'operations-demo')).toBe(
+			'/app/operations-demo/parties',
+		);
+		expect(viewHref('overview')).toBe('/app');
 	});
 });
 
@@ -51,7 +70,7 @@ describe('shell navigation groups', () => {
 
 	it('keeps development entries owner-only even if a member has a stale scope', () => {
 		const development = [
-			...CORE_NAVIGATION,
+			...coreNavigation((key) => key),
 			{
 				id: 'sandbox.navigation.access',
 				viewId: 'sandbox',

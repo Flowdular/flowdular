@@ -62,19 +62,19 @@
 .workspace-menu__button {
 	display: inline-flex;
 	align-items: center;
-	gap: 8px;
+	gap: 10px;
 	max-width: 320px;
-	padding: 5px 8px;
+	padding: 8px 12px;
 	background: transparent;
 	border: 1px solid transparent;
-	border-radius: var(--r);
+	border-radius: var(--r-lg);
 	cursor: pointer;
 	transition: background var(--t-fast) var(--ease);
 }
 
-.workspace-menu__button:hover {
+.workspace-menu__button:hover,
+.workspace-menu__button[aria-expanded='true'] {
 	background: var(--surface-2);
-	border-color: var(--line);
 }
 
 .workspace-menu__label {
@@ -143,16 +143,49 @@
 }
 
 .session-bar__title {
-	display: grid;
+	display: inline-flex;
+	align-items: baseline;
+	gap: 8px;
 	min-width: 0;
+}
+
+.session-bar__add {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 6px;
+	font-family: var(--font-sans);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--ink-3);
+	background: transparent;
+	border: 0;
+	border-radius: var(--r-sm);
+	cursor: pointer;
+	transition: color var(--t-fast) var(--ease);
+}
+
+.session-bar__add:hover:not(:disabled) {
+	color: var(--primary);
+}
+
+.session-bar__add:disabled {
+	cursor: not-allowed;
+	opacity: 0.5;
 }
 
 .session-bar__title b {
 	font-size: var(--text-md);
 	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .session-bar__title small {
+	flex: none;
 	font-size: var(--text-sm);
 	color: var(--ink-3);
 }
@@ -268,6 +301,16 @@
 	color: var(--ink-3);
 }
 
+/* Which module an entry belongs to, quiet enough to ignore in a session that
+   only has one. */
+.chat__module {
+	font-size: var(--text-xs);
+	font-weight: 500;
+	letter-spacing: 0;
+	text-transform: none;
+	color: var(--ink-3);
+}
+
 .chat__text {
 	margin: 0;
 	font-size: var(--text-md);
@@ -288,10 +331,17 @@
 	display: flex;
 	align-items: center;
 	gap: 8px;
+	min-width: 0;
 	font-family: var(--font-mono);
 	font-size: var(--text-sm);
 	color: var(--ink-3);
-	overflow-wrap: anywhere;
+}
+
+.chat__event-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .chat__event--error {
@@ -316,6 +366,12 @@
 	flex-wrap: wrap;
 	align-items: center;
 	gap: 12px;
+}
+
+.chat__composer-status {
+	margin: 0;
+	font-size: var(--text-sm);
+	color: var(--ink-3);
 }
 
 /* Role and agent sit with the send action, as quiet underlined pickers rather
@@ -380,6 +436,235 @@
 	margin-left: 0;
 }
 
+/* The specification the operator approves, and what the session changed in it.
+   Long lists stay readable: they wrap, they never scroll sideways, and only an
+   identifier is monospaced. */
+.spec-review {
+	display: grid;
+	gap: 10px;
+	padding: 12px;
+	background: var(--surface);
+	border: 1px solid var(--line);
+	border-radius: var(--r-md);
+	min-width: 0;
+}
+
+.spec-review__head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	font-size: var(--text-sm);
+}
+
+.spec-review__path {
+	font-size: var(--text-xs);
+	color: var(--ink-3);
+	overflow-wrap: anywhere;
+}
+
+.spec-review__block {
+	display: grid;
+	gap: 6px;
+	min-width: 0;
+}
+
+.spec-review__title {
+	margin: 0;
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--ink-3);
+}
+
+.spec-review__text,
+.spec-review__empty {
+	margin: 0;
+	font-size: var(--text-sm);
+	line-height: 1.5;
+	overflow-wrap: anywhere;
+}
+
+.spec-review__empty {
+	color: var(--ink-3);
+}
+
+.spec-review__facts {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	gap: 2px 10px;
+	margin: 0;
+	font-size: var(--text-sm);
+}
+
+.spec-review__facts dt {
+	color: var(--ink-3);
+}
+
+.spec-review__facts dd {
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+
+.spec-review__changes,
+.spec-review__list {
+	display: grid;
+	gap: 4px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	font-size: var(--text-sm);
+}
+
+.spec-review__change,
+.spec-review__item {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 6px;
+	padding: 3px 6px;
+	border-radius: var(--r-sm);
+	overflow-wrap: anywhere;
+}
+
+.spec-review__scenario {
+	display: grid;
+	gap: 2px;
+	padding: 6px;
+	border-radius: var(--r-sm);
+	overflow-wrap: anywhere;
+}
+
+.spec-review__change--added,
+.spec-review__item--added {
+	background: var(--success-bg);
+}
+
+.spec-review__change--removed,
+.spec-review__item--removed {
+	background: var(--danger-bg);
+}
+
+.spec-review__change--changed,
+.spec-review__item--changed {
+	background: var(--warning-bg);
+}
+
+.spec-review__sign {
+	font-family: var(--font-mono);
+	font-weight: 600;
+	color: var(--ink-3);
+}
+
+.spec-review__field {
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--ink-3);
+}
+
+.spec-review__value {
+	color: var(--ink-2);
+}
+
+.spec-review__ask {
+	display: grid;
+	gap: 8px;
+}
+
+/* The specification as text, for the operator who would rather fix it than
+   describe it. */
+.spec-editor {
+	display: grid;
+	grid-template-rows: auto auto minmax(0, 1fr);
+	gap: 8px;
+	height: 100%;
+	padding: 12px;
+}
+
+.spec-editor__bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	font-size: var(--text-sm);
+}
+
+.spec-editor__error {
+	margin: 0;
+	font-size: var(--text-sm);
+	color: var(--danger);
+}
+
+.spec-editor__notice {
+	margin: 0;
+	font-size: var(--text-sm);
+	color: var(--ink-3);
+}
+
+.spec-editor__text {
+	min-height: 60vh;
+	font-family: var(--font-mono);
+	font-size: var(--text-sm);
+	line-height: 1.5;
+	white-space: pre;
+	resize: none;
+}
+
+/* A recovery action, kept quiet: it sits under a turn and only offers to roll
+   the workspace back to that point. */
+.chat__restore {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+
+.chat__restore-toggle,
+.chat__restore-go,
+.chat__restore-cancel {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 6px;
+	font-family: var(--font-sans);
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--ink-3);
+	background: transparent;
+	border: 0;
+	border-radius: var(--r-sm);
+	cursor: pointer;
+	transition: color var(--t-fast) var(--ease);
+}
+
+.chat__restore-toggle:hover,
+.chat__restore-go:hover:not(:disabled),
+.chat__restore-cancel:hover:not(:disabled) {
+	color: var(--primary);
+}
+
+.chat__restore-go:disabled,
+.chat__restore-cancel:disabled {
+	cursor: not-allowed;
+	opacity: 0.5;
+}
+
+.chat__restore-ask {
+	font-size: var(--text-sm);
+	color: var(--ink-3);
+}
+
+.chat__restore-error {
+	width: 100%;
+	font-size: var(--text-sm);
+	color: var(--danger);
+}
+
 .chat__auto {
 	display: inline-flex;
 	align-items: center;
@@ -397,6 +682,121 @@
 	background: var(--primary-tint);
 	border: 1px solid var(--primary-soft);
 	border-radius: var(--r);
+}
+
+/* The attachment strip sits above the textarea: one chip per file, an image
+   thumbnail or a file icon, its name, its size, and a remove control. */
+.chat__attachments {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.chat__attachment {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	max-width: 240px;
+	padding: 4px 6px 4px 4px;
+	background: var(--surface-2);
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+}
+
+.chat__attachment--error {
+	border-color: var(--danger);
+	background: var(--danger-bg);
+}
+
+.chat__attachment-thumb {
+	flex: none;
+	width: 40px;
+	height: 40px;
+	object-fit: cover;
+	border-radius: var(--r-sm);
+	background: var(--surface);
+}
+
+.chat__attachment-thumb--file {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--ink-3);
+	border: 1px solid var(--line);
+}
+
+.chat__attachment-info {
+	display: grid;
+	gap: 2px;
+	min-width: 0;
+}
+
+.chat__attachment-name {
+	overflow: hidden;
+	font-size: var(--text-sm);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.chat__attachment-size {
+	font-size: var(--text-xs);
+	color: var(--ink-3);
+}
+
+.chat__attachment-remove {
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: center;
+	padding: 2px;
+	color: var(--ink-3);
+	background: transparent;
+	border: 0;
+	border-radius: var(--r-sm);
+	cursor: pointer;
+	transition: color var(--t-fast) var(--ease);
+}
+
+.chat__attachment-remove:hover {
+	color: var(--danger);
+}
+
+.chat__attachment-error {
+	width: 100%;
+	font-size: var(--text-sm);
+	color: var(--danger);
+}
+
+/* The attach button matches the quiet composer pickers, and the file input it
+   opens stays out of the layout. */
+.chat__attach {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	color: var(--ink-2);
+	background: transparent;
+	border: 1px solid var(--line);
+	border-radius: var(--r-sm);
+	cursor: pointer;
+	transition:
+		color var(--t-fast) var(--ease),
+		border-color var(--t-fast) var(--ease);
+}
+
+.chat__attach:hover:not(:disabled) {
+	color: var(--primary);
+	border-color: var(--primary);
+}
+
+.chat__attach:disabled {
+	cursor: not-allowed;
+	opacity: 0.5;
+}
+
+.chat__attach-input {
+	display: none;
 }
 
 /* The work card: preview or code, floating on the right of the conversation.
@@ -733,6 +1133,57 @@
 	border-top: 1px solid var(--line-2);
 }
 
+/* GitHub delivery settings use the same calm, three-part modal anatomy as the
+   eject plan. Secrets stay write-only and the form remains scannable. */
+.github-settings__panel {
+	display: grid;
+	grid-template-rows: auto minmax(0, 1fr) auto;
+	width: min(720px, 100%);
+	max-height: min(760px, 100%);
+	background: var(--surface);
+	border: 1px solid var(--line);
+	border-radius: var(--r-lg);
+	box-shadow: 0 24px 64px rgb(16 24 40 / 24%);
+	overflow: hidden;
+}
+
+.github-settings__head,
+.github-settings__foot {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 14px 18px;
+}
+
+.github-settings__head {
+	border-bottom: 1px solid var(--line-2);
+}
+
+.github-settings__title {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	font-size: var(--text-lg);
+	font-weight: 600;
+}
+
+.github-settings__body {
+	display: grid;
+	gap: 14px;
+	min-height: 0;
+	padding: 18px;
+	overflow-y: auto;
+}
+
+.github-settings__body > .ui-help {
+	margin: 0;
+}
+
+.github-settings__foot {
+	justify-content: flex-end;
+	border-top: 1px solid var(--line-2);
+}
+
 /* Session picker */
 .sessions {
 	display: grid;
@@ -773,11 +1224,16 @@
 	resize: vertical;
 }
 
-.sessions__driver {
+.sessions__composer {
 	display: grid;
-	gap: 2px;
-	min-width: 0;
-	max-width: 340px;
+	gap: 10px;
+	padding: 16px;
+}
+
+.sessions__composer-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
 }
 
 .sessions__blocked {
@@ -935,6 +1391,21 @@
 	display: grid;
 	gap: 12px;
 	min-width: 0;
+}
+
+.diff__group {
+	display: grid;
+	gap: 12px;
+	min-width: 0;
+}
+
+/* One header per module, so a session that spans modules reads as grouped
+   files instead of one long list. */
+.diff__module {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	padding: 0 2px;
 }
 
 .diff__file {

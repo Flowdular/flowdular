@@ -36,7 +36,7 @@ async function authRuntime(): Promise<AuthRuntime> {
 	const moduleSettings = createModuleSettingsRuntime(repository);
 	moduleSettings.declare(createAuthModuleSettings());
 	const cookie = {
-		name: 'oerp_session_dev',
+		name: 'coreloom_session_dev',
 		secure: false,
 		maxAgeSeconds: 3600,
 	};
@@ -54,8 +54,12 @@ async function authRuntime(): Promise<AuthRuntime> {
 		trustProxy: false,
 		mailTransport: false,
 		workspaceRoot: null,
+		oidcProviders: [],
+		publicBaseUrl: null,
 		service: () => service,
+		authorizeAgentToolAccess: () => [],
 		middleware: createAuthenticationMiddleware(() => service, cookie),
+		dispose: () => undefined,
 	};
 }
 
@@ -137,7 +141,7 @@ async function signInMember(
 ): Promise<Session> {
 	const issued = await auth.service().signIn({ email, password });
 	return {
-		cookie: `oerp_session_dev=${issued.token}`,
+		cookie: `coreloom_session_dev=${issued.token}`,
 		csrfToken: issued.csrfToken,
 		accountId: issued.principal.accountId,
 		tenantId: issued.principal.tenantId,

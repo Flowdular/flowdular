@@ -89,7 +89,7 @@ Dependencies are one-way. The platform does not import the sandbox, CLI, or harn
 ### 4.1. Canonical repository tree
 
 ```text
-octane-erp/
+coreloom/
 ├── package.json
 ├── pnpm-workspace.yaml
 ├── pnpm-lock.yaml
@@ -145,15 +145,15 @@ Every matched workspace directory has its own `package.json`, tests, and explici
 
 ### 5.1. Platform packages
 
-| Package               | Responsibility                                                                      | Must not contain                                  |
-| --------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------- |
-| `@coreloom/contracts` | Types, JSON Schema, IDs, module protocol, event contracts                           | IO, Octane runtime, databases                     |
-| `@coreloom/kernel`    | Module registry, lifecycle, execution context, ACL, event bus, extension registries | UI, database drivers, HTTP                        |
-| `@coreloom/server`    | `ServerRoute` integration, middleware, response serialization, request context      | UI components, module business logic              |
-| `@coreloom/client`    | Application shell, navigation, screen registry, i18n, error boundaries              | Database access, secrets, service implementations |
-| `@coreloom/database`  | DB adapter interface, migrator, transactions, migration ledger                      | Module business logic                             |
-| `@coreloom/testing`   | Test host, fake clock, fake principal, memory adapters, contract test kits          | Production composition root                       |
-| `@coreloom/platform`  | Complete application and composition root                                           | Private module imports                            |
+| Package               | Responsibility                                                                                  | Must not contain                                  |
+| --------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `@coreloom/contracts` | Types, JSON Schema, IDs, module protocol, event contracts                                       | IO, Octane runtime, databases                     |
+| `@coreloom/kernel`    | Module registry, lifecycle, execution context, ACL, event bus, extension registries             | UI, database drivers, HTTP                        |
+| `@coreloom/server`    | `ServerRoute` integration, middleware, response serialization, request context                  | UI components, module business logic              |
+| `@coreloom/client`    | Application shell, navigation, screen registry, i18n, error boundaries                          | Database access, secrets, service implementations |
+| `@coreloom/database`  | DB adapter interface, transactions (the migration runner and ledger live in `@coreloom/kernel`) | Module business logic                             |
+| `@coreloom/testing`   | Test host, fake clock, fake principal, memory adapters, contract test kits                      | Production composition root                       |
+| `@coreloom/platform`  | Complete application and composition root                                                       | Private module imports                            |
 
 ### 5.2. Dependency direction
 
@@ -602,44 +602,33 @@ The first release may use an in-memory process for local events. The outbox cont
 
 ## 10. Database and migrations
 
-> Not implemented (2026-09-01). There is no migrator, ledger, checksum, `meta.json`, `verify.sql`, or `db plan/apply`. Each module executes idempotent SQL constants from `src/services/migration.ts` in its repository constructor and mirrors them into `migrations/000N_*.{up,down}.sql` for review. See `.ai/skills/migration-authoring/SKILL.md`.
+> Implemented for every database-owning module (2026-09-02). The runner, per-database ledger, checksums, adoption, and drift refusal live in `packages/kernel/src/migrations.ts`. `agents`, `auth`, `automations`, `catalog`, `expenses`, `parties`, `profile`, and `sandbox` all use it, and `coreloom migration verify --json` reports no unmanaged database-owning module. There is no `meta.json`, `verify.sql`, global lock, or remote apply. Cross-module ordering is unnecessary because each module owns a separate SQLite file. See `.ai/skills/migration-authoring/SKILL.md`.
 
 ### 10.1. Migration rules
 
-- Migration directories use UTC time and a short description.
-- `meta.json` contains module ID, dependencies, checksum, change type, and risk declaration.
-- `up.sql` is the only file that changes the database.
-- `verify.sql` must succeed after the migration.
-- An applied migration is immutable. A checksum mismatch blocks startup.
-- Migrations from multiple modules are topologically sorted by dependency.
-- The migrator uses a global lock and migration ledger.
+- `migrations/NNNN_<module>_<name>.up.sql` is the source. `src/services/migration.ts` exports `migrations: readonly ModuleMigration[]` whose `statements` mirror those files byte for byte, and a per-module test fails on drift.
+- `up.sql` is the only file that changes the database. `.down.sql` documents the reverse; nothing executes it.
+- Every module database carries its own ledger, `_coreloom_migrations (id TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at INTEGER NOT NULL)`.
+- The checksum is `sha256:<hex>` of the statements with CRLF normalized to LF and the text trimmed. An applied migration is immutable: a mismatch throws before any statement runs, so it blocks startup for that module.
+- A migration whose objects already exist is **adopted**, meaning the ledger records it and the statements never run. This is what lets a database that predates the ledger keep its rows. Detection reads `CREATE TABLE/INDEX/VIEW/TRIGGER` from `sqlite_master` and `ALTER TABLE ... ADD COLUMN` from `pragma_table_info`; a migration whose effect is rows supplies an `adoptWhen` predicate instead.
+- A migration whose objects are only half present is refused (`PARTIAL_OBJECTS`) rather than guessed at.
+- Each applied migration runs inside its own transaction together with its ledger row, so a failure leaves neither.
+- Migrations are ordered per module by file number. Each module owns one SQLite file, so there is no cross-module ordering to do.
 - Destructive changes require a separate plan, backup evidence, or an expand-and-contract strategy.
-
-Example `meta.json`:
-
-```json
-{
-	"schemaVersion": 1,
-	"id": "sales.orders/20260831T120000Z_create_orders",
-	"dependsOn": [],
-	"risk": "additive",
-	"transaction": "required",
-	"checksum": "sha256:GENERATED_BY_CLI"
-}
-```
 
 ### 10.2. Migration flow
 
 ```text
-migration new
-  → migration lint
-  → db plan
-  → run on an empty database
-  → run on an N-1 snapshot
-  → verify.sql
-  → human review
-  → db apply with an approved plan ID
+write migrations/NNNN_<name>.up.sql and .down.sql
+  → mirror it into src/services/migration.ts and the migrations list
+  → module tests: fresh applies, existing adopts, files match constants
+  → coreloom migration status --module <id>   (read-only; must read adopted, never pending, on real data)
+  → coreloom migration apply --module <id>    (dry run, read-only)
+  → coreloom migration apply --module <id> --apply   (development or test only)
+  → coreloom migration verify
 ```
+
+The server applies outstanding migrations itself when a module repository is first constructed, so a deploy needs no separate step. The CLI exists to inspect and to drive a local database ahead of the app.
 
 The `agent` profile does not expose general SQL execution. Database inspection uses explicit read-only capabilities with row, time, and output limits.
 
@@ -650,7 +639,7 @@ The `agent` profile does not expose general SQL execution. Database inspection u
 - Business code does not perform direct joins across module-owned tables. Shared reporting uses an explicit read model.
 - A foreign key between modules requires a manifest dependency, a migration dependency, and an uninstall test.
 - Tenant-owned tables include `tenant_id`. Unique constraints and indexes include the tenant unless an invariant is intentionally global.
-- Platform tables such as migration ledger, audit, and outbox belong to the system module.
+- Audit and outbox tables belong to the module that owns them. The migration ledger is per database, not a platform table, because each module owns its own SQLite file.
 
 ## 11. Client, TSRX, and translations
 
@@ -681,7 +670,7 @@ A module registers `clientRoutes` and `navigation`. It does not edit the central
 
 ### 11.3. Translation rules
 
-> Not implemented (2026-09-01). No code loads `translations/*.json`; files hold `module.name` only and UI copy is English literals. The shell has no translation provider, locale, or 401/403/404/500 views beyond the workspace access denial in `platform/src/App.tsrx`. See `.ai/skills/translations-i18n/SKILL.md`.
+> Implemented (2026-09-02). The shell registers module translation bundles, resolves the active locale with an English fallback, updates the document language, and exposes a personal language selector in Profile. Static translation keys and locale parity are validated by the CLI. See `.ai/skills/translations-i18n/SKILL.md`.
 
 - Keys use a module prefix, for example `sales.orders.list.title`.
 - `en.json` is the contract locale. Every required locale has the same key set.
@@ -724,17 +713,17 @@ The coding agent is not the platform agent runtime. `agents.core` and `@coreloom
 
 Every driver is offered only after a capability probe. Every turn produces normalized events: assistant text, tool activity, file change, error, and completion with usage. Local drivers require `loopback`.
 
-A session starts from one brief, not from a chosen role: a planner classifies the request into a new module or a change, names the module, and picks the specialist who takes the first turn. The operator chooses only the coding agent, next to the brief, and the session remembers it. Later turns route on the state of the module, and the request can only choose between specialists that state already allows. Every turn is driven by exactly one specialist role, so a change always has a single accountable author: business manager (specification), UX designer (screens), frontend engineer (client), backend engineer (server and data), agentic engineer (agent surface). A role declares its writable paths, its gates, and the roles it hands off to. Roles are workspace configuration in `.ai/agents/sandbox` and a workspace may replace any of them by id.
+A session starts from one brief, not from a chosen role. A planner classifies the request, identifies every affected module, marks each as new or existing, and picks the first specialist. The operator chooses only the coding agent next to the brief, and the session remembers it. Each specialist turn targets one module, while the session may carry several modules in one workspace, preview, diff, and delivery. Every turn has one accountable author: business manager for a specification or spec delta, UX designer for screens, frontend engineer for the client, backend engineer for server and data, and agentic engineer for the agent surface. A role declares its writable paths, gates, and valid handoffs. Roles are workspace configuration in `.ai/agents/sandbox`, and a workspace may replace any of them by id.
 
-Work does not stop between specialists. Every role closes its final message with one handoff line naming who continues, or `none` when the request is satisfied. The orchestrator turns that into the next step and validates it against the registered roles, falling back to the deterministic routing when the line is missing or names an unknown role. A handed-off turn starts on its own up to a bounded chain length per operator message, and the operator can turn that off per session and start each step by hand. Three things always stop the chain: a driver error, a failing gate that returns to the specialist that caused it, and a new module whose specification is still a draft, which waits for the operator's approval before anyone implements it.
+Work does not stop between specialists. Every role closes its final message with one handoff line naming who continues, or `none` when the request is satisfied. The orchestrator validates it against the registered roles and falls back to deterministic routing when the line is missing or unknown. A handed-off turn starts on its own up to a bounded chain length per operator message, and the operator can disable chaining. Three things always stop the chain: a driver error, a failing gate that returns to the responsible specialist, and any affected module without a current operator approval for the exact hash of its specification or spec delta. An agent never records approval. Editing a spec, requesting changes, or adding a module invalidates the recorded approval and routes back to the business manager before implementation continues.
 
 An agent may read only inside its session workspace, so every session carries `reference/`: read-only copies of the platform contracts, the shared UI primitives, and one complete example module. Without it an agent would either invent an architecture or stop; with it, it implements against the same contracts the gates enforce. The reference is never ejected.
 
 ### 12.4. Preview levels
 
 1. `component`: renders one TSRX component with fixtures.
-2. `module`: runs client routes, endpoints, and services for one module with an ephemeral session database.
-3. `integration`: runs the module against the bridge so other modules answer from the full application.
+2. `module`: runs client routes, endpoints, and services for the session's draft modules with ephemeral session databases.
+3. `integration`: composes the draft modules first, then uses the bridge for unchanged modules in the full application.
 
 Chat uses the `module` level by default. The full application is required only for the final integration test.
 
@@ -756,23 +745,23 @@ Preview adapters run the same contract as production adapters. Preview behavior 
 
 ### 12.6. Composed preview API
 
-A preview request is answered by the first layer that owns it: the draft module's own routes, then the session's authentication routes, then the bridge. The draft composition is loaded from the session workspace and rebuilt when its sources change, so a screen exercises its real endpoints, its real permissions, and its own ephemeral database instead of a stub.
+A preview request is answered by the first layer that owns it: any draft module's own routes, then the session's authentication routes, then the bridge. All draft compositions are loaded from the session workspace and rebuilt when their sources change, so a screen exercises the current endpoints, permissions, and ephemeral databases of every module changed in the session.
 
 Any API path the draft module does not own is answered by the bridge. The bridge forwards the request to a configured full application using a server-held session for the signed-in account, so a draft screen reads real records from other enabled modules under the platform's own authorization and tenancy. It is refused without the `sandbox.preview.data` scope, without a configured origin, or without an authenticated sandbox principal. `fixtures` is the default and is fully offline.
 
 ### 12.7. Access
 
-Sandbox access is created and assigned in the full application by an owner with `sandbox.access.manage`, or from the CLI with `oerp sandbox grant` and `oerp sandbox revoke`. Both paths write the same tenant-scoped grant records owned by `sandbox.core`.
+Sandbox access is created and assigned in the full application by an owner with `sandbox.access.manage`, or from the CLI with `coreloom sandbox grant` and `coreloom sandbox revoke`. Both paths write the same tenant-scoped grant records owned by `sandbox.core`.
 
 Signing in to the sandbox requires an `auth.core` account, the `sandbox.access.use` scope on the selected tenant membership, and a grant that is neither revoked nor expired. The sandbox issues its own cookie and never accepts the platform cookie as a sandbox session.
 
 ### 12.8. Work session
 
-Each conversation gets an isolated workspace directory outside the module tree, with its own ephemeral database and audit log.
+Each conversation gets an isolated pnpm workspace outside the module tree, with one draft and pristine base per affected module, ephemeral module databases, checkpoints, attachments, and an append-only audit log.
 
 ```text
-draft → classified → planned → editing → validating → previewing → awaiting-approval → accepted
-                                                     ↘ failed
+draft → classified → spec-drafting → awaiting-spec-approval → editing → validating → previewing → accepted
+                                      ↖ spec-changed      ↘ failed
 draft → blocked-no-blueprint
 ```
 
@@ -780,7 +769,7 @@ The agent sees only the session workspace. The orchestrator records the diff and
 
 ### 12.9. Eject
 
-Eject is a separate scope and a separate CLI capability with a dry run by default. It copies the session module into `modules/`, runs the module and spec gates, and then calls the existing `module enable` capability. It never edits the platform composition by hand.
+Eject is a separate scope and delivery capability with a dry run by default. It first verifies that every current spec hash still equals the operator-approved hash, then runs gates per changed module and delivers all session modules in one operation. New modules go through `module enable`; existing modules are updated in place; both run scope synchronization and the platform typecheck. A configured Git target may deliver the same plan on a branch and open one pull request. Eject never edits platform composition by hand.
 
 ### 12.10. Sandbox screen
 
@@ -801,7 +790,7 @@ The CLI is the only supported automation boundary for platform operations. Human
 
 The CLI takes the tool-layer role commonly served by MCP: discovery, typed input and output schemas, and controlled execution. It runs as a normal local process that can be governed by operating system policy, CI, and audit. A future MCP adapter may wrap the capability registry without creating a second platform implementation.
 
-Binary: `octane-erp`, with optional `oerp` alias.
+Binary: `coreloom`, with optional short alias `cl`.
 
 ### 13.1. Capability definition
 
@@ -825,9 +814,9 @@ Interactive commands and `capability run` use the same handler. Agent protocol b
 ### 13.2. Machine protocol
 
 ```bash
-octane-erp capability list --json
-octane-erp capability describe module.validate --json
-octane-erp capability run module.validate --input request.json --json
+coreloom capability list --json
+coreloom capability describe module.validate --json
+coreloom capability run module.validate --input request.json --json
 ```
 
 Standard response:
@@ -857,64 +846,67 @@ The extension contract and customer export example are documented in `docs/cli-e
 
 ### 13.4. Command groups
 
-> Partially implemented (2026-09-01). The binary is `oerp` through `pnpm oerp`. Implemented: `doctor`, `setup check|quick`, `capability list|describe|run`, `spec validate`, `blueprint list|validate`, `module list|validate|sync|enable|disable|new`, and module extensions `auth scopes|sync-scopes|greenfield`, `agents status|audit-verify`, `sandbox access|grant|revoke|sessions|audit-verify`. The rest of this list (`setup init`, `workspace`, `spec list|show|diff|lock|trace`, `blueprint show|classify`, `module show|graph|test`, `api`, `acl`, `migration`, `db`, `i18n`, `preview`, `agent`) does not exist. `.ai/policies/capabilities.yaml` tracks the real list.
+> Partially implemented (2026-09-01). The binary is `coreloom` through `pnpm coreloom`. Implemented: `doctor`, `setup check|quick`, `capability list|describe|run`, `spec validate`, `blueprint list|validate`, `module list|validate|sync|enable|disable|new`, `migration status|apply|verify`, and module extensions `auth scopes|sync-scopes|greenfield`, `agents status|audit-verify`, `sandbox access|grant|revoke|sessions|audit-verify`. The rest of this list (`setup init`, `workspace`, `spec list|show|diff|lock|trace`, `blueprint show|classify`, `module show|graph|test`, `api`, `acl`, `migration new|lint`, `db`, `i18n`, `preview`, `agent`) does not exist. `.ai/policies/capabilities.yaml` tracks the real list.
 
 ```text
-octane-erp setup init
-octane-erp setup check
-octane-erp setup quick [--apply --confirm reset-local-auth]
-octane-erp doctor
+coreloom setup init
+coreloom setup check
+coreloom setup quick [--apply --confirm reset-local-auth]
+coreloom doctor
 
-octane-erp workspace info
-octane-erp workspace diff
+coreloom workspace info
+coreloom workspace diff
 
-octane-erp spec list [module]
-octane-erp spec show <spec-id>
-octane-erp spec validate [module]
-octane-erp spec diff <base> <head>
-octane-erp spec lock <module-or-change>
-octane-erp spec trace <spec-id>
+coreloom spec list [module]
+coreloom spec show <spec-id>
+coreloom spec validate [module]
+coreloom spec diff <base> <head>
+coreloom spec lock <module-or-change>
+coreloom spec trace <spec-id>
 
-octane-erp blueprint list
-octane-erp blueprint show <id> --version <version>
-octane-erp blueprint validate <id>
-octane-erp blueprint classify --request <file>
+coreloom blueprint list
+coreloom blueprint show <id> --version <version>
+coreloom blueprint validate <id>
+coreloom blueprint classify --request <file>
 
-octane-erp module new <id> --profile full
-octane-erp module list
-octane-erp module show <id>
-octane-erp module validate [id]
-octane-erp module graph
-octane-erp module test <id>
+coreloom module new <id> --profile full
+coreloom module list
+coreloom module show <id>
+coreloom module validate [id]
+coreloom module graph
+coreloom module test <id>
 
-octane-erp api list [module]
-octane-erp api check [module]
-octane-erp api invoke <endpoint-id> --env preview
+coreloom api list [module]
+coreloom api check [module]
+coreloom api invoke <endpoint-id> --env preview
 
-octane-erp acl list [module]
-octane-erp acl matrix <module>
-octane-erp acl check <permission> --principal fixture:manager
+coreloom acl list [module]
+coreloom acl matrix <module>
+coreloom acl check <permission> --principal fixture:manager
 
-octane-erp migration new <module> <name>
-octane-erp migration lint [module]
-octane-erp db status --target <alias>
-octane-erp db plan --target <alias>
-octane-erp db apply --target <alias> --plan-id <id>
+coreloom migration status [--module <id>]
+coreloom migration apply --module <id> [--apply]
+coreloom migration verify
+coreloom migration new <module> <name>
+coreloom migration lint [module]
+coreloom db status --target <alias>
+coreloom db plan --target <alias>
+coreloom db apply --target <alias> --plan-id <id>
 
-octane-erp i18n check [module]
-octane-erp preview start <module>
-octane-erp preview status
-octane-erp preview stop
+coreloom i18n check [module]
+coreloom preview start <module>
+coreloom preview status
+coreloom preview stop
 
-octane-erp agent context <task>
-octane-erp agent packet build <plan.json> --step <step-id>
-octane-erp agent packet validate <packet.json>
-octane-erp agent execute <packet.json> --profile executor-basic
-octane-erp agent eval --profile executor-basic [blueprint]
-octane-erp agent verify-plan <plan.json>
-octane-erp capability list
-octane-erp capability describe <id>
-octane-erp capability run <id>
+coreloom agent context <task>
+coreloom agent packet build <plan.json> --step <step-id>
+coreloom agent packet validate <packet.json>
+coreloom agent execute <packet.json> --profile executor-basic
+coreloom agent eval --profile executor-basic [blueprint]
+coreloom agent verify-plan <plan.json>
+coreloom capability list
+coreloom capability describe <id>
+coreloom capability run <id>
 ```
 
 `doctor` checks Node and pnpm versions, TSRX tooling, Octane configuration, workspace graph, manifests, blueprints, model profiles, task budgets, database adapter, preview ports, agent policy, and secret references by name only.
@@ -945,7 +937,7 @@ octane-erp capability run <id>
 
 ### 13.7. Setup
 
-`octane-erp setup init` performs:
+`coreloom setup init` performs:
 
 1. Validation of an empty or compatible workspace.
 2. Creation of the four monorepo areas.
@@ -961,7 +953,7 @@ Every step is idempotent. The command shows a plan before writing. Existing conf
 
 ## 14. Part 4: agentic harness and `.ai`
 
-> Not implemented as drawn (2026-09-01). The real `.ai` tree is `agents/` (sandbox roles loaded by `packages/coding-agent`, plus root roles), `skills/` (13 skills copied into sandbox sessions and exposed to Claude Code), `blueprints/` (8), `policies/`, `examples/`. There are no `rules/` or `workflows/` directories, no orchestrator or run artifacts (`.octane-erp/runs`), and no task-packet executor; the sandbox (`packages/sandbox`) is the orchestrator, with roles, gates, and handoffs described in `.ai/README.md`.
+> Not implemented as drawn (2026-09-02). The real `.ai` tree is `agents/` (sandbox roles loaded by `packages/coding-agent`, plus root roles), `skills/` (15 skills copied into sandbox sessions and exposed to Claude Code), `blueprints/` (8), `policies/`, `examples/`. There are no `rules/` or run artifacts (`.coreloom/runs`), and no task-packet executor; the sandbox (`packages/sandbox`) is the coding orchestrator, with roles, gates, and handoffs described in `.ai/README.md`. The optional `workflows.core` module owns business workflow definitions and runs.
 
 ### 14.1. Tree
 
@@ -1051,7 +1043,7 @@ A reviewer does not fix the code it reviews in the same role. A finding returns 
 Every run creates a Git-ignored directory:
 
 ```text
-.octane-erp/runs/<run-id>/
+.coreloom/runs/<run-id>/
 ├── request.json
 ├── classification.json
 ├── blueprint-lock.json
@@ -1153,7 +1145,7 @@ Invalid modules under `.ai/examples` are part of agent evals. The agent must ide
 
 ## 15. Enforced blueprint system
 
-> Partially implemented (2026-09-01). `pnpm oerp blueprint validate --all` checks every `.ai/blueprints/*/blueprint.json` against `packages/contracts/schemas/blueprint.schema.json` and that the companion files exist. Nothing locks a blueprint or a spec, executes `steps.yaml` or `gates.yaml`, or enforces `allowed-paths.yaml`; the sandbox enforces gates from role front matter (`packages/sandbox/src/server/gates.ts`) and labels sessions `new-module@1.0.0` or `edit-module@1.0.0`.
+> Partially implemented (2026-09-01). `pnpm coreloom blueprint validate --all` checks every `.ai/blueprints/*/blueprint.json` against `packages/contracts/schemas/blueprint.schema.json` and that the companion files exist. Nothing locks a blueprint or a spec, executes `steps.yaml` or `gates.yaml`, or enforces `allowed-paths.yaml`; the sandbox enforces gates from role front matter (`packages/sandbox/src/server/gates.ts`) and labels sessions `new-module@1.0.0` or `edit-module@1.0.0`.
 
 Blueprints are executable development contracts. They constrain the agent more tightly than prose instructions.
 
@@ -1494,7 +1486,7 @@ Examples that require decomposition:
 The basic executor receives a generated packet instead of raw chat or repository-wide context:
 
 ```text
-.octane-erp/runs/<run-id>/task-packets/<step-id>/
+.coreloom/runs/<run-id>/task-packets/<step-id>/
 ├── task.json
 ├── blueprint-slice.json
 ├── spec-slice.json
@@ -1697,8 +1689,8 @@ Root `coreloom.json` contains safe references only:
 	"database": {
 		"provider": "postgres",
 		"targets": {
-			"local": "secret://octane-erp/local/database",
-			"production": "secret://octane-erp/production/database"
+			"local": "secret://coreloom/local/database",
+			"production": "secret://coreloom/production/database"
 		}
 	},
 	"agent": {
@@ -1715,7 +1707,7 @@ The secret resolver is a runtime adapter. Configuration files never contain a DS
 
 ### 17.1. Module gates
 
-`octane-erp module validate sales.orders` checks:
+`coreloom module validate sales.orders` checks:
 
 1. Approved specification graph and spec lock.
 2. Traceability from source and tests to spec IDs.
@@ -1734,7 +1726,7 @@ The secret resolver is a runtime adapter. Configuration files never contain a DS
 
 ### 17.2. Specification gates
 
-`octane-erp spec validate <module>` checks:
+`coreloom spec validate <module>` checks:
 
 1. Schema and lifecycle state of every spec.
 2. Unique and namespaced spec IDs.
@@ -1748,7 +1740,7 @@ The secret resolver is a runtime adapter. Configuration files never contain a DS
 
 ### 17.3. Blueprint gates
 
-`octane-erp blueprint validate <id>` checks:
+`coreloom blueprint validate <id>` checks:
 
 1. Blueprint manifest and version.
 2. Input and plan schemas.
@@ -1782,10 +1774,10 @@ The secret resolver is a runtime adapter. Configuration files never contain a DS
 		"build": "pnpm -r build",
 		"typecheck": "pnpm -r typecheck",
 		"test": "pnpm -r test",
-		"validate": "octane-erp spec validate --all && octane-erp module validate && octane-erp blueprint validate --all",
-		"doctor": "octane-erp doctor",
+		"validate": "coreloom spec validate --all && coreloom module validate && coreloom blueprint validate --all",
+		"doctor": "coreloom doctor",
 		"verify": "pnpm typecheck && pnpm test && pnpm validate",
-		"eval:executor-basic": "octane-erp agent eval --profile executor-basic",
+		"eval:executor-basic": "coreloom agent eval --profile executor-basic",
 		"sandbox": "pnpm --filter @coreloom/sandbox dev"
 	}
 }
@@ -1894,7 +1886,7 @@ The order minimizes work invalidated by contract changes:
 3. `@coreloom/cli-protocol`: envelope, error codes, capability registry types.
 4. Blueprint validator, classifier contract, lock, and path policy engine.
 5. Task packet compiler, context slicer, structured executor result, and bounded repair engine.
-6. `octane-erp doctor`, `spec validate`, `spec lock`, `spec trace`, `blueprint validate`, `agent packet`, `agent eval`, `module new`, and `module validate`.
+6. `coreloom doctor`, `spec validate`, `spec lock`, `spec trace`, `blueprint validate`, `agent packet`, `agent eval`, `module new`, and `module validate`.
 7. `@coreloom/kernel`: module registry, execution context, ACL.
 8. `@coreloom/server`: middleware and `defineEndpoint` to `ServerRoute`.
 9. `@coreloom/testing`: memory adapters and contract test kits.

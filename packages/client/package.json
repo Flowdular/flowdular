@@ -4,7 +4,8 @@
 	"private": true,
 	"type": "module",
 	"exports": {
-		".": "./src/index.ts"
+		".": "./src/index.ts",
+		"./i18n": "./src/i18n/index.ts"
 	},
 	"scripts": {
 		"typecheck": "tsrx-tsc --noEmit -p tsconfig.json",
@@ -12,8 +13,8 @@
 	},
 	"dependencies": {
 		"@coreloom/ui": "workspace:*",
-		"@octanejs/seo": "0.0.35",
-		"octane": "0.1.50",
+		"@octanejs/seo": "0.0.36",
+		"octane": "0.1.51",
 		"segment-state": "0.2.0"
 	},
 	"devDependencies": {

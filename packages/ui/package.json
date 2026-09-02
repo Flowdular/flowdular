@@ -12,9 +12,12 @@
 		"test": "vitest run --passWithNoTests"
 	},
 	"dependencies": {
+		"@coreloom/contracts": "workspace:*",
 		"@fontsource-variable/ibm-plex-sans": "5.3.0",
 		"@fontsource/ibm-plex-mono": "5.2.7",
-		"octane": "0.1.50"
+		"@octanejs/tanstack-table": "0.1.48",
+		"chart.js": "^4.5.1",
+		"octane": "0.1.51"
 	},
 	"devDependencies": {
 		"@tsrx/typescript-plugin": "0.3.120",

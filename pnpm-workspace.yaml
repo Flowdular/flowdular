@@ -7,10 +7,14 @@ allowBuilds:
   esbuild: true
 
 minimumReleaseAgeExclude:
-  - '@octanejs/app-core@0.0.46'
-  - '@octanejs/seo@0.0.35'
-  - '@octanejs/vite-plugin@0.1.50'
-  - octane@0.1.50
+  - '@octanejs/app-core@0.0.47'
+  - '@octanejs/seo@0.0.36'
+  - '@octanejs/tanstack-table@0.1.48'
+  - '@octanejs/vite-plugin@0.1.51'
+  - octane@0.1.51
+  - '@octanejs/tanstack-store@0.0.45'
 
 patchedDependencies:
-  '@octanejs/seo@0.0.35': patches/@octanejs__seo@0.0.35.patch
+  '@octanejs/seo@0.0.36': patches/@octanejs__seo@0.0.36.patch
+  '@octanejs/tanstack-store@0.0.45': patches/@octanejs__tanstack-store@0.0.45.patch
+  '@octanejs/tanstack-table@0.1.48': patches/@octanejs__tanstack-table@0.1.48.patch

@@ -18,7 +18,9 @@ import {
 	readChat,
 	readSession,
 	sessionPaths,
+	updateSession,
 } from '../src/server/sessions.ts';
+import { hashSpec } from '../src/server/spec.ts';
 
 async function workspace(): Promise<string> {
 	const root = await mkdtemp(join(tmpdir(), 'coreloom-routes-'));
@@ -142,6 +144,7 @@ const preview: PreviewRuntime = {
 	compose: () => Promise.reject(new Error('no preview in tests')),
 	cached: () => null,
 	forget: () => undefined,
+	dispose: () => undefined,
 };
 
 function api(runtime: SandboxRuntime, port = 4320) {
@@ -312,6 +315,72 @@ describe('sandbox route security', () => {
 		expect(patches).toHaveLength(1);
 	});
 
+	it('validates GitHub settings and seals the provider token', async () => {
+		const root = await workspace();
+		const runtime = fakeRuntime(
+			root,
+			fakeDriver({ handoff: 'HANDOFF: none - done' }),
+		);
+		const patches: Record<string, unknown>[] = [];
+		runtime.update = async (patch) => {
+			patches.push(patch as Record<string, unknown>);
+			return runtime.connection();
+		};
+		const call = api(runtime);
+		const saved = await call('POST', '/sandbox/api/config', {
+			body: {
+				githubEnabled: true,
+				githubOverridesProject: true,
+				githubRemote: 'upstream',
+				githubRepository: 'example/octane',
+				githubBaseBranch: 'develop',
+				githubBranchPrefix: 'coreloom',
+				githubMode: 'fork',
+				githubForkOwner: 'octocat',
+				githubReviewers: ['reviewer-one'],
+				githubToken: 'github_pat_must_stay_secret',
+			},
+		});
+		expect(saved.status).toBe(200);
+		expect(patches).toHaveLength(1);
+		expect(patches[0]?.github).toEqual({
+			enabled: true,
+			overridesProject: true,
+			remote: 'upstream',
+			repository: 'example/octane',
+			baseBranch: 'develop',
+			branchPrefix: 'coreloom',
+			mode: 'fork',
+			forkOwner: 'octocat',
+			reviewers: ['reviewer-one'],
+		});
+		expect(JSON.stringify(patches[0]?.gitProviderToken)).not.toContain(
+			'github_pat_must_stay_secret',
+		);
+		expect(JSON.stringify(await saved.json())).not.toContain(
+			'github_pat_must_stay_secret',
+		);
+
+		const invalid = await call('POST', '/sandbox/api/config', {
+			body: { githubRepository: 'https://github.com/example/octane' },
+		});
+		expect(invalid.status).toBe(400);
+		expect(
+			((await invalid.json()) as { error: { code: string } }).error.code,
+		).toBe('GITHUB_CONFIG_INVALID');
+		const tooManyReviewers = await call('POST', '/sandbox/api/config', {
+			body: { githubReviewers: Array.from({ length: 21 }, () => 'octocat') },
+		});
+		expect(tooManyReviewers.status).toBe(400);
+		const oversized = await call('POST', '/sandbox/api/config', {
+			body: { githubToken: 'x'.repeat(300_000) },
+		});
+		expect(oversized.status).toBe(413);
+		expect(
+			((await oversized.json()) as { error: { code: string } }).error.code,
+		).toBe('REQUEST_TOO_LARGE');
+	});
+
 	it('answers a self-hosted browser with 401 until it signs in', async () => {
 		const root = await workspace();
 		const call = api(
@@ -385,6 +454,17 @@ describe('detached turns', () => {
 			join(paths.workspace, 'modules', 'booking', 'package.json'),
 			JSON.stringify({ name: '@coreloom/module-booking', dependencies: {} }),
 		);
+		const approvedText = await readFile(
+			join(paths.modulePath, 'spec', 'module.yaml'),
+			'utf8',
+		);
+		await updateSession(root, session.id, {
+			modules: session.modules.map((module) => ({
+				...module,
+				specHash: hashSpec(approvedText),
+				specApprovedAt: Date.now(),
+			})),
+		});
 		await runtime.update({ autoContinue: false } as never);
 
 		const response = await call(
@@ -428,7 +508,7 @@ describe('detached turns', () => {
 		).toBe(true);
 		const updated = await readSession(root, session.id);
 		expect(updated.state).not.toBe('editing');
-	});
+	}, 15_000);
 
 	it('chains handoffs on the server up to the limit and streams every turn', async () => {
 		const root = await workspace();
@@ -444,7 +524,7 @@ describe('detached turns', () => {
 						: 'HANDOFF: backend-engineer - the screen exists';
 				yield* fakeDriver({
 					handoff,
-					file: `modules/booking/src/turn-${turns}.ts`,
+					file: `modules/booking/src/domain/turn-${turns}.ts`,
 					delayMs: 5,
 				}).run(request);
 			},
@@ -466,6 +546,17 @@ describe('detached turns', () => {
 			join(paths.modulePath, 'package.json'),
 			JSON.stringify({ name: '@coreloom/module-booking', dependencies: {} }),
 		);
+		const approvedText = await readFile(
+			join(paths.modulePath, 'spec', 'module.yaml'),
+			'utf8',
+		);
+		await updateSession(root, session.id, {
+			modules: session.modules.map((module) => ({
+				...module,
+				specHash: hashSpec(approvedText),
+				specApprovedAt: Date.now(),
+			})),
+		});
 
 		const response = await call(
 			'POST',

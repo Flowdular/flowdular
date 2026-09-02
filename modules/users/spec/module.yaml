@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: users.core
-specVersion: 0.3.0
+specVersion: 0.5.0
 status: approved
 name: User Management Core
 description: Provides the tenant-scoped user directory and member administration (creation, display name, role assignment, per-member scopes, account status, password reset, session revocation, removal) through the public auth administration port.
@@ -73,3 +73,7 @@ acceptanceScenarios:
     given: The principal opens the Roles screen.
     when: The built-in role catalog is rendered.
     then: Owner and Member are shown separately with their effective permission scopes and immutable built-in status.
+  - id: USERS-INVITE
+    given: A principal with users.members.manage and a configured auth mail adapter.
+    when: The principal sends an invitation to an email address with an assignable workspace role.
+    then: Auth core delivers a single-use invitation without creating a membership before acceptance, and the Users screen reports delivery without exposing the token.

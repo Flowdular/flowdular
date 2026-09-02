@@ -1,0 +1,30 @@
+{
+	"$schema": "../../packages/contracts/schemas/module.schema.json",
+	"schemaVersion": 1,
+	"id": "workflows.core",
+	"package": "@coreloom/module-workflows",
+	"version": "0.1.0",
+	"profile": "full",
+	"capabilities": ["api", "database", "client", "translations", "integration"],
+	"platform": {
+		"server": true,
+		"client": true
+	},
+	"dependencies": [
+		{
+			"id": "system.core",
+			"range": "^0.1.0"
+		},
+		{
+			"id": "auth.core",
+			"range": "^0.6.0"
+		},
+		{
+			"id": "agents.core",
+			"range": "^0.6.0"
+		}
+	],
+	"tenancy": "required",
+	"locales": ["en", "pl"],
+	"stability": "experimental"
+}

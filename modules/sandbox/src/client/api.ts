@@ -3,6 +3,7 @@ import type {
 	SandboxAccessGrant,
 	SandboxSessionRecord,
 } from '../domain/types.ts';
+import { t } from '@coreloom/client/i18n';
 
 interface ErrorEnvelope {
 	readonly error?: { readonly message?: string };
@@ -24,7 +25,7 @@ export interface GrantSandboxAccessRequest {
 async function payload<T>(response: Response): Promise<T> {
 	const value = (await response.json()) as T & ErrorEnvelope;
 	if (!response.ok) {
-		throw new Error(value.error?.message ?? 'The sandbox operation failed.');
+		throw new Error(value.error?.message ?? t('sandbox.error.request'));
 	}
 	return value;
 }

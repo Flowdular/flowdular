@@ -1,5 +1,7 @@
-import type { ModuleClientContribution } from '@coreloom/client';
+import { t, type ModuleClientContribution } from '@coreloom/client';
 import { SYSTEM_PERMISSIONS } from '../acl/permissions.ts';
+import translationsEn from '../../translations/en.json';
+import translationsPl from '../../translations/pl.json';
 import { ModulesView } from './ModulesView.tsrx';
 
 export interface SystemClientContributionOptions {
@@ -13,14 +15,19 @@ export function createSystemClientContribution(
 	const scopes = options.scopes ?? [];
 	return {
 		moduleId: 'system.core',
+		translations: { en: translationsEn, pl: translationsPl },
 		navigation: [
 			{
 				id: 'system.navigation.modules',
 				viewId: 'modules',
 				group: 'Administration',
-				label: 'Modules',
+				get label() {
+					return t('system.navigation.modules');
+				},
 				glyph: 'modules',
-				description: 'Installed modules, surfaces, and settings',
+				get description() {
+					return t('system.navigation.modulesDescription');
+				},
 				scope: SYSTEM_PERMISSIONS.modulesRead,
 				order: 60,
 			},

@@ -5,6 +5,7 @@ import type {
 	EjectSummary,
 	EjectTargetId,
 } from './api.ts';
+import { activeLocale, t, useTranslation } from './i18n.ts';
 
 export interface EjectModalProps {
 	readonly plan: EjectPlanView;
@@ -20,8 +21,8 @@ export interface EjectModalProps {
 }
 
 const TARGET_LABELS: Readonly<Record<EjectTargetId, string>> = {
-	workspace: 'Into this workspace',
-	'git-pr': 'As a pull request',
+	workspace: 'target.workspace',
+	'git-pr': 'target.gitPr',
 };
 
 function stepIcon(status: EjectStep['status']): string {
@@ -33,47 +34,108 @@ function stepIcon(status: EjectStep['status']): string {
 
 function others(plan: EjectPlanView): string {
 	const count = plan.modules.length - 1;
-	return count > 0
-		? `, plus ${count} more module${
-				count === 1 ? '' : 's'
-			} in the same delivery`
-		: '';
+	return count > 0 ? t('sandbox.eject.moreModules', { count }) : '';
 }
 
 function lead(plan: EjectPlanView): string {
 	if (plan.git) {
-		return `${plan.git.changedFiles} files change on ${plan.git.branch}, branched from ${plan.git.remote}/${plan.git.baseBranch}${others(
-			plan,
-		)}. Nothing in this workspace changes.`;
+		return t('sandbox.eject.lead.git', {
+			count: plan.git.changedFiles,
+			branch: plan.git.branch,
+			base: `${plan.git.remote}/${plan.git.baseBranch}`,
+			target: plan.git.pushTarget,
+			others: others(plan),
+		});
+	}
+	if (plan.modules.length > 1) {
+		return t('sandbox.eject.lead.multi', {
+			files: plan.changedFiles,
+			modules: plan.modules.length,
+		});
 	}
 	const parts = [
-		`${plan.files.length} files land in ${plan.targetPath}`,
+		t('sandbox.eject.detail.filesLand', {
+			count: plan.files.length,
+			path: plan.targetPath,
+		}),
 		...(plan.overwrites.length > 0
-			? [`${plan.overwrites.length} of them overwritten`]
+			? [
+					t('sandbox.eject.detail.overwritten', {
+						count: plan.overwrites.length,
+					}),
+				]
 			: []),
 		...(plan.removes.length > 0
-			? [`${plan.removes.length} deleted files removed`]
+			? [t('sandbox.eject.detail.removed', { count: plan.removes.length })]
 			: []),
 	];
 	return `${parts.join(', ')}${others(plan)}.`;
 }
 
+/* What one module of the delivery changes, in the same words the single-module
+   lead uses. */
+function moduleDetail(module: EjectPlanView['modules'][number]): string {
+	return [
+		t('sandbox.eject.detail.files', { count: module.files.length }),
+		...(module.overwrites.length > 0
+			? [
+					t('sandbox.eject.detail.overwritten', {
+						count: module.overwrites.length,
+					}),
+				]
+			: []),
+		...(module.removes.length > 0
+			? [t('sandbox.eject.detail.removed', { count: module.removes.length })]
+			: []),
+		...(module.newPackages.length > 0
+			? [
+					t('sandbox.eject.detail.packages', {
+						packages: module.newPackages.join(', '),
+					}),
+				]
+			: []),
+		...(module.enable ? [t('sandbox.eject.detail.enable')] : []),
+	].join(', ');
+}
+
 function explanation(plan: EjectPlanView): string {
 	if (plan.git) {
-		return 'Every gate runs first. The modules are then copied into a clean worktree of the base branch, dependencies are linked, new modules are enabled, the platform is typechecked, and the change is checked against the allowed paths and the budget. Only then is it committed and pushed. A failing step stops the delivery, removes the worktree, and nothing is marked delivered.';
+		return t('sandbox.eject.explanation.git');
 	}
-	return plan.enable
-		? 'Every gate runs first. The module is then copied, its dependencies are linked, and it is enabled through the module capability. A failing step stops the delivery and nothing is marked delivered.'
-		: 'Every gate runs first. The module is then copied and its dependencies are linked. A failing step stops the delivery and nothing is marked delivered.';
+	return plan.modules.some((module) => module.enable)
+		? t('sandbox.eject.explanation.enable', { count: plan.modules.length })
+		: t('sandbox.eject.explanation.copy', { count: plan.modules.length });
+}
+
+function totalRemoves(plan: EjectPlanView): number {
+	return plan.modules.reduce(
+		(total, module) => total + module.removes.length,
+		0,
+	);
+}
+
+function newPackagesOf(plan: EjectPlanView): readonly string[] {
+	return [
+		...new Set(plan.modules.flatMap((module) => module.newPackages)),
+	].sort();
+}
+
+/* What landed, named: one module by its id, several by their ids. */
+function delivered(summary: EjectSummary): string {
+	return `${summary.modules.join(', ')} ${t(
+		'sandbox.eject.deliveredVerb.' +
+			(summary.modules.length === 1 ? 'one' : 'other'),
+	)}`;
 }
 
 function deliveredAt(at: number): string {
-	return new Date(at).toLocaleString();
+	return new Date(at).toLocaleString(activeLocale());
 }
 
 /* Eject is a delivery, so it gets its own screen: what will land, every step
    while it lands, and a plain confirmation when it has. */
 export function EjectModal(props: EjectModalProps) @{
+	const { t } = useTranslation();
 	const phase =
 		props.summary
 			? 'done'
@@ -97,11 +159,23 @@ export function EjectModal(props: EjectModalProps) @{
 					} @else {
 						<Icon name="download" size={18} />
 					}
-					{phase === 'done' ? 'Delivered' : 'Eject ' + props.plan.moduleId}
+					{phase === 'done'
+						? t('sandbox.eject.delivered')
+						: props.plan.modules.length === 1
+							? t('sandbox.eject.title.one', { module: props.plan.moduleId })
+							: t('sandbox.eject.title.other', {
+									count: props.plan.modules.length,
+								})}
 				</span>
 				<span class="sandbox__spacer"></span>
 				<Tag mono>
-					{git ? git.branch : props.plan.targetPath}
+					{git
+						? git.branch
+						: props.plan.modules.length === 1
+							? props.plan.targetPath
+							: t('sandbox.session.modules', {
+									count: props.plan.modules.length,
+								})}
 				</Tag>
 			</header>
 
@@ -113,7 +187,7 @@ export function EjectModal(props: EjectModalProps) @{
 								<div
 									class="ui-toolbar"
 									role="radiogroup"
-									aria-label="Delivery target"
+									aria-label={t('sandbox.eject.target.label')}
 								>
 									@for (const target of props.plan.availableTargets; key target.id) {
 										<Button
@@ -123,83 +197,134 @@ export function EjectModal(props: EjectModalProps) @{
 												: 'secondary'}
 											disabled={!target.available}
 											onClick={() => props.onTarget(target.id)}
-										>{TARGET_LABELS[target.id]}</Button>
+										>{t('sandbox.eject.' + TARGET_LABELS[target.id])}</Button>
 									}
 								</div>
 								@for (const target of unavailable; key target.id) {
-									<span class="ui-help">
-										{TARGET_LABELS[target.id] + ' is not available: ' +
-											(target.reason ?? 'unknown reason')}
-									</span>
+									<span class="ui-help">{t('sandbox.eject.target.unavailable', {
+										target: t('sandbox.eject.' + TARGET_LABELS[target.id]),
+										reason: target.reason ?? t('sandbox.eject.unknownReason'),
+									})}</span>
 								}
 							</>
 						}
 						<p class="eject__lead">{lead(props.plan)}</p>
 						<p class="ui-help">{explanation(props.plan)}</p>
+						<ul class="eject__steps">
+							@for (const module of props.plan.modules; key module.id) {
+								<li class="eject__step">
+									<span class="eject__step-label">
+										{module.id + ' (' + module.targetPath + ')'}
+									</span>
+									<span class="eject__step-detail">{moduleDetail(module)}</span>
+								</li>
+							}
+						</ul>
 						@if (git) {
 							<>
 								<ul class="eject__steps">
 									<li class="eject__step">
-										<span class="eject__step-label">Branch</span>
-										<span class="eject__step-detail">{git.branch}</span>
+										<span class="eject__step-label">{t(
+											'sandbox.eject.git.deliveryPath',
+										)}</span>
+										<span class="eject__step-detail">
+											{git.deliveryMode === 'fork'
+												? t('sandbox.eject.git.fork', {
+														target: git.pushTarget,
+														suffix: git.forkRequired
+															? t('sandbox.eject.git.createdAfterConfirm')
+															: '',
+													})
+												: t('sandbox.eject.git.directPush', {
+														target: git.pushTarget,
+													})}
+										</span>
 									</li>
 									<li class="eject__step">
-										<span class="eject__step-label">Base</span>
+										<span class="eject__step-label">{t(
+											'sandbox.eject.git.branch',
+										)}</span>
+										<span class="eject__step-detail">
+											{git.branch +
+												(git.head !== git.branch ? ` (${git.head})` : '')}
+										</span>
+									</li>
+									<li class="eject__step">
+										<span class="eject__step-label">{t(
+											'sandbox.eject.git.base',
+										)}</span>
 										<span class="eject__step-detail">
 											{git.remote + '/' + git.baseBranch}
 										</span>
 									</li>
 									<li class="eject__step">
-										<span class="eject__step-label">Changed files</span>
-										<span class="eject__step-detail">
-											{git.changedFiles + ' of ' + git.budget.maxChangedFiles +
-												' allowed (estimate; the guardrail step counts the real worktree)'}
-										</span>
+										<span class="eject__step-label">{t(
+											'sandbox.eject.git.changedFiles',
+										)}</span>
+										<span class="eject__step-detail">{t(
+											'sandbox.eject.git.changedFilesDetail',
+											{
+												changed: git.changedFiles,
+												allowed: git.budget.maxChangedFiles,
+											},
+										)}</span>
 									</li>
 									@if (git.newDependencies.length > 0) {
 										<li class="eject__step">
-											<span class="eject__step-label">New packages</span>
-											<span class="eject__step-detail">
-												{git.newDependencies.join(', ') + ' (' +
-													git.budget.maxNewDependencies +
-													' allowed)'}
-											</span>
+											<span class="eject__step-label">{t(
+												'sandbox.eject.git.newPackages',
+											)}</span>
+											<span class="eject__step-detail">{t(
+												'sandbox.eject.git.packagesDetail',
+												{
+													packages: git.newDependencies.join(', '),
+													allowed: git.budget.maxNewDependencies,
+												},
+											)}</span>
 										</li>
 									}
 									<li class="eject__step">
-										<span class="eject__step-label">Owners touched</span>
+										<span class="eject__step-label">{t(
+											'sandbox.eject.git.owners',
+										)}</span>
 										<span class="eject__step-detail">
 											{git.owners.length > 0
 												? git.owners.join(', ')
-												: 'none listed in path-ownership.yaml'}
+												: t('sandbox.eject.git.noOwners')}
 										</span>
 									</li>
 									@if (git.reviewers.length > 0) {
 										<li class="eject__step">
-											<span class="eject__step-label">Reviewers</span>
+											<span class="eject__step-label">{t(
+												'sandbox.eject.git.reviewers',
+											)}</span>
 											<span class="eject__step-detail">{git.reviewers.join(
 												', ',
 											)}</span>
 										</li>
 									}
 									<li class="eject__step">
-										<span class="eject__step-label">Pull request</span>
+										<span class="eject__step-label">{t(
+											'sandbox.eject.git.pullRequest',
+										)}</span>
 										<span class="eject__step-detail">
 											{git.provider === 'github'
-												? 'opened with gh'
+												? t('sandbox.eject.git.openedIn', {
+														repository: git.repository ??
+															t('sandbox.eject.git.configuredRepository'),
+													})
 												: git.providerNote}
 										</span>
 									</li>
 								</ul>
 								@if (blocked) {
-									<Alert>
-										{'The guardrails block this delivery: ' +
-											git.guardrails.reasons.join(' ')}
-									</Alert>
+									<Alert>{t('sandbox.eject.guardrails.blocked', {
+										reasons: git.guardrails.reasons.join(' '),
+									})}</Alert>
 								} @else {
-									<span class="ui-help">
-										Guardrails: within the allowed paths and the budget.
-									</span>
+									<span class="ui-help">{t(
+										'sandbox.eject.guardrails.passed',
+									)}</span>
 								}
 							</>
 						}
@@ -207,61 +332,66 @@ export function EjectModal(props: EjectModalProps) @{
 							@for (const gate of props.plan.gates; key gate) {
 								<li class="eject__step">
 									<span class="eject__step-dot"></span>
-									{'Gate ' + gate}
+									{t('sandbox.eject.step.gate', { gate })}
 								</li>
 							}
 							@if (git) {
 								<li class="eject__step">
 									<span class="eject__step-dot"></span>
-									{'Fetch ' + git.remote + '/' + git.baseBranch +
-										' and prepare a clean worktree on ' +
-										git.branch}
+									{t('sandbox.eject.step.fetch', {
+										base: `${git.remote}/${git.baseBranch}`,
+										branch: git.branch,
+									})}
 								</li>
 							}
 							<li class="eject__step">
 								<span class="eject__step-dot"></span>
-								Copy, then link dependencies with pnpm install
+								{t('sandbox.eject.step.copy')}
 							</li>
-							@if (props.plan.removes.length > 0) {
+							@if (totalRemoves(props.plan) > 0) {
 								<li class="eject__step">
 									<span class="eject__step-dot"></span>
-									{'Remove ' + props.plan.removes.length +
-										' files the session deleted: ' +
-										props.plan.removes.slice(0, 5).join(', ') +
-										(props.plan.removes.length > 5 ? ', …' : '')}
+									{t('sandbox.eject.step.remove', {
+										count: totalRemoves(props.plan),
+									})}
 								</li>
 							}
-							@if (props.plan.enable) {
+							@for (const module of props.plan.modules.filter(
+								(entry) => entry.enable,
+							); key module.id) {
 								<li class="eject__step">
 									<span class="eject__step-dot"></span>
-									Enable the module in the platform
+									{t('sandbox.eject.step.enable', { module: module.id })}
 								</li>
 							}
 							@if (!git) {
 								<li class="eject__step">
 									<span class="eject__step-dot"></span>
-									Grant the module scopes to workspace owners
+									{t('sandbox.eject.step.grant')}
 								</li>
 							}
 							<li class="eject__step">
 								<span class="eject__step-dot"></span>
-								Typecheck the platform with the module in it
+								{t('sandbox.eject.step.typecheck')}
 							</li>
 							@if (git) {
 								<>
 									<li class="eject__step">
 										<span class="eject__step-dot"></span>
-										Check the change against the allowed paths and the budget
+										{t('sandbox.eject.step.guardrails')}
 									</li>
 									<li class="eject__step">
 										<span class="eject__step-dot"></span>
-										{'Commit and push ' + git.branch + ' to ' + git.remote}
+										{t('sandbox.eject.step.push', {
+											branch: git.branch,
+											remote: git.remote,
+										})}
 									</li>
 									<li class="eject__step">
 										<span class="eject__step-dot"></span>
 										{git.provider === 'github'
-											? 'Open the pull request'
-											: 'Show the compare link'}
+											? t('sandbox.eject.step.openPr')
+											: t('sandbox.eject.step.compare')}
 									</li>
 								</>
 							}
@@ -269,34 +399,32 @@ export function EjectModal(props: EjectModalProps) @{
 								<li class="eject__step eject__step--note">
 									<span class="eject__step-dot"></span>
 									{props.plan.platformLocal
-										? 'Then restart the application so it loads the new composition and migrations'
-										: 'Then deploy the workspace; the connected application runs elsewhere'}
+										? t('sandbox.eject.step.restart')
+										: t('sandbox.eject.step.deploy')}
 								</li>
 							}
 						</ul>
-						@if (props.plan.newPackages.length > 0 && !git) {
-							<Alert tone="warning">
-								{'This module adds packages the workspace does not have yet: ' +
-									props.plan.newPackages.join(', ') +
-									'. They are installed during the eject.'}
-							</Alert>
+						@if (newPackagesOf(props.plan).length > 0 && !git) {
+							<Alert tone="warning">{t('sandbox.eject.packagesWarning', {
+								packages: newPackagesOf(props.plan).join(', '),
+							})}</Alert>
 						}
 						@if (props.plan.previous) {
 							<span class="ui-help">
-								{'Delivered before, on ' +
-									deliveredAt(props.plan.previous.deliveredAt) +
-									(props.plan.previous.branch
-										? ' as ' + props.plan.previous.branch
-										: '') +
-									'. '}
+								{t('sandbox.eject.previous', {
+									date: deliveredAt(props.plan.previous.deliveredAt),
+									branch: props.plan.previous.branch
+										? t('sandbox.eject.previousBranch', {
+												branch: props.plan.previous.branch,
+											})
+										: '',
+								})}
 								@if (props.plan.previous.pullRequestUrl) {
 									<a
 										href={props.plan.previous.pullRequestUrl}
 										target="_blank"
 										rel="noreferrer"
-									>
-										Open that pull request
-									</a>
+									>{t('sandbox.eject.openPreviousPr')}</a>
 								}
 							</span>
 						}
@@ -309,7 +437,7 @@ export function EjectModal(props: EjectModalProps) @{
 										event.currentTarget.checked,
 									)}
 								/>
-								<span>Build the platform afterwards (slower)</span>
+								<span>{t('sandbox.eject.build')}</span>
 							</label>
 						}
 					</div>
@@ -338,47 +466,50 @@ export function EjectModal(props: EjectModalProps) @{
 					<div class="eject__done">
 						<b>
 							{props.summary.branch
-								? props.summary.moduleId + ' is on ' + props.summary.branch
-								: props.summary.moduleId + ' is in ' + props.summary.targetPath}
+								? t('sandbox.eject.done.branch', {
+										subject: delivered(props.summary),
+										branch: props.summary.branch,
+									})
+								: t('sandbox.eject.done.workspace', {
+										subject: delivered(props.summary),
+										target: props.summary.modules.length === 1
+											? props.summary.targetPath
+											: t('sandbox.eject.thisWorkspace'),
+									})}
 						</b>
-						<span class="ui-help">
-							{props.summary.files + ' files delivered' +
-								(props.summary.removed > 0
-									? ', ' + props.summary.removed + ' removed'
-									: '') +
-								(props.summary.enabled
-									? ' and the module is enabled in the platform.'
-									: '.')}
-						</span>
+						<span class="ui-help">{t('sandbox.eject.done.summary', {
+							files: props.summary.files,
+							removed: props.summary.removed > 0
+								? t('sandbox.eject.done.removed', {
+										count: props.summary.removed,
+									})
+								: '',
+							enabled: props.summary.enabled
+								? t('sandbox.eject.done.enabled')
+								: '',
+						})}</span>
 						@if (props.summary.pullRequestUrl) {
 							<a
 								class="ui-btn ui-btn--secondary ui-btn--sm"
 								href={props.summary.pullRequestUrl}
 								target="_blank"
 								rel="noreferrer"
-							>
-								Open the pull request
-							</a>
+							>{t('sandbox.eject.openPr')}</a>
 						} @else if (props.summary.compareUrl) {
 							<a
 								class="ui-btn ui-btn--secondary ui-btn--sm"
 								href={props.summary.compareUrl}
 								target="_blank"
 								rel="noreferrer"
-							>
-								Open the compare view to create the pull request
-							</a>
+							>{t('sandbox.eject.openCompare')}</a>
 						} @else if (props.summary.branch) {
-							<span class="ui-help">
-								The branch is pushed. Open a pull request from it in your git
-								host.
-							</span>
+							<span class="ui-help">{t('sandbox.eject.branchPushed')}</span>
 						}
 						@if (props.summary.restartRequired) {
 							<span class="ui-help">
 								{props.summary.platformLocal
-									? 'Restart the application (pnpm dev) to load the new composition and run its migrations.'
-									: 'Deploy the workspace for the connected application to pick the change up.'}
+									? t('sandbox.eject.restartNote')
+									: t('sandbox.eject.deployNote')}
 							</span>
 						}
 					</div>
@@ -393,9 +524,9 @@ export function EjectModal(props: EjectModalProps) @{
 			<footer class="eject__foot">
 				@if (phase === 'plan') {
 					<>
-						<Button size="sm" variant="ghost" onClick={props.onClose}>
-							Cancel
-						</Button>
+						<Button size="sm" variant="ghost" onClick={props.onClose}>{t(
+							'sandbox.common.cancel',
+						)}</Button>
 						<Button
 							size="sm"
 							variant="primary"
@@ -404,16 +535,18 @@ export function EjectModal(props: EjectModalProps) @{
 						>
 							<Icon name="download" size={14} />
 							{git
-								? 'Run gates and open the pull request'
-								: 'Run gates and deliver'}
+								? git.provider === 'github'
+									? t('sandbox.eject.confirmPr')
+									: t('sandbox.eject.confirmBranch')
+								: t('sandbox.eject.confirm')}
 						</Button>
 					</>
 				} @else if (phase === 'running') {
-					<span class="ui-help">Delivering. This runs every gate first.</span>
+					<span class="ui-help">{t('sandbox.eject.running')}</span>
 				} @else {
-					<Button size="sm" variant="primary" onClick={props.onClose}>
-						Close
-					</Button>
+					<Button size="sm" variant="primary" onClick={props.onClose}>{t(
+						'sandbox.common.close',
+					)}</Button>
 				}
 			</footer>
 		</div>

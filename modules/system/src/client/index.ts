@@ -6,6 +6,12 @@ import { createSystemClientContribution } from './contribution.tsrx';
 
 export { createSystemClientContribution } from './contribution.tsrx';
 export type { SystemClientContributionOptions } from './contribution.tsrx';
+export { loadSystemOverview } from './overview-api.ts';
+export type {
+	OverviewActivityPoint,
+	OverviewModulePoint,
+	SystemOverviewPayload,
+} from './overview-api.ts';
 export { ModulesView } from './ModulesView.tsrx';
 export { ModuleSettingsSection } from './ModuleSettingsSection.tsrx';
 

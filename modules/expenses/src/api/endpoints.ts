@@ -8,8 +8,10 @@ import {
 	requiredInteger,
 	requiredString,
 } from '@coreloom/server';
+import { parseHistoryRequest } from '@coreloom/kernel';
 import type { AuthRuntime } from '@coreloom/module-auth/server';
 import {
+	actorFromContext,
 	endpointIdentityFromContext,
 	principalFromContext,
 	sessionMutationDenial,
@@ -164,7 +166,12 @@ export function createExpensesRoutes(
 				const value = await readJsonObject(octane.request);
 				const claim = runtime
 					.service()
-					.create(principal.tenantId, principal.accountId, claimInput(value));
+					.create(
+						principal.tenantId,
+						principal.accountId,
+						claimInput(value),
+						actorFromContext(octane)!,
+					);
 				return jsonResponse({ claim }, 201);
 			} catch (error) {
 				return validationFailure(error, 'INVALID_CLAIM_INPUT');
@@ -191,6 +198,7 @@ export function createExpensesRoutes(
 						principal.accountId,
 						requiredString(value, 'claimId', { max: 128 }),
 						claimInput(value),
+						actorFromContext(octane)!,
 					);
 				return jsonResponse({ claim });
 			} catch (error) {
@@ -217,8 +225,36 @@ export function createExpensesRoutes(
 						principal.tenantId,
 						principal.accountId,
 						requiredString(value, 'claimId', { max: 128 }),
+						actorFromContext(octane)!,
 					);
 				return jsonResponse({ claim });
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
+	const remove = defineEndpoint({
+		id: 'expenses.claims.delete',
+		path: '/api/expenses/claims/delete',
+		methods: ['POST'],
+		access: { kind: 'permission', permission: EXPENSES_PERMISSIONS.manage },
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			const denial = sessionMutationDenial(octane, auth);
+			if (denial) return denial;
+			try {
+				const principal = principalFromContext(octane)!;
+				const value = await readJsonObject(octane.request);
+				runtime
+					.service()
+					.delete(
+						principal.tenantId,
+						principal.accountId,
+						requiredString(value, 'claimId', { max: 128 }),
+						actorFromContext(octane)!,
+					);
+				return jsonResponse({ deleted: true });
 			} catch (error) {
 				return failure(error);
 			}
@@ -251,6 +287,7 @@ export function createExpensesRoutes(
 							requiredString(value, 'claimId', { max: 128 }),
 							decision,
 							decisionComment(value),
+							actorFromContext(octane)!,
 						);
 					return jsonResponse({ claim });
 				} catch (error) {
@@ -258,6 +295,45 @@ export function createExpensesRoutes(
 				}
 			},
 		});
+
+	const history = defineEndpoint({
+		id: 'expenses.claims.history',
+		path: '/api/expenses/claims/history',
+		methods: ['GET'],
+		access: { kind: 'permission', permission: EXPENSES_PERMISSIONS.read },
+		resolveIdentity: endpointIdentityFromContext,
+		handler: ({ octane }) => {
+			const request = parseHistoryRequest(
+				new URL(octane.request.url).searchParams,
+			);
+			if (!request) {
+				return jsonResponse(
+					{
+						error: {
+							code: 'INVALID_INPUT',
+							message: 'recordId is required.',
+						},
+					},
+					400,
+				);
+			}
+			try {
+				const principal = principalFromContext(octane)!;
+				return jsonResponse(
+					runtime
+						.service()
+						.history(
+							principal.tenantId,
+							principal.accountId,
+							principal.scopes.includes(EXPENSES_PERMISSIONS.approve),
+							request,
+						),
+				);
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
 
 	const approve = decide(
 		'approved',
@@ -277,8 +353,10 @@ export function createExpensesRoutes(
 		create.serverRoute,
 		update.serverRoute,
 		submit.serverRoute,
+		remove.serverRoute,
 		approve.serverRoute,
 		reject.serverRoute,
+		history.serverRoute,
 	] as const;
 }
 
@@ -289,6 +367,8 @@ export const endpoints = [
 	'expenses.claims.create',
 	'expenses.claims.update',
 	'expenses.claims.submit',
+	'expenses.claims.delete',
 	'expenses.claims.approve',
 	'expenses.claims.reject',
+	'expenses.claims.history',
 ] as const;

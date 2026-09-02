@@ -13,4 +13,9 @@ export {
 	ProfileService,
 	ProfileServiceError,
 } from './services/profile-service.ts';
-export type { Profile, UpdateProfileInput } from './domain/types.ts';
+export type {
+	Profile,
+	ProfileLanguagePreference,
+	UpdateProfileInput,
+	UpdateProfileLanguageInput,
+} from './domain/types.ts';

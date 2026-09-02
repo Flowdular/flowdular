@@ -1,0 +1,52 @@
+diff --git a/src/reactivity.ts b/src/reactivity.ts
+index 95fec8f9607bbb29ffee27dc76798506205e26eb..a5523f2042987a14b8f669313e6d889c3bb0fcac 100644
+--- a/src/reactivity.ts
++++ b/src/reactivity.ts
+@@ -3,9 +3,19 @@
+ // `@tanstack/store` directly would add a second path to the same package and
+ // risk resolving a second copy — atoms compare by identity, so a duplicate
+ // would silently break every subscription.
+-import { batch, createAtom } from '@octanejs/tanstack-store';
++import {
++	batch,
++	createAtom,
++	type Atom,
++	type AtomOptions,
++} from '@octanejs/tanstack-store';
+ import type { TableAtomOptions, TableReactivityBindings } from '@tanstack/table-core/reactivity';
+ 
++const createWritableAtom = createAtom as <T>(
++	initialValue: T,
++	options?: AtomOptions<T>,
++) => Atom<T>;
++
+ /**
+  * Creates the table-core reactivity bindings used by the octane adapter.
+  *
+@@ -31,14 +41,20 @@ export function octaneReactivity(): TableReactivityBindings {
+ 		batch,
+ 		untrack: (fn) => fn(),
+ 		createReadonlyAtom: <T>(fn: () => T, options?: TableAtomOptions<T>) => {
+-			return createAtom(() => fn(), {
+-				compare: options?.compare,
+-			});
++			return createAtom<T>(
++				() => fn(),
++				options?.compare === undefined
++					? undefined
++					: { compare: options.compare },
++			);
+ 		},
+ 		createWritableAtom: <T>(value: T, options?: TableAtomOptions<T>) => {
+-			return createAtom(value, {
+-				compare: options?.compare,
+-			});
++			return createWritableAtom(
++				value,
++				options?.compare === undefined
++					? undefined
++					: { compare: options.compare },
++			);
+ 		},
+ 	};
+ }

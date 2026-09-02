@@ -1,4 +1,5 @@
 import { useMemo } from 'octane';
+import { t } from '@coreloom/client';
 import { Button, CheckGrid, FormField } from '@coreloom/ui';
 import type { CheckGroup, CheckOption } from '@coreloom/ui';
 import { cell, createStore, useValue } from 'segment-state';
@@ -66,8 +67,8 @@ export function ApiTokenForm(props: ApiTokenFormProps) @{
 		<div class="ui-drawer__body">
 			<div class="ui-form">
 				<FormField
-					label="Label"
-					help="Name the client that holds the token, not the person creating it."
+					label={t('auth.tokens.form.label')}
+					help={t('auth.tokens.form.labelHelp')}
 					required
 				>
 					<input
@@ -75,27 +76,35 @@ export function ApiTokenForm(props: ApiTokenFormProps) @{
 						name="label"
 						minlength={2}
 						maxlength={80}
-						placeholder="Local sandbox"
+						placeholder={t('auth.tokens.form.labelPlaceholder')}
 						autoFocus
 						required
 					/>
 				</FormField>
-				<FormField label="Expiry">
+				<FormField label={t('auth.tokens.form.expiry')}>
 					<select
 						class="ui-select"
 						value={expiryDays}
 						onInput={(event) => setExpiryDays(event.currentTarget.value)}
 					>
-						<option value="0">No expiry</option>
-						<option value="7">7 days</option>
-						<option value="30">30 days</option>
-						<option value="90">90 days</option>
-						<option value="365">365 days</option>
+						<option value="0">{t('auth.tokens.form.noExpiry')}</option>
+						<option value="7">{t('auth.tokens.form.days', {
+							count: 7,
+						})}</option>
+						<option value="30">{t('auth.tokens.form.days', {
+							count: 30,
+						})}</option>
+						<option value="90">{t('auth.tokens.form.days', {
+							count: 90,
+						})}</option>
+						<option value="365">{t('auth.tokens.form.days', {
+							count: 365,
+						})}</option>
 					</select>
 				</FormField>
 				<div class="ui-field">
 					<span class="ui-label">
-						Scopes
+						{t('auth.tokens.form.scopes')}
 						<em aria-hidden="true">{' *'}</em>
 					</span>
 					<div class="token-presets">
@@ -104,7 +113,7 @@ export function ApiTokenForm(props: ApiTokenFormProps) @{
 							onClick={() => setScopes(
 								props.availableScopes.filter(sandboxPreset),
 							)}
-						>Sandbox connection</Button>
+						>{t('auth.tokens.form.presetSandbox')}</Button>
 						<Button
 							size="sm"
 							onClick={() => setScopes(
@@ -112,29 +121,31 @@ export function ApiTokenForm(props: ApiTokenFormProps) @{
 									(scope) => scope.endsWith('.read'),
 								),
 							)}
-						>Read only</Button>
-						<Button size="sm" variant="ghost" onClick={() => setScopes([])}>
-							Clear
-						</Button>
+						>{t('auth.tokens.form.presetRead')}</Button>
+						<Button size="sm" variant="ghost" onClick={() => setScopes([])}>{t(
+							'auth.tokens.form.clear',
+						)}</Button>
 					</div>
 					<CheckGrid groups={groups} value={scopes} mono onChange={setScopes} />
-					<span class="ui-help">
-						{scopes.length + ' of ' + props.availableScopes.length +
-							' scopes selected'}
-					</span>
+					<span class="ui-help">{t('auth.tokens.form.selected', {
+						selected: scopes.length,
+						total: props.availableScopes.length,
+					})}</span>
 				</div>
 			</div>
 		</div>
 		<div class="ui-drawer__foot">
-			<small>The secret is shown once, right after it is created.</small>
+			<small>{t('auth.tokens.form.secretOnce')}</small>
 			<div class="ui-form__actions">
-				<Button onClick={props.onCancel}>Cancel</Button>
+				<Button onClick={props.onCancel}>{t('auth.common.cancel')}</Button>
 				<Button
 					variant="primary"
 					type="submit"
 					disabled={props.busy || scopes.length === 0}
 				>
-					{props.busy ? 'Creating…' : 'Create token'}
+					{props.busy
+						? t('auth.tokens.form.creating')
+						: t('auth.tokens.form.create')}
 				</Button>
 			</div>
 		</div>

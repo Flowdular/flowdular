@@ -6,6 +6,8 @@ import type { ServerRoute } from '@octanejs/app-core';
 import { createRouter, type Router } from '@octanejs/app-core';
 import {
 	createModuleSettingsRuntime,
+	createPlatformAgentRegistry,
+	createPlatformCapabilityRegistry,
 	createPlatformToolRegistry,
 	type ModuleSettingRecord,
 	type ModuleSettingValue,
@@ -25,6 +27,7 @@ import {
 	type SandboxSession,
 	type SessionModule,
 } from './sessions.ts';
+import { createIsolatedPreviewRuntime } from './preview-worker-manager.ts';
 
 export const PREVIEW_COOKIE = 'coreloom_preview';
 const PREVIEW_TENANT = 'Preview workspace';
@@ -55,12 +58,13 @@ export interface PreviewComposition {
 	readonly routes: readonly ServerRoute[];
 	readonly moduleScopes: readonly string[];
 	readonly error: string | null;
+	/* The parent invokes draft routes across the process boundary. */
+	request(request: Request): Promise<Response>;
 	/* Releases what the draft compositions hold (database handles, timers). */
-	dispose(): void;
+	dispose(): void | Promise<void>;
 }
 
 interface DraftComposition extends PlatformServerComposition {
-	readonly dispose?: () => void;
 	readonly close?: () => void;
 }
 
@@ -132,6 +136,41 @@ async function exists(path: string): Promise<boolean> {
 	} catch {
 		return false;
 	}
+}
+
+/* A module reads its database path from one environment variable. Core spells
+   that name from the module id in two places: the namespace (`expenses.core`
+   to CL_EXPENSES_DATABASE) and the package suffix the scaffold writes
+   (`sales.orders` to CL_SALES_ORDERS_DATABASE). They agree for a single
+   segment id and differ for a longer one, so a preview sets both. */
+function databaseVariables(module: SessionModule): readonly string[] {
+	const namespace = module.id.split('.')[0] ?? module.id;
+	return [
+		...new Set([
+			`CL_${namespace.toUpperCase()}_DATABASE`,
+			`CL_${module.directory.replace(/[^a-zA-Z0-9]+/g, '_').toUpperCase()}_DATABASE`,
+		]),
+	];
+}
+
+/* Every draft with a database writes to its own file in the session's data
+   directory, the only place the preview worker may write, and the directory
+   the session takes with it when it is deleted. Without this a draft resolves
+   the deployment path (the worker runs with NODE_ENV=production, so
+   `/data/<namespace>.db`), fails to open it, and every read answers 500. */
+export function previewEnvironment(
+	base: NodeJS.ProcessEnv,
+	dataPath: string,
+	modules: readonly SessionModule[],
+): NodeJS.ProcessEnv {
+	const environment: NodeJS.ProcessEnv = { ...base };
+	for (const module of modules) {
+		const file = join(dataPath, `preview-${module.directory}.db`);
+		for (const variable of databaseVariables(module)) {
+			environment[variable] = file;
+		}
+	}
+	return environment;
 }
 
 /* Each session gets its own authentication runtime and database, so a preview
@@ -238,10 +277,20 @@ async function loadDraftComposition(
 	}
 }
 
-function disposeAll(compositions: readonly DraftComposition[]): void {
-	for (const composition of compositions) {
+async function disposeAll(
+	compositions: readonly DraftComposition[],
+): Promise<void> {
+	const reversed = [...compositions].reverse();
+	for (const composition of reversed) {
 		try {
-			composition.dispose?.();
+			await composition.stop?.();
+		} catch {
+			/* Continue so one broken producer cannot leave the others running. */
+		}
+	}
+	for (const composition of reversed) {
+		try {
+			await composition.dispose?.();
 			composition.close?.();
 		} catch {
 			/* A draft that fails to release is the draft's bug; the preview must
@@ -250,23 +299,67 @@ function disposeAll(compositions: readonly DraftComposition[]): void {
 	}
 }
 
+/* A candidate preview is prepared as one generation. No draft may start until
+	 every prepare hook has passed and the previous generation has released its
+	 resources. A failed candidate cleans up only itself. */
+export async function activatePreviewDrafts(
+	drafts: readonly DraftComposition[],
+	retireCurrent: () => void | Promise<void>,
+): Promise<readonly string[]> {
+	try {
+		for (const draft of drafts) await draft.prepare?.();
+	} catch (error) {
+		await disposeAll(drafts);
+		throw error;
+	}
+
+	await retireCurrent();
+	const errors: string[] = [];
+	for (const draft of drafts) {
+		try {
+			draft.start?.();
+		} catch (error) {
+			errors.push(
+				error instanceof Error
+					? error.message.slice(0, 400)
+					: 'A draft start hook failed.',
+			);
+		}
+	}
+	return errors;
+}
+
 export interface PreviewRuntime {
 	compose(session: SandboxSession): Promise<PreviewComposition>;
 	cached(sessionId: string): PreviewComposition | null;
 	forget(sessionId: string): void;
+	/* Releases every session worker and draft composition owned by this runtime. */
+	dispose(): void;
 }
 
 /* The preview API is a composition, not a proxy: the draft modules' own routes
    answer first, the session's authentication routes answer next, and anything
    left over falls through to the connected application. */
-export function createPreviewRuntime(workspaceRoot: string): PreviewRuntime {
+/* Called only by preview-worker.ts. Draft session source must not be imported
+   into the long-lived sandbox server process. */
+export function createInProcessPreviewRuntime(
+	workspaceRoot: string,
+): PreviewRuntime {
 	const compositions = new Map<string, PreviewComposition>();
 
 	return {
 		cached: (sessionId) => compositions.get(sessionId) ?? null,
 		forget: (sessionId) => {
-			compositions.get(sessionId)?.dispose();
+			void Promise.resolve(compositions.get(sessionId)?.dispose()).catch(
+				() => undefined,
+			);
 			compositions.delete(sessionId);
+		},
+		dispose: () => {
+			for (const composition of compositions.values()) {
+				void Promise.resolve(composition.dispose()).catch(() => undefined);
+			}
+			compositions.clear();
 		},
 		compose: async (session) => {
 			const paths = sessionPaths(
@@ -295,11 +388,18 @@ export function createPreviewRuntime(workspaceRoot: string): PreviewRuntime {
 			const moduleScopes = new Set<string>();
 			const modules: PreviewModuleComposition[] = [];
 			const errors: string[] = [];
+			const agentDefinitions = createPlatformAgentRegistry();
 			const context: Omit<PlatformServerContext, 'workspaceRoot'> = {
-				environment: process.env,
+				environment: previewEnvironment(
+					process.env,
+					paths.data,
+					session.modules,
+				),
 				auth,
 				settings: memorySettings(),
 				agentTools: createPlatformToolRegistry() as PlatformToolRegistry,
+				agentDefinitions,
+				capabilities: createPlatformCapabilityRegistry(),
 			};
 			for (const module of session.modules) {
 				const draft = await loadDraftComposition(
@@ -323,6 +423,7 @@ export function createPreviewRuntime(workspaceRoot: string): PreviewRuntime {
 					error: draft.error,
 				});
 			}
+			agentDefinitions.seal();
 
 			const account = auth.service().findAccountAccess(credentials.email);
 			if (account && moduleScopes.size > 0) {
@@ -336,17 +437,15 @@ export function createPreviewRuntime(workspaceRoot: string): PreviewRuntime {
 				}
 			}
 
-			/* Like the platform, start hooks run after every draft composed. */
-			for (const draft of drafts) {
-				try {
-					draft.start?.();
-				} catch (error) {
-					errors.push(
-						error instanceof Error
-							? error.message.slice(0, 400)
-							: 'A draft start hook failed.',
-					);
-				}
+			/* Preparation is generation-wide. The current preview stays alive when
+			   any candidate rejects its durable-state preflight. */
+			try {
+				errors.push(
+					...(await activatePreviewDrafts(drafts, () => current?.dispose())),
+				);
+			} catch (error) {
+				if (!current) auth.dispose();
+				throw error;
 			}
 			const all = [...routes, ...createAuthRoutes(auth)];
 			const composition: PreviewComposition = {
@@ -360,13 +459,60 @@ export function createPreviewRuntime(workspaceRoot: string): PreviewRuntime {
 				router: createRouter([...all]),
 				moduleScopes: [...moduleScopes],
 				error: errors.length > 0 ? errors.join(' ') : null,
+				request: async () =>
+					new Response(
+						JSON.stringify({
+							error: {
+								code: 'PREVIEW_WORKER_ONLY',
+								message: 'Preview requests run in the isolated worker.',
+							},
+						}),
+						{ status: 500, headers: { 'content-type': 'application/json' } },
+					),
 				dispose: () => disposeAll(drafts),
 			};
-			/* The previous revision's drafts are released before the new one is
-			   published, so a reload never stacks database handles. */
-			current?.dispose();
 			compositions.set(session.id, composition);
 			return composition;
 		},
 	};
+}
+
+export function createPreviewRuntime(workspaceRoot: string): PreviewRuntime {
+	return createIsolatedPreviewRuntime(workspaceRoot);
+}
+
+interface ProcessPreviewSlot {
+	readonly workspaceRoot: string;
+	readonly runtime: PreviewRuntime;
+}
+
+const PROCESS_PREVIEW_SLOT = Symbol.for('coreloom.sandbox.preview-runtime');
+
+function processPreviewState(): Record<symbol, ProcessPreviewSlot | undefined> {
+	return globalThis as unknown as Record<
+		symbol,
+		ProcessPreviewSlot | undefined
+	>;
+}
+
+/* Octane reloads its server route configuration inside the same Vite process.
+   A module-local runtime belongs to only one generation and its workers become
+   unreachable when the next generation replaces the routes. Keep exactly one
+   process-owned runtime instead. A workspace switch retires the previous one. */
+export function processPreviewRuntime(workspaceRoot: string): PreviewRuntime {
+	const state = processPreviewState();
+	const current = state[PROCESS_PREVIEW_SLOT];
+	if (current?.workspaceRoot === workspaceRoot) return current.runtime;
+	current?.runtime.dispose();
+	const runtime = createPreviewRuntime(workspaceRoot);
+	state[PROCESS_PREVIEW_SLOT] = { workspaceRoot, runtime };
+	return runtime;
+}
+
+/* Tests and explicit host teardown can release the process singleton. Normal
+   process exit also closes IPC, which makes every worker terminate itself. */
+export function disposeProcessPreviewRuntime(): void {
+	const state = processPreviewState();
+	state[PROCESS_PREVIEW_SLOT]?.runtime.dispose();
+	delete state[PROCESS_PREVIEW_SLOT];
 }

@@ -19,6 +19,8 @@ export function createUsersClientState() {
 		query: '',
 		formOpen: false,
 		formSession: 0,
+		inviteOpen: false,
+		inviteSession: 0,
 		selectedAccountId: cell<string | null>(null),
 		status: cell<UsersStatus>('idle'),
 		error: '',

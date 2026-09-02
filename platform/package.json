@@ -5,7 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"dev": "node scripts/dev.mjs",
-		"build": "vite build",
+		"build": "node scripts/build.mjs",
 		"preview": "octane-preview --host 0.0.0.0 --port 4310 --strictPort",
 		"start": "node dist/server/entry.js",
 		"typecheck": "tsrx-tsc --noEmit -p tsconfig.json",
@@ -15,6 +15,8 @@
 		"@coreloom/client": "workspace:*",
 		"@coreloom/module-agents": "workspace:*",
 		"@coreloom/module-auth": "workspace:*",
+		"@coreloom/module-automations": "workspace:*",
+		"@coreloom/module-automations-workflows-integration": "workspace:*",
 		"@coreloom/module-catalog": "workspace:*",
 		"@coreloom/module-expenses": "workspace:*",
 		"@coreloom/module-parties": "workspace:*",
@@ -22,18 +24,20 @@
 		"@coreloom/module-sandbox": "workspace:*",
 		"@coreloom/module-system": "workspace:*",
 		"@coreloom/module-users": "workspace:*",
+		"@coreloom/module-workflows": "workspace:*",
 		"@coreloom/server": "workspace:*",
-		"@octanejs/seo": "0.0.35",
-		"@octanejs/vite-plugin": "0.1.50",
-		"octane": "0.1.50"
+		"@coreloom/ui": "workspace:*",
+		"@octanejs/seo": "0.0.36",
+		"@octanejs/vite-plugin": "0.1.51",
+		"octane": "0.1.51"
 	},
 	"devDependencies": {
 		"@coreloom/dev-console": "workspace:*",
-		"@octanejs/app-core": "0.0.46",
+		"@octanejs/app-core": "0.0.47",
 		"@tsrx/typescript-plugin": "0.3.120",
 		"@types/node": "24.13.3",
 		"typescript": "5.9.3",
-		"vite": "8.1.5",
+		"vite": "8.2.2",
 		"vitest": "4.1.10"
 	}
 }

@@ -1,6 +1,6 @@
 {
 	"name": "@coreloom/module-expenses",
-	"version": "0.1.0",
+	"version": "0.4.0",
 	"private": true,
 	"type": "module",
 	"exports": {
@@ -16,10 +16,11 @@
 	"dependencies": {
 		"@coreloom/client": "workspace:*",
 		"@coreloom/contracts": "workspace:*",
+		"@coreloom/kernel": "workspace:*",
 		"@coreloom/module-auth": "workspace:*",
 		"@coreloom/server": "workspace:*",
 		"@coreloom/ui": "workspace:*",
-		"octane": "0.1.50",
+		"octane": "0.1.51",
 		"segment-state": "0.2.0"
 	},
 	"devDependencies": {

@@ -17,11 +17,11 @@ when: A brief names an existing module, or a sandbox session is labelled edit-mo
 
 Read the whole module before changing it: `spec/module.yaml`, `src/index.ts`, `src/acl/permissions.ts`, `src/api/endpoints.ts`, `src/services/*`, `src/client/*`, `tests/`. Keep every exported name in `src/index.ts`, `src/server/index.ts` and `src/client/index.ts` stable: other modules import them (`modules/users` uses `AuthRuntime` from `@coreloom/module-auth/server`), and the generated composition imports `createServerComposition` and `createClientContribution`.
 
-Sandbox facts for an edit session (`packages/sandbox/src/server/sessions.ts`): the module is copied to `workspace/modules/<dir>` and a pristine copy to `base/modules/<dir>`; the diff shown to the operator and the eject plan compare the two. The workspace is a pnpm workspace of its own (declared dependencies install for real; a `package.json` change triggers a reinstall that counts as the `dependencies` gate). The planner routes the first turn to `backend-engineer` when the brief names an existing module (`planning.ts`, `classifyByRules`). The spec is not re-approved for an edit (`turns.ts`, `specApproval` returns `null`), so `status` stays `approved` while you add scenarios.
+Sandbox facts for an edit session (`packages/sandbox/src/server/sessions.ts`): the module is copied to `workspace/modules/<dir>` and a pristine copy to `base/modules/<dir>`; the diff shown to the operator and the eject plan compare the two. The workspace is a pnpm workspace of its own (declared dependencies install for real; a `package.json` change triggers a reinstall that counts as the `dependencies` gate). The business manager updates the spec before implementation. The operator approves the exact spec hash for every affected module; editing that spec, requesting changes, or adding another module reopens its approval gate. A sandbox specialist never writes `status: approved`; a host agent may invoke approval only after an explicit current user request through `spec-approval`. Delivery checks the recorded hash again.
 
 ## 2. Classify the change and use its touch list
 
-Change classes: endpoint, table, column, screen, widget, permission, setting, cross-module read, fix.
+Change classes: endpoint, table, column, screen, widget, permission, setting, cross-module read, agent tool, business agent, fix.
 
 New endpoint:
 
@@ -34,9 +34,9 @@ New endpoint:
 
 New column or table:
 
-1. `src/services/migration.ts`: append `X_MIGRATION_00N`; never edit `001`. A new table is `CREATE TABLE IF NOT EXISTS`. A new column is `ALTER TABLE ... ADD COLUMN`, executed only after a `pragma_table_info` check (pattern in `modules/auth/src/services/sqlite-repository.ts`, constructor), because there is no migration runner or ledger and every constant runs on every open.
-2. `sqlite-repository.ts`: run the constant in the constructor, extend the row interface and `fromRow`, extend `INSERT` and `SELECT` lists.
-3. `migrations/000N_<module>_<name>.up.sql` and `.down.sql`: the same SQL, for review.
+1. Write `migrations/000N_<module>_<name>.up.sql` first and its documented reverse in `.down.sql`. Never edit, reorder, or remove a migration that shipped. A new table uses `CREATE TABLE IF NOT EXISTS`; a new column uses `ALTER TABLE ... ADD COLUMN` once under the ledger.
+2. `src/services/migration.ts`: append `X_MIGRATION_00N` mirroring the `.up.sql` file byte for byte and append its `{ id, statements }` entry to `migrations`. Use `adoptWhen` only when the migration effect cannot be inferred from declared schema objects.
+3. `sqlite-repository.ts` continues to call `runModuleMigrations(this.#database, migrations)` once. Extend the row interface and `fromRow`, `INSERT`, `UPDATE` and `SELECT` lists. Add the migration tests required by `migration-authoring`.
 4. `src/domain/types.ts`, service, endpoint validation, client form and table column.
 5. Tests against `':memory:'` for the new rule; `spec/module.yaml` invariant or scenario, `specVersion` bump.
 
@@ -45,27 +45,31 @@ New permission:
 1. `spec/module.yaml` `permissions`: the new `{ id, description }`.
 2. `src/acl/permissions.ts`: the constant with the same string.
 3. Endpoint `access.permission` and client `scope` on the navigation entry, widget or `canManage` flag.
-4. After eject or enable: `pnpm oerp auth sync-scopes --module <id> --apply` grants it to owners. Members and bundled defaults require a core change in `modules/auth/src/acl/scopes.ts` (`BUNDLED_MODULE_SCOPES`, `MEMBER_SCOPES`); say so in the handoff instead of editing another module.
+4. After eject or enable: `pnpm coreloom auth sync-scopes --module <id> --apply` grants it to owners. Members and bundled defaults require a core change in `modules/auth/src/acl/scopes.ts` (`BUNDLED_MODULE_SCOPES`, `MEMBER_SCOPES`); say so in the handoff instead of editing another module.
 
 New screen or widget:
 
 1. `src/client/XView.tsrx` (and `XForm.tsrx` for a drawer) following the pattern in `ux-design`.
 2. `src/client/contribution.tsrx`: a `views` entry, a `navigation` entry with a unique id, `viewId`, `group`, `glyph` from `ICON_PATHS`, `scope`, `order`; or a `widgets` entry with a `WORKSPACE_SLOTS` slot. Widget state is its own store instance.
 3. `src/client/index.ts`: re-export the view.
-4. Copy is English literals in `.tsrx`; `translations/*.json` are not loaded.
+4. Add user-facing copy to every declared `translations/*.json` bundle and resolve it with fully qualified `t()` keys. Navigation copy uses getters because contributions exist before bundles are registered.
 
 New setting:
 
-1. `src/settings.ts`: `export const X_MODULE_SETTINGS = defineModuleSettings({ moduleId: '<module>.core', settings: { key: { type: 'string' | 'number' | 'boolean', defaultValue, visibility: 'private' | 'shared', client: boolean, scope: 'tenant' | 'platform', label, description, min?, max?, enum?, secret? } } })` from `@coreloom/kernel` (`packages/kernel/src/module-settings.ts`; keys match `^[a-z][a-zA-Z0-9]*$`).
+1. `src/settings.ts`: `export const X_MODULE_SETTINGS = defineModuleSettings({ moduleId: '<module>.core', settings: { key: { type: 'string' | 'number' | 'boolean', defaultValue, visibility: 'private' | 'shared', client: boolean, scope: 'tenant' | 'platform', labelKey, label, descriptionKey, description, min?, max?, enum?, secret? } } })` from `@coreloom/kernel` (`packages/kernel/src/module-settings.ts`; setting keys match `^[a-z][a-zA-Z0-9]*$`). `labelKey` and `descriptionKey` are fully qualified module translation keys present in every locale. Keep the English literals as compatibility fallbacks; values, ids and secrets are never translated.
 2. `src/platform.ts`: return `settings: X_MODULE_SETTINGS` next to `routes`; the platform declares it at boot and Administration, Modules renders it in the module's drawer (`modules/system/src/client/ModuleSettingsSection.tsrx`, behind `system.settings.read` and `system.settings.manage`; the API is `GET /api/settings` and `POST /api/settings/update` in `modules/system/src/server/endpoints.ts`).
 3. Read it live where it is used: `context.settings.get<number>(tenantId, '<module>.core', 'key')` at request time, never cached at boot; pass `context.settings` into the runtime or service that needs it (`modules/agents/src/settings.ts`, `agentSettings`, shows the pattern with an environment fallback).
 4. `spec/module.yaml`: an invariant or scenario naming the setting and its bounds; `specVersion` bump. Cross-module reads of a setting need `visibility: 'shared'` and a declared dependency.
 
 Cross-module read: import the other module's runtime or service type from its public entry (`@coreloom/module-<x>` or `@coreloom/module-<x>/server`), declare `{ "id": "<x>.core", "range": "^0.1.0" }` in `module.json` `dependencies` and the spec, and add the package to `package.json`. Never open its database or import from its `src/` path.
 
+Agent tool: read `agent-tool-design`; add the approved scenario, `src/agent/tools.ts`, the `context.agentTools.register(...)` call, target-side idempotency for writes, and denial tests.
+
+Business agent: read `business-agent-design`; add the approved behavior and refusal scenarios, declare the `agents.core` module and package dependencies, define it in `src/agent/agents.ts`, and register it with `context.agentDefinitions.register(...)`. A code definition owns behavior and a maximum exact tool allowlist. Provider, model, active state, and the reduced enabled tools remain tenant binding data.
+
 ## 3. Versions and spec
 
-Bump `spec/module.yaml` `specVersion`, `module.json` `version` and `package.json` `version` together (patch for a fix, minor for a new endpoint, screen or column). Add an acceptance scenario for every new behaviour and an invariant for every new rule; the scenario id matches `^[A-Z][A-Z0-9-]+$`. `status` stays `approved`; a change the owner has not agreed to goes to `in-review` and stops.
+Bump `spec/module.yaml` `specVersion`, `module.json` `version` and `package.json` `version` together (patch for a fix, minor for a new endpoint, screen or column). Add an acceptance scenario for every new behaviour and an invariant for every new rule; the scenario id matches `^[A-Z][A-Z0-9-]+$`. In the sandbox the business manager leaves the changed spec in `draft` or `in-review`; only the operator approval route records the approved hash and permits implementation.
 
 ## 4. Gates
 
@@ -74,8 +78,8 @@ Sandbox: the role's gates run after the turn. Repository root:
 ```bash
 pnpm --filter @coreloom/module-<dir> typecheck
 pnpm --filter @coreloom/module-<dir> test
-pnpm oerp spec validate --all --json
-pnpm oerp module validate --json
+pnpm coreloom spec validate --all --json
+pnpm coreloom module validate --json
 pnpm format:check
 ```
 
@@ -88,7 +92,7 @@ Sandbox: eject runs the gates per module, copies added and changed files over th
 ## Pitfalls
 
 - Renaming `createServerComposition`, `createClientContribution` or a permission constant breaks the platform typecheck or another module.
-- A migration constant that is not idempotent (`CREATE TABLE` without `IF NOT EXISTS`, unguarded `ALTER TABLE`) breaks every existing `.octane-erp/<module>.db` on the next start.
+- Editing an applied `.up.sql` file, even only its whitespace, changes its checksum and blocks startup. Add a new numbered migration.
 - `ORDER BY` on a new list must be covered by a `(tenant_id, <column>, id)` index.
 - A new `Tag` tone or `Icon` name must exist in `@coreloom/ui`; there is no fallback warning.
 - Editing `platform/**`, `coreloom.json`, or another module from a module change is out of scope; hand off with the exact core change needed.

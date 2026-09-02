@@ -1,9 +1,27 @@
 schemaVersion: 1
 steps:
+  - id: spec
+    role: business-manager
+    action: Update the specification or write its minimal delta first; add the acceptance scenario and invariant, bump specVersion, and leave status draft or in-review for the operator.
+    inputs:
+      - 'brief'
+      - 'base/spec/module.yaml'
+    outputs:
+      - 'spec/module.yaml'
+  - id: approve
+    role: orchestrator
+    action: Show the spec delta and record the operator approval of its exact content hash. Any later spec edit or request for changes invalidates that module's approval and blocks its implementation again; a module added to the session needs its own approved hash.
+    inputs:
+      - 'spec/module.yaml'
+    outputs:
+      - 'approved spec hash'
+    gates:
+      - 'spec-schema'
   - id: read
     role: backend-engineer
-    action: Read the whole module (spec, acl, endpoints, services, client, tests) and the base copy before changing anything.
+    action: After approval, read the whole module (spec, acl, endpoints, services, client, tests) and the base copy before changing implementation.
     inputs:
+      - 'approved spec hash'
       - 'modules/{module}/**'
     outputs: []
   - id: classify
@@ -15,7 +33,7 @@ steps:
       - 'touch list'
   - id: server
     role: backend-engineer
-    action: Service method, repository SQL with WHERE tenant_id = ?, idempotent migration constant plus guarded ALTER for a column, endpoint with access, resolveIdentity, sessionMutationDenial, readJsonObject; tests for denial and isolation.
+    action: Service method, repository SQL with WHERE tenant_id = ?, numbered ledger migration for a schema change, endpoint with access, resolveIdentity, sessionMutationDenial, readJsonObject; tests for denial and isolation.
     inputs:
       - 'touch list'
     outputs:
@@ -42,21 +60,40 @@ steps:
       - 'typecheck'
       - 'tests'
       - 'format'
-  - id: spec
-    role: business-manager
-    action: Add the acceptance scenario and invariant, bump specVersion; module.json and package.json versions follow.
+  - id: agent-surface
+    role: agentic-engineer
+    action: When the approved delta asks for a tool or module-owned business agent, follow agent-tool-design or business-agent-design, register it during composition, and test exact tool ceilings, tenant isolation, live permission refusal, and revision behavior.
     inputs:
-      - 'change'
+      - 'approved spec hash'
+      - 'src/api/endpoints.ts'
+      - 'src/services/*.ts'
     outputs:
-      - 'spec/module.yaml'
+      - 'src/agent/tools.ts when tools are required'
+      - 'src/agent/agents.ts when a business agent is required'
+      - 'src/platform.ts'
+      - 'tests/agent-tools.test.ts'
+      - 'tests/business-agents.test.ts'
       - 'module.json'
       - 'package.json'
     gates:
-      - 'spec-schema'
+      - 'module-schema'
+      - 'dependencies'
+      - 'typecheck'
+      - 'tests'
+      - 'format'
+  - id: versions
+    role: backend-engineer
+    action: Keep module.json and package.json versions equal to the operator-approved specVersion without changing the approved spec content.
+    inputs:
+      - 'approved spec hash'
+    outputs:
+      - 'module.json'
+      - 'package.json'
+    gates:
       - 'module-schema'
   - id: land
     role: orchestrator
-    action: 'Sandbox: eject (gates per module, copy and removals, pnpm install, auth sync-scopes, platform typecheck; stops at the first failed step). Direct path: pnpm verify, pull request; auth sync-scopes --apply when a permission was added.'
+    action: 'Sandbox: verify the current spec hash still equals the operator-approved hash, then eject (gates per module, copy and removals, pnpm install, auth sync-scopes, platform typecheck; stops at the first failed step). Direct path: pnpm verify, pull request; auth sync-scopes --apply when a permission was added.'
     inputs:
       - 'modules/{module}/**'
     outputs:
@@ -70,7 +107,7 @@ steps:
       - 'format'
   - id: review
     role: reviewer
-    action: Diff against base, exported names unchanged, versions bumped together, migration idempotent against an existing database.
+    action: Diff against base, exact approved spec hash unchanged, exported names unchanged, versions bumped together, and migration runner evidence covers fresh apply plus adoption of an existing database.
     inputs:
       - 'diff'
       - 'gate evidence'

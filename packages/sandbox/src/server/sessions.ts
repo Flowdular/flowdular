@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+	access,
 	appendFile,
 	cp,
 	mkdir,
@@ -14,6 +15,8 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import type { CodingAgentEvent } from '@coreloom/coding-agent';
 import { SANDBOX_DIRECTORY } from './config.ts';
 import { materializeModuleGraph, materializeReference } from './reference.ts';
+import { hashSpec } from './spec.ts';
+import { forgetDiffs } from './turns.ts';
 import {
 	ensureSessionDependencies,
 	materializeSessionWorkspace,
@@ -44,6 +47,9 @@ export interface HandoffPlan {
 	readonly roleName: string;
 	readonly reason: string;
 	readonly prompt: string;
+	/* The draft module directory the next turn works in. Absent on handoffs
+	   written before a session could target one module of several. */
+	readonly module?: string;
 }
 
 /* One draft module of a session. The directory is the module directory under
@@ -53,6 +59,35 @@ export interface SessionModule {
 	readonly id: string;
 	readonly directory: string;
 	readonly kind: 'new' | 'edit';
+	/* When the operator approved this module's specification, and the hash of
+	   the exact text they approved. A later edit changes the hash, so the
+	   approval belongs to that version of the document and nothing else. */
+	readonly specApprovedAt?: number;
+	readonly specHash?: string;
+}
+
+/* A file the operator attached to the session to show what they want changed.
+   The bytes live under the session directory; the same file is copied into the
+   workspace so the coding agent, which may only read inside the workspace, can
+   open it. `name` is the sanitised filename and doubles as the workspace copy's
+   name, so it is unique within the session. */
+export interface SessionAttachment {
+	readonly id: string;
+	readonly name: string;
+	readonly kind: 'image' | 'file';
+	readonly size: number;
+	readonly addedAt: number;
+}
+
+/* A restore point the operator can roll the workspace back to. The snapshot of
+   each draft module tree lives under checkpoints/<sequence>/; the metadata here
+   says which turn produced it. `sequence` is the chat entry it belongs to, so
+   the transcript line and its restore point share one identity. */
+export interface SessionCheckpoint {
+	readonly sequence: number;
+	readonly at: number;
+	readonly label: string;
+	readonly role: string;
 }
 
 export interface SandboxSession {
@@ -76,6 +111,12 @@ export interface SandboxSession {
 	readonly autoContinue: boolean;
 	/* Automatic turns run since the operator last spoke. */
 	readonly chainDepth: number;
+	/* Files the operator attached to show the desired change. Bounded per
+	   session; see attachments.ts for the limits. */
+	readonly attachments: readonly SessionAttachment[];
+	/* Restore points, oldest first. Bounded; see checkpoints.ts for the cap and
+	   the pruning that never drops the start. */
+	readonly checkpoints: readonly SessionCheckpoint[];
 	readonly state: SandboxSessionState;
 	readonly createdAt: number;
 	readonly updatedAt: number;
@@ -89,9 +130,16 @@ export interface ChatEntry {
 	readonly at: number;
 	readonly kind: 'user' | 'agent' | 'event' | 'system';
 	readonly role: string;
+	/* The draft module directory the entry belongs to. Absent on entries that
+	   are about the session itself, and on entries written before a session
+	   could carry several modules. */
+	readonly module?: string;
 	readonly text?: string;
 	readonly event?: CodingAgentEvent;
 	readonly handoff?: HandoffPlan;
+	/* Attachments included with this turn, echoed onto the user entry so the
+	   transcript records exactly what the agent was shown. */
+	readonly attachments?: readonly SessionAttachment[];
 }
 
 export interface SessionPaths {
@@ -101,8 +149,14 @@ export interface SessionPaths {
 	readonly modulePath: string;
 	readonly base: string;
 	readonly data: string;
+	/* Where module-tree snapshots live, one directory per checkpoint sequence. */
+	readonly checkpoints: string;
 	readonly chatLog: string;
 	readonly record: string;
+	/* Where attachment bytes are stored, and the workspace copy the coding
+	   agent reads from. */
+	readonly attachments: string;
+	readonly workspaceAttachments: string;
 }
 
 const SESSION_ID =
@@ -160,8 +214,11 @@ export function sessionPaths(
 		modulePath: join(workspace, 'modules', moduleSuffix),
 		base: join(root, 'base'),
 		data: join(root, 'data'),
+		checkpoints: join(root, 'checkpoints'),
 		chatLog: join(root, 'chat.jsonl'),
 		record: join(root, 'session.json'),
+		attachments: join(root, 'attachments'),
+		workspaceAttachments: join(workspace, 'reference', 'attachments'),
 	};
 }
 
@@ -173,9 +230,29 @@ export function basePathOf(paths: SessionPaths, directory: string): string {
 	return join(paths.base, 'modules', directory);
 }
 
+export function checkpointModulePath(
+	paths: SessionPaths,
+	sequence: number,
+	directory: string,
+): string {
+	return join(paths.checkpoints, String(sequence), 'modules', directory);
+}
+
+async function exists(path: string): Promise<boolean> {
+	try {
+		await access(path);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 const COPY_EXCLUDED = new Set(['node_modules', 'dist', '.turbo']);
 
-async function copyModuleTree(source: string, target: string): Promise<void> {
+export async function copyModuleTree(
+	source: string,
+	target: string,
+): Promise<void> {
 	await cp(source, target, {
 		recursive: true,
 		filter: (path) => {
@@ -337,6 +414,15 @@ export async function createSession(
 		modules,
 	});
 
+	/* The pristine state is the first restore point, so an operator can always
+	   roll back to before any agent touched the module. */
+	for (const module of modules) {
+		await copyModuleTree(
+			modulePathOf(paths, module.directory),
+			checkpointModulePath(paths, 0, module.directory),
+		);
+	}
+
 	const now = Date.now();
 	const session: SandboxSession = {
 		id,
@@ -353,6 +439,10 @@ export async function createSession(
 		resumeIds: {},
 		autoContinue: true,
 		chainDepth: 0,
+		attachments: [],
+		checkpoints: [
+			{ sequence: 0, at: now, label: 'the starting point', role: input.role },
+		],
 		state: 'draft',
 		createdAt: now,
 		updatedAt: now,
@@ -365,6 +455,48 @@ export async function createSession(
 		await installSessionDependencies(input.workspaceRoot, session);
 	}
 	return session;
+}
+
+/* A module joins a session after it started: it is materialized into the
+   workspace (with its pristine base, for an edit), appended to modules[], and
+   the workspace manifests are regenerated so the new draft is a project of the
+   session's pnpm workspace instead of a link to the host checkout. The caller
+   installs afterwards; the install only runs when the new package.json changed
+   the session's dependency signature. */
+export async function addSessionModule(
+	workspaceRoot: string,
+	session: SandboxSession,
+	module: SessionModule,
+): Promise<SandboxSession> {
+	assertModule(module);
+	if (
+		session.modules.some(
+			(entry) => entry.id === module.id || entry.directory === module.directory,
+		)
+	) {
+		throw new SandboxSetupError(
+			'MODULE_ALREADY_IN_SESSION',
+			`${module.id} is already part of this session.`,
+		);
+	}
+	const paths = sessionPaths(workspaceRoot, session.id, session.moduleSuffix);
+	const target = modulePathOf(paths, module.directory);
+	const base = basePathOf(paths, module.directory);
+	if (module.kind === 'edit') {
+		const source = join(workspaceRoot, 'modules', module.directory);
+		await copyModuleTree(source, target);
+		await copyModuleTree(source, base);
+	} else {
+		await mkdir(target, { recursive: true });
+		await mkdir(base, { recursive: true });
+	}
+	const modules = [...session.modules, module];
+	await prepareSessionWorkspace({ workspaceRoot, paths, modules });
+	return updateSession(workspaceRoot, session.id, {
+		modules,
+		moduleId: modules[0]!.id,
+		moduleSuffix: modules[0]!.directory,
+	});
 }
 
 /* The record is replaced by rename, so a reader racing a running turn never
@@ -404,6 +536,8 @@ export async function readSession(
 			],
 			autoContinue: record.autoContinue !== false,
 			chainDepth: record.chainDepth ?? 0,
+			attachments: record.attachments ?? [],
+			checkpoints: record.checkpoints ?? [],
 			ejectedAt: record.ejectedAt ?? null,
 			archivedAt: record.archivedAt ?? null,
 		};
@@ -468,6 +602,59 @@ export function restoreSession(
 	return updateSession(workspaceRoot, sessionId, { archivedAt: null });
 }
 
+/* Replaces a draft module directory with a checkpoint snapshot: the current
+   contents step aside, then the snapshot is copied over the emptied directory.
+   node_modules stays so the session's install survives the rollback. */
+async function replaceModuleContents(
+	target: string,
+	snapshot: string,
+): Promise<void> {
+	await mkdir(target, { recursive: true });
+	for (const entry of await readdir(target)) {
+		if (entry === 'node_modules') continue;
+		await rm(join(target, entry), { recursive: true, force: true });
+	}
+	await copyModuleTree(snapshot, target);
+}
+
+/* Rolls the session workspace back to a captured checkpoint. The transcript is
+   append-only: the rollback is recorded as a marker, never by rewriting the
+   history, so the record of what the agents did stays intact. */
+export async function restoreCheckpoint(
+	workspaceRoot: string,
+	sessionId: string,
+	sequence: number,
+): Promise<SandboxSession> {
+	const session = await readSession(workspaceRoot, assertSessionId(sessionId));
+	const checkpoint = session.checkpoints.find(
+		(entry) => entry.sequence === sequence,
+	);
+	if (!checkpoint) {
+		throw new SandboxSetupError(
+			'CHECKPOINT_NOT_FOUND',
+			`No checkpoint for turn ${sequence} exists in this session.`,
+		);
+	}
+	const paths = sessionPaths(workspaceRoot, session.id, session.moduleSuffix);
+	for (const module of session.modules) {
+		const snapshot = checkpointModulePath(paths, sequence, module.directory);
+		/* A checkpoint older than the module says nothing about it, so that
+		   module keeps its current files instead of failing the rollback. */
+		if (!(await exists(snapshot))) continue;
+		await replaceModuleContents(
+			modulePathOf(paths, module.directory),
+			snapshot,
+		);
+	}
+	forgetDiffs(session.id);
+	await appendChatEntry(workspaceRoot, session, {
+		kind: 'system',
+		role: checkpoint.role,
+		text: `Restored the workspace to the state after ${checkpoint.label} (turn ${sequence}).`,
+	});
+	return updateSession(workspaceRoot, session.id, { state: 'editing' });
+}
+
 export interface DeleteSessionOptions {
 	/* Keep session.json and chat.jsonl as a tombstone. Default true. */
 	readonly keepTranscript?: boolean;
@@ -499,7 +686,13 @@ export async function deleteSession(
 		await rm(paths.root, { recursive: true, force: true });
 		return;
 	}
-	for (const directory of [paths.workspace, paths.base, paths.data]) {
+	for (const directory of [
+		paths.workspace,
+		paths.base,
+		paths.data,
+		paths.attachments,
+		paths.checkpoints,
+	]) {
 		await rm(directory, { recursive: true, force: true });
 	}
 	await writeSession(workspaceRoot, {
@@ -510,20 +703,32 @@ export async function deleteSession(
 }
 
 /* Approving a draft specification is a one-line, reviewable edit: only the
-   status field moves, so the operator's decision cannot rewrite the document. */
+   status field moves, so the operator's decision cannot rewrite the document.
+   The hash of the approved text is recorded on the module, which is what makes
+   the approval belong to this version of the specification and not to the file
+   name: an edit after it re-opens the gate. */
 export async function approveSpecification(
 	workspaceRoot: string,
 	session: SandboxSession,
-): Promise<{ readonly session: SandboxSession; readonly status: string }> {
+	module: SessionModule = session.modules[0]!,
+): Promise<{
+	readonly session: SandboxSession;
+	readonly status: string;
+	readonly module: string;
+}> {
 	const paths = sessionPaths(workspaceRoot, session.id, session.moduleSuffix);
-	const specPath = join(paths.modulePath, 'spec', 'module.yaml');
+	const specPath = join(
+		modulePathOf(paths, module.directory),
+		'spec',
+		'module.yaml',
+	);
 	let spec: string;
 	try {
 		spec = await readFile(specPath, 'utf8');
 	} catch {
 		throw new SandboxSetupError(
 			'SPEC_NOT_FOUND',
-			'This session has no specification to approve yet.',
+			`${module.id} has no specification to approve yet.`,
 		);
 	}
 	const status = /^status:[ \t]*(\S+)[ \t]*$/m.exec(spec);
@@ -533,18 +738,45 @@ export async function approveSpecification(
 			'The specification has no status field, so it cannot be approved.',
 		);
 	}
-	if (status[1] === 'approved') return { session, status: 'approved' };
-	await writeFile(
-		specPath,
-		spec.replace(/^status:[ \t]*\S+[ \t]*$/m, 'status: approved'),
-		'utf8',
-	);
+	if (status[1] !== 'approved') {
+		spec = spec.replace(/^status:[ \t]*\S+[ \t]*$/m, 'status: approved');
+		await writeFile(specPath, spec, 'utf8');
+	}
+	const approvedAt = Date.now();
+	const specHash = hashSpec(spec);
+	const current = await readSession(workspaceRoot, session.id);
 	return {
 		session: await updateSession(workspaceRoot, session.id, {
+			modules: current.modules.map((entry) =>
+				entry.directory === module.directory
+					? { ...entry, specApprovedAt: approvedAt, specHash }
+					: entry,
+			),
 			state: 'planned',
 		}),
 		status: 'approved',
+		module: module.directory,
 	};
+}
+
+/* The module a request names, by directory or by id. A name the session does
+   not have is refused rather than silently redirected to the primary module,
+   because everything downstream builds a path from it. */
+export function findSessionModule(
+	session: SandboxSession,
+	requested: string | null | undefined,
+): SessionModule {
+	if (!requested) return session.modules[0]!;
+	const found = session.modules.find(
+		(module) => module.directory === requested || module.id === requested,
+	);
+	if (!found) {
+		throw new SandboxSetupError(
+			'MODULE_NOT_IN_SESSION',
+			`This session has no module ${requested}. Add it to the session first.`,
+		);
+	}
+	return found;
 }
 
 /* The next sequence per session, so an append does not re-read the whole

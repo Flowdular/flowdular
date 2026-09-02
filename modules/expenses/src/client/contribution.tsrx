@@ -1,5 +1,7 @@
-import type { ModuleClientContribution } from '@coreloom/client';
+import { t, type ModuleClientContribution } from '@coreloom/client';
 import { EXPENSES_PERMISSIONS } from '../acl/permissions.ts';
+import translationsEn from '../../translations/en.json';
+import translationsPl from '../../translations/pl.json';
 import { ExpensesDashboardWidget, ExpensesView } from './ExpensesView.tsrx';
 
 export interface ExpensesClientContributionOptions {
@@ -15,14 +17,19 @@ export function createExpensesClientContribution(
 	const canApprove = options.scopes.includes(EXPENSES_PERMISSIONS.approve);
 	return {
 		moduleId: 'expenses.core',
+		translations: { en: translationsEn, pl: translationsPl },
 		navigation: [
 			{
 				id: 'expenses.navigation',
 				viewId: 'expenses',
 				group: 'Operations',
-				label: 'Expense Claims',
+				get label() {
+					return t('expenses.navigation.label');
+				},
 				glyph: 'file-text',
-				description: 'Create, submit, and review employee expense claims.',
+				get description() {
+					return t('expenses.navigation.description');
+				},
 				scope: EXPENSES_PERMISSIONS.read,
 				order: 50,
 			},

@@ -7,7 +7,9 @@ import {
 	SANDBOX_SESSION_STATES,
 	type SandboxAccessCandidate,
 	type SandboxAccessGrant,
+	type SandboxAuditChainVerification,
 	type SandboxAuditEvent,
+	type SandboxAuditPage,
 	type SandboxAuthority,
 	type SandboxGrantCapability,
 	type SandboxRuntimeMode,
@@ -21,6 +23,28 @@ import { SandboxServiceError } from './sandbox-service-error.ts';
 const MAX_GRANT_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000;
 const MAX_NOTE_LENGTH = 280;
 const SESSION_LIST_LIMIT = 200;
+const DEFAULT_AUDIT_PAGE = 50;
+const MAX_AUDIT_PAGE = 200;
+
+/* `occurredAt:sequence` of the last row of the previous page. Both halves are
+   non-negative integers; anything else is a client error, never a silent
+   first-page fallback. */
+function auditCursor(
+	raw: string | null,
+): { readonly occurredAt: number; readonly sequence: number } | null {
+	if (raw === null || raw === '') return null;
+	const match = /^(\d+):(\d+)$/.exec(raw);
+	const occurredAt = match ? Number(match[1]) : NaN;
+	const sequence = match ? Number(match[2]) : NaN;
+	if (!Number.isSafeInteger(occurredAt) || !Number.isSafeInteger(sequence)) {
+		throw new SandboxServiceError(
+			'INVALID_CURSOR',
+			'cursor is malformed.',
+			400,
+		);
+	}
+	return { occurredAt, sequence };
+}
 
 export interface GrantSandboxAccessInput {
 	readonly tenantId: string;
@@ -447,8 +471,29 @@ export class SandboxService {
 		);
 	}
 
+	pageAuditEvents(
+		tenantId: string,
+		cursor: string | null,
+		limit = DEFAULT_AUDIT_PAGE,
+	): SandboxAuditPage {
+		const size = Number.isSafeInteger(limit)
+			? Math.min(Math.max(1, Math.trunc(limit)), MAX_AUDIT_PAGE)
+			: DEFAULT_AUDIT_PAGE;
+		return this.repository.pageAuditEvents(
+			identifier(tenantId, 'tenantId'),
+			auditCursor(cursor),
+			size,
+		);
+	}
+
 	verifyAuditChain(tenantId: string): boolean {
 		return this.repository.verifyAuditChain(identifier(tenantId, 'tenantId'));
+	}
+
+	verifyAudit(tenantId: string): SandboxAuditChainVerification {
+		return this.repository.verifyAuditChainDetailed(
+			identifier(tenantId, 'tenantId'),
+		);
 	}
 
 	#expiry(value: number | null, now: number): number | null {

@@ -1,12 +1,61 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { changeOwnPassword, updateOwnProfile } from '../src/client/api.ts';
+import {
+	registerModuleTranslations,
+	setActiveLocale,
+	t,
+} from '@coreloom/client/i18n';
+import {
+	changeOwnPassword,
+	loadOwnLanguagePreference,
+	updateOwnLanguagePreference,
+	updateOwnProfile,
+} from '../src/client/api.ts';
 import { validatePasswordChange } from '../src/client/password.ts';
+import translationsEn from '../translations/en.json';
+import translationsPl from '../translations/pl.json';
 
 afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
 describe('profile client', () => {
+	it('ships every dynamic password validation message', () => {
+		registerModuleTranslations([
+			{
+				moduleId: 'profile.core',
+				translations: { en: translationsEn, pl: translationsPl },
+			},
+		]);
+		setActiveLocale('pl');
+		for (const [values, expected] of [
+			[
+				{
+					currentPassword: '',
+					newPassword: 'new-secret',
+					confirmation: 'new-secret',
+				},
+				'Wpisz obecne i nowe hasło.',
+			],
+			[
+				{
+					currentPassword: 'current-secret',
+					newPassword: 'new-secret',
+					confirmation: 'different-secret',
+				},
+				'Nowe hasło i jego powtórzenie nie są identyczne.',
+			],
+		] as const) {
+			const validation = validatePasswordChange(values);
+			expect(validation.valid).toBe(false);
+			if (!validation.valid) {
+				expect(t('profile.password.validation.' + validation.code)).toBe(
+					expected,
+				);
+			}
+		}
+		setActiveLocale('en');
+	});
+
 	it('maps matching password fields without sending confirmation', () => {
 		expect(
 			validatePasswordChange({
@@ -32,7 +81,7 @@ describe('profile client', () => {
 			}),
 		).toEqual({
 			valid: false,
-			message: 'Enter your current password and a new password.',
+			code: 'required',
 		});
 		expect(
 			validatePasswordChange({
@@ -42,7 +91,7 @@ describe('profile client', () => {
 			}),
 		).toEqual({
 			valid: false,
-			message: 'The new password and confirmation do not match.',
+			code: 'mismatch',
 		});
 	});
 
@@ -107,6 +156,46 @@ describe('profile client', () => {
 		});
 		expect(JSON.parse(options.body as string)).toEqual({
 			displayName: 'Ada Lovelace',
+		});
+	});
+
+	it('loads and updates the server-backed language preference', async () => {
+		const preference = {
+			tenantId: 'tenant-a',
+			accountId: 'account-a',
+			locale: 'pl',
+			updatedAt: 1,
+		};
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ locale: 'pl' }), { status: 200 }),
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ preference }), { status: 200 }),
+			);
+		vi.stubGlobal('fetch', fetchMock);
+
+		await expect(loadOwnLanguagePreference()).resolves.toBe('pl');
+		await expect(
+			updateOwnLanguagePreference('pl', 'csrf-token'),
+		).resolves.toEqual(preference);
+
+		expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/profile/language');
+		expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+			credentials: 'same-origin',
+		});
+		expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/profile/language');
+		expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
+			method: 'PUT',
+			credentials: 'same-origin',
+			headers: {
+				'content-type': 'application/json',
+				'x-csrf-token': 'csrf-token',
+			},
+		});
+		expect(JSON.parse(fetchMock.mock.calls[1]?.[1]?.body as string)).toEqual({
+			locale: 'pl',
 		});
 	});
 

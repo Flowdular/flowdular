@@ -1,5 +1,9 @@
-export const SANDBOX_MIGRATION_001 = `
-CREATE TABLE IF NOT EXISTS sandbox_access_grants (
+import type { MigrationDatabase, ModuleMigration } from '@coreloom/kernel';
+
+/* Every constant mirrors its migrations/<id>.up.sql file byte for byte;
+   tests/migrations.test.ts fails on drift. */
+
+export const SANDBOX_MIGRATION_001 = `CREATE TABLE IF NOT EXISTS sandbox_access_grants (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
   account_id TEXT NOT NULL,
@@ -56,9 +60,9 @@ CREATE INDEX IF NOT EXISTS sandbox_audit_tenant_time_idx
   ON sandbox_audit_events (tenant_id, occurred_at DESC, sequence DESC);
 `;
 
-/* Applied by the repository only when sandbox_sessions has no archived_at
-   column, because SQLite cannot widen a CHECK constraint in place. */
-export const SANDBOX_MIGRATION_002 = `
+export const SANDBOX_MIGRATION_002 = `-- Sessions gain an archive timestamp and two lifecycle states. SQLite cannot
+-- widen a CHECK constraint in place, so the table is rebuilt; the repository
+-- applies this only when archived_at is missing.
 CREATE TABLE sandbox_sessions_v2 (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
@@ -89,3 +93,22 @@ ALTER TABLE sandbox_sessions_v2 RENAME TO sandbox_sessions;
 CREATE INDEX IF NOT EXISTS sandbox_sessions_tenant_idx
   ON sandbox_sessions (tenant_id, updated_at DESC, id);
 `;
+
+function sessionLifecycleAlreadyApplied(database: MigrationDatabase): boolean {
+	return Boolean(
+		database
+			.prepare(
+				"SELECT 1 AS present FROM pragma_table_info('sandbox_sessions') WHERE name = 'archived_at'",
+			)
+			.get(),
+	);
+}
+
+export const migrations: readonly ModuleMigration[] = [
+	{ id: '0001_sandbox_core', statements: SANDBOX_MIGRATION_001 },
+	{
+		id: '0002_sandbox_session_lifecycle',
+		statements: SANDBOX_MIGRATION_002,
+		adoptWhen: sessionLifecycleAlreadyApplied,
+	},
+];

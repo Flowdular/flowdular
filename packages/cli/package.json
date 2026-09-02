@@ -4,7 +4,8 @@
 	"private": true,
 	"type": "module",
 	"bin": {
-		"oerp": "./dist/index.js"
+		"coreloom": "./dist/index.js",
+		"cl": "./dist/index.js"
 	},
 	"exports": {
 		".": "./src/index.ts"

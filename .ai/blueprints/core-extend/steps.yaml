@@ -27,7 +27,7 @@ steps:
       - '.ai/skills/**'
   - id: regenerate
     role: module-executor
-    action: pnpm oerp module sync --apply when the generated composition shape changed; never hand-edit platform/src/generated.
+    action: pnpm coreloom module sync --apply when the generated composition shape changed; never hand-edit platform/src/generated.
     inputs:
       - 'packages/cli/src/module-sync.ts'
     outputs:

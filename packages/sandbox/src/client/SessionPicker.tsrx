@@ -1,6 +1,14 @@
+import { useEffect, useRef, useState } from 'octane';
 import { Button, EmptyState, Icon, Tag } from '@coreloom/ui';
 import type { SandboxSession } from '../server/sessions.ts';
 import type { DriverSummary, RoleSummary } from './api.ts';
+import {
+	ATTACH_ACCEPT,
+	attachmentKind,
+	attachmentRefusal,
+	formatBytes,
+} from './attachments.ts';
+import { t, useTranslation } from './i18n.ts';
 
 export interface SessionPickerProps {
 	readonly sessions: readonly SandboxSession[];
@@ -17,7 +25,7 @@ export interface SessionPickerProps {
 	readonly showArchived: boolean;
 	readonly onDriver: (driver: string) => void;
 	readonly onOpen: (id: string) => void;
-	readonly onCreate: (brief: string, driver: string) => void;
+	readonly onCreate: (brief: string, driver: string, attachments: readonly File[]) => void;
 	readonly onMenu: (id: string) => void;
 	readonly onShowArchived: (show: boolean) => void;
 	readonly onArchive: (id: string) => void;
@@ -43,20 +51,44 @@ function stateTone(
 
 /* A delivered session reads as delivered, not as an internal state name. */
 function stateLabel(session: SandboxSession): string {
-	if (session.archivedAt) return 'archived';
-	return session.state === 'accepted' ? 'delivered' : session.state;
+	if (session.archivedAt) return t('sandbox.sessions.state.archived');
+	return session.state === 'accepted'
+		? t('sandbox.sessions.state.delivered')
+		: t('sandbox.session.state.' + session.state);
+}
+
+/* A file the operator attached before the session exists. It is uploaded to
+   the new session id right after the session is created. */
+interface PickedFile {
+	readonly key: string;
+	readonly file: File;
+	readonly kind: 'image' | 'file';
+	/* Object URL for an image thumbnail, empty otherwise. Revoked on removal
+   and when the screen goes away. */
+	readonly url: string;
+}
+
+/* Every module of the session, bounded so a card stays a card. */
+function moduleLine(session: SandboxSession): string {
+	const ids = session.modules.map((module) => module.id);
+	return ids.length > 2
+		? `${ids[0]}, ${ids[1]} +${ids.length - 2}`
+		: ids.join(', ');
 }
 
 function since(value: number): string {
 	const minutes = Math.round((Date.now() - value) / 60_000);
-	if (minutes < 1) return 'just now';
-	if (minutes < 60) return `${minutes} min ago`;
+	if (minutes < 1) return t('sandbox.sessions.time.now');
+	if (minutes < 60) return t('sandbox.sessions.time.minutes', {
+		count: minutes,
+	});
 	const hours = Math.round(minutes / 60);
-	if (hours < 24) return `${hours} h ago`;
-	return `${Math.round(hours / 24)} d ago`;
+	if (hours < 24) return t('sandbox.sessions.time.hours', { count: hours });
+	return t('sandbox.sessions.time.days', { count: Math.round(hours / 24) });
 }
 
 export function SessionPicker(props: SessionPickerProps) @{
+	const { t } = useTranslation();
 	const offered = props.drivers.filter((driver) => driver.offered);
 	const blocked = props.drivers.filter((driver) => !driver.offered);
 	const selected =
@@ -66,67 +98,184 @@ export function SessionPicker(props: SessionPickerProps) @{
 		props.showArchived
 			? props.sessions
 			: props.sessions.filter((session) => !session.archivedAt);
+	const attachInput = useRef<HTMLInputElement | null>(null);
+	const opened = useRef<string[]>([]);
+	const [picked, setPicked] = useState<readonly PickedFile[]>([]);
+	const [attachError, setAttachError] = useState('');
+
+	/* Thumbnails hold object URLs; nothing else releases them, so the screen
+   does it when it goes away. */
+	useEffect(
+		() => () => {
+			for (const url of opened.current) URL.revokeObjectURL(url);
+		},
+		[],
+	);
+
+	const addFiles = (chosen: readonly File[]) => {
+		const next = [...picked];
+		let refusal = '';
+		for (const file of chosen) {
+			const reason = attachmentRefusal(file, next.length);
+			if (reason) {
+				refusal = reason;
+				continue;
+			}
+			const kind = attachmentKind(file);
+			const url =
+				kind === 'image' ? URL.createObjectURL(file) : '';
+			if (url) opened.current.push(url);
+			next.push({
+				key: `${file.name}-${Date.now()}-${Math.random().toString(36).slice(
+					2,
+					8,
+				)}`,
+				file,
+				kind,
+				url,
+			});
+		}
+		setPicked(next);
+		setAttachError(refusal);
+	};
+
+	const removeFile = (key: string) => {
+		const found = picked.find((item) => item.key === key);
+		if (found?.url) URL.revokeObjectURL(found.url);
+		setPicked(picked.filter((item) => item.key !== key));
+	};
+
+	const onPaste = (event: ClipboardEvent) => {
+		const files = event.clipboardData?.files;
+		if (!files || files.length === 0) return;
+		const images = Array.from(files).filter(
+			(file) => file.type.startsWith('image/'),
+		);
+		if (images.length === 0) return;
+		event.preventDefault();
+		addFiles(images);
+	};
+
+	const onPick = (event: Event & { currentTarget: HTMLInputElement }) => {
+		const chosen = event.currentTarget.files;
+		if (chosen && chosen.length > 0) addFiles(Array.from(chosen));
+		event.currentTarget.value = '';
+	};
 
 	const submit = (event: SubmitEvent) => {
 		event.preventDefault();
 		const form = new FormData(event.currentTarget as HTMLFormElement);
 		const brief = form.get('brief');
 		if (typeof brief === 'string' && brief.trim().length > 7 && selected) {
-			props.onCreate(brief.trim(), selected.id);
+			props.onCreate(
+				brief.trim(),
+				selected.id,
+				picked.map((item) => item.file),
+			);
 		}
 	};
 
 	<div class="sessions">
 		<header class="sessions__head">
-			<h1>What should we build?</h1>
-			<p>
-				Describe the capability or the change you want on top of the Coreloom
-				foundation. The specialists work out which module it belongs to and who
-				takes the first turn.
-			</p>
+			<h1>{t('sandbox.sessions.title')}</h1>
+			<p>{t('sandbox.sessions.description')}</p>
 		</header>
 
 		<section class="sessions__start">
-			<form class="ui-form" onSubmit={submit}>
+			<form class="sessions__composer" onSubmit={submit}>
+				@if (picked.length > 0 || attachError) {
+					<div class="chat__attachments">
+						@for (const item of picked; key item.key) {
+							<div class="chat__attachment">
+								@if (item.kind === 'image') {
+									<img
+										class="chat__attachment-thumb"
+										src={item.url}
+										alt={item.file.name}
+									/>
+								} @else {
+									<span
+										class="chat__attachment-thumb chat__attachment-thumb--file"
+									>
+										<Icon name="file-text" size={18} />
+									</span>
+								}
+								<span class="chat__attachment-info">
+									<span class="chat__attachment-name">{item.file.name}</span>
+									<span class="chat__attachment-size">{formatBytes(
+										item.file.size,
+									)}</span>
+								</span>
+								<button
+									class="chat__attachment-remove"
+									type="button"
+									aria-label={t('sandbox.attachments.remove', {
+										name: item.file.name,
+									})}
+									onClick={() => removeFile(item.key)}
+								>
+									<Icon name="x" size={12} />
+								</button>
+							</div>
+						}
+						@if (attachError) {
+							<span class="chat__attachment-error">{attachError}</span>
+						}
+					</div>
+				}
 				<textarea
 					class="ui-textarea sessions__brief"
 					name="brief"
 					rows={4}
-					placeholder="A screen where a signed-in user changes their display name and password. Or: add custom roles to auth.core so an owner can define workspace roles."
+					placeholder={t('sandbox.sessions.brief.placeholder')}
 					required
+					onPaste={onPaste}
 				></textarea>
-				<div class="ui-form__foot">
-					<label class="sessions__driver">
-						<span class="ui-label">Coding agent</span>
-						<select
-							class="chat__picker"
-							aria-label="Coding agent"
-							value={selected?.id ?? ''}
-							disabled={offered.length === 0}
-							onChange={(event) => props.onDriver(event.currentTarget.value)}
-						>
-							@for (const driver of offered; key driver.id) {
-								<option value={driver.id}>{driver.label}</option>
-							}
-						</select>
-						<span class="ui-help">
-							{selected
-								? selected.description
-								: 'No coding agent is available yet.'}
-						</span>
-					</label>
+				<div class="sessions__composer-row">
+					<button
+						class="chat__attach"
+						type="button"
+						aria-label={t('sandbox.attachments.action')}
+						title={t('sandbox.attachments.help')}
+						onClick={() => attachInput.current?.click()}
+					>
+						<Icon name="plus" size={16} />
+					</button>
+					<input
+						ref={attachInput}
+						class="chat__attach-input"
+						type="file"
+						multiple
+						accept={ATTACH_ACCEPT}
+						onChange={onPick}
+					/>
+					<select
+						class="chat__picker"
+						aria-label={t('sandbox.sessions.driver.label')}
+						value={selected?.id ?? ''}
+						disabled={offered.length === 0}
+						onChange={(event) => props.onDriver(event.currentTarget.value)}
+					>
+						@for (const driver of offered; key driver.id) {
+							<option value={driver.id}>{driver.label}</option>
+						}
+					</select>
 					<span class="sandbox__spacer"></span>
-					<div class="ui-form__actions">
-						<Button
-							variant="primary"
-							type="submit"
-							disabled={props.busy || offered.length === 0}
-						>
-							<Icon name="play" size={14} />
-							{props.busy ? 'Planning…' : 'Start'}
-						</Button>
-					</div>
+					<Button
+						size="sm"
+						variant="primary"
+						type="submit"
+						disabled={props.busy || offered.length === 0}
+					>
+						<Icon name="play" size={14} />
+						{props.busy
+							? t('sandbox.sessions.planning')
+							: t('sandbox.sessions.start')}
+					</Button>
 				</div>
+				<p class="chat__composer-status">
+					{selected ? selected.description : t('sandbox.sessions.driver.none')}
+				</p>
 			</form>
 			@if (blocked.length > 0) {
 				<ul class="sessions__blocked">
@@ -141,34 +290,33 @@ export function SessionPicker(props: SessionPickerProps) @{
 					}
 				</ul>
 			}
-			<p class="ui-help sessions__team">{props.roles.map(
-				(role) => role.name,
-			).join(' · ')}</p>
 		</section>
 
 		@if (props.sessions.length === 0) {
 			<EmptyState
 				icon="flask"
-				title="No session yet"
+				title={t('sandbox.sessions.empty.title')}
 				code="npx @coreloom/sandbox"
-			>
-				Describe the work above. Nothing leaves the session until you eject it.
-			</EmptyState>
+			>{t('sandbox.sessions.empty.description')}</EmptyState>
 		} @else {
 			<>
 				@if (archived.length > 0) {
 					<div class="sessions__toolbar">
 						<span class="ui-help">
 							{archived.length === 1
-								? '1 archived session'
-								: archived.length + ' archived sessions'}
+								? t('sandbox.sessions.archived.one')
+								: t('sandbox.sessions.archived.other', {
+										count: archived.length,
+									})}
 						</span>
 						<Button
 							size="sm"
 							variant="ghost"
 							onClick={() => props.onShowArchived(!props.showArchived)}
 						>
-							{props.showArchived ? 'Hide archived' : 'Show archived'}
+							{props.showArchived
+								? t('sandbox.sessions.archived.hide')
+								: t('sandbox.sessions.archived.show')}
 						</Button>
 					</div>
 				}
@@ -187,25 +335,28 @@ export function SessionPicker(props: SessionPickerProps) @{
 							>
 								<span class="session-card__title">
 									<b>{session.title}</b>
-									<small>{session.modules.map((module) => module.id).join(
-										', ',
-									)}</small>
+									<small>{moduleLine(session)}</small>
 								</span>
 								<span class="session-card__meta">
 									<Tag tone={stateTone(session)} dot>{stateLabel(session)}</Tag>
-									<small>
-										{(session.kind === 'new-module' ? 'new module' : 'change') +
-											' · ' +
-											session.driver}
-									</small>
+									<small>{t('sandbox.sessions.kindAndDriver', {
+										kind: session.kind === 'new-module'
+											? t('sandbox.sessions.kind.new')
+											: t('sandbox.sessions.kind.change'),
+										driver: session.driver,
+									})}</small>
 								</span>
 								<span class="session-card__foot">
 									<span>
 										{props.running.includes(session.id)
-											? 'Working now'
+											? t('sandbox.sessions.working')
 											: session.ejectedAt
-												? 'Delivered ' + since(session.ejectedAt)
-												: 'Updated ' + since(session.updatedAt)}
+												? t('sandbox.sessions.deliveredAt', {
+														when: since(session.ejectedAt),
+													})
+												: t('sandbox.sessions.updatedAt', {
+														when: since(session.updatedAt),
+													})}
 									</span>
 									@if (session.ejectedAt) {
 										<Icon name="check" size={14} />
@@ -218,7 +369,7 @@ export function SessionPicker(props: SessionPickerProps) @{
 								<button
 									class="session-card__menu"
 									type="button"
-									aria-label="Session actions"
+									aria-label={t('sandbox.sessions.actions')}
 									aria-expanded={props.openMenu === session.id}
 									onClick={() => props.onMenu(
 										props.openMenu === session.id ? '' : session.id,
@@ -230,31 +381,30 @@ export function SessionPicker(props: SessionPickerProps) @{
 									<div class="ui-menu session-card__panel" role="menu">
 										@if (props.confirmDelete === session.id) {
 											<>
-												<p class="ui-help session-card__confirm">
-													{'Delete this session? The workspace and preview data are removed; the transcript stays' +
-														(session.ejectedAt
-															? ', and the delivered module stays in ' +
-																'modules/' +
-																session.moduleSuffix +
-																'.'
-															: '.')}
-												</p>
+												<p class="ui-help session-card__confirm">{t(
+													'sandbox.sessions.delete.confirm',
+													{
+														delivery: session.ejectedAt
+															? t('sandbox.sessions.delete.delivered', {
+																	paths: session.modules.map(
+																		(module) => 'modules/' + module.directory,
+																	).join(', '),
+																})
+															: '',
+													},
+												)}</p>
 												<div class="ui-form__actions">
 													<Button
 														size="sm"
 														variant="danger"
 														disabled={props.busy}
 														onClick={() => props.onDelete(session.id)}
-													>
-														Delete
-													</Button>
+													>{t('sandbox.common.delete')}</Button>
 													<Button
 														size="sm"
 														variant="ghost"
 														onClick={() => props.onConfirmDelete('')}
-													>
-														Cancel
-													</Button>
+													>{t('sandbox.common.cancel')}</Button>
 												</div>
 											</>
 										} @else {
@@ -268,7 +418,7 @@ export function SessionPicker(props: SessionPickerProps) @{
 														onClick={() => props.onRestore(session.id)}
 													>
 														<Icon name="refresh" size={16} />
-														Restore
+														{t('sandbox.common.restore')}
 													</button>
 												} @else {
 													<button
@@ -280,7 +430,7 @@ export function SessionPicker(props: SessionPickerProps) @{
 														onClick={() => props.onArchive(session.id)}
 													>
 														<Icon name="download" size={16} />
-														Archive
+														{t('sandbox.sessions.archive')}
 													</button>
 												}
 												<div class="ui-menu__sep"></div>
@@ -294,8 +444,8 @@ export function SessionPicker(props: SessionPickerProps) @{
 												>
 													<Icon name="x" size={16} />
 													{props.running.includes(session.id)
-														? 'Delete (stop the turn first)'
-														: 'Delete'}
+														? t('sandbox.sessions.delete.stopFirst')
+														: t('sandbox.common.delete')}
 												</button>
 											</>
 										}

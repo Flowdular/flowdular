@@ -1,5 +1,6 @@
 node_modules
 dist
+# Preserved source for `coreloom setup migrate-state`.
 .octane-erp
 .coreloom
 platform/.generated

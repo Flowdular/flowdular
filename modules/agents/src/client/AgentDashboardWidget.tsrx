@@ -1,7 +1,9 @@
 import { useEffect, useMemo } from 'octane';
+import { t } from '@coreloom/client';
 import { Kpi } from '@coreloom/ui';
 import { useValue } from 'segment-state';
 import { loadAgentRuns } from './api.ts';
+import { countLabel } from './presentation.ts';
 import { createAgentClientState } from './state.ts';
 
 export function AgentDashboardWidget() @{
@@ -21,10 +23,10 @@ export function AgentDashboardWidget() @{
 		(run) => ['queued', 'running'].includes(run.status),
 	).length;
 	<Kpi
-		label="Agent operations"
-		value={status === 'loading' ? '…' : String(active)}
-		note="Queued and running tasks that continue outside the browser."
+		label={t('agents.widget.label')}
+		value={status === 'loading' ? '…' : countLabel(active)}
+		note={t('agents.widget.note')}
 		href="/agent-runs"
-		linkLabel="Open agent runs"
+		linkLabel={t('agents.widget.link')}
 	/>
 }

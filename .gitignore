@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# Legacy local state remains ignored because `coreloom setup migrate-state`
+# preserves the source after copying it into .coreloom/data.
 .octane-erp/
 .coreloom/
 platform/.generated/

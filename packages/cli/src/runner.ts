@@ -1,7 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { failure, success, type CommandEnvelope } from '@coreloom/cli-protocol';
+import {
+	failure,
+	success,
+	type CapabilityDescriptor,
+	type CommandEnvelope,
+} from '@coreloom/cli-protocol';
 import { capabilities, capability as coreCapability } from './capabilities.ts';
 import { runDoctor } from './doctor.ts';
 import {
@@ -9,7 +14,13 @@ import {
 	loadCliExtensions,
 	type LoadedCliCommand,
 } from './extensions.ts';
+import {
+	migrationApply,
+	migrationStatus,
+	migrationVerify,
+} from './migration.ts';
 import { scaffoldModule } from './module-scaffold.ts';
+import { migrateLegacyState } from './state-migration.ts';
 import {
 	disableModule,
 	enableModule,
@@ -41,12 +52,12 @@ function relativeReports(
 	}));
 }
 
-async function runExtensionCommand(
-	workspace: Workspace,
-	extension: LoadedCliCommand,
-	arguments_: ParsedArguments,
-): Promise<CommandEnvelope> {
-	const descriptor = extension.command.capability;
+/* The approval gates of packages/cli/src/capabilities.ts and every module
+   catalog, in the order .ai/policies/capabilities.yaml documents. The spec gate
+   sits between the two halves because only it needs the workspace. */
+function environmentRefusal(
+	descriptor: CapabilityDescriptor,
+): CommandEnvelope | undefined {
 	if (descriptor.risk === 'external') {
 		return failure(
 			'APPROVAL_VERIFIER_REQUIRED',
@@ -60,7 +71,7 @@ async function runExtensionCommand(
 		);
 	}
 	const environment =
-		process.env.OERP_ENV ?? process.env.NODE_ENV ?? 'development';
+		process.env.CL_ENV ?? process.env.NODE_ENV ?? 'development';
 	if (
 		descriptor.localOnly &&
 		environment !== 'development' &&
@@ -71,6 +82,40 @@ async function runExtensionCommand(
 			`Capability "${descriptor.id}" cannot run in environment "${environment}".`,
 		);
 	}
+	return undefined;
+}
+
+function writeRefusal(
+	descriptor: CapabilityDescriptor,
+	arguments_: ParsedArguments,
+): CommandEnvelope | undefined {
+	const apply = arguments_.flags.has('apply');
+	if (descriptor.risk === 'destructive' && apply) {
+		const confirmation = stringFlag(arguments_, 'confirm');
+		if (!descriptor.confirmation || confirmation !== descriptor.confirmation) {
+			return failure(
+				'CONFIRMATION_REQUIRED',
+				`Pass --confirm ${descriptor.confirmation ?? '<token>'} with --apply.`,
+			);
+		}
+	}
+	if (descriptor.risk !== 'read' && !descriptor.supportsDryRun && !apply) {
+		return failure(
+			'EXPLICIT_APPLY_REQUIRED',
+			'Pass --apply to execute this capability.',
+		);
+	}
+	return undefined;
+}
+
+async function runExtensionCommand(
+	workspace: Workspace,
+	extension: LoadedCliCommand,
+	arguments_: ParsedArguments,
+): Promise<CommandEnvelope> {
+	const descriptor = extension.command.capability;
+	const refused = environmentRefusal(descriptor);
+	if (refused) return refused;
 	if (descriptor.requiresApprovedSpec) {
 		const specFlag = stringFlag(arguments_, 'spec');
 		if (!specFlag) {
@@ -98,22 +143,9 @@ async function runExtensionCommand(
 			);
 		}
 	}
+	const writeRefused = writeRefusal(descriptor, arguments_);
+	if (writeRefused) return writeRefused;
 	const apply = arguments_.flags.has('apply');
-	if (descriptor.risk === 'destructive' && apply) {
-		const confirmation = stringFlag(arguments_, 'confirm');
-		if (!descriptor.confirmation || confirmation !== descriptor.confirmation) {
-			return failure(
-				'CONFIRMATION_REQUIRED',
-				`Pass --confirm ${descriptor.confirmation ?? '<token>'} with --apply.`,
-			);
-		}
-	}
-	if (descriptor.risk !== 'read' && !descriptor.supportsDryRun && !apply) {
-		return failure(
-			'EXPLICIT_APPLY_REQUIRED',
-			'Pass --apply to execute this capability.',
-		);
-	}
 	const command = await loadCliCommand(extension);
 	const invokedByCapability =
 		arguments_.positionals[0] === 'capability' &&
@@ -154,14 +186,15 @@ export async function runCommand(
 		if (!group || group === 'help' || arguments_.flags.has('help')) {
 			return success({
 				usage:
-					'oerp [--root <workspace>] [--json] <doctor|capability|spec|blueprint|module|setup> [action] [options]',
+					'coreloom [--root <workspace>] [--json] <doctor|capability|spec|blueprint|module|migration|setup> [action] [options]',
 				commands: [
 					'doctor',
 					'capability list|describe <id>|run <id>',
 					'spec validate [--all]',
 					'blueprint list|validate --all',
 					'module list|validate|sync [--apply]|enable <id> [--apply]|disable <id> [--apply]|new <id> --spec <path> [--apply]',
-					'setup check|quick [--apply --confirm reset-local-auth]',
+					'migration status [--module <id>]|apply --module <id> [--apply]|verify',
+					'setup check|quick [--apply --confirm reset-local-auth]|migrate-state [--apply --confirm migrate-legacy-state]',
 					...extensionCommands.map((entry) => entry.command.path.join(' ')),
 				],
 				options: [
@@ -183,6 +216,14 @@ export async function runCommand(
 						'AUTH_MODULE_REQUIRED',
 						'Quick setup requires the enabled auth.core module.',
 					);
+		}
+
+		if (group === 'setup' && action === 'migrate-state') {
+			const descriptor = coreCapability('workspace.state.migrate')!;
+			const refused =
+				environmentRefusal(descriptor) ?? writeRefusal(descriptor, arguments_);
+			if (refused) return refused;
+			return migrateLegacyState(workspace, arguments_.flags.has('apply'));
 		}
 
 		if (
@@ -229,6 +270,10 @@ export async function runCommand(
 					'spec.validate': ['spec', 'validate'],
 					'blueprint.validate': ['blueprint', 'validate'],
 					'module.validate': ['module', 'validate'],
+					'migration.status': ['migration', 'status'],
+					'migration.verify': ['migration', 'verify'],
+					'migration.apply.local': ['migration', 'apply'],
+					'workspace.state.migrate': ['setup', 'migrate-state'],
 				};
 				const alias = aliases[target];
 				if (alias)
@@ -312,6 +357,36 @@ export async function runCommand(
 					);
 		}
 
+		if (group === 'migration') {
+			const moduleFlag = stringFlag(arguments_, 'module');
+			if (action === 'status') {
+				return migrationStatus(workspace, moduleFlag);
+			}
+			if (action === 'verify') return migrationVerify(workspace);
+			if (action === 'apply') {
+				if (!moduleFlag) {
+					return failure(
+						'INPUT_REQUIRED',
+						'--module <id> is required; migrations are applied one database at a time.',
+					);
+				}
+				const descriptor = coreCapability('migration.apply.local')!;
+				const refused =
+					environmentRefusal(descriptor) ??
+					writeRefusal(descriptor, arguments_);
+				if (refused) return refused;
+				return migrationApply(
+					workspace,
+					moduleFlag,
+					arguments_.flags.has('apply'),
+				);
+			}
+			return failure(
+				'USAGE_ERROR',
+				'Use migration status [--module <id>], migration apply --module <id> [--apply], or migration verify.',
+			);
+		}
+
 		if (group === 'module' && action === 'list') {
 			const files = await findNamedFiles(workspace.root, 'module.json');
 			return success({
@@ -354,7 +429,7 @@ export async function runCommand(
 				...(apply
 					? []
 					: [
-							'Dry run only. Pass --apply to enable the module, regenerate the composition, and grant its scopes.',
+							'Dry run only. Pass --apply to enable the module and its dependencies, regenerate the composition, and grant their scopes.',
 						]),
 				...(report.installed
 					? []
@@ -365,35 +440,66 @@ export async function runCommand(
 			/* A module brings its own scopes. Without this grant it is enabled and
 			   invisible, because no owner holds the permission its navigation needs. */
 			let scopes: unknown;
+			const scopeGrants: unknown[] = [];
 			if (apply) {
-				const scopeSync = extensionCommands.find(
+				/* Enabling a module can enable auth.core as part of its dependency
+				   closure, so discover extensions again against the resulting config. */
+				const enabledWorkspace: Workspace = {
+					...workspace,
+					config: {
+						...workspace.config,
+						modules: {
+							...((workspace.config.modules as
+								| Record<string, unknown>
+								| undefined) ?? {}),
+							enabled: [...report.enabled],
+						},
+					},
+				};
+				const enabledExtensions = await loadCliExtensions(enabledWorkspace);
+				const scopeSync = enabledExtensions.find(
 					(entry) => entry.command.capability.id === 'auth.scopes.sync',
 				);
 				if (!scopeSync) {
 					warnings.push(
-						'auth.core is not enabled, so module scopes were not granted. Run "oerp auth sync-scopes --module <id> --apply" once it is.',
+						'auth.core is not enabled, so module scopes were not granted. Run "coreloom auth sync-scopes --module <id> --apply" once it is.',
 					);
 				} else {
-					const granted = await runExtensionCommand(workspace, scopeSync, {
-						positionals: ['auth', 'sync-scopes'],
-						flags: new Map<string, string | boolean>([
-							['module', target],
-							['apply', true],
-						]),
-					});
-					if (!granted.ok) {
-						return failure(
-							'MODULE_SCOPES_SYNC_FAILED',
-							`Module ${target} is enabled but its scopes were not granted: ${granted.error?.message ?? 'unknown error'}`,
-							{ report, error: granted.error },
+					const modulesToGrant = [
+						...report.newlyEnabled,
+						...(report.newlyEnabled.includes(target) ? [] : [target]),
+					];
+					for (const moduleId of modulesToGrant) {
+						const granted = await runExtensionCommand(
+							enabledWorkspace,
+							scopeSync,
+							{
+								positionals: ['auth', 'sync-scopes'],
+								flags: new Map<string, string | boolean>([
+									['module', moduleId],
+									['apply', true],
+								]),
+							},
 						);
+						if (!granted.ok) {
+							return failure(
+								'MODULE_SCOPES_SYNC_FAILED',
+								`Module ${moduleId} is enabled but its scopes were not granted: ${granted.error?.message ?? 'unknown error'}`,
+								{ report, moduleId, error: granted.error },
+							);
+						}
+						scopeGrants.push(granted.data);
+						warnings.push(...granted.warnings);
+						if (moduleId === target) scopes = granted.data;
 					}
-					scopes = granted.data;
-					warnings.push(...granted.warnings);
 				}
 			}
 			return success(
-				{ ...report, ...(scopes === undefined ? {} : { scopes }) },
+				{
+					...report,
+					...(scopes === undefined ? {} : { scopes }),
+					...(scopeGrants.length === 0 ? {} : { scopeGrants }),
+				},
 				{
 					evidence: [
 						'coreloom.json',

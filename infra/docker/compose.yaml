@@ -3,22 +3,25 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile
-    image: octane-erp:local
+    image: coreloom:local
     environment:
       NODE_ENV: production
       PORT: 3000
-      OERP_AUTH_DATABASE: /data/auth.db
-      OERP_AGENTS_DATABASE: /data/agents.db
-      OERP_AUTH_ALLOW_SIGN_UP: 'false'
+      CL_AUTH_DATABASE: /data/auth.db
+      CL_AGENTS_DATABASE: /data/agents.db
+      CL_WORKFLOWS_DATABASE: /data/workflows.db
+      CL_AUTH_ALLOW_SIGN_UP: 'false'
       # TLS terminates in front of this container. Only a plain-HTTP run on a
-      # workstation may set OERP_AUTH_SECURE_COOKIE=false in .env.
-      OERP_AUTH_SECURE_COOKIE: ${OERP_AUTH_SECURE_COOKIE:-true}
+      # workstation may set CL_AUTH_SECURE_COOKIE=false in .env.
+      CL_AUTH_SECURE_COOKIE: ${CL_AUTH_SECURE_COOKIE:-true}
       # Both keys come from infra/docker/.env (copy .env.example). Compose
       # refuses to start without them; the app would refuse at boot anyway.
-      OERP_AGENT_CREDENTIAL_KEY: ${OERP_AGENT_CREDENTIAL_KEY:?Set OERP_AGENT_CREDENTIAL_KEY in infra/docker/.env (openssl rand -base64 32)}
-      OERP_AGENT_RUN_GRANT_KEY: ${OERP_AGENT_RUN_GRANT_KEY:?Set OERP_AGENT_RUN_GRANT_KEY in infra/docker/.env (openssl rand -base64 32)}
+      CL_AGENT_CREDENTIAL_KEY: ${CL_AGENT_CREDENTIAL_KEY:?Set CL_AGENT_CREDENTIAL_KEY in infra/docker/.env (openssl rand -base64 32)}
+      CL_AGENT_RUN_GRANT_KEY: ${CL_AGENT_RUN_GRANT_KEY:?Set CL_AGENT_RUN_GRANT_KEY in infra/docker/.env (openssl rand -base64 32)}
+      CL_WORKFLOWS_PAYLOAD_KEY: ${CL_WORKFLOWS_PAYLOAD_KEY:?Set CL_WORKFLOWS_PAYLOAD_KEY in infra/docker/.env (openssl rand -base64 32)}
+      CL_WORKFLOWS_CURSOR_KEY: ${CL_WORKFLOWS_CURSOR_KEY:?Set CL_WORKFLOWS_CURSOR_KEY in infra/docker/.env (openssl rand -base64 32)}
     ports:
-      - '${OERP_PORT:-3000}:3000'
+      - '${CL_PORT:-3000}:3000'
     healthcheck:
       test:
         - CMD
@@ -34,10 +37,10 @@ services:
     tmpfs:
       - /tmp:size=64m,mode=1777
     volumes:
-      - auth-data:/data
+      - coreloom-data:/data
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
 
 volumes:
-  auth-data:
+  coreloom-data:

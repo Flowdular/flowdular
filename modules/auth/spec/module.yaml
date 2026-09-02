@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: auth.core
-specVersion: 0.5.0
+specVersion: 0.8.1
 status: approved
 name: Authentication Core
 description: Provides tenant-aware accounts, password authentication, sessions, scopes, tenant roles, API tokens for machine clients, the module settings store, the auth audit trail, security headers, authentication screens, and server authorization middleware.
@@ -42,6 +42,9 @@ invariants:
   - Assigning a role replaces the membership scopes with the role's scopes and keeps the role key on the membership in sync.
   - Module settings are declared by their owning module, stored per tenant (or once for the platform), validated against the declaration on every write, and secret values are never returned.
   - Email confirmation cannot be enabled without a composed mail transport.
+  - Password reset and tenant invitation tokens are random, hashed at rest, short lived, single use, and never returned by HTTP APIs.
+  - TOTP secrets are encrypted with a deployment-provided AES-256 key; a successful password check creates a short-lived, single-use MFA challenge rather than a session.
+  - External email delivery is an injected deployment adapter. The local in-memory adapter is development-only and never exposes tokens over HTTP or logs.
   - Authentication and administration events are appended to an auth audit trail that is readable per tenant and never contains credentials or raw tokens.
 permissions:
   - id: auth.profile.read
@@ -144,7 +147,31 @@ acceptanceScenarios:
     given: A principal with auth.audit.read.
     when: The principal pages through the audit trail with action and actor filters.
     then: Only the active tenant's events are returned, newest first, with a cursor for the next page.
+  - id: AUTH-AUDIT-SOURCES
+    given: A principal who opens the unified audit screen holding a subset of auth.audit.read, agents.runs.read, and sandbox.sessions.read.
+    when: The screen offers audit sources.
+    then: Only the sources whose scope the principal holds are selectable, and the agent and sandbox sources show a chain-integrity indicator driven by their verify endpoint.
   - id: AUTH-SESSIONS-OWN
     given: An account with several live sessions.
     when: The account lists its sessions and revokes one that is not current.
     then: The revoked session no longer resolves and the current one is unchanged.
+  - id: AUTH-PASSWORD-RECOVERY
+    given: A visitor has access to the email address of an active account.
+    when: The visitor requests a reset and submits the delivered, unexpired, single-use token with a policy-compliant password.
+    then: The password changes, earlier sessions are revoked, the token cannot be reused, and the request response never reveals whether the address exists.
+  - id: AUTH-INVITATION-ACCEPT
+    given: A workspace administrator delivered a tenant invitation through the configured mail adapter.
+    when: The invited person submits the unexpired, single-use token with account details.
+    then: The account gains only the invited workspace role, the token cannot be reused, and no token appears in logs or audit metadata.
+  - id: AUTH-MFA-ENROLL
+    given: An authenticated account and a configured MFA encryption key.
+    when: The account enrolls a TOTP authenticator and confirms a valid rotating code.
+    then: The secret stays encrypted at rest, recovery codes are returned only during enrollment, and future sign-in requires a TOTP or unused recovery code.
+  - id: AUTH-MFA-OIDC
+    given: An account with confirmed TOTP signs in through an enabled, configured OIDC provider.
+    when: The provider returns a verified email for that account.
+    then: Coreloom redirects to the MFA challenge using a short-lived HttpOnly proof cookie and creates no session before the second factor succeeds.
+  - id: AUTH-SECURITY-SURFACES
+    given: A browser opens account recovery, invitation acceptance, or personal security from a supported route.
+    when: The corresponding operation is unavailable, loading, denied, invalid, successful, or pending confirmation.
+    then: The screen renders a translated explicit state and never exposes a stored credential or reusable token.

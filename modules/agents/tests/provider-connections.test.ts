@@ -26,10 +26,11 @@ function connections(
 	probe?: () => Promise<ProviderReadinessResult>,
 ) {
 	const repository = new SqliteProviderRepository(':memory:');
+	const audit = new SqliteAgentRepository(':memory:');
 	const service = new AgentProviderService(
 		repository,
 		new AesGcmCredentialVault(Buffer.alloc(32, 3)),
-		new SqliteAgentRepository(':memory:'),
+		audit,
 		{
 			hostAllowlist: new Set<string>(),
 			readinessTtlMs: 60_000,
@@ -45,10 +46,61 @@ function connections(
 		credential: 'sk-provider-test-credential',
 		models,
 	});
-	return { repository, service, created };
+	return { repository, audit, service, created };
 }
 
 describe('provider connection lifecycle', () => {
+	it('deletes an unused connection and records the actor in the audit trail', () => {
+		const now = 1_700_000_000_000;
+		const { audit, service, created } = connections(() => now);
+
+		service.delete(tenantId, actor, created.id, created.revision);
+
+		expect(service.get(tenantId, created.id)).toBeNull();
+		expect(audit.listAuditEvents(tenantId, 10)[0]).toMatchObject({
+			action: 'agent-provider.deleted',
+			actorId: actor,
+			subjectId: created.id,
+		});
+	});
+
+	it('refuses to delete the built-in provider or a connection used by an agent', () => {
+		const now = 1_700_000_000_000;
+		const { audit, service, created } = connections(() => now);
+
+		expect(() =>
+			service.delete(tenantId, actor, 'local-simulation', 1),
+		).toThrow('built in and cannot be deleted');
+
+		audit.createAgent({
+			id: 'agent-provider-user',
+			tenantId,
+			key: 'provider-user',
+			name: 'Provider user',
+			description: 'Keeps the provider referenced.',
+			instructions: 'Use the configured provider for this test.',
+			provider: created.id,
+			model: 'gpt-4o-mini',
+			allowedTools: [],
+			skillIds: [],
+			maxSteps: 2,
+			timeoutMs: 1_000,
+			temperature: 0,
+			maxOutputTokens: 256,
+			status: 'draft',
+			revision: 1,
+			createdBy: actor,
+			createdAt: now,
+			updatedBy: actor,
+			updatedAt: now,
+		});
+
+		expect(() =>
+			service.delete(tenantId, actor, created.id, created.revision),
+		).toThrow('Archive or move every agent using this provider');
+		expect(service.get(tenantId, created.id)).not.toBeNull();
+	});
+
 	it('enables a connection once its readiness is proven', () => {
 		const now = 1_700_000_000_000;
 		const { repository, service, created } = connections(() => now);

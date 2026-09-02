@@ -1,0 +1,26 @@
+{
+	"$schema": "../../packages/contracts/schemas/module.schema.json",
+	"schemaVersion": 1,
+	"id": "automations-workflows.integration",
+	"package": "@coreloom/module-automations-workflows-integration",
+	"version": "0.1.0",
+	"profile": "integration",
+	"capabilities": ["integration"],
+	"platform": {
+		"server": true,
+		"client": false
+	},
+	"dependencies": [
+		{
+			"id": "automations.core",
+			"range": "^0.2.0"
+		},
+		{
+			"id": "workflows.core",
+			"range": "^0.1.0"
+		}
+	],
+	"tenancy": "required",
+	"locales": ["en", "pl"],
+	"stability": "experimental"
+}

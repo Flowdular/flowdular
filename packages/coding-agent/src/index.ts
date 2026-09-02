@@ -48,6 +48,8 @@ export {
 	parseJsonLine,
 	probeCommand,
 	resolveInsideWorkspace,
+	resolveReadableInsideWorkspace,
+	resolveWritableInsideWorkspace,
 	spawnLineStream,
 	workspaceRelative,
 } from './workspace.ts';

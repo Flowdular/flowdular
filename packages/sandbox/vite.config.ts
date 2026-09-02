@@ -8,7 +8,7 @@ import { findCoreloomWorkspace } from './src/server/workspace-root.ts';
 
 const appRoot = dirname(fileURLToPath(import.meta.url));
 const workspace = await findCoreloomWorkspace(
-	process.env.CORELOOM_WORKSPACE ?? process.cwd(),
+	process.env.CL_SANDBOX_WORKSPACE ?? process.cwd(),
 );
 
 const PREVIEW_MODULE =
@@ -86,6 +86,6 @@ export default defineConfig({
 		   overlay must never cover a module someone is reviewing. */
 		hmr: { overlay: false },
 		fs: { allow: [appRoot, workspace.root] },
-		watch: { ignored: ['**/.coreloom/**/data/**', '**/.octane-erp/**'] },
+		watch: { ignored: ['**/.coreloom/data/**'] },
 	},
 });

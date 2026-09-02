@@ -37,6 +37,29 @@ describe('security headers middleware', () => {
 		expect(await response.json()).toEqual({ ok: true });
 	});
 
+	it('replaces the shell nonce marker and does not allow inline scripts in production', async () => {
+		const middleware = createSecurityHeadersMiddleware({
+			strictTransportSecurity: true,
+			contentSecurityPolicy: PRODUCTION_CONTENT_SECURITY_POLICY,
+			reportOnly: false,
+		});
+		const response = await middleware(context(), async () => {
+			const html = '<script nonce="__CORELOOM_CSP_NONCE__">boot()</script>';
+			return new Response(html, {
+				headers: {
+					'content-type': 'text/html; charset=utf-8',
+					'content-length': String(new TextEncoder().encode(html).byteLength),
+				},
+			});
+		});
+		const policy = response.headers.get('content-security-policy')!;
+		const nonce = policy.match(/'nonce-([^']+)'/)?.[1];
+		expect(nonce).toBeTruthy();
+		expect(policy).not.toContain("script-src 'self' 'unsafe-inline'");
+		expect(response.headers.has('content-length')).toBe(false);
+		expect(await response.text()).toContain(`nonce="${nonce}"`);
+	});
+
 	it('reports instead of enforcing when asked and skips HSTS over plain HTTP', () => {
 		const headers = securityHeaders({
 			strictTransportSecurity: false,

@@ -16,6 +16,7 @@ export type {
 	SandboxConfiguration,
 	SealedSecret,
 } from './config.ts';
+export { MAX_CHECKPOINTS, captureCheckpoint } from './checkpoints.ts';
 export { checkDeclaredDependencies } from './dependencies.ts';
 export type { DependencyReport } from './dependencies.ts';
 export { diffFile, diffTrees } from './diff.ts';
@@ -76,11 +77,13 @@ export type {
 	SandboxRuntime,
 } from './runtime.ts';
 export {
+	addSessionModule,
 	appendChatEntry,
 	approveSpecification,
 	archiveSession,
 	assertSessionId,
 	basePathOf,
+	checkpointModulePath,
 	createSession,
 	deleteSession,
 	installSessionDependencies,
@@ -90,6 +93,7 @@ export {
 	moduleSuffixOf,
 	readChat,
 	readSession,
+	restoreCheckpoint,
 	restoreSession,
 	sessionPaths,
 	updateSession,
@@ -103,6 +107,7 @@ export type {
 	SandboxSession,
 	SandboxSessionKind,
 	SandboxSessionState,
+	SessionCheckpoint,
 	SessionModule,
 	SessionPaths,
 } from './sessions.ts';

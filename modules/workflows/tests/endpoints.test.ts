@@ -1,0 +1,598 @@
+import type { AuthPrincipal } from '@coreloom/module-auth';
+import {
+	AUTH_PRINCIPAL_STATE_KEY,
+	type AuthRuntime,
+} from '@coreloom/module-auth/server';
+import { createPlatformCapabilityRegistry } from '@coreloom/kernel';
+import {
+	AGENT_ACTION_EXECUTION_CAPABILITY,
+	AGENT_RUN_EXECUTION_CAPABILITY,
+	type AgentActionExecutionCapability,
+	type AgentRevisionExecutionCapability,
+} from '@coreloom/module-agents/server';
+import { describe, expect, it, vi } from 'vitest';
+import { WORKFLOWS_PERMISSIONS } from '../src/acl/permissions.ts';
+import { createWorkflowsRoutes } from '../src/api/endpoints.ts';
+import type { WorkflowGraphV1 } from '../src/domain/types.ts';
+import { WORKFLOW_LIMITS } from '../src/domain/types.ts';
+import { createWorkflowsRuntime } from '../src/server/runtime.ts';
+
+function principal(
+	scopes: readonly string[],
+	tenantId = 'tenant-a',
+): AuthPrincipal {
+	return {
+		accountId: 'account-a',
+		tenantId,
+		email: 'owner@example.test',
+		displayName: 'Owner',
+		role: 'owner',
+		scopes,
+		tenants: [],
+	};
+}
+
+const graph: WorkflowGraphV1 = {
+	schemaVersion: 1,
+	nodes: [
+		{
+			id: 'input.start',
+			label: 'Input',
+			type: 'input',
+			inputPorts: [],
+			outputPorts: [{ name: 'data', schemaId: 'schema.data' }],
+		},
+		{
+			id: 'output.done',
+			label: 'Output',
+			type: 'output',
+			inputPorts: [{ name: 'input', schemaId: 'schema.data' }],
+			outputPorts: [],
+		},
+	],
+	edges: [
+		{
+			id: 'edge.done',
+			source: { nodeId: 'input.start', port: 'data' },
+			target: { nodeId: 'output.done', port: 'input' },
+		},
+	],
+	schemas: {
+		'schema.data': {
+			type: 'object',
+			required: ['name'],
+			properties: { name: { type: 'string' } },
+		},
+	},
+	layout: {
+		'input.start': { x: 0, y: 0 },
+		'output.done': { x: 300, y: 0 },
+	},
+};
+
+function longLinearGraph(intermediateNodes = 30): WorkflowGraphV1 {
+	const nodes: WorkflowGraphV1['nodes'][number][] = [
+		{
+			id: 'input.start',
+			label: 'Input',
+			type: 'input',
+			inputPorts: [],
+			outputPorts: [{ name: 'data', schemaId: 'schema.data' }],
+		},
+	];
+	const edges: WorkflowGraphV1['edges'][number][] = [];
+	const layout: Record<string, { readonly x: number; readonly y: number }> = {
+		'input.start': { x: 0, y: 0 },
+	};
+	let sourceNodeId = 'input.start';
+	for (let index = 0; index < intermediateNodes; index += 1) {
+		const nodeId = `merge.step-${index}`;
+		nodes.push({
+			id: nodeId,
+			label: `Step ${index}`,
+			type: 'merge',
+			mode: 'all',
+			inputPorts: [{ name: 'items', schemaId: 'schema.data' }],
+			outputPorts: [{ name: 'data', schemaId: 'schema.data' }],
+		});
+		edges.push({
+			id: `edge.step-${index}`,
+			source: { nodeId: sourceNodeId, port: 'data' },
+			target: { nodeId, port: 'items' },
+		});
+		layout[nodeId] = { x: (index + 1) * 200, y: 0 };
+		sourceNodeId = nodeId;
+	}
+	nodes.push({
+		id: 'output.done',
+		label: 'Output',
+		type: 'output',
+		inputPorts: [{ name: 'input', schemaId: 'schema.data' }],
+		outputPorts: [],
+	});
+	edges.push({
+		id: 'edge.done',
+		source: { nodeId: sourceNodeId, port: 'data' },
+		target: { nodeId: 'output.done', port: 'input' },
+	});
+	layout['output.done'] = { x: (intermediateNodes + 1) * 200, y: 0 };
+	return {
+		schemaVersion: 1,
+		nodes,
+		edges,
+		schemas: { 'schema.data': { type: 'array' } },
+		layout,
+	};
+}
+
+function executionCapabilities() {
+	const registry = createPlatformCapabilityRegistry();
+	const agents: AgentRevisionExecutionCapability = {
+		listRevisions: () => [],
+		getRevision: () => null,
+		enqueueRevision: async () => {
+			throw new Error('No agent node is expected in this test.');
+		},
+		readEvents: () => [],
+		getResult: () => null,
+		requestCancel: () => false,
+	};
+	const actions: AgentActionExecutionCapability = {
+		listWorkflowActions: () => [],
+		start: async () => {
+			throw new Error('No action node is expected in this test.');
+		},
+		getResult: () => null,
+		requestCancel: (actionInvocationId) => ({
+			actionInvocationId,
+			state: 'not-supported',
+		}),
+	};
+	registry.register(AGENT_RUN_EXECUTION_CAPABILITY, agents);
+	registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, actions);
+	return registry;
+}
+
+function createPublishedDirectWorkflow(
+	runtime: ReturnType<typeof createWorkflowsRuntime>,
+	key: string,
+) {
+	const service = runtime.service();
+	const created = service.create(
+		'tenant-a',
+		{ key, name: key, description: '' },
+		{ kind: 'user', id: 'account-a', label: 'Owner' },
+	);
+	service.update(
+		'tenant-a',
+		{
+			workflowId: created.definition.id,
+			expectedRevision: 1,
+			name: key,
+			description: '',
+			graph,
+		},
+		{ kind: 'user', id: 'account-a', label: 'Owner' },
+	);
+	service.publish(
+		'tenant-a',
+		created.definition.id,
+		2,
+		{ kind: 'user', id: 'account-a', label: 'Owner' },
+		[
+			WORKFLOWS_PERMISSIONS.runsExecute,
+			'agents.definitions.read',
+			'agents.runs.read',
+			'agents.runs.execute',
+		],
+	);
+	return created;
+}
+
+function route(
+	routes: ReturnType<typeof createWorkflowsRoutes>,
+	path: string,
+	method: 'GET' | 'POST',
+) {
+	const found = routes.find(
+		(candidate) =>
+			candidate.path === path && candidate.methods.includes(method),
+	);
+	if (!found) throw new Error(`Missing ${method} ${path}.`);
+	return found;
+}
+
+function context(request: Request, identity?: AuthPrincipal) {
+	const state = new Map<string, unknown>();
+	if (identity) state.set(AUTH_PRINCIPAL_STATE_KEY, identity);
+	return {
+		request,
+		url: new URL(request.url),
+		state,
+	} as never;
+}
+
+describe('workflow HTTP boundary', () => {
+	it('declares trusted identity and denies every route before its handler', async () => {
+		const runtime = createWorkflowsRuntime({
+			databasePath: ':memory:',
+			payloadKey: Buffer.alloc(32, 21),
+			cursorKey: Buffer.alloc(32, 22),
+		});
+		const routes = createWorkflowsRoutes(
+			{ authorizeAgentToolAccess: () => [] } as unknown as AuthRuntime,
+			runtime,
+		);
+		for (const route of routes) {
+			const method = route.methods.includes('GET') ? 'GET' : 'POST';
+			const request = new Request(`https://erp.example${route.path}`, {
+				method,
+				...(method === 'POST'
+					? { headers: { 'content-type': 'application/json' }, body: '{}' }
+					: {}),
+			});
+			expect(
+				(await route.handler(context(request))).status,
+				`${method} ${route.path} anonymous`,
+			).toBe(401);
+			expect(
+				(await route.handler(context(request, principal([])))).status,
+				`${method} ${route.path} unscoped`,
+			).toBe(403);
+		}
+		runtime.dispose();
+	});
+
+	it('keeps definition, run, and audit reads inside the authenticated tenant', async () => {
+		const runtime = createWorkflowsRuntime({
+			databasePath: ':memory:',
+			payloadKey: Buffer.alloc(32, 23),
+			cursorKey: Buffer.alloc(32, 24),
+		});
+		const service = runtime.service();
+		const created = service.create(
+			'tenant-a',
+			{ key: 'tenant-bound', name: 'Tenant bound', description: '' },
+			{ kind: 'user', id: 'account-a', label: 'Owner' },
+		);
+		service.update(
+			'tenant-a',
+			{
+				workflowId: created.definition.id,
+				expectedRevision: 1,
+				name: 'Tenant bound',
+				description: '',
+				graph,
+			},
+			{ kind: 'user', id: 'account-a', label: 'Owner' },
+		);
+		const run = service.simulate(
+			{
+				workflowId: created.definition.id,
+				input: { name: 'Ada' },
+				fixtures: [],
+			},
+			{
+				tenantId: 'tenant-a',
+				actor: { kind: 'user', id: 'account-a', label: 'Owner' },
+				origin: { kind: 'manual' },
+				permissionSnapshot: [WORKFLOWS_PERMISSIONS.runsExecute],
+			},
+		);
+		const routes = createWorkflowsRoutes(
+			{ authorizeAgentToolAccess: () => [] } as unknown as AuthRuntime,
+			runtime,
+		);
+		const other = principal(
+			[WORKFLOWS_PERMISSIONS.read, WORKFLOWS_PERMISSIONS.runsRead],
+			'tenant-b',
+		);
+
+		const definitions = await route(routes, '/api/workflows', 'GET').handler(
+			context(new Request('https://erp.example/api/workflows'), other),
+		);
+		expect(await definitions.json()).toEqual({ definitions: [] });
+		const foreignDefinition = await route(
+			routes,
+			'/api/workflows/detail',
+			'GET',
+		).handler(
+			context(
+				new Request(
+					`https://erp.example/api/workflows/detail?id=${created.definition.id}`,
+				),
+				other,
+			),
+		);
+		expect(foreignDefinition.status).toBe(404);
+		const runs = await route(routes, '/api/workflow-runs', 'GET').handler(
+			context(new Request('https://erp.example/api/workflow-runs'), other),
+		);
+		expect(await runs.json()).toEqual({ runs: [], nextCursor: null });
+		const foreignRun = await route(
+			routes,
+			'/api/workflow-runs/detail',
+			'GET',
+		).handler(
+			context(
+				new Request(
+					`https://erp.example/api/workflow-runs/detail?id=${run.run.id}`,
+				),
+				other,
+			),
+		);
+		expect(foreignRun.status).toBe(404);
+		const audit = await route(routes, '/api/workflow-audit', 'GET').handler(
+			context(new Request('https://erp.example/api/workflow-audit'), other),
+		);
+		expect(await audit.json()).toEqual({ events: [], nextCursor: null });
+		runtime.dispose();
+	});
+
+	it('resumes a terminal event stream at its final sequence and closes cleanly', async () => {
+		const runtime = createWorkflowsRuntime({
+			databasePath: ':memory:',
+			payloadKey: Buffer.alloc(32, 25),
+			cursorKey: Buffer.alloc(32, 26),
+		});
+		const service = runtime.service();
+		const created = service.create(
+			'tenant-a',
+			{ key: 'terminal-stream', name: 'Terminal stream', description: '' },
+			{ kind: 'user', id: 'account-a', label: 'Owner' },
+		);
+		service.update(
+			'tenant-a',
+			{
+				workflowId: created.definition.id,
+				expectedRevision: 1,
+				name: 'Terminal stream',
+				description: '',
+				graph,
+			},
+			{ kind: 'user', id: 'account-a', label: 'Owner' },
+		);
+		const run = service.simulate(
+			{
+				workflowId: created.definition.id,
+				input: { name: 'Ada' },
+				fixtures: [],
+			},
+			{
+				tenantId: 'tenant-a',
+				actor: { kind: 'user', id: 'account-a', label: 'Owner' },
+				origin: { kind: 'manual' },
+				permissionSnapshot: [WORKFLOWS_PERMISSIONS.runsExecute],
+			},
+		);
+		const lastSequence = run.events.at(-1)!.sequence;
+		const routes = createWorkflowsRoutes(
+			{ authorizeAgentToolAccess: () => [] } as unknown as AuthRuntime,
+			runtime,
+		);
+		const response = await route(
+			routes,
+			'/api/workflow-runs/events',
+			'GET',
+		).handler(
+			context(
+				new Request(
+					`https://erp.example/api/workflow-runs/events?runId=${run.run.id}&afterSequence=${lastSequence}`,
+				),
+				principal([WORKFLOWS_PERMISSIONS.runsRead]),
+			),
+		);
+		expect(response.status).toBe(200);
+		expect(await response.text()).toContain('event: workflow.stream-complete');
+		expect(service.getRunDetail('tenant-a', run.run.id).events).toHaveLength(
+			lastSequence,
+		);
+		runtime.dispose();
+	});
+
+	it('emits cursor-free heartbeats and flushes terminal events before closing', async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-09-02T10:00:00.000Z'));
+		const runtime = createWorkflowsRuntime({
+			databasePath: ':memory:',
+			capabilities: executionCapabilities(),
+			payloadKey: Buffer.alloc(32, 29),
+			cursorKey: Buffer.alloc(32, 30),
+			worker: { pollMs: 250, leaseMs: 1_000 },
+		});
+		try {
+			createPublishedDirectWorkflow(runtime, 'heartbeat-stream');
+			const service = runtime.service();
+			const accepted = await service.enqueue(
+				{
+					workflowKey: 'heartbeat-stream',
+					input: { name: 'Ada' },
+					idempotencyKey: 'heartbeat-stream:1',
+				},
+				{
+					tenantId: 'tenant-a',
+					actor: { kind: 'user', id: 'account-a', label: 'Owner' },
+					origin: { kind: 'manual' },
+					permissionSnapshot: [WORKFLOWS_PERMISSIONS.runsExecute],
+				},
+			);
+			const initialSequence = service
+				.getRunDetail('tenant-a', accepted.runId)
+				.events.at(-1)!.sequence;
+			const routes = createWorkflowsRoutes(
+				{ authorizeAgentToolAccess: () => [] } as unknown as AuthRuntime,
+				runtime,
+			);
+			const response = await route(
+				routes,
+				'/api/workflow-runs/events',
+				'GET',
+			).handler(
+				context(
+					new Request(
+						`https://erp.example/api/workflow-runs/events?runId=${accepted.runId}&afterSequence=${initialSequence}`,
+					),
+					principal([WORKFLOWS_PERMISSIONS.runsRead]),
+				),
+			);
+			const reader = response.body!.getReader();
+			const decoder = new TextDecoder();
+			let streamed = decoder.decode((await reader.read()).value);
+			expect(streamed).toBe('retry: 1000\n\n');
+
+			await vi.advanceTimersByTimeAsync(15_000);
+			const heartbeat = decoder.decode((await reader.read()).value);
+			streamed += heartbeat;
+			expect(heartbeat).toContain('event: workflow.heartbeat');
+			expect(heartbeat).not.toContain('id:');
+
+			service.cancel('tenant-a', accepted.runId, {
+				kind: 'user',
+				id: 'account-a',
+				label: 'Owner',
+			});
+			runtime.start();
+			await vi.advanceTimersByTimeAsync(1_000);
+			for (let index = 0; index < 20; index += 1) {
+				const chunk = await reader.read();
+				if (chunk.done) break;
+				streamed += decoder.decode(chunk.value);
+			}
+			expect(streamed).toContain('"type":"run.cancel.requested"');
+			expect(streamed).toContain('"type":"run.cancelled"');
+			expect(streamed.indexOf('"type":"run.cancelled"')).toBeLessThan(
+				streamed.indexOf('event: workflow.stream-complete'),
+			);
+			const firstEventCursor = streamed.match(/id: ([^\n]+)\ndata:/)?.[1];
+			expect(firstEventCursor).toBeDefined();
+			expect(
+				service.eventSequence('tenant-a', accepted.runId, firstEventCursor!),
+			).toBe(initialSequence + 1);
+		} finally {
+			await Promise.resolve(runtime.dispose());
+			vi.useRealTimers();
+		}
+	});
+
+	it('emits a replay boundary and resumes until the terminal event is flushed', async () => {
+		const runtime = createWorkflowsRuntime({
+			databasePath: ':memory:',
+			payloadKey: Buffer.alloc(32, 31),
+			cursorKey: Buffer.alloc(32, 32),
+		});
+		try {
+			const service = runtime.service();
+			const created = service.create(
+				'tenant-a',
+				{ key: 'replay-boundary', name: 'Replay boundary', description: '' },
+				{ kind: 'user', id: 'account-a', label: 'Owner' },
+			);
+			service.update(
+				'tenant-a',
+				{
+					workflowId: created.definition.id,
+					expectedRevision: 1,
+					name: 'Replay boundary',
+					description: '',
+					graph: longLinearGraph(),
+				},
+				{ kind: 'user', id: 'account-a', label: 'Owner' },
+			);
+			const run = service.simulate(
+				{
+					workflowId: created.definition.id,
+					input: [],
+					fixtures: [],
+				},
+				{
+					tenantId: 'tenant-a',
+					actor: { kind: 'user', id: 'account-a', label: 'Owner' },
+					origin: { kind: 'manual' },
+					permissionSnapshot: [WORKFLOWS_PERMISSIONS.runsExecute],
+				},
+			);
+			expect(run.events.length).toBeGreaterThan(
+				WORKFLOW_LIMITS.maxReplayEvents,
+			);
+			const routes = createWorkflowsRoutes(
+				{ authorizeAgentToolAccess: () => [] } as unknown as AuthRuntime,
+				runtime,
+			);
+			const response = await route(
+				routes,
+				'/api/workflow-runs/events',
+				'GET',
+			).handler(
+				context(
+					new Request(
+						`https://erp.example/api/workflow-runs/events?runId=${run.run.id}`,
+					),
+					principal([WORKFLOWS_PERMISSIONS.runsRead]),
+				),
+			);
+			const streamed = await response.text();
+			expect(streamed).toContain('event: workflow.replay-boundary');
+			expect(streamed).toContain('"type":"run.succeeded"');
+			expect(streamed.indexOf('event: workflow.replay-boundary')).toBeLessThan(
+				streamed.indexOf('"type":"run.succeeded"'),
+			);
+			expect(streamed.indexOf('"type":"run.succeeded"')).toBeLessThan(
+				streamed.indexOf('event: workflow.stream-complete'),
+			);
+			const boundary = streamed.match(
+				/event: workflow\.replay-boundary\ndata: \{"cursor":"([^"]+)"\}/,
+			)?.[1];
+			expect(boundary).toBeDefined();
+			expect(service.eventSequence('tenant-a', run.run.id, boundary!)).toBe(
+				WORKFLOW_LIMITS.maxReplayEvents,
+			);
+		} finally {
+			runtime.dispose();
+		}
+	});
+
+	it('refuses invalid page limits and conflicting event cursors', async () => {
+		const runtime = createWorkflowsRuntime({
+			databasePath: ':memory:',
+			payloadKey: Buffer.alloc(32, 27),
+			cursorKey: Buffer.alloc(32, 28),
+		});
+		const routes = createWorkflowsRoutes(
+			{ authorizeAgentToolAccess: () => [] } as unknown as AuthRuntime,
+			runtime,
+		);
+		const identity = principal([WORKFLOWS_PERMISSIONS.runsRead]);
+		const invalidLimit = await route(
+			routes,
+			'/api/workflow-runs',
+			'GET',
+		).handler(
+			context(
+				new Request('https://erp.example/api/workflow-runs?limit=0'),
+				identity,
+			),
+		);
+		expect(invalidLimit.status).toBe(400);
+		const conflicting = await route(
+			routes,
+			'/api/workflow-runs/events',
+			'GET',
+		).handler(
+			context(
+				new Request(
+					'https://erp.example/api/workflow-runs/events?runId=missing&afterSequence=1',
+					{
+						headers: {
+							'last-event-id': runtime
+								.service()
+								.eventCursor('tenant-a', 'missing', 2),
+						},
+					},
+				),
+				identity,
+			),
+		);
+		expect(conflicting.status).toBe(409);
+		runtime.dispose();
+	});
+});

@@ -1,17 +1,27 @@
 import type { AgentExecutionEvent } from '@coreloom/harness';
+import { t } from '@coreloom/client/i18n';
+import {
+	appendRunTimeline,
+	timelineSequence,
+	type RunTimelineEntry,
+} from '../domain/run-timeline.ts';
 import type {
 	AgentDefinition,
 	AgentProviderConnection,
 	AgentRun,
-	AgentRunDetail,
+	AgentRunTimeline,
 	AgentSkill,
+	AgentUsageSummary,
 	AgentWorkerStatus,
 	CreateAgentProviderInput,
 	CreateAgentInput,
 	CreateAgentSkillInput,
 	EnqueueAgentRunInput,
+	ModuleAgentView,
+	TenantAgentView,
 	UpdateAgentProviderInput,
 	UpdateAgentInput,
+	UpdateModuleAgentBindingInput,
 	UpdateAgentSkillInput,
 } from '../domain/types.ts';
 
@@ -22,7 +32,7 @@ interface ErrorEnvelope {
 async function payload<T>(response: Response): Promise<T> {
 	const value = (await response.json()) as T & ErrorEnvelope;
 	if (!response.ok) {
-		throw new Error(value.error?.message ?? 'The agent operation failed.');
+		throw new Error(value.error?.message ?? t('agents.common.requestFailed'));
 	}
 	return value;
 }
@@ -35,7 +45,8 @@ function mutationHeaders(csrfToken: string): HeadersInit {
 }
 
 export async function loadAgents(): Promise<{
-	readonly agents: readonly AgentDefinition[];
+	readonly agents: readonly TenantAgentView[];
+	readonly moduleAgents: readonly ModuleAgentView[];
 	readonly providers: readonly AgentProviderConnection[];
 	readonly tools: readonly string[];
 	readonly skills: readonly AgentSkill[];
@@ -45,6 +56,19 @@ export async function loadAgents(): Promise<{
 		credentials: 'same-origin',
 	});
 	return payload(response);
+}
+
+export async function updateModuleAgentBinding(
+	input: UpdateModuleAgentBindingInput,
+	csrfToken: string,
+): Promise<ModuleAgentView> {
+	const response = await fetch('/api/agents/module-bindings/update', {
+		method: 'POST',
+		headers: mutationHeaders(csrfToken),
+		credentials: 'same-origin',
+		body: JSON.stringify(input),
+	});
+	return (await payload<{ readonly agent: ModuleAgentView }>(response)).agent;
 }
 
 export async function loadAgentProviders(): Promise<{
@@ -107,6 +131,20 @@ export async function testAgentProvider(
 	).provider;
 }
 
+export async function deleteAgentProvider(
+	id: string,
+	expectedRevision: number,
+	csrfToken: string,
+): Promise<void> {
+	const response = await fetch('/api/agent-providers/delete', {
+		method: 'POST',
+		headers: mutationHeaders(csrfToken),
+		credentials: 'same-origin',
+		body: JSON.stringify({ id, expectedRevision }),
+	});
+	await payload<{ readonly deleted: true }>(response);
+}
+
 export async function createAgent(
 	input: CreateAgentInput,
 	csrfToken: string,
@@ -132,6 +170,34 @@ export async function updateAgent(
 		body: JSON.stringify({ id: agentId, ...input }),
 	});
 	return (await payload<{ readonly agent: AgentDefinition }>(response)).agent;
+}
+
+export async function archiveAgent(
+	id: string,
+	expectedRevision: number,
+	csrfToken: string,
+): Promise<AgentDefinition> {
+	const response = await fetch('/api/agents/archive', {
+		method: 'POST',
+		headers: mutationHeaders(csrfToken),
+		credentials: 'same-origin',
+		body: JSON.stringify({ id, expectedRevision }),
+	});
+	return (await payload<{ readonly agent: AgentDefinition }>(response)).agent;
+}
+
+export async function deleteAgent(
+	id: string,
+	expectedRevision: number,
+	csrfToken: string,
+): Promise<void> {
+	const response = await fetch('/api/agents/delete', {
+		method: 'POST',
+		headers: mutationHeaders(csrfToken),
+		credentials: 'same-origin',
+		body: JSON.stringify({ id, expectedRevision }),
+	});
+	await payload<{ readonly deleted: true }>(response);
 }
 
 export async function createAgentSkill(
@@ -161,6 +227,34 @@ export async function updateAgentSkill(
 	return (await payload<{ readonly skill: AgentSkill }>(response)).skill;
 }
 
+export async function archiveAgentSkill(
+	id: string,
+	expectedRevision: number,
+	csrfToken: string,
+): Promise<AgentSkill> {
+	const response = await fetch('/api/agent-skills/archive', {
+		method: 'POST',
+		headers: mutationHeaders(csrfToken),
+		credentials: 'same-origin',
+		body: JSON.stringify({ id, expectedRevision }),
+	});
+	return (await payload<{ readonly skill: AgentSkill }>(response)).skill;
+}
+
+export async function deleteAgentSkill(
+	id: string,
+	expectedRevision: number,
+	csrfToken: string,
+): Promise<void> {
+	const response = await fetch('/api/agent-skills/delete', {
+		method: 'POST',
+		headers: mutationHeaders(csrfToken),
+		credentials: 'same-origin',
+		body: JSON.stringify({ id, expectedRevision }),
+	});
+	await payload<{ readonly deleted: true }>(response);
+}
+
 export async function loadAgentRuns(): Promise<readonly AgentRun[]> {
 	const response = await fetch('/api/agent-runs', {
 		headers: { accept: 'application/json' },
@@ -169,7 +263,7 @@ export async function loadAgentRuns(): Promise<readonly AgentRun[]> {
 	return (await payload<{ readonly runs: readonly AgentRun[] }>(response)).runs;
 }
 
-export async function loadAgentRun(runId: string): Promise<AgentRunDetail> {
+export async function loadAgentRun(runId: string): Promise<AgentRunTimeline> {
 	const response = await fetch(
 		`/api/agent-runs?id=${encodeURIComponent(runId)}`,
 		{
@@ -177,7 +271,7 @@ export async function loadAgentRun(runId: string): Promise<AgentRunDetail> {
 			credentials: 'same-origin',
 		},
 	);
-	return (await payload<{ readonly run: AgentRunDetail }>(response)).run;
+	return (await payload<{ readonly run: AgentRunTimeline }>(response)).run;
 }
 
 export async function loadAgentWorker(): Promise<AgentWorkerStatus> {
@@ -192,35 +286,35 @@ export async function loadAgentWorker(): Promise<AgentWorkerStatus> {
 export async function cancelAgentRun(
 	runId: string,
 	csrfToken: string,
-): Promise<AgentRunDetail> {
+): Promise<AgentRunTimeline> {
 	const response = await fetch('/api/agent-runs/cancel', {
 		method: 'POST',
 		headers: mutationHeaders(csrfToken),
 		credentials: 'same-origin',
 		body: JSON.stringify({ id: runId }),
 	});
-	return (await payload<{ readonly run: AgentRunDetail }>(response)).run;
+	return (await payload<{ readonly run: AgentRunTimeline }>(response)).run;
 }
 
 interface RunStreamMessage {
-	readonly run?: Omit<AgentRunDetail, 'events'>;
+	readonly run?: Omit<AgentRunTimeline, 'timeline'>;
 	readonly events?: readonly AgentExecutionEvent[];
 	readonly error?: { readonly code: string; readonly message: string };
 }
 
 /* The server sends the run summary plus only the events after the last
-   acknowledged sequence. Events accumulate here, and the browser's own
-   reconnect (after the server recycles the connection) resumes from
-   Last-Event-ID, so a reconnect is invisible to the caller. */
+   acknowledged sequence. Each batch is folded onto the timeline with the same
+   function the server uses, so a live answer and a reloaded one group
+   identically. The browser's own reconnect (after the server recycles the
+   connection) resumes from Last-Event-ID, and a replayed sequence is dropped
+   because sequences only ever move forward. */
 export function observeAgentRun(
 	runId: string,
-	onRun: (run: AgentRunDetail) => void,
-	initial: readonly AgentExecutionEvent[] = [],
+	onRun: (run: AgentRunTimeline) => void,
+	initial: readonly RunTimelineEntry[] = [],
 ): () => void {
-	const events = new Map<number, AgentExecutionEvent>(
-		initial.map((event) => [event.sequence, event]),
-	);
-	let lastSequence = Math.max(0, ...initial.map((event) => event.sequence));
+	let timeline = initial;
+	let lastSequence = timelineSequence(initial);
 	const source = new EventSource(
 		`/api/agent-runs/stream?id=${encodeURIComponent(runId)}&after=${lastSequence}`,
 		{ withCredentials: true },
@@ -228,21 +322,27 @@ export function observeAgentRun(
 	source.onmessage = (event) => {
 		const value = JSON.parse(event.data) as RunStreamMessage;
 		if (!value.run) return;
-		for (const item of value.events ?? []) {
-			events.set(item.sequence, item);
-			lastSequence = Math.max(lastSequence, item.sequence);
+		const fresh = (value.events ?? []).filter(
+			(item) => item.sequence > lastSequence,
+		);
+		if (fresh.length > 0) {
+			timeline = appendRunTimeline(timeline, fresh);
+			lastSequence = timelineSequence(timeline);
 		}
-		onRun({
-			...value.run,
-			events: [...events.values()].sort(
-				(left, right) => left.sequence - right.sequence,
-			),
-		});
+		onRun({ ...value.run, timeline });
 		if (['succeeded', 'failed', 'cancelled'].includes(value.run.status)) {
 			source.close();
 		}
 	};
 	return () => source.close();
+}
+
+export async function loadAgentUsage(days: number): Promise<AgentUsageSummary> {
+	const response = await fetch(`/api/agent-usage?days=${days}`, {
+		headers: { accept: 'application/json' },
+		credentials: 'same-origin',
+	});
+	return payload<AgentUsageSummary>(response);
 }
 
 export type PlaygroundRunRequest = Omit<

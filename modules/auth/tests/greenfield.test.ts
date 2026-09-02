@@ -8,8 +8,8 @@ import { SqliteAuthRepository } from '../src/services/sqlite-repository.ts';
 
 describe('auth greenfield', () => {
 	it('previews safely, then resets and seeds the local database', async () => {
-		const workspaceRoot = await mkdtemp(join(tmpdir(), 'oerp-greenfield-'));
-		const databasePath = join(workspaceRoot, '.octane-erp/auth.db');
+		const workspaceRoot = await mkdtemp(join(tmpdir(), 'coreloom-greenfield-'));
+		const databasePath = join(workspaceRoot, '.coreloom/data/auth.db');
 		try {
 			const preview = await runGreenfield({
 				workspaceRoot,

@@ -1,7 +1,9 @@
 import { useMemo } from 'octane';
-import { Button, CheckGrid, FormField } from '@coreloom/ui';
+import { t, useTranslation } from '@coreloom/client';
+import { Button, CheckGrid, FormField, VariableTextarea } from '@coreloom/ui';
 import type { CheckGroup, CheckOption } from '@coreloom/ui';
 import { cell, createStore, useValue } from 'segment-state';
+import { AGENT_CONTEXT_VARIABLES } from '../domain/context-variables.ts';
 import type {
 	AgentDefinition,
 	AgentProviderConnection,
@@ -9,6 +11,12 @@ import type {
 	CreateAgentInput,
 	UpdateAgentInput,
 } from '../domain/types.ts';
+
+const CONTEXT_SAMPLE_VALUES: Record<string, string> = Object.fromEntries(
+	AGENT_CONTEXT_VARIABLES.map(
+		(variable) => [variable.key, variable.sample ?? ''],
+	),
+);
 
 export interface AgentDefinitionFormProps {
 	readonly agent: AgentDefinition | null;
@@ -49,12 +57,13 @@ function skillGroups(skills: readonly AgentSkill[]): readonly CheckGroup[] {
 	if (skills.length === 0) return [];
 	return [
 		{
-			label: 'Approved skills',
+			label: t('agents.definitions.form.skills'),
 			options: skills.map(
 				(skill) => ({
 					value: skill.id,
 					label: skill.name,
-					hint: 'r' + skill.revision + ' · ' + skill.status,
+					hint: 'r' + skill.revision + ' · ' +
+						t('agents.status.' + skill.status),
 				}),
 			),
 		},
@@ -62,6 +71,13 @@ function skillGroups(skills: readonly AgentSkill[]): readonly CheckGroup[] {
 }
 
 export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
+	const { t } = useTranslation();
+	const contextVariables = AGENT_CONTEXT_VARIABLES.map(
+		(variable) => ({
+			...variable,
+			label: t('agents.variables.' + variable.key + '.label'),
+		}),
+	);
 	const firstEnabledModel = (providerId: string) =>
 		props.providers.find((provider) => provider.id === providerId)?.models.find(
 			(model) => model.enabled,
@@ -72,12 +88,16 @@ export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
 		return createStore({
 			providerId,
 			modelId: props.agent?.model ?? firstEnabledModel(providerId),
+			instructions: props.agent?.instructions ?? '',
 			allowedTools: cell<readonly string[]>(props.agent?.allowedTools ?? []),
 			skillIds: cell<readonly string[]>(props.agent?.skillIds ?? []),
 		});
 	}, []);
 	const [providerId, setProviderId] = useValue(formState.state.providerId);
 	const [modelId, setModelId] = useValue(formState.state.modelId);
+	const [instructions, setInstructions] = useValue(
+		formState.state.instructions,
+	);
 	const [allowedTools, setAllowedTools] = useValue(
 		formState.state.allowedTools,
 	);
@@ -93,7 +113,7 @@ export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
 			key: stringValue(form, 'key'),
 			name: stringValue(form, 'name'),
 			description: stringValue(form, 'description'),
-			instructions: stringValue(form, 'instructions'),
+			instructions,
 			provider: stringValue(form, 'provider'),
 			model: stringValue(form, 'model'),
 			allowedTools,
@@ -113,7 +133,7 @@ export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
 		<div class="ui-drawer__body">
 			<div class="ui-form">
 				<div class="ui-form__row">
-					<FormField label="Name" required>
+					<FormField label={t('agents.definitions.form.name')} required>
 						<input
 							class="ui-input"
 							name="name"
@@ -123,7 +143,7 @@ export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
 							required
 						/>
 					</FormField>
-					<FormField label="Stable key" required>
+					<FormField label={t('agents.definitions.form.key')} required>
 						<input
 							class="ui-input ui-mono"
 							name="key"
@@ -135,7 +155,7 @@ export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
 						/>
 					</FormField>
 				</div>
-				<FormField label="Description" required>
+				<FormField label={t('agents.definitions.form.description')} required>
 					<input
 						class="ui-input"
 						name="description"
@@ -145,22 +165,28 @@ export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
 					/>
 				</FormField>
 				<FormField
-					label="System instructions"
-					help="Business outcome, boundaries, escalation rules, expected output."
+					label={t('agents.definitions.form.instructions')}
+					help={t('agents.definitions.form.instructionsHelp')}
 					required
 				>
-					<textarea
-						class="ui-textarea"
+					<VariableTextarea
 						name="instructions"
-						defaultValue={props.agent?.instructions ?? ''}
-						placeholder="Define the business outcome, boundaries, escalation rules, and expected output."
-						minlength={8}
-						maxlength={40_000}
+						label={t('agents.definitions.form.instructions')}
+						value={instructions}
+						onInput={setInstructions}
+						variables={contextVariables}
+						sampleValues={CONTEXT_SAMPLE_VALUES}
+						insertLabel={t('agents.template.insert')}
+						variablesLabel={t('agents.template.available')}
+						emptyLabel={t('agents.template.empty')}
+						placeholder={t('agents.definitions.form.instructionsPlaceholder')}
+						minLength={8}
+						maxLength={40_000}
 						required
-					></textarea>
+					/>
 				</FormField>
 				<div class="ui-form__row">
-					<FormField label="Provider">
+					<FormField label={t('agents.definitions.form.provider')}>
 						<select
 							class="ui-select"
 							name="provider"
@@ -173,12 +199,15 @@ export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
 						>
 							@for (const provider of props.providers; key provider.id) {
 								<option value={provider.id}>
-									{provider.name + (provider.enabled ? '' : ' (disabled)')}
+									{provider.name +
+										(provider.enabled
+											? ''
+											: ' (' + t('agents.status.disabled') + ')')}
 								</option>
 							}
 						</select>
 					</FormField>
-					<FormField label="Model" required>
+					<FormField label={t('agents.definitions.form.model')} required>
 						<select
 							class="ui-select"
 							name="model"
@@ -197,7 +226,7 @@ export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
 					</FormField>
 				</div>
 				<div class="ui-form__row ui-form__row--4">
-					<FormField label="Max steps" required>
+					<FormField label={t('agents.definitions.form.maxSteps')} required>
 						<input
 							class="ui-input"
 							name="maxSteps"
@@ -208,7 +237,7 @@ export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
 							required
 						/>
 					</FormField>
-					<FormField label="Output tokens" required>
+					<FormField label={t('agents.definitions.form.outputTokens')} required>
 						<input
 							class="ui-input"
 							name="maxOutputTokens"
@@ -220,7 +249,7 @@ export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
 							required
 						/>
 					</FormField>
-					<FormField label="Timeout, ms" required>
+					<FormField label={t('agents.definitions.form.timeout')} required>
 						<input
 							class="ui-input"
 							name="timeoutMs"
@@ -232,9 +261,9 @@ export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
 						/>
 					</FormField>
 					<FormField
-						label="Temperature"
+						label={t('agents.definitions.form.temperature')}
 						help={selectedModel?.supportsTemperature === false
-							? 'This model answers at its own default and ignores this value.'
+							? t('agents.definitions.form.temperatureHelp')
 							: undefined}
 						required
 					>
@@ -252,25 +281,25 @@ export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
 					</FormField>
 				</div>
 				<div class="ui-form__row">
-					<FormField label="Status">
+					<FormField label={t('agents.definitions.form.status')}>
 						<select
 							class="ui-select"
 							name="status"
 							defaultValue={props.agent?.status ?? 'draft'}
 						>
-							<option value="draft">Draft</option>
-							<option value="active">Active</option>
-							<option value="paused">Paused</option>
-							<option value="archived">Archived</option>
+							<option value="draft">{t('agents.status.draft')}</option>
+							<option value="active">{t('agents.status.active')}</option>
+							<option value="paused">{t('agents.status.paused')}</option>
+							<option value="archived">{t('agents.status.archived')}</option>
 						</select>
 					</FormField>
 				</div>
 				<div class="ui-field">
-					<span class="ui-label">Approved skills</span>
+					<span class="ui-label">{t('agents.definitions.form.skills')}</span>
 					@if (props.skills.length === 0) {
-						<p class="agent-empty-note">
-							No reusable skills are configured for this tenant.
-						</p>
+						<p class="agent-empty-note">{t(
+							'agents.definitions.form.skillsEmpty',
+						)}</p>
 					} @else {
 						<CheckGrid
 							groups={skillGroups(props.skills)}
@@ -280,12 +309,11 @@ export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
 					}
 				</div>
 				<div class="ui-field">
-					<span class="ui-label">Explicit tool grants</span>
+					<span class="ui-label">{t('agents.definitions.form.tools')}</span>
 					@if (props.tools.length === 0) {
-						<p class="agent-empty-note">
-							No API or CLI tools are registered. This agent stays isolated from
-							ERP data.
-						</p>
+						<p class="agent-empty-note">{t(
+							'agents.definitions.form.toolsEmpty',
+						)}</p>
 					} @else {
 						<CheckGrid
 							groups={toolGroups(props.tools)}
@@ -294,31 +322,33 @@ export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
 							onChange={setAllowedTools}
 						/>
 					}
-					<span class="ui-help">
-						{allowedTools.length + ' of ' + props.tools.length +
-							' registered tools granted'}
-					</span>
+					<span class="ui-help">{t('agents.definitions.form.toolsCount', {
+						granted: allowedTools.length,
+						total: props.tools.length,
+					})}</span>
 				</div>
 			</div>
 		</div>
 		<div class="ui-drawer__foot">
 			<small>
 				{props.agent
-					? `Saving creates revision ${props.agent.revision + 1}.`
-					: 'New agents start as drafts and cannot run until activated.'}
+					? t('agents.definitions.form.revisionNote', {
+							revision: props.agent.revision + 1,
+						})
+					: t('agents.definitions.form.createNote')}
 			</small>
 			<div class="ui-form__actions">
-				<Button onClick={props.onCancel}>Cancel</Button>
+				<Button onClick={props.onCancel}>{t('agents.common.cancel')}</Button>
 				<Button
 					variant="primary"
 					type="submit"
 					disabled={props.busy || props.providers.length === 0}
 				>
 					{props.busy
-						? 'Saving…'
+						? t('agents.common.saving')
 						: props.agent
-							? 'Save revision'
-							: 'Create draft'}
+							? t('agents.definitions.form.save')
+							: t('agents.definitions.form.create')}
 				</Button>
 			</div>
 		</div>

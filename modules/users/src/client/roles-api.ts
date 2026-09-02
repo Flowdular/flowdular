@@ -1,4 +1,5 @@
 import type { TenantRole } from '@coreloom/module-auth';
+import { t } from '@coreloom/client/i18n';
 import { ApiError } from './api.ts';
 
 interface ErrorEnvelope {
@@ -22,7 +23,7 @@ async function payload<T>(response: Response): Promise<T> {
 	if (!response.ok) {
 		throw new ApiError(
 			response.status,
-			value.error?.message ?? 'The role operation failed.',
+			value.error?.message ?? t('users.roles.errorRequest'),
 		);
 	}
 	return value;

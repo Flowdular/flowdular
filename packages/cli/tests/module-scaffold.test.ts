@@ -50,7 +50,7 @@ acceptanceScenarios:
 const specPath = 'modules/inventory/spec/module.yaml';
 
 async function workspace(): Promise<Workspace> {
-	const root = await mkdtemp(join(tmpdir(), 'oerp-scaffold-'));
+	const root = await mkdtemp(join(tmpdir(), 'coreloom-scaffold-'));
 	await mkdir(join(root, 'modules/inventory/spec'), { recursive: true });
 	await writeFile(join(root, specPath), specification);
 	await writeFile(join(root, 'coreloom.json'), '{}\n');
@@ -95,6 +95,7 @@ describe('module scaffolding', () => {
 			const packageJson = JSON.parse(await read(ws.root, 'package.json')) as {
 				exports: Record<string, string>;
 				scripts: Record<string, string>;
+				dependencies: Record<string, string>;
 			};
 			expect(packageJson.exports).toEqual({
 				'.': './src/index.ts',
@@ -103,6 +104,7 @@ describe('module scaffolding', () => {
 				'./platform': './src/platform.ts',
 			});
 			expect(packageJson.scripts.typecheck).toContain('tsrx-tsc');
+			expect(packageJson.dependencies.octane).toBe('0.1.51');
 
 			const tsconfig = JSON.parse(await read(ws.root, 'tsconfig.json')) as {
 				compilerOptions: { types: string[] };
@@ -123,6 +125,16 @@ describe('module scaffolding', () => {
 				'export function createClientContribution(\n\tcontext: ModuleClientContext,\n): ModuleClientContribution',
 			);
 			expect(client).toContain('csrfToken: context.csrfToken');
+			const view = await read(ws.root, 'src/client/InventoryView.tsrx');
+			expect(view).toContain('TableCard');
+			expect(view).toContain("width: '65%'");
+			expect(view).toContain("t('inventory.table.title')");
+			expect(view).not.toContain('<table');
+			const contribution = await read(ws.root, 'src/client/contribution.tsrx');
+			expect(contribution).toContain(
+				'translations: { en: translationsEn, pl: translationsPl }',
+			);
+			expect(contribution).toContain("return t('inventory.navigation.label')");
 
 			expect(await read(ws.root, 'src/acl/permissions.ts')).toContain(
 				"read: 'inventory.records.read'",
@@ -133,17 +145,31 @@ describe('module scaffolding', () => {
 			expect(endpoints).toContain('sessionMutationDenial(octane, auth)');
 
 			const runtime = await read(ws.root, 'src/server/runtime.ts');
-			expect(runtime).toContain('OERP_INVENTORY_DATABASE');
+			expect(runtime).toContain('CL_INVENTORY_DATABASE');
 			expect(runtime).toContain("'/data/inventory.db'");
-			expect(runtime).toContain("'.octane-erp/inventory.db'");
+			expect(runtime).toContain(
+				"coreloomLocalDataPath(workspaceRoot, 'inventory.db')",
+			);
 
 			const migration = await read(ws.root, 'src/services/migration.ts');
 			expect(migration).toContain('INVENTORY_MIGRATION_001');
 			expect(migration).toContain('tenant_id TEXT NOT NULL');
 			expect(migration).toContain(') STRICT;');
+			const upSql = await read(
+				ws.root,
+				'migrations/0001_inventory_core.up.sql',
+			);
+			expect(upSql).toContain('CREATE TABLE IF NOT EXISTS inventory_records');
+			/* The runner checksums the constant, so it must equal the file. */
+			expect(migration).toContain(
+				`export const INVENTORY_MIGRATION_001 = \`${upSql}\`;`,
+			);
+			expect(migration).toContain(
+				"{ id: '0001_inventory_core', statements: INVENTORY_MIGRATION_001 },",
+			);
 			expect(
-				await read(ws.root, 'migrations/0001_inventory_core.up.sql'),
-			).toContain('CREATE TABLE IF NOT EXISTS inventory_records');
+				await read(ws.root, 'src/services/sqlite-repository.ts'),
+			).toContain('runModuleMigrations(this.#database, migrations);');
 			expect(
 				await read(ws.root, 'migrations/0001_inventory_core.down.sql'),
 			).toContain('DROP TABLE IF EXISTS inventory_records');

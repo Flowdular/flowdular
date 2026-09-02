@@ -1,18 +1,25 @@
 import { useEffect, useMemo } from 'octane';
+import { activeLocale, t } from '@coreloom/client';
 import {
 	Alert,
 	Button,
+	ConfirmDialog,
 	Drawer,
 	Icon,
 	PageHeader,
-	SearchField,
 } from '@coreloom/ui';
 import { useValue } from 'segment-state';
 import type {
 	CreateAgentSkillInput,
 	UpdateAgentSkillInput,
 } from '../domain/types.ts';
-import { createAgentSkill, loadAgents, updateAgentSkill } from './api.ts';
+import {
+	archiveAgentSkill,
+	createAgentSkill,
+	deleteAgentSkill,
+	loadAgents,
+	updateAgentSkill,
+} from './api.ts';
 import { AgentSkillForm } from './AgentSkillForm.tsrx';
 import { AgentSkillList } from './AgentSkillList.tsrx';
 import { createAgentSkillClientState } from './state.ts';
@@ -33,17 +40,22 @@ export function AgentSkillsView(props: AgentSkillsViewProps) @{
 	const [error, setError] = useValue(client.state.error);
 	const [query, setQuery] = useValue(client.state.query);
 	const [editorOpen, setEditorOpen] = useValue(client.state.editorOpen);
+	const [lifecycleAction, setLifecycleAction] = useValue(
+		client.state.lifecycleAction,
+	);
 	const selected = skills.find((skill) => skill.id === selectedSkillId) ?? null;
 	const active = skills.filter((skill) => skill.status === 'active');
-	const term = query.trim().toLocaleLowerCase('en-US');
+	const term = query.trim().toLocaleLowerCase(activeLocale());
 	const visible =
 		term === ''
 			? skills
 			: skills.filter(
 					(skill) =>
-						skill.name.toLocaleLowerCase('en-US').includes(term) ||
+						skill.name.toLocaleLowerCase(activeLocale()).includes(term) ||
 							skill.key.includes(term) ||
-							skill.description.toLocaleLowerCase('en-US').includes(term),
+							skill.description.toLocaleLowerCase(activeLocale()).includes(
+								term,
+							),
 				);
 
 	const refresh = async () => {
@@ -59,7 +71,7 @@ export function AgentSkillsView(props: AgentSkillsViewProps) @{
 			setError(
 				loadError instanceof Error
 					? loadError.message
-					: 'Could not load skills.',
+					: t('agents.skills.error.load'),
 			);
 		} finally {
 			setStatus('idle');
@@ -72,7 +84,7 @@ export function AgentSkillsView(props: AgentSkillsViewProps) @{
 
 	const open = (skillId: string) => {
 		setSelectedSkillId(skillId);
-		setEditorOpen(true);
+		if (props.canManage) setEditorOpen(true);
 	};
 
 	const save = async (input: CreateAgentSkillInput | UpdateAgentSkillInput) => {
@@ -97,68 +109,104 @@ export function AgentSkillsView(props: AgentSkillsViewProps) @{
 			setError(
 				saveError instanceof Error
 					? saveError.message
-					: 'Could not save the skill.',
+					: t('agents.skills.error.save'),
 			);
 		} finally {
 			setStatus('idle');
 		}
 	};
 
+	const lifecycleTarget =
+		skills.find((skill) => skill.id === selectedSkillId) ?? null;
+	const manageLifecycle = async () => {
+		if (!lifecycleTarget || lifecycleAction === '') return;
+		setStatus('submitting');
+		setError('');
+		try {
+			if (lifecycleAction === 'archive') {
+				const archived = await archiveAgentSkill(
+					lifecycleTarget.id,
+					lifecycleTarget.revision,
+					props.csrfToken,
+				);
+				client.store.act((transaction) => {
+					transaction.set(
+						client.state.skills,
+						skills.map((skill) => skill.id === archived.id ? archived : skill),
+					);
+				}, 'agent-skills/archived');
+			} else {
+				await deleteAgentSkill(
+					lifecycleTarget.id,
+					lifecycleTarget.revision,
+					props.csrfToken,
+				);
+				client.store.act((transaction) => {
+					transaction.set(
+						client.state.skills,
+						skills.filter((skill) => skill.id !== lifecycleTarget.id),
+					);
+					transaction.set(client.state.selectedSkillId, '');
+				}, 'agent-skills/deleted');
+			}
+			setLifecycleAction('');
+		} catch (lifecycleError) {
+			setError(
+				lifecycleError instanceof Error
+					? lifecycleError.message
+					: t('agents.skills.error.lifecycle'),
+			);
+			setLifecycleAction('');
+		} finally {
+			setStatus('idle');
+		}
+	};
+
+	const beginLifecycle = (id: string, action: 'archive' | 'delete') => {
+		setSelectedSkillId(id);
+		setLifecycleAction(action);
+	};
+
 	<div class="ui-view">
 		<PageHeader
-			eyebrow="Agentic core"
-			title="Skills"
-			description="Reusable procedures an agent can attach: instructions plus the tools the procedure needs."
+			eyebrow={t('agents.common.core')}
+			title={t('agents.skills.title')}
+			description={t('agents.skills.description')}
 		>
 			<Button size="sm" onClick={() => void refresh()}>
 				<Icon name="refresh" size={14} />
-				Refresh
+				{t('agents.common.refresh')}
 			</Button>
 			@if (props.canManage) {
 				<Button size="sm" variant="primary" onClick={() => open('')}>
 					<Icon name="plus" size={14} />
-					New skill
+					{t('agents.skills.new')}
 				</Button>
 			}
 		</PageHeader>
 		@if (error) {
 			<Alert>{error}</Alert>
 		}
-		<section class="ui-card">
-			<div class="ui-card__head">
-				<span class="ui-card__title">
-					Tenant skills
-					<small>
-						{active.length + ' active · ' + skills.length + ' defined'}
-					</small>
-				</span>
-				<SearchField
-					value={query}
-					placeholder="Filter by name, key, or purpose"
-					label="Filter skills"
-					onInput={setQuery}
-				/>
-			</div>
-			<AgentSkillList
-				skills={visible}
-				filtered={term !== ''}
-				canManage={props.canManage}
-				onSelect={open}
-			/>
-			<p class="ui-note">
-				<Icon name="shield" size={14} />
-				<span>
-					A skill may only require tools this deployment registers. An agent has
-					to hold every required tool before it can attach the skill.
-				</span>
-			</p>
-		</section>
+		<AgentSkillList
+			skills={visible}
+			filtered={term !== ''}
+			canManage={props.canManage}
+			query={query}
+			activeCount={active.length}
+			onQuery={setQuery}
+			onSelect={open}
+			onArchive={(id) => beginLifecycle(id, 'archive')}
+			onDelete={(id) => beginLifecycle(id, 'delete')}
+		/>
 		<Drawer
 			open={editorOpen}
-			title={selected ? selected.name : 'New skill'}
+			title={selected ? selected.name : t('agents.skills.new')}
 			subtitle={selected
-				? 'Revision ' + selected.revision + ' · ' + selected.key
-				: 'Reusable procedure'}
+				? t('agents.skills.drawer.revision', {
+						revision: selected.revision,
+						key: selected.key,
+					})
+				: t('agents.skills.drawer.subtitle')}
 			width="lg"
 			onClose={() => setEditorOpen(false)}
 		>
@@ -171,5 +219,19 @@ export function AgentSkillsView(props: AgentSkillsViewProps) @{
 				onSubmit={save}
 			/>
 		</Drawer>
+		<ConfirmDialog
+			open={lifecycleAction !== '' && lifecycleTarget !== null}
+			title={t('agents.skills.lifecycle.' + lifecycleAction + '.title')}
+			confirmLabel={t(
+				'agents.skills.lifecycle.' + lifecycleAction + '.confirm',
+			)}
+			cancelLabel={t('agents.common.cancel')}
+			tone={lifecycleAction === 'delete' ? 'danger' : 'primary'}
+			busy={status === 'submitting'}
+			onCancel={() => setLifecycleAction('')}
+			onConfirm={() => void manageLifecycle()}
+		>{t('agents.skills.lifecycle.' + lifecycleAction + '.description', {
+			name: lifecycleTarget?.name ?? '',
+		})}</ConfirmDialog>
 	</div>
 }

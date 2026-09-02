@@ -3,6 +3,7 @@ import { Avatar, Icon } from '@coreloom/ui';
 import { useValue } from 'segment-state';
 import { cell, createStore } from 'segment-state';
 import type { AccountMenuContribution } from '../contributions.ts';
+import { useTranslation } from '../i18n/runtime.ts';
 import type { NavigateToView, ShellIdentity } from './types.ts';
 
 export interface UserMenuProps {
@@ -17,6 +18,7 @@ export interface UserMenuProps {
 export function UserMenu(props: UserMenuProps) @{
 	const dropdown = useMemo(() => createStore({ open: cell(false) }), []);
 	const [open, setOpen] = useValue(dropdown.state.open);
+	const { t } = useTranslation();
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.key === 'Escape') setOpen(false);
@@ -30,7 +32,7 @@ export function UserMenu(props: UserMenuProps) @{
 			type="button"
 			aria-haspopup="menu"
 			aria-expanded={open}
-			aria-label="Account menu"
+			aria-label={t('shell.account.menu')}
 			onClick={() => setOpen((current) => !current)}
 		>
 			<Avatar name={props.identity.displayName} />
@@ -40,10 +42,14 @@ export function UserMenu(props: UserMenuProps) @{
 				<button
 					class="menu-dismiss"
 					type="button"
-					aria-label="Close account menu"
+					aria-label={t('shell.account.close')}
 					onClick={() => setOpen(false)}
 				></button>
-				<div class="ui-menu user-menu__panel" role="menu" aria-label="Account">
+				<div
+					class="ui-menu user-menu__panel"
+					role="menu"
+					aria-label={t('shell.account.label')}
+				>
 					<div class="ui-menu__section">
 						<Avatar name={props.identity.displayName} large />
 						<span class="ui-cell">
@@ -88,7 +94,7 @@ export function UserMenu(props: UserMenuProps) @{
 						}}
 					>
 						<Icon name="sign-out" size={16} />
-						Sign out
+						{t('shell.account.signOut')}
 					</button>
 				</div>
 			</>

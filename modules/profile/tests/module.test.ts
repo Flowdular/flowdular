@@ -97,6 +97,24 @@ describe('profile.core', () => {
 		);
 	});
 
+	it('stores supported language preferences per account and tenant', () => {
+		const service = new ProfileService(new SqliteProfileRepository(':memory:'));
+		service.updateLanguage('tenant-a', 'account-a', { locale: 'PL' });
+		service.updateLanguage('tenant-b', 'account-a', { locale: 'en' });
+		expect(service.readLanguage('tenant-a', 'account-a')).toBe('pl');
+		expect(service.readLanguage('tenant-b', 'account-a')).toBe('en');
+		expect(service.readLanguage('tenant-a', 'account-b')).toBeNull();
+	});
+
+	it('rejects an unsupported language without changing the stored preference', () => {
+		const service = new ProfileService(new SqliteProfileRepository(':memory:'));
+		service.updateLanguage('tenant-a', 'account-a', { locale: 'pl' });
+		expect(() =>
+			service.updateLanguage('tenant-a', 'account-a', { locale: 'de' }),
+		).toThrowError(/supported interface languages/);
+		expect(service.readLanguage('tenant-a', 'account-a')).toBe('pl');
+	});
+
 	it('denies request-supplied account and tenant targets', () => {
 		expect(() =>
 			assertSelfOnlyProfileTarget(

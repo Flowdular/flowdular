@@ -36,6 +36,11 @@ export interface WorkPlan {
 	readonly classifiedBy: 'agent' | 'rules';
 }
 
+/* Who owns spec/module.yaml, for a new module and for a change alike. */
+export const SPEC_OWNER_ROLE = 'business-manager';
+/* Who implements when nothing better is routed. */
+const DEFAULT_IMPLEMENTER_ROLE = 'backend-engineer';
+
 const PLAN_TIMEOUT_MS = 3 * 60 * 1000;
 const MODULE_ID = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/;
 /* Bounded output for the fix prompt; the transcript keeps the whole output. */
@@ -123,21 +128,29 @@ function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/* A module is named by its whole dotted id (auth.core, never "auth" alone) or
-   by an explicit "module <directory>" phrase. Bare directory words such as
-   "users" are ordinary English and never select a module. */
+/* Where the brief first names this module, or -1. A module is named by its
+   whole dotted id (auth.core, never "auth" alone) or by an explicit
+   "module <directory>" phrase. Bare directory words such as "users" are
+   ordinary English and never select a module. */
+export function mentionIndex(brief: string, module: WorkspaceModule): number {
+	const text = brief.toLowerCase();
+	const id = new RegExp(
+		`(^|[^a-z0-9.-])${escapeRegExp(module.id)}(?![a-z0-9-])(?!\\.[a-z0-9])`,
+	).exec(text);
+	const phrase = new RegExp(
+		`\\bmodule\\s+${escapeRegExp(module.directory)}(?![a-z0-9-])`,
+	).exec(text);
+	const found = [id?.index ?? -1, phrase?.index ?? -1].filter(
+		(index) => index >= 0,
+	);
+	return found.length > 0 ? Math.min(...found) : -1;
+}
+
 export function mentionsModule(
 	brief: string,
 	module: WorkspaceModule,
 ): boolean {
-	const text = brief.toLowerCase();
-	const id = new RegExp(
-		`(^|[^a-z0-9.-])${escapeRegExp(module.id)}(?![a-z0-9-])(?!\\.[a-z0-9])`,
-	);
-	const phrase = new RegExp(
-		`\\bmodule\\s+${escapeRegExp(module.directory)}(?![a-z0-9-])`,
-	);
-	return id.test(text) || phrase.test(text);
+	return mentionIndex(brief, module) >= 0;
 }
 
 function moduleFor(
@@ -148,6 +161,62 @@ function moduleFor(
 	return known
 		? { id, directory: known.directory, kind: 'edit' }
 		: { id, directory: moduleSuffixOf(id), kind: 'new' };
+}
+
+/* A module id the workspace does not have yet. Only the `<domain>.core`
+   convention the planner and the scaffold use counts, so a file name such as
+   package.json is never read as a request for a module. */
+const INVENTED_ID =
+	/(^|[^a-z0-9.-])([a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*\.core)(?![a-z0-9-])/g;
+
+/* Every module the brief names, in the order it names them: a known id is a
+   change to that module, an invented `<domain>.core` id is a new one. */
+function namedModules(
+	brief: string,
+	modules: readonly WorkspaceModule[],
+): readonly SessionModule[] {
+	const found: { readonly at: number; readonly module: SessionModule }[] = [];
+	for (const module of modules) {
+		const at = mentionIndex(brief, module);
+		if (at < 0) continue;
+		found.push({
+			at,
+			module: { id: module.id, directory: module.directory, kind: 'edit' },
+		});
+	}
+	const known = new Set(modules.map((module) => module.id));
+	const seen = new Set<string>();
+	for (const match of brief.toLowerCase().matchAll(INVENTED_ID)) {
+		const id = match[2]!;
+		if (known.has(id) || seen.has(id)) continue;
+		seen.add(id);
+		found.push({ at: match.index, module: moduleFor(id, modules) });
+	}
+	return found
+		.sort((left, right) => left.at - right.at)
+		.map((entry) => entry.module);
+}
+
+function rationaleFor(modules: readonly SessionModule[]): string {
+	const existing = modules.filter((module) => module.kind === 'edit');
+	const created = modules.filter((module) => module.kind === 'new');
+	const parts = [
+		...(existing.length > 0
+			? [
+					`${existing.map((module) => module.id).join(' and ')}, ${
+						existing.length === 1 ? 'an existing module' : 'existing modules'
+					}`,
+				]
+			: []),
+		...(created.length > 0
+			? [
+					`${created.map((module) => module.id).join(' and ')}, which ${
+						created.length === 1 ? 'does' : 'do'
+					} not exist yet`,
+				]
+			: []),
+	];
+	return `The request names ${parts.join(', and ')}.`;
 }
 
 function planFor(
@@ -171,30 +240,22 @@ function planFor(
 	};
 }
 
-/* Rules first: an existing module named in the request is a change to that
-   module. Only what the rules cannot decide is left to the planner agent. */
+/* Rules first: every existing module named in the request is a change to that
+   module, and an invented id is a new one. Only what the rules cannot decide is
+   left to the planner agent. The specification owner always takes the first
+   turn, because a change is described before it is implemented. */
 export function classifyByRules(
 	brief: string,
 	modules: readonly WorkspaceModule[],
 ): WorkPlan {
-	const named = modules.filter((module) => mentionsModule(brief, module));
+	const named = namedModules(brief, modules);
 	if (named.length > 0) {
-		return planFor(
-			named.map((module) => ({
-				id: module.id,
-				directory: module.directory,
-				kind: 'edit' as const,
-			})),
-			brief,
-			'backend-engineer',
-			`The request names ${named.map((module) => module.id).join(' and ')}, ${named.length === 1 ? 'an existing module' : 'existing modules'}.`,
-			'rules',
-		);
+		return planFor(named, brief, SPEC_OWNER_ROLE, rationaleFor(named), 'rules');
 	}
 	return planFor(
 		[moduleFor(slugModuleId(brief), modules)],
 		brief,
-		'business-manager',
+		SPEC_OWNER_ROLE,
 		'No existing module matches the request.',
 		'rules',
 	);
@@ -228,10 +289,18 @@ export function parsePlan(
 		typeof value.moduleId === 'string' && MODULE_ID.test(value.moduleId)
 			? value.moduleId
 			: (listed[0] ?? fallback.moduleId);
-	const ids = [primary, ...listed.filter((id) => id !== primary)];
+	const ids = new Set([primary, ...listed]);
+	const named = [...ids].map((id) => moduleFor(id, modules));
+	/* A module this workspace already has and the brief named belongs to the
+	   work whatever the planner listed. */
+	for (const module of fallback.modules) {
+		if (module.kind !== 'edit') continue;
+		if (named.some((entry) => entry.id === module.id)) continue;
+		named.push(module);
+	}
 	const role = roles.find((candidate) => candidate.id === value.firstRole);
 	return planFor(
-		ids.map((id) => moduleFor(id, modules)),
+		named,
 		'',
 		role?.id ?? fallback.firstRole,
 		typeof value.rationale === 'string'
@@ -279,6 +348,7 @@ Answer with exactly this shape and nothing else:
 
 Rules:
 - modules lists every module the request touches, the primary one first; moduleId repeats the primary one.
+- A request that spans several modules names all of them, for example {"moduleId":"parties.core","modules":["parties.core","catalog.core"]} for a field added in one module and shown on another module's screen.
 - An id from the existing modules list means a change to that module. Any other id means a new module: invent it as domain.core, naming the capability, not the technology.
 - kind describes the primary module.
 - firstRole is the specialist who should take the first turn.
@@ -320,6 +390,9 @@ export interface RoutingContext {
 	readonly hasManifest: boolean;
 	readonly hasServer: boolean;
 	readonly hasClient: boolean;
+	/* The gate on the module this turn works in: false while the operator has
+	   not approved its specification, null when it has none at all. */
+	readonly specApproved: boolean | null;
 	/* The handoff that ended the previous turn, when there was one. */
 	readonly lastHandoff?: HandoffPlan | null;
 }
@@ -351,12 +424,18 @@ export function routeRole(context: RoutingContext): {
 			reason: `${context.lastHandoff.roleName} asked the question this message answers.`,
 		};
 	}
-	if (SPEC_WORDS.test(context.message) || !context.hasSpec) {
+	if (
+		SPEC_WORDS.test(context.message) ||
+		!context.hasSpec ||
+		context.specApproved === false
+	) {
 		return {
-			role: has('business-manager'),
+			role: has(SPEC_OWNER_ROLE),
 			reason: !context.hasSpec
 				? 'The module has no approved specification yet.'
-				: 'The request is about the specification.',
+				: context.specApproved === false
+					? 'The specification of this module is not approved yet, so nobody implements before it is.'
+					: 'The request is about the specification.',
 		};
 	}
 	if (AGENT_WORDS.test(context.message)) {
@@ -395,6 +474,8 @@ export interface HandoffContext {
 	readonly routing: RoutingContext;
 	/* The role that just finished its turn. */
 	readonly role: string;
+	/* The draft module directory that turn worked in. */
+	readonly module: string;
 	readonly declared: HandoffDeclaration | null;
 	readonly gates: readonly GateResult[];
 	readonly failed: boolean;
@@ -466,12 +547,14 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 		role: string,
 		reason: string,
 		prompt = '',
+		module = context.module,
 	): HandoffPlan => ({
 		kind,
 		role,
 		roleName: roleName(roles, role),
 		reason,
 		prompt,
+		module,
 	});
 
 	if (context.failed) {
@@ -482,6 +565,8 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 		);
 	}
 
+	/* A failed gate belongs to the module it ran in, so the fix turn works
+	   there even when the finished turn worked somewhere else. */
 	const failedGate = context.gates.find((gate) => gate.status === 'failed');
 	if (failedGate) {
 		return plan(
@@ -494,6 +579,7 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 				`Gate output (first ${GATE_PROMPT_OUTPUT} characters; the transcript holds the rest):`,
 				failedGate.output.slice(0, GATE_PROMPT_OUTPUT),
 			].join('\n\n'),
+			failedGate.module ?? context.module,
 		);
 	}
 
@@ -517,13 +603,11 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 	}
 
 	if (context.specApproved === false) {
-		const implementer = next ?? 'backend-engineer';
+		const implementer = next ?? DEFAULT_IMPLEMENTER_ROLE;
 		return plan(
 			'approval',
 			implementer,
-			withNote(
-				'The specification is written and needs your approval before anyone implements it.',
-			),
+			withNote('The specification is ready for your review.'),
 			continuePrompt(
 				roleName(roles, implementer),
 				context.declared?.reason ?? '',
@@ -532,18 +616,17 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 		);
 	}
 
-	/* In a change session the specification is a means, not the deliverable: a
-	   business manager that updated it hands the change on to the implementer
-	   instead of reporting the request done. */
+	/* The specification is approved, so a business manager that wrote it hands
+	   the change on to the implementer instead of reporting the request done. */
 	if (
 		finished &&
 		context.routing.session.kind === 'edit-module' &&
-		context.role === 'business-manager'
+		context.role === SPEC_OWNER_ROLE
 	) {
 		const implementer =
 			routed !== context.role && roles.some((role) => role.id === routed)
 				? routed
-				: 'backend-engineer';
+				: DEFAULT_IMPLEMENTER_ROLE;
 		return plan(
 			'continue',
 			implementer,
@@ -590,6 +673,61 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 			context.brief,
 		),
 	);
+}
+
+export interface SpecGateContext {
+	readonly roles: readonly AgentRoleDefinition[];
+	/* The draft module directory the refused turn was for. */
+	readonly module: string;
+	readonly refusedRole: string;
+	/* True when the draft specification already carries a change to review. */
+	readonly changed: boolean;
+	readonly brief: string;
+}
+
+/* The move after a turn an implementer may not take. A specification change on
+   the table is the operator's to review; without one the specification owner
+   writes it first, which is what keeps a change spec-driven. */
+export function planSpecGateHandoff(context: SpecGateContext): HandoffPlan {
+	const named = (id: string) => roleName(context.roles, id);
+	if (context.changed) {
+		return {
+			kind: 'approval',
+			role: context.refusedRole,
+			roleName: named(context.refusedRole),
+			reason: 'The specification change is ready for your review.',
+			prompt: continuePrompt(named(context.refusedRole), '', context.brief),
+			module: context.module,
+		};
+	}
+	if (!context.roles.some((role) => role.id === SPEC_OWNER_ROLE)) {
+		return {
+			kind: 'blocked',
+			role: context.refusedRole,
+			roleName: named(context.refusedRole),
+			reason:
+				'The specification is not approved and the business-manager role is not configured, so implementation remains blocked.',
+			prompt: '',
+			module: context.module,
+		};
+	}
+	return {
+		kind: 'continue',
+		role: SPEC_OWNER_ROLE,
+		roleName: named(SPEC_OWNER_ROLE),
+		reason: `The specification does not describe this change yet, so ${named(
+			SPEC_OWNER_ROLE,
+		)} writes the delta before anyone implements it.`,
+		prompt: [
+			'Update this module specification so it describes the requested change, and change nothing else.',
+			context.brief ? `The request was: ${context.brief}` : '',
+			'Bump specVersion, add or change the acceptance scenarios the change needs, and state the permissions, invariants and data ownership it introduces. A small change deserves a small delta. Leave status as it is: the operator approves it.',
+			'End with your handoff line.',
+		]
+			.filter(Boolean)
+			.join('\n\n'),
+		module: context.module,
+	};
 }
 
 export function assertBrief(value: string): string {

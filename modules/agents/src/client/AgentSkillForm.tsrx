@@ -1,4 +1,5 @@
 import { useMemo } from 'octane';
+import { t } from '@coreloom/client';
 import { Button, CheckGrid, FormField } from '@coreloom/ui';
 import type { CheckGroup, CheckOption } from '@coreloom/ui';
 import { cell, createStore, useValue } from 'segment-state';
@@ -67,7 +68,7 @@ export function AgentSkillForm(props: AgentSkillFormProps) @{
 		<div class="ui-drawer__body">
 			<div class="ui-form">
 				<div class="ui-form__row">
-					<FormField label="Name" required>
+					<FormField label={t('agents.skills.form.name')} required>
 						<input
 							class="ui-input"
 							name="name"
@@ -79,8 +80,8 @@ export function AgentSkillForm(props: AgentSkillFormProps) @{
 						/>
 					</FormField>
 					<FormField
-						label="Stable key"
-						help={props.skill ? 'Fixed after creation.' : undefined}
+						label={t('agents.skills.form.key')}
+						help={props.skill ? t('agents.skills.form.keyFixed') : undefined}
 						required
 					>
 						<input
@@ -95,50 +96,46 @@ export function AgentSkillForm(props: AgentSkillFormProps) @{
 						/>
 					</FormField>
 				</div>
-				<FormField label="Description" required>
+				<FormField label={t('agents.skills.form.description')} required>
 					<input
 						class="ui-input"
 						name="description"
 						defaultValue={props.skill?.description ?? ''}
-						placeholder="What an agent gains by attaching this skill."
+						placeholder={t('agents.skills.form.descriptionPlaceholder')}
 						maxlength={500}
 						required
 					/>
 				</FormField>
 				<FormField
-					label="Instructions"
-					help="Appended to the agent's own instructions when the skill is attached."
+					label={t('agents.skills.form.instructions')}
+					help={t('agents.skills.form.instructionsHelp')}
 					required
 				>
 					<textarea
 						class="ui-textarea"
 						name="instructions"
 						defaultValue={props.skill?.instructions ?? ''}
-						placeholder="Describe the procedure, the boundaries, and the expected output."
+						placeholder={t('agents.skills.form.instructionsPlaceholder')}
 						minlength={8}
 						maxlength={8_000}
 						required
 					></textarea>
 				</FormField>
-				<FormField label="Status">
+				<FormField label={t('agents.skills.form.status')}>
 					<select
 						class="ui-select"
 						name="status"
 						defaultValue={props.skill?.status ?? 'draft'}
 					>
-						<option value="draft">Draft</option>
-						<option value="active">Active</option>
-						<option value="archived">Archived</option>
+						<option value="draft">{t('agents.status.draft')}</option>
+						<option value="active">{t('agents.status.active')}</option>
+						<option value="archived">{t('agents.status.archived')}</option>
 					</select>
 				</FormField>
 				<div class="ui-field">
-					<span class="ui-label">Required tools</span>
+					<span class="ui-label">{t('agents.skills.form.tools')}</span>
 					@if (props.tools.length === 0) {
-						<p class="agent-empty-note">
-							No API or CLI tools are registered in this deployment. A skill can
-							still carry instructions, but it cannot require a tool that does
-							not exist.
-						</p>
+						<p class="agent-empty-note">{t('agents.skills.form.toolsEmpty')}</p>
 					} @else {
 						<CheckGrid
 							groups={toolGroups(props.tools)}
@@ -147,27 +144,26 @@ export function AgentSkillForm(props: AgentSkillFormProps) @{
 							onChange={setRequiredTools}
 						/>
 					}
-					<span class="ui-help">
-						An agent may only attach this skill when it was granted every tool
-						listed here.
-					</span>
+					<span class="ui-help">{t('agents.skills.form.toolsHelp')}</span>
 				</div>
 			</div>
 		</div>
 		<div class="ui-drawer__foot">
 			<small>
 				{props.skill
-					? `Saving creates revision ${props.skill.revision + 1}.`
-					: 'New skills start as drafts.'}
+					? t('agents.skills.form.revisionNote', {
+							revision: props.skill.revision + 1,
+						})
+					: t('agents.skills.form.createNote')}
 			</small>
 			<div class="ui-form__actions">
-				<Button onClick={props.onCancel}>Cancel</Button>
+				<Button onClick={props.onCancel}>{t('agents.common.cancel')}</Button>
 				<Button variant="primary" type="submit" disabled={props.busy}>
 					{props.busy
-						? 'Saving…'
+						? t('agents.common.saving')
 						: props.skill
-							? 'Save revision'
-							: 'Create skill'}
+							? t('agents.skills.form.save')
+							: t('agents.skills.form.create')}
 				</Button>
 			</div>
 		</div>

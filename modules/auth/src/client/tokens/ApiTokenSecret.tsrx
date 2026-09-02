@@ -1,3 +1,4 @@
+import { t } from '@coreloom/client';
 import { Button, Icon } from '@coreloom/ui';
 
 export interface ApiTokenSecretProps {
@@ -13,26 +14,21 @@ export function ApiTokenSecret(props: ApiTokenSecretProps) @{
 				<span class="token-secret__icon">
 					<Icon name="key" size={18} />
 				</span>
-				<b>{props.label + ' is ready'}</b>
-				<p>
-					Copy the value now. It is stored only as a hash and cannot be shown
-					again.
-				</p>
+				<b>{t('auth.tokens.secret.ready', { label: props.label })}</b>
+				<p>{t('auth.tokens.secret.copyNow')}</p>
 				<code>{props.token}</code>
 				<Button
 					variant="primary"
 					onClick={() => void navigator.clipboard?.writeText(props.token).catch(
 						() => undefined,
 					)}
-				>
-					Copy token
-				</Button>
+				>{t('auth.tokens.secret.copy')}</Button>
 			</div>
 		</div>
 		<div class="ui-drawer__foot">
-			<small>Store it in the client that will present it.</small>
+			<small>{t('auth.tokens.secret.store')}</small>
 			<div class="ui-form__actions">
-				<Button onClick={props.onDone}>Done</Button>
+				<Button onClick={props.onDone}>{t('auth.common.done')}</Button>
 			</div>
 		</div>
 	</div>

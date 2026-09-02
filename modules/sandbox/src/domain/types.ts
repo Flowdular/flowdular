@@ -110,3 +110,16 @@ export interface SandboxAuditEvent {
 	readonly previousHash: string | null;
 	readonly eventHash: string;
 }
+
+export interface SandboxAuditPage {
+	readonly events: readonly SandboxAuditEvent[];
+	/** `${occurredAt}:${sequence}` of the last event, or null when exhausted. */
+	readonly nextCursor: string | null;
+}
+
+/* Whether the tenant hash chain reproduces, and the id of the first row that
+   does not. The same walk backs the audit-verify CLI and the HTTP endpoint. */
+export interface SandboxAuditChainVerification {
+	readonly verified: boolean;
+	readonly brokenAt: string | null;
+}

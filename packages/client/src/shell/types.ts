@@ -9,6 +9,7 @@ export interface ShellTenant {
 }
 
 export interface ShellIdentity {
+	readonly accountId: string;
 	readonly email: string;
 	readonly displayName: string;
 	readonly role: string;

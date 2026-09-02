@@ -1,8 +1,13 @@
+import { createHash } from 'node:crypto';
 import { AgentHarnessError } from './errors.ts';
+import { normalizeActor, type Actor, type UserActor } from '@coreloom/kernel';
 import {
 	boundToolOutput,
 	toolTimeoutMs,
+	validateJsonValue,
 	validateToolInput,
+	validateToolOutput,
+	validateStructuredOutput,
 } from './tool-contract.ts';
 
 export { AgentHarnessError } from './errors.ts';
@@ -36,12 +41,31 @@ export interface AgentExecutionRequest {
 	readonly runId: string;
 	readonly tenantId: string;
 	readonly requestedBy: string;
+	readonly requestedActor: Actor;
+	/* Audit provenance remains requestedActor. Live authorization uses this user. */
+	readonly authorizationSubject?: UserActor | null;
 	readonly trigger: AgentRunTrigger;
 	readonly input: string;
 	readonly definition: AgentExecutionDefinition;
 	readonly permissionSnapshot: readonly string[];
 	readonly toolGrants: readonly string[];
+	/* Absent keeps the v1 text behavior. */
+	readonly outputContract?: AgentOutputContract;
 }
+
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue =
+	| JsonPrimitive
+	| readonly JsonValue[]
+	| { readonly [key: string]: JsonValue };
+
+export type AgentOutputContract =
+	| { readonly kind: 'text' }
+	| {
+			readonly kind: 'json-schema';
+			readonly name: string;
+			readonly schema: Readonly<Record<string, unknown>>;
+	  };
 
 export interface AgentExecutionEvent {
 	readonly sequence: number;
@@ -68,6 +92,7 @@ export interface AgentUsage {
 
 export interface AgentProviderResult {
 	readonly output: string;
+	readonly structuredOutput?: JsonValue;
 	readonly usage: AgentUsage;
 	readonly finishReason: 'stop' | 'length' | 'tool-limit';
 }
@@ -76,6 +101,16 @@ export interface AgentToolContext {
 	readonly runId: string;
 	readonly tenantId: string;
 	readonly requestedBy: string;
+	/* Present for real agent runs. Optional keeps direct module tests and action
+	   execution source-compatible while callers that need an agent actor can
+	   refuse when the trusted identity is absent. */
+	readonly agentId?: string;
+	readonly agentName?: string;
+	readonly idempotencyKey?: string;
+	/* Trusted provenance for record history. Optional preserves v1 direct tool
+	   callers; harness and workflow executions always provide it. */
+	readonly actor?: Actor;
+	readonly authorizationSubject?: UserActor;
 	readonly permissions: ReadonlySet<string>;
 	readonly signal: AbortSignal;
 }
@@ -87,6 +122,15 @@ export interface AgentTool {
 	readonly description: string;
 	readonly requiredPermissions: readonly string[];
 	readonly inputSchema?: Readonly<Record<string, unknown>>;
+	readonly contractVersion?: number;
+	readonly outputSchema?: Readonly<Record<string, unknown>>;
+	readonly risk?: 'read' | 'workspace-write' | 'external' | 'destructive';
+	readonly idempotency?: 'required';
+	/* A mutating tool is executable only when its target persists the key and
+	   returns the first result on retry. Declaring `required` alone is not that
+	   guarantee. */
+	readonly idempotencyProtection?: 'target-ledger';
+	readonly cancellation?: 'cooperative' | 'not-supported';
 	/* Per call. Defaults to 30 s; the run's own timeout still applies. */
 	readonly timeoutMs?: number;
 	execute(input: unknown, context: AgentToolContext): Promise<unknown>;
@@ -102,7 +146,11 @@ export interface AgentProviderContext {
 		readonly description: string;
 		readonly inputSchema: Readonly<Record<string, unknown>>;
 	}[];
-	invokeTool(id: string, input: unknown): Promise<unknown>;
+	invokeTool(
+		id: string,
+		input: unknown,
+		invocation?: { readonly providerCallId?: string },
+	): Promise<unknown>;
 	emit(
 		type: AgentExecutionEvent['type'],
 		message: string,
@@ -112,6 +160,9 @@ export interface AgentProviderContext {
 
 export interface AgentProvider {
 	readonly id: string;
+	readonly capabilities?: {
+		readonly structuredOutput: boolean;
+	};
 	execute(context: AgentProviderContext): Promise<AgentProviderResult>;
 }
 
@@ -120,6 +171,16 @@ export interface AgentExecutionResult extends AgentProviderResult {
 	readonly startedAt: number;
 	readonly completedAt: number;
 }
+
+export interface AgentToolAuthorizationRequest {
+	readonly tenantId: string;
+	readonly actor: Actor;
+	readonly signal: AbortSignal;
+}
+
+export type AgentToolAccessAuthorizer = (
+	request: AgentToolAuthorizationRequest,
+) => readonly string[] | Promise<readonly string[]>;
 
 function identifier(value: string, field: string): string {
 	const normalized = value.trim();
@@ -151,7 +212,34 @@ function boundedText(
 function assertExecutionRequest(request: AgentExecutionRequest): void {
 	boundedText(request.runId, 'runId', 1, 128);
 	boundedText(request.tenantId, 'tenantId', 1, 128);
-	boundedText(request.requestedBy, 'requestedBy', 1, 128);
+	const requestedBy = boundedText(request.requestedBy, 'requestedBy', 1, 128);
+	const requestedActor = normalizeActor(request.requestedActor);
+	if (!requestedActor || requestedActor.id !== requestedBy) {
+		throw new AgentHarnessError(
+			'INVALID_ACTOR',
+			'requestedActor must be valid and match requestedBy.',
+		);
+	}
+	const suppliedSubject = request.authorizationSubject
+		? normalizeActor(request.authorizationSubject)
+		: undefined;
+	const derivedSubject =
+		requestedActor.kind === 'user'
+			? requestedActor
+			: requestedActor.kind === 'service'
+				? requestedActor.configuredBy
+				: undefined;
+	if (
+		(suppliedSubject != null && suppliedSubject.kind !== 'user') ||
+		(derivedSubject !== undefined &&
+			suppliedSubject != null &&
+			derivedSubject.id !== suppliedSubject.id)
+	) {
+		throw new AgentHarnessError(
+			'INVALID_AUTHORIZATION_SUBJECT',
+			'authorizationSubject must be the trusted delegated user.',
+		);
+	}
 	boundedText(request.input, 'input', 1, 100_000);
 	boundedText(request.definition.name, 'definition.name', 2, 120);
 	boundedText(request.definition.instructions, 'instructions', 8, 40_000);
@@ -208,6 +296,39 @@ function assertExecutionRequest(request: AgentExecutionRequest): void {
 			`definition.maxOutputTokens must be between ${MIN_MAX_OUTPUT_TOKENS} and ${MAX_MAX_OUTPUT_TOKENS}.`,
 		);
 	}
+	if (request.outputContract?.kind === 'json-schema') {
+		boundedText(request.outputContract.name, 'outputContract.name', 1, 64);
+		if (
+			!request.outputContract.schema ||
+			Array.isArray(request.outputContract.schema) ||
+			typeof request.outputContract.schema !== 'object'
+		) {
+			throw new AgentHarnessError(
+				'INVALID_OUTPUT_CONTRACT',
+				'outputContract.schema must be a JSON object.',
+			);
+		}
+		validateJsonValue(
+			request.outputContract.schema,
+			'INVALID_OUTPUT_CONTRACT',
+			'outputContract.schema',
+		);
+		let serialized: string;
+		try {
+			serialized = JSON.stringify(request.outputContract.schema);
+		} catch {
+			throw new AgentHarnessError(
+				'INVALID_OUTPUT_CONTRACT',
+				'outputContract.schema must be JSON serializable.',
+			);
+		}
+		if (serialized.length > 32_768) {
+			throw new AgentHarnessError(
+				'INVALID_OUTPUT_CONTRACT',
+				'outputContract.schema exceeds 32768 characters.',
+			);
+		}
+	}
 }
 
 function toolFailure(error: unknown): { code: string; message: string } {
@@ -224,10 +345,12 @@ function toolFailure(error: unknown): { code: string; message: string } {
 export class AgentHarness {
 	readonly #providers: ReadonlyMap<string, AgentProvider>;
 	readonly #tools: ReadonlyMap<string, AgentTool>;
+	readonly #authorizeToolAccess: AgentToolAccessAuthorizer;
 
 	constructor(options: {
 		readonly providers: readonly AgentProvider[];
 		readonly tools?: readonly AgentTool[];
+		readonly authorizeToolAccess?: AgentToolAccessAuthorizer;
 	}) {
 		const providers = new Map<string, AgentProvider>();
 		for (const provider of options.providers) {
@@ -254,14 +377,45 @@ export class AgentHarness {
 		}
 		this.#providers = providers;
 		this.#tools = tools;
+		/* No callback means no live authority. This keeps standalone runtimes and
+		   service actors fail-closed instead of treating a stored snapshot as a
+		   permanent credential. */
+		this.#authorizeToolAccess = options.authorizeToolAccess ?? (() => []);
 	}
 
 	providers(): readonly string[] {
 		return [...this.#providers.keys()].sort();
 	}
 
+	providerSupportsStructuredOutput(id: string): boolean {
+		return this.#providers.get(id)?.capabilities?.structuredOutput === true;
+	}
+
 	tools(): readonly string[] {
 		return [...this.#tools.keys()].sort();
+	}
+
+	/* This is the single access calculation used both when a durable run is
+	   created and when it is executed. A tool must be present in the code
+	   registry, allowed by the agent, explicitly requested for the run, and
+	   covered by the trusted permission snapshot. */
+	effectiveToolGrants(
+		allowedTools: readonly string[],
+		requestedToolGrants: readonly string[],
+		permissionSnapshot: readonly string[],
+	): readonly string[] {
+		const allowed = new Set(allowedTools);
+		const requested = new Set(requestedToolGrants);
+		const permissions = new Set(permissionSnapshot);
+		return [...this.#tools.values()]
+			.filter((tool) => allowed.has(tool.id) && requested.has(tool.id))
+			.filter((tool) =>
+				tool.requiredPermissions.every((permission) =>
+					permissions.has(permission),
+				),
+			)
+			.map((tool) => tool.id)
+			.sort();
 	}
 
 	async execute(
@@ -273,6 +427,14 @@ export class AgentHarness {
 		} = {},
 	): Promise<AgentExecutionResult> {
 		assertExecutionRequest(request);
+		const auditActor = normalizeActor(request.requestedActor)!;
+		const authorizationSubject = request.authorizationSubject
+			? normalizeActor(request.authorizationSubject)
+			: auditActor.kind === 'user'
+				? auditActor
+				: auditActor.kind === 'service'
+					? auditActor.configuredBy
+					: null;
 		const provider =
 			options.provider ?? this.#providers.get(request.definition.provider);
 		if (!provider) {
@@ -287,17 +449,23 @@ export class AgentHarness {
 				'The resolved provider does not match the run snapshot.',
 			);
 		}
-		const allowed = new Set(request.definition.allowedTools);
-		const granted = new Set(request.toolGrants);
-		const permissions = new Set(request.permissionSnapshot);
-		const availableTools = [...this.#tools.values()]
-			.filter((tool) => allowed.has(tool.id) && granted.has(tool.id))
-			.filter((tool) =>
-				tool.requiredPermissions.every((permission) =>
-					permissions.has(permission),
-				),
-			)
-			.sort((left, right) => left.id.localeCompare(right.id));
+		const outputContract = request.outputContract ?? { kind: 'text' as const };
+		if (
+			outputContract.kind === 'json-schema' &&
+			provider.capabilities?.structuredOutput !== true
+		) {
+			throw new AgentHarnessError(
+				'STRUCTURED_OUTPUT_UNSUPPORTED',
+				`Provider ${provider.id} cannot guarantee structured output for this run.`,
+			);
+		}
+		const snapshotGrants = new Set(
+			this.effectiveToolGrants(
+				request.definition.allowedTools,
+				request.toolGrants,
+				request.permissionSnapshot,
+			),
+		);
 		const controller = new AbortController();
 		const abortFromCaller = () =>
 			controller.abort(options.signal?.reason ?? 'aborted');
@@ -306,9 +474,44 @@ export class AgentHarness {
 			options.signal?.addEventListener('abort', abortFromCaller, {
 				once: true,
 			});
+		const livePermissions = async (): Promise<Set<string>> => {
+			if (!authorizationSubject || authorizationSubject.kind !== 'user') {
+				return new Set();
+			}
+			let authorized: readonly string[];
+			try {
+				authorized = await this.#authorizeToolAccess({
+					tenantId: request.tenantId,
+					actor: authorizationSubject,
+					signal: controller.signal,
+				});
+			} catch {
+				throw new AgentHarnessError(
+					'TOOL_AUTHORIZATION_FAILED',
+					'Live tool authorization is unavailable.',
+				);
+			}
+			const currentlyHeld = new Set(authorized);
+			return new Set(
+				request.permissionSnapshot.filter((permission) =>
+					currentlyHeld.has(permission),
+				),
+			);
+		};
+		const initialPermissions = await livePermissions();
+		const availableTools = [...this.#tools.values()]
+			.filter((tool) => snapshotGrants.has(tool.id))
+			.filter((tool) =>
+				tool.requiredPermissions.every((permission) =>
+					initialPermissions.has(permission),
+				),
+			)
+			.sort((left, right) => left.id.localeCompare(right.id));
 		const startedAt = Date.now();
 		const events: AgentExecutionEvent[] = [];
+		let acceptingEvents = true;
 		const emit: AgentProviderContext['emit'] = (type, message, metadata) => {
+			if (!acceptingEvents) return;
 			/* Streamed output deltas are kept verbatim: a whitespace-only chunk
 			   carries formatting and must not fail the run. */
 			const text =
@@ -331,7 +534,13 @@ export class AgentHarness {
 			model: request.definition.model,
 		});
 		const grantedIds = new Set(availableTools.map((tool) => tool.id));
-		const invokeTool = async (id: string, input: unknown): Promise<unknown> => {
+		let toolCallOrdinal = 0;
+		const invokeTool = async (
+			id: string,
+			input: unknown,
+			invocation: { readonly providerCallId?: string } = {},
+		): Promise<unknown> => {
+			const ordinal = ++toolCallOrdinal;
 			const tool = this.#tools.get(id);
 			if (!tool || !grantedIds.has(id)) {
 				emit('tool.denied', `Tool ${id} was denied.`, {
@@ -343,6 +552,54 @@ export class AgentHarness {
 					`Tool ${id} was not granted for this run.`,
 				);
 			}
+			let permissions: Set<string>;
+			try {
+				permissions = await livePermissions();
+			} catch (error) {
+				const failure = toolFailure(error);
+				emit('tool.denied', `Tool ${id} was denied.`, {
+					tool: id,
+					reason: failure.code,
+				});
+				throw error;
+			}
+			if (
+				tool.requiredPermissions.some(
+					(permission) => !permissions.has(permission),
+				)
+			) {
+				emit('tool.denied', `Tool ${id} was denied.`, {
+					tool: id,
+					reason: 'TOOL_AUTHORIZATION_REVOKED',
+				});
+				throw new AgentHarnessError(
+					'TOOL_AUTHORIZATION_REVOKED',
+					`The initiating actor no longer has permission for tool ${id}.`,
+				);
+			}
+			if (
+				tool.risk !== undefined &&
+				tool.risk !== 'read' &&
+				tool.idempotency === 'required' &&
+				tool.idempotencyProtection !== 'target-ledger'
+			) {
+				emit('tool.denied', `Tool ${id} was denied.`, {
+					tool: id,
+					reason: 'TOOL_IDEMPOTENCY_UNAVAILABLE',
+				});
+				throw new AgentHarnessError(
+					'TOOL_IDEMPOTENCY_UNAVAILABLE',
+					`Tool ${id} has no durable target-side idempotency guarantee.`,
+				);
+			}
+			let idempotencyKey: string | undefined;
+			if (tool.idempotency === 'required') {
+				/* Provider call ids are useful evidence but are not guaranteed to be
+				   reproduced after a process crash. The run id and call ordinal are. */
+				idempotencyKey = createHash('sha256')
+					.update(`${request.runId}\u0000${ordinal}`)
+					.digest('hex');
+			}
 			try {
 				validateToolInput(tool.inputSchema, input);
 			} catch (error) {
@@ -353,7 +610,13 @@ export class AgentHarness {
 				});
 				throw error;
 			}
-			emit('tool.started', `Tool ${id} started.`, { tool: id });
+			emit('tool.started', `Tool ${id} started.`, {
+				tool: id,
+				ordinal,
+				...(invocation.providerCallId
+					? { providerCallId: invocation.providerCallId.slice(0, 128) }
+					: {}),
+			});
 			/* The tool runs foreign code: it gets its own signal, a deadline, and
 			   any failure becomes an event plus a stable error, never a crash. */
 			const toolController = new AbortController();
@@ -362,12 +625,36 @@ export class AgentHarness {
 			else
 				controller.signal.addEventListener('abort', abortTool, { once: true });
 			let toolTimer: ReturnType<typeof setTimeout> | undefined;
+			let rejectToolAbort: (() => void) | undefined;
 			try {
+				const toolAborted = new Promise<never>((_, reject) => {
+					rejectToolAbort = () =>
+						reject(
+							new AgentHarnessError('TOOL_ABORTED', `Tool ${id} was aborted.`),
+						);
+					if (toolController.signal.aborted) rejectToolAbort();
+					else
+						toolController.signal.addEventListener('abort', rejectToolAbort, {
+							once: true,
+						});
+				});
 				const output = await Promise.race([
 					tool.execute(input, {
 						runId: request.runId,
 						tenantId: request.tenantId,
 						requestedBy: request.requestedBy,
+						agentId: request.definition.id,
+						agentName: request.definition.name,
+						actor: {
+							kind: 'agent',
+							id: request.definition.id,
+							label: request.definition.name,
+							runId: request.runId,
+						},
+						...(authorizationSubject?.kind === 'user'
+							? { authorizationSubject }
+							: {}),
+						...(idempotencyKey ? { idempotencyKey } : {}),
 						permissions,
 						signal: toolController.signal,
 					}),
@@ -384,7 +671,9 @@ export class AgentHarness {
 							toolController.abort('timeout');
 						}, toolTimeoutMs(tool.timeoutMs));
 					}),
+					toolAborted,
 				]);
+				validateToolOutput(tool.outputSchema, output);
 				const bounded = boundToolOutput(output);
 				emit('tool.completed', `Tool ${id} completed.`, {
 					tool: id,
@@ -403,20 +692,37 @@ export class AgentHarness {
 					: new AgentHarnessError(failure.code, failure.message);
 			} finally {
 				if (toolTimer !== undefined) clearTimeout(toolTimer);
+				if (rejectToolAbort)
+					toolController.signal.removeEventListener('abort', rejectToolAbort);
 				controller.signal.removeEventListener('abort', abortTool);
 			}
 		};
 		let timer: ReturnType<typeof setTimeout> | undefined;
+		let rejectProviderAbort: (() => void) | undefined;
 		try {
+			const providerAborted = new Promise<never>((_, reject) => {
+				rejectProviderAbort = () =>
+					reject(
+						new AgentHarnessError(
+							'EXECUTION_ABORTED',
+							String(controller.signal.reason ?? 'aborted'),
+						),
+					);
+				if (controller.signal.aborted) rejectProviderAbort();
+				else
+					controller.signal.addEventListener('abort', rejectProviderAbort, {
+						once: true,
+					});
+			});
 			const timeout = new Promise<never>((_, reject) => {
 				timer = setTimeout(() => {
-					controller.abort('timeout');
 					reject(
 						new AgentHarnessError(
 							'EXECUTION_TIMEOUT',
 							`Agent execution exceeded ${request.definition.timeoutMs} ms.`,
 						),
 					);
+					controller.abort('timeout');
 				}, request.definition.timeoutMs);
 			});
 			const providerResult = await Promise.race([
@@ -437,7 +743,20 @@ export class AgentHarness {
 					emit,
 				}),
 				timeout,
+				providerAborted,
 			]);
+			if (outputContract.kind === 'json-schema') {
+				if (providerResult.structuredOutput === undefined) {
+					throw new AgentHarnessError(
+						'STRUCTURED_OUTPUT_MISSING',
+						'The provider did not return the required structured output.',
+					);
+				}
+				validateStructuredOutput(
+					outputContract.schema,
+					providerResult.structuredOutput,
+				);
+			}
 			const output = boundedText(
 				providerResult.output,
 				'provider output',
@@ -457,7 +776,10 @@ export class AgentHarness {
 				completedAt,
 			};
 		} finally {
+			acceptingEvents = false;
 			if (timer !== undefined) clearTimeout(timer);
+			if (rejectProviderAbort)
+				controller.signal.removeEventListener('abort', rejectProviderAbort);
 			options.signal?.removeEventListener('abort', abortFromCaller);
 		}
 	}

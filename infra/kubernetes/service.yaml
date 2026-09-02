@@ -1,12 +1,12 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: octane-erp
+  name: coreloom
   labels:
-    app.kubernetes.io/name: octane-erp
+    app.kubernetes.io/name: coreloom
 spec:
   selector:
-    app.kubernetes.io/name: octane-erp
+    app.kubernetes.io/name: coreloom
   ports:
     - name: http
       port: 80

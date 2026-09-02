@@ -1,5 +1,18 @@
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { ServerRoute, type Context } from '@octanejs/app-core';
 import {
+	MAX_ATTACHMENT_BYTES,
+	addAttachment,
+	assertAttachmentId,
+	readAttachment,
+	removeAttachment,
+} from './attachments.ts';
+import {
+	assertGitHubAccount,
+	assertGitHubDeliveryMode,
+	assertGitHubRepository,
+	assertGitName,
 	assertPlatformUrl,
 	openSecret,
 	safeConfiguration,
@@ -22,7 +35,12 @@ import {
 	type PreviewRuntime,
 } from './preview-runtime.ts';
 import { formatSession } from './gates.ts';
-import { assertBrief, listWorkspaceModules, planWork } from './planning.ts';
+import {
+	SPEC_OWNER_ROLE,
+	assertBrief,
+	listWorkspaceModules,
+	planWork,
+} from './planning.ts';
 import {
 	collectDiffs,
 	forgetDiffs,
@@ -32,22 +50,33 @@ import {
 	type TurnOutcome,
 } from './turns.ts';
 import {
+	addSessionModule,
 	appendChatEntry,
 	approveSpecification,
 	archiveSession,
 	assertSessionId,
+	basePathOf,
 	createSession,
 	deleteSession,
+	findSessionModule,
 	installSessionDependencies,
 	isSessionId,
 	listSessions,
+	modulePathOf,
 	readChat,
 	readSession,
+	restoreCheckpoint,
 	restoreSession,
 	sessionPaths,
 	updateSession,
 	type SandboxSession,
+	type SessionModule,
 } from './sessions.ts';
+import {
+	readModuleSpecReview,
+	specPathOf,
+	type ModuleSpecReview,
+} from './spec.ts';
 import type { BrowserSession, SandboxRuntime } from './runtime.ts';
 import { SandboxSetupError } from './workspace-root.ts';
 
@@ -71,11 +100,38 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
 	SANDBOX_HOST_REJECTED: 403,
 	SANDBOX_CROSS_SITE: 403,
 	SANDBOX_HEADER_REQUIRED: 403,
+	CONTENT_TYPE_REQUIRED: 415,
+	REQUEST_TOO_LARGE: 413,
+	INVALID_JSON: 400,
 	EJECT_SCOPE_MISSING: 403,
 	SESSION_NOT_FOUND: 404,
+	ATTACHMENT_NOT_FOUND: 404,
+	INVALID_ATTACHMENT_ID: 400,
+	ATTACHMENT_NAME_INVALID: 400,
+	ATTACHMENT_EMPTY: 400,
+	ATTACHMENT_TYPE_REJECTED: 415,
+	ATTACHMENT_TOO_LARGE: 413,
+	ATTACHMENT_LIMIT_REACHED: 409,
 	SESSION_RUNNING: 409,
 	SESSION_ARCHIVED: 409,
+	SESSION_DELIVERED: 409,
+	MODULE_NOT_FOUND: 404,
+	MODULE_NOT_IN_SESSION: 400,
+	MODULE_ALREADY_IN_SESSION: 409,
+	SPEC_NOT_FOUND: 404,
+	SPEC_NOT_APPROVED: 409,
+	EJECT_SPEC_MISSING: 409,
+	EJECT_SPEC_NOT_APPROVED: 409,
+	EJECT_SPEC_VERSION_UNCHANGED: 409,
+	EJECT_SPEC_SCENARIOS_UNCHANGED: 409,
+	EJECT_MIGRATION_IMMUTABLE: 409,
 };
+
+/* The specification is a document the operator reviews, not a file the browser
+   uploads: this is what a spec edit may carry. */
+const MAX_SPEC_TEXT = 200_000;
+const MAX_SPEC_COMMENT = 4_000;
+const MAX_JSON_BODY_BYTES = 256_000;
 
 export interface SandboxRouteOptions {
 	/* The port the launcher bound. A loopback request must name it in its Host
@@ -130,7 +186,10 @@ function readCookie(request: Request, name: string): string | null {
 	return null;
 }
 
-async function body(request: Request): Promise<Record<string, unknown>> {
+async function body(
+	request: Request,
+	maximumBytes = MAX_JSON_BODY_BYTES,
+): Promise<Record<string, unknown>> {
 	if (
 		!(request.headers.get('content-type') ?? '')
 			.toLowerCase()
@@ -141,7 +200,45 @@ async function body(request: Request): Promise<Record<string, unknown>> {
 			'Expected application/json.',
 		);
 	}
-	const value = (await request.json()) as unknown;
+	const contentLength = Number(request.headers.get('content-length'));
+	if (Number.isFinite(contentLength) && contentLength > maximumBytes) {
+		throw new SandboxSetupError(
+			'REQUEST_TOO_LARGE',
+			`The JSON request body is limited to ${maximumBytes} bytes.`,
+		);
+	}
+	const chunks: Uint8Array[] = [];
+	let bytes = 0;
+	if (request.body) {
+		const reader = request.body.getReader();
+		try {
+			for (;;) {
+				const part = await reader.read();
+				if (part.done) break;
+				bytes += part.value.byteLength;
+				if (bytes > maximumBytes) {
+					await reader.cancel().catch(() => undefined);
+					throw new SandboxSetupError(
+						'REQUEST_TOO_LARGE',
+						`The JSON request body is limited to ${maximumBytes} bytes.`,
+					);
+				}
+				chunks.push(part.value);
+			}
+		} finally {
+			reader.releaseLock();
+		}
+	}
+	const raw = Buffer.concat(
+		chunks.map((chunk) => Buffer.from(chunk)),
+		bytes,
+	).toString('utf8');
+	let value: unknown;
+	try {
+		value = JSON.parse(raw) as unknown;
+	} catch {
+		throw new SandboxSetupError('INVALID_JSON', 'Expected valid JSON.');
+	}
 	if (!value || typeof value !== 'object' || Array.isArray(value)) {
 		throw new SandboxSetupError('INVALID_INPUT', 'Expected a JSON object.');
 	}
@@ -177,6 +274,36 @@ function sessionIdParam(context: Context): string {
 	return assertSessionId(context.params.id ?? '');
 }
 
+function attachmentIdParam(context: Context): string {
+	return assertAttachmentId(context.params.attachmentId ?? '');
+}
+
+/* Decodes a base64 field into bytes, refusing a payload that could not fit the
+   size limit before it is decoded, so an oversized upload never allocates. */
+function base64Field(
+	value: Record<string, unknown>,
+	key: string,
+	maxBytes: number,
+): Buffer {
+	const raw = value[key];
+	if (typeof raw !== 'string' || raw.length === 0) {
+		throw new SandboxSetupError(
+			'INVALID_INPUT',
+			`${key} must be a base64 string.`,
+		);
+	}
+	if (raw.length > Math.ceil(maxBytes / 3) * 4 + 4) {
+		throw new SandboxSetupError(
+			'ATTACHMENT_TOO_LARGE',
+			`Attachments are limited to ${maxBytes / (1024 * 1024)} MB.`,
+		);
+	}
+	if (!/^[A-Za-z0-9+/]+={0,2}$/.test(raw)) {
+		throw new SandboxSetupError('INVALID_INPUT', `${key} is not valid base64.`);
+	}
+	return Buffer.from(raw, 'base64');
+}
+
 /* A loopback sandbox trusts the machine it runs on and nothing else: the
    request must be addressed to the loopback name and port it was started on,
    so a page served from another local port cannot reach it by name. */
@@ -205,10 +332,11 @@ function assertLoopbackHost(request: Request, port: number | undefined): void {
 	}
 }
 
-/* Mutations must come from the sandbox's own page: the fetch metadata or the
-   Origin header must name this origin, and the custom header must be present.
-   A cross-site form post can satisfy neither. */
-export function assertSameOrigin(request: Request): void {
+/* The browser-facing half of the origin boundary: the fetch metadata and the
+   Origin header must name this server. A cross-site form post satisfies
+   neither. This is the only place that sees the origin the browser used, so
+   every request that leaves for an internal hop is checked here first. */
+export function assertBrowserOrigin(request: Request): void {
 	const site = request.headers.get('sec-fetch-site');
 	if (site && site !== 'same-origin' && site !== 'none') {
 		throw new SandboxSetupError(
@@ -217,20 +345,25 @@ export function assertSameOrigin(request: Request): void {
 		);
 	}
 	const origin = request.headers.get('origin');
-	if (origin) {
-		let originHost: string;
-		try {
-			originHost = new URL(origin).host;
-		} catch {
-			originHost = '';
-		}
-		if (!originHost || originHost !== (request.headers.get('host') ?? '')) {
-			throw new SandboxSetupError(
-				'SANDBOX_CROSS_SITE',
-				'Sandbox mutations are accepted from the sandbox page only.',
-			);
-		}
+	if (!origin) return;
+	let originHost: string;
+	try {
+		originHost = new URL(origin).host;
+	} catch {
+		originHost = '';
 	}
+	if (!originHost || originHost !== (request.headers.get('host') ?? '')) {
+		throw new SandboxSetupError(
+			'SANDBOX_CROSS_SITE',
+			'Sandbox mutations are accepted from the sandbox page only.',
+		);
+	}
+}
+
+/* Mutations must come from the sandbox's own page: the browser origin must
+   name this server, and the custom header must be present. */
+export function assertSameOrigin(request: Request): void {
+	assertBrowserOrigin(request);
 	if (request.headers.get(SANDBOX_REQUEST_HEADER) !== '1') {
 		throw new SandboxSetupError(
 			'SANDBOX_HEADER_REQUIRED',
@@ -305,6 +438,74 @@ function sessionCookie(id: string, secure: boolean): string {
 	].join('; ');
 }
 
+/* One review per module: the draft specification, the copy the session started
+   from, the difference between them, and whether the operator approved it. The
+   card renders this and nothing it fetches itself. */
+function sessionSpecs(
+	workspaceRoot: string,
+	session: SandboxSession,
+): Promise<readonly ModuleSpecReview[]> {
+	const paths = sessionPaths(workspaceRoot, session.id, session.moduleSuffix);
+	return Promise.all(
+		session.modules.map((module) =>
+			readModuleSpecReview(
+				module,
+				modulePathOf(paths, module.directory),
+				basePathOf(paths, module.directory),
+			),
+		),
+	);
+}
+
+/* The one place a client-named module turns into a specification path. The
+   module is always one the session holds, so nothing a request says reaches the
+   file system by itself. */
+function specFileOf(
+	workspaceRoot: string,
+	session: SandboxSession,
+	module: SessionModule,
+): string {
+	return specPathOf(
+		modulePathOf(
+			sessionPaths(workspaceRoot, session.id, session.moduleSuffix),
+			module.directory,
+		),
+	);
+}
+
+async function readSpecFile(
+	workspaceRoot: string,
+	session: SandboxSession,
+	module: SessionModule,
+): Promise<string> {
+	try {
+		return await readFile(specFileOf(workspaceRoot, session, module), 'utf8');
+	} catch {
+		throw new SandboxSetupError(
+			'SPEC_NOT_FOUND',
+			`${module.id} has no specification in this session yet.`,
+		);
+	}
+}
+
+async function writeSpecFile(
+	workspaceRoot: string,
+	session: SandboxSession,
+	module: SessionModule,
+	text: string,
+): Promise<void> {
+	const path = specFileOf(workspaceRoot, session, module);
+	/* The editor writes a draft. `approved` is reserved for the approval route,
+	   which records the matching hash in session.json at the same time. */
+	const draftStatus = module.kind === 'new' ? 'draft' : 'in-review';
+	const draft = text.replace(
+		/^status:[ \t]*approved[ \t]*$/m,
+		`status: ${draftStatus}`,
+	);
+	await mkdir(dirname(path), { recursive: true });
+	await writeFile(path, draft, 'utf8');
+}
+
 async function sessionView(
 	runtime: SandboxRuntime,
 	session: SandboxSession,
@@ -323,6 +524,7 @@ async function sessionView(
 		},
 		chat: await readChat(runtime.workspaceRoot, session),
 		diffs: await collectDiffs(runtime.workspaceRoot, session),
+		specs: await sessionSpecs(runtime.workspaceRoot, session),
 		/* A turn outlives the request that started it, so a browser that reloads
 		   mid-turn has to be told the agent is still working. */
 		running: busy,
@@ -351,6 +553,15 @@ function assertNotArchived(session: SandboxSession): void {
 		throw new SandboxSetupError(
 			'SESSION_ARCHIVED',
 			'This session is archived. Restore it before working on it again.',
+		);
+	}
+}
+
+function assertNotDelivered(session: SandboxSession): void {
+	if (session.ejectedAt !== null) {
+		throw new SandboxSetupError(
+			'SESSION_DELIVERED',
+			'This session was already delivered. Start a new session for a further specification change.',
 		);
 	}
 }
@@ -410,7 +621,12 @@ export function createSandboxRoutes(
 	   the server's decision and survives a closed tab. */
 	const startTurn = (
 		sessionId: string,
-		input: { message: string; role?: string; driver?: string },
+		input: {
+			message: string;
+			role?: string;
+			module?: string;
+			driver?: string;
+		},
 	): TurnChannel => {
 		const previous = running.get(sessionId);
 		const controller = new AbortController();
@@ -438,8 +654,12 @@ export function createSandboxRoutes(
 				await updateSession(runtime.workspaceRoot, sessionId, {
 					chainDepth: 0,
 				});
-				let next: { message: string; role?: string; driver?: string } | null =
-					input;
+				let next: {
+					message: string;
+					role?: string;
+					module?: string;
+					driver?: string;
+				} | null = input;
 				let depth = 0;
 				while (next && !controller.signal.aborted) {
 					const iterator = runTurn(turnContext(), {
@@ -468,6 +688,9 @@ export function createSandboxRoutes(
 						next = {
 							message: outcome.handoff.prompt,
 							role: outcome.handoff.role,
+							...(outcome.handoff.module
+								? { module: outcome.handoff.module }
+								: {}),
 						};
 					}
 				}
@@ -555,6 +778,8 @@ export function createSandboxRoutes(
 					handoff: role.handoff,
 				})),
 				sessions: await listSessions(runtime.workspaceRoot),
+				/* What a session may still add to itself. */
+				workspaceModules: await listWorkspaceModules(runtime.workspaceRoot),
 				running: [...running.keys()],
 			});
 		},
@@ -575,6 +800,7 @@ export function createSandboxRoutes(
 				const value = await body(context.request);
 				const token = optionalText(value, 'platformToken', 4_096);
 				const byokCredential = optionalText(value, 'byokCredential', 16_384);
+				const githubToken = optionalText(value, 'githubToken', 16_384);
 				const configuration = runtime.configuration();
 				if (value.disconnect === true) {
 					return json({
@@ -595,6 +821,116 @@ export function createSandboxRoutes(
 						'PLATFORM_TOKEN_REQUIRED',
 						'Changing the application address needs the API token for that application.',
 					);
+				}
+				const githubPatchRequested = [
+					'githubEnabled',
+					'githubOverridesProject',
+					'githubRemote',
+					'githubRepository',
+					'githubBaseBranch',
+					'githubBranchPrefix',
+					'githubMode',
+					'githubForkOwner',
+					'githubReviewers',
+				].some((key) => value[key] !== undefined);
+				if (
+					value.githubOverridesProject !== undefined &&
+					typeof value.githubOverridesProject !== 'boolean'
+				) {
+					throw new SandboxSetupError(
+						'GITHUB_CONFIG_INVALID',
+						'The GitHub project override flag must be a boolean.',
+					);
+				}
+				if (
+					value.githubEnabled !== undefined &&
+					typeof value.githubEnabled !== 'boolean'
+				) {
+					throw new SandboxSetupError(
+						'GITHUB_CONFIG_INVALID',
+						'The GitHub enabled flag must be a boolean.',
+					);
+				}
+				let github = configuration.github;
+				if (githubPatchRequested) {
+					const reviewersValue = value.githubReviewers;
+					if (
+						reviewersValue !== undefined &&
+						(!Array.isArray(reviewersValue) ||
+							reviewersValue.length > 20 ||
+							reviewersValue.some((entry) => typeof entry !== 'string'))
+					) {
+						throw new SandboxSetupError(
+							'GITHUB_CONFIG_INVALID',
+							'The GitHub reviewers must be a list of account names.',
+						);
+					}
+					github = {
+						...github,
+						...(typeof value.githubOverridesProject === 'boolean'
+							? { overridesProject: value.githubOverridesProject }
+							: { overridesProject: true }),
+						...(typeof value.githubEnabled === 'boolean'
+							? { enabled: value.githubEnabled }
+							: {}),
+						...(value.githubRemote === undefined
+							? {}
+							: {
+									remote: assertGitName(
+										text(value, 'githubRemote', 120),
+										'remote',
+									),
+								}),
+						...(value.githubRepository === undefined
+							? {}
+							: {
+									repository: assertGitHubRepository(
+										optionalText(value, 'githubRepository', 160),
+									),
+								}),
+						...(value.githubBaseBranch === undefined
+							? {}
+							: {
+									baseBranch: assertGitName(
+										text(value, 'githubBaseBranch', 120),
+										'baseBranch',
+									),
+								}),
+						...(value.githubBranchPrefix === undefined
+							? {}
+							: {
+									branchPrefix: assertGitName(
+										text(value, 'githubBranchPrefix', 120),
+										'branchPrefix',
+									),
+								}),
+						...(value.githubMode === undefined
+							? {}
+							: {
+									mode: assertGitHubDeliveryMode(text(value, 'githubMode', 20)),
+								}),
+						...(value.githubForkOwner === undefined
+							? {}
+							: {
+									forkOwner: assertGitHubAccount(
+										optionalText(value, 'githubForkOwner', 80),
+									),
+								}),
+						...(reviewersValue === undefined
+							? {}
+							: {
+									reviewers: (reviewersValue as string[]).map((entry) => {
+										if (entry.trim() === '') {
+											throw new SandboxSetupError(
+												'GITHUB_CONFIG_INVALID',
+												'The GitHub reviewers must be account names.',
+											);
+										}
+										const reviewer = assertGitHubAccount(entry.trim());
+										return reviewer as string;
+									}),
+								}),
+					};
 				}
 				const connection = await runtime.update({
 					...(platformUrl === null ? {} : { platformUrl }),
@@ -629,6 +965,17 @@ export function createSandboxRoutes(
 										: (configuration.byok?.credential ?? null),
 								},
 							}),
+					...(githubPatchRequested ? { github } : {}),
+					...(githubToken
+						? {
+								gitProviderToken: await sealSecret(
+									runtime.workspaceRoot,
+									githubToken,
+								),
+							}
+						: value.githubClearToken === true
+							? { gitProviderToken: null }
+							: {}),
 				});
 				return json({
 					configuration: safeConfiguration(runtime.configuration()),
@@ -774,6 +1121,157 @@ export function createSandboxRoutes(
 		},
 	});
 
+	/* A session grows: an existing module of this workspace is materialized into
+	   the session, with its pristine base, and joins the modules the turns,
+	   gates, preview and delivery already iterate. The primary module never
+	   changes, so nothing that keyed on it moves. */
+	const addSandboxModule = new ServerRoute({
+		path: '/sandbox/api/sessions/:id/modules',
+		methods: ['POST'],
+		handler: async (context) => {
+			try {
+				authorize(runtime, context, options, { mutation: true });
+				const sessionId = sessionIdParam(context);
+				const value = await body(context.request);
+				const moduleId = text(value, 'moduleId', 120);
+				const session = await readSession(runtime.workspaceRoot, sessionId);
+				assertNotArchived(session);
+				if (running.has(sessionId)) {
+					throw new SandboxSetupError(
+						'SESSION_RUNNING',
+						'A turn is still running in this session. Wait for it or stop it before adding a module.',
+					);
+				}
+				if (session.ejectedAt !== null) {
+					throw new SandboxSetupError(
+						'SESSION_DELIVERED',
+						'This session was already delivered. Start a new session to work on another module.',
+					);
+				}
+				const known = (await listWorkspaceModules(runtime.workspaceRoot)).find(
+					(module) => module.id === moduleId,
+				);
+				if (!known) {
+					throw new SandboxSetupError(
+						'MODULE_NOT_FOUND',
+						`No module ${moduleId} exists in this workspace.`,
+					);
+				}
+				const updated = await addSessionModule(runtime.workspaceRoot, session, {
+					id: known.id,
+					directory: known.directory,
+					kind: 'edit',
+				});
+				const install = await installSessionDependencies(
+					runtime.workspaceRoot,
+					updated,
+				);
+				await appendChatEntry(runtime.workspaceRoot, updated, {
+					kind: 'system',
+					role: updated.role,
+					module: known.directory,
+					text: `Added ${known.id} (modules/${known.directory}) to this session. Its working copy and its pristine base are in the session workspace.${
+						install.ran && !install.ok
+							? `\n\nThe session workspace could not install the declared dependencies:\n${install.output}`
+							: ''
+					}`,
+				});
+				forgetDiffs(sessionId);
+				preview.forget(sessionId);
+				return json(
+					await sessionView(
+						runtime,
+						await readSession(runtime.workspaceRoot, sessionId),
+						false,
+					),
+					201,
+				);
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
+	/* Attachments are copied into the session workspace at upload time, so the
+	   coding agent, which may only read inside the workspace, opens them by name
+	   from reference/attachments/. The bytes never leave this origin. */
+	const addSandboxAttachment = new ServerRoute({
+		path: '/sandbox/api/sessions/:id/attachments',
+		methods: ['POST'],
+		handler: async (context) => {
+			try {
+				authorize(runtime, context, options, { mutation: true });
+				const sessionId = sessionIdParam(context);
+				const session = await readSession(runtime.workspaceRoot, sessionId);
+				assertNotArchived(session);
+				const value = await body(
+					context.request,
+					Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4 + 2_048,
+				);
+				const attachment = await addAttachment(runtime.workspaceRoot, session, {
+					name: text(value, 'name', 256),
+					bytes: base64Field(value, 'contentBase64', MAX_ATTACHMENT_BYTES),
+				});
+				return json({ attachment }, 201);
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
+	const removeSandboxAttachment = new ServerRoute({
+		path: '/sandbox/api/sessions/:id/attachments/:attachmentId/delete',
+		methods: ['POST'],
+		handler: async (context) => {
+			try {
+				authorize(runtime, context, options, { mutation: true });
+				const session = await readSession(
+					runtime.workspaceRoot,
+					sessionIdParam(context),
+				);
+				await removeAttachment(
+					runtime.workspaceRoot,
+					session,
+					attachmentIdParam(context),
+				);
+				return json({ deleted: true });
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
+	/* Serves the bytes for the composer thumbnail. A read, so it needs no
+	   mutation header; the same-origin cookie or loopback host still gates it. */
+	const serveSandboxAttachment = new ServerRoute({
+		path: '/sandbox/api/sessions/:id/attachments/:attachmentId',
+		methods: ['GET'],
+		handler: async (context) => {
+			try {
+				authorize(runtime, context, options);
+				const session = await readSession(
+					runtime.workspaceRoot,
+					sessionIdParam(context),
+				);
+				const attachment = await readAttachment(
+					runtime.workspaceRoot,
+					session,
+					attachmentIdParam(context),
+				);
+				return new Response(new Uint8Array(attachment.bytes), {
+					headers: {
+						'content-type': attachment.contentType,
+						'content-disposition': `inline; filename="${attachment.name}"`,
+						'cache-control': 'private, no-store',
+						'x-content-type-options': 'nosniff',
+					},
+				});
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
 	/* Lifecycle actions refuse a running session unless the caller says stop:
 	   a turn that is still writing must not lose its workspace under it. */
 	const stopIfRequested = async (
@@ -840,6 +1338,58 @@ export function createSandboxRoutes(
 		},
 	});
 
+	/* Rolls the session's workspace back to a captured checkpoint. The path is
+	   distinct from /restore, which un-archives a session; this one replaces the
+	   draft files with an earlier snapshot and keeps the transcript. A delivered
+	   session refuses: its module already landed, so a new session should carry
+	   any further change. */
+	const restoreSandboxCheckpoint = new ServerRoute({
+		path: '/sandbox/api/sessions/:id/checkpoints/restore',
+		methods: ['POST'],
+		handler: async (context) => {
+			try {
+				authorize(runtime, context, options, { mutation: true });
+				const sessionId = sessionIdParam(context);
+				const value = await body(context.request);
+				const sequence = value.sequence;
+				if (
+					typeof sequence !== 'number' ||
+					!Number.isInteger(sequence) ||
+					sequence < 0
+				) {
+					throw new SandboxSetupError(
+						'INVALID_INPUT',
+						'sequence must be a non-negative integer.',
+					);
+				}
+				const session = await readSession(runtime.workspaceRoot, sessionId);
+				assertNotArchived(session);
+				if (running.has(sessionId)) {
+					throw new SandboxSetupError(
+						'SESSION_RUNNING',
+						'A turn is still running in this session. Stop it before restoring a checkpoint.',
+					);
+				}
+				if (session.ejectedAt !== null) {
+					throw new SandboxSetupError(
+						'SESSION_DELIVERED',
+						'This session was already delivered. Start a new session to change the module again.',
+					);
+				}
+				const restored = await restoreCheckpoint(
+					runtime.workspaceRoot,
+					sessionId,
+					sequence,
+				);
+				preview.forget(sessionId);
+				await notifyPlatform(restored, restored.state);
+				return json(await sessionView(runtime, restored, false));
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
 	const removeSandboxSession = new ServerRoute({
 		path: '/sandbox/api/sessions/:id/delete',
 		methods: ['POST'],
@@ -879,6 +1429,9 @@ export function createSandboxRoutes(
 					message: text(value, 'message', 20_000),
 					...(optionalText(value, 'role', 64)
 						? { role: text(value, 'role', 64) }
+						: {}),
+					...(optionalText(value, 'module', 64)
+						? { module: text(value, 'module', 64) }
 						: {}),
 					...(optionalText(value, 'driver', 64)
 						? { driver: text(value, 'driver', 64) }
@@ -944,7 +1497,8 @@ export function createSandboxRoutes(
 	});
 
 	/* Approving a specification is the operator's decision, so the sandbox makes
-	   it: the status line moves to approved and the implementer can start. */
+	   it: the status line moves to approved, the approved text is recorded on
+	   the module, and its implementer can start. One module at a time. */
 	const approve = new ServerRoute({
 		path: '/sandbox/api/sessions/:id/approve',
 		methods: ['POST'],
@@ -956,11 +1510,176 @@ export function createSandboxRoutes(
 					sessionIdParam(context),
 				);
 				assertNotArchived(session);
+				assertNotDelivered(session);
+				const value = await body(context.request);
+				const module = findSessionModule(
+					session,
+					optionalText(value, 'module', 120),
+				);
 				const approved = await approveSpecification(
 					runtime.workspaceRoot,
 					session,
+					module,
 				);
-				return json({ session: approved.session, status: approved.status });
+				await appendChatEntry(runtime.workspaceRoot, approved.session, {
+					kind: 'system',
+					role: session.role,
+					module: module.directory,
+					text: `You approved the specification of ${module.id}. Implementation of modules/${module.directory} is unblocked until the specification changes again.`,
+				});
+				return json({
+					session: approved.session,
+					status: approved.status,
+					module: approved.module,
+				});
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
+	/* The second answer to a review: the operator says in words what the
+	   specification should say instead. The comment is the business manager's
+	   next turn, and the transcript records who asked for what. */
+	const requestSpecChanges = new ServerRoute({
+		path: '/sandbox/api/sessions/:id/spec/changes',
+		methods: ['POST'],
+		handler: async (context) => {
+			try {
+				authorize(runtime, context, options, { mutation: true });
+				const session = await readSession(
+					runtime.workspaceRoot,
+					sessionIdParam(context),
+				);
+				assertNotArchived(session);
+				assertNotDelivered(session);
+				const value = await body(context.request);
+				const module = findSessionModule(
+					session,
+					optionalText(value, 'module', 120),
+				);
+				const comment = text(value, 'comment', MAX_SPEC_COMMENT);
+				const handoff = {
+					kind: 'continue' as const,
+					role: SPEC_OWNER_ROLE,
+					roleName:
+						runtime.roles().find((role) => role.id === SPEC_OWNER_ROLE)?.name ??
+						SPEC_OWNER_ROLE,
+					reason: `You asked for changes to the specification of ${module.id}.`,
+					prompt: [
+						`The operator reviewed ${module.id} and asked for this change to the specification:`,
+						comment,
+						'Change spec/module.yaml to match, and nothing else. Leave status as it is: the operator approves. End with your handoff line.',
+					].join('\n\n'),
+					module: module.directory,
+				};
+				/* A review comment withdraws the prior decision immediately. The
+				   business manager can then revise the same document, but no stale
+				   approval can slip through an eject while that happens. */
+				const awaitingRevision = await updateSession(
+					runtime.workspaceRoot,
+					session.id,
+					{
+						modules: session.modules.map((entry) =>
+							entry.directory === module.directory
+								? {
+										id: entry.id,
+										directory: entry.directory,
+										kind: entry.kind,
+									}
+								: entry,
+						),
+						state: 'planned',
+					},
+				);
+				await appendChatEntry(runtime.workspaceRoot, awaitingRevision, {
+					kind: 'user',
+					role: SPEC_OWNER_ROLE,
+					module: module.directory,
+					text: `Requested changes to the specification of ${module.id}: ${comment}`,
+					handoff,
+				});
+				return json({
+					session: await readSession(runtime.workspaceRoot, session.id),
+					handoff,
+				});
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
+	/* The third answer: the operator edits the document. Reading it needs no
+	   mutation header; writing replaces the draft and says so in the transcript,
+	   which also re-opens the approval gate because the text changed. */
+	const readSpecDocument = new ServerRoute({
+		path: '/sandbox/api/sessions/:id/spec',
+		methods: ['GET'],
+		handler: async (context) => {
+			try {
+				authorize(runtime, context, options);
+				const session = await readSession(
+					runtime.workspaceRoot,
+					sessionIdParam(context),
+				);
+				const module = findSessionModule(
+					session,
+					context.url.searchParams.get('module'),
+				);
+				return json({
+					module: module.directory,
+					moduleId: module.id,
+					path: `modules/${module.directory}/spec/module.yaml`,
+					text: await readSpecFile(runtime.workspaceRoot, session, module),
+				});
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
+	const writeSpecDocument = new ServerRoute({
+		path: '/sandbox/api/sessions/:id/spec',
+		methods: ['POST'],
+		handler: async (context) => {
+			try {
+				authorize(runtime, context, options, { mutation: true });
+				const sessionId = sessionIdParam(context);
+				const session = await readSession(runtime.workspaceRoot, sessionId);
+				assertNotArchived(session);
+				assertNotDelivered(session);
+				if (running.has(sessionId)) {
+					throw new SandboxSetupError(
+						'SESSION_RUNNING',
+						'A turn is still running in this session. Wait for it or stop it before editing the specification.',
+					);
+				}
+				const value = await body(context.request, MAX_SPEC_TEXT * 2 + 2_048);
+				const module = findSessionModule(
+					session,
+					optionalText(value, 'module', 120),
+				);
+				const draft = text(value, 'text', MAX_SPEC_TEXT);
+				await writeSpecFile(
+					runtime.workspaceRoot,
+					session,
+					module,
+					`${draft.trimEnd()}\n`,
+				);
+				forgetDiffs(sessionId);
+				await appendChatEntry(runtime.workspaceRoot, session, {
+					kind: 'system',
+					role: session.role,
+					module: module.directory,
+					text: `You edited the specification of ${module.id}. Approve it to let the implementer continue.`,
+				});
+				return json(
+					await sessionView(
+						runtime,
+						await readSession(runtime.workspaceRoot, sessionId),
+						false,
+					),
+				);
 			} catch (error) {
 				return failure(error);
 			}
@@ -1048,17 +1767,45 @@ export function createSandboxRoutes(
 						'A turn is still running in this session. Wait for it or stop it before delivering.',
 					);
 				}
-				const delivery = await readDeliveryConfiguration(runtime.workspaceRoot);
+				const projectDelivery = await readDeliveryConfiguration(
+					runtime.workspaceRoot,
+				);
 				const requestedText = optionalText(value, 'target', 32);
 				const requested =
 					requestedText === null ? null : assertEjectTarget(requestedText);
-				if (requested !== null && !delivery.targets.includes(requested)) {
+				const configuration = runtime.configuration();
+				const githubProviderDisabled =
+					projectDelivery.git.provider === 'github' &&
+					!configuration.github.enabled;
+				if (
+					requested !== null &&
+					(!projectDelivery.targets.includes(requested) ||
+						(requested === 'git-pr' && githubProviderDisabled))
+				) {
 					throw new SandboxSetupError(
 						'EJECT_TARGET_DISABLED',
-						`The ${requested} target is not enabled in coreloom.json sandbox.delivery.targets.`,
+						requested === 'git-pr' && githubProviderDisabled
+							? 'GitHub pull request delivery is disabled in the sandbox configuration.'
+							: `The ${requested} target is not enabled in coreloom.json sandbox.delivery.targets.`,
 					);
 				}
-				const configuration = runtime.configuration();
+				const delivery =
+					configuration.github.enabled && configuration.github.overridesProject
+						? {
+								...projectDelivery,
+								git: {
+									...projectDelivery.git,
+									remote: configuration.github.remote,
+									repository: configuration.github.repository,
+									baseBranch: configuration.github.baseBranch,
+									branchPrefix: configuration.github.branchPrefix,
+									provider: projectDelivery.git.provider,
+									mode: configuration.github.mode,
+									forkOwner: configuration.github.forkOwner,
+									reviewers: configuration.github.reviewers,
+								},
+							}
+						: projectDelivery;
 				const deliveryContext: DeliveryContext = {
 					workspaceRoot: runtime.workspaceRoot,
 					session,
@@ -1067,6 +1814,8 @@ export function createSandboxRoutes(
 					build: value.build === true,
 					delivery,
 					gitProviderToken: () =>
+						configuration.github.enabled &&
+						delivery.git.provider === 'github' &&
 						configuration.gitProviderToken
 							? openSecret(
 									runtime.workspaceRoot,
@@ -1079,7 +1828,13 @@ export function createSandboxRoutes(
 				const availableTargets = await Promise.all(
 					delivery.targets.map(async (id) => ({
 						id,
-						...(await resolveDeliveryTarget(id).available(deliveryContext)),
+						...(id === 'git-pr' && githubProviderDisabled
+							? {
+									available: false,
+									reason:
+										'GitHub pull request delivery is disabled in the sandbox configuration.',
+								}
+							: await resolveDeliveryTarget(id).available(deliveryContext)),
 					})),
 				);
 				/* The configured default may be unusable here (no commits yet, no
@@ -1176,6 +1931,7 @@ export function createSandboxRoutes(
 							send('done', {
 								target: plan.target,
 								moduleId: outcome.moduleId,
+								modules: plan.modules.map((module) => module.id),
 								targetPath: outcome.targetPath,
 								files: outcome.files,
 								removed: outcome.removed,
@@ -1258,6 +2014,15 @@ export function createSandboxRoutes(
 		handler: async (context) => {
 			try {
 				authorize(runtime, context, options);
+				/* A draft module's own fetch carries no sandbox header, so the
+				   preview mutation boundary is the browser origin checked here.
+				   The worker hop below runs on its own loopback origin. */
+				if (
+					context.request.method !== 'GET' &&
+					context.request.method !== 'HEAD'
+				) {
+					assertBrowserOrigin(context.request);
+				}
 			} catch (error) {
 				return failure(error);
 			}
@@ -1272,18 +2037,14 @@ export function createSandboxRoutes(
 					composition = null;
 				}
 			}
-			const match = composition?.router.match(
-				context.request.method,
-				context.url.pathname,
-			);
-			if (composition && match && match.route.type === 'server') {
-				context.params = match.params;
-				/* The session's authentication middleware resolves the preview
-				   cookie into a principal, exactly as the platform does, so the
-				   draft module's own identity and permission checks run for real. */
-				return composition.auth.middleware(context, async () =>
-					(match.route as ServerRoute).handler(context),
-				);
+			if (composition) {
+				/* Draft routes and their authentication runtime execute in a bounded
+				   loopback worker. A worker miss deliberately falls through to the
+				   read-only bridge, never to an import in this server process. */
+				const response = await composition.request(context.request);
+				if (response.headers.get('x-coreloom-preview-unmatched') !== '1') {
+					return response;
+				}
 			}
 			return bridgeRequest(context);
 		},
@@ -1354,14 +2115,22 @@ export function createSandboxRoutes(
 		connect,
 		createSandboxSession,
 		readSandboxSession,
+		addSandboxModule,
+		addSandboxAttachment,
+		removeSandboxAttachment,
+		serveSandboxAttachment,
 		archiveSandboxSession,
 		restoreSandboxSession,
+		restoreSandboxCheckpoint,
 		removeSandboxSession,
 		turn,
 		followTurn,
 		stop,
 		settings,
 		approve,
+		requestSpecChanges,
+		readSpecDocument,
+		writeSpecDocument,
 		gates,
 		format,
 		eject,

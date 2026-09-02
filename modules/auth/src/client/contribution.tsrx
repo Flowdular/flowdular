@@ -1,8 +1,10 @@
-import type { ModuleClientContribution } from '@coreloom/client';
+import { t, type ModuleClientContribution } from '@coreloom/client';
 import { AUTH_SCOPES, PLATFORM_SCOPES } from '../acl/scopes.ts';
 import { AuditView } from './audit/AuditView.tsrx';
 import { SettingsView } from './settings/SettingsView.tsrx';
+import { SecurityView } from './security/SecurityView.tsrx';
 import { ApiTokensView } from './tokens/ApiTokensView.tsrx';
+import { AUTH_TRANSLATIONS } from './translations.ts';
 
 export interface AuthClientContributionOptions {
 	readonly csrfToken: string;
@@ -15,14 +17,34 @@ export function createAuthClientContribution(
 	const scopes = options.scopes ?? [];
 	return {
 		moduleId: 'auth.core',
+		translations: AUTH_TRANSLATIONS,
+		accountMenu: [
+			{
+				id: 'auth.account-menu.security',
+				viewId: 'account-security',
+				get label() {
+					return t('auth.security.navigation.label');
+				},
+				get description() {
+					return t('auth.security.navigation.description');
+				},
+				glyph: 'shield',
+				scope: AUTH_SCOPES.sessionManage,
+				order: 20,
+			},
+		],
 		navigation: [
 			{
 				id: 'auth.navigation.api-tokens',
 				viewId: 'api-tokens',
 				group: 'Administration',
-				label: 'API tokens',
+				get label() {
+					return t('auth.navigation.tokens');
+				},
 				glyph: 'key',
-				description: 'Machine credentials',
+				get description() {
+					return t('auth.navigation.tokensDescription');
+				},
 				scope: AUTH_SCOPES.tokensRead,
 				order: 30,
 			},
@@ -30,9 +52,13 @@ export function createAuthClientContribution(
 				id: 'auth.navigation.audit',
 				viewId: 'audit',
 				group: 'Administration',
-				label: 'Audit',
+				get label() {
+					return t('auth.navigation.audit');
+				},
 				glyph: 'activity',
-				description: 'Sign-ins and changes',
+				get description() {
+					return t('auth.navigation.auditDescription');
+				},
 				scope: AUTH_SCOPES.auditRead,
 				order: 40,
 			},
@@ -40,19 +66,27 @@ export function createAuthClientContribution(
 				id: 'auth.navigation.settings',
 				viewId: 'settings',
 				group: 'Administration',
-				label: 'Settings',
+				get label() {
+					return t('auth.navigation.settings');
+				},
 				glyph: 'settings',
-				description: 'Workspace identity and defaults',
+				get description() {
+					return t('auth.navigation.settingsDescription');
+				},
 				scope: PLATFORM_SCOPES.settingsRead,
 				order: 50,
 			},
 		],
 		views: [
 			{
+				id: 'account-security',
+				render: () => <SecurityView csrfToken={options.csrfToken} />,
+			},
+			{
 				id: 'api-tokens',
 				render: () => <ApiTokensView csrfToken={options.csrfToken} />,
 			},
-			{ id: 'audit', render: () => <AuditView /> },
+			{ id: 'audit', render: () => <AuditView scopes={scopes} /> },
 			{
 				id: 'settings',
 				render: () =>

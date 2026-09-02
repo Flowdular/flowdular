@@ -1,7 +1,22 @@
-import type { Profile, UpdateProfileInput } from '../domain/types.ts';
+import type {
+	Profile,
+	ProfileLanguagePreference,
+	UpdateProfileInput,
+} from '../domain/types.ts';
+import { t } from '@coreloom/client/i18n';
 
 interface ErrorEnvelope {
 	readonly error?: { readonly message?: string };
+}
+
+export class ProfileClientError extends Error {
+	constructor(
+		message: string,
+		readonly status: number,
+	) {
+		super(message);
+		this.name = 'ProfileClientError';
+	}
 }
 
 export interface ChangePasswordInput {
@@ -23,7 +38,10 @@ async function payload<T>(
 		}
 	}
 	if (!response.ok) {
-		throw new Error(value?.error?.message ?? fallbackMessage);
+		throw new ProfileClientError(
+			value?.error?.message ?? fallbackMessage,
+			response.status,
+		);
 	}
 	return (value ?? {}) as T;
 }
@@ -36,7 +54,7 @@ export async function loadOwnProfile(): Promise<Profile | null> {
 	return (
 		await payload<{ readonly profile: Profile | null }>(
 			response,
-			'Could not load your profile.',
+			t('profile.error.load'),
 		)
 	).profile;
 }
@@ -57,9 +75,46 @@ export async function updateOwnProfile(
 	return (
 		await payload<{ readonly profile: Profile }>(
 			response,
-			'Could not update your profile.',
+			t('profile.error.update'),
 		)
 	).profile;
+}
+
+export async function loadOwnLanguagePreference(
+	signal?: AbortSignal,
+): Promise<string | null> {
+	const response = await fetch('/api/profile/language', {
+		headers: { accept: 'application/json' },
+		credentials: 'same-origin',
+		...(signal ? { signal } : {}),
+	});
+	return (
+		await payload<{ readonly locale: string | null }>(
+			response,
+			t('profile.error.languageLoad'),
+		)
+	).locale;
+}
+
+export async function updateOwnLanguagePreference(
+	locale: string,
+	csrfToken: string,
+): Promise<ProfileLanguagePreference> {
+	const response = await fetch('/api/profile/language', {
+		method: 'PUT',
+		headers: {
+			'content-type': 'application/json',
+			'x-csrf-token': csrfToken,
+		},
+		credentials: 'same-origin',
+		body: JSON.stringify({ locale }),
+	});
+	return (
+		await payload<{ readonly preference: ProfileLanguagePreference }>(
+			response,
+			t('profile.error.languageSave'),
+		)
+	).preference;
 }
 
 export async function changeOwnPassword(
@@ -75,5 +130,5 @@ export async function changeOwnPassword(
 		credentials: 'same-origin',
 		body: JSON.stringify(input),
 	});
-	await payload<unknown>(response, 'Could not change your password.');
+	await payload<unknown>(response, t('profile.error.password'));
 }

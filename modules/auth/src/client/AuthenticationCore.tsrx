@@ -1,6 +1,7 @@
 import { useEffect, useMemo, type OctaneNode } from 'octane';
 import { Seo } from '@octanejs/seo';
 import { Alert, BrandMark, Button, FormField, Icon } from '@coreloom/ui';
+import { restorePersistedLocale, useTranslation } from '@coreloom/client';
 import { useValue } from 'segment-state';
 import type { AuthPrincipal } from '../domain/types.ts';
 import {
@@ -14,14 +15,24 @@ import {
 } from './api.ts';
 import { AuthBackdrop } from './AuthBackdrop.tsrx';
 import { PasswordChangeRequired } from './PasswordChangeRequired.tsrx';
+import {
+	ForgotPasswordForm,
+	InvitationAcceptanceForm,
+	MfaChallengeForm,
+	ResetPasswordForm,
+} from './PublicAuthFlows.tsrx';
 import { isValidWorkspaceSlug, slugifyWorkspaceName } from './slug.ts';
 import {
+	authPathForScreen,
 	authScreenFromUrl,
+	canonicalAuthLocation,
 	createAuthClientState,
+	isAuthRouteUrl,
 	type AuthClientState,
 	type AuthScreen,
 	type WorkspaceSlugCheck,
 } from './state.ts';
+import { registerPublicAuthTranslations } from './translations.ts';
 import './auth.css';
 
 export interface AuthenticationCoreProps {
@@ -59,6 +70,7 @@ function providerLabel(provider: string): string {
 }
 
 function AuthenticationForm(props: AuthenticationFormProps) @{
+	const { t } = useTranslation();
 	const [signUpStep] = useValue(props.auth.state.signUpStep);
 	const [workspaceName, setWorkspaceName] = useValue(
 		props.auth.state.workspaceName,
@@ -75,6 +87,8 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 	const [signInProviders] = useValue(props.auth.state.signInProviders);
 	const [emailConfirmation] = useValue(props.auth.state.emailConfirmation);
 	const [confirmationEmail] = useValue(props.auth.state.confirmationEmail);
+	const [passwordMinLength] = useValue(props.auth.state.passwordMinLength);
+	const [flowNotice] = useValue(props.auth.state.flowNotice);
 
 	const setStep = (step: 1 | 2 | 3) => {
 		props.auth.store.act((transaction) => {
@@ -90,7 +104,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 			transaction.set(props.auth.state.error, '');
 			transaction.set(props.auth.state.signUpStep, 1);
 		}, 'auth/screen');
-		history.pushState(null, '', screen === 'sign-up' ? '/sign-up' : '/sign-in');
+		history.pushState(null, '', authPathForScreen(screen));
 	};
 
 	const submitWorkspaceStep = async (event: SubmitEvent) => {
@@ -99,7 +113,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 		if (!isValidWorkspaceSlug(slug)) {
 			setSlugCheck({
 				status: 'unavailable',
-				message: 'Use 3 to 48 lowercase letters, digits, and single hyphens; start and end with a letter or digit.',
+				message: t('auth.signup.slug.invalid'),
 			});
 			return;
 		}
@@ -109,8 +123,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 			if (!availability.valid || !availability.available) {
 				setSlugCheck({
 					status: 'unavailable',
-					message: availability.message ??
-						'This workspace id is already taken. Pick another one.',
+					message: availability.message ?? t('auth.signup.slug.taken'),
 				});
 				return;
 			}
@@ -129,7 +142,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 				status: 'unavailable',
 				message: checkError instanceof Error
 					? checkError.message
-					: 'Availability check failed.',
+					: t('auth.signup.slug.error'),
 			});
 		}
 	};
@@ -157,64 +170,99 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 		slugCheck.status === 'unavailable' ? slugCheck.message : undefined;
 	const slugHelp =
 		slugCheck.status === 'checking'
-			? 'Checking availability…'
+			? t('auth.signup.slug.checking')
 			: slugCheck.status === 'available'
-				? 'This workspace id is available.'
-				: 'Lowercase letters, digits, and single hyphens.';
+				? t('auth.signup.slug.available')
+				: t('auth.signup.slug.help');
+	const seoTitle =
+		props.screen === 'sign-up'
+			? t('auth.signup.seo.title')
+			: props.screen === 'forgot-password'
+				? t('auth.security.passwordReset.requestTitle')
+				: props.screen === 'reset-password'
+					? t('auth.security.passwordReset.completeTitle')
+					: props.screen === 'accept-invitation'
+						? t('auth.security.invitation.title')
+						: props.screen === 'mfa-challenge'
+							? t('auth.security.mfa.challengeTitle')
+							: t('auth.signin.seo.title');
+	const seoDescription =
+		props.screen === 'sign-up'
+			? t('auth.signup.seo.description')
+			: props.screen === 'forgot-password'
+				? t('auth.security.passwordReset.requestDescription')
+				: props.screen === 'reset-password'
+					? t('auth.security.passwordReset.completeDescription')
+					: props.screen === 'accept-invitation'
+						? t('auth.security.invitation.description')
+						: props.screen === 'mfa-challenge'
+							? t('auth.security.mfa.challengeDescription')
+							: t('auth.signin.seo.description');
 
 	<main class="auth-page">
-		<Seo
-			title={props.screen === 'sign-up' ? 'Create workspace' : 'Sign in'}
-			description={props.screen === 'sign-up'
-				? 'Create a Coreloom workspace and its first administrator account.'
-				: 'Sign in to your Coreloom business workspace.'}
-		/>
-		<section class="auth-story" aria-label="Product introduction">
+		<Seo title={seoTitle} description={seoDescription} />
+		<section class="auth-story" aria-label={t('auth.story.label')}>
 			<AuthBackdrop />
 			<span class="auth-story__bg" aria-hidden="true">
 				<BrandMark size={380} signature tone="inverse" />
 			</span>
-			<a
-				class="auth-brand"
-				href="/sign-in"
-				aria-label="Coreloom authentication"
-			>
+			<a class="auth-brand" href="/" aria-label={t('auth.brand.label')}>
 				<BrandMark size={24} signature tone="inverse" />
 				Coreloom
 			</a>
 			<div class="auth-story__copy">
-				<span class="auth-kicker">Agentic foundation framework</span>
-				<h1>Your business platform, built on a ready foundation.</h1>
-				<p>
-					Coreloom ships the core: accounts, workspaces, permissions, modules,
-					and agents. You add the capabilities your business needs, in the
-					sandbox with AI specialists or with skills inside your own tools.
-				</p>
+				<span class="auth-kicker">{t('auth.story.kicker')}</span>
+				<h1>{t('auth.story.title')}</h1>
+				<p>{t('auth.story.description')}</p>
 			</div>
 			<footer>
-				<span>Foundation by Coreloom</span>
-				<span>Built by you</span>
+				<span>{t('auth.story.foundation')}</span>
+				<span>{t('auth.story.builtBy')}</span>
 			</footer>
 		</section>
 		<section class="auth-form-panel">
 			<div class="auth-card">
-				@if (props.screen === 'sign-up') {
+				@if (props.screen === 'forgot-password') {
+					<ForgotPasswordForm
+						auth={props.auth}
+						passwordMinLength={passwordMinLength}
+						onScreen={changeScreen}
+					/>
+				} @else if (props.screen === 'reset-password') {
+					<ResetPasswordForm
+						auth={props.auth}
+						passwordMinLength={passwordMinLength}
+						onScreen={changeScreen}
+					/>
+				} @else if (props.screen === 'accept-invitation') {
+					<InvitationAcceptanceForm
+						auth={props.auth}
+						passwordMinLength={passwordMinLength}
+						onScreen={changeScreen}
+					/>
+				} @else if (props.screen === 'mfa-challenge') {
+					<MfaChallengeForm
+						auth={props.auth}
+						passwordMinLength={passwordMinLength}
+						onScreen={changeScreen}
+					/>
+				} @else if (props.screen === 'sign-up') {
 					<>
 						<header>
-							<span class="auth-kicker">New workspace</span>
+							<span class="auth-kicker">{t('auth.signup.kicker')}</span>
 							<h2>
 								{signUpStep === 1
-									? 'Name your workspace'
+									? t('auth.signup.step.workspace.title')
 									: signUpStep === 2
-										? 'Create the administrator'
-										: 'Confirm your email'}
+										? t('auth.signup.step.administrator.title')
+										: t('auth.signup.step.confirmation.title')}
 							</h2>
 							<p class="auth-card__sub">
 								{signUpStep === 1
-									? 'The workspace id becomes part of your workspace address.'
+									? t('auth.signup.step.workspace.description')
 									: signUpStep === 2
-										? 'The first account owns the workspace and everything built on it.'
-										: 'One more step before you can sign in.'}
+										? t('auth.signup.step.administrator.description')
+										: t('auth.signup.step.confirmation.description')}
 							</p>
 						</header>
 						<ol class="auth-steps">
@@ -227,7 +275,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 								<i aria-hidden="true">
 									{signUpStep > 1 ? '✓' : '01'}
 								</i>
-								Workspace
+								{t('auth.signup.step.workspace.label')}
 							</li>
 							<li
 								class={[
@@ -238,12 +286,12 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 								<i aria-hidden="true">
 									{signUpStep > 2 ? '✓' : '02'}
 								</i>
-								Administrator
+								{t('auth.signup.step.administrator.label')}
 							</li>
 							@if (emailConfirmation) {
 								<li class={[signUpStep === 3 && 'is-active']}>
 									<i aria-hidden="true">03</i>
-									Confirmation
+									{t('auth.signup.step.confirmation.label')}
 								</li>
 							}
 						</ol>
@@ -252,12 +300,12 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 								style="display:grid;gap:14px"
 								onSubmit={submitWorkspaceStep}
 							>
-								<FormField label="Workspace name" required>
+								<FormField label={t('auth.signup.workspace.name')} required>
 									<input
 										class="ui-input"
 										name="organizationName"
 										type="text"
-										autoComplete="organization"
+										autocomplete="organization"
 										value={workspaceName}
 										onInput={(event) => {
 											const name = event.currentTarget.value;
@@ -273,7 +321,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 									/>
 								</FormField>
 								<FormField
-									label="Workspace id"
+									label={t('auth.signup.workspace.id')}
 									required
 									help={slugError === undefined ? slugHelp : undefined}
 									error={slugError}
@@ -285,7 +333,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 										]}
 										name="organizationSlug"
 										type="text"
-										autoComplete="off"
+										autocomplete="off"
 										spellcheck={false}
 										value={workspaceSlug}
 										onInput={(event) => {
@@ -299,8 +347,10 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 									/>
 								</FormField>
 								<p class="auth-slug-preview">
-									{'Workspace address: /'}
-									<b>{workspaceSlug || 'your-workspace'}</b>
+									{t('auth.signup.workspace.address') + ' /app/'}
+									<b>
+										{workspaceSlug || t('auth.signup.workspace.placeholder')}
+									</b>
 								</p>
 								@if (props.error) {
 									<Alert>{props.error}</Alert>
@@ -312,42 +362,44 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 									block
 									disabled={slugCheck.status === 'checking'}
 								>
-									{slugCheck.status === 'checking' ? 'Checking…' : 'Continue'}
+									{slugCheck.status === 'checking'
+										? t('auth.signup.slug.checkingShort')
+										: t('auth.common.continue')}
 								</Button>
 							</form>
 						} @else if (signUpStep === 2) {
 							<form style="display:grid;gap:14px" onSubmit={submit}>
-								<FormField label="Full name" required>
+								<FormField label={t('auth.signup.fullName')} required>
 									<input
 										class="ui-input"
 										name="displayName"
 										type="text"
-										autoComplete="name"
+										autocomplete="name"
 										minlength={2}
 										maxlength={80}
 										required
 									/>
 								</FormField>
-								<FormField label="Email address" required>
+								<FormField label={t('auth.email')} required>
 									<input
 										class="ui-input"
 										name="email"
 										type="email"
-										autoComplete="username"
+										autocomplete="username"
 										maxlength={254}
 										required
 									/>
 								</FormField>
 								<FormField
-									label="Password"
+									label={t('auth.password')}
 									required
-									help="At least 12 characters."
+									help={t('auth.password.minimum', { count: 12 })}
 								>
 									<input
 										class="ui-input"
 										name="password"
 										type="password"
-										autoComplete="new-password"
+										autocomplete="new-password"
 										minlength={12}
 										required
 									/>
@@ -356,14 +408,18 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 									<Alert>{props.error}</Alert>
 								}
 								<div class="auth-wizard-foot">
-									<Button size="lg" onClick={() => setStep(1)}>Back</Button>
+									<Button size="lg" onClick={() => setStep(1)}>{t(
+										'auth.common.back',
+									)}</Button>
 									<Button
 										variant="primary"
 										size="lg"
 										type="submit"
 										disabled={props.pending}
 									>
-										{props.pending ? 'Please wait…' : 'Create workspace'}
+										{props.pending
+											? t('auth.common.wait')
+											: t('auth.signup.create')}
 									</Button>
 								</div>
 							</form>
@@ -373,49 +429,50 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 									<Icon name="check" size={20} />
 								</span>
 								<p>
-									{'We created '}
-									<b>{'/' + workspaceSlug}</b>
-									{'. Confirm your email address using the link sent to '}
+									{t('auth.signup.confirmation.created') + ' '}
+									<b>{'/app/' + workspaceSlug}</b>
+									{'. ' + t('auth.signup.confirmation.sent') + ' '}
 									<b>{confirmationEmail}</b>
-									{', then sign in.'}
+									{t('auth.signup.confirmation.finish')}
 								</p>
-								<Button block onClick={() => changeScreen('sign-in')}>
-									Back to sign in
-								</Button>
+								<Button block onClick={() => changeScreen('sign-in')}>{t(
+									'auth.signup.backToSignIn',
+								)}</Button>
 							</div>
 						}
 					</>
 				} @else {
 					<>
 						<header>
-							<span class="auth-kicker">Welcome back</span>
-							<h2>Sign in to continue</h2>
-							<p class="auth-card__sub">
-								Sign in with your workspace account.
-							</p>
+							<span class="auth-kicker">{t('auth.signin.kicker')}</span>
+							<h2>{t('auth.signin.title')}</h2>
+							<p class="auth-card__sub">{t('auth.signin.description')}</p>
 						</header>
 						<form style="display:grid;gap:14px" onSubmit={submit}>
-							<FormField label="Email address" required>
+							<FormField label={t('auth.email')} required>
 								<input
 									class="ui-input"
 									name="email"
 									type="email"
-									autoComplete="username"
+									autocomplete="username"
 									maxlength={254}
 									required
 								/>
 							</FormField>
-							<FormField label="Password" required>
+							<FormField label={t('auth.password')} required>
 								<input
 									class="ui-input"
 									name="password"
 									type="password"
-									autoComplete="current-password"
+									autocomplete="current-password"
 									required
 								/>
 							</FormField>
 							@if (props.error) {
 								<Alert>{props.error}</Alert>
+							}
+							@if (flowNotice) {
+								<Alert tone="info">{flowNotice}</Alert>
 							}
 							<Button
 								variant="primary"
@@ -424,28 +481,40 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 								block
 								disabled={props.pending}
 							>
-								{props.pending ? 'Please wait…' : 'Sign in'}
+								{props.pending
+									? t('auth.common.wait')
+									: t('auth.signin.submit')}
 							</Button>
 						</form>
+						<button
+							class="auth-text-action"
+							type="button"
+							onClick={() => changeScreen('forgot-password')}
+						>{t('auth.security.passwordReset.forgot')}</button>
 						@if (signInProviders.length > 0) {
 							<div class="auth-providers">
-								<span class="auth-providers__divider">or continue with</span>
+								<span class="auth-providers__divider">{t(
+									'auth.signin.orProvider',
+								)}</span>
 								@for (const provider of signInProviders; key provider) {
 									<a
 										class="ui-btn ui-btn--secondary ui-btn--block"
-										href={'/api/auth/sso/' + provider + '/start'}
+										href={'/api/auth/oidc/' + provider + '/start'}
 									>{providerLabel(provider)}</a>
 								}
 							</div>
 						}
 					</>
 				}
-				@if (props.screen === 'sign-up' || props.allowSignUp) {
+				@if (
+					(props.screen === 'sign-in' || props.screen === 'sign-up') &&
+						(props.screen === 'sign-up' || props.allowSignUp)
+				) {
 					<div class="auth-switch">
 						<span>
 							{props.screen === 'sign-up'
-								? 'Already have an account?'
-								: 'New to Coreloom?'}
+								? t('auth.switch.existing')
+								: t('auth.switch.new')}
 						</span>
 						<button
 							type="button"
@@ -453,7 +522,9 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 								props.screen === 'sign-up' ? 'sign-in' : 'sign-up',
 							)}
 						>
-							{props.screen === 'sign-up' ? 'Sign in' : 'Create a workspace'}
+							{props.screen === 'sign-up'
+								? t('auth.signin.submit')
+								: t('auth.signup.create')}
 						</button>
 					</div>
 				}
@@ -463,6 +534,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 }
 
 export function AuthenticationCore(props: AuthenticationCoreProps) @{
+	registerPublicAuthTranslations();
 	const auth = useMemo(() => createAuthClientState(props.initialScreen), [
 		props.initialScreen,
 	]);
@@ -476,8 +548,26 @@ export function AuthenticationCore(props: AuthenticationCoreProps) @{
 	const [error] = useValue(auth.state.error);
 
 	useEffect(() => {
+		/* The auth root is the first component to run in the browser, so the
+   account's stored language applies to the sign-in screen too. */
+		restorePersistedLocale();
 		void loadAuthConfiguration(auth).then(() => loadSession(auth));
-		const onPopState = () => setScreen(authScreenFromUrl(window.location.href));
+		const synchronizePublicRoute = () => {
+			const location = window.location.href;
+			setScreen(authScreenFromUrl(location));
+			if (isAuthRouteUrl(location)) {
+				const canonical = canonicalAuthLocation(location);
+				if (
+					window.location.pathname + window.location.search +
+						window.location.hash !==
+						canonical
+				) {
+					history.replaceState(null, '', canonical);
+				}
+			}
+		};
+		synchronizePublicRoute();
+		const onPopState = () => synchronizePublicRoute();
 		// Screens that change what the principal carries (the workspace name,
 		// a forced password change) ask for a reload instead of duplicating it.
 		const onRefresh = () => void loadSession(auth);
@@ -488,6 +578,11 @@ export function AuthenticationCore(props: AuthenticationCoreProps) @{
 			window.removeEventListener('coreloom:session-refresh', onRefresh);
 		};
 	}, [auth, setScreen]);
+
+	useEffect(() => {
+		if (status !== 'anonymous' || isAuthRouteUrl(window.location.href)) return;
+		history.replaceState(null, '', authPathForScreen(screen));
+	}, [screen, status]);
 
 	useEffect(() => {
 		if (status === 'checking') return;

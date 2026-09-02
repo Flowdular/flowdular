@@ -5,6 +5,7 @@ import type {
 	CliExtensionContext,
 	CliExtensionResult,
 } from '@coreloom/cli-protocol';
+import { coreloomLocalDataPath } from '@coreloom/kernel/legacy-local-state';
 import { MEMBER_SCOPES, OWNER_SCOPES } from '../acl/scopes.ts';
 import { hashPassword } from '../services/password.ts';
 import {
@@ -12,7 +13,7 @@ import {
 	SqliteAuthRepository,
 } from '../services/sqlite-repository.ts';
 
-const databaseRelativePath = '.octane-erp/auth.db';
+const databaseRelativePath = '.coreloom/data/auth.db';
 
 export const GREENFIELD_ACCOUNTS = Object.freeze({
 	admin: Object.freeze({
@@ -73,20 +74,20 @@ export async function runGreenfield(
 	context: CliExtensionContext,
 ): Promise<CliExtensionResult> {
 	const environment =
-		process.env.OERP_ENV ?? process.env.NODE_ENV ?? 'development';
+		process.env.CL_ENV ?? process.env.NODE_ENV ?? 'development';
 	if (environment !== 'development' && environment !== 'test') {
 		throw new Error('Greenfield is restricted to development and test.');
 	}
-	const databasePath = resolve(context.workspaceRoot, databaseRelativePath);
+	const databasePath = coreloomLocalDataPath(context.workspaceRoot, 'auth.db');
 	ensureInside(context.workspaceRoot, databasePath);
-	if (process.env.OERP_AUTH_DATABASE) {
+	if (process.env.CL_AUTH_DATABASE) {
 		const configured = resolve(
 			context.workspaceRoot,
-			process.env.OERP_AUTH_DATABASE,
+			process.env.CL_AUTH_DATABASE,
 		);
 		if (configured !== databasePath) {
 			throw new Error(
-				'Greenfield only resets .octane-erp/auth.db. Unset OERP_AUTH_DATABASE or reset the custom adapter manually.',
+				'Greenfield only resets .coreloom/data/auth.db. Unset CL_AUTH_DATABASE or reset the custom adapter manually.',
 			);
 		}
 	}

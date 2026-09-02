@@ -12,7 +12,11 @@ export {
 	boundToolOutput,
 	DEFAULT_TOOL_TIMEOUT_MS,
 	MAX_TOOL_OUTPUT_CHARACTERS,
+	toolTimeoutMs,
+	validateJsonValue,
+	validateStructuredOutput,
 	validateToolInput,
+	validateToolOutput,
 } from './tool-contract.ts';
 export { systemPreamble, withSystemPreamble } from './preamble.ts';
 export type {
@@ -23,10 +27,14 @@ export type {
 	AgentProvider,
 	AgentProviderContext,
 	AgentProviderResult,
+	AgentOutputContract,
 	AgentRunTrigger,
 	AgentTool,
+	AgentToolAccessAuthorizer,
+	AgentToolAuthorizationRequest,
 	AgentToolContext,
 	AgentUsage,
+	JsonValue,
 } from './runtime.ts';
 export { defineApiAgentTool, defineCliAgentTool } from './tool-adapters.ts';
 export type {

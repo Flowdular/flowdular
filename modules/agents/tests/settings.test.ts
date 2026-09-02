@@ -4,14 +4,18 @@ import {
 	agentSettings,
 	agentsModuleSettingsFromEnvironment,
 } from '../src/settings.ts';
+import translationsEn from '../translations/en.json';
+import translationsPl from '../translations/pl.json';
 
 describe('agents.core module settings', () => {
 	it('declares a valid set of settings', () => {
 		expect(AGENTS_MODULE_SETTINGS.moduleId).toBe('agents.core');
 		expect(Object.keys(AGENTS_MODULE_SETTINGS.settings).sort()).toEqual([
+			'agentMonthlyCostCapUsd',
 			'defaultMaxOutputTokens',
 			'defaultModel',
 			'defaultProvider',
+			'monthlyCostCapUsd',
 			'providerHostAllowlist',
 			'providerReadinessTtlMs',
 			'workerConcurrency',
@@ -20,13 +24,20 @@ describe('agents.core module settings', () => {
 		for (const definition of Object.values(AGENTS_MODULE_SETTINGS.settings)) {
 			expect(definition.label).toBeTruthy();
 			expect(definition.description).toBeTruthy();
+			expect(definition.labelKey).toMatch(/^agents\./);
+			expect(definition.descriptionKey).toMatch(/^agents\./);
+			for (const key of [definition.labelKey, definition.descriptionKey]) {
+				const localKey = key!.slice('agents.'.length);
+				expect(localKey in translationsEn).toBe(true);
+				expect(localKey in translationsPl).toBe(true);
+			}
 		}
 	});
 
 	it('takes deployment defaults from the environment', () => {
 		const declaration = agentsModuleSettingsFromEnvironment({
-			OERP_AGENT_WORKER_CONCURRENCY: '4',
-			OERP_AGENT_PROVIDER_HOST_ALLOWLIST: 'models.example.com',
+			CL_AGENT_WORKER_CONCURRENCY: '4',
+			CL_AGENT_PROVIDER_HOST_ALLOWLIST: 'models.example.com',
 		});
 		expect(declaration.settings.workerConcurrency?.defaultValue).toBe(4);
 		expect(declaration.settings.providerHostAllowlist?.defaultValue).toBe(
@@ -40,8 +51,8 @@ describe('agents.core module settings', () => {
 	it('falls back to the environment without a settings runtime', () => {
 		const reader = agentSettings({
 			environment: {
-				OERP_AGENT_WORKER_CONCURRENCY: '3',
-				OERP_AGENT_PROVIDER_HOST_ALLOWLIST: 'a.example.com, B.example.com',
+				CL_AGENT_WORKER_CONCURRENCY: '3',
+				CL_AGENT_PROVIDER_HOST_ALLOWLIST: 'a.example.com, B.example.com',
 			},
 		});
 		expect(reader.workerConcurrency()).toBe(3);
@@ -61,7 +72,7 @@ describe('agents.core module settings', () => {
 			defaultMaxOutputTokens: 'not-a-number',
 		};
 		const reader = agentSettings({
-			environment: { OERP_AGENT_WORKER_CONCURRENCY: '3' },
+			environment: { CL_AGENT_WORKER_CONCURRENCY: '3' },
 			settings: {
 				get: (tenantId: string, moduleId: string, key: string) => {
 					if (key === 'defaultModel') throw new Error('store offline');

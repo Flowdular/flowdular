@@ -1,0 +1,87 @@
+schemaVersion: 1
+id: automations.core
+specVersion: 0.2.0
+status: approved
+name: Automations Core
+description: Runs agents without a person present, on a schedule or from a signed webhook, as a module a workspace can leave uninstalled.
+profile: full
+capabilities:
+  - api
+  - database
+  - client
+  - translations
+dependencies:
+  - id: system.core
+    range: ^0.1.0
+  - id: auth.core
+    range: ^0.1.0
+  - id: agents.core
+    range: ^0.5.0
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - Automations never reads or writes another module's database; it reaches agents.core only through the agents.run-queue platform capability.
+  - A workspace with automations.core disabled keeps every agent capability, including manual runs, usage accounting, and budget caps.
+  - A schedule fires at most once per slot, and a slot missed while the platform was down is skipped, never replayed.
+  - A webhook request is accepted only with a fresh, valid signature; every refusal returns one identical response and the reason goes to the audit trail alone.
+  - The trigger secret is stored encrypted with the key held outside the database, and is returned in full only at creation and rotation.
+  - A schedule or trigger whose agent no longer exists disables itself and records why, because a cross-module reference cannot be a foreign key.
+  - Automation events are appended to a hash-chained audit trail that verifies independently of the agents trail.
+  - The scheduler poll interval is an automations.core platform setting with a bounded deployment default, so installing the module does not add an undeclared clock policy to agents.core.
+  - A schedule stores its raw input template; only the queued run snapshot receives a single-pass resolved value from scope-filtered variable sources.
+permissions:
+  - id: automations.schedules.read
+    description: Read schedules in the active tenant.
+  - id: automations.schedules.manage
+    description: Create, update, delete, and run schedules in the active tenant.
+  - id: automations.triggers.read
+    description: Read webhook triggers in the active tenant.
+  - id: automations.triggers.manage
+    description: Create, update, rotate, and delete webhook triggers in the active tenant.
+dataOwnership:
+  - automations.core owns schedule definitions, webhook trigger definitions, their encrypted secrets, and its own audit trail.
+  - agents.core keeps runs, run history, token usage, cost accounting, and budget caps, so cost protection survives with automations uninstalled.
+  - Automations stores an agent identifier and never copies agent definitions, skills, or provider credentials.
+acceptanceScenarios:
+  - id: AUTO-SCHEDULE-FIRES
+    given: An enabled schedule on an existing agent is due.
+    when: The worker ticks twice inside the same slot.
+    then: Exactly one run is enqueued through the agents.run-queue capability and the next slot is computed from the fired slot.
+  - id: AUTO-SCHEDULE-MISSED
+    given: An enabled schedule was due several intervals ago because the platform was stopped.
+    when: The worker ticks after the platform starts.
+    then: One run is enqueued and the skipped slots are not replayed.
+  - id: AUTO-WEBHOOK-ACCEPT
+    given: A caller signs the body with the trigger secret and a fresh timestamp.
+    when: The request reaches the public fire endpoint.
+    then: A run is enqueued, the same signed request replayed lands on the run already queued, and no second run is created.
+  - id: AUTO-WEBHOOK-REFUSE
+    given: A request carries a wrong signature, an unknown trigger identifier, or a stale timestamp.
+    when: The request reaches the public fire endpoint.
+    then: All three receive one identical refusal that reveals nothing about which trigger exists, and the reason is recorded in the tenant audit trail only.
+  - id: AUTO-MISSING-AGENT
+    given: A schedule references an agent that was deleted in agents.core.
+    when: The schedule becomes due.
+    then: No run is enqueued, the schedule is disabled with a recorded reason, and the failure is visible on the schedule.
+  - id: AUTO-DENY
+    given: A principal is unauthenticated or lacks the required automations permission.
+    when: The principal reads or mutates a schedule or a trigger.
+    then: The server denies the operation before repository access.
+  - id: AUTO-OPTIONAL
+    given: A workspace has automations.core disabled.
+    when: A principal uses agents.core.
+    then: Definitions, runs, usage, and budget caps all work, and no automations navigation entry, permission, or route is present.
+  - id: AUTO-AUDIT-CHAIN
+    given: Schedules and triggers were created, updated, and deleted.
+    when: The automations audit trail is verified.
+    then: The chain verifies independently of the agents run trail.
+  - id: AUTO-SETTINGS
+    given: An administrator changes the scheduler poll interval within its declared bounds.
+    when: The automations runtime next starts.
+    then: Its scheduler uses the configured interval without changing the agents worker cadence.
+  - id: AUTO-SCHEDULE-VARIABLES
+    given: A schedule manager can read the variables offered by the schedule editor, including agent.name through the agents.run-queue public capability.
+    when: The manager saves a template containing known variables and the schedule queues a run.
+    then: Unknown or forbidden variables are rejected, the stored schedule keeps the raw template, and the run receives one-pass resolved input from the active tenant only.

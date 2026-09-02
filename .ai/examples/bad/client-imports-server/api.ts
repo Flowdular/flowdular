@@ -2,7 +2,7 @@
 import { SqliteCustomerRepository } from '../services/sqlite-repository.ts';
 import type { Customer } from '../domain/types.ts';
 
-const repository = new SqliteCustomerRepository('.octane-erp/customers.db');
+const repository = new SqliteCustomerRepository('.coreloom/data/customers.db');
 
 export function loadCustomers(tenantId: string): readonly Customer[] {
 	return repository.list(tenantId);

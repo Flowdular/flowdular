@@ -1,6 +1,8 @@
 import { EmptyState, PageHeader } from '@coreloom/ui';
 import type { WidgetContribution } from '../contributions.ts';
+import { t } from '../i18n/runtime.ts';
 import { SlotOutlet, widgetsForSlot } from './ContributionOutlets.tsrx';
+import { OverviewCharts } from './OverviewCharts.tsrx';
 
 export interface DashboardViewProps {
 	widgets: readonly WidgetContribution[];
@@ -16,58 +18,43 @@ export function DashboardView(props: DashboardViewProps) @{
 	const mainWidgets = widgetsForSlot(props.widgets, 'dashboard.main');
 	const asideWidgets = widgetsForSlot(props.widgets, 'dashboard.aside');
 	const firstName =
-		props.displayName.split(/\s+/).filter(Boolean)[0] ?? 'there';
+		props.displayName.split(/\s+/).filter(Boolean)[0] ??
+			t('shell.dashboard.greetingFallback');
 	<div class="ui-view">
 		<PageHeader
 			eyebrow={props.tenantName}
-			title={'Welcome, ' + firstName}
-			description="Your business platform, built on the Coreloom foundation. Every module you enable adds its records, screens, and agents here."
+			title={t('shell.dashboard.greeting', { name: firstName })}
+			description={t('shell.dashboard.description')}
 		/>
 		<SlotOutlet className="module-slot--metrics" widgets={metricWidgets} />
-		<div class="ui-two-col">
-			<section class="ui-card">
-				<div class="ui-card__head">
-					<span class="ui-card__title">
-						Start with the essentials
-						<small>
-							{mainWidgets.length +
-								(mainWidgets.length === 1 ? ' step' : ' steps')}
-						</small>
-					</span>
-				</div>
-				<div class="ui-card__body">
-					@if (mainWidgets.length === 0) {
-						<EmptyState icon="modules" title="No setup steps yet">
-							Enabled modules add their first steps here. Enable a module with
-							the CLI to see its records, or open Administration to manage users
-							and settings.
-						</EmptyState>
-					} @else {
-						<div class="dash-steps">
-							@for (const widget of mainWidgets; key widget.id) {
-								<div data-contribution-id={widget.id}>{widget.render()}</div>
-							}
-						</div>
-					}
-				</div>
-			</section>
-			<aside class="ui-card">
-				<div class="ui-card__head">
-					<span class="ui-card__title">
-						Active organization
-						<small>Scope of everything on this screen</small>
-					</span>
-				</div>
-				<div class="dash-tenant">
-					<strong>{props.tenantName}</strong>
-					<p>All visible data and actions are scoped to this organization.</p>
-					<div class="dash-tenant__row">
-						<span>Modules on this dashboard</span>
-						<b>{String(props.widgets.length)}</b>
+		<OverviewCharts />
+		<section class="ui-card">
+			<div class="ui-card__head">
+				<span class="ui-card__title">
+					{t('shell.dashboard.steps.title')}
+					<small>{t(
+						mainWidgets.length === 1
+							? 'shell.dashboard.steps.count.one'
+							: 'shell.dashboard.steps.count.other',
+						{ count: mainWidgets.length },
+					)}</small>
+				</span>
+			</div>
+			<div class="ui-card__body">
+				@if (mainWidgets.length === 0) {
+					<EmptyState
+						icon="modules"
+						title={t('shell.dashboard.steps.empty.title')}
+					>{t('shell.dashboard.steps.empty.hint')}</EmptyState>
+				} @else {
+					<div class="dash-steps">
+						@for (const widget of mainWidgets; key widget.id) {
+							<div data-contribution-id={widget.id}>{widget.render()}</div>
+						}
 					</div>
-				</div>
-			</aside>
-		</div>
+				}
+			</div>
+		</section>
 		<SlotOutlet className="module-slot--aside" widgets={asideWidgets} />
 	</div>
 }

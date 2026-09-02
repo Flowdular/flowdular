@@ -14,6 +14,7 @@ import {
 	sessionMutationDenial,
 } from '@coreloom/module-auth/server';
 import type { AgentExecutionEvent } from '@coreloom/harness';
+import { userActor } from '@coreloom/kernel';
 import { AGENT_PERMISSIONS } from '../acl/permissions.ts';
 import type {
 	AgentProviderKind,
@@ -27,6 +28,8 @@ import type {
 	UpdateAgentInput,
 	UpdateAgentProviderInput,
 	UpdateAgentSkillInput,
+	UpdateModuleAgentBindingInput,
+	TenantAgentView,
 } from '../domain/types.ts';
 import { AgentServiceError } from '../services/agent-service.ts';
 import { AgentProviderServiceError } from '../services/provider-service.ts';
@@ -298,7 +301,16 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 		handler: ({ octane }) => {
 			const principal = principalFromContext(octane)!;
 			return jsonResponse({
-				agents: runtime.service().listAgents(principal.tenantId),
+				agents: runtime
+					.service()
+					.listAgents(principal.tenantId)
+					.map(
+						(agent): TenantAgentView => ({
+							...agent,
+							ownership: { kind: 'tenant' },
+						}),
+					),
+				moduleAgents: runtime.service().listModuleAgents(principal.tenantId),
 				providers: principal.scopes.includes(AGENT_PERMISSIONS.providersRead)
 					? runtime.service().providers(principal.tenantId)
 					: [],
@@ -307,6 +319,47 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 					? runtime.service().listSkills(principal.tenantId)
 					: [],
 			});
+		},
+	});
+	const updateModuleAgentBinding = defineEndpoint({
+		id: 'agents.module-bindings.update',
+		path: '/api/agents/module-bindings/update',
+		methods: ['POST'],
+		access: {
+			kind: 'permission',
+			permission: AGENT_PERMISSIONS.definitionsManage,
+		},
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			const denial = sessionMutationDenial(octane, auth);
+			if (denial) return denial;
+			try {
+				const value = await readJsonObject(octane.request, 16 * 1_024);
+				const principal = principalFromContext(octane)!;
+				const input: UpdateModuleAgentBindingInput = {
+					agentId: requiredString(value, 'agentId', { max: 128 }),
+					provider: requiredString(value, 'provider', { max: 120 }),
+					model: requiredString(value, 'model', { max: 160 }),
+					enabledTools: stringArray(value, 'enabledTools'),
+					status: requiredString(value, 'status', {
+						max: 16,
+					}) as UpdateModuleAgentBindingInput['status'],
+					expectedRevision: requiredInteger(value, 'expectedRevision', {
+						min: 0,
+					}),
+				};
+				return jsonResponse({
+					agent: runtime
+						.service()
+						.configureModuleAgent(
+							principal.tenantId,
+							principal.accountId,
+							input,
+						),
+				});
+			} catch (error) {
+				return failure(error);
+			}
 		},
 	});
 	const createAgent = defineEndpoint({
@@ -372,6 +425,65 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 							input,
 						),
 				});
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+	const archiveAgent = defineEndpoint({
+		id: 'agents.definitions.archive',
+		path: '/api/agents/archive',
+		methods: ['POST'],
+		access: {
+			kind: 'permission',
+			permission: AGENT_PERMISSIONS.definitionsManage,
+		},
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			const denial = sessionMutationDenial(octane, auth);
+			if (denial) return denial;
+			try {
+				const value = await readJsonObject(octane.request, 8 * 1_024);
+				const principal = principalFromContext(octane)!;
+				return jsonResponse({
+					agent: runtime
+						.service()
+						.archiveAgent(
+							principal.tenantId,
+							requiredString(value, 'id', { max: 128 }),
+							principal.accountId,
+							requiredInteger(value, 'expectedRevision', { min: 1 }),
+						),
+				});
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+	const deleteAgent = defineEndpoint({
+		id: 'agents.definitions.delete',
+		path: '/api/agents/delete',
+		methods: ['POST'],
+		access: {
+			kind: 'permission',
+			permission: AGENT_PERMISSIONS.definitionsManage,
+		},
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			const denial = sessionMutationDenial(octane, auth);
+			if (denial) return denial;
+			try {
+				const value = await readJsonObject(octane.request, 8 * 1_024);
+				const principal = principalFromContext(octane)!;
+				runtime
+					.service()
+					.deleteAgent(
+						principal.tenantId,
+						requiredString(value, 'id', { max: 128 }),
+						principal.accountId,
+						requiredInteger(value, 'expectedRevision', { min: 1 }),
+					);
+				return jsonResponse({ deleted: true });
 			} catch (error) {
 				return failure(error);
 			}
@@ -445,6 +557,65 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 			}
 		},
 	});
+	const archiveSkill = defineEndpoint({
+		id: 'agents.skills.archive',
+		path: '/api/agent-skills/archive',
+		methods: ['POST'],
+		access: {
+			kind: 'permission',
+			permission: AGENT_PERMISSIONS.skillsManage,
+		},
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			const denial = sessionMutationDenial(octane, auth);
+			if (denial) return denial;
+			try {
+				const value = await readJsonObject(octane.request, 8 * 1_024);
+				const principal = principalFromContext(octane)!;
+				return jsonResponse({
+					skill: runtime
+						.service()
+						.archiveSkill(
+							principal.tenantId,
+							requiredString(value, 'id', { max: 128 }),
+							principal.accountId,
+							requiredInteger(value, 'expectedRevision', { min: 1 }),
+						),
+				});
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+	const deleteSkill = defineEndpoint({
+		id: 'agents.skills.delete',
+		path: '/api/agent-skills/delete',
+		methods: ['POST'],
+		access: {
+			kind: 'permission',
+			permission: AGENT_PERMISSIONS.skillsManage,
+		},
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			const denial = sessionMutationDenial(octane, auth);
+			if (denial) return denial;
+			try {
+				const value = await readJsonObject(octane.request, 8 * 1_024);
+				const principal = principalFromContext(octane)!;
+				runtime
+					.service()
+					.deleteSkill(
+						principal.tenantId,
+						requiredString(value, 'id', { max: 128 }),
+						principal.accountId,
+						requiredInteger(value, 'expectedRevision', { min: 1 }),
+					);
+				return jsonResponse({ deleted: true });
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
 	const listRuns = defineEndpoint({
 		id: 'agents.runs.list',
 		path: '/api/agent-runs',
@@ -458,7 +629,7 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 				const runId = url.searchParams.get('id');
 				return runId
 					? jsonResponse({
-							run: runtime.service().getRun(principal.tenantId, runId),
+							run: runtime.service().getRunTimeline(principal.tenantId, runId),
 						})
 					: jsonResponse({
 							runs: runtime.service().listRuns(principal.tenantId),
@@ -481,23 +652,30 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 				const value = await readJsonObject(octane.request, 128 * 1_024);
 				const principal = principalFromContext(octane)!;
 				const idempotencyKey = octane.request.headers.get('idempotency-key');
+				const tenantName =
+					principal.tenants.find(
+						(tenant) => tenant.tenantId === principal.tenantId,
+					)?.name ?? principal.tenantId;
 				/* A browser session can only start playground runs. Workflow,
 				   service, and schedule triggers are enqueued in-process by the
 				   platform, never by a client-supplied field. */
-				const run = await runtime
-					.service()
-					.enqueueRun(
-						principal.tenantId,
-						principal.accountId,
-						principal.scopes,
-						{
-							agentId: requiredString(value, 'agentId', { max: 128 }),
-							trigger: 'playground',
-							input: requiredString(value, 'input', { max: 100_000 }),
-							toolGrants: stringArray(value, 'toolGrants'),
-							...(idempotencyKey ? { idempotencyKey } : {}),
-						},
-					);
+				const run = await runtime.service().enqueueRun(
+					principal.tenantId,
+					userActor(principal),
+					principal.scopes,
+					{
+						agentId: requiredString(value, 'agentId', { max: 128 }),
+						trigger: 'playground',
+						input: requiredString(value, 'input', { max: 100_000 }),
+						toolGrants: stringArray(value, 'toolGrants'),
+						...(idempotencyKey ? { idempotencyKey } : {}),
+					},
+					{
+						tenantName,
+						userDisplayName: principal.displayName,
+						userEmail: principal.email,
+					},
+				);
 				return jsonResponse({ run }, 202);
 			} catch (error) {
 				return failure(error);
@@ -521,7 +699,7 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 						.service()
 						.cancelRun(
 							principal.tenantId,
-							principal.accountId,
+							userActor(principal),
 							principal.scopes,
 							requiredString(value, 'id', { max: 128 }),
 						),
@@ -572,6 +750,46 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 					after,
 					octane.request,
 				);
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+	const listAudit = defineEndpoint({
+		id: 'agents.audit.list',
+		path: '/api/agent-audit',
+		methods: ['GET'],
+		access: { kind: 'permission', permission: AGENT_PERMISSIONS.runsRead },
+		resolveIdentity: endpointIdentityFromContext,
+		handler: ({ octane }) => {
+			try {
+				const principal = principalFromContext(octane)!;
+				const url = new URL(octane.request.url);
+				const limit = Number(url.searchParams.get('limit') ?? '50');
+				return jsonResponse(
+					runtime
+						.service()
+						.pageAuditEvents(
+							principal.tenantId,
+							url.searchParams.get('cursor'),
+							limit,
+						),
+				);
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+	const verifyAudit = defineEndpoint({
+		id: 'agents.audit.verify',
+		path: '/api/agent-audit/verify',
+		methods: ['GET'],
+		access: { kind: 'permission', permission: AGENT_PERMISSIONS.runsRead },
+		resolveIdentity: endpointIdentityFromContext,
+		handler: ({ octane }) => {
+			try {
+				const principal = principalFromContext(octane)!;
+				return jsonResponse(runtime.service().verifyAudit(principal.tenantId));
 			} catch (error) {
 				return failure(error);
 			}
@@ -696,37 +914,104 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 			}
 		},
 	});
+	const deleteProvider = defineEndpoint({
+		id: 'agents.providers.delete',
+		path: '/api/agent-providers/delete',
+		methods: ['POST'],
+		access: {
+			kind: 'permission',
+			permission: AGENT_PERMISSIONS.providersManage,
+		},
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			const denial = sessionMutationDenial(octane, auth);
+			if (denial) return denial;
+			try {
+				const value = await readJsonObject(octane.request, 8 * 1_024);
+				const principal = principalFromContext(octane)!;
+				runtime
+					.providerService()
+					.delete(
+						principal.tenantId,
+						principal.accountId,
+						requiredString(value, 'id', { max: 128 }),
+						requiredInteger(value, 'expectedRevision', { min: 1 }),
+					);
+				return jsonResponse({ deleted: true });
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+	const readUsage = defineEndpoint({
+		id: 'agents.usage.read',
+		path: '/api/agent-usage',
+		methods: ['GET'],
+		access: { kind: 'permission', permission: AGENT_PERMISSIONS.runsRead },
+		resolveIdentity: endpointIdentityFromContext,
+		handler: ({ octane }) => {
+			try {
+				const principal = principalFromContext(octane)!;
+				const url = new URL(octane.request.url);
+				return jsonResponse(
+					runtime
+						.usageService()
+						.summary(principal.tenantId, Number(url.searchParams.get('days'))),
+				);
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
 	return [
 		listAgents.serverRoute,
+		updateModuleAgentBinding.serverRoute,
 		createAgent.serverRoute,
 		updateAgent.serverRoute,
+		archiveAgent.serverRoute,
+		deleteAgent.serverRoute,
 		createSkill.serverRoute,
 		updateSkill.serverRoute,
+		archiveSkill.serverRoute,
+		deleteSkill.serverRoute,
 		listRuns.serverRoute,
 		enqueueRun.serverRoute,
 		cancelRun.serverRoute,
 		workerStatus.serverRoute,
 		streamRun.serverRoute,
+		listAudit.serverRoute,
+		verifyAudit.serverRoute,
 		listProviders.serverRoute,
 		createProvider.serverRoute,
 		updateProvider.serverRoute,
 		testProvider.serverRoute,
+		deleteProvider.serverRoute,
+		readUsage.serverRoute,
 	] as const;
 }
 
 export const endpoints = [
 	'agents.definitions.list',
+	'agents.module-bindings.update',
 	'agents.definitions.create',
 	'agents.definitions.update',
+	'agents.definitions.archive',
+	'agents.definitions.delete',
 	'agents.skills.create',
 	'agents.skills.update',
+	'agents.skills.archive',
+	'agents.skills.delete',
 	'agents.runs.list',
 	'agents.runs.enqueue',
 	'agents.runs.cancel',
 	'agents.runs.worker',
 	'agents.runs.stream',
+	'agents.audit.list',
+	'agents.audit.verify',
 	'agents.providers.list',
 	'agents.providers.create',
 	'agents.providers.update',
 	'agents.providers.test',
+	'agents.providers.delete',
+	'agents.usage.read',
 ] as const;

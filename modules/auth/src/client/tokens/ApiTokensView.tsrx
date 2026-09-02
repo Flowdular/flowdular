@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from 'octane';
+import { activeLocale, t } from '@coreloom/client';
 import {
 	Alert,
 	Button,
@@ -6,6 +7,7 @@ import {
 	Icon,
 	PageHeader,
 	SearchField,
+	TableCard,
 } from '@coreloom/ui';
 import { useValue } from 'segment-state';
 import {
@@ -15,8 +17,8 @@ import {
 	type CreateApiTokenRequest,
 } from './api.ts';
 import { ApiTokenForm } from './ApiTokenForm.tsrx';
-import { ApiTokenList } from './ApiTokenList.tsrx';
 import { ApiTokenSecret } from './ApiTokenSecret.tsrx';
+import { apiTokenColumns } from './token-columns.tsrx';
 import { createApiTokenClientState, tokenState } from './state.ts';
 import '../auth.css';
 
@@ -39,16 +41,19 @@ export function ApiTokensView(props: ApiTokensViewProps) @{
 	const [query, setQuery] = useValue(tokens.state.query);
 	const [formOpen, setFormOpen] = useValue(tokens.state.formOpen);
 	const [formSession, setFormSession] = useValue(tokens.state.formSession);
+	const now = Date.now();
 	const active = records.filter(
-		(record) => tokenState(record, Date.now()) === 'active',
+		(record) => tokenState(record, now) === 'active',
 	);
-	const term = query.trim().toLocaleLowerCase('en-US');
+	const columns = apiTokenColumns(now);
+	const locale = activeLocale();
+	const term = query.trim().toLocaleLowerCase(locale);
 	const visible =
 		term === ''
 			? records
 			: records.filter(
 					(record) =>
-						record.label.toLocaleLowerCase('en-US').includes(term) ||
+						record.label.toLocaleLowerCase(locale).includes(term) ||
 							record.scopes.some((scope) => scope.includes(term)),
 				);
 
@@ -65,7 +70,7 @@ export function ApiTokensView(props: ApiTokensViewProps) @{
 				);
 			}, 'auth/tokens-loaded');
 		} catch (loadError) {
-			setError(message(loadError, 'Could not load API tokens.'));
+			setError(message(loadError, t('auth.tokens.error.load')));
 		} finally {
 			setStatus('idle');
 		}
@@ -95,7 +100,7 @@ export function ApiTokensView(props: ApiTokensViewProps) @{
 			setIssuedLabel(issued.record.label);
 			await refresh();
 		} catch (createError) {
-			setError(message(createError, 'Could not create the API token.'));
+			setError(message(createError, t('auth.tokens.error.create')));
 			setStatus('idle');
 		}
 	};
@@ -107,20 +112,20 @@ export function ApiTokensView(props: ApiTokensViewProps) @{
 			await revokeApiToken(id, props.csrfToken);
 			await refresh();
 		} catch (revokeError) {
-			setError(message(revokeError, 'Could not revoke the API token.'));
+			setError(message(revokeError, t('auth.tokens.error.revoke')));
 			setStatus('idle');
 		}
 	};
 
 	<div class="ui-view">
 		<PageHeader
-			eyebrow="Administration"
-			title="API tokens"
-			description="Machine credentials for clients that hold no browser session, such as a sandbox connected to this deployment."
+			eyebrow={t('auth.common.administration')}
+			title={t('auth.tokens.title')}
+			description={t('auth.tokens.description')}
 		>
 			<Button size="sm" onClick={() => void refresh()}>
 				<Icon name="refresh" size={14} />
-				Refresh
+				{t('auth.common.refresh')}
 			</Button>
 			<Button
 				size="sm"
@@ -129,47 +134,65 @@ export function ApiTokensView(props: ApiTokensViewProps) @{
 				onClick={openForm}
 			>
 				<Icon name="plus" size={14} />
-				New token
+				{t('auth.tokens.new')}
 			</Button>
 		</PageHeader>
 		@if (error) {
 			<Alert>{error}</Alert>
 		}
-		<section class="ui-card">
-			<div class="ui-card__head">
-				<span class="ui-card__title">
-					Tokens
-					<small>
-						{active.length + ' active · ' + records.length + ' issued'}
-					</small>
-				</span>
-				<SearchField
-					value={query}
-					placeholder="Filter by label or scope"
-					label="Filter API tokens"
-					onInput={setQuery}
-				/>
-			</div>
-			<ApiTokenList
-				tokens={visible}
-				filtered={term !== ''}
-				busy={status === 'submitting'}
-				onRevoke={(id) => void revoke(id)}
-			/>
-			<p class="ui-note">
-				<Icon name="shield" size={14} />
-				<span>
-					A token proves machine identity only. Session-guarded mutations reject
-					it regardless of the scopes granted here.
-				</span>
-			</p>
-		</section>
+		<TableCard
+			title={t('auth.tokens.table.title')}
+			count={t('auth.tokens.table.count', {
+				active: active.length,
+				total: records.length,
+			})}
+			search={<SearchField
+				value={query}
+				placeholder={t('auth.tokens.search.placeholder')}
+				label={t('auth.tokens.search.label')}
+				onInput={setQuery}
+			/>}
+			caption={t('auth.tokens.table.caption')}
+			columns={columns}
+			rows={visible}
+			rowKey={(token) => token.id}
+			status={status === 'loading' && records.length === 0 ? 'loading' : 'idle'}
+			loadingLabel={t('auth.tokens.loading')}
+			filtered={term !== ''}
+			empty={{
+				icon: 'key',
+				title: t('auth.tokens.empty.title'),
+				hint: t('auth.tokens.empty.hint'),
+			}}
+			emptyFiltered={{
+				icon: 'key',
+				title: t('auth.tokens.empty.filteredTitle'),
+				hint: t('auth.tokens.empty.filteredHint'),
+			}}
+			actionsLabel={t('auth.common.actions')}
+			actions={(token) => token.revokedAt === null
+				? [
+						{
+							id: 'revoke',
+							label: t('auth.tokens.revoke'),
+							icon: 'x',
+							tone: 'danger',
+							disabled: status === 'submitting',
+							onSelect: () => void revoke(token.id),
+						},
+					]
+				: []}
+			noteIcon="shield"
+			note={t('auth.tokens.note')}
+		/>
 		<Drawer
 			open={formOpen}
-			title={issuedToken ? 'Token created' : 'New API token'}
+			title={issuedToken
+				? t('auth.tokens.drawer.createdTitle')
+				: t('auth.tokens.drawer.newTitle')}
 			subtitle={issuedToken
-				? 'Shown once'
-				: 'Machine credential for this workspace'}
+				? t('auth.tokens.drawer.once')
+				: t('auth.tokens.drawer.subtitle')}
 			width="lg"
 			onClose={closeForm}
 		>

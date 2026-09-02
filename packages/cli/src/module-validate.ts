@@ -1,4 +1,4 @@
-import { access, readFile } from 'node:fs/promises';
+import { access, readFile, readdir } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { failure, success, type CommandEnvelope } from '@coreloom/cli-protocol';
@@ -45,6 +45,21 @@ async function readJson(path: string): Promise<unknown> {
 	return JSON.parse(await readFile(path, 'utf8')) as unknown;
 }
 
+async function clientSourceFiles(
+	moduleRoot: string,
+): Promise<readonly string[]> {
+	const clientRoot = join(moduleRoot, 'src/client');
+	if (!(await exists(clientRoot))) return [];
+	return (
+		await readdir(clientRoot, {
+			recursive: true,
+			withFileTypes: true,
+		})
+	)
+		.filter((entry) => entry.isFile() && /\.(?:ts|tsx|tsrx)$/.test(entry.name))
+		.map((entry) => join(entry.parentPath, entry.name));
+}
+
 async function platformIssues(
 	moduleRoot: string,
 	manifest: PlatformManifest,
@@ -52,13 +67,16 @@ async function platformIssues(
 	const issues: ValidationIssue[] = [];
 	let exports: Record<string, unknown> = {};
 	let packageName: unknown;
+	let packageVersion: unknown;
 	try {
 		const pkg = (await readJson(join(moduleRoot, 'package.json'))) as {
 			name?: unknown;
+			version?: unknown;
 			exports?: Record<string, unknown>;
 		};
 		exports = pkg.exports ?? {};
 		packageName = pkg.name;
+		packageVersion = pkg.version;
 	} catch (error) {
 		issues.push(
 			issue(
@@ -74,6 +92,15 @@ async function platformIssues(
 			issue(
 				'PACKAGE_NAME_MISMATCH',
 				`package.json name "${String(packageName)}" differs from module.json package "${manifest.package}".`,
+				'package.json',
+			),
+		);
+	}
+	if (packageVersion !== manifest.version) {
+		issues.push(
+			issue(
+				'PACKAGE_VERSION_MISMATCH',
+				`package.json version "${String(packageVersion)}" differs from module.json version "${manifest.version}".`,
 				'package.json',
 			),
 		);
@@ -233,6 +260,72 @@ async function translationIssues(
 			),
 		);
 	}
+
+	/* Static translation references are part of the module contract. A missing
+	   key otherwise survives typecheck and paints the raw key in the UI. Dynamic
+	   families such as `status.` are still covered by locale key parity and the
+	   module's presentation tests. */
+	const referenceKeys = new Set(reference[1]);
+	const files = await clientSourceFiles(moduleRoot);
+	if (files.length > 0) {
+		const namespace = manifest.id.split('.')[0] ?? manifest.id;
+		const prefix = namespace + '.';
+		const missing = new Map<string, string>();
+		const pattern = /\bt\s*\(\s*(['"])([a-zA-Z0-9._-]+)\1/g;
+		for (const file of files) {
+			const source = await readFile(file, 'utf8');
+			for (const match of source.matchAll(pattern)) {
+				const fullKey = match[2]!;
+				if (!fullKey.startsWith(prefix) || fullKey.endsWith('.')) continue;
+				const localKey = fullKey.slice(prefix.length);
+				if (!referenceKeys.has(localKey)) {
+					missing.set(fullKey, relative(moduleRoot, file));
+				}
+			}
+		}
+		for (const [key, path] of [...missing].sort(([left], [right]) =>
+			left.localeCompare(right),
+		)) {
+			issues.push(
+				issue(
+					'TRANSLATION_KEY_MISSING',
+					`Translation key "${key}" is used by the client but absent from translations/${reference[0]}.json.`,
+					path,
+				),
+			);
+		}
+	}
+	return issues;
+}
+
+async function userInterfaceIssues(
+	moduleRoot: string,
+): Promise<ValidationIssue[]> {
+	const issues: ValidationIssue[] = [];
+	for (const file of await clientSourceFiles(moduleRoot)) {
+		const source = await readFile(file, 'utf8');
+		const path = relative(moduleRoot, file);
+		/* Native DOM elements are lowercase. The shared Coreloom primitive is
+		   intentionally named <Table>, so this check must stay case-sensitive. */
+		if (/<table\b/.test(source)) {
+			issues.push(
+				issue(
+					'RAW_TABLE_FORBIDDEN',
+					'Module screens use Table or TableCard from @coreloom/ui instead of raw table markup.',
+					path,
+				),
+			);
+		}
+		if (/from\s+['"]@octanejs\/tanstack-table['"]/.test(source)) {
+			issues.push(
+				issue(
+					'TANSTACK_TABLE_DIRECT_IMPORT',
+					'Modules use the shared Table contract from @coreloom/ui; TanStack configuration belongs to the UI package.',
+					path,
+				),
+			);
+		}
+	}
 	return issues;
 }
 
@@ -252,6 +345,7 @@ export async function moduleLayoutIssues(
 			options.specDirectory ?? 'spec',
 		)),
 		...(await translationIssues(moduleRoot, manifest, options.projectLocales)),
+		...(await userInterfaceIssues(moduleRoot)),
 	];
 }
 

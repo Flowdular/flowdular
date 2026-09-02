@@ -1,4 +1,5 @@
-import { Tag } from '@coreloom/ui';
+import { Table, Tag, type TableColumn } from '@coreloom/ui';
+import { t } from '@coreloom/client';
 import type { SandboxSessionRecord } from '../domain/types.ts';
 import { sessionTone, timestamp } from './presentation.ts';
 
@@ -10,43 +11,46 @@ function origin(session: SandboxSessionRecord): string {
 	return session.moduleId + ' · ' + session.driver + ' · ' + session.mode;
 }
 
+function columns(): readonly TableColumn<SandboxSessionRecord>[] {
+	return [
+		{
+			key: 'session',
+			header: t('sandbox.sessions.session'),
+			width: '50%',
+			cell: (session) => <span class="ui-cell">
+				<b>{session.title}</b>
+				<small class="ui-mono">{origin(session)}</small>
+			</span>,
+		},
+		{
+			key: 'state',
+			header: t('sandbox.sessions.state'),
+			width: '20%',
+			cell: (session) =>
+				<Tag tone={sessionTone(session.state)} dot>{t(
+					'sandbox.sessionState.' + session.state,
+				)}</Tag>,
+		},
+		{
+			key: 'updated',
+			header: t('sandbox.sessions.updated'),
+			width: '30%',
+			numeric: true,
+			cell: (session) => timestamp(session.updatedAt),
+		},
+	];
+}
+
 export function SandboxSessionList(props: SandboxSessionListProps) @{
-	<div>
-		@if (props.sessions.length === 0) {
-			<p class="ui-table__empty">
-				No sandbox session has been opened for this workspace.
-			</p>
-		} @else {
-			<div class="ui-table-wrap">
-				<table class="ui-table" aria-label="Sandbox sessions">
-					<thead>
-						<tr>
-							<th>Session</th>
-							<th>State</th>
-							<th class="num">Updated</th>
-						</tr>
-					</thead>
-					<tbody>
-						@for (const session of props.sessions; key session.id) {
-							<tr>
-								<td>
-									<span class="ui-cell">
-										<b>{session.title}</b>
-										<small class="ui-mono">{origin(session)}</small>
-									</span>
-								</td>
-								<td>
-									<Tag
-										tone={sessionTone(session.state)}
-										dot
-									>{session.state}</Tag>
-								</td>
-								<td class="num">{timestamp(session.updatedAt)}</td>
-							</tr>
-						}
-					</tbody>
-				</table>
-			</div>
-		}
-	</div>
+	<Table
+		caption={t('sandbox.sessions.caption')}
+		columns={columns()}
+		rows={props.sessions}
+		rowKey={(session) => session.id}
+		empty={{
+			icon: 'flask',
+			title: t('sandbox.sessions.emptyTitle'),
+			hint: t('sandbox.sessions.empty'),
+		}}
+	/>
 }

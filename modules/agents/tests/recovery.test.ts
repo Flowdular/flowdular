@@ -82,6 +82,38 @@ function waitFor(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {
 }
 
 describe('agent run recovery and lifecycle', () => {
+	it('does not claim queued work before the worker is started', async () => {
+		const repository = new SqliteAgentRepository(':memory:');
+		let executions = 0;
+		const harness = new AgentHarness({
+			providers: [okProvider(() => (executions += 1))],
+		});
+		const worker = new AgentWorker(repository, harness, {
+			workerId: 'worker:not-started',
+			concurrency: 1,
+			leaseMs: 1_000,
+		});
+		const service = new AgentService(repository, harness, worker);
+		const agent = await activeAgent(service);
+		const queued = await service.enqueueRun(tenantId, actor, [], {
+			agentId: agent.id,
+			trigger: 'service',
+			input: 'Wait for explicit startup.',
+			toolGrants: [],
+		});
+
+		await new Promise((resolve) => setTimeout(resolve, 30));
+		expect(executions).toBe(0);
+		expect(service.getRun(tenantId, queued.id).status).toBe('queued');
+
+		worker.start();
+		await waitFor(
+			() => service.getRun(tenantId, queued.id).status === 'succeeded',
+		);
+		await worker.dispose();
+		repository.close();
+	});
+
 	it('lets a fresh worker claim a running run whose lease expired', async () => {
 		let now = 1_000_000;
 		const repository = new SqliteAgentRepository(':memory:');
@@ -109,6 +141,15 @@ describe('agent run recovery and lifecycle', () => {
 			'worker:crashed',
 			now,
 			now + 1_000,
+			{
+				tenantId,
+				actorId: 'worker:crashed',
+				action: 'agent-run.claimed',
+				subjectType: 'agent-run',
+				subjectId: queued.id,
+				metadata: {},
+				occurredAt: now,
+			},
 		);
 		expect(claimed?.run.attempt).toBe(1);
 		expect(service.getRun(tenantId, queued.id).status).toBe('running');
@@ -138,7 +179,7 @@ describe('agent run recovery and lifecycle', () => {
 			repository
 				.listAuditEvents(tenantId, 20)
 				.filter((event) => event.action === 'agent-run.claimed'),
-		).toHaveLength(1);
+		).toHaveLength(2);
 		expect(repository.verifyAuditChain(tenantId)).toBe(true);
 	});
 
@@ -168,11 +209,91 @@ describe('agent run recovery and lifecycle', () => {
 			'worker:other',
 			Date.now() + 60_000,
 			Date.now() + 120_000,
+			{
+				tenantId,
+				actorId: 'worker:other',
+				action: 'agent-run.claimed',
+				subjectType: 'agent-run',
+				subjectId: queued.id,
+				metadata: {},
+				occurredAt: Date.now() + 60_000,
+			},
 		);
 		expect(stolen?.run.attempt).toBe(2);
 		await waitFor(() => worker.status().inFlight === 0);
 		worker.stop();
 		expect(provider.reasons).toEqual(['lease-lost']);
+		const run = service.getRun(tenantId, queued.id);
+		expect(run.status).toBe('running');
+		expect(run.failureCode).toBeNull();
+	});
+
+	it('leaves a run recoverable when lease renewal cannot prove ownership', async () => {
+		const repository = new SqliteAgentRepository(':memory:');
+		const provider = abortableProvider();
+		const harness = new AgentHarness({ providers: [provider] });
+		const worker = new AgentWorker(repository, harness, {
+			workerId: 'worker:renewal-error',
+			concurrency: 1,
+			leaseMs: 1_000,
+		});
+		const service = new AgentService(repository, harness, worker);
+		const agent = await activeAgent(service);
+		worker.start();
+		const queued = await service.enqueueRun(tenantId, actor, [], {
+			agentId: agent.id,
+			trigger: 'service',
+			input: 'Wait for recovery.',
+			toolGrants: [],
+		});
+		await waitFor(() => worker.status().inFlight === 1);
+		const renewal = vi
+			.spyOn(repository, 'renewLease')
+			.mockImplementation(() => {
+				throw new Error('database temporarily unavailable');
+			});
+
+		await waitFor(() => worker.status().inFlight === 0);
+
+		expect(provider.reasons).toEqual(['lease-lost']);
+		expect(service.getRun(tenantId, queued.id)).toMatchObject({
+			status: 'running',
+			failureCode: null,
+		});
+		expect(
+			repository
+				.listAuditEvents(tenantId, 20)
+				.some((event) => event.action === 'agent-run.failed'),
+		).toBe(false);
+		renewal.mockRestore();
+		worker.stop();
+		repository.close();
+	});
+
+	it('awaits an in-flight run during terminal worker disposal', async () => {
+		const repository = new SqliteAgentRepository(':memory:');
+		const provider = abortableProvider();
+		const harness = new AgentHarness({ providers: [provider] });
+		const worker = new AgentWorker(repository, harness, {
+			workerId: 'worker:shutdown',
+			concurrency: 1,
+			leaseMs: 1_000,
+		});
+		const service = new AgentService(repository, harness, worker);
+		const agent = await activeAgent(service);
+		worker.start();
+		const queued = await service.enqueueRun(tenantId, actor, [], {
+			agentId: agent.id,
+			trigger: 'service',
+			input: 'Resume after restart.',
+			toolGrants: [],
+		});
+		await waitFor(() => worker.status().inFlight === 1);
+
+		await worker.dispose();
+
+		expect(worker.status().inFlight).toBe(0);
+		expect(provider.reasons).toEqual(['worker-shutdown']);
 		const run = service.getRun(tenantId, queued.id);
 		expect(run.status).toBe('running');
 		expect(run.failureCode).toBeNull();
@@ -273,6 +394,48 @@ describe('agent run recovery and lifecycle', () => {
 		expect(service.listRuns(tenantId)).toHaveLength(1);
 	});
 
+	it('binds a run idempotency key to the full request and actor authority', async () => {
+		const repository = new SqliteAgentRepository(':memory:');
+		const harness = new AgentHarness({ providers: [okProvider()] });
+		const worker = new AgentWorker(repository, harness, {
+			workerId: 'worker:idle',
+			concurrency: 1,
+			leaseMs: 1_000,
+		});
+		const service = new AgentService(repository, harness, worker);
+		const agent = await activeAgent(service);
+		const request = {
+			agentId: agent.id,
+			trigger: 'service' as const,
+			input: 'Original request.',
+			toolGrants: [],
+			idempotencyKey: 'bound-request-0001',
+		};
+		await service.enqueueRun(tenantId, actor, [], request);
+
+		await expect(
+			service.enqueueRun(tenantId, actor, [], {
+				...request,
+				input: 'Different request.',
+			}),
+		).rejects.toMatchObject({ code: 'AGENT_RUN_IDEMPOTENCY_CONFLICT' });
+		await expect(
+			service.enqueueRun(
+				tenantId,
+				{
+					kind: 'agent',
+					id: actor,
+					label: 'Same id, different authority',
+					runId: 'parent-run',
+				},
+				[],
+				request,
+			),
+		).rejects.toMatchObject({ code: 'AGENT_RUN_IDEMPOTENCY_CONFLICT' });
+		expect(service.listRuns(tenantId)).toHaveLength(1);
+		repository.close();
+	});
+
 	it('keeps runs invisible across tenants', async () => {
 		const repository = new SqliteAgentRepository(':memory:');
 		const harness = new AgentHarness({ providers: [okProvider()] });
@@ -297,7 +460,15 @@ describe('agent run recovery and lifecycle', () => {
 			service.cancelRun('tenant-other', actor, [], queued.id),
 		).toThrow(/not found/);
 		expect(
-			repository.cancelRun('tenant-other', queued.id, 'nope', Date.now()),
+			repository.cancelRun('tenant-other', queued.id, 'nope', Date.now(), {
+				tenantId: 'tenant-other',
+				actorId: actor,
+				action: 'agent-run.cancelled',
+				subjectType: 'agent-run',
+				subjectId: queued.id,
+				metadata: {},
+				occurredAt: Date.now(),
+			}),
 		).toBeNull();
 		expect(service.getRun(tenantId, queued.id).status).toBe('queued');
 	});

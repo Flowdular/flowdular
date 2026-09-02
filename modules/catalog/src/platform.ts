@@ -2,7 +2,10 @@ import type {
 	PlatformServerComposition,
 	PlatformServerContext,
 } from '@coreloom/module-auth/server';
+import { platformVariableRegistry } from '@coreloom/kernel';
+import { registerCatalogVariableSource } from './domain/variables.ts';
 import {
+	catalogAgentTools,
 	catalogRuntimeOptionsFromEnvironment,
 	createCatalogRoutes,
 	createCatalogRuntime,
@@ -17,5 +20,14 @@ export function createServerComposition(
 			context.workspaceRoot,
 		),
 	);
-	return { routes: createCatalogRoutes(context.auth, runtime) };
+	const tools = catalogAgentTools(runtime);
+	context.agentTools.register(tools);
+	registerCatalogVariableSource(
+		platformVariableRegistry(context.capabilities),
+		tools,
+	);
+	return {
+		routes: createCatalogRoutes(context.auth, runtime),
+		dispose: () => runtime.dispose(),
+	};
 }

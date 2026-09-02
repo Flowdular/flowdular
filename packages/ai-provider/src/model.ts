@@ -48,6 +48,35 @@ function required(value: string, field: string, maximum: number): string {
 	return normalized;
 }
 
+function assertSecureProviderUrl(value: string): void {
+	let url: URL;
+	try {
+		url = new URL(value);
+	} catch {
+		throw new AiProviderError(
+			'INVALID_PROVIDER_CONFIGURATION',
+			'baseURL must be an absolute URL.',
+		);
+	}
+	if (url.username || url.password) {
+		throw new AiProviderError(
+			'INVALID_PROVIDER_CONFIGURATION',
+			'baseURL must not contain URL credentials.',
+		);
+	}
+	const loopback =
+		url.hostname === 'localhost' ||
+		url.hostname === '::1' ||
+		url.hostname === '[::1]' ||
+		/^127(?:\.\d{1,3}){3}$/.test(url.hostname);
+	if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) {
+		throw new AiProviderError(
+			'INVALID_PROVIDER_CONFIGURATION',
+			'baseURL must use HTTPS unless the provider is on loopback.',
+		);
+	}
+}
+
 export function assertProviderConfiguration(
 	configuration: AiProviderConfiguration,
 ): void {
@@ -59,6 +88,9 @@ export function assertProviderConfiguration(
 			field,
 			field === 'baseURL' ? 2_048 : 120,
 		);
+	}
+	if (configuration.kind === 'openai-compatible') {
+		assertSecureProviderUrl(configuration.baseURL ?? '');
 	}
 }
 

@@ -1,4 +1,5 @@
 import type { OctaneNode } from 'octane';
+import type { LocaleBundles, Translate } from './i18n/translations.ts';
 
 export const WORKSPACE_SLOTS = [
 	'dashboard.metrics',
@@ -12,12 +13,22 @@ export type NavigationGroup =
 	| 'Workspace'
 	| 'Operations'
 	| 'Agents'
+	| 'Automations'
 	| 'Administration'
 	| 'Development';
 
 export interface ModuleClientContext {
 	readonly csrfToken: string;
 	readonly scopes: readonly string[];
+	readonly locale: string;
+	/** Takes a fully qualified key, `<module>.<screen>.<element>`. */
+	readonly t: Translate;
+}
+
+export interface ModuleClientInitializationContext {
+	readonly accountId: string;
+	readonly tenantId: string;
+	readonly signal: AbortSignal;
 }
 
 export interface ClientViewContribution {
@@ -59,6 +70,12 @@ export interface WidgetContribution {
 
 export interface ModuleClientContribution {
 	readonly moduleId: string;
+	/** Every locale file the module ships, statically imported by its entry. */
+	readonly translations?: LocaleBundles;
+	/** Runs before the signed-in workspace is shown for this account and tenant. */
+	readonly initialize?: (
+		context: ModuleClientInitializationContext,
+	) => void | Promise<void>;
 	readonly navigation?: readonly NavigationContribution[];
 	readonly accountMenu?: readonly AccountMenuContribution[];
 	readonly views?: readonly ClientViewContribution[];

@@ -11,9 +11,13 @@ export function response(
 	status = 200,
 	headers: HeadersInit = {},
 ): Response {
+	const responseHeaders = new Headers(headers);
+	if (!responseHeaders.has('cache-control')) {
+		responseHeaders.set('cache-control', 'no-store');
+	}
 	return Response.json(body, {
 		status,
-		headers: { 'cache-control': 'no-store', ...headers },
+		headers: responseHeaders,
 	});
 }
 
@@ -31,7 +35,9 @@ export function errorResponse(
 			error.status,
 		);
 	}
-	console.error(label, error);
+	/* Repository and provider errors can contain bound values or credentials.
+	   The public response and the server log both stay free of the raw value. */
+	console.error(`${label} (${error instanceof Error ? 'Error' : 'non-error'})`);
 	return response(
 		{
 			error: {

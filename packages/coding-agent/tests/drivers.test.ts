@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -7,6 +7,8 @@ import {
 	createCodexDriver,
 	createCodingAgentRegistry,
 	resolveInsideWorkspace,
+	resolveReadableInsideWorkspace,
+	resolveWritableInsideWorkspace,
 	type CodingAgentDriver,
 	type CodingAgentEvent,
 } from '../src/index.ts';
@@ -398,5 +400,49 @@ describe('workspace guards', () => {
 		expect(() => resolveInsideWorkspace('/tmp/session', '/etc/passwd')).toThrow(
 			/escapes the session workspace/,
 		);
+	});
+
+	it('rejects writes outside the role allowlist and through escaping symlinks', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'coreloom-workspace-guard-'));
+		const outside = await mkdtemp(
+			join(tmpdir(), 'coreloom-workspace-outside-'),
+		);
+		await mkdir(join(root, 'modules', 'catalog', 'src'), { recursive: true });
+		await symlink(outside, join(root, 'modules', 'catalog', 'src', 'escape'));
+
+		await expect(
+			resolveWritableInsideWorkspace(root, 'modules/catalog/src/owned.ts', [
+				'modules/catalog/src/**',
+			]),
+		).resolves.toBe(join(root, 'modules', 'catalog', 'src', 'owned.ts'));
+		await expect(
+			resolveWritableInsideWorkspace(root, 'coreloom.json', [
+				'modules/catalog/src/**',
+			]),
+		).rejects.toMatchObject({ code: 'PATH_NOT_ALLOWED' });
+		await expect(
+			resolveWritableInsideWorkspace(
+				root,
+				'modules/catalog/src/escape/host.ts',
+				['modules/catalog/src/**'],
+			),
+		).rejects.toMatchObject({ code: 'PATH_ESCAPES_WORKSPACE' });
+		await expect(
+			resolveReadableInsideWorkspace(
+				root,
+				'modules/catalog/src/escape/secret.txt',
+			),
+		).rejects.toMatchObject({ code: 'PATH_ESCAPES_WORKSPACE' });
+	});
+
+	it('never allows model tools to write dependency or repository control paths', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'coreloom-workspace-guard-'));
+		await mkdir(join(root, 'node_modules'), { recursive: true });
+		await mkdir(join(root, '.git'), { recursive: true });
+		for (const path of ['node_modules/.bin/vitest', '.git/config']) {
+			await expect(
+				resolveWritableInsideWorkspace(root, path, ['**']),
+			).rejects.toMatchObject({ code: 'PATH_NOT_ALLOWED' });
+		}
 	});
 });

@@ -1,3 +1,4 @@
+import { setTenantDefaultLocale, t } from '@coreloom/client/i18n';
 import type { AuthPrincipal } from '../domain/types.ts';
 import type { AuthClientState } from './state.ts';
 
@@ -6,10 +7,33 @@ interface SessionPayload {
 	readonly csrfToken: string;
 	readonly expiresAt: number;
 	readonly passwordChangeRequired?: boolean;
+	readonly tenantSettings?: Record<string, unknown>;
 }
 
 interface ErrorPayload {
 	readonly error?: { readonly code?: string; readonly message?: string };
+}
+
+export class AuthClientApiError extends Error {
+	readonly status: number;
+
+	constructor(status: number, message: string) {
+		super(message);
+		this.name = 'AuthClientApiError';
+		this.status = status;
+	}
+}
+
+export interface MfaStatusPayload {
+	readonly available: boolean;
+	readonly enrolled: boolean;
+	readonly pending: boolean;
+}
+
+export interface MfaEnrollmentPayload {
+	readonly secret: string;
+	readonly otpauthUrl: string;
+	readonly recoveryCodes: readonly string[];
 }
 
 export interface WorkspaceAvailability {
@@ -33,7 +57,7 @@ export async function loadAuthConfiguration(
 			readonly passwordMinLength?: number;
 		};
 		if (!response.ok || typeof body.allowSignUp !== 'boolean') {
-			throw new Error('Authentication configuration is unavailable.');
+			throw new Error(t('auth.error.configuration'));
 		}
 		const providers = Array.isArray(body.signInProviders)
 			? body.signInProviders.filter(
@@ -50,10 +74,15 @@ export async function loadAuthConfiguration(
 			if (typeof body.passwordMinLength === 'number') {
 				transaction.set(auth.state.passwordMinLength, body.passwordMinLength);
 			}
-			if (!body.allowSignUp) transaction.set(auth.state.screen, 'sign-in');
+			if (
+				!body.allowSignUp &&
+				auth.store.get(auth.state.screen) === 'sign-up'
+			) {
+				transaction.set(auth.state.screen, 'sign-in');
+			}
 		}, 'auth/configuration');
-		if (!body.allowSignUp && window.location.pathname === '/sign-up') {
-			history.replaceState(null, '', '/sign-in');
+		if (!body.allowSignUp && auth.store.get(auth.state.screen) === 'sign-in') {
+			history.replaceState(null, '', '/auth/login');
 		}
 	} catch {
 		auth.store.act(
@@ -79,7 +108,7 @@ export async function checkWorkspaceAvailability(
 		readonly message?: string;
 	} & ErrorPayload;
 	if (!response.ok) {
-		throw new Error(body.error?.message ?? 'Availability check failed.');
+		throw new Error(body.error?.message ?? t('auth.signup.slug.error'));
 	}
 	return {
 		valid: body.valid === true,
@@ -91,12 +120,21 @@ export async function checkWorkspaceAvailability(
 async function payload(response: Response): Promise<SessionPayload> {
 	const body = (await response.json()) as SessionPayload & ErrorPayload;
 	if (!response.ok) {
-		throw new Error(body.error?.message ?? 'Authentication request failed.');
+		throw new AuthClientApiError(
+			response.status,
+			body.error?.message ?? t('auth.error.request'),
+		);
 	}
 	return body;
 }
 
+/* auth.core owns the session, so it is the layer that publishes the workspace
+   default locale into the shell's translation runtime. */
 function commitSession(auth: AuthClientState, session: SessionPayload): void {
+	const defaultLocale = session.tenantSettings?.['defaultLocale'];
+	setTenantDefaultLocale(
+		typeof defaultLocale === 'string' ? defaultLocale : null,
+	);
 	auth.store.act((transaction) => {
 		transaction.set(auth.state.principal, session.principal);
 		transaction.set(auth.state.csrfToken, session.csrfToken);
@@ -130,7 +168,7 @@ export async function loadSession(auth: AuthClientState): Promise<void> {
 		}
 		commitSession(auth, await payload(response));
 	} catch {
-		commitAnonymous(auth, 'Authentication service is unavailable.');
+		commitAnonymous(auth, t('auth.error.unavailable'));
 	}
 }
 
@@ -141,6 +179,7 @@ export async function signIn(
 	auth.store.act((transaction) => {
 		transaction.set(auth.state.status, 'submitting');
 		transaction.set(auth.state.error, '');
+		transaction.set(auth.state.flowNotice, '');
 	}, 'auth/submit');
 	try {
 		const response = await fetch('/api/auth/sign-in', {
@@ -152,14 +191,184 @@ export async function signIn(
 			},
 			body: JSON.stringify(input),
 		});
-		commitSession(auth, await payload(response));
-		history.replaceState(null, '', '/');
+		const body = (await response.json()) as
+			| (SessionPayload & ErrorPayload)
+			| ({
+					readonly mfaRequired: true;
+					readonly challengeToken: string;
+					readonly expiresAt: number;
+			  } & ErrorPayload);
+		if (!response.ok) {
+			throw new AuthClientApiError(
+				response.status,
+				body.error?.message ?? t('auth.error.request'),
+			);
+		}
+		if ('mfaRequired' in body && body.mfaRequired === true) {
+			auth.store.act((transaction) => {
+				transaction.set(auth.state.mfaChallengeToken, body.challengeToken);
+				transaction.set(auth.state.mfaRecoveryMode, false);
+				transaction.set(auth.state.screen, 'mfa-challenge');
+				transaction.set(auth.state.status, 'anonymous');
+				transaction.set(auth.state.error, '');
+			}, 'auth/mfa-required');
+			history.replaceState(null, '', '/auth/mfa');
+			return;
+		}
+		if (!('principal' in body)) {
+			throw new AuthClientApiError(500, t('auth.error.request'));
+		}
+		commitSession(auth, body);
+		history.replaceState(null, '', '/app');
 	} catch (error) {
 		commitAnonymous(
 			auth,
-			error instanceof Error ? error.message : 'Authentication failed.',
+			error instanceof Error ? error.message : t('auth.error.failed'),
 		);
 	}
+}
+
+async function publicMutation<T>(path: string, body: unknown): Promise<T> {
+	const response = await fetch(path, {
+		method: 'POST',
+		credentials: 'same-origin',
+		headers: {
+			accept: 'application/json',
+			'content-type': 'application/json',
+		},
+		body: JSON.stringify(body),
+	});
+	const value = (await response.json()) as T & ErrorPayload;
+	if (!response.ok) {
+		throw new AuthClientApiError(
+			response.status,
+			value.error?.message ?? t('auth.error.request'),
+		);
+	}
+	return value;
+}
+
+async function sessionMutation<T>(
+	path: string,
+	body: unknown,
+	csrfToken: string,
+): Promise<T> {
+	const response = await fetch(path, {
+		method: 'POST',
+		credentials: 'same-origin',
+		headers: {
+			accept: 'application/json',
+			'content-type': 'application/json',
+			'x-csrf-token': csrfToken,
+		},
+		body: JSON.stringify(body),
+	});
+	const value = (await response.json()) as T & ErrorPayload;
+	if (!response.ok) {
+		throw new AuthClientApiError(
+			response.status,
+			value.error?.message ?? t('auth.error.request'),
+		);
+	}
+	return value;
+}
+
+export async function requestPasswordReset(email: string): Promise<void> {
+	await publicMutation('/api/auth/password-reset/request', { email });
+}
+
+export async function completePasswordReset(
+	token: string,
+	password: string,
+): Promise<void> {
+	await publicMutation('/api/auth/password-reset/complete', {
+		token,
+		password,
+	});
+}
+
+export async function acceptTenantInvitation(input: {
+	readonly token: string;
+	readonly displayName: string;
+	readonly password: string;
+}): Promise<void> {
+	await publicMutation('/api/auth/invitations/accept', input);
+}
+
+export async function completeMfaChallenge(
+	auth: AuthClientState,
+	input: { readonly code?: string; readonly recoveryCode?: string },
+): Promise<void> {
+	auth.store.act((transaction) => {
+		transaction.set(auth.state.status, 'submitting');
+		transaction.set(auth.state.error, '');
+	}, 'auth/mfa-submit');
+	try {
+		const session = await publicMutation<SessionPayload>(
+			'/api/auth/mfa/challenge',
+			{
+				challengeToken: auth.store.get(auth.state.mfaChallengeToken),
+				...input,
+			},
+		);
+		commitSession(auth, session);
+		auth.store.act((transaction) => {
+			transaction.set(auth.state.mfaChallengeToken, '');
+			transaction.set(auth.state.mfaRecoveryMode, false);
+		}, 'auth/mfa-complete');
+		history.replaceState(null, '', '/app');
+	} catch (error) {
+		auth.store.act((transaction) => {
+			transaction.set(auth.state.status, 'anonymous');
+			transaction.set(
+				auth.state.error,
+				error instanceof Error ? error.message : t('auth.error.failed'),
+			);
+		}, 'auth/mfa-failed');
+	}
+}
+
+export async function loadMfaStatus(): Promise<MfaStatusPayload> {
+	const response = await fetch('/api/auth/mfa/status', {
+		credentials: 'same-origin',
+		headers: { accept: 'application/json' },
+	});
+	const value = (await response.json()) as MfaStatusPayload & ErrorPayload;
+	if (!response.ok) {
+		throw new AuthClientApiError(
+			response.status,
+			value.error?.message ?? t('auth.error.request'),
+		);
+	}
+	return value;
+}
+
+export async function enrollMfa(
+	csrfToken: string,
+): Promise<MfaEnrollmentPayload> {
+	return sessionMutation(
+		'/api/auth/mfa/enroll',
+		{ issuer: 'Coreloom' },
+		csrfToken,
+	);
+}
+
+export async function confirmMfa(
+	code: string,
+	csrfToken: string,
+): Promise<void> {
+	await sessionMutation('/api/auth/mfa/confirm', { code }, csrfToken);
+}
+
+export async function createTenantInvitation(
+	input: { readonly email: string; readonly role: string },
+	csrfToken: string,
+): Promise<{ readonly id: string; readonly expiresAt: number }> {
+	return (
+		await sessionMutation<{
+			readonly invitation: { readonly id: string; readonly expiresAt: number };
+		}>('/api/auth/invitations', input, csrfToken)
+	).invitation;
 }
 
 export async function signUp(
@@ -202,11 +411,11 @@ export async function signUp(
 			return;
 		}
 		commitSession(auth, await payload(response));
-		history.replaceState(null, '', '/');
+		history.replaceState(null, '', '/app');
 	} catch (error) {
 		commitAnonymous(
 			auth,
-			error instanceof Error ? error.message : 'Authentication failed.',
+			error instanceof Error ? error.message : t('auth.error.failed'),
 		);
 	}
 }
@@ -239,15 +448,15 @@ export async function signOut(auth: AuthClientState): Promise<void> {
 		});
 		if (!response.ok && response.status !== 401) {
 			const body = (await response.json()) as ErrorPayload;
-			throw new Error(body.error?.message ?? 'Sign out failed.');
+			throw new Error(body.error?.message ?? t('auth.error.signOut'));
 		}
 		commitAnonymous(auth);
-		history.replaceState(null, '', '/sign-in');
+		history.replaceState(null, '', '/auth/login');
 	} catch (error) {
 		auth.store.act((transaction) => {
 			transaction.set(
 				auth.state.error,
-				error instanceof Error ? error.message : 'Sign out failed.',
+				error instanceof Error ? error.message : t('auth.error.signOut'),
 			);
 		}, 'auth/sign-out-failed');
 	}

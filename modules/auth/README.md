@@ -50,19 +50,19 @@ A client presents it as `Authorization: Bearer clat_...`. The authentication mid
 
 ## Configuration
 
-| Variable                         | Default                                                             |
-| -------------------------------- | ------------------------------------------------------------------- |
-| `OERP_AUTH_DATABASE`             | `.octane-erp/auth.db`, or `/data/auth.db` in production             |
-| `OERP_AUTH_SECURE_COOKIE`        | `false` in development and `true` in production                     |
-| `OERP_AUTH_ALLOW_SIGN_UP`        | `true` in development and `false` in production                     |
-| `OERP_AUTH_SESSION_TTL_HOURS`    | `12`                                                                |
-| `OERP_AUTH_SESSION_IDLE_MINUTES` | `120`                                                               |
-| `OERP_AUTH_PASSWORD_MIN_LENGTH`  | `12`                                                                |
-| `OERP_AUTH_SIGN_IN_PROVIDERS`    | empty                                                               |
-| `OERP_AUTH_EMAIL_CONFIRMATION`   | `false`; `true` is refused until a mail transport exists            |
-| `OERP_TRUST_PROXY`               | `false`; `true` reads the client address from `x-forwarded-for`     |
-| `OERP_CSP`                       | built-in policy; report-only in development, enforced in production |
-| `OERP_CSP_REPORT_ONLY`           | `true` in development and `false` in production                     |
+| Variable                       | Default                                                             |
+| ------------------------------ | ------------------------------------------------------------------- |
+| `CL_AUTH_DATABASE`             | `.coreloom/data/auth.db`, or `/data/auth.db` in production          |
+| `CL_AUTH_SECURE_COOKIE`        | `false` in development and `true` in production                     |
+| `CL_AUTH_ALLOW_SIGN_UP`        | `true` in development and `false` in production                     |
+| `CL_AUTH_SESSION_TTL_HOURS`    | `12`                                                                |
+| `CL_AUTH_SESSION_IDLE_MINUTES` | `120`                                                               |
+| `CL_AUTH_PASSWORD_MIN_LENGTH`  | `12`                                                                |
+| `CL_AUTH_SIGN_IN_PROVIDERS`    | empty                                                               |
+| `CL_AUTH_EMAIL_CONFIRMATION`   | `false`; `true` is refused until a mail transport exists            |
+| `CL_TRUST_PROXY`               | `false`; `true` reads the client address from `x-forwarded-for`     |
+| `CL_CSP`                       | built-in policy; report-only in development, enforced in production |
+| `CL_CSP_REPORT_ONLY`           | `true` in development and `false` in production                     |
 
 The auth values are defaults for the declared `auth.core` settings. A value
 stored through the module's drawer under Administration > Modules wins at
@@ -81,9 +81,8 @@ idle period or absolute lifetime, and expired rows are swept every 15 minutes.
 
 Every response carries `X-Content-Type-Options`, `X-Frame-Options`,
 `Referrer-Policy`, `Permissions-Policy`, `Strict-Transport-Security` when secure
-cookies are on, and a `Content-Security-Policy`. The production policy still
-allows inline scripts because `platform/index.html` ships an un-nonced boot
-script; once that script carries the octane nonce the policy can drop
+cookies are on, and a `Content-Security-Policy`. The production shell replaces
+its bootstrap nonce per response, so `script-src` does not allow
 `'unsafe-inline'`.
 
 ## Roles, audit, and settings
@@ -102,8 +101,8 @@ A module declares its scopes in its specification. Enabling it does not grant
 them, so the scopes are handed to the workspace owners explicitly:
 
 ```bash
-pnpm oerp auth sync-scopes --module profile.core          # dry run
-pnpm oerp auth sync-scopes --module profile.core --apply
+pnpm coreloom auth sync-scopes --module profile.core          # dry run
+pnpm coreloom auth sync-scopes --module profile.core --apply
 ```
 
 The command reads `permissions` from the module's specification, never from
@@ -116,20 +115,27 @@ eject, which is why an ejected module is reachable straight away.
 Preview the local reset, seed credentials, and tenant layout:
 
 ```bash
-pnpm oerp setup quick
+pnpm coreloom setup quick
 ```
 
 Stop the development server, then apply the reset with typed confirmation:
 
 ```bash
-pnpm oerp setup quick --apply --confirm reset-local-auth
+pnpm coreloom setup quick --apply --confirm reset-local-auth
 ```
 
-The command resets only `.octane-erp/auth.db` inside the workspace. It creates:
+The command resets only `.coreloom/data/auth.db` inside the workspace. It creates:
 
 - `admin@example.com` / `Admin!23456789`, an owner of Operations Demo and Finance Demo.
 - `user@example.com` / `User!234567890`, a reduced-scope member of Operations Demo.
 
 The application shell exposes the active tenant selector. Switching it rotates the session cookie and reloads the target membership's role and scopes. All seed values are public development defaults. The command refuses custom database paths and non-development environments. `auth greenfield` remains the module-owned equivalent of `setup quick`.
 
-The current adapter is intentionally single-writer SQLite. Password reset, email verification, MFA, external identity providers, shared-database deployment, and distributed rate limiting require separate approved specs before implementation.
+The current adapter is intentionally single-writer SQLite. Password reset,
+tenant invitations, TOTP MFA, and OIDC use injected deployment configuration:
+`CL_AUTH_MFA_KEY` is a 32-byte AES key encoded as 64 hexadecimal characters
+or base64url, `CL_AUTH_PUBLIC_ORIGIN` is the public HTTPS origin, and
+`CL_AUTH_OIDC_PROVIDERS` is a JSON list of configured OIDC endpoints and
+credentials. Email delivery is injected through `AuthMailDelivery`; local-only
+evidence can use `CL_AUTH_DEVELOPMENT_MAIL=true`, which keeps messages in
+memory and never logs or exposes raw tokens.

@@ -13,7 +13,7 @@ export type PasswordChangeValidation =
 	  }
 	| {
 			readonly valid: false;
-			readonly message: string;
+			readonly code: 'required' | 'mismatch';
 	  };
 
 export function validatePasswordChange(
@@ -22,13 +22,13 @@ export function validatePasswordChange(
 	if (values.currentPassword.length === 0 || values.newPassword.length === 0) {
 		return {
 			valid: false,
-			message: 'Enter your current password and a new password.',
+			code: 'required',
 		};
 	}
 	if (values.newPassword !== values.confirmation) {
 		return {
 			valid: false,
-			message: 'The new password and confirmation do not match.',
+			code: 'mismatch',
 		};
 	}
 	return {

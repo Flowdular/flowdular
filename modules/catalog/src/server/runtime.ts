@@ -1,4 +1,4 @@
-import { resolve } from 'node:path';
+import { coreloomLocalDataPath } from '@coreloom/kernel/legacy-local-state';
 import { CatalogService } from '../services/catalog-service.ts';
 import { SqliteCatalogRepository } from '../services/sqlite-repository.ts';
 
@@ -8,6 +8,7 @@ export interface CatalogRuntimeOptions {
 
 export interface CatalogRuntime {
 	service(): CatalogService;
+	dispose(): void;
 }
 
 export function catalogRuntimeOptionsFromEnvironment(
@@ -16,10 +17,12 @@ export function catalogRuntimeOptionsFromEnvironment(
 ): CatalogRuntimeOptions {
 	return {
 		databasePath:
-			environment.OERP_CATALOG_DATABASE ??
+			environment.CL_CATALOG_DATABASE ??
 			(environment.NODE_ENV === 'production'
 				? '/data/catalog.db'
-				: resolve(workspaceRoot, '.octane-erp/catalog.db')),
+				: environment.NODE_ENV === 'test'
+					? ':memory:'
+					: coreloomLocalDataPath(workspaceRoot, 'catalog.db')),
 	};
 }
 
@@ -27,12 +30,21 @@ export function createCatalogRuntime(
 	options: CatalogRuntimeOptions = catalogRuntimeOptionsFromEnvironment(),
 ): CatalogRuntime {
 	let service: CatalogService | undefined;
+	let repository: SqliteCatalogRepository | undefined;
+	let disposed = false;
 	return {
 		service: () => {
-			service ??= new CatalogService(
-				new SqliteCatalogRepository(options.databasePath),
-			);
+			if (disposed) throw new Error('Catalog runtime is disposed.');
+			repository ??= new SqliteCatalogRepository(options.databasePath);
+			service ??= new CatalogService(repository);
 			return service;
+		},
+		dispose() {
+			if (disposed) return;
+			disposed = true;
+			repository?.close();
+			repository = undefined;
+			service = undefined;
 		},
 	};
 }

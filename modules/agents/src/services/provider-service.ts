@@ -512,6 +512,67 @@ export class AgentProviderService {
 		return updated;
 	}
 
+	delete(
+		tenantId: string,
+		actorId: string,
+		providerId: string,
+		expectedRevision: number,
+	): void {
+		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
+		const actor = bounded(actorId, 'actorId', 1, 128);
+		const id = bounded(providerId, 'provider id', 1, 128);
+		if (id === LOCAL_PROVIDER_ID) {
+			throw new AgentProviderServiceError(
+				'PROVIDER_BUILT_IN',
+				'The local simulation provider is built in and cannot be deleted.',
+				409,
+			);
+		}
+		const stored = this.repository.get(trustedTenantId, id);
+		if (!stored) {
+			throw new AgentProviderServiceError(
+				'PROVIDER_NOT_FOUND',
+				'Provider connection not found.',
+				404,
+			);
+		}
+		if (stored.connection.revision !== expectedRevision) {
+			throw new AgentProviderServiceError(
+				'PROVIDER_REVISION_CONFLICT',
+				'The provider was changed by another request. Reload before deleting.',
+				409,
+			);
+		}
+		const usage = this.audit.providerUsage(trustedTenantId, id);
+		if (usage.definitions > 0 || usage.pendingRuns > 0) {
+			throw new AgentProviderServiceError(
+				'PROVIDER_IN_USE',
+				'Archive or move every agent using this provider and wait for its queued runs before deleting the connection.',
+				409,
+			);
+		}
+		if (!this.repository.delete(trustedTenantId, id)) {
+			throw new AgentProviderServiceError(
+				'PROVIDER_NOT_FOUND',
+				'Provider connection not found.',
+				404,
+			);
+		}
+		this.audit.appendAuditEvent({
+			tenantId: trustedTenantId,
+			actorId: actor,
+			action: 'agent-provider.deleted',
+			subjectType: 'agent-provider',
+			subjectId: id,
+			metadata: {
+				key: stored.connection.key,
+				kind: stored.connection.kind,
+				credentialRevision: stored.connection.credentialRevision,
+			},
+			occurredAt: this.#now(),
+		});
+	}
+
 	async test(
 		tenantId: string,
 		providerId: string,
@@ -634,6 +695,24 @@ export class AgentProviderService {
 		}
 		this.model(stored.connection, modelId, true);
 		this.assertUsableConnection(stored.connection, modelId);
+	}
+
+	supportsStructuredOutput(
+		tenantId: string,
+		providerId: string,
+		modelId: string,
+	): boolean {
+		if (providerId === LOCAL_PROVIDER_ID) return false;
+		const stored = this.repository.get(
+			bounded(tenantId, 'tenantId', 1, 128),
+			bounded(providerId, 'provider id', 1, 128),
+		);
+		if (!stored) return false;
+		return Boolean(
+			stored.connection.models.find(
+				(model) => model.id === modelId && model.enabled,
+			),
+		);
 	}
 
 	/* Like assertUsable, except expired evidence triggers one automatic

@@ -2,6 +2,7 @@ import type {
 	SandboxAccessGrant,
 	SandboxSessionState,
 } from '../domain/types.ts';
+import { activeLocale, t } from '@coreloom/client/i18n';
 
 export type GrantState = 'active' | 'expired' | 'revoked';
 
@@ -31,9 +32,16 @@ export function sessionTone(
 }
 
 export function capabilityLabel(capability: string): string {
-	return capability.replace('sandbox.', '').replace(/\./g, ' ');
+	const key = 'sandbox.capability.' + capability;
+	const translated = t(key);
+	return translated === key
+		? capability.replace('sandbox.', '').replace(/\./g, ' ')
+		: translated;
 }
 
 export function timestamp(value: number): string {
-	return new Date(value).toISOString().slice(0, 16).replace('T', ' ');
+	return new Intl.DateTimeFormat(activeLocale(), {
+		dateStyle: 'medium',
+		timeStyle: 'short',
+	}).format(new Date(value));
 }

@@ -1,3 +1,5 @@
+import { t } from '@coreloom/client/i18n';
+
 export interface LocaleSetting {
 	readonly value: string;
 	readonly defaultValue: string;
@@ -60,7 +62,7 @@ export async function loadDefaultLocale(): Promise<LocaleSetting | null> {
 			readonly moduleId: string;
 			readonly settings: readonly WireSetting[];
 		}[];
-	}>(response, 'Could not load settings.');
+	}>(response, t('auth.settings.error.load'));
 	return localeOf(
 		body.modules
 			.find((module) => module.moduleId === 'auth.core')
@@ -87,7 +89,7 @@ export async function updateDefaultLocale(
 	});
 	const body = await payload<{ readonly setting: WireSetting | null }>(
 		response,
-		'Could not save the default locale.',
+		t('auth.settings.error.locale'),
 	);
 	return localeOf(body.setting ?? undefined);
 }
@@ -108,6 +110,6 @@ export async function renameWorkspace(
 	return (
 		await payload<{
 			readonly tenant: { readonly tenantId: string; readonly name: string };
-		}>(response, 'Could not rename the workspace.')
+		}>(response, t('auth.settings.error.rename'))
 	).tenant;
 }

@@ -11,7 +11,8 @@ import {
 	readFileSync,
 	writeFileSync,
 } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname } from 'node:path';
+import { coreloomLocalDataPath } from '@coreloom/kernel/legacy-local-state';
 
 export interface EncryptedCredential {
 	readonly keyId: string;
@@ -30,7 +31,7 @@ function encryptionKey(value: string): Buffer {
 	if (key.byteLength !== 32) {
 		key.fill(0);
 		throw new Error(
-			'OERP_AGENT_CREDENTIAL_KEY must be a base64-encoded 32-byte key.',
+			'CL_AGENT_CREDENTIAL_KEY must be a base64-encoded 32-byte key.',
 		);
 	}
 	return key;
@@ -114,16 +115,19 @@ export function credentialVaultFromEnvironment(
 	environment: NodeJS.ProcessEnv = process.env,
 	workspaceRoot = process.cwd(),
 ): CredentialVault {
-	const configured = environment.OERP_AGENT_CREDENTIAL_KEY;
+	const configured = environment.CL_AGENT_CREDENTIAL_KEY;
 	if (configured) return new AesGcmCredentialVault(encryptionKey(configured));
 	if (environment.NODE_ENV === 'production') {
 		throw new Error(
-			'OERP_AGENT_CREDENTIAL_KEY is required in production before provider credentials can be used.',
+			'CL_AGENT_CREDENTIAL_KEY is required in production before provider credentials can be used.',
 		);
+	}
+	if (environment.NODE_ENV === 'test') {
+		return new AesGcmCredentialVault(Buffer.alloc(32, 0x43));
 	}
 	return new AesGcmCredentialVault(
 		readOrCreateDevelopmentKey(
-			resolve(workspaceRoot, '.octane-erp/agent-credential.key'),
+			coreloomLocalDataPath(workspaceRoot, 'agent-credential.key'),
 		),
 	);
 }

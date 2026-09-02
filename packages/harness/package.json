@@ -6,6 +6,7 @@
 	"exports": {
 		".": "./src/index.ts",
 		"./runtime": "./src/runtime.ts",
+		"./tool-adapters": "./src/tool-adapters.ts",
 		"./catalog": "./src/catalog.ts",
 		"./schema": "./schemas/task-packet.schema.json"
 	},
@@ -16,9 +17,11 @@
 	"dependencies": {
 		"@coreloom/ai-provider": "workspace:*",
 		"@coreloom/contracts": "workspace:*",
+		"@coreloom/kernel": "workspace:*",
 		"ai": "7.0.85"
 	},
 	"devDependencies": {
+		"@types/node": "24.13.3",
 		"typescript": "5.9.3",
 		"vitest": "4.1.10"
 	}

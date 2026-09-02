@@ -11,5 +11,8 @@ import { createCatalogClientContribution as canonicalContribution } from './cont
 export function createClientContribution(
 	context: ModuleClientContext,
 ): ModuleClientContribution {
-	return canonicalContribution({ csrfToken: context.csrfToken });
+	return canonicalContribution({
+		csrfToken: context.csrfToken,
+		scopes: context.scopes,
+	});
 }

@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from 'octane';
+import { Head, Seo } from '@octanejs/seo';
 import { Alert, BrandMark, Button, Icon, Tag } from '@coreloom/ui';
 import { useValue } from 'segment-state';
 import type { RenderRouteProps } from '@octanejs/vite-plugin';
@@ -8,6 +9,7 @@ import type {
 	SandboxSession,
 } from './server/sessions.ts';
 import {
+	addSessionModule,
 	approveSpecification,
 	archiveSandboxSession,
 	connectBrowser,
@@ -18,6 +20,7 @@ import {
 	loadSession,
 	formatSession,
 	planEject,
+	requestSpecChanges,
 	restoreSandboxSession,
 	runGates,
 	saveConfiguration,
@@ -25,6 +28,7 @@ import {
 	stopTurn,
 	streamEject,
 	streamTurn,
+	uploadAttachment,
 	type EjectPlanView,
 	type EjectTargetId,
 	type TurnHandlers,
@@ -42,6 +46,10 @@ import {
 import { SessionPicker } from './client/SessionPicker.tsrx';
 import { EjectModal } from './client/EjectModal.tsrx';
 import {
+	GitHubSettingsModal,
+	type GitHubSettingsInput,
+} from './client/GitHubSettingsModal.tsrx';
+import {
 	createSandboxClientState,
 	mergeEntries,
 	mergeSteps,
@@ -49,8 +57,15 @@ import {
 	sessionIdFromUrl,
 	type PreviewSelection,
 } from './client/state.ts';
+import {
+	registerSandboxTranslations,
+	restoreSandboxLocale,
+	useTranslation,
+} from './client/i18n.ts';
 import '@coreloom/ui/styles';
 import './styles.css';
+
+registerSandboxTranslations();
 
 function message(error: unknown, fallback: string): string {
 	return error instanceof Error ? error.message : fallback;
@@ -69,6 +84,7 @@ function startingPoint(
 }
 
 export function App(props?: RenderRouteProps) @{
+	const { t } = useTranslation();
 	const sandbox = useMemo(() => createSandboxClientState(), []);
 	const [state] = useValue(sandbox.state.state);
 	const [view] = useValue(sandbox.state.view);
@@ -78,9 +94,12 @@ export function App(props?: RenderRouteProps) @{
 		sandbox.state.activeSessionId,
 	);
 	const [role, setRole] = useValue(sandbox.state.role);
+	const [activeModule, setActiveModule] = useValue(sandbox.state.activeModule);
+	const [turnModule, setTurnModule] = useValue(sandbox.state.turnModule);
 	const [driver, setDriver] = useValue(sandbox.state.driver);
 	const [draft, setDraft] = useValue(sandbox.state.message);
 	const [workbench, setWorkbench] = useValue(sandbox.state.workbench);
+	const [specModule, setSpecModule] = useValue(sandbox.state.specModule);
 	const [cardMode, setCardMode] = useValue(sandbox.state.cardMode);
 	const [nonce, setNonce] = useValue(sandbox.state.previewNonce);
 	const [selecting, setSelecting] = useValue(sandbox.state.selecting);
@@ -95,6 +114,9 @@ export function App(props?: RenderRouteProps) @{
 	const [ejecting, setEjecting] = useValue(sandbox.state.ejecting);
 	const [ejectBuild, setEjectBuild] = useValue(sandbox.state.ejectBuild);
 	const [menuOpen, setMenuOpen] = useValue(sandbox.state.menuOpen);
+	const [githubSettingsOpen, setGitHubSettingsOpen] = useValue(
+		sandbox.state.githubSettingsOpen,
+	);
 	const [connecting, setConnecting] = useValue(sandbox.state.connecting);
 	const [sessionMenu, setSessionMenu] = useValue(sandbox.state.sessionMenu);
 	const [confirmDelete, setConfirmDelete] = useValue(
@@ -187,6 +209,9 @@ export function App(props?: RenderRouteProps) @{
 				transaction.set(sandbox.state.view, loaded);
 				transaction.set(sandbox.state.liveEntries, loaded.chat);
 				transaction.set(sandbox.state.activeSessionId, id);
+				/* Module selections belong to the session that is open. */
+				transaction.set(sandbox.state.activeModule, '');
+				transaction.set(sandbox.state.turnModule, '');
 			}, 'sandbox/session');
 			setDriver(loaded.session.driver);
 			setNonce(nonce + 1);
@@ -196,13 +221,14 @@ export function App(props?: RenderRouteProps) @{
 				if (loaded.running) void follow(id);
 			}
 		} catch (loadError) {
-			setError(message(loadError, 'Could not open the session.'));
+			setError(message(loadError, t('sandbox.app.error.openSession')));
 		} finally {
 			setBusy(false);
 		}
 	};
 
 	useEffect(() => {
+		restoreSandboxLocale();
 		void (async () => {
 			try {
 				await refreshState();
@@ -212,7 +238,7 @@ export function App(props?: RenderRouteProps) @{
 				);
 				if (initial) await openSession(initial);
 			} catch (loadError) {
-				setError(message(loadError, 'The sandbox state is unavailable.'));
+				setError(message(loadError, t('sandbox.app.error.state')));
 			} finally {
 				signalReady();
 			}
@@ -236,7 +262,12 @@ export function App(props?: RenderRouteProps) @{
 	/* One turn, wherever it came from: an operator message or a handoff the
    operator confirmed. Automatic handoffs are chained by the server on the
    same stream, so this browser only has to follow it. */
-	const dispatch = (session: SandboxSession, text: string, roleId: string) => {
+	const dispatch = (
+		session: SandboxSession,
+		text: string,
+		roleId: string,
+		moduleDirectory = sandbox.store.get(sandbox.state.turnModule),
+	) => {
 		detach();
 		setRunning(true);
 		setError('');
@@ -245,6 +276,7 @@ export function App(props?: RenderRouteProps) @{
 			{
 				message: text,
 				role: roleId,
+				...(moduleDirectory ? { module: moduleDirectory } : {}),
 				driver: sandbox.store.get(sandbox.state.driver) || session.driver,
 			},
 			handlersFor(session.id),
@@ -254,16 +286,42 @@ export function App(props?: RenderRouteProps) @{
 	/* One brief starts everything: the planner names the modules and the first
    specialist, then the same brief becomes the first turn, so a new session
    is already working when it opens. */
-	const startSession = async (brief: string, chosenDriver: string) => {
+	const startSession = async (
+		brief: string,
+		chosenDriver: string,
+		attachments: readonly File[],
+	) => {
 		setBusy(true);
 		setError('');
 		try {
 			const created = await createSandboxSession(brief, chosenDriver);
 			await refreshState();
 			await openSession(created.session.id);
-			dispatch(created.session, brief, 'auto');
+			/* The files go up before the first turn, so its prompt already names
+   them. A failed upload keeps the created session and stops here
+   instead of starting a turn that cannot see the file. */
+			const failed: string[] = [];
+			for (const file of attachments) {
+				try {
+					await uploadAttachment(created.session.id, file);
+				} catch (uploadError) {
+					failed.push(
+						`${file.name}: ${message(
+							uploadError,
+							t('sandbox.attachments.uploadFailed'),
+						)}`,
+					);
+				}
+			}
+			if (failed.length > 0) {
+				setError(
+					t('sandbox.app.error.attachments', { failures: failed.join('; ') }),
+				);
+				return;
+			}
+			dispatch(created.session, brief, 'auto', '');
 		} catch (createError) {
-			setError(message(createError, 'Could not start the session.'));
+			setError(message(createError, t('sandbox.app.error.startSession')));
 		} finally {
 			setBusy(false);
 		}
@@ -295,13 +353,45 @@ export function App(props?: RenderRouteProps) @{
 		setBusy(true);
 		setError('');
 		try {
-			await approveSpecification(session.id);
+			await approveSpecification(session.id, handoff.module);
 			await openSession(session.id);
-			dispatch(session, handoff.prompt, handoff.role);
+			dispatch(session, handoff.prompt, handoff.role, handoff.module ?? '');
 		} catch (approveError) {
-			setError(
-				message(approveError, 'The specification could not be approved.'),
-			);
+			setError(message(approveError, t('sandbox.app.error.approveSpec')));
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	/* The operator steers the specification in words: the comment is recorded
+   and becomes the business manager's next turn. */
+	const askForSpecChanges = async (module: string, comment: string) => {
+		const session = currentSession();
+		if (!session || running) return;
+		setBusy(true);
+		setError('');
+		try {
+			const asked = await requestSpecChanges(session.id, module, comment);
+			await openSession(session.id);
+			dispatch(session, asked.handoff.prompt, asked.handoff.role, module);
+		} catch (askError) {
+			setError(message(askError, t('sandbox.app.error.requestChanges')));
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	const addModule = async (moduleId: string) => {
+		const session = currentSession();
+		if (!session) return;
+		setBusy(true);
+		setError('');
+		try {
+			await addSessionModule(session.id, moduleId);
+			await openSession(session.id);
+			await refreshState();
+		} catch (addError) {
+			setError(message(addError, t('sandbox.app.error.addModule')));
 		} finally {
 			setBusy(false);
 		}
@@ -314,7 +404,7 @@ export function App(props?: RenderRouteProps) @{
 			await setAutoContinue(session.id, enabled);
 			await refreshView(session.id);
 		} catch (settingError) {
-			setError(message(settingError, 'Could not change the handoff setting.'));
+			setError(message(settingError, t('sandbox.app.error.handoff')));
 		}
 	};
 
@@ -336,11 +426,11 @@ export function App(props?: RenderRouteProps) @{
 			const result = await runGates(session.id);
 			setNotice(
 				result.gates.map((gate) => `${gate.id}: ${gate.status}`).join(' · ') ||
-					'No gate ran.',
+					t('sandbox.app.gates.none'),
 			);
 			await openSession(session.id);
 		} catch (gateError) {
-			setError(message(gateError, 'The gates could not run.'));
+			setError(message(gateError, t('sandbox.app.error.gates')));
 		} finally {
 			setBusy(false);
 		}
@@ -356,7 +446,7 @@ export function App(props?: RenderRouteProps) @{
 			setPlan(result.plan);
 			setNotice('');
 		} catch (planError) {
-			setError(message(planError, 'The eject plan could not be prepared.'));
+			setError(message(planError, t('sandbox.app.error.ejectPlan')));
 		} finally {
 			setBusy(false);
 		}
@@ -412,6 +502,8 @@ export function App(props?: RenderRouteProps) @{
 			transaction.set(sandbox.state.view, null);
 			transaction.set(sandbox.state.liveEntries, []);
 			transaction.set(sandbox.state.workbench, 'none');
+			transaction.set(sandbox.state.activeModule, '');
+			transaction.set(sandbox.state.turnModule, '');
 			transaction.set(sandbox.state.notice, '');
 			transaction.set(sandbox.state.error, '');
 		}, 'sandbox/sessions');
@@ -449,7 +541,7 @@ export function App(props?: RenderRouteProps) @{
 			await refreshState();
 			backToSessions();
 		} catch (disconnectError) {
-			setError(message(disconnectError, 'Could not disconnect the sandbox.'));
+			setError(message(disconnectError, t('sandbox.app.error.disconnect')));
 		} finally {
 			setBusy(false);
 		}
@@ -461,7 +553,22 @@ export function App(props?: RenderRouteProps) @{
 			await refreshState();
 			setNonce(nonce + 1);
 		} catch (configError) {
-			setError(message(configError, 'Could not change the preview data mode.'));
+			setError(message(configError, t('sandbox.app.error.previewMode')));
+		}
+	};
+
+	const saveGitHub = async (input: GitHubSettingsInput) => {
+		setBusy(true);
+		setError('');
+		try {
+			await saveConfiguration(input);
+			await refreshState();
+			setGitHubSettingsOpen(false);
+			setNotice(t('sandbox.app.github.saved'));
+		} catch (configurationError) {
+			setError(message(configurationError, t('sandbox.app.error.github')));
+		} finally {
+			setBusy(false);
 		}
 	};
 
@@ -485,201 +592,263 @@ export function App(props?: RenderRouteProps) @{
 			setConnecting(false);
 			if (!result.connection.connected) {
 				setError(
-					result.connection.error?.message ??
-						'The sandbox could not connect to that application.',
+					result.connection.error?.message ?? t('sandbox.app.error.connect'),
 				);
 			}
 		} catch (connectError) {
-			setError(message(connectError, 'Could not save the connection.'));
+			setError(message(connectError, t('sandbox.app.error.saveConnection')));
 		} finally {
 			setBusy(false);
 		}
 	};
 
-	<div>
-		@if (!state) {
-			<div class="connect">
-				<p class="ui-help">Starting the sandbox…</p>
-			</div>
-		} @else if (!state.connection.connected || connecting) {
-			<ConnectView
-				state={state}
-				busy={busy}
-				error={error}
-				onConnect={(input) => void connect(input)}
-			/>
-		} @else {
-			<div class="sandbox">
-				<header class="sandbox__bar">
-					<button
-						class="sandbox__brand"
-						type="button"
-						onClick={() => backToSessions()}
-					>
-						<BrandMark size={20} />
-						Coreloom sandbox
-					</button>
-					<Tag mono>{state.configuration.mode}</Tag>
-					<span class="sandbox__spacer"></span>
-					<WorkspaceMenu
-						state={state}
-						open={menuOpen}
-						onToggle={() => setMenuOpen(!menuOpen)}
-						onChangeConnection={() => {
-							setMenuOpen(false);
-							setConnecting(true);
-						}}
-						onDisconnect={() => {
-							setMenuOpen(false);
-							void disconnect();
-						}}
-					/>
-				</header>
-
-				<div class="sandbox__notice">
-					@if (error) {
-						<Alert>{error}</Alert>
-					} @else if (notice) {
-						<Alert tone="info">{notice}</Alert>
-					}
+	<Head>
+		<Seo
+			title={t('sandbox.app.seo.title')}
+			titleTemplate="%s · Coreloom"
+			description={t('sandbox.app.seo.description')}
+			robots={{ index: false, follow: false, noarchive: true }}
+			openGraph={{
+				type: 'website',
+				siteName: t('sandbox.app.seo.imageAlt'),
+				images: [
+					{
+						url: '/og.png',
+						width: 1200,
+						height: 630,
+						alt: t('sandbox.app.seo.imageAlt'),
+					},
+				],
+			}}
+			twitter={{ card: 'summary_large_image', image: '/og.png' }}
+		/>
+		<div>
+			@if (!state) {
+				<div class="connect">
+					<p class="ui-help">{t('sandbox.app.starting')}</p>
 				</div>
-				@if (plan) {
-					<EjectModal
-						plan={plan}
-						steps={ejectSteps}
-						summary={ejectSummary}
-						error={ejectError}
-						running={ejecting}
-						build={ejectBuild}
-						onBuild={setEjectBuild}
-						onTarget={(target) => void startEject(target)}
-						onConfirm={confirmEject}
-						onClose={closeEject}
-					/>
-				}
-
-				@if (!activeSessionId || !view) {
-					<div class="sandbox__scroll">
-						<SessionPicker
-							sessions={state.sessions}
-							running={state.running}
-							roles={state.roles}
-							drivers={state.drivers}
-							driver={driver || state.configuration.driver}
-							busy={busy}
-							openMenu={sessionMenu}
-							confirmDelete={confirmDelete}
-							showArchived={showArchived}
-							onDriver={setDriver}
-							onOpen={(id) => void openSession(id)}
-							onCreate={(brief, chosen) => void startSession(brief, chosen)}
-							onMenu={(id) => {
-								setSessionMenu(id);
-								setConfirmDelete('');
+			} @else if (!state.connection.connected || connecting) {
+				<ConnectView
+					state={state}
+					busy={busy}
+					error={error}
+					onConnect={(input) => void connect(input)}
+				/>
+			} @else {
+				<div class="sandbox">
+					<header class="sandbox__bar">
+						<button
+							class="sandbox__brand"
+							type="button"
+							onClick={() => backToSessions()}
+						>
+							<BrandMark size={20} />
+							{t('sandbox.app.brand')}
+						</button>
+						<Tag mono>{state.configuration.mode}</Tag>
+						<span class="sandbox__spacer"></span>
+						<WorkspaceMenu
+							state={state}
+							open={menuOpen}
+							onToggle={() => setMenuOpen(!menuOpen)}
+							onChangeConnection={() => {
+								setMenuOpen(false);
+								setConnecting(true);
 							}}
-							onShowArchived={setShowArchived}
-							onArchive={(id) => void sessionAction(
-								id,
-								() => archiveSandboxSession(id),
-								'Could not archive the session.',
-							)}
-							onRestore={(id) => void sessionAction(
-								id,
-								() => restoreSandboxSession(id),
-								'Could not restore the session.',
-							)}
-							onConfirmDelete={setConfirmDelete}
-							onDelete={(id) => void sessionAction(
-								id,
-								() => deleteSandboxSession(id),
-								'Could not delete the session.',
-							)}
+							onGitHub={() => {
+								setMenuOpen(false);
+								setError('');
+								setGitHubSettingsOpen(true);
+							}}
+							onDisconnect={() => {
+								setMenuOpen(false);
+								void disconnect();
+							}}
 						/>
+					</header>
+
+					<div class="sandbox__notice">
+						@if (error) {
+							<Alert>{error}</Alert>
+						} @else if (notice) {
+							<Alert tone="info">{notice}</Alert>
+						}
 					</div>
-				} @else {
-					<>
-						<SessionBar
-							session={view.session}
-							changes={view.diffs.length}
-							busy={busy}
-							onBack={backToSessions}
-							onGates={() => void validate()}
-							onChanges={() => setWorkbench('diff')}
-							onEject={() => void startEject()}
+					@if (plan) {
+						<EjectModal
+							plan={plan}
+							steps={ejectSteps}
+							summary={ejectSummary}
+							error={ejectError}
+							running={ejecting}
+							build={ejectBuild}
+							onBuild={setEjectBuild}
+							onTarget={(target) => void startEject(target)}
+							onConfirm={confirmEject}
+							onClose={closeEject}
 						/>
-						<div class="sandbox__body">
-							<ChatPane
-								entries={entries}
-								delivered={Boolean(view.session.ejectedAt)}
+					}
+					@if (githubSettingsOpen) {
+						<GitHubSettingsModal
+							configuration={state.configuration}
+							busy={busy}
+							error={error}
+							onSave={(input) => void saveGitHub(input)}
+							onClose={() => {
+								setGitHubSettingsOpen(false);
+								setError('');
+							}}
+						/>
+					}
+
+					@if (!activeSessionId || !view) {
+						<div class="sandbox__scroll">
+							<SessionPicker
+								sessions={state.sessions}
+								running={state.running}
 								roles={state.roles}
 								drivers={state.drivers}
-								role={role}
-								driver={driver}
-								message={draft}
-								running={running}
-								selection={selection}
-								autoContinue={view.session.autoContinue}
-								pendingBrief={startingPoint(view.session, entries)}
-								onStart={() => send(startingPoint(view.session, entries))}
-								onContinue={continueWith}
-								onApprove={(handoff) => void approveAndContinue(handoff)}
-								onAutoContinue={(enabled) => void toggleAutoContinue(enabled)}
-								onRole={setRole}
+								driver={driver || state.configuration.driver}
+								busy={busy}
+								openMenu={sessionMenu}
+								confirmDelete={confirmDelete}
+								showArchived={showArchived}
 								onDriver={setDriver}
-								onMessage={setDraft}
-								onSend={() => send()}
-								onStop={stop}
-								onClearSelection={() => setSelection(null)}
+								onOpen={(id) => void openSession(id)}
+								onCreate={(brief, chosen, attachments) => void startSession(
+									brief,
+									chosen,
+									attachments,
+								)}
+								onMenu={(id) => {
+									setSessionMenu(id);
+									setConfirmDelete('');
+								}}
+								onShowArchived={setShowArchived}
+								onArchive={(id) => void sessionAction(
+									id,
+									() => archiveSandboxSession(id),
+									t('sandbox.app.error.archiveSession'),
+								)}
+								onRestore={(id) => void sessionAction(
+									id,
+									() => restoreSandboxSession(id),
+									t('sandbox.app.error.restoreSession'),
+								)}
+								onConfirmDelete={setConfirmDelete}
+								onDelete={(id) => void sessionAction(
+									id,
+									() => deleteSandboxSession(id),
+									t('sandbox.app.error.deleteSession'),
+								)}
 							/>
-							<aside class="sandbox__side">
-								<WorkCard
-									session={view.session}
-									diffs={view.diffs}
-									mode={cardMode as WorkCardMode}
-									nonce={nonce}
-									previewData={state.configuration.previewData}
-									onMode={(mode) => setCardMode(mode)}
-									onOpen={() => setWorkbench(
-										cardMode === 'code' ? 'diff' : 'preview',
-									)}
-									onReload={() => setNonce(nonce + 1)}
-									onAskAbout={(path) => setDraft(
-										draft
-											? draft + '\n\nAbout ' + path + ': '
-											: 'About ' + path + ': ',
-									)}
-								/>
-							</aside>
 						</div>
-					</>
-				}
-				@if (workbench !== 'none') {
-					<WorkbenchModal
-						mode={workbench as WorkbenchMode}
-						session={view!.session}
-						diffs={view!.diffs}
-						nonce={nonce}
-						selecting={selecting}
-						previewData={state.configuration.previewData}
-						onMode={(mode) => setWorkbench(mode)}
-						onToggleSelect={() => {
-							setSelecting(!selecting);
-							setNonce(nonce + 1);
-						}}
-						onReload={() => setNonce(nonce + 1)}
-						onPreviewData={(mode) => void setPreviewData(mode)}
-						onAskAbout={(path) => {
-							setDraft(
-								draft
-									? draft + '\n\nAbout ' + path + ': '
-									: 'About ' + path + ': ',
-							);
-							setWorkbench('none');
-						}}
-						onClose={() => setWorkbench('none')}
-					/>
-				}
-			</div>
-		}
-	</div>
+					} @else {
+						<>
+							<SessionBar
+								session={view.session}
+								changes={view.diffs.length}
+								busy={busy}
+								activeModule={activeModule}
+								workspaceModules={state.workspaceModules}
+								onModule={setActiveModule}
+								onAddModule={(moduleId) => void addModule(moduleId)}
+								onBack={backToSessions}
+								onGates={() => void validate()}
+								onChanges={() => setWorkbench('diff')}
+								onEject={() => void startEject()}
+							/>
+							<div class="sandbox__body">
+								<ChatPane
+									entries={entries}
+									delivered={Boolean(view.session.ejectedAt)}
+									roles={state.roles}
+									drivers={state.drivers}
+									modules={view.session.modules}
+									specs={view.specs}
+									role={role}
+									module={turnModule}
+									driver={driver}
+									message={draft}
+									running={running}
+									selection={selection}
+									autoContinue={view.session.autoContinue}
+									pendingBrief={startingPoint(view.session, entries)}
+									onStart={() => send(startingPoint(view.session, entries))}
+									onContinue={continueWith}
+									onApprove={(handoff) => void approveAndContinue(handoff)}
+									onRequestChanges={(module, comment) => void askForSpecChanges(
+										module,
+										comment,
+									)}
+									onEditSpec={(module) => {
+										setSpecModule(module);
+										setWorkbench('spec');
+									}}
+									onAutoContinue={(enabled) => void toggleAutoContinue(enabled)}
+									onRole={setRole}
+									onModule={setTurnModule}
+									onDriver={setDriver}
+									onMessage={setDraft}
+									onSend={() => send()}
+									onStop={stop}
+									onClearSelection={() => setSelection(null)}
+								/>
+								<aside class="sandbox__side">
+									<WorkCard
+										session={view.session}
+										diffs={view.diffs}
+										mode={cardMode as WorkCardMode}
+										nonce={nonce}
+										activeModule={activeModule}
+										previewData={state.configuration.previewData}
+										onMode={(mode) => setCardMode(mode)}
+										onOpen={() => setWorkbench(
+											cardMode === 'code' ? 'diff' : 'preview',
+										)}
+										onReload={() => setNonce(nonce + 1)}
+										onAskAbout={(path) => setDraft(
+											draft
+												? draft + '\n\n' + t('sandbox.app.askAbout', { path })
+												: t('sandbox.app.askAbout', { path }),
+										)}
+									/>
+								</aside>
+							</div>
+						</>
+					}
+					@if (workbench !== 'none') {
+						<WorkbenchModal
+							mode={workbench as WorkbenchMode}
+							session={view!.session}
+							diffs={view!.diffs}
+							nonce={nonce}
+							selecting={selecting}
+							activeModule={activeModule}
+							specModule={specModule}
+							previewData={state.configuration.previewData}
+							onModule={setActiveModule}
+							onSpecSaved={() => void refreshView(view!.session.id)}
+							onMode={(mode) => setWorkbench(mode)}
+							onToggleSelect={() => {
+								setSelecting(!selecting);
+								setNonce(nonce + 1);
+							}}
+							onReload={() => setNonce(nonce + 1)}
+							onPreviewData={(mode) => void setPreviewData(mode)}
+							onAskAbout={(path) => {
+								setDraft(
+									draft
+										? draft + '\n\n' + t('sandbox.app.askAbout', { path })
+										: t('sandbox.app.askAbout', { path }),
+								);
+								setWorkbench('none');
+							}}
+							onClose={() => setWorkbench('none')}
+						/>
+					}
+				</div>
+			}
+		</div>
+	</Head>
 }

@@ -2,8 +2,8 @@ schemaVersion: 1
 # Nothing executes this file; it documents the contract.
 gates:
   - id: spec-schema
-    command: pnpm oerp spec validate --all --json
-    sandbox: pnpm oerp spec validate --all --json --root <session workspace>
+    command: pnpm coreloom spec validate --all --json
+    sandbox: pnpm coreloom spec validate --all --json --root <session workspace>
     required: true
   - id: unresolved-decisions
     assertion: the handoff lists zero open business questions

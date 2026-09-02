@@ -1,4 +1,4 @@
-import type { ModuleSettingsStore } from '@coreloom/kernel';
+import type { ActorKind, ModuleSettingsStore } from '@coreloom/kernel';
 import type {
 	ApiTokenRecord,
 	AuditEvent,
@@ -44,6 +44,33 @@ export interface CreateSessionRecord {
 	readonly csrfToken: string;
 	readonly createdAt: number;
 	readonly expiresAt: number;
+}
+
+export interface PasswordResetTokenRecord {
+	readonly tokenHash: string;
+	readonly accountId: string;
+	readonly expiresAt: number;
+	readonly createdAt: number;
+}
+
+export interface TenantInvitationRecord {
+	readonly id: string;
+	readonly tenantId: string;
+	readonly email: string;
+	readonly normalizedEmail: string;
+	readonly roleKey: string;
+	readonly tokenHash: string;
+	readonly expiresAt: number;
+	readonly createdBy: string;
+	readonly createdAt: number;
+}
+
+export interface MfaChallengeRecord {
+	readonly tokenHash: string;
+	readonly accountId: string;
+	readonly tenantId: string;
+	readonly expiresAt: number;
+	readonly createdAt: number;
 }
 
 export interface CreateAccountInTenantRecord {
@@ -120,11 +147,21 @@ export interface AuditRecord {
 	readonly tenantId: string;
 	readonly actorAccountId: string | null;
 	readonly actorLabel: string;
+	readonly actorKind: ActorKind;
+	/* The agent run the entry is traceable to; null for a user. */
+	readonly actorRunId: string | null;
 	readonly action: string;
 	readonly subjectType: string;
 	readonly subjectId: string;
 	readonly metadata: Readonly<Record<string, unknown>>;
 	readonly occurredAt: number;
+}
+
+/* The audit event plus the actor columns added by 0014. Rows written before it
+   read as user actors. */
+export interface AuditActorEvent extends AuditEvent {
+	readonly actorKind: ActorKind;
+	readonly actorRunId: string | null;
 }
 
 export interface AuthRepository extends ModuleSettingsStore {
@@ -166,6 +203,14 @@ export interface AuthRepository extends ModuleSettingsStore {
 	createTenantMembership(
 		record: CreateTenantMembershipRecord,
 	): AccountCredential;
+	createMembershipInTenant(record: {
+		readonly accountId: string;
+		readonly tenantId: string;
+		readonly role: string;
+		readonly roleId: string | null;
+		readonly scopes: readonly string[];
+		readonly createdAt: number;
+	}): AccountCredential;
 	createApiToken(record: CreateApiTokenRecord): ApiTokenRecord;
 	listApiTokens(tenantId: string): readonly ApiTokenRecord[];
 	findApiTokenByHash(tokenHash: string): ApiTokenRecord | null;
@@ -209,6 +254,39 @@ export interface AuthRepository extends ModuleSettingsStore {
 	deleteSession(tokenHash: string): void;
 	deleteSessionById(accountId: string, id: string): boolean;
 	deleteExpiredSessions(now: number): number;
+	createPasswordResetToken(record: PasswordResetTokenRecord): void;
+	consumePasswordResetToken(tokenHash: string, now: number): string | null;
+	createTenantInvitation(record: TenantInvitationRecord): void;
+	consumeTenantInvitation(
+		tokenHash: string,
+		now: number,
+	): {
+		readonly tenantId: string;
+		readonly email: string;
+		readonly normalizedEmail: string;
+		readonly roleKey: string;
+	} | null;
+	upsertMfaTotp(
+		accountId: string,
+		secretCiphertext: string,
+		createdAt: number,
+	): void;
+	findMfaTotp(accountId: string): {
+		readonly secretCiphertext: string;
+		readonly confirmedAt: number | null;
+	} | null;
+	confirmMfaTotp(accountId: string, confirmedAt: number): void;
+	replaceMfaRecoveryCodes(
+		accountId: string,
+		codeHashes: readonly string[],
+		createdAt: number,
+	): void;
+	consumeMfaRecoveryCode(accountId: string, codeHash: string): boolean;
+	createMfaChallenge(record: MfaChallengeRecord): void;
+	consumeMfaChallenge(
+		tokenHash: string,
+		now: number,
+	): { readonly accountId: string; readonly tenantId: string } | null;
 	findSignInFailure(normalizedEmail: string): SignInFailureRecord | null;
 	recordSignInFailure(
 		normalizedEmail: string,
@@ -235,7 +313,7 @@ export interface AuthRepository extends ModuleSettingsStore {
 	deleteRole(tenantId: string, id: string): boolean;
 	countRoleMemberships(tenantId: string, roleId: string): number;
 	appendAudit(record: AuditRecord): void;
-	queryAudit(query: AuditQuery): readonly AuditEvent[];
+	queryAudit(query: AuditQuery): readonly AuditActorEvent[];
 }
 
 export class DuplicateAccountError extends Error {

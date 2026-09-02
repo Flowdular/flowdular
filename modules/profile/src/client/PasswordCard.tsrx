@@ -1,4 +1,5 @@
 import { Alert, Button, FormField } from '@coreloom/ui';
+import { t } from '@coreloom/client';
 import type { PasswordFormValues } from './password.ts';
 
 export interface PasswordCardProps {
@@ -29,12 +30,12 @@ export function PasswordCard(props: PasswordCardProps) @{
 	<section class="ui-card">
 		<div class="ui-card__head">
 			<span class="ui-card__title">
-				Password
-				<small>Confirm the current password to set a new one</small>
+				{t('profile.password.title')}
+				<small>{t('profile.password.description')}</small>
 			</span>
 		</div>
 		<form class="ui-form" onSubmit={submit}>
-			<FormField label="Current password" required>
+			<FormField label={t('profile.password.current')} required>
 				<input
 					class="ui-input"
 					name="currentPassword"
@@ -43,7 +44,7 @@ export function PasswordCard(props: PasswordCardProps) @{
 					required
 				/>
 			</FormField>
-			<FormField label="New password" required>
+			<FormField label={t('profile.password.new')} required>
 				<input
 					class="ui-input"
 					name="newPassword"
@@ -52,7 +53,7 @@ export function PasswordCard(props: PasswordCardProps) @{
 					required
 				/>
 			</FormField>
-			<FormField label="Confirm new password" required>
+			<FormField label={t('profile.password.confirm')} required>
 				<input
 					class="ui-input"
 					name="confirmation"
@@ -68,7 +69,9 @@ export function PasswordCard(props: PasswordCardProps) @{
 			}
 			<div class="ui-form__actions">
 				<Button variant="primary" type="submit" disabled={props.saving}>
-					{props.saving ? 'Changing…' : 'Change password'}
+					{props.saving
+						? t('profile.password.saving')
+						: t('profile.password.save')}
 				</Button>
 			</div>
 		</form>

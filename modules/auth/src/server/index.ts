@@ -1,3 +1,4 @@
+export { actorFromContext } from './actor.ts';
 export { createAuthRoutes } from './endpoints.ts';
 export type {
 	PlatformServerComposition,
@@ -10,7 +11,11 @@ export {
 } from './runtime.ts';
 export type { AuthRuntime, AuthRuntimeOptions } from './runtime.ts';
 export { sessionMutationDenial } from './session-security.ts';
-export { createPlatformToolRegistry } from '@coreloom/kernel';
+export {
+	createPlatformAgentRegistry,
+	createPlatformCapabilityRegistry,
+	createPlatformToolRegistry,
+} from '@coreloom/kernel';
 export { AuthServiceError } from '../services/auth-service-error.ts';
 export { AUDIT_ACTIONS, AUDIT_ACTION_LIST } from '../services/auth-service.ts';
 export {

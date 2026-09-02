@@ -1,4 +1,5 @@
 import { Alert, Button, FormField } from '@coreloom/ui';
+import { t } from '@coreloom/client';
 import { SANDBOX_GRANT_CAPABILITIES } from '../acl/permissions.ts';
 import type { SandboxAccessCandidate } from '../domain/types.ts';
 import type { GrantSandboxAccessRequest } from './api.ts';
@@ -49,8 +50,8 @@ export function SandboxGrantForm(props: SandboxGrantFormProps) @{
 		<div class="ui-drawer__body">
 			<div class="ui-form">
 				<FormField
-					label="Workspace member"
-					help="Only members that already hold sandbox scopes can be granted access."
+					label={t('sandbox.form.member')}
+					help={t('sandbox.form.memberHelp')}
 					required
 				>
 					<select
@@ -60,7 +61,7 @@ export function SandboxGrantForm(props: SandboxGrantFormProps) @{
 						onChange={(event) => props.onSelect(event.currentTarget.value)}
 						required
 					>
-						<option value="">Select a member</option>
+						<option value="">{t('sandbox.form.selectMember')}</option>
 						@for (const candidate of props.candidates; key candidate.accountId) {
 							<option
 								value={candidate.accountId}
@@ -72,12 +73,9 @@ export function SandboxGrantForm(props: SandboxGrantFormProps) @{
 					</select>
 				</FormField>
 				<div class="ui-field">
-					<span class="ui-label">Capabilities</span>
+					<span class="ui-label">{t('sandbox.form.capabilities')}</span>
 					@if (available.length === 0) {
-						<span class="ui-help">
-							This member holds no sandbox scope. Change the membership role or
-							grant the scope first.
-						</span>
+						<span class="ui-help">{t('sandbox.form.noCapabilities')}</span>
 					} @else {
 						<div class="ui-choices">
 							@for (const capability of SANDBOX_GRANT_CAPABILITIES; key capability) {
@@ -94,10 +92,13 @@ export function SandboxGrantForm(props: SandboxGrantFormProps) @{
 							}
 						</div>
 					}
-					<span class="ui-help">sandbox.access.use is always required.</span>
+					<span class="ui-help">{t('sandbox.form.requiredCapability')}</span>
 				</div>
 				<div class="ui-form__row">
-					<FormField label="Expires in days" help="Leave empty for no expiry.">
+					<FormField
+						label={t('sandbox.form.expiry')}
+						help={t('sandbox.form.expiryHelp')}
+					>
 						<input
 							class="ui-input"
 							name="expiryDays"
@@ -107,7 +108,7 @@ export function SandboxGrantForm(props: SandboxGrantFormProps) @{
 							step="1"
 						/>
 					</FormField>
-					<FormField label="Note">
+					<FormField label={t('sandbox.form.note')}>
 						<input class="ui-input" name="note" maxlength={280} />
 					</FormField>
 				</div>
@@ -117,15 +118,15 @@ export function SandboxGrantForm(props: SandboxGrantFormProps) @{
 			</div>
 		</div>
 		<div class="ui-drawer__foot">
-			<small>Access is auditable and can be revoked at any time.</small>
+			<small>{t('sandbox.form.footer')}</small>
 			<div class="ui-form__actions">
-				<Button onClick={props.onCancel}>Cancel</Button>
+				<Button onClick={props.onCancel}>{t('sandbox.action.cancel')}</Button>
 				<Button
 					variant="primary"
 					type="submit"
 					disabled={props.busy || available.length === 0}
 				>
-					{props.busy ? 'Saving…' : 'Grant access'}
+					{props.busy ? t('sandbox.action.saving') : t('sandbox.access.grant')}
 				</Button>
 			</div>
 		</div>

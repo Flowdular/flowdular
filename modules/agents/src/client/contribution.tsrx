@@ -1,11 +1,14 @@
-import type { ModuleClientContribution } from '@coreloom/client';
+import { t, type ModuleClientContribution } from '@coreloom/client';
 import { AGENT_PERMISSIONS } from '../acl/permissions.ts';
+import translationsEn from '../../translations/en.json';
+import translationsPl from '../../translations/pl.json';
 import { AgentProvidersView } from './AgentProvidersView.tsrx';
 import { AgentDashboardWidget } from './AgentDashboardWidget.tsrx';
 import { AgentPlaygroundView } from './AgentPlaygroundView.tsrx';
 import { AgentRunsView } from './AgentRunsView.tsrx';
 import { AgentSkillsView } from './AgentSkillsView.tsrx';
 import { AgentsView } from './AgentsView.tsrx';
+import { AgentUsageView } from './AgentUsageView.tsrx';
 import './agents.css';
 
 export interface AgentClientContributionOptions {
@@ -18,14 +21,19 @@ export function createAgentClientContribution(
 ): ModuleClientContribution {
 	return {
 		moduleId: 'agents.core',
+		translations: { en: translationsEn, pl: translationsPl },
 		navigation: [
 			{
 				id: 'agents.navigation.providers',
 				viewId: 'agent-providers',
 				group: 'Agents',
-				label: 'Providers',
+				get label() {
+					return t('agents.navigation.providers');
+				},
 				glyph: 'plug',
-				description: 'Connections and readiness',
+				get description() {
+					return t('agents.navigation.providersDescription');
+				},
 				scope: AGENT_PERMISSIONS.providersRead,
 				order: 20,
 			},
@@ -33,9 +41,13 @@ export function createAgentClientContribution(
 				id: 'agents.navigation.skills',
 				viewId: 'agent-skills',
 				group: 'Agents',
-				label: 'Skills',
+				get label() {
+					return t('agents.navigation.skills');
+				},
 				glyph: 'file-text',
-				description: 'Reusable procedures',
+				get description() {
+					return t('agents.navigation.skillsDescription');
+				},
 				scope: AGENT_PERMISSIONS.skillsRead,
 				order: 35,
 			},
@@ -43,9 +55,13 @@ export function createAgentClientContribution(
 				id: 'agents.navigation.playground',
 				viewId: 'agent-playground',
 				group: 'Agents',
-				label: 'Agent playground',
+				get label() {
+					return t('agents.navigation.playground');
+				},
 				glyph: 'flask',
-				description: 'Queue isolated test runs',
+				get description() {
+					return t('agents.navigation.playgroundDescription');
+				},
 				scope: AGENT_PERMISSIONS.runsExecute,
 				order: 40,
 			},
@@ -53,9 +69,13 @@ export function createAgentClientContribution(
 				id: 'agents.navigation.runs',
 				viewId: 'agent-runs',
 				group: 'Agents',
-				label: 'Agent runs',
+				get label() {
+					return t('agents.navigation.runs');
+				},
 				glyph: 'activity',
-				description: 'Durable execution history',
+				get description() {
+					return t('agents.navigation.runsDescription');
+				},
 				scope: AGENT_PERMISSIONS.runsRead,
 				order: 50,
 			},
@@ -63,17 +83,41 @@ export function createAgentClientContribution(
 				id: 'agents.navigation.definitions',
 				viewId: 'agents',
 				group: 'Agents',
-				label: 'Agents',
+				get label() {
+					return t('agents.navigation.agents');
+				},
 				glyph: 'bot',
-				description: 'Reusable worker definitions',
+				get description() {
+					return t('agents.navigation.agentsDescription');
+				},
 				scope: AGENT_PERMISSIONS.definitionsRead,
 				order: 30,
+			},
+			{
+				id: 'agents.navigation.usage',
+				viewId: 'agent-usage',
+				group: 'Agents',
+				get label() {
+					return t('agents.navigation.usage');
+				},
+				glyph: 'download',
+				get description() {
+					return t('agents.navigation.usageDescription');
+				},
+				scope: AGENT_PERMISSIONS.runsRead,
+				order: 80,
 			},
 		],
 		views: [
 			{
 				id: 'agent-providers',
-				render: () => <AgentProvidersView csrfToken={options.csrfToken} />,
+				render: () =>
+					<AgentProvidersView
+						csrfToken={options.csrfToken}
+						canManage={options.scopes.includes(
+							AGENT_PERMISSIONS.providersManage,
+						)}
+					/>,
 			},
 			{
 				id: 'agents',
@@ -104,6 +148,10 @@ export function createAgentClientContribution(
 						csrfToken={options.csrfToken}
 						canCancel={options.scopes.includes(AGENT_PERMISSIONS.runsExecute)}
 					/>,
+			},
+			{
+				id: 'agent-usage',
+				render: () => <AgentUsageView />,
 			},
 		],
 		widgets: [

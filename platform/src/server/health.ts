@@ -9,7 +9,7 @@ export const healthEndpoint = defineEndpoint({
 		Response.json(
 			{
 				status: 'ok',
-				service: 'octane-erp',
+				service: 'coreloom',
 				architectureVersion: '0.2.0',
 				requestId,
 			},

@@ -1,8 +1,10 @@
 import { useEffect, useMemo } from 'octane';
 import { Alert, Button, EmptyState, PageHeader } from '@coreloom/ui';
+import { t } from '@coreloom/client';
 import { useValue } from 'segment-state';
 import { changeOwnPassword, loadOwnProfile, updateOwnProfile } from './api.ts';
 import { DisplayNameCard } from './DisplayNameCard.tsrx';
+import { LanguageCard } from './LanguageCard.tsrx';
 import { PasswordCard } from './PasswordCard.tsrx';
 import { SessionsCard } from './SessionsCard.tsrx';
 import { validatePasswordChange, type PasswordFormValues } from './password.ts';
@@ -50,7 +52,7 @@ export function ProfileView(props: ProfileViewProps) @{
 				transaction.set(profileState.state.status, 'idle');
 				transaction.set(
 					profileState.state.loadError,
-					errorMessage(error, 'Could not load your profile.'),
+					errorMessage(error, t('profile.error.load')),
 				);
 			}, 'profile/load-failed');
 		}
@@ -85,7 +87,7 @@ export function ProfileView(props: ProfileViewProps) @{
 				transaction.set(profileState.state.status, 'idle');
 				transaction.set(
 					profileState.state.profileSuccess,
-					'Your display name was saved.',
+					t('profile.displayName.saved'),
 				);
 			}, 'profile/saved');
 		} catch (error) {
@@ -93,7 +95,7 @@ export function ProfileView(props: ProfileViewProps) @{
 				transaction.set(profileState.state.status, 'idle');
 				transaction.set(
 					profileState.state.profileError,
-					errorMessage(error, 'Could not update your profile.'),
+					errorMessage(error, t('profile.error.update')),
 				);
 			}, 'profile/save-failed');
 		}
@@ -103,7 +105,10 @@ export function ProfileView(props: ProfileViewProps) @{
 		const validation = validatePasswordChange(values);
 		if (!validation.valid) {
 			profileState.store.act((transaction) => {
-				transaction.set(profileState.state.passwordError, validation.message);
+				transaction.set(
+					profileState.state.passwordError,
+					t('profile.password.validation.' + validation.code),
+				);
 				transaction.set(profileState.state.passwordSuccess, '');
 			}, 'profile/password-invalid');
 			return false;
@@ -119,7 +124,7 @@ export function ProfileView(props: ProfileViewProps) @{
 				transaction.set(profileState.state.status, 'idle');
 				transaction.set(
 					profileState.state.passwordSuccess,
-					'Your password was changed.',
+					t('profile.password.saved'),
 				);
 			}, 'profile/password-saved');
 			return true;
@@ -128,7 +133,7 @@ export function ProfileView(props: ProfileViewProps) @{
 				transaction.set(profileState.state.status, 'idle');
 				transaction.set(
 					profileState.state.passwordError,
-					errorMessage(error, 'Could not change your password.'),
+					errorMessage(error, t('profile.error.password')),
 				);
 			}, 'profile/password-save-failed');
 			return false;
@@ -137,20 +142,22 @@ export function ProfileView(props: ProfileViewProps) @{
 
 	<div class="ui-view">
 		<PageHeader
-			eyebrow="Workspace account"
-			title="Profile"
-			description="Your display name, password, and signed-in sessions."
+			eyebrow={t('profile.page.eyebrow')}
+			title={t('profile.page.title')}
+			description={t('profile.page.description')}
 		/>
 		@if (status === 'loading' && !loaded) {
 			<section class="ui-card">
-				<p class="ui-table__empty">Loading your profile…</p>
+				<p class="ui-table__empty">{t('profile.page.loading')}</p>
 			</section>
 		} @else {
 			@if (loadError && !profile) {
 				<>
 					<Alert>{loadError}</Alert>
 					<div class="ui-form__actions">
-						<Button onClick={() => void refresh()}>Try again</Button>
+						<Button onClick={() => void refresh()}>{t(
+							'profile.action.retry',
+						)}</Button>
 					</div>
 				</>
 			} @else {
@@ -158,9 +165,9 @@ export function ProfileView(props: ProfileViewProps) @{
 					@if (loadError) {
 						<Alert>{loadError}</Alert>
 					} @else if (!profile) {
-						<EmptyState title="No display name saved">
-							Save a display name to create your workspace profile.
-						</EmptyState>
+						<EmptyState title={t('profile.page.emptyTitle')}>{t(
+							'profile.page.emptyHint',
+						)}</EmptyState>
 					}
 					<DisplayNameCard
 						displayName={displayName}
@@ -170,6 +177,7 @@ export function ProfileView(props: ProfileViewProps) @{
 						onDisplayNameChange={setDisplayName}
 						onSubmit={saveDisplayName}
 					/>
+					<LanguageCard csrfToken={props.csrfToken} />
 					<PasswordCard
 						saving={status === 'saving-password'}
 						error={passwordError}

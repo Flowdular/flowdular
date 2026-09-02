@@ -1,4 +1,5 @@
 import type { ModuleSettingValue } from '@coreloom/kernel';
+import { t } from '@coreloom/client/i18n';
 import type {
 	SettingsEntryPayload,
 	SettingsModulePayload,
@@ -27,7 +28,7 @@ export async function loadSettings(): Promise<
 	return (
 		await payload<{ readonly modules: readonly SettingsModulePayload[] }>(
 			response,
-			'Could not load settings.',
+			t('system.settings.errorLoad'),
 		)
 	).modules;
 }
@@ -50,7 +51,7 @@ export async function updateSetting(
 	return (
 		await payload<{ readonly setting: SettingsEntryPayload | null }>(
 			response,
-			'Could not save the setting.',
+			t('system.settings.errorSave'),
 		)
 	).setting;
 }

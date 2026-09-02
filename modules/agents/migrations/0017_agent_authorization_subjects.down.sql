@@ -1,0 +1,2 @@
+ALTER TABLE agent_action_invocations DROP COLUMN authorization_subject_json;
+ALTER TABLE agent_run_actors DROP COLUMN authorization_subject_json;

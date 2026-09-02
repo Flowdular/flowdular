@@ -62,6 +62,19 @@ byChange:
     - 'spec/module.yaml'
     - 'package.json'
     - 'src/services/*.ts'
+  agent-tool:
+    - 'src/agent/tools.ts'
+    - 'src/platform.ts'
+    - 'tests/agent-tools.test.ts'
+    - 'spec/module.yaml'
+    - 'package.json'
+  business-agent:
+    - 'src/agent/agents.ts'
+    - 'src/platform.ts'
+    - 'tests/business-agents.test.ts'
+    - 'spec/module.yaml'
+    - 'module.json'
+    - 'package.json'
   fix:
     - 'tests/module.test.ts'
     - 'the owning file'

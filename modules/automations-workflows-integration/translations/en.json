@@ -1,0 +1,21 @@
+{
+	"module.name": "Automations Workflow Integration",
+	"navigation.label": "Automations Workflow Integration",
+	"navigation.description": "Connects schedules and signed webhooks owned by automations.core to published workflows through the public workflows.execution.v1 capability.",
+	"page.eyebrow": "Operations",
+	"page.title": "Automations Workflow Integration",
+	"page.description": "Connects schedules and signed webhooks owned by automations.core to published workflows through the public workflows.execution.v1 capability.",
+	"action.refresh": "Refresh",
+	"table.title": "Records",
+	"table.caption": "Automations Workflow Integration records",
+	"table.count": "{count} records",
+	"table.column.name": "Name",
+	"table.column.status": "Status",
+	"table.loading": "Loading records…",
+	"table.emptyTitle": "No records yet",
+	"table.emptyHint": "Records created in this workspace appear here.",
+	"status.active": "Active",
+	"status.archived": "Archived",
+	"error.load": "Could not load records.",
+	"error.request": "The records operation failed."
+}

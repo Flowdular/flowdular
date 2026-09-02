@@ -1,4 +1,5 @@
 import { Alert, Button, FormField } from '@coreloom/ui';
+import { t } from '@coreloom/client';
 
 export interface DisplayNameCardProps {
 	readonly displayName: string;
@@ -18,14 +19,14 @@ export function DisplayNameCard(props: DisplayNameCardProps) @{
 	<section class="ui-card">
 		<div class="ui-card__head">
 			<span class="ui-card__title">
-				Display name
-				<small>Shown to members of this workspace</small>
+				{t('profile.displayName.title')}
+				<small>{t('profile.displayName.description')}</small>
 			</span>
 		</div>
 		<form class="ui-form" onSubmit={submit}>
 			<FormField
-				label="Display name"
-				help="Use between 2 and 120 characters."
+				label={t('profile.displayName.label')}
+				help={t('profile.displayName.help')}
 				required
 			>
 				<input
@@ -48,7 +49,9 @@ export function DisplayNameCard(props: DisplayNameCardProps) @{
 			}
 			<div class="ui-form__actions">
 				<Button variant="primary" type="submit" disabled={props.saving}>
-					{props.saving ? 'Saving…' : 'Save display name'}
+					{props.saving
+						? t('profile.displayName.saving')
+						: t('profile.displayName.save')}
 				</Button>
 			</div>
 		</form>

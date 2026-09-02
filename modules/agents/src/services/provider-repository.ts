@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { modelSupportsTemperature } from '@coreloom/harness/catalog';
+import { runModuleMigrations } from '@coreloom/kernel';
 import type {
 	AgentModelReadiness,
 	AgentProviderConnection,
@@ -9,16 +10,7 @@ import type {
 	AgentProviderModelConfiguration,
 } from '../domain/types.ts';
 import type { EncryptedCredential } from './credential-vault.ts';
-import {
-	AGENTS_MIGRATION_001,
-	AGENTS_MIGRATION_002,
-	AGENTS_MIGRATION_003,
-	AGENTS_MIGRATION_004,
-	AGENTS_MIGRATION_005,
-	AGENTS_MIGRATION_006,
-	AGENTS_MIGRATION_007,
-	AGENTS_MIGRATION_008,
-} from './migration.ts';
+import { migrations } from './migration.ts';
 
 export class DuplicateProviderKeyError extends Error {
 	constructor() {
@@ -163,6 +155,7 @@ export interface ProviderRepository {
 	get(tenantId: string, id: string): StoredProviderConnection | null;
 	create(value: StoredProviderConnection): AgentProviderConnection;
 	update(value: StoredProviderConnection): AgentProviderConnection;
+	delete(tenantId: string, id: string): boolean;
 	recordReadiness(
 		tenantId: string,
 		id: string,
@@ -189,22 +182,18 @@ export interface ProviderRepository {
 
 export class SqliteProviderRepository implements ProviderRepository {
 	readonly #database: DatabaseSync;
+	#closed = false;
 
 	constructor(path: string) {
 		if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
 		this.#database = new DatabaseSync(path, { timeout: 5_000 });
 		this.#database.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
-		this.#database.exec(AGENTS_MIGRATION_001);
-		this.#database.exec(AGENTS_MIGRATION_002);
-		this.#database.exec(AGENTS_MIGRATION_003);
-		this.#database.exec(AGENTS_MIGRATION_004);
-		this.#database.exec(AGENTS_MIGRATION_005);
-		this.#database.exec(AGENTS_MIGRATION_006);
-		this.#database.exec(AGENTS_MIGRATION_007);
-		this.#database.exec(AGENTS_MIGRATION_008);
+		runModuleMigrations(this.#database, migrations);
 	}
 
 	close(): void {
+		if (this.#closed) return;
+		this.#closed = true;
 		this.#database.close();
 	}
 
@@ -341,6 +330,16 @@ export class SqliteProviderRepository implements ProviderRepository {
 			);
 		if (result.changes !== 1) throw new Error('Provider connection not found.');
 		return item;
+	}
+
+	delete(tenantId: string, id: string): boolean {
+		return (
+			this.#database
+				.prepare(
+					'DELETE FROM agent_provider_connections WHERE tenant_id = ? AND id = ?',
+				)
+				.run(tenantId, id).changes === 1
+		);
 	}
 
 	recordReadiness(

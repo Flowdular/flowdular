@@ -7,6 +7,7 @@ export interface Party {
 	readonly kind: PartyKind;
 	readonly email: string | null;
 	readonly phone: string | null;
+	readonly vatId: string | null;
 	readonly status: 'active' | 'archived';
 	readonly createdAt: number;
 }
@@ -16,4 +17,9 @@ export interface CreatePartyInput {
 	readonly kind: PartyKind;
 	readonly email?: string | null;
 	readonly phone?: string | null;
+	readonly vatId?: string | null;
+}
+
+export interface UpdatePartyInput extends CreatePartyInput {
+	readonly id: string;
 }

@@ -88,7 +88,7 @@ export const cliExtension = defineCliExtension({
 							eventsInspected: events.length,
 							latestSequence: events[0]?.sequence ?? 0,
 						},
-						evidence: ['.octane-erp/agents.db'],
+						evidence: ['.coreloom/data/agents.db'],
 					};
 				} finally {
 					repository.close();

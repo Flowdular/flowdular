@@ -54,6 +54,9 @@ export interface CodingAgentMessage {
 export interface CodingAgentTurnRequest {
 	/* The only directory the driver may read from or write to. */
 	readonly workspacePath: string;
+	/* Writes are narrower than reads. The orchestrator expands the active
+	   role's globs to the one draft module owned by this turn. */
+	readonly allowedPaths?: readonly string[] | undefined;
 	readonly role: string;
 	readonly systemInstruction: string;
 	readonly prompt: string;

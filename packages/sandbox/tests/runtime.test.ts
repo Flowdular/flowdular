@@ -46,9 +46,11 @@ import {
 	readSession,
 	restoreSession,
 	sessionPaths,
+	updateSession,
 	type SandboxSession,
 } from '../src/server/sessions.ts';
 import { collectDiffs } from '../src/server/turns.ts';
+import { hashSpec } from '../src/server/spec.ts';
 
 async function workspace(): Promise<string> {
 	const root = await mkdtemp(join(tmpdir(), 'coreloom-sandbox-'));
@@ -80,25 +82,124 @@ describe('sandbox configuration', () => {
 		const stored = await saveSandboxConfiguration(root, {
 			...DEFAULT_CONFIGURATION,
 			platformToken: sealed,
+			gitProviderToken: await sealSecret(root, 'github_pat_secret'),
 		});
 		const safe = safeConfiguration(stored);
 		expect(JSON.stringify(safe)).not.toContain('clat_secret-value');
+		expect(JSON.stringify(safe)).not.toContain('github_pat_secret');
 		expect(safe.platformTokenFingerprint).toHaveLength(8);
+		expect(safe.github.tokenFingerprint).toHaveLength(8);
 		expect((await loadSandboxConfiguration(root)).platformToken).toEqual(
 			sealed,
 		);
+	});
+
+	it('refuses symlinked local secret and configuration files', async () => {
+		const root = await workspace();
+		const outside = await mkdtemp(join(tmpdir(), 'coreloom-sandbox-outside-'));
+		const sandboxDirectory = join(root, '.coreloom', 'sandbox');
+		await mkdir(sandboxDirectory, { recursive: true });
+		const outsideKey = join(outside, 'secret.key');
+		await writeFile(outsideKey, Buffer.alloc(32, 7).toString('base64'), 'utf8');
+		await symlink(outsideKey, join(sandboxDirectory, 'secret.key'));
+
+		await expect(sealSecret(root, 'must-stay-local')).rejects.toThrow(
+			/symbolic link/,
+		);
+
+		await rm(join(sandboxDirectory, 'secret.key'));
+		const outsideConfig = join(outside, 'config.json');
+		await writeFile(outsideConfig, 'outside-file', 'utf8');
+		await symlink(outsideConfig, join(sandboxDirectory, 'config.json'));
+		await expect(
+			saveSandboxConfiguration(root, DEFAULT_CONFIGURATION),
+		).rejects.toThrow(/symbolic link/);
+		expect(await readFile(outsideConfig, 'utf8')).toBe('outside-file');
 	});
 
 	it('falls back to the loopback default when nothing is configured', async () => {
 		const configuration = await loadSandboxConfiguration(await workspace());
 		expect(configuration.mode).toBe('loopback');
 		expect(configuration.previewData).toBe('fixtures');
+		expect(configuration.github.enabled).toBe(true);
+		expect(configuration.github.overridesProject).toBe(false);
+	});
+
+	it('does not mistake materialized GitHub defaults for a local override', async () => {
+		const root = await workspace();
+		await mkdir(join(root, '.coreloom/sandbox'), { recursive: true });
+		await writeFile(
+			join(root, '.coreloom/sandbox/config.json'),
+			JSON.stringify({
+				...DEFAULT_CONFIGURATION,
+				github: {
+					enabled: true,
+					remote: 'origin',
+					repository: null,
+					baseBranch: 'main',
+					branchPrefix: 'sandbox',
+					mode: 'auto',
+					forkOwner: null,
+					reviewers: [],
+				},
+			}),
+			'utf8',
+		);
+		expect((await loadSandboxConfiguration(root)).github.overridesProject).toBe(
+			false,
+		);
+	});
+
+	it('preserves a local GitHub override written before the marker existed', async () => {
+		const root = await workspace();
+		await mkdir(join(root, '.coreloom/sandbox'), { recursive: true });
+		await writeFile(
+			join(root, '.coreloom/sandbox/config.json'),
+			JSON.stringify({
+				...DEFAULT_CONFIGURATION,
+				github: {
+					enabled: true,
+					remote: 'upstream',
+					repository: 'example/coreloom',
+					baseBranch: 'develop',
+					branchPrefix: 'changes',
+					mode: 'direct',
+					forkOwner: null,
+					reviewers: [],
+				},
+			}),
+			'utf8',
+		);
+		expect((await loadSandboxConfiguration(root)).github.overridesProject).toBe(
+			true,
+		);
+	});
+
+	it('uses the CL sandbox mode contract and ignores the removed legacy name', async () => {
+		const current = process.env.CL_SANDBOX_MODE;
+		const legacy = process.env.CORELOOM_SANDBOX_MODE;
+		process.env.CL_SANDBOX_MODE = 'self-hosted';
+		process.env.CORELOOM_SANDBOX_MODE = 'loopback';
+		try {
+			expect((await loadSandboxConfiguration(await workspace())).mode).toBe(
+				'self-hosted',
+			);
+		} finally {
+			if (current === undefined) delete process.env.CL_SANDBOX_MODE;
+			else process.env.CL_SANDBOX_MODE = current;
+			if (legacy === undefined) delete process.env.CORELOOM_SANDBOX_MODE;
+			else process.env.CORELOOM_SANDBOX_MODE = legacy;
+		}
 	});
 
 	it('rejects a platform address that is not an http origin', () => {
 		expect(assertPlatformUrl('https://erp.example.test/api/')).toBe(
 			'https://erp.example.test',
 		);
+		expect(assertPlatformUrl('http://127.0.0.1:4310')).toBe(
+			'http://127.0.0.1:4310',
+		);
+		expect(() => assertPlatformUrl('http://erp.example.test')).toThrow(/HTTPS/);
 		expect(() => assertPlatformUrl('ftp://erp.example.test')).toThrow(
 			/http or https/,
 		);
@@ -454,7 +555,33 @@ describe('delivery', () => {
 		if (kind === 'edit-module') {
 			await rm(join(paths.modulePath, 'src', 'old.ts'));
 		}
-		return { root, session };
+		const spec = [
+			'id: profile.core',
+			'name: Profile',
+			'description: User profile',
+			'specVersion: 0.1.0',
+			'status: approved',
+			'acceptanceScenarios:',
+			'  - id: PROFILE-READ',
+			'    given: a signed-in user',
+			'    when: they open their profile',
+			'    then: their profile is shown',
+			'',
+		].join('\n');
+		await mkdir(join(paths.modulePath, 'spec'), { recursive: true });
+		await writeFile(
+			join(paths.modulePath, 'spec', 'module.yaml'),
+			spec,
+			'utf8',
+		);
+		const approved = await updateSession(root, session.id, {
+			modules: session.modules.map((module) => ({
+				...module,
+				specHash: hashSpec(spec),
+				specApprovedAt: Date.now(),
+			})),
+		});
+		return { root, session: approved };
 	}
 
 	const recording = (failing: string | null = null) => {
@@ -502,13 +629,17 @@ describe('delivery', () => {
 		const plan = await createLocalDeliveryTarget().plan(
 			contextFor(root, session, recording().commands),
 		);
-		expect(plan.files).toEqual(['module.json', 'src/index.ts']);
+		expect(plan.files).toEqual([
+			'module.json',
+			'spec/module.yaml',
+			'src/index.ts',
+		]);
 		expect(plan.overwrites).toEqual(['src/index.ts']);
 		expect(plan.removes).toEqual(['src/old.ts']);
 		expect(plan.targetPath).toBe('modules/profile');
 		expect(plan.enable).toBe(false);
 		expect(plan.modules).toHaveLength(1);
-		expect(plan.changedFiles).toBe(3);
+		expect(plan.changedFiles).toBe(4);
 		expect(plan.platformLocal).toBe(true);
 		expect(plan.restartRequired).toBe(true);
 		expect(plan.gates).toContain('tests');
@@ -551,7 +682,7 @@ describe('delivery', () => {
 		const outcome = await target.apply(context, plan, (event) =>
 			events.push(event),
 		);
-		expect(outcome.files).toBe(2);
+		expect(outcome.files).toBe(3);
 		expect(outcome.removed).toBe(1);
 		expect(outcome.enabled).toBe(false);
 		expect(calls).toEqual(['install', 'scopes', 'verify']);
@@ -633,6 +764,41 @@ describe('work planning', () => {
 		]);
 	});
 
+	it('names every module a two-module request touches, primary first', () => {
+		const plan = classifyByRules(
+			'Add a VAT field to catalog.core and show it on the auth.core screen.',
+			modules,
+		);
+		expect(plan.kind).toBe('edit-module');
+		expect(plan.moduleId).toBe('catalog.core');
+		expect(plan.modules.map((module) => [module.id, module.kind])).toEqual([
+			['catalog.core', 'edit'],
+			['auth.core', 'edit'],
+		]);
+		expect(plan.rationale).toContain('existing modules');
+	});
+
+	it('adds an invented id as a new module beside the existing one', () => {
+		const plan = classifyByRules(
+			'Move the price rules out of catalog.core into pricing.core.',
+			modules,
+		);
+		expect(plan.modules.map((module) => [module.id, module.kind])).toEqual([
+			['catalog.core', 'edit'],
+			['pricing.core', 'new'],
+		]);
+		expect(plan.kind).toBe('edit-module');
+		expect(plan.rationale).toContain('does not exist yet');
+	});
+
+	it('never reads a file name as a module id', () => {
+		const plan = classifyByRules(
+			'Update package.json and tsconfig.json in auth.core.',
+			modules,
+		);
+		expect(plan.modules.map((module) => module.id)).toEqual(['auth.core']);
+	});
+
 	it('treats an unknown capability as a new module', () => {
 		const plan = classifyByRules(
 			'Teams should log time against a project.',
@@ -658,6 +824,24 @@ describe('work planning', () => {
 			['auth.core', 'edit'],
 		]);
 		expect(plan.title).toBe('Catalog prices');
+		expect(plan.classifiedBy).toBe('agent');
+	});
+
+	it('keeps a module the brief named even when the planner forgets it', () => {
+		const fallback = classifyByRules(
+			'Add a field in auth.core and show it in catalog.core.',
+			modules,
+		);
+		const plan = parsePlan(
+			'{"kind":"edit-module","moduleId":"auth.core","modules":["auth.core"],"title":"Party VAT","firstRole":"backend-engineer","rationale":"Roles live in auth."}',
+			modules,
+			DEFAULT_AGENT_ROLES,
+			fallback,
+		);
+		expect(plan.modules.map((module) => module.id)).toEqual([
+			'auth.core',
+			'catalog.core',
+		]);
 		expect(plan.classifiedBy).toBe('agent');
 	});
 
@@ -702,6 +886,8 @@ const SESSION: SandboxSession = {
 	resumeIds: {},
 	autoContinue: true,
 	chainDepth: 0,
+	attachments: [],
+	checkpoints: [],
 	state: 'draft',
 	createdAt: 0,
 	updatedAt: 0,
@@ -713,7 +899,13 @@ const SESSION: SandboxSession = {
 describe('turn routing', () => {
 	const roles = DEFAULT_AGENT_ROLES;
 	const paths = sessionPaths('/tmp/workspace', SESSION.id, 'profile');
-	const base = { session: SESSION, paths, roles, message: 'Do the work.' };
+	const base = {
+		session: SESSION,
+		paths,
+		roles,
+		message: 'Do the work.',
+		specApproved: true as boolean | null,
+	};
 
 	it('starts with the specification when there is none', () => {
 		expect(
@@ -875,10 +1067,12 @@ describe('handoff planning', () => {
 		hasManifest: false,
 		hasServer: false,
 		hasClient: false,
+		specApproved: true as boolean | null,
 	};
 	const base = {
 		routing,
 		role: 'business-manager',
+		module: 'profile',
 		declared: null,
 		gates: [],
 		failed: false,

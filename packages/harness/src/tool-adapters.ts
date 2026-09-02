@@ -6,6 +6,12 @@ interface AgentToolBase {
 	readonly description: string;
 	readonly requiredPermissions: readonly string[];
 	readonly inputSchema?: Readonly<Record<string, unknown>>;
+	readonly contractVersion?: number;
+	readonly outputSchema?: Readonly<Record<string, unknown>>;
+	readonly risk?: 'read' | 'workspace-write' | 'external' | 'destructive';
+	readonly idempotency?: 'required';
+	readonly idempotencyProtection?: 'target-ledger';
+	readonly cancellation?: 'cooperative' | 'not-supported';
 	execute(input: unknown, context: AgentToolContext): Promise<unknown>;
 }
 
@@ -36,6 +42,22 @@ export function defineApiAgentTool(
 		target: dottedIdentifier(definition.endpointId, 'Endpoint id'),
 		description: definition.description,
 		requiredPermissions: [...definition.requiredPermissions],
+		...(definition.contractVersion === undefined
+			? {}
+			: { contractVersion: definition.contractVersion }),
+		...(definition.outputSchema === undefined
+			? {}
+			: { outputSchema: definition.outputSchema }),
+		...(definition.risk === undefined ? {} : { risk: definition.risk }),
+		...(definition.idempotency === undefined
+			? {}
+			: { idempotency: definition.idempotency }),
+		...(definition.idempotencyProtection === undefined
+			? {}
+			: { idempotencyProtection: definition.idempotencyProtection }),
+		...(definition.cancellation === undefined
+			? {}
+			: { cancellation: definition.cancellation }),
 		...(definition.inputSchema === undefined
 			? {}
 			: { inputSchema: definition.inputSchema }),
@@ -60,6 +82,22 @@ export function defineCliAgentTool(
 		target: dottedIdentifier(definition.capability.id, 'Capability id'),
 		description: definition.description,
 		requiredPermissions: [...definition.requiredPermissions],
+		...(definition.contractVersion === undefined
+			? {}
+			: { contractVersion: definition.contractVersion }),
+		...(definition.outputSchema === undefined
+			? {}
+			: { outputSchema: definition.outputSchema }),
+		...(definition.risk === undefined ? {} : { risk: definition.risk }),
+		...(definition.idempotency === undefined
+			? {}
+			: { idempotency: definition.idempotency }),
+		...(definition.idempotencyProtection === undefined
+			? {}
+			: { idempotencyProtection: definition.idempotencyProtection }),
+		...(definition.cancellation === undefined
+			? {}
+			: { cancellation: definition.cancellation }),
 		...(definition.inputSchema === undefined
 			? {}
 			: { inputSchema: definition.inputSchema }),

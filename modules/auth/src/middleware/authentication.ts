@@ -4,10 +4,10 @@ import type { AuthPrincipal } from '../domain/types.ts';
 import { readCookie, type AuthCookieConfig } from '../api/cookies.ts';
 import type { AuthService } from '../services/auth-service.ts';
 
-export const AUTH_PRINCIPAL_STATE_KEY = 'octane-erp.auth.principal';
+export const AUTH_PRINCIPAL_STATE_KEY = 'coreloom.auth.principal';
 /* Set when the principal came from an API token instead of a browser session.
    Session-guarded mutations stay closed to machine credentials. */
-export const AUTH_TOKEN_PRINCIPAL_STATE_KEY = 'octane-erp.auth.token-principal';
+export const AUTH_TOKEN_PRINCIPAL_STATE_KEY = 'coreloom.auth.token-principal';
 
 type ServiceResolver = () => AuthService;
 

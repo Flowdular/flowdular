@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { SandboxService } from '../src/services/sandbox-service.ts';
 import { SandboxServiceError } from '../src/services/sandbox-service-error.ts';
@@ -298,5 +302,59 @@ describe('sandbox session lifecycle', () => {
 		expect(event.action).toBe('sandbox.module.ejected');
 		expect(event.subjectType).toBe('module');
 		expect(service.verifyAuditChain('tenant-a')).toBe(true);
+	});
+});
+
+/* A file-backed database lets the test tamper a stored row through a second
+   connection, then re-verify through the service, the way an attacker with disk
+   access would. */
+describe('sandbox audit chain verification', () => {
+	it('verifies an untouched chain and reports the row that was altered', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'sandbox-audit-'));
+		const path = join(dir, 'sandbox.db');
+		const repository = new SqliteSandboxRepository(path);
+		const service = new SandboxService(
+			repository,
+			directory({ 'account-owner': FULL_SCOPES }),
+		);
+		try {
+			service.grant({
+				tenantId: 'tenant-a',
+				actorId: 'account-owner',
+				accountId: 'account-owner',
+			});
+			service.registerSession({
+				tenantId: 'tenant-a',
+				accountId: 'account-owner',
+				sessionId: 'session-1',
+				moduleId: 'demo.core',
+				title: 'Demo module',
+				blueprint: 'demo',
+				driver: 'loopback-cli',
+				mode: 'loopback',
+			});
+			expect(service.verifyAudit('tenant-a')).toEqual({
+				verified: true,
+				brokenAt: null,
+			});
+
+			/* Newest first: index 0 is the session event, sequence 2. */
+			const target = service.listAuditEvents('tenant-a')[0]!;
+			const tamper = new DatabaseSync(path);
+			tamper
+				.prepare(
+					'UPDATE sandbox_audit_events SET metadata_json = ? WHERE id = ?',
+				)
+				.run('{"tampered":"1"}', target.id);
+			tamper.close();
+
+			const result = service.verifyAudit('tenant-a');
+			expect(result.verified).toBe(false);
+			expect(result.brokenAt).toBe(target.id);
+			expect(service.verifyAuditChain('tenant-a')).toBe(false);
+		} finally {
+			repository.close();
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });

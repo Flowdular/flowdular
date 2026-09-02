@@ -11,7 +11,7 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@octanejs/app-core": "0.0.46"
+		"@octanejs/app-core": "0.0.47"
 	},
 	"devDependencies": {
 		"typescript": "5.9.3",

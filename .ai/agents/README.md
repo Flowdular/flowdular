@@ -9,11 +9,11 @@ Two families of role prompts live here. They share one front matter schema (`id`
 What the front matter does at run time:
 
 - `gates`: enforced. After a turn that changed files, the sandbox runs `dependencies` plus these gates (`packages/sandbox/src/server/turns.ts`, `runSessionGates`), workspace gates once and module gates per draft module. Ids must come from `packages/sandbox/src/server/gates.ts`: `spec-schema`, `module-schema`, `dependencies`, `typecheck`, `tests`, `format`. An unknown id is dropped silently. The failing gate's command and output go into the fix prompt.
-- `allowedPaths`: advisory. Globs relative to each draft module directory are shown to the agent as "Paths you may write" (`packages/coding-agent/src/roles/contract.ts`); nothing blocks a write elsewhere. The eject copies the whole module directory and removes files the session deleted.
+- `allowedPaths`: enforced after every turn. Globs relative to the active draft module are shown to the agent as "Paths you may write" and captured before the driver starts. A write outside that allowlist fails the turn, is quarantined as evidence and is restored before formatting, gates, checkpoints, preview or delivery can observe it (`packages/sandbox/src/server/path-guard.ts`, `turns.ts`).
 - `handoff`: enforced. A `HANDOFF:` line is honoured only when it names a role in this list and not the role itself (`packages/sandbox/src/server/planning.ts`); otherwise the state routing decides and the transcript says why. The team list in the instruction is built from this list.
 - `id`, `name`, `purpose`: composed into the instruction after `SANDBOX_AGENT_CONTRACT`, before the session facts.
 
-The five roles and who takes the first turn: `business-manager` for a new module (no spec yet), `backend-engineer` for a change to an existing module (`classifyByRules` in `planning.ts`), then `ux-designer`, `frontend-engineer`, `agentic-engineer` by handoff or by the state of the module (`routeRole`).
+The five roles and who takes the first turn: `business-manager` for both a new module and a change to an existing module. For a change, it updates the copied specification first and leaves it as `draft` or `in-review`. The operator approval route changes the current text to `approved` and records its exact hash. Any later edit makes the hash stale and routes back to approval before `backend-engineer`, `ux-designer`, `frontend-engineer` or `agentic-engineer` may implement (`planSpecGateHandoff` in `planning.ts`, `isSpecApproved` in `spec.ts`).
 
 ## Root roles run at the repository root
 

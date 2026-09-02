@@ -8,6 +8,7 @@ import {
 	type AgentProvider,
 	type AgentTool,
 } from '../src/index.ts';
+import { userActor } from '@coreloom/kernel';
 
 const TOOL_ID = 'parties.customer.read';
 
@@ -18,6 +19,11 @@ function request(
 		runId: 'run-1',
 		tenantId: 'tenant-a',
 		requestedBy: 'account-a',
+		requestedActor: userActor({
+			accountId: 'account-a',
+			displayName: 'Ada',
+			email: 'ada@example.com',
+		}),
 		trigger: 'playground',
 		input: 'Look up the customer.',
 		definition: {
@@ -56,6 +62,8 @@ function tool(overrides: Partial<AgentTool> = {}): AgentTool {
 	};
 }
 
+const authorizeToolAccess = () => ['parties.records.read'];
+
 /* The provider forwards whatever the tool call produced, including its
    failure, so the test can observe both the events and the error. */
 function providerCalling(
@@ -90,6 +98,7 @@ describe('harness tool contract', () => {
 		let executed = false;
 		const harness = new AgentHarness({
 			providers: [providerCalling({ id: 42, extra: true })],
+			authorizeToolAccess,
 			tools: [
 				tool({
 					execute: async () => {
@@ -114,6 +123,7 @@ describe('harness tool contract', () => {
 		let received: unknown;
 		const harness = new AgentHarness({
 			providers: [providerCalling({ id: 'customer-1' })],
+			authorizeToolAccess,
 			tools: [
 				tool({
 					execute: async (input) => {
@@ -139,6 +149,7 @@ describe('harness tool contract', () => {
 		let aborted = false;
 		const harness = new AgentHarness({
 			providers: [providerCalling({ id: 'customer-1' })],
+			authorizeToolAccess,
 			tools: [
 				tool({
 					timeoutMs: 250,
@@ -163,6 +174,7 @@ describe('harness tool contract', () => {
 	it('turns a throwing tool into a stable failure without crashing the run', async () => {
 		const harness = new AgentHarness({
 			providers: [providerCalling({ id: 'customer-1' })],
+			authorizeToolAccess,
 			tools: [
 				tool({
 					execute: async () => {
@@ -186,6 +198,7 @@ describe('harness tool contract', () => {
 					forwarded = value;
 				}),
 			],
+			authorizeToolAccess,
 			tools: [
 				tool({
 					execute: async () => ({
@@ -210,6 +223,7 @@ describe('harness tool contract', () => {
 	it('records a denial event for a tool the run was not granted', async () => {
 		const harness = new AgentHarness({
 			providers: [providerCalling({ id: 'customer-1' })],
+			authorizeToolAccess,
 			tools: [tool()],
 		});
 		const result = await harness.execute(request({ toolGrants: [] }));
@@ -237,6 +251,7 @@ describe('harness tool contract', () => {
 		};
 		const harness = new AgentHarness({
 			providers: [provider],
+			authorizeToolAccess,
 			tools: [
 				tool({
 					execute: async (input) => {
@@ -262,6 +277,7 @@ describe('harness tool contract', () => {
 			() =>
 				new AgentHarness({
 					providers: [providerCalling({})],
+					authorizeToolAccess,
 					tools: [tool({ timeoutMs: 10 })],
 				}),
 		).toThrow(AgentHarnessError);

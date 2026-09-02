@@ -6,6 +6,7 @@ import {
 	type AgentExecutionRequest,
 	type VercelAiProviderConfiguration,
 } from '../src/index.ts';
+import { userActor } from '@coreloom/kernel';
 
 const INSTRUCTIONS =
 	'Answer billing questions for the finance team and escalate disputes.';
@@ -17,6 +18,11 @@ function request(
 		runId: 'run-1',
 		tenantId: 'tenant-finance',
 		requestedBy: 'account-a',
+		requestedActor: userActor({
+			accountId: 'account-a',
+			displayName: 'Ada',
+			email: 'ada@example.com',
+		}),
 		trigger: 'playground',
 		input: 'Why was invoice 42 charged twice?',
 		definition: {

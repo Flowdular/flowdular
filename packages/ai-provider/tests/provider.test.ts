@@ -133,6 +133,32 @@ describe('provider configuration', () => {
 			}),
 		).toThrow(/credential is invalid/);
 	});
+
+	it('never sends an OpenAI-compatible credential over remote plaintext HTTP', () => {
+		const configuration = {
+			kind: 'openai-compatible' as const,
+			model: 'model',
+			credential: 'secret-value',
+		};
+		expect(() =>
+			assertProviderConfiguration({
+				...configuration,
+				baseURL: 'http://models.example.test/v1',
+			}),
+		).toThrow(/HTTPS/);
+		expect(() =>
+			assertProviderConfiguration({
+				...configuration,
+				baseURL: 'https://user:password@models.example.test/v1',
+			}),
+		).toThrow(/credentials/);
+		expect(() =>
+			assertProviderConfiguration({
+				...configuration,
+				baseURL: 'http://127.0.0.1:11434/v1',
+			}),
+		).not.toThrow();
+	});
 });
 
 describe('readiness probe', () => {

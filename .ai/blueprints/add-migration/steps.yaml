@@ -7,22 +7,21 @@ steps:
       - 'spec/module.yaml'
     outputs:
       - 'SQL draft'
-  - id: constant
+  - id: sql
     role: backend-engineer
-    action: Append X_MIGRATION_00N in src/services/migration.ts; for a column split ADD COLUMN and backfill into two constants and guard the first with pragma_table_info in the repository constructor.
+    action: Write migrations/000N_{module}_{name}.up.sql first as one additive unit and .down.sql as documentation of the reverse; never edit an existing migration.
     inputs:
       - 'SQL draft'
     outputs:
-      - 'src/services/migration.ts'
-      - 'src/services/sqlite-repository.ts'
-  - id: mirror
-    role: backend-engineer
-    action: Write migrations/000N_{module}_{name}.up.sql with the same SQL and .down.sql with the reverse.
-    inputs:
-      - 'src/services/migration.ts'
-    outputs:
       - 'migrations/000N_*.up.sql'
       - 'migrations/000N_*.down.sql'
+  - id: mirror
+    role: backend-engineer
+    action: Append X_MIGRATION_00N to src/services/migration.ts with bytes identical to the .up.sql file and append its ordered { id, statements } entry to migrations. The repository keeps one runModuleMigrations call and no per-column guard.
+    inputs:
+      - 'migrations/000N_*.up.sql'
+    outputs:
+      - 'src/services/migration.ts'
   - id: plumb
     role: backend-engineer
     action: Extend the row interface, fromRow, INSERT and SELECT lists, domain type, service validation and endpoint parsing.
@@ -39,16 +38,17 @@ steps:
       - 'format'
   - id: prove
     role: backend-engineer
-    action: Tests on ':memory:' for the new rule, tenant isolation, and idempotence (open twice); run pnpm dev once against the existing .octane-erp/<module>.db.
+    action: Add migration tests proving SQL byte parity, fresh apply, safe adoption of a populated pre-ledger schema, and a clean second repository construction. Add module tests for the new rule and tenant isolation; inspect migration status against a copy of the existing database before applying.
     inputs:
-      - 'tests/module.test.ts'
+      - 'migrations/000N_*.up.sql'
     outputs:
+      - 'tests/migrations.test.ts'
       - 'tests/module.test.ts'
     gates:
       - 'tests'
   - id: land
     role: orchestrator
-    action: 'Sandbox: eject. Direct path: pnpm verify, pull request stating that the schema applies on next boot.'
+    action: 'Sandbox: eject. Direct path: coreloom migration verify, pnpm verify, then a pull request stating that the schema applies on next boot.'
     inputs:
       - 'diff'
     outputs:

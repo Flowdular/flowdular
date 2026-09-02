@@ -21,6 +21,9 @@ import {
 	type CodingAgentRegistry,
 	type HandoffDeclaration,
 } from '@coreloom/coding-agent';
+import { attachmentInstruction } from './attachments.ts';
+import { captureCheckpoint } from './checkpoints.ts';
+import { guardAgentPaths } from './path-guard.ts';
 import type { SandboxConfiguration } from './config.ts';
 import { diffTrees, type FileDiff } from './diff.ts';
 import {
@@ -30,12 +33,19 @@ import {
 	type GateId,
 	type GateResult,
 } from './gates.ts';
-import { planHandoff, routeRole, type RoutingContext } from './planning.ts';
+import {
+	SPEC_OWNER_ROLE,
+	planHandoff,
+	planSpecGateHandoff,
+	routeRole,
+	type RoutingContext,
+} from './planning.ts';
 import type { PlatformClient } from './platform-client.ts';
 import { listSkills, writeAgentPointer } from './reference.ts';
 import {
 	appendChatEntry,
 	basePathOf,
+	findSessionModule,
 	installSessionDependencies,
 	modulePathOf,
 	readChat,
@@ -48,6 +58,7 @@ import {
 	type SessionModule,
 	type SessionPaths,
 } from './sessions.ts';
+import { isSpecApproved, readSpecGate, type SpecGate } from './spec.ts';
 import type { InstallResult } from './workspace-install.ts';
 import { SandboxSetupError } from './workspace-root.ts';
 
@@ -61,12 +72,22 @@ export interface TurnContext {
 	readonly installDependencies?: (
 		session: SandboxSession,
 	) => Promise<InstallResult>;
+	/* Runs deterministic sandbox gates. Tests may replace the process boundary
+	   while keeping routing and approval behaviour unchanged. */
+	readonly executeGates?: (input: {
+		readonly session: SandboxSession;
+		readonly gates: readonly GateId[];
+		readonly modules?: readonly SessionModule[];
+	}) => Promise<readonly GateResult[]>;
 }
 
 export interface TurnInput {
 	readonly sessionId: string;
 	readonly message: string;
 	readonly role?: string;
+	/* The draft module directory this turn works in. Defaults to the module the
+	   last handoff named, then to the primary module. */
+	readonly module?: string;
 	readonly driver?: string;
 	readonly signal?: AbortSignal;
 }
@@ -128,41 +149,101 @@ async function routingContext(
 	context: TurnContext,
 	session: SandboxSession,
 	paths: SessionPaths,
+	modulePath: string,
 	message: string,
 	entries: readonly ChatEntry[],
+	specApproved: boolean | null,
 ): Promise<RoutingContext> {
 	return {
 		session,
 		paths,
 		roles: context.roles,
 		message,
-		hasSpec: await exists(join(paths.modulePath, 'spec/module.yaml')),
-		hasManifest: await exists(join(paths.modulePath, 'module.json')),
-		hasServer: await hasServerSurface(paths.modulePath),
-		hasClient: await exists(
-			join(paths.modulePath, 'src/client/contribution.tsrx'),
-		),
+		hasSpec: await exists(join(modulePath, 'spec/module.yaml')),
+		hasManifest: await exists(join(modulePath, 'module.json')),
+		hasServer: await hasServerSurface(modulePath),
+		hasClient: await exists(join(modulePath, 'src/client/contribution.tsrx')),
+		specApproved,
 		lastHandoff:
 			entries.filter((entry) => entry.handoff).at(-1)?.handoff ?? null,
 	};
 }
 
-/* Only a new module waits for approval. An existing module already carries an
-   approved specification, so a change to it is never gated on one. */
-async function specApproval(
+/* The last handoff names the module the work continues in, so a chained turn
+   stays where the previous one left off. An explicit request wins, and one that
+   names a module the session does not have is refused rather than silently
+   redirected to the primary. */
+function activeModule(
 	session: SandboxSession,
-	paths: SessionPaths,
-): Promise<boolean | null> {
-	if (session.kind !== 'new-module') return null;
-	try {
-		const spec = await readFile(
-			join(paths.modulePath, 'spec', 'module.yaml'),
-			'utf8',
-		);
-		return /^status:\s*approved\s*$/m.test(spec);
-	} catch {
-		return null;
-	}
+	requested: string | undefined,
+	entries: readonly ChatEntry[],
+): SessionModule {
+	if (requested) return findSessionModule(session, requested);
+	const named = entries.filter((entry) => entry.handoff).at(-1)
+		?.handoff?.module;
+	return (
+		session.modules.find((module) => module.directory === named) ??
+		session.modules[0]!
+	);
+}
+
+/* Nobody but the specification owner works in a module whose specification the
+   operator has not approved. A missing owner role is a configuration error, not
+   permission to bypass the gate. */
+function refusesUnapproved(gate: SpecGate, roleId: string): boolean {
+	return gate.approved !== true && roleId !== SPEC_OWNER_ROLE;
+}
+
+/* The refused turn: the operator hears why nothing ran, with a stable code, and
+   the session stops on the move that unblocks it. */
+async function* refuseUnapproved(
+	context: TurnContext,
+	session: SandboxSession,
+	active: SessionModule,
+	role: AgentRoleDefinition,
+	gate: SpecGate,
+	input: { readonly brief: string; readonly driver: string },
+): AsyncGenerator<ChatEntry, TurnOutcome> {
+	const handoff = planSpecGateHandoff({
+		roles: context.roles,
+		module: active.directory,
+		refusedRole: role.id,
+		changed: gate.changed,
+		brief: input.brief,
+	});
+	const reason = `${role.name} did not take this turn: the specification of ${active.id} is not approved. ${
+		gate.changed
+			? 'Review the change below and approve it, ask for changes, or edit the specification yourself.'
+			: `${handoff.roleName} writes the specification change first.`
+	}`;
+	yield await appendChatEntry(context.workspaceRoot, session, {
+		kind: 'system',
+		role: role.id,
+		module: active.directory,
+		text: reason,
+		event: {
+			type: 'error',
+			code: 'SPEC_NOT_APPROVED',
+			message: reason,
+		} as CodingAgentEvent,
+	});
+	yield await appendChatEntry(context.workspaceRoot, session, {
+		kind: 'system',
+		role: handoff.role,
+		module: active.directory,
+		text: handoffText(handoff),
+		handoff,
+	});
+	const updated = await updateSession(context.workspaceRoot, session.id, {
+		state: handoff.kind === 'approval' ? 'awaiting-approval' : 'planned',
+		driver: input.driver,
+	});
+	return {
+		session: updated,
+		diffs: await collectDiffs(context.workspaceRoot, updated),
+		gates: [],
+		handoff,
+	};
 }
 
 function handoffText(handoff: HandoffPlan): string {
@@ -185,7 +266,7 @@ function runCli(
 	return new Promise((resolvePromise) => {
 		const child = spawn(
 			'pnpm',
-			['--dir', workspaceRoot, '--silent', 'oerp', ...args],
+			['--dir', workspaceRoot, '--silent', 'coreloom', ...args],
 			{
 				cwd: workspaceRoot,
 				env: { ...process.env, FORCE_COLOR: '0' },
@@ -277,9 +358,9 @@ export async function scaffoldFromSpec(
 		if (!(await exists(specPath))) continue;
 		if (await exists(join(modulePath, 'module.json'))) continue;
 		const spec = await readFile(specPath, 'utf8');
-		if (!/^status:\s*approved\s*$/m.test(spec)) {
+		if (!isSpecApproved(module, spec)) {
 			notes.push(
-				`The ${module.id} specification is not approved yet, so the module skeleton was not created.`,
+				`The ${module.id} specification is not approved by the operator yet, so the module skeleton was not created.`,
 			);
 			continue;
 		}
@@ -372,9 +453,17 @@ export async function runSessionGates(
 	context: TurnContext,
 	session: SandboxSession,
 	gates: readonly string[],
+	modules?: readonly SessionModule[],
 ): Promise<readonly GateResult[]> {
 	const selected = gates.filter(isGateId) as GateId[];
 	if (selected.length === 0) return [];
+	if (context.executeGates) {
+		return context.executeGates({
+			session,
+			gates: selected,
+			...(modules ? { modules } : {}),
+		});
+	}
 	return runGates({
 		workspaceRoot: context.workspaceRoot,
 		paths: sessionPaths(
@@ -384,6 +473,7 @@ export async function runSessionGates(
 		),
 		session,
 		gates: selected,
+		...(modules ? { modules } : {}),
 	});
 }
 
@@ -411,13 +501,13 @@ async function installGate(
 	};
 }
 
+/* A turn writes in one module, so the role's paths resolve against that
+   module's directory and nowhere else. */
 function allowedPathsFor(
 	role: AgentRoleDefinition,
-	modules: readonly SessionModule[],
+	module: SessionModule,
 ): readonly string[] {
-	return modules.flatMap((module) =>
-		role.allowedPaths.map((path) => `modules/${module.directory}/${path}`),
-	);
+	return role.allowedPaths.map((path) => `modules/${module.directory}/${path}`);
 }
 
 function gateSummary(gate: GateResult): string {
@@ -447,6 +537,14 @@ export async function* runTurn(
 			'A turn needs a message of 1 to 20000 characters.',
 		);
 	}
+	const transcript = await readChat(context.workspaceRoot, session);
+	const active = activeModule(session, input.module, transcript);
+	const modulePath = modulePathOf(paths, active.directory);
+	const gate = await readSpecGate(
+		active,
+		modulePath,
+		basePathOf(paths, active.directory),
+	);
 	const requested = input.role ?? 'auto';
 	const routed =
 		requested === 'auto'
@@ -455,8 +553,10 @@ export async function* runTurn(
 						context,
 						session,
 						paths,
+						modulePath,
 						message,
-						await readChat(context.workspaceRoot, session),
+						transcript,
+						gate.approved,
 					),
 				)
 			: { role: requested, reason: '' };
@@ -465,11 +565,24 @@ export async function* runTurn(
 	const driverId = input.driver ?? session.driver;
 	const driver = await context.registry.resolve(driverId);
 
+	const attachmentNote = attachmentInstruction(session.attachments);
+
 	yield await appendChatEntry(context.workspaceRoot, session, {
 		kind: 'user',
 		role: roleId,
+		module: active.directory,
 		text: message,
+		...(session.attachments.length > 0
+			? { attachments: session.attachments }
+			: {}),
 	});
+
+	if (refusesUnapproved(gate, roleId)) {
+		return yield* refuseUnapproved(context, session, active, role, gate, {
+			brief: session.brief || message,
+			driver: driverId,
+		});
+	}
 
 	await updateSession(context.workspaceRoot, session.id, {
 		state: 'editing',
@@ -481,6 +594,7 @@ export async function* runTurn(
 		yield await appendChatEntry(context.workspaceRoot, session, {
 			kind: 'system',
 			role: roleId,
+			module: active.directory,
 			text: `Routed to ${role.name}. ${routed.reason}`,
 		});
 	}
@@ -507,26 +621,29 @@ export async function* runTurn(
 	const skills = await listSkills(context.workspaceRoot);
 	const team = context.roles.filter((mate) => role.handoff.includes(mate.id));
 	const instruction = composeInstruction(role, {
-		moduleId: session.moduleId,
-		modulePath: `modules/${session.moduleSuffix}`,
-		sessionKind: session.kind,
+		moduleId: active.id,
+		modulePath: `modules/${active.directory}`,
+		sessionKind: active.kind === 'new' ? 'new-module' : 'edit-module',
 		blueprint: session.blueprint,
-		allowedPaths: allowedPathsFor(role, session.modules),
+		allowedPaths: allowedPathsFor(role, active),
 		skills,
 		team: team.map((mate) => `${mate.id}: ${mate.purpose}`),
 		notes: [
 			...(session.modules.length > 1
 				? [
-						`This session changes several modules together: ${session.modules
-							.map((module) => `${module.id} (modules/${module.directory})`)
+						`This session works on several modules: ${session.modules
+							.map(
+								(module) =>
+									`${module.id} (modules/${module.directory}, ${module.kind === 'new' ? 'new' : 'existing'})`,
+							)
 							.join(
 								', ',
-							)}. Each is a project of this pnpm workspace, so a draft that imports another draft resolves the session copy.`,
+							)}. This turn is yours in modules/${active.directory} only; another specialist takes the turn for the others. Each module is a project of this pnpm workspace, so a draft that imports another draft resolves the session copy.`,
 					]
 				: []),
 			'reference/ holds read-only copies of the platform contracts: packages/ for the server, client and UI contracts, example-module/ for a complete module to copy the shape from, auth-core/ for the public authentication surface, and skills/ for the workflows. Read them before implementing and never edit them.',
 			'Other module.json files under modules/ describe the dependency graph. Only the draft module directories have sources you may change.',
-			...(session.kind === 'edit-module'
+			...(active.kind === 'edit'
 				? [
 						'The module already exists. Read it before changing it and keep every existing behavior that the request does not ask you to change.',
 					]
@@ -544,32 +661,80 @@ export async function* runTurn(
 	let nextResumeId = resumeId;
 	let failed = false;
 	let closing = '';
+	/* This snapshot is the enforcement point for role ownership. The workspace
+	   remains readable to the agent, but changes outside its module allowlist are
+	   quarantined and restored before any formatter, gate, checkpoint or delivery
+	   can observe them. */
+	const pathGuard = await guardAgentPaths({
+		workspace: paths.workspace,
+		sessionRoot: paths.root,
+		allowedPaths: allowedPathsFor(role, active),
+	});
 
-	for await (const event of driver.run({
-		workspacePath: paths.workspace,
-		role: roleId,
-		systemInstruction: instruction,
-		prompt: message,
-		resumeId,
-		history: history.slice(0, -1),
-		model: session.model,
-		signal: input.signal,
-	})) {
-		yield await appendChatEntry(context.workspaceRoot, session, {
-			kind: eventKind(event),
+	try {
+		for await (const event of driver.run({
+			workspacePath: paths.workspace,
+			allowedPaths: allowedPathsFor(role, active),
 			role: roleId,
-			...(event.type === 'assistant.message' ? { text: event.text } : {}),
-			event,
-		});
-		if (event.type === 'assistant.message') closing = event.text;
-		if (event.type === 'turn.completed') {
-			nextResumeId = event.resumeId ?? nextResumeId;
-			failed = event.finishReason === 'error';
+			systemInstruction: instruction,
+			prompt: attachmentNote ? `${attachmentNote}\n\n${message}` : message,
+			resumeId,
+			history: history.slice(0, -1),
+			model: session.model,
+			signal: input.signal,
+		})) {
+			yield await appendChatEntry(context.workspaceRoot, session, {
+				kind: eventKind(event),
+				role: roleId,
+				module: active.directory,
+				...(event.type === 'assistant.message' ? { text: event.text } : {}),
+				event,
+			});
+			if (event.type === 'assistant.message') closing = event.text;
+			if (event.type === 'turn.completed') {
+				nextResumeId = event.resumeId ?? nextResumeId;
+				failed = event.finishReason === 'error';
+			}
+			if (event.type === 'error') failed = true;
 		}
-		if (event.type === 'error') failed = true;
+	} catch (error) {
+		failed = true;
+		yield await appendChatEntry(context.workspaceRoot, session, {
+			kind: 'system',
+			role: roleId,
+			module: active.directory,
+			text:
+				error instanceof Error
+					? `The coding agent stopped: ${error.message}`
+					: 'The coding agent stopped unexpectedly.',
+			event: {
+				type: 'error',
+				code: 'AGENT_TURN_FAILED',
+				message: 'The coding agent stopped unexpectedly.',
+			} as CodingAgentEvent,
+		});
 	}
 
-	const scaffoldNote = await scaffoldFromSpec(context, session);
+	const pathResult = await pathGuard.verify();
+	if (pathResult.violations.length > 0) {
+		failed = true;
+		const evidence = pathResult.violations
+			.map((violation) => `- ${violation.path}: ${violation.reason}`)
+			.join('\n');
+		yield await appendChatEntry(context.workspaceRoot, session, {
+			kind: 'system',
+			role: roleId,
+			module: active.directory,
+			text: `This turn wrote outside its allowed paths and was failed. The sandbox restored those paths before validation.\n${evidence}${pathResult.quarantine ? `\nEvidence was quarantined at ${pathResult.quarantine}.` : ''}`,
+			event: {
+				type: 'error',
+				code: 'ALLOWED_PATHS_VIOLATION',
+				message: evidence.slice(0, 500),
+			} as CodingAgentEvent,
+		});
+	}
+
+	const scaffoldNote = failed ? null : await scaffoldFromSpec(context, session);
 	if (scaffoldNote) {
 		yield await appendChatEntry(context.workspaceRoot, session, {
 			kind: 'system',
@@ -598,6 +763,12 @@ export async function* runTurn(
 	const diffs = await collectDiffs(context.workspaceRoot, session);
 	const gates: GateResult[] = [];
 	if (diffs.length > 0 && !failed) {
+		/* Only the modules that hold changes are gated: a module nobody touched
+		   has nothing to check and its gates would cost minutes for no signal. */
+		const changed = new Set(diffs.map((diff) => diff.module));
+		const gated = session.modules.filter((module) =>
+			changed.has(module.directory),
+		);
 		/* The install runs whenever a package.json changed and counts as the
 		   dependencies gate; the role's own gates follow, plus the declared
 		   dependency check the session cannot do without. */
@@ -605,10 +776,15 @@ export async function* runTurn(
 		if (install) gates.push(install);
 		if (!install || install.status !== 'failed') {
 			gates.push(
-				...(await runSessionGates(context, session, [
-					...role.gates,
-					...(role.gates.includes('dependencies') ? [] : ['dependencies']),
-				])),
+				...(await runSessionGates(
+					context,
+					session,
+					[
+						...role.gates,
+						...(role.gates.includes('dependencies') ? [] : ['dependencies']),
+					],
+					gated,
+				)),
 			);
 		}
 	}
@@ -616,6 +792,7 @@ export async function* runTurn(
 		yield await appendChatEntry(context.workspaceRoot, session, {
 			kind: 'system',
 			role: roleId,
+			...(gate.module ? { module: gate.module } : {}),
 			text: gateSummary(gate),
 			event: {
 				type: gate.status === 'failed' ? 'error' : 'tool.completed',
@@ -632,23 +809,52 @@ export async function* runTurn(
 	const declared: HandoffDeclaration | null = closing
 		? parseHandoff(closing)
 		: null;
+	/* The turn may have written the specification, so the gate is read again:
+	   what the next role may do depends on the document as it is now. */
+	const closingGate = await readSpecGate(
+		active,
+		modulePath,
+		basePathOf(paths, active.directory),
+	);
 	const handoff = planHandoff({
-		routing: await routingContext(context, session, paths, message, []),
+		routing: await routingContext(
+			context,
+			session,
+			paths,
+			modulePath,
+			message,
+			[],
+			closingGate.approved,
+		),
 		role: roleId,
+		module: active.directory,
 		declared,
 		gates,
 		failed,
 		changed: diffs.length > 0,
-		specApproved: await specApproval(session, paths),
+		specApproved: closingGate.approved,
 		brief: session.brief || message,
 	});
 
-	yield await appendChatEntry(context.workspaceRoot, session, {
+	const handoffEntry = await appendChatEntry(context.workspaceRoot, session, {
 		kind: 'system',
 		role: handoff.role,
+		...(handoff.module ? { module: handoff.module } : {}),
 		text: handoffText(handoff),
 		handoff,
 	});
+	yield handoffEntry;
+
+	/* A turn that changed files becomes a restore point, keyed by the handoff
+	   entry so the transcript line and its checkpoint share one sequence. */
+	if (diffs.length > 0) {
+		await captureCheckpoint(
+			context.workspaceRoot,
+			session,
+			handoffEntry.sequence,
+			{ label: role.name, role: roleId },
+		);
+	}
 
 	const updated = await updateSession(context.workspaceRoot, session.id, {
 		resumeIds: nextResumeId

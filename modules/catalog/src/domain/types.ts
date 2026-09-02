@@ -21,3 +21,12 @@ export interface CreateCatalogItemInput {
 	readonly basePriceMinor: number;
 	readonly currency: string;
 }
+
+export interface UpdateCatalogItemInput {
+	readonly id: string;
+	readonly name: string;
+	readonly kind: CatalogItemKind;
+	readonly unit: string;
+	readonly basePriceMinor: number;
+	readonly currency: string;
+}

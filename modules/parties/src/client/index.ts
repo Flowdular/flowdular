@@ -1,6 +1,7 @@
 export { createPartiesClientContribution } from './contribution.tsrx';
 export type { PartiesClientContributionOptions } from './contribution.tsrx';
 export { PartiesDashboardWidget, PartiesView } from './PartiesView.tsrx';
+export { PartyHistoryDrawer } from './PartyHistoryDrawer.tsrx';
 import type {
 	ModuleClientContext,
 	ModuleClientContribution,
@@ -11,5 +12,8 @@ import { createPartiesClientContribution as canonicalContribution } from './cont
 export function createClientContribution(
 	context: ModuleClientContext,
 ): ModuleClientContribution {
-	return canonicalContribution({ csrfToken: context.csrfToken });
+	return canonicalContribution({
+		csrfToken: context.csrfToken,
+		scopes: context.scopes,
+	});
 }

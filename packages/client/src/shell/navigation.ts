@@ -2,28 +2,43 @@ import type {
 	NavigationContribution,
 	NavigationGroup,
 } from '../contributions.ts';
+import type { Translate } from '../i18n/translations.ts';
 import type { ShellView } from '../state.ts';
 
-export const CORE_NAVIGATION: readonly NavigationContribution[] = [
-	{
-		id: 'system.navigation.overview',
-		viewId: 'overview',
-		group: 'Workspace',
-		label: 'Dashboard',
-		glyph: 'dashboard',
-		description: 'Business overview',
-		scope: 'system.workspace.access',
-		order: 10,
-	},
-];
+export function coreNavigation(
+	t: Translate,
+): readonly NavigationContribution[] {
+	return [
+		{
+			id: 'system.navigation.overview',
+			viewId: 'overview',
+			group: 'Workspace',
+			label: t('shell.nav.dashboard.label'),
+			glyph: 'dashboard',
+			description: t('shell.nav.dashboard.description'),
+			scope: 'system.workspace.access',
+			order: 10,
+		},
+	];
+}
 
 export const NAVIGATION_GROUPS: readonly NavigationGroup[] = [
 	'Workspace',
 	'Operations',
 	'Agents',
+	'Automations',
 	'Administration',
 	'Development',
 ];
+
+/* The group name is an identifier in the contribution and a label on screen;
+   only the label is translated. */
+export function navigationGroupLabel(
+	t: Translate,
+	group: NavigationGroup | 'Account',
+): string {
+	return t('shell.nav.group.' + group.toLowerCase());
+}
 
 export interface NavigationIdentity {
 	readonly role: string;
@@ -46,7 +61,7 @@ export function viewHref(
 	viewId: ShellView,
 	workspaceSlug?: string | null,
 ): string {
-	const base = workspaceSlug ? '/' + workspaceSlug : '';
-	if (viewId === 'overview') return base === '' ? '/' : base;
+	const base = workspaceSlug ? '/app/' + workspaceSlug : '/app';
+	if (viewId === 'overview') return base;
 	return base + '/' + viewId;
 }

@@ -9,11 +9,21 @@ import {
 
 describe('contract schemas', () => {
 	it('exports schemas with stable ids', () => {
-		expect(projectSchema.$id).toContain('project.schema.json');
-		expect(moduleSchema.$id).toContain('module.schema.json');
-		expect(moduleSpecSchema.$id).toContain('module-spec.schema.json');
-		expect(blueprintSchema.$id).toContain('blueprint.schema.json');
-		expect(cliExtensionSchema.$id).toContain('cli-extension.schema.json');
+		expect(projectSchema.$id).toBe(
+			'https://coreloom.dev/schemas/project.schema.json',
+		);
+		expect(moduleSchema.$id).toBe(
+			'https://coreloom.dev/schemas/module.schema.json',
+		);
+		expect(moduleSpecSchema.$id).toBe(
+			'https://coreloom.dev/schemas/module-spec.schema.json',
+		);
+		expect(blueprintSchema.$id).toBe(
+			'https://coreloom.dev/schemas/blueprint.schema.json',
+		);
+		expect(cliExtensionSchema.$id).toBe(
+			'https://coreloom.dev/schemas/cli-extension.schema.json',
+		);
 	});
 
 	it('lets coreloom.json configure the sandbox delivery without requiring it', () => {
@@ -32,8 +42,11 @@ describe('contract schemas', () => {
 		expect(Object.keys(delivery.properties.git.properties).sort()).toEqual([
 			'baseBranch',
 			'branchPrefix',
+			'forkOwner',
+			'mode',
 			'provider',
 			'remote',
+			'repository',
 			'reviewers',
 		]);
 	});

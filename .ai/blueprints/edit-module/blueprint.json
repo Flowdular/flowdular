@@ -16,5 +16,5 @@
 	],
 	"executorProfiles": ["sandbox-specialist", "repo-agent"],
 	"requiredReviewers": ["reviewer"],
-	"requiresApprovedSpec": false
+	"requiresApprovedSpec": true
 }

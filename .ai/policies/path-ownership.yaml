@@ -49,9 +49,9 @@ moduleRoles:
   modules/{module}/package.json:
     [backend-engineer, frontend-engineer, agentic-engineer]
 cliOwned:
-  coreloom.json: pnpm oerp module enable|disable --apply
-  platform/package.json: pnpm oerp module enable --apply
-  platform/src/generated/**: pnpm oerp module sync --apply
+  coreloom.json: pnpm coreloom module enable|disable --apply
+  platform/package.json: pnpm coreloom module enable --apply
+  platform/src/generated/**: pnpm coreloom module sync --apply
   packages/coding-agent/src/roles/defaults.ts: role defaults sync script (.ai/README.md)
   packages/ui/src/brand/mark.ts: node packages/ui/scripts/gen-mark.mjs
 crossOwnerChanges:

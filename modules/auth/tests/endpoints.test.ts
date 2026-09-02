@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createContext } from '@octanejs/app-core';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { OWNER_SCOPES } from '../src/acl/scopes.ts';
 import {
 	authRuntimeOptionsFromEnvironment,
@@ -91,6 +91,156 @@ describe('auth HTTP boundary', () => {
 			),
 		);
 		expect(response.status).toBe(403);
+	});
+
+	it('guards public reset and authenticated MFA and invitation mutations against CSRF', async () => {
+		const auth = testRuntime();
+		const owner = await signUpOwner(auth);
+		const reset = await call(
+			auth,
+			'/api/auth/password-reset/request',
+			jsonRequest(
+				'/api/auth/password-reset/request',
+				{ email: 'owner@example.com' },
+				{ origin: 'https://attacker.example' },
+			),
+		);
+		expect(reset.status).toBe(403);
+		const unauthenticatedMfa = await call(
+			auth,
+			'/api/auth/mfa/enroll',
+			jsonRequest('/api/auth/mfa/enroll', {}),
+		);
+		expect(unauthenticatedMfa.status).toBe(401);
+		const invitation = await call(
+			auth,
+			'/api/auth/invitations',
+			jsonRequest(
+				'/api/auth/invitations',
+				{ email: 'invitee@example.com', role: 'member' },
+				{ cookie: owner.cookie },
+			),
+		);
+		expect(invitation.status).toBe(403);
+		expect(await invitation.json()).toMatchObject({
+			error: { code: 'CSRF_REJECTED' },
+		});
+	});
+
+	it('silently limits repeated password reset delivery without revealing the limit', async () => {
+		const auth = testRuntime();
+		const delivery = vi
+			.spyOn(auth.authService, 'requestPasswordReset')
+			.mockResolvedValue();
+
+		for (let attempt = 0; attempt < 4; attempt += 1) {
+			const result = await call(
+				auth,
+				'/api/auth/password-reset/request',
+				jsonRequest('/api/auth/password-reset/request', {
+					email: 'limited@example.com',
+				}),
+			);
+			expect(result.status).toBe(202);
+			expect(await result.json()).toEqual({ accepted: true });
+		}
+
+		expect(delivery).toHaveBeenCalledTimes(3);
+	});
+
+	it('caps reset delivery across addresses when the trusted proxy exposes a client address', async () => {
+		const auth = testRuntime({ trustProxy: true });
+		const delivery = vi
+			.spyOn(auth.authService, 'requestPasswordReset')
+			.mockResolvedValue();
+
+		for (let attempt = 0; attempt < 21; attempt += 1) {
+			const result = await call(
+				auth,
+				'/api/auth/password-reset/request',
+				jsonRequest(
+					'/api/auth/password-reset/request',
+					{ email: `person-${attempt}@example.com` },
+					{ 'x-forwarded-for': '203.0.113.77' },
+				),
+			);
+			expect(result.status).toBe(202);
+		}
+
+		expect(delivery).toHaveBeenCalledTimes(20);
+	});
+
+	it('returns only the current account MFA state to an authenticated session', async () => {
+		const auth = testRuntime({ mfaEncryptionKey: 'f'.repeat(64) });
+		const unauthenticated = await call(
+			auth,
+			'/api/auth/mfa/status',
+			new Request(`${ORIGIN}/api/auth/mfa/status`),
+		);
+		expect(unauthenticated.status).toBe(401);
+		const owner = await signUpOwner(auth);
+		const result = await call(
+			auth,
+			'/api/auth/mfa/status',
+			new Request(`${ORIGIN}/api/auth/mfa/status`, {
+				headers: { cookie: owner.cookie },
+			}),
+		);
+		expect(result.status).toBe(200);
+		expect(await result.json()).toEqual({
+			available: true,
+			enrolled: false,
+			pending: false,
+		});
+	});
+
+	it('expires a stale MFA proof after a failed challenge', async () => {
+		const auth = testRuntime({ mfaEncryptionKey: 'f'.repeat(64) });
+		const result = await call(
+			auth,
+			'/api/auth/mfa/challenge',
+			jsonRequest(
+				'/api/auth/mfa/challenge',
+				{ code: '123456' },
+				{ cookie: `coreloom_mfa_challenge=${'A'.repeat(43)}` },
+			),
+		);
+
+		expect(result.status).toBe(401);
+		expect(result.headers.getSetCookie()).toEqual([
+			expect.stringMatching(/^coreloom_mfa_challenge=.*Max-Age=0/),
+		]);
+	});
+
+	it('returns the session and expired MFA proof as separate Set-Cookie headers', async () => {
+		const auth = testRuntime({ mfaEncryptionKey: 'f'.repeat(64) });
+		const owner = await signUpOwner(auth);
+		const currentToken = owner.cookie.slice(owner.cookie.indexOf('=') + 1);
+		const current = auth.authService.resolveSession(currentToken)!;
+		vi.spyOn(auth.authService, 'completeMfaChallenge').mockResolvedValue({
+			...current,
+			token: 'B'.repeat(43),
+		});
+
+		const result = await call(
+			auth,
+			'/api/auth/mfa/challenge',
+			jsonRequest(
+				'/api/auth/mfa/challenge',
+				{ code: '123456' },
+				{ cookie: `coreloom_mfa_challenge=${'A'.repeat(43)}` },
+			),
+		);
+		const cookies = result.headers.getSetCookie();
+
+		expect(result.status).toBe(200);
+		expect(cookies).toHaveLength(2);
+		expect(cookies).toEqual(
+			expect.arrayContaining([
+				expect.stringMatching(/^coreloom_session_dev=/),
+				expect.stringMatching(/^coreloom_mfa_challenge=.*Max-Age=0/),
+			]),
+		);
 	});
 
 	it('enforces the sign-up module setting at the server boundary', async () => {
@@ -264,7 +414,7 @@ describe('auth HTTP boundary', () => {
 		expect(runtime.settings.emailConfirmation).toBe(false);
 		expect(() =>
 			authRuntimeOptionsFromEnvironment({
-				OERP_AUTH_EMAIL_CONFIRMATION: 'true',
+				CL_AUTH_EMAIL_CONFIRMATION: 'true',
 			}),
 		).toThrow(/mail transport/);
 	});
@@ -329,7 +479,7 @@ describe('workspace settings', () => {
 				'/api/auth/workspace',
 				{ name: 'Hijacked' },
 				{
-					cookie: `oerp_session_dev=${memberSession.token}`,
+					cookie: `coreloom_session_dev=${memberSession.token}`,
 					'x-csrf-token': memberSession.csrfToken,
 				},
 			),

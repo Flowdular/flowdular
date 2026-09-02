@@ -21,7 +21,7 @@ export function parseSandboxArguments(argv = []) {
 		port: 4320,
 		mode: 'loopback',
 		workspace: process.cwd(),
-		verbose: process.env.OERP_SANDBOX_VERBOSE === 'true',
+		verbose: process.env.CL_SANDBOX_VERBOSE === 'true',
 		help: false,
 	};
 	for (let index = 0; index < argv.length; index += 1) {
@@ -159,9 +159,9 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 		printHelp(theme);
 		return null;
 	}
-	process.env.CORELOOM_WORKSPACE = options.workspace;
-	process.env.CORELOOM_SANDBOX_MODE = options.mode;
-	process.env.CORELOOM_SANDBOX_PORT = String(options.port);
+	process.env.CL_SANDBOX_WORKSPACE = options.workspace;
+	process.env.CL_SANDBOX_MODE = options.mode;
+	process.env.CL_SANDBOX_PORT = String(options.port);
 
 	const startedAt = performance.now();
 	const restoreConsole = installOctaneConsoleBridge(options.verbose, useColor);

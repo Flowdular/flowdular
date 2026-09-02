@@ -3,9 +3,11 @@ import { createModuleSettingsRuntime } from '@coreloom/kernel';
 import { createAuthenticationMiddleware } from '../src/middleware/authentication.ts';
 import { createAuthRoutes } from '../src/server/endpoints.ts';
 import type { AuthRuntime } from '../src/server/runtime.ts';
+import type { OidcProvider } from '../src/server/runtime.ts';
 import { AuthService, type AuthPolicy } from '../src/services/auth-service.ts';
 import { SqliteAuthRepository } from '../src/services/sqlite-repository.ts';
 import { createAuthModuleSettings } from '../src/settings.ts';
+import type { AuthMailDelivery } from '../src/services/mail-delivery.ts';
 
 export const fastHash = {
 	cost: 2 ** 12,
@@ -33,6 +35,11 @@ export function testRuntime(
 		allowSignUp: boolean;
 		trustProxy: boolean;
 		mailTransport: boolean;
+		mailDelivery: AuthMailDelivery;
+		mfaEncryptionKey: string;
+		signInProviders: readonly string[];
+		oidcProviders: readonly OidcProvider[];
+		publicBaseUrl: string;
 	}> = {},
 ): TestRuntime {
 	const repository = new SqliteAuthRepository(':memory:');
@@ -50,15 +57,22 @@ export function testRuntime(
 		passwordHash: fastHash,
 		policy: () => policy,
 		now: () => clock.now,
+		...(overrides.mfaEncryptionKey
+			? { mfaEncryptionKey: overrides.mfaEncryptionKey }
+			: {}),
+		...(overrides.mailDelivery ? { mailDelivery: overrides.mailDelivery } : {}),
 	});
 	const moduleSettings = createModuleSettingsRuntime(repository, {
 		now: () => clock.now,
 	});
 	moduleSettings.declare(
-		createAuthModuleSettings({ allowSignUp: overrides.allowSignUp ?? true }),
+		createAuthModuleSettings({
+			allowSignUp: overrides.allowSignUp ?? true,
+			signInProviders: overrides.signInProviders ?? [],
+		}),
 	);
 	const cookie = {
-		name: 'oerp_session_dev',
+		name: 'coreloom_session_dev',
 		secure: false,
 		maxAgeSeconds: 3600,
 	};
@@ -73,7 +87,7 @@ export function testRuntime(
 				return moduleSettings.get<boolean>('', 'auth.core', 'allowSignUp');
 			},
 			emailConfirmation: false,
-			signInProviders: [],
+			signInProviders: overrides.signInProviders ?? [],
 			get sessionTtlMs() {
 				return policy.sessionTtlMs;
 			},
@@ -86,9 +100,18 @@ export function testRuntime(
 		},
 		moduleSettings,
 		trustProxy: overrides.trustProxy ?? false,
-		mailTransport: overrides.mailTransport ?? false,
+		mailTransport:
+			overrides.mailTransport ?? overrides.mailDelivery !== undefined,
 		workspaceRoot: null,
+		oidcProviders: overrides.oidcProviders ?? [],
+		publicBaseUrl: overrides.publicBaseUrl ?? null,
 		service: () => authService,
+		authorizeAgentToolAccess: (tenantId, actor) => {
+			if (actor.kind !== 'user') return [];
+			const membership = repository.findAccountMembership(actor.id, tenantId);
+			return membership?.status === 'active' ? membership.scopes : [];
+		},
+		dispose: () => repository.close(),
 		middleware: createAuthenticationMiddleware(() => authService, cookie),
 	};
 }

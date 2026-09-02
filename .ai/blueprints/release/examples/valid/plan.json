@@ -14,5 +14,7 @@
 		"pnpm --filter @coreloom/platform typecheck",
 		"pnpm verify"
 	],
-	"postMerge": ["pnpm oerp auth sync-scopes --module inventory.core --apply"]
+	"postMerge": [
+		"pnpm coreloom auth sync-scopes --module inventory.core --apply"
+	]
 }

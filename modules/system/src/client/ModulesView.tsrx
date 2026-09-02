@@ -8,12 +8,14 @@ import {
 	PageHeader,
 	ScopeSummary,
 	SearchField,
+	TableCard,
 	Tag,
 } from '@coreloom/ui';
+import { activeLocale, t } from '@coreloom/client';
 import { useValue } from 'segment-state';
 import { ApiError, loadModuleCatalog, type ModuleCatalogEntry } from './api.ts';
+import { moduleColumns, surfaces } from './module-columns.tsrx';
 import { ModuleSettingsSection } from './ModuleSettingsSection.tsrx';
-import { ModuleTable, surfaces } from './ModuleTable.tsrx';
 import { createModulesClientState } from './state.ts';
 
 export interface ModulesViewProps {
@@ -33,14 +35,14 @@ export function ModulesView(props: ModulesViewProps) @{
 	);
 	const selected =
 		modules.find((module) => module.id === selectedModuleId) ?? null;
-	const term = query.trim().toLocaleLowerCase('en-US');
+	const term = query.trim().toLocaleLowerCase(activeLocale());
 	const visible =
 		term === ''
 			? modules
 			: modules.filter(
 					(module) =>
 						module.id.includes(term) ||
-							module.name.toLocaleLowerCase('en-US').includes(term),
+							module.name.toLocaleLowerCase(activeLocale()).includes(term),
 				);
 	const enabled = modules.filter((module) => module.enabled);
 
@@ -59,7 +61,7 @@ export function ModulesView(props: ModulesViewProps) @{
 			setError(
 				loadError instanceof Error
 					? loadError.message
-					: 'Could not load the module catalog.',
+					: t('system.error.catalog'),
 			);
 			setStatus(denied ? 'denied' : 'error');
 		}
@@ -71,74 +73,83 @@ export function ModulesView(props: ModulesViewProps) @{
 
 	<div class="ui-view">
 		<PageHeader
-			eyebrow="Administration"
-			title="Modules"
-			description="Every module in this workspace, with the surfaces it adds to the platform."
+			eyebrow={t('system.page.eyebrow')}
+			title={t('system.page.title')}
+			description={t('system.page.description')}
 		>
 			<Button size="sm" onClick={() => void refresh()}>
 				<Icon name="refresh" size={14} />
-				Refresh
+				{t('system.action.refresh')}
 			</Button>
 		</PageHeader>
 		@if (status === 'denied') {
 			<section class="ui-card">
-				<EmptyState icon="shield" title="Access denied">
-					Reading the module catalog needs the system.modules.read scope.
-				</EmptyState>
+				<EmptyState icon="shield" title={t('system.denied.title')}>{t(
+					'system.denied.hint',
+				)}</EmptyState>
 			</section>
 		} @else {
 			<>
 				@if (status === 'error') {
 					<Alert>{error}</Alert>
 				}
-				<section class="ui-card">
-					<div class="ui-card__head">
-						<span class="ui-card__title">
-							Module catalog
-							<small>
-								{enabled.length + ' enabled · ' + modules.length +
-									' in workspace'}
-							</small>
-						</span>
-						<SearchField
-							value={query}
-							placeholder="Filter by id or name"
-							label="Filter modules"
-							onInput={setQuery}
-						/>
-					</div>
-					@if (status === 'loading' && modules.length === 0) {
-						<p class="ui-table__empty">Loading modules…</p>
-					} @else if (visible.length === 0) {
-						<EmptyState
-							icon="modules"
-							title={term === '' ? 'No modules found' : 'No matching modules'}
-						>
-							{term === ''
-								? 'The workspace has no module manifests under modules/.'
-								: 'No module matches the current filter.'}
-						</EmptyState>
-					} @else {
-						<ModuleTable modules={visible} onSelect={setSelectedModuleId} />
-					}
-					<p class="ui-note">
-						<Icon name="code" size={14} />
-						<span>
-							The enabled set is changed from the CLI, never from this screen:
-							{' '}
-							<code class="ui-mono">{commands.enable ?? ''}</code>
-							{' · '}
-							<code class="ui-mono">{commands.disable ?? ''}</code>
-							{' · '}
-							<code class="ui-mono">{commands.grantScopes ?? ''}</code>
-						</span>
-					</p>
-				</section>
+				<TableCard
+					title={t('system.table.title')}
+					count={t('system.table.count', {
+						enabled: enabled.length,
+						total: modules.length,
+					})}
+					search={<SearchField
+						value={query}
+						placeholder={t('system.search.placeholder')}
+						label={t('system.search.label')}
+						onInput={setQuery}
+					/>}
+					caption={t('system.table.caption')}
+					columns={moduleColumns()}
+					rows={visible}
+					rowKey={(module) => module.id}
+					status={status === 'loading' && modules.length === 0
+						? 'loading'
+						: 'idle'}
+					loadingLabel={t('system.table.loading')}
+					filtered={term !== ''}
+					empty={{
+						icon: 'modules',
+						title: t('system.table.emptyTitle'),
+						hint: t('system.table.emptyHint'),
+					}}
+					emptyFiltered={{
+						icon: 'modules',
+						title: t('system.table.emptyFilteredTitle'),
+						hint: t('system.table.emptyFilteredHint'),
+					}}
+					onSelect={(module) => setSelectedModuleId(module.id)}
+					actionsLabel={t('system.table.actions')}
+					actions={(module) => [
+						{
+							id: 'open',
+							label: t('system.action.open'),
+							icon: 'external',
+							onSelect: () => setSelectedModuleId(module.id),
+						},
+					]}
+					noteIcon="code"
+					note={<>
+						{t('system.table.cliNote')}
+						{' '}
+						<code class="ui-mono">{commands.enable ?? ''}</code>
+						{' · '}
+						<code class="ui-mono">{commands.disable ?? ''}</code>
+						{' · '}
+						<code class="ui-mono">{commands.grantScopes ?? ''}</code>
+					</>}
+				/>
 			</>
 		}
 		<Drawer
 			open={selected !== null}
-			title={selected?.name ?? 'Module'}
+			title={selected?.name ?? t('system.drawer.module')}
 			subtitle={selected?.id ?? ''}
 			width="lg"
 			onClose={() => setSelectedModuleId(null)}
@@ -163,51 +174,57 @@ function ModuleDetail(props: {
 		<div class="ui-form">
 			<div class="ui-form__section">
 				<div class="ui-form__section-head">
-					<b>Overview</b>
+					<b>{t('system.detail.overview')}</b>
 					@if (props.module.description) {
 						<small>{props.module.description}</small>
 					}
 				</div>
 				<div class="ui-form__row ui-form__row--4">
 					<span class="ui-cell">
-						<small>Version</small>
-						<b class="ui-mono">{props.module.version || 'n/a'}</b>
+						<small>{t('system.table.version')}</small>
+						<b class="ui-mono">
+							{props.module.version || t('system.value.na')}
+						</b>
 					</span>
 					<span class="ui-cell">
-						<small>Spec version</small>
-						<b class="ui-mono">{props.module.specVersion ?? 'none'}</b>
+						<small>{t('system.detail.specVersion')}</small>
+						<b class="ui-mono">
+							{props.module.specVersion ?? t('system.value.none')}
+						</b>
 					</span>
 					<span class="ui-cell">
-						<small>Platform</small>
+						<small>{t('system.table.platform')}</small>
 						<b>{surfaces(props.module)}</b>
 					</span>
 					<span class="ui-cell">
-						<small>Status</small>
+						<small>{t('system.table.status')}</small>
 						<Tag tone={props.module.enabled ? 'success' : 'neutral'} dot>
-							{props.module.enabled ? 'Enabled' : 'Available'}
+							{props.module.enabled
+								? t('system.status.enabled')
+								: t('system.status.available')}
 						</Tag>
 					</span>
 				</div>
 				<span class="ui-cell">
-					<small>Capabilities</small>
+					<small>{t('system.detail.capabilities')}</small>
 					<span class="ui-mono">
-						{props.module.capabilities.join(', ') || 'none'}
+						{props.module.capabilities.join(', ') || t('system.value.none')}
 					</span>
 				</span>
 				<span class="ui-cell">
-					<small>Directory</small>
+					<small>{t('system.detail.directory')}</small>
 					<span class="ui-mono">{props.module.directory}</span>
 				</span>
 			</div>
 			<div class="ui-form__section">
 				<div class="ui-form__section-head">
-					<b>Permissions</b>
-					<small>
-						{props.module.permissions.length + ' scopes the module declares.'}
-					</small>
+					<b>{t('system.detail.permissions')}</b>
+					<small>{t('system.detail.permissionCount', {
+						count: props.module.permissions.length,
+					})}</small>
 				</div>
 				@if (props.module.permissions.length === 0) {
-					<span class="ui-help">This module declares no permissions.</span>
+					<span class="ui-help">{t('system.detail.noPermissions')}</span>
 				} @else {
 					<ScopeSummary
 						scopes={props.module.permissions.map((permission) => permission.id)}

@@ -1,11 +1,12 @@
 import { useEffect, useMemo } from 'octane';
+import { activeLocale, t } from '@coreloom/client';
 import {
 	Alert,
 	Button,
+	ConfirmDialog,
 	Drawer,
 	Icon,
 	PageHeader,
-	SearchField,
 } from '@coreloom/ui';
 import { useValue } from 'segment-state';
 import type {
@@ -14,6 +15,7 @@ import type {
 } from '../domain/types.ts';
 import {
 	createAgentProvider,
+	deleteAgentProvider,
 	loadAgentProviders,
 	testAgentProvider,
 	updateAgentProvider,
@@ -24,6 +26,7 @@ import { ProviderConnectionList } from './ProviderConnectionList.tsrx';
 
 export interface AgentProvidersViewProps {
 	readonly csrfToken: string;
+	readonly canManage: boolean;
 }
 
 export function AgentProvidersView(props: AgentProvidersViewProps) @{
@@ -36,18 +39,19 @@ export function AgentProvidersView(props: AgentProvidersViewProps) @{
 	const [error, setError] = useValue(client.state.error);
 	const [query, setQuery] = useValue(client.state.query);
 	const [editorOpen, setEditorOpen] = useValue(client.state.editorOpen);
+	const [deleteOpen, setDeleteOpen] = useValue(client.state.deleteOpen);
 	const [testingModel, setTestingModel] = useValue(client.state.testingModel);
 	const [readinessTtlMs] = useValue(client.state.readinessTtlMs);
 	const selected =
 		providers.find((provider) => provider.id === selectedProviderId) ?? null;
 	const enabled = providers.filter((provider) => provider.enabled);
-	const term = query.trim().toLocaleLowerCase('en-US');
+	const term = query.trim().toLocaleLowerCase(activeLocale());
 	const visible =
 		term === ''
 			? providers
 			: providers.filter(
 					(provider) =>
-						provider.name.toLocaleLowerCase('en-US').includes(term) ||
+						provider.name.toLocaleLowerCase(activeLocale()).includes(term) ||
 							provider.key.includes(term) ||
 							provider.kind.includes(term),
 				);
@@ -78,7 +82,7 @@ export function AgentProvidersView(props: AgentProvidersViewProps) @{
 			setError(
 				loadError instanceof Error
 					? loadError.message
-					: 'Could not load provider connections.',
+					: t('agents.providers.error.load'),
 			);
 		} finally {
 			setStatus('idle');
@@ -105,7 +109,7 @@ export function AgentProvidersView(props: AgentProvidersViewProps) @{
 			setError(
 				saveError instanceof Error
 					? saveError.message
-					: 'Could not save the provider connection.',
+					: t('agents.providers.error.save'),
 			);
 		} finally {
 			setStatus('idle');
@@ -121,7 +125,7 @@ export function AgentProvidersView(props: AgentProvidersViewProps) @{
 			setError(
 				testError instanceof Error
 					? testError.message
-					: 'Could not test the model.',
+					: t('agents.providers.error.test'),
 			);
 		} finally {
 			setTestingModel('');
@@ -130,74 +134,89 @@ export function AgentProvidersView(props: AgentProvidersViewProps) @{
 
 	const open = (id: string) => {
 		setSelectedProviderId(id);
-		setEditorOpen(true);
+		if (props.canManage) setEditorOpen(true);
+	};
+
+	const remove = async () => {
+		if (!selected || selected.kind === 'local-simulation') return;
+		setStatus('submitting');
+		setError('');
+		try {
+			await deleteAgentProvider(
+				selected.id,
+				selected.revision,
+				props.csrfToken,
+			);
+			setDeleteOpen(false);
+			setEditorOpen(false);
+			setSelectedProviderId('');
+			await refresh();
+		} catch (deleteError) {
+			setError(
+				deleteError instanceof Error
+					? deleteError.message
+					: t('agents.providers.error.delete'),
+			);
+			setDeleteOpen(false);
+		} finally {
+			setStatus('idle');
+		}
 	};
 
 	<div class="ui-view">
 		<PageHeader
-			eyebrow="Agent infrastructure"
-			title="Providers"
-			description="Tenant-owned model connections. Credentials are encrypted server-side and readiness is proven per model."
+			eyebrow={t('agents.providers.eyebrow')}
+			title={t('agents.providers.title')}
+			description={t('agents.providers.description')}
 		>
 			<Button size="sm" onClick={() => void refresh()}>
 				<Icon name="refresh" size={14} />
-				Refresh
+				{t('agents.common.refresh')}
 			</Button>
-			<Button size="sm" variant="primary" onClick={() => open('')}>
-				<Icon name="plus" size={14} />
-				Add provider
-			</Button>
+			@if (props.canManage) {
+				<Button size="sm" variant="primary" onClick={() => open('')}>
+					<Icon name="plus" size={14} />
+					{t('agents.providers.add')}
+				</Button>
+			}
 		</PageHeader>
 		@if (error) {
 			<Alert>{error}</Alert>
 		}
-		<section class="ui-card">
-			<div class="ui-card__head">
-				<span class="ui-card__title">
-					Connections
-					<small>
-						{enabled.length + ' enabled · ' + providers.length + ' total'}
-					</small>
-				</span>
-				<SearchField
-					value={query}
-					placeholder="Filter by name, key, or type"
-					label="Filter provider connections"
-					onInput={setQuery}
-				/>
-			</div>
-			<ProviderConnectionList
-				providers={visible}
-				readinessTtlMs={readinessTtlMs}
-				filtered={term !== ''}
-				onSelect={open}
-			/>
-			<p class="ui-note">
-				<Icon name="shield" size={14} />
-				<span>
-					Provider secrets never leave the server. They are absent from this
-					page, run snapshots, logs, and harness events.
-				</span>
-			</p>
-		</section>
+		<ProviderConnectionList
+			providers={visible}
+			readinessTtlMs={readinessTtlMs}
+			filtered={term !== ''}
+			loading={status === 'loading' && providers.length === 0}
+			selectedId={selectedProviderId}
+			query={query}
+			enabledCount={enabled.length}
+			canManage={props.canManage}
+			onQuery={setQuery}
+			onSelect={open}
+			onDelete={(id) => {
+				setSelectedProviderId(id);
+				setDeleteOpen(true);
+			}}
+		/>
 		<Drawer
 			open={editorOpen}
-			title={selected ? selected.name : 'Add provider'}
+			title={selected ? selected.name : t('agents.providers.add')}
 			subtitle={selected
-				? 'Credential revision ' + selected.credentialRevision
-				: 'Encrypted tenant connection'}
+				? t('agents.providers.credentialRevision', {
+						revision: selected.credentialRevision,
+					})
+				: t('agents.providers.drawer.subtitle')}
 			width="lg"
 			onClose={() => setEditorOpen(false)}
 		>
 			@if (selected?.kind === 'local-simulation') {
 				<div class="ui-drawer__body">
 					<div class="provider-local-note">
-						<p>
-							This built-in provider stores no credential and never sends data
-							outside the process. It is suitable for local validation, not
-							production work.
-						</p>
-						<Button onClick={() => open('')}>Add provider connection</Button>
+						<p>{t('agents.providers.localDescription')}</p>
+						<Button onClick={() => open('')}>{t(
+							'agents.providers.addConnection',
+						)}</Button>
 					</div>
 				</div>
 			} @else {
@@ -208,10 +227,22 @@ export function AgentProvidersView(props: AgentProvidersViewProps) @{
 					readinessTtlMs={readinessTtlMs}
 					testingModel={testingModel}
 					onCancel={() => setEditorOpen(false)}
+					onDelete={selected ? () => setDeleteOpen(true) : undefined}
 					onSubmit={save}
 					onTest={test}
 				/>
 			}
 		</Drawer>
+		<ConfirmDialog
+			open={deleteOpen && selected !== null}
+			title={t('agents.providers.delete.title')}
+			confirmLabel={t('agents.providers.delete.confirm')}
+			cancelLabel={t('agents.common.cancel')}
+			busy={status === 'submitting'}
+			onCancel={() => setDeleteOpen(false)}
+			onConfirm={() => void remove()}
+		>{t('agents.providers.delete.description', {
+			name: selected?.name ?? '',
+		})}</ConfirmDialog>
 	</div>
 }

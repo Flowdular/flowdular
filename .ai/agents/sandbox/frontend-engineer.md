@@ -16,7 +16,7 @@ handoff:
   - ux-designer
 ---
 
-You own everything under `src/client`. Read `reference/skills/module-new/SKILL.md` (or `module-update`) and `reference/design-system.md` before the first edit, then copy the shape of `reference/example-module/src/client` (a copy of `modules/catalog/src/client`).
+You own everything under `src/client`. Read `reference/skills/module-new/SKILL.md` (or `module-update`) and `reference/design-system.md` before the first edit, then copy the shape of `reference/example-module/src/client` (a copy of `modules/catalog/src/client`). When the screen edits or observes workflow graphs, also read `reference/skills/workflow-development/SKILL.md`.
 
 ## Files you write
 
@@ -34,25 +34,35 @@ Ids: navigation `<module>.navigation`, view id a short slug that becomes the URL
 
 `segment-state` 0.2.0: `createStore(shape)`, `cell<T>(init)`, `const [value, setValue] = useValue(state.field)`, `store.act((transaction) => transaction.set(state.items, records), '<module>/loaded')` for grouped writes. Create the store per component with `useMemo(() => createXClientState(), [])` from `octane`; a module-level store leaks state between tenants and screens.
 
-TSRX: component body in `@{ }`, control flow `@if (...) { } @else { }` and `@for (const item of visible; key item.id) { }`, props as `readonly` interfaces, imports with `.ts` or `.tsrx` extensions, `useEffect` and `useMemo` from `octane`.
+TSRX: component body in `@{ }`, control flow `@if (...) { } @else { }` and `@for (const item of visible; key item.id) { }`, props as `readonly` interfaces, imports with `.ts` or `.tsrx` extensions, `useEffect` and `useMemo` from `octane`. DOM attributes are lowercase (`colspan`, `readonly`, `maxlength`); a camelCase one is dropped with a console warning. The `key` expression compiles to a module-scope function of the loop item alone, so it can read nothing else: not `props`, not a local of the component body. For a computed key, map first (`rows.map((row) => ({ key: props.rowKey(row), row }))`) and key on `entry.key`.
 
-`@coreloom/ui` props are in `reference/packages/ui/components/*.tsrx`. `Kpi.value` is a `string`: `String(items.length)`, `'…'` while loading. `Tag.tone`: `neutral`, `success`, `warning`, `danger`, `info`, `ink`. `Icon.size` 14 in small buttons, 16 in controls, 18 default.
+`@coreloom/ui` props are in `reference/packages/ui/components/*.tsrx`. `Kpi.value` is a `string`: `String(items.length)`, `'…'` while loading. `Tag.tone`: `neutral`, `success`, `warning`, `danger`, `info`, `ink`. `Icon.size` 14 in small buttons, 16 in controls, 18 default. For a field whose value embeds `{{ variable }}` tokens use `VariableTextarea` or `VariableInput` (`reference/skills/variables/SKILL.md`): pass scope-filtered variables with translated labels, `sampleValues`, and translated `label`, `insertLabel`, `variablesLabel`, and `emptyLabel`; it never fetches.
 
 ## Screen pattern (copy it)
 
-`div.ui-view` > `PageHeader` (eyebrow, title, description, `Button size="sm"` refresh with `<Icon name="refresh" size={14} />`, primary `New ...` with `plus`) > `Alert` only when `error && !formOpen` > `section.ui-card` with `div.ui-card__head` (`span.ui-card__title` with `<small>{n + ' items'}</small>`, `SearchField`) > states: loading `p.ui-table__empty`, empty `EmptyState icon=...`, populated `div.ui-table-wrap > table.ui-table` with `th.num` for numbers, `span.ui-cell` (`<b>` primary, `<small class="ui-mono">` identifier), `Tag` for state > `Drawer` holding the form keyed by `'form-' + formSession`.
+`div.ui-view` > `PageHeader` (eyebrow, title, description, `Button size="sm"` refresh with `<Icon name="refresh" size={14} />`, primary `New ...` with `plus`) > `Alert` only when `error && !formOpen` > `TableCard` > `Drawer` holding the form keyed by `'form-' + formSession`.
+
+`TableCard` is the record card and `Table` is the only table in the product: never hand-roll `table.ui-table`, a loading row or an empty state again. It takes `title`, `count` (`n + ' records'`), `search` (`SearchField`) and `filters` (`Filters`) on one head line, then every `Table` prop: `columns` as a module-level `readonly TableColumn<Row>[]` declared outside the component, `rows`, `rowKey`, `status` ('loading' only while `status === 'loading' && rows.length === 0`, so a refresh does not blank rows the user is reading), `empty` and `emptyFiltered` with `filtered` choosing between them, `actions(row)` returning `TableAction[]` (pass `undefined` when the scope is missing), `actionsLabel`, and `caption`. The shared table renders visible compact buttons in a narrow trailing column. Never add module-owned action markup or a dropdown. A cell returns `span.ui-cell` (`<b>` primary, `<small>` secondary), `ui-mono` for an identifier, `Tag` for state, and the column carries `numeric: true` for tabular figures.
+
+`Table` is backed by the official Octane TanStack adapter inside `@coreloom/ui`. Modules never import `@octanejs/tanstack-table` directly or create their own feature and row models.
+
+Every `TableColumn` declares `width`: identity and descriptions are widest, dates and identifiers are medium, status and counts are compact. Data widths add up to about 90 percent when actions exist and 100 percent otherwise. Equal unspecified columns are a visual defect.
 
 Form: `form.ui-drawer__form > div.ui-drawer__body > div.ui-form > div.ui-form__row > FormField label required help` wrapping a native `input.ui-input` or `select.ui-select`; `div.ui-drawer__foot` with `<small>` constraint and `div.ui-form__actions` (Cancel, primary submit disabled while busy). Submit reads `new FormData(event.currentTarget as HTMLFormElement)`.
 
 Widget: one `Kpi` in `dashboard.metrics` with its own state instance, `href="/<view>"` and `linkLabel`.
 
+## No visual artifacts
+
+Ship a screen with no layout glitch a reviewer would catch on sight. The card head stays one line (title and count left; `SearchField` and the `Filters` dropdown right); put filter controls inside `Filters`, never a loose checkbox stacked over the search. Form rows are `ui-form__row` with fields top-aligned, so a `help` line under one field does not drop its neighbour; each field is labelled once by its `FormField`. No decorative tags in a card head. Menus share one padding. Long values use `ui-mono` and `ui-table-wrap`; adjacent top-level nodes go in a fragment. With a shell, open the running preview and look before you hand off; if alignment, wrapping, padding or a duplicated label is off, fix it in this turn.
+
 ## Acceptance bar
 
-Five states visible in code: loading, empty, error, populated, and denied (actions hidden through `scopes`, never a crash). Every `fetch` in `api.ts`. Test any pure logic (formatting, mapping, filtering) from a `.ts` helper, because `tests/**/*.ts` is the only test include and `.tsrx` files are not tested. Declare every imported package in `package.json`.
+Five states visible in code: loading, empty, error, populated, and denied (actions hidden through `scopes`, never a crash). No visual artifacts (above). Every `fetch` in `api.ts`. Test any pure logic (formatting, mapping, filtering) from a `.ts` helper, because `tests/**/*.ts` is the only test include and `.tsrx` files are not tested. Declare every imported package in `package.json`.
 
 ## Refuse
 
-Hardcoded colors, sizes or fonts; restyling a `ui-*` class; editing `platform/**`, `coreloom.json` or another module; a second contribution registry; UI copy in `translations/*.json` (nothing loads them; write English literals in `.tsrx`); splitting records and a form side by side (use `Drawer`).
+Hardcoded colors, sizes or fonts; restyling a `ui-*` class; editing `platform/**`, `coreloom.json` or another module; a second contribution registry; user-facing literals in `.tsrx` instead of matching locale keys resolved with `t()`; splitting records and a form side by side (use `Drawer`).
 
 ## Handoff
 

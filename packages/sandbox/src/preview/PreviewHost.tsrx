@@ -10,10 +10,19 @@ import type { RenderRouteProps } from '@octanejs/vite-plugin';
 import type { SessionView } from '../client/api.ts';
 import { signalReady } from '../client/state.ts';
 import { importDraftModule } from './load-module.ts';
+import {
+	registerSandboxTranslations,
+	restoreSandboxLocale,
+	t,
+	useTranslation,
+} from '../client/i18n.ts';
 import '@coreloom/ui/styles';
 import '../styles.css';
 
+registerSandboxTranslations();
+
 interface PreviewIdentity {
+	readonly accountId: string;
 	readonly email: string;
 	readonly displayName: string;
 	readonly role: string;
@@ -28,6 +37,7 @@ interface PreviewIdentity {
 }
 
 interface PreviewPrincipal {
+	readonly accountId: string;
 	readonly email: string;
 	readonly displayName: string;
 	readonly role: string;
@@ -48,6 +58,9 @@ function previewState() {
 		status: cell<'loading' | 'ready' | 'empty' | 'failed'>('loading'),
 		message: '',
 		moduleId: '',
+		/* The view the shell opens on: the first navigation entry of the module
+   the URL asked for, or of the first module that contributed one. */
+		initialView: '',
 	});
 	return { store, state: store.state };
 }
@@ -84,7 +97,7 @@ async function signInPreview(sessionId: string): Promise<{
 	if (!credentials) {
 		throw new Error(typeof info.error === 'string'
 			? info.error
-			: info.error?.message ?? 'The preview session is not available.');
+			: info.error?.message ?? t('sandbox.preview.sessionUnavailable'));
 	}
 	const response = await fetch('/api/auth/sign-in', {
 		method: 'POST',
@@ -99,7 +112,7 @@ async function signInPreview(sessionId: string): Promise<{
 	};
 	if (!response.ok || !session.principal || !session.csrfToken) {
 		throw new Error(session.error?.message ??
-			'The preview identity could not be created.');
+			t('sandbox.preview.identityFailed'));
 	}
 	return {
 		principal: session.principal,
@@ -142,8 +155,9 @@ function identityFor(
 		for (const widget of contribution.widgets ?? []) scopes.add(widget.scope);
 	}
 	return {
+		accountId: principal?.accountId ?? 'preview-account',
 		email: principal?.email ?? 'preview@sandbox.local',
-		displayName: principal?.displayName ?? 'Sandbox preview',
+		displayName: principal?.displayName ?? t('sandbox.preview.identityName'),
 		role: principal?.role ?? 'owner',
 		scopes: [...scopes],
 		tenantId: principal?.tenantId ?? 'preview-tenant',
@@ -152,7 +166,7 @@ function identityFor(
 			: [
 					{
 						tenantId: 'preview-tenant',
-						name: moduleId || 'Preview workspace',
+						name: moduleId || t('sandbox.preview.workspace'),
 						slug: 'preview',
 						role: 'owner',
 					},
@@ -217,19 +231,24 @@ function installSelection(enabled: boolean): () => void {
 }
 
 export function PreviewHost(props?: RenderRouteProps) @{
+	const { t } = useTranslation();
 	const preview = useMemo(() => previewState(), []);
 	const [contributions] = useValue(preview.state.contributions);
 	const [principal] = useValue(preview.state.principal);
 	const [status, setStatus] = useValue(preview.state.status);
 	const [message, setMessage] = useValue(preview.state.message);
 	const [moduleId, setModuleId] = useValue(preview.state.moduleId);
+	const [initialView] = useValue(preview.state.initialView);
 
 	useEffect(() => {
+		restoreSandboxLocale();
 		const url = props?.url ?? window.location.href;
 		const sessionId = sessionIdFromLocation(url);
-		const selecting = new URL(url, 'http://sandbox.local').searchParams.has(
-			'select',
-		);
+		const parameters = new URL(url, 'http://sandbox.local').searchParams;
+		const selecting = parameters.has('select');
+		/* The workbench opens the preview on one module of the session; every
+   module still composes, so this only picks the first screen. */
+		const openOn = parameters.get('module') ?? '';
 		const teardown = installSelection(selecting);
 
 		void (async () => {
@@ -243,7 +262,9 @@ export function PreviewHost(props?: RenderRouteProps) @{
 						error?: { message?: string };
 					};
 				if (!response.ok) {
-					setMessage(view.error?.message ?? 'The session is not available.');
+					setMessage(
+						view.error?.message ?? t('sandbox.preview.sessionUnavailable'),
+					);
 					setStatus('failed');
 					return;
 				}
@@ -253,6 +274,7 @@ export function PreviewHost(props?: RenderRouteProps) @{
    shell, exactly as the platform composes them. */
 				const created: ModuleClientContribution[] = [];
 				const missing: string[] = [];
+				let opening = '';
 				for (const module of identity.modules) {
 					if (!module.hasClient) continue;
 					const loaded = await importDraftModule(
@@ -262,19 +284,23 @@ export function PreviewHost(props?: RenderRouteProps) @{
 						missing.push(module.id);
 						continue;
 					}
-					created.push(
-						loaded.createClientContribution({
-							csrfToken: identity.csrfToken,
-							scopes: [...identity.principal.scopes, ...identity.scopes],
-						}),
-					);
+					const contribution = loaded.createClientContribution({
+						csrfToken: identity.csrfToken,
+						scopes: [...identity.principal.scopes, ...identity.scopes],
+					});
+					created.push(contribution);
+					const entry = contribution.navigation?.[0]?.viewId ?? '';
+					if (entry && (!opening || module.directory === openOn)) {
+						opening = entry;
+					}
 				}
 				if (created.length === 0) {
 					setMessage(
 						missing.length > 0
-							? missing.join(', ') +
-								' does not export createClientContribution from src/client/index.ts yet.'
-							: 'No draft module has a client entry yet.',
+							? missing.join(', ') + t('sandbox.preview.missingExport', {
+									modules: missing.join(', '),
+								})
+							: t('sandbox.preview.noClient'),
 					);
 					setStatus('empty');
 					return;
@@ -282,13 +308,14 @@ export function PreviewHost(props?: RenderRouteProps) @{
 				preview.store.act((transaction) => {
 					transaction.set(preview.state.contributions, created);
 					transaction.set(preview.state.principal, identity.principal);
+					transaction.set(preview.state.initialView, opening);
 				}, 'preview/loaded');
 				setStatus('ready');
 			} catch (error) {
 				setMessage(
 					error instanceof Error
 						? error.message
-						: 'The draft module could not be loaded.',
+						: t('sandbox.preview.loadFailed'),
 				);
 				setStatus('empty');
 			} finally {
@@ -306,28 +333,28 @@ export function PreviewHost(props?: RenderRouteProps) @{
 			<ApplicationShell
 				contributions={contributions}
 				identity={identityFor(principal, contributions, moduleId)}
-				initialView={contributions[0]!.navigation?.[0]?.viewId ?? 'overview'}
+				initialView={initialView || contributions[0]!.navigation?.[0]?.viewId ||
+					'overview'}
 				onSignOut={() => undefined}
 				onSwitchTenant={() => undefined}
 			/>
 		} @else if (status === 'loading') {
 			<div class="ui-view" style="padding: 24px">
-				<p class="ui-help">Loading the draft module…</p>
+				<p class="ui-help">{t('sandbox.preview.loading')}</p>
 			</div>
 		} @else {
 			<div class="ui-view" style="padding: 24px">
 				<EmptyState
 					icon="flask"
-					title="Nothing to preview yet"
+					title={t('sandbox.preview.empty.title')}
 					code="src/client/index.ts"
 				>
-					{message ||
-						'The module has no client contribution yet. Ask the frontend engineer for a view.'}
+					{message || t('sandbox.preview.empty.description')}
 				</EmptyState>
 				@if (status === 'failed') {
 					<Alert>{message}</Alert>
 				} @else {
-					<Tag tone="info">{moduleId || 'draft module'}</Tag>
+					<Tag tone="info">{moduleId || t('sandbox.preview.draftModule')}</Tag>
 				}
 			</div>
 		}

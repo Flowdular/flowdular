@@ -2,13 +2,18 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	ConfirmDialog,
 	Drawer,
-	EmptyState,
+	Filters,
 	Icon,
 	Kpi,
 	PageHeader,
+	TableCard,
 	Tag,
+	type TableAction,
+	type TableColumn,
 } from '@coreloom/ui';
+import { activeLocale, t } from '@coreloom/client';
 import { useValue } from 'segment-state';
 import type {
 	ExpenseClaimCategory,
@@ -18,16 +23,17 @@ import type {
 import {
 	createExpensesClaim,
 	decideExpensesClaim,
+	deleteExpensesClaim,
 	loadAwaitingApprovalCount,
+	loadExpenseClaimHistory,
 	loadExpensesClaims,
 	submitExpensesClaim,
 } from './api.ts';
 import {
 	amountToMinorUnits,
-	expenseCategoryLabel,
-	expenseStatusLabel,
 	expenseStatusTone,
 	formatExpenseAmount,
+	showsExpenseActionColumn,
 	type ExpenseStatusFilter,
 } from './expense-claims.ts';
 import {
@@ -36,6 +42,7 @@ import {
 } from './state.ts';
 import { ExpenseClaimForm } from './ExpenseClaimForm.tsrx';
 import { ExpenseDecisionForm } from './ExpenseDecisionForm.tsrx';
+import { ExpenseHistoryDrawer } from './ExpenseHistoryDrawer.tsrx';
 
 export interface ExpensesViewProps {
 	readonly csrfToken: string;
@@ -49,12 +56,65 @@ function formValue(form: FormData, key: string): string {
 	return typeof value === 'string' ? value : '';
 }
 
+function columns(withActions: boolean): readonly TableColumn<ExpensesClaim>[] {
+	return [
+		{
+			key: 'claim',
+			header: t('expenses.table.claim'),
+			width: withActions ? '22%' : '26%',
+			cell: (claim) => <span class="ui-cell">
+				<b>{claim.title}</b>
+				<small class="ui-mono">{claim.id}</small>
+			</span>,
+		},
+		{
+			key: 'expenseDate',
+			header: t('expenses.table.expenseDate'),
+			width: withActions ? '13%' : '14%',
+			cell: (claim) => <span class="ui-mono">{claim.expenseDate}</span>,
+		},
+		{
+			key: 'category',
+			header: t('expenses.table.category'),
+			width: withActions ? '13%' : '14%',
+			cell: (claim) => t('expenses.category.' + claim.category),
+		},
+		{
+			key: 'amount',
+			header: t('expenses.table.amount'),
+			width: withActions ? '12%' : '13%',
+			numeric: true,
+			cell: (claim) => formatExpenseAmount(claim.amountMinor, claim.currency),
+		},
+		{
+			key: 'status',
+			header: t('expenses.table.status'),
+			width: withActions ? '13%' : '14%',
+			cell: (claim) =>
+				<Tag tone={expenseStatusTone(claim.status)} dot>{t(
+					'expenses.status.' + claim.status,
+				)}</Tag>,
+		},
+		{
+			key: 'decisionComment',
+			header: t('expenses.table.decisionComment'),
+			width: withActions ? '17%' : '19%',
+			cell: (claim) => claim.decisionComment
+				? claim.decisionComment
+				: <span class="ui-cell__muted">{t(
+						'expenses.table.noDecisionComment',
+					)}</span>,
+		},
+	];
+}
+
 export function ExpensesView(props: ExpensesViewProps) @{
 	const viewState = useMemo(() => createExpensesClientState(), []);
 	const [claims] = useValue(viewState.state.claims);
 	const [statusFilter, setStatusFilter] = useValue(
 		viewState.state.statusFilter,
 	);
+	const [filtersOpen, setFiltersOpen] = useValue(viewState.state.filtersOpen);
 	const [status, setStatus] = useValue(viewState.state.status);
 	const [error, setError] = useValue(viewState.state.error);
 	const [formOpen, setFormOpen] = useValue(viewState.state.formOpen);
@@ -72,6 +132,21 @@ export function ExpensesView(props: ExpensesViewProps) @{
 	const [decision, setDecision] = useValue(viewState.state.decision);
 	const [decisionError, setDecisionError] = useValue(
 		viewState.state.decisionError,
+	);
+	const [deleteConfirmOpen, setDeleteConfirmOpen] = useValue(
+		viewState.state.deleteConfirmOpen,
+	);
+	const [deleteClaim, setDeleteClaim] = useValue(viewState.state.deleteClaim);
+	const [historyOpen, setHistoryOpen] = useValue(viewState.state.historyOpen);
+	const [historyClaim, setHistoryClaim] = useValue(
+		viewState.state.historyClaim,
+	);
+	const [historyEntries] = useValue(viewState.state.historyEntries);
+	const [historyLoading, setHistoryLoading] = useValue(
+		viewState.state.historyLoading,
+	);
+	const [historyError, setHistoryError] = useValue(
+		viewState.state.historyError,
 	);
 
 	const refresh = async (filter: ExpenseStatusFilter = statusFilter) => {
@@ -91,7 +166,7 @@ export function ExpensesView(props: ExpensesViewProps) @{
 			setError(
 				loadError instanceof Error
 					? loadError.message
-					: 'Could not load expense claims.',
+					: t('expenses.error.load'),
 			);
 		} finally {
 			setStatus('idle');
@@ -122,7 +197,7 @@ export function ExpensesView(props: ExpensesViewProps) @{
 		const form = new FormData(event.currentTarget as HTMLFormElement);
 		const amountMinor = amountToMinorUnits(formValue(form, 'amount'));
 		if (amountMinor === null) {
-			setFormError('Amount must use no more than two decimal places.');
+			setFormError(t('expenses.error.amount'));
 			return;
 		}
 		setStatus('submitting');
@@ -146,7 +221,7 @@ export function ExpensesView(props: ExpensesViewProps) @{
 			setFormError(
 				createError instanceof Error
 					? createError.message
-					: 'Could not create the expense claim.',
+					: t('expenses.error.create'),
 			);
 			setStatus('idle');
 		}
@@ -162,7 +237,35 @@ export function ExpensesView(props: ExpensesViewProps) @{
 			setError(
 				submitError instanceof Error
 					? submitError.message
-					: 'Could not submit the expense claim.',
+					: t('expenses.error.submit'),
+			);
+			setStatus('idle');
+		}
+	};
+
+	const requestDelete = (claim: ExpensesClaim) => {
+		setDeleteClaim(claim);
+		setDeleteConfirmOpen(true);
+	};
+
+	const closeDelete = () => {
+		setDeleteConfirmOpen(false);
+		setDeleteClaim(null);
+	};
+
+	const deleteDraft = async () => {
+		if (!deleteClaim) return;
+		setStatus('deleting');
+		setError('');
+		try {
+			await deleteExpensesClaim(deleteClaim.id, props.csrfToken);
+			closeDelete();
+			await refresh(statusFilter);
+		} catch (deleteError) {
+			setError(
+				deleteError instanceof Error
+					? deleteError.message
+					: t('expenses.error.delete'),
 			);
 			setStatus('idle');
 		}
@@ -185,6 +288,35 @@ export function ExpensesView(props: ExpensesViewProps) @{
 		setDecisionClaim(null);
 	};
 
+	const openHistory = async (claim: ExpensesClaim) => {
+		setHistoryClaim(claim);
+		setHistoryOpen(true);
+		setHistoryLoading(true);
+		setHistoryError('');
+		viewState.store.act(
+			(transaction) => transaction.set(viewState.state.historyEntries, []),
+			'expenses/history-loading',
+		);
+		try {
+			const page = await loadExpenseClaimHistory(claim.id);
+			viewState.store.act(
+				(transaction) => transaction.set(
+					viewState.state.historyEntries,
+					page.entries,
+				),
+				'expenses/history-loaded',
+			);
+		} catch (historyFailure) {
+			setHistoryError(
+				historyFailure instanceof Error
+					? historyFailure.message
+					: t('expenses.error.history'),
+			);
+		} finally {
+			setHistoryLoading(false);
+		}
+	};
+
 	const decideClaim = async (event: SubmitEvent) => {
 		event.preventDefault();
 		if (!decisionClaim) return;
@@ -204,172 +336,145 @@ export function ExpensesView(props: ExpensesViewProps) @{
 			setDecisionError(
 				decisionFailure instanceof Error
 					? decisionFailure.message
-					: 'Could not record the decision.',
+					: t('expenses.error.decision'),
 			);
 			setStatus('idle');
 		}
 	};
 
+	/* Keep the action column whenever this principal can perform an action.
+   Filtering to decided records must not resize every data column. */
+	const showActionColumn = showsExpenseActionColumn(
+		props.canManage,
+		props.canApprove,
+	);
+	const claimActions = (claim: ExpensesClaim): readonly TableAction[] => {
+		if (claim.status === 'draft' && props.canManage) {
+			return [
+				{
+					id: 'submit',
+					label: t('expenses.action.submit'),
+					icon: 'play',
+					disabled: status !== 'idle',
+					onSelect: () => void submitDraft(claim.id),
+				},
+				{
+					id: 'delete',
+					label: t('expenses.action.delete'),
+					icon: 'x',
+					tone: 'danger',
+					disabled: status !== 'idle',
+					onSelect: () => requestDelete(claim),
+				},
+			];
+		}
+		if (claim.status === 'submitted' && props.canApprove) {
+			return [
+				{
+					id: 'approve',
+					label: t('expenses.action.approve'),
+					icon: 'check',
+					disabled: status !== 'idle',
+					onSelect: () => openDecision(claim, 'approved'),
+				},
+				{
+					id: 'reject',
+					label: t('expenses.action.reject'),
+					icon: 'x',
+					tone: 'danger',
+					disabled: status !== 'idle',
+					onSelect: () => openDecision(claim, 'rejected'),
+				},
+			];
+		}
+		return [];
+	};
+
 	<div class="ui-view">
 		<PageHeader
-			eyebrow="Employee expenses"
-			title="Expense claims"
-			description="Record expenses, submit drafts, and review approval decisions."
+			eyebrow={t('expenses.page.eyebrow')}
+			title={t('expenses.page.title')}
+			description={t('expenses.page.description')}
 		>
 			@if (props.canRead) {
 				<Button size="sm" onClick={() => void refresh()}>
 					<Icon name="refresh" size={14} />
-					Refresh
+					{t('expenses.action.refresh')}
 				</Button>
 			}
 			@if (props.canManage) {
 				<Button size="sm" variant="primary" onClick={openCreate}>
 					<Icon name="plus" size={14} />
-					New claim
+					{t('expenses.action.new')}
 				</Button>
 			}
 		</PageHeader>
 		@if (!props.canRead) {
-			<Alert tone="warning">
-				You do not have permission to view expense claims.
-			</Alert>
+			<Alert tone="warning">{t('expenses.denied')}</Alert>
 		} @else {
 			<>
 				@if (error && !formOpen && !decisionOpen) {
 					<Alert>{error}</Alert>
 				}
-				<section class="ui-card">
-					<div class="ui-card__head">
-						<span class="ui-card__title">
-							Claims
-							<small>
-								{claims.length + (claims.length === 1 ? ' claim' : ' claims')}
-							</small>
-						</span>
-					</div>
-					<div class="ui-toolbar">
+				<TableCard
+					title={t('expenses.table.title')}
+					count={t('expenses.table.count', { count: claims.length })}
+					filters={<Filters
+						open={filtersOpen}
+						onToggle={() => setFiltersOpen(!filtersOpen)}
+						activeCount={statusFilter === 'all' ? 0 : 1}
+						label={t('expenses.filters.label')}
+					>
 						<select
 							class="ui-select"
-							aria-label="Filter claims by status"
+							aria-label={t('expenses.filters.status')}
 							value={statusFilter}
 							disabled={status !== 'idle'}
 							onInput={(event) => changeStatusFilter(
 								event.currentTarget.value as ExpenseStatusFilter,
 							)}
 						>
-							<option value="all">All statuses</option>
-							<option value="draft">Draft</option>
-							<option value="submitted">Submitted</option>
-							<option value="approved">Approved</option>
-							<option value="rejected">Rejected</option>
+							<option value="all">{t('expenses.filters.all')}</option>
+							<option value="draft">{t('expenses.status.draft')}</option>
+							<option value="submitted">{t(
+								'expenses.status.submitted',
+							)}</option>
+							<option value="approved">{t('expenses.status.approved')}</option>
+							<option value="rejected">{t('expenses.status.rejected')}</option>
 						</select>
-					</div>
-					@if (status === 'loading') {
-						<p class="ui-table__empty">Loading expense claims…</p>
-					} @else if (claims.length === 0) {
-						<EmptyState
-							icon="file-text"
-							title={statusFilter === 'all'
-								? 'No expense claims yet'
-								: `No ${expenseStatusLabel(statusFilter).toLowerCase()} claims`}
-						>
-							{statusFilter === 'all'
-								? props.canManage
-									? 'Create the first expense claim for this workspace.'
-									: 'No expense claims are available to your account.'
-								: 'No claims match the selected status.'}
-						</EmptyState>
-					} @else {
-						<div class="ui-table-wrap">
-							<table class="ui-table" aria-label="Expense claims">
-								<thead>
-									<tr>
-										<th>Claim</th>
-										<th>Expense date</th>
-										<th>Category</th>
-										<th class="num">Amount</th>
-										<th>Status</th>
-										<th class="ui-table__actions">Actions</th>
-									</tr>
-								</thead>
-								<tbody>
-									@for (const claim of claims; key claim.id) {
-										<tr>
-											<td>
-												<span class="ui-cell">
-													<b>{claim.title}</b>
-													<small class="ui-mono">{claim.id}</small>
-												</span>
-											</td>
-											<td class="ui-mono">{claim.expenseDate}</td>
-											<td>{expenseCategoryLabel(claim.category)}</td>
-											<td class="num">{formatExpenseAmount(
-												claim.amountMinor,
-												claim.currency,
-											)}</td>
-											<td>
-												<span class="ui-cell">
-													<Tag
-														tone={expenseStatusTone(claim.status)}
-														dot
-													>{expenseStatusLabel(claim.status)}</Tag>
-													@if (claim.decisionComment) {
-														<small>{claim.decisionComment}</small>
-													}
-												</span>
-											</td>
-											<td class="ui-table__actions">
-												<span class="ui-table__state">
-													@if (claim.status === 'draft' && props.canManage) {
-														<Button
-															size="sm"
-															variant="primary"
-															disabled={status !== 'idle'}
-															onClick={() => void submitDraft(claim.id)}
-														>
-															Submit
-														</Button>
-													} @else if (
-														claim.status === 'submitted' && props.canApprove
-													) {
-														<>
-															<Button
-																size="sm"
-																variant="primary"
-																disabled={status !== 'idle'}
-																onClick={() => openDecision(claim, 'approved')}
-															>
-																Approve
-															</Button>
-															<Button
-																size="sm"
-																variant="danger"
-																disabled={status !== 'idle'}
-																onClick={() => openDecision(claim, 'rejected')}
-															>
-																Reject
-															</Button>
-														</>
-													} @else {
-														<small>
-															{claim.status === 'submitted'
-																? 'Awaiting decision'
-																: 'No action'}
-														</small>
-													}
-												</span>
-											</td>
-										</tr>
-									}
-								</tbody>
-							</table>
-						</div>
-					}
-				</section>
+					</Filters>}
+					caption={t('expenses.table.caption')}
+					columns={columns(showActionColumn)}
+					rows={claims}
+					rowKey={(claim) => claim.id}
+					status={status === 'loading' && claims.length === 0
+						? 'loading'
+						: 'idle'}
+					loadingLabel={t('expenses.table.loading')}
+					filtered={statusFilter !== 'all'}
+					empty={{
+						icon: 'file-text',
+						title: t('expenses.table.emptyTitle'),
+						hint: props.canManage
+							? t('expenses.table.emptyManage')
+							: t('expenses.table.emptyRead'),
+					}}
+					emptyFiltered={statusFilter === 'all'
+						? undefined
+						: {
+								icon: 'file-text',
+								title: t('expenses.table.emptyFilteredTitle'),
+								hint: t('expenses.table.emptyFilteredHint'),
+							}}
+					actionsLabel={t('expenses.table.actions')}
+					actionsWidth="280px"
+					actions={showActionColumn ? claimActions : undefined}
+					onSelect={(claim) => void openHistory(claim)}
+				/>
 				<Drawer
 					open={formOpen}
-					title="New expense claim"
-					subtitle="Saved as draft"
+					title={t('expenses.drawer.newTitle')}
+					subtitle={t('expenses.drawer.newSubtitle')}
 					width="lg"
 					onClose={closeCreate}
 				>
@@ -383,8 +488,10 @@ export function ExpensesView(props: ExpensesViewProps) @{
 				</Drawer>
 				<Drawer
 					open={decisionOpen && decisionClaim !== null}
-					title={decision === 'approved' ? 'Approve claim' : 'Reject claim'}
-					subtitle="Manager decision"
+					title={decision === 'approved'
+						? t('expenses.drawer.approveTitle')
+						: t('expenses.drawer.rejectTitle')}
+					subtitle={t('expenses.drawer.decisionSubtitle')}
 					onClose={closeDecision}
 				>
 					@if (decisionClaim) {
@@ -399,6 +506,29 @@ export function ExpensesView(props: ExpensesViewProps) @{
 						/>
 					}
 				</Drawer>
+				<ExpenseHistoryDrawer
+					open={historyOpen}
+					claim={historyClaim}
+					entries={historyEntries}
+					loading={historyLoading}
+					error={historyError}
+					onClose={() => {
+						setHistoryOpen(false);
+						setHistoryClaim(null);
+					}}
+				/>
+				<ConfirmDialog
+					open={deleteConfirmOpen && deleteClaim !== null}
+					title={t('expenses.delete.title')}
+					confirmLabel={t('expenses.delete.confirm')}
+					cancelLabel={t('expenses.action.cancel')}
+					busy={status === 'deleting'}
+					tone="danger"
+					onConfirm={() => void deleteDraft()}
+					onCancel={closeDelete}
+				>{t('expenses.delete.description', {
+					name: deleteClaim?.title ?? '',
+				})}</ConfirmDialog>
 			</>
 		}
 	</div>
@@ -417,20 +547,20 @@ export function ExpensesDashboardWidget() @{
 			(loadError) => setError(
 				loadError instanceof Error
 					? loadError.message
-					: 'Could not load the approval count.',
+					: t('expenses.widget.error'),
 			),
 		).finally(() => setStatus('idle'));
 	}, []);
 
 	<Kpi
-		label="Awaiting approval"
+		label={t('expenses.widget.label')}
 		value={status === 'loading'
 			? '…'
 			: error
-				? 'Unavailable'
-				: String(count)}
-		note={error || 'Submitted expense claims waiting for a decision.'}
+				? t('expenses.widget.unavailable')
+				: new Intl.NumberFormat(activeLocale()).format(count)}
+		note={error || t('expenses.widget.note')}
 		href="/expenses"
-		linkLabel="Review claims"
+		linkLabel={t('expenses.widget.link')}
 	/>
 }
