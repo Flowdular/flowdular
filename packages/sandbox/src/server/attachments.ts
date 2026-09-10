@@ -1,5 +1,6 @@
+import { withSessionLock } from './session-lock.ts';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import {
 	readSession,
@@ -210,28 +211,26 @@ export async function addAttachment(
 			`Attachments are limited to ${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB.`,
 		);
 	}
-	const current = await readSession(workspaceRoot, session.id);
-	if (current.attachments.length >= MAX_ATTACHMENTS) {
-		throw new SandboxSetupError(
-			'ATTACHMENT_LIMIT_REACHED',
-			`A session may hold at most ${MAX_ATTACHMENTS} attachments.`,
-		);
-	}
-	const type = resolveType(input.name, input.bytes);
-	const meta: SessionAttachment = {
-		id: randomUUID(),
-		name: uniqueName(safeAttachmentName(input.name), current.attachments),
-		kind: type.kind,
-		size: input.bytes.byteLength,
-		addedAt: Date.now(),
-	};
-	const paths = sessionPaths(workspaceRoot, current.id, current.moduleSuffix);
-	await mkdir(paths.attachments, { recursive: true });
-	await mkdir(paths.workspaceAttachments, { recursive: true });
-	await writeFile(storedPath(paths, meta), input.bytes);
-	await writeFile(workspacePath(paths, meta), input.bytes);
-	await updateSession(workspaceRoot, current.id, {
-		attachments: [...current.attachments, meta],
+	let meta!: SessionAttachment;
+	await updateSession(workspaceRoot, session.id, async (current) => {
+		if (current.attachments.length >= MAX_ATTACHMENTS) {
+			throw new SandboxSetupError(
+				'ATTACHMENT_LIMIT_REACHED',
+				`A session may hold at most ${MAX_ATTACHMENTS} attachments.`,
+			);
+		}
+		const type = resolveType(input.name, input.bytes);
+		meta = {
+			id: randomUUID(),
+			name: uniqueName(safeAttachmentName(input.name), current.attachments),
+			kind: type.kind,
+			size: input.bytes.byteLength,
+			addedAt: Date.now(),
+		};
+		const paths = sessionPaths(workspaceRoot, current.id, current.moduleSuffix);
+		await mkdir(paths.attachments, { recursive: true });
+		await writeFile(storedPath(paths, meta), input.bytes);
+		return { attachments: [...current.attachments, meta] };
 	});
 	return meta;
 }
@@ -263,13 +262,15 @@ export async function removeAttachment(
 	attachmentId: string,
 ): Promise<void> {
 	assertAttachmentId(attachmentId);
-	const current = await readSession(workspaceRoot, session.id);
-	const meta = findAttachment(current.attachments, attachmentId);
-	const paths = sessionPaths(workspaceRoot, current.id, current.moduleSuffix);
-	await rm(storedPath(paths, meta), { force: true });
-	await rm(workspacePath(paths, meta), { force: true });
-	await updateSession(workspaceRoot, current.id, {
-		attachments: current.attachments.filter((item) => item.id !== attachmentId),
+	await updateSession(workspaceRoot, session.id, async (current) => {
+		const meta = findAttachment(current.attachments, attachmentId);
+		const paths = sessionPaths(workspaceRoot, current.id, current.moduleSuffix);
+		await rm(storedPath(paths, meta), { force: true });
+		return {
+			attachments: current.attachments.filter(
+				(item) => item.id !== attachmentId,
+			),
+		};
 	});
 }
 
@@ -292,6 +293,42 @@ export async function readAttachment(
 		contentType: attachmentContentType(meta.name),
 		name: meta.name,
 	};
+}
+
+/* The host prepares a stable turn snapshot before path enforcement begins.
+   Uploads/removals only change the private store, never an active workspace. */
+export async function materializeAttachments(
+	workspaceRoot: string,
+	session: SandboxSession,
+): Promise<readonly SessionAttachment[]> {
+	return withSessionLock(workspaceRoot, session.id, async () => {
+		const current = await readSession(workspaceRoot, session.id);
+		const paths = sessionPaths(workspaceRoot, current.id, current.moduleSuffix);
+		const reference = join(paths.workspace, 'reference');
+		const info = await lstat(reference).catch(
+			(error: NodeJS.ErrnoException) => {
+				if (error.code === 'ENOENT') return null;
+				throw error;
+			},
+		);
+		if (info && !info.isDirectory())
+			throw new SandboxSetupError(
+				'ATTACHMENT_REFERENCE_INVALID',
+				'The session reference directory is not a regular directory.',
+			);
+		await mkdir(reference, { recursive: true });
+		// rm unlinks a planted attachment symlink instead of following it.
+		await rm(paths.workspaceAttachments, { recursive: true, force: true });
+		await mkdir(paths.workspaceAttachments, { recursive: true });
+		for (const meta of current.attachments) {
+			await writeFile(
+				workspacePath(paths, meta),
+				await readFile(storedPath(paths, meta)),
+				{ flag: 'wx' },
+			);
+		}
+		return current.attachments;
+	});
 }
 
 /* The note prepended to a turn's instruction when the session has attachments.

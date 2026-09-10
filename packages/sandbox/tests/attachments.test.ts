@@ -1,4 +1,11 @@
-import { access, mkdtemp, writeFile } from 'node:fs/promises';
+import {
+	access,
+	mkdtemp,
+	readFile,
+	rm,
+	symlink,
+	writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -16,9 +23,11 @@ import {
 	assertAttachmentId,
 	attachmentInstruction,
 	listAttachments,
+	materializeAttachments,
 	readAttachment,
 	removeAttachment,
 } from '../src/server/attachments.ts';
+import { guardAgentPaths } from '../src/server/path-guard.ts';
 import { DEFAULT_CONFIGURATION } from '../src/server/config.ts';
 import type { PreviewRuntime } from '../src/server/preview-runtime.ts';
 import { createSandboxRoutes } from '../src/server/routes.ts';
@@ -28,6 +37,7 @@ import {
 	readChat,
 	readSession,
 	sessionPaths,
+	updateSession,
 } from '../src/server/sessions.ts';
 
 /* A 1x1 PNG; its bytes begin with the PNG signature, so the magic-byte sniff
@@ -71,7 +81,10 @@ async function exists(path: string): Promise<boolean> {
 
 /* A driver that records the prompt it was handed and ends without touching the
    workspace, so no gates run and the turn is fast. */
-function capturingDriver(sink: { prompt: string }): CodingAgentDriver {
+function capturingDriver(sink: {
+	prompt: string;
+	inspect?: (workspace: string) => Promise<void>;
+}): CodingAgentDriver {
 	return {
 		id: 'fake',
 		label: 'Fake',
@@ -81,6 +94,7 @@ function capturingDriver(sink: { prompt: string }): CodingAgentDriver {
 		probe: async () => ({ available: true, detail: 'ok', version: '1' }),
 		async *run(request: CodingAgentTurnRequest) {
 			sink.prompt = request.prompt;
+			await sink.inspect?.(request.workspacePath);
 			yield {
 				type: 'turn.started',
 				driver: 'fake',
@@ -195,7 +209,65 @@ async function readSse(response: Response): Promise<{ event: string }[]> {
 }
 
 describe('attachment storage', () => {
-	it('stores the bytes under the session and copies them into the workspace', async () => {
+	it('does not count an upload during a turn as an agent write', async () => {
+		const root = await workspace();
+		const session = await sessionFor(root);
+		const paths = sessionPaths(root, session.id, session.moduleSuffix);
+		const guard = await guardAgentPaths({
+			workspace: paths.workspace,
+			sessionRoot: paths.root,
+			allowedPaths: [],
+		});
+		const meta = await addAttachment(root, session, {
+			name: 'image.png',
+			bytes: PNG_BYTES,
+		});
+		expect((await guard.verify()).violations).toEqual([]);
+		expect((await readAttachment(root, session, meta.id)).bytes).toEqual(
+			PNG_BYTES,
+		);
+	});
+
+	it('retains concurrent clipboard uploads with distinct names', async () => {
+		const root = await workspace();
+		const session = await sessionFor(root);
+		const uploaded = await Promise.all(
+			Array.from({ length: 3 }, () =>
+				addAttachment(root, session, { name: 'image.png', bytes: PNG_BYTES }),
+			),
+		);
+		const attached = await listAttachments(root, session);
+		expect(attached).toHaveLength(3);
+		expect(new Set(attached.map((item) => item.name)).size).toBe(3);
+		expect(attached.map((item) => item.id).sort()).toEqual(
+			uploaded.map((item) => item.id).sort(),
+		);
+	});
+
+	it('preserves uploads across session updates and releases failed operations', async () => {
+		const root = await workspace();
+		const session = await sessionFor(root);
+		const results = await Promise.allSettled([
+			addAttachment(root, session, { name: 'invalid.exe', bytes: PNG_BYTES }),
+			addAttachment(root, session, { name: 'image.png', bytes: PNG_BYTES }),
+			updateSession(root, session.id, { title: 'Updated title' }),
+			addAttachment(root, session, { name: 'image.png', bytes: PNG_BYTES }),
+		]);
+		expect(results.map((result) => result.status)).toEqual([
+			'rejected',
+			'fulfilled',
+			'fulfilled',
+			'fulfilled',
+		]);
+		const current = await readSession(root, session.id);
+		expect(current.title).toBe('Updated title');
+		expect(current.attachments.map((item) => item.name)).toEqual([
+			'image.png',
+			'image-2.png',
+		]);
+	});
+
+	it('stores bytes privately and copies them only when preparing a turn', async () => {
 		const root = await workspace();
 		const session = await sessionFor(root);
 		const meta = await addAttachment(root, session, {
@@ -213,10 +285,65 @@ describe('attachment storage', () => {
 		).toBe(true);
 		expect(
 			await exists(join(paths.workspaceAttachments, 'screenshot.png')),
-		).toBe(true);
+		).toBe(false);
+		await materializeAttachments(root, session);
+		expect(
+			await readFile(join(paths.workspaceAttachments, 'screenshot.png')),
+		).toEqual(PNG_BYTES);
 		expect(
 			(await listAttachments(root, session)).map((item) => item.id),
 		).toEqual([meta.id]);
+	});
+
+	it('keeps the active snapshot stable across removal and repairs a deleted snapshot', async () => {
+		const root = await workspace();
+		const session = await sessionFor(root);
+		const paths = sessionPaths(root, session.id, session.moduleSuffix);
+		const meta = await addAttachment(root, session, {
+			name: 'image.png',
+			bytes: PNG_BYTES,
+		});
+		await materializeAttachments(root, session);
+		const guard = await guardAgentPaths({
+			workspace: paths.workspace,
+			sessionRoot: paths.root,
+			allowedPaths: [],
+		});
+		await removeAttachment(root, session, meta.id);
+		expect(await readFile(join(paths.workspaceAttachments, meta.name))).toEqual(
+			PNG_BYTES,
+		);
+		expect((await guard.verify()).violations).toEqual([]);
+		await materializeAttachments(root, session);
+		expect(await exists(join(paths.workspaceAttachments, meta.name))).toBe(
+			false,
+		);
+		await addAttachment(root, session, {
+			name: 'restored.png',
+			bytes: PNG_BYTES,
+		});
+		await rm(paths.workspaceAttachments, { recursive: true, force: true });
+		await materializeAttachments(root, session);
+		expect(
+			await readFile(join(paths.workspaceAttachments, 'restored.png')),
+		).toEqual(PNG_BYTES);
+	});
+
+	it('does not follow a replaced reference directory outside the workspace', async () => {
+		const root = await workspace();
+		const session = await sessionFor(root);
+		const paths = sessionPaths(root, session.id, session.moduleSuffix);
+		const outside = await mkdtemp(join(tmpdir(), 'attachment-outside-'));
+		await addAttachment(root, session, { name: 'image.png', bytes: PNG_BYTES });
+		await rm(join(paths.workspace, 'reference'), {
+			recursive: true,
+			force: true,
+		});
+		await symlink(outside, join(paths.workspace, 'reference'));
+		await expect(materializeAttachments(root, session)).rejects.toMatchObject({
+			code: 'ATTACHMENT_REFERENCE_INVALID',
+		});
+		expect(await exists(join(outside, 'attachments'))).toBe(false);
 	});
 
 	it('serves the bytes back with the right content type', async () => {
@@ -308,6 +435,7 @@ describe('attachment storage', () => {
 		});
 		expect(first.name).toBe('same.png');
 		expect(second.name).not.toBe('same.png');
+		await materializeAttachments(root, session);
 		const paths = sessionPaths(root, session.id, session.moduleSuffix);
 		expect(await exists(join(paths.workspaceAttachments, first.name))).toBe(
 			true,
@@ -331,14 +459,16 @@ describe('attachment storage', () => {
 		).rejects.toMatchObject({ code: 'INVALID_ATTACHMENT_ID' });
 	});
 
-	it('removes an attachment from disk, the workspace and the record', async () => {
+	it('removes an attachment from storage and the next turn snapshot', async () => {
 		const root = await workspace();
 		const session = await sessionFor(root);
 		const meta = await addAttachment(root, session, {
 			name: 'gone.png',
 			bytes: PNG_BYTES,
 		});
+		await materializeAttachments(root, session);
 		await removeAttachment(root, session, meta.id);
+		await materializeAttachments(root, session);
 		const paths = sessionPaths(root, session.id, session.moduleSuffix);
 		expect(await exists(join(paths.attachments, `${meta.id}-gone.png`))).toBe(
 			false,
@@ -540,7 +670,16 @@ describe('attachment routes', () => {
 
 	it('prepends the attachment note to the turn the driver receives', async () => {
 		const root = await workspace();
-		const sink = { prompt: '' };
+		let driverAttachment: string | undefined;
+		const sink = {
+			prompt: '',
+			inspect: async (workspace: string) => {
+				driverAttachment = await readFile(
+					join(workspace, 'reference/attachments/concept.md'),
+					'utf8',
+				);
+			},
+		};
 		const runtime = fakeRuntime(root, capturingDriver(sink));
 		const call = api(runtime);
 		const session = await sessionFor(root);
@@ -551,6 +690,8 @@ describe('attachment routes', () => {
 			},
 		});
 
+		const paths = sessionPaths(root, session.id, session.moduleSuffix);
+		await rm(paths.workspaceAttachments, { recursive: true, force: true });
 		const response = await call(
 			'POST',
 			`/sandbox/api/sessions/${session.id}/turn`,
@@ -567,6 +708,7 @@ describe('attachment routes', () => {
 
 		expect(sink.prompt).toContain('reference/attachments/');
 		expect(sink.prompt).toContain('concept.md (file)');
+		expect(driverAttachment).toBe('# concept\n');
 		expect(sink.prompt).toContain('Build the screen like the concept.');
 
 		const chat = await readChat(root, session);

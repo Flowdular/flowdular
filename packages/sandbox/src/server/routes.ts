@@ -1266,9 +1266,8 @@ export function createSandboxRoutes(
 		},
 	});
 
-	/* Attachments are copied into the session workspace at upload time, so the
-	   coding agent, which may only read inside the workspace, opens them by name
-	   from reference/attachments/. The bytes never leave this origin. */
+	/* Uploads stay outside the active workspace. Each turn copies its attachment
+	   snapshot into reference/attachments/ before the path guard starts. */
 	const addSandboxAttachment = new ServerRoute({
 		path: '/sandbox/api/sessions/:id/attachments',
 		methods: ['POST'],

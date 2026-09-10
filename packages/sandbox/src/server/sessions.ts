@@ -1,3 +1,4 @@
+import { withSessionLock } from './session-lock.ts';
 import { randomUUID } from 'node:crypto';
 import {
 	access,
@@ -588,16 +589,23 @@ export async function listSessions(
 	return sessions.sort((left, right) => right.updatedAt - left.updatedAt);
 }
 
+type SessionPatch = Partial<Omit<SandboxSession, 'id' | 'createdAt'>>;
+
 export async function updateSession(
 	workspaceRoot: string,
 	sessionId: string,
-	patch: Partial<Omit<SandboxSession, 'id' | 'createdAt'>>,
+	patch:
+		| SessionPatch
+		| ((current: SandboxSession) => SessionPatch | Promise<SessionPatch>),
 ): Promise<SandboxSession> {
-	const current = await readSession(workspaceRoot, sessionId);
-	return writeSession(workspaceRoot, {
-		...current,
-		...patch,
-		updatedAt: Date.now(),
+	return withSessionLock(workspaceRoot, sessionId, async () => {
+		const current = await readSession(workspaceRoot, sessionId);
+		const updates = typeof patch === 'function' ? await patch(current) : patch;
+		return writeSession(workspaceRoot, {
+			...current,
+			...updates,
+			updatedAt: Date.now(),
+		});
 	});
 }
 

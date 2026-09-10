@@ -28,7 +28,10 @@ import {
 	moduleReviewRevision,
 	recordAutoReview,
 } from './auto-review.ts';
-import { attachmentInstruction } from './attachments.ts';
+import {
+	attachmentInstruction,
+	materializeAttachments,
+} from './attachments.ts';
 import { captureCheckpoint } from './checkpoints.ts';
 import { guardAgentPaths } from './path-guard.ts';
 import type { SandboxConfiguration } from './config.ts';
@@ -535,7 +538,7 @@ export async function* runTurn(
 	context: TurnContext,
 	input: TurnInput,
 ): AsyncGenerator<ChatEntry, TurnOutcome> {
-	const session = await readSession(context.workspaceRoot, input.sessionId);
+	let session = await readSession(context.workspaceRoot, input.sessionId);
 	const paths = sessionPaths(
 		context.workspaceRoot,
 		session.id,
@@ -576,6 +579,10 @@ export async function* runTurn(
 	const driverId = input.driver ?? session.driver;
 	const driver = await context.registry.resolve(driverId);
 
+	session = {
+		...session,
+		attachments: await materializeAttachments(context.workspaceRoot, session),
+	};
 	const attachmentNote = attachmentInstruction(session.attachments);
 
 	yield await appendChatEntry(context.workspaceRoot, session, {
