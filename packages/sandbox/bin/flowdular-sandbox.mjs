@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import './register-types.mjs';
+import { watchSandboxReloads } from '../src/server/reload-log.ts';
 import process from 'node:process';
 import { realpathSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -12,7 +13,6 @@ import {
 	installOctaneConsoleBridge,
 	printReady,
 	shouldUseColor,
-	watchReloads,
 } from '@flowdular/dev-console';
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -223,7 +223,12 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 		],
 	});
 
-	watchReloads(server, appRoot, useColor);
+	watchSandboxReloads(
+		server,
+		appRoot,
+		(message) => console.log(formatDevEvent('reload', message, useColor)),
+		options.verbose,
+	);
 
 	const close = async () => {
 		console.log(`\n${formatDevEvent('process', 'Sandbox stopped.', useColor)}`);

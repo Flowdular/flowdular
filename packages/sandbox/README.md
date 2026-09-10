@@ -146,6 +146,12 @@ browser. An empty key field preserves the existing key only when the provider
 and destination are unchanged. The settings also let you clear the key or
 remove BYOK entirely.
 
+Provider conversations are scoped to the current specialist, module, task skill,
+write permissions, approved specification and model. A handoff that changes
+that scope starts a fresh conversation with the brief and recent messages;
+continuing the same scope resumes its existing conversation. Legacy shared
+conversations are replaced on the next turn.
+
 For a long CLI conversation, select **Fresh agent context** before sending the
 next message. It starts a new CLI conversation with the original brief and
 recent sandbox messages, preserving draft files, the approved specification
@@ -154,6 +160,10 @@ include any older decision that is not recorded in the spec or recent messages.
 Claude activity is shown from the start of streamed response blocks, with
 completed reasoning and tool events following as they arrive. This does not
 reduce provider queue or inference time.
+
+Source-change logs group repeated saves into a short summary such as
+`Draft blog (96a64f10) · 4 files changed`. These report file changes, not a
+successful build. Use `--verbose` to see individual paths.
 
 ## Sessions
 

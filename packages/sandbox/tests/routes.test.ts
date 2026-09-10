@@ -614,6 +614,65 @@ describe('sandbox route security', () => {
 });
 
 describe('detached turns', () => {
+	it('resumes only the same role and scope, never a previous specialist conversation', async () => {
+		const root = await workspace();
+		const requests: CodingAgentTurnRequest[] = [];
+		const driver = fakeDriver({ handoff: 'HANDOFF: none - done' });
+		const run = driver.run.bind(driver);
+		driver.run = async function* (request) {
+			requests.push(request);
+			for await (const event of run(request))
+				yield event.type === 'turn.completed'
+					? { ...event, resumeId: `context-${requests.length}` }
+					: event;
+		};
+		const runtime = fakeRuntime(root, driver);
+		const call = api(runtime);
+		const session = await sessionFor(root);
+		await updateSession(root, session.id, {
+			autoContinue: false,
+			resumeIds: { fake: 'legacy-shared-context' },
+		});
+		const turn = async (role: string, message = 'Continue') =>
+			readSse(
+				await call('POST', `/sandbox/api/sessions/${session.id}/turn`, {
+					body: { role, message },
+				}),
+			);
+		await turn('business-manager');
+		expect(requests[0]?.resumeId).toBeNull();
+		await turn('business-manager');
+		expect(requests[1]?.resumeId).toBe('context-1');
+		const paths = sessionPaths(root, session.id, session.moduleSuffix);
+		await mkdir(join(paths.modulePath, 'spec'), { recursive: true });
+		const spec =
+			'schemaVersion: 1\nid: booking.core\nstatus: approved\nname: Booking\n';
+		await writeFile(join(paths.modulePath, 'spec/module.yaml'), spec);
+		await writeFile(
+			join(paths.modulePath, 'module.json'),
+			'{"id":"booking.core"}',
+		);
+		await updateSession(root, session.id, {
+			modules: session.modules.map((module) => ({
+				...module,
+				specHash: hashSpec(spec),
+				specApprovedAt: Date.now(),
+			})),
+		});
+		await turn('backend-engineer');
+		expect(requests[2]?.resumeId).toBeNull();
+		expect(requests[2]?.allowedPaths).not.toContain(
+			'modules/booking/src/client/**',
+		);
+		await turn('backend-engineer');
+		expect(requests[3]?.resumeId).toBe('context-3');
+		await turn('frontend-engineer');
+		expect(requests[4]?.resumeId).toBeNull();
+		expect(
+			Object.keys((await readSession(root, session.id)).resumeIds),
+		).toHaveLength(1);
+	});
+
 	it('starts fresh context without losing the brief, transcript or draft files', async () => {
 		const root = await workspace();
 		const requests: CodingAgentTurnRequest[] = [];

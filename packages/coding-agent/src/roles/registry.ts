@@ -145,12 +145,6 @@ export function composeInstruction(
 		'',
 		role.instruction,
 		'',
-		composeSessionFacts({
-			...context,
-			allowedPaths:
-				context.allowedPaths.length > 0
-					? context.allowedPaths
-					: role.allowedPaths,
-		}),
+		composeSessionFacts(context),
 	].join('\n');
 }

@@ -688,14 +688,31 @@ export async function* runTurn(
 	);
 
 	const history = historyFrom(await readChat(context.workspaceRoot, session));
+	// Provider conversations retain instructions and tool history. Reuse one only
+	// while its role, module, skill, write ceiling, specification and model match.
+	const resumePrefix = `${driverId}:scope:`;
+	const resumeKey =
+		resumePrefix +
+		createHash('sha256')
+			.update(
+				JSON.stringify([
+					instruction,
+					active.specHash ?? null,
+					session.model ?? context.configuration.driverModel,
+				]),
+			)
+			.digest('hex');
+	const previousKeys = Object.keys(session.resumeIds).filter(
+		(key) => key === driverId || key.startsWith(resumePrefix),
+	);
 	const resumeId = input.freshContext
 		? null
-		: (session.resumeIds[driverId] ?? null);
-	if (input.freshContext) {
+		: (session.resumeIds[resumeKey] ?? null);
+	if (input.freshContext || (!resumeId && previousKeys.length > 0)) {
 		yield await appendChatEntry(context.workspaceRoot, session, {
 			kind: 'system',
 			role: roleId,
-			text: 'Starting with fresh agent context. Draft files, approved specification and sandbox history are preserved; the agent receives the brief and recent messages.',
+			text: `Starting fresh agent context for ${role.name} in ${active.id} with the current task and write scope. Draft files, approved specification and sandbox history are preserved; the agent receives the brief and recent messages.`,
 		});
 	}
 	let nextResumeId = resumeId;
@@ -973,8 +990,9 @@ export async function* runTurn(
 	}
 
 	const resumeIds = { ...session.resumeIds };
-	if (nextResumeId) resumeIds[driverId] = nextResumeId;
-	else if (input.freshContext) delete resumeIds[driverId];
+	// Retain at most one conversation per driver, including after many handoffs.
+	for (const key of previousKeys) delete resumeIds[key];
+	if (nextResumeId) resumeIds[resumeKey] = nextResumeId;
 	const updated = await updateSession(context.workspaceRoot, session.id, {
 		resumeIds,
 		state: failed

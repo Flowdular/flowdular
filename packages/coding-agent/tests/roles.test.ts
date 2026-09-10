@@ -93,7 +93,7 @@ describe('agent roles', () => {
 		expect(instruction).toContain('backend-engineer: Implement the server.');
 	});
 
-	it('composes an instruction with the contract, role, and session facts', () => {
+	it('keeps an explicitly empty write scope read-only during review', () => {
 		const instruction = composeInstruction(
 			findRole(DEFAULT_AGENT_ROLES, 'backend-engineer'),
 			{
@@ -102,6 +102,21 @@ describe('agent roles', () => {
 				sessionKind: 'new-module',
 				blueprint: 'new-module@1.0.0',
 				allowedPaths: [],
+				skill: 'auto-review',
+			},
+		);
+		expect(instruction).toContain('Paths you may write: none (read-only)');
+		expect(instruction).not.toContain('Paths you may write: src/');
+	});
+	it('composes an instruction with the contract, role, and session facts', () => {
+		const instruction = composeInstruction(
+			findRole(DEFAULT_AGENT_ROLES, 'backend-engineer'),
+			{
+				moduleId: 'sales.orders',
+				modulePath: 'modules/sales-orders',
+				sessionKind: 'new-module',
+				blueprint: 'new-module@1.0.0',
+				allowedPaths: ['modules/sales-orders/src/services/**'],
 			},
 		);
 		expect(instruction).toContain('Never install packages');
