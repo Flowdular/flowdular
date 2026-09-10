@@ -1,6 +1,6 @@
 # npm publication
 
-Publish exactly four packages. The SDK, CLI and generator are at `0.2.2`;
+Publish exactly four packages. The SDK and CLI are at `0.2.2`, the generator is at `0.2.3`;
 the independently versioned sandbox is at `0.2.3` and depends on SDK `0.2.2`.
 
 | Package              | Purpose                                                                                      |

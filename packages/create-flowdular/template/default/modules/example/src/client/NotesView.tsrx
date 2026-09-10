@@ -195,30 +195,34 @@ export function NotesView(props: NotesViewProps) @{
 				onSubmit={submit}
 			>
 				<div class="ui-drawer__body">
-					@if (error) {
-						<Alert>{error}</Alert>
-					}
-					<FormField label={t('example.field.title')}>
-						<input
-							class="ui-input"
-							id="title"
-							name="title"
+					<div class="ui-form">
+						@if (error) {
+							<Alert>{error}</Alert>
+						}
+						<FormField label={t('example.field.title')} required>
+							<input
+								class="ui-input"
+								id="title"
+								name="title"
+								required
+								maxLength={120}
+							/>
+						</FormField>
+						<FormField
+							label={t('example.field.body')}
 							required
-							maxLength={120}
-						/>
-					</FormField>
-					<FormField
-						label={t('example.field.body')}
-						help={t('example.field.body.help')}
-					>
-						<textarea
-							class="ui-textarea"
-							id="body"
-							required
-							rows={6}
-							maxLength={4000}
-						></textarea>
-					</FormField>
+							help={t('example.field.body.help')}
+						>
+							<textarea
+								class="ui-textarea"
+								id="body"
+								name="body"
+								required
+								rows={6}
+								maxLength={4000}
+							></textarea>
+						</FormField>
+					</div>
 				</div>
 				<div class="ui-drawer__foot">
 					<Button type="button" onClick={closeForm}>{t(

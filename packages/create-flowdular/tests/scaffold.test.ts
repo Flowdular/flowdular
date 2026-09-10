@@ -63,6 +63,14 @@ describe('scaffold', () => {
 			blueprints: 'platform/node_modules/@flowdular/sdk/.ai/blueprints',
 		});
 		expect(manifest.scripts.dev).toContain('platform/scripts/dev.mjs');
+		expect(
+			await readFile(join(result.directory, 'platform/index.html'), 'utf8'),
+		).toBe(
+			await readFile(
+				new URL('../../../platform/index.html', import.meta.url),
+				'utf8',
+			),
+		);
 
 		for (const path of [
 			'pnpm-workspace.yaml',

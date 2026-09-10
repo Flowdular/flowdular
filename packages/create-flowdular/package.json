@@ -1,6 +1,6 @@
 {
 	"name": "create-flowdular",
-	"version": "0.2.2",
+	"version": "0.2.3",
 	"type": "module",
 	"description": "Scaffold a Flowdular application: the platform, one example module and the secrets a fresh install needs.",
 	"license": "MIT",
