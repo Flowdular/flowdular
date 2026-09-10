@@ -5,6 +5,7 @@ import type {
 	PostgresDriverResult,
 } from '@flowdular/database';
 import { PGlite } from '@electric-sql/pglite';
+import { mkdir } from 'node:fs/promises';
 
 export interface PgliteDriverPoolOptions {
 	/** Omit for an in-memory database. A path keeps the data across restarts. */
@@ -93,7 +94,6 @@ export function createPgliteCluster(
 	const database = async (): Promise<PGlite> => {
 		databasePromise ??= (async () => {
 			if (options.dataDirectory) {
-				const { mkdir } = await import('node:fs/promises');
 				await mkdir(options.dataDirectory, { recursive: true, mode: 0o700 });
 			}
 			const created = options.dataDirectory

@@ -1,6 +1,6 @@
 {
 	"name": "@flowdular/sdk",
-	"version": "0.2.2",
+	"version": "0.2.3",
 	"type": "module",
 	"description": "Flowdular platform SDK: server, client, UI, data, agents and core modules through separate exports.",
 	"license": "MIT",
