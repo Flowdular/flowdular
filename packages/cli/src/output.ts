@@ -1,4 +1,5 @@
 import type { CommandEnvelope } from '@flowdular/cli-protocol';
+import { styleText } from 'node:util';
 
 interface CapabilityLine {
 	readonly id: string;
@@ -21,8 +22,14 @@ function isCapabilityList(
 	);
 }
 
-export function renderOutput(envelope: CommandEnvelope, json: boolean): string {
+export function renderOutput(
+	envelope: CommandEnvelope,
+	json: boolean,
+	color = false,
+): string {
 	if (json) return JSON.stringify(envelope, null, 2);
+	const paint = (text: string, format: 'bold' | 'cyan' | 'green') =>
+		color ? styleText(format, text, { validateStream: false }) : text;
 	if (!envelope.ok) {
 		const heading = `ERROR ${envelope.error?.code ?? 'UNKNOWN'}\n${envelope.error?.message ?? 'Command failed.'}`;
 		if (envelope.error?.code !== 'DOCTOR_FAILED') return heading;
@@ -50,23 +57,38 @@ export function renderOutput(envelope: CommandEnvelope, json: boolean): string {
 	const data = envelope.data as Record<string, unknown> | undefined;
 	if (data?.cancelled === true) return decorate('Setup cancelled.');
 	if (data?.setup === 'postgresql')
-		return decorate(
-			'PostgreSQL settings saved to .env.\nRun pnpm dev, then open http://localhost:4310 to create an account.',
-		);
+		return [
+			'',
+			`  ${paint('FLOWDULAR', 'bold')}  ${paint('PostgreSQL configured', 'green')}`,
+			'',
+			'  PostgreSQL settings saved to .env.',
+			'',
+			`  Start app    ${paint('pnpm dev', 'bold')}`,
+			`  Local URL    ${paint('http://localhost:4310', 'cyan')}`,
+			'  Open the app to create an account.',
+			'',
+			...envelope.warnings.map((warning) => `  ${warning}`),
+			'',
+		].join('\n');
 	if (data?.setup === 'local') {
 		const admin = (
 			data.accounts as
 				| { admin?: { email?: string; password?: string } }
 				| undefined
 		)?.admin;
-		return decorate(
-			[
-				'Local demo is ready.',
-				'Run pnpm dev, then open http://localhost:4310.',
-				...(admin?.email ? [`Demo administrator: ${admin.email}`] : []),
-				...(admin?.password ? [`Public demo password: ${admin.password}`] : []),
-			].join('\n'),
-		);
+		return [
+			'',
+			`  ${paint('FLOWDULAR', 'bold')}  ${paint('Local demo is ready.', 'green')}`,
+			'',
+			`  Start app    ${paint('pnpm dev', 'bold')}`,
+			`  Local URL    ${paint('http://localhost:4310', 'cyan')}`,
+			'',
+			...(admin?.email ? [`  Demo login   ${admin.email}`] : []),
+			...(admin?.password ? [`  Password     ${admin.password}`] : []),
+			'',
+			...envelope.warnings.map((warning) => `  ${warning}`),
+			'',
+		].join('\n');
 	}
 	if (data && Array.isArray(data.checks)) {
 		return decorate(

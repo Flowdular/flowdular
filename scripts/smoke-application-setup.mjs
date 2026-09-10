@@ -73,6 +73,15 @@ try {
 	const session = await login.json();
 	assert.equal(session.principal.email, 'admin@example.com');
 	assert.equal(session.principal.role, 'owner');
+	for (const scope of [
+		'sandbox.access.use',
+		'workflows.definitions.read',
+		'automations.schedules.read',
+	])
+		assert.ok(
+			session.principal.scopes.includes(scope),
+			`Demo owner needs ${scope}`,
+		);
 	assert.ok(login.headers.get('set-cookie'));
 	console.log(
 		'Freshly initialized application serves its login page and authenticates the seeded administrator.',

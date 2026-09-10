@@ -6,7 +6,14 @@ import type {
 } from '@flowdular/sdk/modules/auth/server';
 import type { WebMount } from '@flowdular/sdk/server';
 import { createServerComposition as system_core } from '@flowdular/sdk/modules/system/platform';
+import { createServerComposition as agents_core } from '@flowdular/sdk/modules/agents/platform';
+import { createServerComposition as automations_core } from '@flowdular/sdk/modules/automations/platform';
+import { createServerComposition as workflows_core } from '@flowdular/sdk/modules/workflows/platform';
+import { createServerComposition as automations_workflows_integration } from '@flowdular/sdk/modules/automations-workflows-integration/platform';
 import { createServerComposition as example_core } from '@app/module-example/platform';
+import { createServerComposition as profile_core } from '@flowdular/sdk/modules/profile/platform';
+import { createServerComposition as sandbox_core } from '@flowdular/sdk/modules/sandbox/platform';
+import { createServerComposition as users_core } from '@flowdular/sdk/modules/users/platform';
 
 export function composeModuleServer(
 	context: PlatformServerContext,
@@ -20,11 +27,63 @@ export function composeModuleServer(
 			moduleId: 'system.core',
 		},
 		{
+			...agents_core({
+				...context,
+				agentDefinitions: context.agentDefinitions.forModule('agents.core'),
+			}),
+			moduleId: 'agents.core',
+		},
+		{
+			...automations_core({
+				...context,
+				agentDefinitions:
+					context.agentDefinitions.forModule('automations.core'),
+			}),
+			moduleId: 'automations.core',
+		},
+		{
+			...workflows_core({
+				...context,
+				agentDefinitions: context.agentDefinitions.forModule('workflows.core'),
+			}),
+			moduleId: 'workflows.core',
+		},
+		{
+			...automations_workflows_integration({
+				...context,
+				agentDefinitions: context.agentDefinitions.forModule(
+					'automations-workflows.integration',
+				),
+			}),
+			moduleId: 'automations-workflows.integration',
+		},
+		{
 			...example_core({
 				...context,
 				agentDefinitions: context.agentDefinitions.forModule('example.core'),
 			}),
 			moduleId: 'example.core',
+		},
+		{
+			...profile_core({
+				...context,
+				agentDefinitions: context.agentDefinitions.forModule('profile.core'),
+			}),
+			moduleId: 'profile.core',
+		},
+		{
+			...sandbox_core({
+				...context,
+				agentDefinitions: context.agentDefinitions.forModule('sandbox.core'),
+			}),
+			moduleId: 'sandbox.core',
+		},
+		{
+			...users_core({
+				...context,
+				agentDefinitions: context.agentDefinitions.forModule('users.core'),
+			}),
+			moduleId: 'users.core',
 		},
 	];
 }

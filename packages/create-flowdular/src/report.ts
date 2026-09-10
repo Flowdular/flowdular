@@ -1,4 +1,5 @@
 import type { PackageManager } from './args.ts';
+import { styleText } from 'node:util';
 
 export const DEV_URL = 'http://localhost:4310';
 
@@ -35,14 +36,27 @@ export function nextSteps(input: NextStepsInput): readonly string[] {
 	];
 }
 
-export function renderNextSteps(input: NextStepsInput): string {
+export function renderNextSteps(input: NextStepsInput, color = false): string {
+	const paint = (text: string, format: 'bold' | 'cyan' | 'green' | 'dim') =>
+		color ? styleText(format, text, { validateStream: false }) : text;
+	const labels = [
+		'Open your project',
+		...(input.installed ? [] : ['Install dependencies']),
+		'Choose local demo or PostgreSQL',
+		'Start your app',
+	];
 	return [
 		'',
-		'Next:',
+		`  ${paint('FLOWDULAR', 'bold')}  ${paint('Project created', 'green')}`,
 		'',
-		...nextSteps(input).map((step) => `  ${step}`),
-		'',
-		`Then open ${DEV_URL} and follow the setup choice. Local demo uses admin@example.com.`,
+		...nextSteps(input).flatMap((step, index) => [
+			`  ${paint(`${index + 1}.`, 'cyan')} ${labels[index]}`,
+			`     ${paint(step, 'bold')}`,
+			'',
+		]),
+		`  ${paint('Local URL', 'dim')}   ${paint(DEV_URL, 'cyan')}`,
+		`  ${paint('Demo login', 'dim')}  admin@example.com`,
+		`  ${paint('Demo account is created only with local demo setup.', 'dim')}`,
 		'',
 	].join('\n');
 }

@@ -1,5 +1,6 @@
 import { flowdularEnvironment } from '@flowdular/kernel/runtime-config';
 import { existsSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { octane } from '@octanejs/vite-plugin';
@@ -13,6 +14,13 @@ import type { SandboxSession } from './src/server/sessions.ts';
 Object.assign(process.env, flowdularEnvironment(process.env));
 
 const appRoot = dirname(fileURLToPath(import.meta.url));
+// npx installs UI dependencies beside the sandbox, outside the app/workspace.
+// Allow only the font asset directories, never the surrounding npm cache.
+const uiRequire = createRequire(import.meta.resolve('@flowdular/ui'));
+const fontDirectories = [
+	'@fontsource-variable/ibm-plex-sans',
+	'@fontsource/ibm-plex-mono',
+].map((name) => join(dirname(uiRequire.resolve(name)), 'files'));
 const workspace = await findFlowdularWorkspace(
 	process.env.FD_SANDBOX_WORKSPACE ?? process.cwd(),
 );
@@ -126,7 +134,7 @@ const config = {
 		   outside this app's root. The preview reloads itself instead, and a Vite
 		   overlay must never cover a module someone is reviewing. */
 		hmr: { overlay: false },
-		fs: { allow: [appRoot, workspace.root] },
+		fs: { allow: [appRoot, workspace.root, ...fontDirectories] },
 		watch: { ignored: ['**/.flowdular/data/**', '**/.coreloom/data/**'] },
 	},
 } satisfies import('vitest/config').UserWorkspaceConfig;

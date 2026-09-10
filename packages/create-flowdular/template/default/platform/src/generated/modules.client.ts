@@ -7,10 +7,26 @@ import type {
 } from '@flowdular/sdk/client';
 import { createClientContribution as system_core } from '@flowdular/sdk/modules/system/client';
 import { createClientContribution as auth_core } from '@flowdular/sdk/modules/auth/client';
+import { createClientContribution as agents_core } from '@flowdular/sdk/modules/agents/client';
+import { createClientContribution as automations_core } from '@flowdular/sdk/modules/automations/client';
+import { createClientContribution as workflows_core } from '@flowdular/sdk/modules/workflows/client';
 import { createClientContribution as example_core } from '@app/module-example/client';
+import { createClientContribution as profile_core } from '@flowdular/sdk/modules/profile/client';
+import { createClientContribution as sandbox_core } from '@flowdular/sdk/modules/sandbox/client';
+import { createClientContribution as users_core } from '@flowdular/sdk/modules/users/client';
 
 export function createModuleClientContributions(
 	context: ModuleClientContext,
 ): readonly ModuleClientContribution[] {
-	return [system_core(context), auth_core(context), example_core(context)];
+	return [
+		system_core(context),
+		auth_core(context),
+		agents_core(context),
+		automations_core(context),
+		workflows_core(context),
+		example_core(context),
+		profile_core(context),
+		sandbox_core(context),
+		users_core(context),
+	];
 }

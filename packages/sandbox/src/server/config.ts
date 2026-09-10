@@ -98,7 +98,7 @@ export const DEFAULT_GITHUB_CONFIGURATION: GitHubDeliveryConfiguration = {
 export const DEFAULT_CONFIGURATION: SandboxConfiguration = {
 	version: 1,
 	mode: 'loopback',
-	platformUrl: 'http://127.0.0.1:4310',
+	platformUrl: 'http://localhost:4310',
 	platformToken: null,
 	driver: 'claude-code',
 	driverModel: null,

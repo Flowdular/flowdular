@@ -1,5 +1,5 @@
 import { readFile, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { defineCliExtension } from '@flowdular/cli-protocol';
 import { AUTH_SCOPES, OWNER_SCOPES, PLATFORM_SCOPES } from '../acl/scopes.ts';
@@ -17,25 +17,31 @@ import {
 
 /* Scopes are declared once, in the module specification. Reading them from
    there keeps this command free of module code execution. */
-async function declaredScopes(
+export async function declaredScopes(
 	workspaceRoot: string,
 	moduleId: string,
+	moduleRoot = join(workspaceRoot, 'modules/auth'),
 ): Promise<{ readonly directory: string; readonly scopes: readonly string[] }> {
-	for (const entry of await readdir(join(workspaceRoot, 'modules'))) {
-		const specPath = join(workspaceRoot, 'modules', entry, 'spec/module.yaml');
-		let spec: { id?: string; permissions?: { id?: string }[] };
-		try {
-			spec = parseYaml(await readFile(specPath, 'utf8')) as typeof spec;
-		} catch {
-			continue;
+	for (const root of new Set([
+		join(workspaceRoot, 'modules'),
+		dirname(moduleRoot),
+	])) {
+		for (const entry of await readdir(root)) {
+			const specPath = join(root, entry, 'spec/module.yaml');
+			let spec: { id?: string; permissions?: { id?: string }[] };
+			try {
+				spec = parseYaml(await readFile(specPath, 'utf8')) as typeof spec;
+			} catch {
+				continue;
+			}
+			if (spec.id !== moduleId) continue;
+			return {
+				directory: entry,
+				scopes: (spec.permissions ?? [])
+					.map((permission) => permission.id)
+					.filter((id): id is string => typeof id === 'string'),
+			};
 		}
-		if (spec.id !== moduleId) continue;
-		return {
-			directory: entry,
-			scopes: (spec.permissions ?? [])
-				.map((permission) => permission.id)
-				.filter((id): id is string => typeof id === 'string'),
-		};
 	}
 	throw new Error(`No enabled module declares the id "${moduleId}".`);
 }
@@ -84,6 +90,7 @@ export const cliExtension = defineCliExtension({
 				const declared = await declaredScopes(
 					context.workspaceRoot,
 					moduleId.trim(),
+					context.moduleRoot,
 				);
 				const local = localDatabaseProvider(context.workspaceRoot);
 				const databases = local.create();

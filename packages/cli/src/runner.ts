@@ -243,12 +243,38 @@ export async function runCommand(
 			const greenfield = extensionCommands.find(
 				(entry) => entry.command.capability.id === 'auth.greenfield.reset',
 			);
-			return greenfield
-				? await runExtensionCommand(workspace, greenfield, arguments_)
-				: failure(
-						'AUTH_MODULE_REQUIRED',
-						'Quick setup requires the enabled auth.core module.',
-					);
+			if (!greenfield)
+				return failure(
+					'AUTH_MODULE_REQUIRED',
+					'Quick setup requires the enabled auth.core module.',
+				);
+			const result = await runExtensionCommand(
+				workspace,
+				greenfield,
+				arguments_,
+			);
+			if (!result.ok || !arguments_.flags.has('apply')) return result;
+			const sync = extensionCommands.find(
+				(entry) => entry.command.capability.id === 'auth.scopes.sync',
+			);
+			if (!sync)
+				return failure(
+					'AUTH_SCOPE_SYNC_REQUIRED',
+					'The demo was created but module permissions could not be synchronized.',
+				);
+			const enabled =
+				(workspace.config.modules as { enabled?: string[] }).enabled ?? [];
+			for (const moduleId of enabled) {
+				const granted = await runExtensionCommand(workspace, sync, {
+					positionals: ['auth', 'sync-scopes'],
+					flags: new Map<string, string | boolean>([
+						['module', moduleId],
+						['apply', true],
+					]),
+				});
+				if (!granted.ok) return granted;
+			}
+			return result;
 		}
 
 		if (group === 'setup' && action === 'migrate-state') {

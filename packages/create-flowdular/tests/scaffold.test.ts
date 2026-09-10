@@ -46,6 +46,15 @@ describe('scaffold', () => {
 		const project = JSON.parse(
 			await readFile(join(result.directory, 'flowdular.json'), 'utf8'),
 		);
+		const platform = JSON.parse(
+			await readFile(
+				new URL('../../../flowdular.json', import.meta.url),
+				'utf8',
+			),
+		);
+		expect([...project.modules.enabled].sort()).toEqual(
+			[...platform.modules.enabled, 'example.core'].sort(),
+		);
 		expect(project.agent).toEqual({
 			policy:
 				'platform/node_modules/@flowdular/sdk/.ai/policies/capabilities.yaml',

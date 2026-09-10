@@ -48,7 +48,7 @@ it('preserves the approved specification and module identity byte for byte while
 	);
 	expect(JSON.parse(files.get('package.json')!)).toEqual({
 		name: '@flowdular/module-example',
-		dependencies: { octane: '0.1.51', '@flowdular/sdk': '0.2.1' },
+		dependencies: { octane: '0.1.51', '@flowdular/sdk': '0.2.2' },
 		devDependencies: { vitest: '4.1.11' },
 	});
 });

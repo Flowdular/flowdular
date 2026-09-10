@@ -64,5 +64,5 @@ it('renders a concise setup result and cancellation instead of internal JSON', (
 		false,
 	);
 	expect(output).toContain('PostgreSQL settings saved to .env.');
-	expect(output).not.toContain('configured');
+	expect(output).not.toContain('"configured":');
 });

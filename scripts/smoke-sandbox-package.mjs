@@ -121,6 +121,26 @@ try {
 	const page = await fetch(`http://127.0.0.1:${port}/`);
 	assert.equal(page.status, 200, logs);
 	assert.match(await page.text(), /Flowdular/);
+	const sdkRequire = createRequire(
+		createRequire(join(packageRoot, 'package.json')).resolve(
+			'@flowdular/sdk/ui',
+		),
+	);
+	for (const font of [
+		'@fontsource-variable/ibm-plex-sans/files/ibm-plex-sans-latin-wght-normal.woff2',
+		'@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2',
+		'@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-500-normal.woff2',
+	]) {
+		const fontPath = sdkRequire.resolve(font);
+		const asset = await fetch(`http://127.0.0.1:${port}/@fs/${fontPath}`, {
+			signal: AbortSignal.timeout(5000),
+		});
+		assert.equal(asset.status, 200, `Sandbox must serve ${font}`);
+		assert.deepEqual(
+			Buffer.from(await asset.arrayBuffer()),
+			await readFile(fontPath),
+		);
+	}
 	console.log(
 		'Independent sandbox: installed SDK dependency, launcher, HTTP state and SSR page pass.',
 	);

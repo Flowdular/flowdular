@@ -17,12 +17,19 @@ export {
 } from './secrets.ts';
 
 export interface RunIo {
+	readonly color?: boolean;
 	readonly cwd: string;
 	readonly out: (text: string) => void;
 	readonly err: (text: string) => void;
 }
 
 const processIo: RunIo = {
+	color: Boolean(
+		process.stdout.isTTY &&
+			process.stdout.hasColors?.() &&
+			!('NO_COLOR' in process.env) &&
+			!process.env.CI,
+	),
 	cwd: process.cwd(),
 	out: (text) => process.stdout.write(text),
 	err: (text) => process.stderr.write(text),
@@ -102,11 +109,14 @@ export async function run(
 
 	const here = relative(io.cwd, result.directory);
 	io.out(
-		renderNextSteps({
-			directory: here.length > 0 ? here : '.',
-			packageManager,
-			installed,
-		}),
+		renderNextSteps(
+			{
+				directory: here.length > 0 ? here : '.',
+				packageManager,
+				installed,
+			},
+			io.color,
+		),
 	);
 	return 0;
 }

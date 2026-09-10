@@ -23,7 +23,7 @@ if (invokedAsProgram) {
 		? runSetupWizard(arguments_)
 		: runProgram(arguments_));
 	process.stdout.write(
-		`${renderOutput(envelope, arguments_.flags.has('json'))}\n`,
+		`${renderOutput(envelope, arguments_.flags.has('json'), Boolean(process.stdout.isTTY && process.stdout.hasColors?.() && !('NO_COLOR' in process.env) && !process.env.CI))}\n`,
 	);
 	if (!envelope.ok) process.exitCode = 1;
 }

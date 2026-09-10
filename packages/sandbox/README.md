@@ -82,7 +82,7 @@ platform database.
 
 The token is encrypted at rest with a key in `.flowdular/sandbox/secret.key` and
 is never returned to the browser. The application may run anywhere: the sandbox
-works the same against `http://127.0.0.1:4310` and a deployment.
+defaults to `http://localhost:4310`, which supports Vite's IPv4 or IPv6 loopback listener, and can also connect to a deployment. For an older application, enable `sandbox.core` with `pnpm flowdular module enable sandbox.core --apply` while the application is stopped, then restart it. If local demo setup reset the database, issue a new API token before reconnecting.
 
 Sign-in is enforced on the platform side: the token authenticates as its
 account, and `sandbox.core` must hold an active grant for it.

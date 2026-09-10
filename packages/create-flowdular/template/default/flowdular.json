@@ -8,7 +8,18 @@
 	},
 	"modules": {
 		"roots": ["modules"],
-		"enabled": ["system.core", "auth.core", "example.core"]
+		"enabled": [
+			"system.core",
+			"auth.core",
+			"agents.core",
+			"automations.core",
+			"workflows.core",
+			"automations-workflows.integration",
+			"example.core",
+			"profile.core",
+			"sandbox.core",
+			"users.core"
+		]
 	},
 	"locales": ["en", "pl"],
 	"agent": {
