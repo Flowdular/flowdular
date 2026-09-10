@@ -1,5 +1,14 @@
 import { expect, it } from 'vitest';
-import { sdkScaffold } from '../src/sdk.ts';
+import { sdkScaffold, sdkSource } from '../src/sdk.ts';
+
+it('keeps the standalone sandbox distinct from the SDK sandbox access module', () => {
+	expect(sdkSource("import '@flowdular/sandbox/server';")).toBe(
+		"import '@flowdular/sandbox/server';",
+	);
+	expect(sdkSource("import '@flowdular/module-sandbox/server';")).toBe(
+		"import '@flowdular/sdk/modules/sandbox/server';",
+	);
+});
 
 it('preserves the approved specification and module identity byte for byte while adapting generated imports', () => {
 	const specification =

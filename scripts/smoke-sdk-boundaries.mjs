@@ -1,17 +1,19 @@
-import { readFile, writeFile, rm } from 'node:fs/promises';
+import { readFile, writeFile, rm, access } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
 const consumer = resolve(process.argv[2]);
 const require = createRequire(join(consumer, 'platform/package.json'));
 const sdk = dirname(require.resolve('@flowdular/sdk/package.json'));
-const help = spawnSync(
-	process.execPath,
-	[join(sdk, 'packages/sandbox/bin/flowdular-sandbox.mjs'), '--help'],
-	{ encoding: 'utf8', cwd: consumer },
-);
-if (help.status !== 0) throw new Error(help.stderr);
-console.log('Packed sandbox launcher: help exited 0.');
+for (const removed of ['sandbox', 'coding-agent']) {
+	try {
+		await access(join(sdk, 'packages', removed));
+		throw new Error(
+			'The SDK still contains coding application code: ' + removed,
+		);
+	} catch (error) {
+		if (error.code !== 'ENOENT') throw error;
+	}
+}
 const { build: viteBuild } = await import(require.resolve('vite'));
 const { octane } = await import(require.resolve('@octanejs/vite-plugin'));
 const probe = join(consumer, 'platform/ui-boundary.ts');
@@ -56,6 +58,13 @@ console.log(
 );
 const metadata = JSON.parse(await readFile(join(sdk, 'package.json'), 'utf8'));
 if (metadata.exports['.']) throw new Error('Unexpected root barrel');
+if (
+	metadata.bin ||
+	metadata.exports['./sandbox'] ||
+	metadata.exports['./sandbox/server'] ||
+	metadata.exports['./coding-agent']
+)
+	throw new Error('The SDK exposes the standalone coding sandbox.');
 if (Object.keys(metadata.dependencies).some((n) => n.startsWith('@flowdular/')))
 	throw new Error('SDK depends on an unpublished internal package');
 console.log('SDK dependency and export boundaries pass.');

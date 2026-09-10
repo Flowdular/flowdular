@@ -7,10 +7,6 @@
 		"directory": "packages/database",
 		"export": "database"
 	},
-	"@flowdular/coding-agent": {
-		"directory": "packages/coding-agent",
-		"export": "coding-agent"
-	},
 	"@flowdular/database-testing": {
 		"directory": "packages/database-testing",
 		"export": "database-testing"
@@ -34,10 +30,6 @@
 	"@flowdular/harness": {
 		"directory": "packages/harness",
 		"export": "harness"
-	},
-	"@flowdular/sandbox": {
-		"directory": "packages/sandbox",
-		"export": "sandbox"
 	},
 	"@flowdular/database-pglite": {
 		"directory": "packages/database-pglite",

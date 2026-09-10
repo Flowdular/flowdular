@@ -104,6 +104,7 @@ const config = {
 		dedupe: [
 			'octane',
 			'segment-state',
+			'@flowdular/sdk',
 			'@flowdular/client',
 			'@flowdular/ui',
 			'@flowdular/server',

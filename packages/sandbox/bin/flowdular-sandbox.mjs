@@ -1,5 +1,7 @@
 #!/usr/bin/env node
+import './register-types.mjs';
 import process from 'node:process';
+import { realpathSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
@@ -236,7 +238,7 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 
 if (
 	process.argv[1] &&
-	resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+	realpathSync(resolve(process.argv[1])) === fileURLToPath(import.meta.url)
 ) {
 	startSandbox().catch((error) => {
 		console.error(

@@ -42,19 +42,25 @@ The SDK ships TypeScript and TSRX source for the Flowdular/Octane toolchain. It 
 
 ## What's included
 
-| Area                                    | Import paths                                                                          |
-| --------------------------------------- | ------------------------------------------------------------------------------------- |
-| Module contracts and runtime            | `@flowdular/sdk/contracts`, `@flowdular/sdk/kernel`                                   |
-| HTTP endpoints                          | `@flowdular/sdk/server`                                                               |
-| Client integration and translations     | `@flowdular/sdk/client`, `@flowdular/sdk/client/i18n`                                 |
-| Shared UI and styles                    | `@flowdular/sdk/ui`, `@flowdular/sdk/ui/styles`                                       |
-| Database contracts and local PostgreSQL | `@flowdular/sdk/database`, `@flowdular/sdk/database-pglite`                           |
-| Database test helpers                   | `@flowdular/sdk/database-testing`                                                     |
-| Agents and providers                    | `@flowdular/sdk/harness`, `@flowdular/sdk/ai-provider`, `@flowdular/sdk/coding-agent` |
-| Development tools                       | `@flowdular/sdk/sandbox`, `@flowdular/sdk/dev-console`, `@flowdular/sdk/cli-protocol` |
-| Bundled core modules                    | `@flowdular/sdk/modules/<name>`, including `modules/auth/server`                      |
+| Area                                    | Import paths                                                     |
+| --------------------------------------- | ---------------------------------------------------------------- |
+| Module contracts and runtime            | `@flowdular/sdk/contracts`, `@flowdular/sdk/kernel`              |
+| HTTP endpoints                          | `@flowdular/sdk/server`                                          |
+| Client integration and translations     | `@flowdular/sdk/client`, `@flowdular/sdk/client/i18n`            |
+| Shared UI and styles                    | `@flowdular/sdk/ui`, `@flowdular/sdk/ui/styles`                  |
+| Database contracts and local PostgreSQL | `@flowdular/sdk/database`, `@flowdular/sdk/database-pglite`      |
+| Database test helpers                   | `@flowdular/sdk/database-testing`                                |
+| Agents and providers                    | `@flowdular/sdk/harness`, `@flowdular/sdk/ai-provider`           |
+| Development APIs                        | `@flowdular/sdk/dev-console`, `@flowdular/sdk/cli-protocol`      |
+| Bundled core modules                    | `@flowdular/sdk/modules/<name>`, including `modules/auth/server` |
 
 Business modules are distributed as source archives through [Official Modules](https://github.com/Flowdular/official-modules). Installing an archive and enabling a module are separate CLI actions.
+
+The coding sandbox is a separate application distributed as `@flowdular/sandbox`.
+Launch it with `npx @flowdular/sandbox` from your application directory. It depends
+on the SDK; installing the SDK alone does not install the sandbox application or
+its launcher. The SDK's `modules/sandbox` export is the platform access/grant
+module, not the coding application.
 
 ## Build a module
 

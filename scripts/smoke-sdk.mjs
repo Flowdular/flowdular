@@ -14,6 +14,10 @@ const consumer = join(
 const manifest = JSON.parse(
 	await readFile(join(artifacts, 'sdk.json'), 'utf8'),
 );
+const sandbox = manifest.packages.find(
+	(pkg) => pkg.name === '@flowdular/sandbox',
+);
+if (!sandbox) throw new Error('Missing independent sandbox artifact.');
 const generator = manifest.packages.find(
 	(pkg) => pkg.name === 'create-flowdular',
 );
@@ -62,9 +66,9 @@ await writeFile(
 			.join('\n') +
 		'\n',
 );
-function run(args) {
+function run(args, cwd = consumer) {
 	const result = spawnSync('pnpm', args, {
-		cwd: consumer,
+		cwd,
 		stdio: 'inherit',
 		env: { ...process.env, CI: 'true' },
 	});
@@ -110,4 +114,33 @@ const boundaries = spawnSync(
 );
 if (boundaries.status !== 0)
 	throw new Error('SDK public entrypoint check failed.');
+// Model npm-exec: the tool and its SDK live outside the consumer workspace.
+const runner = await mkdtemp(join(tmpdir(), 'flowdular-sandbox-runner-'));
+await writeFile(
+	join(runner, 'package.json'),
+	JSON.stringify({
+		private: true,
+		type: 'module',
+		dependencies: { '@flowdular/sandbox': overrides['@flowdular/sandbox'] },
+	}),
+);
+await writeFile(
+	join(runner, 'pnpm-workspace.yaml'),
+	'overrides:\n' +
+		Object.entries(overrides)
+			.map(
+				([name, value]) =>
+					`  ${JSON.stringify(name)}: ${JSON.stringify(value)}`,
+			)
+			.join('\n') +
+		'\n',
+);
+run(['install', '--ignore-scripts'], runner);
+const sandboxSmoke = spawnSync(
+	process.execPath,
+	[join(root, 'scripts/smoke-sandbox-package.mjs'), consumer, runner],
+	{ stdio: 'inherit' },
+);
+if (sandboxSmoke.status !== 0)
+	throw new Error('Standalone sandbox consumer check failed.');
 console.log(`SDK consumer passed: ${consumer}`);

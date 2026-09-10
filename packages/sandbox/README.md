@@ -36,6 +36,11 @@ npx @flowdular/sandbox            # from a Flowdular workspace
 npx @flowdular/sandbox --port 4320 --workspace /path/to/workspace
 ```
 
+The sandbox is published independently and depends on `@flowdular/sdk`. The SDK
+does not include this application or the `flowdular-sandbox` launcher. Use a
+sandbox release compatible with the application's SDK version; existing SDK
+applications do not need their platform dependencies changed just to launch it.
+
 The launcher finds the workspace by walking up to `flowdular.json`, then opens
 http://127.0.0.1:4320.
 

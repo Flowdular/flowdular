@@ -47,12 +47,12 @@ try {
 			}
 		}
 	}
-	async function rewriteSources(directory) {
+	async function rewriteSources(directory, rewrite = sdkSource) {
 		for (const entry of await readdir(directory, { withFileTypes: true })) {
 			const path = join(directory, entry.name);
-			if (entry.isDirectory()) await rewriteSources(path);
+			if (entry.isDirectory()) await rewriteSources(path, rewrite);
 			else if (/\.(?:ts|tsrx|tsx|js|mjs|css|md)$/.test(entry.name))
-				await writeFile(path, sdkSource(await readFile(path, 'utf8')));
+				await writeFile(path, rewrite(await readFile(path, 'utf8')));
 		}
 	}
 	const sdk = await json(join(root, 'packages/sdk/package.json'));
@@ -61,9 +61,6 @@ try {
 		'./modules.json': './modules.json',
 	};
 	sdk.dependencies = {};
-	sdk.bin = {
-		'flowdular-sandbox': './packages/sandbox/bin/flowdular-sandbox.mjs',
-	};
 	const sdkRoot = join(staging, 'sdk');
 	await mkdir(sdkRoot);
 	const modules = [];
@@ -118,18 +115,6 @@ try {
 	await rewriteSources(join(sdkRoot, 'docs'));
 	await save(join(sdkRoot, 'modules.json'), { schemaVersion: 1, modules });
 	await save(join(sdkRoot, 'package.json'), sdk);
-	run('pnpm', [
-		'--filter',
-		'@flowdular/cli',
-		'exec',
-		'esbuild',
-		'../sandbox/bin/flowdular-sandbox.mjs',
-		'--bundle',
-		'--platform=node',
-		'--format=esm',
-		'--external:vite',
-		'--outfile=' + join(sdkRoot, 'packages/sandbox/bin/flowdular-sandbox.mjs'),
-	]);
 	await cp(join(root, 'packages/sdk/README.md'), join(sdkRoot, 'README.md'));
 	await cp(join(root, 'packages/sdk/assets'), join(sdkRoot, 'assets'), {
 		recursive: true,
@@ -175,8 +160,59 @@ try {
 	delete generator.devDependencies;
 	await save(join(generatorRoot, 'package.json'), generator);
 	await cp(join(root, 'LICENSE'), join(generatorRoot, 'LICENSE'));
+	// The coding application is an independent SDK consumer, not an SDK member.
+	const sandboxRoot = join(staging, 'sandbox');
+	const sandbox = await json(join(root, 'packages/sandbox/package.json'));
+	await copyMember(join(root, 'packages/sandbox'), sandboxRoot, sandbox);
+	// Only the sandbox consumes coding-agent. Keep its drivers with the app.
+	const codingAgent = await json(
+		join(root, 'packages/coding-agent/package.json'),
+	);
+	await copyMember(
+		join(root, 'packages/coding-agent'),
+		join(sandboxRoot, 'internal/coding-agent'),
+		codingAgent,
+	);
+	await rewriteSources(sandboxRoot, (source) =>
+		sdkSource(source).replaceAll('@flowdular/coding-agent', '#coding-agent'),
+	);
+	sandbox.imports = { '#coding-agent': './internal/coding-agent/src/index.ts' };
+	sandbox.files = [...sandbox.files, 'internal'];
+	const sandboxDependencies = {};
+	for (const dependencies of [codingAgent.dependencies, sandbox.dependencies]) {
+		for (const [name, version] of Object.entries(dependencies)) {
+			if (members[name] || name === '@flowdular/coding-agent') continue;
+			if (name.startsWith('@flowdular/') || version.startsWith('workspace:'))
+				throw new Error(`Unbundled sandbox dependency: ${name}`);
+			if (sandboxDependencies[name] && sandboxDependencies[name] !== version)
+				throw new Error(`Conflicting sandbox dependency: ${name}`);
+			sandboxDependencies[name] = version;
+		}
+	}
+	sandbox.dependencies = sandboxDependencies;
+	sandbox.dependencies['@flowdular/sdk'] = sdk.version;
+	sandbox.publishConfig = { access: 'public' };
+	delete sandbox.private;
+	delete sandbox.devDependencies;
+	delete sandbox.scripts;
+	await save(join(sandboxRoot, 'package.json'), sandbox);
+	await cp(join(root, 'LICENSE'), join(sandboxRoot, 'LICENSE'));
+	// The executable must run in plain Node before Vite can transform SDK source.
+	run('pnpm', [
+		'--filter',
+		'@flowdular/cli',
+		'exec',
+		'esbuild',
+		'../sandbox/bin/flowdular-sandbox.mjs',
+		'--bundle',
+		'--platform=node',
+		'--format=esm',
+		'--external:vite',
+		'--external:./register-types.mjs',
+		'--outfile=' + join(sandboxRoot, 'bin/flowdular-sandbox.mjs'),
+	]);
 	const records = [];
-	for (const directory of [sdkRoot, cliRoot, generatorRoot]) {
+	for (const directory of [sdkRoot, cliRoot, generatorRoot, sandboxRoot]) {
 		const pkg = await json(join(directory, 'package.json'));
 		const result = JSON.parse(
 			run(

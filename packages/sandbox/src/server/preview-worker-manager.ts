@@ -1,8 +1,9 @@
 import { sandboxDirectory } from './config.ts';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, realpathSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, mkdirSync, realpathSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPreviewDatabaseProvider } from './preview-database.ts';
 import {
@@ -142,18 +143,53 @@ function startWorker(
 	   lookup before the worker reaches the session. */
 	const canonicalWorkspaceRoot = realpathSync(workspaceRoot);
 	const entry = fileURLToPath(new URL('./preview-worker.ts', import.meta.url));
-	const repositoryRoot = resolve(dirname(entry), '../../../..');
+	const sandboxRoot = resolve(dirname(entry), '../..');
 	const sessionRoot = join(
 		sandboxDirectory(canonicalWorkspaceRoot),
 		'sessions',
 		session.id,
 	);
-	const readable = [
-		sessionRoot,
-		join(repositoryRoot, 'packages'),
-		join(repositoryRoot, 'modules'),
-		join(repositoryRoot, 'node_modules'),
-	];
+	const readable = new Set([sessionRoot, sandboxRoot]);
+	// Installed packages can live in a pnpm store or an npm-exec cache, separate
+	// from the consumer. Grant dependency code, never the consumer's whole root.
+	const addDependencies = (from: string) => {
+		for (
+			let directory = from;
+			dirname(directory) !== directory;
+			directory = dirname(directory)
+		) {
+			if (basename(directory) === 'node_modules')
+				readable.add(realpathSync(directory));
+		}
+		const dependencies = join(from, 'node_modules');
+		if (existsSync(dependencies)) readable.add(realpathSync(dependencies));
+	};
+	addDependencies(sandboxRoot);
+	addDependencies(canonicalWorkspaceRoot);
+	const repositoryRoot = resolve(sandboxRoot, '../..');
+	if (join(repositoryRoot, 'packages/sandbox') === sandboxRoot) {
+		readable.add(join(repositoryRoot, 'packages'));
+		readable.add(join(repositoryRoot, 'modules'));
+		addDependencies(repositoryRoot);
+	}
+	let consumerSdkRoot: string | undefined;
+	try {
+		const require = createRequire(
+			join(canonicalWorkspaceRoot, 'platform/package.json'),
+		);
+		const sdkRoot = realpathSync(
+			dirname(require.resolve('@flowdular/sdk/package.json')),
+		);
+		consumerSdkRoot = sdkRoot;
+		readable.add(sdkRoot);
+		addDependencies(sdkRoot);
+	} catch (error) {
+		if (
+			(error as NodeJS.ErrnoException).code !== 'MODULE_NOT_FOUND' &&
+			(error as NodeJS.ErrnoException).code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED'
+		)
+			throw error;
+	}
 	const writable = [
 		/* Authentication and module databases are the only persistent state a
 		   preview composition owns. Session metadata, chat, source, checkpoints
@@ -172,8 +208,10 @@ function startWorker(
 			   child process and would force us to grant draft code that capability. */
 			'--experimental-transform-types',
 			'--permission',
-			...readable.map((path) => `--allow-fs-read=${path}`),
+			...[...readable].map((path) => `--allow-fs-read=${path}`),
 			...writable.map((path) => `--allow-fs-write=${path}`),
+			'--import',
+			join(sandboxRoot, 'bin/register-types.mjs'),
 			entry,
 			canonicalWorkspaceRoot,
 		],
@@ -184,6 +222,9 @@ function startWorker(
 				// Ephemeral keys belong only to this isolated preview runtime.
 				...keys,
 				FD_INTERNAL_SANDBOX_PREVIEW_WORKER: '1',
+				...(consumerSdkRoot
+					? { FD_INTERNAL_SANDBOX_SDK_ROOT: consumerSdkRoot }
+					: {}),
 				FD_INTERNAL_SANDBOX_STATE_ROOT:
 					sandboxDirectory(canonicalWorkspaceRoot) ===
 					join(canonicalWorkspaceRoot, '.coreloom', 'sandbox')

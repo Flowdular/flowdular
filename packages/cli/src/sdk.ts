@@ -9,7 +9,6 @@ const LIBRARIES = new Set([
 	'ai-provider',
 	'cli-protocol',
 	'client',
-	'coding-agent',
 	'contracts',
 	'database',
 	'database-pglite',
@@ -17,7 +16,6 @@ const LIBRARIES = new Set([
 	'dev-console',
 	'harness',
 	'kernel',
-	'sandbox',
 	'server',
 	'ui',
 ]);

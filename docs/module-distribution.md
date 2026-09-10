@@ -67,7 +67,7 @@ pnpm release:smoke
 node scripts/smoke-sdk.mjs release-artifacts/sdk /path/to/official-modules/registry/local-index.json
 ```
 
-`release-artifacts/sdk/sdk.json` lists exactly `@flowdular/sdk`, `flowdular` and `create-flowdular`, with versions, tarballs
+`release-artifacts/sdk/sdk.json` lists exactly `@flowdular/sdk`, `flowdular`, `create-flowdular` and `@flowdular/sandbox`, with versions, tarballs
 and SHA-256 digests. Publish those tarballs with `npm publish <tarball> --access public`.
 Publish all SDK dependencies before consumers install the starter. The three
 business modules and the landing are not in this npm publication set. Keep release
