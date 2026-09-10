@@ -7,7 +7,7 @@ example module, and nothing else you have to configure.
 
 ```bash
 pnpm install
-pnpm flowdular setup quick --apply --confirm reset-local-auth
+pnpm flowdular setup
 pnpm dev
 ```
 

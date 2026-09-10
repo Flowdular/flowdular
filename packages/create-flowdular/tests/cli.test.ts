@@ -94,11 +94,7 @@ describe('nextSteps', () => {
 				packageManager: 'pnpm',
 				installed: true,
 			}),
-		).toEqual([
-			'cd my-app',
-			'pnpm flowdular setup quick --apply --confirm reset-local-auth',
-			'pnpm dev',
-		]);
+		).toEqual(['cd my-app', 'pnpm flowdular setup', 'pnpm dev']);
 		expect(
 			nextSteps({
 				directory: 'my-app',
@@ -115,11 +111,7 @@ describe('nextSteps', () => {
 				packageManager: 'npm',
 				installed: true,
 			}),
-		).toEqual([
-			'cd my-app',
-			'npm run flowdular -- setup quick --apply --confirm reset-local-auth',
-			'npm run dev',
-		]);
+		).toEqual(['cd my-app', 'npm run flowdular -- setup', 'npm run dev']);
 	});
 });
 
@@ -140,9 +132,7 @@ describe('run', () => {
 		expect(out).toContain('Created my-app in ' + join(cwd, 'my-app'));
 		expect(out).toContain('cd my-app');
 		expect(out).toContain('pnpm install');
-		expect(out).toContain(
-			'pnpm flowdular setup quick --apply --confirm reset-local-auth',
-		);
+		expect(out).toContain('pnpm flowdular setup');
 		expect(out).toContain('pnpm dev');
 		expect(out).toContain('http://localhost:4310');
 		expect(

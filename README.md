@@ -72,8 +72,7 @@ database**, then creates two demo workspaces. Back up any data you need to keep.
 Never run it against a custom or deployed database.
 
 ```bash
-pnpm flowdular setup quick
-pnpm flowdular setup quick --apply --confirm reset-local-auth
+pnpm flowdular setup
 
 # Restore scopes omitted by the current demo seed.
 pnpm flowdular auth sync-scopes --module workflows.core --apply

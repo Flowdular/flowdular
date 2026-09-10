@@ -1,6 +1,6 @@
 {
 	"name": "flowdular",
-	"version": "0.2.0",
+	"version": "0.2.1",
 	"private": true,
 	"type": "module",
 	"description": "Flowdular is an agentic foundation framework for OctaneJS: a production platform core that teams extend with modules built by AI agents.",

@@ -23,8 +23,23 @@ function isCapabilityList(
 
 export function renderOutput(envelope: CommandEnvelope, json: boolean): string {
 	if (json) return JSON.stringify(envelope, null, 2);
-	if (!envelope.ok)
-		return `ERROR ${envelope.error?.code ?? 'UNKNOWN'}\n${envelope.error?.message ?? 'Command failed.'}`;
+	if (!envelope.ok) {
+		const heading = `ERROR ${envelope.error?.code ?? 'UNKNOWN'}\n${envelope.error?.message ?? 'Command failed.'}`;
+		if (envelope.error?.code !== 'DOCTOR_FAILED') return heading;
+		const details = envelope.error.details as { checks?: unknown } | undefined;
+		if (!Array.isArray(details?.checks)) return heading;
+		const failures = details.checks.filter(
+			(check) =>
+				check &&
+				check.status === 'fail' &&
+				typeof check.id === 'string' &&
+				typeof check.message === 'string',
+		);
+		return [
+			heading,
+			...failures.map((check) => `FAIL ${check.id}  ${check.message}`),
+		].join('\n');
+	}
 
 	const decorate = (body: string): string =>
 		[
@@ -33,6 +48,26 @@ export function renderOutput(envelope: CommandEnvelope, json: boolean): string {
 			...envelope.evidence.map((item) => `EVIDENCE ${item}`),
 		].join('\n');
 	const data = envelope.data as Record<string, unknown> | undefined;
+	if (data?.cancelled === true) return decorate('Setup cancelled.');
+	if (data?.setup === 'postgresql')
+		return decorate(
+			'PostgreSQL settings saved to .env.\nRun pnpm dev, then open http://localhost:4310 to create an account.',
+		);
+	if (data?.setup === 'local') {
+		const admin = (
+			data.accounts as
+				| { admin?: { email?: string; password?: string } }
+				| undefined
+		)?.admin;
+		return decorate(
+			[
+				'Local demo is ready.',
+				'Run pnpm dev, then open http://localhost:4310.',
+				...(admin?.email ? [`Demo administrator: ${admin.email}`] : []),
+				...(admin?.password ? [`Public demo password: ${admin.password}`] : []),
+			].join('\n'),
+		);
+	}
 	if (data && Array.isArray(data.checks)) {
 		return decorate(
 			data.checks

@@ -1,6 +1,6 @@
 {
 	"name": "@flowdular/sandbox",
-	"version": "0.2.1",
+	"version": "0.2.2",
 	"description": "The Flowdular sandbox: chat a change, build it behind the gates, preview it in the real application, deliver it as code.",
 	"license": "MIT",
 	"homepage": "https://github.com/flowdular/flowdular/tree/main/packages/sandbox#readme",

@@ -30,15 +30,7 @@ export function nextSteps(input: NextStepsInput): readonly string[] {
 	return [
 		`cd ${input.directory}`,
 		...(input.installed ? [] : [`${input.packageManager} install`]),
-		runScript(
-			input.packageManager,
-			'flowdular',
-			'setup',
-			'quick',
-			'--apply',
-			'--confirm',
-			'reset-local-auth',
-		),
+		runScript(input.packageManager, 'flowdular', 'setup'),
 		runScript(input.packageManager, 'dev'),
 	];
 }
@@ -50,7 +42,7 @@ export function renderNextSteps(input: NextStepsInput): string {
 		'',
 		...nextSteps(input).map((step) => `  ${step}`),
 		'',
-		`Then open ${DEV_URL} and sign in as admin@example.com.`,
+		`Then open ${DEV_URL} and follow the setup choice. Local demo uses admin@example.com.`,
 		'',
 	].join('\n');
 }

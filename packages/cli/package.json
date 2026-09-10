@@ -1,6 +1,6 @@
 {
 	"name": "@flowdular/cli",
-	"version": "0.2.0",
+	"version": "0.2.1",
 	"type": "module",
 	"bin": {
 		"flowdular": "./dist/index.js",
@@ -12,18 +12,19 @@
 	},
 	"scripts": {
 		"dev": "tsx src/index.ts",
-		"build": "esbuild src/index.ts --bundle --platform=node --format=esm --external:ajv/* --external:yaml --external:pg --external:@electric-sql/pglite --outfile=dist/index.js --banner:js=\"#!/usr/bin/env node\" && esbuild src/distribution.ts --bundle --platform=node --format=esm --external:ajv/* --external:yaml --outfile=dist/distribution.js",
+		"build": "esbuild src/index.ts --bundle --platform=node --format=esm --external:@inquirer/prompts --external:ajv/* --external:yaml --external:pg --external:@electric-sql/pglite --outfile=dist/index.js --banner:js=\"#!/usr/bin/env node\" && esbuild src/distribution.ts --bundle --platform=node --format=esm --external:ajv/* --external:yaml --outfile=dist/distribution.js",
 		"smoke": "node dist/index.js doctor --json",
 		"typecheck": "tsc --noEmit -p tsconfig.json",
 		"test": "vitest run"
 	},
 	"dependencies": {
+		"@electric-sql/pglite": "0.5.8",
 		"@flowdular/cli-protocol": "workspace:*",
 		"@flowdular/contracts": "workspace:*",
 		"@flowdular/database": "workspace:*",
 		"@flowdular/database-pglite": "workspace:*",
 		"@flowdular/kernel": "workspace:*",
-		"@electric-sql/pglite": "0.5.8",
+		"@inquirer/prompts": "8.7.2",
 		"ajv": "8.20.0",
 		"pg": "8.23.0",
 		"yaml": "2.9.0"

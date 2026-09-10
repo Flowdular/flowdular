@@ -77,6 +77,44 @@ function run(args, cwd = consumer) {
 }
 console.log(`Clean SDK consumer: ${consumer}`);
 run(['install', '--ignore-scripts']);
+run(['flowdular', 'doctor', '--json']);
+run(['flowdular', 'blueprint', 'validate', '--all']);
+run(['flowdular', 'setup', 'quick', '--json']);
+const setupEnvironment = Object.fromEntries(
+	Object.entries(process.env).filter(
+		([key]) => !key.startsWith('FD_') && !key.startsWith('CORELOOM_'),
+	),
+);
+const setup = spawnSync(
+	'pnpm',
+	[
+		'flowdular',
+		'setup',
+		'quick',
+		'--apply',
+		'--confirm',
+		'reset-local-auth',
+		'--json',
+	],
+	{
+		cwd: consumer,
+		stdio: 'inherit',
+		env: {
+			...setupEnvironment,
+			NODE_ENV: 'development',
+			FD_DATABASE_ADAPTER: 'pglite',
+			FD_DATABASE_PGLITE_DIRECTORY: join(consumer, '.flowdular/test-setup'),
+		},
+	},
+);
+if (setup.status !== 0) throw new Error('Fresh consumer quick setup failed.');
+const application = spawnSync(
+	process.execPath,
+	[join(root, 'scripts/smoke-application-setup.mjs'), consumer],
+	{ stdio: 'inherit', timeout: 90000 },
+);
+if (application.status !== 0)
+	throw new Error('Initialized application startup failed.');
 run(['flowdular', 'module', 'validate', '--json']);
 if (process.argv[3]) {
 	const registry = resolve(process.argv[3]);

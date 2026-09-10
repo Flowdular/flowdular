@@ -81,22 +81,40 @@ export function createPgliteCluster(
 	const close = (): Promise<void> => {
 		closePromise ??= (async () => {
 			if (!databasePromise) return;
-			const instance = await databasePromise;
+			// A failed initialization has no database to close; its caller already
+			// received the original error. Do not replace it during disposal.
+			const instance = await databasePromise.catch(() => undefined);
 			databasePromise = undefined;
-			await instance.close();
+			await instance?.close();
 		})();
 		return closePromise;
 	};
 
 	const database = async (): Promise<PGlite> => {
 		databasePromise ??= (async () => {
+			if (options.dataDirectory) {
+				const { mkdir } = await import('node:fs/promises');
+				await mkdir(options.dataDirectory, { recursive: true, mode: 0o700 });
+			}
 			const created = options.dataDirectory
 				? await PGlite.create({
 						dataDir: options.dataDirectory,
 						parsers: SERVER_PARSERS,
 					})
 				: await PGlite.create({ parsers: SERVER_PARSERS });
-			if (options.bootstrap) await created.exec(options.bootstrap);
+			try {
+				if (options.bootstrap) await created.exec(options.bootstrap);
+			} catch (error) {
+				try {
+					await created.close();
+				} catch (closeError) {
+					throw new AggregateError(
+						[error, closeError],
+						'PGlite bootstrap failed and cleanup also failed.',
+					);
+				}
+				throw error;
+			}
 			return created;
 		})();
 		return databasePromise;

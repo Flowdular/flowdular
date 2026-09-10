@@ -21,7 +21,9 @@ composition, guardrail files). Add `--json` for a machine-readable envelope.
 
 ## Seed a local demo
 
-`setup quick` is a destructive local reset. It prints its full plan first and
+`pnpm flowdular setup` opens an interactive wizard. Choose a local demo, configure PostgreSQL, or check the existing configuration. Local initialization requires confirmation and a stopped application.
+
+For scripts and CI, `setup quick` is a destructive local reset. It prints its full plan first and
 writes only after a typed confirmation:
 
 ```bash

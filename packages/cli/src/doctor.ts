@@ -1,3 +1,5 @@
+import { agentResource, findBlueprintFiles } from './agent-resources.ts';
+import { sdkModules } from './sdk.ts';
 import { access, readFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { syncPlatformModules } from './module-sync.ts';
@@ -45,14 +47,17 @@ export async function runDoctor(
 		evidence: relative(workspace.root, workspace.configPath),
 	});
 
-	for (const [id, path] of [
-		['policy.capabilities', '.ai/policies/capabilities.yaml'],
-		['policy.model-routing', '.ai/policies/model-routing.yaml'],
-		['blueprints.root', '.ai/blueprints'],
-		['modules.root', 'modules'],
-		['packages.root', 'packages'],
-		['platform.root', 'platform'],
+	for (const [id, resource] of [
+		['policy.capabilities', agentResource(workspace, 'policy')],
+		['policy.model-routing', agentResource(workspace, 'modelRouting')],
+		['blueprints.root', agentResource(workspace, 'blueprints')],
+		['modules.root', join(workspace.root, 'modules')],
+		...((await sdkModules(workspace)).size
+			? []
+			: ([['packages.root', join(workspace.root, 'packages')]] as const)),
+		['platform.root', join(workspace.root, 'platform')],
 	] as const) {
+		const path = relative(workspace.root, resource);
 		checks.push({
 			id,
 			status: (await exists(join(workspace.root, path))) ? 'pass' : 'fail',
@@ -77,7 +82,7 @@ export async function runDoctor(
 		evidence: 'package.json',
 	});
 
-	const blueprints = await findNamedFiles(workspace.root, 'blueprint.json');
+	const blueprints = await findBlueprintFiles(workspace);
 	checks.push({
 		id: 'blueprints.discovered',
 		status: blueprints.length > 0 ? 'pass' : 'fail',

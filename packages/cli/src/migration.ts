@@ -1,7 +1,7 @@
 import { findModuleFiles } from './module-files.ts';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { importModuleSource } from './module-import.ts';
 import {
 	failure,
 	success,
@@ -54,14 +54,16 @@ export async function loadMigrationModules(
 		if (!enabled.has(manifest.id)) continue;
 		if (moduleId && manifest.id !== moduleId) continue;
 		const entry = join(dirname(manifestPath), 'src/services/migration.ts');
-		let databaseMigrations: unknown;
 		try {
-			({ databaseMigrations } = (await import(pathToFileURL(entry).href)) as {
-				databaseMigrations?: unknown;
-			});
-		} catch {
-			continue;
+			await stat(entry);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+			throw error;
 		}
+		const { databaseMigrations } = (await importModuleSource(
+			entry,
+			dirname(manifestPath),
+		)) as { databaseMigrations?: unknown };
 		if (!Array.isArray(databaseMigrations)) {
 			unmanaged.push({
 				moduleId: manifest.id,

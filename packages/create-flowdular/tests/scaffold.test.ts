@@ -43,6 +43,16 @@ describe('scaffold', () => {
 			await readFile(join(result.directory, 'package.json'), 'utf8'),
 		) as { name: string; scripts: Record<string, string> };
 		expect(manifest.name).toBe('my-app');
+		const project = JSON.parse(
+			await readFile(join(result.directory, 'flowdular.json'), 'utf8'),
+		);
+		expect(project.agent).toEqual({
+			policy:
+				'platform/node_modules/@flowdular/sdk/.ai/policies/capabilities.yaml',
+			modelRouting:
+				'platform/node_modules/@flowdular/sdk/.ai/policies/model-routing.yaml',
+			blueprints: 'platform/node_modules/@flowdular/sdk/.ai/blueprints',
+		});
 		expect(manifest.scripts.dev).toContain('platform/scripts/dev.mjs');
 
 		for (const path of [

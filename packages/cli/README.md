@@ -71,3 +71,16 @@ Release tooling can import the source distribution API through `flowdular/distri
 - [Documentation](https://github.com/Flowdular/flowdular/tree/main/docs) · [Source and issues](https://github.com/Flowdular/flowdular) · [Website](https://flowdular.com)
 
 Licensed under MIT. Repository documentation and source require repository access while the repositories are private.
+
+## Interactive setup
+
+Run `pnpm flowdular setup` in a terminal. The wizard offers a local demo, existing
+PostgreSQL connection settings, or a configuration check. Local resets require
+confirmation and a stopped application; custom or hosted databases are refused.
+PostgreSQL URLs are masked and saved to `.env` with TLS verification; this does
+not initialize, reset or connect to the hosted database.
+
+Without an interactive terminal, `setup` remains a configuration check. Use
+`setup check --json` for machine-readable results and
+`setup quick --apply --confirm reset-local-auth` for an explicitly authorized
+local reset in a script. Ctrl+C or declining confirmation leaves data unchanged.

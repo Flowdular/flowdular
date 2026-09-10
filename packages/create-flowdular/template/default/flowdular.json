@@ -1,5 +1,5 @@
 {
-	"$schema": "./node_modules/@flowdular/contracts/schemas/project.schema.json",
+	"$schema": "./platform/node_modules/@flowdular/sdk/packages/contracts/schemas/project.schema.json",
 	"schemaVersion": 1,
 	"architectureVersion": "0.2.0",
 	"specs": {
@@ -10,5 +10,10 @@
 		"roots": ["modules"],
 		"enabled": ["system.core", "auth.core", "example.core"]
 	},
-	"locales": ["en", "pl"]
+	"locales": ["en", "pl"],
+	"agent": {
+		"policy": "platform/node_modules/@flowdular/sdk/.ai/policies/capabilities.yaml",
+		"modelRouting": "platform/node_modules/@flowdular/sdk/.ai/policies/model-routing.yaml",
+		"blueprints": "platform/node_modules/@flowdular/sdk/.ai/blueprints"
+	}
 }

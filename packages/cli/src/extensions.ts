@@ -1,7 +1,7 @@
 import { findModuleFiles } from './module-files.ts';
 import { readFile } from 'node:fs/promises';
 import { dirname, relative } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { importModuleSource } from './module-import.ts';
 import type {
 	ModuleCliCommand,
 	ModuleCliCommandDescriptor,
@@ -85,7 +85,10 @@ function commandKey(command: ModuleCliCommandDescriptor): string {
 export async function loadCliCommand(
 	loaded: LoadedCliCommand,
 ): Promise<ModuleCliCommand> {
-	const imported = (await import(pathToFileURL(loaded.entry).href)) as {
+	const imported = (await importModuleSource(
+		loaded.entry,
+		loaded.moduleRoot,
+	)) as {
 		default?: ModuleCliExtension;
 		cliExtension?: ModuleCliExtension;
 	};

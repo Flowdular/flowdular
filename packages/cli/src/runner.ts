@@ -1,3 +1,4 @@
+import { findBlueprintFiles } from './agent-resources.ts';
 import { RegistryError } from '@flowdular/kernel';
 import { loadModuleCatalog } from './module-catalog.ts';
 import {
@@ -226,7 +227,7 @@ export async function runCommand(
 					'module list|validate [--locked]|sync [--apply]|enable <id> [--apply]|disable <id> [--apply]|new <id> --spec <path> [--apply]',
 					'migration status [--module <id>]|apply --module <id> [--apply]|verify|new <name> --module <id> [--apply]',
 					'database reset [--module <id>] [--apply --confirm reset-database]',
-					'setup check|quick [--apply --confirm reset-local-auth]|migrate-state [--apply --confirm migrate-legacy-state]',
+					'setup (interactive)|check|quick [--apply --confirm reset-local-auth]|migrate-state [--apply --confirm migrate-legacy-state]',
 					...extensionCommands.map((entry) => entry.command.path.join(' ')),
 				],
 				options: [
@@ -368,14 +369,14 @@ export async function runCommand(
 		}
 
 		if (group === 'blueprint' && action === 'list') {
-			const files = await findNamedFiles(workspace.root, 'blueprint.json');
+			const files = await findBlueprintFiles(workspace);
 			return success({
 				blueprints: files.map((file) => relative(workspace.root, file)),
 			});
 		}
 
 		if (group === 'blueprint' && action === 'validate') {
-			const files = await findNamedFiles(workspace.root, 'blueprint.json');
+			const files = await findBlueprintFiles(workspace);
 			const reports = await Promise.all(files.map(validateBlueprint));
 			const data = relativeReports(workspace.root, reports);
 			return reports.every((report) => report.valid)
