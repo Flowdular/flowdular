@@ -21,3 +21,4 @@
 ## Operating it
 
 - [Deployment](../infra/README.md): container, Compose, Kubernetes, published images.
+- [Platform releases](platform-releases.md): manual GitHub Releases, signed artifacts and full changelogs.

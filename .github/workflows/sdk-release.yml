@@ -19,7 +19,9 @@ jobs:
         with:
           runtime: node@24
           cache: true
-          require-lockfile: true
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - run: node --test scripts/tests/platform-release.test.mjs
       - run: pnpm verify
       - run: pnpm release:pack
       - run: pnpm release:smoke
