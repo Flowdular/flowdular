@@ -1,4 +1,6 @@
-import { useEffect, useMemo } from 'octane';
+import { useEffect, useMemo, useState } from 'octane';
+import { ModelSettingsModal } from './client/ModelSettingsModal.tsrx';
+import type { ConfigurationPatch } from './client/api.ts';
 import { Head, Seo } from '@octanejs/seo';
 import { Alert, BrandMark, Button, Icon, Tag } from '@flowdular/ui';
 import { useValue } from 'segment-state';
@@ -118,6 +120,7 @@ export function App(props?: RenderRouteProps) @{
 	const [ejectError, setEjectError] = useValue(sandbox.state.ejectError);
 	const [ejecting, setEjecting] = useValue(sandbox.state.ejecting);
 	const [ejectBuild, setEjectBuild] = useValue(sandbox.state.ejectBuild);
+	const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
 	const [menuOpen, setMenuOpen] = useValue(sandbox.state.menuOpen);
 	const [githubSettingsOpen, setGitHubSettingsOpen] = useValue(
 		sandbox.state.githubSettingsOpen,
@@ -280,6 +283,7 @@ export function App(props?: RenderRouteProps) @{
 		roleId: string,
 		moduleDirectory = sandbox.store.get(sandbox.state.turnModule),
 		submittedDraft?: string,
+		freshContext = false,
 	) => {
 		detach();
 		setRunning(true);
@@ -289,6 +293,7 @@ export function App(props?: RenderRouteProps) @{
 			session.id,
 			{
 				message: text,
+				freshContext,
 				role: roleId,
 				...(moduleDirectory ? { module: moduleDirectory } : {}),
 				driver: sandbox.store.get(sandbox.state.driver) || session.driver,
@@ -355,7 +360,7 @@ export function App(props?: RenderRouteProps) @{
 		}
 	};
 
-	const send = (explicit?: string) => {
+	const send = (explicit?: string, freshContext = false) => {
 		const session = currentSession();
 		if (!session || sandbox.store.get(sandbox.state.running)) return;
 		const text = (explicit ?? draft).trim();
@@ -371,6 +376,7 @@ export function App(props?: RenderRouteProps) @{
 			role,
 			undefined,
 			explicit === undefined ? draft : undefined,
+			freshContext,
 		);
 	};
 
@@ -592,6 +598,22 @@ export function App(props?: RenderRouteProps) @{
 		}
 	};
 
+	const saveModels = async (input: ConfigurationPatch) => {
+		setBusy(true);
+		setError('');
+		try {
+			await saveConfiguration(input);
+			await refreshState();
+			if (input.driver && !currentSession()) setDriver(input.driver);
+			setModelSettingsOpen(false);
+			setNotice(t('sandbox.models.saved'));
+		} catch (error) {
+			setError(message(error, t('sandbox.models.error')));
+		} finally {
+			setBusy(false);
+		}
+	};
+
 	const saveGitHub = async (input: GitHubSettingsInput) => {
 		setBusy(true);
 		setError('');
@@ -700,6 +722,11 @@ export function App(props?: RenderRouteProps) @{
 						<span class="sandbox__spacer"></span>
 						<WorkspaceMenu
 							state={state}
+							onModels={() => {
+								setMenuOpen(false);
+								setError('');
+								setModelSettingsOpen(true);
+							}}
 							open={menuOpen}
 							onToggle={() => setMenuOpen(!menuOpen)}
 							onChangeConnection={() => {
@@ -732,6 +759,18 @@ export function App(props?: RenderRouteProps) @{
 							onTarget={(target) => void startEject(target)}
 							onConfirm={confirmEject}
 							onClose={closeEject}
+						/>
+					}
+					@if (modelSettingsOpen) {
+						<ModelSettingsModal
+							configuration={state.configuration}
+							busy={busy}
+							error={error}
+							onSave={(input) => void saveModels(input)}
+							onClose={() => {
+								setModelSettingsOpen(false);
+								setError('');
+							}}
 						/>
 					}
 					@if (githubSettingsOpen) {
@@ -853,7 +892,7 @@ export function App(props?: RenderRouteProps) @{
 									onModule={setTurnModule}
 									onDriver={setDriver}
 									onMessage={setDraft}
-									onSend={() => send()}
+									onSend={(fresh) => send(undefined, fresh)}
 									onStop={stop}
 									onClearSelection={() => setSelection(null)}
 								/>

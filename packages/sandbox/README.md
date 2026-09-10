@@ -133,6 +133,28 @@ Every request to the sandbox API is checked before it does anything:
 sandbox that cannot prove it is loopback never offers a local binary, because a
 local binary carries the operator's own login.
 
+## Model settings
+
+Open the workspace menu and choose **AI models · BYOK**. Select a provider,
+enter its model ID and API key, and supply an API base URL for OpenAI-compatible
+servers or a resource name for Azure. Saving makes BYOK available in the agent
+selector. You can make it the default for new sessions; running turns retain
+the configuration they started with.
+
+Keys are encrypted in local sandbox configuration and never returned to the
+browser. An empty key field preserves the existing key only when the provider
+and destination are unchanged. The settings also let you clear the key or
+remove BYOK entirely.
+
+For a long CLI conversation, select **Fresh agent context** before sending the
+next message. It starts a new CLI conversation with the original brief and
+recent sandbox messages, preserving draft files, the approved specification
+and the complete sandbox transcript. Earlier tool output is not replayed;
+include any older decision that is not recorded in the spec or recent messages.
+Claude activity is shown from the start of streamed response blocks, with
+completed reasoning and tool events following as they arrive. This does not
+reduce provider queue or inference time.
+
 ## Sessions
 
 The home dashboard lists the operator's ideas, current stages, recorded token

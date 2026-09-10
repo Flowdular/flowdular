@@ -426,6 +426,8 @@ export interface SafeSandboxConfiguration {
 		readonly kind: AiProviderKind;
 		readonly model: string;
 		readonly credentialFingerprint: string | null;
+		readonly baseURL?: string;
+		readonly resourceName?: string;
 	} | null;
 	readonly github: GitHubDeliveryConfiguration & {
 		readonly tokenFingerprint: string | null;
@@ -446,6 +448,12 @@ export function safeConfiguration(
 		byok: configuration.byok
 			? {
 					kind: configuration.byok.kind,
+					...(configuration.byok.baseURL
+						? { baseURL: configuration.byok.baseURL }
+						: {}),
+					...(configuration.byok.resourceName
+						? { resourceName: configuration.byok.resourceName }
+						: {}),
 					model: configuration.byok.model,
 					credentialFingerprint: secretFingerprint(
 						configuration.byok.credential,

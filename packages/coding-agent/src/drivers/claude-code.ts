@@ -30,6 +30,7 @@ const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 interface ContentBlock {
 	readonly type?: string;
 	readonly text?: string;
+	readonly thinking?: string;
 	readonly name?: string;
 	readonly input?: Record<string, unknown>;
 	readonly content?: unknown;
@@ -116,7 +117,7 @@ export function createClaudeCodeDriver(
 		): AsyncIterable<CodingAgentEvent> {
 			const resumeId = request.resumeId ?? null;
 			if (!resumeId) {
-				yield* runSession(request, null);
+				yield* runSession(request, null, Boolean(request.history?.length));
 				return;
 			}
 			try {
@@ -145,6 +146,7 @@ export function createClaudeCodeDriver(
 			'--output-format',
 			'stream-json',
 			'--verbose',
+			'--include-partial-messages',
 			'--permission-mode',
 			'acceptEdits',
 			'--restricted',
@@ -193,6 +195,23 @@ export function createClaudeCodeDriver(
 				continue;
 			}
 
+			if (type === 'stream_event') {
+				const partial = message.event as Record<string, unknown> | undefined;
+				const block = partial?.content_block as
+					| Record<string, unknown>
+					| undefined;
+				if (
+					partial?.type === 'content_block_start' &&
+					(block?.type === 'thinking' || block?.type === 'text')
+				) {
+					yield {
+						type: 'activity',
+						phase: block.type === 'thinking' ? 'thinking' : 'responding',
+					};
+				}
+				continue;
+			}
+
 			if (type === 'assistant') {
 				const content = ((message.message ?? {}) as Record<string, unknown>)
 					.content;
@@ -200,8 +219,8 @@ export function createClaudeCodeDriver(
 					if (block.type === 'text' && block.text?.trim()) {
 						yield { type: 'assistant.message', text: block.text };
 					}
-					if (block.type === 'thinking' && typeof block.text === 'string') {
-						yield { type: 'reasoning', text: block.text };
+					if (block.type === 'thinking' && typeof block.thinking === 'string') {
+						yield { type: 'reasoning', text: block.thinking };
 					}
 					if (block.type === 'tool_use' && block.name) {
 						yield {

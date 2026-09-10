@@ -1,3 +1,4 @@
+import { byokSettings } from './byok-settings.ts';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { ServerRoute, type Context } from '@octanejs/app-core';
@@ -665,6 +666,7 @@ export function createSandboxRoutes(
 		sessionId: string,
 		input: {
 			message: string;
+			freshContext?: boolean;
 			role?: string;
 			module?: string;
 			driver?: string;
@@ -866,7 +868,6 @@ export function createSandboxRoutes(
 				});
 				const value = await body(context.request);
 				const token = optionalText(value, 'platformToken', 4_096);
-				const byokCredential = optionalText(value, 'byokCredential', 16_384);
 				const githubToken = optionalText(value, 'githubToken', 16_384);
 				const configuration = runtime.configuration();
 				if (value.disconnect === true) {
@@ -999,6 +1000,11 @@ export function createSandboxRoutes(
 								}),
 					};
 				}
+				const byok = await byokSettings(
+					runtime.workspaceRoot,
+					value,
+					configuration.byok,
+				);
 				const connection = await runtime.update({
 					...(platformUrl === null ? {} : { platformUrl }),
 					...(token
@@ -1015,23 +1021,7 @@ export function createSandboxRoutes(
 					...(value.previewData === 'fixtures' || value.previewData === 'bridge'
 						? { previewData: value.previewData }
 						: {}),
-					...(value.byokKind === undefined
-						? {}
-						: {
-								byok: {
-									kind: text(value, 'byokKind', 40) as never,
-									model: text(value, 'byokModel', 160),
-									...(optionalText(value, 'byokResourceName', 160)
-										? { resourceName: text(value, 'byokResourceName', 160) }
-										: {}),
-									...(optionalText(value, 'byokBaseUrl', 2_048)
-										? { baseURL: text(value, 'byokBaseUrl', 2_048) }
-										: {}),
-									credential: byokCredential
-										? await sealSecret(runtime.workspaceRoot, byokCredential)
-										: (configuration.byok?.credential ?? null),
-								},
-							}),
+					...(byok === undefined ? {} : { byok }),
 					...(githubPatchRequested ? { github } : {}),
 					...(githubToken
 						? {
@@ -1537,6 +1527,7 @@ export function createSandboxRoutes(
 					sessionId,
 					{
 						message: text(value, 'message', 20_000),
+						freshContext: value.freshContext === true,
 						...(optionalText(value, 'role', 64)
 							? { role: text(value, 'role', 64) }
 							: {}),

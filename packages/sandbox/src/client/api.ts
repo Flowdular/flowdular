@@ -242,6 +242,8 @@ export interface ConfigurationPatch {
 	readonly driver?: string;
 	readonly driverModel?: string | null;
 	readonly previewData?: 'fixtures' | 'bridge';
+	readonly byokRemove?: boolean;
+	readonly byokClearCredential?: boolean;
 	readonly byokKind?: string;
 	readonly byokModel?: string;
 	readonly byokCredential?: string;
@@ -705,6 +707,7 @@ export function streamTurn(
 	sessionId: string,
 	input: {
 		readonly message: string;
+		readonly freshContext?: boolean;
 		readonly role: string;
 		/* The draft module directory the turn works in; absent lets the sandbox
 		   decide from the last handoff. */

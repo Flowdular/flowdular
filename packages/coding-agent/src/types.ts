@@ -17,6 +17,7 @@ export type CodingAgentEvent =
 	  }
 	| { readonly type: 'assistant.message'; readonly text: string }
 	| { readonly type: 'reasoning'; readonly text: string }
+	| { readonly type: 'activity'; readonly phase: 'thinking' | 'responding' }
 	| {
 			readonly type: 'tool.started';
 			readonly tool: string;

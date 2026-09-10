@@ -90,6 +90,7 @@ export interface TurnContext {
 }
 
 export interface TurnInput {
+	readonly freshContext?: boolean;
 	readonly sessionId: string;
 	readonly message: string;
 	readonly role?: string;
@@ -687,7 +688,16 @@ export async function* runTurn(
 	);
 
 	const history = historyFrom(await readChat(context.workspaceRoot, session));
-	const resumeId = session.resumeIds[driverId] ?? null;
+	const resumeId = input.freshContext
+		? null
+		: (session.resumeIds[driverId] ?? null);
+	if (input.freshContext) {
+		yield await appendChatEntry(context.workspaceRoot, session, {
+			kind: 'system',
+			role: roleId,
+			text: 'Starting with fresh agent context. Draft files, approved specification and sandbox history are preserved; the agent receives the brief and recent messages.',
+		});
+	}
 	let nextResumeId = resumeId;
 	let failed = false;
 	let closing = '';
@@ -709,7 +719,7 @@ export async function* runTurn(
 			systemInstruction: instruction,
 			prompt: attachmentNote ? `${attachmentNote}\n\n${message}` : message,
 			resumeId,
-			history: history.slice(0, -1),
+			history: [{ role: 'user', text: session.brief }, ...history.slice(0, -1)],
 			model: session.model,
 			signal: input.signal,
 		})) {
@@ -962,10 +972,11 @@ export async function* runTurn(
 		);
 	}
 
+	const resumeIds = { ...session.resumeIds };
+	if (nextResumeId) resumeIds[driverId] = nextResumeId;
+	else if (input.freshContext) delete resumeIds[driverId];
 	const updated = await updateSession(context.workspaceRoot, session.id, {
-		resumeIds: nextResumeId
-			? { ...session.resumeIds, [driverId]: nextResumeId }
-			: session.resumeIds,
+		resumeIds,
 		state: failed
 			? 'failed'
 			: handoff.kind === 'approval' || handoff.kind === 'question'

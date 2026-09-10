@@ -56,7 +56,7 @@ export interface ChatPaneProps {
 	readonly onModule: (module: string) => void;
 	readonly onDriver: (driver: string) => void;
 	readonly onMessage: (message: string) => void;
-	readonly onSend: () => void;
+	readonly onSend: (freshContext?: boolean) => void;
 	readonly onStop: () => void;
 	readonly onClearSelection: () => void;
 }
@@ -70,6 +70,8 @@ function eventLabel(entry: ChatEntry): string {
 				driver: event.driver,
 				role: roleLabel(event.role),
 			});
+		case 'activity':
+			return t('sandbox.chat.activity.' + event.phase);
 		case 'reasoning':
 			return event.text.slice(0, 160);
 		case 'tool.started':
@@ -381,9 +383,11 @@ export function ChatPane(props: ChatPaneProps) @{
 		</div>;
 	};
 
+	const [freshContext, setFreshContext] = useState(false);
 	const submit = (event: SubmitEvent) => {
 		event.preventDefault();
-		props.onSend();
+		props.onSend(freshContext);
+		setFreshContext(false);
 	};
 
 	<section class="sandbox__chat">
@@ -602,6 +606,15 @@ export function ChatPane(props: ChatPaneProps) @{
 				onInput={(event) => props.onMessage(event.currentTarget.value)}
 				onPaste={onPaste}
 			></textarea>
+			<label class="ui-checkbox" title={t('sandbox.chat.freshHelp')}>
+				<input
+					type="checkbox"
+					checked={freshContext}
+					disabled={props.running}
+					onChange={(event) => setFreshContext(event.currentTarget.checked)}
+				/>
+				<span>{t('sandbox.chat.fresh')}</span>
+			</label>
 			<div class="chat__composer-row">
 				<button
 					class="chat__attach"

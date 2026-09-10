@@ -466,6 +466,41 @@ describe('sandbox route security', () => {
 		expect(patches).toHaveLength(1);
 	});
 
+	it('validates BYOK before persisting and never returns a key', async () => {
+		const root = await workspace();
+		const runtime = fakeRuntime(
+			root,
+			fakeDriver({ handoff: 'HANDOFF: none - done' }),
+		);
+		const patches: Record<string, unknown>[] = [];
+		runtime.update = async (patch) => {
+			patches.push(patch);
+			return runtime.connection();
+		};
+		const call = api(runtime);
+		const invalid = await call('POST', '/sandbox/api/config', {
+			body: { byokKind: 'unknown', byokModel: 'model' },
+		});
+		expect(invalid.status).toBe(400);
+		expect(patches).toHaveLength(0);
+		const saved = await call('POST', '/sandbox/api/config', {
+			body: {
+				byokKind: 'openai',
+				byokModel: 'model',
+				byokCredential: 'synthetic-key',
+			},
+		});
+		expect(saved.status).toBe(200);
+		expect(patches[0]).toMatchObject({
+			byok: {
+				kind: 'openai',
+				model: 'model',
+				credential: { ciphertext: expect.any(String) },
+			},
+		});
+		expect(await saved.text()).not.toContain('synthetic-key');
+	});
+
 	it('validates GitHub settings and seals the provider token', async () => {
 		const root = await workspace();
 		const runtime = fakeRuntime(
@@ -579,6 +614,48 @@ describe('sandbox route security', () => {
 });
 
 describe('detached turns', () => {
+	it('starts fresh context without losing the brief, transcript or draft files', async () => {
+		const root = await workspace();
+		const requests: CodingAgentTurnRequest[] = [];
+		const driver = fakeDriver({ handoff: 'HANDOFF: none - done' });
+		const run = driver.run.bind(driver);
+		driver.run = async function* (request) {
+			requests.push(request);
+			yield* run(request);
+		};
+		const call = api(fakeRuntime(root, driver));
+		const session = await sessionFor(root);
+		await updateSession(root, session.id, {
+			resumeIds: { fake: 'old-context' },
+			autoContinue: false,
+		});
+		const paths = sessionPaths(root, session.id, session.moduleSuffix);
+		await writeFile(join(paths.modulePath, 'keep.txt'), 'draft');
+		await readSse(
+			await call('POST', `/sandbox/api/sessions/${session.id}/turn`, {
+				body: {
+					message: 'Continue planning',
+					role: 'business-manager',
+					freshContext: true,
+				},
+			}),
+		);
+		expect(requests).toHaveLength(1);
+		expect(requests[0]?.resumeId).toBeNull();
+		expect(requests[0]?.history).toContainEqual({
+			role: 'user',
+			text: session.brief,
+		});
+		expect(await readFile(join(paths.modulePath, 'keep.txt'), 'utf8')).toBe(
+			'draft',
+		);
+		expect(
+			(await readChat(root, session)).some(
+				(entry) => entry.text === 'Continue planning',
+			),
+		).toBe(true);
+	});
+
 	it('finishes the turn, its gates, and the handoff after the stream consumer leaves', async () => {
 		const root = await workspace();
 		const runtime = fakeRuntime(

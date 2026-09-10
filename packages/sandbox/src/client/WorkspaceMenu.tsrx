@@ -5,6 +5,7 @@ import { setActiveLocale, SUPPORTED_LOCALES, useTranslation } from './i18n.ts';
 export interface WorkspaceMenuProps {
 	readonly state: SandboxState;
 	readonly open: boolean;
+	readonly onModels: () => void;
 	readonly onToggle: () => void;
 	readonly onChangeConnection: () => void;
 	readonly onDisconnect: () => void;
@@ -60,6 +61,12 @@ export function WorkspaceMenu(props: WorkspaceMenuProps) @{
 					</Tag>
 				</div>
 				<div class="ui-menu__sep"></div>
+				<button
+					class="ui-menu__item"
+					type="button"
+					role="menuitem"
+					onClick={props.onModels}
+				>{t('sandbox.models.title')}</button>
 				<label class="ui-menu__item workspace-menu__language">
 					<Icon name="globe" size={16} />
 					<span>{t('sandbox.workspace.language')}</span>

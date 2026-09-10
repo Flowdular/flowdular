@@ -1,4 +1,11 @@
-import { chmod, mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
+import {
+	chmod,
+	mkdir,
+	mkdtemp,
+	readFile,
+	symlink,
+	writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -66,15 +73,80 @@ async function collect(
 }
 
 describe('claude-code driver', () => {
+	it('can resume after cancellation and replay history into a fresh conversation', async () => {
+		const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-resume-'));
+		const command = join(workspacePath, 'fake-cli');
+		await writeFile(
+			command,
+			`#!${process.execPath}
+const fs = require('node:fs');
+fs.writeFileSync('args.json', JSON.stringify(process.argv.slice(2)));
+const first = !fs.existsSync('started');
+fs.writeFileSync('started', 'yes');
+console.log(JSON.stringify({type:'system',subtype:'init',session_id:'resumable'}));
+if (first) setInterval(() => {}, 1000);
+else console.log(JSON.stringify({type:'result',subtype:'success',session_id:'resumable',result:'Continued',usage:{}}));
+`,
+		);
+		await chmod(command, 0o755);
+		const driver = createClaudeCodeDriver({ command });
+		const controller = new AbortController();
+		const request = {
+			workspacePath,
+			role: 'backend-engineer',
+			systemInstruction: 'contract',
+			prompt: 'continue',
+		};
+		const stopped: CodingAgentEvent[] = [];
+		for await (const event of driver.run({
+			...request,
+			signal: controller.signal,
+		})) {
+			stopped.push(event);
+			if (event.type === 'turn.started') controller.abort();
+		}
+		expect(stopped.at(-1)).toMatchObject({
+			type: 'turn.completed',
+			finishReason: 'aborted',
+			resumeId: 'resumable',
+		});
+		const resumed: CodingAgentEvent[] = [];
+		for await (const event of driver.run({ ...request, resumeId: 'resumable' }))
+			resumed.push(event);
+		expect(resumed.at(-1)).toMatchObject({ finishReason: 'stop' });
+		expect(
+			JSON.parse(await readFile(join(workspacePath, 'args.json'), 'utf8')),
+		).toContain('--resume');
+		for await (const event of driver.run({
+			...request,
+			history: [{ role: 'user', text: 'Preserve room booking constraints' }],
+		})) {
+			void event;
+		}
+		const freshArgs = JSON.parse(
+			await readFile(join(workspacePath, 'args.json'), 'utf8'),
+		) as string[];
+		expect(freshArgs).not.toContain('--resume');
+		expect(freshArgs.at(-1)).toContain('Preserve room booking constraints');
+	});
+
 	it('maps the print-mode stream to sandbox events', async () => {
 		const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-claude-'));
 		const command = await replayBinary([
 			{ type: 'system', subtype: 'init', session_id: 'session-1' },
 			{
+				type: 'stream_event',
+				event: {
+					type: 'content_block_start',
+					content_block: { type: 'thinking' },
+				},
+			},
+			{
 				type: 'assistant',
 				message: {
 					content: [
 						{ type: 'text', text: 'Writing the entry point.' },
+						{ type: 'thinking', thinking: 'Checking the entry point.' },
 						{
 							type: 'tool_use',
 							name: 'Write',
@@ -112,9 +184,14 @@ describe('claude-code driver', () => {
 			role: 'backend-engineer',
 			resumeId: 'session-1',
 		});
+		expect(events).toContainEqual({ type: 'activity', phase: 'thinking' });
 		expect(events).toContainEqual({
 			type: 'assistant.message',
 			text: 'Writing the entry point.',
+		});
+		expect(events).toContainEqual({
+			type: 'reasoning',
+			text: 'Checking the entry point.',
 		});
 		expect(events).toContainEqual({
 			type: 'file.changed',

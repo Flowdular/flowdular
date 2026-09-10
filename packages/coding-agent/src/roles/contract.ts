@@ -4,6 +4,7 @@ export const SANDBOX_AGENT_CONTRACT = `You are one coding specialist in a Flowdu
 Always-active invariants
 - Write only to the active module and the allowed Session paths. reference/ is read-only. Preserve unrelated work. Never edit platform composition or flowdular.json.
 - Read the one task skill named under Session before editing. Do not load other SKILL.md files or the full skill catalog. Read only the owning code and references needed for this task; copy the example-module shape where relevant.
+- Batch independent reads and searches when the tools allow it. Reuse files already read in this conversation unless they changed. Search for a symbol in its owning package before widening the search. Do not read whole reference trees or node_modules to discover an API. If a required public API is absent, report that blocker rather than repeating broad searches.
 - Module implementation requires operator approval of the exact current spec hash. Agents never approve specs. Any later spec edit, request for changes, or added module invalidates the approval. Stop implementation until it is renewed.
 - Deny by default: explicit endpoint permissions, trusted principal identity, CSRF and bounded inputs. Never accept tenant identity from request input.
 - Use bound SQL and tenant-scoped transactions. Tenant predicates and forced RLS with USING and WITH CHECK are mandatory. No runtime superuser/BYPASSRLS. DDL uses a short migration lease; applied SQL is immutable and mirrored byte for byte.

@@ -11,7 +11,12 @@ import assert from 'node:assert/strict';
 const out = await mkdtemp(join(tmpdir(), 'sandbox-workflow-'));
 const baseUrl = process.argv[2] ?? 'http://127.0.0.1:4438';
 const repository = fileURLToPath(new URL('../../../..', import.meta.url));
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({
+	headless: true,
+	...(process.env.CHROME_PATH
+		? { executablePath: process.env.CHROME_PATH }
+		: {}),
+});
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 page.setDefaultTimeout(12000);
 const errors = [],
@@ -265,6 +270,11 @@ await page.route('**/sandbox/api/**', async (route) => {
 	const body = req.method() === 'POST' ? req.postDataJSON() : null;
 	calls.push({ path, method: req.method(), body });
 	if (path.endsWith('/state')) return json(route, state);
+	if (path.endsWith('/config'))
+		return json(route, {
+			configuration: state.configuration,
+			connection: state.connection,
+		});
 	if (path.endsWith('/spec') && req.method() === 'GET') {
 		if (delayedSpec) await new Promise((r) => (resolveSpec = r));
 		const module = url.searchParams.get('module') || 'booking';
@@ -336,6 +346,32 @@ async function open() {
 }
 try {
 	await open();
+	await page.locator('.workspace-menu__button').click();
+	await page.getByRole('menuitem', { name: 'Modele AI · BYOK' }).click();
+	const modelDrawer = page.getByRole('dialog');
+	await modelDrawer.locator('select').selectOption('openai-compatible');
+	await modelDrawer.locator('[name="model"]').fill('test-model');
+	await modelDrawer.locator('[name="credential"]').fill('synthetic-key');
+	await modelDrawer
+		.locator('[name="baseURL"]')
+		.fill('https://models.example/v1');
+	await modelDrawer.screenshot({
+		path: out + '/byok-settings.png',
+		animations: 'disabled',
+	});
+	await modelDrawer
+		.getByRole('button', { name: 'Zapisz', exact: true })
+		.click();
+	await modelDrawer.waitFor({ state: 'detached' });
+	const configCall = calls.find((call) => call.path.endsWith('/config'));
+	assert.equal(configCall.body.byokKind, 'openai-compatible');
+	assert.equal(configCall.body.byokModel, 'test-model');
+	assert.equal(configCall.body.byokCredential, 'synthetic-key');
+	assert.equal(configCall.body.byokBaseUrl, 'https://models.example/v1');
+	findings.byok =
+		'Provider settings submit through the authenticated configuration endpoint';
+	await page.getByText('Świeży kontekst agenta', { exact: true }).waitFor();
+
 	await page.screenshot({
 		animations: 'disabled',
 		path: out + '/session-pl.png',
