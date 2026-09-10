@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { createRouter } from '@octanejs/app-core';
 import {
 	DEFAULT_AGENT_ROLES,
+	CodingAgentError,
 	createCodingAgentRegistry,
 	type CodingAgentDriver,
 	type CodingAgentTurnRequest,
@@ -614,6 +615,43 @@ describe('sandbox route security', () => {
 });
 
 describe('detached turns', () => {
+	it('blocks automatic continuation when the agent exceeds its time limit', async () => {
+		const root = await workspace();
+		const driver = fakeDriver({ handoff: 'HANDOFF: none - done' });
+		let attempts = 0;
+		driver.run = async function* () {
+			attempts++;
+			yield { type: 'activity', phase: 'thinking' };
+			throw new CodingAgentError(
+				'DRIVER_TIMEOUT',
+				'The coding agent exceeded the turn time limit. Review the draft before continuing.',
+			);
+		};
+		const call = api(fakeRuntime(root, driver));
+		const session = await sessionFor(root);
+		await updateSession(root, session.id, { autoContinue: true });
+		await readSse(
+			await call('POST', `/sandbox/api/sessions/${session.id}/turn`, {
+				body: { role: 'business-manager', message: 'Continue', driver: 'fake' },
+			}),
+		);
+		const chat = await readChat(root, session);
+		expect(attempts).toBe(1);
+		expect(
+			chat.some((entry) =>
+				entry.text?.includes('exceeded the turn time limit'),
+			),
+		).toBe(true);
+		expect(chat.filter((entry) => entry.handoff).at(-1)?.handoff?.kind).toBe(
+			'blocked',
+		);
+		expect(chat.some((entry) => entry.text?.startsWith('Gate '))).toBe(false);
+		const view = (await (
+			await call('GET', `/sandbox/api/sessions/${session.id}`)
+		).json()) as { running: boolean };
+		expect(view.running).toBe(false);
+	});
+
 	it('resumes only the same role and scope, never a previous specialist conversation', async () => {
 		const root = await workspace();
 		const requests: CodingAgentTurnRequest[] = [];

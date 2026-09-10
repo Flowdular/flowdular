@@ -683,13 +683,16 @@
 	color: var(--danger);
 }
 
-.chat__auto {
+.chat-settings {
 	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-	font-size: var(--text-sm);
-	color: var(--ink-3);
-	white-space: nowrap;
+}
+
+.chat-settings__panel {
+	position: fixed;
+	z-index: 20;
+	width: min(320px, calc(100vw - 32px));
+	max-height: calc(100dvh - 32px);
+	overflow-y: auto;
 }
 
 .chat__selection {
@@ -1570,4 +1573,18 @@
 	margin: 0;
 	font-size: var(--text-md);
 	color: var(--ink-3);
+}
+
+@keyframes chat-activity-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+.chat__event--active > svg {
+	animation: chat-activity-spin 1.5s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+	.chat__event--active > svg {
+		animation: none;
+	}
 }

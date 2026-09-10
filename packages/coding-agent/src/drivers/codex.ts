@@ -262,6 +262,12 @@ export function createCodexDriver(
 
 		const exit = await stream.finished;
 		if (completed) return;
+		if (exit.timedOut) {
+			throw new CodingAgentError(
+				'DRIVER_TIMEOUT',
+				'The coding agent exceeded the turn time limit. Review the draft before continuing.',
+			);
+		}
 		if (exit.aborted) {
 			yield {
 				type: 'turn.completed',

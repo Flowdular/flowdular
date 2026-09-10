@@ -3,8 +3,9 @@
 const { chromium } = await import(
 	process.env.PLAYWRIGHT_MODULE ?? 'playwright'
 );
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
@@ -165,6 +166,8 @@ const review = modules.map((m) => ({
 		],
 	},
 }));
+let running = false;
+let releaseFollow;
 let kind = 'approval',
 	turnFailure = false,
 	delayedSpec = false;
@@ -226,10 +229,37 @@ const view = () => ({
 		module: 'modules/booking',
 		modules: modules.map((m) => ({ id: m.id, path: `modules/${m.directory}` })),
 	},
-	chat: chat(),
+	chat: [
+		...chat(),
+		...(running
+			? [
+					{
+						sequence: 4,
+						at: Date.now() - 60000,
+						kind: 'event',
+						role: 'backend-engineer',
+						event: { type: 'reasoning', text: '   ' },
+					},
+					{
+						sequence: 5,
+						at: Date.now() - 60000,
+						kind: 'event',
+						role: 'backend-engineer',
+						event: { type: 'activity', phase: 'thinking' },
+					},
+					{
+						sequence: 6,
+						at: Date.now() - 60000,
+						kind: 'event',
+						role: 'backend-engineer',
+						event: { type: 'activity', phase: 'thinking' },
+					},
+				]
+			: []),
+	],
 	specs: review,
 	diffs,
-	running: false,
+	running,
 });
 const plan = {
 	target: 'workspace',
@@ -269,6 +299,16 @@ await page.route('**/sandbox/api/**', async (route) => {
 		path = url.pathname;
 	const body = req.method() === 'POST' ? req.postDataJSON() : null;
 	calls.push({ path, method: req.method(), body });
+	if (path.endsWith('/turn/stream')) {
+		await new Promise((resolve) => {
+			releaseFollow = resolve;
+		});
+		return route.fulfill({ status: 204 });
+	}
+	if (path.endsWith('/settings') && body) {
+		session.autoContinue = body.autoContinue;
+		return json(route, { session });
+	}
 	if (path.endsWith('/state')) return json(route, state);
 	if (path.endsWith('/config'))
 		return json(route, {
@@ -346,6 +386,55 @@ async function open() {
 }
 try {
 	await open();
+	const stateDirectory = existsSync(join(repository, '.coreloom'))
+		? '.coreloom'
+		: '.flowdular';
+	const sessionsRoot = join(repository, stateDirectory, 'sandbox/sessions');
+	await mkdir(sessionsRoot, { recursive: true });
+	const draftRoot = await mkdtemp(join(sessionsRoot, 'hmr-regression-'));
+	try {
+		const draftFile = join(
+			draftRoot,
+			'workspace/modules/sample/src/client/Probe.tsrx',
+		);
+		await mkdir(join(draftFile, '..'), { recursive: true });
+		await writeFile(draftFile, "export const marker = 'preview-before';");
+		const moduleUrl = new URL('/@fs' + draftFile, baseUrl);
+		assert.match(await (await fetch(moduleUrl)).text(), /preview-before/);
+		await page
+			.locator('.chat__composer textarea')
+			.fill('Preserve this unsent message.');
+		await page.evaluate(() => {
+			window.__reloadProbe = 'preserved';
+		});
+		await writeFile(draftFile, "export const marker = 'preview-after';");
+		const deadline = Date.now() + 10000;
+		let refreshed = false;
+		while (Date.now() < deadline) {
+			if ((await (await fetch(moduleUrl)).text()).includes('preview-after')) {
+				refreshed = true;
+				break;
+			}
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+		assert.equal(
+			refreshed,
+			true,
+			'The preview transform must reflect the saved file',
+		);
+		// Allow delivery of any full-reload message emitted by this save.
+		await new Promise((resolve) => setTimeout(resolve, 750));
+		assert.equal(await page.evaluate(() => window.__reloadProbe), 'preserved');
+		assert.equal(
+			await page.locator('.chat__composer textarea').inputValue(),
+			'Preserve this unsent message.',
+		);
+		await page.locator('.chat__composer textarea').fill('');
+		findings.previewIsolation =
+			'Draft save refreshes the transformed module without reloading the page or losing unsent text';
+	} finally {
+		await rm(draftRoot, { recursive: true, force: true });
+	}
 	await page.locator('.workspace-menu__button').click();
 	await page.getByRole('menuitem', { name: 'Modele AI · BYOK' }).click();
 	const modelDrawer = page.getByRole('dialog');
@@ -370,7 +459,91 @@ try {
 	assert.equal(configCall.body.byokBaseUrl, 'https://models.example/v1');
 	findings.byok =
 		'Provider settings submit through the authenticated configuration endpoint';
-	await page.getByText('Świeży kontekst agenta', { exact: true }).waitFor();
+	const settings = page.locator('.chat-settings button');
+	const panel = page.locator('#composer-settings');
+	assert.equal(await panel.count(), 0);
+	const settingsBounds = await settings.boundingBox();
+	const attachBounds = await page.locator('.chat__attach').boundingBox();
+	assert.ok(settingsBounds.x < attachBounds.x);
+	assert.ok(
+		Math.abs(
+			settingsBounds.y +
+				settingsBounds.height / 2 -
+				attachBounds.y -
+				attachBounds.height / 2,
+		) < 2,
+	);
+	await settings.focus();
+	await page.keyboard.press('Enter');
+	await panel.waitFor();
+	const handoffs = panel.getByRole('checkbox').nth(0);
+	const fresh = panel.getByRole('checkbox', {
+		name: 'Świeży kontekst agenta',
+		exact: true,
+	});
+	const initialHandoffs = await handoffs.isChecked();
+	await page.keyboard.press('Tab');
+	assert.equal(
+		await handoffs.evaluate((node) => node === document.activeElement),
+		true,
+	);
+	await page.keyboard.press('Space');
+	await page.waitForFunction(
+		(expected) =>
+			document.querySelector('#composer-settings input')?.checked === expected,
+		!initialHandoffs,
+	);
+	assert.equal(await handoffs.isChecked(), !initialHandoffs);
+	await fresh.check();
+	await page.keyboard.press('Escape');
+	await panel.waitFor({ state: 'detached' });
+	assert.equal(
+		await settings.evaluate((node) => node === document.activeElement),
+		true,
+	);
+	await settings.click();
+	assert.equal(await fresh.isChecked(), true);
+	assert.equal(await handoffs.isChecked(), !initialHandoffs);
+	await panel.screenshot({
+		path: out + '/composer-settings.png',
+		animations: 'disabled',
+	});
+	await handoffs.click();
+	await page.waitForFunction(
+		(expected) =>
+			document.querySelector('#composer-settings input')?.checked === expected,
+		initialHandoffs,
+	);
+	await fresh.uncheck();
+	await page.locator('.chat__composer textarea').click();
+	await panel.waitFor({ state: 'detached' });
+	findings.composerSettings =
+		'Keyboard toggles, retained state, Escape focus restoration and outside dismissal passed';
+	running = true;
+	await open();
+	await page.getByText(/Brak aktualizacji od \d+s/).waitFor();
+	const firstAge = await page.locator('.chat__activity-age').innerText();
+	await page.waitForFunction(
+		(previous) =>
+			document.querySelector('.chat__activity-age')?.textContent !== previous,
+		firstAge,
+	);
+	assert.equal(await page.locator('.chat__event--active').count(), 1);
+	assert.equal(await page.locator('.chat__events li').count(), 1);
+	await settings.click();
+	assert.equal(await fresh.isDisabled(), true);
+	assert.equal(await handoffs.isEnabled(), true);
+	await page.keyboard.press('Escape');
+	await page.screenshot({
+		path: out + '/quiet-agent.png',
+		animations: 'disabled',
+	});
+	running = false;
+	releaseFollow?.();
+	await open();
+	assert.equal(await page.locator('.chat__activity-age').count(), 0);
+	findings.agentActivity =
+		'Quiet duration ticks, activity is coalesced, fresh context is disabled while running, and the status unmounts after completion';
 
 	await page.screenshot({
 		animations: 'disabled',
@@ -474,7 +647,13 @@ try {
 	await page
 		.locator('.chat__composer textarea')
 		.fill('Proszę dodać opis rezerwacji.');
+	await settings.click();
+	await fresh.check();
 	await page.getByRole('button', { name: 'Wyślij', exact: true }).click();
+	assert.equal(
+		calls.filter((c) => c.path.endsWith('/turn')).at(-1).body.freshContext,
+		true,
+	);
 	await page
 		.getByText('The selected driver is unavailable.', { exact: true })
 		.waitFor();
@@ -495,6 +674,16 @@ try {
 		animations: 'disabled',
 		path: out + '/session-mobile.png',
 	});
+	await settings.click();
+	await panel.waitFor();
+	const panelBounds = await panel.boundingBox();
+	assert.ok(panelBounds.x >= 0 && panelBounds.x + panelBounds.width <= 390);
+	assert.ok(panelBounds.y >= 0 && panelBounds.y + panelBounds.height <= 844);
+	await page.screenshot({
+		path: out + '/composer-settings-mobile.png',
+		animations: 'disabled',
+	});
+	await page.keyboard.press('Escape');
 	findings.mobile = {
 		previewButtons: await page
 			.getByRole('button', { name: 'Podgląd', exact: true })

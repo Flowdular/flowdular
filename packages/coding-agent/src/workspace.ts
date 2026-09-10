@@ -146,6 +146,7 @@ export interface ProcessLineStream {
 		readonly code: number | null;
 		readonly stderr: string;
 		readonly aborted: boolean;
+		readonly timedOut: boolean;
 	}>;
 }
 
@@ -171,6 +172,8 @@ export function spawnLineStream(options: SpawnJsonOptions): ProcessLineStream {
 	const stderrLimit = options.stderrLimit ?? 8_192;
 	let stderr = '';
 	let aborted = false;
+	let timedOut = false;
+	let killTimer: ReturnType<typeof setTimeout> | undefined;
 	child.stderr.setEncoding('utf8');
 	child.stderr.on('data', (chunk: string) => {
 		if (stderr.length < stderrLimit) {
@@ -179,27 +182,40 @@ export function spawnLineStream(options: SpawnJsonOptions): ProcessLineStream {
 	});
 
 	const stop = () => {
+		if (aborted) return;
 		aborted = true;
 		child.kill('SIGTERM');
-		setTimeout(() => child.kill('SIGKILL'), 2_000).unref();
+		killTimer = setTimeout(() => child.kill('SIGKILL'), 2_000);
+		killTimer.unref();
 	};
 	const timer =
 		options.timeoutMs === undefined
 			? undefined
-			: setTimeout(stop, options.timeoutMs);
+			: setTimeout(() => {
+					if (aborted) return;
+					timedOut = true;
+					stop();
+				}, options.timeoutMs);
 	timer?.unref();
 	if (options.signal) {
 		if (options.signal.aborted) stop();
 		else options.signal.addEventListener('abort', stop, { once: true });
 	}
 
+	const cleanup = () => {
+		if (timer) clearTimeout(timer);
+		if (killTimer) clearTimeout(killTimer);
+		options.signal?.removeEventListener('abort', stop);
+	};
+
 	const finished = new Promise<{
 		code: number | null;
 		stderr: string;
 		aborted: boolean;
+		timedOut: boolean;
 	}>((resolvePromise, rejectPromise) => {
 		child.on('error', (error) => {
-			if (timer) clearTimeout(timer);
+			cleanup();
 			rejectPromise(
 				new CodingAgentError(
 					'DRIVER_PROCESS_FAILED',
@@ -208,8 +224,8 @@ export function spawnLineStream(options: SpawnJsonOptions): ProcessLineStream {
 			);
 		});
 		child.on('close', (code) => {
-			if (timer) clearTimeout(timer);
-			resolvePromise({ code, stderr, aborted });
+			cleanup();
+			resolvePromise({ code, stderr, aborted, timedOut });
 		});
 	});
 

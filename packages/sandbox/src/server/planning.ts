@@ -8,6 +8,7 @@ import type {
 	HandoffDeclaration,
 } from '@flowdular/coding-agent';
 import type { GateResult } from './gates.ts';
+import { gateRepairOwner } from './gate-repair.ts';
 import { SandboxSetupError } from './workspace-root.ts';
 import {
 	moduleSuffixOf,
@@ -573,20 +574,29 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 	   there even when the finished turn worked somewhere else. */
 	const failedGate = context.gates.find((gate) => gate.status !== 'passed');
 	if (failedGate) {
-		const repairRole = context.reviewing
-			? (validateDeclared(context).role ?? context.role)
-			: context.role;
+		const owner = gateRepairOwner(
+			failedGate,
+			context.module,
+			roles,
+			context.routing.session.modules.map((module) => module.directory),
+		);
+		const repairRole =
+			owner?.role ??
+			(context.reviewing
+				? (validateDeclared(context).role ?? context.role)
+				: context.role);
 		return plan(
 			'continue',
 			repairRole,
 			`The ${gateLabel(failedGate)} gate failed, so the responsible specialist fixes it before delivery.`,
 			[
-				`The ${gateLabel(failedGate)} gate failed after your change. Fix exactly what it reports, change nothing else, and end with your handoff line.`,
+				`Continue as ${roleName(roles, repairRole)}. The ${gateLabel(failedGate)} gate failed. Fix the reported files within your role, preserve other work, and end with your handoff line.`,
+				`Recorded gate results:\n${context.gates.map((gate) => `${gateLabel(gate)}: ${gate.status}`).join('\n')}`,
 				`Gate command: ${failedGate.command}`,
 				`Gate output (first ${GATE_PROMPT_OUTPUT} characters; the transcript holds the rest):`,
 				failedGate.output.slice(0, GATE_PROMPT_OUTPUT),
 			].join('\n\n'),
-			failedGate.module ?? context.module,
+			owner?.module ?? failedGate.module ?? context.module,
 		);
 	}
 

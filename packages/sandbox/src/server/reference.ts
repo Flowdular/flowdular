@@ -9,7 +9,7 @@ import {
 } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 
-async function referenceSource(
+export async function referenceSource(
 	workspaceRoot: string,
 	path: string,
 ): Promise<string> {

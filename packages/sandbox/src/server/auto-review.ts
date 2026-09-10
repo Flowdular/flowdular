@@ -9,6 +9,7 @@ import {
 	writeFile,
 } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import { referenceSource } from './reference.ts';
 import {
 	basePathOf,
 	modulePathOf,
@@ -107,7 +108,7 @@ export async function prepareAutoReview(
 	const skill = join(paths.workspace, 'reference', 'skills', 'auto-review');
 	await mkdir(skill, { recursive: true });
 	await cp(
-		join(workspaceRoot, '.ai', 'skills', 'auto-review', 'SKILL.md'),
+		await referenceSource(workspaceRoot, '.ai/skills/auto-review/SKILL.md'),
 		join(skill, 'SKILL.md'),
 	);
 }

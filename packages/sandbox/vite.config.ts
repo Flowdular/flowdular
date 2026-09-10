@@ -9,6 +9,7 @@ import { defineConfig } from 'vite';
 import { sandboxDirectory } from './src/server/config.ts';
 import { findFlowdularWorkspace } from './src/server/workspace-root.ts';
 import { resolvePreviewModules } from './src/server/preview-modules.ts';
+import { isolatePreviewHotUpdates } from './src/server/preview-hot-updates.ts';
 import type { SandboxSession } from './src/server/sessions.ts';
 
 Object.assign(process.env, flowdularEnvironment(process.env));
@@ -103,7 +104,10 @@ function previewModules(workspaceRoot: string): Plugin {
 
 const config = {
 	root: appRoot,
-	plugins: [previewModules(workspace.root), octane()],
+	plugins: [
+		previewModules(workspace.root),
+		...isolatePreviewHotUpdates(octane(), workspace.root),
+	],
 	resolve: {
 		/* Draft module code is loaded from a session workspace outside this app.
 		   It resolves the workspace packages through the node_modules link the

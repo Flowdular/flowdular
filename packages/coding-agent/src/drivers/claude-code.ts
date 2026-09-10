@@ -175,6 +175,7 @@ export function createClaudeCodeDriver(
 		let started = false;
 		let completed = false;
 		let currentResumeId = resumeId;
+		let lastActivityAt = -Infinity;
 		for await (const line of stream.lines) {
 			const message = parseJsonLine(line);
 			if (!message) continue;
@@ -200,14 +201,30 @@ export function createClaudeCodeDriver(
 				const block = partial?.content_block as
 					| Record<string, unknown>
 					| undefined;
+
+				const delta = partial?.delta as Record<string, unknown> | undefined;
+				const kind =
+					partial?.type === 'content_block_start'
+						? block?.type
+						: partial?.type === 'content_block_delta'
+							? delta?.type
+							: null;
+				const phase =
+					kind === 'thinking' || kind === 'thinking_delta'
+						? 'thinking'
+						: kind === 'text' ||
+							  kind === 'text_delta' ||
+							  kind === 'input_json_delta'
+							? 'responding'
+							: null;
+				const now = Date.now();
 				if (
-					partial?.type === 'content_block_start' &&
-					(block?.type === 'thinking' || block?.type === 'text')
+					phase &&
+					(partial?.type === 'content_block_start' ||
+						now - lastActivityAt >= 10_000)
 				) {
-					yield {
-						type: 'activity',
-						phase: block.type === 'thinking' ? 'thinking' : 'responding',
-					};
+					lastActivityAt = now;
+					yield { type: 'activity', phase };
 				}
 				continue;
 			}
@@ -219,7 +236,7 @@ export function createClaudeCodeDriver(
 					if (block.type === 'text' && block.text?.trim()) {
 						yield { type: 'assistant.message', text: block.text };
 					}
-					if (block.type === 'thinking' && typeof block.thinking === 'string') {
+					if (block.type === 'thinking' && block.thinking?.trim()) {
 						yield { type: 'reasoning', text: block.thinking };
 					}
 					if (block.type === 'tool_use' && block.name) {
@@ -290,6 +307,12 @@ export function createClaudeCodeDriver(
 
 		const exit = await stream.finished;
 		if (completed) return;
+		if (exit.timedOut) {
+			throw new CodingAgentError(
+				'DRIVER_TIMEOUT',
+				'The coding agent exceeded the turn time limit. Review the draft before continuing.',
+			);
+		}
 		if (exit.aborted) {
 			yield {
 				type: 'turn.completed',

@@ -1,4 +1,11 @@
-import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
+import {
+	mkdtemp,
+	mkdir,
+	writeFile,
+	readFile,
+	rm,
+	symlink,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -6,6 +13,7 @@ import { runGates } from '../src/server/gates.ts';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
 	inspectAutoReview,
+	prepareAutoReview,
 	moduleReviewRevision,
 	recordAutoReview,
 } from '../src/server/auto-review.ts';
@@ -15,6 +23,7 @@ import {
 } from '../src/server/delivery/steps.ts';
 import {
 	sessionPaths,
+	basePathOf,
 	modulePathOf,
 	type SessionModule,
 } from '../src/server/sessions.ts';
@@ -55,9 +64,44 @@ async function fixture() {
 	const directory = modulePathOf(paths, module.directory);
 	await mkdir(directory, { recursive: true });
 	await writeFile(join(directory, 'package.json'), '{}');
-	return { paths, module, directory };
+	return { root, paths, module, directory };
 }
 describe('review evidence', () => {
+	it('prepares review from installed SDK skills in a generated consumer and prefers a local override', async () => {
+		const { root, paths, module } = await fixture();
+		const baseline = basePathOf(paths, module.directory);
+		await mkdir(baseline, { recursive: true });
+		await writeFile(join(baseline, 'original.ts'), 'original');
+		const sdk = join(root, 'node_modules/@flowdular/sdk');
+		const bundled = join(sdk, '.ai/skills/auto-review');
+		await mkdir(bundled, { recursive: true });
+		await writeFile(
+			join(sdk, 'package.json'),
+			JSON.stringify({
+				name: '@flowdular/sdk',
+				exports: { './package.json': './package.json' },
+			}),
+		);
+		await writeFile(join(bundled, 'SKILL.md'), 'Bundled review instructions');
+		await prepareAutoReview(root, paths, module);
+		const target = join(
+			paths.workspace,
+			'reference/skills/auto-review/SKILL.md',
+		);
+		expect(await readFile(target, 'utf8')).toBe('Bundled review instructions');
+		expect(
+			await readFile(
+				join(paths.workspace, 'reference/auto-review-base/original.ts'),
+				'utf8',
+			),
+		).toBe('original');
+		const local = join(root, '.ai/skills/auto-review');
+		await mkdir(local, { recursive: true });
+		await writeFile(join(local, 'SKILL.md'), 'Local review instructions');
+		await prepareAutoReview(root, paths, module);
+		expect(await readFile(target, 'utf8')).toBe('Local review instructions');
+	});
+
 	it('requires a report and rejects stale evidence after addition, modification and deletion', async () => {
 		const { paths, module, directory } = await fixture();
 		expect((await inspectAutoReview(paths, module)).passed).toBe(false);

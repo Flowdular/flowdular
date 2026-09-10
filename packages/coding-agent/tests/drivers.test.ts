@@ -8,7 +8,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
 	createClaudeCodeDriver,
 	createCodexDriver,
@@ -73,6 +73,72 @@ async function collect(
 }
 
 describe('claude-code driver', () => {
+	it.each([
+		['Claude Code', createClaudeCodeDriver],
+		['Codex', createCodexDriver],
+	])(
+		'reports %s timeouts as errors, not operator cancellation',
+		async (_name, createDriver) => {
+			const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-timeout-'));
+			const command = join(workspacePath, 'fake-cli');
+			await writeFile(
+				command,
+				`#!${process.execPath}\nsetInterval(() => {}, 1000);\n`,
+			);
+			await chmod(command, 0o755);
+			await expect(
+				collect(createDriver({ command, timeoutMs: 100 }), workspacePath),
+			).rejects.toMatchObject({ code: 'DRIVER_TIMEOUT' });
+		},
+	);
+
+	it('reports ongoing streamed generation at most once per ten seconds', async () => {
+		const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-activity-'));
+		const command = await replayBinary([
+			{ type: 'system', subtype: 'init', session_id: 'streaming' },
+			{
+				type: 'stream_event',
+				event: {
+					type: 'content_block_start',
+					content_block: { type: 'thinking' },
+				},
+			},
+			...Array.from({ length: 100 }, () => ({
+				type: 'stream_event',
+				event: {
+					type: 'content_block_delta',
+					delta: { type: 'thinking_delta', thinking: 'fragment' },
+				},
+			})),
+			{
+				type: 'assistant',
+				message: { content: [{ type: 'thinking', thinking: '   ' }] },
+			},
+			{ type: 'result', is_error: false, usage: {} },
+		]);
+		let now = 1000;
+		const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+		const events: CodingAgentEvent[] = [];
+		try {
+			for await (const event of createClaudeCodeDriver({ command }).run({
+				workspacePath,
+				role: 'backend-engineer',
+				systemInstruction: 'contract',
+				prompt: 'go',
+			})) {
+				events.push(event);
+				if (event.type === 'activity') now = 11000;
+			}
+		} finally {
+			clock.mockRestore();
+		}
+		expect(events.filter((event) => event.type === 'activity')).toEqual([
+			{ type: 'activity', phase: 'thinking' },
+			{ type: 'activity', phase: 'thinking' },
+		]);
+		expect(events.some((event) => event.type === 'reasoning')).toBe(false);
+	});
+
 	it('can resume after cancellation and replay history into a fresh conversation', async () => {
 		const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-resume-'));
 		const command = join(workspacePath, 'fake-cli');

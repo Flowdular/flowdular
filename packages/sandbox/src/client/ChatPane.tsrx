@@ -17,6 +17,8 @@ import {
 	type ModuleSpecReview,
 	type RoleSummary,
 } from './api.ts';
+import { TurnActivity } from './TurnActivity.tsrx';
+import { ComposerSettings } from './ComposerSettings.tsrx';
 import { ApprovalHandoff } from './ApprovalHandoff.tsrx';
 import { ATTACH_ACCEPT, attachmentKind, formatBytes } from './attachments.ts';
 import {
@@ -131,10 +133,16 @@ function streamBlocks(entries: readonly ChatEntry[]): readonly StreamBlock[] {
 		events: ChatEntry[] | null;
 	}[] = [];
 	for (const entry of entries) {
+		if (entry.event?.type === 'reasoning' && !entry.event.text.trim()) continue;
 		const last = blocks[blocks.length - 1];
 		if (entry.kind === 'event') {
 			if (last?.events) {
-				last.events.push(entry);
+				if (
+					entry.event?.type === 'activity' &&
+						last.events.at(-1)?.event?.type === 'activity'
+				) {
+					last.events[last.events.length - 1] = entry;
+				} else last.events.push(entry);
 				continue;
 			}
 			blocks.push({ key: entry.sequence, entry: null, events: [entry] });
@@ -167,6 +175,10 @@ export function ChatPane(props: ChatPaneProps) @{
 	const { t } = useTranslation();
 	const offered = props.drivers.filter((driver) => driver.offered);
 	const stream = streamBlocks(props.entries);
+	const isActive = (entry: ChatEntry) =>
+		props.running && entry.sequence === props.entries.at(-1)?.sequence &&
+			(entry.event?.type === 'activity' ||
+				entry.event?.type === 'tool.started');
 	/* Which module an entry belongs to only matters once a session has several;
    with one module the transcript stays as quiet as it was. */
 	const moduleLabel = (entry: ChatEntry) => props.modules.length > 1 &&
@@ -400,11 +412,19 @@ export function ChatPane(props: ChatPaneProps) @{
 								<li
 									class={[
 										'chat__event',
+										isActive(entry) && 'chat__event--active',
 										isError(entry) && 'chat__event--error',
 									]}
 									title={eventLabel(entry)}
 								>
-									<Icon name={isError(entry) ? 'alert' : 'check'} size={14} />
+									<Icon
+										name={isError(entry)
+											? 'alert'
+											: isActive(entry)
+												? 'refresh'
+												: 'check'}
+										size={14}
+									/>
 									<span class="chat__event-text">{eventLabel(entry)}</span>
 								</li>
 							}
@@ -606,16 +626,14 @@ export function ChatPane(props: ChatPaneProps) @{
 				onInput={(event) => props.onMessage(event.currentTarget.value)}
 				onPaste={onPaste}
 			></textarea>
-			<label class="ui-checkbox" title={t('sandbox.chat.freshHelp')}>
-				<input
-					type="checkbox"
-					checked={freshContext}
-					disabled={props.running}
-					onChange={(event) => setFreshContext(event.currentTarget.checked)}
-				/>
-				<span>{t('sandbox.chat.fresh')}</span>
-			</label>
 			<div class="chat__composer-row">
+				<ComposerSettings
+					autoContinue={props.autoContinue}
+					freshContext={freshContext}
+					running={props.running}
+					onAutoContinue={props.onAutoContinue}
+					onFreshContext={setFreshContext}
+				/>
 				<button
 					class="chat__attach"
 					type="button"
@@ -668,16 +686,6 @@ export function ChatPane(props: ChatPaneProps) @{
 						<option value={driver.id}>{driver.label}</option>
 					}
 				</select>
-				<label class="chat__auto">
-					<input
-						type="checkbox"
-						checked={props.autoContinue}
-						onInput={(event) => props.onAutoContinue(
-							event.currentTarget.checked,
-						)}
-					/>
-					<span>{t('sandbox.chat.autoHandoff')}</span>
-				</label>
 				<span class="sandbox__spacer"></span>
 				@if (props.running) {
 					<Button size="sm" variant="danger" onClick={props.onStop}>{t(
@@ -698,7 +706,7 @@ export function ChatPane(props: ChatPaneProps) @{
 			@if (props.running || props.delivered) {
 				<p class="chat__composer-status">
 					{props.running
-						? t('sandbox.chat.working')
+						? <TurnActivity lastUpdateAt={props.entries.at(-1)?.at} />
 						: t('sandbox.chat.delivered')}
 				</p>
 			}

@@ -1130,7 +1130,7 @@ describe('handoff planning', () => {
 		expect(plan.reason).toContain('who may approve');
 	});
 
-	it('keeps a failed gate with the specialist that caused it and quotes the output', () => {
+	it('routes failed tests to their owner and quotes the output', () => {
 		const plan = planHandoff({
 			...base,
 			declared: { role: 'ux-designer', reason: 'the screen is missing' },
@@ -1146,11 +1146,165 @@ describe('handoff planning', () => {
 			],
 		});
 		expect(plan.kind).toBe('continue');
-		expect(plan.role).toBe('business-manager');
+		expect(plan.role).toBe('backend-engineer');
 		expect(plan.prompt).toContain('tests (modules/profile) gate failed');
 		expect(plan.prompt).toContain('no such column: tenant_id');
 		expect(plan.prompt).toContain('vitest run');
 	});
+
+	it.each([
+		[
+			'module-schema',
+			JSON.stringify({
+				error: {
+					details: {
+						reports: [
+							{
+								file: 'modules/profile/module.json',
+								issues: [
+									{
+										severity: 'error',
+										code: 'TRANSLATION_KEY_MISSING',
+										path: 'src/client/View.tsrx',
+									},
+								],
+							},
+						],
+					},
+				},
+			}),
+		],
+		[
+			'typecheck',
+			"src/client/View.tsrx(26,33): error TS2339: Property 'name' does not exist.",
+		],
+	])(
+		'routes %s client diagnostics to the frontend instead of repeating a backend turn',
+		(id, output) => {
+			const plan = planHandoff({
+				...base,
+				role: 'backend-engineer',
+				declared: { role: null, reason: 'Client paths are outside my scope' },
+				gates: [
+					{
+						id: id as 'module-schema' | 'typecheck',
+						module: 'profile',
+						status: 'failed',
+						command: 'check',
+						durationMs: 1,
+						output,
+					},
+					{
+						id: 'tests',
+						module: 'profile',
+						status: 'passed',
+						command: 'vitest run',
+						durationMs: 1,
+						output: 'passed',
+					},
+				],
+			});
+			expect(plan.kind).toBe('continue');
+			expect(plan.role).toBe('frontend-engineer');
+			expect(plan.module).toBe('profile');
+			expect(plan.prompt).toContain('Frontend engineer');
+			expect(plan.prompt).toContain('tests (modules/profile): passed');
+		},
+	);
+
+	it('routes a workspace validation error to the module named by its diagnostic', () => {
+		const plan = planHandoff({
+			...base,
+			routing: {
+				...routing,
+				session: {
+					...SESSION,
+					modules: [
+						...SESSION.modules,
+						{ id: 'booking.core', directory: 'booking', kind: 'edit' },
+					],
+				},
+			},
+			role: 'backend-engineer',
+			gates: [
+				{
+					id: 'module-schema',
+					status: 'failed',
+					command: 'check',
+					durationMs: 1,
+					output: JSON.stringify({
+						error: {
+							details: {
+								reports: [
+									{
+										file: 'modules/booking/module.json',
+										issues: [
+											{ severity: 'error', path: 'src/client/View.tsrx' },
+										],
+									},
+								],
+							},
+						},
+					}),
+				},
+			],
+		});
+		expect(plan.role).toBe('frontend-engineer');
+		expect(plan.module).toBe('booking');
+	});
+
+	it.each([
+		{
+			file: 'modules/outside/module.json',
+			severity: 'error',
+			path: 'src/client/View.tsrx',
+		},
+		{
+			file: 'modules/profile/module.json',
+			severity: 'warning',
+			path: 'src/client/View.tsrx',
+		},
+		{
+			file: 'modules/profile/module.json',
+			severity: 'error',
+			path: 'src/client/../../outside.ts',
+		},
+	])(
+		'does not route outside the session or from non-actionable paths: %j',
+		(diagnostic) => {
+			const plan = planHandoff({
+				...base,
+				role: 'backend-engineer',
+				gates: [
+					{
+						id: 'module-schema',
+						status: 'failed',
+						command: 'check',
+						durationMs: 1,
+						output: JSON.stringify({
+							error: {
+								details: {
+									reports: [
+										{
+											file: diagnostic.file,
+											issues: [
+												{
+													severity: diagnostic.severity,
+													path: diagnostic.path,
+												},
+											],
+										},
+									],
+								},
+							},
+						}),
+					},
+				],
+			});
+			expect(plan.role).toBe('backend-engineer');
+			expect(plan.module).toBe('profile');
+		},
+	);
 
 	it('never continues on its own after a driver error', () => {
 		expect(planHandoff({ ...base, failed: true }).kind).toBe('blocked');
