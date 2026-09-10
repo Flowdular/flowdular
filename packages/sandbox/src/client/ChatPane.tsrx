@@ -17,6 +17,8 @@ import {
 	type ModuleSpecReview,
 	type RoleSummary,
 } from './api.ts';
+import { ToolEvent } from './ToolEvent.tsrx';
+import { transcriptRows, type TranscriptRow } from './transcript.ts';
 import { TurnActivity } from './TurnActivity.tsrx';
 import { ComposerSettings } from './ComposerSettings.tsrx';
 import { ApprovalHandoff } from './ApprovalHandoff.tsrx';
@@ -117,35 +119,33 @@ function spoken(entry: ChatEntry): string {
 interface StreamBlock {
 	readonly key: number;
 	readonly entry: ChatEntry | null;
-	readonly events: readonly ChatEntry[] | null;
+	readonly events: readonly TranscriptRow[] | null;
 }
-
-const EVENT_TAIL = 6;
 
 /* One stream in the order it happened: a message, then the tool activity that
    followed it, so the newest thing on screen is the newest thing that happened.
-   A long run of tool events keeps only its tail, because the transcript is the
-   conversation and the events are its footnotes. */
+   Keep the complete history; paired calls retain their original position. */
 function streamBlocks(entries: readonly ChatEntry[]): readonly StreamBlock[] {
 	const blocks: {
 		key: number;
 		entry: ChatEntry | null;
-		events: ChatEntry[] | null;
+		events: TranscriptRow[] | null;
 	}[] = [];
-	for (const entry of entries) {
+	for (const row of transcriptRows(entries)) {
+		const entry = row.entry;
 		if (entry.event?.type === 'reasoning' && !entry.event.text.trim()) continue;
 		const last = blocks[blocks.length - 1];
 		if (entry.kind === 'event') {
 			if (last?.events) {
 				if (
 					entry.event?.type === 'activity' &&
-						last.events.at(-1)?.event?.type === 'activity'
+						last.events.at(-1)?.entry.event?.type === 'activity'
 				) {
-					last.events[last.events.length - 1] = entry;
-				} else last.events.push(entry);
+					last.events[last.events.length - 1] = row;
+				} else last.events.push(row);
 				continue;
 			}
-			blocks.push({ key: entry.sequence, entry: null, events: [entry] });
+			blocks.push({ key: entry.sequence, entry: null, events: [row] });
 			continue;
 		}
 		blocks.push({ key: entry.sequence, entry, events: null });
@@ -154,7 +154,7 @@ function streamBlocks(entries: readonly ChatEntry[]): readonly StreamBlock[] {
 		(block) => ({
 			key: block.key,
 			entry: block.entry,
-			events: block.events ? block.events.slice(-EVENT_TAIL) : null,
+			events: block.events,
 		}),
 	);
 }
@@ -190,6 +190,7 @@ export function ChatPane(props: ChatPaneProps) @{
 	const open =
 		props.entries.filter((entry) => entry.handoff).at(-1)?.sequence ?? -1;
 	const scroller = useRef<HTMLDivElement | null>(null);
+	const followLatest = useRef(true);
 	const attachInput = useRef<HTMLInputElement | null>(null);
 	/* The composer manages its own attachments: App owns the transcript, but the
    session id from the URL is enough to upload, list and remove them here. */
@@ -218,11 +219,14 @@ export function ChatPane(props: ChatPaneProps) @{
 				? checkpoints.find((entry) => entry.sequence === 0)
 				: undefined);
 
-	/* The newest message is the one being written, so the transcript follows it. */
+	/* Follow new events only while the operator is already at the bottom. */
+	useEffect(() => {
+		followLatest.current = true;
+	}, [sessionId]);
 	useEffect(() => {
 		const node = scroller.current;
-		if (node) node.scrollTop = node.scrollHeight;
-	}, [props.entries.length, props.running]);
+		if (node && followLatest.current) node.scrollTop = node.scrollHeight;
+	}, [props.entries.length, props.running, sessionId]);
 
 	/* Seed the strip from the open session, and reset it when the session
    changes so one session's attachments never show under another. */
@@ -403,30 +407,50 @@ export function ChatPane(props: ChatPaneProps) @{
 	};
 
 	<section class="sandbox__chat">
-		<div class="sandbox__scroll" ref={scroller}>
+		<div
+			class="sandbox__scroll"
+			ref={scroller}
+			onScroll={(event) => {
+				const node = event.currentTarget;
+				followLatest.current = node.scrollHeight - node.scrollTop -
+					node.clientHeight <
+				64;
+			}}
+		>
 			<div class="chat sandbox__column">
 				@for (const block of stream; key blockKey(block)) {
 					@if (block.events) {
 						<ul class="chat__events">
-							@for (const entry of block.events; key entry.sequence) {
-								<li
-									class={[
-										'chat__event',
-										isActive(entry) && 'chat__event--active',
-										isError(entry) && 'chat__event--error',
-									]}
-									title={eventLabel(entry)}
-								>
-									<Icon
-										name={isError(entry)
-											? 'alert'
-											: isActive(entry)
-												? 'refresh'
-												: 'check'}
-										size={14}
-									/>
-									<span class="chat__event-text">{eventLabel(entry)}</span>
-								</li>
+							@for (const row of block.events; key row.key) {
+								@if (
+									row.entry.event?.type === 'tool.started' ||
+										row.entry.event?.type === 'tool.completed'
+								) {
+									<li>
+										<ToolEvent row={row} running={props.running} />
+									</li>
+								} @else {
+									<li
+										class={[
+											'chat__event',
+											isActive(row.entry) && 'chat__event--active',
+											isError(row.entry) && 'chat__event--error',
+										]}
+										title={eventLabel(row.entry)}
+									>
+										<Icon
+											name={isError(row.entry)
+												? 'alert'
+												: isActive(row.entry)
+													? 'refresh'
+													: 'check'}
+											size={14}
+										/>
+										<span class="chat__event-text">{eventLabel(
+											row.entry,
+										)}</span>
+									</li>
+								}
 							}
 						</ul>
 					} @else if (block.entry!.handoff) {

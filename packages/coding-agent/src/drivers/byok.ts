@@ -85,19 +85,33 @@ export function createByokDriver(
 		allowedPaths: readonly string[],
 		emit: (event: CodingAgentEvent) => void,
 	): ToolSet {
+		let nextCall = 0;
 		const record = (
 			name: string,
 			detail: string,
 			run: () => Promise<string>,
 		) => {
-			emit({ type: 'tool.started', tool: name, detail });
+			const callId = String(++nextCall);
+			emit({ type: 'tool.started', callId, tool: name, detail });
 			return run().then(
 				(value) => {
-					emit({ type: 'tool.completed', tool: name, detail, ok: true });
+					emit({
+						type: 'tool.completed',
+						callId,
+						tool: name,
+						detail,
+						ok: true,
+					});
 					return value;
 				},
 				(error: unknown) => {
-					emit({ type: 'tool.completed', tool: name, detail, ok: false });
+					emit({
+						type: 'tool.completed',
+						callId,
+						tool: name,
+						detail,
+						ok: false,
+					});
 					return `Error: ${error instanceof Error ? error.message : String(error)}`;
 				},
 			);

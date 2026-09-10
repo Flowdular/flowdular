@@ -167,6 +167,7 @@ const review = modules.map((m) => ({
 	},
 }));
 let running = false;
+let showTools = false;
 let releaseFollow;
 let kind = 'approval',
 	turnFailure = false,
@@ -231,6 +232,50 @@ const view = () => ({
 	},
 	chat: [
 		...chat(),
+		...(showTools
+			? Array.from({ length: 12 }, (_, i) => [
+					{
+						sequence: 10 + i * 2,
+						at: 1000 + i * 2000,
+						kind: 'event',
+						role: 'backend-engineer',
+						event: {
+							type: 'tool.started',
+							callId: String(i),
+							tool: 'Edit',
+							detail: `/Users/demo/app/.flowdular/sandbox/sessions/${id}/workspace/modules/blog/src/file-${i}.ts`,
+						},
+					},
+					{
+						sequence: 11 + i * 2,
+						at: 1500 + i * 2000,
+						kind: 'event',
+						role: 'backend-engineer',
+						event: {
+							type: 'tool.completed',
+							callId: String(i),
+							tool: 'tool',
+							detail: i === 0 ? 'Permission denied' : '',
+							ok: i !== 0,
+						},
+					},
+				])
+					.flat()
+					.concat([
+						{
+							sequence: 40,
+							at: Date.now(),
+							kind: 'event',
+							role: 'backend-engineer',
+							event: {
+								type: 'tool.started',
+								callId: 'pending',
+								tool: 'Read',
+								detail: 'modules/blog/src/pending.ts',
+							},
+						},
+					])
+			: []),
 		...(running
 			? [
 					{
@@ -544,6 +589,72 @@ try {
 	assert.equal(await page.locator('.chat__activity-age').count(), 0);
 	findings.agentActivity =
 		'Quiet duration ticks, activity is coalesced, fresh context is disabled while running, and the status unmounts after completion';
+	showTools = true;
+	await open();
+	assert.equal(await page.locator('.chat-tool').count(), 13);
+	const firstTool = page.locator('.chat-tool').first();
+	assert.match(
+		await firstTool.locator('summary').innerText(),
+		/blog\/src\/file-0.ts/,
+	);
+	assert.doesNotMatch(
+		await firstTool.locator('summary').innerText(),
+		/Users|sessions/,
+	);
+	assert.equal(await firstTool.getAttribute('data-status'), 'failed');
+	assert.equal(
+		await page.locator('.chat-tool').last().getAttribute('data-status'),
+		'unknown',
+	);
+	await firstTool.locator('summary').focus();
+	await page.keyboard.press('Enter');
+	await firstTool.locator('dd').first().waitFor({ state: 'visible' });
+	assert.match(await firstTool.locator('dl').innerText(), /Permission denied/);
+	assert.match(await firstTool.locator('dl').innerText(), /\/Users\/demo\/app/);
+	assert.equal(
+		await page.locator('.chat-tool__duration').first().innerText(),
+		'0.5s',
+	);
+	await page.screenshot({
+		path: out + '/tool-history.png',
+		animations: 'disabled',
+	});
+	await page.setViewportSize({ width: 390, height: 844 });
+	await firstTool.scrollIntoViewIfNeeded();
+	assert.equal(
+		await page.evaluate(
+			() => document.documentElement.scrollWidth <= window.innerWidth,
+		),
+		true,
+	);
+	await page.screenshot({
+		path: out + '/tool-history-mobile.png',
+		animations: 'disabled',
+	});
+	await page.setViewportSize({ width: 1440, height: 1000 });
+	running = true;
+	await open();
+	assert.equal(
+		await page.locator('.chat-tool').last().getAttribute('data-status'),
+		'running',
+	);
+	await page.locator('.sandbox__chat > .sandbox__scroll').evaluate((node) => {
+		node.scrollTop = 0;
+		node.dispatchEvent(new Event('scroll'));
+	});
+	running = false;
+	releaseFollow?.();
+	await page.locator('.chat__activity-age').waitFor({ state: 'detached' });
+	assert.equal(
+		await page
+			.locator('.sandbox__chat > .sandbox__scroll')
+			.evaluate((node) => node.scrollTop),
+		0,
+	);
+	showTools = false;
+	await open();
+	findings.toolHistory =
+		'All 13 operations remain visible; paired calls show short paths, duration, failure/running/unconfirmed states, keyboard-accessible full details and mobile containment';
 
 	await page.screenshot({
 		animations: 'disabled',

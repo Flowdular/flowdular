@@ -486,5 +486,22 @@
 	"chat.activity.thinking": "Agent is thinking…",
 	"chat.activity.responding": "Agent is preparing a response…",
 	"chat.fresh": "Fresh agent context",
-	"chat.freshHelp": "The next message starts a fresh context with the brief and recent messages. Draft files, specification and sandbox history are preserved."
+	"chat.freshHelp": "The next message starts a fresh context with the brief and recent messages. Draft files, specification and sandbox history are preserved.",
+	"chat.tool.name": "Tool",
+	"chat.tool.detail": "Target or command",
+	"chat.tool.result": "Completion detail",
+	"chat.tool.noDetail": "No detail provided",
+	"chat.tool.duration": "{seconds}s",
+	"chat.tool.action.read": "Read file",
+	"chat.tool.action.edit": "Edit file",
+	"chat.tool.action.write": "Write file",
+	"chat.tool.action.delete": "Delete file",
+	"chat.tool.action.list": "Find files",
+	"chat.tool.action.search": "Search",
+	"chat.tool.action.command": "Run command",
+	"chat.tool.action.tool": "Tool call",
+	"chat.tool.status.done": "Done",
+	"chat.tool.status.failed": "Failed",
+	"chat.tool.status.running": "Running",
+	"chat.tool.status.unknown": "No result"
 }

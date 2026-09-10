@@ -28,6 +28,8 @@ const DEFAULT_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep'] as const;
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 
 interface ContentBlock {
+	readonly id?: string;
+	readonly tool_use_id?: string;
 	readonly type?: string;
 	readonly text?: string;
 	readonly thinking?: string;
@@ -41,7 +43,8 @@ function toolDetail(input: Record<string, unknown> | undefined): string {
 	if (!input) return '';
 	for (const key of ['file_path', 'path', 'pattern', 'query', 'command']) {
 		const value = input[key];
-		if (typeof value === 'string') return value.slice(0, 200);
+		if (typeof value === 'string')
+			return value.slice(0, key === 'file_path' || key === 'path' ? 4096 : 200);
 	}
 	return '';
 }
@@ -242,6 +245,7 @@ export function createClaudeCodeDriver(
 					if (block.type === 'tool_use' && block.name) {
 						yield {
 							type: 'tool.started',
+							...(block.id ? { callId: block.id } : {}),
 							tool: block.name,
 							detail: toolDetail(block.input),
 						};
@@ -261,6 +265,7 @@ export function createClaudeCodeDriver(
 					if (block.type !== 'tool_result') continue;
 					yield {
 						type: 'tool.completed',
+						...(block.tool_use_id ? { callId: block.tool_use_id } : {}),
 						tool: typeof result.type === 'string' ? result.type : 'tool',
 						detail: typeof result.filePath === 'string' ? result.filePath : '',
 						ok: block.is_error !== true,

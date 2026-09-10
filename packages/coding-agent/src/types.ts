@@ -20,11 +20,13 @@ export type CodingAgentEvent =
 	| { readonly type: 'activity'; readonly phase: 'thinking' | 'responding' }
 	| {
 			readonly type: 'tool.started';
+			readonly callId?: string;
 			readonly tool: string;
 			readonly detail: string;
 	  }
 	| {
 			readonly type: 'tool.completed';
+			readonly callId?: string;
 			readonly tool: string;
 			readonly detail: string;
 			readonly ok: boolean;

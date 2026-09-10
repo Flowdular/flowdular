@@ -486,5 +486,22 @@
 	"chat.activity.thinking": "Agent analizuje zadanie…",
 	"chat.activity.responding": "Agent przygotowuje odpowiedź…",
 	"chat.fresh": "Świeży kontekst agenta",
-	"chat.freshHelp": "Następna wiadomość rozpocznie nowy kontekst z briefem i ostatnimi wiadomościami. Pliki, specyfikacja i historia sandboxa pozostaną zachowane."
+	"chat.freshHelp": "Następna wiadomość rozpocznie nowy kontekst z briefem i ostatnimi wiadomościami. Pliki, specyfikacja i historia sandboxa pozostaną zachowane.",
+	"chat.tool.name": "Narzędzie",
+	"chat.tool.detail": "Plik lub polecenie",
+	"chat.tool.result": "Szczegóły zakończenia",
+	"chat.tool.noDetail": "Brak szczegółów",
+	"chat.tool.duration": "{seconds}s",
+	"chat.tool.action.read": "Odczyt pliku",
+	"chat.tool.action.edit": "Edycja pliku",
+	"chat.tool.action.write": "Zapis pliku",
+	"chat.tool.action.delete": "Usunięcie pliku",
+	"chat.tool.action.list": "Wyszukiwanie plików",
+	"chat.tool.action.search": "Wyszukiwanie",
+	"chat.tool.action.command": "Polecenie",
+	"chat.tool.action.tool": "Narzędzie",
+	"chat.tool.status.done": "Gotowe",
+	"chat.tool.status.failed": "Błąd",
+	"chat.tool.status.running": "W toku",
+	"chat.tool.status.unknown": "Brak wyniku"
 }

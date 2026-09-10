@@ -217,12 +217,14 @@ export function createCodexDriver(
 					yield done
 						? {
 								type: 'tool.completed',
+								...(item.id ? { callId: item.id } : {}),
 								tool: 'command',
 								detail: (item.command ?? '').slice(0, 200),
 								ok: (item.exit_code ?? 0) === 0,
 							}
 						: {
 								type: 'tool.started',
+								...(item.id ? { callId: item.id } : {}),
 								tool: 'command',
 								detail: (item.command ?? '').slice(0, 200),
 							};

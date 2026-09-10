@@ -3,6 +3,7 @@ import {
 	mkdir,
 	mkdtemp,
 	readFile,
+	rm,
 	symlink,
 	writeFile,
 } from 'node:fs/promises';
@@ -73,6 +74,39 @@ async function collect(
 }
 
 describe('claude-code driver', () => {
+	it('retains long file paths so the operation can show its target', async () => {
+		const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-tool-path-'));
+		const path = `${workspacePath}/${'nested/'.repeat(35)}src/index.ts`;
+		const command = await replayBinary([
+			{
+				type: 'assistant',
+				message: {
+					content: [
+						{
+							type: 'tool_use',
+							id: 'read-1',
+							name: 'Read',
+							input: { file_path: path },
+						},
+					],
+				},
+			},
+			{ type: 'result', subtype: 'success', is_error: false, usage: {} },
+		]);
+		try {
+			const events = await collect(
+				createClaudeCodeDriver({ command }),
+				workspacePath,
+			);
+			expect(
+				events.find((event) => event.type === 'tool.started'),
+			).toMatchObject({ detail: path });
+		} finally {
+			await rm(workspacePath, { recursive: true, force: true });
+			await rm(join(command, '..'), { recursive: true, force: true });
+		}
+	});
+
 	it.each([
 		['Claude Code', createClaudeCodeDriver],
 		['Codex', createCodexDriver],
@@ -215,6 +249,7 @@ else console.log(JSON.stringify({type:'result',subtype:'success',session_id:'res
 						{ type: 'thinking', thinking: 'Checking the entry point.' },
 						{
 							type: 'tool_use',
+							id: 'write-1',
 							name: 'Write',
 							input: { file_path: `${workspacePath}/src/index.ts` },
 						},
@@ -223,7 +258,11 @@ else console.log(JSON.stringify({type:'result',subtype:'success',session_id:'res
 			},
 			{
 				type: 'user',
-				message: { content: [{ type: 'tool_result', is_error: false }] },
+				message: {
+					content: [
+						{ type: 'tool_result', tool_use_id: 'write-1', is_error: false },
+					],
+				},
 				tool_use_result: {
 					type: 'create',
 					filePath: `${workspacePath}/src/index.ts`,
@@ -250,6 +289,10 @@ else console.log(JSON.stringify({type:'result',subtype:'success',session_id:'res
 			role: 'backend-engineer',
 			resumeId: 'session-1',
 		});
+		expect(events.filter((event) => event.type.startsWith('tool.'))).toEqual([
+			expect.objectContaining({ type: 'tool.started', callId: 'write-1' }),
+			expect.objectContaining({ type: 'tool.completed', callId: 'write-1' }),
+		]);
 		expect(events).toContainEqual({ type: 'activity', phase: 'thinking' });
 		expect(events).toContainEqual({
 			type: 'assistant.message',
@@ -394,6 +437,7 @@ describe('codex driver', () => {
 		});
 		expect(events).toContainEqual({
 			type: 'tool.completed',
+			callId: 'item_1',
 			tool: 'command',
 			detail: 'ls -la',
 			ok: true,
