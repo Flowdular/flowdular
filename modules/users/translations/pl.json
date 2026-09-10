@@ -14,7 +14,7 @@
 	"invite.subtitle": "Zaproszenie e-mail do tej przestrzeni roboczej",
 	"invite.email": "Adres e-mail",
 	"invite.emailHelp": "Link z zaproszenia działa jeden raz i wygasa po siedmiu dniach.",
-	"invite.footer": "Coreloom wysyła zaproszenie przez adapter poczty skonfigurowany we wdrożeniu.",
+	"invite.footer": "Flowdular wysyła zaproszenie przez adapter poczty skonfigurowany we wdrożeniu.",
 	"invite.send": "Wyślij zaproszenie",
 	"invite.sending": "Wysyłanie…",
 	"invite.sent": "Zaproszenie wysłano na {email}.",

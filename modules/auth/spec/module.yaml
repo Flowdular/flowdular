@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: auth.core
-specVersion: 0.8.1
+specVersion: 0.10.0
 status: approved
 name: Authentication Core
 description: Provides tenant-aware accounts, password authentication, sessions, scopes, tenant roles, API tokens for machine clients, the module settings store, the auth audit trail, security headers, authentication screens, and server authorization middleware.
@@ -13,7 +13,7 @@ capabilities:
   - cli
 dependencies:
   - id: system.core
-    range: ^0.1.0
+    range: 0.5.0
 tenancy: required
 locales:
   - en
@@ -43,9 +43,14 @@ invariants:
   - Module settings are declared by their owning module, stored per tenant (or once for the platform), validated against the declaration on every write, and secret values are never returned.
   - Email confirmation cannot be enabled without a composed mail transport.
   - Password reset and tenant invitation tokens are random, hashed at rest, short lived, single use, and never returned by HTTP APIs.
+  - Operator provisioning creates a workspace, its owner and the owner scopes exactly as sign-up does, works against the deployment database, and never reads the sign-up setting.
+  - An operator command never returns a password the operator did not supply. It emits a single-use setup or invitation link once, and a supplied password is read from the environment rather than from a command flag.
+  - Every operator provisioning command appends an audit row whose actor identifies the operator shell that ran it.
   - TOTP secrets are encrypted with a deployment-provided AES-256 key; a successful password check creates a short-lived, single-use MFA challenge rather than a session.
   - External email delivery is an injected deployment adapter. The local in-memory adapter is development-only and never exposes tokens over HTTP or logs.
   - Authentication and administration events are appended to an auth audit trail that is readable per tenant and never contains credentials or raw tokens.
+  - Every request-time read and write runs on a tenant-scoped database handle, under forced row-level security bound to the transaction tenant.
+  - A lookup that arrives with a key and no workspace, such as a session cookie, a bearer token, an invitation link or an email address, resolves the owning tenant on a read-only cross-tenant handle that is granted only the routing columns, and the work that follows runs under the tenant that lookup named.
 permissions:
   - id: auth.profile.read
     description: Read the current account profile.
@@ -170,8 +175,16 @@ acceptanceScenarios:
   - id: AUTH-MFA-OIDC
     given: An account with confirmed TOTP signs in through an enabled, configured OIDC provider.
     when: The provider returns a verified email for that account.
-    then: Coreloom redirects to the MFA challenge using a short-lived HttpOnly proof cookie and creates no session before the second factor succeeds.
+    then: Flowdular redirects to the MFA challenge using a short-lived HttpOnly proof cookie and creates no session before the second factor succeeds.
   - id: AUTH-SECURITY-SURFACES
     given: A browser opens account recovery, invitation acceptance, or personal security from a supported route.
     when: The corresponding operation is unavailable, loading, denied, invalid, successful, or pending confirmation.
     then: The screen renders a translated explicit state and never exposes a stored credential or reusable token.
+  - id: AUTH-OPERATOR-WORKSPACE
+    given: A deployment with public sign-up disabled and no workspace yet.
+    when: An operator runs the workspace creation command with a workspace name, an owner address and a display name, and authorizes it with apply.
+    then: The workspace, the owner account, the owner membership and the owner scopes are created exactly as a sign-up creates them, an audit row names the operator, and the owner's first credential is returned once as a single-use setup link unless the operator supplied a password through the environment.
+  - id: AUTH-OPERATOR-MEMBER
+    given: An existing workspace in a deployment with public sign-up disabled.
+    when: An operator adds an email address to that workspace with a role.
+    then: A known account joins immediately with that role's scopes, an unknown address receives a single-use invitation link that is shown once, and either outcome is appended to the workspace audit trail with the operator as the actor.

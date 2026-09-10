@@ -1,9 +1,9 @@
 import type {
 	PlatformServerComposition,
 	PlatformServerContext,
-} from '@coreloom/module-auth/server';
-import type { ModuleSettingsDeclaration } from '@coreloom/kernel';
-import type { AgentTool } from '@coreloom/harness';
+} from '@flowdular/module-auth/server';
+import type { ModuleSettingsDeclaration } from '@flowdular/kernel';
+import type { AgentTool } from '@flowdular/harness';
 import type { ModuleAgentDefinition } from './domain/types.ts';
 import {
 	AGENT_ACTION_EXECUTION_CAPABILITY,
@@ -37,7 +37,7 @@ function toolsFromContext(
 
 export type AgentServerComposition = PlatformServerComposition & {
 	readonly settings: ModuleSettingsDeclaration;
-	prepare(): void;
+	prepare(): Promise<void>;
 	/* Called by the platform once every module is composed. Recovery of
 	   interrupted runs starts here, not on the first request. */
 	start(): void;
@@ -51,6 +51,7 @@ export function createServerComposition(
 			context.environment,
 			context.workspaceRoot,
 		),
+		databases: context.databases,
 		tools: () => toolsFromContext(context),
 		moduleAgents: () =>
 			context.agentDefinitions.list() as readonly ModuleAgentDefinition[],

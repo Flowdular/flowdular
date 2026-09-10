@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'octane';
-import type { ModuleSettingValue } from '@coreloom/kernel';
-import { t } from '@coreloom/client';
+import type { ModuleSettingValue } from '@flowdular/kernel';
+import { t } from '@flowdular/client';
 import { cell, createStore, useValue } from 'segment-state';
 import { ApiError } from './api.ts';
 import { ModuleSettingRow } from './ModuleSettingRow.tsrx';

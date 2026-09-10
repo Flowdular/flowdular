@@ -1,4 +1,4 @@
-/* Mirror of modules/catalog/src/client/index.ts: the canonical entry the
+/* Mirror of .ai/references/catalog/src/client/index.ts: the canonical entry the
    generated composition imports as createClientContribution from
    <package>/client. */
 export { createCustomerClientContribution } from './contribution.tsrx';
@@ -10,7 +10,7 @@ export {
 import type {
 	ModuleClientContext,
 	ModuleClientContribution,
-} from '@coreloom/client';
+} from '@flowdular/client';
 import { createCustomerClientContribution as canonicalContribution } from './contribution.tsrx';
 
 export function createClientContribution(

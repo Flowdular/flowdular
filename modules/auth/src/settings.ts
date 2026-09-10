@@ -1,7 +1,7 @@
 import {
 	defineModuleSettings,
 	type ModuleSettingsDeclaration,
-} from '@coreloom/kernel';
+} from '@flowdular/kernel';
 
 export const PROVIDER_LIST_PATTERN =
 	'|[a-z][a-z0-9-]{1,30}(,[a-z][a-z0-9-]{1,30})*';
@@ -17,7 +17,7 @@ export interface AuthSettingDefaults {
 	readonly sessionIdleMinutes?: number;
 	readonly passwordMinLength?: number;
 	readonly signInProviders?: readonly string[];
-	/** Locales offered as a tenant default; from coreloom.json when known. */
+	/** Locales offered as a tenant default; from flowdular.json when known. */
 	readonly locales?: readonly string[];
 }
 

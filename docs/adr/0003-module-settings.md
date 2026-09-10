@@ -9,11 +9,11 @@ Every setting is declared and owned by one module. Its stable key is the module 
 
 A module may read another module's setting only when its manifest declares a direct dependency on the owner and the setting is explicitly marked shared. Private or secret settings never cross that boundary. Secret settings cannot be included in a client snapshot.
 
-The first setting is `auth.core.allowSignUp`. The server is authoritative and rejects sign-up when it is disabled. The client configuration endpoint exposes only the client-safe boolean so the public authentication screen can hide the sign-up action. The environment variable `CL_AUTH_ALLOW_SIGN_UP` supplies the initial deployment value.
+The first setting is `auth.core.allowSignUp`. The server is authoritative and rejects sign-up when it is disabled. The client configuration endpoint exposes only the client-safe boolean so the public authentication screen can hide the sign-up action. The environment variable `FD_AUTH_ALLOW_SIGN_UP` supplies the initial deployment value.
 
 ## Runtime (amendment, 2026-09-01)
 
-- `@coreloom/kernel` exports `ModuleSettingsRuntime` (`declare`, `get`, `list`, `set`, `onChange`) and `createModuleSettingsRuntime(store)`. Values live in `module_settings` in auth.db (`tenant_id`, `module_id`, `key`, `value_json`, `updated_at`, `updated_by`); `auth.core` provides the store and exposes the runtime as `authRuntime.moduleSettings`.
+- `@flowdular/kernel` exports `ModuleSettingsRuntime` (`declare`, `get`, `list`, `set`, `onChange`) and `createModuleSettingsRuntime(store)`. Values live in `module_settings` in auth.db (`tenant_id`, `module_id`, `key`, `value_json`, `updated_at`, `updated_by`); `auth.core` provides the store and exposes the runtime as `authRuntime.moduleSettings`.
 - A setting is tenant-scoped by default. `scope: 'platform'` stores one value for the whole deployment (tenant id `''`); auth uses it for knobs that apply before a tenant is known (sign-up, session policy, password length, sign-in providers).
 - Environment variables only supply the declared default. A stored value wins at read time; reads are live, never snapshotted at boot.
 - A module declares settings by returning `settings` from `createServerComposition`; the platform registers every declaration after composing, then calls each composition's `start()`.

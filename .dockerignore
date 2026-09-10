@@ -5,9 +5,11 @@
 **/node_modules
 **/dist
 **/coverage
-# Never send preserved pre-Coreloom databases or keys to the build context.
+# Never send preserved pre-Flowdular databases or keys to the build context.
 **/.octane-erp
 .octane-erp/
-**/.coreloom
-.coreloom/
+**/.flowdular
+.flowdular/
 *.log
+
+.coreloom/

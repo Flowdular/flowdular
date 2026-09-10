@@ -1,25 +1,46 @@
 {
-	"name": "@coreloom/client",
+	"name": "@flowdular/client",
 	"version": "0.1.0",
-	"private": true,
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
-		"./i18n": "./src/i18n/index.ts"
+		"./i18n": "./src/i18n/index.ts",
+		"./web": "./src/web.ts",
+		"./routing": "./src/routing.ts"
 	},
 	"scripts": {
 		"typecheck": "tsrx-tsc --noEmit -p tsconfig.json",
 		"test": "vitest run --passWithNoTests"
 	},
 	"dependencies": {
-		"@coreloom/ui": "workspace:*",
-		"@octanejs/seo": "0.0.36",
+		"@flowdular/ui": "workspace:*",
+		"@octanejs/seo": "0.0.38",
 		"octane": "0.1.51",
 		"segment-state": "0.2.0"
 	},
 	"devDependencies": {
 		"@tsrx/typescript-plugin": "0.3.120",
 		"typescript": "5.9.3",
-		"vitest": "4.1.10"
-	}
+		"vitest": "4.1.11"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Flowdular/flowdular.git",
+		"directory": "packages/client"
+	},
+	"files": [
+		"src",
+		"schemas",
+		"dist",
+		"bin",
+		"public",
+		"module.json",
+		"migrations",
+		"translations",
+		"spec",
+		"README.md",
+		"LICENSE"
+	],
+	"private": true
 }

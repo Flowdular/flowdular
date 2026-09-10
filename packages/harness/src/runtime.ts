@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { AgentHarnessError } from './errors.ts';
-import { normalizeActor, type Actor, type UserActor } from '@coreloom/kernel';
+import { normalizeActor, type Actor, type UserActor } from '@flowdular/kernel';
 import {
 	boundToolOutput,
 	toolTimeoutMs,
@@ -209,6 +209,19 @@ function boundedText(
 	return normalized;
 }
 
+/** Opaque connection IDs may contain generated numeric segments. Authority
+ * comes from provider resolution and the exact snapshot match, not this syntax. */
+function providerReference(value: string): string {
+	const normalized = boundedText(value, 'provider', 1, 128);
+	if (/[\u0000-\u001f\u007f]/.test(normalized)) {
+		throw new AgentHarnessError(
+			'INVALID_INPUT',
+			'provider contains an unsupported character.',
+		);
+	}
+	return normalized;
+}
+
 function assertExecutionRequest(request: AgentExecutionRequest): void {
 	boundedText(request.runId, 'runId', 1, 128);
 	boundedText(request.tenantId, 'tenantId', 1, 128);
@@ -243,7 +256,7 @@ function assertExecutionRequest(request: AgentExecutionRequest): void {
 	boundedText(request.input, 'input', 1, 100_000);
 	boundedText(request.definition.name, 'definition.name', 2, 120);
 	boundedText(request.definition.instructions, 'instructions', 8, 40_000);
-	identifier(request.definition.provider, 'provider');
+	providerReference(request.definition.provider);
 	boundedText(request.definition.model, 'model', 1, 160);
 	if (
 		!Number.isSafeInteger(request.definition.revision) ||
@@ -354,7 +367,7 @@ export class AgentHarness {
 	}) {
 		const providers = new Map<string, AgentProvider>();
 		for (const provider of options.providers) {
-			const id = identifier(provider.id, 'provider.id');
+			const id = providerReference(provider.id);
 			if (providers.has(id)) {
 				throw new AgentHarnessError(
 					'DUPLICATE_PROVIDER',

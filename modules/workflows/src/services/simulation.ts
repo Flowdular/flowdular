@@ -11,6 +11,7 @@ import {
 	applyWorkflowMappings,
 	evaluateGate,
 	validateJsonSchema,
+	jsonByteSize,
 } from '../domain/graph.ts';
 import { safePayloadEvidence } from './payload-codec.ts';
 import type { WorkflowRunRecord, WorkflowsRepository } from './repository.ts';
@@ -39,22 +40,26 @@ const NOT_APPLICABLE_COST: WorkflowCostRollupV1 = {
 };
 
 function schemaForInput(node: WorkflowNodeV1): string {
+	if (node.type === 'input')
+		return node.outputPorts[0]?.schemaId ?? 'workflow.input';
 	return node.inputPorts[0]?.schemaId ?? 'workflow.input';
 }
 
 function schemaForOutput(node: WorkflowNodeV1, port: string): string {
+	if (node.type === 'output')
+		return node.inputPorts[0]?.schemaId ?? 'workflow.output';
 	return (
 		node.outputPorts.find((entry) => entry.name === port)?.schemaId ??
 		'workflow.output'
 	);
 }
 
-export function simulateWorkflow(
+export async function simulateWorkflow(
 	repository: WorkflowsRepository,
 	run: WorkflowRunRecord,
 	input: JsonValue,
 	fixtures: readonly WorkflowSimulationFixture[],
-): WorkflowRunDetail {
+): Promise<WorkflowRunDetail> {
 	const fixtureByNode = new Map(
 		fixtures.map((fixture) => [fixture.nodeId, fixture]),
 	);
@@ -79,7 +84,7 @@ export function simulateWorkflow(
 			.map((edge) => outputs.get(`${edge.source.nodeId}:${edge.source.port}`))
 			.filter((value): value is JsonValue => value !== undefined);
 		if (node.type !== 'input' && emittedInputs.length === 0) {
-			repository.markNodeSkipped(
+			await repository.markNodeSkipped(
 				run.tenantId,
 				run.id,
 				node.id,
@@ -96,7 +101,7 @@ export function simulateWorkflow(
 					undefined,
 					schemaForOutput(node, edge.source.port),
 				);
-				repository.settleEdge({
+				await repository.settleEdge({
 					tenantId: run.tenantId,
 					runId: run.id,
 					transfer: {
@@ -124,22 +129,28 @@ export function simulateWorkflow(
 				: node.type === 'merge'
 					? emittedInputs
 					: (emittedInputs[0] ?? null);
-		const nodeInput = applyWorkflowMappings(
-			baseInput,
-			node.mappings ?? [],
-			outputs,
-		);
+		let nodeInput = baseInput;
+		let mappingError: unknown;
+		try {
+			nodeInput = applyWorkflowMappings(
+				baseInput,
+				node.mappings ?? [],
+				outputs,
+			);
+		} catch (error) {
+			mappingError = error;
+		}
 		const inputSchemaId = schemaForInput(node);
 		const inputEvidence = safePayloadEvidence(nodeInput, inputSchemaId, {
 			schema: run.graph.schemas[inputSchemaId] ?? {},
 			permissionSnapshot: run.permissionSnapshot,
 		});
-		const priorState = repository
-			.readNodeStates(run.tenantId, run.id)
-			.find((entry) => entry.nodeId === node.id);
+		const priorState = (
+			await repository.readNodeStates(run.tenantId, run.id)
+		).find((entry) => entry.nodeId === node.id);
 		const attempt = (priorState?.latestAttempt ?? 0) + 1;
 		const semanticGroup = `${run.id}:${node.id}`;
-		repository.startAttempt(
+		await repository.startAttempt(
 			{
 				tenantId: run.tenantId,
 				runId: run.id,
@@ -171,10 +182,18 @@ export function simulateWorkflow(
 		let failureCode: string | null = null;
 
 		try {
-			const schemaErrors = validateJsonSchema(
-				nodeInput,
-				run.graph.schemas[inputSchemaId] ?? {},
-			);
+			if (mappingError) throw mappingError;
+			if (jsonByteSize(nodeInput) > 64 * 1024)
+				throw new Error('WORKFLOW_INPUT_LIMIT_EXCEEDED');
+			const schemaErrors =
+				node.type === 'merge'
+					? emittedInputs.flatMap((value) =>
+							validateJsonSchema(value, run.graph.schemas[inputSchemaId] ?? {}),
+						)
+					: validateJsonSchema(
+							nodeInput,
+							run.graph.schemas[inputSchemaId] ?? {},
+						);
 			if (schemaErrors.length > 0) throw new Error('WORKFLOW_INPUT_INVALID');
 			switch (node.type) {
 				case 'input':
@@ -206,7 +225,6 @@ export function simulateWorkflow(
 				case 'output':
 					outcomePort = 'complete';
 					output = nodeInput;
-					finalOutput = nodeInput;
 					break;
 				case 'agent':
 				case 'action':
@@ -225,6 +243,21 @@ export function simulateWorkflow(
 					}
 					break;
 			}
+			if (
+				node.type !== 'output' &&
+				!node.outputPorts.some((port) => port.name === outcomePort)
+			)
+				throw new Error('WORKFLOW_OUTPUT_INVALID');
+			if (
+				output !== undefined &&
+				(jsonByteSize(output) > 64 * 1024 ||
+					validateJsonSchema(
+						output,
+						run.graph.schemas[schemaForOutput(node, outcomePort)] ?? {},
+					).length)
+			)
+				throw new Error('WORKFLOW_OUTPUT_INVALID');
+			if (node.type === 'output') finalOutput = nodeInput;
 		} catch (error) {
 			status = 'refused';
 			failureCode =
@@ -240,7 +273,7 @@ export function simulateWorkflow(
 			schema: run.graph.schemas[outputSchemaId] ?? {},
 			permissionSnapshot: run.permissionSnapshot,
 		});
-		repository.settleAttempt(
+		await repository.settleAttempt(
 			{
 				tenantId: run.tenantId,
 				runId: run.id,
@@ -262,7 +295,11 @@ export function simulateWorkflow(
 			run.origin,
 		);
 
-		if (status === 'refused' && !outcomePort) {
+		if (
+			status === 'refused' ||
+			(status === 'failed' &&
+				node.failurePolicy?.onExhausted !== 'emit-failure')
+		) {
 			terminalFailure = failureCode;
 			break;
 		}
@@ -282,7 +319,7 @@ export function simulateWorkflow(
 					permissionSnapshot: run.permissionSnapshot,
 				},
 			);
-			repository.settleEdge({
+			await repository.settleEdge({
 				tenantId: run.tenantId,
 				runId: run.id,
 				transfer: {
@@ -306,7 +343,7 @@ export function simulateWorkflow(
 
 	const succeeded = finalOutput !== undefined && terminalFailure === null;
 	const finalEvidence = safePayloadEvidence(finalOutput, 'workflow.output');
-	repository.settleRun(
+	await repository.settleRun(
 		run.tenantId,
 		run.id,
 		succeeded ? 'succeeded' : 'failed',
@@ -318,5 +355,5 @@ export function simulateWorkflow(
 		Date.now(),
 		virtualOffsetMs,
 	);
-	return repository.runDetail(run.tenantId, run.id)!;
+	return (await repository.runDetail(run.tenantId, run.id))!;
 }

@@ -7,7 +7,7 @@ export { createAgentClientContribution } from './contribution.tsrx';
 import type {
 	ModuleClientContext,
 	ModuleClientContribution,
-} from '@coreloom/client';
+} from '@flowdular/client';
 import { createAgentClientContribution as canonicalContribution } from './contribution.tsrx';
 
 /* Canonical entry used by the generated platform composition. */

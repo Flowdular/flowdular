@@ -8,6 +8,16 @@ export type {
 	AutomationsRuntimeOptions,
 } from './runtime.ts';
 export {
+	AUTOMATION_EXECUTION_CAPABILITY,
+	createAutomationExecutionCapability,
+} from './execution.ts';
+export type {
+	AutomationExecutionCapability,
+	AutomationExecutionContext,
+	AutomationScheduleRunAccepted,
+	AutomationScheduleRunRequest,
+} from './execution.ts';
+export {
 	AUTOMATION_TARGETS_CAPABILITY,
 	createAutomationTargetRegistry,
 } from './targets.ts';

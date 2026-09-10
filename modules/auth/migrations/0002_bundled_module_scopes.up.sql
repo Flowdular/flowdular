@@ -1,15 +1,21 @@
-INSERT OR IGNORE INTO auth_membership_scopes (account_id, tenant_id, scope)
-SELECT account_id, tenant_id, 'users.members.read' FROM auth_memberships;
-INSERT OR IGNORE INTO auth_membership_scopes (account_id, tenant_id, scope)
-SELECT account_id, tenant_id, 'parties.records.read' FROM auth_memberships;
-INSERT OR IGNORE INTO auth_membership_scopes (account_id, tenant_id, scope)
-SELECT account_id, tenant_id, 'catalog.items.read' FROM auth_memberships;
-INSERT OR IGNORE INTO auth_membership_scopes (account_id, tenant_id, scope)
-SELECT account_id, tenant_id, 'users.members.manage' FROM auth_memberships WHERE role = 'owner';
-INSERT OR IGNORE INTO auth_membership_scopes (account_id, tenant_id, scope)
-SELECT account_id, tenant_id, 'parties.records.manage' FROM auth_memberships WHERE role = 'owner';
-INSERT OR IGNORE INTO auth_membership_scopes (account_id, tenant_id, scope)
-SELECT account_id, tenant_id, 'catalog.items.manage' FROM auth_memberships WHERE role = 'owner';
+INSERT INTO auth_membership_scopes (account_id, tenant_id, scope)
+SELECT account_id, tenant_id, 'users.members.read' FROM auth_memberships
+ON CONFLICT DO NOTHING;
+INSERT INTO auth_membership_scopes (account_id, tenant_id, scope)
+SELECT account_id, tenant_id, 'parties.records.read' FROM auth_memberships
+ON CONFLICT DO NOTHING;
+INSERT INTO auth_membership_scopes (account_id, tenant_id, scope)
+SELECT account_id, tenant_id, 'catalog.items.read' FROM auth_memberships
+ON CONFLICT DO NOTHING;
+INSERT INTO auth_membership_scopes (account_id, tenant_id, scope)
+SELECT account_id, tenant_id, 'users.members.manage' FROM auth_memberships WHERE role = 'owner'
+ON CONFLICT DO NOTHING;
+INSERT INTO auth_membership_scopes (account_id, tenant_id, scope)
+SELECT account_id, tenant_id, 'parties.records.manage' FROM auth_memberships WHERE role = 'owner'
+ON CONFLICT DO NOTHING;
+INSERT INTO auth_membership_scopes (account_id, tenant_id, scope)
+SELECT account_id, tenant_id, 'catalog.items.manage' FROM auth_memberships WHERE role = 'owner'
+ON CONFLICT DO NOTHING;
 DELETE FROM auth_membership_scopes
 WHERE scope = 'system.modules.read'
   AND EXISTS (

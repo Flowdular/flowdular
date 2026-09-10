@@ -1,7 +1,9 @@
 import { timingSafeEqual } from 'node:crypto';
 import type { Context } from '@octanejs/app-core';
-import { readCookie } from '../api/cookies.ts';
-import { isTokenPrincipal } from '../middleware/authentication.ts';
+import {
+	isTokenPrincipal,
+	sessionFromContext,
+} from '../middleware/authentication.ts';
 import { assertSameOrigin } from '../api/origin.ts';
 import { AuthServiceError } from '../services/auth-service-error.ts';
 import type { AuthRuntime } from './runtime.ts';
@@ -22,9 +24,18 @@ function denial(status: number, code: string, message: string): Response {
 	);
 }
 
+/**
+ * The session comes from the authentication middleware, which resolved it once
+ * for this request. That is what keeps this guard synchronous for the modules
+ * that call it at the head of every mutation, now that reading a session is a
+ * database round trip.
+ *
+ * The runtime argument is accepted and ignored so those call sites keep
+ * compiling; new ones may omit it, and it can be dropped once none pass it.
+ */
 export function sessionMutationDenial(
 	context: Context,
-	runtime: AuthRuntime,
+	_runtime?: AuthRuntime,
 ): Response | null {
 	try {
 		if (isTokenPrincipal(context)) {
@@ -35,8 +46,7 @@ export function sessionMutationDenial(
 			);
 		}
 		assertSameOrigin(context);
-		const token = readCookie(context.request, runtime.cookie.name);
-		const session = token ? runtime.service().resolveSession(token) : null;
+		const session = sessionFromContext(context);
 		if (!session) {
 			return denial(401, 'UNAUTHENTICATED', 'Authentication is required.');
 		}

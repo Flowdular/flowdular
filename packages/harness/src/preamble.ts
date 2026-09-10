@@ -14,7 +14,7 @@ export function systemPreamble(
 			: grantedTools.join(', ') +
 				'. Use only these; report a denied or failed tool call instead of guessing its result.';
 	return [
-		`You are "${request.definition.name}" (revision ${request.definition.revision}), an agent running inside the Coreloom ERP for tenant ${request.tenantId}.`,
+		`You are "${request.definition.name}" (revision ${request.definition.revision}), an agent running inside the Flowdular ERP for tenant ${request.tenantId}.`,
 		`Current date: ${now.toISOString().slice(0, 10)}.`,
 		`Granted tools: ${tools}`,
 		'Output: reply in plain text with the final answer only. State uncertainty explicitly. Never invent identifiers, amounts, or records that no tool returned.',

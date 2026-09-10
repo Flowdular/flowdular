@@ -2,23 +2,24 @@ import { userInfo } from 'node:os';
 import {
 	defineCliExtension,
 	type CliExtensionContext,
-} from '@coreloom/cli-protocol';
+} from '@flowdular/cli-protocol';
 import {
 	authRuntimeOptionsFromEnvironment,
 	createAuthRuntime,
 	type AuthRuntime,
-} from '@coreloom/module-auth/server';
+} from '@flowdular/module-auth/server';
 import { SANDBOX_GRANT_CAPABILITIES } from '../acl/permissions.ts';
 import type { SandboxGrantCapability } from '../domain/types.ts';
 import {
 	createSandboxRuntime,
-	sandboxRuntimeOptionsFromEnvironment,
+	sandboxSettingsFromEnvironment,
 } from '../server/runtime.ts';
 import type { SandboxService } from '../services/sandbox-service.ts';
 
 interface ResolvedRuntimes {
 	readonly auth: AuthRuntime;
 	readonly service: SandboxService;
+	dispose(): Promise<void>;
 }
 
 function flag(context: CliExtensionContext, name: string): string | undefined {
@@ -42,26 +43,55 @@ function actorOf(context: CliExtensionContext): string {
 	}
 }
 
-function runtimes(context: CliExtensionContext): ResolvedRuntimes {
-	const auth = createAuthRuntime(
-		authRuntimeOptionsFromEnvironment(process.env, context.workspaceRoot),
-	);
-	const sandbox = createSandboxRuntime(
-		sandboxRuntimeOptionsFromEnvironment(process.env, context.workspaceRoot),
-	);
-	return { auth, service: sandbox.service(auth) };
+/* The operator commands read the same deployment database the platform does;
+   there is no module-owned file to open. The runner owns the provider and a
+   module owns no driver, so it arrives on the context. */
+async function runtimes(
+	context: CliExtensionContext,
+): Promise<ResolvedRuntimes> {
+	const databases = context.databases;
+	if (!databases) {
+		throw new Error(
+			'sandbox.core CLI commands read the deployment database, and this workspace has none configured.',
+		);
+	}
+	const auth = createAuthRuntime({
+		...authRuntimeOptionsFromEnvironment(process.env, context.workspaceRoot),
+		databases,
+	});
+	const sandbox = createSandboxRuntime({
+		...sandboxSettingsFromEnvironment(process.env),
+		databases,
+		purpose: 'runtime',
+	});
+	try {
+		/* The provider belongs to the runner; only the lease this runtime took is
+		   released here. */
+		return {
+			auth,
+			service: await sandbox.service(auth),
+			dispose: sandbox.dispose,
+		};
+	} catch (error) {
+		await sandbox.dispose();
+		throw error;
+	}
 }
 
-function tenantOf(auth: AuthRuntime, reference: string) {
-	const tenant = auth.service().findTenant(reference);
+async function tenantOf(auth: AuthRuntime, reference: string) {
+	const tenant = await (await auth.service()).findTenant(reference);
 	if (!tenant) {
 		throw new Error(`No workspace matches "${reference}".`);
 	}
 	return tenant;
 }
 
-function accountOf(auth: AuthRuntime, email: string, tenantReference?: string) {
-	const account = auth.service().findAccountAccess(email);
+async function accountOf(
+	auth: AuthRuntime,
+	email: string,
+	tenantReference?: string,
+) {
+	const account = await (await auth.service()).findAccountAccess(email);
 	if (!account) throw new Error(`No account exists for ${email}.`);
 	const membership = tenantReference
 		? account.tenants.find(
@@ -84,8 +114,12 @@ function accountOf(auth: AuthRuntime, email: string, tenantReference?: string) {
 	return { account, membership };
 }
 
-function sessionOf(service: SandboxService, tenantId: string, id: string) {
-	const session = service.findSession(tenantId, id);
+async function sessionOf(
+	service: SandboxService,
+	tenantId: string,
+	id: string,
+) {
+	const session = await service.findSession(tenantId, id);
 	if (!session)
 		throw new Error(`No sandbox session ${id} exists in this tenant.`);
 	return session;
@@ -129,17 +163,22 @@ export const cliExtension = defineCliExtension({
 				requiresApprovedSpec: false,
 				supportsDryRun: false,
 			},
-			execute: (context) => {
-				const { auth, service } = runtimes(context);
-				const tenant = tenantOf(auth, required(context, 'tenant'));
-				return {
-					data: {
-						tenant,
-						grants: service.listGrants(tenant.tenantId),
-						candidates: service.listCandidates(tenant.tenantId),
-					},
-					evidence: ['.coreloom/data/sandbox.db'],
-				};
+			execute: async (context) => {
+				const resolved = await runtimes(context);
+				try {
+					const { auth, service } = resolved;
+					const tenant = await tenantOf(auth, required(context, 'tenant'));
+					return {
+						data: {
+							tenant,
+							grants: await service.listGrants(tenant.tenantId),
+							candidates: await service.listCandidates(tenant.tenantId),
+						},
+						evidence: ['modules/sandbox/spec/module.yaml'],
+					};
+				} finally {
+					await resolved.dispose();
+				}
 			},
 		},
 		{
@@ -152,64 +191,69 @@ export const cliExtension = defineCliExtension({
 				requiresApprovedSpec: false,
 				supportsDryRun: true,
 			},
-			execute: (context) => {
-				const { auth, service } = runtimes(context);
-				const email = required(context, 'email');
-				const { account, membership } = accountOf(
-					auth,
-					email,
-					flag(context, 'tenant'),
-				);
-				const available = new Set(
-					auth
-						.service()
-						.listMembershipScopes(account.accountId, membership.tenantId),
-				);
-				const requested =
-					requestedCapabilities(context) ??
-					SANDBOX_GRANT_CAPABILITIES.filter((capability) =>
-						available.has(capability),
+			execute: async (context) => {
+				const resolved = await runtimes(context);
+				try {
+					const { auth, service } = resolved;
+					const email = required(context, 'email');
+					const { account, membership } = await accountOf(
+						auth,
+						email,
+						flag(context, 'tenant'),
 					);
-				const capabilities = SANDBOX_GRANT_CAPABILITIES.filter(
-					(capability) =>
-						available.has(capability) && requested.includes(capability),
-				) as readonly SandboxGrantCapability[];
-				const expiresAt = expiryOf(context);
-				if (!context.apply) {
+					const available = new Set(
+						await (
+							await auth.service()
+						).listMembershipScopes(account.accountId, membership.tenantId),
+					);
+					const requested =
+						requestedCapabilities(context) ??
+						SANDBOX_GRANT_CAPABILITIES.filter((capability) =>
+							available.has(capability),
+						);
+					const capabilities = SANDBOX_GRANT_CAPABILITIES.filter(
+						(capability) =>
+							available.has(capability) && requested.includes(capability),
+					) as readonly SandboxGrantCapability[];
+					const expiresAt = expiryOf(context);
+					if (!context.apply) {
+						return {
+							data: {
+								applied: false,
+								tenant: membership,
+								account: {
+									accountId: account.accountId,
+									email: account.email,
+									displayName: account.displayName,
+								},
+								capabilities,
+								expiresAt,
+							},
+							warnings:
+								capabilities.length === 0
+									? [
+											'The account holds no sandbox scope. Grant the scope on its membership first.',
+										]
+									: [],
+						};
+					}
 					return {
 						data: {
-							applied: false,
-							tenant: membership,
-							account: {
+							applied: true,
+							grant: await service.grant({
+								tenantId: membership.tenantId,
+								actorId: actorOf(context),
 								accountId: account.accountId,
-								email: account.email,
-								displayName: account.displayName,
-							},
-							capabilities,
-							expiresAt,
+								capabilities: requested,
+								expiresAt,
+								note: flag(context, 'note') ?? null,
+							}),
 						},
-						warnings:
-							capabilities.length === 0
-								? [
-										'The account holds no sandbox scope. Grant the scope on its membership first.',
-									]
-								: [],
+						evidence: ['modules/sandbox/spec/module.yaml'],
 					};
+				} finally {
+					await resolved.dispose();
 				}
-				return {
-					data: {
-						applied: true,
-						grant: service.grant({
-							tenantId: membership.tenantId,
-							actorId: actorOf(context),
-							accountId: account.accountId,
-							capabilities: requested,
-							expiresAt,
-							note: flag(context, 'note') ?? null,
-						}),
-					},
-					evidence: ['.coreloom/data/sandbox.db'],
-				};
 			},
 		},
 		{
@@ -222,38 +266,43 @@ export const cliExtension = defineCliExtension({
 				requiresApprovedSpec: false,
 				supportsDryRun: true,
 			},
-			execute: (context) => {
-				const { auth, service } = runtimes(context);
-				const email = required(context, 'email');
-				const { account, membership } = accountOf(
-					auth,
-					email,
-					flag(context, 'tenant'),
-				);
-				const current = service
-					.listGrants(membership.tenantId)
-					.find((grant) => grant.accountId === account.accountId);
-				if (!current) throw new Error(`${email} has no sandbox grant.`);
-				if (!context.apply) {
+			execute: async (context) => {
+				const resolved = await runtimes(context);
+				try {
+					const { auth, service } = resolved;
+					const email = required(context, 'email');
+					const { account, membership } = await accountOf(
+						auth,
+						email,
+						flag(context, 'tenant'),
+					);
+					const current = (await service.listGrants(membership.tenantId)).find(
+						(grant) => grant.accountId === account.accountId,
+					);
+					if (!current) throw new Error(`${email} has no sandbox grant.`);
+					if (!context.apply) {
+						return {
+							data: {
+								applied: false,
+								tenant: membership,
+								grant: current,
+							},
+						};
+					}
 					return {
 						data: {
-							applied: false,
-							tenant: membership,
-							grant: current,
+							applied: true,
+							grant: await service.revoke(
+								membership.tenantId,
+								account.accountId,
+								actorOf(context),
+							),
 						},
+						evidence: ['modules/sandbox/spec/module.yaml'],
 					};
+				} finally {
+					await resolved.dispose();
 				}
-				return {
-					data: {
-						applied: true,
-						grant: service.revoke(
-							membership.tenantId,
-							account.accountId,
-							actorOf(context),
-						),
-					},
-					evidence: ['.coreloom/data/sandbox.db'],
-				};
 			},
 		},
 		{
@@ -266,16 +315,21 @@ export const cliExtension = defineCliExtension({
 				requiresApprovedSpec: false,
 				supportsDryRun: false,
 			},
-			execute: (context) => {
-				const { auth, service } = runtimes(context);
-				const tenant = tenantOf(auth, required(context, 'tenant'));
-				return {
-					data: {
-						tenant,
-						sessions: service.listSessions(tenant.tenantId, 50),
-					},
-					evidence: ['.coreloom/data/sandbox.db'],
-				};
+			execute: async (context) => {
+				const resolved = await runtimes(context);
+				try {
+					const { auth, service } = resolved;
+					const tenant = await tenantOf(auth, required(context, 'tenant'));
+					return {
+						data: {
+							tenant,
+							sessions: await service.listSessions(tenant.tenantId, 50),
+						},
+						evidence: ['modules/sandbox/spec/module.yaml'],
+					};
+				} finally {
+					await resolved.dispose();
+				}
 			},
 		},
 		{
@@ -288,28 +342,35 @@ export const cliExtension = defineCliExtension({
 				requiresApprovedSpec: false,
 				supportsDryRun: true,
 			},
-			execute: (context) => {
-				const { auth, service } = runtimes(context);
-				const tenant = tenantOf(auth, required(context, 'tenant'));
-				const session = sessionOf(
-					service,
-					tenant.tenantId,
-					required(context, 'id'),
-				);
-				if (!context.apply) {
-					return { data: { applied: false, tenant, session, to: 'archived' } };
+			execute: async (context) => {
+				const resolved = await runtimes(context);
+				try {
+					const { auth, service } = resolved;
+					const tenant = await tenantOf(auth, required(context, 'tenant'));
+					const session = await sessionOf(
+						service,
+						tenant.tenantId,
+						required(context, 'id'),
+					);
+					if (!context.apply) {
+						return {
+							data: { applied: false, tenant, session, to: 'archived' },
+						};
+					}
+					return {
+						data: {
+							applied: true,
+							session: await service.archiveSession(
+								tenant.tenantId,
+								session.id,
+								actorOf(context),
+							),
+						},
+						evidence: ['modules/sandbox/spec/module.yaml'],
+					};
+				} finally {
+					await resolved.dispose();
 				}
-				return {
-					data: {
-						applied: true,
-						session: service.archiveSession(
-							tenant.tenantId,
-							session.id,
-							actorOf(context),
-						),
-					},
-					evidence: ['.coreloom/data/sandbox.db'],
-				};
 			},
 		},
 		{
@@ -323,28 +384,33 @@ export const cliExtension = defineCliExtension({
 				requiresApprovedSpec: false,
 				supportsDryRun: true,
 			},
-			execute: (context) => {
-				const { auth, service } = runtimes(context);
-				const tenant = tenantOf(auth, required(context, 'tenant'));
-				const session = sessionOf(
-					service,
-					tenant.tenantId,
-					required(context, 'id'),
-				);
-				if (!context.apply) {
-					return { data: { applied: false, tenant, session, to: 'deleted' } };
+			execute: async (context) => {
+				const resolved = await runtimes(context);
+				try {
+					const { auth, service } = resolved;
+					const tenant = await tenantOf(auth, required(context, 'tenant'));
+					const session = await sessionOf(
+						service,
+						tenant.tenantId,
+						required(context, 'id'),
+					);
+					if (!context.apply) {
+						return { data: { applied: false, tenant, session, to: 'deleted' } };
+					}
+					return {
+						data: {
+							applied: true,
+							session: await service.deleteSession(
+								tenant.tenantId,
+								session.id,
+								actorOf(context),
+							),
+						},
+						evidence: ['modules/sandbox/spec/module.yaml'],
+					};
+				} finally {
+					await resolved.dispose();
 				}
-				return {
-					data: {
-						applied: true,
-						session: service.deleteSession(
-							tenant.tenantId,
-							session.id,
-							actorOf(context),
-						),
-					},
-					evidence: ['.coreloom/data/sandbox.db'],
-				};
 			},
 		},
 		{
@@ -358,19 +424,24 @@ export const cliExtension = defineCliExtension({
 				supportsDryRun: false,
 				localOnly: true,
 			},
-			execute: (context) => {
-				const { auth, service } = runtimes(context);
-				const tenant = tenantOf(auth, required(context, 'tenant'));
-				const events = service.listAuditEvents(tenant.tenantId, 250);
-				return {
-					data: {
-						tenant,
-						valid: service.verifyAuditChain(tenant.tenantId),
-						eventsInspected: events.length,
-						latestSequence: events[0]?.sequence ?? 0,
-					},
-					evidence: ['.coreloom/data/sandbox.db'],
-				};
+			execute: async (context) => {
+				const resolved = await runtimes(context);
+				try {
+					const { auth, service } = resolved;
+					const tenant = await tenantOf(auth, required(context, 'tenant'));
+					const events = await service.listAuditEvents(tenant.tenantId, 250);
+					return {
+						data: {
+							tenant,
+							valid: await service.verifyAuditChain(tenant.tenantId),
+							eventsInspected: events.length,
+							latestSequence: events[0]?.sequence ?? 0,
+						},
+						evidence: ['modules/sandbox/spec/module.yaml'],
+					};
+				} finally {
+					await resolved.dispose();
+				}
 			},
 		},
 	],

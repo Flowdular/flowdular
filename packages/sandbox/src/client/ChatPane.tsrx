@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'octane';
-import { Button, Icon, Tag } from '@coreloom/ui';
+import { Button, Icon, Tag } from '@flowdular/ui';
 import type {
 	ChatEntry,
 	HandoffPlan,
@@ -17,7 +17,7 @@ import {
 	type ModuleSpecReview,
 	type RoleSummary,
 } from './api.ts';
-import { SpecReviewCard } from './SpecReviewCard.tsrx';
+import { ApprovalHandoff } from './ApprovalHandoff.tsrx';
 import { ATTACH_ACCEPT, attachmentKind, formatBytes } from './attachments.ts';
 import {
 	sessionIdFromUrl,
@@ -25,6 +25,7 @@ import {
 	type PreviewSelection,
 } from './state.ts';
 import { t, useTranslation } from './i18n.ts';
+import { roleLabel, handoffLabel } from './session-labels.ts';
 
 export interface ChatPaneProps {
 	readonly entries: readonly ChatEntry[];
@@ -40,6 +41,7 @@ export interface ChatPaneProps {
 	readonly driver: string;
 	readonly message: string;
 	readonly running: boolean;
+	readonly busy?: boolean;
 	readonly selection: PreviewSelection | null;
 	readonly autoContinue: boolean;
 	/* Set when the session has never run a turn, so the brief can still start it. */
@@ -66,7 +68,7 @@ function eventLabel(entry: ChatEntry): string {
 		case 'turn.started':
 			return t('sandbox.chat.event.started', {
 				driver: event.driver,
-				role: event.role,
+				role: roleLabel(event.role),
 			});
 		case 'reasoning':
 			return event.text.slice(0, 160);
@@ -379,38 +381,6 @@ export function ChatPane(props: ChatPaneProps) @{
 		</div>;
 	};
 
-	/* An approval handoff is a specification review: the operator sees the
-   document and its delta, and answers with one of the three actions. The
-   plain approve button remains for a session whose review could not be
-   read. */
-	const specCard = (handoff: HandoffPlan) => {
-		const review =
-			props.specs.find((entry) => entry.module === handoff.module) ??
-				props.specs[0];
-		if (!review) {
-			return <div class="ui-form__actions">
-				<Button
-					size="sm"
-					variant="primary"
-					onClick={() => props.onApprove(handoff)}
-				>
-					<Icon name="check" size={14} />
-					{t('sandbox.chat.approveAndImplement')}
-				</Button>
-			</div>;
-		}
-		return <SpecReviewCard
-			review={review}
-			busy={props.running}
-			onApprove={() => props.onApprove(handoff)}
-			onRequestChanges={(comment) => props.onRequestChanges(
-				review.module,
-				comment,
-			)}
-			onEdit={() => props.onEditSpec(review.module)}
-		/>;
-	};
-
 	const submit = (event: SubmitEvent) => {
 		event.preventDefault();
 		props.onSend();
@@ -447,26 +417,49 @@ export function ChatPane(props: ChatPaneProps) @{
 									name={handoffIcon(block.entry!.handoff!.kind)}
 									size={14}
 								/>
-								<span>{block.entry!.handoff!.roleName}</span>
-								<Tag mono>{block.entry!.handoff!.kind}</Tag>
+								<span>{roleLabel(
+									block.entry!.handoff!.role,
+									block.entry!.handoff!.roleName,
+								)}</span>
+								<Tag>{handoffLabel(block.entry!.handoff!)}</Tag>
 								{moduleLabel(block.entry!)}
 							</header>
-							<p class="chat__text">{block.entry!.text ?? ''}</p>
+							<p class="chat__text">{t(
+								'sandbox.handoff.description.' + block.entry!.handoff!.kind,
+							)}</p>
+							@if (block.entry!.text) {
+								<details
+									open={block.entry!.handoff!.kind === 'question' ||
+										block.entry!.handoff!.kind === 'blocked'}
+								>
+									<summary>{t('sandbox.handoff.details')}</summary>
+									<p class="chat__text">{block.entry!.text}</p>
+								</details>
+							}
 							@if (block.entry!.sequence === open && !props.running) {
 								@if (block.entry!.handoff!.kind === 'approval') {
-									{
-										specCard(block.entry!.handoff!);
-									}
+									<ApprovalHandoff
+										handoff={block.entry!.handoff!}
+										reviews={props.specs}
+										busy={props.running || props.busy === true}
+										onApprove={props.onApprove}
+										onRequestChanges={props.onRequestChanges}
+										onEdit={props.onEditSpec}
+									/>
 								} @else if (block.entry!.handoff!.kind === 'continue') {
 									<div class="ui-form__actions">
 										<Button
 											size="sm"
 											variant="primary"
+											disabled={props.busy === true}
 											onClick={() => props.onContinue(block.entry!.handoff!)}
 										>
 											<Icon name="play" size={14} />
 											{t('sandbox.chat.continueWith', {
-												role: block.entry!.handoff!.roleName,
+												role: roleLabel(
+													block.entry!.handoff!.role,
+													block.entry!.handoff!.roleName,
+												),
 											})}
 										</Button>
 									</div>
@@ -485,7 +478,7 @@ export function ChatPane(props: ChatPaneProps) @{
 								<span>
 									{block.entry!.kind === 'user'
 										? t('sandbox.chat.you')
-										: block.entry!.role}
+										: roleLabel(block.entry!.role)}
 								</span>
 								{moduleLabel(block.entry!)}
 							</header>
@@ -636,7 +629,7 @@ export function ChatPane(props: ChatPaneProps) @{
 				>
 					<option value="auto">{t('sandbox.chat.auto')}</option>
 					@for (const role of props.roles; key role.id) {
-						<option value={role.id}>{role.name}</option>
+						<option value={role.id}>{roleLabel(role.id, role.name)}</option>
 					}
 				</select>
 				@if (props.modules.length > 1) {

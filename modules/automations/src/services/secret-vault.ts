@@ -12,7 +12,7 @@ import {
 	writeFileSync,
 } from 'node:fs';
 import { dirname } from 'node:path';
-import { coreloomLocalDataPath } from '@coreloom/kernel/legacy-local-state';
+import { flowdularLocalDataPath } from '@flowdular/kernel/legacy-local-state';
 
 export interface EncryptedSecret {
 	readonly keyId: string;
@@ -31,7 +31,7 @@ function encryptionKey(value: string): Buffer {
 	if (key.byteLength !== 32) {
 		key.fill(0);
 		throw new Error(
-			'CL_AUTOMATIONS_CREDENTIAL_KEY must be a base64-encoded 32-byte key.',
+			'FD_AUTOMATIONS_CREDENTIAL_KEY must be a base64-encoded 32-byte key.',
 		);
 	}
 	return key;
@@ -108,17 +108,17 @@ export function secretVaultFromEnvironment(
 	environment: NodeJS.ProcessEnv = process.env,
 	workspaceRoot = process.cwd(),
 ): SecretVault {
-	const configured = environment.CL_AUTOMATIONS_CREDENTIAL_KEY;
+	const configured = environment.FD_AUTOMATIONS_CREDENTIAL_KEY;
 	if (configured) return new AesGcmSecretVault(encryptionKey(configured));
 	if (environment.NODE_ENV === 'production') {
-		throw new Error('CL_AUTOMATIONS_CREDENTIAL_KEY is required in production.');
+		throw new Error('FD_AUTOMATIONS_CREDENTIAL_KEY is required in production.');
 	}
 	if (environment.NODE_ENV === 'test') {
 		return new AesGcmSecretVault(Buffer.alloc(32, 0x41));
 	}
 	return new AesGcmSecretVault(
 		developmentKey(
-			coreloomLocalDataPath(workspaceRoot, 'automations-credential.key'),
+			flowdularLocalDataPath(workspaceRoot, 'automations-credential.key'),
 		),
 	);
 }

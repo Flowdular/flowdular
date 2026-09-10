@@ -6,8 +6,8 @@ import {
 	type Actor,
 	type PlatformVariableRegistry,
 	type UserActor,
-} from '@coreloom/kernel';
-import type { AgentRunQueue } from '@coreloom/module-agents/server';
+} from '@flowdular/kernel';
+import type { AgentRunQueue } from '@flowdular/module-agents/server';
 import { AUTOMATIONS_PERMISSIONS } from '../acl/permissions.ts';
 import type {
 	AutomationSchedule,
@@ -177,6 +177,21 @@ function manualRunKey(scheduleId: string, actor: Actor, now: number): string {
 	return `schedule-now:${scheduleId}:${manualRequestToken(actor, now)}`;
 }
 
+export interface AutomationRunNowOptions {
+	/* A caller that owns a durable retry supplies its own attempt independent
+	   key, so the agent run ledger returns the first run instead of firing the
+	   schedule again. It reaches the agent dispatch path only. */
+	readonly idempotencyKey?: string;
+	/* Target kinds this caller can dispatch. Absent means every kind. */
+	readonly allowedTargetKinds?: readonly string[];
+}
+
+export interface AutomationScheduleRunOutcome {
+	readonly id: string;
+	readonly created: boolean;
+	readonly targetKind: string;
+}
+
 export class AutomationScheduleService {
 	private readonly variables: PlatformVariableRegistry;
 	private readonly targets: AutomationTargetRegistry;
@@ -193,27 +208,27 @@ export class AutomationScheduleService {
 		this.targets = targets ?? createAutomationTargetRegistry();
 	}
 
-	list(tenantId: string): readonly AutomationSchedule[] {
-		return this.repository
-			.listSchedules(tenantId)
-			.map((record) => this.present(record));
+	async list(tenantId: string): Promise<readonly AutomationSchedule[]> {
+		return Promise.all(
+			(await this.repository.listSchedules(tenantId)).map((record) =>
+				this.present(record),
+			),
+		);
 	}
 
-	agents(tenantId: string) {
-		return this.runs.listAgents(tenantId).map(({ id, name, status }) => ({
-			id,
-			name,
-			status,
-		}));
+	async agents(tenantId: string) {
+		return (await this.runs.listAgents(tenantId)).map(
+			({ id, name, status }) => ({ id, name, status }),
+		);
 	}
 
-	targetOptions(
+	async targetOptions(
 		tenantId: string,
 		actorInput: string | UserActor,
 		permissionSnapshot: readonly string[],
-	): readonly AutomationTargetOption[] {
+	): Promise<readonly AutomationTargetOption[]> {
 		const actor = trustedUser(actorInput);
-		const agents: AutomationTargetOption[] = this.agents(tenantId)
+		const agents: AutomationTargetOption[] = (await this.agents(tenantId))
 			.filter((agent) => agent.status === 'active')
 			.map((agent) => ({
 				kind: 'agent',
@@ -221,25 +236,29 @@ export class AutomationScheduleService {
 				label: agent.name,
 				available: true,
 			}));
-		const extensions = this.targets.list().flatMap((adapter) => {
-			if (!adapter.available()) return [];
+		const extensions = [];
+		for (const adapter of this.targets.list()) {
+			if (!adapter.available()) continue;
 			try {
-				return adapter
-					.list({ tenantId, actor, permissionSnapshot })
-					.map((target) => ({
-						...target,
-						kind: adapter.kind,
-						available: true,
-					}));
+				extensions.push(
+					...(await adapter.list({ tenantId, actor, permissionSnapshot })).map(
+						(target) => ({
+							...target,
+							kind: adapter.kind,
+							available: true,
+						}),
+					),
+				);
 			} catch {
-				return [];
+				/* A revoked permission hides that adapter's targets, it does not
+				   hide the agent targets the caller may still use. */
 			}
-		});
+		}
 		return [...agents, ...extensions];
 	}
 
-	get(tenantId: string, scheduleId: string): AutomationSchedule {
-		const schedule = this.repository.getSchedule(
+	async get(tenantId: string, scheduleId: string): Promise<AutomationSchedule> {
+		const schedule = await this.repository.getSchedule(
 			tenantId,
 			bounded(scheduleId, 'scheduleId', 1, 128),
 		);
@@ -250,20 +269,20 @@ export class AutomationScheduleService {
 				404,
 			);
 		}
-		return this.present(schedule);
+		return await this.present(schedule);
 	}
 
-	create(
+	async create(
 		tenantId: string,
 		actorInput: string | UserActor,
 		input: CreateAutomationScheduleInput,
 		scopes: readonly string[] = [],
-	): AutomationSchedule {
+	): Promise<AutomationSchedule> {
 		const now = this.now();
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
 		const configuredBy = trustedUser(actorInput);
 		const target = targetSelection(input);
-		this.validateTarget(trustedTenantId, target, configuredBy, scopes);
+		await this.validateTarget(trustedTenantId, target, configuredBy, scopes);
 		const normalized = cadence(input.cadence);
 		const inputTemplate = bounded(input.inputTemplate, 'input', 1, 10_000);
 		validateScheduleTemplate(inputTemplate, scopes);
@@ -298,24 +317,32 @@ export class AutomationScheduleService {
 			configuredBy,
 			permissionSnapshot: sortedScopes(scopes),
 		};
-		const created = this.present(this.repository.createSchedule(schedule));
-		this.audit(created, configuredBy.id, 'automation-schedule.created', now, {
-			targetKind: created.targetKind,
-			targetKey: created.targetKey,
-			cadence: created.cadence,
-			enabled: created.enabled,
-		});
+		const created = await this.present(
+			await this.repository.createSchedule(schedule),
+		);
+		await this.audit(
+			created,
+			configuredBy.id,
+			'automation-schedule.created',
+			now,
+			{
+				targetKind: created.targetKind,
+				targetKey: created.targetKey,
+				cadence: created.cadence,
+				enabled: created.enabled,
+			},
+		);
 		return created;
 	}
 
-	update(
+	async update(
 		tenantId: string,
 		actorInput: string | UserActor,
 		input: UpdateAutomationScheduleInput,
 		scopes: readonly string[] = [],
-	): AutomationSchedule {
+	): Promise<AutomationSchedule> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
-		const existing = this.repository.getSchedule(
+		const existing = await this.repository.getSchedule(
 			trustedTenantId,
 			bounded(input.id, 'scheduleId', 1, 128),
 		);
@@ -328,7 +355,7 @@ export class AutomationScheduleService {
 		}
 		const configuredBy = trustedUser(actorInput);
 		const target = targetSelection(input);
-		this.validateTarget(trustedTenantId, target, configuredBy, scopes);
+		await this.validateTarget(trustedTenantId, target, configuredBy, scopes);
 		const now = this.now();
 		const nextCadence = cadence(input.cadence);
 		const nextRunAt =
@@ -347,8 +374,8 @@ export class AutomationScheduleService {
 				403,
 			);
 		}
-		const updated = this.present(
-			this.repository.updateSchedule({
+		const updated = await this.present(
+			await this.repository.updateSchedule({
 				...existing,
 				targetKind: target.kind,
 				targetKey: target.key,
@@ -364,21 +391,31 @@ export class AutomationScheduleService {
 				permissionSnapshot: sortedScopes(scopes),
 			}),
 		);
-		this.audit(updated, configuredBy.id, 'automation-schedule.updated', now, {
-			targetKind: updated.targetKind,
-			targetKey: updated.targetKey,
-			cadence: updated.cadence,
-			enabled: updated.enabled,
-		});
+		await this.audit(
+			updated,
+			configuredBy.id,
+			'automation-schedule.updated',
+			now,
+			{
+				targetKind: updated.targetKind,
+				targetKey: updated.targetKey,
+				cadence: updated.cadence,
+				enabled: updated.enabled,
+			},
+		);
 		return updated;
 	}
 
-	delete(tenantId: string, actorId: string, scheduleId: string): void {
+	async delete(
+		tenantId: string,
+		actorId: string,
+		scheduleId: string,
+	): Promise<void> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
-		const existing = this.get(trustedTenantId, scheduleId);
+		const existing = await this.get(trustedTenantId, scheduleId);
 		const now = this.now();
-		this.repository.deleteSchedule(trustedTenantId, existing.id);
-		this.audit(existing, actorId, 'automation-schedule.deleted', now, {
+		await this.repository.deleteSchedule(trustedTenantId, existing.id);
+		await this.audit(existing, actorId, 'automation-schedule.deleted', now, {
 			targetKind: existing.targetKind,
 			targetKey: existing.targetKey,
 		});
@@ -389,13 +426,14 @@ export class AutomationScheduleService {
 		actorInput: Actor,
 		scheduleId: string,
 		permissionSnapshot: readonly string[] = [AUTOMATIONS_PERMISSIONS.manage],
-	): Promise<{ readonly id: string }> {
+		options: AutomationRunNowOptions = {},
+	): Promise<AutomationScheduleRunOutcome> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
 		const actor = normalizeActor(actorInput);
 		if (!actor) {
 			throw new AutomationsServiceError('INVALID_ACTOR', 'Actor is invalid.');
 		}
-		const stored = this.repository.getSchedule(
+		const stored = await this.repository.getSchedule(
 			trustedTenantId,
 			bounded(scheduleId, 'scheduleId', 1, 128),
 		);
@@ -406,11 +444,23 @@ export class AutomationScheduleService {
 				404,
 			);
 		}
+		/* The allowlist is checked against the stored row that dispatch uses, so a
+		   caller cannot be routed to a target kind it refused. */
+		if (
+			options.allowedTargetKinds &&
+			!options.allowedTargetKinds.includes(stored.targetKind)
+		) {
+			throw new AutomationsServiceError(
+				'AUTOMATION_TARGET_KIND_DENIED',
+				`This caller cannot run a ${stored.targetKind} automation target.`,
+				409,
+			);
+		}
 		const now = this.now();
 		let id: string;
 		let created: boolean;
 		if (stored.targetKind === 'agent') {
-			const agent = this.requireAgent(trustedTenantId, stored.targetKey);
+			const agent = await this.requireAgent(trustedTenantId, stored.targetKey);
 			const accepted = await this.runs.enqueueWithOutcome(
 				{ tenantId: trustedTenantId, actor, permissionSnapshot },
 				{
@@ -423,12 +473,22 @@ export class AutomationScheduleService {
 						permissionSnapshot,
 					),
 					toolGrants: agent.allowedTools,
-					idempotencyKey: manualRunKey(stored.id, actor, now),
+					idempotencyKey:
+						options.idempotencyKey === undefined
+							? manualRunKey(stored.id, actor, now)
+							: bounded(options.idempotencyKey, 'idempotencyKey', 8, 128),
 				},
 			);
 			id = accepted.run.id;
 			created = accepted.created;
 		} else {
+			if (options.idempotencyKey !== undefined) {
+				throw new AutomationsServiceError(
+					'AUTOMATION_IDEMPOTENCY_UNSUPPORTED',
+					`A caller supplied idempotency key does not reach a ${stored.targetKind} target.`,
+					409,
+				);
+			}
 			if (actor.kind !== 'user') {
 				throw new AutomationsServiceError(
 					'INVALID_ACTOR',
@@ -464,7 +524,7 @@ export class AutomationScheduleService {
 			created = result.created;
 		}
 		if (created) {
-			this.repository.appendAuditEvent({
+			await this.repository.appendAuditEvent({
 				tenantId: trustedTenantId,
 				actorId: actor.id,
 				action: 'automation-schedule.fired',
@@ -478,14 +538,22 @@ export class AutomationScheduleService {
 				occurredAt: now,
 			});
 		}
-		return { id };
+		return { id, created, targetKind: stored.targetKind };
 	}
 
 	async tick(limit = 20): Promise<number> {
 		const now = this.now();
-		const due = this.repository.listDueSchedules(now, limit);
+		const due = await this.repository.listDueSchedules(now, limit);
 		let fired = 0;
-		for (const schedule of due) {
+		for (const routing of due) {
+			/* The poll crosses tenants and returns routing data only. The schedule
+			   itself is read under the tenant that row named, and a slot that moved
+			   in between is skipped rather than fired twice. */
+			const schedule = await this.repository.getSchedule(
+				routing.tenantId,
+				routing.id,
+			);
+			if (!schedule || schedule.nextRunAt !== routing.nextRunAt) continue;
 			if (await this.fire(schedule, now)) fired += 1;
 		}
 		return fired;
@@ -554,22 +622,28 @@ export class AutomationScheduleService {
 			}`.slice(0, MAX_ERROR_LENGTH);
 			if (disablesTarget(code)) {
 				if (
-					this.repository.disableSchedule(
+					await this.repository.disableSchedule(
 						schedule.tenantId,
 						schedule.id,
 						failure,
 						now,
 					)
 				) {
-					this.audit(schedule, 'system', 'automation-schedule.disabled', now, {
-						reason: code,
-						targetKind: schedule.targetKind,
-					});
+					await this.audit(
+						schedule,
+						'system',
+						'automation-schedule.disabled',
+						now,
+						{
+							reason: code,
+							targetKind: schedule.targetKind,
+						},
+					);
 				}
 				return false;
 			}
 		}
-		const advanced = this.repository.advanceSchedule({
+		const advanced = await this.repository.advanceSchedule({
 			tenantId: schedule.tenantId,
 			scheduleId: schedule.id,
 			firedSlot: slot,
@@ -579,7 +653,7 @@ export class AutomationScheduleService {
 			lastError: failure,
 		});
 		if (!advanced) return false;
-		this.audit(
+		await this.audit(
 			schedule,
 			'system',
 			runId ? 'automation-schedule.fired' : 'automation-schedule.refused',
@@ -595,18 +669,18 @@ export class AutomationScheduleService {
 		return runId !== null;
 	}
 
-	private validateTarget(
+	private async validateTarget(
 		tenantId: string,
 		target: { readonly kind: string; readonly key: string },
 		actor: UserActor,
 		permissionSnapshot: readonly string[],
-	): void {
+	): Promise<void> {
 		if (target.kind === 'agent') {
-			this.requireAgent(tenantId, target.key);
+			await this.requireAgent(tenantId, target.key);
 			return;
 		}
 		try {
-			this.requireTargetAdapter(target.kind).validate(target.key, {
+			await this.requireTargetAdapter(target.kind).validate(target.key, {
 				tenantId,
 				actor,
 				permissionSnapshot: sortedScopes(permissionSnapshot),
@@ -628,10 +702,10 @@ export class AutomationScheduleService {
 		return adapter;
 	}
 
-	private requireAgent(tenantId: string, agentId: string) {
-		const agent = this.runs
-			.listAgents(tenantId)
-			.find((candidate) => candidate.id === agentId);
+	private async requireAgent(tenantId: string, agentId: string) {
+		const agent = (await this.runs.listAgents(tenantId)).find(
+			(candidate) => candidate.id === agentId,
+		);
 		if (!agent) {
 			throw new AutomationsServiceError(
 				'AGENT_NOT_FOUND',
@@ -666,9 +740,9 @@ export class AutomationScheduleService {
 				const agentMissing =
 					schedule.targetKind === 'agent' &&
 					error.code !== 'VARIABLE_RESOLUTION_ABORTED' &&
-					!this.runs
-						.listAgents(schedule.tenantId)
-						.some((agent) => agent.id === schedule.agentId);
+					!(await this.runs.listAgents(schedule.tenantId)).some(
+						(agent) => agent.id === schedule.agentId,
+					);
 				if (agentMissing) {
 					throw new AutomationsServiceError(
 						'AGENT_NOT_FOUND',
@@ -686,13 +760,15 @@ export class AutomationScheduleService {
 		}
 	}
 
-	private present(schedule: StoredAutomationSchedule): AutomationSchedule {
+	private async present(
+		schedule: StoredAutomationSchedule,
+	): Promise<AutomationSchedule> {
 		let targetName = schedule.targetKey;
 		let targetAvailable = false;
 		if (schedule.targetKind === 'agent') {
-			const agent = this.runs
-				.listAgents(schedule.tenantId)
-				.find((candidate) => candidate.id === schedule.targetKey);
+			const agent = (await this.runs.listAgents(schedule.tenantId)).find(
+				(candidate) => candidate.id === schedule.targetKey,
+			);
 			if (agent) {
 				targetName = agent.name;
 				targetAvailable = agent.status === 'active';
@@ -701,13 +777,13 @@ export class AutomationScheduleService {
 			const adapter = this.targets.get(schedule.targetKind);
 			if (adapter?.available()) {
 				try {
-					const reference = adapter
-						.list({
+					const reference = (
+						await adapter.list({
 							tenantId: schedule.tenantId,
 							actor: schedule.configuredBy,
 							permissionSnapshot: schedule.permissionSnapshot,
 						})
-						.find((target) => target.key === schedule.targetKey);
+					).find((target) => target.key === schedule.targetKey);
 					if (reference) {
 						targetName = reference.label;
 						targetAvailable = true;
@@ -741,14 +817,14 @@ export class AutomationScheduleService {
 		};
 	}
 
-	private audit(
+	private async audit(
 		schedule: Pick<AutomationSchedule, 'tenantId' | 'id'>,
 		actorId: string,
 		action: string,
 		occurredAt: number,
 		metadata: Readonly<Record<string, string | number | boolean>>,
-	): void {
-		this.repository.appendAuditEvent({
+	): Promise<void> {
+		await this.repository.appendAuditEvent({
 			tenantId: schedule.tenantId,
 			actorId,
 			action,

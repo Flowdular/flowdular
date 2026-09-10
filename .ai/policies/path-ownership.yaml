@@ -26,8 +26,11 @@ owners:
   docs/**: platform-architecture
   specs/**: platform-architecture
   .ai/**: platform-architecture
-  AGENTS.md: platform-architecture
-  CLAUDE.md: platform-architecture
+  rulesync.jsonc: platform-architecture
+  AGENTS.md: generated
+  CLAUDE.md: generated
+  .agents/skills/**: generated
+  .claude/skills/**: generated
 # Inside a module built or changed in the sandbox, the role front matter in
 # .ai/agents/sandbox/*.md says who writes what. Advisory at run time.
 moduleRoles:
@@ -49,10 +52,14 @@ moduleRoles:
   modules/{module}/package.json:
     [backend-engineer, frontend-engineer, agentic-engineer]
 cliOwned:
-  coreloom.json: pnpm coreloom module enable|disable --apply
-  platform/package.json: pnpm coreloom module enable --apply
-  platform/src/generated/**: pnpm coreloom module sync --apply
+  flowdular.json: pnpm flowdular module enable|disable --apply
+  platform/package.json: pnpm flowdular module enable --apply
+  platform/src/generated/**: pnpm flowdular module sync --apply
   packages/coding-agent/src/roles/defaults.ts: role defaults sync script (.ai/README.md)
   packages/ui/src/brand/mark.ts: node packages/ui/scripts/gen-mark.mjs
+  AGENTS.md: pnpm rules:generate
+  CLAUDE.md: pnpm rules:generate
+  .agents/skills/**: pnpm rules:generate
+  .claude/skills/**: pnpm rules:generate
 crossOwnerChanges:
   requireReviewer: true

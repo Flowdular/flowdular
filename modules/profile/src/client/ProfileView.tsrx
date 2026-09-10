@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'octane';
-import { Alert, Button, EmptyState, PageHeader } from '@coreloom/ui';
-import { t } from '@coreloom/client';
+import { Alert, Button, EmptyState, PageHeader } from '@flowdular/ui';
+import { t } from '@flowdular/client';
 import { useValue } from 'segment-state';
 import { changeOwnPassword, loadOwnProfile, updateOwnProfile } from './api.ts';
 import { DisplayNameCard } from './DisplayNameCard.tsrx';

@@ -1,6 +1,6 @@
 schemaVersion: 1
-# What modules/catalog has and packages/cli/src/module-sync.ts needs. The
-# scaffold (pnpm coreloom module new) writes most of these; check the dry run.
+# What .ai/references/catalog has and packages/cli/src/module-sync.ts needs. The
+# scaffold (pnpm flowdular module new) writes most of these; check the dry run.
 required:
   - module.json
   - package.json
@@ -41,7 +41,7 @@ conditional:
     required:
       - src/services/migration.ts
       - src/services/repository.ts
-      - src/services/sqlite-repository.ts
+      - src/services/database-repository.ts
       - migrations/0001_{module}_core.up.sql
       - migrations/0001_{module}_core.down.sql
   no-database:
@@ -69,5 +69,5 @@ conditional:
       - src/agent/agents.ts
       - tests/business-agents.test.ts
       - agents.core in spec/module.yaml and module.json dependencies
-      - '@coreloom/module-agents in package.json dependencies'
+      - '@flowdular/module-agents in package.json dependencies'
       - context.agentDefinitions.register(...) in src/platform.ts

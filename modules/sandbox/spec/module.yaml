@@ -1,9 +1,9 @@
 schemaVersion: 1
 id: sandbox.core
-specVersion: 0.2.0
+specVersion: 0.4.0
 status: approved
 name: Sandbox Access
-description: Owns sandbox access grants, sandbox session records, and the audit evidence that lets an authorized account open the Coreloom sandbox, preview a draft module against live platform data, and eject an accepted module into the workspace.
+description: Owns sandbox access grants, sandbox session records, and the audit evidence that lets an authorized account open the Flowdular sandbox, preview a draft module against live platform data, and eject an accepted module into the workspace.
 profile: full
 capabilities:
   - api
@@ -13,14 +13,17 @@ capabilities:
   - cli
 dependencies:
   - id: system.core
-    range: ^0.1.0
+    range: 0.5.0
   - id: auth.core
-    range: ^0.1.0
+    range: 0.10.0
 tenancy: required
 locales:
   - en
   - pl
 invariants:
+  - Persistence runs on PostgreSQL through the shared asynchronous database contract. The module receives a leased handle from platform composition, never a driver or a connection string, and writes explicit PostgreSQL SQL.
+  - Migrations are declared as explicit PostgreSQL SQL; sandbox.core never rewrites placeholders or translates SQL between dialects.
+  - PostgreSQL grant, session, and audit tables enable and force row-level security with USING and WITH CHECK policies bound to transaction-local coreloom.tenant_id, and the runtime role holds neither SUPERUSER nor BYPASSRLS. Migrations use a separate lease.
   - Every access grant, session record, and audit event is owned by exactly one tenant, and every repository query receives the trusted tenant identifier.
   - The sandbox is a separate application. It never receives platform authority implicitly; it must resolve an authenticated account, the sandbox.access.use scope on the selected membership, and an active grant before it opens a session.
   - A grant is created only by an authorized owner through the platform API or through the sandbox CLI capability. Both paths write the same record and the same audit evidence.

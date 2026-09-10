@@ -2,14 +2,14 @@ import {
 	validateTemplate,
 	type VariableDefinition,
 	type VariableSource,
-} from '@coreloom/contracts';
+} from '@flowdular/contracts';
 import {
 	createPlatformVariableRegistry,
 	VariableResolutionError,
 	type Actor,
 	type PlatformVariableRegistry,
-} from '@coreloom/kernel';
-import type { AgentRunQueue } from '@coreloom/module-agents/server';
+} from '@flowdular/kernel';
+import type { AgentRunQueue } from '@flowdular/module-agents/server';
 import { AUTOMATIONS_PERMISSIONS } from '../acl/permissions.ts';
 import type { AutomationSchedule } from './types.ts';
 import { AutomationsServiceError } from '../services/automations-service.ts';
@@ -129,9 +129,9 @@ export function registerScheduleVariableSource(
 					'Variable resolution was aborted.',
 				);
 			}
-			const agent = runQueue()
-				.listAgents(context.tenantId)
-				.find((candidate) => candidate.id === context.bindings.agentId);
+			const agent = (await runQueue().listAgents(context.tenantId)).find(
+				(candidate) => candidate.id === context.bindings.agentId,
+			);
 			if (!agent) {
 				throw new VariableResolutionError(
 					'VARIABLE_VALUE_UNAVAILABLE',

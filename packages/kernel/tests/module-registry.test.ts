@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { RegisteredModule } from '@coreloom/contracts';
+import type { RegisteredModule } from '@flowdular/contracts';
 import { createModuleRegistry, RegistryError } from '../src/index.ts';
 
 function moduleOf(id: string, dependencies: string[] = []): RegisteredModule {
@@ -7,7 +7,7 @@ function moduleOf(id: string, dependencies: string[] = []): RegisteredModule {
 		manifest: {
 			schemaVersion: 1,
 			id,
-			package: `@coreloom/module-${id.replace('.', '-')}`,
+			package: `@flowdular/module-${id.replace('.', '-')}`,
 			version: '0.1.0',
 			profile: 'full',
 			capabilities: ['client'],
@@ -56,4 +56,35 @@ describe('createModuleRegistry', () => {
 		expect(registry.navigation()).toEqual([]);
 		expect(registry.navigation(new Set(['system.admin.read']))).toHaveLength(1);
 	});
+});
+
+it('rejects a declared dependency range that excludes the installed version', () => {
+	const consumer = moduleOf('profile.core', ['auth.core']);
+	const auth = moduleOf('auth.core');
+	const upgraded = {
+		...auth,
+		manifest: { ...auth.manifest, version: '0.10.0' },
+	};
+	expect(() => createModuleRegistry([consumer, upgraded])).toThrow(
+		/profile.core requires auth.core \^0.1.0; available 0.10.0/,
+	);
+});
+it('rejects invalid ranges and incompatible platform APIs', () => {
+	const module = moduleOf('sample.core');
+	expect(() =>
+		createModuleRegistry([
+			{ ...module, manifest: { ...module.manifest, platformApi: '^9.0.0' } },
+		]),
+	).toThrow(/platform API/);
+	expect(() =>
+		createModuleRegistry([
+			{
+				...module,
+				manifest: {
+					...module.manifest,
+					dependencies: [{ id: 'auth.core', range: 'not-semver' }],
+				},
+			},
+		]),
+	).toThrow(/invalid range/);
 });

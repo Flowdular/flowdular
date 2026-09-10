@@ -10,7 +10,7 @@ import {
 	setActiveLocale,
 	t,
 } from '../src/client/i18n.ts';
-import { registerModuleTranslations } from '@coreloom/client/i18n';
+import { registerModuleTranslations } from '@flowdular/client/i18n';
 
 const SESSION_STATES: Readonly<Record<SandboxSessionState, true>> = {
 	draft: true,

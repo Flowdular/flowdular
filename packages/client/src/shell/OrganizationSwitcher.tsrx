@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'octane';
-import { Avatar, Icon } from '@coreloom/ui';
+import { Avatar, Icon } from '@flowdular/ui';
 import { useValue } from 'segment-state';
 import { cell, createStore } from 'segment-state';
 import { t } from '../i18n/runtime.ts';

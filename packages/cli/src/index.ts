@@ -1,6 +1,7 @@
 import { parseArguments } from './arguments.ts';
 import { renderOutput } from './output.ts';
 import { runCommand } from './runner.ts';
+import { runProgram } from './program.ts';
 
 export { parseArguments, runCommand };
 
@@ -10,7 +11,7 @@ const invokedAsProgram =
 
 if (invokedAsProgram) {
 	const arguments_ = parseArguments(process.argv.slice(2));
-	const envelope = await runCommand(arguments_);
+	const envelope = await runProgram(arguments_);
 	process.stdout.write(
 		`${renderOutput(envelope, arguments_.flags.has('json'))}\n`,
 	);

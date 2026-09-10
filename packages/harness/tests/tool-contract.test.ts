@@ -8,7 +8,7 @@ import {
 	type AgentProvider,
 	type AgentTool,
 } from '../src/index.ts';
-import { userActor } from '@coreloom/kernel';
+import { userActor } from '@flowdular/kernel';
 
 const TOOL_ID = 'parties.customer.read';
 

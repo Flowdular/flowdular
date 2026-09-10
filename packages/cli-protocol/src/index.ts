@@ -1,3 +1,5 @@
+import type { DatabaseProvider } from '@flowdular/database';
+
 export type CapabilityRisk =
 	| 'read'
 	| 'workspace-write'
@@ -22,6 +24,13 @@ export interface CliExtensionContext {
 	readonly apply: boolean;
 	readonly flags: ReadonlyMap<string, string | boolean>;
 	readonly arguments: readonly string[];
+	/**
+	 * The configured platform database, for a command that reads the deployment
+	 * data. A module owns no driver, so the runner builds this. It is absent
+	 * when the workspace declares no usable database configuration. The runner
+	 * owns it: release the leases you take and never dispose the provider.
+	 */
+	readonly databases?: DatabaseProvider;
 }
 
 export interface CliExtensionResult {

@@ -1,6 +1,7 @@
 export {
 	DEFAULT_CONFIGURATION,
 	SANDBOX_DIRECTORY,
+	sandboxDirectory,
 	assertPlatformUrl,
 	loadSandboxConfiguration,
 	openSecret,
@@ -132,7 +133,7 @@ export type { InstallResult } from './workspace-install.ts';
 export {
 	SandboxSetupError,
 	enabledModules,
-	findCoreloomWorkspace,
+	findFlowdularWorkspace,
 	moduleRootsOf,
 } from './workspace-root.ts';
-export type { CoreloomWorkspace } from './workspace-root.ts';
+export type { FlowdularWorkspace } from './workspace-root.ts';

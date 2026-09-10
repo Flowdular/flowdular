@@ -62,7 +62,7 @@ export interface TableProps<Row extends RowData> {
 	readonly caption?: string | undefined;
 }
 
-interface CoreloomColumnMeta {
+interface FlowdularColumnMeta {
 	readonly numeric?: boolean;
 	readonly width?: string;
 	readonly actions?: boolean;
@@ -71,7 +71,7 @@ interface CoreloomColumnMeta {
 
 const FEATURES = tableFeatures({
 	coreRowModel: createCoreRowModel(),
-	columnMeta: {} as CoreloomColumnMeta,
+	columnMeta: {} as FlowdularColumnMeta,
 });
 
 function ActionButtons(props: { readonly actions: readonly TableAction[] }) @{
@@ -141,8 +141,8 @@ function widthStyle(width: string | undefined): string {
 }
 
 /**
- * Coreloom's visual table over the official TanStack Table v9 adapter for
- * Octane. Screens keep the small Coreloom contract while TanStack owns the
+ * Flowdular's visual table over the official TanStack Table v9 adapter for
+ * Octane. Screens keep the small Flowdular contract while TanStack owns the
  * row, header, column and cell model underneath it.
  */
 export function Table<Row extends RowData>(props: TableProps<Row>) @{
@@ -166,7 +166,7 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 		(group) => ({
 			key: group.id,
 			headers: group.headers.map((header) => {
-				const meta = header.column.columnDef.meta as CoreloomColumnMeta | undefined;
+				const meta = header.column.columnDef.meta as FlowdularColumnMeta | undefined;
 				return {
 					key: header.id,
 					content: header.isPlaceholder
@@ -187,7 +187,7 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 				(cell) => ({
 					key: cell.id,
 					content: flexRender(cell.column.columnDef.cell, cell.getContext()),
-					meta: cell.column.columnDef.meta as CoreloomColumnMeta | undefined,
+					meta: cell.column.columnDef.meta as FlowdularColumnMeta | undefined,
 				}),
 			),
 		}),
@@ -195,7 +195,7 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 	const leafColumns = table.getAllLeafColumns().map(
 		(column) => ({
 			key: column.id,
-			meta: column.columnDef.meta as CoreloomColumnMeta | undefined,
+			meta: column.columnDef.meta as FlowdularColumnMeta | undefined,
 		}),
 	);
 

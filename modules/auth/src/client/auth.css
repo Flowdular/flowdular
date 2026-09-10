@@ -1,4 +1,4 @@
-/* Authentication screens. Built on @coreloom/ui tokens. */
+/* Authentication screens. Built on @flowdular/ui tokens. */
 
 .auth-root {
 	min-height: 100vh;
@@ -366,7 +366,7 @@
 }
 
 /* API token screens. Composites specific to this module; the pickers,
-   drawer, and table come from @coreloom/ui. */
+   drawer, and table come from @flowdular/ui. */
 .token-presets {
 	display: flex;
 	flex-wrap: wrap;

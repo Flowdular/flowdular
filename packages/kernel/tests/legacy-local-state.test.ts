@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-	coreloomLocalDataPath,
+	flowdularLocalDataPath,
 	LegacyLocalStateError,
 	UnsafeLocalStatePathError,
 } from '../src/legacy-local-state.ts';
@@ -18,19 +18,19 @@ import {
 let workspace: string;
 
 beforeEach(() => {
-	workspace = mkdtempSync(join(tmpdir(), 'coreloom-local-state-'));
+	workspace = mkdtempSync(join(tmpdir(), 'flowdular-local-state-'));
 });
 
 afterEach(() => {
 	rmSync(workspace, { recursive: true, force: true });
 });
 
-describe('Coreloom local data path', () => {
+describe('Flowdular local data path', () => {
 	it('returns the new path for a new workspace', () => {
-		expect(coreloomLocalDataPath(workspace, 'auth.db')).toBe(
-			join(workspace, '.coreloom/data/auth.db'),
+		expect(flowdularLocalDataPath(workspace, 'auth.db')).toBe(
+			join(workspace, '.flowdular/data/auth.db'),
 		);
-		expect(lstatSync(join(workspace, '.coreloom/data')).isDirectory()).toBe(
+		expect(lstatSync(join(workspace, '.flowdular/data')).isDirectory()).toBe(
 			true,
 		);
 	});
@@ -39,34 +39,34 @@ describe('Coreloom local data path', () => {
 		mkdirSync(join(workspace, '.octane-erp'));
 		writeFileSync(join(workspace, '.octane-erp/auth.db'), 'legacy');
 
-		expect(() => coreloomLocalDataPath(workspace, 'auth.db')).toThrow(
+		expect(() => flowdularLocalDataPath(workspace, 'auth.db')).toThrow(
 			LegacyLocalStateError,
 		);
 	});
 
 	it('uses a migrated target while preserving the legacy source', () => {
 		mkdirSync(join(workspace, '.octane-erp'));
-		mkdirSync(join(workspace, '.coreloom/data'), { recursive: true });
+		mkdirSync(join(workspace, '.flowdular/data'), { recursive: true });
 		writeFileSync(join(workspace, '.octane-erp/auth.db'), 'legacy');
-		writeFileSync(join(workspace, '.coreloom/data/auth.db'), 'migrated');
+		writeFileSync(join(workspace, '.flowdular/data/auth.db'), 'migrated');
 
-		expect(coreloomLocalDataPath(workspace, 'auth.db')).toBe(
-			join(workspace, '.coreloom/data/auth.db'),
+		expect(flowdularLocalDataPath(workspace, 'auth.db')).toBe(
+			join(workspace, '.flowdular/data/auth.db'),
 		);
 	});
 
 	it('rejects path traversal in a file name', () => {
-		expect(() => coreloomLocalDataPath(workspace, '../auth.db')).toThrow(
+		expect(() => flowdularLocalDataPath(workspace, '../auth.db')).toThrow(
 			/single path segment/,
 		);
 	});
 
 	it('refuses a linked destination directory', () => {
-		const outside = mkdtempSync(join(tmpdir(), 'coreloom-linked-data-'));
-		mkdirSync(join(workspace, '.coreloom'));
-		symlinkSync(outside, join(workspace, '.coreloom/data'));
+		const outside = mkdtempSync(join(tmpdir(), 'flowdular-linked-data-'));
+		mkdirSync(join(workspace, '.flowdular'));
+		symlinkSync(outside, join(workspace, '.flowdular/data'));
 		try {
-			expect(() => coreloomLocalDataPath(workspace, 'auth.db')).toThrow(
+			expect(() => flowdularLocalDataPath(workspace, 'auth.db')).toThrow(
 				UnsafeLocalStatePathError,
 			);
 		} finally {
@@ -74,11 +74,11 @@ describe('Coreloom local data path', () => {
 		}
 	});
 
-	it('refuses a linked Coreloom state root', () => {
-		const outside = mkdtempSync(join(tmpdir(), 'coreloom-linked-root-'));
-		symlinkSync(outside, join(workspace, '.coreloom'));
+	it('refuses a linked Flowdular state root', () => {
+		const outside = mkdtempSync(join(tmpdir(), 'flowdular-linked-root-'));
+		symlinkSync(outside, join(workspace, '.flowdular'));
 		try {
-			expect(() => coreloomLocalDataPath(workspace, 'auth.db')).toThrow(
+			expect(() => flowdularLocalDataPath(workspace, 'auth.db')).toThrow(
 				UnsafeLocalStatePathError,
 			);
 		} finally {
@@ -89,29 +89,29 @@ describe('Coreloom local data path', () => {
 	it('refuses linked target and legacy files', () => {
 		const outside = join(workspace, 'outside.db');
 		writeFileSync(outside, 'outside');
-		mkdirSync(join(workspace, '.coreloom/data'), { recursive: true });
-		symlinkSync(outside, join(workspace, '.coreloom/data/auth.db'));
-		expect(() => coreloomLocalDataPath(workspace, 'auth.db')).toThrow(
+		mkdirSync(join(workspace, '.flowdular/data'), { recursive: true });
+		symlinkSync(outside, join(workspace, '.flowdular/data/auth.db'));
+		expect(() => flowdularLocalDataPath(workspace, 'auth.db')).toThrow(
 			UnsafeLocalStatePathError,
 		);
 
-		rmSync(join(workspace, '.coreloom'), { recursive: true, force: true });
+		rmSync(join(workspace, '.flowdular'), { recursive: true, force: true });
 		mkdirSync(join(workspace, '.octane-erp'));
 		symlinkSync(outside, join(workspace, '.octane-erp/auth.db'));
-		expect(() => coreloomLocalDataPath(workspace, 'auth.db')).toThrow(
+		expect(() => flowdularLocalDataPath(workspace, 'auth.db')).toThrow(
 			UnsafeLocalStatePathError,
 		);
 	});
 
 	it('refuses directories where a database or key file is expected', () => {
-		mkdirSync(join(workspace, '.coreloom/data/auth.db'), { recursive: true });
-		expect(() => coreloomLocalDataPath(workspace, 'auth.db')).toThrow(
+		mkdirSync(join(workspace, '.flowdular/data/auth.db'), { recursive: true });
+		expect(() => flowdularLocalDataPath(workspace, 'auth.db')).toThrow(
 			UnsafeLocalStatePathError,
 		);
 
-		rmSync(join(workspace, '.coreloom'), { recursive: true, force: true });
+		rmSync(join(workspace, '.flowdular'), { recursive: true, force: true });
 		mkdirSync(join(workspace, '.octane-erp/auth.db'), { recursive: true });
-		expect(() => coreloomLocalDataPath(workspace, 'auth.db')).toThrow(
+		expect(() => flowdularLocalDataPath(workspace, 'auth.db')).toThrow(
 			UnsafeLocalStatePathError,
 		);
 	});

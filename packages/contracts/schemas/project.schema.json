@@ -1,6 +1,6 @@
 {
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
-	"$id": "https://coreloom.dev/schemas/project.schema.json",
+	"$id": "https://flowdular.dev/schemas/project.schema.json",
 	"type": "object",
 	"additionalProperties": false,
 	"required": [
@@ -12,8 +12,12 @@
 		"agent"
 	],
 	"properties": {
-		"$schema": { "type": "string" },
-		"schemaVersion": { "const": 1 },
+		"$schema": {
+			"type": "string"
+		},
+		"schemaVersion": {
+			"const": 1
+		},
 		"architectureVersion": {
 			"type": "string",
 			"pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
@@ -23,8 +27,14 @@
 			"additionalProperties": false,
 			"required": ["platformRoot", "moduleDirectory"],
 			"properties": {
-				"platformRoot": { "type": "string", "minLength": 1 },
-				"moduleDirectory": { "type": "string", "minLength": 1 }
+				"platformRoot": {
+					"type": "string",
+					"minLength": 1
+				},
+				"moduleDirectory": {
+					"type": "string",
+					"minLength": 1
+				}
 			}
 		},
 		"modules": {
@@ -35,7 +45,10 @@
 				"roots": {
 					"type": "array",
 					"minItems": 1,
-					"items": { "type": "string", "minLength": 1 },
+					"items": {
+						"type": "string",
+						"minLength": 1
+					},
 					"uniqueItems": true
 				},
 				"enabled": {
@@ -51,7 +64,10 @@
 		"locales": {
 			"type": "array",
 			"minItems": 1,
-			"items": { "type": "string", "pattern": "^[a-z]{2}(-[A-Z]{2})?$" },
+			"items": {
+				"type": "string",
+				"pattern": "^[a-z]{2}(-[A-Z]{2})?$"
+			},
 			"uniqueItems": true
 		},
 		"agent": {
@@ -59,9 +75,18 @@
 			"additionalProperties": false,
 			"required": ["policy", "blueprints", "modelRouting"],
 			"properties": {
-				"policy": { "type": "string", "minLength": 1 },
-				"blueprints": { "type": "string", "minLength": 1 },
-				"modelRouting": { "type": "string", "minLength": 1 }
+				"policy": {
+					"type": "string",
+					"minLength": 1
+				},
+				"blueprints": {
+					"type": "string",
+					"minLength": 1
+				},
+				"modelRouting": {
+					"type": "string",
+					"minLength": 1
+				}
 			}
 		},
 		"sandbox": {
@@ -72,40 +97,136 @@
 					"type": "object",
 					"additionalProperties": false,
 					"properties": {
-						"default": { "$ref": "#/$defs/deliveryTarget" },
+						"default": {
+							"$ref": "#/$defs/deliveryTarget"
+						},
 						"targets": {
 							"type": "array",
 							"minItems": 1,
-							"items": { "$ref": "#/$defs/deliveryTarget" },
+							"items": {
+								"$ref": "#/$defs/deliveryTarget"
+							},
 							"uniqueItems": true
 						},
 						"git": {
 							"type": "object",
 							"additionalProperties": false,
 							"properties": {
-								"remote": { "$ref": "#/$defs/gitName" },
-								"repository": { "$ref": "#/$defs/githubRepository" },
-								"baseBranch": { "$ref": "#/$defs/gitName" },
-								"branchPrefix": { "$ref": "#/$defs/gitName" },
-								"provider": { "enum": ["github", "none"] },
-								"mode": { "enum": ["auto", "direct", "fork"] },
-								"forkOwner": { "$ref": "#/$defs/githubAccount" },
+								"remote": {
+									"$ref": "#/$defs/gitName"
+								},
+								"repository": {
+									"$ref": "#/$defs/githubRepository"
+								},
+								"baseBranch": {
+									"$ref": "#/$defs/gitName"
+								},
+								"branchPrefix": {
+									"$ref": "#/$defs/gitName"
+								},
+								"provider": {
+									"enum": ["github", "none"]
+								},
+								"mode": {
+									"enum": ["auto", "direct", "fork"]
+								},
+								"forkOwner": {
+									"$ref": "#/$defs/githubAccount"
+								},
 								"reviewers": {
 									"type": "array",
 									"maxItems": 20,
-									"items": { "$ref": "#/$defs/githubAccount" },
+									"items": {
+										"$ref": "#/$defs/githubAccount"
+									},
 									"uniqueItems": true
 								}
 							}
 						},
-						"maxChangedFiles": { "type": "integer", "minimum": 1 }
+						"maxChangedFiles": {
+							"type": "integer",
+							"minimum": 1
+						}
 					}
+				}
+			}
+		},
+		"web": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["mounts"],
+			"properties": {
+				"mounts": {
+					"type": "array",
+					"maxItems": 256,
+					"items": {
+						"type": "object",
+						"additionalProperties": false,
+						"required": ["id", "moduleId", "surfaceId", "path", "tenantId"],
+						"properties": {
+							"id": {
+								"type": "string",
+								"pattern": "^[a-z][a-z0-9-]*$"
+							},
+							"moduleId": {
+								"type": "string",
+								"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+							},
+							"surfaceId": {
+								"type": "string",
+								"pattern": "^[a-z][a-z0-9-]*$"
+							},
+							"path": {
+								"type": "string",
+								"maxLength": 256,
+								"pattern": "^(/|/[a-z0-9-]+(/[a-z0-9-]+)*)$"
+							},
+							"tenantId": {
+								"type": "string",
+								"minLength": 1,
+								"maxLength": 128
+							},
+							"enabled": {
+								"type": "boolean"
+							}
+						}
+					}
+				}
+			}
+		},
+		"application": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["path"],
+			"properties": {
+				"path": {
+					"type": "string",
+					"pattern": "^/[a-z][a-z0-9-]*$",
+					"not": {
+						"enum": [
+							"/auth",
+							"/api",
+							"/sites",
+							"/sign-in",
+							"/sign-up",
+							"/forgot-password",
+							"/reset-password",
+							"/accept-invitation",
+							"/setup",
+							"/health",
+							"/ready",
+							"/assets"
+						]
+					},
+					"maxLength": 64
 				}
 			}
 		}
 	},
 	"$defs": {
-		"deliveryTarget": { "enum": ["workspace", "git-pr"] },
+		"deliveryTarget": {
+			"enum": ["workspace", "git-pr", "official-modules"]
+		},
 		"gitName": {
 			"type": "string",
 			"maxLength": 120,

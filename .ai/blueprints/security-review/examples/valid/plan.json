@@ -3,7 +3,7 @@
 	"checksRun": [
 		"grep -rn \"new ServerRoute\" modules/inventory/src",
 		"grep -rn tenantId modules/inventory/src/api",
-		"pnpm --filter @coreloom/module-inventory test"
+		"pnpm --filter @flowdular/module-inventory test"
 	],
 	"findings": [
 		{

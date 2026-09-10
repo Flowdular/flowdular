@@ -2,13 +2,13 @@ import { defineConfig, RenderRoute } from '@octanejs/vite-plugin';
 import { createSandboxRoutes } from './src/server/routes.ts';
 import { processPreviewRuntime } from './src/server/preview-runtime.ts';
 import { createSandboxRuntime } from './src/server/runtime.ts';
-import { findCoreloomWorkspace } from './src/server/workspace-root.ts';
+import { findFlowdularWorkspace } from './src/server/workspace-root.ts';
 
 const SHELL = ['App', '/src/App.tsrx'] as const;
 const PREVIEW = ['PreviewHost', '/src/preview/PreviewHost.tsrx'] as const;
 
-const workspace = await findCoreloomWorkspace(
-	process.env.CL_SANDBOX_WORKSPACE ?? process.cwd(),
+const workspace = await findFlowdularWorkspace(
+	process.env.FD_SANDBOX_WORKSPACE ?? process.cwd(),
 );
 const runtime = await createSandboxRuntime(workspace.root);
 /* Server route modules are reevaluated during HMR. The preview runtime belongs
@@ -27,8 +27,8 @@ export default defineConfig({
 			new RenderRoute({ path: '/preview/:sessionId', entry: PREVIEW }),
 			new RenderRoute({ path: '/preview/:sessionId/:view', entry: PREVIEW }),
 			...createSandboxRoutes(runtime, preview, {
-				...(process.env.CL_SANDBOX_PORT
-					? { port: Number(process.env.CL_SANDBOX_PORT) }
+				...(process.env.FD_SANDBOX_PORT
+					? { port: Number(process.env.FD_SANDBOX_PORT) }
 					: {}),
 			}),
 		],

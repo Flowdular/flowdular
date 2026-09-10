@@ -1,5 +1,5 @@
-import type { TagTone } from '@coreloom/ui';
-import { activeLocale, t } from '@coreloom/client/i18n';
+import type { TagTone } from '@flowdular/ui';
+import { activeLocale, t } from '@flowdular/client/i18n';
 import type {
 	AgentModelReadiness,
 	AgentRun,

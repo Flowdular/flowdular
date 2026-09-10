@@ -1,4 +1,4 @@
-import type { ModuleManifest, RegisteredModule } from '@coreloom/contracts';
+import type { ModuleManifest, RegisteredModule } from '@flowdular/contracts';
 import manifest from '../module.json' with { type: 'json' };
 import { SYSTEM_PERMISSIONS } from './acl/permissions.ts';
 

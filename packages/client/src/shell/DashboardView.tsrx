@@ -1,4 +1,4 @@
-import { EmptyState, PageHeader } from '@coreloom/ui';
+import { EmptyState, PageHeader } from '@flowdular/ui';
 import type { WidgetContribution } from '../contributions.ts';
 import { t } from '../i18n/runtime.ts';
 import { SlotOutlet, widgetsForSlot } from './ContributionOutlets.tsrx';

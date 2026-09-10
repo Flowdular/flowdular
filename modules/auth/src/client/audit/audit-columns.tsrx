@@ -1,5 +1,5 @@
-import { t } from '@coreloom/client';
-import { Tag, type TableColumn } from '@coreloom/ui';
+import { t } from '@flowdular/client';
+import { Tag, type TableColumn } from '@flowdular/ui';
 import type { AuditRow } from './api.ts';
 import { auditDetails, auditStamp, auditTone } from './audit-row.ts';
 

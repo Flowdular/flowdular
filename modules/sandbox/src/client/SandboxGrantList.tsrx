@@ -1,5 +1,5 @@
-import { Table, Tag, type TableColumn } from '@coreloom/ui';
-import { t } from '@coreloom/client';
+import { Table, Tag, type TableColumn } from '@flowdular/ui';
+import { t } from '@flowdular/client';
 import type { SandboxAccessGrant } from '../domain/types.ts';
 import {
 	capabilityLabel,

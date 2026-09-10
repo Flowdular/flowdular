@@ -9,11 +9,11 @@ steps:
       - 'gate evidence'
   - id: compose
     role: module-executor
-    action: pnpm coreloom module enable <id> --apply for a new module (grants its scopes), pnpm coreloom module sync --apply otherwise; pnpm coreloom auth sync-scopes --module <id> --apply only to re-grant after a new permission.
+    action: pnpm flowdular module enable <id> --apply for a new module (grants its scopes), pnpm flowdular module sync --apply otherwise; pnpm flowdular auth sync-scopes --module <id> --apply only to re-grant after a new permission.
     inputs:
       - 'modules/{module}/**'
     outputs:
-      - 'coreloom.json'
+      - 'flowdular.json'
       - 'platform/package.json'
       - 'platform/src/generated/*.ts'
   - id: branch
@@ -40,7 +40,7 @@ steps:
       - 'review'
   - id: post-merge
     role: operator
-    action: Deploy; run pnpm coreloom auth sync-scopes --module <id> --apply with CL_AUTH_DATABASE pointing at the deployment; verify an owner sees the navigation entry. Tag v*.*.* to build the container.
+    action: Deploy; run pnpm flowdular auth sync-scopes --module <id> --apply with FD_AUTH_DATABASE pointing at the deployment; verify an owner sees the navigation entry. Tag v*.*.* to build the container.
     inputs:
       - 'merged main'
     outputs:

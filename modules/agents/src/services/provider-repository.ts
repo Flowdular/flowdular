@@ -1,8 +1,5 @@
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
-import { modelSupportsTemperature } from '@coreloom/harness/catalog';
-import { runModuleMigrations } from '@coreloom/kernel';
+import type { DatabaseHandle, DatabaseTransaction } from '@flowdular/database';
+import { modelSupportsTemperature } from '@flowdular/harness/catalog';
 import type {
 	AgentModelReadiness,
 	AgentProviderConnection,
@@ -10,7 +7,6 @@ import type {
 	AgentProviderModelConfiguration,
 } from '../domain/types.ts';
 import type { EncryptedCredential } from './credential-vault.ts';
-import { migrations } from './migration.ts';
 
 export class DuplicateProviderKeyError extends Error {
 	constructor() {
@@ -38,14 +34,14 @@ interface ProviderRow {
 	credential_revision: number;
 	readiness_status: 'unknown' | 'healthy' | 'unhealthy';
 	readiness_model: string | null;
-	readiness_latency_ms: number | null;
+	readiness_latency_ms: Int | null;
 	readiness_error_code: string | null;
-	readiness_checked_at: number | null;
+	readiness_checked_at: Int | null;
 	revision: number;
 	created_by: string;
-	created_at: number;
+	created_at: Int;
 	updated_by: string;
-	updated_at: number;
+	updated_at: Int;
 }
 
 export interface StoredProviderConnection {
@@ -64,9 +60,9 @@ interface ReadinessRow {
 	provider_id: string;
 	model_id: string;
 	status: 'healthy' | 'unhealthy';
-	latency_ms: number | null;
+	latency_ms: Int | null;
 	error_code: string | null;
-	checked_at: number;
+	checked_at: Int;
 }
 
 /* models_json holds configuration only. Readiness is evidence and lives in its
@@ -106,12 +102,13 @@ function readinessMap(
 ): Map<string, Map<string, AgentModelReadiness>> {
 	const result = new Map<string, Map<string, AgentModelReadiness>>();
 	for (const row of rows) {
-		const models = result.get(row.provider_id) ?? new Map();
+		const models =
+			result.get(row.provider_id) ?? new Map<string, AgentModelReadiness>();
 		models.set(row.model_id, {
 			status: row.status,
-			latencyMs: row.latency_ms,
+			latencyMs: integerOrNull(row.latency_ms),
 			errorCode: row.error_code,
-			checkedAt: row.checked_at,
+			checkedAt: integer(row.checked_at),
 		});
 		result.set(row.provider_id, models);
 	}
@@ -137,9 +134,9 @@ function fromRow(
 			credentialRevision: row.credential_revision,
 			revision: row.revision,
 			createdBy: row.created_by,
-			createdAt: row.created_at,
+			createdAt: integer(row.created_at),
 			updatedBy: row.updated_by,
-			updatedAt: row.updated_at,
+			updatedAt: integer(row.updated_at),
 		},
 		credential: {
 			keyId: row.credential_key_id,
@@ -151,11 +148,12 @@ function fromRow(
 }
 
 export interface ProviderRepository {
-	list(tenantId: string): readonly AgentProviderConnection[];
-	get(tenantId: string, id: string): StoredProviderConnection | null;
-	create(value: StoredProviderConnection): AgentProviderConnection;
-	update(value: StoredProviderConnection): AgentProviderConnection;
-	delete(tenantId: string, id: string): boolean;
+	close(): Promise<void>;
+	list(tenantId: string): Promise<readonly AgentProviderConnection[]>;
+	get(tenantId: string, id: string): Promise<StoredProviderConnection | null>;
+	create(value: StoredProviderConnection): Promise<AgentProviderConnection>;
+	update(value: StoredProviderConnection): Promise<AgentProviderConnection>;
+	delete(tenantId: string, id: string): Promise<boolean>;
 	recordReadiness(
 		tenantId: string,
 		id: string,
@@ -163,13 +161,13 @@ export interface ProviderRepository {
 		readiness: AgentModelReadiness,
 		actorId: string,
 		updatedAt: number,
-	): AgentProviderConnection;
+	): Promise<AgentProviderConnection>;
 	/* Evidence a change invalidated. Pass null to drop every model's. */
 	clearReadiness(
 		tenantId: string,
 		id: string,
 		modelIds: readonly string[] | null,
-	): void;
+	): Promise<void>;
 	/* Evidence from a run that answered. Touches the model only, never the
 	   connection's revision or author. */
 	refreshReadiness(
@@ -177,93 +175,222 @@ export interface ProviderRepository {
 		id: string,
 		modelId: string,
 		readiness: AgentModelReadiness,
-	): void;
+	): Promise<void>;
 }
 
-export class SqliteProviderRepository implements ProviderRepository {
-	readonly #database: DatabaseSync;
-	#closed = false;
+type Int = number | bigint | string;
 
-	constructor(path: string) {
-		if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
-		this.#database = new DatabaseSync(path, { timeout: 5_000 });
-		this.#database.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
-		runModuleMigrations(this.#database, migrations);
+/* PostgreSQL returns BIGINT and NUMERIC aggregates as strings, so a count read
+   raw compares against text where it should compare against a number. */
+function integer(value: Int): number {
+	const normalized = Number(value);
+	if (!Number.isSafeInteger(normalized)) {
+		throw new Error('The agents database returned an invalid integer.');
 	}
+	return normalized;
+}
 
-	close(): void {
-		if (this.#closed) return;
-		this.#closed = true;
-		this.#database.close();
-	}
+/* A nullable BIGINT must stay null: coercing it to 0 would turn "never checked"
+   into "checked at the epoch". */
+function integerOrNull(value: Int | null): number | null {
+	return value === null ? null : integer(value);
+}
 
-	/* Deployment-wide counts for operator tooling; no tenant data. */
-	summary(): { readonly connections: number; readonly enabled: number } {
-		const row = this.#database
-			.prepare(
-				`SELECT COUNT(*) AS connections, COALESCE(SUM(enabled), 0) AS enabled
+export interface ProvidersPersistenceStatements {
+	readonly summary: string;
+	readonly list1: string;
+	readonly list2: string;
+	readonly get: string;
+	readonly readinessFor: string;
+	readonly create: string;
+	readonly update: string;
+	readonly delete: string;
+	readonly recordReadiness1: string;
+	readonly recordReadiness2: string;
+	readonly refreshReadiness: string;
+	readonly upsertReadiness: string;
+	readonly clearReadiness1: string;
+	readonly clearReadiness2: string;
+	readonly clearReadiness3: string;
+}
+
+/* Every statement is PostgreSQL; the platform has no second dialect. */
+export const PROVIDERS_SQL: ProvidersPersistenceStatements = Object.freeze({
+	summary: `SELECT COUNT(*) AS connections, COALESCE(SUM(enabled), 0) AS enabled
 				 FROM agent_provider_connections`,
-			)
-			.get() as unknown as { connections: number; enabled: number };
-		return { connections: row.connections, enabled: row.enabled };
-	}
-
-	list(tenantId: string): readonly AgentProviderConnection[] {
-		const readiness = readinessMap(
-			this.#database
-				.prepare(
-					`SELECT r.* FROM agent_provider_model_readiness r
+	list1: `SELECT r.* FROM agent_provider_model_readiness r
 					 JOIN agent_provider_connections c ON c.id = r.provider_id
-					 WHERE c.tenant_id = ?`,
-				)
-				.all(tenantId) as unknown as ReadinessRow[],
-		);
-		return (
-			this.#database
-				.prepare(
-					`SELECT * FROM agent_provider_connections WHERE tenant_id = ?
+					 WHERE c.tenant_id = $1`,
+	list2: `SELECT * FROM agent_provider_connections WHERE tenant_id = $1
 					 ORDER BY lower(name), id`,
-				)
-				.all(tenantId) as unknown as ProviderRow[]
-		).map((row) => fromRow(row, readiness.get(row.id) ?? new Map()).connection);
-	}
-
-	get(tenantId: string, id: string): StoredProviderConnection | null {
-		const row = this.#database
-			.prepare(
-				'SELECT * FROM agent_provider_connections WHERE tenant_id = ? AND id = ?',
-			)
-			.get(tenantId, id) as unknown as ProviderRow | undefined;
-		return row ? fromRow(row, this.#readinessFor(id)) : null;
-	}
-
-	#readinessFor(providerId: string): ReadonlyMap<string, AgentModelReadiness> {
-		return (
-			readinessMap(
-				this.#database
-					.prepare(
-						'SELECT * FROM agent_provider_model_readiness WHERE provider_id = ?',
-					)
-					.all(providerId) as unknown as ReadinessRow[],
-			).get(providerId) ?? new Map()
-		);
-	}
-
-	create(value: StoredProviderConnection): AgentProviderConnection {
-		const item = value.connection;
-		try {
-			this.#database
-				.prepare(
-					`INSERT INTO agent_provider_connections
+	get: `SELECT * FROM agent_provider_connections WHERE tenant_id = $1 AND id = $2`,
+	readinessFor: `SELECT * FROM agent_provider_model_readiness
+			 WHERE tenant_id = $1 AND provider_id = $2`,
+	create: `INSERT INTO agent_provider_connections
 				 (id, tenant_id, provider_key, name, kind, enabled, resource_name,
 				  base_url, models_json, credential_key_id, credential_iv,
 				  credential_tag, credential_ciphertext, credential_revision,
 				  readiness_status, readiness_model, readiness_latency_ms,
 				  readiness_error_code, readiness_checked_at, revision, created_by,
 				  created_at, updated_by, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				)
-				.run(
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`,
+	update: `UPDATE agent_provider_connections SET name = $1, enabled = $2,
+				 resource_name = $3, base_url = $4, models_json = $5,
+				 credential_key_id = $6, credential_iv = $7, credential_tag = $8,
+				 credential_ciphertext = $9, credential_revision = $10, revision = $11,
+				 updated_by = $12, updated_at = $13 WHERE tenant_id = $14 AND id = $15`,
+	delete: `DELETE FROM agent_provider_connections WHERE tenant_id = $1 AND id = $2`,
+	recordReadiness1: `SELECT id FROM agent_provider_connections WHERE tenant_id = $1 AND id = $2`,
+	recordReadiness2: `UPDATE agent_provider_connections SET readiness_status = $1,
+				 readiness_model = $2, readiness_latency_ms = $3, readiness_error_code = $4,
+				 readiness_checked_at = $5, updated_by = $6, updated_at = $7
+				 WHERE tenant_id = $8 AND id = $9`,
+	refreshReadiness: `SELECT id FROM agent_provider_connections WHERE tenant_id = $1 AND id = $2`,
+	upsertReadiness: `INSERT INTO agent_provider_model_readiness
+				 (provider_id, tenant_id, model_id, status, latency_ms, error_code,
+				  checked_at)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7)
+				 ON CONFLICT (provider_id, model_id) DO UPDATE SET
+				   status = excluded.status, latency_ms = excluded.latency_ms,
+				   error_code = excluded.error_code, checked_at = excluded.checked_at`,
+	clearReadiness1: `SELECT id FROM agent_provider_connections WHERE tenant_id = $1 AND id = $2`,
+	clearReadiness2: `DELETE FROM agent_provider_model_readiness
+			 WHERE tenant_id = $1 AND provider_id = $2`,
+	clearReadiness3: `DELETE FROM agent_provider_model_readiness
+			 WHERE tenant_id = $1 AND provider_id = $2 AND model_id = $3`,
+});
+
+/** A dialect-neutral provider repository over a platform-owned handle. */
+export class DatabaseProviderRepository implements ProviderRepository {
+	constructor(
+		private readonly handle: DatabaseHandle,
+		private readonly readyPromise: Promise<void> = Promise.resolve(),
+		/* Deployment-wide counts cross tenants, so they read the narrow role
+		   rather than the tenant-scoped one. Absent means summary() refuses. */
+		private readonly background?: DatabaseHandle,
+	) {}
+
+	async #tx<T>(
+		tenantId: string,
+		access: 'read' | 'write',
+		body: (transaction: DatabaseTransaction) => Promise<T>,
+	): Promise<T> {
+		await this.readyPromise;
+		return this.handle.transaction(body, { access, tenantId });
+	}
+
+	async #query<Row extends object>(
+		transaction: DatabaseTransaction,
+		text: string,
+		parameters: readonly unknown[],
+	): Promise<readonly Row[]> {
+		const result = await transaction.query<Row>({
+			text,
+			parameters: parameters as never,
+		});
+		return result.rows;
+	}
+
+	async #exec(
+		transaction: DatabaseTransaction,
+		text: string,
+		parameters: readonly unknown[],
+	): Promise<number> {
+		const result = await transaction.execute({
+			text,
+			parameters: parameters as never,
+		});
+		return result.affectedRows;
+	}
+
+	async close(): Promise<void> {}
+
+	/* Deployment-wide counts for operator tooling; no tenant data, so it runs
+	   on the same handle without a tenant context. */
+	async summary(): Promise<{
+		readonly connections: number;
+		readonly enabled: number;
+	}> {
+		await this.readyPromise;
+		if (!this.background) {
+			throw new Error(
+				'A deployment-wide provider summary needs the cross-tenant read handle.',
+			);
+		}
+		const result = await this.background.transaction(
+			(transaction) =>
+				transaction.query<{ connections: Int; enabled: Int }>({
+					text: PROVIDERS_SQL.summary,
+				}),
+			{ access: 'read' },
+		);
+		const row = result.rows[0]!;
+		return {
+			connections: integer(row.connections),
+			enabled: integer(row.enabled),
+		};
+	}
+
+	async list(tenantId: string): Promise<readonly AgentProviderConnection[]> {
+		return this.#tx(tenantId, 'read', async (transaction) => {
+			const readiness = readinessMap(
+				(await this.#query(transaction, PROVIDERS_SQL.list1, [
+					tenantId,
+				])) as unknown as ReadinessRow[],
+			);
+			return (
+				(await this.#query(transaction, PROVIDERS_SQL.list2, [
+					tenantId,
+				])) as unknown as ProviderRow[]
+			).map(
+				(row) => fromRow(row, readiness.get(row.id) ?? new Map()).connection,
+			);
+		});
+	}
+
+	get(tenantId: string, id: string): Promise<StoredProviderConnection | null> {
+		return this.#tx(tenantId, 'read', (transaction) =>
+			this.#get(transaction, tenantId, id),
+		);
+	}
+
+	/* A transaction pins one connection, so work already inside one reads
+	   through it instead of asking the handle for a second. */
+	async #get(
+		transaction: DatabaseTransaction,
+		tenantId: string,
+		id: string,
+	): Promise<StoredProviderConnection | null> {
+		const row = (
+			await this.#query(transaction, PROVIDERS_SQL.get, [tenantId, id])
+		)[0] as unknown as ProviderRow | undefined;
+		return row
+			? fromRow(row, await this.#readinessFor(transaction, tenantId, id))
+			: null;
+	}
+
+	async #readinessFor(
+		transaction: DatabaseTransaction,
+		tenantId: string,
+		providerId: string,
+	): Promise<ReadonlyMap<string, AgentModelReadiness>> {
+		return (
+			readinessMap(
+				(await this.#query(transaction, PROVIDERS_SQL.readinessFor, [
+					tenantId,
+					providerId,
+				])) as unknown as ReadinessRow[],
+			).get(providerId) ?? new Map()
+		);
+	}
+
+	async create(
+		value: StoredProviderConnection,
+	): Promise<AgentProviderConnection> {
+		return this.#tx(value.connection.tenantId, 'write', async (transaction) => {
+			const item = value.connection;
+			try {
+				await this.#exec(transaction, PROVIDERS_SQL.create, [
 					item.id,
 					item.tenantId,
 					item.key,
@@ -288,30 +415,28 @@ export class SqliteProviderRepository implements ProviderRepository {
 					item.createdAt,
 					item.updatedBy,
 					item.updatedAt,
-				);
-		} catch (error) {
-			if (
-				error instanceof Error &&
-				error.message.includes('agent_provider_connections.tenant_id')
-			) {
-				throw new DuplicateProviderKeyError();
+				]);
+			} catch (error) {
+				if (
+					error instanceof Error &&
+					error.message.includes(
+						'agent_provider_connections_tenant_id_provider_key_key',
+					)
+				) {
+					throw new DuplicateProviderKeyError();
+				}
+				throw error;
 			}
-			throw error;
-		}
-		return item;
+			return item;
+		});
 	}
 
-	update(value: StoredProviderConnection): AgentProviderConnection {
-		const item = value.connection;
-		const result = this.#database
-			.prepare(
-				`UPDATE agent_provider_connections SET name = ?, enabled = ?,
-				 resource_name = ?, base_url = ?, models_json = ?,
-				 credential_key_id = ?, credential_iv = ?, credential_tag = ?,
-				 credential_ciphertext = ?, credential_revision = ?, revision = ?,
-				 updated_by = ?, updated_at = ? WHERE tenant_id = ? AND id = ?`,
-			)
-			.run(
+	async update(
+		value: StoredProviderConnection,
+	): Promise<AgentProviderConnection> {
+		return this.#tx(value.connection.tenantId, 'write', async (transaction) => {
+			const item = value.connection;
+			const result = await this.#exec(transaction, PROVIDERS_SQL.update, [
 				item.name,
 				item.enabled ? 1 : 0,
 				item.resourceName,
@@ -327,49 +452,52 @@ export class SqliteProviderRepository implements ProviderRepository {
 				item.updatedAt,
 				item.tenantId,
 				item.id,
+			]);
+			if (result !== 1) throw new Error('Provider connection not found.');
+			return item;
+		});
+	}
+
+	async delete(tenantId: string, id: string): Promise<boolean> {
+		return this.#tx(tenantId, 'write', async (transaction) => {
+			return (
+				(await this.#exec(transaction, PROVIDERS_SQL.delete, [
+					tenantId,
+					id,
+				])) === 1
 			);
-		if (result.changes !== 1) throw new Error('Provider connection not found.');
-		return item;
+		});
 	}
 
-	delete(tenantId: string, id: string): boolean {
-		return (
-			this.#database
-				.prepare(
-					'DELETE FROM agent_provider_connections WHERE tenant_id = ? AND id = ?',
-				)
-				.run(tenantId, id).changes === 1
-		);
-	}
-
-	recordReadiness(
+	async recordReadiness(
 		tenantId: string,
 		id: string,
 		modelId: string,
 		readiness: AgentModelReadiness,
 		actorId: string,
 		updatedAt: number,
-	): AgentProviderConnection {
-		if (readiness.status === 'unknown' || readiness.checkedAt === null) {
-			throw new Error('Recorded readiness must carry a probe result.');
-		}
-		const owned = this.#database
-			.prepare(
-				'SELECT id FROM agent_provider_connections WHERE tenant_id = ? AND id = ?',
-			)
-			.get(tenantId, id);
-		if (!owned) throw new Error('Provider connection not found.');
-		this.#upsertReadiness(id, modelId, readiness);
-		/* The connection columns keep the last probe so a later migration can
-		   still read where the evidence came from. */
-		this.#database
-			.prepare(
-				`UPDATE agent_provider_connections SET readiness_status = ?,
-				 readiness_model = ?, readiness_latency_ms = ?, readiness_error_code = ?,
-				 readiness_checked_at = ?, updated_by = ?, updated_at = ?
-				 WHERE tenant_id = ? AND id = ?`,
-			)
-			.run(
+	): Promise<AgentProviderConnection> {
+		return this.#tx(tenantId, 'write', async (transaction) => {
+			if (readiness.status === 'unknown' || readiness.checkedAt === null) {
+				throw new Error('Recorded readiness must carry a probe result.');
+			}
+			const owned = (
+				await this.#query(transaction, PROVIDERS_SQL.recordReadiness1, [
+					tenantId,
+					id,
+				])
+			)[0];
+			if (!owned) throw new Error('Provider connection not found.');
+			await this.#upsertReadiness(
+				transaction,
+				tenantId,
+				id,
+				modelId,
+				readiness,
+			);
+			/* The connection columns keep the last probe so a later migration can
+			   still read where the evidence came from. */
+			await this.#exec(transaction, PROVIDERS_SQL.recordReadiness2, [
 				readiness.status,
 				modelId,
 				readiness.latencyMs,
@@ -379,75 +507,83 @@ export class SqliteProviderRepository implements ProviderRepository {
 				updatedAt,
 				tenantId,
 				id,
-			);
-		return this.get(tenantId, id)!.connection;
+			]);
+			return (await this.#get(transaction, tenantId, id))!.connection;
+		});
 	}
 
-	refreshReadiness(
+	async refreshReadiness(
 		tenantId: string,
 		id: string,
 		modelId: string,
 		readiness: AgentModelReadiness,
-	): void {
-		if (readiness.status === 'unknown' || readiness.checkedAt === null) {
-			throw new Error('Recorded readiness must carry a probe result.');
-		}
-		const owned = this.#database
-			.prepare(
-				'SELECT id FROM agent_provider_connections WHERE tenant_id = ? AND id = ?',
-			)
-			.get(tenantId, id);
-		if (!owned) throw new Error('Provider connection not found.');
-		this.#upsertReadiness(id, modelId, readiness);
+	): Promise<void> {
+		return this.#tx(tenantId, 'write', async (transaction) => {
+			if (readiness.status === 'unknown' || readiness.checkedAt === null) {
+				throw new Error('Recorded readiness must carry a probe result.');
+			}
+			const owned = (
+				await this.#query(transaction, PROVIDERS_SQL.refreshReadiness, [
+					tenantId,
+					id,
+				])
+			)[0];
+			if (!owned) throw new Error('Provider connection not found.');
+			await this.#upsertReadiness(
+				transaction,
+				tenantId,
+				id,
+				modelId,
+				readiness,
+			);
+		});
 	}
 
-	#upsertReadiness(
+	async #upsertReadiness(
+		transaction: DatabaseTransaction,
+		tenantId: string,
 		id: string,
 		modelId: string,
 		readiness: AgentModelReadiness,
-	): void {
-		this.#database
-			.prepare(
-				`INSERT INTO agent_provider_model_readiness
-				 (provider_id, model_id, status, latency_ms, error_code, checked_at)
-				 VALUES (?, ?, ?, ?, ?, ?)
-				 ON CONFLICT (provider_id, model_id) DO UPDATE SET
-				   status = excluded.status, latency_ms = excluded.latency_ms,
-				   error_code = excluded.error_code, checked_at = excluded.checked_at`,
-			)
-			.run(
-				id,
-				modelId,
-				readiness.status,
-				readiness.latencyMs,
-				readiness.errorCode,
-				readiness.checkedAt,
-			);
+	): Promise<void> {
+		await this.#exec(transaction, PROVIDERS_SQL.upsertReadiness, [
+			id,
+			tenantId,
+			modelId,
+			readiness.status,
+			readiness.latencyMs,
+			readiness.errorCode,
+			readiness.checkedAt,
+		]);
 	}
 
-	clearReadiness(
+	async clearReadiness(
 		tenantId: string,
 		id: string,
 		modelIds: readonly string[] | null,
-	): void {
-		const owned = this.#database
-			.prepare(
-				'SELECT id FROM agent_provider_connections WHERE tenant_id = ? AND id = ?',
-			)
-			.get(tenantId, id);
-		if (!owned) throw new Error('Provider connection not found.');
-		if (modelIds === null) {
-			this.#database
-				.prepare(
-					'DELETE FROM agent_provider_model_readiness WHERE provider_id = ?',
-				)
-				.run(id);
-			return;
-		}
-		const statement = this.#database.prepare(
-			`DELETE FROM agent_provider_model_readiness
-			 WHERE provider_id = ? AND model_id = ?`,
-		);
-		for (const modelId of modelIds) statement.run(id, modelId);
+	): Promise<void> {
+		return this.#tx(tenantId, 'write', async (transaction) => {
+			const owned = (
+				await this.#query(transaction, PROVIDERS_SQL.clearReadiness1, [
+					tenantId,
+					id,
+				])
+			)[0];
+			if (!owned) throw new Error('Provider connection not found.');
+			if (modelIds === null) {
+				await this.#exec(transaction, PROVIDERS_SQL.clearReadiness2, [
+					tenantId,
+					id,
+				]);
+				return;
+			}
+			for (const modelId of modelIds) {
+				await this.#exec(transaction, PROVIDERS_SQL.clearReadiness3, [
+					tenantId,
+					id,
+					modelId,
+				]);
+			}
+		});
 	}
 }

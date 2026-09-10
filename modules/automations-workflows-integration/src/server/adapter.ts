@@ -1,19 +1,19 @@
 import {
 	serviceActor,
 	type PlatformCapabilityRegistry,
-} from '@coreloom/kernel';
+} from '@flowdular/kernel';
 import {
 	AUTOMATION_TARGETS_CAPABILITY,
 	type AutomationTargetAdapter,
 	type AutomationTargetAuthorizationContext,
 	type AutomationTargetInvocationContext,
 	type AutomationTargetRegistry,
-} from '@coreloom/module-automations/server';
-import { WORKFLOWS_PERMISSIONS } from '@coreloom/module-workflows';
+} from '@flowdular/module-automations/server';
+import { WORKFLOWS_PERMISSIONS } from '@flowdular/module-workflows';
 import {
 	WORKFLOW_EXECUTION_CAPABILITY,
 	type WorkflowExecutionCapability,
-} from '@coreloom/module-workflows/server';
+} from '@flowdular/module-workflows/server';
 
 type WorkflowInput = Parameters<
 	WorkflowExecutionCapability['enqueue']
@@ -73,7 +73,7 @@ function workflowContext(context: AutomationTargetAuthorizationContext) {
 	};
 }
 
-function requireExecutable(
+async function requireExecutable(
 	resolve: () => WorkflowExecutionCapability | null,
 	workflowKey: string,
 	context: AutomationTargetAuthorizationContext,
@@ -91,7 +91,7 @@ function requireExecutable(
 			);
 		}
 	}
-	const reference = workflowsOrRefusal(resolve).getPublishedReference(
+	const reference = await workflowsOrRefusal(resolve).getPublishedReference(
 		bounded(workflowKey, 'workflowKey', 3, 120),
 		workflowContext(context),
 	);
@@ -165,30 +165,36 @@ export function createWorkflowAutomationTargetAdapter(
 		kind: 'workflow',
 		contractVersion: 1,
 		available: () => resolveWorkflows() !== null,
-		list(context) {
-			return workflowsOrRefusal(resolveWorkflows)
-				.listPublished(workflowContext(context))
-				.flatMap((workflow) => {
-					try {
-						const executable = requireExecutable(
-							resolveWorkflows,
-							workflow.key,
-							context,
-						);
-						return [
-							{
-								key: executable.key,
-								label: executable.name,
-								revision: executable.revision,
-							},
-						];
-					} catch {
-						return [];
-					}
-				});
+		async list(context) {
+			const published = await workflowsOrRefusal(
+				resolveWorkflows,
+			).listPublished(workflowContext(context));
+			const entries = [];
+			for (const workflow of published) {
+				try {
+					const executable = await requireExecutable(
+						resolveWorkflows,
+						workflow.key,
+						context,
+					);
+					entries.push({
+						key: executable.key,
+						label: executable.name,
+						revision: executable.revision,
+					});
+				} catch {
+					/* A workflow the configuring user may not execute is simply not
+					   offered as a target. */
+				}
+			}
+			return entries;
 		},
-		validate(targetKey, context) {
-			const workflow = requireExecutable(resolveWorkflows, targetKey, context);
+		async validate(targetKey, context) {
+			const workflow = await requireExecutable(
+				resolveWorkflows,
+				targetKey,
+				context,
+			);
 			return {
 				key: workflow.key,
 				label: workflow.name,
@@ -196,11 +202,15 @@ export function createWorkflowAutomationTargetAdapter(
 			};
 		},
 		async invoke(request, context) {
-			const reference = requireExecutable(resolveWorkflows, request.targetKey, {
-				tenantId: context.tenantId,
-				actor: context.configuredBy,
-				permissionSnapshot: context.permissionSnapshot,
-			});
+			const reference = await requireExecutable(
+				resolveWorkflows,
+				request.targetKey,
+				{
+					tenantId: context.tenantId,
+					actor: context.configuredBy,
+					permissionSnapshot: context.permissionSnapshot,
+				},
+			);
 			const source = context.source;
 			const actor =
 				source.kind === 'run-now'

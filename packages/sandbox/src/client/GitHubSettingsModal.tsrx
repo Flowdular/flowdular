@@ -1,4 +1,6 @@
-import { Alert, Button, FormField, Icon, Tag } from '@coreloom/ui';
+import { useState } from 'octane';
+import { Alert, Button, Drawer, FormField } from '@flowdular/ui';
+import { githubSettingsInput } from './github-settings.ts';
 import type { SafeSandboxConfiguration } from '../server/config.ts';
 import { useTranslation } from './i18n.ts';
 
@@ -24,189 +26,194 @@ export interface GitHubSettingsModalProps {
 	readonly onClose: () => void;
 }
 
-function value(form: FormData, name: string): string {
-	const entry = form.get(name);
-	return typeof entry === 'string' ? entry.trim() : '';
-}
-
-function checked(form: FormData, name: string): boolean {
-	return form.get(name) === 'on';
-}
-
 export function GitHubSettingsModal(props: GitHubSettingsModalProps) @{
 	const { t } = useTranslation();
 	const github = props.configuration.github;
+	const [enabled, setEnabled] = useState(github.enabled);
+	const [custom, setCustom] = useState(github.overridesProject);
 	const submit = (event: SubmitEvent) => {
 		event.preventDefault();
-		const form = new FormData(event.currentTarget as HTMLFormElement);
-		const token = value(form, 'githubToken');
-		props.onSave({
-			githubEnabled: checked(form, 'githubEnabled'),
-			githubOverridesProject: checked(form, 'githubOverridesProject'),
-			githubRemote: value(form, 'githubRemote'),
-			githubRepository: value(form, 'githubRepository'),
-			githubBaseBranch: value(form, 'githubBaseBranch'),
-			githubBranchPrefix: value(form, 'githubBranchPrefix'),
-			githubMode: value(form, 'githubMode') as 'auto' | 'direct' | 'fork',
-			githubForkOwner: value(form, 'githubForkOwner'),
-			githubReviewers: value(form, 'githubReviewers').split(',').map(
-				(entry) => entry.trim(),
-			).filter(Boolean),
-			...(token ? { githubToken: token } : {}),
-			...(checked(form, 'githubClearToken') ? { githubClearToken: true } : {}),
-		});
+		props.onSave(
+			githubSettingsInput(
+				new FormData(event.currentTarget as HTMLFormElement),
+				github,
+			),
+		);
 	};
 
-	<div class="workbench github-settings" role="dialog" aria-modal="true">
-		<form class="github-settings__panel" onSubmit={submit}>
-			<header class="github-settings__head">
-				<span class="github-settings__title">
-					<Icon name="code" size={18} />
-					{t('sandbox.github.title')}
-				</span>
-				<span class="sandbox__spacer"></span>
-				<Tag tone={github.enabled ? 'success' : 'neutral'} dot>
-					{github.enabled
-						? t('sandbox.github.enabled')
-						: t('sandbox.github.disabled')}
-				</Tag>
-			</header>
-			<div class="github-settings__body">
-				<p class="ui-help">{t('sandbox.github.description')}</p>
-				<label class="ui-checkbox">
-					<input
-						type="checkbox"
-						name="githubEnabled"
-						defaultChecked={github.enabled}
-					/>
-					<span>{t('sandbox.github.offer')}</span>
-				</label>
-				<label class="ui-checkbox">
-					<input
-						type="checkbox"
-						name="githubOverridesProject"
-						defaultChecked={github.overridesProject}
-					/>
-					<span>{t('sandbox.github.overrideProject')}</span>
-				</label>
-				<div class="ui-form__row">
-					<FormField
-						label={t('sandbox.github.remote.label')}
-						help={t('sandbox.github.remote.help')}
-						required
-					>
-						<input
-							class="ui-input ui-mono"
-							name="githubRemote"
-							defaultValue={github.remote}
-							required
-						/>
-					</FormField>
-					<FormField
-						label={t('sandbox.github.repository.label')}
-						help={t('sandbox.github.repository.help')}
-					>
-						<input
-							class="ui-input ui-mono"
-							name="githubRepository"
-							defaultValue={github.repository ?? ''}
-							placeholder={t('sandbox.github.repository.placeholder')}
-						/>
-					</FormField>
-				</div>
-				<div class="ui-form__row">
-					<FormField label={t('sandbox.github.base.label')} required>
-						<input
-							class="ui-input ui-mono"
-							name="githubBaseBranch"
-							defaultValue={github.baseBranch}
-							required
-						/>
-					</FormField>
-					<FormField label={t('sandbox.github.prefix.label')} required>
-						<input
-							class="ui-input ui-mono"
-							name="githubBranchPrefix"
-							defaultValue={github.branchPrefix}
-							required
-						/>
-					</FormField>
-				</div>
-				<div class="ui-form__row">
-					<FormField
-						label={t('sandbox.github.mode.label')}
-						help={t('sandbox.github.mode.help')}
-						required
-					>
-						<select
-							class="ui-select"
-							name="githubMode"
-							defaultValue={github.mode}
-						>
-							<option value="auto">{t('sandbox.github.mode.auto')}</option>
-							<option value="direct">{t('sandbox.github.mode.direct')}</option>
-							<option value="fork">{t('sandbox.github.mode.fork')}</option>
-						</select>
-					</FormField>
-					<FormField
-						label={t('sandbox.github.forkOwner.label')}
-						help={t('sandbox.github.forkOwner.help')}
-					>
-						<input
-							class="ui-input ui-mono"
-							name="githubForkOwner"
-							defaultValue={github.forkOwner ?? ''}
-							placeholder={t('sandbox.github.forkOwner.placeholder')}
-						/>
-					</FormField>
-				</div>
-				<FormField
-					label={t('sandbox.github.reviewers.label')}
-					help={t('sandbox.github.reviewers.help')}
-				>
-					<input
-						class="ui-input ui-mono"
-						name="githubReviewers"
-						defaultValue={github.reviewers.join(', ')}
-					/>
-				</FormField>
-				<FormField
-					label={t('sandbox.github.token.label')}
-					help={github.tokenFingerprint
-						? t('sandbox.github.token.stored', {
-								fingerprint: github.tokenFingerprint,
-							})
-						: t('sandbox.github.token.help')}
-				>
-					<input
-						class="ui-input ui-mono"
-						name="githubToken"
-						type="password"
-						autocomplete="new-password"
-						placeholder={t('sandbox.github.token.placeholder')}
-					/>
-				</FormField>
-				@if (github.tokenFingerprint) {
+	<Drawer
+		open={true}
+		title={t('sandbox.github.title')}
+		subtitle={t('sandbox.github.description')}
+		width="lg"
+		onClose={() => {
+			if (!props.busy) props.onClose();
+		}}
+	>
+		<form class="ui-drawer__form" onSubmit={submit}>
+			<div class="ui-drawer__body">
+				<div class="ui-form">
 					<label class="ui-checkbox">
-						<input type="checkbox" name="githubClearToken" />
-						<span>{t('sandbox.github.token.remove')}</span>
+						<input
+							type="checkbox"
+							name="githubEnabled"
+							checked={enabled}
+							onChange={(event) => setEnabled(event.currentTarget.checked)}
+						/>
+						<span>{t('sandbox.github.offer')}</span>
 					</label>
-				}
-				@if (props.error) {
-					<Alert>{props.error}</Alert>
-				}
+					<Alert tone="info">{t('sandbox.github.safety')}</Alert>
+					<label class="ui-checkbox">
+						<input
+							type="checkbox"
+							name="githubOverridesProject"
+							checked={custom}
+							onChange={(event) => setCustom(event.currentTarget.checked)}
+						/>
+						<span>{t('sandbox.github.overrideProject')}</span>
+					</label>
+					@if (!custom) {
+						<p class="ui-help">{t('sandbox.github.projectHelp')}</p>
+					} @else {
+						<div class="ui-form__section">
+							<FormField
+								label={t('sandbox.github.repository.label')}
+								help={t('sandbox.github.repository.help')}
+							>
+								<input
+									class="ui-input ui-mono"
+									name="githubRepository"
+									defaultValue={github.repository ?? ''}
+									placeholder={t('sandbox.github.repository.placeholder')}
+									maxlength={200}
+								/>
+							</FormField>
+							<FormField
+								label={t('sandbox.github.mode.label')}
+								help={t('sandbox.github.mode.help')}
+							>
+								<select
+									class="ui-select"
+									name="githubMode"
+									defaultValue={github.mode}
+								>
+									<option value="auto">{t('sandbox.github.mode.auto')}</option>
+									<option value="direct">{t(
+										'sandbox.github.mode.direct',
+									)}</option>
+									<option value="fork">{t('sandbox.github.mode.fork')}</option>
+								</select>
+							</FormField>
+							<FormField
+								label={t('sandbox.github.reviewers.label')}
+								help={t('sandbox.github.reviewers.help')}
+							>
+								<input
+									class="ui-input ui-mono"
+									name="githubReviewers"
+									defaultValue={github.reviewers.join(', ')}
+									maxlength={1000}
+								/>
+							</FormField>
+							<details>
+								<summary class="ui-label">{t(
+									'sandbox.github.advanced',
+								)}</summary>
+								<div class="ui-form">
+									<div class="ui-form__row">
+										<FormField
+											label={t('sandbox.github.remote.label')}
+											help={t('sandbox.github.remote.help')}
+										>
+											<input
+												class="ui-input ui-mono"
+												name="githubRemote"
+												defaultValue={github.remote}
+												maxlength={120}
+											/>
+										</FormField>
+										<FormField
+											label={t('sandbox.github.base.label')}
+											help={t('sandbox.github.base.help')}
+										>
+											<input
+												class="ui-input ui-mono"
+												name="githubBaseBranch"
+												defaultValue={github.baseBranch}
+												maxlength={120}
+											/>
+										</FormField>
+									</div>
+									<div class="ui-form__row">
+										<FormField label={t('sandbox.github.prefix.label')}>
+											<input
+												class="ui-input ui-mono"
+												name="githubBranchPrefix"
+												defaultValue={github.branchPrefix}
+												maxlength={120}
+											/>
+										</FormField>
+										<FormField
+											label={t('sandbox.github.forkOwner.label')}
+											help={t('sandbox.github.forkOwner.help')}
+										>
+											<input
+												class="ui-input ui-mono"
+												name="githubForkOwner"
+												defaultValue={github.forkOwner ?? ''}
+												maxlength={120}
+											/>
+										</FormField>
+									</div>
+								</div>
+							</details>
+						</div>
+					}
+					<div class="ui-form__section">
+						<div class="ui-form__section-head">
+							<b>{t('sandbox.github.access')}</b>
+							<small>{t('sandbox.github.accessHelp')}</small>
+						</div>
+						<FormField
+							label={t('sandbox.github.token.label')}
+							help={github.tokenFingerprint
+								? t('sandbox.github.token.stored', {
+										fingerprint: github.tokenFingerprint,
+									})
+								: t('sandbox.github.token.help')}
+						>
+							<input
+								class="ui-input ui-mono"
+								name="githubToken"
+								type="password"
+								autocomplete="new-password"
+								placeholder={t('sandbox.github.token.placeholder')}
+								maxlength={16384}
+							/>
+						</FormField>
+						@if (github.tokenFingerprint) {
+							<label class="ui-checkbox">
+								<input type="checkbox" name="githubClearToken" />
+								<span>{t('sandbox.github.token.remove')}</span>
+							</label>
+						}
+					</div>
+					@if (props.error) {
+						<Alert>{props.error}</Alert>
+					}
+				</div>
 			</div>
-			<footer class="github-settings__foot">
-				<Button
-					type="button"
-					size="sm"
-					variant="ghost"
-					onClick={props.onClose}
-				>{t('sandbox.common.cancel')}</Button>
-				<Button type="submit" size="sm" variant="primary" disabled={props.busy}>
-					{props.busy ? t('sandbox.common.saving') : t('sandbox.github.save')}
-				</Button>
-			</footer>
+			<div class="ui-drawer__foot">
+				<small>{t('sandbox.github.saveNote')}</small>
+				<div class="ui-form__actions">
+					<Button onClick={props.onClose} disabled={props.busy}>{t(
+						'sandbox.common.cancel',
+					)}</Button>
+					<Button type="submit" variant="primary" disabled={props.busy}>
+						{props.busy ? t('sandbox.common.saving') : t('sandbox.github.save')}
+					</Button>
+				</div>
+			</div>
 		</form>
-	</div>
+	</Drawer>
 }

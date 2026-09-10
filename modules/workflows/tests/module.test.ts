@@ -1,19 +1,19 @@
-import { createPlatformCapabilityRegistry, userActor } from '@coreloom/kernel';
+import { createPlatformCapabilityRegistry, userActor } from '@flowdular/kernel';
 import { describe, expect, it } from 'vitest';
 import { moduleDefinition } from '../src/index.ts';
 import { createWorkflowCursorCodec } from '../src/services/cursor-codec.ts';
 import { WorkflowsService } from '../src/services/workflows-service.ts';
-import { SqliteWorkflowsRepository } from '../src/services/sqlite-repository.ts';
+import { openWorkflowsTestRepository } from './support/database.ts';
 import type { WorkflowGraphV1 } from '../src/domain/types.ts';
 import { WORKFLOWS_PERMISSIONS } from '../src/acl/permissions.ts';
 
-function fixture() {
-	const repository = new SqliteWorkflowsRepository(':memory:');
-	const service = new WorkflowsService(repository, {
+async function fixture() {
+	const database = await openWorkflowsTestRepository();
+	const service = new WorkflowsService(database.repository, {
 		capabilities: createPlatformCapabilityRegistry(),
 		cursorCodec: createWorkflowCursorCodec(Buffer.alloc(32, 7)),
 	});
-	return { repository, service };
+	return { database, service };
 }
 
 const actor = userActor({ accountId: 'account-1', email: 'owner@example.com' });
@@ -57,58 +57,60 @@ const graph: WorkflowGraphV1 = {
 };
 
 describe('workflows.core', () => {
-	it('exports its validated identity', () => {
+	it('exports its validated identity', async () => {
 		expect(moduleDefinition.manifest.id).toBe('workflows.core');
 	});
 
-	it('isolates definitions by trusted tenant id', () => {
-		const { repository, service } = fixture();
-		service.create(
+	it('isolates definitions by trusted tenant id', async () => {
+		const { database, service } = await fixture();
+		await service.create(
 			'tenant-a',
 			{ key: 'alpha-flow', name: 'Alpha', description: '' },
 			actor,
 		);
-		service.create(
+		await service.create(
 			'tenant-b',
 			{ key: 'beta-flow', name: 'Beta', description: '' },
 			actor,
 		);
-		expect(service.list('tenant-a').map((record) => record.name)).toEqual([
-			'Alpha',
-		]);
-		expect(service.list('tenant-b').map((record) => record.name)).toEqual([
-			'Beta',
-		]);
-		repository.close();
+		expect(
+			(await service.list('tenant-a')).map((record) => record.name),
+		).toEqual(['Alpha']);
+		expect(
+			(await service.list('tenant-b')).map((record) => record.name),
+		).toEqual(['Beta']);
+		await database.dispose();
 	});
 
-	it('accepts tenant workflow slugs and rejects platform dotted ids', () => {
-		const { repository, service } = fixture();
+	it('accepts tenant workflow slugs and rejects platform dotted ids', async () => {
+		const { database, service } = await fixture();
 		expect(
-			service.create(
-				'tenant-a',
-				{ key: 'catalog-enrichment', name: 'Catalog', description: '' },
-				actor,
+			(
+				await service.create(
+					'tenant-a',
+					{ key: 'catalog-enrichment', name: 'Catalog', description: '' },
+					actor,
+				)
 			).definition.key,
 		).toBe('catalog-enrichment');
-		expect(() =>
+		await expect(
 			service.create(
 				'tenant-a',
 				{ key: 'catalog.enrichment', name: 'Catalog 2', description: '' },
 				actor,
 			),
-		).toThrow(/lowercase slug/);
-		repository.close();
+		).rejects.toThrow(/lowercase slug/);
+		await database.dispose();
 	});
 
-	it('persists deterministic simulation attempts, edges, events and output evidence', () => {
-		const { repository, service } = fixture();
-		const created = service.create(
+	it('persists deterministic simulation attempts, edges, events and output evidence', async () => {
+		const { database, service } = await fixture();
+		const created = await service.create(
 			'tenant-a',
 			{ key: 'simulation-flow', name: 'Simulation', description: '' },
 			actor,
 		);
-		service.update(
+		await service.update(
 			'tenant-a',
 			{
 				workflowId: created.definition.id,
@@ -119,7 +121,7 @@ describe('workflows.core', () => {
 			},
 			actor,
 		);
-		const detail = service.simulate(
+		const detail = await service.simulate(
 			{
 				workflowId: created.definition.id,
 				input: { name: 'Ada' },
@@ -145,6 +147,6 @@ describe('workflows.core', () => {
 		expect(
 			detail.events.every((event) => event.virtualOffsetMs !== undefined),
 		).toBe(true);
-		repository.close();
+		await database.dispose();
 	});
 });

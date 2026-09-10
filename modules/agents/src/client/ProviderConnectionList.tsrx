@@ -1,5 +1,5 @@
-import { activeLocale, t } from '@coreloom/client';
-import { SearchField, TableCard, Tag, type TableColumn } from '@coreloom/ui';
+import { activeLocale, t } from '@flowdular/client';
+import { SearchField, TableCard, Tag, type TableColumn } from '@flowdular/ui';
 import type { AgentProviderConnection } from '../domain/types.ts';
 import { modelReadinessState } from './presentation.ts';
 

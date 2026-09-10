@@ -1,5 +1,5 @@
 /* Platform-specific styles. Tokens, base styles, and primitives come from
-   @coreloom/ui; the shell layout comes from @coreloom/client. */
+   @flowdular/ui; the shell layout comes from @flowdular/client. */
 
 .access-denied {
 	display: grid;

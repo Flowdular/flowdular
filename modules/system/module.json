@@ -2,7 +2,7 @@
 	"$schema": "../../packages/contracts/schemas/module.schema.json",
 	"schemaVersion": 1,
 	"id": "system.core",
-	"package": "@coreloom/module-system",
+	"package": "@flowdular/module-system",
 	"version": "0.5.0",
 	"profile": "full",
 	"capabilities": ["api", "client", "translations"],
@@ -13,5 +13,6 @@
 	"dependencies": [],
 	"tenancy": "required",
 	"locales": ["en", "pl"],
-	"stability": "experimental"
+	"stability": "experimental",
+	"platformApi": "0.1.0"
 }

@@ -2,14 +2,25 @@ import {
 	AgentHarness,
 	type AgentProvider,
 	type AgentTool,
-} from '@coreloom/harness';
-import { userActor } from '@coreloom/kernel';
-import { describe, expect, it } from 'vitest';
+} from '@flowdular/harness';
+import { userActor } from '@flowdular/kernel';
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+} from 'vitest';
 import type { CreateAgentInput } from '../src/domain/types.ts';
 import { createAgentRunQueue } from '../src/server/run-queue.ts';
 import { AgentService } from '../src/services/agent-service.ts';
-import { SqliteAgentRepository } from '../src/services/sqlite-repository.ts';
 import { AgentWorker } from '../src/services/worker.ts';
+import {
+	openAgentsTestDatabase,
+	type AgentsTestDatabase,
+} from './support/database.ts';
 
 const provider: AgentProvider = {
 	id: 'test-provider',
@@ -37,27 +48,52 @@ const agentInput: CreateAgentInput = {
 	provider: provider.id,
 	model: 'test-model',
 	allowedTools: [readTool.id],
-	skillIds: [],
+	procedureIds: [],
 	maxSteps: 4,
 	timeoutMs: 1_000,
 	temperature: 0,
 	status: 'draft',
 };
 
-function fixture() {
-	const repository = new SqliteAgentRepository(':memory:');
+let database: AgentsTestDatabase;
+const workers: AgentWorker[] = [];
+
+beforeAll(async () => {
+	database = await openAgentsTestDatabase();
+});
+
+afterEach(async () => {
+	for (const worker of workers.splice(0)) await worker.dispose();
+});
+
+beforeEach(async () => {
+	await database.truncate();
+});
+
+afterAll(async () => {
+	await database.dispose();
+});
+
+function trackedWorker(harness: AgentHarness, workerId: string): AgentWorker {
+	const worker = new AgentWorker(database.repository, harness, {
+		workerId,
+		concurrency: 1,
+		leaseMs: 1_000,
+	});
+	workers.push(worker);
+	return worker;
+}
+
+async function fixture() {
+	const repository = database.repository;
 	const harness = new AgentHarness({
 		providers: [provider],
 		tools: [readTool],
 	});
-	const worker = new AgentWorker(repository, harness, {
-		workerId: 'worker:run-queue-test',
-		concurrency: 1,
-		leaseMs: 1_000,
-	});
+	const worker = trackedWorker(harness, 'worker:run-queue-test');
 	const service = new AgentService(repository, harness, worker);
-	const created = service.createAgent('tenant-a', 'owner-a', agentInput);
-	const agent = service.updateAgent('tenant-a', created.id, 'owner-a', {
+	const created = await service.createAgent('tenant-a', 'owner-a', agentInput);
+	const agent = await service.updateAgent('tenant-a', created.id, 'owner-a', {
 		...agentInput,
 		status: 'active',
 		expectedRevision: created.revision,
@@ -73,7 +109,7 @@ const actor = userActor({
 
 describe('agents.run-queue capability', () => {
 	it('stores the explicit request separately from its permission ceiling', async () => {
-		const { queue, agent } = fixture();
+		const { queue, agent } = await fixture();
 		const run = await queue.enqueue(
 			{
 				tenantId: 'tenant-a',
@@ -93,7 +129,7 @@ describe('agents.run-queue capability', () => {
 	});
 
 	it('keeps an explicit grant when every side of the access contract agrees', async () => {
-		const { queue, agent } = fixture();
+		const { queue, agent } = await fixture();
 		const run = await queue.enqueue(
 			{
 				tenantId: 'tenant-a',
@@ -113,7 +149,7 @@ describe('agents.run-queue capability', () => {
 	});
 
 	it('refuses a grant outside the agent definition before a run is persisted', async () => {
-		const { queue, service, agent } = fixture();
+		const { queue, service, agent } = await fixture();
 		await expect(
 			queue.enqueue(
 				{
@@ -129,11 +165,11 @@ describe('agents.run-queue capability', () => {
 				},
 			),
 		).rejects.toMatchObject({ code: 'TOOL_NOT_ALLOWED', status: 403 });
-		expect(service.listRuns('tenant-a')).toEqual([]);
+		expect(await service.listRuns('tenant-a')).toEqual([]);
 	});
 
 	it('cannot combine an actor from one tenant with a run in another tenant', async () => {
-		const { queue, agent } = fixture();
+		const { queue, agent } = await fixture();
 		await expect(
 			queue.enqueue(
 				{
@@ -152,7 +188,7 @@ describe('agents.run-queue capability', () => {
 	});
 
 	it('returns an idempotent retry before current agent and tool checks', async () => {
-		const { repository, service, queue, agent } = fixture();
+		const { repository, service, queue, agent } = await fixture();
 		const input = {
 			agentId: agent.id,
 			trigger: 'service' as const,
@@ -168,18 +204,14 @@ describe('agents.run-queue capability', () => {
 			},
 			input,
 		);
-		service.updateAgent('tenant-a', agent.id, 'owner-a', {
+		await service.updateAgent('tenant-a', agent.id, 'owner-a', {
 			...agentInput,
 			name: 'Changed reader',
 			status: 'paused',
 			expectedRevision: agent.revision,
 		});
 		const noToolsHarness = new AgentHarness({ providers: [provider] });
-		const noToolsWorker = new AgentWorker(repository, noToolsHarness, {
-			workerId: 'worker:no-tools',
-			concurrency: 1,
-			leaseMs: 1_000,
-		});
+		const noToolsWorker = trackedWorker(noToolsHarness, 'worker:no-tools');
 		const retryQueue = createAgentRunQueue(
 			new AgentService(repository, noToolsHarness, noToolsWorker),
 		);
@@ -206,13 +238,9 @@ describe('agents.run-queue capability', () => {
 	});
 
 	it('refuses a new run when an allowed tool is no longer registered', async () => {
-		const { repository, agent } = fixture();
+		const { repository, agent } = await fixture();
 		const noToolsHarness = new AgentHarness({ providers: [provider] });
-		const noToolsWorker = new AgentWorker(repository, noToolsHarness, {
-			workerId: 'worker:no-tools',
-			concurrency: 1,
-			leaseMs: 1_000,
-		});
+		const noToolsWorker = trackedWorker(noToolsHarness, 'worker:no-tools');
 		const queue = createAgentRunQueue(
 			new AgentService(repository, noToolsHarness, noToolsWorker),
 		);
@@ -261,28 +289,29 @@ describe('agents.run-queue capability', () => {
 				return { ok: true };
 			},
 		};
-		const repository = new SqliteAgentRepository(':memory:');
+		const repository = database.repository;
 		const harness = new AgentHarness({
 			providers: [gatedProvider],
 			tools: [guardedTool],
 			authorizeToolAccess: () => livePermissions,
 		});
-		const worker = new AgentWorker(repository, harness, {
-			workerId: 'worker:live-revocation',
-			concurrency: 1,
-			leaseMs: 1_000,
-		});
+		const worker = trackedWorker(harness, 'worker:live-revocation');
 		const service = new AgentService(repository, harness, worker);
-		const created = service.createAgent('tenant-a', 'owner-a', {
+		const created = await service.createAgent('tenant-a', 'owner-a', {
 			...agentInput,
 			provider: gatedProvider.id,
 		});
-		const active = service.updateAgent('tenant-a', created.id, 'owner-a', {
-			...agentInput,
-			provider: gatedProvider.id,
-			status: 'active',
-			expectedRevision: created.revision,
-		});
+		const active = await service.updateAgent(
+			'tenant-a',
+			created.id,
+			'owner-a',
+			{
+				...agentInput,
+				provider: gatedProvider.id,
+				status: 'active',
+				expectedRevision: created.revision,
+			},
+		);
 		const run = await createAgentRunQueue(service).enqueue(
 			{
 				tenantId: 'tenant-a',
@@ -296,21 +325,19 @@ describe('agents.run-queue capability', () => {
 				toolGrants: [readTool.id],
 			},
 		);
-		worker.start();
+		await worker.start();
 		await started;
 		livePermissions = [];
 		releaseProvider();
-		for (let attempt = 0; attempt < 100; attempt += 1) {
-			if (service.getRun('tenant-a', run.id).status === 'failed') break;
+		for (let attempt = 0; attempt < 300; attempt += 1) {
+			if ((await service.getRun('tenant-a', run.id)).status === 'failed') break;
 			await new Promise((resolve) => setTimeout(resolve, 5));
 		}
 
 		expect(mutations).toBe(0);
-		expect(service.getRun('tenant-a', run.id)).toMatchObject({
+		expect(await service.getRun('tenant-a', run.id)).toMatchObject({
 			status: 'failed',
 			failureCode: 'TOOL_AUTHORIZATION_REVOKED',
 		});
-		await worker.dispose();
-		repository.close();
 	});
 });

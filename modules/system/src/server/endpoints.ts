@@ -5,18 +5,18 @@ import {
 	problemResponse,
 	readJsonObject,
 	requiredString,
-} from '@coreloom/server';
+} from '@flowdular/server';
 import {
 	endpointIdentityFromContext,
 	principalFromContext,
 	sessionMutationDenial,
 	type AuthRuntime,
-} from '@coreloom/module-auth/server';
+} from '@flowdular/module-auth/server';
 import {
 	ModuleSettingsError,
 	type ModuleSettingEntry,
 	type ModuleSettingsRuntime,
-} from '@coreloom/kernel';
+} from '@flowdular/kernel';
 import { SYSTEM_PERMISSIONS } from '../acl/permissions.ts';
 import { readModuleCatalog } from './module-catalog.ts';
 
@@ -141,10 +141,10 @@ function utcDayKey(timestamp: number): string {
 /* Last 14 days of audit events per day for the tenant, read from the auth
    runtime already available in the composition context. Events arrive
    newest-first, so paging stops as soon as one predates the window. */
-function readActivity(
+async function readActivity(
 	auth: AuthRuntime,
 	tenantId: string,
-): OverviewActivityPoint[] {
+): Promise<OverviewActivityPoint[]> {
 	const now = new Date();
 	const todayStart = Date.UTC(
 		now.getUTCFullYear(),
@@ -159,10 +159,14 @@ function readActivity(
 		keys.push(key);
 		counts.set(key, 0);
 	}
-	const service = auth.service();
+	const service = await auth.service();
 	let cursor: string | null = null;
 	for (let page = 0; page < MAX_ACTIVITY_PAGES; page += 1) {
-		const result = service.queryAudit({ tenantId, limit: AUDIT_PAGE, cursor });
+		const result = await service.queryAudit({
+			tenantId,
+			limit: AUDIT_PAGE,
+			cursor,
+		});
 		let reachedWindowEnd = false;
 		for (const event of result.events) {
 			if (event.occurredAt < windowStart) {
@@ -193,10 +197,11 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 				return jsonResponse({
 					modules: readModuleCatalog(options.workspaceRoot),
 					commands: {
-						enable: 'pnpm coreloom module enable <id> --apply',
-						disable: 'pnpm coreloom module disable <id> --apply',
-						sync: 'pnpm coreloom module sync --apply',
-						grantScopes: 'pnpm coreloom auth sync-scopes --module <id> --apply',
+						enable: 'pnpm flowdular module enable <id> --apply',
+						disable: 'pnpm flowdular module disable <id> --apply',
+						sync: 'pnpm flowdular module sync --apply',
+						grantScopes:
+							'pnpm flowdular auth sync-scopes --module <id> --apply',
 					},
 				});
 			} catch (error) {
@@ -232,7 +237,7 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 			permission: SYSTEM_PERMISSIONS.workspaceAccess,
 		},
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			try {
 				const principal = principalFromContext(octane)!;
 				const catalog = readModuleCatalog(options.workspaceRoot);
@@ -249,7 +254,7 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 				const payload: SystemOverviewPayload = {
 					enabledModuleCount: catalog.filter((entry) => entry.enabled).length,
 					moduleCount: catalog.length,
-					activity: readActivity(options.auth, principal.tenantId),
+					activity: await readActivity(options.auth, principal.tenantId),
 					modules,
 				};
 				return jsonResponse(payload);

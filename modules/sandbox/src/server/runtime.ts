@@ -1,20 +1,35 @@
-import { coreloomLocalDataPath } from '@coreloom/kernel/legacy-local-state';
-import type { AuthRuntime } from '@coreloom/module-auth/server';
+import type {
+	DatabaseAdapterLease,
+	DatabaseProvider,
+	DatabaseProviderRequest,
+} from '@flowdular/database';
+import {
+	DATABASE_CAPABILITY_IDS,
+	DATABASE_DIALECT_IDS,
+} from '@flowdular/database';
+import type { AuthRuntime } from '@flowdular/module-auth/server';
 import { directoryFromAuthRuntime } from '../services/directory.ts';
 import { SandboxService } from '../services/sandbox-service.ts';
-import { SqliteSandboxRepository } from '../services/sqlite-repository.ts';
+import {
+	DatabaseSandboxRepository,
+	migrateSandboxDatabase,
+} from '../services/database-repository.ts';
 
-export interface SandboxRuntimeOptions {
-	readonly databasePath: string;
+export interface SandboxRuntimeSettings {
 	/* Where the sandbox application is reachable. The platform only links to
 	   it; it never proxies sandbox traffic. */
 	readonly sandboxUrl: string;
 }
 
+export interface SandboxRuntimeOptions extends SandboxRuntimeSettings {
+	readonly databases: DatabaseProvider;
+	readonly purpose: Exclude<DatabaseProviderRequest['purpose'], 'migration'>;
+}
+
 export interface SandboxRuntime {
 	readonly options: SandboxRuntimeOptions;
-	service(auth: AuthRuntime): SandboxService;
-	dispose(): void;
+	service(auth: AuthRuntime): Promise<SandboxService>;
+	dispose(): Promise<void>;
 }
 
 function sandboxUrl(value: string | undefined): string {
@@ -23,53 +38,82 @@ function sandboxUrl(value: string | undefined): string {
 	try {
 		url = new URL(candidate);
 	} catch {
-		throw new Error('CL_SANDBOX_URL must be an absolute URL.');
+		throw new Error('FD_SANDBOX_URL must be an absolute URL.');
 	}
 	if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-		throw new Error('CL_SANDBOX_URL must use http or https.');
+		throw new Error('FD_SANDBOX_URL must use http or https.');
 	}
 	return url.origin;
 }
 
-export function sandboxRuntimeOptionsFromEnvironment(
+export function sandboxSettingsFromEnvironment(
 	environment: NodeJS.ProcessEnv = process.env,
-	workspaceRoot = process.cwd(),
-): SandboxRuntimeOptions {
-	return {
-		databasePath:
-			environment.CL_SANDBOX_DATABASE ??
-			(environment.NODE_ENV === 'production'
-				? '/data/sandbox.db'
-				: environment.NODE_ENV === 'test'
-					? ':memory:'
-					: coreloomLocalDataPath(workspaceRoot, 'sandbox.db')),
-		sandboxUrl: sandboxUrl(environment.CL_SANDBOX_URL),
-	};
+): SandboxRuntimeSettings {
+	return { sandboxUrl: sandboxUrl(environment.FD_SANDBOX_URL) };
 }
 
 export function createSandboxRuntime(
-	options: SandboxRuntimeOptions = sandboxRuntimeOptionsFromEnvironment(),
+	options: SandboxRuntimeOptions,
 ): SandboxRuntime {
-	let service: SandboxService | undefined;
-	let repository: SqliteSandboxRepository | undefined;
 	let disposed = false;
+	let runtimeLeasePromise: Promise<DatabaseAdapterLease> | undefined;
+	let servicePromise: Promise<SandboxService> | undefined;
+
+	const initialize = async (auth: AuthRuntime): Promise<SandboxService> => {
+		/* Migrations take their own short lease: the runtime role is tenant
+		   scoped and may not run schema operations. */
+		const migrationLease = await options.databases.acquire({
+			namespace: 'sandbox.core',
+			purpose: 'migration',
+			requirements: {
+				dialectIds: [DATABASE_DIALECT_IDS.postgresql],
+				capabilities: [
+					DATABASE_CAPABILITY_IDS.MIGRATION_LOCK,
+					DATABASE_CAPABILITY_IDS.SCHEMA_INTROSPECTION,
+					DATABASE_CAPABILITY_IDS.TRANSACTIONAL_DDL,
+				],
+			},
+		});
+		try {
+			await migrateSandboxDatabase(migrationLease.database);
+		} finally {
+			await migrationLease.release();
+		}
+		runtimeLeasePromise = options.databases.acquire({
+			namespace: 'sandbox.core',
+			purpose: options.purpose,
+			requirements: {
+				dialectIds: [DATABASE_DIALECT_IDS.postgresql],
+				capabilities: [DATABASE_CAPABILITY_IDS.TRANSACTIONS],
+			},
+		});
+		const lease = await runtimeLeasePromise;
+		return new SandboxService(
+			new DatabaseSandboxRepository(lease.database),
+			directoryFromAuthRuntime(auth),
+		);
+	};
+
 	return {
 		options,
 		service: (auth) => {
-			if (disposed) throw new Error('Sandbox runtime is disposed.');
-			repository ??= new SqliteSandboxRepository(options.databasePath);
-			service ??= new SandboxService(
-				repository,
-				directoryFromAuthRuntime(auth),
-			);
-			return service;
+			if (disposed) {
+				return Promise.reject(new Error('Sandbox runtime is disposed.'));
+			}
+			servicePromise ??= initialize(auth);
+			return servicePromise;
 		},
-		dispose() {
+		async dispose() {
 			if (disposed) return;
 			disposed = true;
-			repository?.close();
-			repository = undefined;
-			service = undefined;
+			if (!runtimeLeasePromise) {
+				await servicePromise?.catch(() => undefined);
+			}
+			if (!runtimeLeasePromise) return;
+			const lease = await runtimeLeasePromise;
+			await lease.release();
+			runtimeLeasePromise = undefined;
+			servicePromise = undefined;
 		},
 	};
 }

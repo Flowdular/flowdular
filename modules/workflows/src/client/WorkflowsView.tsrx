@@ -1,4 +1,4 @@
-import { activeLocale, t } from '@coreloom/client';
+import { activeLocale, t } from '@flowdular/client';
 import {
 	Alert,
 	Button,
@@ -12,7 +12,7 @@ import {
 	TableCard,
 	Tag,
 	type TableColumn,
-} from '@coreloom/ui';
+} from '@flowdular/ui';
 import { useEffect, useMemo } from 'octane';
 import { useValue } from 'segment-state';
 import type {
@@ -57,6 +57,12 @@ import {
 	type WorkflowNodeType,
 } from './canvas-model.ts';
 import { dateTime } from './presentation.ts';
+import { runActions } from './run-actions.ts';
+import { repairCanvasIdentifiers } from './draft-repair.ts';
+import {
+	addConnectedNode,
+	type ConnectedNodeRequest,
+} from './connected-node.ts';
 import { createWorkflowsClientState } from './state.ts';
 import { WorkflowCreateForm } from './WorkflowCreateForm.tsrx';
 import { WorkflowEditor } from './WorkflowEditor.tsrx';
@@ -186,6 +192,8 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 	const [editorMode, setEditorMode] = useValue(client.state.editorMode);
 	const runCursor = useMemo(() => ({ value: null as string | null }), []);
 	const editVersion = useMemo(() => ({ value: 0 }), []);
+	const failedSaveVersion = useMemo(() => ({ value: -1 }), []);
+	const createSession = useMemo(() => ({ value: 0 }), []);
 
 	const refresh = async () => {
 		if (!props.canRead) return;
@@ -228,6 +236,10 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 
 	useEffect(() => {
 		if (!detail || !graph || !dirty || saving || !props.canManage) return;
+		if (
+			detail.definition.status === 'archived' ||
+				failedSaveVersion.value === editVersion.value
+		) return;
 		const timer = setTimeout(() => {
 			const scheduledVersion = editVersion.value;
 			setSaving(true);
@@ -246,6 +258,7 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 				if (editVersion.value === scheduledVersion) setDirty(false);
 				setSaving(false);
 			}).catch((saveError: unknown) => {
+				failedSaveVersion.value = scheduledVersion;
 				setSaving(false);
 				setError(
 					saveError instanceof Error
@@ -265,6 +278,7 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 	};
 
 	const openEditor = async (definition: WorkflowDefinition) => {
+		editVersion.value += 1;
 		setStatus('loading');
 		setError('');
 		try {
@@ -281,9 +295,13 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 						})
 					: Promise.resolve({ runs: [], nextCursor: null }),
 			]);
+			const editableGraph =
+				props.canManage && loaded.definition.status !== 'archived'
+					? repairCanvasIdentifiers(loaded.draft.graph)
+					: loaded.draft.graph;
 			client.store.act((transaction) => {
 				transaction.set(client.state.detail, loaded);
-				transaction.set(client.state.graph, loaded.draft.graph);
+				transaction.set(client.state.graph, editableGraph);
 				transaction.set(client.state.editorName, loaded.definition.name);
 				transaction.set(
 					client.state.editorDescription,
@@ -297,11 +315,17 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 				transaction.set(client.state.selectedRun, null);
 				transaction.set(client.state.selectedNodeId, '');
 				transaction.set(client.state.selectedEdgeId, '');
-				transaction.set(client.state.dirty, false);
+				transaction.set(
+					client.state.dirty,
+					editableGraph !== loaded.draft.graph,
+				);
 				transaction.set(client.state.editorMode, 'editor');
+				transaction.set(client.state.inputText, '{}');
+				transaction.set(client.state.notice, '');
+				transaction.set(client.state.connectionSource, null);
 			}, 'workflows/editor-opened');
 			setFixturesText(
-				JSON.stringify(simulationFixtures(loaded.draft.graph), null, 2),
+				JSON.stringify(simulationFixtures(editableGraph), null, 2),
 			);
 			runCursor.value = runPage.nextCursor;
 		} catch (loadError) {
@@ -332,9 +356,18 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 		}
 	};
 
-	const addNode = (type: WorkflowNodeType) => {
+	const addNode = (type: WorkflowNodeType, request?: ConnectedNodeRequest) => {
 		if (!graph) return;
-		const added = addWorkflowNode(graph, type, t('workflows.nodeType.' + type));
+		const added =
+			request
+				? addConnectedNode(
+						graph,
+						type,
+						t('workflows.nodeType.' + type),
+						request,
+					)
+				: addWorkflowNode(graph, type, t('workflows.nodeType.' + type));
+		if (!added) return;
 		changeGraph(added.graph);
 		setSelectedNodeId(added.nodeId);
 		setSelectedEdgeId('');
@@ -392,6 +425,19 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 	const selectRun = async (run: WorkflowRunSummary) => {
 		setError('');
 		try {
+			if (dirty || saving) {
+				setError(t('workflows.test.saveFirst'));
+				return;
+			}
+			if (
+				!detail || detail.definition.id !== run.workflowId ||
+					editorMode !== 'editor'
+			) {
+				const definition =
+					definitions.find((entry) => entry.id === run.workflowId) ??
+						(await loadWorkflowDetail(run.workflowId)).definition;
+				await openEditor(definition);
+			}
 			const loaded = await loadWorkflowRunDetail(run.id);
 			setSelectedRun(loaded);
 			setSelectedNodeId(loaded.compiledOrder[0] ?? '');
@@ -405,6 +451,10 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 
 	const simulate = async () => {
 		if (!detail) return;
+		if (dirty || saving) {
+			setError(t('workflows.test.saveFirst'));
+			return;
+		}
 		setStatus('submitting');
 		setError('');
 		try {
@@ -637,7 +687,10 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 	};
 
 	const cancelRun = async () => {
-		if (!selectedRun) return;
+		if (!selectedRun || !runActions(selectedRun.run, {
+					execute: props.canExecute,
+					cancel: props.canCancel,
+				}).cancel) return;
 		setStatus('submitting');
 		try {
 			await cancelWorkflowRun(selectedRun.run.id, props.csrfToken);
@@ -654,7 +707,10 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 	};
 
 	const retryRun = async () => {
-		if (!selectedRun) return;
+		if (!selectedRun || !runActions(selectedRun.run, {
+					execute: props.canExecute,
+					cancel: props.canCancel,
+				}).retry) return;
 		setStatus('submitting');
 		try {
 			const accepted = await retryWorkflowRun(
@@ -719,6 +775,7 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 		} @else if (editorMode === 'editor' && detail && graph) {
 			<>
 				<WorkflowEditor
+					key={detail.definition.id}
 					detail={detail}
 					graph={graph}
 					name={editorName}
@@ -739,13 +796,17 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 					notice={notice}
 					busy={status === 'submitting'}
 					saving={saving}
-					canManage={props.canManage}
-					canPublish={props.canPublish}
+					dirty={dirty}
+					history={history}
+					canManage={props.canManage && detail.definition.status === 'active'}
+					canPublish={props.canPublish && detail.definition.status === 'active'}
 					canExecute={props.canExecute}
 					canCancel={props.canCancel}
 					onBack={() => {
+						if (dirty || saving) return;
 						setEditorMode('catalog');
 						setSelectedRun(null);
+						setDetail(null);
 						void refresh();
 					}}
 					onName={(value) => {
@@ -759,6 +820,7 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 						setDirty(true);
 					}}
 					onAddNode={addNode}
+					onReplaceGraph={changeGraph}
 					onSelectNode={(nodeId) => {
 						setSelectedNodeId(nodeId);
 						setSelectedEdgeId('');
@@ -769,9 +831,13 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 					}}
 					onStartConnection={(nodeId, port) => {
 						setConnectionSource({ nodeId, port });
-						setNotice(t('workflows.canvas.chooseInput'));
+						setNotice('');
 					}}
 					onFinishConnection={finishConnection}
+					onCancelConnection={() => {
+						setConnectionSource(null);
+						setNotice('');
+					}}
 					onMoveNode={(nodeId, x, y) => changeGraph(
 						moveWorkflowNode(graph, nodeId, x, y),
 					)}
@@ -800,7 +866,6 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 					onCancelRun={() => void cancelRun()}
 					onRetryRun={() => void retryRun()}
 				/>
-				{history}
 			</>
 		} @else {
 			<div class="ui-view">
@@ -819,7 +884,11 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 						<Button
 							size="sm"
 							variant="primary"
-							onClick={() => setCreateOpen(true)}
+							onClick={() => {
+								createSession.value += 1;
+								setError('');
+								setCreateOpen(true);
+							}}
 						>
 							<Icon name="plus" size={14} />
 							{t('workflows.action.new')}
@@ -928,9 +997,12 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 			open={createOpen}
 			title={t('workflows.create.title')}
 			subtitle={t('workflows.create.subtitle')}
-			onClose={() => setCreateOpen(false)}
+			onClose={() => {
+				if (status !== 'submitting') setCreateOpen(false);
+			}}
 		>
 			<WorkflowCreateForm
+				key={'workflow-create-' + createSession.value}
 				busy={status === 'submitting'}
 				error={error}
 				onCancel={() => setCreateOpen(false)}

@@ -1,432 +1,235 @@
-import { createHash } from 'node:crypto';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
-import { afterEach, describe, expect, it } from 'vitest';
+import { readdirSync, readFileSync } from 'node:fs';
+import type {
+	DatabaseAdapterLease,
+	DatabaseProvider,
+} from '@flowdular/database';
 import {
-	MIGRATION_LEDGER_TABLE,
-	moduleMigrationStatus,
-	runModuleMigrations,
-} from '@coreloom/kernel';
-import {
-	AGENTS_MIGRATION_009,
-	AGENTS_MIGRATION_015,
-	migrations,
-} from '../src/services/migration.ts';
-import { SqliteAgentRepository } from '../src/services/sqlite-repository.ts';
+	DATABASE_MIGRATION_LEDGER,
+	databaseMigrationStatus,
+	runDatabaseMigrations,
+} from '@flowdular/database';
+import { createTestDatabaseProvider } from '@flowdular/database-testing';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { databaseMigrations } from '../src/services/migration.ts';
 
-const directory = new URL('../migrations/', import.meta.url);
+const migrationDirectory = new URL('../migrations/', import.meta.url);
 
-let workspace: string | undefined;
+let provider: DatabaseProvider;
+let lease: DatabaseAdapterLease;
 
-afterEach(() => {
-	if (workspace) rmSync(workspace, { recursive: true, force: true });
-	workspace = undefined;
+beforeAll(async () => {
+	provider = createTestDatabaseProvider();
+	lease = await provider.acquire({
+		namespace: 'agents.core',
+		purpose: 'migration',
+	});
 });
 
-function databasePath(): string {
-	workspace = mkdtempSync(join(tmpdir(), 'coreloom-agents-'));
-	return join(workspace, 'agents.db');
-}
+/* Every case states its own starting point, so the shared cluster goes back to
+   an unmigrated, unrecorded schema first. */
+beforeEach(async () => {
+	const tables = await lease.database.query<{ tablename: string }>({
+		text: `SELECT tablename FROM pg_tables WHERE schemaname = current_schema()`,
+	});
+	if (tables.rows.length === 0) return;
+	await lease.database.execute({
+		text: `DROP TABLE ${tables.rows
+			.map((row) => `"${row.tablename}"`)
+			.join(', ')} CASCADE`,
+	});
+});
 
-function states(path: string): readonly string[] {
-	return moduleMigrationStatus(new DatabaseSync(path), migrations).map(
-		(entry) => entry.state,
+afterAll(async () => {
+	await lease?.release();
+	await provider?.dispose();
+});
+
+function apply() {
+	return runDatabaseMigrations(
+		lease.database,
+		'agents.core',
+		databaseMigrations,
 	);
 }
 
-function auditHash(value: {
-	readonly sequence: number;
-	readonly action: string;
-	readonly subjectType: string;
-	readonly previousHash: string | null;
-}): string {
-	return createHash('sha256')
-		.update(
-			JSON.stringify([
-				'tenant-a',
-				value.sequence,
-				'account-a',
-				value.action,
-				value.subjectType,
-				`subject-${value.sequence}`,
-				'{}',
-				value.sequence * 1_000,
-				value.previousHash,
-			]),
-		)
-		.digest('hex');
+function status() {
+	return databaseMigrationStatus(
+		lease.database,
+		'agents.core',
+		databaseMigrations,
+	);
 }
 
-function insertAudit(
-	db: DatabaseSync,
-	value: {
-		readonly table: string;
-		readonly sequence: number;
-		readonly action: string;
-		readonly subjectType: string;
-		readonly previousHash: string | null;
-	},
-): string {
-	const hash = auditHash(value);
-	db.prepare(
-		`INSERT INTO ${value.table}
-		 (id, tenant_id, sequence, actor_id, action, subject_type, subject_id,
-		  metadata_json, occurred_at, previous_hash, event_hash)
-		 VALUES (?, 'tenant-a', ?, 'account-a', ?, ?, ?, '{}', ?, ?, ?)`,
-	).run(
-		`event-${value.sequence}`,
-		value.sequence,
-		value.action,
-		value.subjectType,
-		`subject-${value.sequence}`,
-		value.sequence * 1_000,
-		value.previousHash,
-		hash,
+/* A table is tenant owned from the moment a migration gives it a tenant_id,
+   whether the column arrives with the table or by a later ALTER. Reading the
+   CREATE body rather than the whole file keeps the row-security check attached
+   to the table it protects. */
+function tenantTablesOf(sql: string): readonly string[] {
+	const tables: string[] = [];
+	for (const [, name, body] of sql.matchAll(
+		/CREATE TABLE(?: IF NOT EXISTS)? (\w+) \(([\s\S]*?)\n\);/g,
+	)) {
+		if (/^\s+tenant_id\s+TEXT\s+NOT NULL/m.test(body!)) tables.push(name!);
+	}
+	for (const [, name] of sql.matchAll(
+		/ALTER TABLE (\w+) ADD COLUMN tenant_id\b/g,
+	)) {
+		tables.push(name!);
+	}
+	return tables;
+}
+
+function policyFor(sql: string, table: string): string {
+	return (
+		sql.match(
+			new RegExp(`CREATE POLICY \\w+\\s+ON ${table}\\b[\\s\\S]*?;`),
+		)?.[0] ?? ''
 	);
-	return hash;
 }
 
 describe('agents migrations', () => {
-	it('mirrors every numbered up file byte for byte', () => {
-		const files = readdirSync(directory)
+	it('mirrors every PostgreSQL up file byte for byte', () => {
+		const files = readdirSync(migrationDirectory)
 			.filter((name) => name.endsWith('.up.sql'))
 			.sort();
 
-		expect(migrations.map((migration) => `${migration.id}.up.sql`)).toEqual(
-			files,
-		);
-		for (const migration of migrations) {
-			expect(migration.statements).toBe(
-				readFileSync(new URL(`${migration.id}.up.sql`, directory), 'utf8'),
+		expect(
+			databaseMigrations.map((migration) => `${migration.id}.up.sql`),
+		).toEqual(files);
+		for (const migration of databaseMigrations) {
+			expect(migration.sql.postgresql).toBe(
+				readFileSync(
+					new URL(`${migration.id}.up.sql`, migrationDirectory),
+					'utf8',
+				),
 			);
+			/* PostgreSQL and nothing else. A stray dialect key would ship SQL no
+			   deployment runs and no test covers. */
+			expect(Object.keys(migration.sql)).toEqual(['postgresql']);
 		}
 	});
 
-	it('applies every migration on a fresh database', () => {
-		const path = databasePath();
-
-		new SqliteAgentRepository(path);
-
-		expect(states(path)).toEqual(migrations.map(() => 'applied'));
+	it('forces tenant row security on every table it creates with a tenant id', () => {
+		const covered: string[] = [];
+		for (const migration of databaseMigrations) {
+			const sql = migration.sql.postgresql ?? '';
+			for (const table of tenantTablesOf(sql)) {
+				covered.push(table);
+				expect(sql).toContain(
+					`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;`,
+				);
+				expect(sql).toContain(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY;`);
+				const policy = policyFor(sql, table);
+				expect(policy).toContain("current_setting('coreloom.tenant_id', true)");
+				expect(policy).toContain('WITH CHECK');
+			}
+		}
+		/* Counting the tenant columns independently proves the reader above found
+		   every tenant table instead of silently matching none. */
+		const declared = databaseMigrations.reduce(
+			(total, migration) =>
+				total +
+				[
+					...(migration.sql.postgresql ?? '').matchAll(
+						/^\s+tenant_id\s+TEXT\s+NOT NULL|ADD COLUMN tenant_id\b/gm,
+					),
+				].length,
+			0,
+		);
+		expect(covered).toHaveLength(declared);
+		expect(covered.length).toBeGreaterThan(0);
 	});
 
-	it('adopts a database that already carries the schema and rows', () => {
-		const path = databasePath();
-		const before = new DatabaseSync(path);
-		before.exec('PRAGMA foreign_keys = ON');
-		for (const migration of migrations) before.exec(migration.statements);
-		before.exec(`INSERT INTO agent_definitions
-	 (id, tenant_id, agent_key, name, description, instructions, provider, model,
-	  allowed_tools_json, max_steps, timeout_ms, temperature_milli, status,
-	  revision, created_by, created_at, updated_by, updated_at)
-	 VALUES ('agent-1', 'tenant-a', 'assistant', 'Assistant', 'Test agent',
-	  'Help the user', 'local-simulation', 'deterministic-v1', '[]', 4, 10000,
-	  0, 'active', 1, 'owner-a', 1, 'owner-a', 1)`);
-		before.close();
-
-		expect(states(path)).toEqual(migrations.map(() => 'adopted'));
-		const repository = new SqliteAgentRepository(path);
-		expect(repository.getAgentRevision('tenant-a', 'agent-1', 1)).toMatchObject(
-			{
-				name: 'Assistant',
-				revision: 1,
-				instructions: 'Help the user',
-			},
+	it('applies every migration on a fresh database', async () => {
+		expect((await apply()).map((entry) => entry.action)).toEqual(
+			databaseMigrations.map(() => 'applied'),
 		);
-		repository.close();
+		expect((await status()).map((entry) => entry.state)).toEqual(
+			databaseMigrations.map(() => 'applied'),
+		);
+	});
 
-		const after = new DatabaseSync(path);
+	it('reports pending before the first pass', async () => {
+		expect((await status()).map((entry) => entry.state)).toEqual(
+			databaseMigrations.map(() => 'pending'),
+		);
+	});
+
+	it('adopts a schema that predates the ledger without changing its rows', async () => {
+		await apply();
+		await lease.database.transaction(
+			(transaction) =>
+				transaction.execute({
+					text: `INSERT INTO agent_definitions
+						 (id, tenant_id, agent_key, name, description, instructions, provider,
+						  model, allowed_tools_json, max_steps, timeout_ms, temperature_milli,
+						  status, revision, created_by, created_at, updated_by, updated_at)
+						 VALUES ('agent-1', 'tenant-a', 'assistant', 'Assistant', 'Test agent',
+						  'Help the user', 'local-simulation', 'deterministic-v1', '[]', 4,
+						  10000, 0, 'active', 1, 'owner-a', 1, 'owner-a', 1)`,
+				}),
+			{ access: 'write', tenantId: 'tenant-a' },
+		);
+		await lease.database.execute({
+			text: `DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = 'agents.core'`,
+		});
+
+		expect((await status()).map((entry) => entry.state)).toEqual(
+			databaseMigrations.map(() => 'adopted'),
+		);
+		expect((await apply()).map((entry) => entry.action)).toEqual(
+			databaseMigrations.map(() => 'adopted'),
+		);
 		expect(
-			after
-				.prepare(`SELECT id FROM ${MIGRATION_LEDGER_TABLE} ORDER BY id`)
-				.all(),
-		).toEqual(
-			migrations
-				.map((migration) => ({ id: migration.id }))
-				.sort((a, b) => a.id.localeCompare(b.id)),
-		);
-		expect(after.prepare('SELECT name FROM agent_definitions').all()).toEqual([
-			{ name: 'Assistant' },
-		]);
-		expect(() =>
-			after
-				.prepare(
-					`UPDATE agent_definition_revisions SET name = 'Changed'
-					 WHERE tenant_id = 'tenant-a' AND agent_id = 'agent-1' AND revision = 1`,
+			(
+				await lease.database.transaction(
+					(transaction) =>
+						transaction.query<{ name: string }>({
+							text: 'SELECT name FROM agent_definitions',
+						}),
+					{ access: 'read', tenantId: 'tenant-a' },
 				)
-				.run(),
-		).toThrow('agent definition revisions are immutable');
-		after.close();
+			).rows,
+		).toEqual([{ name: 'Assistant' }]);
 	});
 
-	it('runs clean on a second repository construction', () => {
-		const path = databasePath();
-		new SqliteAgentRepository(path);
+	it('runs clean on a second migration pass', async () => {
+		await apply();
 
-		expect(() => new SqliteAgentRepository(path)).not.toThrow();
-		expect(states(path)).toEqual(migrations.map(() => 'applied'));
-	});
-
-	it('adopts the exact legacy v3 audit projection and preserves its full chain in v4', () => {
-		const path = databasePath();
-		const before = new DatabaseSync(path);
-		const preWorkflow = migrations.filter(
-			(migration) =>
-				![
-					'0009_agent_audit_v3',
-					'0013_workflow_prerequisites',
-					'0014_agent_action_audit',
-					'0017_agent_authorization_subjects',
-				].includes(migration.id),
+		expect((await apply()).map((entry) => entry.action)).toEqual(
+			databaseMigrations.map(() => 'unchanged'),
 		);
-		runModuleMigrations(before, preWorkflow);
-		const first = insertAudit(before, {
-			table: 'agent_audit_events_v2',
-			sequence: 1,
-			action: 'agent.updated',
-			subjectType: 'agent',
-			previousHash: null,
+	});
+
+	it('refuses adoption when reconciliation policies exist but a routing grant is missing', async () => {
+		await apply();
+		await lease.database.execute({
+			text: 'REVOKE SELECT (agent_id) ON module_agent_bindings FROM coreloom_background',
 		});
-		before.exec(AGENTS_MIGRATION_009);
-		const second = insertAudit(before, {
-			table: 'agent_audit_events_v3',
-			sequence: 2,
-			action: 'agent-schedule.created',
-			subjectType: 'agent-schedule',
-			previousHash: first,
+		await lease.database.execute({
+			text: `DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = 'agents.core' AND id = '0021_agents_agent_reconciliation_role'`,
 		});
-		insertAudit(before, {
-			table: 'agent_audit_events_v3',
-			sequence: 3,
-			action: 'agent-trigger.created',
-			subjectType: 'agent-trigger',
-			previousHash: second,
+		await expect(apply()).rejects.toMatchObject({ code: 'PARTIAL_MIGRATION' });
+	});
+
+	it('reports a ledger entry that no longer matches its migration', async () => {
+		await apply();
+		const drifted = databaseMigrations[0]!.id;
+		await lease.database.execute({
+			text: `UPDATE ${DATABASE_MIGRATION_LEDGER}
+			       SET checksum = 'sha256:drifted'
+			       WHERE namespace = 'agents.core' AND id = $1`,
+			parameters: [drifted],
 		});
-		const expected = before
-			.prepare('SELECT * FROM agent_audit_events_v3 ORDER BY sequence')
-			.all();
-		before.close();
 
-		expect(states(path)).toContain('adopted');
-		const repository = new SqliteAgentRepository(path);
-		expect(repository.verifyAuditChain('tenant-a')).toBe(true);
-		repository.close();
-
-		const after = new DatabaseSync(path);
-		expect(
-			after
-				.prepare('SELECT * FROM agent_audit_events_v4 ORDER BY sequence')
-				.all(),
-		).toEqual(expected);
-		expect(
-			after
-				.prepare(
-					"SELECT sql FROM sqlite_master WHERE name = 'agent_audit_events_v4'",
-				)
-				.get(),
-		).toMatchObject({
-			sql: expect.stringContaining("'agent-action'"),
+		const states = await status();
+		expect(states[0]).toMatchObject({ id: drifted, state: 'mismatch' });
+		expect(states.slice(1).map((entry) => entry.state)).toEqual(
+			databaseMigrations.slice(1).map(() => 'applied'),
+		);
+		await expect(apply()).rejects.toMatchObject({
+			code: 'CHECKSUM_MISMATCH',
+			migrationId: drifted,
 		});
-		expect(
-			after
-				.prepare(
-					`SELECT id FROM ${MIGRATION_LEDGER_TABLE} WHERE id IN (?, ?, ?) ORDER BY id`,
-				)
-				.all(
-					'0009_agent_audit_v3',
-					'0013_workflow_prerequisites',
-					'0014_agent_action_audit',
-				),
-		).toEqual([
-			{ id: '0009_agent_audit_v3' },
-			{ id: '0013_workflow_prerequisites' },
-			{ id: '0014_agent_action_audit' },
-		]);
-		after.close();
-	});
-
-	it('refuses an incompatible pre-ledger v3 audit table', () => {
-		const path = databasePath();
-		const before = new DatabaseSync(path);
-		const preAudit = migrations.filter((migration) =>
-			[
-				'0001_agents_core',
-				'0002_provider_connections',
-				'0003_resource_audit',
-				'0004_run_grants',
-				'0005_long_running_limits',
-				'0006_agent_skills',
-				'0007_model_readiness',
-				'0008_output_limits',
-			].includes(migration.id),
-		);
-		runModuleMigrations(before, preAudit);
-		before.exec(
-			AGENTS_MIGRATION_009.replace(
-				"'agent-schedule', 'agent-trigger'",
-				"'agent-action'",
-			),
-		);
-		before.close();
-
-		expect(() => new SqliteAgentRepository(path)).toThrowError(
-			/incompatible pre-ledger audit projection/,
-		);
-		const after = new DatabaseSync(path);
-		expect(
-			after
-				.prepare(`SELECT id FROM ${MIGRATION_LEDGER_TABLE} WHERE id = ?`)
-				.get('0009_agent_audit_v3'),
-		).toBeUndefined();
-		after.close();
-	});
-
-	it('backfills a legacy run requester as a user actor without inventing provenance', () => {
-		const path = databasePath();
-		const before = new DatabaseSync(path);
-		runModuleMigrations(
-			before,
-			migrations.filter(
-				(migration) =>
-					![
-						'0013_workflow_prerequisites',
-						'0014_agent_action_audit',
-						'0015_agent_run_actors',
-						'0017_agent_authorization_subjects',
-					].includes(migration.id),
-			),
-		);
-		before.exec(`INSERT INTO agent_definitions
-		 (id, tenant_id, agent_key, name, description, instructions, provider, model,
-		  allowed_tools_json, max_steps, timeout_ms, temperature_milli, status,
-		  revision, created_by, created_at, updated_by, updated_at)
-		 VALUES ('agent-legacy', 'tenant-a', 'legacy', 'Legacy', 'Legacy agent',
-		  'Help', 'local-simulation', 'deterministic-v1', '[]', 4, 10000, 0,
-		  'active', 1, 'owner-a', 1, 'owner-a', 1);
-		 INSERT INTO agent_runs
-		 (id, tenant_id, agent_id, agent_name, agent_revision,
-		  instructions_snapshot, provider, model, allowed_tools_json, max_steps,
-		  timeout_ms, temperature_milli, trigger, status, input, output,
-		  requested_by, permission_snapshot_json, tool_grants_json, usage_json,
-		  failure_code, failure_message, idempotency_key, attempt, queued_at,
-		  started_at, completed_at, lease_owner, lease_expires_at)
-		 VALUES ('run-legacy', 'tenant-a', 'agent-legacy', 'Legacy', 1, 'Help',
-		  'local-simulation', 'deterministic-v1', '[]', 4, 10000, 0, 'schedule',
-		  'succeeded', 'Run', 'Done', 'schedule:legacy', '[]', '[]',
-		  '{"inputTokens":1,"outputTokens":1,"totalTokens":2}', NULL, NULL,
-		  'legacy-run-key', 1, 1, 2, 3, NULL, NULL);`);
-		before.close();
-
-		const repository = new SqliteAgentRepository(path);
-		expect(repository.getRun('tenant-a', 'run-legacy')?.requestedActor).toEqual(
-			{
-				kind: 'user',
-				id: 'schedule:legacy',
-				label: 'schedule:legacy',
-			},
-		);
-		repository.close();
-	});
-
-	it('finishes an exact but incomplete pre-ledger actor backfill instead of adopting it', () => {
-		const path = databasePath();
-		const before = new DatabaseSync(path);
-		runModuleMigrations(
-			before,
-			migrations.filter(
-				(migration) =>
-					![
-						'0015_agent_run_actors',
-						'0017_agent_authorization_subjects',
-					].includes(migration.id),
-			),
-		);
-		before.exec(`INSERT INTO agent_definitions
-		 (id, tenant_id, agent_key, name, description, instructions, provider, model,
-		  allowed_tools_json, max_steps, timeout_ms, temperature_milli, status,
-		  revision, created_by, created_at, updated_by, updated_at)
-		 VALUES ('agent-legacy', 'tenant-a', 'legacy', 'Legacy', 'Legacy agent',
-		  'Help', 'local-simulation', 'deterministic-v1', '[]', 4, 10000, 0,
-		  'active', 1, 'owner-a', 1, 'owner-a', 1);
-		 INSERT INTO agent_runs
-		 (id, tenant_id, agent_id, agent_name, agent_revision,
-		  instructions_snapshot, provider, model, allowed_tools_json, max_steps,
-		  timeout_ms, temperature_milli, trigger, status, input, output,
-		  requested_by, permission_snapshot_json, tool_grants_json, usage_json,
-		  failure_code, failure_message, idempotency_key, attempt, queued_at,
-		  started_at, completed_at, lease_owner, lease_expires_at)
-		 VALUES
-		 ('run-one', 'tenant-a', 'agent-legacy', 'Legacy', 1, 'Help',
-		  'local-simulation', 'deterministic-v1', '[]', 4, 10000, 0, 'service',
-		  'queued', 'One', NULL, 'owner-a', '[]', '[]', NULL, NULL, NULL,
-		  'legacy-key-one', 0, 1, NULL, NULL, NULL, NULL),
-		 ('run-two', 'tenant-a', 'agent-legacy', 'Legacy', 1, 'Help',
-		  'local-simulation', 'deterministic-v1', '[]', 4, 10000, 0, 'service',
-		  'queued', 'Two', NULL, 'owner-b', '[]', '[]', NULL, NULL, NULL,
-		  'legacy-key-two', 0, 2, NULL, NULL, NULL, NULL);`);
-		before.exec(AGENTS_MIGRATION_015);
-		before.exec("DELETE FROM agent_run_actors WHERE run_id = 'run-two'");
-		before.close();
-
-		const repository = new SqliteAgentRepository(path);
-		expect(repository.getRun('tenant-a', 'run-one')?.requestedActor.id).toBe(
-			'owner-a',
-		);
-		expect(repository.getRun('tenant-a', 'run-two')?.requestedActor.id).toBe(
-			'owner-b',
-		);
-		repository.close();
-
-		const after = new DatabaseSync(path);
-		expect(
-			after
-				.prepare(`SELECT id FROM ${MIGRATION_LEDGER_TABLE} WHERE id = ?`)
-				.get('0015_agent_run_actors'),
-		).toEqual({ id: '0015_agent_run_actors' });
-		expect(
-			after.prepare('SELECT count(*) AS count FROM agent_run_actors').get(),
-		).toEqual({ count: 2 });
-		after.close();
-	});
-
-	it('refuses a pre-ledger actor row whose authority does not match its run', () => {
-		const path = databasePath();
-		const repository = new SqliteAgentRepository(path);
-		const db = new DatabaseSync(path);
-		db.exec(`DELETE FROM ${MIGRATION_LEDGER_TABLE}
-		 WHERE id = '0015_agent_run_actors';`);
-		repository.close();
-		db.exec(`INSERT INTO agent_definitions
-		 (id, tenant_id, agent_key, name, description, instructions, provider, model,
-		  allowed_tools_json, max_steps, timeout_ms, temperature_milli, status,
-		  revision, created_by, created_at, updated_by, updated_at)
-		 VALUES ('agent-invalid', 'tenant-a', 'invalid', 'Invalid', 'Invalid actor',
-		  'Help', 'local-simulation', 'deterministic-v1', '[]', 4, 10000, 0,
-		  'active', 1, 'owner-a', 1, 'owner-a', 1);
-		 INSERT INTO agent_runs
-		 (id, tenant_id, agent_id, agent_name, agent_revision,
-		  instructions_snapshot, provider, model, allowed_tools_json, max_steps,
-		  timeout_ms, temperature_milli, trigger, status, input, output,
-		  requested_by, permission_snapshot_json, tool_grants_json, usage_json,
-		  failure_code, failure_message, idempotency_key, attempt, queued_at,
-		  started_at, completed_at, lease_owner, lease_expires_at)
-		 VALUES ('run-invalid', 'tenant-a', 'agent-invalid', 'Invalid', 1, 'Help',
-		  'local-simulation', 'deterministic-v1', '[]', 4, 10000, 0, 'service',
-		  'queued', 'Run', NULL, 'owner-a', '[]', '[]', NULL, NULL, NULL,
-		  'invalid-key', 0, 1, NULL, NULL, NULL, NULL);
-		 INSERT INTO agent_run_contracts
-		 (run_id, tenant_id, workflow_run_id, output_contract_json,
-		  structured_output_json, request_hash)
-		 VALUES ('run-invalid', 'tenant-a', NULL, '{"kind":"text"}', NULL, 'hash');
-		 INSERT INTO agent_run_actors (run_id, tenant_id, actor_json)
-		 VALUES ('run-invalid', 'tenant-a',
-		  '{"kind":"user","id":"another-owner","label":"Another"}');`);
-		db.close();
-
-		expect(() => new SqliteAgentRepository(path)).toThrowError(
-			/invalid pre-ledger actor row/,
-		);
 	});
 });

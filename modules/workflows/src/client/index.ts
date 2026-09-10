@@ -1,7 +1,7 @@
 import type {
 	ModuleClientContext,
 	ModuleClientContribution,
-} from '@coreloom/client';
+} from '@flowdular/client';
 import { createWorkflowsClientContribution as canonicalContribution } from './contribution.tsrx';
 
 export { createWorkflowsClientContribution } from './contribution.tsrx';

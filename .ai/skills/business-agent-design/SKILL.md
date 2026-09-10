@@ -1,6 +1,9 @@
 ---
 name: business-agent-design
-description: Ship a module-owned business agent with defineAgent, an exact tool ceiling, tenant provider binding, retained revisions, and tests. Use for business automation delivered by a module, not for sandbox coding specialists.
+description: >-
+  Ship a module-owned business agent with defineAgent, an exact tool ceiling,
+  tenant provider binding, retained revisions, and tests. Use for business
+  automation delivered by a module, not for sandbox coding specialists.
 roles:
   - agentic-engineer
   - backend-engineer
@@ -16,8 +19,8 @@ by module source. It is not a sandbox specialist, coding role, `.ai` skill, or
 permission grant. Read `docs/adr/0007-module-owned-agents.md` and the approved
 module spec before editing.
 
-Use `agent-tool-design` first when the agent needs a tool the module does not
-already register. A business agent can use only registered tools.
+If a required tool is missing, pause this phase and hand it off as a separate
+`agent-tool-design` task. A business agent can use only registered tools.
 
 ## Ownership split
 
@@ -42,12 +45,12 @@ read-only and lets an authorized tenant manager configure only the binding.
 ## Define and register
 
 Declare `agents.core` in both `spec/module.yaml` and `module.json` dependencies,
-and add `"@coreloom/module-agents": "workspace:*"` to `package.json`. Keep the
+and add `"@flowdular/module-agents": "workspace:*"` to `package.json`. Keep the
 import server-only.
 
 ```ts
 // src/agent/agents.ts
-import { defineAgent } from '@coreloom/module-agents/server';
+import { defineAgent } from '@flowdular/module-agents/server';
 
 export const catalogCurator = defineAgent({
 	moduleId: 'catalog.core',
@@ -168,7 +171,7 @@ The shared `agents.core` integration suite proves:
 5. Module absence blocks new runs while retained run and workflow evidence
    remains readable.
 
-Use `:memory:` repositories for module tests. The end-to-end access intersection
+Use the module's isolated test provider for persistence tests. The end-to-end access intersection
 belongs in `modules/agents/tests`, while a business module proves its own
 definition and tool behavior locally. Do not edit `agents.core` merely to
 duplicate its platform contract tests. Run the module tests, typecheck, spec

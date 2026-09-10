@@ -1,5 +1,5 @@
-import { t } from '@coreloom/client';
-import { Alert, Button, FormField, Icon, Tag } from '@coreloom/ui';
+import { t } from '@flowdular/client';
+import { Alert, Button, FormField, Icon, Tag } from '@flowdular/ui';
 import type {
 	WorkflowActionNodeV1,
 	WorkflowAgentDecisionNodeV1,
@@ -8,12 +8,14 @@ import type {
 	WorkflowGraphV1,
 	WorkflowNodeFailurePolicyV1,
 	WorkflowNodeV1,
-	WorkflowTargetMappingV1,
 } from '../domain/types.ts';
 import type {
 	WorkflowActionCatalogItem,
 	WorkflowAgentCatalogItem,
 } from './api.ts';
+
+import { WorkflowMappingEditor } from './WorkflowMappingEditor.tsrx';
+import { WorkflowInputSchemaEditor } from './WorkflowInputSchemaEditor.tsrx';
 
 export interface WorkflowInspectorProps {
 	readonly graph: WorkflowGraphV1;
@@ -23,6 +25,7 @@ export interface WorkflowInspectorProps {
 	readonly actions: readonly WorkflowActionCatalogItem[];
 	readonly editable: boolean;
 	readonly onReplaceNode: (node: WorkflowNodeV1) => void;
+	readonly onReplaceGraph: (graph: WorkflowGraphV1) => void;
 	readonly onRemoveNode: (nodeId: string) => void;
 	readonly onRemoveEdge: (edgeId: string) => void;
 }
@@ -300,98 +303,6 @@ function ActionReferenceEditor(props: {
 	</FormField>
 }
 
-function NodeMappingEditor(props: {
-	readonly graph: WorkflowGraphV1;
-	readonly node: WorkflowNodeV1;
-	readonly editable: boolean;
-	readonly onChange: (node: WorkflowNodeV1) => void;
-}) @{
-	const sources = props.graph.nodes.filter(
-		(node) => node.id !== props.node.id,
-	).flatMap(
-		(node) => node.outputPorts.map(
-			(port) => ({
-				key: `${node.id}|${port.name}`,
-				label: `${node.label} · ${port.name}`,
-				nodeId: node.id,
-				port: port.name,
-			}),
-		),
-	);
-	const mappings = (props.node.mappings ?? []).map(
-		(mapping, index) => ({
-			key: `${mapping.targetPointer}.${index}`,
-			mapping,
-		}),
-	);
-	const add = (event: SubmitEvent) => {
-		event.preventDefault();
-		const form = new FormData(event.currentTarget as HTMLFormElement);
-		const source = String(form.get('source') ?? '').split('|');
-		if (!source[0] || !source[1]) return;
-		const mapping: WorkflowTargetMappingV1 = {
-			targetPointer: String(form.get('targetPointer') ?? '/'),
-			binding: {
-				kind: 'path',
-				sourceNodeId: source[0],
-				sourcePort: source[1],
-				pointer: String(form.get('sourcePointer') ?? '/'),
-			},
-		};
-		props.onChange(
-			{
-				...props.node,
-				mappings: [...(props.node.mappings ?? []), mapping],
-			} as WorkflowNodeV1,
-		);
-	};
-
-	<div class="ui-form__section">
-		<div class="ui-form__section-head">
-			<b>{t('workflows.inspector.mappings')}</b>
-			<small>{t('workflows.inspector.mappingsHelp')}</small>
-		</div>
-		@if (mappings.length > 0) {
-			<div class="workflow-mapping-list">
-				@for (const entry of mappings; key entry.key) {
-					<div class="workflow-mapping-row">
-						<code class="ui-mono">{entry.mapping.targetPointer}</code>
-						<small>{entry.mapping.binding.kind}</small>
-					</div>
-				}
-			</div>
-		}
-		@if (props.editable && sources.length > 0) {
-			<form class="workflow-mapping-form" onSubmit={add}>
-				<select
-					class="ui-select"
-					name="source"
-					aria-label={t('workflows.inspector.mappingSource')}
-				>
-					@for (const source of sources; key source.key) {
-						<option value={source.key}>{source.label}</option>
-					}
-				</select>
-				<input
-					class="ui-input ui-mono"
-					name="sourcePointer"
-					value="/"
-					aria-label={t('workflows.inspector.sourcePointer')}
-				/>
-				<input
-					class="ui-input ui-mono"
-					name="targetPointer"
-					value="/"
-					aria-label={t('workflows.inspector.targetPointer')}
-				/>
-				<Button type="submit" size="sm">{t(
-					'workflows.inspector.addMapping',
-				)}</Button>
-			</form>
-		}
-	</div>
-}
-
 export function WorkflowInspector(props: WorkflowInspectorProps) @{
 	@if (props.edge) {
 		<aside class="workflow-inspector">
@@ -514,7 +425,23 @@ export function WorkflowInspector(props: WorkflowInspectorProps) @{
 						/>
 					</FormField>
 				}
-				<NodeMappingEditor
+				@if (props.node.type === 'input') {
+					<WorkflowInputSchemaEditor
+						schema={props.graph.schemas[props.node.outputPorts[0]?.schemaId ??
+							''] ??
+							{}}
+						editable={props.editable}
+						onChange={(schema) => props.onReplaceGraph({
+							...props.graph,
+							schemas: {
+								...props.graph.schemas,
+								[props.node!.outputPorts[0]!.schemaId]: schema,
+							},
+						})}
+					/>
+				}
+				<WorkflowMappingEditor
+					key={props.node.id}
 					graph={props.graph}
 					node={props.node}
 					editable={props.editable}

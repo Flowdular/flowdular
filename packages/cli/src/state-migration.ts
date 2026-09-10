@@ -1,3 +1,4 @@
+import { flowdularStateDirectory } from '@flowdular/kernel/runtime-config';
 import { constants } from 'node:fs';
 import {
 	chmod,
@@ -10,15 +11,16 @@ import {
 } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { createHash } from 'node:crypto';
-import { failure, success, type CommandEnvelope } from '@coreloom/cli-protocol';
 import {
-	CORELOOM_DATA_DIRECTORY,
-	LEGACY_DATA_DIRECTORY,
-} from '@coreloom/kernel/legacy-local-state';
+	failure,
+	success,
+	type CommandEnvelope,
+} from '@flowdular/cli-protocol';
+import { LEGACY_DATA_DIRECTORY } from '@flowdular/kernel/legacy-local-state';
 import type { Workspace } from './workspace.ts';
 
 /* Sources are copied, never moved or deleted. The legacy name comes only from
-   the shared startup guard. Remove both after pre-Coreloom workspaces no longer
+   the shared startup guard. Remove both after pre-Flowdular workspaces no longer
    need this migration. */
 const STATE_FILES = [
 	'agents.db',
@@ -77,7 +79,9 @@ async function migrationPlan(
 	workspace: Workspace,
 ): Promise<StateMigrationPlan> {
 	const sourceDirectory = join(workspace.root, LEGACY_DATA_DIRECTORY);
-	const destinationDirectory = join(workspace.root, CORELOOM_DATA_DIRECTORY);
+	const stateDirectory = flowdularStateDirectory(workspace.root);
+	const destinationDirectory = join(stateDirectory, 'data');
+	const destinationLabel = relativePath(workspace, destinationDirectory);
 	const blockers: string[] = [];
 	const missing: string[] = [];
 	const files: FilePlan[] = [];
@@ -87,10 +91,7 @@ async function migrationPlan(
 	} else if (sourceState && !sourceState.isDirectory()) {
 		blockers.push(`${LEGACY_DATA_DIRECTORY} is not a directory.`);
 	}
-	for (const directory of [
-		join(workspace.root, '.coreloom'),
-		destinationDirectory,
-	]) {
+	for (const directory of [stateDirectory, destinationDirectory]) {
 		const state = await pathState(directory);
 		if (state?.isSymbolicLink()) {
 			blockers.push(
@@ -125,20 +126,18 @@ async function migrationPlan(
 		}
 		let blocked = false;
 		if (await pathState(destination)) {
-			blockers.push(`${CORELOOM_DATA_DIRECTORY}/${name} already exists.`);
+			blockers.push(`${destinationLabel}/${name} already exists.`);
 			blocked = true;
 		}
 		if (DATABASE_FILES.has(name)) {
 			for (const suffix of ['-wal', '-shm', '-journal']) {
 				if (await pathState(`${destination}${suffix}`)) {
-					blockers.push(
-						`${CORELOOM_DATA_DIRECTORY}/${name}${suffix} already exists.`,
-					);
+					blockers.push(`${destinationLabel}/${name}${suffix} already exists.`);
 					blocked = true;
 				}
 				if (await pathState(`${source}${suffix}`)) {
 					blockers.push(
-						`${LEGACY_DATA_DIRECTORY}/${name}${suffix} exists. Stop every Coreloom process and close database clients before migrating.`,
+						`${LEGACY_DATA_DIRECTORY}/${name}${suffix} exists. Stop every Flowdular process and close database clients before migrating.`,
 					);
 					blocked = true;
 				}
@@ -236,7 +235,10 @@ function data(plan: StateMigrationPlan, applied: boolean) {
 		applied,
 		ready: plan.blockers.length === 0,
 		source: LEGACY_DATA_DIRECTORY,
-		destination: CORELOOM_DATA_DIRECTORY,
+		destination: relative(
+			dirname(dirname(plan.destinationDirectory)),
+			plan.destinationDirectory,
+		),
 		files: plan.files.map((file) => file.name),
 		missing: plan.missing,
 		blockers: plan.blockers,
@@ -279,11 +281,11 @@ export async function migrateLegacyState(
 		);
 	}
 	return success(data(plan, true), {
-		evidence: plan.files.map(
-			(file) => `${CORELOOM_DATA_DIRECTORY}/${file.name}`,
+		evidence: plan.files.map((file) =>
+			relativePath(workspace, join(plan.destinationDirectory, file.name)),
 		),
 		warnings: [
-			`The source directory ${LEGACY_DATA_DIRECTORY} was preserved. Remove it only after verifying the new Coreloom data directory.`,
+			`The source directory ${LEGACY_DATA_DIRECTORY} was preserved. Remove it only after verifying the new Flowdular data directory.`,
 		],
 	});
 }

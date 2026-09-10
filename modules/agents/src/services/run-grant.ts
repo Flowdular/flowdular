@@ -13,9 +13,9 @@ import {
 	writeFileSync,
 } from 'node:fs';
 import { dirname } from 'node:path';
-import { coreloomLocalDataPath } from '@coreloom/kernel/legacy-local-state';
+import { flowdularLocalDataPath } from '@flowdular/kernel/legacy-local-state';
 
-const GRANT_ISSUER = 'coreloom-control-plane';
+const GRANT_ISSUER = 'flowdular-control-plane';
 const GRANT_AUDIENCE = 'agent-provider-broker';
 
 export interface AgentRunGrantClaims {
@@ -73,7 +73,7 @@ function grantKey(value: string): Buffer {
 	if (key.byteLength !== 32) {
 		key.fill(0);
 		throw new Error(
-			'CL_AGENT_RUN_GRANT_KEY must be a base64-encoded 32-byte key.',
+			'FD_AGENT_RUN_GRANT_KEY must be a base64-encoded 32-byte key.',
 		);
 	}
 	return key;
@@ -228,7 +228,8 @@ export class AgentRunGrantAuthority {
 		const value = raw as Record<string, unknown>;
 		if (
 			value.version !== 1 ||
-			value.issuer !== GRANT_ISSUER ||
+			(value.issuer !== GRANT_ISSUER &&
+				value.issuer !== 'coreloom-control-plane') ||
 			value.audience !== GRANT_AUDIENCE
 		) {
 			throw new AgentRunGrantError(
@@ -284,12 +285,12 @@ export function runGrantAuthorityFromEnvironment(
 	workspaceRoot = process.cwd(),
 	ttlMs = 30_000,
 ): AgentRunGrantAuthority {
-	const configured = environment.CL_AGENT_RUN_GRANT_KEY;
+	const configured = environment.FD_AGENT_RUN_GRANT_KEY;
 	if (configured)
 		return new AgentRunGrantAuthority(grantKey(configured), ttlMs);
 	if (environment.NODE_ENV === 'production') {
 		throw new Error(
-			'CL_AGENT_RUN_GRANT_KEY is required in production before agent runs can execute.',
+			'FD_AGENT_RUN_GRANT_KEY is required in production before agent runs can execute.',
 		);
 	}
 	if (environment.NODE_ENV === 'test') {
@@ -297,7 +298,7 @@ export function runGrantAuthorityFromEnvironment(
 	}
 	return new AgentRunGrantAuthority(
 		readOrCreateDevelopmentKey(
-			coreloomLocalDataPath(workspaceRoot, 'agent-run-grant.key'),
+			flowdularLocalDataPath(workspaceRoot, 'agent-run-grant.key'),
 		),
 		ttlMs,
 	);

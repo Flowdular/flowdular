@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: users.core
-specVersion: 0.5.0
+specVersion: 0.6.0
 status: approved
 name: User Management Core
 description: Provides the tenant-scoped user directory and member administration (creation, display name, role assignment, per-member scopes, account status, password reset, session revocation, removal) through the public auth administration port.
@@ -11,9 +11,9 @@ capabilities:
   - translations
 dependencies:
   - id: system.core
-    range: ^0.1.0
+    range: 0.5.0
   - id: auth.core
-    range: ^0.1.0
+    range: 0.10.0
 tenancy: required
 locales:
   - en

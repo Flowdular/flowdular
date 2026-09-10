@@ -1,5 +1,5 @@
-import { Alert, Button, FormField } from '@coreloom/ui';
-import { t } from '@coreloom/client';
+import { Alert, Button, FormField } from '@flowdular/ui';
+import { t } from '@flowdular/client';
 import { SANDBOX_GRANT_CAPABILITIES } from '../acl/permissions.ts';
 import type { SandboxAccessCandidate } from '../domain/types.ts';
 import type { GrantSandboxAccessRequest } from './api.ts';

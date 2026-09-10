@@ -5,14 +5,14 @@ import {
 	problemResponse,
 	readJsonObject,
 	requiredString,
-} from '@coreloom/server';
-import type { AuthRuntime } from '@coreloom/module-auth/server';
+} from '@flowdular/server';
+import type { AuthRuntime } from '@flowdular/module-auth/server';
 import {
 	endpointIdentityFromContext,
 	isTokenPrincipal,
 	principalFromContext,
 	sessionMutationDenial,
-} from '@coreloom/module-auth/server';
+} from '@flowdular/module-auth/server';
 import type { Context } from '@octanejs/app-core';
 import { SANDBOX_PERMISSIONS } from '../acl/permissions.ts';
 import type { SandboxSessionState } from '../domain/types.ts';
@@ -132,13 +132,13 @@ export function createSandboxRoutes(
 		methods: ['GET'],
 		access: { kind: 'permission', permission: SANDBOX_PERMISSIONS.manage },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			const principal = principalFromContext(octane)!;
-			const service = runtime.service(auth);
+			const service = await runtime.service(auth);
 			return jsonResponse({
 				sandbox: { url: runtime.options.sandboxUrl },
-				grants: service.listGrants(principal.tenantId),
-				candidates: service.listCandidates(principal.tenantId),
+				grants: await service.listGrants(principal.tenantId),
+				candidates: await service.listCandidates(principal.tenantId),
 			});
 		},
 	});
@@ -157,7 +157,9 @@ export function createSandboxRoutes(
 				const value = await readJsonObject(octane.request);
 				return jsonResponse(
 					{
-						grant: runtime.service(auth).grant({
+						grant: await (
+							await runtime.service(auth)
+						).grant({
 							tenantId: principal.tenantId,
 							actorId: principal.accountId,
 							accountId: requiredString(value, 'accountId', { max: 128 }),
@@ -187,13 +189,13 @@ export function createSandboxRoutes(
 				const principal = principalFromContext(octane)!;
 				const value = await readJsonObject(octane.request);
 				return jsonResponse({
-					grant: runtime
-						.service(auth)
-						.revoke(
-							principal.tenantId,
-							requiredString(value, 'accountId', { max: 128 }),
-							principal.accountId,
-						),
+					grant: await (
+						await runtime.service(auth)
+					).revoke(
+						principal.tenantId,
+						requiredString(value, 'accountId', { max: 128 }),
+						principal.accountId,
+					),
 				});
 			} catch (error) {
 				return failure(error);
@@ -210,10 +212,12 @@ export function createSandboxRoutes(
 			permission: SANDBOX_PERMISSIONS.sessionsRead,
 		},
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			const principal = principalFromContext(octane)!;
 			return jsonResponse({
-				sessions: runtime.service(auth).listSessions(principal.tenantId, 50),
+				sessions: await (
+					await runtime.service(auth)
+				).listSessions(principal.tenantId, 50),
 			});
 		},
 	});
@@ -227,19 +231,19 @@ export function createSandboxRoutes(
 			permission: SANDBOX_PERMISSIONS.sessionsRead,
 		},
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			try {
 				const principal = principalFromContext(octane)!;
 				const url = new URL(octane.request.url);
 				const limit = Number(url.searchParams.get('limit') ?? '50');
 				return jsonResponse(
-					runtime
-						.service(auth)
-						.pageAuditEvents(
-							principal.tenantId,
-							url.searchParams.get('cursor'),
-							Number.isSafeInteger(limit) ? limit : 50,
-						),
+					await (
+						await runtime.service(auth)
+					).pageAuditEvents(
+						principal.tenantId,
+						url.searchParams.get('cursor'),
+						Number.isSafeInteger(limit) ? limit : 50,
+					),
 				);
 			} catch (error) {
 				return failure(error);
@@ -256,11 +260,11 @@ export function createSandboxRoutes(
 			permission: SANDBOX_PERMISSIONS.sessionsRead,
 		},
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			try {
 				const principal = principalFromContext(octane)!;
 				return jsonResponse(
-					runtime.service(auth).verifyAudit(principal.tenantId),
+					await (await runtime.service(auth)).verifyAudit(principal.tenantId),
 				);
 			} catch (error) {
 				return failure(error);
@@ -274,7 +278,7 @@ export function createSandboxRoutes(
 		methods: ['GET'],
 		access: { kind: 'permission', permission: SANDBOX_PERMISSIONS.use },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			const principal = principalFromContext(octane)!;
 			return jsonResponse({
 				principal: {
@@ -293,9 +297,9 @@ export function createSandboxRoutes(
 							(tenant) => tenant.tenantId === principal.tenantId,
 						)?.slug ?? '',
 				},
-				authority: runtime
-					.service(auth)
-					.authorize(principal.tenantId, principal.accountId, principal.scopes),
+				authority: await (
+					await runtime.service(auth)
+				).authorize(principal.tenantId, principal.accountId, principal.scopes),
 				sandbox: { url: runtime.options.sandboxUrl },
 			});
 		},
@@ -323,7 +327,9 @@ export function createSandboxRoutes(
 				}
 				return jsonResponse(
 					{
-						session: runtime.service(auth).registerSession({
+						session: await (
+							await runtime.service(auth)
+						).registerSession({
 							tenantId: principal.tenantId,
 							accountId: principal.accountId,
 							sessionId: requiredString(value, 'sessionId', { max: 128 }),
@@ -355,7 +361,9 @@ export function createSandboxRoutes(
 				const principal = principalFromContext(octane)!;
 				const value = await readJsonObject(octane.request);
 				return jsonResponse({
-					session: runtime.service(auth).updateSessionState(
+					session: await (
+						await runtime.service(auth)
+					).updateSessionState(
 						principal.tenantId,
 						requiredString(value, 'sessionId', { max: 128 }),
 						requiredString(value, 'state', {
@@ -386,14 +394,14 @@ export function createSandboxRoutes(
 				const value = await readJsonObject(octane.request);
 				return jsonResponse(
 					{
-						event: runtime
-							.service(auth)
-							.recordEject(
-								principal.tenantId,
-								requiredString(value, 'sessionId', { max: 128 }),
-								principal.accountId,
-								ejectMetadata(value),
-							),
+						event: await (
+							await runtime.service(auth)
+						).recordEject(
+							principal.tenantId,
+							requiredString(value, 'sessionId', { max: 128 }),
+							principal.accountId,
+							ejectMetadata(value),
+						),
 					},
 					201,
 				);

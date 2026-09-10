@@ -7,15 +7,18 @@ export {
 	defaultModelFor,
 	isAiProviderKind,
 	modelSupportsTemperature,
-} from '@coreloom/ai-provider/catalog';
+} from '@flowdular/ai-provider/catalog';
 export type {
 	AiProviderKind,
 	AiProviderKindDescriptor,
-} from '@coreloom/ai-provider/catalog';
+} from '@flowdular/ai-provider/catalog';
 export {
 	AI_MODEL_PRICES,
 	modelPrice,
 	unpricedCatalogModels,
 	usageCostMicros,
-} from '@coreloom/ai-provider/pricing';
-export type { AiModelPrice, AiTokenUsage } from '@coreloom/ai-provider/pricing';
+} from '@flowdular/ai-provider/pricing';
+export type {
+	AiModelPrice,
+	AiTokenUsage,
+} from '@flowdular/ai-provider/pricing';

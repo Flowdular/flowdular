@@ -1,3 +1,4 @@
+import { createPgliteTestProvider } from '@flowdular/database-testing';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -5,11 +6,11 @@ import { createContext, type ServerRoute } from '@octanejs/app-core';
 import {
 	createAuthRuntime,
 	type AuthRuntime,
-} from '@coreloom/module-auth/server';
+} from '@flowdular/module-auth/server';
 import {
 	defineModuleSettings,
 	PLATFORM_SETTINGS_TENANT,
-} from '@coreloom/kernel';
+} from '@flowdular/kernel';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createSystemRoutes } from '../src/server/endpoints.ts';
 import type { SettingsEntryPayload } from '../src/server/endpoints.ts';
@@ -32,9 +33,9 @@ interface SettingsBody {
 }
 
 function workspace(): string {
-	const root = mkdtempSync(join(tmpdir(), 'coreloom-system-settings-'));
+	const root = mkdtempSync(join(tmpdir(), 'flowdular-system-settings-'));
 	writeFileSync(
-		join(root, 'coreloom.json'),
+		join(root, 'flowdular.json'),
 		JSON.stringify({
 			modules: { enabled: ['auth.core'] },
 			locales: ['en', 'pl'],
@@ -97,7 +98,7 @@ describe('settings API', () => {
 
 	beforeAll(async () => {
 		runtime = createAuthRuntime({
-			databasePath: ':memory:',
+			databases: createPgliteTestProvider(),
 			secureCookies: false,
 			sessionTtlMs: 12 * 60 * 60 * 1000,
 			allowSignUp: true,
@@ -120,7 +121,9 @@ describe('settings API', () => {
 				},
 			}),
 		);
-		const issued = await runtime.service().signUp({
+		const issued = await (
+			await runtime.service()
+		).signUp({
 			email: 'owner@example.com',
 			password: 'correct horse battery staple',
 			displayName: 'Ada Owner',
@@ -133,7 +136,9 @@ describe('settings API', () => {
 			accountId: issued.principal.accountId,
 			tenantId: issued.principal.tenantId,
 		};
-		await runtime.service().createTenantMember(
+		await (
+			await runtime.service()
+		).createTenantMember(
 			{
 				tenantId: owner.tenantId,
 				email: 'member@example.com',
@@ -149,7 +154,9 @@ describe('settings API', () => {
 				scopes: issued.principal.scopes,
 			},
 		);
-		const memberSession = await runtime.service().signIn({
+		const memberSession = await (
+			await runtime.service()
+		).signIn({
 			email: 'member@example.com',
 			password: 'member password long',
 		});
@@ -257,10 +264,14 @@ describe('settings API', () => {
 			),
 		).toBe(120);
 
-		const events = runtime
-			.service()
-			.queryAudit({ tenantId: owner.tenantId, limit: 10 })
-			.events.filter((event) => event.action === 'settings.updated');
+		/* The kernel change listener is synchronous, so the audit rows land after
+		   the response. Wait for them rather than racing the write. */
+		await runtime.settingsAuditSettled();
+		const events = (
+			await (
+				await runtime.service()
+			).queryAudit({ tenantId: owner.tenantId, limit: 10 })
+		).events.filter((event) => event.action === 'settings.updated');
 		expect(events).toHaveLength(2);
 		expect(events[0]).toMatchObject({
 			actorLabel: 'owner@example.com',
@@ -339,7 +350,9 @@ describe('settings API', () => {
 			),
 		);
 		expect(noCsrf.status).toBe(403);
-		const token = runtime.service().issueApiToken({
+		const token = await (
+			await runtime.service()
+		).issueApiToken({
 			tenantId: owner.tenantId,
 			accountId: owner.accountId,
 			label: 'Automation',

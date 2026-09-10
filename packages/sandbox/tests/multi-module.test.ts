@@ -1,3 +1,4 @@
+import { reviewFixture, fixtureGates } from './support/auto-review.ts';
 import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +9,7 @@ import {
 	createCodingAgentRegistry,
 	type CodingAgentDriver,
 	type CodingAgentTurnRequest,
-} from '@coreloom/coding-agent';
+} from '@flowdular/coding-agent';
 import { DEFAULT_CONFIGURATION } from '../src/server/config.ts';
 import { createLocalDeliveryTarget } from '../src/server/delivery/index.ts';
 import type {
@@ -35,9 +36,9 @@ import {
 } from '../src/server/turns.ts';
 
 async function workspace(): Promise<string> {
-	const root = await mkdtemp(join(tmpdir(), 'coreloom-multi-'));
+	const root = await mkdtemp(join(tmpdir(), 'flowdular-multi-'));
 	await writeFile(
-		join(root, 'coreloom.json'),
+		join(root, 'flowdular.json'),
 		JSON.stringify({ schemaVersion: 1, modules: { enabled: [] } }),
 		'utf8',
 	);
@@ -57,7 +58,7 @@ async function workspace(): Promise<string> {
 		);
 		await writeFile(
 			join(root, 'modules', directory, 'package.json'),
-			`${JSON.stringify({ name: `@coreloom/module-${directory}` })}\n`,
+			`${JSON.stringify({ name: `@flowdular/module-${directory}` })}\n`,
 			'utf8',
 		);
 		await writeFile(
@@ -251,7 +252,7 @@ function api(runtime: SandboxRuntime, port = 4320) {
 		const headers: Record<string, string> = {
 			host: '127.0.0.1:4320',
 			...(init.body !== undefined
-				? { 'content-type': 'application/json', 'x-coreloom-sandbox': '1' }
+				? { 'content-type': 'application/json', 'x-flowdular-sandbox': '1' }
 				: {}),
 		};
 		const request = new Request(url, {
@@ -399,7 +400,7 @@ describe('adding a module to a running session', () => {
 			),
 		).toBe('export const catalog = 1;\n');
 		const enabled = JSON.parse(
-			await readFile(join(paths.workspace, 'coreloom.json'), 'utf8'),
+			await readFile(join(paths.workspace, 'flowdular.json'), 'utf8'),
 		) as { modules: { enabled: readonly string[] } };
 		expect(enabled.modules.enabled).toContain('catalog.core');
 		const chat = await readChat(root, await readSession(root, session.id));
@@ -506,6 +507,28 @@ describe('adding a module to a running session', () => {
 });
 
 describe('a turn targets one module', () => {
+	it('gives the driver and its local pointer the same single task skill', async () => {
+		const root = await workspace();
+		for (const skill of ['module-update', 'test-hardening', 'ux-design']) {
+			const directory = join(root, '.ai/skills', skill);
+			await mkdir(directory, { recursive: true });
+			await writeFile(join(directory, 'SKILL.md'), `# ${skill}\n`, 'utf8');
+		}
+		const session = await twoModuleSession(root);
+		const sink = { instruction: '', prompt: '' };
+		await drive(turnContext(root, recordingDriver(sink)), session.id, {
+			message: '$test-hardening: review the existing cases.',
+		});
+		const paths = sessionPaths(root, session.id, session.moduleSuffix);
+		const pointer = await readFile(join(paths.workspace, 'AGENTS.md'), 'utf8');
+		for (const text of [sink.instruction, pointer]) {
+			expect(text.match(/reference\/skills\/[a-z-]+\/SKILL\.md/g)).toEqual([
+				'reference/skills/test-hardening/SKILL.md',
+			]);
+			expect(text).not.toContain('reference/skills/ux-design');
+		}
+	});
+
 	it('works in the module the request names and may only write there', async () => {
 		const root = await workspace();
 		const sink = { instruction: '', prompt: '' };
@@ -625,7 +648,7 @@ describe('delivering a session that spans modules', () => {
 		session,
 		capabilities: ['sandbox.access.use', 'sandbox.modules.eject'],
 		platformUrl: 'http://127.0.0.1:4310',
-		runGates: async () => [],
+		runGates: async (gates) => fixtureGates(session, gates),
 		commands,
 	});
 
@@ -680,6 +703,7 @@ describe('delivering a session that spans modules', () => {
 
 		const target = createLocalDeliveryTarget();
 		const { calls, commands } = recording();
+		await reviewFixture(root, approved);
 		const context = contextFor(root, approved, commands);
 		const plan = await target.plan(context);
 		expect(plan.modules.map((module) => module.id)).toEqual([

@@ -10,9 +10,9 @@ import {
 	PageHeader,
 	SearchField,
 	TableCard,
-} from '@coreloom/ui';
-import { activeLocale, t } from '@coreloom/client';
-import type { TenantMember } from '@coreloom/module-auth';
+} from '@flowdular/ui';
+import { activeLocale, t } from '@flowdular/client';
+import type { TenantMember } from '@flowdular/module-auth';
 import { cell, createStore, useValue } from 'segment-state';
 import {
 	ApiError,

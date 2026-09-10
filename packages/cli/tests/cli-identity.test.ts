@@ -16,15 +16,10 @@ const ROOT_PACKAGE_PATH = fileURLToPath(
 );
 const REPOSITORY_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
-const LOCAL_STATE_CALLS = [
-	['modules/agents/src/server/runtime.ts', 'agents.db'],
-	['modules/auth/src/server/runtime.ts', 'auth.db'],
-	['modules/automations/src/server/runtime.ts', 'automations.db'],
-	['modules/catalog/src/server/runtime.ts', 'catalog.db'],
-	['modules/expenses/src/server/runtime.ts', 'expenses.db'],
-	['modules/parties/src/server/runtime.ts', 'parties.db'],
-	['modules/profile/src/server/runtime.ts', 'profile.db'],
-	['modules/sandbox/src/server/runtime.ts', 'sandbox.db'],
+/* Module data lives in the platform database, which a runtime reaches through a
+   provider lease. A vault key is the only local state a module still resolves
+   itself, and its path may not move without an operator noticing. */
+const VAULT_KEY_CALLS = [
 	['modules/agents/src/services/credential-vault.ts', 'agent-credential.key'],
 	['modules/agents/src/services/run-grant.ts', 'agent-run-grant.key'],
 	[
@@ -37,8 +32,8 @@ async function staleWorkspace(): Promise<{
 	readonly workspace: Workspace;
 	readonly dispose: () => Promise<void>;
 }> {
-	const root = await mkdtemp(join(tmpdir(), 'coreloom-doctor-'));
-	const configPath = join(root, 'coreloom.json');
+	const root = await mkdtemp(join(tmpdir(), 'flowdular-doctor-'));
+	const configPath = join(root, 'flowdular.json');
 	const config = { modules: { enabled: [] } };
 	await Promise.all([
 		mkdir(join(root, '.ai/policies'), { recursive: true }),
@@ -63,7 +58,7 @@ async function staleWorkspace(): Promise<{
 }
 
 describe('CLI identity', () => {
-	it('makes coreloom primary and exposes cl as the short alias', async () => {
+	it('makes flowdular primary and exposes fd as the short alias', async () => {
 		const [cliPackage, rootPackage] = await Promise.all(
 			[CLI_PACKAGE_PATH, ROOT_PACKAGE_PATH].map(async (path) =>
 				JSON.parse(await readFile(path, 'utf8')),
@@ -71,23 +66,23 @@ describe('CLI identity', () => {
 		);
 
 		expect(cliPackage.bin).toEqual({
-			coreloom: './dist/index.js',
-			cl: './dist/index.js',
+			flowdular: './dist/index.js',
+			fd: './dist/index.js',
 		});
-		expect(rootPackage.name).toBe('coreloom');
-		expect(rootPackage.scripts.coreloom).toBe(
-			'pnpm --filter @coreloom/cli dev',
+		expect(rootPackage.name).toBe('flowdular');
+		expect(rootPackage.scripts.flowdular).toBe(
+			'pnpm --filter @flowdular/cli dev',
 		);
-		expect(rootPackage.scripts.cl).toBe('pnpm coreloom');
+		expect(rootPackage.scripts.fd).toBe('pnpm flowdular');
 		expect(rootPackage.scripts).not.toHaveProperty('oerp');
 
 		const help = await runCommand(parseArguments(['help']));
 		expect(help.ok).toBe(true);
-		expect((help.data as { usage: string }).usage).toMatch(/^coreloom /);
+		expect((help.data as { usage: string }).usage).toMatch(/^flowdular /);
 		expect((help.data as { usage: string }).usage).not.toContain('oerp');
 	});
 
-	it('tells operators to repair generated composition with coreloom', async () => {
+	it('tells operators to repair generated composition with flowdular', async () => {
 		const { workspace, dispose } = await staleWorkspace();
 		try {
 			const composition = (await runDoctor(workspace)).find(
@@ -95,7 +90,7 @@ describe('CLI identity', () => {
 			);
 			expect(composition).toMatchObject({ status: 'warn' });
 			expect(composition?.message).toContain(
-				'pnpm coreloom module sync --apply',
+				'pnpm flowdular module sync --apply',
 			);
 			expect(composition?.message).not.toContain('oerp');
 		} finally {
@@ -103,11 +98,11 @@ describe('CLI identity', () => {
 		}
 	});
 
-	it('guards every default database and vault key against silent replacement', async () => {
-		for (const [path, fileName] of LOCAL_STATE_CALLS) {
+	it('guards every default vault key path against silent replacement', async () => {
+		for (const [path, fileName] of VAULT_KEY_CALLS) {
 			const source = await readFile(join(REPOSITORY_ROOT, path), 'utf8');
 			expect(source, path).toContain(
-				`coreloomLocalDataPath(workspaceRoot, '${fileName}')`,
+				`flowdularLocalDataPath(workspaceRoot, '${fileName}')`,
 			);
 		}
 	});

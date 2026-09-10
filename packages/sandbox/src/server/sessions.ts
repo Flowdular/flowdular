@@ -12,8 +12,8 @@ import {
 	writeFile,
 } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
-import type { CodingAgentEvent } from '@coreloom/coding-agent';
-import { SANDBOX_DIRECTORY } from './config.ts';
+import type { CodingAgentEvent } from '@flowdular/coding-agent';
+import { sandboxDirectory } from './config.ts';
 import { materializeModuleGraph, materializeReference } from './reference.ts';
 import { hashSpec } from './spec.ts';
 import { forgetDiffs } from './turns.ts';
@@ -91,6 +91,9 @@ export interface SessionCheckpoint {
 }
 
 export interface SandboxSession {
+	/* Historical records have no owner. Never infer one from the next login. */
+	readonly owner?: SessionOwner;
+	readonly rejectedAt?: number | null;
 	readonly id: string;
 	readonly kind: SandboxSessionKind;
 	/* The primary module: modules[0]. Kept as fields for the current UI. */
@@ -125,7 +128,14 @@ export interface SandboxSession {
 	readonly registeredWithPlatform: boolean;
 }
 
+export interface SessionOwner {
+	readonly platformUrl: string;
+	readonly tenantId: string;
+	readonly accountId: string;
+}
+
 export interface ChatEntry {
+	readonly decision?: 'approved' | 'changes-requested';
 	readonly sequence: number;
 	readonly at: number;
 	readonly kind: 'user' | 'agent' | 'event' | 'system';
@@ -185,7 +195,7 @@ export function moduleSuffixOf(moduleId: string): string {
 }
 
 function sessionsRoot(workspaceRoot: string): string {
-	return join(workspaceRoot, SANDBOX_DIRECTORY, 'sessions');
+	return join(sandboxDirectory(workspaceRoot), 'sessions');
 }
 
 function sessionRoot(workspaceRoot: string, sessionId: string): string {
@@ -262,7 +272,7 @@ export async function copyModuleTree(
 	});
 }
 
-/* A session workspace is a Coreloom workspace of its own: the draft modules,
+/* A session workspace is a Flowdular workspace of its own: the draft modules,
    the manifests of every other enabled module, the shared TypeScript and
    formatting contracts, and a pnpm workspace that links the live framework
    packages so gates run against the code the platform runs. */
@@ -281,7 +291,7 @@ async function prepareSessionWorkspace(options: {
 	);
 	await materializeReference(options.workspaceRoot, options.paths.workspace);
 	await writeFile(
-		join(options.paths.workspace, 'coreloom.json'),
+		join(options.paths.workspace, 'flowdular.json'),
 		`${JSON.stringify(
 			{
 				schemaVersion: 1,
@@ -333,6 +343,7 @@ export function installSessionDependencies(
 }
 
 export interface CreateSessionInput {
+	readonly owner?: SessionOwner;
 	readonly workspaceRoot: string;
 	readonly kind: SandboxSessionKind;
 	readonly moduleId: string;
@@ -425,6 +436,7 @@ export async function createSession(
 
 	const now = Date.now();
 	const session: SandboxSession = {
+		...(input.owner ? { owner: input.owner } : {}),
 		id,
 		kind: input.kind,
 		moduleId: input.moduleId,
@@ -555,6 +567,7 @@ export async function readSession(
    transcript and never listed. */
 export async function listSessions(
 	workspaceRoot: string,
+	includeDeleted = false,
 ): Promise<readonly SandboxSession[]> {
 	let entries: readonly string[];
 	try {
@@ -567,7 +580,7 @@ export async function listSessions(
 		if (!isSessionId(entry)) continue;
 		try {
 			const session = await readSession(workspaceRoot, entry);
-			if (session.state !== 'deleted') sessions.push(session);
+			if (includeDeleted || session.state !== 'deleted') sessions.push(session);
 		} catch {
 			continue;
 		}
@@ -599,7 +612,10 @@ export function restoreSession(
 	workspaceRoot: string,
 	sessionId: string,
 ): Promise<SandboxSession> {
-	return updateSession(workspaceRoot, sessionId, { archivedAt: null });
+	return updateSession(workspaceRoot, sessionId, {
+		archivedAt: null,
+		rejectedAt: null,
+	});
 }
 
 /* Replaces a draft module directory with a checkpoint snapshot: the current

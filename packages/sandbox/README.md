@@ -3,16 +3,16 @@
 <picture>
 	<source
 		media="(prefers-color-scheme: dark)"
-		srcset="https://raw.githubusercontent.com/moxxy-ai/coreloom/main/docs/assets/coreloom-logo-dark.svg"
+		srcset="https://raw.githubusercontent.com/flowdular/flowdular/main/docs/assets/flowdular-logo-dark.svg"
 	/>
 	<img
-		src="https://raw.githubusercontent.com/moxxy-ai/coreloom/main/docs/assets/coreloom-logo.svg"
-		alt="Coreloom"
+		src="https://raw.githubusercontent.com/flowdular/flowdular/main/docs/assets/flowdular-logo.svg"
+		alt="Flowdular"
 		width="320"
 	/>
 </picture>
 
-### The Coreloom sandbox
+### The Flowdular sandbox
 
 Chat a change, watch it build behind the gates, preview it in the real
 application, deliver it as code you own.
@@ -24,7 +24,7 @@ application, deliver it as code you own.
 
 </div>
 
-The sandbox is the workshop of [Coreloom](https://github.com/moxxy-ai/coreloom),
+The sandbox is the workshop of [Flowdular](https://github.com/flowdular/flowdular),
 the agentic foundation framework. It builds a change in an isolated workspace,
 drives the coding agent your team already uses inside it, runs the same gates
 the platform runs, and shows the result in the real application shell. A
@@ -32,11 +32,11 @@ session carries as many modules as the work touches: one turn writes in one
 module, and the whole set is previewed and delivered together.
 
 ```bash
-npx @coreloom/sandbox            # from a Coreloom workspace
-npx @coreloom/sandbox --port 4320 --workspace /path/to/workspace
+npx @flowdular/sandbox            # from a Flowdular workspace
+npx @flowdular/sandbox --port 4320 --workspace /path/to/workspace
 ```
 
-The launcher finds the workspace by walking up to `coreloom.json`, then opens
+The launcher finds the workspace by walking up to `flowdular.json`, then opens
 http://127.0.0.1:4320.
 
 ## What it does
@@ -55,19 +55,19 @@ http://127.0.0.1:4320.
 
 ## Requirements
 
-Node.js 22.22.2 or newer, pnpm 11, a Coreloom workspace (a directory with
-`coreloom.json`), and a running Coreloom application to connect to.
+Node.js 22.22.2 or newer, pnpm 11, a Flowdular workspace (a directory with
+`flowdular.json`), and a running Flowdular application to connect to.
 
 ## Documentation
 
-- [Coreloom repository](https://github.com/moxxy-ai/coreloom)
-- [Architecture blueprint](https://github.com/moxxy-ai/coreloom/blob/main/docs/architecture-blueprint.md)
-- [Module contract (AGENTS.md)](https://github.com/moxxy-ai/coreloom/blob/main/AGENTS.md)
-- [Design system](https://github.com/moxxy-ai/coreloom/blob/main/docs/design-system.md)
+- [Flowdular repository](https://github.com/flowdular/flowdular)
+- [Architecture blueprint](https://github.com/flowdular/flowdular/blob/main/docs/architecture-blueprint.md)
+- [Module contract (AGENTS.md)](https://github.com/flowdular/flowdular/blob/main/AGENTS.md)
+- [Design system](https://github.com/flowdular/flowdular/blob/main/docs/design-system.md)
 
 ## Connecting
 
-The sandbox is a client of a running Coreloom application. It never opens the
+The sandbox is a client of a running Flowdular application. It never opens the
 platform database.
 
 1. In the application, open Administration, API tokens, and issue a token with
@@ -75,7 +75,7 @@ platform database.
    `sandbox.preview.data` for live data and `sandbox.modules.eject` for eject.
 2. Paste the token and the application address into the sandbox connect screen.
 
-The token is encrypted at rest with a key in `.coreloom/sandbox/secret.key` and
+The token is encrypted at rest with a key in `.flowdular/sandbox/secret.key` and
 is never returned to the browser. The application may run anywhere: the sandbox
 works the same against `http://127.0.0.1:4310` and a deployment.
 
@@ -97,15 +97,15 @@ Every request to the sandbox API is checked before it does anything:
   the mode and the application address, and nothing else.
 - Every mutation must come from the sandbox page: `Sec-Fetch-Site` (when the
   browser sends it) and `Origin` must match the sandbox host, and the request
-  must carry `x-coreloom-sandbox: 1`. A cross-site form post can do neither, so
+  must carry `x-flowdular-sandbox: 1`. A cross-site form post can do neither, so
   it is refused with 403 before any body is read.
-- The mode is the launcher's decision (`--mode`, `CL_SANDBOX_MODE`) and is
+- The mode is the launcher's decision (`--mode`, `FD_SANDBOX_MODE`) and is
   never accepted over HTTP. Changing the application address needs the token
   for that application in the same request, so a stored token is never replayed
   to another host.
 - Session ids are UUIDs. Anything else in a `:id` segment or the preview cookie
   is refused before a path is built from it, and a delete additionally checks
-  that the real path stays inside `.coreloom/sandbox/sessions`.
+  that the real path stays inside `.flowdular/sandbox/sessions`.
 - Capabilities (`sandbox.modules.eject`, `sandbox.preview.data`) are read from
   the acting principal: the browser session in `self-hosted` mode, the
   configured connection in `loopback` mode.
@@ -130,9 +130,15 @@ local binary carries the operator's own login.
 
 ## Sessions
 
-A session owns a directory under `.coreloom/sandbox/sessions/<id>`:
+The home dashboard lists the operator's ideas, current stages, recorded token
+usage and provider-reported costs. A session summary breaks usage down by
+specialist and offers archive, reject, restore and delete actions. Unknown
+amounts are marked rather than treated as free work. See
+[dashboard accounting and limitations](../../docs/sandbox-dashboard.md).
 
-- `workspace/` is a Coreloom workspace and a pnpm workspace of its own: the
+A session owns a directory under `.flowdular/sandbox/sessions/<id>`:
+
+- `workspace/` is a Flowdular workspace and a pnpm workspace of its own: the
   draft modules under `modules/`, the manifests of every other enabled module
   for dependency validation, `reference/` with read-only copies of the platform
   contracts, one complete example module and the skills under
@@ -232,7 +238,7 @@ carry their module, so the conversation says where each turn worked.
 
 The session workspace installs for real. `package.json` and
 `pnpm-workspace.yaml` are generated at creation: the draft modules are the
-workspace projects, every other workspace package (`@coreloom/*`, the other
+workspace projects, every other workspace package (`@flowdular/*`, the other
 modules) is an `overrides` entry pointing at the live checkout with `link:`,
 the host `pnpm-lock.yaml` seeds the resolution so versions match the platform,
 and the host `patches/` travel along. `pnpm install --offline` runs at creation
@@ -255,9 +261,9 @@ settings right away. Files the business manager already wrote under the module
 
 ### Lifecycle
 
-A session can be archived, restored, and deleted from the session list menu,
-or from the platform CLI (`coreloom sandbox session-archive`,
-`coreloom sandbox session-delete`, dry run by default). Archived sessions are
+A session can be archived, restored, and deleted from its dashboard summary,
+or from the platform CLI (`flowdular sandbox session-archive`,
+`flowdular sandbox session-delete`, dry run by default). Archived sessions are
 hidden until "Show archived" and refuse new turns until restored. Deleting
 removes the workspace, the base copy and the preview data; the record and the
 transcript stay as a tombstone unless `keepTranscript: false` is passed. Both
@@ -271,7 +277,7 @@ actions refuse a session with a running turn unless asked to stop it
 An operator can paste a screenshot or attach files (concepts, mockups, specs)
 to a turn to show what they want changed. Attachments belong to the session:
 
-- The bytes are stored under `.coreloom/sandbox/sessions/<id>/attachments/<attachmentId>-<safeName>`
+- The bytes are stored under `.flowdular/sandbox/sessions/<id>/attachments/<attachmentId>-<safeName>`
   and copied into the session workspace at `workspace/reference/attachments/<safeName>`,
   so the coding agent, which may only read inside the workspace, opens them by
   name with its normal file tools.
@@ -286,7 +292,7 @@ to a turn to show what they want changed. Attachments belong to the session:
 size, addedAt }]`, backfilled to `[]` for older sessions.
 
 The endpoints, each behind the same `authorize()`, same-origin and
-`x-coreloom-sandbox` boundary as every other mutation, and each validating the
+`x-flowdular-sandbox` boundary as every other mutation, and each validating the
 session id and attachment id before building a path:
 
 - `POST /sandbox/api/sessions/:id/attachments` with `{ name, contentBase64 }`
@@ -315,7 +321,7 @@ session's workspace back to an earlier state when a coding agent goes wrong
 without losing the transcript.
 
 - A snapshot of each draft module tree is copied to
-  `.coreloom/sandbox/sessions/<id>/checkpoints/<sequence>/modules/<directory>`,
+  `.flowdular/sandbox/sessions/<id>/checkpoints/<sequence>/modules/<directory>`,
   excluding `node_modules`; `base/`, `reference/` and attachments are never
   snapshotted. One is taken at session creation as the pristine start
   (`sequence` 0), and one after every turn that produced a diff, keyed by that
@@ -330,7 +336,7 @@ without losing the transcript.
 Restore replaces the draft files, keeps the transcript, and appends a marker:
 
 - `POST /sandbox/api/sessions/:id/checkpoints/restore` with `{ sequence }`,
-  behind the same `authorize()`, same-origin and `x-coreloom-sandbox` boundary
+  behind the same `authorize()`, same-origin and `x-flowdular-sandbox` boundary
   as every other mutation, validating the session id first. The path is distinct
   from `/restore`, which un-archives a session.
 - It replaces `workspace/modules/<directory>` with the snapshot (the current
@@ -374,8 +380,8 @@ one turn, and the module picker beside it overrides which module that turn
 works in.
 
 The role documents in `.ai/agents/sandbox` are the source of truth; the
-bundled defaults in `@coreloom/coding-agent` are regenerated from them with
-`pnpm --filter @coreloom/coding-agent sync-roles`, and a test fails when the
+bundled defaults in `@flowdular/coding-agent` are regenerated from them with
+`pnpm --filter @flowdular/coding-agent sync-roles`, and a test fails when the
 two disagree.
 
 The coding agent is chosen when the session starts, next to the brief, and the
@@ -468,10 +474,37 @@ in the session list, with the time it landed, and the platform records
 
 Delivery is a target behind one interface (`DeliveryTarget` in
 `src/server/delivery/types.ts`): `available`, `plan`, `apply`. The eject
-request names the target (`target: 'workspace' | 'git-pr'`, default from
+request names the target (`target: 'workspace' | 'git-pr' | 'official-modules'`, default from
 configuration); the plan answer lists `availableTargets` with a reason for each
 one that cannot be used here, and the screen offers the choice only when more
 than one is usable.
+
+### Contribute to Official Modules (`official-modules`)
+
+Choose **Send to Official Modules** in the eject dialog, then confirm the displayed
+repository and source scope. This target accepts one new module with a current
+human-approved specification and passing exact-source auto-review. GitHub access
+to `Flowdular/official-modules`, git, gh and pnpm are required. The repository must
+be accessible to the configured GitHub identity; private repositories remain private.
+
+The host repeats all sandbox gates, clones the registry to a temporary directory,
+refuses an existing module ID/directory, copies the reviewed source and runs the
+registry's `pnpm verify`. It records source-bound evidence, packages an immutable
+release, and opens a PR to `Flowdular/official-modules` against `main`. Contributors
+without upstream push rights use a personal fork. Only module source, its review
+and release artifact enter the commit. Credentials stay out of package-script
+environments, command arguments and PR text. The local application is not enabled
+or changed. Existing branches are never overwritten on retry; only an identical
+source tree can be reused after an interrupted PR request.
+
+The target is included in default delivery targets. Projects with an explicit
+`sandbox.delivery.targets` list must add `official-modules`. Disabling GitHub
+in sandbox settings disables this target too. SDK/CLI npm releases must exist for
+the clean registry installation; an unavailable dependency stops before any push.
+
+This action submits code for maintainer review. It does not publish the registry,
+merge the PR or bypass PostgreSQL CI. Existing registry modules and multi-module
+changes use the contributor skills and a manually prepared branch for now.
 
 ### As a pull request (`git-pr`)
 
@@ -488,7 +521,7 @@ result. The steps:
 
 1. every gate, as above,
 2. `git fetch <remote> <base>`, a detached worktree of `<remote>/<base>` under
-   `.coreloom/sandbox/worktrees/<session>`, and the branch
+   `.flowdular/sandbox/worktrees/<session>`, and the branch
    `<prefix>/<module-dir>-<session id prefix>` in it,
 3. the copy and the removals into the worktree,
 4. `pnpm install --offline` there (`--prefer-offline` when a package is new),
@@ -496,7 +529,7 @@ result. The steps:
 6. a platform typecheck in the worktree,
 7. the guardrail check: `git status` in the worktree may list only
    `modules/<dir>/**` of the session's modules and `pnpm-lock.yaml`. A delivery
-   with a new module may also change `coreloom.json`, `platform/package.json`
+   with a new module may also change `flowdular.json`, `platform/package.json`
    and `platform/src/generated/**`;
    the count stays within `sandbox.delivery.maxChangedFiles` (else the
    `.ai/policies/task-budgets.yaml` figure for the session kind); new packages
@@ -509,7 +542,7 @@ result. The steps:
 9. `gh pr create` with a plain body: what changed, the gate table, the file
    list (added, modified, removed), the specification versions and field diff,
    detected deployment risks, the post-merge
-   `pnpm coreloom auth sync-scopes --module <id> --apply`, the session id, and a
+   `pnpm flowdular auth sync-scopes --module <id> --apply`, the session id, and a
    reviewer note when `.ai/policies/path-ownership.yaml` says a cross-owner
    change needs one. A second delivery of the same session updates the branch
    and keeps the open pull request.
@@ -525,12 +558,14 @@ process-local authorization header. Command output and pull request summary
 text are redacted before they can reach the browser or GitHub.
 
 The done screen shows the pull request (or compare) link, and
-`.coreloom/sandbox/sessions/<id>/delivery.json` keeps the branch and the URL
+`.flowdular/sandbox/sessions/<id>/delivery.json` keeps the branch and the URL
 for the session.
 
-Open the workspace menu and choose **GitHub integration** to configure delivery
-for this sandbox operator. The form controls the source remote, repository,
-base branch, session branch prefix, reviewers, and one of three push modes:
+Open **Delivery settings** on the dashboard to configure GitHub delivery for
+this sandbox. Project defaults apply unless local overrides are selected.
+Repository, reviewers and delivery mode appear first; the source remote,
+base branch, branch prefix and fork owner are under **Advanced settings**.
+Saving the form does not create, push or merge a pull request. Push modes are:
 
 - `auto` uses direct delivery only after GitHub confirms push permission and
   refuses otherwise,
@@ -539,19 +574,19 @@ base branch, session branch prefix, reviewers, and one of three push modes:
   creates the fork only after the operator confirms the eject.
 
 The sandbox never creates a fork in `auto` mode. Selecting `fork` is the
-operator's explicit consent. The repository must ignore `.coreloom/`; delivery
+operator's explicit consent. The repository must ignore `.flowdular/`; delivery
 is refused otherwise so the temporary worktree cannot dirty the active
 checkout.
 
-The optional token is encrypted in `.coreloom/sandbox/config.json` with the
+The optional token is encrypted in `.flowdular/sandbox/config.json` with the
 local sandbox key. The browser receives only its eight-character fingerprint.
 Git receives it through process-local configuration, never in a command
 argument or remote URL. The repository settings below remain authoritative
-until the operator checks **Override the repository delivery settings on this
-machine**. That local override never modifies `coreloom.json` and can be turned
+until the operator checks **Use custom settings for this sandbox**.
+That local override never modifies `flowdular.json` and can be turned
 off again from the same form.
 
-Configuration lives in `coreloom.json`, all of it optional (defaults shown):
+Configuration lives in `flowdular.json`, all of it optional (defaults shown):
 
 ```json
 {
@@ -575,9 +610,32 @@ Configuration lives in `coreloom.json`, all of it optional (defaults shown):
 `provider: "none"` pushes the branch without opening a pull request.
 `maxChangedFiles` is unset by default, which means the task budget applies.
 The block is validated by `packages/contracts/schemas/project.schema.json`
-(`pnpm coreloom doctor`) and read at request time.
+(`pnpm flowdular doctor`) and read at request time.
 
 ## Gates
+
+The session's **Check modules** action opens per-module results with a plain
+status and expandable diagnostic output. A skipped check is not a success.
+Specification approval requires the matching module's readable review; switching
+the specification editor to another module disables saving until that document
+loads. A failed turn start retains the user's message and releases the composer.
+
+On desktop the preview is a floating card over the right side of the chat
+surface, with room reserved for messages and the composer. **Preview** also opens
+the full-screen workbench on mobile, including sessions without file changes.
+
+The browser regression in `tests/browser/session-workflow.mjs` exercises the real
+UI with synthetic session, model and delivery responses. Start a sandbox against
+a disposable workspace, then run:
+
+```bash
+node packages/sandbox/tests/browser/session-workflow.mjs http://127.0.0.1:4438
+```
+
+It requires Playwright with Chromium available. If Playwright is provided by an
+external runtime, set `PLAYWRIGHT_MODULE` to its absolute `index.mjs` path.
+Screenshots and results are saved in a temporary directory. No paid model calls,
+platform mutations or GitHub operations are made by this regression.
 
 Gates are a fixed list run by the sandbox: `spec-schema` and `module-schema`
 once per session workspace, `dependencies`, `typecheck`, `tests` and `format`
@@ -616,3 +674,18 @@ other modules. Preview data has two modes: `fixtures` is fully offline, and
 `bridge` forwards the leftovers to the connected application with the sandbox
 token. The bridge is read only and refuses without the `sandbox.preview.data`
 scope.
+
+### Auto-review
+
+At the final completion handoff, a missing or stale `auto-review` result routes the
+same specialist to a separate read-only review turn. The report covers correctness,
+security, compatibility, lifecycle, tests and UI, with specific evidence. Findings
+return to implementation. A passing report is stored by the server outside the
+agent workspace and tied to every module file's content. Later edits invalidate it.
+With auto-continue disabled, continue the generated review handoff manually.
+
+All eject targets require a current report for every delivered module and passing
+schema, dependency, typecheck, test and format checks. Missing or skipped results
+block eject; empty test suites fail. Old sessions need a review before delivery.
+The report is a model assessment and does not guarantee correctness; executable
+checks remain mandatory, and operator spec approval stays separate.

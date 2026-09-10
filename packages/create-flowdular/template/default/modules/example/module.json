@@ -1,0 +1,22 @@
+{
+	"$schema": "../../node_modules/@flowdular/contracts/schemas/module.schema.json",
+	"schemaVersion": 1,
+	"id": "example.core",
+	"package": "@app/module-example",
+	"version": "0.1.0",
+	"profile": "full",
+	"capabilities": ["api", "database", "client", "translations"],
+	"platform": {
+		"server": true,
+		"client": true
+	},
+	"dependencies": [
+		{
+			"id": "auth.core",
+			"range": "0.10.0"
+		}
+	],
+	"tenancy": "required",
+	"locales": ["en", "pl"],
+	"stability": "experimental"
+}

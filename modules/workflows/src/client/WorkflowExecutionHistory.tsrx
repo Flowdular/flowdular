@@ -1,4 +1,4 @@
-import { t } from '@coreloom/client';
+import { t } from '@flowdular/client';
 import {
 	Button,
 	Filters,
@@ -6,7 +6,7 @@ import {
 	TableCard,
 	Tag,
 	type TableColumn,
-} from '@coreloom/ui';
+} from '@flowdular/ui';
 import type { WorkflowRunSummary } from '../domain/types.ts';
 import {
 	costLabel,

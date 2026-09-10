@@ -51,7 +51,7 @@ describe('browser origin boundary', () => {
 		);
 		expect(() =>
 			assertSameOrigin(
-				browserRequest({ origin: SANDBOX, 'x-coreloom-sandbox': '1' }),
+				browserRequest({ origin: SANDBOX, 'x-flowdular-sandbox': '1' }),
 			),
 		).not.toThrow();
 	});
@@ -67,7 +67,7 @@ describe('preview worker hop headers', () => {
 				connection: 'keep-alive',
 				'content-length': '18',
 				'content-type': 'application/json',
-				'x-coreloom-preview-session': '1a2b',
+				'x-flowdular-preview-session': '1a2b',
 			}),
 			WORKER,
 		);
@@ -78,7 +78,7 @@ describe('preview worker hop headers', () => {
 		expect(headers.get('connection')).toBeNull();
 		expect(headers.get('content-length')).toBeNull();
 		expect(headers.get('content-type')).toBe('application/json');
-		expect(headers.get('x-coreloom-preview-session')).toBe('1a2b');
+		expect(headers.get('x-flowdular-preview-session')).toBe('1a2b');
 	});
 
 	it('adds no origin to a request that had none', () => {

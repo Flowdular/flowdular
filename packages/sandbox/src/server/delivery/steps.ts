@@ -2,7 +2,8 @@ import { spawn } from 'node:child_process';
 import { cp, mkdir, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join, relative } from 'node:path';
-import type { GateResult } from '../gates.ts';
+import { GATE_IDS, type GateResult } from '../gates.ts';
+import { inspectAutoReview } from '../auto-review.ts';
 import { modulePathOf, type SessionPaths } from '../sessions.ts';
 import { SandboxSetupError } from '../workspace-root.ts';
 import type {
@@ -72,7 +73,7 @@ export const spawnCommand: CommandRunner = (command, args, cwd, options) =>
 
 /* Only module sources travel. Dependencies, the reference material, and the
    session's own scratch state never enter the workspace. */
-const EXCLUDED = new Set(['node_modules', 'dist', '.turbo']);
+const EXCLUDED = new Set(['node_modules', 'dist', '.turbo', '.git']);
 
 export async function listModuleFiles(
 	root: string,
@@ -202,12 +203,32 @@ export async function runDeliveryGates(
 	emit: DeliveryEmit,
 ): Promise<readonly GateResult[]> {
 	const results: GateResult[] = [];
-	for (const gate of gates) {
+	for (const gate of new Set([...gates, ...GATE_IDS])) {
 		emit('gate.started', { id: gate });
-		for (const result of await context.runGates([gate])) {
+		const checked = await context.runGates([gate]);
+		const targets =
+			gate === 'spec-schema' || gate === 'module-schema'
+				? [undefined]
+				: context.session.modules.map((module) => module.directory);
+		if (
+			targets.length === 0 ||
+			targets.some(
+				(module) =>
+					!checked.some(
+						(result) => result.id === gate && result.module === module,
+					),
+			)
+		) {
+			throw new DeliveryError(
+				'EJECT_GATES_MISSING',
+				`No result for required gate ${gate}.`,
+			);
+		}
+		for (const result of checked) {
 			results.push(result);
 			emit('gate.completed', result);
 		}
+		assertGatesPassed(checked);
 	}
 	assertGatesPassed(results);
 	return results;
@@ -221,6 +242,11 @@ export async function stageModules(
 	modules: readonly DeliveryModulePlan[],
 	emit: DeliveryEmit,
 ): Promise<{ readonly copied: number; readonly removed: number }> {
+	for (const module of modules) {
+		const review = await inspectAutoReview(paths, module);
+		if (!review.passed)
+			throw new DeliveryError('EJECT_REVIEW_REQUIRED', review.output);
+	}
 	let copied = 0;
 	let removed = 0;
 	for (const module of modules) {
@@ -243,7 +269,7 @@ export async function stageModules(
 }
 
 export function assertGatesPassed(gates: readonly GateResult[]): void {
-	const failed = gates.filter((gate) => gate.status === 'failed');
+	const failed = gates.filter((gate) => gate.status !== 'passed');
 	if (failed.length > 0) {
 		throw new DeliveryError(
 			'EJECT_GATES_FAILED',
@@ -376,7 +402,7 @@ export async function enableModule(
 				'--dir',
 				workspaceRoot,
 				'--silent',
-				'coreloom',
+				'flowdular',
 				'module',
 				'enable',
 				moduleId,
@@ -402,7 +428,7 @@ export async function syncModuleScopes(
 				'--dir',
 				workspaceRoot,
 				'--silent',
-				'coreloom',
+				'flowdular',
 				'auth',
 				'sync-scopes',
 				'--module',
@@ -422,7 +448,7 @@ export async function verifyPlatform(
 	return step(
 		await run(
 			'pnpm',
-			['--dir', workspaceRoot, '--filter', '@coreloom/platform', 'typecheck'],
+			['--dir', workspaceRoot, '--filter', '@flowdular/platform', 'typecheck'],
 			workspaceRoot,
 		),
 	);

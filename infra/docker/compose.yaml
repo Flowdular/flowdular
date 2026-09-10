@@ -1,27 +1,78 @@
 services:
+  postgres-tls:
+    image: postgres:17
+    entrypoint: ['/bin/bash', '/tls-init.sh']
+    volumes:
+      - ./postgres/tls-init.sh:/tls-init.sh:ro
+      - flowdular-postgres-tls:/tls
+    restart: 'no'
+
+  postgres:
+    image: postgres:17
+    depends_on:
+      postgres-tls:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_DB: flowdular
+      POSTGRES_PASSWORD: ${FD_POSTGRES_SUPERUSER_PASSWORD:?Set FD_POSTGRES_SUPERUSER_PASSWORD in infra/docker/.env (openssl rand -base64 32)}
+      FD_DATABASE_MIGRATOR_PASSWORD: ${FD_DATABASE_MIGRATOR_PASSWORD:?Set FD_DATABASE_MIGRATOR_PASSWORD in infra/docker/.env (openssl rand -base64 32)}
+      FD_DATABASE_RUNTIME_PASSWORD: ${FD_DATABASE_RUNTIME_PASSWORD:?Set FD_DATABASE_RUNTIME_PASSWORD in infra/docker/.env (openssl rand -base64 32)}
+      FD_DATABASE_BACKGROUND_PASSWORD: ${FD_DATABASE_BACKGROUND_PASSWORD:?Set FD_DATABASE_BACKGROUND_PASSWORD in infra/docker/.env (openssl rand -base64 32)}
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/tls/server.crt
+      - -c
+      - ssl_key_file=/tls/server.key
+    volumes:
+      - flowdular-postgres:/var/lib/postgresql/data
+      - flowdular-postgres-tls:/tls:ro
+      - ./postgres/10-roles.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d flowdular']
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
   app:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile
-    image: coreloom:local
+    image: flowdular:local
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       NODE_ENV: production
       PORT: 3000
-      CL_AUTH_DATABASE: /data/auth.db
-      CL_AGENTS_DATABASE: /data/agents.db
-      CL_WORKFLOWS_DATABASE: /data/workflows.db
-      CL_AUTH_ALLOW_SIGN_UP: 'false'
+      # Every module reads and writes through the platform provider; the
+      # deployment has one database and no per-module files.
+      FD_DATABASE_ADAPTER: postgresql
+      FD_DATABASE_URL: postgresql://coreloom_runtime:${FD_DATABASE_RUNTIME_PASSWORD}@postgres:5432/flowdular
+      FD_DATABASE_MIGRATOR_URL: postgresql://coreloom_migrator:${FD_DATABASE_MIGRATOR_PASSWORD}@postgres:5432/flowdular
+      # Cross-tenant reads (the scheduler poll) run as this role. It carries no
+      # blanket grant: a migration hands it named columns under its own policy.
+      FD_DATABASE_BACKGROUND_URL: postgresql://coreloom_background:${FD_DATABASE_BACKGROUND_PASSWORD}@postgres:5432/flowdular
+      FD_DATABASE_TLS: verify-full
+      FD_DATABASE_TLS_CA_FILE: /tls/server.crt
+      FD_AUTH_ALLOW_SIGN_UP: 'false'
       # TLS terminates in front of this container. Only a plain-HTTP run on a
-      # workstation may set CL_AUTH_SECURE_COOKIE=false in .env.
-      CL_AUTH_SECURE_COOKIE: ${CL_AUTH_SECURE_COOKIE:-true}
+      # workstation may set FD_AUTH_SECURE_COOKIE=false in .env.
+      FD_AUTH_SECURE_COOKIE: ${FD_AUTH_SECURE_COOKIE:-true}
       # Both keys come from infra/docker/.env (copy .env.example). Compose
       # refuses to start without them; the app would refuse at boot anyway.
-      CL_AGENT_CREDENTIAL_KEY: ${CL_AGENT_CREDENTIAL_KEY:?Set CL_AGENT_CREDENTIAL_KEY in infra/docker/.env (openssl rand -base64 32)}
-      CL_AGENT_RUN_GRANT_KEY: ${CL_AGENT_RUN_GRANT_KEY:?Set CL_AGENT_RUN_GRANT_KEY in infra/docker/.env (openssl rand -base64 32)}
-      CL_WORKFLOWS_PAYLOAD_KEY: ${CL_WORKFLOWS_PAYLOAD_KEY:?Set CL_WORKFLOWS_PAYLOAD_KEY in infra/docker/.env (openssl rand -base64 32)}
-      CL_WORKFLOWS_CURSOR_KEY: ${CL_WORKFLOWS_CURSOR_KEY:?Set CL_WORKFLOWS_CURSOR_KEY in infra/docker/.env (openssl rand -base64 32)}
+      FD_AGENT_CREDENTIAL_KEY: ${FD_AGENT_CREDENTIAL_KEY:?Set FD_AGENT_CREDENTIAL_KEY in infra/docker/.env (openssl rand -base64 32)}
+      FD_AGENT_RUN_GRANT_KEY: ${FD_AGENT_RUN_GRANT_KEY:?Set FD_AGENT_RUN_GRANT_KEY in infra/docker/.env (openssl rand -base64 32)}
+      FD_WORKFLOWS_PAYLOAD_KEY: ${FD_WORKFLOWS_PAYLOAD_KEY:?Set FD_WORKFLOWS_PAYLOAD_KEY in infra/docker/.env (openssl rand -base64 32)}
+      FD_WORKFLOWS_CURSOR_KEY: ${FD_WORKFLOWS_CURSOR_KEY:?Set FD_WORKFLOWS_CURSOR_KEY in infra/docker/.env (openssl rand -base64 32)}
     ports:
-      - '${CL_PORT:-3000}:3000'
+      - '${FD_PORT:-3000}:3000'
     healthcheck:
       test:
         - CMD
@@ -37,10 +88,11 @@ services:
     tmpfs:
       - /tmp:size=64m,mode=1777
     volumes:
-      - coreloom-data:/data
+      - flowdular-postgres-tls:/tls:ro
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
 
 volumes:
-  coreloom-data:
+  flowdular-postgres:
+  flowdular-postgres-tls:

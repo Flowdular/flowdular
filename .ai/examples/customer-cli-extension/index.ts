@@ -1,7 +1,7 @@
 /* In a module this is src/cli/index.ts. Every field of `capability` and the
    `path` must equal the entry in commands.json; packages/cli/src/extensions.ts
    (loadCliCommand) refuses the command otherwise. */
-import { defineCliExtension } from '@coreloom/cli-protocol';
+import { defineCliExtension } from '@flowdular/cli-protocol';
 
 export const cliExtension = defineCliExtension({
 	protocolVersion: 1,
@@ -22,7 +22,7 @@ export const cliExtension = defineCliExtension({
 				data: {
 					applied: apply,
 					format: arguments_[0] ?? 'json',
-					target: `${workspaceRoot}/.coreloom/data/exports/customers.${arguments_[0] ?? 'json'}`,
+					target: `${workspaceRoot}/.flowdular/data/exports/customers.${arguments_[0] ?? 'json'}`,
 				},
 				evidence: ['modules/customer/spec/module.yaml'],
 				warnings: apply

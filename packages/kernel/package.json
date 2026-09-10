@@ -1,22 +1,44 @@
 {
-	"name": "@coreloom/kernel",
+	"name": "@flowdular/kernel",
 	"version": "0.1.0",
-	"private": true,
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
-		"./legacy-local-state": "./src/legacy-local-state.ts"
+		"./legacy-local-state": "./src/legacy-local-state.ts",
+		"./runtime-config": "./src/runtime-config.ts"
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit -p tsconfig.json",
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@coreloom/contracts": "workspace:*"
+		"@flowdular/contracts": "workspace:*",
+		"semver": "7.7.4",
+		"@types/semver": "7.7.1"
 	},
 	"devDependencies": {
 		"@types/node": "24.13.3",
 		"typescript": "5.9.3",
-		"vitest": "4.1.10"
-	}
+		"vitest": "4.1.11"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Flowdular/flowdular.git",
+		"directory": "packages/kernel"
+	},
+	"files": [
+		"src",
+		"schemas",
+		"dist",
+		"bin",
+		"public",
+		"module.json",
+		"migrations",
+		"translations",
+		"spec",
+		"README.md",
+		"LICENSE"
+	],
+	"private": true
 }

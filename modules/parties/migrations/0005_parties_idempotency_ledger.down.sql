@@ -1,2 +1,0 @@
-DROP INDEX IF EXISTS parties_idempotency_ledger_tenant_operation_idx;
-DROP TABLE IF EXISTS parties_idempotency_ledger;

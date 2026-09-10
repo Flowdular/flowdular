@@ -1,5 +1,5 @@
 /* Agents module: composites specific to this module. Primitives (buttons,
-   fields, tags, cards) come from @coreloom/ui and are not restyled here. */
+   fields, tags, cards) come from @flowdular/ui and are not restyled here. */
 
 .run-detail {
 	align-self: start;

@@ -4,7 +4,7 @@ import {
 	type ModuleSettingsDeclaration,
 	type ModuleSettingsRuntime,
 	type ModuleSettingValue,
-} from '@coreloom/kernel';
+} from '@flowdular/kernel';
 import { providerHostAllowlist } from './services/outbound-policy.ts';
 import { agentRuntimeOptionsFromEnvironment } from './server/runtime.ts';
 
@@ -148,7 +148,7 @@ export function agentsModuleSettingsFromEnvironment(
 		workerLeaseMs: options.workerLeaseMs,
 		providerReadinessTtlMs: options.providerReadinessTtlMs,
 		providerHostAllowlist:
-			environment.CL_AGENT_PROVIDER_HOST_ALLOWLIST?.trim() ?? '',
+			environment.FD_AGENT_PROVIDER_HOST_ALLOWLIST?.trim() ?? '',
 	};
 	return defineModuleSettings({
 		moduleId: AGENTS_MODULE_ID,
@@ -229,7 +229,7 @@ export function agentSettings(context: {
 						read(
 							PLATFORM_SETTINGS_TENANT,
 							'providerHostAllowlist',
-							context.environment.CL_AGENT_PROVIDER_HOST_ALLOWLIST ?? '',
+							context.environment.FD_AGENT_PROVIDER_HOST_ALLOWLIST ?? '',
 						),
 					)
 				: fallback.providerHostAllowlist,

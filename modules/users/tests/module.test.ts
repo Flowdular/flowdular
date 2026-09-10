@@ -1,66 +1,45 @@
 import { createContext } from '@octanejs/app-core';
-import { createModuleSettingsRuntime } from '@coreloom/kernel';
-import type { AuthRuntime } from '@coreloom/module-auth/server';
+import type { DatabaseProvider } from '@flowdular/database';
+import { createPgliteTestProvider } from '@flowdular/database-testing';
+import type { AuthRuntime } from '@flowdular/module-auth/server';
 import {
-	createAuthenticationMiddleware,
 	createAuthRoutes,
-} from '@coreloom/module-auth/server';
-import { describe, expect, it } from 'vitest';
+	createAuthRuntime,
+} from '@flowdular/module-auth/server';
+import { afterEach, describe, expect, it } from 'vitest';
 import { createUserRoutes } from '../src/api/endpoints.ts';
 import { moduleDefinition } from '../src/index.ts';
 
 const ORIGIN = 'https://erp.example';
 
-/* The auth runtime is composed from its public server entry, the same way the
-   platform composes it, so these tests exercise the real administration port. */
+const opened: { runtime: AuthRuntime; databases: DatabaseProvider }[] = [];
+
+afterEach(async () => {
+	for (const entry of opened.splice(0)) {
+		await entry.runtime.dispose();
+		await entry.databases.dispose();
+	}
+});
+
+/* The auth runtime is composed from its public server entry over an embedded
+   PostgreSQL, the same way the platform composes it, so these tests exercise
+   the real administration port and never reach into auth.core internals. */
 async function authRuntime(): Promise<AuthRuntime> {
-	const { AuthService } = await import(
-		'../../auth/src/services/auth-service.ts'
-	);
-	const { SqliteAuthRepository } = await import(
-		'../../auth/src/services/sqlite-repository.ts'
-	);
-	const { createAuthModuleSettings } = await import(
-		'../../auth/src/settings.ts'
-	);
-	const repository = new SqliteAuthRepository(':memory:');
-	const service = new AuthService(repository, {
-		passwordHash: {
-			cost: 2 ** 12,
-			blockSize: 8,
-			parallelization: 1,
-			keyLength: 32,
-			maxMemory: 32 * 1024 * 1024,
-		},
+	const databases = createPgliteTestProvider();
+	const runtime = createAuthRuntime({
+		databases,
+		purpose: 'test',
+		secureCookies: false,
+		cookieName: 'coreloom_session_dev',
+		sessionTtlMs: 3_600_000,
+		sessionIdleMs: 3_600_000,
+		passwordMinLength: 12,
+		allowSignUp: true,
+		emailConfirmation: false,
+		signInProviders: [],
 	});
-	const moduleSettings = createModuleSettingsRuntime(repository);
-	moduleSettings.declare(createAuthModuleSettings());
-	const cookie = {
-		name: 'coreloom_session_dev',
-		secure: false,
-		maxAgeSeconds: 3600,
-	};
-	return {
-		cookie,
-		settings: {
-			allowSignUp: true,
-			emailConfirmation: false,
-			signInProviders: [],
-			sessionTtlMs: 3_600_000,
-			sessionIdleMs: 3_600_000,
-			passwordMinLength: 12,
-		},
-		moduleSettings,
-		trustProxy: false,
-		mailTransport: false,
-		workspaceRoot: null,
-		oidcProviders: [],
-		publicBaseUrl: null,
-		service: () => service,
-		authorizeAgentToolAccess: () => [],
-		middleware: createAuthenticationMiddleware(() => service, cookie),
-		dispose: () => undefined,
-	};
+	opened.push({ runtime, databases });
+	return runtime;
 }
 
 interface Session {
@@ -139,7 +118,7 @@ async function signInMember(
 	email: string,
 	password: string,
 ): Promise<Session> {
-	const issued = await auth.service().signIn({ email, password });
+	const issued = await (await auth.service()).signIn({ email, password });
 	return {
 		cookie: `coreloom_session_dev=${issued.token}`,
 		csrfToken: issued.csrfToken,
@@ -186,7 +165,9 @@ describe('users.core', () => {
 		expect(created.status).toBe(201);
 		const manager = ((await created.json()) as { user: { accountId: string } })
 			.user;
-		auth.service().setMembershipScopes(
+		await (
+			await auth.service()
+		).setMembershipScopes(
 			{
 				accountId: owner.accountId,
 				tenantId: owner.tenantId,
@@ -246,7 +227,9 @@ describe('users.core', () => {
 		);
 		expect(capped.status).toBe(403);
 
-		const token = auth.service().issueApiToken({
+		const token = await (
+			await auth.service()
+		).issueApiToken({
 			tenantId: owner.tenantId,
 			accountId: owner.accountId,
 			label: 'Automation',
@@ -330,7 +313,9 @@ describe('users.core', () => {
 			user: { passwordChangeRequired: true },
 		});
 		expect(resetText).not.toContain('temporary pass');
-		const session = await auth.service().signIn({
+		const session = await (
+			await auth.service()
+		).signIn({
 			email: 'member@example.com',
 			password: 'temporary pass 1234',
 		});
@@ -339,6 +324,8 @@ describe('users.core', () => {
 			accountId: member.accountId,
 		});
 		expect(removed.status).toBe(200);
-		expect(auth.service().resolveSession(session.token)).toBeNull();
+		expect(
+			await (await auth.service()).resolveSession(session.token),
+		).toBeNull();
 	});
 });

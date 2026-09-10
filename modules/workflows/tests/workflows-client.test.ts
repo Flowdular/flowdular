@@ -2,7 +2,7 @@ import {
 	registerModuleTranslations,
 	setActiveLocale,
 	t,
-} from '@coreloom/client/i18n';
+} from '@flowdular/client/i18n';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { WorkflowNodeExecution } from '../src/domain/types.ts';
 import translationsEn from '../translations/en.json';
@@ -30,8 +30,8 @@ describe('workflow canvas model', () => {
 	it('creates stable node ids and clamps dragged layout to the canvas origin', () => {
 		const first = graphWith('input');
 		const second = addWorkflowNode(first.graph, 'input', 'second');
-		expect(first.nodeId).toBe('input.1');
-		expect(second.nodeId).toBe('input.2');
+		expect(first.nodeId).toBe('input.n1');
+		expect(second.nodeId).toBe('input.n2');
 		expect(
 			moveWorkflowNode(second.graph, second.nodeId, -12, 18).layout[
 				second.nodeId
@@ -76,7 +76,18 @@ describe('workflow canvas model', () => {
 		).toBe('TARGET_CARDINALITY');
 		const cycleInput = graphWith('input');
 		const merge = addWorkflowNode(cycleInput.graph, 'merge', 'merge');
-		const cycleGate = addWorkflowNode(merge.graph, 'gate', 'cycle gate');
+		const compatibleMerge = {
+			...merge.graph,
+			nodes: merge.graph.nodes.map((node) =>
+				node.id === merge.nodeId
+					? {
+							...node,
+							outputPorts: [{ name: 'data', schemaId: 'workflow.data' }],
+						}
+					: node,
+			),
+		};
+		const cycleGate = addWorkflowNode(compatibleMerge, 'gate', 'cycle gate');
 		const withSecond = connectWorkflowNodes(
 			connectWorkflowNodes(
 				cycleGate.graph,
@@ -119,9 +130,9 @@ describe('workflow canvas model', () => {
 			'input',
 		);
 		expect(workflowOutline(graph).map((node) => node.id)).toEqual([
-			'input.1',
-			'gate.1',
-			'output.1',
+			'input.n1',
+			'gate.n1',
+			'output.n1',
 		]);
 	});
 

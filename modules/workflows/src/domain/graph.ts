@@ -201,6 +201,8 @@ function schemaIssues(
 	}
 	const allowed = new Set([
 		'$id',
+		'title',
+		'description',
 		'type',
 		'properties',
 		'required',
@@ -324,7 +326,9 @@ function validateGateExpression(
 
 function validPointer(pointer: string): boolean {
 	return (
-		pointer === '' || (pointer.startsWith('/') && !/~(?:[^01]|$)/.test(pointer))
+		typeof pointer === 'string' &&
+		(pointer === '' ||
+			(pointer.startsWith('/') && !/~(?:[^01]|$)/.test(pointer)))
 	);
 }
 
@@ -332,6 +336,7 @@ function mappingIssues(
 	mapping: WorkflowTargetMappingV1,
 	node: WorkflowNodeV1,
 	nodeIndex: ReadonlyMap<string, number>,
+	graph: WorkflowGraphV1,
 ): readonly WorkflowValidationIssueV1[] {
 	const issues: WorkflowValidationIssueV1[] = [];
 	if (!validPointer(mapping.targetPointer)) {
@@ -371,7 +376,11 @@ function mappingIssues(
 		if (
 			sourceIndex === undefined ||
 			targetIndex === undefined ||
-			sourceIndex >= targetIndex
+			sourceIndex >= targetIndex ||
+			!graph.nodes
+				.find((entry) => entry.id === source.sourceNodeId)
+				?.outputPorts.some((port) => port.name === source.sourcePort) ||
+			!isUpstream(graph, source.sourceNodeId, node.id)
 		) {
 			issues.push(
 				issue(
@@ -383,6 +392,26 @@ function mappingIssues(
 		}
 	}
 	return issues;
+}
+
+function isUpstream(
+	graph: WorkflowGraphV1,
+	source: string,
+	target: string,
+): boolean {
+	const pending = [target];
+	const visited = new Set<string>();
+	while (pending.length) {
+		const id = pending.pop()!;
+		if (visited.has(id)) continue;
+		visited.add(id);
+		for (const edge of graph.edges) {
+			if (edge.target.nodeId !== id) continue;
+			if (edge.source.nodeId === source) return true;
+			pending.push(edge.source.nodeId);
+		}
+	}
+	return false;
 }
 
 function stableTopologicalOrder(
@@ -762,7 +791,7 @@ export function compileWorkflowGraph(
 		if (node.type === 'gate')
 			issues.push(...validateGateExpression(node.expression, node.id));
 		for (const mapping of node.mappings ?? [])
-			issues.push(...mappingIssues(mapping, node, index));
+			issues.push(...mappingIssues(mapping, node, index, graph));
 	}
 	for (const reference of references) {
 		if (reference.kind !== 'schema' && !reference.available)
@@ -843,7 +872,8 @@ export function validateJsonSchema(
 				),
 			),
 		);
-	if (isRecord(value) && isRecord(schema.properties)) {
+	if (isRecord(value)) {
+		const properties = isRecord(schema.properties) ? schema.properties : {};
 		const required = Array.isArray(schema.required)
 			? new Set(
 					schema.required.filter(
@@ -852,10 +882,12 @@ export function validateJsonSchema(
 				)
 			: new Set<string>();
 		for (const name of required)
-			if (!(name in value))
+			if (!Object.hasOwn(value, name))
 				errors.push({ path: `${path}/${name}`, code: 'required' });
 		for (const [name, entry] of Object.entries(value)) {
-			const child = schema.properties[name];
+			const child = Object.hasOwn(properties, name)
+				? properties[name]
+				: undefined;
 			if (isRecord(child))
 				errors.push(
 					...validateJsonSchema(
@@ -881,11 +913,14 @@ export function readJsonPointer(
 	for (const raw of pointer.slice(1).split('/')) {
 		const key = raw.replaceAll('~1', '/').replaceAll('~0', '~');
 		if (Array.isArray(current)) {
+			if (!/^(0|[1-9][0-9]*)$/.test(key)) return undefined;
 			const index = Number(key);
 			current =
 				Number.isSafeInteger(index) && index >= 0 ? current[index] : undefined;
 		} else if (isRecord(current))
-			current = current[key] as JsonValue | undefined;
+			current = Object.hasOwn(current, key)
+				? (current[key] as JsonValue)
+				: undefined;
 		else return undefined;
 	}
 	return current;
@@ -896,12 +931,29 @@ function writeJsonPointer(
 	pointer: string,
 	value: JsonValue,
 ): void {
+	if (
+		!validPointer(pointer) ||
+		pointer
+			.split('/')
+			.some((part) =>
+				['__proto__', 'constructor', 'prototype'].includes(
+					part.replaceAll('~1', '/').replaceAll('~0', '~'),
+				),
+			)
+	)
+		throw new Error('WORKFLOW_MAPPING_TARGET_INVALID');
 	if (pointer === '') {
 		if (value === null || typeof value !== 'object' || Array.isArray(value)) {
 			throw new Error('WORKFLOW_MAPPING_TARGET_INVALID');
 		}
 		for (const key of Object.keys(target)) delete target[key];
-		Object.assign(target, structuredClone(value));
+		for (const [key, entry] of Object.entries(value))
+			Object.defineProperty(target, key, {
+				value: structuredClone(entry),
+				enumerable: true,
+				configurable: true,
+				writable: true,
+			});
 		return;
 	}
 	const parts = pointer
@@ -910,7 +962,7 @@ function writeJsonPointer(
 		.map((entry) => entry.replaceAll('~1', '/').replaceAll('~0', '~'));
 	let current = target;
 	for (const part of parts.slice(0, -1)) {
-		const existing = current[part];
+		const existing = Object.hasOwn(current, part) ? current[part] : undefined;
 		if (
 			existing === null ||
 			typeof existing !== 'object' ||
@@ -936,6 +988,12 @@ export function applyWorkflowMappings(
 		let value: JsonValue | undefined;
 		if (mapping.binding.kind === 'literal') value = mapping.binding.value;
 		if (mapping.binding.kind === 'path') {
+			if (
+				!outputs.has(
+					`${mapping.binding.sourceNodeId}:${mapping.binding.sourcePort}`,
+				)
+			)
+				throw new Error('WORKFLOW_MAPPING_SOURCE_INVALID');
 			value = readJsonPointer(
 				outputs.get(
 					`${mapping.binding.sourceNodeId}:${mapping.binding.sourcePort}`,
@@ -946,6 +1004,8 @@ export function applyWorkflowMappings(
 		if (mapping.binding.kind === 'template') {
 			const values = new Map<string, string>();
 			for (const variable of mapping.binding.variables) {
+				if (!outputs.has(`${variable.sourceNodeId}:${variable.sourcePort}`))
+					throw new Error('WORKFLOW_MAPPING_SOURCE_INVALID');
 				const resolved = readJsonPointer(
 					outputs.get(`${variable.sourceNodeId}:${variable.sourcePort}`) ??
 						null,
@@ -979,6 +1039,15 @@ export function evaluateGate(
 	expression: WorkflowGateExpressionV1,
 	input: JsonValue,
 ): boolean {
+	const required = (value: JsonValue | undefined): JsonValue => {
+		if (value === undefined) throw new Error('WORKFLOW_GATE_PATH_MISSING');
+		return value;
+	};
+	const boolean = (value: JsonValue | undefined): boolean => {
+		if (typeof required(value) !== 'boolean')
+			throw new Error('WORKFLOW_GATE_TYPE_MISMATCH');
+		return value as boolean;
+	};
 	const evaluate = (entry: WorkflowGateExpressionV1): JsonValue | undefined => {
 		switch (entry.op) {
 			case 'literal':
@@ -988,14 +1057,15 @@ export function evaluateGate(
 			case 'exists':
 				return evaluate(entry.value) !== undefined;
 			case 'not':
-				return !Boolean(evaluate(entry.value));
+				return !boolean(evaluate(entry.value));
 			case 'and':
-				return entry.values.every((value) => Boolean(evaluate(value)));
+				return entry.values.every((value) => boolean(evaluate(value)));
 			case 'or':
-				return entry.values.some((value) => Boolean(evaluate(value)));
+				return entry.values.some((value) => boolean(evaluate(value)));
 			case 'eq':
 				return (
-					canonical(evaluate(entry.left)) === canonical(evaluate(entry.right))
+					canonical(required(evaluate(entry.left))) ===
+					canonical(required(evaluate(entry.right)))
 				);
 			case 'gt':
 			case 'gte':
@@ -1014,12 +1084,13 @@ export function evaluateGate(
 							: left <= right;
 			}
 			case 'in': {
-				const right = evaluate(entry.right);
+				const right = required(evaluate(entry.right));
+				const left = required(evaluate(entry.left));
+				if (!Array.isArray(right))
+					throw new Error('WORKFLOW_GATE_TYPE_MISMATCH');
 				return (
 					Array.isArray(right) &&
-					right.some(
-						(value) => canonical(value) === canonical(evaluate(entry.left)),
-					)
+					right.some((value) => canonical(value) === canonical(left))
 				);
 			}
 		}

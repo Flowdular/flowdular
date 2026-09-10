@@ -1,6 +1,8 @@
 ---
 name: bug-hunt
-description: Reproduce a defect with the gate runner, map the symptom to the owning layer, fix it there with a failing test first, then hunt its siblings.
+description: >-
+  Reproduce a defect with the gate runner, map the symptom to the owning layer,
+  fix it there with a failing test first, then hunt its siblings.
 roles:
   - backend-engineer
   - frontend-engineer
@@ -13,27 +15,27 @@ when: A report, failing gate, wrong status code, blank screen, or unexpected 4xx
 ## 1. Reproduce with the tools the gates use
 
 - Server: a vitest case in `tests/module.test.ts` that builds the route and calls it directly. Recipe: `const routes = createXRoutes(auth, runtime); const route = routes.find(...)`, then `await route.handler(createContext(new Request('https://erp.example/api/x', { method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://erp.example', cookie, 'x-csrf-token': csrf }, body }), {}))`. `createContext` comes from `@octanejs/app-core`; a full example with sign-up, cookie and CSRF is `modules/auth/tests/endpoints.test.ts`.
-- Service or repository: `new XService(new SqliteXRepository(':memory:'))` and call the method.
+- Service or repository: `new XService((await createXTestDatabase()).repository)` from the module's `tests/support/database.ts` and await the method.
 - Client logic: move the pure part into a `.ts` helper and test it; `.tsrx` files are outside `tests/**/*.ts`.
-- Run: `pnpm --filter @coreloom/module-<dir> test` (repository root) or ask for the `tests` gate (sandbox). Keep the failing test; it becomes the regression test.
+- Run: `pnpm --filter @flowdular/module-<dir> test` (repository root) or ask for the `tests` gate (sandbox). Keep the failing test; it becomes the regression test.
 
 ## 2. Symptom to layer
 
-| Symptom                                                                                                    | Where it is decided                                                                                                                                                                                                                                                 |
-| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 401 `UNAUTHENTICATED`                                                                                      | `packages/server/src/endpoint.ts` (no identity from `resolveIdentity`) or `modules/auth/src/server/session-security.ts` (no session cookie on a mutation)                                                                                                           |
-| 403 `FORBIDDEN`                                                                                            | `endpoint.ts`: the permission string is not in the principal's scopes. Check `src/acl/permissions.ts` against the spec and whether `auth sync-scopes` ran                                                                                                           |
-| 403 `TOKEN_MUTATION_DENIED`, `CSRF_REJECTED`, `ORIGIN_REJECTED`, `CROSS_ORIGIN_REQUEST`, `ORIGIN_REQUIRED` | `sessionMutationDenial` order: API token, `assertSameOrigin` (`modules/auth/src/api/origin.ts`), cookie session, `x-csrf-token`                                                                                                                                     |
-| 415 `CONTENT_TYPE_REQUIRED`, 413 `PAYLOAD_TOO_LARGE`, 400 `INVALID_JSON` or `INVALID_INPUT`                | `packages/server/src/http.ts` `readJsonObject` (16 KB cap) and `requiredString`, `requiredInteger`, `optionalString`                                                                                                                                                |
-| 409 on create                                                                                              | the repository maps a SQLite unique violation by matching the constraint text (`modules/catalog/src/services/sqlite-repository.ts`, `create`); a renamed table or column breaks the match silently                                                                  |
-| 500 `INTERNAL_ERROR`                                                                                       | the handler threw; `endpoint.ts` logs `[requestId] endpoint <id> failed` with the error                                                                                                                                                                             |
-| 404 on a module route                                                                                      | route not mounted: `module.json` `platform.server`, `./platform` export, `src/platform.ts`, `coreloom.json` `modules.enabled`, `platform/src/generated/modules.server.ts` regenerated by `pnpm coreloom module sync --apply`                                        |
-| Blank shell or boot error                                                                                  | `packages/client/src/contributions.ts` throws on a duplicate contribution id, a navigation entry whose `viewId` has no view, or an unknown widget slot                                                                                                              |
-| Navigation entry missing                                                                                   | scope not granted (`navigationForIdentity` in `packages/client/src/shell/navigation.ts`), or `Development` group for a non-owner                                                                                                                                    |
-| View falls back to the dashboard                                                                           | `ApplicationShell.tsrx` renders `overview` for a view id that no visible navigation or account menu entry reaches                                                                                                                                                   |
-| Icon renders as a grid                                                                                     | `glyph` or `Icon name` is not an `ICON_PATHS` key (`packages/ui/src/icons/Icon.tsrx` falls back to `modules`)                                                                                                                                                       |
-| Stale data after a change                                                                                  | each component owns a store instance (`useMemo(() => createXClientState(), [])`); check the `store.act` that should have written it. `store.commits(cb)` and `store.stats()` from `segment-state` show what was committed                                           |
-| Schema error on start                                                                                      | `runModuleMigrations`: `CHECKSUM_MISMATCH` means applied SQL bytes changed; `PARTIAL_OBJECTS` means only part of a pending migration exists. Never delete or bypass the database to hide either condition; restore the shipped bytes or diagnose the partial schema |
+| Symptom                                                                                                    | Where it is decided                                                                                                                                                                                                                                                                             |
+| ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 401 `UNAUTHENTICATED`                                                                                      | `packages/server/src/endpoint.ts` (no identity from `resolveIdentity`) or `modules/auth/src/server/session-security.ts` (no session cookie on a mutation)                                                                                                                                       |
+| 403 `FORBIDDEN`                                                                                            | `endpoint.ts`: the permission string is not in the principal's scopes. Check `src/acl/permissions.ts` against the spec and whether `auth sync-scopes` ran                                                                                                                                       |
+| 403 `TOKEN_MUTATION_DENIED`, `CSRF_REJECTED`, `ORIGIN_REJECTED`, `CROSS_ORIGIN_REQUEST`, `ORIGIN_REQUIRED` | `sessionMutationDenial` order: API token, `assertSameOrigin` (`modules/auth/src/api/origin.ts`), cookie session, `x-csrf-token`                                                                                                                                                                 |
+| 415 `CONTENT_TYPE_REQUIRED`, 413 `PAYLOAD_TOO_LARGE`, 400 `INVALID_JSON` or `INVALID_INPUT`                | `packages/server/src/http.ts` `readJsonObject` (16 KB cap) and `requiredString`, `requiredInteger`, `optionalString`                                                                                                                                                                            |
+| 409 on create                                                                                              | the repository maps the unique violation by SQLSTATE `23505` plus the constraint name (`.ai/references/catalog/src/services/database-repository.ts`, `create`); match the code, never the driver message text, and remember that renaming the unique index breaks the constraint check silently |
+| 500 `INTERNAL_ERROR`                                                                                       | the handler threw; `endpoint.ts` logs `[requestId] endpoint <id> failed` with the error                                                                                                                                                                                                         |
+| 404 on a module route                                                                                      | route not mounted: `module.json` `platform.server`, `./platform` export, `src/platform.ts`, `flowdular.json` `modules.enabled`, `platform/src/generated/modules.server.ts` regenerated by `pnpm flowdular module sync --apply`                                                                  |
+| Blank shell or boot error                                                                                  | `packages/client/src/contributions.ts` throws on a duplicate contribution id, a navigation entry whose `viewId` has no view, or an unknown widget slot                                                                                                                                          |
+| Navigation entry missing                                                                                   | scope not granted (`navigationForIdentity` in `packages/client/src/shell/navigation.ts`), or `Development` group for a non-owner                                                                                                                                                                |
+| View falls back to the dashboard                                                                           | `ApplicationShell.tsrx` renders `overview` for a view id that no visible navigation or account menu entry reaches                                                                                                                                                                               |
+| Icon renders as a grid                                                                                     | `glyph` or `Icon name` is not an `ICON_PATHS` key (`packages/ui/src/icons/Icon.tsrx` falls back to `modules`)                                                                                                                                                                                   |
+| Stale data after a change                                                                                  | each component owns a store instance (`useMemo(() => createXClientState(), [])`); check the `store.act` that should have written it. `store.commits(cb)` and `store.stats()` from `segment-state` show what was committed                                                                       |
+| Schema error on start                                                                                      | `runModuleMigrations`: `CHECKSUM_MISMATCH` means applied SQL bytes changed; `PARTIAL_OBJECTS` means only part of a pending migration exists. Never delete or bypass the database to hide either condition; restore the shipped bytes or diagnose the partial schema                             |
 
 ## 2b. Reproduction snippets
 
@@ -42,11 +44,13 @@ Service level, no HTTP:
 ```ts
 import { describe, expect, it } from 'vitest';
 import { CatalogService } from '../src/services/catalog-service.ts';
-import { SqliteCatalogRepository } from '../src/services/sqlite-repository.ts';
+import { createCatalogTestDatabase } from './support/database.ts';
 
-it('rejects a sku above 64 characters with a stable code', () => {
-	const service = new CatalogService(new SqliteCatalogRepository(':memory:'));
-	expect(() =>
+it('rejects a sku above 64 characters with a stable code', async () => {
+	const service = new CatalogService(
+		(await createCatalogTestDatabase()).repository,
+	);
+	await expect(
 		service.create('tenant-a', {
 			sku: 'x'.repeat(70),
 			name: 'Too long',
@@ -55,7 +59,7 @@ it('rejects a sku above 64 characters with a stable code', () => {
 			basePriceMinor: 100,
 			currency: 'EUR',
 		}),
-	).toThrowError(/between 1 and 64/);
+	).rejects.toThrowError(/between 1 and 64/);
 });
 ```
 
@@ -79,20 +83,20 @@ For a 403 or a mutation you need a principal; the recipe with sign-up, cookie an
 ## 2c. Reading gate output
 
 - `typecheck`: the first error is usually the cause; later ones cascade. `TS2307 Cannot find module` inside a module means an undeclared package or a missing `.ts` extension.
-- `tests`: vitest prints the failing assertion with `Expected` and `Received`; a `SqliteError` mentioning `STRICT` means a type mismatch at insert (`Number.isSafeInteger`).
+- `tests`: vitest prints the failing assertion with `Expected` and `Received`; a driver error naming a column type is a value that does not fit the column (`Number.isSafeInteger` at the service boundary), and a comparison that fails on a count or a flag is usually a `BIGINT` returned as a string that skipped the repository's `integer()` helper.
 - `format`: run `pnpm format` (or the sandbox format action); never hand-format.
 - `dependencies`: the message lists the undeclared packages; add them to `package.json` dependencies (the session installs what `package.json` declares and nothing else). A failed `pnpm install` after a `package.json` change is reported under the same gate with the installer output.
-- `module-schema`: `SCHEMA_ADDITIONALPROPERTIES` names a key `module.json` does not know; `MODULE_ENABLED_MISSING` means `coreloom.json` names a module without a manifest; `PLATFORM_SERVER_ENTRY_MISSING`, `PLATFORM_EXPORT_MISSING`, `PLATFORM_CLIENT_ENTRY_MISSING`, `PLATFORM_CLIENT_EXPORT_MISSING` name a composition entry the flags promise but the module lacks; `TRANSLATION_KEYS_MISMATCH` and `TRANSLATION_FILE_MISSING` are locale drift; `SPEC_VERSION_DRIFT` and `LOCALE_NOT_IN_PROJECT` are warnings.
+- `module-schema`: `SCHEMA_ADDITIONALPROPERTIES` names a key `module.json` does not know; `MODULE_ENABLED_MISSING` means `flowdular.json` names a module without a manifest; `PLATFORM_SERVER_ENTRY_MISSING`, `PLATFORM_EXPORT_MISSING`, `PLATFORM_CLIENT_ENTRY_MISSING`, `PLATFORM_CLIENT_EXPORT_MISSING` name a composition entry the flags promise but the module lacks; `TRANSLATION_KEYS_MISMATCH` and `TRANSLATION_FILE_MISSING` are locale drift; `SPEC_VERSION_DRIFT` and `LOCALE_NOT_IN_PROJECT` are warnings.
 
 ## 3. Fix at the owning layer
 
 Validation belongs to the HTTP helpers and the service, not to the client. Tenant scoping belongs to the repository query and the endpoint's `principalFromContext`. Presentation belongs to the view. A fix that adds a second check in a different layer hides the defect; move it instead.
 
-Smallest change: write the failing test, make it pass, run `pnpm --filter @coreloom/module-<dir> typecheck` and `test`, and `pnpm format` when the format gate complains (the sandbox has a format action for that).
+Smallest change: write the failing test, make it pass, run `pnpm --filter @flowdular/module-<dir> typecheck` and `test`, and `pnpm format` when the format gate complains (the sandbox has a format action for that).
 
 ## 4. Hunt siblings
 
-The bundled modules share one shape. After fixing `modules/<dir>`, grep the same pattern in `modules/parties`, `modules/catalog`, `modules/users`, `modules/profile`, `modules/agents`, `modules/sandbox`: `grep -rn '<pattern>' modules/*/src`. Report siblings you did not fix.
+The bundled modules share one shape. After fixing `modules/<dir>`, grep the same pattern in `.ai/references/catalog`, `modules/users`, `modules/profile`, `modules/agents`, `modules/sandbox`: `grep -rn '<pattern>' modules/*/src`. Report siblings you did not fix.
 
 ## 5. Reporting
 
@@ -101,6 +105,6 @@ State the root cause (input and state to wrong outcome), the file and line, the 
 ## Pitfalls
 
 - The sandbox `tests` gate passes with zero tests; a green gate is not evidence.
-- Local databases live in `.coreloom/data/*.db`; a test must use `':memory:'`.
+- A test never points at a running deployment; it takes its database from `createPgliteTestProvider()` through the module's `tests/support/database.ts`, which runs PostgreSQL inside the test process.
 - `principalFromContext(octane)!` is only safe after `resolveIdentity`; a public endpoint has no principal.
 - Do not add `try/catch` that swallows the error to make a 500 disappear; map it to a stable code or let it surface.

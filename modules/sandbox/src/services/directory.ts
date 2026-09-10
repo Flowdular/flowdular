@@ -1,4 +1,4 @@
-import type { AuthRuntime } from '@coreloom/module-auth/server';
+import type { AuthRuntime } from '@flowdular/module-auth/server';
 
 export interface SandboxDirectoryMember {
 	readonly accountId: string;
@@ -11,24 +11,23 @@ export interface SandboxDirectoryMember {
 /* The only cross-module read sandbox.core performs. It uses the auth.core
    service contract and never opens the authentication database. */
 export interface SandboxDirectory {
-	listMembers(tenantId: string): readonly SandboxDirectoryMember[];
-	listScopes(accountId: string, tenantId: string): readonly string[];
+	listMembers(tenantId: string): Promise<readonly SandboxDirectoryMember[]>;
+	listScopes(accountId: string, tenantId: string): Promise<readonly string[]>;
 }
 
 export function directoryFromAuthRuntime(auth: AuthRuntime): SandboxDirectory {
 	return {
-		listMembers: (tenantId) =>
-			auth
-				.service()
-				.listTenantMembers(tenantId)
-				.map((member) => ({
+		listMembers: async (tenantId) =>
+			(await (await auth.service()).listTenantMembers(tenantId)).map(
+				(member) => ({
 					accountId: member.accountId,
 					email: member.email,
 					displayName: member.displayName,
 					role: member.role,
 					status: member.status,
-				})),
-		listScopes: (accountId, tenantId) =>
-			auth.service().listMembershipScopes(accountId, tenantId),
+				}),
+			),
+		listScopes: async (accountId, tenantId) =>
+			(await auth.service()).listMembershipScopes(accountId, tenantId),
 	};
 }

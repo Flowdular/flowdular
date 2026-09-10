@@ -1,4 +1,4 @@
-import { Alert, Button, FormField, Tag } from '@coreloom/ui';
+import { Alert, Button, FormField, Tag } from '@flowdular/ui';
 import type { SandboxState } from './api.ts';
 import { useTranslation } from './i18n.ts';
 

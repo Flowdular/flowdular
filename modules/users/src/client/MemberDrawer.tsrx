@@ -1,8 +1,8 @@
 import { useMemo } from 'octane';
-import { Alert, Button, CheckGrid, FormField, Tag } from '@coreloom/ui';
-import { t } from '@coreloom/client';
-import type { CheckGroup, CheckOption } from '@coreloom/ui';
-import type { TenantMember } from '@coreloom/module-auth';
+import { Alert, Button, CheckGrid, FormField, Tag } from '@flowdular/ui';
+import { t } from '@flowdular/client';
+import type { CheckGroup, CheckOption } from '@flowdular/ui';
+import type { TenantMember } from '@flowdular/module-auth';
 import { cell, createStore, useValue } from 'segment-state';
 import type { UserDirectory } from '../services/users-service.ts';
 

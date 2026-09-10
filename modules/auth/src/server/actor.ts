@@ -1,5 +1,5 @@
 import type { Context } from '@octanejs/app-core';
-import { userActor, type Actor } from '@coreloom/kernel';
+import { userActor, type Actor } from '@flowdular/kernel';
 import { principalFromContext } from '../middleware/authentication.ts';
 
 /* The one place a user actor is built, so every module's trail names a user

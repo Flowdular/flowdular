@@ -7,17 +7,17 @@ describe('initial HTML shell', () => {
 			new URL('../../index.html', import.meta.url),
 			'utf8',
 		);
-		expect(html.indexOf('id="coreloom-splash"')).toBeLessThan(
+		expect(html.indexOf('id="flowdular-splash"')).toBeLessThan(
 			html.indexOf('id="root"'),
 		);
 		expect(html).toContain('role="status"');
-		expect(html).toContain("window.addEventListener('coreloom:ready', finish");
+		expect(html).toContain("window.addEventListener('flowdular:ready', finish");
 		expect(html).toContain("'Selecting workspace'");
 		expect(html).toContain("'Loading modules'");
 		expect(html).toContain("'Preparing workspace'");
 		expect(html).not.toContain('requestAnimationFrame(() =>');
 		expect(html).toMatch(
-			/<noscript[\s\S]*\.coreloom-splash\s*{\s*display:\s*none;/,
+			/<noscript[\s\S]*\.flowdular-splash\s*{\s*display:\s*none;/,
 		);
 	});
 });

@@ -1,7 +1,7 @@
 import type {
 	ModuleClientContext,
 	ModuleClientContribution,
-} from '@coreloom/client';
+} from '@flowdular/client';
 import { createSystemClientContribution } from './contribution.tsrx';
 
 export { createSystemClientContribution } from './contribution.tsrx';

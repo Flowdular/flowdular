@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'octane';
-import { activeLocale, t } from '@coreloom/client';
+import { activeLocale, t } from '@flowdular/client';
 import {
 	Alert,
 	Button,
@@ -7,7 +7,7 @@ import {
 	Drawer,
 	Icon,
 	PageHeader,
-} from '@coreloom/ui';
+} from '@flowdular/ui';
 import { useValue } from 'segment-state';
 import type {
 	CreateAgentInput,
@@ -39,7 +39,7 @@ export function AgentsView(props: AgentsViewProps) @{
 	const [moduleAgents] = useValue(client.state.moduleAgents);
 	const [providers] = useValue(client.state.providers);
 	const [tools] = useValue(client.state.tools);
-	const [skills] = useValue(client.state.skills);
+	const [procedures] = useValue(client.state.procedures);
 	const [selectedAgentId, setSelectedAgentId] = useValue(
 		client.state.selectedAgentId,
 	);
@@ -100,7 +100,7 @@ export function AgentsView(props: AgentsViewProps) @{
 				transaction.set(client.state.moduleAgents, result.moduleAgents);
 				transaction.set(client.state.providers, result.providers);
 				transaction.set(client.state.tools, result.tools);
-				transaction.set(client.state.skills, result.skills);
+				transaction.set(client.state.procedures, result.procedures);
 			}, 'agents/loaded');
 		} catch (loadError) {
 			setError(
@@ -315,7 +315,7 @@ export function AgentsView(props: AgentsViewProps) @{
 				agent={selected}
 				providers={providers}
 				tools={tools}
-				skills={skills}
+				procedures={procedures}
 				busy={status === 'submitting'}
 				onCancel={() => setEditorOpen(false)}
 				onSubmit={save}

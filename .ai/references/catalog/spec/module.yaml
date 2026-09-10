@@ -1,0 +1,86 @@
+schemaVersion: 1
+id: catalog.core
+specVersion: 0.6.1
+status: approved
+name: Product Catalog Core
+description: Provides tenant-scoped products and services with stable SKUs, units, prices, currencies, and lifecycle state.
+profile: full
+capabilities:
+  - api
+  - database
+  - client
+  - translations
+dependencies:
+  - id: system.core
+    range: 0.5.0
+  - id: auth.core
+    range: 0.10.0
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - Persistence runs on the shared asynchronous database contract. The module receives a leased PostgreSQL handle from platform composition, never a driver or a connection string, and declares explicit PostgreSQL SQL for every statement and migration.
+  - PostgreSQL item, history, and idempotency ledger tables enable and force row-level security with USING and WITH CHECK policies bound to transaction-local coreloom.tenant_id, and the runtime role holds neither SUPERUSER nor BYPASSRLS. Migrations use a separate lease.
+  - Every catalog item is owned by exactly one tenant and every query uses the trusted tenant identifier.
+  - SKU is unique inside a tenant and is never used as tenancy authority.
+  - Monetary values are stored as integer minor units with an explicit ISO currency code.
+  - Item kind is product or service and status is active or archived.
+  - Background workflow actions preserve their service actor and the configuring user in record history.
+  - One tenant-scoped durable target ledger is shared by mutating agent tools and workflow actions; each entry binds an idempotency key to the exact tool identifier or versioned workflow action identifier, canonical input digest, and first persisted result in the same transaction as the catalog mutation.
+  - Replaying the same idempotency key for the same operation and canonical input returns the original result without another catalog item or history row, while reuse for another operation or input fails with a stable conflict.
+  - Idempotency ledger entries remain after a catalog item is deleted, and audit metadata records identifiers, input digests, and outcomes without raw tool input, credentials, secrets, or result payloads.
+permissions:
+  - id: catalog.items.read
+    description: Read products and services in the active tenant.
+  - id: catalog.items.manage
+    description: Create and update products and services in the active tenant.
+dataOwnership:
+  - catalog.core owns SKU, item identity, kind, unit, base price, currency, and lifecycle status.
+  - catalog.core owns the idempotency ledger for its mutating agent tools and workflow actions; callers supply the key but do not maintain a second target ledger.
+  - Sales and purchasing modules reference catalog item identifiers and snapshot commercial terms when required by their specs.
+acceptanceScenarios:
+  - id: CATALOG-LIST
+    given: Tenant-scoped products and services exist.
+    when: An authorized principal lists catalog items.
+    then: Only items owned by the active tenant are returned in deterministic SKU order.
+  - id: CATALOG-CREATE
+    given: An authorized principal supplies a unique SKU and valid product or service data.
+    when: The catalog item is created.
+    then: A tenant-owned active item is persisted with integer minor-unit pricing.
+  - id: CATALOG-DUPLICATE
+    given: An item already uses a SKU in the active tenant.
+    when: Another item is created with the same normalized SKU.
+    then: The server returns a stable conflict error and leaves existing data unchanged.
+  - id: CATALOG-DENY
+    given: A principal is unauthenticated or lacks the required catalog permission.
+    when: The principal reads or mutates catalog data.
+    then: The server denies the operation before repository access.
+  - id: CATALOG-AGENT-TOOL
+    given: An agent run holds catalog.items.manage in its permission snapshot and the tool catalog.item.create in its grants.
+    when: The agent invokes the tool with a valid item, and a run without the manage scope invokes the same tool.
+    then: The scoped run creates a tenant-owned catalog item from the run tenant and the harness denies the unscoped run before any write.
+  - id: CATALOG-LIFECYCLE-HISTORY
+    given: A catalog item is active in the current tenant.
+    when: An authorized principal edits it, archives it, restores it, or deletes it after archiving.
+    then: Each accepted transition has an append-only tenant-scoped revision with the user or agent actor, and the item history endpoint returns only that tenant's revisions.
+  - id: CATALOG-WORKFLOW-ACTIONS
+    given: A workflow revision selects a versioned catalog read or create action and carries the matching permission snapshot.
+    when: The action capability validates and executes the node with an idempotency key and service actor.
+    then: The action exposes exact input and output schemas, refuses a missing permission before work, cooperates with cancellation, and attributes a created item to the service and its configuring user.
+  - id: CATALOG-IDEMPOTENCY-REPLAY
+    given: A mutating catalog tool or workflow action has committed a catalog mutation and its target-ledger result for an idempotency key.
+    when: The caller repeats the exact operation with the same canonical input and key, including after losing the first response.
+    then: The module returns the original persisted result and creates no second catalog item or history row.
+  - id: CATALOG-IDEMPOTENCY-CONFLICT
+    given: A tenant-scoped idempotency key is already bound to an exact catalog tool identifier or versioned workflow action identifier and canonical input digest.
+    when: A caller reuses the key for a different operation or canonical input.
+    then: The module returns a stable conflict before any catalog item, history, or ledger write.
+  - id: CATALOG-POSTGRESQL-TENANT-BOUNDARY
+    given: catalog.core runs on PostgreSQL and two tenants own catalog data.
+    when: A runtime transaction bound to one tenant reads or writes items, history, or ledger rows.
+    then: Only that tenant's rows are visible or mutable, a transaction without a tenant is refused, and the forced row-level security policy rejects a row carrying another tenant identifier.
+  - id: CATALOG-IDEMPOTENCY-RECOVERY
+    given: A catalog item has been committed atomically with its idempotency result, or the item is later deleted through its lifecycle operation.
+    when: Recovery replays the mutating tool or workflow action with the same key.
+    then: The retained ledger returns the original result without another mutation, and audit evidence contains no raw input, credentials, secrets, or result payload.

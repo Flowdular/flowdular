@@ -1,8 +1,19 @@
-import { defineCliExtension } from '@coreloom/cli-protocol';
-import { AI_PROVIDER_KINDS } from '@coreloom/harness/catalog';
+import {
+	defineCliExtension,
+	type CliExtensionContext,
+} from '@flowdular/cli-protocol';
+import {
+	DATABASE_CAPABILITY_IDS,
+	DATABASE_DIALECT_IDS,
+	type DatabaseAdapterLease,
+} from '@flowdular/database';
+import { AI_PROVIDER_KINDS } from '@flowdular/harness/catalog';
 import { agentRuntimeOptionsFromEnvironment } from '../server/runtime.ts';
-import { SqliteProviderRepository } from '../services/provider-repository.ts';
-import { SqliteAgentRepository } from '../services/sqlite-repository.ts';
+import { DatabaseProviderRepository } from '../services/provider-repository.ts';
+import {
+	DatabaseAgentRepository,
+	migrateAgentsDatabase,
+} from '../services/database-repository.ts';
 
 const statusCapability = {
 	id: 'agents.status',
@@ -23,6 +34,54 @@ const auditCapability = {
 	localOnly: true,
 };
 
+interface OpenDatabase {
+	readonly leases: readonly DatabaseAdapterLease[];
+	readonly runtime: DatabaseAdapterLease;
+	readonly background: DatabaseAdapterLease;
+}
+
+/* The operator commands read the same deployment database the platform does;
+   there is no module-owned file to open. The runner owns the provider and a
+   module owns no driver, so it arrives on the context. An operator command may
+   be the first thing to touch a fresh database, so it migrates before reading. */
+async function open(context: CliExtensionContext): Promise<OpenDatabase> {
+	const databases = context.databases;
+	if (!databases) {
+		throw new Error(
+			'agents.core CLI commands read the deployment database, and this workspace has none configured.',
+		);
+	}
+	const requirements = {
+		dialectIds: [DATABASE_DIALECT_IDS.postgresql],
+		capabilities: [DATABASE_CAPABILITY_IDS.TRANSACTIONS],
+	};
+	const migration = await databases.acquire({
+		namespace: 'agents.core',
+		purpose: 'migration',
+		requirements,
+	});
+	await migrateAgentsDatabase(migration.database);
+	const runtime = await databases.acquire({
+		namespace: 'agents.core',
+		purpose: 'runtime',
+		requirements,
+	});
+	/* The status command counts across the whole deployment, which only the
+	   narrow read-only role may do. */
+	const background = await databases.acquire({
+		namespace: 'agents.core',
+		purpose: 'background',
+		requirements,
+	});
+	return { leases: [migration, runtime, background], runtime, background };
+}
+
+/* The provider belongs to the runner; only the leases this command took are
+   released here. */
+async function close(open: OpenDatabase): Promise<void> {
+	for (const lease of open.leases) await lease.release();
+}
+
 export const cliExtension = defineCliExtension({
 	protocolVersion: 1,
 	moduleId: 'agents.core',
@@ -30,14 +89,18 @@ export const cliExtension = defineCliExtension({
 		{
 			path: ['agents', 'status'],
 			capability: statusCapability,
-			execute: (context) => {
+			execute: async (context) => {
 				const options = agentRuntimeOptionsFromEnvironment(
 					process.env,
 					context.workspaceRoot,
 				);
-				const repository = new SqliteProviderRepository(options.databasePath);
+				const opened = await open(context);
 				try {
-					const connections = repository.summary();
+					const connections = await new DatabaseProviderRepository(
+						opened.runtime.database,
+						Promise.resolve(),
+						opened.background.database,
+					).summary();
 					return {
 						data: {
 							moduleId: 'agents.core',
@@ -47,7 +110,6 @@ export const cliExtension = defineCliExtension({
 							providerKinds: [...AI_PROVIDER_KINDS],
 							providerConnections: connections.connections,
 							enabledProviderConnections: connections.enabled,
-							databasePath: options.databasePath,
 							workerConcurrency: options.workerConcurrency,
 							businessDataAccess: [
 								'registered-api-tool',
@@ -58,40 +120,39 @@ export const cliExtension = defineCliExtension({
 						evidence: [
 							'modules/agents/spec/module.yaml',
 							'packages/harness/src/runtime.ts',
-							options.databasePath,
 						],
 					};
 				} finally {
-					repository.close();
+					await close(opened);
 				}
 			},
 		},
 		{
 			path: ['agents', 'audit-verify'],
 			capability: auditCapability,
-			execute: (context) => {
+			execute: async (context) => {
 				const tenant = context.flags.get('tenant');
 				if (typeof tenant !== 'string' || tenant.trim().length === 0) {
 					throw new Error('--tenant <id> is required.');
 				}
-				const options = agentRuntimeOptionsFromEnvironment(
-					process.env,
-					context.workspaceRoot,
-				);
-				const repository = new SqliteAgentRepository(options.databasePath);
+				const opened = await open(context);
 				try {
-					const events = repository.listAuditEvents(tenant, 250);
+					const repository = new DatabaseAgentRepository({
+						runtime: opened.runtime.database,
+						background: opened.background.database,
+					});
+					const events = await repository.listAuditEvents(tenant, 250);
 					return {
 						data: {
 							tenantId: tenant,
-							valid: repository.verifyAuditChain(tenant),
+							valid: await repository.verifyAuditChain(tenant),
 							eventsInspected: events.length,
 							latestSequence: events[0]?.sequence ?? 0,
 						},
-						evidence: ['.coreloom/data/agents.db'],
+						evidence: ['modules/agents/spec/module.yaml'],
 					};
 				} finally {
-					repository.close();
+					await close(opened);
 				}
 			},
 		},

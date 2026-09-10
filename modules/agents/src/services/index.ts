@@ -1,11 +1,14 @@
 export { AgentService, AgentServiceError } from './agent-service.ts';
-export { SqliteAgentRepository } from './sqlite-repository.ts';
+export {
+	DatabaseAgentRepository,
+	migrateAgentsDatabase,
+} from './database-repository.ts';
 export { AgentWorker } from './worker.ts';
 export {
 	AgentProviderService,
 	AgentProviderServiceError,
 } from './provider-service.ts';
-export { SqliteProviderRepository } from './provider-repository.ts';
+export { DatabaseProviderRepository } from './provider-repository.ts';
 export {
 	AesGcmCredentialVault,
 	credentialVaultFromEnvironment,
@@ -17,7 +20,6 @@ export {
 } from './run-grant.ts';
 export type { AgentRepository } from './repository.ts';
 export {
-	migrations,
 	AGENTS_MIGRATION_001,
 	AGENTS_MIGRATION_002,
 	AGENTS_MIGRATION_003,

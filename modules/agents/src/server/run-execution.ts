@@ -3,14 +3,14 @@ import {
 	normalizeActor,
 	type Actor,
 	type UserActor,
-} from '@coreloom/kernel';
+} from '@flowdular/kernel';
 import type {
 	AgentExecutionEvent,
 	AgentOutputContract,
 	AgentUsage,
 	JsonValue,
-} from '@coreloom/harness';
-import type { AgentToolAccessAuthorizer } from '@coreloom/harness';
+} from '@flowdular/harness';
+import type { AgentToolAccessAuthorizer } from '@flowdular/harness';
 import { AGENT_PERMISSIONS } from '../acl/permissions.ts';
 import type { AgentRunStatus } from '../domain/types.ts';
 import {
@@ -50,12 +50,12 @@ export interface AgentRunResult {
 export interface AgentRevisionExecutionCapability {
 	listRevisions(
 		context: AgentChildCapabilityContext,
-	): readonly AgentRevisionReference[];
+	): Promise<readonly AgentRevisionReference[]>;
 	getRevision(
 		agentId: string,
 		revision: number,
 		context: AgentChildCapabilityContext,
-	): AgentRevisionReference | null;
+	): Promise<AgentRevisionReference | null>;
 	enqueueRevision(
 		request: {
 			readonly agentId: string;
@@ -71,12 +71,15 @@ export interface AgentRevisionExecutionCapability {
 		runId: string,
 		afterSequence: number,
 		context: AgentChildCapabilityContext,
-	): readonly AgentExecutionEvent[];
+	): Promise<readonly AgentExecutionEvent[]>;
 	getResult(
 		runId: string,
 		context: AgentChildCapabilityContext,
-	): AgentRunResult | null;
-	requestCancel(runId: string, context: AgentChildCapabilityContext): boolean;
+	): Promise<AgentRunResult | null>;
+	requestCancel(
+		runId: string,
+		context: AgentChildCapabilityContext,
+	): Promise<boolean>;
 }
 
 function requirePermission(
@@ -132,18 +135,19 @@ function authorizationSubject(context: AgentChildCapabilityContext): UserActor {
 }
 
 export function createAgentRevisionExecutionCapability(
-	service: AgentService | (() => AgentService),
+	service: AgentService | (() => AgentService | Promise<AgentService>),
 	authorizeToolAccess?: AgentToolAccessAuthorizer,
 ): AgentRevisionExecutionCapability {
-	const current = () => (typeof service === 'function' ? service() : service);
+	const current = async () =>
+		typeof service === 'function' ? service() : service;
 	return {
-		listRevisions(context) {
+		async listRevisions(context) {
 			requirePermission(context, AGENT_PERMISSIONS.definitionsRead);
-			return current().listRevisionReferences(context.tenantId);
+			return (await current()).listRevisionReferences(context.tenantId);
 		},
-		getRevision(agentId, revision, context) {
+		async getRevision(agentId, revision, context) {
 			requirePermission(context, AGENT_PERMISSIONS.definitionsRead);
-			return current().getRevisionReference(
+			return (await current()).getRevisionReference(
 				context.tenantId,
 				agentId,
 				revision,
@@ -168,36 +172,34 @@ export function createAgentRevisionExecutionCapability(
 					);
 				}
 			}
-			return current().enqueueRevisionRun(
+			return (await current()).enqueueRevisionRun(
 				{ ...context, authorizationSubject: subject },
 				request,
 			);
 		},
-		readEvents(runId, afterSequence, context) {
+		async readEvents(runId, afterSequence, context) {
 			requirePermission(context, AGENT_PERMISSIONS.runsRead);
-			const service = current();
+			const service = await current();
 			const actor = normalizeActor(context.actor);
-			const run = service.getWorkflowRun(
+			const run = await service.getWorkflowRun(
 				context.tenantId,
 				context.workflowRunId,
 				runId,
 			);
 			if (!actor || !run || !actorsEqual(run.requestedActor, actor)) return [];
-			return service.readWorkflowRunEvents(
+			return await service.readWorkflowRunEvents(
 				context.tenantId,
 				context.workflowRunId,
 				runId,
 				afterSequence,
 			);
 		},
-		getResult(runId, context) {
+		async getResult(runId, context) {
 			requirePermission(context, AGENT_PERMISSIONS.runsRead);
 			const actor = normalizeActor(context.actor);
-			const run = current().getWorkflowRun(
-				context.tenantId,
-				context.workflowRunId,
-				runId,
-			);
+			const run = await (
+				await current()
+			).getWorkflowRun(context.tenantId, context.workflowRunId, runId);
 			if (!actor || !run || !actorsEqual(run.requestedActor, actor))
 				return null;
 			return run
@@ -212,18 +214,18 @@ export function createAgentRevisionExecutionCapability(
 					}
 				: null;
 		},
-		requestCancel(runId, context) {
+		async requestCancel(runId, context) {
 			requirePermission(context, AGENT_PERMISSIONS.runsExecute);
-			const service = current();
+			const service = await current();
 			const actor = normalizeActor(context.actor);
-			const run = service.getWorkflowRun(
+			const run = await service.getWorkflowRun(
 				context.tenantId,
 				context.workflowRunId,
 				runId,
 			);
 			if (!actor || !run || !actorsEqual(run.requestedActor, actor))
 				return false;
-			return service.cancelWorkflowRun(context, runId);
+			return await service.cancelWorkflowRun(context, runId);
 		},
 	};
 }

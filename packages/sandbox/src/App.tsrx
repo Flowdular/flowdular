@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'octane';
 import { Head, Seo } from '@octanejs/seo';
-import { Alert, BrandMark, Button, Icon, Tag } from '@coreloom/ui';
+import { Alert, BrandMark, Button, Icon, Tag } from '@flowdular/ui';
 import { useValue } from 'segment-state';
 import type { RenderRouteProps } from '@octanejs/vite-plugin';
 import type {
@@ -12,6 +12,7 @@ import {
 	addSessionModule,
 	approveSpecification,
 	archiveSandboxSession,
+	rejectSandboxSession,
 	connectBrowser,
 	createSandboxSession,
 	deleteSandboxSession,
@@ -36,6 +37,7 @@ import {
 import { ChatPane } from './client/ChatPane.tsrx';
 import { ConnectView } from './client/ConnectView.tsrx';
 import { SessionBar } from './client/SessionBar.tsrx';
+import { GateResults } from './client/GateResults.tsrx';
 import { WorkspaceMenu } from './client/WorkspaceMenu.tsrx';
 import { DiffPane } from './client/DiffPane.tsrx';
 import { WorkCard, type WorkCardMode } from './client/WorkCard.tsrx';
@@ -62,7 +64,7 @@ import {
 	restoreSandboxLocale,
 	useTranslation,
 } from './client/i18n.ts';
-import '@coreloom/ui/styles';
+import '@flowdular/ui/styles';
 import './styles.css';
 
 registerSandboxTranslations();
@@ -99,7 +101,6 @@ export function App(props?: RenderRouteProps) @{
 	const [driver, setDriver] = useValue(sandbox.state.driver);
 	const [draft, setDraft] = useValue(sandbox.state.message);
 	const [workbench, setWorkbench] = useValue(sandbox.state.workbench);
-	const [specModule, setSpecModule] = useValue(sandbox.state.specModule);
 	const [cardMode, setCardMode] = useValue(sandbox.state.cardMode);
 	const [nonce, setNonce] = useValue(sandbox.state.previewNonce);
 	const [selecting, setSelecting] = useValue(sandbox.state.selecting);
@@ -107,6 +108,10 @@ export function App(props?: RenderRouteProps) @{
 	const [busy, setBusy] = useValue(sandbox.state.busy);
 	const [error, setError] = useValue(sandbox.state.error);
 	const [notice, setNotice] = useValue(sandbox.state.notice);
+	const [gateResults, setGateResults] = useValue(sandbox.state.gateResults);
+	const [gatesOpen, setGatesOpen] = useValue(sandbox.state.gatesOpen);
+	const [gatesRunning, setGatesRunning] = useValue(sandbox.state.gatesRunning);
+	const [gatesError, setGatesError] = useValue(sandbox.state.gatesError);
 	const [plan, setPlan] = useValue(sandbox.state.ejectPlan);
 	const [ejectSteps, setEjectSteps] = useValue(sandbox.state.ejectSteps);
 	const [ejectSummary, setEjectSummary] = useValue(sandbox.state.ejectSummary);
@@ -165,6 +170,7 @@ export function App(props?: RenderRouteProps) @{
    the chain frees the composer. */
 	const handlersFor = (id: string): TurnHandlers => ({
 		onEntry: (entry) => {
+			if (sandbox.store.get(sandbox.state.activeSessionId) !== id) return;
 			sandbox.store.update(
 				sandbox.state.liveEntries,
 				(current) => mergeEntries(current, [entry]),
@@ -175,15 +181,21 @@ export function App(props?: RenderRouteProps) @{
 			void refreshView(id);
 		},
 		onEnded: () => {
+			if (sandbox.store.get(sandbox.state.activeSessionId) !== id) return;
 			turn.controller = null;
 			setRunning(false);
 			setSelection(null);
 			void refreshView(id).then(() => {
 				setNonce(sandbox.store.get(sandbox.state.previewNonce) + 1);
 			});
-			void refreshState();
+			void refreshState().catch((failure) => {
+				if (!sandbox.store.get(sandbox.state.error)) {
+					setError(message(failure, t('sandbox.app.error.state')));
+				}
+			});
 		},
 		onFailed: (failure) => {
+			if (sandbox.store.get(sandbox.state.activeSessionId) !== id) return;
 			setError(failure);
 		},
 	});
@@ -246,7 +258,7 @@ export function App(props?: RenderRouteProps) @{
 
 		const onMessage = (event: MessageEvent) => {
 			const data = event.data as PreviewSelection & { type?: string };
-			if (data?.type !== 'coreloom:selection') return;
+			if (data?.type !== 'flowdular:selection') return;
 			setSelection({
 				label: data.label,
 				selector: data.selector,
@@ -267,10 +279,12 @@ export function App(props?: RenderRouteProps) @{
 		text: string,
 		roleId: string,
 		moduleDirectory = sandbox.store.get(sandbox.state.turnModule),
+		submittedDraft?: string,
 	) => {
 		detach();
 		setRunning(true);
 		setError('');
+		const handlers = handlersFor(session.id);
 		turn.controller = streamTurn(
 			session.id,
 			{
@@ -279,7 +293,21 @@ export function App(props?: RenderRouteProps) @{
 				...(moduleDirectory ? { module: moduleDirectory } : {}),
 				driver: sandbox.store.get(sandbox.state.driver) || session.driver,
 			},
-			handlersFor(session.id),
+			{
+				...handlers,
+				onEntry: (entry) => {
+					if (
+						sandbox.store.get(sandbox.state.activeSessionId) !== session.id
+					) return;
+					// Clear only after the server has recorded this message, preserving
+					// a failed submission and any newer draft typed while awaiting it.
+					if (
+						entry.kind === 'user' && submittedDraft !== undefined &&
+							sandbox.store.get(sandbox.state.message) === submittedDraft
+					) setDraft('');
+					handlers.onEntry(entry);
+				},
+			},
 		);
 	};
 
@@ -337,14 +365,19 @@ export function App(props?: RenderRouteProps) @{
 					selection.view ? `\nView: ${selection.view}` : ''
 				}`
 			: text;
-		setDraft('');
-		dispatch(session, withSelection, role);
+		dispatch(
+			session,
+			withSelection,
+			role,
+			undefined,
+			explicit === undefined ? draft : undefined,
+		);
 	};
 
 	const continueWith = (handoff: HandoffPlan) => {
 		const session = currentSession();
 		if (!session || running) return;
-		dispatch(session, handoff.prompt, handoff.role);
+		dispatch(session, handoff.prompt, handoff.role, handoff.module ?? '');
 	};
 
 	const approveAndContinue = async (handoff: HandoffPlan) => {
@@ -421,18 +454,20 @@ export function App(props?: RenderRouteProps) @{
 		const session = view?.session;
 		if (!session) return;
 		setBusy(true);
+		setGatesOpen(true);
+		setGatesRunning(true);
+		setGatesError('');
+		setGateResults([]);
 		try {
 			await formatSession(session.id);
 			const result = await runGates(session.id);
-			setNotice(
-				result.gates.map((gate) => `${gate.id}: ${gate.status}`).join(' · ') ||
-					t('sandbox.app.gates.none'),
-			);
-			await openSession(session.id);
+			setGateResults(result.gates);
+			await refreshView(session.id);
 		} catch (gateError) {
-			setError(message(gateError, t('sandbox.app.error.gates')));
+			setGatesError(message(gateError, t('sandbox.app.error.gates')));
 		} finally {
 			setBusy(false);
+			setGatesRunning(false);
 		}
 	};
 
@@ -605,7 +640,7 @@ export function App(props?: RenderRouteProps) @{
 	<Head>
 		<Seo
 			title={t('sandbox.app.seo.title')}
-			titleTemplate="%s · Coreloom"
+			titleTemplate="%s · Flowdular"
 			description={t('sandbox.app.seo.description')}
 			robots={{ index: false, follow: false, noarchive: true }}
 			openGraph={{
@@ -614,8 +649,8 @@ export function App(props?: RenderRouteProps) @{
 				images: [
 					{
 						url: '/og.png',
-						width: 1200,
-						height: 630,
+						width: 1730,
+						height: 909,
 						alt: t('sandbox.app.seo.imageAlt'),
 					},
 				],
@@ -625,7 +660,23 @@ export function App(props?: RenderRouteProps) @{
 		<div>
 			@if (!state) {
 				<div class="connect">
-					<p class="ui-help">{t('sandbox.app.starting')}</p>
+					@if (error) {
+						<>
+							<Alert>{error}</Alert>
+							<Button
+								onClick={() => {
+									setError('');
+									void refreshState().catch(
+										(error) => setError(
+											message(error, t('sandbox.app.error.state')),
+										),
+									);
+								}}
+							>{t('sandbox.dashboard.refresh')}</Button>
+						</>
+					} @else {
+						<p class="ui-help">{t('sandbox.app.starting')}</p>
+					}
 				</div>
 			} @else if (!state.connection.connected || connecting) {
 				<ConnectView
@@ -654,11 +705,6 @@ export function App(props?: RenderRouteProps) @{
 							onChangeConnection={() => {
 								setMenuOpen(false);
 								setConnecting(true);
-							}}
-							onGitHub={() => {
-								setMenuOpen(false);
-								setError('');
-								setGitHubSettingsOpen(true);
 							}}
 							onDisconnect={() => {
 								setMenuOpen(false);
@@ -704,6 +750,21 @@ export function App(props?: RenderRouteProps) @{
 					@if (!activeSessionId || !view) {
 						<div class="sandbox__scroll">
 							<SessionPicker
+								onDeliverySettings={() => {
+									setError('');
+									setGitHubSettingsOpen(true);
+								}}
+								dashboard={state.dashboard}
+								onRefresh={() => void refreshState().catch(
+									(error) => setError(
+										message(error, t('sandbox.app.error.state')),
+									),
+								)}
+								onReject={(id) => void sessionAction(
+									id,
+									() => rejectSandboxSession(id),
+									t('sandbox.dashboard.rejectError'),
+								)}
 								sessions={state.sessions}
 								running={state.running}
 								roles={state.roles}
@@ -756,6 +817,7 @@ export function App(props?: RenderRouteProps) @{
 								onBack={backToSessions}
 								onGates={() => void validate()}
 								onChanges={() => setWorkbench('diff')}
+								onPreview={() => setWorkbench('preview')}
 								onEject={() => void startEject()}
 							/>
 							<div class="sandbox__body">
@@ -771,6 +833,7 @@ export function App(props?: RenderRouteProps) @{
 									driver={driver}
 									message={draft}
 									running={running}
+									busy={busy}
 									selection={selection}
 									autoContinue={view.session.autoContinue}
 									pendingBrief={startingPoint(view.session, entries)}
@@ -782,7 +845,7 @@ export function App(props?: RenderRouteProps) @{
 										comment,
 									)}
 									onEditSpec={(module) => {
-										setSpecModule(module);
+										setActiveModule(module);
 										setWorkbench('spec');
 									}}
 									onAutoContinue={(enabled) => void toggleAutoContinue(enabled)}
@@ -817,6 +880,14 @@ export function App(props?: RenderRouteProps) @{
 							</div>
 						</>
 					}
+					@if (gatesOpen) {
+						<GateResults
+							results={gateResults}
+							running={gatesRunning}
+							error={gatesError}
+							onClose={() => setGatesOpen(false)}
+						/>
+					}
 					@if (workbench !== 'none') {
 						<WorkbenchModal
 							mode={workbench as WorkbenchMode}
@@ -825,7 +896,6 @@ export function App(props?: RenderRouteProps) @{
 							nonce={nonce}
 							selecting={selecting}
 							activeModule={activeModule}
-							specModule={specModule}
 							previewData={state.configuration.previewData}
 							onModule={setActiveModule}
 							onSpecSaved={() => void refreshView(view!.session.id)}

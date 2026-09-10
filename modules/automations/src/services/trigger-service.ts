@@ -4,8 +4,12 @@ import {
 	randomUUID,
 	timingSafeEqual,
 } from 'node:crypto';
-import { normalizeActor, serviceActor, type UserActor } from '@coreloom/kernel';
-import type { AgentRunQueue } from '@coreloom/module-agents/server';
+import {
+	normalizeActor,
+	serviceActor,
+	type UserActor,
+} from '@flowdular/kernel';
+import type { AgentRunQueue } from '@flowdular/module-agents/server';
 import type {
 	AutomationTrigger,
 	AutomationTriggerSecret,
@@ -24,8 +28,8 @@ import {
 	type AutomationTargetRegistry,
 } from '../server/targets.ts';
 
-export const TRIGGER_SIGNATURE_HEADER = 'x-coreloom-signature';
-export const TRIGGER_TIMESTAMP_HEADER = 'x-coreloom-timestamp';
+export const TRIGGER_SIGNATURE_HEADER = 'x-flowdular-signature';
+export const TRIGGER_TIMESTAMP_HEADER = 'x-flowdular-timestamp';
 export const TRIGGER_SIGNATURE_VERSION = 'v1';
 /* A signature older or newer than this cannot be replayed into a run. */
 export const TRIGGER_FRESHNESS_MS = 300_000;
@@ -170,22 +174,24 @@ export class AutomationTriggerService {
 		this.#limiter = limiter ?? new TriggerRateLimiter();
 	}
 
-	list(tenantId: string): readonly AutomationTrigger[] {
-		return this.repository
-			.listTriggers(tenantId)
-			.map((record) => this.present(record));
+	async list(tenantId: string): Promise<readonly AutomationTrigger[]> {
+		return Promise.all(
+			(await this.repository.listTriggers(tenantId)).map((record) =>
+				this.present(record),
+			),
+		);
 	}
 
-	create(
+	async create(
 		tenantId: string,
 		actorInput: string | UserActor,
 		input: CreateAutomationTriggerInput,
 		permissionSnapshot: readonly string[] = [],
-	): AutomationTriggerSecret {
+	): Promise<AutomationTriggerSecret> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 128);
 		const configuredBy = trustedUser(actorInput);
 		const target = targetSelection(input);
-		this.validateTarget(
+		await this.validateTarget(
 			trustedTenantId,
 			target.kind,
 			target.key,
@@ -195,7 +201,7 @@ export class AutomationTriggerService {
 		const now = this.now();
 		const id = randomUUID();
 		const secret = randomBytes(32).toString('base64url');
-		const trigger = this.repository.createTrigger({
+		const trigger = await this.repository.createTrigger({
 			id,
 			tenantId: trustedTenantId,
 			targetKind: target.kind,
@@ -214,16 +220,22 @@ export class AutomationTriggerService {
 			acceptedCount: 0,
 			rejectedCount: 0,
 		});
-		const presented = this.present(trigger);
-		this.audit(presented, configuredBy.id, 'automation-trigger.created', now, {
-			targetKind: trigger.targetKind,
-			targetKey: trigger.targetKey,
-			enabled: trigger.enabled,
-		});
+		const presented = await this.present(trigger);
+		await this.audit(
+			presented,
+			configuredBy.id,
+			'automation-trigger.created',
+			now,
+			{
+				targetKind: trigger.targetKind,
+				targetKey: trigger.targetKey,
+				enabled: trigger.enabled,
+			},
+		);
 		return { trigger: presented, secret };
 	}
 
-	update(
+	async update(
 		tenantId: string,
 		actorInput: string | UserActor,
 		triggerId: string,
@@ -234,11 +246,11 @@ export class AutomationTriggerService {
 			CreateAutomationTriggerInput,
 			'targetKind' | 'targetKey' | 'agentId'
 		>,
-	): AutomationTrigger {
+	): Promise<AutomationTrigger> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 128);
 		const configuredBy = trustedUser(actorInput);
 		const id = bounded(triggerId, 'id', 128);
-		const existing = this.repository.getTrigger(trustedTenantId, id);
+		const existing = await this.repository.getTrigger(trustedTenantId, id);
 		if (!existing) {
 			throw new AutomationsServiceError(
 				'TRIGGER_NOT_FOUND',
@@ -249,7 +261,7 @@ export class AutomationTriggerService {
 		const target = targetInput
 			? targetSelection(targetInput)
 			: { kind: existing.targetKind, key: existing.targetKey };
-		this.validateTarget(
+		await this.validateTarget(
 			trustedTenantId,
 			target.kind,
 			target.key,
@@ -257,7 +269,7 @@ export class AutomationTriggerService {
 			permissionSnapshot,
 		);
 		const now = this.now();
-		const updated = this.repository.updateTrigger({
+		const updated = await this.repository.updateTrigger({
 			...existing,
 			targetKind: target.kind,
 			targetKey: target.key,
@@ -275,25 +287,31 @@ export class AutomationTriggerService {
 				404,
 			);
 		}
-		const presented = this.present(updated);
-		this.audit(presented, configuredBy.id, 'automation-trigger.updated', now, {
-			targetKind: target.kind,
-			targetKey: target.key,
-			enabled: updated.enabled,
-		});
+		const presented = await this.present(updated);
+		await this.audit(
+			presented,
+			configuredBy.id,
+			'automation-trigger.updated',
+			now,
+			{
+				targetKind: target.kind,
+				targetKey: target.key,
+				enabled: updated.enabled,
+			},
+		);
 		return presented;
 	}
 
-	rotate(
+	async rotate(
 		tenantId: string,
 		actorId: string,
 		triggerId: string,
-	): AutomationTriggerSecret {
+	): Promise<AutomationTriggerSecret> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 128);
 		const id = bounded(triggerId, 'id', 128);
 		const now = this.now();
 		const secret = randomBytes(32).toString('base64url');
-		const rotated = this.repository.rotateTriggerSecret(
+		const rotated = await this.repository.rotateTriggerSecret(
 			trustedTenantId,
 			id,
 			this.vault.encrypt(secret, secretContext(trustedTenantId, id)),
@@ -306,17 +324,21 @@ export class AutomationTriggerService {
 				404,
 			);
 		}
-		const presented = this.present(rotated);
-		this.audit(presented, actorId, 'automation-trigger.rotated', now, {
+		const presented = await this.present(rotated);
+		await this.audit(presented, actorId, 'automation-trigger.rotated', now, {
 			secretRevision: rotated.secretRevision,
 		});
 		return { trigger: presented, secret };
 	}
 
-	delete(tenantId: string, actorId: string, triggerId: string): void {
+	async delete(
+		tenantId: string,
+		actorId: string,
+		triggerId: string,
+	): Promise<void> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 128);
 		const id = bounded(triggerId, 'id', 128);
-		const existing = this.repository.getTrigger(trustedTenantId, id);
+		const existing = await this.repository.getTrigger(trustedTenantId, id);
 		if (!existing) {
 			throw new AutomationsServiceError(
 				'TRIGGER_NOT_FOUND',
@@ -325,8 +347,8 @@ export class AutomationTriggerService {
 			);
 		}
 		const now = this.now();
-		this.repository.deleteTrigger(trustedTenantId, id);
-		this.audit(existing, actorId, 'automation-trigger.deleted', now, {
+		await this.repository.deleteTrigger(trustedTenantId, id);
+		await this.audit(existing, actorId, 'automation-trigger.deleted', now, {
 			targetKind: existing.targetKind,
 			targetKey: existing.targetKey,
 		});
@@ -342,22 +364,22 @@ export class AutomationTriggerService {
 			throw new TriggerRejectedError('rate-limited');
 		}
 		const trigger =
-			id.length <= 128 ? this.repository.findTriggerForFire(id) : null;
+			id.length <= 128 ? await this.repository.findTriggerForFire(id) : null;
 		const signature = this.#verify(request, this.#secretOf(trigger), now);
 		if (!trigger) throw new TriggerRejectedError('unknown');
 		/* Signature first: without it, a caller could still learn which
 		   identifiers exist from the disabled branch. */
 		if (!signature) {
-			this.#reject(trigger, 'signature', now);
+			await this.#reject(trigger, 'signature', now);
 			throw new TriggerRejectedError('signature');
 		}
 		if (!trigger.enabled) {
-			this.#reject(trigger, 'disabled', now);
+			await this.#reject(trigger, 'disabled', now);
 			throw new TriggerRejectedError('disabled');
 		}
 		const body = request.body;
 		if (body.length === 0 || Buffer.byteLength(body) > MAX_TRIGGER_BODY_BYTES) {
-			this.#reject(trigger, 'body', now);
+			await this.#reject(trigger, 'body', now);
 			throw new TriggerRejectedError('body');
 		}
 		try {
@@ -411,8 +433,15 @@ export class AutomationTriggerService {
 				created = result.created;
 			}
 			if (created) {
-				this.repository.recordTriggerOutcome(trigger.id, true, now);
-				this.audit(
+				/* The tenant comes from the row the cross-tenant lookup returned, never
+				   from the request. */
+				await this.repository.recordTriggerOutcome(
+					trigger.tenantId,
+					trigger.id,
+					true,
+					now,
+				);
+				await this.audit(
 					trigger,
 					`trigger:${trigger.id}`,
 					'automation-trigger.fired',
@@ -429,7 +458,7 @@ export class AutomationTriggerService {
 				typeof (error as { code?: unknown })?.code === 'string'
 					? String((error as { code: string }).code)
 					: 'TRIGGER_FIRE_FAILED';
-			this.#reject(trigger, code, now);
+			await this.#reject(trigger, code, now);
 			throw new TriggerRejectedError(code);
 		}
 	}
@@ -471,9 +500,18 @@ export class AutomationTriggerService {
 		return constantTimeEquals(submitted, expected) && fresh ? expected : null;
 	}
 
-	#reject(trigger: StoredAutomationTrigger, reason: string, now: number): void {
-		this.repository.recordTriggerOutcome(trigger.id, false, now);
-		this.audit(
+	async #reject(
+		trigger: StoredAutomationTrigger,
+		reason: string,
+		now: number,
+	): Promise<void> {
+		await this.repository.recordTriggerOutcome(
+			trigger.tenantId,
+			trigger.id,
+			false,
+			now,
+		);
+		await this.audit(
 			trigger,
 			`trigger:${trigger.id}`,
 			'automation-trigger.rejected',
@@ -484,13 +522,15 @@ export class AutomationTriggerService {
 		);
 	}
 
-	private present(trigger: StoredAutomationTrigger): AutomationTrigger {
+	private async present(
+		trigger: StoredAutomationTrigger,
+	): Promise<AutomationTrigger> {
 		let targetName = trigger.targetKey;
 		let targetAvailable = false;
 		if (trigger.targetKind === 'agent') {
-			const agent = this.runs
-				.listAgents(trigger.tenantId)
-				.find((candidate) => candidate.id === trigger.targetKey);
+			const agent = (await this.runs.listAgents(trigger.tenantId)).find(
+				(candidate) => candidate.id === trigger.targetKey,
+			);
 			if (agent) {
 				targetName = agent.name;
 				targetAvailable = agent.status === 'active';
@@ -499,13 +539,13 @@ export class AutomationTriggerService {
 			const adapter = this.targets.get(trigger.targetKind);
 			if (adapter?.available()) {
 				try {
-					const reference = adapter
-						.list({
+					const reference = (
+						await adapter.list({
 							tenantId: trigger.tenantId,
 							actor: trigger.configuredBy,
 							permissionSnapshot: trigger.permissionSnapshot,
 						})
-						.find((target) => target.key === trigger.targetKey);
+					).find((target) => target.key === trigger.targetKey);
 					if (reference) {
 						targetName = reference.label;
 						targetAvailable = true;
@@ -536,15 +576,19 @@ export class AutomationTriggerService {
 		};
 	}
 
-	private validateTarget(
+	private async validateTarget(
 		tenantId: string,
 		kind: string,
 		key: string,
 		actor: UserActor,
 		permissionSnapshot: readonly string[],
-	): void {
+	): Promise<void> {
 		if (kind === 'agent') {
-			if (!this.runs.listAgents(tenantId).some((agent) => agent.id === key)) {
+			if (
+				!(await this.runs.listAgents(tenantId)).some(
+					(agent) => agent.id === key,
+				)
+			) {
 				throw new AutomationsServiceError(
 					'AGENT_NOT_FOUND',
 					'Agent not found.',
@@ -562,7 +606,7 @@ export class AutomationTriggerService {
 			);
 		}
 		try {
-			adapter.validate(key, {
+			await adapter.validate(key, {
 				tenantId,
 				actor,
 				permissionSnapshot: [...new Set(permissionSnapshot)].sort(),
@@ -584,14 +628,14 @@ export class AutomationTriggerService {
 		}
 	}
 
-	private audit(
+	private async audit(
 		trigger: Pick<AutomationTrigger, 'tenantId' | 'id'>,
 		actorId: string,
 		action: string,
 		occurredAt: number,
 		metadata: Readonly<Record<string, string | number | boolean>>,
-	): void {
-		this.repository.appendAuditEvent({
+	): Promise<void> {
+		await this.repository.appendAuditEvent({
 			tenantId: trigger.tenantId,
 			actorId,
 			action,

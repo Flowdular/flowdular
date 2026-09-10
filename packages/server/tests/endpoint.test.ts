@@ -3,6 +3,27 @@ import { describe, expect, it, vi } from 'vitest';
 import { defineEndpoint } from '../src/index.ts';
 
 describe('defineEndpoint', () => {
+	it.each([
+		{ access: { kind: 'permission', permission: 'secret.read' } },
+		{ access: { kind: 'unknown' } },
+		{},
+		{ access: { kind: 'public' }, resolveIdentity: () => null },
+	])(
+		'rejects malformed runtime access declarations before a handler can run',
+		(definition) => {
+			const handler = vi.fn(() => Response.json({ secret: true }));
+			expect(() =>
+				defineEndpoint({
+					id: 'test.secret',
+					path: '/secret',
+					methods: ['GET'],
+					handler,
+					...definition,
+				} as never),
+			).toThrow(/invalid access policy/);
+			expect(handler).not.toHaveBeenCalled();
+		},
+	);
 	it('serves a public endpoint with a request id', async () => {
 		const endpoint = defineEndpoint({
 			id: 'system.health',

@@ -9,9 +9,9 @@ import {
 	PageHeader,
 	ScopeSummary,
 	Tag,
-} from '@coreloom/ui';
-import { t } from '@coreloom/client';
-import type { TenantRole } from '@coreloom/module-auth';
+} from '@flowdular/ui';
+import { t } from '@flowdular/client';
+import type { TenantRole } from '@flowdular/module-auth';
 import { cell, createStore, useValue } from 'segment-state';
 import { ApiError } from './api.ts';
 import { RoleForm } from './RoleForm.tsrx';

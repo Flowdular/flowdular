@@ -1,9 +1,20 @@
-import { describe, expect, it } from 'vitest';
-import { AgentHarness, type AgentProvider } from '@coreloom/harness';
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+} from 'vitest';
+import { AgentHarness, type AgentProvider } from '@flowdular/harness';
 import { AgentService, moduleDefinition } from '../src/index.ts';
 import type { CreateAgentInput } from '../src/domain/types.ts';
-import { SqliteAgentRepository } from '../src/services/sqlite-repository.ts';
 import { AgentWorker } from '../src/services/worker.ts';
+import {
+	openAgentsTestDatabase,
+	type AgentsTestDatabase,
+} from './support/database.ts';
 
 const input: CreateAgentInput = {
 	key: 'customer-care',
@@ -13,22 +24,42 @@ const input: CreateAgentInput = {
 	provider: 'test-provider',
 	model: 'test-model',
 	allowedTools: [],
-	skillIds: [],
+	procedureIds: [],
 	maxSteps: 4,
 	timeoutMs: 1_000,
 	temperature: 0,
 	status: 'draft',
 };
 
-function runtime(provider: AgentProvider) {
-	const repository = new SqliteAgentRepository(':memory:');
+let database: AgentsTestDatabase;
+const workers: AgentWorker[] = [];
+
+beforeAll(async () => {
+	database = await openAgentsTestDatabase();
+});
+
+afterEach(async () => {
+	for (const worker of workers.splice(0)) await worker.dispose();
+});
+
+beforeEach(async () => {
+	await database.truncate();
+});
+
+afterAll(async () => {
+	await database.dispose();
+});
+
+async function runtime(provider: AgentProvider) {
+	const repository = database.repository;
 	const harness = new AgentHarness({ providers: [provider] });
 	const worker = new AgentWorker(repository, harness, {
 		workerId: 'worker:test',
 		concurrency: 1,
 		leaseMs: 1_000,
 	});
-	worker.start();
+	workers.push(worker);
+	await worker.start();
 	const service = new AgentService(repository, harness, worker);
 	return { repository, service, worker };
 }
@@ -38,8 +69,8 @@ async function waitForTerminal(
 	tenantId: string,
 	runId: string,
 ) {
-	for (let index = 0; index < 50; index += 1) {
-		const run = service.getRun(tenantId, runId);
+	for (let index = 0; index < 300; index += 1) {
+		const run = await service.getRun(tenantId, runId);
 		if (['succeeded', 'failed', 'cancelled'].includes(run.status)) return run;
 		await new Promise((resolve) => setTimeout(resolve, 5));
 	}
@@ -47,11 +78,11 @@ async function waitForTerminal(
 }
 
 describe('agents.core', () => {
-	it('exports its validated identity', () => {
+	it('exports its validated identity', async () => {
 		expect(moduleDefinition.manifest.id).toBe('agents.core');
 	});
 
-	it('versions tenant-scoped definitions and records an audit hash chain', () => {
+	it('versions tenant-scoped definitions and records an audit hash chain', async () => {
 		const provider: AgentProvider = {
 			id: 'test-provider',
 			execute: async () => ({
@@ -60,21 +91,26 @@ describe('agents.core', () => {
 				finishReason: 'stop',
 			}),
 		};
-		const { repository, service } = runtime(provider);
-		const created = service.createAgent('tenant-a', 'owner-a', input);
+		const { repository, service } = await runtime(provider);
+		const created = await service.createAgent('tenant-a', 'owner-a', input);
 		expect(created.status).toBe('draft');
-		expect(service.listAgents('tenant-b')).toEqual([]);
-		const active = service.updateAgent('tenant-a', created.id, 'owner-a', {
-			...input,
-			status: 'active',
-			expectedRevision: 1,
-		});
+		expect(await service.listAgents('tenant-b')).toEqual([]);
+		const active = await service.updateAgent(
+			'tenant-a',
+			created.id,
+			'owner-a',
+			{
+				...input,
+				status: 'active',
+				expectedRevision: 1,
+			},
+		);
 		expect(active.revision).toBe(2);
-		expect(repository.verifyAuditChain('tenant-a')).toBe(true);
-		expect(repository.listAuditEvents('tenant-a', 10)).toHaveLength(2);
+		expect(await repository.verifyAuditChain('tenant-a')).toBe(true);
+		expect(await repository.listAuditEvents('tenant-a', 10)).toHaveLength(2);
 	});
 
-	it('archives and deletes only unused definitions and skills', () => {
+	it('archives and deletes only unused definitions and procedures', async () => {
 		const provider: AgentProvider = {
 			id: 'test-provider',
 			execute: async () => ({
@@ -83,8 +119,8 @@ describe('agents.core', () => {
 				finishReason: 'stop',
 			}),
 		};
-		const { repository, service } = runtime(provider);
-		const skill = service.createSkill('tenant-a', 'owner-a', {
+		const { repository, service } = await runtime(provider);
+		const skill = await service.createProcedure('tenant-a', 'owner-a', {
 			key: 'safe-delete',
 			name: 'Safe delete',
 			description: 'Exercises lifecycle protections.',
@@ -92,85 +128,97 @@ describe('agents.core', () => {
 			requiredTools: [],
 			status: 'draft',
 		});
-		const activeSkill = service.updateSkill('tenant-a', skill.id, 'owner-a', {
-			key: skill.key,
-			name: skill.name,
-			description: skill.description,
-			instructions: skill.instructions,
-			requiredTools: skill.requiredTools,
-			status: 'active',
-			expectedRevision: skill.revision,
-		});
-		const agent = service.createAgent('tenant-a', 'owner-a', {
+		const activeProcedure = await service.updateProcedure(
+			'tenant-a',
+			skill.id,
+			'owner-a',
+			{
+				key: skill.key,
+				name: skill.name,
+				description: skill.description,
+				instructions: skill.instructions,
+				requiredTools: skill.requiredTools,
+				status: 'active',
+				expectedRevision: skill.revision,
+			},
+		);
+		const agent = await service.createAgent('tenant-a', 'owner-a', {
 			...input,
 			key: 'safe-delete-agent',
-			skillIds: [activeSkill.id],
+			procedureIds: [activeProcedure.id],
 		});
-		const activeAgent = service.updateAgent('tenant-a', agent.id, 'owner-a', {
-			...input,
-			key: agent.key,
-			skillIds: [activeSkill.id],
-			status: 'active',
-			expectedRevision: agent.revision,
-		});
-		expect(() =>
-			service.archiveSkill(
+		const activeAgent = await service.updateAgent(
+			'tenant-a',
+			agent.id,
+			'owner-a',
+			{
+				...input,
+				key: agent.key,
+				procedureIds: [activeProcedure.id],
+				status: 'active',
+				expectedRevision: agent.revision,
+			},
+		);
+		await expect(
+			service.archiveProcedure(
 				'tenant-a',
-				activeSkill.id,
+				activeProcedure.id,
 				'owner-a',
-				activeSkill.revision,
+				activeProcedure.revision,
 			),
-		).toThrow('Remove this skill from every active agent');
+		).rejects.toThrow('Remove this procedure from every active agent');
 
-		const archivedAgent = service.archiveAgent(
+		const archivedAgent = await service.archiveAgent(
 			'tenant-a',
 			activeAgent.id,
 			'owner-a',
 			activeAgent.revision,
 		);
-		const archivedSkill = service.archiveSkill(
+		const archivedProcedure = await service.archiveProcedure(
 			'tenant-a',
-			activeSkill.id,
+			activeProcedure.id,
 			'owner-a',
-			activeSkill.revision,
+			activeProcedure.revision,
 		);
-		expect(() =>
-			service.deleteSkill(
+		await expect(
+			service.deleteProcedure(
 				'tenant-a',
-				archivedSkill.id,
+				archivedProcedure.id,
 				'owner-a',
-				archivedSkill.revision,
+				archivedProcedure.revision,
 			),
-		).toThrow('Remove this skill from every agent');
+		).rejects.toThrow('Remove this procedure from every agent');
 
-		const detachedAgent = service.updateAgent(
+		const detachedAgent = await service.updateAgent(
 			'tenant-a',
 			archivedAgent.id,
 			'owner-a',
 			{
 				...input,
 				key: archivedAgent.key,
-				skillIds: [],
+				procedureIds: [],
 				status: 'archived',
 				expectedRevision: archivedAgent.revision,
 			},
 		);
-		service.deleteSkill(
+		await service.deleteProcedure(
 			'tenant-a',
-			archivedSkill.id,
+			archivedProcedure.id,
 			'owner-a',
-			archivedSkill.revision,
+			archivedProcedure.revision,
 		);
-		service.deleteAgent(
+		await service.deleteAgent(
 			'tenant-a',
 			detachedAgent.id,
 			'owner-a',
 			detachedAgent.revision,
 		);
-		expect(service.listSkills('tenant-a')).toEqual([]);
-		expect(service.listAgents('tenant-a')).toEqual([]);
+		expect(await service.listProcedures('tenant-a')).toEqual([]);
+		expect(await service.listAgents('tenant-a')).toEqual([]);
 		expect(
-			repository.listAuditEvents('tenant-a', 20).map((event) => event.action),
+			(await repository.listAuditEvents('tenant-a', 20)).map(
+				(event) => event.action,
+			),
 		).toEqual(
 			expect.arrayContaining([
 				'agent.archived',
@@ -190,13 +238,18 @@ describe('agents.core', () => {
 				finishReason: 'stop',
 			}),
 		};
-		const { service } = runtime(provider);
-		const created = service.createAgent('tenant-a', 'owner-a', input);
-		const active = service.updateAgent('tenant-a', created.id, 'owner-a', {
-			...input,
-			status: 'active',
-			expectedRevision: created.revision,
-		});
+		const { service } = await runtime(provider);
+		const created = await service.createAgent('tenant-a', 'owner-a', input);
+		const active = await service.updateAgent(
+			'tenant-a',
+			created.id,
+			'owner-a',
+			{
+				...input,
+				status: 'active',
+				expectedRevision: created.revision,
+			},
+		);
 		await service.enqueueRun('tenant-a', 'owner-a', [], {
 			agentId: active.id,
 			trigger: 'service',
@@ -204,20 +257,20 @@ describe('agents.core', () => {
 			toolGrants: [],
 			idempotencyKey: 'keep-run-evidence',
 		});
-		const archived = service.archiveAgent(
+		const archived = await service.archiveAgent(
 			'tenant-a',
 			active.id,
 			'owner-a',
 			active.revision,
 		);
-		expect(() =>
+		await expect(
 			service.deleteAgent(
 				'tenant-a',
 				archived.id,
 				'owner-a',
 				archived.revision,
 			),
-		).toThrow('run history');
+		).rejects.toThrow('run history');
 	});
 
 	it('returns a queued run before detached provider work completes', async () => {
@@ -234,13 +287,18 @@ describe('agents.core', () => {
 				};
 			},
 		};
-		const { repository, service } = runtime(provider);
-		const created = service.createAgent('tenant-a', 'owner-a', input);
-		const active = service.updateAgent('tenant-a', created.id, 'owner-a', {
-			...input,
-			status: 'active',
-			expectedRevision: created.revision,
-		});
+		const { repository, service } = await runtime(provider);
+		const created = await service.createAgent('tenant-a', 'owner-a', input);
+		const active = await service.updateAgent(
+			'tenant-a',
+			created.id,
+			'owner-a',
+			{
+				...input,
+				status: 'active',
+				expectedRevision: created.revision,
+			},
+		);
 		const queued = await service.enqueueRun(
 			'tenant-a',
 			'owner-a',
@@ -264,7 +322,7 @@ describe('agents.core', () => {
 			'provider.completed',
 			'run.completed',
 		]);
-		expect(repository.verifyAuditChain('tenant-a')).toBe(true);
+		expect(await repository.verifyAuditChain('tenant-a')).toBe(true);
 	});
 
 	it('deduplicates fire-and-forget requests by tenant idempotency key', async () => {
@@ -276,13 +334,18 @@ describe('agents.core', () => {
 				finishReason: 'stop',
 			}),
 		};
-		const { service } = runtime(provider);
-		const created = service.createAgent('tenant-a', 'owner-a', input);
-		const active = service.updateAgent('tenant-a', created.id, 'owner-a', {
-			...input,
-			status: 'active',
-			expectedRevision: 1,
-		});
+		const { service } = await runtime(provider);
+		const created = await service.createAgent('tenant-a', 'owner-a', input);
+		const active = await service.updateAgent(
+			'tenant-a',
+			created.id,
+			'owner-a',
+			{
+				...input,
+				status: 'active',
+				expectedRevision: 1,
+			},
+		);
 		const request = {
 			agentId: active.id,
 			trigger: 'service' as const,
@@ -308,19 +371,24 @@ describe('agents.core', () => {
 				};
 			},
 		};
-		const { service } = runtime(provider);
+		const { service } = await runtime(provider);
 		const template =
 			'You act for {{ context.tenantName }} on {{ context.today }} as {{ context.user.displayName }}.';
-		const created = service.createAgent('tenant-a', 'owner-a', {
+		const created = await service.createAgent('tenant-a', 'owner-a', {
 			...input,
 			instructions: template,
 		});
-		const active = service.updateAgent('tenant-a', created.id, 'owner-a', {
-			...input,
-			instructions: template,
-			status: 'active',
-			expectedRevision: created.revision,
-		});
+		const active = await service.updateAgent(
+			'tenant-a',
+			created.id,
+			'owner-a',
+			{
+				...input,
+				instructions: template,
+				status: 'active',
+				expectedRevision: created.revision,
+			},
+		);
 		const queued = await service.enqueueRun(
 			'tenant-a',
 			'owner-a',
@@ -342,7 +410,7 @@ describe('agents.core', () => {
 		expect(seenInstructions).toContain('as Ada Lovelace.');
 		expect(seenInstructions).toMatch(/on \d{4}-\d{2}-\d{2} as/);
 		expect(seenInstructions).not.toContain('{{');
-		const stored = service.listAgents('tenant-a')[0];
+		const stored = (await service.listAgents('tenant-a'))[0];
 		expect(stored?.instructions).toBe(template);
 	});
 });

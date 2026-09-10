@@ -13,7 +13,7 @@ import {
 	printReady as printReadyBlock,
 	shouldUseColor,
 	watchReloads,
-} from '@coreloom/dev-console';
+} from '@flowdular/dev-console';
 
 const appRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const SHUTDOWN_TIMEOUT_MS = 3_000;
@@ -23,7 +23,7 @@ export {
 	formatDevEvent,
 	isClientDisconnectLog,
 	shouldUseColor,
-} from '@coreloom/dev-console';
+} from '@flowdular/dev-console';
 
 export function withShutdownDeadline(promise, timeoutMs = SHUTDOWN_TIMEOUT_MS) {
 	let timer;
@@ -43,7 +43,7 @@ export function withShutdownDeadline(promise, timeoutMs = SHUTDOWN_TIMEOUT_MS) {
 export function parseDevArguments(arguments_) {
 	let host = '0.0.0.0';
 	let port = 4310;
-	let verbose = process.env.CL_DEV_VERBOSE === 'true';
+	let verbose = process.env.FD_DEV_VERBOSE === 'true';
 	let help = false;
 	for (let index = 0; index < arguments_.length; index += 1) {
 		const argument = arguments_[index];
@@ -89,7 +89,7 @@ export function parseDevArguments(arguments_) {
 }
 
 function printHelp(theme) {
-	console.log(`${theme.brand('Coreloom')} ${theme.muted('development server')}
+	console.log(`${theme.brand('Flowdular')} ${theme.muted('development server')}
 
 ${theme.label('Usage:')} ${theme.text('pnpm dev -- [options]')}
 
@@ -103,7 +103,7 @@ ${theme.label('Options:')}
 function printReady(server, elapsedMs, verbose, theme) {
 	const local = server.resolvedUrls?.local?.[0] ?? 'http://localhost:4310/';
 	printReadyBlock({
-		title: 'CORELOOM',
+		title: 'FLOWDULAR',
 		subtitle: 'development workspace',
 		theme,
 		lines: [
@@ -114,7 +114,7 @@ function printReady(server, elapsedMs, verbose, theme) {
 				url,
 				'info',
 			]),
-			['auth', 'auth.core · SQLite · local session', 'success'],
+			['auth', 'auth.core · PostgreSQL · local session', 'success'],
 			['reload', 'TSRX · TypeScript · CSS', 'info'],
 			[
 				'diagnostics',
@@ -140,7 +140,7 @@ export async function startDevelopmentServer(
 	// editing platform files by hand.
 	const sync = spawnSync(
 		'pnpm',
-		['--silent', 'coreloom', 'module', 'sync', '--apply'],
+		['--silent', 'flowdular', 'module', 'sync', '--apply'],
 		{
 			cwd: resolve(appRoot, '..'),
 			stdio: options.verbose ? 'inherit' : 'pipe',
@@ -148,7 +148,7 @@ export async function startDevelopmentServer(
 	);
 	if (sync.status !== 0) {
 		throw new Error(
-			'Module composition sync failed. Run "pnpm coreloom module sync --apply" for details.',
+			'Module composition sync failed. Run "pnpm flowdular module sync --apply" for details.',
 		);
 	}
 	const restoreConsole = installOctaneConsoleBridge(options.verbose, useColor);
@@ -244,7 +244,7 @@ export async function startDevelopmentServer(
 			process.off('SIGTERM', onSignal);
 			/* Vite may begin one last config evaluation while close tears down its
 			   module runner. Refuse that boot before it can reopen databases. */
-			process.env.CL_INTERNAL_PLATFORM_TERMINATING = 'true';
+			process.env.FD_INTERNAL_PLATFORM_TERMINATING = 'true';
 			console.log(
 				`\n${formatDevEvent('process', 'Development server stopped.', useColor)}`,
 			);
@@ -252,11 +252,11 @@ export async function startDevelopmentServer(
 				/* Stop accepting requests before retiring their route generation. */
 				const httpClose = closeHttpServer();
 				const retirements = [];
-				process.emit('coreloom:platform-runtime-retire', (retirement) =>
+				process.emit('flowdular:platform-runtime-retire', (retirement) =>
 					retirements.push(retirement),
 				);
 				const channel = new BroadcastChannel(
-					'coreloom.platform.runtime-lifecycle',
+					'flowdular.platform.runtime-lifecycle',
 				);
 				channel.postMessage({ type: 'retire-all' });
 				try {

@@ -1,7 +1,7 @@
-/* Mirror of modules/catalog/src/client/contribution.tsrx. In a module this file
+/* Mirror of .ai/references/catalog/src/client/contribution.tsrx. In a module this file
    is src/client/contribution.tsrx, the permissions come from
    src/acl/permissions.ts, and the views from sibling .tsrx files. */
-import type { ModuleClientContribution } from '@coreloom/client';
+import type { ModuleClientContribution } from '@flowdular/client';
 import { CUSTOMER_PERMISSIONS } from './permissions.ts';
 import {
 	CustomerDashboardWidget,

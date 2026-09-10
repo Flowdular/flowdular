@@ -1,9 +1,19 @@
+import { sandboxDirectory } from './config.ts';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { mkdirSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createPreviewDatabaseProvider } from './preview-database.ts';
+import {
+	createPreviewDatabaseHost,
+	type PreviewDatabaseHost,
+} from './preview-database-host.ts';
 import type { PreviewComposition, PreviewRuntime } from './preview-runtime.ts';
 import type { SandboxSession } from './sessions.ts';
+import { resolvePreviewModules } from './preview-modules.ts';
+import { previewRevision } from './preview-revision.ts';
+import { sendPreviewDatabaseReply } from './preview-ipc.ts';
 
 const START_TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -46,8 +56,16 @@ interface IsolatedWorker {
 }
 
 interface WorkerSlot {
+	readonly revision: string;
+	readonly keys: PreviewKeys;
 	readonly child: ChildProcess;
+	readonly host: PreviewDatabaseHost;
 	readonly ready: Promise<IsolatedWorker>;
+}
+
+interface PreviewKeys {
+	readonly FD_AGENT_CREDENTIAL_KEY: string;
+	readonly FD_AGENT_RUN_GRANT_KEY: string;
 }
 
 function timeoutSignal(timeoutMs: number): {
@@ -66,7 +84,7 @@ function timeoutSignal(timeoutMs: number): {
    they were reached on and would reject every call. The sandbox checked the
    browser origin before this hop, so the hop presents its own. Referer names
    the sandbox page for the same reason and is dropped; the session travels in
-   x-coreloom-preview-session. */
+   x-flowdular-preview-session. */
 export function previewHopHeaders(
 	source: Headers,
 	workerOrigin: string,
@@ -108,7 +126,16 @@ async function requestWorker(
 function startWorker(
 	workspaceRoot: string,
 	session: SandboxSession,
+	revision: string,
 	startTimeoutMs: number,
+	/* The previous worker's engine holds the same data directory until it has
+	   closed, and two embedded PostgreSQL instances must never share one. */
+	drained: Promise<void> | undefined,
+	/* Source reloads keep the session's vault and retained grants readable. */
+	keys: PreviewKeys = {
+		FD_AGENT_CREDENTIAL_KEY: randomBytes(32).toString('base64'),
+		FD_AGENT_RUN_GRANT_KEY: randomBytes(32).toString('base64'),
+	},
 ): WorkerSlot {
 	/* Permission roots must be physical paths. On macOS /var is a symlink to
 	   /private/var; granting the lexical path still makes Node deny the realpath
@@ -117,9 +144,7 @@ function startWorker(
 	const entry = fileURLToPath(new URL('./preview-worker.ts', import.meta.url));
 	const repositoryRoot = resolve(dirname(entry), '../../../..');
 	const sessionRoot = join(
-		canonicalWorkspaceRoot,
-		'.coreloom',
-		'sandbox',
+		sandboxDirectory(canonicalWorkspaceRoot),
 		'sessions',
 		session.id,
 	);
@@ -134,7 +159,7 @@ function startWorker(
 		   preview composition owns. Session metadata, chat, source, checkpoints
 		   and attachments stay read-only even to draft top-level code. */
 		join(sessionRoot, 'data'),
-		join(sessionRoot, '.coreloom'),
+		join(sessionRoot, '.flowdular'),
 	];
 	for (const path of writable)
 		mkdirSync(path, { recursive: true, mode: 0o700 });
@@ -156,11 +181,37 @@ function startWorker(
 			cwd: canonicalWorkspaceRoot,
 			env: {
 				NODE_ENV: process.env.NODE_ENV === 'test' ? 'test' : 'production',
-				CL_INTERNAL_SANDBOX_PREVIEW_WORKER: '1',
+				// Ephemeral keys belong only to this isolated preview runtime.
+				...keys,
+				FD_INTERNAL_SANDBOX_PREVIEW_WORKER: '1',
+				FD_INTERNAL_SANDBOX_STATE_ROOT:
+					sandboxDirectory(canonicalWorkspaceRoot) ===
+					join(canonicalWorkspaceRoot, '.coreloom', 'sandbox')
+						? '.coreloom'
+						: '.flowdular',
 			},
 			stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+			/* Database rows carry bigints, byte arrays and dates, none of which
+			   survive the default JSON channel. */
+			serialization: 'advanced',
 		},
 	);
+	/* The worker cannot host the engine: Node's permission model denies
+	   process.binding, which the embedded PostgreSQL build needs during static
+	   init. The engine stays here and the worker drives it over this channel. */
+	const host = createPreviewDatabaseHost({
+		open: async () => {
+			await drained;
+			return createPreviewDatabaseProvider(join(sessionRoot, 'data'));
+		},
+		send: (reply) => sendPreviewDatabaseReply(child, reply),
+	});
+	child.on('message', (message) => {
+		host.accept(message);
+	});
+	const closeHost = () => void host.close().catch(() => undefined);
+	child.once('exit', closeHost);
+	child.once('disconnect', closeHost);
 	const ready = new Promise<IsolatedWorker>((resolvePromise, reject) => {
 		let settled = false;
 		const finish = (callback: () => void) => {
@@ -201,7 +252,7 @@ function startWorker(
 			),
 		);
 	});
-	return { child, ready };
+	return { child, host, ready, revision, keys };
 }
 
 /* The manager owns process lifetime. A worker crash or timeout destroys only
@@ -214,7 +265,12 @@ export function createIsolatedPreviewRuntime(
 	const requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
 	const workers = new Map<string, WorkerSlot>();
 	const cached = new Map<string, PreviewComposition>();
-	const composing = new Map<string, Promise<PreviewComposition>>();
+	const composing = new Map<
+		string,
+		{ pending: Promise<PreviewComposition>; controller: AbortController }
+	>();
+	/* Self-clearing: an entry lives only until the engine it names has closed. */
+	const draining = new Map<string, Promise<void>>();
 	let disposed = false;
 	const observe = (event: 'started' | 'released', sessionId: string) => {
 		try {
@@ -225,20 +281,44 @@ export function createIsolatedPreviewRuntime(
 	};
 	const release = (sessionId: string, expected?: WorkerSlot) => {
 		const slot = workers.get(sessionId);
-		if (!slot || (expected && slot !== expected)) return;
+		if (!slot || (expected && slot !== expected))
+			return draining.get(sessionId) ?? Promise.resolve();
 		workers.delete(sessionId);
 		cached.delete(sessionId);
+		const drained = slot.host.close().catch(() => undefined);
+		draining.set(sessionId, drained);
+		void drained.then(() => {
+			if (draining.get(sessionId) === drained) draining.delete(sessionId);
+		});
 		slot.child.kill('SIGKILL');
 		observe('released', sessionId);
+		return drained;
 	};
-	const compose = async (session: SandboxSession) => {
+	const compose = async (session: SandboxSession, signal: AbortSignal) => {
+		const revision = await previewRevision(
+			await resolvePreviewModules(workspaceRoot, session),
+		);
+		signal.throwIfAborted();
 		let slot = workers.get(session.id);
-		if (slot && (slot.child.exitCode !== null || slot.child.killed)) {
+		const keys = slot?.keys;
+		if (
+			slot &&
+			(slot.revision !== revision ||
+				slot.child.exitCode !== null ||
+				slot.child.killed)
+		) {
 			release(session.id, slot);
 			slot = undefined;
 		}
 		if (!slot) {
-			slot = startWorker(workspaceRoot, session, startTimeoutMs);
+			slot = startWorker(
+				workspaceRoot,
+				session,
+				revision,
+				startTimeoutMs,
+				draining.get(session.id),
+				keys,
+			);
 			workers.set(session.id, slot);
 			observe('started', session.id);
 			const owned = slot;
@@ -249,6 +329,7 @@ export function createIsolatedPreviewRuntime(
 		let worker: IsolatedWorker;
 		try {
 			worker = await slot.ready;
+			signal.throwIfAborted();
 		} catch (error) {
 			release(session.id, slot);
 			throw error;
@@ -271,11 +352,15 @@ export function createIsolatedPreviewRuntime(
 		}
 		if (!response.ok) {
 			release(session.id, slot);
+			const detail = await response.text().catch(() => '');
 			throw new Error(
-				'The isolated preview worker could not compose the draft.',
+				`The isolated preview worker could not compose the draft.${
+					detail ? ` ${detail.slice(0, 500)}` : ''
+				}`,
 			);
 		}
 		const meta = (await response.json()) as PreviewMeta;
+		signal.throwIfAborted();
 		const current = cached.get(session.id);
 		if (current && current.revision === meta.revision) return current;
 		const owned = slot;
@@ -289,7 +374,7 @@ export function createIsolatedPreviewRuntime(
 					const forwarded = new Request(request, {
 						headers: new Headers(request.headers),
 					});
-					forwarded.headers.set('x-coreloom-preview-session', session.id);
+					forwarded.headers.set('x-flowdular-preview-session', session.id);
 					return await requestWorker(
 						worker,
 						`/request${new URL(request.url).pathname}${new URL(request.url).search}`,
@@ -317,9 +402,14 @@ export function createIsolatedPreviewRuntime(
 	};
 	return {
 		cached: (sessionId) => cached.get(sessionId) ?? null,
-		forget: release,
+		forget: (sessionId) => {
+			composing.get(sessionId)?.controller.abort();
+			composing.delete(sessionId);
+			return release(sessionId);
+		},
 		dispose: () => {
 			disposed = true;
+			for (const entry of composing.values()) entry.controller.abort();
 			for (const sessionId of [...workers.keys()]) release(sessionId);
 			cached.clear();
 			composing.clear();
@@ -331,11 +421,13 @@ export function createIsolatedPreviewRuntime(
 				);
 			}
 			const active = composing.get(session.id);
-			if (active) return active;
-			const pending = compose(session);
-			composing.set(session.id, pending);
+			if (active) return active.pending;
+			const controller = new AbortController();
+			const pending = compose(session, controller.signal);
+			const entry = { pending, controller };
+			composing.set(session.id, entry);
 			const clear = () => {
-				if (composing.get(session.id) === pending) composing.delete(session.id);
+				if (composing.get(session.id) === entry) composing.delete(session.id);
 			};
 			void pending.then(clear, clear);
 			return pending;

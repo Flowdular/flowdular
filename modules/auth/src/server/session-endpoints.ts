@@ -1,5 +1,5 @@
 import { ServerRoute } from '@octanejs/app-core';
-import { readJsonObject } from '@coreloom/server';
+import { readJsonObject } from '@flowdular/server';
 import { BUNDLED_MODULE_SCOPES } from '../acl/scopes.ts';
 import { AuthServiceError } from '../services/auth-service-error.ts';
 import {
@@ -19,18 +19,19 @@ export function createSessionRoutes(
 	const list = new ServerRoute({
 		path: '/api/auth/sessions',
 		methods: ['GET'],
-		handler: (context) => {
+		handler: async (context) => {
 			try {
-				const session = requireSession(context, runtime);
+				const session = requireSession(context);
 				return response({
 					currentSessionId: session.sessionId,
-					sessions: runtime
-						.service()
-						.listSessions(session.principal.accountId)
-						.map((entry) => ({
-							...entry,
-							current: entry.id === session.sessionId,
-						})),
+					sessions: (
+						await (
+							await runtime.service()
+						).listSessions(session.principal.accountId)
+					).map((entry) => ({
+						...entry,
+						current: entry.id === session.sessionId,
+					})),
 				});
 			} catch (error) {
 				return errorResponse(error, '[auth.core] sessions request failed');
@@ -47,16 +48,16 @@ export function createSessionRoutes(
 			const denial = sessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
-				const session = requireSession(context, runtime);
+				const session = requireSession(context);
 				const body = await readJsonObject(context.request);
 				const id = optionalStringField(body, 'id');
 				const accountId = optionalStringField(body, 'accountId');
 				if (accountId !== undefined) {
 					requireScope(session, BUNDLED_MODULE_SCOPES.usersManage);
 					return response({
-						revoked: runtime
-							.service()
-							.revokeMemberSessions(actorOf(session), accountId),
+						revoked: await (
+							await runtime.service()
+						).revokeMemberSessions(actorOf(session), accountId),
 					});
 				}
 				if (id === undefined) {
@@ -73,7 +74,7 @@ export function createSessionRoutes(
 						400,
 					);
 				}
-				runtime.service().revokeOwnSession(session, id);
+				await (await runtime.service()).revokeOwnSession(session, id);
 				return response({ revoked: 1 });
 			} catch (error) {
 				return errorResponse(error, '[auth.core] sessions request failed');

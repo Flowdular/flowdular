@@ -4,8 +4,8 @@ import {
 	setServerAccountLocale,
 	SUPPORTED_LOCALES,
 	useTranslation,
-} from '@coreloom/client';
-import { Alert, FormField, Icon } from '@coreloom/ui';
+} from '@flowdular/client';
+import { Alert, FormField, Icon } from '@flowdular/ui';
 import { useMemo } from 'octane';
 import { createStore, useValue } from 'segment-state';
 import { updateOwnLanguagePreference } from './api.ts';

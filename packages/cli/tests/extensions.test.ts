@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { ModuleCliCatalog } from '@coreloom/cli-protocol';
-import type { ModuleManifest } from '@coreloom/contracts';
+import type { ModuleCliCatalog } from '@flowdular/cli-protocol';
+import type { ModuleManifest } from '@flowdular/contracts';
 import { validateCliCatalog } from '../src/extensions.ts';
 
 const manifest: ModuleManifest = {
 	schemaVersion: 1,
 	id: 'customer.core',
-	package: '@coreloom/module-customer',
+	package: '@flowdular/module-customer',
 	version: '0.1.0',
 	profile: 'full',
 	capabilities: ['cli'],

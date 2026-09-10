@@ -1,27 +1,48 @@
 {
-	"name": "@coreloom/module-automations-workflows-integration",
+	"name": "@flowdular/module-automations-workflows-integration",
 	"version": "0.1.0",
-	"private": true,
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
 		"./server": "./src/server/index.ts",
-		"./platform": "./src/platform.ts"
+		"./platform": "./src/platform.ts",
+		"./module.json": "./module.json"
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit -p tsconfig.json",
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@coreloom/contracts": "workspace:*",
-		"@coreloom/kernel": "workspace:*",
-		"@coreloom/module-auth": "workspace:*",
-		"@coreloom/module-automations": "workspace:*",
-		"@coreloom/module-workflows": "workspace:*"
+		"@flowdular/contracts": "workspace:*",
+		"@flowdular/harness": "workspace:*",
+		"@flowdular/kernel": "workspace:*",
+		"@flowdular/module-auth": "workspace:*",
+		"@flowdular/module-automations": "workspace:*",
+		"@flowdular/module-workflows": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/node": "24.13.3",
 		"typescript": "5.9.3",
-		"vitest": "4.1.10"
-	}
+		"vitest": "4.1.11"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Flowdular/flowdular.git",
+		"directory": "modules/automations-workflows-integration"
+	},
+	"files": [
+		"src",
+		"schemas",
+		"dist",
+		"bin",
+		"public",
+		"module.json",
+		"migrations",
+		"translations",
+		"spec",
+		"README.md",
+		"LICENSE"
+	],
+	"private": true
 }

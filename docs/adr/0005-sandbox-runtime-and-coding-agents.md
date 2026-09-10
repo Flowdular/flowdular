@@ -7,13 +7,13 @@
 
 Part 2 of the architecture describes an agentic sandbox that builds one module in isolation and previews it without booting the complete platform. Three questions were left open: how the sandbox is distributed, which agent writes the module source, and how a person is authorized to use it.
 
-The platform already ships `agents.core` and `@coreloom/harness`. That runtime is a shared in-product capability: business modules use it to run bounded agents against registered API and CLI tools. It is deliberately not a coding agent. It cannot open a workspace, edit source files, or run gates, and it must not gain those powers.
+The platform already ships `agents.core` and `@flowdular/harness`. That runtime is a shared in-product capability: business modules use it to run bounded agents against registered API and CLI tools. It is deliberately not a coding agent. It cannot open a workspace, edit source files, or run gates, and it must not gain those powers.
 
 ## Decision
 
 ### Distribution and runtime modes
 
-The sandbox is an independently executable package, `@coreloom/sandbox`, with a `coreloom-sandbox` binary. It is started from a Coreloom workspace and discovers that workspace by walking up to `coreloom.json`. Its first-class launch path is `npx @coreloom/sandbox`.
+The sandbox is an independently executable package, `@flowdular/sandbox`, with a `flowdular-sandbox` binary. It is started from a Flowdular workspace and discovers that workspace by walking up to `flowdular.json`. Its first-class launch path is `npx @flowdular/sandbox`.
 
 It runs in one of two modes.
 
@@ -24,7 +24,7 @@ The mode is explicit configuration, not inference. A sandbox that cannot prove i
 
 ### Coding agent adapter
 
-Coding agents are a separate contract in `@coreloom/coding-agent`. A driver receives a session workspace, a bounded instruction, and a turn input, and returns an ordered stream of normalized events: assistant text, reasoning summary, tool activity, file change, error, and turn completion with usage.
+Coding agents are a separate contract in `@flowdular/coding-agent`. A driver receives a session workspace, a bounded instruction, and a turn input, and returns an ordered stream of normalized events: assistant text, reasoning summary, tool activity, file change, error, and turn completion with usage.
 
 Three drivers are bundled.
 
@@ -34,7 +34,7 @@ Three drivers are bundled.
 
 A driver is offered only after a capability probe succeeds. Local drivers are probed by executing the binary's version command; the byok driver is probed by an existing credential. The driver is chosen when the session is created, next to the brief, and is recorded in the session's audit trail. Roles are never chosen by hand at that point: the planner picks the first specialist and the handoff decides every later one.
 
-The two agent systems stay separate. The sandbox never uses `@coreloom/harness` to write code, and `agents.core` never gains file system or process tools. A draft module that uses `agents.core` is previewed through the normal module contract.
+The two agent systems stay separate. The sandbox never uses `@flowdular/harness` to write code, and `agents.core` never gains file system or process tools. A draft module that uses `agents.core` is previewed through the normal module contract.
 
 ### Turn handoff
 
@@ -52,7 +52,7 @@ Preview data has two modes. `fixtures` is the default and is fully offline. `bri
 
 ### Access
 
-`sandbox.core` is a normal module of the full platform. It owns sandbox scopes, tenant-scoped access grants, session metadata, and its audit evidence. Access is created and assigned either from the full application, by an owner with the management scope, or from the CLI with `coreloom sandbox` commands. Both paths write the same grant records.
+`sandbox.core` is a normal module of the full platform. It owns sandbox scopes, tenant-scoped access grants, session metadata, and its audit evidence. Access is created and assigned either from the full application, by an owner with the management scope, or from the CLI with `flowdular sandbox` commands. Both paths write the same grant records.
 
 Signing in to the sandbox requires an active `auth.core` account, the `sandbox.access.use` scope on the selected tenant membership, and a grant that is neither revoked nor expired. The sandbox issues its own cookie and never accepts the platform cookie as a sandbox session.
 
@@ -78,4 +78,4 @@ Ejecting a draft into `modules/` is a separate scope and a separate CLI capabili
   mutation, validates session ids as UUIDs, authenticates the state,
   configuration and preview routes, never accepts a mode change over HTTP, and
   reads capabilities from the acting principal. Sessions can be archived,
-  restored and deleted, from the sandbox and from `coreloom sandbox` commands.
+  restored and deleted, from the sandbox and from `flowdular sandbox` commands.

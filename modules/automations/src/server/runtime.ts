@@ -1,6 +1,14 @@
-import type { PlatformVariableRegistry } from '@coreloom/kernel';
-import { coreloomLocalDataPath } from '@coreloom/kernel/legacy-local-state';
-import type { AgentRunQueue } from '@coreloom/module-agents/server';
+import type {
+	DatabaseAdapterLease,
+	DatabaseProvider,
+	DatabaseProviderRequest,
+} from '@flowdular/database';
+import {
+	DATABASE_CAPABILITY_IDS,
+	DATABASE_DIALECT_IDS,
+} from '@flowdular/database';
+import type { PlatformVariableRegistry } from '@flowdular/kernel';
+import type { AgentRunQueue } from '@flowdular/module-agents/server';
 import {
 	createAutomationTargetRegistry,
 	type AutomationTargetRegistry,
@@ -15,11 +23,18 @@ import {
 	secretVaultFromEnvironment,
 	type SecretVault,
 } from '../services/secret-vault.ts';
-import { SqliteAutomationsRepository } from '../services/sqlite-repository.ts';
+import {
+	DatabaseAutomationsRepository,
+	migrateAutomationsDatabase,
+} from '../services/database-repository.ts';
 import { AutomationTriggerService } from '../services/trigger-service.ts';
 
 export interface AutomationsRuntimeOptions {
-	readonly databasePath: string;
+	/** Platform-owned provider. Modules never receive a DSN or a pool. */
+	readonly databases: DatabaseProvider;
+	readonly purpose?:
+		| Exclude<DatabaseProviderRequest['purpose'], 'migration'>
+		| undefined;
 	readonly runQueue: () => AgentRunQueue;
 	readonly environment?: NodeJS.ProcessEnv;
 	readonly workspaceRoot?: string;
@@ -31,36 +46,27 @@ export interface AutomationsRuntimeOptions {
 }
 
 export interface AutomationsRuntime {
-	scheduleService(): AutomationScheduleService;
-	triggerService(): AutomationTriggerService;
+	scheduleService(): Promise<AutomationScheduleService>;
+	triggerService(): Promise<AutomationTriggerService>;
 	listAuditEvents(
 		tenantId: string,
 		limit: number,
-	): readonly AutomationAuditEvent[];
-	verifyAudit(tenantId: string): AutomationAuditVerification;
+	): Promise<readonly AutomationAuditEvent[]>;
+	verifyAudit(tenantId: string): Promise<AutomationAuditVerification>;
 	start(): void;
 	stop(): void;
 	quiesce(): Promise<void>;
 	dispose(): Promise<void>;
 }
 
+/* Everything a deployment reads from its environment. The provider itself is
+   platform owned, so composition supplies `databases` alongside this. */
 export function automationsRuntimeOptionsFromEnvironment(
 	runQueue: () => AgentRunQueue,
 	environment: NodeJS.ProcessEnv = process.env,
 	workspaceRoot = process.cwd(),
-): AutomationsRuntimeOptions {
-	return {
-		databasePath:
-			environment.CL_AUTOMATIONS_DATABASE ??
-			(environment.NODE_ENV === 'production'
-				? '/data/automations.db'
-				: environment.NODE_ENV === 'test'
-					? ':memory:'
-					: coreloomLocalDataPath(workspaceRoot, 'automations.db')),
-		runQueue,
-		environment,
-		workspaceRoot,
-	};
+): Omit<AutomationsRuntimeOptions, 'databases'> {
+	return { runQueue, environment, workspaceRoot };
 }
 
 export function createAutomationsRuntime(
@@ -68,9 +74,56 @@ export function createAutomationsRuntime(
 ): AutomationsRuntime {
 	const environment = options.environment ?? process.env;
 	const workspaceRoot = options.workspaceRoot ?? process.cwd();
-	let repository = options.repository;
-	const repositoryInstance = () =>
-		(repository ??= new SqliteAutomationsRepository(options.databasePath));
+	let repositoryPromise: Promise<AutomationsRepository> | undefined;
+	let leases: readonly DatabaseAdapterLease[] = [];
+	const acquire = (
+		databases: DatabaseProvider,
+		purpose: DatabaseProviderRequest['purpose'],
+	) =>
+		databases.acquire({
+			namespace: 'automations.core',
+			purpose,
+			requirements: {
+				dialectIds: [DATABASE_DIALECT_IDS.postgresql],
+				capabilities: [DATABASE_CAPABILITY_IDS.TRANSACTIONS],
+			},
+		});
+	const openRepository = async (): Promise<AutomationsRepository> => {
+		if (options.repository) return options.repository;
+		/* Migrations take their own short lease: the runtime role is tenant
+		   scoped and may not run schema operations. */
+		const migration = await options.databases.acquire({
+			namespace: 'automations.core',
+			purpose: 'migration',
+			requirements: {
+				dialectIds: [DATABASE_DIALECT_IDS.postgresql],
+				capabilities: [
+					DATABASE_CAPABILITY_IDS.MIGRATION_LOCK,
+					DATABASE_CAPABILITY_IDS.SCHEMA_INTROSPECTION,
+					DATABASE_CAPABILITY_IDS.TRANSACTIONAL_DDL,
+				],
+			},
+		});
+		try {
+			await migrateAutomationsDatabase(migration.database);
+		} finally {
+			await migration.release();
+		}
+		const runtimeLease = await acquire(
+			options.databases,
+			options.purpose ?? 'runtime',
+		);
+		/* The scheduler poll and the webhook lookup read across tenants; every
+		   write that follows uses the tenant carried by the row they returned. */
+		const backgroundLease = await acquire(options.databases, 'background');
+		leases = [runtimeLease, backgroundLease];
+		return new DatabaseAutomationsRepository({
+			runtime: runtimeLease.database,
+			background: backgroundLease.database,
+		});
+	};
+	const repositoryInstance = (): Promise<AutomationsRepository> =>
+		(repositoryPromise ??= openRepository());
 	const vault =
 		options.secretVault ??
 		secretVaultFromEnvironment(environment, workspaceRoot);
@@ -81,18 +134,18 @@ export function createAutomationsRuntime(
 	let tickInFlight: Promise<void> | undefined;
 	const resolutionController = new AbortController();
 	let disposed = false;
-	const scheduleService = () =>
+	const scheduleService = async () =>
 		(schedules ??= new AutomationScheduleService(
-			repositoryInstance(),
+			await repositoryInstance(),
 			options.runQueue(),
 			Date.now,
 			resolutionController.signal,
 			options.variables,
 			targets,
 		));
-	const triggerService = () =>
+	const triggerService = async () =>
 		(triggers ??= new AutomationTriggerService(
-			repositoryInstance(),
+			await repositoryInstance(),
 			vault,
 			options.runQueue(),
 			Date.now,
@@ -102,7 +155,7 @@ export function createAutomationsRuntime(
 	const tick = () => {
 		if (disposed || tickInFlight) return;
 		const pending = scheduleService()
-			.tick()
+			.then((service) => service.tick())
 			.then(() => undefined)
 			.catch((error: unknown) => {
 				console.error(
@@ -127,12 +180,13 @@ export function createAutomationsRuntime(
 	return {
 		scheduleService,
 		triggerService,
-		listAuditEvents: (tenantId, limit) =>
-			repositoryInstance().listAuditEvents(
+		listAuditEvents: async (tenantId, limit) =>
+			(await repositoryInstance()).listAuditEvents(
 				tenantId,
 				Math.min(Math.max(1, limit), 200),
 			),
-		verifyAudit: (tenantId) => repositoryInstance().verifyAuditChain(tenantId),
+		verifyAudit: async (tenantId) =>
+			(await repositoryInstance()).verifyAuditChain(tenantId),
 		start() {
 			if (disposed) return;
 			if (poll) return;
@@ -150,9 +204,13 @@ export function createAutomationsRuntime(
 			if (disposed) return;
 			disposed = true;
 			await quiesce();
-			const closable = repository as { close?: () => void } | undefined;
-			closable?.close?.();
-			repository = undefined;
+			/* An open still in flight would assign its leases after this read, so
+			   settle it first; a failed open must not surface as an unhandled
+			   rejection during teardown. */
+			await repositoryPromise?.catch(() => undefined);
+			for (const lease of leases) await lease.release();
+			leases = [];
+			repositoryPromise = undefined;
 			schedules = undefined;
 			triggers = undefined;
 		},

@@ -1,4 +1,4 @@
-import { Button, EmptyState, Tag } from '@coreloom/ui';
+import { Button, EmptyState, Tag } from '@flowdular/ui';
 import type { DiffLine, FileDiff } from '../server/diff.ts';
 import { tokenClass, tokenize } from './highlight.ts';
 import { useTranslation } from './i18n.ts';

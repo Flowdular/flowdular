@@ -1,21 +1,22 @@
-import type { AuthPrincipal } from '@coreloom/module-auth';
+import type { AuthPrincipal } from '@flowdular/module-auth';
 import {
 	AUTH_PRINCIPAL_STATE_KEY,
 	type AuthRuntime,
-} from '@coreloom/module-auth/server';
-import { createPlatformCapabilityRegistry } from '@coreloom/kernel';
+} from '@flowdular/module-auth/server';
+import { createPlatformCapabilityRegistry } from '@flowdular/kernel';
 import {
 	AGENT_ACTION_EXECUTION_CAPABILITY,
 	AGENT_RUN_EXECUTION_CAPABILITY,
 	type AgentActionExecutionCapability,
 	type AgentRevisionExecutionCapability,
-} from '@coreloom/module-agents/server';
+} from '@flowdular/module-agents/server';
 import { describe, expect, it, vi } from 'vitest';
 import { WORKFLOWS_PERMISSIONS } from '../src/acl/permissions.ts';
 import { createWorkflowsRoutes } from '../src/api/endpoints.ts';
 import type { WorkflowGraphV1 } from '../src/domain/types.ts';
 import { WORKFLOW_LIMITS } from '../src/domain/types.ts';
-import { createWorkflowsRuntime } from '../src/server/runtime.ts';
+import type { WorkflowsRuntime } from '../src/server/runtime.ts';
+import { createWorkflowsTestRuntime } from './support/database.ts';
 
 function principal(
 	scopes: readonly string[],
@@ -128,22 +129,22 @@ function longLinearGraph(intermediateNodes = 30): WorkflowGraphV1 {
 function executionCapabilities() {
 	const registry = createPlatformCapabilityRegistry();
 	const agents: AgentRevisionExecutionCapability = {
-		listRevisions: () => [],
-		getRevision: () => null,
+		listRevisions: async () => [],
+		getRevision: async () => null,
 		enqueueRevision: async () => {
 			throw new Error('No agent node is expected in this test.');
 		},
-		readEvents: () => [],
-		getResult: () => null,
-		requestCancel: () => false,
+		readEvents: async () => [],
+		getResult: async () => null,
+		requestCancel: async () => false,
 	};
 	const actions: AgentActionExecutionCapability = {
-		listWorkflowActions: () => [],
+		listWorkflowActions: async () => [],
 		start: async () => {
 			throw new Error('No action node is expected in this test.');
 		},
-		getResult: () => null,
-		requestCancel: (actionInvocationId) => ({
+		getResult: async () => null,
+		requestCancel: async (actionInvocationId) => ({
 			actionInvocationId,
 			state: 'not-supported',
 		}),
@@ -153,17 +154,17 @@ function executionCapabilities() {
 	return registry;
 }
 
-function createPublishedDirectWorkflow(
-	runtime: ReturnType<typeof createWorkflowsRuntime>,
+async function createPublishedDirectWorkflow(
+	runtime: WorkflowsRuntime,
 	key: string,
 ) {
-	const service = runtime.service();
-	const created = service.create(
+	const service = await runtime.service();
+	const created = await service.create(
 		'tenant-a',
 		{ key, name: key, description: '' },
 		{ kind: 'user', id: 'account-a', label: 'Owner' },
 	);
-	service.update(
+	await service.update(
 		'tenant-a',
 		{
 			workflowId: created.definition.id,
@@ -174,7 +175,7 @@ function createPublishedDirectWorkflow(
 		},
 		{ kind: 'user', id: 'account-a', label: 'Owner' },
 	);
-	service.publish(
+	await service.publish(
 		'tenant-a',
 		created.definition.id,
 		2,
@@ -214,8 +215,7 @@ function context(request: Request, identity?: AuthPrincipal) {
 
 describe('workflow HTTP boundary', () => {
 	it('declares trusted identity and denies every route before its handler', async () => {
-		const runtime = createWorkflowsRuntime({
-			databasePath: ':memory:',
+		const runtime = createWorkflowsTestRuntime({
 			payloadKey: Buffer.alloc(32, 21),
 			cursorKey: Buffer.alloc(32, 22),
 		});
@@ -240,22 +240,21 @@ describe('workflow HTTP boundary', () => {
 				`${method} ${route.path} unscoped`,
 			).toBe(403);
 		}
-		runtime.dispose();
+		await runtime.dispose();
 	});
 
 	it('keeps definition, run, and audit reads inside the authenticated tenant', async () => {
-		const runtime = createWorkflowsRuntime({
-			databasePath: ':memory:',
+		const runtime = createWorkflowsTestRuntime({
 			payloadKey: Buffer.alloc(32, 23),
 			cursorKey: Buffer.alloc(32, 24),
 		});
-		const service = runtime.service();
-		const created = service.create(
+		const service = await runtime.service();
+		const created = await service.create(
 			'tenant-a',
 			{ key: 'tenant-bound', name: 'Tenant bound', description: '' },
 			{ kind: 'user', id: 'account-a', label: 'Owner' },
 		);
-		service.update(
+		await service.update(
 			'tenant-a',
 			{
 				workflowId: created.definition.id,
@@ -266,7 +265,7 @@ describe('workflow HTTP boundary', () => {
 			},
 			{ kind: 'user', id: 'account-a', label: 'Owner' },
 		);
-		const run = service.simulate(
+		const run = await service.simulate(
 			{
 				workflowId: created.definition.id,
 				input: { name: 'Ada' },
@@ -288,14 +287,12 @@ describe('workflow HTTP boundary', () => {
 			'tenant-b',
 		);
 
-		const definitions = await route(routes, '/api/workflows', 'GET').handler(
-			context(new Request('https://erp.example/api/workflows'), other),
-		);
+		const definitions = await (
+			await route(routes, '/api/workflows', 'GET')
+		).handler(context(new Request('https://erp.example/api/workflows'), other));
 		expect(await definitions.json()).toEqual({ definitions: [] });
-		const foreignDefinition = await route(
-			routes,
-			'/api/workflows/detail',
-			'GET',
+		const foreignDefinition = await (
+			await route(routes, '/api/workflows/detail', 'GET')
 		).handler(
 			context(
 				new Request(
@@ -305,14 +302,14 @@ describe('workflow HTTP boundary', () => {
 			),
 		);
 		expect(foreignDefinition.status).toBe(404);
-		const runs = await route(routes, '/api/workflow-runs', 'GET').handler(
+		const runs = await (
+			await route(routes, '/api/workflow-runs', 'GET')
+		).handler(
 			context(new Request('https://erp.example/api/workflow-runs'), other),
 		);
 		expect(await runs.json()).toEqual({ runs: [], nextCursor: null });
-		const foreignRun = await route(
-			routes,
-			'/api/workflow-runs/detail',
-			'GET',
+		const foreignRun = await (
+			await route(routes, '/api/workflow-runs/detail', 'GET')
 		).handler(
 			context(
 				new Request(
@@ -322,26 +319,27 @@ describe('workflow HTTP boundary', () => {
 			),
 		);
 		expect(foreignRun.status).toBe(404);
-		const audit = await route(routes, '/api/workflow-audit', 'GET').handler(
+		const audit = await (
+			await route(routes, '/api/workflow-audit', 'GET')
+		).handler(
 			context(new Request('https://erp.example/api/workflow-audit'), other),
 		);
 		expect(await audit.json()).toEqual({ events: [], nextCursor: null });
-		runtime.dispose();
+		await runtime.dispose();
 	});
 
 	it('resumes a terminal event stream at its final sequence and closes cleanly', async () => {
-		const runtime = createWorkflowsRuntime({
-			databasePath: ':memory:',
+		const runtime = createWorkflowsTestRuntime({
 			payloadKey: Buffer.alloc(32, 25),
 			cursorKey: Buffer.alloc(32, 26),
 		});
-		const service = runtime.service();
-		const created = service.create(
+		const service = await runtime.service();
+		const created = await service.create(
 			'tenant-a',
 			{ key: 'terminal-stream', name: 'Terminal stream', description: '' },
 			{ kind: 'user', id: 'account-a', label: 'Owner' },
 		);
-		service.update(
+		await service.update(
 			'tenant-a',
 			{
 				workflowId: created.definition.id,
@@ -352,7 +350,7 @@ describe('workflow HTTP boundary', () => {
 			},
 			{ kind: 'user', id: 'account-a', label: 'Owner' },
 		);
-		const run = service.simulate(
+		const run = await service.simulate(
 			{
 				workflowId: created.definition.id,
 				input: { name: 'Ada' },
@@ -370,10 +368,8 @@ describe('workflow HTTP boundary', () => {
 			{ authorizeAgentToolAccess: () => [] } as unknown as AuthRuntime,
 			runtime,
 		);
-		const response = await route(
-			routes,
-			'/api/workflow-runs/events',
-			'GET',
+		const response = await (
+			await route(routes, '/api/workflow-runs/events', 'GET')
 		).handler(
 			context(
 				new Request(
@@ -384,25 +380,25 @@ describe('workflow HTTP boundary', () => {
 		);
 		expect(response.status).toBe(200);
 		expect(await response.text()).toContain('event: workflow.stream-complete');
-		expect(service.getRunDetail('tenant-a', run.run.id).events).toHaveLength(
-			lastSequence,
-		);
-		runtime.dispose();
+		expect(
+			(await service.getRunDetail('tenant-a', run.run.id)).events,
+		).toHaveLength(lastSequence);
+		await runtime.dispose();
 	});
 
 	it('emits cursor-free heartbeats and flushes terminal events before closing', async () => {
-		vi.useFakeTimers();
+		// Advance the heartbeat clock without freezing PostgreSQL socket timers.
+		vi.useFakeTimers({ toFake: ['Date'] });
 		vi.setSystemTime(new Date('2026-09-02T10:00:00.000Z'));
-		const runtime = createWorkflowsRuntime({
-			databasePath: ':memory:',
+		const runtime = createWorkflowsTestRuntime({
 			capabilities: executionCapabilities(),
 			payloadKey: Buffer.alloc(32, 29),
 			cursorKey: Buffer.alloc(32, 30),
 			worker: { pollMs: 250, leaseMs: 1_000 },
 		});
 		try {
-			createPublishedDirectWorkflow(runtime, 'heartbeat-stream');
-			const service = runtime.service();
+			await createPublishedDirectWorkflow(runtime, 'heartbeat-stream');
+			const service = await runtime.service();
 			const accepted = await service.enqueue(
 				{
 					workflowKey: 'heartbeat-stream',
@@ -416,17 +412,15 @@ describe('workflow HTTP boundary', () => {
 					permissionSnapshot: [WORKFLOWS_PERMISSIONS.runsExecute],
 				},
 			);
-			const initialSequence = service
-				.getRunDetail('tenant-a', accepted.runId)
-				.events.at(-1)!.sequence;
+			const initialSequence = (
+				await service.getRunDetail('tenant-a', accepted.runId)
+			).events.at(-1)!.sequence;
 			const routes = createWorkflowsRoutes(
 				{ authorizeAgentToolAccess: () => [] } as unknown as AuthRuntime,
 				runtime,
 			);
-			const response = await route(
-				routes,
-				'/api/workflow-runs/events',
-				'GET',
+			const response = await (
+				await route(routes, '/api/workflow-runs/events', 'GET')
 			).handler(
 				context(
 					new Request(
@@ -446,7 +440,7 @@ describe('workflow HTTP boundary', () => {
 			expect(heartbeat).toContain('event: workflow.heartbeat');
 			expect(heartbeat).not.toContain('id:');
 
-			service.cancel('tenant-a', accepted.runId, {
+			await service.cancel('tenant-a', accepted.runId, {
 				kind: 'user',
 				id: 'account-a',
 				label: 'Owner',
@@ -466,7 +460,11 @@ describe('workflow HTTP boundary', () => {
 			const firstEventCursor = streamed.match(/id: ([^\n]+)\ndata:/)?.[1];
 			expect(firstEventCursor).toBeDefined();
 			expect(
-				service.eventSequence('tenant-a', accepted.runId, firstEventCursor!),
+				await service.eventSequence(
+					'tenant-a',
+					accepted.runId,
+					firstEventCursor!,
+				),
 			).toBe(initialSequence + 1);
 		} finally {
 			await Promise.resolve(runtime.dispose());
@@ -475,19 +473,18 @@ describe('workflow HTTP boundary', () => {
 	});
 
 	it('emits a replay boundary and resumes until the terminal event is flushed', async () => {
-		const runtime = createWorkflowsRuntime({
-			databasePath: ':memory:',
+		const runtime = createWorkflowsTestRuntime({
 			payloadKey: Buffer.alloc(32, 31),
 			cursorKey: Buffer.alloc(32, 32),
 		});
 		try {
-			const service = runtime.service();
-			const created = service.create(
+			const service = await runtime.service();
+			const created = await service.create(
 				'tenant-a',
 				{ key: 'replay-boundary', name: 'Replay boundary', description: '' },
 				{ kind: 'user', id: 'account-a', label: 'Owner' },
 			);
-			service.update(
+			await service.update(
 				'tenant-a',
 				{
 					workflowId: created.definition.id,
@@ -498,7 +495,7 @@ describe('workflow HTTP boundary', () => {
 				},
 				{ kind: 'user', id: 'account-a', label: 'Owner' },
 			);
-			const run = service.simulate(
+			const run = await service.simulate(
 				{
 					workflowId: created.definition.id,
 					input: [],
@@ -518,10 +515,8 @@ describe('workflow HTTP boundary', () => {
 				{ authorizeAgentToolAccess: () => [] } as unknown as AuthRuntime,
 				runtime,
 			);
-			const response = await route(
-				routes,
-				'/api/workflow-runs/events',
-				'GET',
+			const response = await (
+				await route(routes, '/api/workflow-runs/events', 'GET')
 			).handler(
 				context(
 					new Request(
@@ -543,17 +538,16 @@ describe('workflow HTTP boundary', () => {
 				/event: workflow\.replay-boundary\ndata: \{"cursor":"([^"]+)"\}/,
 			)?.[1];
 			expect(boundary).toBeDefined();
-			expect(service.eventSequence('tenant-a', run.run.id, boundary!)).toBe(
-				WORKFLOW_LIMITS.maxReplayEvents,
-			);
+			expect(
+				await service.eventSequence('tenant-a', run.run.id, boundary!),
+			).toBe(WORKFLOW_LIMITS.maxReplayEvents);
 		} finally {
-			runtime.dispose();
+			await runtime.dispose();
 		}
 	});
 
 	it('refuses invalid page limits and conflicting event cursors', async () => {
-		const runtime = createWorkflowsRuntime({
-			databasePath: ':memory:',
+		const runtime = createWorkflowsTestRuntime({
 			payloadKey: Buffer.alloc(32, 27),
 			cursorKey: Buffer.alloc(32, 28),
 		});
@@ -562,10 +556,8 @@ describe('workflow HTTP boundary', () => {
 			runtime,
 		);
 		const identity = principal([WORKFLOWS_PERMISSIONS.runsRead]);
-		const invalidLimit = await route(
-			routes,
-			'/api/workflow-runs',
-			'GET',
+		const invalidLimit = await (
+			await route(routes, '/api/workflow-runs', 'GET')
 		).handler(
 			context(
 				new Request('https://erp.example/api/workflow-runs?limit=0'),
@@ -573,19 +565,19 @@ describe('workflow HTTP boundary', () => {
 			),
 		);
 		expect(invalidLimit.status).toBe(400);
-		const conflicting = await route(
-			routes,
-			'/api/workflow-runs/events',
-			'GET',
+		const conflicting = await (
+			await route(routes, '/api/workflow-runs/events', 'GET')
 		).handler(
 			context(
 				new Request(
 					'https://erp.example/api/workflow-runs/events?runId=missing&afterSequence=1',
 					{
 						headers: {
-							'last-event-id': runtime
-								.service()
-								.eventCursor('tenant-a', 'missing', 2),
+							'last-event-id': (await runtime.service()).eventCursor(
+								'tenant-a',
+								'missing',
+								2,
+							),
 						},
 					},
 				),
@@ -593,6 +585,6 @@ describe('workflow HTTP boundary', () => {
 			),
 		);
 		expect(conflicting.status).toBe(409);
-		runtime.dispose();
+		await runtime.dispose();
 	});
 });

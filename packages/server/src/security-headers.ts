@@ -10,7 +10,7 @@ export interface SecurityHeadersOptions {
 	readonly noncePlaceholder?: string;
 }
 
-export const CSP_NONCE_PLACEHOLDER = '__CORELOOM_CSP_NONCE__';
+export const CSP_NONCE_PLACEHOLDER = '__FLOWDULAR_CSP_NONCE__';
 
 function cspNonce(): string {
 	const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -78,8 +78,8 @@ function withHeaders(
 ): Response {
 	const target = (() => {
 		try {
-			response.headers.set('x-coreloom-probe', '1');
-			response.headers.delete('x-coreloom-probe');
+			response.headers.set('x-flowdular-probe', '1');
+			response.headers.delete('x-flowdular-probe');
 			return response;
 		} catch {
 			// Redirect and error responses carry immutable headers.

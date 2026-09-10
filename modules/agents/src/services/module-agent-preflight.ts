@@ -1,5 +1,8 @@
-import { existsSync } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
+import {
+	DATABASE_CAPABILITY_IDS,
+	DATABASE_DIALECT_IDS,
+	type DatabaseProvider,
+} from '@flowdular/database';
 import type { ModuleAgentDefinition } from '../domain/types.ts';
 import {
 	moduleAgentDefinitionHash,
@@ -7,52 +10,59 @@ import {
 } from '../server/define-agent.ts';
 
 interface StoredModuleAgentDefinition {
-	readonly definition_revision: number;
+	readonly definition_revision: number | bigint | string;
 	readonly content_hash: string;
 }
 
 /* Validate persisted revision high-water marks before HMR retires the healthy
-	 generation. This connection is deliberately read-only: migrations,
-	 reconciliation, vault access, workers and timers still begin only after the
-	 old generation has released its resources. */
-export function preflightModuleAgentDefinitions(
-	databasePath: string,
+   generation. This read is deliberately the only database work the new
+   generation does up front: migrations, reconciliation, vault access, workers
+   and timers still begin only after the old generation has released its
+   resources. */
+export async function preflightModuleAgentDefinitions(
+	databases: DatabaseProvider | undefined,
 	definitions: readonly ModuleAgentDefinition[],
-): readonly ModuleAgentDefinition[] {
+): Promise<readonly ModuleAgentDefinition[]> {
 	const normalized = normalizeModuleAgentDefinitions(definitions);
-	if (databasePath === ':memory:' || !existsSync(databasePath))
-		return normalized;
+	if (!databases || normalized.length === 0) return normalized;
 
-	const database = new DatabaseSync(databasePath, {
-		readOnly: true,
-		timeout: 5_000,
+	const lease = await databases.acquire({
+		namespace: 'agents.core',
+		purpose: 'migration',
+		requirements: {
+			dialectIds: [DATABASE_DIALECT_IDS.postgresql],
+			capabilities: [
+				DATABASE_CAPABILITY_IDS.TRANSACTIONS,
+				DATABASE_CAPABILITY_IDS.SCHEMA_INTROSPECTION,
+			],
+		},
 	});
 	try {
-		const table = database
-			.prepare(
-				`SELECT 1 AS present FROM sqlite_master
-				 WHERE type = 'table' AND name = 'module_agent_definitions'`,
-			)
-			.get();
-		if (!table) return normalized;
-
-		const storedDefinition = database.prepare(
-			`SELECT definition_revision, content_hash
-			 FROM module_agent_definitions WHERE agent_id = ?`,
+		/* A first run has no catalog table yet, and that is not a downgrade. */
+		if (!(await lease.database.schema.hasTable('module_agent_definitions'))) {
+			return normalized;
+		}
+		const stored = await lease.database.transaction(
+			(transaction) =>
+				transaction.query<StoredModuleAgentDefinition & { agent_id: string }>({
+					text: `SELECT agent_id, definition_revision, content_hash
+					       FROM module_agent_definitions`,
+				}),
+			{ access: 'read' },
 		);
+		const byAgent = new Map(stored.rows.map((row) => [row.agent_id, row]));
 		for (const definition of normalized) {
-			const stored = storedDefinition.get(definition.id) as
-				| StoredModuleAgentDefinition
-				| undefined;
-			if (!stored) continue;
-			if (definition.definitionRevision < stored.definition_revision) {
+			const previous = byAgent.get(definition.id);
+			if (!previous) continue;
+			const revision = Number(previous.definition_revision);
+			if (definition.definitionRevision < revision) {
 				throw new Error(
-					`MODULE_AGENT_REVISION_DOWNGRADE: ${definition.id} registered revision ${definition.definitionRevision} after ${stored.definition_revision}.`,
+					`MODULE_AGENT_REVISION_DOWNGRADE: ${definition.id} registered revision ${definition.definitionRevision} after ${revision}.`,
 				);
 			}
 			if (
-				definition.definitionRevision === stored.definition_revision &&
-				moduleAgentDefinitionHash(definition) !== stored.content_hash
+				definition.definitionRevision === revision &&
+				moduleAgentDefinitionHash(definition) !== previous.content_hash
 			) {
 				throw new Error(
 					`MODULE_AGENT_REVISION_DRIFT: ${definition.id} changed without a definition revision bump.`,
@@ -61,6 +71,6 @@ export function preflightModuleAgentDefinitions(
 		}
 		return normalized;
 	} finally {
-		database.close();
+		await lease.release();
 	}
 }

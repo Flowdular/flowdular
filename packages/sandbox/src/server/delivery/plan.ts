@@ -23,6 +23,7 @@ export const GATES = [
 	'typecheck',
 	'tests',
 	'format',
+	'auto-review',
 ] as const;
 
 const NUMBERED_MIGRATION = /^migrations\/\d{4}_[^/]+\.(?:up|down)\.sql$/;

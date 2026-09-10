@@ -4,7 +4,7 @@ export { ProfileView } from './ProfileView.tsrx';
 import type {
 	ModuleClientContext,
 	ModuleClientContribution,
-} from '@coreloom/client';
+} from '@flowdular/client';
 import { createProfileClientContribution as canonicalContribution } from './contribution.tsrx';
 
 /* Canonical entry used by the generated platform composition. */

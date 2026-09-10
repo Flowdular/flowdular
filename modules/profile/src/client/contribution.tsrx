@@ -3,7 +3,7 @@ import {
 	setServerAccountLocale,
 	t,
 	type ModuleClientContribution,
-} from '@coreloom/client';
+} from '@flowdular/client';
 import { PROFILE_PERMISSIONS } from '../acl/permissions.ts';
 import translationsEn from '../../translations/en.json';
 import translationsPl from '../../translations/pl.json';

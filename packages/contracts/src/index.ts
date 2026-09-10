@@ -16,6 +16,7 @@ export interface ModuleDependency {
 }
 
 export interface ModuleManifest {
+	readonly platformApi?: string;
 	readonly $schema?: string;
 	readonly schemaVersion: 1;
 	readonly id: string;
@@ -165,3 +166,26 @@ export type {
 	VariableKind,
 	VariableSource,
 } from './variables.ts';
+
+export type {
+	ModuleReviewEvidence,
+	ModuleSourceFile,
+	ModuleArtifact,
+	ModuleRelease,
+	ModuleCatalog,
+	InstalledModule,
+	ModuleInstallLock,
+} from './module-distribution.ts';
+
+export { moduleCatalogSchema, moduleArtifactSchema } from './schemas.ts';
+
+export type {
+	WebMount,
+	WebIdentity,
+	WebAccess,
+	WebJson,
+	WebPage,
+	WebPageContext,
+	ModuleWebSurface,
+	WebModuleComposition,
+} from './web.ts';

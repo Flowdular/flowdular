@@ -52,13 +52,13 @@ export type {
 	ModuleAgentView,
 	UpdateModuleAgentBindingInput,
 } from '../domain/types.ts';
-export { defineApiAgentTool, defineCliAgentTool } from '@coreloom/harness';
+export { defineApiAgentTool, defineCliAgentTool } from '@flowdular/harness';
 export type {
 	AgentTool,
 	AgentToolContext,
 	ApiAgentToolDefinition,
 	CliAgentToolDefinition,
-} from '@coreloom/harness';
+} from '@flowdular/harness';
 export {
 	AGENTS_MODULE_SETTINGS,
 	agentSettings,

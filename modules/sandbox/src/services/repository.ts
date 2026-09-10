@@ -11,34 +11,45 @@ export type SandboxAuditDraft = Omit<
 	'id' | 'sequence' | 'previousHash' | 'eventHash'
 >;
 
+/** The database-agnostic business port. No driver type crosses it. */
 export interface SandboxRepository {
-	findGrant(tenantId: string, accountId: string): SandboxAccessGrant | null;
-	listGrants(tenantId: string): readonly SandboxAccessGrant[];
-	saveGrant(grant: SandboxAccessGrant): SandboxAccessGrant;
+	findGrant(
+		tenantId: string,
+		accountId: string,
+	): Promise<SandboxAccessGrant | null>;
+	listGrants(tenantId: string): Promise<readonly SandboxAccessGrant[]>;
+	saveGrant(grant: SandboxAccessGrant): Promise<SandboxAccessGrant>;
 	revokeGrant(
 		tenantId: string,
 		accountId: string,
 		revokedAt: number,
 		revokedBy: string,
-	): SandboxAccessGrant | null;
-	findSession(tenantId: string, id: string): SandboxSessionRecord | null;
+	): Promise<SandboxAccessGrant | null>;
+	findSession(
+		tenantId: string,
+		id: string,
+	): Promise<SandboxSessionRecord | null>;
 	listSessions(
 		tenantId: string,
 		limit: number,
-	): readonly SandboxSessionRecord[];
-	saveSession(session: SandboxSessionRecord): SandboxSessionRecord;
-	appendAuditEvent(event: SandboxAuditDraft): SandboxAuditEvent;
+	): Promise<readonly SandboxSessionRecord[]>;
+	saveSession(session: SandboxSessionRecord): Promise<SandboxSessionRecord>;
+	appendAuditEvent(event: SandboxAuditDraft): Promise<SandboxAuditEvent>;
 	listAuditEvents(
 		tenantId: string,
 		limit: number,
-	): readonly SandboxAuditEvent[];
+	): Promise<readonly SandboxAuditEvent[]>;
 	/* Keyset page over the tenant trail, newest first, cursor `occurredAt:sequence`. */
 	pageAuditEvents(
 		tenantId: string,
 		cursor: { readonly occurredAt: number; readonly sequence: number } | null,
 		limit: number,
-	): SandboxAuditPage;
-	verifyAuditChain(tenantId: string): boolean;
-	verifyAuditChainDetailed(tenantId: string): SandboxAuditChainVerification;
-	close(): void;
+	): Promise<SandboxAuditPage>;
+	verifyAuditChain(tenantId: string): Promise<boolean>;
+	verifyAuditChainDetailed(
+		tenantId: string,
+	): Promise<SandboxAuditChainVerification>;
+	/* Only a locally owned adapter closes; a leased handle is released by the
+	   runtime that acquired it. */
+	close?(): Promise<void>;
 }

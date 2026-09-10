@@ -1,6 +1,9 @@
 ---
 name: workflow-development
-description: Build, publish, invoke, and test a workflows.core DAG through its typed graph and public execution capability without bypassing agent, action, tenant, or audit boundaries.
+description: >-
+  Build, publish, invoke, and test a workflows.core DAG through its typed graph
+  and public execution capability without bypassing agent, action, tenant, or
+  audit boundaries.
 roles:
   - agentic-engineer
   - backend-engineer
@@ -25,8 +28,9 @@ Read `docs/adr/0006-agentic-workflows.md`, the approved
 - A workflow definition belongs in `workflows.core` and is edited through its
   API or canvas. Do not hardcode a tenant workflow in source.
 - A business operation that a workflow may call is a versioned agent action.
-  Register it through the agents action catalog. Follow `agent-tool-design` for
-  permission, input, output, timeout, idempotency, and audit rules.
+  Register it through the agents action catalog. If missing, implement it in a
+  separate `agent-tool-design` phase with permission, input, output, timeout,
+  idempotency and audit tests before returning to workflow integration.
 - A business module that starts a workflow resolves
   `workflows.execution.v1` from `context.capabilities`. It never imports a
   workflow repository or database.
@@ -103,7 +107,7 @@ composition has completed:
 import {
 	WORKFLOW_EXECUTION_CAPABILITY,
 	type WorkflowExecutionCapability,
-} from '@coreloom/module-workflows/server';
+} from '@flowdular/module-workflows/server';
 
 const workflows = context.capabilities.get<WorkflowExecutionCapability>(
 	WORKFLOW_EXECUTION_CAPABILITY,
@@ -190,6 +194,6 @@ For a graph or runtime change, prove:
 11. The canvas shows validation, loading, empty, error, denied, simulation,
     live, cancelled, and recovered states, including small-screen read mode.
 
-Run the module typecheck and tests, `pnpm coreloom module validate`, then the
+Run the module typecheck and tests, `pnpm flowdular module validate`, then the
 full `pnpm verify`. For a new module integration, update its approved spec and
 move `specVersion`, `module.json` version, and package version together.

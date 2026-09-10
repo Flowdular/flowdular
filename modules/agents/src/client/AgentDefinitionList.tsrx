@@ -1,5 +1,5 @@
-import { t } from '@coreloom/client';
-import { SearchField, TableCard, Tag, type TableColumn } from '@coreloom/ui';
+import { t } from '@flowdular/client';
+import { SearchField, TableCard, Tag, type TableColumn } from '@flowdular/ui';
 import type {
 	AgentDefinition,
 	AgentProviderConnection,

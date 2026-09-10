@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type {
 	AgentActionExecutionCapability,
 	AgentRevisionExecutionCapability,
-} from '@coreloom/module-agents/server';
+} from '@flowdular/module-agents/server';
 import type {
 	JsonValue,
 	WorkflowCostRollupV1,
@@ -30,6 +30,8 @@ export interface WorkflowWorkerOptions {
 const TERMINAL = new Set(['succeeded', 'failed', 'refused', 'cancelled']);
 
 function inputSchema(node: WorkflowNodeV1): string {
+	if (node.type === 'input')
+		return node.outputPorts[0]?.schemaId ?? 'workflow.input';
 	return node.inputPorts[0]?.schemaId ?? 'workflow.input';
 }
 
@@ -145,9 +147,9 @@ export class WorkflowWorker {
 		if (this.#stopped || this.#running) return;
 		this.#running = true;
 		try {
-			this.repository.applyPayloadRetention(this.#now());
+			await this.repository.applyPayloadRetention(this.#now());
 			const now = this.#now();
-			const run = this.repository.claimNext(
+			const run = await this.repository.claimNext(
 				this.#workerId,
 				now,
 				now + this.#leaseMs,
@@ -163,7 +165,7 @@ export class WorkflowWorker {
 	async #execute(run: WorkflowRunRecord): Promise<void> {
 		const dependencies = this.capabilities();
 		if (!dependencies) {
-			this.repository.releaseLease(run.tenantId, run.id, this.#workerId);
+			await this.repository.releaseLease(run.tenantId, run.id, this.#workerId);
 			return;
 		}
 		let leaseLost = false;
@@ -172,21 +174,27 @@ export class WorkflowWorker {
 		};
 		const renewal = setInterval(
 			() => {
-				if (
-					!this.repository.renewLease(
+				/* A renewal that loses the race marks the lease lost for the next
+				   assertLease call; the timer itself cannot await. */
+				void this.repository
+					.renewLease(
 						run.tenantId,
 						run.id,
 						this.#workerId,
 						this.#now() + this.#leaseMs,
 					)
-				)
-					leaseLost = true;
+					.then((renewed) => {
+						if (!renewed) leaseLost = true;
+					})
+					.catch(() => {
+						leaseLost = true;
+					});
 			},
 			Math.max(500, Math.floor(this.#leaseMs / 2)),
 		);
 		renewal.unref?.();
 		try {
-			const current = this.repository.getRun(run.tenantId, run.id);
+			const current = await this.repository.getRun(run.tenantId, run.id);
 			if (!current || TERMINAL.has(current.status)) return;
 			const now = this.#now();
 			if (current.status === 'cancel-requested') {
@@ -194,7 +202,7 @@ export class WorkflowWorker {
 				return;
 			}
 			if (now - current.queuedAt > WORKFLOW_LIMITS.maxLiveDurationMs) {
-				this.repository.settleRun(
+				await this.repository.settleRun(
 					current.tenantId,
 					current.id,
 					'refused',
@@ -210,7 +218,7 @@ export class WorkflowWorker {
 			await this.#advance(current, dependencies, assertLease);
 		} catch (error) {
 			if (leaseLost) return;
-			const current = this.repository.getRun(run.tenantId, run.id);
+			const current = await this.repository.getRun(run.tenantId, run.id);
 			if (current?.status === 'cancel-requested') {
 				console.error(
 					`[workflows] cancellation observation failed for run ${run.id}:`,
@@ -223,7 +231,7 @@ export class WorkflowWorker {
 					error instanceof Error && /^[A-Z][A-Z0-9_]+$/.test(error.message)
 						? error.message
 						: 'WORKFLOW_RECOVERY_INCONSISTENT';
-				this.repository.settleRun(
+				await this.repository.settleRun(
 					current.tenantId,
 					current.id,
 					'refused',
@@ -237,7 +245,7 @@ export class WorkflowWorker {
 			}
 		} finally {
 			clearInterval(renewal);
-			this.repository.releaseLease(run.tenantId, run.id, this.#workerId);
+			await this.repository.releaseLease(run.tenantId, run.id, this.#workerId);
 		}
 	}
 
@@ -249,14 +257,17 @@ export class WorkflowWorker {
 		},
 	): Promise<void> {
 		const now = this.#now();
-		const priorEvents = this.repository.readEvents(
+		const priorEvents = await this.repository.readEvents(
 			run.tenantId,
 			run.id,
 			0,
 			WORKFLOW_LIMITS.maxRunEvents,
 		);
 		let pending = false;
-		for (const node of this.repository.readNodeStates(run.tenantId, run.id)) {
+		for (const node of await this.repository.readNodeStates(
+			run.tenantId,
+			run.id,
+		)) {
 			const attempt = node.attempts.at(-1);
 			if (!attempt || attempt.status !== 'waiting-child' || !attempt.childId)
 				continue;
@@ -269,7 +280,7 @@ export class WorkflowWorker {
 					event.payload.childId === attempt.childId,
 			);
 			if (!alreadyRequested) {
-				this.repository.appendRunEvent(
+				await this.repository.appendRunEvent(
 					run.tenantId,
 					run.id,
 					'node.cancel.requested',
@@ -286,14 +297,14 @@ export class WorkflowWorker {
 					| { readonly acknowledged: false; readonly reason: string };
 				try {
 					if (attempt.childKind === 'agent') {
-						cancellation = dependencies.agents.requestCancel(
+						cancellation = (await dependencies.agents.requestCancel(
 							attempt.childId,
 							childContext(run),
-						)
+						))
 							? { acknowledged: true }
 							: { acknowledged: false, reason: 'not-acknowledged' };
 					} else {
-						const result = dependencies.actions.requestCancel(
+						const result = await dependencies.actions.requestCancel(
 							attempt.childId,
 							childContext(run),
 						);
@@ -308,7 +319,7 @@ export class WorkflowWorker {
 						reason: stableCapabilityCode(error, 'CHILD_CANCELLATION_REFUSED'),
 					};
 				}
-				this.repository.appendRunEvent(
+				await this.repository.appendRunEvent(
 					run.tenantId,
 					run.id,
 					cancellation.acknowledged
@@ -328,13 +339,17 @@ export class WorkflowWorker {
 			}
 
 			let childResult:
-				| ReturnType<AgentRevisionExecutionCapability['getResult']>
-				| ReturnType<AgentActionExecutionCapability['getResult']> = null;
+				| Awaited<ReturnType<AgentRevisionExecutionCapability['getResult']>>
+				| Awaited<ReturnType<AgentActionExecutionCapability['getResult']>> =
+				null;
 			try {
 				childResult =
 					attempt.childKind === 'agent'
-						? dependencies.agents.getResult(attempt.childId, childContext(run))
-						: dependencies.actions.getResult(
+						? await dependencies.agents.getResult(
+								attempt.childId,
+								childContext(run),
+							)
+						: await dependencies.actions.getResult(
 								attempt.childId,
 								childContext(run),
 							);
@@ -358,7 +373,7 @@ export class WorkflowWorker {
 						event.payload.reason === 'child-observation-timeout',
 				)
 			) {
-				this.repository.appendRunEvent(
+				await this.repository.appendRunEvent(
 					run.tenantId,
 					run.id,
 					'node.cancel.not-acknowledged',
@@ -381,7 +396,7 @@ export class WorkflowWorker {
 			   hash and size, but do not expose a preview without a selected output
 			   port whose schema and read mask could authorize that preview. */
 			const evidence = safePayloadEvidence(rawOutput, 'workflow.output', {
-				schema: { 'x-coreloom-secret': true },
+				schema: { 'x-flowdular-secret': true },
 				permissionSnapshot: run.permissionSnapshot,
 			});
 			if (childResult) {
@@ -390,14 +405,14 @@ export class WorkflowWorker {
 					'usage' in childResult &&
 					childResult.usage
 				) {
-					this.repository.recordAgentUsage(
+					await this.repository.recordAgentUsage(
 						run.tenantId,
 						run.id,
 						attempt.childId,
 						childResult.usage,
 					);
 				}
-				this.repository.appendRunEvent(
+				await this.repository.appendRunEvent(
 					run.tenantId,
 					run.id,
 					'node.result.late-ignored',
@@ -413,7 +428,7 @@ export class WorkflowWorker {
 					now,
 				);
 			}
-			this.repository.settleAttempt(
+			await this.repository.settleAttempt(
 				{
 					tenantId: run.tenantId,
 					runId: run.id,
@@ -434,8 +449,8 @@ export class WorkflowWorker {
 			);
 		}
 		if (pending) return;
-		const fresh = this.repository.getRun(run.tenantId, run.id) ?? run;
-		this.repository.settleRun(
+		const fresh = (await this.repository.getRun(run.tenantId, run.id)) ?? run;
+		await this.repository.settleRun(
 			run.tenantId,
 			run.id,
 			'cancelled',
@@ -459,13 +474,13 @@ export class WorkflowWorker {
 		const nodeById = new Map(run.graph.nodes.map((node) => [node.id, node]));
 		for (const nodeId of run.compiledOrder) {
 			assertLease();
-			const freshRun = this.repository.getRun(run.tenantId, run.id);
+			const freshRun = await this.repository.getRun(run.tenantId, run.id);
 			if (!freshRun || freshRun.status === 'cancel-requested') return;
 			const node = nodeById.get(nodeId);
 			if (!node) throw new Error('WORKFLOW_RECOVERY_INCONSISTENT');
-			const state = this.repository
-				.readNodeStates(run.tenantId, run.id)
-				.find((entry) => entry.nodeId === nodeId);
+			const state = (
+				await this.repository.readNodeStates(run.tenantId, run.id)
+			).find((entry) => entry.nodeId === nodeId);
 			if (!state) throw new Error('WORKFLOW_RECOVERY_INCONSISTENT');
 			if (
 				['succeeded', 'failed', 'refused', 'skipped', 'cancelled'].includes(
@@ -484,7 +499,10 @@ export class WorkflowWorker {
 			const incoming = run.graph.edges
 				.filter((edge) => edge.target.nodeId === node.id)
 				.sort((left, right) => left.id.localeCompare(right.id));
-			const settled = this.repository.readEdgeTransfers(run.tenantId, run.id);
+			const settled = await this.repository.readEdgeTransfers(
+				run.tenantId,
+				run.id,
+			);
 			if (
 				node.type !== 'input' &&
 				incoming.some(
@@ -498,22 +516,24 @@ export class WorkflowWorker {
 					settled.find((item) => item.edgeId === edge.id)?.state === 'emitted',
 			);
 			if (node.type !== 'input' && emitted.length === 0) {
-				this.#skip(run, node, 'upstream-branch-closed');
+				await this.#skip(run, node, 'upstream-branch-closed');
 				continue;
 			}
-			const values = emitted.map((edge) => {
-				const payload = this.repository.readEdgePayload(
+			const values = [];
+			for (const edge of emitted) {
+				const payload = await this.repository.readEdgePayload(
 					run.tenantId,
 					run.id,
 					edge.id,
 				);
-				if (payload === undefined)
+				if (payload === undefined) {
 					throw new Error('WORKFLOW_RECOVERY_INCONSISTENT');
-				return { edge, payload };
-			});
+				}
+				values.push({ edge, payload });
+			}
 			const baseInput: JsonValue =
 				node.type === 'input'
-					? this.repository.readExecutionPayload(
+					? await this.repository.readExecutionPayload(
 							run.tenantId,
 							run.id,
 							run.inputPayloadId,
@@ -527,6 +547,35 @@ export class WorkflowWorker {
 					`${entry.edge.source.nodeId}:${entry.edge.source.port}`,
 					entry.payload,
 				);
+			}
+			// A mapping can reference any actual ancestor, not only a direct input.
+			// Read only referenced, emitted envelopes and retain tenant/run scoping.
+			const mappingSources = (node.mappings ?? []).flatMap<{
+				readonly sourceNodeId: string;
+				readonly sourcePort: string;
+			}>((mapping) =>
+				mapping.binding.kind === 'path'
+					? [mapping.binding]
+					: mapping.binding.kind === 'template'
+						? mapping.binding.variables
+						: [],
+			);
+			for (const source of mappingSources) {
+				const key = `${source.sourceNodeId}:${source.sourcePort}`;
+				if (outputs.has(key)) continue;
+				const transfer = settled.find(
+					(entry) =>
+						entry.sourceNodeId === source.sourceNodeId &&
+						entry.sourcePort === source.sourcePort &&
+						entry.state === 'emitted',
+				);
+				if (!transfer) continue;
+				const payload = await this.repository.readEdgePayload(
+					run.tenantId,
+					run.id,
+					transfer.edgeId,
+				);
+				if (payload !== undefined) outputs.set(key, payload);
 			}
 			const nodeInput = applyWorkflowMappings(
 				baseInput,
@@ -544,7 +593,7 @@ export class WorkflowWorker {
 				!prior ||
 				(prior.status !== 'running' && prior.status !== 'waiting-child')
 			) {
-				this.repository.startAttempt(
+				await this.repository.startAttempt(
 					{
 						tenantId: run.tenantId,
 						runId: run.id,
@@ -575,8 +624,16 @@ export class WorkflowWorker {
 				return;
 			}
 			if (
-				validateJsonSchema(nodeInput, run.graph.schemas[schemaId] ?? {})
-					.length > 0
+				node.type === 'merge'
+					? values.some(
+							(entry) =>
+								validateJsonSchema(
+									entry.payload,
+									run.graph.schemas[schemaId] ?? {},
+								).length > 0,
+						)
+					: validateJsonSchema(nodeInput, run.graph.schemas[schemaId] ?? {})
+							.length > 0
 			) {
 				await this.#failNode(
 					run,
@@ -604,7 +661,7 @@ export class WorkflowWorker {
 				const retryAllowed =
 					delay !== null &&
 					node.failurePolicy?.retryOn.includes(result.code ?? '') === true;
-				this.repository.settleAttempt(
+				await this.repository.settleAttempt(
 					{
 						tenantId: run.tenantId,
 						runId: run.id,
@@ -640,11 +697,18 @@ export class WorkflowWorker {
 					node.failurePolicy?.onExhausted === 'emit-failure' &&
 					result.output !== undefined
 				) {
-					this.#settleEdges(run, node, attemptNumber, 'failure', result.output);
+					await this.#settleEdges(
+						run,
+						node,
+						attemptNumber,
+						'failure',
+						result.output,
+					);
 					continue;
 				}
-				const terminal = this.repository.getRun(run.tenantId, run.id) ?? run;
-				this.repository.settleRun(
+				const terminal =
+					(await this.repository.getRun(run.tenantId, run.id)) ?? run;
+				await this.repository.settleRun(
 					run.tenantId,
 					run.id,
 					result.status === 'refused' ? 'refused' : 'failed',
@@ -680,7 +744,7 @@ export class WorkflowWorker {
 				);
 				return;
 			}
-			this.repository.settleAttempt(
+			await this.repository.settleAttempt(
 				{
 					tenantId: run.tenantId,
 					runId: run.id,
@@ -704,8 +768,9 @@ export class WorkflowWorker {
 				run.origin,
 			);
 			if (node.type === 'output') {
-				const terminal = this.repository.getRun(run.tenantId, run.id) ?? run;
-				this.repository.settleRun(
+				const terminal =
+					(await this.repository.getRun(run.tenantId, run.id)) ?? run;
+				await this.repository.settleRun(
 					run.tenantId,
 					run.id,
 					'succeeded',
@@ -721,7 +786,7 @@ export class WorkflowWorker {
 				);
 				return;
 			}
-			this.#settleEdges(run, node, attemptNumber, outcome, result.output);
+			await this.#settleEdges(run, node, attemptNumber, outcome, result.output);
 		}
 	}
 
@@ -824,7 +889,7 @@ export class WorkflowWorker {
 						run.queuedAt + WORKFLOW_LIMITS.maxLiveDurationMs,
 						this.#now() + WORKFLOW_LIMITS.maxChildObservationMs,
 					);
-					this.repository.markChildWaiting(
+					await this.repository.markChildWaiting(
 						run.tenantId,
 						run.id,
 						node.id,
@@ -852,7 +917,7 @@ export class WorkflowWorker {
 				}
 				let result;
 				try {
-					result = dependencies.agents.getResult(id, childContext(run));
+					result = await dependencies.agents.getResult(id, childContext(run));
 					assertLease();
 				} catch (error) {
 					const code = stableCapabilityCode(error, 'AGENT_RESULT_REFUSED');
@@ -865,7 +930,7 @@ export class WorkflowWorker {
 				}
 				if (!result) return null;
 				if (result.usage)
-					this.repository.recordAgentUsage(
+					await this.repository.recordAgentUsage(
 						run.tenantId,
 						run.id,
 						id,
@@ -951,7 +1016,7 @@ export class WorkflowWorker {
 						run.queuedAt + WORKFLOW_LIMITS.maxLiveDurationMs,
 						this.#now() + WORKFLOW_LIMITS.maxChildObservationMs,
 					);
-					this.repository.markChildWaiting(
+					await this.repository.markChildWaiting(
 						run.tenantId,
 						run.id,
 						node.id,
@@ -979,7 +1044,7 @@ export class WorkflowWorker {
 				}
 				let result;
 				try {
-					result = dependencies.actions.getResult(id, childContext(run));
+					result = await dependencies.actions.getResult(id, childContext(run));
 					assertLease();
 				} catch (error) {
 					const code = stableCapabilityCode(error, 'ACTION_RESULT_REFUSED');
@@ -1019,7 +1084,7 @@ export class WorkflowWorker {
 		code: string,
 	): Promise<void> {
 		const actualAttempt = Math.max(1, attempt);
-		this.repository.settleAttempt(
+		await this.repository.settleAttempt(
 			{
 				tenantId: run.tenantId,
 				runId: run.id,
@@ -1038,8 +1103,9 @@ export class WorkflowWorker {
 			run.actor,
 			run.origin,
 		);
-		const terminal = this.repository.getRun(run.tenantId, run.id) ?? run;
-		this.repository.settleRun(
+		const terminal =
+			(await this.repository.getRun(run.tenantId, run.id)) ?? run;
+		await this.repository.settleRun(
 			run.tenantId,
 			run.id,
 			'refused',
@@ -1052,19 +1118,19 @@ export class WorkflowWorker {
 		);
 	}
 
-	#settleEdges(
+	async #settleEdges(
 		run: WorkflowRunRecord,
 		node: WorkflowNodeV1,
 		attempt: number,
 		selectedPort: string,
 		output: JsonValue,
-	): void {
+	): Promise<void> {
 		for (const edge of run.graph.edges.filter(
 			(entry) => entry.source.nodeId === node.id,
 		)) {
 			const emitted = edge.source.port === selectedPort;
 			const schemaId = outputSchema(node, edge.source.port);
-			this.repository.settleEdge({
+			await this.repository.settleEdge({
 				tenantId: run.tenantId,
 				runId: run.id,
 				transfer: {
@@ -1091,8 +1157,12 @@ export class WorkflowWorker {
 		}
 	}
 
-	#skip(run: WorkflowRunRecord, node: WorkflowNodeV1, reason: string): void {
-		this.repository.markNodeSkipped(
+	async #skip(
+		run: WorkflowRunRecord,
+		node: WorkflowNodeV1,
+		reason: string,
+	): Promise<void> {
+		await this.repository.markNodeSkipped(
 			run.tenantId,
 			run.id,
 			node.id,
@@ -1105,7 +1175,7 @@ export class WorkflowWorker {
 			(entry) => entry.source.nodeId === node.id,
 		)) {
 			const schemaId = outputSchema(node, edge.source.port);
-			this.repository.settleEdge({
+			await this.repository.settleEdge({
 				tenantId: run.tenantId,
 				runId: run.id,
 				transfer: {

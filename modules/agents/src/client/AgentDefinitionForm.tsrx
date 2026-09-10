@@ -1,13 +1,13 @@
 import { useMemo } from 'octane';
-import { t, useTranslation } from '@coreloom/client';
-import { Button, CheckGrid, FormField, VariableTextarea } from '@coreloom/ui';
-import type { CheckGroup, CheckOption } from '@coreloom/ui';
+import { t, useTranslation } from '@flowdular/client';
+import { Button, CheckGrid, FormField, VariableTextarea } from '@flowdular/ui';
+import type { CheckGroup, CheckOption } from '@flowdular/ui';
 import { cell, createStore, useValue } from 'segment-state';
 import { AGENT_CONTEXT_VARIABLES } from '../domain/context-variables.ts';
 import type {
 	AgentDefinition,
 	AgentProviderConnection,
-	AgentSkill,
+	AgentProcedure,
 	CreateAgentInput,
 	UpdateAgentInput,
 } from '../domain/types.ts';
@@ -22,7 +22,7 @@ export interface AgentDefinitionFormProps {
 	readonly agent: AgentDefinition | null;
 	readonly providers: readonly AgentProviderConnection[];
 	readonly tools: readonly string[];
-	readonly skills: readonly AgentSkill[];
+	readonly procedures: readonly AgentProcedure[];
 	readonly busy: boolean;
 	readonly onCancel: () => void;
 	readonly onSubmit: (input: CreateAgentInput | UpdateAgentInput) => Promise<
@@ -53,17 +53,19 @@ function toolGroups(tools: readonly string[]): readonly CheckGroup[] {
 	return [...groups].map(([label, options]) => ({ label, options }));
 }
 
-function skillGroups(skills: readonly AgentSkill[]): readonly CheckGroup[] {
-	if (skills.length === 0) return [];
+function procedureGroups(
+	procedures: readonly AgentProcedure[],
+): readonly CheckGroup[] {
+	if (procedures.length === 0) return [];
 	return [
 		{
-			label: t('agents.definitions.form.skills'),
-			options: skills.map(
-				(skill) => ({
-					value: skill.id,
-					label: skill.name,
-					hint: 'r' + skill.revision + ' · ' +
-						t('agents.status.' + skill.status),
+			label: t('agents.definitions.form.procedures'),
+			options: procedures.map(
+				(procedure) => ({
+					value: procedure.id,
+					label: procedure.name,
+					hint: 'r' + procedure.revision + ' · ' +
+						t('agents.status.' + procedure.status),
 				}),
 			),
 		},
@@ -90,7 +92,7 @@ export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
 			modelId: props.agent?.model ?? firstEnabledModel(providerId),
 			instructions: props.agent?.instructions ?? '',
 			allowedTools: cell<readonly string[]>(props.agent?.allowedTools ?? []),
-			skillIds: cell<readonly string[]>(props.agent?.skillIds ?? []),
+			procedureIds: cell<readonly string[]>(props.agent?.procedureIds ?? []),
 		});
 	}, []);
 	const [providerId, setProviderId] = useValue(formState.state.providerId);
@@ -101,7 +103,9 @@ export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
 	const [allowedTools, setAllowedTools] = useValue(
 		formState.state.allowedTools,
 	);
-	const [skillIds, setSkillIds] = useValue(formState.state.skillIds);
+	const [procedureIds, setProcedureIds] = useValue(
+		formState.state.procedureIds,
+	);
 	const selectedProvider =
 		props.providers.find((provider) => provider.id === providerId) ?? null;
 	const selectedModel =
@@ -117,7 +121,7 @@ export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
 			provider: stringValue(form, 'provider'),
 			model: stringValue(form, 'model'),
 			allowedTools,
-			skillIds,
+			procedureIds,
 			maxSteps: numberValue(form, 'maxSteps'),
 			timeoutMs: numberValue(form, 'timeoutMs'),
 			temperature: numberValue(form, 'temperature'),
@@ -295,16 +299,18 @@ export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
 					</FormField>
 				</div>
 				<div class="ui-field">
-					<span class="ui-label">{t('agents.definitions.form.skills')}</span>
-					@if (props.skills.length === 0) {
+					<span class="ui-label">{t(
+						'agents.definitions.form.procedures',
+					)}</span>
+					@if (props.procedures.length === 0) {
 						<p class="agent-empty-note">{t(
-							'agents.definitions.form.skillsEmpty',
+							'agents.definitions.form.proceduresEmpty',
 						)}</p>
 					} @else {
 						<CheckGrid
-							groups={skillGroups(props.skills)}
-							value={skillIds}
-							onChange={setSkillIds}
+							groups={procedureGroups(props.procedures)}
+							value={procedureIds}
+							onChange={setProcedureIds}
 						/>
 					}
 				</div>

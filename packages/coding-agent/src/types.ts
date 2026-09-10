@@ -1,4 +1,4 @@
-import type { AiUsage } from '@coreloom/ai-provider';
+import type { AiUsage } from '@flowdular/ai-provider';
 
 /* A sandbox that cannot prove it is loopback treats itself as self-hosted and
    never offers a driver that shells out to a local binary. */

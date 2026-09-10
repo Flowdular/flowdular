@@ -1,9 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { createHmac, randomUUID } from 'node:crypto';
 import { OWNER_SCOPES } from '../src/acl/scopes.ts';
 import { AuthService } from '../src/services/auth-service.ts';
-import { SqliteAuthRepository } from '../src/services/sqlite-repository.ts';
 import type { AuthMailDelivery } from '../src/services/mail-delivery.ts';
+import {
+	closeAuthTestDatabases,
+	createAuthTestDatabase,
+	type AuthTestDatabase,
+} from './support/database.ts';
 
 const fastHash = {
 	cost: 2 ** 12,
@@ -12,6 +16,24 @@ const fastHash = {
 	keyLength: 32,
 	maxMemory: 32 * 1024 * 1024,
 } as const;
+
+const open = new Set<AuthTestDatabase>();
+
+afterEach(async () => {
+	await Promise.all([...open].map((database) => database.dispose()));
+	open.clear();
+});
+
+afterAll(closeAuthTestDatabases);
+
+/* Every case here runs against an embedded PostgreSQL, whose first boot alone
+   outlasts the default per-test timeout. */
+
+async function fixture(): Promise<AuthTestDatabase> {
+	const database = await createAuthTestDatabase();
+	open.add(database);
+	return database;
+}
 
 function totp(secret: string, now: number): string {
 	const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -57,7 +79,7 @@ class Mailbox implements AuthMailDelivery {
 
 describe('AuthService', () => {
 	it('creates a tenant owner and resolves only the issued session', async () => {
-		const repository = new SqliteAuthRepository(':memory:');
+		const repository = (await fixture()).repository;
 		const service = new AuthService(repository, {
 			passwordHash: fastHash,
 			now: () => 1_000,
@@ -71,12 +93,12 @@ describe('AuthService', () => {
 		});
 		expect(issued.principal.email).toBe('owner@example.com');
 		expect(issued.principal.scopes).toContain('system.workspace.access');
-		expect(service.resolveSession(issued.token)?.principal.accountId).toBe(
-			issued.principal.accountId,
-		);
-		expect(service.resolveSession('not-a-session')).toBeNull();
+		expect(
+			(await service.resolveSession(issued.token))?.principal.accountId,
+		).toBe(issued.principal.accountId);
+		expect(await service.resolveSession('not-a-session')).toBeNull();
 		const secondTenantId = randomUUID();
-		repository.createTenantMembership({
+		await repository.createTenantMembership({
 			accountId: issued.principal.accountId,
 			tenantId: secondTenantId,
 			organizationName: 'Second Workspace',
@@ -88,11 +110,11 @@ describe('AuthService', () => {
 		const switched = await service.switchTenant(issued.token, secondTenantId);
 		expect(switched.principal.tenantId).toBe(secondTenantId);
 		expect(switched.principal.tenants).toHaveLength(2);
-		expect(service.resolveSession(issued.token)).toBeNull();
+		expect(await service.resolveSession(issued.token)).toBeNull();
 	});
 
 	it('rejects a taken workspace slug and reports availability', async () => {
-		const service = new AuthService(new SqliteAuthRepository(':memory:'), {
+		const service = new AuthService((await fixture()).repository, {
 			passwordHash: fastHash,
 		});
 		await service.signUp({
@@ -102,15 +124,17 @@ describe('AuthService', () => {
 			organizationName: 'First Workspace',
 			organizationSlug: 'shared-slug',
 		});
-		expect(service.checkWorkspaceSlug('shared-slug')).toMatchObject({
+		expect(await service.checkWorkspaceSlug('shared-slug')).toMatchObject({
 			valid: true,
 			available: false,
 		});
-		expect(service.checkWorkspaceSlug('open-slug')).toMatchObject({
+		expect(await service.checkWorkspaceSlug('open-slug')).toMatchObject({
 			valid: true,
 			available: true,
 		});
-		expect(service.checkWorkspaceSlug('X')).toMatchObject({ valid: false });
+		expect(await service.checkWorkspaceSlug('X')).toMatchObject({
+			valid: false,
+		});
 		await expect(
 			service.signUp({
 				email: 'second@example.com',
@@ -123,7 +147,7 @@ describe('AuthService', () => {
 	});
 
 	it('uses a generic error for incorrect credentials', async () => {
-		const service = new AuthService(new SqliteAuthRepository(':memory:'), {
+		const service = new AuthService((await fixture()).repository, {
 			passwordHash: fastHash,
 		});
 		await expect(
@@ -140,7 +164,7 @@ describe('AuthService', () => {
 	it('resets passwords using a short-lived, single-use delivered token without disclosing account existence', async () => {
 		let now = 1_000_000;
 		const mailbox = new Mailbox();
-		const service = new AuthService(new SqliteAuthRepository(':memory:'), {
+		const service = new AuthService((await fixture()).repository, {
 			passwordHash: fastHash,
 			now: () => now,
 			mailDelivery: mailbox,
@@ -162,7 +186,7 @@ describe('AuthService', () => {
 		const token = new URL(mailbox.messages[0]!.url).searchParams.get('token')!;
 		expect(
 			JSON.stringify(
-				service.queryAudit({
+				await service.queryAudit({
 					tenantId: owner.principal.tenantId,
 					limit: 100,
 				}),
@@ -205,7 +229,7 @@ describe('AuthService', () => {
 
 	it('requires an enrolled TOTP factor and consumes recovery codes only once', async () => {
 		let now = 1_000_000;
-		const service = new AuthService(new SqliteAuthRepository(':memory:'), {
+		const service = new AuthService((await fixture()).repository, {
 			passwordHash: fastHash,
 			now: () => now,
 			mfaEncryptionKey: 'f'.repeat(64),
@@ -217,25 +241,28 @@ describe('AuthService', () => {
 			organizationName: 'Example Operations',
 			organizationSlug: 'example-operations',
 		});
-		const enrolled = service.enrollTotp(owner.principal.accountId);
+		const enrolled = await service.enrollTotp(owner.principal.accountId);
 		expect(enrolled.recoveryCodes).toHaveLength(10);
 		expect(
 			enrolled.recoveryCodes.every((code) => /^[A-F0-9]{20}$/.test(code)),
 		).toBe(true);
-		expect(service.mfaStatus(owner.principal.accountId)).toEqual({
+		expect(await service.mfaStatus(owner.principal.accountId)).toEqual({
 			available: true,
 			enrolled: false,
 			pending: true,
 		});
-		service.confirmTotp(owner.principal.accountId, totp(enrolled.secret, now));
-		expect(service.mfaStatus(owner.principal.accountId)).toEqual({
+		await service.confirmTotp(
+			owner.principal.accountId,
+			totp(enrolled.secret, now),
+		);
+		expect(await service.mfaStatus(owner.principal.accountId)).toEqual({
 			available: true,
 			enrolled: true,
 			pending: false,
 		});
-		expect(() => service.enrollTotp(owner.principal.accountId)).toThrowError(
-			/Multi-factor authentication is already enabled/,
-		);
+		await expect(
+			service.enrollTotp(owner.principal.accountId),
+		).rejects.toThrowError(/Multi-factor authentication is already enabled/);
 		const challenge = await service.signIn({
 			email: 'owner@example.com',
 			password: 'correct horse battery staple',
@@ -262,7 +289,7 @@ describe('AuthService', () => {
 
 	it('continues an OIDC sign-in with the same MFA challenge contract', async () => {
 		const now = 1_000_000;
-		const service = new AuthService(new SqliteAuthRepository(':memory:'), {
+		const service = new AuthService((await fixture()).repository, {
 			passwordHash: fastHash,
 			now: () => now,
 			mfaEncryptionKey: 'f'.repeat(64),
@@ -274,8 +301,11 @@ describe('AuthService', () => {
 			organizationName: 'Example Operations',
 			organizationSlug: 'example-operations',
 		});
-		const enrolled = service.enrollTotp(owner.principal.accountId);
-		service.confirmTotp(owner.principal.accountId, totp(enrolled.secret, now));
+		const enrolled = await service.enrollTotp(owner.principal.accountId);
+		await service.confirmTotp(
+			owner.principal.accountId,
+			totp(enrolled.secret, now),
+		);
 		await expect(
 			service.signInVerifiedExternalEmail('owner@example.com'),
 		).resolves.toMatchObject({
@@ -287,7 +317,7 @@ describe('AuthService', () => {
 
 	it('accepts a tenant invitation once and adds no membership to another tenant', async () => {
 		const mailbox = new Mailbox();
-		const repository = new SqliteAuthRepository(':memory:');
+		const repository = (await fixture()).repository;
 		const service = new AuthService(repository, {
 			passwordHash: fastHash,
 			mailDelivery: mailbox,
@@ -330,7 +360,7 @@ describe('AuthService', () => {
 		});
 		expect(
 			JSON.stringify(
-				service.queryAudit({
+				await service.queryAudit({
 					tenantId: owner.principal.tenantId,
 					limit: 100,
 				}),
@@ -345,7 +375,7 @@ describe('AuthService', () => {
 			[owner.principal.tenantId],
 		);
 		expect(
-			repository.findAccountMembership(
+			await repository.findAccountMembership(
 				signedIn.principal.accountId,
 				otherOwner.principal.tenantId,
 			),

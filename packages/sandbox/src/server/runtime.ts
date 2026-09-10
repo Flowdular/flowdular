@@ -8,7 +8,7 @@ import {
 	type AgentRoleDefinition,
 	type CodingAgentDriver,
 	type CodingAgentRegistry,
-} from '@coreloom/coding-agent';
+} from '@flowdular/coding-agent';
 import {
 	loadSandboxConfiguration,
 	openSecret,
@@ -113,7 +113,7 @@ export async function createSandboxRuntime(
 				error: {
 					code: 'PLATFORM_TOKEN_MISSING',
 					message:
-						'Paste an API token from the Coreloom application to connect this sandbox.',
+						'Paste an API token from the Flowdular application to connect this sandbox.',
 				},
 			};
 			return connection;

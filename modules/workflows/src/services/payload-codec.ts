@@ -52,7 +52,7 @@ export function decodeWorkflowPayloadKey(value: string): Buffer {
 		? Buffer.from(trimmed, 'hex')
 		: Buffer.from(trimmed, 'base64');
 	if (decoded.length !== 32) {
-		throw new Error('CL_WORKFLOWS_PAYLOAD_KEY must encode exactly 32 bytes.');
+		throw new Error('FD_WORKFLOWS_PAYLOAD_KEY must encode exactly 32 bytes.');
 	}
 	return decoded;
 }
@@ -145,13 +145,22 @@ function schemaReason(
 	schema: JsonSchemaV1 | undefined,
 	permissions: readonly string[],
 ): RedactionReason | null {
-	if (schema?.writeOnly === true || schema?.['x-coreloom-secret'] === true) {
+	if (
+		schema?.writeOnly === true ||
+		schema?.['x-flowdular-secret'] === true ||
+		schema?.['x-coreloom-secret'] === true
+	) {
 		return 'secret';
 	}
-	const requiredPermission = schema?.['x-coreloom-read-permission'];
+	const requiredPermissions = [
+		schema?.['x-flowdular-read-permission'],
+		schema?.['x-coreloom-read-permission'],
+	];
 	if (
-		typeof requiredPermission === 'string' &&
-		!permissions.includes(requiredPermission)
+		requiredPermissions.some(
+			(permission) =>
+				typeof permission === 'string' && !permissions.includes(permission),
+		)
 	) {
 		return 'scope-denied';
 	}

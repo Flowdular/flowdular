@@ -1,4 +1,4 @@
-import { t, type ModuleClientContribution } from '@coreloom/client';
+import { t, type ModuleClientContribution } from '@flowdular/client';
 import { AUTH_SCOPES, PLATFORM_SCOPES } from '../acl/scopes.ts';
 import { AuditView } from './audit/AuditView.tsrx';
 import { SettingsView } from './settings/SettingsView.tsrx';

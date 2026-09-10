@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'octane';
-import { Button, Icon } from '@coreloom/ui';
+import { useEffect } from 'octane';
+import { Button, Icon } from '@flowdular/ui';
 import type { SandboxSession } from '../server/sessions.ts';
-import { loadModuleSpec, saveModuleSpec } from './api.ts';
+import { SpecEditor } from './SpecEditor.tsrx';
 import { DiffPane, type ModuleDiff } from './DiffPane.tsrx';
 import { useTranslation } from './i18n.ts';
 
@@ -16,8 +16,6 @@ export interface WorkbenchModalProps {
 	/* The module the preview opens on and the diff is filtered to; empty means
    every module of the session. */
 	readonly activeModule: string;
-	/* The module whose specification the spec mode edits. */
-	readonly specModule: string;
 	readonly previewData: 'fixtures' | 'bridge';
 	readonly onModule: (directory: string) => void;
 	readonly onMode: (mode: WorkbenchMode) => void;
@@ -42,15 +40,8 @@ export function WorkbenchModal(props: WorkbenchModalProps) @{
 		props.activeModule
 			? props.diffs.filter((diff) => diff.module === props.activeModule)
 			: props.diffs;
-	const specModule =
-		props.specModule || props.activeModule ||
-			props.session.modules[0]!.directory;
+	const specModule = props.activeModule || props.session.modules[0]!.directory;
 	const sessionId = props.session.id;
-	const [spec, setSpec] = useState('');
-	const [specPath, setSpecPath] = useState('');
-	const [specError, setSpecError] = useState('');
-	const [specNotice, setSpecNotice] = useState('');
-	const [saving, setSaving] = useState(false);
 
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent) => {
@@ -59,50 +50,6 @@ export function WorkbenchModal(props: WorkbenchModalProps) @{
 		window.addEventListener('keydown', onKey);
 		return () => window.removeEventListener('keydown', onKey);
 	}, []);
-
-	/* The document is loaded from the session, never from a cached copy, so the
-   editor always opens on what the gate reads. */
-	useEffect(() => {
-		if (props.mode !== 'spec') return;
-		let cancelled = false;
-		setSpecError('');
-		setSpecNotice('');
-		void loadModuleSpec(sessionId, specModule).then((loaded) => {
-			if (cancelled) return;
-			setSpec(loaded.text);
-			setSpecPath(loaded.path);
-		}).catch((error: unknown) => {
-			if (cancelled) return;
-			setSpec('');
-			setSpecError(
-				error instanceof Error
-					? error.message
-					: t('sandbox.workbench.spec.readFailed'),
-			);
-		});
-		return () => {
-			cancelled = true;
-		};
-	}, [props.mode, specModule]);
-
-	const saveSpec = () => {
-		if (saving) return;
-		setSaving(true);
-		setSpecError('');
-		setSpecNotice('');
-		void saveModuleSpec(sessionId, specModule, spec).then(() => {
-			setSaving(false);
-			setSpecNotice(t('sandbox.workbench.spec.saved'));
-			props.onSpecSaved();
-		}).catch((error: unknown) => {
-			setSaving(false);
-			setSpecError(
-				error instanceof Error
-					? error.message
-					: t('sandbox.workbench.spec.saveFailed'),
-			);
-		});
-	};
 
 	<div class="workbench" role="dialog" aria-modal="true">
 		<div class="workbench__panel">
@@ -133,10 +80,12 @@ export function WorkbenchModal(props: WorkbenchModalProps) @{
 					<select
 						class="chat__picker"
 						aria-label={t('sandbox.workbench.module')}
-						value={props.activeModule}
+						value={props.mode === 'spec' ? specModule : props.activeModule}
 						onChange={(event) => props.onModule(event.currentTarget.value)}
 					>
-						<option value="">{t('sandbox.session.module.all')}</option>
+						@if (props.mode !== 'spec') {
+							<option value="">{t('sandbox.session.module.all')}</option>
+						}
 						@for (const module of props.session.modules; key module.id) {
 							<option value={module.directory}>{module.id}</option>
 						}
@@ -191,32 +140,12 @@ export function WorkbenchModal(props: WorkbenchModalProps) @{
 				</div>
 			} @else if (props.mode === 'spec') {
 				<div class="workbench__body workbench__body--scroll">
-					<div class="spec-editor">
-						<div class="spec-editor__bar">
-							<span class="ui-mono">{specPath || specModule}</span>
-							<span class="sandbox__spacer"></span>
-							<Button
-								size="sm"
-								variant="primary"
-								disabled={saving}
-								onClick={saveSpec}
-							>
-								<Icon name="check" size={14} />
-								{saving ? t('sandbox.common.saving') : t('sandbox.common.save')}
-							</Button>
-						</div>
-						@if (specError) {
-							<p class="spec-editor__error">{specError}</p>
-						} @else if (specNotice) {
-							<p class="spec-editor__notice">{specNotice}</p>
-						}
-						<textarea
-							class="ui-textarea spec-editor__text"
-							spellcheck={false}
-							value={spec}
-							onInput={(event) => setSpec(event.currentTarget.value)}
-						></textarea>
-					</div>
+					<SpecEditor
+						key={sessionId + '/' + specModule}
+						sessionId={sessionId}
+						module={specModule}
+						onSaved={props.onSpecSaved}
+					/>
 				</div>
 			} @else {
 				<div class="workbench__body workbench__body--scroll">

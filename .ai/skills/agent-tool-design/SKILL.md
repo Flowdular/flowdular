@@ -1,6 +1,8 @@
 ---
 name: agent-tool-design
-description: Register an API or CLI tool that lets business agents act on a module, with the real harness, permission, idempotency, audit, and test contract.
+description: >-
+  Register an API or CLI tool that lets business agents act on a module, with
+  the real harness, permission, idempotency, audit, and test contract.
 roles:
   - agentic-engineer
   - backend-engineer
@@ -24,7 +26,7 @@ also ship a ready business agent through `defineAgent()`, read
 
 - Composition: `PlatformServerContext` (`modules/auth/src/server/composition.ts`) carries `agentTools: PlatformToolRegistry` (`register(tools)`, `list()`; `packages/kernel/src/tool-registry.ts`; a duplicate tool id throws at boot), `settings: ModuleSettingsRuntime`, and `capabilities: PlatformCapabilityRegistry` (`register(id, service)`, `get(id)`, `has(id)`; `packages/kernel/src/capability-registry.ts`). `platform/octane.config.ts` creates the registries, passes them to every module's `createServerComposition`, declares each `settings`, owns each `dispose`, then calls each `start`.
 - Ordering is a non-issue: `agents.core` (`modules/agents/src/platform.ts`) passes `tools: () => context.agentTools.list()` into `createAgentRuntime`, and the harness is built lazily in `start()`, which runs after every module has composed. Tools any module registers during its own compose are therefore visible, whatever the module order.
-- Helpers: import `defineApiAgentTool` from `@coreloom/harness/tool-adapters` and the types `AgentTool`, `AgentToolContext` from `@coreloom/harness/runtime`. Both subpaths are free of the Vercel AI SDK; only the harness root (`@coreloom/harness`) and `@coreloom/module-agents/server` pull it. `defineApiAgentTool` returns a frozen `AgentTool { id, transport: 'api', target, description, requiredPermissions, inputSchema?, execute }`. `defineCliAgentTool({ id, capability: { id, risk }, ... })` wraps a CLI capability and throws at definition time for `external` or `destructive` risk.
+- Helpers: import `defineApiAgentTool` from `@flowdular/harness/tool-adapters` and the types `AgentTool`, `AgentToolContext` from `@flowdular/harness/runtime`. Both subpaths are free of the Vercel AI SDK; only the harness root (`@flowdular/harness`) and `@flowdular/module-agents/server` pull it. `defineApiAgentTool` returns a frozen `AgentTool { id, transport: 'api', target, description, requiredPermissions, inputSchema?, execute }`. `defineCliAgentTool({ id, capability: { id, risk }, ... })` wraps a CLI capability and throws at definition time for `external` or `destructive` risk.
 - Skills inside `agents.core` are tenant database records behind `agents.skills.*`, appended to agent instructions. They are unrelated to `.ai/skills/**`, which are files for coding agents.
 - A read tool's output can also become a resolvable `{{ variable }}` for variable-aware fields: the tool's `requiredPermissions` is the variable's scope mask. Register a source on `platformVariableRegistry(context.capabilities)`, require an explicit record binding, and invoke the tool with the trusted tenant, actor permission snapshot, and signal. See the `variables` skill for the complete refusal contract.
 - ADR 0002 (`docs/adr/0002-durable-agent-execution.md`): instructions are data, tools are registered by the composition, each tool records an endpoint id or a CLI capability id plus its required permissions, runs are durable with leases.
@@ -33,8 +35,8 @@ also ship a ready business agent through `defineAgent()`, read
 
 ```ts
 // src/agent/tools.ts
-import { defineApiAgentTool } from '@coreloom/harness/tool-adapters';
-import type { AgentTool } from '@coreloom/harness/runtime';
+import { defineApiAgentTool } from '@flowdular/harness/tool-adapters';
+import type { AgentTool } from '@flowdular/harness/runtime';
 import { PARTY_PERMISSIONS } from '../acl/permissions.ts';
 import type { PartyKind } from '../domain/types.ts';
 import type { PartiesRuntime } from '../server/runtime.ts';
@@ -113,7 +115,7 @@ context.agentTools.register(partiesAgentTools(runtime));
 
 Export the factory from `src/server/index.ts` so tests and the composition reach it.
 
-Dependencies: `package.json` gets `"@coreloom/harness": "workspace:*"`. You do not import `@coreloom/module-agents` and you do not add `agents.core` to `module.json`: registration flows through the platform-provided registry on the composition context, not an import of agents.core. Adding a scenario bumps `spec/module.yaml` `specVersion` and `module.json` `version` together.
+Dependencies: `package.json` gets `"@flowdular/harness": "workspace:*"`. You do not import `@flowdular/module-agents` and you do not add `agents.core` to `module.json`: registration flows through the platform-provided registry on the composition context, not an import of agents.core. Adding a scenario bumps `spec/module.yaml` `specVersion` and `module.json` `version` together.
 
 ## 3. Execution model you design against (`packages/harness/src/runtime.ts`, `AgentHarness.execute`)
 
@@ -150,7 +152,7 @@ Module-local test (`tests/agent-tools.test.ts`) drives `execute` directly. It do
 not assert on `context.permissions`: RBAC is the harness's job, not the tool's.
 
 ```ts
-import type { AgentToolContext } from '@coreloom/harness/runtime';
+import type { AgentToolContext } from '@flowdular/harness/runtime';
 import { describe, expect, it } from 'vitest';
 import { partiesAgentTools } from '../src/agent/tools.ts';
 import { createPartiesRuntime } from '../src/server/runtime.ts';
@@ -195,13 +197,13 @@ nothing.
 
 ## 5. Settings a tool may depend on
 
-Declare `settings: defineModuleSettings({...})` (from `@coreloom/kernel`) by returning it from the composition, keep a reference to `PlatformServerContext.settings` in the tool factory, and read it per call as `settings.get<number>(context.tenantId, '<module>.core', 'key')` at request time, never at boot. Declared settings render in the module's drawer under Administration, Modules automatically.
+Declare `settings: defineModuleSettings({...})` (from `@flowdular/kernel`) by returning it from the composition, keep a reference to `PlatformServerContext.settings` in the tool factory, and read it per call as `settings.get<number>(context.tenantId, '<module>.core', 'key')` at request time, never at boot. Declared settings render in the module's drawer under Administration, Modules automatically.
 
 ## Pitfalls
 
 - A tool id equal to an endpoint id is a convention, not a requirement; keep them parallel for traceability. A read-by-id tool with no dedicated endpoint reuses the read endpoint id under the same permission.
 - `requiredPermissions` must be exactly the endpoint's permission; a weaker list lets a run bypass the endpoint's ACL because the tool calls the service directly.
 - Register once per composition; a duplicate id throws in the registry at boot and the platform does not start.
-- Import the helpers from `@coreloom/harness/tool-adapters` and `@coreloom/harness/runtime`; never import the harness root or `@coreloom/module-agents` from `src/index.ts` or the client, which would pull the Vercel AI SDK into the client bundle.
+- Import the helpers from `@flowdular/harness/tool-adapters` and `@flowdular/harness/runtime`; never import the harness root or `@flowdular/module-agents` from `src/index.ts` or the client, which would pull the Vercel AI SDK into the client bundle.
 - The harness validates only the schema subset; deep validation is the service's job. Pass input through the service so a tool cannot persist what the endpoint would reject.
 - Playground runs use the tenant's readiness-probed provider; the local simulation provider performs no network call and is the only provider in a fresh install.

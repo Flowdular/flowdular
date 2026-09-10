@@ -1,4 +1,4 @@
-import type { CommandEnvelope } from '@coreloom/cli-protocol';
+import type { CommandEnvelope } from '@flowdular/cli-protocol';
 
 interface CapabilityLine {
 	readonly id: string;

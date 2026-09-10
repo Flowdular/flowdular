@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: workflows.core
-specVersion: 0.1.0
+specVersion: 0.3.0
 status: approved
 name: Agentic Workflows
 description: Builds, publishes, simulates, and executes durable tenant-scoped DAG workflows whose versioned nodes coordinate pinned agents, deterministic decisions, validated data, and registered module actions.
@@ -13,11 +13,11 @@ capabilities:
   - integration
 dependencies:
   - id: system.core
-    range: ^0.1.0
+    range: 0.5.0
   - id: auth.core
-    range: ^0.6.0
+    range: 0.10.0
   - id: agents.core
-    range: ^0.6.0
+    range: 0.9.1
 tenancy: required
 locales:
   - en
@@ -58,6 +58,8 @@ invariants:
   - Interactive history and audit pages use opaque versioned cursors bound to tenant, filters, sort order, and the first-page snapshot boundary. Malformed, foreign, or mismatched cursors are refused instead of being interpreted loosely.
   - Usage and cost use a versioned typed rollup with integer token counts, integer micro-USD amounts, pricing snapshot references, provisional or final state, and explicit unpriced child and action counts. Dry-run has no rollup and simulation uses not-applicable rollups.
   - Every state transition named as audit-required commits its run event, projection update, and hash-chained workflow audit event atomically. Edge data events remain ordered run evidence unless their transition also changes audited execution state.
+  - Every request-time read and write runs on a tenant-scoped database handle. The worker claim poll and payload retention are the only cross-tenant reads, they run on a separate read-only role, and on PostgreSQL that role is granted only the columns that route the work under a policy of each table itself.
+  - A run found by the cross-tenant claim poll is read again and re-checked under the tenant that row named before it is claimed, and payload retention performs each redaction in its own transaction under the tenant that owns it.
 permissions:
   - id: workflows.definitions.read
     description: Read workflow definitions, drafts, published revisions, and validation reports in the active tenant.
@@ -219,3 +221,7 @@ acceptanceScenarios:
     given: A graph, mapping, input, output, fixture, retry policy, runtime, or lineage exceeds its declared bound.
     when: It is saved, published, simulated, or executed.
     then: The operation fails with a stable limit code before unbounded memory, storage, provider, or action work begins.
+  - id: WF-CLAIM-NARROW
+    given: Two workspaces each own a queued live run.
+    when: The worker polls for claimable work across tenants.
+    then: The poll returns only the workspace id, run id, mode, status, lease expiry and queue time; the graph, actor, permission snapshot and payload ciphertext are unreadable on that connection, it cannot write, and each run is claimed exactly once under its own workspace.

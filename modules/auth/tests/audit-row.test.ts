@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import {
 	registerModuleTranslations,
 	setActiveLocale,
-} from '@coreloom/client/i18n';
+} from '@flowdular/client/i18n';
 import translationsEn from '../translations/en.json';
 import translationsPl from '../translations/pl.json';
 import {

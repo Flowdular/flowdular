@@ -1,6 +1,6 @@
 {
 	"blueprint": "core-extend@1.0.0",
-	"package": "@coreloom/server",
+	"package": "@flowdular/server",
 	"consumersMigrated": [],
 	"adr": false,
 	"gates": []

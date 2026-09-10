@@ -1,4 +1,8 @@
-import type { ActorKind, ModuleSettingsStore } from '@coreloom/kernel';
+import type {
+	ActorKind,
+	ModuleSettingRecord,
+	ModuleSettingValue,
+} from '@flowdular/kernel';
 import type {
 	ApiTokenRecord,
 	AuditEvent,
@@ -164,45 +168,67 @@ export interface AuditActorEvent extends AuditEvent {
 	readonly actorRunId: string | null;
 }
 
-export interface AuthRepository extends ModuleSettingsStore {
-	isTenantSlugTaken(slug: string): boolean;
-	findTenant(reference: string): TenantSummary | null;
-	listTenants(): readonly TenantSummary[];
-	renameTenant(tenantId: string, name: string): TenantSummary | null;
-	listOwnerMemberships(): readonly {
-		readonly accountId: string;
-		readonly tenantId: string;
-	}[];
-	findAccountByEmail(normalizedEmail: string): AccountCredential | null;
-	findAccountCredentialById(accountId: string): AccountCredential | null;
+/**
+ * auth.core speaks to one PostgreSQL namespace through two handles: a
+ * tenant-scoped runtime handle for everything a workspace owns, and a
+ * read-only background handle for the lookups that arrive with a key and no
+ * workspace at all. Every method returns a promise because both do.
+ */
+export interface AuthRepository {
+	isTenantSlugTaken(slug: string): Promise<boolean>;
+	findTenant(reference: string): Promise<TenantSummary | null>;
+	listTenants(): Promise<readonly TenantSummary[]>;
+	renameTenant(tenantId: string, name: string): Promise<TenantSummary | null>;
+	listOwnerMemberships(): Promise<
+		readonly {
+			readonly accountId: string;
+			readonly tenantId: string;
+		}[]
+	>;
+	findAccountByEmail(
+		normalizedEmail: string,
+	): Promise<AccountCredential | null>;
+	findAccountCredentialById(
+		accountId: string,
+	): Promise<AccountCredential | null>;
 	updatePasswordHash(
 		accountId: string,
 		passwordHash: string,
 		changeRequired: boolean,
-	): void;
-	updateAccountDisplayName(accountId: string, displayName: string): void;
-	updateAccountStatus(accountId: string, status: 'active' | 'disabled'): void;
+	): Promise<void>;
+	updateAccountDisplayName(
+		accountId: string,
+		displayName: string,
+	): Promise<void>;
+	updateAccountStatus(
+		accountId: string,
+		status: 'active' | 'disabled',
+	): Promise<void>;
 	deleteAccountSessions(
 		accountId: string,
 		exceptTokenHash: string | null,
-	): void;
-	deleteMembershipSessions(accountId: string, tenantId: string): void;
-	deleteMembership(accountId: string, tenantId: string): boolean;
-	countMemberships(accountId: string): number;
-	deleteAccount(accountId: string): void;
-	countActiveOwners(tenantId: string): number;
+	): Promise<void>;
+	deleteMembershipSessions(accountId: string, tenantId: string): Promise<void>;
+	deleteMembership(accountId: string, tenantId: string): Promise<boolean>;
+	countMemberships(accountId: string): Promise<number>;
+	deleteAccount(accountId: string): Promise<void>;
+	countActiveOwners(tenantId: string): Promise<number>;
 	findAccountMembership(
 		accountId: string,
 		tenantId: string,
-	): AccountCredential | null;
-	listTenantAccess(accountId: string): readonly AuthTenantAccess[];
-	listTenantMembers(tenantId: string): readonly TenantMember[];
-	listTenantScopes(tenantId: string): readonly string[];
-	createAccountWithTenant(record: CreateAccountRecord): AccountCredential;
-	createAccountInTenant(record: CreateAccountInTenantRecord): AccountCredential;
+	): Promise<AccountCredential | null>;
+	listTenantAccess(accountId: string): Promise<readonly AuthTenantAccess[]>;
+	listTenantMembers(tenantId: string): Promise<readonly TenantMember[]>;
+	listTenantScopes(tenantId: string): Promise<readonly string[]>;
+	createAccountWithTenant(
+		record: CreateAccountRecord,
+	): Promise<AccountCredential>;
+	createAccountInTenant(
+		record: CreateAccountInTenantRecord,
+	): Promise<AccountCredential>;
 	createTenantMembership(
 		record: CreateTenantMembershipRecord,
-	): AccountCredential;
+	): Promise<AccountCredential>;
 	createMembershipInTenant(record: {
 		readonly accountId: string;
 		readonly tenantId: string;
@@ -210,35 +236,49 @@ export interface AuthRepository extends ModuleSettingsStore {
 		readonly roleId: string | null;
 		readonly scopes: readonly string[];
 		readonly createdAt: number;
-	}): AccountCredential;
-	createApiToken(record: CreateApiTokenRecord): ApiTokenRecord;
-	listApiTokens(tenantId: string): readonly ApiTokenRecord[];
-	findApiTokenByHash(tokenHash: string): ApiTokenRecord | null;
-	touchApiToken(id: string, usedAt: number): void;
+	}): Promise<AccountCredential>;
+	createApiToken(record: CreateApiTokenRecord): Promise<ApiTokenRecord>;
+	listApiTokens(tenantId: string): Promise<readonly ApiTokenRecord[]>;
+	findApiTokenByHash(tokenHash: string): Promise<ApiTokenRecord | null>;
+	/* The tenant comes from the record the lookup already returned, so touching
+	   a token costs no second cross-tenant read. */
+	touchApiToken(tenantId: string, id: string, usedAt: number): Promise<void>;
 	revokeApiToken(
 		tenantId: string,
 		id: string,
 		revokedAt: number,
 		revokedBy: string,
-	): ApiTokenRecord | null;
+	): Promise<ApiTokenRecord | null>;
 	insertMembershipScopes(
 		accountId: string,
 		tenantId: string,
 		scopes: readonly string[],
-	): void;
+	): Promise<void>;
+	/** Atomically extends the built-in owner role and current owners of one tenant.
+	 * Returns only membership scopes inserted by this call. */
+	grantTenantOwnerScopes(
+		tenantId: string,
+		scopes: readonly string[],
+		updatedAt: number,
+	): Promise<
+		readonly {
+			readonly accountId: string;
+			readonly granted: readonly string[];
+		}[]
+	>;
 	replaceMembershipScopes(
 		accountId: string,
 		tenantId: string,
 		scopes: readonly string[],
-	): void;
+	): Promise<void>;
 	updateMembershipRole(
 		accountId: string,
 		tenantId: string,
 		role: string,
 		roleId: string | null,
 		scopes: readonly string[],
-	): void;
-	createSession(record: CreateSessionRecord): void;
+	): Promise<void>;
+	createSession(record: CreateSessionRecord): Promise<void>;
 	/* A read older than idleMs since the last touch resolves to null; a
 	   successful read refreshes last_seen_at at most once per touchIntervalMs. */
 	findSession(
@@ -246,60 +286,68 @@ export interface AuthRepository extends ModuleSettingsStore {
 		now: number,
 		idleMs: number,
 		touchIntervalMs: number,
-	): AuthSession | null;
+	): Promise<AuthSession | null>;
 	listAccountSessions(
 		accountId: string,
 		now: number,
-	): readonly SessionSummary[];
-	deleteSession(tokenHash: string): void;
-	deleteSessionById(accountId: string, id: string): boolean;
-	deleteExpiredSessions(now: number): number;
-	createPasswordResetToken(record: PasswordResetTokenRecord): void;
-	consumePasswordResetToken(tokenHash: string, now: number): string | null;
-	createTenantInvitation(record: TenantInvitationRecord): void;
+	): Promise<readonly SessionSummary[]>;
+	deleteSession(tokenHash: string): Promise<void>;
+	deleteSessionById(accountId: string, id: string): Promise<boolean>;
+	deleteExpiredSessions(now: number): Promise<number>;
+	createPasswordResetToken(record: PasswordResetTokenRecord): Promise<void>;
+	consumePasswordResetToken(
+		tokenHash: string,
+		now: number,
+	): Promise<string | null>;
+	createTenantInvitation(record: TenantInvitationRecord): Promise<void>;
 	consumeTenantInvitation(
 		tokenHash: string,
 		now: number,
-	): {
+	): Promise<{
 		readonly tenantId: string;
 		readonly email: string;
 		readonly normalizedEmail: string;
 		readonly roleKey: string;
-	} | null;
+	} | null>;
 	upsertMfaTotp(
 		accountId: string,
 		secretCiphertext: string,
 		createdAt: number,
-	): void;
-	findMfaTotp(accountId: string): {
+	): Promise<void>;
+	findMfaTotp(accountId: string): Promise<{
 		readonly secretCiphertext: string;
 		readonly confirmedAt: number | null;
-	} | null;
-	confirmMfaTotp(accountId: string, confirmedAt: number): void;
+	} | null>;
+	confirmMfaTotp(accountId: string, confirmedAt: number): Promise<void>;
 	replaceMfaRecoveryCodes(
 		accountId: string,
 		codeHashes: readonly string[],
 		createdAt: number,
-	): void;
-	consumeMfaRecoveryCode(accountId: string, codeHash: string): boolean;
-	createMfaChallenge(record: MfaChallengeRecord): void;
+	): Promise<void>;
+	consumeMfaRecoveryCode(accountId: string, codeHash: string): Promise<boolean>;
+	createMfaChallenge(record: MfaChallengeRecord): Promise<void>;
 	consumeMfaChallenge(
 		tokenHash: string,
 		now: number,
-	): { readonly accountId: string; readonly tenantId: string } | null;
-	findSignInFailure(normalizedEmail: string): SignInFailureRecord | null;
+	): Promise<{
+		readonly accountId: string;
+		readonly tenantId: string;
+	} | null>;
+	findSignInFailure(
+		normalizedEmail: string,
+	): Promise<SignInFailureRecord | null>;
 	recordSignInFailure(
 		normalizedEmail: string,
 		now: number,
 		lockThreshold: number,
 		lockMs: number,
 		retentionMs: number,
-	): SignInFailureRecord;
-	clearSignInFailures(normalizedEmail: string): void;
-	listRoles(tenantId: string): readonly TenantRole[];
-	findRole(tenantId: string, id: string): TenantRole | null;
-	findRoleByKey(tenantId: string, key: string): TenantRole | null;
-	createRole(record: CreateRoleRecord): TenantRole;
+	): Promise<SignInFailureRecord>;
+	clearSignInFailures(normalizedEmail: string): Promise<void>;
+	listRoles(tenantId: string): Promise<readonly TenantRole[]>;
+	findRole(tenantId: string, id: string): Promise<TenantRole | null>;
+	findRoleByKey(tenantId: string, key: string): Promise<TenantRole | null>;
+	createRole(record: CreateRoleRecord): Promise<TenantRole>;
 	updateRole(
 		tenantId: string,
 		id: string,
@@ -309,11 +357,20 @@ export interface AuthRepository extends ModuleSettingsStore {
 			readonly scopes: readonly string[];
 		},
 		updatedAt: number,
-	): TenantRole | null;
-	deleteRole(tenantId: string, id: string): boolean;
-	countRoleMemberships(tenantId: string, roleId: string): number;
-	appendAudit(record: AuditRecord): void;
-	queryAudit(query: AuditQuery): readonly AuditActorEvent[];
+	): Promise<TenantRole | null>;
+	deleteRole(tenantId: string, id: string): Promise<boolean>;
+	countRoleMemberships(tenantId: string, roleId: string): Promise<number>;
+	appendAudit(record: AuditRecord): Promise<void>;
+	queryAudit(query: AuditQuery): Promise<readonly AuditActorEvent[]>;
+	/* The stored module settings of one tenant and module. The synchronous
+	   kernel ModuleSettingsStore is served from a snapshot over these three;
+	   see services/settings-store.ts. */
+	loadSettings(
+		tenantId: string,
+		moduleId: string,
+	): Promise<Readonly<Record<string, ModuleSettingValue>>>;
+	saveSetting(record: ModuleSettingRecord): Promise<void>;
+	clearSetting(tenantId: string, moduleId: string, key: string): Promise<void>;
 }
 
 export class DuplicateAccountError extends Error {

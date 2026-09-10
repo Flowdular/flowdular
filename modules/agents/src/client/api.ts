@@ -1,5 +1,5 @@
-import type { AgentExecutionEvent } from '@coreloom/harness';
-import { t } from '@coreloom/client/i18n';
+import type { AgentExecutionEvent } from '@flowdular/harness';
+import { t } from '@flowdular/client/i18n';
 import {
 	appendRunTimeline,
 	timelineSequence,
@@ -10,19 +10,19 @@ import type {
 	AgentProviderConnection,
 	AgentRun,
 	AgentRunTimeline,
-	AgentSkill,
+	AgentProcedure,
 	AgentUsageSummary,
 	AgentWorkerStatus,
 	CreateAgentProviderInput,
 	CreateAgentInput,
-	CreateAgentSkillInput,
+	CreateAgentProcedureInput,
 	EnqueueAgentRunInput,
 	ModuleAgentView,
 	TenantAgentView,
 	UpdateAgentProviderInput,
 	UpdateAgentInput,
 	UpdateModuleAgentBindingInput,
-	UpdateAgentSkillInput,
+	UpdateAgentProcedureInput,
 } from '../domain/types.ts';
 
 interface ErrorEnvelope {
@@ -49,7 +49,7 @@ export async function loadAgents(): Promise<{
 	readonly moduleAgents: readonly ModuleAgentView[];
 	readonly providers: readonly AgentProviderConnection[];
 	readonly tools: readonly string[];
-	readonly skills: readonly AgentSkill[];
+	readonly procedures: readonly AgentProcedure[];
 }> {
 	const response = await fetch('/api/agents', {
 		headers: { accept: 'application/json' },
@@ -200,53 +200,56 @@ export async function deleteAgent(
 	await payload<{ readonly deleted: true }>(response);
 }
 
-export async function createAgentSkill(
-	input: CreateAgentSkillInput,
+export async function createAgentProcedure(
+	input: CreateAgentProcedureInput,
 	csrfToken: string,
-): Promise<AgentSkill> {
-	const response = await fetch('/api/agent-skills', {
+): Promise<AgentProcedure> {
+	const response = await fetch('/api/agent-procedures', {
 		method: 'POST',
 		headers: mutationHeaders(csrfToken),
 		credentials: 'same-origin',
 		body: JSON.stringify(input),
 	});
-	return (await payload<{ readonly skill: AgentSkill }>(response)).skill;
+	return (await payload<{ readonly procedure: AgentProcedure }>(response))
+		.procedure;
 }
 
-export async function updateAgentSkill(
-	skillId: string,
-	input: UpdateAgentSkillInput,
+export async function updateAgentProcedure(
+	procedureId: string,
+	input: UpdateAgentProcedureInput,
 	csrfToken: string,
-): Promise<AgentSkill> {
-	const response = await fetch('/api/agent-skills/update', {
+): Promise<AgentProcedure> {
+	const response = await fetch('/api/agent-procedures/update', {
 		method: 'POST',
 		headers: mutationHeaders(csrfToken),
 		credentials: 'same-origin',
-		body: JSON.stringify({ id: skillId, ...input }),
+		body: JSON.stringify({ id: procedureId, ...input }),
 	});
-	return (await payload<{ readonly skill: AgentSkill }>(response)).skill;
+	return (await payload<{ readonly procedure: AgentProcedure }>(response))
+		.procedure;
 }
 
-export async function archiveAgentSkill(
+export async function archiveAgentProcedure(
 	id: string,
 	expectedRevision: number,
 	csrfToken: string,
-): Promise<AgentSkill> {
-	const response = await fetch('/api/agent-skills/archive', {
+): Promise<AgentProcedure> {
+	const response = await fetch('/api/agent-procedures/archive', {
 		method: 'POST',
 		headers: mutationHeaders(csrfToken),
 		credentials: 'same-origin',
 		body: JSON.stringify({ id, expectedRevision }),
 	});
-	return (await payload<{ readonly skill: AgentSkill }>(response)).skill;
+	return (await payload<{ readonly procedure: AgentProcedure }>(response))
+		.procedure;
 }
 
-export async function deleteAgentSkill(
+export async function deleteAgentProcedure(
 	id: string,
 	expectedRevision: number,
 	csrfToken: string,
 ): Promise<void> {
-	const response = await fetch('/api/agent-skills/delete', {
+	const response = await fetch('/api/agent-procedures/delete', {
 		method: 'POST',
 		headers: mutationHeaders(csrfToken),
 		credentials: 'same-origin',

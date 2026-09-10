@@ -1,3 +1,4 @@
+import { reviewFixture, fixtureGates } from './support/auto-review.ts';
 import {
 	mkdir,
 	mkdtemp,
@@ -10,7 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_AGENT_ROLES } from '@coreloom/coding-agent';
+import { DEFAULT_AGENT_ROLES } from '@flowdular/coding-agent';
 import {
 	assertBrief,
 	classifyByRules,
@@ -53,9 +54,9 @@ import { collectDiffs } from '../src/server/turns.ts';
 import { hashSpec } from '../src/server/spec.ts';
 
 async function workspace(): Promise<string> {
-	const root = await mkdtemp(join(tmpdir(), 'coreloom-sandbox-'));
+	const root = await mkdtemp(join(tmpdir(), 'flowdular-sandbox-'));
 	await writeFile(
-		join(root, 'coreloom.json'),
+		join(root, 'flowdular.json'),
 		JSON.stringify({ schemaVersion: 1, modules: { enabled: [] } }),
 		'utf8',
 	);
@@ -96,8 +97,8 @@ describe('sandbox configuration', () => {
 
 	it('refuses symlinked local secret and configuration files', async () => {
 		const root = await workspace();
-		const outside = await mkdtemp(join(tmpdir(), 'coreloom-sandbox-outside-'));
-		const sandboxDirectory = join(root, '.coreloom', 'sandbox');
+		const outside = await mkdtemp(join(tmpdir(), 'flowdular-sandbox-outside-'));
+		const sandboxDirectory = join(root, '.flowdular', 'sandbox');
 		await mkdir(sandboxDirectory, { recursive: true });
 		const outsideKey = join(outside, 'secret.key');
 		await writeFile(outsideKey, Buffer.alloc(32, 7).toString('base64'), 'utf8');
@@ -127,9 +128,9 @@ describe('sandbox configuration', () => {
 
 	it('does not mistake materialized GitHub defaults for a local override', async () => {
 		const root = await workspace();
-		await mkdir(join(root, '.coreloom/sandbox'), { recursive: true });
+		await mkdir(join(root, '.flowdular/sandbox'), { recursive: true });
 		await writeFile(
-			join(root, '.coreloom/sandbox/config.json'),
+			join(root, '.flowdular/sandbox/config.json'),
 			JSON.stringify({
 				...DEFAULT_CONFIGURATION,
 				github: {
@@ -152,15 +153,15 @@ describe('sandbox configuration', () => {
 
 	it('preserves a local GitHub override written before the marker existed', async () => {
 		const root = await workspace();
-		await mkdir(join(root, '.coreloom/sandbox'), { recursive: true });
+		await mkdir(join(root, '.flowdular/sandbox'), { recursive: true });
 		await writeFile(
-			join(root, '.coreloom/sandbox/config.json'),
+			join(root, '.flowdular/sandbox/config.json'),
 			JSON.stringify({
 				...DEFAULT_CONFIGURATION,
 				github: {
 					enabled: true,
 					remote: 'upstream',
-					repository: 'example/coreloom',
+					repository: 'example/flowdular',
 					baseBranch: 'develop',
 					branchPrefix: 'changes',
 					mode: 'direct',
@@ -176,19 +177,19 @@ describe('sandbox configuration', () => {
 	});
 
 	it('uses the CL sandbox mode contract and ignores the removed legacy name', async () => {
-		const current = process.env.CL_SANDBOX_MODE;
-		const legacy = process.env.CORELOOM_SANDBOX_MODE;
-		process.env.CL_SANDBOX_MODE = 'self-hosted';
-		process.env.CORELOOM_SANDBOX_MODE = 'loopback';
+		const current = process.env.FD_SANDBOX_MODE;
+		const legacy = process.env.FLOWDULAR_SANDBOX_MODE;
+		process.env.FD_SANDBOX_MODE = 'self-hosted';
+		process.env.FLOWDULAR_SANDBOX_MODE = 'loopback';
 		try {
 			expect((await loadSandboxConfiguration(await workspace())).mode).toBe(
 				'self-hosted',
 			);
 		} finally {
-			if (current === undefined) delete process.env.CL_SANDBOX_MODE;
-			else process.env.CL_SANDBOX_MODE = current;
-			if (legacy === undefined) delete process.env.CORELOOM_SANDBOX_MODE;
-			else process.env.CORELOOM_SANDBOX_MODE = legacy;
+			if (current === undefined) delete process.env.FD_SANDBOX_MODE;
+			else process.env.FD_SANDBOX_MODE = current;
+			if (legacy === undefined) delete process.env.FLOWDULAR_SANDBOX_MODE;
+			else process.env.FLOWDULAR_SANDBOX_MODE = legacy;
 		}
 	});
 
@@ -233,7 +234,7 @@ describe('sandbox sessions', () => {
 		]);
 		expect(
 			JSON.parse(
-				await readFile(join(paths.workspace, 'coreloom.json'), 'utf8'),
+				await readFile(join(paths.workspace, 'flowdular.json'), 'utf8'),
 			),
 		).toMatchObject({ modules: { enabled: ['profile.core'] } });
 		expect(
@@ -244,7 +245,7 @@ describe('sandbox sessions', () => {
 		).toContain('  - modules/*');
 		expect(
 			JSON.parse(await readFile(join(paths.workspace, 'package.json'), 'utf8')),
-		).toMatchObject({ name: 'coreloom-session', private: true });
+		).toMatchObject({ name: 'flowdular-session', private: true });
 		expect((await listSessions(root)).map((entry) => entry.id)).toEqual([
 			session.id,
 		]);
@@ -255,13 +256,13 @@ describe('sandbox sessions', () => {
 		await mkdir(join(root, 'packages', 'server'), { recursive: true });
 		await writeFile(
 			join(root, 'packages', 'server', 'package.json'),
-			JSON.stringify({ name: '@coreloom/server' }),
+			JSON.stringify({ name: '@flowdular/server' }),
 			'utf8',
 		);
 		await mkdir(join(root, 'modules', 'auth'), { recursive: true });
 		await writeFile(
 			join(root, 'modules', 'auth', 'package.json'),
-			JSON.stringify({ name: '@coreloom/module-auth' }),
+			JSON.stringify({ name: '@flowdular/module-auth' }),
 			'utf8',
 		);
 		await writeFile(
@@ -286,9 +287,9 @@ describe('sandbox sessions', () => {
 			'utf8',
 		);
 		expect(manifest).toContain(
-			`'@coreloom/server': 'link:${join(root, 'packages', 'server')}'`,
+			`'@flowdular/server': 'link:${join(root, 'packages', 'server')}'`,
 		);
-		expect(manifest).not.toContain('@coreloom/module-auth');
+		expect(manifest).not.toContain('@flowdular/module-auth');
 	});
 
 	it('copies an existing module and keeps a pristine base for the diff', async () => {
@@ -376,7 +377,7 @@ describe('sandbox sessions', () => {
 			['catalog', 'src/index.ts'],
 		]);
 		const enabled = JSON.parse(
-			await readFile(join(paths.workspace, 'coreloom.json'), 'utf8'),
+			await readFile(join(paths.workspace, 'flowdular.json'), 'utf8'),
 		) as { modules: { enabled: string[] } };
 		expect(enabled.modules.enabled).toEqual(['catalog.core', 'parties.core']);
 	});
@@ -461,12 +462,12 @@ describe('session identifiers', () => {
 			);
 		}
 		expect(await readFile(join(root, 'keep.txt'), 'utf8')).toBe('keep');
-		await expect(stat(join(root, 'coreloom.json'))).resolves.toBeDefined();
+		await expect(stat(join(root, 'flowdular.json'))).resolves.toBeDefined();
 	});
 
 	it('refuses to delete through a symlink planted in the sessions directory', async () => {
 		const { root, session } = await sessionRoot();
-		const outside = await mkdtemp(join(tmpdir(), 'coreloom-outside-'));
+		const outside = await mkdtemp(join(tmpdir(), 'flowdular-outside-'));
 		await writeFile(join(outside, 'victim.txt'), 'victim', 'utf8');
 		const paths = sessionPaths(root, session.id, session.moduleSuffix);
 		const planted = '00000000-0000-4000-8000-000000000001';
@@ -581,6 +582,7 @@ describe('delivery', () => {
 				specApprovedAt: Date.now(),
 			})),
 		});
+		await reviewFixture(root, approved);
 		return { root, session: approved };
 	}
 
@@ -614,13 +616,7 @@ describe('delivery', () => {
 		session,
 		capabilities: ['sandbox.access.use', 'sandbox.modules.eject'],
 		platformUrl: 'http://127.0.0.1:4310',
-		runGates: async (gates) =>
-			gates.map((id) => ({
-				...PASSED_GATE,
-				id: id as typeof PASSED_GATE.id,
-				status: gateStatus,
-				output: gateStatus === 'failed' ? `${id} failed` : '',
-			})),
+		runGates: async (gates) => fixtureGates(session, gates, gateStatus),
 		commands,
 	});
 
@@ -989,19 +985,19 @@ describe('turn routing', () => {
 
 describe('declared dependencies', () => {
 	it('reports a package the sources import but the manifest omits', async () => {
-		const root = await mkdtemp(join(tmpdir(), 'coreloom-deps-'));
+		const root = await mkdtemp(join(tmpdir(), 'flowdular-deps-'));
 		await mkdir(join(root, 'src/client'), { recursive: true });
 		await writeFile(
 			join(root, 'package.json'),
-			JSON.stringify({ dependencies: { '@coreloom/server': 'workspace:*' } }),
+			JSON.stringify({ dependencies: { '@flowdular/server': 'workspace:*' } }),
 			'utf8',
 		);
 		await writeFile(
 			join(root, 'src/client/View.tsrx'),
 			[
 				"import { readFile } from 'node:fs/promises';",
-				"import { Button } from '@coreloom/ui';",
-				"import { defineEndpoint } from '@coreloom/server';",
+				"import { Button } from '@flowdular/ui';",
+				"import { defineEndpoint } from '@flowdular/server';",
 				"import { useValue } from 'segment-state';",
 				"import { local } from './state.ts';",
 				'export const view = [readFile, Button, defineEndpoint, useValue, local];',
@@ -1011,21 +1007,21 @@ describe('declared dependencies', () => {
 
 		const report = await checkDeclaredDependencies(root);
 		expect(report.imported).toEqual([
-			'@coreloom/server',
-			'@coreloom/ui',
+			'@flowdular/server',
+			'@flowdular/ui',
 			'segment-state',
 		]);
-		expect(report.missing).toEqual(['@coreloom/ui', 'segment-state']);
+		expect(report.missing).toEqual(['@flowdular/ui', 'segment-state']);
 	});
 
 	it('accepts a module whose manifest covers every import', async () => {
-		const root = await mkdtemp(join(tmpdir(), 'coreloom-deps-'));
+		const root = await mkdtemp(join(tmpdir(), 'flowdular-deps-'));
 		await mkdir(join(root, 'src'), { recursive: true });
 		await writeFile(
 			join(root, 'package.json'),
 			JSON.stringify({
 				dependencies: { octane: '0.1.50' },
-				devDependencies: { vitest: '4.1.10' },
+				devDependencies: { vitest: '4.1.11' },
 			}),
 			'utf8',
 		);
@@ -1044,14 +1040,14 @@ describe('boot shell', () => {
 			new URL('../index.html', import.meta.url),
 			'utf8',
 		);
-		expect(html.indexOf('id="coreloom-splash"')).toBeLessThan(
+		expect(html.indexOf('id="flowdular-splash"')).toBeLessThan(
 			html.indexOf('id="root"'),
 		);
 		expect(html).toContain('role="status"');
-		expect(html).toContain("window.addEventListener('coreloom:ready', finish");
+		expect(html).toContain("window.addEventListener('flowdular:ready', finish");
 		expect(html).toContain("'Probing coding agents'");
 		expect(html).toMatch(
-			/<noscript[\s\S]*\.coreloom-splash\s*{\s*display:\s*none;/,
+			/<noscript[\s\S]*\.flowdular-splash\s*{\s*display:\s*none;/,
 		);
 	});
 });

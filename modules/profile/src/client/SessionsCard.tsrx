@@ -6,8 +6,8 @@ import {
 	TableCard,
 	Tag,
 	type TableColumn,
-} from '@coreloom/ui';
-import { activeLocale, t } from '@coreloom/client';
+} from '@flowdular/ui';
+import { activeLocale, t } from '@flowdular/client';
 import { cell, createStore, useValue } from 'segment-state';
 import {
 	loadOwnSessions,

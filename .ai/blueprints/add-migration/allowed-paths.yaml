@@ -1,7 +1,7 @@
 schemaVersion: 1
 write:
   - modules/{module}/src/services/migration.ts
-  - modules/{module}/src/services/sqlite-repository.ts
+  - modules/{module}/src/services/database-repository.ts
   - modules/{module}/src/services/repository.ts
   - modules/{module}/src/domain/types.ts
   - modules/{module}/migrations/**
@@ -17,7 +17,7 @@ deny:
   - docs/**
   - specs/**
   - .ai/**
-  - coreloom.json
+  - flowdular.json
   - pnpm-workspace.yaml
   - modules/!({module})/**
   - modules/{module}/src/services/migration.ts: editing an already shipped constant

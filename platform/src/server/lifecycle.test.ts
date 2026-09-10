@@ -6,6 +6,44 @@ import {
 } from './lifecycle.ts';
 
 describe('platform runtime lifecycle', () => {
+	it.each(['close', 'cancel', 'error', 'abort'] as const)(
+		'keeps resources alive until a response stream finishes through %s',
+		async (mode) => {
+			const lifecycle = createPlatformRuntimeLifecycle();
+			const disposed = vi.fn();
+			lifecycle.add(disposed);
+			const abort = new AbortController();
+			let stream!: ReadableStreamDefaultController<Uint8Array>;
+			const response = await lifecycle.middleware(
+				{
+					request: new Request('https://test/', { signal: abort.signal }),
+				} as never,
+				async () =>
+					new Response(
+						new ReadableStream({
+							start(controller) {
+								stream = controller;
+							},
+						}),
+					),
+			);
+			const retired = lifecycle.retire();
+			await Promise.resolve();
+			expect(disposed).not.toHaveBeenCalled();
+			if (mode === 'cancel') await response.body!.cancel();
+			else if (mode === 'abort') abort.abort();
+			else if (mode === 'error') {
+				stream.error(new Error('stream failed'));
+				await expect(response.text()).rejects.toThrow('stream failed');
+			} else {
+				stream.enqueue(new TextEncoder().encode('done'));
+				stream.close();
+				expect(await response.text()).toBe('done');
+			}
+			await retired;
+			expect(disposed).toHaveBeenCalledOnce();
+		},
+	);
 	it('waits for an active request and disposes resources once in reverse order', async () => {
 		const lifecycle = createPlatformRuntimeLifecycle();
 		const events: string[] = [];
@@ -28,7 +66,7 @@ describe('platform runtime lifecycle', () => {
 		await Promise.resolve();
 		expect(events).toEqual(['request']);
 		release?.();
-		await request;
+		await (await request).text();
 		await retired;
 		expect(events).toEqual(['request', 'module', 'auth']);
 

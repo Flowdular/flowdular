@@ -1,25 +1,29 @@
+import { findModuleFiles } from './module-files.ts';
 import { readFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { failure, success, type CommandEnvelope } from '@coreloom/cli-protocol';
-import type { ModuleManifest } from '@coreloom/contracts';
 import {
-	MIGRATION_LEDGER_TABLE,
-	moduleMigrationChecksum,
-	moduleMigrationStatus,
-	runModuleMigrations,
-	type MigrationDatabase,
-	type ModuleMigration,
-} from '@coreloom/kernel';
-import { coreloomLocalDataPath } from '@coreloom/kernel/legacy-local-state';
+	failure,
+	success,
+	type CommandEnvelope,
+} from '@flowdular/cli-protocol';
+import type { ModuleManifest } from '@flowdular/contracts';
+import {
+	databaseMigrationStatus,
+	databaseProviderConfigFromEnvironment,
+	runDatabaseMigrations,
+	type ConfiguredDatabaseProvider,
+	type DatabaseMigration,
+} from '@flowdular/database';
+import { createCliDatabaseProvider } from './database.ts';
+import { moduleMigrationAudit } from './migration-audit.ts';
 import { findNamedFiles } from './validation.ts';
 import type { Workspace } from './workspace.ts';
 
 export interface MigrationModule {
 	readonly moduleId: string;
-	readonly databasePath: string;
-	readonly migrations: readonly ModuleMigration[];
+	readonly moduleDirectory: string;
+	readonly databaseMigrations: readonly DatabaseMigration[];
 }
 
 export interface UnmanagedModule {
@@ -32,22 +36,6 @@ export interface MigrationModules {
 	readonly unmanaged: readonly UnmanagedModule[];
 }
 
-/* Mirrors src/server/runtime.ts in every module: one SQLite file per module
-   namespace, overridable per module by an environment variable. */
-function databasePath(workspaceRoot: string, moduleId: string): string {
-	const namespace = moduleId.split('.')[0] ?? moduleId;
-	const override = process.env[`CL_${namespace.toUpperCase()}_DATABASE`];
-	if (override) return override;
-	return process.env.NODE_ENV === 'production'
-		? `/data/${namespace}.db`
-		: coreloomLocalDataPath(workspaceRoot, `${namespace}.db`);
-}
-
-function displayPath(workspaceRoot: string, path: string): string {
-	const inside = relative(workspaceRoot, path);
-	return inside.startsWith('..') || isAbsolute(inside) ? path : inside;
-}
-
 export async function loadMigrationModules(
 	workspace: Workspace,
 	moduleId?: string,
@@ -56,9 +44,7 @@ export async function loadMigrationModules(
 		(workspace.config.modules as { enabled?: string[] } | undefined)?.enabled ??
 			[],
 	);
-	const manifests = (
-		await findNamedFiles(workspace.root, 'module.json')
-	).filter((path) => path.includes('/modules/'));
+	const manifests = await findModuleFiles(workspace);
 	const managed: MigrationModule[] = [];
 	const unmanaged: UnmanagedModule[] = [];
 	for (const manifestPath of manifests) {
@@ -68,53 +54,29 @@ export async function loadMigrationModules(
 		if (!enabled.has(manifest.id)) continue;
 		if (moduleId && manifest.id !== moduleId) continue;
 		const entry = join(dirname(manifestPath), 'src/services/migration.ts');
-		let migrations: unknown;
+		let databaseMigrations: unknown;
 		try {
-			({ migrations } = (await import(pathToFileURL(entry).href)) as {
-				migrations?: unknown;
+			({ databaseMigrations } = (await import(pathToFileURL(entry).href)) as {
+				databaseMigrations?: unknown;
 			});
 		} catch {
 			continue;
 		}
-		if (!Array.isArray(migrations)) {
+		if (!Array.isArray(databaseMigrations)) {
 			unmanaged.push({
 				moduleId: manifest.id,
 				reason:
-					'src/services/migration.ts exports no "migrations" list; the module still runs SQL constants on repository construction.',
+					'src/services/migration.ts exports no "databaseMigrations" list, so the migration runner owns none of its schema.',
 			});
 			continue;
 		}
 		managed.push({
 			moduleId: manifest.id,
-			databasePath: databasePath(workspace.root, manifest.id),
-			migrations: migrations as readonly ModuleMigration[],
+			moduleDirectory: dirname(manifestPath),
+			databaseMigrations: databaseMigrations as readonly DatabaseMigration[],
 		});
 	}
 	return { managed, unmanaged };
-}
-
-function open(path: string, readOnly: boolean): DatabaseSync {
-	return new DatabaseSync(path, { readOnly, timeout: 5000 });
-}
-
-interface LedgerRow {
-	readonly id: string;
-	readonly checksum: string;
-	readonly applied_at: number;
-}
-
-function ledgerRows(database: MigrationDatabase): readonly LedgerRow[] {
-	const present = database
-		.prepare(
-			'SELECT 1 AS present FROM sqlite_master WHERE type = ? AND name = ?',
-		)
-		.get('table', MIGRATION_LEDGER_TABLE);
-	if (present === undefined) return [];
-	return database
-		.prepare(
-			`SELECT id, checksum, applied_at FROM ${MIGRATION_LEDGER_TABLE} ORDER BY id`,
-		)
-		.all() as readonly LedgerRow[];
 }
 
 function moduleFilterFailure(
@@ -133,6 +95,32 @@ function moduleFilterFailure(
 	);
 }
 
+/* Every module shares the one database the application opens, so its state is
+   read through the configured provider exactly as the application reads it.
+   One provider serves every module in the command. */
+async function withProviderModules<T>(
+	workspace: Workspace,
+	modules: readonly MigrationModule[],
+	run: (
+		databases: ConfiguredDatabaseProvider,
+		module: MigrationModule,
+	) => Promise<T>,
+): Promise<readonly T[]> {
+	if (modules.length === 0) return [];
+	const config = databaseProviderConfigFromEnvironment(
+		process.env,
+		workspace.root,
+	);
+	const databases = createCliDatabaseProvider(config);
+	try {
+		const results: T[] = [];
+		for (const module of modules) results.push(await run(databases, module));
+		return results;
+	} finally {
+		await databases.dispose();
+	}
+}
+
 export async function migrationStatus(
 	workspace: Workspace,
 	moduleId?: string,
@@ -142,41 +130,47 @@ export async function migrationStatus(
 	if (refusal) return refusal;
 
 	const counters = { applied: 0, adopted: 0, pending: 0, mismatch: 0 };
-	const reports = modules.managed.map((module) => {
-		const path = displayPath(workspace.root, module.databasePath);
-		let database: DatabaseSync;
-		try {
-			database = open(module.databasePath, true);
-		} catch (error) {
-			counters.pending += module.migrations.length;
-			return {
-				moduleId: module.moduleId,
-				database: path,
-				databaseExists: false,
-				ledger: 0,
-				note: `The database has not been opened yet (${error instanceof Error ? error.message : String(error)}). Every migration runs on first boot.`,
-				migrations: module.migrations.map((migration) => ({
-					id: migration.id,
-					state: 'pending' as const,
-					checksum: moduleMigrationChecksum(migration.statements),
-					appliedAt: null,
-				})),
-			};
+	const count = (state: string): void => {
+		if (state in counters) {
+			counters[state as keyof typeof counters] += 1;
 		}
-		const entries = moduleMigrationStatus(database, module.migrations);
-		const ledger = ledgerRows(database).length;
-		database.close();
-		for (const entry of entries) counters[entry.state] += 1;
-		return {
-			moduleId: module.moduleId,
-			database: path,
-			databaseExists: true,
-			ledger,
-			migrations: entries,
-		};
-	});
+	};
+	const reports = await withProviderModules(
+		workspace,
+		modules.managed,
+		async (databases, module) => {
+			const lease = await databases.acquire({
+				namespace: module.moduleId,
+				purpose: 'migration',
+			});
+			try {
+				const entries = await databaseMigrationStatus(
+					lease.database,
+					module.moduleId,
+					module.databaseMigrations,
+				);
+				for (const entry of entries) count(entry.state);
+				return {
+					moduleId: module.moduleId,
+					database: `${databases.adapter}:${module.moduleId}`,
+					ledger: entries.filter((entry) => entry.state !== 'pending').length,
+					migrations: entries.map((entry) => ({
+						id: entry.id,
+						state: entry.state,
+						checksum: entry.checksum,
+						appliedAt: entry.appliedAt ?? null,
+					})),
+				};
+			} finally {
+				await lease.release();
+			}
+		},
+	);
+	const all = [...reports].sort((left, right) =>
+		left.moduleId.localeCompare(right.moduleId),
+	);
 	const data = {
-		modules: reports,
+		modules: all,
 		unmanaged: modules.unmanaged,
 		summary: counters,
 	};
@@ -187,7 +181,7 @@ export async function migrationStatus(
 				data,
 			)
 		: success(data, {
-				evidence: reports.map((report) => report.database),
+				evidence: all.map((report) => report.database),
 			});
 }
 
@@ -204,111 +198,137 @@ export async function migrationApply(
 		return failure('MODULE_NOT_FOUND', `No enabled module "${moduleId}".`);
 	}
 
-	const path = displayPath(workspace.root, module.databasePath);
-	let database: DatabaseSync;
-	try {
-		/* A dry run opens read-only so it cannot even create the file. */
-		database = open(module.databasePath, !apply);
-	} catch (error) {
-		if (apply) {
-			return failure(
-				'DATABASE_UNAVAILABLE',
-				`Cannot open ${path}: ${error instanceof Error ? error.message : String(error)}`,
-			);
-		}
-		return success(
-			{
-				moduleId: module.moduleId,
-				database: path,
-				applied: false,
-				migrations: module.migrations.map((migration) => ({
-					id: migration.id,
-					action: 'applied' as const,
-					checksum: moduleMigrationChecksum(migration.statements),
-				})),
-			},
-			{
-				warnings: [
-					'Dry run only. Pass --apply to write the ledger and run the SQL.',
-					`${path} does not exist yet; the module creates it on first use.`,
-				],
-			},
-		);
-	}
-	try {
-		const results = runModuleMigrations(database, module.migrations, {
-			dryRun: !apply,
-		});
-		return success(
-			{
-				moduleId: module.moduleId,
-				database: path,
-				applied: apply,
-				migrations: results,
-			},
-			{
-				evidence: [path],
-				warnings: apply
-					? []
-					: ['Dry run only. Pass --apply to write the ledger and run the SQL.'],
-			},
-		);
-	} catch (error) {
-		return failure(
-			'MIGRATION_FAILED',
-			error instanceof Error ? error.message : String(error),
-		);
-	} finally {
-		database.close();
-	}
+	/* The runner is transactional, so a dry run reports the plan without opening
+	   a write path: status already answers what would run. */
+	const [report] = await withProviderModules(
+		workspace,
+		[module],
+		async (databases, entry) => {
+			const lease = await databases.acquire({
+				namespace: entry.moduleId,
+				purpose: 'migration',
+			});
+			try {
+				if (!apply) {
+					const pending = await databaseMigrationStatus(
+						lease.database,
+						entry.moduleId,
+						entry.databaseMigrations,
+					);
+					return {
+						adapter: databases.adapter,
+						migrations: pending
+							.filter((state) => state.state !== 'applied')
+							.map((state) => ({
+								id: state.id,
+								action: state.state === 'adopted' ? 'adopted' : 'applied',
+								checksum: state.checksum,
+							})),
+					};
+				}
+				return {
+					adapter: databases.adapter,
+					migrations: await runDatabaseMigrations(
+						lease.database,
+						entry.moduleId,
+						entry.databaseMigrations,
+					),
+				};
+			} finally {
+				await lease.release();
+			}
+		},
+	);
+	return success(
+		{
+			moduleId: module.moduleId,
+			database: `${report!.adapter}:${module.moduleId}`,
+			applied: apply,
+			migrations: report!.migrations,
+		},
+		{
+			warnings: apply
+				? []
+				: ['Dry run only. Pass --apply to write the ledger and run the SQL.'],
+		},
+	);
 }
 
 export async function migrationVerify(
 	workspace: Workspace,
 ): Promise<CommandEnvelope> {
 	const modules = await loadMigrationModules(workspace);
-	const reports = modules.managed.map((module) => {
-		const expected = new Map(
-			module.migrations.map((migration) => [
-				migration.id,
-				moduleMigrationChecksum(migration.statements),
-			]),
-		);
-		let rows: readonly LedgerRow[];
-		try {
-			const database = open(module.databasePath, true);
-			rows = ledgerRows(database);
-			database.close();
-		} catch {
-			return {
-				moduleId: module.moduleId,
-				database: displayPath(workspace.root, module.databasePath),
-				recorded: 0,
-				mismatched: [] as string[],
-				unknown: [] as string[],
-			};
-		}
-		return {
-			moduleId: module.moduleId,
-			database: displayPath(workspace.root, module.databasePath),
-			recorded: rows.length,
-			mismatched: rows
-				.filter(
-					(row) =>
-						expected.has(row.id) && expected.get(row.id) !== row.checksum,
-				)
-				.map((row) => row.id),
-			unknown: rows.filter((row) => !expected.has(row.id)).map((row) => row.id),
-		};
-	});
-	const broken = reports.filter(
+	const reports = await withProviderModules(
+		workspace,
+		modules.managed,
+		async (databases, module) => {
+			const lease = await databases.acquire({
+				namespace: module.moduleId,
+				purpose: 'migration',
+			});
+			try {
+				const entries = await databaseMigrationStatus(
+					lease.database,
+					module.moduleId,
+					module.databaseMigrations,
+				);
+				return {
+					moduleId: module.moduleId,
+					database: `${databases.adapter}:${module.moduleId}`,
+					recorded: entries.filter((entry) => entry.state !== 'pending').length,
+					mismatched: entries
+						.filter((entry) => entry.state === 'mismatch')
+						.map((entry) => entry.id),
+					unknown: [] as string[],
+				};
+			} finally {
+				await lease.release();
+			}
+		},
+	);
+	/* Checksum drift is one half of the contract; the other is that the committed
+	   scripts still declare what a deployment needs. A missing tenant policy is a
+	   deployment-time isolation failure, so it fails here instead. */
+	const audits = await Promise.all(
+		modules.managed.map((module) =>
+			moduleMigrationAudit(
+				module.moduleId,
+				module.moduleDirectory,
+				module.databaseMigrations,
+			),
+		),
+	);
+	const auditIssues = audits.flatMap((report) => report.issues);
+	const all = [...reports].sort((left, right) =>
+		left.moduleId.localeCompare(right.moduleId),
+	);
+	const broken = all.filter(
 		(report) => report.mismatched.length > 0 || report.unknown.length > 0,
 	);
-	const data = { modules: reports, unmanaged: modules.unmanaged };
+	const data = {
+		modules: all,
+		unmanaged: modules.unmanaged,
+		scripts: audits.map((report) => ({
+			moduleId: report.moduleId,
+			migrations: report.migrations,
+			issues: report.issues,
+		})),
+	};
+	if (auditIssues.length > 0) {
+		return failure(
+			'MIGRATION_SCRIPTS_INVALID',
+			`${auditIssues.length} migration script issue(s): ${auditIssues
+				.map(
+					(issue) => `${issue.moduleId} ${issue.migrationId}: ${issue.message}`,
+				)
+				.join(' ')}`,
+			data,
+		);
+	}
 	return broken.length === 0
 		? success(
 				{ valid: true, ...data },
-				{ evidence: reports.map((report) => report.database) },
+				{ evidence: all.map((report) => report.database) },
 			)
 		: failure(
 				'MIGRATION_LEDGER_INVALID',

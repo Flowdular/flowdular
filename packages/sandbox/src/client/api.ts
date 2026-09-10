@@ -1,5 +1,8 @@
+import { t } from '@flowdular/client/i18n';
+import { DELIVERY_STEPS, gateLabel } from './session-labels.ts';
 import type { SafeSandboxConfiguration } from '../server/config.ts';
 import type { DeliveryRecord } from '../server/delivery/record.ts';
+import type { SandboxDashboard } from '../server/dashboard.ts';
 import type { EjectTarget, GitDeliveryPlan } from '../server/delivery/types.ts';
 import type { FileDiff } from '../server/diff.ts';
 import type { GateResult } from '../server/gates.ts';
@@ -45,6 +48,7 @@ export interface DriverSummary {
 }
 
 export interface SandboxState {
+	readonly dashboard?: SandboxDashboard;
 	readonly configuration: SafeSandboxConfiguration;
 	readonly connection: SandboxConnection;
 	readonly drivers: readonly DriverSummary[];
@@ -81,13 +85,13 @@ interface ErrorEnvelope {
    a cross-site form post can never drive the sandbox. */
 const MUTATION_HEADERS = {
 	'content-type': 'application/json',
-	'x-coreloom-sandbox': '1',
+	'x-flowdular-sandbox': '1',
 } as const;
 
 async function payload<T>(response: Response): Promise<T> {
 	const value = (await response.json()) as T & ErrorEnvelope;
 	if (!response.ok) {
-		throw new Error(value.error?.message ?? 'The sandbox request failed.');
+		throw new Error(value.error?.message ?? t('sandbox.api.error.request'));
 	}
 	return value;
 }
@@ -99,9 +103,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 	try {
 		response = await fetch(path, { credentials: 'same-origin', ...init });
 	} catch {
-		throw new Error(
-			'The sandbox server is not reachable. Start it again with npx @coreloom/sandbox.',
-		);
+		throw new Error(t('sandbox.api.error.unreachable'));
 	}
 	return payload<T>(response);
 }
@@ -114,6 +116,10 @@ function post<T>(path: string, body: unknown): Promise<T> {
 	});
 }
 
+export function rejectSandboxSession(id: string): Promise<unknown> {
+	return post(`/sandbox/api/sessions/${encodeURIComponent(id)}/reject`, {});
+}
+
 /* A self-hosted sandbox answers 401 with the little it may say before sign-in;
    the screen then asks for a token instead of showing an error. */
 export async function loadSandboxState(): Promise<SandboxState> {
@@ -124,9 +130,7 @@ export async function loadSandboxState(): Promise<SandboxState> {
 			headers: { accept: 'application/json' },
 		});
 	} catch {
-		throw new Error(
-			'The sandbox server is not reachable. Start it again with npx @coreloom/sandbox.',
-		);
+		throw new Error(t('sandbox.api.error.unreachable'));
 	}
 	const value = (await response.json()) as Partial<SandboxState> &
 		ErrorEnvelope & {
@@ -172,7 +176,7 @@ export async function loadSandboxState(): Promise<SandboxState> {
 		};
 	}
 	if (!response.ok) {
-		throw new Error(value.error?.message ?? 'The sandbox request failed.');
+		throw new Error(value.error?.message ?? t('sandbox.api.error.request'));
 	}
 	return { ...(value as SandboxState), signInRequired: false };
 }
@@ -472,6 +476,9 @@ export interface EjectPlanView {
 export interface EjectStep {
 	readonly id: string;
 	readonly label: string;
+	readonly gateId?: string;
+	readonly module?: string;
+	readonly files?: number;
 	readonly status: 'running' | 'passed' | 'failed' | 'note';
 	readonly detail: string;
 }
@@ -538,25 +545,6 @@ async function readEvents(
 	}
 }
 
-const STEP_LABELS: Readonly<Record<string, string>> = {
-	fork: 'Prepare the GitHub fork',
-	fetch: 'Fetch the base branch',
-	worktree: 'Prepare a clean worktree',
-	branch: 'Create the session branch',
-	copy: 'Copy the module into the workspace',
-	remove: 'Remove the files the session deleted',
-	install: 'Link the module dependencies',
-	enable: 'Enable the module in the platform',
-	scopes: 'Grant the module scopes to workspace owners',
-	verify: 'Typecheck the platform with the module in it',
-	guardrails: 'Check the change against the allowed paths and budget',
-	commit: 'Commit the change',
-	push: 'Push the branch',
-	pr: 'Open the pull request',
-	cleanup: 'Remove the worktree',
-	build: 'Build the platform',
-};
-
 /* The delivery is watched step by step, so the screen can show what is running
    instead of a spinner with no meaning. */
 export function streamEject(
@@ -586,14 +574,20 @@ export function streamEject(
 				const value = (await response
 					.json()
 					.catch(() => ({}))) as ErrorEnvelope;
-				handlers.onFailed(value.error?.message ?? 'The eject could not start.');
+				handlers.onFailed(
+					value.error?.message ?? t('sandbox.api.error.deliveryStart'),
+				);
 				return;
 			}
 			await readEvents(response, (event, payload) => {
 				if (event === 'gate.started') {
 					handlers.onStep({
 						id: `gate:${String(payload.id)}`,
-						label: `Gate ${String(payload.id)}`,
+						label: gateLabel(String(payload.id)),
+						gateId: String(payload.id),
+						...(typeof payload.module === 'string'
+							? { module: payload.module }
+							: {}),
 						status: 'running',
 						detail: '',
 					});
@@ -603,10 +597,10 @@ export function streamEject(
 					const gate = payload as unknown as GateResult;
 					handlers.onStep({
 						id: `gate:${gate.id}`,
-						label: gate.module
-							? `Gate ${gate.id} (${gate.module})`
-							: `Gate ${gate.id}`,
-						status: gate.status === 'failed' ? 'failed' : 'passed',
+						label: gateLabel(gate.id),
+						gateId: gate.id,
+						...(gate.module ? { module: gate.module } : {}),
+						status: gate.status === 'skipped' ? 'note' : gate.status,
 						detail:
 							gate.status === 'failed'
 								? gate.output.slice(0, 300)
@@ -615,17 +609,24 @@ export function streamEject(
 					return;
 				}
 				const [step, phase] = event.split('.');
-				if (step && phase && STEP_LABELS[step]) {
+				if (
+					step &&
+					(phase === 'started' || phase === 'completed') &&
+					DELIVERY_STEPS.some((id) => id === step)
+				) {
 					const ok = payload.ok !== false;
 					handlers.onStep({
 						id: step,
-						label: STEP_LABELS[step]!,
+						...(typeof payload.files === 'number'
+							? { files: payload.files }
+							: {}),
+						label: t('sandbox.delivery.step.' + step),
 						status: phase === 'started' ? 'running' : ok ? 'passed' : 'failed',
 						detail:
 							phase === 'started'
 								? ''
 								: typeof payload.files === 'number'
-									? `${String(payload.files)} files`
+									? t('sandbox.eject.detail.files', { count: payload.files })
 									: ok
 										? String(payload.detail ?? '')
 										: String(payload.output ?? '').slice(-400),
@@ -635,7 +636,7 @@ export function streamEject(
 				if (event === 'restart.required') {
 					handlers.onStep({
 						id: 'restart',
-						label: 'Restart the application to load the composition',
+						label: t('sandbox.delivery.step.restart'),
 						status: 'note',
 						detail: String(payload.note ?? ''),
 					});
@@ -649,7 +650,7 @@ export function streamEject(
 					const output =
 						typeof payload.output === 'string' ? payload.output : '';
 					handlers.onFailed(
-						`${String(payload.message ?? 'The eject failed.')}${
+						`${String(payload.message ?? t('sandbox.api.error.delivery'))}${
 							output ? `\n\n${output.slice(-1_500)}` : ''
 						}`,
 					);
@@ -657,7 +658,9 @@ export function streamEject(
 			});
 		} catch (error) {
 			handlers.onFailed(
-				error instanceof Error ? error.message : 'The eject failed.',
+				error instanceof Error
+					? error.message
+					: t('sandbox.api.error.delivery'),
 			);
 		}
 	})();
@@ -689,11 +692,11 @@ async function consumeTurnStream(
 		}
 		if (event === 'failed') {
 			handlers.onFailed(
-				(payload as { message?: string }).message ?? 'The turn failed.',
+				(payload as { message?: string }).message ??
+					t('sandbox.api.error.turn'),
 			);
 		}
 	});
-	handlers.onEnded();
 }
 
 /* The turn runs on the server whatever this stream does. Aborting the
@@ -727,15 +730,19 @@ export function streamTurn(
 				const value = (await response
 					.json()
 					.catch(() => ({}))) as ErrorEnvelope;
-				handlers.onFailed(value.error?.message ?? 'The turn could not start.');
+				handlers.onFailed(
+					value.error?.message ?? t('sandbox.api.error.turnStart'),
+				);
 				return;
 			}
 			await consumeTurnStream(response, handlers);
 		} catch (error) {
 			if (controller.signal.aborted) return;
 			handlers.onFailed(
-				error instanceof Error ? error.message : 'The turn failed.',
+				error instanceof Error ? error.message : t('sandbox.api.error.turn'),
 			);
+		} finally {
+			if (!controller.signal.aborted) handlers.onEnded();
 		}
 	})();
 	return controller;
@@ -769,9 +776,18 @@ export function followTurn(
 			) {
 				return false;
 			}
-			void consumeTurnStream(response, handlers).catch(() => {
-				if (!controller.signal.aborted) handlers.onEnded();
-			});
+			void consumeTurnStream(response, handlers)
+				.catch((error: unknown) => {
+					if (!controller.signal.aborted)
+						handlers.onFailed(
+							error instanceof Error
+								? error.message
+								: t('sandbox.api.error.turn'),
+						);
+				})
+				.finally(() => {
+					if (!controller.signal.aborted) handlers.onEnded();
+				});
 			return true;
 		} catch {
 			return false;

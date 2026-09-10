@@ -1,6 +1,6 @@
-import { Tag, type TableColumn } from '@coreloom/ui';
-import { activeLocale, t } from '@coreloom/client';
-import type { TenantMember } from '@coreloom/module-auth';
+import { Tag, type TableColumn } from '@flowdular/ui';
+import { activeLocale, t } from '@flowdular/client';
+import type { TenantMember } from '@flowdular/module-auth';
 
 export function memberColumns(
 	roleNames: ReadonlyMap<string, string>,

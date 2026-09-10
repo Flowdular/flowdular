@@ -1,4 +1,5 @@
 import { cell, createStore } from 'segment-state';
+import type { GateResult } from '../server/gates.ts';
 import type { ChatEntry, SandboxSession } from '../server/sessions.ts';
 import type {
 	EjectPlanView,
@@ -40,6 +41,10 @@ export function createSandboxClientState() {
 		ejectBuild: false,
 		menuOpen: false,
 		githubSettingsOpen: false,
+		gateResults: cell<readonly GateResult[]>([]),
+		gatesOpen: false,
+		gatesRunning: false,
+		gatesError: '',
 		connecting: false,
 		activeSessionId: '',
 		role: 'auto',
@@ -50,8 +55,6 @@ export function createSandboxClientState() {
 		driver: '',
 		message: '',
 		workbench: cell<'none' | 'preview' | 'diff' | 'spec'>('none'),
-		/* The module whose specification the workbench edits. */
-		specModule: '',
 		cardMode: cell<'preview' | 'code'>('preview'),
 		previewNonce: 0,
 		selecting: false,
@@ -101,5 +104,5 @@ export function mergeEntries(
    brand block and never a flash of unstyled text. */
 export function signalReady(): void {
 	if (typeof window === 'undefined') return;
-	window.dispatchEvent(new Event('coreloom:ready'));
+	window.dispatchEvent(new Event('flowdular:ready'));
 }

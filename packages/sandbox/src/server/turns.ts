@@ -15,18 +15,26 @@ import {
 	composeInstruction,
 	findRole,
 	parseHandoff,
+	selectTaskSkill,
 	type AgentRoleDefinition,
 	type CodingAgentEvent,
 	type CodingAgentMessage,
 	type CodingAgentRegistry,
 	type HandoffDeclaration,
-} from '@coreloom/coding-agent';
+} from '@flowdular/coding-agent';
+import {
+	invalidateAutoReview,
+	prepareAutoReview,
+	moduleReviewRevision,
+	recordAutoReview,
+} from './auto-review.ts';
 import { attachmentInstruction } from './attachments.ts';
 import { captureCheckpoint } from './checkpoints.ts';
 import { guardAgentPaths } from './path-guard.ts';
 import type { SandboxConfiguration } from './config.ts';
 import { diffTrees, type FileDiff } from './diff.ts';
 import {
+	GATE_IDS,
 	formatDirectory,
 	isGateId,
 	runGates,
@@ -266,7 +274,7 @@ function runCli(
 	return new Promise((resolvePromise) => {
 		const child = spawn(
 			'pnpm',
-			['--dir', workspaceRoot, '--silent', 'coreloom', ...args],
+			['--dir', workspaceRoot, '--silent', 'flowdular', ...args],
 			{
 				cwd: workspaceRoot,
 				env: { ...process.env, FORCE_COLOR: '0' },
@@ -318,7 +326,7 @@ async function withScaffoldClearance<T>(
 		(file) => file !== 'spec/module.yaml',
 	);
 	if (extras.length === 0) return run();
-	const stash = await mkdtemp(join(tmpdir(), 'coreloom-scaffold-'));
+	const stash = await mkdtemp(join(tmpdir(), 'flowdular-scaffold-'));
 	try {
 		for (const file of extras) {
 			await cp(join(modulePath, file), join(stash, file));
@@ -454,6 +462,7 @@ export async function runSessionGates(
 	session: SandboxSession,
 	gates: readonly string[],
 	modules?: readonly SessionModule[],
+	signal?: AbortSignal,
 ): Promise<readonly GateResult[]> {
 	const selected = gates.filter(isGateId) as GateId[];
 	if (selected.length === 0) return [];
@@ -474,6 +483,7 @@ export async function runSessionGates(
 		session,
 		gates: selected,
 		...(modules ? { modules } : {}),
+		...(signal ? { signal } : {}),
 	});
 }
 
@@ -618,17 +628,36 @@ export async function* runTurn(
 		}
 	}
 
-	const skills = await listSkills(context.workspaceRoot);
+	const skill = selectTaskSkill({
+		role: role.id,
+		sessionKind: active.kind === 'new' ? 'new-module' : 'edit-module',
+		blueprint: session.blueprint,
+		task: message,
+		available: await listSkills(context.workspaceRoot),
+	});
+	const reviewing = skill === 'auto-review';
+	if (reviewing) await prepareAutoReview(context.workspaceRoot, paths, active);
+	const reviewRevision = reviewing
+		? await moduleReviewRevision(modulePath)
+		: null;
+	if (reviewing) await invalidateAutoReview(paths, active);
+	let reviewPassed = false;
+	const turnAllowedPaths = reviewing ? [] : allowedPathsFor(role, active);
 	const team = context.roles.filter((mate) => role.handoff.includes(mate.id));
 	const instruction = composeInstruction(role, {
 		moduleId: active.id,
 		modulePath: `modules/${active.directory}`,
 		sessionKind: active.kind === 'new' ? 'new-module' : 'edit-module',
 		blueprint: session.blueprint,
-		allowedPaths: allowedPathsFor(role, active),
-		skills,
+		allowedPaths: turnAllowedPaths,
+		skill,
 		team: team.map((mate) => `${mate.id}: ${mate.purpose}`),
 		notes: [
+			...(reviewing
+				? [
+						'Read the complete active-module change against reference/auto-review-base/. This turn is read-only. Preserve the intended next-specialist handoff from the implementation turn after a passing review.',
+					]
+				: []),
 			...(session.modules.length > 1
 				? [
 						`This session works on several modules: ${session.modules
@@ -641,7 +670,7 @@ export async function* runTurn(
 							)}. This turn is yours in modules/${active.directory} only; another specialist takes the turn for the others. Each module is a project of this pnpm workspace, so a draft that imports another draft resolves the session copy.`,
 					]
 				: []),
-			'reference/ holds read-only copies of the platform contracts: packages/ for the server, client and UI contracts, example-module/ for a complete module to copy the shape from, auth-core/ for the public authentication surface, and skills/ for the workflows. Read them before implementing and never edit them.',
+			'reference/ is read-only. Consult only the code and references needed for this task; do not preload its catalog.',
 			'Other module.json files under modules/ describe the dependency graph. Only the draft module directories have sources you may change.',
 			...(active.kind === 'edit'
 				? [
@@ -654,6 +683,7 @@ export async function* runTurn(
 		paths.workspace,
 		driverId === 'claude-code' ? 'CLAUDE.md' : 'AGENTS.md',
 		role.name,
+		skill,
 	);
 
 	const history = historyFrom(await readChat(context.workspaceRoot, session));
@@ -668,13 +698,13 @@ export async function* runTurn(
 	const pathGuard = await guardAgentPaths({
 		workspace: paths.workspace,
 		sessionRoot: paths.root,
-		allowedPaths: allowedPathsFor(role, active),
+		allowedPaths: turnAllowedPaths,
 	});
 
 	try {
 		for await (const event of driver.run({
 			workspacePath: paths.workspace,
-			allowedPaths: allowedPathsFor(role, active),
+			allowedPaths: turnAllowedPaths,
 			role: roleId,
 			systemInstruction: instruction,
 			prompt: attachmentNote ? `${attachmentNote}\n\n${message}` : message,
@@ -734,7 +764,8 @@ export async function* runTurn(
 		});
 	}
 
-	const scaffoldNote = failed ? null : await scaffoldFromSpec(context, session);
+	const scaffoldNote =
+		failed || reviewing ? null : await scaffoldFromSpec(context, session);
 	if (scaffoldNote) {
 		yield await appendChatEntry(context.workspaceRoot, session, {
 			kind: 'system',
@@ -746,7 +777,7 @@ export async function* runTurn(
 	/* Prettier is deterministic and not a correctness signal, so the sandbox
 	   formats the draft modules itself after each turn rather than bouncing the
 	   format gate back to the agent over whitespace. */
-	if (!failed) {
+	if (!failed && !reviewing) {
 		const turnPaths = sessionPaths(
 			context.workspaceRoot,
 			session.id,
@@ -762,7 +793,7 @@ export async function* runTurn(
 
 	const diffs = await collectDiffs(context.workspaceRoot, session);
 	const gates: GateResult[] = [];
-	if (diffs.length > 0 && !failed) {
+	if ((diffs.length > 0 || reviewing) && !failed) {
 		/* Only the modules that hold changes are gated: a module nobody touched
 		   has nothing to check and its gates would cost minutes for no signal. */
 		const changed = new Set(diffs.map((diff) => diff.module));
@@ -780,32 +811,64 @@ export async function* runTurn(
 					context,
 					session,
 					[
-						...role.gates,
+						...(reviewing
+							? GATE_IDS.filter((id) => id !== 'auto-review')
+							: role.gates),
 						...(role.gates.includes('dependencies') ? [] : ['dependencies']),
 					],
-					gated,
+					reviewing ? [active] : gated,
+					input.signal,
 				)),
 			);
 		}
 	}
-	for (const gate of gates) {
-		yield await appendChatEntry(context.workspaceRoot, session, {
-			kind: 'system',
-			role: roleId,
-			...(gate.module ? { module: gate.module } : {}),
-			text: gateSummary(gate),
-			event: {
-				type: gate.status === 'failed' ? 'error' : 'tool.completed',
-				...(gate.status === 'failed'
-					? {
-							code: `GATE_${gate.id.toUpperCase()}`,
-							message: gate.output.slice(0, 500),
-						}
-					: { tool: `gate:${gate.id}`, detail: gate.command, ok: true }),
-			} as CodingAgentEvent,
-		});
+	if (
+		reviewing &&
+		!failed &&
+		!input.signal?.aborted &&
+		reviewRevision !== null
+	) {
+		const verified = GATE_IDS.filter((id) => id !== 'auto-review').every((id) =>
+			gates.some(
+				(gate) =>
+					gate.id === id &&
+					gate.status === 'passed' &&
+					(gate.module === active.directory ||
+						((id === 'spec-schema' || id === 'module-schema') &&
+							gate.module === undefined)),
+			),
+		);
+		if (verified && gates.every((gate) => gate.status === 'passed')) {
+			reviewPassed = await recordAutoReview(
+				paths,
+				active,
+				reviewRevision,
+				closing,
+			);
+		}
+		gates.push(
+			...(await runSessionGates(
+				context,
+				session,
+				['auto-review'],
+				[active],
+				input.signal,
+			)),
+		);
 	}
 
+	if (reviewing && !reviewPassed && !failed) {
+		const index = gates.findIndex(
+			(gate) => gate.id === 'auto-review' && gate.status === 'failed',
+		);
+		if (index >= 0 && /"verdict"\s*:\s*"fail"/.test(closing)) {
+			gates[index] = {
+				...gates[index]!,
+				output:
+					'Use $module-update to fix the findings in your preceding review. Preserve unrelated behavior, add regression tests, and finish implementation before requesting another review.',
+			};
+		}
+	}
 	const declared: HandoffDeclaration | null = closing
 		? parseHandoff(closing)
 		: null;
@@ -816,7 +879,7 @@ export async function* runTurn(
 		modulePath,
 		basePathOf(paths, active.directory),
 	);
-	const handoff = planHandoff({
+	const handoffContext = {
 		routing: await routingContext(
 			context,
 			session,
@@ -834,7 +897,50 @@ export async function* runTurn(
 		changed: diffs.length > 0,
 		specApproved: closingGate.approved,
 		brief: session.brief || message,
-	});
+		reviewing,
+	};
+	let handoff = planHandoff(handoffContext);
+	if (handoff.kind === 'review') {
+		// Let intermediate specialists finish their handoffs before a full review.
+		// Every delivered module, including unchanged drafts, needs a current record.
+		const remaining = session.modules.filter(
+			(module) =>
+				!gates.some(
+					(gate) =>
+						gate.id === 'auto-review' && gate.module === module.directory,
+				),
+		);
+		if (remaining.length > 0) {
+			gates.push(
+				...(await runSessionGates(
+					context,
+					session,
+					['auto-review'],
+					remaining,
+					input.signal,
+				)),
+			);
+			handoff = planHandoff(handoffContext);
+		}
+	}
+
+	for (const gate of gates) {
+		yield await appendChatEntry(context.workspaceRoot, session, {
+			kind: 'system',
+			role: roleId,
+			...(gate.module ? { module: gate.module } : {}),
+			text: gateSummary(gate),
+			event: {
+				type: gate.status === 'failed' ? 'error' : 'tool.completed',
+				...(gate.status === 'failed'
+					? {
+							code: `GATE_${gate.id.toUpperCase()}`,
+							message: gate.output.slice(0, 500),
+						}
+					: { tool: `gate:${gate.id}`, detail: gate.command, ok: true }),
+			} as CodingAgentEvent,
+		});
+	}
 
 	const handoffEntry = await appendChatEntry(context.workspaceRoot, session, {
 		kind: 'system',
@@ -864,7 +970,7 @@ export async function* runTurn(
 			? 'failed'
 			: handoff.kind === 'approval' || handoff.kind === 'question'
 				? 'awaiting-approval'
-				: gates.some((gate) => gate.status === 'failed')
+				: gates.some((gate) => gate.status !== 'passed')
 					? 'validating'
 					: diffs.length > 0
 						? 'previewing'

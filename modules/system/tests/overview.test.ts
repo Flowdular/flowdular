@@ -1,15 +1,16 @@
+import { createPgliteTestProvider } from '@flowdular/database-testing';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createContext } from '@octanejs/app-core';
-import { createAuthRuntime } from '@coreloom/module-auth/server';
+import { createAuthRuntime } from '@flowdular/module-auth/server';
 import { describe, expect, it } from 'vitest';
 import { SYSTEM_PERMISSIONS } from '../src/acl/permissions.ts';
 import { createSystemRoutes } from '../src/server/endpoints.ts';
 
 function harness(workspaceRoot: string) {
 	const auth = createAuthRuntime({
-		databasePath: ':memory:',
+		databases: createPgliteTestProvider(),
 		secureCookies: false,
 		sessionTtlMs: 3_600_000,
 		allowSignUp: true,
@@ -25,9 +26,9 @@ function harness(workspaceRoot: string) {
 }
 
 function workspace(): string {
-	const root = mkdtempSync(join(tmpdir(), 'coreloom-overview-'));
+	const root = mkdtempSync(join(tmpdir(), 'flowdular-overview-'));
 	writeFileSync(
-		join(root, 'coreloom.json'),
+		join(root, 'flowdular.json'),
 		JSON.stringify({ modules: { enabled: ['system.core'] } }),
 	);
 	mkdirSync(join(root, 'modules/system/spec'), { recursive: true });
@@ -60,7 +61,7 @@ function workspace(): string {
 function principalContext(scopes: readonly string[], tenantId = 'tenant') {
 	const request = new Request('https://erp.example/api/system/overview');
 	const context = createContext(request, {});
-	context.state.set('coreloom.auth.principal', {
+	context.state.set('flowdular.auth.principal', {
 		accountId: 'account',
 		tenantId,
 		email: 'person@example.com',
@@ -114,7 +115,9 @@ describe('system.core overview', () => {
 
 	it('counts real audit events into the tenant activity series', async () => {
 		const { auth, overview } = harness(workspace());
-		const issued = await auth.service().signUp({
+		const issued = await (
+			await auth.service()
+		).signUp({
 			email: 'owner@example.com',
 			password: 'correct horse battery staple',
 			displayName: 'Ada Owner',

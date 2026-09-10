@@ -1,5 +1,5 @@
-import type { TenantMember } from '@coreloom/module-auth';
-import { t } from '@coreloom/client/i18n';
+import type { TenantMember } from '@flowdular/module-auth';
+import { t } from '@flowdular/client/i18n';
 import type {
 	CreateUserInput,
 	UserDirectory,

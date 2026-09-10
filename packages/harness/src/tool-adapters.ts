@@ -1,4 +1,4 @@
-import type { CapabilityRisk } from '@coreloom/contracts';
+import type { CapabilityRisk } from '@flowdular/contracts';
 import type { AgentTool, AgentToolContext } from './runtime.ts';
 
 interface AgentToolBase {

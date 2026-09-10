@@ -1,35 +1,61 @@
 {
-	"name": "@coreloom/module-auth",
-	"version": "0.8.1",
-	"private": true,
+	"name": "@flowdular/module-auth",
+	"version": "0.10.0",
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
 		"./client": "./src/client/index.ts",
 		"./server": "./src/server/index.ts",
-		"./cli": "./src/cli/index.ts"
+		"./cli": "./src/cli/index.ts",
+		"./greenfield": "./src/cli/greenfield.ts",
+		"./module.json": "./module.json"
 	},
 	"scripts": {
 		"typecheck": "tsrx-tsc --noEmit -p tsconfig.json",
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@coreloom/cli-protocol": "workspace:*",
-		"@coreloom/client": "workspace:*",
-		"@coreloom/contracts": "workspace:*",
-		"@coreloom/kernel": "workspace:*",
-		"@coreloom/server": "workspace:*",
-		"@coreloom/ui": "workspace:*",
+		"@flowdular/cli-protocol": "workspace:*",
+		"@flowdular/client": "workspace:*",
+		"@flowdular/contracts": "workspace:*",
+		"@flowdular/database": "workspace:*",
+		"@flowdular/database-pglite": "workspace:*",
+		"@flowdular/kernel": "workspace:*",
+		"@flowdular/server": "workspace:*",
+		"@flowdular/ui": "workspace:*",
 		"@octanejs/app-core": "0.0.47",
-		"@octanejs/seo": "0.0.36",
+		"@octanejs/seo": "0.0.38",
 		"octane": "0.1.51",
+		"pg": "8.23.0",
 		"segment-state": "0.2.0",
 		"yaml": "2.9.0"
 	},
 	"devDependencies": {
+		"@flowdular/database-testing": "workspace:*",
 		"@tsrx/typescript-plugin": "0.3.120",
 		"@types/node": "24.13.3",
+		"@types/pg": "8.23.1",
 		"typescript": "5.9.3",
-		"vitest": "4.1.10"
-	}
+		"vitest": "4.1.11"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Flowdular/flowdular.git",
+		"directory": "modules/auth"
+	},
+	"files": [
+		"src",
+		"schemas",
+		"dist",
+		"bin",
+		"public",
+		"module.json",
+		"migrations",
+		"translations",
+		"spec",
+		"README.md",
+		"LICENSE"
+	],
+	"private": true
 }

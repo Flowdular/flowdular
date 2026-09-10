@@ -4,7 +4,7 @@ import type {
 	AutomationTargetOption,
 	AutomationTrigger,
 } from '../domain/types.ts';
-import type { VariableDefinition } from '@coreloom/contracts';
+import type { VariableDefinition } from '@flowdular/contracts';
 
 export function createAutomationScheduleClientState() {
 	const store = createStore({

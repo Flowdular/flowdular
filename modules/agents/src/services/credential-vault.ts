@@ -12,7 +12,7 @@ import {
 	writeFileSync,
 } from 'node:fs';
 import { dirname } from 'node:path';
-import { coreloomLocalDataPath } from '@coreloom/kernel/legacy-local-state';
+import { flowdularLocalDataPath } from '@flowdular/kernel/legacy-local-state';
 
 export interface EncryptedCredential {
 	readonly keyId: string;
@@ -31,7 +31,7 @@ function encryptionKey(value: string): Buffer {
 	if (key.byteLength !== 32) {
 		key.fill(0);
 		throw new Error(
-			'CL_AGENT_CREDENTIAL_KEY must be a base64-encoded 32-byte key.',
+			'FD_AGENT_CREDENTIAL_KEY must be a base64-encoded 32-byte key.',
 		);
 	}
 	return key;
@@ -115,11 +115,11 @@ export function credentialVaultFromEnvironment(
 	environment: NodeJS.ProcessEnv = process.env,
 	workspaceRoot = process.cwd(),
 ): CredentialVault {
-	const configured = environment.CL_AGENT_CREDENTIAL_KEY;
+	const configured = environment.FD_AGENT_CREDENTIAL_KEY;
 	if (configured) return new AesGcmCredentialVault(encryptionKey(configured));
 	if (environment.NODE_ENV === 'production') {
 		throw new Error(
-			'CL_AGENT_CREDENTIAL_KEY is required in production before provider credentials can be used.',
+			'FD_AGENT_CREDENTIAL_KEY is required in production before provider credentials can be used.',
 		);
 	}
 	if (environment.NODE_ENV === 'test') {
@@ -127,7 +127,7 @@ export function credentialVaultFromEnvironment(
 	}
 	return new AesGcmCredentialVault(
 		readOrCreateDevelopmentKey(
-			coreloomLocalDataPath(workspaceRoot, 'agent-credential.key'),
+			flowdularLocalDataPath(workspaceRoot, 'agent-credential.key'),
 		),
 	);
 }

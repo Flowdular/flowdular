@@ -16,7 +16,7 @@ import {
 /* A stand-in binary that replays a recorded event stream, so the mapping is
    verified against the real protocol shape without calling a provider. */
 async function replayBinary(lines: readonly unknown[]): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), 'coreloom-replay-'));
+	const directory = await mkdtemp(join(tmpdir(), 'flowdular-replay-'));
 	const fixture = join(directory, 'stream.jsonl');
 	await writeFile(
 		fixture,
@@ -32,7 +32,7 @@ async function replayBinary(lines: readonly unknown[]): Promise<string> {
 /* A codex whose thread store is already locked: resuming fails the way the real
    binary fails, a fresh exec replays the recorded stream. */
 async function lockedResumeBinary(lines: readonly unknown[]): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), 'coreloom-replay-'));
+	const directory = await mkdtemp(join(tmpdir(), 'flowdular-replay-'));
 	const fixture = join(directory, 'stream.jsonl');
 	await writeFile(
 		fixture,
@@ -67,7 +67,7 @@ async function collect(
 
 describe('claude-code driver', () => {
 	it('maps the print-mode stream to sandbox events', async () => {
-		const workspacePath = await mkdtemp(join(tmpdir(), 'coreloom-claude-'));
+		const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-claude-'));
 		const command = await replayBinary([
 			{ type: 'system', subtype: 'init', session_id: 'session-1' },
 			{
@@ -131,7 +131,7 @@ describe('claude-code driver', () => {
 	});
 
 	it('surfaces a failed turn as an error event', async () => {
-		const workspacePath = await mkdtemp(join(tmpdir(), 'coreloom-claude-'));
+		const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-claude-'));
 		const command = await replayBinary([
 			{ type: 'system', subtype: 'init', session_id: 'session-2' },
 			{
@@ -156,7 +156,7 @@ describe('claude-code driver', () => {
 	});
 
 	it('fails loudly when the binary exits before completing a turn', async () => {
-		const workspacePath = await mkdtemp(join(tmpdir(), 'coreloom-claude-'));
+		const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-claude-'));
 		const command = await replayBinary([{ type: 'rate_limit_event' }]);
 		await expect(
 			collect(createClaudeCodeDriver({ command }), workspacePath),
@@ -164,7 +164,7 @@ describe('claude-code driver', () => {
 	});
 
 	it('continues on a fresh session when the resumed one cannot start', async () => {
-		const workspacePath = await mkdtemp(join(tmpdir(), 'coreloom-claude-'));
+		const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-claude-'));
 		const command = await lockedResumeBinary([
 			{ type: 'system', subtype: 'init', session_id: 'session-3' },
 			{
@@ -201,7 +201,7 @@ describe('claude-code driver', () => {
 
 describe('codex driver', () => {
 	it('maps the exec JSONL stream to sandbox events', async () => {
-		const workspacePath = await mkdtemp(join(tmpdir(), 'coreloom-codex-'));
+		const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-codex-'));
 		const command = await replayBinary([
 			{ type: 'thread.started', thread_id: 'thread-1' },
 			{ type: 'turn.started' },
@@ -270,7 +270,7 @@ describe('codex driver', () => {
 	});
 
 	it('starts a fresh thread when the previous one still holds the writer', async () => {
-		const workspacePath = await mkdtemp(join(tmpdir(), 'coreloom-codex-'));
+		const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-codex-'));
 		const command = await lockedResumeBinary([
 			{ type: 'thread.started', thread_id: 'thread-2' },
 			{ type: 'turn.started' },
@@ -403,9 +403,9 @@ describe('workspace guards', () => {
 	});
 
 	it('rejects writes outside the role allowlist and through escaping symlinks', async () => {
-		const root = await mkdtemp(join(tmpdir(), 'coreloom-workspace-guard-'));
+		const root = await mkdtemp(join(tmpdir(), 'flowdular-workspace-guard-'));
 		const outside = await mkdtemp(
-			join(tmpdir(), 'coreloom-workspace-outside-'),
+			join(tmpdir(), 'flowdular-workspace-outside-'),
 		);
 		await mkdir(join(root, 'modules', 'catalog', 'src'), { recursive: true });
 		await symlink(outside, join(root, 'modules', 'catalog', 'src', 'escape'));
@@ -416,7 +416,7 @@ describe('workspace guards', () => {
 			]),
 		).resolves.toBe(join(root, 'modules', 'catalog', 'src', 'owned.ts'));
 		await expect(
-			resolveWritableInsideWorkspace(root, 'coreloom.json', [
+			resolveWritableInsideWorkspace(root, 'flowdular.json', [
 				'modules/catalog/src/**',
 			]),
 		).rejects.toMatchObject({ code: 'PATH_NOT_ALLOWED' });
@@ -436,7 +436,7 @@ describe('workspace guards', () => {
 	});
 
 	it('never allows model tools to write dependency or repository control paths', async () => {
-		const root = await mkdtemp(join(tmpdir(), 'coreloom-workspace-guard-'));
+		const root = await mkdtemp(join(tmpdir(), 'flowdular-workspace-guard-'));
 		await mkdir(join(root, 'node_modules'), { recursive: true });
 		await mkdir(join(root, '.git'), { recursive: true });
 		for (const path of ['node_modules/.bin/vitest', '.git/config']) {

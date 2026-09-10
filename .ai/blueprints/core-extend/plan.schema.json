@@ -9,7 +9,7 @@
 		},
 		"package": {
 			"type": "string",
-			"pattern": "^@coreloom/[a-z-]+$"
+			"pattern": "^@flowdular/[a-z-]+$"
 		},
 		"consumersMigrated": {
 			"type": "array",
@@ -30,7 +30,7 @@
 				"enum": [
 					"pnpm verify",
 					"pnpm build",
-					"pnpm --filter @coreloom/platform typecheck"
+					"pnpm --filter @flowdular/platform typecheck"
 				]
 			},
 			"uniqueItems": true

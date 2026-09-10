@@ -1,7 +1,6 @@
 {
-	"name": "@coreloom/server",
+	"name": "@flowdular/server",
 	"version": "0.1.0",
-	"private": true,
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts"
@@ -11,10 +10,34 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@octanejs/app-core": "0.0.47"
+		"@octanejs/app-core": "0.0.47",
+		"@flowdular/contracts": "workspace:*",
+		"@flowdular/kernel": "workspace:*",
+		"@flowdular/database": "workspace:*"
 	},
 	"devDependencies": {
 		"typescript": "5.9.3",
-		"vitest": "4.1.10"
-	}
+		"vitest": "4.1.11",
+		"@types/node": "24.13.3"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Flowdular/flowdular.git",
+		"directory": "packages/server"
+	},
+	"files": [
+		"src",
+		"schemas",
+		"dist",
+		"bin",
+		"public",
+		"module.json",
+		"migrations",
+		"translations",
+		"spec",
+		"README.md",
+		"LICENSE"
+	],
+	"private": true
 }

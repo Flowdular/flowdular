@@ -36,13 +36,13 @@ describe('workspace validation commands', () => {
 		const moduleFiles = (modulesOnly.data as Reports).reports.map(
 			(report) => report.file,
 		);
-		expect(moduleFiles).toContain('modules/catalog/spec/module.yaml');
+		expect(moduleFiles).toContain('modules/profile/spec/module.yaml');
 		expect(moduleFiles.some((file) => file.startsWith('specs/'))).toBe(false);
 
 		const all = await runCommand(parseArguments(['spec', 'validate', '--all']));
 		expect(all.ok).toBe(true);
 		const files = (all.data as Reports).reports.map((report) => report.file);
-		expect(files).toContain('modules/catalog/spec/module.yaml');
+		expect(files).toContain('modules/profile/spec/module.yaml');
 		expect(files).toContain('specs/platform.yaml');
 	});
 
@@ -50,7 +50,7 @@ describe('workspace validation commands', () => {
 		const result = await runCommand(parseArguments(['module', 'validate']));
 		expect(result.ok).toBe(true);
 		expect((result.data as { order: string[] }).order).toContain(
-			'catalog.core',
+			'profile.core',
 		);
 	});
 

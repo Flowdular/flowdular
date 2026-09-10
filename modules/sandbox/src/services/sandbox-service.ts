@@ -146,31 +146,36 @@ export class SandboxService {
 		this.#now = options.now ?? Date.now;
 	}
 
-	listCandidates(tenantId: string): readonly SandboxAccessCandidate[] {
+	async listCandidates(
+		tenantId: string,
+	): Promise<readonly SandboxAccessCandidate[]> {
 		const tenant = identifier(tenantId, 'tenantId');
-		return this.directory.listMembers(tenant).map((member) => ({
-			accountId: member.accountId,
-			email: member.email,
-			displayName: member.displayName,
-			role: member.role,
-			status: member.status,
-			availableCapabilities: sandboxCapabilitiesOf(
-				this.directory.listScopes(member.accountId, tenant),
-			),
-		}));
+		const members = await this.directory.listMembers(tenant);
+		return await Promise.all(
+			members.map(async (member) => ({
+				accountId: member.accountId,
+				email: member.email,
+				displayName: member.displayName,
+				role: member.role,
+				status: member.status,
+				availableCapabilities: sandboxCapabilitiesOf(
+					await this.directory.listScopes(member.accountId, tenant),
+				),
+			})),
+		);
 	}
 
-	listGrants(tenantId: string): readonly SandboxAccessGrant[] {
-		return this.repository.listGrants(identifier(tenantId, 'tenantId'));
+	async listGrants(tenantId: string): Promise<readonly SandboxAccessGrant[]> {
+		return await this.repository.listGrants(identifier(tenantId, 'tenantId'));
 	}
 
-	grant(input: GrantSandboxAccessInput): SandboxAccessGrant {
+	async grant(input: GrantSandboxAccessInput): Promise<SandboxAccessGrant> {
 		const tenantId = identifier(input.tenantId, 'tenantId');
 		const actorId = identifier(input.actorId, 'actorId');
 		const accountId = identifier(input.accountId, 'accountId');
-		const member = this.directory
-			.listMembers(tenantId)
-			.find((candidate) => candidate.accountId === accountId);
+		const member = (await this.directory.listMembers(tenantId)).find(
+			(candidate) => candidate.accountId === accountId,
+		);
 		if (!member) {
 			throw new SandboxServiceError(
 				'ACCOUNT_NOT_FOUND',
@@ -186,7 +191,9 @@ export class SandboxService {
 			);
 		}
 		const available = new Set(
-			sandboxCapabilitiesOf(this.directory.listScopes(accountId, tenantId)),
+			sandboxCapabilitiesOf(
+				await this.directory.listScopes(accountId, tenantId),
+			),
 		);
 		const requested = input.capabilities ?? [...available];
 		for (const capability of requested) {
@@ -216,8 +223,8 @@ export class SandboxService {
 			input.note === undefined || input.note === null || input.note === ''
 				? null
 				: boundedText(input.note, 'note', 1, MAX_NOTE_LENGTH);
-		const existing = this.repository.findGrant(tenantId, accountId);
-		const saved = this.repository.saveGrant({
+		const existing = await this.repository.findGrant(tenantId, accountId);
+		const saved = await this.repository.saveGrant({
 			id: existing?.id ?? randomUUID(),
 			tenantId,
 			accountId,
@@ -231,7 +238,7 @@ export class SandboxService {
 			revokedAt: null,
 			revokedBy: null,
 		});
-		this.repository.appendAuditEvent({
+		await this.repository.appendAuditEvent({
 			tenantId,
 			actorId,
 			action: 'sandbox.access.granted',
@@ -248,15 +255,15 @@ export class SandboxService {
 		return saved;
 	}
 
-	revoke(
+	async revoke(
 		tenantId: string,
 		accountId: string,
 		actorId: string,
-	): SandboxAccessGrant {
+	): Promise<SandboxAccessGrant> {
 		const tenant = identifier(tenantId, 'tenantId');
 		const account = identifier(accountId, 'accountId');
 		const actor = identifier(actorId, 'actorId');
-		const existing = this.repository.findGrant(tenant, account);
+		const existing = await this.repository.findGrant(tenant, account);
 		if (!existing) {
 			throw new SandboxServiceError(
 				'GRANT_NOT_FOUND',
@@ -266,13 +273,13 @@ export class SandboxService {
 		}
 		if (existing.revokedAt !== null) return existing;
 		const revokedAt = this.#now();
-		const revoked = this.repository.revokeGrant(
+		const revoked = (await this.repository.revokeGrant(
 			tenant,
 			account,
 			revokedAt,
 			actor,
-		)!;
-		this.repository.appendAuditEvent({
+		))!;
+		await this.repository.appendAuditEvent({
 			tenantId: tenant,
 			actorId: actor,
 			action: 'sandbox.access.revoked',
@@ -286,14 +293,14 @@ export class SandboxService {
 
 	/* Live platform scopes always win. A grant can narrow authority and can
 	   never widen it beyond the scopes the membership holds right now. */
-	authorize(
+	async authorize(
 		tenantId: string,
 		accountId: string,
 		scopes: readonly string[],
-	): SandboxAuthority {
+	): Promise<SandboxAuthority> {
 		const tenant = identifier(tenantId, 'tenantId');
 		const account = identifier(accountId, 'accountId');
-		const grant = this.repository.findGrant(tenant, account);
+		const grant = await this.repository.findGrant(tenant, account);
 		if (!grant) return { granted: false, reason: 'grant-missing' };
 		if (grant.revokedAt !== null) {
 			return { granted: false, reason: 'grant-revoked' };
@@ -318,13 +325,15 @@ export class SandboxService {
 		};
 	}
 
-	registerSession(input: RegisterSandboxSessionInput): SandboxSessionRecord {
+	async registerSession(
+		input: RegisterSandboxSessionInput,
+	): Promise<SandboxSessionRecord> {
 		const tenantId = identifier(input.tenantId, 'tenantId');
 		const accountId = identifier(input.accountId, 'accountId');
 		const id = identifier(input.sessionId, 'sessionId');
 		const now = this.#now();
-		const existing = this.repository.findSession(tenantId, id);
-		const session = this.repository.saveSession({
+		const existing = await this.repository.findSession(tenantId, id);
+		const session = await this.repository.saveSession({
 			id,
 			tenantId,
 			accountId,
@@ -339,7 +348,7 @@ export class SandboxService {
 			ejectedAt: existing?.ejectedAt ?? null,
 			archivedAt: existing?.archivedAt ?? null,
 		});
-		this.repository.appendAuditEvent({
+		await this.repository.appendAuditEvent({
 			tenantId,
 			actorId: accountId,
 			action: existing ? 'sandbox.session.updated' : 'sandbox.session.opened',
@@ -358,17 +367,17 @@ export class SandboxService {
 	/* Archiving and deleting are transitions like any other, so the sandbox
 	   reports them through the same call; the audit action names them. A
 	   transition out of archived is a restore. */
-	updateSessionState(
+	async updateSessionState(
 		tenantId: string,
 		sessionId: string,
 		requested: SandboxSessionState,
 		actorId: string,
-	): SandboxSessionRecord {
+	): Promise<SandboxSessionRecord> {
 		const tenant = identifier(tenantId, 'tenantId');
 		const id = identifier(sessionId, 'sessionId');
 		const actor = identifier(actorId, 'actorId');
 		const state = sessionState(requested);
-		const existing = this.repository.findSession(tenant, id);
+		const existing = await this.repository.findSession(tenant, id);
 		if (!existing) {
 			throw new SandboxServiceError(
 				'SESSION_NOT_FOUND',
@@ -384,7 +393,7 @@ export class SandboxService {
 			);
 		}
 		const now = this.#now();
-		const session = this.repository.saveSession({
+		const session = await this.repository.saveSession({
 			...existing,
 			state,
 			updatedAt: now,
@@ -392,7 +401,7 @@ export class SandboxService {
 				state === 'accepted' ? (existing.ejectedAt ?? now) : existing.ejectedAt,
 			archivedAt: state === 'archived' ? (existing.archivedAt ?? now) : null,
 		});
-		this.repository.appendAuditEvent({
+		await this.repository.appendAuditEvent({
 			tenantId: tenant,
 			actorId: actor,
 			action:
@@ -411,49 +420,49 @@ export class SandboxService {
 		return session;
 	}
 
-	archiveSession(
+	async archiveSession(
 		tenantId: string,
 		sessionId: string,
 		actorId: string,
-	): SandboxSessionRecord {
+	): Promise<SandboxSessionRecord> {
 		return this.updateSessionState(tenantId, sessionId, 'archived', actorId);
 	}
 
-	deleteSession(
+	async deleteSession(
 		tenantId: string,
 		sessionId: string,
 		actorId: string,
-	): SandboxSessionRecord {
+	): Promise<SandboxSessionRecord> {
 		return this.updateSessionState(tenantId, sessionId, 'deleted', actorId);
 	}
 
-	listSessions(
+	async listSessions(
 		tenantId: string,
 		limit = SESSION_LIST_LIMIT,
-	): readonly SandboxSessionRecord[] {
-		return this.repository.listSessions(
+	): Promise<readonly SandboxSessionRecord[]> {
+		return await this.repository.listSessions(
 			identifier(tenantId, 'tenantId'),
 			Math.min(Math.max(limit, 1), SESSION_LIST_LIMIT),
 		);
 	}
 
-	findSession(
+	async findSession(
 		tenantId: string,
 		sessionId: string,
-	): SandboxSessionRecord | null {
-		return this.repository.findSession(
+	): Promise<SandboxSessionRecord | null> {
+		return await this.repository.findSession(
 			identifier(tenantId, 'tenantId'),
 			identifier(sessionId, 'sessionId'),
 		);
 	}
 
-	recordEject(
+	async recordEject(
 		tenantId: string,
 		sessionId: string,
 		actorId: string,
 		metadata: Readonly<Record<string, string | number | boolean>>,
-	): SandboxAuditEvent {
-		return this.repository.appendAuditEvent({
+	): Promise<SandboxAuditEvent> {
+		return await this.repository.appendAuditEvent({
 			tenantId: identifier(tenantId, 'tenantId'),
 			actorId: identifier(actorId, 'actorId'),
 			action: 'sandbox.module.ejected',
@@ -464,34 +473,39 @@ export class SandboxService {
 		});
 	}
 
-	listAuditEvents(tenantId: string, limit = 100): readonly SandboxAuditEvent[] {
-		return this.repository.listAuditEvents(
+	async listAuditEvents(
+		tenantId: string,
+		limit = 100,
+	): Promise<readonly SandboxAuditEvent[]> {
+		return await this.repository.listAuditEvents(
 			identifier(tenantId, 'tenantId'),
 			Math.min(Math.max(limit, 1), 500),
 		);
 	}
 
-	pageAuditEvents(
+	async pageAuditEvents(
 		tenantId: string,
 		cursor: string | null,
 		limit = DEFAULT_AUDIT_PAGE,
-	): SandboxAuditPage {
+	): Promise<SandboxAuditPage> {
 		const size = Number.isSafeInteger(limit)
 			? Math.min(Math.max(1, Math.trunc(limit)), MAX_AUDIT_PAGE)
 			: DEFAULT_AUDIT_PAGE;
-		return this.repository.pageAuditEvents(
+		return await this.repository.pageAuditEvents(
 			identifier(tenantId, 'tenantId'),
 			auditCursor(cursor),
 			size,
 		);
 	}
 
-	verifyAuditChain(tenantId: string): boolean {
-		return this.repository.verifyAuditChain(identifier(tenantId, 'tenantId'));
+	async verifyAuditChain(tenantId: string): Promise<boolean> {
+		return await this.repository.verifyAuditChain(
+			identifier(tenantId, 'tenantId'),
+		);
 	}
 
-	verifyAudit(tenantId: string): SandboxAuditChainVerification {
-		return this.repository.verifyAuditChainDetailed(
+	async verifyAudit(tenantId: string): Promise<SandboxAuditChainVerification> {
+		return await this.repository.verifyAuditChainDetailed(
 			identifier(tenantId, 'tenantId'),
 		);
 	}

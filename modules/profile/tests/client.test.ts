@@ -3,7 +3,7 @@ import {
 	registerModuleTranslations,
 	setActiveLocale,
 	t,
-} from '@coreloom/client/i18n';
+} from '@flowdular/client/i18n';
 import {
 	changeOwnPassword,
 	loadOwnLanguagePreference,

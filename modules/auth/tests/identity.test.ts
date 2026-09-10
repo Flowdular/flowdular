@@ -1,8 +1,13 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
 import { createContext } from '@octanejs/app-core';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	describe,
+	expect,
+	it,
+	vi,
+} from 'vitest';
 import {
 	AUTH_PRINCIPAL_STATE_KEY,
 	AUTH_TOKEN_PRINCIPAL_STATE_KEY,
@@ -11,8 +16,17 @@ import { createAuthRoutes } from '../src/server/endpoints.ts';
 import {
 	authRuntimeOptionsFromEnvironment,
 	createAuthRuntime,
+	type AuthRuntime,
 } from '../src/server/runtime.ts';
-import { ORIGIN, route, testRuntime } from './helpers.ts';
+import {
+	closeAuthTestDatabases,
+	ORIGIN,
+	route,
+	testRuntime,
+	unopenedDatabases,
+	type TestRuntime,
+} from './helpers.ts';
+import { authTestProvider } from './support/database.ts';
 
 const OIDC_PROVIDER = {
 	id: 'example',
@@ -23,7 +37,7 @@ const OIDC_PROVIDER = {
 	clientSecret: 'secret',
 } as const;
 
-async function oidcStart(runtime: ReturnType<typeof testRuntime>) {
+async function oidcStart(runtime: TestRuntime) {
 	const result = await route(runtime, '/api/auth/oidc/:provider/start').handler(
 		createContext(new Request(`${ORIGIN}/api/auth/oidc/example/start`), {
 			provider: OIDC_PROVIDER.id,
@@ -36,7 +50,7 @@ async function oidcStart(runtime: ReturnType<typeof testRuntime>) {
 }
 
 async function oidcCallback(
-	runtime: ReturnType<typeof testRuntime>,
+	runtime: TestRuntime,
 	transaction: { readonly cookie: string; readonly state: string },
 	values: { readonly code?: string; readonly state?: string } = {},
 ) {
@@ -64,56 +78,65 @@ function oidcProviderFetch() {
 	);
 }
 
-afterEach(() => {
+const open = new Set<AuthRuntime>();
+
+function track<T extends AuthRuntime>(runtime: T): T {
+	open.add(runtime);
+	return runtime;
+}
+
+/* Booting the embedded PostgreSQL takes seconds; charge it to the hook budget
+   instead of the first case's five second timeout. */
+beforeAll(async () => {
+	await authTestProvider();
+}, 60_000);
+
+afterEach(async () => {
 	vi.unstubAllGlobals();
 	vi.restoreAllMocks();
+	await Promise.all([...open].map((runtime) => runtime.dispose()));
+	open.clear();
 });
 
-describe('Coreloom authentication identity', () => {
-	it('uses the Coreloom local data path and request state keys', () => {
-		const workspace = mkdtempSync(resolve(tmpdir(), 'coreloom-auth-identity-'));
-		try {
-			const options = authRuntimeOptionsFromEnvironment({}, workspace);
+afterAll(closeAuthTestDatabases);
 
-			expect(options.databasePath).toBe(
-				resolve(workspace, '.coreloom/data/auth.db'),
-			);
-			expect(AUTH_PRINCIPAL_STATE_KEY).toBe('coreloom.auth.principal');
-			expect(AUTH_TOKEN_PRINCIPAL_STATE_KEY).toBe(
-				'coreloom.auth.token-principal',
-			);
-		} finally {
-			rmSync(workspace, { recursive: true, force: true });
-		}
+describe('Flowdular authentication identity', () => {
+	it('uses the Flowdular request state keys', () => {
+		expect(AUTH_PRINCIPAL_STATE_KEY).toBe('flowdular.auth.principal');
+		expect(AUTH_TOKEN_PRINCIPAL_STATE_KEY).toBe(
+			'flowdular.auth.token-principal',
+		);
 	});
 
-	it('uses Coreloom session cookie names in development and production', () => {
+	it('uses Flowdular session cookie names in development and production', () => {
 		const base = {
-			databasePath: ':memory:',
+			databases: unopenedDatabases(),
 			sessionTtlMs: 3_600_000,
 			allowSignUp: false,
 			emailConfirmation: false,
 			signInProviders: [],
 		};
-		const development = createAuthRuntime({ ...base, secureCookies: false });
-		const production = createAuthRuntime({ ...base, secureCookies: true });
+		const development = track(
+			createAuthRuntime({ ...base, secureCookies: false }),
+		);
+		const production = track(
+			createAuthRuntime({ ...base, secureCookies: true }),
+		);
 
 		expect(development.cookie.name).toBe('coreloom_session_dev');
 		expect(production.cookie.name).toBe('__Host-coreloom_session');
-		development.dispose();
-		production.dispose();
 	});
 
 	it('rejects a malformed MFA encryption key before the runtime starts', () => {
 		expect(() =>
 			authRuntimeOptionsFromEnvironment(
-				{ CL_AUTH_MFA_KEY: 'not-a-32-byte-key' },
+				{ FD_AUTH_MFA_KEY: 'not-a-32-byte-key' },
 				process.cwd(),
 			),
-		).toThrow(/CL_AUTH_MFA_KEY/);
+		).toThrow(/FD_AUTH_MFA_KEY/);
 		expect(() =>
 			createAuthRuntime({
-				databasePath: ':memory:',
+				databases: unopenedDatabases(),
 				secureCookies: false,
 				sessionTtlMs: 3_600_000,
 				allowSignUp: false,
@@ -127,49 +150,51 @@ describe('Coreloom authentication identity', () => {
 	it('requires a secure canonical public origin for auth links and OIDC', () => {
 		expect(() =>
 			authRuntimeOptionsFromEnvironment(
-				{ CL_AUTH_PUBLIC_ORIGIN: 'http://erp.example.test' },
+				{ FD_AUTH_PUBLIC_ORIGIN: 'http://erp.example.test' },
 				process.cwd(),
 			),
 		).toThrow(/HTTPS/);
 		expect(() =>
 			authRuntimeOptionsFromEnvironment(
-				{ CL_AUTH_PUBLIC_ORIGIN: 'https://user:password@erp.example.test' },
+				{ FD_AUTH_PUBLIC_ORIGIN: 'https://user:password@erp.example.test' },
 				process.cwd(),
 			),
 		).toThrow(/credentials/);
 		expect(
 			authRuntimeOptionsFromEnvironment(
-				{ CL_AUTH_PUBLIC_ORIGIN: 'http://127.0.0.1:4310' },
+				{ FD_AUTH_PUBLIC_ORIGIN: 'http://127.0.0.1:4310' },
 				process.cwd(),
 			).publicBaseUrl,
 		).toBe('http://127.0.0.1:4310');
 	});
 
-	it('uses a separate Coreloom cookie for the OIDC transaction', async () => {
-		const runtime = createAuthRuntime({
-			databasePath: ':memory:',
-			secureCookies: false,
-			sessionTtlMs: 3_600_000,
-			allowSignUp: false,
-			emailConfirmation: false,
-			signInProviders: ['example'],
-			publicBaseUrl: 'https://coreloom.example',
-			oidcProviders: [
-				{
-					id: 'example',
-					authorizationEndpoint: 'https://identity.example/authorize',
-					tokenEndpoint: 'https://identity.example/token',
-					userInfoEndpoint: 'https://identity.example/userinfo',
-					clientId: 'client',
-					clientSecret: 'secret',
-				},
-			],
-		});
+	it('uses a separate Flowdular cookie for the OIDC transaction', async () => {
+		const runtime = track(
+			createAuthRuntime({
+				databases: await authTestProvider(),
+				secureCookies: false,
+				sessionTtlMs: 3_600_000,
+				allowSignUp: false,
+				emailConfirmation: false,
+				signInProviders: ['example'],
+				publicBaseUrl: 'https://flowdular.example',
+				oidcProviders: [
+					{
+						id: 'example',
+						authorizationEndpoint: 'https://identity.example/authorize',
+						tokenEndpoint: 'https://identity.example/token',
+						userInfoEndpoint: 'https://identity.example/userinfo',
+						clientId: 'client',
+						clientSecret: 'secret',
+					},
+				],
+			}),
+		);
 		const route = createAuthRoutes(runtime).find(
 			(entry) => entry.path === '/api/auth/oidc/:provider/start',
 		)!;
 		const context = createContext(
-			new Request('https://coreloom.example/api/auth/oidc/example/start'),
+			new Request('https://flowdular.example/api/auth/oidc/example/start'),
 			{ provider: 'example' },
 		);
 
@@ -177,15 +202,16 @@ describe('Coreloom authentication identity', () => {
 
 		expect(response.status).toBe(302);
 		expect(response.headers.get('set-cookie')).toMatch(/^coreloom_oidc_state=/);
-		runtime.dispose();
 	});
 
 	it('rejects a modified OIDC transaction before contacting the provider and expires its cookie', async () => {
-		const runtime = testRuntime({
-			signInProviders: [OIDC_PROVIDER.id],
-			oidcProviders: [OIDC_PROVIDER],
-			publicBaseUrl: ORIGIN,
-		});
+		const runtime = track(
+			await testRuntime({
+				signInProviders: [OIDC_PROVIDER.id],
+				oidcProviders: [OIDC_PROVIDER],
+				publicBaseUrl: ORIGIN,
+			}),
+		);
 		const transaction = await oidcStart(runtime);
 		const cookie = transaction.cookie;
 		const [name, encodedValue] = cookie.split('=', 2) as [string, string];
@@ -210,15 +236,16 @@ describe('Coreloom authentication identity', () => {
 			expect.stringContaining('coreloom_oidc_state='),
 		]);
 		expect(result.headers.getSetCookie()[0]).toContain('Max-Age=0');
-		runtime.dispose();
 	});
 
 	it('rejects an oversized OIDC authorization code before contacting the provider', async () => {
-		const runtime = testRuntime({
-			signInProviders: [OIDC_PROVIDER.id],
-			oidcProviders: [OIDC_PROVIDER],
-			publicBaseUrl: ORIGIN,
-		});
+		const runtime = track(
+			await testRuntime({
+				signInProviders: [OIDC_PROVIDER.id],
+				oidcProviders: [OIDC_PROVIDER],
+				publicBaseUrl: ORIGIN,
+			}),
+		);
 		const transaction = await oidcStart(runtime);
 		const fetchMock = vi.fn();
 		vi.stubGlobal('fetch', fetchMock);
@@ -229,15 +256,16 @@ describe('Coreloom authentication identity', () => {
 
 		expect(result.status).toBe(401);
 		expect(fetchMock).not.toHaveBeenCalled();
-		runtime.dispose();
 	});
 
 	it('returns the session and expired OIDC state as separate Set-Cookie headers', async () => {
-		const runtime = testRuntime({
-			signInProviders: [OIDC_PROVIDER.id],
-			oidcProviders: [OIDC_PROVIDER],
-			publicBaseUrl: ORIGIN,
-		});
+		const runtime = track(
+			await testRuntime({
+				signInProviders: [OIDC_PROVIDER.id],
+				oidcProviders: [OIDC_PROVIDER],
+				publicBaseUrl: ORIGIN,
+			}),
+		);
 		await runtime.authService.signUp({
 			email: 'owner@example.com',
 			password: 'correct horse battery staple',
@@ -260,15 +288,16 @@ describe('Coreloom authentication identity', () => {
 				expect.stringMatching(/^coreloom_oidc_state=.*Max-Age=0/),
 			]),
 		);
-		runtime.dispose();
 	});
 
 	it('returns the MFA proof and expired OIDC state as separate Set-Cookie headers', async () => {
-		const runtime = testRuntime({
-			signInProviders: [OIDC_PROVIDER.id],
-			oidcProviders: [OIDC_PROVIDER],
-			publicBaseUrl: ORIGIN,
-		});
+		const runtime = track(
+			await testRuntime({
+				signInProviders: [OIDC_PROVIDER.id],
+				oidcProviders: [OIDC_PROVIDER],
+				publicBaseUrl: ORIGIN,
+			}),
+		);
 		vi.spyOn(
 			runtime.authService,
 			'signInVerifiedExternalEmail',
@@ -304,15 +333,16 @@ describe('Coreloom authentication identity', () => {
 				expect.stringMatching(/^coreloom_oidc_state=.*Max-Age=0/),
 			]),
 		);
-		runtime.dispose();
 	});
 
 	it('puts a deadline on both OIDC provider requests', async () => {
-		const runtime = testRuntime({
-			signInProviders: [OIDC_PROVIDER.id],
-			oidcProviders: [OIDC_PROVIDER],
-			publicBaseUrl: ORIGIN,
-		});
+		const runtime = track(
+			await testRuntime({
+				signInProviders: [OIDC_PROVIDER.id],
+				oidcProviders: [OIDC_PROVIDER],
+				publicBaseUrl: ORIGIN,
+			}),
+		);
 		const transaction = await oidcStart(runtime);
 		const fetchMock = oidcProviderFetch();
 		vi.stubGlobal('fetch', fetchMock);
@@ -323,15 +353,16 @@ describe('Coreloom authentication identity', () => {
 		for (const [, init] of fetchMock.mock.calls) {
 			expect(init?.signal).toBeInstanceOf(AbortSignal);
 		}
-		runtime.dispose();
 	});
 
 	it('rejects an OIDC provider response larger than the identity bound', async () => {
-		const runtime = testRuntime({
-			signInProviders: [OIDC_PROVIDER.id],
-			oidcProviders: [OIDC_PROVIDER],
-			publicBaseUrl: ORIGIN,
-		});
+		const runtime = track(
+			await testRuntime({
+				signInProviders: [OIDC_PROVIDER.id],
+				oidcProviders: [OIDC_PROVIDER],
+				publicBaseUrl: ORIGIN,
+			}),
+		);
 		await runtime.authService.signUp({
 			email: 'owner@example.com',
 			password: 'correct horse battery staple',
@@ -356,6 +387,5 @@ describe('Coreloom authentication identity', () => {
 			},
 		});
 		expect(fetchMock).toHaveBeenCalledTimes(1);
-		runtime.dispose();
 	});
 });

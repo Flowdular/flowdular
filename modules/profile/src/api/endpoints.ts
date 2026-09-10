@@ -5,13 +5,13 @@ import {
 	problemResponse,
 	readJsonObject,
 	requiredString,
-} from '@coreloom/server';
-import type { AuthRuntime } from '@coreloom/module-auth/server';
+} from '@flowdular/server';
+import type { AuthRuntime } from '@flowdular/module-auth/server';
 import {
 	endpointIdentityFromContext,
 	principalFromContext,
 	sessionMutationDenial,
-} from '@coreloom/module-auth/server';
+} from '@flowdular/module-auth/server';
 import { PROFILE_PERMISSIONS } from '../acl/permissions.ts';
 import type { UpdateProfileInput } from '../domain/types.ts';
 import { ProfileServiceError } from '../services/profile-service.ts';
@@ -70,14 +70,13 @@ export function createProfileRoutes(
 			permission: PROFILE_PERMISSIONS.manageSelf,
 		},
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			try {
 				assertSelfOnlyProfileTarget(octane.request);
 				const principal = principalFromContext(octane)!;
+				const service = await runtime.service();
 				return jsonResponse({
-					profile: runtime
-						.service()
-						.read(principal.tenantId, principal.accountId),
+					profile: await service.read(principal.tenantId, principal.accountId),
 				});
 			} catch (error) {
 				return failure(error);
@@ -100,14 +99,13 @@ export function createProfileRoutes(
 				const value = await readJsonObject(octane.request);
 				assertSelfOnlyProfileTarget(octane.request, value);
 				const principal = principalFromContext(octane)!;
+				const service = await runtime.service();
 				return jsonResponse({
-					profile: runtime
-						.service()
-						.update(
-							principal.tenantId,
-							principal.accountId,
-							updateInput(value),
-						),
+					profile: await service.update(
+						principal.tenantId,
+						principal.accountId,
+						updateInput(value),
+					),
 				});
 			} catch (error) {
 				return failure(error);
@@ -123,14 +121,16 @@ export function createProfileRoutes(
 			permission: PROFILE_PERMISSIONS.manageSelf,
 		},
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			try {
 				assertSelfOnlyProfileTarget(octane.request);
 				const principal = principalFromContext(octane)!;
+				const service = await runtime.service();
 				return jsonResponse({
-					locale: runtime
-						.service()
-						.readLanguage(principal.tenantId, principal.accountId),
+					locale: await service.readLanguage(
+						principal.tenantId,
+						principal.accountId,
+					),
 				});
 			} catch (error) {
 				return failure(error);
@@ -153,12 +153,15 @@ export function createProfileRoutes(
 				const value = await readJsonObject(octane.request);
 				assertSelfOnlyProfileTarget(octane.request, value);
 				const principal = principalFromContext(octane)!;
+				const service = await runtime.service();
 				return jsonResponse({
-					preference: runtime
-						.service()
-						.updateLanguage(principal.tenantId, principal.accountId, {
+					preference: await service.updateLanguage(
+						principal.tenantId,
+						principal.accountId,
+						{
 							locale: requiredString(value, 'locale', { min: 2, max: 16 }),
-						}),
+						},
+					),
 				});
 			} catch (error) {
 				return failure(error);

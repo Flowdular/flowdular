@@ -1,4 +1,4 @@
-import type { UserActor } from '@coreloom/kernel';
+import type { UserActor } from '@flowdular/kernel';
 
 export const AUTOMATION_TARGETS_CAPABILITY = 'automations.targets.v1';
 
@@ -64,11 +64,11 @@ export interface AutomationTargetAdapter {
 	available(): boolean;
 	list(
 		context: AutomationTargetAuthorizationContext,
-	): readonly AutomationTargetReference[];
+	): Promise<readonly AutomationTargetReference[]>;
 	validate(
 		targetKey: string,
 		context: AutomationTargetAuthorizationContext,
-	): AutomationTargetReference;
+	): Promise<AutomationTargetReference>;
 	invoke(
 		request: AutomationTargetInvocationRequest,
 		context: AutomationTargetInvocationContext,

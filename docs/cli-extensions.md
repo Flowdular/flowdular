@@ -41,7 +41,7 @@ A module with the `cli` capability declares two paths in `module.json`:
 The implementation exports the matching versioned command:
 
 ```ts
-import { defineCliExtension } from '@coreloom/cli-protocol';
+import { defineCliExtension } from '@flowdular/cli-protocol';
 
 export default defineCliExtension({
 	protocolVersion: 1,
@@ -70,7 +70,7 @@ The CLI imports this code only after the exact command or capability is invoked.
 ## Execution rules
 
 - Command paths and capability IDs must start with the first segment of the module ID.
-- The module must be enabled in `coreloom.json`.
+- The module must be enabled in `flowdular.json`.
 - Catalog and entry paths must resolve inside the module, including through symlinks.
 - A command marked `requiresApprovedSpec` requires `--spec <path>` and an approved, schema-valid spec.
 - Non-read commands are dry-run by default when supported. Other non-read commands require `--apply`.

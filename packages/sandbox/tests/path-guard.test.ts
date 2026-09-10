@@ -13,13 +13,13 @@ import { describe, expect, it } from 'vitest';
 import { guardAgentPaths } from '../src/server/path-guard.ts';
 
 async function workspace(): Promise<string> {
-	const root = await mkdtemp(join(tmpdir(), 'coreloom-path-guard-'));
+	const root = await mkdtemp(join(tmpdir(), 'flowdular-path-guard-'));
 	await mkdir(join(root, 'modules', 'catalog', 'src'), { recursive: true });
 	await writeFile(
 		join(root, 'modules', 'catalog', 'src', 'owned.ts'),
 		'before\n',
 	);
-	await writeFile(join(root, 'coreloom.json'), '{"schemaVersion":1}\n');
+	await writeFile(join(root, 'flowdular.json'), '{"schemaVersion":1}\n');
 	return root;
 }
 
@@ -47,13 +47,13 @@ describe('agent path guard', () => {
 			sessionRoot: join(root, '..', 'path-guard-session'),
 			allowedPaths: ['modules/catalog/src/**'],
 		});
-		await writeFile(join(root, 'coreloom.json'), '{"changed":true}\n');
+		await writeFile(join(root, 'flowdular.json'), '{"changed":true}\n');
 		const result = await guard.verify();
 		expect(result.violations).toEqual([
-			expect.objectContaining({ path: 'coreloom.json', change: 'modified' }),
+			expect.objectContaining({ path: 'flowdular.json', change: 'modified' }),
 		]);
 		expect(result.quarantine).not.toBeNull();
-		expect(await readFile(join(root, 'coreloom.json'), 'utf8')).toBe(
+		expect(await readFile(join(root, 'flowdular.json'), 'utf8')).toBe(
 			'{"schemaVersion":1}\n',
 		);
 		await expect(

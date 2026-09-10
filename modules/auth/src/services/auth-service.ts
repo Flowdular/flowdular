@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { userActor, type Actor } from '@coreloom/kernel';
+import { userActor, type Actor } from '@flowdular/kernel';
 import { AUTH_SCOPES, MEMBER_SCOPES, OWNER_SCOPES } from '../acl/scopes.ts';
 import type {
 	ApiTokenRecord,
@@ -53,6 +53,7 @@ import {
 	normalizeEmail,
 	validateCreateTenantMember,
 	validateDisplayName,
+	validateEmailAddress,
 	validateRoleDescription,
 	validateRoleKey,
 	validateRoleName,
@@ -102,6 +103,97 @@ export interface MfaStatus {
 	readonly pending: boolean;
 }
 
+/** How the first credential of a provisioned account reaches the operator. */
+export type OperatorCredentialKind =
+	| 'password-setup-link'
+	| 'operator-password'
+	| 'invitation-link'
+	| 'existing-password';
+
+export interface OperatorCredential {
+	readonly kind: OperatorCredentialKind;
+	/* Carried by the link kinds only. Returned once, because only its hash is
+	   stored and nothing can recover it afterwards. */
+	readonly url?: string;
+	readonly expiresAt?: number;
+}
+
+export interface WorkspaceProvisionInput {
+	readonly name: string;
+	readonly slug: string;
+	readonly ownerEmail: string;
+	readonly ownerDisplayName: string;
+	/* Chosen by the operator and supplied out of band. Leaving it out issues a
+	   single-use setup link instead, so no password the operator did not choose
+	   is ever returned. */
+	readonly password?: string;
+	/** Audit label of the operator, such as `cli:ada`. */
+	readonly operator: string;
+}
+
+export interface WorkspaceProvisionPlan {
+	readonly workspace: { readonly name: string; readonly slug: string };
+	readonly owner: {
+		readonly email: string;
+		readonly displayName: string;
+		readonly role: string;
+		readonly scopes: readonly string[];
+	};
+	/* The same field the applied result carries, so a plan and an apply parse
+	   the same way. Only the applied one adds the link itself. */
+	readonly credential: { readonly kind: OperatorCredentialKind };
+	readonly operator: string;
+}
+
+export interface ProvisionedWorkspace {
+	readonly workspace: TenantSummary;
+	readonly owner: {
+		readonly accountId: string;
+		readonly email: string;
+		readonly displayName: string;
+		readonly role: string;
+		readonly scopes: readonly string[];
+	};
+	readonly credential: OperatorCredential;
+	readonly operator: string;
+}
+
+export interface MemberProvisionInput {
+	/** Workspace slug or identifier. */
+	readonly workspace: string;
+	readonly email: string;
+	readonly role: string;
+	readonly operator: string;
+}
+
+export interface MemberProvisionPlan {
+	readonly workspace: TenantSummary;
+	readonly email: string;
+	readonly role: TenantRole;
+	/* An address that already has an account joins immediately; an unknown one
+	   receives an invitation and creates its own account. */
+	readonly action: 'membership' | 'invitation';
+	readonly account: {
+		readonly accountId: string;
+		readonly email: string;
+		readonly displayName: string;
+	} | null;
+	readonly credential: { readonly kind: OperatorCredentialKind };
+	readonly operator: string;
+}
+
+export interface ProvisionedMember {
+	readonly workspace: TenantSummary;
+	readonly email: string;
+	readonly role: string;
+	readonly scopes: readonly string[];
+	readonly action: 'membership' | 'invitation';
+	readonly accountId: string | null;
+	readonly invitationId: string | null;
+	readonly credential: OperatorCredential;
+	readonly operator: string;
+}
+
 export interface SignInContext {
 	/** Client address when known; null skips address-based limits. */
 	readonly address?: string | null;
@@ -123,6 +215,9 @@ const FAILURE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const MAX_AUDIT_PAGE = 100;
 const PASSWORD_RESET_TTL_MS = 30 * 60 * 1000;
 const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/* An operator carries this link to a person by hand, which the 30 minutes of a
+   self-service reset does not survive. It stays single use and hashed at rest. */
+const OPERATOR_SETUP_TTL_MS = 24 * 60 * 60 * 1000;
 const MFA_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const RECOVERY_CODE_COUNT = 10;
 
@@ -143,6 +238,7 @@ export const AUDIT_ACTIONS = Object.freeze({
 	mfaConfirmed: 'auth.mfa.confirmed',
 	mfaChallengeSucceeded: 'auth.mfa.challenge-succeeded',
 	tenantRenamed: 'auth.tenant.renamed',
+	workspaceProvisioned: 'auth.workspace.provisioned',
 	memberCreated: 'users.member.created',
 	memberUpdated: 'users.member.updated',
 	memberStatus: 'users.member.status',
@@ -157,6 +253,14 @@ export const AUDIT_ACTIONS = Object.freeze({
 });
 
 export const AUDIT_ACTION_LIST = Object.freeze(Object.values(AUDIT_ACTIONS));
+
+/* An operator command runs from a deployment shell and belongs to no account.
+   The audit actor_kind column accepts only 'user' or 'agent', so the operator
+   is recorded as a user whose identifier carries the cli: prefix the label
+   filter can search for. */
+function operatorActor(operator: string): Actor {
+	return { kind: 'user', id: operator, label: operator };
+}
 
 function member(account: AccountCredential, createdAt: number): TenantMember {
 	return {
@@ -206,16 +310,16 @@ export class AuthService {
 
 	/* Audit rows are evidence, never a reason to fail the operation they
 	   describe; a failing write is reported and swallowed. */
-	#audit(
+	async #audit(
 		tenantId: string,
 		actor: Actor,
 		action: string,
 		subjectType: string,
 		subjectId: string,
 		metadata: Readonly<Record<string, unknown>> = {},
-	): void {
+	): Promise<void> {
 		try {
-			this.#repository.appendAudit({
+			await this.#repository.appendAudit({
 				tenantId,
 				actorAccountId: actor.kind === 'user' ? actor.id : null,
 				actorLabel: actor.label,
@@ -228,7 +332,7 @@ export class AuthService {
 				occurredAt: this.#now(),
 			});
 		} catch (error) {
-			/* Audit failures must not leak a SQLite error, whose detail can include
+			/* Audit failures must not leak a driver error, whose detail can include
 			   bound values from the operation being audited. */
 			void error;
 			console.error('[auth.core] audit write failed');
@@ -245,7 +349,7 @@ export class AuthService {
 		const createdAt = this.#now();
 		const expiresAt = createdAt + this.#policy().sessionTtlMs;
 		const sessionId = randomUUID();
-		this.#repository.createSession({
+		await this.#repository.createSession({
 			id: sessionId,
 			tokenHash: hashSessionToken(token),
 			accountId: account.accountId,
@@ -267,7 +371,7 @@ export class AuthService {
 				displayName: account.displayName,
 				role: account.role,
 				scopes: account.scopes,
-				tenants: this.#repository.listTenantAccess(account.accountId),
+				tenants: await this.#repository.listTenantAccess(account.accountId),
 			},
 		};
 	}
@@ -276,7 +380,7 @@ export class AuthService {
 		const input = validateSignUp(raw, this.#policy().passwordMinLength);
 		const passwordHash = await hashPassword(input.password, this.#passwordHash);
 		try {
-			const account = this.#repository.createAccountWithTenant({
+			const account = await this.#repository.createAccountWithTenant({
 				accountId: randomUUID(),
 				tenantId: randomUUID(),
 				email: input.email,
@@ -290,7 +394,7 @@ export class AuthService {
 				createdAt: this.#now(),
 			});
 			const issued = await this.#issue(account);
-			this.#audit(
+			await this.#audit(
 				account.tenantId,
 				{ kind: 'user', id: account.accountId, label: account.email },
 				AUDIT_ACTIONS.signInSucceeded,
@@ -316,12 +420,12 @@ export class AuthService {
 		}
 	}
 
-	checkWorkspaceSlug(raw: string): {
+	async checkWorkspaceSlug(raw: string): Promise<{
 		readonly slug: string;
 		readonly valid: boolean;
 		readonly available: boolean;
 		readonly message?: string;
-	} {
+	}> {
 		let slug: string;
 		try {
 			slug = validateWorkspaceSlug(raw);
@@ -339,7 +443,7 @@ export class AuthService {
 		return {
 			slug,
 			valid: true,
-			available: !this.#repository.isTenantSlugTaken(slug),
+			available: !(await this.#repository.isTenantSlugTaken(slug)),
 		};
 	}
 
@@ -351,7 +455,7 @@ export class AuthService {
 	): Promise<IssuedSession & { readonly mfaRequired?: true }> {
 		const input = validateSignIn(raw);
 		const now = this.#now();
-		const failure = this.#repository.findSignInFailure(input.email);
+		const failure = await this.#repository.findSignInFailure(input.email);
 		if (failure?.lockedUntil !== null && (failure?.lockedUntil ?? 0) > now) {
 			throw new AuthServiceError(
 				'ACCOUNT_LOCKED',
@@ -359,23 +463,23 @@ export class AuthService {
 				423,
 			);
 		}
-		const account = this.#repository.findAccountByEmail(input.email);
+		const account = await this.#repository.findAccountByEmail(input.email);
 		if (!account) {
 			await hashPassword(input.password, this.#passwordHash);
-			this.#recordFailure(input.email, null, context);
+			await this.#recordFailure(input.email, null, context);
 			throw this.#invalidCredentials();
 		}
 		const valid = await verifyPassword(input.password, account.passwordHash);
 		if (!valid || account.status !== 'active') {
-			this.#recordFailure(input.email, account, context);
+			await this.#recordFailure(input.email, account, context);
 			throw this.#invalidCredentials();
 		}
-		this.#repository.clearSignInFailures(input.email);
-		const mfa = this.#repository.findMfaTotp(account.accountId);
+		await this.#repository.clearSignInFailures(input.email);
+		const mfa = await this.#repository.findMfaTotp(account.accountId);
 		if (mfa?.confirmedAt !== null && mfa?.confirmedAt !== undefined)
 			return this.#issueMfaChallenge(account, now);
 		const issued = await this.#issue(account);
-		this.#audit(
+		await this.#audit(
 			account.tenantId,
 			{ kind: 'user', id: account.accountId, label: account.email },
 			AUDIT_ACTIONS.signInSucceeded,
@@ -386,12 +490,12 @@ export class AuthService {
 		return issued;
 	}
 
-	#issueMfaChallenge(
+	async #issueMfaChallenge(
 		account: AccountCredential,
 		now = this.#now(),
-	): MfaChallenge {
+	): Promise<MfaChallenge> {
 		const token = randomBytes(32).toString('base64url');
-		this.#repository.createMfaChallenge({
+		await this.#repository.createMfaChallenge({
 			tokenHash: hashSessionToken(token),
 			accountId: account.accountId,
 			tenantId: account.tenantId,
@@ -426,12 +530,12 @@ export class AuthService {
 		);
 	}
 
-	#recordFailure(
+	async #recordFailure(
 		normalizedEmail: string,
 		account: AccountCredential | null,
 		context: SignInContext,
-	): void {
-		const record = this.#repository.recordSignInFailure(
+	): Promise<void> {
+		const record = await this.#repository.recordSignInFailure(
 			normalizedEmail,
 			this.#now(),
 			LOCK_THRESHOLD,
@@ -440,7 +544,7 @@ export class AuthService {
 		);
 		if (!account) return;
 		const locked = record.failures >= LOCK_THRESHOLD;
-		this.#audit(
+		await this.#audit(
 			account.tenantId,
 			{ kind: 'user', id: account.accountId, label: account.email },
 			locked ? AUDIT_ACTIONS.signInLocked : AUDIT_ACTIONS.signInFailed,
@@ -453,27 +557,31 @@ export class AuthService {
 		);
 	}
 
-	listTenantMembers(tenantId: string): readonly TenantMember[] {
+	async listTenantMembers(tenantId: string): Promise<readonly TenantMember[]> {
 		return this.#repository.listTenantMembers(tenantId);
 	}
 
 	/* Scopes are authorization metadata, not credentials. Dependent modules read
 	   them here instead of interpreting role names or opening the auth database. */
-	listMembershipScopes(accountId: string, tenantId: string): readonly string[] {
+	async listMembershipScopes(
+		accountId: string,
+		tenantId: string,
+	): Promise<readonly string[]> {
 		return (
-			this.#repository.findAccountMembership(accountId, tenantId)?.scopes ?? []
+			(await this.#repository.findAccountMembership(accountId, tenantId))
+				?.scopes ?? []
 		);
 	}
 
 	/* Every scope an administrator may hand out in this workspace: the static
 	   owner template plus whatever later modules granted through sync-scopes. */
-	listGrantableScopes(tenantId: string): readonly string[] {
+	async listGrantableScopes(tenantId: string): Promise<readonly string[]> {
 		return [
 			...new Set([
 				...OWNER_SCOPES,
-				...this.#repository.listTenantScopes(
+				...(await this.#repository.listTenantScopes(
 					this.#identifier(tenantId, 'tenantId'),
-				),
+				)),
 			]),
 		].sort();
 	}
@@ -487,7 +595,7 @@ export class AuthService {
 		readonly newPassword: string;
 		readonly keepSessionToken?: string | null;
 	}): Promise<void> {
-		const account = this.#repository.findAccountCredentialById(
+		const account = await this.#repository.findAccountCredentialById(
 			this.#identifier(input.accountId, 'accountId'),
 		);
 		if (!account || account.status !== 'active') {
@@ -516,16 +624,16 @@ export class AuthService {
 				400,
 			);
 		}
-		this.#repository.updatePasswordHash(
+		await this.#repository.updatePasswordHash(
 			account.accountId,
 			await hashPassword(input.newPassword, this.#passwordHash),
 			false,
 		);
-		this.#repository.deleteAccountSessions(
+		await this.#repository.deleteAccountSessions(
 			account.accountId,
 			input.keepSessionToken ? hashSessionToken(input.keepSessionToken) : null,
 		);
-		this.#audit(
+		await this.#audit(
 			account.tenantId,
 			{ kind: 'user', id: account.accountId, label: account.email },
 			AUDIT_ACTIONS.passwordChanged,
@@ -537,12 +645,12 @@ export class AuthService {
 	/* Adds scopes to an existing membership. A composition root uses it to give
 	   a workspace the scopes a newly composed module declares; it never widens
 	   authority on its own, because the caller decides what to grant. */
-	grantMembershipScopes(
+	async grantMembershipScopes(
 		accountId: string,
 		tenantId: string,
 		scopes: readonly string[],
-	): readonly string[] {
-		const membership = this.#repository.findAccountMembership(
+	): Promise<readonly string[]> {
+		const membership = await this.#repository.findAccountMembership(
 			this.#identifier(accountId, 'accountId'),
 			this.#identifier(tenantId, 'tenantId'),
 		);
@@ -558,7 +666,7 @@ export class AuthService {
 			.filter((scope) => SCOPE_PATTERN.test(scope) && !held.has(scope))
 			.sort();
 		if (added.length > 0) {
-			this.#repository.insertMembershipScopes(
+			await this.#repository.insertMembershipScopes(
 				membership.accountId,
 				membership.tenantId,
 				added,
@@ -570,49 +678,52 @@ export class AuthService {
 	/* A module that joins the platform brings its own scopes. Nobody holds them
 	   yet, so enabling it grants them to the workspace owners; members receive
 	   them through role assignment. The grant is idempotent. */
-	grantModuleScopes(scopes: readonly string[]): readonly {
-		readonly tenantId: string;
-		readonly accountId: string;
-		readonly granted: readonly string[];
-	}[] {
+	async grantModuleScopes(scopes: readonly string[]): Promise<
+		readonly {
+			readonly tenantId: string;
+			readonly accountId: string;
+			readonly granted: readonly string[];
+		}[]
+	> {
 		const results: {
 			tenantId: string;
 			accountId: string;
 			granted: readonly string[];
 		}[] = [];
-		for (const membership of this.#repository.listOwnerMemberships()) {
-			const granted = this.grantMembershipScopes(
-				membership.accountId,
-				membership.tenantId,
-				scopes,
-			);
-			if (granted.length > 0) {
-				results.push({
-					tenantId: membership.tenantId,
-					accountId: membership.accountId,
-					granted,
-				});
+		const accepted = [...new Set(scopes)]
+			.filter((scope) => SCOPE_PATTERN.test(scope))
+			.sort();
+		if (accepted.length === 0) return results;
+		/* The role and its memberships commit together within each tenant. Future
+		   owners inherit the role; arbitrary membership grants never become defaults. */
+		for (const tenant of await this.#repository.listTenants()) {
+			for (const granted of await this.#repository.grantTenantOwnerScopes(
+				tenant.tenantId,
+				accepted,
+				this.#now(),
+			)) {
+				results.push({ tenantId: tenant.tenantId, ...granted });
 			}
 		}
 		return results;
 	}
 
-	listTenants(): readonly TenantSummary[] {
+	async listTenants(): Promise<readonly TenantSummary[]> {
 		return this.#repository.listTenants();
 	}
 
 	/* Tenant lookup by identifier or workspace slug for operator tooling. */
-	findTenant(reference: string): TenantSummary | null {
+	async findTenant(reference: string): Promise<TenantSummary | null> {
 		const normalized = reference.trim().normalize('NFKC');
 		if (normalized.length < 1 || normalized.length > 128) return null;
 		return (
-			this.#repository.findTenant(normalized) ??
-			this.#repository.findTenant(normalized.toLowerCase())
+			(await this.#repository.findTenant(normalized)) ??
+			(await this.#repository.findTenant(normalized.toLowerCase()))
 		);
 	}
 
-	renameTenant(actor: AuthActor, name: string): TenantSummary {
-		const renamed = this.#repository.renameTenant(
+	async renameTenant(actor: AuthActor, name: string): Promise<TenantSummary> {
+		const renamed = await this.#repository.renameTenant(
 			actor.tenantId,
 			validateWorkspaceName(name),
 		);
@@ -623,7 +734,7 @@ export class AuthService {
 				404,
 			);
 		}
-		this.#audit(
+		await this.#audit(
 			actor.tenantId,
 			this.#actorOf(actor),
 			AUDIT_ACTIONS.tenantRenamed,
@@ -636,25 +747,30 @@ export class AuthService {
 
 	/* Safe account lookup for operator tooling. It returns identity and
 	   membership metadata only, never a password hash or a session token. */
-	findAccountAccess(email: string): {
+	async findAccountAccess(email: string): Promise<{
 		readonly accountId: string;
 		readonly email: string;
 		readonly displayName: string;
 		readonly tenants: readonly AuthTenantAccess[];
-	} | null {
-		const account = this.#repository.findAccountByEmail(normalizeEmail(email));
+	} | null> {
+		const account = await this.#repository.findAccountByEmail(
+			normalizeEmail(email),
+		);
 		if (!account) return null;
 		return {
 			accountId: account.accountId,
 			email: account.email,
 			displayName: account.displayName,
-			tenants: this.#repository.listTenantAccess(account.accountId),
+			tenants: await this.#repository.listTenantAccess(account.accountId),
 		};
 	}
 
 	/* Only an owner may create or promote an owner; every other role is a
 	   tenant role row whose scopes become the membership's scopes. */
-	#roleForAssignment(actor: AuthActor | null, roleKey: string): TenantRole {
+	async #roleForAssignment(
+		actor: AuthActor | null,
+		roleKey: string,
+	): Promise<TenantRole> {
 		const tenantId = actor?.tenantId;
 		if (roleKey === 'owner' && actor && actor.role !== 'owner') {
 			throw new AuthServiceError(
@@ -664,7 +780,7 @@ export class AuthService {
 			);
 		}
 		const role = tenantId
-			? this.#repository.findRoleByKey(tenantId, roleKey)
+			? await this.#repository.findRoleByKey(tenantId, roleKey)
 			: null;
 		if (!role) {
 			throw new AuthServiceError(
@@ -692,8 +808,8 @@ export class AuthService {
 			);
 		}
 		const role = actor
-			? this.#roleForAssignment(actor, input.role)
-			: this.#repository.findRoleByKey(input.tenantId, input.role);
+			? await this.#roleForAssignment(actor, input.role)
+			: await this.#repository.findRoleByKey(input.tenantId, input.role);
 		const scopes = role
 			? role.scopes
 			: input.role === 'owner'
@@ -702,7 +818,7 @@ export class AuthService {
 		const passwordHash = await hashPassword(input.password, this.#passwordHash);
 		try {
 			const createdAt = this.#now();
-			const account = this.#repository.createAccountInTenant({
+			const account = await this.#repository.createAccountInTenant({
 				accountId: randomUUID(),
 				tenantId: input.tenantId,
 				email: input.email,
@@ -715,7 +831,7 @@ export class AuthService {
 				createdAt,
 			});
 			if (actor) {
-				this.#audit(
+				await this.#audit(
 					actor.tenantId,
 					this.#actorOf(actor),
 					AUDIT_ACTIONS.memberCreated,
@@ -733,12 +849,12 @@ export class AuthService {
 		}
 	}
 
-	#targetMember(
+	async #targetMember(
 		actor: AuthActor,
 		accountId: string,
 		options: { readonly allowSelf: boolean },
-	): AccountCredential {
-		const target = this.#repository.findAccountMembership(
+	): Promise<AccountCredential> {
+		const target = await this.#repository.findAccountMembership(
 			this.#identifier(accountId, 'accountId'),
 			actor.tenantId,
 		);
@@ -766,11 +882,14 @@ export class AuthService {
 		return target;
 	}
 
-	#assertOwnerRemains(tenantId: string, target: AccountCredential): void {
+	async #assertOwnerRemains(
+		tenantId: string,
+		target: AccountCredential,
+	): Promise<void> {
 		if (
 			target.role === 'owner' &&
 			target.status === 'active' &&
-			this.#repository.countActiveOwners(tenantId) <= 1
+			(await this.#repository.countActiveOwners(tenantId)) <= 1
 		) {
 			throw new AuthServiceError(
 				'LAST_OWNER',
@@ -780,10 +899,10 @@ export class AuthService {
 		}
 	}
 
-	#member(accountId: string, tenantId: string): TenantMember {
-		const record = this.#repository
-			.listTenantMembers(tenantId)
-			.find((entry) => entry.accountId === accountId);
+	async #member(accountId: string, tenantId: string): Promise<TenantMember> {
+		const record = (await this.#repository.listTenantMembers(tenantId)).find(
+			(entry) => entry.accountId === accountId,
+		);
 		if (!record) {
 			throw new AuthServiceError(
 				'ACCOUNT_NOT_FOUND',
@@ -794,15 +913,17 @@ export class AuthService {
 		return record;
 	}
 
-	updateMemberDisplayName(
+	async updateMemberDisplayName(
 		actor: AuthActor,
 		accountId: string,
 		displayName: string,
-	): TenantMember {
-		const target = this.#targetMember(actor, accountId, { allowSelf: true });
+	): Promise<TenantMember> {
+		const target = await this.#targetMember(actor, accountId, {
+			allowSelf: true,
+		});
 		const name = validateDisplayName(displayName);
-		this.#repository.updateAccountDisplayName(target.accountId, name);
-		this.#audit(
+		await this.#repository.updateAccountDisplayName(target.accountId, name);
+		await this.#audit(
 			actor.tenantId,
 			this.#actorOf(actor),
 			AUDIT_ACTIONS.memberUpdated,
@@ -813,18 +934,20 @@ export class AuthService {
 		return this.#member(target.accountId, actor.tenantId);
 	}
 
-	setMemberStatus(
+	async setMemberStatus(
 		actor: AuthActor,
 		accountId: string,
 		status: 'active' | 'disabled',
-	): TenantMember {
-		const target = this.#targetMember(actor, accountId, { allowSelf: false });
+	): Promise<TenantMember> {
+		const target = await this.#targetMember(actor, accountId, {
+			allowSelf: false,
+		});
 		if (status === 'disabled') {
-			this.#assertOwnerRemains(actor.tenantId, target);
-			this.#repository.deleteAccountSessions(target.accountId, null);
+			await this.#assertOwnerRemains(actor.tenantId, target);
+			await this.#repository.deleteAccountSessions(target.accountId, null);
 		}
-		this.#repository.updateAccountStatus(target.accountId, status);
-		this.#audit(
+		await this.#repository.updateAccountStatus(target.accountId, status);
+		await this.#audit(
 			actor.tenantId,
 			this.#actorOf(actor),
 			AUDIT_ACTIONS.memberStatus,
@@ -837,14 +960,16 @@ export class AuthService {
 
 	/* Leaves the account intact when it still belongs to another workspace;
 	   otherwise the account row goes too, so no orphan credential remains. */
-	removeMember(actor: AuthActor, accountId: string): void {
-		const target = this.#targetMember(actor, accountId, { allowSelf: false });
-		this.#assertOwnerRemains(actor.tenantId, target);
-		this.#repository.deleteMembership(target.accountId, actor.tenantId);
-		if (this.#repository.countMemberships(target.accountId) === 0) {
-			this.#repository.deleteAccount(target.accountId);
+	async removeMember(actor: AuthActor, accountId: string): Promise<void> {
+		const target = await this.#targetMember(actor, accountId, {
+			allowSelf: false,
+		});
+		await this.#assertOwnerRemains(actor.tenantId, target);
+		await this.#repository.deleteMembership(target.accountId, actor.tenantId);
+		if ((await this.#repository.countMemberships(target.accountId)) === 0) {
+			await this.#repository.deleteAccount(target.accountId);
 		}
-		this.#audit(
+		await this.#audit(
 			actor.tenantId,
 			this.#actorOf(actor),
 			AUDIT_ACTIONS.memberRemoved,
@@ -861,16 +986,18 @@ export class AuthService {
 		accountId: string,
 		temporaryPassword: string,
 	): Promise<TenantMember> {
-		const target = this.#targetMember(actor, accountId, { allowSelf: false });
+		const target = await this.#targetMember(actor, accountId, {
+			allowSelf: false,
+		});
 		assertPasswordPolicy(temporaryPassword, this.#policy().passwordMinLength);
-		this.#repository.updatePasswordHash(
+		await this.#repository.updatePasswordHash(
 			target.accountId,
 			await hashPassword(temporaryPassword, this.#passwordHash),
 			true,
 		);
-		this.#repository.deleteAccountSessions(target.accountId, null);
-		this.#repository.clearSignInFailures(normalizeEmail(target.email));
-		this.#audit(
+		await this.#repository.deleteAccountSessions(target.accountId, null);
+		await this.#repository.clearSignInFailures(normalizeEmail(target.email));
+		await this.#audit(
 			actor.tenantId,
 			this.#actorOf(actor),
 			AUDIT_ACTIONS.memberPasswordReset,
@@ -882,13 +1009,15 @@ export class AuthService {
 
 	/* A non-owner can only hand out scopes it holds itself; an owner may grant
 	   any grantable scope. */
-	setMembershipScopes(
+	async setMembershipScopes(
 		actor: AuthActor,
 		accountId: string,
 		scopes: readonly string[],
-	): TenantMember {
-		const target = this.#targetMember(actor, accountId, { allowSelf: false });
-		const grantable = new Set(this.listGrantableScopes(actor.tenantId));
+	): Promise<TenantMember> {
+		const target = await this.#targetMember(actor, accountId, {
+			allowSelf: false,
+		});
+		const grantable = new Set(await this.listGrantableScopes(actor.tenantId));
 		const held = new Set(actor.scopes);
 		const accepted = [...new Set(scopes)].sort();
 		for (const scope of accepted) {
@@ -907,12 +1036,12 @@ export class AuthService {
 				);
 			}
 		}
-		this.#repository.replaceMembershipScopes(
+		await this.#repository.replaceMembershipScopes(
 			target.accountId,
 			actor.tenantId,
 			accepted,
 		);
-		this.#audit(
+		await this.#audit(
 			actor.tenantId,
 			this.#actorOf(actor),
 			AUDIT_ACTIONS.memberScopes,
@@ -925,24 +1054,26 @@ export class AuthService {
 
 	/* Assigning a role replaces the membership scopes with the role's scopes and
 	   keeps the legacy role string in sync for readers of the principal. */
-	assignMemberRole(
+	async assignMemberRole(
 		actor: AuthActor,
 		accountId: string,
 		roleKey: string,
-	): TenantMember {
-		const target = this.#targetMember(actor, accountId, { allowSelf: false });
-		const role = this.#roleForAssignment(actor, validateRoleKey(roleKey));
+	): Promise<TenantMember> {
+		const target = await this.#targetMember(actor, accountId, {
+			allowSelf: false,
+		});
+		const role = await this.#roleForAssignment(actor, validateRoleKey(roleKey));
 		if (target.role === 'owner' && role.key !== 'owner') {
-			this.#assertOwnerRemains(actor.tenantId, target);
+			await this.#assertOwnerRemains(actor.tenantId, target);
 		}
-		this.#repository.updateMembershipRole(
+		await this.#repository.updateMembershipRole(
 			target.accountId,
 			actor.tenantId,
 			role.key,
 			role.id,
 			role.scopes,
 		);
-		this.#audit(
+		await this.#audit(
 			actor.tenantId,
 			this.#actorOf(actor),
 			AUDIT_ACTIONS.memberRole,
@@ -953,12 +1084,15 @@ export class AuthService {
 		return this.#member(target.accountId, actor.tenantId);
 	}
 
-	listRoles(tenantId: string): readonly TenantRole[] {
+	async listRoles(tenantId: string): Promise<readonly TenantRole[]> {
 		return this.#repository.listRoles(this.#identifier(tenantId, 'tenantId'));
 	}
 
-	#roleScopes(actor: AuthActor, scopes: readonly string[]): readonly string[] {
-		const grantable = new Set(this.listGrantableScopes(actor.tenantId));
+	async #roleScopes(
+		actor: AuthActor,
+		scopes: readonly string[],
+	): Promise<readonly string[]> {
+		const grantable = new Set(await this.listGrantableScopes(actor.tenantId));
 		const accepted = [...new Set(scopes)].sort();
 		if (accepted.length === 0) {
 			throw new AuthServiceError(
@@ -979,7 +1113,10 @@ export class AuthService {
 		return accepted;
 	}
 
-	createRole(actor: AuthActor, raw: CreateRoleInput): TenantRole {
+	async createRole(
+		actor: AuthActor,
+		raw: CreateRoleInput,
+	): Promise<TenantRole> {
 		if (raw.tenantId !== actor.tenantId) {
 			throw new AuthServiceError(
 				'TENANT_ACCESS_DENIED',
@@ -996,17 +1133,17 @@ export class AuthService {
 			);
 		}
 		try {
-			const role = this.#repository.createRole({
+			const role = await this.#repository.createRole({
 				id: randomUUID(),
 				tenantId: actor.tenantId,
 				key,
 				name: validateRoleName(raw.name),
 				description: validateRoleDescription(raw.description),
-				scopes: this.#roleScopes(actor, raw.scopes),
+				scopes: await this.#roleScopes(actor, raw.scopes),
 				builtin: false,
 				createdAt: this.#now(),
 			});
-			this.#audit(
+			await this.#audit(
 				actor.tenantId,
 				this.#actorOf(actor),
 				AUDIT_ACTIONS.roleCreated,
@@ -1023,8 +1160,8 @@ export class AuthService {
 		}
 	}
 
-	#editableRole(tenantId: string, id: string): TenantRole {
-		const role = this.#repository.findRole(
+	async #editableRole(tenantId: string, id: string): Promise<TenantRole> {
+		const role = await this.#repository.findRole(
 			tenantId,
 			this.#identifier(id, 'id'),
 		);
@@ -1045,7 +1182,10 @@ export class AuthService {
 		return role;
 	}
 
-	updateRole(actor: AuthActor, raw: UpdateRoleInput): TenantRole {
+	async updateRole(
+		actor: AuthActor,
+		raw: UpdateRoleInput,
+	): Promise<TenantRole> {
 		if (raw.tenantId !== actor.tenantId) {
 			throw new AuthServiceError(
 				'TENANT_ACCESS_DENIED',
@@ -1053,12 +1193,12 @@ export class AuthService {
 				403,
 			);
 		}
-		const current = this.#editableRole(actor.tenantId, raw.id);
+		const current = await this.#editableRole(actor.tenantId, raw.id);
 		const scopes =
 			raw.scopes === undefined
 				? current.scopes
-				: this.#roleScopes(actor, raw.scopes);
-		const updated = this.#repository.updateRole(
+				: await this.#roleScopes(actor, raw.scopes);
+		const updated = (await this.#repository.updateRole(
 			actor.tenantId,
 			current.id,
 			{
@@ -1071,19 +1211,19 @@ export class AuthService {
 				scopes,
 			},
 			this.#now(),
-		)!;
+		))!;
 		if (raw.scopes !== undefined) {
-			for (const membership of this.#repository
-				.listTenantMembers(actor.tenantId)
-				.filter((entry) => entry.roleId === current.id)) {
-				this.#repository.replaceMembershipScopes(
+			for (const membership of (
+				await this.#repository.listTenantMembers(actor.tenantId)
+			).filter((entry) => entry.roleId === current.id)) {
+				await this.#repository.replaceMembershipScopes(
 					membership.accountId,
 					actor.tenantId,
 					scopes,
 				);
 			}
 		}
-		this.#audit(
+		await this.#audit(
 			actor.tenantId,
 			this.#actorOf(actor),
 			AUDIT_ACTIONS.roleUpdated,
@@ -1094,17 +1234,19 @@ export class AuthService {
 		return updated;
 	}
 
-	deleteRole(actor: AuthActor, id: string): void {
-		const role = this.#editableRole(actor.tenantId, id);
-		if (this.#repository.countRoleMemberships(actor.tenantId, role.id) > 0) {
+	async deleteRole(actor: AuthActor, id: string): Promise<void> {
+		const role = await this.#editableRole(actor.tenantId, id);
+		if (
+			(await this.#repository.countRoleMemberships(actor.tenantId, role.id)) > 0
+		) {
 			throw new AuthServiceError(
 				'ROLE_IN_USE',
 				'Reassign every member before deleting this role.',
 				409,
 			);
 		}
-		this.#repository.deleteRole(actor.tenantId, role.id);
-		this.#audit(
+		await this.#repository.deleteRole(actor.tenantId, role.id);
+		await this.#audit(
 			actor.tenantId,
 			this.#actorOf(actor),
 			AUDIT_ACTIONS.roleDeleted,
@@ -1114,29 +1256,82 @@ export class AuthService {
 		);
 	}
 
+	/* One password reset token, minted the same way for every caller: random,
+	   stored only as a hash, single use, and handed back with its link because
+	   the caller decides how it reaches the person. Mail is one such caller and
+	   an operator terminal is another; a deployment with no mail adapter still
+	   has to be able to hand an owner its first credential. */
+	async #mintPasswordResetToken(
+		accountId: string,
+		ttlMs: number,
+	): Promise<{ readonly url: string; readonly expiresAt: number }> {
+		const now = this.#now();
+		const token = randomBytes(32).toString('base64url');
+		const expiresAt = now + ttlMs;
+		await this.#repository.createPasswordResetToken({
+			tokenHash: hashSessionToken(token),
+			accountId,
+			expiresAt,
+			createdAt: now,
+		});
+		return {
+			url: `${this.#publicBaseUrl}/auth/reset-password?token=${encodeURIComponent(token)}`,
+			expiresAt,
+		};
+	}
+
+	/* The same contract for an invitation token. */
+	async #mintTenantInvitation(record: {
+		readonly tenantId: string;
+		readonly normalizedEmail: string;
+		readonly roleKey: string;
+		readonly createdBy: string;
+	}): Promise<{
+		readonly id: string;
+		readonly url: string;
+		readonly expiresAt: number;
+	}> {
+		const now = this.#now();
+		const token = randomBytes(32).toString('base64url');
+		const id = randomUUID();
+		const expiresAt = now + INVITATION_TTL_MS;
+		await this.#repository.createTenantInvitation({
+			id,
+			tenantId: record.tenantId,
+			email: record.normalizedEmail,
+			normalizedEmail: record.normalizedEmail,
+			roleKey: record.roleKey,
+			tokenHash: hashSessionToken(token),
+			expiresAt,
+			createdBy: record.createdBy,
+			createdAt: now,
+		});
+		return {
+			id,
+			url: `${this.#publicBaseUrl}/auth/accept-invitation?token=${encodeURIComponent(token)}`,
+			expiresAt,
+		};
+	}
+
 	/* Public reset requests intentionally have no observable distinction between
 	   a known and unknown address. A delivery failure is also treated as accepted
 	   so it cannot become an address-enumeration side channel. */
 	async requestPasswordReset(email: string): Promise<void> {
 		const normalized = normalizeEmail(email);
 		if (normalized.length > 254) return;
-		const account = this.#repository.findAccountByEmail(normalized);
+		const account = await this.#repository.findAccountByEmail(normalized);
 		if (!account || !this.#mailDelivery) return;
-		const now = this.#now();
-		const token = randomBytes(32).toString('base64url');
-		this.#repository.createPasswordResetToken({
-			tokenHash: hashSessionToken(token),
-			accountId: account.accountId,
-			expiresAt: now + PASSWORD_RESET_TTL_MS,
-			createdAt: now,
-		});
+		const reset = await this.#mintPasswordResetToken(
+			account.accountId,
+			PASSWORD_RESET_TTL_MS,
+		);
 		try {
 			await this.#mailDelivery.send({
 				to: account.email,
 				kind: 'password-reset',
-				url: `${this.#publicBaseUrl}/auth/reset-password?token=${encodeURIComponent(token)}`,
+				url: reset.url,
 			});
-			this.#audit(
+			await this.#audit(
 				account.tenantId,
 				{ kind: 'user', id: account.accountId, label: account.email },
 				AUDIT_ACTIONS.passwordResetRequested,
@@ -1158,7 +1353,7 @@ export class AuthService {
 			);
 		}
 		assertPasswordPolicy(password, this.#policy().passwordMinLength);
-		const accountId = this.#repository.consumePasswordResetToken(
+		const accountId = await this.#repository.consumePasswordResetToken(
 			hashSessionToken(token),
 			this.#now(),
 		);
@@ -1169,7 +1364,7 @@ export class AuthService {
 				400,
 			);
 		}
-		const account = this.#repository.findAccountCredentialById(accountId);
+		const account = await this.#repository.findAccountCredentialById(accountId);
 		if (!account || account.status !== 'active') {
 			throw new AuthServiceError(
 				'RESET_TOKEN_INVALID',
@@ -1177,14 +1372,14 @@ export class AuthService {
 				400,
 			);
 		}
-		this.#repository.updatePasswordHash(
+		await this.#repository.updatePasswordHash(
 			accountId,
 			await hashPassword(password, this.#passwordHash),
 			false,
 		);
-		this.#repository.deleteAccountSessions(accountId, null);
-		this.#repository.clearSignInFailures(normalizeEmail(account.email));
-		this.#audit(
+		await this.#repository.deleteAccountSessions(accountId, null);
+		await this.#repository.clearSignInFailures(normalizeEmail(account.email));
+		await this.#audit(
 			account.tenantId,
 			{ kind: 'user', id: account.accountId, label: account.email },
 			AUDIT_ACTIONS.passwordResetCompleted,
@@ -1210,7 +1405,7 @@ export class AuthService {
 			);
 		}
 		/* Owner elevation through invitations follows the same rule as member creation. */
-		this.#roleForAssignment(actor, validateRoleKey(roleKey));
+		await this.#roleForAssignment(actor, validateRoleKey(roleKey));
 		if (!this.#mailDelivery) {
 			throw new AuthServiceError(
 				'MAIL_NOT_CONFIGURED',
@@ -1218,25 +1413,17 @@ export class AuthService {
 				503,
 			);
 		}
-		const now = this.#now();
-		const token = randomBytes(32).toString('base64url');
-		const id = randomUUID();
-		this.#repository.createTenantInvitation({
-			id,
+		const invitation = await this.#mintTenantInvitation({
 			tenantId: actor.tenantId,
-			email: normalized,
 			normalizedEmail: normalized,
 			roleKey: roleKey.trim(),
-			tokenHash: hashSessionToken(token),
-			expiresAt: now + INVITATION_TTL_MS,
 			createdBy: actor.accountId,
-			createdAt: now,
 		});
 		try {
 			await this.#mailDelivery.send({
 				to: normalized,
 				kind: 'tenant-invitation',
-				url: `${this.#publicBaseUrl}/auth/accept-invitation?token=${encodeURIComponent(token)}`,
+				url: invitation.url,
 			});
 		} catch {
 			throw new AuthServiceError(
@@ -1245,15 +1432,15 @@ export class AuthService {
 				503,
 			);
 		}
-		this.#audit(
+		await this.#audit(
 			actor.tenantId,
 			this.#actorOf(actor),
 			AUDIT_ACTIONS.invitationCreated,
 			'invitation',
-			id,
+			invitation.id,
 			{ role: roleKey.trim() },
 		);
-		return { id, expiresAt: now + INVITATION_TTL_MS };
+		return { id: invitation.id, expiresAt: invitation.expiresAt };
 	}
 
 	async acceptTenantInvitation(input: {
@@ -1268,7 +1455,7 @@ export class AuthService {
 				400,
 			);
 		}
-		const invitation = this.#repository.consumeTenantInvitation(
+		const invitation = await this.#repository.consumeTenantInvitation(
 			hashSessionToken(input.token),
 			this.#now(),
 		);
@@ -1278,7 +1465,7 @@ export class AuthService {
 				'This invitation is invalid or has expired.',
 				400,
 			);
-		const role = this.#repository.findRoleByKey(
+		const role = await this.#repository.findRoleByKey(
 			invitation.tenantId,
 			invitation.roleKey,
 		);
@@ -1288,12 +1475,12 @@ export class AuthService {
 				'This invitation is invalid or has expired.',
 				400,
 			);
-		const existing = this.#repository.findAccountByEmail(
+		const existing = await this.#repository.findAccountByEmail(
 			invitation.normalizedEmail,
 		);
 		if (existing) {
 			if (
-				this.#repository.findAccountMembership(
+				await this.#repository.findAccountMembership(
 					existing.accountId,
 					invitation.tenantId,
 				)
@@ -1304,7 +1491,7 @@ export class AuthService {
 					400,
 				);
 			}
-			this.#repository.createMembershipInTenant({
+			await this.#repository.createMembershipInTenant({
 				accountId: existing.accountId,
 				tenantId: invitation.tenantId,
 				role: invitation.roleKey,
@@ -1321,7 +1508,7 @@ export class AuthService {
 				role: invitation.roleKey,
 			});
 		}
-		this.#audit(
+		await this.#audit(
 			invitation.tenantId,
 			{
 				kind: 'user',
@@ -1334,15 +1521,280 @@ export class AuthService {
 		);
 	}
 
-	enrollTotp(
+	/* Operator provisioning. A deployment turns public sign-up off, so its first
+	   workspace and every later colleague arrive through these calls instead.
+	   They write the rows the HTTP paths write, audit trail included, and read
+	   nothing from the sign-up setting. */
+	async planWorkspaceProvision(
+		input: WorkspaceProvisionInput,
+	): Promise<WorkspaceProvisionPlan> {
+		const operator = this.#identifier(input.operator, 'operator');
+		const name = validateWorkspaceName(input.name);
+		const slug = validateWorkspaceSlug(input.slug);
+		const displayName = validateDisplayName(input.ownerDisplayName);
+		const email = validateEmailAddress(input.ownerEmail);
+		if (input.password !== undefined) {
+			assertPasswordPolicy(input.password, this.#policy().passwordMinLength);
+		}
+		if (await this.#repository.isTenantSlugTaken(slug)) {
+			throw new AuthServiceError(
+				'WORKSPACE_SLUG_TAKEN',
+				`A workspace with the id "${slug}" already exists.`,
+				409,
+			);
+		}
+		/* An operator holds the deployment shell already, so a precise refusal
+		   reveals nothing the public sign-up response has to withhold. */
+		if (await this.#repository.findAccountByEmail(email)) {
+			throw new AuthServiceError(
+				'ACCOUNT_EXISTS',
+				`An account already exists for ${email}. Add that account to a workspace instead of creating a second one.`,
+				409,
+			);
+		}
+		return {
+			workspace: { name, slug },
+			owner: { email, displayName, role: 'owner', scopes: OWNER_SCOPES },
+			credential: {
+				kind:
+					input.password === undefined
+						? 'password-setup-link'
+						: 'operator-password',
+			},
+			operator,
+		};
+	}
+
+	async provisionWorkspace(
+		input: WorkspaceProvisionInput,
+	): Promise<ProvisionedWorkspace> {
+		const plan = await this.planWorkspaceProvision(input);
+		const actor = operatorActor(plan.operator);
+		/* Without an operator-chosen password the row still needs a hash. A
+		   discarded random one leaves the setup link as the only way in. */
+		const passwordHash = await hashPassword(
+			input.password ?? randomBytes(32).toString('base64url'),
+			this.#passwordHash,
+		);
+		const tenantId = randomUUID();
+		let owner: AccountCredential;
+		try {
+			owner = await this.#repository.createAccountWithTenant({
+				accountId: randomUUID(),
+				tenantId,
+				email: plan.owner.email,
+				normalizedEmail: plan.owner.email,
+				passwordHash,
+				displayName: plan.owner.displayName,
+				organizationName: plan.workspace.name,
+				organizationSlug: plan.workspace.slug,
+				role: 'owner',
+				scopes: OWNER_SCOPES,
+				createdAt: this.#now(),
+			});
+		} catch (error) {
+			if (error instanceof DuplicateAccountError) {
+				throw new AuthServiceError('ACCOUNT_EXISTS', error.message, 409);
+			}
+			if (error instanceof DuplicateTenantSlugError) {
+				throw new AuthServiceError('WORKSPACE_SLUG_TAKEN', error.message, 409);
+			}
+			throw error;
+		}
+		await this.#audit(
+			tenantId,
+			actor,
+			AUDIT_ACTIONS.workspaceProvisioned,
+			'tenant',
+			tenantId,
+			{ slug: plan.workspace.slug, name: plan.workspace.name },
+		);
+		await this.#audit(
+			tenantId,
+			actor,
+			AUDIT_ACTIONS.memberCreated,
+			'account',
+			owner.accountId,
+			{ email: owner.email, role: owner.role },
+		);
+		return {
+			workspace: {
+				tenantId,
+				name: plan.workspace.name,
+				slug: plan.workspace.slug,
+			},
+			owner: {
+				accountId: owner.accountId,
+				email: owner.email,
+				displayName: owner.displayName,
+				role: owner.role,
+				scopes: owner.scopes,
+			},
+			credential:
+				input.password === undefined
+					? await this.#issuePasswordSetupLink(owner, actor)
+					: { kind: 'operator-password' },
+			operator: plan.operator,
+		};
+	}
+
+	/* The operator holds a terminal on the deployment, so the link is returned
+	   to the command rather than posted. The public reset path cannot serve this:
+	   it needs a mail adapter, and a deployment has none until someone composes
+	   one. */
+	async #issuePasswordSetupLink(
+		account: AccountCredential,
+		actor: Actor,
+	): Promise<OperatorCredential> {
+		const reset = await this.#mintPasswordResetToken(
+			account.accountId,
+			OPERATOR_SETUP_TTL_MS,
+		);
+		await this.#audit(
+			account.tenantId,
+			actor,
+			AUDIT_ACTIONS.passwordResetRequested,
+			'account',
+			account.accountId,
+		);
+		return { kind: 'password-setup-link', ...reset };
+	}
+
+	async planMemberProvision(
+		input: MemberProvisionInput,
+	): Promise<MemberProvisionPlan> {
+		const operator = this.#identifier(input.operator, 'operator');
+		const email = validateEmailAddress(input.email);
+		const roleKey = validateRoleKey(input.role);
+		const workspace = await this.findTenant(input.workspace);
+		if (!workspace) {
+			throw new AuthServiceError(
+				'TENANT_NOT_FOUND',
+				`No workspace matches "${input.workspace}".`,
+				404,
+			);
+		}
+		const role = await this.#repository.findRoleByKey(
+			workspace.tenantId,
+			roleKey,
+		);
+		if (!role) {
+			throw new AuthServiceError(
+				'ROLE_NOT_FOUND',
+				`The workspace has no role "${roleKey}".`,
+				404,
+			);
+		}
+		const account = await this.#repository.findAccountByEmail(email);
+		if (
+			account &&
+			(await this.#repository.findAccountMembership(
+				account.accountId,
+				workspace.tenantId,
+			))
+		) {
+			throw new AuthServiceError(
+				'MEMBER_EXISTS',
+				`${email} is already a member of "${workspace.slug}".`,
+				409,
+			);
+		}
+		return {
+			workspace,
+			email,
+			role,
+			action: account ? 'membership' : 'invitation',
+			account: account
+				? {
+						accountId: account.accountId,
+						email: account.email,
+						displayName: account.displayName,
+					}
+				: null,
+			credential: {
+				kind: account ? 'existing-password' : 'invitation-link',
+			},
+			operator,
+		};
+	}
+
+	async provisionMember(
+		input: MemberProvisionInput,
+	): Promise<ProvisionedMember> {
+		const plan = await this.planMemberProvision(input);
+		const actor = operatorActor(plan.operator);
+		if (plan.account) {
+			const membership = await this.#repository.createMembershipInTenant({
+				accountId: plan.account.accountId,
+				tenantId: plan.workspace.tenantId,
+				role: plan.role.key,
+				roleId: plan.role.id,
+				scopes: plan.role.scopes,
+				createdAt: this.#now(),
+			});
+			await this.#audit(
+				plan.workspace.tenantId,
+				actor,
+				AUDIT_ACTIONS.memberCreated,
+				'account',
+				membership.accountId,
+				{ email: membership.email, role: plan.role.key },
+			);
+			return {
+				workspace: plan.workspace,
+				email: membership.email,
+				role: plan.role.key,
+				scopes: membership.scopes,
+				action: 'membership',
+				accountId: membership.accountId,
+				invitationId: null,
+				credential: { kind: 'existing-password' },
+				operator: plan.operator,
+			};
+		}
+		/* Minted here rather than through createTenantInvitation, which cannot
+		   serve an operator: it refuses without a mail adapter and hands its
+		   token only to that adapter. */
+		const invitation = await this.#mintTenantInvitation({
+			tenantId: plan.workspace.tenantId,
+			normalizedEmail: plan.email,
+			roleKey: plan.role.key,
+			createdBy: plan.operator,
+		});
+		await this.#audit(
+			plan.workspace.tenantId,
+			actor,
+			AUDIT_ACTIONS.invitationCreated,
+			'invitation',
+			invitation.id,
+			{ role: plan.role.key },
+		);
+		return {
+			workspace: plan.workspace,
+			email: plan.email,
+			role: plan.role.key,
+			scopes: plan.role.scopes,
+			action: 'invitation',
+			accountId: null,
+			invitationId: invitation.id,
+			credential: {
+				kind: 'invitation-link',
+				url: invitation.url,
+				expiresAt: invitation.expiresAt,
+			},
+			operator: plan.operator,
+		};
+	}
+
+	async enrollTotp(
 		accountId: string,
-		issuer = 'Coreloom',
-	): {
+		issuer = 'Flowdular',
+	): Promise<{
 		readonly secret: string;
 		readonly otpauthUrl: string;
 		readonly recoveryCodes: readonly string[];
-	} {
-		const account = this.#repository.findAccountCredentialById(
+	}> {
+		const account = await this.#repository.findAccountCredentialById(
 			this.#identifier(accountId, 'accountId'),
 		);
 		if (!account)
@@ -1351,7 +1803,10 @@ export class AuthService {
 				'The account is not available.',
 				404,
 			);
-		if (this.#repository.findMfaTotp(account.accountId)?.confirmedAt != null) {
+		if (
+			(await this.#repository.findMfaTotp(account.accountId))?.confirmedAt !=
+			null
+		) {
 			throw new AuthServiceError(
 				'MFA_ALREADY_CONFIGURED',
 				'Multi-factor authentication is already enabled for this account.',
@@ -1363,17 +1818,17 @@ export class AuthService {
 			randomBytes(10).toString('hex').toUpperCase(),
 		);
 		const now = this.#now();
-		this.#repository.upsertMfaTotp(
+		await this.#repository.upsertMfaTotp(
 			account.accountId,
 			encryptMfaSecret(secret, this.#mfaEncryptionKey),
 			now,
 		);
-		this.#repository.replaceMfaRecoveryCodes(
+		await this.#repository.replaceMfaRecoveryCodes(
 			account.accountId,
 			recoveryCodes.map(hashSessionToken),
 			now,
 		);
-		this.#audit(
+		await this.#audit(
 			account.tenantId,
 			{ kind: 'user', id: account.accountId, label: account.email },
 			AUDIT_ACTIONS.mfaEnrolled,
@@ -1387,8 +1842,8 @@ export class AuthService {
 		};
 	}
 
-	mfaStatus(accountId: string): MfaStatus {
-		const account = this.#repository.findAccountCredentialById(
+	async mfaStatus(accountId: string): Promise<MfaStatus> {
+		const account = await this.#repository.findAccountCredentialById(
 			this.#identifier(accountId, 'accountId'),
 		);
 		if (!account)
@@ -1397,7 +1852,7 @@ export class AuthService {
 				'The account is not available.',
 				404,
 			);
-		const factor = this.#repository.findMfaTotp(account.accountId);
+		const factor = await this.#repository.findMfaTotp(account.accountId);
 		return {
 			available: this.#mfaEncryptionKey !== undefined,
 			enrolled: factor?.confirmedAt != null,
@@ -1405,12 +1860,12 @@ export class AuthService {
 		};
 	}
 
-	confirmTotp(accountId: string, code: string): void {
-		const account = this.#repository.findAccountCredentialById(
+	async confirmTotp(accountId: string, code: string): Promise<void> {
+		const account = await this.#repository.findAccountCredentialById(
 			this.#identifier(accountId, 'accountId'),
 		);
 		const record = account
-			? this.#repository.findMfaTotp(account.accountId)
+			? await this.#repository.findMfaTotp(account.accountId)
 			: null;
 		if (
 			!account ||
@@ -1427,8 +1882,8 @@ export class AuthService {
 				400,
 			);
 		}
-		this.#repository.confirmMfaTotp(account.accountId, this.#now());
-		this.#audit(
+		await this.#repository.confirmMfaTotp(account.accountId, this.#now());
+		await this.#audit(
 			account.tenantId,
 			{ kind: 'user', id: account.accountId, label: account.email },
 			AUDIT_ACTIONS.mfaConfirmed,
@@ -1448,7 +1903,7 @@ export class AuthService {
 				'The sign-in challenge is invalid or has expired.',
 				401,
 			);
-		const challenge = this.#repository.consumeMfaChallenge(
+		const challenge = await this.#repository.consumeMfaChallenge(
 			hashSessionToken(token),
 			this.#now(),
 		);
@@ -1458,12 +1913,12 @@ export class AuthService {
 				'The sign-in challenge is invalid or has expired.',
 				401,
 			);
-		const account = this.#repository.findAccountMembership(
+		const account = await this.#repository.findAccountMembership(
 			challenge.accountId,
 			challenge.tenantId,
 		);
 		const record = account
-			? this.#repository.findMfaTotp(account.accountId)
+			? await this.#repository.findMfaTotp(account.accountId)
 			: null;
 		const valid =
 			account &&
@@ -1479,10 +1934,10 @@ export class AuthService {
 					/* Twelve-character codes were issued before 0.8.0. Keep them
 					   redeemable while all newly issued codes carry 80 bits. */
 					/^(?:[A-F0-9]{12}|[A-F0-9]{20})$/.test(recoveryCode) &&
-					this.#repository.consumeMfaRecoveryCode(
+					(await this.#repository.consumeMfaRecoveryCode(
 						account.accountId,
 						hashSessionToken(recoveryCode),
-					)));
+					))));
 		if (!valid)
 			throw new AuthServiceError(
 				'MFA_CODE_INVALID',
@@ -1490,7 +1945,7 @@ export class AuthService {
 				401,
 			);
 		const issued = await this.#issue(account);
-		this.#audit(
+		await this.#audit(
 			account.tenantId,
 			{ kind: 'user', id: account.accountId, label: account.email },
 			AUDIT_ACTIONS.mfaChallengeSucceeded,
@@ -1503,13 +1958,18 @@ export class AuthService {
 	async signInVerifiedExternalEmail(
 		email: string,
 	): Promise<IssuedSession | MfaChallenge> {
-		const account = this.#repository.findAccountByEmail(normalizeEmail(email));
+		const account = await this.#repository.findAccountByEmail(
+			normalizeEmail(email),
+		);
 		if (!account || account.status !== 'active')
 			throw this.#invalidCredentials();
-		if (this.#repository.findMfaTotp(account.accountId)?.confirmedAt != null)
+		if (
+			(await this.#repository.findMfaTotp(account.accountId))?.confirmedAt !=
+			null
+		)
 			return this.#issueMfaChallenge(account);
 		const issued = await this.#issue(account);
-		this.#audit(
+		await this.#audit(
 			account.tenantId,
 			{ kind: 'user', id: account.accountId, label: account.email },
 			AUDIT_ACTIONS.signInSucceeded,
@@ -1520,7 +1980,7 @@ export class AuthService {
 		return issued;
 	}
 
-	resolveSession(token: string | null): AuthSession | null {
+	async resolveSession(token: string | null): Promise<AuthSession | null> {
 		if (!token) return null;
 		return this.#repository.findSession(
 			hashSessionToken(token),
@@ -1530,15 +1990,18 @@ export class AuthService {
 		);
 	}
 
-	listSessions(accountId: string): readonly SessionSummary[] {
+	async listSessions(accountId: string): Promise<readonly SessionSummary[]> {
 		return this.#repository.listAccountSessions(
 			this.#identifier(accountId, 'accountId'),
 			this.#now(),
 		);
 	}
 
-	revokeOwnSession(session: AuthSession, sessionId: string): void {
-		const removed = this.#repository.deleteSessionById(
+	async revokeOwnSession(
+		session: AuthSession,
+		sessionId: string,
+	): Promise<void> {
+		const removed = await this.#repository.deleteSessionById(
 			session.principal.accountId,
 			this.#identifier(sessionId, 'sessionId'),
 		);
@@ -1549,7 +2012,7 @@ export class AuthService {
 				404,
 			);
 		}
-		this.#audit(
+		await this.#audit(
 			session.principal.tenantId,
 			{
 				kind: 'user',
@@ -1562,14 +2025,18 @@ export class AuthService {
 		);
 	}
 
-	revokeMemberSessions(actor: AuthActor, accountId: string): number {
-		const target = this.#targetMember(actor, accountId, { allowSelf: false });
-		const before = this.#repository.listAccountSessions(
-			target.accountId,
-			this.#now(),
+	async revokeMemberSessions(
+		actor: AuthActor,
+		accountId: string,
+	): Promise<number> {
+		const target = await this.#targetMember(actor, accountId, {
+			allowSelf: false,
+		});
+		const before = (
+			await this.#repository.listAccountSessions(target.accountId, this.#now())
 		).length;
-		this.#repository.deleteAccountSessions(target.accountId, null);
-		this.#audit(
+		await this.#repository.deleteAccountSessions(target.accountId, null);
+		await this.#audit(
 			actor.tenantId,
 			this.#actorOf(actor),
 			AUDIT_ACTIONS.sessionRevoked,
@@ -1580,17 +2047,17 @@ export class AuthService {
 		return before;
 	}
 
-	deleteExpiredSessions(): number {
+	async deleteExpiredSessions(): Promise<number> {
 		return this.#repository.deleteExpiredSessions(this.#now());
 	}
 
-	recordSettingsUpdate(
+	async recordSettingsUpdate(
 		actor: AuthActor,
 		moduleId: string,
 		key: string,
 		cleared: boolean,
-	): void {
-		this.#audit(
+	): Promise<void> {
+		await this.#audit(
 			actor.tenantId,
 			this.#actorOf(actor),
 			AUDIT_ACTIONS.settingsUpdated,
@@ -1600,12 +2067,12 @@ export class AuthService {
 		);
 	}
 
-	queryAudit(query: AuditQuery): AuditActorPage {
+	async queryAudit(query: AuditQuery): Promise<AuditActorPage> {
 		const limit = Math.min(
 			Math.max(1, Math.trunc(query.limit)),
 			MAX_AUDIT_PAGE,
 		);
-		const events = this.#repository.queryAudit({
+		const events = await this.#repository.queryAudit({
 			...query,
 			tenantId: this.#identifier(query.tenantId, 'tenantId'),
 			limit: limit + 1,
@@ -1620,7 +2087,7 @@ export class AuthService {
 	}
 
 	async switchTenant(token: string, tenantId: string): Promise<IssuedSession> {
-		const current = this.resolveSession(token);
+		const current = await this.resolveSession(token);
 		if (!current) {
 			throw new AuthServiceError(
 				'UNAUTHENTICATED',
@@ -1635,7 +2102,7 @@ export class AuthService {
 				403,
 			);
 		}
-		const account = this.#repository.findAccountMembership(
+		const account = await this.#repository.findAccountMembership(
 			current.principal.accountId,
 			tenantId,
 		);
@@ -1646,7 +2113,7 @@ export class AuthService {
 				403,
 			);
 		}
-		this.#repository.deleteSession(hashSessionToken(token));
+		await this.#repository.deleteSession(hashSessionToken(token));
 		return this.#issue(account);
 	}
 
@@ -1654,7 +2121,7 @@ export class AuthService {
 	   session, such as a sandbox connected to a remote deployment. Only the hash
 	   is stored, the raw value is returned exactly once, and effective authority
 	   is always re-intersected with the live membership scopes. */
-	issueApiToken(raw: CreateApiTokenInput): IssuedApiToken {
+	async issueApiToken(raw: CreateApiTokenInput): Promise<IssuedApiToken> {
 		const tenantId = this.#identifier(raw.tenantId, 'tenantId');
 		const accountId = this.#identifier(raw.accountId, 'accountId');
 		const createdBy = this.#identifier(raw.createdBy, 'createdBy');
@@ -1666,7 +2133,7 @@ export class AuthService {
 				400,
 			);
 		}
-		const membership = this.#repository.findAccountMembership(
+		const membership = await this.#repository.findAccountMembership(
 			accountId,
 			tenantId,
 		);
@@ -1719,7 +2186,7 @@ export class AuthService {
 			}
 		}
 		const token = `${API_TOKEN_PREFIX}${randomBytes(32).toString('base64url')}`;
-		const record = this.#repository.createApiToken({
+		const record = await this.#repository.createApiToken({
 			id: randomUUID(),
 			tenantId,
 			accountId,
@@ -1731,7 +2198,7 @@ export class AuthService {
 			createdAt,
 			expiresAt: raw.expiresAt,
 		});
-		this.#audit(
+		await this.#audit(
 			tenantId,
 			{ kind: 'user', id: createdBy, label: membership.email },
 			AUDIT_ACTIONS.tokenIssued,
@@ -1742,18 +2209,18 @@ export class AuthService {
 		return { record, token };
 	}
 
-	listApiTokens(tenantId: string): readonly ApiTokenRecord[] {
+	async listApiTokens(tenantId: string): Promise<readonly ApiTokenRecord[]> {
 		return this.#repository.listApiTokens(
 			this.#identifier(tenantId, 'tenantId'),
 		);
 	}
 
-	revokeApiToken(
+	async revokeApiToken(
 		tenantId: string,
 		id: string,
 		revokedBy: string,
-	): ApiTokenRecord {
-		const record = this.#repository.revokeApiToken(
+	): Promise<ApiTokenRecord> {
+		const record = await this.#repository.revokeApiToken(
 			this.#identifier(tenantId, 'tenantId'),
 			this.#identifier(id, 'id'),
 			this.#now(),
@@ -1766,7 +2233,7 @@ export class AuthService {
 				404,
 			);
 		}
-		this.#audit(
+		await this.#audit(
 			record.tenantId,
 			{ kind: 'user', id: revokedBy, label: revokedBy },
 			AUDIT_ACTIONS.tokenRevoked,
@@ -1777,13 +2244,15 @@ export class AuthService {
 		return record;
 	}
 
-	resolveApiToken(raw: string | null): AuthPrincipal | null {
+	async resolveApiToken(raw: string | null): Promise<AuthPrincipal | null> {
 		if (!raw || !API_TOKEN_PATTERN.test(raw)) return null;
-		const record = this.#repository.findApiTokenByHash(hashSessionToken(raw));
+		const record = await this.#repository.findApiTokenByHash(
+			hashSessionToken(raw),
+		);
 		if (!record || record.revokedAt !== null) return null;
 		const now = this.#now();
 		if (record.expiresAt !== null && record.expiresAt <= now) return null;
-		const membership = this.#repository.findAccountMembership(
+		const membership = await this.#repository.findAccountMembership(
 			record.accountId,
 			record.tenantId,
 		);
@@ -1795,7 +2264,7 @@ export class AuthService {
 			record.lastUsedAt === null ||
 			now - record.lastUsedAt > API_TOKEN_TOUCH_INTERVAL_MS
 		) {
-			this.#repository.touchApiToken(record.id, now);
+			await this.#repository.touchApiToken(record.tenantId, record.id, now);
 		}
 		return {
 			accountId: membership.accountId,
@@ -1804,7 +2273,7 @@ export class AuthService {
 			displayName: membership.displayName,
 			role: membership.role,
 			scopes,
-			tenants: this.#repository.listTenantAccess(membership.accountId),
+			tenants: await this.#repository.listTenantAccess(membership.accountId),
 		};
 	}
 
@@ -1820,11 +2289,11 @@ export class AuthService {
 		return normalized;
 	}
 
-	signOut(token: string): void {
-		const session = this.resolveSession(token);
-		this.#repository.deleteSession(hashSessionToken(token));
+	async signOut(token: string): Promise<void> {
+		const session = await this.resolveSession(token);
+		await this.#repository.deleteSession(hashSessionToken(token));
 		if (session) {
-			this.#audit(
+			await this.#audit(
 				session.principal.tenantId,
 				{
 					kind: 'user',

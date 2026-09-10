@@ -1,26 +1,37 @@
 import { createContext, type ServerRoute } from '@octanejs/app-core';
+import type { DatabaseProvider } from '@flowdular/database';
+import { createPgliteTestProvider } from '@flowdular/database-testing';
 import {
 	createAuthRuntime,
 	type AuthRuntime,
-} from '@coreloom/module-auth/server';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+} from '@flowdular/module-auth/server';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PROFILE_PERMISSIONS } from '../src/acl/permissions.ts';
 import { createProfileRoutes } from '../src/api/endpoints.ts';
 import {
 	createProfileRuntime,
 	type ProfileRuntime,
 } from '../src/server/runtime.ts';
+import {
+	closeProfileTestDatabases,
+	profileTestProvider,
+} from './support/database.ts';
 
-const ORIGIN = 'https://coreloom.example';
+const ORIGIN = 'https://flowdular.example';
 
 describe('profile language endpoints', () => {
 	let auth: AuthRuntime;
+	let authDatabases: DatabaseProvider;
 	let profile: ProfileRuntime;
 	let routes: readonly ServerRoute[];
 
-	beforeEach(() => {
+	/* auth.core owns its own cluster here: the profile fixture only truncates
+	   profile tables, so a shared one would carry accounts between cases. */
+	beforeEach(async () => {
+		authDatabases = createPgliteTestProvider();
 		auth = createAuthRuntime({
-			databasePath: ':memory:',
+			databases: authDatabases,
+			purpose: 'test',
 			secureCookies: false,
 			sessionTtlMs: 12 * 60 * 60 * 1000,
 			sessionIdleMs: 2 * 60 * 60 * 1000,
@@ -30,14 +41,20 @@ describe('profile language endpoints', () => {
 			signInProviders: [],
 			locales: ['en', 'pl'],
 		});
-		profile = createProfileRuntime({ databasePath: ':memory:' });
+		profile = createProfileRuntime({
+			databases: await profileTestProvider(),
+			purpose: 'test',
+		});
 		routes = createProfileRoutes(auth, profile);
 	});
 
-	afterEach(() => {
-		profile.dispose();
-		auth.dispose();
+	afterEach(async () => {
+		await profile.dispose();
+		await auth.dispose();
+		await authDatabases.dispose();
 	});
+
+	afterAll(closeProfileTestDatabases);
 
 	const call = async (request: Request): Promise<Response> => {
 		const route = routes.find(
@@ -77,7 +94,9 @@ describe('profile language endpoints', () => {
 		expect((await call(read())).status).toBe(401);
 		expect((await call(update('pl', ''))).status).toBe(401);
 
-		const issued = await auth.service().signUp({
+		const issued = await (
+			await auth.service()
+		).signUp({
 			email: 'owner@example.com',
 			password: 'correct horse battery staple',
 			displayName: 'Ada Owner',
@@ -89,28 +108,31 @@ describe('profile language endpoints', () => {
 		expect((await call(update('pl', cookie, issued.csrfToken))).status).toBe(
 			403,
 		);
-		expect(
-			profile
-				.service()
-				.readLanguage(issued.principal.tenantId, issued.principal.accountId),
-		).toBeNull();
+		await expect(
+			(await profile.service()).readLanguage(
+				issued.principal.tenantId,
+				issued.principal.accountId,
+			),
+		).resolves.toBeNull();
 	});
 
 	it('requires CSRF and stores only the authenticated tenant and account', async () => {
-		const issued = await auth.service().signUp({
+		const issued = await (
+			await auth.service()
+		).signUp({
 			email: 'owner@example.com',
 			password: 'correct horse battery staple',
 			displayName: 'Ada Owner',
 			organizationName: 'Example Operations',
 			organizationSlug: 'example-operations',
 		});
-		auth
-			.service()
-			.grantMembershipScopes(
-				issued.principal.accountId,
-				issued.principal.tenantId,
-				[PROFILE_PERMISSIONS.manageSelf],
-			);
+		await (
+			await auth.service()
+		).grantMembershipScopes(
+			issued.principal.accountId,
+			issued.principal.tenantId,
+			[PROFILE_PERMISSIONS.manageSelf],
+		);
 		const cookie = `${auth.cookie.name}=${issued.token}`;
 
 		expect((await call(update('pl', cookie))).status).toBe(403);
@@ -127,14 +149,17 @@ describe('profile language endpoints', () => {
 			400,
 		);
 
-		profile
-			.service()
-			.updateLanguage('tenant-b', issued.principal.accountId, { locale: 'en' });
+		await (
+			await profile.service()
+		).updateLanguage('tenant-b', issued.principal.accountId, { locale: 'en' });
 		const response = await call(read(cookie));
 		expect(response.status).toBe(200);
 		expect(await response.json()).toEqual({ locale: 'pl' });
-		expect(
-			profile.service().readLanguage('tenant-b', issued.principal.accountId),
-		).toBe('en');
+		await expect(
+			(await profile.service()).readLanguage(
+				'tenant-b',
+				issued.principal.accountId,
+			),
+		).resolves.toBe('en');
 	});
 });

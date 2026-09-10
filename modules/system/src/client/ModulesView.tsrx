@@ -10,8 +10,8 @@ import {
 	SearchField,
 	TableCard,
 	Tag,
-} from '@coreloom/ui';
-import { activeLocale, t } from '@coreloom/client';
+} from '@flowdular/ui';
+import { activeLocale, t } from '@flowdular/client';
 import { useValue } from 'segment-state';
 import { ApiError, loadModuleCatalog, type ModuleCatalogEntry } from './api.ts';
 import { moduleColumns, surfaces } from './module-columns.tsrx';

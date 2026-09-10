@@ -1,4 +1,4 @@
-import type { AgentExecutionEvent } from '@coreloom/harness';
+import type { AgentExecutionEvent } from '@flowdular/harness';
 
 /* A streamed answer is stored as one event per token, so a run's persisted
    timeline is mostly one-word rows. Reading folds each maximal run of

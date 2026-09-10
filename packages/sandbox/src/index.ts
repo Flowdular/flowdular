@@ -1,7 +1,7 @@
 export {
 	createSandboxRoutes,
 	createSandboxRuntime,
-	findCoreloomWorkspace,
+	findFlowdularWorkspace,
 } from './server/index.ts';
 export type {
 	SandboxConfiguration,

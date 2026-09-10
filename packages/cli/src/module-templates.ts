@@ -1,4 +1,4 @@
-import type { ModuleSpec } from '@coreloom/contracts';
+import type { ModuleSpec } from '@flowdular/contracts';
 
 export interface ScaffoldNames {
 	readonly id: string;
@@ -70,7 +70,7 @@ export function scaffoldNames(id: string): ScaffoldNames {
 	return {
 		id,
 		suffix,
-		packageName: `@coreloom/module-${suffix}`,
+		packageName: `@flowdular/module-${suffix}`,
 		namespace: id.split('.')[0]!,
 		constant: suffix.replace(/-/g, '_').toUpperCase(),
 		pascal: pascalCase(suffix),
@@ -266,29 +266,30 @@ function packageJson(model: ScaffoldModel): string {
 			test: 'vitest run',
 		},
 		dependencies: {
-			...(hasCli ? { '@coreloom/cli-protocol': 'workspace:*' } : {}),
-			...(hasClient ? { '@coreloom/client': 'workspace:*' } : {}),
-			'@coreloom/contracts': 'workspace:*',
-			...(hasDatabase ? { '@coreloom/kernel': 'workspace:*' } : {}),
+			...(hasCli ? { '@flowdular/cli-protocol': 'workspace:*' } : {}),
+			...(hasClient ? { '@flowdular/client': 'workspace:*' } : {}),
+			'@flowdular/contracts': 'workspace:*',
+			...(hasDatabase ? { '@flowdular/database': 'workspace:*' } : {}),
 			...(hasApi
 				? {
-						'@coreloom/module-auth': 'workspace:*',
-						'@coreloom/server': 'workspace:*',
+						'@flowdular/module-auth': 'workspace:*',
+						'@flowdular/server': 'workspace:*',
 					}
 				: {}),
 			...(hasClient
 				? {
-						'@coreloom/ui': 'workspace:*',
+						'@flowdular/ui': 'workspace:*',
 						octane: '0.1.51',
 						'segment-state': '0.2.0',
 					}
 				: {}),
 		},
 		devDependencies: {
+			...(hasDatabase ? { '@flowdular/database-testing': 'workspace:*' } : {}),
 			...(hasClient ? { '@tsrx/typescript-plugin': '0.3.120' } : {}),
 			'@types/node': '24.13.3',
 			typescript: '5.9.3',
-			vitest: '4.1.10',
+			vitest: '4.1.11',
 		},
 	});
 }
@@ -332,7 +333,7 @@ function moduleIndex(model: ScaffoldModel): string {
 		},
 	]`
 			: '[]';
-	return `import type { ModuleManifest, RegisteredModule } from '@coreloom/contracts';
+	return `import type { ModuleManifest, RegisteredModule } from '@flowdular/contracts';
 import manifest from '../module.json' with { type: 'json' };
 import { ${permissionsConstant} } from './acl/permissions.ts';
 
@@ -388,8 +389,8 @@ function repositoryFile(model: ScaffoldModel): string {
 	return `import type { ${entity.type} } from '../domain/types.ts';
 
 export interface ${names.pascal}Repository {
-	list(tenantId: string): readonly ${entity.type}[];
-	create(record: ${entity.type}): ${entity.type};
+	list(tenantId: string): Promise<readonly ${entity.type}[]>;
+	create(record: ${entity.type}): Promise<${entity.type}>;
 }
 `;
 }
@@ -430,11 +431,14 @@ function bounded(
 export class ${names.pascal}Service {
 	constructor(private readonly repository: ${names.pascal}Repository) {}
 
-	list(tenantId: string): readonly ${entity.type}[] {
+	list(tenantId: string): Promise<readonly ${entity.type}[]> {
 		return this.repository.list(bounded(tenantId, 'tenantId', 1, 128));
 	}
 
-	create(tenantId: string, input: Create${entity.type}Input): ${entity.type} {
+	create(
+		tenantId: string,
+		input: Create${entity.type}Input,
+	): Promise<${entity.type}> {
 		return this.repository.create({
 			id: randomUUID(),
 			tenantId: bounded(tenantId, 'tenantId', 1, 128),
@@ -454,34 +458,48 @@ function migrationSql(model: ScaffoldModel): string {
   tenant_id TEXT NOT NULL,
   name TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('active', 'archived')),
-  created_at INTEGER NOT NULL
-) STRICT;
+  created_at BIGINT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS ${entity.table}_tenant_name_idx
   ON ${entity.table} (tenant_id, name, id);
+ALTER TABLE ${entity.table} ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ${entity.table} FORCE ROW LEVEL SECURITY;
+CREATE POLICY ${entity.table}_tenant_policy ON ${entity.table}
+  USING (tenant_id = current_setting('coreloom.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
 `;
 }
 
 function migrationFile(model: ScaffoldModel): string {
-	const { names } = model;
-	return `import type { ModuleMigration } from '@coreloom/kernel';
+	const { names, entity } = model;
+	return `import type { DatabaseMigration } from '@flowdular/database';
+import { postgresTenantTableState } from '@flowdular/database';
 
 /* Mirrors migrations/0001_${names.snake}_core.up.sql byte for byte. */
 export const ${names.constant}_MIGRATION_001 = \`${migrationSql(model)}\`;
 
-export const migrations: readonly ModuleMigration[] = [
-	{ id: '0001_${names.snake}_core', statements: ${names.constant}_MIGRATION_001 },
+export const databaseMigrations: readonly DatabaseMigration[] = [
+	{
+		id: '0001_${names.snake}_core',
+		sql: { postgresql: ${names.constant}_MIGRATION_001 },
+		inspectExisting: (database) =>
+			postgresTenantTableState(
+				database,
+				'${entity.table}',
+				'${entity.table}_tenant_policy',
+				[() => database.schema.hasIndex('${entity.table}_tenant_name_idx')],
+			),
+	},
 ];
 `;
 }
 
-function sqliteRepositoryFile(model: ScaffoldModel): string {
+function databaseRepositoryFile(model: ScaffoldModel): string {
 	const { names, entity } = model;
-	return `import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
-import { runModuleMigrations } from '@coreloom/kernel';
+	return `import type { DatabaseHandle } from '@flowdular/database';
+import { runDatabaseMigrations } from '@flowdular/database';
 import type { ${entity.type} } from '../domain/types.ts';
-import { migrations } from './migration.ts';
+import { databaseMigrations } from './migration.ts';
 import type { ${names.pascal}Repository } from './repository.ts';
 
 interface ${entity.type}Row {
@@ -489,7 +507,28 @@ interface ${entity.type}Row {
 	tenant_id: string;
 	name: string;
 	status: ${entity.type}['status'];
-	created_at: number;
+	created_at: number | bigint | string;
+}
+
+/* Queries stay explicit. Values always travel in the adapter's parameter
+   channel; nothing from a request is concatenated into SQL. */
+const LIST = \`SELECT id, tenant_id, name, status, created_at
+			 FROM ${entity.table}
+			 WHERE tenant_id = $1
+			 ORDER BY lower(name), id\`;
+
+const CREATE = \`INSERT INTO ${entity.table}
+			 (id, tenant_id, name, status, created_at)
+			 VALUES ($1, $2, $3, $4, $5)\`;
+
+/* PostgreSQL returns BIGINT as a string, so every numeric read is normalized
+   before it reaches the domain. */
+function integer(value: ${entity.type}Row['created_at']): number {
+	const normalized = Number(value);
+	if (!Number.isSafeInteger(normalized) || normalized < 0) {
+		throw new Error('The ${names.suffix} database returned an invalid timestamp.');
+	}
+	return normalized;
 }
 
 function fromRow(row: ${entity.type}Row): ${entity.type} {
@@ -498,54 +537,49 @@ function fromRow(row: ${entity.type}Row): ${entity.type} {
 		tenantId: row.tenant_id,
 		name: row.name,
 		status: row.status,
-		createdAt: row.created_at,
+		createdAt: integer(row.created_at),
 	};
 }
 
-export class Sqlite${names.pascal}Repository implements ${names.pascal}Repository {
-	readonly #database: DatabaseSync;
-	#closed = false;
+/** A repository over a platform-owned PostgreSQL handle. */
+export class Database${names.pascal}Repository implements ${names.pascal}Repository {
+	constructor(private readonly database: DatabaseHandle) {}
 
-	constructor(path: string) {
-		if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
-		this.#database = new DatabaseSync(path, { timeout: 5000 });
-		this.#database.exec('PRAGMA journal_mode = WAL;');
-		runModuleMigrations(this.#database, migrations);
+	async list(tenantId: string): Promise<readonly ${entity.type}[]> {
+		const result = await this.database.transaction(
+			(transaction) =>
+				transaction.query<${entity.type}Row>({
+					text: LIST,
+					parameters: [tenantId],
+				}),
+			{ access: 'read', tenantId },
+		);
+		return result.rows.map(fromRow);
 	}
 
-	list(tenantId: string): readonly ${entity.type}[] {
-		return (
-			this.#database
-				.prepare(
-					\`SELECT id, tenant_id, name, status, created_at
-					 FROM ${entity.table} WHERE tenant_id = ?
-					 ORDER BY lower(name), id\`,
-				)
-				.all(tenantId) as unknown as ${entity.type}Row[]
-		).map(fromRow);
-	}
-
-	create(record: ${entity.type}): ${entity.type} {
-		this.#database
-			.prepare(
-				\`INSERT INTO ${entity.table} (id, tenant_id, name, status, created_at)
-				 VALUES (?, ?, ?, ?, ?)\`,
-			)
-			.run(
-				record.id,
-				record.tenantId,
-				record.name,
-				record.status,
-				record.createdAt,
-			);
+	async create(record: ${entity.type}): Promise<${entity.type}> {
+		await this.database.transaction(
+			(transaction) =>
+				transaction.execute({
+					text: CREATE,
+					parameters: [
+						record.id,
+						record.tenantId,
+						record.name,
+						record.status,
+						record.createdAt,
+					],
+				}),
+			{ access: 'write', tenantId: record.tenantId },
+		);
 		return record;
 	}
+}
 
-	close(): void {
-		if (this.#closed) return;
-		this.#closed = true;
-		this.#database.close();
-	}
+export async function migrate${names.pascal}Database(
+	database: DatabaseHandle,
+): Promise<void> {
+	await runDatabaseMigrations(database, '${names.id}', databaseMigrations);
 }
 `;
 }
@@ -560,14 +594,14 @@ import type { ${names.pascal}Repository } from './repository.ts';
 export class Memory${names.pascal}Repository implements ${names.pascal}Repository {
 	readonly #records = new Map<string, ${entity.type}[]>();
 
-	list(tenantId: string): readonly ${entity.type}[] {
+	async list(tenantId: string): Promise<readonly ${entity.type}[]> {
 		return [...(this.#records.get(tenantId) ?? [])].sort(
 			(left, right) =>
 				left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
 		);
 	}
 
-	create(record: ${entity.type}): ${entity.type} {
+	async create(record: ${entity.type}): Promise<${entity.type}> {
 		const records = this.#records.get(record.tenantId) ?? [];
 		records.push(record);
 		this.#records.set(record.tenantId, records);
@@ -580,7 +614,10 @@ export class Memory${names.pascal}Repository implements ${names.pascal}Repositor
 function servicesIndex(model: ScaffoldModel): string {
 	const { names, hasDatabase } = model;
 	const implementation = hasDatabase
-		? `export { Sqlite${names.pascal}Repository } from './sqlite-repository.ts';`
+		? `export {
+	Database${names.pascal}Repository,
+	migrate${names.pascal}Database,
+} from './database-repository.ts';`
 		: `export { Memory${names.pascal}Repository } from './memory-repository.ts';`;
 	return `export {
 	${names.pascal}Service,
@@ -598,20 +635,20 @@ function runtimeFile(model: ScaffoldModel): string {
 import { Memory${names.pascal}Repository } from '../services/memory-repository.ts';
 
 export interface ${names.pascal}Runtime {
-	service(): ${names.pascal}Service;
-	dispose(): void;
+	service(): Promise<${names.pascal}Service>;
+	dispose(): Promise<void>;
 }
 
 export function create${names.pascal}Runtime(): ${names.pascal}Runtime {
 	let service: ${names.pascal}Service | undefined;
 	let disposed = false;
 	return {
-		service: () => {
+		async service() {
 			if (disposed) throw new Error('${names.pascal} runtime is disposed.');
 			service ??= new ${names.pascal}Service(new Memory${names.pascal}Repository());
 			return service;
 		},
-		dispose() {
+		async dispose() {
 			disposed = true;
 			service = undefined;
 		},
@@ -619,53 +656,91 @@ export function create${names.pascal}Runtime(): ${names.pascal}Runtime {
 }
 `;
 	}
-	return `import { coreloomLocalDataPath } from '@coreloom/kernel/legacy-local-state';
+	return `import type {
+	DatabaseAdapterLease,
+	DatabaseProvider,
+	DatabaseProviderRequest,
+} from '@flowdular/database';
+import {
+	DATABASE_CAPABILITY_IDS,
+	DATABASE_DIALECT_IDS,
+} from '@flowdular/database';
 import { ${names.pascal}Service } from '../services/${names.suffix}-service.ts';
-import { Sqlite${names.pascal}Repository } from '../services/sqlite-repository.ts';
+import {
+	Database${names.pascal}Repository,
+	migrate${names.pascal}Database,
+} from '../services/database-repository.ts';
 
 export interface ${names.pascal}RuntimeOptions {
-	readonly databasePath: string;
+	readonly databases: DatabaseProvider;
+	readonly purpose: Exclude<DatabaseProviderRequest['purpose'], 'migration'>;
 }
 
 export interface ${names.pascal}Runtime {
-	service(): ${names.pascal}Service;
-	dispose(): void;
-}
-
-export function ${names.camel}RuntimeOptionsFromEnvironment(
-	environment: NodeJS.ProcessEnv = process.env,
-	workspaceRoot = process.cwd(),
-): ${names.pascal}RuntimeOptions {
-	return {
-		databasePath:
-			environment.CL_${names.constant}_DATABASE ??
-			(environment.NODE_ENV === 'production'
-				? '/data/${names.suffix}.db'
-				: environment.NODE_ENV === 'test'
-					? ':memory:'
-					: coreloomLocalDataPath(workspaceRoot, '${names.suffix}.db')),
-	};
+	service(): Promise<${names.pascal}Service>;
+	dispose(): Promise<void>;
 }
 
 export function create${names.pascal}Runtime(
-	options: ${names.pascal}RuntimeOptions = ${names.camel}RuntimeOptionsFromEnvironment(),
+	options: ${names.pascal}RuntimeOptions,
 ): ${names.pascal}Runtime {
-	let service: ${names.pascal}Service | undefined;
-	let repository: Sqlite${names.pascal}Repository | undefined;
 	let disposed = false;
+	let runtimeLeasePromise: Promise<DatabaseAdapterLease> | undefined;
+	let servicePromise: Promise<${names.pascal}Service> | undefined;
+
+	/* Schema work runs on the migrator role and that lease is released before the
+	   runtime one is taken, so request handling never holds a schema owner. */
+	const initialize = async (): Promise<${names.pascal}Service> => {
+		const migrationLease = await options.databases.acquire({
+			namespace: '${names.id}',
+			purpose: 'migration',
+			requirements: {
+				dialectIds: [DATABASE_DIALECT_IDS.postgresql],
+				capabilities: [
+					DATABASE_CAPABILITY_IDS.MIGRATION_LOCK,
+					DATABASE_CAPABILITY_IDS.SCHEMA_INTROSPECTION,
+					DATABASE_CAPABILITY_IDS.TRANSACTIONAL_DDL,
+				],
+			},
+		});
+		try {
+			await migrate${names.pascal}Database(migrationLease.database);
+		} finally {
+			await migrationLease.release();
+		}
+		runtimeLeasePromise = options.databases.acquire({
+			namespace: '${names.id}',
+			purpose: options.purpose,
+			requirements: {
+				dialectIds: [DATABASE_DIALECT_IDS.postgresql],
+				capabilities: [DATABASE_CAPABILITY_IDS.TRANSACTIONS],
+			},
+		});
+		const lease = await runtimeLeasePromise;
+		return new ${names.pascal}Service(
+			new Database${names.pascal}Repository(lease.database),
+		);
+	};
+
 	return {
 		service: () => {
-			if (disposed) throw new Error('${names.pascal} runtime is disposed.');
-			repository ??= new Sqlite${names.pascal}Repository(options.databasePath);
-			service ??= new ${names.pascal}Service(repository);
-			return service;
+			if (disposed) {
+				return Promise.reject(new Error('${names.pascal} runtime is disposed.'));
+			}
+			servicePromise ??= initialize();
+			return servicePromise;
 		},
-		dispose() {
+		async dispose() {
 			if (disposed) return;
 			disposed = true;
-			repository?.close();
-			repository = undefined;
-			service = undefined;
+			if (!runtimeLeasePromise) {
+				await servicePromise?.catch(() => undefined);
+			}
+			if (!runtimeLeasePromise) return;
+			const lease = await runtimeLeasePromise;
+			await lease.release();
+			runtimeLeasePromise = undefined;
+			servicePromise = undefined;
 		},
 	};
 }
@@ -676,9 +751,10 @@ function serverIndex(model: ScaffoldModel): string {
 	const { names, hasDatabase } = model;
 	const runtimeExports = hasDatabase
 		? `export {
-	create${names.pascal}Runtime,
-	${names.camel}RuntimeOptionsFromEnvironment,
-} from './runtime.ts';
+	Database${names.pascal}Repository,
+	migrate${names.pascal}Database,
+} from '../services/database-repository.ts';
+export { create${names.pascal}Runtime } from './runtime.ts';
 export type { ${names.pascal}Runtime, ${names.pascal}RuntimeOptions } from './runtime.ts';`
 		: `export { create${names.pascal}Runtime } from './runtime.ts';
 export type { ${names.pascal}Runtime } from './runtime.ts';`;
@@ -689,26 +765,22 @@ ${runtimeExports}
 
 function platformFile(model: ScaffoldModel): string {
 	const { names, hasDatabase } = model;
-	const imports = hasDatabase
-		? `import {
-	create${names.pascal}Routes,
-	create${names.pascal}Runtime,
-	${names.camel}RuntimeOptionsFromEnvironment,
-} from './server/index.ts';`
-		: `import { create${names.pascal}Routes, create${names.pascal}Runtime } from './server/index.ts';`;
 	const runtime = hasDatabase
-		? `const runtime = create${names.pascal}Runtime(
-		${names.camel}RuntimeOptionsFromEnvironment(
-			context.environment,
-			context.workspaceRoot,
-		),
-	);`
+		? `const runtime = create${names.pascal}Runtime({
+		databases: context.databases,
+		purpose:
+			context.environment.NODE_ENV === 'test'
+				? 'test'
+				: context.environment.NODE_ENV === 'production'
+					? 'runtime'
+					: 'preview',
+	});`
 		: `const runtime = create${names.pascal}Runtime();`;
 	return `import type {
 	PlatformServerComposition,
 	PlatformServerContext,
-} from '@coreloom/module-auth/server';
-${imports}
+} from '@flowdular/module-auth/server';
+import { create${names.pascal}Routes, create${names.pascal}Runtime } from './server/index.ts';
 
 export function createServerComposition(
 	context: PlatformServerContext,
@@ -745,12 +817,12 @@ function endpointsFile(model: ScaffoldModel): string {
 	const importList = (names_: readonly string[]) =>
 		names_.map((name) => `\t${name},\n`).join('');
 	const header = `import {
-${importList(serverImports)}} from '@coreloom/server';
-import type { AuthRuntime } from '@coreloom/module-auth/server';
+${importList(serverImports)}} from '@flowdular/server';
+import type { AuthRuntime } from '@flowdular/module-auth/server';
 ${
 	authImports.length > 0
 		? `import {
-${importList(authImports)}} from '@coreloom/module-auth/server';
+${importList(authImports)}} from '@flowdular/module-auth/server';
 `
 		: ''
 }${
@@ -782,12 +854,14 @@ function failure(error: unknown): Response {
 		methods: ['GET'],
 		access: { kind: 'permission', permission: ${constant}.${listPermission.key} },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) =>
-			jsonResponse({
-				${entity.plural}: runtime
-					.service()
-					.list(principalFromContext(octane)!.tenantId),
-			}),
+		handler: async ({ octane }) => {
+			const service = await runtime.service();
+			return jsonResponse({
+				${entity.plural}: await service.list(
+					principalFromContext(octane)!.tenantId,
+				),
+			});
+		},
 	});
 `
 		: '';
@@ -803,11 +877,11 @@ function failure(error: unknown): Response {
 			if (denial) return denial;
 			try {
 				const value = await readJsonObject(octane.request);
-				const record = runtime
-					.service()
-					.create(principalFromContext(octane)!.tenantId, {
-						name: requiredString(value, 'name', { min: 2, max: 160 }),
-					});
+				const service = await runtime.service();
+				const record = await service.create(
+					principalFromContext(octane)!.tenantId,
+					{ name: requiredString(value, 'name', { min: 2, max: 160 }) },
+				);
 				return jsonResponse({ record }, 201);
 			} catch (error) {
 				return failure(error);
@@ -850,7 +924,7 @@ function clientIndex(model: ScaffoldModel): string {
 	return `import type {
 	ModuleClientContext,
 	ModuleClientContribution,
-} from '@coreloom/client';
+} from '@flowdular/client';
 import { create${names.pascal}ClientContribution as canonicalContribution } from './contribution.tsrx';
 
 export { create${names.pascal}ClientContribution } from './contribution.tsrx';
@@ -891,7 +965,7 @@ function contributionFile(model: ScaffoldModel): string {
 	const view = listPermission
 		? `<${names.pascal}View csrfToken={options.csrfToken} />`
 		: `<${names.pascal}View />`;
-	return `import { t, type ModuleClientContribution } from '@coreloom/client';
+	return `import { t, type ModuleClientContribution } from '@flowdular/client';
 ${translationImports(spec)}
 ${readPermission ? `import { ${constant} } from '../acl/permissions.ts';\n` : ''}import { ${names.pascal}View } from './${names.pascal}View.tsrx';
 
@@ -918,7 +992,7 @@ ${navigation}		views: [
 
 function clientApi(model: ScaffoldModel): string {
 	const { names, entity } = model;
-	return `import { t } from '@coreloom/client/i18n';
+	return `import { t } from '@flowdular/client/i18n';
 import type { ${entity.type} } from '../domain/types.ts';
 
 interface ErrorEnvelope {
@@ -968,8 +1042,8 @@ export function create${names.pascal}ClientState() {
 function viewFile(model: ScaffoldModel): string {
 	const { names, entity, listPermission } = model;
 	if (!listPermission) {
-		return `import { t } from '@coreloom/client';
-import { EmptyState, PageHeader } from '@coreloom/ui';
+		return `import { t } from '@flowdular/client';
+import { EmptyState, PageHeader } from '@flowdular/ui';
 
 export function ${names.pascal}View() @{
 	<div class="ui-view">
@@ -991,7 +1065,7 @@ export function ${names.pascal}View() @{
 `;
 	}
 	return `import { useEffect, useMemo } from 'octane';
-import { t } from '@coreloom/client';
+import { t } from '@flowdular/client';
 import {
 	Alert,
 	Button,
@@ -999,7 +1073,7 @@ import {
 	PageHeader,
 	TableCard,
 	type TableColumn,
-} from '@coreloom/ui';
+} from '@flowdular/ui';
 import { useValue } from 'segment-state';
 import type { ${entity.type} } from '../domain/types.ts';
 import { load${entity.type}s } from './api.ts';
@@ -1096,34 +1170,128 @@ export function ${names.pascal}View(_props: ${names.pascal}ViewProps) @{
 
 function testFile(model: ScaffoldModel): string {
 	const { names, entity, hasDatabase } = model;
-	const repositoryImport = hasDatabase
-		? `import { Sqlite${names.pascal}Repository } from '../src/services/sqlite-repository.ts';`
-		: `import { Memory${names.pascal}Repository } from '../src/services/memory-repository.ts';`;
-	const repository = hasDatabase
-		? `new Sqlite${names.pascal}Repository(':memory:')`
-		: `new Memory${names.pascal}Repository()`;
-	return `import { describe, expect, it } from 'vitest';
+	const isolation = `	it('isolates ${entity.plural} by trusted tenant id', async () => {
+		const service = await ${names.camel}Service();
+		await service.create('tenant-a', { name: 'Alpha' });
+		await service.create('tenant-b', { name: 'Beta' });
+
+		expect((await service.list('tenant-a')).map((record) => record.name)).toEqual(
+			['Alpha'],
+		);
+		expect((await service.list('tenant-b')).map((record) => record.name)).toEqual(
+			['Beta'],
+		);
+	});`;
+	if (!hasDatabase) {
+		return `import { describe, expect, it } from 'vitest';
 import { moduleDefinition } from '../src/index.ts';
 import { ${names.pascal}Service } from '../src/services/${names.suffix}-service.ts';
-${repositoryImport}
+import { Memory${names.pascal}Repository } from '../src/services/memory-repository.ts';
+
+async function ${names.camel}Service(): Promise<${names.pascal}Service> {
+	return new ${names.pascal}Service(new Memory${names.pascal}Repository());
+}
 
 describe('${names.id}', () => {
 	it('exports its validated identity', () => {
 		expect(moduleDefinition.manifest.id).toBe('${names.id}');
 	});
 
-	it('isolates ${entity.plural} by trusted tenant id', () => {
-		const service = new ${names.pascal}Service(${repository});
-		service.create('tenant-a', { name: 'Alpha' });
-		service.create('tenant-b', { name: 'Beta' });
+${isolation}
+});
+`;
+	}
+	return `import type { DatabaseProvider } from '@flowdular/database';
+import { createPgliteTestProvider } from '@flowdular/database-testing';
+import { afterAll, describe, expect, it } from 'vitest';
+import { moduleDefinition } from '../src/index.ts';
+import { ${names.pascal}Service } from '../src/services/${names.suffix}-service.ts';
+import {
+	Database${names.pascal}Repository,
+	migrate${names.pascal}Database,
+} from '../src/services/database-repository.ts';
 
-		expect(service.list('tenant-a').map((record) => record.name)).toEqual([
-			'Alpha',
-		]);
-		expect(service.list('tenant-b').map((record) => record.name)).toEqual([
-			'Beta',
-		]);
+interface TestDatabase {
+	readonly provider: DatabaseProvider;
+	readonly service: ${names.pascal}Service;
+	release(): Promise<void>;
+}
+
+let shared: Promise<TestDatabase> | undefined;
+
+async function open(): Promise<TestDatabase> {
+	const provider = createPgliteTestProvider();
+	const migration = await provider.acquire({
+		namespace: '${names.id}',
+		purpose: 'migration',
 	});
+	try {
+		await migrate${names.pascal}Database(migration.database);
+	} finally {
+		await migration.release();
+	}
+	const lease = await provider.acquire({
+		namespace: '${names.id}',
+		purpose: 'test',
+	});
+	return {
+		provider,
+		service: new ${names.pascal}Service(
+			new Database${names.pascal}Repository(lease.database),
+		),
+		release: () => lease.release(),
+	};
+}
+
+/* Booting an embedded PostgreSQL costs about two seconds, so the file shares one
+   migrated database and every case starts from truncated tables. The runtime
+   role holds no BYPASSRLS, so the isolation below is enforced by the database. */
+async function ${names.camel}Service(): Promise<${names.pascal}Service> {
+	shared ??= open();
+	const database = await shared;
+	const migration = await database.provider.acquire({
+		namespace: '${names.id}',
+		purpose: 'migration',
+	});
+	try {
+		await migration.database.execute({
+			text: 'TRUNCATE ${entity.table} RESTART IDENTITY CASCADE',
+		});
+	} finally {
+		await migration.release();
+	}
+	return database.service;
+}
+
+afterAll(async () => {
+	const pending = shared;
+	shared = undefined;
+	if (!pending) return;
+	const database = await pending;
+	await database.release();
+	await database.provider.dispose();
+});
+
+describe('${names.id}', () => {
+	it('exports its validated identity', () => {
+		expect(moduleDefinition.manifest.id).toBe('${names.id}');
+	});
+
+${isolation}
+});
+`;
+}
+
+function vitestConfig(): string {
+	return `import { defineConfig } from 'vitest/config';
+
+/* Booting the embedded PostgreSQL a suite runs against takes seconds under
+   parallel load, well past the 5s vitest default. */
+export default defineConfig({
+	test: {
+		testTimeout: 30_000,
+		hookTimeout: 30_000,
+	},
 });
 `;
 }
@@ -1151,7 +1319,7 @@ function cliCatalog(model: ScaffoldModel): string {
 
 function cliEntry(model: ScaffoldModel): string {
 	const { names } = model;
-	return `import { defineCliExtension } from '@coreloom/cli-protocol';
+	return `import { defineCliExtension } from '@flowdular/cli-protocol';
 
 export default defineCliExtension({
 	protocolVersion: 1,
@@ -1250,7 +1418,11 @@ export function planScaffold(
 	]);
 	if (hasDatabase) {
 		files.set('src/services/migration.ts', migrationFile(model));
-		files.set('src/services/sqlite-repository.ts', sqliteRepositoryFile(model));
+		files.set(
+			'src/services/database-repository.ts',
+			databaseRepositoryFile(model),
+		);
+		files.set('vitest.config.ts', vitestConfig());
 		files.set(
 			`migrations/0001_${names.snake}_core.up.sql`,
 			migrationSql(model),

@@ -1,0 +1,26 @@
+{
+	"name": "flowdular-app",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"packageManager": "pnpm@11.17.0",
+	"engines": {
+		"node": ">=22.22.2"
+	},
+	"scripts": {
+		"dev": "node --env-file-if-exists=.env platform/scripts/dev.mjs",
+		"typecheck": "pnpm -r --if-present typecheck",
+		"test": "pnpm -r --if-present test",
+		"format": "prettier --write .",
+		"format:check": "prettier --check .",
+		"flowdular": "flowdular",
+		"cl": "flowdular",
+		"doctor": "flowdular doctor",
+		"verify": "pnpm typecheck && pnpm test && flowdular module validate && pnpm format:check"
+	},
+	"devDependencies": {
+		"@tsrx/prettier-plugin": "0.3.120",
+		"prettier": "3.6.2",
+		"flowdular": "0.2.0"
+	}
+}

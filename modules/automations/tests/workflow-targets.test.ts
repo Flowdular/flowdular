@@ -1,6 +1,14 @@
-import { userActor } from '@coreloom/kernel';
-import type { AgentRunQueue } from '@coreloom/module-agents/server';
-import { describe, expect, it, vi } from 'vitest';
+import { userActor } from '@flowdular/kernel';
+import type { AgentRunQueue } from '@flowdular/module-agents/server';
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	describe,
+	expect,
+	it,
+	vi,
+} from 'vitest';
 import { AUTOMATIONS_PERMISSIONS } from '../src/acl/permissions.ts';
 import {
 	automationTargetOptions,
@@ -15,7 +23,10 @@ import {
 } from '../src/server/targets.ts';
 import { AutomationScheduleService } from '../src/services/schedule-service.ts';
 import { AesGcmSecretVault } from '../src/services/secret-vault.ts';
-import { SqliteAutomationsRepository } from '../src/services/sqlite-repository.ts';
+import {
+	openAutomationsTestDatabase,
+	type AutomationsTestDatabase,
+} from './support/database.ts';
 import {
 	AutomationTriggerService,
 	triggerSignature,
@@ -36,7 +47,7 @@ const scopes = [
 
 function noAgentQueue(): AgentRunQueue {
 	return {
-		listAgents: () => [],
+		listAgents: async () => [],
 		enqueue: async () => {
 			throw new Error('The workflow path must not enqueue an agent.');
 		},
@@ -53,7 +64,7 @@ function targetFixture() {
 	}> = [];
 	const accepted = new Map<string, string>();
 	const validate = vi.fn<AutomationTargetAdapter['validate']>(
-		(targetKey, context) => {
+		async (targetKey, context) => {
 			if (context.tenantId !== 'tenant-a' || targetKey !== 'party-review') {
 				throw Object.assign(new Error('Workflow not found.'), {
 					code: 'WORKFLOW_NOT_FOUND',
@@ -73,7 +84,7 @@ function targetFixture() {
 		kind: 'workflow',
 		contractVersion: 1,
 		available: () => true,
-		list: (context) =>
+		list: async (context) =>
 			context.tenantId === 'tenant-a' &&
 			context.permissionSnapshot.includes('parties.records.read')
 				? [{ key: 'party-review', label: 'Party review', revision: 3 }]
@@ -97,8 +108,24 @@ function targetFixture() {
 	return { registry, validate, invocations };
 }
 
+/* Starting the embedded engine costs about half a second, so the file shares
+   one and empties it between cases. */
+let shared: AutomationsTestDatabase;
+
+beforeAll(async () => {
+	shared = await openAutomationsTestDatabase();
+});
+
+afterAll(async () => {
+	await shared?.dispose();
+});
+
+afterEach(async () => {
+	await shared.reset();
+});
+
 describe('workflow automation targets', () => {
-	it('round-trips target values and retains an unavailable saved target', () => {
+	it('round-trips target values and retains an unavailable saved target', async () => {
 		const encoded = automationTargetValue({
 			kind: 'workflow',
 			key: 'party:review/v2',
@@ -122,8 +149,8 @@ describe('workflow automation targets', () => {
 		]);
 	});
 
-	it('stores trusted workflow configuration and refuses missing permissions before persistence', () => {
-		const repository = new SqliteAutomationsRepository(':memory:');
+	it('stores trusted workflow configuration and refuses missing permissions before persistence', async () => {
+		const { repository } = shared;
 		const target = targetFixture();
 		const service = new AutomationScheduleService(
 			repository,
@@ -133,7 +160,7 @@ describe('workflow automation targets', () => {
 			undefined,
 			target.registry,
 		);
-		const created = service.create(
+		const created = await service.create(
 			'tenant-a',
 			configuringUser,
 			{
@@ -154,11 +181,13 @@ describe('workflow automation targets', () => {
 			targetAvailable: true,
 			agentId: '',
 		});
-		expect(repository.getSchedule('tenant-a', created.id)).toMatchObject({
+		await expect(
+			repository.getSchedule('tenant-a', created.id),
+		).resolves.toMatchObject({
 			configuredBy: configuringUser,
 			permissionSnapshot: [...scopes].sort(),
 		});
-		expect(() =>
+		await expect(
 			service.create(
 				'tenant-a',
 				configuringUser,
@@ -172,15 +201,13 @@ describe('workflow automation targets', () => {
 				},
 				[AUTOMATIONS_PERMISSIONS.manage],
 			),
-		).toThrowError(
-			expect.objectContaining({ code: 'WORKFLOW_PERMISSION_DENIED' }),
-		);
-		expect(repository.listSchedules('tenant-a')).toHaveLength(1);
+		).rejects.toMatchObject({ code: 'WORKFLOW_PERMISSION_DENIED' });
+		await expect(repository.listSchedules('tenant-a')).resolves.toHaveLength(1);
 	});
 
 	it('dispatches automatic and manual schedule runs without target fallback', async () => {
 		let now = 10_000;
-		const repository = new SqliteAutomationsRepository(':memory:');
+		const { repository } = shared;
 		const target = targetFixture();
 		const service = new AutomationScheduleService(
 			repository,
@@ -190,7 +217,7 @@ describe('workflow automation targets', () => {
 			undefined,
 			target.registry,
 		);
-		const created = service.create(
+		const created = await service.create(
 			'tenant-a',
 			configuringUser,
 			{
@@ -241,7 +268,7 @@ describe('workflow automation targets', () => {
 
 	it('passes a verified webhook JSON body with a stable accepted signature digest', async () => {
 		const now = 1_800_000;
-		const repository = new SqliteAutomationsRepository(':memory:');
+		const { repository } = shared;
 		const target = targetFixture();
 		const service = new AutomationTriggerService(
 			repository,
@@ -251,7 +278,7 @@ describe('workflow automation targets', () => {
 			undefined,
 			target.registry,
 		);
-		const created = service.create(
+		const created = await service.create(
 			'tenant-a',
 			configuringUser,
 			{
@@ -295,19 +322,19 @@ describe('workflow automation targets', () => {
 				},
 			},
 		});
-		expect(repository.getTrigger('tenant-a', created.trigger.id)).toMatchObject(
-			{
-				acceptedCount: 1,
-				configuredBy: configuringUser,
-				permissionSnapshot: [...scopes].sort(),
-			},
-		);
+		await expect(
+			repository.getTrigger('tenant-a', created.trigger.id),
+		).resolves.toMatchObject({
+			acceptedCount: 1,
+			configuredBy: configuringUser,
+			permissionSnapshot: [...scopes].sort(),
+		});
 	});
 
 	it('retains a configured workflow while its adapter is unavailable', async () => {
 		let now = 2_000;
 		let available = true;
-		const repository = new SqliteAutomationsRepository(':memory:');
+		const { repository } = shared;
 		const target = targetFixture();
 		const adapter = target.registry.get('workflow')!;
 		const registry = createAutomationTargetRegistry();
@@ -320,7 +347,7 @@ describe('workflow automation targets', () => {
 			undefined,
 			registry,
 		);
-		const created = service.create(
+		const created = await service.create(
 			'tenant-a',
 			configuringUser,
 			{
@@ -336,7 +363,7 @@ describe('workflow automation targets', () => {
 		available = false;
 		now += 60_000;
 		expect(await service.tick()).toBe(0);
-		expect(service.get('tenant-a', created.id)).toMatchObject({
+		expect(await service.get('tenant-a', created.id)).toMatchObject({
 			targetKind: 'workflow',
 			targetKey: 'party-review',
 			targetAvailable: false,

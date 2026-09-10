@@ -1,5 +1,5 @@
 import { ServerRoute } from '@octanejs/app-core';
-import { readJsonObject } from '@coreloom/server';
+import { readJsonObject } from '@flowdular/server';
 import { AUTH_SCOPES } from '../acl/scopes.ts';
 import { AuthServiceError } from '../services/auth-service-error.ts';
 import {
@@ -34,12 +34,14 @@ export function createApiTokenRoutes(
 	const list = new ServerRoute({
 		path: '/api/auth/api-tokens',
 		methods: ['GET'],
-		handler: (context) => {
+		handler: async (context) => {
 			try {
-				const session = requireSession(context, runtime);
+				const session = requireSession(context);
 				requireScope(session, AUTH_SCOPES.tokensRead);
 				return response({
-					tokens: runtime.service().listApiTokens(session.principal.tenantId),
+					tokens: await (
+						await runtime.service()
+					).listApiTokens(session.principal.tenantId),
 					availableScopes: session.principal.scopes,
 				});
 			} catch (error) {
@@ -55,10 +57,12 @@ export function createApiTokenRoutes(
 			const denial = sessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
-				const session = requireSession(context, runtime);
+				const session = requireSession(context);
 				requireScope(session, AUTH_SCOPES.tokensManage);
 				const body = await readJsonObject(context.request);
-				const issued = runtime.service().issueApiToken({
+				const issued = await (
+					await runtime.service()
+				).issueApiToken({
 					tenantId: session.principal.tenantId,
 					accountId: session.principal.accountId,
 					label: stringField(body, 'label'),
@@ -80,17 +84,17 @@ export function createApiTokenRoutes(
 			const denial = sessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
-				const session = requireSession(context, runtime);
+				const session = requireSession(context);
 				requireScope(session, AUTH_SCOPES.tokensManage);
 				const body = await readJsonObject(context.request);
 				return response({
-					token: runtime
-						.service()
-						.revokeApiToken(
-							session.principal.tenantId,
-							stringField(body, 'id'),
-							session.principal.accountId,
-						),
+					token: await (
+						await runtime.service()
+					).revokeApiToken(
+						session.principal.tenantId,
+						stringField(body, 'id'),
+						session.principal.accountId,
+					),
 				});
 			} catch (error) {
 				return errorResponse(error, '[auth.core] api token request failed');

@@ -1,7 +1,11 @@
 import type {
 	NavigationContribution,
 	RegisteredModule,
-} from '@coreloom/contracts';
+} from '@flowdular/contracts';
+import {
+	assertModuleCompatibility,
+	assertModuleDependency,
+} from './module-compatibility.ts';
 import { RegistryError } from './errors.ts';
 
 function compareModules(
@@ -44,6 +48,11 @@ function visitModule(
 				`Module "${id}" requires missing module "${dependency.id}".`,
 			);
 		}
+		assertModuleDependency(
+			id,
+			dependency,
+			modules.get(dependency.id)!.manifest.version,
+		);
 		visitModule(dependency.id, modules, visiting, visited, ordered);
 	}
 	visiting.delete(id);
@@ -67,6 +76,7 @@ export function createModuleRegistry(
 	const navigationIds = new Set<string>();
 
 	for (const module of input) {
+		assertModuleCompatibility(module.manifest);
 		if (byId.has(module.manifest.id)) {
 			throw new RegistryError(
 				'MODULE_DUPLICATE',

@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { ServerRoute } from '@octanejs/app-core';
@@ -13,21 +13,27 @@ import {
 	type ModuleSettingValue,
 	type ModuleSettingsRuntime,
 	type PlatformToolRegistry,
-} from '@coreloom/kernel';
+} from '@flowdular/kernel';
 import {
 	createAuthRoutes,
 	createAuthRuntime,
 	type AuthRuntime,
 	type PlatformServerComposition,
 	type PlatformServerContext,
-} from '@coreloom/module-auth/server';
+} from '@flowdular/module-auth/server';
 import {
 	modulePathOf,
 	sessionPaths,
 	type SandboxSession,
 	type SessionModule,
 } from './sessions.ts';
+import type { DatabaseProvider } from '@flowdular/database';
 import { createIsolatedPreviewRuntime } from './preview-worker-manager.ts';
+import {
+	resolvePreviewModules,
+	type PreviewModuleSource,
+} from './preview-modules.ts';
+import { previewRevision } from './preview-revision.ts';
 
 export const PREVIEW_COOKIE = 'coreloom_preview';
 const PREVIEW_TENANT = 'Preview workspace';
@@ -45,6 +51,7 @@ export interface PreviewModuleComposition {
 	readonly routes: number;
 	readonly hasClient: boolean;
 	readonly error: string | null;
+	readonly support?: boolean;
 }
 
 export interface PreviewComposition {
@@ -105,30 +112,6 @@ interface DraftManifest {
 	readonly permissions?: readonly string[];
 }
 
-async function newestModification(directory: string): Promise<number> {
-	let newest = 0;
-	let entries;
-	try {
-		entries = await readdir(directory, { withFileTypes: true });
-	} catch {
-		return newest;
-	}
-	for (const entry of entries) {
-		if (entry.name === 'node_modules' || entry.name === 'dist') continue;
-		const path = join(directory, entry.name);
-		if (entry.isDirectory()) {
-			newest = Math.max(newest, await newestModification(path));
-			continue;
-		}
-		try {
-			newest = Math.max(newest, (await stat(path)).mtimeMs);
-		} catch {
-			continue;
-		}
-	}
-	return newest;
-}
-
 async function exists(path: string): Promise<boolean> {
 	try {
 		await stat(path);
@@ -138,52 +121,18 @@ async function exists(path: string): Promise<boolean> {
 	}
 }
 
-/* A module reads its database path from one environment variable. Core spells
-   that name from the module id in two places: the namespace (`expenses.core`
-   to CL_EXPENSES_DATABASE) and the package suffix the scaffold writes
-   (`sales.orders` to CL_SALES_ORDERS_DATABASE). They agree for a single
-   segment id and differ for a longer one, so a preview sets both. */
-function databaseVariables(module: SessionModule): readonly string[] {
-	const namespace = module.id.split('.')[0] ?? module.id;
-	return [
-		...new Set([
-			`CL_${namespace.toUpperCase()}_DATABASE`,
-			`CL_${module.directory.replace(/[^a-zA-Z0-9]+/g, '_').toUpperCase()}_DATABASE`,
-		]),
-	];
-}
-
-/* Every draft with a database writes to its own file in the session's data
-   directory, the only place the preview worker may write, and the directory
-   the session takes with it when it is deleted. Without this a draft resolves
-   the deployment path (the worker runs with NODE_ENV=production, so
-   `/data/<namespace>.db`), fails to open it, and every read answers 500. */
-export function previewEnvironment(
-	base: NodeJS.ProcessEnv,
-	dataPath: string,
-	modules: readonly SessionModule[],
-): NodeJS.ProcessEnv {
-	const environment: NodeJS.ProcessEnv = { ...base };
-	for (const module of modules) {
-		const file = join(dataPath, `preview-${module.directory}.db`);
-		for (const variable of databaseVariables(module)) {
-			environment[variable] = file;
-		}
-	}
-	return environment;
-}
-
 /* Each session gets its own authentication runtime and database, so a preview
    runs with a real principal, real scopes, and a real CSRF contract instead of
    a stub. Everything lives inside the session directory and is thrown away
    with it. Sign-up stays closed: the only account is the one seeded here. */
 async function createPreviewAuth(
+	databases: DatabaseProvider,
 	session: SandboxSession,
 	workspaceRoot: string,
 ): Promise<{ auth: AuthRuntime; credentials: PreviewCredentials }> {
 	const paths = sessionPaths(workspaceRoot, session.id, session.moduleSuffix);
 	const auth = createAuthRuntime({
-		databasePath: join(paths.data, 'preview-auth.db'),
+		databases,
 		secureCookies: false,
 		cookieName: 'coreloom_preview_session',
 		sessionTtlMs: 12 * 60 * 60 * 1000,
@@ -211,8 +160,10 @@ async function createPreviewAuth(
 			mode: 0o600,
 		});
 	}
-	if (!auth.service().findAccountAccess(credentials.email)) {
-		await auth.service().signUp({
+	if (!(await (await auth.service()).findAccountAccess(credentials.email))) {
+		await (
+			await auth.service()
+		).signUp({
 			email: credentials.email,
 			password: credentials.password,
 			displayName: 'Sandbox preview',
@@ -225,7 +176,7 @@ async function createPreviewAuth(
 
 async function loadDraftComposition(
 	session: SandboxSession,
-	module: SessionModule,
+	module: PreviewModuleSource,
 	workspaceRoot: string,
 	context: Omit<PlatformServerContext, 'workspaceRoot'>,
 	revision: string,
@@ -236,7 +187,7 @@ async function loadDraftComposition(
 	readonly error: string | null;
 }> {
 	const paths = sessionPaths(workspaceRoot, session.id, session.moduleSuffix);
-	const modulePath = modulePathOf(paths, module.directory);
+	const modulePath = module.path;
 	const platformEntry = `${pathToFileURL(join(modulePath, 'src/platform.ts')).href}?revision=${revision}`;
 	const indexEntry = `${pathToFileURL(join(modulePath, 'src/index.ts')).href}?revision=${revision}`;
 	const hasClient = await exists(join(modulePath, 'src/client/index.ts'));
@@ -252,6 +203,7 @@ async function loadDraftComposition(
 		}
 		const composition = draft.createServerComposition({
 			...context,
+			agentDefinitions: context.agentDefinitions.forModule(module.id),
 			workspaceRoot: paths.root,
 		});
 		if (composition.settings) context.settings.declare(composition.settings);
@@ -332,7 +284,7 @@ export async function activatePreviewDrafts(
 export interface PreviewRuntime {
 	compose(session: SandboxSession): Promise<PreviewComposition>;
 	cached(sessionId: string): PreviewComposition | null;
-	forget(sessionId: string): void;
+	forget(sessionId: string): void | Promise<void>;
 	/* Releases every session worker and draft composition owned by this runtime. */
 	dispose(): void;
 }
@@ -341,9 +293,12 @@ export interface PreviewRuntime {
    answer first, the session's authentication routes answer next, and anything
    left over falls through to the connected application. */
 /* Called only by preview-worker.ts. Draft session source must not be imported
-   into the long-lived sandbox server process. */
+   into the long-lived sandbox server process. The caller owns `databases`: one
+   engine per session, shared by the preview's own authentication and by every
+   draft generation, because two engines over one data directory would fight. */
 export function createInProcessPreviewRuntime(
 	workspaceRoot: string,
+	databases: DatabaseProvider,
 ): PreviewRuntime {
 	const compositions = new Map<string, PreviewComposition>();
 
@@ -367,22 +322,14 @@ export function createInProcessPreviewRuntime(
 				session.id,
 				session.moduleSuffix,
 			);
-			let newest = 0;
-			for (const module of session.modules) {
-				newest = Math.max(
-					newest,
-					await newestModification(
-						join(modulePathOf(paths, module.directory), 'src'),
-					),
-				);
-			}
-			const revision = String(Math.round(newest));
+			const sources = await resolvePreviewModules(workspaceRoot, session);
+			const revision = await previewRevision(sources);
 			const current = compositions.get(session.id);
 			if (current && current.revision === revision) return current;
 
 			const { auth, credentials } = current
 				? { auth: current.auth, credentials: current.credentials }
-				: await createPreviewAuth(session, workspaceRoot);
+				: await createPreviewAuth(databases, session, workspaceRoot);
 			const drafts: DraftComposition[] = [];
 			const routes: ServerRoute[] = [];
 			const moduleScopes = new Set<string>();
@@ -390,18 +337,15 @@ export function createInProcessPreviewRuntime(
 			const errors: string[] = [];
 			const agentDefinitions = createPlatformAgentRegistry();
 			const context: Omit<PlatformServerContext, 'workspaceRoot'> = {
-				environment: previewEnvironment(
-					process.env,
-					paths.data,
-					session.modules,
-				),
+				environment: process.env,
 				auth,
 				settings: memorySettings(),
 				agentTools: createPlatformToolRegistry() as PlatformToolRegistry,
 				agentDefinitions,
 				capabilities: createPlatformCapabilityRegistry(),
+				databases,
 			};
-			for (const module of session.modules) {
+			for (const module of sources) {
 				const draft = await loadDraftComposition(
 					session,
 					module,
@@ -417,6 +361,7 @@ export function createInProcessPreviewRuntime(
 				if (draft.error) errors.push(draft.error);
 				modules.push({
 					id: module.id,
+					support: module.support,
 					directory: module.directory,
 					routes: draft.composition?.routes.length ?? 0,
 					hasClient: draft.hasClient,
@@ -425,15 +370,17 @@ export function createInProcessPreviewRuntime(
 			}
 			agentDefinitions.seal();
 
-			const account = auth.service().findAccountAccess(credentials.email);
+			const account = await (
+				await auth.service()
+			).findAccountAccess(credentials.email);
 			if (account && moduleScopes.size > 0) {
 				const tenant = account.tenants[0];
 				if (tenant) {
-					auth
-						.service()
-						.grantMembershipScopes(account.accountId, tenant.tenantId, [
-							...moduleScopes,
-						]);
+					await (
+						await auth.service()
+					).grantMembershipScopes(account.accountId, tenant.tenantId, [
+						...moduleScopes,
+					]);
 				}
 			}
 
@@ -469,6 +416,8 @@ export function createInProcessPreviewRuntime(
 						}),
 						{ status: 500, headers: { 'content-type': 'application/json' } },
 					),
+				/* The session engine outlives a generation, so retiring one releases
+				   the drafts and nothing else. */
 				dispose: () => disposeAll(drafts),
 			};
 			compositions.set(session.id, composition);
@@ -486,7 +435,7 @@ interface ProcessPreviewSlot {
 	readonly runtime: PreviewRuntime;
 }
 
-const PROCESS_PREVIEW_SLOT = Symbol.for('coreloom.sandbox.preview-runtime');
+const PROCESS_PREVIEW_SLOT = Symbol.for('flowdular.sandbox.preview-runtime');
 
 function processPreviewState(): Record<symbol, ProcessPreviewSlot | undefined> {
 	return globalThis as unknown as Record<

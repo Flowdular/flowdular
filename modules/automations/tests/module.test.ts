@@ -1,10 +1,19 @@
-import { describe, expect, it, vi } from 'vitest';
-import type { AgentRunQueue } from '@coreloom/module-agents/server';
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	describe,
+	expect,
+	it,
+	vi,
+} from 'vitest';
+import type { DatabaseProvider } from '@flowdular/database';
+import type { AgentRunQueue } from '@flowdular/module-agents/server';
 import {
 	registerModuleTranslations,
 	setActiveLocale,
 	t,
-} from '@coreloom/client/i18n';
+} from '@flowdular/client/i18n';
 import translationsEn from '../translations/en.json';
 import translationsPl from '../translations/pl.json';
 import { cadenceLabel, timestampLabel } from '../src/client/presentation.ts';
@@ -19,7 +28,6 @@ import { moduleDefinition } from '../src/index.ts';
 import { createAutomationsRuntime } from '../src/server/runtime.ts';
 import { AutomationScheduleService } from '../src/services/schedule-service.ts';
 import { AesGcmSecretVault } from '../src/services/secret-vault.ts';
-import { SqliteAutomationsRepository } from '../src/services/sqlite-repository.ts';
 import {
 	AutomationTriggerService,
 	TriggerRejectedError,
@@ -27,6 +35,26 @@ import {
 	triggerSignedPayload,
 } from '../src/services/trigger-service.ts';
 import { createAutomationTargetRegistry } from '../src/server/targets.ts';
+import {
+	openAutomationsTestDatabase,
+	type AutomationsTestDatabase,
+} from './support/database.ts';
+
+/* Starting the embedded engine costs about half a second, so the file shares
+   one and empties it between cases. */
+let shared: AutomationsTestDatabase;
+
+beforeAll(async () => {
+	shared = await openAutomationsTestDatabase();
+});
+
+afterAll(async () => {
+	await shared?.dispose();
+});
+
+afterEach(async () => {
+	await shared.reset();
+});
 
 function runQueue(allowedTools: readonly string[] = []) {
 	const runs = new Map<string, { readonly id: string }>();
@@ -40,7 +68,7 @@ function runQueue(allowedTools: readonly string[] = []) {
 		return created as Awaited<ReturnType<AgentRunQueue['enqueue']>>;
 	});
 	const queue: AgentRunQueue = {
-		listAgents: (tenantId) => [
+		listAgents: async (tenantId) => [
 			{
 				id: tenantId + '-agent',
 				name: 'Workspace agent',
@@ -61,14 +89,14 @@ function runQueue(allowedTools: readonly string[] = []) {
 }
 
 describe('automations.core', () => {
-	it('owns a versioned target registry and refuses duplicate adapters', () => {
+	it('owns a versioned target registry and refuses duplicate adapters', async () => {
 		const registry = createAutomationTargetRegistry();
 		const adapter = {
 			kind: 'workflow',
 			contractVersion: 1,
 			available: () => true,
-			list: () => [],
-			validate: () => ({ key: 'review', label: 'Review' }),
+			list: async () => [],
+			validate: async () => ({ key: 'review', label: 'Review' }),
 			invoke: async () => ({
 				correlationId: 'run-1',
 				created: true,
@@ -81,23 +109,25 @@ describe('automations.core', () => {
 		expect(() => registry.register(adapter)).toThrow(/already registered/);
 	});
 
-	it('does not open its database while the platform composition is built', () => {
-		const directory = mkdtempSync(join(tmpdir(), 'coreloom-automations-'));
-		const databasePath = join(directory, 'data', 'automations.db');
+	it('acquires no database lease while the platform composition is built', async () => {
 		const { queue } = runQueue();
-		try {
-			createAutomationsRuntime({
-				databasePath,
-				runQueue: () => queue,
-				secretVault: new AesGcmSecretVault(Buffer.alloc(32, 5)),
-			});
-			expect(existsSync(databasePath)).toBe(false);
-		} finally {
-			rmSync(directory, { recursive: true, force: true });
-		}
+		let acquisitions = 0;
+		const databases: DatabaseProvider = {
+			acquire: async () => {
+				acquisitions += 1;
+				throw new Error('Composition must not acquire a lease.');
+			},
+			dispose: async () => undefined,
+		};
+		createAutomationsRuntime({
+			databases,
+			runQueue: () => queue,
+			secretVault: new AesGcmSecretVault(Buffer.alloc(32, 5)),
+		});
+		expect(acquisitions).toBe(0);
 	});
 
-	it('formats cadence and timestamps in the active locale', () => {
+	it('formats cadence and timestamps in the active locale', async () => {
 		registerModuleTranslations([
 			{
 				moduleId: 'automations.core',
@@ -111,7 +141,7 @@ describe('automations.core', () => {
 		setActiveLocale('en');
 	});
 
-	it('translates the variable picker and every schedule variable label', () => {
+	it('translates the variable picker and every schedule variable label', async () => {
 		registerModuleTranslations([
 			{
 				moduleId: 'automations.core',
@@ -136,32 +166,32 @@ describe('automations.core', () => {
 		setActiveLocale('en');
 	});
 
-	it('ships the same translation keys in English and Polish', () => {
+	it('ships the same translation keys in English and Polish', async () => {
 		expect(Object.keys(translationsPl).sort()).toEqual(
 			Object.keys(translationsEn).sort(),
 		);
 	});
 
-	it('exports its validated identity', () => {
+	it('exports its validated identity', async () => {
 		expect(moduleDefinition.manifest.id).toBe('automations.core');
 	});
 
-	it('isolates schedules by the trusted tenant id', () => {
-		const repository = new SqliteAutomationsRepository(':memory:');
+	it('isolates schedules by the trusted tenant id', async () => {
+		const { repository } = shared;
 		const { queue } = runQueue();
 		const schedules = new AutomationScheduleService(
 			repository,
 			queue,
 			() => 1_000,
 		);
-		schedules.create('tenant-a', 'user-a', {
+		await schedules.create('tenant-a', 'user-a', {
 			agentId: 'tenant-a-agent',
 			label: 'Alpha schedule',
 			inputTemplate: 'Run alpha.',
 			cadence: 'every:60',
 			enabled: true,
 		});
-		schedules.create('tenant-b', 'user-b', {
+		await schedules.create('tenant-b', 'user-b', {
 			agentId: 'tenant-b-agent',
 			label: 'Beta schedule',
 			inputTemplate: 'Run beta.',
@@ -169,15 +199,15 @@ describe('automations.core', () => {
 			enabled: true,
 		});
 
-		expect(schedules.list('tenant-a').map((entry) => entry.label)).toEqual([
-			'Alpha schedule',
-		]);
-		expect(schedules.list('tenant-b').map((entry) => entry.label)).toEqual([
-			'Beta schedule',
-		]);
+		expect(
+			(await schedules.list('tenant-a')).map((entry) => entry.label),
+		).toEqual(['Alpha schedule']);
+		expect(
+			(await schedules.list('tenant-b')).map((entry) => entry.label),
+		).toEqual(['Beta schedule']);
 	});
 
-	it('offers protected variables only to a schedule manager', () => {
+	it('offers protected variables only to a schedule manager', async () => {
 		expect(
 			scheduleVariablesForScopes([]).map((variable) => variable.key),
 		).toEqual(['context.today', 'context.now']);
@@ -188,9 +218,9 @@ describe('automations.core', () => {
 		).toContain('agent.name');
 	});
 
-	it('rejects unknown and forbidden schedule template variables', () => {
+	it('rejects unknown and forbidden schedule template variables', async () => {
 		const schedules = new AutomationScheduleService(
-			new SqliteAutomationsRepository(':memory:'),
+			shared.repository,
 			runQueue().queue,
 			() => 1_000,
 		);
@@ -200,30 +230,30 @@ describe('automations.core', () => {
 			cadence: 'every:60',
 			enabled: true,
 		};
-		expect(() =>
+		await expect(
 			schedules.create('tenant-a', 'user-a', {
 				...input,
 				inputTemplate: '{{ unknown.value }}',
 			}),
-		).toThrow(/Unknown template variable/);
-		expect(() =>
+		).rejects.toThrow(/Unknown template variable/);
+		await expect(
 			schedules.create('tenant-a', 'user-a', {
 				...input,
 				inputTemplate: '{{ agent.name }}',
 			}),
-		).toThrow(/cannot use template variable/);
+		).rejects.toThrow(/cannot use template variable/);
 	});
 
 	it('resolves a scheduled input once and retains its raw template', async () => {
 		let now = Date.parse('2026-09-02T09:30:00.000Z');
 		const { queue } = runQueue();
-		const repository = new SqliteAutomationsRepository(':memory:');
+		const { repository } = shared;
 		const schedules = new AutomationScheduleService(
 			repository,
 			queue,
 			() => now,
 		);
-		const created = schedules.create(
+		const created = await schedules.create(
 			'tenant-a',
 			'user-a',
 			{
@@ -239,7 +269,9 @@ describe('automations.core', () => {
 		now += 60_000;
 		await schedules.tick();
 
-		expect(repository.getSchedule('tenant-a', created.id)?.inputTemplate).toBe(
+		expect(
+			(await repository.getSchedule('tenant-a', created.id))?.inputTemplate,
+		).toBe(
 			'{{ automation.schedule.label }} for {{ agent.name }} on {{ context.today }}',
 		);
 		expect(queue.enqueue).toHaveBeenCalledWith(
@@ -266,11 +298,11 @@ describe('automations.core', () => {
 	it('grants a manual schedule run only the agent tools covered by the current user scopes', async () => {
 		const { queue } = runQueue(['parties.customer.read']);
 		const schedules = new AutomationScheduleService(
-			new SqliteAutomationsRepository(':memory:'),
+			shared.repository,
 			queue,
 			() => Date.parse('2026-09-02T09:30:00.000Z'),
 		);
-		const created = schedules.create(
+		const created = await schedules.create(
 			'tenant-a',
 			'user-a',
 			{
@@ -310,14 +342,14 @@ describe('automations.core', () => {
 
 	it('deduplicates a repeated manual run per actor without duplicating audit', async () => {
 		const now = Date.parse('2026-09-02T09:30:00.000Z');
-		const repository = new SqliteAutomationsRepository(':memory:');
+		const { repository } = shared;
 		const { queue, runs } = runQueue();
 		const schedules = new AutomationScheduleService(
 			repository,
 			queue,
 			() => now,
 		);
-		const created = schedules.create('tenant-a', 'user-a', {
+		const created = await schedules.create('tenant-a', 'user-a', {
 			agentId: 'tenant-a-agent',
 			label: 'Manual summary',
 			inputTemplate: 'Summarize now.',
@@ -331,22 +363,22 @@ describe('automations.core', () => {
 		expect(retry.id).toBe(first.id);
 		expect(runs.size).toBe(1);
 		expect(
-			repository
-				.listAuditEvents('tenant-a', 100)
-				.filter((event) => event.action === 'automation-schedule.fired'),
+			(await repository.listAuditEvents('tenant-a', 100)).filter(
+				(event) => event.action === 'automation-schedule.fired',
+			),
 		).toHaveLength(1);
 	});
 
 	it('does not collide manual run keys across actors', async () => {
 		const now = Date.parse('2026-09-02T09:30:00.000Z');
-		const repository = new SqliteAutomationsRepository(':memory:');
+		const { repository } = shared;
 		const { queue, runs } = runQueue();
 		const schedules = new AutomationScheduleService(
 			repository,
 			queue,
 			() => now,
 		);
-		const created = schedules.create('tenant-a', 'user-a', {
+		const created = await schedules.create('tenant-a', 'user-a', {
 			agentId: 'tenant-a-agent',
 			label: 'Manual summary',
 			inputTemplate: 'Summarize now.',
@@ -367,9 +399,9 @@ describe('automations.core', () => {
 		expect(second.id).not.toBe(first.id);
 		expect(runs.size).toBe(2);
 		expect(
-			repository
-				.listAuditEvents('tenant-a', 100)
-				.filter((event) => event.action === 'automation-schedule.fired'),
+			(await repository.listAuditEvents('tenant-a', 100)).filter(
+				(event) => event.action === 'automation-schedule.fired',
+			),
 		).toHaveLength(2);
 	});
 
@@ -395,14 +427,14 @@ describe('automations.core', () => {
 
 	it('settles one durable run for one due schedule slot', async () => {
 		let now = 10_000;
-		const repository = new SqliteAutomationsRepository(':memory:');
+		const { repository } = shared;
 		const { queue, runs } = runQueue();
 		const schedules = new AutomationScheduleService(
 			repository,
 			queue,
 			() => now,
 		);
-		schedules.create('tenant-a', 'user-a', {
+		await schedules.create('tenant-a', 'user-a', {
 			agentId: 'tenant-a-agent',
 			label: 'Minute schedule',
 			inputTemplate: 'Run once.',
@@ -414,7 +446,7 @@ describe('automations.core', () => {
 		expect(await schedules.tick()).toBe(1);
 		expect(await schedules.tick()).toBe(0);
 		expect(runs.size).toBe(1);
-		expect(repository.verifyAuditChain('tenant-a')).toEqual({
+		await expect(repository.verifyAuditChain('tenant-a')).resolves.toEqual({
 			verified: true,
 			brokenAt: null,
 		});
@@ -425,7 +457,7 @@ describe('automations.core', () => {
 		let agentExists = true;
 		const enqueue = vi.fn<AgentRunQueue['enqueue']>();
 		const queue: AgentRunQueue = {
-			listAgents: (tenantId) =>
+			listAgents: async (tenantId) =>
 				agentExists
 					? [
 							{
@@ -444,13 +476,13 @@ describe('automations.core', () => {
 				created: true,
 			}),
 		};
-		const repository = new SqliteAutomationsRepository(':memory:');
+		const { repository } = shared;
 		const schedules = new AutomationScheduleService(
 			repository,
 			queue,
 			() => now,
 		);
-		const created = schedules.create(
+		const created = await schedules.create(
 			'tenant-a',
 			'user-a',
 			{
@@ -466,7 +498,7 @@ describe('automations.core', () => {
 		now += 60_000;
 
 		expect(await schedules.tick()).toBe(0);
-		expect(schedules.get('tenant-a', created.id)).toMatchObject({
+		expect(await schedules.get('tenant-a', created.id)).toMatchObject({
 			enabled: false,
 			disabledReason: expect.stringContaining('AGENT_NOT_FOUND'),
 		});
@@ -475,7 +507,7 @@ describe('automations.core', () => {
 
 	it('accepts a fresh signed webhook and makes a replay idempotent', async () => {
 		const now = 1_700_000_000_000;
-		const repository = new SqliteAutomationsRepository(':memory:');
+		const { repository } = shared;
 		const { queue, runs } = runQueue();
 		const triggers = new AutomationTriggerService(
 			repository,
@@ -483,7 +515,7 @@ describe('automations.core', () => {
 			queue,
 			() => now,
 		);
-		const created = triggers.create('tenant-a', 'user-a', {
+		const created = await triggers.create('tenant-a', 'user-a', {
 			agentId: 'tenant-a-agent',
 			label: 'Signed trigger',
 			enabled: true,
@@ -504,15 +536,15 @@ describe('automations.core', () => {
 		const replay = await triggers.fire(request);
 		expect(replay.id).toBe(first.id);
 		expect(runs.size).toBe(1);
-		expect(repository.getTrigger('tenant-a', created.trigger.id)).toMatchObject(
-			{
-				acceptedCount: 1,
-			},
-		);
+		await expect(
+			repository.getTrigger('tenant-a', created.trigger.id),
+		).resolves.toMatchObject({
+			acceptedCount: 1,
+		});
 		expect(
-			repository
-				.listAuditEvents('tenant-a', 100)
-				.filter((event) => event.action === 'automation-trigger.fired'),
+			(await repository.listAuditEvents('tenant-a', 100)).filter(
+				(event) => event.action === 'automation-trigger.fired',
+			),
 		).toHaveLength(1);
 		expect(queue.enqueue).toHaveBeenLastCalledWith(
 			{
@@ -531,12 +563,12 @@ describe('automations.core', () => {
 			},
 			expect.objectContaining({ input: body }),
 		);
-		expect(repository.verifyAuditChain('tenant-a').verified).toBe(true);
+		expect((await repository.verifyAuditChain('tenant-a')).verified).toBe(true);
 	});
 
 	it('uses the same refusal for unknown and incorrectly signed triggers', async () => {
 		const now = 1_700_000_000_000;
-		const repository = new SqliteAutomationsRepository(':memory:');
+		const { repository } = shared;
 		const { queue } = runQueue();
 		const triggers = new AutomationTriggerService(
 			repository,
@@ -544,7 +576,7 @@ describe('automations.core', () => {
 			queue,
 			() => now,
 		);
-		const created = triggers.create('tenant-a', 'user-a', {
+		const created = await triggers.create('tenant-a', 'user-a', {
 			agentId: 'tenant-a-agent',
 			label: 'Signed trigger',
 			enabled: true,
@@ -567,6 +599,150 @@ describe('automations.core', () => {
 		});
 	});
 });
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+
+describe('automations PostgreSQL boundary', () => {
+	function schedule(
+		tenantId: string,
+		id: string,
+		label: string,
+		nextRunAt: number,
+	) {
+		return {
+			id,
+			tenantId,
+			targetKind: 'agent',
+			targetKey: 'agent-1',
+			agentId: 'agent-1',
+			label,
+			inputTemplate: 'Summarize the day.',
+			cadence: 'every:60',
+			enabled: true,
+			disabledReason: null,
+			nextRunAt,
+			lastRunAt: null,
+			lastRunId: null,
+			lastError: null,
+			createdAt: 1,
+			updatedAt: 1,
+			createdBy: 'account-a',
+			configuredBy: {
+				kind: 'user',
+				id: 'account-a',
+				label: 'Owner',
+			},
+			permissionSnapshot: ['agents.runs.create'],
+		} as const;
+	}
+
+	it('keeps schedules tenant scoped and limits the scheduler poll to routing data', async () => {
+		const { repository } = shared;
+		await repository.createSchedule(
+			schedule('tenant-a', 'schedule-a', 'Daily digest for A', 10),
+		);
+		await repository.createSchedule(
+			schedule('tenant-b', 'schedule-b', 'Daily digest for B', 20),
+		);
+
+		expect(
+			(await repository.listSchedules('tenant-a')).map((record) => record.id),
+		).toEqual(['schedule-a']);
+		expect(await repository.getSchedule('tenant-a', 'schedule-b')).toBeNull();
+
+		/* The poll crosses tenants on purpose. It must return the routing columns
+		   and nothing else, so a leak here cannot carry a label, a prompt
+		   template, or a permission snapshot out of a tenant. */
+		const due = await repository.listDueSchedules(1_000, 10);
+		expect(due).toEqual([
+			{ tenantId: 'tenant-a', id: 'schedule-a', nextRunAt: 10 },
+			{ tenantId: 'tenant-b', id: 'schedule-b', nextRunAt: 20 },
+		]);
+		for (const routing of due) {
+			expect(Object.keys(routing).sort()).toEqual([
+				'id',
+				'nextRunAt',
+				'tenantId',
+			]);
+		}
+
+		/* The scheduler re-reads under the tenant the poll named, so the full row
+		   is reachable only through a tenant-bound handle. */
+		expect(
+			(await repository.getSchedule('tenant-b', 'schedule-b'))?.label,
+		).toBe('Daily digest for B');
+	});
+
+	it('refuses a runtime transaction that carries no tenant', async () => {
+		const { runtime } = shared;
+		await expect(
+			runtime.transaction(
+				(transaction) => transaction.query({ text: 'SELECT 1 AS one' }),
+				{ access: 'read' },
+			),
+		).rejects.toMatchObject({ code: 'TENANT_CONTEXT_REQUIRED' });
+	});
+
+	it('denies the background role every column outside the routing set and every write', async () => {
+		const { repository, background } = shared;
+		await repository.createSchedule(
+			schedule('tenant-a', 'schedule-a', 'Confidential label', 10),
+		);
+
+		const identity = await background.transaction(
+			(transaction) =>
+				transaction.query<{ role: string }>({
+					text: 'SELECT current_user AS role',
+				}),
+			{ access: 'read' },
+		);
+		/* The grants only mean something against a distinct role. A suite must
+		   actually be connected as it, or this would pass by reading nothing. */
+		expect(identity.rows[0]?.role).toBe('coreloom_background');
+
+		for (const text of [
+			'SELECT label FROM automations_schedules',
+			'SELECT input_template FROM automations_schedules',
+			'SELECT permission_snapshot_json FROM automations_schedules',
+			'SELECT * FROM automations_schedules',
+			'SELECT secret_ciphertext FROM automations_triggers',
+			'SELECT label FROM automations_triggers',
+			'SELECT * FROM automations_triggers',
+			'SELECT * FROM automations_audit_events',
+		]) {
+			await expect(
+				background.transaction((transaction) => transaction.query({ text }), {
+					access: 'read',
+				}),
+			).rejects.toBeDefined();
+		}
+
+		await expect(
+			background.transaction(
+				(transaction) =>
+					transaction.execute({
+						text: 'UPDATE automations_schedules SET enabled = 0',
+					}),
+				{ access: 'write' },
+			),
+		).rejects.toBeDefined();
+	});
+
+	it('advances a due schedule exactly once for the slot the poll named', async () => {
+		const { repository } = shared;
+		await repository.createSchedule(
+			schedule('tenant-a', 'schedule-a', 'Daily digest for A', 10),
+		);
+		const advance = {
+			tenantId: 'tenant-a',
+			scheduleId: 'schedule-a',
+			firedSlot: 10,
+			nextRunAt: 70,
+			lastRunAt: 12,
+			lastRunId: 'run-1',
+			lastError: null,
+		};
+		await expect(repository.advanceSchedule(advance)).resolves.toBe(true);
+		/* A second worker holding the same poll result must lose: next_run_at has
+		   moved past the slot it claimed. */
+		await expect(repository.advanceSchedule(advance)).resolves.toBe(false);
+	});
+});

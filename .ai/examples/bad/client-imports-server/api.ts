@@ -1,9 +1,12 @@
 /* WRONG: browser code importing the server repository. */
-import { SqliteCustomerRepository } from '../services/sqlite-repository.ts';
+import type { DatabaseHandle } from '@flowdular/database';
+import { DatabaseCustomerRepository } from '../services/database-repository.ts';
 import type { Customer } from '../domain/types.ts';
 
-const repository = new SqliteCustomerRepository('.coreloom/data/customers.db');
+declare const database: DatabaseHandle;
 
-export function loadCustomers(tenantId: string): readonly Customer[] {
+const repository = new DatabaseCustomerRepository(database);
+
+export function loadCustomers(tenantId: string): Promise<readonly Customer[]> {
 	return repository.list(tenantId);
 }

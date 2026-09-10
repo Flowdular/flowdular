@@ -1,19 +1,24 @@
 import { access, readFile, readdir } from 'node:fs/promises';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { failure, success, type CommandEnvelope } from '@coreloom/cli-protocol';
+import {
+	failure,
+	success,
+	type CommandEnvelope,
+} from '@flowdular/cli-protocol';
 import type {
 	ModuleManifest,
 	RegisteredModule,
 	ValidationIssue,
-} from '@coreloom/contracts';
-import { createModuleRegistry } from '@coreloom/kernel';
+} from '@flowdular/contracts';
+import { createModuleRegistry } from '@flowdular/kernel';
 import {
 	findNamedFiles,
 	validateFile,
 	validators,
 	type FileValidation,
 } from './validation.ts';
+import { findModuleFiles } from './module-files.ts';
 import type { Workspace } from './workspace.ts';
 
 interface PlatformManifest extends ModuleManifest {
@@ -204,7 +209,7 @@ async function translationIssues(
 				issues.push(
 					issue(
 						'LOCALE_NOT_IN_PROJECT',
-						`Locale "${locale}" is not listed in coreloom.json locales.`,
+						`Locale "${locale}" is not listed in flowdular.json locales.`,
 						'module.json',
 						'warning',
 					),
@@ -305,13 +310,13 @@ async function userInterfaceIssues(
 	for (const file of await clientSourceFiles(moduleRoot)) {
 		const source = await readFile(file, 'utf8');
 		const path = relative(moduleRoot, file);
-		/* Native DOM elements are lowercase. The shared Coreloom primitive is
+		/* Native DOM elements are lowercase. The shared Flowdular primitive is
 		   intentionally named <Table>, so this check must stay case-sensitive. */
 		if (/<table\b/.test(source)) {
 			issues.push(
 				issue(
 					'RAW_TABLE_FORBIDDEN',
-					'Module screens use Table or TableCard from @coreloom/ui instead of raw table markup.',
+					'Module screens use Table or TableCard from @flowdular/ui instead of raw table markup.',
 					path,
 				),
 			);
@@ -320,7 +325,7 @@ async function userInterfaceIssues(
 			issues.push(
 				issue(
 					'TANSTACK_TABLE_DIRECT_IMPORT',
-					'Modules use the shared Table contract from @coreloom/ui; TanStack configuration belongs to the UI package.',
+					'Modules use the shared Table contract from @flowdular/ui; TanStack configuration belongs to the UI package.',
 					path,
 				),
 			);
@@ -363,9 +368,7 @@ export async function validateModules(
 	workspace: Workspace,
 	options: { readonly modules?: readonly string[] } = {},
 ): Promise<CommandEnvelope> {
-	const files = (await findNamedFiles(workspace.root, 'module.json')).filter(
-		(file) => file.includes('/modules/'),
-	);
+	const files = await findModuleFiles(workspace);
 	const config = workspace.config as {
 		specs?: { moduleDirectory?: string };
 		locales?: string[];

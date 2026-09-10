@@ -15,7 +15,7 @@ import {
 } from '../src/index.ts';
 
 async function workspace(): Promise<string> {
-	return mkdtemp(join(tmpdir(), 'coreloom-roles-'));
+	return mkdtemp(join(tmpdir(), 'flowdular-roles-'));
 }
 
 describe('agent roles', () => {
@@ -105,21 +105,15 @@ describe('agent roles', () => {
 			},
 		);
 		expect(instruction).toContain('Never install packages');
-		expect(instruction).toContain(
-			'createServerComposition(context: PlatformServerContext)',
-		);
-		expect(instruction).toContain(
-			'createClientContribution(context: ModuleClientContext)',
-		);
 		expect(instruction).toContain('Role: Backend engineer');
 		expect(instruction).toContain('Target module: sales.orders');
 		expect(instruction).toContain('src/services/**');
 		expect(instruction).toContain('operator approval of the exact spec hash');
-		expect(instruction).toContain('runModuleMigrations once');
+		expect(instruction).toContain('applied SQL is immutable');
 		expect(instruction).toContain('shared Table and TableCard');
-		expect(instruction).toContain("fully qualified t('<module>.<key>') keys");
-		expect(instruction).toContain('context.capabilities');
-		expect(instruction).toContain('Administration, Modules');
+		expect(instruction).toContain('translated copy');
+		expect(instruction).toContain('public capabilities or registered tools');
+		expect(instruction).toContain('No runtime superuser/BYPASSRLS');
 	});
 
 	it('requires an approved exact spec delta before an edit-module implementation', () => {

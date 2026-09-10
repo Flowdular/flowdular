@@ -1,4 +1,4 @@
-import type { AgentTool } from '@coreloom/harness';
+import type { AgentTool } from '@flowdular/harness';
 
 export type ModuleAgentTools = readonly AgentTool[];
 

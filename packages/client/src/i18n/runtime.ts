@@ -12,8 +12,8 @@ import shellEn from './locales/en.json';
 import shellPl from './locales/pl.json';
 
 const SHELL_NAMESPACE = 'shell';
-const LOCALE_STORAGE_KEY = 'coreloom.locale';
-const ACCOUNT_LOCALE_STORAGE_PREFIX = 'coreloom.locale.account';
+const LOCALE_STORAGE_KEY = 'flowdular.locale';
+const ACCOUNT_LOCALE_STORAGE_PREFIX = 'flowdular.locale.account';
 
 const SHELL_BUNDLES: LocaleBundles = { en: shellEn, pl: shellPl };
 

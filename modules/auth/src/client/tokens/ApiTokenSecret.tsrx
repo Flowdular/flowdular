@@ -1,5 +1,5 @@
-import { t } from '@coreloom/client';
-import { Button, Icon } from '@coreloom/ui';
+import { t } from '@flowdular/client';
+import { Button, Icon } from '@flowdular/ui';
 
 export interface ApiTokenSecretProps {
 	readonly label: string;

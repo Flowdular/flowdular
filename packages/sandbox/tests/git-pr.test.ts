@@ -1,3 +1,4 @@
+import { reviewFixture } from './support/auto-review.ts';
 import {
 	chmod,
 	mkdir,
@@ -29,9 +30,15 @@ import {
 import { hashSpec } from '../src/server/spec.ts';
 
 /* Fixtures land in the scratch root the runner names, else the OS tmpdir. */
-const TEST_ROOT = process.env.CL_SANDBOX_TEST_ROOT ?? tmpdir();
+const TEST_ROOT = process.env.FD_SANDBOX_TEST_ROOT ?? tmpdir();
 const PULL_REQUEST_URL = 'https://github.com/example/octane/pull/7';
-const MODULE_GATES = new Set(['dependencies', 'typecheck', 'tests', 'format']);
+const MODULE_GATES = new Set([
+	'auto-review',
+	'dependencies',
+	'typecheck',
+	'tests',
+	'format',
+]);
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
 	const result = await spawnCommand('git', args, cwd);
@@ -57,12 +64,12 @@ interface Fixture {
 	readonly forkMarker: string;
 }
 
-/* A repository shaped like a Coreloom workspace with one commit on main, a
+/* A repository shaped like a Flowdular workspace with one commit on main, a
    bare remote it pushes to, and a gh on PATH that records what it was asked
    and answers with a fixed pull request URL. */
-async function fixture(ignoreCoreloom = true): Promise<Fixture> {
+async function fixture(ignoreFlowdular = true): Promise<Fixture> {
 	await mkdir(TEST_ROOT, { recursive: true });
-	const base = await mkdtemp(join(TEST_ROOT, 'coreloom-git-pr-'));
+	const base = await mkdtemp(join(TEST_ROOT, 'flowdular-git-pr-'));
 	const root = join(base, 'workspace');
 	const remote = join(base, 'remote.git');
 	const stubs = join(base, 'bin');
@@ -70,7 +77,7 @@ async function fixture(ignoreCoreloom = true): Promise<Fixture> {
 	await mkdir(stubs);
 	await write(
 		root,
-		'coreloom.json',
+		'flowdular.json',
 		`${JSON.stringify(
 			{
 				schemaVersion: 1,
@@ -83,7 +90,7 @@ async function fixture(ignoreCoreloom = true): Promise<Fixture> {
 	await write(
 		root,
 		'.gitignore',
-		ignoreCoreloom ? 'node_modules/\n.coreloom/\n' : 'node_modules/\n',
+		ignoreFlowdular ? 'node_modules/\n.flowdular/\n' : 'node_modules/\n',
 	);
 	await write(root, 'package.json', '{"name":"fixture","private":true}\n');
 	await write(root, 'pnpm-lock.yaml', "lockfileVersion: '9.0'\n");
@@ -92,7 +99,7 @@ async function fixture(ignoreCoreloom = true): Promise<Fixture> {
 	await write(
 		root,
 		'platform/package.json',
-		'{"name":"@coreloom/platform","dependencies":{}}\n',
+		'{"name":"@flowdular/platform","dependencies":{}}\n',
 	);
 	await write(
 		root,
@@ -264,7 +271,7 @@ async function sessionWithModules(root: string): Promise<SandboxSession> {
 			'',
 		].join('\n'),
 	);
-	return updateSession(root, session.id, {
+	const approved = await updateSession(root, session.id, {
 		modules: [
 			{
 				...session.modules[0]!,
@@ -284,6 +291,8 @@ async function sessionWithModules(root: string): Promise<SandboxSession> {
 			},
 		],
 	});
+	await reviewFixture(root, approved);
+	return approved;
 }
 
 interface StubOptions {
@@ -360,18 +369,18 @@ function commandsFor(options: StubOptions = {}) {
 			const id = args[args.indexOf('enable') + 1]!;
 			const directory = id.split('.')[0]!;
 			const project = JSON.parse(
-				await readFile(join(worktree, 'coreloom.json'), 'utf8'),
+				await readFile(join(worktree, 'flowdular.json'), 'utf8'),
 			) as { modules: { enabled: string[] } };
 			project.modules.enabled.push(id);
 			await write(
 				worktree,
-				'coreloom.json',
+				'flowdular.json',
 				`${JSON.stringify(project, null, '\t')}\n`,
 			);
 			const platform = JSON.parse(
 				await readFile(join(worktree, 'platform/package.json'), 'utf8'),
 			) as { dependencies: Record<string, string> };
-			platform.dependencies[`@coreloom/module-${directory}`] = 'workspace:*';
+			platform.dependencies[`@flowdular/module-${directory}`] = 'workspace:*';
 			await write(
 				worktree,
 				'platform/package.json',
@@ -460,7 +469,7 @@ describe('git-pr delivery', () => {
 		process.env.GH_STUB_ENV = fx.ghEnv;
 		process.env.GH_STUB_MARKER = fx.ghMarker;
 		process.env.GH_STUB_FORK_MARKER = fx.forkMarker;
-		process.env.CL_TEST_TOKEN = 'must-not-leak';
+		process.env.FD_TEST_TOKEN = 'must-not-leak';
 	});
 
 	afterAll(() => {
@@ -476,12 +485,12 @@ describe('git-pr delivery', () => {
 		delete process.env.GH_STUB_PUSH;
 		delete process.env.GH_STUB_PR_FAIL;
 		delete process.env.GH_STUB_AUTH_FAIL;
-		delete process.env.CL_TEST_TOKEN;
+		delete process.env.FD_TEST_TOKEN;
 	});
 
 	it('is unavailable in a repository without commits', async () => {
-		const root = await mkdtemp(join(TEST_ROOT, 'coreloom-empty-repo-'));
-		await write(root, 'coreloom.json', '{"schemaVersion":1}\n');
+		const root = await mkdtemp(join(TEST_ROOT, 'flowdular-empty-repo-'));
+		await write(root, 'flowdular.json', '{"schemaVersion":1}\n');
 		await git(root, 'init', '-q', '-b', 'main');
 		const session = await createSession({
 			workspaceRoot: root,
@@ -591,7 +600,7 @@ describe('git-pr delivery', () => {
 		expect(plan.git?.allowedPaths).toEqual([
 			'modules/profile/**',
 			'modules/inventory/**',
-			'coreloom.json',
+			'flowdular.json',
 			'platform/package.json',
 			'platform/src/generated/**',
 			'pnpm-lock.yaml',
@@ -889,6 +898,7 @@ describe('git-pr delivery', () => {
 				approvedSession,
 				commandsFor().commands,
 			);
+			await reviewFixture(fx.root, approvedSession);
 			const retryPlan = await target.plan(retryContext);
 			await expect(
 				target.apply(retryContext, retryPlan, () => undefined),
@@ -995,7 +1005,7 @@ describe('git-pr delivery', () => {
 		);
 		const rows = changed.split('\n').map((line) => line.split('\t'));
 		expect(rows.map(([, path]) => path).sort()).toEqual([
-			'coreloom.json',
+			'flowdular.json',
 			'modules/inventory/module.json',
 			'modules/inventory/spec/module.yaml',
 			'modules/inventory/src/index.ts',
@@ -1039,7 +1049,7 @@ describe('git-pr delivery', () => {
 		expect(body).toContain('token: [redacted]');
 		expect(body).toContain('Removed (1):\n- modules/profile/src/old.ts');
 		expect(body).toContain(
-			'Post-merge: `pnpm coreloom auth sync-scopes --module inventory.core --apply`',
+			'Post-merge: `pnpm flowdular auth sync-scopes --module inventory.core --apply`',
 		);
 		expect(body).toContain(`Session ${session.id}.`);
 		expect(body).toContain(
@@ -1054,7 +1064,7 @@ describe('git-pr delivery', () => {
 			`pr create --base main --head ${branch} --title Add inventory.core and update profile.core --body-file`,
 		);
 		const ghEnv = await readFile(fx.ghEnv, 'utf8');
-		expect(ghEnv).not.toContain('CL_TEST_TOKEN');
+		expect(ghEnv).not.toContain('FD_TEST_TOKEN');
 		expect(ghEnv).not.toContain('must-not-leak');
 		expect(ghEnv).not.toContain('outer-token-must-not-leak');
 		expect(ghEnv).toContain('GH_TOKEN=github_pat_delivery-only');
@@ -1151,7 +1161,7 @@ describe('git-pr delivery', () => {
 });
 
 describe('delivery configuration and policies', () => {
-	it('applies defaults and validates the coreloom.json block', () => {
+	it('applies defaults and validates the flowdular.json block', () => {
 		expect(resolveDeliveryConfiguration(undefined)).toEqual(
 			DEFAULT_DELIVERY_CONFIGURATION,
 		);
@@ -1163,7 +1173,7 @@ describe('delivery configuration and policies', () => {
 			}),
 		).toEqual({
 			default: 'git-pr',
-			targets: ['workspace', 'git-pr'],
+			targets: ['workspace', 'git-pr', 'official-modules'],
 			git: {
 				remote: 'origin',
 				repository: null,
@@ -1211,7 +1221,7 @@ describe('delivery configuration and policies', () => {
 				'    [backend-engineer, frontend-engineer,',
 				'    agentic-engineer]',
 				'cliOwned:',
-				'  coreloom.json: pnpm coreloom module enable|disable --apply',
+				'  flowdular.json: pnpm flowdular module enable|disable --apply',
 				'flags:',
 				'  requireReviewer: true',
 				'  count: 18',
@@ -1231,7 +1241,7 @@ describe('delivery configuration and policies', () => {
 				],
 			},
 			cliOwned: {
-				'coreloom.json': 'pnpm coreloom module enable|disable --apply',
+				'flowdular.json': 'pnpm flowdular module enable|disable --apply',
 			},
 			flags: { requireReviewer: true, count: 18 },
 			list: ['one', 'two'],

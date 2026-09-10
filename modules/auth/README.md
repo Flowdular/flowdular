@@ -5,7 +5,7 @@
 ## Included
 
 - Sign-up and sign-in screens in TSRX.
-- Account, tenant, membership, scope, and session persistence in SQLite.
+- Account, tenant, membership, scope, and session persistence in PostgreSQL, through the platform-owned `@flowdular/database` provider.
 - Password hashing with scrypt and per-password random salts.
 - Random session tokens stored only as SHA-256 hashes in the database.
 - HttpOnly, host-only, `SameSite=Strict` cookies, with `Secure` enabled by default in production.
@@ -52,17 +52,16 @@ A client presents it as `Authorization: Bearer clat_...`. The authentication mid
 
 | Variable                       | Default                                                             |
 | ------------------------------ | ------------------------------------------------------------------- |
-| `CL_AUTH_DATABASE`             | `.coreloom/data/auth.db`, or `/data/auth.db` in production          |
-| `CL_AUTH_SECURE_COOKIE`        | `false` in development and `true` in production                     |
-| `CL_AUTH_ALLOW_SIGN_UP`        | `true` in development and `false` in production                     |
-| `CL_AUTH_SESSION_TTL_HOURS`    | `12`                                                                |
-| `CL_AUTH_SESSION_IDLE_MINUTES` | `120`                                                               |
-| `CL_AUTH_PASSWORD_MIN_LENGTH`  | `12`                                                                |
-| `CL_AUTH_SIGN_IN_PROVIDERS`    | empty                                                               |
-| `CL_AUTH_EMAIL_CONFIRMATION`   | `false`; `true` is refused until a mail transport exists            |
-| `CL_TRUST_PROXY`               | `false`; `true` reads the client address from `x-forwarded-for`     |
-| `CL_CSP`                       | built-in policy; report-only in development, enforced in production |
-| `CL_CSP_REPORT_ONLY`           | `true` in development and `false` in production                     |
+| `FD_AUTH_SECURE_COOKIE`        | `false` in development and `true` in production                     |
+| `FD_AUTH_ALLOW_SIGN_UP`        | `true` in development and `false` in production                     |
+| `FD_AUTH_SESSION_TTL_HOURS`    | `12`                                                                |
+| `FD_AUTH_SESSION_IDLE_MINUTES` | `120`                                                               |
+| `FD_AUTH_PASSWORD_MIN_LENGTH`  | `12`                                                                |
+| `FD_AUTH_SIGN_IN_PROVIDERS`    | empty                                                               |
+| `FD_AUTH_EMAIL_CONFIRMATION`   | `false`; `true` is refused until a mail transport exists            |
+| `FD_TRUST_PROXY`               | `false`; `true` reads the client address from `x-forwarded-for`     |
+| `FD_CSP`                       | built-in policy; report-only in development, enforced in production |
+| `FD_CSP_REPORT_ONLY`           | `true` in development and `false` in production                     |
 
 The auth values are defaults for the declared `auth.core` settings. A value
 stored through the module's drawer under Administration > Modules wins at
@@ -101,8 +100,8 @@ A module declares its scopes in its specification. Enabling it does not grant
 them, so the scopes are handed to the workspace owners explicitly:
 
 ```bash
-pnpm coreloom auth sync-scopes --module profile.core          # dry run
-pnpm coreloom auth sync-scopes --module profile.core --apply
+pnpm flowdular auth sync-scopes --module profile.core          # dry run
+pnpm flowdular auth sync-scopes --module profile.core --apply
 ```
 
 The command reads `permissions` from the module's specification, never from
@@ -110,32 +109,107 @@ module code, and the grant is idempotent. Members receive module scopes through
 role assignment, not through this command. The sandbox runs it as part of an
 eject, which is why an ejected module is reachable straight away.
 
+## Operator provisioning
+
+A deployment turns public sign-up off, so its first workspace and every later
+colleague arrive through the CLI. The commands use the deployment database
+through the platform provider, work against a PostgreSQL server, read nothing
+from `FD_AUTH_ALLOW_SIGN_UP`, and reset nothing.
+
+```bash
+pnpm flowdular auth workspaces                                     # what exists, with owners
+pnpm flowdular auth workspace-create --name "Northwind" \
+  --owner-email ada@northwind.example --owner-name "Ada Lovelace" # dry run
+pnpm flowdular auth workspace-create --name "Northwind" \
+  --owner-email ada@northwind.example --owner-name "Ada Lovelace" --apply
+pnpm flowdular auth member-add --workspace northwind \
+  --email grace@northwind.example --role member --apply
+```
+
+`workspace-create` writes the tenant, the owner account, the owner membership
+and `OWNER_SCOPES`, exactly as sign-up does, so the workspace is
+indistinguishable from one created in the browser. The workspace id comes from
+`--slug` or is derived from the name, and both it and the email pass the
+validators the sign-up path uses. A taken workspace id or a registered address
+is refused with a stable `WORKSPACE_SLUG_TAKEN` or `ACCOUNT_EXISTS` error.
+
+| Flag              | Meaning                                                    |
+| ----------------- | ---------------------------------------------------------- |
+| `--name`          | Workspace name, 2 to 120 characters                        |
+| `--slug`          | Workspace id; derived from the name when absent            |
+| `--owner-email`   | Owner address, normalized the way sign-up normalizes it    |
+| `--owner-name`    | Owner display name                                         |
+| `--password-env`  | Name of an environment variable holding the owner password |
+| `--actor <label>` | Audit actor suffix; defaults to the OS user                |
+| `--workspace`     | `member-add` target, by workspace id or tenant identifier  |
+| `--role <key>`    | `member-add` role, `member` by default                     |
+| `--limit <n>`     | `workspaces` page size, 1 to 200, 25 by default            |
+
+### How the first credential reaches the operator
+
+By default the command emits a single-use password setup link over the existing
+`auth_password_reset_tokens` table: only the token hash is stored, it is valid
+for 24 hours, it can be used once, and it is printed exactly once. Nothing can
+recover it afterwards, and it never reaches the audit trail. Set
+`FD_AUTH_PUBLIC_ORIGIN` so the link points at the deployment; without it the
+command warns and falls back to `http://localhost`.
+
+The command mints that token itself rather than going through
+`requestPasswordReset` or `createTenantInvitation`. Both of those hand their
+token to the injected `AuthMailDelivery` adapter and to nobody else:
+`createTenantInvitation` refuses with `MAIL_NOT_CONFIGURED` when none is
+composed, and `requestPasswordReset` returns silently. The only adapter that
+ships is in-memory and its flag is refused in production, so an operator
+standing at a shell on the server is the delivery channel, and the terminal is
+the one channel that always exists.
+
+`--password-env` takes the **name** of an environment variable, never the
+password. A password passed as a flag value lands in shell history and in the
+process list of every other user on the host, so a value that is not a variable
+name is refused without being echoed back. With `--password-env` the command
+emits no link and no password.
+
+`member-add` needs no credential for an address that already has an account: it
+adds the membership with the role's scopes. An unknown address gets a
+single-use invitation link over `auth_tenant_invitations`, shown once, which
+the invited person opens to choose their own display name and password.
+
+Both commands are `risk: process` capabilities: they are a dry run without
+`--apply` and print the workspace, the account and the scopes they would
+create. Each append an audit row to the workspace trail with the operator as
+the actor (`cli:<user>`, or `cli:<label>` with `--actor`), so an owner never
+appears without a record of who made it.
+
 ## Greenfield development seed
 
 Preview the local reset, seed credentials, and tenant layout:
 
 ```bash
-pnpm coreloom setup quick
+pnpm flowdular setup quick
 ```
 
 Stop the development server, then apply the reset with typed confirmation:
 
 ```bash
-pnpm coreloom setup quick --apply --confirm reset-local-auth
+pnpm flowdular setup quick --apply --confirm reset-local-auth
 ```
 
-The command resets only `.coreloom/data/auth.db` inside the workspace. It creates:
+The command resets only the workspace's local embedded database, and refuses to run when a PostgreSQL server is configured. It creates:
 
 - `admin@example.com` / `Admin!23456789`, an owner of Operations Demo and Finance Demo.
 - `user@example.com` / `User!234567890`, a reduced-scope member of Operations Demo.
 
-The application shell exposes the active tenant selector. Switching it rotates the session cookie and reloads the target membership's role and scopes. All seed values are public development defaults. The command refuses custom database paths and non-development environments. `auth greenfield` remains the module-owned equivalent of `setup quick`.
+The application shell exposes the active tenant selector. Switching it rotates the session cookie and reloads the target membership's role and scopes. All seed values are public development defaults. The command refuses a configured PostgreSQL server and non-development environments. `auth greenfield` remains the module-owned equivalent of `setup quick`.
 
-The current adapter is intentionally single-writer SQLite. Password reset,
+auth.core stores everything in PostgreSQL through the platform provider, which
+means a deployment must configure `FD_DATABASE_BACKGROUND_URL`: a session
+cookie, a bearer token, an invitation link and an email address all arrive
+without a workspace, and that read-only cross-tenant role is what resolves the
+one they belong to. Password reset,
 tenant invitations, TOTP MFA, and OIDC use injected deployment configuration:
-`CL_AUTH_MFA_KEY` is a 32-byte AES key encoded as 64 hexadecimal characters
-or base64url, `CL_AUTH_PUBLIC_ORIGIN` is the public HTTPS origin, and
-`CL_AUTH_OIDC_PROVIDERS` is a JSON list of configured OIDC endpoints and
+`FD_AUTH_MFA_KEY` is a 32-byte AES key encoded as 64 hexadecimal characters
+or base64url, `FD_AUTH_PUBLIC_ORIGIN` is the public HTTPS origin, and
+`FD_AUTH_OIDC_PROVIDERS` is a JSON list of configured OIDC endpoints and
 credentials. Email delivery is injected through `AuthMailDelivery`; local-only
-evidence can use `CL_AUTH_DEVELOPMENT_MAIL=true`, which keeps messages in
+evidence can use `FD_AUTH_DEVELOPMENT_MAIL=true`, which keeps messages in
 memory and never logs or exposes raw tokens.

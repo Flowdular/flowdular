@@ -4,13 +4,13 @@ import translationsPl from '../translations/pl.json';
 import { AUTOMATIONS_MODULE_SETTINGS } from '../src/settings.ts';
 
 describe('automations translations', () => {
-	it('ships matching English and Polish keys', () => {
+	it('ships matching English and Polish keys', async () => {
 		expect(Object.keys(translationsPl).sort()).toEqual(
 			Object.keys(translationsEn).sort(),
 		);
 	});
 
-	it('translates every declared module setting label and description', () => {
+	it('translates every declared module setting label and description', async () => {
 		for (const definition of Object.values(
 			AUTOMATIONS_MODULE_SETTINGS.settings,
 		)) {

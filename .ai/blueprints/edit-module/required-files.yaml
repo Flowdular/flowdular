@@ -24,7 +24,7 @@ byChange:
     - 'spec/module.yaml'
   table:
     - 'src/services/migration.ts'
-    - 'src/services/sqlite-repository.ts'
+    - 'src/services/database-repository.ts'
     - 'migrations/000N_{module}_{name}.up.sql'
     - 'migrations/000N_{module}_{name}.down.sql'
     - 'src/domain/types.ts'
@@ -32,7 +32,7 @@ byChange:
     - 'spec/module.yaml'
   column:
     - 'src/services/migration.ts'
-    - 'src/services/sqlite-repository.ts'
+    - 'src/services/database-repository.ts'
     - 'migrations/000N_{module}_{name}.up.sql'
     - 'migrations/000N_{module}_{name}.down.sql'
     - 'src/domain/types.ts'

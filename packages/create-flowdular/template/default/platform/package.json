@@ -1,0 +1,27 @@
+{
+	"name": "@app/platform",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "node scripts/dev.mjs",
+		"preview": "octane-preview --host 127.0.0.1 --port 4310 --strictPort",
+		"typecheck": "tsrx-tsc --noEmit -p tsconfig.json"
+	},
+	"dependencies": {
+		"@app/module-example": "workspace:*",
+		"@octanejs/seo": "0.0.38",
+		"@octanejs/vite-plugin": "0.1.51",
+		"octane": "0.1.51",
+		"pg": "8.23.0",
+		"@flowdular/sdk": "0.2.0"
+	},
+	"devDependencies": {
+		"@octanejs/app-core": "0.0.47",
+		"@tsrx/typescript-plugin": "0.3.120",
+		"@types/node": "24.13.3",
+		"@types/pg": "8.23.1",
+		"typescript": "5.9.3",
+		"vite": "8.2.2"
+	}
+}

@@ -4,7 +4,7 @@ import type {
 	AgentRun,
 	EnqueueAgentRunInput,
 } from '../domain/types.ts';
-import type { Actor } from '@coreloom/kernel';
+import type { Actor } from '@flowdular/kernel';
 import type { AgentService } from '../services/agent-service.ts';
 
 export const AGENT_RUN_QUEUE_CAPABILITY = 'agents.run-queue';
@@ -25,7 +25,7 @@ export interface AgentRunInvocationContext {
 }
 
 export interface AgentRunQueue {
-	listAgents(tenantId: string): readonly AgentRunQueueAgent[];
+	listAgents(tenantId: string): Promise<readonly AgentRunQueueAgent[]>;
 	enqueue(
 		context: AgentRunInvocationContext,
 		input: EnqueueAgentRunInput,
@@ -37,25 +37,25 @@ export interface AgentRunQueue {
 }
 
 export function createAgentRunQueue(
-	service: AgentService | (() => AgentService),
+	service: AgentService | (() => AgentService | Promise<AgentService>),
 ): AgentRunQueue {
-	const current = () => (typeof service === 'function' ? service() : service);
+	const current = async () =>
+		typeof service === 'function' ? service() : service;
 	return {
-		listAgents(tenantId) {
-			const service = current();
+		async listAgents(tenantId) {
+			const service = await current();
 			return [
-				...service
-					.listAgents(tenantId)
-					.map(({ id, name, status, allowedTools, revision }) => ({
+				...(await service.listAgents(tenantId)).map(
+					({ id, name, status, allowedTools, revision }) => ({
 						id,
 						name,
 						status,
 						allowedTools,
 						revision,
 						ownership: { kind: 'tenant' as const },
-					})),
-				...service
-					.listModuleAgents(tenantId)
+					}),
+				),
+				...(await service.listModuleAgents(tenantId))
 					.filter(
 						(
 							agent,
@@ -76,16 +76,16 @@ export function createAgentRunQueue(
 					})),
 			].sort((left, right) => left.id.localeCompare(right.id));
 		},
-		enqueue(context, input) {
-			return current().enqueueRun(
+		async enqueue(context, input) {
+			return (await current()).enqueueRun(
 				context.tenantId,
 				context.actor,
 				context.permissionSnapshot,
 				input,
 			);
 		},
-		enqueueWithOutcome(context, input) {
-			return current().enqueueRunWithOutcome(
+		async enqueueWithOutcome(context, input) {
+			return (await current()).enqueueRunWithOutcome(
 				context.tenantId,
 				context.actor,
 				context.permissionSnapshot,

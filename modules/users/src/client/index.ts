@@ -5,7 +5,7 @@ export { UsersDashboardWidget, UsersView } from './UsersView.tsrx';
 import type {
 	ModuleClientContext,
 	ModuleClientContribution,
-} from '@coreloom/client';
+} from '@flowdular/client';
 import { createUsersClientContribution as canonicalContribution } from './contribution.tsrx';
 
 /* Canonical entry used by the generated platform composition. */

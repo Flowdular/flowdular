@@ -3,7 +3,7 @@ import {
 	PLATFORM_SETTINGS_TENANT,
 	type ModuleSettingsDeclaration,
 	type ModuleSettingsRuntime,
-} from '@coreloom/kernel';
+} from '@flowdular/kernel';
 
 export const AUTOMATIONS_MODULE_ID = 'automations.core';
 
@@ -28,12 +28,12 @@ export const AUTOMATIONS_MODULE_SETTINGS = defineModuleSettings({
 });
 
 function environmentPollMs(environment: NodeJS.ProcessEnv): number {
-	const raw = environment.CL_AUTOMATIONS_SCHEDULER_POLL_MS;
+	const raw = environment.FD_AUTOMATIONS_SCHEDULER_POLL_MS;
 	if (raw === undefined) return 30_000;
 	const value = Number(raw);
 	if (!Number.isSafeInteger(value) || value < 1_000 || value > 300_000) {
 		throw new Error(
-			'CL_AUTOMATIONS_SCHEDULER_POLL_MS must be an integer between 1000 and 300000.',
+			'FD_AUTOMATIONS_SCHEDULER_POLL_MS must be an integer between 1000 and 300000.',
 		);
 	}
 	return value;

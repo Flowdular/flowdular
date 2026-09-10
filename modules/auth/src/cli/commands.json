@@ -25,6 +25,39 @@
 			}
 		},
 		{
+			"path": ["auth", "workspaces"],
+			"capability": {
+				"id": "auth.workspace.list",
+				"version": 1,
+				"summary": "List the workspaces of this deployment and their owners.",
+				"risk": "read",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": false
+			}
+		},
+		{
+			"path": ["auth", "workspace-create"],
+			"capability": {
+				"id": "auth.workspace.create",
+				"version": 1,
+				"summary": "Create a workspace with its owner account without opening public sign-up.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		},
+		{
+			"path": ["auth", "member-add"],
+			"capability": {
+				"id": "auth.member.add",
+				"version": 1,
+				"summary": "Add an account to a workspace with a role, or invite an unknown address.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		},
+		{
 			"path": ["auth", "greenfield"],
 			"capability": {
 				"id": "auth.greenfield.reset",

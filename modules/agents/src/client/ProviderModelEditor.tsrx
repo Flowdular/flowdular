@@ -1,10 +1,10 @@
 import { useId } from 'octane';
-import { t } from '@coreloom/client';
-import { Button, Icon, Tag } from '@coreloom/ui';
+import { t } from '@flowdular/client';
+import { Button, Icon, Tag } from '@flowdular/ui';
 import {
 	AI_PROVIDER_CATALOG,
 	modelSupportsTemperature,
-} from '@coreloom/harness/catalog';
+} from '@flowdular/harness/catalog';
 import type {
 	AgentProviderKind,
 	AgentProviderModel,

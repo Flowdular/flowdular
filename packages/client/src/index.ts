@@ -1,4 +1,6 @@
 export { ApplicationShell } from './ApplicationShell.tsrx';
+export { applicationPath, configureApplicationRouting } from './routing.ts';
+export { loadWebPage, webPageData } from './web.ts';
 export {
 	createClientContributionRegistry,
 	WORKSPACE_SLOTS,

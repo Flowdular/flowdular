@@ -1,6 +1,6 @@
 {
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
-	"$id": "https://coreloom.dev/schemas/module.schema.json",
+	"$id": "https://flowdular.dev/schemas/module.schema.json",
 	"type": "object",
 	"additionalProperties": false,
 	"required": [
@@ -16,18 +16,27 @@
 		"stability"
 	],
 	"properties": {
-		"$schema": { "type": "string" },
-		"schemaVersion": { "const": 1 },
+		"$schema": {
+			"type": "string"
+		},
+		"schemaVersion": {
+			"const": 1
+		},
 		"id": {
 			"type": "string",
 			"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
 		},
 		"package": {
 			"type": "string",
-			"pattern": "^@coreloom/module-[a-z0-9-]+$"
+			"pattern": "^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$"
 		},
-		"version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
-		"profile": { "enum": ["full", "headless", "ui", "integration"] },
+		"version": {
+			"type": "string",
+			"pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+		},
+		"profile": {
+			"enum": ["full", "headless", "ui", "integration"]
+		},
 		"capabilities": {
 			"type": "array",
 			"items": {
@@ -53,23 +62,37 @@
 						"type": "string",
 						"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
 					},
-					"range": { "type": "string", "minLength": 1 }
+					"range": {
+						"type": "string",
+						"minLength": 1
+					}
 				}
 			}
 		},
-		"tenancy": { "enum": ["required", "optional", "none"] },
+		"tenancy": {
+			"enum": ["required", "optional", "none"]
+		},
 		"locales": {
 			"type": "array",
-			"items": { "type": "string", "pattern": "^[a-z]{2}(-[A-Z]{2})?$" },
+			"items": {
+				"type": "string",
+				"pattern": "^[a-z]{2}(-[A-Z]{2})?$"
+			},
 			"uniqueItems": true
 		},
-		"stability": { "enum": ["experimental", "stable", "deprecated"] },
+		"stability": {
+			"enum": ["experimental", "stable", "deprecated"]
+		},
 		"platform": {
 			"type": "object",
 			"additionalProperties": false,
 			"properties": {
-				"server": { "type": "boolean" },
-				"client": { "type": "boolean" }
+				"server": {
+					"type": "boolean"
+				},
+				"client": {
+					"type": "boolean"
+				}
 			}
 		},
 		"cli": {
@@ -86,6 +109,10 @@
 					"pattern": "^src/cli/[a-z0-9-/]+\\.ts$"
 				}
 			}
+		},
+		"platformApi": {
+			"type": "string",
+			"minLength": 1
 		}
 	},
 	"allOf": [
@@ -94,19 +121,33 @@
 				"properties": {
 					"capabilities": {
 						"type": "array",
-						"contains": { "const": "cli" }
+						"contains": {
+							"const": "cli"
+						}
 					}
 				}
 			},
-			"then": { "properties": { "cli": true }, "required": ["cli"] }
+			"then": {
+				"properties": {
+					"cli": true
+				},
+				"required": ["cli"]
+			}
 		},
 		{
-			"if": { "properties": { "cli": true }, "required": ["cli"] },
+			"if": {
+				"properties": {
+					"cli": true
+				},
+				"required": ["cli"]
+			},
 			"then": {
 				"properties": {
 					"capabilities": {
 						"type": "array",
-						"contains": { "const": "cli" }
+						"contains": {
+							"const": "cli"
+						}
 					}
 				}
 			}

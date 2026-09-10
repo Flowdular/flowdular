@@ -61,6 +61,20 @@ function requestIdOf(context: Context): string {
 export function defineEndpoint(
 	definition: EndpointDefinition,
 ): DefinedEndpoint {
+	if (
+		!definition.access ||
+		(definition.access.kind !== 'public' &&
+			definition.access.kind !== 'permission') ||
+		(definition.access.kind === 'permission' &&
+			(!definition.access.permission?.trim() ||
+				!('resolveIdentity' in definition) ||
+				typeof definition.resolveIdentity !== 'function')) ||
+		(definition.access.kind === 'public' && 'resolveIdentity' in definition)
+	) {
+		throw new Error(
+			`Endpoint "${definition.id}" has an invalid access policy.`,
+		);
+	}
 	if (definition.methods.length === 0) {
 		throw new Error(
 			`Endpoint "${definition.id}" must declare at least one HTTP method.`,
@@ -73,27 +87,29 @@ export function defineEndpoint(
 		handler: async (context) => {
 			const requestId = requestIdOf(context);
 			let identity: EndpointIdentity | null = null;
-
-			if ('resolveIdentity' in definition) {
-				identity = await definition.resolveIdentity(context);
-				if (!identity)
-					return problem(
-						401,
-						'UNAUTHENTICATED',
-						'Authentication is required.',
-						requestId,
-					);
-				if (!identity.permissions.has(definition.access.permission)) {
-					return problem(
-						403,
-						'FORBIDDEN',
-						'The required permission was not granted.',
-						requestId,
-					);
-				}
-			}
-
 			try {
+				if (
+					definition.access.kind === 'permission' &&
+					'resolveIdentity' in definition
+				) {
+					identity = await definition.resolveIdentity(context);
+					if (!identity)
+						return problem(
+							401,
+							'UNAUTHENTICATED',
+							'Authentication is required.',
+							requestId,
+						);
+					if (!identity.permissions.has(definition.access.permission)) {
+						return problem(
+							403,
+							'FORBIDDEN',
+							'The required permission was not granted.',
+							requestId,
+						);
+					}
+				}
+
 				const response = await definition.handler({
 					requestId,
 					identity,

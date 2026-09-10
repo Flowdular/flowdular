@@ -1,13 +1,13 @@
 import type { Profile, ProfileLanguagePreference } from '../domain/types.ts';
 
 export interface ProfileRepository {
-	find(tenantId: string, accountId: string): Profile | null;
-	save(profile: Profile): Profile;
+	find(tenantId: string, accountId: string): Promise<Profile | null>;
+	save(profile: Profile): Promise<Profile>;
 	findLanguage(
 		tenantId: string,
 		accountId: string,
-	): ProfileLanguagePreference | null;
+	): Promise<ProfileLanguagePreference | null>;
 	saveLanguage(
 		preference: ProfileLanguagePreference,
-	): ProfileLanguagePreference;
+	): Promise<ProfileLanguagePreference>;
 }

@@ -1,5 +1,5 @@
-import type { TenantRole } from '@coreloom/module-auth';
-import { t } from '@coreloom/client/i18n';
+import type { TenantRole } from '@flowdular/module-auth';
+import { t } from '@flowdular/client/i18n';
 import { ApiError } from './api.ts';
 
 interface ErrorEnvelope {

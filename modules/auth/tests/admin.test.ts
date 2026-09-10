@@ -1,13 +1,32 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { OWNER_SCOPES } from '../src/acl/scopes.ts';
 import type { AuthActor } from '../src/domain/types.ts';
 import { createAuthRuntime } from '../src/server/runtime.ts';
 import { AuthService } from '../src/services/auth-service.ts';
-import { SqliteAuthRepository } from '../src/services/sqlite-repository.ts';
 import { fastHash } from './helpers.ts';
+import {
+	authTestProvider,
+	closeAuthTestDatabases,
+	createAuthTestDatabase,
+	type AuthTestDatabase,
+} from './support/database.ts';
+
+const open = new Set<AuthTestDatabase>();
+
+afterEach(async () => {
+	await Promise.all([...open].map((database) => database.dispose()));
+	open.clear();
+});
+
+afterAll(closeAuthTestDatabases);
+
+/* Every case here runs against an embedded PostgreSQL, whose first boot alone
+   outlasts the default per-test timeout. */
 
 async function workspace(now: { value: number } = { value: 1_000 }) {
-	const repository = new SqliteAuthRepository(':memory:');
+	const database = await createAuthTestDatabase();
+	open.add(database);
+	const repository = database.repository;
 	const policy = {
 		sessionTtlMs: 12 * 60 * 60 * 1000,
 		sessionIdleMs: 2 * 60 * 60 * 1000,
@@ -67,12 +86,12 @@ describe('member administration', () => {
 				member,
 			),
 		).rejects.toMatchObject({ code: 'OWNER_REQUIRED', status: 403 });
-		expect(() =>
+		await expect(
 			service.assignMemberRole(member, owner.accountId, 'member'),
-		).toThrow(/Only an owner/);
-		expect(() =>
+		).rejects.toThrow(/Only an owner/);
+		await expect(
 			service.setMemberStatus(member, owner.accountId, 'disabled'),
-		).toThrow(/Only an owner/);
+		).rejects.toThrow(/Only an owner/);
 		await expect(
 			service.createTenantMember(
 				{
@@ -93,13 +112,13 @@ describe('member administration', () => {
 			email: 'member@example.com',
 			password: 'member password long',
 		});
-		const disabled = service.setMemberStatus(
+		const disabled = await service.setMemberStatus(
 			owner,
 			member.accountId,
 			'disabled',
 		);
 		expect(disabled.status).toBe('disabled');
-		expect(service.resolveSession(session.token)).toBeNull();
+		expect(await service.resolveSession(session.token)).toBeNull();
 		await expect(
 			service.signIn({
 				email: 'member@example.com',
@@ -107,29 +126,33 @@ describe('member administration', () => {
 			}),
 		).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' });
 		expect(
-			service.setMemberStatus(owner, member.accountId, 'active').status,
+			(await service.setMemberStatus(owner, member.accountId, 'active')).status,
 		).toBe('active');
-		expect(() =>
+		await expect(
 			service.setMemberStatus(owner, owner.accountId, 'disabled'),
-		).toThrow(/your profile/);
-		expect(() => service.removeMember(owner, owner.accountId)).toThrow(
+		).rejects.toThrow(/your profile/);
+		await expect(service.removeMember(owner, owner.accountId)).rejects.toThrow(
 			/your profile/,
 		);
-		const promoted = service.assignMemberRole(owner, member.accountId, 'owner');
+		const promoted = await service.assignMemberRole(
+			owner,
+			member.accountId,
+			'owner',
+		);
 		expect(promoted.role).toBe('owner');
 		expect(promoted.scopes).toEqual([...OWNER_SCOPES].sort());
-		service.removeMember(
+		await service.removeMember(
 			{ ...member, role: 'owner', scopes: OWNER_SCOPES },
 			owner.accountId,
 		);
-		expect(() =>
+		await expect(
 			service.removeMember(
 				{ ...member, role: 'owner', scopes: OWNER_SCOPES },
 				member.accountId,
 			),
-		).toThrow(/your profile/);
-		expect(service.listTenantMembers(owner.tenantId)).toHaveLength(1);
-		expect(service.findAccountAccess('owner@example.com')).toBeNull();
+		).rejects.toThrow(/your profile/);
+		expect(await service.listTenantMembers(owner.tenantId)).toHaveLength(1);
+		expect(await service.findAccountAccess('owner@example.com')).toBeNull();
 	});
 
 	it('refuses to demote or disable the last active owner', async () => {
@@ -151,13 +174,13 @@ describe('member administration', () => {
 			role: 'owner',
 			scopes: second.scopes,
 		};
-		service.setMemberStatus(secondActor, owner.accountId, 'disabled');
-		expect(() =>
+		await service.setMemberStatus(secondActor, owner.accountId, 'disabled');
+		await expect(
 			service.assignMemberRole(owner, second.accountId, 'member'),
-		).toThrow(/at least one active owner/);
-		expect(() =>
+		).rejects.toThrow(/at least one active owner/);
+		await expect(
 			service.setMemberStatus(owner, second.accountId, 'disabled'),
-		).toThrow(/at least one active owner/);
+		).rejects.toThrow(/at least one active owner/);
 	});
 
 	it('resets a password with a forced change and clears it on change', async () => {
@@ -172,7 +195,7 @@ describe('member administration', () => {
 			'temporary password 123',
 		);
 		expect(reset.passwordChangeRequired).toBe(true);
-		expect(service.resolveSession(before.token)).toBeNull();
+		expect(await service.resolveSession(before.token)).toBeNull();
 		const temporary = await service.signIn({
 			email: 'member@example.com',
 			password: 'temporary password 123',
@@ -185,7 +208,7 @@ describe('member administration', () => {
 			keepSessionToken: temporary.token,
 		});
 		expect(
-			service.resolveSession(temporary.token)?.passwordChangeRequired,
+			(await service.resolveSession(temporary.token))?.passwordChangeRequired,
 		).toBe(false);
 		await expect(
 			service.resetMemberPassword(owner, member.accountId, 'short'),
@@ -194,10 +217,10 @@ describe('member administration', () => {
 
 	it('bounds membership scopes to grantable ones and to the actor', async () => {
 		const { service, owner, member } = await workspace();
-		expect(() =>
+		await expect(
 			service.setMembershipScopes(owner, member.accountId, ['made.up.scope']),
-		).toThrow(/cannot be granted/);
-		const updated = service.setMembershipScopes(owner, member.accountId, [
+		).rejects.toThrow(/cannot be granted/);
+		const updated = await service.setMembershipScopes(owner, member.accountId, [
 			'users.members.read',
 			'auth.audit.read',
 		]);
@@ -213,7 +236,7 @@ describe('member administration', () => {
 			},
 			owner,
 		);
-		service.setMembershipScopes(owner, manager.accountId, managerScopes);
+		await service.setMembershipScopes(owner, manager.accountId, managerScopes);
 		const managerActor: AuthActor = {
 			accountId: manager.accountId,
 			tenantId: owner.tenantId,
@@ -221,17 +244,19 @@ describe('member administration', () => {
 			role: 'member',
 			scopes: managerScopes,
 		};
-		expect(() =>
+		await expect(
 			service.setMembershipScopes(managerActor, member.accountId, [
 				'auth.tokens.manage',
 			]),
-		).toThrow(/do not hold/);
+		).rejects.toThrow(/do not hold/);
 		expect(
-			service.setMembershipScopes(managerActor, member.accountId, [
-				'users.members.read',
-			]).scopes,
+			(
+				await service.setMembershipScopes(managerActor, member.accountId, [
+					'users.members.read',
+				])
+			).scopes,
 		).toEqual(['users.members.read']);
-		expect(service.listGrantableScopes(owner.tenantId)).toContain(
+		expect(await service.listGrantableScopes(owner.tenantId)).toContain(
 			'system.settings.manage',
 		);
 	});
@@ -240,16 +265,16 @@ describe('member administration', () => {
 		const now = { value: 1_000 };
 		const { service, issued, policy } = await workspace(now);
 		now.value += policy.sessionIdleMs - 1;
-		expect(service.resolveSession(issued.token)).not.toBeNull();
+		expect(await service.resolveSession(issued.token)).not.toBeNull();
 		now.value += policy.sessionIdleMs + 1;
-		expect(service.resolveSession(issued.token)).toBeNull();
+		expect(await service.resolveSession(issued.token)).toBeNull();
 	});
 });
 
 describe('custom roles', () => {
 	it('creates, assigns, updates, and protects roles', async () => {
 		const { service, owner, member } = await workspace();
-		const role = service.createRole(owner, {
+		const role = await service.createRole(owner, {
 			tenantId: owner.tenantId,
 			key: 'auditor',
 			name: 'Auditor',
@@ -257,7 +282,7 @@ describe('custom roles', () => {
 			scopes: ['auth.audit.read', 'users.members.read'],
 		});
 		expect(role.builtin).toBe(false);
-		expect(() =>
+		await expect(
 			service.createRole(owner, {
 				tenantId: owner.tenantId,
 				key: 'owner',
@@ -265,8 +290,8 @@ describe('custom roles', () => {
 				description: '',
 				scopes: ['users.members.read'],
 			}),
-		).toThrow(/built in/);
-		expect(() =>
+		).rejects.toThrow(/built in/);
+		await expect(
 			service.createRole(owner, {
 				tenantId: owner.tenantId,
 				key: 'auditor',
@@ -274,8 +299,8 @@ describe('custom roles', () => {
 				description: '',
 				scopes: ['users.members.read'],
 			}),
-		).toThrow(/already exists/);
-		expect(() =>
+		).rejects.toThrow(/already exists/);
+		await expect(
 			service.createRole(owner, {
 				tenantId: owner.tenantId,
 				key: 'wide',
@@ -283,8 +308,8 @@ describe('custom roles', () => {
 				description: '',
 				scopes: ['not.grantable.scope'],
 			}),
-		).toThrow(/cannot be granted/);
-		const assigned = service.assignMemberRole(
+		).rejects.toThrow(/cannot be granted/);
+		const assigned = await service.assignMemberRole(
 			owner,
 			member.accountId,
 			'auditor',
@@ -292,32 +317,36 @@ describe('custom roles', () => {
 		expect(assigned.role).toBe('auditor');
 		expect(assigned.roleId).toBe(role.id);
 		expect(assigned.scopes).toEqual(['auth.audit.read', 'users.members.read']);
-		expect(() => service.deleteRole(owner, role.id)).toThrow(/Reassign/);
-		const updated = service.updateRole(owner, {
+		await expect(service.deleteRole(owner, role.id)).rejects.toThrow(
+			/Reassign/,
+		);
+		const updated = await service.updateRole(owner, {
 			tenantId: owner.tenantId,
 			id: role.id,
 			scopes: ['auth.audit.read'],
 		});
 		expect(updated.scopes).toEqual(['auth.audit.read']);
 		expect(
-			service.listMembershipScopes(member.accountId, owner.tenantId),
+			await service.listMembershipScopes(member.accountId, owner.tenantId),
 		).toEqual(['auth.audit.read']);
-		const builtin = service
-			.listRoles(owner.tenantId)
-			.find((entry) => entry.key === 'owner')!;
-		expect(() =>
+		const builtin = (await service.listRoles(owner.tenantId)).find(
+			(entry) => entry.key === 'owner',
+		)!;
+		await expect(
 			service.updateRole(owner, {
 				tenantId: owner.tenantId,
 				id: builtin.id,
 				name: 'Renamed',
 			}),
-		).toThrow(/Built-in/);
-		expect(() => service.deleteRole(owner, builtin.id)).toThrow(/Built-in/);
-		service.assignMemberRole(owner, member.accountId, 'member');
-		service.deleteRole(owner, role.id);
-		expect(service.listRoles(owner.tenantId).map((entry) => entry.key)).toEqual(
-			['owner', 'member'],
+		).rejects.toThrow(/Built-in/);
+		await expect(service.deleteRole(owner, builtin.id)).rejects.toThrow(
+			/Built-in/,
 		);
+		await service.assignMemberRole(owner, member.accountId, 'member');
+		await service.deleteRole(owner, role.id);
+		expect(
+			(await service.listRoles(owner.tenantId)).map((entry) => entry.key),
+		).toEqual(['owner', 'member']);
 	});
 
 	it('keeps roles invisible and unassignable across tenants', async () => {
@@ -336,7 +365,7 @@ describe('custom roles', () => {
 			role: 'owner',
 			scopes: other.principal.scopes,
 		};
-		const role = service.createRole(owner, {
+		const role = await service.createRole(owner, {
 			tenantId: owner.tenantId,
 			key: 'auditor',
 			name: 'Auditor',
@@ -344,28 +373,35 @@ describe('custom roles', () => {
 			scopes: ['auth.audit.read'],
 		});
 		expect(
-			service.listRoles(otherActor.tenantId).map((entry) => entry.key),
+			(await service.listRoles(otherActor.tenantId)).map((entry) => entry.key),
 		).toEqual(['owner', 'member']);
-		expect(() =>
+		await expect(
 			service.updateRole(otherActor, {
 				tenantId: otherActor.tenantId,
 				id: role.id,
 				name: 'Stolen',
 			}),
-		).toThrow(/does not exist/);
-		expect(() => service.deleteRole(otherActor, role.id)).toThrow(
+		).rejects.toThrow(/does not exist/);
+		await expect(service.deleteRole(otherActor, role.id)).rejects.toThrow(
 			/does not exist/,
 		);
-		expect(() =>
+		await expect(
 			service.assignMemberRole(otherActor, owner.accountId, 'auditor'),
-		).toThrow(/not a member/);
+		).rejects.toThrow(/not a member/);
 	});
 
 	it('records an audit trail for administrative actions', async () => {
 		const { service, owner, member } = await workspace();
-		service.updateMemberDisplayName(owner, member.accountId, 'Renamed Member');
-		service.assignMemberRole(owner, member.accountId, 'owner');
-		const page = service.queryAudit({ tenantId: owner.tenantId, limit: 10 });
+		await service.updateMemberDisplayName(
+			owner,
+			member.accountId,
+			'Renamed Member',
+		);
+		await service.assignMemberRole(owner, member.accountId, 'owner');
+		const page = await service.queryAudit({
+			tenantId: owner.tenantId,
+			limit: 10,
+		});
 		expect(page.events.map((event) => event.action)).toEqual([
 			'users.member.role',
 			'users.member.updated',
@@ -380,46 +416,62 @@ describe('custom roles', () => {
 describe('settings audit', () => {
 	it('appends settings.updated when the shared runtime commits a change', async () => {
 		const runtime = createAuthRuntime({
-			databasePath: ':memory:',
+			databases: await authTestProvider(),
 			secureCookies: false,
 			sessionTtlMs: 3_600_000,
 			allowSignUp: true,
 			emailConfirmation: false,
 			signInProviders: [],
 		});
-		const issued = await runtime.service().signUp({
-			email: 'owner@example.com',
-			password: 'correct horse battery staple',
-			displayName: 'Ada Owner',
-			organizationName: 'Example Operations',
-			organizationSlug: 'example-operations',
-		});
-		const { accountId, tenantId } = issued.principal;
-		runtime.moduleSettings.set(
-			tenantId,
-			'auth.core',
-			'sessionIdleMinutes',
-			45,
-			accountId,
-		);
-		runtime.moduleSettings.set(
-			tenantId,
-			'auth.core',
-			'sessionIdleMinutes',
-			null,
-			accountId,
-		);
-		const events = runtime
-			.service()
-			.queryAudit({ tenantId, limit: 10 })
-			.events.filter((event) => event.action === 'settings.updated');
-		expect(events).toHaveLength(2);
-		expect(events[0]).toMatchObject({
-			actorLabel: 'owner@example.com',
-			subjectType: 'setting',
-			subjectId: 'auth.core.sessionIdleMinutes',
-			metadata: { cleared: true },
-		});
-		expect(events[1]?.metadata).toEqual({ cleared: false });
+		try {
+			const issued = await (
+				await runtime.service()
+			).signUp({
+				email: 'owner@example.com',
+				password: 'correct horse battery staple',
+				displayName: 'Ada Owner',
+				organizationName: 'Example Operations',
+				organizationSlug: 'example-operations',
+			});
+			const { accountId, tenantId } = issued.principal;
+			runtime.moduleSettings.set(
+				tenantId,
+				'auth.core',
+				'sessionIdleMinutes',
+				45,
+				accountId,
+			);
+			runtime.moduleSettings.set(
+				tenantId,
+				'auth.core',
+				'sessionIdleMinutes',
+				null,
+				accountId,
+			);
+			/* The settings change listener is synchronous and the audit row lands
+			   after it returns, so the trail is read once the write has arrived. */
+			const events = await vi.waitFor(
+				async () => {
+					const page = await (
+						await runtime.service()
+					).queryAudit({ tenantId, limit: 10 });
+					const settings = page.events.filter(
+						(event) => event.action === 'settings.updated',
+					);
+					expect(settings).toHaveLength(2);
+					return settings;
+				},
+				{ timeout: 5_000, interval: 25 },
+			);
+			expect(events[0]).toMatchObject({
+				actorLabel: 'owner@example.com',
+				subjectType: 'setting',
+				subjectId: 'auth.core.sessionIdleMinutes',
+				metadata: { cleared: true },
+			});
+			expect(events[1]?.metadata).toEqual({ cleared: false });
+		} finally {
+			await runtime.dispose();
+		}
 	});
 });

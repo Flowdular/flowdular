@@ -37,7 +37,7 @@ profiles:
     mayRunCommands: false
     landing: eject
   repo-agent:
-    runs: .ai/agents/module-executor.md or spec-author.md in a checkout with a shell (Claude Code reads CLAUDE.md and AGENTS.md; Codex reads AGENTS.md)
+    runs: .ai/agents/module-executor.md or spec-author.md in a checkout with a shell (RuleSync generates each driver's root instructions from .ai/rules)
     mayApproveSpecs: false
     mayChangeArchitecture: only through core-extend with an ADR
     mayRunCommands: true

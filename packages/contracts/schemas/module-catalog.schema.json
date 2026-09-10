@@ -1,0 +1,48 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://flowdular.dev/schemas/module-catalog.schema.json",
+	"type": "object",
+	"additionalProperties": false,
+	"required": ["schemaVersion", "releases"],
+	"properties": {
+		"schemaVersion": {
+			"const": 1
+		},
+		"releases": {
+			"type": "array",
+			"maxItems": 4096,
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"manifest",
+					"artifact",
+					"sha256",
+					"sourceCommit",
+					"license"
+				],
+				"properties": {
+					"manifest": {
+						"$ref": "https://flowdular.dev/schemas/module.schema.json"
+					},
+					"artifact": {
+						"type": "string",
+						"minLength": 1
+					},
+					"sha256": {
+						"type": "string",
+						"pattern": "^[a-f0-9]{64}$"
+					},
+					"sourceCommit": {
+						"type": "string",
+						"pattern": "^[a-f0-9]{40}$"
+					},
+					"license": {
+						"type": "string",
+						"minLength": 1
+					}
+				}
+			}
+		}
+	}
+}

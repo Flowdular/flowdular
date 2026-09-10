@@ -1,11 +1,21 @@
-import { describe, expect, it, vi } from 'vitest';
-import type { ProviderReadinessResult } from '@coreloom/harness';
+import {
+	afterAll,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	vi,
+} from 'vitest';
+import type { ProviderReadinessResult } from '@flowdular/harness';
 import type { AgentProviderModelConfiguration } from '../src/domain/types.ts';
 import { AesGcmCredentialVault } from '../src/services/credential-vault.ts';
-import { SqliteProviderRepository } from '../src/services/provider-repository.ts';
 import { AgentProviderService } from '../src/services/provider-service.ts';
-import { SqliteAgentRepository } from '../src/services/sqlite-repository.ts';
 import { modelReadinessState } from '../src/client/presentation.ts';
+import {
+	openAgentsTestDatabase,
+	type AgentsTestDatabase,
+} from './support/database.ts';
 
 const tenantId = 'tenant-providers';
 const actor = 'owner-providers';
@@ -21,12 +31,26 @@ const models: readonly AgentProviderModelConfiguration[] = [
 	},
 ];
 
-function connections(
+let database: AgentsTestDatabase;
+
+beforeAll(async () => {
+	database = await openAgentsTestDatabase();
+});
+
+beforeEach(async () => {
+	await database.truncate();
+});
+
+afterAll(async () => {
+	await database.dispose();
+});
+
+async function connections(
 	now: () => number,
 	probe?: () => Promise<ProviderReadinessResult>,
 ) {
-	const repository = new SqliteProviderRepository(':memory:');
-	const audit = new SqliteAgentRepository(':memory:');
+	const repository = database.providers;
+	const audit = database.repository;
 	const service = new AgentProviderService(
 		repository,
 		new AesGcmCredentialVault(Buffer.alloc(32, 3)),
@@ -39,7 +63,7 @@ function connections(
 			...(probe ? { probe } : {}),
 		},
 	);
-	const created = service.create(tenantId, actor, {
+	const created = await service.create(tenantId, actor, {
 		key: 'primary-openai',
 		name: 'Primary OpenAI',
 		kind: 'openai',
@@ -50,29 +74,29 @@ function connections(
 }
 
 describe('provider connection lifecycle', () => {
-	it('deletes an unused connection and records the actor in the audit trail', () => {
+	it('deletes an unused connection and records the actor in the audit trail', async () => {
 		const now = 1_700_000_000_000;
-		const { audit, service, created } = connections(() => now);
+		const { audit, service, created } = await connections(() => now);
 
-		service.delete(tenantId, actor, created.id, created.revision);
+		await service.delete(tenantId, actor, created.id, created.revision);
 
-		expect(service.get(tenantId, created.id)).toBeNull();
-		expect(audit.listAuditEvents(tenantId, 10)[0]).toMatchObject({
+		expect(await service.get(tenantId, created.id)).toBeNull();
+		expect((await audit.listAuditEvents(tenantId, 10))[0]).toMatchObject({
 			action: 'agent-provider.deleted',
 			actorId: actor,
 			subjectId: created.id,
 		});
 	});
 
-	it('refuses to delete the built-in provider or a connection used by an agent', () => {
+	it('refuses to delete the built-in provider or a connection used by an agent', async () => {
 		const now = 1_700_000_000_000;
-		const { audit, service, created } = connections(() => now);
+		const { audit, service, created } = await connections(() => now);
 
-		expect(() =>
+		await expect(
 			service.delete(tenantId, actor, 'local-simulation', 1),
-		).toThrow('built in and cannot be deleted');
+		).rejects.toThrow('built in and cannot be deleted');
 
-		audit.createAgent({
+		await audit.createAgent({
 			id: 'agent-provider-user',
 			tenantId,
 			key: 'provider-user',
@@ -82,7 +106,7 @@ describe('provider connection lifecycle', () => {
 			provider: created.id,
 			model: 'gpt-4o-mini',
 			allowedTools: [],
-			skillIds: [],
+			procedureIds: [],
 			maxSteps: 2,
 			timeoutMs: 1_000,
 			temperature: 0,
@@ -95,18 +119,18 @@ describe('provider connection lifecycle', () => {
 			updatedAt: now,
 		});
 
-		expect(() =>
+		await expect(
 			service.delete(tenantId, actor, created.id, created.revision),
-		).toThrow('Archive or move every agent using this provider');
-		expect(service.get(tenantId, created.id)).not.toBeNull();
+		).rejects.toThrow('Archive or move every agent using this provider');
+		expect(await service.get(tenantId, created.id)).not.toBeNull();
 	});
 
-	it('enables a connection once its readiness is proven', () => {
+	it('enables a connection once its readiness is proven', async () => {
 		const now = 1_700_000_000_000;
-		const { repository, service, created } = connections(() => now);
+		const { repository, service, created } = await connections(() => now);
 		expect(created.enabled).toBe(false);
 
-		const tested = repository.recordReadiness(
+		const tested = await repository.recordReadiness(
 			tenantId,
 			created.id,
 			'gpt-4o-mini',
@@ -115,7 +139,7 @@ describe('provider connection lifecycle', () => {
 			now,
 		);
 
-		const enabled = service.update(tenantId, actor, {
+		const enabled = await service.update(tenantId, actor, {
 			id: created.id,
 			expectedRevision: tested.revision,
 			name: created.name,
@@ -127,10 +151,10 @@ describe('provider connection lifecycle', () => {
 		expect(enabled.models[0]?.readiness.status).toBe('healthy');
 	});
 
-	it('defaults the temperature flag from the model catalog', () => {
+	it('defaults the temperature flag from the model catalog', async () => {
 		const now = 1_700_000_000_000;
-		const { service } = connections(() => now);
-		const anthropic = service.create(tenantId, actor, {
+		const { service } = await connections(() => now);
+		const anthropic = await service.create(tenantId, actor, {
 			key: 'anthropic',
 			name: 'Anthropic',
 			kind: 'anthropic',
@@ -151,7 +175,7 @@ describe('provider connection lifecycle', () => {
 			['claude-sonnet-5', false],
 			['claude-opus-5', true],
 		]);
-		const openai = service.create(tenantId, actor, {
+		const openai = await service.create(tenantId, actor, {
 			key: 'openai-mixed',
 			name: 'OpenAI mixed',
 			kind: 'openai',
@@ -169,10 +193,10 @@ describe('provider connection lifecycle', () => {
 		]);
 	});
 
-	it('refuses to enable a connection that was never tested', () => {
+	it('refuses to enable a connection that was never tested', async () => {
 		const now = 1_700_000_000_000;
-		const { service, created } = connections(() => now);
-		expect(() =>
+		const { service, created } = await connections(() => now);
+		await expect(
 			service.update(tenantId, actor, {
 				id: created.id,
 				expectedRevision: created.revision,
@@ -180,14 +204,14 @@ describe('provider connection lifecycle', () => {
 				enabled: true,
 				models,
 			}),
-		).toThrow(
+		).rejects.toThrow(
 			'Test at least one enabled model before enabling the connection.',
 		);
 	});
 });
 
-function healthy(): Promise<ProviderReadinessResult> {
-	return Promise.resolve({
+async function healthy(): Promise<ProviderReadinessResult> {
+	return await Promise.resolve({
 		healthy: true,
 		latencyMs: 20,
 		errorCode: null,
@@ -195,8 +219,8 @@ function healthy(): Promise<ProviderReadinessResult> {
 	});
 }
 
-function unhealthy(): Promise<ProviderReadinessResult> {
-	return Promise.resolve({
+async function unhealthy(): Promise<ProviderReadinessResult> {
+	return await Promise.resolve({
 		healthy: false,
 		latencyMs: 20,
 		errorCode: 'PROVIDER_AUTHENTICATION_FAILED',
@@ -208,8 +232,8 @@ async function enabledConnection(
 	now: () => number,
 	probe: () => Promise<ProviderReadinessResult>,
 ) {
-	const { repository, service, created } = connections(now, probe);
-	const tested = repository.recordReadiness(
+	const { repository, service, created } = await connections(now, probe);
+	const tested = await repository.recordReadiness(
 		tenantId,
 		created.id,
 		'gpt-4o-mini',
@@ -217,7 +241,7 @@ async function enabledConnection(
 		actor,
 		now(),
 	);
-	const enabled = service.update(tenantId, actor, {
+	const enabled = await service.update(tenantId, actor, {
 		id: created.id,
 		expectedRevision: tested.revision,
 		name: created.name,
@@ -233,20 +257,20 @@ describe('readiness expiry at enqueue', () => {
 		const probe = vi.fn(healthy);
 		const { service, enabled } = await enabledConnection(() => now, probe);
 		now += 120_000;
-		expect(() =>
+		await expect(
 			service.assertUsable(tenantId, enabled.id, 'gpt-4o-mini'),
-		).toThrow(/expired/);
+		).rejects.toThrow(/expired/);
 		await Promise.all([
 			service.ensureUsable(tenantId, enabled.id, 'gpt-4o-mini', actor),
 			service.ensureUsable(tenantId, enabled.id, 'gpt-4o-mini', actor),
 		]);
 		expect(probe).toHaveBeenCalledTimes(1);
 		expect(
-			service.get(tenantId, enabled.id)?.models[0]?.readiness.checkedAt,
+			(await service.get(tenantId, enabled.id))?.models[0]?.readiness.checkedAt,
 		).toBe(now);
-		expect(() =>
+		await expect(
 			service.assertUsable(tenantId, enabled.id, 'gpt-4o-mini'),
-		).not.toThrow();
+		).resolves.not.toThrow();
 	});
 
 	it('keeps the 409 when the automatic re-test fails', async () => {
@@ -259,15 +283,15 @@ describe('readiness expiry at enqueue', () => {
 			code: 'PROVIDER_READINESS_REQUIRED',
 			status: 409,
 		});
-		expect(service.get(tenantId, enabled.id)?.models[0]?.readiness.status).toBe(
-			'unhealthy',
-		);
+		expect(
+			(await service.get(tenantId, enabled.id))?.models[0]?.readiness.status,
+		).toBe('unhealthy');
 	});
 
 	it('does not re-test a model that never passed', async () => {
 		const now = 1_700_000_000_000;
 		const probe = vi.fn(healthy);
-		const { service, created } = connections(() => now, probe);
+		const { service, created } = await connections(() => now, probe);
 		await expect(
 			service.ensureUsable(tenantId, created.id, 'gpt-4o-mini', actor),
 		).rejects.toMatchObject({ code: 'PROVIDER_DISABLED' });
@@ -279,11 +303,17 @@ describe('readiness expiry at enqueue', () => {
 		const probe = vi.fn(healthy);
 		const { service, enabled } = await enabledConnection(() => now, probe);
 		now += 120_000;
-		service.recordRunSuccess(tenantId, enabled.id, 'gpt-4o-mini', now, 850);
-		expect(() =>
+		await service.recordRunSuccess(
+			tenantId,
+			enabled.id,
+			'gpt-4o-mini',
+			now,
+			850,
+		);
+		await expect(
 			service.assertUsable(tenantId, enabled.id, 'gpt-4o-mini'),
-		).not.toThrow();
-		const refreshed = service.get(tenantId, enabled.id)!;
+		).resolves.not.toThrow();
+		const refreshed = (await service.get(tenantId, enabled.id))!;
 		expect(refreshed.models[0]?.readiness).toMatchObject({
 			status: 'healthy',
 			checkedAt: now,
@@ -302,7 +332,7 @@ describe('model readiness presentation', () => {
 		checkedAt: 1_000,
 	} as const;
 
-	it('separates fresh evidence from evidence that expired', () => {
+	it('separates fresh evidence from evidence that expired', async () => {
 		expect(modelReadinessState(proven, 500, 1_400)).toBe('ready');
 		expect(modelReadinessState(proven, 500, 1_600)).toBe('stale');
 		expect(

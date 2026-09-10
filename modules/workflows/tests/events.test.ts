@@ -60,7 +60,7 @@ const successfulEvents = [
 ] as const;
 
 describe('workflow event projection', () => {
-	it('rebuilds run and node state from the ordered v1 catalog', () => {
+	it('rebuilds run and node state from the ordered v1 catalog', async () => {
 		expect(projectWorkflowRunEvents(successfulEvents)).toEqual({
 			tenantId: 'tenant-a',
 			runId: 'run-a',
@@ -79,7 +79,7 @@ describe('workflow event projection', () => {
 		});
 	});
 
-	it('refuses an unknown persisted event schema without guessing', () => {
+	it('refuses an unknown persisted event schema without guessing', async () => {
 		const corrupted = structuredClone(successfulEvents[0]);
 		Object.defineProperty(corrupted, 'schemaVersion', { value: 2 });
 		expect(() => projectWorkflowRunEvents([corrupted])).toThrowError(
@@ -89,7 +89,7 @@ describe('workflow event projection', () => {
 		);
 	});
 
-	it('refuses a transition after a terminal event', () => {
+	it('refuses a transition after a terminal event', async () => {
 		const illegal = [
 			...successfulEvents,
 			event(7, 'node.ready', { nodeId: 'too-late' }),

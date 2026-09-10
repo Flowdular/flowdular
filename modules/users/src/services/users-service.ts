@@ -4,8 +4,8 @@ import type {
 	CreateTenantMemberInput,
 	TenantMember,
 	TenantRole,
-} from '@coreloom/module-auth';
-import type { AuthRuntime } from '@coreloom/module-auth/server';
+} from '@flowdular/module-auth';
+import type { AuthRuntime } from '@flowdular/module-auth/server';
 
 export interface CreateUserInput {
 	readonly email: string;
@@ -47,20 +47,20 @@ export class UsersService {
 		this.#auth = auth;
 	}
 
-	list(principal: AuthPrincipal): UserDirectory {
-		const service = this.#auth.service();
+	async list(principal: AuthPrincipal): Promise<UserDirectory> {
+		const service = await this.#auth.service();
 		return {
-			users: service.listTenantMembers(principal.tenantId),
-			roles: service
-				.listRoles(principal.tenantId)
-				.map(({ id, key, name, builtin }) => ({ id, key, name, builtin })),
-			grantableScopes: service.listGrantableScopes(principal.tenantId),
+			users: await service.listTenantMembers(principal.tenantId),
+			roles: (await service.listRoles(principal.tenantId)).map(
+				({ id, key, name, builtin }) => ({ id, key, name, builtin }),
+			),
+			grantableScopes: await service.listGrantableScopes(principal.tenantId),
 			actor: { accountId: principal.accountId, role: principal.role },
 			passwordMinLength: this.#auth.settings.passwordMinLength,
 		};
 	}
 
-	create(
+	async create(
 		principal: AuthPrincipal,
 		input: CreateUserInput,
 	): Promise<TenantMember> {
@@ -68,60 +68,75 @@ export class UsersService {
 			...input,
 			tenantId: principal.tenantId,
 		};
-		return this.#auth.service().createTenantMember(record, actor(principal));
+		return (await this.#auth.service()).createTenantMember(
+			record,
+			actor(principal),
+		);
 	}
 
-	rename(
+	async rename(
 		principal: AuthPrincipal,
 		accountId: string,
 		displayName: string,
-	): TenantMember {
-		return this.#auth
-			.service()
-			.updateMemberDisplayName(actor(principal), accountId, displayName);
+	): Promise<TenantMember> {
+		return (await this.#auth.service()).updateMemberDisplayName(
+			actor(principal),
+			accountId,
+			displayName,
+		);
 	}
 
-	assignRole(
+	async assignRole(
 		principal: AuthPrincipal,
 		accountId: string,
 		roleKey: string,
-	): TenantMember {
-		return this.#auth
-			.service()
-			.assignMemberRole(actor(principal), accountId, roleKey);
+	): Promise<TenantMember> {
+		return (await this.#auth.service()).assignMemberRole(
+			actor(principal),
+			accountId,
+			roleKey,
+		);
 	}
 
-	setStatus(
+	async setStatus(
 		principal: AuthPrincipal,
 		accountId: string,
 		status: 'active' | 'disabled',
-	): TenantMember {
-		return this.#auth
-			.service()
-			.setMemberStatus(actor(principal), accountId, status);
+	): Promise<TenantMember> {
+		return (await this.#auth.service()).setMemberStatus(
+			actor(principal),
+			accountId,
+			status,
+		);
 	}
 
-	remove(principal: AuthPrincipal, accountId: string): void {
-		this.#auth.service().removeMember(actor(principal), accountId);
+	async remove(principal: AuthPrincipal, accountId: string): Promise<void> {
+		await (
+			await this.#auth.service()
+		).removeMember(actor(principal), accountId);
 	}
 
-	resetPassword(
+	async resetPassword(
 		principal: AuthPrincipal,
 		accountId: string,
 		temporaryPassword: string,
 	): Promise<TenantMember> {
-		return this.#auth
-			.service()
-			.resetMemberPassword(actor(principal), accountId, temporaryPassword);
+		return (await this.#auth.service()).resetMemberPassword(
+			actor(principal),
+			accountId,
+			temporaryPassword,
+		);
 	}
 
-	setScopes(
+	async setScopes(
 		principal: AuthPrincipal,
 		accountId: string,
 		scopes: readonly string[],
-	): TenantMember {
-		return this.#auth
-			.service()
-			.setMembershipScopes(actor(principal), accountId, scopes);
+	): Promise<TenantMember> {
+		return (await this.#auth.service()).setMembershipScopes(
+			actor(principal),
+			accountId,
+			scopes,
+		);
 	}
 }

@@ -20,7 +20,7 @@
 	"kpi.address": "Adres sandboxa",
 	"kpi.configured": "Skonfigurowany",
 	"kpi.unset": "Nie ustawiono",
-	"kpi.startHint": "Uruchom poleceniem npx @coreloom/sandbox.",
+	"kpi.startHint": "Uruchom poleceniem npx @flowdular/sandbox.",
 	"value.na": "nie dotyczy",
 	"access.listTitle": "Dostęp",
 	"access.count": "Aktywne: {active} · przydzielone: {total}",

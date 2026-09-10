@@ -1,6 +1,9 @@
 ---
 name: release-eject-pr
-description: 'Land a module or core change: the sandbox eject sequence, the repository verification gates, the git branch and PR conventions, and the post-merge scope grant.'
+description: >-
+  Land a module or core change: the sandbox eject sequence, the repository
+  verification gates, the git branch and PR conventions, and the post-merge
+  scope grant.
 roles:
   - module-executor
   - reviewer
@@ -19,33 +22,33 @@ Two paths reach the same place. The sandbox path is chat, gates, preview, eject.
 1. Gates: `spec-schema` and `module-schema` once, then `dependencies`, `typecheck`, `tests`, `format` per draft module. Any failure stops the eject before a file is written (`EJECT_GATES_FAILED`).
 2. Copy of each session module into `modules/<dir>`, then removal of the files an edit deleted (`removeModuleFiles`, empty directories included).
 3. `pnpm install` at the workspace root.
-4. `pnpm coreloom module enable <id> --apply --json` for each new module (writes `coreloom.json`, `platform/package.json`, `platform/src/generated/*`, and grants the module's scopes itself).
-5. `pnpm coreloom auth sync-scopes --module <id> --apply --json` for each module (idempotent re-grant, needed for edited modules that added a permission).
-6. `pnpm --filter @coreloom/platform typecheck`.
+4. `pnpm flowdular module enable <id> --apply --json` for each new module (writes `flowdular.json`, `platform/package.json`, `platform/src/generated/*`, and grants the module's scopes itself).
+5. `pnpm flowdular auth sync-scopes --module <id> --apply --json` for each module (idempotent re-grant, needed for edited modules that added a permission).
+6. `pnpm --filter @flowdular/platform typecheck`.
 7. Optionally `pnpm build`.
 8. A restart note: the connected application loads the new composition and runs new schema constants only at start, so a local `pnpm dev` restarts and a remote deployment redeploys.
 
-A failing step stops the delivery there with the step's output; the session is marked delivered only when every step passed. Eject requires the connected grant to hold `sandbox.modules.eject`. Delivery targets sit behind one interface (`delivery/types.ts`); the request names one with `target: 'workspace' | 'git-pr'` (default from `coreloom.json`), `workspace` is the one above, `git-pr` is section 2.
+A failing step stops the delivery there with the step's output; the session is marked delivered only when every step passed. Eject requires the connected grant to hold `sandbox.modules.eject`. Delivery targets sit behind one interface (`delivery/types.ts`); the request names one with `target: 'workspace' | 'git-pr'` (default from `flowdular.json`), `workspace` is the one above, `git-pr` is section 2.
 
 ## 2. Git delivery from a sandbox (`target: 'git-pr'`, `packages/sandbox/src/server/delivery/git-pr.ts`)
 
-The pull request is the unit of a delivery: one session, one branch, one PR, every module the session touched. Nothing in the operator's working tree or index changes; the work happens in a detached worktree under `.coreloom/sandbox/worktrees/<session>` that is removed afterwards, whatever the outcome.
+The pull request is the unit of a delivery: one session, one branch, one PR, every module the session touched. Nothing in the operator's working tree or index changes; the work happens in a detached worktree under `.flowdular/sandbox/worktrees/<session>` that is removed afterwards, whatever the outcome.
 
-- Available when the workspace is a git work tree with at least one commit, `.coreloom/` is ignored, and the configured remote exists (`git rev-parse --verify HEAD`, `git remote get-url <remote>`); a repository without commits answers "make the first commit before delivering as a pull request". A PR is opened when `gh auth status` succeeds (a provider token sealed in the sandbox configuration is handed to gh as `GH_TOKEN`); otherwise the branch is pushed and the compare link shown.
+- Available when the workspace is a git work tree with at least one commit, `.flowdular/` is ignored, and the configured remote exists (`git rev-parse --verify HEAD`, `git remote get-url <remote>`); a repository without commits answers "make the first commit before delivering as a pull request". A PR is opened when `gh auth status` succeeds (a provider token sealed in the sandbox configuration is handed to gh as `GH_TOKEN`); otherwise the branch is pushed and the compare link shown.
 - Branch `<branchPrefix>/<module-dir>-<session id first 8>` from `<remote>/<baseBranch>`: `git fetch`, `git worktree add --detach`, `git switch -C`.
-- In the worktree: the copy and the removals, `pnpm install --offline` (fallback `--prefer-offline`), `pnpm coreloom module enable <id> --apply` for each new module with the worktree as `--dir`, the platform typecheck.
-- Guardrails before the commit: `git status --porcelain` in the worktree may list only `modules/<dir>/**` of the session's modules and `pnpm-lock.yaml`. A delivery with a new module may also change `coreloom.json`, `platform/package.json` and `platform/src/generated/**`. The count stays within `sandbox.delivery.maxChangedFiles` or, unset, the `.ai/policies/task-budgets.yaml` figure for the session kind (`new-module` 30, `edit-module` 12, default 18); new packages within `maxNewDependencies` (0). Owners come from `.ai/policies/path-ownership.yaml`; with `crossOwnerChanges.requireReviewer` a cross-owner change asks for a reviewer from each owner in the body. A violation lists the offending paths and stops before anything is committed; the branch is deleted.
+- In the worktree: the copy and the removals, `pnpm install --offline` (fallback `--prefer-offline`), `pnpm flowdular module enable <id> --apply` for each new module with the worktree as `--dir`, the platform typecheck.
+- Guardrails before the commit: `git status --porcelain` in the worktree may list only `modules/<dir>/**` of the session's modules and `pnpm-lock.yaml`. A delivery with a new module may also change `flowdular.json`, `platform/package.json` and `platform/src/generated/**`. The count stays within `sandbox.delivery.maxChangedFiles` or, unset, the `.ai/policies/task-budgets.yaml` figure for the session kind (`new-module` 30, `edit-module` 12, default 18); new packages within `maxNewDependencies` (0). Owners come from `.ai/policies/path-ownership.yaml`; with `crossOwnerChanges.requireReviewer` a cross-owner change asks for a reviewer from each owner in the body. A violation lists the offending paths and stops before anything is committed; the branch is deleted.
 - Commit `sandbox: add|update <module id>` (author from git config) with the session id and the gate summary, `git push -u --force-with-lease <remote> <branch>`, `gh pr create --base <baseBranch> --head <branch> --title "Add|Update <module id>" --body-file <tmp>` (`--reviewer` from `git.reviewers`). A second delivery of the same session updates the branch and keeps the open PR.
-- PR body, plain: two or three sentences from the brief and the last review handoff, `Session <id>.`, the gate table (gate, module, result), the file list grouped as added, modified, removed, `Post-merge: pnpm coreloom auth sync-scopes --module <id> --apply` per module, the reviewer note. No attribution footers, no dashes.
-- `sync-scopes` does not run in the worktree: it is a runtime action against the deployment database, so it stays the post-merge step. Deploy, run it with `CL_AUTH_DATABASE` pointing at that database, verify the navigation entry appears for an owner.
-- Configuration in `coreloom.json`, all optional and validated by `packages/contracts/schemas/project.schema.json`: `sandbox.delivery { default: 'workspace' | 'git-pr', targets: ['workspace', 'git-pr'], git: { remote: 'origin', baseBranch: 'main', branchPrefix: 'sandbox', provider: 'github' | 'none', mode: 'auto' | 'direct' | 'fork', forkOwner: null, reviewers: [] }, maxChangedFiles }`. Read at request time. `auto` never creates a fork: it uses direct delivery only after GitHub confirms push access and otherwise asks the operator to choose `direct` or `fork`. Only an explicit `fork` choice authorizes fork creation.
-- The screen: "Into this workspace" / "As a pull request", offered only when both are usable here; an unusable target says why. The git plan shows branch, base, changed files against the budget, new packages, owners touched and the guardrail verdict; done shows the PR or compare link. `.coreloom/sandbox/sessions/<id>/delivery.json` keeps the branch and the URL.
+- PR body, plain: two or three sentences from the brief and the last review handoff, `Session <id>.`, the gate table (gate, module, result), the file list grouped as added, modified, removed, `Post-merge: pnpm flowdular auth sync-scopes --module <id> --apply` per module, the reviewer note. No attribution footers, no dashes.
+- `sync-scopes` does not run in the worktree: it is a runtime action against the deployment database, so it stays the post-merge step. Deploy, run it with `FD_AUTH_DATABASE` pointing at that database, verify the navigation entry appears for an owner.
+- Configuration in `flowdular.json`, all optional and validated by `packages/contracts/schemas/project.schema.json`: `sandbox.delivery { default: 'workspace' | 'git-pr', targets: ['workspace', 'git-pr'], git: { remote: 'origin', baseBranch: 'main', branchPrefix: 'sandbox', provider: 'github' | 'none', mode: 'auto' | 'direct' | 'fork', forkOwner: null, reviewers: [] }, maxChangedFiles }`. Read at request time. `auto` never creates a fork: it uses direct delivery only after GitHub confirms push access and otherwise asks the operator to choose `direct` or `fork`. Only an explicit `fork` choice authorizes fork creation.
+- The screen: "Into this workspace" / "As a pull request", offered only when both are usable here; an unusable target says why. The git plan shows branch, base, changed files against the budget, new packages, owners touched and the guardrail verdict; done shows the PR or compare link. `.flowdular/sandbox/sessions/<id>/delivery.json` keeps the branch and the URL.
 
 ## 3. Direct path from a working tree
 
 ```bash
-pnpm coreloom module enable <id> --apply          # new module only; also grants its scopes (result: scopes)
-pnpm coreloom auth sync-scopes --module <id> --apply   # re-grant after a new permission, or against another database
+pnpm flowdular module enable <id> --apply          # new module only; also grants its scopes (result: scopes)
+pnpm flowdular auth sync-scopes --module <id> --apply   # re-grant after a new permission, or against another database
 pnpm verify                                    # typecheck, test, validate, format:check
 pnpm build                                     # cli build and smoke, module sync --apply, platform build
 pnpm audit --prod --audit-level high           # what CI runs (.github/workflows/ci.yml)
@@ -71,14 +74,14 @@ a list and create endpoint, a Locations screen with a drawer form, and a
 dashboard KPI. Covers INVENTORY-LIST, INVENTORY-CREATE, INVENTORY-DENY,
 INVENTORY-ISOLATION.
 
-Generated by the CLI in this PR: coreloom.json and platform/package.json
-(pnpm coreloom module enable inventory.core --apply), platform/src/generated/*
+Generated by the CLI in this PR: flowdular.json and platform/package.json
+(pnpm flowdular module enable inventory.core --apply), platform/src/generated/*
 (module sync), pnpm-lock.yaml (pnpm install).
 
 Gates: spec-schema, module-schema, dependencies, typecheck, tests (7), format
 all passed in the sandbox eject; pnpm verify and pnpm build pass locally.
 
-Post-merge: pnpm coreloom auth sync-scopes --module inventory.core --apply against
+Post-merge: pnpm flowdular auth sync-scopes --module inventory.core --apply against
 the deployment database.
 ```
 
@@ -92,11 +95,19 @@ the deployment database.
 
 ## 5. Container and tags
 
-CI builds the image from `infra/docker/Dockerfile` on every PR (no push). A release tag `v*.*.*` is the trigger for publishing (workflow owned by the platform team). The image runs `node platform/dist/server/entry.js` with `/data` as the database volume. Compose and Kubernetes provide `CL_AUTH_DATABASE`, `CL_AGENTS_DATABASE`, and `CL_WORKFLOWS_DATABASE`. Production also requires `CL_AGENT_CREDENTIAL_KEY`, `CL_AGENT_RUN_GRANT_KEY`, `CL_WORKFLOWS_PAYLOAD_KEY`, and `CL_WORKFLOWS_CURSOR_KEY`; generate every key independently with `openssl rand -base64 32` and supply it through the deployment secret.
+CI builds the image from `infra/docker/Dockerfile` on every PR (no push). A release tag `v*.*.*` is the trigger for publishing (workflow owned by the platform team). The image runs `node platform/dist/server/entry.js` with `/data` as the database volume. Compose and Kubernetes provide `FD_AUTH_DATABASE`, `FD_AGENTS_DATABASE`, and `FD_WORKFLOWS_DATABASE`. Production also requires `FD_AGENT_CREDENTIAL_KEY`, `FD_AGENT_RUN_GRANT_KEY`, `FD_WORKFLOWS_PAYLOAD_KEY`, and `FD_WORKFLOWS_CURSOR_KEY`; generate every key independently with `openssl rand -base64 32` and supply it through the deployment secret.
 
 ## Pitfalls
 
 - An eject removes the files a session deleted; a rename shows up as one removal and one addition in the plan.
 - `module enable` runs `pnpm install` when the package is not linked; a failing install is reported as `pnpm install failed while linking the module package`. A failed scope grant after a successful enable is `MODULE_SCOPES_SYNC_FAILED`; rerun `auth sync-scopes`.
 - `platform/.generated/` is a stale ignore entry; the live generated directory is `platform/src/generated/`.
-- `pnpm coreloom module sync --apply` is also run by `pnpm dev` and `pnpm build`; a dirty generated file after a checkout means the enabled list and the files disagree.
+- `pnpm flowdular module sync --apply` is also run by `pnpm dev` and `pnpm build`; a dirty generated file after a checkout means the enabled list and the files disagree.
+
+## Required auto-review
+
+Before delivery, complete the separate `auto-review` phase. Sandbox eject requires
+a current per-module review record and passing schema, dependency, typecheck,
+test and format gates. Missing, skipped and empty-suite results block delivery.
+Any module edit invalidates its review. Host changes also need the auto-review
+report and full verification described by that skill before completion.

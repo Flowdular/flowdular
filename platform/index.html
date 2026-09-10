@@ -1,11 +1,11 @@
 <!doctype html>
-<html lang="en" class="coreloom-booting">
+<html lang="en" class="flowdular-booting">
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<meta name="theme-color" content="#141B2E" />
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<style id="coreloom-critical-splash">
+		<style id="flowdular-critical-splash">
 			html,
 			body,
 			#root {
@@ -13,7 +13,7 @@
 				margin: 0;
 				background: #0c1222;
 			}
-			.coreloom-splash {
+			.flowdular-splash {
 				position: fixed;
 				inset: 0;
 				z-index: 2147483647;
@@ -23,7 +23,7 @@
 				color: #f4f6fa;
 				transition: opacity 180ms ease;
 			}
-			.coreloom-splash__content {
+			.flowdular-splash__content {
 				display: grid;
 				justify-items: center;
 				gap: 16px;
@@ -34,7 +34,7 @@
 				letter-spacing: 0.14em;
 				text-transform: uppercase;
 			}
-			.coreloom-splash__stage {
+			.flowdular-splash__stage {
 				min-width: 190px;
 				font-size: 10px;
 				font-weight: 500;
@@ -43,23 +43,23 @@
 				text-align: center;
 				text-transform: none;
 			}
-			.coreloom-splash__mark {
+			.flowdular-splash__mark {
 				display: block;
 				width: 44px;
 				height: 44px;
-				animation: coreloom-pulse 1.4s ease-in-out infinite alternate;
+				animation: flowdular-pulse 1.4s ease-in-out infinite alternate;
 			}
-			.coreloom-splash--leaving {
+			.flowdular-splash--leaving {
 				opacity: 0;
 				pointer-events: none;
 			}
-			@keyframes coreloom-pulse {
+			@keyframes flowdular-pulse {
 				to {
 					opacity: 0.45;
 				}
 			}
 			@media (prefers-reduced-motion: reduce) {
-				.coreloom-splash__mark {
+				.flowdular-splash__mark {
 					animation: none;
 				}
 			}
@@ -68,14 +68,14 @@
 	</head>
 	<body aria-busy="true">
 		<div
-			id="coreloom-splash"
-			class="coreloom-splash"
+			id="flowdular-splash"
+			class="flowdular-splash"
 			role="status"
 			aria-live="polite"
 		>
-			<div class="coreloom-splash__content">
+			<div class="flowdular-splash__content">
 				<svg
-					class="coreloom-splash__mark"
+					class="flowdular-splash__mark"
 					viewBox="0 0 24 24"
 					aria-hidden="true"
 				>
@@ -100,15 +100,21 @@
 						<circle cx="20.6" cy="16.1" r="1.7" />
 					</g>
 				</svg>
-				<span>Coreloom</span>
-				<small id="coreloom-splash-stage" class="coreloom-splash__stage"
+				<span>Flowdular</span>
+				<small id="flowdular-splash-stage" class="flowdular-splash__stage"
 					>Starting workspace</small
 				>
 			</div>
 		</div>
 		<div id="root"><!--ssr-body--></div>
-		<script nonce="__CORELOOM_CSP_NONCE__">
+		<script nonce="__FLOWDULAR_CSP_NONCE__">
 			(() => {
+				if (document.getElementById('flowdular-web-data')) {
+					document.getElementById('flowdular-splash')?.remove();
+					document.documentElement.classList.remove('flowdular-booting');
+					document.body.removeAttribute('aria-busy');
+					return;
+				}
 				const startedAt = performance.now();
 				const stages = [
 					'Securing session',
@@ -119,7 +125,7 @@
 				let stageIndex = 0;
 				let ready = false;
 				let stageTimer;
-				const stage = document.getElementById('coreloom-splash-stage');
+				const stage = document.getElementById('flowdular-splash-stage');
 				const advance = () => {
 					if (!stage || ready) return;
 					stage.textContent = stages[Math.min(stageIndex, stages.length - 1)];
@@ -129,11 +135,11 @@
 					if (ready) return;
 					ready = true;
 					clearInterval(stageTimer);
-					const splash = document.getElementById('coreloom-splash');
+					const splash = document.getElementById('flowdular-splash');
 					if (!splash) return;
 					const leave = () => {
-						splash.classList.add('coreloom-splash--leaving');
-						document.documentElement.classList.remove('coreloom-booting');
+						splash.classList.add('flowdular-splash--leaving');
+						document.documentElement.classList.remove('flowdular-booting');
 						document.body.setAttribute('aria-busy', 'false');
 						setTimeout(() => splash.remove(), 200);
 					};
@@ -148,12 +154,12 @@
 					   than this. */
 					setTimeout(finish, 2500);
 				});
-				window.addEventListener('coreloom:ready', finish, { once: true });
+				window.addEventListener('flowdular:ready', finish, { once: true });
 			})();
 		</script>
 		<noscript
 			><style>
-				.coreloom-splash {
+				.flowdular-splash {
 					display: none;
 				}
 			</style></noscript

@@ -1,6 +1,9 @@
 ---
 name: core-extend
-description: Change a platform package (contracts, kernel, server, client, ui, cli, sandbox, coding-agent) without breaking the modules and generated files that depend on it.
+description: >-
+  Change a platform package (contracts, kernel, server, client, ui, cli,
+  sandbox, coding-agent) without breaking the modules and generated files that
+  depend on it.
 roles:
   - module-executor
   - reviewer
@@ -13,7 +16,7 @@ This work runs at the repository root; a sandbox session cannot do it (the sessi
 
 ## 1. Dependency direction
 
-`packages/contracts` (types and JSON schemas, no runtime) -> `packages/kernel` (registry, ACL, settings) -> `packages/server`, `packages/client`, `packages/ui` -> modules -> `platform` (composition) and `packages/cli`, `packages/sandbox`, `packages/coding-agent`, `packages/harness`, `packages/ai-provider`. A lower layer never imports a higher one. `platform/octane.config.ts` imports `@coreloom/module-auth/server` and the generated `modules.server.ts`; nothing else in `packages/` may import a module. `@coreloom/module-auth/server` is effectively part of the server contract: `PlatformServerContext` and `PlatformServerComposition` live in `modules/auth/src/server/composition.ts`.
+`packages/contracts` (types and JSON schemas, no runtime) -> `packages/kernel` (registry, ACL, settings) -> `packages/server`, `packages/client`, `packages/ui` -> modules -> `platform` (composition) and `packages/cli`, `packages/sandbox`, `packages/coding-agent`, `packages/harness`, `packages/ai-provider`. A lower layer never imports a higher one. `platform/octane.config.ts` imports `@flowdular/module-auth/server` and the generated `modules.server.ts`; nothing else in `packages/` may import a module. `@flowdular/module-auth/server` is effectively part of the server contract: `PlatformServerContext` and `PlatformServerComposition` live in `modules/auth/src/server/composition.ts`.
 
 ## 2. Surfaces every module and every agent sees
 
@@ -39,7 +42,7 @@ Server or auth contract (`packages/server`, `modules/auth/src/server/composition
 
 Client or UI primitive: add the component to `packages/ui/src/components/`, export it from `packages/ui/src/index.ts`, add its classes to `packages/ui/src/styles/components.css` with tokens only, document props and classes in `docs/design-system.md`, and delete the module-local promotion candidate it replaces. An icon is one path in `ICON_PATHS` (`packages/ui/src/icons/Icon.tsrx`), 24x24 stroke geometry.
 
-CLI: commands are dispatched in `packages/cli/src/runner.ts`; a new core capability is a descriptor in `packages/cli/src/capabilities.ts` (`id`, `version`, `summary`, `risk`, `requiresApprovedSpec`, `supportsDryRun`); flags are parsed by `packages/cli/src/arguments.ts` (`--name value` or `--name=value`, `--flag`); `reservedGroups` in `packages/cli/src/extensions.ts` protects core groups from module namespaces; `pnpm coreloom help` output lists the commands. Tests in `packages/cli/tests`. Update `.ai/policies/capabilities.yaml` and `README.md`.
+CLI: commands are dispatched in `packages/cli/src/runner.ts`; a new core capability is a descriptor in `packages/cli/src/capabilities.ts` (`id`, `version`, `summary`, `risk`, `requiresApprovedSpec`, `supportsDryRun`); flags are parsed by `packages/cli/src/arguments.ts` (`--name value` or `--name=value`, `--flag`); `reservedGroups` in `packages/cli/src/extensions.ts` protects core groups from module namespaces; `pnpm flowdular help` output lists the commands. Tests in `packages/cli/tests`. Update `.ai/policies/capabilities.yaml` and `README.md`.
 
 Sandbox and coding agent: gate ids live in `packages/sandbox/src/server/gates.ts` (`GateId`, `GATE_DEFINITIONS`) and must match the `gates:` front matter of `.ai/agents/sandbox/*.md`; role defaults in `packages/coding-agent/src/roles/defaults.ts` are regenerated from those files (sync script in `.ai/README.md`), never hand-edited; the instruction contract is `packages/coding-agent/src/roles/contract.ts`. Reference copies for sessions: `packages/sandbox/src/server/reference.ts` `REFERENCE_SOURCES`.
 
@@ -70,11 +73,11 @@ export interface PlatformServerComposition {
 }
 ```
 
-New context members are required (every module receives them; nobody has to read them), new composition members are optional (existing modules compile unchanged). The platform composes modules in dependency order, binds each `agentDefinitions` registrar to that module id, declares every `settings`, seals the definitions, runs every `prepare`, retires the old generation, and then calls every `start`. Retirement completes every `stop` before any `dispose`, so background work cannot outlive a repository it uses. The generic registries live in `@coreloom/kernel` so `modules/auth` does not import the harness or a provider module. `agentTools` carries model-visible tool identities; `agentDefinitions` carries immutable module-owned business agent behavior; `capabilities` carries typed public services between modules, with the provider owning the service type and the consumer declaring the module dependency and handling absence from `get`.
+New context members are required (every module receives them; nobody has to read them), new composition members are optional (existing modules compile unchanged). The platform composes modules in dependency order, binds each `agentDefinitions` registrar to that module id, declares every `settings`, seals the definitions, runs every `prepare`, retires the old generation, and then calls every `start`. Retirement completes every `stop` before any `dispose`, so background work cannot outlive a repository it uses. The generic registries live in `@flowdular/kernel` so `modules/auth` does not import the harness or a provider module. `agentTools` carries model-visible tool identities; `agentDefinitions` carries immutable module-owned business agent behavior; `capabilities` carries typed public services between modules, with the provider owning the service type and the consumer declaring the module dependency and handling absence from `get`.
 
 ## 4. Generated and composed files
 
-`platform/src/generated/modules.server.ts` and `modules.client.ts` are written by `pnpm coreloom module sync --apply` (also run by `pnpm dev` and `pnpm build`). `coreloom.json` `modules.enabled` and `platform/package.json` dependencies are written by `module enable --apply`. Never edit them by hand; change the generator and regenerate. `packages/ui/src/brand/mark.ts` is generated by `node packages/ui/scripts/gen-mark.mjs`.
+`platform/src/generated/modules.server.ts` and `modules.client.ts` are written by `pnpm flowdular module sync --apply` (also run by `pnpm dev` and `pnpm build`). `flowdular.json` `modules.enabled` and `platform/package.json` dependencies are written by `module enable --apply`. Never edit them by hand; change the generator and regenerate. `packages/ui/src/brand/mark.ts` is generated by `node packages/ui/scripts/gen-mark.mjs`.
 
 ## 5. Verification
 
@@ -83,7 +86,11 @@ pnpm verify        # typecheck, test, validate, format:check
 pnpm build         # cli build and smoke, module sync --apply, platform build
 ```
 
-Run the affected package alone while iterating: `pnpm --filter @coreloom/<pkg> test`. A change to `packages/ui` or `packages/client` also needs `pnpm --filter @coreloom/platform typecheck` and a look at the shell in `pnpm dev`.
+Run the affected package alone while iterating: `pnpm --filter @flowdular/<pkg> test`. A change to `packages/ui` or `packages/client` also needs `pnpm --filter @flowdular/platform typecheck` and a look at the shell in `pnpm dev`.
+
+After implementation and these checks, switch to `auto-review` as a separate
+read-only phase before declaring completion. Fix findings in an implementation
+phase, rerun affected checks, and repeat the review.
 
 ## 6. Do not build on dead code
 
@@ -93,5 +100,5 @@ Run the affected package alone while iterating: `pnpm --filter @coreloom/<pkg> t
 
 - A new required key in `module.schema.json` breaks every module manifest and the scaffold at once; ship it optional first.
 - Changing an error code string (`UNAUTHENTICATED`, `FORBIDDEN`, `CSRF_REJECTED`) breaks module tests that assert it.
-- `packages/ui/src/index.ts` imports fonts and `styles/index.css` at module top; a test that imports `@coreloom/ui` needs a DOM environment.
+- `packages/ui/src/index.ts` imports fonts and `styles/index.css` at module top; a test that imports `@flowdular/ui` needs a DOM environment.
 - Prettier uses tabs and `@tsrx/prettier-plugin`; run `pnpm format` before `format:check`.

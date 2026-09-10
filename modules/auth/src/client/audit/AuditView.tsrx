@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'octane';
-import { activeLocale, t } from '@coreloom/client';
+import { activeLocale, t } from '@flowdular/client';
 import {
 	Alert,
 	Button,
@@ -10,7 +10,7 @@ import {
 	SearchField,
 	TableCard,
 	Tag,
-} from '@coreloom/ui';
+} from '@flowdular/ui';
 import { cell, createStore, useValue } from 'segment-state';
 import {
 	ApiError,

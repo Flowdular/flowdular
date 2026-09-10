@@ -1,26 +1,36 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
-import { describe, expect, it, vi } from 'vitest';
+import type { DatabaseAdapterLease } from '@flowdular/database';
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	vi,
+} from 'vitest';
 import {
 	AgentHarness,
 	LocalSimulationProvider,
 	type AgentProvider,
 	type AgentTool,
 	type AgentToolAuthorizationRequest,
-} from '@coreloom/harness';
+} from '@flowdular/harness';
 import { AGENT_PERMISSIONS } from '../src/acl/permissions.ts';
 import type { CreateAgentInput } from '../src/domain/types.ts';
 import {
 	AgentActionCapabilityError,
 	createAgentActionExecutionRuntime,
+	type AgentActionRuntime,
 } from '../src/server/action-execution.ts';
 import { createAgentRevisionExecutionCapability } from '../src/server/run-execution.ts';
 import { createAgentRuntime } from '../src/server/runtime.ts';
 import { AgentService } from '../src/services/agent-service.ts';
-import { SqliteAgentRepository } from '../src/services/sqlite-repository.ts';
 import { AgentWorker } from '../src/services/worker.ts';
+import {
+	openAgentsTestDatabase,
+	type AgentsTestDatabase,
+} from './support/database.ts';
 
 const tenantId = 'tenant-workflow';
 const actor = {
@@ -29,17 +39,20 @@ const actor = {
 	label: 'Workflow owner',
 } as const;
 
-function waitFor(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {
+function waitFor(
+	predicate: () => boolean | Promise<boolean>,
+	timeoutMs = 5_000,
+): Promise<void> {
 	const startedAt = Date.now();
-	return new Promise((resolve, reject) => {
-		const tick = () => {
-			if (predicate()) return resolve();
+	return new Promise<void>((resolve, reject) => {
+		const tick = async () => {
+			if (await predicate()) return resolve();
 			if (Date.now() - startedAt > timeoutMs) {
 				return reject(new Error('Condition was not met in time.'));
 			}
-			setTimeout(tick, 10);
+			setTimeout(() => void tick(), 10);
 		};
-		tick();
+		void tick();
 	});
 }
 
@@ -51,7 +64,7 @@ const agentInput: CreateAgentInput = {
 	provider: 'structured-provider',
 	model: 'structured-model',
 	allowedTools: [],
-	skillIds: [],
+	procedureIds: [],
 	maxSteps: 2,
 	timeoutMs: 5_000,
 	temperature: 0,
@@ -59,10 +72,61 @@ const agentInput: CreateAgentInput = {
 	status: 'draft',
 };
 
+let database: AgentsTestDatabase;
+let owner: DatabaseAdapterLease;
+const workers: AgentWorker[] = [];
+const actionRuntimes: AgentActionRuntime[] = [];
+
+beforeAll(async () => {
+	database = await openAgentsTestDatabase();
+	owner = await database.databases.acquire({
+		namespace: 'agents.core',
+		purpose: 'migration',
+	});
+});
+
+afterEach(async () => {
+	vi.restoreAllMocks();
+	for (const runtime of actionRuntimes.splice(0)) await runtime.dispose();
+	for (const worker of workers.splice(0)) await worker.dispose();
+});
+
+beforeEach(async () => {
+	await database.truncate();
+});
+
+afterAll(async () => {
+	await owner?.release();
+	await database.dispose();
+});
+
+function trackedWorker(harness: AgentHarness, workerId: string): AgentWorker {
+	const worker = new AgentWorker(database.repository, harness, {
+		workerId,
+		concurrency: 1,
+		leaseMs: 1_000,
+	});
+	workers.push(worker);
+	return worker;
+}
+
+function trackedActionRuntime(
+	tools: readonly AgentTool[],
+	options: Parameters<typeof createAgentActionExecutionRuntime>[2],
+): AgentActionRuntime {
+	const runtime = createAgentActionExecutionRuntime(
+		database.repository,
+		tools,
+		options,
+	);
+	actionRuntimes.push(runtime);
+	return runtime;
+}
+
 describe('workflow agent execution capability', () => {
 	it('keeps both background workers stopped until the composition starts', async () => {
 		const runtime = createAgentRuntime({
-			databasePath: ':memory:',
+			databases: database.databases,
 			workerConcurrency: 1,
 			workerLeaseMs: 1_000,
 			providers: [new LocalSimulationProvider()],
@@ -73,15 +137,18 @@ describe('workflow agent execution capability', () => {
 			environment: { NODE_ENV: 'test' },
 		});
 
-		expect(runtime.workerStatus().online).toBe(false);
-		void runtime.service();
-		expect(runtime.workerStatus().online).toBe(false);
-		runtime.start();
-		expect(runtime.workerStatus().online).toBe(true);
-		runtime.stop();
-		void runtime.providerService();
-		expect(runtime.workerStatus().online).toBe(false);
-		await runtime.dispose();
+		try {
+			expect((await runtime.workerStatus()).online).toBe(false);
+			void runtime.service();
+			expect((await runtime.workerStatus()).online).toBe(false);
+			runtime.start();
+			await waitFor(async () => (await runtime.workerStatus()).online);
+			runtime.stop();
+			void runtime.providerService();
+			expect((await runtime.workerStatus()).online).toBe(false);
+		} finally {
+			await runtime.dispose();
+		}
 	});
 
 	it('executes an immutable exact revision with structured output and durable observation', async () => {
@@ -104,21 +171,17 @@ describe('workflow agent execution capability', () => {
 				};
 			},
 		};
-		const repository = new SqliteAgentRepository(':memory:');
+		const repository = database.repository;
 		const harness = new AgentHarness({ providers: [provider] });
-		const worker = new AgentWorker(repository, harness, {
-			workerId: 'worker:workflow',
-			concurrency: 1,
-			leaseMs: 1_000,
-		});
+		const worker = trackedWorker(harness, 'worker:workflow');
 		const service = new AgentService(repository, harness, worker);
-		const created = service.createAgent(tenantId, actor.id, agentInput);
-		const active = service.updateAgent(tenantId, created.id, actor.id, {
+		const created = await service.createAgent(tenantId, actor.id, agentInput);
+		const active = await service.updateAgent(tenantId, created.id, actor.id, {
 			...agentInput,
 			status: 'active',
 			expectedRevision: created.revision,
 		});
-		service.updateAgent(tenantId, active.id, actor.id, {
+		await service.updateAgent(tenantId, active.id, actor.id, {
 			...agentInput,
 			instructions: 'Return a later and different decision.',
 			status: 'active',
@@ -137,14 +200,14 @@ describe('workflow agent execution capability', () => {
 			],
 		};
 		expect(
-			capability.getRevision(active.id, active.revision, context),
+			await capability.getRevision(active.id, active.revision, context),
 		).toMatchObject({
 			revision: 2,
 			status: 'active',
 			supportsStructuredOutput: true,
 		});
 		expect(
-			capability.listRevisions(context).map(({ revision, status }) => ({
+			(await capability.listRevisions(context)).map(({ revision, status }) => ({
 				revision,
 				status,
 			})),
@@ -152,7 +215,7 @@ describe('workflow agent execution capability', () => {
 			{ revision: 3, status: 'active' },
 			{ revision: 2, status: 'active' },
 		]);
-		expect(capability.getRevision(active.id, 1, context)).toBeNull();
+		expect(await capability.getRevision(active.id, 1, context)).toBeNull();
 		const request = {
 			agentId: active.id,
 			revision: active.revision,
@@ -197,24 +260,25 @@ describe('workflow agent execution capability', () => {
 			),
 		).rejects.toMatchObject({ code: 'INVALID_OUTPUT_CONTRACT' });
 
-		worker.start();
+		await worker.start();
 		await waitFor(
-			() =>
-				capability.getResult(accepted.runId, context)?.status === 'succeeded',
+			async () =>
+				(await capability.getResult(accepted.runId, context))?.status ===
+				'succeeded',
 		);
 		expect(executedRevision).toBe(2);
 		expect(executedInstructions).toContain('original workflow decision');
 		expect(executedInstructions).not.toContain('later and different');
 		expect(executedOutputContract).toBe('json-schema');
-		expect(capability.getResult(accepted.runId, context)).toMatchObject({
+		expect(await capability.getResult(accepted.runId, context)).toMatchObject({
 			structuredOutput: { decision: 'approved' },
 			status: 'succeeded',
 		});
-		expect(capability.readEvents(accepted.runId, 0, context).at(-1)?.type).toBe(
-			'run.completed',
-		);
 		expect(
-			capability.getResult(accepted.runId, {
+			(await capability.readEvents(accepted.runId, 0, context)).at(-1)?.type,
+		).toBe('run.completed');
+		expect(
+			await capability.getResult(accepted.runId, {
 				...context,
 				tenantId: 'tenant-other',
 			}),
@@ -223,31 +287,28 @@ describe('workflow agent execution capability', () => {
 			...context,
 			actor: { kind: 'user', id: 'another-owner', label: 'Another owner' },
 		} as const;
-		expect(capability.getResult(accepted.runId, otherActorContext)).toBeNull();
-		expect(capability.readEvents(accepted.runId, 0, otherActorContext)).toEqual(
-			[],
-		);
+		expect(
+			await capability.getResult(accepted.runId, otherActorContext),
+		).toBeNull();
+		expect(
+			await capability.readEvents(accepted.runId, 0, otherActorContext),
+		).toEqual([]);
 		worker.stop();
-		repository.close();
 	});
 
 	it('does not let another workflow actor cancel a queued child run', async () => {
-		const repository = new SqliteAgentRepository(':memory:');
+		const repository = database.repository;
 		const harness = new AgentHarness({
 			providers: [new LocalSimulationProvider()],
 		});
-		const worker = new AgentWorker(repository, harness, {
-			workerId: 'worker:actor-boundary',
-			concurrency: 1,
-			leaseMs: 1_000,
-		});
+		const worker = trackedWorker(harness, 'worker:actor-boundary');
 		const service = new AgentService(repository, harness, worker);
-		const created = service.createAgent(tenantId, actor.id, {
+		const created = await service.createAgent(tenantId, actor.id, {
 			...agentInput,
 			provider: 'local-simulation',
 			model: 'deterministic-v1',
 		});
-		const active = service.updateAgent(tenantId, created.id, actor.id, {
+		const active = await service.updateAgent(tenantId, created.id, actor.id, {
 			...agentInput,
 			provider: 'local-simulation',
 			model: 'deterministic-v1',
@@ -278,9 +339,9 @@ describe('workflow agent execution capability', () => {
 			},
 			context,
 		);
-		expect(repository.getRun(tenantId, accepted.runId)?.requestedActor).toEqual(
-			serviceActor,
-		);
+		expect(
+			(await repository.getRun(tenantId, accepted.runId))?.requestedActor,
+		).toEqual(serviceActor);
 		await expect(
 			capability.enqueueRevision(
 				{
@@ -306,7 +367,7 @@ describe('workflow agent execution capability', () => {
 		).rejects.toMatchObject({ code: 'AGENT_RUN_IDEMPOTENCY_CONFLICT' });
 
 		expect(
-			capability.requestCancel(accepted.runId, {
+			await capability.requestCancel(accepted.runId, {
 				...context,
 				actor: {
 					...serviceActor,
@@ -318,30 +379,26 @@ describe('workflow agent execution capability', () => {
 				},
 			}),
 		).toBe(false);
-		expect(repository.getRun(tenantId, accepted.runId)?.status).toBe('queued');
-		repository.close();
+		expect((await repository.getRun(tenantId, accepted.runId))?.status).toBe(
+			'queued',
+		);
 	});
 
-	it('requires the capability-specific RBAC scopes', () => {
-		const repository = new SqliteAgentRepository(':memory:');
+	it('requires the capability-specific RBAC scopes', async () => {
+		const repository = database.repository;
 		const harness = new AgentHarness({ providers: [] });
-		const worker = new AgentWorker(repository, harness, {
-			workerId: 'worker:denied',
-			concurrency: 1,
-			leaseMs: 1_000,
-		});
+		const worker = trackedWorker(harness, 'worker:denied');
 		const capability = createAgentRevisionExecutionCapability(
 			new AgentService(repository, harness, worker),
 		);
-		expect(() =>
+		await expect(
 			capability.getRevision('agent-1', 1, {
 				tenantId,
 				workflowRunId: 'workflow-run-1',
 				actor,
 				permissionSnapshot: [],
 			}),
-		).toThrow('lacks permission');
-		repository.close();
+		).rejects.toThrow('lacks permission');
 	});
 });
 
@@ -379,24 +436,24 @@ const authorizeWorkflowRead = (_request: AgentToolAuthorizationRequest) => [
 ];
 
 describe('versioned workflow action capability', () => {
-	it('refuses an unsafe action lease configuration', () => {
-		const repository = new SqliteAgentRepository(':memory:');
+	it('refuses an unsafe action lease configuration', async () => {
 		expect(() =>
-			createAgentActionExecutionRuntime(repository, [workflowAction()], {
-				workerId: 'action-worker:invalid-lease',
-				leaseMs: 999,
-				authorizeToolAccess: authorizeWorkflowRead,
-			}),
+			createAgentActionExecutionRuntime(
+				database.repository,
+				[workflowAction()],
+				{
+					workerId: 'action-worker:invalid-lease',
+					leaseMs: 999,
+					authorizeToolAccess: authorizeWorkflowRead,
+				},
+			),
 		).toThrow('between 1000 and 300000 ms');
-		repository.close();
 	});
 
 	it('excludes invalid action schemas and returns defensive catalog copies', async () => {
-		const repository = new SqliteAgentRepository(':memory:');
 		const cyclicSchema: Record<string, unknown> = { type: 'object' };
 		cyclicSchema.self = cyclicSchema;
-		const runtime = createAgentActionExecutionRuntime(
-			repository,
+		const runtime = trackedActionRuntime(
 			[
 				workflowAction(),
 				workflowAction({
@@ -410,26 +467,23 @@ describe('versioned workflow action capability', () => {
 				authorizeToolAccess: authorizeWorkflowRead,
 			},
 		);
-		const first = runtime.capability.listWorkflowActions();
+		const first = await runtime.capability.listWorkflowActions();
 		expect(first.map((action) => action.id)).toEqual([
 			'parties.customer.lookup',
 		]);
 		(first[0]!.inputSchema as Record<string, unknown>).type = 'array';
 		(first[0]!.requiredPermissions as string[]).push('unexpected.permission');
 
-		const second = runtime.capability.listWorkflowActions();
+		const second = await runtime.capability.listWorkflowActions();
 		expect(second[0]?.inputSchema.type).toBe('object');
 		expect(second[0]?.requiredPermissions).toEqual(['parties.records.read']);
-		await runtime.dispose();
-		repository.close();
 	});
 
 	it('lists only complete safe contracts and executes them idempotently under RBAC', async () => {
 		const execute = vi.fn(async () => ({ name: 'Ada' }));
 		const authorize = vi.fn(authorizeWorkflowRead);
-		const repository = new SqliteAgentRepository(':memory:');
-		const runtime = createAgentActionExecutionRuntime(
-			repository,
+		const repository = database.repository;
+		const runtime = trackedActionRuntime(
 			[
 				workflowAction({ execute }),
 				workflowAction({ id: 'unsafe.external', risk: 'external' }),
@@ -441,7 +495,7 @@ describe('versioned workflow action capability', () => {
 			},
 		);
 		expect(
-			runtime.capability.listWorkflowActions().map((item) => item.id),
+			(await runtime.capability.listWorkflowActions()).map((item) => item.id),
 		).toEqual(['parties.customer.lookup']);
 		const controller = new AbortController();
 		const context = {
@@ -477,7 +531,7 @@ describe('versioned workflow action capability', () => {
 		} as const;
 		const accepted = await runtime.capability.start(request, context);
 		expect(
-			repository.getAction(tenantId, accepted.actionInvocationId),
+			await repository.getAction(tenantId, accepted.actionInvocationId),
 		).toMatchObject({
 			actor: { kind: 'service', id: 'schedule-1' },
 			authorizationSubject: { kind: 'user', id: actor.id },
@@ -495,9 +549,9 @@ describe('versioned workflow action capability', () => {
 
 		runtime.start();
 		await waitFor(
-			() =>
-				repository.getAction(tenantId, accepted.actionInvocationId)?.status ===
-				'succeeded',
+			async () =>
+				(await repository.getAction(tenantId, accepted.actionInvocationId))
+					?.status === 'succeeded',
 		);
 		expect(execute).toHaveBeenCalledOnce();
 		expect(
@@ -507,10 +561,10 @@ describe('versioned workflow action capability', () => {
 			),
 		).toBe(true);
 		expect(
-			runtime.capability.getResult(accepted.actionInvocationId, context),
+			await runtime.capability.getResult(accepted.actionInvocationId, context),
 		).toMatchObject({ status: 'succeeded', output: { name: 'Ada' } });
 		expect(
-			runtime.capability.getResult(accepted.actionInvocationId, {
+			await runtime.capability.getResult(accepted.actionInvocationId, {
 				tenantId,
 				workflowRunId: context.workflowRunId,
 				actor: { kind: 'user', id: 'another-user', label: 'Another user' },
@@ -518,7 +572,7 @@ describe('versioned workflow action capability', () => {
 			}),
 		).toBeNull();
 		expect(
-			runtime.capability.getResult(accepted.actionInvocationId, {
+			await runtime.capability.getResult(accepted.actionInvocationId, {
 				tenantId,
 				workflowRunId: context.workflowRunId,
 				actor: {
@@ -533,35 +587,29 @@ describe('versioned workflow action capability', () => {
 			}),
 		).toBeNull();
 		expect(
-			runtime.capability.getResult(accepted.actionInvocationId, {
+			await runtime.capability.getResult(accepted.actionInvocationId, {
 				tenantId,
 				workflowRunId: context.workflowRunId,
 				actor: context.actor,
 				permissionSnapshot: [],
 			}),
 		).toBeNull();
-		const audit = repository.listAuditEvents(tenantId, 20);
+		const audit = await repository.listAuditEvents(tenantId, 20);
 		expect(audit.map((event) => event.action)).toContain(
 			'agent-action.succeeded',
 		);
 		expect(JSON.stringify(audit)).not.toContain('customer-1');
-		await runtime.dispose();
-		repository.close();
 	});
 
 	it('refuses execution when the initiating actor loses action permission after enqueue', async () => {
 		let livePermissions = ['parties.records.read'];
 		const execute = vi.fn(async () => ({ name: 'Ada' }));
-		const repository = new SqliteAgentRepository(':memory:');
-		const runtime = createAgentActionExecutionRuntime(
-			repository,
-			[workflowAction({ execute })],
-			{
-				workerId: 'action-worker:revoked',
-				leaseMs: 1_000,
-				authorizeToolAccess: () => livePermissions,
-			},
-		);
+		const repository = database.repository;
+		const runtime = trackedActionRuntime([workflowAction({ execute })], {
+			workerId: 'action-worker:revoked',
+			leaseMs: 1_000,
+			authorizeToolAccess: () => livePermissions,
+		});
 		const accepted = await runtime.capability.start(
 			{
 				actionId: 'parties.customer.lookup',
@@ -581,24 +629,21 @@ describe('versioned workflow action capability', () => {
 		livePermissions = [];
 		runtime.start();
 		await waitFor(
-			() =>
-				repository.getAction(tenantId, accepted.actionInvocationId)?.status ===
-				'failed',
+			async () =>
+				(await repository.getAction(tenantId, accepted.actionInvocationId))
+					?.status === 'failed',
 		);
 
 		expect(execute).not.toHaveBeenCalled();
 		expect(
-			repository.getAction(tenantId, accepted.actionInvocationId),
+			await repository.getAction(tenantId, accepted.actionInvocationId),
 		).toMatchObject({ code: 'ACTION_PERMISSION_REVOKED' });
-		await runtime.dispose();
-		repository.close();
 	});
 
 	it('aborts in-flight action work on dispose and leaves it recoverable', async () => {
 		let aborted = false;
-		const repository = new SqliteAgentRepository(':memory:');
-		const runtime = createAgentActionExecutionRuntime(
-			repository,
+		const repository = database.repository;
+		const runtime = trackedActionRuntime(
 			[
 				workflowAction({
 					execute: (_input, context) =>
@@ -636,24 +681,23 @@ describe('versioned workflow action capability', () => {
 		);
 		runtime.start();
 		await waitFor(
-			() =>
-				repository.getAction(tenantId, accepted.actionInvocationId)?.status ===
-				'running',
+			async () =>
+				(await repository.getAction(tenantId, accepted.actionInvocationId))
+					?.status === 'running',
 		);
 
 		await runtime.dispose();
 
 		expect(aborted).toBe(true);
 		expect(
-			repository.getAction(tenantId, accepted.actionInvocationId)?.status,
+			(await repository.getAction(tenantId, accepted.actionInvocationId))
+				?.status,
 		).toBe('running');
-		repository.close();
 	});
 
 	it('disposes promptly when an action ignores its abort signal', async () => {
-		const repository = new SqliteAgentRepository(':memory:');
-		const runtime = createAgentActionExecutionRuntime(
-			repository,
+		const repository = database.repository;
+		const runtime = trackedActionRuntime(
 			[
 				workflowAction({
 					execute: () => new Promise(() => {}),
@@ -683,30 +727,26 @@ describe('versioned workflow action capability', () => {
 		);
 		runtime.start();
 		await waitFor(
-			() =>
-				repository.getAction(tenantId, accepted.actionInvocationId)?.status ===
-				'running',
+			async () =>
+				(await repository.getAction(tenantId, accepted.actionInvocationId))
+					?.status === 'running',
 		);
 
 		await runtime.dispose();
 
 		expect(
-			repository.getAction(tenantId, accepted.actionInvocationId)?.status,
+			(await repository.getAction(tenantId, accepted.actionInvocationId))
+				?.status,
 		).toBe('running');
-		repository.close();
 	});
 
 	it('refuses non-JSON action input with a stable error before persistence', async () => {
-		const repository = new SqliteAgentRepository(':memory:');
-		const runtime = createAgentActionExecutionRuntime(
-			repository,
-			[workflowAction()],
-			{
-				workerId: 'action-worker:invalid-input',
-				leaseMs: 1_000,
-				authorizeToolAccess: authorizeWorkflowRead,
-			},
-		);
+		const repository = database.repository;
+		const runtime = trackedActionRuntime([workflowAction()], {
+			workerId: 'action-worker:invalid-input',
+			leaseMs: 1_000,
+			authorizeToolAccess: authorizeWorkflowRead,
+		});
 		const cyclic: Record<string, unknown> = {};
 		cyclic.self = cyclic;
 
@@ -729,27 +769,20 @@ describe('versioned workflow action capability', () => {
 			),
 		).rejects.toMatchObject({ code: 'ACTION_INPUT_INVALID' });
 		expect(
-			repository.findActionByIdempotencyKey(
+			await repository.findActionByIdempotencyKey(
 				tenantId,
 				'workflow-run-4:invalid-input',
 			),
 		).toBeNull();
-
-		await runtime.dispose();
-		repository.close();
 	});
 
 	it('cancels an invocation when the caller aborts during enqueue', async () => {
-		const repository = new SqliteAgentRepository(':memory:');
-		const runtime = createAgentActionExecutionRuntime(
-			repository,
-			[workflowAction()],
-			{
-				workerId: 'action-worker:enqueue-cancel',
-				leaseMs: 1_000,
-				authorizeToolAccess: authorizeWorkflowRead,
-			},
-		);
+		const repository = database.repository;
+		const runtime = trackedActionRuntime([workflowAction()], {
+			workerId: 'action-worker:enqueue-cancel',
+			leaseMs: 1_000,
+			authorizeToolAccess: authorizeWorkflowRead,
+		});
 		const controller = new AbortController();
 		const enqueue = repository.enqueueAction.bind(repository);
 		vi.spyOn(repository, 'enqueueAction').mockImplementation(
@@ -777,27 +810,26 @@ describe('versioned workflow action capability', () => {
 			},
 		);
 
+		/* The abort listener settles the row on its own promise chain. */
+		await waitFor(
+			async () =>
+				(await repository.getAction(tenantId, accepted.actionInvocationId))
+					?.status === 'cancelled',
+		);
 		expect(
-			repository.getAction(tenantId, accepted.actionInvocationId)?.status,
-		).toBe('cancelled');
-		expect(
-			repository.listAuditEvents(tenantId, 10).map((event) => event.action),
+			(await repository.listAuditEvents(tenantId, 10)).map(
+				(event) => event.action,
+			),
 		).toContain('agent-action.cancelled');
-		await runtime.dispose();
-		repository.close();
 	});
 
 	it('audits a recovered action whose contract is no longer available', async () => {
-		const repository = new SqliteAgentRepository(':memory:');
-		const acceptingRuntime = createAgentActionExecutionRuntime(
-			repository,
-			[workflowAction()],
-			{
-				workerId: 'action-worker:before-restart',
-				leaseMs: 1_000,
-				authorizeToolAccess: authorizeWorkflowRead,
-			},
-		);
+		const repository = database.repository;
+		const acceptingRuntime = trackedActionRuntime([workflowAction()], {
+			workerId: 'action-worker:before-restart',
+			leaseMs: 1_000,
+			authorizeToolAccess: authorizeWorkflowRead,
+		});
 		const accepted = await acceptingRuntime.capability.start(
 			{
 				actionId: 'parties.customer.lookup',
@@ -816,20 +848,19 @@ describe('versioned workflow action capability', () => {
 		);
 		await acceptingRuntime.dispose();
 
-		const recoveryRuntime = createAgentActionExecutionRuntime(repository, [], {
+		const recoveryRuntime = trackedActionRuntime([], {
 			workerId: 'action-worker:after-restart',
 			leaseMs: 1_000,
 			authorizeToolAccess: authorizeWorkflowRead,
 		});
 		recoveryRuntime.start();
 		await waitFor(
-			() =>
-				repository.getAction(tenantId, accepted.actionInvocationId)?.status ===
-				'failed',
+			async () =>
+				(await repository.getAction(tenantId, accepted.actionInvocationId))
+					?.status === 'failed',
 		);
 		expect(
-			repository
-				.listAuditEvents(tenantId, 10)
+			(await repository.listAuditEvents(tenantId, 10))
 				.filter((event) => event.subjectId === accepted.actionInvocationId)
 				.map((event) => event.action),
 		).toEqual([
@@ -837,26 +868,20 @@ describe('versioned workflow action capability', () => {
 			'agent-action.claimed',
 			'agent-action.queued',
 		]);
-
-		await recoveryRuntime.dispose();
-		repository.close();
 	});
 
 	it('contains a background settlement failure instead of leaking a rejection', async () => {
-		const directory = mkdtempSync(join(tmpdir(), 'agents-action-audit-'));
-		const path = join(directory, 'agents.db');
-		const repository = new SqliteAgentRepository(path);
+		const repository = database.repository;
 		const reported = vi.spyOn(console, 'error').mockImplementation(() => {});
-		const runtime = createAgentActionExecutionRuntime(
-			repository,
+		const runtime = trackedActionRuntime(
 			[
 				workflowAction({
 					execute: async () => {
-						const fault = new DatabaseSync(path);
-						fault.exec(`CREATE TRIGGER fail_action_audit
-						 BEFORE INSERT ON agent_audit_events_v4
-						 BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END;`);
-						fault.close();
+						await owner.database.execute({
+							text: `CREATE TRIGGER fail_action_audit
+							       BEFORE INSERT ON agent_audit_events_v4
+							       FOR EACH ROW EXECUTE FUNCTION coreloom_reject_change('audit unavailable')`,
+						});
 						throw new Error('target failed');
 					},
 				}),
@@ -884,22 +909,24 @@ describe('versioned workflow action capability', () => {
 			},
 		);
 		runtime.start();
-		await waitFor(() => reported.mock.calls.length > 0);
-		expect(
-			repository.getAction(tenantId, accepted.actionInvocationId)?.status,
-		).toBe('running');
-		expect(
-			repository
-				.listAuditEvents(tenantId, 20)
-				.some((event) => event.action === 'agent-action.failed'),
-		).toBe(false);
-		expect(reported.mock.calls[0]?.[0]).toContain(
-			'worker failed to settle action',
-		);
-
-		await runtime.dispose();
-		reported.mockRestore();
-		repository.close();
-		rmSync(directory, { recursive: true, force: true });
+		try {
+			await waitFor(() => reported.mock.calls.length > 0);
+			expect(
+				(await repository.getAction(tenantId, accepted.actionInvocationId))
+					?.status,
+			).toBe('running');
+			expect(
+				(await repository.listAuditEvents(tenantId, 20)).some(
+					(event) => event.action === 'agent-action.failed',
+				),
+			).toBe(false);
+			expect(reported.mock.calls[0]?.[0]).toContain(
+				'worker failed to settle action',
+			);
+		} finally {
+			await owner.database.execute({
+				text: 'DROP TRIGGER IF EXISTS fail_action_audit ON agent_audit_events_v4',
+			});
+		}
 	});
 });

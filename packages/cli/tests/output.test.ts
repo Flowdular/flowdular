@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { success } from '@coreloom/cli-protocol';
+import { success } from '@flowdular/cli-protocol';
 import { renderOutput } from '../src/output.ts';
 
 describe('human CLI output', () => {

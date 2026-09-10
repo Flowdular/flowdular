@@ -11,12 +11,12 @@ async function workspaceRoot(): Promise<string> {
 	let directory = packageRoot;
 	for (;;) {
 		try {
-			await access(join(directory, 'coreloom.json'));
+			await access(join(directory, 'flowdular.json'));
 			return directory;
 		} catch {
 			const parent = dirname(directory);
 			if (parent === directory) {
-				throw new Error('No coreloom.json above the coding-agent package.');
+				throw new Error('No flowdular.json above the coding-agent package.');
 			}
 			directory = parent;
 		}

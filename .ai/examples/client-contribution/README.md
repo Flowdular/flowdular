@@ -1,6 +1,6 @@
 # Client contribution example
 
-Mirror of `modules/catalog/src/client/{contribution.tsrx,index.ts}`, flattened into one directory. In a module the files live at `src/client/contribution.tsrx`, `src/client/index.ts`, `src/client/CustomerListView.tsrx`, and the permissions at `src/acl/permissions.ts`.
+Mirror of `.ai/references/catalog/src/client/{contribution.tsrx,index.ts}`, flattened into one directory. In a module the files live at `src/client/contribution.tsrx`, `src/client/index.ts`, `src/client/CustomerListView.tsrx`, and the permissions at `src/acl/permissions.ts`.
 
 What it shows:
 
@@ -8,4 +8,4 @@ What it shows:
 - `glyph: 'parties'` is a key of `ICON_PATHS` (`packages/ui/src/icons/Icon.tsrx`); an unknown key renders the `modules` icon silently.
 - Ids: `customers.navigation`, view `customers` (the URL slug), widget `customers.dashboard.summary`; `slot` is one of `WORKSPACE_SLOTS`; `scope` is the module's read permission.
 
-These files are not part of any `tsconfig.json` and are not compiled; `modules/catalog` is the compiled reference.
+These files are not part of any `tsconfig.json` and are not compiled; `.ai/references/catalog` is the compiled reference.

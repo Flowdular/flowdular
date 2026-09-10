@@ -1,3 +1,4 @@
+import { applicationPath } from '@flowdular/client/routing';
 const LEGACY_AUTH_PATHS = new Set([
 	'/sign-in',
 	'/sign-up',
@@ -9,7 +10,7 @@ const LEGACY_AUTH_PATHS = new Set([
 export type PlatformSurface = 'auth' | 'application';
 
 export function platformSurfaceFromUrl(value: string): PlatformSurface {
-	const pathname = new URL(value, 'https://coreloom.local').pathname;
+	const pathname = new URL(value, 'https://flowdular.local').pathname;
 	if (
 		pathname === '/auth' ||
 		pathname.startsWith('/auth/') ||
@@ -23,5 +24,5 @@ export function platformSurfaceFromUrl(value: string): PlatformSurface {
 /* Signing in from an authentication URL must not leave that URL as the shell
    location, or the workspace would open on a view that does not exist. */
 export function applicationInitialUrl(value: string): string {
-	return platformSurfaceFromUrl(value) === 'auth' ? '/app' : value;
+	return platformSurfaceFromUrl(value) === 'auth' ? applicationPath() : value;
 }

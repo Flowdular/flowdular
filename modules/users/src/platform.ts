@@ -1,7 +1,7 @@
 import type {
 	PlatformServerComposition,
 	PlatformServerContext,
-} from '@coreloom/module-auth/server';
+} from '@flowdular/module-auth/server';
 import { createUserRoutes } from './api/endpoints.ts';
 
 export function createServerComposition(

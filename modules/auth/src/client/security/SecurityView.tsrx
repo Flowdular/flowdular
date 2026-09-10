@@ -7,8 +7,8 @@ import {
 	Icon,
 	PageHeader,
 	Tag,
-} from '@coreloom/ui';
-import { t } from '@coreloom/client';
+} from '@flowdular/ui';
+import { t } from '@flowdular/client';
 import { cell, createStore, useValue } from 'segment-state';
 import {
 	AuthClientApiError,

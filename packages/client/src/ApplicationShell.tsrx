@@ -25,12 +25,12 @@ import {
 	toggleNavigationGroup,
 	type ShellView,
 } from './state.ts';
-import '@coreloom/ui';
+import '@flowdular/ui';
 import './shell/shell.css';
 
 export type { ApplicationShellProps } from './shell/types.ts';
 
-const SIDEBAR_STORAGE_KEY = 'coreloom.sidebar';
+const SIDEBAR_STORAGE_KEY = 'flowdular.sidebar';
 
 export function ApplicationShell(props: ApplicationShellProps) @{
 	/* Register synchronously on every render. `useMemo` state may survive a Vite

@@ -1,4 +1,4 @@
-import { Icon } from '@coreloom/ui';
+import { Icon } from '@flowdular/ui';
 import type { NavigationContribution } from '../contributions.ts';
 import { activeLocale, t } from '../i18n/runtime.ts';
 import { navigationGroupLabel } from './navigation.ts';

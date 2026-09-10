@@ -5,7 +5,7 @@ import {
 	timingSafeEqual,
 } from 'node:crypto';
 import { ServerRoute, type Context } from '@octanejs/app-core';
-import { readJsonObject } from '@coreloom/server';
+import { readJsonObject } from '@flowdular/server';
 import { BUNDLED_MODULE_SCOPES, PLATFORM_SCOPES } from '../acl/scopes.ts';
 import type { SignInInput, SignUpInput } from '../domain/types.ts';
 import { AttemptLimiter } from '../api/attempt-limiter.ts';
@@ -16,6 +16,7 @@ import {
 	sessionCookie,
 } from '../api/cookies.ts';
 import { assertSameOrigin } from '../api/origin.ts';
+import { sessionFromContext } from '../middleware/authentication.ts';
 import { AuthServiceError } from '../services/auth-service-error.ts';
 import { normalizeEmail } from '../services/validation.ts';
 import { createAuditRoutes } from './audit-endpoints.ts';
@@ -72,7 +73,7 @@ function sealOidcState(value: OidcState, provider: OidcProvider): string {
 		'base64url',
 	);
 	const signature = createHmac('sha256', provider.clientSecret)
-		.update('coreloom:oidc-state:v1\0', 'utf8')
+		.update('flowdular:oidc-state:v1\0', 'utf8')
 		.update(payload, 'utf8')
 		.digest('base64url');
 	return `${payload}.${signature}`;
@@ -84,7 +85,7 @@ function openOidcState(value: string, provider: OidcProvider): OidcState {
 	if (parts.length !== 2 || !parts[0] || !parts[1])
 		throw new Error('invalid OIDC state');
 	const expected = createHmac('sha256', provider.clientSecret)
-		.update('coreloom:oidc-state:v1\0', 'utf8')
+		.update('flowdular:oidc-state:v1\0', 'utf8')
 		.update(parts[0], 'utf8')
 		.digest('base64url');
 	if (!safeEqual(parts[1], expected)) throw new Error('invalid OIDC state');
@@ -356,9 +357,9 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 					profile.email_verified !== true
 				)
 					throw oidcFailure();
-				const issued = await runtime
-					.service()
-					.signInVerifiedExternalEmail(profile.email);
+				const issued = await (
+					await runtime.service()
+				).signInVerifiedExternalEmail(profile.email);
 				if ('mfaRequired' in issued) {
 					const headers = new Headers({ location: '/auth/mfa?mfa=oidc' });
 					headers.append(
@@ -368,7 +369,9 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 					headers.append('set-cookie', expiredState);
 					return new Response(null, { status: 302, headers });
 				}
-				const headers = new Headers({ location: '/app' });
+				const headers = new Headers({
+					location: runtime.applicationPath ?? '/app',
+				});
 				headers.append(
 					'set-cookie',
 					sessionCookie(issued.token, runtime.cookie),
@@ -389,7 +392,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 	const workspaceAvailability = new ServerRoute({
 		path: '/api/auth/workspace-availability',
 		methods: ['GET'],
-		handler: (context) => {
+		handler: async (context) => {
 			try {
 				if (!runtime.settings.allowSignUp) {
 					throw new AuthServiceError(
@@ -406,7 +409,9 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 				}
 				const slug =
 					new URL(context.request.url).searchParams.get('slug') ?? '';
-				return response(runtime.service().checkWorkspaceSlug(slug));
+				return response(
+					await (await runtime.service()).checkWorkspaceSlug(slug),
+				);
 			} catch (error) {
 				return errorResponse(error);
 			}
@@ -416,9 +421,11 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 	const session = new ServerRoute({
 		path: '/api/auth/session',
 		methods: ['GET'],
+		/* The shell polls this route. The authentication middleware already
+		   resolved the session for this request, so reading it again would be a
+		   second round trip for the same answer. */
 		handler: (context) => {
-			const token = readCookie(context.request, runtime.cookie.name);
-			const current = token ? runtime.service().resolveSession(token) : null;
+			const current = sessionFromContext(context);
 			return current
 				? response(sessionPayload(current, runtime))
 				: response(
@@ -452,7 +459,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 					organizationSlug: stringField(body, 'organizationSlug'),
 				};
 				const attempt = throttle(context, runtime, input.email);
-				const issued = await runtime.service().signUp(input);
+				const issued = await (await runtime.service()).signUp(input);
 				attempt.clear();
 				return response(sessionPayload(issued, runtime), 201, {
 					'set-cookie': sessionCookie(issued.token, runtime.cookie),
@@ -475,9 +482,9 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 					password: stringField(body, 'password'),
 				};
 				const attempt = throttle(context, runtime, input.email);
-				const issued = await runtime
-					.service()
-					.signIn(input, { address: attempt.address });
+				const issued = await (
+					await runtime.service()
+				).signIn(input, { address: attempt.address });
 				attempt.clear();
 				if ('mfaRequired' in issued) {
 					return response({
@@ -510,7 +517,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 						400,
 					);
 				if (allowPasswordResetDelivery(context, runtime, email)) {
-					await runtime.service().requestPasswordReset(email);
+					await (await runtime.service()).requestPasswordReset(email);
 				}
 				return response({ accepted: true }, 202);
 			} catch (error) {
@@ -534,7 +541,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 						'The reset request is invalid.',
 						400,
 					);
-				await runtime.service().completePasswordReset(token, password);
+				await (await runtime.service()).completePasswordReset(token, password);
 				return response({ reset: true });
 			} catch (error) {
 				return errorResponse(error);
@@ -567,9 +574,9 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 						'The authentication request is invalid.',
 						400,
 					);
-				const issued = await runtime
-					.service()
-					.completeMfaChallenge(token, code, recoveryCode);
+				const issued = await (
+					await runtime.service()
+				).completeMfaChallenge(token, code, recoveryCode);
 				const headers = new Headers();
 				headers.append(
 					'set-cookie',
@@ -592,11 +599,13 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 	const mfaStatus = new ServerRoute({
 		path: '/api/auth/mfa/status',
 		methods: ['GET'],
-		handler: (context) => {
+		handler: async (context) => {
 			try {
-				const session = requireSession(context, runtime);
+				const session = requireSession(context);
 				return response(
-					runtime.service().mfaStatus(session.principal.accountId),
+					await (
+						await runtime.service()
+					).mfaStatus(session.principal.accountId),
 				);
 			} catch (error) {
 				return errorResponse(error);
@@ -611,14 +620,16 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 			const denial = sessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
-				const session = requireSession(context, runtime);
+				const session = requireSession(context);
 				const body = await readJsonObject(context.request);
 				const issuer =
 					typeof body.issuer === 'string' && body.issuer.length <= 64
 						? body.issuer
-						: 'Coreloom';
+						: 'Flowdular';
 				return response(
-					runtime.service().enrollTotp(session.principal.accountId, issuer),
+					await (
+						await runtime.service()
+					).enrollTotp(session.principal.accountId, issuer),
 				);
 			} catch (error) {
 				return errorResponse(error);
@@ -633,7 +644,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 			const denial = sessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
-				const session = requireSession(context, runtime);
+				const session = requireSession(context);
 				const body = await readJsonObject(context.request);
 				const code = stringField(body, 'code');
 				if (code.length > 16)
@@ -642,7 +653,9 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 						'The authentication code is invalid.',
 						400,
 					);
-				runtime.service().confirmTotp(session.principal.accountId, code);
+				await (
+					await runtime.service()
+				).confirmTotp(session.principal.accountId, code);
 				return response({ confirmed: true });
 			} catch (error) {
 				return errorResponse(error);
@@ -657,7 +670,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 			const denial = sessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
-				const session = requireSession(context, runtime);
+				const session = requireSession(context);
 				requireScope(session, BUNDLED_MODULE_SCOPES.usersManage);
 				const body = await readJsonObject(context.request);
 				const email = stringField(body, 'email');
@@ -670,9 +683,9 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 					);
 				return response(
 					{
-						invitation: await runtime
-							.service()
-							.createTenantInvitation(actorOf(session), email, role),
+						invitation: await (
+							await runtime.service()
+						).createTenantInvitation(actorOf(session), email, role),
 					},
 					201,
 				);
@@ -702,9 +715,9 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 						'The invitation is invalid.',
 						400,
 					);
-				await runtime
-					.service()
-					.acceptTenantInvitation({ token, displayName, password });
+				await (
+					await runtime.service()
+				).acceptTenantInvitation({ token, displayName, password });
 				return response({ accepted: true });
 			} catch (error) {
 				return errorResponse(error);
@@ -715,11 +728,12 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 	const signOut = new ServerRoute({
 		path: '/api/auth/sign-out',
 		methods: ['POST'],
-		handler: (context) => {
+		handler: async (context) => {
 			try {
 				assertSameOrigin(context);
 				const token = readCookie(context.request, runtime.cookie.name);
-				const current = token ? runtime.service().resolveSession(token) : null;
+				const service = await runtime.service();
+				const current = token ? await service.resolveSession(token) : null;
 				if (!token || !current) {
 					throw new AuthServiceError(
 						'UNAUTHENTICATED',
@@ -735,7 +749,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 						403,
 					);
 				}
-				runtime.service().signOut(token);
+				await service.signOut(token);
 				return response({ ok: true }, 200, {
 					'set-cookie': expiredSessionCookie(runtime.cookie),
 				});
@@ -752,7 +766,8 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 			try {
 				assertSameOrigin(context);
 				const token = readCookie(context.request, runtime.cookie.name);
-				const current = token ? runtime.service().resolveSession(token) : null;
+				const service = await runtime.service();
+				const current = token ? await service.resolveSession(token) : null;
 				if (!token || !current) {
 					throw new AuthServiceError(
 						'UNAUTHENTICATED',
@@ -777,7 +792,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 						400,
 					);
 				}
-				const issued = await runtime.service().switchTenant(token, tenantId);
+				const issued = await service.switchTenant(token, tenantId);
 				return response(sessionPayload(issued, runtime), 200, {
 					'set-cookie': sessionCookie(issued.token, runtime.cookie),
 				});
@@ -794,7 +809,8 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 			try {
 				assertSameOrigin(context);
 				const token = readCookie(context.request, runtime.cookie.name);
-				const session = token ? runtime.service().resolveSession(token) : null;
+				const service = await runtime.service();
+				const session = token ? await service.resolveSession(token) : null;
 				if (!session) {
 					throw new AuthServiceError(
 						'UNAUTHENTICATED',
@@ -815,7 +831,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 					);
 				}
 				const body = await readJsonObject(context.request);
-				await runtime.service().changePassword({
+				await service.changePassword({
 					accountId: session.principal.accountId,
 					currentPassword: stringField(body, 'currentPassword'),
 					newPassword: stringField(body, 'newPassword'),
@@ -837,13 +853,13 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 			const denial = sessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
-				const session = requireSession(context, runtime);
+				const session = requireSession(context);
 				requireScope(session, PLATFORM_SCOPES.settingsManage);
 				const body = await readJsonObject(context.request);
 				return response({
-					tenant: runtime
-						.service()
-						.renameTenant(actorOf(session), stringField(body, 'name')),
+					tenant: await (
+						await runtime.service()
+					).renameTenant(actorOf(session), stringField(body, 'name')),
 				});
 			} catch (error) {
 				return errorResponse(error);

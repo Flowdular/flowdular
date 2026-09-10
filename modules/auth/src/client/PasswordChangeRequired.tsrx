@@ -1,6 +1,6 @@
 import { useMemo } from 'octane';
-import { useTranslation } from '@coreloom/client';
-import { Alert, BrandMark, Button, FormField } from '@coreloom/ui';
+import { useTranslation } from '@flowdular/client';
+import { Alert, BrandMark, Button, FormField } from '@flowdular/ui';
 import { cell, createStore, useValue } from 'segment-state';
 
 export interface PasswordChangeRequiredProps {

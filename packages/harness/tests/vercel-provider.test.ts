@@ -6,7 +6,7 @@ import {
 	type AgentExecutionRequest,
 	type VercelAiProviderConfiguration,
 } from '../src/index.ts';
-import { userActor } from '@coreloom/kernel';
+import { userActor } from '@flowdular/kernel';
 
 const INSTRUCTIONS =
 	'Answer billing questions for the finance team and escalate disputes.';

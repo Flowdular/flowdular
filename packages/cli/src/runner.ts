@@ -1,3 +1,12 @@
+import { RegistryError } from '@flowdular/kernel';
+import { loadModuleCatalog } from './module-catalog.ts';
+import {
+	installModule,
+	validateInstalledModules,
+	recoverModuleInstall,
+} from './module-install.ts';
+import { ModuleDistributionError } from './module-artifact.ts';
+import { findModuleFiles } from './module-files.ts';
 import { readFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { parse as parseYaml } from 'yaml';
@@ -6,8 +15,14 @@ import {
 	success,
 	type CapabilityDescriptor,
 	type CommandEnvelope,
-} from '@coreloom/cli-protocol';
+} from '@flowdular/cli-protocol';
+import {
+	databaseProviderConfigFromEnvironment,
+	type ConfiguredDatabaseProvider,
+} from '@flowdular/database';
 import { capabilities, capability as coreCapability } from './capabilities.ts';
+import { createCliDatabaseProvider, databaseReset } from './database.ts';
+import { migrationScaffold } from './migration-new.ts';
 import { runDoctor } from './doctor.ts';
 import {
 	loadCliCommand,
@@ -71,7 +86,7 @@ function environmentRefusal(
 		);
 	}
 	const environment =
-		process.env.CL_ENV ?? process.env.NODE_ENV ?? 'development';
+		process.env.FD_ENV ?? process.env.NODE_ENV ?? 'development';
 	if (
 		descriptor.localOnly &&
 		environment !== 'development' &&
@@ -150,24 +165,39 @@ async function runExtensionCommand(
 	const invokedByCapability =
 		arguments_.positionals[0] === 'capability' &&
 		arguments_.positionals[1] === 'run';
-	const result = await command.execute({
-		workspaceRoot: workspace.root,
-		moduleRoot: extension.moduleRoot,
-		apply,
-		flags: arguments_.flags,
-		arguments: arguments_.positionals.slice(
-			invokedByCapability ? 3 : extension.command.path.length,
-		),
-	});
-	return success(result.data, {
-		evidence: result.evidence ?? [],
-		warnings: [
-			...(result.warnings ?? []),
-			...(!apply && descriptor.risk !== 'read'
-				? ['Dry run only. No writes were authorized.']
-				: []),
-		],
-	});
+	let databases: ConfiguredDatabaseProvider | undefined;
+	try {
+		const result = await command.execute({
+			workspaceRoot: workspace.root,
+			moduleRoot: extension.moduleRoot,
+			apply,
+			flags: arguments_.flags,
+			arguments: arguments_.positionals.slice(
+				invokedByCapability ? 3 : extension.command.path.length,
+			),
+			/* Built on first read, so a command that touches no database starts no
+			   embedded PostgreSQL and opens no pool. The runner owns it for the
+			   length of the command: an extension releases the leases it takes and
+			   never disposes the provider. */
+			get databases() {
+				databases ??= createCliDatabaseProvider(
+					databaseProviderConfigFromEnvironment(process.env, workspace.root),
+				);
+				return databases;
+			},
+		});
+		return success(result.data, {
+			evidence: result.evidence ?? [],
+			warnings: [
+				...(result.warnings ?? []),
+				...(!apply && descriptor.risk !== 'read'
+					? ['Dry run only. No writes were authorized.']
+					: []),
+			],
+		});
+	} finally {
+		await databases?.dispose();
+	}
 }
 
 export async function runCommand(
@@ -186,19 +216,21 @@ export async function runCommand(
 		if (!group || group === 'help' || arguments_.flags.has('help')) {
 			return success({
 				usage:
-					'coreloom [--root <workspace>] [--json] <doctor|capability|spec|blueprint|module|migration|setup> [action] [options]',
+					'flowdular [--root <workspace>] [--json] <doctor|capability|spec|blueprint|module|migration|database|setup> [action] [options]',
 				commands: [
 					'doctor',
 					'capability list|describe <id>|run <id>',
 					'spec validate [--all]',
 					'blueprint list|validate --all',
-					'module list|validate|sync [--apply]|enable <id> [--apply]|disable <id> [--apply]|new <id> --spec <path> [--apply]',
-					'migration status [--module <id>]|apply --module <id> [--apply]|verify',
+					'module search [query]|info <id>|install <id[@version]> [--apply]|update <id[@version]> [--apply]|recover [--apply] [--registry <local-index>] ',
+					'module list|validate [--locked]|sync [--apply]|enable <id> [--apply]|disable <id> [--apply]|new <id> --spec <path> [--apply]',
+					'migration status [--module <id>]|apply --module <id> [--apply]|verify|new <name> --module <id> [--apply]',
+					'database reset [--module <id>] [--apply --confirm reset-database]',
 					'setup check|quick [--apply --confirm reset-local-auth]|migrate-state [--apply --confirm migrate-legacy-state]',
 					...extensionCommands.map((entry) => entry.command.path.join(' ')),
 				],
 				options: [
-					'--root <workspace>: operate on another workspace (defaults to the nearest coreloom.json above the current directory)',
+					'--root <workspace>: operate on another workspace (defaults to the nearest flowdular.json above the current directory)',
 					'--json: print the machine-readable envelope',
 					'--apply: perform writes; every write command is a dry run without it',
 					'--all: with "spec validate", also validate the platform specs under the configured specs root',
@@ -211,7 +243,7 @@ export async function runCommand(
 				(entry) => entry.command.capability.id === 'auth.greenfield.reset',
 			);
 			return greenfield
-				? runExtensionCommand(workspace, greenfield, arguments_)
+				? await runExtensionCommand(workspace, greenfield, arguments_)
 				: failure(
 						'AUTH_MODULE_REQUIRED',
 						'Quick setup requires the enabled auth.core module.',
@@ -261,7 +293,7 @@ export async function runCommand(
 					(entry) => entry.command.capability.id === target,
 				);
 				if (extension)
-					return runExtensionCommand(workspace, extension, arguments_);
+					return await runExtensionCommand(workspace, extension, arguments_);
 				if (target === 'workspace.doctor') {
 					const checks = await runDoctor(workspace);
 					return success({ checks });
@@ -274,6 +306,7 @@ export async function runCommand(
 					'migration.verify': ['migration', 'verify'],
 					'migration.apply.local': ['migration', 'apply'],
 					'workspace.state.migrate': ['setup', 'migrate-state'],
+					'database.reset.local': ['database', 'reset'],
 				};
 				const alias = aliases[target];
 				if (alias)
@@ -357,8 +390,43 @@ export async function runCommand(
 					);
 		}
 
+		if (group === 'database') {
+			if (action !== 'reset') {
+				return failure(
+					'USAGE_ERROR',
+					'Use database reset [--module <id>] [--apply --confirm reset-database].',
+				);
+			}
+			const descriptor = coreCapability('database.reset.local')!;
+			const refused =
+				environmentRefusal(descriptor) ?? writeRefusal(descriptor, arguments_);
+			if (refused) return refused;
+			return databaseReset(
+				workspace,
+				stringFlag(arguments_, 'module'),
+				arguments_.flags.has('apply'),
+			);
+		}
+
 		if (group === 'migration') {
 			const moduleFlag = stringFlag(arguments_, 'module');
+			if (action === 'new') {
+				if (!moduleFlag || !target) {
+					return failure(
+						'INPUT_REQUIRED',
+						'Use migration new <name> --module <id> [--apply].',
+					);
+				}
+				const descriptor = coreCapability('migration.scaffold')!;
+				const refused = writeRefusal(descriptor, arguments_);
+				if (refused) return refused;
+				return migrationScaffold(
+					workspace,
+					moduleFlag,
+					target,
+					arguments_.flags.has('apply'),
+				);
+			}
 			if (action === 'status') {
 				return migrationStatus(workspace, moduleFlag);
 			}
@@ -367,7 +435,7 @@ export async function runCommand(
 				if (!moduleFlag) {
 					return failure(
 						'INPUT_REQUIRED',
-						'--module <id> is required; migrations are applied one database at a time.',
+						'--module <id> is required; migrations are applied one module at a time.',
 					);
 				}
 				const descriptor = coreCapability('migration.apply.local')!;
@@ -383,18 +451,64 @@ export async function runCommand(
 			}
 			return failure(
 				'USAGE_ERROR',
-				'Use migration status [--module <id>], migration apply --module <id> [--apply], or migration verify.',
+				'Use migration status, migration apply --module <id>, migration verify, or migration new <name> --module <id>.',
 			);
 		}
 
+		if (group === 'module' && (action === 'search' || action === 'info')) {
+			const source = stringFlag(arguments_, 'source');
+			if (source && source !== 'official')
+				return failure('USAGE_ERROR', 'Only --source official is supported.');
+			const { catalog } = await loadModuleCatalog(
+				stringFlag(arguments_, 'registry'),
+			);
+			const releases = catalog.releases.filter((release) =>
+				action === 'info'
+					? release.manifest.id === target
+					: !target || release.manifest.id.includes(target),
+			);
+			if (action === 'info' && !releases.length)
+				return failure(
+					'MODULE_NOT_FOUND',
+					`No official module ${target ?? ''}.`,
+				);
+			return success({ releases });
+		}
+		if (group === 'module' && (action === 'install' || action === 'update')) {
+			if (!target)
+				return failure(
+					'USAGE_ERROR',
+					`Use module ${action} <id[@version]> [--apply].`,
+				);
+			const registry = stringFlag(arguments_, 'registry');
+			const report = await installModule(workspace, {
+				target,
+				apply: arguments_.flags.has('apply'),
+				update: action === 'update',
+				...(registry ? { registry } : {}),
+			});
+			return success(report, {
+				warnings: report.activationRequired
+					? [
+							'Source installation does not activate modules. Review the source, then use module enable <id> --apply to link packages and enable the module.',
+						]
+					: [],
+			});
+		}
+		if (group === 'module' && action === 'recover')
+			return success(
+				await recoverModuleInstall(workspace, arguments_.flags.has('apply')),
+			);
 		if (group === 'module' && action === 'list') {
-			const files = await findNamedFiles(workspace.root, 'module.json');
+			const files = await findModuleFiles(workspace);
 			return success({
 				modules: files.map((file) => relative(workspace.root, file)),
 			});
 		}
 
 		if (group === 'module' && action === 'validate') {
+			if (arguments_.flags.has('locked'))
+				await validateInstalledModules(workspace);
 			const moduleFlag = stringFlag(arguments_, 'module');
 			return validateModules(
 				workspace,
@@ -462,7 +576,7 @@ export async function runCommand(
 				);
 				if (!scopeSync) {
 					warnings.push(
-						'auth.core is not enabled, so module scopes were not granted. Run "coreloom auth sync-scopes --module <id> --apply" once it is.',
+						'auth.core is not enabled, so module scopes were not granted. Run "flowdular auth sync-scopes --module <id> --apply" once it is.',
 					);
 				} else {
 					const modulesToGrant = [
@@ -502,7 +616,7 @@ export async function runCommand(
 				},
 				{
 					evidence: [
-						'coreloom.json',
+						'flowdular.json',
 						'platform/package.json',
 						...report.files.map((file) => file.path),
 					],
@@ -518,7 +632,7 @@ export async function runCommand(
 				arguments_.flags.has('apply'),
 			);
 			return success(report, {
-				evidence: ['coreloom.json', ...report.files.map((file) => file.path)],
+				evidence: ['flowdular.json', ...report.files.map((file) => file.path)],
 				warnings: report.applied
 					? []
 					: [
@@ -560,7 +674,8 @@ export async function runCommand(
 			.sort(
 				(left, right) => right.command.path.length - left.command.path.length,
 			)[0];
-		if (extension) return runExtensionCommand(workspace, extension, arguments_);
+		if (extension)
+			return await runExtensionCommand(workspace, extension, arguments_);
 
 		return failure(
 			'USAGE_ERROR',
@@ -568,7 +683,9 @@ export async function runCommand(
 		);
 	} catch (error) {
 		return failure(
-			'COMMAND_FAILED',
+			error instanceof ModuleDistributionError || error instanceof RegistryError
+				? error.code
+				: 'COMMAND_FAILED',
 			error instanceof Error ? error.message : String(error),
 		);
 	}

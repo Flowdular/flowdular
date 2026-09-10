@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: profile.core
-specVersion: '1.3.0'
+specVersion: '1.5.0'
 status: approved
 name: Profile
 description: Allows a signed-in user to manage their own tenant-scoped display name and interface language, request a password change after confirming their current password, and review or end their own sessions.
@@ -15,7 +15,7 @@ capabilities:
 
 dependencies:
   - id: auth.core
-    range: '^1.0.0'
+    range: 0.10.0
 
 tenancy: required
 
@@ -28,6 +28,11 @@ invariants:
   - A user can read or change only the profile identified by their authenticated principal in the current tenant.
   - The trusted tenant identifier and user identifier come from the authenticated principal and are never accepted from request data.
   - Every profile query and mutation is scoped by both the trusted tenant identifier and authenticated principal identifier.
+  - Profile persistence uses a platform-provided database handle; module code never receives a connection string, owns a production pool, or reaches another module's database.
+  - Every runtime persistence operation executes inside a transaction carrying the authenticated tenant identifier, while every SQL statement also retains an explicit tenant predicate.
+  - PostgreSQL tables owned by profile.core enable and force row-level security, with USING and WITH CHECK policies bound to the transaction-local coreloom.tenant_id value.
+  - Migrations are declared as explicit PostgreSQL SQL; profile.core never rewrites placeholders or translates SQL between dialects.
+  - Adopting the adapter migration ledger on an existing profile schema preserves every profile and language-preference row and refuses a partially present schema.
   - A personal interface language is stored by authenticated account and tenant; a preference from another account or tenant is never returned or applied.
   - The server preference is authoritative after authentication; a tenant-and-account-scoped browser value is only an unavailable-server cache.
   - Only locales declared by profile.core can be stored as a personal interface language.
@@ -114,3 +119,18 @@ acceptanceScenarios:
     given: A user is signed in and has profile.self.manage.
     when: The user submits a locale that profile.core does not declare.
     then: The request fails without changing the stored preference or active server-backed language.
+
+  - id: PRESERVE-EXISTING-PROFILES
+    given: A profile database contains profile and language-preference rows created before the database adapter ledger was introduced.
+    when: profile.core starts against that schema for the first time.
+    then: The existing schema is adopted without replaying its migrations, every existing row is preserved, and subsequent starts leave the ledger and data unchanged.
+
+  - id: ENFORCE-POSTGRESQL-TENANT-BOUNDARY
+    given: profile.core runs on PostgreSQL and two tenants have profile records with the same account identifier.
+    when: A runtime transaction is bound to either tenant and reads or writes profile data.
+    then: Only that tenant's rows are visible or mutable, a transaction without a tenant is refused, and the forced row-level security policy rejects a row carrying another tenant identifier.
+
+  - id: RUN-ON-SUPPORTED-DATABASE-ADAPTERS
+    given: The platform provides profile.core a PostgreSQL database handle and a separate migration lease.
+    when: profile.core initializes its persistence runtime.
+    then: It applies or adopts the explicit PostgreSQL migrations, releases the migration lease, and serves the profile repository contract through the tenant-bound runtime lease.

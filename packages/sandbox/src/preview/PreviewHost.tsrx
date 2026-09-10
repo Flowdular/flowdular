@@ -2,8 +2,8 @@ import { useEffect, useMemo } from 'octane';
 import {
 	ApplicationShell,
 	type ModuleClientContribution,
-} from '@coreloom/client';
-import { Alert, EmptyState, Tag } from '@coreloom/ui';
+} from '@flowdular/client';
+import { Alert, EmptyState, Tag } from '@flowdular/ui';
 import { cell, createStore, useValue } from 'segment-state';
 import { Head } from '@octanejs/seo';
 import type { RenderRouteProps } from '@octanejs/vite-plugin';
@@ -16,7 +16,7 @@ import {
 	t,
 	useTranslation,
 } from '../client/i18n.ts';
-import '@coreloom/ui/styles';
+import '@flowdular/ui/styles';
 import '../styles.css';
 
 registerSandboxTranslations();
@@ -72,6 +72,7 @@ interface PreviewModuleInfo {
 	readonly id: string;
 	readonly directory: string;
 	readonly hasClient: boolean;
+	readonly support?: boolean;
 }
 
 async function signInPreview(sessionId: string): Promise<{
@@ -125,8 +126,14 @@ async function signInPreview(sessionId: string): Promise<{
 
 /* Draft sources are served through a sandbox route that names the session and
    the module directory, never through a host file system path. */
-function clientEntry(sessionId: string, directory: string): string {
-	return `/preview-module/${encodeURIComponent(sessionId)}/${encodeURIComponent(
+function clientEntry(
+	sessionId: string,
+	directory: string,
+	support = false,
+): string {
+	return `/${
+		support ? 'preview-support' : 'preview-module'
+	}/${encodeURIComponent(sessionId)}/${encodeURIComponent(
 		directory,
 	)}/src/client/index.ts`;
 }
@@ -196,13 +203,13 @@ function installSelection(enabled: boolean): () => void {
 		event.preventDefault();
 		event.stopPropagation();
 		const view =
-			target.closest('[data-coreloom-view]')?.getAttribute(
-				'data-coreloom-view',
+			target.closest('[data-flowdular-view]')?.getAttribute(
+				'data-flowdular-view',
 			) ??
 				'';
 		window.parent.postMessage(
 			{
-				type: 'coreloom:selection',
+				type: 'flowdular:selection',
 				label: (target.textContent ?? '').trim().slice(0, 80) ||
 					target.tagName.toLowerCase(),
 				selector: describe(target),
@@ -278,7 +285,7 @@ export function PreviewHost(props?: RenderRouteProps) @{
 				for (const module of identity.modules) {
 					if (!module.hasClient) continue;
 					const loaded = await importDraftModule(
-						clientEntry(sessionId, module.directory),
+						clientEntry(sessionId, module.directory, module.support),
 					);
 					if (!loaded.createClientContribution) {
 						missing.push(module.id);
@@ -290,7 +297,11 @@ export function PreviewHost(props?: RenderRouteProps) @{
 					});
 					created.push(contribution);
 					const entry = contribution.navigation?.[0]?.viewId ?? '';
-					if (entry && (!opening || module.directory === openOn)) {
+					if (
+						entry &&
+							(!opening || !module.support && !openOn ||
+								module.directory === openOn)
+					) {
 						opening = entry;
 					}
 				}

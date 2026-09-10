@@ -1,4 +1,4 @@
-import { t, type Translate } from '@coreloom/client/i18n';
+import { t, type Translate } from '@flowdular/client/i18n';
 import type { SettingsEntryPayload } from './settings-api.ts';
 
 export interface LocalizedSettingCopy {

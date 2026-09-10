@@ -1,13 +1,16 @@
 import type {
 	PlatformServerComposition,
 	PlatformServerContext,
-} from '@coreloom/module-auth/server';
+} from '@flowdular/module-auth/server';
 import {
 	createWorkflowsRoutes,
 	createWorkflowsRuntime,
 	workflowsRuntimeOptionsFromEnvironment,
 } from './server/index.ts';
-import { WORKFLOW_EXECUTION_CAPABILITY } from './domain/types.ts';
+import {
+	WORKFLOW_EXECUTION_CAPABILITY,
+	type WorkflowExecutionCapability,
+} from './domain/types.ts';
 
 export function createServerComposition(
 	context: PlatformServerContext,
@@ -17,12 +20,26 @@ export function createServerComposition(
 			context.environment,
 			context.workspaceRoot,
 		),
+		databases: context.databases,
 		capabilities: context.capabilities,
 	});
-	context.capabilities.register(
-		WORKFLOW_EXECUTION_CAPABILITY,
-		runtime.service().executionCapability(),
-	);
+	/* The runtime opens its database leases lazily, so the capability is a
+	   forwarder rather than a resolved object: registration must not force a
+	   connection at composition time. */
+	const capability = async () =>
+		(await runtime.service()).executionCapability();
+	context.capabilities.register(WORKFLOW_EXECUTION_CAPABILITY, {
+		listPublished: async (contextValue) =>
+			(await capability()).listPublished(contextValue),
+		getPublishedReference: async (workflowKey, contextValue) =>
+			(await capability()).getPublishedReference(workflowKey, contextValue),
+		enqueue: async (request, contextValue) =>
+			(await capability()).enqueue(request, contextValue),
+		getRun: async (runId, contextValue) =>
+			(await capability()).getRun(runId, contextValue),
+		cancel: async (runId, contextValue) =>
+			(await capability()).cancel(runId, contextValue),
+	} satisfies WorkflowExecutionCapability);
 	return {
 		routes: createWorkflowsRoutes(context.auth, runtime),
 		start: () => runtime.start(),

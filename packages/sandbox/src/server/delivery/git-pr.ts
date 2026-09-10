@@ -1,7 +1,8 @@
+import { sandboxDirectory } from '../config.ts';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { redactSecrets } from '@coreloom/ai-provider';
+import { join, relative } from 'node:path';
+import { redactSecrets } from '@flowdular/ai-provider';
 import type { GateResult } from '../gates.ts';
 import {
 	basePathOf,
@@ -56,11 +57,13 @@ import type {
 	GitDeliveryPlan,
 } from './types.ts';
 
-const WORKTREES_DIRECTORY = '.coreloom/sandbox/worktrees';
+function worktreesDirectory(root: string): string {
+	return relative(root, join(sandboxDirectory(root), 'worktrees'));
+}
 /* Written by module enable and pnpm install; they travel in the module's
    commit (.ai/blueprints/new-module/allowed-paths.yaml, cliOwned). */
 const COMPOSITION_PATHS = [
-	'coreloom.json',
+	'flowdular.json',
 	'platform/package.json',
 	'platform/src/generated/**',
 ] as const;
@@ -220,7 +223,9 @@ function safeExternalText(value: string, providerToken: string | null): string {
 	return safe;
 }
 
-async function runner(context: DeliveryContext): Promise<Run> {
+export async function gitDeliveryRunner(
+	context: DeliveryContext,
+): Promise<Run> {
 	const token = context.gitProviderToken
 		? await context.gitProviderToken()
 		: null;
@@ -298,7 +303,7 @@ function evaluateGuardrails(input: {
 	}
 	if (input.changedFiles > input.budget.maxChangedFiles) {
 		reasons.push(
-			`${input.changedFiles} changed files exceed the budget of ${input.budget.maxChangedFiles} (sandbox.delivery.maxChangedFiles in coreloom.json, else .ai/policies/task-budgets.yaml).`,
+			`${input.changedFiles} changed files exceed the budget of ${input.budget.maxChangedFiles} (sandbox.delivery.maxChangedFiles in flowdular.json, else .ai/policies/task-budgets.yaml).`,
 		);
 	}
 	if (input.newDependencies.length > input.budget.maxNewDependencies) {
@@ -348,13 +353,18 @@ async function assertWorktreeDirectoryIgnored(
 ): Promise<void> {
 	const ignored = await run(
 		'git',
-		['check-ignore', '--quiet', '--no-index', `${WORKTREES_DIRECTORY}/.probe`],
+		[
+			'check-ignore',
+			'--quiet',
+			'--no-index',
+			`${worktreesDirectory(cwd)}/.probe`,
+		],
 		cwd,
 	);
 	if (ignored.code !== 0) {
 		throw new SandboxSetupError(
 			'GIT_WORKTREE_DIRECTORY_NOT_IGNORED',
-			`The ${WORKTREES_DIRECTORY} directory is not ignored by Git. Add .coreloom/ to .gitignore before pull request delivery so the active checkout stays unchanged.`,
+			`The ${worktreesDirectory(cwd)} directory is not ignored by Git. Add .flowdular/ to .gitignore before pull request delivery so the active checkout stays unchanged.`,
 		);
 	}
 }
@@ -521,7 +531,7 @@ async function withTemporaryFile<T>(
 	content: string,
 	use: (path: string) => Promise<T>,
 ): Promise<T> {
-	const directory = await mkdtemp(join(tmpdir(), 'coreloom-delivery-'));
+	const directory = await mkdtemp(join(tmpdir(), 'flowdular-delivery-'));
 	try {
 		const path = join(directory, 'message.md');
 		await writeFile(path, content, 'utf8');
@@ -720,7 +730,7 @@ function pullRequestBody(input: {
 	);
 	for (const module of input.modules) {
 		lines.push(
-			`Post-merge: \`pnpm coreloom auth sync-scopes --module ${module.id} --apply\` against the deployment database.`,
+			`Post-merge: \`pnpm flowdular auth sync-scopes --module ${module.id} --apply\` against the deployment database.`,
 		);
 	}
 	if (input.requireReviewer && input.owners.length > 1) {
@@ -849,15 +859,17 @@ async function openPullRequest(
 			'list',
 			...repositoryArgs,
 			'--head',
-			git.head,
+			git.branch,
 			'--state',
 			'open',
 			'--limit',
 			'1',
 			'--json',
-			'url',
+			'url,headRepositoryOwner',
 			'--jq',
-			'.[0].url',
+			git.deliveryMode === 'fork'
+				? `.[] | select(.headRepositoryOwner.login == ${JSON.stringify(git.forkOwner)}) | .url`
+				: '.[0].url',
 		],
 		worktree,
 	);
@@ -911,7 +923,7 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 		available: async (context) => {
 			const config = context.delivery ?? DEFAULT_DELIVERY_CONFIGURATION;
 			const root = context.workspaceRoot;
-			const run = await runner(context);
+			const run = await gitDeliveryRunner(context);
 			const head = await run(
 				'git',
 				['rev-parse', '--verify', '--quiet', 'HEAD'],
@@ -1020,7 +1032,7 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 				...modules.map((module) => `modules/${module.directory}/module.json`),
 				...(enable ? ['platform/package.json'] : []),
 			]);
-			const run = await runner(context);
+			const run = await gitDeliveryRunner(context);
 			const remoteUrl = (
 				await run('git', ['remote', 'get-url', config.git.remote], root)
 			).output.trim();
@@ -1069,7 +1081,7 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 					forkOwner: destination.forkOwner,
 					forkRequired: destination.forkRequired,
 					head: destination.head,
-					worktreePath: join(WORKTREES_DIRECTORY, context.session.id),
+					worktreePath: join(worktreesDirectory(root), context.session.id),
 					allowedPaths: [
 						...modules.map((module) => `modules/${module.directory}/**`),
 						...(enable ? COMPOSITION_PATHS : []),
@@ -1114,7 +1126,7 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 			inFlight.add(session.id);
 			const root = context.workspaceRoot;
 			const worktree = join(root, git.worktreePath);
-			const run = await runner(context);
+			const run = await gitDeliveryRunner(context);
 			const recorder = createStepRecorder(emit);
 			const { record } = recorder;
 			const assertOk = (id: string, result: CommandResult): void => {
@@ -1207,7 +1219,7 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 				);
 
 				emit('worktree.started', {});
-				await mkdir(join(root, WORKTREES_DIRECTORY), { recursive: true });
+				await mkdir(join(root, worktreesDirectory(root)), { recursive: true });
 				if (await exists(worktree)) await removeWorktree(run, root, worktree);
 				record(
 					'worktree',

@@ -1,4 +1,8 @@
 import {
+	flowdularEnvironment,
+	flowdularStateDirectory,
+} from '@flowdular/kernel/runtime-config';
+import {
 	createCipheriv,
 	createDecipheriv,
 	createHash,
@@ -7,11 +11,23 @@ import {
 import { constants } from 'node:fs';
 import { chmod, lstat, mkdir, open } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { SandboxRuntimeMode } from '@coreloom/coding-agent';
-import type { AiProviderKind } from '@coreloom/ai-provider';
+import type { SandboxRuntimeMode } from '@flowdular/coding-agent';
+import type { AiProviderKind } from '@flowdular/ai-provider';
 import { SandboxSetupError } from './workspace-root.ts';
 
-export const SANDBOX_DIRECTORY = '.coreloom/sandbox';
+export const SANDBOX_DIRECTORY = '.flowdular/sandbox';
+
+export function sandboxDirectory(workspaceRoot: string): string {
+	// The parent selects this path before applying the worker filesystem ceiling.
+	// A worker cannot inspect sibling state roots to rediscover that selection.
+	if (process.env.FD_INTERNAL_SANDBOX_PREVIEW_WORKER === '1') {
+		const root = process.env.FD_INTERNAL_SANDBOX_STATE_ROOT;
+		if (root !== '.flowdular' && root !== '.coreloom')
+			throw new Error('Missing preview state root.');
+		return join(workspaceRoot, root, 'sandbox');
+	}
+	return join(flowdularStateDirectory(workspaceRoot), 'sandbox');
+}
 
 export type PreviewDataMode = 'fixtures' | 'bridge';
 
@@ -33,7 +49,7 @@ export type GitHubDeliveryMode = 'auto' | 'direct' | 'fork';
 
 /* Repository delivery is local sandbox configuration, not project source.
    One operator can use a fork while another can push directly without either
-   changing coreloom.json for the whole team. */
+   changing flowdular.json for the whole team. */
 export interface GitHubDeliveryConfiguration {
 	readonly enabled: boolean;
 	/* False keeps the repository-owned sandbox.delivery.git values authoritative.
@@ -53,7 +69,7 @@ export interface GitHubDeliveryConfiguration {
 export interface SandboxConfiguration {
 	readonly version: 1;
 	readonly mode: SandboxRuntimeMode;
-	/* Origin of the Coreloom application this sandbox connects to. It may be a
+	/* Origin of the Flowdular application this sandbox connects to. It may be a
 	   local development server or a remote deployment. */
 	readonly platformUrl: string;
 	readonly platformToken: SealedSecret | null;
@@ -192,11 +208,11 @@ export function resolveGitHubConfiguration(
 }
 
 function configPath(workspaceRoot: string): string {
-	return join(workspaceRoot, SANDBOX_DIRECTORY, 'config.json');
+	return join(sandboxDirectory(workspaceRoot), 'config.json');
 }
 
 function keyPath(workspaceRoot: string): string {
-	return join(workspaceRoot, SANDBOX_DIRECTORY, 'secret.key');
+	return join(sandboxDirectory(workspaceRoot), 'secret.key');
 }
 
 function unsafeLocalPath(path: string): SandboxSetupError {
@@ -212,8 +228,8 @@ async function assertSafeLocalPath(
 	createDirectory: boolean,
 ): Promise<void> {
 	for (const directory of [
-		join(workspaceRoot, '.coreloom'),
-		join(workspaceRoot, SANDBOX_DIRECTORY),
+		flowdularStateDirectory(workspaceRoot),
+		sandboxDirectory(workspaceRoot),
 	]) {
 		try {
 			const info = await lstat(directory);
@@ -355,7 +371,7 @@ export function assertPlatformUrl(value: string): string {
 /* The launcher decides the mode from the interface it actually bound, so a
    stored configuration can never grant loopback trust to a public listener. */
 function modeFromEnvironment(stored: SandboxRuntimeMode): SandboxRuntimeMode {
-	const value = process.env.CL_SANDBOX_MODE;
+	const value = flowdularEnvironment(process.env).FD_SANDBOX_MODE;
 	if (value === 'loopback' || value === 'self-hosted') return value;
 	return stored;
 }

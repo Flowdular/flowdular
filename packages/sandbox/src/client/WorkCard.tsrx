@@ -1,5 +1,5 @@
 import { useEffect } from 'octane';
-import { Button, Icon, Tag } from '@coreloom/ui';
+import { Button, Icon, Tag } from '@flowdular/ui';
 import type { SandboxSession } from '../server/sessions.ts';
 import { DiffPane, type ModuleDiff } from './DiffPane.tsrx';
 import { useTranslation } from './i18n.ts';

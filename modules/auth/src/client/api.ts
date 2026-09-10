@@ -1,4 +1,5 @@
-import { setTenantDefaultLocale, t } from '@coreloom/client/i18n';
+import { applicationPath } from '@flowdular/client/routing';
+import { setTenantDefaultLocale, t } from '@flowdular/client/i18n';
 import type { AuthPrincipal } from '../domain/types.ts';
 import type { AuthClientState } from './state.ts';
 
@@ -219,7 +220,7 @@ export async function signIn(
 			throw new AuthClientApiError(500, t('auth.error.request'));
 		}
 		commitSession(auth, body);
-		history.replaceState(null, '', '/app');
+		history.replaceState(null, '', applicationPath());
 	} catch (error) {
 		commitAnonymous(
 			auth,
@@ -316,7 +317,7 @@ export async function completeMfaChallenge(
 			transaction.set(auth.state.mfaChallengeToken, '');
 			transaction.set(auth.state.mfaRecoveryMode, false);
 		}, 'auth/mfa-complete');
-		history.replaceState(null, '', '/app');
+		history.replaceState(null, '', applicationPath());
 	} catch (error) {
 		auth.store.act((transaction) => {
 			transaction.set(auth.state.status, 'anonymous');
@@ -348,7 +349,7 @@ export async function enrollMfa(
 ): Promise<MfaEnrollmentPayload> {
 	return sessionMutation(
 		'/api/auth/mfa/enroll',
-		{ issuer: 'Coreloom' },
+		{ issuer: 'Flowdular' },
 		csrfToken,
 	);
 }
@@ -411,7 +412,7 @@ export async function signUp(
 			return;
 		}
 		commitSession(auth, await payload(response));
-		history.replaceState(null, '', '/app');
+		history.replaceState(null, '', applicationPath());
 	} catch (error) {
 		commitAnonymous(
 			auth,

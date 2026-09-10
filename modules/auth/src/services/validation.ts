@@ -44,6 +44,13 @@ function validateEmail(email: string): void {
 	}
 }
 
+/* The address rule sign-up enforces, for a caller that holds only an address. */
+export function validateEmailAddress(value: string): string {
+	const email = normalizeEmail(value);
+	validateEmail(email);
+	return email;
+}
+
 export function assertPasswordPolicy(
 	password: string,
 	minLength = DEFAULT_PASSWORD_MIN_LENGTH,

@@ -1,31 +1,36 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SqliteAgentRepository } from '../src/services/sqlite-repository.ts';
+import type { DatabaseAdapterLease } from '@flowdular/database';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import {
+	openAgentsTestDatabase,
+	type AgentsTestDatabase,
+} from './support/database.ts';
 
-/* The chain is verified against a file-backed database so the test can tamper a
-   stored row through a second connection, the way an attacker with disk access
-   would, and then re-verify through the repository. */
+/* The chain is verified against a real PostgreSQL so the test can tamper a
+   stored row through the schema owner, the way an operator with direct
+   database access would, and then re-verify through the repository. */
 describe('agent audit chain verification', () => {
-	let dir: string;
-	let path: string;
-	let repository: SqliteAgentRepository;
+	let database: AgentsTestDatabase;
+	let owner: DatabaseAdapterLease;
 
-	beforeEach(() => {
-		dir = mkdtempSync(join(tmpdir(), 'agents-audit-'));
-		path = join(dir, 'agents.db');
-		repository = new SqliteAgentRepository(path);
+	beforeAll(async () => {
+		database = await openAgentsTestDatabase();
+		owner = await database.databases.acquire({
+			namespace: 'agents.core',
+			purpose: 'migration',
+		});
 	});
 
-	afterEach(() => {
-		repository.close();
-		rmSync(dir, { recursive: true, force: true });
+	beforeEach(async () => {
+		await database.truncate();
 	});
 
-	function append(subjectId: string, occurredAt: number, key: string) {
-		return repository.appendAuditEvent({
+	afterAll(async () => {
+		await owner?.release();
+		await database.dispose();
+	});
+
+	async function append(subjectId: string, occurredAt: number, key: string) {
+		return await database.repository.appendAuditEvent({
 			tenantId: 'tenant-a',
 			actorId: 'account-a',
 			action: 'agent.updated',
@@ -36,28 +41,33 @@ describe('agent audit chain verification', () => {
 		});
 	}
 
-	it('verifies an untouched chain and reports the row that was altered', () => {
-		append('agent-1', 1_000, 'first');
-		const second = append('agent-2', 2_000, 'second');
-		append('agent-3', 3_000, 'third');
+	it('verifies an untouched chain and reports the row that was altered', async () => {
+		await append('agent-1', 1_000, 'first');
+		const second = await append('agent-2', 2_000, 'second');
+		await append('agent-3', 3_000, 'third');
 
-		expect(repository.verifyAuditChainDetailed('tenant-a')).toEqual({
+		expect(
+			await database.repository.verifyAuditChainDetailed('tenant-a'),
+		).toEqual({
 			verified: true,
 			brokenAt: null,
 		});
 
-		const tamper = new DatabaseSync(path);
-		tamper
-			.prepare(
-				'UPDATE agent_audit_events_v4 SET metadata_json = ? WHERE id = ?',
-			)
-			.run('{"key":"tampered"}', second.id);
-		tamper.close();
+		await owner.database.transaction(
+			(transaction) =>
+				transaction.execute({
+					text: `UPDATE agent_audit_events_v4 SET metadata_json = $1 WHERE id = $2`,
+					parameters: ['{"key":"tampered"}', second.id],
+				}),
+			{ access: 'write', tenantId: 'tenant-a' },
+		);
 
-		expect(repository.verifyAuditChainDetailed('tenant-a')).toEqual({
+		expect(
+			await database.repository.verifyAuditChainDetailed('tenant-a'),
+		).toEqual({
 			verified: false,
 			brokenAt: second.id,
 		});
-		expect(repository.verifyAuditChain('tenant-a')).toBe(false);
+		expect(await database.repository.verifyAuditChain('tenant-a')).toBe(false);
 	});
 });

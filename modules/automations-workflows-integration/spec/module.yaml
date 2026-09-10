@@ -9,9 +9,9 @@ capabilities:
   - integration
 dependencies:
   - id: automations.core
-    range: ^0.2.0
+    range: 0.4.0
   - id: workflows.core
-    range: ^0.1.0
+    range: 0.3.0
 tenancy: required
 locales:
   - en

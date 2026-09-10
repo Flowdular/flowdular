@@ -1,5 +1,5 @@
-import { Alert, Button, FormField } from '@coreloom/ui';
-import { t } from '@coreloom/client';
+import { Alert, Button, FormField } from '@flowdular/ui';
+import { t } from '@flowdular/client';
 import type { PasswordFormValues } from './password.ts';
 
 export interface PasswordCardProps {

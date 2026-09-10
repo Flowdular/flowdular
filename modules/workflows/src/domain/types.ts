@@ -1,4 +1,4 @@
-import type { Actor } from '@coreloom/kernel';
+import type { Actor } from '@flowdular/kernel';
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue =
@@ -477,7 +477,7 @@ export interface WorkflowInvocationContext {
 	readonly tenantId: string;
 	readonly actor: Actor;
 	/* Actor is audit provenance. This user is the live authorization subject. */
-	readonly authorizationSubject?: import('@coreloom/kernel').UserActor;
+	readonly authorizationSubject?: import('@flowdular/kernel').UserActor;
 	readonly origin: WorkflowExecutionOrigin;
 	readonly permissionSnapshot: readonly string[];
 }
@@ -485,7 +485,7 @@ export interface WorkflowInvocationContext {
 export interface WorkflowCapabilityContext {
 	readonly tenantId: string;
 	readonly actor: Actor;
-	readonly authorizationSubject?: import('@coreloom/kernel').UserActor;
+	readonly authorizationSubject?: import('@flowdular/kernel').UserActor;
 	readonly permissionSnapshot: readonly string[];
 }
 
@@ -520,11 +520,11 @@ export interface WorkflowPublishedInspection
 export interface WorkflowExecutionCapability {
 	listPublished(
 		context: WorkflowCapabilityContext,
-	): readonly WorkflowPublishedReference[];
+	): Promise<readonly WorkflowPublishedReference[]>;
 	getPublishedReference(
 		workflowKey: string,
 		context: WorkflowCapabilityContext,
-	): WorkflowPublishedInspection | null;
+	): Promise<WorkflowPublishedInspection | null>;
 	enqueue(
 		request: WorkflowEnqueueRequest,
 		context: WorkflowInvocationContext,
@@ -532,11 +532,11 @@ export interface WorkflowExecutionCapability {
 	getRun(
 		runId: string,
 		context: WorkflowCapabilityContext,
-	): WorkflowRunSummary | null;
+	): Promise<WorkflowRunSummary | null>;
 	cancel(
 		runId: string,
 		context: WorkflowCapabilityContext,
-	): WorkflowCancellationResult;
+	): Promise<WorkflowCancellationResult>;
 }
 
 export const WORKFLOW_EXECUTION_CAPABILITY = 'workflows.execution.v1';

@@ -1,4 +1,4 @@
-import { t } from '@coreloom/client';
+import { t } from '@flowdular/client';
 import type {
 	WorkflowDryRunResponseV1,
 	WorkflowGraphV1,

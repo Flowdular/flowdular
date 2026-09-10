@@ -4,8 +4,8 @@ import {
 	jsonResponse,
 	readJsonObject,
 	requiredString,
-} from '@coreloom/server';
-import { endpointIdentityFromContext } from '@coreloom/module-auth/server';
+} from '@flowdular/server';
+import { endpointIdentityFromContext } from '@flowdular/module-auth/server';
 import { CUSTOMER_PERMISSIONS } from '../acl/permissions.ts';
 import type { CustomerRuntime } from '../server/runtime.ts';
 

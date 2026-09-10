@@ -1,4 +1,4 @@
-import { activeLocale, t } from '@coreloom/client/i18n';
+import { activeLocale, t } from '@flowdular/client/i18n';
 import type { AuditRow } from './api.ts';
 
 export type AuditTone = 'danger' | 'warning' | 'neutral' | 'info';

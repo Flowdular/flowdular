@@ -10,26 +10,40 @@ write:
   - modules/*/src/platform.ts
   - docs/**
   - .ai/**
+  - .agents/skills/**
+  - .claude/skills/**
   - AGENTS.md
   - CLAUDE.md
+  - rulesync.jsonc
+  - package.json
+  - pnpm-workspace.yaml
 deny:
   - platform/src/generated/**
-  - coreloom.json
+  - flowdular.json
   - infra/**
   - .github/**
   - pnpm-lock.yaml (only through pnpm install)
 notes:
   - modules/** beyond the listed files belong to edit-module; a consumer migration touches only the lines the contract change forces
+  - AGENTS.md, CLAUDE.md, .agents/skills and .claude/skills are written only by pnpm rules:generate
 # Written only by CLI commands, never by hand. The eject and the direct path
 # both run the commands; the files still travel in the same commit.
 cliOwned:
-  - path: coreloom.json
-    command: pnpm coreloom module enable <id> --apply
+  - path: flowdular.json
+    command: pnpm flowdular module enable <id> --apply
   - path: platform/package.json
-    command: pnpm coreloom module enable <id> --apply
+    command: pnpm flowdular module enable <id> --apply
   - path: platform/src/generated/modules.server.ts
-    command: pnpm coreloom module sync --apply
+    command: pnpm flowdular module sync --apply
   - path: platform/src/generated/modules.client.ts
-    command: pnpm coreloom module sync --apply
+    command: pnpm flowdular module sync --apply
   - path: pnpm-lock.yaml
     command: pnpm install
+  - path: AGENTS.md
+    command: pnpm rules:generate
+  - path: CLAUDE.md
+    command: pnpm rules:generate
+  - path: .agents/skills
+    command: pnpm rules:generate
+  - path: .claude/skills
+    command: pnpm rules:generate

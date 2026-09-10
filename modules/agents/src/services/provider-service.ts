@@ -4,8 +4,8 @@ import {
 	probeVercelAiSdkProvider,
 	type AgentProvider,
 	type VercelAiProviderConfiguration,
-} from '@coreloom/harness';
-import { modelSupportsTemperature } from '@coreloom/harness/catalog';
+} from '@flowdular/harness';
+import { modelSupportsTemperature } from '@flowdular/harness/catalog';
 import type {
 	AgentModelReadiness,
 	AgentProviderConnection,
@@ -305,28 +305,35 @@ export class AgentProviderService {
 			: this.options.hostAllowlist;
 	}
 
-	list(tenantId: string): readonly AgentProviderConnection[] {
+	async list(tenantId: string): Promise<readonly AgentProviderConnection[]> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
 		return [
 			localConnection(trustedTenantId),
-			...this.repository.list(trustedTenantId),
+			...(await this.repository.list(trustedTenantId)),
 		];
 	}
 
-	get(tenantId: string, id: string): AgentProviderConnection | null {
+	async get(
+		tenantId: string,
+		id: string,
+	): Promise<AgentProviderConnection | null> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
 		if (id === LOCAL_PROVIDER_ID) return localConnection(trustedTenantId);
 		return (
-			this.repository.get(trustedTenantId, bounded(id, 'provider id', 1, 128))
-				?.connection ?? null
+			(
+				await this.repository.get(
+					trustedTenantId,
+					bounded(id, 'provider id', 1, 128),
+				)
+			)?.connection ?? null
 		);
 	}
 
-	create(
+	async create(
 		tenantId: string,
 		actorId: string,
 		input: CreateAgentProviderInput,
-	): AgentProviderConnection {
+	): Promise<AgentProviderConnection> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
 		const actor = bounded(actorId, 'actorId', 1, 128);
 		const kind = providerKind(input.kind);
@@ -372,14 +379,14 @@ export class AgentProviderService {
 			updatedAt: now,
 		};
 		try {
-			const created = this.repository.create({
+			const created = await this.repository.create({
 				connection,
 				credential: this.credentials.encrypt(
 					bounded(input.credential, 'credential', 8, 16_384),
 					credentialContext(connection),
 				),
 			});
-			this.audit.appendAuditEvent({
+			await this.audit.appendAuditEvent({
 				tenantId: trustedTenantId,
 				actorId: actor,
 				action: 'agent-provider.created',
@@ -401,14 +408,14 @@ export class AgentProviderService {
 		}
 	}
 
-	update(
+	async update(
 		tenantId: string,
 		actorId: string,
 		input: UpdateAgentProviderInput,
-	): AgentProviderConnection {
+	): Promise<AgentProviderConnection> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
 		const actor = bounded(actorId, 'actorId', 1, 128);
-		const stored = this.repository.get(
+		const stored = await this.repository.get(
 			trustedTenantId,
 			bounded(input.id, 'provider id', 1, 128),
 		);
@@ -481,20 +488,28 @@ export class AgentProviderService {
 					credentialContext(connection),
 				)
 			: stored.credential;
-		const updated = this.repository.update({ connection, credential });
+		const updated = await this.repository.update({ connection, credential });
 		/* Evidence that no longer describes anything reachable. */
 		if (credentialChanged) {
-			this.repository.clearReadiness(trustedTenantId, connection.id, null);
+			await this.repository.clearReadiness(
+				trustedTenantId,
+				connection.id,
+				null,
+			);
 		} else {
 			const dropped = removedModels(
 				stored.connection.models,
 				nextConfiguration.models,
 			);
 			if (dropped.length > 0) {
-				this.repository.clearReadiness(trustedTenantId, connection.id, dropped);
+				await this.repository.clearReadiness(
+					trustedTenantId,
+					connection.id,
+					dropped,
+				);
 			}
 		}
-		this.audit.appendAuditEvent({
+		await this.audit.appendAuditEvent({
 			tenantId: trustedTenantId,
 			actorId: actor,
 			action: credentialChanged
@@ -512,12 +527,12 @@ export class AgentProviderService {
 		return updated;
 	}
 
-	delete(
+	async delete(
 		tenantId: string,
 		actorId: string,
 		providerId: string,
 		expectedRevision: number,
-	): void {
+	): Promise<void> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
 		const actor = bounded(actorId, 'actorId', 1, 128);
 		const id = bounded(providerId, 'provider id', 1, 128);
@@ -528,7 +543,7 @@ export class AgentProviderService {
 				409,
 			);
 		}
-		const stored = this.repository.get(trustedTenantId, id);
+		const stored = await this.repository.get(trustedTenantId, id);
 		if (!stored) {
 			throw new AgentProviderServiceError(
 				'PROVIDER_NOT_FOUND',
@@ -543,7 +558,7 @@ export class AgentProviderService {
 				409,
 			);
 		}
-		const usage = this.audit.providerUsage(trustedTenantId, id);
+		const usage = await this.audit.providerUsage(trustedTenantId, id);
 		if (usage.definitions > 0 || usage.pendingRuns > 0) {
 			throw new AgentProviderServiceError(
 				'PROVIDER_IN_USE',
@@ -551,14 +566,14 @@ export class AgentProviderService {
 				409,
 			);
 		}
-		if (!this.repository.delete(trustedTenantId, id)) {
+		if (!(await this.repository.delete(trustedTenantId, id))) {
 			throw new AgentProviderServiceError(
 				'PROVIDER_NOT_FOUND',
 				'Provider connection not found.',
 				404,
 			);
 		}
-		this.audit.appendAuditEvent({
+		await this.audit.appendAuditEvent({
 			tenantId: trustedTenantId,
 			actorId: actor,
 			action: 'agent-provider.deleted',
@@ -583,7 +598,7 @@ export class AgentProviderService {
 		const id = bounded(providerId, 'provider id', 1, 128);
 		const actor = bounded(actorId, 'actorId', 1, 128);
 		if (id === LOCAL_PROVIDER_ID) return localConnection(trustedTenantId);
-		const stored = this.repository.get(trustedTenantId, id);
+		const stored = await this.repository.get(trustedTenantId, id);
 		if (!stored) {
 			throw new AgentProviderServiceError(
 				'PROVIDER_NOT_FOUND',
@@ -599,7 +614,7 @@ export class AgentProviderService {
 				429,
 			);
 		}
-		return this.#probeModel(trustedTenantId, stored, model, actor);
+		return await this.#probeModel(trustedTenantId, stored, model, actor);
 	}
 
 	#probeKey(tenantId: string, providerId: string, modelId: string): string {
@@ -640,7 +655,7 @@ export class AgentProviderService {
 			);
 		}
 		const checkedAt = this.#now();
-		const updated = this.repository.recordReadiness(
+		const updated = await this.repository.recordReadiness(
 			trustedTenantId,
 			id,
 			model.id,
@@ -653,7 +668,7 @@ export class AgentProviderService {
 			actor,
 			checkedAt,
 		);
-		this.audit.appendAuditEvent({
+		await this.audit.appendAuditEvent({
 			tenantId: trustedTenantId,
 			actorId: actor,
 			action: 'agent-provider.readiness-tested',
@@ -670,7 +685,11 @@ export class AgentProviderService {
 		return updated;
 	}
 
-	assertUsable(tenantId: string, providerId: string, modelId: string): void {
+	async assertUsable(
+		tenantId: string,
+		providerId: string,
+		modelId: string,
+	): Promise<void> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
 		if (providerId === LOCAL_PROVIDER_ID) {
 			if (modelId !== LOCAL_MODEL_ID) {
@@ -682,7 +701,7 @@ export class AgentProviderService {
 			}
 			return;
 		}
-		const stored = this.repository.get(
+		const stored = await this.repository.get(
 			trustedTenantId,
 			bounded(providerId, 'provider id', 1, 128),
 		);
@@ -697,13 +716,13 @@ export class AgentProviderService {
 		this.assertUsableConnection(stored.connection, modelId);
 	}
 
-	supportsStructuredOutput(
+	async supportsStructuredOutput(
 		tenantId: string,
 		providerId: string,
 		modelId: string,
-	): boolean {
+	): Promise<boolean> {
 		if (providerId === LOCAL_PROVIDER_ID) return false;
-		const stored = this.repository.get(
+		const stored = await this.repository.get(
 			bounded(tenantId, 'tenantId', 1, 128),
 			bounded(providerId, 'provider id', 1, 128),
 		);
@@ -725,10 +744,10 @@ export class AgentProviderService {
 	): Promise<void> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
 		if (providerId === LOCAL_PROVIDER_ID) {
-			this.assertUsable(trustedTenantId, providerId, modelId);
+			await this.assertUsable(trustedTenantId, providerId, modelId);
 			return;
 		}
-		const stored = this.repository.get(
+		const stored = await this.repository.get(
 			trustedTenantId,
 			bounded(providerId, 'provider id', 1, 128),
 		);
@@ -767,7 +786,7 @@ export class AgentProviderService {
 		}
 	}
 
-	#reprobe(
+	async #reprobe(
 		trustedTenantId: string,
 		stored: StoredProviderConnection,
 		model: AgentProviderModel,
@@ -795,15 +814,15 @@ export class AgentProviderService {
 
 	/* A completed run proves the model as well as a probe does, and it did so
 	   more recently. Local simulation needs no evidence. */
-	recordRunSuccess(
+	async recordRunSuccess(
 		tenantId: string,
 		providerId: string,
 		modelId: string,
 		completedAt: number,
 		durationMs: number,
-	): void {
+	): Promise<void> {
 		if (providerId === LOCAL_PROVIDER_ID) return;
-		this.repository.refreshReadiness(
+		await this.repository.refreshReadiness(
 			bounded(tenantId, 'tenantId', 1, 128),
 			bounded(providerId, 'provider id', 1, 128),
 			bounded(modelId, 'model', 1, 160),
@@ -823,7 +842,7 @@ export class AgentProviderService {
 	): Promise<AgentProvider | null> {
 		if (providerId === LOCAL_PROVIDER_ID) return null;
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
-		const stored = this.repository.get(
+		const stored = await this.repository.get(
 			trustedTenantId,
 			bounded(providerId, 'provider id', 1, 128),
 		);

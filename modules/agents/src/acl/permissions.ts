@@ -6,6 +6,8 @@ export const AGENT_PERMISSIONS = {
 	providersRead: 'agents.providers.read',
 	providersManage: 'agents.providers.manage',
 	providersTest: 'agents.providers.test',
-	skillsRead: 'agents.skills.read',
-	skillsManage: 'agents.skills.manage',
+	/* Product term is Procedures. The identifiers keep their skill-era
+	   spelling so existing tenant grants stay valid. */
+	proceduresRead: 'agents.skills.read',
+	proceduresManage: 'agents.skills.manage',
 } as const;

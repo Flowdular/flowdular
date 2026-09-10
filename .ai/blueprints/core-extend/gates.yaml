@@ -9,7 +9,7 @@ gates:
     command: pnpm build
     required: true
   - id: platform-typecheck
-    command: pnpm --filter @coreloom/platform typecheck
+    command: pnpm --filter @flowdular/platform typecheck
     required: true
   - id: audit
     command: pnpm audit --prod --audit-level high

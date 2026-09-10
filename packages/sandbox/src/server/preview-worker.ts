@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { createRouter, type ServerRoute } from '@octanejs/app-core';
+import { createRemoteDatabaseProvider } from './preview-database-proxy.ts';
 import { createInProcessPreviewRuntime } from './preview-runtime.ts';
 import type { SandboxSession } from './sessions.ts';
 
@@ -7,7 +8,21 @@ const workspaceRoot = process.argv[2];
 if (!workspaceRoot)
 	throw new Error('The preview worker requires a workspace path.');
 
-const runtime = createInProcessPreviewRuntime(workspaceRoot);
+const channel = process.send?.bind(process);
+if (!channel)
+	throw new Error('The preview worker requires an IPC channel to the sandbox.');
+
+const runtime = createInProcessPreviewRuntime(
+	workspaceRoot,
+	createRemoteDatabaseProvider({
+		send: (request) => {
+			channel(request);
+		},
+		subscribe: (listener) => {
+			process.on('message', listener);
+		},
+	}),
+);
 
 async function readBody(
 	request: import('node:http').IncomingMessage,
@@ -43,7 +58,7 @@ async function compose(request: Request): Promise<Response> {
 }
 
 async function previewRequest(request: Request): Promise<Response> {
-	const sessionId = request.headers.get('x-coreloom-preview-session');
+	const sessionId = request.headers.get('x-flowdular-preview-session');
 	if (!sessionId)
 		return Response.json(
 			{
@@ -58,14 +73,14 @@ async function previewRequest(request: Request): Promise<Response> {
 	if (!composition)
 		return new Response(null, {
 			status: 404,
-			headers: { 'x-coreloom-preview-unmatched': '1' },
+			headers: { 'x-flowdular-preview-unmatched': '1' },
 		});
 	const url = new URL(request.url);
 	const match = composition.router.match(request.method, url.pathname);
 	if (!match || match.route.type !== 'server') {
 		return new Response(null, {
 			status: 404,
-			headers: { 'x-coreloom-preview-unmatched': '1' },
+			headers: { 'x-flowdular-preview-unmatched': '1' },
 		});
 	}
 	const context = {

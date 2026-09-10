@@ -1,5 +1,5 @@
-import { Table, Tag, type TableColumn } from '@coreloom/ui';
-import { t } from '@coreloom/client';
+import { Table, Tag, type TableColumn } from '@flowdular/ui';
+import { t } from '@flowdular/client';
 import type { SandboxSessionRecord } from '../domain/types.ts';
 import { sessionTone, timestamp } from './presentation.ts';
 

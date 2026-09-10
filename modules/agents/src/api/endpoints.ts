@@ -6,28 +6,32 @@ import {
 	readJsonObject,
 	requiredInteger,
 	requiredString,
-} from '@coreloom/server';
-import type { AuthRuntime } from '@coreloom/module-auth/server';
+} from '@flowdular/server';
+import type { EndpointExecutionContext } from '@flowdular/server';
+import type { AuthRuntime } from '@flowdular/module-auth/server';
 import {
 	endpointIdentityFromContext,
 	principalFromContext,
 	sessionMutationDenial,
-} from '@coreloom/module-auth/server';
-import type { AgentExecutionEvent } from '@coreloom/harness';
-import { userActor } from '@coreloom/kernel';
+} from '@flowdular/module-auth/server';
+import type { AgentExecutionEvent } from '@flowdular/harness';
+import { userActor } from '@flowdular/kernel';
 import { AGENT_PERMISSIONS } from '../acl/permissions.ts';
 import type {
+	AgentDefinition,
+	AgentProcedure,
+	AgentProcedureSnapshot,
 	AgentProviderKind,
 	AgentProviderModelConfiguration,
 	AgentRunDetail,
-	AgentSkillStatus,
+	AgentProcedureStatus,
 	AgentStatus,
 	CreateAgentInput,
 	CreateAgentProviderInput,
-	CreateAgentSkillInput,
+	CreateAgentProcedureInput,
 	UpdateAgentInput,
 	UpdateAgentProviderInput,
-	UpdateAgentSkillInput,
+	UpdateAgentProcedureInput,
 	UpdateModuleAgentBindingInput,
 	TenantAgentView,
 } from '../domain/types.ts';
@@ -151,6 +155,15 @@ function requiredNumber(value: Record<string, unknown>, key: string): number {
 	return result;
 }
 
+/* Canonical first, then the deprecated spelling, so a client that still sends
+   skillIds keeps working without creating a second field on the agent. */
+function procedureIdsInput(value: Record<string, unknown>): readonly string[] {
+	if (value.procedureIds === undefined && value.skillIds !== undefined) {
+		return stringArray(value, 'skillIds');
+	}
+	return stringArray(value, 'procedureIds');
+}
+
 function agentInput(value: Record<string, unknown>): CreateAgentInput {
 	return {
 		key: requiredString(value, 'key', { min: 3, max: 64 }),
@@ -164,7 +177,7 @@ function agentInput(value: Record<string, unknown>): CreateAgentInput {
 		provider: optionalString(value, 'provider', 120) ?? '',
 		model: optionalString(value, 'model', 160) ?? '',
 		allowedTools: stringArray(value, 'allowedTools'),
-		skillIds: stringArray(value, 'skillIds'),
+		procedureIds: procedureIdsInput(value),
 		maxSteps: requiredInteger(value, 'maxSteps', { min: 1, max: 32 }),
 		timeoutMs: requiredInteger(value, 'timeoutMs', {
 			min: 250,
@@ -183,7 +196,34 @@ function agentInput(value: Record<string, unknown>): CreateAgentInput {
 	};
 }
 
-function skillInput(value: Record<string, unknown>): CreateAgentSkillInput {
+/* A tenant agent and a run carry the deprecated projection beside the canonical
+   field, so a client on either contract reads the same configuration and the
+   same retained evidence. */
+function withDeprecatedProcedureFields<
+	T extends { readonly procedureIds: readonly string[] },
+>(agent: T) {
+	return { ...agent, skillIds: agent.procedureIds };
+}
+
+function withDeprecatedRunFields<
+	T extends { readonly procedureSnapshots: readonly AgentProcedureSnapshot[] },
+>(run: T) {
+	return { ...run, skillSnapshots: run.procedureSnapshots };
+}
+
+/* Both spellings project the same records. A reader on either contract sees one
+   resource, never two, because the deprecated field is the canonical value. */
+function procedureCollection(procedures: readonly AgentProcedure[]) {
+	return { procedures, skills: procedures };
+}
+
+function procedureEnvelope(procedure: AgentProcedure) {
+	return { procedure, skill: procedure };
+}
+
+function procedureInput(
+	value: Record<string, unknown>,
+): CreateAgentProcedureInput {
 	return {
 		key: requiredString(value, 'key', { min: 3, max: 64 }),
 		name: requiredString(value, 'name', { min: 2, max: 120 }),
@@ -193,17 +233,17 @@ function skillInput(value: Record<string, unknown>): CreateAgentSkillInput {
 			max: 8_000,
 		}),
 		requiredTools: stringArray(value, 'requiredTools'),
-		status: requiredString(value, 'status') as AgentSkillStatus,
+		status: requiredString(value, 'status') as AgentProcedureStatus,
 	};
 }
 
-function runEventStream(
+async function runEventStream(
 	runtime: AgentRuntime,
 	tenantId: string,
 	runId: string,
 	after: number,
 	request: Request,
-): Response {
+): Promise<Response> {
 	const encoder = new TextEncoder();
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let closed = false;
@@ -216,10 +256,13 @@ function runEventStream(
 		events: readonly AgentExecutionEvent[],
 	) => {
 		const { events: _all, ...summary } = run;
-		return `id: ${sequence}\ndata: ${JSON.stringify({ run: summary, events })}\n\n`;
+		return `id: ${sequence}\ndata: ${JSON.stringify({
+			run: withDeprecatedRunFields(summary),
+			events,
+		})}\n\n`;
 	};
 	const stream = new ReadableStream<Uint8Array>({
-		start(controller) {
+		async start(controller) {
 			const close = () => {
 				if (closed) return;
 				closed = true;
@@ -233,10 +276,10 @@ function runEventStream(
 			request.signal.addEventListener('abort', close, { once: true });
 			controller.enqueue(encoder.encode('retry: 1000\n\n'));
 			const expiresAt = Date.now() + 30_000;
-			const pump = () => {
+			const pump = async () => {
 				if (closed || request.signal.aborted) return close();
 				try {
-					const run = runtime.service().getRun(tenantId, runId);
+					const run = await (await runtime.service()).getRun(tenantId, runId);
 					const newEvents = run.events.filter(
 						(event) => event.sequence > sequence,
 					);
@@ -269,9 +312,9 @@ function runEventStream(
 					return close();
 				}
 				if (Date.now() >= expiresAt) return close();
-				timer = setTimeout(pump, 300);
+				timer = setTimeout(() => void pump(), 300);
 			};
-			pump();
+			void pump();
 		},
 		cancel() {
 			closed = true;
@@ -298,26 +341,29 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 			permission: AGENT_PERMISSIONS.definitionsRead,
 		},
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			const principal = principalFromContext(octane)!;
 			return jsonResponse({
-				agents: runtime
-					.service()
-					.listAgents(principal.tenantId)
-					.map(
-						(agent): TenantAgentView => ({
-							...agent,
-							ownership: { kind: 'tenant' },
-						}),
-					),
-				moduleAgents: runtime.service().listModuleAgents(principal.tenantId),
+				agents: (
+					await (await runtime.service()).listAgents(principal.tenantId)
+				).map((agent: AgentDefinition) =>
+					withDeprecatedProcedureFields<TenantAgentView>({
+						...agent,
+						ownership: { kind: 'tenant' },
+					}),
+				),
+				moduleAgents: await (
+					await runtime.service()
+				).listModuleAgents(principal.tenantId),
 				providers: principal.scopes.includes(AGENT_PERMISSIONS.providersRead)
-					? runtime.service().providers(principal.tenantId)
+					? await (await runtime.service()).providers(principal.tenantId)
 					: [],
-				tools: runtime.service().tools(),
-				skills: principal.scopes.includes(AGENT_PERMISSIONS.skillsRead)
-					? runtime.service().listSkills(principal.tenantId)
-					: [],
+				tools: (await runtime.service()).tools(),
+				...procedureCollection(
+					principal.scopes.includes(AGENT_PERMISSIONS.proceduresRead)
+						? await (await runtime.service()).listProcedures(principal.tenantId)
+						: [],
+				),
 			});
 		},
 	});
@@ -349,13 +395,13 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 					}),
 				};
 				return jsonResponse({
-					agent: runtime
-						.service()
-						.configureModuleAgent(
-							principal.tenantId,
-							principal.accountId,
-							input,
-						),
+					agent: await (
+						await runtime.service()
+					).configureModuleAgent(
+						principal.tenantId,
+						principal.accountId,
+						input,
+					),
 				});
 			} catch (error) {
 				return failure(error);
@@ -379,13 +425,15 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 				const principal = principalFromContext(octane)!;
 				return jsonResponse(
 					{
-						agent: runtime
-							.service()
-							.createAgent(
+						agent: withDeprecatedProcedureFields(
+							await (
+								await runtime.service()
+							).createAgent(
 								principal.tenantId,
 								principal.accountId,
 								agentInput(value),
 							),
+						),
 					},
 					201,
 				);
@@ -416,14 +464,16 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 					}),
 				};
 				return jsonResponse({
-					agent: runtime
-						.service()
-						.updateAgent(
+					agent: withDeprecatedProcedureFields(
+						await (
+							await runtime.service()
+						).updateAgent(
 							principal.tenantId,
 							requiredString(value, 'id', { max: 128 }),
 							principal.accountId,
 							input,
 						),
+					),
 				});
 			} catch (error) {
 				return failure(error);
@@ -446,14 +496,16 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 				const value = await readJsonObject(octane.request, 8 * 1_024);
 				const principal = principalFromContext(octane)!;
 				return jsonResponse({
-					agent: runtime
-						.service()
-						.archiveAgent(
+					agent: withDeprecatedProcedureFields(
+						await (
+							await runtime.service()
+						).archiveAgent(
 							principal.tenantId,
 							requiredString(value, 'id', { max: 128 }),
 							principal.accountId,
 							requiredInteger(value, 'expectedRevision', { min: 1 }),
 						),
+					),
 				});
 			} catch (error) {
 				return failure(error);
@@ -475,164 +527,201 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 			try {
 				const value = await readJsonObject(octane.request, 8 * 1_024);
 				const principal = principalFromContext(octane)!;
-				runtime
-					.service()
-					.deleteAgent(
-						principal.tenantId,
-						requiredString(value, 'id', { max: 128 }),
-						principal.accountId,
-						requiredInteger(value, 'expectedRevision', { min: 1 }),
-					);
-				return jsonResponse({ deleted: true });
-			} catch (error) {
-				return failure(error);
-			}
-		},
-	});
-	const createSkill = defineEndpoint({
-		id: 'agents.skills.create',
-		path: '/api/agent-skills',
-		methods: ['POST'],
-		access: {
-			kind: 'permission',
-			permission: AGENT_PERMISSIONS.skillsManage,
-		},
-		resolveIdentity: endpointIdentityFromContext,
-		handler: async ({ octane }) => {
-			const denial = sessionMutationDenial(octane, auth);
-			if (denial) return denial;
-			try {
-				const value = await readJsonObject(octane.request, 32 * 1_024);
-				const principal = principalFromContext(octane)!;
-				return jsonResponse(
-					{
-						skill: runtime
-							.service()
-							.createSkill(
-								principal.tenantId,
-								principal.accountId,
-								skillInput(value),
-							),
-					},
-					201,
+				await (
+					await runtime.service()
+				).deleteAgent(
+					principal.tenantId,
+					requiredString(value, 'id', { max: 128 }),
+					principal.accountId,
+					requiredInteger(value, 'expectedRevision', { min: 1 }),
 				);
-			} catch (error) {
-				return failure(error);
-			}
-		},
-	});
-	const updateSkill = defineEndpoint({
-		id: 'agents.skills.update',
-		path: '/api/agent-skills/update',
-		methods: ['POST'],
-		access: {
-			kind: 'permission',
-			permission: AGENT_PERMISSIONS.skillsManage,
-		},
-		resolveIdentity: endpointIdentityFromContext,
-		handler: async ({ octane }) => {
-			const denial = sessionMutationDenial(octane, auth);
-			if (denial) return denial;
-			try {
-				const value = await readJsonObject(octane.request, 32 * 1_024);
-				const principal = principalFromContext(octane)!;
-				const input: UpdateAgentSkillInput = {
-					...skillInput(value),
-					expectedRevision: requiredInteger(value, 'expectedRevision', {
-						min: 1,
-					}),
-				};
-				return jsonResponse({
-					skill: runtime
-						.service()
-						.updateSkill(
-							principal.tenantId,
-							requiredString(value, 'id', { max: 128 }),
-							principal.accountId,
-							input,
-						),
-				});
-			} catch (error) {
-				return failure(error);
-			}
-		},
-	});
-	const archiveSkill = defineEndpoint({
-		id: 'agents.skills.archive',
-		path: '/api/agent-skills/archive',
-		methods: ['POST'],
-		access: {
-			kind: 'permission',
-			permission: AGENT_PERMISSIONS.skillsManage,
-		},
-		resolveIdentity: endpointIdentityFromContext,
-		handler: async ({ octane }) => {
-			const denial = sessionMutationDenial(octane, auth);
-			if (denial) return denial;
-			try {
-				const value = await readJsonObject(octane.request, 8 * 1_024);
-				const principal = principalFromContext(octane)!;
-				return jsonResponse({
-					skill: runtime
-						.service()
-						.archiveSkill(
-							principal.tenantId,
-							requiredString(value, 'id', { max: 128 }),
-							principal.accountId,
-							requiredInteger(value, 'expectedRevision', { min: 1 }),
-						),
-				});
-			} catch (error) {
-				return failure(error);
-			}
-		},
-	});
-	const deleteSkill = defineEndpoint({
-		id: 'agents.skills.delete',
-		path: '/api/agent-skills/delete',
-		methods: ['POST'],
-		access: {
-			kind: 'permission',
-			permission: AGENT_PERMISSIONS.skillsManage,
-		},
-		resolveIdentity: endpointIdentityFromContext,
-		handler: async ({ octane }) => {
-			const denial = sessionMutationDenial(octane, auth);
-			if (denial) return denial;
-			try {
-				const value = await readJsonObject(octane.request, 8 * 1_024);
-				const principal = principalFromContext(octane)!;
-				runtime
-					.service()
-					.deleteSkill(
-						principal.tenantId,
-						requiredString(value, 'id', { max: 128 }),
-						principal.accountId,
-						requiredInteger(value, 'expectedRevision', { min: 1 }),
-					);
 				return jsonResponse({ deleted: true });
 			} catch (error) {
 				return failure(error);
 			}
 		},
 	});
+	/* One handler per operation, published under the canonical procedure path and
+	   the deprecated skill path. Both reach the same records, so calling either
+	   surface with the same id can never create a second resource. */
+	const createProcedureHandler = async ({
+		octane,
+	}: EndpointExecutionContext) => {
+		const denial = sessionMutationDenial(octane, auth);
+		if (denial) return denial;
+		try {
+			const value = await readJsonObject(octane.request, 32 * 1_024);
+			const principal = principalFromContext(octane)!;
+			return jsonResponse(
+				procedureEnvelope(
+					await (
+						await runtime.service()
+					).createProcedure(
+						principal.tenantId,
+						principal.accountId,
+						procedureInput(value),
+					),
+				),
+				201,
+			);
+		} catch (error) {
+			return failure(error);
+		}
+	};
+	const updateProcedureHandler = async ({
+		octane,
+	}: EndpointExecutionContext) => {
+		const denial = sessionMutationDenial(octane, auth);
+		if (denial) return denial;
+		try {
+			const value = await readJsonObject(octane.request, 32 * 1_024);
+			const principal = principalFromContext(octane)!;
+			const input: UpdateAgentProcedureInput = {
+				...procedureInput(value),
+				expectedRevision: requiredInteger(value, 'expectedRevision', {
+					min: 1,
+				}),
+			};
+			return jsonResponse(
+				procedureEnvelope(
+					await (
+						await runtime.service()
+					).updateProcedure(
+						principal.tenantId,
+						requiredString(value, 'id', { max: 128 }),
+						principal.accountId,
+						input,
+					),
+				),
+			);
+		} catch (error) {
+			return failure(error);
+		}
+	};
+	const archiveProcedureHandler = async ({
+		octane,
+	}: EndpointExecutionContext) => {
+		const denial = sessionMutationDenial(octane, auth);
+		if (denial) return denial;
+		try {
+			const value = await readJsonObject(octane.request, 8 * 1_024);
+			const principal = principalFromContext(octane)!;
+			return jsonResponse(
+				procedureEnvelope(
+					await (
+						await runtime.service()
+					).archiveProcedure(
+						principal.tenantId,
+						requiredString(value, 'id', { max: 128 }),
+						principal.accountId,
+						requiredInteger(value, 'expectedRevision', { min: 1 }),
+					),
+				),
+			);
+		} catch (error) {
+			return failure(error);
+		}
+	};
+	const deleteProcedureHandler = async ({
+		octane,
+	}: EndpointExecutionContext) => {
+		const denial = sessionMutationDenial(octane, auth);
+		if (denial) return denial;
+		try {
+			const value = await readJsonObject(octane.request, 8 * 1_024);
+			const principal = principalFromContext(octane)!;
+			await (
+				await runtime.service()
+			).deleteProcedure(
+				principal.tenantId,
+				requiredString(value, 'id', { max: 128 }),
+				principal.accountId,
+				requiredInteger(value, 'expectedRevision', { min: 1 }),
+			);
+			return jsonResponse({ deleted: true });
+		} catch (error) {
+			return failure(error);
+		}
+	};
+
+	const procedureMutation = (
+		id: string,
+		path: string,
+		handler: (arguments_: EndpointExecutionContext) => Promise<Response>,
+	) =>
+		defineEndpoint({
+			id,
+			path,
+			methods: ['POST'],
+			access: {
+				kind: 'permission',
+				permission: AGENT_PERMISSIONS.proceduresManage,
+			},
+			resolveIdentity: endpointIdentityFromContext,
+			handler,
+		});
+
+	const createProcedure = procedureMutation(
+		'agents.procedures.create',
+		'/api/agent-procedures',
+		createProcedureHandler,
+	);
+	const updateProcedure = procedureMutation(
+		'agents.procedures.update',
+		'/api/agent-procedures/update',
+		updateProcedureHandler,
+	);
+	const archiveProcedure = procedureMutation(
+		'agents.procedures.archive',
+		'/api/agent-procedures/archive',
+		archiveProcedureHandler,
+	);
+	const deleteProcedure = procedureMutation(
+		'agents.procedures.delete',
+		'/api/agent-procedures/delete',
+		deleteProcedureHandler,
+	);
+	const createSkill = procedureMutation(
+		'agents.skills.create',
+		'/api/agent-skills',
+		createProcedureHandler,
+	);
+	const updateSkill = procedureMutation(
+		'agents.skills.update',
+		'/api/agent-skills/update',
+		updateProcedureHandler,
+	);
+	const archiveSkill = procedureMutation(
+		'agents.skills.archive',
+		'/api/agent-skills/archive',
+		archiveProcedureHandler,
+	);
+	const deleteSkill = procedureMutation(
+		'agents.skills.delete',
+		'/api/agent-skills/delete',
+		deleteProcedureHandler,
+	);
 	const listRuns = defineEndpoint({
 		id: 'agents.runs.list',
 		path: '/api/agent-runs',
 		methods: ['GET'],
 		access: { kind: 'permission', permission: AGENT_PERMISSIONS.runsRead },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			try {
 				const principal = principalFromContext(octane)!;
 				const url = new URL(octane.request.url);
 				const runId = url.searchParams.get('id');
 				return runId
 					? jsonResponse({
-							run: runtime.service().getRunTimeline(principal.tenantId, runId),
+							run: await (
+								await runtime.service()
+							).getRunTimeline(principal.tenantId, runId),
 						})
 					: jsonResponse({
-							runs: runtime.service().listRuns(principal.tenantId),
+							runs: (
+								await (await runtime.service()).listRuns(principal.tenantId)
+							).map(withDeprecatedRunFields),
 						});
 			} catch (error) {
 				return failure(error);
@@ -659,7 +748,9 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 				/* A browser session can only start playground runs. Workflow,
 				   service, and schedule triggers are enqueued in-process by the
 				   platform, never by a client-supplied field. */
-				const run = await runtime.service().enqueueRun(
+				const run = await (
+					await runtime.service()
+				).enqueueRun(
 					principal.tenantId,
 					userActor(principal),
 					principal.scopes,
@@ -695,14 +786,16 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 				const value = await readJsonObject(octane.request, 4 * 1_024);
 				const principal = principalFromContext(octane)!;
 				return jsonResponse({
-					run: runtime
-						.service()
-						.cancelRun(
+					run: withDeprecatedRunFields(
+						await (
+							await runtime.service()
+						).cancelRun(
 							principal.tenantId,
 							userActor(principal),
 							principal.scopes,
 							requiredString(value, 'id', { max: 128 }),
 						),
+					),
 				});
 			} catch (error) {
 				return failure(error);
@@ -715,7 +808,7 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 		methods: ['GET'],
 		access: { kind: 'permission', permission: AGENT_PERMISSIONS.runsRead },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: () => jsonResponse({ worker: runtime.workerStatus() }),
+		handler: async () => jsonResponse({ worker: await runtime.workerStatus() }),
 	});
 	const streamRun = defineEndpoint({
 		id: 'agents.runs.stream',
@@ -723,7 +816,7 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 		methods: ['GET'],
 		access: { kind: 'permission', permission: AGENT_PERMISSIONS.runsRead },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			try {
 				const principal = principalFromContext(octane)!;
 				const url = new URL(octane.request.url);
@@ -761,19 +854,19 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 		methods: ['GET'],
 		access: { kind: 'permission', permission: AGENT_PERMISSIONS.runsRead },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			try {
 				const principal = principalFromContext(octane)!;
 				const url = new URL(octane.request.url);
 				const limit = Number(url.searchParams.get('limit') ?? '50');
 				return jsonResponse(
-					runtime
-						.service()
-						.pageAuditEvents(
-							principal.tenantId,
-							url.searchParams.get('cursor'),
-							limit,
-						),
+					await (
+						await runtime.service()
+					).pageAuditEvents(
+						principal.tenantId,
+						url.searchParams.get('cursor'),
+						limit,
+					),
 				);
 			} catch (error) {
 				return failure(error);
@@ -786,10 +879,12 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 		methods: ['GET'],
 		access: { kind: 'permission', permission: AGENT_PERMISSIONS.runsRead },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			try {
 				const principal = principalFromContext(octane)!;
-				return jsonResponse(runtime.service().verifyAudit(principal.tenantId));
+				return jsonResponse(
+					await (await runtime.service()).verifyAudit(principal.tenantId),
+				);
 			} catch (error) {
 				return failure(error);
 			}
@@ -804,11 +899,13 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 			permission: AGENT_PERMISSIONS.providersRead,
 		},
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			const principal = principalFromContext(octane)!;
 			return jsonResponse({
-				providers: runtime.providerService().list(principal.tenantId),
-				readinessTtlMs: runtime.providerService().readinessTtlMs,
+				providers: await (
+					await runtime.providerService()
+				).list(principal.tenantId),
+				readinessTtlMs: (await runtime.providerService()).readinessTtlMs,
 			});
 		},
 	});
@@ -829,13 +926,13 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 				const principal = principalFromContext(octane)!;
 				return jsonResponse(
 					{
-						provider: runtime
-							.providerService()
-							.create(
-								principal.tenantId,
-								principal.accountId,
-								createProviderInput(value),
-							),
+						provider: await (
+							await runtime.providerService()
+						).create(
+							principal.tenantId,
+							principal.accountId,
+							createProviderInput(value),
+						),
 					},
 					201,
 				);
@@ -875,9 +972,9 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 					...(baseURL ? { baseURL } : {}),
 				};
 				return jsonResponse({
-					provider: runtime
-						.providerService()
-						.update(principal.tenantId, principal.accountId, input),
+					provider: await (
+						await runtime.providerService()
+					).update(principal.tenantId, principal.accountId, input),
 				});
 			} catch (error) {
 				return failure(error);
@@ -900,14 +997,14 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 				const value = await readJsonObject(octane.request, 8 * 1_024);
 				const principal = principalFromContext(octane)!;
 				return jsonResponse({
-					provider: await runtime
-						.providerService()
-						.test(
-							principal.tenantId,
-							requiredString(value, 'id', { max: 128 }),
-							requiredString(value, 'model', { max: 160 }),
-							principal.accountId,
-						),
+					provider: await (
+						await runtime.providerService()
+					).test(
+						principal.tenantId,
+						requiredString(value, 'id', { max: 128 }),
+						requiredString(value, 'model', { max: 160 }),
+						principal.accountId,
+					),
 				});
 			} catch (error) {
 				return failure(error);
@@ -929,14 +1026,14 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 			try {
 				const value = await readJsonObject(octane.request, 8 * 1_024);
 				const principal = principalFromContext(octane)!;
-				runtime
-					.providerService()
-					.delete(
-						principal.tenantId,
-						principal.accountId,
-						requiredString(value, 'id', { max: 128 }),
-						requiredInteger(value, 'expectedRevision', { min: 1 }),
-					);
+				await (
+					await runtime.providerService()
+				).delete(
+					principal.tenantId,
+					principal.accountId,
+					requiredString(value, 'id', { max: 128 }),
+					requiredInteger(value, 'expectedRevision', { min: 1 }),
+				);
 				return jsonResponse({ deleted: true });
 			} catch (error) {
 				return failure(error);
@@ -949,14 +1046,14 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 		methods: ['GET'],
 		access: { kind: 'permission', permission: AGENT_PERMISSIONS.runsRead },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			try {
 				const principal = principalFromContext(octane)!;
 				const url = new URL(octane.request.url);
 				return jsonResponse(
-					runtime
-						.usageService()
-						.summary(principal.tenantId, Number(url.searchParams.get('days'))),
+					await (
+						await runtime.usageService()
+					).summary(principal.tenantId, Number(url.searchParams.get('days'))),
 				);
 			} catch (error) {
 				return failure(error);
@@ -970,6 +1067,10 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 		updateAgent.serverRoute,
 		archiveAgent.serverRoute,
 		deleteAgent.serverRoute,
+		createProcedure.serverRoute,
+		updateProcedure.serverRoute,
+		archiveProcedure.serverRoute,
+		deleteProcedure.serverRoute,
 		createSkill.serverRoute,
 		updateSkill.serverRoute,
 		archiveSkill.serverRoute,
@@ -997,6 +1098,10 @@ export const endpoints = [
 	'agents.definitions.update',
 	'agents.definitions.archive',
 	'agents.definitions.delete',
+	'agents.procedures.create',
+	'agents.procedures.update',
+	'agents.procedures.archive',
+	'agents.procedures.delete',
 	'agents.skills.create',
 	'agents.skills.update',
 	'agents.skills.archive',

@@ -15,9 +15,9 @@ import { runCommand } from '../src/runner.ts';
 let workspace: string;
 
 beforeEach(async () => {
-	workspace = await mkdtemp(join(tmpdir(), 'coreloom-state-migration-'));
+	workspace = await mkdtemp(join(tmpdir(), 'flowdular-state-migration-'));
 	await writeFile(
-		join(workspace, 'coreloom.json'),
+		join(workspace, 'flowdular.json'),
 		'{"modules":{"enabled":[]}}\n',
 	);
 });
@@ -55,7 +55,7 @@ describe('local state identity migration', () => {
 			applied: false,
 			ready: true,
 			source: '.octane-erp',
-			destination: '.coreloom/data',
+			destination: '.flowdular/data',
 			files: ['auth.db', 'agent-credential.key'],
 			sourcePreserved: true,
 		});
@@ -63,7 +63,7 @@ describe('local state identity migration', () => {
 			readFile(join(workspace, '.octane-erp/auth.db'), 'utf8'),
 		).resolves.toBe('database');
 		await expect(
-			readFile(join(workspace, '.coreloom/data/auth.db'), 'utf8'),
+			readFile(join(workspace, '.flowdular/data/auth.db'), 'utf8'),
 		).rejects.toMatchObject({ code: 'ENOENT' });
 	});
 
@@ -85,10 +85,10 @@ describe('local state identity migration', () => {
 		expect(result.ok).toBe(true);
 		expect(result.data).toMatchObject({ applied: true, sourcePreserved: true });
 		await expect(
-			readFile(join(workspace, '.coreloom/data/auth.db'), 'utf8'),
+			readFile(join(workspace, '.flowdular/data/auth.db'), 'utf8'),
 		).resolves.toBe('database');
 		await expect(
-			readFile(join(workspace, '.coreloom/data/agent-credential.key'), 'utf8'),
+			readFile(join(workspace, '.flowdular/data/agent-credential.key'), 'utf8'),
 		).resolves.toBe('secret');
 		await expect(
 			readFile(join(workspace, '.octane-erp/auth.db'), 'utf8'),
@@ -97,15 +97,15 @@ describe('local state identity migration', () => {
 
 	it('refuses a destination collision without changing either file', async () => {
 		await legacy('auth.db', 'legacy');
-		await mkdir(join(workspace, '.coreloom/data'), { recursive: true });
-		await writeFile(join(workspace, '.coreloom/data/auth.db'), 'current');
+		await mkdir(join(workspace, '.flowdular/data'), { recursive: true });
+		await writeFile(join(workspace, '.flowdular/data/auth.db'), 'current');
 
 		const result = await run('--apply', '--confirm', 'migrate-legacy-state');
 
 		expect(result.ok).toBe(false);
 		expect(result.error?.code).toBe('LEGACY_STATE_MIGRATION_REFUSED');
 		await expect(
-			readFile(join(workspace, '.coreloom/data/auth.db'), 'utf8'),
+			readFile(join(workspace, '.flowdular/data/auth.db'), 'utf8'),
 		).resolves.toBe('current');
 		await expect(
 			readFile(join(workspace, '.octane-erp/auth.db'), 'utf8'),
@@ -130,20 +130,20 @@ describe('local state identity migration', () => {
 
 	it('refuses a stale destination sidecar even when the main target is absent', async () => {
 		await legacy('auth.db', 'database');
-		await mkdir(join(workspace, '.coreloom/data'), { recursive: true });
-		await writeFile(join(workspace, '.coreloom/data/auth.db-wal'), 'stale');
+		await mkdir(join(workspace, '.flowdular/data'), { recursive: true });
+		await writeFile(join(workspace, '.flowdular/data/auth.db-wal'), 'stale');
 
 		const result = await run('--apply', '--confirm', 'migrate-legacy-state');
 
 		expect(result.ok).toBe(false);
 		expect(result.error?.code).toBe('LEGACY_STATE_MIGRATION_REFUSED');
 		await expect(
-			readFile(join(workspace, '.coreloom/data/auth.db'), 'utf8'),
+			readFile(join(workspace, '.flowdular/data/auth.db'), 'utf8'),
 		).rejects.toMatchObject({ code: 'ENOENT' });
 	});
 
 	it('refuses a linked legacy directory', async () => {
-		const outside = await mkdtemp(join(tmpdir(), 'coreloom-state-source-'));
+		const outside = await mkdtemp(join(tmpdir(), 'flowdular-state-source-'));
 		try {
 			await symlink(outside, join(workspace, '.octane-erp'));
 			const result = await run('--apply', '--confirm', 'migrate-legacy-state');

@@ -1,10 +1,21 @@
-import { describe, expect, it } from 'vitest';
-import { AgentHarness, type AgentProvider } from '@coreloom/harness';
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+} from 'vitest';
+import { AgentHarness, type AgentProvider } from '@flowdular/harness';
 import type { CreateAgentInput } from '../src/domain/types.ts';
 import { AgentService } from '../src/services/agent-service.ts';
-import { SqliteAgentRepository } from '../src/services/sqlite-repository.ts';
 import { AgentUsageService } from '../src/services/usage-service.ts';
 import { AgentWorker } from '../src/services/worker.ts';
+import {
+	openAgentsTestDatabase,
+	type AgentsTestDatabase,
+} from './support/database.ts';
 
 const TENANT = 'tenant-usage';
 const OWNER = 'owner-usage';
@@ -17,7 +28,7 @@ const definition: CreateAgentInput = {
 	provider: 'test-provider',
 	model: 'claude-sonnet-5',
 	allowedTools: [],
-	skillIds: [],
+	procedureIds: [],
 	maxSteps: 2,
 	timeoutMs: 1_000,
 	temperature: 0,
@@ -33,14 +44,34 @@ const provider: AgentProvider = {
 	}),
 };
 
-function fixture(monthlyCostCapUsd = 0) {
-	const repository = new SqliteAgentRepository(':memory:');
+let database: AgentsTestDatabase;
+const workers: AgentWorker[] = [];
+
+beforeAll(async () => {
+	database = await openAgentsTestDatabase();
+});
+
+afterEach(async () => {
+	for (const worker of workers.splice(0)) await worker.dispose();
+});
+
+beforeEach(async () => {
+	await database.truncate();
+});
+
+afterAll(async () => {
+	await database.dispose();
+});
+
+async function fixture(monthlyCostCapUsd = 0) {
+	const repository = database.repository;
 	const harness = new AgentHarness({ providers: [provider] });
 	const worker = new AgentWorker(repository, harness, {
 		workerId: 'worker:usage',
 		concurrency: 1,
 		leaseMs: 1_000,
 	});
+	workers.push(worker);
 	const usage = new AgentUsageService(repository, {
 		monthlyCostCapUsd: () => monthlyCostCapUsd,
 		agentMonthlyCostCapUsd: () => 0,
@@ -54,8 +85,8 @@ function fixture(monthlyCostCapUsd = 0) {
 		undefined,
 		usage,
 	);
-	const created = service.createAgent(TENANT, OWNER, definition);
-	const agent = service.updateAgent(TENANT, created.id, OWNER, {
+	const created = await service.createAgent(TENANT, OWNER, definition);
+	const agent = await service.updateAgent(TENANT, created.id, OWNER, {
 		...definition,
 		status: 'active',
 		expectedRevision: created.revision,
@@ -64,8 +95,8 @@ function fixture(monthlyCostCapUsd = 0) {
 }
 
 async function waitForTerminal(service: AgentService, runId: string) {
-	for (let index = 0; index < 100; index += 1) {
-		const run = service.getRun(TENANT, runId);
+	for (let index = 0; index < 300; index += 1) {
+		const run = await service.getRun(TENANT, runId);
 		if (['succeeded', 'failed', 'cancelled'].includes(run.status)) return;
 		await new Promise((resolve) => setTimeout(resolve, 5));
 	}
@@ -74,47 +105,41 @@ async function waitForTerminal(service: AgentService, runId: string) {
 
 describe('agent usage and budgets', () => {
 	it('prices a completed run and keeps usage tenant scoped', async () => {
-		const { service, usage, worker, agent } = fixture();
-		worker.start();
-		try {
-			const run = await service.enqueueRun(TENANT, OWNER, [], {
-				agentId: agent.id,
-				trigger: 'playground',
-				input: 'Do the work.',
-				toolGrants: [],
-			});
-			await waitForTerminal(service, run.id);
-			expect(usage.summary(TENANT).month).toMatchObject({
-				runs: 1,
-				costMicroUsd: 7_000,
-			});
-			expect(usage.summary('another-tenant').month.runs).toBe(0);
-		} finally {
-			worker.stop();
-		}
+		const { service, usage, worker, agent } = await fixture();
+		await worker.start();
+		const run = await service.enqueueRun(TENANT, OWNER, [], {
+			agentId: agent.id,
+			trigger: 'playground',
+			input: 'Do the work.',
+			toolGrants: [],
+		});
+		await waitForTerminal(service, run.id);
+		expect((await usage.summary(TENANT)).month).toMatchObject({
+			runs: 1,
+			costMicroUsd: 7_000,
+		});
+		expect((await usage.summary('another-tenant')).month.runs).toBe(0);
+		worker.stop();
 	});
 
 	it('refuses another enqueue after the workspace budget is spent', async () => {
-		const { service, worker, agent } = fixture(0.005);
-		worker.start();
-		try {
-			const run = await service.enqueueRun(TENANT, OWNER, [], {
+		const { service, worker, agent } = await fixture(0.005);
+		await worker.start();
+		const run = await service.enqueueRun(TENANT, OWNER, [], {
+			agentId: agent.id,
+			trigger: 'playground',
+			input: 'First run.',
+			toolGrants: [],
+		});
+		await waitForTerminal(service, run.id);
+		await expect(
+			service.enqueueRun(TENANT, OWNER, [], {
 				agentId: agent.id,
 				trigger: 'playground',
-				input: 'First run.',
+				input: 'Second run.',
 				toolGrants: [],
-			});
-			await waitForTerminal(service, run.id);
-			await expect(
-				service.enqueueRun(TENANT, OWNER, [], {
-					agentId: agent.id,
-					trigger: 'playground',
-					input: 'Second run.',
-					toolGrants: [],
-				}),
-			).rejects.toMatchObject({ code: 'BUDGET_EXCEEDED', status: 409 });
-		} finally {
-			worker.stop();
-		}
+			}),
+		).rejects.toMatchObject({ code: 'BUDGET_EXCEEDED', status: 409 });
+		worker.stop();
 	});
 });

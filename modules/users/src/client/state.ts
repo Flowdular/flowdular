@@ -1,4 +1,4 @@
-import type { TenantMember } from '@coreloom/module-auth';
+import type { TenantMember } from '@flowdular/module-auth';
 import { cell, createStore } from 'segment-state';
 import type { UserDirectory } from '../services/users-service.ts';
 

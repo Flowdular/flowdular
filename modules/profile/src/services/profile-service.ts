@@ -64,18 +64,18 @@ function locale(value: string): string {
 export class ProfileService {
 	constructor(private readonly repository: ProfileRepository) {}
 
-	read(tenantId: string, accountId: string): Profile | null {
+	async read(tenantId: string, accountId: string): Promise<Profile | null> {
 		return this.repository.find(
 			identifier(tenantId, 'tenantId'),
 			identifier(accountId, 'accountId'),
 		);
 	}
 
-	update(
+	async update(
 		tenantId: string,
 		accountId: string,
 		input: UpdateProfileInput,
-	): Profile {
+	): Promise<Profile> {
 		const profile: Profile = {
 			tenantId: identifier(tenantId, 'tenantId'),
 			accountId: identifier(accountId, 'accountId'),
@@ -85,20 +85,25 @@ export class ProfileService {
 		return this.repository.save(profile);
 	}
 
-	readLanguage(tenantId: string, accountId: string): string | null {
+	async readLanguage(
+		tenantId: string,
+		accountId: string,
+	): Promise<string | null> {
 		return (
-			this.repository.findLanguage(
-				identifier(tenantId, 'tenantId'),
-				identifier(accountId, 'accountId'),
+			(
+				await this.repository.findLanguage(
+					identifier(tenantId, 'tenantId'),
+					identifier(accountId, 'accountId'),
+				)
 			)?.locale ?? null
 		);
 	}
 
-	updateLanguage(
+	async updateLanguage(
 		tenantId: string,
 		accountId: string,
 		input: UpdateProfileLanguageInput,
-	): ProfileLanguagePreference {
+	): Promise<ProfileLanguagePreference> {
 		return this.repository.saveLanguage({
 			tenantId: identifier(tenantId, 'tenantId'),
 			accountId: identifier(accountId, 'accountId'),

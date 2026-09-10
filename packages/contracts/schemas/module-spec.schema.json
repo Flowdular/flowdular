@@ -1,6 +1,6 @@
 {
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
-	"$id": "https://coreloom.dev/schemas/module-spec.schema.json",
+	"$id": "https://flowdular.dev/schemas/module-spec.schema.json",
 	"type": "object",
 	"additionalProperties": false,
 	"required": [

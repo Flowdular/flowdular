@@ -10,8 +10,8 @@ import {
 	TableCard,
 	Tag,
 	type TableColumn,
-} from '@coreloom/ui';
-import { activeLocale, t } from '@coreloom/client';
+} from '@flowdular/ui';
+import { activeLocale, t } from '@flowdular/client';
 import { useValue } from 'segment-state';
 import { cadenceMinutes } from '../domain/cadence.ts';
 import type {

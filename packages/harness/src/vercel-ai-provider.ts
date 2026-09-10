@@ -8,7 +8,7 @@ import {
 	type AiProviderConfiguration,
 	type AiProviderKind,
 	type ProviderReadinessResult,
-} from '@coreloom/ai-provider';
+} from '@flowdular/ai-provider';
 import {
 	jsonSchema,
 	Output,
@@ -28,7 +28,7 @@ import {
 } from './runtime.ts';
 
 /* Provider kinds, model resolution, and failure classification are owned by
-   @coreloom/ai-provider so the platform runtime and the sandbox coding agent
+   @flowdular/ai-provider so the platform runtime and the sandbox coding agent
    share one definition. This module keeps the agent-runtime contract. */
 export type VercelAiProviderKind = AiProviderKind;
 export type { ProviderReadinessResult };

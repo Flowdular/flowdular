@@ -1,7 +1,7 @@
 import { useMemo } from 'octane';
-import { t } from '@coreloom/client';
-import { Button, CheckGrid, FormField } from '@coreloom/ui';
-import type { CheckGroup, CheckOption } from '@coreloom/ui';
+import { t } from '@flowdular/client';
+import { Button, CheckGrid, FormField } from '@flowdular/ui';
+import type { CheckGroup, CheckOption } from '@flowdular/ui';
 import { cell, createStore, useValue } from 'segment-state';
 import type { CreateApiTokenRequest } from './api.ts';
 

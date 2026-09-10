@@ -1,15 +1,16 @@
-import { BrandMark, Icon } from '@coreloom/ui';
+import { applicationPath } from '../routing.ts';
+import { BrandMark, Icon } from '@flowdular/ui';
 import { t } from '../i18n/runtime.ts';
 
 export function MobileHeader(props: { onToggle: () => void }) @{
 	<header class="mobile-header">
 		<a
 			class="mobile-header__brand"
-			href="/app"
+			href={applicationPath()}
 			aria-label={t('shell.brand.home')}
 		>
 			<BrandMark size={22} />
-			Coreloom
+			Flowdular
 		</a>
 		<button
 			class="ui-btn ui-btn--secondary ui-btn--icon"

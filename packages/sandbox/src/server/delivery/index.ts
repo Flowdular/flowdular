@@ -1,3 +1,4 @@
+import { createOfficialModulesDeliveryTarget } from './official-modules.ts';
 import { SandboxSetupError } from '../workspace-root.ts';
 import { createGitPullRequestDeliveryTarget } from './git-pr.ts';
 import { createLocalDeliveryTarget } from './local.ts';
@@ -6,6 +7,7 @@ import type { DeliveryTarget, EjectTarget } from './types.ts';
 const TARGETS: Readonly<Record<EjectTarget, () => DeliveryTarget>> = {
 	workspace: createLocalDeliveryTarget,
 	'git-pr': createGitPullRequestDeliveryTarget,
+	'official-modules': createOfficialModulesDeliveryTarget,
 };
 
 export function isEjectTarget(value: string): value is EjectTarget {
@@ -16,7 +18,7 @@ export function assertEjectTarget(value: string): EjectTarget {
 	if (!isEjectTarget(value)) {
 		throw new SandboxSetupError(
 			'EJECT_TARGET_UNSUPPORTED',
-			`The ${value} eject target is not implemented in this sandbox yet. Use workspace or git-pr.`,
+			`The ${value} eject target is not implemented in this sandbox yet. Use workspace, git-pr or official-modules.`,
 		);
 	}
 	return value;

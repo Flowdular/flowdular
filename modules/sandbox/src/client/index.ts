@@ -4,7 +4,7 @@ export { SandboxAccessView } from './SandboxAccessView.tsrx';
 import type {
 	ModuleClientContext,
 	ModuleClientContribution,
-} from '@coreloom/client';
+} from '@flowdular/client';
 import { createSandboxClientContribution as canonicalContribution } from './contribution.tsrx';
 
 /* Canonical entry used by the generated platform composition. */

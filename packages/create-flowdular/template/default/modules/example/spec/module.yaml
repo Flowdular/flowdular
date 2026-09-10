@@ -1,0 +1,43 @@
+schemaVersion: 1
+id: example.core
+specVersion: 0.1.0
+status: approved
+name: Example Notes
+description: A minimal tenant-scoped record module to copy when you build your first real module.
+profile: full
+capabilities:
+  - api
+  - database
+  - client
+  - translations
+dependencies:
+  - id: auth.core
+    range: 0.10.0
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - Persistence runs on the shared asynchronous database contract. The module receives a leased handle from platform composition, never a driver or a connection string, and provides explicit SQL for every dialect it declares.
+  - The PostgreSQL notes table enables and forces row-level security with USING and WITH CHECK policies bound to transaction-local coreloom.tenant_id, and the runtime role holds neither SUPERUSER nor BYPASSRLS. Migrations use a separate lease.
+  - Every note is owned by exactly one tenant and every query uses the trusted tenant identifier.
+permissions:
+  - id: example.notes.read
+    description: Read notes in the active tenant.
+  - id: example.notes.manage
+    description: Create notes in the active tenant.
+dataOwnership:
+  - example.core owns note identity, title, body, and creation time.
+acceptanceScenarios:
+  - id: EXAMPLE-LIST
+    given: Notes exist in more than one tenant.
+    when: An authorized principal lists notes.
+    then: Only notes owned by the active tenant are returned, newest first.
+  - id: EXAMPLE-CREATE
+    given: An authorized principal supplies a title and a body.
+    when: The note is created.
+    then: A tenant-owned note is persisted and returned with its creation time.
+  - id: EXAMPLE-DENY
+    given: A principal is unauthenticated or lacks the required example permission.
+    when: The principal reads or creates a note.
+    then: The server denies the operation before repository access.

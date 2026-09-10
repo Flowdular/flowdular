@@ -3,7 +3,7 @@ import type {
 	OverviewModulePoint,
 	SystemOverviewPayload,
 } from '../server/endpoints.ts';
-import { t } from '@coreloom/client/i18n';
+import { t } from '@flowdular/client/i18n';
 import { ApiError } from './api.ts';
 
 export type {

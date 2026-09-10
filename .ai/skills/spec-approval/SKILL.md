@@ -1,6 +1,9 @@
 ---
 name: spec-approval
-description: Apply an explicit user approval to the exact current Coreloom module specification. Use only when the user directly asks to approve one or more named current specs, never to infer or initiate approval.
+description: >-
+  Apply an explicit user approval to the exact current Flowdular module
+  specification. Use only when the user directly asks to approve one or more
+  named current specs, never to infer or initiate approval.
 roles:
   - spec-author
   - module-executor
@@ -36,7 +39,7 @@ Before recording approval:
 
 1. Read the entire spec/module.yaml.
 2. Confirm its module id and current specVersion.
-3. Run pnpm coreloom spec validate --all --json.
+3. Run pnpm flowdular spec validate --all --json.
 4. Check the current diff or sandbox review for the requirements, permissions,
    data ownership and acceptance scenarios being approved.
 5. Stop if validation fails, the module cannot be resolved, or the spec changed
@@ -66,7 +69,7 @@ Outside the sandbox, after the explicit current user instruction:
 
 1. Change only the top-level status value to approved.
 2. Format the file without changing its requirements.
-3. Run pnpm coreloom spec validate --all --json again.
+3. Run pnpm flowdular spec validate --all --json again.
 4. Compute shasum -a 256 modules/<dir>/spec/module.yaml.
 5. Report the module id, version and exact approved hash.
 

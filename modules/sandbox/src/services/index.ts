@@ -8,9 +8,12 @@ export type {
 } from './sandbox-service.ts';
 export { SandboxServiceError } from './sandbox-service-error.ts';
 export type { SandboxAuditDraft, SandboxRepository } from './repository.ts';
-export { SqliteSandboxRepository } from './sqlite-repository.ts';
 export {
-	migrations,
+	DatabaseSandboxRepository,
+	migrateSandboxDatabase,
+} from './database-repository.ts';
+export {
+	databaseMigrations,
 	SANDBOX_MIGRATION_001,
 	SANDBOX_MIGRATION_002,
 } from './migration.ts';

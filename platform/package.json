@@ -1,5 +1,5 @@
 {
-	"name": "@coreloom/platform",
+	"name": "@flowdular/platform",
 	"version": "0.1.0",
 	"private": true,
 	"type": "module",
@@ -12,32 +12,34 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@coreloom/client": "workspace:*",
-		"@coreloom/module-agents": "workspace:*",
-		"@coreloom/module-auth": "workspace:*",
-		"@coreloom/module-automations": "workspace:*",
-		"@coreloom/module-automations-workflows-integration": "workspace:*",
-		"@coreloom/module-catalog": "workspace:*",
-		"@coreloom/module-expenses": "workspace:*",
-		"@coreloom/module-parties": "workspace:*",
-		"@coreloom/module-profile": "workspace:*",
-		"@coreloom/module-sandbox": "workspace:*",
-		"@coreloom/module-system": "workspace:*",
-		"@coreloom/module-users": "workspace:*",
-		"@coreloom/module-workflows": "workspace:*",
-		"@coreloom/server": "workspace:*",
-		"@coreloom/ui": "workspace:*",
-		"@octanejs/seo": "0.0.36",
+		"@flowdular/client": "workspace:*",
+		"@flowdular/database": "workspace:*",
+		"@flowdular/database-pglite": "workspace:*",
+		"@flowdular/kernel": "workspace:*",
+		"@flowdular/module-agents": "workspace:*",
+		"@flowdular/module-auth": "workspace:*",
+		"@flowdular/module-automations": "workspace:*",
+		"@flowdular/module-automations-workflows-integration": "workspace:*",
+		"@flowdular/module-profile": "workspace:*",
+		"@flowdular/module-sandbox": "workspace:*",
+		"@flowdular/module-system": "workspace:*",
+		"@flowdular/module-users": "workspace:*",
+		"@flowdular/module-workflows": "workspace:*",
+		"@flowdular/server": "workspace:*",
+		"@flowdular/ui": "workspace:*",
+		"@octanejs/seo": "0.0.38",
 		"@octanejs/vite-plugin": "0.1.51",
-		"octane": "0.1.51"
+		"octane": "0.1.51",
+		"pg": "8.23.0"
 	},
 	"devDependencies": {
-		"@coreloom/dev-console": "workspace:*",
+		"@flowdular/dev-console": "workspace:*",
 		"@octanejs/app-core": "0.0.47",
 		"@tsrx/typescript-plugin": "0.3.120",
 		"@types/node": "24.13.3",
+		"@types/pg": "8.23.1",
 		"typescript": "5.9.3",
 		"vite": "8.2.2",
-		"vitest": "4.1.10"
+		"vitest": "4.1.11"
 	}
 }

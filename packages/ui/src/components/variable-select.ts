@@ -1,4 +1,4 @@
-import type { VariableDefinition } from '@coreloom/contracts';
+import type { VariableDefinition } from '@flowdular/contracts';
 import { previewValue } from './variable-field.ts';
 
 export interface VariableSelectLiteralOption {

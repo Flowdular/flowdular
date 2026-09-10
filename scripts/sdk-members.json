@@ -1,0 +1,94 @@
+{
+	"@flowdular/ui": {
+		"directory": "packages/ui",
+		"export": "ui"
+	},
+	"@flowdular/database": {
+		"directory": "packages/database",
+		"export": "database"
+	},
+	"@flowdular/coding-agent": {
+		"directory": "packages/coding-agent",
+		"export": "coding-agent"
+	},
+	"@flowdular/database-testing": {
+		"directory": "packages/database-testing",
+		"export": "database-testing"
+	},
+	"@flowdular/ai-provider": {
+		"directory": "packages/ai-provider",
+		"export": "ai-provider"
+	},
+	"@flowdular/contracts": {
+		"directory": "packages/contracts",
+		"export": "contracts"
+	},
+	"@flowdular/cli-protocol": {
+		"directory": "packages/cli-protocol",
+		"export": "cli-protocol"
+	},
+	"@flowdular/server": {
+		"directory": "packages/server",
+		"export": "server"
+	},
+	"@flowdular/harness": {
+		"directory": "packages/harness",
+		"export": "harness"
+	},
+	"@flowdular/sandbox": {
+		"directory": "packages/sandbox",
+		"export": "sandbox"
+	},
+	"@flowdular/database-pglite": {
+		"directory": "packages/database-pglite",
+		"export": "database-pglite"
+	},
+	"@flowdular/dev-console": {
+		"directory": "packages/dev-console",
+		"export": "dev-console"
+	},
+	"@flowdular/client": {
+		"directory": "packages/client",
+		"export": "client"
+	},
+	"@flowdular/kernel": {
+		"directory": "packages/kernel",
+		"export": "kernel"
+	},
+	"@flowdular/module-automations-workflows-integration": {
+		"directory": "modules/automations-workflows-integration",
+		"export": "modules/automations-workflows-integration"
+	},
+	"@flowdular/module-auth": {
+		"directory": "modules/auth",
+		"export": "modules/auth"
+	},
+	"@flowdular/module-workflows": {
+		"directory": "modules/workflows",
+		"export": "modules/workflows"
+	},
+	"@flowdular/module-agents": {
+		"directory": "modules/agents",
+		"export": "modules/agents"
+	},
+	"@flowdular/module-system": {
+		"directory": "modules/system",
+		"export": "modules/system"
+	},
+	"@flowdular/module-profile": {
+		"directory": "modules/profile",
+		"export": "modules/profile"
+	},
+	"@flowdular/module-sandbox": {
+		"directory": "modules/sandbox",
+		"export": "modules/sandbox"
+	},
+	"@flowdular/module-users": {
+		"directory": "modules/users",
+		"export": "modules/users"
+	},
+	"@flowdular/module-automations": {
+		"directory": "modules/automations",
+		"export": "modules/automations"
+	}
+}

@@ -109,7 +109,7 @@
 	"triggers.form.rotate": "Zmień sekret",
 	"triggers.form.save": "Zapisz wyzwalacz",
 	"triggers.form.secret": "Sekret podpisu",
-	"triggers.form.secretHelp": "Klucz HMAC-SHA256. Podpisz v1.<timestamp>.<raw body> i wyślij x-coreloom-signature: v1=<hex> wraz z x-coreloom-timestamp w milisekundach czasu Unix.",
+	"triggers.form.secretHelp": "Klucz HMAC-SHA256. Podpisz v1.<timestamp>.<raw body> i wyślij x-flowdular-signature: v1=<hex> wraz z x-flowdular-timestamp w milisekundach czasu Unix.",
 	"triggers.form.secretWarning": "Skopiuj sekret podpisu teraz. Jest przechowywany w postaci zaszyfrowanej i nie będzie ponownie wyświetlony.",
 	"triggers.loading": "Wczytywanie wyzwalaczy webhook…",
 	"triggers.new": "Nowy wyzwalacz",

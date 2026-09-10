@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
-import type { VariableDefinition } from '@coreloom/contracts';
+import type { VariableDefinition } from '@flowdular/contracts';
 import {
 	variableChoiceLabel,
 	variableSelectChoices,

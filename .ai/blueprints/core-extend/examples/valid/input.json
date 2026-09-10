@@ -1,5 +1,5 @@
 {
-	"package": "@coreloom/module-auth",
+	"package": "@flowdular/module-auth",
 	"change": "server-contract",
 	"brief": "Add an optional agentTools list to PlatformServerComposition.",
 	"consumers": ["modules/*/src/platform.ts", "packages/cli/src/module-sync.ts"]

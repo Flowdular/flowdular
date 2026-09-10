@@ -1,7 +1,6 @@
 {
-	"name": "@coreloom/harness",
+	"name": "@flowdular/harness",
 	"version": "0.1.0",
-	"private": true,
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
@@ -15,14 +14,34 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@coreloom/ai-provider": "workspace:*",
-		"@coreloom/contracts": "workspace:*",
-		"@coreloom/kernel": "workspace:*",
+		"@flowdular/ai-provider": "workspace:*",
+		"@flowdular/contracts": "workspace:*",
+		"@flowdular/kernel": "workspace:*",
 		"ai": "7.0.85"
 	},
 	"devDependencies": {
 		"@types/node": "24.13.3",
 		"typescript": "5.9.3",
-		"vitest": "4.1.10"
-	}
+		"vitest": "4.1.11"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Flowdular/flowdular.git",
+		"directory": "packages/harness"
+	},
+	"files": [
+		"src",
+		"schemas",
+		"dist",
+		"bin",
+		"public",
+		"module.json",
+		"migrations",
+		"translations",
+		"spec",
+		"README.md",
+		"LICENSE"
+	],
+	"private": true
 }

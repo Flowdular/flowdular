@@ -6,9 +6,9 @@ import type { CommandRunner } from './steps.ts';
 /* Where a delivery lands. The request names the target; the sandbox resolves
    it to the implementation below. 'workspace' writes into this working tree;
    'git-pr' commits the same change on a branch and opens a pull request. */
-export type EjectTarget = 'workspace' | 'git-pr';
+export type EjectTarget = 'workspace' | 'git-pr' | 'official-modules';
 
-export type DeliveryTargetId = 'local' | 'git-pr';
+export type DeliveryTargetId = 'local' | 'git-pr' | 'official-modules';
 
 export interface DeliveryModulePlan {
 	readonly id: string;
@@ -115,7 +115,7 @@ export interface DeliveryContext {
 	readonly capabilities: readonly string[];
 	readonly platformUrl: string;
 	readonly build?: boolean;
-	/* The sandbox.delivery block of coreloom.json; defaults when absent. */
+	/* The sandbox.delivery block of flowdular.json; defaults when absent. */
 	readonly delivery?: DeliveryConfiguration;
 	/* Opens the sealed pull-request provider token, if one is configured. */
 	readonly gitProviderToken?: () => Promise<string | null>;

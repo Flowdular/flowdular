@@ -1,190 +1,288 @@
 <div align="center">
 
-<picture>
-	<source media="(prefers-color-scheme: dark)" srcset="docs/assets/coreloom-logo-dark.svg" />
-	<img src="docs/assets/coreloom-logo.svg" alt="Coreloom" width="360" />
-</picture>
+<img src="docs/assets/flowdular-readme-hero.png" alt="Flowdular. Your business. Your building blocks. Woven hash logo connected to business modules." width="100%" />
 
-### The agentic foundation framework for OctaneJS
+### Build your business platform. Put agents to work.
 
-Ship the platform core once. Let AI specialists build the rest, on top of it.
+Accounts, workspaces, business modules and AI workflows, on a shared foundation.
 
+[![CI](https://github.com/flowdular/flowdular/actions/workflows/ci.yml/badge.svg)](https://github.com/flowdular/flowdular/actions/workflows/ci.yml)
 ![Node](https://img.shields.io/badge/Node-%E2%89%A5%2022.22.2-3A6BE0)
 ![pnpm](https://img.shields.io/badge/pnpm-11.17.0-2557D6)
-![OctaneJS](https://img.shields.io/badge/built%20with-OctaneJS-141B2E)
 ![Status](https://img.shields.io/badge/status-preview-8290A8)
+
+[Website](https://flowdular.com) · [Quick start](#quick-start) · [Build with AI](#build-with-ai) · [Agents and workflows](#agents-and-workflows) · [Documentation](docs/README.md) · [Deployment](infra/README.md)
 
 </div>
 
-Coreloom gives you a production platform core (accounts, workspaces, permissions, module composition, an in-product agent runtime, a capability CLI, and a chat-first sandbox) and a strict module contract on top of it. A business person describes what they need; AI specialists turn it into an approved spec, build it behind gates, preview it live inside the real app shell, and land it in one click. Developers get the same guardrails as skills they can run from their own coding tools.
+Flowdular is an extensible business platform built with OctaneJS and TypeScript.
+It provides identity, workspace isolation, permissions, administration and an AI
+runtime. Add the screens, data and processes your business needs as modules in
+your own codebase.
 
-## What you get
+Business users can describe a change in the sandbox, review its specification
+and preview the result. Developers can build the same modules in their coding
+tools, using shared contracts and task-specific skills. Both paths produce
+versioned source code, migrations and tests.
 
-- **A real platform, not a starter.** Sign-in, tenants, roles and scopes, API tokens, per-module settings, and an audit trail are already there and configurable by an admin.
-- **A sandbox that builds modules.** Chat a brief; a planner routes it to specialists (business, UX, backend, frontend, agentic); each turn runs the same gates the platform runs; the draft previews inside the real shell before anything lands.
-- **One-click delivery.** Eject a finished module straight into `modules/` and enable it, or, in a git repo, open a ready pull request with the gate evidence attached.
-- **Safe by contract.** Every endpoint declares a permission, every query is tenant-scoped, generated composition files are CLI-owned, and no change ships without typecheck, tests, schema and format gates.
-- **Skills for your own tools.** The procedures in [`.ai/skills`](.ai/skills) (module-new, module-update, core-extend, bug-hunt, auth-security-review, and more) load as `/skill` in Claude Code and as `AGENTS.md` context in Codex, so the same rules apply whether an agent works in the sandbox or in your editor.
-- **A durable agent runtime.** `agents.core` runs reusable agents against registered tools with leases, recovery, idempotency, and an append-only audit, configurable per tenant.
+> **Preview release.** Deployment assets and automated checks are included,
+> but APIs and module contracts are still evolving. Review the security model,
+> validate your use case and plan backups before deploying business data.
 
-## See it in action
+## What is included
 
-<!-- Demo slots: replace each SVG with a GIF or MP4 recorded from the live app (keep the same path). -->
+![Modules, agents and workflows: modular building blocks, an agent connected to tools, and a branching workflow.](docs/assets/flowdular-readme-modules.png)
 
-|                                                                                                                                      |                                                                                                                                   |
-| ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| [<img src="docs/assets/demo/build-module.svg" alt="Build a module in the sandbox" width="420" />](docs/assets/demo/build-module.svg) | [<img src="docs/assets/demo/eject-to-app.svg" alt="Eject into the running app" width="420" />](docs/assets/demo/eject-to-app.svg) |
-| **Build a module in the sandbox**                                                                                                    | **Eject into the running app**                                                                                                    |
-| [<img src="docs/assets/demo/update-module.svg" alt="Update an existing module" width="420" />](docs/assets/demo/update-module.svg)   | [<img src="docs/assets/demo/admin-settings.svg" alt="Full admin control" width="420" />](docs/assets/demo/admin-settings.svg)     |
-| **Update an existing module**                                                                                                        | **Full admin control**                                                                                                            |
+| Area              | Capabilities                                                                                                               |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Platform          | Accounts, multiple workspaces, roles, permissions, API tokens, audit history and module settings.                          |
+| Business modules  | Installable customers, suppliers, catalog and expenses from official-modules; bundled user profiles.                       |
+| AI agents         | Provider connections, reusable agents and procedures, registered tools, a playground, durable runs and usage records.      |
+| Workflows         | Versioned graphs connecting agents, decisions, validation and module actions, with simulation and live execution.          |
+| Automations       | Schedules and signed webhook triggers for agents and workflows.                                                            |
+| Sandbox           | Chat-based module development, specification approval, validation gates, application preview and local or GitHub delivery. |
+| Work dashboard    | Sessions, drafts, accepted plans, rejected ideas, delivery stages, recorded tokens and provider-reported costs.            |
+| Developer tooling | Specification-driven scaffolding, generated composition, a capability CLI and shared instructions through RuleSync.        |
 
-## How a change ships
+The platform and sandbox include English and Polish translations. New modules
+use the same UI components, translation runtime and permission model.
 
-```text
-brief -> approved spec -> gates -> live preview -> eject (or pull request)
-```
+## Quick start
 
-Every module starts with an approved specification. Versioned blueprints then constrain its ACL, endpoints, migrations, services, client code, translations, tests, and allowed paths, so routine implementation can be delegated to cost-efficient executor models while architecture and verification decisions stay encoded.
-
-## Start locally
-
-Requirements: Node.js 22.22.2 or newer and pnpm 11.17.0.
+Requires **Node.js 22.22.2 or newer** and **pnpm 11.17.0**. Local development
+uses embedded PostgreSQL through PGlite; no database server is required.
 
 ```bash
+git clone https://github.com/flowdular/flowdular.git
+cd flowdular
 pnpm install
-pnpm coreloom doctor
-pnpm coreloom setup quick
-pnpm coreloom setup quick --apply --confirm reset-local-auth
+pnpm flowdular doctor
 pnpm dev
 ```
 
-Open `http://localhost:4310`. Vite HMR is enabled for TSRX, TypeScript, and styles. The custom launcher keeps tool warnings quiet; use `pnpm dev -- --verbose` for full diagnostics.
+Open [localhost:4310](http://localhost:4310). On a clean database, create a
+workspace and its owner account. Module permissions may need
+[synchronization](#module-access-and-owner-permissions) after creating a workspace.
 
-Quick setup first prints its complete dry-run plan, then creates the local demo only after typed confirmation. The first visit opens the core sign-in flow. `auth.core` keeps the session in an HttpOnly cookie and loads the scopes for the selected tenant membership. The sign-up flow remains available for a clean database.
+<details>
+<summary>Optional: reset the local database and create demo accounts</summary>
 
-Local databases and development vault keys live under `.coreloom/data`. `setup migrate-state` is the isolated compatibility bridge for workspaces that still hold preserved state under `.octane-erp`:
-
-```bash
-pnpm coreloom setup migrate-state
-# Stop the platform, sandbox, and every SQLite client first.
-pnpm coreloom setup migrate-state --apply --confirm migrate-legacy-state
-```
-
-The dry run lists every source, destination, collision, and active SQLite sidecar. Apply refuses symbolic links, existing destination files, and databases with `-wal`, `-shm`, or `-journal` state. It verifies every copied file and never removes the legacy source directory.
-
-The bundled `agents.core` module provides reusable agent definitions, an isolated playground, and durable run history. Enqueue returns after the run is committed, so execution continues after navigation, browser close, or sign-out. Agents can reach ERP capabilities only through tools registered against approved API endpoints or CLI capabilities. The default local simulation provider does not call an external model or network service.
-
-## Repository layout
-
-- `platform`: the deployable OctaneJS composition root and TSRX application shell.
-- `modules`: the foundation modules (authentication, users, system, agents, sandbox) and the business modules built on top of them.
-- `packages`: reusable contracts, kernel, client, server, CLI, sandbox, landing site, and agent harness packages.
-- `infra`: container, Compose, Kubernetes, and CI deployment assets.
-- `.ai`: agent roles, policies, blueprints, examples, and deterministic guardrails.
-
-## Core commands
+Stop the development server first. This resets **all module data in the local
+database**, then creates two demo workspaces. Back up any data you need to keep.
+Never run it against a custom or deployed database.
 
 ```bash
-pnpm coreloom capability list
-pnpm coreloom spec validate --all
-pnpm coreloom blueprint validate --all
-pnpm coreloom module validate
-pnpm coreloom auth scopes
-pnpm coreloom agents status
-pnpm coreloom setup quick
-pnpm coreloom setup migrate-state
-pnpm verify
-pnpm build
+pnpm flowdular setup quick
+pnpm flowdular setup quick --apply --confirm reset-local-auth
+
+# Restore scopes omitted by the current demo seed.
+pnpm flowdular auth sync-scopes --module workflows.core --apply
+pnpm flowdular auth sync-scopes --module automations.core --apply
+pnpm flowdular auth sync-scopes --module expenses.core --apply
+pnpm flowdular auth sync-scopes --module profile.core --apply
+
+pnpm dev
 ```
 
-Machine consumers should pass `--json`. Workspace writes are dry-run by default. `--root <dir>` runs any command against another workspace (the sandbox uses it for session workspaces); without it the CLI walks up from the current directory to the nearest `coreloom.json`. `spec validate --all` also covers the platform specs under `specs/`; without `--all` only module specs are checked. Creating a module requires an approved spec and an explicit `--apply`:
+| Account             | Password         | Access                                    |
+| ------------------- | ---------------- | ----------------------------------------- |
+| `admin@example.com` | `Admin!23456789` | Owner of Operations Demo and Finance Demo |
+| `user@example.com`  | `User!234567890` | Reduced-scope member of Operations Demo   |
 
-`coreloom` is the primary CLI name. `cl` is the optional short alias and resolves to the same command.
+These credentials are public development defaults. Never use them in a
+deployment. Local database files and development keys live in `.flowdular/data`.
+
+</details>
+
+[Getting started](docs/getting-started.md) covers local state, configuration
+and migration from older workspaces.
+
+## Build with AI
+
+Start the sandbox alongside the platform:
 
 ```bash
-pnpm coreloom module new sales.orders \
-  --spec modules/sales-orders/spec/module.yaml
+pnpm sandbox
 ```
 
-The scaffold derives everything from the spec: `platform.server` / `platform.client` flags from the capabilities, `src/platform.ts` and `src/client/index.ts` with the canonical `createServerComposition` / `createClientContribution` entries, one `defineEndpoint` per `<ns>.<entity>.read` (list) and `.manage` (create) permission of the first entity, and with the `database` capability a SQLite repository, `CL_<MODULE>_DATABASE` runtime option, and `migrations/0001_*.up/down.sql`. Files are written through the workspace's Prettier, so the format gate passes without a rewrite. A directory that already holds `spec/module.yaml` or `translations/**` is extended, not rejected; a failed run leaves nothing behind.
+Open [localhost:4320](http://localhost:4320), then connect it using a platform
+API token and a sandbox access grant. Follow the
+[connection guide](docs/sandbox.md#connect-it-to-a-running-application).
 
-`module validate` checks more than the schema: `platform.server` requires `src/platform.ts` and a `./platform` export, `platform.client` requires `src/client/index.ts` and a `./client` export, every declared locale needs a `translations/<locale>.json` with the same keys as the others (errors), and `module.json` version drift against `specVersion` or a locale missing from `coreloom.json` is reported as a warning.
+```text
+Describe the work -> Review and approve the spec -> Build and run gates
+                 -> Preview the module -> Deliver locally or open a PR
+```
 
-Enabled modules can add namespaced commands such as `customer export`. Discovery uses a declarative JSON catalog and does not execute module code. See [docs/cli-extensions.md](docs/cli-extensions.md).
+A session can create or update multiple modules. Coding specialists work in a
+separate workspace, and you approve the exact specification before
+implementation. Drafts preview in the application shell with a session-local
+database. Delivery checks the specification and gates again.
 
-For a disposable local workspace, `setup quick` prints the reset plan, two seeded logins, and two demo tenants. Apply it only after stopping the development server:
+The dashboard lets you search sessions, review their stage, inspect recorded
+usage by specialist, and reject, restore or archive an idea. GitHub repository
+and reviewer configuration lives in **Delivery settings**. Opening a pull
+request does not merge it or mark the change as deployed.
+
+### Models and costs
+
+Loopback mode can use your installed Claude Code or Codex CLI and its existing
+authentication, or a provider API key. Self-hosted mode uses API keys only.
+Access and charges depend on the provider and your account; a coding-tool
+subscription does not automatically authorize business-agent API calls.
+
+Short shared rules and one task-specific skill per phase keep instructions
+focused for cost-conscious model selection. The dashboard records usage that
+drivers report. Missing usage or pricing remains unknown. Displayed costs are
+not subscription charges or invoices.
+
+[Sandbox guide](docs/sandbox.md) · [Dashboard accounting and limitations](docs/sandbox-dashboard.md)
+
+## Agents and workflows
+
+Business agents run inside the platform. Each has instructions, a provider
+binding and a restricted set of registered tools. Permissions remain bounded
+by the workspace, calling actor and invocation grants. Procedures package
+reusable instructions and tool selections.
+
+Workflows connect agents with inputs, decisions, validation, module actions
+and outputs. Published revisions pin the execution graph. Simulation uses
+supplied fixtures; live runs use configured providers and authorized actions.
+Run history records progress, failures and available usage and cost data.
+Schedules and signed webhooks can start these processes.
+
+For example, a risk-review module could collect case data, invoke an analysis
+agent, validate its structured result and route a decision for review. That is
+a module you build on these capabilities, not a preinstalled risk product.
+
+The built-in local agent provider is a deterministic simulation with no model
+calls. Workflow simulation, coding-agent usage and live business-agent usage
+are separate. A complete sandbox test environment for live agents and
+workflows remains in development.
+
+## Build with code
+
+A module owns its specification, permissions, API, migrations, screens,
+translations and tests. Start from an explicitly approved specification:
 
 ```bash
-pnpm coreloom setup quick --apply --confirm reset-local-auth
+pnpm flowdular module new sales.orders --spec modules/sales-orders/spec/module.yaml
+pnpm flowdular module new sales.orders --spec modules/sales-orders/spec/module.yaml --apply
+# Implement and verify the scaffold before enabling it.
+pnpm flowdular module enable sales.orders --apply
 ```
 
-The admin seed is `admin@example.com` with password `Admin!23456789`. It can switch between Operations Demo and Finance Demo. The reduced-scope user is `user@example.com` with password `User!234567890`. Quick setup is blocked outside development and test and must never be used for deployed data.
+The CLI manages composition and module dependencies. Modules use shared UI
+components and access other modules through declared capabilities or registered
+tools. [Modules](docs/modules.md) explains the lifecycle;
+[`.ai/references/catalog`](.ai/references/catalog) is the pinned reference implementation.
+Business modules are installed from [official-modules](https://github.com/Flowdular/official-modules); see [installation and publication](docs/module-distribution.md).
 
-Development navigation is visible only to tenant owners. Authentication sign-up can be disabled at deployment time with `CL_AUTH_ALLOW_SIGN_UP=false`; the server rejects sign-up and the client removes the sign-up action.
+### Shared instructions across coding tools
 
-## Landing site
-
-The public website is a standalone application in `packages/landing`: one
-server-rendered page, no session and no module composition, so marketing work
-never reaches the product. The platform itself serves the workspace at `/`.
+[`.ai/rules`](.ai/rules) and [`.ai/skills`](.ai/skills) are the source of truth.
+RuleSync generates discovery files for Claude Code and Codex from that source.
+The root contract contains always-active invariants; a task loads its relevant
+skill instead of the full instruction library.
 
 ```bash
-pnpm landing   # http://127.0.0.1:4330
+pnpm rules:generate
+pnpm rules:check
 ```
 
-Set `CL_LANDING_APP_URL` at build time to point its sign-in and sign-up
-actions at a deployed platform on another origin.
+### Module access and owner permissions
 
-## Sandbox
+`module enable <id> --apply` grants the module's declared scopes and those of
+newly enabled dependencies to existing workspace owners. Sandbox local delivery
+also synchronizes module scopes. Members receive access through role assignment.
 
-The sandbox is a separate, chat-first application that builds one module at a
-time in an isolated workspace and previews it inside the real application
-shell. It is started from any Coreloom workspace and connects to a running
-application with an API token:
+The current demo reset and new-workspace provisioning use fixed owner
+defaults. After either operation, synchronize scopes for the enabled modules
+you need. Do the same when adding permissions to an existing module or
+deploying a change to another database:
 
 ```bash
-npx @coreloom/sandbox
+# Stop the local app before a CLI command opens its embedded database.
+pnpm flowdular auth sync-scopes --module workflows.core --apply
 ```
 
-Issue the token in the application under Administration, API tokens, and grant
-sandbox access under Development, Sandbox, or from the CLI:
+Restart the app and refresh your session. An enabled module can be absent from
+navigation when the account lacks its read scope. Do not reset the database to
+repair this condition.
 
-```bash
-pnpm coreloom sandbox grant --email admin@example.com --tenant operations-demo --apply
-pnpm coreloom sandbox access --tenant operations-demo
-```
+## Database and deployment
 
-A local sandbox can drive the `claude` or `codex` binary with the operator's own
-subscription; a self-hosted sandbox uses bring-your-own-key providers. Each turn
-is driven by one specialist role with its own writable paths and gates, and the
-roles live in `.ai/agents/sandbox` so a workspace can change them. See
-[packages/sandbox/README.md](packages/sandbox/README.md).
+Modules use the platform's database provider. The platform supplies drivers
+and credentials; repositories use asynchronous, tenant-scoped transactions
+and versioned PostgreSQL migrations.
 
-## Module composition
+| Environment                                        | Database                                                               |
+| -------------------------------------------------- | ---------------------------------------------------------------------- |
+| Local development, isolated tests, sandbox preview | Embedded PostgreSQL through PGlite                                     |
+| Production                                         | PostgreSQL server with separate migrator, runtime and background roles |
 
-Modules join the platform without touching core files. A module declares `platform.server` / `platform.client` in its `module.json`, exposes `createServerComposition` from `src/platform.ts` and `createClientContribution` from `src/client/index.ts`, and is wired in through generated code:
+Tenant tables enforce row-level security. The runtime role has neither
+`SUPERUSER` nor `BYPASSRLS`. `GET /api/health` and `GET /api/ready` expose
+health and readiness checks. See [Database adapters](docs/database-adapters.md).
 
-```bash
-pnpm coreloom module enable <module.id> --apply
-pnpm coreloom module disable <module.id> --apply
-```
-
-`enable` resolves the module's complete dependency closure, writes every newly enabled module to `coreloom.json` in deterministic dependency-first order, adds all required packages to `platform/package.json`, runs `pnpm install` when a package is not linked yet, and regenerates `platform/src/generated/modules.{server,client}.ts`. With `--apply` it also grants the scopes declared by each newly enabled module to every workspace owner through `auth sync-scopes` (the target result is returned as `scopes`; a failed grant is reported as `MODULE_SCOPES_SYNC_FAILED`, and when `auth.core` is unavailable the grant is skipped with a warning). `disable` refuses while another enabled module depends on the target, then removes it and regenerates (`system.core` and `auth.core` are protected). `module sync` also validates the enabled dependency graph and always composes dependencies before consumers, independent of the order stored in an older config. A running `pnpm dev` picks the change up live: the octane plugin reloads server routes when the generated composition changes and the client hot-reloads, so no application rebuild is needed. `pnpm dev` and `pnpm build` also run the sync automatically. The generated files are CLI-owned; never edit them, `platform/octane.config.ts`, or `platform/src/App.tsrx` by hand.
-
-## Authentication configuration
-
-Sign-up is a three-step wizard: workspace name plus a unique workspace id (the slug that becomes the first URL segment, `/{workspace}/{view}`), then the administrator account, then an optional email confirmation step. Bookmarks that point at another workspace you belong to switch the session to it on load.
-
-- `CL_AUTH_ALLOW_SIGN_UP` (`true`/`false`): expose account creation.
-- `CL_AUTH_EMAIL_CONFIRMATION` (`false` by default): hold the session after sign-up until the address is confirmed. Requires a composed mail transport; keep disabled until one exists.
-- `CL_AUTH_SIGN_IN_PROVIDERS` (comma list, empty by default): external sign-in providers rendered on the sign-in screen, e.g. `google,okta`. Listing a provider only surfaces the button; the matching `/api/auth/sso/{provider}/start` handler must be composed at the platform level.
-
-## Deploy
+Copy `infra/docker/.env.example` to `infra/docker/.env` and configure its
+four module keys and four PostgreSQL passwords, then run:
 
 ```bash
 docker compose -f infra/docker/compose.yaml up --build
 ```
 
-CI verifies types, tests, specs, blueprints, formatting, the production build, dependencies, and the container. Tagged releases can publish to GHCR. Kubernetes base manifests live in `infra/kubernetes`.
+Compose includes PostgreSQL and TLS configuration between the app and database.
+Configure HTTPS, secrets and backups for your deployment. Public sign-up is
+disabled by default in the container. The [deployment guide](infra/README.md)
+covers cookies, database roles, published images and Kubernetes manifests.
 
-Architecture and delivery contract: [docs/architecture-blueprint.md](docs/architecture-blueprint.md)
+The sandbox development server is not a hardened boundary for mutually
+untrusted users. Review its [security model](packages/sandbox/README.md#security-model)
+and [hosting limitations](docs/sandbox-dashboard.md#ownership) before sharing it.
+
+## Development and verification
+
+```bash
+pnpm dev                              # Platform with hot reload
+pnpm sandbox                          # Module-building workspace
+pnpm verify                           # Rules, types, tests, validation, formatting
+pnpm build                            # CLI smoke checks and production build
+pnpm flowdular module validate         # Manifests, composition and translations
+```
+
+CI runs repository verification, a PostgreSQL adapter matrix, the production
+build, dependency auditing and a container build. Local repository tests use
+isolated databases. A passing gate is evidence for that check, not a substitute
+for reviewing generated code or testing the business process.
+
+Before contributing, read [AGENTS.md](AGENTS.md), select the relevant
+[task skill](.ai/skills/README.md), and follow the specification and validation
+workflow. Keep changes scoped; do not edit generated composition files by hand.
+
+## Repository map
+
+| Path                    | Purpose                                                          |
+| ----------------------- | ---------------------------------------------------------------- |
+| [`platform/`](platform) | Deployable application and module composition                    |
+| [`modules/`](modules)   | Platform capabilities and business modules                       |
+| [`packages/`](packages) | Contracts, database adapters, UI, CLI, sandbox and agent tooling |
+| [`.ai/`](.ai)           | Shared rules, task skills, specialist roles and blueprints       |
+| [`infra/`](infra)       | Container and Kubernetes deployment assets                       |
+| [`docs/`](docs)         | Setup, configuration, architecture and operating guides          |
+
+## Documentation
+
+- [Getting started](docs/getting-started.md): install, run and seed a local demo.
+- [Modules](docs/modules.md): specification, implementation, permissions and delivery.
+- [Sandbox](docs/sandbox.md): connect a coding workspace to your platform.
+- [CLI](docs/cli.md): commands, dry runs and explicit write confirmation.
+- [Configuration](docs/configuration.md): environment variables and defaults.
+- [Design system](docs/design-system.md): shared components and UI conventions.
+- [Architecture decisions](docs/adr): design choices and their context.
+
+## License
+
+MIT.
+
+The public website is maintained in [Flowdular/landing](https://github.com/Flowdular/landing). Clone that repository and run `pnpm dev` there.

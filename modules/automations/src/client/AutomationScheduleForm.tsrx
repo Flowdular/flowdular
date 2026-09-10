@@ -1,7 +1,7 @@
 import { useMemo } from 'octane';
-import { useTranslation } from '@coreloom/client';
-import { Button, FormField, VariableTextarea } from '@coreloom/ui';
-import type { VariableDefinition } from '@coreloom/contracts';
+import { useTranslation } from '@flowdular/client';
+import { Button, FormField, VariableTextarea } from '@flowdular/ui';
+import type { VariableDefinition } from '@flowdular/contracts';
 import { createStore, useValue } from 'segment-state';
 import { cadenceMinutes } from '../domain/cadence.ts';
 import type {

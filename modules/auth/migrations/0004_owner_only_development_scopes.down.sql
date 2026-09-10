@@ -1,2 +1,0 @@
--- Access hardening is intentionally irreversible. Development scopes removed
--- from non-owner memberships must not be restored automatically.

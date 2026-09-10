@@ -1,4 +1,4 @@
-import type { ModuleManifest, RegisteredModule } from '@coreloom/contracts';
+import type { ModuleManifest, RegisteredModule } from '@flowdular/contracts';
 import manifest from '../module.json' with { type: 'json' };
 import { AGENT_PERMISSIONS } from './acl/permissions.ts';
 
@@ -21,11 +21,11 @@ export const moduleDefinition = {
 			permission: AGENT_PERMISSIONS.definitionsRead,
 		},
 		{
-			id: 'agents.navigation.skills',
-			label: 'Skills',
-			href: '/agent-skills',
+			id: 'agents.navigation.procedures',
+			label: 'Procedures',
+			href: '/agent-procedures',
 			order: 35,
-			permission: AGENT_PERMISSIONS.skillsRead,
+			permission: AGENT_PERMISSIONS.proceduresRead,
 		},
 		{
 			id: 'agents.navigation.playground',
@@ -73,4 +73,16 @@ export type {
 	ModuleAgentExecutionLimits,
 	ModuleAgentView,
 	UpdateModuleAgentBindingInput,
+	AgentProcedure,
+	AgentProcedureSnapshot,
+	AgentProcedureStatus,
+	AgentRevisionProcedure,
+	CreateAgentProcedureInput,
+	UpdateAgentProcedureInput,
+	AgentSkill,
+	AgentSkillSnapshot,
+	AgentSkillStatus,
+	AgentRevisionSkill,
+	CreateAgentSkillInput,
+	UpdateAgentSkillInput,
 } from './domain/types.ts';

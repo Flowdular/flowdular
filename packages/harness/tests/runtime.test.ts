@@ -9,7 +9,7 @@ import {
 	type AgentTool,
 	type AgentToolContext,
 } from '../src/index.ts';
-import { agentActor, serviceActor, userActor } from '@coreloom/kernel';
+import { agentActor, serviceActor, userActor } from '@flowdular/kernel';
 
 function request(
 	overrides: Partial<AgentExecutionRequest> = {},

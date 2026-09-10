@@ -1,7 +1,7 @@
 import { access, readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 
-export interface CoreloomWorkspace {
+export interface FlowdularWorkspace {
 	readonly root: string;
 	readonly configPath: string;
 	readonly config: Record<string, unknown>;
@@ -17,14 +17,14 @@ export class SandboxSetupError extends Error {
 	}
 }
 
-/* The sandbox is always started from a Coreloom workspace, the same way the
-   CLI finds it: walk up until coreloom.json is found. */
-export async function findCoreloomWorkspace(
+/* The sandbox is always started from a Flowdular workspace, the same way the
+   CLI finds it: walk up until flowdular.json is found. */
+export async function findFlowdularWorkspace(
 	start: string,
-): Promise<CoreloomWorkspace> {
+): Promise<FlowdularWorkspace> {
 	let directory = resolve(start);
 	for (;;) {
-		const configPath = resolve(directory, 'coreloom.json');
+		const configPath = resolve(directory, 'flowdular.json');
 		try {
 			await access(configPath);
 			return {
@@ -39,7 +39,7 @@ export async function findCoreloomWorkspace(
 			if (error instanceof SyntaxError) {
 				throw new SandboxSetupError(
 					'WORKSPACE_CONFIG_INVALID',
-					`coreloom.json in ${directory} is not valid JSON.`,
+					`flowdular.json in ${directory} is not valid JSON.`,
 				);
 			}
 		}
@@ -47,7 +47,7 @@ export async function findCoreloomWorkspace(
 		if (parent === directory) {
 			throw new SandboxSetupError(
 				'WORKSPACE_NOT_FOUND',
-				'No coreloom.json was found in this directory or any parent. Start the sandbox from a Coreloom workspace.',
+				'No flowdular.json was found in this directory or any parent. Start the sandbox from a Flowdular workspace.',
 			);
 		}
 		directory = parent;
@@ -55,7 +55,7 @@ export async function findCoreloomWorkspace(
 }
 
 export function enabledModules(
-	workspace: CoreloomWorkspace,
+	workspace: FlowdularWorkspace,
 ): readonly string[] {
 	const modules = workspace.config.modules as
 		| { enabled?: readonly string[] }
@@ -63,7 +63,9 @@ export function enabledModules(
 	return modules?.enabled ?? [];
 }
 
-export function moduleRootsOf(workspace: CoreloomWorkspace): readonly string[] {
+export function moduleRootsOf(
+	workspace: FlowdularWorkspace,
+): readonly string[] {
 	const modules = workspace.config.modules as
 		| { roots?: readonly string[] }
 		| undefined;

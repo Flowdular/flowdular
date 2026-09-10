@@ -5,23 +5,23 @@ schemaVersion: 1
 # this file; it documents the contract.
 gates:
   - id: spec-schema
-    command: pnpm coreloom spec validate --all --json
-    sandbox: pnpm coreloom spec validate --all --json --root <session workspace>
+    command: pnpm flowdular spec validate --all --json
+    sandbox: pnpm flowdular spec validate --all --json --root <session workspace>
     required: true
   - id: module-schema
-    command: pnpm coreloom module validate --json
-    sandbox: pnpm coreloom module validate --json --root <session workspace>
+    command: pnpm flowdular module validate --json
+    sandbox: pnpm flowdular module validate --json --root <session workspace>
     required: true
   - id: dependencies
     command: 'grep the imports under src/** and compare with package.json dependencies (no CLI command yet)'
     sandbox: checkDeclaredDependencies(modulePath) in packages/sandbox/src/server/dependencies.ts, run after every turn that changed files, plus a pnpm install when a package.json changed
     required: true
   - id: typecheck
-    command: pnpm --filter @coreloom/module-{module} typecheck
+    command: pnpm --filter @flowdular/module-{module} typecheck
     sandbox: node_modules/.bin/tsrx-tsc --noEmit -p tsconfig.json (cwd module)
     required: true
   - id: tests
-    command: pnpm --filter @coreloom/module-{module} test
+    command: pnpm --filter @flowdular/module-{module} test
     sandbox: node_modules/.bin/vitest run --passWithNoTests (cwd module; zero tests still pass)
     required: true
   - id: format

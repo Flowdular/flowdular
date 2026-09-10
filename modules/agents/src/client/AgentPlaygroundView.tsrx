@@ -1,6 +1,12 @@
 import { useEffect, useMemo } from 'octane';
-import { t } from '@coreloom/client';
-import { Alert, Button, EmptyState, FormField, PageHeader } from '@coreloom/ui';
+import { t } from '@flowdular/client';
+import {
+	Alert,
+	Button,
+	EmptyState,
+	FormField,
+	PageHeader,
+} from '@flowdular/ui';
 import { useValue } from 'segment-state';
 import type { AgentRunDetail } from '../domain/types.ts';
 import {

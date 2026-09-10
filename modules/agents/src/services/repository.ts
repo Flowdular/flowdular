@@ -1,7 +1,7 @@
 import type {
 	AgentExecutionEvent,
 	AgentExecutionResult,
-} from '@coreloom/harness';
+} from '@flowdular/harness';
 import type {
 	AgentAuditEvent,
 	AgentAuditPage,
@@ -13,7 +13,7 @@ import type {
 	AgentRun,
 	AgentRunDetail,
 	AgentRunExecution,
-	AgentSkill,
+	AgentProcedure,
 	AgentUsageAgent,
 	AgentUsageBucket,
 	AgentUsageDay,
@@ -27,10 +27,12 @@ export class DuplicateAgentKeyError extends Error {
 	}
 }
 
-export class DuplicateAgentSkillKeyError extends Error {
+export class DuplicateAgentProcedureKeyError extends Error {
 	constructor() {
-		super('An agent skill with this key already exists in the active tenant.');
-		this.name = 'DuplicateAgentSkillKeyError';
+		super(
+			'An agent procedure with this key already exists in the active tenant.',
+		);
+		this.name = 'DuplicateAgentProcedureKeyError';
 	}
 }
 
@@ -73,70 +75,84 @@ export type PendingAgentAuditEvent = Omit<
 >;
 
 export interface AgentRepository {
+	close(): Promise<void>;
 	reconcileModuleAgents(
 		definitions: readonly ModuleAgentDefinition[],
 		reconciledAt: number,
-	): void;
-	listModuleAgentBindings(tenantId: string): readonly ModuleAgentBinding[];
+	): Promise<void>;
+	listModuleAgentBindings(
+		tenantId: string,
+	): Promise<readonly ModuleAgentBinding[]>;
 	getModuleAgentBinding(
 		tenantId: string,
 		agentId: string,
-	): ModuleAgentBinding | null;
+	): Promise<ModuleAgentBinding | null>;
 	saveModuleAgentBinding(
 		binding: ModuleAgentBinding,
 		definition: ModuleAgentDefinition,
 		expectedRevision: number,
 		audit: PendingAgentAuditEvent,
-	): ModuleAgentBinding;
-	listAgents(tenantId: string): readonly AgentDefinition[];
-	getAgent(tenantId: string, agentId: string): AgentDefinition | null;
+	): Promise<ModuleAgentBinding>;
+	listAgents(tenantId: string): Promise<readonly AgentDefinition[]>;
+	getAgent(tenantId: string, agentId: string): Promise<AgentDefinition | null>;
 	getAgentRevision(
 		tenantId: string,
 		agentId: string,
 		revision: number,
-	): AgentDefinitionRevision | null;
-	listAgentRevisions(tenantId: string): readonly AgentDefinitionRevision[];
-	createAgent(agent: AgentDefinition): AgentDefinition;
-	updateAgent(agent: AgentDefinition): AgentDefinition;
-	deleteAgent(tenantId: string, agentId: string): boolean;
+	): Promise<AgentDefinitionRevision | null>;
+	listAgentRevisions(
+		tenantId: string,
+	): Promise<readonly AgentDefinitionRevision[]>;
+	createAgent(agent: AgentDefinition): Promise<AgentDefinition>;
+	updateAgent(agent: AgentDefinition): Promise<AgentDefinition>;
+	deleteAgent(tenantId: string, agentId: string): Promise<boolean>;
 	agentUsage(
 		tenantId: string,
 		agentId: string,
-	): {
+	): Promise<{
 		readonly runs: number;
 		readonly pendingRuns: number;
 		readonly assignments: number;
-	};
+	}>;
 	providerUsage(
 		tenantId: string,
 		providerId: string,
-	): { readonly definitions: number; readonly pendingRuns: number };
-	listSkills(tenantId: string): readonly AgentSkill[];
-	getSkill(tenantId: string, skillId: string): AgentSkill | null;
-	createSkill(skill: AgentSkill): AgentSkill;
-	updateSkill(skill: AgentSkill): AgentSkill;
-	deleteSkill(tenantId: string, skillId: string): boolean;
-	skillUsage(
+	): Promise<{ readonly definitions: number; readonly pendingRuns: number }>;
+	listProcedures(tenantId: string): Promise<readonly AgentProcedure[]>;
+	getProcedure(
 		tenantId: string,
-		skillId: string,
-	): { readonly assignments: number; readonly activeDefinitions: number };
-	listRuns(tenantId: string, limit: number): readonly AgentRun[];
-	getRun(tenantId: string, runId: string): AgentRunDetail | null;
+		procedureId: string,
+	): Promise<AgentProcedure | null>;
+	createProcedure(skill: AgentProcedure): Promise<AgentProcedure>;
+	updateProcedure(skill: AgentProcedure): Promise<AgentProcedure>;
+	deleteProcedure(tenantId: string, procedureId: string): Promise<boolean>;
+	procedureUsage(
+		tenantId: string,
+		procedureId: string,
+	): Promise<{
+		readonly assignments: number;
+		readonly activeDefinitions: number;
+	}>;
+	listRuns(tenantId: string, limit: number): Promise<readonly AgentRun[]>;
+	getRun(tenantId: string, runId: string): Promise<AgentRunDetail | null>;
 	listRunEvents(
 		tenantId: string,
 		runId: string,
 		afterSequence: number,
-	): readonly AgentExecutionEvent[];
+	): Promise<readonly AgentExecutionEvent[]>;
 	findRunByIdempotencyKey(
 		tenantId: string,
 		idempotencyKey: string,
-	): AgentRun | null;
+	): Promise<AgentRun | null>;
 	enqueueRun(
 		run: AgentRunExecution,
 		idempotencyKey: string | null,
 		audit: PendingAgentAuditEvent,
-	): AgentRun;
-	listRecoverableRuns(now: number, limit: number): readonly RecoverableRun[];
+	): Promise<AgentRun>;
+	listRecoverableRuns(
+		now: number,
+		limit: number,
+	): Promise<readonly RecoverableRun[]>;
 	claimRun(
 		tenantId: string,
 		runId: string,
@@ -144,13 +160,13 @@ export interface AgentRepository {
 		now: number,
 		leaseExpiresAt: number,
 		audit: PendingAgentAuditEvent,
-	): AgentRunExecution | null;
+	): Promise<AgentRunExecution | null>;
 	renewLease(
 		tenantId: string,
 		runId: string,
 		workerId: string,
 		leaseExpiresAt: number,
-	): boolean;
+	): Promise<boolean>;
 	consumeRunGrant(input: {
 		readonly grantId: string;
 		readonly tokenHash: string;
@@ -162,19 +178,19 @@ export interface AgentRepository {
 		readonly issuedAt: number;
 		readonly expiresAt: number;
 		readonly consumedAt: number;
-	}): boolean;
+	}): Promise<boolean>;
 	appendRunEvent(
 		tenantId: string,
 		runId: string,
 		event: AgentExecutionEvent,
-	): void;
+	): Promise<void>;
 	completeRun(
 		tenantId: string,
 		runId: string,
 		workerId: string,
 		result: AgentExecutionResult,
 		audit: PendingAgentAuditEvent,
-	): void;
+	): Promise<void>;
 	failRun(
 		tenantId: string,
 		runId: string,
@@ -183,7 +199,7 @@ export interface AgentRepository {
 		message: string,
 		completedAt: number,
 		audit: PendingAgentAuditEvent,
-	): void;
+	): Promise<void>;
 	/* Returns the status the run had, or null when it was already terminal. */
 	cancelRun(
 		tenantId: string,
@@ -191,23 +207,25 @@ export interface AgentRepository {
 		message: string,
 		completedAt: number,
 		audit: PendingAgentAuditEvent,
-	): AgentRun['status'] | null;
+	): Promise<AgentRun['status'] | null>;
 	enqueueAction(
 		invocation: AgentActionInvocation,
 		audit: PendingAgentAuditEvent,
-	): AgentActionInvocation;
+	): Promise<AgentActionInvocation>;
 	getAction(
 		tenantId: string,
 		invocationId: string,
-	): AgentActionInvocation | null;
+	): Promise<AgentActionInvocation | null>;
 	findActionByIdempotencyKey(
 		tenantId: string,
 		idempotencyKey: string,
-	): AgentActionInvocation | null;
+	): Promise<AgentActionInvocation | null>;
 	listRecoverableActions(
 		now: number,
 		limit: number,
-	): readonly { readonly tenantId: string; readonly invocationId: string }[];
+	): Promise<
+		readonly { readonly tenantId: string; readonly invocationId: string }[]
+	>;
 	claimAction(
 		tenantId: string,
 		invocationId: string,
@@ -215,21 +233,21 @@ export interface AgentRepository {
 		now: number,
 		leaseExpiresAt: number,
 		audit: PendingAgentAuditEvent,
-	): AgentActionInvocation | null;
+	): Promise<AgentActionInvocation | null>;
 	renewActionLease(
 		tenantId: string,
 		invocationId: string,
 		workerId: string,
 		leaseExpiresAt: number,
-	): boolean;
+	): Promise<boolean>;
 	completeAction(
 		tenantId: string,
 		invocationId: string,
 		workerId: string,
-		output: import('@coreloom/harness').JsonValue,
+		output: import('@flowdular/harness').JsonValue,
 		completedAt: number,
 		audit: PendingAgentAuditEvent,
-	): boolean;
+	): Promise<boolean>;
 	failAction(
 		tenantId: string,
 		invocationId: string,
@@ -237,37 +255,40 @@ export interface AgentRepository {
 		code: string,
 		completedAt: number,
 		audit: PendingAgentAuditEvent,
-	): boolean;
+	): Promise<boolean>;
 	cancelAction(
 		tenantId: string,
 		invocationId: string,
 		completedAt: number,
 		audit: PendingAgentAuditEvent,
-	): AgentActionInvocation['status'] | null;
-	appendAuditEvent(event: PendingAgentAuditEvent): AgentAuditEvent;
-	listAuditEvents(tenantId: string, limit: number): readonly AgentAuditEvent[];
+	): Promise<AgentActionInvocation['status'] | null>;
+	appendAuditEvent(event: PendingAgentAuditEvent): Promise<AgentAuditEvent>;
+	listAuditEvents(
+		tenantId: string,
+		limit: number,
+	): Promise<readonly AgentAuditEvent[]>;
 	/* Keyset page over the tenant trail, newest first, cursor `occurredAt:sequence`. */
 	pageAuditEvents(
 		tenantId: string,
 		cursor: { readonly occurredAt: number; readonly sequence: number } | null,
 		limit: number,
-	): AgentAuditPage;
-	verifyAuditChain(tenantId: string): boolean;
-	verifyAuditChainDetailed(tenantId: string): AuditChainVerification;
+	): Promise<AgentAuditPage>;
+	verifyAuditChain(tenantId: string): Promise<boolean>;
+	verifyAuditChainDetailed(tenantId: string): Promise<AuditChainVerification>;
 	usageByDay(
 		tenantId: string,
 		fromDay: string,
 		toDay: string,
-	): readonly AgentUsageDay[];
+	): Promise<readonly AgentUsageDay[]>;
 	usageByAgent(
 		tenantId: string,
 		fromDay: string,
 		toDay: string,
-	): readonly AgentUsageAgent[];
+	): Promise<readonly AgentUsageAgent[]>;
 	/* One indexed aggregate; `agentId` narrows it to a single agent's spend. */
 	usageTotal(
 		tenantId: string,
 		fromDay: string,
 		agentId: string | null,
-	): AgentUsageBucket;
+	): Promise<AgentUsageBucket>;
 }

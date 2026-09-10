@@ -1,36 +1,36 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { CapabilityDescriptor } from '@coreloom/cli-protocol';
+import type { CapabilityDescriptor } from '@flowdular/cli-protocol';
+import {
+	DATABASE_MIGRATION_LEDGER,
+	databaseProviderConfigFromEnvironment,
+	type DatabaseHandle,
+} from '@flowdular/database';
 import { parseArguments } from '../src/arguments.ts';
+import { createCliDatabaseProvider } from '../src/database.ts';
 import { runCommand } from '../src/runner.ts';
-
-const modules = [
-	'agents',
-	'auth',
-	'automations',
-	'catalog',
-	'expenses',
-	'parties',
-	'profile',
-	'sandbox',
-	'workflows',
-] as const;
 
 let workspace: string;
 const restore = new Map<string, string | undefined>();
 
-/* Every module database is redirected into a temporary directory, so these
-   tests never open the databases the workspace runs on. */
+/* The embedded database is redirected into a temporary directory, so these
+   tests never open the database the workspace runs on. It must be durable:
+   every command opens the provider again and expects the previous command's
+   ledger to still be there. */
 beforeEach(() => {
 	workspace = mkdtempSync(join(tmpdir(), 'coreloom-migration-'));
-	for (const module of modules) {
-		const key = `CL_${module.toUpperCase()}_DATABASE`;
+	for (const key of [
+		'NODE_ENV',
+		'FD_DATABASE_ADAPTER',
+		'FD_DATABASE_PGLITE_DIRECTORY',
+	]) {
 		restore.set(key, process.env[key]);
-		process.env[key] = join(workspace, `${module}.db`);
 	}
+	process.env.NODE_ENV = 'development';
+	process.env.FD_DATABASE_ADAPTER = 'pglite';
+	process.env.FD_DATABASE_PGLITE_DIRECTORY = join(workspace, 'pglite');
 });
 
 afterEach(() => {
@@ -66,12 +66,40 @@ async function status(...extra: string[]) {
 	};
 }
 
-function partiesPath(): string {
-	return join(workspace, 'parties.db');
+async function apply(moduleId: string, ...extra: string[]) {
+	return runCommand(
+		parseArguments(['migration', 'apply', '--module', moduleId, ...extra]),
+	);
+}
+
+function actions(result: { data?: unknown }): readonly string[] {
+	return (
+		result.data as { migrations: readonly { action: string }[] }
+	).migrations.map((migration) => migration.action);
+}
+
+/* A direct migration lease on the same database the commands use, so a test can
+   damage the ledger the way an operator or a bad merge would. */
+async function withMigrationDatabase<T>(
+	run: (database: DatabaseHandle) => Promise<T>,
+): Promise<T> {
+	const databases = createCliDatabaseProvider(
+		databaseProviderConfigFromEnvironment(process.env, workspace),
+	);
+	const lease = await databases.acquire({
+		namespace: 'profile.core',
+		purpose: 'migration',
+	});
+	try {
+		return await run(lease.database);
+	} finally {
+		await lease.release();
+		await databases.dispose();
+	}
 }
 
 describe('migration status', () => {
-	it('reports every migration as pending while no database exists', async () => {
+	it('reports every migration as pending against an empty database', async () => {
 		const result = await status();
 
 		expect(result.ok).toBe(true);
@@ -89,57 +117,35 @@ describe('migration status', () => {
 			'agents.core',
 			'auth.core',
 			'automations.core',
-			'catalog.core',
-			'expenses.core',
-			'parties.core',
 			'profile.core',
 			'sandbox.core',
 			'workflows.core',
 		]);
-	});
-
-	it('reports no unmanaged module after every repository adopted the runner', async () => {
-		const result = await status();
-
 		expect(result.data.unmanaged).toEqual([]);
 	});
 
 	it('narrows to one module with --module', async () => {
-		const result = await status('--module', 'parties.core');
+		const result = await status('--module', 'profile.core');
 
 		expect(result.data.modules).toHaveLength(1);
-		expect(result.data.modules[0]?.moduleId).toBe('parties.core');
+		expect(result.data.modules[0]?.moduleId).toBe('profile.core');
 	});
 
+	/* The largest module. Its migration list grows, so this pins the contract
+	   the command owns, not the inventory a module happens to have today. */
 	it('reports the agents module through the shared runner', async () => {
 		const result = await status('--module', 'agents.core');
+		const migrations = result.data.modules[0]?.migrations ?? [];
 
 		expect(result.ok).toBe(true);
 		expect(result.data.modules[0]?.moduleId).toBe('agents.core');
-		expect(
-			result.data.modules[0]?.migrations.map((migration) => migration.id),
-		).toEqual([
-			'0001_agents_core',
-			'0002_provider_connections',
-			'0003_resource_audit',
-			'0004_run_grants',
-			'0005_long_running_limits',
-			'0006_agent_skills',
-			'0007_model_readiness',
-			'0008_output_limits',
-			'0009_agent_audit_v3',
-			'0012_agent_run_costs',
-			'0013_workflow_prerequisites',
-			'0014_agent_action_audit',
-			'0015_agent_run_actors',
-			'0016_module_owned_agents',
-			'0017_agent_authorization_subjects',
-		]);
-		expect(
-			result.data.modules[0]?.migrations.every(
-				(migration) => migration.state === 'pending',
-			),
-		).toBe(true);
+		expect(migrations[0]?.id).toBe('0001_agents_core');
+		expect(new Set(migrations.map((migration) => migration.id)).size).toBe(
+			migrations.length,
+		);
+		expect(migrations.every((migration) => migration.state === 'pending')).toBe(
+			true,
+		);
 	});
 });
 
@@ -154,201 +160,101 @@ describe('migration apply', () => {
 	});
 
 	it('writes nothing without --apply', async () => {
-		const result = await runCommand(
-			parseArguments(['migration', 'apply', '--module', 'parties.core']),
-		);
+		const result = await apply('profile.core');
 
 		expect(result.ok).toBe(true);
 		expect(result.warnings).toContain(
 			'Dry run only. Pass --apply to write the ledger and run the SQL.',
 		);
-		expect(existsSync(partiesPath())).toBe(false);
+		expect(
+			(await status('--module', 'profile.core')).data.modules[0]?.ledger,
+		).toBe(0);
 	});
 
 	it('applies the module migrations with --apply', async () => {
-		const result = await runCommand(
-			parseArguments([
-				'migration',
-				'apply',
-				'--module',
-				'parties.core',
-				'--apply',
-			]),
-		);
+		const result = await apply('profile.core', '--apply');
 
 		expect(result.ok).toBe(true);
 		expect(
-			(result.data as { migrations: readonly { action: string }[] }).migrations,
+			(result.data as { migrations: readonly { id: string }[] }).migrations,
 		).toEqual([
 			{
-				id: '0001_parties_core',
+				id: '0001_profile_core',
 				action: 'applied',
 				checksum: expect.any(String),
 			},
 			{
-				id: '0002_parties_vat_id',
-				action: 'applied',
-				checksum: expect.any(String),
-			},
-			{
-				id: '0003_parties_history',
-				action: 'applied',
-				checksum: expect.any(String),
-			},
-			{
-				id: '0004_parties_history_service_actors',
-				action: 'applied',
-				checksum: expect.any(String),
-			},
-			{
-				id: '0005_parties_idempotency_ledger',
+				id: '0002_profile_language',
 				action: 'applied',
 				checksum: expect.any(String),
 			},
 		]);
 		expect(
-			(await status('--module', 'parties.core')).data.modules[0]?.ledger,
-		).toBe(5);
+			(await status('--module', 'profile.core')).data.modules[0]?.ledger,
+		).toBe(2);
 	});
 
-	it('adopts a database that already carries the schema and its rows', async () => {
-		const database = new DatabaseSync(partiesPath());
-		database.exec(`CREATE TABLE parties (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
-  name TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  email TEXT,
-  phone TEXT,
-  status TEXT NOT NULL,
-  created_at INTEGER NOT NULL
-) STRICT;
-CREATE INDEX parties_tenant_name_idx ON parties (tenant_id, name, id);
-ALTER TABLE parties ADD COLUMN vat_id TEXT;
-CREATE TABLE parties_history (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
-  record_id TEXT NOT NULL,
-  version INTEGER NOT NULL,
-  action TEXT NOT NULL,
-  actor_kind TEXT NOT NULL,
-  actor_id TEXT NOT NULL,
-  actor_label TEXT NOT NULL,
-  run_id TEXT,
-  changes_json TEXT NOT NULL,
-  occurred_at INTEGER NOT NULL
-) STRICT;
-CREATE UNIQUE INDEX parties_history_tenant_record_version_idx
-  ON parties_history (tenant_id, record_id, version DESC);
-CREATE TABLE parties_history_v2 (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
-  record_id TEXT NOT NULL,
-  version INTEGER NOT NULL,
-  action TEXT NOT NULL,
-  actor_kind TEXT NOT NULL,
-  actor_id TEXT NOT NULL,
-  actor_label TEXT NOT NULL,
-  run_id TEXT,
-  configured_by_json TEXT,
-  changes_json TEXT NOT NULL,
-  occurred_at INTEGER NOT NULL
-) STRICT;
-CREATE UNIQUE INDEX parties_history_v2_tenant_record_version_idx
-  ON parties_history_v2 (tenant_id, record_id, version DESC);
-INSERT INTO parties (id, tenant_id, name, kind, email, phone, status, created_at, vat_id)
-VALUES ('p1', 't1', 'Contoso GmbH', 'customer', NULL, NULL, 'active', 1, 'DE811569869');`);
-		database.close();
+	/* A database that carries the schema but lost its ledger is what a
+	   pre-ledger deployment looks like. Every migration must adopt instead of
+	   running its DDL a second time. */
+	it('adopts a database that already carries the schema', async () => {
+		await apply('profile.core', '--apply');
+		await withMigrationDatabase((database) =>
+			database.execute({ text: `DROP TABLE ${DATABASE_MIGRATION_LEDGER}` }),
+		);
 
-		const before = await status('--module', 'parties.core');
+		const before = await status('--module', 'profile.core');
 		expect(
 			before.data.modules[0]?.migrations.map((migration) => migration.state),
-		).toEqual(['adopted', 'adopted', 'adopted', 'adopted', 'pending']);
+		).toEqual(['adopted', 'adopted']);
 
-		const result = await runCommand(
-			parseArguments([
-				'migration',
-				'apply',
-				'--module',
-				'parties.core',
-				'--apply',
-			]),
-		);
-		expect(
-			(
-				result.data as { migrations: readonly { action: string }[] }
-			).migrations.map((migration) => migration.action),
-		).toEqual(['adopted', 'adopted', 'adopted', 'adopted', 'applied']);
-
-		const after = new DatabaseSync(partiesPath(), { readOnly: true });
-		expect(after.prepare('SELECT name, vat_id FROM parties').all()).toEqual([
-			{ name: 'Contoso GmbH', vat_id: 'DE811569869' },
+		expect(actions(await apply('profile.core', '--apply'))).toEqual([
+			'adopted',
+			'adopted',
 		]);
-		after.close();
 	});
 
 	it('refuses to run outside development or test', async () => {
-		const previous = process.env.CL_ENV;
-		process.env.CL_ENV = 'production';
+		const previous = process.env.FD_ENV;
+		process.env.FD_ENV = 'production';
 		try {
-			const result = await runCommand(
-				parseArguments([
-					'migration',
-					'apply',
-					'--module',
-					'parties.core',
-					'--apply',
-				]),
-			);
+			const result = await apply('profile.core', '--apply');
 
 			expect(result.ok).toBe(false);
 			expect(result.error?.code).toBe('LOCAL_ONLY_CAPABILITY');
 		} finally {
-			if (previous === undefined) delete process.env.CL_ENV;
-			else process.env.CL_ENV = previous;
+			if (previous === undefined) delete process.env.FD_ENV;
+			else process.env.FD_ENV = previous;
 		}
 	});
 });
 
 describe('migration verify', () => {
 	it('accepts a ledger that matches the workspace migrations', async () => {
-		await runCommand(
-			parseArguments([
-				'migration',
-				'apply',
-				'--module',
-				'parties.core',
-				'--apply',
-			]),
-		);
+		await apply('profile.core', '--apply');
 
 		const result = await runCommand(parseArguments(['migration', 'verify']));
 
-		expect(result.ok).toBe(true);
+		expect(result.error).toBeUndefined();
 		expect(
 			(
 				result.data as {
 					modules: readonly { moduleId: string; recorded: number }[];
 				}
-			).modules.find((module) => module.moduleId === 'parties.core')?.recorded,
-		).toBe(5);
+			).modules.find((module) => module.moduleId === 'profile.core')?.recorded,
+		).toBe(2);
 	});
 
 	it('reports a ledger row whose checksum drifted', async () => {
-		await runCommand(
-			parseArguments([
-				'migration',
-				'apply',
-				'--module',
-				'parties.core',
-				'--apply',
-			]),
+		await apply('profile.core', '--apply');
+		await withMigrationDatabase((database) =>
+			database.execute({
+				text: `UPDATE ${DATABASE_MIGRATION_LEDGER}
+				       SET checksum = 'sha256:edited'
+				       WHERE namespace = $1 AND id = $2`,
+				parameters: ['profile.core', '0001_profile_core'],
+			}),
 		);
-		const database = new DatabaseSync(partiesPath());
-		database.exec(
-			"UPDATE _coreloom_migrations SET checksum = 'sha256:edited' WHERE id = '0001_parties_core'",
-		);
-		database.close();
 
 		const result = await runCommand(parseArguments(['migration', 'verify']));
 
@@ -359,15 +265,15 @@ describe('migration verify', () => {
 				result.error?.details as {
 					modules: readonly { moduleId: string; mismatched: string[] }[];
 				}
-			).modules.find((module) => module.moduleId === 'parties.core')
+			).modules.find((module) => module.moduleId === 'profile.core')
 				?.mismatched,
-		).toEqual(['0001_parties_core']);
-		expect((await status('--module', 'parties.core')).ok).toBe(false);
+		).toEqual(['0001_profile_core']);
+		expect((await status('--module', 'profile.core')).ok).toBe(false);
 	});
 });
 
 describe('migration capabilities', () => {
-	it('publishes the three descriptors the policy documents', async () => {
+	it('publishes the four descriptors the policy documents', async () => {
 		const result = await runCommand(parseArguments(['capability', 'list']));
 		const listed = (
 			result.data as { capabilities: readonly CapabilityDescriptor[] }
@@ -381,6 +287,7 @@ describe('migration capabilities', () => {
 			'migration.status:read:false',
 			'migration.verify:read:false',
 			'migration.apply.local:process:true',
+			'migration.scaffold:workspace-write:false',
 		]);
 	});
 

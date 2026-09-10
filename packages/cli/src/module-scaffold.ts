@@ -1,3 +1,4 @@
+import { sdkModules, sdkScaffold } from './sdk.ts';
 import {
 	access,
 	mkdir,
@@ -9,7 +10,7 @@ import {
 } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import type { ModuleSpec } from '@coreloom/contracts';
+import type { ModuleSpec } from '@flowdular/contracts';
 import { loadWorkspaceFormatter, type Formatter } from './format.ts';
 import { packageSuffix, planScaffold } from './module-templates.ts';
 import { findNamedFiles, validateFile, validators } from './validation.ts';
@@ -186,7 +187,9 @@ export async function scaffoldModule(
 		specPath,
 		specSource,
 	);
-	const planned = planScaffold(spec, specSource);
+	let planned = planScaffold(spec, specSource);
+
+	if ((await sdkModules(workspace)).size) planned = sdkScaffold(planned);
 
 	let formatted = false;
 	if (request.apply) {

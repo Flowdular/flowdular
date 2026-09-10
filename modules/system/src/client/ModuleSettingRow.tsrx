@@ -1,7 +1,7 @@
 import { useMemo } from 'octane';
-import { Button, SettingRow, Switch, Tag } from '@coreloom/ui';
-import { useTranslation, type Translate } from '@coreloom/client';
-import type { ModuleSettingValue } from '@coreloom/kernel';
+import { Button, SettingRow, Switch, Tag } from '@flowdular/ui';
+import { useTranslation, type Translate } from '@flowdular/client';
+import type { ModuleSettingValue } from '@flowdular/kernel';
 import { cell, createStore, useValue } from 'segment-state';
 import type { SettingsEntryPayload } from './settings-api.ts';
 import { translateSettingCopy } from './setting-copy.ts';

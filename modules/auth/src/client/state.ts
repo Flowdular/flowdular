@@ -45,19 +45,19 @@ export function authPathForScreen(screen: AuthScreen): string {
 }
 
 export function isAuthRouteUrl(value: string): boolean {
-	const url = new URL(value, 'https://coreloom.local');
+	const url = new URL(value, 'https://flowdular.local');
 	return (
 		url.pathname.startsWith('/auth/') || AUTH_ROUTE_PATHS.has(url.pathname)
 	);
 }
 
 export function canonicalAuthLocation(value: string): string {
-	const url = new URL(value, 'https://coreloom.local');
+	const url = new URL(value, 'https://flowdular.local');
 	return authPathForScreen(authScreenFromUrl(url.href)) + url.search + url.hash;
 }
 
 export function authScreenFromUrl(value: string): AuthScreen {
-	const url = new URL(value, 'https://coreloom.local');
+	const url = new URL(value, 'https://flowdular.local');
 	if (
 		url.pathname === '/auth/register' ||
 		url.pathname === '/auth/sign-up' ||

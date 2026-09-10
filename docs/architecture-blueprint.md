@@ -1,10 +1,10 @@
-# Coreloom: an agentic foundation framework on OctaneJS
+# Flowdular: an agentic foundation framework on OctaneJS
 
 Status: architecture proposal v0.2, with implementation notes added 2026-09-01  
 Date: 2026-08-31  
 Documentation language: English
 
-Coreloom ships the foundation platform (accounts, workspaces, permissions, modules, agents runtime, CLI, sandbox). People build their own business platform on top of it, either in the sandbox with AI specialists or with the skills in `.ai/skills` inside their own coding tools. Spec-first is a working rule of that process, not the identity of the product.
+Flowdular ships the foundation platform (accounts, workspaces, permissions, modules, agents runtime, CLI, sandbox). People build their own business platform on top of it, either in the sandbox with AI specialists or with the skills in `.ai/skills` inside their own coding tools. Spec-first is a working rule of that process, not the identity of the product.
 
 Sections marked "Not implemented" below describe intent that has no code yet as of 2026-09-01; the note names what exists instead. Agents follow `AGENTS.md` and `.ai/skills`, which describe the code as it is.
 
@@ -89,12 +89,12 @@ Dependencies are one-way. The platform does not import the sandbox, CLI, or harn
 ### 4.1. Canonical repository tree
 
 ```text
-coreloom/
+flowdular/
 ├── package.json
 ├── pnpm-workspace.yaml
 ├── pnpm-lock.yaml
 ├── tsconfig.base.json
-├── coreloom.json
+├── flowdular.json
 ├── specs/                            # Machine-readable platform specifications
 │   ├── architecture/
 │   ├── protocols/
@@ -139,21 +139,21 @@ packages:
   - packages/*
 ```
 
-Every matched workspace directory has its own `package.json`, tests, and explicit `exports`. Internal packages use the `@coreloom/*` scope.
+Every matched workspace directory has its own `package.json`, tests, and explicit `exports`. Internal packages use the `@flowdular/*` scope.
 
 ## 5. Part 1: core platform
 
 ### 5.1. Platform packages
 
-| Package               | Responsibility                                                                                  | Must not contain                                  |
-| --------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| `@coreloom/contracts` | Types, JSON Schema, IDs, module protocol, event contracts                                       | IO, Octane runtime, databases                     |
-| `@coreloom/kernel`    | Module registry, lifecycle, execution context, ACL, event bus, extension registries             | UI, database drivers, HTTP                        |
-| `@coreloom/server`    | `ServerRoute` integration, middleware, response serialization, request context                  | UI components, module business logic              |
-| `@coreloom/client`    | Application shell, navigation, screen registry, i18n, error boundaries                          | Database access, secrets, service implementations |
-| `@coreloom/database`  | DB adapter interface, transactions (the migration runner and ledger live in `@coreloom/kernel`) | Module business logic                             |
-| `@coreloom/testing`   | Test host, fake clock, fake principal, memory adapters, contract test kits                      | Production composition root                       |
-| `@coreloom/platform`  | Complete application and composition root                                                       | Private module imports                            |
+| Package                | Responsibility                                                                         | Must not contain                                  |
+| ---------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `@flowdular/contracts` | Types, JSON Schema, IDs, module protocol, event contracts                              | IO, Octane runtime, databases                     |
+| `@flowdular/kernel`    | Module registry, lifecycle, execution context, ACL, event bus, extension registries    | UI, database drivers, HTTP                        |
+| `@flowdular/server`    | `ServerRoute` integration, middleware, response serialization, request context         | UI components, module business logic              |
+| `@flowdular/client`    | Application shell, navigation, screen registry, i18n, error boundaries                 | Database access, secrets, service implementations |
+| `@flowdular/database`  | Async DB adapter interface, transactions, dialect-aware migration bridge and v2 ledger | Module business logic, credentials                |
+| `@flowdular/testing`   | Test host, fake clock, fake principal, memory adapters, contract test kits             | Production composition root                       |
+| `@flowdular/platform`  | Complete application and composition root                                              | Private module imports                            |
 
 ### 5.2. Dependency direction
 
@@ -258,7 +258,7 @@ Architecture documentation explains decisions to humans. Platform specs define m
 
 `auth.core` is an enabled platform module and the identity source for `platform`. The composition root installs its authentication middleware before module routes and renders the application shell only after the browser resolves a valid principal with `system.workspace.access`.
 
-The initial adapter owns tenants, accounts, many-to-many memberships, scope grants, and hashed sessions in a single-writer SQLite database. Each session selects exactly one tenant membership. An account may switch only to another granted membership; the switch revokes the old session, rotates the cookie and CSRF token, and reloads role and scopes from the target tenant. Passwords use salted memory-hard hashing. Raw session tokens exist only in the browser's HttpOnly cookie and are persisted only as hashes. Production cookies are host-only, `Secure`, and `SameSite=Strict`. Mutation endpoints verify same-origin request metadata, and sign-out requires a session-bound CSRF token. Missing identity or scope always returns 401 or 403 before protected work executes.
+The adapter owns tenants, accounts, many-to-many memberships, scope grants, and hashed sessions in the platform PostgreSQL database. Each session selects exactly one tenant membership. An account may switch only to another granted membership; the switch revokes the old session, rotates the cookie and CSRF token, and reloads role and scopes from the target tenant. Passwords use salted memory-hard hashing. Raw session tokens exist only in the browser's HttpOnly cookie and are persisted only as hashes. Production cookies are host-only, `Secure`, and `SameSite=Strict`. Mutation endpoints verify same-origin request metadata, and sign-out requires a session-bound CSRF token. Missing identity or scope always returns 401 or 403 before protected work executes.
 
 The auth adapter is replaceable behind its repository contract. Password reset, verification, MFA, external identity providers, and a shared database adapter require their own approved specifications.
 
@@ -427,7 +427,7 @@ Implementation paths remain read-only until the run reaches `spec-approved`. A f
 	"$schema": "../../packages/contracts/schemas/module.schema.json",
 	"schemaVersion": 1,
 	"id": "sales.orders",
-	"package": "@coreloom/module-sales-orders",
+	"package": "@flowdular/module-sales-orders",
 	"version": "0.1.0",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations", "cli"],
@@ -602,18 +602,24 @@ The first release may use an in-memory process for local events. The outbox cont
 
 ## 10. Database and migrations
 
-> Implemented for every database-owning module (2026-09-02). The runner, per-database ledger, checksums, adoption, and drift refusal live in `packages/kernel/src/migrations.ts`. `agents`, `auth`, `automations`, `catalog`, `expenses`, `parties`, `profile`, and `sandbox` all use it, and `coreloom migration verify --json` reports no unmanaged database-owning module. There is no `meta.json`, `verify.sql`, global lock, or remote apply. Cross-module ordering is unnecessary because each module owns a separate SQLite file. See `.ai/skills/migration-authoring/SKILL.md`.
+> Implemented for every database-owning module (2026-09). The runner, namespaced ledger, checksums, adoption, and drift refusal live in `packages/database/src/migrations.ts`. `agents`, `auth`, `automations`, `catalog`, `expenses`, `parties`, `profile`, and `sandbox` all use it through a provider lease, and `flowdular migration verify --json` reports no unmanaged database-owning module. There is no `meta.json`, `verify.sql`, global lock, or remote apply. See `.ai/skills/migration-authoring/SKILL.md`.
+
+> Single database (2026-09): Flowdular runs on PostgreSQL everywhere. One
+> platform-owned provider in `@flowdular/database` lends every module a leased
+> handle, embedded through PGlite outside production and a `pg` pool in a
+> deployment. Migrations are PostgreSQL only and share one namespaced v2
+> ledger. See `docs/database-adapters.md` and ADR 0008.
 
 ### 10.1. Migration rules
 
-- `migrations/NNNN_<module>_<name>.up.sql` is the source. `src/services/migration.ts` exports `migrations: readonly ModuleMigration[]` whose `statements` mirror those files byte for byte, and a per-module test fails on drift.
+- `migrations/NNNN_<module>_<name>.up.sql` is the source and is PostgreSQL. `src/services/migration.ts` exports `databaseMigrations: readonly DatabaseMigration[]` whose `sql.postgresql` mirrors those files byte for byte, and a per-module test fails on drift.
 - `up.sql` is the only file that changes the database. `.down.sql` documents the reverse; nothing executes it.
-- Every module database carries its own ledger, `_coreloom_migrations (id TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at INTEGER NOT NULL)`.
-- The checksum is `sha256:<hex>` of the statements with CRLF normalized to LF and the text trimmed. An applied migration is immutable: a mismatch throws before any statement runs, so it blocks startup for that module.
-- A migration whose objects already exist is **adopted**, meaning the ledger records it and the statements never run. This is what lets a database that predates the ledger keep its rows. Detection reads `CREATE TABLE/INDEX/VIEW/TRIGGER` from `sqlite_master` and `ALTER TABLE ... ADD COLUMN` from `pragma_table_info`; a migration whose effect is rows supplies an `adoptWhen` predicate instead.
+- The database carries one ledger, `_coreloom_migrations_v2`, keyed by module namespace and migration id so every module can share it.
+- The checksum is `sha256:<hex>` of the SQL with CRLF normalized to LF and the text trimmed. An applied migration is immutable: a mismatch throws before any statement runs, so it blocks startup for that module.
+- A migration whose objects already exist is **adopted**, meaning the ledger records it and the statements never run. This is what lets a database that predates the ledger keep its rows. The module states the proof itself in `inspectExisting`, which returns `complete`, `absent` or `partial`; `postgresTenantTableState` is the standard check for a tenant table, its policy and its forced row-level security.
 - A migration whose objects are only half present is refused (`PARTIAL_OBJECTS`) rather than guessed at.
-- Each applied migration runs inside its own transaction together with its ledger row, so a failure leaves neither.
-- Migrations are ordered per module by file number. Each module owns one SQLite file, so there is no cross-module ordering to do.
+- Every outstanding migration of a module applies with its ledger rows inside one connection-bound transaction, so a failure leaves neither.
+- Migrations are ordered per module by file number, and the runner holds an advisory lock for that namespace, so two runtimes starting at once do not race.
 - Destructive changes require a separate plan, backup evidence, or an expand-and-contract strategy.
 
 ### 10.2. Migration flow
@@ -622,10 +628,10 @@ The first release may use an in-memory process for local events. The outbox cont
 write migrations/NNNN_<name>.up.sql and .down.sql
   → mirror it into src/services/migration.ts and the migrations list
   → module tests: fresh applies, existing adopts, files match constants
-  → coreloom migration status --module <id>   (read-only; must read adopted, never pending, on real data)
-  → coreloom migration apply --module <id>    (dry run, read-only)
-  → coreloom migration apply --module <id> --apply   (development or test only)
-  → coreloom migration verify
+  → flowdular migration status --module <id>   (read-only; must read adopted, never pending, on real data)
+  → flowdular migration apply --module <id>    (dry run, read-only)
+  → flowdular migration apply --module <id> --apply   (development or test only)
+  → flowdular migration verify
 ```
 
 The server applies outstanding migrations itself when a module repository is first constructed, so a deploy needs no separate step. The CLI exists to inspect and to drive a local database ahead of the app.
@@ -639,13 +645,13 @@ The `agent` profile does not expose general SQL execution. Database inspection u
 - Business code does not perform direct joins across module-owned tables. Shared reporting uses an explicit read model.
 - A foreign key between modules requires a manifest dependency, a migration dependency, and an uninstall test.
 - Tenant-owned tables include `tenant_id`. Unique constraints and indexes include the tenant unless an invariant is intentionally global.
-- Audit and outbox tables belong to the module that owns them. The migration ledger is per database, not a platform table, because each module owns its own SQLite file.
+- Audit and outbox tables belong to the module that owns them. The migration ledger is shared, which is why every row carries the owning module namespace.
 
 ## 11. Client, TSRX, and translations
 
 ### 11.1. Client shell
 
-`@coreloom/client` provides:
+`@flowdular/client` provides:
 
 - application layout,
 - module screen router,
@@ -681,18 +687,18 @@ A module registers `clientRoutes` and `navigation`. It does not edit the central
 
 ## 12. Part 2: agentic sandbox
 
-The sandbox is an independently executable Octane micro-application with chat, file diff, validation logs, and a module preview. It does not start the complete platform. It is distributed as `@coreloom/sandbox` and is started from a workspace with `npx @coreloom/sandbox`, which discovers the workspace by walking up to `coreloom.json`.
+The sandbox is an independently executable Octane micro-application with chat, file diff, validation logs, and a module preview. It does not start the complete platform. It is distributed as `@flowdular/sandbox` and is started from a workspace with `npx @flowdular/sandbox`, which discovers the workspace by walking up to `flowdular.json`.
 
 ### 12.1. Packages
 
-| Package                  | Responsibility                                                                     |
-| ------------------------ | ---------------------------------------------------------------------------------- |
-| `@coreloom/sandbox`      | Binary, session orchestrator, preview host, chat and diff UI, gate runner          |
-| `@coreloom/coding-agent` | Coding agent driver contract and the bundled local-binary and BYOK drivers         |
-| `@coreloom/ai-provider`  | Shared provider kinds, model catalog, model resolution, and failure classification |
-| `sandbox.core`           | Platform module owning sandbox scopes, access grants, session records, and audit   |
+| Package                   | Responsibility                                                                     |
+| ------------------------- | ---------------------------------------------------------------------------------- |
+| `@flowdular/sandbox`      | Binary, session orchestrator, preview host, chat and diff UI, gate runner          |
+| `@flowdular/coding-agent` | Coding agent driver contract and the bundled local-binary and BYOK drivers         |
+| `@flowdular/ai-provider`  | Shared provider kinds, model catalog, model resolution, and failure classification |
+| `sandbox.core`            | Platform module owning sandbox scopes, access grants, session records, and audit   |
 
-`@coreloom/ai-provider` is the single owner of provider kinds and model identifiers. The platform agent runtime and the sandbox BYOK driver both build on it, so a model or provider version is declared once.
+`@flowdular/ai-provider` is the single owner of provider kinds and model identifiers. The platform agent runtime and the sandbox BYOK driver both build on it, so a model or provider version is declared once.
 
 ### 12.2. Runtime modes
 
@@ -705,7 +711,7 @@ The mode is explicit configuration. A sandbox that cannot prove it is loopback b
 
 ### 12.3. Coding agents
 
-The coding agent is not the platform agent runtime. `agents.core` and `@coreloom/harness` stay an in-product capability for business modules and never receive file system or process tools. The sandbox drives a separate adapter:
+The coding agent is not the platform agent runtime. `agents.core` and `@flowdular/harness` stay an in-product capability for business modules and never receive file system or process tools. The sandbox drives a separate adapter:
 
 - `claude-code`: the local `claude` binary, print mode, streamed JSON protocol, restricted tools, session workspace as the only writable directory, operator subscription login.
 - `codex`: the local `codex` binary, `exec` mode, JSONL events, workspace-write sandbox.
@@ -745,13 +751,13 @@ Preview adapters run the same contract as production adapters. Preview behavior 
 
 ### 12.6. Composed preview API
 
-A preview request is answered by the first layer that owns it: any draft module's own routes, then the session's authentication routes, then the bridge. All draft compositions are loaded from the session workspace and rebuilt when their sources change, so a screen exercises the current endpoints, permissions, and ephemeral databases of every module changed in the session.
+A preview request is answered by the first layer that owns it: any draft module's own routes, then the session's authentication routes, then the bridge. All draft compositions are loaded from the session workspace and rebuilt when their sources change, so a screen exercises the current endpoints and permissions of every module changed in the session against the session's own ephemeral database.
 
 Any API path the draft module does not own is answered by the bridge. The bridge forwards the request to a configured full application using a server-held session for the signed-in account, so a draft screen reads real records from other enabled modules under the platform's own authorization and tenancy. It is refused without the `sandbox.preview.data` scope, without a configured origin, or without an authenticated sandbox principal. `fixtures` is the default and is fully offline.
 
 ### 12.7. Access
 
-Sandbox access is created and assigned in the full application by an owner with `sandbox.access.manage`, or from the CLI with `coreloom sandbox grant` and `coreloom sandbox revoke`. Both paths write the same tenant-scoped grant records owned by `sandbox.core`.
+Sandbox access is created and assigned in the full application by an owner with `sandbox.access.manage`, or from the CLI with `flowdular sandbox grant` and `flowdular sandbox revoke`. Both paths write the same tenant-scoped grant records owned by `sandbox.core`.
 
 Signing in to the sandbox requires an `auth.core` account, the `sandbox.access.use` scope on the selected tenant membership, and a grant that is neither revoked nor expired. The sandbox issues its own cookie and never accepts the platform cookie as a sandbox session.
 
@@ -790,7 +796,7 @@ The CLI is the only supported automation boundary for platform operations. Human
 
 The CLI takes the tool-layer role commonly served by MCP: discovery, typed input and output schemas, and controlled execution. It runs as a normal local process that can be governed by operating system policy, CI, and audit. A future MCP adapter may wrap the capability registry without creating a second platform implementation.
 
-Binary: `coreloom`, with optional short alias `cl`.
+Binary: `flowdular`, with optional short alias `cl`.
 
 ### 13.1. Capability definition
 
@@ -814,9 +820,9 @@ Interactive commands and `capability run` use the same handler. Agent protocol b
 ### 13.2. Machine protocol
 
 ```bash
-coreloom capability list --json
-coreloom capability describe module.validate --json
-coreloom capability run module.validate --input request.json --json
+flowdular capability list --json
+flowdular capability describe module.validate --json
+flowdular capability run module.validate --input request.json --json
 ```
 
 Standard response:
@@ -846,67 +852,67 @@ The extension contract and customer export example are documented in `docs/cli-e
 
 ### 13.4. Command groups
 
-> Partially implemented (2026-09-01). The binary is `coreloom` through `pnpm coreloom`. Implemented: `doctor`, `setup check|quick`, `capability list|describe|run`, `spec validate`, `blueprint list|validate`, `module list|validate|sync|enable|disable|new`, `migration status|apply|verify`, and module extensions `auth scopes|sync-scopes|greenfield`, `agents status|audit-verify`, `sandbox access|grant|revoke|sessions|audit-verify`. The rest of this list (`setup init`, `workspace`, `spec list|show|diff|lock|trace`, `blueprint show|classify`, `module show|graph|test`, `api`, `acl`, `migration new|lint`, `db`, `i18n`, `preview`, `agent`) does not exist. `.ai/policies/capabilities.yaml` tracks the real list.
+> Partially implemented (2026-09-01). The binary is `flowdular` through `pnpm flowdular`. Implemented: `doctor`, `setup check|quick`, `capability list|describe|run`, `spec validate`, `blueprint list|validate`, `module list|validate|sync|enable|disable|new`, `migration status|apply|verify|new`, and module extensions `auth scopes|sync-scopes|greenfield`, `agents status|audit-verify`, `sandbox access|grant|revoke|sessions|audit-verify`. The rest of this list (`setup init`, `workspace`, `spec list|show|diff|lock|trace`, `blueprint show|classify`, `module show|graph|test`, `api`, `acl`, `migration lint`, `db`, `i18n`, `preview`, `agent`) does not exist. `.ai/policies/capabilities.yaml` tracks the real list.
 
 ```text
-coreloom setup init
-coreloom setup check
-coreloom setup quick [--apply --confirm reset-local-auth]
-coreloom doctor
+flowdular setup init
+flowdular setup check
+flowdular setup quick [--apply --confirm reset-local-auth]
+flowdular doctor
 
-coreloom workspace info
-coreloom workspace diff
+flowdular workspace info
+flowdular workspace diff
 
-coreloom spec list [module]
-coreloom spec show <spec-id>
-coreloom spec validate [module]
-coreloom spec diff <base> <head>
-coreloom spec lock <module-or-change>
-coreloom spec trace <spec-id>
+flowdular spec list [module]
+flowdular spec show <spec-id>
+flowdular spec validate [module]
+flowdular spec diff <base> <head>
+flowdular spec lock <module-or-change>
+flowdular spec trace <spec-id>
 
-coreloom blueprint list
-coreloom blueprint show <id> --version <version>
-coreloom blueprint validate <id>
-coreloom blueprint classify --request <file>
+flowdular blueprint list
+flowdular blueprint show <id> --version <version>
+flowdular blueprint validate <id>
+flowdular blueprint classify --request <file>
 
-coreloom module new <id> --profile full
-coreloom module list
-coreloom module show <id>
-coreloom module validate [id]
-coreloom module graph
-coreloom module test <id>
+flowdular module new <id> --profile full
+flowdular module list
+flowdular module show <id>
+flowdular module validate [id]
+flowdular module graph
+flowdular module test <id>
 
-coreloom api list [module]
-coreloom api check [module]
-coreloom api invoke <endpoint-id> --env preview
+flowdular api list [module]
+flowdular api check [module]
+flowdular api invoke <endpoint-id> --env preview
 
-coreloom acl list [module]
-coreloom acl matrix <module>
-coreloom acl check <permission> --principal fixture:manager
+flowdular acl list [module]
+flowdular acl matrix <module>
+flowdular acl check <permission> --principal fixture:manager
 
-coreloom migration status [--module <id>]
-coreloom migration apply --module <id> [--apply]
-coreloom migration verify
-coreloom migration new <module> <name>
-coreloom migration lint [module]
-coreloom db status --target <alias>
-coreloom db plan --target <alias>
-coreloom db apply --target <alias> --plan-id <id>
+flowdular migration status [--module <id>]
+flowdular migration apply --module <id> [--apply]
+flowdular migration verify
+flowdular migration new <module> <name>
+flowdular migration lint [module]
+flowdular db status --target <alias>
+flowdular db plan --target <alias>
+flowdular db apply --target <alias> --plan-id <id>
 
-coreloom i18n check [module]
-coreloom preview start <module>
-coreloom preview status
-coreloom preview stop
+flowdular i18n check [module]
+flowdular preview start <module>
+flowdular preview status
+flowdular preview stop
 
-coreloom agent context <task>
-coreloom agent packet build <plan.json> --step <step-id>
-coreloom agent packet validate <packet.json>
-coreloom agent execute <packet.json> --profile executor-basic
-coreloom agent eval --profile executor-basic [blueprint]
-coreloom agent verify-plan <plan.json>
-coreloom capability list
-coreloom capability describe <id>
-coreloom capability run <id>
+flowdular agent context <task>
+flowdular agent packet build <plan.json> --step <step-id>
+flowdular agent packet validate <packet.json>
+flowdular agent execute <packet.json> --profile executor-basic
+flowdular agent eval --profile executor-basic [blueprint]
+flowdular agent verify-plan <plan.json>
+flowdular capability list
+flowdular capability describe <id>
+flowdular capability run <id>
 ```
 
 `doctor` checks Node and pnpm versions, TSRX tooling, Octane configuration, workspace graph, manifests, blueprints, model profiles, task budgets, database adapter, preview ports, agent policy, and secret references by name only.
@@ -937,12 +943,12 @@ coreloom capability run <id>
 
 ### 13.7. Setup
 
-`coreloom setup init` performs:
+`flowdular setup init` performs:
 
 1. Validation of an empty or compatible workspace.
 2. Creation of the four monorepo areas.
 3. Installation of TypeScript, TSRX, formatter, and test-runner configuration.
-4. Creation of `coreloom.json` and a local policy without secrets.
+4. Creation of `flowdular.json` and a local policy without secrets.
 5. Creation of the system module and example module.
 6. Installation of the approved blueprint catalog.
 7. Installation of model-routing policy, task budgets, and basic-executor examples.
@@ -953,7 +959,7 @@ Every step is idempotent. The command shows a plan before writing. Existing conf
 
 ## 14. Part 4: agentic harness and `.ai`
 
-> Not implemented as drawn (2026-09-02). The real `.ai` tree is `agents/` (sandbox roles loaded by `packages/coding-agent`, plus root roles), `skills/` (15 skills copied into sandbox sessions and exposed to Claude Code), `blueprints/` (8), `policies/`, `examples/`. There are no `rules/` or run artifacts (`.coreloom/runs`), and no task-packet executor; the sandbox (`packages/sandbox`) is the coding orchestrator, with roles, gates, and handoffs described in `.ai/README.md`. The optional `workflows.core` module owns business workflow definitions and runs.
+> Not implemented as drawn (2026-09-02). The real `.ai` tree is `agents/` (sandbox roles loaded by `packages/coding-agent`, plus root roles), `skills/` (15 skills copied into sandbox sessions and exposed to Claude Code), `blueprints/` (8), `policies/`, `examples/`. There are no `rules/` or run artifacts (`.flowdular/runs`), and no task-packet executor; the sandbox (`packages/sandbox`) is the coding orchestrator, with roles, gates, and handoffs described in `.ai/README.md`. The optional `workflows.core` module owns business workflow definitions and runs.
 
 ### 14.1. Tree
 
@@ -1019,7 +1025,7 @@ Every step is idempotent. The command shows a plan before writing. Existing conf
     └── executor-basic/
 ```
 
-`.ai` is the source of truth. The harness may generate compatibility files for specific agent tools, including the root `AGENTS.md`. Generated copies have a source header and a synchronization test.
+`.ai/rules` and `.ai/skills` are the source of truth. RuleSync generates `AGENTS.md`, `CLAUDE.md`, `.agents/skills` and `.claude/skills`. The root copies carry the source notice, and `pnpm rules:check` rejects drift in `pnpm verify`.
 
 ### 14.2. Agent roles
 
@@ -1043,7 +1049,7 @@ A reviewer does not fix the code it reviews in the same role. A finding returns 
 Every run creates a Git-ignored directory:
 
 ```text
-.coreloom/runs/<run-id>/
+.flowdular/runs/<run-id>/
 ├── request.json
 ├── classification.json
 ├── blueprint-lock.json
@@ -1145,7 +1151,7 @@ Invalid modules under `.ai/examples` are part of agent evals. The agent must ide
 
 ## 15. Enforced blueprint system
 
-> Partially implemented (2026-09-01). `pnpm coreloom blueprint validate --all` checks every `.ai/blueprints/*/blueprint.json` against `packages/contracts/schemas/blueprint.schema.json` and that the companion files exist. Nothing locks a blueprint or a spec, executes `steps.yaml` or `gates.yaml`, or enforces `allowed-paths.yaml`; the sandbox enforces gates from role front matter (`packages/sandbox/src/server/gates.ts`) and labels sessions `new-module@1.0.0` or `edit-module@1.0.0`.
+> Partially implemented (2026-09-01). `pnpm flowdular blueprint validate --all` checks every `.ai/blueprints/*/blueprint.json` against `packages/contracts/schemas/blueprint.schema.json` and that the companion files exist. Nothing locks a blueprint or a spec, executes `steps.yaml` or `gates.yaml`, or enforces `allowed-paths.yaml`; the sandbox enforces gates from role front matter (`packages/sandbox/src/server/gates.ts`) and labels sessions `new-module@1.0.0` or `edit-module@1.0.0`.
 
 Blueprints are executable development contracts. They constrain the agent more tightly than prose instructions.
 
@@ -1486,7 +1492,7 @@ Examples that require decomposition:
 The basic executor receives a generated packet instead of raw chat or repository-wide context:
 
 ```text
-.coreloom/runs/<run-id>/task-packets/<step-id>/
+.flowdular/runs/<run-id>/task-packets/<step-id>/
 ├── task.json
 ├── blueprint-slice.json
 ├── spec-slice.json
@@ -1670,7 +1676,7 @@ Safety percentages are enforced by deterministic controls and must remain 100%. 
 
 ## 16. Project configuration
 
-Root `coreloom.json` contains safe references only:
+Root `flowdular.json` contains safe references only:
 
 ```json
 {
@@ -1689,8 +1695,8 @@ Root `coreloom.json` contains safe references only:
 	"database": {
 		"provider": "postgres",
 		"targets": {
-			"local": "secret://coreloom/local/database",
-			"production": "secret://coreloom/production/database"
+			"local": "secret://flowdular/local/database",
+			"production": "secret://flowdular/production/database"
 		}
 	},
 	"agent": {
@@ -1707,7 +1713,7 @@ The secret resolver is a runtime adapter. Configuration files never contain a DS
 
 ### 17.1. Module gates
 
-`coreloom module validate sales.orders` checks:
+`flowdular module validate sales.orders` checks:
 
 1. Approved specification graph and spec lock.
 2. Traceability from source and tests to spec IDs.
@@ -1726,7 +1732,7 @@ The secret resolver is a runtime adapter. Configuration files never contain a DS
 
 ### 17.2. Specification gates
 
-`coreloom spec validate <module>` checks:
+`flowdular spec validate <module>` checks:
 
 1. Schema and lifecycle state of every spec.
 2. Unique and namespaced spec IDs.
@@ -1740,7 +1746,7 @@ The secret resolver is a runtime adapter. Configuration files never contain a DS
 
 ### 17.3. Blueprint gates
 
-`coreloom blueprint validate <id>` checks:
+`flowdular blueprint validate <id>` checks:
 
 1. Blueprint manifest and version.
 2. Input and plan schemas.
@@ -1774,11 +1780,11 @@ The secret resolver is a runtime adapter. Configuration files never contain a DS
 		"build": "pnpm -r build",
 		"typecheck": "pnpm -r typecheck",
 		"test": "pnpm -r test",
-		"validate": "coreloom spec validate --all && coreloom module validate && coreloom blueprint validate --all",
-		"doctor": "coreloom doctor",
+		"validate": "flowdular spec validate --all && flowdular module validate && flowdular blueprint validate --all",
+		"doctor": "flowdular doctor",
 		"verify": "pnpm typecheck && pnpm test && pnpm validate",
-		"eval:executor-basic": "coreloom agent eval --profile executor-basic",
-		"sandbox": "pnpm --filter @coreloom/sandbox dev"
+		"eval:executor-basic": "flowdular agent eval --profile executor-basic",
+		"sandbox": "pnpm --filter @flowdular/sandbox dev"
 	}
 }
 ```
@@ -1881,18 +1887,18 @@ Exit condition: a repeatable agent run creates a compliant change or stops with 
 
 The order minimizes work invalidated by contract changes:
 
-1. `@coreloom/contracts`: platform spec, module spec, project, module, migration, capability, blueprint, and run schemas.
+1. `@flowdular/contracts`: platform spec, module spec, project, module, migration, capability, blueprint, and run schemas.
 2. Spec validator, graph compiler, approval contract, content lock, and trace engine.
-3. `@coreloom/cli-protocol`: envelope, error codes, capability registry types.
+3. `@flowdular/cli-protocol`: envelope, error codes, capability registry types.
 4. Blueprint validator, classifier contract, lock, and path policy engine.
 5. Task packet compiler, context slicer, structured executor result, and bounded repair engine.
-6. `coreloom doctor`, `spec validate`, `spec lock`, `spec trace`, `blueprint validate`, `agent packet`, `agent eval`, `module new`, and `module validate`.
-7. `@coreloom/kernel`: module registry, execution context, ACL.
-8. `@coreloom/server`: middleware and `defineEndpoint` to `ServerRoute`.
-9. `@coreloom/testing`: memory adapters and contract test kits.
+6. `flowdular doctor`, `spec validate`, `spec lock`, `spec trace`, `blueprint validate`, `agent packet`, `agent eval`, `module new`, and `module validate`.
+7. `@flowdular/kernel`: module registry, execution context, ACL.
+8. `@flowdular/server`: middleware and `defineEndpoint` to `ServerRoute`.
+9. `@flowdular/testing`: memory adapters and contract test kits.
 10. `example-orders`: first complete spec-first reference module.
 11. Canonical basic-executor example and repair suites for the reference module.
-12. `@coreloom/preview-runtime`: lightweight module host.
+12. `@flowdular/preview-runtime`: lightweight module host.
 13. Sandbox UI in TSRX.
 14. Migrator and PostgreSQL adapter.
 15. Complete `.ai` skills, blueprints, workflows, model routing, task budgets, and agent policies.

@@ -4,7 +4,7 @@ import type {
 	AgentDefinition,
 	AgentRun,
 	AgentRunTimeline,
-	AgentSkill,
+	AgentProcedure,
 	AgentUsageSummary,
 	AgentWorkerStatus,
 	ModuleAgentView,
@@ -17,7 +17,7 @@ export function createAgentClientState() {
 		runs: cell<readonly AgentRun[]>([]),
 		providers: cell<readonly AgentProviderConnection[]>([]),
 		tools: cell<readonly string[]>([]),
-		skills: cell<readonly AgentSkill[]>([]),
+		procedures: cell<readonly AgentProcedure[]>([]),
 		selectedAgentId: '',
 		selectedModuleAgentId: '',
 		selectedRun: cell<AgentRunTimeline | null>(null),
@@ -59,11 +59,11 @@ export function createRunTimelineState() {
 	return { store, state: store.state };
 }
 
-export function createAgentSkillClientState() {
+export function createAgentProcedureClientState() {
 	const store = createStore({
-		skills: cell<readonly AgentSkill[]>([]),
+		procedures: cell<readonly AgentProcedure[]>([]),
 		tools: cell<readonly string[]>([]),
-		selectedSkillId: '',
+		selectedProcedureId: '',
 		status: cell<'idle' | 'loading' | 'submitting'>('idle'),
 		error: '',
 		query: '',

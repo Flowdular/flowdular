@@ -2,7 +2,7 @@ schemaVersion: 1
 steps:
   - id: reproduce
     role: backend-engineer
-    action: Write the failing test with the gate runner (vitest; route.handler(createContext(new Request(...), {})) or the service on a ':memory:' repository).
+    action: Write the failing test with the gate runner (vitest; route.handler(createContext(new Request(...), {})) or the service on the module's tests/support/database.ts provider).
     inputs:
       - 'symptom'
       - 'reproduction'

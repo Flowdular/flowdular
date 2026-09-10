@@ -1,6 +1,6 @@
 import { useMemo } from 'octane';
-import { t } from '@coreloom/client';
-import { Alert, Button, FormField } from '@coreloom/ui';
+import { t } from '@flowdular/client';
+import { Alert, Button, FormField } from '@flowdular/ui';
 import { createStore, useValue } from 'segment-state';
 import type {
 	AutomationTargetOption,

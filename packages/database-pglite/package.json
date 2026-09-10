@@ -1,0 +1,42 @@
+{
+	"name": "@flowdular/database-pglite",
+	"version": "0.1.0",
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit -p tsconfig.json",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@flowdular/database": "workspace:*",
+		"@electric-sql/pglite": "0.5.8"
+	},
+	"devDependencies": {
+		"@flowdular/database-testing": "workspace:*",
+		"@types/node": "24.13.3",
+		"typescript": "5.9.3",
+		"vitest": "4.1.11"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Flowdular/flowdular.git",
+		"directory": "packages/database-pglite"
+	},
+	"files": [
+		"src",
+		"schemas",
+		"dist",
+		"bin",
+		"public",
+		"module.json",
+		"migrations",
+		"translations",
+		"spec",
+		"README.md",
+		"LICENSE"
+	],
+	"private": true
+}

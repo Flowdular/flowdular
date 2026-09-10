@@ -13,7 +13,7 @@ import {
 	probeLanguageModel,
 	resolveLanguageModel,
 	type AiProviderConfiguration,
-} from '@coreloom/ai-provider';
+} from '@flowdular/ai-provider';
 import {
 	jsonSchema,
 	stepCountIs,

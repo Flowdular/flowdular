@@ -1,3 +1,4 @@
+import { findModuleFiles } from './module-files.ts';
 import { readFile } from 'node:fs/promises';
 import { dirname, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -6,8 +7,8 @@ import type {
 	ModuleCliCommandDescriptor,
 	ModuleCliCatalog,
 	ModuleCliExtension,
-} from '@coreloom/cli-protocol';
-import type { ModuleManifest } from '@coreloom/contracts';
+} from '@flowdular/cli-protocol';
+import type { ModuleManifest } from '@flowdular/contracts';
 import { findNamedFiles, validateFile, validators } from './validation.ts';
 import { resolveExistingInside, type Workspace } from './workspace.ts';
 
@@ -123,9 +124,7 @@ export async function loadCliExtensions(
 		(workspace.config.modules as { enabled?: string[] } | undefined)?.enabled ??
 			[],
 	);
-	const manifests = (
-		await findNamedFiles(workspace.root, 'module.json')
-	).filter((path) => path.includes('/modules/'));
+	const manifests = await findModuleFiles(workspace);
 	const loaded: LoadedCliCommand[] = [];
 	for (const manifestPath of manifests) {
 		const manifest = JSON.parse(

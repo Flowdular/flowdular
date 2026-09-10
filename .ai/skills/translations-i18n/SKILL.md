@@ -1,6 +1,8 @@
 ---
 name: translations-i18n
-description: Add or review Coreloom UI translations through the shared client runtime, module bundles, locale-aware formatting, and validation gates.
+description: >-
+  Add or review Flowdular UI translations through the shared client runtime,
+  module bundles, locale-aware formatting, and validation gates.
 roles:
   - business-manager
   - frontend-engineer
@@ -9,22 +11,22 @@ roles:
 when: A module adds user-facing copy, a locale changes, a raw translation key appears, or UI must support another language.
 ---
 
-# Translate Coreloom UI
+# Translate Flowdular UI
 
-Coreloom loads translations at runtime. The shell owns locale selection and the fallback chain; each module owns its copy.
+Flowdular loads translations at runtime. The shell owns locale selection and the fallback chain; each module owns its copy.
 
 ## Runtime contract
 
 - `packages/client/src/i18n` registers the shell bundle and every enabled module bundle. Resolution is active locale, then `en`, then the key itself so a missing key stays visible.
 - A module contribution imports `translations/en.json` and every declared locale, then returns `translations: { en, pl }` with its `moduleId`.
-- Use fully qualified keys with `t()`, for example `t('catalog.items.title')`. In `.tsrx`, import from `@coreloom/client`. In plain `.ts` helpers, import from `@coreloom/client/i18n` so tests do not pull the TSRX shell entry.
+- Use fully qualified keys with `t()`, for example `t('catalog.items.title')`. In `.tsrx`, import from `@flowdular/client`. In plain `.ts` helpers, import from `@flowdular/client/i18n` so tests do not pull the TSRX shell entry.
 - Navigation and account-menu labels use getters. Contributions are created before their bundles are registered, so eager `label: t(...)` can paint a raw key.
 - Locale-sensitive dates, numbers and currency use `activeLocale()` with `Intl.DateTimeFormat` or `Intl.NumberFormat`.
 - The personal locale selector lives in Profile and applies immediately. The tenant default remains an Administration setting and is the fallback when the browser has no personal choice.
 
 ## Module workflow
 
-1. Keep the same locale list in `spec/module.yaml`, `module.json` and `coreloom.json`. Every module ships `en`.
+1. Keep the same locale list in `spec/module.yaml`, `module.json` and `flowdular.json`. Every module ships `en`.
 2. Put all user-facing labels, hints, empty states, errors and accessible names in `translations/<locale>.json`. Keep flat, module-local keys such as `items.form.save`; the runtime adds the module namespace.
 3. Add the same key to every locale in the same change. Write natural copy in each language.
 4. Import the bundles in `src/client/contribution.tsrx` and expose them through `translations`.
@@ -34,7 +36,7 @@ Coreloom loads translations at runtime. The shell owns locale selection and the 
 Navigation pattern:
 
 ```ts
-import { t, type ModuleClientContribution } from '@coreloom/client';
+import { t, type ModuleClientContribution } from '@flowdular/client';
 import translationsEn from '../../translations/en.json';
 import translationsPl from '../../translations/pl.json';
 
@@ -60,9 +62,9 @@ return {
 Run:
 
 ```bash
-pnpm coreloom module validate --module <module-id>
-pnpm --filter @coreloom/module-<dir> typecheck
-pnpm --filter @coreloom/module-<dir> test
+pnpm flowdular module validate --module <module-id>
+pnpm --filter @flowdular/module-<dir> typecheck
+pnpm --filter @flowdular/module-<dir> test
 pnpm format:check
 ```
 

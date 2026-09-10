@@ -1,5 +1,5 @@
-import { t } from '@coreloom/client';
-import { Alert, EmptyState, Tag } from '@coreloom/ui';
+import { t } from '@flowdular/client';
+import { Alert, Tag } from '@flowdular/ui';
 import type {
 	WorkflowDryRunResponseV1,
 	WorkflowGraphV1,
@@ -56,10 +56,10 @@ export function WorkflowValidationPanel(props: {
 			@if (props.busy) {
 				<p>{t('workflows.validation.running')}</p>
 			} @else if (!props.report) {
-				<EmptyState
-					icon="check"
-					title={t('workflows.validation.emptyTitle')}
-				>{t('workflows.validation.emptyHint')}</EmptyState>
+				<span class="ui-cell">
+					<b>{t('workflows.validation.emptyTitle')}</b>
+					<small>{t('workflows.validation.emptyHint')}</small>
+				</span>
 			} @else {
 				<>
 					<div class="workflow-validation-summary">

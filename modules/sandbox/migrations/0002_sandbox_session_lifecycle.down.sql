@@ -1,3 +1,4 @@
+DROP POLICY IF EXISTS sandbox_sessions_tenant_policy ON sandbox_sessions;
 -- Drops archived and deleted sessions with the column; rows in those states
 -- have no representation in the previous schema.
 CREATE TABLE sandbox_sessions_v1 (
@@ -13,10 +14,10 @@ CREATE TABLE sandbox_sessions_v1 (
     'draft', 'classified', 'planned', 'editing', 'validating',
     'previewing', 'awaiting-approval', 'accepted', 'failed', 'blocked'
   )),
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  ejected_at INTEGER
-) STRICT;
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  ejected_at BIGINT
+);
 INSERT INTO sandbox_sessions_v1
   (id, tenant_id, account_id, module_id, title, blueprint, driver, mode, state,
    created_at, updated_at, ejected_at)
@@ -28,3 +29,8 @@ DROP TABLE sandbox_sessions;
 ALTER TABLE sandbox_sessions_v1 RENAME TO sandbox_sessions;
 CREATE INDEX IF NOT EXISTS sandbox_sessions_tenant_idx
   ON sandbox_sessions (tenant_id, updated_at DESC, id);
+ALTER TABLE sandbox_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sandbox_sessions FORCE ROW LEVEL SECURITY;
+CREATE POLICY sandbox_sessions_tenant_policy ON sandbox_sessions
+  USING (tenant_id = current_setting('coreloom.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));

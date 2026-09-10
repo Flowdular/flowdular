@@ -1,3 +1,4 @@
+import { applicationPath } from '../routing.ts';
 import type {
 	NavigationContribution,
 	NavigationGroup,
@@ -61,7 +62,9 @@ export function viewHref(
 	viewId: ShellView,
 	workspaceSlug?: string | null,
 ): string {
-	const base = workspaceSlug ? '/app/' + workspaceSlug : '/app';
+	const base = workspaceSlug
+		? applicationPath() + '/' + workspaceSlug
+		: applicationPath();
 	if (viewId === 'overview') return base;
 	return base + '/' + viewId;
 }

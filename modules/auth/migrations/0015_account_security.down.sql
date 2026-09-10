@@ -1,9 +1,0 @@
-DROP INDEX IF EXISTS auth_mfa_challenges_expiry_idx;
-DROP TABLE IF EXISTS auth_mfa_challenges;
-DROP INDEX IF EXISTS auth_mfa_recovery_codes_account_idx;
-DROP TABLE IF EXISTS auth_mfa_recovery_codes;
-DROP TABLE IF EXISTS auth_mfa_totp;
-DROP INDEX IF EXISTS auth_tenant_invitations_tenant_expiry_idx;
-DROP TABLE IF EXISTS auth_tenant_invitations;
-DROP INDEX IF EXISTS auth_password_reset_tokens_account_expiry_idx;
-DROP TABLE IF EXISTS auth_password_reset_tokens;

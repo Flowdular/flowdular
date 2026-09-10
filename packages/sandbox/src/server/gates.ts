@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
+import { inspectAutoReview } from './auto-review.ts';
 import { checkDeclaredDependencies } from './dependencies.ts';
 import {
 	modulePathOf,
@@ -15,7 +16,8 @@ export type GateId =
 	| 'dependencies'
 	| 'typecheck'
 	| 'tests'
-	| 'format';
+	| 'format'
+	| 'auto-review';
 
 export interface GateResult {
 	readonly id: GateId;
@@ -51,6 +53,7 @@ interface GateContext {
 	readonly session: SandboxSession;
 	readonly module: SessionModule;
 	readonly modulePath: string;
+	readonly signal?: AbortSignal | undefined;
 }
 
 /* Output keeps its head and its tail: the head names what failed (the test
@@ -63,6 +66,13 @@ const GATE_TIMEOUT_MS = 5 * 60 * 1000;
    request a gate by id and the orchestrator runs this fixed list. */
 const GATE_DEFINITIONS: readonly GateDefinition[] = [
 	{
+		id: 'auto-review',
+		summary: 'Review evidence matches the current module contents.',
+		scope: 'module',
+		command: () => null,
+		inspect: (context) => inspectAutoReview(context.paths, context.module),
+	},
+	{
 		id: 'spec-schema',
 		summary: 'Validate the module specification against its schema.',
 		scope: 'workspace',
@@ -72,7 +82,7 @@ const GATE_DEFINITIONS: readonly GateDefinition[] = [
 				'--dir',
 				context.workspaceRoot,
 				'--silent',
-				'coreloom',
+				'flowdular',
 				'spec',
 				'validate',
 				'--all',
@@ -93,7 +103,7 @@ const GATE_DEFINITIONS: readonly GateDefinition[] = [
 				'--dir',
 				context.workspaceRoot,
 				'--silent',
-				'coreloom',
+				'flowdular',
 				'module',
 				'validate',
 				'--json',
@@ -139,7 +149,7 @@ const GATE_DEFINITIONS: readonly GateDefinition[] = [
 		scope: 'module',
 		command: (context) => ({
 			command: join(context.modulePath, 'node_modules', '.bin', 'vitest'),
-			args: ['run', '--passWithNoTests'],
+			args: ['run', '--passWithNoTests=false'],
 			cwd: context.modulePath,
 		}),
 	},
@@ -177,6 +187,8 @@ export async function formatDirectory(
 			output: 'Prettier is not installed in this workspace.',
 		};
 	}
+	/* An operator asked for this directly, so it is not tied to a turn and has
+	   no turn signal to observe. */
 	const result = await runProcess(command, ['--write', '.'], directory);
 	return {
 		id: 'format',
@@ -213,8 +225,13 @@ function runProcess(
 	command: string,
 	args: readonly string[],
 	cwd: string,
+	signal?: AbortSignal | undefined,
 ): Promise<{ code: number | null; output: string }> {
 	return new Promise((resolvePromise) => {
+		if (signal?.aborted) {
+			resolvePromise({ code: null, output: 'The gate was stopped.' });
+			return;
+		}
 		const child = spawn(command, [...args], {
 			cwd,
 			env: { ...process.env, CI: 'true', FORCE_COLOR: '0' },
@@ -247,13 +264,21 @@ function runProcess(
 			child.kill('SIGKILL');
 		}, GATE_TIMEOUT_MS);
 		timer.unref();
-		child.on('error', (error) => {
+		const stop = () => {
+			append('\nThe turn was stopped, so the gate was stopped with it.');
+			child.kill('SIGKILL');
+		};
+		signal?.addEventListener('abort', stop, { once: true });
+		const settle = (value: { code: number | null; output: string }) => {
 			clearTimeout(timer);
-			resolvePromise({ code: null, output: `${output()}\n${error.message}` });
+			signal?.removeEventListener('abort', stop);
+			resolvePromise(value);
+		};
+		child.on('error', (error) => {
+			settle({ code: null, output: `${output()}\n${error.message}` });
 		});
 		child.on('close', (code) => {
-			clearTimeout(timer);
-			resolvePromise({ code, output: output() });
+			settle({ code, output: output() });
 		});
 	});
 }
@@ -307,6 +332,7 @@ async function runGate(
 		invocation.command,
 		invocation.args,
 		invocation.cwd,
+		context.signal,
 	);
 	return {
 		id,
@@ -326,6 +352,9 @@ export interface RunGatesInput {
 	/* The draft modules to gate; every module of the session by default. A turn
 	   passes the ones that changed, so an untouched module is not re-checked. */
 	readonly modules?: readonly SessionModule[];
+	/* Stopping a turn must stop its gates. Without this a spawned gate outlives
+	   the abort and the session stays busy until the gate's own budget expires. */
+	readonly signal?: AbortSignal | undefined;
 }
 
 /* Workspace gates run once; module gates run once per draft module, so a
@@ -340,6 +369,9 @@ export async function runGates(
 		const targets =
 			definition.scope === 'workspace' ? modules.slice(0, 1) : modules;
 		for (const module of targets) {
+			/* A stopped turn runs no further gates. The one already spawned is
+			   killed through the same signal. */
+			if (input.signal?.aborted) return results;
 			results.push(
 				await runGate(definition, {
 					workspaceRoot: input.workspaceRoot,
@@ -347,6 +379,7 @@ export async function runGates(
 					session: input.session,
 					module,
 					modulePath: modulePathOf(input.paths, module.directory),
+					signal: input.signal,
 				}),
 			);
 		}

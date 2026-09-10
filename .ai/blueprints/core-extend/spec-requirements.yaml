@@ -4,7 +4,7 @@ status:
   allowed: []
 adr:
   requiredWhen:
-    - a type exported from packages/server, packages/client, packages/contracts, packages/ui or @coreloom/module-auth/server changes shape
+    - a type exported from packages/server, packages/client, packages/contracts, packages/ui or @flowdular/module-auth/server changes shape
     - a JSON schema in packages/contracts/schemas gains or loses a key
     - a gate id, role front matter key, or CLI command group changes
   location: docs/adr/NNNN-<slug>.md

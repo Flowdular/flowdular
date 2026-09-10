@@ -1,6 +1,9 @@
 ---
 name: migration-authoring
-description: "Add or change a module's SQLite schema the way the platform applies it: numbered SQL files are the source, a per-database ledger records what ran, checksums make applied migrations immutable, and an existing database is adopted rather than re-run."
+description: >-
+  Add an immutable PostgreSQL module migration through @flowdular/database, with
+  the namespaced v2 ledger, safe schema adoption, forced row-level security, and
+  tenant isolation tests.
 roles:
   - backend-engineer
   - module-executor
@@ -8,148 +11,157 @@ roles:
 when: A module needs a new table, column, index, or constraint.
 ---
 
-# Author a migration
+# Author a database migration
 
-## 1. Reality first
+An adapter conversion is a separate phase using `database-adapter`. For this phase, read
+`packages/database/src/migrations.ts` and the converted `modules/profile`
+migration as the reference. Flowdular has a migration runner. Do not add
+constructor-owned `DatabaseSync.exec()` guards around it.
 
-`migrations/NNNN_<module>_<name>.up.sql` is the source of truth. `packages/kernel/src/migrations.ts` runs it and records it. What happens:
+## 1. Source layout and compatibility
 
-- `src/services/migration.ts` exports `migrations: readonly ModuleMigration[]`, one entry per numbered file, in file order. Each `statements` constant mirrors its `.up.sql` file byte for byte, and `tests/migrations.test.ts` fails when they drift.
-- `src/services/sqlite-repository.ts` calls `runModuleMigrations(this.#database, migrations)` once in its constructor, after the connection pragmas.
-- The runner keeps `_coreloom_migrations (id TEXT PRIMARY KEY, checksum TEXT NOT NULL, applied_at INTEGER NOT NULL)` in the module's own database.
-- One SQLite file per database-owning module: `CL_<MODULE>_DATABASE`, else `/data/<module>.db` in production, else `.coreloom/data/<module>.db` (`src/server/runtime.ts`). Production mounts `/data` (`infra/kubernetes/data-pvc.yaml`, `infra/docker/compose.yaml`).
-- `.down.sql` stays as documentation of the reverse. Nothing executes it.
+Migration SQL is checked in and immutable after release:
 
-Every database-owning module uses this runner: `agents`, `auth`, `automations`, `catalog`, `expenses`, `parties`, `profile`, and `sandbox`. `users.core` stores its data through `auth.core` and therefore does not own a separate database or migration list. `coreloom migration verify --json` must report no unmanaged database-owning module.
+- `migrations/NNNN_<module>_<name>.up.sql` holds the PostgreSQL source and is
+  byte-exact. Never move, renumber or reformat a released file.
+- `src/services/migration.ts` mirrors every `.up.sql` file as a literal and
+  exports `databaseMigrations: readonly DatabaseMigration[]`, one entry per
+  file. No code translates or rewrites SQL.
+- `.down.sql` documents a reverse operation. Flowdular never executes it.
 
-## 2. What the runner does per migration
+## 2. What the v2 runner guarantees
 
-Checked in order, on the database as it stands when that migration is reached:
+`runDatabaseMigrations(database, namespace, databaseMigrations)` uses the
+namespaced `_coreloom_migrations_v2` ledger. A row records namespace, migration
+id, dialect id, checksum, and applied time. The checksum covers the selected
+dialect's exact SQL.
 
-| Situation                                                  | Result                                                                                 |
-| ---------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Ledger has the id, checksum matches                        | nothing runs                                                                           |
-| Ledger has the id, checksum differs                        | `MigrationError` `CHECKSUM_MISMATCH`, before any statement of any migration runs       |
-| Not in the ledger, every object it declares already exists | **adopted**: only the ledger row is written                                            |
-| Not in the ledger, none of its objects exist               | **applied**: the statements run in a transaction, then the ledger row, both or neither |
-| Not in the ledger, some objects exist                      | `MigrationError` `PARTIAL_OBJECTS`, nothing runs                                       |
+Before applying outstanding work, the runner checks every existing ledger row.
+It refuses checksum drift, a missing script, duplicate ids, a wrong ledger
+dialect, partial adoption, and adapters without transactional DDL. It opens one
+serializable transaction, takes a transaction advisory lock, and commits DDL
+plus ledger rows together. Dry run writes nothing.
 
-Adoption is what lets a database that predates the ledger keep its rows. The runner reads the objects out of the SQL itself (`CREATE TABLE`, `CREATE [UNIQUE] INDEX`, `CREATE VIEW`, `CREATE TRIGGER` against `sqlite_master`; `ALTER TABLE t ADD COLUMN c` against `pragma_table_info`), ignoring names inside comments and string literals.
+The runner selects scripts by the provider's open `dialectId`. Do not add a core
+switch over known dialects. A new driver advertises capabilities and a module
+opts into it by supplying reviewed SQL and tests.
 
-The checksum is `sha256:<hex>` of the statements with CRLF normalized to LF and the whole text trimmed. Every other byte counts, whitespace included.
+## 3. Explicit adoption proof
 
-A migration that only moves rows declares no objects, so it cannot be adopted by inspection. Give it an `adoptWhen(database)` predicate that answers "the effect this migration carries is already in this database". When supplied it is the only thing consulted, so it must also cover any DDL in the same file. A predicate that throws is never an adoption. `modules/auth/src/services/migration.ts` shows the pattern for scope backfills.
+Every migration that may predate v2 defines `inspectExisting(database)`. Use
+adapter-owned, capability-checked schema introspection such as `hasTable`,
+`hasColumn`, and `hasIndex` with fixed identifiers.
 
-## 3. Rules for the SQL
+Return `complete` only when every table, column, index, constraint, data effect,
+and security policy exists. Return `absent` only when none exists. Return
+`partial` for every mixed state. If an adapter cannot inspect a required object,
+extend its introspection capability or supply a narrow module-owned inspection.
+Never guess `complete` and never parse another dialect's catalog directly in
+shared code.
 
-- `CREATE TABLE IF NOT EXISTS ... STRICT;` with explicit types: `TEXT`, `INTEGER`, `REAL`, `BLOB`.
-- `id TEXT PRIMARY KEY` filled with `randomUUID()` by the service; `tenant_id TEXT NOT NULL` on every tenant-owned table; `created_at INTEGER NOT NULL` (milliseconds from `Date.now()`).
-- Enums and ranges as `CHECK` (`kind IN ('product', 'service')`, `base_price_minor >= 0`).
-- Uniqueness inside a tenant: `UNIQUE (tenant_id, <normalized key>)`; store the normalized form in its own column (`sku_normalized`) and keep the display form.
-- Indexes start with `tenant_id` and end with `id` for a stable order: `CREATE INDEX IF NOT EXISTS <table>_tenant_<col>_idx ON <table> (tenant_id, <col>, id);`.
-- Money as integer minor units plus a currency code column; never `REAL`.
-- Cross-module foreign keys do not exist; reference another module's record by id only and read it through that module's service.
-- Additive only. `IF NOT EXISTS` still belongs on every `CREATE`: it is what makes a half-adopted database report `PARTIAL_OBJECTS` instead of failing on a name clash.
-- Connection pragmas (`foreign_keys`, `journal_mode`) belong in the repository constructor. `PRAGMA` inside a migration is a no-op, because the statements run inside a transaction.
+## 4. SQL rules shared by dialects
 
-## 4. Adding a migration
+- Tenant tables carry `tenant_id TEXT NOT NULL`.
+- Tenant uniqueness and lookup indexes start with `tenant_id`; ordered indexes
+  end with `id` for stable results.
+- IDs are text UUIDs generated by the service. Times are integer milliseconds.
+- Money is integer minor units plus a currency code, never floating point.
+- Enums and ranges have database check constraints.
+- Cross-module foreign keys do not exist. Use the owner's capability or API.
+- Additive changes are the default. Destructive or locking changes need an
+  operator-approved rollout, compatibility window, and rollback plan.
 
-Write the SQL file first, then mirror it.
+Write PostgreSQL directly: its types, conflict syntax, indexes and policies.
+Never rewrite placeholders or DDL text.
 
-`migrations/0003_parties_contacts.up.sql`:
+## 5. PostgreSQL row-level security
+
+Every PostgreSQL tenant table includes:
 
 ```sql
-CREATE TABLE IF NOT EXISTS party_contacts (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
-  party_id TEXT NOT NULL,
-  email TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('billing', 'delivery', 'general')),
-  created_at INTEGER NOT NULL,
-  UNIQUE (tenant_id, party_id, email)
-) STRICT;
-CREATE INDEX IF NOT EXISTS party_contacts_tenant_party_idx
-  ON party_contacts (tenant_id, party_id, id);
+ALTER TABLE inventory_locations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inventory_locations FORCE ROW LEVEL SECURITY;
+CREATE POLICY inventory_locations_tenant_policy ON inventory_locations
+  USING (tenant_id = current_setting('coreloom.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
 ```
 
-`migrations/0003_parties_contacts.down.sql` holds the reverse (`DROP INDEX IF EXISTS ...;` then `DROP TABLE IF EXISTS ...;`).
+The runtime role is not a superuser and has no `BYPASSRLS`. DDL and policy
+ownership use `purpose: 'migration'`. Runtime repository calls use
+`database.transaction(operation, { tenantId, access })`; the adapter sets
+transaction-local `coreloom.tenant_id` on the pinned connection. Queries still
+include `WHERE tenant_id = ...` as defense in depth.
 
-`src/services/migration.ts`, appended; existing constants stay byte for byte:
+## 6. Add one migration
 
-```ts
-export const PARTIES_MIGRATION_003 = `CREATE TABLE IF NOT EXISTS party_contacts (
-  id TEXT PRIMARY KEY,
-  ...
-) STRICT;
-CREATE INDEX IF NOT EXISTS party_contacts_tenant_party_idx
-  ON party_contacts (tenant_id, party_id, id);
-`;
+Scaffold instead of writing from memory:
 
-export const migrations: readonly ModuleMigration[] = [
-	{ id: '0001_parties_core', statements: PARTIES_MIGRATION_001 },
-	{
-		id: '0002_parties_vat_id',
-		statements: PARTIES_MIGRATION_002_VAT_ID_COLUMN,
-	},
-	{ id: '0003_parties_contacts', statements: PARTIES_MIGRATION_003 },
-];
+```bash
+pnpm flowdular migration new <name> --module <id>          # dry run
+pnpm flowdular migration new <name> --module <id> --apply  # writes both files
 ```
 
-The template literal opens directly on the first SQL character and closes after the file's trailing newline. The `id` is the file name without `.up.sql`. Nothing changes in the repository constructor.
+The scaffold emits the `.up.sql` and `.down.sql` pair with the tenant table, its
+index, and the `ENABLE` + `FORCE` + policy block already correct. Replace the
+placeholder columns with the real schema; keep the row-security block unless the
+table is not tenant owned.
 
-A new column no longer needs a guard: `ALTER TABLE parties ADD COLUMN vat_id TEXT;` in its own numbered file runs once on a database that lacks the column and is adopted on one that has it. Keep the `ADD COLUMN` and its backfill in the same file; they are one unit of work.
+1. Never renumber released files. The scaffold picks the next id.
+2. Mirror every `.up.sql` byte for byte and append one `DatabaseMigration` with
+   the same id.
+3. Add exact `inspectExisting` logic with `migrationObjectState` and
+   `postgresTenantTableState` from `@flowdular/database`. Pass thunks, never
+   ready promises: adoption runs inside a transaction pinned to one connection,
+   and eager promises issue overlapping queries on it.
+4. Extend repository SQL, row mapping, service validation, endpoint, client,
+   approved spec scenario, and all three module versions.
 
-Then extend the row interface, `fromRow`, `INSERT` and `SELECT` lists, the domain type, service validation, endpoint parsing and the client.
+### Column types that bite
 
-## 5. Verify the runner integration
+PostgreSQL returns `BIGINT` as a string. Normalize every integer read in the
+repository through a local `integer()` helper; a raw value concatenates where it
+should add, and `enabled === 1` is false against `'1'`.
 
-Every database-owning module has the same integration shape:
+Widen timestamps, durations and sequences to `BIGINT`. Leave boolean flags,
+counters and version columns `INTEGER`, or every comparison against them has to
+be normalized too.
 
-1. Every constant has a numbered `.up.sql` file, and the exported `migrations` list covers every file in order.
-2. The repository constructor calls `runModuleMigrations(this.#database, migrations)` once after connection pragmas and before seeds or normal queries.
-3. `@coreloom/kernel` is a declared dependency.
-4. `tests/migrations.test.ts` covers the four cases below.
-5. `pnpm coreloom migration status --module <id> --json` against a copy of an existing database reports every pre-ledger migration as `adopted`, never `pending`.
+Money is integer minor units in `BIGINT` plus a currency code.
 
-Seeding that is not a migration, such as auth's built-in roles for each tenant, stays after the runner call.
+Never test against a workspace database. `createTestDatabaseProvider()` from
+`@flowdular/database-testing` gives the suite its own PGlite by default or an
+isolated PostgreSQL schema in server CI. Tenant fixture reads and writes still
+need transaction-local tenant context, including on the migration connection.
 
-## 6. Tests and gates
+## 7. Tests and gates
 
-Every converted module carries `tests/migrations.test.ts` with four cases:
+`pnpm flowdular migration verify` checks the ledger and every module's migration
+set: a missing script, a tenant table without forced row security, and a policy
+lost to a table rebuild.
 
-- the constants equal their `.up.sql` files, and the ids cover every file in `migrations/`;
-- a fresh database reaches `applied` for every migration;
-- a database that already carries the schema and rows reaches `adopted`, keeps its rows, and ends with a full ledger;
-- a second repository construction runs clean.
+The migration suite proves byte parity and id order, empty apply, complete
+adoption without row loss, partial refusal, checksum refusal before later SQL,
+dry run without writes, and a clean second start.
 
-Plus tenant isolation and uniqueness tests for every new constraint.
+Every gate runs against a real PostgreSQL, because the embedded one starts in
+process. Cover tenant A and B isolation, a forged tenant `WITH CHECK` refusal, a
+missing-context `TENANT_CONTEXT_REQUIRED` test, and direct row-security bypass
+probes under a role that holds neither `SUPERUSER` nor `BYPASSRLS`. Where the
+module polls across tenants, prove the background role reads only the routing
+columns.
 
-Commands:
+## Refuse
 
-```
-pnpm coreloom migration status [--module <id>] [--json]   read-only, no approval
-pnpm coreloom migration apply --module <id> [--apply]     dry run without --apply, development or test only
-pnpm coreloom migration verify                            every ledger row against the workspace checksums
-```
+- Editing, moving, reordering, or removing released migration bytes.
+- A PostgreSQL tenant table without enabled and forced RLS plus both policy
+  clauses.
+- A runtime role with superuser or `BYPASSRLS`.
+- DDL through a runtime lease or request data through `executeScript()`.
+- Automatic SQL translation or a closed core switch over known dialects.
+- Forcing past checksum or partial-adoption refusal.
+- A production-support claim based on a fake driver alone.
 
-`migration apply` without `--apply` opens the database read-only, so it cannot even create the file. `pnpm coreloom migration status` reporting `pending` on a populated database means the runner is about to write; read the plan before you pass `--apply`.
+## Verification
 
-Gates: `typecheck`, `tests`, `format`, and `pnpm coreloom migration verify`. Sandbox eject or a PR then lands the change; production applies it on the next boot of the server.
-
-## 7. What to refuse
-
-- Editing an already applied migration, including its `CREATE TABLE` body. The checksum blocks startup for everyone who applied the old text. Add a new numbered file instead.
-- Destructive changes (`DROP TABLE`, `DROP COLUMN`, type changes, tightening a `CHECK` on existing data) without an operator decision and a backup plan; `.down.sql` is documentation, nothing runs it.
-- Renumbering, reordering, or removing a migration that shipped.
-- A table without `tenant_id` unless the spec says tenancy is `none`.
-- Writing to another module's database file.
-- Forcing past a `PARTIAL_OBJECTS` error. It means the database is in a state no migration produced; find out why first.
-
-## Pitfalls
-
-- `PRAGMA journal_mode = WAL` leaves `-wal` and `-shm` files next to the database; `.coreloom/` is git-ignored.
-- `STRICT` rejects a JavaScript `number` with a fraction for an `INTEGER` column at insert time; validate with `Number.isSafeInteger`.
-- `String(error).includes('<table>.tenant_id')` is how services detect a unique violation; renaming the table or constraint columns breaks that mapping.
-- Reformatting an applied `.up.sql` file, even only its indentation, changes the checksum and blocks every database that applied it.
-- `AUTH_MIGRATION_002` to `013` in `modules/auth` insert other modules' scopes into auth tables; a new bundled module that wants default member scopes needs a new numbered file there, which is a core change.
-- The ledger lives in each module's own database, so a module's history is only as portable as its file. Copying a database without its `_coreloom_migrations` table makes the next boot adopt everything again, which is safe but loses the applied timestamps.
+Run the module typecheck and tests, module validation,
+`pnpm flowdular migration verify`, and `pnpm verify`.

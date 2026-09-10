@@ -20,11 +20,11 @@ You run at the repository root (Claude Code, Codex, or a person following the sa
 ## Procedure
 
 1. Pick the blueprint under `.ai/blueprints/<id>/` and read `README.md`, `steps.yaml`, `allowed-paths.yaml`, `required-files.yaml`, `gates.yaml`. Read the matching skill in `.ai/skills/<name>/SKILL.md` and `AGENTS.md`.
-2. `pnpm coreloom doctor --json` must report `healthy`.
-3. For `new-module`: the spec must be `status: approved`. Run `pnpm coreloom module new <id> --spec modules/<dir>/spec/module.yaml` (dry run), compare the planned files with `required-files.yaml`, then rerun with `--apply`. Add what the scaffold lacks (see the `module-new` skill).
-4. Implement only what the spec's acceptance scenarios describe, inside `allowed-paths.yaml`. Copy the shape of `modules/catalog`.
-5. Run the gates yourself, in the module directory: `pnpm --filter @coreloom/module-<dir> typecheck`, `pnpm --filter @coreloom/module-<dir> test`, `pnpm coreloom spec validate --all --json`, `pnpm coreloom module validate --json`, `pnpm format:check`. Check that every package imported under `src/` is declared in `package.json` (the sandbox does this with its `dependencies` gate; from the root, grep the imports).
-6. Join the platform through the CLI only: `pnpm coreloom module enable <id> --apply`, then `pnpm coreloom auth sync-scopes --module <id> --apply`. Never edit `coreloom.json`, `platform/package.json`, `platform/src/generated/**` or `platform/octane.config.ts`.
+2. `pnpm flowdular doctor --json` must report `healthy`.
+3. For `new-module`: the spec must be `status: approved`. Run `pnpm flowdular module new <id> --spec modules/<dir>/spec/module.yaml` (dry run), compare the planned files with `required-files.yaml`, then rerun with `--apply`. Add what the scaffold lacks (see the `module-new` skill).
+4. Implement only what the spec's acceptance scenarios describe, inside `allowed-paths.yaml`. Copy the shape of `.ai/references/catalog`.
+5. Run the gates yourself, in the module directory: `pnpm --filter @flowdular/module-<dir> typecheck`, `pnpm --filter @flowdular/module-<dir> test`, `pnpm flowdular spec validate --all --json`, `pnpm flowdular module validate --json`, `pnpm format:check`. Check that every package imported under `src/` is declared in `package.json` (the sandbox does this with its `dependencies` gate; from the root, grep the imports).
+6. Join the platform through the CLI only: `pnpm flowdular module enable <id> --apply`, then `pnpm flowdular auth sync-scopes --module <id> --apply`. Never edit `flowdular.json`, `platform/package.json`, `platform/src/generated/**` or `platform/octane.config.ts`.
 7. `pnpm verify` at the root before you report.
 
 ## Refuse

@@ -4,35 +4,26 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const stateDirectory = mkdtempSync(join(tmpdir(), 'coreloom-build-'));
+const stateDirectory = mkdtempSync(join(tmpdir(), 'flowdular-build-'));
 const buildSecret = () => randomBytes(32).toString('base64');
-const database = (name) => join(stateDirectory, `${name}.db`);
 
 /* The Octane plugin evaluates the server composition while bundling it. Give
-   that build-time process isolated state and ephemeral keys, while preserving
-   every explicitly supplied value. The emitted server still reads its real
+   that build-time process isolated state and ephemeral keys, without using deployment database settings or encryption keys. The emitted server still reads its real
    production environment when it starts. */
 const environment = {
 	...process.env,
-	CL_AGENT_CREDENTIAL_KEY: process.env.CL_AGENT_CREDENTIAL_KEY ?? buildSecret(),
-	CL_AGENT_RUN_GRANT_KEY: process.env.CL_AGENT_RUN_GRANT_KEY ?? buildSecret(),
-	CL_AUTOMATIONS_CREDENTIAL_KEY:
-		process.env.CL_AUTOMATIONS_CREDENTIAL_KEY ?? buildSecret(),
-	CL_WORKFLOWS_PAYLOAD_KEY:
-		process.env.CL_WORKFLOWS_PAYLOAD_KEY ?? buildSecret(),
-	CL_WORKFLOWS_CURSOR_KEY: process.env.CL_WORKFLOWS_CURSOR_KEY ?? buildSecret(),
-	CL_AGENTS_DATABASE: process.env.CL_AGENTS_DATABASE ?? database('agents'),
-	CL_AUTH_DATABASE: process.env.CL_AUTH_DATABASE ?? database('auth'),
-	CL_AUTOMATIONS_DATABASE:
-		process.env.CL_AUTOMATIONS_DATABASE ?? database('automations'),
-	CL_CATALOG_DATABASE: process.env.CL_CATALOG_DATABASE ?? database('catalog'),
-	CL_EXPENSES_DATABASE:
-		process.env.CL_EXPENSES_DATABASE ?? database('expenses'),
-	CL_PARTIES_DATABASE: process.env.CL_PARTIES_DATABASE ?? database('parties'),
-	CL_PROFILE_DATABASE: process.env.CL_PROFILE_DATABASE ?? database('profile'),
-	CL_SANDBOX_DATABASE: process.env.CL_SANDBOX_DATABASE ?? database('sandbox'),
-	CL_WORKFLOWS_DATABASE:
-		process.env.CL_WORKFLOWS_DATABASE ?? database('workflows'),
+	/* A production bundle is evaluated while it is built, but the build must not
+	   connect to the deployment database. The embedded engine writes into the
+	   throwaway state directory below; runtime still reads its real adapter. */
+	FD_ENV: 'development',
+	FD_INTERNAL_BUILD: 'true',
+	FD_DATABASE_ADAPTER: 'pglite',
+	FD_DATABASE_PGLITE_DIRECTORY: join(stateDirectory, 'pglite'),
+	FD_AGENT_CREDENTIAL_KEY: buildSecret(),
+	FD_AGENT_RUN_GRANT_KEY: buildSecret(),
+	FD_AUTOMATIONS_CREDENTIAL_KEY: buildSecret(),
+	FD_WORKFLOWS_PAYLOAD_KEY: buildSecret(),
+	FD_WORKFLOWS_CURSOR_KEY: buildSecret(),
 };
 
 try {

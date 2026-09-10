@@ -1,15 +1,23 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
-import { describe, expect, it } from 'vitest';
-import { defineAgent } from '../src/server/define-agent.ts';
+import type { DatabaseProvider } from '@flowdular/database';
+import { createPgliteTestProvider } from '@flowdular/database-testing';
 import {
-	agentRuntimeOptionsFromEnvironment,
-	createAgentRuntime,
-} from '../src/server/runtime.ts';
+	afterAll,
+	afterEach,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+} from 'vitest';
+import { AgentHarness, LocalSimulationProvider } from '@flowdular/harness';
+import { defineAgent } from '../src/server/define-agent.ts';
 import { preflightModuleAgentDefinitions } from '../src/services/module-agent-preflight.ts';
-import { SqliteAgentRepository } from '../src/services/sqlite-repository.ts';
+import { AgentService } from '../src/services/agent-service.ts';
+import { AgentWorker } from '../src/services/worker.ts';
+import {
+	openAgentsTestDatabase,
+	type AgentsTestDatabase,
+} from './support/database.ts';
 
 function definition(revision: number, name = `Catalog curator ${revision}`) {
 	return defineAgent({
@@ -29,84 +37,112 @@ function definition(revision: number, name = `Catalog curator ${revision}`) {
 	});
 }
 
-function databaseFixture(revision: number) {
-	const directory = mkdtempSync(join(tmpdir(), 'module-agent-preflight-'));
-	const path = join(directory, 'agents.db');
-	const repository = new SqliteAgentRepository(path);
-	repository.reconcileModuleAgents([definition(revision)], Date.now());
-	repository.close();
-	return { directory, path };
+let database: AgentsTestDatabase;
+const workers: AgentWorker[] = [];
+
+beforeAll(async () => {
+	database = await openAgentsTestDatabase();
+});
+
+afterEach(async () => {
+	for (const worker of workers.splice(0)) await worker.dispose();
+});
+
+beforeEach(async () => {
+	await database.truncate();
+});
+
+afterAll(async () => {
+	await database.dispose();
+});
+
+function service() {
+	const harness = new AgentHarness({
+		providers: [new LocalSimulationProvider()],
+	});
+	const worker = new AgentWorker(database.repository, harness, {
+		workerId: 'worker:module-agent-preflight',
+		concurrency: 1,
+		leaseMs: 1_000,
+	});
+	workers.push(worker);
+	return new AgentService(database.repository, harness, worker);
+}
+
+async function registered(revision: number) {
+	await database.repository.reconcileModuleAgents(
+		[definition(revision)],
+		Date.now(),
+	);
 }
 
 describe('module agent boot preflight', () => {
-	it('uses a read-only connection and accepts an unchanged or newer definition', () => {
-		const { directory, path } = databaseFixture(2);
-		const before = readFileSync(path);
-		const beforeMtime = statSync(path).mtimeMs;
-		const inspect = new DatabaseSync(path, { readOnly: true });
-		const beforeTables = inspect
-			.prepare(
-				"SELECT count(*) AS count FROM sqlite_master WHERE type = 'table'",
-			)
-			.get();
-		inspect.close();
+	it('accepts an unchanged or newer definition and writes nothing', async () => {
+		await registered(2);
 
-		expect(preflightModuleAgentDefinitions(path, [definition(2)])).toHaveLength(
-			1,
-		);
-		expect(preflightModuleAgentDefinitions(path, [definition(3)])).toHaveLength(
-			1,
-		);
-
-		const afterInspect = new DatabaseSync(path, { readOnly: true });
 		expect(
-			afterInspect
-				.prepare(
-					"SELECT count(*) AS count FROM sqlite_master WHERE type = 'table'",
-				)
-				.get(),
-		).toEqual(beforeTables);
-		afterInspect.close();
-		expect(readFileSync(path)).toEqual(before);
-		expect(statSync(path).mtimeMs).toBe(beforeMtime);
+			await preflightModuleAgentDefinitions(database.databases, [
+				definition(2),
+			]),
+		).toHaveLength(1);
+		expect(
+			await preflightModuleAgentDefinitions(database.databases, [
+				definition(3),
+			]),
+		).toHaveLength(1);
 
-		rmSync(directory, { recursive: true, force: true });
+		/* The check is read only: the durable catalog still names revision 2, so
+		   revision 2 is still accepted rather than reported as a downgrade from
+		   the 3 the previous call passed. */
+		expect(
+			await preflightModuleAgentDefinitions(database.databases, [
+				definition(2),
+			]),
+		).toHaveLength(1);
 	});
 
-	it('rejects drift and downgrade using the persisted high-water revision', () => {
-		const { directory, path } = databaseFixture(2);
-		expect(() => preflightModuleAgentDefinitions(path, [])).not.toThrow();
-		expect(() =>
-			preflightModuleAgentDefinitions(path, [definition(1)]),
-		).toThrow(/MODULE_AGENT_REVISION_DOWNGRADE/);
-		expect(() =>
-			preflightModuleAgentDefinitions(path, [
+	it('rejects drift and downgrade using the persisted high-water revision', async () => {
+		await registered(2);
+
+		await expect(
+			preflightModuleAgentDefinitions(database.databases, []),
+		).resolves.toEqual([]);
+		await expect(
+			preflightModuleAgentDefinitions(database.databases, [definition(1)]),
+		).rejects.toThrow(/MODULE_AGENT_REVISION_DOWNGRADE/);
+		await expect(
+			preflightModuleAgentDefinitions(database.databases, [
 				definition(2, 'Changed in place'),
 			]),
-		).toThrow(/MODULE_AGENT_REVISION_DRIFT/);
+		).rejects.toThrow(/MODULE_AGENT_REVISION_DRIFT/);
+	});
 
-		rmSync(directory, { recursive: true, force: true });
+	it('treats a database with no catalog yet as a first run, not a downgrade', async () => {
+		const bare: DatabaseProvider = createPgliteTestProvider();
+		try {
+			expect(
+				await preflightModuleAgentDefinitions(bare, [definition(1)]),
+			).toHaveLength(1);
+		} finally {
+			await bare.dispose();
+		}
+		expect(
+			await preflightModuleAgentDefinitions(undefined, [definition(1)]),
+		).toHaveLength(1);
 	});
 
 	it('keeps transactional reconciliation as a race-condition defense', async () => {
-		const { directory, path } = databaseFixture(1);
-		const base = agentRuntimeOptionsFromEnvironment(
-			{ NODE_ENV: 'test' },
-			process.cwd(),
-		);
-		const runtime = createAgentRuntime({
-			...base,
-			databasePath: path,
-			moduleAgents: [definition(2)],
-		});
-		runtime.prepare();
+		/* This generation passed its boot check against an empty catalog. */
+		expect(
+			await preflightModuleAgentDefinitions(database.databases, [
+				definition(2),
+			]),
+		).toHaveLength(1);
+		/* A competing process registered a newer revision in between. */
+		await registered(3);
 
-		const competing = new SqliteAgentRepository(path);
-		competing.reconcileModuleAgents([definition(3)], Date.now());
-		competing.close();
-
-		expect(() => runtime.start()).toThrow(/MODULE_AGENT_REVISION_DOWNGRADE/);
-		await runtime.dispose();
-		rmSync(directory, { recursive: true, force: true });
+		await expect(
+			service().reconcileModuleAgents([definition(2)]),
+		).rejects.toThrow(/MODULE_AGENT_REVISION_DOWNGRADE/);
 	});
 });

@@ -6,7 +6,7 @@ import {
 	SUPPORTED_LOCALES,
 	t,
 	useTranslation,
-} from '@coreloom/client';
+} from '@flowdular/client';
 import en from './locales/en.json';
 import pl from './locales/pl.json';
 

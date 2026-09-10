@@ -1,14 +1,20 @@
+import { flowdularEnvironment } from '@flowdular/kernel/runtime-config';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { octane } from '@octanejs/vite-plugin';
-import { defineConfig, type Plugin } from 'vite';
-import { SANDBOX_DIRECTORY } from './src/server/config.ts';
-import { findCoreloomWorkspace } from './src/server/workspace-root.ts';
+import type { Plugin } from 'vite';
+import { defineConfig } from 'vite';
+import { sandboxDirectory } from './src/server/config.ts';
+import { findFlowdularWorkspace } from './src/server/workspace-root.ts';
+import { resolvePreviewModules } from './src/server/preview-modules.ts';
+import type { SandboxSession } from './src/server/sessions.ts';
+
+Object.assign(process.env, flowdularEnvironment(process.env));
 
 const appRoot = dirname(fileURLToPath(import.meta.url));
-const workspace = await findCoreloomWorkspace(
-	process.env.CL_SANDBOX_WORKSPACE ?? process.cwd(),
+const workspace = await findFlowdularWorkspace(
+	process.env.FD_SANDBOX_WORKSPACE ?? process.cwd(),
 );
 
 const PREVIEW_MODULE =
@@ -20,9 +26,39 @@ const PREVIEW_MODULE =
    session's module directory. */
 function previewModules(workspaceRoot: string): Plugin {
 	return {
-		name: 'coreloom-preview-modules',
+		name: 'flowdular-preview-modules',
 		enforce: 'pre',
-		resolveId(source) {
+		async resolveId(source) {
+			const support =
+				/^\/preview-support\/([0-9a-f-]{36})\/([a-z][a-z0-9-]*)\/(.+)$/.exec(
+					source,
+				);
+			if (support) {
+				const [, sessionId, directory, rest] = support;
+				if (rest!.split('/').some((part) => part === '..' || !part))
+					return null;
+				try {
+					const session = JSON.parse(
+						readFileSync(
+							join(
+								sandboxDirectory(workspaceRoot),
+								'sessions',
+								sessionId!,
+								'session.json',
+							),
+							'utf8',
+						),
+					) as SandboxSession;
+					const selected = (
+						await resolvePreviewModules(workspaceRoot, session)
+					).find((module) => module.support && module.directory === directory);
+					if (!selected) return null;
+					const file = join(selected.path, rest!);
+					return existsSync(file) ? file : null;
+				} catch {
+					return null;
+				}
+			}
 			const match = PREVIEW_MODULE.exec(source);
 			if (!match) return null;
 			const [, sessionId, directory, rest] = match;
@@ -30,8 +66,7 @@ function previewModules(workspaceRoot: string): Plugin {
 				return null;
 			}
 			const sessionRoot = join(
-				workspaceRoot,
-				SANDBOX_DIRECTORY,
+				sandboxDirectory(workspaceRoot),
 				'sessions',
 				sessionId!,
 			);
@@ -58,7 +93,7 @@ function previewModules(workspaceRoot: string): Plugin {
 	};
 }
 
-export default defineConfig({
+const config = {
 	root: appRoot,
 	plugins: [previewModules(workspace.root), octane()],
 	resolve: {
@@ -69,14 +104,19 @@ export default defineConfig({
 		dedupe: [
 			'octane',
 			'segment-state',
-			'@coreloom/client',
-			'@coreloom/ui',
-			'@coreloom/server',
-			'@coreloom/contracts',
+			'@flowdular/client',
+			'@flowdular/ui',
+			'@flowdular/server',
+			'@flowdular/contracts',
 		],
 		extensions: ['.tsrx', '.ts', '.tsx', '.mjs', '.js', '.jsx', '.json'],
 	},
 	build: { target: 'esnext' },
+	/* Suites here boot the embedded PostgreSQL, which costs well past the 5s
+	   vitest default under a full workspace run. Vitest reads this file, so the
+	   timeouts live here rather than in a vitest.config.ts that would shadow it
+	   and take the preview plugins with it. */
+	test: { testTimeout: 30_000, hookTimeout: 30_000 },
 	server: {
 		host: '127.0.0.1',
 		port: 4320,
@@ -86,6 +126,8 @@ export default defineConfig({
 		   overlay must never cover a module someone is reviewing. */
 		hmr: { overlay: false },
 		fs: { allow: [appRoot, workspace.root] },
-		watch: { ignored: ['**/.coreloom/data/**'] },
+		watch: { ignored: ['**/.flowdular/data/**', '**/.coreloom/data/**'] },
 	},
-});
+} satisfies import('vitest/config').UserWorkspaceConfig;
+
+export default defineConfig(config);

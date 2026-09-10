@@ -1,26 +1,41 @@
+import { validateApplicationPath } from '@flowdular/server';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Middleware } from '@octanejs/app-core';
+import {
+	DATABASE_CAPABILITY_IDS,
+	DATABASE_DIALECT_IDS,
+	type DatabaseAdapterLease,
+	type DatabaseProvider,
+	type DatabaseProviderRequest,
+} from '@flowdular/database';
 import {
 	createModuleSettingsRuntime as createKernelSettingsRuntime,
 	normalizeActor,
 	PLATFORM_SETTINGS_TENANT,
 	type Actor,
 	type ModuleSettingsRuntime,
-} from '@coreloom/kernel';
-import { coreloomLocalDataPath } from '@coreloom/kernel/legacy-local-state';
+} from '@flowdular/kernel';
 import {
 	createSecurityHeadersMiddleware,
 	DEVELOPMENT_CONTENT_SECURITY_POLICY,
 	PRODUCTION_CONTENT_SECURITY_POLICY,
-} from '@coreloom/server';
+} from '@flowdular/server';
 import { createAuthenticationMiddleware } from '../middleware/authentication.ts';
 import { AuthService, type AuthPolicy } from '../services/auth-service.ts';
+import {
+	DatabaseAuthRepository,
+	migrateAuthDatabase,
+} from '../services/database-repository.ts';
 import {
 	DevelopmentMailDelivery,
 	type AuthMailDelivery,
 } from '../services/mail-delivery.ts';
-import { SqliteAuthRepository } from '../services/sqlite-repository.ts';
+import type { AuthRepository } from '../services/repository.ts';
+import {
+	createAuthSettingsStore,
+	type AuthSettingsStore,
+} from '../services/settings-store.ts';
 import type { AuthCookieConfig } from '../api/cookies.ts';
 import {
 	createAuthModuleSettings,
@@ -31,8 +46,15 @@ import {
 	type AuthSettings,
 } from '../settings.ts';
 
-export interface AuthRuntimeOptions {
-	readonly databasePath: string;
+export interface AuthRuntimeOptions extends AuthRuntimeEnvironmentOptions {
+	/** Platform-owned provider. auth.core never receives a DSN or a pool. */
+	readonly databases: DatabaseProvider;
+	/** Tenant-scoped lease purpose; `migration` is taken and released internally. */
+	readonly purpose?: Exclude<DatabaseProviderRequest['purpose'], 'migration'>;
+}
+
+/** Everything the process environment can decide on its own. */
+export interface AuthRuntimeEnvironmentOptions {
 	readonly secureCookies: boolean;
 	/* Applications that share a host with the platform must not share its
 	   session cookie; cookies ignore the port. */
@@ -45,7 +67,7 @@ export interface AuthRuntimeOptions {
 	readonly allowSignUp: boolean;
 	readonly emailConfirmation: boolean;
 	readonly signInProviders: readonly string[];
-	/** Locales a tenant may pick as default; from coreloom.json when known. */
+	/** Locales a tenant may pick as default; from flowdular.json when known. */
 	readonly locales?: readonly string[];
 	readonly workspaceRoot?: string;
 	/** Honor x-forwarded-for; only behind a reverse proxy that sets it. */
@@ -55,11 +77,12 @@ export interface AuthRuntimeOptions {
 	readonly mailDelivery?: AuthMailDelivery;
 	readonly mfaEncryptionKey?: string;
 	readonly publicBaseUrl?: string;
+	readonly applicationPath?: string;
 	readonly oidcProviders?: readonly OidcProvider[];
 	readonly production?: boolean;
 	readonly contentSecurityPolicy?: string | null;
 	readonly contentSecurityPolicyReportOnly?: boolean;
-	/** Share an existing settings runtime instead of opening one on auth.db. */
+	/** Share an existing settings runtime instead of opening one of its own. */
 	readonly settings?: ModuleSettingsRuntime;
 }
 
@@ -83,12 +106,24 @@ export interface AuthRuntime {
 	readonly workspaceRoot: string | null;
 	readonly oidcProviders: readonly OidcProvider[];
 	readonly publicBaseUrl: string | null;
-	service(): AuthService;
+	readonly applicationPath?: string;
+	/* Resolves once the schema is migrated and the leases are held. Concurrent
+	   first callers await the same initialization. */
+	service(): Promise<AuthService>;
 	/* Re-read at the point of use. A stored run snapshot is only a ceiling and
 	   never substitutes for the actor's current membership. */
-	authorizeAgentToolAccess(tenantId: string, actor: Actor): readonly string[];
+	authorizeAgentToolAccess(
+		tenantId: string,
+		actor: Actor,
+	): Promise<readonly string[]>;
+	/**
+	 * Resolves once every settings audit row accepted so far has been written.
+	 * The kernel change listener is synchronous, so the write is started after
+	 * it returns; a caller that must observe the trail waits on this first.
+	 */
+	settingsAuditSettled(): Promise<void>;
 	/** Terminal, idempotent release used by platform HMR and process shutdown. */
-	dispose(): void;
+	dispose(): Promise<void>;
 }
 
 function booleanEnvironment(
@@ -141,11 +176,11 @@ function oidcProvidersEnvironment(
 	try {
 		parsed = JSON.parse(value);
 	} catch {
-		throw new Error('CL_AUTH_OIDC_PROVIDERS must be valid JSON.');
+		throw new Error('FD_AUTH_OIDC_PROVIDERS must be valid JSON.');
 	}
 	if (!Array.isArray(parsed) || parsed.length > 8)
 		throw new Error(
-			'CL_AUTH_OIDC_PROVIDERS must be an array of at most eight providers.',
+			'FD_AUTH_OIDC_PROVIDERS must be an array of at most eight providers.',
 		);
 	return parsed.map((entry): OidcProvider => {
 		if (!entry || typeof entry !== 'object')
@@ -202,13 +237,13 @@ function publicOriginEnvironment(
 	try {
 		url = new URL(value);
 	} catch {
-		throw new Error('CL_AUTH_PUBLIC_ORIGIN must be an absolute URL.');
+		throw new Error('FD_AUTH_PUBLIC_ORIGIN must be an absolute URL.');
 	}
 	if (url.username || url.password) {
-		throw new Error('CL_AUTH_PUBLIC_ORIGIN must not contain URL credentials.');
+		throw new Error('FD_AUTH_PUBLIC_ORIGIN must not contain URL credentials.');
 	}
 	if (url.pathname !== '/' || url.search || url.hash) {
-		throw new Error('CL_AUTH_PUBLIC_ORIGIN must contain only an origin.');
+		throw new Error('FD_AUTH_PUBLIC_ORIGIN must contain only an origin.');
 	}
 	const loopback =
 		url.hostname === 'localhost' ||
@@ -217,20 +252,20 @@ function publicOriginEnvironment(
 		/^127(?:\.\d{1,3}){3}$/.test(url.hostname);
 	if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) {
 		throw new Error(
-			'CL_AUTH_PUBLIC_ORIGIN must use HTTPS unless it is a loopback origin.',
+			'FD_AUTH_PUBLIC_ORIGIN must use HTTPS unless it is a loopback origin.',
 		);
 	}
 	return url.origin;
 }
 
 /* The tenant default locale is validated against the workspace locales; a
-   missing or unreadable coreloom.json falls back to the module's own list. */
+   missing or unreadable flowdular.json falls back to the module's own list. */
 function workspaceLocales(
 	workspaceRoot: string,
 ): readonly string[] | undefined {
 	try {
 		const config = JSON.parse(
-			readFileSync(resolve(workspaceRoot, 'coreloom.json'), 'utf8'),
+			readFileSync(resolve(workspaceRoot, 'flowdular.json'), 'utf8'),
 		) as { locales?: unknown };
 		return Array.isArray(config.locales) &&
 			config.locales.every((entry) => typeof entry === 'string')
@@ -241,19 +276,21 @@ function workspaceLocales(
 	}
 }
 
+/* The database is not one of them: composition owns the provider and passes it
+   to createAuthRuntime alongside this result. */
 export function authRuntimeOptionsFromEnvironment(
 	environment: NodeJS.ProcessEnv = process.env,
 	workspaceRoot = process.cwd(),
-): AuthRuntimeOptions {
+): AuthRuntimeEnvironmentOptions {
 	const production = environment.NODE_ENV === 'production';
 	const developmentMail = booleanEnvironment(
-		environment.CL_AUTH_DEVELOPMENT_MAIL,
+		environment.FD_AUTH_DEVELOPMENT_MAIL,
 		false,
-		'CL_AUTH_DEVELOPMENT_MAIL',
+		'FD_AUTH_DEVELOPMENT_MAIL',
 	);
 	if (developmentMail && production) {
 		throw new Error(
-			'CL_AUTH_DEVELOPMENT_MAIL is only allowed outside production.',
+			'FD_AUTH_DEVELOPMENT_MAIL is only allowed outside production.',
 		);
 	}
 	const mailDelivery = developmentMail
@@ -261,40 +298,33 @@ export function authRuntimeOptionsFromEnvironment(
 		: undefined;
 	const mailTransport = mailDelivery !== undefined;
 	const emailConfirmation = booleanEnvironment(
-		environment.CL_AUTH_EMAIL_CONFIRMATION,
+		environment.FD_AUTH_EMAIL_CONFIRMATION,
 		false,
-		'CL_AUTH_EMAIL_CONFIRMATION',
+		'FD_AUTH_EMAIL_CONFIRMATION',
 	);
 	if (emailConfirmation && !mailTransport) {
 		throw new Error(
-			'CL_AUTH_EMAIL_CONFIRMATION requires a composed mail transport; none is available.',
+			'FD_AUTH_EMAIL_CONFIRMATION requires a composed mail transport; none is available.',
 		);
 	}
-	if (environment.CL_AUTH_MFA_KEY) {
-		assertMfaEncryptionKey(environment.CL_AUTH_MFA_KEY, 'CL_AUTH_MFA_KEY');
+	if (environment.FD_AUTH_MFA_KEY) {
+		assertMfaEncryptionKey(environment.FD_AUTH_MFA_KEY, 'FD_AUTH_MFA_KEY');
 	}
 	const publicBaseUrl = publicOriginEnvironment(
-		environment.CL_AUTH_PUBLIC_ORIGIN,
+		environment.FD_AUTH_PUBLIC_ORIGIN,
 	);
 	const locales = workspaceLocales(workspaceRoot);
 	return {
-		databasePath:
-			environment.CL_AUTH_DATABASE ??
-			(production
-				? '/data/auth.db'
-				: environment.NODE_ENV === 'test'
-					? ':memory:'
-					: coreloomLocalDataPath(workspaceRoot, 'auth.db')),
 		secureCookies: booleanEnvironment(
-			environment.CL_AUTH_SECURE_COOKIE,
+			environment.FD_AUTH_SECURE_COOKIE,
 			production,
-			'CL_AUTH_SECURE_COOKIE',
+			'FD_AUTH_SECURE_COOKIE',
 		),
 		sessionTtlMs:
 			integerEnvironment(
-				environment.CL_AUTH_SESSION_TTL_HOURS,
+				environment.FD_AUTH_SESSION_TTL_HOURS,
 				DEFAULT_SESSION_TTL_HOURS,
-				'CL_AUTH_SESSION_TTL_HOURS',
+				'FD_AUTH_SESSION_TTL_HOURS',
 				1,
 				168,
 			) *
@@ -303,56 +333,56 @@ export function authRuntimeOptionsFromEnvironment(
 			1000,
 		sessionIdleMs:
 			integerEnvironment(
-				environment.CL_AUTH_SESSION_IDLE_MINUTES,
+				environment.FD_AUTH_SESSION_IDLE_MINUTES,
 				DEFAULT_SESSION_IDLE_MINUTES,
-				'CL_AUTH_SESSION_IDLE_MINUTES',
+				'FD_AUTH_SESSION_IDLE_MINUTES',
 				5,
 				1440,
 			) *
 			60 *
 			1000,
 		passwordMinLength: integerEnvironment(
-			environment.CL_AUTH_PASSWORD_MIN_LENGTH,
+			environment.FD_AUTH_PASSWORD_MIN_LENGTH,
 			DEFAULT_PASSWORD_MIN_LENGTH,
-			'CL_AUTH_PASSWORD_MIN_LENGTH',
+			'FD_AUTH_PASSWORD_MIN_LENGTH',
 			8,
 			128,
 		),
 		// Public registration stays opt-in for production deployments.
 		allowSignUp: booleanEnvironment(
-			environment.CL_AUTH_ALLOW_SIGN_UP,
+			environment.FD_AUTH_ALLOW_SIGN_UP,
 			!production,
-			'CL_AUTH_ALLOW_SIGN_UP',
+			'FD_AUTH_ALLOW_SIGN_UP',
 		),
 		emailConfirmation,
 		signInProviders: providersEnvironment(
-			environment.CL_AUTH_SIGN_IN_PROVIDERS,
-			'CL_AUTH_SIGN_IN_PROVIDERS',
+			environment.FD_AUTH_SIGN_IN_PROVIDERS,
+			'FD_AUTH_SIGN_IN_PROVIDERS',
 		),
-		oidcProviders: oidcProvidersEnvironment(environment.CL_AUTH_OIDC_PROVIDERS),
+		oidcProviders: oidcProvidersEnvironment(environment.FD_AUTH_OIDC_PROVIDERS),
 		...(locales ? { locales } : {}),
 		workspaceRoot,
 		trustProxy: booleanEnvironment(
-			environment.CL_TRUST_PROXY,
+			environment.FD_TRUST_PROXY,
 			false,
-			'CL_TRUST_PROXY',
+			'FD_TRUST_PROXY',
 		),
 		mailTransport,
 		...(mailDelivery ? { mailDelivery } : {}),
-		...(environment.CL_AUTH_MFA_KEY
-			? { mfaEncryptionKey: environment.CL_AUTH_MFA_KEY }
+		...(environment.FD_AUTH_MFA_KEY
+			? { mfaEncryptionKey: environment.FD_AUTH_MFA_KEY }
 			: {}),
 		...(publicBaseUrl ? { publicBaseUrl } : {}),
 		production,
 		contentSecurityPolicy:
-			environment.CL_CSP?.trim() ||
+			environment.FD_CSP?.trim() ||
 			(production
 				? PRODUCTION_CONTENT_SECURITY_POLICY
 				: DEVELOPMENT_CONTENT_SECURITY_POLICY),
 		contentSecurityPolicyReportOnly: booleanEnvironment(
-			environment.CL_CSP_REPORT_ONLY,
+			environment.FD_CSP_REPORT_ONLY,
 			!production,
-			'CL_CSP_REPORT_ONLY',
+			'FD_CSP_REPORT_ONLY',
 		),
 	};
 }
@@ -377,43 +407,122 @@ function cookieName(options: AuthRuntimeOptions): string {
 
 const EXPIRED_SESSION_SWEEP_MS = 15 * 60 * 1000;
 
-/* Standalone settings runtime backed by auth.db, for a composition root or a
-   CLI that needs settings without the rest of the auth runtime. */
-export function createModuleSettingsRuntime(options: {
-	readonly databasePath: string;
-}): ModuleSettingsRuntime {
-	let repository: SqliteAuthRepository | undefined;
-	const store = () =>
-		(repository ??= new SqliteAuthRepository(options.databasePath));
-	return createKernelSettingsRuntime({
-		load: (tenantId, moduleId) => store().load(tenantId, moduleId),
-		save: (record) => store().save(record),
-		clear: (tenantId, moduleId, key) => store().clear(tenantId, moduleId, key),
-	});
+const RUNTIME_REQUIREMENTS = {
+	dialectIds: [DATABASE_DIALECT_IDS.postgresql],
+	capabilities: [DATABASE_CAPABILITY_IDS.TRANSACTIONS],
+} as const;
+
+const MIGRATION_REQUIREMENTS = {
+	dialectIds: [DATABASE_DIALECT_IDS.postgresql],
+	capabilities: [
+		DATABASE_CAPABILITY_IDS.MIGRATION_LOCK,
+		DATABASE_CAPABILITY_IDS.SCHEMA_INTROSPECTION,
+		DATABASE_CAPABILITY_IDS.TRANSACTIONAL_DDL,
+	],
+} as const;
+
+interface OpenedAuthDatabase {
+	readonly repository: AuthRepository;
+	readonly leases: readonly DatabaseAdapterLease[];
 }
 
-export function createAuthRuntime(
-	options: AuthRuntimeOptions = authRuntimeOptionsFromEnvironment(),
-): AuthRuntime {
+/* The schema is owned by the migration role and released before any request
+   can run: the tenant-scoped runtime role never holds DDL rights. The
+   background lease is the read-only role that answers which workspace owns a
+   session token, a bearer token, an invitation or an email address. */
+async function openAuthDatabase(
+	databases: DatabaseProvider,
+	purpose: Exclude<DatabaseProviderRequest['purpose'], 'migration'>,
+): Promise<OpenedAuthDatabase> {
+	const migration = await databases.acquire({
+		namespace: 'auth.core',
+		purpose: 'migration',
+		requirements: MIGRATION_REQUIREMENTS,
+	});
+	try {
+		await migrateAuthDatabase(migration.database);
+	} finally {
+		await migration.release();
+	}
+	const runtime = await databases.acquire({
+		namespace: 'auth.core',
+		purpose,
+		requirements: RUNTIME_REQUIREMENTS,
+	});
+	try {
+		const background = await databases.acquire({
+			namespace: 'auth.core',
+			purpose: 'background',
+			requirements: RUNTIME_REQUIREMENTS,
+		});
+		return {
+			repository: new DatabaseAuthRepository({
+				runtime: runtime.database,
+				background: background.database,
+			}),
+			leases: [runtime, background],
+		};
+	} catch (error) {
+		/* A deployment that declares no cross-tenant role is refused here. The
+		   lease already taken goes back before the error leaves. */
+		await runtime.release();
+		throw error;
+	}
+}
+
+export interface AuthModuleSettingsRuntime {
+	readonly settings: ModuleSettingsRuntime;
+	/** Resolves once every pending settings read and write has landed. */
+	ready(): Promise<void>;
+	dispose(): Promise<void>;
+}
+
+/* Standalone settings runtime over the auth.core namespace, for a composition
+   root or a CLI that needs settings without the rest of the auth runtime. */
+export function createModuleSettingsRuntime(options: {
+	readonly databases: DatabaseProvider;
+	readonly purpose?: Exclude<DatabaseProviderRequest['purpose'], 'migration'>;
+}): AuthModuleSettingsRuntime {
+	let opened: Promise<OpenedAuthDatabase> | undefined;
+	const open = () =>
+		(opened ??= openAuthDatabase(
+			options.databases,
+			options.purpose ?? 'runtime',
+		));
+	const store = createAuthSettingsStore(async () => (await open()).repository);
+	return {
+		settings: createKernelSettingsRuntime(store),
+		ready: () => store.ready(),
+		async dispose() {
+			const pending = opened;
+			opened = undefined;
+			if (!pending) return;
+			await store.ready().catch(() => undefined);
+			const database = await pending.catch(() => undefined);
+			for (const lease of database?.leases ?? []) await lease.release();
+		},
+	};
+}
+
+export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 	if (options.mfaEncryptionKey) {
 		assertMfaEncryptionKey(options.mfaEncryptionKey, 'The MFA encryption key');
 	}
-	let repository: SqliteAuthRepository | undefined;
-	let authService: AuthService | undefined;
+	let opened: Promise<OpenedAuthDatabase> | undefined;
+	let servicePromise: Promise<AuthService> | undefined;
 	let sessionSweep: ReturnType<typeof setInterval> | undefined;
 	let disposed = false;
-	const store = () => {
+	const open = (): Promise<OpenedAuthDatabase> => {
 		if (disposed) throw new Error('Auth runtime is disposed.');
-		return (repository ??= new SqliteAuthRepository(options.databasePath));
+		return (opened ??= openAuthDatabase(
+			options.databases,
+			options.purpose ?? 'runtime',
+		));
 	};
-	const moduleSettings =
-		options.settings ??
-		createKernelSettingsRuntime({
-			load: (tenantId, moduleId) => store().load(tenantId, moduleId),
-			save: (record) => store().save(record),
-			clear: (tenantId, moduleId, key) =>
-				store().clear(tenantId, moduleId, key),
-		});
+	const store: AuthSettingsStore = createAuthSettingsStore(
+		async () => (await open()).repository,
+	);
+	const moduleSettings = options.settings ?? createKernelSettingsRuntime(store);
 	moduleSettings.declare(
 		createAuthModuleSettings({
 			allowSignUp: options.allowSignUp,
@@ -472,53 +581,74 @@ export function createAuthRuntime(
 			return Math.floor(settings.sessionTtlMs / 1000);
 		},
 	};
-	const service = () => {
-		if (!authService) {
-			authService = new AuthService(store(), {
-				policy,
-				...(options.mfaEncryptionKey
-					? { mfaEncryptionKey: options.mfaEncryptionKey }
-					: {}),
-				...(options.mailDelivery ? { mailDelivery: options.mailDelivery } : {}),
-				...(options.publicBaseUrl
-					? { publicBaseUrl: options.publicBaseUrl }
-					: {}),
+	const create = async (): Promise<AuthService> => {
+		const { repository } = await open();
+		/* The settings this runtime reads on every request are platform scoped.
+		   Priming them here means a request never observes the declared default
+		   in place of a stored value. */
+		await store.prime(PLATFORM_SETTINGS_TENANT, 'auth.core');
+		const authService = new AuthService(repository, {
+			policy,
+			...(options.mfaEncryptionKey
+				? { mfaEncryptionKey: options.mfaEncryptionKey }
+				: {}),
+			...(options.mailDelivery ? { mailDelivery: options.mailDelivery } : {}),
+			...(options.publicBaseUrl
+				? { publicBaseUrl: options.publicBaseUrl }
+				: {}),
+		});
+		// Expired rows only matter for storage; the lookup already filters them.
+		sessionSweep = setInterval(() => {
+			void authService.deleteExpiredSessions().catch((error: unknown) => {
+				/* Repository errors can contain SQL parameters. Keep the recurring
+				   maintenance log useful without serializing the thrown value. */
+				console.error(
+					`[auth.core] expired session sweep failed (${error instanceof Error ? 'Error' : 'non-error'})`,
+				);
 			});
-			// Expired rows only matter for storage; the lookup already filters them.
-			sessionSweep = setInterval(() => {
-				try {
-					authService?.deleteExpiredSessions();
-				} catch (error) {
-					/* Repository errors can contain SQL parameters. Keep the recurring
-					   maintenance log useful without serializing the thrown value. */
-					console.error(
-						`[auth.core] expired session sweep failed (${error instanceof Error ? 'Error' : 'non-error'})`,
-					);
-				}
-			}, EXPIRED_SESSION_SWEEP_MS);
-			sessionSweep.unref();
-		}
+		}, EXPIRED_SESSION_SWEEP_MS);
+		sessionSweep.unref();
 		return authService;
 	};
+	const service = (): Promise<AuthService> => {
+		if (disposed) {
+			return Promise.reject(new Error('Auth runtime is disposed.'));
+		}
+		return (servicePromise ??= create());
+	};
 	/* Settings writes are audited at the store owner, so the settings
-	   administration API in system.core needs no audit dependency. */
+	   administration API in system.core needs no audit dependency. The kernel
+	   change listener is synchronous, so the audit row is written after it
+	   returns and a failure is reported instead of failing the setting. */
+	/* An accepted settings change owes an audit row. Tracking the in-flight
+	   writes is what lets disposal drain them instead of dropping them. */
+	const settingsAuditWrites = new Set<Promise<void>>();
 	const detachSettingsAudit = moduleSettings.onChange((change) => {
-		const membership = store().findAccountMembership(
-			change.actor.accountId,
-			change.actor.tenantId,
-		);
-		service().recordSettingsUpdate(
-			{
-				accountId: change.actor.accountId,
-				tenantId: change.actor.tenantId,
-				email: membership?.email ?? change.actor.accountId,
-				role: membership?.role ?? '',
-				scopes: membership?.scopes ?? [],
-			},
-			change.moduleId,
-			change.key,
-			change.cleared,
-		);
+		const write = (async () => {
+			const { repository } = await open();
+			const membership = await repository.findAccountMembership(
+				change.actor.accountId,
+				change.actor.tenantId,
+			);
+			await (
+				await service()
+			).recordSettingsUpdate(
+				{
+					accountId: change.actor.accountId,
+					tenantId: change.actor.tenantId,
+					email: membership?.email ?? change.actor.accountId,
+					role: membership?.role ?? '',
+					scopes: membership?.scopes ?? [],
+				},
+				change.moduleId,
+				change.key,
+				change.cleared,
+			);
+		})().catch(() => {
+			console.error('[auth.core] settings audit write failed');
+		});
+		settingsAuditWrites.add(write);
+		void write.finally(() => settingsAuditWrites.delete(write));
 	});
 	const securityHeaders = createSecurityHeadersMiddleware({
 		strictTransportSecurity: options.secureCookies,
@@ -540,24 +670,36 @@ export function createAuthRuntime(
 		workspaceRoot: options.workspaceRoot ?? null,
 		oidcProviders: options.oidcProviders ?? [],
 		publicBaseUrl: options.publicBaseUrl ?? null,
+		applicationPath: validateApplicationPath(options.applicationPath ?? '/app'),
 		service,
-		authorizeAgentToolAccess(tenantId, actor) {
+		async authorizeAgentToolAccess(tenantId, actor) {
 			const identity = normalizeActor(actor);
 			if (!identity || identity.kind !== 'user') return [];
-			const membership = store().findAccountMembership(identity.id, tenantId);
+			const membership = await (
+				await open()
+			).repository.findAccountMembership(identity.id, tenantId);
 			return membership?.status === 'active'
 				? [...new Set(membership.scopes)].sort()
 				: [];
 		},
-		dispose() {
+		async settingsAuditSettled() {
+			await Promise.allSettled([...settingsAuditWrites]);
+		},
+		async dispose() {
 			if (disposed) return;
 			disposed = true;
 			detachSettingsAudit();
+			await Promise.allSettled([...settingsAuditWrites]);
 			if (sessionSweep) clearInterval(sessionSweep);
 			sessionSweep = undefined;
-			repository?.close();
-			repository = undefined;
-			authService = undefined;
+			const database = opened;
+			opened = undefined;
+			servicePromise = undefined;
+			if (!database) return;
+			/* A settings write accepted before disposal still has to land, and its
+			   lease has to outlive it. */
+			await store.ready().catch(() => undefined);
+			for (const lease of (await database).leases) await lease.release();
 		},
 		middleware: (context, next) =>
 			securityHeaders(context, () =>

@@ -117,7 +117,7 @@ export function resolveLanguageModel(
 			return createAnthropic({ apiKey, ...fetchOption })(model);
 		case 'openai-compatible':
 			return createOpenAICompatible({
-				name: 'coreloom-compatible',
+				name: 'flowdular-compatible',
 				apiKey,
 				baseURL: (configuration.baseURL ?? '').trim(),
 				...fetchOption,

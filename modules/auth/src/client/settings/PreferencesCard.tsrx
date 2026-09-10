@@ -1,6 +1,6 @@
 import { useMemo } from 'octane';
-import { t } from '@coreloom/client';
-import { Button, SettingRow } from '@coreloom/ui';
+import { t } from '@flowdular/client';
+import { Button, SettingRow } from '@flowdular/ui';
 import { cell, createStore, useValue } from 'segment-state';
 import type { LocaleSetting } from './api.ts';
 

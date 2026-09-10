@@ -10,23 +10,23 @@ import {
 describe('contract schemas', () => {
 	it('exports schemas with stable ids', () => {
 		expect(projectSchema.$id).toBe(
-			'https://coreloom.dev/schemas/project.schema.json',
+			'https://flowdular.dev/schemas/project.schema.json',
 		);
 		expect(moduleSchema.$id).toBe(
-			'https://coreloom.dev/schemas/module.schema.json',
+			'https://flowdular.dev/schemas/module.schema.json',
 		);
 		expect(moduleSpecSchema.$id).toBe(
-			'https://coreloom.dev/schemas/module-spec.schema.json',
+			'https://flowdular.dev/schemas/module-spec.schema.json',
 		);
 		expect(blueprintSchema.$id).toBe(
-			'https://coreloom.dev/schemas/blueprint.schema.json',
+			'https://flowdular.dev/schemas/blueprint.schema.json',
 		);
 		expect(cliExtensionSchema.$id).toBe(
-			'https://coreloom.dev/schemas/cli-extension.schema.json',
+			'https://flowdular.dev/schemas/cli-extension.schema.json',
 		);
 	});
 
-	it('lets coreloom.json configure the sandbox delivery without requiring it', () => {
+	it('lets flowdular.json configure the sandbox delivery without requiring it', () => {
 		expect(projectSchema.required).not.toContain('sandbox');
 		const delivery = projectSchema.properties.sandbox.properties.delivery;
 		expect(Object.keys(delivery.properties).sort()).toEqual([
@@ -38,6 +38,7 @@ describe('contract schemas', () => {
 		expect(projectSchema.$defs.deliveryTarget.enum).toEqual([
 			'workspace',
 			'git-pr',
+			'official-modules',
 		]);
 		expect(Object.keys(delivery.properties.git.properties).sort()).toEqual([
 			'baseBranch',

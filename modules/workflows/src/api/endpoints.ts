@@ -6,14 +6,14 @@ import {
 	readJsonObject,
 	requiredInteger,
 	requiredString,
-} from '@coreloom/server';
-import type { AuthRuntime } from '@coreloom/module-auth/server';
+} from '@flowdular/server';
+import type { AuthRuntime } from '@flowdular/module-auth/server';
 import {
 	actorFromContext,
 	endpointIdentityFromContext,
 	principalFromContext,
 	sessionMutationDenial,
-} from '@coreloom/module-auth/server';
+} from '@flowdular/module-auth/server';
 import type {
 	JsonValue,
 	WorkflowExecutionOrigin,
@@ -179,15 +179,19 @@ function streamEvents(
 			};
 			request.signal.addEventListener('abort', close, { once: true });
 			controller.enqueue(encoder.encode('retry: 1000\n\n'));
-			const pump = () => {
+			const pump = async () => {
 				if (closed || request.signal.aborted) return close();
 				try {
-					const events = runtime.service().readEvents(tenantId, runId, cursor);
+					const events = await (
+						await runtime.service()
+					).readEvents(tenantId, runId, cursor);
 					for (const event of events) {
 						cursor = event.sequence;
-						const eventCursor = runtime
-							.service()
-							.eventCursor(tenantId, runId, event.sequence);
+						const eventCursor = (await runtime.service()).eventCursor(
+							tenantId,
+							runId,
+							event.sequence,
+						);
 						controller.enqueue(
 							encoder.encode(
 								`id: ${eventCursor}\ndata: ${JSON.stringify(event)}\n\n`,
@@ -201,21 +205,23 @@ function streamEvents(
 						return close();
 					}
 					if (events.length === WORKFLOW_LIMITS.maxReplayEvents) {
-						const replayCursor = runtime
-							.service()
-							.eventCursor(tenantId, runId, cursor);
+						const replayCursor = (await runtime.service()).eventCursor(
+							tenantId,
+							runId,
+							cursor,
+						);
 						controller.enqueue(
 							encoder.encode(
 								`event: workflow.replay-boundary\ndata: ${JSON.stringify({ cursor: replayCursor })}\n\n`,
 							),
 						);
-						timer = setTimeout(pump, 0);
+						timer = setTimeout(() => void pump(), 0);
 						return;
 					}
 					/* A terminal projection can be ahead of this replay page. Drain every
 					   full page before using the projection as the close shortcut, otherwise
 					   a resumed client can miss the persisted terminal event. */
-					const run = runtime.service().getRun(tenantId, runId);
+					const run = await (await runtime.service()).getRun(tenantId, runId);
 					if (
 						run &&
 						['succeeded', 'failed', 'refused', 'cancelled'].includes(run.status)
@@ -239,9 +245,9 @@ function streamEvents(
 					);
 					nextHeartbeatAt = Date.now() + 15_000;
 				}
-				timer = setTimeout(pump, 300);
+				timer = setTimeout(() => void pump(), 300);
 			};
-			pump();
+			void pump();
 		},
 		cancel() {
 			closed = true;
@@ -268,11 +274,11 @@ export function createWorkflowsRoutes(
 		methods: ['GET'],
 		access: { kind: 'permission', permission: WORKFLOWS_PERMISSIONS.read },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) =>
+		handler: async ({ octane }) =>
 			jsonResponse({
-				definitions: runtime
-					.service()
-					.list(principalFromContext(octane)!.tenantId),
+				definitions: await (
+					await runtime.service()
+				).list(principalFromContext(octane)!.tenantId),
 			}),
 	});
 	const create = defineEndpoint({
@@ -286,7 +292,9 @@ export function createWorkflowsRoutes(
 			if (denial) return denial;
 			try {
 				const value = await readJsonObject(octane.request, 8 * 1_024);
-				const detail = runtime.service().create(
+				const detail = await (
+					await runtime.service()
+				).create(
 					principalFromContext(octane)!.tenantId,
 					{
 						key: requiredString(value, 'key', { min: 3, max: 120 }),
@@ -307,14 +315,14 @@ export function createWorkflowsRoutes(
 		methods: ['GET'],
 		access: { kind: 'permission', permission: WORKFLOWS_PERMISSIONS.read },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			try {
 				const id = optionalQuery(new URL(octane.request.url), 'id');
 				if (!id) throw new HttpProblem('INVALID_INPUT', 'id is required.', 400);
 				return jsonResponse({
-					detail: runtime
-						.service()
-						.detail(principalFromContext(octane)!.tenantId, id),
+					detail: await (
+						await runtime.service()
+					).detail(principalFromContext(octane)!.tenantId, id),
 				});
 			} catch (error) {
 				return failure(error);
@@ -333,7 +341,9 @@ export function createWorkflowsRoutes(
 			try {
 				const value = await readJsonObject(octane.request, 96 * 1_024);
 				return jsonResponse({
-					detail: runtime.service().update(
+					detail: await (
+						await runtime.service()
+					).update(
 						principalFromContext(octane)!.tenantId,
 						{
 							workflowId: requiredString(value, 'workflowId', { max: 128 }),
@@ -367,9 +377,9 @@ export function createWorkflowsRoutes(
 			try {
 				const value = await readJsonObject(octane.request, 96 * 1_024);
 				return jsonResponse({
-					report: runtime
-						.service()
-						.validate(value.graph, invocationContext(octane)),
+					report: await (
+						await runtime.service()
+					).validate(value.graph, invocationContext(octane)),
 				});
 			} catch (error) {
 				return failure(error);
@@ -389,15 +399,15 @@ export function createWorkflowsRoutes(
 				const value = await readJsonObject(octane.request, 4 * 1_024);
 				const principal = principalFromContext(octane)!;
 				return jsonResponse({
-					detail: runtime
-						.service()
-						.publish(
-							principal.tenantId,
-							requiredString(value, 'workflowId', { max: 128 }),
-							requiredInteger(value, 'expectedRevision', { min: 1 }),
-							actorFromContext(octane)!,
-							principal.scopes,
-						),
+					detail: await (
+						await runtime.service()
+					).publish(
+						principal.tenantId,
+						requiredString(value, 'workflowId', { max: 128 }),
+						requiredInteger(value, 'expectedRevision', { min: 1 }),
+						actorFromContext(octane)!,
+						principal.scopes,
+					),
 				});
 			} catch (error) {
 				return failure(error);
@@ -416,13 +426,13 @@ export function createWorkflowsRoutes(
 			try {
 				const value = await readJsonObject(octane.request, 4 * 1_024);
 				return jsonResponse({
-					definition: runtime
-						.service()
-						.archive(
-							principalFromContext(octane)!.tenantId,
-							requiredString(value, 'workflowId', { max: 128 }),
-							actorFromContext(octane)!,
-						),
+					definition: await (
+						await runtime.service()
+					).archive(
+						principalFromContext(octane)!.tenantId,
+						requiredString(value, 'workflowId', { max: 128 }),
+						actorFromContext(octane)!,
+					),
 				});
 			} catch (error) {
 				return failure(error);
@@ -440,13 +450,13 @@ export function createWorkflowsRoutes(
 			if (denial) return denial;
 			try {
 				const value = await readJsonObject(octane.request, 4 * 1_024);
-				runtime
-					.service()
-					.delete(
-						principalFromContext(octane)!.tenantId,
-						requiredString(value, 'workflowId', { max: 128 }),
-						actorFromContext(octane)!,
-					);
+				await (
+					await runtime.service()
+				).delete(
+					principalFromContext(octane)!.tenantId,
+					requiredString(value, 'workflowId', { max: 128 }),
+					actorFromContext(octane)!,
+				);
 				return jsonResponse({ deleted: true });
 			} catch (error) {
 				return failure(error);
@@ -459,10 +469,12 @@ export function createWorkflowsRoutes(
 		methods: ['GET'],
 		access: { kind: 'permission', permission: WORKFLOWS_PERMISSIONS.read },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			try {
 				return jsonResponse({
-					agents: runtime.service().listAgentCatalog(invocationContext(octane)),
+					agents: await (
+						await runtime.service()
+					).listAgentCatalog(invocationContext(octane)),
 				});
 			} catch (error) {
 				return failure(error);
@@ -475,12 +487,12 @@ export function createWorkflowsRoutes(
 		methods: ['GET'],
 		access: { kind: 'permission', permission: WORKFLOWS_PERMISSIONS.read },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			try {
 				return jsonResponse({
-					actions: runtime
-						.service()
-						.listActionCatalog(invocationContext(octane)),
+					actions: await (
+						await runtime.service()
+					).listActionCatalog(invocationContext(octane)),
 				});
 			} catch (error) {
 				return failure(error);
@@ -493,7 +505,7 @@ export function createWorkflowsRoutes(
 		methods: ['GET'],
 		access: { kind: 'permission', permission: WORKFLOWS_PERMISSIONS.runsRead },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			try {
 				const principal = principalFromContext(octane)!;
 				const url = new URL(octane.request.url);
@@ -537,7 +549,7 @@ export function createWorkflowsRoutes(
 					...(cursor ? { cursor } : {}),
 				};
 				return jsonResponse(
-					runtime.service().listRuns(principal.tenantId, filters),
+					await (await runtime.service()).listRuns(principal.tenantId, filters),
 				);
 			} catch (error) {
 				return failure(error);
@@ -560,7 +572,9 @@ export function createWorkflowsRoutes(
 				const value = await readJsonObject(octane.request, 72 * 1_024);
 				return jsonResponse(
 					{
-						accepted: await runtime.service().enqueue(
+						accepted: await (
+							await runtime.service()
+						).enqueue(
 							{
 								workflowKey: requiredString(value, 'workflowKey', {
 									min: 3,
@@ -597,7 +611,9 @@ export function createWorkflowsRoutes(
 			try {
 				const value = await readJsonObject(octane.request, 128 * 1_024);
 				return jsonResponse({
-					run: runtime.service().simulate(
+					run: await (
+						await runtime.service()
+					).simulate(
 						{
 							workflowId: requiredString(value, 'workflowId', { max: 128 }),
 							input: requireJson(value.input, 'input'),
@@ -617,14 +633,14 @@ export function createWorkflowsRoutes(
 		methods: ['GET'],
 		access: { kind: 'permission', permission: WORKFLOWS_PERMISSIONS.runsRead },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			try {
 				const id = optionalQuery(new URL(octane.request.url), 'id');
 				if (!id) throw new HttpProblem('INVALID_INPUT', 'id is required.', 400);
 				return jsonResponse(
-					runtime
-						.service()
-						.getRunDetail(principalFromContext(octane)!.tenantId, id),
+					await (
+						await runtime.service()
+					).getRunDetail(principalFromContext(octane)!.tenantId, id),
 				);
 			} catch (error) {
 				return failure(error);
@@ -646,13 +662,13 @@ export function createWorkflowsRoutes(
 			try {
 				const value = await readJsonObject(octane.request, 4 * 1_024);
 				return jsonResponse(
-					runtime
-						.service()
-						.cancel(
-							principalFromContext(octane)!.tenantId,
-							requiredString(value, 'runId', { max: 128 }),
-							actorFromContext(octane)!,
-						),
+					await (
+						await runtime.service()
+					).cancel(
+						principalFromContext(octane)!.tenantId,
+						requiredString(value, 'runId', { max: 128 }),
+						actorFromContext(octane)!,
+					),
 				);
 			} catch (error) {
 				return failure(error);
@@ -675,14 +691,14 @@ export function createWorkflowsRoutes(
 				const value = await readJsonObject(octane.request, 4 * 1_024);
 				const principal = principalFromContext(octane)!;
 				return jsonResponse(
-					runtime
-						.service()
-						.retry(
-							principal.tenantId,
-							requiredString(value, 'runId', { max: 128 }),
-							actorFromContext(octane)!,
-							principal.scopes,
-						),
+					await (
+						await runtime.service()
+					).retry(
+						principal.tenantId,
+						requiredString(value, 'runId', { max: 128 }),
+						actorFromContext(octane)!,
+						principal.scopes,
+					),
 				);
 			} catch (error) {
 				return failure(error);
@@ -695,7 +711,7 @@ export function createWorkflowsRoutes(
 		methods: ['GET'],
 		access: { kind: 'permission', permission: WORKFLOWS_PERMISSIONS.runsRead },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			try {
 				const url = new URL(octane.request.url);
 				const runId = optionalQuery(url, 'runId');
@@ -707,9 +723,11 @@ export function createWorkflowsRoutes(
 				const fromHeader =
 					headerCursor === null
 						? null
-						: runtime
-								.service()
-								.eventSequence(principal.tenantId, runId, headerCursor);
+						: (await runtime.service()).eventSequence(
+								principal.tenantId,
+								runId,
+								headerCursor,
+							);
 				const fromQuery = queryCursor === null ? null : Number(queryCursor);
 				if (
 					fromQuery !== null &&
@@ -731,7 +749,9 @@ export function createWorkflowsRoutes(
 						409,
 					);
 				const after = fromHeader ?? fromQuery ?? 0;
-				runtime.service().readEvents(principal.tenantId, runId, after, 1);
+				await (
+					await runtime.service()
+				).readEvents(principal.tenantId, runId, after, 1);
 				return streamEvents(
 					runtime,
 					principal.tenantId,
@@ -750,18 +770,18 @@ export function createWorkflowsRoutes(
 		methods: ['GET'],
 		access: { kind: 'permission', permission: WORKFLOWS_PERMISSIONS.runsRead },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			try {
 				const url = new URL(octane.request.url);
 				const limit = Number(url.searchParams.get('limit') ?? '50');
 				return jsonResponse(
-					runtime
-						.service()
-						.listAudit(
-							principalFromContext(octane)!.tenantId,
-							limit,
-							url.searchParams.get('cursor'),
-						),
+					await (
+						await runtime.service()
+					).listAudit(
+						principalFromContext(octane)!.tenantId,
+						limit,
+						url.searchParams.get('cursor'),
+					),
 				);
 			} catch (error) {
 				return failure(error);
@@ -774,10 +794,12 @@ export function createWorkflowsRoutes(
 		methods: ['GET'],
 		access: { kind: 'permission', permission: WORKFLOWS_PERMISSIONS.runsRead },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			try {
 				return jsonResponse(
-					runtime.service().verifyAudit(principalFromContext(octane)!.tenantId),
+					await (
+						await runtime.service()
+					).verifyAudit(principalFromContext(octane)!.tenantId),
 				);
 			} catch (error) {
 				return failure(error);

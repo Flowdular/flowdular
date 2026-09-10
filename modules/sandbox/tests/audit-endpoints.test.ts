@@ -1,11 +1,15 @@
-import { describe, expect, it } from 'vitest';
-import type { AuthPrincipal } from '@coreloom/module-auth';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import type { AuthPrincipal } from '@flowdular/module-auth';
 import {
 	AUTH_PRINCIPAL_STATE_KEY,
 	type AuthRuntime,
 	type PlatformServerContext,
-} from '@coreloom/module-auth/server';
+} from '@flowdular/module-auth/server';
 import { createServerComposition } from '../src/platform.ts';
+import {
+	closeSandboxTestDatabases,
+	sandboxTestProvider,
+} from './support/database.ts';
 
 const ORIGIN = 'https://erp.example';
 
@@ -41,15 +45,28 @@ function authRuntime(_session: AuthPrincipal | null): AuthRuntime {
 	} as unknown as AuthRuntime;
 }
 
-function composition(session: AuthPrincipal | null) {
+const compositions = new Set<{ dispose?: () => Promise<void> | void }>();
+
+afterEach(async () => {
+	for (const composed of compositions) await composed.dispose?.();
+	compositions.clear();
+});
+
+afterAll(closeSandboxTestDatabases);
+
+/* Composition takes a provider, so the test supplies the same shape the
+   platform does instead of a database path. */
+async function composition(session: AuthPrincipal | null) {
 	const context = {
-		environment: { CL_SANDBOX_DATABASE: ':memory:' },
+		environment: { NODE_ENV: 'test' },
 		workspaceRoot: process.cwd(),
 		auth: authRuntime(session),
+		databases: await sandboxTestProvider(),
 	};
 	const composed = createServerComposition(
 		context as unknown as PlatformServerContext,
 	);
+	compositions.add(composed);
 	const call = (
 		path: string,
 		init: { readonly authenticated?: boolean } = {},
@@ -76,19 +93,19 @@ function composition(session: AuthPrincipal | null) {
 
 describe('sandbox audit HTTP boundary', () => {
 	it('guards the audit read and verify endpoints by the sessions read scope', async () => {
-		const anonymous = composition(null);
+		const anonymous = await composition(null);
 		expect(
 			(await anonymous.call('/api/sandbox/audit', { authenticated: false }))
 				.status,
 		).toBe(401);
 
-		const forbidden = composition(principal(['sandbox.access.use']));
+		const forbidden = await composition(principal(['sandbox.access.use']));
 		expect((await forbidden.call('/api/sandbox/audit')).status).toBe(403);
 		expect((await forbidden.call('/api/sandbox/audit/verify')).status).toBe(
 			403,
 		);
 
-		const reader = composition(principal(['sandbox.sessions.read']));
+		const reader = await composition(principal(['sandbox.sessions.read']));
 		const list = await reader.call('/api/sandbox/audit');
 		expect(list.status).toBe(200);
 		expect(await list.json()).toMatchObject({ events: [], nextCursor: null });
@@ -98,7 +115,7 @@ describe('sandbox audit HTTP boundary', () => {
 	});
 
 	it('rejects a malformed audit cursor with a 400', async () => {
-		const reader = composition(principal(['sandbox.sessions.read']));
+		const reader = await composition(principal(['sandbox.sessions.read']));
 		const response = await reader.call(
 			'/api/sandbox/audit?cursor=not-a-cursor',
 		);

@@ -1,5 +1,5 @@
-import { activeLocale, t } from '@coreloom/client';
-import { Tag, type TableColumn } from '@coreloom/ui';
+import { activeLocale, t } from '@flowdular/client';
+import { Tag, type TableColumn } from '@flowdular/ui';
 import type { ApiTokenRecord } from '../../domain/types.ts';
 import { tokenState } from './state.ts';
 

@@ -1,4 +1,4 @@
-import { Avatar, Icon, Tag } from '@coreloom/ui';
+import { Avatar, Icon, Tag } from '@flowdular/ui';
 import type { SandboxState } from './api.ts';
 import { setActiveLocale, SUPPORTED_LOCALES, useTranslation } from './i18n.ts';
 
@@ -7,7 +7,6 @@ export interface WorkspaceMenuProps {
 	readonly open: boolean;
 	readonly onToggle: () => void;
 	readonly onChangeConnection: () => void;
-	readonly onGitHub: () => void;
 	readonly onDisconnect: () => void;
 }
 
@@ -61,22 +60,6 @@ export function WorkspaceMenu(props: WorkspaceMenuProps) @{
 					</Tag>
 				</div>
 				<div class="ui-menu__sep"></div>
-				<button
-					class="ui-menu__item"
-					type="button"
-					role="menuitem"
-					onClick={props.onGitHub}
-				>
-					<Icon name="code" size={16} />
-					<span class="ui-cell">
-						<b>{t('sandbox.workspace.github.title')}</b>
-						<small>
-							{props.state.configuration.github.enabled
-								? t('sandbox.workspace.github.enabled')
-								: t('sandbox.workspace.github.configure')}
-						</small>
-					</span>
-				</button>
 				<label class="ui-menu__item workspace-menu__language">
 					<Icon name="globe" size={16} />
 					<span>{t('sandbox.workspace.language')}</span>

@@ -3,7 +3,7 @@ import {
 	registerModuleTranslations,
 	setActiveLocale,
 	t,
-} from '@coreloom/client/i18n';
+} from '@flowdular/client/i18n';
 import { moduleDefinition, SANDBOX_PERMISSIONS } from '../src/index.ts';
 import { endpoints } from '../src/api/endpoints.ts';
 import catalog from '../src/cli/commands.json' with { type: 'json' };
@@ -12,7 +12,7 @@ import translationsEn from '../translations/en.json';
 import translationsPl from '../translations/pl.json';
 
 describe('sandbox.core', () => {
-	it('ships complete dynamic state and capability translations', () => {
+	it('ships complete dynamic state and capability translations', async () => {
 		expect(Object.keys(translationsPl).sort()).toEqual(
 			Object.keys(translationsEn).sort(),
 		);
@@ -58,16 +58,16 @@ describe('sandbox.core', () => {
 		setActiveLocale('en');
 	});
 
-	it('exports its validated identity', () => {
+	it('exports its validated identity', async () => {
 		expect(moduleDefinition.manifest.id).toBe('sandbox.core');
 		expect(moduleDefinition.permissions).toContain(SANDBOX_PERMISSIONS.use);
 	});
 
-	it('registers every declared endpoint id once', () => {
+	it('registers every declared endpoint id once', async () => {
 		expect(new Set(endpoints).size).toBe(endpoints.length);
 	});
 
-	it('keeps the CLI implementation metadata-identical to its catalog', () => {
+	it('keeps the CLI implementation metadata-identical to its catalog', async () => {
 		expect(cliExtension.moduleId).toBe(catalog.moduleId);
 		const declared = catalog.commands.map((command) => ({
 			path: command.path,

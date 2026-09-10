@@ -1,4 +1,4 @@
-import type { VariableDefinition } from '@coreloom/contracts';
+import type { VariableDefinition } from '@flowdular/contracts';
 
 /* Always-available run context. These resolve from the run's principal and
    tenant with no extra scope, so an author can embed them in instructions and

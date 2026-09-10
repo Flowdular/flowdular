@@ -8,7 +8,7 @@ import {
 	createCodingAgentRegistry,
 	type CodingAgentDriver,
 	type CodingAgentTurnRequest,
-} from '@coreloom/coding-agent';
+} from '@flowdular/coding-agent';
 import {
 	MAX_ATTACHMENTS,
 	MAX_ATTACHMENT_BYTES,
@@ -37,9 +37,9 @@ const PNG_BASE64 =
 const PNG_BYTES = Buffer.from(PNG_BASE64, 'base64');
 
 async function workspace(): Promise<string> {
-	const root = await mkdtemp(join(tmpdir(), 'coreloom-attachments-'));
+	const root = await mkdtemp(join(tmpdir(), 'flowdular-attachments-'));
 	await writeFile(
-		join(root, 'coreloom.json'),
+		join(root, 'flowdular.json'),
 		JSON.stringify({ schemaVersion: 1, modules: { enabled: [] } }),
 		'utf8',
 	);
@@ -166,7 +166,7 @@ function api(runtime: SandboxRuntime, port = 4320) {
 		const headers: Record<string, string> = { host: '127.0.0.1:4320' };
 		if (init.body !== undefined) {
 			headers['content-type'] = 'application/json';
-			headers['x-coreloom-sandbox'] = '1';
+			headers['x-flowdular-sandbox'] = '1';
 		}
 		const request = new Request(url, {
 			method,

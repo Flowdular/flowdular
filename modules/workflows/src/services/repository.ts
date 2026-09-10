@@ -1,4 +1,4 @@
-import type { Actor, UserActor } from '@coreloom/kernel';
+import type { Actor, UserActor } from '@flowdular/kernel';
 import type {
 	JsonValue,
 	WorkflowAuditEvent,
@@ -99,23 +99,25 @@ export interface WorkflowAuditPage {
 }
 
 export interface WorkflowsRepository {
-	listDefinitions(tenantId: string): readonly WorkflowDefinition[];
+	listDefinitions(tenantId: string): Promise<readonly WorkflowDefinition[]>;
 	findDefinition(
 		tenantId: string,
 		workflowId: string,
-	): WorkflowDefinition | null;
+	): Promise<WorkflowDefinition | null>;
 	findDefinitionByKey(
 		tenantId: string,
 		workflowKey: string,
-	): WorkflowDefinition | null;
+	): Promise<WorkflowDefinition | null>;
 	definitionDetail(
 		tenantId: string,
 		workflowId: string,
-	): WorkflowDefinitionDetail | null;
-	createDefinition(write: WorkflowDefinitionWrite): WorkflowDefinitionDetail;
+	): Promise<WorkflowDefinitionDetail | null>;
+	createDefinition(
+		write: WorkflowDefinitionWrite,
+	): Promise<WorkflowDefinitionDetail>;
 	saveDraft(
 		write: WorkflowDefinitionWrite & { readonly expectedRevision: number },
-	): WorkflowDefinitionDetail | 'conflict';
+	): Promise<WorkflowDefinitionDetail | 'conflict'>;
 	publish(
 		tenantId: string,
 		workflowId: string,
@@ -123,44 +125,56 @@ export interface WorkflowsRepository {
 		actor: Actor,
 		origin: WorkflowExecutionOrigin,
 		recordedAt: number,
-	): WorkflowDefinitionDetail | 'conflict' | null;
+	): Promise<WorkflowDefinitionDetail | 'conflict' | null>;
 	archive(
 		tenantId: string,
 		workflowId: string,
 		actor: Actor,
 		origin: WorkflowExecutionOrigin,
 		recordedAt: number,
-	): WorkflowDefinition | null;
+	): Promise<WorkflowDefinition | null>;
 	deleteDraft(
 		tenantId: string,
 		workflowId: string,
 		actor: Actor,
 		origin: WorkflowExecutionOrigin,
 		recordedAt: number,
-	): 'deleted' | 'not-found' | 'in-use';
-	listPublished(tenantId: string): readonly WorkflowPublishedReference[];
+	): Promise<'deleted' | 'not-found' | 'in-use'>;
+	listPublished(
+		tenantId: string,
+	): Promise<readonly WorkflowPublishedReference[]>;
 	findRevision(
 		tenantId: string,
 		workflowId: string,
 		revision: number,
-	): WorkflowRevision | null;
-	createRun(write: CreateWorkflowRunWrite): WorkflowRunRecord;
-	findRunByIdempotency(tenantId: string, key: string): WorkflowRunRecord | null;
-	getRun(tenantId: string, runId: string): WorkflowRunRecord | null;
-	listRuns(tenantId: string, filters: WorkflowRunFilters): WorkflowRunPage;
-	runDetail(tenantId: string, runId: string): WorkflowRunDetail | null;
+	): Promise<WorkflowRevision | null>;
+	createRun(write: CreateWorkflowRunWrite): Promise<WorkflowRunRecord>;
+	findRunByIdempotency(
+		tenantId: string,
+		key: string,
+	): Promise<WorkflowRunRecord | null>;
+	getRun(tenantId: string, runId: string): Promise<WorkflowRunRecord | null>;
+	listRuns(
+		tenantId: string,
+		filters: WorkflowRunFilters,
+	): Promise<WorkflowRunPage>;
+	runDetail(tenantId: string, runId: string): Promise<WorkflowRunDetail | null>;
 	claimNext(
 		workerId: string,
 		now: number,
 		leaseExpiresAt: number,
-	): WorkflowRunRecord | null;
+	): Promise<WorkflowRunRecord | null>;
 	renewLease(
 		tenantId: string,
 		runId: string,
 		workerId: string,
 		leaseExpiresAt: number,
-	): boolean;
-	releaseLease(tenantId: string, runId: string, workerId: string): void;
+	): Promise<boolean>;
+	releaseLease(
+		tenantId: string,
+		runId: string,
+		workerId: string,
+	): Promise<void>;
 	appendRunEvent(
 		tenantId: string,
 		runId: string,
@@ -168,18 +182,18 @@ export interface WorkflowsRepository {
 		payload: Readonly<Record<string, JsonValue>>,
 		recordedAt: number,
 		virtualOffsetMs?: number,
-	): WorkflowRunEventV1;
+	): Promise<WorkflowRunEventV1>;
 	readEvents(
 		tenantId: string,
 		runId: string,
 		afterSequence: number,
 		limit: number,
-	): readonly WorkflowRunEventV1[];
+	): Promise<readonly WorkflowRunEventV1[]>;
 	startAttempt(
 		write: StartAttemptWrite,
 		actor: Actor,
 		origin: WorkflowExecutionOrigin,
-	): WorkflowNodeAttempt;
+	): Promise<WorkflowNodeAttempt>;
 	markChildWaiting(
 		tenantId: string,
 		runId: string,
@@ -189,13 +203,13 @@ export interface WorkflowsRepository {
 		childId: string,
 		observationDeadlineAt: number,
 		recordedAt: number,
-	): void;
+	): Promise<void>;
 	settleAttempt(
 		write: SettleAttemptWrite,
 		actor: Actor,
 		origin: WorkflowExecutionOrigin,
-	): WorkflowNodeAttempt;
-	settleEdge(write: SettleEdgeWrite): WorkflowEdgeTransfer;
+	): Promise<WorkflowNodeAttempt>;
+	settleEdge(write: SettleEdgeWrite): Promise<WorkflowEdgeTransfer>;
 	markNodeSkipped(
 		tenantId: string,
 		runId: string,
@@ -205,7 +219,7 @@ export interface WorkflowsRepository {
 		actor: Actor,
 		origin: WorkflowExecutionOrigin,
 		virtualOffsetMs?: number,
-	): void;
+	): Promise<void>;
 	settleRun(
 		tenantId: string,
 		runId: string,
@@ -220,24 +234,27 @@ export interface WorkflowsRepository {
 		cost: WorkflowCostRollupV1,
 		recordedAt: number,
 		virtualOffsetMs?: number,
-	): WorkflowRunRecord | null;
+	): Promise<WorkflowRunRecord | null>;
 	requestCancellation(
 		tenantId: string,
 		runId: string,
 		actor: Actor,
 		origin: WorkflowExecutionOrigin,
 		recordedAt: number,
-	): { readonly run: WorkflowRunRecord; readonly requested: boolean } | null;
+	): Promise<{
+		readonly run: WorkflowRunRecord;
+		readonly requested: boolean;
+	} | null>;
 	readExecutionPayload(
 		tenantId: string,
 		runId: string,
 		payloadId: string,
-	): JsonValue;
+	): Promise<JsonValue>;
 	readEdgePayload(
 		tenantId: string,
 		runId: string,
 		edgeId: string,
-	): JsonValue | undefined;
+	): Promise<JsonValue | undefined>;
 	recordAgentUsage(
 		tenantId: string,
 		runId: string,
@@ -247,22 +264,22 @@ export interface WorkflowsRepository {
 			readonly outputTokens: number;
 			readonly totalTokens: number;
 		},
-	): void;
+	): Promise<void>;
 	readNodeStates(
 		tenantId: string,
 		runId: string,
-	): readonly WorkflowNodeExecution[];
+	): Promise<readonly WorkflowNodeExecution[]>;
 	readEdgeTransfers(
 		tenantId: string,
 		runId: string,
-	): readonly WorkflowEdgeTransfer[];
+	): Promise<readonly WorkflowEdgeTransfer[]>;
 	listAudit(
 		tenantId: string,
 		limit: number,
 		beforeSequence?: number,
-	): WorkflowAuditPage;
-	verifyAudit(tenantId: string): WorkflowAuditVerification;
-	applyPayloadRetention(now: number, limit?: number): number;
-	countRuns(tenantId: string): number;
-	close(): void;
+	): Promise<WorkflowAuditPage>;
+	verifyAudit(tenantId: string): Promise<WorkflowAuditVerification>;
+	applyPayloadRetention(now: number, limit?: number): Promise<number>;
+	countRuns(tenantId: string): Promise<number>;
+	close(): Promise<void>;
 }

@@ -1,7 +1,8 @@
+import { applicationPath } from '@flowdular/client/routing';
 import { useEffect, useMemo, type OctaneNode } from 'octane';
 import { Seo } from '@octanejs/seo';
-import { Alert, BrandMark, Button, FormField, Icon } from '@coreloom/ui';
-import { restorePersistedLocale, useTranslation } from '@coreloom/client';
+import { Alert, BrandMark, Button, FormField, Icon } from '@flowdular/ui';
+import { restorePersistedLocale, useTranslation } from '@flowdular/client';
 import { useValue } from 'segment-state';
 import type { AuthPrincipal } from '../domain/types.ts';
 import {
@@ -208,7 +209,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 			</span>
 			<a class="auth-brand" href="/" aria-label={t('auth.brand.label')}>
 				<BrandMark size={24} signature tone="inverse" />
-				Coreloom
+				Flowdular
 			</a>
 			<div class="auth-story__copy">
 				<span class="auth-kicker">{t('auth.story.kicker')}</span>
@@ -347,7 +348,9 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 									/>
 								</FormField>
 								<p class="auth-slug-preview">
-									{t('auth.signup.workspace.address') + ' /app/'}
+									{t('auth.signup.workspace.address') + ' ' +
+										applicationPath() +
+										'/'}
 									<b>
 										{workspaceSlug || t('auth.signup.workspace.placeholder')}
 									</b>
@@ -430,7 +433,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 								</span>
 								<p>
 									{t('auth.signup.confirmation.created') + ' '}
-									<b>{'/app/' + workspaceSlug}</b>
+									<b>{applicationPath() + '/' + workspaceSlug}</b>
 									{'. ' + t('auth.signup.confirmation.sent') + ' '}
 									<b>{confirmationEmail}</b>
 									{t('auth.signup.confirmation.finish')}
@@ -572,10 +575,10 @@ export function AuthenticationCore(props: AuthenticationCoreProps) @{
 		// a forced password change) ask for a reload instead of duplicating it.
 		const onRefresh = () => void loadSession(auth);
 		window.addEventListener('popstate', onPopState);
-		window.addEventListener('coreloom:session-refresh', onRefresh);
+		window.addEventListener('flowdular:session-refresh', onRefresh);
 		return () => {
 			window.removeEventListener('popstate', onPopState);
-			window.removeEventListener('coreloom:session-refresh', onRefresh);
+			window.removeEventListener('flowdular:session-refresh', onRefresh);
 		};
 	}, [auth, setScreen]);
 
@@ -587,7 +590,7 @@ export function AuthenticationCore(props: AuthenticationCoreProps) @{
 	useEffect(() => {
 		if (status === 'checking') return;
 		requestAnimationFrame(() => {
-			window.dispatchEvent(new Event('coreloom:ready'));
+			window.dispatchEvent(new Event('flowdular:ready'));
 		});
 	}, [status]);
 

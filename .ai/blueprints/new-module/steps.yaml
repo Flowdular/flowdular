@@ -18,7 +18,7 @@ steps:
       - 'spec/module.yaml'
   - id: scaffold
     role: orchestrator
-    action: pnpm coreloom module new <id> --spec modules/<dir>/spec/module.yaml --apply (the sandbox runs it; at the root run the dry run first). Writes the composition entries, a list and a create endpoint, table or memory repository, view, api, state and tests for the first entity; other permissions get constants only.
+    action: pnpm flowdular module new <id> --spec modules/<dir>/spec/module.yaml --apply (the sandbox runs it; at the root run the dry run first). Writes the composition entries, a list and a create endpoint, table or memory repository, view, api, state and tests for the first entity; other permissions get constants only.
     inputs:
       - 'spec/module.yaml'
       - 'translations/*.json'
@@ -63,7 +63,7 @@ steps:
       - 'format'
   - id: screen
     role: ux-designer
-    action: Skeleton of the record screen and drawer form with the five states, on @coreloom/ui only.
+    action: Skeleton of the record screen and drawer form with the five states, on @flowdular/ui only.
     inputs:
       - 'spec/module.yaml'
       - 'reference/design-system.md'
@@ -117,7 +117,7 @@ steps:
     inputs:
       - 'modules/{module}/**'
     outputs:
-      - 'coreloom.json'
+      - 'flowdular.json'
       - 'platform/package.json'
       - 'platform/src/generated/modules.server.ts'
       - 'platform/src/generated/modules.client.ts'

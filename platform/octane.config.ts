@@ -1,20 +1,51 @@
+import {
+	assertRouteConflicts,
+	createModuleWebRoutes,
+	createApplicationRoutes,
+	validateApplicationPath,
+} from '@flowdular/server';
 import { resolve } from 'node:path';
 import { defineConfig, RenderRoute, ServerRoute } from '@octanejs/vite-plugin';
 import {
 	createAuthRoutes,
+	principalFromContext,
 	createAuthRuntime,
 	createPlatformAgentRegistry,
 	createPlatformCapabilityRegistry,
 	createPlatformToolRegistry,
 	authRuntimeOptionsFromEnvironment,
-} from '@coreloom/module-auth/server';
-import { composeModuleServer } from './src/generated/modules.server.ts';
-import { healthEndpoint } from './src/server/health.ts';
+} from '@flowdular/module-auth/server';
+import {
+	composeModuleServer,
+	moduleWebMounts,
+	applicationBasePath,
+} from './src/generated/modules.server.ts';
+import {
+	createPlatformDatabaseProvider,
+	databaseProviderConfigFromEnvironment,
+	loadPlatformEnvironmentFile,
+	platformDatabaseConfigured,
+} from './src/server/database.ts';
+import {
+	createReadinessEndpoint,
+	healthEndpoint,
+} from './src/server/health.ts';
 import {
 	activatePlatformRuntimeLifecycle,
 	createPlatformRuntimeLifecycle,
 	prepareAndActivatePlatformRuntimeLifecycle,
 } from './src/server/lifecycle.ts';
+import {
+	clearSetupToken,
+	createFirstRunSetup,
+} from './src/server/setup/index.ts';
+
+function checkedRoutes<T extends Parameters<typeof assertRouteConflicts>[0]>(
+	routes: T,
+): T {
+	assertRouteConflicts(routes);
+	return routes;
+}
 
 const SHELL = ['App', '/src/App.tsrx'] as const;
 const apiNotFound = () =>
@@ -45,24 +76,58 @@ const API_NOT_FOUND_ROUTES = [
 
 const workspaceRoot = resolve(import.meta.dirname, '..');
 
+/* The first-run installer and the application are alternatives, never
+   neighbours. A deployment that names a database composes the application and
+   has no reachable route that could re-point it; one that names none composes
+   only the installer, which disappears at the next start. */
+function createFirstRunConfig() {
+	const setup = createFirstRunSetup({
+		applicationPath: applicationBasePath,
+		webMountPaths: moduleWebMounts.map((site) => site.path),
+		environment: process.env,
+		workspaceRoot,
+	});
+	return defineConfig({
+		router: { routes: [healthEndpoint.serverRoute, ...setup.routes] },
+	});
+}
+
 async function createPlatformConfig() {
-	if (process.env.CL_INTERNAL_PLATFORM_TERMINATING === 'true') {
+	if (process.env.FD_INTERNAL_PLATFORM_TERMINATING === 'true') {
 		throw new Error(
 			'Platform startup was requested while the process is stopping.',
 		);
 	}
-	const lifecycle = createPlatformRuntimeLifecycle();
-	const authRuntime = createAuthRuntime(
-		authRuntimeOptionsFromEnvironment(process.env, workspaceRoot),
+	loadPlatformEnvironmentFile(workspaceRoot);
+	const configuredApplicationPath = validateApplicationPath(
+		process.env.FD_APPLICATION_PATH ?? applicationBasePath,
 	);
+	if (!platformDatabaseConfigured(process.env)) return createFirstRunConfig();
+	clearSetupToken(workspaceRoot);
+	const lifecycle = createPlatformRuntimeLifecycle();
+	const databases = createPlatformDatabaseProvider(
+		databaseProviderConfigFromEnvironment(
+			process.env.FD_INTERNAL_BUILD === 'true'
+				? { ...process.env, NODE_ENV: 'development' }
+				: process.env,
+			workspaceRoot,
+		),
+	);
+	lifecycle.add(() => databases.dispose());
+	const authRuntime = createAuthRuntime({
+		...authRuntimeOptionsFromEnvironment(process.env, workspaceRoot),
+		applicationPath: configuredApplicationPath,
+		databases,
+	});
 	lifecycle.add(() => authRuntime.dispose());
 	try {
 		/* Module APIs come from the generated composition. Enable or disable modules
-		   with "pnpm coreloom module enable <id> --apply"; never wire them here by hand. */
+		   with "pnpm flowdular module enable <id> --apply"; never wire them here by hand. */
 		const settings = authRuntime.moduleSettings;
 		const agentTools = createPlatformToolRegistry();
 		const agentDefinitions = createPlatformAgentRegistry();
 		const capabilities = createPlatformCapabilityRegistry();
+		const readinessEndpoint = createReadinessEndpoint(databases);
 		const moduleCompositions = composeModuleServer({
 			environment: process.env,
 			workspaceRoot,
@@ -71,6 +136,7 @@ async function createPlatformConfig() {
 			agentTools,
 			agentDefinitions,
 			capabilities,
+			databases,
 		});
 		for (const composition of moduleCompositions) {
 			if (composition.settings) settings.declare(composition.settings);
@@ -81,51 +147,61 @@ async function createPlatformConfig() {
 		const config = defineConfig({
 			middlewares: [lifecycle.middleware, authRuntime.middleware],
 			router: {
-				routes: [
-					new RenderRoute({ path: '/', entry: SHELL }),
-					new RenderRoute({ path: '/auth', entry: SHELL }),
-					new RenderRoute({ path: '/auth/login', entry: SHELL }),
-					new RenderRoute({ path: '/auth/register', entry: SHELL }),
-					new RenderRoute({ path: '/auth/forgot-password', entry: SHELL }),
-					new RenderRoute({ path: '/auth/reset-password', entry: SHELL }),
-					new RenderRoute({ path: '/auth/accept-invitation', entry: SHELL }),
-					new RenderRoute({ path: '/auth/mfa', entry: SHELL }),
-					new RenderRoute({ path: '/sign-in', entry: SHELL }),
-					new RenderRoute({ path: '/sign-up', entry: SHELL }),
-					new RenderRoute({ path: '/forgot-password', entry: SHELL }),
-					new RenderRoute({ path: '/reset-password', entry: SHELL }),
-					new RenderRoute({ path: '/accept-invitation', entry: SHELL }),
-					new RenderRoute({ path: '/app', entry: SHELL }),
-					new RenderRoute({ path: '/app/:workspace', entry: SHELL }),
-					new RenderRoute({ path: '/app/:workspace/:view', entry: SHELL }),
+				routes: checkedRoutes([
+					...createApplicationRoutes({
+						path: configuredApplicationPath,
+						entry: SHELL,
+						publicRoot: moduleWebMounts.some((site) => site.path === '/'),
+					}),
 					healthEndpoint.serverRoute,
+					readinessEndpoint.serverRoute,
 					...createAuthRoutes(authRuntime),
 					...moduleCompositions.flatMap((composition) => composition.routes),
+					...createModuleWebRoutes({
+						modules: moduleCompositions,
+						mounts: moduleWebMounts,
+						applicationPath: configuredApplicationPath,
+						resolveIdentity: (context) => {
+							const principal = principalFromContext(context);
+							return principal
+								? {
+										subjectId: principal.accountId,
+										tenantId: principal.tenantId,
+										permissions: new Set(principal.scopes),
+									}
+								: null;
+						},
+					}),
 					// The explicit /api fallback is more specific than the workspace
 					// params below and prevents API typos from rendering as pages.
 					...API_NOT_FOUND_ROUTES,
 					// Compatibility routes for slug-first bookmarks. The shell moves them
 					// below /app, so module screens never need their own route entries here.
-					new RenderRoute({ path: '/:workspace', entry: SHELL }),
-					new RenderRoute({ path: '/:workspace/:view', entry: SHELL }),
-				],
+				]),
 			},
 		});
-		/* No new SQLite connection opens until the previous generation finished
-		   closing. SQLite retains lock file descriptors when old and new WAL
-		   connections overlap, even when the old DatabaseSync is then closed. */
-		await prepareAndActivatePlatformRuntimeLifecycle(
-			lifecycle,
-			moduleCompositions.flatMap((composition) =>
+		// Bundling needs route and entry declarations, but must not activate
+		// background producers or retain database leases in the build process.
+		if (process.env.FD_INTERNAL_BUILD === 'true') {
+			await lifecycle.retire();
+			return config;
+		}
+		/* The next generation only opens its pools once the previous one has
+		   finished closing, so two generations never hold the database at once. */
+		await prepareAndActivatePlatformRuntimeLifecycle(lifecycle, [
+			async () => {
+				await databases.check();
+			},
+			...moduleCompositions.flatMap((composition) =>
 				composition.prepare ? [composition.prepare] : [],
 			),
-		);
+		]);
 		for (const composition of moduleCompositions) composition.start?.();
 		return config;
 	} catch (error) {
 		void lifecycle.retire().catch((disposeError: unknown) => {
 			console.error(
-				'[coreloom] failed platform boot cleanup failed',
+				'[flowdular] failed platform boot cleanup failed',
 				disposeError,
 			);
 		});

@@ -103,7 +103,7 @@ export async function runDoctor(
 			message:
 				stale.length === 0
 					? `Generated composition matches ${sync.modules.length} enabled module(s).`
-					: `Generated composition is stale: ${stale.join(', ')}. Run "pnpm coreloom module sync --apply".`,
+					: `Generated composition is stale: ${stale.join(', ')}. Run "pnpm flowdular module sync --apply".`,
 			evidence: 'platform/src/generated',
 		});
 	} catch (error) {
@@ -111,7 +111,7 @@ export async function runDoctor(
 			id: 'composition.generated',
 			status: 'fail',
 			message: error instanceof Error ? error.message : String(error),
-			evidence: 'coreloom.json',
+			evidence: 'flowdular.json',
 		});
 	}
 

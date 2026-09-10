@@ -1,100 +1,154 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
-import { MIGRATION_LEDGER_TABLE, runModuleMigrations } from '@coreloom/kernel';
 import {
-	AUTOMATIONS_MIGRATION_001,
-	migrations,
-} from '../src/services/migration.ts';
-import { SqliteAutomationsRepository } from '../src/services/sqlite-repository.ts';
+	DATABASE_MIGRATION_LEDGER,
+	databaseMigrationStatus,
+	runDatabaseMigrations,
+	type DatabaseHandle,
+	type DatabaseProvider,
+} from '@flowdular/database';
+import { createTestDatabaseProvider } from '@flowdular/database-testing';
+import { databaseMigrations } from '../src/services/migration.ts';
+import { migrateAutomationsDatabase } from '../src/services/database-repository.ts';
 
 const directory = new URL('../migrations/', import.meta.url);
-let workspace: string | undefined;
 
-afterEach(() => {
-	if (workspace) rmSync(workspace, { recursive: true, force: true });
-	workspace = undefined;
+const TENANT_TABLES = [
+	'automations_schedules',
+	'automations_triggers',
+	'automations_audit_events',
+] as const;
+
+let providers: DatabaseProvider[] = [];
+
+afterEach(async () => {
+	const open = providers;
+	providers = [];
+	for (const provider of open) await provider.dispose();
 });
 
-function databasePath(): string {
-	workspace = mkdtempSync(join(tmpdir(), 'coreloom-automations-targets-'));
-	return join(workspace, 'automations.db');
+async function migrator(): Promise<DatabaseHandle> {
+	const provider = createTestDatabaseProvider();
+	providers.push(provider);
+	const lease = await provider.acquire({
+		namespace: 'automations.core',
+		purpose: 'migration',
+	});
+	return lease.database;
+}
+
+interface RelationSecurity {
+	readonly relrowsecurity: boolean;
+	readonly relforcerowsecurity: boolean;
+	readonly policies: number | bigint | string;
 }
 
 describe('automations migrations', () => {
 	it('mirrors every numbered up file byte for byte', () => {
-		for (const migration of migrations) {
-			expect(migration.statements).toBe(
+		for (const migration of databaseMigrations) {
+			expect(migration.sql.postgresql).toBe(
 				readFileSync(new URL(`${migration.id}.up.sql`, directory), 'utf8'),
 			);
 		}
 	});
 
-	it('applies the target migration and records it in the ledger', () => {
-		const database = new DatabaseSync(':memory:');
-		runModuleMigrations(database, migrations);
-		const scheduleColumns = database
-			.prepare('SELECT name FROM pragma_table_info(?) ORDER BY cid')
-			.all('automations_schedules') as unknown as readonly {
-			readonly name: string;
-		}[];
-		expect(scheduleColumns.map((column) => column.name)).toEqual(
-			expect.arrayContaining([
-				'target_kind',
-				'target_key',
-				'configured_by_json',
-				'permission_snapshot_json',
-			]),
+	it('applies every migration once and records it in the ledger', async () => {
+		const database = await migrator();
+		const applied = await runDatabaseMigrations(
+			database,
+			'automations.core',
+			databaseMigrations,
 		);
-		expect(
-			database
-				.prepare(`SELECT id FROM ${MIGRATION_LEDGER_TABLE} ORDER BY id`)
-				.all(),
-		).toEqual(migrations.map((migration) => ({ id: migration.id })));
+		expect(applied.map((result) => [result.id, result.action])).toEqual(
+			databaseMigrations.map((migration) => [migration.id, 'applied']),
+		);
+		const ledger = await database.transaction(
+			(transaction) =>
+				transaction.query<{ id: string }>({
+					text: `SELECT id FROM ${DATABASE_MIGRATION_LEDGER}
+					 WHERE namespace = $1 ORDER BY id`,
+					parameters: ['automations.core'],
+				}),
+			{ access: 'read' },
+		);
+		expect(ledger.rows.map((row) => row.id)).toEqual(
+			databaseMigrations.map((migration) => migration.id),
+		);
+
+		const second = await runDatabaseMigrations(
+			database,
+			'automations.core',
+			databaseMigrations,
+		);
+		expect(second.every((result) => result.action === 'unchanged')).toBe(true);
 	});
 
-	it('upgrades legacy agent rows without changing their target identity', () => {
-		const path = databasePath();
-		const database = new DatabaseSync(path);
-		database.exec(AUTOMATIONS_MIGRATION_001);
-		database.exec(`INSERT INTO automations_schedules
-		(id, tenant_id, agent_id, label, input_template, cadence, enabled,
-		 next_run_at, created_at, updated_at, created_by)
-		VALUES ('schedule-1', 'tenant-a', 'agent-1', 'Legacy', '{}', 'every:60',
-		        1, 1000, 1, 1, 'owner-1')`);
-		database.exec(`INSERT INTO automations_triggers
-		(id, tenant_id, agent_id, label, secret_key_id, secret_iv, secret_tag,
-		 secret_ciphertext, secret_revision, enabled, created_at, updated_at,
-		 created_by)
-		VALUES ('trigger-1', 'tenant-a', 'agent-1', 'Legacy webhook', 'key-1',
-		        'iv', 'tag', 'ciphertext', 1, 1, 1, 1, 'owner-1')`);
-		database.close();
+	it('forces row level security with a tenant policy on every tenant table', async () => {
+		const database = await migrator();
+		await migrateAutomationsDatabase(database);
+		for (const table of TENANT_TABLES) {
+			const security = await database.transaction(
+				(transaction) =>
+					transaction.query<RelationSecurity>({
+						text: `SELECT relation.relrowsecurity, relation.relforcerowsecurity,
+						              (SELECT count(*) FROM pg_policy
+						               WHERE polrelid = relation.oid
+						                 AND polname = $2) AS policies
+						       FROM pg_class AS relation
+						       JOIN pg_namespace AS namespace
+						         ON namespace.oid = relation.relnamespace
+						       WHERE namespace.nspname = current_schema()
+						         AND relation.relname = $1`,
+						parameters: [table, `${table}_tenant_policy`],
+					}),
+				{ access: 'read' },
+			);
+			expect(security.rows[0]).toMatchObject({
+				relrowsecurity: true,
+				relforcerowsecurity: true,
+			});
+			expect(Number(security.rows[0]?.policies)).toBe(1);
+		}
+	});
 
-		const repository = new SqliteAutomationsRepository(path);
-		expect(repository.listSchedules('tenant-a')).toMatchObject([
-			{
-				id: 'schedule-1',
-				agentId: 'agent-1',
-				targetKind: 'agent',
-				targetKey: 'agent-1',
-				configuredBy: { kind: 'user', id: 'owner-1', label: 'owner-1' },
-				permissionSnapshot: [],
-			},
-		]);
-		expect(repository.listTriggers('tenant-a')).toMatchObject([
-			{
-				id: 'trigger-1',
-				agentId: 'agent-1',
-				targetKind: 'agent',
-				targetKey: 'agent-1',
-				configuredBy: { kind: 'user', id: 'owner-1', label: 'owner-1' },
-				permissionSnapshot: [],
-			},
-		]);
-		repository.close();
+	it('adopts a schema that already carries the tables instead of reapplying them', async () => {
+		const database = await migrator();
+		await migrateAutomationsDatabase(database);
+		await database.transaction(
+			(transaction) =>
+				transaction.execute({
+					text: `DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = $1`,
+					parameters: ['automations.core'],
+				}),
+			{ access: 'write' },
+		);
 
-		expect(() => new SqliteAutomationsRepository(path).close()).not.toThrow();
+		const status = await databaseMigrationStatus(
+			database,
+			'automations.core',
+			databaseMigrations,
+		);
+		expect(status.map((entry) => entry.state)).toEqual(
+			databaseMigrations.map(() => 'adopted'),
+		);
+
+		const adopted = await runDatabaseMigrations(
+			database,
+			'automations.core',
+			databaseMigrations,
+		);
+		expect(adopted.every((result) => result.action === 'adopted')).toBe(true);
+	});
+
+	it('reports a pending schema before anything is applied', async () => {
+		const database = await migrator();
+		const status = await databaseMigrationStatus(
+			database,
+			'automations.core',
+			databaseMigrations,
+		);
+		expect(status.map((entry) => entry.state)).toEqual(
+			databaseMigrations.map(() => 'pending'),
+		);
 	});
 });

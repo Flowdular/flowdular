@@ -1,5 +1,5 @@
-import type { ModuleSettingValue } from '@coreloom/kernel';
-import { t } from '@coreloom/client/i18n';
+import type { ModuleSettingValue } from '@flowdular/kernel';
+import { t } from '@flowdular/client/i18n';
 import type {
 	SettingsEntryPayload,
 	SettingsModulePayload,

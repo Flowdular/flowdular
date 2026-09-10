@@ -1,9 +1,11 @@
-import { t } from '@coreloom/client';
-import { Icon } from '@coreloom/ui';
+import { t } from '@flowdular/client';
+import { Icon } from '@flowdular/ui';
 import { WORKFLOW_NODE_TYPES, type WorkflowNodeType } from './canvas-model.ts';
 
 export interface WorkflowNodePaletteProps {
 	readonly disabled: boolean;
+	readonly types?: readonly WorkflowNodeType[];
+	readonly compact?: boolean;
 	readonly onAdd: (type: WorkflowNodeType) => void;
 }
 
@@ -18,7 +20,7 @@ function icon(type: WorkflowNodeType): string {
 }
 
 export function WorkflowNodePalette(props: WorkflowNodePaletteProps) @{
-	const entries = WORKFLOW_NODE_TYPES.map(
+	const entries = (props.types ?? WORKFLOW_NODE_TYPES).map(
 		(type) => ({
 			key: type,
 			type,
@@ -27,11 +29,10 @@ export function WorkflowNodePalette(props: WorkflowNodePaletteProps) @{
 		}),
 	);
 
-	<aside class="workflow-palette" aria-label={t('workflows.palette.label')}>
-		<div class="workflow-panel-head">
-			<b>{t('workflows.palette.title')}</b>
-			<small>{t('workflows.palette.description')}</small>
-		</div>
+	<aside
+		class={props.compact ? 'workflow-palette-inline' : 'workflow-palette'}
+		aria-label={t('workflows.palette.label')}
+	>
 		<div class="workflow-palette__items">
 			@for (const entry of entries; key entry.key) {
 				<button
@@ -42,7 +43,6 @@ export function WorkflowNodePalette(props: WorkflowNodePaletteProps) @{
 				>
 					<Icon name={entry.icon} size={16} />
 					<span>{entry.label}</span>
-					<Icon name="plus" size={14} />
 				</button>
 			}
 		</div>

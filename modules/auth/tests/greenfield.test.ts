@@ -1,15 +1,30 @@
 import { access, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { runGreenfield, GREENFIELD_ACCOUNTS } from '../src/cli/greenfield.ts';
+import { createPgliteTestProvider } from '@flowdular/database-testing';
+import {
+	GREENFIELD_ACCOUNTS,
+	runGreenfield,
+	seedGreenfield,
+} from '../src/cli/greenfield.ts';
+import { DatabaseAuthRepository } from '../src/services/database-repository.ts';
 import { verifyPassword } from '../src/services/password.ts';
-import { SqliteAuthRepository } from '../src/services/sqlite-repository.ts';
+
+/* Seeding boots an embedded PostgreSQL and hashes two passwords at the real
+   cost parameters, which outlasts the default per-test timeout. */
 
 describe('auth greenfield', () => {
-	it('previews safely, then resets and seeds the local database', async () => {
-		const workspaceRoot = await mkdtemp(join(tmpdir(), 'coreloom-greenfield-'));
-		const databasePath = join(workspaceRoot, '.coreloom/data/auth.db');
+	it('previews without touching the local database', async () => {
+		const workspaceRoot = await mkdtemp(
+			join(tmpdir(), 'flowdular-greenfield-'),
+		);
+		const dataDirectory = resolve(
+			workspaceRoot,
+			'.flowdular',
+			'data',
+			'pglite',
+		);
 		try {
 			const preview = await runGreenfield({
 				workspaceRoot,
@@ -18,30 +33,41 @@ describe('auth greenfield', () => {
 				flags: new Map(),
 				arguments: [],
 			});
-			expect(preview.data).toMatchObject({ applied: false });
-			await expect(access(databasePath)).rejects.toThrow();
-
-			const applied = await runGreenfield({
-				workspaceRoot,
-				moduleRoot: workspaceRoot,
-				apply: true,
-				flags: new Map(),
-				arguments: [],
-			});
-			expect(applied.data).toMatchObject({
-				applied: true,
+			expect(preview.data).toMatchObject({
+				applied: false,
+				database: dataDirectory,
 				accounts: {
 					admin: { email: GREENFIELD_ACCOUNTS.admin.email },
 					user: { email: GREENFIELD_ACCOUNTS.user.email },
 				},
 			});
+			await expect(access(dataDirectory)).rejects.toThrow();
+		} finally {
+			await rm(workspaceRoot, { recursive: true, force: true });
+		}
+	});
 
-			const repository = new SqliteAuthRepository(databasePath);
+	it('resets and seeds the demo accounts into the database it is given', async () => {
+		const databases = createPgliteTestProvider();
+		try {
+			await seedGreenfield(databases);
+			const runtime = await databases.acquire({
+				namespace: 'auth.core',
+				purpose: 'runtime',
+			});
+			const background = await databases.acquire({
+				namespace: 'auth.core',
+				purpose: 'background',
+			});
 			try {
-				const admin = repository.findAccountByEmail(
+				const repository = new DatabaseAuthRepository({
+					runtime: runtime.database,
+					background: background.database,
+				});
+				const admin = await repository.findAccountByEmail(
 					GREENFIELD_ACCOUNTS.admin.email,
 				);
-				const user = repository.findAccountByEmail(
+				const user = await repository.findAccountByEmail(
 					GREENFIELD_ACCOUNTS.user.email,
 				);
 				expect(admin?.role).toBe('owner');
@@ -53,7 +79,7 @@ describe('auth greenfield', () => {
 					]),
 				);
 				expect(
-					repository.listTenantAccess(admin?.accountId ?? ''),
+					await repository.listTenantAccess(admin?.accountId ?? ''),
 				).toHaveLength(2);
 				expect(user?.role).toBe('member');
 				expect(user?.scopes).not.toContain('system.specs.read');
@@ -74,10 +100,11 @@ describe('auth greenfield', () => {
 					),
 				).toBe(true);
 			} finally {
-				repository.close();
+				await background.release();
+				await runtime.release();
 			}
 		} finally {
-			await rm(workspaceRoot, { recursive: true, force: true });
+			await databases.dispose();
 		}
 	});
 });

@@ -4,14 +4,14 @@ import {
 	problemResponse,
 	readJsonObject,
 	requiredString,
-} from '@coreloom/server';
-import type { AuthRuntime } from '@coreloom/module-auth/server';
+} from '@flowdular/server';
+import type { AuthRuntime } from '@flowdular/module-auth/server';
 import {
 	endpointIdentityFromContext,
 	principalFromContext,
 	sessionMutationDenial,
-} from '@coreloom/module-auth/server';
-import { userActor } from '@coreloom/kernel';
+} from '@flowdular/module-auth/server';
+import { userActor } from '@flowdular/kernel';
 import { AUTOMATIONS_PERMISSIONS } from '../acl/permissions.ts';
 import type { CreateAutomationScheduleInput } from '../domain/types.ts';
 import { scheduleVariablesForScopes } from '../domain/variables.ts';
@@ -120,19 +120,23 @@ export function createAutomationsRoutes(
 		methods: ['GET'],
 		access: { kind: 'permission', permission: AUTOMATIONS_PERMISSIONS.read },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			const principal = principalFromContext(octane)!;
 			return jsonResponse({
-				schedules: runtime.scheduleService().list(principal.tenantId),
+				schedules: await (
+					await runtime.scheduleService()
+				).list(principal.tenantId),
 				variables: scheduleVariablesForScopes(principal.scopes),
-				agents: runtime.scheduleService().agents(principal.tenantId),
-				targets: runtime
-					.scheduleService()
-					.targetOptions(
-						principal.tenantId,
-						userActor(principal),
-						principal.scopes,
-					),
+				agents: await (
+					await runtime.scheduleService()
+				).agents(principal.tenantId),
+				targets: await (
+					await runtime.scheduleService()
+				).targetOptions(
+					principal.tenantId,
+					userActor(principal),
+					principal.scopes,
+				),
 			});
 		},
 	});
@@ -150,14 +154,14 @@ export function createAutomationsRoutes(
 				const principal = principalFromContext(octane)!;
 				return jsonResponse(
 					{
-						schedule: runtime
-							.scheduleService()
-							.create(
-								principal.tenantId,
-								userActor(principal),
-								scheduleInput(value),
-								principal.scopes,
-							),
+						schedule: await (
+							await runtime.scheduleService()
+						).create(
+							principal.tenantId,
+							userActor(principal),
+							scheduleInput(value),
+							principal.scopes,
+						),
 					},
 					201,
 				);
@@ -179,7 +183,9 @@ export function createAutomationsRoutes(
 				const value = await readJsonObject(octane.request, 32 * 1_024);
 				const principal = principalFromContext(octane)!;
 				return jsonResponse({
-					schedule: runtime.scheduleService().update(
+					schedule: await (
+						await runtime.scheduleService()
+					).update(
 						principal.tenantId,
 						userActor(principal),
 						{
@@ -206,13 +212,13 @@ export function createAutomationsRoutes(
 			try {
 				const value = await readJsonObject(octane.request, 4 * 1_024);
 				const principal = principalFromContext(octane)!;
-				runtime
-					.scheduleService()
-					.delete(
-						principal.tenantId,
-						principal.accountId,
-						requiredString(value, 'id', { max: 128 }),
-					);
+				await (
+					await runtime.scheduleService()
+				).delete(
+					principal.tenantId,
+					principal.accountId,
+					requiredString(value, 'id', { max: 128 }),
+				);
 				return jsonResponse({ deleted: true });
 			} catch (error) {
 				return failure(error);
@@ -231,19 +237,15 @@ export function createAutomationsRoutes(
 			try {
 				const value = await readJsonObject(octane.request, 4 * 1_024);
 				const principal = principalFromContext(octane)!;
-				return jsonResponse(
-					{
-						run: await runtime
-							.scheduleService()
-							.runNow(
-								principal.tenantId,
-								userActor(principal),
-								requiredString(value, 'id', { max: 128 }),
-								principal.scopes,
-							),
-					},
-					202,
+				const accepted = await (
+					await runtime.scheduleService()
+				).runNow(
+					principal.tenantId,
+					userActor(principal),
+					requiredString(value, 'id', { max: 128 }),
+					principal.scopes,
 				);
+				return jsonResponse({ run: { id: accepted.id } }, 202);
 			} catch (error) {
 				return failure(error);
 			}
@@ -258,18 +260,22 @@ export function createAutomationsRoutes(
 			permission: AUTOMATIONS_PERMISSIONS.triggersRead,
 		},
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			const principal = principalFromContext(octane)!;
 			return jsonResponse({
-				triggers: runtime.triggerService().list(principal.tenantId),
-				agents: runtime.scheduleService().agents(principal.tenantId),
-				targets: runtime
-					.scheduleService()
-					.targetOptions(
-						principal.tenantId,
-						userActor(principal),
-						principal.scopes,
-					),
+				triggers: await (
+					await runtime.triggerService()
+				).list(principal.tenantId),
+				agents: await (
+					await runtime.scheduleService()
+				).agents(principal.tenantId),
+				targets: await (
+					await runtime.scheduleService()
+				).targetOptions(
+					principal.tenantId,
+					userActor(principal),
+					principal.scopes,
+				),
 			});
 		},
 	});
@@ -289,7 +295,9 @@ export function createAutomationsRoutes(
 				const value = await readJsonObject(octane.request, 8 * 1_024);
 				const principal = principalFromContext(octane)!;
 				return jsonResponse(
-					runtime.triggerService().create(
+					await (
+						await runtime.triggerService()
+					).create(
 						principal.tenantId,
 						userActor(principal),
 						{
@@ -322,17 +330,17 @@ export function createAutomationsRoutes(
 				const value = await readJsonObject(octane.request, 8 * 1_024);
 				const principal = principalFromContext(octane)!;
 				return jsonResponse({
-					trigger: runtime
-						.triggerService()
-						.update(
-							principal.tenantId,
-							userActor(principal),
-							requiredString(value, 'id', { max: 128 }),
-							requiredString(value, 'label', { min: 2, max: 120 }),
-							requiredBoolean(value, 'enabled'),
-							principal.scopes,
-							optionalTargetInput(value),
-						),
+					trigger: await (
+						await runtime.triggerService()
+					).update(
+						principal.tenantId,
+						userActor(principal),
+						requiredString(value, 'id', { max: 128 }),
+						requiredString(value, 'label', { min: 2, max: 120 }),
+						requiredBoolean(value, 'enabled'),
+						principal.scopes,
+						optionalTargetInput(value),
+					),
 				});
 			} catch (error) {
 				return failure(error);
@@ -355,13 +363,13 @@ export function createAutomationsRoutes(
 				const value = await readJsonObject(octane.request, 4 * 1_024);
 				const principal = principalFromContext(octane)!;
 				return jsonResponse(
-					runtime
-						.triggerService()
-						.rotate(
-							principal.tenantId,
-							principal.accountId,
-							requiredString(value, 'id', { max: 128 }),
-						),
+					await (
+						await runtime.triggerService()
+					).rotate(
+						principal.tenantId,
+						principal.accountId,
+						requiredString(value, 'id', { max: 128 }),
+					),
 				);
 			} catch (error) {
 				return failure(error);
@@ -383,13 +391,13 @@ export function createAutomationsRoutes(
 			try {
 				const value = await readJsonObject(octane.request, 4 * 1_024);
 				const principal = principalFromContext(octane)!;
-				runtime
-					.triggerService()
-					.delete(
-						principal.tenantId,
-						principal.accountId,
-						requiredString(value, 'id', { max: 128 }),
-					);
+				await (
+					await runtime.triggerService()
+				).delete(
+					principal.tenantId,
+					principal.accountId,
+					requiredString(value, 'id', { max: 128 }),
+				);
 				return jsonResponse({ deleted: true });
 			} catch (error) {
 				return failure(error);
@@ -411,7 +419,9 @@ export function createAutomationsRoutes(
 				if (Number.isFinite(declared) && declared > MAX_TRIGGER_BODY_BYTES) {
 					return triggerRejection();
 				}
-				const run = await runtime.triggerService().fire({
+				const run = await (
+					await runtime.triggerService()
+				).fire({
 					triggerId: octane.params.id ?? '',
 					body: await octane.request.text(),
 					signature: octane.request.headers.get(TRIGGER_SIGNATURE_HEADER),
@@ -430,11 +440,11 @@ export function createAutomationsRoutes(
 		methods: ['GET'],
 		access: { kind: 'permission', permission: AUTOMATIONS_PERMISSIONS.read },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) => {
+		handler: async ({ octane }) => {
 			const principal = principalFromContext(octane)!;
 			return jsonResponse({
-				events: runtime.listAuditEvents(principal.tenantId, 100),
-				integrity: runtime.verifyAudit(principal.tenantId),
+				events: await runtime.listAuditEvents(principal.tenantId, 100),
+				integrity: await runtime.verifyAudit(principal.tenantId),
 			});
 		},
 	});

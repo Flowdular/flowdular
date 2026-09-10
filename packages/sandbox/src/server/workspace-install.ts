@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { access, cp, readFile, readdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
 import type { SessionModule } from './sessions.ts';
 
 export interface InstallResult {
@@ -74,6 +75,29 @@ export async function materializeSessionWorkspace(options: {
 		}
 	}
 
+	// A generated application installs the SDK under platform/. Make that exact
+	// SDK discoverable in a new session before its first module is scaffolded.
+	let sdkVersion: string | undefined;
+	try {
+		const require = createRequire(
+			join(options.workspaceRoot, 'platform/package.json'),
+		);
+		const sdkRoot = dirname(require.resolve('@flowdular/sdk/modules.json'));
+		const sdk = JSON.parse(
+			await readFile(join(sdkRoot, 'package.json'), 'utf8'),
+		);
+		if (typeof sdk.version !== 'string')
+			throw new Error('Invalid installed SDK version.');
+		sdkVersion = sdk.version;
+		overrides.push(`  '@flowdular/sdk': ${yamlString(`link:${sdkRoot}`)}`);
+	} catch (error) {
+		if (
+			!['MODULE_NOT_FOUND', 'ERR_PACKAGE_PATH_NOT_EXPORTED'].includes(
+				(error as NodeJS.ErrnoException).code ?? '',
+			)
+		)
+			throw error;
+	}
 	let host: Record<string, unknown> = {};
 	try {
 		host = JSON.parse(
@@ -86,7 +110,10 @@ export async function materializeSessionWorkspace(options: {
 		join(options.sessionWorkspace, 'package.json'),
 		`${JSON.stringify(
 			{
-				name: 'coreloom-session',
+				name: 'flowdular-session',
+				...(sdkVersion
+					? { dependencies: { '@flowdular/sdk': sdkVersion } }
+					: {}),
 				private: true,
 				type: 'module',
 				...(typeof host.packageManager === 'string'

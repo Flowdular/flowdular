@@ -14,7 +14,7 @@
 	"invite.subtitle": "Email invitation to this workspace",
 	"invite.email": "Email address",
 	"invite.emailHelp": "The invitation link is single-use and expires after seven days.",
-	"invite.footer": "Coreloom sends the invitation through the deployment mail adapter.",
+	"invite.footer": "Flowdular sends the invitation through the deployment mail adapter.",
 	"invite.send": "Send invitation",
 	"invite.sending": "Sending…",
 	"invite.sent": "Invitation sent to {email}.",

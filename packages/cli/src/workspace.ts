@@ -10,7 +10,7 @@ export interface Workspace {
 export async function findWorkspace(start: string): Promise<Workspace> {
 	let directory = resolve(start);
 	for (;;) {
-		const configPath = resolve(directory, 'coreloom.json');
+		const configPath = resolve(directory, 'flowdular.json');
 		try {
 			await access(configPath);
 			const config = JSON.parse(await readFile(configPath, 'utf8')) as Record<
@@ -25,7 +25,7 @@ export async function findWorkspace(start: string): Promise<Workspace> {
 		const parent = dirname(directory);
 		if (parent === directory) {
 			throw new Error(
-				'No coreloom.json was found in this directory or any parent.',
+				'No flowdular.json was found in this directory or any parent.',
 			);
 		}
 		directory = parent;

@@ -6,14 +6,14 @@ import {
 	readJsonObject,
 	requiredString,
 	type EndpointExecutionContext,
-} from '@coreloom/server';
-import type { AuthRuntime } from '@coreloom/module-auth/server';
+} from '@flowdular/server';
+import type { AuthRuntime } from '@flowdular/module-auth/server';
 import {
 	AuthServiceError,
 	endpointIdentityFromContext,
 	principalFromContext,
 	sessionMutationDenial,
-} from '@coreloom/module-auth/server';
+} from '@flowdular/module-auth/server';
 import { USER_PERMISSIONS } from '../acl/permissions.ts';
 import {
 	UsersService,
@@ -91,8 +91,8 @@ export function createUserRoutes(auth: AuthRuntime) {
 		methods: ['GET'],
 		access: { kind: 'permission', permission: USER_PERMISSIONS.read },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: ({ octane }) =>
-			jsonResponse(users.list(principalFromContext(octane)!)),
+		handler: async ({ octane }) =>
+			jsonResponse(await users.list(principalFromContext(octane)!)),
 	});
 
 	const create = mutation(
@@ -115,9 +115,9 @@ export function createUserRoutes(auth: AuthRuntime) {
 	const update = mutation(
 		'users.members.update',
 		'/api/users/update',
-		(octane, payload) =>
+		async (octane, payload) =>
 			jsonResponse({
-				user: users.rename(
+				user: await users.rename(
 					principalFromContext(octane)!,
 					requiredString(payload, 'accountId', { max: 128 }),
 					requiredString(payload, 'displayName', { max: 80 }),
@@ -128,9 +128,9 @@ export function createUserRoutes(auth: AuthRuntime) {
 	const role = mutation(
 		'users.members.role',
 		'/api/users/role',
-		(octane, payload) =>
+		async (octane, payload) =>
 			jsonResponse({
-				user: users.assignRole(
+				user: await users.assignRole(
 					principalFromContext(octane)!,
 					requiredString(payload, 'accountId', { max: 128 }),
 					requiredString(payload, 'role', { max: 32 }),
@@ -141,7 +141,7 @@ export function createUserRoutes(auth: AuthRuntime) {
 	const status = mutation(
 		'users.members.status',
 		'/api/users/status',
-		(octane, payload) => {
+		async (octane, payload) => {
 			const value = requiredString(payload, 'status', { max: 16 });
 			if (value !== 'active' && value !== 'disabled') {
 				throw new HttpProblem(
@@ -151,7 +151,7 @@ export function createUserRoutes(auth: AuthRuntime) {
 				);
 			}
 			return jsonResponse({
-				user: users.setStatus(
+				user: await users.setStatus(
 					principalFromContext(octane)!,
 					requiredString(payload, 'accountId', { max: 128 }),
 					value,
@@ -163,8 +163,8 @@ export function createUserRoutes(auth: AuthRuntime) {
 	const remove = mutation(
 		'users.members.remove',
 		'/api/users/remove',
-		(octane, payload) => {
-			users.remove(
+		async (octane, payload) => {
+			await users.remove(
 				principalFromContext(octane)!,
 				requiredString(payload, 'accountId', { max: 128 }),
 			);
@@ -188,9 +188,9 @@ export function createUserRoutes(auth: AuthRuntime) {
 	const setScopes = mutation(
 		'users.members.scopes',
 		'/api/users/scopes',
-		(octane, payload) =>
+		async (octane, payload) =>
 			jsonResponse({
-				user: users.setScopes(
+				user: await users.setScopes(
 					principalFromContext(octane)!,
 					requiredString(payload, 'accountId', { max: 128 }),
 					scopes(payload),

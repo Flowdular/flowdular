@@ -1,12 +1,17 @@
 node_modules/
 dist/
-# Legacy local state remains ignored because `coreloom setup migrate-state`
-# preserves the source after copying it into .coreloom/data.
+# Legacy local state remains ignored because `flowdular setup migrate-state`
+# preserves the source after copying it into .flowdular/data.
 .octane-erp/
-.coreloom/
+.flowdular/
 platform/.generated/
 .env
 .env.*
 !.env.example
 *.log
 .DS_Store
+
+# Existing pre-rename installations retain their private state.
+.coreloom/
+
+release-artifacts/

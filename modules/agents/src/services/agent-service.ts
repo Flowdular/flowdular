@@ -1,17 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import { resolveTemplate } from '@coreloom/contracts';
+import { resolveTemplate } from '@flowdular/contracts';
 import {
 	validateJsonValue,
 	type AgentHarness,
 	type AgentOutputContract,
 	type AgentRunTrigger,
-} from '@coreloom/harness';
+} from '@flowdular/harness';
 import {
 	actorsEqual,
 	normalizeActor,
 	type Actor,
 	type UserActor,
-} from '@coreloom/kernel';
+} from '@flowdular/kernel';
 import { AGENT_PERMISSIONS } from '../acl/permissions.ts';
 import {
 	agentContextValues,
@@ -29,21 +29,21 @@ import type {
 	AgentRun,
 	AgentRunDetail,
 	AgentRunTimeline,
-	AgentSkill,
-	AgentSkillSnapshot,
+	AgentProcedure,
+	AgentProcedureSnapshot,
 	AgentWorkerStatus,
 	AuditChainVerification,
-	CreateAgentSkillInput,
+	CreateAgentProcedureInput,
 	CreateAgentInput,
 	EnqueueAgentRunInput,
-	UpdateAgentSkillInput,
+	UpdateAgentProcedureInput,
 	UpdateAgentInput,
 	UpdateModuleAgentBindingInput,
 } from '../domain/types.ts';
 import type { AgentSettingsReader } from '../settings.ts';
 import {
 	DuplicateAgentKeyError,
-	DuplicateAgentSkillKeyError,
+	DuplicateAgentProcedureKeyError,
 	DuplicateRunIdempotencyKeyError,
 	ModuleAgentBindingConflictError,
 	type AgentRepository,
@@ -188,25 +188,25 @@ function toolList(value: readonly string[]): readonly string[] {
 	return [...new Set(value.map((tool) => identifier(tool, 'tool')))].sort();
 }
 
-function skillIdList(value: readonly string[]): readonly string[] {
+function procedureIdList(value: readonly string[]): readonly string[] {
 	if (value.length > 8) {
 		throw new AgentServiceError(
 			'SKILL_LIMIT_EXCEEDED',
-			'An agent can attach at most 8 skills.',
+			'An agent can attach at most 8 procedures.',
 		);
 	}
 	return [
-		...new Set(value.map((id) => bounded(id, 'skill id', 1, 128))),
+		...new Set(value.map((id) => bounded(id, 'procedure id', 1, 128))),
 	].sort();
 }
 
-function skillStatus(
-	value: CreateAgentSkillInput['status'],
-): AgentSkill['status'] {
+function procedureStatus(
+	value: CreateAgentProcedureInput['status'],
+): AgentProcedure['status'] {
 	if (!['draft', 'active', 'archived'].includes(value)) {
 		throw new AgentServiceError(
 			'INVALID_SKILL_STATUS',
-			'Agent skill status is not supported.',
+			'Agent procedure status is not supported.',
 		);
 	}
 	return value;
@@ -297,7 +297,7 @@ export interface AgentBudgetGuard {
 		tenantId: string,
 		agentId: string,
 		now: number,
-	): { readonly code: string; readonly message: string } | null;
+	): Promise<{ readonly code: string; readonly message: string } | null>;
 }
 
 export class AgentService {
@@ -317,7 +317,9 @@ export class AgentService {
 		return this.worker.status();
 	}
 
-	providers(tenantId: string): readonly AgentProviderConnection[] {
+	async providers(
+		tenantId: string,
+	): Promise<readonly AgentProviderConnection[]> {
 		if (this.providerService) return this.providerService.list(tenantId);
 		return this.harness.providers().map((id) => ({
 			id,
@@ -350,38 +352,46 @@ export class AgentService {
 		return this.harness.tools();
 	}
 
-	reconcileModuleAgents(definitions: readonly ModuleAgentDefinition[]): void {
+	async reconcileModuleAgents(
+		definitions: readonly ModuleAgentDefinition[],
+	): Promise<void> {
 		const normalized = normalizeModuleAgentDefinitions(definitions);
-		this.repository.reconcileModuleAgents(normalized, this.now());
+		await this.repository.reconcileModuleAgents(normalized, this.now());
 		this.#moduleAgents.clear();
 		for (const definition of normalized) {
 			this.#moduleAgents.set(definition.id, definition);
 		}
 	}
 
-	listModuleAgents(tenantId: string): readonly ModuleAgentView[] {
+	async listModuleAgents(
+		tenantId: string,
+	): Promise<readonly ModuleAgentView[]> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
 		const bindings = new Map(
-			this.repository
-				.listModuleAgentBindings(trustedTenantId)
-				.map((binding) => [binding.agentId, binding] as const),
+			(await this.repository.listModuleAgentBindings(trustedTenantId)).map(
+				(binding) => [binding.agentId, binding] as const,
+			),
 		);
-		return [...this.#moduleAgents.values()]
-			.sort((left, right) => left.id.localeCompare(right.id))
-			.map((definition) =>
-				this.#moduleAgentView(
+		const views: ModuleAgentView[] = [];
+		for (const definition of [...this.#moduleAgents.values()].sort(
+			(left, right) => left.id.localeCompare(right.id),
+		)) {
+			views.push(
+				await this.#moduleAgentView(
 					trustedTenantId,
 					definition,
 					bindings.get(definition.id) ?? null,
 				),
 			);
+		}
+		return views;
 	}
 
-	configureModuleAgent(
+	async configureModuleAgent(
 		tenantId: string,
 		actorId: string,
 		input: UpdateModuleAgentBindingInput,
-	): ModuleAgentView {
+	): Promise<ModuleAgentView> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
 		const id = bounded(input.agentId, 'agentId', 1, 128);
 		const definition = this.#moduleAgents.get(id);
@@ -407,11 +417,11 @@ export class AgentService {
 				'Module agent binding status must be active or paused.',
 			);
 		}
-		const provider = identifier(input.provider, 'provider');
+		const provider = bounded(input.provider, 'provider', 1, 128);
 		const model = bounded(input.model, 'model', 1, 160);
-		this.assertProviderConfigured(trustedTenantId, provider, model);
+		await this.assertProviderConfigured(trustedTenantId, provider, model);
 		if (input.status === 'active' && this.providerService) {
-			this.providerService.assertUsable(trustedTenantId, provider, model);
+			await this.providerService.assertUsable(trustedTenantId, provider, model);
 		}
 		const enabledTools = toolList(input.enabledTools);
 		const outsideMaximum = enabledTools.find(
@@ -425,7 +435,10 @@ export class AgentService {
 			);
 		}
 		this.assertToolsRegistered(enabledTools);
-		const existing = this.repository.getModuleAgentBinding(trustedTenantId, id);
+		const existing = await this.repository.getModuleAgentBinding(
+			trustedTenantId,
+			id,
+		);
 		if ((existing?.revision ?? 0) !== input.expectedRevision) {
 			throw new AgentServiceError(
 				'MODULE_AGENT_BINDING_REVISION_CONFLICT',
@@ -440,7 +453,7 @@ export class AgentService {
 			JSON.stringify(existing.enabledTools) !== JSON.stringify(enabledTools) ||
 			existing.moduleDefinitionRevision !== definition.definitionRevision;
 		if (existing && !configurationChanged && existing.status === input.status) {
-			return this.#moduleAgentView(trustedTenantId, definition, existing);
+			return await this.#moduleAgentView(trustedTenantId, definition, existing);
 		}
 		const updatedAt = this.now();
 		const identity = bounded(actorId, 'actorId', 1, 128);
@@ -460,7 +473,7 @@ export class AgentService {
 			updatedAt,
 		};
 		try {
-			this.repository.saveModuleAgentBinding(
+			await this.repository.saveModuleAgentBinding(
 				binding,
 				definition,
 				input.expectedRevision,
@@ -492,49 +505,53 @@ export class AgentService {
 			}
 			throw error;
 		}
-		return this.#moduleAgentView(trustedTenantId, definition, binding);
+		return await this.#moduleAgentView(trustedTenantId, definition, binding);
 	}
 
-	listAgents(tenantId: string): readonly AgentDefinition[] {
-		return this.repository.listAgents(bounded(tenantId, 'tenantId', 1, 128));
+	async listAgents(tenantId: string): Promise<readonly AgentDefinition[]> {
+		return await this.repository.listAgents(
+			bounded(tenantId, 'tenantId', 1, 128),
+		);
 	}
 
-	listSkills(tenantId: string): readonly AgentSkill[] {
-		return this.repository.listSkills(bounded(tenantId, 'tenantId', 1, 128));
+	async listProcedures(tenantId: string): Promise<readonly AgentProcedure[]> {
+		return await this.repository.listProcedures(
+			bounded(tenantId, 'tenantId', 1, 128),
+		);
 	}
 
-	pageAuditEvents(
+	async pageAuditEvents(
 		tenantId: string,
 		cursor: string | null,
 		limit: number,
-	): AgentAuditPage {
+	): Promise<AgentAuditPage> {
 		const size = Number.isSafeInteger(limit)
 			? Math.min(Math.max(1, Math.trunc(limit)), MAX_AUDIT_PAGE)
 			: DEFAULT_AUDIT_PAGE;
-		return this.repository.pageAuditEvents(
+		return await this.repository.pageAuditEvents(
 			bounded(tenantId, 'tenantId', 1, 128),
 			auditCursor(cursor),
 			size,
 		);
 	}
 
-	verifyAudit(tenantId: string): AuditChainVerification {
-		return this.repository.verifyAuditChainDetailed(
+	async verifyAudit(tenantId: string): Promise<AuditChainVerification> {
+		return await this.repository.verifyAuditChainDetailed(
 			bounded(tenantId, 'tenantId', 1, 128),
 		);
 	}
 
-	createSkill(
+	async createProcedure(
 		tenantId: string,
 		actorId: string,
-		input: CreateAgentSkillInput,
-	): AgentSkill {
+		input: CreateAgentProcedureInput,
+	): Promise<AgentProcedure> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
 		const actor = bounded(actorId, 'actorId', 1, 128);
 		const requiredTools = toolList(input.requiredTools);
 		this.assertToolsRegistered(requiredTools);
 		const now = this.now();
-		const skill: AgentSkill = {
+		const procedure: AgentProcedure = {
 			id: randomUUID(),
 			tenantId: trustedTenantId,
 			key: agentKey(input.key),
@@ -550,10 +567,12 @@ export class AgentService {
 			updatedAt: now,
 		};
 		try {
-			const created = this.repository.createSkill(skill);
-			this.repository.appendAuditEvent({
+			const created = await this.repository.createProcedure(procedure);
+			await this.repository.appendAuditEvent({
 				tenantId: trustedTenantId,
 				actorId: actor,
+				/* Audit action and subject ids are evidence. 0.8 renames the product
+				   term, never the history it would have to rewrite. */
 				action: 'agent-skill.created',
 				subjectType: 'agent-skill',
 				subjectId: created.id,
@@ -562,60 +581,60 @@ export class AgentService {
 			});
 			return created;
 		} catch (error) {
-			if (error instanceof DuplicateAgentSkillKeyError) {
+			if (error instanceof DuplicateAgentProcedureKeyError) {
 				throw new AgentServiceError('DUPLICATE_SKILL_KEY', error.message, 409);
 			}
 			throw error;
 		}
 	}
 
-	updateSkill(
+	async updateProcedure(
 		tenantId: string,
-		skillId: string,
+		procedureId: string,
 		actorId: string,
-		input: UpdateAgentSkillInput,
-	): AgentSkill {
+		input: UpdateAgentProcedureInput,
+	): Promise<AgentProcedure> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
-		const existing = this.repository.getSkill(
+		const existing = await this.repository.getProcedure(
 			trustedTenantId,
-			bounded(skillId, 'skillId', 1, 128),
+			bounded(procedureId, 'procedureId', 1, 128),
 		);
 		if (!existing) {
 			throw new AgentServiceError(
 				'SKILL_NOT_FOUND',
-				'Agent skill not found.',
+				'Agent procedure not found.',
 				404,
 			);
 		}
 		if (input.expectedRevision !== existing.revision) {
 			throw new AgentServiceError(
 				'SKILL_REVISION_CONFLICT',
-				'The skill was changed by another request. Reload before saving.',
+				'The procedure was changed by another request. Reload before saving.',
 				409,
 			);
 		}
 		if (input.status === 'archived' && existing.status !== 'archived') {
-			this.assertSkillCanArchive(trustedTenantId, existing.id);
+			await this.assertSkillCanArchive(trustedTenantId, existing.id);
 		}
 		const requiredTools = toolList(input.requiredTools);
 		this.assertToolsRegistered(requiredTools);
 		const actor = bounded(actorId, 'actorId', 1, 128);
 		const now = this.now();
-		const updated: AgentSkill = {
+		const updated: AgentProcedure = {
 			...existing,
 			key: agentKey(input.key),
 			name: bounded(input.name, 'name', 2, 120),
 			description: bounded(input.description, 'description', 2, 500),
 			instructions: bounded(input.instructions, 'instructions', 8, 8_000),
 			requiredTools,
-			status: skillStatus(input.status),
+			status: procedureStatus(input.status),
 			revision: existing.revision + 1,
 			updatedBy: actor,
 			updatedAt: now,
 		};
 		try {
-			const result = this.repository.updateSkill(updated);
-			this.repository.appendAuditEvent({
+			const result = await this.repository.updateProcedure(updated);
+			await this.repository.appendAuditEvent({
 				tenantId: trustedTenantId,
 				actorId: actor,
 				action:
@@ -629,21 +648,21 @@ export class AgentService {
 			});
 			return result;
 		} catch (error) {
-			if (error instanceof DuplicateAgentSkillKeyError) {
+			if (error instanceof DuplicateAgentProcedureKeyError) {
 				throw new AgentServiceError('DUPLICATE_SKILL_KEY', error.message, 409);
 			}
 			throw error;
 		}
 	}
 
-	archiveSkill(
+	async archiveProcedure(
 		tenantId: string,
-		skillId: string,
+		procedureId: string,
 		actorId: string,
 		expectedRevision: number,
-	): AgentSkill {
-		const existing = this.requireSkill(tenantId, skillId);
-		return this.updateSkill(tenantId, existing.id, actorId, {
+	): Promise<AgentProcedure> {
+		const existing = await this.requireSkill(tenantId, procedureId);
+		return await this.updateProcedure(tenantId, existing.id, actorId, {
 			key: existing.key,
 			name: existing.name,
 			description: existing.description,
@@ -654,44 +673,49 @@ export class AgentService {
 		});
 	}
 
-	deleteSkill(
+	async deleteProcedure(
 		tenantId: string,
-		skillId: string,
+		procedureId: string,
 		actorId: string,
 		expectedRevision: number,
-	): void {
+	): Promise<void> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
-		const existing = this.requireSkill(trustedTenantId, skillId);
+		const existing = await this.requireSkill(trustedTenantId, procedureId);
 		if (existing.revision !== expectedRevision) {
 			throw new AgentServiceError(
 				'SKILL_REVISION_CONFLICT',
-				'The skill was changed by another request. Reload before deleting.',
+				'The procedure was changed by another request. Reload before deleting.',
 				409,
 			);
 		}
 		if (existing.status !== 'archived') {
 			throw new AgentServiceError(
 				'SKILL_NOT_ARCHIVED',
-				'Archive the skill before deleting it.',
+				'Archive the procedure before deleting it.',
 				409,
 			);
 		}
-		const usage = this.repository.skillUsage(trustedTenantId, existing.id);
+		const usage = await this.repository.procedureUsage(
+			trustedTenantId,
+			existing.id,
+		);
 		if (usage.assignments > 0) {
 			throw new AgentServiceError(
 				'SKILL_IN_USE',
-				'Remove this skill from every agent before deleting it.',
+				'Remove this procedure from every agent before deleting it.',
 				409,
 			);
 		}
-		if (!this.repository.deleteSkill(trustedTenantId, existing.id)) {
+		if (
+			!(await this.repository.deleteProcedure(trustedTenantId, existing.id))
+		) {
 			throw new AgentServiceError(
 				'SKILL_NOT_FOUND',
-				'Agent skill not found.',
+				'Agent procedure not found.',
 				404,
 			);
 		}
-		this.repository.appendAuditEvent({
+		await this.repository.appendAuditEvent({
 			tenantId: trustedTenantId,
 			actorId: bounded(actorId, 'actorId', 1, 128),
 			action: 'agent-skill.deleted',
@@ -702,15 +726,18 @@ export class AgentService {
 		});
 	}
 
-	createAgent(
+	async createAgent(
 		tenantId: string,
 		actorId: string,
 		input: CreateAgentInput,
-	): AgentDefinition {
+	): Promise<AgentDefinition> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
-		const provider = identifier(
+		// Provider references are stored connection IDs, not tool identifiers.
+		const provider = bounded(
 			input.provider || (this.settings?.defaultProvider(trustedTenantId) ?? ''),
 			'provider',
+			1,
+			128,
 		);
 		const model = bounded(
 			input.model || (this.settings?.defaultModel(trustedTenantId) ?? ''),
@@ -718,11 +745,11 @@ export class AgentService {
 			1,
 			160,
 		);
-		this.assertProviderConfigured(trustedTenantId, provider, model);
+		await this.assertProviderConfigured(trustedTenantId, provider, model);
 		const allowedTools = toolList(input.allowedTools);
 		this.assertToolsRegistered(allowedTools);
-		const skillIds = skillIdList(input.skillIds);
-		this.resolveSkills(trustedTenantId, skillIds, false);
+		const procedureIds = procedureIdList(input.procedureIds);
+		await this.resolveSkills(trustedTenantId, procedureIds, false);
 		const createdAt = this.now();
 		const identity = bounded(actorId, 'actorId', 1, 128);
 		const agent: AgentDefinition = {
@@ -735,7 +762,7 @@ export class AgentService {
 			provider,
 			model,
 			allowedTools,
-			skillIds,
+			procedureIds,
 			...executionLimits(
 				input,
 				this.settings?.defaultMaxOutputTokens(trustedTenantId) ??
@@ -749,8 +776,8 @@ export class AgentService {
 			updatedAt: createdAt,
 		};
 		try {
-			const created = this.repository.createAgent(agent);
-			this.repository.appendAuditEvent({
+			const created = await this.repository.createAgent(agent);
+			await this.repository.appendAuditEvent({
 				tenantId: created.tenantId,
 				actorId: identity,
 				action: 'agent.created',
@@ -768,16 +795,16 @@ export class AgentService {
 		}
 	}
 
-	updateAgent(
+	async updateAgent(
 		tenantId: string,
 		agentId: string,
 		actorId: string,
 		input: UpdateAgentInput,
-	): AgentDefinition {
+	): Promise<AgentDefinition> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
 		const id = bounded(agentId, 'agentId', 1, 128);
 		this.#refuseModuleAgentMutation(id);
-		const existing = this.repository.getAgent(trustedTenantId, id);
+		const existing = await this.repository.getAgent(trustedTenantId, id);
 		if (!existing) {
 			throw new AgentServiceError('AGENT_NOT_FOUND', 'Agent not found.', 404);
 		}
@@ -788,21 +815,23 @@ export class AgentService {
 				409,
 			);
 		}
-		const provider = identifier(
+		const provider = bounded(
 			input.provider || existing.provider,
 			'provider',
+			1,
+			128,
 		);
 		const model = bounded(input.model || existing.model, 'model', 1, 160);
-		this.assertProviderConfigured(trustedTenantId, provider, model);
+		await this.assertProviderConfigured(trustedTenantId, provider, model);
 		if (input.status === 'active' && this.providerService) {
-			this.providerService.assertUsable(trustedTenantId, provider, model);
+			await this.providerService.assertUsable(trustedTenantId, provider, model);
 		}
 		const allowedTools = toolList(input.allowedTools);
 		this.assertToolsRegistered(allowedTools);
-		const skillIds = skillIdList(input.skillIds);
-		const skills = this.resolveSkills(
+		const procedureIds = procedureIdList(input.procedureIds);
+		const skills = await this.resolveSkills(
 			trustedTenantId,
-			skillIds,
+			procedureIds,
 			input.status === 'active',
 		);
 		if (input.status === 'active') {
@@ -819,7 +848,7 @@ export class AgentService {
 			provider,
 			model,
 			allowedTools,
-			skillIds,
+			procedureIds,
 			...executionLimits(input, existing.maxOutputTokens),
 			status: status(input.status),
 			revision: existing.revision + 1,
@@ -827,8 +856,8 @@ export class AgentService {
 			updatedAt,
 		};
 		try {
-			const result = this.repository.updateAgent(updated);
-			this.repository.appendAuditEvent({
+			const result = await this.repository.updateAgent(updated);
+			await this.repository.appendAuditEvent({
 				tenantId: result.tenantId,
 				actorId: identity,
 				action:
@@ -849,15 +878,15 @@ export class AgentService {
 		}
 	}
 
-	archiveAgent(
+	async archiveAgent(
 		tenantId: string,
 		agentId: string,
 		actorId: string,
 		expectedRevision: number,
-	): AgentDefinition {
+	): Promise<AgentDefinition> {
 		this.#refuseModuleAgentMutation(bounded(agentId, 'agentId', 1, 128));
-		const existing = this.requireAgent(tenantId, agentId);
-		return this.updateAgent(tenantId, existing.id, actorId, {
+		const existing = await this.requireAgent(tenantId, agentId);
+		return await this.updateAgent(tenantId, existing.id, actorId, {
 			key: existing.key,
 			name: existing.name,
 			description: existing.description,
@@ -865,7 +894,7 @@ export class AgentService {
 			provider: existing.provider,
 			model: existing.model,
 			allowedTools: existing.allowedTools,
-			skillIds: existing.skillIds,
+			procedureIds: existing.procedureIds,
 			maxSteps: existing.maxSteps,
 			timeoutMs: existing.timeoutMs,
 			temperature: existing.temperature,
@@ -875,15 +904,15 @@ export class AgentService {
 		});
 	}
 
-	deleteAgent(
+	async deleteAgent(
 		tenantId: string,
 		agentId: string,
 		actorId: string,
 		expectedRevision: number,
-	): void {
+	): Promise<void> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
 		this.#refuseModuleAgentMutation(bounded(agentId, 'agentId', 1, 128));
-		const existing = this.requireAgent(trustedTenantId, agentId);
+		const existing = await this.requireAgent(trustedTenantId, agentId);
 		if (existing.revision !== expectedRevision) {
 			throw new AgentServiceError(
 				'AGENT_REVISION_CONFLICT',
@@ -898,7 +927,10 @@ export class AgentService {
 				409,
 			);
 		}
-		const usage = this.repository.agentUsage(trustedTenantId, existing.id);
+		const usage = await this.repository.agentUsage(
+			trustedTenantId,
+			existing.id,
+		);
 		if (usage.runs > 0) {
 			throw new AgentServiceError(
 				'AGENT_IN_USE',
@@ -909,14 +941,14 @@ export class AgentService {
 		if (usage.assignments > 0) {
 			throw new AgentServiceError(
 				'AGENT_IN_USE',
-				'Remove every attached skill before deleting this agent.',
+				'Remove every attached procedure before deleting this agent.',
 				409,
 			);
 		}
-		if (!this.repository.deleteAgent(trustedTenantId, existing.id)) {
+		if (!(await this.repository.deleteAgent(trustedTenantId, existing.id))) {
 			throw new AgentServiceError('AGENT_NOT_FOUND', 'Agent not found.', 404);
 		}
-		this.repository.appendAuditEvent({
+		await this.repository.appendAuditEvent({
 			tenantId: trustedTenantId,
 			actorId: bounded(actorId, 'actorId', 1, 128),
 			action: 'agent.deleted',
@@ -927,16 +959,16 @@ export class AgentService {
 		});
 	}
 
-	listRuns(tenantId: string, limit = 100): readonly AgentRun[] {
+	async listRuns(tenantId: string, limit = 100): Promise<readonly AgentRun[]> {
 		const boundedLimit = Math.max(1, Math.min(250, Math.trunc(limit)));
-		return this.repository.listRuns(
+		return await this.repository.listRuns(
 			bounded(tenantId, 'tenantId', 1, 128),
 			boundedLimit,
 		);
 	}
 
-	getRun(tenantId: string, runId: string): AgentRunDetail {
-		const run = this.repository.getRun(
+	async getRun(tenantId: string, runId: string): Promise<AgentRunDetail> {
+		const run = await this.repository.getRun(
 			bounded(tenantId, 'tenantId', 1, 128),
 			bounded(runId, 'runId', 1, 128),
 		);
@@ -946,18 +978,18 @@ export class AgentService {
 		return run;
 	}
 
-	getRevisionReference(
+	async getRevisionReference(
 		tenantId: string,
 		agentId: string,
 		revision: number,
-	): {
+	): Promise<{
 		readonly agentId: string;
 		readonly revision: number;
 		readonly name: string;
 		readonly status: Exclude<AgentDefinition['status'], 'draft'>;
 		readonly supportsStructuredOutput: boolean;
 		readonly allowedTools: readonly string[];
-	} | null {
+	} | null> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
 		if (!Number.isSafeInteger(revision) || revision < 1) {
 			throw new AgentServiceError(
@@ -966,7 +998,7 @@ export class AgentService {
 			);
 		}
 		const id = bounded(agentId, 'agentId', 1, 128);
-		const retained = this.repository.getAgentRevision(
+		const retained = await this.repository.getAgentRevision(
 			trustedTenantId,
 			id,
 			revision,
@@ -974,18 +1006,18 @@ export class AgentService {
 		if (!retained || retained.status === 'draft') return null;
 		if (retained.ownership.kind === 'module') {
 			const definition = this.#moduleAgents.get(id);
-			const binding = this.repository.getModuleAgentBinding(
+			const binding = await this.repository.getModuleAgentBinding(
 				trustedTenantId,
 				id,
 			);
 			if (
 				!definition ||
 				!binding ||
-				this.#moduleAgentRevisionUnavailableReason(
+				(await this.#moduleAgentRevisionUnavailableReason(
 					trustedTenantId,
 					retained,
 					binding,
-				)
+				))
 			) {
 				return null;
 			}
@@ -995,15 +1027,16 @@ export class AgentService {
 				name: retained.name,
 				status: binding.status,
 				supportsStructuredOutput:
-					this.providerService?.supportsStructuredOutput(
+					(await this.providerService?.supportsStructuredOutput(
 						trustedTenantId,
 						retained.provider,
 						retained.model,
-					) ?? this.harness.providerSupportsStructuredOutput(retained.provider),
+					)) ??
+					this.harness.providerSupportsStructuredOutput(retained.provider),
 				allowedTools: retained.allowedTools,
 			};
 		}
-		const current = this.repository.getAgent(trustedTenantId, id);
+		const current = await this.repository.getAgent(trustedTenantId, id);
 		if (!current || current.status === 'draft') return null;
 		return {
 			agentId: retained.agentId,
@@ -1011,48 +1044,80 @@ export class AgentService {
 			name: retained.name,
 			status: current.status === 'active' ? retained.status : current.status,
 			supportsStructuredOutput:
-				this.providerService?.supportsStructuredOutput(
+				(await this.providerService?.supportsStructuredOutput(
 					trustedTenantId,
 					retained.provider,
 					retained.model,
-				) ?? this.harness.providerSupportsStructuredOutput(retained.provider),
+				)) ?? this.harness.providerSupportsStructuredOutput(retained.provider),
 			allowedTools: retained.allowedTools,
 		};
 	}
 
-	listRevisionReferences(tenantId: string): readonly {
-		readonly agentId: string;
-		readonly revision: number;
-		readonly name: string;
-		readonly status: Exclude<AgentDefinition['status'], 'draft'>;
-		readonly supportsStructuredOutput: boolean;
-		readonly allowedTools: readonly string[];
-	}[] {
+	async listRevisionReferences(tenantId: string): Promise<
+		readonly {
+			readonly agentId: string;
+			readonly revision: number;
+			readonly name: string;
+			readonly status: Exclude<AgentDefinition['status'], 'draft'>;
+			readonly supportsStructuredOutput: boolean;
+			readonly allowedTools: readonly string[];
+		}[]
+	> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
 		const current = new Map(
-			this.repository
-				.listAgents(trustedTenantId)
-				.map((agent) => [agent.id, agent] as const),
+			(await this.repository.listAgents(trustedTenantId)).map(
+				(agent) => [agent.id, agent] as const,
+			),
 		);
 		const moduleBindings = new Map(
-			this.repository
-				.listModuleAgentBindings(trustedTenantId)
-				.map((binding) => [binding.agentId, binding] as const),
+			(await this.repository.listModuleAgentBindings(trustedTenantId)).map(
+				(binding) => [binding.agentId, binding] as const,
+			),
 		);
-		return this.repository
-			.listAgentRevisions(trustedTenantId)
-			.flatMap((retained) => {
-				if (retained.ownership.kind === 'module') {
-					const definition = this.#moduleAgents.get(retained.agentId);
-					const binding = moduleBindings.get(retained.agentId);
+		const references = [];
+		for (const retained of await this.repository.listAgentRevisions(
+			trustedTenantId,
+		)) {
+			references.push(
+				...(await (async () => {
+					if (retained.ownership.kind === 'module') {
+						const definition = this.#moduleAgents.get(retained.agentId);
+						const binding = moduleBindings.get(retained.agentId);
+						if (
+							!definition ||
+							!binding ||
+							(await this.#moduleAgentRevisionUnavailableReason(
+								trustedTenantId,
+								retained,
+								binding,
+							))
+						) {
+							return [];
+						}
+						return [
+							{
+								agentId: retained.agentId,
+								revision: retained.revision,
+								name: retained.name,
+								status: binding.status,
+								supportsStructuredOutput:
+									(await this.providerService?.supportsStructuredOutput(
+										trustedTenantId,
+										retained.provider,
+										retained.model,
+									)) ??
+									this.harness.providerSupportsStructuredOutput(
+										retained.provider,
+									),
+								allowedTools: retained.allowedTools,
+							},
+						];
+					}
+					const agent = current.get(retained.agentId);
 					if (
-						!definition ||
-						!binding ||
-						this.#moduleAgentRevisionUnavailableReason(
-							trustedTenantId,
-							retained,
-							binding,
-						)
+						!agent ||
+						agent.status === 'draft' ||
+						retained.status === 'draft'
 					) {
 						return [];
 					}
@@ -1061,41 +1126,24 @@ export class AgentService {
 							agentId: retained.agentId,
 							revision: retained.revision,
 							name: retained.name,
-							status: binding.status,
+							status:
+								agent.status === 'active' ? retained.status : agent.status,
 							supportsStructuredOutput:
-								this.providerService?.supportsStructuredOutput(
+								(await this.providerService?.supportsStructuredOutput(
 									trustedTenantId,
 									retained.provider,
 									retained.model,
-								) ??
+								)) ??
 								this.harness.providerSupportsStructuredOutput(
 									retained.provider,
 								),
 							allowedTools: retained.allowedTools,
 						},
 					];
-				}
-				const agent = current.get(retained.agentId);
-				if (!agent || agent.status === 'draft' || retained.status === 'draft') {
-					return [];
-				}
-				return [
-					{
-						agentId: retained.agentId,
-						revision: retained.revision,
-						name: retained.name,
-						status: agent.status === 'active' ? retained.status : agent.status,
-						supportsStructuredOutput:
-							this.providerService?.supportsStructuredOutput(
-								trustedTenantId,
-								retained.provider,
-								retained.model,
-							) ??
-							this.harness.providerSupportsStructuredOutput(retained.provider),
-						allowedTools: retained.allowedTools,
-					},
-				];
-			});
+				})()),
+			);
+		}
+		return references;
 	}
 
 	async enqueueRevisionRun(
@@ -1178,7 +1226,7 @@ export class AgentService {
 			JSON.stringify(candidate.toolGrants) ===
 				JSON.stringify(requestedToolGrants) &&
 			JSON.stringify(candidate.outputContract) === JSON.stringify(contract);
-		const existing = this.repository.findRunByIdempotencyKey(
+		const existing = await this.repository.findRunByIdempotencyKey(
 			trustedTenantId,
 			idempotencyKey,
 		);
@@ -1192,7 +1240,7 @@ export class AgentService {
 			}
 			return { runId: existing.id, created: false };
 		}
-		const retained = this.repository.getAgentRevision(
+		const retained = await this.repository.getAgentRevision(
 			trustedTenantId,
 			agentId,
 			input.revision,
@@ -1207,7 +1255,7 @@ export class AgentService {
 		let currentStatus: AgentDefinition['status'];
 		if (retained.ownership.kind === 'module') {
 			const definition = this.#moduleAgents.get(agentId);
-			const binding = this.repository.getModuleAgentBinding(
+			const binding = await this.repository.getModuleAgentBinding(
 				trustedTenantId,
 				agentId,
 			);
@@ -1218,7 +1266,7 @@ export class AgentService {
 					404,
 				);
 			}
-			const unavailable = this.#moduleAgentRevisionUnavailableReason(
+			const unavailable = await this.#moduleAgentRevisionUnavailableReason(
 				trustedTenantId,
 				retained,
 				binding,
@@ -1232,7 +1280,7 @@ export class AgentService {
 			}
 			currentStatus = binding.status;
 		} else {
-			const current = this.repository.getAgent(trustedTenantId, agentId);
+			const current = await this.repository.getAgent(trustedTenantId, agentId);
 			if (!current) {
 				throw new AgentServiceError(
 					'AGENT_REVISION_NOT_FOUND',
@@ -1253,11 +1301,11 @@ export class AgentService {
 			);
 		}
 		const supportsStructuredOutput =
-			this.providerService?.supportsStructuredOutput(
+			(await this.providerService?.supportsStructuredOutput(
 				trustedTenantId,
 				retained.provider,
 				retained.model,
-			) ?? this.harness.providerSupportsStructuredOutput(retained.provider);
+			)) ?? this.harness.providerSupportsStructuredOutput(retained.provider);
 		if (contract.kind === 'json-schema' && !supportsStructuredOutput) {
 			throw new AgentServiceError(
 				'STRUCTURED_OUTPUT_UNSUPPORTED',
@@ -1281,17 +1329,19 @@ export class AgentService {
 			requestedToolGrants,
 			permissionSnapshot,
 		);
-		const missingSkillGrant = retained.skills
-			.flatMap((skill) => skill.requiredTools)
+		const missingProcedureGrant = retained.procedures
+			.flatMap((procedure) => procedure.requiredTools)
 			.find((tool) => !effectiveToolGrants.includes(tool));
-		if (missingSkillGrant) {
+		if (missingProcedureGrant) {
+			/* The code is a stable API identifier and keeps its procedure-era spelling
+			   for the same reason the permission ids do. */
 			throw new AgentServiceError(
 				'SKILL_TOOL_GRANT_REQUIRED',
-				`Skill requires permission for tool ${missingSkillGrant}.`,
+				`Procedure requires permission for tool ${missingProcedureGrant}.`,
 				403,
 			);
 		}
-		const refusal = this.budget?.check(
+		const refusal = await this.budget?.check(
 			trustedTenantId,
 			retained.agentId,
 			this.now(),
@@ -1316,15 +1366,17 @@ export class AgentService {
 		);
 		const instructions = [
 			resolvedInstructions,
-			...retained.skills.map(
-				(skill) =>
-					`\n[Approved skill: ${skill.key} revision ${skill.revision}]\n${skill.instructions}`,
+			/* Model-facing wording is deliberately unchanged: the rename is a product
+			   and API contract change, not a change to what an agent reads. */
+			...retained.procedures.map(
+				(procedure) =>
+					`\n[Approved procedure: ${procedure.key} revision ${procedure.revision}]\n${procedure.instructions}`,
 			),
 		].join('\n');
 		if (instructions.length > 40_000) {
 			throw new AgentServiceError(
 				'AGENT_INSTRUCTIONS_TOO_LARGE',
-				'Agent and skill instructions exceed the 40000 character execution limit.',
+				'Agent and procedure instructions exceed the 40000 character execution limit.',
 				409,
 			);
 		}
@@ -1349,12 +1401,12 @@ export class AgentService {
 			authorizationSubject,
 			permissionSnapshot,
 			toolGrants: requestedToolGrants,
-			skillSnapshots: retained.skills.map((skill) => ({
-				id: skill.id,
-				key: skill.key,
-				name: skill.name,
-				revision: skill.revision,
-				requiredTools: skill.requiredTools,
+			procedureSnapshots: retained.procedures.map((procedure) => ({
+				id: procedure.id,
+				key: procedure.key,
+				name: procedure.name,
+				revision: procedure.revision,
+				requiredTools: procedure.requiredTools,
 			})),
 			usage: null,
 			failureCode: null,
@@ -1366,7 +1418,7 @@ export class AgentService {
 			leaseExpiresAt: null,
 		};
 		try {
-			this.repository.enqueueRun(
+			await this.repository.enqueueRun(
 				{
 					run,
 					definition: {
@@ -1401,7 +1453,7 @@ export class AgentService {
 			);
 		} catch (error) {
 			if (error instanceof DuplicateRunIdempotencyKeyError) {
-				const raced = this.repository.findRunByIdempotencyKey(
+				const raced = await this.repository.findRunByIdempotencyKey(
 					trustedTenantId,
 					idempotencyKey,
 				);
@@ -1420,12 +1472,12 @@ export class AgentService {
 		return { runId: run.id, created: true };
 	}
 
-	getWorkflowRun(
+	async getWorkflowRun(
 		tenantId: string,
 		workflowRunId: string,
 		runId: string,
-	): AgentRunDetail | null {
-		const run = this.repository.getRun(
+	): Promise<AgentRunDetail | null> {
+		const run = await this.repository.getRun(
 			bounded(tenantId, 'tenantId', 1, 128),
 			bounded(runId, 'runId', 1, 128),
 		);
@@ -1435,7 +1487,7 @@ export class AgentService {
 			: null;
 	}
 
-	readWorkflowRunEvents(
+	async readWorkflowRunEvents(
 		tenantId: string,
 		workflowRunId: string,
 		runId: string,
@@ -1447,13 +1499,13 @@ export class AgentService {
 				'afterSequence must be a non-negative integer.',
 			);
 		}
-		const run = this.getWorkflowRun(tenantId, workflowRunId, runId);
+		const run = await this.getWorkflowRun(tenantId, workflowRunId, runId);
 		return run
-			? this.repository.listRunEvents(run.tenantId, run.id, afterSequence)
+			? await this.repository.listRunEvents(run.tenantId, run.id, afterSequence)
 			: [];
 	}
 
-	cancelWorkflowRun(
+	async cancelWorkflowRun(
 		context: {
 			readonly tenantId: string;
 			readonly workflowRunId: string;
@@ -1461,27 +1513,35 @@ export class AgentService {
 			readonly permissionSnapshot: readonly string[];
 		},
 		runId: string,
-	): boolean {
+	): Promise<boolean> {
 		const actor = normalizeActor(context.actor);
 		if (!actor) {
 			throw new AgentServiceError('INVALID_ACTOR', 'Actor is invalid.');
 		}
-		const run = this.getWorkflowRun(
+		const run = await this.getWorkflowRun(
 			context.tenantId,
 			context.workflowRunId,
 			runId,
 		);
 		if (!run) return false;
 		if (TERMINAL_STATUSES.includes(run.status)) return false;
-		this.cancelRun(context.tenantId, actor, context.permissionSnapshot, run.id);
+		await this.cancelRun(
+			context.tenantId,
+			actor,
+			context.permissionSnapshot,
+			run.id,
+		);
 		return true;
 	}
 
 	/* The served shape of one run: stored events folded into timeline entries.
 	   Every reader goes through here, so the run screen and any other consumer
 	   see the same grouping and the same ceiling. */
-	getRunTimeline(tenantId: string, runId: string): AgentRunTimeline {
-		const { events, ...run } = this.getRun(tenantId, runId);
+	async getRunTimeline(
+		tenantId: string,
+		runId: string,
+	): Promise<AgentRunTimeline> {
+		const { events, ...run } = await this.getRun(tenantId, runId);
 		return { ...run, timeline: groupRunTimeline(events) };
 	}
 
@@ -1533,7 +1593,7 @@ export class AgentService {
 				JSON.stringify(requestedToolGrants) &&
 			candidate.outputContract.kind === 'text';
 		if (idempotencyKey) {
-			const existing = this.repository.findRunByIdempotencyKey(
+			const existing = await this.repository.findRunByIdempotencyKey(
 				trustedTenantId,
 				idempotencyKey,
 			);
@@ -1548,7 +1608,7 @@ export class AgentService {
 				return { run: existing, created: false };
 			}
 		}
-		const agent = this.#currentExecutionAgent(trustedTenantId, agentId);
+		const agent = await this.#currentExecutionAgent(trustedTenantId, agentId);
 		if (!agent) {
 			throw new AgentServiceError('AGENT_NOT_FOUND', 'Agent not found.', 404);
 		}
@@ -1560,7 +1620,11 @@ export class AgentService {
 			);
 		}
 		this.assertToolsRegistered(agent.allowedTools);
-		const skills = this.resolveSkills(trustedTenantId, agent.skillIds, true);
+		const skills = await this.resolveSkills(
+			trustedTenantId,
+			agent.procedureIds,
+			true,
+		);
 		this.assertSkillToolsAllowed(skills, agent.allowedTools);
 		const invalidGrant = requestedToolGrants.find(
 			(tool) => !agent.allowedTools.includes(tool),
@@ -1578,7 +1642,7 @@ export class AgentService {
 			permissions,
 		);
 		const missingSkillGrant = skills
-			.flatMap((skill) => skill.requiredTools)
+			.flatMap((procedure) => procedure.requiredTools)
 			.find((tool) => !effectiveToolGrants.includes(tool));
 		if (missingSkillGrant) {
 			throw new AgentServiceError(
@@ -1587,7 +1651,11 @@ export class AgentService {
 				403,
 			);
 		}
-		const refusal = this.budget?.check(trustedTenantId, agent.id, this.now());
+		const refusal = await this.budget?.check(
+			trustedTenantId,
+			agent.id,
+			this.now(),
+		);
 		if (refusal) {
 			throw new AgentServiceError(refusal.code, refusal.message, 409);
 		}
@@ -1597,13 +1665,13 @@ export class AgentService {
 			agent.model,
 			identity,
 		);
-		const skillSnapshots: readonly AgentSkillSnapshot[] = skills.map(
-			(skill) => ({
-				id: skill.id,
-				key: skill.key,
-				name: skill.name,
-				revision: skill.revision,
-				requiredTools: skill.requiredTools,
+		const procedureSnapshots: readonly AgentProcedureSnapshot[] = skills.map(
+			(procedure) => ({
+				id: procedure.id,
+				key: procedure.key,
+				name: procedure.name,
+				revision: procedure.revision,
+				requiredTools: procedure.requiredTools,
 			}),
 		);
 		/* The stored definition keeps the raw {{ }} template; the run snapshot
@@ -1621,14 +1689,14 @@ export class AgentService {
 		const instructions = [
 			resolvedInstructions,
 			...skills.map(
-				(skill) =>
-					`\n[Approved skill: ${skill.key} revision ${skill.revision}]\n${skill.instructions}`,
+				(procedure) =>
+					`\n[Approved procedure: ${procedure.key} revision ${procedure.revision}]\n${procedure.instructions}`,
 			),
 		].join('\n');
 		if (instructions.length > 40_000) {
 			throw new AgentServiceError(
 				'AGENT_INSTRUCTIONS_TOO_LARGE',
-				'Agent and skill instructions exceed the 40000 character execution limit.',
+				'Agent and procedure instructions exceed the 40000 character execution limit.',
 				409,
 			);
 		}
@@ -1658,7 +1726,7 @@ export class AgentService {
 						: null,
 			permissionSnapshot: permissions,
 			toolGrants: requestedToolGrants,
-			skillSnapshots,
+			procedureSnapshots,
 			usage: null,
 			failureCode: null,
 			failureMessage: null,
@@ -1670,7 +1738,7 @@ export class AgentService {
 		};
 		let queued: AgentRun;
 		try {
-			queued = this.repository.enqueueRun(
+			queued = await this.repository.enqueueRun(
 				{
 					run,
 					definition: {
@@ -1706,7 +1774,7 @@ export class AgentService {
 			/* Two callers raced past the lookup with the same key; the row that
 			   won is the run they both asked for. */
 			if (error instanceof DuplicateRunIdempotencyKeyError && idempotencyKey) {
-				const existing = this.repository.findRunByIdempotencyKey(
+				const existing = await this.repository.findRunByIdempotencyKey(
 					trustedTenantId,
 					idempotencyKey,
 				);
@@ -1727,17 +1795,17 @@ export class AgentService {
 
 	/* The requester may cancel their own run; a definitions manager may cancel
 	   any run in the tenant. */
-	cancelRun(
+	async cancelRun(
 		tenantId: string,
 		actorInput: Actor | string,
 		permissionSnapshot: readonly string[],
 		runId: string,
-	): AgentRunTimeline {
+	): Promise<AgentRunTimeline> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
 		const actor = requestedActor(actorInput);
 		const identity = actor.id;
 		const id = bounded(runId, 'runId', 1, 128);
-		const run = this.getRun(trustedTenantId, id);
+		const run = await this.getRun(trustedTenantId, id);
 		if (
 			!actorsEqual(run.requestedActor, actor) &&
 			!permissionSnapshot.includes(AGENT_PERMISSIONS.definitionsManage)
@@ -1756,7 +1824,7 @@ export class AgentService {
 			);
 		}
 		const cancelledAt = this.now();
-		const previousStatus = this.repository.cancelRun(
+		const previousStatus = await this.repository.cancelRun(
 			trustedTenantId,
 			id,
 			`Cancelled by ${identity}.`,
@@ -1779,14 +1847,14 @@ export class AgentService {
 			);
 		}
 		this.worker.cancel(id);
-		return this.getRunTimeline(trustedTenantId, id);
+		return await this.getRunTimeline(trustedTenantId, id);
 	}
 
-	private assertProviderConfigured(
+	private async assertProviderConfigured(
 		tenantId: string,
 		providerId: string,
 		modelId: string,
-	): void {
+	): Promise<void> {
 		if (!this.providerService) {
 			if (!this.harness.providers().includes(providerId)) {
 				throw new AgentServiceError(
@@ -1797,7 +1865,7 @@ export class AgentService {
 			}
 			return;
 		}
-		const provider = this.providerService.get(tenantId, providerId);
+		const provider = await this.providerService.get(tenantId, providerId);
 		if (!provider) {
 			throw new AgentServiceError(
 				'PROVIDER_NOT_AVAILABLE',
@@ -1826,11 +1894,11 @@ export class AgentService {
 		}
 	}
 
-	#moduleAgentUnavailableReason(
+	async #moduleAgentUnavailableReason(
 		tenantId: string,
 		definition: ModuleAgentDefinition,
 		binding: ModuleAgentBinding,
-	): string | null {
+	): Promise<string | null> {
 		const missingTool = binding.enabledTools.find(
 			(tool) =>
 				!definition.allowedTools.includes(tool) ||
@@ -1838,9 +1906,13 @@ export class AgentService {
 		);
 		if (missingTool) return `Tool ${missingTool} is not available.`;
 		try {
-			this.assertProviderConfigured(tenantId, binding.provider, binding.model);
+			await this.assertProviderConfigured(
+				tenantId,
+				binding.provider,
+				binding.model,
+			);
 			if (binding.status === 'active' && this.providerService) {
-				this.providerService.assertUsable(
+				await this.providerService.assertUsable(
 					tenantId,
 					binding.provider,
 					binding.model,
@@ -1858,23 +1930,23 @@ export class AgentService {
 	   The mutable binding contributes availability only. Checking its current
 	   execution configuration here would silently move an old workflow to a
 	   newer binding and break the exact-revision contract. */
-	#moduleAgentRevisionUnavailableReason(
+	async #moduleAgentRevisionUnavailableReason(
 		tenantId: string,
 		revision: AgentDefinitionRevision,
 		binding: ModuleAgentBinding,
-	): string | null {
+	): Promise<string | null> {
 		const missingTool = revision.allowedTools.find(
 			(tool) => !this.harness.tools().includes(tool),
 		);
 		if (missingTool) return `Tool ${missingTool} is not available.`;
 		try {
-			this.assertProviderConfigured(
+			await this.assertProviderConfigured(
 				tenantId,
 				revision.provider,
 				revision.model,
 			);
 			if (binding.status === 'active' && this.providerService) {
-				this.providerService.assertUsable(
+				await this.providerService.assertUsable(
 					tenantId,
 					revision.provider,
 					revision.model,
@@ -1888,11 +1960,11 @@ export class AgentService {
 		}
 	}
 
-	#moduleAgentView(
+	async #moduleAgentView(
 		tenantId: string,
 		definition: ModuleAgentDefinition,
 		binding: ModuleAgentBinding | null,
-	): ModuleAgentView {
+	): Promise<ModuleAgentView> {
 		if (!binding) {
 			return {
 				id: definition.id,
@@ -1913,7 +1985,7 @@ export class AgentService {
 				ownership: definition.ownership,
 			};
 		}
-		const unavailableReason = this.#moduleAgentUnavailableReason(
+		const unavailableReason = await this.#moduleAgentUnavailableReason(
 			tenantId,
 			definition,
 			binding,
@@ -1938,15 +2010,18 @@ export class AgentService {
 		};
 	}
 
-	#currentExecutionAgent(
+	async #currentExecutionAgent(
 		tenantId: string,
 		agentId: string,
-	): AgentDefinition | null {
-		const tenantAgent = this.repository.getAgent(tenantId, agentId);
+	): Promise<AgentDefinition | null> {
+		const tenantAgent = await this.repository.getAgent(tenantId, agentId);
 		if (tenantAgent) return tenantAgent;
 		const definition = this.#moduleAgents.get(agentId);
 		if (!definition) return null;
-		const binding = this.repository.getModuleAgentBinding(tenantId, agentId);
+		const binding = await this.repository.getModuleAgentBinding(
+			tenantId,
+			agentId,
+		);
 		if (!binding) {
 			throw new AgentServiceError(
 				'MODULE_AGENT_UNCONFIGURED',
@@ -1954,7 +2029,7 @@ export class AgentService {
 				409,
 			);
 		}
-		const unavailable = this.#moduleAgentUnavailableReason(
+		const unavailable = await this.#moduleAgentUnavailableReason(
 			tenantId,
 			definition,
 			binding,
@@ -1972,7 +2047,7 @@ export class AgentService {
 			provider: binding.provider,
 			model: binding.model,
 			allowedTools: binding.enabledTools,
-			skillIds: [],
+			procedureIds: [],
 			maxSteps: definition.limits.maxSteps,
 			timeoutMs: definition.limits.timeoutMs,
 			temperature: definition.limits.temperature,
@@ -1986,8 +2061,11 @@ export class AgentService {
 		};
 	}
 
-	private requireAgent(tenantId: string, agentId: string): AgentDefinition {
-		const agent = this.repository.getAgent(
+	private async requireAgent(
+		tenantId: string,
+		agentId: string,
+	): Promise<AgentDefinition> {
+		const agent = await this.repository.getAgent(
 			bounded(tenantId, 'tenantId', 1, 128),
 			bounded(agentId, 'agentId', 1, 128),
 		);
@@ -1997,27 +2075,33 @@ export class AgentService {
 		return agent;
 	}
 
-	private requireSkill(tenantId: string, skillId: string): AgentSkill {
-		const skill = this.repository.getSkill(
+	private async requireSkill(
+		tenantId: string,
+		procedureId: string,
+	): Promise<AgentProcedure> {
+		const procedure = await this.repository.getProcedure(
 			bounded(tenantId, 'tenantId', 1, 128),
-			bounded(skillId, 'skillId', 1, 128),
+			bounded(procedureId, 'procedureId', 1, 128),
 		);
-		if (!skill) {
+		if (!procedure) {
 			throw new AgentServiceError(
 				'SKILL_NOT_FOUND',
-				'Agent skill not found.',
+				'Agent procedure not found.',
 				404,
 			);
 		}
-		return skill;
+		return procedure;
 	}
 
-	private assertSkillCanArchive(tenantId: string, skillId: string): void {
-		const usage = this.repository.skillUsage(tenantId, skillId);
+	private async assertSkillCanArchive(
+		tenantId: string,
+		procedureId: string,
+	): Promise<void> {
+		const usage = await this.repository.procedureUsage(tenantId, procedureId);
 		if (usage.activeDefinitions > 0) {
 			throw new AgentServiceError(
 				'SKILL_IN_USE',
-				'Remove this skill from every active agent before archiving it.',
+				'Remove this procedure from every active agent before archiving it.',
 				409,
 			);
 		}
@@ -2035,42 +2119,47 @@ export class AgentService {
 		}
 	}
 
-	private resolveSkills(
+	private async resolveSkills(
 		tenantId: string,
-		skillIds: readonly string[],
+		procedureIds: readonly string[],
 		requireActive: boolean,
-	): readonly AgentSkill[] {
-		return skillIds.map((skillId) => {
-			const skill = this.repository.getSkill(tenantId, skillId);
-			if (!skill) {
+	): Promise<readonly AgentProcedure[]> {
+		const procedures: AgentProcedure[] = [];
+		for (const procedureId of procedureIds) {
+			const procedure = await this.repository.getProcedure(
+				tenantId,
+				procedureId,
+			);
+			if (!procedure) {
 				throw new AgentServiceError(
 					'SKILL_NOT_FOUND',
-					'Attached agent skill was not found in the active tenant.',
+					'Attached agent procedure was not found in the active tenant.',
 					409,
 				);
 			}
-			if (requireActive && skill.status !== 'active') {
+			if (requireActive && procedure.status !== 'active') {
 				throw new AgentServiceError(
 					'SKILL_NOT_ACTIVE',
-					`Skill ${skill.key} must be active before the agent can run.`,
+					`Skill ${procedure.key} must be active before the agent can run.`,
 					409,
 				);
 			}
-			return skill;
-		});
+			procedures.push(procedure);
+		}
+		return procedures;
 	}
 
 	private assertSkillToolsAllowed(
-		skills: readonly AgentSkill[],
+		skills: readonly AgentProcedure[],
 		allowedTools: readonly string[],
 	): void {
 		const unavailable = skills
-			.flatMap((skill) => skill.requiredTools)
+			.flatMap((procedure) => procedure.requiredTools)
 			.find((tool) => !allowedTools.includes(tool));
 		if (unavailable) {
 			throw new AgentServiceError(
 				'SKILL_TOOL_NOT_ALLOWED',
-				`Attached skill requires ${unavailable}, which the agent does not allow.`,
+				`Attached procedure requires ${unavailable}, which the agent does not allow.`,
 				409,
 			);
 		}

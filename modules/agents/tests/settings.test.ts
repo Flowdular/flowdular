@@ -8,7 +8,7 @@ import translationsEn from '../translations/en.json';
 import translationsPl from '../translations/pl.json';
 
 describe('agents.core module settings', () => {
-	it('declares a valid set of settings', () => {
+	it('declares a valid set of settings', async () => {
 		expect(AGENTS_MODULE_SETTINGS.moduleId).toBe('agents.core');
 		expect(Object.keys(AGENTS_MODULE_SETTINGS.settings).sort()).toEqual([
 			'agentMonthlyCostCapUsd',
@@ -34,10 +34,10 @@ describe('agents.core module settings', () => {
 		}
 	});
 
-	it('takes deployment defaults from the environment', () => {
+	it('takes deployment defaults from the environment', async () => {
 		const declaration = agentsModuleSettingsFromEnvironment({
-			CL_AGENT_WORKER_CONCURRENCY: '4',
-			CL_AGENT_PROVIDER_HOST_ALLOWLIST: 'models.example.com',
+			FD_AGENT_WORKER_CONCURRENCY: '4',
+			FD_AGENT_PROVIDER_HOST_ALLOWLIST: 'models.example.com',
 		});
 		expect(declaration.settings.workerConcurrency?.defaultValue).toBe(4);
 		expect(declaration.settings.providerHostAllowlist?.defaultValue).toBe(
@@ -48,11 +48,11 @@ describe('agents.core module settings', () => {
 		);
 	});
 
-	it('falls back to the environment without a settings runtime', () => {
+	it('falls back to the environment without a settings runtime', async () => {
 		const reader = agentSettings({
 			environment: {
-				CL_AGENT_WORKER_CONCURRENCY: '3',
-				CL_AGENT_PROVIDER_HOST_ALLOWLIST: 'a.example.com, B.example.com',
+				FD_AGENT_WORKER_CONCURRENCY: '3',
+				FD_AGENT_PROVIDER_HOST_ALLOWLIST: 'a.example.com, B.example.com',
 			},
 		});
 		expect(reader.workerConcurrency()).toBe(3);
@@ -65,14 +65,14 @@ describe('agents.core module settings', () => {
 		expect(reader.defaultProvider('tenant-a')).toBe('');
 	});
 
-	it('reads live values from a settings runtime and survives its failures', () => {
+	it('reads live values from a settings runtime and survives its failures', async () => {
 		const values: Record<string, unknown> = {
 			workerConcurrency: 7,
 			providerHostAllowlist: 'live.example.com',
 			defaultMaxOutputTokens: 'not-a-number',
 		};
 		const reader = agentSettings({
-			environment: { CL_AGENT_WORKER_CONCURRENCY: '3' },
+			environment: { FD_AGENT_WORKER_CONCURRENCY: '3' },
 			settings: {
 				get: (tenantId: string, moduleId: string, key: string) => {
 					if (key === 'defaultModel') throw new Error('store offline');

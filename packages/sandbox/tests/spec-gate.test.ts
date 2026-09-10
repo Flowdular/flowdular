@@ -1,3 +1,6 @@
+import { REVIEW_RESPONSE, fixtureGates } from './support/auto-review.ts';
+import { runGates } from '../src/server/gates.ts';
+import { inspectAutoReview } from '../src/server/auto-review.ts';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +11,7 @@ import {
 	createCodingAgentRegistry,
 	type CodingAgentDriver,
 	type CodingAgentTurnRequest,
-} from '@coreloom/coding-agent';
+} from '@flowdular/coding-agent';
 import { DEFAULT_CONFIGURATION } from '../src/server/config.ts';
 import { createLocalDeliveryTarget } from '../src/server/delivery/index.ts';
 import type {
@@ -85,9 +88,9 @@ const CHANGED_SPEC = BASE_SPEC.replace(
 	);
 
 async function workspace(): Promise<string> {
-	const root = await mkdtemp(join(tmpdir(), 'coreloom-spec-'));
+	const root = await mkdtemp(join(tmpdir(), 'flowdular-spec-'));
 	await writeFile(
-		join(root, 'coreloom.json'),
+		join(root, 'flowdular.json'),
 		JSON.stringify({ schemaVersion: 1, modules: { enabled: [] } }),
 		'utf8',
 	);
@@ -102,7 +105,7 @@ async function workspace(): Promise<string> {
 	);
 	await writeFile(
 		join(root, 'modules', 'parties', 'package.json'),
-		`${JSON.stringify({ name: '@coreloom/module-parties' })}\n`,
+		`${JSON.stringify({ name: '@flowdular/module-parties' })}\n`,
 		'utf8',
 	);
 	await writeFile(
@@ -137,7 +140,11 @@ function editSession(root: string): Promise<SandboxSession> {
    that never ran. */
 function recordingDriver(
 	sink: { prompt: string; role: string },
-	options: { readonly file?: string; readonly content?: string } = {},
+	options: {
+		readonly file?: string;
+		readonly content?: string;
+		readonly closing?: string;
+	} = {},
 ): CodingAgentDriver {
 	return {
 		id: 'fake',
@@ -163,7 +170,7 @@ function recordingDriver(
 			}
 			yield {
 				type: 'assistant.message',
-				text: 'Done.\n\nHANDOFF: none - done',
+				text: options.closing ?? 'Done.\n\nHANDOFF: none - done',
 			};
 			yield {
 				type: 'turn.completed',
@@ -290,7 +297,7 @@ function api(runtime: SandboxRuntime) {
 			headers: {
 				host: '127.0.0.1:4320',
 				...(init.body !== undefined
-					? { 'content-type': 'application/json', 'x-coreloom-sandbox': '1' }
+					? { 'content-type': 'application/json', 'x-flowdular-sandbox': '1' }
 					: {}),
 			},
 			...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
@@ -832,5 +839,180 @@ describe('delivering a change', () => {
 			contextFor(root, approved.session),
 		);
 		expect(plan.modules[0]!.additions).toEqual([]);
+	});
+});
+
+describe('auto-review turn lifecycle', () => {
+	async function setup() {
+		const root = await workspace();
+		for (const skill of ['auto-review', 'module-update']) {
+			await mkdir(join(root, '.ai/skills', skill), { recursive: true });
+			await writeFile(
+				join(root, '.ai/skills', skill, 'SKILL.md'),
+				'# Fixture skill',
+			);
+		}
+		const session = await editSession(root);
+		await writeFile(draftSpecPath(root, session), CHANGED_SPEC);
+		const approved = (await approveSpecification(root, session)).session;
+		return {
+			root,
+			session: approved,
+			paths: sessionPaths(root, session.id, session.moduleSuffix),
+		};
+	}
+	function context(root: string, driver: CodingAgentDriver): TurnContext {
+		return {
+			...turnContext(root, driver),
+			executeGates: async ({ session, gates, modules }) => {
+				const deterministic = fixtureGates(
+					session,
+					gates.filter((id) => id !== 'auto-review'),
+				);
+				if (!gates.includes('auto-review')) return deterministic;
+				return [
+					...deterministic,
+					...(await runGates({
+						workspaceRoot: root,
+						paths: sessionPaths(root, session.id, session.moduleSuffix),
+						session,
+						gates: ['auto-review'],
+						...(modules ? { modules } : {}),
+					})),
+				];
+			},
+		};
+	}
+	it('routes implementation to review and only records an unchanged review turn', async () => {
+		const { root, session, paths } = await setup();
+		const implemented = await drive(
+			context(
+				root,
+				recordingDriver(
+					{ prompt: '', role: '' },
+					{ file: 'modules/parties/src/services/vat.ts' },
+				),
+			),
+			session.id,
+			{ message: 'Implement VAT', role: 'backend-engineer' },
+		);
+		expect(implemented.handoff.kind).toBe('continue');
+		expect(implemented.handoff.prompt).toContain('$auto-review');
+		const driver = recordingDriver(
+			{ prompt: '', role: '' },
+			{ closing: REVIEW_RESPONSE },
+		);
+		const checking: CodingAgentDriver = {
+			...driver,
+			async *run(request) {
+				expect(request.allowedPaths).toEqual([]);
+				expect(
+					await readFile(
+						join(
+							request.workspacePath,
+							'reference/auto-review-base/src/index.ts',
+						),
+						'utf8',
+					),
+				).toContain('parties = 1');
+				expect(request.systemInstruction).toContain(
+					'reference/skills/auto-review/SKILL.md',
+				);
+				yield* driver.run(request);
+			},
+		};
+		const reviewed = await drive(context(root, checking), session.id, {
+			message: implemented.handoff.prompt,
+			role: 'backend-engineer',
+		});
+		expect(reviewed.gates.every((gate) => gate.status === 'passed')).toBe(true);
+		expect((await inspectAutoReview(paths, session.modules[0]!)).passed).toBe(
+			true,
+		);
+		await drive(
+			context(
+				root,
+				recordingDriver(
+					{ prompt: '', role: '' },
+					{
+						file: 'modules/parties/src/services/vat.ts',
+						content: 'unauthorized review edit',
+						closing: REVIEW_RESPONSE,
+					},
+				),
+			),
+			session.id,
+			{ message: '$auto-review', role: 'backend-engineer' },
+		);
+		expect((await inspectAutoReview(paths, session.modules[0]!)).passed).toBe(
+			false,
+		);
+		expect(
+			await readFile(join(paths.modulePath, 'src/services/vat.ts'), 'utf8'),
+		).not.toContain('unauthorized');
+	});
+	it('preserves an intermediate handoff before requiring final review', async () => {
+		const { root, session } = await setup();
+		const outcome = await drive(
+			context(
+				root,
+				recordingDriver(
+					{ prompt: '', role: '' },
+					{
+						file: 'modules/parties/src/services/vat.ts',
+						closing: 'HANDOFF: frontend-engineer - implement the VAT field',
+					},
+				),
+			),
+			session.id,
+			{ message: 'Implement VAT storage', role: 'backend-engineer' },
+		);
+		expect(outcome.handoff.role).toBe('frontend-engineer');
+		expect(outcome.gates.some((gate) => gate.id === 'auto-review')).toBe(false);
+	});
+	it.each(['failed', 'skipped'] as const)(
+		'does not persist a passing model report when tests are %s',
+		async (status) => {
+			const { root, session, paths } = await setup();
+			const driver = recordingDriver(
+				{ prompt: '', role: '' },
+				{ closing: REVIEW_RESPONSE },
+			);
+			const original = context(root, driver);
+			await drive(
+				{
+					...original,
+					executeGates: async (input) =>
+						(await original.executeGates!(input)).map((gate) =>
+							gate.id === 'tests' ? { ...gate, status } : gate,
+						),
+				},
+				session.id,
+				{ message: '$auto-review', role: 'backend-engineer' },
+			);
+			expect((await inspectAutoReview(paths, session.modules[0]!)).passed).toBe(
+				false,
+			);
+		},
+	);
+	it('returns findings to an implementation phase without issuing a pass', async () => {
+		const { root, session, paths } = await setup();
+		const result = await drive(
+			context(
+				root,
+				recordingDriver(
+					{ prompt: '', role: '' },
+					{ closing: REVIEW_RESPONSE.replace('"pass"', '"fail"') },
+				),
+			),
+			session.id,
+			{ message: '$auto-review', role: 'backend-engineer' },
+		);
+		expect(result.handoff.kind).toBe('continue');
+		expect(result.handoff.prompt).toContain('$module-update');
+		expect(result.handoff.prompt).not.toContain('$auto-review');
+		expect((await inspectAutoReview(paths, session.modules[0]!)).passed).toBe(
+			false,
+		);
 	});
 });

@@ -16,7 +16,7 @@ export interface GitDeliveryConfiguration {
 	readonly reviewers: readonly string[];
 }
 
-/* The sandbox.delivery block of coreloom.json. Every field is optional there;
+/* The sandbox.delivery block of flowdular.json. Every field is optional there;
    this is the resolved shape the sandbox works with. */
 export interface DeliveryConfiguration {
 	readonly default: EjectTarget;
@@ -28,7 +28,7 @@ export interface DeliveryConfiguration {
 
 export const DEFAULT_DELIVERY_CONFIGURATION: DeliveryConfiguration = {
 	default: 'workspace',
-	targets: ['workspace', 'git-pr'],
+	targets: ['workspace', 'git-pr', 'official-modules'],
 	git: {
 		remote: 'origin',
 		repository: null,
@@ -42,7 +42,11 @@ export const DEFAULT_DELIVERY_CONFIGURATION: DeliveryConfiguration = {
 	maxChangedFiles: null,
 };
 
-const EJECT_TARGETS: readonly EjectTarget[] = ['workspace', 'git-pr'];
+const EJECT_TARGETS: readonly EjectTarget[] = [
+	'workspace',
+	'git-pr',
+	'official-modules',
+];
 /* Remote, branch, and prefix become git arguments; a value that starts with a
    dash would be read as an option. */
 const GIT_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
@@ -55,7 +59,7 @@ const GITHUB_ACCOUNT = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 function invalid(detail: string): SandboxSetupError {
 	return new SandboxSetupError(
 		'DELIVERY_CONFIG_INVALID',
-		`coreloom.json sandbox.delivery is not usable: ${detail}`,
+		`flowdular.json sandbox.delivery is not usable: ${detail}`,
 	);
 }
 
@@ -92,7 +96,7 @@ export function resolveDeliveryConfiguration(
 			block.targets.length === 0 ||
 			!block.targets.every(isEjectTarget)
 		) {
-			throw invalid('targets must list workspace and/or git-pr.');
+			throw invalid('targets must list workspace, git-pr or official-modules.');
 		}
 		targets = [...new Set(block.targets)];
 	}
@@ -169,7 +173,7 @@ export function resolveDeliveryConfiguration(
 	};
 }
 
-/* Read at request time, so an operator who edits coreloom.json does not have
+/* Read at request time, so an operator who edits flowdular.json does not have
    to restart the sandbox for the delivery settings to apply. */
 export async function readDeliveryConfiguration(
 	workspaceRoot: string,
@@ -177,7 +181,7 @@ export async function readDeliveryConfiguration(
 	let project: unknown;
 	try {
 		project = JSON.parse(
-			await readFile(join(workspaceRoot, 'coreloom.json'), 'utf8'),
+			await readFile(join(workspaceRoot, 'flowdular.json'), 'utf8'),
 		);
 	} catch {
 		return DEFAULT_DELIVERY_CONFIGURATION;

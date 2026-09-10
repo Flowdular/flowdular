@@ -1,3 +1,4 @@
+import { applicationPath } from './routing.ts';
 import { cell, createStore } from 'segment-state';
 
 export type ShellView = string;
@@ -17,9 +18,13 @@ export function toggleNavigationGroup(
 }
 
 export function shellViewFromUrl(value: string): ShellView {
-	const pathname = new URL(value, 'https://coreloom.local').pathname;
+	const pathname = new URL(value, 'https://flowdular.local').pathname;
 	const segments = pathname.split('/').filter(Boolean);
-	return (segments[0] === 'app' ? segments[2] : segments[0]) ?? 'overview';
+	return (
+		(segments[0] === applicationPath().slice(1) || segments[0] === 'app'
+			? segments[2]
+			: segments[0]) ?? 'overview'
+	);
 }
 
 /* Canonical workspace URLs live below /app. Slug-first and view-only links are
@@ -28,9 +33,9 @@ export function shellLocationFromUrl(
 	value: string,
 	knownWorkspaceSlugs: readonly string[],
 ): ShellLocation {
-	const pathname = new URL(value, 'https://coreloom.local').pathname;
+	const pathname = new URL(value, 'https://flowdular.local').pathname;
 	const segments = pathname.split('/').filter(Boolean);
-	if (segments[0] === 'app') {
+	if (segments[0] === applicationPath().slice(1) || segments[0] === 'app') {
 		const workspace = segments[1];
 		if (workspace !== undefined && knownWorkspaceSlugs.includes(workspace)) {
 			return { workspaceSlug: workspace, view: segments[2] ?? 'overview' };

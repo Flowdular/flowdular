@@ -28,32 +28,10 @@ export { createPlatformCapabilityRegistry } from './capability-registry.ts';
 export type { PlatformCapabilityRegistry } from './capability-registry.ts';
 export { RegistryError } from './errors.ts';
 export {
-	MIGRATION_LEDGER_TABLE,
-	MigrationError,
-	moduleMigrationChecksum,
-	moduleMigrationStatus,
-	runModuleMigrations,
-} from './migrations.ts';
-export type {
-	MigrationDatabase,
-	MigrationErrorCode,
-	MigrationParameter,
-	MigrationStatement,
-	ModuleMigration,
-	ModuleMigrationAction,
-	ModuleMigrationResult,
-	ModuleMigrationState,
-	ModuleMigrationStatusEntry,
-	RunModuleMigrationsOptions,
-} from './migrations.ts';
-export {
-	appendHistory,
 	DEFAULT_HISTORY_PAGE,
 	diffFields,
-	inTransaction,
 	MAX_HISTORY_PAGE,
 	parseHistoryRequest,
-	queryHistory,
 } from './record-history.ts';
 export type {
 	FieldChange,
@@ -102,3 +80,11 @@ export type {
 	VariableSourceResolutionContext,
 	VariableSourceResolver,
 } from './variable-registry.ts';
+
+export {
+	PLATFORM_API_VERSION,
+	assertModuleCompatibility,
+	assertModuleDependency,
+	satisfiesModuleVersion,
+	compareModuleVersions,
+} from './module-compatibility.ts';

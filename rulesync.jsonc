@@ -1,0 +1,11 @@
+{
+	"$schema": "https://github.com/dyoshikawa/rulesync/releases/latest/download/config-schema.json",
+	"inputRoots": [".ai"],
+	"outputRoots": ["."],
+	"targets": ["codexcli", "claudecode"],
+	"features": ["rules", "skills"],
+	"delete": true,
+	"verbose": false,
+	"silent": false,
+	"global": false,
+}

@@ -8,7 +8,7 @@ import {
 	createCodingAgentRegistry,
 	type CodingAgentDriver,
 	type CodingAgentTurnRequest,
-} from '@coreloom/coding-agent';
+} from '@flowdular/coding-agent';
 import { DEFAULT_CONFIGURATION } from '../src/server/config.ts';
 import type { PreviewRuntime } from '../src/server/preview-runtime.ts';
 import { createSandboxRoutes } from '../src/server/routes.ts';
@@ -21,11 +21,12 @@ import {
 	updateSession,
 } from '../src/server/sessions.ts';
 import { hashSpec } from '../src/server/spec.ts';
+import { settledSession } from './settle.ts';
 
 async function workspace(): Promise<string> {
-	const root = await mkdtemp(join(tmpdir(), 'coreloom-routes-'));
+	const root = await mkdtemp(join(tmpdir(), 'flowdular-routes-'));
 	await writeFile(
-		join(root, 'coreloom.json'),
+		join(root, 'flowdular.json'),
 		JSON.stringify({ schemaVersion: 1, modules: { enabled: [] } }),
 		'utf8',
 	);
@@ -163,7 +164,7 @@ function api(runtime: SandboxRuntime, port = 4320) {
 		const headers: Record<string, string> = {
 			host: '127.0.0.1:4320',
 			...(init.body !== undefined
-				? { 'content-type': 'application/json', 'x-coreloom-sandbox': '1' }
+				? { 'content-type': 'application/json', 'x-flowdular-sandbox': '1' }
 				: {}),
 		};
 		for (const [name, value] of Object.entries(init.headers ?? {})) {
@@ -216,6 +217,156 @@ async function readSse(
 }
 
 describe('sandbox route security', () => {
+	it('isolates dashboard, transcript, actions and preview by account, tenant and platform', async () => {
+		const root = await workspace();
+		const runtime = fakeRuntime(
+			root,
+			fakeDriver({ handoff: 'HANDOFF: none - done' }),
+			'self-hosted',
+		);
+		const authority = runtime.connection().authority!;
+		runtime.browserSession = (id) =>
+			id
+				? {
+						id,
+						token: 'test',
+						createdAt: Date.now(),
+						authority: {
+							...authority,
+							principal: {
+								...authority.principal,
+								accountId: id === 'other-account' ? 'other' : 'a',
+								tenantId: id === 'other-tenant' ? 'other' : 't',
+							},
+						},
+					}
+				: null;
+		const call = api(runtime);
+		const session = await sessionFor(root);
+		await updateSession(root, session.id, {
+			owner: {
+				platformUrl: runtime.configuration().platformUrl,
+				accountId: 'a',
+				tenantId: 't',
+			},
+		});
+		for (const identity of ['other-account', 'other-tenant']) {
+			const headers = { cookie: `coreloom_sandbox=${identity}` };
+			const state = (await (
+				await call('GET', '/sandbox/api/state', { headers })
+			).json()) as {
+				sessions: unknown[];
+				dashboard: { rows: unknown[]; usage: { totalTokens: number } };
+				running: string[];
+			};
+			expect(state.sessions).toEqual([]);
+			expect(state.dashboard.rows).toEqual([]);
+			expect(state.dashboard.usage.totalTokens).toBe(0);
+			for (const [method, suffix] of [
+				['GET', ''],
+				['GET', '/turn/stream'],
+				['GET', '/preview'],
+				['GET', '/spec'],
+				['POST', '/approve'],
+				['POST', '/reject'],
+				['POST', '/delete'],
+				['POST', '/stop'],
+				['POST', '/restore'],
+				['POST', '/turn'],
+			] as const) {
+				const response = await call(
+					method,
+					`/sandbox/api/sessions/${session.id}${suffix}`,
+					{ headers, ...(method === 'POST' ? { body: {} } : {}) },
+				);
+				expect(response.status, method + suffix).toBe(404);
+			}
+			const previewResponse = await call('GET', '/api/booking/items', {
+				headers: {
+					cookie: `${headers.cookie}; coreloom_preview_session=${session.id}`,
+					referer: `http://127.0.0.1:4320/preview/${session.id}`,
+				},
+			});
+			expect(previewResponse.status).toBe(404);
+		}
+		const ownHeaders = { cookie: 'coreloom_sandbox=owner' };
+		expect(
+			(
+				await call('GET', `/sandbox/api/sessions/${session.id}`, {
+					headers: ownHeaders,
+				})
+			).status,
+		).toBe(200);
+		await updateSession(root, session.id, {
+			owner: {
+				platformUrl: 'https://other.example',
+				accountId: 'a',
+				tenantId: 't',
+			},
+		});
+		expect(
+			(
+				await call('GET', `/sandbox/api/sessions/${session.id}`, {
+					headers: ownHeaders,
+				})
+			).status,
+		).toBe(404);
+	});
+
+	it('records the real operator and planner usage, and preserves usage when an idea is rejected or restored', async () => {
+		const root = await workspace();
+		const call = api(
+			fakeRuntime(root, fakeDriver({ handoff: 'HANDOFF: none - done' })),
+		);
+		const created = await call('POST', '/sandbox/api/sessions', {
+			body: {
+				brief: 'Build room booking for our office.',
+				driver: 'fake',
+				owner: { accountId: 'forged' },
+			},
+		});
+		expect(created.status).toBe(201);
+		const { session } = (await created.json()) as {
+			session: { id: string; owner: { accountId: string; tenantId: string } };
+		};
+		expect(session.owner.accountId).toBe('a');
+		expect(session.owner.tenantId).toBe('t');
+		const snapshot = async () =>
+			(await (await call('GET', '/sandbox/api/state')).json()) as {
+				dashboard: {
+					counts: { rejected: number };
+					usage: { totalTokens: number };
+					rows: { status: string }[];
+				};
+			};
+		expect((await snapshot()).dashboard.usage.totalTokens).toBe(2);
+		expect(
+			(
+				await call('POST', `/sandbox/api/sessions/${session.id}/reject`, {
+					body: {},
+				})
+			).status,
+		).toBe(200);
+		expect((await snapshot()).dashboard.counts.rejected).toBe(1);
+		expect((await snapshot()).dashboard.usage.totalTokens).toBe(2);
+		expect(
+			(
+				await call('POST', `/sandbox/api/sessions/${session.id}/turn`, {
+					body: { message: 'Do more', role: 'auto' },
+				})
+			).status,
+		).toBe(409);
+		expect(
+			(
+				await call('POST', `/sandbox/api/sessions/${session.id}/restore`, {
+					body: {},
+				})
+			).status,
+		).toBe(200);
+		expect((await snapshot()).dashboard.counts.rejected).toBe(0);
+		expect((await snapshot()).dashboard.usage.totalTokens).toBe(2);
+	});
+
 	it('rejects a percent-encoded traversal id before touching the disk', async () => {
 		const root = await workspace();
 		await writeFile(join(root, 'keep.txt'), 'keep');
@@ -234,7 +385,7 @@ describe('sandbox route security', () => {
 			((await response.json()) as { error: { code: string } }).error.code,
 		).toBe('INVALID_SESSION_ID');
 		expect(await readFile(join(root, 'keep.txt'), 'utf8')).toBe('keep');
-		await expect(stat(join(root, 'coreloom.json'))).resolves.toBeDefined();
+		await expect(stat(join(root, 'flowdular.json'))).resolves.toBeDefined();
 	});
 
 	it('refuses a mutation without the sandbox header or from another site', async () => {
@@ -247,13 +398,13 @@ describe('sandbox route security', () => {
 			'POST',
 			`/sandbox/api/sessions/${session.id}/stop`,
 			{
-				headers: { 'x-coreloom-sandbox': undefined },
+				headers: { 'x-flowdular-sandbox': undefined },
 				body: {},
 			},
 		);
 		expect(bare.status).toBe(403);
 		const missingHeader = await call('POST', '/sandbox/api/config', {
-			headers: { 'x-coreloom-sandbox': '' },
+			headers: { 'x-flowdular-sandbox': '' },
 			body: { driver: 'fake' },
 		});
 		expect(missingHeader.status).toBe(403);
@@ -334,7 +485,7 @@ describe('sandbox route security', () => {
 				githubRemote: 'upstream',
 				githubRepository: 'example/octane',
 				githubBaseBranch: 'develop',
-				githubBranchPrefix: 'coreloom',
+				githubBranchPrefix: 'flowdular',
 				githubMode: 'fork',
 				githubForkOwner: 'octocat',
 				githubReviewers: ['reviewer-one'],
@@ -349,7 +500,7 @@ describe('sandbox route security', () => {
 			remote: 'upstream',
 			repository: 'example/octane',
 			baseBranch: 'develop',
-			branchPrefix: 'coreloom',
+			branchPrefix: 'flowdular',
 			mode: 'fork',
 			forkOwner: 'octocat',
 			reviewers: ['reviewer-one'],
@@ -452,7 +603,7 @@ describe('detached turns', () => {
 		);
 		await writeFile(
 			join(paths.workspace, 'modules', 'booking', 'package.json'),
-			JSON.stringify({ name: '@coreloom/module-booking', dependencies: {} }),
+			JSON.stringify({ name: '@flowdular/module-booking', dependencies: {} }),
 		);
 		const approvedText = await readFile(
 			join(paths.modulePath, 'spec', 'module.yaml'),
@@ -492,10 +643,7 @@ describe('detached turns', () => {
 				running: boolean;
 			};
 		expect((await view()).running).toBe(true);
-		const deadline = Date.now() + 10_000;
-		while ((await view()).running && Date.now() < deadline) {
-			await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
-		}
+		await settledSession(async () => (await view()).running);
 		expect((await view()).running).toBe(false);
 
 		const chat = await readChat(root, session);
@@ -544,7 +692,7 @@ describe('detached turns', () => {
 		);
 		await writeFile(
 			join(paths.modulePath, 'package.json'),
-			JSON.stringify({ name: '@coreloom/module-booking', dependencies: {} }),
+			JSON.stringify({ name: '@flowdular/module-booking', dependencies: {} }),
 		);
 		const approvedText = await readFile(
 			join(paths.modulePath, 'spec', 'module.yaml'),

@@ -1,8 +1,9 @@
+import { createPgliteTestProvider } from '@flowdular/database-testing';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createContext } from '@octanejs/app-core';
-import { createAuthRuntime } from '@coreloom/module-auth/server';
+import { createAuthRuntime } from '@flowdular/module-auth/server';
 import { describe, expect, it } from 'vitest';
 import { SYSTEM_PERMISSIONS } from '../src/acl/permissions.ts';
 import { systemModule } from '../src/index.ts';
@@ -10,7 +11,7 @@ import { createSystemRoutes } from '../src/server/endpoints.ts';
 
 function systemRoutes(workspaceRoot: string) {
 	const auth = createAuthRuntime({
-		databasePath: ':memory:',
+		databases: createPgliteTestProvider(),
 		secureCookies: false,
 		sessionTtlMs: 3_600_000,
 		allowSignUp: true,
@@ -25,9 +26,9 @@ function systemRoutes(workspaceRoot: string) {
 }
 
 function workspace(): string {
-	const root = mkdtempSync(join(tmpdir(), 'coreloom-system-'));
+	const root = mkdtempSync(join(tmpdir(), 'flowdular-system-'));
 	writeFileSync(
-		join(root, 'coreloom.json'),
+		join(root, 'flowdular.json'),
 		JSON.stringify({ modules: { enabled: ['system.core'] } }),
 	);
 	mkdirSync(join(root, 'modules/system/spec'), { recursive: true });
@@ -76,7 +77,7 @@ describe('system.core', () => {
 		expect(denied.status).toBe(401);
 
 		const context = createContext(request, {});
-		context.state.set('coreloom.auth.principal', {
+		context.state.set('flowdular.auth.principal', {
 			accountId: 'owner',
 			tenantId: 'tenant',
 			email: 'owner@example.com',
@@ -115,7 +116,7 @@ describe('system.core', () => {
 		expect(body.commands.enable).toContain('module enable');
 
 		const member = createContext(request, {});
-		member.state.set('coreloom.auth.principal', {
+		member.state.set('flowdular.auth.principal', {
 			accountId: 'member',
 			tenantId: 'tenant',
 			email: 'member@example.com',

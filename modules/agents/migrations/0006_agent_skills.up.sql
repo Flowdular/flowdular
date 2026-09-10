@@ -9,12 +9,12 @@ CREATE TABLE IF NOT EXISTS agent_skills (
   status TEXT NOT NULL CHECK (status IN ('draft', 'active', 'archived')),
   revision INTEGER NOT NULL CHECK (revision >= 1),
   created_by TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
+  created_at BIGINT NOT NULL,
   updated_by TEXT NOT NULL,
-  updated_at INTEGER NOT NULL,
+  updated_at BIGINT NOT NULL,
   UNIQUE (tenant_id, skill_key),
   UNIQUE (id, tenant_id)
-) STRICT;
+);
 CREATE INDEX IF NOT EXISTS agent_skills_tenant_name_idx ON agent_skills (tenant_id, name, id);
 CREATE TABLE IF NOT EXISTS agent_skill_assignments (
   agent_id TEXT NOT NULL REFERENCES agent_definitions(id) ON DELETE CASCADE,
@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS agent_skill_assignments (
   tenant_id TEXT NOT NULL,
   PRIMARY KEY (agent_id, skill_id),
   FOREIGN KEY (skill_id, tenant_id) REFERENCES agent_skills(id, tenant_id) ON DELETE CASCADE
-) STRICT;
+);
 CREATE TABLE IF NOT EXISTS agent_run_skill_snapshots (
   run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
   skill_id TEXT NOT NULL,
@@ -31,4 +31,14 @@ CREATE TABLE IF NOT EXISTS agent_run_skill_snapshots (
   skill_revision INTEGER NOT NULL,
   required_tools_json TEXT NOT NULL,
   PRIMARY KEY (run_id, skill_id)
-) STRICT;
+);
+ALTER TABLE agent_skills ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_skills FORCE ROW LEVEL SECURITY;
+CREATE POLICY agent_skills_tenant_policy ON agent_skills
+  USING (tenant_id = current_setting('coreloom.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+ALTER TABLE agent_skill_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_skill_assignments FORCE ROW LEVEL SECURITY;
+CREATE POLICY agent_skill_assignments_tenant_policy ON agent_skill_assignments
+  USING (tenant_id = current_setting('coreloom.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));

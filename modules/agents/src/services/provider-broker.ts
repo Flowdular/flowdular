@@ -1,4 +1,4 @@
-import type { AgentProvider } from '@coreloom/harness';
+import type { AgentProvider } from '@flowdular/harness';
 import type { AgentProviderService } from './provider-service.ts';
 import type { AgentRepository } from './repository.ts';
 import {
@@ -36,7 +36,7 @@ export class AgentProviderBroker {
 	async exchange(token: string): Promise<ExchangedAgentProvider> {
 		const claims = this.grants.verify(token);
 		const consumedAt = this.#now();
-		const consumed = this.repository.consumeRunGrant({
+		const consumed = await this.repository.consumeRunGrant({
 			grantId: claims.grantId,
 			tokenHash: this.grants.tokenHash(token),
 			tenantId: claims.tenantId,
@@ -54,7 +54,7 @@ export class AgentProviderBroker {
 				'Run grant was already used or its worker lease is no longer valid.',
 			);
 		}
-		this.repository.appendAuditEvent({
+		await this.repository.appendAuditEvent({
 			tenantId: claims.tenantId,
 			actorId: 'agent-provider-broker',
 			action: 'agent-run.grant-consumed',

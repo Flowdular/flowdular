@@ -23,5 +23,5 @@ The five roles and who takes the first turn: `business-manager` for both a new m
 
 1. Edit or add `.ai/agents/sandbox/<id>.md`. Keep the front matter keys exactly as above; `id` is the file name.
 2. Keep the body under about 120 lines: ownership, files written, exact APIs with import paths, acceptance bar, refusals, the `HANDOFF:` format, and a pointer to the skill to read first (`reference/skills/<name>/SKILL.md` inside a session).
-3. Run `pnpm --filter @coreloom/coding-agent sync-roles` so `packages/coding-agent/src/roles/defaults.ts` matches (never edit that file by hand), then `pnpm --filter @coreloom/coding-agent test`; `tests/sync.test.ts` fails on any drift.
+3. Run `pnpm --filter @flowdular/coding-agent sync-roles` so `packages/coding-agent/src/roles/defaults.ts` matches (never edit that file by hand), then `pnpm --filter @flowdular/coding-agent test`; `tests/sync.test.ts` fails on any drift.
 4. `npx prettier --check .ai`.

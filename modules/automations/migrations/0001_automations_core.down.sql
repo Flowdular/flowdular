@@ -1,3 +1,6 @@
+DROP POLICY IF EXISTS automations_schedules_tenant_policy ON automations_schedules;
+DROP POLICY IF EXISTS automations_triggers_tenant_policy ON automations_triggers;
+DROP POLICY IF EXISTS automations_audit_events_tenant_policy ON automations_audit_events;
 DROP INDEX IF EXISTS automations_audit_tenant_time_idx;
 DROP TABLE IF EXISTS automations_audit_events;
 DROP INDEX IF EXISTS automations_triggers_tenant_label_idx;

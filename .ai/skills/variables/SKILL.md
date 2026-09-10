@@ -1,6 +1,8 @@
 ---
 name: variables
-description: Build variable-aware fields and templates on the {{ }} contract, the scope mask, and server-side resolution, with agents.core as the worked example.
+description: >-
+  Build variable-aware fields and templates on the {{ }} contract, the scope
+  mask, and server-side resolution, with agents.core as the worked example.
 roles:
   - frontend-engineer
   - ux-designer
@@ -14,8 +16,8 @@ when: A field must let a value embed {{ variable }} tokens filled from other fie
 
 A variable field lets a stored value embed `{{ key }}` tokens that are filled at
 run time from context or another module's data. The contract is pure and lives
-in `@coreloom/contracts` (`packages/contracts/src/variables.ts`); the fields are
-presentational primitives in `@coreloom/ui`; resolution happens on the server
+in `@flowdular/contracts` (`packages/contracts/src/variables.ts`); the fields are
+presentational primitives in `@flowdular/ui`; resolution happens on the server
 before the consumer sees the text. `agents.core` is the worked example: an agent
 author writes instructions as a template and the run snapshot carries the
 resolved text.
@@ -60,7 +62,7 @@ variable is offered and resolved only when the principal holds that scope:
   template whose `forbidden` is non-empty. A scope-less variable
   (`context.*`) is always allowed.
 
-## The UI fields (`@coreloom/ui`)
+## The UI fields (`@flowdular/ui`)
 
 `VariableTextarea` (multiline), `VariableInput` (single line), and
 `VariableSelect` (one literal option or one variable token) are presentational.
@@ -92,7 +94,7 @@ that label is visible in the picker.
 Keep the fields presentational: the caller supplies `variables` and
 `sampleValues`, the component never fetches.
 
-The platform variable registry (`@coreloom/kernel`) registers definitions and
+The platform variable registry (`@flowdular/kernel`) registers definitions and
 their execution-time resolvers. Reach the shared instance with
 `platformVariableRegistry(context.capabilities)`. `list(scopes)` requires an
 explicit permission snapshot and is the only

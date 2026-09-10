@@ -1,13 +1,21 @@
 import { createContext } from '@octanejs/app-core';
-import { createModuleSettingsRuntime } from '@coreloom/kernel';
+import type { DatabaseProvider } from '@flowdular/database';
+import { createModuleSettingsRuntime } from '@flowdular/kernel';
 import { createAuthenticationMiddleware } from '../src/middleware/authentication.ts';
 import { createAuthRoutes } from '../src/server/endpoints.ts';
 import type { AuthRuntime } from '../src/server/runtime.ts';
 import type { OidcProvider } from '../src/server/runtime.ts';
 import { AuthService, type AuthPolicy } from '../src/services/auth-service.ts';
-import { SqliteAuthRepository } from '../src/services/sqlite-repository.ts';
+import type { DatabaseAuthRepository } from '../src/services/database-repository.ts';
+import { createAuthSettingsStore } from '../src/services/settings-store.ts';
 import { createAuthModuleSettings } from '../src/settings.ts';
 import type { AuthMailDelivery } from '../src/services/mail-delivery.ts';
+import {
+	createAuthTestDatabase,
+	type AuthTestDatabase,
+} from './support/database.ts';
+
+export { closeAuthTestDatabases } from './support/database.ts';
 
 export const fastHash = {
 	cost: 2 ** 12,
@@ -19,8 +27,19 @@ export const fastHash = {
 
 export const ORIGIN = 'https://erp.example';
 
+/* A provider for the cases that only construct a runtime, such as cookie naming
+   and key validation. Opening it is the failure they are asserting against. */
+export function unopenedDatabases(): DatabaseProvider {
+	return {
+		acquire: () =>
+			Promise.reject(new Error('This runtime must not open a database.')),
+		dispose: () => Promise.resolve(),
+	};
+}
+
 export interface TestRuntime extends AuthRuntime {
-	readonly repository: SqliteAuthRepository;
+	readonly database: AuthTestDatabase;
+	readonly repository: DatabaseAuthRepository;
 	readonly authService: AuthService;
 	readonly policy: {
 		sessionTtlMs: number;
@@ -30,7 +49,7 @@ export interface TestRuntime extends AuthRuntime {
 	clock: { now: number };
 }
 
-export function testRuntime(
+export async function testRuntime(
 	overrides: Partial<{
 		allowSignUp: boolean;
 		trustProxy: boolean;
@@ -41,8 +60,9 @@ export function testRuntime(
 		oidcProviders: readonly OidcProvider[];
 		publicBaseUrl: string;
 	}> = {},
-): TestRuntime {
-	const repository = new SqliteAuthRepository(':memory:');
+): Promise<TestRuntime> {
+	const database = await createAuthTestDatabase();
+	const repository = database.repository;
 	const clock = { now: 1_000_000 };
 	const policy: AuthPolicy & {
 		sessionTtlMs: number;
@@ -62,7 +82,8 @@ export function testRuntime(
 			: {}),
 		...(overrides.mailDelivery ? { mailDelivery: overrides.mailDelivery } : {}),
 	});
-	const moduleSettings = createModuleSettingsRuntime(repository, {
+	const store = createAuthSettingsStore(() => Promise.resolve(repository));
+	const moduleSettings = createModuleSettingsRuntime(store, {
 		now: () => clock.now,
 	});
 	moduleSettings.declare(
@@ -71,17 +92,21 @@ export function testRuntime(
 			signInProviders: overrides.signInProviders ?? [],
 		}),
 	);
+	await store.prime('', 'auth.core');
 	const cookie = {
 		name: 'coreloom_session_dev',
 		secure: false,
 		maxAgeSeconds: 3600,
 	};
+	const service = () => Promise.resolve(authService);
 	return {
+		database,
 		repository,
 		authService,
 		policy,
 		clock,
 		cookie,
+		settingsAuditSettled: () => Promise.resolve(),
 		settings: {
 			get allowSignUp() {
 				return moduleSettings.get<boolean>('', 'auth.core', 'allowSignUp');
@@ -105,14 +130,20 @@ export function testRuntime(
 		workspaceRoot: null,
 		oidcProviders: overrides.oidcProviders ?? [],
 		publicBaseUrl: overrides.publicBaseUrl ?? null,
-		service: () => authService,
-		authorizeAgentToolAccess: (tenantId, actor) => {
+		service,
+		async authorizeAgentToolAccess(tenantId, actor) {
 			if (actor.kind !== 'user') return [];
-			const membership = repository.findAccountMembership(actor.id, tenantId);
+			const membership = await repository.findAccountMembership(
+				actor.id,
+				tenantId,
+			);
 			return membership?.status === 'active' ? membership.scopes : [];
 		},
-		dispose: () => repository.close(),
-		middleware: createAuthenticationMiddleware(() => authService, cookie),
+		async dispose() {
+			await store.ready().catch(() => undefined);
+			await database.dispose();
+		},
+		middleware: createAuthenticationMiddleware(service, cookie),
 	};
 }
 
@@ -142,14 +173,19 @@ export function jsonRequest(
 	});
 }
 
+/* The authentication middleware is what resolves the session and publishes it
+   for the route guards, so a test request runs through it exactly as a served
+   request does. */
 export async function call(
 	runtime: AuthRuntime,
 	path: string,
 	request: Request,
 ): Promise<Response> {
-	return route(runtime, path, request.method).handler(
-		createContext(request, {}),
-	);
+	const context = createContext(request, {});
+	const handler = route(runtime, path, request.method).handler;
+	return runtime.middleware(context, () =>
+		Promise.resolve(handler(context)),
+	) as Promise<Response>;
 }
 
 export interface SignedIn {

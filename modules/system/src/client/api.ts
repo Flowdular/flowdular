@@ -1,5 +1,5 @@
 import type { ModuleCatalogEntry } from '../server/module-catalog.ts';
-import { t } from '@coreloom/client/i18n';
+import { t } from '@flowdular/client/i18n';
 
 export type { ModuleCatalogEntry };
 

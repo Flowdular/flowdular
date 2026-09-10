@@ -1,15 +1,25 @@
 import { createHash } from 'node:crypto';
 import {
+	DATABASE_CAPABILITY_IDS,
+	DATABASE_DIALECT_IDS,
+	type DatabaseAdapterLease,
+	type DatabaseProvider,
+	type DatabaseProviderRequest,
+} from '@flowdular/database';
+import {
 	createPlatformCapabilityRegistry,
 	type PlatformCapabilityRegistry,
-} from '@coreloom/kernel';
-import { coreloomLocalDataPath } from '@coreloom/kernel/legacy-local-state';
+} from '@flowdular/kernel';
 import { createWorkflowCursorCodec } from '../services/cursor-codec.ts';
 import {
 	createWorkflowPayloadCodec,
 	decodeWorkflowPayloadKey,
 } from '../services/payload-codec.ts';
-import { SqliteWorkflowsRepository } from '../services/sqlite-repository.ts';
+import {
+	DatabaseWorkflowsRepository,
+	migrateWorkflowsDatabase,
+} from '../services/database-repository.ts';
+import type { WorkflowsRepository } from '../services/repository.ts';
 import {
 	WorkflowsService,
 	type WorkflowsServiceOptions,
@@ -20,7 +30,12 @@ import {
 } from '../services/worker.ts';
 
 export interface WorkflowsRuntimeOptions {
-	readonly databasePath: string;
+	/** Platform-owned provider. Every lease of the runtime comes from it. */
+	readonly databases: DatabaseProvider;
+	readonly purpose?:
+		| Exclude<DatabaseProviderRequest['purpose'], 'migration'>
+		| undefined;
+	readonly repository?: WorkflowsRepository;
 	readonly capabilities?: PlatformCapabilityRegistry;
 	readonly payloadKey?: Buffer;
 	readonly cursorKey?: Buffer;
@@ -31,7 +46,7 @@ export interface WorkflowsRuntimeOptions {
 }
 
 export interface WorkflowsRuntime {
-	service(): WorkflowsService;
+	service(): Promise<WorkflowsService>;
 	start(): void;
 	stop(): void | Promise<void>;
 	dispose(): void | Promise<void>;
@@ -40,7 +55,7 @@ export interface WorkflowsRuntime {
 function derivedDevelopmentKey(workspaceRoot: string, purpose: string): Buffer {
 	return createHash('sha256')
 		.update(
-			`coreloom-workflows-development\u0000${purpose}\u0000${workspaceRoot}`,
+			`flowdular-workflows-development\u0000${purpose}\u0000${workspaceRoot}`,
 		)
 		.digest();
 }
@@ -68,11 +83,11 @@ export function assertProductionWorkflowSecrets(
 ): void {
 	if (environment.NODE_ENV !== 'production') return;
 	const missing = [
-		...(!provided.payloadKey && !environment.CL_WORKFLOWS_PAYLOAD_KEY
-			? ['CL_WORKFLOWS_PAYLOAD_KEY']
+		...(!provided.payloadKey && !environment.FD_WORKFLOWS_PAYLOAD_KEY
+			? ['FD_WORKFLOWS_PAYLOAD_KEY']
 			: []),
-		...(!provided.cursorKey && !environment.CL_WORKFLOWS_CURSOR_KEY
-			? ['CL_WORKFLOWS_CURSOR_KEY']
+		...(!provided.cursorKey && !environment.FD_WORKFLOWS_CURSOR_KEY
+			? ['FD_WORKFLOWS_CURSOR_KEY']
 			: []),
 	];
 	if (missing.length > 0) {
@@ -85,47 +100,40 @@ export function assertProductionWorkflowSecrets(
 export function workflowsRuntimeOptionsFromEnvironment(
 	environment: NodeJS.ProcessEnv = process.env,
 	workspaceRoot = process.cwd(),
-): WorkflowsRuntimeOptions {
+): Omit<WorkflowsRuntimeOptions, 'databases'> {
 	assertProductionWorkflowSecrets(environment, {
 		payloadKey: false,
 		cursorKey: false,
 	});
 	return {
-		databasePath:
-			environment.CL_WORKFLOWS_DATABASE ??
-			(environment.NODE_ENV === 'production'
-				? '/data/workflows.db'
-				: environment.NODE_ENV === 'test'
-					? ':memory:'
-					: coreloomLocalDataPath(workspaceRoot, 'workflows.db')),
-		payloadKey: environment.CL_WORKFLOWS_PAYLOAD_KEY
-			? decodeWorkflowPayloadKey(environment.CL_WORKFLOWS_PAYLOAD_KEY)
+		payloadKey: environment.FD_WORKFLOWS_PAYLOAD_KEY
+			? decodeWorkflowPayloadKey(environment.FD_WORKFLOWS_PAYLOAD_KEY)
 			: derivedDevelopmentKey(workspaceRoot, 'payload'),
-		cursorKey: environment.CL_WORKFLOWS_CURSOR_KEY
-			? decodeWorkflowPayloadKey(environment.CL_WORKFLOWS_CURSOR_KEY)
+		cursorKey: environment.FD_WORKFLOWS_CURSOR_KEY
+			? decodeWorkflowPayloadKey(environment.FD_WORKFLOWS_CURSOR_KEY)
 			: derivedDevelopmentKey(workspaceRoot, 'cursor'),
 		worker: {
 			leaseMs: environmentInteger(
-				environment.CL_WORKFLOWS_WORKER_LEASE_MS,
+				environment.FD_WORKFLOWS_WORKER_LEASE_MS,
 				30_000,
 				1_000,
 				300_000,
-				'CL_WORKFLOWS_WORKER_LEASE_MS',
+				'FD_WORKFLOWS_WORKER_LEASE_MS',
 			),
 			pollMs: environmentInteger(
-				environment.CL_WORKFLOWS_WORKER_POLL_MS,
+				environment.FD_WORKFLOWS_WORKER_POLL_MS,
 				1_000,
 				250,
 				60_000,
-				'CL_WORKFLOWS_WORKER_POLL_MS',
+				'FD_WORKFLOWS_WORKER_POLL_MS',
 			),
 		},
 		payloadRetentionMs: environmentInteger(
-			environment.CL_WORKFLOWS_PAYLOAD_RETENTION_MS,
+			environment.FD_WORKFLOWS_PAYLOAD_RETENTION_MS,
 			24 * 60 * 60 * 1_000,
 			0,
 			30 * 24 * 60 * 60 * 1_000,
-			'CL_WORKFLOWS_PAYLOAD_RETENTION_MS',
+			'FD_WORKFLOWS_PAYLOAD_RETENTION_MS',
 		),
 		environment,
 		workspaceRoot,
@@ -133,7 +141,7 @@ export function workflowsRuntimeOptionsFromEnvironment(
 }
 
 export function createWorkflowsRuntime(
-	options: WorkflowsRuntimeOptions = workflowsRuntimeOptionsFromEnvironment(),
+	options: WorkflowsRuntimeOptions,
 ): WorkflowsRuntime {
 	const environment = options.environment ?? process.env;
 	const workspaceRoot = options.workspaceRoot ?? process.cwd();
@@ -147,18 +155,69 @@ export function createWorkflowsRuntime(
 		options.cursorKey ?? derivedDevelopmentKey(workspaceRoot, 'cursor');
 	const capabilities =
 		options.capabilities ?? createPlatformCapabilityRegistry();
-	let repository: SqliteWorkflowsRepository | undefined;
+	let repository: WorkflowsRepository | undefined;
+	let servicePromise: Promise<WorkflowsService> | undefined;
 	let service: WorkflowsService | undefined;
 	let worker: WorkflowWorker | undefined;
+	let leases: readonly DatabaseAdapterLease[] = [];
 	let disposed = false;
 	let started = false;
-	const create = () => {
-		if (disposed) throw new Error('Workflows runtime is disposed.');
-		repository ??= new SqliteWorkflowsRepository(
-			options.databasePath,
+
+	const acquire = (
+		databases: DatabaseProvider,
+		purpose: DatabaseProviderRequest['purpose'],
+	) =>
+		databases.acquire({
+			namespace: 'workflows.core',
+			purpose,
+			requirements: {
+				dialectIds: [DATABASE_DIALECT_IDS.postgresql],
+				capabilities: [DATABASE_CAPABILITY_IDS.TRANSACTIONS],
+			},
+		});
+
+	const openRepository = async (): Promise<WorkflowsRepository> => {
+		if (options.repository) return options.repository;
+		/* Migrations take their own short lease: the runtime role is tenant
+		   scoped and may not run schema operations. */
+		const migration = await options.databases.acquire({
+			namespace: 'workflows.core',
+			purpose: 'migration',
+			requirements: {
+				dialectIds: [DATABASE_DIALECT_IDS.postgresql],
+				capabilities: [
+					DATABASE_CAPABILITY_IDS.MIGRATION_LOCK,
+					DATABASE_CAPABILITY_IDS.SCHEMA_INTROSPECTION,
+					DATABASE_CAPABILITY_IDS.TRANSACTIONAL_DDL,
+				],
+			},
+		});
+		try {
+			await migrateWorkflowsDatabase(migration.database);
+		} finally {
+			await migration.release();
+		}
+		const runtimeLease = await acquire(
+			options.databases,
+			options.purpose ?? 'runtime',
+		);
+		/* The worker claim poll and payload retention read across tenants; every
+		   write that follows uses the tenant carried by the row they returned. */
+		const backgroundLease = await acquire(options.databases, 'background');
+		leases = [runtimeLease, backgroundLease];
+		return new DatabaseWorkflowsRepository(
+			{
+				runtime: runtimeLease.database,
+				background: backgroundLease.database,
+			},
 			createWorkflowPayloadCodec(payloadKey),
 			options.payloadRetentionMs,
 		);
+	};
+
+	const create = async (): Promise<WorkflowsService> => {
+		if (disposed) throw new Error('Workflows runtime is disposed.');
+		repository ??= await openRepository();
 		if (!service) {
 			const serviceOptions: WorkflowsServiceOptions = {
 				capabilities,
@@ -175,13 +234,16 @@ export function createWorkflowsRuntime(
 		if (started) worker.start();
 		return service;
 	};
+
+	const resolved = (): Promise<WorkflowsService> =>
+		(servicePromise ??= create());
+
 	return {
-		service: create,
+		service: resolved,
 		start() {
 			if (disposed) throw new Error('Workflows runtime is disposed.');
 			started = true;
-			create();
-			worker!.start();
+			void resolved().then(() => worker?.start());
 		},
 		stop() {
 			started = false;
@@ -192,13 +254,13 @@ export function createWorkflowsRuntime(
 			disposed = true;
 			const pending = worker?.stop();
 			if (pending) await pending;
-			const close = () => {
-				repository?.close();
-				worker = undefined;
-				service = undefined;
-				repository = undefined;
-			};
-			close();
+			await repository?.close();
+			for (const lease of leases) await lease.release();
+			leases = [];
+			worker = undefined;
+			service = undefined;
+			servicePromise = undefined;
+			repository = undefined;
 		},
 	};
 }

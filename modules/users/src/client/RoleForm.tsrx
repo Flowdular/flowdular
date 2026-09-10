@@ -1,8 +1,8 @@
 import { useMemo } from 'octane';
-import { Alert, Button, CheckGrid, FormField } from '@coreloom/ui';
-import { t } from '@coreloom/client';
-import type { CheckGroup, CheckOption } from '@coreloom/ui';
-import type { TenantRole } from '@coreloom/module-auth';
+import { Alert, Button, CheckGrid, FormField } from '@flowdular/ui';
+import { t } from '@flowdular/client';
+import type { CheckGroup, CheckOption } from '@flowdular/ui';
+import type { TenantRole } from '@flowdular/module-auth';
 import { cell, createStore, useValue } from 'segment-state';
 import type { RoleDraft } from './roles-api.ts';
 

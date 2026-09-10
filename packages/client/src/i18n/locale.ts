@@ -1,4 +1,4 @@
-/* Mirrors the first entry of `locales` in coreloom.json: the locale every
+/* Mirrors the first entry of `locales` in flowdular.json: the locale every
    bundle is guaranteed to carry, and the last step before a key is shown raw. */
 export const FALLBACK_LOCALE = 'en';
 

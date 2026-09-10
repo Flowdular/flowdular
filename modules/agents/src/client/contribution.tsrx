@@ -1,4 +1,4 @@
-import { t, type ModuleClientContribution } from '@coreloom/client';
+import { t, type ModuleClientContribution } from '@flowdular/client';
 import { AGENT_PERMISSIONS } from '../acl/permissions.ts';
 import translationsEn from '../../translations/en.json';
 import translationsPl from '../../translations/pl.json';
@@ -6,7 +6,7 @@ import { AgentProvidersView } from './AgentProvidersView.tsrx';
 import { AgentDashboardWidget } from './AgentDashboardWidget.tsrx';
 import { AgentPlaygroundView } from './AgentPlaygroundView.tsrx';
 import { AgentRunsView } from './AgentRunsView.tsrx';
-import { AgentSkillsView } from './AgentSkillsView.tsrx';
+import { AgentProceduresView } from './AgentProceduresView.tsrx';
 import { AgentsView } from './AgentsView.tsrx';
 import { AgentUsageView } from './AgentUsageView.tsrx';
 import './agents.css';
@@ -38,17 +38,17 @@ export function createAgentClientContribution(
 				order: 20,
 			},
 			{
-				id: 'agents.navigation.skills',
-				viewId: 'agent-skills',
+				id: 'agents.navigation.procedures',
+				viewId: 'agent-procedures',
 				group: 'Agents',
 				get label() {
-					return t('agents.navigation.skills');
+					return t('agents.navigation.procedures');
 				},
 				glyph: 'file-text',
 				get description() {
-					return t('agents.navigation.skillsDescription');
+					return t('agents.navigation.proceduresDescription');
 				},
-				scope: AGENT_PERMISSIONS.skillsRead,
+				scope: AGENT_PERMISSIONS.proceduresRead,
 				order: 35,
 			},
 			{
@@ -130,11 +130,25 @@ export function createAgentClientContribution(
 					/>,
 			},
 			{
+				id: 'agent-procedures',
+				render: () =>
+					<AgentProceduresView
+						csrfToken={options.csrfToken}
+						canManage={options.scopes.includes(
+							AGENT_PERMISSIONS.proceduresManage,
+						)}
+					/>,
+			},
+			/* The former deep link keeps resolving. It is a view without a
+   navigation entry, so the group still shows one Procedures item. */
+			{
 				id: 'agent-skills',
 				render: () =>
-					<AgentSkillsView
+					<AgentProceduresView
 						csrfToken={options.csrfToken}
-						canManage={options.scopes.includes(AGENT_PERMISSIONS.skillsManage)}
+						canManage={options.scopes.includes(
+							AGENT_PERMISSIONS.proceduresManage,
+						)}
 					/>,
 			},
 			{

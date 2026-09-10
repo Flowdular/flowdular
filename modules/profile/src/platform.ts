@@ -1,22 +1,21 @@
 import type {
 	PlatformServerComposition,
 	PlatformServerContext,
-} from '@coreloom/module-auth/server';
-import {
-	createProfileRoutes,
-	createProfileRuntime,
-	profileRuntimeOptionsFromEnvironment,
-} from './server/index.ts';
+} from '@flowdular/module-auth/server';
+import { createProfileRoutes, createProfileRuntime } from './server/index.ts';
 
 export function createServerComposition(
 	context: PlatformServerContext,
 ): PlatformServerComposition {
-	const runtime = createProfileRuntime(
-		profileRuntimeOptionsFromEnvironment(
-			context.environment,
-			context.workspaceRoot,
-		),
-	);
+	const runtime = createProfileRuntime({
+		databases: context.databases,
+		purpose:
+			context.environment.NODE_ENV === 'test'
+				? 'test'
+				: context.environment.NODE_ENV === 'production'
+					? 'runtime'
+					: 'preview',
+	});
 	return {
 		routes: createProfileRoutes(context.auth, runtime),
 		dispose: () => runtime.dispose(),

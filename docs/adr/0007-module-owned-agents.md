@@ -37,8 +37,8 @@ from tenant-owned execution configuration.
 - The platform carries a generic agent definition registry in the composition
   context. It is created and sealed by the platform, not by `agents.core`.
 - `defineAgent()` and the semantic agent types are exported by
-  `@coreloom/module-agents/server`. A module using them declares `agents.core`
-  as a module dependency and `@coreloom/module-agents` as a package dependency.
+  `@flowdular/module-agents/server`. A module using them declares `agents.core`
+  as a module dependency and `@flowdular/module-agents` as a package dependency.
 - Module source owns identity, display copy, instructions, maximum tool
   allowlist and execution limits.
 - Each tenant owns a binding that selects an available provider and model,
@@ -57,7 +57,7 @@ integrations implement this contract together.
 
 ```ts
 // modules/catalog/src/agent/agents.ts
-import { defineAgent } from '@coreloom/module-agents/server';
+import { defineAgent } from '@flowdular/module-agents/server';
 
 export const catalogCurator = defineAgent({
 	moduleId: 'catalog.core',
@@ -123,7 +123,7 @@ The tenant and authority are trusted context, never input fields. An omitted
 
 ## Public contract
 
-The semantic surface belongs to `@coreloom/module-agents/server`:
+The semantic surface belongs to `@flowdular/module-agents/server`:
 
 ```ts
 export interface ModuleAgentDefinitionInput {
@@ -162,7 +162,7 @@ characters. The prefix is reserved and tenant-created agents cannot use it.
 Callers never supply or parse this id. They treat it as opaque after
 registration.
 
-The generic registry belongs to `@coreloom/kernel` so auth and the composition
+The generic registry belongs to `@flowdular/kernel` so auth and the composition
 contract do not import `agents.core`:
 
 ```ts

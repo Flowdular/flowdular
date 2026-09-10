@@ -1,33 +1,55 @@
 {
-	"name": "@coreloom/module-automations",
-	"version": "0.2.0",
-	"private": true,
+	"name": "@flowdular/module-automations",
+	"version": "0.4.0",
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
 		"./client": "./src/client/index.ts",
 		"./server": "./src/server/index.ts",
-		"./platform": "./src/platform.ts"
+		"./platform": "./src/platform.ts",
+		"./module.json": "./module.json"
 	},
 	"scripts": {
 		"typecheck": "tsrx-tsc --noEmit -p tsconfig.json",
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@coreloom/client": "workspace:*",
-		"@coreloom/contracts": "workspace:*",
-		"@coreloom/kernel": "workspace:*",
-		"@coreloom/module-agents": "workspace:*",
-		"@coreloom/module-auth": "workspace:*",
-		"@coreloom/server": "workspace:*",
-		"@coreloom/ui": "workspace:*",
+		"@flowdular/client": "workspace:*",
+		"@flowdular/contracts": "workspace:*",
+		"@flowdular/database": "workspace:*",
+		"@flowdular/kernel": "workspace:*",
+		"@flowdular/module-agents": "workspace:*",
+		"@flowdular/module-auth": "workspace:*",
+		"@flowdular/server": "workspace:*",
+		"@flowdular/ui": "workspace:*",
 		"octane": "0.1.51",
 		"segment-state": "0.2.0"
 	},
 	"devDependencies": {
+		"@flowdular/database-testing": "workspace:*",
 		"@tsrx/typescript-plugin": "0.3.120",
 		"@types/node": "24.13.3",
 		"typescript": "5.9.3",
-		"vitest": "4.1.10"
-	}
+		"vitest": "4.1.11"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Flowdular/flowdular.git",
+		"directory": "modules/automations"
+	},
+	"files": [
+		"src",
+		"schemas",
+		"dist",
+		"bin",
+		"public",
+		"module.json",
+		"migrations",
+		"translations",
+		"spec",
+		"README.md",
+		"LICENSE"
+	],
+	"private": true
 }

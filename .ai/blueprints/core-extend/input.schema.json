@@ -7,20 +7,20 @@
 		"package": {
 			"type": "string",
 			"enum": [
-				"@coreloom/contracts",
-				"@coreloom/kernel",
-				"@coreloom/server",
-				"@coreloom/client",
-				"@coreloom/ui",
-				"@coreloom/cli",
-				"@coreloom/cli-protocol",
-				"@coreloom/sandbox",
-				"@coreloom/coding-agent",
-				"@coreloom/harness",
-				"@coreloom/ai-provider",
-				"@coreloom/dev-console",
-				"@coreloom/platform",
-				"@coreloom/module-auth"
+				"@flowdular/contracts",
+				"@flowdular/kernel",
+				"@flowdular/server",
+				"@flowdular/client",
+				"@flowdular/ui",
+				"@flowdular/cli",
+				"@flowdular/cli-protocol",
+				"@flowdular/sandbox",
+				"@flowdular/coding-agent",
+				"@flowdular/harness",
+				"@flowdular/ai-provider",
+				"@flowdular/dev-console",
+				"@flowdular/platform",
+				"@flowdular/module-auth"
 			]
 		},
 		"change": {

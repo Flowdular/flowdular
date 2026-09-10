@@ -1,4 +1,25 @@
 export { defineEndpoint } from './endpoint.ts';
+export {
+	createApplicationRoutes,
+	validateApplicationPath,
+} from './application-routes.ts';
+export { trackResponseBody } from './response-lifetime.ts';
+export {
+	assertRouteConflicts,
+	createModuleWebRoutes,
+	defineWebSurface,
+	validateWebMounts,
+} from './web.ts';
+export type {
+	WebMount,
+	WebIdentity,
+	WebAccess,
+	WebJson,
+	WebPage,
+	WebPageContext,
+	ModuleWebSurface,
+	WebModuleComposition,
+} from './web.ts';
 export type {
 	DefinedEndpoint,
 	EndpointDefinition,
@@ -21,3 +42,8 @@ export {
 	securityHeaders,
 } from './security-headers.ts';
 export type { SecurityHeadersOptions } from './security-headers.ts';
+
+export type {
+	ModuleServerContext,
+	ModuleServerComposition,
+} from './composition.ts';

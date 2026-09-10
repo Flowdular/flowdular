@@ -1,4 +1,4 @@
-import { registerModuleTranslations, t } from '@coreloom/client/i18n';
+import { registerModuleTranslations, t } from '@flowdular/client/i18n';
 import translationsEn from '../../translations/en.json';
 import translationsPl from '../../translations/pl.json';
 

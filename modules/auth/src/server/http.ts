@@ -1,8 +1,8 @@
 import type { Context } from '@octanejs/app-core';
-import { ModuleSettingsError } from '@coreloom/kernel';
-import { HttpProblem } from '@coreloom/server';
-import { readCookie } from '../api/cookies.ts';
+import { ModuleSettingsError } from '@flowdular/kernel';
+import { HttpProblem } from '@flowdular/server';
 import type { AuthActor, AuthSession } from '../domain/types.ts';
+import { sessionFromContext } from '../middleware/authentication.ts';
 import { AuthServiceError } from '../services/auth-service-error.ts';
 import type { AuthRuntime } from './runtime.ts';
 
@@ -95,12 +95,8 @@ export function scopeList(
 /* Browser-session identity for auth's own routes. API tokens are resolved by
    the middleware for module endpoints, but auth administration stays a
    session-only surface. */
-export function requireSession(
-	context: Context,
-	runtime: AuthRuntime,
-): AuthSession {
-	const token = readCookie(context.request, runtime.cookie.name);
-	const session = token ? runtime.service().resolveSession(token) : null;
+export function requireSession(context: Context): AuthSession {
+	const session = sessionFromContext(context);
 	if (!session) {
 		throw new AuthServiceError(
 			'UNAUTHENTICATED',

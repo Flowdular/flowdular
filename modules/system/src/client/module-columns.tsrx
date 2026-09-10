@@ -1,5 +1,5 @@
-import { Tag, type TableColumn } from '@coreloom/ui';
-import { activeLocale, t } from '@coreloom/client';
+import { Tag, type TableColumn } from '@flowdular/ui';
+import { activeLocale, t } from '@flowdular/client';
 import type { ModuleCatalogEntry } from './api.ts';
 
 export function surfaces(module: ModuleCatalogEntry): string {

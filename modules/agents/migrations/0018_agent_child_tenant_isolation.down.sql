@@ -1,0 +1,12 @@
+DROP POLICY IF EXISTS agent_provider_model_readiness_tenant_policy ON agent_provider_model_readiness;
+DROP POLICY IF EXISTS agent_run_skill_snapshots_tenant_policy ON agent_run_skill_snapshots;
+DROP POLICY IF EXISTS agent_run_output_limits_tenant_policy ON agent_run_output_limits;
+DROP POLICY IF EXISTS agent_run_execution_limits_tenant_policy ON agent_run_execution_limits;
+DROP POLICY IF EXISTS agent_definition_output_limits_tenant_policy ON agent_definition_output_limits;
+DROP POLICY IF EXISTS agent_definition_execution_limits_tenant_policy ON agent_definition_execution_limits;
+ALTER TABLE agent_provider_model_readiness DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE agent_run_skill_snapshots DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE agent_run_output_limits DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE agent_run_execution_limits DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE agent_definition_output_limits DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE agent_definition_execution_limits DROP COLUMN IF EXISTS tenant_id;

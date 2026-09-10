@@ -1,4 +1,4 @@
-import type { AgentHarness, AgentProvider } from '@coreloom/harness';
+import type { AgentHarness, AgentProvider } from '@flowdular/harness';
 import type { AgentRunExecution, AgentWorkerStatus } from '../domain/types.ts';
 import type { AgentRepository, RecoverableRun } from './repository.ts';
 import type { AgentProviderBroker } from './provider-broker.ts';
@@ -28,7 +28,7 @@ export interface AgentProviderResolver {
 		modelId: string,
 		completedAt: number,
 		durationMs: number,
-	): void;
+	): void | Promise<void>;
 }
 
 const CANCELLED = 'cancelled';
@@ -59,6 +59,7 @@ export class AgentWorker {
 	readonly #now: () => number;
 	#concurrency: number;
 	#scheduled = false;
+	#draining: Promise<void> | undefined;
 	#stopped = true;
 	#lastDrainAt: number | null = null;
 	#poll: ReturnType<typeof setInterval> | undefined;
@@ -95,14 +96,14 @@ export class AgentWorker {
 		this.#now = options.now ?? Date.now;
 	}
 
-	start(): void {
+	async start(): Promise<void> {
 		this.#stopped = false;
-		this.kick();
-		if (this.#poll !== undefined) return;
+		await this.kick();
+		if (this.#stopped || this.#poll !== undefined) return;
 		/* Interrupted runs become claimable only once their lease expires, so a
 		   periodic drain is what makes recovery happen without a new request. */
 		this.#poll = setInterval(
-			() => this.kick(),
+			() => void this.kick(),
 			Math.max(1_000, Math.floor(this.options.leaseMs / 2)),
 		);
 		this.#poll.unref?.();
@@ -121,6 +122,7 @@ export class AgentWorker {
 	   persisted rows stay leased for recovery by the next worker generation. */
 	async dispose(): Promise<void> {
 		this.stop();
+		await this.#draining;
 		for (const controller of this.#inFlight.values()) {
 			controller.abort(SHUTDOWN);
 		}
@@ -150,14 +152,15 @@ export class AgentWorker {
 		return true;
 	}
 
-	kick(): void {
-		if (this.#scheduled || this.#stopped) return;
+	async kick(): Promise<void> {
+		if (this.#scheduled || this.#draining || this.#stopped) return;
 		this.#scheduled = true;
-		this.#kickTimer = setTimeout(() => {
+		this.#kickTimer = setTimeout(async () => {
 			this.#kickTimer = undefined;
 			this.#scheduled = false;
 			try {
-				this.#drain();
+				this.#draining = this.#drain();
+				await this.#draining;
 			} catch (error) {
 				/* A failed transactional claim leaves the run recoverable. The
 				   periodic poll retries it without crashing the host process. */
@@ -165,6 +168,8 @@ export class AgentWorker {
 					'[agents] run worker drain failed:',
 					error instanceof Error ? error.message : error,
 				);
+			} finally {
+				this.#draining = undefined;
 			}
 		}, 0);
 	}
@@ -177,20 +182,21 @@ export class AgentWorker {
 		return this.#concurrency;
 	}
 
-	#drain(): void {
+	async #drain(): Promise<void> {
 		if (this.#stopped) return;
 		this.#lastDrainAt = this.#now();
 		const slots = this.#currentConcurrency() - this.#inFlight.size;
 		if (slots <= 0) return;
-		const candidates = this.repository.listRecoverableRuns(
+		const candidates = await this.repository.listRecoverableRuns(
 			this.#now(),
 			slots * 2,
 		);
 		let claimed = 0;
 		for (const candidate of candidates) {
+			if (this.#stopped) return;
 			if (claimed >= slots || this.#inFlight.has(candidate.runId)) continue;
 			const now = this.#now();
-			const execution = this.repository.claimRun(
+			const execution = await this.repository.claimRun(
 				candidate.tenantId,
 				candidate.runId,
 				this.options.workerId,
@@ -206,6 +212,7 @@ export class AgentWorker {
 					occurredAt: now,
 				},
 			);
+			if (this.#stopped) return;
 			if (!execution) continue;
 			claimed += 1;
 			const controller = new AbortController();
@@ -223,7 +230,7 @@ export class AgentWorker {
 						for (const resolve of this.#idleWaiters) resolve();
 						this.#idleWaiters.clear();
 					}
-					this.kick();
+					void this.kick();
 				});
 		}
 	}
@@ -233,10 +240,12 @@ export class AgentWorker {
 		execution: AgentRunExecution,
 		controller: AbortController,
 	): Promise<void> {
+		let eventWrites = Promise.resolve();
+		let eventFailure: unknown;
 		const renewal = setInterval(
-			() => {
+			async () => {
 				try {
-					const renewed = this.repository.renewLease(
+					const renewed = await this.repository.renewLease(
 						candidate.tenantId,
 						candidate.runId,
 						this.options.workerId,
@@ -268,7 +277,7 @@ export class AgentWorker {
 					toolGrants: execution.run.toolGrants,
 					leaseExpiresAt: execution.run.leaseExpiresAt,
 				});
-				this.repository.appendAuditEvent({
+				await this.repository.appendAuditEvent({
 					tenantId: candidate.tenantId,
 					actorId: this.options.workerId,
 					action: 'agent-run.grant-issued',
@@ -294,12 +303,20 @@ export class AgentWorker {
 			}
 			const onEvent = (
 				event: Parameters<AgentRepository['appendRunEvent']>[2],
-			) =>
-				this.repository.appendRunEvent(
-					candidate.tenantId,
-					candidate.runId,
-					event,
+			): void => {
+				// The harness callback is synchronous. Own and drain its async writes.
+				eventWrites = eventWrites.then(() =>
+					this.repository.appendRunEvent(
+						candidate.tenantId,
+						candidate.runId,
+						event,
+					),
 				);
+				void eventWrites.catch((error) => {
+					eventFailure = error;
+					controller.abort('event-persistence-failed');
+				});
+			};
 			const result = await this.harness.execute(
 				{
 					runId: execution.run.id,
@@ -320,7 +337,8 @@ export class AgentWorker {
 					? { onEvent, provider, signal: controller.signal }
 					: { onEvent, signal: controller.signal },
 			);
-			this.repository.completeRun(
+			await eventWrites;
+			await this.repository.completeRun(
 				candidate.tenantId,
 				candidate.runId,
 				this.options.workerId,
@@ -338,8 +356,13 @@ export class AgentWorker {
 					occurredAt: result.completedAt,
 				},
 			);
-			this.#recordRunSuccess(execution, result.completedAt, result.startedAt);
+			await this.#recordRunSuccess(
+				execution,
+				result.completedAt,
+				result.startedAt,
+			);
 		} catch (error) {
+			await eventWrites.catch(() => undefined);
 			/* The service already moved a cancelled row and wrote its audit event;
 			   the worker only had to stop. */
 			if (controller.signal.aborted && controller.signal.reason === CANCELLED) {
@@ -354,17 +377,20 @@ export class AgentWorker {
 			) {
 				return;
 			}
-			const failed = controller.signal.aborted
-				? {
-						code: 'AGENT_LEASE_LOST',
-						message: 'The worker lost its lease on the run.',
-					}
-				: failure(error);
+			const failed =
+				eventFailure !== undefined
+					? failure(eventFailure)
+					: controller.signal.aborted
+						? {
+								code: 'AGENT_LEASE_LOST',
+								message: 'The worker lost its lease on the run.',
+							}
+						: failure(error);
 			const completedAt = this.#now();
 			/* A lost lease means another worker owns the row now; the failure
 			   record belongs to it, so a rejected write here is not an error. */
 			try {
-				this.repository.failRun(
+				await this.repository.failRun(
 					candidate.tenantId,
 					candidate.runId,
 					this.options.workerId,
@@ -389,16 +415,17 @@ export class AgentWorker {
 			}
 		} finally {
 			clearInterval(renewal);
+			await eventWrites.catch(() => undefined);
 		}
 	}
 
-	#recordRunSuccess(
+	async #recordRunSuccess(
 		execution: AgentRunExecution,
 		completedAt: number,
 		startedAt: number,
-	): void {
+	): Promise<void> {
 		try {
-			this.providerResolver?.recordRunSuccess?.(
+			await this.providerResolver?.recordRunSuccess?.(
 				execution.run.tenantId,
 				execution.run.provider,
 				execution.run.model,

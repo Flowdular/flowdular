@@ -20,7 +20,7 @@
 	"kpi.address": "Sandbox address",
 	"kpi.configured": "Configured",
 	"kpi.unset": "Unset",
-	"kpi.startHint": "Start it with npx @coreloom/sandbox.",
+	"kpi.startHint": "Start it with npx @flowdular/sandbox.",
 	"value.na": "n/a",
 	"access.listTitle": "Access",
 	"access.count": "{active} active · {total} granted",

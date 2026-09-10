@@ -1,6 +1,9 @@
 ---
 name: auth-security-review
-description: Review a module or platform change for authorization, tenancy, CSRF, input bounds, secrets, and destructive CLI use, with the exact checks and tests the platform relies on.
+description: >-
+  Review a module or platform change for authorization, tenancy, CSRF, input
+  bounds, secrets, and destructive CLI use, with the exact checks and tests the
+  platform relies on.
 roles:
   - reviewer
   - backend-engineer
@@ -12,7 +15,7 @@ when: Any endpoint, scope, token, credential, or CLI capability is added or chan
 
 ## 1. Threat surface of a module endpoint
 
-Check every route in `src/api/endpoints.ts` against `modules/catalog/src/api/endpoints.ts`:
+Check every route in `src/api/endpoints.ts` against `.ai/references/catalog/src/api/endpoints.ts`:
 
 1. `defineEndpoint` (`packages/server/src/endpoint.ts`) with `access: { kind: 'permission', permission }` and `resolveIdentity: endpointIdentityFromContext`. `access: { kind: 'public' }` is allowed only with a written reason (health, sign-in). A raw `new ServerRoute` from `@octanejs/app-core` bypasses all of this; outside `modules/auth` and `packages/server` it is a finding.
 2. Non-GET handlers call `sessionMutationDenial(octane, auth)` before any work. Order inside it (`modules/auth/src/server/session-security.ts`): API token principal (403 `TOKEN_MUTATION_DENIED`), `assertSameOrigin` (`sec-fetch-site`, then `origin`, then `referer`; 403 `CROSS_ORIGIN_REQUEST` or `ORIGIN_REQUIRED`), session cookie (401), `x-csrf-token` compared with `timingSafeEqual` (403 `CSRF_REJECTED`).
@@ -23,13 +26,13 @@ Check every route in `src/api/endpoints.ts` against `modules/catalog/src/api/end
 
 ## 2. Scope model
 
-`modules/auth/src/acl/scopes.ts`: `AUTH_SCOPES`, `PLATFORM_SCOPES` (`system.workspace.access` gates the shell in `platform/src/App.tsrx`; `system.settings.read` and `system.settings.manage` guard `GET /api/settings` and `POST /api/settings/update` in `modules/auth/src/server/settings-endpoints.ts`), `BUNDLED_MODULE_SCOPES`, `OWNER_SCOPES` (all of them), `MEMBER_SCOPES` (read scopes plus `agents.runs.execute`). Sign-up creates an owner with `OWNER_SCOPES`; member creation copies `OWNER_SCOPES` or `MEMBER_SCOPES` by role (`modules/auth/src/services/auth-service.ts`). A module's scopes reach existing owners through `pnpm coreloom module enable <id> --apply` (which runs the grant) or `pnpm coreloom auth sync-scopes --module <id> --apply` for a re-grant. Navigation in the `Development` group is owner-only in the client (`packages/client/src/shell/navigation.ts`); the server permission stays authoritative.
+`modules/auth/src/acl/scopes.ts`: `AUTH_SCOPES`, `PLATFORM_SCOPES` (`system.workspace.access` gates the shell in `platform/src/App.tsrx`; `system.settings.read` and `system.settings.manage` guard `GET /api/settings` and `POST /api/settings/update` in `modules/auth/src/server/settings-endpoints.ts`), `BUNDLED_MODULE_SCOPES`, `OWNER_SCOPES` (all of them), `MEMBER_SCOPES` (read scopes plus `agents.runs.execute`). Sign-up creates an owner with `OWNER_SCOPES`; member creation copies `OWNER_SCOPES` or `MEMBER_SCOPES` by role (`modules/auth/src/services/auth-service.ts`). A module's scopes reach existing owners through `pnpm flowdular module enable <id> --apply` (which runs the grant) or `pnpm flowdular auth sync-scopes --module <id> --apply` for a re-grant. Navigation in the `Development` group is owner-only in the client (`packages/client/src/shell/navigation.ts`); the server permission stays authoritative.
 
 Review question: does every new scope appear in the spec `permissions`, in `src/acl/permissions.ts`, on the endpoint, and on the client contribution that exposes it?
 
 ### Unified audit read surface
 
-Three tenant-scoped trails are readable over HTTP, each a GET behind a read scope with the tenant taken from the principal: `GET /api/auth/audit` (`auth.audit.read`), `GET /api/agent-audit` (`agents.runs.read`), and `GET /api/sandbox/audit` (`sandbox.sessions.read`). They are surfaced together in `auth.core`'s Administration > Audit view, whose source selector is derived from `ModuleClientContext.scopes` so a reader is never offered a source it cannot read. The agent and sandbox trails are hash-chained; `GET /api/agent-audit/verify` and `GET /api/sandbox/audit/verify` (same read scopes) recompute the chain and return `{ verified, brokenAt }` through the same repository walk the `coreloom <module> audit-verify` CLI uses, so CLI and endpoint cannot drift. Reviewing an audit change: the read scope guards both list and verify, the list cursor is `(occurred_at, sequence)` and the sequence is trusted from storage (never from input), and no chain field or metadata may carry a credential, token, or request body.
+Three tenant-scoped trails are readable over HTTP, each a GET behind a read scope with the tenant taken from the principal: `GET /api/auth/audit` (`auth.audit.read`), `GET /api/agent-audit` (`agents.runs.read`), and `GET /api/sandbox/audit` (`sandbox.sessions.read`). They are surfaced together in `auth.core`'s Administration > Audit view, whose source selector is derived from `ModuleClientContext.scopes` so a reader is never offered a source it cannot read. The agent and sandbox trails are hash-chained; `GET /api/agent-audit/verify` and `GET /api/sandbox/audit/verify` (same read scopes) recompute the chain and return `{ verified, brokenAt }` through the same repository walk the `flowdular <module> audit-verify` CLI uses, so CLI and endpoint cannot drift. Reviewing an audit change: the read scope guards both list and verify, the list cursor is `(occurred_at, sequence)` and the sequence is trusted from storage (never from input), and no chain field or metadata may carry a credential, token, or request body.
 
 ## 3. API tokens
 
@@ -37,7 +40,7 @@ Three tenant-scoped trails are readable over HTTP, each a GET behind a read scop
 
 ## 4. Secrets
 
-Passwords: scrypt `N=2^17, r=8, p=1`, 64-byte key (`modules/auth/src/services/password.ts`). Sessions: 32 random bytes, CSRF 24 bytes, SHA-256 at rest. Cookies: `HttpOnly; SameSite=Strict; Path=/`, `Secure` and the `__Host-` prefix when `CL_AUTH_SECURE_COOKIE` is true (default in production), 12 hour TTL (`modules/auth/src/server/runtime.ts`). Provider credentials: AES-256-GCM in `modules/agents/src/services/credential-vault.ts`, key from `CL_AGENT_CREDENTIAL_KEY` (required in production). `redactSecrets` in `packages/ai-provider/src/errors.ts` scrubs provider messages; there is no general redacting logger, so `console.error(..., error)` with a raw SQLite error can print bound values. A module never logs a principal, a token, or a request body.
+Passwords: scrypt `N=2^17, r=8, p=1`, 64-byte key (`modules/auth/src/services/password.ts`). Sessions: 32 random bytes, CSRF 24 bytes, SHA-256 at rest. Cookies: `HttpOnly; SameSite=Strict; Path=/`, `Secure` and the `__Host-` prefix when `FD_AUTH_SECURE_COOKIE` is true (default in production), 12 hour TTL (`modules/auth/src/server/runtime.ts`). Provider credentials: AES-256-GCM in `modules/agents/src/services/credential-vault.ts`, key from `FD_AGENT_CREDENTIAL_KEY` (required in production). `redactSecrets` in `packages/ai-provider/src/errors.ts` scrubs provider messages; there is no general redacting logger, and a raw driver error can carry the failing statement, so a handler maps it to a Flowdular error code and logs that instead of `console.error(..., error)` with the driver message. A module never logs a principal, a token, or a request body.
 
 ## 5. Greps to run
 
@@ -47,20 +50,20 @@ grep -rn "tenantId" modules/*/src/api | grep -v principalFromContext      # tena
 grep -rn "request.json()" modules/*/src                                   # unbounded body reads
 grep -rn "console\.\(log\|error\)" modules/*/src                          # logging of principals or bodies
 grep -rn "kind: 'public'" modules/*/src                                   # public endpoints need a reason
-grep -rn "\${" modules/*/src/services/sqlite-repository.ts                # interpolation into SQL
+grep -rn "\${" modules/*/src/services/database-repository.ts              # interpolation into SQL
 ```
 
 ## 6. Destructive and external CLI capabilities
 
-`packages/cli/src/runner.ts`: `external` risk and non-local `destructive` capabilities fail with `APPROVAL_VERIFIER_REQUIRED`; `localOnly` runs only when `CL_ENV` or `NODE_ENV` is `development` or `test` (unset counts as development); `requiresApprovedSpec` needs `--spec` pointing at an approved spec; `destructive` with `--apply` needs `--confirm <token>` equal to the descriptor's `confirmation`. `setup quick` is `auth greenfield` (`--apply --confirm reset-local-auth`) and resets `.coreloom/data/auth.db`. Never point it at `CL_AUTH_DATABASE` of a deployment.
+`packages/cli/src/runner.ts`: `external` risk and non-local `destructive` capabilities fail with `APPROVAL_VERIFIER_REQUIRED`; `localOnly` runs only when `FD_ENV` or `NODE_ENV` is `development` or `test` (unset counts as development); `requiresApprovedSpec` needs `--spec` pointing at an approved spec; `destructive` with `--apply` needs `--confirm <token>` equal to the descriptor's `confirmation`. `setup quick` is `auth greenfield` (`--apply --confirm reset-local-auth`) and resets `.flowdular/data/auth.db`. Never point it at `FD_AUTH_DATABASE` of a deployment.
 
 ## 7. Required tests per endpoint
 
-Recipe in `modules/auth/tests/endpoints.test.ts`: build the runtime with `new SqliteAuthRepository(':memory:')`, call `route.handler(createContext(new Request(...), {}))`.
+Recipe in `modules/auth/tests/endpoints.test.ts`: build the runtime with a `DatabaseAuthRepository` on a `createPgliteTestProvider()` lease, call `route.handler(createContext(new Request(...), {}))`.
 
 - 401 without a cookie or token.
 - 403 with a principal that lacks the permission.
-- Cross-tenant read returns an empty list (service level with `':memory:'`).
+- Cross-tenant read returns an empty list (service level, on the suite's test provider under the non-bypass `coreloom_runtime` role).
 - Mutation without `x-csrf-token` returns 403 `CSRF_REJECTED`; without `origin` returns 403.
 - Each validation bound returns 400 with its code.
 

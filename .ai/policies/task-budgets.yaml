@@ -12,7 +12,7 @@ overrides:
   new-module:
     maxChangedFiles: 30
     maxNewDependencies: 0
-    note: a full module is about 25 files (modules/catalog has 28 including migrations and translations)
+    note: a full module is about 25 files (.ai/references/catalog has 28 including migrations and translations)
   edit-module:
     maxChangedFiles: 12
   add-migration:

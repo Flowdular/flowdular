@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { PROFILE_PERMISSIONS } from '../src/acl/permissions.ts';
 import { assertSelfOnlyProfileTarget } from '../src/api/endpoints.ts';
 import { moduleDefinition } from '../src/index.ts';
@@ -6,7 +6,26 @@ import {
 	ProfileService,
 	ProfileServiceError,
 } from '../src/services/profile-service.ts';
-import { SqliteProfileRepository } from '../src/services/sqlite-repository.ts';
+import {
+	closeProfileTestDatabases,
+	createProfileTestDatabase,
+	type ProfileTestDatabase,
+} from './support/database.ts';
+
+const databases = new Set<ProfileTestDatabase>();
+
+async function profileService(): Promise<ProfileService> {
+	const database = await createProfileTestDatabase();
+	databases.add(database);
+	return new ProfileService(database.repository);
+}
+
+afterEach(async () => {
+	await Promise.all([...databases].map((database) => database.dispose()));
+	databases.clear();
+});
+
+afterAll(closeProfileTestDatabases);
 
 describe('profile.core', () => {
 	it('exports its validated identity', () => {
@@ -16,103 +35,125 @@ describe('profile.core', () => {
 		]);
 	});
 
-	it('trims and stores display names from 2 to 120 characters', () => {
-		const service = new ProfileService(new SqliteProfileRepository(':memory:'));
+	it('trims and stores display names from 2 to 120 characters', async () => {
+		const service = await profileService();
 		expect(
-			service.update('tenant-a', 'account-a', {
-				displayName: '  Ada Lovelace  ',
-			}).displayName,
+			(
+				await service.update('tenant-a', 'account-a', {
+					displayName: '  Ada Lovelace  ',
+				})
+			).displayName,
 		).toBe('Ada Lovelace');
 		expect(
-			service.update('tenant-a', 'account-b', { displayName: 'AB' })
+			(await service.update('tenant-a', 'account-b', { displayName: 'AB' }))
 				.displayName,
 		).toBe('AB');
 		expect(
-			service.update('tenant-a', 'account-c', {
-				displayName: 'A'.repeat(120),
-			}).displayName,
+			(
+				await service.update('tenant-a', 'account-c', {
+					displayName: 'A'.repeat(120),
+				})
+			).displayName,
 		).toHaveLength(120);
 	});
 
-	it('rejects display names shorter than 2 characters after trimming', () => {
-		const service = new ProfileService(new SqliteProfileRepository(':memory:'));
-		expect(() =>
+	it('rejects display names shorter than 2 characters after trimming', async () => {
+		const service = await profileService();
+		await expect(
 			service.update('tenant-a', 'account-a', { displayName: ' A ' }),
-		).toThrowError(ProfileServiceError);
+		).rejects.toThrowError(ProfileServiceError);
 	});
 
-	it('rejects display names longer than 120 characters after trimming', () => {
-		const service = new ProfileService(new SqliteProfileRepository(':memory:'));
-		expect(() =>
+	it('rejects display names longer than 120 characters after trimming', async () => {
+		const service = await profileService();
+		await expect(
 			service.update('tenant-a', 'account-a', {
 				displayName: 'A'.repeat(121),
 			}),
-		).toThrowError(/between 2 and 120/);
+		).rejects.toThrowError(/between 2 and 120/);
 	});
 
-	it('rejects control characters in display names', () => {
-		const service = new ProfileService(new SqliteProfileRepository(':memory:'));
-		expect(() =>
+	it('rejects control characters in display names', async () => {
+		const service = await profileService();
+		await expect(
 			service.update('tenant-a', 'account-a', {
 				displayName: 'Ada\nLovelace',
 			}),
-		).toThrowError(/control characters/);
-		expect(() =>
+		).rejects.toThrowError(/control characters/);
+		await expect(
 			service.update('tenant-a', 'account-a', {
 				displayName: '\nAda Lovelace',
 			}),
-		).toThrowError(/control characters/);
+		).rejects.toThrowError(/control characters/);
 	});
 
-	it('rejects malformed tenant and account identifiers', () => {
-		const service = new ProfileService(new SqliteProfileRepository(':memory:'));
-		expect(() => service.read('tenant with spaces', 'account-a')).toThrowError(
+	it('rejects malformed tenant and account identifiers', async () => {
+		const service = await profileService();
+		await expect(
+			service.read('tenant with spaces', 'account-a'),
+		).rejects.toThrowError(/valid identifier/);
+		await expect(service.read('tenant-a', '')).rejects.toThrowError(
 			/valid identifier/,
 		);
-		expect(() => service.read('tenant-a', '')).toThrowError(/valid identifier/);
-		expect(() => service.read('tenant-a', 'a'.repeat(129))).toThrowError(
-			/valid identifier/,
-		);
+		await expect(
+			service.read('tenant-a', 'a'.repeat(129)),
+		).rejects.toThrowError(/valid identifier/);
 	});
 
-	it('keeps one display-name record per account and tenant', () => {
-		const service = new ProfileService(new SqliteProfileRepository(':memory:'));
-		service.update('tenant-a', 'account-a', { displayName: 'First Name' });
-		service.update('tenant-a', 'account-a', { displayName: 'Second Name' });
-		expect(service.read('tenant-a', 'account-a')?.displayName).toBe(
+	it('keeps one display-name record per account and tenant', async () => {
+		const service = await profileService();
+		await service.update('tenant-a', 'account-a', {
+			displayName: 'First Name',
+		});
+		await service.update('tenant-a', 'account-a', {
+			displayName: 'Second Name',
+		});
+		expect((await service.read('tenant-a', 'account-a'))?.displayName).toBe(
 			'Second Name',
 		);
-		expect(service.read('tenant-a', 'account-b')).toBeNull();
+		await expect(service.read('tenant-a', 'account-b')).resolves.toBeNull();
 	});
 
-	it('isolates the same account identifier between tenants', () => {
-		const service = new ProfileService(new SqliteProfileRepository(':memory:'));
-		service.update('tenant-a', 'account-a', { displayName: 'Tenant Alpha' });
-		service.update('tenant-b', 'account-a', { displayName: 'Tenant Beta' });
-		expect(service.read('tenant-a', 'account-a')?.displayName).toBe(
+	it('isolates the same account identifier between tenants', async () => {
+		const service = await profileService();
+		await service.update('tenant-a', 'account-a', {
+			displayName: 'Tenant Alpha',
+		});
+		await service.update('tenant-b', 'account-a', {
+			displayName: 'Tenant Beta',
+		});
+		expect((await service.read('tenant-a', 'account-a'))?.displayName).toBe(
 			'Tenant Alpha',
 		);
-		expect(service.read('tenant-b', 'account-a')?.displayName).toBe(
+		expect((await service.read('tenant-b', 'account-a'))?.displayName).toBe(
 			'Tenant Beta',
 		);
 	});
 
-	it('stores supported language preferences per account and tenant', () => {
-		const service = new ProfileService(new SqliteProfileRepository(':memory:'));
-		service.updateLanguage('tenant-a', 'account-a', { locale: 'PL' });
-		service.updateLanguage('tenant-b', 'account-a', { locale: 'en' });
-		expect(service.readLanguage('tenant-a', 'account-a')).toBe('pl');
-		expect(service.readLanguage('tenant-b', 'account-a')).toBe('en');
-		expect(service.readLanguage('tenant-a', 'account-b')).toBeNull();
+	it('stores supported language preferences per account and tenant', async () => {
+		const service = await profileService();
+		await service.updateLanguage('tenant-a', 'account-a', { locale: 'PL' });
+		await service.updateLanguage('tenant-b', 'account-a', { locale: 'en' });
+		await expect(service.readLanguage('tenant-a', 'account-a')).resolves.toBe(
+			'pl',
+		);
+		await expect(service.readLanguage('tenant-b', 'account-a')).resolves.toBe(
+			'en',
+		);
+		await expect(
+			service.readLanguage('tenant-a', 'account-b'),
+		).resolves.toBeNull();
 	});
 
-	it('rejects an unsupported language without changing the stored preference', () => {
-		const service = new ProfileService(new SqliteProfileRepository(':memory:'));
-		service.updateLanguage('tenant-a', 'account-a', { locale: 'pl' });
-		expect(() =>
+	it('rejects an unsupported language without changing the stored preference', async () => {
+		const service = await profileService();
+		await service.updateLanguage('tenant-a', 'account-a', { locale: 'pl' });
+		await expect(
 			service.updateLanguage('tenant-a', 'account-a', { locale: 'de' }),
-		).toThrowError(/supported interface languages/);
-		expect(service.readLanguage('tenant-a', 'account-a')).toBe('pl');
+		).rejects.toThrowError(/supported interface languages/);
+		await expect(service.readLanguage('tenant-a', 'account-a')).resolves.toBe(
+			'pl',
+		);
 	});
 
 	it('denies request-supplied account and tenant targets', () => {

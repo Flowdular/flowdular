@@ -71,7 +71,7 @@ describe('development launcher arguments', () => {
 
 	it('drops an HMR update when a restart replaces the environments', async () => {
 		const temporaryRoot = await realpath(
-			await mkdtemp(join(tmpdir(), 'coreloom-platform-hmr-')),
+			await mkdtemp(join(tmpdir(), 'flowdular-platform-hmr-')),
 		);
 		const sourceFile = join(temporaryRoot, 'main.js');
 		await writeFile(sourceFile, 'export const value = 1;\n');
@@ -84,7 +84,7 @@ describe('development launcher arguments', () => {
 			logLevel: 'silent',
 			plugins: [
 				{
-					name: 'coreloom-hmr-restart-race-reproduction',
+					name: 'flowdular-hmr-restart-race-reproduction',
 					handleHotUpdate(context) {
 						updateStarted = true;
 						const environmentsBeforeRestart = context.server.environments;

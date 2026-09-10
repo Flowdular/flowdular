@@ -2,8 +2,8 @@
 	"$schema": "../../packages/contracts/schemas/module.schema.json",
 	"schemaVersion": 1,
 	"id": "auth.core",
-	"package": "@coreloom/module-auth",
-	"version": "0.8.1",
+	"package": "@flowdular/module-auth",
+	"version": "0.10.0",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations", "cli"],
 	"platform": {
@@ -12,7 +12,7 @@
 	"dependencies": [
 		{
 			"id": "system.core",
-			"range": "^0.1.0"
+			"range": "0.5.0"
 		}
 	],
 	"tenancy": "required",
@@ -21,5 +21,6 @@
 	"cli": {
 		"catalog": "src/cli/commands.json",
 		"entry": "src/cli/index.ts"
-	}
+	},
+	"platformApi": "0.1.0"
 }

@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: automations.core
-specVersion: 0.2.0
+specVersion: 0.4.0
 status: approved
 name: Automations Core
 description: Runs agents without a person present, on a schedule or from a signed webhook, as a module a workspace can leave uninstalled.
@@ -12,11 +12,11 @@ capabilities:
   - translations
 dependencies:
   - id: system.core
-    range: ^0.1.0
+    range: 0.5.0
   - id: auth.core
-    range: ^0.1.0
+    range: 0.10.0
   - id: agents.core
-    range: ^0.5.0
+    range: 0.9.1
 tenancy: required
 locales:
   - en
@@ -31,6 +31,8 @@ invariants:
   - Automation events are appended to a hash-chained audit trail that verifies independently of the agents trail.
   - The scheduler poll interval is an automations.core platform setting with a bounded deployment default, so installing the module does not add an undeclared clock policy to agents.core.
   - A schedule stores its raw input template; only the queued run snapshot receives a single-pass resolved value from scope-filtered variable sources.
+  - Every request-time read and write runs on a tenant-scoped PostgreSQL handle under forced row-level security. The scheduler poll and the webhook trigger lookup are the only cross-tenant reads, they run on a separate read-only role, and that role is granted only the columns that route the work to a tenant under a policy of the table itself.
+  - A due schedule found by the cross-tenant poll, and a trigger found by the cross-tenant webhook lookup, are read again under the tenant that row named before anything acts on them, and a slot whose next run time moved in between is skipped.
 permissions:
   - id: automations.schedules.read
     description: Read schedules in the active tenant.
@@ -85,3 +87,7 @@ acceptanceScenarios:
     given: A schedule manager can read the variables offered by the schedule editor, including agent.name through the agents.run-queue public capability.
     when: The manager saves a template containing known variables and the schedule queues a run.
     then: Unknown or forbidden variables are rejected, the stored schedule keeps the raw template, and the run receives one-pass resolved input from the active tenant only.
+  - id: AUTO-POLL-NARROW
+    given: Two workspaces each own an enabled schedule that is due.
+    when: The scheduler polls for due work across tenants.
+    then: The poll returns only the workspace id, schedule id and next run time; the label, input template, configuring actor and permission snapshot are unreadable on that connection, and it cannot write.

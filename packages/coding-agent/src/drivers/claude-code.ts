@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { AiUsage } from '@coreloom/ai-provider';
+import type { AiUsage } from '@flowdular/ai-provider';
 import {
 	CodingAgentError,
 	type CodingAgentAvailability,

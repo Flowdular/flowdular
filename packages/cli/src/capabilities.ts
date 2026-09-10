@@ -1,6 +1,48 @@
-import type { CapabilityDescriptor } from '@coreloom/cli-protocol';
+import type { CapabilityDescriptor } from '@flowdular/cli-protocol';
 
 export const capabilities: readonly CapabilityDescriptor[] = [
+	{
+		id: 'module.search',
+		version: 1,
+		summary: 'Search official module releases.',
+		risk: 'read',
+		requiresApprovedSpec: false,
+		supportsDryRun: false,
+	},
+	{
+		id: 'module.info',
+		version: 1,
+		summary: 'Inspect an official module release contract.',
+		risk: 'read',
+		requiresApprovedSpec: false,
+		supportsDryRun: false,
+	},
+	{
+		id: 'module.install',
+		version: 1,
+		summary:
+			'Install reviewed module source without activation or database changes.',
+		risk: 'workspace-write',
+		requiresApprovedSpec: false,
+		supportsDryRun: true,
+	},
+	{
+		id: 'module.update',
+		version: 1,
+		summary:
+			'Update an installed module while preserving local edits and migrations.',
+		risk: 'workspace-write',
+		requiresApprovedSpec: false,
+		supportsDryRun: true,
+	},
+	{
+		id: 'module.recover',
+		version: 1,
+		summary: 'Recover an interrupted module source installation.',
+		risk: 'workspace-write',
+		requiresApprovedSpec: false,
+		supportsDryRun: true,
+	},
 	{
 		id: 'workspace.doctor',
 		version: 1,
@@ -57,17 +99,36 @@ export const capabilities: readonly CapabilityDescriptor[] = [
 		id: 'migration.apply.local',
 		version: 1,
 		summary:
-			'Apply or adopt the outstanding migrations of one module against its local database.',
+			'Apply or adopt the outstanding migrations of one module against the configured database.',
 		risk: 'process',
 		requiresApprovedSpec: false,
 		supportsDryRun: true,
 		localOnly: true,
 	},
 	{
+		id: 'database.reset.local',
+		version: 1,
+		summary:
+			'Drop every table in the configured database, including the migration ledger.',
+		risk: 'destructive',
+		requiresApprovedSpec: false,
+		supportsDryRun: true,
+		localOnly: true,
+		confirmation: 'reset-database',
+	},
+	{
+		id: 'migration.scaffold',
+		version: 1,
+		summary: 'Scaffold the up and down scripts of one module migration.',
+		risk: 'workspace-write',
+		requiresApprovedSpec: false,
+		supportsDryRun: true,
+	},
+	{
 		id: 'workspace.state.migrate',
 		version: 1,
 		summary:
-			'Copy pre-Coreloom local databases and vault keys into .coreloom/data without deleting the source.',
+			'Copy pre-Flowdular local databases and vault keys into .flowdular/data without deleting the source.',
 		risk: 'destructive',
 		requiresApprovedSpec: false,
 		supportsDryRun: true,

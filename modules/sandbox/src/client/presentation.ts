@@ -2,7 +2,7 @@ import type {
 	SandboxAccessGrant,
 	SandboxSessionState,
 } from '../domain/types.ts';
-import { activeLocale, t } from '@coreloom/client/i18n';
+import { activeLocale, t } from '@flowdular/client/i18n';
 
 export type GrantState = 'active' | 'expired' | 'revoked';
 

@@ -1,6 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { createContext } from '@octanejs/app-core';
-import { describe, expect, it, vi } from 'vitest';
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	describe,
+	expect,
+	it,
+	vi,
+} from 'vitest';
 import { OWNER_SCOPES } from '../src/acl/scopes.ts';
 import {
 	authRuntimeOptionsFromEnvironment,
@@ -9,15 +17,42 @@ import {
 import {
 	authed,
 	call,
+	closeAuthTestDatabases,
 	jsonRequest,
 	ORIGIN,
 	signUpOwner,
 	testRuntime,
+	unopenedDatabases,
+	type TestRuntime,
 } from './helpers.ts';
+import { authTestProvider } from './support/database.ts';
+
+const open = new Set<TestRuntime>();
+
+/* Booting the embedded PostgreSQL takes seconds; charge it to the hook budget
+   instead of the first case's five second timeout. */
+beforeAll(async () => {
+	await authTestProvider();
+}, 60_000);
+
+afterEach(async () => {
+	await Promise.all([...open].map((runtime) => runtime.dispose()));
+	open.clear();
+});
+
+afterAll(closeAuthTestDatabases);
+
+async function fixture(
+	overrides?: Parameters<typeof testRuntime>[0],
+): Promise<TestRuntime> {
+	const runtime = await testRuntime(overrides);
+	open.add(runtime);
+	return runtime;
+}
 
 describe('auth HTTP boundary', () => {
 	it('creates, reads, and revokes a protected cookie session', async () => {
-		const auth = testRuntime();
+		const auth = await fixture();
 		const owner = await signUpOwner(auth);
 		const sessionResponse = await call(
 			auth,
@@ -37,7 +72,7 @@ describe('auth HTTP boundary', () => {
 		expect(sessionBody.tenantSettings).toEqual({ defaultLocale: 'en' });
 
 		const secondTenantId = randomUUID();
-		auth.repository.createTenantMembership({
+		await auth.repository.createTenantMembership({
 			accountId: owner.accountId,
 			tenantId: secondTenantId,
 			organizationName: 'Second Workspace',
@@ -80,7 +115,7 @@ describe('auth HTTP boundary', () => {
 	});
 
 	it('rejects cross-origin sign-up before account work', async () => {
-		const auth = testRuntime();
+		const auth = await fixture();
 		const response = await call(
 			auth,
 			'/api/auth/sign-up',
@@ -94,7 +129,7 @@ describe('auth HTTP boundary', () => {
 	});
 
 	it('guards public reset and authenticated MFA and invitation mutations against CSRF', async () => {
-		const auth = testRuntime();
+		const auth = await fixture();
 		const owner = await signUpOwner(auth);
 		const reset = await call(
 			auth,
@@ -128,7 +163,7 @@ describe('auth HTTP boundary', () => {
 	});
 
 	it('silently limits repeated password reset delivery without revealing the limit', async () => {
-		const auth = testRuntime();
+		const auth = await fixture();
 		const delivery = vi
 			.spyOn(auth.authService, 'requestPasswordReset')
 			.mockResolvedValue();
@@ -149,7 +184,7 @@ describe('auth HTTP boundary', () => {
 	});
 
 	it('caps reset delivery across addresses when the trusted proxy exposes a client address', async () => {
-		const auth = testRuntime({ trustProxy: true });
+		const auth = await fixture({ trustProxy: true });
 		const delivery = vi
 			.spyOn(auth.authService, 'requestPasswordReset')
 			.mockResolvedValue();
@@ -171,7 +206,7 @@ describe('auth HTTP boundary', () => {
 	});
 
 	it('returns only the current account MFA state to an authenticated session', async () => {
-		const auth = testRuntime({ mfaEncryptionKey: 'f'.repeat(64) });
+		const auth = await fixture({ mfaEncryptionKey: 'f'.repeat(64) });
 		const unauthenticated = await call(
 			auth,
 			'/api/auth/mfa/status',
@@ -195,7 +230,7 @@ describe('auth HTTP boundary', () => {
 	});
 
 	it('expires a stale MFA proof after a failed challenge', async () => {
-		const auth = testRuntime({ mfaEncryptionKey: 'f'.repeat(64) });
+		const auth = await fixture({ mfaEncryptionKey: 'f'.repeat(64) });
 		const result = await call(
 			auth,
 			'/api/auth/mfa/challenge',
@@ -213,10 +248,10 @@ describe('auth HTTP boundary', () => {
 	});
 
 	it('returns the session and expired MFA proof as separate Set-Cookie headers', async () => {
-		const auth = testRuntime({ mfaEncryptionKey: 'f'.repeat(64) });
+		const auth = await fixture({ mfaEncryptionKey: 'f'.repeat(64) });
 		const owner = await signUpOwner(auth);
 		const currentToken = owner.cookie.slice(owner.cookie.indexOf('=') + 1);
-		const current = auth.authService.resolveSession(currentToken)!;
+		const current = (await auth.authService.resolveSession(currentToken))!;
 		vi.spyOn(auth.authService, 'completeMfaChallenge').mockResolvedValue({
 			...current,
 			token: 'B'.repeat(43),
@@ -244,7 +279,7 @@ describe('auth HTTP boundary', () => {
 	});
 
 	it('enforces the sign-up module setting at the server boundary', async () => {
-		const auth = testRuntime({ allowSignUp: false });
+		const auth = await fixture({ allowSignUp: false });
 		const response = await call(
 			auth,
 			'/api/auth/sign-up',
@@ -257,7 +292,7 @@ describe('auth HTTP boundary', () => {
 	});
 
 	it('does not confirm registered addresses through sign-up or sign-in', async () => {
-		const auth = testRuntime();
+		const auth = await fixture();
 		await signUpOwner(auth);
 		const duplicate = await call(
 			auth,
@@ -299,7 +334,7 @@ describe('auth HTTP boundary', () => {
 	});
 
 	it('caps request bodies and reports 413', async () => {
-		const auth = testRuntime();
+		const auth = await fixture();
 		const response = await call(
 			auth,
 			'/api/auth/sign-in',
@@ -312,7 +347,7 @@ describe('auth HTTP boundary', () => {
 	});
 
 	it('locks an address after repeated failures with a stable error', async () => {
-		const auth = testRuntime();
+		const auth = await fixture();
 		await signUpOwner(auth, 'lock@example.com', 'lock-workspace');
 		const attempt = () =>
 			call(
@@ -332,7 +367,7 @@ describe('auth HTTP boundary', () => {
 		expect(locked.status).toBe(401);
 		const sixth = await attempt();
 		expect(sixth.status).toBe(429);
-		const service = auth.service();
+		const service = await auth.service();
 		await expect(
 			service.signIn({
 				email: 'lock@example.com',
@@ -350,7 +385,7 @@ describe('auth HTTP boundary', () => {
 
 	it('limits by forwarded client address only behind a trusted proxy', async () => {
 		const attempts = async (trustProxy: boolean) => {
-			const auth = testRuntime({ trustProxy });
+			const auth = await fixture({ trustProxy });
 			const statuses: number[] = [];
 			for (let index = 0; index < 25; index += 1) {
 				const response = await call(
@@ -379,7 +414,7 @@ describe('auth HTTP boundary', () => {
 
 	it('adds security headers through the composed auth middleware', async () => {
 		const runtime = createAuthRuntime({
-			databasePath: ':memory:',
+			databases: await authTestProvider(),
 			secureCookies: true,
 			cookieName: '__Host-test',
 			sessionTtlMs: 3_600_000,
@@ -388,41 +423,49 @@ describe('auth HTTP boundary', () => {
 			signInProviders: [],
 			production: true,
 		});
-		const response = await runtime.middleware(
-			createContext(new Request('https://erp.example/'), {}),
-			async () => new Response('<html></html>'),
-		);
-		expect(response.headers.get('x-frame-options')).toBe('DENY');
-		expect(response.headers.get('strict-transport-security')).toContain(
-			'max-age',
-		);
-		expect(response.headers.get('content-security-policy')).toContain(
-			"frame-ancestors 'none'",
-		);
-		expect(runtime.settings.allowSignUp).toBe(false);
+		try {
+			const response = await runtime.middleware(
+				createContext(new Request('https://erp.example/'), {}),
+				async () => new Response('<html></html>'),
+			);
+			expect(response.headers.get('x-frame-options')).toBe('DENY');
+			expect(response.headers.get('strict-transport-security')).toContain(
+				'max-age',
+			);
+			expect(response.headers.get('content-security-policy')).toContain(
+				"frame-ancestors 'none'",
+			);
+			expect(runtime.settings.allowSignUp).toBe(false);
+		} finally {
+			await runtime.dispose();
+		}
 	});
 
-	it('refuses to enable email confirmation without a mail transport', () => {
+	it('refuses to enable email confirmation without a mail transport', async () => {
 		const runtime = createAuthRuntime({
-			databasePath: ':memory:',
+			databases: unopenedDatabases(),
 			secureCookies: false,
 			sessionTtlMs: 3_600_000,
 			allowSignUp: true,
 			emailConfirmation: true,
 			signInProviders: [],
 		});
-		expect(runtime.settings.emailConfirmation).toBe(false);
-		expect(() =>
-			authRuntimeOptionsFromEnvironment({
-				CL_AUTH_EMAIL_CONFIRMATION: 'true',
-			}),
-		).toThrow(/mail transport/);
+		try {
+			expect(runtime.settings.emailConfirmation).toBe(false);
+			expect(() =>
+				authRuntimeOptionsFromEnvironment({
+					FD_AUTH_EMAIL_CONFIRMATION: 'true',
+				}),
+			).toThrow(/mail transport/);
+		} finally {
+			await runtime.dispose();
+		}
 	});
 });
 
 describe('workspace settings', () => {
 	it('renames the workspace and serves the tenant locale in the session', async () => {
-		const auth = testRuntime();
+		const auth = await fixture();
 		const owner = await signUpOwner(auth);
 		const renamed = await call(
 			auth,
@@ -459,16 +502,17 @@ describe('workspace settings', () => {
 	});
 
 	it('denies the rename without the manage scope', async () => {
-		const auth = testRuntime();
+		const auth = await fixture();
 		const owner = await signUpOwner(auth);
-		await auth.service().createTenantMember({
+		const service = await auth.service();
+		await service.createTenantMember({
 			tenantId: owner.tenantId,
 			email: 'member@example.com',
 			password: 'member password long',
 			displayName: 'Mem Ber',
 			role: 'member',
 		});
-		const memberSession = await auth.service().signIn({
+		const memberSession = await service.signIn({
 			email: 'member@example.com',
 			password: 'member password long',
 		});
@@ -490,7 +534,7 @@ describe('workspace settings', () => {
 
 describe('roles, audit, and sessions API', () => {
 	it('manages custom roles over HTTP and keeps them tenant-scoped', async () => {
-		const auth = testRuntime();
+		const auth = await fixture();
 		const owner = await signUpOwner(auth);
 		const created = await call(
 			auth,
@@ -550,11 +594,12 @@ describe('roles, audit, and sessions API', () => {
 	});
 
 	it('pages the audit trail newest first and filters by action', async () => {
-		const auth = testRuntime();
+		const auth = await fixture();
 		const owner = await signUpOwner(auth);
+		const service = await auth.service();
 		for (let index = 0; index < 3; index += 1) {
 			auth.clock.now += 1;
-			auth.service().renameTenant(
+			await service.renameTenant(
 				{
 					accountId: owner.accountId,
 					tenantId: owner.tenantId,
@@ -598,9 +643,10 @@ describe('roles, audit, and sessions API', () => {
 	});
 
 	it('lists own sessions and revokes another one', async () => {
-		const auth = testRuntime();
+		const auth = await fixture();
 		const owner = await signUpOwner(auth);
-		const second = await auth.service().signIn({
+		const service = await auth.service();
+		const second = await service.signIn({
 			email: 'owner@example.com',
 			password: 'correct horse battery staple',
 		});
@@ -629,7 +675,7 @@ describe('roles, audit, and sessions API', () => {
 			),
 		);
 		expect(revoke.status).toBe(200);
-		expect(auth.service().resolveSession(second.token)).toBeNull();
+		expect(await service.resolveSession(second.token)).toBeNull();
 		const current = await call(
 			auth,
 			'/api/auth/sessions/revoke',

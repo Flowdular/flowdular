@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'octane';
-import { Alert, Button, FormField } from '@coreloom/ui';
-import { useTranslation } from '@coreloom/client';
+import { Alert, Button, FormField } from '@flowdular/ui';
+import { useTranslation } from '@flowdular/client';
 import { cell, createStore, useValue } from 'segment-state';
 import {
 	acceptTenantInvitation,

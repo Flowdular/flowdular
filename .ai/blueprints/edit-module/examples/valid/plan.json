@@ -4,7 +4,7 @@
 	"change": "column",
 	"touchList": [
 		"modules/parties/src/services/migration.ts",
-		"modules/parties/src/services/sqlite-repository.ts",
+		"modules/parties/src/services/database-repository.ts",
 		"modules/parties/migrations/0002_parties_vat_id.up.sql",
 		"modules/parties/migrations/0002_parties_vat_id.down.sql",
 		"modules/parties/src/domain/types.ts",

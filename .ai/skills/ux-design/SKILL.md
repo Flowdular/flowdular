@@ -1,6 +1,8 @@
 ---
 name: ux-design
-description: Design a module screen on the shared design system, with the record-screen recipe, the five states, the component and class inventory, and the icon keys.
+description: >-
+  Design a module screen on the shared design system, with the record-screen
+  recipe, the five states, the component and class inventory, and the icon keys.
 roles:
   - ux-designer
   - frontend-engineer
@@ -9,7 +11,7 @@ when: A screen, drawer form, dashboard widget, or copy is being designed or revi
 
 # Design a screen
 
-`docs/design-system.md` (in a session: `reference/design-system.md`) is the only source of visual decisions. Primitives live in `packages/ui` (`reference/packages/ui/components/*.tsrx` and `components.css`). The reference screen is `modules/catalog/src/client/CatalogView.tsrx` with `CatalogItemForm.tsrx`.
+`docs/design-system.md` (in a session: `reference/design-system.md`) is the only source of visual decisions. Primitives live in `packages/ui` (`reference/packages/ui/components/*.tsrx` and `components.css`). The reference screen is `.ai/references/catalog/src/client/CatalogView.tsrx` with `CatalogItemForm.tsrx`.
 
 ## 1. Rules (design-system.md, section Rules)
 
@@ -42,7 +44,7 @@ div.ui-view
 
 `TableCard` is the record card and `Table` is the only table in the product: never hand-roll `table.ui-table` again, and never rebuild the head, the loading row or the empty state that these already own. `actions(row)` returns `TableAction[]`; the component renders visible compact buttons in its narrow trailing column. Do not build a dropdown or module-owned action markup. Fixed column widths apply through loading, empty and populated states. A cell returns nodes: `span.ui-cell` (`<b>` primary, `<small>` secondary), `ui-mono` for an identifier, `Tag` for state, `numeric: true` on the column for tabular figures.
 
-The shared `Table` is backed by the official `@octanejs/tanstack-table` adapter. A module never imports TanStack directly. It supplies the Coreloom columns, rows and actions above, while `@coreloom/ui` owns the features, row model, header model and cell rendering.
+The shared `Table` is backed by the official `@octanejs/tanstack-table` adapter. A module never imports TanStack directly. It supplies the Flowdular columns, rows and actions above, while `@flowdular/ui` owns the features, row model, header model and cell rendering.
 
 Every column declares `width`. Primary identity and descriptions get the largest share, dates and identifiers a medium share, and counts or status the smallest. For a table with actions, data widths normally add up to about 90 percent because the shared action column is 160 px. Without actions they add up to 100 percent. Do not leave all columns unspecified: equal distribution wastes space and weakens the hierarchy.
 

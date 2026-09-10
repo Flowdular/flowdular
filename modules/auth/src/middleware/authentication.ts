@@ -1,15 +1,20 @@
 import type { Context, Middleware } from '@octanejs/app-core';
-import type { EndpointIdentity } from '@coreloom/server';
-import type { AuthPrincipal } from '../domain/types.ts';
+import type { EndpointIdentity } from '@flowdular/server';
+import type { AuthPrincipal, AuthSession } from '../domain/types.ts';
 import { readCookie, type AuthCookieConfig } from '../api/cookies.ts';
 import type { AuthService } from '../services/auth-service.ts';
 
-export const AUTH_PRINCIPAL_STATE_KEY = 'coreloom.auth.principal';
+export const AUTH_PRINCIPAL_STATE_KEY = 'flowdular.auth.principal';
 /* Set when the principal came from an API token instead of a browser session.
    Session-guarded mutations stay closed to machine credentials. */
-export const AUTH_TOKEN_PRINCIPAL_STATE_KEY = 'coreloom.auth.token-principal';
+export const AUTH_TOKEN_PRINCIPAL_STATE_KEY = 'flowdular.auth.token-principal';
+/* The whole browser session, set only when a cookie resolved one. Reading the
+   session is a database round trip, and the CSRF check, the session guard and
+   auth's own routes all need it, so the middleware resolves it once and
+   publishes it here. It is also what keeps those callers synchronous. */
+export const AUTH_SESSION_STATE_KEY = 'flowdular.auth.session';
 
-type ServiceResolver = () => AuthService;
+type ServiceResolver = () => Promise<AuthService>;
 
 export function createAuthenticationMiddleware(
 	service: ServiceResolver,
@@ -17,12 +22,14 @@ export function createAuthenticationMiddleware(
 ): Middleware {
 	return async (context, next) => {
 		const token = readCookie(context.request, cookie.name);
-		const session = token ? service().resolveSession(token) : null;
+		const resolved = await service();
+		const session = token ? await resolved.resolveSession(token) : null;
 		if (session) {
 			context.state.set(AUTH_PRINCIPAL_STATE_KEY, session.principal);
+			context.state.set(AUTH_SESSION_STATE_KEY, session);
 			return next();
 		}
-		const principal = service().resolveApiToken(
+		const principal = await resolved.resolveApiToken(
 			bearerToken(context.request.headers.get('authorization')),
 		);
 		if (principal) {
@@ -41,6 +48,12 @@ function bearerToken(header: string | null): string | null {
 
 export function isTokenPrincipal(context: Context): boolean {
 	return context.state.get(AUTH_TOKEN_PRINCIPAL_STATE_KEY) === true;
+}
+
+/** The browser session the middleware resolved, or null for any other caller. */
+export function sessionFromContext(context: Context): AuthSession | null {
+	const value = context.state.get(AUTH_SESSION_STATE_KEY);
+	return value && typeof value === 'object' ? (value as AuthSession) : null;
 }
 
 export function principalFromContext(context: Context): AuthPrincipal | null {

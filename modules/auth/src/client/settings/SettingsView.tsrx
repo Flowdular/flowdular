@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'octane';
-import { t } from '@coreloom/client';
-import { Alert, Button, EmptyState, Icon, PageHeader } from '@coreloom/ui';
+import { t } from '@flowdular/client';
+import { Alert, Button, EmptyState, Icon, PageHeader } from '@flowdular/ui';
 import { cell, createStore, useValue } from 'segment-state';
 import {
 	ApiError,
@@ -19,7 +19,7 @@ export interface SettingsViewProps {
 
 /* Fired after a change the shell shows (the workspace name); the
    authentication root reloads the session so the principal stays current. */
-export const SESSION_REFRESH_EVENT = 'coreloom:session-refresh';
+export const SESSION_REFRESH_EVENT = 'flowdular:session-refresh';
 
 type SettingsStatus = 'loading' | 'idle' | 'denied' | 'error';
 

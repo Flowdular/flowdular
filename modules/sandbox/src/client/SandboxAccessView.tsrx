@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'octane';
-import { Alert, Button, Drawer, Icon, Kpi, PageHeader } from '@coreloom/ui';
-import { t } from '@coreloom/client';
+import { Alert, Button, Drawer, Icon, Kpi, PageHeader } from '@flowdular/ui';
+import { t } from '@flowdular/client';
 import { useValue } from 'segment-state';
 import {
 	grantSandboxAccess,

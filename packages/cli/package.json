@@ -1,34 +1,60 @@
 {
-	"name": "@coreloom/cli",
-	"version": "0.1.0",
-	"private": true,
+	"name": "@flowdular/cli",
+	"version": "0.2.0",
 	"type": "module",
 	"bin": {
-		"coreloom": "./dist/index.js",
-		"cl": "./dist/index.js"
+		"flowdular": "./dist/index.js",
+		"fd": "./dist/index.js"
 	},
 	"exports": {
-		".": "./src/index.ts"
+		".": "./src/index.ts",
+		"./distribution": "./dist/distribution.js"
 	},
 	"scripts": {
 		"dev": "tsx src/index.ts",
-		"build": "esbuild src/index.ts --bundle --platform=node --format=esm --external:ajv/* --external:yaml --outfile=dist/index.js --banner:js=\"#!/usr/bin/env node\"",
+		"build": "esbuild src/index.ts --bundle --platform=node --format=esm --external:ajv/* --external:yaml --external:pg --external:@electric-sql/pglite --outfile=dist/index.js --banner:js=\"#!/usr/bin/env node\" && esbuild src/distribution.ts --bundle --platform=node --format=esm --external:ajv/* --external:yaml --outfile=dist/distribution.js",
 		"smoke": "node dist/index.js doctor --json",
 		"typecheck": "tsc --noEmit -p tsconfig.json",
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@coreloom/cli-protocol": "workspace:*",
-		"@coreloom/contracts": "workspace:*",
-		"@coreloom/kernel": "workspace:*",
+		"@flowdular/cli-protocol": "workspace:*",
+		"@flowdular/contracts": "workspace:*",
+		"@flowdular/database": "workspace:*",
+		"@flowdular/database-pglite": "workspace:*",
+		"@flowdular/kernel": "workspace:*",
+		"@electric-sql/pglite": "0.5.8",
 		"ajv": "8.20.0",
+		"pg": "8.23.0",
 		"yaml": "2.9.0"
 	},
 	"devDependencies": {
+		"@flowdular/database-testing": "workspace:*",
 		"@types/node": "24.13.3",
-		"esbuild": "0.27.4",
-		"tsx": "4.21.0",
+		"@types/pg": "8.23.1",
+		"esbuild": "0.28.2",
+		"tsx": "4.23.13",
 		"typescript": "5.9.3",
-		"vitest": "4.1.10"
-	}
+		"vitest": "4.1.11"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Flowdular/flowdular.git",
+		"directory": "packages/cli"
+	},
+	"files": [
+		"src",
+		"schemas",
+		"dist",
+		"bin",
+		"public",
+		"module.json",
+		"migrations",
+		"translations",
+		"spec",
+		"README.md",
+		"LICENSE"
+	],
+	"private": true
 }

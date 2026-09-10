@@ -1,5 +1,5 @@
-/* Coreloom shared UI primitives. Modules compose screens from these
-   classes and the components in @coreloom/ui; module CSS should only
+/* Flowdular shared UI primitives. Modules compose screens from these
+   classes and the components in @flowdular/ui; module CSS should only
    add module-specific layout, never restyle primitives. */
 
 /* Icon sizing is controlled by the Icon component via width/height. */

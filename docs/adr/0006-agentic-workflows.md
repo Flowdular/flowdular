@@ -6,7 +6,7 @@
 
 ## Context
 
-Coreloom can execute one durable agent run and can trigger an agent from
+Flowdular can execute one durable agent run and can trigger an agent from
 `automations.core`. It cannot describe, publish, inspect, or recover a business
 process that coordinates several pinned agents, deterministic decisions,
 validated data, and module actions.
@@ -126,8 +126,8 @@ inside a protected endpoint or service that already has a trusted principal.
 import {
 	WORKFLOW_EXECUTION_CAPABILITY,
 	type WorkflowExecutionCapability,
-} from '@coreloom/module-workflows/server';
-import { userActor } from '@coreloom/kernel';
+} from '@flowdular/module-workflows/server';
+import { userActor } from '@flowdular/kernel';
 
 const workflows = context.capabilities.get<WorkflowExecutionCapability>(
 	WORKFLOW_EXECUTION_CAPABILITY,
@@ -230,7 +230,7 @@ user identifier or an anonymous `system` actor.
 ## Public execution capability
 
 The first public surface is experimental in 0.1. It is module-owned and exported
-from `@coreloom/module-workflows/server`.
+from `@flowdular/module-workflows/server`.
 
 ```ts
 export const WORKFLOW_EXECUTION_CAPABILITY = 'workflows.execution.v1';
@@ -416,7 +416,7 @@ Every exact-revision catalog, observation, result, and cancellation call carries
 the persisted trusted workflow child context. A bare tenant identifier never
 authorizes access to an agent definition or child run.
 
-`agents.core` and `@coreloom/harness` also own structured output support. An
+`agents.core` and `@flowdular/harness` also own structured output support. An
 agent-decision node supplies a JSON Schema output contract to exact-revision
 enqueue and receives parsed, schema-valid JSON. It never branches by parsing or
 guessing from free-form `AgentRun.output`. Publication refuses a decision node
@@ -516,7 +516,7 @@ These additions are backward compatible:
 - `agents.actions.v1` exposes only `read` and `workspace-write` actions to
   workflows and refuses `external` or `destructive` actions even when such a
   tool is available to a direct agent run;
-- `@coreloom/harness` owns schema validation, timeout, output bounds, and the
+- `@flowdular/harness` owns schema validation, timeout, output bounds, and the
   shared invocation guard, while the registering business module owns the
   service operation and idempotent effect;
 - `workflows.core` consumes these capabilities and owns workflow recovery and
@@ -1635,7 +1635,7 @@ module history. A service actor plus separate origin is explicit and auditable.
 3. Register the additive `agents.run-execution.v2` capability with exact
    revision enqueue, event observation, terminal result, cancellation, and
    structured JSON Schema output. Keep `agents.run-queue` unchanged.
-4. Add structured output support to `@coreloom/harness` and provider capability
+4. Add structured output support to `@flowdular/harness` and provider capability
    discovery. Refuse an agent-decision node when its pinned model cannot produce
    the required structured output.
 5. Add trusted `agentId` and `agentName` fields to `AgentToolContext`, sourced

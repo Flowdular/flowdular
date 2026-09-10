@@ -1,5 +1,5 @@
 import { useState } from 'octane';
-import { Button, Icon, Tag } from '@coreloom/ui';
+import { Button, Icon, Tag } from '@flowdular/ui';
 import type { SandboxSession } from '../server/sessions.ts';
 import type { WorkspaceModuleSummary } from './api.ts';
 import { useTranslation } from './i18n.ts';
@@ -17,6 +17,7 @@ export interface SessionBarProps {
 	readonly onBack: () => void;
 	readonly onGates: () => void;
 	readonly onChanges: () => void;
+	readonly onPreview: () => void;
 	readonly onEject: () => void;
 }
 
@@ -113,6 +114,10 @@ export function SessionBar(props: SessionBarProps) @{
 			</button>
 		}
 		<span class="sandbox__spacer"></span>
+		<Button size="sm" variant="ghost" onClick={props.onPreview}>
+			<Icon name="play" size={14} />
+			{t('sandbox.work.preview')}
+		</Button>
 		<Button
 			size="sm"
 			variant="ghost"

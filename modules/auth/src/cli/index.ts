@@ -1,9 +1,15 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { defineCliExtension } from '@coreloom/cli-protocol';
+import { defineCliExtension } from '@flowdular/cli-protocol';
 import { AUTH_SCOPES, OWNER_SCOPES, PLATFORM_SCOPES } from '../acl/scopes.ts';
+import { localDatabaseProvider } from './database.ts';
 import { runGreenfield } from './greenfield.ts';
+import {
+	addWorkspaceMember,
+	createWorkspace,
+	listWorkspaces,
+} from './provisioning.ts';
 import {
 	authRuntimeOptionsFromEnvironment,
 	createAuthRuntime,
@@ -79,33 +85,83 @@ export const cliExtension = defineCliExtension({
 					context.workspaceRoot,
 					moduleId.trim(),
 				);
-				const runtime = createAuthRuntime(
-					authRuntimeOptionsFromEnvironment(process.env, context.workspaceRoot),
-				);
-				if (!context.apply) {
+				const local = localDatabaseProvider(context.workspaceRoot);
+				const databases = local.create();
+				const runtime = createAuthRuntime({
+					...authRuntimeOptionsFromEnvironment(
+						process.env,
+						context.workspaceRoot,
+					),
+					databases,
+				});
+				try {
+					const service = await runtime.service();
+					if (!context.apply) {
+						return {
+							data: {
+								applied: false,
+								moduleId: moduleId.trim(),
+								scopes: declared.scopes,
+								workspaces: await service.listTenants(),
+							},
+							evidence: [`modules/${declared.directory}/spec/module.yaml`],
+						};
+					}
 					return {
 						data: {
-							applied: false,
+							applied: true,
 							moduleId: moduleId.trim(),
 							scopes: declared.scopes,
-							workspaces: runtime.service().listTenants(),
+							granted: await service.grantModuleScopes(declared.scopes),
 						},
-						evidence: [`modules/${declared.directory}/spec/module.yaml`],
+						evidence: [
+							`modules/${declared.directory}/spec/module.yaml`,
+							local.location,
+						],
 					};
+				} finally {
+					await runtime.dispose();
+					await databases.dispose();
 				}
-				return {
-					data: {
-						applied: true,
-						moduleId: moduleId.trim(),
-						scopes: declared.scopes,
-						granted: runtime.service().grantModuleScopes(declared.scopes),
-					},
-					evidence: [
-						`modules/${declared.directory}/spec/module.yaml`,
-						'.coreloom/data/auth.db',
-					],
-				};
 			},
+		},
+		{
+			path: ['auth', 'workspaces'],
+			capability: {
+				id: 'auth.workspace.list',
+				version: 1,
+				summary: 'List the workspaces of this deployment and their owners.',
+				risk: 'read',
+				requiresApprovedSpec: false,
+				supportsDryRun: false,
+			},
+			execute: listWorkspaces,
+		},
+		{
+			path: ['auth', 'workspace-create'],
+			capability: {
+				id: 'auth.workspace.create',
+				version: 1,
+				summary:
+					'Create a workspace with its owner account without opening public sign-up.',
+				risk: 'process' as const,
+				requiresApprovedSpec: false,
+				supportsDryRun: true,
+			},
+			execute: createWorkspace,
+		},
+		{
+			path: ['auth', 'member-add'],
+			capability: {
+				id: 'auth.member.add',
+				version: 1,
+				summary:
+					'Add an account to a workspace with a role, or invite an unknown address.',
+				risk: 'process' as const,
+				requiresApprovedSpec: false,
+				supportsDryRun: true,
+			},
+			execute: addWorkspaceMember,
 		},
 		{
 			path: ['auth', 'greenfield'],

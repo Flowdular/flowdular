@@ -43,7 +43,10 @@ export class AgentUsageService {
 		private readonly now: () => number = Date.now,
 	) {}
 
-	summary(tenantId: string, days = DEFAULT_WINDOW_DAYS): AgentUsageSummary {
+	async summary(
+		tenantId: string,
+		days = DEFAULT_WINDOW_DAYS,
+	): Promise<AgentUsageSummary> {
 		const window = Number.isSafeInteger(days)
 			? Math.min(Math.max(1, days), MAX_WINDOW_DAYS)
 			: DEFAULT_WINDOW_DAYS;
@@ -54,11 +57,11 @@ export class AgentUsageService {
 		return {
 			from,
 			to,
-			days: this.repository.usageByDay(tenantId, from, to),
-			agents: this.repository.usageByAgent(tenantId, from, to),
+			days: await this.repository.usageByDay(tenantId, from, to),
+			agents: await this.repository.usageByAgent(tenantId, from, to),
 			month: {
 				from: monthFrom,
-				...this.repository.usageTotal(tenantId, monthFrom, null),
+				...(await this.repository.usageTotal(tenantId, monthFrom, null)),
 			},
 			caps: this.caps(tenantId),
 		};
@@ -79,21 +82,19 @@ export class AgentUsageService {
 	   has not reported usage yet, so concurrent enqueues can overshoot a cap by
 	   the cost of the runs still executing; a run over the cap is never killed
 	   mid-way, only the next enqueue is refused. */
-	check(
+	async check(
 		tenantId: string,
 		agentId: string,
 		now = this.now(),
-	): BudgetRefusal | null {
+	): Promise<BudgetRefusal | null> {
 		const caps = this.caps(tenantId);
 		if (caps.monthlyCostMicroUsd === 0 && caps.agentMonthlyCostMicroUsd === 0) {
 			return null;
 		}
 		const monthFrom = firstDayOfMonth(now);
 		if (caps.monthlyCostMicroUsd > 0) {
-			const spent = this.repository.usageTotal(
-				tenantId,
-				monthFrom,
-				null,
+			const spent = (
+				await this.repository.usageTotal(tenantId, monthFrom, null)
 			).costMicroUsd;
 			if (spent >= caps.monthlyCostMicroUsd) {
 				return {
@@ -103,10 +104,8 @@ export class AgentUsageService {
 			}
 		}
 		if (caps.agentMonthlyCostMicroUsd > 0) {
-			const spent = this.repository.usageTotal(
-				tenantId,
-				monthFrom,
-				agentId,
+			const spent = (
+				await this.repository.usageTotal(tenantId, monthFrom, agentId)
 			).costMicroUsd;
 			if (spent >= caps.agentMonthlyCostMicroUsd) {
 				return {

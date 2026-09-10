@@ -1,17 +1,21 @@
+import { configureApplicationFromPage } from '@flowdular/client/routing';
 import {
 	ApplicationShell,
 	activeLocale,
 	shellLocationFromUrl,
 	t,
-} from '@coreloom/client';
+} from '@flowdular/client';
 import {
 	AuthenticationCore,
 	authScreenFromUrl,
-} from '@coreloom/module-auth/client';
-import type { AuthPrincipal } from '@coreloom/module-auth';
+} from '@flowdular/module-auth/client';
+import type { AuthPrincipal } from '@flowdular/module-auth';
 import { Head, Seo } from '@octanejs/seo';
 import type { RenderRouteProps } from '@octanejs/vite-plugin';
-import { createModuleClientContributions } from './generated/modules.client.ts';
+import {
+	createModuleClientContributions,
+	applicationBasePath,
+} from './generated/modules.client.ts';
 import { applicationInitialUrl } from './routing.ts';
 import './styles.css';
 
@@ -60,22 +64,23 @@ function AuthenticatedApp(props: AuthenticatedAppProps) @{
 }
 
 export function App(props?: RenderRouteProps) @{
+	configureApplicationFromPage(props, applicationBasePath);
 	const initialUrl =
 		props?.url ?? (typeof window === 'undefined' ? '/' : window.location.href);
 	<Head>
 		<Seo
 			title={t('shell.workspace.title')}
-			titleTemplate="%s · Coreloom"
+			titleTemplate="%s · Flowdular"
 			description={t('shell.seo.description')}
 			robots={{ index: false, follow: false, noarchive: true }}
 			openGraph={{
 				type: 'website',
-				siteName: 'Coreloom',
+				siteName: 'Flowdular',
 				images: [
 					{
 						url: '/og.png',
-						width: 1200,
-						height: 630,
+						width: 1730,
+						height: 909,
 						alt: t('shell.seo.imageAlt'),
 					},
 				],

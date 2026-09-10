@@ -1,4 +1,4 @@
-import type { ModuleClientContribution } from '@coreloom/client';
+import type { ModuleClientContribution } from '@flowdular/client';
 
 export interface DraftModuleEntry {
 	readonly createClientContribution?: (context: {

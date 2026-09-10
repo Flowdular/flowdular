@@ -1,15 +1,11 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
-import { createPlatformCapabilityRegistry, userActor } from '@coreloom/kernel';
+import { createPlatformCapabilityRegistry, userActor } from '@flowdular/kernel';
 import {
 	AGENT_ACTION_EXECUTION_CAPABILITY,
 	AGENT_RUN_EXECUTION_CAPABILITY,
 	type ActionExecutionResult,
 	type AgentActionExecutionCapability,
 	type AgentRevisionExecutionCapability,
-} from '@coreloom/module-agents/server';
+} from '@flowdular/module-agents/server';
 import { describe, expect, it } from 'vitest';
 import { WORKFLOWS_PERMISSIONS } from '../src/acl/permissions.ts';
 import type { JsonValue, WorkflowGraphV1 } from '../src/domain/types.ts';
@@ -22,7 +18,16 @@ import { safePayloadEvidence } from '../src/services/payload-codec.ts';
 import { createWorkflowPayloadCodec } from '../src/services/payload-codec.ts';
 import { createWorkflowCursorCodec } from '../src/services/cursor-codec.ts';
 import { WorkflowsService } from '../src/services/workflows-service.ts';
-import { SqliteWorkflowsRepository } from '../src/services/sqlite-repository.ts';
+import type { CreateWorkflowRunWrite } from '../src/services/repository.ts';
+import {
+	createWorkflowsTestProvider,
+	createWorkflowsTestRuntime,
+	executeAsOwner,
+	executeScriptAsOwner,
+	openWorkflowsTestRepository,
+	withHandle,
+	withOwnerHandle,
+} from './support/database.ts';
 
 const actor = userActor({ accountId: 'owner-1', email: 'owner@example.com' });
 const permissions = [
@@ -249,7 +254,7 @@ function dependencies(result: { current: JsonValue | null }) {
 	const enqueueGrants: string[][] = [];
 	const authorizationSubjects: string[] = [];
 	const agents: AgentRevisionExecutionCapability = {
-		listRevisions: () => [
+		listRevisions: async () => [
 			{
 				agentId: 'agent-1',
 				revision: 3,
@@ -259,7 +264,7 @@ function dependencies(result: { current: JsonValue | null }) {
 				allowedTools: ['catalog.items.read'],
 			},
 		],
-		getRevision: () => ({
+		getRevision: async () => ({
 			agentId: 'agent-1',
 			revision: 3,
 			name: 'Agent',
@@ -278,8 +283,8 @@ function dependencies(result: { current: JsonValue | null }) {
 			childRuns.set(request.idempotencyKey, runId);
 			return { runId, created: true };
 		},
-		readEvents: () => [],
-		getResult: (runId) =>
+		readEvents: async () => [],
+		getResult: async (runId) =>
 			result.current === null
 				? null
 				: {
@@ -291,13 +296,13 @@ function dependencies(result: { current: JsonValue | null }) {
 						failureCode: null,
 						completedAt: Date.now(),
 					},
-		requestCancel: () => true,
+		requestCancel: async () => true,
 	};
 	const actions: AgentActionExecutionCapability = {
-		listWorkflowActions: () => [],
+		listWorkflowActions: async () => [],
 		start: async () => ({ actionInvocationId: 'action-1', created: true }),
-		getResult: () => null,
-		requestCancel: (actionInvocationId) => ({
+		getResult: async () => null,
+		requestCancel: async (actionInvocationId) => ({
 			actionInvocationId,
 			state: 'acknowledged',
 		}),
@@ -318,7 +323,7 @@ function actionDependencies(result: { current: ActionExecutionResult | null }) {
 	const startKeys: string[] = [];
 	const agent = dependencies({ current: null }).agents;
 	const actions: AgentActionExecutionCapability = {
-		listWorkflowActions: () => [
+		listWorkflowActions: async () => [
 			{
 				id: 'catalog.items.create',
 				contractVersion: 1,
@@ -341,9 +346,9 @@ function actionDependencies(result: { current: ActionExecutionResult | null }) {
 			actionInvocations.set(request.idempotencyKey, actionInvocationId);
 			return { actionInvocationId, created: true };
 		},
-		getResult: (actionInvocationId) =>
+		getResult: async (actionInvocationId) =>
 			result.current ? { ...result.current, actionInvocationId } : null,
-		requestCancel: (actionInvocationId) => ({
+		requestCancel: async (actionInvocationId) => ({
 			actionInvocationId,
 			state: 'acknowledged',
 		}),
@@ -357,20 +362,12 @@ function actionDependencies(result: { current: ActionExecutionResult | null }) {
 	};
 }
 
-function temporaryDatabase(): {
-	readonly directory: string;
-	readonly path: string;
-} {
-	const directory = mkdtempSync(join(tmpdir(), 'coreloom-workflows-backend-'));
-	return { directory, path: join(directory, 'workflows.db') };
-}
-
 async function waitFor(
-	predicate: () => boolean,
+	predicate: () => boolean | Promise<boolean>,
 	timeout = 2_000,
 ): Promise<void> {
 	const deadline = Date.now() + timeout;
-	while (!predicate()) {
+	while (!(await predicate())) {
 		if (Date.now() > deadline)
 			throw new Error('Timed out waiting for workflow state.');
 		await new Promise((resolve) => setTimeout(resolve, 25));
@@ -378,123 +375,126 @@ async function waitFor(
 }
 
 describe('workflow backend contracts', () => {
-	it('redacts schema-marked secrets and permission-filtered fields before evidence persistence', () => {
-		const value = {
-			name: 'Ada',
-			apiKey: 'by-name',
-			privateNote: 'hidden',
-			scoped: 'denied',
-		};
-		const evidence = safePayloadEvidence(value, 'schema.secure', {
-			schema: {
-				type: 'object',
-				properties: {
-					name: { type: 'string' },
-					privateNote: { type: 'string', 'x-coreloom-secret': true },
-					scoped: {
-						type: 'string',
-						'x-coreloom-read-permission': 'private.read',
+	it.each(['flowdular', 'coreloom'])(
+		'redacts %s schema-marked secrets and permission-filtered fields before evidence persistence',
+		async (brand) => {
+			const value = {
+				name: 'Ada',
+				apiKey: 'by-name',
+				privateNote: 'hidden',
+				scoped: 'denied',
+			};
+			const evidence = safePayloadEvidence(value, 'schema.secure', {
+				schema: {
+					type: 'object',
+					properties: {
+						name: { type: 'string' },
+						privateNote: { type: 'string', [`x-${brand}-secret`]: true },
+						scoped: {
+							type: 'string',
+							[`x-${brand}-read-permission`]: 'private.read',
+						},
 					},
 				},
-			},
-			permissionSnapshot: [],
-		});
-		expect(evidence).toMatchObject({
-			state: 'redacted',
-			preview: {
-				name: 'Ada',
-				apiKey: '[redacted]',
-				privateNote: '[redacted]',
-				scoped: '[redacted]',
-			},
-		});
-		expect(JSON.stringify(evidence)).not.toContain('hidden');
-		expect(JSON.stringify(evidence)).not.toContain('denied');
-	});
+				permissionSnapshot: [],
+			});
+			expect(evidence).toMatchObject({
+				state: 'redacted',
+				preview: {
+					name: 'Ada',
+					apiKey: '[redacted]',
+					privateNote: '[redacted]',
+					scoped: '[redacted]',
+				},
+			});
+			expect(JSON.stringify(evidence)).not.toContain('hidden');
+			expect(JSON.stringify(evidence)).not.toContain('denied');
+		},
+	);
 
-	it('refuses production startup without both stable workflow secrets', () => {
+	it('refuses production startup without both stable workflow secrets', async () => {
 		expect(() =>
 			assertProductionWorkflowSecrets(
 				{ NODE_ENV: 'production' },
 				{ payloadKey: false, cursorKey: false },
 			),
-		).toThrow(/CL_WORKFLOWS_PAYLOAD_KEY/);
+		).toThrow(/FD_WORKFLOWS_PAYLOAD_KEY/);
 		expect(() =>
 			assertProductionWorkflowSecrets(
 				{
 					NODE_ENV: 'production',
-					CL_WORKFLOWS_PAYLOAD_KEY: Buffer.alloc(32).toString('base64'),
-					CL_WORKFLOWS_CURSOR_KEY: Buffer.alloc(32, 1).toString('base64'),
+					FD_WORKFLOWS_PAYLOAD_KEY: Buffer.alloc(32).toString('base64'),
+					FD_WORKFLOWS_CURSOR_KEY: Buffer.alloc(32, 1).toString('base64'),
 				},
 				{ payloadKey: false, cursorKey: false },
 			),
 		).not.toThrow();
 	});
 
-	it('keeps dry-run stateless and reports graph errors without creating history', () => {
-		const runtime = createWorkflowsRuntime({
-			databasePath: ':memory:',
+	it('keeps dry-run stateless and reports graph errors without creating history', async () => {
+		const runtime = createWorkflowsTestRuntime({
 			payloadKey: Buffer.alloc(32, 9),
 			cursorKey: Buffer.alloc(32, 8),
 		});
-		const service = runtime.service();
+		const service = await runtime.service();
 		const invalid = { ...directGraph(), edges: [] };
-		const before = service.listRuns('tenant-a', {});
-		const report = service.validate(invalid, context());
+		const before = await service.listRuns('tenant-a', {});
+		const report = await service.validate(invalid, context());
 		expect(report.valid).toBe(false);
 		expect(report.issues.map((issue) => issue.code)).toContain(
 			'WORKFLOW_INPUT_UNCONNECTED',
 		);
-		expect(service.listRuns('tenant-a', {})).toEqual(before);
-		runtime.dispose();
+		expect(await service.listRuns('tenant-a', {})).toEqual(before);
+		await runtime.dispose();
 	});
 
-	it('accepts tenant-local slug keys and rejects dotted or malformed keys', () => {
-		const runtime = createWorkflowsRuntime({
-			databasePath: ':memory:',
+	it('accepts tenant-local slug keys and rejects dotted or malformed keys', async () => {
+		const runtime = createWorkflowsTestRuntime({
 			payloadKey: Buffer.alloc(32, 33),
 			cursorKey: Buffer.alloc(32, 34),
 		});
-		const service = runtime.service();
+		const service = await runtime.service();
 		expect(
-			service.create(
-				'tenant-a',
-				{
-					key: 'catalog-enrichment',
-					name: 'Catalog enrichment',
-					description: '',
-				},
-				actor,
+			(
+				await service.create(
+					'tenant-a',
+					{
+						key: 'catalog-enrichment',
+						name: 'Catalog enrichment',
+						description: '',
+					},
+					actor,
+				)
 			).definition.key,
 		).toBe('catalog-enrichment');
 		for (const key of ['catalog.enrichment', 'A-flow', 'x', 'white space']) {
-			expect(() =>
+			await expect(
 				service.create(
 					'tenant-a',
 					{ key, name: 'Invalid key', description: '' },
 					actor,
 				),
-			).toThrow(/lowercase slug|between 3 and 120/);
+			).rejects.toThrow(/lowercase slug|between 3 and 120/);
 		}
-		runtime.dispose();
+		await runtime.dispose();
 	});
 
-	it('expires encrypted payloads only after terminal settlement and keeps typed evidence', () => {
-		const repository = new SqliteWorkflowsRepository(
-			':memory:',
-			createWorkflowPayloadCodec(Buffer.alloc(32, 31)),
-			0,
-		);
+	it('expires encrypted payloads only after terminal settlement and keeps typed evidence', async () => {
+		const database = await openWorkflowsTestRepository({
+			payloadCodec: createWorkflowPayloadCodec(Buffer.alloc(32, 31)),
+			payloadRetentionMs: 0,
+		});
+		const repository = database.repository;
 		const service = new WorkflowsService(repository, {
 			capabilities: createPlatformCapabilityRegistry(),
 			cursorCodec: createWorkflowCursorCodec(Buffer.alloc(32, 32)),
 		});
-		const definition = service.create(
+		const definition = await service.create(
 			'tenant-a',
 			{ key: 'retention-flow', name: 'Retention', description: '' },
 			actor,
 		);
-		service.update(
+		await service.update(
 			'tenant-a',
 			{
 				workflowId: definition.definition.id,
@@ -505,7 +505,7 @@ describe('workflow backend contracts', () => {
 			},
 			actor,
 		);
-		const detail = service.simulate(
+		const detail = await service.simulate(
 			{
 				workflowId: definition.definition.id,
 				input: { name: 'Secret input' },
@@ -513,15 +513,21 @@ describe('workflow backend contracts', () => {
 			},
 			context(),
 		);
-		const run = repository.getRun('tenant-a', detail.run.id)!;
+		const run = (await repository.getRun('tenant-a', detail.run.id))!;
 		expect(
-			repository.readExecutionPayload('tenant-a', run.id, run.inputPayloadId),
+			await repository.readExecutionPayload(
+				'tenant-a',
+				run.id,
+				run.inputPayloadId,
+			),
 		).toEqual({ name: 'Secret input' });
-		expect(repository.applyPayloadRetention(Date.now() + 1)).toBeGreaterThan(0);
-		expect(() =>
+		expect(
+			await repository.applyPayloadRetention(Date.now() + 1),
+		).toBeGreaterThan(0);
+		await expect(
 			repository.readExecutionPayload('tenant-a', run.id, run.inputPayloadId),
-		).toThrow(/WORKFLOW_PAYLOAD_UNREADABLE/);
-		const retained = service.getRunDetail('tenant-a', run.id);
+		).rejects.toThrow(/WORKFLOW_PAYLOAD_UNREADABLE/);
+		const retained = await service.getRunDetail('tenant-a', run.id);
 		expect(retained.input).toMatchObject({
 			state: 'expired',
 			reason: 'retention',
@@ -532,22 +538,21 @@ describe('workflow backend contracts', () => {
 			reason: 'retention',
 		});
 		expect(retained.events.at(-1)?.type).toBe('payload.retention.applied');
-		repository.close();
+		await database.dispose();
 	});
 
-	it('binds opaque run cursors to the tenant and filter set', () => {
-		const runtime = createWorkflowsRuntime({
-			databasePath: ':memory:',
+	it('binds opaque run cursors to the tenant and filter set', async () => {
+		const runtime = createWorkflowsTestRuntime({
 			payloadKey: Buffer.alloc(32, 6),
 			cursorKey: Buffer.alloc(32, 5),
 		});
-		const service = runtime.service();
-		const definition = service.create(
+		const service = await runtime.service();
+		const definition = await service.create(
 			'tenant-a',
 			{ key: 'page-flow', name: 'Page', description: '' },
 			actor,
 		);
-		service.update(
+		await service.update(
 			'tenant-a',
 			{
 				workflowId: definition.definition.id,
@@ -559,26 +564,37 @@ describe('workflow backend contracts', () => {
 			actor,
 		);
 		for (const name of ['Ada', 'Grace'])
-			service.simulate(
+			await service.simulate(
 				{ workflowId: definition.definition.id, input: { name }, fixtures: [] },
 				context(),
 			);
-		const first = service.listRuns('tenant-a', { limit: 1 });
+		const first = await service.listRuns('tenant-a', { limit: 1 });
 		expect(first.runs).toHaveLength(1);
 		expect(first.nextCursor).not.toBeNull();
 		expect(
-			service.listRuns('tenant-a', { limit: 1, cursor: first.nextCursor }).runs,
+			(
+				await service.listRuns('tenant-a', {
+					limit: 1,
+					cursor: first.nextCursor,
+				})
+			).runs,
 		).toHaveLength(1);
-		expect(() =>
-			service.listRuns('tenant-b', { limit: 1, cursor: first.nextCursor }),
-		).toThrow(/another tenant or filter/);
-		expect(() =>
-			service.listRuns('tenant-a', { limit: 2, cursor: first.nextCursor }),
-		).toThrow(/another tenant or filter/);
-		runtime.dispose();
+		await expect(
+			service.listRuns('tenant-b', {
+				limit: 1,
+				cursor: first.nextCursor,
+			}),
+		).rejects.toThrow(/another tenant or filter/);
+		await expect(
+			service.listRuns('tenant-a', {
+				limit: 2,
+				cursor: first.nextCursor,
+			}),
+		).rejects.toThrow(/another tenant or filter/);
+		await runtime.dispose();
 	});
 
-	it('requires referenced action permissions and pins the published revision', () => {
+	it('requires referenced action permissions and pins the published revision', async () => {
 		const registry = createPlatformCapabilityRegistry();
 		const fake = dependencies({ current: null });
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
@@ -599,19 +615,18 @@ describe('workflow backend contracts', () => {
 				},
 			],
 		});
-		const runtime = createWorkflowsRuntime({
-			databasePath: ':memory:',
+		const runtime = createWorkflowsTestRuntime({
 			capabilities: registry,
 			payloadKey: Buffer.alloc(32, 41),
 			cursorKey: Buffer.alloc(32, 42),
 		});
-		const service = runtime.service();
-		const created = service.create(
+		const service = await runtime.service();
+		const created = await service.create(
 			'tenant-a',
 			{ key: 'action-flow', name: 'Action', description: '' },
 			actor,
 		);
-		service.update(
+		await service.update(
 			'tenant-a',
 			{
 				workflowId: created.definition.id,
@@ -622,10 +637,10 @@ describe('workflow backend contracts', () => {
 			},
 			actor,
 		);
-		expect(() =>
+		await expect(
 			service.publish('tenant-a', created.definition.id, 2, actor, permissions),
-		).toThrow(/permission is required/);
-		const published = service.publish(
+		).rejects.toThrow(/permission is required/);
+		const published = await service.publish(
 			'tenant-a',
 			created.definition.id,
 			2,
@@ -633,7 +648,7 @@ describe('workflow backend contracts', () => {
 			[...permissions, 'catalog.items.manage'],
 		);
 		expect(published.definition.publishedRevision).toBe(2);
-		const changed = service.update(
+		const changed = await service.update(
 			'tenant-a',
 			{
 				workflowId: created.definition.id,
@@ -651,21 +666,20 @@ describe('workflow backend contracts', () => {
 		expect(
 			changed.revisions.find((revision) => revision.revision === 2),
 		).toMatchObject({ publishedAt: expect.any(Number) });
-		runtime.dispose();
+		await runtime.dispose();
 	});
 
-	it('refuses a tool grant outside the pinned agent revision', () => {
+	it('refuses a tool grant outside the pinned agent revision', async () => {
 		const fake = dependencies({ current: null });
 		const registry = createPlatformCapabilityRegistry();
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
 		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
-		const runtime = createWorkflowsRuntime({
-			databasePath: ':memory:',
+		const runtime = createWorkflowsTestRuntime({
 			capabilities: registry,
 			payloadKey: Buffer.alloc(32, 66),
 			cursorKey: Buffer.alloc(32, 67),
 		});
-		const service = runtime.service();
+		const service = await runtime.service();
 		const graph = agentGraph();
 		const node = graph.nodes.find((entry) => entry.type === 'agent')!;
 		const invalid = {
@@ -676,24 +690,25 @@ describe('workflow backend contracts', () => {
 					: entry,
 			),
 		} as WorkflowGraphV1;
-		expect(service.validate(invalid, context()).issues).toMatchObject([
+		expect((await service.validate(invalid, context())).issues).toMatchObject([
 			{ code: 'WORKFLOW_AGENT_TOOL_GRANT_NOT_ALLOWED' },
 		]);
-		runtime.dispose();
+		await runtime.dispose();
 	});
 
-	it('does not append audit evidence when optimistic draft save is refused', () => {
-		const repository = new SqliteWorkflowsRepository(':memory:');
+	it('does not append audit evidence when optimistic draft save is refused', async () => {
+		const database = await openWorkflowsTestRepository();
+		const repository = database.repository;
 		const service = new WorkflowsService(repository, {
 			capabilities: createPlatformCapabilityRegistry(),
 			cursorCodec: createWorkflowCursorCodec(Buffer.alloc(32, 43)),
 		});
-		const created = service.create(
+		const created = await service.create(
 			'tenant-a',
 			{ key: 'conflict-flow', name: 'Conflict', description: '' },
 			actor,
 		);
-		service.update(
+		await service.update(
 			'tenant-a',
 			{
 				workflowId: created.definition.id,
@@ -704,8 +719,8 @@ describe('workflow backend contracts', () => {
 			},
 			actor,
 		);
-		const auditBefore = repository.listAudit('tenant-a', 100).events;
-		expect(() =>
+		const auditBefore = (await repository.listAudit('tenant-a', 100)).events;
+		await expect(
 			service.update(
 				'tenant-a',
 				{
@@ -717,27 +732,28 @@ describe('workflow backend contracts', () => {
 				},
 				actor,
 			),
-		).toThrow(/changed before this save/);
-		expect(repository.listAudit('tenant-a', 100).events).toEqual(auditBefore);
-		repository.close();
+		).rejects.toThrow(/changed before this save/);
+		expect((await repository.listAudit('tenant-a', 100)).events).toEqual(
+			auditBefore,
+		);
+		await database.dispose();
 	});
 
-	it('rolls back a run projection and ordered events when audit persistence fails', () => {
-		const temporary = temporaryDatabase();
-		const repository = new SqliteWorkflowsRepository(
-			temporary.path,
-			createWorkflowPayloadCodec(Buffer.alloc(32, 44)),
-		);
+	it('rolls back a run projection and ordered events when audit persistence fails', async () => {
+		const database = await openWorkflowsTestRepository({
+			payloadCodec: createWorkflowPayloadCodec(Buffer.alloc(32, 44)),
+		});
+		const repository = database.repository;
 		const service = new WorkflowsService(repository, {
 			capabilities: createPlatformCapabilityRegistry(),
 			cursorCodec: createWorkflowCursorCodec(Buffer.alloc(32, 45)),
 		});
-		const created = service.create(
+		const created = await service.create(
 			'tenant-a',
 			{ key: 'atomic-flow', name: 'Atomic', description: '' },
 			actor,
 		);
-		service.update(
+		await service.update(
 			'tenant-a',
 			{
 				workflowId: created.definition.id,
@@ -748,13 +764,32 @@ describe('workflow backend contracts', () => {
 			},
 			actor,
 		);
-		const database = new DatabaseSync(temporary.path);
+		const rowCount = async (table: string): Promise<number> => {
+			const counted = await withOwnerHandle(database.databases, (owner) =>
+				owner.transaction(
+					(transaction) =>
+						transaction.query<{ count: string }>({
+							text: `SELECT count(*) AS count FROM ${table}`,
+						}),
+					{ access: 'read', tenantId: 'tenant-a' },
+				),
+			);
+			return Number(counted.rows[0]?.count ?? 0);
+		};
 		try {
-			database.exec(`CREATE TRIGGER reject_workflow_run_audit
-				BEFORE INSERT ON workflow_audit_events
-				WHEN NEW.action = 'workflow-run.enqueued'
-				BEGIN SELECT RAISE(ABORT, 'audit persistence failed'); END`);
-			expect(() =>
+			await executeScriptAsOwner(
+				database.databases,
+				`CREATE FUNCTION reject_workflow_run_audit() RETURNS trigger AS $audit$
+				BEGIN
+				  RAISE EXCEPTION 'audit persistence failed';
+				END
+				$audit$ LANGUAGE plpgsql;
+				CREATE TRIGGER reject_workflow_run_audit
+				  BEFORE INSERT ON workflow_audit_events
+				  FOR EACH ROW WHEN (NEW.action = 'workflow-run.enqueued')
+				  EXECUTE FUNCTION reject_workflow_run_audit();`,
+			);
+			await expect(
 				service.simulate(
 					{
 						workflowId: created.definition.id,
@@ -763,19 +798,11 @@ describe('workflow backend contracts', () => {
 					},
 					context(),
 				),
-			).toThrow(/audit persistence failed/);
-			expect(
-				database.prepare('SELECT count(*) AS count FROM workflow_runs').get(),
-			).toEqual({ count: 0 });
-			expect(
-				database
-					.prepare('SELECT count(*) AS count FROM workflow_run_events')
-					.get(),
-			).toEqual({ count: 0 });
+			).rejects.toThrow(/audit persistence failed/);
+			expect(await rowCount('workflow_runs')).toBe(0);
+			expect(await rowCount('workflow_run_events')).toBe(0);
 		} finally {
-			database.close();
-			repository.close();
-			rmSync(temporary.directory, { recursive: true, force: true });
+			await database.dispose();
 		}
 	});
 
@@ -784,20 +811,19 @@ describe('workflow backend contracts', () => {
 		const fake = dependencies({ current: null });
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
 		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
-		const runtime = createWorkflowsRuntime({
-			databasePath: ':memory:',
+		const runtime = createWorkflowsTestRuntime({
 			capabilities: registry,
 			payloadKey: Buffer.alloc(32, 1),
 			cursorKey: Buffer.alloc(32, 2),
 			worker: { pollMs: 250, leaseMs: 1_000 },
 		});
-		const service = runtime.service();
-		const definition = service.create(
+		const service = await runtime.service();
+		const definition = await service.create(
 			'tenant-a',
 			{ key: 'direct-flow', name: 'Direct', description: '' },
 			actor,
 		);
-		service.update(
+		await service.update(
 			'tenant-a',
 			{
 				workflowId: definition.definition.id,
@@ -808,7 +834,7 @@ describe('workflow backend contracts', () => {
 			},
 			actor,
 		);
-		service.publish(
+		await service.publish(
 			'tenant-a',
 			definition.definition.id,
 			2,
@@ -825,16 +851,20 @@ describe('workflow backend contracts', () => {
 			context(),
 		);
 		await waitFor(
-			() => service.getRun('tenant-a', accepted.runId)?.status === 'succeeded',
+			async () =>
+				(await service.getRun('tenant-a', accepted.runId))?.status ===
+				'succeeded',
 		);
-		const detail = service.getRunDetail('tenant-a', accepted.runId);
+		const detail = await service.getRunDetail('tenant-a', accepted.runId);
 		expect(detail.output).toMatchObject({
 			state: 'available',
 			preview: { name: 'Ada' },
 		});
 		expect(detail.events.at(-1)?.type).toBe('run.succeeded');
-		expect(service.verifyAudit('tenant-a')).toMatchObject({ valid: true });
-		runtime.dispose();
+		expect(await service.verifyAudit('tenant-a')).toMatchObject({
+			valid: true,
+		});
+		await runtime.dispose();
 	});
 
 	it('persists a child correlation before waiting and resumes it without a duplicate enqueue', async () => {
@@ -843,20 +873,19 @@ describe('workflow backend contracts', () => {
 		const registry = createPlatformCapabilityRegistry();
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
 		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
-		const runtime = createWorkflowsRuntime({
-			databasePath: ':memory:',
+		const runtime = createWorkflowsTestRuntime({
 			capabilities: registry,
 			payloadKey: Buffer.alloc(32, 3),
 			cursorKey: Buffer.alloc(32, 4),
 			worker: { pollMs: 250, leaseMs: 1_000 },
 		});
-		const service = runtime.service();
-		const definition = service.create(
+		const service = await runtime.service();
+		const definition = await service.create(
 			'tenant-a',
 			{ key: 'agent-flow', name: 'Agent flow', description: '' },
 			actor,
 		);
-		service.update(
+		await service.update(
 			'tenant-a',
 			{
 				workflowId: definition.definition.id,
@@ -867,8 +896,10 @@ describe('workflow backend contracts', () => {
 			},
 			actor,
 		);
-		expect(service.validate(agentGraph(), context()).issues).toEqual([]);
-		service.publish(
+		expect((await service.validate(agentGraph(), context())).issues).toEqual(
+			[],
+		);
+		await service.publish(
 			'tenant-a',
 			definition.definition.id,
 			2,
@@ -885,23 +916,28 @@ describe('workflow backend contracts', () => {
 			context(),
 		);
 		await waitFor(
-			() =>
-				service.getRun('tenant-a', accepted.runId)?.status === 'waiting-agent',
+			async () =>
+				(await service.getRun('tenant-a', accepted.runId))?.status ===
+				'waiting-agent',
 		);
 		expect(fake.enqueues()).toBe(1);
 		expect(fake.enqueueGrants).toEqual([['catalog.items.read']]);
 		expect(fake.authorizationSubjects).toEqual(['owner-1']);
 		expect(
-			service
-				.getRunDetail('tenant-a', accepted.runId)
-				.nodes.find((node) => node.nodeId === 'agent.process')?.attempts[0],
+			(await service.getRunDetail('tenant-a', accepted.runId)).nodes.find(
+				(node) => node.nodeId === 'agent.process',
+			)?.attempts[0],
 		).toMatchObject({ childId: 'child-run-1', status: 'waiting-child' });
 		result.current = { name: 'Ada enriched' };
 		await waitFor(
-			() => service.getRun('tenant-a', accepted.runId)?.status === 'succeeded',
+			async () =>
+				(await service.getRun('tenant-a', accepted.runId))?.status ===
+				'succeeded',
 		);
 		expect(fake.enqueues()).toBe(1);
-		expect(service.getRun('tenant-a', accepted.runId)?.usage).toMatchObject({
+		expect(
+			(await service.getRun('tenant-a', accepted.runId))?.usage,
+		).toMatchObject({
 			totalTokens: 7,
 			unpricedChildRuns: 1,
 			state: 'final',
@@ -918,12 +954,14 @@ describe('workflow backend contracts', () => {
 			context(),
 		);
 		await waitFor(
-			() => service.getRun('tenant-a', oversized.runId)?.status === 'refused',
+			async () =>
+				(await service.getRun('tenant-a', oversized.runId))?.status ===
+				'refused',
 		);
-		expect(service.getRun('tenant-a', oversized.runId)?.failureCode).toBe(
-			'WORKFLOW_OUTPUT_LIMIT_EXCEEDED',
-		);
-		runtime.dispose();
+		expect(
+			(await service.getRun('tenant-a', oversized.runId))?.failureCode,
+		).toBe('WORKFLOW_OUTPUT_LIMIT_EXCEEDED');
+		await runtime.dispose();
 	});
 
 	it('preserves a permanent agent refusal instead of classifying it as retryable failure', async () => {
@@ -939,20 +977,19 @@ describe('workflow backend contracts', () => {
 		const registry = createPlatformCapabilityRegistry();
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, refusingAgents);
 		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, base.actions);
-		const runtime = createWorkflowsRuntime({
-			databasePath: ':memory:',
+		const runtime = createWorkflowsTestRuntime({
 			capabilities: registry,
 			payloadKey: Buffer.alloc(32, 60),
 			cursorKey: Buffer.alloc(32, 61),
 			worker: { pollMs: 250, leaseMs: 1_000 },
 		});
-		const service = runtime.service();
-		const definition = service.create(
+		const service = await runtime.service();
+		const definition = await service.create(
 			'tenant-a',
 			{ key: 'agent-refusal', name: 'Agent refusal', description: '' },
 			actor,
 		);
-		service.update(
+		await service.update(
 			'tenant-a',
 			{
 				workflowId: definition.definition.id,
@@ -963,7 +1000,7 @@ describe('workflow backend contracts', () => {
 			},
 			actor,
 		);
-		service.publish(
+		await service.publish(
 			'tenant-a',
 			definition.definition.id,
 			2,
@@ -980,9 +1017,11 @@ describe('workflow backend contracts', () => {
 			context(),
 		);
 		await waitFor(
-			() => service.getRun('tenant-a', accepted.runId)?.status === 'refused',
+			async () =>
+				(await service.getRun('tenant-a', accepted.runId))?.status ===
+				'refused',
 		);
-		const detail = service.getRunDetail('tenant-a', accepted.runId);
+		const detail = await service.getRunDetail('tenant-a', accepted.runId);
 		expect(detail.run.failureCode).toBe('AGENT_PERMISSION_DENIED');
 		expect(
 			detail.nodes.find((node) => node.nodeId === 'agent.process')?.attempts,
@@ -994,7 +1033,7 @@ describe('workflow backend contracts', () => {
 			},
 		]);
 		expect(base.enqueues()).toBe(0);
-		runtime.dispose();
+		await runtime.dispose();
 	});
 
 	it('executes and refuses action nodes through the versioned public capability', async () => {
@@ -1005,20 +1044,19 @@ describe('workflow backend contracts', () => {
 		const registry = createPlatformCapabilityRegistry();
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
 		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
-		const runtime = createWorkflowsRuntime({
-			databasePath: ':memory:',
+		const runtime = createWorkflowsTestRuntime({
 			capabilities: registry,
 			payloadKey: Buffer.alloc(32, 46),
 			cursorKey: Buffer.alloc(32, 47),
 			worker: { pollMs: 250, leaseMs: 1_000 },
 		});
-		const service = runtime.service();
-		const definition = service.create(
+		const service = await runtime.service();
+		const definition = await service.create(
 			'tenant-a',
 			{ key: 'action-execution', name: 'Action execution', description: '' },
 			actor,
 		);
-		service.update(
+		await service.update(
 			'tenant-a',
 			{
 				workflowId: definition.definition.id,
@@ -1030,7 +1068,7 @@ describe('workflow backend contracts', () => {
 			actor,
 		);
 		const executionPermissions = [...permissions, 'catalog.items.manage'];
-		service.publish(
+		await service.publish(
 			'tenant-a',
 			definition.definition.id,
 			2,
@@ -1038,7 +1076,9 @@ describe('workflow backend contracts', () => {
 			executionPermissions,
 		);
 		expect(
-			service.executionCapability().getPublishedReference('action-execution', {
+			await (
+				await service.executionCapability()
+			).getPublishedReference('action-execution', {
 				...context(),
 				permissionSnapshot: executionPermissions,
 			}),
@@ -1059,11 +1099,10 @@ describe('workflow backend contracts', () => {
 			{ ...context(), permissionSnapshot: executionPermissions },
 		);
 		await waitFor(
-			() =>
-				service
-					.getRunDetail('tenant-a', succeeded.runId)
-					.nodes.find((node) => node.nodeId === 'action.create')?.attempts[0]
-					?.status === 'waiting-child',
+			async () =>
+				(await service.getRunDetail('tenant-a', succeeded.runId)).nodes.find(
+					(node) => node.nodeId === 'action.create',
+				)?.attempts[0]?.status === 'waiting-child',
 		);
 		actionResult.current = {
 			actionInvocationId: 'replaced-by-fake',
@@ -1071,9 +1110,11 @@ describe('workflow backend contracts', () => {
 			output: { name: 'Created' },
 		};
 		await waitFor(
-			() => service.getRun('tenant-a', succeeded.runId)?.status === 'succeeded',
+			async () =>
+				(await service.getRun('tenant-a', succeeded.runId))?.status ===
+				'succeeded',
 		);
-		expect(service.getRun('tenant-a', succeeded.runId)).toMatchObject({
+		expect(await service.getRun('tenant-a', succeeded.runId)).toMatchObject({
 			usage: { actionInvocations: 1, unpricedActions: 1, state: 'final' },
 			cost: { unpricedActions: 1, state: 'final' },
 		});
@@ -1088,11 +1129,10 @@ describe('workflow backend contracts', () => {
 			{ ...context(), permissionSnapshot: executionPermissions },
 		);
 		await waitFor(
-			() =>
-				service
-					.getRunDetail('tenant-a', refused.runId)
-					.nodes.find((node) => node.nodeId === 'action.create')?.attempts[0]
-					?.status === 'waiting-child',
+			async () =>
+				(await service.getRunDetail('tenant-a', refused.runId)).nodes.find(
+					(node) => node.nodeId === 'action.create',
+				)?.attempts[0]?.status === 'waiting-child',
 		);
 		actionResult.current = {
 			actionInvocationId: 'replaced-by-fake',
@@ -1101,21 +1141,22 @@ describe('workflow backend contracts', () => {
 			code: 'ACTION_PERMISSION_DENIED',
 		};
 		await waitFor(
-			() => service.getRun('tenant-a', refused.runId)?.status === 'refused',
+			async () =>
+				(await service.getRun('tenant-a', refused.runId))?.status === 'refused',
 		);
-		expect(service.getRun('tenant-a', refused.runId)).toMatchObject({
+		expect(await service.getRun('tenant-a', refused.runId)).toMatchObject({
 			failureCode: 'ACTION_PERMISSION_DENIED',
 			usage: { actionInvocations: 1 },
 		});
 		expect(fake.starts()).toBe(2);
-		runtime.dispose();
+		await runtime.dispose();
 	});
 
 	it('persists retry evidence, exhausts the policy, and counts child usage once', async () => {
 		const base = dependencies({ current: null });
 		const failingAgents: AgentRevisionExecutionCapability = {
 			...base.agents,
-			getResult: (runId) => ({
+			getResult: async (runId) => ({
 				runId,
 				status: 'failed',
 				output: null,
@@ -1128,20 +1169,19 @@ describe('workflow backend contracts', () => {
 		const registry = createPlatformCapabilityRegistry();
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, failingAgents);
 		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, base.actions);
-		const runtime = createWorkflowsRuntime({
-			databasePath: ':memory:',
+		const runtime = createWorkflowsTestRuntime({
 			capabilities: registry,
 			payloadKey: Buffer.alloc(32, 48),
 			cursorKey: Buffer.alloc(32, 49),
 			worker: { pollMs: 250, leaseMs: 1_000 },
 		});
-		const service = runtime.service();
-		const definition = service.create(
+		const service = await runtime.service();
+		const definition = await service.create(
 			'tenant-a',
 			{ key: 'retry-exhaustion', name: 'Retry exhaustion', description: '' },
 			actor,
 		);
-		service.update(
+		await service.update(
 			'tenant-a',
 			{
 				workflowId: definition.definition.id,
@@ -1152,7 +1192,7 @@ describe('workflow backend contracts', () => {
 			},
 			actor,
 		);
-		service.publish(
+		await service.publish(
 			'tenant-a',
 			definition.definition.id,
 			2,
@@ -1169,10 +1209,11 @@ describe('workflow backend contracts', () => {
 			context(),
 		);
 		await waitFor(
-			() => service.getRun('tenant-a', accepted.runId)?.status === 'failed',
+			async () =>
+				(await service.getRun('tenant-a', accepted.runId))?.status === 'failed',
 			4_000,
 		);
-		const detail = service.getRunDetail('tenant-a', accepted.runId);
+		const detail = await service.getRunDetail('tenant-a', accepted.runId);
 		const attempts = detail.nodes.find(
 			(node) => node.nodeId === 'agent.process',
 		)?.attempts;
@@ -1198,7 +1239,7 @@ describe('workflow backend contracts', () => {
 			`tenant-a:${accepted.runId}:agent.process:attempt:1`,
 			`tenant-a:${accepted.runId}:agent.process:attempt:2`,
 		]);
-		runtime.dispose();
+		await runtime.dispose();
 	});
 
 	it('retries workspace-write actions with one stable side-effect key and invocation', async () => {
@@ -1214,21 +1255,20 @@ describe('workflow backend contracts', () => {
 		const registry = createPlatformCapabilityRegistry();
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
 		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
-		const runtime = createWorkflowsRuntime({
-			databasePath: ':memory:',
+		const runtime = createWorkflowsTestRuntime({
 			capabilities: registry,
 			payloadKey: Buffer.alloc(32, 56),
 			cursorKey: Buffer.alloc(32, 57),
 			worker: { pollMs: 250, leaseMs: 1_000 },
 		});
-		const service = runtime.service();
-		const definition = service.create(
+		const service = await runtime.service();
+		const definition = await service.create(
 			'tenant-a',
 			{ key: 'action-retry', name: 'Action retry', description: '' },
 			actor,
 		);
 		const graph = actionGraph(2, ['ACTION_TRANSIENT']);
-		service.update(
+		await service.update(
 			'tenant-a',
 			{
 				workflowId: definition.definition.id,
@@ -1240,7 +1280,7 @@ describe('workflow backend contracts', () => {
 			actor,
 		);
 		const executionPermissions = [...permissions, 'catalog.items.manage'];
-		service.publish(
+		await service.publish(
 			'tenant-a',
 			definition.definition.id,
 			2,
@@ -1257,10 +1297,11 @@ describe('workflow backend contracts', () => {
 			{ ...context(), permissionSnapshot: executionPermissions },
 		);
 		await waitFor(
-			() => service.getRun('tenant-a', accepted.runId)?.status === 'failed',
+			async () =>
+				(await service.getRun('tenant-a', accepted.runId))?.status === 'failed',
 			4_000,
 		);
-		const detail = service.getRunDetail('tenant-a', accepted.runId);
+		const detail = await service.getRunDetail('tenant-a', accepted.runId);
 		const attempts = detail.nodes.find(
 			(node) => node.nodeId === 'action.create',
 		)?.attempts;
@@ -1278,11 +1319,11 @@ describe('workflow backend contracts', () => {
 			actionInvocations: 1,
 			unpricedActions: 1,
 		});
-		runtime.dispose();
+		await runtime.dispose();
 	});
 
 	it('recovers an expired child wait after restart without enqueueing the child again', async () => {
-		const temporary = temporaryDatabase();
+		const databases = createWorkflowsTestProvider();
 		const result: { current: JsonValue | null } = { current: null };
 		const fake = dependencies(result);
 		const registry = createPlatformCapabilityRegistry();
@@ -1291,7 +1332,7 @@ describe('workflow backend contracts', () => {
 		const payloadKey = Buffer.alloc(32, 50);
 		const cursorKey = Buffer.alloc(32, 51);
 		const first = createWorkflowsRuntime({
-			databasePath: temporary.path,
+			databases,
 			capabilities: registry,
 			payloadKey,
 			cursorKey,
@@ -1299,13 +1340,13 @@ describe('workflow backend contracts', () => {
 		});
 		let runId = '';
 		try {
-			const service = first.service();
-			const definition = service.create(
+			const service = await first.service();
+			const definition = await service.create(
 				'tenant-a',
 				{ key: 'restart-recovery', name: 'Restart recovery', description: '' },
 				actor,
 			);
-			service.update(
+			await service.update(
 				'tenant-a',
 				{
 					workflowId: definition.definition.id,
@@ -1316,7 +1357,7 @@ describe('workflow backend contracts', () => {
 				},
 				actor,
 			);
-			service.publish(
+			await service.publish(
 				'tenant-a',
 				definition.definition.id,
 				2,
@@ -1335,24 +1376,24 @@ describe('workflow backend contracts', () => {
 				)
 			).runId;
 			await waitFor(
-				() => service.getRun('tenant-a', runId)?.status === 'waiting-agent',
+				async () =>
+					(await service.getRun('tenant-a', runId))?.status === 'waiting-agent',
 			);
 			expect(fake.enqueues()).toBe(1);
 		} finally {
-			first.dispose();
+			await first.dispose();
 		}
 
-		const database = new DatabaseSync(temporary.path);
-		database
-			.prepare(
-				`UPDATE workflow_runs SET lease_owner = 'crashed-worker', lease_expires_at = 1
-				 WHERE tenant_id = 'tenant-a' AND id = ?`,
-			)
-			.run(runId);
-		database.close();
+		await executeAsOwner(
+			databases,
+			'tenant-a',
+			`UPDATE workflow_runs SET lease_owner = 'crashed-worker', lease_expires_at = 1
+			 WHERE tenant_id = 'tenant-a' AND id = $1`,
+			[runId],
+		);
 		result.current = { name: 'Recovered' };
 		const second = createWorkflowsRuntime({
-			databasePath: temporary.path,
+			databases,
 			capabilities: registry,
 			payloadKey,
 			cursorKey,
@@ -1361,23 +1402,26 @@ describe('workflow backend contracts', () => {
 		try {
 			second.start();
 			await waitFor(
-				() =>
-					second.service().getRun('tenant-a', runId)?.status === 'succeeded',
+				async () =>
+					(await (await second.service()).getRun('tenant-a', runId))?.status ===
+					'succeeded',
 				4_000,
 			);
-			const detail = second.service().getRunDetail('tenant-a', runId);
+			const detail = await (
+				await second.service()
+			).getRunDetail('tenant-a', runId);
 			expect(detail.events.map((event) => event.type)).toContain(
 				'run.recovered',
 			);
 			expect(fake.enqueues()).toBe(1);
 		} finally {
-			second.dispose();
-			rmSync(temporary.directory, { recursive: true, force: true });
+			await second.dispose();
+			await databases.dispose();
 		}
 	});
 
 	it('persists a child observation deadline and refuses a stuck child after restart', async () => {
-		const temporary = temporaryDatabase();
+		const databases = createWorkflowsTestProvider();
 		const result: { current: JsonValue | null } = { current: null };
 		const fake = dependencies(result);
 		const registry = createPlatformCapabilityRegistry();
@@ -1387,7 +1431,7 @@ describe('workflow backend contracts', () => {
 		const cursorKey = Buffer.alloc(32, 63);
 		let workerNow = Date.now();
 		const first = createWorkflowsRuntime({
-			databasePath: temporary.path,
+			databases,
 			capabilities: registry,
 			payloadKey,
 			cursorKey,
@@ -1400,13 +1444,13 @@ describe('workflow backend contracts', () => {
 		let runId = '';
 		let deadline = 0;
 		try {
-			const service = first.service();
-			const definition = service.create(
+			const service = await first.service();
+			const definition = await service.create(
 				'tenant-a',
 				{ key: 'child-deadline', name: 'Child deadline', description: '' },
 				actor,
 			);
-			service.update(
+			await service.update(
 				'tenant-a',
 				{
 					workflowId: definition.definition.id,
@@ -1417,7 +1461,7 @@ describe('workflow backend contracts', () => {
 				},
 				actor,
 			);
-			service.publish(
+			await service.publish(
 				'tenant-a',
 				definition.definition.id,
 				2,
@@ -1436,15 +1480,16 @@ describe('workflow backend contracts', () => {
 				)
 			).runId;
 			await waitFor(
-				() => service.getRun('tenant-a', runId)?.status === 'waiting-agent',
+				async () =>
+					(await service.getRun('tenant-a', runId))?.status === 'waiting-agent',
 			);
-			const attempt = service
-				.getRunDetail('tenant-a', runId)
-				.nodes.find((node) => node.nodeId === 'agent.process')?.attempts[0];
+			const attempt = (
+				await service.getRunDetail('tenant-a', runId)
+			).nodes.find((node) => node.nodeId === 'agent.process')?.attempts[0];
 			deadline = attempt?.childObservationDeadlineAt ?? 0;
 			expect(deadline).toBe(workerNow + WORKFLOW_LIMITS.maxChildObservationMs);
 			expect(deadline).toBeLessThanOrEqual(
-				service.getRun('tenant-a', runId)!.queuedAt +
+				(await service.getRun('tenant-a', runId))!.queuedAt +
 					WORKFLOW_LIMITS.maxLiveDurationMs,
 			);
 		} finally {
@@ -1453,7 +1498,7 @@ describe('workflow backend contracts', () => {
 
 		workerNow = deadline;
 		const second = createWorkflowsRuntime({
-			databasePath: temporary.path,
+			databases,
 			capabilities: registry,
 			payloadKey,
 			cursorKey,
@@ -1466,9 +1511,13 @@ describe('workflow backend contracts', () => {
 		try {
 			second.start();
 			await waitFor(
-				() => second.service().getRun('tenant-a', runId)?.status === 'refused',
+				async () =>
+					(await (await second.service()).getRun('tenant-a', runId))?.status ===
+					'refused',
 			);
-			const detail = second.service().getRunDetail('tenant-a', runId);
+			const detail = await (
+				await second.service()
+			).getRunDetail('tenant-a', runId);
 			expect(detail.run.failureCode).toBe('WORKFLOW_CHILD_OBSERVATION_TIMEOUT');
 			expect(
 				detail.nodes.find((node) => node.nodeId === 'agent.process')
@@ -1481,12 +1530,12 @@ describe('workflow backend contracts', () => {
 			expect(fake.enqueues()).toBe(1);
 		} finally {
 			await Promise.resolve(second.dispose());
-			rmSync(temporary.directory, { recursive: true, force: true });
+			await databases.dispose();
 		}
 	});
 
 	it('allows one worker to recover a lost lease without duplicate child settlement', async () => {
-		const temporary = temporaryDatabase();
+		const databases = createWorkflowsTestProvider();
 		const registry = createPlatformCapabilityRegistry();
 		const base = dependencies({ current: null });
 		let enqueueCalls = 0;
@@ -1518,7 +1567,7 @@ describe('workflow backend contracts', () => {
 				}
 				return { runId: childId, created };
 			},
-			getResult: (runId) =>
+			getResult: async (runId) =>
 				result.current === null
 					? null
 					: {
@@ -1534,7 +1583,7 @@ describe('workflow backend contracts', () => {
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, contendedAgents);
 		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, base.actions);
 		const shared = {
-			databasePath: temporary.path,
+			databases,
 			capabilities: registry,
 			payloadKey: Buffer.alloc(32, 64),
 			cursorKey: Buffer.alloc(32, 65),
@@ -1549,13 +1598,13 @@ describe('workflow backend contracts', () => {
 		});
 		let runId = '';
 		try {
-			const service = first.service();
-			const definition = service.create(
+			const service = await first.service();
+			const definition = await service.create(
 				'tenant-a',
 				{ key: 'lease-contention', name: 'Lease contention', description: '' },
 				actor,
 			);
-			service.update(
+			await service.update(
 				'tenant-a',
 				{
 					workflowId: definition.definition.id,
@@ -1566,7 +1615,7 @@ describe('workflow backend contracts', () => {
 				},
 				actor,
 			);
-			service.publish(
+			await service.publish(
 				'tenant-a',
 				definition.definition.id,
 				2,
@@ -1589,32 +1638,33 @@ describe('workflow backend contracts', () => {
 			await new Promise((resolve) => setTimeout(resolve, 750));
 			expect(enqueueCalls).toBe(1);
 
-			const database = new DatabaseSync(temporary.path);
-			database
-				.prepare(
-					`UPDATE workflow_runs SET lease_owner = 'lost-owner', lease_expires_at = 1
-					 WHERE tenant_id = 'tenant-a' AND id = ?`,
-				)
-				.run(runId);
-			database.close();
+			await executeAsOwner(
+				databases,
+				'tenant-a',
+				`UPDATE workflow_runs SET lease_owner = 'lost-owner', lease_expires_at = 1
+				 WHERE tenant_id = 'tenant-a' AND id = $1`,
+				[runId],
+			);
 			await waitFor(() => enqueueCalls === 2);
 			await waitFor(
-				() =>
-					second
-						.service()
-						.getRunDetail('tenant-a', runId)
-						.nodes.find((node) => node.nodeId === 'agent.process')?.attempts[0]
+				async () =>
+					(
+						await (await second.service()).getRunDetail('tenant-a', runId)
+					).nodes.find((node) => node.nodeId === 'agent.process')?.attempts[0]
 						?.status === 'waiting-child',
 			);
 			await new Promise((resolve) => setTimeout(resolve, 600));
 			result.current = { name: 'Recovered exactly once' };
 			releaseFirst();
 			await waitFor(
-				() =>
-					second.service().getRun('tenant-a', runId)?.status === 'succeeded',
+				async () =>
+					(await (await second.service()).getRun('tenant-a', runId))?.status ===
+					'succeeded',
 				4_000,
 			);
-			const detail = second.service().getRunDetail('tenant-a', runId);
+			const detail = await (
+				await second.service()
+			).getRunDetail('tenant-a', runId);
 			expect(enqueueCalls).toBe(2);
 			expect(createdChildren).toBe(1);
 			expect(
@@ -1633,7 +1683,7 @@ describe('workflow backend contracts', () => {
 			releaseFirst();
 			await Promise.resolve(first.dispose());
 			await Promise.resolve(second.dispose());
-			rmSync(temporary.directory, { recursive: true, force: true });
+			await databases.dispose();
 		}
 	});
 
@@ -1642,15 +1692,15 @@ describe('workflow backend contracts', () => {
 		const registry = createPlatformCapabilityRegistry();
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
 		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
-		const repository = new SqliteWorkflowsRepository(
-			':memory:',
-			createWorkflowPayloadCodec(Buffer.alloc(32, 52)),
-		);
+		const database = await openWorkflowsTestRepository({
+			payloadCodec: createWorkflowPayloadCodec(Buffer.alloc(32, 52)),
+		});
+		const repository = database.repository;
 		const service = new WorkflowsService(repository, {
 			capabilities: registry,
 			cursorCodec: createWorkflowCursorCodec(Buffer.alloc(32, 53)),
 		});
-		const definition = service.create(
+		const definition = await service.create(
 			'tenant-a',
 			{
 				key: 'cost-deduplication',
@@ -1659,7 +1709,7 @@ describe('workflow backend contracts', () => {
 			},
 			actor,
 		);
-		service.update(
+		await service.update(
 			'tenant-a',
 			{
 				workflowId: definition.definition.id,
@@ -1670,7 +1720,7 @@ describe('workflow backend contracts', () => {
 			},
 			actor,
 		);
-		service.publish(
+		await service.publish(
 			'tenant-a',
 			definition.definition.id,
 			2,
@@ -1688,13 +1738,13 @@ describe('workflow backend contracts', () => {
 			)
 		).runId;
 		for (let index = 0; index < 2; index += 1) {
-			repository.recordAgentUsage('tenant-a', runId, 'child-run-stable', {
+			await repository.recordAgentUsage('tenant-a', runId, 'child-run-stable', {
 				inputTokens: 4,
 				outputTokens: 3,
 				totalTokens: 7,
 			});
 		}
-		expect(repository.getRun('tenant-a', runId)).toMatchObject({
+		expect(await repository.getRun('tenant-a', runId)).toMatchObject({
 			usage: {
 				inputTokens: 4,
 				outputTokens: 3,
@@ -1704,7 +1754,7 @@ describe('workflow backend contracts', () => {
 			},
 			cost: { unpricedChildRuns: 1 },
 		});
-		repository.close();
+		await database.dispose();
 	});
 
 	it('makes cancellation idempotent and lets the worker settle a queued run', async () => {
@@ -1712,20 +1762,19 @@ describe('workflow backend contracts', () => {
 		const fake = dependencies({ current: null });
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
 		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
-		const runtime = createWorkflowsRuntime({
-			databasePath: ':memory:',
+		const runtime = createWorkflowsTestRuntime({
 			capabilities: registry,
 			payloadKey: Buffer.alloc(32, 11),
 			cursorKey: Buffer.alloc(32, 12),
 			worker: { pollMs: 250, leaseMs: 1_000 },
 		});
-		const service = runtime.service();
-		const definition = service.create(
+		const service = await runtime.service();
+		const definition = await service.create(
 			'tenant-a',
 			{ key: 'cancel-flow', name: 'Cancel', description: '' },
 			actor,
 		);
-		service.update(
+		await service.update(
 			'tenant-a',
 			{
 				workflowId: definition.definition.id,
@@ -1736,7 +1785,7 @@ describe('workflow backend contracts', () => {
 			},
 			actor,
 		);
-		service.publish(
+		await service.publish(
 			'tenant-a',
 			definition.definition.id,
 			2,
@@ -1751,25 +1800,31 @@ describe('workflow backend contracts', () => {
 			},
 			context(),
 		);
-		expect(service.cancel('tenant-a', accepted.runId, actor)).toMatchObject({
+		expect(
+			await service.cancel('tenant-a', accepted.runId, actor),
+		).toMatchObject({
 			requested: true,
 			status: 'cancel-requested',
 		});
-		expect(service.cancel('tenant-a', accepted.runId, actor)).toMatchObject({
+		expect(
+			await service.cancel('tenant-a', accepted.runId, actor),
+		).toMatchObject({
 			requested: false,
 			status: 'cancel-requested',
 		});
 		runtime.start();
 		await waitFor(
-			() => service.getRun('tenant-a', accepted.runId)?.status === 'cancelled',
+			async () =>
+				(await service.getRun('tenant-a', accepted.runId))?.status ===
+				'cancelled',
 		);
-		const detail = service.getRunDetail('tenant-a', accepted.runId);
+		const detail = await service.getRunDetail('tenant-a', accepted.runId);
 		expect(detail.events.map((event) => event.type)).toContain('run.cancelled');
-		expect(() =>
+		await expect(
 			service.readEvents('tenant-a', accepted.runId, 10_000),
-		).toThrow(/ahead/);
-		expect(service.getRun('tenant-b', accepted.runId)).toBeNull();
-		runtime.dispose();
+		).rejects.toThrow(/ahead/);
+		expect(await service.getRun('tenant-b', accepted.runId)).toBeNull();
+		await runtime.dispose();
 	});
 
 	it('observes an accepted child to terminal and discards its late result after cancellation', async () => {
@@ -1778,20 +1833,19 @@ describe('workflow backend contracts', () => {
 		const registry = createPlatformCapabilityRegistry();
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
 		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
-		const runtime = createWorkflowsRuntime({
-			databasePath: ':memory:',
+		const runtime = createWorkflowsTestRuntime({
 			capabilities: registry,
 			payloadKey: Buffer.alloc(32, 58),
 			cursorKey: Buffer.alloc(32, 59),
 			worker: { pollMs: 250, leaseMs: 1_000 },
 		});
-		const service = runtime.service();
-		const definition = service.create(
+		const service = await runtime.service();
+		const definition = await service.create(
 			'tenant-a',
 			{ key: 'cancel-child', name: 'Cancel child', description: '' },
 			actor,
 		);
-		service.update(
+		await service.update(
 			'tenant-a',
 			{
 				workflowId: definition.definition.id,
@@ -1802,7 +1856,7 @@ describe('workflow backend contracts', () => {
 			},
 			actor,
 		);
-		service.publish(
+		await service.publish(
 			'tenant-a',
 			definition.definition.id,
 			2,
@@ -1819,26 +1873,29 @@ describe('workflow backend contracts', () => {
 			context(),
 		);
 		await waitFor(
-			() =>
-				service.getRun('tenant-a', accepted.runId)?.status === 'waiting-agent',
+			async () =>
+				(await service.getRun('tenant-a', accepted.runId))?.status ===
+				'waiting-agent',
 		);
-		service.cancel('tenant-a', accepted.runId, actor);
-		await waitFor(() =>
-			service
-				.getRunDetail('tenant-a', accepted.runId)
-				.events.some((event) => event.type === 'node.cancel.acknowledged'),
+		await service.cancel('tenant-a', accepted.runId, actor);
+		await waitFor(async () =>
+			(await service.getRunDetail('tenant-a', accepted.runId)).events.some(
+				(event) => event.type === 'node.cancel.acknowledged',
+			),
 		);
 		await new Promise((resolve) => setTimeout(resolve, 600));
-		let detail = service.getRunDetail('tenant-a', accepted.runId);
+		let detail = await service.getRunDetail('tenant-a', accepted.runId);
 		expect(detail.run.status).toBe('cancel-requested');
 		expect(
 			detail.events.filter((event) => event.type === 'node.cancel.requested'),
 		).toHaveLength(1);
 		result.current = { name: 'must not be routed' };
 		await waitFor(
-			() => service.getRun('tenant-a', accepted.runId)?.status === 'cancelled',
+			async () =>
+				(await service.getRun('tenant-a', accepted.runId))?.status ===
+				'cancelled',
 		);
-		detail = service.getRunDetail('tenant-a', accepted.runId);
+		detail = await service.getRunDetail('tenant-a', accepted.runId);
 		expect(
 			detail.nodes.find((node) => node.nodeId === 'agent.process')?.status,
 		).toBe('cancelled');
@@ -1854,7 +1911,7 @@ describe('workflow backend contracts', () => {
 				?.output,
 		).toMatchObject({ state: 'redacted', reason: 'secret' });
 		expect(detail.run.usage).toMatchObject({ totalTokens: 7 });
-		runtime.dispose();
+		await runtime.dispose();
 	});
 
 	it('settles cancellation with durable evidence when child observation expires', async () => {
@@ -1864,8 +1921,7 @@ describe('workflow backend contracts', () => {
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
 		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
 		let workerNow = Date.now();
-		const runtime = createWorkflowsRuntime({
-			databasePath: ':memory:',
+		const runtime = createWorkflowsTestRuntime({
 			capabilities: registry,
 			payloadKey: Buffer.alloc(32, 66),
 			cursorKey: Buffer.alloc(32, 67),
@@ -1875,13 +1931,13 @@ describe('workflow backend contracts', () => {
 				now: () => workerNow,
 			},
 		});
-		const service = runtime.service();
-		const definition = service.create(
+		const service = await runtime.service();
+		const definition = await service.create(
 			'tenant-a',
 			{ key: 'cancel-deadline', name: 'Cancel deadline', description: '' },
 			actor,
 		);
-		service.update(
+		await service.update(
 			'tenant-a',
 			{
 				workflowId: definition.definition.id,
@@ -1892,7 +1948,7 @@ describe('workflow backend contracts', () => {
 			},
 			actor,
 		);
-		service.publish(
+		await service.publish(
 			'tenant-a',
 			definition.definition.id,
 			2,
@@ -1909,25 +1965,28 @@ describe('workflow backend contracts', () => {
 			context(),
 		);
 		await waitFor(
-			() =>
-				service.getRun('tenant-a', accepted.runId)?.status === 'waiting-agent',
+			async () =>
+				(await service.getRun('tenant-a', accepted.runId))?.status ===
+				'waiting-agent',
 		);
-		const deadline = service
-			.getRunDetail('tenant-a', accepted.runId)
-			.nodes.find((node) => node.nodeId === 'agent.process')
-			?.attempts[0]?.childObservationDeadlineAt;
+		const deadline = (
+			await service.getRunDetail('tenant-a', accepted.runId)
+		).nodes.find((node) => node.nodeId === 'agent.process')?.attempts[0]
+			?.childObservationDeadlineAt;
 		expect(deadline).toEqual(expect.any(Number));
-		service.cancel('tenant-a', accepted.runId, actor);
-		await waitFor(() =>
-			service
-				.getRunDetail('tenant-a', accepted.runId)
-				.events.some((event) => event.type === 'node.cancel.acknowledged'),
+		await service.cancel('tenant-a', accepted.runId, actor);
+		await waitFor(async () =>
+			(await service.getRunDetail('tenant-a', accepted.runId)).events.some(
+				(event) => event.type === 'node.cancel.acknowledged',
+			),
 		);
 		workerNow = deadline!;
 		await waitFor(
-			() => service.getRun('tenant-a', accepted.runId)?.status === 'cancelled',
+			async () =>
+				(await service.getRun('tenant-a', accepted.runId))?.status ===
+				'cancelled',
 		);
-		const detail = service.getRunDetail('tenant-a', accepted.runId);
+		const detail = await service.getRunDetail('tenant-a', accepted.runId);
 		expect(
 			detail.events.find(
 				(event) =>
@@ -1942,5 +2001,198 @@ describe('workflow backend contracts', () => {
 			failureCode: 'WORKFLOW_CHILD_OBSERVATION_TIMEOUT',
 		});
 		await Promise.resolve(runtime.dispose());
+	});
+});
+
+const routingActor = { kind: 'user', id: 'account-a', label: 'Owner' } as const;
+
+function queuedLiveRun(
+	tenantId: string,
+	id: string,
+	name: string,
+): CreateWorkflowRunWrite {
+	return {
+		run: {
+			id,
+			tenantId,
+			workflowId: `workflow-${tenantId}`,
+			workflowKey: 'probe',
+			workflowName: name,
+			workflowRevision: 1,
+			graphChecksum: 'checksum',
+			graph: directGraph(),
+			compiledOrder: ['input.start', 'output.done'],
+			mode: 'live',
+			status: 'queued',
+			actor: routingActor,
+			authorizationSubject: routingActor,
+			origin: { kind: 'manual' },
+			permissionSnapshot: [WORKFLOWS_PERMISSIONS.runsExecute],
+			permissionDigest: 'digest',
+			inputHash: 'sha256:input',
+			inputPayloadId: '',
+			idempotencyKey: `${id}-key`,
+			leaseOwner: null,
+			leaseExpiresAt: null,
+			completedNodes: 0,
+			totalNodes: 2,
+			usage: {
+				inputTokens: 0,
+				outputTokens: 0,
+				totalTokens: 0,
+				actionInvocations: 0,
+				unpricedActions: 0,
+				includedChildRunIds: [],
+				unpricedChildRuns: 0,
+			},
+			cost: { unpricedActions: 0, unpricedChildRuns: 0 },
+			failureCode: null,
+			queuedAt: 1_000,
+			startedAt: null,
+			completedAt: null,
+			durationMs: null,
+			cancellationRequestedAt: null,
+		},
+		input: { name },
+		inputEvidence: {
+			version: 1,
+			state: 'available',
+			schemaId: 'workflow.input',
+			hash: 'sha256:input',
+			originalByteSize: 4,
+		},
+	} as unknown as CreateWorkflowRunWrite;
+}
+
+describe('workflow persistence boundary', () => {
+	it('keeps runs inside their tenant and refuses a connection without one', async () => {
+		const database = await openWorkflowsTestRepository();
+		try {
+			await database.repository.createRun(
+				queuedLiveRun('tenant-a', 'run-a', 'Alpha'),
+			);
+			await database.repository.createRun(
+				queuedLiveRun('tenant-b', 'run-b', 'Beta'),
+			);
+
+			expect(await database.repository.getRun('tenant-a', 'run-b')).toBeNull();
+			expect(
+				(await database.repository.getRun('tenant-a', 'run-a'))?.workflowName,
+			).toBe('Alpha');
+			expect(await database.repository.countRuns('tenant-a')).toBe(1);
+
+			/* Row security, not the WHERE clause: an unfiltered read under one
+			   tenant still returns only the rows that tenant owns. */
+			const visible = await withHandle(
+				database.databases,
+				'runtime',
+				(handle) =>
+					handle.transaction(
+						(transaction) =>
+							transaction.query<{ id: string }>({
+								text: 'SELECT id FROM workflow_runs',
+							}),
+						{ access: 'read', tenantId: 'tenant-a' },
+					),
+			);
+			expect(visible.rows.map((row) => row.id)).toEqual(['run-a']);
+
+			await expect(
+				withHandle(database.databases, 'runtime', (handle) =>
+					handle.transaction(
+						(transaction) =>
+							transaction.query({ text: 'SELECT id FROM workflow_runs' }),
+						{ access: 'read' },
+					),
+				),
+			).rejects.toMatchObject({ code: 'TENANT_CONTEXT_REQUIRED' });
+		} finally {
+			await database.dispose();
+		}
+	});
+
+	it('claims every queued run once, each under the tenant the poll named', async () => {
+		const database = await openWorkflowsTestRepository();
+		try {
+			await database.repository.createRun(
+				queuedLiveRun('tenant-a', 'run-a', 'Alpha'),
+			);
+			await database.repository.createRun(
+				queuedLiveRun('tenant-b', 'run-b', 'Beta'),
+			);
+
+			const first = await database.repository.claimNext(
+				'worker-1',
+				2_000,
+				40_000,
+			);
+			const second = await database.repository.claimNext(
+				'worker-2',
+				2_000,
+				40_000,
+			);
+			expect([first?.id, second?.id].sort()).toEqual(['run-a', 'run-b']);
+			expect(first?.tenantId).not.toBe(second?.tenantId);
+			expect(
+				await database.repository.claimNext('worker-3', 2_000, 40_000),
+			).toBeNull();
+		} finally {
+			await database.dispose();
+		}
+	});
+
+	it('denies the background role every column outside the routing set and every write', async () => {
+		const database = await openWorkflowsTestRepository();
+		try {
+			await database.repository.createRun(
+				queuedLiveRun('tenant-a', 'run-a', 'Confidential'),
+			);
+
+			const identity = await withHandle(
+				database.databases,
+				'background',
+				(handle) =>
+					handle.transaction(
+						(transaction) =>
+							transaction.query<{ role: string }>({
+								text: 'SELECT current_user AS role',
+							}),
+						{ access: 'read' },
+					),
+			);
+			expect(identity.rows[0]?.role).toBe('coreloom_background');
+
+			for (const text of [
+				'SELECT graph_json FROM workflow_runs',
+				'SELECT actor_json FROM workflow_runs',
+				'SELECT permission_snapshot_json FROM workflow_runs',
+				'SELECT * FROM workflow_runs',
+				'SELECT ciphertext FROM workflow_payloads',
+				'SELECT * FROM workflow_run_events',
+				'SELECT * FROM workflow_audit_events',
+			]) {
+				await expect(
+					withHandle(database.databases, 'background', (handle) =>
+						handle.transaction((transaction) => transaction.query({ text }), {
+							access: 'read',
+						}),
+					),
+				).rejects.toBeDefined();
+			}
+
+			await expect(
+				withHandle(database.databases, 'background', (handle) =>
+					handle.transaction(
+						(transaction) =>
+							transaction.execute({
+								text: "UPDATE workflow_runs SET status = 'cancelled'",
+							}),
+						{ access: 'write' },
+					),
+				),
+			).rejects.toBeDefined();
+		} finally {
+			await database.dispose();
+		}
 	});
 });

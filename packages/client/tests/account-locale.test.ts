@@ -24,7 +24,7 @@ describe('server-backed account locale', () => {
 	afterEach(() => vi.unstubAllGlobals());
 
 	it('uses a scoped cache only until the server returns a preference', () => {
-		const key = 'coreloom.locale.account.account-a.tenant-a';
+		const key = 'flowdular.locale.account.account-a.tenant-a';
 		values.set(key, 'pl');
 
 		restoreAccountLocaleCache('account-a', 'tenant-a');
@@ -36,7 +36,7 @@ describe('server-backed account locale', () => {
 	});
 
 	it('removes a stale cache when the server reports no personal choice', () => {
-		const key = 'coreloom.locale.account.account-a.tenant-a';
+		const key = 'flowdular.locale.account.account-a.tenant-a';
 		values.set(key, 'pl');
 		restoreAccountLocaleCache('account-a', 'tenant-a');
 

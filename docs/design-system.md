@@ -1,18 +1,18 @@
-# Coreloom design system
+# Flowdular design system
 
 Identity 1.0 (2026-08-31). The implementation reference for humans and agents:
 shared primitives, tokens, and the rules for using them.
 
 ## Where things live
 
-- `packages/ui` (`@coreloom/ui`): the only source of visual primitives.
+- `packages/ui` (`@flowdular/ui`): the only source of visual primitives.
   Design tokens (`src/styles/tokens.css`), base styles, `ui-*` component
   classes, TSRX components, icons, and the brand mark. Fonts (IBM Plex Sans
   Variable, IBM Plex Mono) are self-hosted through `@fontsource` packages.
 - `packages/client`: the application shell (sidebar, topbar, command palette,
   dashboard, contribution outlets). Shell-only layout lives in
   `src/shell/shell.css`.
-- Modules: compose screens from `@coreloom/ui`. Module CSS may only add
+- Modules: compose screens from `@flowdular/ui`. Module CSS may only add
   module-specific composites built on the tokens (example:
   `modules/agents/src/client/agents.css`).
 - `platform/public`: `favicon.svg`, `og.png` (1200x630 Open Graph image).
@@ -85,8 +85,8 @@ empty and populated states, so widths do not drift. `Table` on its own covers
 what needs a bare table, such as the list side of a master-detail screen.
 
 `Table` is backed by the official `@octanejs/tanstack-table` adapter. Modules
-still use the smaller Coreloom `Table` and `TableCard` contract from
-`@coreloom/ui`; they never import TanStack directly. The shared primitive owns
+still use the smaller Flowdular `Table` and `TableCard` contract from
+`@flowdular/ui`; they never import TanStack directly. The shared primitive owns
 the TanStack features, row model, header model and cell rendering so every
 screen keeps the same states, widths and actions.
 

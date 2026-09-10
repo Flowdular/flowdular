@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os';
 import type {
 	AgentRoleDefinition,
 	CodingAgentRegistry,
+	CodingAgentEvent,
 	HandoffDeclaration,
-} from '@coreloom/coding-agent';
+} from '@flowdular/coding-agent';
 import type { GateResult } from './gates.ts';
 import { SandboxSetupError } from './workspace-root.ts';
 import {
@@ -314,6 +315,7 @@ export function parsePlan(
 }
 
 export interface PlanRequest {
+	readonly onEvent?: (event: CodingAgentEvent) => void;
 	readonly brief: string;
 	readonly driver: string;
 	readonly registry: CodingAgentRegistry;
@@ -358,7 +360,7 @@ Existing modules: ${catalogue || 'none'}
 Roles:
 ${roleList}`;
 
-	const workspacePath = await mkdtemp(join(tmpdir(), 'coreloom-plan-'));
+	const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-plan-'));
 	let output = '';
 	try {
 		for await (const event of driver.run({
@@ -369,6 +371,7 @@ ${roleList}`;
 			timeoutMs: PLAN_TIMEOUT_MS,
 			signal: request.signal,
 		})) {
+			request.onEvent?.(event);
 			if (event.type === 'assistant.message') output += `\n${event.text}`;
 		}
 	} catch {
@@ -471,6 +474,7 @@ export function routeRole(context: RoutingContext): {
 }
 
 export interface HandoffContext {
+	readonly reviewing?: boolean;
 	readonly routing: RoutingContext;
 	/* The role that just finished its turn. */
 	readonly role: string;
@@ -567,12 +571,15 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 
 	/* A failed gate belongs to the module it ran in, so the fix turn works
 	   there even when the finished turn worked somewhere else. */
-	const failedGate = context.gates.find((gate) => gate.status === 'failed');
+	const failedGate = context.gates.find((gate) => gate.status !== 'passed');
 	if (failedGate) {
+		const repairRole = context.reviewing
+			? (validateDeclared(context).role ?? context.role)
+			: context.role;
 		return plan(
 			'continue',
-			context.role,
-			`The ${gateLabel(failedGate)} gate failed, so the same specialist fixes it before anyone else works.`,
+			repairRole,
+			`The ${gateLabel(failedGate)} gate failed, so the responsible specialist fixes it before delivery.`,
 			[
 				`The ${gateLabel(failedGate)} gate failed after your change. Fix exactly what it reports, change nothing else, and end with your handoff line.`,
 				`Gate command: ${failedGate.command}`,

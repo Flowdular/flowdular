@@ -8,7 +8,7 @@ import {
 	createCodingAgentRegistry,
 	type CodingAgentDriver,
 	type CodingAgentTurnRequest,
-} from '@coreloom/coding-agent';
+} from '@flowdular/coding-agent';
 import {
 	MAX_CHECKPOINTS,
 	captureCheckpoint,
@@ -28,11 +28,12 @@ import {
 	sessionPaths,
 } from '../src/server/sessions.ts';
 import { runTurn, type TurnContext } from '../src/server/turns.ts';
+import { settledSession } from './settle.ts';
 
 async function workspace(): Promise<string> {
-	const root = await mkdtemp(join(tmpdir(), 'coreloom-checkpoints-'));
+	const root = await mkdtemp(join(tmpdir(), 'flowdular-checkpoints-'));
 	await writeFile(
-		join(root, 'coreloom.json'),
+		join(root, 'flowdular.json'),
 		JSON.stringify({ schemaVersion: 1, modules: { enabled: [] } }),
 		'utf8',
 	);
@@ -211,7 +212,7 @@ function api(runtime: SandboxRuntime, port = 4320) {
 		const headers: Record<string, string> = {
 			host: '127.0.0.1:4320',
 			...(init.body !== undefined
-				? { 'content-type': 'application/json', 'x-coreloom-sandbox': '1' }
+				? { 'content-type': 'application/json', 'x-flowdular-sandbox': '1' }
 				: {}),
 		};
 		const request = new Request(url, {
@@ -493,10 +494,7 @@ describe('checkpoint restore route', () => {
 					await call('GET', `/sandbox/api/sessions/${session.id}`)
 				).json()) as { running: boolean }
 			).running;
-		const deadline = Date.now() + 5_000;
-		while ((await view()) && Date.now() < deadline) {
-			await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
-		}
+		await settledSession(view);
 		expect(await view()).toBe(false);
 	});
 });

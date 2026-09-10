@@ -1,166 +1,222 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
-import { afterEach, describe, expect, it } from 'vitest';
+import { readdirSync, readFileSync } from 'node:fs';
+import type {
+	DatabaseAdapterLease,
+	DatabaseProvider,
+} from '@flowdular/database';
 import {
-	MIGRATION_LEDGER_TABLE,
-	moduleMigrationStatus,
-} from '@coreloom/kernel';
-import { OWNER_SCOPES } from '../src/acl/scopes.ts';
-import { migrations } from '../src/services/migration.ts';
-import { SqliteAuthRepository } from '../src/services/sqlite-repository.ts';
+	DATABASE_MIGRATION_LEDGER,
+	databaseMigrationStatus,
+	runDatabaseMigrations,
+} from '@flowdular/database';
+import { createTestDatabaseProvider } from '@flowdular/database-testing';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { databaseMigrations } from '../src/services/migration.ts';
 
-const directory = new URL('../migrations/', import.meta.url);
+const migrationDirectory = new URL('../migrations/', import.meta.url);
 
-let workspace: string | undefined;
+const MODULE_TABLES = [
+	'auth_membership_scopes',
+	'auth_memberships',
+	'auth_sessions',
+	'auth_api_tokens',
+	'auth_roles',
+	'auth_audit',
+	'auth_sign_in_failures',
+	'auth_password_reset_tokens',
+	'auth_tenant_invitations',
+	'auth_mfa_totp',
+	'auth_mfa_recovery_codes',
+	'auth_mfa_challenges',
+	'module_settings',
+	'auth_accounts',
+	'auth_tenants',
+].join(', ');
 
-afterEach(() => {
-	if (workspace) rmSync(workspace, { recursive: true, force: true });
-	workspace = undefined;
+/* Every table that carries a workspace boundary, and the policy that binds it.
+   auth_tenants is a workspace itself, so its policy binds the primary key. */
+const TENANT_TABLES: Readonly<Record<string, string>> = {
+	auth_tenants: 'auth_tenants_tenant_policy',
+	auth_memberships: 'auth_memberships_tenant_policy',
+	auth_membership_scopes: 'auth_membership_scopes_tenant_policy',
+	auth_sessions: 'auth_sessions_tenant_policy',
+	auth_api_tokens: 'auth_api_tokens_tenant_policy',
+	module_settings: 'module_settings_tenant_policy',
+	auth_roles: 'auth_roles_tenant_policy',
+	auth_audit: 'auth_audit_tenant_policy',
+	auth_tenant_invitations: 'auth_tenant_invitations_tenant_policy',
+	auth_mfa_challenges: 'auth_mfa_challenges_tenant_policy',
+};
+
+let provider: DatabaseProvider;
+let lease: DatabaseAdapterLease;
+
+beforeAll(async () => {
+	provider = createTestDatabaseProvider();
+	lease = await provider.acquire({
+		namespace: 'auth.core',
+		purpose: 'migration',
+	});
 });
 
-function databasePath(): string {
-	workspace = mkdtempSync(join(tmpdir(), 'coreloom-auth-'));
-	return join(workspace, 'auth.db');
+/* Every case states its own starting point, so the shared cluster goes back to
+   an unmigrated, unrecorded schema first. */
+beforeEach(async () => {
+	await lease.database.execute({
+		text: `DROP TABLE IF EXISTS ${MODULE_TABLES} CASCADE`,
+	});
+	if (await lease.database.schema.hasTable(DATABASE_MIGRATION_LEDGER)) {
+		await lease.database.execute({
+			text: `DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = 'auth.core'`,
+		});
+	}
+});
+
+afterAll(async () => {
+	await lease?.release();
+	await provider?.dispose();
+});
+
+function apply() {
+	return runDatabaseMigrations(lease.database, 'auth.core', databaseMigrations);
 }
 
-function open(path: string): DatabaseSync {
-	const database = new DatabaseSync(path);
-	database.exec('PRAGMA foreign_keys = ON;');
-	return database;
-}
-
-function states(path: string): readonly string[] {
-	return moduleMigrationStatus(open(path), migrations).map(
-		(entry) => entry.state,
+function status() {
+	return databaseMigrationStatus(
+		lease.database,
+		'auth.core',
+		databaseMigrations,
 	);
-}
-
-/* The shape a database reaches under the pre-ledger repository: the schema of
-   every migration, plus one tenant whose owner already carries the scopes the
-   backfill migrations grant. */
-function seedPreLedgerDatabase(
-	path: string,
-	scopes: readonly string[] = OWNER_SCOPES,
-): void {
-	const database = open(path);
-	for (const migration of migrations) database.exec(migration.statements);
-	database.exec(
-		`INSERT INTO auth_tenants (id, name, slug, created_at) VALUES ('tenant-a', 'Contoso', 'tenant-a', 1);
-		 INSERT INTO auth_accounts (id, email, email_normalized, password_hash, display_name, status, created_at)
-		 VALUES ('account-1', 'Admin@example.com', 'admin@example.com', 'hash', 'Admin', 'active', 1);
-		 INSERT INTO auth_memberships (account_id, tenant_id, role, role_id, created_at)
-		 VALUES ('account-1', 'tenant-a', 'owner', 'tenant-a:owner', 1);`,
-	);
-	const insert = database.prepare(
-		'INSERT INTO auth_membership_scopes (account_id, tenant_id, scope) VALUES (?, ?, ?)',
-	);
-	for (const scope of scopes) insert.run('account-1', 'tenant-a', scope);
-	database.close();
-}
-
-function scopesOf(path: string): readonly string[] {
-	return (
-		open(path)
-			.prepare(
-				'SELECT scope FROM auth_membership_scopes WHERE account_id = ? ORDER BY scope',
-			)
-			.all('account-1') as unknown as readonly { scope: string }[]
-	).map((row) => row.scope);
 }
 
 describe('auth migrations', () => {
-	it('mirrors every numbered up file byte for byte', () => {
-		const files = readdirSync(directory)
+	it('mirrors every PostgreSQL up file byte for byte', () => {
+		const files = readdirSync(migrationDirectory)
 			.filter((name) => name.endsWith('.up.sql'))
 			.sort();
 
-		expect(migrations.map((migration) => `${migration.id}.up.sql`)).toEqual(
-			files,
-		);
-		for (const migration of migrations) {
-			expect(migration.statements).toBe(
-				readFileSync(new URL(`${migration.id}.up.sql`, directory), 'utf8'),
+		expect(
+			databaseMigrations.map((migration) => `${migration.id}.up.sql`),
+		).toEqual(files);
+		for (const migration of databaseMigrations) {
+			expect(migration.sql.postgresql).toBe(
+				readFileSync(
+					new URL(`${migration.id}.up.sql`, migrationDirectory),
+					'utf8',
+				),
 			);
+			/* PostgreSQL and nothing else. A stray dialect key would ship SQL no
+			   deployment runs and no test covers. */
+			expect(Object.keys(migration.sql)).toEqual(['postgresql']);
 		}
 	});
 
-	it('applies every migration on a fresh database', () => {
-		const path = databasePath();
+	it('declares forced row security and a tenant policy for every table that carries a workspace', () => {
+		const script = databaseMigrations
+			.map((migration) => migration.sql.postgresql ?? '')
+			.join('\n');
 
-		new SqliteAuthRepository(path);
-
-		expect(states(path)).toEqual(migrations.map(() => 'applied'));
+		for (const [table, policy] of Object.entries(TENANT_TABLES)) {
+			expect(script).toContain(
+				`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`,
+			);
+			expect(script).toContain(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY`);
+			expect(script).toContain(`CREATE POLICY ${policy} ON ${table}`);
+		}
+		expect(script).toContain("current_setting('coreloom.tenant_id', true)");
+		expect(script).toContain('WITH CHECK');
 	});
 
-	it('adopts a database written before the ledger existed', () => {
-		const path = databasePath();
-		seedPreLedgerDatabase(path);
-
-		expect(states(path)).toEqual(migrations.map(() => 'adopted'));
-		new SqliteAuthRepository(path);
-
-		const database = open(path);
-		expect(
-			database
-				.prepare(`SELECT id FROM ${MIGRATION_LEDGER_TABLE} ORDER BY id`)
-				.all(),
-		).toEqual(migrations.map((migration) => ({ id: migration.id })));
-		expect(
-			database
-				.prepare('SELECT email, slug FROM auth_accounts, auth_tenants')
-				.get(),
-		).toEqual({ email: 'Admin@example.com', slug: 'tenant-a' });
-		expect(scopesOf(path)).toEqual([...OWNER_SCOPES].sort());
-	});
-
-	it('still backfills a membership the scope grants never reached', () => {
-		const path = databasePath();
-		const missing = OWNER_SCOPES.filter(
-			(scope) => scope !== 'users.members.read',
+	it('applies every migration on a fresh database', async () => {
+		expect((await apply()).map((entry) => entry.action)).toEqual(
+			databaseMigrations.map(() => 'applied'),
 		);
-		seedPreLedgerDatabase(path, missing);
-
-		expect(states(path)[1]).toBe('pending');
-		new SqliteAuthRepository(path);
-
-		expect(scopesOf(path)).toContain('users.members.read');
-		expect(states(path)).toEqual(migrations.map(() => 'applied'));
+		expect((await status()).map((entry) => entry.state)).toEqual(
+			databaseMigrations.map(() => 'applied'),
+		);
 	});
 
-	it('stops re-running the scope backfills once they are in the ledger', () => {
-		const path = databasePath();
-		seedPreLedgerDatabase(path);
-		new SqliteAuthRepository(path);
+	it('enables and forces row security on every workspace table it creates', async () => {
+		await apply();
 
-		const database = open(path);
-		database.exec(
-			`INSERT INTO auth_accounts (id, email, email_normalized, password_hash, display_name, status, created_at)
-			 VALUES ('account-2', 'member@example.com', 'member@example.com', 'hash', 'Member', 'active', 1);
-			 INSERT INTO auth_memberships (account_id, tenant_id, role, role_id, created_at)
-			 VALUES ('account-2', 'tenant-a', 'member', 'tenant-a:member', 1);
-			 INSERT INTO auth_membership_scopes (account_id, tenant_id, scope)
-			 VALUES ('account-2', 'tenant-a', 'system.modules.read');`,
+		const security = await lease.database.query<{
+			relname: string;
+			relrowsecurity: boolean;
+			relforcerowsecurity: boolean;
+			policies: number | string;
+		}>({
+			text: `SELECT relation.relname, relation.relrowsecurity,
+			              relation.relforcerowsecurity,
+			              (SELECT count(*) FROM pg_policy
+			                 WHERE polrelid = relation.oid) AS policies
+			       FROM pg_class AS relation
+			       JOIN pg_namespace AS namespace
+			         ON namespace.oid = relation.relnamespace
+			       WHERE namespace.nspname = current_schema()
+			         AND relation.relname = ANY($1::text[])`,
+			parameters: [`{${Object.keys(TENANT_TABLES).join(',')}}`],
+		});
+
+		expect(security.rows).toHaveLength(Object.keys(TENANT_TABLES).length);
+		for (const row of security.rows) {
+			expect({
+				table: row.relname,
+				enabled: row.relrowsecurity,
+				forced: row.relforcerowsecurity,
+			}).toEqual({ table: row.relname, enabled: true, forced: true });
+			expect(Number(row.policies)).toBeGreaterThan(0);
+		}
+	});
+
+	it('adopts a schema that predates the ledger without changing its rows', async () => {
+		await apply();
+		await lease.database.transaction(
+			(transaction) =>
+				transaction.execute({
+					text: `INSERT INTO auth_tenants (id, name, slug, created_at)
+			       VALUES ('tenant-a', 'Contoso', 'tenant-a', 1)`,
+				}),
+			{ tenantId: 'tenant-a', access: 'write' },
 		);
-		database.close();
+		await lease.database.execute({
+			text: `DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = 'auth.core'`,
+		});
 
-		new SqliteAuthRepository(path);
-
+		/* The scope backfills carry no schema, so adoption cannot prove them and
+		   the runner replays them. They read through forced row security and
+		   reach nothing, which is what makes the replay safe. */
+		const adopted = new Set(
+			databaseMigrations
+				.filter((migration) => migration.inspectExisting)
+				.map((migration) => migration.id),
+		);
+		expect((await status()).map((entry) => entry.state)).toEqual(
+			databaseMigrations.map((migration) =>
+				adopted.has(migration.id) ? 'adopted' : 'pending',
+			),
+		);
+		expect((await apply()).map((entry) => entry.action)).toEqual(
+			databaseMigrations.map((migration) =>
+				adopted.has(migration.id) ? 'adopted' : 'applied',
+			),
+		);
 		expect(
-			open(path)
-				.prepare(
-					'SELECT scope FROM auth_membership_scopes WHERE account_id = ?',
+			(
+				await lease.database.transaction(
+					(transaction) =>
+						transaction.query<{ name: string }>({
+							text: 'SELECT name FROM auth_tenants',
+						}),
+					{ tenantId: 'tenant-a', access: 'read' },
 				)
-				.all('account-2'),
-		).toEqual([{ scope: 'system.modules.read' }]);
+			).rows,
+		).toEqual([{ name: 'Contoso' }]);
 	});
 
-	it('runs clean on a second repository construction', () => {
-		const path = databasePath();
-		new SqliteAuthRepository(path);
+	it('runs clean on a second migration pass', async () => {
+		await apply();
 
-		expect(() => new SqliteAuthRepository(path)).not.toThrow();
-		expect(states(path)).toEqual(migrations.map(() => 'applied'));
+		expect((await apply()).map((entry) => entry.action)).toEqual(
+			databaseMigrations.map(() => 'unchanged'),
+		);
 	});
 });

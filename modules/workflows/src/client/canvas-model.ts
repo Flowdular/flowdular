@@ -46,6 +46,7 @@ export interface WorkflowChangeSummary {
 
 const DATA_SCHEMA = 'workflow.data';
 const ERROR_SCHEMA = 'workflow.error';
+const ITEMS_SCHEMA = 'workflow.items';
 
 function canonicalJson(value: unknown): string {
 	if (Array.isArray(value)) {
@@ -93,6 +94,10 @@ export function emptyWorkflowGraph(): WorkflowGraphV1 {
 				type: 'object',
 				properties: { code: { type: 'string' }, message: { type: 'string' } },
 			},
+			[ITEMS_SCHEMA]: {
+				type: 'array',
+				items: { type: 'object', additionalProperties: true },
+			},
 		},
 		layout: {},
 	};
@@ -104,10 +109,10 @@ function nextIdentifier(
 ): string {
 	let sequence = 1;
 	const prefix = type.replace('-', '.');
-	while (graph.nodes.some((node) => node.id === `${prefix}.${sequence}`)) {
+	while (graph.nodes.some((node) => node.id === `${prefix}.n${sequence}`)) {
 		sequence += 1;
 	}
-	return `${prefix}.${sequence}`;
+	return `${prefix}.n${sequence}`;
 }
 
 function nodeTemplate(
@@ -192,7 +197,7 @@ function nodeTemplate(
 				label,
 				type,
 				inputPorts: [{ name: 'items', schemaId: DATA_SCHEMA }],
-				outputPorts: [data],
+				outputPorts: [{ name: 'data', schemaId: ITEMS_SCHEMA }],
 				mode: 'all',
 			};
 		case 'output':
@@ -349,10 +354,10 @@ export function connectWorkflowNodes(
 	)
 		return graph;
 	let sequence = graph.edges.length + 1;
-	let id = `edge.${sequence}`;
+	let id = `edge.e${sequence}`;
 	while (graph.edges.some((edge) => edge.id === id)) {
 		sequence += 1;
-		id = `edge.${sequence}`;
+		id = `edge.e${sequence}`;
 	}
 	return {
 		...graph,

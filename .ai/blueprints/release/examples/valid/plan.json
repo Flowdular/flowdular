@@ -3,7 +3,7 @@
 	"branch": "sandbox/inventory-3f1c2d9e",
 	"files": [
 		"modules/inventory/**",
-		"coreloom.json",
+		"flowdular.json",
 		"platform/package.json",
 		"platform/src/generated/modules.server.ts",
 		"platform/src/generated/modules.client.ts",
@@ -11,10 +11,10 @@
 	],
 	"gates": [
 		"sandbox gates",
-		"pnpm --filter @coreloom/platform typecheck",
+		"pnpm --filter @flowdular/platform typecheck",
 		"pnpm verify"
 	],
 	"postMerge": [
-		"pnpm coreloom auth sync-scopes --module inventory.core --apply"
+		"pnpm flowdular auth sync-scopes --module inventory.core --apply"
 	]
 }

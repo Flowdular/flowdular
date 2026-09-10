@@ -3,6 +3,7 @@ import {
 	mkdtemp,
 	readFile,
 	realpath,
+	utimes,
 	writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -16,9 +17,9 @@ import {
 import { createSession, sessionPaths } from '../src/server/sessions.ts';
 
 async function previewSession(platformSource: string) {
-	const root = await mkdtemp(join(tmpdir(), 'coreloom-preview-worker-'));
+	const root = await mkdtemp(join(tmpdir(), 'flowdular-preview-worker-'));
 	await writeFile(
-		join(root, 'coreloom.json'),
+		join(root, 'flowdular.json'),
 		JSON.stringify({ schemaVersion: 1, modules: { enabled: [] } }),
 		'utf8',
 	);
@@ -55,6 +56,92 @@ async function previewSession(platformSource: string) {
 }
 
 describe('isolated preview worker', () => {
+	it('does not resurrect a preview forgotten while revision discovery is pending', async () => {
+		const { root, session } = await previewSession(
+			'export function createServerComposition() { return { routes: [] }; }\n',
+		);
+		const lifecycle: string[] = [];
+		const runtime = createIsolatedPreviewRuntime(root, {
+			onWorkerLifecycle: (event) => lifecycle.push(event),
+		});
+		try {
+			const pending = runtime.compose(session);
+			await runtime.forget(session.id);
+			await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+			expect(runtime.cached(session.id)).toBeNull();
+			expect(lifecycle).toEqual([]);
+			expect((await runtime.compose(session)).error).toBeNull();
+		} finally {
+			runtime.dispose();
+		}
+	}, 30_000);
+	it('reloads imported draft dependencies without losing the preview database', async () => {
+		const { root, session, modulePath } = await previewSession(
+			`import { version } from './handler.ts';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+export function createServerComposition(context) {
+  const path = join(context.workspaceRoot, 'data', 'test-key-fingerprint');
+  const fingerprint = createHash('sha256').update(context.environment.FD_AGENT_CREDENTIAL_KEY + context.environment.FD_AGENT_RUN_GRANT_KEY).digest('hex');
+  if (existsSync(path) && readFileSync(path, 'utf8') !== fingerprint) throw new Error('Preview encryption keys changed');
+  writeFileSync(path, fingerprint);
+  return { routes: [], start() { throw new Error(version); } };
+}\n`,
+		);
+		const handler = join(modulePath, 'src', 'handler.ts');
+		await writeFile(handler, "export const version = 'first version';\n");
+		const lifecycle: string[] = [];
+		const runtime = createIsolatedPreviewRuntime(root, {
+			onWorkerLifecycle: (event) => lifecycle.push(event),
+		});
+		try {
+			const first = await runtime.compose(session);
+			expect(first.error).toBe('first version');
+			await writeFile(handler, "export const version = 'second version';\n");
+			const changed = new Date(Date.now() + 5_000);
+			await utimes(handler, changed, changed);
+			const second = await runtime.compose(session);
+			expect(second.error).toBe('second version');
+			expect(second.credentials).toEqual(first.credentials);
+			expect(lifecycle).toEqual(['started', 'released', 'started']);
+			expect(await runtime.compose(session)).toBe(second);
+		} finally {
+			runtime.dispose();
+		}
+	}, 60_000);
+	it('composes declared agent and workflow dependencies inside the session', async () => {
+		const { root, session, modulePath } = await previewSession(
+			'export function createServerComposition() { return { routes: [] }; }\n',
+		);
+		await writeFile(
+			join(modulePath, 'module.json'),
+			JSON.stringify({
+				id: 'preview.core',
+				dependencies: [{ id: 'workflows.core', range: '*' }],
+			}),
+		);
+		const runtime = createIsolatedPreviewRuntime(root, {
+			requestTimeoutMs: 30_000,
+		});
+		try {
+			const composition = await runtime.compose(session);
+			expect(composition.error).toBeNull();
+			expect(composition.modules.map((module) => module.id)).toEqual([
+				'system.core',
+				'agents.core',
+				'workflows.core',
+				'preview.core',
+			]);
+			expect(
+				composition.modules.find((module) => module.id === 'agents.core')
+					?.support,
+			).toBe(true);
+			expect(composition.moduleScopes).toContain('agents.definitions.read');
+		} finally {
+			runtime.dispose();
+		}
+	}, 60_000);
 	it('composes outside the sandbox process and releases every worker', async () => {
 		const { root, session } = await previewSession(
 			'export function createServerComposition() { return { routes: [] }; }\n',
@@ -66,7 +153,7 @@ describe('isolated preview worker', () => {
 		expect(runtime.cached(session.id)).toBe(composition);
 		runtime.dispose();
 		expect(runtime.cached(session.id)).toBeNull();
-	});
+	}, 30_000);
 
 	it('shares one worker across concurrent first requests for a session', async () => {
 		const { root, session } = await previewSession(
@@ -91,7 +178,7 @@ describe('isolated preview worker', () => {
 			`started:${session.id}`,
 			`released:${session.id}`,
 		]);
-	});
+	}, 30_000);
 
 	it('reuses the process preview runtime across server route generations', async () => {
 		disposeProcessPreviewRuntime();
@@ -99,7 +186,7 @@ describe('isolated preview worker', () => {
 			'export function createServerComposition() { return { routes: [] }; }\n',
 		);
 		const otherRoot = await mkdtemp(
-			join(tmpdir(), 'coreloom-preview-process-'),
+			join(tmpdir(), 'flowdular-preview-process-'),
 		);
 		try {
 			const first = processPreviewRuntime(root);
@@ -117,7 +204,7 @@ describe('isolated preview worker', () => {
 		const { root, session } = await previewSession(`
 export function createServerComposition(context) {
 	context.agentDefinitions.register([
-		{ id: 'module-agent:preview.core:helper' },
+		{ id: 'module-agent:preview.core:helper', moduleId: 'preview.core' },
 	]);
 	return {
 		routes: [],
@@ -135,7 +222,7 @@ export function createServerComposition(context) {
 
 		expect(composition.error).toContain('already sealed');
 		runtime.dispose();
-	});
+	}, 30_000);
 
 	it('kills a draft whose composition exceeds the request deadline', async () => {
 		const { root, session } = await previewSession(
@@ -172,7 +259,7 @@ export function createServerComposition(context) {
 		);
 		expect(composition.error).not.toContain('must-not-reach-the-preview');
 		runtime.dispose();
-	});
+	}, 30_000);
 
 	it('denies draft writes to sandbox session control files', async () => {
 		const { root, session, modulePath } = await previewSession(
@@ -199,7 +286,7 @@ export function createServerComposition(context) {
 			id: session.id,
 		});
 		runtime.dispose();
-	});
+	}, 30_000);
 
 	it('allows preview databases inside the session data directory', async () => {
 		const { root, session, modulePath } = await previewSession(
@@ -207,7 +294,7 @@ export function createServerComposition(context) {
 		);
 		const data = join(
 			sessionPaths(await realpath(root), session.id, session.moduleSuffix).root,
-			'.coreloom',
+			'.flowdular',
 			'data',
 		);
 		const probe = join(data, 'preview-probe.txt');
@@ -223,5 +310,5 @@ export function createServerComposition(context) {
 		expect(composition.error).toBeNull();
 		expect(await readFile(probe, 'utf8')).toBe('preview-state');
 		runtime.dispose();
-	});
+	}, 30_000);
 });

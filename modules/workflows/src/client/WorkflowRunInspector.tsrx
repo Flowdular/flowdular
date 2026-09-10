@@ -1,5 +1,5 @@
-import { t } from '@coreloom/client';
-import { Button, Tag } from '@coreloom/ui';
+import { t } from '@flowdular/client';
+import { Button, Tag } from '@flowdular/ui';
 import type { WorkflowRunDetail } from '../domain/types.ts';
 import { evidenceText } from './canvas-model.ts';
 import {
@@ -9,20 +9,22 @@ import {
 	workflowStatusTone,
 } from './presentation.ts';
 
-const RETRYABLE = ['failed', 'refused', 'cancelled'] as const;
+import { runActions } from './run-actions.ts';
 
 export function WorkflowRunInspector(props: {
 	readonly detail: WorkflowRunDetail;
 	readonly selectedNodeId: string;
 	readonly canCancel: boolean;
+	readonly canExecute: boolean;
 	readonly busy: boolean;
 	readonly onClose: () => void;
 	readonly onCancel: () => void;
 	readonly onRetry: () => void;
 }) @{
-	const retryable = RETRYABLE.includes(
-		props.detail.run.status as (typeof RETRYABLE)[number],
-	);
+	const actions = runActions(props.detail.run, {
+		execute: props.canExecute,
+		cancel: props.canCancel,
+	});
 	const selectedExecution = props.detail.nodes.find(
 		(node) => node.nodeId === props.selectedNodeId,
 	);
@@ -125,11 +127,11 @@ export function WorkflowRunInspector(props: {
 			</ol>
 		</details>
 		<div class="ui-form__actions workflow-run-actions">
-			@if (retryable) {
+			@if (actions.retry) {
 				<Button disabled={props.busy} onClick={props.onRetry}>{t(
 					'workflows.runDetail.retry',
 				)}</Button>
-			} @else if (props.canCancel) {
+			} @else if (actions.cancel) {
 				<Button
 					variant="danger"
 					disabled={props.busy}

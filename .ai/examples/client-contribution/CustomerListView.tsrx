@@ -1,7 +1,7 @@
 /* Minimal view and widget so the contribution example resolves. A real screen
-   follows modules/catalog/src/client/CatalogView.tsrx and the record-screen
+   follows .ai/references/catalog/src/client/CatalogView.tsrx and the record-screen
    recipe in .ai/skills/ux-design/SKILL.md. */
-import { EmptyState, Kpi, PageHeader } from '@coreloom/ui';
+import { EmptyState, Kpi, PageHeader } from '@flowdular/ui';
 
 export interface CustomerListViewProps {
 	readonly csrfToken: string;

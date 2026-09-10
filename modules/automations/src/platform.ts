@@ -1,17 +1,19 @@
 import type {
 	PlatformServerComposition,
 	PlatformServerContext,
-} from '@coreloom/module-auth/server';
-import { platformVariableRegistry } from '@coreloom/kernel';
+} from '@flowdular/module-auth/server';
+import { platformVariableRegistry } from '@flowdular/kernel';
 import {
 	AGENT_RUN_QUEUE_CAPABILITY,
 	type AgentRunQueue,
-} from '@coreloom/module-agents/server';
+} from '@flowdular/module-agents/server';
 import {
 	createAutomationsRoutes,
 	createAutomationsRuntime,
 	automationsRuntimeOptionsFromEnvironment,
+	AUTOMATION_EXECUTION_CAPABILITY,
 	AUTOMATION_TARGETS_CAPABILITY,
+	createAutomationExecutionCapability,
 	createAutomationTargetRegistry,
 } from './server/index.ts';
 import { registerScheduleVariableSource } from './domain/variables.ts';
@@ -42,6 +44,13 @@ export function createServerComposition(
 			context.environment,
 			context.workspaceRoot,
 		),
+		databases: context.databases,
+		purpose:
+			context.environment.NODE_ENV === 'test'
+				? 'test'
+				: context.environment.NODE_ENV === 'production'
+					? 'runtime'
+					: 'preview',
 		schedulerPollMs: () =>
 			automationsSchedulerPollMs(context.settings, context.environment),
 		variables: registerScheduleVariableSource(
@@ -50,6 +59,10 @@ export function createServerComposition(
 		),
 		targets,
 	});
+	context.capabilities.register(
+		AUTOMATION_EXECUTION_CAPABILITY,
+		createAutomationExecutionCapability(() => runtime.scheduleService()),
+	);
 	return {
 		routes: createAutomationsRoutes(context.auth, runtime),
 		settings: automationsModuleSettingsFromEnvironment(context.environment),

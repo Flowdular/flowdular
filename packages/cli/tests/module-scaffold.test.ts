@@ -50,11 +50,11 @@ acceptanceScenarios:
 const specPath = 'modules/inventory/spec/module.yaml';
 
 async function workspace(): Promise<Workspace> {
-	const root = await mkdtemp(join(tmpdir(), 'coreloom-scaffold-'));
+	const root = await mkdtemp(join(tmpdir(), 'flowdular-scaffold-'));
 	await mkdir(join(root, 'modules/inventory/spec'), { recursive: true });
 	await writeFile(join(root, specPath), specification);
-	await writeFile(join(root, 'coreloom.json'), '{}\n');
-	return { root, configPath: join(root, 'coreloom.json'), config: {} };
+	await writeFile(join(root, 'flowdular.json'), '{}\n');
+	return { root, configPath: join(root, 'flowdular.json'), config: {} };
 }
 
 async function listTree(
@@ -115,7 +115,7 @@ describe('module scaffolding', () => {
 			expect(platform).toContain(
 				'export function createServerComposition(\n\tcontext: PlatformServerContext,\n): PlatformServerComposition',
 			);
-			expect(platform).toContain("from '@coreloom/module-auth/server'");
+			expect(platform).toContain("from '@flowdular/module-auth/server'");
 			expect(platform).toContain(
 				'createInventoryRoutes(context.auth, runtime)',
 			);
@@ -144,32 +144,49 @@ describe('module scaffolding', () => {
 			expect(endpoints).toContain('INVENTORY_PERMISSIONS.read');
 			expect(endpoints).toContain('sessionMutationDenial(octane, auth)');
 
+			/* Schema work runs on the migrator role and is released before the
+			   runtime lease, so a request never holds a schema owner. */
 			const runtime = await read(ws.root, 'src/server/runtime.ts');
-			expect(runtime).toContain('CL_INVENTORY_DATABASE');
-			expect(runtime).toContain("'/data/inventory.db'");
-			expect(runtime).toContain(
-				"coreloomLocalDataPath(workspaceRoot, 'inventory.db')",
-			);
+			expect(runtime).toContain("purpose: 'migration'");
+			expect(runtime).toContain('migrateInventoryDatabase');
+			expect(runtime).toContain('purpose: options.purpose');
+			expect(runtime).toContain('DATABASE_DIALECT_IDS.postgresql');
+			expect(platform).toContain('databases: context.databases');
 
 			const migration = await read(ws.root, 'src/services/migration.ts');
 			expect(migration).toContain('INVENTORY_MIGRATION_001');
 			expect(migration).toContain('tenant_id TEXT NOT NULL');
-			expect(migration).toContain(') STRICT;');
 			const upSql = await read(
 				ws.root,
 				'migrations/0001_inventory_core.up.sql',
 			);
 			expect(upSql).toContain('CREATE TABLE IF NOT EXISTS inventory_records');
+			/* A tenant table the runtime role could read across tenants is the one
+			   scaffold defect nothing downstream would catch. */
+			expect(upSql).toContain(
+				'ALTER TABLE inventory_records FORCE ROW LEVEL SECURITY;',
+			);
+			expect(upSql).toContain(
+				"CREATE POLICY inventory_records_tenant_policy ON inventory_records\n  USING (tenant_id = current_setting('coreloom.tenant_id', true))\n  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));",
+			);
 			/* The runner checksums the constant, so it must equal the file. */
 			expect(migration).toContain(
 				`export const INVENTORY_MIGRATION_001 = \`${upSql}\`;`,
 			);
 			expect(migration).toContain(
-				"{ id: '0001_inventory_core', statements: INVENTORY_MIGRATION_001 },",
+				'sql: { postgresql: INVENTORY_MIGRATION_001 },',
 			);
-			expect(
-				await read(ws.root, 'src/services/sqlite-repository.ts'),
-			).toContain('runModuleMigrations(this.#database, migrations);');
+			expect(migration).toContain("'inventory_records_tenant_policy'");
+
+			const repository = await read(
+				ws.root,
+				'src/services/database-repository.ts',
+			);
+			expect(repository).toContain('WHERE tenant_id = $1');
+			expect(repository).toContain("{ access: 'read', tenantId }");
+			expect(repository).toContain(
+				"runDatabaseMigrations(database, 'inventory.core', databaseMigrations)",
+			);
 			expect(
 				await read(ws.root, 'migrations/0001_inventory_core.down.sql'),
 			).toContain('DROP TABLE IF EXISTS inventory_records');
@@ -185,6 +202,8 @@ describe('module scaffolding', () => {
 			expect(pl['module.name']).toMatch(/^Moduł /);
 
 			const test = await read(ws.root, 'tests/module.test.ts');
+			expect(test).toContain('createPgliteTestProvider()');
+			expect(test).toContain('TRUNCATE inventory_records');
 			expect(test).toContain("'tenant-a'");
 			expect(test).toContain("'tenant-b'");
 		} finally {

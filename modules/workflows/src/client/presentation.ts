@@ -1,10 +1,10 @@
-import { activeLocale, t } from '@coreloom/client/i18n';
+import { activeLocale, t } from '@flowdular/client/i18n';
 import type {
 	WorkflowCostRollupV1,
 	WorkflowRunStatus,
 	WorkflowUsageRollupV1,
 } from '../domain/types.ts';
-import type { TagTone } from '@coreloom/ui';
+import type { TagTone } from '@flowdular/ui';
 
 export const RUN_STATUSES: readonly WorkflowRunStatus[] = [
 	'queued',

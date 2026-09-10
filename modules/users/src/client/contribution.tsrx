@@ -1,4 +1,4 @@
-import { t, type ModuleClientContribution } from '@coreloom/client';
+import { t, type ModuleClientContribution } from '@flowdular/client';
 import { USER_PERMISSIONS } from '../acl/permissions.ts';
 import translationsEn from '../../translations/en.json';
 import translationsPl from '../../translations/pl.json';

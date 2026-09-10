@@ -1,5 +1,5 @@
-import { t } from '@coreloom/client';
-import { Tag } from '@coreloom/ui';
+import { t } from '@flowdular/client';
+import { Tag } from '@flowdular/ui';
 import type {
 	WorkflowDefinitionDetail,
 	WorkflowGraphV1,

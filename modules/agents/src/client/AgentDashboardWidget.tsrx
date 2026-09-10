@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'octane';
-import { t } from '@coreloom/client';
-import { Kpi } from '@coreloom/ui';
+import { t } from '@flowdular/client';
+import { Kpi } from '@flowdular/ui';
 import { useValue } from 'segment-state';
 import { loadAgentRuns } from './api.ts';
 import { countLabel } from './presentation.ts';

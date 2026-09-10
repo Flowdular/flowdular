@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	registerModuleTranslations,
 	setActiveLocale,
-} from '@coreloom/client/i18n';
+} from '@flowdular/client/i18n';
 import type { SettingsEntryPayload } from '../src/server/endpoints.ts';
 import { translateSettingCopy } from '../src/client/setting-copy.ts';
 

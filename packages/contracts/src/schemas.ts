@@ -11,3 +11,8 @@ export const moduleSchema = moduleSchemaJson;
 export const moduleSpecSchema = moduleSpecSchemaJson;
 export const platformSpecSchema = platformSpecSchemaJson;
 export const projectSchema = projectSchemaJson;
+
+import moduleCatalogSchemaJson from '../schemas/module-catalog.schema.json' with { type: 'json' };
+import moduleArtifactSchemaJson from '../schemas/module-artifact.schema.json' with { type: 'json' };
+export const moduleCatalogSchema = moduleCatalogSchemaJson;
+export const moduleArtifactSchema = moduleArtifactSchemaJson;

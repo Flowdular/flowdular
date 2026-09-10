@@ -27,15 +27,19 @@ steps:
       - '.ai/skills/**'
   - id: regenerate
     role: module-executor
-    action: pnpm coreloom module sync --apply when the generated composition shape changed; never hand-edit platform/src/generated.
+    action: Run pnpm flowdular module sync --apply when the generated composition shape changed. Run pnpm rules:generate when .ai/rules or .ai/skills changed. Never hand-edit generated files.
     inputs:
       - 'packages/cli/src/module-sync.ts'
     outputs:
       - 'platform/src/generated/modules.server.ts'
       - 'platform/src/generated/modules.client.ts'
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+      - '.agents/skills/**'
+      - '.claude/skills/**'
   - id: verify
     role: module-executor
-    action: pnpm verify, then pnpm build; pnpm --filter @coreloom/platform typecheck while iterating.
+    action: pnpm verify, then pnpm build; pnpm --filter @flowdular/platform typecheck while iterating.
     inputs:
       - 'working tree'
     outputs:

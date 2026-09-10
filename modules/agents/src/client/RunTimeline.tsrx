@@ -1,6 +1,6 @@
 import { useMemo } from 'octane';
-import { t } from '@coreloom/client';
-import { Alert, Button, Icon, Tag } from '@coreloom/ui';
+import { t } from '@flowdular/client';
+import { Alert, Button, Icon, Tag } from '@flowdular/ui';
 import { useValue } from 'segment-state';
 import type { AgentRunTimeline } from '../domain/types.ts';
 import type {

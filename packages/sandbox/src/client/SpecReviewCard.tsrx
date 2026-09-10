@@ -1,5 +1,5 @@
 import { useState } from 'octane';
-import { Button, Icon, Tag } from '@coreloom/ui';
+import { Button, Icon, Tag } from '@flowdular/ui';
 import type {
 	ModuleSpecReview,
 	SpecChangeKind,
@@ -86,7 +86,10 @@ export function SpecReviewCard(props: SpecReviewCardProps) @{
 		<header class="spec-review__head">
 			<span class="ui-mono">{review.moduleId}</span>
 			<Tag mono tone={review.approved ? 'success' : 'warning'}>
-				{review.status ?? t('sandbox.spec.status.none')}
+				{review.status === 'draft' || review.status === 'approved' ||
+				review.status === 'rejected'
+					? t('sandbox.spec.status.' + review.status)
+					: review.status ?? t('sandbox.spec.status.none')}
 			</Tag>
 			@if (draft && draft.specVersion) {
 				<Tag mono>{'v' + draft.specVersion}</Tag>
@@ -293,7 +296,7 @@ export function SpecReviewCard(props: SpecReviewCardProps) @{
 				<Button
 					size="sm"
 					variant="primary"
-					disabled={props.busy}
+					disabled={props.busy || !draft}
 					onClick={props.onApprove}
 				>
 					<Icon name="check" size={14} />

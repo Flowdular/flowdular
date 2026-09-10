@@ -1,6 +1,6 @@
 import { createLogger } from 'vite';
 
-/* Developer-facing startup output, shared by every Coreloom launcher. One
+/* Developer-facing startup output, shared by every Flowdular launcher. One
    presentation for the platform and the sandbox: the same brand block, the same
    quiet default, and the same event prefixes. */
 

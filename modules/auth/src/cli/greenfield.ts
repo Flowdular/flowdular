@@ -1,19 +1,21 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, realpath, rm } from 'node:fs/promises';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import type {
 	CliExtensionContext,
 	CliExtensionResult,
-} from '@coreloom/cli-protocol';
-import { coreloomLocalDataPath } from '@coreloom/kernel/legacy-local-state';
+} from '@flowdular/cli-protocol';
+import {
+	resetDatabase,
+	type DatabaseAdapterLease,
+	type DatabaseProvider,
+} from '@flowdular/database';
 import { MEMBER_SCOPES, OWNER_SCOPES } from '../acl/scopes.ts';
-import { hashPassword } from '../services/password.ts';
 import {
 	builtinRoleId,
-	SqliteAuthRepository,
-} from '../services/sqlite-repository.ts';
-
-const databaseRelativePath = '.coreloom/data/auth.db';
+	DatabaseAuthRepository,
+	migrateAuthDatabase,
+} from '../services/database-repository.ts';
+import { hashPassword } from '../services/password.ts';
+import { localDatabaseProvider, MIGRATION_REQUIREMENTS } from './database.ts';
 
 export const GREENFIELD_ACCOUNTS = Object.freeze({
 	admin: Object.freeze({
@@ -38,63 +40,110 @@ export const GREENFIELD_TENANT_SLUGS = Object.freeze({
 	finance: 'finance-demo',
 });
 
-function ensureInside(root: string, candidate: string): void {
-	const pathFromRoot = relative(root, candidate);
-	if (pathFromRoot.startsWith('..') || isAbsolute(pathFromRoot)) {
-		throw new Error('The greenfield database path escapes the workspace.');
-	}
-}
-
-async function resetDatabase(workspaceRoot: string, databasePath: string) {
-	const canonicalWorkspace = await realpath(workspaceRoot);
-	const stateDirectory = dirname(databasePath);
+/**
+ * Drops every table auth.core owns in this namespace, migrates it back, and
+ * seeds the demo accounts. The provider is supplied so a caller decides which
+ * database is reset; `runGreenfield` only ever hands it a local embedded one.
+ */
+export async function seedGreenfield(
+	databases: DatabaseProvider,
+): Promise<void> {
+	const adminPasswordHash = await hashPassword(
+		GREENFIELD_ACCOUNTS.admin.password,
+	);
+	const userPasswordHash = await hashPassword(
+		GREENFIELD_ACCOUNTS.user.password,
+	);
+	const migration = await databases.acquire({
+		namespace: 'auth.core',
+		purpose: 'migration',
+		requirements: MIGRATION_REQUIREMENTS,
+	});
 	try {
-		const state = await lstat(stateDirectory);
-		if (state.isSymbolicLink()) {
-			throw new Error('The local state directory cannot be a symbolic link.');
-		}
-	} catch (error) {
-		if (
-			!(error instanceof Error && 'code' in error && error.code === 'ENOENT')
-		) {
-			throw error;
-		}
-		await mkdir(stateDirectory, { recursive: true });
+		await resetDatabase(migration.database, {
+			intent: 'confirmed-destructive-reset',
+		});
+		await migrateAuthDatabase(migration.database);
+	} finally {
+		await migration.release();
 	}
-	const canonicalState = await realpath(stateDirectory);
-	ensureInside(canonicalWorkspace, canonicalState);
-	await Promise.all([
-		rm(databasePath, { force: true }),
-		rm(`${databasePath}-shm`, { force: true }),
-		rm(`${databasePath}-wal`, { force: true }),
-	]);
+	const leases: DatabaseAdapterLease[] = [];
+	try {
+		const runtime = await databases.acquire({
+			namespace: 'auth.core',
+			purpose: 'runtime',
+		});
+		leases.push(runtime);
+		const background = await databases.acquire({
+			namespace: 'auth.core',
+			purpose: 'background',
+		});
+		leases.push(background);
+		const repository = new DatabaseAuthRepository({
+			runtime: runtime.database,
+			background: background.database,
+		});
+		const createdAt = Date.now();
+		const adminAccountId = randomUUID();
+		const operationsTenantId = randomUUID();
+		await repository.createAccountWithTenant({
+			accountId: adminAccountId,
+			tenantId: operationsTenantId,
+			email: GREENFIELD_ACCOUNTS.admin.email,
+			normalizedEmail: GREENFIELD_ACCOUNTS.admin.email,
+			passwordHash: adminPasswordHash,
+			displayName: GREENFIELD_ACCOUNTS.admin.displayName,
+			organizationName: GREENFIELD_TENANTS.operations,
+			organizationSlug: GREENFIELD_TENANT_SLUGS.operations,
+			role: 'owner',
+			scopes: OWNER_SCOPES,
+			createdAt,
+		});
+		await repository.createTenantMembership({
+			accountId: adminAccountId,
+			tenantId: randomUUID(),
+			organizationName: GREENFIELD_TENANTS.finance,
+			organizationSlug: GREENFIELD_TENANT_SLUGS.finance,
+			role: 'owner',
+			scopes: OWNER_SCOPES,
+			createdAt: createdAt + 1,
+		});
+		await repository.createAccountInTenant({
+			accountId: randomUUID(),
+			tenantId: operationsTenantId,
+			email: GREENFIELD_ACCOUNTS.user.email,
+			normalizedEmail: GREENFIELD_ACCOUNTS.user.email,
+			passwordHash: userPasswordHash,
+			displayName: GREENFIELD_ACCOUNTS.user.displayName,
+			role: 'member',
+			roleId: builtinRoleId(operationsTenantId, 'member'),
+			scopes: MEMBER_SCOPES,
+			createdAt: createdAt + 2,
+		});
+	} finally {
+		for (const lease of leases) await lease.release();
+	}
 }
 
 export async function runGreenfield(
 	context: CliExtensionContext,
 ): Promise<CliExtensionResult> {
 	const environment =
-		process.env.CL_ENV ?? process.env.NODE_ENV ?? 'development';
+		process.env.FD_ENV ?? process.env.NODE_ENV ?? 'development';
 	if (environment !== 'development' && environment !== 'test') {
 		throw new Error('Greenfield is restricted to development and test.');
 	}
-	const databasePath = coreloomLocalDataPath(context.workspaceRoot, 'auth.db');
-	ensureInside(context.workspaceRoot, databasePath);
-	if (process.env.CL_AUTH_DATABASE) {
-		const configured = resolve(
-			context.workspaceRoot,
-			process.env.CL_AUTH_DATABASE,
+	const local = localDatabaseProvider(context.workspaceRoot);
+	/* The reset drops every table in the namespace. A workstation runs the
+	   embedded database; a configured server is somebody's deployment. */
+	if (local.config.adapter !== 'pglite') {
+		throw new Error(
+			'Greenfield only resets the local embedded database. Unset the PostgreSQL connection configuration or reset that database manually.',
 		);
-		if (configured !== databasePath) {
-			throw new Error(
-				'Greenfield only resets .coreloom/data/auth.db. Unset CL_AUTH_DATABASE or reset the custom adapter manually.',
-			);
-		}
 	}
-
 	const data = {
 		applied: context.apply,
-		database: databaseRelativePath,
+		database: local.location,
 		accounts: GREENFIELD_ACCOUNTS,
 		tenants: [GREENFIELD_TENANTS.operations, GREENFIELD_TENANTS.finance],
 		next: 'Start the app, sign in as admin to switch tenants, or sign in as user to verify reduced scopes.',
@@ -108,59 +157,15 @@ export async function runGreenfield(
 			],
 		};
 	}
-
-	const adminPasswordHash = await hashPassword(
-		GREENFIELD_ACCOUNTS.admin.password,
-	);
-	const userPasswordHash = await hashPassword(
-		GREENFIELD_ACCOUNTS.user.password,
-	);
-	await resetDatabase(context.workspaceRoot, databasePath);
-	const repository = new SqliteAuthRepository(databasePath);
+	const databases = local.create();
 	try {
-		const createdAt = Date.now();
-		const adminAccountId = randomUUID();
-		const operationsTenantId = randomUUID();
-		repository.createAccountWithTenant({
-			accountId: adminAccountId,
-			tenantId: operationsTenantId,
-			email: GREENFIELD_ACCOUNTS.admin.email,
-			normalizedEmail: GREENFIELD_ACCOUNTS.admin.email,
-			passwordHash: adminPasswordHash,
-			displayName: GREENFIELD_ACCOUNTS.admin.displayName,
-			organizationName: GREENFIELD_TENANTS.operations,
-			organizationSlug: GREENFIELD_TENANT_SLUGS.operations,
-			role: 'owner',
-			scopes: OWNER_SCOPES,
-			createdAt,
-		});
-		repository.createTenantMembership({
-			accountId: adminAccountId,
-			tenantId: randomUUID(),
-			organizationName: GREENFIELD_TENANTS.finance,
-			organizationSlug: GREENFIELD_TENANT_SLUGS.finance,
-			role: 'owner',
-			scopes: OWNER_SCOPES,
-			createdAt: createdAt + 1,
-		});
-		repository.createAccountInTenant({
-			accountId: randomUUID(),
-			tenantId: operationsTenantId,
-			email: GREENFIELD_ACCOUNTS.user.email,
-			normalizedEmail: GREENFIELD_ACCOUNTS.user.email,
-			passwordHash: userPasswordHash,
-			displayName: GREENFIELD_ACCOUNTS.user.displayName,
-			role: 'member',
-			roleId: builtinRoleId(operationsTenantId, 'member'),
-			scopes: MEMBER_SCOPES,
-			createdAt: createdAt + 2,
-		});
+		await seedGreenfield(databases);
 	} finally {
-		repository.close();
+		await databases.dispose();
 	}
 	return {
 		data,
-		evidence: [databaseRelativePath, 'modules/auth/spec/module.yaml'],
+		evidence: [local.location, 'modules/auth/spec/module.yaml'],
 		warnings: [
 			'These credentials are public development defaults. Never use this database in a deployed environment.',
 		],

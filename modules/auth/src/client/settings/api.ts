@@ -1,4 +1,4 @@
-import { t } from '@coreloom/client/i18n';
+import { t } from '@flowdular/client/i18n';
 
 export interface LocaleSetting {
 	readonly value: string;

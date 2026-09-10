@@ -55,7 +55,7 @@ export function readModuleCatalog(
 	const enabled = new Set(
 		strings(
 			readJson<{ modules?: { enabled?: unknown } }>(
-				join(workspaceRoot, 'coreloom.json'),
+				join(workspaceRoot, 'flowdular.json'),
 			)?.modules?.enabled,
 		),
 	);

@@ -18,7 +18,7 @@ steps:
     gates: [spec-schema]
   - id: validate
     role: orchestrator
-    action: pnpm coreloom spec validate --all --json (the sandbox spec-schema gate).
+    action: pnpm flowdular spec validate --all --json (the sandbox spec-schema gate).
     inputs: [spec/module.yaml]
     outputs: [gate evidence]
   - id: handoff

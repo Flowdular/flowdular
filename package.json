@@ -1,31 +1,38 @@
 {
-	"name": "coreloom",
-	"version": "0.1.0",
+	"name": "flowdular",
+	"version": "0.2.0",
 	"private": true,
 	"type": "module",
-	"description": "Coreloom is an agentic foundation framework for OctaneJS: a production platform core that teams extend with modules built by AI agents.",
+	"description": "Flowdular is an agentic foundation framework for OctaneJS: a production platform core that teams extend with modules built by AI agents.",
 	"packageManager": "pnpm@11.17.0",
 	"engines": {
 		"node": ">=22.22.2"
 	},
 	"scripts": {
 		"dev": "node platform/scripts/dev.mjs",
-		"build": "pnpm --filter @coreloom/cli build && pnpm --filter @coreloom/cli smoke && node packages/cli/dist/index.js module sync --apply && pnpm --filter @coreloom/platform build",
-		"preview": "pnpm --filter @coreloom/platform preview",
-		"sandbox": "node packages/sandbox/bin/coreloom-sandbox.mjs",
-		"landing": "pnpm --filter @coreloom/landing dev",
+		"build": "pnpm --filter @flowdular/cli build && pnpm --filter @flowdular/cli smoke && node packages/cli/dist/index.js module sync --apply && pnpm --filter @flowdular/platform build",
+		"preview": "pnpm --filter @flowdular/platform preview",
+		"sandbox": "node packages/sandbox/bin/flowdular-sandbox.mjs",
 		"typecheck": "pnpm -r --if-present typecheck",
-		"test": "pnpm -r --if-present test",
+		"test": "pnpm -r --workspace-concurrency=2 --if-present test",
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
-		"coreloom": "pnpm --filter @coreloom/cli dev",
-		"cl": "pnpm coreloom",
-		"doctor": "pnpm coreloom doctor",
-		"validate": "pnpm coreloom spec validate --all && pnpm coreloom blueprint validate --all && pnpm coreloom module validate",
-		"verify": "pnpm typecheck && pnpm test && pnpm validate && pnpm format:check"
+		"flowdular": "pnpm --filter @flowdular/cli dev",
+		"fd": "pnpm flowdular",
+		"doctor": "pnpm flowdular doctor",
+		"rules:generate": "rulesync generate",
+		"rules:check": "rulesync generate --check",
+		"validate": "pnpm flowdular spec validate --all && pnpm flowdular blueprint validate --all && pnpm flowdular module validate",
+		"verify": "pnpm rules:check && pnpm reference:check && pnpm typecheck && pnpm test && pnpm validate && pnpm format:check",
+		"release:pack": "node scripts/package-sdk.mjs",
+		"release:smoke": "node scripts/smoke-sdk.mjs",
+		"reference:check": "node scripts/module-reference.mjs --check",
+		"release:publish": "node scripts/publish-sdk.mjs"
 	},
 	"devDependencies": {
 		"@tsrx/prettier-plugin": "0.3.120",
-		"prettier": "3.6.2"
-	}
+		"prettier": "3.6.2",
+		"rulesync": "16.21.0"
+	},
+	"homepage": "https://flowdular.com"
 }

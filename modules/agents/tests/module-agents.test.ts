@@ -1,18 +1,26 @@
-import { describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import type { DatabaseAdapterLease } from '@flowdular/database';
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+} from 'vitest';
 import {
 	AgentHarness,
 	type AgentProvider,
 	type AgentTool,
-} from '@coreloom/harness';
+} from '@flowdular/harness';
 import { defineAgent } from '../src/server/define-agent.ts';
 import { createAgentRunQueue } from '../src/server/run-queue.ts';
 import { AgentService } from '../src/services/agent-service.ts';
-import { SqliteAgentRepository } from '../src/services/sqlite-repository.ts';
 import { AgentWorker } from '../src/services/worker.ts';
+import {
+	openAgentsTestDatabase,
+	type AgentsTestDatabase,
+} from './support/database.ts';
 
 const provider: AgentProvider = {
 	id: 'test-provider',
@@ -59,8 +67,33 @@ function definition(revision = 1, name = 'Catalog curator') {
 	});
 }
 
+let database: AgentsTestDatabase;
+let owner: DatabaseAdapterLease;
+const workers: AgentWorker[] = [];
+
+beforeAll(async () => {
+	database = await openAgentsTestDatabase();
+	owner = await database.databases.acquire({
+		namespace: 'agents.core',
+		purpose: 'migration',
+	});
+});
+
+afterEach(async () => {
+	for (const worker of workers.splice(0)) await worker.dispose();
+});
+
+beforeEach(async () => {
+	await database.truncate();
+});
+
+afterAll(async () => {
+	await owner?.release();
+	await database.dispose();
+});
+
 function fixture() {
-	const repository = new SqliteAgentRepository(':memory:');
+	const repository = database.repository;
 	const harness = new AgentHarness({
 		providers: [provider],
 		tools: [readTool, writeTool],
@@ -70,16 +103,17 @@ function fixture() {
 		concurrency: 1,
 		leaseMs: 1_000,
 	});
+	workers.push(worker);
 	const service = new AgentService(repository, harness, worker);
 	return { repository, service, worker };
 }
 
-function bind(
+async function bind(
 	service: AgentService,
 	tenantId: string,
 	enabledTools: readonly string[] = [readTool.id],
 ) {
-	return service.configureModuleAgent(tenantId, 'owner-a', {
+	return await service.configureModuleAgent(tenantId, 'owner-a', {
 		agentId: definition().id,
 		provider: provider.id,
 		model: 'test-model',
@@ -90,7 +124,7 @@ function bind(
 }
 
 describe('module-owned business agents', () => {
-	it('validates and deeply freezes a module definition without deployment data', () => {
+	it('validates and deeply freezes a module definition without deployment data', async () => {
 		const agent = definition();
 		expect(agent.id).toBe('module-agent:catalog.core:catalog-curator');
 		expect(agent.ownership).toEqual({
@@ -109,10 +143,10 @@ describe('module-owned business agents', () => {
 		).toThrow(/valid identifier/);
 	});
 
-	it('lists an unconfigured module agent and creates tenant-isolated bindings', () => {
+	it('lists an unconfigured module agent and creates tenant-isolated bindings', async () => {
 		const { repository, service } = fixture();
-		service.reconcileModuleAgents([definition()]);
-		expect(service.listModuleAgents('tenant-a')).toMatchObject([
+		await service.reconcileModuleAgents([definition()]);
+		expect(await service.listModuleAgents('tenant-a')).toMatchObject([
 			{
 				status: 'unconfigured',
 				provider: null,
@@ -121,8 +155,8 @@ describe('module-owned business agents', () => {
 			},
 		]);
 
-		const first = bind(service, 'tenant-a', [readTool.id]);
-		const second = bind(service, 'tenant-b', [writeTool.id]);
+		const first = await bind(service, 'tenant-a', [readTool.id]);
+		const second = await bind(service, 'tenant-b', [writeTool.id]);
 		expect(first).toMatchObject({
 			status: 'active',
 			enabledTools: [readTool.id],
@@ -131,20 +165,22 @@ describe('module-owned business agents', () => {
 		});
 		expect(second.enabledTools).toEqual([writeTool.id]);
 		expect(
-			repository.getModuleAgentBinding('tenant-a', definition().id)
+			(await repository.getModuleAgentBinding('tenant-a', definition().id))
 				?.enabledTools,
 		).toEqual([readTool.id]);
 		expect(
-			repository.listAuditEvents('tenant-a', 10).map((event) => event.action),
+			(await repository.listAuditEvents('tenant-a', 10)).map(
+				(event) => event.action,
+			),
 		).toEqual(['module-agent.binding-created']);
 	});
 
 	it('enforces the code allowlist, binding reduction, invocation grants, and actor permissions', async () => {
 		const { service } = fixture();
-		service.reconcileModuleAgents([definition()]);
-		bind(service, 'tenant-a', [readTool.id]);
+		await service.reconcileModuleAgents([definition()]);
+		await bind(service, 'tenant-a', [readTool.id]);
 		const queue = createAgentRunQueue(service);
-		expect(queue.listAgents('tenant-a')).toMatchObject([
+		expect(await queue.listAgents('tenant-a')).toMatchObject([
 			{
 				id: definition().id,
 				allowedTools: [readTool.id],
@@ -188,82 +224,157 @@ describe('module-owned business agents', () => {
 		});
 	});
 
-	it('retains exact executable revisions and rejects code drift or downgrade', () => {
+	it('retains exact executable revisions and rejects code drift or downgrade', async () => {
 		const { repository, service } = fixture();
-		service.reconcileModuleAgents([definition(1)]);
-		bind(service, 'tenant-a');
-		service.reconcileModuleAgents([definition(2, 'Catalog curator v2')]);
+		await service.reconcileModuleAgents([definition(1)]);
+		await bind(service, 'tenant-a');
+		await service.reconcileModuleAgents([definition(2, 'Catalog curator v2')]);
 
 		expect(
-			repository.getModuleAgentBinding('tenant-a', definition().id),
+			await repository.getModuleAgentBinding('tenant-a', definition().id),
 		).toMatchObject({
 			moduleDefinitionRevision: 2,
 			executableRevision: 2,
 		});
 		expect(
-			repository.getAgentRevision('tenant-a', definition().id, 1),
+			await repository.getAgentRevision('tenant-a', definition().id, 1),
 		).toMatchObject({
 			name: 'Catalog curator',
 			ownership: { kind: 'module', definitionRevision: 1 },
 		});
 		expect(
-			repository.getAgentRevision('tenant-a', definition().id, 2),
+			await repository.getAgentRevision('tenant-a', definition().id, 2),
 		).toMatchObject({
 			name: 'Catalog curator v2',
 			ownership: { kind: 'module', definitionRevision: 2 },
 		});
 		expect(
-			repository.listAuditEvents('tenant-a', 10).map((event) => event.action),
+			(await repository.listAuditEvents('tenant-a', 10)).map(
+				(event) => event.action,
+			),
 		).toEqual([
 			'module-agent.definition-reconciled',
 			'module-agent.binding-created',
 		]);
-		expect(() =>
+		await expect(
 			service.reconcileModuleAgents([definition(2, 'Changed without a bump')]),
-		).toThrow(/MODULE_AGENT_REVISION_DRIFT/);
-		expect(() => service.reconcileModuleAgents([definition(1)])).toThrow(
-			/MODULE_AGENT_REVISION_DOWNGRADE/,
-		);
+		).rejects.toThrow(/MODULE_AGENT_REVISION_DRIFT/);
+		await expect(
+			service.reconcileModuleAgents([definition(1)]),
+		).rejects.toThrow(/MODULE_AGENT_REVISION_DOWNGRADE/);
 	});
 
-	it('rolls back a binding when its audit evidence cannot be written', () => {
-		const directory = mkdtempSync(join(tmpdir(), 'module-agent-audit-'));
-		const path = join(directory, 'agents.db');
-		const repository = new SqliteAgentRepository(path);
-		const harness = new AgentHarness({
-			providers: [provider],
-			tools: [readTool, writeTool],
+	it('rolls back a binding when its audit evidence cannot be written', async () => {
+		const { repository, service } = fixture();
+		await service.reconcileModuleAgents([definition()]);
+		await owner.database.execute({
+			text: `CREATE TRIGGER fail_module_agent_audit
+			       BEFORE INSERT ON agent_audit_events_v4
+			       FOR EACH ROW EXECUTE FUNCTION coreloom_reject_change('audit unavailable')`,
 		});
-		const worker = new AgentWorker(repository, harness, {
-			workerId: 'worker:module-agent-audit',
-			concurrency: 1,
-			leaseMs: 1_000,
-		});
-		const service = new AgentService(repository, harness, worker);
-		service.reconcileModuleAgents([definition()]);
-		const fault = new DatabaseSync(path);
-		fault.exec(`CREATE TRIGGER fail_module_agent_audit
-			BEFORE INSERT ON agent_audit_events_v4
-			BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END;`);
-		fault.close();
 
-		expect(() => bind(service, 'tenant-a')).toThrow(/audit unavailable/);
+		try {
+			await expect(bind(service, 'tenant-a')).rejects.toThrow(
+				/audit unavailable/,
+			);
+		} finally {
+			await owner.database.execute({
+				text: 'DROP TRIGGER fail_module_agent_audit ON agent_audit_events_v4',
+			});
+		}
+
 		expect(
-			repository.getModuleAgentBinding('tenant-a', definition().id),
+			await repository.getModuleAgentBinding('tenant-a', definition().id),
 		).toBeNull();
 		expect(
-			repository.getAgentRevision('tenant-a', definition().id, 1),
+			await repository.getAgentRevision('tenant-a', definition().id, 1),
 		).toBeNull();
+	});
 
-		repository.close();
-		rmSync(directory, { recursive: true, force: true });
+	it('retries partial cross-tenant reconciliation without duplicating retained revisions', async () => {
+		const { repository, service } = fixture();
+		await service.reconcileModuleAgents([definition()]);
+		await bind(service, 'tenant-a');
+		await bind(service, 'tenant-b');
+		await owner.database.execute({
+			text: `CREATE TRIGGER fail_reconciliation_audit BEFORE INSERT ON agent_audit_events_v4
+			FOR EACH ROW WHEN (NEW.tenant_id = 'tenant-b' AND NEW.action = 'module-agent.definition-reconciled')
+			EXECUTE FUNCTION coreloom_reject_change('reconciliation audit unavailable')`,
+		});
+		try {
+			await expect(
+				service.reconcileModuleAgents([definition(2, 'Updated curator')]),
+			).rejects.toThrow(/reconciliation audit unavailable/);
+		} finally {
+			await owner.database.execute({
+				text: 'DROP TRIGGER fail_reconciliation_audit ON agent_audit_events_v4',
+			});
+		}
+		expect(
+			(await repository.getModuleAgentBinding('tenant-a', definition().id))
+				?.revision,
+		).toBe(2);
+		expect(
+			(await repository.getModuleAgentBinding('tenant-b', definition().id))
+				?.revision,
+		).toBe(1);
+		await service.reconcileModuleAgents([definition(2, 'Updated curator')]);
+		await service.reconcileModuleAgents([definition(2, 'Updated curator')]);
+		for (const tenant of ['tenant-a', 'tenant-b']) {
+			expect(
+				(await repository.getModuleAgentBinding(tenant, definition().id))
+					?.revision,
+			).toBe(2);
+			expect(
+				await repository.getAgentRevision(tenant, definition().id, 1),
+			).not.toBeNull();
+			expect(
+				await repository.getAgentRevision(tenant, definition().id, 2),
+			).not.toBeNull();
+			expect(
+				(await repository.listAuditEvents(tenant, 20)).filter(
+					(event) => event.action === 'module-agent.definition-reconciled',
+				),
+			).toHaveLength(1);
+		}
+	});
+
+	it('grants reconciliation only tenant routing columns, never instructions or writes', async () => {
+		const { service } = fixture();
+		await service.reconcileModuleAgents([definition()]);
+		await bind(service, 'tenant-a');
+		const background = await database.databases.acquire({
+			namespace: 'agents.core',
+			purpose: 'background',
+		});
+		try {
+			expect(
+				(
+					await background.database.query({
+						text: 'SELECT tenant_id, agent_id FROM module_agent_bindings',
+					})
+				).rows,
+			).toEqual([{ tenant_id: 'tenant-a', agent_id: definition().id }]);
+			await expect(
+				background.database.query({
+					text: 'SELECT instructions FROM agent_definitions',
+				}),
+			).rejects.toMatchObject({ code: '42501' });
+			await expect(
+				background.database.execute({
+					text: "DELETE FROM module_agent_bindings WHERE tenant_id = 'tenant-a'",
+				}),
+			).rejects.toMatchObject({ code: '42501' });
+		} finally {
+			await background.release();
+		}
 	});
 
 	it('executes a pinned revision after the current binding and code advance', async () => {
 		const { repository, service } = fixture();
-		service.reconcileModuleAgents([definition(1)]);
-		bind(service, 'tenant-a', [readTool.id]);
-		service.configureModuleAgent('tenant-a', 'owner-a', {
+		await service.reconcileModuleAgents([definition(1)]);
+		await bind(service, 'tenant-a', [readTool.id]);
+		await service.configureModuleAgent('tenant-a', 'owner-a', {
 			agentId: definition().id,
 			provider: provider.id,
 			model: 'new-model',
@@ -271,10 +382,10 @@ describe('module-owned business agents', () => {
 			status: 'active',
 			expectedRevision: 1,
 		});
-		service.reconcileModuleAgents([definition(2, 'Catalog curator v2')]);
+		await service.reconcileModuleAgents([definition(2, 'Catalog curator v2')]);
 
 		expect(
-			service.getRevisionReference('tenant-a', definition().id, 1),
+			await service.getRevisionReference('tenant-a', definition().id, 1),
 		).toMatchObject({
 			revision: 1,
 			name: 'Catalog curator',
@@ -296,7 +407,7 @@ describe('module-owned business agents', () => {
 				idempotencyKey: 'workflow-agent-revision-1',
 			},
 		);
-		expect(repository.getRun('tenant-a', accepted.runId)).toMatchObject({
+		expect(await repository.getRun('tenant-a', accepted.runId)).toMatchObject({
 			agentRevision: 1,
 			agentName: 'Catalog curator',
 			provider: provider.id,
@@ -307,16 +418,16 @@ describe('module-owned business agents', () => {
 
 	it('keeps retained evidence but refuses new work after module removal', async () => {
 		const { repository, service } = fixture();
-		service.reconcileModuleAgents([definition()]);
-		bind(service, 'tenant-a');
-		service.reconcileModuleAgents([]);
+		await service.reconcileModuleAgents([definition()]);
+		await bind(service, 'tenant-a');
+		await service.reconcileModuleAgents([]);
 
 		expect(
-			repository.getAgentRevision('tenant-a', definition().id, 1),
+			await repository.getAgentRevision('tenant-a', definition().id, 1),
 		).toMatchObject({ ownership: { kind: 'module' } });
-		expect(service.listModuleAgents('tenant-a')).toEqual([]);
+		expect(await service.listModuleAgents('tenant-a')).toEqual([]);
 		expect(
-			service.getRevisionReference('tenant-a', definition().id, 1),
+			await service.getRevisionReference('tenant-a', definition().id, 1),
 		).toBeNull();
 		await expect(
 			service.enqueueRevisionRun(
@@ -338,11 +449,11 @@ describe('module-owned business agents', () => {
 		).rejects.toMatchObject({ code: 'AGENT_REVISION_NOT_FOUND', status: 404 });
 	});
 
-	it('keeps module behavior read-only and uses optimistic binding revisions', () => {
+	it('keeps module behavior read-only and uses optimistic binding revisions', async () => {
 		const { service } = fixture();
-		service.reconcileModuleAgents([definition()]);
-		const bound = bind(service, 'tenant-a');
-		const paused = service.configureModuleAgent('tenant-a', 'owner-a', {
+		await service.reconcileModuleAgents([definition()]);
+		const bound = await bind(service, 'tenant-a');
+		const paused = await service.configureModuleAgent('tenant-a', 'owner-a', {
 			agentId: definition().id,
 			provider: provider.id,
 			model: 'test-model',
@@ -363,17 +474,17 @@ describe('module-owned business agents', () => {
 			provider: provider.id,
 			model: 'test-model',
 			allowedTools: [],
-			skillIds: [],
+			procedureIds: [],
 			maxSteps: 1,
 			timeoutMs: 1_000,
 			temperature: 0,
 			status: 'paused' as const,
 			expectedRevision: 1,
 		};
-		expect(() =>
+		await expect(
 			service.updateAgent('tenant-a', definition().id, 'owner-a', input),
-		).toThrowError(expect.objectContaining({ code: 'MODULE_AGENT_READ_ONLY' }));
-		expect(() =>
+		).rejects.toMatchObject({ code: 'MODULE_AGENT_READ_ONLY' });
+		await expect(
 			service.configureModuleAgent('tenant-a', 'owner-a', {
 				agentId: definition().id,
 				provider: provider.id,
@@ -382,10 +493,8 @@ describe('module-owned business agents', () => {
 				status: 'paused',
 				expectedRevision: 1,
 			}),
-		).toThrowError(
-			expect.objectContaining({
-				code: 'MODULE_AGENT_BINDING_REVISION_CONFLICT',
-			}),
-		);
+		).rejects.toMatchObject({
+			code: 'MODULE_AGENT_BINDING_REVISION_CONFLICT',
+		});
 	});
 });

@@ -7,7 +7,7 @@ import {
 	validateTemplate,
 	type VariableDefinition,
 	type VariableSource,
-} from '@coreloom/contracts';
+} from '@flowdular/contracts';
 import type { PlatformCapabilityRegistry } from './capability-registry.ts';
 import { normalizeActor, type Actor } from './actor.ts';
 import { RegistryError } from './errors.ts';

@@ -1,4 +1,4 @@
-import { Icon } from '@coreloom/ui';
+import { Icon } from '@flowdular/ui';
 import type {
 	AccountMenuContribution,
 	WidgetContribution,

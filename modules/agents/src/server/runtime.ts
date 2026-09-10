@@ -5,8 +5,7 @@ import {
 	type AgentProvider,
 	type AgentTool,
 	type AgentToolAccessAuthorizer,
-} from '@coreloom/harness';
-import { coreloomLocalDataPath } from '@coreloom/kernel/legacy-local-state';
+} from '@flowdular/harness';
 import type {
 	AgentWorkerStatus,
 	ModuleAgentDefinition,
@@ -17,15 +16,29 @@ import {
 	type CredentialVault,
 } from '../services/credential-vault.ts';
 import { providerHostAllowlist } from '../services/outbound-policy.ts';
-import { SqliteProviderRepository } from '../services/provider-repository.ts';
+import {
+	DatabaseProviderRepository,
+	type ProviderRepository,
+} from '../services/provider-repository.ts';
 import { AgentProviderBroker } from '../services/provider-broker.ts';
 import { AgentProviderService } from '../services/provider-service.ts';
 import {
 	runGrantAuthorityFromEnvironment,
 	type AgentRunGrantAuthority,
 } from '../services/run-grant.ts';
-import { SqliteAgentRepository } from '../services/sqlite-repository.ts';
+import {
+	DatabaseAgentRepository,
+	migrateAgentsDatabase,
+} from '../services/database-repository.ts';
+import type { AgentRepository } from '../services/repository.ts';
 import { AgentUsageService } from '../services/usage-service.ts';
+import {
+	DATABASE_CAPABILITY_IDS,
+	DATABASE_DIALECT_IDS,
+	type DatabaseAdapterLease,
+	type DatabaseProvider,
+	type DatabaseProviderRequest,
+} from '@flowdular/database';
 import { preflightModuleAgentDefinitions } from '../services/module-agent-preflight.ts';
 import { AgentWorker } from '../services/worker.ts';
 import type { AgentSettingsReader } from '../settings.ts';
@@ -40,7 +53,6 @@ import {
 } from './run-execution.ts';
 
 export interface AgentRuntimeOptions {
-	readonly databasePath: string;
 	readonly workerConcurrency: number;
 	readonly workerLeaseMs: number;
 	readonly providers?: readonly AgentProvider[];
@@ -64,16 +76,21 @@ export interface AgentRuntimeOptions {
 	readonly workspaceRoot?: string;
 	/* Live admin settings. Absent means the options above are final. */
 	readonly settings?: AgentSettingsReader;
+	/** Platform-owned provider. Composition passes this instead of a path. */
+	readonly databases?: DatabaseProvider | undefined;
+	readonly purpose?:
+		| Exclude<DatabaseProviderRequest['purpose'], 'migration'>
+		| undefined;
 }
 
 export interface AgentRuntime {
-	service(): AgentService;
-	providerService(): AgentProviderService;
-	usageService(): AgentUsageService;
-	workerStatus(): AgentWorkerStatus;
+	service(): Promise<AgentService>;
+	providerService(): Promise<AgentProviderService>;
+	usageService(): Promise<AgentUsageService>;
+	workerStatus(): Promise<AgentWorkerStatus>;
 	revisionExecution(): AgentRevisionExecutionCapability;
 	actions(): AgentActionExecutionCapability;
-	prepare(): void;
+	prepare(): Promise<void>;
 	start(): void;
 	stop(): void;
 	quiesce(): Promise<void>;
@@ -102,52 +119,45 @@ export function agentRuntimeOptionsFromEnvironment(
 	workspaceRoot = process.cwd(),
 ): AgentRuntimeOptions {
 	return {
-		databasePath:
-			environment.CL_AGENTS_DATABASE ??
-			(environment.NODE_ENV === 'production'
-				? '/data/agents.db'
-				: environment.NODE_ENV === 'test'
-					? ':memory:'
-					: coreloomLocalDataPath(workspaceRoot, 'agents.db')),
 		workerConcurrency: environmentInteger(
-			environment.CL_AGENT_WORKER_CONCURRENCY,
+			environment.FD_AGENT_WORKER_CONCURRENCY,
 			2,
 			1,
 			16,
-			'CL_AGENT_WORKER_CONCURRENCY',
+			'FD_AGENT_WORKER_CONCURRENCY',
 		),
 		workerLeaseMs: environmentInteger(
-			environment.CL_AGENT_WORKER_LEASE_MS,
+			environment.FD_AGENT_WORKER_LEASE_MS,
 			30_000,
 			1_000,
 			300_000,
-			'CL_AGENT_WORKER_LEASE_MS',
+			'FD_AGENT_WORKER_LEASE_MS',
 		),
 		providerHostAllowlist: providerHostAllowlist(
-			environment.CL_AGENT_PROVIDER_HOST_ALLOWLIST,
+			environment.FD_AGENT_PROVIDER_HOST_ALLOWLIST,
 		),
 		/* A human proves a model by clicking Test. A 15 minute window meant every
 		   run outside that window was rejected, so the default is a day. */
 		providerReadinessTtlMs: environmentInteger(
-			environment.CL_AGENT_PROVIDER_READINESS_TTL_MS,
+			environment.FD_AGENT_PROVIDER_READINESS_TTL_MS,
 			86_400_000,
 			10_000,
 			86_400_000,
-			'CL_AGENT_PROVIDER_READINESS_TTL_MS',
+			'FD_AGENT_PROVIDER_READINESS_TTL_MS',
 		),
 		providerReadinessTimeoutMs: environmentInteger(
-			environment.CL_AGENT_PROVIDER_READINESS_TIMEOUT_MS,
+			environment.FD_AGENT_PROVIDER_READINESS_TIMEOUT_MS,
 			10_000,
 			1_000,
 			30_000,
-			'CL_AGENT_PROVIDER_READINESS_TIMEOUT_MS',
+			'FD_AGENT_PROVIDER_READINESS_TIMEOUT_MS',
 		),
 		runGrantTtlMs: environmentInteger(
-			environment.CL_AGENT_RUN_GRANT_TTL_MS,
+			environment.FD_AGENT_RUN_GRANT_TTL_MS,
 			30_000,
 			1_000,
 			300_000,
-			'CL_AGENT_RUN_GRANT_TTL_MS',
+			'FD_AGENT_RUN_GRANT_TTL_MS',
 		),
 		environment,
 		workspaceRoot,
@@ -165,11 +175,11 @@ export function assertProductionAgentSecrets(
 ): void {
 	if (environment.NODE_ENV !== 'production') return;
 	const missing = [
-		...(!provided.credentialVault && !environment.CL_AGENT_CREDENTIAL_KEY
-			? ['CL_AGENT_CREDENTIAL_KEY']
+		...(!provided.credentialVault && !environment.FD_AGENT_CREDENTIAL_KEY
+			? ['FD_AGENT_CREDENTIAL_KEY']
 			: []),
-		...(!provided.runGrantAuthority && !environment.CL_AGENT_RUN_GRANT_KEY
-			? ['CL_AGENT_RUN_GRANT_KEY']
+		...(!provided.runGrantAuthority && !environment.FD_AGENT_RUN_GRANT_KEY
+			? ['FD_AGENT_RUN_GRANT_KEY']
 			: []),
 	];
 	if (missing.length === 0) return;
@@ -192,8 +202,10 @@ export function createAgentRuntime(
 	let worker: AgentWorker | undefined;
 	let providers: AgentProviderService | undefined;
 	let usage: AgentUsageService | undefined;
-	let repository: SqliteAgentRepository | undefined;
-	let providerRepository: SqliteProviderRepository | undefined;
+	let repository: AgentRepository | undefined;
+	let providerRepository: ProviderRepository | undefined;
+	let leases: readonly DatabaseAdapterLease[] = [];
+	let servicePromise: Promise<AgentService> | undefined;
 	let actionRuntime: AgentActionRuntime | undefined;
 	let started = false;
 	let disposed = false;
@@ -203,18 +215,81 @@ export function createAgentRuntime(
 		typeof options.moduleAgents === 'function'
 			? options.moduleAgents()
 			: (options.moduleAgents ?? []);
-	const prepare = () => {
+	const prepare = async () => {
 		if (disposed) throw new Error('Agent runtime is disposed.');
-		preparedModuleAgents = preflightModuleAgentDefinitions(
-			options.databasePath,
+		preparedModuleAgents = await preflightModuleAgentDefinitions(
+			options.databases,
 			moduleAgents(),
 		);
 	};
-	const create = () => {
+	const acquire = (
+		databases: DatabaseProvider,
+		purpose: DatabaseProviderRequest['purpose'],
+	) =>
+		databases.acquire({
+			namespace: 'agents.core',
+			purpose,
+			requirements: {
+				dialectIds: [DATABASE_DIALECT_IDS.postgresql],
+				capabilities: [DATABASE_CAPABILITY_IDS.TRANSACTIONS],
+			},
+		});
+
+	const openRepositories = async () => {
+		if (!options.databases) {
+			throw new Error(
+				'agents.core requires a platform database provider; there is no local file fallback.',
+			);
+		}
+		/* Only schema work receives the migration role. Reconciliation uses
+		   tenant-scoped runtime transactions after this lease is released. */
+		const migration = await options.databases.acquire({
+			namespace: 'agents.core',
+			purpose: 'migration',
+			requirements: {
+				dialectIds: [DATABASE_DIALECT_IDS.postgresql],
+				capabilities: [
+					DATABASE_CAPABILITY_IDS.MIGRATION_LOCK,
+					DATABASE_CAPABILITY_IDS.SCHEMA_INTROSPECTION,
+					DATABASE_CAPABILITY_IDS.TRANSACTIONAL_DDL,
+				],
+			},
+		});
+		try {
+			await migrateAgentsDatabase(migration.database);
+		} finally {
+			await migration.release();
+		}
+		const runtimeLease = await acquire(
+			options.databases,
+			options.purpose ?? 'runtime',
+		);
+		leases = [runtimeLease];
+		/* The worker recovery polls read across tenants; every claim that
+		   follows uses the tenant carried by the row they returned. */
+		const backgroundLease = await acquire(options.databases, 'background');
+		leases = [runtimeLease, backgroundLease];
+		const agents = new DatabaseAgentRepository({
+			runtime: runtimeLease.database,
+			background: backgroundLease.database,
+		});
+		await agents.adoptCurrentAgentRevisions();
+		return {
+			repository: agents as AgentRepository,
+			providerRepository: new DatabaseProviderRepository(
+				runtimeLease.database,
+				Promise.resolve(),
+				backgroundLease.database,
+			) as ProviderRepository,
+		};
+	};
+
+	const create = async (): Promise<AgentService> => {
 		if (disposed) throw new Error('Agent runtime is disposed.');
 		if (!service) {
-			repository = new SqliteAgentRepository(options.databasePath);
-			providerRepository = new SqliteProviderRepository(options.databasePath);
+			const opened = await openRepositories();
+			repository = opened.repository;
+			providerRepository = opened.providerRepository;
 			const vault =
 				options.credentialVault ??
 				credentialVaultFromEnvironment(environment, workspaceRoot);
@@ -290,32 +365,38 @@ export function createAgentRuntime(
 		}
 		return service;
 	};
+	const resolved = (): Promise<AgentService> => (servicePromise ??= create());
 	const start = () => {
-		const currentService = create();
 		if (started) return;
-		if (!moduleAgentsReconciled) {
-			currentService.reconcileModuleAgents(
-				preparedModuleAgents ?? moduleAgents(),
-			);
-			moduleAgentsReconciled = true;
-		}
 		started = true;
-		worker!.start();
-		actionRuntime!.start();
+		void resolved().then(async (currentService) => {
+			if (!moduleAgentsReconciled) {
+				await currentService.reconcileModuleAgents(
+					preparedModuleAgents ?? moduleAgents(),
+				);
+				moduleAgentsReconciled = true;
+			}
+			worker!.start();
+			actionRuntime!.start();
+		});
 	};
 	const revisionCapability = createAgentRevisionExecutionCapability(
-		() => create(),
+		() => resolved(),
 		options.authorizeToolAccess,
 	);
-	const currentActions = () => {
-		void create();
+	const currentActions = async () => {
+		await resolved();
 		return actionRuntime!.capability;
 	};
 	const actionCapability: AgentActionExecutionCapability = {
-		listWorkflowActions: () => currentActions().listWorkflowActions(),
-		start: (request, context) => currentActions().start(request, context),
-		getResult: (id, context) => currentActions().getResult(id, context),
-		requestCancel: (id, context) => currentActions().requestCancel(id, context),
+		listWorkflowActions: async () =>
+			(await currentActions()).listWorkflowActions(),
+		start: async (request, context) =>
+			(await currentActions()).start(request, context),
+		getResult: async (id, context) =>
+			(await currentActions()).getResult(id, context),
+		requestCancel: async (id, context) =>
+			(await currentActions()).requestCancel(id, context),
 	};
 	const quiesce = async () => {
 		started = false;
@@ -323,17 +404,17 @@ export function createAgentRuntime(
 		await actionRuntime?.dispose();
 	};
 	return {
-		service: create,
-		providerService: () => {
-			void create();
+		service: resolved,
+		providerService: async () => {
+			await resolved();
 			return providers!;
 		},
-		usageService: () => {
-			void create();
+		usageService: async () => {
+			await resolved();
 			return usage!;
 		},
-		workerStatus: () => {
-			void create();
+		workerStatus: async () => {
+			await resolved();
 			return worker!.status();
 		},
 		revisionExecution: () => revisionCapability,
@@ -350,8 +431,11 @@ export function createAgentRuntime(
 			if (disposed) return;
 			disposed = true;
 			await quiesce();
-			providerRepository?.close();
-			repository?.close();
+			await providerRepository?.close();
+			await repository?.close();
+			for (const lease of leases) await lease.release();
+			leases = [];
+			servicePromise = undefined;
 			worker = undefined;
 			actionRuntime = undefined;
 			providers = undefined;

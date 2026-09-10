@@ -4,7 +4,7 @@ import type {
 	AutomationSchedule,
 	AutomationTrigger,
 } from '../domain/types.ts';
-import type { UserActor } from '@coreloom/kernel';
+import type { UserActor } from '@flowdular/kernel';
 import type { EncryptedSecret } from './secret-vault.ts';
 
 export interface StoredAutomationSchedule
@@ -33,19 +33,36 @@ export interface StoredAutomationTriggerWithSecret
 	readonly secret: EncryptedSecret;
 }
 
+/** The database-agnostic business port. No driver type crosses it. */
+/**
+ * What a cross-tenant scheduler poll is allowed to learn: which tenant owns a
+ * due schedule, which schedule it is, and when it was due. Labels, templates,
+ * secrets and the configuring actor stay invisible until the schedule is read
+ * again under its own tenant.
+ */
+export interface AutomationScheduleRouting {
+	readonly tenantId: string;
+	readonly id: string;
+	readonly nextRunAt: number;
+}
+
 export interface AutomationsRepository {
-	listSchedules(tenantId: string): readonly StoredAutomationSchedule[];
+	listSchedules(tenantId: string): Promise<readonly StoredAutomationSchedule[]>;
 	getSchedule(
 		tenantId: string,
 		scheduleId: string,
-	): StoredAutomationSchedule | null;
-	createSchedule(schedule: StoredAutomationSchedule): StoredAutomationSchedule;
-	updateSchedule(schedule: StoredAutomationSchedule): StoredAutomationSchedule;
-	deleteSchedule(tenantId: string, scheduleId: string): boolean;
+	): Promise<StoredAutomationSchedule | null>;
+	createSchedule(
+		schedule: StoredAutomationSchedule,
+	): Promise<StoredAutomationSchedule>;
+	updateSchedule(
+		schedule: StoredAutomationSchedule,
+	): Promise<StoredAutomationSchedule>;
+	deleteSchedule(tenantId: string, scheduleId: string): Promise<boolean>;
 	listDueSchedules(
 		now: number,
 		limit: number,
-	): readonly StoredAutomationSchedule[];
+	): Promise<readonly AutomationScheduleRouting[]>;
 	advanceSchedule(input: {
 		readonly tenantId: string;
 		readonly scheduleId: string;
@@ -54,46 +71,49 @@ export interface AutomationsRepository {
 		readonly lastRunAt: number;
 		readonly lastRunId: string | null;
 		readonly lastError: string | null;
-	}): boolean;
+	}): Promise<boolean>;
 	disableSchedule(
 		tenantId: string,
 		scheduleId: string,
 		reason: string,
 		now: number,
-	): boolean;
-	listTriggers(tenantId: string): readonly StoredAutomationTrigger[];
+	): Promise<boolean>;
+	listTriggers(tenantId: string): Promise<readonly StoredAutomationTrigger[]>;
 	getTrigger(
 		tenantId: string,
 		triggerId: string,
-	): StoredAutomationTrigger | null;
+	): Promise<StoredAutomationTrigger | null>;
 	findTriggerForFire(
 		triggerId: string,
-	): StoredAutomationTriggerWithSecret | null;
-	createTrigger(record: AutomationTriggerRecord): StoredAutomationTrigger;
+	): Promise<StoredAutomationTriggerWithSecret | null>;
+	createTrigger(
+		record: AutomationTriggerRecord,
+	): Promise<StoredAutomationTrigger>;
 	updateTrigger(
 		record: StoredAutomationTrigger,
-	): StoredAutomationTrigger | null;
+	): Promise<StoredAutomationTrigger | null>;
 	rotateTriggerSecret(
 		tenantId: string,
 		triggerId: string,
 		secret: EncryptedSecret,
 		now: number,
-	): StoredAutomationTrigger | null;
-	deleteTrigger(tenantId: string, triggerId: string): boolean;
+	): Promise<StoredAutomationTrigger | null>;
+	deleteTrigger(tenantId: string, triggerId: string): Promise<boolean>;
 	recordTriggerOutcome(
+		tenantId: string,
 		triggerId: string,
 		accepted: boolean,
 		occurredAt: number,
-	): void;
+	): Promise<void>;
 	appendAuditEvent(
 		event: Omit<
 			AutomationAuditEvent,
 			'id' | 'sequence' | 'previousHash' | 'eventHash'
 		>,
-	): AutomationAuditEvent;
+	): Promise<AutomationAuditEvent>;
 	listAuditEvents(
 		tenantId: string,
 		limit: number,
-	): readonly AutomationAuditEvent[];
-	verifyAuditChain(tenantId: string): AutomationAuditVerification;
+	): Promise<readonly AutomationAuditEvent[]>;
+	verifyAuditChain(tenantId: string): Promise<AutomationAuditVerification>;
 }

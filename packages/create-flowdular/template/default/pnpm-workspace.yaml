@@ -1,0 +1,6 @@
+packages:
+  - platform
+  - modules/*
+
+allowBuilds:
+  esbuild: true

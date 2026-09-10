@@ -4,13 +4,14 @@ import {
 	type Actor,
 	type PlatformCapabilityRegistry,
 	type UserActor,
-} from '@coreloom/kernel';
+} from '@flowdular/kernel';
 import {
 	AGENT_ACTION_EXECUTION_CAPABILITY,
 	AGENT_RUN_EXECUTION_CAPABILITY,
 	type AgentActionExecutionCapability,
 	type AgentRevisionExecutionCapability,
-} from '@coreloom/module-agents/server';
+	type AgentRevisionReference,
+} from '@flowdular/module-agents/server';
 import {
 	compileWorkflowGraph,
 	EMPTY_WORKFLOW_GRAPH,
@@ -127,6 +128,12 @@ export interface WorkflowsServiceOptions {
 	readonly cursorCodec: WorkflowCursorCodec;
 	readonly now?: () => number;
 	readonly onRunQueued?: () => void;
+}
+
+/** Both agents.core capabilities a live path needs, resolved together. */
+interface WorkflowExecutionCapabilities {
+	readonly agents: AgentRevisionExecutionCapability;
+	readonly actions: AgentActionExecutionCapability;
 }
 
 function bounded(
@@ -250,16 +257,42 @@ export class WorkflowsService {
 		);
 	}
 
-	#referenceCatalog(
-		context: WorkflowCapabilityContext,
-	): WorkflowReferenceCatalog | null {
+	/* Presence is separate from resolution: an absent capability is a 503 the
+	   caller reports before it reads a graph or a revision. */
+	#executionCapabilities(): WorkflowExecutionCapabilities | null {
 		const agents = this.#agents();
 		const actions = this.#actions();
-		if (!agents || !actions) return null;
-		const actionDescriptors = actions.listWorkflowActions();
-		return {
-			agent: (agentId, revision) => {
-				const reference = agents.getRevision(agentId, revision, {
+		return agents && actions ? { agents, actions } : null;
+	}
+
+	/* The graph compiler is synchronous and pure, so every reference the graph
+	   names is resolved once here, before the compiler walks it. */
+	async #referenceCatalog(
+		capabilities: WorkflowExecutionCapabilities,
+		graph: WorkflowGraphV1,
+		context: WorkflowCapabilityContext,
+	): Promise<WorkflowReferenceCatalog> {
+		const { agents, actions } = capabilities;
+		const actionDescriptors = await actions.listWorkflowActions();
+		const revisions = new Map<string, AgentRevisionReference | null>();
+		for (const node of graph.nodes) {
+			if (node.type !== 'agent' && node.type !== 'agent-decision') continue;
+			/* validate() accepts an unparsed graph, so a node may pin nothing. An
+			   unresolved pin reads as unavailable, which is what the compiler
+			   already reports for a reference no catalog can find. */
+			const pinned: { agentId?: unknown; revision?: unknown } | undefined =
+				node.agent;
+			if (
+				typeof pinned?.agentId !== 'string' ||
+				typeof pinned.revision !== 'number'
+			) {
+				continue;
+			}
+			const key = `${pinned.agentId}:${pinned.revision}`;
+			if (revisions.has(key)) continue;
+			revisions.set(
+				key,
+				await agents.getRevision(pinned.agentId, pinned.revision, {
 					tenantId: context.tenantId,
 					workflowRunId: 'workflow-preflight',
 					actor: context.actor,
@@ -268,7 +301,12 @@ export class WorkflowsService {
 						context.authorizationSubject,
 					),
 					permissionSnapshot: context.permissionSnapshot,
-				});
+				}),
+			);
+		}
+		return {
+			agent: (agentId, revision) => {
+				const reference = revisions.get(`${agentId}:${revision}`);
 				return {
 					available: reference?.status === 'active',
 					allowedTools: reference?.allowedTools ?? [],
@@ -291,14 +329,17 @@ export class WorkflowsService {
 		};
 	}
 
-	list(tenantId: string): readonly WorkflowDefinition[] {
-		return this.repository.listDefinitions(
+	async list(tenantId: string): Promise<readonly WorkflowDefinition[]> {
+		return await this.repository.listDefinitions(
 			bounded(tenantId, 'tenantId', 1, 128),
 		);
 	}
 
-	detail(tenantId: string, workflowId: string): WorkflowDefinitionDetail {
-		const detail = this.repository.definitionDetail(
+	async detail(
+		tenantId: string,
+		workflowId: string,
+	): Promise<WorkflowDefinitionDetail> {
+		const detail = await this.repository.definitionDetail(
 			bounded(tenantId, 'tenantId', 1, 128),
 			bounded(workflowId, 'workflowId', 1, 128),
 		);
@@ -312,11 +353,11 @@ export class WorkflowsService {
 		return detail;
 	}
 
-	create(
+	async create(
 		tenantId: string,
 		input: CreateWorkflowDefinitionInput,
 		actor: Actor,
-	): WorkflowDefinitionDetail {
+	): Promise<WorkflowDefinitionDetail> {
 		const now = this.#now();
 		const key = bounded(input.key, 'key', 3, 120);
 		if (!KEY.test(key)) {
@@ -350,7 +391,7 @@ export class WorkflowsService {
 			publishedBy: null,
 		};
 		try {
-			return this.repository.createDefinition({
+			return await this.repository.createDefinition({
 				definition,
 				revision,
 				actor: trustedActor(actor),
@@ -368,7 +409,7 @@ export class WorkflowsService {
 		}
 	}
 
-	update(
+	async update(
 		tenantId: string,
 		input: {
 			readonly workflowId: string;
@@ -378,8 +419,8 @@ export class WorkflowsService {
 			readonly graph: unknown;
 		},
 		actor: Actor,
-	): WorkflowDefinitionDetail {
-		const current = this.detail(tenantId, input.workflowId);
+	): Promise<WorkflowDefinitionDetail> {
+		const current = await this.detail(tenantId, input.workflowId);
 		if (current.definition.status === 'archived') {
 			throw new WorkflowsServiceError(
 				'WORKFLOW_ARCHIVED',
@@ -419,7 +460,7 @@ export class WorkflowsService {
 			publishedAt: null,
 			publishedBy: null,
 		};
-		const saved = this.repository.saveDraft({
+		const saved = await this.repository.saveDraft({
 			definition,
 			revision,
 			expectedRevision: input.expectedRevision,
@@ -436,32 +477,37 @@ export class WorkflowsService {
 		return saved;
 	}
 
-	validate(
+	async validate(
 		graph: unknown,
 		context: WorkflowInvocationContext,
-	): WorkflowDryRunResponseV1 {
+	): Promise<WorkflowDryRunResponseV1> {
 		const parsed = parsedGraph(graph);
-		const catalog = this.#referenceCatalog(context);
-		return compileWorkflowGraph(parsed, catalog ?? undefined);
+		const capabilities = this.#executionCapabilities();
+		return compileWorkflowGraph(
+			parsed,
+			capabilities
+				? await this.#referenceCatalog(capabilities, parsed, context)
+				: undefined,
+		);
 	}
 
-	publish(
+	async publish(
 		tenantId: string,
 		workflowId: string,
 		expectedRevision: number,
 		actor: Actor,
 		permissionSnapshot: readonly string[],
-	): WorkflowDefinitionDetail {
+	): Promise<WorkflowDefinitionDetail> {
 		const context = manualContext(tenantId, actor, permissionSnapshot);
-		const catalog = this.#referenceCatalog(context);
-		if (!catalog) {
+		const capabilities = this.#executionCapabilities();
+		if (!capabilities) {
 			throw new WorkflowsServiceError(
 				'WORKFLOW_LIVE_CAPABILITIES_UNAVAILABLE',
 				'Agent revision and action execution capabilities are required before publication.',
 				503,
 			);
 		}
-		const detail = this.detail(tenantId, workflowId);
+		const detail = await this.detail(tenantId, workflowId);
 		if (detail.definition.currentDraftRevision !== expectedRevision) {
 			throw new WorkflowsServiceError(
 				'WORKFLOW_REVISION_CONFLICT',
@@ -469,7 +515,10 @@ export class WorkflowsService {
 				409,
 			);
 		}
-		const report = compileWorkflowGraph(detail.draft.graph, catalog);
+		const report = compileWorkflowGraph(
+			detail.draft.graph,
+			await this.#referenceCatalog(capabilities, detail.draft.graph, context),
+		);
 		if (!report.valid) {
 			throw new WorkflowsServiceError(
 				'WORKFLOW_GRAPH_INVALID',
@@ -481,7 +530,7 @@ export class WorkflowsService {
 		for (const permission of report.requiredPermissions) {
 			requirePermission(permissionSnapshot, permission);
 		}
-		const published = this.repository.publish(
+		const published = await this.repository.publish(
 			tenantId,
 			workflowId,
 			expectedRevision,
@@ -506,12 +555,12 @@ export class WorkflowsService {
 		return published;
 	}
 
-	archive(
+	async archive(
 		tenantId: string,
 		workflowId: string,
 		actor: Actor,
-	): WorkflowDefinition {
-		const definition = this.repository.archive(
+	): Promise<WorkflowDefinition> {
+		const definition = await this.repository.archive(
 			bounded(tenantId, 'tenantId', 1, 128),
 			bounded(workflowId, 'workflowId', 1, 128),
 			trustedActor(actor),
@@ -528,8 +577,12 @@ export class WorkflowsService {
 		return definition;
 	}
 
-	delete(tenantId: string, workflowId: string, actor: Actor): void {
-		const result = this.repository.deleteDraft(
+	async delete(
+		tenantId: string,
+		workflowId: string,
+		actor: Actor,
+	): Promise<void> {
+		const result = await this.repository.deleteDraft(
 			bounded(tenantId, 'tenantId', 1, 128),
 			bounded(workflowId, 'workflowId', 1, 128),
 			trustedActor(actor),
@@ -552,11 +605,13 @@ export class WorkflowsService {
 		}
 	}
 
-	listAgentCatalog(context: WorkflowInvocationContext): readonly unknown[] {
+	async listAgentCatalog(
+		context: WorkflowInvocationContext,
+	): Promise<readonly unknown[]> {
 		const agents = this.#agents();
 		if (!agents) return [];
-		return agents
-			.listRevisions({
+		return (
+			await agents.listRevisions({
 				tenantId: context.tenantId,
 				workflowRunId: 'workflow-catalog',
 				actor: context.actor,
@@ -566,22 +621,23 @@ export class WorkflowsService {
 				),
 				permissionSnapshot: context.permissionSnapshot,
 			})
-			.map((agent) => ({
-				agentId: agent.agentId,
-				revision: agent.revision,
-				name: agent.name,
-				description: '',
-				status: agent.status,
-				supportsStructuredOutput: agent.supportsStructuredOutput,
-				allowedTools: agent.allowedTools,
-			}));
+		).map((agent) => ({
+			agentId: agent.agentId,
+			revision: agent.revision,
+			name: agent.name,
+			description: '',
+			status: agent.status,
+			supportsStructuredOutput: agent.supportsStructuredOutput,
+			allowedTools: agent.allowedTools,
+		}));
 	}
 
-	listActionCatalog(context: WorkflowInvocationContext): readonly unknown[] {
+	async listActionCatalog(
+		context: WorkflowInvocationContext,
+	): Promise<readonly unknown[]> {
 		const actions = this.#actions();
 		if (!actions) return [];
-		return actions
-			.listWorkflowActions()
+		return (await actions.listWorkflowActions())
 			.filter(
 				(action) =>
 					(action.risk === 'read' || action.risk === 'workspace-write') &&
@@ -601,14 +657,14 @@ export class WorkflowsService {
 			}));
 	}
 
-	#publishedDefinition(
+	async #publishedDefinition(
 		tenantId: string,
 		workflowKey: string,
-	): {
+	): Promise<{
 		readonly definition: WorkflowDefinition;
 		readonly revision: WorkflowRevision;
-	} {
-		const definition = this.repository.findDefinitionByKey(
+	}> {
+		const definition = await this.repository.findDefinitionByKey(
 			tenantId,
 			workflowKey,
 		);
@@ -633,7 +689,7 @@ export class WorkflowsService {
 				409,
 			);
 		}
-		const revision = this.repository.findRevision(
+		const revision = await this.repository.findRevision(
 			tenantId,
 			definition.id,
 			definition.publishedRevision,
@@ -674,19 +730,26 @@ export class WorkflowsService {
 			200,
 		);
 		validateInputSize(request.input);
-		const { definition, revision } = this.#publishedDefinition(
+		const { definition, revision } = await this.#publishedDefinition(
 			trustedContext.tenantId,
 			workflowKey,
 		);
-		const catalog = this.#referenceCatalog(trustedContext);
-		if (!catalog) {
+		const capabilities = this.#executionCapabilities();
+		if (!capabilities) {
 			throw new WorkflowsServiceError(
 				'WORKFLOW_LIVE_CAPABILITIES_UNAVAILABLE',
 				'Agent revision and action execution capabilities are unavailable.',
 				503,
 			);
 		}
-		const report = compileWorkflowGraph(revision.graph, catalog);
+		const report = compileWorkflowGraph(
+			revision.graph,
+			await this.#referenceCatalog(
+				capabilities,
+				revision.graph,
+				trustedContext,
+			),
+		);
 		if (!report.valid) {
 			throw new WorkflowsServiceError(
 				'WORKFLOW_GRAPH_INVALID',
@@ -715,7 +778,7 @@ export class WorkflowsService {
 			);
 		}
 		const inputHash = jsonHash(request.input);
-		const existing = this.repository.findRunByIdempotency(
+		const existing = await this.repository.findRunByIdempotency(
 			trustedContext.tenantId,
 			idempotencyKey,
 		);
@@ -773,7 +836,7 @@ export class WorkflowsService {
 			usage: PROVISIONAL_USAGE,
 			cost: PROVISIONAL_COST,
 		};
-		this.repository.createRun({
+		await this.repository.createRun({
 			run,
 			input: request.input,
 			inputEvidence: safePayloadEvidence(request.input, inputSchemaId, {
@@ -791,10 +854,10 @@ export class WorkflowsService {
 		};
 	}
 
-	simulate(
+	async simulate(
 		request: WorkflowSimulationRequest,
 		context: WorkflowInvocationContext,
-	): WorkflowRunDetail {
+	): Promise<WorkflowRunDetail> {
 		requirePermission(
 			context.permissionSnapshot,
 			WORKFLOWS_PERMISSIONS.runsExecute,
@@ -807,7 +870,7 @@ export class WorkflowsService {
 				413,
 			);
 		}
-		const detail = this.detail(context.tenantId, request.workflowId);
+		const detail = await this.detail(context.tenantId, request.workflowId);
 		const fixtureIds = new Set(
 			request.fixtures.map((fixture) => fixture.nodeId),
 		);
@@ -852,7 +915,7 @@ export class WorkflowsService {
 		}
 		const now = this.#now();
 		const runId = randomUUID();
-		const run = this.repository.createRun({
+		const run = await this.repository.createRun({
 			run: {
 				id: runId,
 				tenantId: context.tenantId,
@@ -903,7 +966,10 @@ export class WorkflowsService {
 		);
 	}
 
-	listRuns(tenantId: string, filters: WorkflowRunFilters): WorkflowRunPage {
+	async listRuns(
+		tenantId: string,
+		filters: WorkflowRunFilters,
+	): Promise<WorkflowRunPage> {
 		const normalizedTenant = bounded(tenantId, 'tenantId', 1, 128);
 		const limit = pageLimit(
 			filters.limit,
@@ -940,7 +1006,7 @@ export class WorkflowsService {
 				);
 			}
 		}
-		const page = this.repository.listRuns(normalizedTenant, {
+		const page = await this.repository.listRuns(normalizedTenant, {
 			...filters,
 			limit,
 			cursor: rawCursor,
@@ -957,15 +1023,21 @@ export class WorkflowsService {
 		};
 	}
 
-	getRun(tenantId: string, runId: string): WorkflowRunSummary | null {
-		return this.repository.getRun(
+	async getRun(
+		tenantId: string,
+		runId: string,
+	): Promise<WorkflowRunSummary | null> {
+		return await this.repository.getRun(
 			bounded(tenantId, 'tenantId', 1, 128),
 			bounded(runId, 'runId', 1, 128),
 		);
 	}
 
-	getRunDetail(tenantId: string, runId: string): WorkflowRunDetail {
-		const detail = this.repository.runDetail(
+	async getRunDetail(
+		tenantId: string,
+		runId: string,
+	): Promise<WorkflowRunDetail> {
+		const detail = await this.repository.runDetail(
 			bounded(tenantId, 'tenantId', 1, 128),
 			bounded(runId, 'runId', 1, 128),
 		);
@@ -979,12 +1051,12 @@ export class WorkflowsService {
 		return detail;
 	}
 
-	readEvents(
+	async readEvents(
 		tenantId: string,
 		runId: string,
 		afterSequence: number,
 		limit: number = WORKFLOW_LIMITS.maxReplayEvents,
-	): readonly WorkflowRunEventV1[] {
+	): Promise<readonly WorkflowRunEventV1[]> {
 		if (!Number.isSafeInteger(afterSequence) || afterSequence < 0) {
 			throw new WorkflowsServiceError(
 				'WORKFLOW_EVENT_CURSOR_INVALID',
@@ -997,7 +1069,7 @@ export class WorkflowsService {
 			WORKFLOW_LIMITS.maxReplayEvents,
 			WORKFLOW_LIMITS.maxReplayEvents,
 		);
-		const detail = this.getRunDetail(tenantId, runId);
+		const detail = await this.getRunDetail(tenantId, runId);
 		const latestSequence = detail.events.at(-1)?.sequence ?? 0;
 		if (afterSequence > latestSequence) {
 			throw new WorkflowsServiceError(
@@ -1006,7 +1078,7 @@ export class WorkflowsService {
 				409,
 			);
 		}
-		return this.repository.readEvents(
+		return await this.repository.readEvents(
 			tenantId,
 			runId,
 			afterSequence,
@@ -1053,12 +1125,12 @@ export class WorkflowsService {
 		}
 	}
 
-	cancel(
+	async cancel(
 		tenantId: string,
 		runId: string,
 		actor: Actor,
-	): WorkflowCancellationResult {
-		const result = this.repository.requestCancellation(
+	): Promise<WorkflowCancellationResult> {
+		const result = await this.repository.requestCancellation(
 			bounded(tenantId, 'tenantId', 1, 128),
 			bounded(runId, 'runId', 1, 128),
 			trustedActor(actor),
@@ -1080,14 +1152,14 @@ export class WorkflowsService {
 		};
 	}
 
-	retry(
+	async retry(
 		tenantId: string,
 		runId: string,
 		actor: Actor,
 		permissionSnapshot: readonly string[],
-	): WorkflowRunAccepted {
+	): Promise<WorkflowRunAccepted> {
 		requirePermission(permissionSnapshot, WORKFLOWS_PERMISSIONS.runsExecute);
-		const prior = this.repository.getRun(
+		const prior = await this.repository.getRun(
 			bounded(tenantId, 'tenantId', 1, 128),
 			bounded(runId, 'runId', 1, 128),
 		);
@@ -1109,15 +1181,18 @@ export class WorkflowsService {
 			);
 		}
 		const context = manualContext(tenantId, actor, permissionSnapshot);
-		const catalog = this.#referenceCatalog(context);
-		if (!catalog) {
+		const capabilities = this.#executionCapabilities();
+		if (!capabilities) {
 			throw new WorkflowsServiceError(
 				'WORKFLOW_LIVE_CAPABILITIES_UNAVAILABLE',
 				'Agent and action execution capabilities are unavailable.',
 				503,
 			);
 		}
-		const report = compileWorkflowGraph(prior.graph, catalog);
+		const report = compileWorkflowGraph(
+			prior.graph,
+			await this.#referenceCatalog(capabilities, prior.graph, context),
+		);
 		if (!report.valid) {
 			throw new WorkflowsServiceError(
 				'WORKFLOW_GRAPH_INVALID',
@@ -1128,7 +1203,7 @@ export class WorkflowsService {
 		}
 		for (const permission of report.requiredPermissions)
 			requirePermission(permissionSnapshot, permission);
-		const input = this.repository.readExecutionPayload(
+		const input = await this.repository.readExecutionPayload(
 			tenantId,
 			prior.id,
 			prior.inputPayloadId,
@@ -1137,7 +1212,7 @@ export class WorkflowsService {
 		const nextId = randomUUID();
 		const inputNode = prior.graph.nodes.find((node) => node.type === 'input');
 		const schemaId = inputNode?.outputPorts[0]?.schemaId ?? 'workflow.input';
-		const created = this.repository.createRun({
+		const created = await this.repository.createRun({
 			run: {
 				...prior,
 				id: nextId,
@@ -1176,11 +1251,11 @@ export class WorkflowsService {
 		};
 	}
 
-	listAudit(
+	async listAudit(
 		tenantId: string,
 		limit: number,
 		cursor?: string | null,
-	): WorkflowAuditPage {
+	): Promise<WorkflowAuditPage> {
 		const normalizedTenant = bounded(tenantId, 'tenantId', 1, 128);
 		const pageSize = pageLimit(
 			limit,
@@ -1211,7 +1286,7 @@ export class WorkflowsService {
 				);
 			}
 		}
-		const page = this.repository.listAudit(
+		const page = await this.repository.listAudit(
 			normalizedTenant,
 			pageSize,
 			beforeSequence,
@@ -1227,8 +1302,10 @@ export class WorkflowsService {
 		};
 	}
 
-	verifyAudit(tenantId: string): WorkflowAuditVerification {
-		return this.repository.verifyAudit(bounded(tenantId, 'tenantId', 1, 128));
+	async verifyAudit(tenantId: string): Promise<WorkflowAuditVerification> {
+		return await this.repository.verifyAudit(
+			bounded(tenantId, 'tenantId', 1, 128),
+		);
 	}
 
 	executionDependencies(): {
@@ -1240,28 +1317,28 @@ export class WorkflowsService {
 		return agents && actions ? { agents, actions } : null;
 	}
 
-	executionCapability(): WorkflowExecutionCapability {
+	async executionCapability(): Promise<WorkflowExecutionCapability> {
 		return {
-			listPublished: (context) => {
+			listPublished: async (context) => {
 				requirePermission(
 					context.permissionSnapshot,
 					WORKFLOWS_PERMISSIONS.read,
 				);
-				return this.repository.listPublished(context.tenantId);
+				return await this.repository.listPublished(context.tenantId);
 			},
-			getPublishedReference: (workflowKey, context) => {
+			getPublishedReference: async (workflowKey, context) => {
 				requirePermission(
 					context.permissionSnapshot,
 					WORKFLOWS_PERMISSIONS.read,
 				);
-				const reference = this.repository
-					.listPublished(context.tenantId)
-					.find(
-						(candidate) =>
-							candidate.key === bounded(workflowKey, 'workflowKey', 3, 120),
-					);
+				const reference = (
+					await this.repository.listPublished(context.tenantId)
+				).find(
+					(candidate) =>
+						candidate.key === bounded(workflowKey, 'workflowKey', 3, 120),
+				);
 				if (!reference) return null;
-				const revision = this.repository.findRevision(
+				const revision = await this.repository.findRevision(
 					context.tenantId,
 					reference.id,
 					reference.revision,
@@ -1273,15 +1350,18 @@ export class WorkflowsService {
 						500,
 					);
 				}
-				const catalog = this.#referenceCatalog(context);
-				if (!catalog) {
+				const capabilities = this.#executionCapabilities();
+				if (!capabilities) {
 					throw new WorkflowsServiceError(
 						'WORKFLOW_LIVE_CAPABILITIES_UNAVAILABLE',
 						'Agent revision and action execution capabilities are required to inspect a workflow.',
 						503,
 					);
 				}
-				const report = compileWorkflowGraph(revision.graph, catalog);
+				const report = compileWorkflowGraph(
+					revision.graph,
+					await this.#referenceCatalog(capabilities, revision.graph, context),
+				);
 				if (!report.valid) {
 					throw new WorkflowsServiceError(
 						'WORKFLOW_PUBLISHED_REFERENCE_UNAVAILABLE',
@@ -1296,19 +1376,19 @@ export class WorkflowsService {
 				} satisfies WorkflowPublishedInspection;
 			},
 			enqueue: (request, context) => this.enqueue(request, context),
-			getRun: (runId, context) => {
+			getRun: async (runId, context) => {
 				requirePermission(
 					context.permissionSnapshot,
 					WORKFLOWS_PERMISSIONS.runsRead,
 				);
-				return this.getRun(context.tenantId, runId);
+				return await this.getRun(context.tenantId, runId);
 			},
-			cancel: (runId, context) => {
+			cancel: async (runId, context) => {
 				requirePermission(
 					context.permissionSnapshot,
 					WORKFLOWS_PERMISSIONS.runsCancel,
 				);
-				return this.cancel(context.tenantId, runId, context.actor);
+				return await this.cancel(context.tenantId, runId, context.actor);
 			},
 		};
 	}

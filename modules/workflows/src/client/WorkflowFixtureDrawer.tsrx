@@ -1,5 +1,5 @@
-import { t } from '@coreloom/client';
-import { Button, Drawer, EmptyState, FormField, Tag } from '@coreloom/ui';
+import { t } from '@flowdular/client';
+import { Button, Drawer, EmptyState, FormField, Tag } from '@flowdular/ui';
 import type {
 	JsonValue,
 	WorkflowGraphV1,

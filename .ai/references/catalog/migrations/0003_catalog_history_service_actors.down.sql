@@ -1,0 +1,3 @@
+DROP POLICY IF EXISTS catalog_items_history_v2_tenant_policy ON catalog_items_history_v2;
+DROP INDEX IF EXISTS catalog_items_history_v2_tenant_record_version_idx;
+DROP TABLE IF EXISTS catalog_items_history_v2;

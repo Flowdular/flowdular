@@ -3,15 +3,16 @@ import { randomUUID } from 'node:crypto';
 import type { EventEmitter } from 'node:events';
 import { BroadcastChannel } from 'node:worker_threads';
 import type { Middleware } from '@octanejs/app-core';
+import { trackResponseBody } from '@flowdular/server';
 
 export const PLATFORM_LIFECYCLE_SYMBOL = Symbol.for(
-	'coreloom.platform.runtime-lifecycle',
+	'flowdular.platform.runtime-lifecycle',
 );
 export const PLATFORM_LIFECYCLE_ACTIVATE_EVENT =
-	'coreloom:platform-runtime-activate';
+	'flowdular:platform-runtime-activate';
 export const PLATFORM_LIFECYCLE_RETIRE_EVENT =
-	'coreloom:platform-runtime-retire';
-const PLATFORM_LIFECYCLE_CHANNEL = 'coreloom.platform.runtime-lifecycle';
+	'flowdular:platform-runtime-retire';
+const PLATFORM_LIFECYCLE_CHANNEL = 'flowdular.platform.runtime-lifecycle';
 
 type Dispose = () => void | Promise<void>;
 
@@ -77,7 +78,7 @@ export function createPlatformRuntimeLifecycle(): PlatformRuntimeLifecycle {
 	};
 
 	const lifecycle: PlatformRuntimeLifecycle = {
-		middleware: async (_context, next) => {
+		middleware: async (context, next) => {
 			if (retired) {
 				return new Response(null, {
 					status: 503,
@@ -85,11 +86,19 @@ export function createPlatformRuntimeLifecycle(): PlatformRuntimeLifecycle {
 				});
 			}
 			activeRequests += 1;
-			try {
-				return await next();
-			} finally {
+			const release = () => {
 				activeRequests -= 1;
 				finish();
+			};
+			try {
+				return trackResponseBody(
+					await next(),
+					release,
+					context.request?.signal,
+				);
+			} catch (error) {
+				release();
+				throw error;
 			}
 		},
 		addQuiesce(quiesce) {
@@ -97,7 +106,7 @@ export function createPlatformRuntimeLifecycle(): PlatformRuntimeLifecycle {
 				void Promise.resolve()
 					.then(quiesce)
 					.catch((error: unknown) => {
-						console.error('[coreloom] late platform quiesce failed', error);
+						console.error('[flowdular] late platform quiesce failed', error);
 					});
 				return;
 			}
@@ -108,7 +117,7 @@ export function createPlatformRuntimeLifecycle(): PlatformRuntimeLifecycle {
 				void Promise.resolve()
 					.then(dispose)
 					.catch((error: unknown) => {
-						console.error('[coreloom] late platform teardown failed', error);
+						console.error('[flowdular] late platform teardown failed', error);
 					});
 				return;
 			}
@@ -154,7 +163,7 @@ export function activatePlatformRuntimeLifecycle(
 		const retirement = lifecycle.retire();
 		report?.(retirement);
 		void retirement.catch((error: unknown) => {
-			console.error('[coreloom] stale platform teardown failed', error);
+			console.error('[flowdular] stale platform teardown failed', error);
 		});
 	};
 	const onRetire = (report: (retirement: Promise<void>) => void) => {
@@ -175,7 +184,7 @@ export function activatePlatformRuntimeLifecycle(
 		queueMicrotask(() => {
 			void lifecycle.retire().catch((error: unknown) => {
 				console.error(
-					'[coreloom] cross-runner platform teardown failed',
+					'[flowdular] cross-runner platform teardown failed',
 					error,
 				);
 			});
@@ -202,7 +211,7 @@ export function activatePlatformRuntimeLifecycle(
 		const retirement = previous.retire();
 		retirements.add(retirement);
 		void retirement.catch((error: unknown) => {
-			console.error('[coreloom] stale platform teardown failed', error);
+			console.error('[flowdular] stale platform teardown failed', error);
 		});
 	}
 	return Promise.all(retirements).then(() => undefined);

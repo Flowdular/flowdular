@@ -1,17 +1,18 @@
 schemaVersion: 1
 required:
   - src/services/migration.ts (new byte-identical constant and ordered migrations entry appended; old constants untouched)
-  - src/services/sqlite-repository.ts (constructor retains one runModuleMigrations call; no per-migration exec or column guard)
+  - src/services/database-repository.ts (row interface, fromRow, statement lists; migrations still run from the runtime migration lease)
   - migrations/000N_{module}_{name}.up.sql
   - migrations/000N_{module}_{name}.down.sql
-  - tests/migrations.test.ts (byte parity, fresh apply, pre-ledger adoption, second construction)
-  - tests/module.test.ts (':memory:' proves the new data rule and tenant isolation)
+  - tests/migrations.test.ts (byte parity, fresh apply, pre-ledger adoption, second start)
+  - tests/module.test.ts (the createPgliteTestProvider() fixture proves the new data rule and tenant isolation)
   - spec/module.yaml (invariant, specVersion)
 rules:
-  - CREATE TABLE IF NOT EXISTS ... STRICT
+  - PostgreSQL only; CREATE TABLE IF NOT EXISTS
   - tenant_id TEXT NOT NULL on tenant-owned tables
   - UNIQUE and indexes start with tenant_id, indexes end with id
-  - ALTER TABLE ADD COLUMN runs once through the ledger; adoption detects an existing column
+  - a new tenant table enables and forces row-level security and adds a <table>_tenant_policy on current_setting('coreloom.tenant_id', true)
+  - ALTER TABLE ADD COLUMN runs once through the ledger; inspectExisting detects an existing column
   - applied migration bytes are immutable; a change always gets a new number
-  - data-only migration has an adoptWhen predicate that proves its effect already exists
+  - inspectExisting returns complete only for every effect, absent only for none, partial for anything mixed
   - numbering 0001, 0002, ... per module, append-only

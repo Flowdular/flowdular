@@ -1,5 +1,5 @@
 import { ServerRoute } from '@octanejs/app-core';
-import { readJsonObject } from '@coreloom/server';
+import { readJsonObject } from '@flowdular/server';
 import { AUTH_SCOPES } from '../acl/scopes.ts';
 import {
 	actorOf,
@@ -18,14 +18,14 @@ export function createRoleRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 	const list = new ServerRoute({
 		path: '/api/auth/roles',
 		methods: ['GET'],
-		handler: (context) => {
+		handler: async (context) => {
 			try {
-				const session = requireSession(context, runtime);
+				const session = requireSession(context);
 				requireScope(session, AUTH_SCOPES.rolesRead);
-				const service = runtime.service();
+				const service = await runtime.service();
 				return response({
-					roles: service.listRoles(session.principal.tenantId),
-					grantableScopes: service.listGrantableScopes(
+					roles: await service.listRoles(session.principal.tenantId),
+					grantableScopes: await service.listGrantableScopes(
 						session.principal.tenantId,
 					),
 				});
@@ -42,13 +42,15 @@ export function createRoleRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 			const denial = sessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
-				const session = requireSession(context, runtime);
+				const session = requireSession(context);
 				requireScope(session, AUTH_SCOPES.rolesManage);
 				const body = await readJsonObject(context.request);
 				const actor = actorOf(session);
 				return response(
 					{
-						role: runtime.service().createRole(actor, {
+						role: await (
+							await runtime.service()
+						).createRole(actor, {
 							tenantId: actor.tenantId,
 							key: stringField(body, 'key'),
 							name: stringField(body, 'name'),
@@ -71,14 +73,16 @@ export function createRoleRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 			const denial = sessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
-				const session = requireSession(context, runtime);
+				const session = requireSession(context);
 				requireScope(session, AUTH_SCOPES.rolesManage);
 				const body = await readJsonObject(context.request);
 				const actor = actorOf(session);
 				const name = optionalStringField(body, 'name');
 				const description = optionalStringField(body, 'description');
 				return response({
-					role: runtime.service().updateRole(actor, {
+					role: await (
+						await runtime.service()
+					).updateRole(actor, {
 						tenantId: actor.tenantId,
 						id: stringField(body, 'id'),
 						...(name === undefined ? {} : { name }),
@@ -99,10 +103,12 @@ export function createRoleRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 			const denial = sessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
-				const session = requireSession(context, runtime);
+				const session = requireSession(context);
 				requireScope(session, AUTH_SCOPES.rolesManage);
 				const body = await readJsonObject(context.request);
-				runtime.service().deleteRole(actorOf(session), stringField(body, 'id'));
+				await (
+					await runtime.service()
+				).deleteRole(actorOf(session), stringField(body, 'id'));
 				return response({ deleted: true });
 			} catch (error) {
 				return errorResponse(error, '[auth.core] roles request failed');

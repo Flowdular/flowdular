@@ -32,3 +32,8 @@ references retain their evidence.
 `0017` stores the delegated user separately from the run or action audit actor.
 Workers use that user for live authorization, while audit and record history
 continue to attribute work to the actual service or business agent.
+
+`0019` grants the background role the routing columns of `agent_runs` and
+`agent_action_invocations` under a SELECT policy of its own. The recovery polls
+have to find interrupted work before they know whose it is; every claim that
+follows runs on the tenant-scoped runtime role, under the tenant the row named.

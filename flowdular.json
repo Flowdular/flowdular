@@ -1,0 +1,29 @@
+{
+	"$schema": "./packages/contracts/schemas/project.schema.json",
+	"schemaVersion": 1,
+	"architectureVersion": "0.2.0",
+	"specs": {
+		"platformRoot": "specs",
+		"moduleDirectory": "spec"
+	},
+	"modules": {
+		"roots": ["modules"],
+		"enabled": [
+			"system.core",
+			"auth.core",
+			"agents.core",
+			"automations.core",
+			"workflows.core",
+			"automations-workflows.integration",
+			"profile.core",
+			"sandbox.core",
+			"users.core"
+		]
+	},
+	"locales": ["en", "pl"],
+	"agent": {
+		"policy": ".ai/policies/capabilities.yaml",
+		"blueprints": ".ai/blueprints",
+		"modelRouting": ".ai/policies/model-routing.yaml"
+	}
+}

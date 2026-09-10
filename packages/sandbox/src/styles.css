@@ -1,5 +1,5 @@
 /* Sandbox shell. Layout only: every colour, size, and font comes from the
-   @coreloom/ui tokens so the preview matches the real application. */
+   @flowdular/ui tokens so the preview matches the real application. */
 
 .sandbox {
 	display: flex;
@@ -30,6 +30,7 @@
 
 .sandbox__bar {
 	display: flex;
+	flex: 0 0 auto;
 	flex-wrap: wrap;
 	align-items: center;
 	gap: 10px;
@@ -197,9 +198,14 @@
 /* The conversation is the page. The work card floats over it on the right,
    inside the same surface, instead of sitting in a separate panel. */
 .sandbox__body {
+	--sandbox-preview-width: clamp(
+		calc(var(--sidebar-w) * 1.5),
+		38vw,
+		calc(var(--sidebar-w) * 2.4)
+	);
 	position: relative;
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) clamp(380px, 38vw, 620px);
+	grid-template-columns: minmax(0, 1fr);
 	min-width: 0;
 	min-height: 0;
 }
@@ -212,11 +218,23 @@
 }
 
 .sandbox__side {
+	position: absolute;
+	inset: 0 0 0 auto;
+	z-index: 1;
+	width: var(--sandbox-preview-width);
 	display: grid;
 	grid-template-rows: minmax(0, 1fr);
 	min-width: 0;
 	min-height: 0;
 	padding: 18px 18px 18px 0;
+}
+
+@media (min-width: 1101px) {
+	/* The card overlays the chat surface, but never its text or controls. */
+	.sandbox__chat > .sandbox__scroll,
+	.sandbox__chat > .chat__composer {
+		padding-right: calc(var(--sandbox-preview-width) + var(--content-pad));
+	}
 }
 
 @media (max-width: 1100px) {
@@ -1187,10 +1205,21 @@
 /* Session picker */
 .sessions {
 	display: grid;
+	grid-template-columns: minmax(0, 1fr);
 	gap: 18px;
-	width: min(1080px, 100%);
+	width: min(calc(var(--sidebar-w) * 5), 100%);
 	margin: 0 auto;
 	padding: 8px 0 24px;
+}
+
+.sessions > * {
+	min-width: 0;
+}
+
+.sessions__actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5em;
 }
 
 .sessions__head {

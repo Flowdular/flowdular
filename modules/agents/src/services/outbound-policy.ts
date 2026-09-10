@@ -93,7 +93,7 @@ export function validateCompatibleBaseUrl(
 	if (!allowlist.has(hostname)) {
 		throw new ProviderEgressError(
 			'PROVIDER_HOST_NOT_ALLOWLISTED',
-			`Provider hostname ${hostname} is not present in CL_AGENT_PROVIDER_HOST_ALLOWLIST.`,
+			`Provider hostname ${hostname} is not present in FD_AGENT_PROVIDER_HOST_ALLOWLIST.`,
 		);
 	}
 	return url;

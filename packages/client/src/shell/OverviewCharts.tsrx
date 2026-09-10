@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'octane';
-import { Alert, Chart, EmptyState } from '@coreloom/ui';
+import { Alert, Chart, EmptyState } from '@flowdular/ui';
 import { cell, createStore, useValue } from 'segment-state';
 import { activeLocale, t } from '../i18n/runtime.ts';
 

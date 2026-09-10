@@ -9,13 +9,13 @@ import {
 	type AgentTool,
 	type AgentToolAccessAuthorizer,
 	type JsonValue,
-} from '@coreloom/harness';
+} from '@flowdular/harness';
 import {
 	actorsEqual,
 	normalizeActor,
 	type Actor,
 	type UserActor,
-} from '@coreloom/kernel';
+} from '@flowdular/kernel';
 import type { AgentActionInvocation } from '../domain/types.ts';
 import {
 	DuplicateActionIdempotencyKeyError,
@@ -68,7 +68,7 @@ export interface AgentActionStartContext extends AgentActionChildContext {
 }
 
 export interface AgentActionExecutionCapability {
-	listWorkflowActions(): readonly VersionedActionDescriptor[];
+	listWorkflowActions(): Promise<readonly VersionedActionDescriptor[]>;
 	start(
 		request: {
 			readonly actionId: string;
@@ -81,11 +81,11 @@ export interface AgentActionExecutionCapability {
 	getResult(
 		actionInvocationId: string,
 		context: AgentActionChildContext,
-	): ActionExecutionResult | null;
+	): Promise<ActionExecutionResult | null>;
 	requestCancel(
 		actionInvocationId: string,
 		context: AgentActionChildContext,
-	): ActionCancellationResult;
+	): Promise<ActionCancellationResult>;
 }
 
 export class AgentActionCapabilityError extends Error {
@@ -272,7 +272,7 @@ export function createAgentActionExecutionRuntime(
 			action.contractVersion !== invocation.contractVersion
 		) {
 			const completedAt = now();
-			repository.failAction(
+			await repository.failAction(
 				invocation.tenantId,
 				invocation.id,
 				workerId,
@@ -295,21 +295,19 @@ export function createAgentActionExecutionRuntime(
 		}
 		const renewal = setInterval(
 			() => {
-				try {
-					if (
-						!repository.renewActionLease(
-							invocation.tenantId,
-							invocation.id,
-							workerId,
-							now() + leaseMs,
-						)
-					) {
-						controller.abort('lease-lost');
-					}
-				} catch {
-					/* Without a successful renewal this worker cannot prove ownership. */
-					controller.abort('lease-lost');
-				}
+				/* The timer cannot await, so a lost renewal aborts through the
+				   controller the next tick observes. */
+				void repository
+					.renewActionLease(
+						invocation.tenantId,
+						invocation.id,
+						workerId,
+						now() + leaseMs,
+					)
+					.then((renewed) => {
+						if (!renewed) controller.abort('lease-lost');
+					})
+					.catch(() => controller.abort('lease-lost'));
 			},
 			Math.max(500, Math.floor(leaseMs / 2)),
 		);
@@ -397,7 +395,7 @@ export function createAgentActionExecutionRuntime(
 				);
 			}
 			const completedAt = now();
-			repository.completeAction(
+			await repository.completeAction(
 				invocation.tenantId,
 				invocation.id,
 				workerId,
@@ -427,7 +425,7 @@ export function createAgentActionExecutionRuntime(
 			}
 			const code = safeCode(error);
 			const completedAt = now();
-			repository.failAction(
+			await repository.failAction(
 				invocation.tenantId,
 				invocation.id,
 				workerId,
@@ -451,12 +449,12 @@ export function createAgentActionExecutionRuntime(
 		}
 	};
 
-	const drain = () => {
+	const drain = async () => {
 		if (stopped) return;
-		for (const candidate of repository.listRecoverableActions(now(), 8)) {
+		for (const candidate of await repository.listRecoverableActions(now(), 8)) {
 			if (inFlight.has(candidate.invocationId)) continue;
 			const claimedAt = now();
-			const invocation = repository.claimAction(
+			const invocation = await repository.claimAction(
 				candidate.tenantId,
 				candidate.invocationId,
 				workerId,
@@ -508,11 +506,11 @@ export function createAgentActionExecutionRuntime(
 		}, 0);
 	};
 
-	const cancellation = (
+	const cancellation = async (
 		actionInvocationId: string,
 		context: AgentActionChildContext,
-	): ActionCancellationResult => {
-		const invocation = repository.getAction(
+	): Promise<ActionCancellationResult> => {
+		const invocation = await repository.getAction(
 			context.tenantId,
 			actionInvocationId,
 		);
@@ -534,7 +532,7 @@ export function createAgentActionExecutionRuntime(
 			return { actionInvocationId, state: 'not-supported' };
 		}
 		const cancelledAt = now();
-		const previous = repository.cancelAction(
+		const previous = await repository.cancelAction(
 			invocation.tenantId,
 			invocation.id,
 			cancelledAt,
@@ -557,7 +555,7 @@ export function createAgentActionExecutionRuntime(
 	};
 
 	const capability: AgentActionExecutionCapability = {
-		listWorkflowActions: () =>
+		listWorkflowActions: async () =>
 			actions.map((action) => ({
 				...action,
 				requiredPermissions: [...action.requiredPermissions],
@@ -673,7 +671,7 @@ export function createAgentActionExecutionRuntime(
 					]),
 				)
 				.digest('hex');
-			const existing = repository.findActionByIdempotencyKey(
+			const existing = await repository.findActionByIdempotencyKey(
 				tenantId,
 				idempotencyKey,
 			);
@@ -709,7 +707,7 @@ export function createAgentActionExecutionRuntime(
 				leaseExpiresAt: null,
 			};
 			try {
-				repository.enqueueAction(invocation, {
+				await repository.enqueueAction(invocation, {
 					tenantId,
 					actorId: actor.id,
 					action: 'agent-action.queued',
@@ -724,7 +722,7 @@ export function createAgentActionExecutionRuntime(
 				});
 			} catch (error) {
 				if (error instanceof DuplicateActionIdempotencyKeyError) {
-					const raced = repository.findActionByIdempotencyKey(
+					const raced = await repository.findActionByIdempotencyKey(
 						tenantId,
 						idempotencyKey,
 					);
@@ -748,8 +746,8 @@ export function createAgentActionExecutionRuntime(
 			kick();
 			return { actionInvocationId: invocation.id, created: true };
 		},
-		getResult(actionInvocationId, context) {
-			const invocation = repository.getAction(
+		async getResult(actionInvocationId, context) {
+			const invocation = await repository.getAction(
 				bounded(context.tenantId, 'tenantId', 1, 128),
 				bounded(actionInvocationId, 'actionInvocationId', 1, 128),
 			);
@@ -784,7 +782,7 @@ export function createAgentActionExecutionRuntime(
 
 	return {
 		capability,
-		start() {
+		async start() {
 			if (!stopped) return;
 			stopped = false;
 			poll = setInterval(kick, Math.max(1_000, Math.floor(leaseMs / 2)));

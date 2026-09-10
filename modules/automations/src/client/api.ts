@@ -1,5 +1,5 @@
-import { t } from '@coreloom/client/i18n';
-import type { VariableDefinition } from '@coreloom/contracts';
+import { t } from '@flowdular/client/i18n';
+import type { VariableDefinition } from '@flowdular/contracts';
 import type {
 	AutomationAgent,
 	AutomationSchedule,

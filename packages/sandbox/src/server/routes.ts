@@ -78,12 +78,22 @@ import {
 	type ModuleSpecReview,
 } from './spec.ts';
 import type { BrowserSession, SandboxRuntime } from './runtime.ts';
+import { PlatformClient } from './platform-client.ts';
 import { SandboxSetupError } from './workspace-root.ts';
+import { canReadSession } from './session-owner.ts';
+import { buildDashboard } from './dashboard.ts';
+import type { SessionOwner, ChatEntry } from './sessions.ts';
+import {
+	processTurnChannels,
+	waitForTurn,
+	type TurnChannel,
+	type TurnSubscriber as Subscriber,
+} from './turn-lifecycle.ts';
 
 const SANDBOX_COOKIE = 'coreloom_sandbox';
 /* Every sandbox mutation carries this header. A cross-site form post cannot
    set it, so together with the origin check it is the CSRF boundary. */
-export const SANDBOX_REQUEST_HEADER = 'x-coreloom-sandbox';
+export const SANDBOX_REQUEST_HEADER = 'x-flowdular-sandbox';
 const TURN_TIMEOUT_MS = 20 * 60 * 1000;
 /* How many handed-off turns may run without the operator saying anything. The
    chain always stops on a failure, on a question, and on this count. */
@@ -388,12 +398,12 @@ interface AuthorizeOptions {
 
 /* Loopback binds to the local interface and uses the configured connection.
    A self-hosted sandbox authenticates every browser with its own API token. */
-function authorize(
+async function authorize(
 	runtime: SandboxRuntime,
 	context: Context,
 	options: SandboxRouteOptions,
 	policy: AuthorizeOptions = {},
-): void {
+): Promise<void> {
 	if (policy.mutation) assertSameOrigin(context.request);
 	if (runtime.configuration().mode === 'loopback') {
 		assertLoopbackHost(context.request, options.port);
@@ -401,17 +411,66 @@ function authorize(
 			throw new SandboxSetupError(
 				runtime.connection().error?.code ?? 'SANDBOX_NOT_CONNECTED',
 				runtime.connection().error?.message ??
-					'The sandbox is not connected to a Coreloom application yet.',
+					'The sandbox is not connected to a Flowdular application yet.',
 			);
 		}
-		return;
-	}
-	if (!browserSession(runtime, context)) {
+	} else if (!browserSession(runtime, context)) {
 		throw new SandboxSetupError(
 			'SANDBOX_SIGN_IN_REQUIRED',
-			'Connect this browser with an API token issued by the Coreloom application.',
+			'Connect this browser with an API token issued by the Flowdular application.',
 		);
 	}
+	const id = context.url.pathname.startsWith('/sandbox/api/sessions/')
+		? sessionIdParam(context)
+		: context.url.pathname.startsWith('/api/')
+			? previewSessionId(context)
+			: null;
+	if (id) {
+		const session = await readSession(runtime.workspaceRoot, id);
+		if (
+			session.state === 'deleted' ||
+			!canReadSession(
+				session,
+				actingOwner(runtime, context),
+				runtime.configuration().mode === 'loopback',
+			)
+		) {
+			throw new SandboxSetupError(
+				'SESSION_NOT_FOUND',
+				'This session is not available to this account.',
+			);
+		}
+	}
+}
+
+function actingOwner(
+	runtime: SandboxRuntime,
+	context: Context,
+): SessionOwner | null {
+	const authority =
+		runtime.configuration().mode === 'loopback'
+			? runtime.connection().authority
+			: browserSession(runtime, context)?.authority;
+	if (!authority) return null;
+	return {
+		platformUrl: runtime.configuration().platformUrl.replace(/\/+$/, ''),
+		accountId: authority.principal.accountId,
+		tenantId: authority.principal.tenantId,
+	};
+}
+
+function actingPlatform(
+	runtime: SandboxRuntime,
+	context: Context,
+): PlatformClient | null {
+	if (runtime.configuration().mode === 'loopback') return runtime.platform();
+	const browser = browserSession(runtime, context);
+	return browser
+		? new PlatformClient({
+				platformUrl: runtime.configuration().platformUrl,
+				token: browser.token,
+			})
+		: null;
 }
 
 /* The capabilities that count are the acting principal's: the browser session
@@ -566,43 +625,26 @@ function assertNotDelivered(session: SandboxSession): void {
 	}
 }
 
-type Subscriber = (event: string, payload: unknown) => void;
-
 /* A turn, or a chain of automatically continued turns, runs to completion on
    the server whatever happens to the browser. Streams subscribe to it and can
    leave at any time; stopping is an explicit action. The finished promise is
    kept with the controller because a superseding turn must wait for the old
    process to release the driver's thread before it resumes it. */
-interface TurnChannel {
-	readonly controller: AbortController;
-	readonly finished: Promise<void>;
-	readonly subscribers: Set<Subscriber>;
-}
-
 export function createSandboxRoutes(
 	runtime: SandboxRuntime,
 	preview: PreviewRuntime,
 	options: SandboxRouteOptions = {},
 ): readonly ServerRoute[] {
-	const running = new Map<string, TurnChannel>();
+	const running = processTurnChannels(runtime.workspaceRoot);
 	const secureCookies = runtime.configuration().mode !== 'loopback';
 
-	const turnContext = (): TurnContext => ({
+	const turnContext = (platform = runtime.platform()): TurnContext => ({
 		workspaceRoot: runtime.workspaceRoot,
 		configuration: runtime.configuration(),
 		registry: runtime.registry(),
 		roles: runtime.roles(),
-		platform: runtime.platform(),
+		platform,
 	});
-
-	const settled = (channel: TurnChannel): Promise<unknown> =>
-		Promise.race([
-			channel.finished,
-			new Promise((resolveTimeout) => {
-				const timer = setTimeout(resolveTimeout, 20_000);
-				timer.unref?.();
-			}),
-		]);
 
 	const publish = (channel: TurnChannel, event: string, payload: unknown) => {
 		for (const subscriber of channel.subscribers) {
@@ -627,6 +669,7 @@ export function createSandboxRoutes(
 			module?: string;
 			driver?: string;
 		},
+		platform: PlatformClient | null,
 	): TurnChannel => {
 		const previous = running.get(sessionId);
 		const controller = new AbortController();
@@ -650,7 +693,7 @@ export function createSandboxRoutes(
 
 		void (async () => {
 			try {
-				if (previous) await settled(previous);
+				if (previous) await waitForTurn(previous);
 				await updateSession(runtime.workspaceRoot, sessionId, {
 					chainDepth: 0,
 				});
@@ -662,7 +705,7 @@ export function createSandboxRoutes(
 				} | null = input;
 				let depth = 0;
 				while (next && !controller.signal.aborted) {
-					const iterator = runTurn(turnContext(), {
+					const iterator = runTurn(turnContext(platform), {
 						sessionId,
 						...next,
 						signal: controller.signal,
@@ -701,6 +744,9 @@ export function createSandboxRoutes(
 				});
 			} finally {
 				clearTimeout(timer);
+				/* A timed-out or superseded waiter still represents its predecessor.
+				   Keep the chain owned until the actual writer has drained. */
+				if (previous) await previous.finished;
 				if (running.get(sessionId) === channel) running.delete(sessionId);
 				publish(channel, 'ended', { sessionId });
 				channel.subscribers.clear();
@@ -751,7 +797,7 @@ export function createSandboxRoutes(
 		handler: async (context) => {
 			const configuration = runtime.configuration();
 			try {
-				authorize(runtime, context, options, { allowDisconnected: true });
+				await authorize(runtime, context, options, { allowDisconnected: true });
 			} catch (error) {
 				/* An unauthenticated self-hosted browser still needs to know it must
 				   sign in, and where; nothing else leaves. */
@@ -765,9 +811,22 @@ export function createSandboxRoutes(
 			/* A platform that was down when the sandbox started must not stay
 			   unreachable forever: the state poll retries the connection. */
 			if (!runtime.connection().connected) await runtime.refresh();
+			const owner = actingOwner(runtime, context);
+			const sessions = (await listSessions(runtime.workspaceRoot, true)).filter(
+				(session) =>
+					canReadSession(session, owner, configuration.mode === 'loopback'),
+			);
+			const visible = sessions.filter((session) => session.state !== 'deleted');
 			return json({
 				configuration: safeConfiguration(configuration),
-				connection: runtime.connection(),
+				connection:
+					configuration.mode === 'self-hosted'
+						? {
+								connected: true,
+								authority: browserSession(runtime, context)!.authority,
+								error: null,
+							}
+						: runtime.connection(),
 				drivers: await runtime.registry().status(),
 				roles: runtime.roles().map((role) => ({
 					id: role.id,
@@ -777,10 +836,18 @@ export function createSandboxRoutes(
 					gates: role.gates,
 					handoff: role.handoff,
 				})),
-				sessions: await listSessions(runtime.workspaceRoot),
+				sessions: visible,
+				dashboard: await buildDashboard(
+					runtime.workspaceRoot,
+					sessions,
+					owner,
+					new Set(running.keys()),
+				),
 				/* What a session may still add to itself. */
 				workspaceModules: await listWorkspaceModules(runtime.workspaceRoot),
-				running: [...running.keys()],
+				running: visible
+					.filter((session) => running.has(session.id))
+					.map((session) => session.id),
 			});
 		},
 	});
@@ -793,7 +860,7 @@ export function createSandboxRoutes(
 		methods: ['POST'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options, {
+				await authorize(runtime, context, options, {
 					allowDisconnected: true,
 					mutation: true,
 				});
@@ -1028,13 +1095,27 @@ export function createSandboxRoutes(
 		methods: ['POST'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options, { mutation: true });
+				await authorize(runtime, context, options, { mutation: true });
 				const value = await body(context.request);
 				const brief = assertBrief(text(value, 'brief', 20_000));
 				const configuration = runtime.configuration();
 				const driver =
 					optionalText(value, 'driver', 64) ?? configuration.driver;
+				const owner = actingOwner(runtime, context);
+				if (!owner)
+					throw new SandboxSetupError(
+						'SANDBOX_NOT_CONNECTED',
+						'Connect an account before starting work.',
+					);
+				const planningEvents: Omit<ChatEntry, 'sequence' | 'at'>[] = [];
 				const plan = await planWork({
+					onEvent: (event) => {
+						if (
+							event.type === 'turn.started' ||
+							event.type === 'turn.completed'
+						)
+							planningEvents.push({ kind: 'event', role: 'planner', event });
+					},
 					brief,
 					driver,
 					registry: runtime.registry(),
@@ -1043,6 +1124,7 @@ export function createSandboxRoutes(
 				});
 
 				const session = await createSession({
+					owner,
 					workspaceRoot: runtime.workspaceRoot,
 					kind: plan.kind,
 					moduleId: plan.moduleId,
@@ -1071,7 +1153,9 @@ export function createSandboxRoutes(
 						)}, classified by the ${plan.classifiedBy === 'agent' ? 'planner' : 'workspace rules'}. ${plan.rationale} Say so in your first message if this is the wrong module.`,
 				});
 
-				const platform = runtime.platform();
+				for (const entry of planningEvents)
+					await appendChatEntry(runtime.workspaceRoot, session, entry);
+				const platform = actingPlatform(runtime, context);
 				if (platform) {
 					await platform
 						.registerSession({
@@ -1107,7 +1191,7 @@ export function createSandboxRoutes(
 		methods: ['GET'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options);
+				await authorize(runtime, context, options);
 				const session = await readSession(
 					runtime.workspaceRoot,
 					sessionIdParam(context),
@@ -1130,7 +1214,7 @@ export function createSandboxRoutes(
 		methods: ['POST'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options, { mutation: true });
+				await authorize(runtime, context, options, { mutation: true });
 				const sessionId = sessionIdParam(context);
 				const value = await body(context.request);
 				const moduleId = text(value, 'moduleId', 120);
@@ -1177,7 +1261,7 @@ export function createSandboxRoutes(
 					}`,
 				});
 				forgetDiffs(sessionId);
-				preview.forget(sessionId);
+				await preview.forget(sessionId);
 				return json(
 					await sessionView(
 						runtime,
@@ -1200,7 +1284,7 @@ export function createSandboxRoutes(
 		methods: ['POST'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options, { mutation: true });
+				await authorize(runtime, context, options, { mutation: true });
 				const sessionId = sessionIdParam(context);
 				const session = await readSession(runtime.workspaceRoot, sessionId);
 				assertNotArchived(session);
@@ -1224,7 +1308,7 @@ export function createSandboxRoutes(
 		methods: ['POST'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options, { mutation: true });
+				await authorize(runtime, context, options, { mutation: true });
 				const session = await readSession(
 					runtime.workspaceRoot,
 					sessionIdParam(context),
@@ -1248,7 +1332,7 @@ export function createSandboxRoutes(
 		methods: ['GET'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options);
+				await authorize(runtime, context, options);
 				const session = await readSession(
 					runtime.workspaceRoot,
 					sessionIdParam(context),
@@ -1287,16 +1371,16 @@ export function createSandboxRoutes(
 			);
 		}
 		channel.controller.abort('stopped');
-		await settled(channel);
+		await waitForTurn(channel);
 	};
 
 	const notifyPlatform = async (
 		session: SandboxSession,
 		state: string,
+		context: Context,
 	): Promise<void> => {
 		if (!session.registeredWithPlatform) return;
-		await runtime
-			.platform()
+		await actingPlatform(runtime, context)
 			?.updateSessionState(session.id, state)
 			.catch(() => undefined);
 	};
@@ -1306,14 +1390,14 @@ export function createSandboxRoutes(
 		methods: ['POST'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options, { mutation: true });
+				await authorize(runtime, context, options, { mutation: true });
 				const sessionId = sessionIdParam(context);
 				const value = await body(context.request);
 				await readSession(runtime.workspaceRoot, sessionId);
 				await stopIfRequested(sessionId, value);
 				const session = await archiveSession(runtime.workspaceRoot, sessionId);
-				preview.forget(sessionId);
-				await notifyPlatform(session, 'archived');
+				await preview.forget(sessionId);
+				await notifyPlatform(session, 'archived', context);
 				return json({ session });
 			} catch (error) {
 				return failure(error);
@@ -1326,11 +1410,35 @@ export function createSandboxRoutes(
 		methods: ['POST'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options, { mutation: true });
+				await authorize(runtime, context, options, { mutation: true });
 				const sessionId = sessionIdParam(context);
 				await body(context.request);
 				const session = await restoreSession(runtime.workspaceRoot, sessionId);
-				await notifyPlatform(session, session.state);
+				await notifyPlatform(session, session.state, context);
+				return json({ session });
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
+	const rejectSandboxSession = new ServerRoute({
+		path: '/sandbox/api/sessions/:id/reject',
+		methods: ['POST'],
+		handler: async (context) => {
+			try {
+				await authorize(runtime, context, options, { mutation: true });
+				await body(context.request);
+				const id = sessionIdParam(context);
+				const current = await readSession(runtime.workspaceRoot, id);
+				assertNotDelivered(current);
+				await stopIfRequested(id, {});
+				const at = current.rejectedAt ?? Date.now();
+				const session = await updateSession(runtime.workspaceRoot, id, {
+					rejectedAt: at,
+					archivedAt: at,
+				});
+				await preview.forget(id);
 				return json({ session });
 			} catch (error) {
 				return failure(error);
@@ -1348,7 +1456,7 @@ export function createSandboxRoutes(
 		methods: ['POST'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options, { mutation: true });
+				await authorize(runtime, context, options, { mutation: true });
 				const sessionId = sessionIdParam(context);
 				const value = await body(context.request);
 				const sequence = value.sequence;
@@ -1381,8 +1489,8 @@ export function createSandboxRoutes(
 					sessionId,
 					sequence,
 				);
-				preview.forget(sessionId);
-				await notifyPlatform(restored, restored.state);
+				await preview.forget(sessionId);
+				await notifyPlatform(restored, restored.state, context);
 				return json(await sessionView(runtime, restored, false));
 			} catch (error) {
 				return failure(error);
@@ -1395,17 +1503,17 @@ export function createSandboxRoutes(
 		methods: ['POST'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options, { mutation: true });
+				await authorize(runtime, context, options, { mutation: true });
 				const sessionId = sessionIdParam(context);
 				const value = await body(context.request);
 				const session = await readSession(runtime.workspaceRoot, sessionId);
 				await stopIfRequested(sessionId, value);
-				preview.forget(sessionId);
+				await preview.forget(sessionId);
 				forgetDiffs(sessionId);
 				await deleteSession(runtime.workspaceRoot, sessionId, {
 					keepTranscript: value.keepTranscript !== false,
 				});
-				await notifyPlatform(session, 'deleted');
+				await notifyPlatform(session, 'deleted', context);
 				return json({
 					deleted: true,
 					keptTranscript: value.keepTranscript !== false,
@@ -1421,22 +1529,26 @@ export function createSandboxRoutes(
 		methods: ['POST'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options, { mutation: true });
+				await authorize(runtime, context, options, { mutation: true });
 				const sessionId = sessionIdParam(context);
 				const value = await body(context.request);
 				assertNotArchived(await readSession(runtime.workspaceRoot, sessionId));
-				const channel = startTurn(sessionId, {
-					message: text(value, 'message', 20_000),
-					...(optionalText(value, 'role', 64)
-						? { role: text(value, 'role', 64) }
-						: {}),
-					...(optionalText(value, 'module', 64)
-						? { module: text(value, 'module', 64) }
-						: {}),
-					...(optionalText(value, 'driver', 64)
-						? { driver: text(value, 'driver', 64) }
-						: {}),
-				});
+				const channel = startTurn(
+					sessionId,
+					{
+						message: text(value, 'message', 20_000),
+						...(optionalText(value, 'role', 64)
+							? { role: text(value, 'role', 64) }
+							: {}),
+						...(optionalText(value, 'module', 64)
+							? { module: text(value, 'module', 64) }
+							: {}),
+						...(optionalText(value, 'driver', 64)
+							? { driver: text(value, 'driver', 64) }
+							: {}),
+					},
+					actingPlatform(runtime, context),
+				);
 				return streamChannel(channel);
 			} catch (error) {
 				return failure(error);
@@ -1448,9 +1560,9 @@ export function createSandboxRoutes(
 	const followTurn = new ServerRoute({
 		path: '/sandbox/api/sessions/:id/turn/stream',
 		methods: ['GET'],
-		handler: (context) => {
+		handler: async (context) => {
 			try {
-				authorize(runtime, context, options);
+				await authorize(runtime, context, options);
 				const channel = running.get(sessionIdParam(context));
 				if (!channel) return json({ running: false });
 				return streamChannel(channel);
@@ -1463,9 +1575,9 @@ export function createSandboxRoutes(
 	const stop = new ServerRoute({
 		path: '/sandbox/api/sessions/:id/stop',
 		methods: ['POST'],
-		handler: (context) => {
+		handler: async (context) => {
 			try {
-				authorize(runtime, context, options, { mutation: true });
+				await authorize(runtime, context, options, { mutation: true });
 				const channel = running.get(sessionIdParam(context));
 				channel?.controller.abort('stopped');
 				return json({ stopped: channel !== undefined });
@@ -1482,7 +1594,7 @@ export function createSandboxRoutes(
 		methods: ['POST'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options, { mutation: true });
+				await authorize(runtime, context, options, { mutation: true });
 				const value = await body(context.request);
 				const session = await updateSession(
 					runtime.workspaceRoot,
@@ -1504,7 +1616,7 @@ export function createSandboxRoutes(
 		methods: ['POST'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options, { mutation: true });
+				await authorize(runtime, context, options, { mutation: true });
 				const session = await readSession(
 					runtime.workspaceRoot,
 					sessionIdParam(context),
@@ -1522,6 +1634,7 @@ export function createSandboxRoutes(
 					module,
 				);
 				await appendChatEntry(runtime.workspaceRoot, approved.session, {
+					decision: 'approved',
 					kind: 'system',
 					role: session.role,
 					module: module.directory,
@@ -1546,7 +1659,7 @@ export function createSandboxRoutes(
 		methods: ['POST'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options, { mutation: true });
+				await authorize(runtime, context, options, { mutation: true });
 				const session = await readSession(
 					runtime.workspaceRoot,
 					sessionIdParam(context),
@@ -1593,6 +1706,7 @@ export function createSandboxRoutes(
 					},
 				);
 				await appendChatEntry(runtime.workspaceRoot, awaitingRevision, {
+					decision: 'changes-requested',
 					kind: 'user',
 					role: SPEC_OWNER_ROLE,
 					module: module.directory,
@@ -1617,7 +1731,7 @@ export function createSandboxRoutes(
 		methods: ['GET'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options);
+				await authorize(runtime, context, options);
 				const session = await readSession(
 					runtime.workspaceRoot,
 					sessionIdParam(context),
@@ -1643,7 +1757,7 @@ export function createSandboxRoutes(
 		methods: ['POST'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options, { mutation: true });
+				await authorize(runtime, context, options, { mutation: true });
 				const sessionId = sessionIdParam(context);
 				const session = await readSession(runtime.workspaceRoot, sessionId);
 				assertNotArchived(session);
@@ -1691,7 +1805,7 @@ export function createSandboxRoutes(
 		methods: ['POST'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options, { mutation: true });
+				await authorize(runtime, context, options, { mutation: true });
 				const value = await body(context.request);
 				const session = await readSession(
 					runtime.workspaceRoot,
@@ -1724,7 +1838,7 @@ export function createSandboxRoutes(
 		methods: ['POST'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options, { mutation: true });
+				await authorize(runtime, context, options, { mutation: true });
 				const session = await readSession(
 					runtime.workspaceRoot,
 					sessionIdParam(context),
@@ -1754,7 +1868,7 @@ export function createSandboxRoutes(
 		methods: ['POST'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options, { mutation: true });
+				await authorize(runtime, context, options, { mutation: true });
 				const value = await body(context.request);
 				const session = await readSession(
 					runtime.workspaceRoot,
@@ -1780,13 +1894,15 @@ export function createSandboxRoutes(
 				if (
 					requested !== null &&
 					(!projectDelivery.targets.includes(requested) ||
-						(requested === 'git-pr' && githubProviderDisabled))
+						((requested === 'git-pr' || requested === 'official-modules') &&
+							githubProviderDisabled))
 				) {
 					throw new SandboxSetupError(
 						'EJECT_TARGET_DISABLED',
-						requested === 'git-pr' && githubProviderDisabled
+						(requested === 'git-pr' || requested === 'official-modules') &&
+						githubProviderDisabled
 							? 'GitHub pull request delivery is disabled in the sandbox configuration.'
-							: `The ${requested} target is not enabled in coreloom.json sandbox.delivery.targets.`,
+							: `The ${requested} target is not enabled in flowdular.json sandbox.delivery.targets.`,
 					);
 				}
 				const delivery =
@@ -1828,7 +1944,8 @@ export function createSandboxRoutes(
 				const availableTargets = await Promise.all(
 					delivery.targets.map(async (id) => ({
 						id,
-						...(id === 'git-pr' && githubProviderDisabled
+						...((id === 'git-pr' || id === 'official-modules') &&
+						githubProviderDisabled
 							? {
 									available: false,
 									reason:
@@ -1908,7 +2025,7 @@ export function createSandboxRoutes(
 								pullRequestUrl: outcome.pullRequestUrl ?? null,
 								compareUrl: outcome.compareUrl ?? null,
 							});
-							const platform = runtime.platform();
+							const platform = actingPlatform(runtime, context);
 							if (platform && session.registeredWithPlatform) {
 								await platform
 									.updateSessionState(session.id, 'accepted')
@@ -1982,7 +2099,7 @@ export function createSandboxRoutes(
 		methods: ['GET'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options);
+				await authorize(runtime, context, options);
 				const session = await readSession(
 					runtime.workspaceRoot,
 					sessionIdParam(context),
@@ -2013,7 +2130,7 @@ export function createSandboxRoutes(
 		methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
 		handler: async (context) => {
 			try {
-				authorize(runtime, context, options);
+				await authorize(runtime, context, options);
 				/* A draft module's own fetch carries no sandbox header, so the
 				   preview mutation boundary is the browser origin checked here.
 				   The worker hop below runs on its own loopback origin. */
@@ -2042,7 +2159,7 @@ export function createSandboxRoutes(
 				   loopback worker. A worker miss deliberately falls through to the
 				   read-only bridge, never to an import in this server process. */
 				const response = await composition.request(context.request);
-				if (response.headers.get('x-coreloom-preview-unmatched') !== '1') {
+				if (response.headers.get('x-flowdular-preview-unmatched') !== '1') {
 					return response;
 				}
 			}
@@ -2055,7 +2172,7 @@ export function createSandboxRoutes(
 	   principal's grant. */
 	const bridgeRequest = async (context: Context): Promise<Response> => {
 		const configuration = runtime.configuration();
-		const platform = runtime.platform();
+		const platform = actingPlatform(runtime, context);
 		if (configuration.previewData !== 'bridge' || !platform) {
 			return json(
 				{
@@ -2104,7 +2221,7 @@ export function createSandboxRoutes(
 			headers: {
 				'content-type': response.contentType,
 				'cache-control': 'no-store',
-				'x-coreloom-bridge': 'platform',
+				'x-flowdular-bridge': 'platform',
 			},
 		});
 	};
@@ -2120,6 +2237,7 @@ export function createSandboxRoutes(
 		removeSandboxAttachment,
 		serveSandboxAttachment,
 		archiveSandboxSession,
+		rejectSandboxSession,
 		restoreSandboxSession,
 		restoreSandboxCheckpoint,
 		removeSandboxSession,

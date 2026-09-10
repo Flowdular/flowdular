@@ -1,0 +1,3 @@
+DROP POLICY IF EXISTS catalog_idempotency_ledger_tenant_policy ON catalog_idempotency_ledger;
+DROP INDEX IF EXISTS catalog_idempotency_ledger_tenant_operation_idx;
+DROP TABLE IF EXISTS catalog_idempotency_ledger;

@@ -44,7 +44,7 @@ describe('security headers middleware', () => {
 			reportOnly: false,
 		});
 		const response = await middleware(context(), async () => {
-			const html = '<script nonce="__CORELOOM_CSP_NONCE__">boot()</script>';
+			const html = '<script nonce="__FLOWDULAR_CSP_NONCE__">boot()</script>';
 			return new Response(html, {
 				headers: {
 					'content-type': 'text/html; charset=utf-8',

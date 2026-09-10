@@ -1,7 +1,12 @@
 # ADR 0002: Durable agent execution
 
-- Status: accepted
+- Status: accepted; the storage paragraph is superseded (2026-09)
 - Date: 2026-08-31
+
+> Superseded in part (2026-09): `agents.core` no longer owns a SQLite file. It
+> holds the same data in the shared platform PostgreSQL database through a
+> provider lease. Everything else here, including the rule that this data is not
+> an integration path, is unchanged.
 
 ## Decision
 

@@ -1,16 +1,19 @@
-import { describe, expect, it } from 'vitest';
-import type { AuthPrincipal } from '@coreloom/module-auth';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import type { AuthPrincipal } from '@flowdular/module-auth';
 import {
-	AUTH_PRINCIPAL_STATE_KEY,
+	createAuthenticationMiddleware,
 	type AuthRuntime,
-} from '@coreloom/module-auth/server';
-import type { AgentRunQueue } from '@coreloom/module-agents/server';
+} from '@flowdular/module-auth/server';
+import type { AgentRunQueue } from '@flowdular/module-agents/server';
 import { AUTOMATIONS_PERMISSIONS } from '../src/acl/permissions.ts';
 import { createAutomationsRoutes } from '../src/api/endpoints.ts';
 import { createAutomationsRuntime } from '../src/server/runtime.ts';
 import { createAutomationTargetRegistry } from '../src/server/targets.ts';
 import { AesGcmSecretVault } from '../src/services/secret-vault.ts';
-import { SqliteAutomationsRepository } from '../src/services/sqlite-repository.ts';
+import {
+	openAutomationsTestDatabase,
+	type AutomationsTestDatabase,
+} from './support/database.ts';
 
 const ORIGIN = 'https://erp.example';
 const SESSION_TOKEN = 'session-token-0001';
@@ -31,36 +34,62 @@ function principal(
 	};
 }
 
-function authRuntime(session: AuthPrincipal | null): AuthRuntime {
-	return {
-		cookie: {
-			name: 'coreloom_session_dev',
-			secure: false,
-			maxAgeSeconds: 3_600,
+/* The real authentication middleware publishes the principal and the session
+   the CSRF guard reads, so these routes are exercised through the same state
+   the platform gives them rather than a hand-placed principal. */
+function authRuntime(
+	sessions: ReadonlyMap<string, AuthPrincipal>,
+): AuthRuntime {
+	const cookie = {
+		name: 'coreloom_session_dev',
+		secure: false,
+		maxAgeSeconds: 3_600,
+	};
+	const service = {
+		resolveSession: async (token: string | null) => {
+			const principal = token === null ? undefined : sessions.get(token);
+			return principal
+				? { principal, csrfToken: CSRF_TOKEN, expiresAt: 0 }
+				: null;
 		},
+		resolveApiToken: async () => null,
+	} as unknown as Awaited<ReturnType<AuthRuntime['service']>>;
+	return {
+		cookie,
 		settings: {
 			allowSignUp: false,
 			emailConfirmation: false,
 			signInProviders: [],
 		},
 		authorizeAgentToolAccess: () => [],
-		middleware: (_context: unknown, next: () => Promise<Response>) => next(),
-		service: () =>
-			({
-				resolveSession: (token: string | null) =>
-					session && token === SESSION_TOKEN
-						? { principal: session, csrfToken: CSRF_TOKEN, expiresAt: 0 }
-						: null,
-			}) as unknown as ReturnType<AuthRuntime['service']>,
+		middleware: createAuthenticationMiddleware(async () => service, cookie),
+		service: async () => service,
 	} as unknown as AuthRuntime;
 }
 
 const ALL_SCOPES = Object.values(AUTOMATIONS_PERMISSIONS);
 
-function fixture(session: AuthPrincipal | null) {
+/* Starting the embedded engine costs about half a second, so the file shares
+   one and empties it between cases. Fixtures inside one test deliberately share
+   the store: they differ only in the principal that calls the routes. */
+let shared: AutomationsTestDatabase;
+
+beforeAll(async () => {
+	shared = await openAutomationsTestDatabase();
+});
+
+afterAll(async () => {
+	await shared?.dispose();
+});
+
+afterEach(async () => {
+	await shared.reset();
+});
+
+async function fixture(session: AuthPrincipal | null) {
 	const runs = new Map<string, { readonly id: string }>();
 	const queue: AgentRunQueue = {
-		listAgents: (tenantId) => [
+		listAgents: async (tenantId) => [
 			{
 				id: tenantId + '-agent',
 				name: 'Workspace agent',
@@ -92,11 +121,11 @@ function fixture(session: AuthPrincipal | null) {
 		kind: 'workflow',
 		contractVersion: 1,
 		available: () => true,
-		list: (context) =>
+		list: async (context) =>
 			context.permissionSnapshot.includes('workflow.allowed')
 				? [{ key: 'party-review', label: 'Party review', revision: 2 }]
 				: [],
-		validate: (targetKey, context) => {
+		validate: async (targetKey, context) => {
 			if (!context.permissionSnapshot.includes('workflow.allowed')) {
 				throw Object.assign(new Error('Workflow permission denied.'), {
 					code: 'WORKFLOW_PERMISSION_DENIED',
@@ -118,13 +147,25 @@ function fixture(session: AuthPrincipal | null) {
 		}),
 	});
 	const runtime = createAutomationsRuntime({
-		databasePath: ':memory:',
+		databases: shared.databases,
 		runQueue: () => queue,
-		repository: new SqliteAutomationsRepository(':memory:'),
 		secretVault: new AesGcmSecretVault(Buffer.alloc(32, 4)),
 		targets,
 	});
-	const routes = createAutomationsRoutes(authRuntime(session), runtime);
+	/* One registered token per principal a case signs in as, so `as` reaches the
+	   routes the same way a second browser session would. */
+	const sessions = new Map<string, AuthPrincipal>();
+	if (session) sessions.set(SESSION_TOKEN, session);
+	const auth = authRuntime(sessions);
+	const tokenFor = (identity: AuthPrincipal): string => {
+		for (const [token, registered] of sessions) {
+			if (registered === identity) return token;
+		}
+		const token = `session-token-${String(sessions.size + 1).padStart(4, '0')}`;
+		sessions.set(token, identity);
+		return token;
+	};
+	const routes = createAutomationsRoutes(auth, runtime);
 	const route = (path: string, method: string) => {
 		const found = routes.find(
 			(candidate) =>
@@ -133,7 +174,7 @@ function fixture(session: AuthPrincipal | null) {
 		if (!found) throw new Error(`Route ${method} ${path} is missing.`);
 		return found;
 	};
-	const invoke = (
+	const invoke = async (
 		path: string,
 		requestPath: string,
 		init: RequestInit & {
@@ -143,18 +184,28 @@ function fixture(session: AuthPrincipal | null) {
 		} = {},
 	) => {
 		const { authenticated = true, params = {}, as, ...requestInit } = init;
-		const request = new Request(ORIGIN + requestPath, requestInit);
-		const state = new Map<string, unknown>();
 		const identity = as ?? session;
+		const headers = new Headers(requestInit.headers);
 		if (authenticated && identity) {
-			state.set(AUTH_PRINCIPAL_STATE_KEY, identity);
+			headers.set(
+				'cookie',
+				`coreloom_session_dev=${as ? tokenFor(as) : SESSION_TOKEN}`,
+			);
+		} else {
+			headers.delete('cookie');
 		}
-		return route(path, requestInit.method ?? 'GET').handler({
+		const request = new Request(ORIGIN + requestPath, {
+			...requestInit,
+			headers,
+		});
+		const context = {
 			request,
 			params,
 			url: new URL(request.url),
-			state,
-		} as never);
+			state: new Map<string, unknown>(),
+		};
+		await auth.middleware(context as never, async () => new Response(null));
+		return route(path, requestInit.method ?? 'GET').handler(context as never);
 	};
 	const call = (path: string, init: Parameters<typeof invoke>[2] = {}) =>
 		invoke(path.split('?')[0]!, path, init);
@@ -180,7 +231,7 @@ function fixture(session: AuthPrincipal | null) {
 
 describe('automations HTTP boundary', () => {
 	it('denies unauthenticated and under-scoped reads', async () => {
-		const anonymous = fixture(null);
+		const anonymous = await fixture(null);
 		expect(
 			(
 				await anonymous.call('/api/automations/schedules', {
@@ -188,7 +239,7 @@ describe('automations HTTP boundary', () => {
 				})
 			).status,
 		).toBe(401);
-		const forbidden = fixture(principal(['agents.runs.read']));
+		const forbidden = await fixture(principal(['agents.runs.read']));
 		expect((await forbidden.call('/api/automations/schedules')).status).toBe(
 			403,
 		);
@@ -198,7 +249,7 @@ describe('automations HTTP boundary', () => {
 	});
 
 	it('denies mutations without manage scope or a valid CSRF token', async () => {
-		const reader = fixture(
+		const reader = await fixture(
 			principal([
 				AUTOMATIONS_PERMISSIONS.read,
 				AUTOMATIONS_PERMISSIONS.triggersRead,
@@ -211,7 +262,7 @@ describe('automations HTTP boundary', () => {
 			(await reader.mutation('/api/automations/triggers', { id: 'x' })).status,
 		).toBe(403);
 
-		const owner = fixture(principal(ALL_SCOPES));
+		const owner = await fixture(principal(ALL_SCOPES));
 		const noCsrf = await owner.mutation(
 			'/api/automations/schedules',
 			{ id: 'x' },
@@ -224,7 +275,7 @@ describe('automations HTTP boundary', () => {
 	});
 
 	it('creates, lists, and deletes a schedule without crossing tenants', async () => {
-		const owner = fixture(principal(ALL_SCOPES));
+		const owner = await fixture(principal(ALL_SCOPES));
 		const created = await owner.mutation('/api/automations/schedules', {
 			agentId: 'tenant-http-agent',
 			label: 'Every ten minutes',
@@ -256,7 +307,7 @@ describe('automations HTTP boundary', () => {
 	});
 
 	it('does not expose agent tool grants through the schedule endpoint', async () => {
-		const owner = fixture(principal(ALL_SCOPES));
+		const owner = await fixture(principal(ALL_SCOPES));
 		const response = await owner.call('/api/automations/schedules');
 		expect(response.status).toBe(200);
 		const body = (await response.json()) as {
@@ -273,7 +324,9 @@ describe('automations HTTP boundary', () => {
 	});
 
 	it('lists and configures workflow targets only from trusted principal scopes', async () => {
-		const authorized = fixture(principal([...ALL_SCOPES, 'workflow.allowed']));
+		const authorized = await fixture(
+			principal([...ALL_SCOPES, 'workflow.allowed']),
+		);
 		const options = (await (
 			await authorized.call('/api/automations/schedules')
 		).json()) as {
@@ -337,7 +390,7 @@ describe('automations HTTP boundary', () => {
 			},
 		});
 
-		const denied = fixture(principal(ALL_SCOPES));
+		const denied = await fixture(principal(ALL_SCOPES));
 		const refused = await denied.mutation('/api/automations/schedules', {
 			targetKind: 'workflow',
 			targetKey: 'party-review',

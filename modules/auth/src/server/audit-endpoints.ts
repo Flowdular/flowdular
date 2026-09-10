@@ -26,13 +26,15 @@ export function createAuditRoutes(
 	const list = new ServerRoute({
 		path: '/api/auth/audit',
 		methods: ['GET'],
-		handler: (context) => {
+		handler: async (context) => {
 			try {
-				const session = requireSession(context, runtime);
+				const session = requireSession(context);
 				requireScope(session, AUTH_SCOPES.auditRead);
 				const search = new URL(context.request.url).searchParams;
 				const limit = Number(search.get('limit') ?? DEFAULT_PAGE);
-				const page = runtime.service().queryAudit({
+				const page = await (
+					await runtime.service()
+				).queryAudit({
 					tenantId: session.principal.tenantId,
 					action: queryString(search, 'action', 64),
 					actor: queryString(search, 'actor', 254),

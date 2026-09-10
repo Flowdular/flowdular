@@ -1,6 +1,6 @@
 import { useMemo } from 'octane';
-import { t } from '@coreloom/client';
-import { Button, FormField } from '@coreloom/ui';
+import { t } from '@flowdular/client';
+import { Button, FormField } from '@flowdular/ui';
 import { cell, createStore, useValue } from 'segment-state';
 import type {
 	AgentProviderConnection,

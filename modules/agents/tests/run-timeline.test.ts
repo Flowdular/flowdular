@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentExecutionEvent } from '@coreloom/harness';
+import type { AgentExecutionEvent } from '@flowdular/harness';
 import {
 	groupRunTimeline,
 	timelineSequence,
@@ -21,7 +21,7 @@ function event(
 }
 
 describe('run timeline presentation', () => {
-	it('folds only contiguous output deltas from the same stream', () => {
+	it('folds only contiguous output deltas from the same stream', async () => {
 		const events = [
 			event(1, 'provider.output.delta', 'Hel', { stream: 'answer-1' }),
 			event(2, 'provider.output.delta', 'lo', { stream: 'answer-1' }),

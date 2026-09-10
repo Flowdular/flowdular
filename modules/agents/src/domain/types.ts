@@ -5,11 +5,11 @@ import type {
 	AgentRunTrigger,
 	AgentUsage,
 	JsonValue,
-} from '@coreloom/harness';
-import type { Actor, UserActor } from '@coreloom/kernel';
+} from '@flowdular/harness';
+import type { Actor, UserActor } from '@flowdular/kernel';
 import type { RunTimelineEntry } from './run-timeline.ts';
 
-export type { AgentRunTrigger } from '@coreloom/harness';
+export type { AgentRunTrigger } from '@flowdular/harness';
 
 export type AgentStatus = 'draft' | 'active' | 'paused' | 'archived';
 
@@ -181,7 +181,7 @@ export interface AgentDefinition {
 	readonly provider: string;
 	readonly model: string;
 	readonly allowedTools: readonly string[];
-	readonly skillIds: readonly string[];
+	readonly procedureIds: readonly string[];
 	readonly maxSteps: number;
 	readonly timeoutMs: number;
 	readonly temperature: number;
@@ -201,7 +201,7 @@ export interface TenantAgentView extends AgentDefinition {
 	readonly ownership: { readonly kind: 'tenant' };
 }
 
-export interface AgentRevisionSkill {
+export interface AgentRevisionProcedure {
 	readonly id: string;
 	readonly key: string;
 	readonly name: string;
@@ -223,7 +223,7 @@ export interface AgentDefinitionRevision {
 	readonly provider: string;
 	readonly model: string;
 	readonly allowedTools: readonly string[];
-	readonly skills: readonly AgentRevisionSkill[];
+	readonly procedures: readonly AgentRevisionProcedure[];
 	readonly maxSteps: number;
 	readonly timeoutMs: number;
 	readonly temperature: number;
@@ -243,7 +243,7 @@ export interface CreateAgentInput {
 	readonly provider: string;
 	readonly model: string;
 	readonly allowedTools: readonly string[];
-	readonly skillIds: readonly string[];
+	readonly procedureIds: readonly string[];
 	readonly maxSteps: number;
 	readonly timeoutMs: number;
 	readonly temperature: number;
@@ -286,7 +286,7 @@ export interface AgentRun {
 	readonly authorizationSubject: UserActor | null;
 	readonly permissionSnapshot: readonly string[];
 	readonly toolGrants: readonly string[];
-	readonly skillSnapshots: readonly AgentSkillSnapshot[];
+	readonly procedureSnapshots: readonly AgentProcedureSnapshot[];
 	readonly usage: AgentUsage | null;
 	readonly failureCode: string | null;
 	readonly failureMessage: string | null;
@@ -297,9 +297,9 @@ export interface AgentRun {
 	readonly leaseExpiresAt: number | null;
 }
 
-export type AgentSkillStatus = 'draft' | 'active' | 'archived';
+export type AgentProcedureStatus = 'draft' | 'active' | 'archived';
 
-export interface AgentSkill {
+export interface AgentProcedure {
 	readonly id: string;
 	readonly tenantId: string;
 	readonly key: string;
@@ -307,7 +307,7 @@ export interface AgentSkill {
 	readonly description: string;
 	readonly instructions: string;
 	readonly requiredTools: readonly string[];
-	readonly status: AgentSkillStatus;
+	readonly status: AgentProcedureStatus;
 	readonly revision: number;
 	readonly createdBy: string;
 	readonly createdAt: number;
@@ -315,7 +315,7 @@ export interface AgentSkill {
 	readonly updatedAt: number;
 }
 
-export interface AgentSkillSnapshot {
+export interface AgentProcedureSnapshot {
 	readonly id: string;
 	readonly key: string;
 	readonly name: string;
@@ -323,18 +323,33 @@ export interface AgentSkillSnapshot {
 	readonly requiredTools: readonly string[];
 }
 
-export interface CreateAgentSkillInput {
+export interface CreateAgentProcedureInput {
 	readonly key: string;
 	readonly name: string;
 	readonly description: string;
 	readonly instructions: string;
 	readonly requiredTools: readonly string[];
-	readonly status: AgentSkillStatus;
+	readonly status: AgentProcedureStatus;
 }
 
-export interface UpdateAgentSkillInput extends CreateAgentSkillInput {
+export interface UpdateAgentProcedureInput extends CreateAgentProcedureInput {
 	readonly expectedRevision: number;
 }
+
+/* Deprecated for the 0.x line. New code uses the procedure names; these keep a
+   consumer that still imports the skill-era spelling compiling. */
+/** @deprecated Use AgentProcedure. */
+export type AgentSkill = AgentProcedure;
+/** @deprecated Use AgentProcedureStatus. */
+export type AgentSkillStatus = AgentProcedureStatus;
+/** @deprecated Use AgentProcedureSnapshot. */
+export type AgentSkillSnapshot = AgentProcedureSnapshot;
+/** @deprecated Use AgentRevisionProcedure. */
+export type AgentRevisionSkill = AgentRevisionProcedure;
+/** @deprecated Use CreateAgentProcedureInput. */
+export type CreateAgentSkillInput = CreateAgentProcedureInput;
+/** @deprecated Use UpdateAgentProcedureInput. */
+export type UpdateAgentSkillInput = UpdateAgentProcedureInput;
 
 export interface AgentRunDetail extends AgentRun {
 	readonly events: readonly AgentExecutionEvent[];

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { ModuleManifest } from '@coreloom/contracts';
+import type { ModuleManifest } from '@flowdular/contracts';
 import { moduleLayoutIssues, validateModules } from '../src/module-validate.ts';
 
 const manifest: ModuleManifest & {
@@ -10,7 +10,7 @@ const manifest: ModuleManifest & {
 } = {
 	schemaVersion: 1,
 	id: 'billing.core',
-	package: '@coreloom/module-billing',
+	package: '@flowdular/module-billing',
 	version: '0.1.0',
 	profile: 'full',
 	capabilities: ['api', 'client', 'translations'],
@@ -24,7 +24,7 @@ const manifest: ModuleManifest & {
 async function moduleRoot(
 	files: Record<string, string>,
 ): Promise<{ root: string; dispose: () => Promise<void> }> {
-	const root = await mkdtemp(join(tmpdir(), 'coreloom-validate-'));
+	const root = await mkdtemp(join(tmpdir(), 'flowdular-validate-'));
 	for (const [path, source] of Object.entries(files)) {
 		await mkdir(join(root, path, '..'), { recursive: true });
 		await writeFile(join(root, path), source);
@@ -34,7 +34,7 @@ async function moduleRoot(
 
 const complete = {
 	'package.json': JSON.stringify({
-		name: '@coreloom/module-billing',
+		name: '@flowdular/module-billing',
 		version: '0.1.0',
 		exports: {
 			'.': './src/index.ts',
@@ -71,7 +71,7 @@ describe('module layout validation', () => {
 		const { root, dispose } = await moduleRoot({
 			...complete,
 			'package.json': JSON.stringify({
-				name: '@coreloom/module-billing',
+				name: '@flowdular/module-billing',
 				version: '0.1.0',
 				exports: { '.': './src/index.ts' },
 			}),
@@ -94,7 +94,7 @@ describe('module layout validation', () => {
 		const { root, dispose } = await moduleRoot({
 			...complete,
 			'package.json': JSON.stringify({
-				name: '@coreloom/module-billing',
+				name: '@flowdular/module-billing',
 				version: '0.2.0',
 				exports: {
 					'.': './src/index.ts',
@@ -116,7 +116,7 @@ describe('module layout validation', () => {
 	});
 
 	it('does not require package metadata from unselected sandbox stubs', async () => {
-		const root = await mkdtemp(join(tmpdir(), 'coreloom-validate-workspace-'));
+		const root = await mkdtemp(join(tmpdir(), 'flowdular-validate-workspace-'));
 		try {
 			for (const [path, source] of Object.entries(complete)) {
 				await mkdir(join(root, 'modules/billing', path, '..'), {
@@ -134,13 +134,13 @@ describe('module layout validation', () => {
 				JSON.stringify({
 					...manifest,
 					id: 'catalog.core',
-					package: '@coreloom/module-catalog',
+					package: '@flowdular/module-catalog',
 					platform: { server: false, client: false },
 				}),
 			);
 
 			const result = await validateModules(
-				{ root, configPath: join(root, 'coreloom.json'), config: {} },
+				{ root, configPath: join(root, 'flowdular.json'), config: {} },
 				{ modules: ['billing.core'] },
 			);
 
@@ -229,7 +229,7 @@ describe('module layout validation', () => {
 		const { root, dispose } = await moduleRoot({
 			...complete,
 			'src/client/index.ts': [
-				"import { Table } from '@coreloom/ui';",
+				"import { Table } from '@flowdular/ui';",
 				'export function View() @{ <Table /> }',
 			].join('\n'),
 		});

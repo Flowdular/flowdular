@@ -1,14 +1,15 @@
 export { createSandboxRoutes, endpoints } from '../api/endpoints.ts';
 export {
 	createSandboxRuntime,
-	sandboxRuntimeOptionsFromEnvironment,
+	sandboxSettingsFromEnvironment,
 } from './runtime.ts';
 export type { SandboxRuntime, SandboxRuntimeOptions } from './runtime.ts';
 export {
+	DatabaseSandboxRepository,
 	directoryFromAuthRuntime,
+	migrateSandboxDatabase,
 	SandboxService,
 	SandboxServiceError,
-	SqliteSandboxRepository,
 } from '../services/index.ts';
 export type {
 	GrantSandboxAccessInput,

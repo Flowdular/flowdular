@@ -1,5 +1,32 @@
-import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
+import {
+	access,
+	cp,
+	mkdir,
+	readFile,
+	readdir,
+	writeFile,
+} from 'node:fs/promises';
+import { dirname, join, relative } from 'node:path';
+
+async function referenceSource(
+	workspaceRoot: string,
+	path: string,
+): Promise<string> {
+	const local = join(workspaceRoot, path);
+	try {
+		await access(local);
+		return local;
+	} catch {
+		/* Use installed SDK references. */
+	}
+	try {
+		const require = createRequire(join(workspaceRoot, 'platform/package.json'));
+		return join(dirname(require.resolve('@flowdular/sdk/package.json')), path);
+	} catch {
+		return local;
+	}
+}
 
 /* A coding agent may only read inside its session workspace. Without the
    platform contracts it would either invent an architecture or stop, so every
@@ -37,7 +64,8 @@ const REFERENCE_SOURCES: readonly {
 	},
 	/* Outside a modules/ path, so the workspace module walker never mistakes
 	   the example for a real module of this session. */
-	{ from: 'modules/catalog', to: 'reference/example-module' },
+	{ from: '.ai/references/catalog', to: 'reference/example-module' },
+	{ from: 'modules/profile', to: 'reference/adapter-module' },
 	{ from: 'modules/auth/src/index.ts', to: 'reference/auth-core/index.ts' },
 	{
 		from: 'modules/auth/src/acl/scopes.ts',
@@ -61,6 +89,7 @@ const REFERENCE_SOURCES: readonly {
 	},
 	{ from: 'AGENTS.md', to: 'reference/AGENTS.md' },
 	{ from: 'docs/design-system.md', to: 'reference/design-system.md' },
+	{ from: 'docs/agent-contract.md', to: 'reference/agent-contract.md' },
 	{ from: '.ai/skills', to: 'reference/skills' },
 ];
 
@@ -80,9 +109,11 @@ not ejected.
 - packages/contracts: module manifest, spec, and blueprint schemas.
 - packages/ui: every shared primitive and the ui-* class list.
 - example-module: a complete module, from ACL to client view, including src/platform.ts. Follow its shape.
+- adapter-module: the same shape on the @flowdular/database provider contract, with an async repository, dialect-explicit migrations and a lease-owning runtime. Follow it when the module stores data.
 - auth-core: the public surface of auth.core, including its scopes, the PlatformServerContext composition contract, and its service API.
 - AGENTS.md and design-system.md: the workspace rules that gates enforce.
-- skills: one directory per skill, each with a SKILL.md. Read the one that matches your role before the first edit.
+- agent-contract.md: detailed lookup reference, not required reading.
+- skills: read only the Task skill named in your Session instruction. Other files are available for later tasks, not for preloading.
 
 ## Skills
 
@@ -96,14 +127,21 @@ export async function listSkills(
 ): Promise<readonly string[]> {
 	let entries: readonly string[];
 	try {
-		entries = await readdir(join(workspaceRoot, SKILLS_DIRECTORY));
+		entries = await readdir(
+			await referenceSource(workspaceRoot, SKILLS_DIRECTORY),
+		);
 	} catch {
 		return [];
 	}
 	const skills: string[] = [];
 	for (const entry of [...entries].sort()) {
 		try {
-			await readFile(join(workspaceRoot, SKILLS_DIRECTORY, entry, 'SKILL.md'));
+			await readFile(
+				await referenceSource(
+					workspaceRoot,
+					join(SKILLS_DIRECTORY, entry, 'SKILL.md'),
+				),
+			);
 			skills.push(entry);
 		} catch {
 			continue;
@@ -119,10 +157,13 @@ export async function materializeReference(
 	for (const source of REFERENCE_SOURCES) {
 		const target = join(sessionWorkspace, source.to);
 		await mkdir(dirname(target), { recursive: true });
-		await cp(join(workspaceRoot, source.from), target, {
+		const from = await referenceSource(workspaceRoot, source.from);
+		await cp(from, target, {
 			recursive: true,
 			filter: (path) =>
-				!path.split('/').some((segment) => EXCLUDED.has(segment)),
+				!relative(from, path)
+					.split('/')
+					.some((segment) => EXCLUDED.has(segment)),
 		}).catch(() => undefined);
 	}
 	const skills = await listSkills(workspaceRoot);
@@ -141,6 +182,7 @@ export async function writeAgentPointer(
 	sessionWorkspace: string,
 	fileName: 'CLAUDE.md' | 'AGENTS.md',
 	roleName: string,
+	skill?: string | null,
 ): Promise<void> {
 	await writeFile(
 		join(sessionWorkspace, fileName),
@@ -149,7 +191,9 @@ export async function writeAgentPointer(
 			'',
 			`You work here as ${roleName}. The role instruction you were started with is authoritative.`,
 			'',
-			'- reference/README.md lists the platform contracts, the example module and the skills. Read the skill for your role before the first edit.',
+			skill
+				? `- Read only reference/skills/${skill}/SKILL.md for this task. Do not load other skills or the whole reference catalog.`
+				: '- No matching task skill is installed. Do not load unrelated skills.',
 			'- Write only inside your module directory under modules/, in the paths the instruction allows. Everything under reference/ is read-only.',
 			'- End your final message with the HANDOFF line the instruction describes.',
 			'',

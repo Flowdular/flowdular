@@ -1,3 +1,0 @@
--- SQLite cannot drop a column added by 0014 without rebuilding auth_audit.
--- The reverse is a table rebuild that copies every row without actor_kind and
--- actor_run_id; nothing executes this file.

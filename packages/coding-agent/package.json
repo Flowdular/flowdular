@@ -1,7 +1,6 @@
 {
-	"name": "@coreloom/coding-agent",
+	"name": "@flowdular/coding-agent",
 	"version": "0.1.0",
-	"private": true,
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts"
@@ -12,13 +11,34 @@
 		"sync-roles": "node --experimental-transform-types --disable-warning=ExperimentalWarning scripts/sync-roles.ts"
 	},
 	"dependencies": {
-		"@coreloom/ai-provider": "workspace:*",
+		"@flowdular/ai-provider": "workspace:*",
 		"ai": "7.0.85",
 		"yaml": "2.9.0"
 	},
 	"devDependencies": {
+		"@flowdular/database-testing": "workspace:*",
 		"@types/node": "24.13.3",
 		"typescript": "5.9.3",
-		"vitest": "4.1.10"
-	}
+		"vitest": "4.1.11"
+	},
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Flowdular/flowdular.git",
+		"directory": "packages/coding-agent"
+	},
+	"files": [
+		"src",
+		"schemas",
+		"dist",
+		"bin",
+		"public",
+		"module.json",
+		"migrations",
+		"translations",
+		"spec",
+		"README.md",
+		"LICENSE"
+	],
+	"private": true
 }

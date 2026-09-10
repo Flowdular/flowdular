@@ -1,9 +1,12 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
 	registerModuleTranslations,
 	setActiveLocale,
 	t,
-} from '@coreloom/client/i18n';
+} from '@flowdular/client/i18n';
 import translationsEn from '../translations/en.json';
 import translationsPl from '../translations/pl.json';
 import {
@@ -16,7 +19,7 @@ import {
 import { AGENT_CONTEXT_VARIABLES } from '../src/domain/context-variables.ts';
 import type {
 	AgentProviderKind,
-	AgentSkillStatus,
+	AgentProcedureStatus,
 	AgentStatus,
 } from '../src/domain/types.ts';
 
@@ -30,7 +33,7 @@ const PROVIDER_KINDS: Readonly<Record<AgentProviderKind, true>> = {
 };
 
 const DEFINITION_STATES: Readonly<
-	Record<AgentStatus | AgentSkillStatus | 'disabled', true>
+	Record<AgentStatus | AgentProcedureStatus | 'disabled', true>
 > = {
 	draft: true,
 	active: true,
@@ -47,7 +50,7 @@ const MODEL_STATES: Readonly<Record<ModelReadinessState, true>> = {
 };
 
 describe('agents translations', () => {
-	it('registers lifecycle actions under the agents namespace', () => {
+	it('registers lifecycle actions under the agents namespace', async () => {
 		setActiveLocale('en');
 		registerModuleTranslations([
 			{
@@ -61,13 +64,13 @@ describe('agents translations', () => {
 		);
 	});
 
-	it('ships the same keys in English and Polish', () => {
+	it('ships the same keys in English and Polish', async () => {
 		expect(Object.keys(translationsPl).sort()).toEqual(
 			Object.keys(translationsEn).sort(),
 		);
 	});
 
-	it('translates the variable picker and every context variable label', () => {
+	it('translates the variable picker and every context variable label', async () => {
 		registerModuleTranslations([
 			{
 				moduleId: 'agents.core',
@@ -90,7 +93,7 @@ describe('agents translations', () => {
 		setActiveLocale('en');
 	});
 
-	it('covers each dynamic cadence key and formats timestamps in the active locale', () => {
+	it('covers each dynamic cadence key and formats timestamps in the active locale', async () => {
 		setActiveLocale('pl');
 		for (const status of RUN_STATUSES) {
 			expect(t('agents.runStatus.' + status)).not.toMatch(/^agents\./);
@@ -108,7 +111,7 @@ describe('agents translations', () => {
 		setActiveLocale('en');
 	});
 
-	it('covers every dynamic provider, lifecycle, and timeline key', () => {
+	it('covers every dynamic provider, lifecycle, and timeline key', async () => {
 		registerModuleTranslations([
 			{
 				moduleId: 'agents.core',
@@ -137,7 +140,7 @@ describe('agents translations', () => {
 				const key = 'agents.status.' + state;
 				expect(t(key), `${locale}: ${key}`).not.toBe(key);
 			}
-			for (const entity of ['definitions', 'skills']) {
+			for (const entity of ['definitions', 'procedures']) {
 				for (const action of ['archive', 'delete']) {
 					for (const part of ['title', 'confirm', 'description']) {
 						const key = `agents.${entity}.lifecycle.${action}.${part}`;
@@ -151,5 +154,34 @@ describe('agents translations', () => {
 			}
 		}
 		setActiveLocale('en');
+	});
+
+	/* The 0.8 rename moved every skills.* key. A call site left on an old key
+	   renders the raw key instead of copy, and nothing else would catch it. */
+	it('resolves every literal key the client asks for', async () => {
+		const clientDirectory = fileURLToPath(
+			new URL('../src/client/', import.meta.url),
+		);
+		const keys = new Set<string>();
+		for (const entry of readdirSync(clientDirectory)) {
+			if (!entry.endsWith('.tsrx') && !entry.endsWith('.ts')) continue;
+			const source = readFileSync(join(clientDirectory, entry), 'utf8');
+			for (const match of source.matchAll(
+				/\bt\(\s*'(agents\.[a-zA-Z0-9.]+)'/g,
+			)) {
+				keys.add(match[1]!);
+			}
+		}
+		expect(keys.size).toBeGreaterThan(50);
+
+		for (const locale of ['en', 'pl']) {
+			setActiveLocale(locale);
+			for (const key of keys) {
+				/* A trailing dot is a prefix the client concatenates at run time; the
+				   dynamic cases above already cover those. */
+				if (key.endsWith('.')) continue;
+				expect(t(key), `${locale}: ${key}`).not.toBe(key);
+			}
+		}
 	});
 });

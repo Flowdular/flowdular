@@ -1,6 +1,6 @@
 {
 	"blueprint": "core-extend@1.0.0",
-	"package": "@coreloom/module-auth",
+	"package": "@flowdular/module-auth",
 	"consumersMigrated": [
 		"modules/agents/src/platform.ts",
 		"packages/cli/src/module-sync.ts"

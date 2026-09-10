@@ -17,7 +17,7 @@ steps:
       - 'migrations/000N_*.down.sql'
   - id: mirror
     role: backend-engineer
-    action: Append X_MIGRATION_00N to src/services/migration.ts with bytes identical to the .up.sql file and append its ordered { id, statements } entry to migrations. The repository keeps one runModuleMigrations call and no per-column guard.
+    action: Append X_MIGRATION_00N to src/services/migration.ts with bytes identical to the .up.sql file and append its ordered { id, sql, inspectExisting } entry to databaseMigrations, with sql.postgresql set to the constant and inspectExisting built from postgresTenantTableState. Migrations run from the runtime migration lease, never from the repository.
     inputs:
       - 'migrations/000N_*.up.sql'
     outputs:
@@ -28,7 +28,7 @@ steps:
     inputs:
       - 'SQL draft'
     outputs:
-      - 'src/services/sqlite-repository.ts'
+      - 'src/services/database-repository.ts'
       - 'src/domain/types.ts'
       - 'src/services/*-service.ts'
       - 'src/api/endpoints.ts'
@@ -38,7 +38,7 @@ steps:
       - 'format'
   - id: prove
     role: backend-engineer
-    action: Add migration tests proving SQL byte parity, fresh apply, safe adoption of a populated pre-ledger schema, and a clean second repository construction. Add module tests for the new rule and tenant isolation; inspect migration status against a copy of the existing database before applying.
+    action: Add migration tests proving SQL byte parity, fresh apply, safe adoption of a populated pre-ledger schema, and a clean second start. Add module tests for the new rule and tenant isolation; inspect migration status against a copy of the existing database before applying.
     inputs:
       - 'migrations/000N_*.up.sql'
     outputs:
@@ -48,7 +48,7 @@ steps:
       - 'tests'
   - id: land
     role: orchestrator
-    action: 'Sandbox: eject. Direct path: coreloom migration verify, pnpm verify, then a pull request stating that the schema applies on next boot.'
+    action: 'Sandbox: eject. Direct path: flowdular migration verify, pnpm verify, then a pull request stating that the schema applies on next boot.'
     inputs:
       - 'diff'
     outputs:

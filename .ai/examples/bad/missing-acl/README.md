@@ -20,4 +20,4 @@ const list = defineEndpoint({
 });
 ```
 
-Reference: `modules/catalog/src/api/endpoints.ts`.
+Reference: `.ai/references/catalog/src/api/endpoints.ts`.

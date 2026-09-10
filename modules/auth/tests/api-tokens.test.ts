@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { AuthService } from '../src/services/auth-service.ts';
-import { SqliteAuthRepository } from '../src/services/sqlite-repository.ts';
+import {
+	closeAuthTestDatabases,
+	createAuthTestDatabase,
+	type AuthTestDatabase,
+} from './support/database.ts';
 
 const fastHash = {
 	cost: 2 ** 12,
@@ -10,8 +14,22 @@ const fastHash = {
 	maxMemory: 32 * 1024 * 1024,
 } as const;
 
+const open = new Set<AuthTestDatabase>();
+
+afterEach(async () => {
+	await Promise.all([...open].map((database) => database.dispose()));
+	open.clear();
+});
+
+afterAll(closeAuthTestDatabases);
+
+/* Every case here runs against an embedded PostgreSQL, whose first boot alone
+   outlasts the default per-test timeout. */
+
 async function ownerService(now: () => number = () => 1_000) {
-	const service = new AuthService(new SqliteAuthRepository(':memory:'), {
+	const database = await createAuthTestDatabase();
+	open.add(database);
+	const service = new AuthService(database.repository, {
 		passwordHash: fastHash,
 		now,
 	});
@@ -28,7 +46,7 @@ async function ownerService(now: () => number = () => 1_000) {
 describe('API tokens', () => {
 	it('returns the raw token once and stores only safe metadata', async () => {
 		const { service, principal } = await ownerService();
-		const issued = service.issueApiToken({
+		const issued = await service.issueApiToken({
 			tenantId: principal.tenantId,
 			accountId: principal.accountId,
 			label: 'Local sandbox',
@@ -39,13 +57,13 @@ describe('API tokens', () => {
 		expect(issued.token.startsWith('clat_')).toBe(true);
 		expect(issued.record.prefix.length).toBeLessThan(issued.token.length);
 		expect(
-			JSON.stringify(service.listApiTokens(principal.tenantId)),
+			JSON.stringify(await service.listApiTokens(principal.tenantId)),
 		).not.toContain(issued.token);
 	});
 
 	it('narrows requested scopes to the live membership', async () => {
 		const { service, principal } = await ownerService();
-		const issued = service.issueApiToken({
+		const issued = await service.issueApiToken({
 			tenantId: principal.tenantId,
 			accountId: principal.accountId,
 			label: 'Narrowed',
@@ -58,7 +76,7 @@ describe('API tokens', () => {
 
 	it('refuses a token that carries no held scope', async () => {
 		const { service, principal } = await ownerService();
-		expect(() =>
+		await expect(
 			service.issueApiToken({
 				tenantId: principal.tenantId,
 				accountId: principal.accountId,
@@ -67,13 +85,13 @@ describe('API tokens', () => {
 				expiresAt: null,
 				createdBy: principal.accountId,
 			}),
-		).toThrow(/None of the requested scopes/);
+		).rejects.toThrow(/None of the requested scopes/);
 	});
 
 	it('resolves a principal for a live token and denies revoked or expired ones', async () => {
 		let now = 1_000;
 		const { service, principal } = await ownerService(() => now);
-		const issued = service.issueApiToken({
+		const issued = await service.issueApiToken({
 			tenantId: principal.tenantId,
 			accountId: principal.accountId,
 			label: 'Bridge',
@@ -81,32 +99,32 @@ describe('API tokens', () => {
 			expiresAt: now + 60_000,
 			createdBy: principal.accountId,
 		});
-		const resolved = service.resolveApiToken(issued.token);
+		const resolved = await service.resolveApiToken(issued.token);
 		expect(resolved?.accountId).toBe(principal.accountId);
 		expect(resolved?.scopes).toEqual(['parties.records.read']);
 
 		now += 60_001;
-		expect(service.resolveApiToken(issued.token)).toBeNull();
+		expect(await service.resolveApiToken(issued.token)).toBeNull();
 
 		now = 1_000;
-		service.revokeApiToken(
+		await service.revokeApiToken(
 			principal.tenantId,
 			issued.record.id,
 			principal.accountId,
 		);
-		expect(service.resolveApiToken(issued.token)).toBeNull();
+		expect(await service.resolveApiToken(issued.token)).toBeNull();
 	});
 
 	it('rejects malformed credentials without a database lookup', async () => {
 		const { service } = await ownerService();
-		expect(service.resolveApiToken(null)).toBeNull();
-		expect(service.resolveApiToken('not-a-token')).toBeNull();
-		expect(service.resolveApiToken('clat_short')).toBeNull();
+		expect(await service.resolveApiToken(null)).toBeNull();
+		expect(await service.resolveApiToken('not-a-token')).toBeNull();
+		expect(await service.resolveApiToken('clat_short')).toBeNull();
 	});
 
 	it('keeps tokens scoped to their workspace', async () => {
 		const { service, principal } = await ownerService();
-		const issued = service.issueApiToken({
+		const issued = await service.issueApiToken({
 			tenantId: principal.tenantId,
 			accountId: principal.accountId,
 			label: 'Scoped',
@@ -114,14 +132,14 @@ describe('API tokens', () => {
 			expiresAt: null,
 			createdBy: principal.accountId,
 		});
-		expect(service.listApiTokens('another-tenant')).toHaveLength(0);
-		expect(() =>
+		expect(await service.listApiTokens('another-tenant')).toHaveLength(0);
+		await expect(
 			service.revokeApiToken(
 				'another-tenant',
 				issued.record.id,
 				principal.accountId,
 			),
-		).toThrow(/does not exist/);
+		).rejects.toThrow(/does not exist/);
 	});
 });
 
@@ -138,7 +156,7 @@ describe('self-service password change', () => {
 			newPassword: 'another correct horse battery',
 			keepSessionToken: second.token,
 		});
-		expect(service.resolveSession(second.token)).not.toBeNull();
+		expect(await service.resolveSession(second.token)).not.toBeNull();
 		await expect(
 			service.signIn({
 				email: 'owner@example.com',

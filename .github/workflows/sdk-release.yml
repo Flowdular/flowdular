@@ -1,0 +1,33 @@
+name: SDK release artifacts
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'packages/**'
+      - 'modules/**'
+      - 'scripts/**'
+      - '.github/workflows/sdk-release.yml'
+permissions:
+  contents: read
+jobs:
+  consumer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/setup@v2
+        with:
+          runtime: node@24
+          cache: true
+          require-lockfile: true
+      - run: pnpm verify
+      - run: pnpm release:pack
+      - run: pnpm release:smoke
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flowdular-sdk
+          path: |
+            release-artifacts/sdk/*.tgz
+            release-artifacts/sdk/sdk.json
+          include-hidden-files: true
+          if-no-files-found: error

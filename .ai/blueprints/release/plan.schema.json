@@ -30,7 +30,7 @@
 					"pnpm build",
 					"pnpm audit --prod --audit-level high",
 					"sandbox gates",
-					"pnpm --filter @coreloom/platform typecheck"
+					"pnpm --filter @flowdular/platform typecheck"
 				]
 			},
 			"uniqueItems": true

@@ -1,17 +1,33 @@
-import { describe, expect, it } from 'vitest';
-import type { AuthPrincipal } from '@coreloom/module-auth';
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+} from 'vitest';
+import type { AuthPrincipal } from '@flowdular/module-auth';
 import {
 	AUTH_PRINCIPAL_STATE_KEY,
+	AUTH_SESSION_STATE_KEY,
 	type AuthRuntime,
 	type PlatformServerContext,
-} from '@coreloom/module-auth/server';
-import type { AgentTool } from '@coreloom/harness';
+} from '@flowdular/module-auth/server';
+import type { AgentTool } from '@flowdular/harness';
 import {
 	createPlatformAgentRegistry,
 	createPlatformCapabilityRegistry,
-} from '@coreloom/kernel';
-import { createServerComposition } from '../src/platform.ts';
+} from '@flowdular/kernel';
+import {
+	createServerComposition,
+	type AgentServerComposition,
+} from '../src/platform.ts';
 import { defineAgent } from '../src/server/define-agent.ts';
+import {
+	openAgentsTestDatabase,
+	type AgentsTestDatabase,
+} from './support/database.ts';
 
 const ORIGIN = 'https://erp.example';
 const SESSION_TOKEN = 'session-token-0001';
@@ -84,15 +100,63 @@ const moduleAgent = defineAgent({
 	},
 });
 
+let database: AgentsTestDatabase;
+const compositions: AgentServerComposition[] = [];
+
+beforeAll(async () => {
+	database = await openAgentsTestDatabase();
+});
+
+afterEach(async () => {
+	/* start() is fire and forget, so the chain it kicked off gets a turn to
+	   finish before the runtime that owns its worker tears down. */
+	for (let turn = 0; turn < 5; turn += 1) {
+		await new Promise((resolve) => setTimeout(resolve, 0));
+	}
+	for (const opened of compositions.splice(0)) await opened.dispose?.();
+});
+
+beforeEach(async () => {
+	await database.truncate();
+});
+
+afterAll(async () => {
+	await database.dispose();
+});
+
+/* start() hands the module agent catalog and the worker to a promise chain, so
+   a case that asserts on either waits for the effect, not for the call that
+   scheduled it. */
+function waitFor(
+	predicate: () => boolean | Promise<boolean>,
+	timeoutMs = 5_000,
+): Promise<void> {
+	const startedAt = Date.now();
+	return new Promise<void>((resolve, reject) => {
+		const tick = async () => {
+			if (await predicate()) return resolve();
+			if (Date.now() - startedAt > timeoutMs) {
+				return reject(new Error('Condition was not met in time.'));
+			}
+			setTimeout(() => void tick(), 10);
+		};
+		void tick();
+	});
+}
+
+function sessionState(principal: AuthPrincipal) {
+	return { principal, csrfToken: CSRF_TOKEN, expiresAt: 0 };
+}
+
 function composition(session: AuthPrincipal | null) {
 	const registered: AgentTool[] = [];
 	const context = {
 		environment: {
-			CL_AGENTS_DATABASE: ':memory:',
-			CL_AGENT_CREDENTIAL_KEY: Buffer.alloc(32, 7).toString('base64'),
-			CL_AGENT_RUN_GRANT_KEY: Buffer.alloc(32, 8).toString('base64'),
+			FD_AGENT_CREDENTIAL_KEY: Buffer.alloc(32, 7).toString('base64'),
+			FD_AGENT_RUN_GRANT_KEY: Buffer.alloc(32, 8).toString('base64'),
 		},
 		workspaceRoot: process.cwd(),
+		databases: database.databases,
 		auth: authRuntime(session),
 		agentTools: {
 			register: (tools: readonly AgentTool[]) => registered.push(...tools),
@@ -104,6 +168,7 @@ function composition(session: AuthPrincipal | null) {
 	const composed = createServerComposition(
 		context as unknown as PlatformServerContext,
 	);
+	compositions.push(composed);
 	const route = (path: string, method: string) => {
 		const found = composed.routes.find(
 			(candidate) =>
@@ -126,6 +191,16 @@ function composition(session: AuthPrincipal | null) {
 		};
 		if (authenticated && session) {
 			context.state.set(AUTH_PRINCIPAL_STATE_KEY, session);
+		}
+		/* The authentication middleware resolves the cookie once per request and
+		   leaves the session in state; the mutation guard reads it from there,
+		   never from the runtime. */
+		if (
+			session &&
+			(requestInit.headers as Record<string, string> | undefined)?.cookie ===
+				`coreloom_session_dev=${SESSION_TOKEN}`
+		) {
+			context.state.set(AUTH_SESSION_STATE_KEY, sessionState(session));
 		}
 		return route(path.split('?')[0]!, requestInit.method ?? 'GET').handler(
 			context as never,
@@ -169,7 +244,7 @@ async function activeAgentId(
 		provider: 'local-simulation',
 		model: 'deterministic-v1',
 		allowedTools: [],
-		skillIds: [],
+		procedureIds: [],
 		maxSteps: 2,
 		timeoutMs: 5_000,
 		temperature: 0,
@@ -311,10 +386,14 @@ describe('agents HTTP boundary', () => {
 			}),
 			params: {},
 			url: new URL(ORIGIN + '/api/agents/delete'),
-			state: new Map([
+			state: new Map<string, unknown>([
 				[
 					AUTH_PRINCIPAL_STATE_KEY,
 					principal(ALL_SCOPES, 'account-b', 'tenant-other'),
+				],
+				[
+					AUTH_SESSION_STATE_KEY,
+					sessionState(principal(ALL_SCOPES, 'account-b', 'tenant-other')),
 				],
 			]),
 		} as never);
@@ -386,6 +465,14 @@ describe('agents HTTP boundary', () => {
 		expect(await queued.json()).toMatchObject({
 			run: { trigger: 'playground', status: 'queued' },
 		});
+		await waitFor(
+			async () =>
+				(
+					(await (await call('/api/agent-runs/worker')).json()) as {
+						worker: { online: boolean };
+					}
+				).worker.online,
+		);
 		const worker = await call('/api/agent-runs/worker');
 		expect(await worker.json()).toMatchObject({
 			worker: { online: true, concurrency: expect.any(Number) },
@@ -427,7 +514,10 @@ describe('agents HTTP boundary', () => {
 			request,
 			params: {},
 			url: new URL(request.url),
-			state: new Map([[AUTH_PRINCIPAL_STATE_KEY, other]]),
+			state: new Map<string, unknown>([
+				[AUTH_PRINCIPAL_STATE_KEY, other],
+				[AUTH_SESSION_STATE_KEY, sessionState(other)],
+			]),
 		} as never);
 		expect(denied.status).toBe(403);
 		expect(await denied.json()).toMatchObject({
@@ -460,6 +550,14 @@ describe('agents HTTP boundary', () => {
 		context.agentTools.register([readOnlyTool]);
 		context.agentDefinitions.register([moduleAgent]);
 		composed.start();
+		await waitFor(
+			async () =>
+				(
+					(await (await call('/api/agents')).json()) as {
+						moduleAgents: readonly unknown[];
+					}
+				).moduleAgents.length === 1,
+		);
 
 		const before = (await (await call('/api/agents')).json()) as {
 			agents: unknown[];
@@ -543,6 +641,14 @@ describe('agents HTTP boundary', () => {
 		owner.context.agentTools.register([readOnlyTool]);
 		owner.context.agentDefinitions.register([moduleAgent]);
 		owner.composed.start();
+		await waitFor(
+			async () =>
+				(
+					(await (await owner.call('/api/agents')).json()) as {
+						moduleAgents: readonly unknown[];
+					}
+				).moduleAgents.length === 1,
+		);
 		const bindingBody = {
 			agentId: moduleAgent.id,
 			provider: 'local-simulation',
@@ -629,7 +735,7 @@ describe('agents HTTP boundary', () => {
 			provider: 'local-simulation',
 			model: 'deterministic-v1',
 			allowedTools: [],
-			skillIds: [],
+			procedureIds: [],
 			maxSteps: 1,
 			timeoutMs: 1_000,
 			temperature: 0,
@@ -640,5 +746,176 @@ describe('agents HTTP boundary', () => {
 		expect(await edit.json()).toMatchObject({
 			error: { code: 'MODULE_AGENT_READ_ONLY' },
 		});
+	});
+});
+
+/* The 0.8 rename keeps the skill-named HTTP surface alive. These cases pin the
+   part that would silently break a deployed client: both contracts must reach
+   the same rows, never a parallel set of them. */
+describe('procedure compatibility surface', () => {
+	const body = {
+		key: 'refund-review',
+		name: 'Refund review',
+		description: 'How an agent reviews a refund request.',
+		instructions: 'Check the order, the amount, and the refund window.',
+		requiredTools: [],
+		status: 'active',
+	};
+
+	it('returns one record under both spellings from either route', async () => {
+		const owner = composition(principal(ALL_SCOPES));
+
+		const created = await owner.mutation('/api/agent-procedures', body);
+		expect(created.status).toBe(201);
+		const payload = (await created.json()) as {
+			procedure: { id: string; name: string };
+			skill: { id: string; name: string };
+		};
+		expect(payload.skill).toEqual(payload.procedure);
+
+		const workspace = (await (await owner.call('/api/agents')).json()) as {
+			procedures: readonly { id: string }[];
+			skills: readonly { id: string }[];
+		};
+		expect(workspace.procedures).toHaveLength(1);
+		expect(workspace.skills).toEqual(workspace.procedures);
+		expect(workspace.procedures[0]!.id).toBe(payload.procedure.id);
+	});
+
+	it('updates one resource when the two routes are mixed', async () => {
+		const owner = composition(principal(ALL_SCOPES));
+
+		const created = await owner.mutation('/api/agent-skills', body);
+		expect(created.status).toBe(201);
+		const { skill } = (await created.json()) as {
+			skill: { id: string; revision: number };
+		};
+
+		const updated = await owner.mutation('/api/agent-procedures/update', {
+			...body,
+			id: skill.id,
+			name: 'Refund review v2',
+			expectedRevision: skill.revision,
+		});
+		expect(updated.status).toBe(200);
+
+		const workspace = (await (await owner.call('/api/agents')).json()) as {
+			procedures: readonly { id: string; name: string }[];
+		};
+		expect(workspace.procedures).toHaveLength(1);
+		expect(workspace.procedures[0]).toMatchObject({
+			id: skill.id,
+			name: 'Refund review v2',
+		});
+	});
+
+	it('rejects a stale revision the same way on both routes', async () => {
+		const owner = composition(principal(ALL_SCOPES));
+		const created = await owner.mutation('/api/agent-procedures', body);
+		const { procedure } = (await created.json()) as {
+			procedure: { id: string; revision: number };
+		};
+
+		const stale = {
+			...body,
+			id: procedure.id,
+			expectedRevision: procedure.revision + 5,
+		};
+		const canonical = await owner.mutation(
+			'/api/agent-procedures/update',
+			stale,
+		);
+		const deprecated = await owner.mutation('/api/agent-skills/update', stale);
+
+		expect(canonical.status).toBe(deprecated.status);
+		expect(await canonical.json()).toEqual(await deprecated.json());
+	});
+
+	it('denies both routes without the manage scope', async () => {
+		const reader = composition(principal(['agents.skills.read']));
+
+		expect((await reader.mutation('/api/agent-procedures', body)).status).toBe(
+			403,
+		);
+		expect((await reader.mutation('/api/agent-skills', body)).status).toBe(403);
+	});
+
+	/* An older client still sends skillIds on the agent payload. */
+	it('accepts the deprecated agent configuration field', async () => {
+		const owner = composition(principal(ALL_SCOPES));
+		const created = await owner.mutation('/api/agent-procedures', body);
+		const { procedure } = (await created.json()) as {
+			procedure: { id: string };
+		};
+
+		const agent = await owner.mutation('/api/agents', {
+			key: 'legacy-client-agent',
+			name: 'Legacy client agent',
+			description: 'Created by a client that still sends skillIds.',
+			instructions: 'Follow the attached procedure.',
+			provider: 'local-simulation',
+			model: 'deterministic-v1',
+			allowedTools: [],
+			skillIds: [procedure.id],
+			maxSteps: 2,
+			timeoutMs: 5_000,
+			temperature: 0,
+			status: 'draft',
+		});
+
+		expect(agent.status).toBe(201);
+		expect(await agent.json()).toMatchObject({
+			agent: { procedureIds: [procedure.id] },
+		});
+	});
+
+	it('returns the deprecated agent and run projections beside the canonical ones', async () => {
+		const owner = composition(principal(ALL_SCOPES));
+		const created = await owner.mutation('/api/agent-procedures', body);
+		const { procedure } = (await created.json()) as {
+			procedure: { id: string };
+		};
+
+		const agent = await owner.mutation('/api/agents', {
+			key: 'projection-agent',
+			name: 'Projection agent',
+			description: 'Checks that both spellings ship in one payload.',
+			instructions: 'Follow the attached procedure.',
+			provider: 'local-simulation',
+			model: 'deterministic-v1',
+			allowedTools: [],
+			procedureIds: [procedure.id],
+			maxSteps: 2,
+			timeoutMs: 5_000,
+			temperature: 0,
+			status: 'active',
+		});
+		const createdAgent = (await agent.json()) as {
+			agent: { procedureIds: readonly string[]; skillIds: readonly string[] };
+		};
+		expect(createdAgent.agent.skillIds).toEqual(
+			createdAgent.agent.procedureIds,
+		);
+
+		const workspace = (await (await owner.call('/api/agents')).json()) as {
+			agents: readonly {
+				procedureIds: readonly string[];
+				skillIds: readonly string[];
+			}[];
+		};
+		const listed = workspace.agents.find(
+			(candidate) => candidate.procedureIds.length === 1,
+		)!;
+		expect(listed.skillIds).toEqual([procedure.id]);
+
+		const runs = (await (await owner.call('/api/agent-runs')).json()) as {
+			runs: readonly {
+				procedureSnapshots: readonly unknown[];
+				skillSnapshots: readonly unknown[];
+			}[];
+		};
+		for (const run of runs.runs) {
+			expect(run.skillSnapshots).toEqual(run.procedureSnapshots);
+		}
 	});
 });

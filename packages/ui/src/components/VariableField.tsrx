@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'octane';
-import { tokenizeTemplate, type VariableDefinition } from '@coreloom/contracts';
+import {
+	tokenizeTemplate,
+	type VariableDefinition,
+} from '@flowdular/contracts';
 import { Icon } from '../icons/Icon.tsrx';
 import {
 	activeQuery,

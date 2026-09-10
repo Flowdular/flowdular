@@ -1,5 +1,5 @@
 import type { ApiTokenRecord, IssuedApiToken } from '../../domain/types.ts';
-import { t } from '@coreloom/client/i18n';
+import { t } from '@flowdular/client/i18n';
 
 interface ErrorEnvelope {
 	readonly error?: { readonly message?: string };

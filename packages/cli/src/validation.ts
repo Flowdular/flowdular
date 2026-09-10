@@ -9,16 +9,22 @@ import {
 	blueprintSchema,
 	cliExtensionSchema,
 	moduleSchema,
+	moduleCatalogSchema,
+	moduleArtifactSchema,
 	moduleSpecSchema,
 	platformSpecSchema,
 	projectSchema,
 	type ValidationIssue,
-} from '@coreloom/contracts';
+} from '@flowdular/contracts';
 
 const ajv = new Ajv2020({ allErrors: true, strict: true });
 const validators = {
+	application: ajv.compile(projectSchema.properties.application),
+	web: ajv.compile(projectSchema.properties.web),
 	project: ajv.compile(projectSchema),
 	module: ajv.compile(moduleSchema),
+	moduleCatalog: ajv.compile(moduleCatalogSchema),
+	moduleArtifact: ajv.compile(moduleArtifactSchema),
 	moduleSpec: ajv.compile(moduleSpecSchema),
 	blueprint: ajv.compile(blueprintSchema),
 	cliExtension: ajv.compile(cliExtensionSchema),
@@ -73,11 +79,12 @@ export async function validateFile(
 }
 
 /* Dependencies, build output, and tool state are never workspace sources.
-   Sandbox session workspaces live under .coreloom and must not register as
+   Sandbox session workspaces live under .flowdular and must not register as
    modules of the host workspace. Other dot directories such as .ai hold
    blueprints and are searched. */
 const SKIPPED_DIRECTORIES = new Set([
 	'.git',
+	'.flowdular',
 	'.coreloom',
 	'node_modules',
 	'dist',

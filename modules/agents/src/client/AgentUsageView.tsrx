@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'octane';
-import { t } from '@coreloom/client';
+import { t } from '@flowdular/client';
 import {
 	Alert,
 	Button,
@@ -10,7 +10,7 @@ import {
 	TableCard,
 	Tag,
 	type TableColumn,
-} from '@coreloom/ui';
+} from '@flowdular/ui';
 import { useValue } from 'segment-state';
 import type { AgentUsageAgent, AgentUsageDay } from '../domain/types.ts';
 import { loadAgentUsage } from './api.ts';
