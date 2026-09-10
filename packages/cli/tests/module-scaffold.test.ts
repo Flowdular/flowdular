@@ -1,5 +1,4 @@
 import {
-	chmod,
 	mkdir,
 	mkdtemp,
 	readdir,
@@ -285,16 +284,21 @@ describe('module scaffolding', () => {
 		try {
 			await mkdir(translations, { recursive: true });
 			await writeFile(join(translations, 'pl.json'), '{}\n');
-			await chmod(translations, 0o555);
+			// A directory at a planned file path rejects writes even as root in CI.
+			const blockedFile = join(translations, 'en.json');
+			await mkdir(blockedFile);
 			await expect(
 				scaffoldModule(ws, { id: 'inventory.core', specPath, apply: true }),
-			).rejects.toThrow();
+			).rejects.toMatchObject({ code: 'EEXIST' });
 			expect(await listTree(join(ws.root, 'modules/inventory'))).toEqual([
 				'spec/module.yaml',
 				'translations/pl.json',
 			]);
 
-			await chmod(translations, 0o755);
+			expect(await read(ws.root, 'spec/module.yaml')).toBe(specification);
+			expect(await read(ws.root, 'translations/pl.json')).toBe('{}\n');
+			expect(await readdir(blockedFile)).toEqual([]);
+			await rm(blockedFile, { recursive: true });
 			const retry = await scaffoldModule(ws, {
 				id: 'inventory.core',
 				specPath,
@@ -305,7 +309,6 @@ describe('module scaffolding', () => {
 				'src/platform.ts',
 			);
 		} finally {
-			await chmod(translations, 0o755).catch(() => undefined);
 			await rm(ws.root, { recursive: true, force: true });
 		}
 	});
