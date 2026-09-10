@@ -6,7 +6,8 @@
 	"scripts": {
 		"dev": "node scripts/dev.mjs",
 		"preview": "octane-preview --host 127.0.0.1 --port 4310 --strictPort",
-		"typecheck": "tsrx-tsc --noEmit -p tsconfig.json"
+		"typecheck": "tsrx-tsc --noEmit -p tsconfig.json",
+		"build": "node scripts/build.mjs"
 	},
 	"dependencies": {
 		"@app/module-example": "workspace:*",

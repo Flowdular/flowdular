@@ -1,4 +1,4 @@
-import { cp, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { access, cp, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -76,7 +76,30 @@ function run(args, cwd = consumer) {
 		throw new Error(`Consumer failed: pnpm ${args.join(' ')} (${consumer})`);
 }
 console.log(`Clean SDK consumer: ${consumer}`);
+for (const path of [
+	'.ai/README.md',
+	'.ai/guides/application-development.md',
+	'.ai/agents/reviewer.md',
+	'.ai/skills/auto-review/SKILL.md',
+	'.ai/references/catalog/module.json',
+	'.agents/skills/module-new/SKILL.md',
+	'.claude/skills/auto-review/SKILL.md',
+	'AGENTS.md',
+	'CLAUDE.md',
+	'rulesync.jsonc',
+	'docs/agent-contract.md',
+])
+	await access(join(consumer, path));
+try {
+	await access(join(consumer, '.claude/settings.local.json'));
+	throw new Error('Generator copied personal Claude settings.');
+} catch (error) {
+	if (error.code !== 'ENOENT') throw error;
+}
 run(['install', '--ignore-scripts']);
+// Only the fixture's tarball overrides were appended outside the formatter.
+run(['exec', 'prettier', '--write', 'pnpm-workspace.yaml']);
+run(['rules:check']);
 run(['flowdular', 'doctor', '--json']);
 run(['flowdular', 'blueprint', 'validate', '--all']);
 run(['flowdular', 'setup', 'quick', '--json']);
@@ -143,8 +166,8 @@ if (process.argv[3]) {
 	}
 	run(['flowdular', 'module', 'validate', '--locked']);
 }
-run(['typecheck']);
-run(['test']);
+run(['verify']);
+run(['build']);
 const boundaries = spawnSync(
 	process.execPath,
 	[join(root, 'scripts/smoke-sdk-boundaries.mjs'), consumer],

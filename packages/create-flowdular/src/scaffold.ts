@@ -6,7 +6,7 @@ import {
 	renderEnvironmentFile,
 	type GeneratedSecrets,
 } from './secrets.ts';
-import { copyTemplate, templateRoot } from './template.ts';
+import { copyTemplate, templateRoot, templatesRoot } from './template.ts';
 
 export class ScaffoldError extends Error {
 	constructor(message: string) {
@@ -80,7 +80,11 @@ export async function scaffold(
 			`${directory} is not empty. Pass --force to scaffold into it anyway.`,
 		);
 	}
-	const files = await copyTemplate(template, directory);
+	const agentTemplate = resolve(templatesRoot(), '..', 'agent-template');
+	await assertTemplateExists(agentTemplate, 'agent guidance');
+	const files =
+		(await copyTemplate(template, directory)) +
+		(await copyTemplate(agentTemplate, directory));
 	await rewritePackageName(directory, name);
 	await writeFile(
 		join(directory, '.env'),

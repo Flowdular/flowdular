@@ -27,6 +27,18 @@ install. Data lives under `.flowdular/data`.
 | `flowdular.json`  | Enabled modules and locales, owned by the CLI                |
 | `.env`            | The keys generated for this app. Never commit it             |
 
+## Work with coding agents
+
+`AGENTS.md` and `CLAUDE.md` introduce the application contract. `.ai` contains the
+editable rules, skills, role prompts, policies, blueprints and reference module.
+Codex and Claude Code discover generated skills in `.agents/skills` and
+`.claude/skills`. Supporting guides are in `docs`.
+
+After editing `.ai/rules` or `.ai/skills`, run `pnpm rules:generate`.
+`pnpm rules:check` detects drift and also runs as part of `pnpm verify`.
+Extend local modules using the published `@flowdular/sdk` imports. Installed
+SDK source is reference material and must not be edited in `node_modules`.
+
 ## Build your first module
 
 ```bash

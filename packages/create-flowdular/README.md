@@ -48,6 +48,17 @@ npx create-flowdular@latest my-app
 
 The generator installs dependencies and initializes Git by default. Local development uses PGlite, an embedded PostgreSQL implementation, so the default setup needs no external database server.
 
+## Ready for coding agents
+
+Every app includes `.ai` rules, skills, role prompts, blueprints, policies and
+reference examples, plus `AGENTS.md`, `CLAUDE.md`, `.agents/skills` and
+`.claude/skills`. These files are bundled with the generator and are available
+with `--no-install`. Personal agent settings and credentials are never copied.
+
+Edit `.ai/rules` or `.ai/skills`, then run `pnpm rules:generate`. `pnpm verify`
+checks that the generated instructions are in sync. The instructions explain
+where to find the installed SDK and how to extend the application's modules.
+
 ## Options
 
 Pass generator flags after `--` when using `npm create`:

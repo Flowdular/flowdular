@@ -23,8 +23,8 @@
 	},
 	"locales": ["en", "pl"],
 	"agent": {
-		"policy": "platform/node_modules/@flowdular/sdk/.ai/policies/capabilities.yaml",
-		"modelRouting": "platform/node_modules/@flowdular/sdk/.ai/policies/model-routing.yaml",
-		"blueprints": "platform/node_modules/@flowdular/sdk/.ai/blueprints"
+		"policy": ".ai/policies/capabilities.yaml",
+		"modelRouting": ".ai/policies/model-routing.yaml",
+		"blueprints": ".ai/blueprints"
 	}
 }

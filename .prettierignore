@@ -19,3 +19,6 @@ release-artifacts/
 
 # Generated from a reviewed official-module artifact.
 .ai/references/
+
+# Generated from canonical agent guidance at generator build time.
+packages/create-flowdular/agent-template/

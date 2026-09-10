@@ -1,6 +1,6 @@
 {
 	"name": "create-flowdular",
-	"version": "0.2.4",
+	"version": "0.2.5",
 	"type": "module",
 	"description": "Scaffold a Flowdular application: the platform, one example module and the secrets a fresh install needs.",
 	"license": "MIT",
@@ -25,7 +25,8 @@
 		"dist",
 		"template",
 		"README.md",
-		"assets"
+		"assets",
+		"agent-template"
 	],
 	"engines": {
 		"node": ">=22.22.2"
@@ -34,11 +35,11 @@
 		"access": "public"
 	},
 	"scripts": {
-		"dev": "tsx src/bin.ts",
-		"build": "esbuild src/bin.ts --bundle --platform=node --format=esm --outfile=dist/bin.js --banner:js=\"#!/usr/bin/env node\"",
+		"dev": "node ../../scripts/generator-agent-template.mjs && tsx src/bin.ts",
+		"build": "node ../../scripts/generator-agent-template.mjs && esbuild src/bin.ts --bundle --platform=node --format=esm --outfile=dist/bin.js --banner:js=\"#!/usr/bin/env node\"",
 		"prepublishOnly": "pnpm build",
 		"typecheck": "tsc --noEmit -p tsconfig.json",
-		"test": "vitest run"
+		"test": "node ../../scripts/generator-agent-template.mjs && vitest run"
 	},
 	"devDependencies": {
 		"@types/node": "24.13.3",

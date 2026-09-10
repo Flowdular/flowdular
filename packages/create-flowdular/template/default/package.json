@@ -16,11 +16,15 @@
 		"flowdular": "flowdular",
 		"cl": "flowdular",
 		"doctor": "flowdular doctor",
-		"verify": "pnpm typecheck && pnpm test && flowdular module validate && pnpm format:check"
+		"verify": "pnpm rules:check && pnpm typecheck && pnpm test && flowdular module validate && pnpm format:check",
+		"rules:generate": "rulesync generate",
+		"rules:check": "rulesync generate --check",
+		"build": "flowdular module sync --apply && pnpm --filter @app/platform build"
 	},
 	"devDependencies": {
 		"@tsrx/prettier-plugin": "0.3.120",
 		"prettier": "3.6.2",
-		"flowdular": "0.2.3"
+		"flowdular": "0.2.3",
+		"rulesync": "16.21.0"
 	}
 }

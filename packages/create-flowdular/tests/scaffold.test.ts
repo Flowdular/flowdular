@@ -56,12 +56,22 @@ describe('scaffold', () => {
 			[...platform.modules.enabled, 'example.core'].sort(),
 		);
 		expect(project.agent).toEqual({
-			policy:
-				'platform/node_modules/@flowdular/sdk/.ai/policies/capabilities.yaml',
-			modelRouting:
-				'platform/node_modules/@flowdular/sdk/.ai/policies/model-routing.yaml',
-			blueprints: 'platform/node_modules/@flowdular/sdk/.ai/blueprints',
+			policy: '.ai/policies/capabilities.yaml',
+			modelRouting: '.ai/policies/model-routing.yaml',
+			blueprints: '.ai/blueprints',
 		});
+		expect(
+			await exists(join(result.directory, '.claude/settings.local.json')),
+		).toBe(false);
+		expect(
+			await readFile(join(result.directory, 'AGENTS.md'), 'utf8'),
+		).toContain('.ai/guides/application-development.md');
+		expect(
+			await readFile(
+				join(result.directory, '.ai/skills/module-new/SKILL.md'),
+				'utf8',
+			),
+		).toContain("from '@flowdular/sdk/server'");
 		expect(manifest.scripts.dev).toContain('platform/scripts/dev.mjs');
 		expect(
 			await readFile(join(result.directory, 'platform/index.html'), 'utf8'),
@@ -77,6 +87,21 @@ describe('scaffold', () => {
 			'flowdular.json',
 			'tsconfig.base.json',
 			'README.md',
+			'.ai/README.md',
+			'.ai/guides/application-development.md',
+			'.ai/skills/auto-review/SKILL.md',
+			'.ai/agents/reviewer.md',
+			'.ai/rules/flowdular.md',
+			'.ai/references/catalog/module.json',
+			'.agents/skills/module-new/SKILL.md',
+			'.claude/skills/auto-review/SKILL.md',
+			'AGENTS.md',
+			'CLAUDE.md',
+			'rulesync.jsonc',
+			'docs/agent-contract.md',
+			'docs/design-system.md',
+			'docs/adr/0006-agentic-workflows.md',
+			'docs/adr/0007-module-owned-agents.md',
 			'platform/package.json',
 			'platform/octane.config.ts',
 			'platform/src/App.tsrx',
