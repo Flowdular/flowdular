@@ -1,3 +1,4 @@
+import { materializeSdkReference } from './sdk-reference.ts';
 import { createRequire } from 'node:module';
 import {
 	access,
@@ -104,6 +105,7 @@ Read-only copies of the platform contracts this session must implement against.
 Never edit anything in this directory: it is not part of the module and it is
 not ejected.
 
+- sdk: complete installed SDK package and module sources, with package.json exports. Read these real files instead of following node_modules symlinks outside the workspace. Present when the host application has an installed SDK.
 - packages/server: defineEndpoint, HTTP helpers, and the endpoint identity contract.
 - packages/client: the client contribution contract (createClientContribution, ModuleClientContext), shell slots, and shell state.
 - packages/contracts: module manifest, spec, and blueprint schemas.
@@ -166,6 +168,7 @@ export async function materializeReference(
 					.some((segment) => EXCLUDED.has(segment)),
 		}).catch(() => undefined);
 	}
+	await materializeSdkReference(workspaceRoot, sessionWorkspace);
 	const skills = await listSkills(workspaceRoot);
 	await writeFile(
 		join(sessionWorkspace, 'reference/README.md'),
@@ -183,6 +186,7 @@ export async function writeAgentPointer(
 	fileName: 'CLAUDE.md' | 'AGENTS.md',
 	roleName: string,
 	skill?: string | null,
+	hasSdk = false,
 ): Promise<void> {
 	await writeFile(
 		join(sessionWorkspace, fileName),
@@ -194,6 +198,11 @@ export async function writeAgentPointer(
 			skill
 				? `- Read only reference/skills/${skill}/SKILL.md for this task. Do not load other skills or the whole reference catalog.`
 				: '- No matching task skill is installed. Do not load unrelated skills.',
+			...(hasSdk
+				? [
+						'- Read installed SDK sources at reference/sdk; use its package.json exports to locate an API. Do not follow external node_modules symlinks or scan the whole SDK.',
+					]
+				: []),
 			'- Write only inside your module directory under modules/, in the paths the instruction allows. Everything under reference/ is read-only.',
 			'- End your final message with the HANDOFF line the instruction describes.',
 			'',

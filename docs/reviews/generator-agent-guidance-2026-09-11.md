@@ -64,7 +64,14 @@ explicit without inventing new roles or granting wider sandbox write paths.
   now includes docs/adr, with scaffold assertions for the relevant documents.
 - Final `pnpm verify` and `pnpm build`: passed
   (`/tmp/generator-agents-verify-final.log`, `/tmp/generator-platform-build.log`).
-- Final packed-consumer smoke: pending.
+- Packed application verify passed, then build exposed that the starter did not
+  honor the isolated-build environment contract. Its configuration now uses the
+  existing build flag for temporary PGlite, skips runtime activation and releases
+  build resources. Production startup keeps its original adapter checks.
+- Final repeated `pnpm verify` and `pnpm build`: passed
+  (`/tmp/sdk-reference-verify.log`, `/tmp/sdk-reference-build.log`).
+- Final packed-consumer smoke after that fix: passed
+  (`/tmp/sdk-reference-smoke.log`), including a generated app verify, isolated
+  production build, application startup and independently installed sandbox.
 
-No actionable code finding. Source review verdict: pass; packed release validation
-remains pending before publication.
+No actionable code finding. Final review verdict: pass. Source checks and packed release validation passed.

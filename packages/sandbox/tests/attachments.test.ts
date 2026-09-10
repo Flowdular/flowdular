@@ -1,6 +1,7 @@
 import {
 	access,
 	mkdtemp,
+	mkdir,
 	readFile,
 	rm,
 	symlink,
@@ -668,12 +669,17 @@ describe('attachment routes', () => {
 		).toMatchObject({ session: { id: sessionId } });
 	});
 
-	it('prepends the attachment note to the turn the driver receives', async () => {
+	it('prepares attachments and SDK sources before an existing session driver starts', async () => {
 		const root = await workspace();
 		let driverAttachment: string | undefined;
+		let driverSdk: string | undefined;
 		const sink = {
 			prompt: '',
 			inspect: async (workspace: string) => {
+				driverSdk = await readFile(
+					join(workspace, 'reference/sdk/packages/database/src/index.ts'),
+					'utf8',
+				);
 				driverAttachment = await readFile(
 					join(workspace, 'reference/attachments/concept.md'),
 					'utf8',
@@ -682,6 +688,20 @@ describe('attachment routes', () => {
 		};
 		const runtime = fakeRuntime(root, capturingDriver(sink));
 		const call = api(runtime);
+		const sdk = join(root, 'platform/node_modules/@flowdular/sdk');
+		await mkdir(join(sdk, 'packages/database/src'), { recursive: true });
+		await writeFile(
+			join(sdk, 'package.json'),
+			JSON.stringify({
+				name: '@flowdular/sdk',
+				version: '1.0.0',
+				exports: { './package.json': './package.json' },
+			}),
+		);
+		await writeFile(
+			join(sdk, 'packages/database/src/index.ts'),
+			'export const installedSdk = true;',
+		);
 		const session = await sessionFor(root);
 		await call('POST', `/sandbox/api/sessions/${session.id}/attachments`, {
 			body: {
@@ -692,6 +712,12 @@ describe('attachment routes', () => {
 
 		const paths = sessionPaths(root, session.id, session.moduleSuffix);
 		await rm(paths.workspaceAttachments, { recursive: true, force: true });
+		// Simulate a saved session from before SDK reference support.
+		await rm(join(paths.workspace, 'reference/sdk'), {
+			recursive: true,
+			force: true,
+		});
+
 		const response = await call(
 			'POST',
 			`/sandbox/api/sessions/${session.id}/turn`,
@@ -709,6 +735,10 @@ describe('attachment routes', () => {
 		expect(sink.prompt).toContain('reference/attachments/');
 		expect(sink.prompt).toContain('concept.md (file)');
 		expect(driverAttachment).toBe('# concept\n');
+		expect(driverSdk).toBe('export const installedSdk = true;');
+		expect(
+			await readFile(join(paths.workspace, 'AGENTS.md'), 'utf8'),
+		).toContain('reference/sdk');
 		expect(sink.prompt).toContain('Build the screen like the concept.');
 
 		const chat = await readChat(root, session);

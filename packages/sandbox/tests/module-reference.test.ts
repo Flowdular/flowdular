@@ -1,7 +1,21 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+	mkdtemp,
+	mkdir,
+	readFile,
+	stat,
+	rm,
+	symlink,
+	writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
+import {
+	resolveReadableInsideWorkspace,
+	resolveWritableInsideWorkspace,
+} from '@flowdular/coding-agent';
+import { materializeSdkReference } from '../src/server/sdk-reference.ts';
+import { guardAgentPaths } from '../src/server/path-guard.ts';
 import { materializeReference } from '../src/server/reference.ts';
 
 it('prepares the offline catalog example without a bundled catalog module', async () => {
@@ -62,6 +76,114 @@ it('loads SDK reference files and skills when the consumer has no core sources',
 				'utf8',
 			),
 		).toContain('final source');
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+it('makes the installed SDK readable without opening external symlinks or allowing writes', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'flowdular-sdk-snapshot-'));
+	try {
+		const sdk = join(root, 'store/sdk');
+		const app = join(root, 'app');
+		const session = join(app, 'session/workspace');
+		await mkdir(join(sdk, 'packages/database/src'), { recursive: true });
+		await mkdir(join(app, 'platform/node_modules/@flowdular'), {
+			recursive: true,
+		});
+		await mkdir(session, { recursive: true });
+		await symlink(sdk, join(app, 'platform/node_modules/@flowdular/sdk'));
+		await symlink(sdk, join(session, 'sdk-link'));
+		await writeFile(
+			join(sdk, 'package.json'),
+			JSON.stringify({
+				name: '@flowdular/sdk',
+				version: '1.0.0',
+				exports: { './package.json': './package.json' },
+			}),
+		);
+		const source = join(sdk, 'packages/database/src/provider.ts');
+		await writeFile(source, 'export const provider = "installed";');
+		await mkdir(join(sdk, 'packages/database/node_modules'), {
+			recursive: true,
+		});
+		await writeFile(join(sdk, 'packages/database/.env'), 'private');
+		await writeFile(
+			join(sdk, 'packages/database/node_modules/private.ts'),
+			'private',
+		);
+		await symlink(source, join(sdk, 'packages/database/src/external.ts'));
+		await materializeReference(app, session);
+		const relative = 'reference/sdk/packages/database/src/provider.ts';
+		const snapshot = await resolveReadableInsideWorkspace(session, relative);
+		expect(await readFile(snapshot, 'utf8')).toBe(
+			'export const provider = "installed";',
+		);
+		await expect(
+			resolveReadableInsideWorkspace(
+				session,
+				'sdk-link/packages/database/src/provider.ts',
+			),
+		).rejects.toThrow();
+		await expect(
+			resolveWritableInsideWorkspace(session, relative, ['modules/example/**']),
+		).rejects.toMatchObject({ code: 'PATH_NOT_ALLOWED' });
+		for (const excluded of [
+			'.env',
+			'node_modules/private.ts',
+			'src/external.ts',
+		]) {
+			await expect(
+				readFile(join(session, 'reference/sdk/packages/database', excluded)),
+			).rejects.toMatchObject({ code: 'ENOENT' });
+		}
+		const copiedAt = (await stat(snapshot)).mtimeMs;
+		await materializeSdkReference(app, session);
+		expect((await stat(snapshot)).mtimeMs).toBe(copiedAt);
+		const guard = await guardAgentPaths({
+			workspace: session,
+			sessionRoot: join(app, 'session'),
+			allowedPaths: ['modules/example/**'],
+		});
+		await writeFile(snapshot, 'changed');
+		expect(
+			(await guard.verify()).violations.map((entry) => entry.path),
+		).toContain(relative);
+		expect(await readFile(snapshot, 'utf8')).toBe(
+			'export const provider = "installed";',
+		);
+		expect(await readFile(source, 'utf8')).toBe(
+			'export const provider = "installed";',
+		);
+		await rm(source);
+		await writeFile(
+			join(sdk, 'packages/database/src/new-api.ts'),
+			'export const version = 2;',
+		);
+		await writeFile(
+			join(sdk, 'package.json'),
+			JSON.stringify({
+				name: '@flowdular/sdk',
+				version: '2.0.0',
+				exports: { './package.json': './package.json' },
+			}),
+		);
+		await materializeSdkReference(app, session);
+		await expect(readFile(snapshot)).rejects.toMatchObject({ code: 'ENOENT' });
+		expect(
+			await readFile(
+				join(session, 'reference/sdk/packages/database/src/new-api.ts'),
+				'utf8',
+			),
+		).toContain('version = 2');
+		await rm(join(session, 'reference/sdk'), { recursive: true });
+		await materializeSdkReference(app, session);
+		expect(
+			await readFile(
+				join(session, 'reference/sdk/packages/database/src/new-api.ts'),
+				'utf8',
+			),
+		).toContain('version = 2');
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}

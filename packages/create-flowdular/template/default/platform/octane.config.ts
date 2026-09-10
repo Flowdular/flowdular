@@ -34,9 +34,13 @@ function checkedRoutes<T extends Parameters<typeof assertRouteConflicts>[0]>(
 
 const SHELL = ['App', '/src/App.tsrx'] as const;
 const workspaceRoot = resolve(import.meta.dirname, '..');
+const building = process.env.FD_INTERNAL_BUILD === 'true';
 
 const databases = createPlatformDatabaseProvider(
-	databaseProviderConfigFromEnvironment(process.env, workspaceRoot),
+	databaseProviderConfigFromEnvironment(
+		building ? { ...process.env, NODE_ENV: 'development' } : process.env,
+		workspaceRoot,
+	),
 );
 const configuredApplicationPath = validateApplicationPath(
 	process.env.FD_APPLICATION_PATH ?? applicationBasePath,
@@ -68,9 +72,11 @@ agentDefinitions.seal();
 
 /* check() proves the runtime role holds neither SUPERUSER nor BYPASSRLS before
    any module reads a row. */
-await databases.check();
-for (const composition of moduleCompositions) await composition.prepare?.();
-for (const composition of moduleCompositions) composition.start?.();
+if (!building) {
+	await databases.check();
+	for (const composition of moduleCompositions) await composition.prepare?.();
+	for (const composition of moduleCompositions) composition.start?.();
+}
 
 let stopping = false;
 const shutdown = async () => {
@@ -83,8 +89,13 @@ const shutdown = async () => {
 	await authRuntime.dispose();
 	await databases.dispose();
 };
-process.once('SIGINT', () => void shutdown());
-process.once('SIGTERM', () => void shutdown());
+// Bundling needs route declarations without background work or retained leases.
+if (building) {
+	await shutdown();
+} else {
+	process.once('SIGINT', () => void shutdown());
+	process.once('SIGTERM', () => void shutdown());
+}
 
 export default defineConfig({
 	middlewares: [authRuntime.middleware],

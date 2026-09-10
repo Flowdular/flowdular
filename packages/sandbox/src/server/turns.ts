@@ -1,3 +1,4 @@
+import { materializeSdkReference } from './sdk-reference.ts';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -583,6 +584,10 @@ export async function* runTurn(
 		...session,
 		attachments: await materializeAttachments(context.workspaceRoot, session),
 	};
+	const hasSdk = await materializeSdkReference(
+		context.workspaceRoot,
+		paths.workspace,
+	);
 	const attachmentNote = attachmentInstruction(session.attachments);
 
 	yield await appendChatEntry(context.workspaceRoot, session, {
@@ -678,6 +683,11 @@ export async function* runTurn(
 							)}. This turn is yours in modules/${active.directory} only; another specialist takes the turn for the others. Each module is a project of this pnpm workspace, so a draft that imports another draft resolves the session copy.`,
 					]
 				: []),
+			...(hasSdk
+				? [
+						'Read the actual installed SDK under reference/sdk/packages and reference/sdk/modules. Its package.json maps public exports. These are readable copies inside the workspace; do not follow external SDK symlinks. Search only the API needed for the current task.',
+					]
+				: []),
 			'reference/ is read-only. Consult only the code and references needed for this task; do not preload its catalog.',
 			'Other module.json files under modules/ describe the dependency graph. Only the draft module directories have sources you may change.',
 			...(active.kind === 'edit'
@@ -692,6 +702,7 @@ export async function* runTurn(
 		driverId === 'claude-code' ? 'CLAUDE.md' : 'AGENTS.md',
 		role.name,
 		skill,
+		hasSdk,
 	);
 
 	const history = historyFrom(await readChat(context.workspaceRoot, session));
