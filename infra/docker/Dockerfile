@@ -5,6 +5,11 @@ ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 WORKDIR /workspace
 
+# Delivery tests create real repositories; the slim Node image omits git.
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends git \
+	&& rm -rf /var/lib/apt/lists/*
+
 RUN corepack enable && corepack prepare pnpm@11.17.0 --activate
 
 COPY . .
