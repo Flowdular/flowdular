@@ -96,7 +96,8 @@ try {
 } catch (error) {
 	if (error.code !== 'ENOENT') throw error;
 }
-run(['install', '--ignore-scripts']);
+// Exercise the same build-script policy as a normal generated-app install.
+run(['install']);
 // Only the fixture's tarball overrides were appended outside the formatter.
 run(['exec', 'prettier', '--write', 'pnpm-workspace.yaml']);
 run(['rules:check']);

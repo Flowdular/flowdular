@@ -1,6 +1,6 @@
 {
 	"name": "@flowdular/sandbox",
-	"version": "0.2.8",
+	"version": "0.2.9",
 	"description": "The Flowdular sandbox: chat a change, build it behind the gates, preview it in the real application, deliver it as code.",
 	"license": "MIT",
 	"homepage": "https://github.com/flowdular/flowdular/tree/main/packages/sandbox#readme",
@@ -68,8 +68,9 @@
 		"@octanejs/seo": "0.0.38",
 		"@octanejs/vite-plugin": "0.1.51",
 		"octane": "0.1.51",
-		"segment-state": "0.2.0",
-		"vite": "8.2.2"
+		"segment-state": "0.2.1",
+		"vite": "8.2.2",
+		"yaml": "2.9.0"
 	},
 	"devDependencies": {
 		"@flowdular/database-testing": "workspace:*",

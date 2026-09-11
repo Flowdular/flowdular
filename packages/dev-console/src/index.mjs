@@ -1,4 +1,5 @@
 import { createLogger } from 'vite';
+import { renderBrandHeader } from './brand.mjs';
 
 /* Developer-facing startup output, shared by every Flowdular launcher. One
    presentation for the platform and the sandbox: the same brand block, the same
@@ -80,7 +81,7 @@ export function statusLine(theme, label, value, tone = 'text') {
    `[label, value, tone]` triples, so each application names its own facts. */
 export function printReady({ title, subtitle, lines, theme }) {
 	console.log('');
-	console.log(`  ${theme.brand(title)}  ${theme.muted(subtitle)}`);
+	console.log(renderBrandHeader({ title, subtitle, color: theme.enabled }));
 	for (const [label, value, tone = 'text'] of lines) {
 		if (value === null || value === undefined) continue;
 		console.log(statusLine(theme, label, value, tone));

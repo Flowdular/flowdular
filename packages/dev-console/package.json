@@ -3,7 +3,8 @@
 	"version": "0.1.0",
 	"type": "module",
 	"exports": {
-		".": "./src/index.mjs"
+		".": "./src/index.mjs",
+		"./brand": "./src/brand.mjs"
 	},
 	"scripts": {
 		"test": "vitest run --passWithNoTests"

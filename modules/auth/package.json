@@ -27,7 +27,7 @@
 		"@octanejs/seo": "0.0.38",
 		"octane": "0.1.51",
 		"pg": "8.23.0",
-		"segment-state": "0.2.0",
+		"segment-state": "0.2.1",
 		"yaml": "2.9.0"
 	},
 	"devDependencies": {

@@ -24,7 +24,7 @@
 	"devDependencies": {
 		"@tsrx/prettier-plugin": "0.3.120",
 		"prettier": "3.6.2",
-		"flowdular": "0.2.3",
+		"flowdular": "0.2.4",
 		"rulesync": "16.21.0"
 	}
 }

@@ -14,3 +14,4 @@ minimumReleaseAgeExclude:
   - '@octanejs/vite-plugin@0.1.51'
   - octane@0.1.51
   - '@octanejs/tanstack-store@0.0.48'
+  - segment-state@0.2.1

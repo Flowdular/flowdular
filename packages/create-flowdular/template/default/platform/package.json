@@ -15,7 +15,7 @@
 		"@octanejs/vite-plugin": "0.1.51",
 		"octane": "0.1.51",
 		"pg": "8.23.0",
-		"@flowdular/sdk": "0.2.3"
+		"@flowdular/sdk": "0.2.4"
 	},
 	"devDependencies": {
 		"@octanejs/app-core": "0.0.47",

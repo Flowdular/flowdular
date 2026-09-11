@@ -22,7 +22,7 @@
 		"@flowdular/ui": "workspace:*",
 		"@octanejs/app-core": "0.0.47",
 		"octane": "0.1.51",
-		"segment-state": "0.2.0",
+		"segment-state": "0.2.1",
 		"yaml": "2.9.0"
 	},
 	"devDependencies": {

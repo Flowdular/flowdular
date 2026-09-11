@@ -1,3 +1,4 @@
+import { renderBrandHeader } from '@flowdular/dev-console/brand';
 import { parseArguments } from './arguments.ts';
 import { renderOutput } from './output.ts';
 import { runCommand } from './runner.ts';
@@ -19,6 +20,27 @@ if (invokedAsProgram) {
 		!arguments_.flags.has('help') &&
 		process.stdin.isTTY &&
 		process.stdout.isTTY;
+	if (
+		process.stdout.isTTY &&
+		!arguments_.flags.has('json') &&
+		(interactive ||
+			arguments_.positionals.length === 0 ||
+			arguments_.positionals[0] === 'help' ||
+			arguments_.flags.has('help'))
+	) {
+		process.stdout.write(
+			'\n' +
+				renderBrandHeader({
+					subtitle: interactive ? 'Application setup' : 'Application toolkit',
+					color: Boolean(
+						process.stdout.hasColors?.() &&
+							!('NO_COLOR' in process.env) &&
+							!process.env.CI,
+					),
+				}) +
+				'\n\n',
+		);
+	}
 	const envelope = await (interactive
 		? runSetupWizard(arguments_)
 		: runProgram(arguments_));

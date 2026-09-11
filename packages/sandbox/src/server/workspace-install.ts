@@ -4,6 +4,7 @@ import { access, cp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import type { SessionModule } from './sessions.ts';
+import { parseDocument } from 'yaml';
 
 export interface InstallResult {
 	readonly ran: boolean;
@@ -36,10 +37,6 @@ async function packageName(directory: string): Promise<string | null> {
 	}
 }
 
-function yamlString(value: string): string {
-	return `'${value.replace(/'/g, "''")}'`;
-}
-
 /* A session workspace is a pnpm workspace of its own: the draft modules are its
    projects, every other workspace package is linked to the live checkout, and
    the host lockfile seeds the resolution so the session installs exactly the
@@ -57,7 +54,7 @@ export async function materializeSessionWorkspace(options: {
 		);
 		if (name) draft.add(name);
 	}
-	const overrides: string[] = [];
+	const overrides: Record<string, string> = {};
 	for (const group of ['packages', 'modules']) {
 		let entries: readonly string[] = [];
 		try {
@@ -69,9 +66,7 @@ export async function materializeSessionWorkspace(options: {
 			const directory = join(options.workspaceRoot, group, entry);
 			const name = await packageName(directory);
 			if (!name || draft.has(name)) continue;
-			overrides.push(
-				`  ${yamlString(name)}: ${yamlString(`link:${directory}`)}`,
-			);
+			overrides[name] = `link:${directory}`;
 		}
 	}
 
@@ -89,7 +84,7 @@ export async function materializeSessionWorkspace(options: {
 		if (typeof sdk.version !== 'string')
 			throw new Error('Invalid installed SDK version.');
 		sdkVersion = sdk.version;
-		overrides.push(`  '@flowdular/sdk': ${yamlString(`link:${sdkRoot}`)}`);
+		overrides['@flowdular/sdk'] = `link:${sdkRoot}`;
 	} catch (error) {
 		if (
 			!['MODULE_NOT_FOUND', 'ERR_PACKAGE_PATH_NOT_EXPORTED'].includes(
@@ -132,29 +127,23 @@ export async function materializeSessionWorkspace(options: {
 		join(options.workspaceRoot, 'pnpm-workspace.yaml'),
 		'utf8',
 	).catch(() => '');
-	const carried = hostWorkspace
-		.split('\n')
-		.filter(
-			(line) =>
-				!/^(packages|overrides):/.test(line) &&
-				!/^\s+-\s+(platform|modules\/\*|packages\/\*)\s*$/.test(line),
-		)
-		.join('\n')
-		.trim();
+	// Edit YAML structurally so lists, custom package globs and host overrides
+	// cannot spill into an unrelated setting when a top-level key is replaced.
+	const workspaceDocument = parseDocument(hostWorkspace);
+	if (workspaceDocument.errors.length > 0) throw workspaceDocument.errors[0];
+	workspaceDocument.set('packages', ['modules/*']);
+	workspaceDocument.set('allowUnusedPatches', true);
+	for (const name of draft) {
+		if (workspaceDocument.hasIn(['overrides', name])) {
+			workspaceDocument.deleteIn(['overrides', name]);
+		}
+	}
+	for (const [name, target] of Object.entries(overrides)) {
+		workspaceDocument.setIn(['overrides', name], target);
+	}
 	await writeFile(
 		join(options.sessionWorkspace, 'pnpm-workspace.yaml'),
-		`${[
-			'packages:',
-			'  - modules/*',
-			/* Host patches travel along even when no draft depends on the patched
-			   package; pnpm must not treat that as an error. */
-			'allowUnusedPatches: true',
-			carried,
-			'overrides:',
-			...overrides,
-		]
-			.filter(Boolean)
-			.join('\n')}\n`,
+		workspaceDocument.toString(),
 		'utf8',
 	);
 	for (const shared of ['pnpm-lock.yaml', 'patches']) {

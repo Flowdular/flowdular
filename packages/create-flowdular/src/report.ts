@@ -1,3 +1,4 @@
+import { renderBrandHeader } from '@flowdular/dev-console/brand';
 import type { PackageManager } from './args.ts';
 import { styleText } from 'node:util';
 
@@ -47,7 +48,11 @@ export function renderNextSteps(input: NextStepsInput, color = false): string {
 	];
 	return [
 		'',
-		`  ${paint('FLOWDULAR', 'bold')}  ${paint('Project created', 'green')}`,
+		renderBrandHeader({
+			title: 'FLOWDULAR',
+			subtitle: 'Project created',
+			color,
+		}),
 		'',
 		...nextSteps(input).flatMap((step, index) => [
 			`  ${paint(`${index + 1}.`, 'cyan')} ${labels[index]}`,

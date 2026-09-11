@@ -1,6 +1,6 @@
 {
 	"name": "create-flowdular",
-	"version": "0.2.5",
+	"version": "0.2.6",
 	"type": "module",
 	"description": "Scaffold a Flowdular application: the platform, one example module and the secrets a fresh install needs.",
 	"license": "MIT",
@@ -46,6 +46,7 @@
 		"esbuild": "0.28.2",
 		"tsx": "4.23.13",
 		"typescript": "5.9.3",
-		"vitest": "4.1.11"
+		"vitest": "4.1.11",
+		"@flowdular/dev-console": "workspace:*"
 	}
 }

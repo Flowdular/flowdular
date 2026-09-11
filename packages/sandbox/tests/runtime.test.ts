@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 import { DEFAULT_AGENT_ROLES } from '@flowdular/coding-agent';
 import {
 	assertBrief,
@@ -286,10 +287,9 @@ describe('sandbox sessions', () => {
 			join(paths.workspace, 'pnpm-workspace.yaml'),
 			'utf8',
 		);
-		expect(manifest).toContain(
-			`'@flowdular/server': 'link:${join(root, 'packages', 'server')}'`,
-		);
-		expect(manifest).not.toContain('@flowdular/module-auth');
+		expect(parseYaml(manifest).overrides).toEqual({
+			'@flowdular/server': `link:${join(root, 'packages', 'server')}`,
+		});
 	});
 
 	it('copies an existing module and keeps a pristine base for the diff', async () => {
