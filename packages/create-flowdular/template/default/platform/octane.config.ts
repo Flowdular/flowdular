@@ -1,8 +1,12 @@
 import {
 	assertRouteConflicts,
+	createModuleMetrics,
 	createModuleWebRoutes,
 	createApplicationRoutes,
+	serverTracer,
 	validateApplicationPath,
+	createMailPort,
+	mailConfigFromEnvironment,
 } from '@flowdular/sdk/server';
 import { createDataClassRegistry } from '@flowdular/sdk/kernel';
 import { resolve } from 'node:path';
@@ -17,6 +21,7 @@ import {
 	createPlatformAgentRegistry,
 	createPlatformCapabilityRegistry,
 	createPlatformToolRegistry,
+	nodemailerSmtpTransport,
 } from '@flowdular/sdk/modules/auth/server';
 import {
 	composeModuleServer,
@@ -32,6 +37,7 @@ import {
 	healthEndpoint,
 } from './src/server/health.ts';
 import { createMetricsRoutes } from './src/server/metrics.ts';
+import { createPlatformObservability } from './src/server/tracing.ts';
 import {
 	createStorageKeyring,
 	createStoragePort,
@@ -50,6 +56,14 @@ const SHELL = ['App', '/src/App.tsrx'] as const;
 const workspaceRoot = resolve(import.meta.dirname, '..');
 const building = process.env.FD_INTERNAL_BUILD === 'true';
 
+/* Composed first and drained last: a trace or an error report is evidence about
+   the boot that follows it, and both egresses refuse a misconfigured endpoint
+   here rather than at the first request that needed them. */
+const observability = createPlatformObservability({
+	environment: building
+		? { ...process.env, NODE_ENV: 'development' }
+		: process.env,
+});
 const databases = createPlatformDatabaseProvider(
 	databaseProviderConfigFromEnvironment(
 		building ? { ...process.env, NODE_ENV: 'development' } : process.env,
@@ -67,17 +81,33 @@ const storage = createStoragePort(
 const configuredApplicationPath = validateApplicationPath(
 	process.env.FD_APPLICATION_PATH ?? applicationBasePath,
 );
+/* One outbound transport for the whole deployment. auth.core is only its
+   first sender; the SMTP client comes from that module because it is the one
+   that declares the dependency. */
+const mail = createMailPort(
+	mailConfigFromEnvironment(
+		building ? { ...process.env, NODE_ENV: 'development' } : process.env,
+	),
+	{ createSmtpTransport: nodemailerSmtpTransport },
+);
+/* Created before the auth runtime so auth.core, which composes outside the
+   generated module list, declares its data classes into the same registry. */
+const dataClasses = createDataClassRegistry();
 const authRuntime = createAuthRuntime({
-	...authRuntimeOptionsFromEnvironment(process.env, workspaceRoot),
+	...authRuntimeOptionsFromEnvironment(
+		building ? { ...process.env, NODE_ENV: 'development' } : process.env,
+		workspaceRoot,
+	),
 	applicationPath: configuredApplicationPath,
 	databases,
+	dataClasses,
+	mail,
 });
 
 /* Module APIs come from the generated composition. Enable or disable modules
    with "pnpm flowdular module enable <id> --apply"; never wire them here by hand. */
 const settings = authRuntime.moduleSettings;
 const agentDefinitions = createPlatformAgentRegistry();
-const dataClasses = createDataClassRegistry();
 const moduleCompositions = composeModuleServer({
 	environment: process.env,
 	workspaceRoot,
@@ -89,6 +119,11 @@ const moduleCompositions = composeModuleServer({
 	dataClasses,
 	databases,
 	storage,
+	mail,
+	/* Rebound to the composing module by the generated composition; this binding
+	   is what a series the platform itself records would carry. */
+	metrics: createModuleMetrics('platform'),
+	tracer: serverTracer(),
 });
 for (const composition of moduleCompositions) {
 	if (composition.settings) settings.declare(composition.settings);
@@ -117,6 +152,9 @@ const shutdown = async () => {
 	await authRuntime.dispose();
 	await storage.dispose();
 	await databases.dispose();
+	/* Last, so the spans and error reports this process queued while it stopped
+	   still leave with it. */
+	await observability.dispose();
 };
 // Bundling needs route declarations without background work or retained leases.
 if (building) {

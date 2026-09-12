@@ -18,6 +18,27 @@ deployments must set the secret keys.
 | `FD_METRICS`         | `false`                           | Expose `GET /api/metrics`; see [operations.md](operations.md)              |
 | `FD_METRICS_TOKEN`   | none                              | Bearer token a metrics scrape must present                                 |
 
+## Observability
+
+Spans are always recorded into a bounded in-process buffer and the logger always
+writes the trace id; only the two egresses below are optional, and a
+misconfigured one fails the boot rather than silently sending nothing.
+
+| Variable                | Default | Purpose                                                                   |
+| ----------------------- | ------- | ------------------------------------------------------------------------- |
+| `FD_TRACE_SAMPLE`       | `1`     | Ratio of new root traces recorded, 0 to 1                                 |
+| `FD_TRACE_EXPORTER`     | `none`  | `none` or `otlp`; see [operations.md](operations.md)                      |
+| `FD_TRACE_OTLP_URL`     | none    | OTLP/HTTP JSON traces endpoint; required with `otlp`, https in production |
+| `FD_TRACE_OTLP_HEADERS` | none    | `name=value,name2=value2` sent with every batch, at most 16               |
+| `FD_ERROR_SINK`         | `none`  | `none` or `webhook`; where a logged error is reported                     |
+| `FD_ERROR_SINK_URL`     | none    | Webhook endpoint; required with `webhook`, https in production            |
+| `FD_ERROR_SINK_TOKEN`   | none    | Bearer credential the webhook request presents                            |
+
+A sample ratio outside 0 to 1, an unknown exporter or sink, a missing URL, a
+plain `http` endpoint in production and a malformed header list are all refused
+while the platform composes. An unsampled trace still propagates its
+`traceparent`, so a downstream service keeps the correlation.
+
 ## Database
 
 Flowdular runs on PostgreSQL. One platform-owned provider serves every module, so
@@ -59,12 +80,12 @@ unreachable. Set the authority either inline or as a file, never both.
 | `FD_AUTH_SESSION_IDLE_MINUTES`         | `120` (5 to 1440)         | Idle timeout                                                                                                            |
 | `FD_AUTH_PASSWORD_MIN_LENGTH`          | `12` (8 to 128)           | Minimum password length                                                                                                 |
 | `FD_AUTH_EMAIL_CONFIRMATION`           | `false`                   | Hold the session after sign-up; needs a mail transport. auth.core composes no confirmation message yet, so none is sent |
-| `FD_AUTH_MAIL_TRANSPORT`               | `none`                    | `none`, `development`, or `smtp`; `development` is refused in production                                                |
-| `FD_AUTH_SMTP_URL`                     | none                      | `smtp://` or `smtps://` relay URL with credentials; required by the `smtp` transport                                    |
-| `FD_AUTH_MAIL_FROM`                    | none                      | Sender as `Name <address>` or `address`; required by the `smtp` transport                                               |
-| `FD_AUTH_SMTP_TLS_REJECT_UNAUTHORIZED` | `true`                    | Verify the relay certificate                                                                                            |
-| `FD_AUTH_SMTP_REQUIRE_TLS`             | `true`                    | Demand STARTTLS on the cleartext `smtp://` scheme; `false` allows a plaintext session                                   |
-| `FD_AUTH_DEVELOPMENT_MAIL`             | `false`                   | Legacy switch for `FD_AUTH_MAIL_TRANSPORT=development`; in-memory, refused in production                                |
+| `FD_AUTH_MAIL_TRANSPORT`               | `none`                    | Deprecated spelling of `FD_MAIL_TRANSPORT`; see Mail                                                                    |
+| `FD_AUTH_SMTP_URL`                     | none                      | Deprecated spelling of `FD_MAIL_SMTP_URL`; see Mail                                                                     |
+| `FD_AUTH_MAIL_FROM`                    | none                      | Deprecated spelling of `FD_MAIL_FROM`; see Mail                                                                         |
+| `FD_AUTH_SMTP_TLS_REJECT_UNAUTHORIZED` | `true`                    | Deprecated spelling of `FD_MAIL_SMTP_TLS_REJECT_UNAUTHORIZED`; see Mail                                                 |
+| `FD_AUTH_SMTP_REQUIRE_TLS`             | `true`                    | Deprecated spelling of `FD_MAIL_SMTP_REQUIRE_TLS`; see Mail                                                             |
+| `FD_AUTH_DEVELOPMENT_MAIL`             | `false`                   | Deprecated switch for `FD_MAIL_TRANSPORT=development`; in-memory, refused in production                                 |
 | `FD_AUTH_SIGN_IN_PROVIDERS`            | empty                     | Comma list of external providers rendered on sign-in                                                                    |
 | `FD_AUTH_OIDC_PROVIDERS`               | empty                     | JSON array of at most eight OIDC provider configurations                                                                |
 | `FD_AUTH_PROVIDER_HOST_ALLOWLIST`      | empty                     | Comma list of hosts a provider URL may name; empty allows any public host                                               |
@@ -224,19 +245,13 @@ browser to enrol with, and its authority is already the intersection of its
 recorded scopes with the live membership. Browser sessions stay gated, on the
 API and on module web pages alike.
 
-The `smtp` transport connects with a 10 second connection and greeting timeout
-and sends plain-text and HTML messages for invitations and password resets.
-`FD_AUTH_SMTP_URL` carries the relay password, so it belongs in the same secret
-store as the encryption keys; it is never logged. Its user and password are
-percent-decoded, so any reserved character in them, `%` included, must be
-percent-encoded or the boot stops on `FD_AUTH_SMTP_URL credentials must be
-percent-encoded.` The cleartext `smtp://` scheme (port 587 by default) starts in
-the open and is upgraded by STARTTLS, so `FD_AUTH_SMTP_REQUIRE_TLS` defaults to
-`true` and the relay has to offer the upgrade; `smtps://` is already encrypted
-end to end and ignores the variable. Without a transport (`none`) an invitation
-is refused with `MAIL_NOT_CONFIGURED` and a password reset still answers
-generically while the server logs one warning that the message was not
-delivered.
+auth.core no longer owns the transport: it composes the invitation, password
+reset and confirmation messages and hands them to the platform mail port, which
+the Mail section below configures. The `FD_AUTH_*` mail variables above are the
+retired spelling of the `FD_MAIL_*` ones and still work. Without a transport
+(`none`) an invitation is refused with `MAIL_NOT_CONFIGURED` and a password
+reset still answers generically while the server logs one warning that the
+message was not delivered.
 
 ## Agents (`agents.core`)
 
@@ -286,6 +301,12 @@ The delivery loop itself is configured through module settings, not the
 environment: `retentionDays`, `retryMaxAttempts` and `retryMaxBackoffMinutes`
 per workspace, `egressAllowlist` and `pollIntervalSeconds` for the platform.
 Edit them in Administration, Modules.
+
+E-mail delivery has no variable of its own. A member turns it on for their own
+account under Notification preferences, and the message then leaves through the
+platform mail port with the same queue, retry, backoff and dead letter a webhook
+gets. With no transport composed the attempts are recorded as refused rather
+than dropped, so the deliveries screen shows what was not sent.
 
 ## Connectors (`connectors.core`)
 
@@ -536,6 +557,51 @@ outstanding cursors still verify under them, while every new payload is sealed
 and every new cursor signed with the current key. Cursors are never stored, so a
 cursor key needs no re-signing pass. See the key rotation section of
 `docs/operations.md`.
+
+## Mail
+
+One outbound transport serves the whole deployment. Modules never select one:
+they receive the mail port on the server context (`context.mail`) and hand it a
+bounded message. auth.core sends invitations, password resets and confirmations
+through it, and notifications.core mails an inbox item to a member who asked
+for it.
+
+| Variable                               | Default | Purpose                                                                               |
+| -------------------------------------- | ------- | ------------------------------------------------------------------------------------- |
+| `FD_MAIL_TRANSPORT`                    | `none`  | `none`, `development` or `smtp`; `development` is refused in production               |
+| `FD_MAIL_SMTP_URL`                     | none    | `smtp://` or `smtps://` relay URL with credentials; required by the `smtp` transport  |
+| `FD_MAIL_FROM`                         | none    | Sender as `Name <address>` or `address`; required by the `smtp` transport             |
+| `FD_MAIL_SMTP_TLS_REJECT_UNAUTHORIZED` | `true`  | Verify the relay certificate                                                          |
+| `FD_MAIL_SMTP_REQUIRE_TLS`             | `true`  | Demand STARTTLS on the cleartext `smtp://` scheme; `false` allows a plaintext session |
+
+Each variable falls back to the auth.core name it replaces
+(`FD_AUTH_MAIL_TRANSPORT`, `FD_AUTH_SMTP_URL`, `FD_AUTH_MAIL_FROM`,
+`FD_AUTH_SMTP_TLS_REJECT_UNAUTHORIZED`, `FD_AUTH_SMTP_REQUIRE_TLS`, and
+`FD_AUTH_DEVELOPMENT_MAIL=true` for `FD_MAIL_TRANSPORT=development`). A
+deployment on the old names keeps working and the server logs one
+`deprecated mail variable` line per retired key it read, naming the
+replacement. The platform name wins when both are set, and every refusal names
+the variable the deployment actually set.
+
+`none` refuses every message with `MAIL_NOT_CONFIGURED` and sends nothing.
+`development` keeps the last 100 messages in memory for a local run and a test
+and is refused at boot in production, where it would be silent data loss.
+`smtp` connects with a 10 second connection and greeting timeout and sends the
+plain-text and HTML parts together. `FD_MAIL_SMTP_URL` carries the relay
+password, so it belongs in the same secret store as the encryption keys; it is
+never logged. Its user and password are percent-decoded, so any reserved
+character in them, `%` included, must be percent-encoded or the boot stops on
+`FD_MAIL_SMTP_URL credentials must be percent-encoded.` The cleartext `smtp://`
+scheme (port 587 by default) starts in the open and is upgraded by STARTTLS, so
+`FD_MAIL_SMTP_REQUIRE_TLS` defaults to `true` and the relay has to offer the
+upgrade; `smtps://` is already encrypted end to end and ignores the variable.
+
+Every message is bounded before a transport sees it: at most 16 recipients, a
+200 character single-line subject, 64 KB of text, 256 KB of HTML, at most 16
+extra headers whose names the envelope does not own, and no CR or LF anywhere a
+header could be opened. A message that breaks a bound is refused with
+`MAIL_MESSAGE_REJECTED` before the connection opens, and a relay failure
+reaches the sender as `MAIL_DELIVERY_FAILED` carrying nothing the relay said.
 
 ## Storage
 

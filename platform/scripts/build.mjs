@@ -17,6 +17,10 @@ const environment = {
 	   throwaway state directory below; runtime still reads its real adapter. */
 	FD_ENV: 'development',
 	FD_INTERNAL_BUILD: 'true',
+	/* The bundler evaluates the server composition. It must not open a trace or
+	   error egress to the deployment's collector while building. */
+	FD_TRACE_EXPORTER: 'none',
+	FD_ERROR_SINK: 'none',
 	FD_DATABASE_ADAPTER: 'pglite',
 	FD_DATABASE_PGLITE_DIRECTORY: join(stateDirectory, 'pglite'),
 	FD_AGENT_CREDENTIAL_KEY: buildSecret(),

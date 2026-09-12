@@ -118,5 +118,17 @@
 	"@flowdular/module-import": {
 		"directory": "modules/import",
 		"export": "modules/import"
+	},
+	"@flowdular/module-reports": {
+		"directory": "modules/reports",
+		"export": "modules/reports"
+	},
+	"@flowdular/module-access": {
+		"directory": "modules/access",
+		"export": "modules/access"
+	},
+	"@flowdular/module-exports": {
+		"directory": "modules/exports",
+		"export": "modules/exports"
 	}
 }

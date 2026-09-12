@@ -27,7 +27,7 @@ function exposed(value: string | undefined): boolean {
 
 /* Both this source file and the bundled server entry sit two directories below
    platform/package.json, which the container image ships next to dist/. */
-function platformVersion(): string {
+export function platformVersion(): string {
 	try {
 		const manifest: unknown = JSON.parse(
 			readFileSync(

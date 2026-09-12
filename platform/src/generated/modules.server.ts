@@ -5,7 +5,10 @@ import type {
 	PlatformServerContext,
 } from '@flowdular/module-auth/server';
 import type { WebMount } from '@flowdular/server';
+import { createModuleMetrics } from '@flowdular/server';
 import { createServerComposition as system_core } from '@flowdular/module-system/platform';
+import { createServerComposition as access_core } from '@flowdular/module-access/platform';
+import { createServerComposition as reports_core } from '@flowdular/module-reports/platform';
 import { createServerComposition as metering_core } from '@flowdular/module-metering/platform';
 import { createServerComposition as agents_core } from '@flowdular/module-agents/platform';
 import { createServerComposition as approvals_core } from '@flowdular/module-approvals/platform';
@@ -15,6 +18,7 @@ import { createServerComposition as automations_core } from '@flowdular/module-a
 import { createServerComposition as connectors_core } from '@flowdular/module-connectors/platform';
 import { createServerComposition as directory_core } from '@flowdular/module-directory/platform';
 import { createServerComposition as documents_core } from '@flowdular/module-documents/platform';
+import { createServerComposition as exports_core } from '@flowdular/module-exports/platform';
 import { createServerComposition as import_core } from '@flowdular/module-import/platform';
 import { createServerComposition as notifications_core } from '@flowdular/module-notifications/platform';
 import { createServerComposition as profile_core } from '@flowdular/module-profile/platform';
@@ -35,8 +39,35 @@ export function composeModuleServer(
 					provides: [],
 					requires: [],
 				}),
+				metrics: createModuleMetrics('system.core'),
 			}),
 			moduleId: 'system.core',
+		},
+		{
+			...access_core({
+				...context,
+				agentDefinitions: context.agentDefinitions.forModule('access.core'),
+				dataClasses: context.dataClasses.forModule('access.core'),
+				capabilities: context.capabilities.forModule('access.core', {
+					provides: [],
+					requires: [{ id: 'exports.lists.v1', optional: true }],
+				}),
+				metrics: createModuleMetrics('access.core'),
+			}),
+			moduleId: 'access.core',
+		},
+		{
+			...reports_core({
+				...context,
+				agentDefinitions: context.agentDefinitions.forModule('reports.core'),
+				dataClasses: context.dataClasses.forModule('reports.core'),
+				capabilities: context.capabilities.forModule('reports.core', {
+					provides: ['reports.v1'],
+					requires: [],
+				}),
+				metrics: createModuleMetrics('reports.core'),
+			}),
+			moduleId: 'reports.core',
 		},
 		{
 			...metering_core({
@@ -45,8 +76,12 @@ export function composeModuleServer(
 				dataClasses: context.dataClasses.forModule('metering.core'),
 				capabilities: context.capabilities.forModule('metering.core', {
 					provides: ['metering.meters.v1'],
-					requires: [{ id: 'notifications.publish.v1', optional: true }],
+					requires: [
+						{ id: 'notifications.publish.v1', optional: true },
+						{ id: 'reports.v1', optional: true },
+					],
 				}),
+				metrics: createModuleMetrics('metering.core'),
 			}),
 			moduleId: 'metering.core',
 		},
@@ -64,8 +99,10 @@ export function composeModuleServer(
 					requires: [
 						{ id: 'notifications.publish.v1', optional: true },
 						{ id: 'metering.meters.v1' },
+						{ id: 'reports.v1', optional: true },
 					],
 				}),
+				metrics: createModuleMetrics('agents.core'),
 			}),
 			moduleId: 'agents.core',
 		},
@@ -78,6 +115,7 @@ export function composeModuleServer(
 					provides: ['approvals.requests.v1'],
 					requires: [{ id: 'notifications.publish.v1', optional: true }],
 				}),
+				metrics: createModuleMetrics('approvals.core'),
 			}),
 			moduleId: 'approvals.core',
 		},
@@ -90,6 +128,7 @@ export function composeModuleServer(
 					provides: ['audit.erasure.v1'],
 					requires: [],
 				}),
+				metrics: createModuleMetrics('audit.core'),
 			}),
 			moduleId: 'audit.core',
 		},
@@ -107,6 +146,7 @@ export function composeModuleServer(
 						{ id: 'approvals.requests.v1', optional: true },
 					],
 				}),
+				metrics: createModuleMetrics('workflows.core'),
 			}),
 			moduleId: 'workflows.core',
 		},
@@ -123,6 +163,7 @@ export function composeModuleServer(
 						{ id: 'workflows.execution.v1', optional: true },
 					],
 				}),
+				metrics: createModuleMetrics('automations.core'),
 			}),
 			moduleId: 'automations.core',
 		},
@@ -135,6 +176,7 @@ export function composeModuleServer(
 					provides: ['connectors.definitions.v1', 'connectors.calls.v1'],
 					requires: [],
 				}),
+				metrics: createModuleMetrics('connectors.core'),
 			}),
 			moduleId: 'connectors.core',
 		},
@@ -147,6 +189,7 @@ export function composeModuleServer(
 					provides: [],
 					requires: [],
 				}),
+				metrics: createModuleMetrics('directory.core'),
 			}),
 			moduleId: 'directory.core',
 		},
@@ -159,8 +202,22 @@ export function composeModuleServer(
 					provides: ['documents.attachments.v1'],
 					requires: [],
 				}),
+				metrics: createModuleMetrics('documents.core'),
 			}),
 			moduleId: 'documents.core',
+		},
+		{
+			...exports_core({
+				...context,
+				agentDefinitions: context.agentDefinitions.forModule('exports.core'),
+				dataClasses: context.dataClasses.forModule('exports.core'),
+				capabilities: context.capabilities.forModule('exports.core', {
+					provides: ['exports.lists.v1'],
+					requires: [],
+				}),
+				metrics: createModuleMetrics('exports.core'),
+			}),
+			moduleId: 'exports.core',
 		},
 		{
 			...import_core({
@@ -171,6 +228,7 @@ export function composeModuleServer(
 					provides: ['import.ports.v1'],
 					requires: [{ id: 'documents.attachments.v1' }],
 				}),
+				metrics: createModuleMetrics('import.core'),
 			}),
 			moduleId: 'import.core',
 		},
@@ -184,6 +242,7 @@ export function composeModuleServer(
 					provides: ['notifications.publish.v1'],
 					requires: [],
 				}),
+				metrics: createModuleMetrics('notifications.core'),
 			}),
 			moduleId: 'notifications.core',
 		},
@@ -196,6 +255,7 @@ export function composeModuleServer(
 					provides: [],
 					requires: [],
 				}),
+				metrics: createModuleMetrics('profile.core'),
 			}),
 			moduleId: 'profile.core',
 		},
@@ -208,6 +268,7 @@ export function composeModuleServer(
 					provides: [],
 					requires: [],
 				}),
+				metrics: createModuleMetrics('sandbox.core'),
 			}),
 			moduleId: 'sandbox.core',
 		},
@@ -220,6 +281,7 @@ export function composeModuleServer(
 					provides: ['search.providers.v1'],
 					requires: [],
 				}),
+				metrics: createModuleMetrics('search.core'),
 			}),
 			moduleId: 'search.core',
 		},
@@ -233,8 +295,10 @@ export function composeModuleServer(
 					requires: [
 						{ id: 'search.providers.v1', optional: true },
 						{ id: 'import.ports.v1', optional: true },
+						{ id: 'exports.lists.v1', optional: true },
 					],
 				}),
+				metrics: createModuleMetrics('users.core'),
 			}),
 			moduleId: 'users.core',
 		},

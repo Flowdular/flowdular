@@ -18,6 +18,52 @@ importers:
         specifier: 16.21.0
         version: 16.21.0(@types/node@24.13.3)(ajv-formats@3.0.1(ajv@8.20.0))(ajv@8.20.0)(jose@6.2.10)(valibot@1.4.2(typescript@5.9.3))
 
+  modules/access:
+    dependencies:
+      '@flowdular/client':
+        specifier: workspace:*
+        version: link:../../packages/client
+      '@flowdular/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@flowdular/database':
+        specifier: workspace:*
+        version: link:../../packages/database
+      '@flowdular/kernel':
+        specifier: workspace:*
+        version: link:../../packages/kernel
+      '@flowdular/module-auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@flowdular/server':
+        specifier: workspace:*
+        version: link:../../packages/server
+      '@flowdular/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
+      octane:
+        specifier: 0.1.51
+        version: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+      segment-state:
+        specifier: 0.2.1
+        version: 0.2.1(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+    devDependencies:
+      '@flowdular/database-testing':
+        specifier: workspace:*
+        version: link:../../packages/database-testing
+      '@tsrx/typescript-plugin':
+        specifier: 0.3.120
+        version: 0.3.120(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11(@types/node@24.13.3)(jsdom@30.0.1(@noble/hashes@2.4.0))(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+
   modules/agents:
     dependencies:
       '@flowdular/cli-protocol':
@@ -41,6 +87,9 @@ importers:
       '@flowdular/module-auth':
         specifier: workspace:*
         version: link:../auth
+      '@flowdular/module-reports':
+        specifier: workspace:*
+        version: link:../reports
       '@flowdular/server':
         specifier: workspace:*
         version: link:../../packages/server
@@ -437,6 +486,55 @@ importers:
         specifier: 4.1.11
         version: 4.1.11(@types/node@24.13.3)(jsdom@30.0.1(@noble/hashes@2.4.0))(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
 
+  modules/exports:
+    dependencies:
+      '@flowdular/client':
+        specifier: workspace:*
+        version: link:../../packages/client
+      '@flowdular/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@flowdular/database':
+        specifier: workspace:*
+        version: link:../../packages/database
+      '@flowdular/kernel':
+        specifier: workspace:*
+        version: link:../../packages/kernel
+      '@flowdular/module-auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@flowdular/server':
+        specifier: workspace:*
+        version: link:../../packages/server
+      '@flowdular/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
+      '@flowdular/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
+      octane:
+        specifier: 0.1.51
+        version: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+      segment-state:
+        specifier: 0.2.1
+        version: 0.2.1(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+    devDependencies:
+      '@flowdular/database-testing':
+        specifier: workspace:*
+        version: link:../../packages/database-testing
+      '@tsrx/typescript-plugin':
+        specifier: 0.3.120
+        version: 0.3.120(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11(@types/node@24.13.3)(jsdom@30.0.1(@noble/hashes@2.4.0))(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+
   modules/import:
     dependencies:
       '@flowdular/client':
@@ -509,6 +607,9 @@ importers:
       '@flowdular/module-auth':
         specifier: workspace:*
         version: link:../auth
+      '@flowdular/module-reports':
+        specifier: workspace:*
+        version: link:../reports
       '@flowdular/server':
         specifier: workspace:*
         version: link:../../packages/server
@@ -623,6 +724,52 @@ importers:
       '@octanejs/app-core':
         specifier: 0.0.47
         version: 0.0.47(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+      '@tsrx/typescript-plugin':
+        specifier: 0.3.120
+        version: 0.3.120(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11(@types/node@24.13.3)(jsdom@30.0.1(@noble/hashes@2.4.0))(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+
+  modules/reports:
+    dependencies:
+      '@flowdular/client':
+        specifier: workspace:*
+        version: link:../../packages/client
+      '@flowdular/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@flowdular/kernel':
+        specifier: workspace:*
+        version: link:../../packages/kernel
+      '@flowdular/module-auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@flowdular/server':
+        specifier: workspace:*
+        version: link:../../packages/server
+      '@flowdular/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
+      octane:
+        specifier: 0.1.51
+        version: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+      segment-state:
+        specifier: 0.2.1
+        version: 0.2.1(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+    devDependencies:
+      '@flowdular/database':
+        specifier: workspace:*
+        version: link:../../packages/database
+      '@flowdular/database-testing':
+        specifier: workspace:*
+        version: link:../../packages/database-testing
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
         version: 0.3.120(octane@0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
@@ -797,6 +944,9 @@ importers:
       '@flowdular/module-auth':
         specifier: workspace:*
         version: link:../auth
+      '@flowdular/module-exports':
+        specifier: workspace:*
+        version: link:../exports
       '@flowdular/module-import':
         specifier: workspace:*
         version: link:../import
@@ -1367,6 +1517,9 @@ importers:
       '@flowdular/kernel':
         specifier: workspace:*
         version: link:../packages/kernel
+      '@flowdular/module-access':
+        specifier: workspace:*
+        version: link:../modules/access
       '@flowdular/module-agents':
         specifier: workspace:*
         version: link:../modules/agents
@@ -1391,6 +1544,9 @@ importers:
       '@flowdular/module-documents':
         specifier: workspace:*
         version: link:../modules/documents
+      '@flowdular/module-exports':
+        specifier: workspace:*
+        version: link:../modules/exports
       '@flowdular/module-import':
         specifier: workspace:*
         version: link:../modules/import
@@ -1403,6 +1559,9 @@ importers:
       '@flowdular/module-profile':
         specifier: workspace:*
         version: link:../modules/profile
+      '@flowdular/module-reports':
+        specifier: workspace:*
+        version: link:../modules/reports
       '@flowdular/module-sandbox':
         specifier: workspace:*
         version: link:../modules/sandbox

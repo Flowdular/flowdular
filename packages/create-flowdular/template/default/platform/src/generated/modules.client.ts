@@ -7,6 +7,8 @@ import type {
 } from '@flowdular/sdk/client';
 import { createClientContribution as system_core } from '@flowdular/sdk/modules/system/client';
 import { createClientContribution as auth_core } from '@flowdular/sdk/modules/auth/client';
+import { createClientContribution as access_core } from '@flowdular/sdk/modules/access/client';
+import { createClientContribution as reports_core } from '@flowdular/sdk/modules/reports/client';
 import { createClientContribution as metering_core } from '@flowdular/sdk/modules/metering/client';
 import { createClientContribution as agents_core } from '@flowdular/sdk/modules/agents/client';
 import { createClientContribution as approvals_core } from '@flowdular/sdk/modules/approvals/client';
@@ -17,6 +19,7 @@ import { createClientContribution as connectors_core } from '@flowdular/sdk/modu
 import { createClientContribution as directory_core } from '@flowdular/sdk/modules/directory/client';
 import { createClientContribution as documents_core } from '@flowdular/sdk/modules/documents/client';
 import { createClientContribution as example_core } from '@app/module-example/client';
+import { createClientContribution as exports_core } from '@flowdular/sdk/modules/exports/client';
 import { createClientContribution as import_core } from '@flowdular/sdk/modules/import/client';
 import { createClientContribution as notifications_core } from '@flowdular/sdk/modules/notifications/client';
 import { createClientContribution as profile_core } from '@flowdular/sdk/modules/profile/client';
@@ -30,6 +33,8 @@ export function createModuleClientContributions(
 	return [
 		system_core(context),
 		auth_core(context),
+		access_core(context),
+		reports_core(context),
 		metering_core(context),
 		agents_core(context),
 		approvals_core(context),
@@ -40,6 +45,7 @@ export function createModuleClientContributions(
 		directory_core(context),
 		documents_core(context),
 		example_core(context),
+		exports_core(context),
 		import_core(context),
 		notifications_core(context),
 		profile_core(context),

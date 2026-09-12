@@ -260,8 +260,10 @@ The server writes one line per event through `createLogger`
 | `FD_LOG_FORMAT` | `json` in production, else `text` | `json` for a log pipeline, `text` for a terminal |
 | `FD_LOG_LEVEL`  | `info`                            | `debug`, `info`, `warn` or `error`               |
 
-A JSON line carries `time`, `level`, `msg` and, where they apply, `requestId`,
-`endpoint`, `module` and `err` (name and message). Stacks are written outside
+A JSON line carries `time`, `level`, `msg` and, where they apply, `traceId`,
+`spanId`, `requestId`, `endpoint`, `module` and `err` (name and message). The
+trace ids are on every line written inside a served request, so the same id
+finds the log line and the trace. Stacks are written outside
 production, and in production only at `FD_LOG_LEVEL=debug`. The `requestId` is
 the same value the response returns in `x-request-id`, so a user-reported error
 id finds its log line. Credential-shaped field names (`authorization`, `cookie`,
@@ -347,3 +349,116 @@ bounded: the process keeps at most 2000 distinct label sets per series family
 and refuses new ones after that, counting each refusal in
 `flowdular_metrics_dropped_samples_total`. A non-zero value there means a
 deployment composes more endpoints than the ceiling allows.
+
+A module adds series of its own with `createModuleMetrics('<module id>')`:
+
+| Series                                                            | Type      | Labels                      |
+| ----------------------------------------------------------------- | --------- | --------------------------- |
+| `flowdular_module_<module>_<name>_total`                          | counter   | the module's own            |
+| `flowdular_module_<module>_<name>` (+`_bucket`, `_sum`, `_count`) | histogram | the module's own, plus `le` |
+
+The module id is lower-cased with every character outside `a-z0-9_` replaced by
+`_`, so `agents.core` reads `flowdular_module_agents_core_`. A module series is
+refused, and counted as a dropped sample, when the metric name does not match
+`^[a-z][a-z0-9_]{0,63}$`, when a call carries more than 8 labels or a label name
+of the wrong shape, when the family already holds 2000 label sets, or when the
+process already opened 256 module families of that kind. A label value is cut at
+128 characters. A module never receives an error from recording: a refused
+sample is lost, the work is not.
+
+**The label rule of the request series holds for a module series too: never a
+tenant, account, record or session id.** The platform cannot tell one from a
+closed set, so nothing refuses it; what it does is cap the damage at 2000 label
+sets per family, after which the series stops admitting new ones. A label is for
+a value with a handful of possibilities, such as an outcome or a channel.
+
+## Tracing
+
+Every request through `defineEndpoint` runs in a W3C trace. The inbound
+`traceparent` names the parent when it is usable; anything else is a new root.
+The response always returns a `traceparent` naming the span the request ran in,
+so a client, a proxy and this process agree on one trace id, and the log lines
+of that request carry the same `traceId`.
+
+Spans go into one bounded in-process ring whether or not an exporter is
+composed: 4096 spans, oldest evicted and counted, at most 16 attributes per span
+and 256 characters per name, attribute key and string value. Attributes carry
+endpoint ids, job names, provider and tool ids, HTTP method and status, and the
+three ids that correlate a span with a log line or an agent run,
+`flowdular.request_id`, `flowdular.agent.run_id` and
+`flowdular.tool.provider_call_id`: no request path, body, tenant or session.
+
+| Variable                | Purpose                                             |
+| ----------------------- | --------------------------------------------------- |
+| `FD_TRACE_SAMPLE`       | Ratio of new roots recorded, 0 to 1, default 1      |
+| `FD_TRACE_EXPORTER`     | `none` (default) or `otlp`                          |
+| `FD_TRACE_OTLP_URL`     | OTLP/HTTP JSON traces endpoint; https in production |
+| `FD_TRACE_OTLP_HEADERS` | `name=value,name2=value2`, at most 16               |
+
+The exporter posts OTLP/HTTP JSON (no SDK, no agent) in batches of 512 spans, or
+every 5 seconds when the batch does not fill. It never runs on a request path: a
+collector that is down costs the process one held batch, retried on the next two
+flushes and then dropped. A `4xx` that is not `429` is not retried, because the
+payload or the credential is wrong and the next batch would be lost too. The
+sampling decision is taken on the trace id, so a whole trace is in or out; a
+trace the caller already marked sampled is never re-decided, and an unsampled
+trace still propagates its header.
+
+A process that stops drains what the ring still holds, in the same batches and
+without a retry: the spans of a shutdown leave with it, and a collector that is
+down is given up on rather than held between the process and its exit.
+
+**An OTLP endpoint receives the endpoint inventory, the job names, the timings
+and the request, agent run and provider call ids of the whole deployment.**
+Point it at a collector you control. Plain `http` is refused in production.
+
+## Error reporting
+
+`FD_ERROR_SINK=webhook` posts every line the server logs at `error` to
+`FD_ERROR_SINK_URL`, with `Authorization: Bearer <FD_ERROR_SINK_TOKEN>` when the
+token is set. The body is `{"reports":[…]}` where a report carries `at`, `name`,
+`message` and, where they apply, `endpoint`, `module`, `requestId`, `traceId`
+and `spanId`. Nothing else: no stack, no log fields, no request body, so the
+sink cannot carry a credential the logger already refuses to write.
+
+`message` is the one field the caller chose. A failing endpoint logs its error
+type only, never the message, so its report carries `endpoint failed`; a
+background loop logs the error it caught, so its report carries that message.
+The sink therefore exports exactly what the log line already shows, to a host
+outside the deployment. A deployment that must not let error text leave keeps
+`FD_ERROR_SINK=none` and reads the log stream instead.
+
+It is bounded and lossy on purpose: 64 queued reports (a report past that is
+dropped and counted), 32 per request, 8 KiB per body with the batch halved until
+it fits, a batch sent every 5 seconds or as soon as 32 are queued, and at most 3
+attempts before a batch is given up. Delivery never runs on the caller's path
+and an unreachable webhook never fails the line that reported the failure.
+`none` is the default and holds no queue and no timer.
+
+The OTLP logs sink named in RFC 0004 H7 is deliberately not built: the OTLP
+surface this platform speaks is the trace exporter above.
+
+## Data residency
+
+Residency is a property of the deployment, not of the workspace. A deployment
+carries one PostgreSQL database, one object store and one region; every module
+writes to that database and, through the storage port, to that bucket. A
+workspace therefore lives wherever its deployment lives, and a customer whose
+data must stay in a particular region gets a deployment in that region. That
+is the supported answer and the only one the platform offers.
+
+Per-workspace routing to regional databases is not planned. It would change
+the provider contract in `packages/database` (one handle per region), the
+lease model every module's migrations and background loops depend on, every
+cross-workspace routing read the background role performs (the retention
+sweep, delivery queues, expiry passes), the storage key layout, and the
+export and erasure paths that assume one place to look. Record that cost
+before anyone proposes it; a second deployment is cheaper in every case
+seen so far.
+
+What to state in a questionnaire: the region of the database and the bucket,
+that backups and the key material are stored in the same region unless the
+operator moves them, that the OTLP trace exporter and the error sink send
+only what `docs/operations.md` lists for them and only to the URLs the
+operator configured, and that outbound mail, webhooks and connector calls
+leave the region by design of the recipient the workspace configured.

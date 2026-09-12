@@ -23,7 +23,7 @@ const fixtures: Record<string, string> = {
 		export const defineConfig = value => value;
 		export class RenderRoute { constructor(options) { Object.assign(this, options); } }
 	`,
-	'@flowdular/sdk/server': `export const validateApplicationPath = value => value; export const assertRouteConflicts = () => {}; export const createModuleWebRoutes = () => []; export const createApplicationRoutes = () => []; export const defineEndpoint = definition => ({ ...definition, serverRoute: { path: definition.path, methods: definition.methods, handler: definition.handler } }); export const jsonResponse = (body, status) => Response.json(body, { status }); export const serverMetrics = () => ({ setBuildVersion() {}, expose: () => 'flowdular_build_info 1\\n' });`,
+	'@flowdular/sdk/server': `export const validateApplicationPath = value => value; export const assertRouteConflicts = () => {}; export const createModuleWebRoutes = () => []; export const createApplicationRoutes = () => []; export const defineEndpoint = definition => ({ ...definition, serverRoute: { path: definition.path, methods: definition.methods, handler: definition.handler } }); export const jsonResponse = (body, status) => Response.json(body, { status }); export const serverMetrics = () => ({ setBuildVersion() {}, expose: () => 'flowdular_build_info 1\\n' }); export const createModuleMetrics = () => ({ counter() {}, histogram() {} }); export const serverTracer = () => ({ sampleRatio: 1, startSpan: () => ({ context: {}, setAttribute() {}, end() {} }), drain: () => [], stats: () => ({ buffered: 0, dropped: 0, recorded: 0 }), onSpanRecorded: () => () => {} }); export const traceConfigFromEnvironment = () => ({ exporter: 'none', url: null, headers: {}, sampleRatio: 1 }); export const createOtlpSpanExporter = () => ({ async flush() {}, stats: () => ({ exported: 0, dropped: 0, failures: 0, retries: 0 }), async dispose() {} }); export const errorSinkConfigFromEnvironment = () => ({ kind: 'none', url: null, token: null }); export const serverErrorSink = () => ({ async flush() {} }); export const createMailPort = () => ({ adapter: 'none', configured: false, async send() {}, outbox: [] }); export const mailConfigFromEnvironment = () => ({ adapter: 'none', deprecated: [] });`,
 	'@flowdular/sdk/modules/auth/server': `
         export const principalFromContext = () => null;
 		export const isTokenPrincipal = () => false;
@@ -37,7 +37,7 @@ const fixtures: Record<string, string> = {
 		export const createPlatformAgentRegistry = () => ({ seal() {} });
 		export const createPlatformCapabilityRegistry = () => ({});
 		export const createPlatformToolRegistry = () => ({});
-	`,
+	 export const nodemailerSmtpTransport = () => ({ async send() {} });`,
 	'@flowdular/sdk/kernel': `export const createDataClassRegistry = () => ({ seal() {} });`,
 	'@flowdular/sdk/storage': `
 		export class StorageError extends Error {}

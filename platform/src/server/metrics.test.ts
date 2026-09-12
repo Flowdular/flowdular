@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createContext } from '@octanejs/app-core';
-import { createMetricsRegistry } from '@flowdular/server';
+import { createMetricsRegistry, createModuleMetrics } from '@flowdular/server';
 import { describe, expect, it } from 'vitest';
 import { createMetricsRoutes } from './metrics.ts';
 
@@ -64,6 +64,22 @@ describe('metrics route', () => {
 
 		expect(await (await scrape(routes)).text()).toContain(
 			`flowdular_build_info{version="${version}"} 1`,
+		);
+	});
+
+	it('exposes the series a module opened through the binding it composed with', async () => {
+		const routes = createMetricsRoutes({
+			environment: { FD_METRICS: 'true' },
+			version: '1.2.3',
+		});
+		/* Exactly what the generated composition hands a module as context.metrics,
+		   so what lands here is what a module records. */
+		createModuleMetrics('demo.core').counter('jobs_started', {
+			kind: 'import',
+		});
+
+		expect(await (await scrape(routes)).text()).toContain(
+			'flowdular_module_demo_core_jobs_started_total{kind="import"} 1',
 		);
 	});
 

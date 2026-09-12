@@ -1,6 +1,6 @@
 # RFC 0004: Platform services and the remaining readiness gaps
 
-- Status: accepted by the owner on 2026-09-12; the first wave is H14, H2, H1, H3, H4, H13, H5, H6, H7 and H8 in the proposed order; H11 (SAML) waits for a buyer, H10 (PDF) waits for a business module naming the document, H9 (outbox) follows H2 when a second module needs decoupling, H12 (residency) is documentation
+- Status: accepted by the owner on 2026-09-12; the first wave (H14, H2, H1, H3, H4, H13, H5, H6, H7, H8 and the H12 documentation) delivered on 2026-09-12, see `docs/reviews/platform-services-rfc0004-2026-09-12.md`; H11 (SAML) waits for a buyer, H10 (PDF) waits for a business module naming the document, H9 (outbox) follows H2 when a second module needs decoupling, H12 (residency) is documentation
 - Date: 2026-09-12
 - Follows: RFC 0001 (enterprise readiness), RFC 0002 (enterprise modules,
   delivered on 2026-09-12, see `docs/reviews/enterprise-rfc0002-2026-09-12.md`)
