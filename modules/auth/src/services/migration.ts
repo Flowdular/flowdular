@@ -451,6 +451,505 @@ REVOKE SELECT ON auth_mfa_challenges FROM coreloom_background;
 GRANT SELECT (token_hash, tenant_id, account_id, expires_at, used_at) ON auth_mfa_challenges TO coreloom_background;
 `;
 
+export const AUTH_MIGRATION_016_EXTERNAL_IDENTITIES = `-- An external provider asserts an identity about an account, not about one of
+-- its workspaces, and it does so before a workspace is chosen. The row carries
+-- no tenant column and no policy, exactly like the enrolled factor tables; the
+-- membership tables remain the only place the workspace boundary is expressed.
+-- The (provider, subject) pair is the identity the provider promises to keep
+-- stable, so it is the primary key; the address it reports is not.
+CREATE TABLE IF NOT EXISTS auth_external_identities (
+  provider TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  account_id TEXT NOT NULL REFERENCES auth_accounts(id) ON DELETE CASCADE,
+  created_at BIGINT NOT NULL,
+  last_seen_at BIGINT NOT NULL,
+  PRIMARY KEY (provider, subject)
+);
+CREATE INDEX IF NOT EXISTS auth_external_identities_account_idx
+  ON auth_external_identities (account_id, provider, subject);
+`;
+
+export const AUTH_MIGRATION_017_MFA_KEY_ID = `-- The TOTP envelope in secret_ciphertext names no key, so rotating
+-- FD_AUTH_MFA_KEY could only be recovered by re-enrolling every account. This
+-- column records the key that sealed the row. A row written before it keeps
+-- NULL and is opened by trying the ring in order until auth secrets-rotate
+-- re-seals it; the envelope bytes themselves are unchanged. The factor belongs
+-- to the account, not to one of its workspaces, so the table carries no tenant
+-- column and no policy, exactly as 0015 created it.
+ALTER TABLE auth_mfa_totp ADD COLUMN IF NOT EXISTS key_id TEXT;
+`;
+
+export const AUTH_MIGRATION_018_RETIRE_BUNDLED_MODULE_SCOPES = `-- The parties and catalog modules no longer ship, and their read and manage
+-- scopes are still granted to memberships created while they did. A grant that
+-- nothing declares is a grant nobody reviews, so both pairs are retired here.
+--
+-- Row security is forced on both tables, and a migration role that is not a
+-- superuser is subject to it like any other, so a plain statement would reach
+-- no row on a real deployment. The force flag is lifted for the owner and put
+-- back inside the same transaction; a role that does not own these tables
+-- fails here loudly instead of leaving the grants in place. Nothing else runs
+-- against them while the migration lock is held.
+ALTER TABLE auth_membership_scopes NO FORCE ROW LEVEL SECURITY;
+DELETE FROM auth_membership_scopes
+WHERE scope IN ('parties.records.read', 'parties.records.manage', 'catalog.items.read', 'catalog.items.manage');
+ALTER TABLE auth_membership_scopes FORCE ROW LEVEL SECURITY;
+-- A role row grants too: assigning a role replaces the membership scopes with
+-- the list it carries, so a retired scope left in one comes back on the next
+-- assignment. Only rows that still name one are rewritten, and their order is
+-- preserved.
+ALTER TABLE auth_roles NO FORCE ROW LEVEL SECURITY;
+UPDATE auth_roles
+SET scopes_json = COALESCE(
+      (SELECT json_agg(entry.scope ORDER BY entry.position)::text
+         FROM json_array_elements_text(auth_roles.scopes_json::json)
+              WITH ORDINALITY AS entry(scope, position)
+        WHERE entry.scope NOT IN ('parties.records.read', 'parties.records.manage', 'catalog.items.read', 'catalog.items.manage')),
+      '[]')
+WHERE scopes_json LIKE '%"parties.records.%'
+   OR scopes_json LIKE '%"catalog.items.%';
+ALTER TABLE auth_roles FORCE ROW LEVEL SECURITY;
+`;
+
+export const AUTH_MIGRATION_019_NOTIFICATIONS_MEMBER_SCOPES = `-- notifications.core declares five permissions. Owners receive all five through
+-- auth sync-scopes, which module enable runs; members receive none, because the
+-- member defaults live in acl/scopes.ts and a built-in role row is seeded once,
+-- with ON CONFLICT DO NOTHING, when the workspace is created. So a workspace
+-- that already exists would never see the three member scopes. This grants them.
+--
+-- Row security is forced on both tables, and a migration role that is not a
+-- superuser is subject to it like any other, so a plain statement would reach
+-- no row on a real deployment. The force flag is lifted for the owner and put
+-- back inside the same transaction; a role that does not own these tables fails
+-- here loudly instead of leaving the grants missing. Nothing else runs against
+-- them while the migration lock is held.
+ALTER TABLE auth_membership_scopes NO FORCE ROW LEVEL SECURITY;
+INSERT INTO auth_membership_scopes (account_id, tenant_id, scope)
+SELECT account_id, tenant_id, scope
+FROM auth_memberships
+CROSS JOIN unnest(ARRAY['notifications.inbox.read', 'notifications.inbox.manage', 'notifications.webhooks.read']) AS granted(scope)
+WHERE auth_memberships.role = 'member'
+ON CONFLICT DO NOTHING;
+ALTER TABLE auth_membership_scopes FORCE ROW LEVEL SECURITY;
+-- A role row grants too: assigning a role replaces the membership scopes with
+-- the list it carries, so a scope missing from the built-in member row would be
+-- taken away again at the next assignment. The scopes already held keep their
+-- order and the missing ones are appended in the order acl/scopes.ts declares
+-- them, which is the order a freshly seeded workspace writes.
+ALTER TABLE auth_roles NO FORCE ROW LEVEL SECURITY;
+UPDATE auth_roles
+SET scopes_json = (
+      SELECT json_agg(entry.scope ORDER BY entry.origin, entry.position)::text
+        FROM (
+               SELECT 0 AS origin, held.position, held.scope
+                 FROM json_array_elements_text(auth_roles.scopes_json::json)
+                      WITH ORDINALITY AS held(scope, position)
+               UNION ALL
+               SELECT 1 AS origin, added.position, added.scope
+                 FROM unnest(ARRAY['notifications.inbox.read', 'notifications.inbox.manage', 'notifications.webhooks.read'])
+                      WITH ORDINALITY AS added(scope, position)
+                WHERE added.scope NOT IN (
+                        SELECT existing.scope
+                          FROM json_array_elements_text(auth_roles.scopes_json::json) AS existing(scope))
+             ) AS entry
+    )
+WHERE builtin = 1 AND key = 'member';
+ALTER TABLE auth_roles FORCE ROW LEVEL SECURITY;
+`;
+
+export const AUTH_MIGRATION_020_IDENTITY_PROVIDERS = `-- A workspace may offer OIDC providers of its own beside the platform providers
+-- FD_AUTH_OIDC_PROVIDERS configures at boot. Such a provider is workspace data,
+-- so the row carries the tenant column and the forced policy every
+-- workspace-owned table carries. The client secret is stored only as the sealed
+-- envelope the auth keyring writes, beside the id of the key that sealed it, so
+-- auth secrets-rotate re-seals these rows exactly as it re-seals enrolled
+-- factors. The discovery endpoints are stored because they are what discovery
+-- answered when the issuer was verified, not administrator input; keeping them
+-- means a sign-in costs no outbound discovery request.
+CREATE TABLE IF NOT EXISTS auth_identity_providers (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL REFERENCES auth_tenants(id) ON DELETE CASCADE,
+  key TEXT NOT NULL,
+  label TEXT NOT NULL,
+  issuer TEXT NOT NULL,
+  authorization_endpoint TEXT NOT NULL,
+  token_endpoint TEXT NOT NULL,
+  user_info_endpoint TEXT NOT NULL,
+  client_id TEXT NOT NULL,
+  client_secret_ciphertext TEXT NOT NULL,
+  client_secret_key_id TEXT NOT NULL,
+  client_secret_fingerprint TEXT NOT NULL,
+  scopes_json TEXT NOT NULL,
+  jit_enabled INTEGER NOT NULL DEFAULT 0,
+  allowed_domains_json TEXT NOT NULL DEFAULT '[]',
+  jit_role TEXT NOT NULL DEFAULT 'member',
+  status TEXT NOT NULL CHECK (status IN ('active', 'disabled')),
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  UNIQUE (tenant_id, key)
+);
+CREATE INDEX IF NOT EXISTS auth_identity_providers_tenant_idx
+  ON auth_identity_providers (tenant_id, key, id);
+ALTER TABLE auth_identity_providers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE auth_identity_providers FORCE ROW LEVEL SECURITY;
+CREATE POLICY auth_identity_providers_tenant_policy ON auth_identity_providers
+  USING (tenant_id = current_setting('coreloom.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+
+-- A platform provider asserts an identity about an account before any workspace
+-- is chosen, and keeps binding without one. A tenant-owned provider asserts it
+-- inside its own workspace only, so the binding carries that workspace and the
+-- pair (provider, subject) is unique per workspace rather than globally. The
+-- primary key 0016 put on the pair would let one workspace's binding block
+-- another's, so it goes and two partial unique indexes take its place.
+ALTER TABLE auth_external_identities
+  ADD COLUMN IF NOT EXISTS tenant_id TEXT REFERENCES auth_tenants(id) ON DELETE CASCADE;
+ALTER TABLE auth_external_identities
+  DROP CONSTRAINT IF EXISTS auth_external_identities_pkey;
+CREATE UNIQUE INDEX IF NOT EXISTS auth_external_identities_platform_idx
+  ON auth_external_identities (provider, subject) WHERE tenant_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS auth_external_identities_workspace_idx
+  ON auth_external_identities (tenant_id, provider, subject) WHERE tenant_id IS NOT NULL;
+-- The workspace rows are workspace data and the policy scopes them to their
+-- tenant; the platform rows carry no workspace and stay readable under the
+-- identity context that has always written them.
+ALTER TABLE auth_external_identities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE auth_external_identities FORCE ROW LEVEL SECURITY;
+CREATE POLICY auth_external_identities_tenant_policy ON auth_external_identities
+  USING (tenant_id IS NULL OR tenant_id = current_setting('coreloom.tenant_id', true))
+  WITH CHECK (tenant_id IS NULL OR tenant_id = current_setting('coreloom.tenant_id', true));
+`;
+
+export const AUTH_MIGRATION_022_AUTH_PROVIDER_SCOPES = `-- auth.core declares auth.providers.read and auth.providers.manage for the
+-- workspace identity providers screen. A module's scopes reach existing owners
+-- through auth sync-scopes, which module enable runs, but auth.core is not a
+-- module a deployment enables, and the built-in role rows are seeded once, with
+-- ON CONFLICT DO NOTHING, when a workspace is created. So a workspace that
+-- already exists would never see either scope. This grants them.
+--
+-- Row security is forced on both tables, and a migration role that is not a
+-- superuser is subject to it like any other, so a plain statement would reach
+-- no row on a real deployment. The force flag is lifted for the owner and put
+-- back inside the same transaction; a role that does not own these tables fails
+-- here loudly instead of leaving the grants missing. Nothing else runs against
+-- them while the migration lock is held.
+ALTER TABLE auth_membership_scopes NO FORCE ROW LEVEL SECURITY;
+INSERT INTO auth_membership_scopes (account_id, tenant_id, scope)
+SELECT account_id, tenant_id, scope
+FROM auth_memberships
+CROSS JOIN unnest(ARRAY['auth.providers.read', 'auth.providers.manage']) AS granted(scope)
+WHERE auth_memberships.role = 'owner'
+ON CONFLICT DO NOTHING;
+ALTER TABLE auth_membership_scopes FORCE ROW LEVEL SECURITY;
+-- A role row grants too: assigning a role replaces the membership scopes with
+-- the list it carries, so a scope missing from the built-in owner row would be
+-- taken away again at the next assignment. The scopes already held keep their
+-- order and the missing ones are appended in the order acl/scopes.ts declares
+-- them, which is the order a freshly seeded workspace writes.
+ALTER TABLE auth_roles NO FORCE ROW LEVEL SECURITY;
+UPDATE auth_roles
+SET scopes_json = (
+      SELECT json_agg(entry.scope ORDER BY entry.origin, entry.position)::text
+        FROM (
+               SELECT 0 AS origin, held.position, held.scope
+                 FROM json_array_elements_text(auth_roles.scopes_json::json)
+                      WITH ORDINALITY AS held(scope, position)
+               UNION ALL
+               SELECT 1 AS origin, added.position, added.scope
+                 FROM unnest(ARRAY['auth.providers.read', 'auth.providers.manage'])
+                      WITH ORDINALITY AS added(scope, position)
+                WHERE added.scope NOT IN (
+                        SELECT existing.scope
+                          FROM json_array_elements_text(auth_roles.scopes_json::json) AS existing(scope))
+             ) AS entry
+    )
+WHERE builtin = 1 AND key = 'owner';
+ALTER TABLE auth_roles FORCE ROW LEVEL SECURITY;
+`;
+
+export const AUTH_MIGRATION_021_MEMBERSHIP_STATUS = `-- Membership status is per workspace: disabling a member in one workspace
+-- revokes that membership's sessions and tokens and refuses its sign-in, and
+-- leaves the person's other memberships untouched. The account status column
+-- stays what it was, the deployment operator's platform-level block.
+ALTER TABLE auth_memberships ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'auth_memberships_status_check'
+  ) THEN
+    ALTER TABLE auth_memberships ADD CONSTRAINT auth_memberships_status_check
+      CHECK (status IN ('active', 'disabled'));
+  END IF;
+END
+$$;
+-- A session cookie, a bearer token and an email address name no workspace, so
+-- the routing read decides which membership answers for them. A disabled
+-- membership must not be that answer, which is a column this role now reads.
+GRANT SELECT (status) ON auth_memberships TO coreloom_background;
+`;
+
+export const AUTH_MIGRATION_023_ENTERPRISE_MODULE_SCOPES = `-- directory.core, audit.core, approvals.core, documents.core, metering.core,
+-- import.core, search.core and connectors.core declare sixteen permissions
+-- between them. Owners receive a module's scopes through auth sync-scopes,
+-- which module enable runs, so only where that module is enabled; members
+-- receive none, because the member defaults live in acl/scopes.ts and a
+-- built-in role row is seeded once, with ON CONFLICT DO NOTHING, when the
+-- workspace is created. So a workspace that already exists would see neither
+-- the owner defaults of a module it never enabled nor any member default. This
+-- grants both, in the order acl/scopes.ts declares them.
+--
+-- Row security is forced on both tables, and a migration role that is not a
+-- superuser is subject to it like any other, so a plain statement would reach
+-- no row on a real deployment. The force flag is lifted for the owner and put
+-- back inside the same transaction; a role that does not own these tables fails
+-- here loudly instead of leaving the grants missing. Nothing else runs against
+-- them while the migration lock is held.
+ALTER TABLE auth_membership_scopes NO FORCE ROW LEVEL SECURITY;
+INSERT INTO auth_membership_scopes (account_id, tenant_id, scope)
+SELECT account_id, tenant_id, scope
+FROM auth_memberships
+CROSS JOIN unnest(ARRAY['directory.tokens.read', 'directory.tokens.manage', 'directory.provisioning.read', 'audit.registry.read', 'audit.retention.manage', 'approvals.requests.read', 'approvals.requests.decide', 'approvals.requests.manage', 'documents.files.read', 'documents.files.manage', 'metering.usage.read', 'import.jobs.read', 'import.jobs.manage', 'search.records.read', 'connectors.instances.read', 'connectors.instances.manage']) AS granted(scope)
+WHERE auth_memberships.role = 'owner'
+ON CONFLICT DO NOTHING;
+INSERT INTO auth_membership_scopes (account_id, tenant_id, scope)
+SELECT account_id, tenant_id, scope
+FROM auth_memberships
+CROSS JOIN unnest(ARRAY['documents.files.read', 'documents.files.manage', 'search.records.read', 'connectors.instances.read']) AS granted(scope)
+WHERE auth_memberships.role = 'member'
+ON CONFLICT DO NOTHING;
+ALTER TABLE auth_membership_scopes FORCE ROW LEVEL SECURITY;
+-- A role row grants too: assigning a role replaces the membership scopes with
+-- the list it carries, so a scope missing from a built-in row would be taken
+-- away again at the next assignment. The scopes already held keep their order
+-- and the missing ones are appended in the order acl/scopes.ts declares them,
+-- which is the order a freshly seeded workspace writes.
+ALTER TABLE auth_roles NO FORCE ROW LEVEL SECURITY;
+UPDATE auth_roles
+SET scopes_json = (
+      SELECT json_agg(entry.scope ORDER BY entry.origin, entry.position)::text
+        FROM (
+               SELECT 0 AS origin, held.position, held.scope
+                 FROM json_array_elements_text(auth_roles.scopes_json::json)
+                      WITH ORDINALITY AS held(scope, position)
+               UNION ALL
+               SELECT 1 AS origin, added.position, added.scope
+                 FROM unnest(ARRAY['directory.tokens.read', 'directory.tokens.manage', 'directory.provisioning.read', 'audit.registry.read', 'audit.retention.manage', 'approvals.requests.read', 'approvals.requests.decide', 'approvals.requests.manage', 'documents.files.read', 'documents.files.manage', 'metering.usage.read', 'import.jobs.read', 'import.jobs.manage', 'search.records.read', 'connectors.instances.read', 'connectors.instances.manage'])
+                      WITH ORDINALITY AS added(scope, position)
+                WHERE added.scope NOT IN (
+                        SELECT existing.scope
+                          FROM json_array_elements_text(auth_roles.scopes_json::json) AS existing(scope))
+             ) AS entry
+    )
+WHERE builtin = 1 AND key = 'owner';
+UPDATE auth_roles
+SET scopes_json = (
+      SELECT json_agg(entry.scope ORDER BY entry.origin, entry.position)::text
+        FROM (
+               SELECT 0 AS origin, held.position, held.scope
+                 FROM json_array_elements_text(auth_roles.scopes_json::json)
+                      WITH ORDINALITY AS held(scope, position)
+               UNION ALL
+               SELECT 1 AS origin, added.position, added.scope
+                 FROM unnest(ARRAY['documents.files.read', 'documents.files.manage', 'search.records.read', 'connectors.instances.read'])
+                      WITH ORDINALITY AS added(scope, position)
+                WHERE added.scope NOT IN (
+                        SELECT existing.scope
+                          FROM json_array_elements_text(auth_roles.scopes_json::json) AS existing(scope))
+             ) AS entry
+    )
+WHERE builtin = 1 AND key = 'member';
+ALTER TABLE auth_roles FORCE ROW LEVEL SECURITY;
+`;
+
+export const AUTH_MIGRATION_024_APPROVALS_MEMBER_SCOPES = `-- approvals.core resolves the deciders of a request from the workspace roles,
+-- so a member has to read the requests that name them and record a decision on
+-- them. 0023 granted the three approval scopes to owners alone, which was the
+-- member default at the time; acl/scopes.ts now carries approvals.requests.read
+-- and approvals.requests.decide among the member defaults, and a built-in role
+-- row is seeded once, with ON CONFLICT DO NOTHING, when the workspace is
+-- created. So a workspace that already exists would never see either. This
+-- grants both to its members, in the order acl/scopes.ts declares them. Owners
+-- keep what 0023 gave them and are not touched here.
+--
+-- Row security is forced on both tables, and a migration role that is not a
+-- superuser is subject to it like any other, so a plain statement would reach
+-- no row on a real deployment. The force flag is lifted for the owner and put
+-- back inside the same transaction; a role that does not own these tables fails
+-- here loudly instead of leaving the grants missing. Nothing else runs against
+-- them while the migration lock is held.
+ALTER TABLE auth_membership_scopes NO FORCE ROW LEVEL SECURITY;
+INSERT INTO auth_membership_scopes (account_id, tenant_id, scope)
+SELECT account_id, tenant_id, scope
+FROM auth_memberships
+CROSS JOIN unnest(ARRAY['approvals.requests.read', 'approvals.requests.decide']) AS granted(scope)
+WHERE auth_memberships.role = 'member'
+ON CONFLICT DO NOTHING;
+ALTER TABLE auth_membership_scopes FORCE ROW LEVEL SECURITY;
+-- A role row grants too: assigning a role replaces the membership scopes with
+-- the list it carries, so a scope missing from the built-in member row would be
+-- taken away again at the next assignment. The scopes already held keep their
+-- order and the missing ones are appended in the order acl/scopes.ts declares
+-- them, which is the order a freshly seeded workspace writes.
+ALTER TABLE auth_roles NO FORCE ROW LEVEL SECURITY;
+UPDATE auth_roles
+SET scopes_json = (
+      SELECT json_agg(entry.scope ORDER BY entry.origin, entry.position)::text
+        FROM (
+               SELECT 0 AS origin, held.position, held.scope
+                 FROM json_array_elements_text(auth_roles.scopes_json::json)
+                      WITH ORDINALITY AS held(scope, position)
+               UNION ALL
+               SELECT 1 AS origin, added.position, added.scope
+                 FROM unnest(ARRAY['approvals.requests.read', 'approvals.requests.decide'])
+                      WITH ORDINALITY AS added(scope, position)
+                WHERE added.scope NOT IN (
+                        SELECT existing.scope
+                          FROM json_array_elements_text(auth_roles.scopes_json::json) AS existing(scope))
+             ) AS entry
+    )
+WHERE builtin = 1 AND key = 'member';
+ALTER TABLE auth_roles FORCE ROW LEVEL SECURITY;
+`;
+
+export const AUTH_MIGRATION_025_AUDIT_HOLDS_OWNER_SCOPE = `-- audit.core declares audit.holds.manage, and D-AUDIT-HOLD-PERMISSION keeps it
+-- with owners: only an owner places or lifts a legal hold. The permission was
+-- declared after 0023 backfilled the enterprise module scopes, so an existing
+-- workspace carries it on neither its owner memberships nor its built-in owner
+-- role row. auth sync-scopes grants a module's declared scopes when the module
+-- is enabled, and audit.core was already enabled when this one appeared, so
+-- that path does not reach it either. This grants it to every owner
+-- membership and appends it to the built-in owner role row. Members receive
+-- nothing here: D-AUDIT-PERMISSIONS keeps every audit permission owner-only.
+--
+-- Row security is forced on both tables, and a migration role that is not a
+-- superuser is subject to it like any other, so a plain statement would reach
+-- no row on a real deployment. The force flag is lifted for the owner and put
+-- back inside the same transaction; a role that does not own these tables fails
+-- here loudly instead of leaving the grants missing. Nothing else runs against
+-- them while the migration lock is held.
+ALTER TABLE auth_membership_scopes NO FORCE ROW LEVEL SECURITY;
+INSERT INTO auth_membership_scopes (account_id, tenant_id, scope)
+SELECT account_id, tenant_id, scope
+FROM auth_memberships
+CROSS JOIN unnest(ARRAY['audit.holds.manage']) AS granted(scope)
+WHERE auth_memberships.role = 'owner'
+ON CONFLICT DO NOTHING;
+ALTER TABLE auth_membership_scopes FORCE ROW LEVEL SECURITY;
+-- A role row grants too: assigning a role replaces the membership scopes with
+-- the list it carries, so a scope missing from the built-in owner row would be
+-- taken away again at the next assignment. The scopes already held keep their
+-- order and the missing one is appended.
+ALTER TABLE auth_roles NO FORCE ROW LEVEL SECURITY;
+UPDATE auth_roles
+SET scopes_json = (
+      SELECT json_agg(entry.scope ORDER BY entry.origin, entry.position)::text
+        FROM (
+               SELECT 0 AS origin, held.position, held.scope
+                 FROM json_array_elements_text(auth_roles.scopes_json::json)
+                      WITH ORDINALITY AS held(scope, position)
+               UNION ALL
+               SELECT 1 AS origin, added.position, added.scope
+                 FROM unnest(ARRAY['audit.holds.manage'])
+                      WITH ORDINALITY AS added(scope, position)
+                WHERE added.scope NOT IN (
+                        SELECT existing.scope
+                          FROM json_array_elements_text(auth_roles.scopes_json::json) AS existing(scope))
+             ) AS entry
+    )
+WHERE builtin = 1 AND key = 'owner';
+ALTER TABLE auth_roles FORCE ROW LEVEL SECURITY;
+`;
+
+export const AUTH_MIGRATION_026_AUTH_EXPORT_KEYSET_INDEXES = `-- The three data class export walks page one workspace by keyset:
+-- WHERE tenant_id = $1 AND id > $2 ORDER BY id LIMIT $3. No index ordered that
+-- pair, so every page sorted the whole workspace again: auth_sessions carried
+-- (account_id, expires_at), (expires_at) and a unique (id); auth_api_tokens
+-- (tenant_id, revoked_at, created_at DESC); auth_audit
+-- (tenant_id, occurred_at DESC, id DESC). These three turn each page into an
+-- index range scan of exactly the rows it returns, which is what makes an
+-- export of a large workspace linear in the rows it carries rather than
+-- quadratic in them.
+CREATE INDEX IF NOT EXISTS auth_sessions_tenant_keyset_idx
+  ON auth_sessions (tenant_id, id);
+CREATE INDEX IF NOT EXISTS auth_api_tokens_tenant_keyset_idx
+  ON auth_api_tokens (tenant_id, id);
+CREATE INDEX IF NOT EXISTS auth_audit_tenant_keyset_idx
+  ON auth_audit (tenant_id, id);
+`;
+
+export const AUTH_MIGRATION_027_WORKFLOW_AUTOMATION_PROFILE_SCOPES = `-- workflows.core, automations.core and profile.core declare eleven permissions
+-- between them, and owners hold every permission an enabled module declares.
+-- All three were already enabled when the owner defaults gained them, so auth
+-- sync-scopes does not reach an existing workspace: it grants a module's scopes
+-- when the module is enabled and to the workspaces that exist at that moment.
+-- The seed lists in acl/scopes.ts reach a workspace created from now on and no
+-- earlier one. This grants the eleven to every owner membership and appends
+-- them to the built-in owner role row. Members receive profile.self.manage
+-- alone, because every member manages their own profile, language, password
+-- and sessions, while the workflow and automation permissions stay with owners.
+--
+-- Row security is forced on both tables, and a migration role that is not a
+-- superuser is subject to it like any other, so a plain statement would reach
+-- no row on a real deployment. The force flag is lifted for the owner and put
+-- back inside the same transaction; a role that does not own these tables fails
+-- here loudly instead of leaving the grants missing. Nothing else runs against
+-- them while the migration lock is held.
+ALTER TABLE auth_membership_scopes NO FORCE ROW LEVEL SECURITY;
+INSERT INTO auth_membership_scopes (account_id, tenant_id, scope)
+SELECT account_id, tenant_id, scope
+FROM auth_memberships
+CROSS JOIN unnest(ARRAY['workflows.definitions.read', 'workflows.definitions.manage', 'workflows.definitions.publish', 'workflows.runs.read', 'workflows.runs.execute', 'workflows.runs.cancel', 'automations.schedules.read', 'automations.schedules.manage', 'automations.triggers.read', 'automations.triggers.manage', 'profile.self.manage']) AS granted(scope)
+WHERE auth_memberships.role = 'owner'
+ON CONFLICT DO NOTHING;
+INSERT INTO auth_membership_scopes (account_id, tenant_id, scope)
+SELECT account_id, tenant_id, scope
+FROM auth_memberships
+CROSS JOIN unnest(ARRAY['profile.self.manage']) AS granted(scope)
+WHERE auth_memberships.role = 'member'
+ON CONFLICT DO NOTHING;
+ALTER TABLE auth_membership_scopes FORCE ROW LEVEL SECURITY;
+-- A role row grants too: assigning a role replaces the membership scopes with
+-- the list it carries, so a scope missing from a built-in row would be taken
+-- away again at the next assignment. The scopes already held keep their order
+-- and the missing ones are appended in the order acl/scopes.ts declares them,
+-- which is the order a freshly seeded workspace writes.
+ALTER TABLE auth_roles NO FORCE ROW LEVEL SECURITY;
+UPDATE auth_roles
+SET scopes_json = (
+      SELECT json_agg(entry.scope ORDER BY entry.origin, entry.position)::text
+        FROM (
+               SELECT 0 AS origin, held.position, held.scope
+                 FROM json_array_elements_text(auth_roles.scopes_json::json)
+                      WITH ORDINALITY AS held(scope, position)
+               UNION ALL
+               SELECT 1 AS origin, added.position, added.scope
+                 FROM unnest(ARRAY['workflows.definitions.read', 'workflows.definitions.manage', 'workflows.definitions.publish', 'workflows.runs.read', 'workflows.runs.execute', 'workflows.runs.cancel', 'automations.schedules.read', 'automations.schedules.manage', 'automations.triggers.read', 'automations.triggers.manage', 'profile.self.manage'])
+                      WITH ORDINALITY AS added(scope, position)
+                WHERE added.scope NOT IN (
+                        SELECT existing.scope
+                          FROM json_array_elements_text(auth_roles.scopes_json::json) AS existing(scope))
+             ) AS entry
+    )
+WHERE builtin = 1 AND key = 'owner';
+UPDATE auth_roles
+SET scopes_json = (
+      SELECT json_agg(entry.scope ORDER BY entry.origin, entry.position)::text
+        FROM (
+               SELECT 0 AS origin, held.position, held.scope
+                 FROM json_array_elements_text(auth_roles.scopes_json::json)
+                      WITH ORDINALITY AS held(scope, position)
+               UNION ALL
+               SELECT 1 AS origin, added.position, added.scope
+                 FROM unnest(ARRAY['profile.self.manage'])
+                      WITH ORDINALITY AS added(scope, position)
+                WHERE added.scope NOT IN (
+                        SELECT existing.scope
+                          FROM json_array_elements_text(auth_roles.scopes_json::json) AS existing(scope))
+             ) AS entry
+    )
+WHERE builtin = 1 AND key = 'member';
+ALTER TABLE auth_roles FORCE ROW LEVEL SECURITY;
+`;
+
 /* The scope backfills carry no schema, so they have nothing to adopt. They also
    reach no rows: row security is forced on both tables they read, and the
    migration role is subject to it like any other, so the SELECT they insert
@@ -587,5 +1086,106 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 					() => database.schema.hasIndex('auth_mfa_challenges_expiry_idx'),
 				],
 			),
+	},
+	{
+		id: '0016_external_identities',
+		sql: { postgresql: AUTH_MIGRATION_016_EXTERNAL_IDENTITIES },
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() => database.schema.hasTable('auth_external_identities'),
+				() => database.schema.hasIndex('auth_external_identities_account_idx'),
+			]),
+	},
+	{
+		id: '0017_mfa_key_id',
+		sql: { postgresql: AUTH_MIGRATION_017_MFA_KEY_ID },
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() => database.schema.hasColumn('auth_mfa_totp', 'key_id'),
+			]),
+	},
+	/* A data-only retirement: there is no schema object to prove, and a probe
+	   over the rows would report a fresh database as adopted. It cannot predate
+	   the ledger either, so it declares no inspectExisting. */
+	{
+		id: '0018_retire_bundled_module_scopes',
+		sql: { postgresql: AUTH_MIGRATION_018_RETIRE_BUNDLED_MODULE_SCOPES },
+	},
+	/* Data-only like 0018, and for the same reason it declares no
+	   inspectExisting: a probe over the rows would report a fresh database, which
+	   receives these scopes from acl/scopes.ts, as adopted. */
+	{
+		id: '0019_notifications_member_scopes',
+		sql: { postgresql: AUTH_MIGRATION_019_NOTIFICATIONS_MEMBER_SCOPES },
+	},
+	{
+		id: '0020_identity_providers',
+		sql: { postgresql: AUTH_MIGRATION_020_IDENTITY_PROVIDERS },
+		inspectExisting: (database) =>
+			postgresTenantTableState(
+				database,
+				'auth_identity_providers',
+				'auth_identity_providers_tenant_policy',
+				[
+					() => database.schema.hasIndex('auth_identity_providers_tenant_idx'),
+					() =>
+						database.schema.hasColumn('auth_external_identities', 'tenant_id'),
+					() =>
+						database.schema.hasIndex('auth_external_identities_workspace_idx'),
+				],
+			),
+	},
+	{
+		id: '0021_membership_status',
+		sql: { postgresql: AUTH_MIGRATION_021_MEMBERSHIP_STATUS },
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() => database.schema.hasColumn('auth_memberships', 'status'),
+			]),
+	},
+	/* Data-only like 0018 and 0019, and for the same reason it declares no
+	   inspectExisting: a probe over the rows would report a fresh database, which
+	   receives these scopes from acl/scopes.ts, as adopted. */
+	{
+		id: '0022_auth_provider_scopes',
+		sql: { postgresql: AUTH_MIGRATION_022_AUTH_PROVIDER_SCOPES },
+	},
+	/* Data-only like 0018, 0019 and 0022, and for the same reason it declares no
+	   inspectExisting: a probe over the rows would report a fresh database, which
+	   receives these scopes from acl/scopes.ts, as adopted. */
+	{
+		id: '0023_enterprise_module_scopes',
+		sql: { postgresql: AUTH_MIGRATION_023_ENTERPRISE_MODULE_SCOPES },
+	},
+	/* Data-only like 0018, 0019, 0022 and 0023, and for the same reason it
+	   declares no inspectExisting: a probe over the rows would report a fresh
+	   database, which receives these scopes from acl/scopes.ts, as adopted. */
+	{
+		id: '0024_approvals_member_scopes',
+		sql: { postgresql: AUTH_MIGRATION_024_APPROVALS_MEMBER_SCOPES },
+	},
+	/* Data-only like 0018, 0019, 0022, 0023 and 0024, and for the same reason it
+	   declares no inspectExisting: a probe over the rows would report a fresh
+	   database, which receives this scope from acl/scopes.ts, as adopted. */
+	{
+		id: '0025_audit_holds_owner_scope',
+		sql: { postgresql: AUTH_MIGRATION_025_AUDIT_HOLDS_OWNER_SCOPE },
+	},
+	{
+		id: '0026_auth_export_keyset_indexes',
+		sql: { postgresql: AUTH_MIGRATION_026_AUTH_EXPORT_KEYSET_INDEXES },
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() => database.schema.hasIndex('auth_sessions_tenant_keyset_idx'),
+				() => database.schema.hasIndex('auth_api_tokens_tenant_keyset_idx'),
+				() => database.schema.hasIndex('auth_audit_tenant_keyset_idx'),
+			]),
+	},
+	/* Data-only like 0018, 0019, 0022, 0023, 0024 and 0025, and for the same
+	   reason it declares no inspectExisting: a probe over the rows would report a
+	   fresh database, which receives these scopes from acl/scopes.ts, as adopted. */
+	{
+		id: '0027_workflow_automation_profile_scopes',
+		sql: { postgresql: AUTH_MIGRATION_027_WORKFLOW_AUTOMATION_PROFILE_SCOPES },
 	},
 ];

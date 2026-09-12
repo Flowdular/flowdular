@@ -11,8 +11,10 @@ import type {
 	CreateApiTokenInput,
 	CreateRoleInput,
 	CreateTenantMemberInput,
+	CreateTenantMemberWithoutPasswordInput,
 	IssuedApiToken,
 	IssuedSession,
+	MembershipStatus,
 	SessionSummary,
 	SignInInput,
 	SignUpInput,
@@ -26,8 +28,19 @@ import {
 } from '../settings.ts';
 import { AuthServiceError } from './auth-service-error.ts';
 import {
+	IdentityProviderService,
+	PROVIDER_AUDIT_ACTIONS,
+	type OidcDiscoveryPort,
+} from './identity-provider-service.ts';
+import {
+	createProviderSecretVault,
+	type ProviderSecretVault,
+} from './provider-secrets.ts';
+import {
 	DEFAULT_PASSWORD_HASH_OPTIONS,
 	hashPassword,
+	passwordIsSet,
+	UNUSABLE_PASSWORD_HASH,
 	verifyPassword,
 	type PasswordHashOptions,
 } from './password.ts';
@@ -43,15 +56,16 @@ import {
 } from './repository.ts';
 import type { AuthMailDelivery } from './mail-delivery.ts';
 import {
+	createMfaSecretVault,
 	createTotpSecret,
-	decryptMfaSecret,
-	encryptMfaSecret,
 	verifyTotp,
+	type MfaSecretVault,
 } from './totp.ts';
 import {
 	assertPasswordPolicy,
 	normalizeEmail,
 	validateCreateTenantMember,
+	validateCreateTenantMemberWithoutPassword,
 	validateDisplayName,
 	validateEmailAddress,
 	validateRoleDescription,
@@ -84,6 +98,23 @@ export interface AuthServiceOptions {
 	readonly now?: () => number;
 	/** AES-256-GCM key used only to protect enrolled TOTP secrets at rest. */
 	readonly mfaEncryptionKey?: string;
+	/**
+	 * Keys a rotation has not finished retiring. They open stored factors that
+	 * were sealed before the rotation, and nothing is ever written with them.
+	 */
+	readonly mfaPreviousEncryptionKeys?: readonly string[];
+	/**
+	 * Verifies an issuer through its discovery document when a workspace saves
+	 * a provider. The server layer installs the HTTP adapter; without one, a
+	 * save is refused instead of trusting an unverified issuer.
+	 */
+	readonly oidcDiscovery?: OidcDiscoveryPort;
+	/**
+	 * Drops the ID token verifier's cached key set for a provider whose row
+	 * changed. The server layer installs the verifier it serves with; a
+	 * composition without one caches nothing to invalidate.
+	 */
+	readonly forgetProviderKeys?: (providerId: string) => void;
 	/** Deployment-owned delivery adapter. auth.core never selects an email vendor. */
 	readonly mailDelivery?: AuthMailDelivery;
 	/** Public origin used to form opaque, one-time delivery links. */
@@ -199,6 +230,34 @@ export interface SignInContext {
 	readonly address?: string | null;
 }
 
+/** What a sign-in through a tenant-owned provider needs about the workspace. */
+export interface TenantProviderSignIn {
+	readonly tenantId: string;
+	readonly jitEnabled: boolean;
+	readonly allowedDomains: readonly string[];
+	readonly jitRole: string;
+}
+
+/* A workspace saving a provider verifies its issuer through discovery, which is
+   an outbound request the server layer owns. Without that adapter the save is
+   refused rather than trusting the issuer a request supplied. */
+function discoveryUnavailable(): AuthServiceError {
+	return new AuthServiceError(
+		'PROVIDER_DISCOVERY_UNAVAILABLE',
+		'Issuer discovery is not available in this composition.',
+		503,
+	);
+}
+
+/* A provisioned account has only the address the provider verified. The local
+   part is the readable half of it and is what the member sees until they
+   change it. */
+function displayNameFromEmail(email: string): string {
+	const local = email.slice(0, email.lastIndexOf('@'));
+	const candidate = local.length >= 2 ? local : email;
+	return candidate.slice(0, 80);
+}
+
 export function hashSessionToken(token: string): string {
 	return createHash('sha256').update(token, 'utf8').digest('base64url');
 }
@@ -221,6 +280,25 @@ const OPERATOR_SETUP_TTL_MS = 24 * 60 * 60 * 1000;
 const MFA_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const RECOVERY_CODE_COUNT = 10;
 
+/**
+ * Addresses one `findTenantMembersByEmail` call may name. A bulk caller splits
+ * a larger batch, so the statement never carries an unbounded list and a
+ * workspace of unknown size is never listed to answer a handful of addresses.
+ */
+export const TENANT_MEMBER_LOOKUP_LIMIT = 500;
+
+/** Members one `searchTenantMembers` call may answer. */
+export const TENANT_MEMBER_SEARCH_LIMIT = 500;
+
+/** Characters a search term may carry; a longer one matches nothing useful. */
+export const TENANT_MEMBER_SEARCH_TERM_LENGTH = 200;
+
+/* The LIKE wildcards, so a term a person typed is matched literally. The
+   statements that use it declare ESCAPE '\'. */
+function escapeLikeTerm(term: string): string {
+	return term.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
+
 export const AUDIT_ACTIONS = Object.freeze({
 	signInSucceeded: 'auth.sign-in.succeeded',
 	signInFailed: 'auth.sign-in.failed',
@@ -237,11 +315,20 @@ export const AUDIT_ACTIONS = Object.freeze({
 	mfaEnrolled: 'auth.mfa.enrolled',
 	mfaConfirmed: 'auth.mfa.confirmed',
 	mfaChallengeSucceeded: 'auth.mfa.challenge-succeeded',
+	mfaReset: 'auth.mfa.reset',
 	tenantRenamed: 'auth.tenant.renamed',
 	workspaceProvisioned: 'auth.workspace.provisioned',
 	memberCreated: 'users.member.created',
 	memberUpdated: 'users.member.updated',
 	memberStatus: 'users.member.status',
+	memberProvisioned: 'auth.member.provisioned',
+	jitRefused: 'auth.jit.refused',
+	membershipStatus: 'auth.membership.status',
+	providerCreated: PROVIDER_AUDIT_ACTIONS.created,
+	providerUpdated: PROVIDER_AUDIT_ACTIONS.updated,
+	providerStatusChanged: PROVIDER_AUDIT_ACTIONS.status,
+	providerSecretRotated: PROVIDER_AUDIT_ACTIONS.secretRotated,
+	providerDeleted: PROVIDER_AUDIT_ACTIONS.deleted,
 	memberRemoved: 'users.member.removed',
 	memberPasswordReset: 'users.member.password-reset',
 	memberScopes: 'users.member.scopes',
@@ -262,6 +349,13 @@ function operatorActor(operator: string): Actor {
 	return { kind: 'user', id: operator, label: operator };
 }
 
+/* A refused just-in-time sign-in belongs to no account of this workspace, so
+   the provider that asserted the identity is the actor and the address it
+   reported never reaches the trail. */
+function providerActor(provider: string): Actor {
+	return { kind: 'user', id: `oidc:${provider}`, label: `oidc:${provider}` };
+}
+
 function member(account: AccountCredential, createdAt: number): TenantMember {
 	return {
 		accountId: account.accountId,
@@ -270,6 +364,7 @@ function member(account: AccountCredential, createdAt: number): TenantMember {
 		role: account.role,
 		roleId: account.roleId,
 		status: account.status,
+		membershipStatus: account.membershipStatus,
 		scopes: account.scopes,
 		passwordChangeRequired: account.passwordChangeRequired,
 		createdAt,
@@ -282,6 +377,12 @@ export class AuthService {
 	readonly #passwordHash: PasswordHashOptions;
 	readonly #now: () => number;
 	readonly #mfaEncryptionKey: string | undefined;
+	readonly #mfaPreviousEncryptionKeys: readonly string[];
+	#mfaVault: MfaSecretVault | undefined;
+	#providerSecretVault: ProviderSecretVault | undefined;
+	#identityProviders: IdentityProviderService | undefined;
+	readonly #oidcDiscovery: OidcDiscoveryPort;
+	readonly #forgetProviderKeys: (providerId: string) => void;
 	readonly #mailDelivery: AuthMailDelivery | undefined;
 	readonly #publicBaseUrl: string;
 
@@ -297,6 +398,10 @@ export class AuthService {
 		this.#passwordHash = options.passwordHash ?? DEFAULT_PASSWORD_HASH_OPTIONS;
 		this.#now = options.now ?? Date.now;
 		this.#mfaEncryptionKey = options.mfaEncryptionKey;
+		this.#mfaPreviousEncryptionKeys = options.mfaPreviousEncryptionKeys ?? [];
+		this.#oidcDiscovery =
+			options.oidcDiscovery ?? (() => Promise.reject(discoveryUnavailable()));
+		this.#forgetProviderKeys = options.forgetProviderKeys ?? (() => undefined);
 		this.#mailDelivery = options.mailDelivery;
 		this.#publicBaseUrl = (options.publicBaseUrl ?? 'http://localhost').replace(
 			/\/$/,
@@ -463,10 +568,20 @@ export class AuthService {
 				423,
 			);
 		}
-		const account = await this.#repository.findAccountByEmail(input.email);
+		const account = await this.#signInAccount(input);
 		if (!account) {
 			await hashPassword(input.password, this.#passwordHash);
 			await this.#recordFailure(input.email, null, context);
+			throw this.#invalidCredentials();
+		}
+		/* An account created without a password answers exactly as an unknown
+		   address does, down to burning the same derivation: a distinct code here
+		   would tell an attacker which addresses are registered and not yet
+		   activated, which is the set most worth attacking. PASSWORD_NOT_SET is
+		   reported where the caller is already authenticated as the account. */
+		if (!passwordIsSet(account.passwordHash)) {
+			await hashPassword(input.password, this.#passwordHash);
+			await this.#recordFailure(input.email, account, context);
 			throw this.#invalidCredentials();
 		}
 		const valid = await verifyPassword(input.password, account.passwordHash);
@@ -488,6 +603,26 @@ export class AuthService {
 			context.address ? { address: context.address } : {},
 		);
 		return issued;
+	}
+
+	/* The workspace the sign-in screen names is the one the session opens in:
+	   the membership has to exist there and be active. An unknown workspace and
+	   a membership the account does not hold answer as a wrong password does,
+	   so the form never reports which workspaces hold an address. Without a
+	   named workspace the oldest membership answers, exactly as before. */
+	async #signInAccount(input: SignInInput): Promise<AccountCredential | null> {
+		if (input.workspace === undefined) {
+			return this.#repository.findAccountByEmail(input.email);
+		}
+		const tenant = await this.findTenant(input.workspace);
+		if (!tenant) return null;
+		const identity = await this.#repository.findAccountIdentity(input.email);
+		if (!identity) return null;
+		const membership = await this.#repository.findAccountMembership(
+			identity.accountId,
+			tenant.tenantId,
+		);
+		return membership?.membershipStatus === 'active' ? membership : null;
 	}
 
 	async #issueMfaChallenge(
@@ -561,6 +696,80 @@ export class AuthService {
 		return this.#repository.listTenantMembers(tenantId);
 	}
 
+	/**
+	 * The members of one workspace holding any of these addresses. The natural
+	 * key a bulk caller resolves per batch, answered by the database rather than
+	 * by listing the workspace and matching in memory. Addresses are folded the
+	 * way auth.core folds a stored address, so the caller passes what a person
+	 * typed. An address the workspace does not hold is simply absent from the
+	 * answer, and an account that exists in another workspace stays invisible
+	 * here.
+	 */
+	async findTenantMembersByEmail(
+		tenantId: string,
+		emails: readonly string[],
+	): Promise<readonly TenantMember[]> {
+		if (emails.length > TENANT_MEMBER_LOOKUP_LIMIT) {
+			throw new AuthServiceError(
+				'INVALID_INPUT',
+				`At most ${TENANT_MEMBER_LOOKUP_LIMIT} addresses can be looked up at once.`,
+				400,
+			);
+		}
+		const normalized = [
+			...new Set(emails.map(normalizeEmail).filter((email) => email !== '')),
+		];
+		return this.#repository.findTenantMembersByEmail(
+			this.#identifier(tenantId, 'tenantId'),
+			normalized,
+		);
+	}
+
+	/**
+	 * Members of one workspace whose display name contains the term or whose
+	 * address starts with it, cut to `limit` in the database. The caller ranks
+	 * what comes back; this only bounds what a search reads.
+	 */
+	async searchTenantMembers(
+		tenantId: string,
+		input: { readonly query: string; readonly limit: number },
+	): Promise<readonly TenantMember[]> {
+		const term = normalizeEmail(input.query);
+		if (term.length === 0 || term.length > TENANT_MEMBER_SEARCH_TERM_LENGTH) {
+			throw new AuthServiceError(
+				'INVALID_INPUT',
+				`Search term must contain 1 to ${TENANT_MEMBER_SEARCH_TERM_LENGTH} characters.`,
+				400,
+			);
+		}
+		if (
+			!Number.isSafeInteger(input.limit) ||
+			input.limit < 1 ||
+			input.limit > TENANT_MEMBER_SEARCH_LIMIT
+		) {
+			throw new AuthServiceError(
+				'INVALID_INPUT',
+				`Limit must be 1 to ${TENANT_MEMBER_SEARCH_LIMIT}.`,
+				400,
+			);
+		}
+		return this.#repository.searchTenantMembers(
+			this.#identifier(tenantId, 'tenantId'),
+			escapeLikeTerm(term),
+			input.limit,
+		);
+	}
+
+	/* A dependent module that needs the role and scopes of one account asks for
+	   that account: reading the whole workspace to find it costs the roll on
+	   every decision a member takes. */
+	async findTenantMember(
+		tenantId: string,
+		accountId: string,
+	): Promise<TenantMember | null> {
+		return this.#repository.findTenantMember(tenantId, accountId);
+	}
+
 	/* Scopes are authorization metadata, not credentials. Dependent modules read
 	   them here instead of interpreting role names or opening the auth database. */
 	async listMembershipScopes(
@@ -605,6 +814,16 @@ export class AuthService {
 				404,
 			);
 		}
+		/* The caller is already authenticated as this account, so naming the cause
+		   reveals nothing it does not already know, and "the current password is
+		   incorrect" would be a dead end for a member who never had one. */
+		if (!passwordIsSet(account.passwordHash)) {
+			throw new AuthServiceError(
+				'PASSWORD_NOT_SET',
+				'This account has no password yet. Use the password reset link to set the first one.',
+				409,
+			);
+		}
 		const valid = await verifyPassword(
 			input.currentPassword,
 			account.passwordHash,
@@ -616,7 +835,11 @@ export class AuthService {
 				401,
 			);
 		}
-		assertPasswordPolicy(input.newPassword, this.#policy().passwordMinLength);
+		assertPasswordPolicy(
+			input.newPassword,
+			this.#policy().passwordMinLength,
+			account.email,
+		);
 		if (input.newPassword === input.currentPassword) {
 			throw new AuthServiceError(
 				'PASSWORD_UNCHANGED',
@@ -800,6 +1023,37 @@ export class AuthService {
 			raw,
 			this.#policy().passwordMinLength,
 		);
+		return this.#createTenantMember(
+			input,
+			actor,
+			await hashPassword(input.password, this.#passwordHash),
+		);
+	}
+
+	/**
+	 * A member who holds no password at all. The account stores the unusable
+	 * credential marker rather than a secret nobody keeps: no password can match
+	 * it, so a sign-in by password is refused, and the member reaches the
+	 * workspace through the reset flow, an administrative temporary password or
+	 * an external identity. A bulk creator calls this instead of drawing a random
+	 * secret it immediately throws away.
+	 */
+	async createTenantMemberWithoutPassword(
+		raw: CreateTenantMemberWithoutPasswordInput,
+		actor: AuthActor | null = null,
+	): Promise<TenantMember> {
+		return this.#createTenantMember(
+			validateCreateTenantMemberWithoutPassword(raw),
+			actor,
+			UNUSABLE_PASSWORD_HASH,
+		);
+	}
+
+	async #createTenantMember(
+		input: CreateTenantMemberWithoutPasswordInput,
+		actor: AuthActor | null,
+		passwordHash: string,
+	): Promise<TenantMember> {
 		if (actor && actor.tenantId !== input.tenantId) {
 			throw new AuthServiceError(
 				'TENANT_ACCESS_DENIED',
@@ -815,7 +1069,6 @@ export class AuthService {
 			: input.role === 'owner'
 				? OWNER_SCOPES
 				: MEMBER_SCOPES;
-		const passwordHash = await hashPassword(input.password, this.#passwordHash);
 		try {
 			const createdAt = this.#now();
 			const account = await this.#repository.createAccountInTenant({
@@ -837,7 +1090,12 @@ export class AuthService {
 					AUDIT_ACTIONS.memberCreated,
 					'account',
 					account.accountId,
-					{ email: account.email, role: input.role },
+					/* Only the credential-less creation is named, so the trail of an
+					   ordinary one keeps the shape it had and carries no word about
+					   a secret at all. */
+					passwordHash === UNUSABLE_PASSWORD_HASH
+						? { email: account.email, role: input.role, credential: 'none' }
+						: { email: account.email, role: input.role },
 				);
 			}
 			return member(account, createdAt);
@@ -882,13 +1140,20 @@ export class AuthService {
 		return target;
 	}
 
+	/* `counted` says whether the target is one of the active owners
+	   countActiveOwners still counts, which is what makes `<= 1` mean "the last
+	   one". A caller that changes the membership alone must not read the account
+	   block as the membership's own state, or disabling an owner whose
+	   membership is already disabled would answer LAST_OWNER instead of doing
+	   nothing. */
 	async #assertOwnerRemains(
 		tenantId: string,
 		target: AccountCredential,
+		counted = target.status === 'active',
 	): Promise<void> {
 		if (
 			target.role === 'owner' &&
-			target.status === 'active' &&
+			counted &&
 			(await this.#repository.countActiveOwners(tenantId)) <= 1
 		) {
 			throw new AuthServiceError(
@@ -989,7 +1254,11 @@ export class AuthService {
 		const target = await this.#targetMember(actor, accountId, {
 			allowSelf: false,
 		});
-		assertPasswordPolicy(temporaryPassword, this.#policy().passwordMinLength);
+		assertPasswordPolicy(
+			temporaryPassword,
+			this.#policy().passwordMinLength,
+			target.email,
+		);
 		await this.#repository.updatePasswordHash(
 			target.accountId,
 			await hashPassword(temporaryPassword, this.#passwordHash),
@@ -1245,6 +1514,20 @@ export class AuthService {
 				409,
 			);
 		}
+		/* A provider provisions into a role by key, and the key is all the row
+		   holds. Deleting the role behind it would leave every just-in-time
+		   sign-in through that provider refusing silently, so the provider is
+		   pointed elsewhere first. */
+		const named = (
+			await this.#repository.listIdentityProviders(actor.tenantId)
+		).find((provider) => provider.jitRole === role.key);
+		if (named) {
+			throw new AuthServiceError(
+				'ROLE_NAMED_BY_PROVIDER',
+				`The identity provider ${named.key} provisions members into this role. Point it at another role first.`,
+				409,
+			);
+		}
 		await this.#repository.deleteRole(actor.tenantId, role.id);
 		await this.#audit(
 			actor.tenantId,
@@ -1320,7 +1603,16 @@ export class AuthService {
 		const normalized = normalizeEmail(email);
 		if (normalized.length > 254) return;
 		const account = await this.#repository.findAccountByEmail(normalized);
-		if (!account || !this.#mailDelivery) return;
+		if (!account) return;
+		if (!this.#mailDelivery) {
+			/* The client still gets the non-enumerating success, so the deployment
+			   log is the only place this dead end is visible. The address stays out
+			   of it. */
+			console.warn(
+				'[auth.core] mail transport is none; password reset for an existing account was not delivered',
+			);
+			return;
+		}
 		const reset = await this.#mintPasswordResetToken(
 			account.accountId,
 			PASSWORD_RESET_TTL_MS,
@@ -1352,20 +1644,36 @@ export class AuthService {
 				400,
 			);
 		}
-		assertPasswordPolicy(password, this.#policy().passwordMinLength);
-		const accountId = await this.#repository.consumePasswordResetToken(
-			hashSessionToken(token),
+		const tokenHash = hashSessionToken(token);
+		const named = await this.#repository.findPasswordResetTokenAccount(
+			tokenHash,
 			this.#now(),
 		);
-		if (!accountId) {
+		const account = named
+			? await this.#repository.findAccountCredentialById(named)
+			: null;
+		if (!account || account.status !== 'active') {
 			throw new AuthServiceError(
 				'RESET_TOKEN_INVALID',
 				'This password reset link is invalid or has expired.',
 				400,
 			);
 		}
-		const account = await this.#repository.findAccountCredentialById(accountId);
-		if (!account || account.status !== 'active') {
+		/* The whole policy, including the address rule, runs on the account the
+		   link names before anything spends it: a refused password leaves the
+		   link usable instead of stranding the visitor with a dead one. */
+		assertPasswordPolicy(
+			password,
+			this.#policy().passwordMinLength,
+			account.email,
+		);
+		/* Claiming the token is still one statement, so two submissions of the
+		   same link cannot both change the password. */
+		const accountId = await this.#repository.consumePasswordResetToken(
+			tokenHash,
+			this.#now(),
+		);
+		if (!accountId) {
 			throw new AuthServiceError(
 				'RESET_TOKEN_INVALID',
 				'This password reset link is invalid or has expired.',
@@ -1534,7 +1842,11 @@ export class AuthService {
 		const displayName = validateDisplayName(input.ownerDisplayName);
 		const email = validateEmailAddress(input.ownerEmail);
 		if (input.password !== undefined) {
-			assertPasswordPolicy(input.password, this.#policy().passwordMinLength);
+			assertPasswordPolicy(
+				input.password,
+				this.#policy().passwordMinLength,
+				email,
+			);
 		}
 		if (await this.#repository.isTenantSlugTaken(slug)) {
 			throw new AuthServiceError(
@@ -1786,6 +2098,45 @@ export class AuthService {
 		};
 	}
 
+	/* Built on first use, so a deployment that configures no MFA key still
+	   constructs the service and an unusable key is refused where a factor is
+	   actually sealed or opened, with MFA_NOT_CONFIGURED. */
+	#vault(): MfaSecretVault {
+		return (this.#mfaVault ??= createMfaSecretVault(
+			this.#mfaEncryptionKey,
+			this.#mfaPreviousEncryptionKeys,
+		));
+	}
+
+	/* The same deployment keys under a provider-specific context, refused with
+	   PROVIDER_KEY_REQUIRED where a provider secret is actually sealed. */
+	#providerVault(): ProviderSecretVault {
+		return (this.#providerSecretVault ??= createProviderSecretVault(
+			this.#mfaEncryptionKey,
+			this.#mfaPreviousEncryptionKeys,
+		));
+	}
+
+	/** Tenant-owned identity providers of the workspaces this service serves. */
+	get identityProviders(): IdentityProviderService {
+		return (this.#identityProviders ??= new IdentityProviderService({
+			repository: this.#repository,
+			vault: () => this.#providerVault(),
+			now: this.#now,
+			discover: this.#oidcDiscovery,
+			forgetKeys: (providerId) => this.#forgetProviderKeys(providerId),
+			audit: (tenantId, actor, action, subjectType, subjectId, metadata) =>
+				this.#audit(
+					tenantId,
+					actor,
+					action,
+					subjectType,
+					subjectId,
+					metadata ?? {},
+				),
+		}));
+	}
+
 	async enrollTotp(
 		accountId: string,
 		issuer = 'Flowdular',
@@ -1820,7 +2171,7 @@ export class AuthService {
 		const now = this.#now();
 		await this.#repository.upsertMfaTotp(
 			account.accountId,
-			encryptMfaSecret(secret, this.#mfaEncryptionKey),
+			this.#vault().seal(secret),
 			now,
 		);
 		await this.#repository.replaceMfaRecoveryCodes(
@@ -1860,6 +2211,31 @@ export class AuthService {
 		};
 	}
 
+	/** Whether the account holds a confirmed second factor; one indexed read. */
+	async hasConfirmedMfa(accountId: string): Promise<boolean> {
+		return this.#repository.hasConfirmedMfaTotp(
+			this.#identifier(accountId, 'accountId'),
+		);
+	}
+
+	/* An administrator clears a lost factor. The target is resolved inside the
+	   acting workspace, so an account that belongs only to another workspace
+	   answers exactly as an unknown one does. */
+	async resetMemberMfa(actor: AuthActor, accountId: string): Promise<void> {
+		const target = await this.#targetMember(actor, accountId, {
+			allowSelf: false,
+		});
+		await this.#repository.deleteMfaEnrolment(target.accountId);
+		await this.#audit(
+			actor.tenantId,
+			this.#actorOf(actor),
+			AUDIT_ACTIONS.mfaReset,
+			'account',
+			target.accountId,
+			{ email: target.email },
+		);
+	}
+
 	async confirmTotp(accountId: string, code: string): Promise<void> {
 		const account = await this.#repository.findAccountCredentialById(
 			this.#identifier(accountId, 'accountId'),
@@ -1871,7 +2247,7 @@ export class AuthService {
 			!account ||
 			!record ||
 			!verifyTotp(
-				decryptMfaSecret(record.secretCiphertext, this.#mfaEncryptionKey),
+				this.#vault().open(record.secretCiphertext, record.keyId),
 				code,
 				this.#now(),
 			)
@@ -1926,7 +2302,7 @@ export class AuthService {
 			record !== null &&
 			((typeof code === 'string' &&
 				verifyTotp(
-					decryptMfaSecret(record.secretCiphertext, this.#mfaEncryptionKey),
+					this.#vault().open(record.secretCiphertext, record.keyId),
 					code,
 					this.#now(),
 				)) ||
@@ -1955,14 +2331,54 @@ export class AuthService {
 		return issued;
 	}
 
-	async signInVerifiedExternalEmail(
-		email: string,
-	): Promise<IssuedSession | MfaChallenge> {
-		const account = await this.#repository.findAccountByEmail(
-			normalizeEmail(email),
+	/* The provider subject is the identity; the address it reports only
+	   bootstraps the first link. Resolving by subject afterwards is what keeps a
+	   reassigned address at the provider from reaching another account here. */
+	async signInExternalIdentity(input: {
+		readonly provider: string;
+		readonly subject: string;
+		readonly email: string;
+		/**
+		 * Present when a tenant-owned provider asserted the identity: the binding
+		 * lives in that workspace, the session opens in that workspace, and
+		 * nothing the provider says reaches another one.
+		 */
+		readonly workspace?: TenantProviderSignIn;
+	}): Promise<IssuedSession | MfaChallenge> {
+		const provider = this.#identifier(input.provider, 'provider');
+		const subject = this.#identifier(input.subject, 'subject');
+		const workspace = input.workspace ?? null;
+		const tenantId = workspace?.tenantId ?? null;
+		const linkedAccountId = await this.#repository.findExternalIdentity(
+			provider,
+			subject,
+			tenantId,
 		);
+		const account = linkedAccountId
+			? await this.#resolveLinkedAccount(linkedAccountId, tenantId)
+			: await this.#resolveExternalAccount(input.email, provider, workspace);
 		if (!account || account.status !== 'active')
 			throw this.#invalidCredentials();
+		if (
+			!linkedAccountId &&
+			(await this.#repository.findExternalIdentitySubject(
+				provider,
+				account.accountId,
+				tenantId,
+			)) !== null
+		) {
+			/* The account already answers to another subject at this provider. An
+			   address the provider reports never re-binds it, which is what a
+			   reused or transferred address would otherwise do. */
+			throw this.#invalidCredentials();
+		}
+		await this.#repository.linkExternalIdentity({
+			provider,
+			subject,
+			accountId: account.accountId,
+			tenantId,
+			now: this.#now(),
+		});
 		if (
 			(await this.#repository.findMfaTotp(account.accountId))?.confirmedAt !=
 			null
@@ -1978,6 +2394,193 @@ export class AuthService {
 			{ via: 'oidc' },
 		);
 		return issued;
+	}
+
+	/* A binding already made resolves the membership it was made in. A platform
+	   binding names no workspace and keeps resolving the account's own. */
+	async #resolveLinkedAccount(
+		accountId: string,
+		tenantId: string | null,
+	): Promise<AccountCredential | null> {
+		if (!tenantId) {
+			return this.#repository.findAccountCredentialById(accountId);
+		}
+		const membership = await this.#repository.findAccountMembership(
+			accountId,
+			tenantId,
+		);
+		return membership?.membershipStatus === 'active' ? membership : null;
+	}
+
+	/**
+	 * The first sign-in through a provider, before any binding exists. The
+	 * verified address only bootstraps the link: for a platform provider it
+	 * resolves the account exactly as before, and for a workspace provider it
+	 * resolves the membership of that workspace, provisioning one when the
+	 * provider is configured to and the address is inside its domains.
+	 */
+	async #resolveExternalAccount(
+		email: string,
+		provider: string,
+		workspace: TenantProviderSignIn | null,
+	): Promise<AccountCredential | null> {
+		const normalized = normalizeEmail(email);
+		if (!workspace) return this.#repository.findAccountByEmail(normalized);
+		const identity = await this.#repository.findAccountIdentity(normalized);
+		if (identity && identity.status !== 'active') return null;
+		if (identity) {
+			const membership = await this.#repository.findAccountMembership(
+				identity.accountId,
+				workspace.tenantId,
+			);
+			if (membership) {
+				return membership.membershipStatus === 'active' ? membership : null;
+			}
+		}
+		return this.#provisionExternalMember(
+			normalized,
+			identity?.accountId ?? null,
+			provider,
+			workspace,
+		);
+	}
+
+	/* Just-in-time provisioning. Every refusal happens before the first write,
+	   so a provider that is not allowed to create members creates nothing. */
+	async #provisionExternalMember(
+		normalizedEmail: string,
+		accountId: string | null,
+		provider: string,
+		workspace: TenantProviderSignIn,
+	): Promise<AccountCredential | null> {
+		if (!workspace.jitEnabled) return null;
+		const domain = normalizedEmail.slice(normalizedEmail.lastIndexOf('@') + 1);
+		if (!domain || !workspace.allowedDomains.includes(domain)) return null;
+		/* A tenant-owned provider may not absorb an account other workspaces
+		   rely on. Reuse is limited to an account no workspace holds; anyone
+		   else is invited by this workspace instead. */
+		if (accountId && (await this.#repository.countMemberships(accountId)) > 0) {
+			await this.#audit(
+				workspace.tenantId,
+				providerActor(provider),
+				AUDIT_ACTIONS.jitRefused,
+				'sign-in',
+				provider,
+				{ provider, reason: 'account-has-other-membership' },
+			);
+			throw new AuthServiceError(
+				'JIT_ACCOUNT_EXISTS',
+				'The account already belongs to another workspace.',
+				401,
+			);
+		}
+		const role = await this.#repository.findRoleByKey(
+			workspace.tenantId,
+			workspace.jitRole,
+		);
+		/* Saving a provider proves the role exists and deleting that role is
+		   refused, so reaching this means the row and the roles drifted apart.
+		   The refusal is recorded under its own reason rather than looking like
+		   a domain or account refusal. */
+		if (!role) {
+			await this.#audit(
+				workspace.tenantId,
+				providerActor(provider),
+				AUDIT_ACTIONS.jitRefused,
+				'sign-in',
+				provider,
+				{ provider, reason: 'role-missing', role: workspace.jitRole },
+			);
+			return null;
+		}
+		const createdAt = this.#now();
+		const member = accountId
+			? await this.#repository.createMembershipInTenant({
+					accountId,
+					tenantId: workspace.tenantId,
+					role: role.key,
+					roleId: role.id,
+					scopes: role.scopes,
+					createdAt,
+				})
+			: await this.#repository.createAccountInTenant({
+					accountId: randomUUID(),
+					tenantId: workspace.tenantId,
+					email: normalizedEmail,
+					normalizedEmail,
+					/* The account signs in through the provider. A random hash nobody
+					   holds keeps the password path closed until a reset sets one. */
+					passwordHash: await hashPassword(
+						randomBytes(32).toString('base64url'),
+						this.#passwordHash,
+					),
+					displayName: displayNameFromEmail(normalizedEmail),
+					role: role.key,
+					roleId: role.id,
+					scopes: role.scopes,
+					createdAt,
+				});
+		await this.#audit(
+			workspace.tenantId,
+			{ kind: 'user', id: member.accountId, label: member.email },
+			AUDIT_ACTIONS.memberProvisioned,
+			'account',
+			member.accountId,
+			{ provider, role: role.key },
+		);
+		return member;
+	}
+
+	/**
+	 * The workspace's own status for one member. Disabling revokes that
+	 * membership's sessions and API tokens and refuses its sign-in; the other
+	 * workspaces of the same account are untouched, and the account status stays
+	 * the deployment operator's platform-level block.
+	 */
+	async setMembershipStatus(
+		actor: AuthActor,
+		accountId: string,
+		status: MembershipStatus,
+	): Promise<{
+		readonly accountId: string;
+		readonly status: MembershipStatus;
+	}> {
+		const target = await this.#targetMember(actor, accountId, {
+			allowSelf: false,
+		});
+		if (status === 'disabled') {
+			await this.#assertOwnerRemains(
+				actor.tenantId,
+				target,
+				target.status === 'active' && target.membershipStatus === 'active',
+			);
+		}
+		await this.#repository.setMembershipStatus(
+			target.accountId,
+			actor.tenantId,
+			status,
+		);
+		if (status === 'disabled') {
+			await this.#repository.deleteMembershipSessions(
+				target.accountId,
+				actor.tenantId,
+			);
+			await this.#repository.revokeMembershipApiTokens(
+				actor.tenantId,
+				target.accountId,
+				this.#now(),
+				actor.accountId,
+			);
+		}
+		await this.#audit(
+			actor.tenantId,
+			this.#actorOf(actor),
+			AUDIT_ACTIONS.membershipStatus,
+			'account',
+			target.accountId,
+			{ status },
+		);
+		return { accountId: target.accountId, status };
 	}
 
 	async resolveSession(token: string | null): Promise<AuthSession | null> {
@@ -2106,7 +2709,9 @@ export class AuthService {
 			current.principal.accountId,
 			tenantId,
 		);
-		if (!account) {
+		/* A membership the workspace disabled is not a workspace this account may
+		   enter, and it answers exactly as one it never held. */
+		if (!account || account.membershipStatus !== 'active') {
 			throw new AuthServiceError(
 				'TENANT_ACCESS_DENIED',
 				'The requested tenant is not available.',
@@ -2137,7 +2742,11 @@ export class AuthService {
 			accountId,
 			tenantId,
 		);
-		if (!membership || membership.status !== 'active') {
+		if (
+			!membership ||
+			membership.status !== 'active' ||
+			membership.membershipStatus !== 'active'
+		) {
 			throw new AuthServiceError(
 				'ACCOUNT_NOT_FOUND',
 				'The account is not an active member of this workspace.',
@@ -2256,7 +2865,12 @@ export class AuthService {
 			record.accountId,
 			record.tenantId,
 		);
-		if (!membership || membership.status !== 'active') return null;
+		if (
+			!membership ||
+			membership.status !== 'active' ||
+			membership.membershipStatus !== 'active'
+		)
+			return null;
 		const held = new Set(membership.scopes);
 		const scopes = record.scopes.filter((scope) => held.has(scope));
 		if (scopes.length === 0) return null;

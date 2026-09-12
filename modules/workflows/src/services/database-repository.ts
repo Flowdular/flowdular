@@ -38,11 +38,15 @@ import { databaseMigrations } from './migration.ts';
 import type { WorkflowPayloadCodec } from './payload-codec.ts';
 import type {
 	CreateWorkflowRunWrite,
+	ExportedWorkflowDefinition,
+	ExportedWorkflowRun,
 	SettleAttemptWrite,
 	SettleEdgeWrite,
 	StartAttemptWrite,
 	WorkflowAuditPage,
+	WorkflowDefinitionExportCursor,
 	WorkflowDefinitionWrite,
+	WorkflowRunExportCursor,
 	WorkflowRunRecord,
 	WorkflowsRepository,
 } from './repository.ts';
@@ -89,6 +93,19 @@ interface RevisionRow {
 	id: string;
 	workflow_id: string;
 	revision: Int;
+	graph_json: string;
+	graph_checksum: string;
+	compiler_version: Int;
+	compiled_order_json: string;
+	published_at: Int | null;
+	published_actor_json: string | null;
+}
+
+/** A definition and the revision it publishes, read in one statement. */
+interface ExportDefinitionRow extends DefinitionRow {
+	revision_id: string;
+	revision_workflow_id: string;
+	revision_number: Int;
 	graph_json: string;
 	graph_checksum: string;
 	compiler_version: Int;
@@ -179,6 +196,19 @@ interface EdgeRow {
 	settled_at: Int;
 }
 
+/** The run id a page of child rows carries, so one query serves many runs. */
+interface ExportNodeStateRow extends NodeStateRow {
+	run_id: string;
+}
+
+interface ExportAttemptRow extends AttemptRow {
+	run_id: string;
+}
+
+interface ExportEdgeRow extends EdgeRow {
+	run_id: string;
+}
+
 interface EventRow {
 	event_id: string;
 	tenant_id: string;
@@ -250,6 +280,38 @@ function revisionFromRow(row: RevisionRow): WorkflowRevision {
 			row.published_actor_json === null
 				? null
 				: parse<Actor>(row.published_actor_json),
+	};
+}
+
+function nodeExecutionFromRow(
+	row: NodeStateRow,
+	attempts: readonly WorkflowNodeAttempt[],
+): WorkflowNodeExecution {
+	return {
+		nodeId: row.node_id,
+		status: row.status,
+		latestAttempt: integer(row.latest_attempt),
+		selectedOutcomePort: row.selected_outcome_port,
+		nextAttemptAt: optionalInteger(row.next_attempt_at),
+		readyAt: optionalInteger(row.ready_at),
+		startedAt: optionalInteger(row.started_at),
+		settledAt: optionalInteger(row.settled_at),
+		attempts,
+	};
+}
+
+function edgeFromRow(row: EdgeRow): WorkflowEdgeTransfer {
+	return {
+		edgeId: row.edge_id,
+		sourceNodeId: row.source_node_id,
+		sourcePort: row.source_port,
+		sourceAttempt: optionalInteger(row.source_attempt),
+		targetNodeId: row.target_node_id,
+		targetPort: row.target_port,
+		state: row.state,
+		reason: row.reason,
+		evidence: parse<WorkflowPayloadEvidenceV1>(row.evidence_json),
+		settledAt: integer(row.settled_at),
 	};
 }
 
@@ -373,6 +435,33 @@ function jsonKind(column: string): string {
 	return `${column}::jsonb ->> 'kind'`;
 }
 
+/**
+ * The person behind a run, in the order migration 0008 backfilled the column:
+ * the account a service actor was configured by, then the delegated
+ * authorization subject, then the actor itself. It must stay that order, or a
+ * run written now would answer an erasure differently from one backfilled.
+ */
+function subjectAccountId(
+	actor: Actor,
+	authorizationSubject: UserActor | null,
+): string {
+	if (actor.kind === 'service') return actor.configuredBy.id;
+	return authorizationSubject?.id ?? actor.id;
+}
+
+/** Appends into the bucket `key` names, creating it on first use. */
+function bucketed<T>(map: Map<string, T[]>, key: string, value: T): void {
+	const bucket = map.get(key);
+	if (bucket) bucket.push(value);
+	else map.set(key, [value]);
+}
+
+/* One node of one run. A run id is a UUID and a node id is a dotted
+   identifier, so neither can hold the separator and two pairs never collide. */
+function nodeKey(runId: string, nodeId: string): string {
+	return `${runId} ${nodeId}`;
+}
+
 /* Marks a stored evidence document expired without touching its hash or
    byte size, so the audit of what was there survives the redaction. */
 function expire(column: string): string {
@@ -445,13 +534,13 @@ const SQL = Object.freeze({
 		 (id, tenant_id, workflow_id, workflow_key, workflow_name,
 		  workflow_revision, graph_checksum, compiler_version, graph_json,
 		  compiled_order_json, mode, status, actor_json, authorization_subject_json, origin_json,
-		  permission_snapshot_json, permission_digest, input_hash,
+		  subject_account_id, permission_snapshot_json, permission_digest, input_hash,
 		  input_payload_id, input_evidence_json, output_evidence_json,
 		  idempotency_key, limits_json, lease_owner, lease_expires_at,
 		  completed_nodes, total_nodes, usage_json, cost_json, failure_code,
 		  queued_at, started_at, completed_at, cancellation_requested_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
-		  NULL, $20, $21, NULL, NULL, 0, $22, $23, $24, NULL, $25, NULL, NULL, NULL)`,
+		  $20, NULL, $21, $22, NULL, NULL, 0, $23, $24, $25, NULL, $26, NULL, NULL, NULL)`,
 	insertNodeState: `INSERT INTO workflow_node_states
 		 (tenant_id, run_id, node_id, status, latest_attempt)
 		 VALUES ($1, $2, $3, 'pending', 0)`,
@@ -469,6 +558,11 @@ const SQL = Object.freeze({
 		  SELECT 1 FROM workflow_node_states n
 		  WHERE n.tenant_id = workflow_runs.tenant_id AND n.run_id = workflow_runs.id
 		  AND n.status = 'waiting-retry' AND n.next_attempt_at <= $3
+		 ))
+		 OR (status = 'waiting-approval' AND (lease_expires_at IS NULL OR lease_expires_at <= $6) AND EXISTS (
+		  SELECT 1 FROM workflow_node_states n
+		  WHERE n.tenant_id = workflow_runs.tenant_id AND n.run_id = workflow_runs.id
+		  AND n.status = 'waiting-child' AND n.next_attempt_at <= $7
 		 ))
 		  OR (status = 'cancel-requested' AND (lease_expires_at IS NULL OR lease_expires_at <= $4))
 		 )
@@ -492,8 +586,11 @@ const SQL = Object.freeze({
 		  semantic_group, side_effect_idempotency_key, input_payload_id,
 		  input_evidence_json, output_evidence_json, started_at)
 		 VALUES ($1, $2, $3, $4, $5, 'running', $6, $7, $8, $9, $10, $11)`,
+	/* The recheck a retry armed has fired by the time the attempt starts.
+		   Leaving it set would keep the node matching the claim poll's due-work
+		   predicate, which reads this column for every waiting state. */
 	startNodeState: `UPDATE workflow_node_states
-		 SET status = 'running', latest_attempt = $1,
+		 SET status = 'running', latest_attempt = $1, next_attempt_at = NULL,
 		  ready_at = coalesce(ready_at, $2), started_at = coalesce(started_at, $3)
 		 WHERE tenant_id = $4 AND run_id = $5 AND node_id = $6`,
 	markAttemptWaitingChild: `UPDATE workflow_node_attempts
@@ -501,10 +598,29 @@ const SQL = Object.freeze({
 		 child_observation_deadline_at = $3
 		 WHERE tenant_id = $4 AND run_id = $5 AND node_id = $6 AND attempt = $7
 		 AND status = 'running'`,
-	markNodeWaitingChild: `UPDATE workflow_node_states SET status = 'waiting-child'
+	/* An agent or an action child is polled while the run stays claimable on its
+		   own status, so such a node arms no recheck: only an approval does, and it
+		   arms it right after this. */
+	markNodeWaitingChild: `UPDATE workflow_node_states
+		 SET status = 'waiting-child', next_attempt_at = NULL
 		 WHERE tenant_id = $1 AND run_id = $2 AND node_id = $3`,
 	markRunWaitingAgent: `UPDATE workflow_runs SET status = 'waiting-agent'
 		 WHERE tenant_id = $1 AND id = $2 AND status = 'running'`,
+	markRunWaitingApproval: `UPDATE workflow_runs SET status = 'waiting-approval'
+		 WHERE tenant_id = $1 AND id = $2 AND status IN ('running', 'waiting-approval')`,
+	armNodeRecheck: `UPDATE workflow_node_states SET next_attempt_at = $1
+		 WHERE tenant_id = $2 AND run_id = $3 AND node_id = $4
+		 AND status = 'waiting-child'`,
+	wakeApprovalRun: `UPDATE workflow_node_states SET next_attempt_at = $1
+		 FROM workflow_node_attempts a
+		 WHERE workflow_node_states.tenant_id = $2
+		 AND workflow_node_states.run_id = $3
+		 AND workflow_node_states.status = 'waiting-child'
+		 AND a.tenant_id = workflow_node_states.tenant_id
+		 AND a.run_id = workflow_node_states.run_id
+		 AND a.node_id = workflow_node_states.node_id
+		 AND a.attempt = workflow_node_states.latest_attempt
+		 AND a.child_kind = 'approval' AND a.child_id = $4`,
 	getAttempt: `SELECT * FROM workflow_node_attempts
 		 WHERE tenant_id = $1 AND run_id = $2 AND node_id = $3 AND attempt = $4`,
 	settleAttempt: `UPDATE workflow_node_attempts
@@ -573,6 +689,14 @@ const SQL = Object.freeze({
 	auditChain: `SELECT sequence, actor_json, origin_json, action, subject_type,
 		 subject_id, metadata_json, occurred_at, previous_hash, event_hash
 		 FROM workflow_audit_events WHERE tenant_id = $1 ORDER BY sequence`,
+	/* Chain order, which is the primary key's own order, so the export walk is
+	   an index range scan and an event appended during it lands ahead of the
+	   cursor rather than being visited twice. */
+	exportAuditEventsPage: `SELECT sequence, actor_json, origin_json, action,
+		 subject_type, subject_id, metadata_json, occurred_at, previous_hash,
+		 event_hash FROM workflow_audit_events
+		 WHERE tenant_id = $1 AND sequence > $2
+		 ORDER BY sequence LIMIT $3`,
 	/* Cross-tenant, routing columns only: the retention writes that follow
 		   run under the tenant each row named. */
 	retentionCandidates: `SELECT p.id, p.tenant_id, p.run_id, p.payload_hash
@@ -597,6 +721,77 @@ const SQL = Object.freeze({
 		 CASE WHEN output_evidence_json IS NULL THEN NULL ELSE ${expire('output_evidence_json')} END
 		 WHERE tenant_id = $1 AND id = $2`,
 	countRuns: `SELECT count(*) AS count FROM workflow_runs WHERE tenant_id = $1`,
+	/* The order workflow_runs_tenant_queue_idx already carries, so the export
+	   walk is an index range scan and a run queued during it lands ahead of the
+	   cursor rather than being visited twice. */
+	exportRunsPage: `SELECT * FROM workflow_runs WHERE tenant_id = $1
+		 ORDER BY queued_at DESC, id DESC LIMIT $2`,
+	exportRunsPageAfter: `SELECT * FROM workflow_runs WHERE tenant_id = $1
+		 AND (queued_at < $2 OR (queued_at = $3 AND id < $4))
+		 ORDER BY queued_at DESC, id DESC LIMIT $5`,
+	exportNodeStates: `SELECT run_id, node_id, status, latest_attempt,
+		 selected_outcome_port, next_attempt_at, ready_at, started_at, settled_at
+		 FROM workflow_node_states
+		 WHERE tenant_id = $1 AND run_id = ANY($2::text[])
+		 ORDER BY run_id, node_id`,
+	exportAttempts: `SELECT run_id, node_id, attempt, node_type, status,
+		 outcome_port, semantic_group, side_effect_idempotency_key,
+		 input_evidence_json, output_evidence_json, child_kind, child_id,
+		 child_observation_deadline_at, failure_code, retry_classification,
+		 selected_backoff_ms, next_attempt_at, started_at, completed_at,
+		 duration_ms FROM workflow_node_attempts
+		 WHERE tenant_id = $1 AND run_id = ANY($2::text[])
+		 ORDER BY run_id, node_id, attempt`,
+	exportEdges: `SELECT run_id, edge_id, source_node_id, source_port,
+		 source_attempt, target_node_id, target_port, state, reason,
+		 evidence_json, settled_at FROM workflow_edge_transfers
+		 WHERE tenant_id = $1 AND run_id = ANY($2::text[])
+		 ORDER BY run_id, edge_id`,
+	/* The inner select applies the batch limit; the child rows of the runs it
+	   names are removed with them in the same transaction. */
+	settledRunsBefore: `SELECT id FROM workflow_runs
+		 WHERE tenant_id = $1 AND completed_at < $2
+		  AND status IN ('succeeded', 'failed', 'refused', 'cancelled')
+		 ORDER BY completed_at LIMIT $3`,
+	/* One plain equality on the column 0008 resolves at write time, which is
+	   what makes an erasure an index range scan on the connection it runs on.
+	   Reading the person out of the actor document instead cannot use an index
+	   there: the jsonb extraction is not leakproof, so the forced row level
+	   security policy is applied first and the comparison stays a filter. */
+	runsOfSubject: `SELECT id FROM workflow_runs
+		 WHERE tenant_id = $1 AND subject_account_id = $2
+		 ORDER BY id LIMIT $3`,
+	deleteRunNodeStates: `DELETE FROM workflow_node_states
+		 WHERE tenant_id = $1 AND run_id = ANY($2::text[])`,
+	deleteRunAttempts: `DELETE FROM workflow_node_attempts
+		 WHERE tenant_id = $1 AND run_id = ANY($2::text[])`,
+	deleteRunEdges: `DELETE FROM workflow_edge_transfers
+		 WHERE tenant_id = $1 AND run_id = ANY($2::text[])`,
+	deleteRunEvents: `DELETE FROM workflow_run_events
+		 WHERE tenant_id = $1 AND run_id = ANY($2::text[])`,
+	deleteRunPayloads: `DELETE FROM workflow_payloads
+		 WHERE tenant_id = $1 AND run_id = ANY($2::text[])`,
+	deleteRunRows: `DELETE FROM workflow_runs
+		 WHERE tenant_id = $1 AND id = ANY($2::text[])`,
+	exportPublishedDefinitions: `SELECT d.*, r.id AS revision_id,
+		 r.workflow_id AS revision_workflow_id, r.revision AS revision_number,
+		 r.graph_json, r.graph_checksum, r.compiler_version,
+		 r.compiled_order_json, r.published_at, r.published_actor_json
+		 FROM workflow_definitions d
+		 JOIN workflow_revisions r ON r.tenant_id = d.tenant_id
+		  AND r.workflow_id = d.id AND r.revision = d.published_revision
+		 WHERE d.tenant_id = $1 AND d.published_revision IS NOT NULL
+		 ORDER BY d.name, d.id LIMIT $2`,
+	exportPublishedDefinitionsAfter: `SELECT d.*, r.id AS revision_id,
+		 r.workflow_id AS revision_workflow_id, r.revision AS revision_number,
+		 r.graph_json, r.graph_checksum, r.compiler_version,
+		 r.compiled_order_json, r.published_at, r.published_actor_json
+		 FROM workflow_definitions d
+		 JOIN workflow_revisions r ON r.tenant_id = d.tenant_id
+		  AND r.workflow_id = d.id AND r.revision = d.published_revision
+		 WHERE d.tenant_id = $1 AND d.published_revision IS NOT NULL
+		 AND (d.name > $2 OR (d.name = $3 AND d.id > $4))
+		 ORDER BY d.name, d.id LIMIT $5`,
 });
 
 export async function migrateWorkflowsDatabase(
@@ -1168,6 +1363,7 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 				JSON.stringify(run.actor),
 				JSON.stringify(run.authorizationSubject),
 				JSON.stringify(run.origin),
+				subjectAccountId(run.actor, run.authorizationSubject),
 				JSON.stringify(run.permissionSnapshot),
 				run.permissionDigest,
 				run.inputHash,
@@ -1412,7 +1608,7 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 				(transaction) =>
 					transaction.query<RunRoutingRow>({
 						text: SQL.claimCandidates,
-						parameters: [now, now, now, now, 20] as never,
+						parameters: [now, now, now, now, 20, now, now] as never,
 					}),
 				{ access: 'read' },
 			)
@@ -1451,7 +1647,8 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 						row.status,
 					) &&
 						leaseExpired) ||
-					(row.status === 'waiting-retry' && leaseExpired));
+					(['waiting-retry', 'waiting-approval'].includes(row.status) &&
+						leaseExpired));
 			if (!claimable) return null;
 			const priorLease = row.lease_owner;
 			const recovering = priorLease !== null && row.status !== 'queued';
@@ -1459,7 +1656,9 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 			   after its node starts would make the new waiting-child projection
 			   unreachable by the next claim. */
 			const status =
-				row.status === 'queued' || row.status === 'waiting-retry'
+				row.status === 'queued' ||
+				row.status === 'waiting-retry' ||
+				row.status === 'waiting-approval'
 					? 'running'
 					: row.status;
 			const changed = await this.#exec(transaction, SQL.claimRun, [
@@ -1711,10 +1910,11 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 		runId: string,
 		nodeId: string,
 		attempt: number,
-		childKind: 'agent' | 'action',
+		childKind: 'agent' | 'action' | 'approval',
 		childId: string,
 		observationDeadlineAt: number,
 		recordedAt: number,
+		recheckAt?: number,
 	): Promise<void> {
 		await this.#tx(tenantId, 'write', async (transaction) => {
 			const changed = await this.#exec(
@@ -1742,6 +1942,20 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 					runId,
 				]);
 			}
+			/* An approval takes the run out of the claim queue entirely, so the
+			   recheck it arms is the only thing that brings it back on its own. */
+			if (childKind === 'approval') {
+				await this.#exec(transaction, SQL.armNodeRecheck, [
+					recheckAt ?? recordedAt,
+					tenantId,
+					runId,
+					nodeId,
+				]);
+				await this.#exec(transaction, SQL.markRunWaitingApproval, [
+					tenantId,
+					runId,
+				]);
+			}
 			await this.#appendEvent(
 				transaction,
 				tenantId,
@@ -1750,6 +1964,53 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 				{ nodeId, attempt, childKind, childId, observationDeadlineAt },
 				recordedAt,
 			);
+		});
+	}
+
+	/**
+	 * Re-arms the wait on an approval the worker found still pending. It records
+	 * no event and touches no attempt: the run simply goes back to sleep with a
+	 * later recheck than the one that woke it.
+	 */
+	async suspendApproval(
+		tenantId: string,
+		runId: string,
+		nodeId: string,
+		recheckAt: number,
+	): Promise<void> {
+		await this.#tx(tenantId, 'write', async (transaction) => {
+			await this.#exec(transaction, SQL.armNodeRecheck, [
+				recheckAt,
+				tenantId,
+				runId,
+				nodeId,
+			]);
+			await this.#exec(transaction, SQL.markRunWaitingApproval, [
+				tenantId,
+				runId,
+			]);
+		});
+	}
+
+	/**
+	 * Brings a sleeping run back into the claim queue the moment approvals.core
+	 * reports a decision, by making the node's recheck due now. It matches on the
+	 * request id, so a callback for a request the run has moved past changes
+	 * nothing.
+	 */
+	async wakeApproval(
+		tenantId: string,
+		runId: string,
+		requestId: string,
+		now: number,
+	): Promise<void> {
+		await this.#tx(tenantId, 'write', async (transaction) => {
+			await this.#exec(transaction, SQL.wakeApprovalRun, [
+				now,
+				tenantId,
+				runId,
+				requestId,
+			]);
 		});
 	}
 
@@ -2214,19 +2475,14 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 				SQL.readAttempts,
 				[tenantId, runId],
 			);
-			return states.map((state) => ({
-				nodeId: state.node_id,
-				status: state.status,
-				latestAttempt: integer(state.latest_attempt),
-				selectedOutcomePort: state.selected_outcome_port,
-				nextAttemptAt: optionalInteger(state.next_attempt_at),
-				readyAt: optionalInteger(state.ready_at),
-				startedAt: optionalInteger(state.started_at),
-				settledAt: optionalInteger(state.settled_at),
-				attempts: attempts
-					.filter((attempt) => attempt.node_id === state.node_id)
-					.map(attemptFromRow),
-			}));
+			return states.map((state) =>
+				nodeExecutionFromRow(
+					state,
+					attempts
+						.filter((attempt) => attempt.node_id === state.node_id)
+						.map(attemptFromRow),
+				),
+			);
 		});
 	}
 
@@ -2240,18 +2496,7 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 					tenantId,
 					runId,
 				])
-			).map((row) => ({
-				edgeId: row.edge_id,
-				sourceNodeId: row.source_node_id,
-				sourcePort: row.source_port,
-				sourceAttempt: optionalInteger(row.source_attempt),
-				targetNodeId: row.target_node_id,
-				targetPort: row.target_port,
-				state: row.state,
-				reason: row.reason,
-				evidence: parse<WorkflowPayloadEvidenceV1>(row.evidence_json),
-				settledAt: integer(row.settled_at),
-			})),
+			).map(edgeFromRow),
 		);
 	}
 
@@ -2401,6 +2646,183 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 				)[0],
 		);
 		return integer(row?.count ?? 0);
+	}
+
+	/* The operations behind the declared data classes. Each runs on this
+	   module's own lease, inside its own tenant-scoped transaction. */
+
+	async exportRunsPage(
+		tenantId: string,
+		after: WorkflowRunExportCursor | null,
+		limit: number,
+	): Promise<readonly ExportedWorkflowRun[]> {
+		return this.#tx(tenantId, 'read', async (transaction) => {
+			const runs =
+				after === null
+					? await this.#query<RunRow>(transaction, SQL.exportRunsPage, [
+							tenantId,
+							limit,
+						])
+					: await this.#query<RunRow>(transaction, SQL.exportRunsPageAfter, [
+							tenantId,
+							after.queuedAt,
+							after.queuedAt,
+							after.id,
+							limit,
+						]);
+			if (runs.length === 0) return [];
+			/* Three queries for the whole page: a run is a row, not four round
+			   trips. */
+			const ids = runs.map((run) => run.id);
+			const states = await this.#query<ExportNodeStateRow>(
+				transaction,
+				SQL.exportNodeStates,
+				[tenantId, ids],
+			);
+			const attempts = await this.#query<ExportAttemptRow>(
+				transaction,
+				SQL.exportAttempts,
+				[tenantId, ids],
+			);
+			const edges = await this.#query<ExportEdgeRow>(
+				transaction,
+				SQL.exportEdges,
+				[tenantId, ids],
+			);
+			/* One pass per result set into its buckets, so assembling a page costs
+			   O(runs + states + attempts + edges). Scanning each child set once per
+			   run is what turns a page of long runs quadratic. Each bucket keeps
+			   the order its query returned. */
+			const statesByRun = new Map<string, ExportNodeStateRow[]>();
+			for (const state of states) bucketed(statesByRun, state.run_id, state);
+			const attemptsByNode = new Map<string, ExportAttemptRow[]>();
+			for (const attempt of attempts) {
+				bucketed(
+					attemptsByNode,
+					nodeKey(attempt.run_id, attempt.node_id),
+					attempt,
+				);
+			}
+			const edgesByRun = new Map<string, ExportEdgeRow[]>();
+			for (const edge of edges) bucketed(edgesByRun, edge.run_id, edge);
+			return runs.map((run) => ({
+				run: runFromRow(run),
+				nodes: (statesByRun.get(run.id) ?? []).map((state) =>
+					nodeExecutionFromRow(
+						state,
+						(attemptsByNode.get(nodeKey(run.id, state.node_id)) ?? []).map(
+							attemptFromRow,
+						),
+					),
+				),
+				edges: (edgesByRun.get(run.id) ?? []).map(edgeFromRow),
+			}));
+		});
+	}
+
+	async exportAuditEventsPage(
+		tenantId: string,
+		afterSequence: number,
+		limit: number,
+	): Promise<readonly WorkflowAuditEvent[]> {
+		return this.#tx(tenantId, 'read', async (transaction) =>
+			(
+				await this.#query<AuditRow>(transaction, SQL.exportAuditEventsPage, [
+					tenantId,
+					afterSequence,
+					limit,
+				])
+			).map(auditFromRow),
+		);
+	}
+
+	async deleteRunsSettledBefore(
+		tenantId: string,
+		before: number,
+		limit: number,
+	): Promise<number> {
+		return this.#tx(tenantId, 'write', async (transaction) => {
+			const rows = await this.#query<{ id: string }>(
+				transaction,
+				SQL.settledRunsBefore,
+				[tenantId, before, limit],
+			);
+			return this.#deleteRunsIn(transaction, tenantId, rows);
+		});
+	}
+
+	/* A run this removes while a worker holds it takes its lease with it: the
+	   next renewal finds no row and the worker stops as it does for any lease
+	   it lost. */
+	async deleteRunsOfSubject(
+		tenantId: string,
+		accountId: string,
+		limit: number,
+	): Promise<number> {
+		return this.#tx(tenantId, 'write', async (transaction) => {
+			const rows = await this.#query<{ id: string }>(
+				transaction,
+				SQL.runsOfSubject,
+				[tenantId, accountId, limit],
+			);
+			return this.#deleteRunsIn(transaction, tenantId, rows);
+		});
+	}
+
+	/* No foreign key hangs off a run, so the child rows are named here. A run
+	   and its evidence leave in one transaction or not at all. */
+	async #deleteRunsIn(
+		transaction: DatabaseTransaction,
+		tenantId: string,
+		rows: readonly { readonly id: string }[],
+	): Promise<number> {
+		if (rows.length === 0) return 0;
+		const ids = rows.map((row) => row.id);
+		for (const statement of [
+			SQL.deleteRunNodeStates,
+			SQL.deleteRunAttempts,
+			SQL.deleteRunEdges,
+			SQL.deleteRunEvents,
+			SQL.deleteRunPayloads,
+		]) {
+			await this.#exec(transaction, statement, [tenantId, ids]);
+		}
+		return this.#exec(transaction, SQL.deleteRunRows, [tenantId, ids]);
+	}
+
+	async exportPublishedDefinitionsPage(
+		tenantId: string,
+		after: WorkflowDefinitionExportCursor | null,
+		limit: number,
+	): Promise<readonly ExportedWorkflowDefinition[]> {
+		return this.#tx(tenantId, 'read', async (transaction) => {
+			const rows =
+				after === null
+					? await this.#query<ExportDefinitionRow>(
+							transaction,
+							SQL.exportPublishedDefinitions,
+							[tenantId, limit],
+						)
+					: await this.#query<ExportDefinitionRow>(
+							transaction,
+							SQL.exportPublishedDefinitionsAfter,
+							[tenantId, after.name, after.name, after.id, limit],
+						);
+			return rows.map((row) => ({
+				definition: definitionFromRow(row),
+				revision: revisionFromRow({
+					id: row.revision_id,
+					workflow_id: row.revision_workflow_id,
+					revision: row.revision_number,
+					graph_json: row.graph_json,
+					graph_checksum: row.graph_checksum,
+					compiler_version: row.compiler_version,
+					compiled_order_json: row.compiled_order_json,
+					published_at: row.published_at,
+					published_actor_json: row.published_actor_json,
+				}),
+			}));
+		});
 	}
 
 	async close(): Promise<void> {}

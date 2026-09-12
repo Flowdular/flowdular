@@ -13,19 +13,24 @@ import type {
 import { BUILTIN_ROLES } from '../acl/scopes.ts';
 import type {
 	ApiTokenRecord,
+	AuditEvent,
 	AuditQuery,
 	AuthPrincipal,
 	AuthSession,
 	AuthTenantAccess,
+	IdentityProviderStatus,
+	MembershipStatus,
 	SessionSummary,
 	TenantRole,
 } from '../domain/types.ts';
 import { databaseMigrations } from './migration.ts';
 import {
 	DuplicateAccountError,
+	DuplicateProviderKeyError,
 	DuplicateRoleKeyError,
 	DuplicateTenantSlugError,
 	type AccountCredential,
+	type AccountIdentity,
 	type AuditActorEvent,
 	type AuditRecord,
 	type AuthRepository,
@@ -35,13 +40,18 @@ import {
 	type CreateRoleRecord,
 	type CreateSessionRecord,
 	type CreateTenantMembershipRecord,
+	type ExternalIdentityRecord,
+	type IdentityProviderPatch,
+	type IdentityProviderRecord,
 	type MfaChallengeRecord,
 	type PasswordResetTokenRecord,
+	type SessionExportRecord,
 	type SignInFailureRecord,
 	type TenantInvitationRecord,
 	type TenantMember,
 	type TenantSummary,
 } from './repository.ts';
+import type { SealedMfaSecret } from './totp.ts';
 
 /**
  * The tenant context an identity table is read and written under. Accounts,
@@ -84,6 +94,7 @@ interface AccountRow {
 	role: string;
 	role_id: string | null;
 	status: 'active' | 'disabled';
+	membership_status: MembershipStatus;
 	password_change_required: number | bigint | string;
 }
 
@@ -105,9 +116,32 @@ interface TenantMemberRow {
 	role: string;
 	role_id: string | null;
 	status: 'active' | 'disabled';
+	membership_status: MembershipStatus;
 	password_change_required: number | bigint | string;
 	scopes: string | null;
 	created_at: number | bigint | string;
+}
+
+interface IdentityProviderRow {
+	id: string;
+	tenant_id: string;
+	key: string;
+	label: string;
+	issuer: string;
+	authorization_endpoint: string;
+	token_endpoint: string;
+	user_info_endpoint: string;
+	client_id: string;
+	client_secret_ciphertext: string;
+	client_secret_key_id: string;
+	client_secret_fingerprint: string;
+	scopes_json: string;
+	jit_enabled: number | bigint | string;
+	allowed_domains_json: string;
+	jit_role: string;
+	status: IdentityProviderStatus;
+	created_at: number | bigint | string;
+	updated_at: number | bigint | string;
 }
 
 interface SessionRow extends AccountRow {
@@ -136,6 +170,15 @@ interface RoleRow {
 	builtin: number | bigint | string;
 	created_at: number | bigint | string;
 	updated_at: number | bigint | string;
+}
+
+interface SessionExportRow {
+	id: string;
+	tenant_id: string;
+	account_id: string;
+	created_at: number | bigint | string;
+	expires_at: number | bigint | string;
+	last_seen_at: number | bigint | string;
 }
 
 interface AuditRow {
@@ -181,7 +224,44 @@ function optionalInteger(
 }
 
 const ACCOUNT_COLUMNS = `a.id AS account_id, m.tenant_id, a.email, a.display_name,
-	 a.password_hash, m.role, m.role_id, a.status, a.password_change_required`;
+	 a.password_hash, m.role, m.role_id, a.status,
+	 m.status AS membership_status, a.password_change_required`;
+
+/* One projection for the whole roll and for a single member, so the two reads
+   can never disagree about what a member is. */
+const TENANT_MEMBER_COLUMNS = `a.id AS account_id, a.email, a.display_name,
+	 m.role, m.role_id, a.status, m.status AS membership_status,
+	 a.password_change_required, m.created_at,
+	 (SELECT string_agg(s.scope, ' ' ORDER BY s.scope)
+	    FROM auth_membership_scopes s
+	    WHERE s.account_id = m.account_id AND s.tenant_id = m.tenant_id) AS scopes`;
+
+/**
+ * One PostgreSQL `text[]` literal. A bound parameter carries no array type, so
+ * a list travels as this literal and the statement casts it back. Every element
+ * is quoted with its backslashes and quotes escaped, so no element can close
+ * the literal early or add one of its own.
+ */
+export function textArrayLiteral(values: readonly string[]): string {
+	return `{${values
+		.map((value) => `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`)
+		.join(',')}}`;
+}
+
+function tenantMemberFrom(row: TenantMemberRow): TenantMember {
+	return {
+		accountId: row.account_id,
+		email: row.email,
+		displayName: row.display_name,
+		role: row.role,
+		roleId: row.role_id,
+		status: row.status,
+		membershipStatus: row.membership_status,
+		scopes: row.scopes ? row.scopes.split(' ') : [],
+		passwordChangeRequired: integer(row.password_change_required) === 1,
+		createdAt: integer(row.created_at),
+	};
+}
 
 export function builtinRoleId(tenantId: string, key: string): string {
 	return `${tenantId}:${key}`;
@@ -218,6 +298,32 @@ function fromRoleRow(row: RoleRow): TenantRole {
 	};
 }
 
+function fromIdentityProviderRow(
+	row: IdentityProviderRow,
+): IdentityProviderRecord {
+	return {
+		id: row.id,
+		tenantId: row.tenant_id,
+		key: row.key,
+		label: row.label,
+		issuer: row.issuer,
+		authorizationEndpoint: row.authorization_endpoint,
+		tokenEndpoint: row.token_endpoint,
+		userInfoEndpoint: row.user_info_endpoint,
+		clientId: row.client_id,
+		secretCiphertext: row.client_secret_ciphertext,
+		secretKeyId: row.client_secret_key_id,
+		secretFingerprint: row.client_secret_fingerprint,
+		scopes: JSON.parse(row.scopes_json) as readonly string[],
+		jitEnabled: integer(row.jit_enabled) === 1,
+		allowedDomains: JSON.parse(row.allowed_domains_json) as readonly string[],
+		jitRole: row.jit_role,
+		status: row.status,
+		createdAt: integer(row.created_at),
+		updatedAt: integer(row.updated_at),
+	};
+}
+
 function tenantSummary(row: TenantRow): TenantSummary {
 	return { tenantId: row.id, name: row.name, slug: row.slug ?? row.id };
 }
@@ -225,11 +331,16 @@ function tenantSummary(row: TenantRow): TenantSummary {
 /* A unique violation arrives as the driver's own error. The constraint name is
    the only stable part of it, so the duplicate a caller can act on is
    recognized by name and everything else is rethrown untouched. */
-function duplicate(error: unknown): 'email' | 'role-key' | 'slug' | null {
+function duplicate(
+	error: unknown,
+): 'email' | 'role-key' | 'slug' | 'provider-key' | null {
 	const text = String(error);
 	if (text.includes('auth_accounts_email_normalized_key')) return 'email';
 	if (text.includes('auth_tenants_slug_idx')) return 'slug';
 	if (text.includes('auth_roles_tenant_id_key_key')) return 'role-key';
+	if (text.includes('auth_identity_providers_tenant_id_key_key')) {
+		return 'provider-key';
+	}
 	return null;
 }
 
@@ -318,9 +429,12 @@ export class DatabaseAuthRepository implements AuthRepository {
 		return result.rows;
 	}
 
+	/* A disabled membership answers for nothing: it must not be the workspace a
+	   session cookie, a bearer token or a sign-in resolves to. */
 	async #tenantOfAccount(accountId: string): Promise<string | null> {
 		const rows = await this.#route<RoutedTenantRow>({
-			text: `SELECT tenant_id FROM auth_memberships WHERE account_id = $1
+			text: `SELECT tenant_id FROM auth_memberships
+			       WHERE account_id = $1 AND status = 'active'
 			       ORDER BY created_at, tenant_id LIMIT 1`,
 			parameters: [accountId],
 		});
@@ -353,6 +467,7 @@ export class DatabaseAuthRepository implements AuthRepository {
 			role: row.role,
 			roleId: row.role_id,
 			status: row.status,
+			membershipStatus: row.membership_status,
 			passwordChangeRequired: integer(row.password_change_required) === 1,
 			scopes: await this.#scopes(transaction, row.account_id, row.tenant_id),
 		};
@@ -501,6 +616,30 @@ export class DatabaseAuthRepository implements AuthRepository {
 		return accountId ? this.findAccountCredentialById(accountId) : null;
 	}
 
+	async findAccountIdentity(
+		normalizedEmail: string,
+	): Promise<AccountIdentity | null> {
+		const rows = await this.#query<{
+			id: string;
+			email: string;
+			display_name: string;
+			status: 'active' | 'disabled';
+		}>(IDENTITY_TENANT_CONTEXT, {
+			text: `SELECT id, email, display_name, status FROM auth_accounts
+			       WHERE email_normalized = $1`,
+			parameters: [normalizedEmail],
+		});
+		const row = rows[0];
+		return row
+			? {
+					accountId: row.id,
+					email: row.email,
+					displayName: row.display_name,
+					status: row.status,
+				}
+			: null;
+	}
+
 	async findAccountCredentialById(
 		accountId: string,
 	): Promise<AccountCredential | null> {
@@ -628,7 +767,8 @@ export class DatabaseAuthRepository implements AuthRepository {
 		const rows = await this.#query<CountRow>(tenantId, {
 			text: `SELECT count(*) AS total FROM auth_memberships m
 			       JOIN auth_accounts a ON a.id = m.account_id
-			       WHERE m.tenant_id = $1 AND m.role = 'owner' AND a.status = 'active'`,
+			       WHERE m.tenant_id = $1 AND m.role = 'owner'
+			         AND a.status = 'active' AND m.status = 'active'`,
 			parameters: [tenantId],
 		});
 		return rows[0] ? integer(rows[0].total) : 0;
@@ -643,7 +783,7 @@ export class DatabaseAuthRepository implements AuthRepository {
 			text: `SELECT t.id AS tenant_id, t.name, t.slug, m.role
 			       FROM auth_memberships m
 			       JOIN auth_tenants t ON t.id = m.tenant_id
-			       WHERE m.account_id = $1
+			       WHERE m.account_id = $1 AND m.status = 'active'
 			       ORDER BY m.created_at, t.id`,
 			parameters: [accountId],
 		});
@@ -657,28 +797,64 @@ export class DatabaseAuthRepository implements AuthRepository {
 
 	async listTenantMembers(tenantId: string): Promise<readonly TenantMember[]> {
 		const rows = await this.#query<TenantMemberRow>(tenantId, {
-			text: `SELECT a.id AS account_id, a.email, a.display_name, m.role, m.role_id,
-			       a.status, a.password_change_required, m.created_at,
-			       (SELECT string_agg(s.scope, ' ' ORDER BY s.scope)
-			          FROM auth_membership_scopes s
-			          WHERE s.account_id = m.account_id AND s.tenant_id = m.tenant_id) AS scopes
+			text: `SELECT ${TENANT_MEMBER_COLUMNS}
 			       FROM auth_memberships m
 			       JOIN auth_accounts a ON a.id = m.account_id
 			       WHERE m.tenant_id = $1
 			       ORDER BY lower(a.display_name), a.id`,
 			parameters: [tenantId],
 		});
-		return rows.map((row) => ({
-			accountId: row.account_id,
-			email: row.email,
-			displayName: row.display_name,
-			role: row.role,
-			roleId: row.role_id,
-			status: row.status,
-			scopes: row.scopes ? row.scopes.split(' ') : [],
-			passwordChangeRequired: integer(row.password_change_required) === 1,
-			createdAt: integer(row.created_at),
-		}));
+		return rows.map(tenantMemberFrom);
+	}
+
+	async findTenantMember(
+		tenantId: string,
+		accountId: string,
+	): Promise<TenantMember | null> {
+		const rows = await this.#query<TenantMemberRow>(tenantId, {
+			text: `SELECT ${TENANT_MEMBER_COLUMNS}
+			       FROM auth_memberships m
+			       JOIN auth_accounts a ON a.id = m.account_id
+			       WHERE m.tenant_id = $1 AND m.account_id = $2`,
+			parameters: [tenantId, accountId],
+		});
+		const row = rows[0];
+		return row ? tenantMemberFrom(row) : null;
+	}
+
+	async findTenantMembersByEmail(
+		tenantId: string,
+		normalizedEmails: readonly string[],
+	): Promise<readonly TenantMember[]> {
+		if (normalizedEmails.length === 0) return [];
+		const rows = await this.#query<TenantMemberRow>(tenantId, {
+			text: `SELECT ${TENANT_MEMBER_COLUMNS}
+			       FROM auth_memberships m
+			       JOIN auth_accounts a ON a.id = m.account_id
+			       WHERE m.tenant_id = $1 AND a.email_normalized = ANY($2::text[])
+			       ORDER BY lower(a.display_name), a.id`,
+			parameters: [tenantId, textArrayLiteral(normalizedEmails)],
+		});
+		return rows.map(tenantMemberFrom);
+	}
+
+	async searchTenantMembers(
+		tenantId: string,
+		term: string,
+		limit: number,
+	): Promise<readonly TenantMember[]> {
+		const rows = await this.#query<TenantMemberRow>(tenantId, {
+			text: `SELECT ${TENANT_MEMBER_COLUMNS}
+			       FROM auth_memberships m
+			       JOIN auth_accounts a ON a.id = m.account_id
+			       WHERE m.tenant_id = $1
+			         AND (lower(a.display_name) LIKE $2 ESCAPE '\\'
+			              OR a.email_normalized LIKE $3 ESCAPE '\\')
+			       ORDER BY lower(a.display_name), a.id
+			       LIMIT $4`,
+			parameters: [tenantId, `%${term}%`, `${term}%`, limit],
+		});
+		return rows.map(tenantMemberFrom);
 	}
 
 	async listTenantScopes(tenantId: string): Promise<readonly string[]> {
@@ -1139,7 +1315,8 @@ export class DatabaseAuthRepository implements AuthRepository {
 				       JOIN auth_accounts a ON a.id = s.account_id
 				       JOIN auth_memberships m
 				         ON m.account_id = s.account_id AND m.tenant_id = s.tenant_id
-				       WHERE s.token_hash = $1 AND s.expires_at > $2 AND a.status = 'active'`,
+				       WHERE s.token_hash = $1 AND s.expires_at > $2 AND a.status = 'active'
+				         AND m.status = 'active'`,
 				parameters: [tokenHash, now],
 			});
 			const row = result.rows[0];
@@ -1287,6 +1464,24 @@ export class DatabaseAuthRepository implements AuthRepository {
 		});
 	}
 
+	/* Reads the account a live link names so the password policy can run on the
+	   full account before anything spends the token. Claiming it stays the job
+	   of consumePasswordResetToken below. */
+	async findPasswordResetTokenAccount(
+		tokenHash: string,
+		now: number,
+	): Promise<string | null> {
+		const rows = await this.#query<{ account_id: string }>(
+			IDENTITY_TENANT_CONTEXT,
+			{
+				text: `SELECT account_id FROM auth_password_reset_tokens
+				       WHERE token_hash = $1 AND used_at IS NULL AND expires_at > $2`,
+				parameters: [tokenHash, now],
+			},
+		);
+		return rows[0]?.account_id ?? null;
+	}
+
 	/* One statement claims the token: a second caller with the same link finds
 	   used_at already set and gets nothing. */
 	async consumePasswordResetToken(
@@ -1378,30 +1573,33 @@ export class DatabaseAuthRepository implements AuthRepository {
 
 	async upsertMfaTotp(
 		accountId: string,
-		secretCiphertext: string,
+		secret: SealedMfaSecret,
 		createdAt: number,
 	): Promise<void> {
 		await this.#exec(IDENTITY_TENANT_CONTEXT, {
 			text: `INSERT INTO auth_mfa_totp
-			       (account_id, secret_ciphertext, confirmed_at, created_at)
-			       VALUES ($1, $2, NULL, $3)
+			       (account_id, secret_ciphertext, key_id, confirmed_at, created_at)
+			       VALUES ($1, $2, $3, NULL, $4)
 			       ON CONFLICT (account_id) DO UPDATE SET
 			         secret_ciphertext = excluded.secret_ciphertext,
+			         key_id = excluded.key_id,
 			         confirmed_at = NULL,
 			         created_at = excluded.created_at`,
-			parameters: [accountId, secretCiphertext, createdAt],
+			parameters: [accountId, secret.ciphertext, secret.keyId, createdAt],
 		});
 	}
 
 	async findMfaTotp(accountId: string): Promise<{
 		readonly secretCiphertext: string;
+		readonly keyId: string | null;
 		readonly confirmedAt: number | null;
 	} | null> {
 		const rows = await this.#query<{
 			secret_ciphertext: string;
+			key_id: string | null;
 			confirmed_at: number | bigint | string | null;
 		}>(IDENTITY_TENANT_CONTEXT, {
-			text: `SELECT secret_ciphertext, confirmed_at FROM auth_mfa_totp
+			text: `SELECT secret_ciphertext, key_id, confirmed_at FROM auth_mfa_totp
 			       WHERE account_id = $1`,
 			parameters: [accountId],
 		});
@@ -1409,15 +1607,41 @@ export class DatabaseAuthRepository implements AuthRepository {
 		return row
 			? {
 					secretCiphertext: row.secret_ciphertext,
+					keyId: row.key_id,
 					confirmedAt: optionalInteger(row.confirmed_at),
 				}
 			: null;
+	}
+
+	async hasConfirmedMfaTotp(accountId: string): Promise<boolean> {
+		const rows = await this.#query<{ account_id: string }>(
+			IDENTITY_TENANT_CONTEXT,
+			{
+				text: `SELECT account_id FROM auth_mfa_totp
+				       WHERE account_id = $1 AND confirmed_at IS NOT NULL`,
+				parameters: [accountId],
+			},
+		);
+		return rows.length > 0;
 	}
 
 	async confirmMfaTotp(accountId: string, confirmedAt: number): Promise<void> {
 		await this.#exec(IDENTITY_TENANT_CONTEXT, {
 			text: 'UPDATE auth_mfa_totp SET confirmed_at = $1 WHERE account_id = $2',
 			parameters: [confirmedAt, accountId],
+		});
+	}
+
+	async deleteMfaEnrolment(accountId: string): Promise<void> {
+		await this.#tx(IDENTITY_TENANT_CONTEXT, 'write', async (transaction) => {
+			await transaction.execute({
+				text: 'DELETE FROM auth_mfa_totp WHERE account_id = $1',
+				parameters: [accountId],
+			});
+			await transaction.execute({
+				text: 'DELETE FROM auth_mfa_recovery_codes WHERE account_id = $1',
+				parameters: [accountId],
+			});
 		});
 	}
 
@@ -1502,6 +1726,241 @@ export class DatabaseAuthRepository implements AuthRepository {
 		});
 		const row = rows[0];
 		return row ? { accountId: row.account_id, tenantId: row.tenant_id } : null;
+	}
+
+	/* A binding lives in one space: the platform space, whose rows carry no
+	   workspace and are read under the identity context exactly as before, or
+	   one workspace's space, read and written under that workspace. The policy
+	   on the table enforces the same split. */
+	async findExternalIdentity(
+		provider: string,
+		subject: string,
+		tenantId: string | null = null,
+	): Promise<string | null> {
+		const rows = await this.#query<{ account_id: string }>(
+			tenantId ?? IDENTITY_TENANT_CONTEXT,
+			{
+				text: `SELECT account_id FROM auth_external_identities
+				       WHERE provider = $1 AND subject = $2
+				         AND tenant_id IS NOT DISTINCT FROM $3`,
+				parameters: [provider, subject, tenantId],
+			},
+		);
+		return rows[0]?.account_id ?? null;
+	}
+
+	async findExternalIdentitySubject(
+		provider: string,
+		accountId: string,
+		tenantId: string | null = null,
+	): Promise<string | null> {
+		const rows = await this.#query<{ subject: string }>(
+			tenantId ?? IDENTITY_TENANT_CONTEXT,
+			{
+				text: `SELECT subject FROM auth_external_identities
+				       WHERE account_id = $1 AND provider = $2
+				         AND tenant_id IS NOT DISTINCT FROM $3`,
+				parameters: [accountId, provider, tenantId],
+			},
+		);
+		return rows[0]?.subject ?? null;
+	}
+
+	async linkExternalIdentity(record: ExternalIdentityRecord): Promise<void> {
+		const tenantId = record.tenantId ?? null;
+		await this.#exec(tenantId ?? IDENTITY_TENANT_CONTEXT, {
+			text: tenantId
+				? `INSERT INTO auth_external_identities
+				   (provider, subject, account_id, tenant_id, created_at, last_seen_at)
+				   VALUES ($1, $2, $3, $4, $5, $5)
+				   ON CONFLICT (tenant_id, provider, subject) WHERE tenant_id IS NOT NULL
+				   DO UPDATE SET last_seen_at = excluded.last_seen_at`
+				: `INSERT INTO auth_external_identities
+				   (provider, subject, account_id, tenant_id, created_at, last_seen_at)
+				   VALUES ($1, $2, $3, $4, $5, $5)
+				   ON CONFLICT (provider, subject) WHERE tenant_id IS NULL
+				   DO UPDATE SET last_seen_at = excluded.last_seen_at`,
+			parameters: [
+				record.provider,
+				record.subject,
+				record.accountId,
+				tenantId,
+				record.now,
+			],
+		});
+	}
+
+	/* A deleted provider takes its workspace's bindings with it; the accounts
+	   stay and keep every other way of signing in. */
+	async deleteExternalIdentitiesOfProvider(
+		tenantId: string,
+		provider: string,
+	): Promise<void> {
+		await this.#exec(tenantId, {
+			text: `DELETE FROM auth_external_identities
+			       WHERE tenant_id = $1 AND provider = $2`,
+			parameters: [tenantId, provider],
+		});
+	}
+
+	async listIdentityProviders(
+		tenantId: string,
+	): Promise<readonly IdentityProviderRecord[]> {
+		const rows = await this.#query<IdentityProviderRow>(tenantId, {
+			text: `SELECT * FROM auth_identity_providers
+			       WHERE tenant_id = $1 ORDER BY key, id`,
+			parameters: [tenantId],
+		});
+		return rows.map(fromIdentityProviderRow);
+	}
+
+	async findIdentityProvider(
+		tenantId: string,
+		id: string,
+	): Promise<IdentityProviderRecord | null> {
+		const rows = await this.#query<IdentityProviderRow>(tenantId, {
+			text: 'SELECT * FROM auth_identity_providers WHERE tenant_id = $1 AND id = $2',
+			parameters: [tenantId, id],
+		});
+		return rows[0] ? fromIdentityProviderRow(rows[0]) : null;
+	}
+
+	async findIdentityProviderByKey(
+		tenantId: string,
+		key: string,
+	): Promise<IdentityProviderRecord | null> {
+		const rows = await this.#query<IdentityProviderRow>(tenantId, {
+			text: 'SELECT * FROM auth_identity_providers WHERE tenant_id = $1 AND key = $2',
+			parameters: [tenantId, key],
+		});
+		return rows[0] ? fromIdentityProviderRow(rows[0]) : null;
+	}
+
+	async createIdentityProvider(
+		record: IdentityProviderRecord,
+	): Promise<IdentityProviderRecord> {
+		try {
+			const rows = await this.#tx(
+				record.tenantId,
+				'write',
+				async (transaction) => {
+					const result = await transaction.query<IdentityProviderRow>({
+						text: `INSERT INTO auth_identity_providers
+						       (id, tenant_id, key, label, issuer, authorization_endpoint,
+						        token_endpoint, user_info_endpoint, client_id,
+						        client_secret_ciphertext, client_secret_key_id,
+						        client_secret_fingerprint, scopes_json, jit_enabled,
+						        allowed_domains_json, jit_role, status, created_at, updated_at)
+						       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+						               $14, $15, $16, $17, $18, $18)
+						       RETURNING *`,
+						parameters: [
+							record.id,
+							record.tenantId,
+							record.key,
+							record.label,
+							record.issuer,
+							record.authorizationEndpoint,
+							record.tokenEndpoint,
+							record.userInfoEndpoint,
+							record.clientId,
+							record.secretCiphertext,
+							record.secretKeyId,
+							record.secretFingerprint,
+							JSON.stringify(record.scopes),
+							record.jitEnabled ? 1 : 0,
+							JSON.stringify(record.allowedDomains),
+							record.jitRole,
+							record.status,
+							record.createdAt,
+						],
+					});
+					return result.rows;
+				},
+			);
+			return fromIdentityProviderRow(rows[0]!);
+		} catch (error) {
+			if (duplicate(error) === 'provider-key') {
+				throw new DuplicateProviderKeyError();
+			}
+			throw error;
+		}
+	}
+
+	async updateIdentityProvider(
+		tenantId: string,
+		id: string,
+		patch: IdentityProviderPatch,
+		updatedAt: number,
+	): Promise<IdentityProviderRecord | null> {
+		const rows = await this.#tx(tenantId, 'write', async (transaction) => {
+			const result = await transaction.query<IdentityProviderRow>({
+				text: `UPDATE auth_identity_providers
+				       SET label = $3, issuer = $4, authorization_endpoint = $5,
+				           token_endpoint = $6, user_info_endpoint = $7, client_id = $8,
+				           client_secret_ciphertext = $9, client_secret_key_id = $10,
+				           client_secret_fingerprint = $11, scopes_json = $12,
+				           jit_enabled = $13, allowed_domains_json = $14, jit_role = $15,
+				           status = $16, updated_at = $17
+				       WHERE tenant_id = $1 AND id = $2
+				       RETURNING *`,
+				parameters: [
+					tenantId,
+					id,
+					patch.label,
+					patch.issuer,
+					patch.authorizationEndpoint,
+					patch.tokenEndpoint,
+					patch.userInfoEndpoint,
+					patch.clientId,
+					patch.secretCiphertext,
+					patch.secretKeyId,
+					patch.secretFingerprint,
+					JSON.stringify(patch.scopes),
+					patch.jitEnabled ? 1 : 0,
+					JSON.stringify(patch.allowedDomains),
+					patch.jitRole,
+					patch.status,
+					updatedAt,
+				],
+			});
+			return result.rows;
+		});
+		return rows[0] ? fromIdentityProviderRow(rows[0]) : null;
+	}
+
+	async deleteIdentityProvider(tenantId: string, id: string): Promise<boolean> {
+		const affected = await this.#exec(tenantId, {
+			text: 'DELETE FROM auth_identity_providers WHERE tenant_id = $1 AND id = $2',
+			parameters: [tenantId, id],
+		});
+		return affected > 0;
+	}
+
+	async revokeMembershipApiTokens(
+		tenantId: string,
+		accountId: string,
+		revokedAt: number,
+		revokedBy: string,
+	): Promise<number> {
+		return this.#exec(tenantId, {
+			text: `UPDATE auth_api_tokens SET revoked_at = $1, revoked_by = $2
+			       WHERE tenant_id = $3 AND account_id = $4 AND revoked_at IS NULL`,
+			parameters: [revokedAt, revokedBy, tenantId, accountId],
+		});
+	}
+
+	async setMembershipStatus(
+		accountId: string,
+		tenantId: string,
+		status: MembershipStatus,
+	): Promise<boolean> {
+		const affected = await this.#exec(tenantId, {
+			text: `UPDATE auth_memberships SET status = $1
+			       WHERE account_id = $2 AND tenant_id = $3`,
+			parameters: [status, accountId, tenantId],
+		});
+		return affected > 0;
 	}
 
 	async findSignInFailure(
@@ -1756,6 +2215,138 @@ export class DatabaseAuthRepository implements AuthRepository {
 			metadata: JSON.parse(row.metadata_json) as Record<string, unknown>,
 			occurredAt: integer(row.occurred_at),
 		}));
+	}
+
+	async exportSessionsPage(
+		tenantId: string,
+		afterId: string,
+		limit: number,
+	): Promise<readonly SessionExportRecord[]> {
+		const rows = await this.#query<SessionExportRow>(tenantId, {
+			text: `SELECT id, tenant_id, account_id, created_at, expires_at,
+			       last_seen_at
+			       FROM auth_sessions
+			       WHERE tenant_id = $1 AND id > $2
+			       ORDER BY id LIMIT $3`,
+			parameters: [tenantId, afterId, limit],
+		});
+		return rows.map((row) => ({
+			id: row.id,
+			tenantId: row.tenant_id,
+			accountId: row.account_id,
+			createdAt: integer(row.created_at),
+			expiresAt: integer(row.expires_at),
+			lastSeenAt: integer(row.last_seen_at),
+		}));
+	}
+
+	async deleteSessionsExpiredBefore(
+		tenantId: string,
+		before: number,
+		limit: number,
+	): Promise<number> {
+		return this.#exec(tenantId, {
+			text: `DELETE FROM auth_sessions WHERE token_hash IN (
+			         SELECT token_hash FROM auth_sessions
+			         WHERE tenant_id = $1 AND expires_at < $2
+			         ORDER BY expires_at LIMIT $3)`,
+			parameters: [tenantId, before, limit],
+		});
+	}
+
+	async exportApiTokensPage(
+		tenantId: string,
+		afterId: string,
+		limit: number,
+	): Promise<readonly ApiTokenRecord[]> {
+		const rows = await this.#query<ApiTokenRow>(tenantId, {
+			text: `SELECT * FROM auth_api_tokens
+			       WHERE tenant_id = $1 AND id > $2
+			       ORDER BY id LIMIT $3`,
+			parameters: [tenantId, afterId, limit],
+		});
+		return rows.map(fromApiTokenRow);
+	}
+
+	async deleteApiTokensRetiredBefore(
+		tenantId: string,
+		before: number,
+		limit: number,
+	): Promise<number> {
+		return this.#exec(tenantId, {
+			text: `DELETE FROM auth_api_tokens WHERE id IN (
+			         SELECT id FROM auth_api_tokens
+			         WHERE tenant_id = $1
+			           AND (revoked_at < $2 OR expires_at < $2)
+			         ORDER BY id LIMIT $3)`,
+			parameters: [tenantId, before, limit],
+		});
+	}
+
+	async exportAuditEventsPage(
+		tenantId: string,
+		afterId: number,
+		limit: number,
+	): Promise<readonly AuditEvent[]> {
+		const rows = await this.#query<AuditRow>(tenantId, {
+			text: `SELECT * FROM auth_audit
+			       WHERE tenant_id = $1 AND id > $2
+			       ORDER BY id LIMIT $3`,
+			parameters: [tenantId, afterId, limit],
+		});
+		return rows.map((row) => ({
+			id: integer(row.id),
+			tenantId: row.tenant_id,
+			actorAccountId: row.actor_account_id,
+			actorLabel: row.actor_label,
+			action: row.action,
+			subjectType: row.subject_type,
+			subjectId: row.subject_id,
+			metadata: JSON.parse(row.metadata_json) as Record<string, unknown>,
+			occurredAt: integer(row.occurred_at),
+		}));
+	}
+
+	async deleteAuditEventsBefore(
+		tenantId: string,
+		before: number,
+		limit: number,
+	): Promise<number> {
+		return this.#exec(tenantId, {
+			text: `DELETE FROM auth_audit WHERE id IN (
+			         SELECT id FROM auth_audit
+			         WHERE tenant_id = $1 AND occurred_at < $2
+			         ORDER BY occurred_at LIMIT $3)`,
+			parameters: [tenantId, before, limit],
+		});
+	}
+
+	async deleteMembershipSessionsOf(
+		tenantId: string,
+		accountId: string,
+		limit: number,
+	): Promise<number> {
+		return this.#exec(tenantId, {
+			text: `DELETE FROM auth_sessions WHERE token_hash IN (
+			         SELECT token_hash FROM auth_sessions
+			         WHERE tenant_id = $1 AND account_id = $2
+			         ORDER BY token_hash LIMIT $3)`,
+			parameters: [tenantId, accountId, limit],
+		});
+	}
+
+	async deleteMembershipApiTokensOf(
+		tenantId: string,
+		accountId: string,
+		limit: number,
+	): Promise<number> {
+		return this.#exec(tenantId, {
+			text: `DELETE FROM auth_api_tokens WHERE id IN (
+			         SELECT id FROM auth_api_tokens
+			         WHERE tenant_id = $1 AND account_id = $2
+			         ORDER BY id LIMIT $3)`,
+			parameters: [tenantId, accountId, limit],
+		});
 	}
 
 	async loadSettings(

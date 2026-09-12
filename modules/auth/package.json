@@ -1,6 +1,6 @@
 {
 	"name": "@flowdular/module-auth",
-	"version": "0.10.0",
+	"version": "0.12.6",
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
@@ -25,6 +25,7 @@
 		"@flowdular/ui": "workspace:*",
 		"@octanejs/app-core": "0.0.47",
 		"@octanejs/seo": "0.0.38",
+		"nodemailer": "10.0.3",
 		"octane": "0.1.51",
 		"pg": "8.23.0",
 		"segment-state": "0.2.1",

@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: users.core
-specVersion: 0.6.0
+specVersion: 0.9.3
 status: approved
 name: User Management Core
 description: Provides the tenant-scoped user directory and member administration (creation, display name, role assignment, per-member scopes, account status, password reset, session revocation, removal) through the public auth administration port.
@@ -11,23 +11,35 @@ capabilities:
   - translations
 dependencies:
   - id: system.core
-    range: 0.5.0
+    range: ^0.5.1
   - id: auth.core
-    range: 0.10.0
+    range: ^0.12.0
+  - id: search.core
+    range: ^0.1.0
+  - id: import.core
+    range: ^0.1.0
+requires:
+  - id: search.providers.v1
+    optional: true
+  - id: import.ports.v1
+    optional: true
 tenancy: required
 locales:
   - en
   - pl
 invariants:
+  - Member status is per workspace. Disabling a member through users.core disables only that membership through the auth administration port, revoking its sessions and API tokens in this workspace and leaving the person's other workspaces and the global account status untouched; re-enabling restores sign-in without restoring revoked tokens.
   - Every directory query and mutation is restricted to the authenticated tenant.
   - Password hashes, session tokens, and CSRF tokens are never returned by user administration APIs.
   - Roles are selected from the platform role catalog and determine server-side scope grants.
   - The module contributes separate user-directory and role-catalog screens through its client contribution without editing the application shell.
   - A tenant must retain at least one active owner.
-  - Account creation requires an explicit initial password and never logs it.
+  - Account creation through the user administration API requires an explicit initial password and never logs it; a member created by the members import target receives no credential at all instead, through the auth administration port's credential-less entry point, so that member holds no password until an administrator sets a temporary one or the member completes the public reset flow, and nothing was ever drawn that could be guessed or leaked.
   - Only an owner may create or promote an owner, change another owner, or hand out scopes it does not hold itself.
   - Disabling, removing, or demoting a member never leaves the tenant without an active owner, and never targets the acting principal.
   - Every member administration write is recorded in the auth audit trail with the acting principal.
+  - The member search provider registered with search.providers.v1 reads members only through the auth administration port, under the tenant of the searching principal and behind users.members.read; it holds no index and no copy of a membership. The predicate and the bound are pushed into the port, which answers at most the documented number of members whose display name contains the longest term of the query or whose address starts with it, so a request never reads a workspace of unknown size; the remaining terms and the ranking are applied to that bounded set.
+  - The members import target registered with import.ports.v1 as users.core.members accepts email (required), displayName (required) and role (optional, a role key of the workspace, defaulting to member), keys rows by the address folded the way auth.core stores one, trimmed, NFKC normalised and lower cased, so import.core refuses a repeat spelled in another case wherever in the file it stands, resolves that natural key per batch by asking the auth administration port about the addresses the batch names rather than by listing the workspace, and is behind users.members.manage; create-only creates an absent member and refuses an existing one with ALREADY_EXISTS, update-existing creates an absent member and applies the display name and then the role of an existing one, so the write that can only be refused for its own shape lands first and a role auth.core refuses afterwards leaves the row updated with the reason ROLE_UNCHANGED:<code> rather than denying a change that already happened, skip-existing leaves an existing member untouched; every write goes through the auth administration port with the principal that started the job, a refused row never fails another row, and a deployment without import.core still composes users.core.
 permissions:
   - id: users.members.read
     description: Read memberships in the active tenant.
@@ -55,7 +67,7 @@ acceptanceScenarios:
     then: Users and Roles appear as separate Administration navigation entries backed by views from the same module contribution.
   - id: USERS-EDIT
     given: A principal with users.members.manage selects a member of the active tenant.
-    when: The principal changes the display name, assigns a role from the tenant role list, replaces the member's scopes, disables or re-enables the account, sets a temporary password, signs the member out everywhere, or removes the member.
+    when: The principal changes the display name, assigns a role from the tenant role list, replaces the member's scopes, disables or re-enables the membership in this workspace, sets a temporary password, signs the member out everywhere, or removes the member; the account-level block stays a deployment operator action outside this screen and is shown read-only.
     then: The change is applied through auth.core, the member row reflects it, and an audit event names the acting principal.
   - id: USERS-OWNER-CAP
     given: A principal with users.members.manage that is not an owner.
@@ -77,3 +89,15 @@ acceptanceScenarios:
     given: A principal with users.members.manage and a configured auth mail adapter.
     when: The principal sends an invitation to an email address with an assignable workspace role.
     then: Auth core delivers a single-use invitation without creating a membership before acceptance, and the Users screen reports delivery without exposing the token.
+  - id: USERS-MEMBERSHIP-STATUS
+    given: A member with sessions and API tokens in this workspace and an active membership in another workspace.
+    when: A principal with users.members.manage disables the member from the member drawer and later re-enables them.
+    then: This workspace's sessions and tokens are revoked and its sign-in refused while the other workspace keeps working, the drawer shows the membership status with its reason copy in both locales, and re-enabling restores sign-in without restoring revoked tokens.
+  - id: USERS-IMPORT
+    given: import.core composed before users.core and a principal holding users.members.manage that started an import job into users.core.members with rows of email, display name and role.
+    when: The file is written with create-only, repeated with create-only, skip-existing and update-existing, and a row names a role the workspace does not have, an address that is already an account elsewhere, or an address a row above it already carried in another case.
+    then: The first run creates the members with their role, their account id as the record reference and no password at all, so a sign-in is refused and a self-service credential change answers PASSWORD_NOT_SET rather than a wrong-password refusal; the repeat reports ALREADY_EXISTS, then skipped, then updated with the display name and role of the file; the unknown role and the repeated address are refused before any write, a role refused at write time after the display name was already changed leaves the row updated with ROLE_UNCHANGED and the member's new name, the address taken elsewhere fails its own row alone, and no member of another workspace is created or changed.
+  - id: USERS-SEARCH
+    given: search.core composed before users.core and a principal holding users.members.read.
+    when: The principal searches a term that matches a member's display name or e-mail.
+    then: Only members of the principal's own workspace are returned as hits routed to the Users view, the port is asked for at most the documented bound however large a page the caller wants, the same set is found whichever order the terms were typed in, a principal without users.members.read is never asked, and a deployment without search.core still composes users.core.

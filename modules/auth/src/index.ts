@@ -35,6 +35,7 @@ export type {
 	AuthTenantAccess,
 	CreateRoleInput,
 	CreateTenantMemberInput,
+	CreateTenantMemberWithoutPasswordInput,
 	SessionSummary,
 	TenantRole,
 	UpdateRoleInput,

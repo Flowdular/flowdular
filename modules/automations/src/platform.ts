@@ -15,8 +15,11 @@ import {
 	AUTOMATION_TARGETS_CAPABILITY,
 	createAutomationExecutionCapability,
 	createAutomationTargetRegistry,
+	createAutomationWorkflowActionTools,
+	registerWorkflowAutomationTarget,
 } from './server/index.ts';
 import { registerScheduleVariableSource } from './domain/variables.ts';
+import { automationsDataClasses } from './services/data-classes.ts';
 import {
 	automationsModuleSettingsFromEnvironment,
 	automationsSchedulerPollMs,
@@ -27,6 +30,7 @@ export function createServerComposition(
 ): PlatformServerComposition {
 	const targets = createAutomationTargetRegistry();
 	context.capabilities.register(AUTOMATION_TARGETS_CAPABILITY, targets);
+	registerWorkflowAutomationTarget(targets, context.capabilities);
 	const runQueue = () => {
 		const queue = context.capabilities.get<AgentRunQueue>(
 			AGENT_RUN_QUEUE_CAPABILITY,
@@ -59,9 +63,17 @@ export function createServerComposition(
 		),
 		targets,
 	});
-	context.capabilities.register(
-		AUTOMATION_EXECUTION_CAPABILITY,
-		createAutomationExecutionCapability(() => runtime.scheduleService()),
+	const execution = createAutomationExecutionCapability(() =>
+		runtime.scheduleService(),
+	);
+	context.capabilities.register(AUTOMATION_EXECUTION_CAPABILITY, execution);
+	context.agentTools.register(
+		createAutomationWorkflowActionTools(() => execution),
+	);
+	/* The export runs here, on this module's own leases and under its own tenant
+	   transaction; the platform only holds the declaration. */
+	context.dataClasses.declare(
+		automationsDataClasses(() => runtime.repository()),
 	);
 	return {
 		routes: createAutomationsRoutes(context.auth, runtime),

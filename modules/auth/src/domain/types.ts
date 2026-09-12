@@ -1,3 +1,42 @@
+/** Per workspace; the account status stays the deployment operator's block. */
+export type MembershipStatus = 'active' | 'disabled';
+
+export type IdentityProviderStatus = 'active' | 'disabled';
+
+/**
+ * Where an identity provider comes from. A `platform` provider is read from
+ * FD_AUTH_OIDC_PROVIDERS at boot and offered to every workspace read-only; a
+ * `tenant` provider is a row a workspace owns and administers.
+ */
+export type IdentityProviderScope = 'platform' | 'tenant';
+
+/** An identity provider as an administrator sees it: never its client secret. */
+export interface IdentityProviderSummary {
+	readonly id: string;
+	readonly key: string;
+	readonly label: string;
+	readonly issuer: string;
+	readonly clientId: string;
+	readonly scopes: readonly string[];
+	readonly jitEnabled: boolean;
+	readonly allowedDomains: readonly string[];
+	readonly jitRole: string;
+	readonly status: IdentityProviderStatus;
+	/** Truncated digest of the secret itself; the secret is never readable. */
+	readonly secretFingerprint: string;
+	readonly scope: IdentityProviderScope;
+	readonly updatedAt: number;
+}
+
+/** One provider button on the sign-in screen of one workspace. */
+export interface SignInProviderOption {
+	readonly key: string;
+	readonly label: string;
+	readonly scope: IdentityProviderScope;
+	/** Where the browser starts the authorization request. */
+	readonly startPath: string;
+}
+
 export interface AuthTenantAccess {
 	readonly tenantId: string;
 	readonly name: string;
@@ -39,6 +78,8 @@ export interface SignUpInput {
 export interface SignInInput {
 	readonly email: string;
 	readonly password: string;
+	/** The workspace the screen is on; absent opens the oldest membership. */
+	readonly workspace?: string;
 }
 
 export interface CreateTenantMemberInput {
@@ -48,6 +89,12 @@ export interface CreateTenantMemberInput {
 	readonly displayName: string;
 	readonly role: string;
 }
+
+/** The same member without a credential; auth.core stores an unusable one. */
+export type CreateTenantMemberWithoutPasswordInput = Omit<
+	CreateTenantMemberInput,
+	'password'
+>;
 
 export interface ApiTokenRecord {
 	readonly id: string;

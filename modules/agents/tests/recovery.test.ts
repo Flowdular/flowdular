@@ -11,6 +11,7 @@ import {
 import { AgentHarness, type AgentProvider } from '@flowdular/harness';
 import type { CreateAgentInput } from '../src/domain/types.ts';
 import { AgentService } from '../src/services/agent-service.ts';
+import { agentsDataClasses } from '../src/services/data-classes.ts';
 import {
 	AgentWorker,
 	type AgentProviderResolver,
@@ -638,6 +639,53 @@ describe('agent run recovery and lifecycle', () => {
 			),
 		).toBeNull();
 		expect((await service.getRun(tenantId, queued.id)).status).toBe('queued');
+	});
+
+	describe('AGENTS-ERASE-RUNNING-RUN', () => {
+		/* An erasure removes the runs one account requested whatever their state, so
+		   it may take a row out from under the worker holding it. That is the
+		   lost-lease case: the worker stops working and settles nothing, because the
+		   row it would write the outcome on no longer exists. */
+		it('stops a running execution whose run an erasure removed and settles nothing', async () => {
+			const repository = database.repository;
+			const provider = abortableProvider();
+			const harness = new AgentHarness({ providers: [provider] });
+			const worker = trackedWorker(harness, { workerId: 'worker:erased' });
+			const service = new AgentService(repository, harness, worker);
+			const agent = await activeAgent(service);
+			await worker.start();
+			const queued = await service.enqueueRun(tenantId, actor, [], {
+				agentId: agent.id,
+				trigger: 'service',
+				input: 'Erase me mid-flight.',
+				toolGrants: [],
+			});
+			await waitFor(() => worker.status().inFlight === 1);
+			const runs = agentsDataClasses(async () => repository).find(
+				(entry) => entry.key === 'runs',
+			)!;
+
+			const erased = await runs.erase!({
+				tenantId,
+				subject: { accountId: actor },
+				limit: 10,
+			});
+
+			expect(erased.removed).toBe(1);
+			await waitFor(() => worker.status().inFlight === 0);
+			expect(provider.reasons).toEqual(['lease-lost']);
+			await expect(service.getRun(tenantId, queued.id)).rejects.toThrow(
+				/not found/,
+			);
+			/* Nothing was settled: no failure row to write and no outcome event on a
+			   run the workspace no longer holds. */
+			expect(
+				(await repository.listAuditEvents(tenantId, 50)).filter((event) =>
+					['agent-run.failed', 'agent-run.succeeded'].includes(event.action),
+				),
+			).toEqual([]);
+			worker.stop();
+		});
 	});
 
 	it('reports a successful run as readiness evidence to the provider resolver', async () => {

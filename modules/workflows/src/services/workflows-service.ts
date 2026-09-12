@@ -50,6 +50,11 @@ import type {
 } from '../domain/types.ts';
 import { WORKFLOW_LIMITS } from '../domain/types.ts';
 import { WORKFLOWS_PERMISSIONS } from '../acl/permissions.ts';
+import {
+	APPROVALS_REQUESTS_CAPABILITY,
+	type ApprovalsRequests,
+	type WorkspaceRolesResolver,
+} from './approvals.ts';
 import type { WorkflowCursorCodec } from './cursor-codec.ts';
 import { safePayloadEvidence } from './payload-codec.ts';
 import type {
@@ -126,6 +131,10 @@ export class WorkflowsServiceError extends Error {
 export interface WorkflowsServiceOptions {
 	readonly capabilities: PlatformCapabilityRegistry;
 	readonly cursorCodec: WorkflowCursorCodec;
+	/* Roles the workspace defines, for the human-approval requirement check at
+	   publish time. Absent means no role can be confirmed, which the compiler
+	   reports the same way it reports an unknown one. */
+	readonly roles?: WorkspaceRolesResolver;
 	readonly now?: () => number;
 	readonly onRunQueued?: () => void;
 }
@@ -257,6 +266,12 @@ export class WorkflowsService {
 		);
 	}
 
+	#approvals(): ApprovalsRequests | null {
+		return this.options.capabilities.get<ApprovalsRequests>(
+			APPROVALS_REQUESTS_CAPABILITY,
+		);
+	}
+
 	/* Presence is separate from resolution: an absent capability is a 503 the
 	   caller reports before it reads a graph or a revision. */
 	#executionCapabilities(): WorkflowExecutionCapabilities | null {
@@ -274,6 +289,16 @@ export class WorkflowsService {
 	): Promise<WorkflowReferenceCatalog> {
 		const { agents, actions } = capabilities;
 		const actionDescriptors = await actions.listWorkflowActions();
+		const needsApproval = graph.nodes.some(
+			(node) => node.type === 'human-approval',
+		);
+		const approvals = needsApproval ? this.#approvals() : null;
+		/* Only asked for when a node needs it: resolving every workspace role is
+		   a query no graph without a human step should pay for. */
+		const roleKeys =
+			needsApproval && approvals !== null && this.options.roles
+				? await this.options.roles(context.tenantId)
+				: [];
 		const revisions = new Map<string, AgentRevisionReference | null>();
 		for (const node of graph.nodes) {
 			if (node.type !== 'agent' && node.type !== 'agent-decision') continue;
@@ -312,6 +337,7 @@ export class WorkflowsService {
 					allowedTools: reference?.allowedTools ?? [],
 				};
 			},
+			approval: () => ({ available: approvals !== null, roleKeys }),
 			action: (actionId, contractVersion) => {
 				const action = actionDescriptors.find(
 					(entry) =>
@@ -887,6 +913,21 @@ export class WorkflowsService {
 				requiredPermissions: [],
 				risk: 'read',
 				idempotency: 'required',
+			}),
+			/* A simulation asks nobody: the requirement is still shape-checked, and
+			   the role it names is taken as defined so a draft can be rehearsed
+			   before the workspace has that role. A draft may carry no requirement
+			   yet, which the compiler reports rather than this read failing on it. */
+			approval: () => ({
+				available: true,
+				roleKeys: detail.draft.graph.nodes.flatMap((node) => {
+					if (node.type !== 'human-approval') return [];
+					const requirement: { roleKey?: unknown } | undefined =
+						node.requirement;
+					return typeof requirement?.roleKey === 'string'
+						? [requirement.roleKey]
+						: [];
+				}),
 			}),
 		});
 		if (!report.valid) {

@@ -22,7 +22,33 @@ export const WORKFLOW_LIMITS = Object.freeze({
 	maxRunEvents: 10_000,
 	maxInteractivePage: 100,
 	maxReplayEvents: 100,
+	/* What a node may ask approvals.core for, bounded where approvals.core
+	   bounds it: a requirement it would refuse has to be a publish issue rather
+	   than a run that reaches the node and refuses there. */
+	maxApprovalDecisions: 16,
+	maxApprovalExpiryDays: 90,
 });
+
+/**
+ * Longest values approvals.core accepts on a request, mirrored so a node whose
+ * prompt or label it would refuse is caught at validation instead of at the
+ * node. It must not drift from `APPROVAL_LIMITS` in that module's
+ * `domain/capability.ts`.
+ */
+export const APPROVAL_LIMITS = Object.freeze({
+	title: 200,
+	summary: 2_000,
+});
+
+/**
+ * How long a run paused on a human approval sleeps before it looks at the
+ * request again. approvals.core calls back in process when a decision lands, so
+ * this is what resumes a run whose callback never arrives: the process that
+ * opened the request restarted, or approvals.core dropped the callback to stay
+ * inside its own bound on the pending ones. Shorter costs one claim per pending
+ * approval per interval.
+ */
+export const WORKFLOW_APPROVAL_RECHECK_MS = 5 * 60 * 1_000;
 
 export interface WorkflowPortV1 {
 	readonly name: string;
@@ -128,6 +154,25 @@ export interface WorkflowActionNodeV1 extends WorkflowNodeBaseV1 {
 	};
 }
 
+/**
+ * The requirement a human-approval node carries. It is the kernel
+ * `ApprovalRequirement` pinned into the published graph: who has to agree, how
+ * many of them, and how long the run waits before the request expires.
+ */
+export interface WorkflowApprovalRequirementV1 {
+	readonly roleKey?: string;
+	readonly scope?: string;
+	readonly decisions?: number;
+	readonly expiresInDays?: number;
+}
+
+export interface WorkflowHumanApprovalNodeV1 extends WorkflowNodeBaseV1 {
+	readonly type: 'human-approval';
+	readonly requirement: WorkflowApprovalRequirementV1;
+	/** Shown to the deciders; the node label is the fallback. */
+	readonly prompt?: string;
+}
+
 export interface WorkflowMergeNodeV1 extends WorkflowNodeBaseV1 {
 	readonly type: 'merge';
 	readonly mode: 'all';
@@ -144,6 +189,7 @@ export type WorkflowNodeV1 =
 	| WorkflowGateNodeV1
 	| WorkflowValidatorNodeV1
 	| WorkflowActionNodeV1
+	| WorkflowHumanApprovalNodeV1
 	| WorkflowMergeNodeV1
 	| WorkflowOutputNodeV1;
 
@@ -226,7 +272,7 @@ export interface WorkflowValidationIssueV1 {
 }
 
 export interface WorkflowReferenceSummaryV1 {
-	readonly kind: 'agent' | 'action' | 'schema';
+	readonly kind: 'agent' | 'action' | 'schema' | 'approval';
 	readonly id: string;
 	readonly version: string;
 	readonly available: boolean;
@@ -258,6 +304,10 @@ export type WorkflowRunStatus =
 	| 'queued'
 	| 'running'
 	| 'waiting-agent'
+	/* A run asleep on a person. It leaves the worker's claim queue until the
+	   approval resolves or its recheck falls due, so a request open for days
+	   costs nothing and never starves a newly queued run. */
+	| 'waiting-approval'
 	| 'waiting-retry'
 	| 'cancel-requested'
 	| 'succeeded'
@@ -355,7 +405,7 @@ export interface WorkflowNodeAttempt {
 	readonly sideEffectIdempotencyKey: string;
 	readonly input: WorkflowPayloadEvidenceV1;
 	readonly output: WorkflowPayloadEvidenceV1;
-	readonly childKind: 'agent' | 'action' | null;
+	readonly childKind: 'agent' | 'action' | 'approval' | null;
 	readonly childId: string | null;
 	readonly childObservationDeadlineAt: number | null;
 	readonly failureCode: string | null;

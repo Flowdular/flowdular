@@ -50,7 +50,7 @@ describe('API tokens', () => {
 			tenantId: principal.tenantId,
 			accountId: principal.accountId,
 			label: 'Local sandbox',
-			scopes: ['parties.records.read', 'sandbox.access.use'],
+			scopes: ['users.members.read', 'sandbox.access.use'],
 			expiresAt: null,
 			createdBy: principal.accountId,
 		});
@@ -67,11 +67,11 @@ describe('API tokens', () => {
 			tenantId: principal.tenantId,
 			accountId: principal.accountId,
 			label: 'Narrowed',
-			scopes: ['parties.records.read', 'not.a.granted.scope'],
+			scopes: ['users.members.read', 'not.a.granted.scope'],
 			expiresAt: null,
 			createdBy: principal.accountId,
 		});
-		expect(issued.record.scopes).toEqual(['parties.records.read']);
+		expect(issued.record.scopes).toEqual(['users.members.read']);
 	});
 
 	it('refuses a token that carries no held scope', async () => {
@@ -95,13 +95,13 @@ describe('API tokens', () => {
 			tenantId: principal.tenantId,
 			accountId: principal.accountId,
 			label: 'Bridge',
-			scopes: ['parties.records.read'],
+			scopes: ['users.members.read'],
 			expiresAt: now + 60_000,
 			createdBy: principal.accountId,
 		});
 		const resolved = await service.resolveApiToken(issued.token);
 		expect(resolved?.accountId).toBe(principal.accountId);
-		expect(resolved?.scopes).toEqual(['parties.records.read']);
+		expect(resolved?.scopes).toEqual(['users.members.read']);
 
 		now += 60_001;
 		expect(await service.resolveApiToken(issued.token)).toBeNull();
@@ -128,7 +128,7 @@ describe('API tokens', () => {
 			tenantId: principal.tenantId,
 			accountId: principal.accountId,
 			label: 'Scoped',
-			scopes: ['parties.records.read'],
+			scopes: ['users.members.read'],
 			expiresAt: null,
 			createdBy: principal.accountId,
 		});

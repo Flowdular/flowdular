@@ -1,6 +1,16 @@
 import type { AgentHarness, AgentProvider } from '@flowdular/harness';
-import type { AgentRunExecution, AgentWorkerStatus } from '../domain/types.ts';
+import type {
+	AgentRun,
+	AgentRunExecution,
+	AgentWorkerStatus,
+} from '../domain/types.ts';
 import type { AgentRepository, RecoverableRun } from './repository.ts';
+import {
+	publishRunOutcome,
+	runNotificationRecipients,
+	type NotificationPublisherResolver,
+} from './notifications.ts';
+import { AGENT_METERS, type MeterRegistryResolver } from './metering.ts';
 import type { AgentProviderBroker } from './provider-broker.ts';
 import type { AgentRunGrantAuthority } from './run-grant.ts';
 
@@ -12,6 +22,13 @@ export interface AgentWorkerOptions {
 	readonly leaseMs: number;
 	readonly runGrantAuthority?: AgentRunGrantAuthority;
 	readonly providerBroker?: AgentProviderBroker;
+	/* Resolved when a run settles. Absent, or resolving to null, means the
+	   optional notifications module is not composed and nothing is published. */
+	readonly notifications?: NotificationPublisherResolver;
+	/* Resolved when a run settles, so the registry is the one the platform holds
+	   then. Absent only in a process that built a worker outside the module
+	   composition, such as a test; a composed deployment always has it. */
+	readonly meters?: MeterRegistryResolver;
 	readonly now?: () => number;
 }
 
@@ -35,10 +52,17 @@ const CANCELLED = 'cancelled';
 const SHUTDOWN = 'worker-shutdown';
 const LEASE_LOST = 'lease-lost';
 
+/* A provider, a driver or the database can put any text on `code`. Only a
+   stable code may reach the failure record, the audit metadata and the
+   notification body a person reads. */
+const STABLE_CODE = /^[A-Z][A-Z0-9_]+$/;
+
 function failure(error: unknown): { code: string; message: string } {
 	if (error instanceof Error) {
 		const code =
-			'code' in error && typeof error.code === 'string'
+			'code' in error &&
+			typeof error.code === 'string' &&
+			STABLE_CODE.test(error.code)
 				? error.code
 				: 'AGENT_EXECUTION_FAILED';
 		return { code, message: error.message.slice(0, 1_000) };
@@ -356,11 +380,16 @@ export class AgentWorker {
 					occurredAt: result.completedAt,
 				},
 			);
+			await this.#reportMeters(execution.run, result.usage.totalTokens);
 			await this.#recordRunSuccess(
 				execution,
 				result.completedAt,
 				result.startedAt,
 			);
+			await this.#publishOutcome(execution.run, 'agent-run-completed', {
+				title: `Agent ${execution.run.agentName} finished`,
+				body: `The run finished in ${result.completedAt - result.startedAt} ms and used ${result.usage.totalTokens} tokens.`,
+			});
 		} catch (error) {
 			await eventWrites.catch(() => undefined);
 			/* The service already moved a cancelled row and wrote its audit event;
@@ -412,10 +441,69 @@ export class AgentWorker {
 					`[agents] run ${candidate.runId} failed with ${failed.code} and could not be settled:`,
 					settleError instanceof Error ? settleError.message : settleError,
 				);
+				return;
 			}
+			await this.#reportMeters(execution.run, 0);
+			await this.#publishOutcome(execution.run, 'agent-run-failed', {
+				title: `Agent ${execution.run.agentName} failed`,
+				body: `The run stopped with ${failed.code}.`,
+			});
 		} finally {
 			clearInterval(renewal);
 			await eventWrites.catch(() => undefined);
+		}
+	}
+
+	/* Called after the terminal row is committed and outside its transaction.
+	   The run id is the source reference, so a terminal step that runs twice
+	   reports the same outcome instead of adding a second notification. A run a
+	   workflow owns stays silent: workflows.core reports the outcome the person
+	   actually asked for, once, instead of one notification per agent step. */
+	async #publishOutcome(
+		run: AgentRun,
+		kind: 'agent-run-completed' | 'agent-run-failed',
+		copy: { readonly title: string; readonly body: string },
+	): Promise<void> {
+		if (run.workflowRunId !== null) return;
+		await publishRunOutcome(this.options.notifications, {
+			tenantId: run.tenantId,
+			kind,
+			sourceModule: 'agents.core',
+			sourceRef: run.id,
+			title: copy.title,
+			body: copy.body,
+			recipients: runNotificationRecipients(run.authorizationSubject),
+		});
+	}
+
+	/* Called after the terminal row is committed and outside its transaction.
+	   The run id is the source reference, so a terminal step that runs twice
+	   counts the run once. Counting is advisory: metering.core commits the fact
+	   in its own transaction and a failure there never changes a settled run. A
+	   run that reported no tokens counts none rather than claiming zero. */
+	async #reportMeters(run: AgentRun, totalTokens: number): Promise<void> {
+		const meters = this.options.meters?.();
+		if (!meters) return;
+		try {
+			await meters.record({
+				tenantId: run.tenantId,
+				meter: AGENT_METERS.runs,
+				amount: 1,
+				sourceRef: run.id,
+			});
+			if (totalTokens > 0) {
+				await meters.record({
+					tenantId: run.tenantId,
+					meter: AGENT_METERS.runTokens,
+					amount: totalTokens,
+					sourceRef: run.id,
+				});
+			}
+		} catch (error) {
+			console.warn(
+				`[agents] metering for run ${run.id} failed:`,
+				error instanceof Error ? error.message : error,
+			);
 		}
 	}
 

@@ -60,5 +60,6 @@
 	"settings.configured": "Skonfigurowano",
 	"settings.emptyValue": "Puste",
 	"settings.mailTransportRequired": "Potwierdzanie adresu e-mail wymaga skonfigurowanej usługi wysyłki wiadomości.",
+	"settings.mfaKeyRequired": "Wymagane uwierzytelnianie dwuskładnikowe potrzebuje klucza szyfrującego MFA skonfigurowanego we wdrożeniu.",
 	"error.catalog": "Nie udało się wczytać katalogu modułów."
 }

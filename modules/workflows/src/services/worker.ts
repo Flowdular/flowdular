@@ -6,10 +6,17 @@ import type {
 import type {
 	JsonValue,
 	WorkflowCostRollupV1,
+	WorkflowNodeExecution,
 	WorkflowNodeV1,
+	WorkflowPayloadEvidenceV1,
+	WorkflowRunStatus,
 	WorkflowUsageRollupV1,
 } from '../domain/types.ts';
-import { WORKFLOW_LIMITS } from '../domain/types.ts';
+import {
+	WORKFLOW_APPROVAL_RECHECK_MS,
+	WORKFLOW_LIMITS,
+} from '../domain/types.ts';
+import type { ApprovalRequest, ApprovalsResolver } from './approvals.ts';
 import {
 	applyWorkflowMappings,
 	evaluateGate,
@@ -17,6 +24,11 @@ import {
 	jsonHash,
 	validateJsonSchema,
 } from '../domain/graph.ts';
+import {
+	publishRunOutcome,
+	runNotificationRecipients,
+	type NotificationPublisherResolver,
+} from './notifications.ts';
 import { safePayloadEvidence } from './payload-codec.ts';
 import type { WorkflowRunRecord, WorkflowsRepository } from './repository.ts';
 
@@ -24,6 +36,12 @@ export interface WorkflowWorkerOptions {
 	readonly workerId?: string;
 	readonly leaseMs?: number;
 	readonly pollMs?: number;
+	/* Resolved when a run settles. Absent, or resolving to null, means the
+	   optional notifications module is not composed and nothing is published. */
+	readonly notifications?: NotificationPublisherResolver;
+	/* Resolved when a human-approval node runs. Absent, or resolving to null,
+	   means approvals.core is not composed and such a node refuses. */
+	readonly approvals?: ApprovalsResolver;
 	readonly now?: () => number;
 }
 
@@ -74,6 +92,49 @@ function childContext(run: WorkflowRunRecord) {
 	};
 }
 
+/**
+ * How long this run has been asleep on a person, summed over every attempt that
+ * opened an approval. It over-approximates by the moments between an attempt
+ * starting and its request opening, which extends the live window by that much
+ * and never shortens it.
+ */
+function approvalWaitMs(
+	nodes: readonly WorkflowNodeExecution[],
+	now: number,
+): number {
+	let waited = 0;
+	for (const node of nodes) {
+		for (const attempt of node.attempts) {
+			if (attempt.childKind !== 'approval') continue;
+			waited += (attempt.completedAt ?? now) - attempt.startedAt;
+		}
+	}
+	return waited;
+}
+
+/** The request this run is parked on, when it is parked on one. */
+function parkedApproval(nodes: readonly WorkflowNodeExecution[]): {
+	readonly nodeId: string;
+	readonly attempt: number;
+	readonly childId: string;
+} | null {
+	for (const node of nodes) {
+		const attempt = node.attempts.at(-1);
+		if (
+			attempt?.status === 'waiting-child' &&
+			attempt.childKind === 'approval' &&
+			attempt.childId
+		) {
+			return {
+				nodeId: node.nodeId,
+				attempt: attempt.attempt,
+				childId: attempt.childId,
+			};
+		}
+	}
+	return null;
+}
+
 function stableCapabilityCode(error: unknown, fallback: string): string {
 	if (
 		error !== null &&
@@ -91,6 +152,8 @@ export class WorkflowWorker {
 	readonly #workerId: string;
 	readonly #leaseMs: number;
 	readonly #pollMs: number;
+	readonly #notifications: NotificationPublisherResolver | undefined;
+	readonly #approvals: ApprovalsResolver | undefined;
 	readonly #now: () => number;
 	#poll: ReturnType<typeof setInterval> | undefined;
 	#scheduled = false;
@@ -110,6 +173,8 @@ export class WorkflowWorker {
 			options.workerId ?? `workflow-worker:${process.pid}:${randomUUID()}`;
 		this.#leaseMs = Math.max(1_000, options.leaseMs ?? 30_000);
 		this.#pollMs = Math.max(250, options.pollMs ?? 1_000);
+		this.#notifications = options.notifications;
+		this.#approvals = options.approvals;
 		this.#now = options.now ?? Date.now;
 	}
 
@@ -202,18 +267,42 @@ export class WorkflowWorker {
 				return;
 			}
 			if (now - current.queuedAt > WORKFLOW_LIMITS.maxLiveDurationMs) {
-				await this.repository.settleRun(
+				/* The live window bounds the work a run does, not how long a person
+				   takes to answer it: a request is bounded by its own expiry, which
+				   is days rather than hours. Reading the node states only once the
+				   raw elapsed time is over keeps the ordinary claim free of it. */
+				const nodes = await this.repository.readNodeStates(
 					current.tenantId,
 					current.id,
-					'refused',
-					'WORKFLOW_LIMIT_EXCEEDED',
-					undefined,
-					safePayloadEvidence(undefined, 'workflow.output'),
-					finalUsage(current),
-					finalCost(current),
-					now,
 				);
-				return;
+				if (
+					now - current.queuedAt - approvalWaitMs(nodes, now) >
+					WORKFLOW_LIMITS.maxLiveDurationMs
+				) {
+					/* Nobody is waiting for the answer once the run stops, and a
+					   request left pending keeps asking people for it. */
+					const parked = parkedApproval(nodes);
+					if (parked) {
+						await this.#withdrawApproval(
+							current,
+							parked.nodeId,
+							parked.attempt,
+							parked.childId,
+							now,
+						);
+					}
+					await this.#settleRun(
+						current,
+						'refused',
+						'WORKFLOW_LIMIT_EXCEEDED',
+						undefined,
+						safePayloadEvidence(undefined, 'workflow.output'),
+						finalUsage(current),
+						finalCost(current),
+						now,
+					);
+					return;
+				}
 			}
 			await this.#advance(current, dependencies, assertLease);
 		} catch (error) {
@@ -231,9 +320,8 @@ export class WorkflowWorker {
 					error instanceof Error && /^[A-Z][A-Z0-9_]+$/.test(error.message)
 						? error.message
 						: 'WORKFLOW_RECOVERY_INCONSISTENT';
-				await this.repository.settleRun(
-					current.tenantId,
-					current.id,
+				await this.#settleRun(
+					current,
 					'refused',
 					code,
 					undefined,
@@ -247,6 +335,53 @@ export class WorkflowWorker {
 			clearInterval(renewal);
 			await this.repository.releaseLease(run.tenantId, run.id, this.#workerId);
 		}
+	}
+
+	/* The one terminal transition of a live run. The publish happens after the
+	   settling transaction committed, and reads the kind from the settled row
+	   rather than the requested status, so a worker that lost the race reports
+	   the outcome the run actually has. A simulated run never reaches here: the
+	   claim poll takes live runs only and the simulator settles its own rows. */
+	async #settleRun(
+		run: WorkflowRunRecord,
+		status: Extract<
+			WorkflowRunStatus,
+			'succeeded' | 'failed' | 'refused' | 'cancelled'
+		>,
+		failureCode: string | null,
+		output: JsonValue | undefined,
+		outputEvidence: WorkflowPayloadEvidenceV1,
+		usage: WorkflowUsageRollupV1,
+		cost: WorkflowCostRollupV1,
+		recordedAt: number,
+	): Promise<void> {
+		const settled = await this.repository.settleRun(
+			run.tenantId,
+			run.id,
+			status,
+			failureCode,
+			output,
+			outputEvidence,
+			usage,
+			cost,
+			recordedAt,
+		);
+		if (!settled || settled.mode !== 'live') return;
+		const failed = settled.status === 'failed' || settled.status === 'refused';
+		/* A cancellation is the outcome the person who requested it already
+		   knows about, and the contract has no kind for it. */
+		if (!failed && settled.status !== 'succeeded') return;
+		await publishRunOutcome(this.#notifications, {
+			tenantId: settled.tenantId,
+			kind: failed ? 'workflow-run-failed' : 'workflow-run-completed',
+			sourceModule: 'workflows.core',
+			sourceRef: settled.id,
+			title: `Workflow ${settled.workflowName} ${failed ? 'failed' : 'finished'}`,
+			body: failed
+				? `The run stopped with ${settled.failureCode ?? 'no reported code'} after ${settled.completedNodes} of ${settled.totalNodes} steps.`
+				: `The run finished ${settled.completedNodes} of ${settled.totalNodes} steps.`,
+			recipients: runNotificationRecipients(settled.authorizationSubject),
+		});
 	}
 
 	async #cancel(
@@ -272,6 +407,26 @@ export class WorkflowWorker {
 			if (!attempt || attempt.status !== 'waiting-child' || !attempt.childId)
 				continue;
 			if (!attempt.childKind) throw new Error('WORKFLOW_RECOVERY_INCONSISTENT');
+			/* A pending approval outlives the run that asked for it unless it is
+			   withdrawn here, and it would keep asking people to decide something
+			   nobody is waiting for. */
+			if (attempt.childKind === 'approval') {
+				await this.#cancelApproval(
+					run,
+					node.nodeId,
+					attempt.attempt,
+					attempt.childId,
+					priorEvents.some(
+						(event) =>
+							event.type === 'node.cancel.requested' &&
+							event.payload.nodeId === node.nodeId &&
+							event.payload.attempt === attempt.attempt &&
+							event.payload.childId === attempt.childId,
+					),
+					now,
+				);
+				continue;
+			}
 			const alreadyRequested = priorEvents.some(
 				(event) =>
 					event.type === 'node.cancel.requested' &&
@@ -450,9 +605,8 @@ export class WorkflowWorker {
 		}
 		if (pending) return;
 		const fresh = (await this.repository.getRun(run.tenantId, run.id)) ?? run;
-		await this.repository.settleRun(
-			run.tenantId,
-			run.id,
+		await this.#settleRun(
+			run,
 			'cancelled',
 			null,
 			undefined,
@@ -708,9 +862,8 @@ export class WorkflowWorker {
 				}
 				const terminal =
 					(await this.repository.getRun(run.tenantId, run.id)) ?? run;
-				await this.repository.settleRun(
-					run.tenantId,
-					run.id,
+				await this.#settleRun(
+					run,
 					result.status === 'refused' ? 'refused' : 'failed',
 					result.code ?? 'WORKFLOW_NODE_FAILED',
 					undefined,
@@ -770,9 +923,8 @@ export class WorkflowWorker {
 			if (node.type === 'output') {
 				const terminal =
 					(await this.repository.getRun(run.tenantId, run.id)) ?? run;
-				await this.repository.settleRun(
-					run.tenantId,
-					run.id,
+				await this.#settleRun(
+					run,
 					'succeeded',
 					null,
 					result.output,
@@ -979,6 +1131,189 @@ export class WorkflowWorker {
 				}
 				return { status: 'succeeded', outcomePort: 'success', output };
 			}
+			case 'human-approval': {
+				const approvals = this.#approvals?.();
+				if (!approvals) {
+					return {
+						status: 'refused',
+						outcomePort: '',
+						output: { code: 'WORKFLOW_APPROVAL_CAPABILITY_UNAVAILABLE' },
+						code: 'WORKFLOW_APPROVAL_CAPABILITY_UNAVAILABLE',
+					};
+				}
+				/* The person accountable for the run is the requester, and they are
+				   excluded from deciding their own request by approvals.core. A run
+				   with nobody behind it has nobody to exclude and nobody to answer
+				   to, so it cannot ask for a human decision at all. */
+				const requester = run.authorizationSubject?.id;
+				if (!requester) {
+					return {
+						status: 'refused',
+						outcomePort: '',
+						output: { code: 'WORKFLOW_APPROVAL_REQUESTER_UNKNOWN' },
+						code: 'WORKFLOW_APPROVAL_REQUESTER_UNKNOWN',
+					};
+				}
+				let id = childId;
+				if (!id) {
+					let opened;
+					try {
+						opened = await approvals.open({
+							tenantId: run.tenantId,
+							subjectModule: 'workflows.core',
+							/* Stable across recovery of this attempt, which is what makes
+							   reopening find the request instead of asking twice. */
+							subjectRef: `${run.id}:${node.id}`,
+							permission: 'workflows.runs.execute',
+							action: 'human-approval',
+							title: node.prompt ?? node.label,
+							summary: `Workflow ${run.workflowName}, step ${node.label}.`,
+							requesterAccountId: requester,
+							requirement: node.requirement,
+							/* The request that resolved names itself, which is also the
+							   only id that exists before `open` returns. */
+							onResolved: async (resolved) => {
+								await this.repository.wakeApproval(
+									run.tenantId,
+									run.id,
+									resolved.id,
+									this.#now(),
+								);
+								this.kick();
+							},
+						});
+						assertLease();
+					} catch (error) {
+						const code = stableCapabilityCode(
+							error,
+							'WORKFLOW_APPROVAL_REFUSED',
+						);
+						return {
+							status: 'refused',
+							outcomePort: '',
+							output: { code },
+							code,
+						};
+					}
+					id = opened.id;
+					/* A person's answer is bounded by the request's own expiry, not by
+					   the run's live window: bounding it by the window would refuse a
+					   request the deciders still have days to answer. */
+					const observationDeadlineAt = opened.expiresAt;
+					await this.repository.markChildWaiting(
+						run.tenantId,
+						run.id,
+						node.id,
+						attempt,
+						'approval',
+						id,
+						observationDeadlineAt,
+						this.#now(),
+						this.#approvalRecheckAt(observationDeadlineAt),
+					);
+					/* The callback was registered inside `open`, against an attempt
+					   this transaction had not armed yet, so a decision taken in that
+					   window woke nothing. One read closes it; a decision after it
+					   finds the armed attempt and wakes the run itself. */
+					let settled: ApprovalRequest | null = null;
+					try {
+						settled = await approvals.get(run.tenantId, id);
+					} catch {
+						/* The run is parked with its recheck armed either way, so a read
+						   that fails here costs a late resume, never a lost one, and a
+						   capability that keeps failing reports itself at that recheck
+						   with the stable code the branch below gives it. */
+					}
+					assertLease();
+					if (settled && settled.status !== 'pending') {
+						await this.repository.wakeApproval(
+							run.tenantId,
+							run.id,
+							id,
+							this.#now(),
+						);
+						this.kick();
+					}
+					return null;
+				}
+				let request;
+				try {
+					request = await approvals.get(run.tenantId, id);
+					assertLease();
+				} catch (error) {
+					const code = stableCapabilityCode(error, 'WORKFLOW_APPROVAL_REFUSED');
+					return {
+						status: 'refused',
+						outcomePort: '',
+						output: { code, approvalRequestId: id },
+						code,
+					};
+				}
+				if (!request) {
+					return {
+						status: 'refused',
+						outcomePort: '',
+						output: {
+							code: 'WORKFLOW_APPROVAL_MISSING',
+							approvalRequestId: id,
+						},
+						code: 'WORKFLOW_APPROVAL_MISSING',
+					};
+				}
+				if (request.status === 'pending') {
+					if (
+						childObservationDeadlineAt !== null &&
+						this.#now() >= childObservationDeadlineAt
+					) {
+						/* The run stops here, so nobody is waiting for the answer any
+						   more and the request is withdrawn rather than left asking. */
+						await this.#withdrawApproval(
+							run,
+							node.id,
+							attempt,
+							id,
+							this.#now(),
+						);
+						return {
+							status: 'refused',
+							outcomePort: '',
+							output: {
+								code: 'WORKFLOW_CHILD_OBSERVATION_TIMEOUT',
+								approvalRequestId: id,
+							},
+							code: 'WORKFLOW_CHILD_OBSERVATION_TIMEOUT',
+						};
+					}
+					/* Nothing to do yet. Going back to sleep is what keeps a request
+					   open for days off the claim queue. */
+					await this.repository.suspendApproval(
+						run.tenantId,
+						run.id,
+						node.id,
+						this.#approvalRecheckAt(childObservationDeadlineAt),
+					);
+					return null;
+				}
+				if (request.status === 'approved') {
+					return {
+						status: 'succeeded',
+						outcomePort: 'approved',
+						output: input,
+					};
+				}
+				const code =
+					request.status === 'rejected'
+						? 'WORKFLOW_APPROVAL_REJECTED'
+						: request.status === 'expired'
+							? 'WORKFLOW_APPROVAL_EXPIRED'
+							: 'WORKFLOW_APPROVAL_CANCELLED';
+				return {
+					status: 'failed',
+					outcomePort: '',
+					output: { code, approvalRequestId: id },
+					code,
+				};
+			}
 			case 'action': {
 				let id = childId;
 				if (!id) {
@@ -1077,6 +1412,93 @@ export class WorkflowWorker {
 		}
 	}
 
+	/**
+	 * Withdraws a request the run has stopped waiting for, whatever stopped it.
+	 * approvals.core refuses a request that already resolved, which is the same
+	 * outcome for the run, so a refusal is recorded and never retried.
+	 */
+	async #withdrawApproval(
+		run: WorkflowRunRecord,
+		nodeId: string,
+		attempt: number,
+		requestId: string,
+		now: number,
+	): Promise<void> {
+		await this.repository.appendRunEvent(
+			run.tenantId,
+			run.id,
+			'node.cancel.requested',
+			{ nodeId, attempt, childKind: 'approval', childId: requestId },
+			now,
+		);
+		let reason: string | null = null;
+		const requester = run.authorizationSubject?.id;
+		try {
+			if (!requester) throw new Error('WORKFLOW_APPROVAL_REQUESTER_UNKNOWN');
+			await this.#approvals?.()?.cancel(run.tenantId, requestId, requester);
+		} catch (error) {
+			reason = stableCapabilityCode(error, 'CHILD_CANCELLATION_REFUSED');
+		}
+		await this.repository.appendRunEvent(
+			run.tenantId,
+			run.id,
+			reason === null
+				? 'node.cancel.acknowledged'
+				: 'node.cancel.not-acknowledged',
+			{
+				nodeId,
+				attempt,
+				childKind: 'approval',
+				childId: requestId,
+				...(reason === null ? {} : { reason }),
+			},
+			now,
+		);
+	}
+
+	/**
+	 * Withdraws the approval a cancelled run was waiting on and settles the
+	 * attempt with it.
+	 */
+	async #cancelApproval(
+		run: WorkflowRunRecord,
+		nodeId: string,
+		attempt: number,
+		requestId: string,
+		alreadyRequested: boolean,
+		now: number,
+	): Promise<void> {
+		if (!alreadyRequested) {
+			await this.#withdrawApproval(run, nodeId, attempt, requestId, now);
+		}
+		await this.repository.settleAttempt(
+			{
+				tenantId: run.tenantId,
+				runId: run.id,
+				nodeId,
+				attempt,
+				status: 'cancelled',
+				outcomePort: null,
+				outputEvidence: safePayloadEvidence(undefined, 'workflow.output'),
+				schemaId: 'workflow.output',
+				failureCode: null,
+				retryClassification: null,
+				selectedBackoffMs: null,
+				nextAttemptAt: null,
+				recordedAt: now,
+			},
+			run.actor,
+			run.origin,
+		);
+	}
+
+	/* Never later than the deadline the attempt is already bounded by: a recheck
+	   past it would leave the run asleep after the request can no longer resolve. */
+	#approvalRecheckAt(deadlineAt: number | null): number {
+		const recheck = this.#now() + WORKFLOW_APPROVAL_RECHECK_MS;
+		return deadlineAt === null ? recheck : Math.min(recheck, deadlineAt);
+	}
+
 	async #failNode(
 		run: WorkflowRunRecord,
 		node: WorkflowNodeV1,
@@ -1105,9 +1527,8 @@ export class WorkflowWorker {
 		);
 		const terminal =
 			(await this.repository.getRun(run.tenantId, run.id)) ?? run;
-		await this.repository.settleRun(
-			run.tenantId,
-			run.id,
+		await this.#settleRun(
+			run,
 			'refused',
 			code,
 			undefined,

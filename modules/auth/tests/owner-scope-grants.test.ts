@@ -14,7 +14,11 @@ afterEach(async () => {
 });
 afterAll(closeAuthTestDatabases);
 
-const scope = 'workflows.definitions.read';
+/* What auth sync-scopes grants is a permission the seed lists do not carry, so
+   these name a module the repository does not ship: every bundled module is
+   enabled and its permissions are owner defaults, and a default would be held
+   before the grant ran and prove nothing about it. */
+const scope = 'billing.invoices.read';
 async function fixture() {
 	database = await createAuthTestDatabase();
 	const service = new AuthService(database.repository, {
@@ -212,7 +216,7 @@ describe('module scope grants', () => {
 
 	it('unions concurrent module grants and reports only newly inserted membership scopes', async () => {
 		const { service, owner } = await fixture();
-		const second = 'workflows.definitions.manage';
+		const second = 'billing.invoices.manage';
 		await Promise.all([
 			service.grantModuleScopes([scope]),
 			service.grantModuleScopes([second]),
@@ -237,7 +241,7 @@ describe('module scope grants', () => {
 		});
 		try {
 			await lease.database.execute({
-				text: `ALTER TABLE auth_membership_scopes ADD CONSTRAINT owner_scope_grant_fixture CHECK (scope <> 'workflows.definitions.read')`,
+				text: `ALTER TABLE auth_membership_scopes ADD CONSTRAINT owner_scope_grant_fixture CHECK (scope <> 'billing.invoices.read')`,
 			});
 			await expect(service.grantModuleScopes([scope])).rejects.toThrow();
 			expect(await service.listRoles(owner.tenantId)).toEqual(before);

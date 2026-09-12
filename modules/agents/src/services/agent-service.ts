@@ -42,6 +42,14 @@ import type {
 } from '../domain/types.ts';
 import type { AgentSettingsReader } from '../settings.ts';
 import {
+	AGENT_METERS,
+	estimateRunTokens,
+	meterPeriod,
+	METER_LIMIT_EXCEEDED,
+	type MeterRegistry,
+	type MeterRegistryResolver,
+} from './metering.ts';
+import {
 	DuplicateAgentKeyError,
 	DuplicateAgentProcedureKeyError,
 	DuplicateRunIdempotencyKeyError,
@@ -311,7 +319,96 @@ export class AgentService {
 		private readonly now: () => number = Date.now,
 		private readonly settings?: AgentSettingsReader,
 		private readonly budget?: AgentBudgetGuard,
+		private readonly meters?: MeterRegistryResolver,
 	) {}
+
+	/**
+	 * The workspace's monthly allowance, checked before a run exists. A run
+	 * costs it one run and the tokens the run may read and write, and
+	 * metering.core answers each meter's own month, so both are asked: checking
+	 * the tokens alone let a workspace whose run allowance was spent keep
+	 * starting runs. What to do about a refusal is this module's decision, so it
+	 * is recorded in this module's own trail under the stable metering code and
+	 * the run is never created. An estimate may be wrong in either direction;
+	 * the settled run replaces it with what it actually used.
+	 */
+	async #assertMeterCapacity(
+		tenantId: string,
+		actorId: string,
+		agentId: string,
+		estimatedTokens: number,
+	): Promise<void> {
+		const meters = this.meters?.();
+		if (!meters) return;
+		/* The run first: a workspace out of runs is refused before it is also
+		   measured against the token allowance. */
+		await this.#assertMeter(meters, tenantId, actorId, agentId, {
+			meter: AGENT_METERS.runs,
+			amount: 1,
+			allowance: 'agent runs',
+		});
+		await this.#assertMeter(meters, tenantId, actorId, agentId, {
+			meter: AGENT_METERS.runTokens,
+			amount: estimatedTokens,
+			allowance: 'agent tokens',
+		});
+	}
+
+	/**
+	 * One meter. A refused verdict stands until the month turns or the limit is
+	 * raised, so the trail records it once per workspace, meter and month: a
+	 * caller retrying a refused enqueue would otherwise write the same fact to
+	 * the chain as fast as it could ask.
+	 */
+	async #assertMeter(
+		meters: MeterRegistry,
+		tenantId: string,
+		actorId: string,
+		agentId: string,
+		request: {
+			readonly meter: string;
+			readonly amount: number;
+			readonly allowance: string;
+		},
+	): Promise<void> {
+		const verdict = await meters.check({
+			tenantId,
+			meter: request.meter,
+			amount: request.amount,
+		});
+		if (verdict.verdict !== 'refused') return;
+		const limit = verdict.limit ?? 0;
+		const at = this.now();
+		if (
+			await this.repository.claimMeterRefusal(
+				tenantId,
+				request.meter,
+				meterPeriod(at),
+				at,
+			)
+		) {
+			await this.repository.appendAuditEvent({
+				tenantId,
+				actorId,
+				action: 'agent-run.meter-refused',
+				subjectType: 'agent',
+				subjectId: agentId,
+				metadata: {
+					code: METER_LIMIT_EXCEEDED,
+					meter: request.meter,
+					amount: request.amount,
+					used: verdict.used,
+					limit,
+				},
+				occurredAt: at,
+			});
+		}
+		throw new AgentServiceError(
+			METER_LIMIT_EXCEEDED,
+			`This workspace has used ${verdict.used} of its ${limit} ${request.allowance} for the month.`,
+			409,
+		);
+	}
 
 	workerStatus(): AgentWorkerStatus {
 		return this.worker.status();
@@ -1380,6 +1477,16 @@ export class AgentService {
 				409,
 			);
 		}
+		await this.#assertMeterCapacity(
+			trustedTenantId,
+			actor.id,
+			retained.agentId,
+			estimateRunTokens({
+				instructions,
+				input: prompt,
+				maxOutputTokens: retained.maxOutputTokens,
+			}),
+		);
 		const queuedAt = this.now();
 		const run: AgentRun = {
 			id: randomUUID(),
@@ -1700,6 +1807,16 @@ export class AgentService {
 				409,
 			);
 		}
+		await this.#assertMeterCapacity(
+			trustedTenantId,
+			identity,
+			agent.id,
+			estimateRunTokens({
+				instructions,
+				input: prompt,
+				maxOutputTokens: agent.maxOutputTokens,
+			}),
+		);
 		const queuedAt = this.now();
 		const run: AgentRun = {
 			id: randomUUID(),

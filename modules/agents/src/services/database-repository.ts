@@ -42,6 +42,8 @@ import {
 	DuplicateRunIdempotencyKeyError,
 	ModuleAgentBindingConflictError,
 	type AgentRepository,
+	type AgentRunExportCursor,
+	type ExportedAgentRun,
 	type PendingAgentAuditEvent,
 	type RecoverableRun,
 } from './repository.ts';
@@ -190,6 +192,11 @@ interface RunEventRow {
 	message: string;
 	metadata_json: string;
 	occurred_at: number | string;
+}
+
+/** The run id a page of events carries, so one query can serve many runs. */
+interface RunEventPageRow extends RunEventRow {
+	run_id: string;
 }
 
 interface AuditRow {
@@ -491,6 +498,16 @@ const USAGE_COLUMNS = `COUNT(*) AS runs,
  COALESCE(SUM(cost_micro_usd), 0) AS cost_micro_usd,
  SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_runs`;
 
+function fromRunEventRow(row: RunEventRow): AgentExecutionEvent {
+	return {
+		sequence: integer(row.sequence),
+		type: row.event_type,
+		timestamp: integer(row.occurred_at),
+		message: row.message,
+		metadata: metadata(row.metadata_json),
+	};
+}
+
 function fromAuditRow(row: AuditRow): AgentAuditEvent {
 	return {
 		id: row.id,
@@ -651,9 +668,17 @@ export interface AgentsPersistenceStatements {
 	readonly completeAction: string;
 	readonly failAction: string;
 	readonly cancelAction: string;
+	readonly exportRunsPage1: string;
+	readonly exportRunsPage2: string;
+	readonly exportRunEvents: string;
+	readonly deleteSettledRunsBefore: string;
+	readonly deleteRunsRequestedBy: string;
 	readonly appendAuditEvent1: string;
 	readonly appendAuditEvent2: string;
+	readonly pruneMeterRefusals: string;
+	readonly claimMeterRefusal: string;
 	readonly listAuditEvents: string;
+	readonly exportAuditEventsPage: string;
 	readonly pageAuditEvents1: string;
 	readonly pageAuditEvents2: string;
 	readonly verifyAuditChainDetailed: string;
@@ -948,8 +973,43 @@ export const AGENTS_SQL: AgentsPersistenceStatements = Object.freeze({
 					 (id, tenant_id, sequence, actor_id, action, subject_type,
 					  subject_id, metadata_json, occurred_at, previous_hash, event_hash)
 					 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+	/* The order agent_runs_tenant_queued_idx already carries, so the walk is an
+	   index range scan and a run queued during it lands ahead of the cursor
+	   rather than being visited twice. */
+	exportRunsPage1: `SELECT ${RUN_COLUMNS} FROM ${RUN_FROM}
+					 WHERE agent_runs.tenant_id = $1
+					 ORDER BY queued_at DESC, agent_runs.id LIMIT $2`,
+	exportRunsPage2: `SELECT ${RUN_COLUMNS} FROM ${RUN_FROM}
+					 WHERE agent_runs.tenant_id = $1
+					 AND (queued_at < $2 OR (queued_at = $3 AND agent_runs.id > $4))
+					 ORDER BY queued_at DESC, agent_runs.id LIMIT $5`,
+	exportRunEvents: `SELECT run_id, sequence, event_type, message, metadata_json,
+					 occurred_at FROM agent_run_events
+					 WHERE tenant_id = $1 AND run_id = ANY($2::text[])
+					 ORDER BY run_id, sequence`,
+	/* The inner select applies the batch limit; the child tables of a run go
+	   with it through their own cascade. */
+	deleteSettledRunsBefore: `DELETE FROM agent_runs WHERE id IN (
+					 SELECT id FROM agent_runs
+					 WHERE tenant_id = $1 AND completed_at < $2
+					  AND status IN ('succeeded', 'failed', 'cancelled')
+					 ORDER BY completed_at LIMIT $3)`,
+	deleteRunsRequestedBy: `DELETE FROM agent_runs WHERE id IN (
+					 SELECT id FROM agent_runs
+					 WHERE tenant_id = $1 AND requested_by = $2
+					 ORDER BY id LIMIT $3)`,
+	pruneMeterRefusals: `DELETE FROM agent_meter_refusals
+					 WHERE tenant_id = $1 AND meter = $2 AND period <> $3`,
+	claimMeterRefusal: `INSERT INTO agent_meter_refusals
+					 (tenant_id, meter, period, first_refused_at)
+					 VALUES ($1, $2, $3, $4)
+					 ON CONFLICT (tenant_id, meter, period) DO NOTHING
+					 RETURNING tenant_id`,
 	listAuditEvents: `SELECT * FROM agent_audit_events_v4 WHERE tenant_id = $1
 					 ORDER BY sequence DESC LIMIT $2`,
+	exportAuditEventsPage: `SELECT * FROM agent_audit_events_v4
+					 WHERE tenant_id = $1 AND sequence > $2
+					 ORDER BY sequence LIMIT $3`,
 	pageAuditEvents1: `SELECT * FROM agent_audit_events_v4 WHERE tenant_id = $1
 							 AND (occurred_at < $2 OR (occurred_at = $3 AND sequence < $4))
 							 ORDER BY occurred_at DESC, sequence DESC LIMIT $5`,
@@ -1939,15 +1999,7 @@ export class DatabaseAgentRepository implements AgentRepository {
 					runId,
 					afterSequence,
 				])) as unknown as RunEventRow[]
-			).map(
-				(event): AgentExecutionEvent => ({
-					sequence: integer(event.sequence),
-					type: event.event_type,
-					timestamp: integer(event.occurred_at),
-					message: event.message,
-					metadata: metadata(event.metadata_json),
-				}),
-			);
+			).map(fromRunEventRow);
 		}
 	}
 
@@ -2632,6 +2684,29 @@ export class DatabaseAgentRepository implements AgentRepository {
 		);
 	}
 
+	async claimMeterRefusal(
+		tenantId: string,
+		meter: string,
+		period: string,
+		at: number,
+	): Promise<boolean> {
+		return this.#tx(tenantId, 'write', async (transaction) => {
+			/* The earlier month goes in the same transaction as the claim, so the
+			   workspace holds one row per meter however long it keeps refusing. */
+			await this.#exec(transaction, AGENTS_SQL.pruneMeterRefusals, [
+				tenantId,
+				meter,
+				period,
+			]);
+			const claimed = await this.#query<{ tenant_id: string }>(
+				transaction,
+				AGENTS_SQL.claimMeterRefusal,
+				[tenantId, meter, period, at],
+			);
+			return claimed.length > 0;
+		});
+	}
+
 	async listAuditEvents(
 		tenantId: string,
 		limit: number,
@@ -2780,6 +2855,95 @@ export class DatabaseAgentRepository implements AgentRepository {
 						unpricedRuns: 0,
 					};
 		});
+	}
+
+	/* The operations behind the declared data classes. Each runs on this
+	   module's own lease, inside its own tenant-scoped transaction. */
+
+	async exportRunsPage(
+		tenantId: string,
+		after: AgentRunExportCursor | null,
+		limit: number,
+	): Promise<readonly ExportedAgentRun[]> {
+		return this.#tx(tenantId, 'read', async (transaction) => {
+			const runs = (after === null
+				? await this.#query(transaction, AGENTS_SQL.exportRunsPage1, [
+						tenantId,
+						limit,
+					])
+				: await this.#query(transaction, AGENTS_SQL.exportRunsPage2, [
+						tenantId,
+						after.queuedAt,
+						after.queuedAt,
+						after.id,
+						limit,
+					])) as unknown as RunRow[];
+			if (runs.length === 0) return [];
+			/* One query for the steps of the whole page: a run is a row, not a
+			   round trip. */
+			const events = (await this.#query(
+				transaction,
+				AGENTS_SQL.exportRunEvents,
+				[tenantId, runs.map((run) => run.id)],
+			)) as unknown as RunEventPageRow[];
+			const steps = new Map<string, AgentExecutionEvent[]>();
+			for (const event of events) {
+				const existing = steps.get(event.run_id);
+				if (existing) existing.push(fromRunEventRow(event));
+				else steps.set(event.run_id, [fromRunEventRow(event)]);
+			}
+			return runs.map((run) => ({
+				run: fromRunRow(run),
+				events: steps.get(run.id) ?? [],
+			}));
+		});
+	}
+
+	async deleteSettledRunsBefore(
+		tenantId: string,
+		before: number,
+		limit: number,
+	): Promise<number> {
+		return this.#tx(tenantId, 'write', (transaction) =>
+			this.#exec(transaction, AGENTS_SQL.deleteSettledRunsBefore, [
+				tenantId,
+				before,
+				limit,
+			]),
+		);
+	}
+
+	/* A run this removes while a worker holds it takes its lease with it: the
+	   next renewal finds no row, the worker stops the execution as it does for
+	   any lost lease, and its settle write reaches nothing. */
+	async deleteRunsRequestedBy(
+		tenantId: string,
+		accountId: string,
+		limit: number,
+	): Promise<number> {
+		return this.#tx(tenantId, 'write', (transaction) =>
+			this.#exec(transaction, AGENTS_SQL.deleteRunsRequestedBy, [
+				tenantId,
+				accountId,
+				limit,
+			]),
+		);
+	}
+
+	async exportAuditEventsPage(
+		tenantId: string,
+		afterSequence: number,
+		limit: number,
+	): Promise<readonly AgentAuditEvent[]> {
+		return this.#tx(tenantId, 'read', async (transaction) =>
+			(
+				(await this.#query(transaction, AGENTS_SQL.exportAuditEventsPage, [
+					tenantId,
+					afterSequence,
+					limit,
+				])) as unknown as AuditRow[]
+			).map(fromAuditRow),
+		);
 	}
 
 	async close(): Promise<void> {}

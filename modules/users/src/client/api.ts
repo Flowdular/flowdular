@@ -6,16 +6,19 @@ import type {
 } from '../services/users-service.ts';
 
 interface ErrorEnvelope {
-	readonly error?: { readonly message?: string };
+	readonly error?: { readonly code?: string; readonly message?: string };
 }
 
 export class ApiError extends Error {
 	readonly status: number;
+	/** Stable server code; '' when the response carried none. */
+	readonly code: string;
 
-	constructor(status: number, message: string) {
+	constructor(status: number, message: string, code = '') {
 		super(message);
 		this.name = 'ApiError';
 		this.status = status;
+		this.code = code;
 	}
 }
 
@@ -25,6 +28,7 @@ async function payload<T>(response: Response): Promise<T> {
 		throw new ApiError(
 			response.status,
 			value.error?.message ?? t('users.error.request'),
+			value.error?.code ?? '',
 		);
 	}
 	return value;
@@ -105,18 +109,31 @@ export async function assignMemberRole(
 	).user;
 }
 
-export async function setMemberStatus(
+/* The operator's global account block reaches every workspace the account
+   belongs to, so no workspace screen calls it and this client has no fetch for
+   POST /api/users/status. The drawer shows the account state read-only and
+   changes workspace access through setMembershipStatus below. */
+
+export interface MembershipStatusResult {
+	readonly accountId: string;
+	readonly status: 'active' | 'disabled';
+}
+
+/* Access to this workspace only. auth.core owns the membership and enforces the
+   self-target and last-owner rules, so the call goes to its administration
+   route directly, as the invitation and session routes above do. */
+export async function setMembershipStatus(
 	accountId: string,
 	status: 'active' | 'disabled',
 	csrfToken: string,
-): Promise<TenantMember> {
+): Promise<MembershipStatusResult> {
 	return (
-		await post<MemberResponse>(
-			'/api/users/status',
+		await post<{ readonly membership: MembershipStatusResult }>(
+			'/api/auth/memberships/status',
 			{ accountId, status },
 			csrfToken,
 		)
-	).user;
+	).membership;
 }
 
 export async function removeMember(

@@ -320,6 +320,9 @@ const SQL = {
 	 ORDER BY sequence DESC LIMIT $2`,
 	auditChain: `SELECT * FROM automations_audit_events WHERE tenant_id = $1
 	 ORDER BY sequence ASC`,
+	exportAudit: `SELECT * FROM automations_audit_events
+	 WHERE tenant_id = $1 AND id > $2
+	 ORDER BY id LIMIT $3`,
 } as const;
 
 export async function migrateAutomationsDatabase(
@@ -692,6 +695,18 @@ export class DatabaseAutomationsRepository implements AutomationsRepository {
 		const rows = await this.#read<AuditRow>(tenantId, {
 			text: SQL.listAudit,
 			parameters: [tenantId, limit],
+		});
+		return rows.map(audit);
+	}
+
+	async exportAuditEventsPage(
+		tenantId: string,
+		afterId: string,
+		limit: number,
+	): Promise<readonly AutomationAuditEvent[]> {
+		const rows = await this.#read<AuditRow>(tenantId, {
+			text: SQL.exportAudit,
+			parameters: [tenantId, afterId, limit],
 		});
 		return rows.map(audit);
 	}

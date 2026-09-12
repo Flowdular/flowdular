@@ -53,6 +53,8 @@ export interface AutomationsRuntime {
 		limit: number,
 	): Promise<readonly AutomationAuditEvent[]>;
 	verifyAudit(tenantId: string): Promise<AutomationAuditVerification>;
+	/** Opens the repository, for the data class operations the module owns. */
+	repository(): Promise<AutomationsRepository>;
 	start(): void;
 	stop(): void;
 	quiesce(): Promise<void>;
@@ -187,6 +189,7 @@ export function createAutomationsRuntime(
 			),
 		verifyAudit: async (tenantId) =>
 			(await repositoryInstance()).verifyAuditChain(tenantId),
+		repository: repositoryInstance,
 		start() {
 			if (disposed) return;
 			if (poll) return;

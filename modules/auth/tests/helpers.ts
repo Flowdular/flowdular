@@ -3,9 +3,15 @@ import type { DatabaseProvider } from '@flowdular/database';
 import { createModuleSettingsRuntime } from '@flowdular/kernel';
 import { createAuthenticationMiddleware } from '../src/middleware/authentication.ts';
 import { createAuthRoutes } from '../src/server/endpoints.ts';
+import {
+	createMfaEnrolmentMiddleware,
+	guardMfaSettings,
+} from '../src/server/mfa-enforcement.ts';
+import { createOidcVerifier } from '../src/server/oidc.ts';
 import type { AuthRuntime } from '../src/server/runtime.ts';
 import type { OidcProvider } from '../src/server/runtime.ts';
 import { AuthService, type AuthPolicy } from '../src/services/auth-service.ts';
+import type { OidcDiscoveryPort } from '../src/services/identity-provider-service.ts';
 import type { DatabaseAuthRepository } from '../src/services/database-repository.ts';
 import { createAuthSettingsStore } from '../src/services/settings-store.ts';
 import { createAuthModuleSettings } from '../src/settings.ts';
@@ -56,9 +62,16 @@ export async function testRuntime(
 		mailTransport: boolean;
 		mailDelivery: AuthMailDelivery;
 		mfaEncryptionKey: string;
+		mfaPreviousEncryptionKeys: readonly string[];
 		signInProviders: readonly string[];
 		oidcProviders: readonly OidcProvider[];
+		/** FD_AUTH_PROVIDER_HOST_ALLOWLIST; empty allows any public host. */
+		providerHosts: readonly string[];
 		publicBaseUrl: string;
+		/* The issuer verification a workspace provider goes through when it is
+		   saved. The served runtime installs the HTTP adapter; a case that saves a
+		   provider installs whatever it wants discovery to answer. */
+		oidcDiscovery: OidcDiscoveryPort;
 	}> = {},
 ): Promise<TestRuntime> {
 	const database = await createAuthTestDatabase();
@@ -73,19 +86,33 @@ export async function testRuntime(
 		sessionIdleMs: 2 * 60 * 60 * 1000,
 		passwordMinLength: 12,
 	};
+	/* The verifier the runtime serves with, wired to the service exactly as
+	   createAuthRuntime wires it, so a case that changes a provider row meets
+	   the same key-cache invalidation a served request does. */
+	const oidcVerifier = createOidcVerifier(() => clock.now);
 	const authService = new AuthService(repository, {
 		passwordHash: fastHash,
 		policy: () => policy,
 		now: () => clock.now,
+		forgetProviderKeys: (providerId) => oidcVerifier.forget(providerId),
 		...(overrides.mfaEncryptionKey
 			? { mfaEncryptionKey: overrides.mfaEncryptionKey }
 			: {}),
+		...(overrides.mfaPreviousEncryptionKeys
+			? { mfaPreviousEncryptionKeys: overrides.mfaPreviousEncryptionKeys }
+			: {}),
 		...(overrides.mailDelivery ? { mailDelivery: overrides.mailDelivery } : {}),
+		...(overrides.oidcDiscovery
+			? { oidcDiscovery: overrides.oidcDiscovery }
+			: {}),
 	});
 	const store = createAuthSettingsStore(() => Promise.resolve(repository));
-	const moduleSettings = createModuleSettingsRuntime(store, {
-		now: () => clock.now,
-	});
+	/* Guarded exactly as createAuthRuntime guards it, so a case that turns a
+	   setting on meets the same refusals a served request does. */
+	const moduleSettings = guardMfaSettings(
+		createModuleSettingsRuntime(store, { now: () => clock.now }),
+		overrides.mfaEncryptionKey !== undefined,
+	);
 	moduleSettings.declare(
 		createAuthModuleSettings({
 			allowSignUp: overrides.allowSignUp ?? true,
@@ -99,6 +126,20 @@ export async function testRuntime(
 		maxAgeSeconds: 3600,
 	};
 	const service = () => Promise.resolve(authService);
+	const tenantSettings = async (tenantId: string) => {
+		await store.prime(tenantId, 'auth.core');
+		return {
+			requireMfa: moduleSettings.get<boolean>(
+				tenantId,
+				'auth.core',
+				'requireMfa',
+			),
+		};
+	};
+	/* The served chain resolves the principal and then holds an account that
+	   still owes enrolment, so a test request runs through both. */
+	const authentication = createAuthenticationMiddleware(service, cookie);
+	const enrolment = createMfaEnrolmentMiddleware({ tenantSettings, service });
 	return {
 		database,
 		repository,
@@ -124,11 +165,15 @@ export async function testRuntime(
 			},
 		},
 		moduleSettings,
+		oidcVerifier,
+		tenantSettings,
 		trustProxy: overrides.trustProxy ?? false,
 		mailTransport:
 			overrides.mailTransport ?? overrides.mailDelivery !== undefined,
+		mfaKeyConfigured: overrides.mfaEncryptionKey !== undefined,
 		workspaceRoot: null,
 		oidcProviders: overrides.oidcProviders ?? [],
+		providerHosts: overrides.providerHosts ?? [],
 		publicBaseUrl: overrides.publicBaseUrl ?? null,
 		service,
 		async authorizeAgentToolAccess(tenantId, actor) {
@@ -143,7 +188,8 @@ export async function testRuntime(
 			await store.ready().catch(() => undefined);
 			await database.dispose();
 		},
-		middleware: createAuthenticationMiddleware(service, cookie),
+		middleware: (context, next) =>
+			authentication(context, () => Promise.resolve(enrolment(context, next))),
 	};
 }
 

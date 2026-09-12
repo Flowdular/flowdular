@@ -1,6 +1,6 @@
 {
 	"name": "@flowdular/module-automations",
-	"version": "0.4.0",
+	"version": "0.5.1",
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
@@ -14,12 +14,15 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
+		"@flowdular/cli-protocol": "workspace:*",
 		"@flowdular/client": "workspace:*",
 		"@flowdular/contracts": "workspace:*",
 		"@flowdular/database": "workspace:*",
+		"@flowdular/harness": "workspace:*",
 		"@flowdular/kernel": "workspace:*",
 		"@flowdular/module-agents": "workspace:*",
 		"@flowdular/module-auth": "workspace:*",
+		"@flowdular/module-workflows": "workspace:*",
 		"@flowdular/server": "workspace:*",
 		"@flowdular/ui": "workspace:*",
 		"octane": "0.1.51",

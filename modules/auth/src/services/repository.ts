@@ -9,9 +9,12 @@ import type {
 	AuditQuery,
 	AuthSession,
 	AuthTenantAccess,
+	IdentityProviderStatus,
+	MembershipStatus,
 	SessionSummary,
 	TenantRole,
 } from '../domain/types.ts';
+import type { SealedMfaSecret } from './totp.ts';
 
 export interface AccountCredential {
 	readonly accountId: string;
@@ -21,9 +24,20 @@ export interface AccountCredential {
 	readonly passwordHash: string;
 	readonly role: string;
 	readonly roleId: string | null;
+	/** The account's platform-level status, set by the deployment operator. */
 	readonly status: 'active' | 'disabled';
+	/** This workspace's own status for the account. */
+	readonly membershipStatus: MembershipStatus;
 	readonly passwordChangeRequired: boolean;
 	readonly scopes: readonly string[];
+}
+
+/** One account, before any workspace is chosen. */
+export interface AccountIdentity {
+	readonly accountId: string;
+	readonly email: string;
+	readonly displayName: string;
+	readonly status: 'active' | 'disabled';
 }
 
 export interface CreateAccountRecord {
@@ -77,6 +91,47 @@ export interface MfaChallengeRecord {
 	readonly createdAt: number;
 }
 
+/* The identity an external provider asserts. The pair is what the provider
+   promises to keep stable; the address it reports may change at any time. A
+   tenant-owned provider asserts it inside one workspace, which the row names;
+   a platform provider carries none, as it always has. */
+export interface ExternalIdentityRecord {
+	readonly provider: string;
+	readonly subject: string;
+	readonly accountId: string;
+	readonly tenantId?: string | null;
+	readonly now: number;
+}
+
+/** A tenant-owned identity provider row, sealed client secret included. */
+export interface IdentityProviderRecord {
+	readonly id: string;
+	readonly tenantId: string;
+	readonly key: string;
+	readonly label: string;
+	readonly issuer: string;
+	readonly authorizationEndpoint: string;
+	readonly tokenEndpoint: string;
+	readonly userInfoEndpoint: string;
+	readonly clientId: string;
+	readonly secretCiphertext: string;
+	readonly secretKeyId: string;
+	readonly secretFingerprint: string;
+	readonly scopes: readonly string[];
+	readonly jitEnabled: boolean;
+	readonly allowedDomains: readonly string[];
+	readonly jitRole: string;
+	readonly status: IdentityProviderStatus;
+	readonly createdAt: number;
+	readonly updatedAt: number;
+}
+
+/** Everything a provider row carries except the columns the row owns itself. */
+export type IdentityProviderPatch = Omit<
+	IdentityProviderRecord,
+	'id' | 'tenantId' | 'key' | 'createdAt' | 'updatedAt'
+>;
+
 export interface CreateAccountInTenantRecord {
 	readonly accountId: string;
 	readonly tenantId: string;
@@ -119,7 +174,10 @@ export interface TenantMember {
 	readonly displayName: string;
 	readonly role: string;
 	readonly roleId: string | null;
+	/** The account's platform-level status. */
 	readonly status: 'active' | 'disabled';
+	/** This workspace's own status for the member. */
+	readonly membershipStatus: MembershipStatus;
 	readonly scopes: readonly string[];
 	readonly passwordChangeRequired: boolean;
 	readonly createdAt: number;
@@ -188,6 +246,9 @@ export interface AuthRepository {
 	findAccountByEmail(
 		normalizedEmail: string,
 	): Promise<AccountCredential | null>;
+	/* The account row alone, without a membership: what an external sign-in
+	   needs before it knows whether the workspace already holds the person. */
+	findAccountIdentity(normalizedEmail: string): Promise<AccountIdentity | null>;
 	findAccountCredentialById(
 		accountId: string,
 	): Promise<AccountCredential | null>;
@@ -219,6 +280,30 @@ export interface AuthRepository {
 	): Promise<AccountCredential | null>;
 	listTenantAccess(accountId: string): Promise<readonly AuthTenantAccess[]>;
 	listTenantMembers(tenantId: string): Promise<readonly TenantMember[]>;
+	/** One member, for a caller that needs a single account rather than the roll. */
+	findTenantMember(
+		tenantId: string,
+		accountId: string,
+	): Promise<TenantMember | null>;
+	/**
+	 * The members of one workspace whose stored address is in the list. The
+	 * caller normalizes and bounds the list; the comparison is against
+	 * `email_normalized`, which is the same folded form.
+	 */
+	findTenantMembersByEmail(
+		tenantId: string,
+		normalizedEmails: readonly string[],
+	): Promise<readonly TenantMember[]>;
+	/**
+	 * The members of one workspace whose display name contains `term` or whose
+	 * address starts with it, ordered as `listTenantMembers` orders and cut to
+	 * `limit` in the database. `term` arrives already folded and LIKE-escaped.
+	 */
+	searchTenantMembers(
+		tenantId: string,
+		term: string,
+		limit: number,
+	): Promise<readonly TenantMember[]>;
 	listTenantScopes(tenantId: string): Promise<readonly string[]>;
 	createAccountWithTenant(
 		record: CreateAccountRecord,
@@ -295,6 +380,11 @@ export interface AuthRepository {
 	deleteSessionById(accountId: string, id: string): Promise<boolean>;
 	deleteExpiredSessions(now: number): Promise<number>;
 	createPasswordResetToken(record: PasswordResetTokenRecord): Promise<void>;
+	/** The account a live token names, without spending it. */
+	findPasswordResetTokenAccount(
+		tokenHash: string,
+		now: number,
+	): Promise<string | null>;
 	consumePasswordResetToken(
 		tokenHash: string,
 		now: number,
@@ -311,14 +401,23 @@ export interface AuthRepository {
 	} | null>;
 	upsertMfaTotp(
 		accountId: string,
-		secretCiphertext: string,
+		secret: SealedMfaSecret,
 		createdAt: number,
 	): Promise<void>;
 	findMfaTotp(accountId: string): Promise<{
 		readonly secretCiphertext: string;
+		/* Null on a row sealed before 0017 added the column; the ring opens it by
+		   trying every key it holds. */
+		readonly keyId: string | null;
 		readonly confirmedAt: number | null;
 	} | null>;
+	/* Answers the enrolment question without reading the enrolled secret, which
+	   an authorization decision has no reason to hold. */
+	hasConfirmedMfaTotp(accountId: string): Promise<boolean>;
 	confirmMfaTotp(accountId: string, confirmedAt: number): Promise<void>;
+	/* Removes the factor and every recovery code together, so an administrative
+	   reset can never leave a code redeemable for a secret that is gone. */
+	deleteMfaEnrolment(accountId: string): Promise<void>;
 	replaceMfaRecoveryCodes(
 		accountId: string,
 		codeHashes: readonly string[],
@@ -333,6 +432,57 @@ export interface AuthRepository {
 		readonly accountId: string;
 		readonly tenantId: string;
 	} | null>;
+	/* `tenantId` selects the binding space: null is the platform space a
+	   provider from the environment binds in, a workspace id is that
+	   workspace's own space. */
+	findExternalIdentity(
+		provider: string,
+		subject: string,
+		tenantId?: string | null,
+	): Promise<string | null>;
+	findExternalIdentitySubject(
+		provider: string,
+		accountId: string,
+		tenantId?: string | null,
+	): Promise<string | null>;
+	linkExternalIdentity(record: ExternalIdentityRecord): Promise<void>;
+	deleteExternalIdentitiesOfProvider(
+		tenantId: string,
+		provider: string,
+	): Promise<void>;
+	listIdentityProviders(
+		tenantId: string,
+	): Promise<readonly IdentityProviderRecord[]>;
+	findIdentityProvider(
+		tenantId: string,
+		id: string,
+	): Promise<IdentityProviderRecord | null>;
+	findIdentityProviderByKey(
+		tenantId: string,
+		key: string,
+	): Promise<IdentityProviderRecord | null>;
+	createIdentityProvider(
+		record: IdentityProviderRecord,
+	): Promise<IdentityProviderRecord>;
+	updateIdentityProvider(
+		tenantId: string,
+		id: string,
+		patch: IdentityProviderPatch,
+		updatedAt: number,
+	): Promise<IdentityProviderRecord | null>;
+	deleteIdentityProvider(tenantId: string, id: string): Promise<boolean>;
+	/** Revokes the membership's live tokens; a revoked one stays revoked. */
+	revokeMembershipApiTokens(
+		tenantId: string,
+		accountId: string,
+		revokedAt: number,
+		revokedBy: string,
+	): Promise<number>;
+	setMembershipStatus(
+		accountId: string,
+		tenantId: string,
+		status: MembershipStatus,
+	): Promise<boolean>;
 	findSignInFailure(
 		normalizedEmail: string,
 	): Promise<SignInFailureRecord | null>;
@@ -362,6 +512,54 @@ export interface AuthRepository {
 	countRoleMemberships(tenantId: string, roleId: string): Promise<number>;
 	appendAudit(record: AuditRecord): Promise<void>;
 	queryAudit(query: AuditQuery): Promise<readonly AuditActorEvent[]>;
+	/* The data class operations. Every page is a keyset read of one workspace,
+	   every sweep a bounded delete of rows a workspace no longer needs; the
+	   caller decides the cutoff from the workspace's retention period. */
+	exportSessionsPage(
+		tenantId: string,
+		afterId: string,
+		limit: number,
+	): Promise<readonly SessionExportRecord[]>;
+	/** Removes sessions that expired before `before`; a live one is never touched. */
+	deleteSessionsExpiredBefore(
+		tenantId: string,
+		before: number,
+		limit: number,
+	): Promise<number>;
+	exportApiTokensPage(
+		tenantId: string,
+		afterId: string,
+		limit: number,
+	): Promise<readonly ApiTokenRecord[]>;
+	/** Removes tokens that were revoked or expired before `before`; a usable one stays. */
+	deleteApiTokensRetiredBefore(
+		tenantId: string,
+		before: number,
+		limit: number,
+	): Promise<number>;
+	exportAuditEventsPage(
+		tenantId: string,
+		afterId: number,
+		limit: number,
+	): Promise<readonly AuditEvent[]>;
+	deleteAuditEventsBefore(
+		tenantId: string,
+		before: number,
+		limit: number,
+	): Promise<number>;
+	/* The erasure operations. Each removes at most `limit` rows one account owns
+	   inside one workspace, so a subject erased in one workspace keeps what
+	   another workspace holds about them. */
+	deleteMembershipSessionsOf(
+		tenantId: string,
+		accountId: string,
+		limit: number,
+	): Promise<number>;
+	deleteMembershipApiTokensOf(
+		tenantId: string,
+		accountId: string,
+		limit: number,
+	): Promise<number>;
 	/* The stored module settings of one tenant and module. The synchronous
 	   kernel ModuleSettingsStore is served from a snapshot over these three;
 	   see services/settings-store.ts. */
@@ -371,6 +569,18 @@ export interface AuthRepository {
 	): Promise<Readonly<Record<string, ModuleSettingValue>>>;
 	saveSetting(record: ModuleSettingRecord): Promise<void>;
 	clearSetting(tenantId: string, moduleId: string, key: string): Promise<void>;
+}
+
+/* What a session export carries. It names no secret: a session is known by its
+   id, and the hash that authenticates it stays in the database. An API token
+   export carries ApiTokenRecord, which already omits the hash. */
+export interface SessionExportRecord {
+	readonly id: string;
+	readonly tenantId: string;
+	readonly accountId: string;
+	readonly createdAt: number;
+	readonly expiresAt: number;
+	readonly lastSeenAt: number;
 }
 
 export class DuplicateAccountError extends Error {
@@ -384,6 +594,13 @@ export class DuplicateTenantSlugError extends Error {
 	constructor() {
 		super('A workspace with this id already exists.');
 		this.name = 'DuplicateTenantSlugError';
+	}
+}
+
+export class DuplicateProviderKeyError extends Error {
+	constructor() {
+		super('A provider with this key already exists in the workspace.');
+		this.name = 'DuplicateProviderKeyError';
 	}
 }
 

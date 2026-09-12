@@ -29,4 +29,23 @@ describe('users translations', () => {
 		);
 		setActiveLocale('en');
 	});
+
+	/* USERS-EDIT: the account block belongs to the deployment operator, so the
+	   drawer says so instead of offering a control that would be refused. */
+	it('says the account block is an operator action, in both locales', () => {
+		registerModuleTranslations([
+			{
+				moduleId: 'users.core',
+				translations: { en: translationsEn, pl: translationsPl },
+			},
+		]);
+		expect(t('users.member.accountReadOnly')).toContain(
+			'deployment operator action',
+		);
+		setActiveLocale('pl');
+		expect(t('users.member.accountReadOnly')).toContain(
+			'działanie operatora wdrożenia',
+		);
+		setActiveLocale('en');
+	});
 });

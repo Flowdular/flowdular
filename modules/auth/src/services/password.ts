@@ -16,6 +16,20 @@ export const DEFAULT_PASSWORD_HASH_OPTIONS: PasswordHashOptions = {
 	maxMemory: 192 * 1024 * 1024,
 };
 
+/**
+ * Stored where an account holds no password at all. `hashPassword` only ever
+ * produces a `scrypt$...` encoding, so no password can hash to this, and
+ * `verifyPassword` refuses it before deriving anything. The account is reached
+ * through the reset flow, an administrative temporary password, or an external
+ * identity; nothing about it is guessable, because there is nothing to guess.
+ */
+export const UNUSABLE_PASSWORD_HASH = 'none$unusable';
+
+/** False only for an account created without a password and never given one. */
+export function passwordIsSet(encoded: string): boolean {
+	return encoded !== UNUSABLE_PASSWORD_HASH;
+}
+
 function derive(
 	password: string,
 	salt: Buffer,

@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	createTenantInvitation,
 	loadAuthConfiguration,
+	loadSessionCsrfToken,
 	requestPasswordReset,
+	resetMemberMfa,
 	signIn,
 } from '../src/client/api.ts';
 import { createAuthClientState } from '../src/client/state.ts';
@@ -89,5 +91,63 @@ describe('auth security client API', () => {
 		await loadAuthConfiguration(auth);
 		expect(auth.store.get(auth.state.screen)).toBe('reset-password');
 		expect(replaceState).not.toHaveBeenCalled();
+	});
+
+	it('resets another member MFA factor with a CSRF proof and no other field', async () => {
+		const fetchMock = vi.fn(
+			async (_input: RequestInfo | URL, _init?: RequestInit) =>
+				Response.json({ reset: true }),
+		);
+		vi.stubGlobal('fetch', fetchMock);
+
+		await resetMemberMfa('account-1', 'csrf-value');
+
+		expect(fetchMock).toHaveBeenCalledWith(
+			'/api/auth/mfa/reset',
+			expect.objectContaining({
+				method: 'POST',
+				credentials: 'same-origin',
+				body: JSON.stringify({ accountId: 'account-1' }),
+			}),
+		);
+		const options = fetchMock.mock.calls[0]![1] as RequestInit;
+		expect(new Headers(options.headers).get('x-csrf-token')).toBe('csrf-value');
+	});
+
+	it('reports a denied MFA reset with the server status and message', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+				Response.json(
+					{ error: { code: 'FORBIDDEN', message: 'Not granted.' } },
+					{ status: 403 },
+				),
+			),
+		);
+
+		await expect(
+			resetMemberMfa('account-1', 'csrf-value'),
+		).rejects.toMatchObject({ status: 403, message: 'Not granted.' });
+	});
+
+	it('reads the live CSRF token from the session and refuses an anonymous one', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+				Response.json({ csrfToken: 'live-token' }),
+			),
+		);
+		await expect(loadSessionCsrfToken()).resolves.toBe('live-token');
+
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+				Response.json(
+					{ error: { code: 'UNAUTHENTICATED', message: 'No active session.' } },
+					{ status: 401 },
+				),
+			),
+		);
+		await expect(loadSessionCsrfToken()).rejects.toMatchObject({ status: 401 });
 	});
 });

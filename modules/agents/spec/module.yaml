@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: agents.core
-specVersion: 0.9.1
+specVersion: 0.12.1
 status: approved
 name: Agentic Core
 description: Provides tenant-created and module-owned business agent definitions, tenant-scoped provider connections, reusable procedures, durable streamed execution, run history, and the public run queue used by optional automation modules.
@@ -14,9 +14,11 @@ capabilities:
   - cli
 dependencies:
   - id: system.core
-    range: 0.5.0
+    range: ^0.5.1
   - id: auth.core
-    range: 0.10.0
+    range: ^0.12.0
+  - id: metering.core
+    range: ^0.1.0
 tenancy: required
 locales:
   - en
@@ -67,7 +69,12 @@ invariants:
   - Business actions exposed to workflows are explicit versioned contracts. Only read and workspace-write risks are eligible, input and output are schema checked, and every invocation is persisted before execution.
   - Workflow action invocations receive a trusted actor, permission snapshot, idempotency key, and AbortSignal. Secrets, raw input, and raw output never enter audit metadata.
   - Every request-time read and write runs on a tenant-scoped database handle. The worker recovery polls are the only cross-tenant reads, they run on a separate read-only role, and the module agent catalog is reconciled at boot on the schema-owner lease that runs migrations.
+  - Run outcome notifications are an optional integration. When a durable run reaches a terminal state the worker resolves notifications.publish.v1 from the platform capability registry at that moment, never at composition time, and publishes the outcome keyed by the run id. notifications.core is never a declared dependency. An absent capability, a run with no person behind it, and a run a workflow owns publish nothing. A publisher failure is logged once at warning level and never changes the settled run, and a repeated terminal step reports the same outcome instead of a second notification.
   - Every table that carries tenant data enables and forces row-level security with a policy bound to the transaction-local tenant, including the child tables that hang off a run, a definition or a provider connection. A read by a caller-supplied parent id therefore cannot cross a workspace even when application code forgets the predicate.
+  - agents.core declares three data classes to the platform registry while it composes, and performs their operations itself on its own leases under its own tenant transaction. agents.core.runs holds the run record, its steps and the child rows that hang off it, keeps them 90 days by default, sweeps only settled runs in bounded batches so a queued or running run is never taken from its worker, exports one workspace by keyset in bounded pages, and erases the runs one account requested in bounded batches, reporting a full batch as truncated. agents.core.audit-events is exportable and is kept until a person deletes it, because the trail is hash chained and removing its oldest links by age would make the next verification report a break it cannot tell from tampering. agents.core.provider-credentials is workspace configuration, is never swept, and is excluded from the export with a stated reason because the row exists to hold a sealed provider secret. No export carries a credential or a sealed payload.
+  - agents.core depends on metering.core and requires the public metering.meters.v1 capability, so the module registry composes metering.core first and refuses a composition that leaves it out or that provides no meter registry. The meters agents.core.run-tokens and agents.core.runs are declared once while agents.core composes; every later use resolves the registry through the capability at the point of use rather than holding the one composition found. A settled run is counted once, keyed by the run id, so a repeated terminal step reports the same fact instead of a second one, and a run that reported no tokens counts the run alone. Counting is advisory and runs after the terminal row commits, so a metering failure never changes a settled run.
+  - Before a run is created the module asks metering.meters.v1 about both meters a run costs, on every enqueue path. agents.core.runs is asked for one run first and agents.core.run-tokens for the tokens the run may read and write, so a workspace that has spent either allowance is refused. A refused verdict fails the run start with METER_LIMIT_EXCEEDED naming that meter and creates no run. An allowed or warning verdict starts the run unchanged, and the settled fact replaces the estimate.
+  - A refused meter is recorded in this module's own hash-chained trail once per workspace, meter and calendar month, with the meter, the estimate, the month's usage and the limit. The claim that a refusal was already recorded is a row of agents.core's own tenant table, and taking it removes the rows of earlier months, so the workspace holds one row per meter however long it keeps being refused. Every attempt still asks metering.core, so a workspace is refused on what its month holds now and never on a remembered verdict, and the first refusal after the month turns is recorded again.
 permissions:
   - id: agents.definitions.read
     description: Read agent definitions in the active tenant.
@@ -96,6 +103,8 @@ dataOwnership:
   - agents.core owns the per-run cost projection, its per-day and per-agent rollups, and the budget caps declared as module settings.
   - agents.core owns immutable agent revision snapshots, workflow-bound run output contracts, and durable versioned action invocation state.
   - Business modules own their records and expose narrowly scoped tools to the harness; agents.core never bypasses their services or ACL rules.
+  - metering.core owns meter declarations as recorded, day buckets and limits. agents.core owns the meters it declares, the standing refusal rows that keep one refused meter out of its trail per workspace and month, and the decision about what a refusal means for a run; it never reads or writes metering storage.
+  - notifications.core owns inbox items, deliveries, and read state. agents.core owns the run it reports and hands over only the run id, the outcome kind, a bounded English title and outcome summary, and the accountable member; it never writes or reads notification records and never receives them back.
 acceptanceScenarios:
   - id: AGENTS-LIST
     given: Tenant-created business agents and enabled modules with module-owned business agents exist.
@@ -265,7 +274,39 @@ acceptanceScenarios:
     given: A schedule, webhook, or other service identity was configured by an authenticated user.
     when: It initiates workflow agent work or a versioned action.
     then: Durable state records the service actor and its configuring user so history never presents background work as an anonymous system mutation.
+  - id: AGENTS-NOTIFY-RUN
+    given: A durable agent run started by a member reaches a terminal state, and the optional notifications module may or may not be composed.
+    when: The worker commits the terminal status.
+    then: With notifications.core composed, exactly one agent-run-completed or agent-run-failed notification is published after that commit, keyed by the run id, addressed to the member accountable for the run, and carrying no credentials, prompt, or transcript; without it, for a run a workflow owns, or when the publisher fails, the run settles unchanged and nothing is published.
   - id: AGENT-CHILD-ISOLATION
     given: Two workspaces each own an agent run with procedure snapshots and a provider connection with model readiness.
     when: A caller supplies the other workspace's run id or provider id directly.
     then: The read returns nothing, because those child tables carry their own workspace and force row-level security rather than relying on their parent.
+  - id: AGENTS-DATA-CLASSES
+    given: Two workspaces hold agent runs of several ages with their steps, one run still queued, a provider connection with a sealed credential, and the platform has sealed the data class registry.
+    when: The platform sweeps, exports and erases the declared classes for one of them.
+    then: The sweep removes only that workspace's settled runs strictly older than the cutoff and at most the batch it was given, taking their steps with them while the queued run stays; the export streams that workspace's runs and its audit trail through the sink in keyset pages with the oldest and newest record time, answers no rows and no range for a workspace that holds none, and carries no provider credential; the audit class declares no sweep; and erasing a subject removes the runs that account requested in that workspace alone, reporting a full batch as truncated.
+  - id: AGENTS-METER-COUNT
+    given: A workspace runs an agent and metering.core is composed, as every deployment of agents.core must compose it.
+    when: The platform composes and the run settles.
+    then: agents.core.run-tokens and agents.core.runs are declared at composition, the settled run counts one run and its reported tokens against the run id, and a run that reported none counts the run alone.
+  - id: AGENTS-METER-REFUSED
+    given: A workspace has used its monthly token allowance for agents.core.run-tokens.
+    when: A further run is requested through any enqueue path.
+    then: The request is refused with METER_LIMIT_EXCEEDED before a run row exists, the refusal is recorded in the agents audit trail with the meter, the estimate, the usage and the limit, the chain still verifies, and nothing is counted for the refused request.
+  - id: AGENTS-METERING-REQUIRED
+    given: A composition of agents.core with the platform modules it depends on.
+    when: The module registry composes it without metering.core, and again with a metering.core that provides no meter registry.
+    then: The first is refused with MODULE_DEPENDENCY_MISSING and the second with MODULE_CAPABILITY_MISSING; a complete composition orders metering.core before agents.core.
+  - id: AGENTS-METER-RUNS-LIMIT
+    given: A workspace that has used its monthly allowance of agents.core.runs while its token allowance is untouched.
+    when: A run is requested.
+    then: The request is refused with METER_LIMIT_EXCEEDED before a run row exists, the refusal names the runs meter and the amount of one run, and the token allowance is never asked.
+  - id: AGENTS-METER-REFUSAL-ONCE
+    given: A workspace refused on one meter that retries the request several times inside one month.
+    when: Every attempt is made.
+    then: Each is refused and asks metering.core again, the trail carries exactly one refusal for that workspace, meter and month, the chain still verifies, and the first attempt in the next month is recorded once more.
+  - id: AGENTS-ERASE-RUNNING-RUN
+    given: A run a worker of this process is executing, requested by the account an erasure names.
+    when: The agents.core.runs erase operation removes it mid-flight.
+    then: The worker's lease renewal cannot prove ownership, the execution is aborted as a lost lease, no terminal status and no terminal audit event are written for the run that is gone, and the worker returns to idle.

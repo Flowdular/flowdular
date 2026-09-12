@@ -29,6 +29,7 @@ import {
 	canonicalAuthLocation,
 	createAuthClientState,
 	isAuthRouteUrl,
+	workspaceFromUrl,
 	type AuthClientState,
 	type AuthScreen,
 	type WorkspaceSlugCheck,
@@ -65,7 +66,8 @@ function providerLabel(provider: string): string {
 	if (provider === 'github') return 'GitHub';
 	if (provider === 'microsoft') return 'Microsoft';
 	if (provider === 'okta') return 'Okta';
-	if (provider === 'saml') return 'SAML SSO';
+	/* Every button here starts /api/auth/oidc/<id>/start. There is no SAML
+   endpoint, so no id gets a SAML label. */
 	if (provider === 'oidc') return 'OpenID Connect';
 	return provider.charAt(0).toUpperCase() + provider.slice(1);
 }
@@ -85,7 +87,12 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 	const [slugCheck, setSlugCheck] = useValue(
 		props.auth.state.workspaceSlugCheck,
 	);
-	const [signInProviders] = useValue(props.auth.state.signInProviders);
+	const [providerOptions] = useValue(props.auth.state.providerOptions);
+	const [signInWorkspace, setSignInWorkspace] = useValue(
+		props.auth.state.signInWorkspace,
+	);
+	const [signInWorkspaceName] = useValue(props.auth.state.signInWorkspaceName);
+	const [workspaceFixed] = useValue(props.auth.state.signInWorkspaceFromUrl);
 	const [emailConfirmation] = useValue(props.auth.state.emailConfirmation);
 	const [confirmationEmail] = useValue(props.auth.state.confirmationEmail);
 	const [passwordMinLength] = useValue(props.auth.state.passwordMinLength);
@@ -160,9 +167,11 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 				organizationSlug: workspaceSlug,
 			});
 		} else {
+			const workspace = signInWorkspace.trim();
 			await signIn(props.auth, {
 				email: value(form, 'email'),
 				password: value(form, 'password'),
+				...(workspace === '' ? {} : { workspace }),
 			});
 		}
 	};
@@ -449,9 +458,38 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 						<header>
 							<span class="auth-kicker">{t('auth.signin.kicker')}</span>
 							<h2>{t('auth.signin.title')}</h2>
-							<p class="auth-card__sub">{t('auth.signin.description')}</p>
+							<p class="auth-card__sub">
+								{signInWorkspaceName
+									? t('auth.signin.workspace.entering', {
+											workspace: signInWorkspaceName,
+										})
+									: t('auth.signin.description')}
+							</p>
 						</header>
 						<form style="display:grid;gap:14px" onSubmit={submit}>
+							@if (!workspaceFixed) {
+								<FormField
+									label={t('auth.signin.workspace.label')}
+									help={t('auth.signin.workspace.help')}
+								>
+									<input
+										class="ui-input"
+										name="workspace"
+										type="text"
+										autocomplete="organization"
+										spellcheck={false}
+										maxlength={64}
+										value={signInWorkspace}
+										onInput={(event) => setSignInWorkspace(
+											event.currentTarget.value.toLowerCase(),
+										)}
+										onChange={() => void loadAuthConfiguration(
+											props.auth,
+											signInWorkspace.trim(),
+										)}
+									/>
+								</FormField>
+							}
 							<FormField label={t('auth.email')} required>
 								<input
 									class="ui-input"
@@ -494,16 +532,22 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 							type="button"
 							onClick={() => changeScreen('forgot-password')}
 						>{t('auth.security.passwordReset.forgot')}</button>
-						@if (signInProviders.length > 0) {
+						@if (providerOptions.length > 0) {
 							<div class="auth-providers">
 								<span class="auth-providers__divider">{t(
 									'auth.signin.orProvider',
 								)}</span>
-								@for (const provider of signInProviders; key provider) {
+								@for (const provider of providerOptions; key provider.scope +
+									':' +
+									provider.key) {
 									<a
 										class="ui-btn ui-btn--secondary ui-btn--block"
-										href={'/api/auth/oidc/' + provider + '/start'}
-									>{providerLabel(provider)}</a>
+										href={provider.startPath}
+									>
+										{provider.scope === 'platform'
+											? providerLabel(provider.key)
+											: provider.label}
+									</a>
 								}
 							</div>
 						}
@@ -554,7 +598,16 @@ export function AuthenticationCore(props: AuthenticationCoreProps) @{
 		/* The auth root is the first component to run in the browser, so the
    account's stored language applies to the sign-in screen too. */
 		restorePersistedLocale();
-		void loadAuthConfiguration(auth).then(() => loadSession(auth));
+		/* A sign-in link may name the workspace being entered; the screen then
+   offers that workspace's providers instead of asking for it. */
+		const requested = workspaceFromUrl(window.location.href);
+		if (requested) {
+			auth.store.act((transaction) => {
+				transaction.set(auth.state.signInWorkspace, requested);
+				transaction.set(auth.state.signInWorkspaceFromUrl, true);
+			}, 'auth/workspace-from-url');
+		}
+		void loadAuthConfiguration(auth, requested).then(() => loadSession(auth));
 		const synchronizePublicRoute = () => {
 			const location = window.location.href;
 			setScreen(authScreenFromUrl(location));

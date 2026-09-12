@@ -8,12 +8,23 @@ import {
 } from '@flowdular/database';
 import {
 	createPlatformCapabilityRegistry,
+	parsePreviousKeys,
 	type PlatformCapabilityRegistry,
 } from '@flowdular/kernel';
+import {
+	APPROVALS_REQUESTS_CAPABILITY,
+	type ApprovalsRequests,
+	type WorkspaceRolesResolver,
+} from '../services/approvals.ts';
 import { createWorkflowCursorCodec } from '../services/cursor-codec.ts';
+import {
+	NOTIFICATIONS_PUBLISH_CAPABILITY,
+	type NotificationPublisher,
+} from '../services/notifications.ts';
 import {
 	createWorkflowPayloadCodec,
 	decodeWorkflowPayloadKey,
+	type WorkflowPayloadCodec,
 } from '../services/payload-codec.ts';
 import {
 	DatabaseWorkflowsRepository,
@@ -37,8 +48,15 @@ export interface WorkflowsRuntimeOptions {
 		| undefined;
 	readonly repository?: WorkflowsRepository;
 	readonly capabilities?: PlatformCapabilityRegistry;
+	/* Roles the workspace defines, read through auth.core when a graph carries a
+	   human-approval node. */
+	readonly roles?: WorkspaceRolesResolver;
 	readonly payloadKey?: Buffer;
+	/* Keys a rotation has not finished retiring. They open stored payloads and
+	   verify outstanding cursors; nothing is ever written or signed with them. */
+	readonly previousPayloadKeys?: readonly Buffer[];
 	readonly cursorKey?: Buffer;
+	readonly previousCursorKeys?: readonly Buffer[];
 	readonly payloadRetentionMs?: number;
 	readonly worker?: WorkflowWorkerOptions;
 	readonly environment?: NodeJS.ProcessEnv;
@@ -47,6 +65,10 @@ export interface WorkflowsRuntimeOptions {
 
 export interface WorkflowsRuntime {
 	service(): Promise<WorkflowsService>;
+	/* The store the declared data classes sweep, export and erase through. It
+	   opens the runtime's own leases on first use, like the service does, so
+	   declaring a class at composition opens no connection. */
+	repository(): Promise<WorkflowsRepository>;
 	start(): void;
 	stop(): void | Promise<void>;
 	dispose(): void | Promise<void>;
@@ -109,9 +131,22 @@ export function workflowsRuntimeOptionsFromEnvironment(
 		payloadKey: environment.FD_WORKFLOWS_PAYLOAD_KEY
 			? decodeWorkflowPayloadKey(environment.FD_WORKFLOWS_PAYLOAD_KEY)
 			: derivedDevelopmentKey(workspaceRoot, 'payload'),
+		previousPayloadKeys: parsePreviousKeys(
+			environment.FD_WORKFLOWS_PAYLOAD_KEY_PREVIOUS,
+			(entry) =>
+				decodeWorkflowPayloadKey(entry, 'FD_WORKFLOWS_PAYLOAD_KEY_PREVIOUS'),
+		),
 		cursorKey: environment.FD_WORKFLOWS_CURSOR_KEY
-			? decodeWorkflowPayloadKey(environment.FD_WORKFLOWS_CURSOR_KEY)
+			? decodeWorkflowPayloadKey(
+					environment.FD_WORKFLOWS_CURSOR_KEY,
+					'FD_WORKFLOWS_CURSOR_KEY',
+				)
 			: derivedDevelopmentKey(workspaceRoot, 'cursor'),
+		previousCursorKeys: parsePreviousKeys(
+			environment.FD_WORKFLOWS_CURSOR_KEY_PREVIOUS,
+			(entry) =>
+				decodeWorkflowPayloadKey(entry, 'FD_WORKFLOWS_CURSOR_KEY_PREVIOUS'),
+		),
 		worker: {
 			leaseMs: environmentInteger(
 				environment.FD_WORKFLOWS_WORKER_LEASE_MS,
@@ -138,6 +173,24 @@ export function workflowsRuntimeOptionsFromEnvironment(
 		environment,
 		workspaceRoot,
 	};
+}
+
+/**
+ * The codec a process outside the runtime seals with: the same current key and
+ * retired keys the runtime itself would resolve from this environment.
+ */
+export function workflowPayloadCodecFromEnvironment(
+	environment: NodeJS.ProcessEnv = process.env,
+	workspaceRoot = process.cwd(),
+): WorkflowPayloadCodec {
+	const options = workflowsRuntimeOptionsFromEnvironment(
+		environment,
+		workspaceRoot,
+	);
+	return createWorkflowPayloadCodec(
+		options.payloadKey ?? derivedDevelopmentKey(workspaceRoot, 'payload'),
+		options.previousPayloadKeys ?? [],
+	);
 }
 
 export function createWorkflowsRuntime(
@@ -210,7 +263,7 @@ export function createWorkflowsRuntime(
 				runtime: runtimeLease.database,
 				background: backgroundLease.database,
 			},
-			createWorkflowPayloadCodec(payloadKey),
+			createWorkflowPayloadCodec(payloadKey, options.previousPayloadKeys ?? []),
 			options.payloadRetentionMs,
 		);
 	};
@@ -221,7 +274,11 @@ export function createWorkflowsRuntime(
 		if (!service) {
 			const serviceOptions: WorkflowsServiceOptions = {
 				capabilities,
-				cursorCodec: createWorkflowCursorCodec(cursorKey),
+				cursorCodec: createWorkflowCursorCodec(
+					cursorKey,
+					options.previousCursorKeys ?? [],
+				),
+				...(options.roles ? { roles: options.roles } : {}),
 				onRunQueued: () => worker?.kick(),
 			};
 			service = new WorkflowsService(repository, serviceOptions);
@@ -229,7 +286,20 @@ export function createWorkflowsRuntime(
 		worker ??= new WorkflowWorker(
 			repository,
 			() => service?.executionDependencies() ?? null,
-			options.worker,
+			{
+				...options.worker,
+				/* notifications.core is optional and is not declared as a
+				   dependency. The lookup happens when a run settles, so a module
+				   composed after this one is found and an absent one is a no-op. */
+				notifications: () =>
+					capabilities.get<NotificationPublisher>(
+						NOTIFICATIONS_PUBLISH_CAPABILITY,
+					),
+				/* approvals.core is optional too. A human-approval node refuses with
+				   a stable code when it is absent; every other node is unaffected. */
+				approvals: () =>
+					capabilities.get<ApprovalsRequests>(APPROVALS_REQUESTS_CAPABILITY),
+			},
 		);
 		if (started) worker.start();
 		return service;
@@ -240,6 +310,10 @@ export function createWorkflowsRuntime(
 
 	return {
 		service: resolved,
+		repository: async () => {
+			await resolved();
+			return repository!;
+		},
 		start() {
 			if (disposed) throw new Error('Workflows runtime is disposed.');
 			started = true;

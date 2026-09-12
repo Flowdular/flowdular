@@ -142,7 +142,7 @@ describe('settings API', () => {
 			{
 				tenantId: owner.tenantId,
 				email: 'member@example.com',
-				password: 'member password long',
+				password: 'workspace passphrase long',
 				displayName: 'Mem Ber',
 				role: 'member',
 			},
@@ -158,7 +158,7 @@ describe('settings API', () => {
 			await runtime.service()
 		).signIn({
 			email: 'member@example.com',
-			password: 'member password long',
+			password: 'workspace passphrase long',
 		});
 		member = {
 			cookie: `coreloom_session_dev=${memberSession.token}`,
@@ -222,6 +222,14 @@ describe('settings API', () => {
 			auth.settings.find((setting) => setting.key === 'emailConfirmation')
 				?.lockedKey,
 		).toBe('system.settings.mailTransportRequired');
+		/* The runtime under test carries no MFA key, so the screen must render the
+		   requirement locked instead of offering a toggle the write refuses. */
+		expect(
+			auth.settings.find((setting) => setting.key === 'requireMfa'),
+		).toMatchObject({
+			locked: expect.stringContaining('MFA encryption key'),
+			lockedKey: 'system.settings.mfaKeyRequired',
+		});
 		expect(body.modules.some((module) => module.moduleId === 'demo.core')).toBe(
 			true,
 		);
@@ -314,6 +322,24 @@ describe('settings API', () => {
 		expect(await mail.json()).toMatchObject({
 			error: { code: 'MAIL_TRANSPORT_REQUIRED' },
 		});
+	});
+
+	/* Without a deployment key enrolment has nothing to seal a secret with, so
+	   the requirement would close the workspace with no way to satisfy it. The
+	   refusal reaches the screen as a stable problem, not as a stored value. */
+	it('refuses requireMfa on a deployment with no MFA key', async () => {
+		const refused = await call(
+			'/api/settings/update',
+			update({ moduleId: 'auth.core', key: 'requireMfa', value: true }, owner),
+		);
+
+		expect(refused.status).toBe(409);
+		expect(await refused.json()).toMatchObject({
+			error: { code: 'MFA_KEY_REQUIRED' },
+		});
+		expect(
+			runtime.moduleSettings.get(owner.tenantId, 'auth.core', 'requireMfa'),
+		).toBe(false);
 	});
 
 	it('keeps secret values write-only', async () => {

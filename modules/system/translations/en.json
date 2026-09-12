@@ -60,5 +60,6 @@
 	"settings.configured": "Configured",
 	"settings.emptyValue": "Empty",
 	"settings.mailTransportRequired": "Email confirmation needs a configured mail transport.",
+	"settings.mfaKeyRequired": "Required multi-factor authentication needs a deployment MFA encryption key.",
 	"error.catalog": "Could not load the module catalog."
 }

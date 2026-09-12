@@ -1,9 +1,4 @@
-import {
-	createCipheriv,
-	createDecipheriv,
-	createHash,
-	randomBytes,
-} from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import {
 	closeSync,
 	mkdirSync,
@@ -12,7 +7,14 @@ import {
 	writeFileSync,
 } from 'node:fs';
 import { dirname } from 'node:path';
+import {
+	createKeyring,
+	KeyringError,
+	parsePreviousKeys,
+	type Keyring,
+} from '@flowdular/kernel';
 import { flowdularLocalDataPath } from '@flowdular/kernel/legacy-local-state';
+import type { AgentProviderKind } from '../domain/types.ts';
 
 export interface EncryptedCredential {
 	readonly keyId: string;
@@ -21,36 +23,53 @@ export interface EncryptedCredential {
 	readonly ciphertext: string;
 }
 
+/**
+ * The additional data every provider credential envelope is bound to. It is
+ * part of the stored envelope: re-sealing a row under a new key must rebuild
+ * exactly this string, so it lives with the envelope format and not with a
+ * service.
+ */
+export function credentialContext(connection: {
+	readonly tenantId: string;
+	readonly id: string;
+	readonly kind: AgentProviderKind;
+}): string {
+	return `${connection.tenantId}:${connection.id}:${connection.kind}`;
+}
+
 export interface CredentialVault {
+	/** Key id every new envelope is written with; stored rows may carry older ones. */
+	readonly keyId: string;
 	encrypt(credential: string, context: string): EncryptedCredential;
 	decrypt(envelope: EncryptedCredential, context: string): string;
 }
 
-function encryptionKey(value: string): Buffer {
+function encryptionKey(
+	value: string,
+	variable = 'FD_AGENT_CREDENTIAL_KEY',
+): Buffer {
 	const key = Buffer.from(value.trim(), 'base64');
 	if (key.byteLength !== 32) {
 		key.fill(0);
-		throw new Error(
-			'FD_AGENT_CREDENTIAL_KEY must be a base64-encoded 32-byte key.',
-		);
+		throw new Error(`${variable} must be a base64-encoded 32-byte key.`);
 	}
 	return key;
 }
 
-function keyId(key: Buffer): string {
-	return createHash('sha256').update(key).digest('hex').slice(0, 16);
-}
-
 export class AesGcmCredentialVault implements CredentialVault {
-	readonly #key: Buffer;
-	readonly #keyId: string;
+	readonly #keyring: Keyring;
 
-	constructor(key: Buffer) {
+	/* `previous` holds the keys a rotation has not finished retiring: they open
+	   stored rows, and nothing is ever written with them. */
+	constructor(key: Buffer, previous: readonly Buffer[] = []) {
 		if (key.byteLength !== 32) {
 			throw new Error('Credential encryption requires a 32-byte key.');
 		}
-		this.#key = Buffer.from(key);
-		this.#keyId = keyId(key);
+		this.#keyring = createKeyring({ current: key, previous });
+	}
+
+	get keyId(): string {
+		return this.#keyring.keyId;
 	}
 
 	encrypt(credential: string, context: string): EncryptedCredential {
@@ -60,37 +79,36 @@ export class AesGcmCredentialVault implements CredentialVault {
 				'Provider credential must contain 8 to 16384 characters.',
 			);
 		}
-		const iv = randomBytes(12);
-		const cipher = createCipheriv('aes-256-gcm', this.#key, iv);
-		cipher.setAAD(Buffer.from(context, 'utf8'));
-		const ciphertext = Buffer.concat([
-			cipher.update(normalized, 'utf8'),
-			cipher.final(),
-		]);
-		const tag = cipher.getAuthTag();
+		const sealed = this.#keyring.seal(normalized, context);
 		return {
-			keyId: this.#keyId,
-			iv: iv.toString('base64'),
-			tag: tag.toString('base64'),
-			ciphertext: ciphertext.toString('base64'),
+			keyId: sealed.keyId,
+			iv: sealed.iv.toString('base64'),
+			tag: sealed.tag.toString('base64'),
+			ciphertext: sealed.ciphertext.toString('base64'),
 		};
 	}
 
 	decrypt(envelope: EncryptedCredential, context: string): string {
-		if (envelope.keyId !== this.#keyId) {
-			throw new Error('The credential encryption key is unavailable.');
+		try {
+			return this.#keyring
+				.open(
+					{
+						keyId: envelope.keyId,
+						iv: Buffer.from(envelope.iv, 'base64'),
+						tag: Buffer.from(envelope.tag, 'base64'),
+						ciphertext: Buffer.from(envelope.ciphertext, 'base64'),
+					},
+					context,
+				)
+				.toString('utf8');
+		} catch (error) {
+			if (error instanceof KeyringError && error.code === 'KEY_UNKNOWN') {
+				throw new Error('The credential encryption key is unavailable.', {
+					cause: error,
+				});
+			}
+			throw error;
 		}
-		const decipher = createDecipheriv(
-			'aes-256-gcm',
-			this.#key,
-			Buffer.from(envelope.iv, 'base64'),
-		);
-		decipher.setAAD(Buffer.from(context, 'utf8'));
-		decipher.setAuthTag(Buffer.from(envelope.tag, 'base64'));
-		return Buffer.concat([
-			decipher.update(Buffer.from(envelope.ciphertext, 'base64')),
-			decipher.final(),
-		]).toString('utf8');
 	}
 }
 
@@ -115,19 +133,26 @@ export function credentialVaultFromEnvironment(
 	environment: NodeJS.ProcessEnv = process.env,
 	workspaceRoot = process.cwd(),
 ): CredentialVault {
+	const previous = parsePreviousKeys(
+		environment.FD_AGENT_CREDENTIAL_KEY_PREVIOUS,
+		(entry) => encryptionKey(entry, 'FD_AGENT_CREDENTIAL_KEY_PREVIOUS'),
+	);
 	const configured = environment.FD_AGENT_CREDENTIAL_KEY;
-	if (configured) return new AesGcmCredentialVault(encryptionKey(configured));
+	if (configured) {
+		return new AesGcmCredentialVault(encryptionKey(configured), previous);
+	}
 	if (environment.NODE_ENV === 'production') {
 		throw new Error(
 			'FD_AGENT_CREDENTIAL_KEY is required in production before provider credentials can be used.',
 		);
 	}
 	if (environment.NODE_ENV === 'test') {
-		return new AesGcmCredentialVault(Buffer.alloc(32, 0x43));
+		return new AesGcmCredentialVault(Buffer.alloc(32, 0x43), previous);
 	}
 	return new AesGcmCredentialVault(
 		readOrCreateDevelopmentKey(
 			flowdularLocalDataPath(workspaceRoot, 'agent-credential.key'),
 		),
+		previous,
 	);
 }

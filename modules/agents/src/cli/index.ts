@@ -9,6 +9,8 @@ import {
 } from '@flowdular/database';
 import { AI_PROVIDER_KINDS } from '@flowdular/harness/catalog';
 import { agentRuntimeOptionsFromEnvironment } from '../server/runtime.ts';
+import { rotateProviderCredentials } from '../services/credential-rotation.ts';
+import { credentialVaultFromEnvironment } from '../services/credential-vault.ts';
 import { DatabaseProviderRepository } from '../services/provider-repository.ts';
 import {
 	DatabaseAgentRepository,
@@ -22,6 +24,16 @@ const statusCapability = {
 	risk: 'read' as const,
 	requiresApprovedSpec: false,
 	supportsDryRun: false,
+};
+
+const rotateCapability = {
+	id: 'agents.secrets.rotate',
+	version: 1,
+	summary:
+		'Re-seal stored provider credentials with the current encryption key.',
+	risk: 'process' as const,
+	requiresApprovedSpec: false,
+	supportsDryRun: true,
 };
 
 const auditCapability = {
@@ -121,6 +133,39 @@ export const cliExtension = defineCliExtension({
 							'modules/agents/spec/module.yaml',
 							'packages/harness/src/runtime.ts',
 						],
+					};
+				} finally {
+					await close(opened);
+				}
+			},
+		},
+		{
+			path: ['agents', 'secrets-rotate'],
+			capability: rotateCapability,
+			execute: async (context) => {
+				/* The report names key ids and row counts only; a credential never
+				   reaches the command output. */
+				const vault = credentialVaultFromEnvironment(
+					process.env,
+					context.workspaceRoot,
+				);
+				const opened = await open(context);
+				try {
+					const report = await rotateProviderCredentials({
+						runtime: opened.runtime.database,
+						background: opened.background.database,
+						vault,
+						apply: context.apply,
+					});
+					return {
+						data: { moduleId: 'agents.core', ...report },
+						evidence: ['modules/agents/spec/module.yaml', 'docs/operations.md'],
+						warnings:
+							report.skipped > 0
+								? [
+										`${report.skipped} rows were rewritten by the application while this ran and keep their own envelope. Run the command again.`,
+									]
+								: [],
 					};
 				} finally {
 					await close(opened);

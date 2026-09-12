@@ -83,6 +83,13 @@ const EVENT_REQUIREMENTS = {
 } as const satisfies Record<WorkflowRunEventTypeV1, readonly string[]>;
 
 const EVENT_TYPES = new Set<string>(Object.keys(EVENT_REQUIREMENTS));
+/** Statuses a run may settle from; every one of them is a claimed live run. */
+const SETTLEABLE: readonly string[] = [
+	'running',
+	'waiting-agent',
+	'waiting-approval',
+	'waiting-retry',
+];
 const TERMINAL = new Set<WorkflowRunStatus>([
 	'succeeded',
 	'failed',
@@ -237,9 +244,13 @@ export function projectWorkflowRunEvents(
 				break;
 			case 'run.claimed':
 				if (
-					!['queued', 'running', 'waiting-agent', 'waiting-retry'].includes(
-						status,
-					)
+					![
+						'queued',
+						'running',
+						'waiting-agent',
+						'waiting-approval',
+						'waiting-retry',
+					].includes(status)
 				)
 					transitionError(event, status);
 				status = 'running';
@@ -284,10 +295,15 @@ export function projectWorkflowRunEvents(
 					outcomePort: null,
 				});
 				nodeStatuses.set(nodeId, 'waiting-child');
-				status =
-					requiredString(event.payload, 'childKind') === 'agent'
-						? 'waiting-agent'
-						: 'running';
+				{
+					const childKind = requiredString(event.payload, 'childKind');
+					status =
+						childKind === 'agent'
+							? 'waiting-agent'
+							: childKind === 'approval'
+								? 'waiting-approval'
+								: 'running';
+				}
 				break;
 			}
 			case 'node.attempt.settled': {
@@ -347,13 +363,11 @@ export function projectWorkflowRunEvents(
 				status = 'cancel-requested';
 				break;
 			case 'run.succeeded':
-				if (!['running', 'waiting-agent', 'waiting-retry'].includes(status))
-					transitionError(event, status);
+				if (!SETTLEABLE.includes(status)) transitionError(event, status);
 				status = 'succeeded';
 				break;
 			case 'run.failed':
-				if (!['running', 'waiting-agent', 'waiting-retry'].includes(status))
-					transitionError(event, status);
+				if (!SETTLEABLE.includes(status)) transitionError(event, status);
 				status = 'failed';
 				break;
 			case 'run.refused':

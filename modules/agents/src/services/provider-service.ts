@@ -15,7 +15,7 @@ import type {
 	CreateAgentProviderInput,
 	UpdateAgentProviderInput,
 } from '../domain/types.ts';
-import type { CredentialVault } from './credential-vault.ts';
+import { credentialContext, type CredentialVault } from './credential-vault.ts';
 import {
 	assertPublicHost,
 	createProviderFetch,
@@ -196,14 +196,6 @@ function resourceName(
 		);
 	}
 	return value;
-}
-
-function credentialContext(connection: {
-	readonly tenantId: string;
-	readonly id: string;
-	readonly kind: AgentProviderKind;
-}): string {
-	return `${connection.tenantId}:${connection.id}:${connection.kind}`;
 }
 
 function localConnection(tenantId: string): AgentProviderConnection {

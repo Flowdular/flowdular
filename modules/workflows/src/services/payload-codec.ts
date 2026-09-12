@@ -1,9 +1,9 @@
 import {
-	createCipheriv,
-	createDecipheriv,
-	createHash,
-	randomBytes,
-} from 'node:crypto';
+	createKeyring,
+	KeyringError,
+	keyFingerprint,
+	type Keyring,
+} from '@flowdular/kernel';
 import type {
 	JsonSchemaV1,
 	JsonValue,
@@ -46,21 +46,41 @@ function aad(context: {
 	);
 }
 
-export function decodeWorkflowPayloadKey(value: string): Buffer {
+export function decodeWorkflowPayloadKey(
+	value: string,
+	variable = 'FD_WORKFLOWS_PAYLOAD_KEY',
+): Buffer {
 	const trimmed = value.trim();
 	const decoded = /^[0-9a-f]{64}$/i.test(trimmed)
 		? Buffer.from(trimmed, 'hex')
 		: Buffer.from(trimmed, 'base64');
 	if (decoded.length !== 32) {
-		throw new Error('FD_WORKFLOWS_PAYLOAD_KEY must encode exactly 32 bytes.');
+		throw new Error(`${variable} must encode exactly 32 bytes.`);
 	}
 	return decoded;
 }
 
-export function createWorkflowPayloadCodec(key: Buffer): WorkflowPayloadCodec {
+/* The stored envelope spells the key id with the digest it came from. The ring
+   holds the bare fingerprint, so the prefix is added on the way out and
+   stripped on the way in; stored rows keep the format they were written in. */
+const KEY_ID_PREFIX = 'sha256:';
+
+export function workflowPayloadKeyId(key: Buffer): string {
+	return `${KEY_ID_PREFIX}${keyFingerprint(key)}`;
+}
+
+/**
+ * `previous` holds the payload keys a rotation has not finished retiring. They
+ * open stored payloads; every new payload is sealed with `key`.
+ */
+export function createWorkflowPayloadCodec(
+	key: Buffer,
+	previous: readonly Buffer[] = [],
+): WorkflowPayloadCodec {
 	if (key.length !== 32)
 		throw new Error('Workflow payload encryption requires 32 bytes.');
-	const keyId = `sha256:${createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
+	const keyring: Keyring = createKeyring({ current: key, previous });
+	const keyId = `${KEY_ID_PREFIX}${keyring.keyId}`;
 	return {
 		keyId,
 		encrypt(value, context) {
@@ -68,16 +88,13 @@ export function createWorkflowPayloadCodec(key: Buffer): WorkflowPayloadCodec {
 			if (bytes.length > WORKFLOW_LIMITS.maxEnvelopeBytes) {
 				throw new Error('WORKFLOW_LIMIT_EXCEEDED');
 			}
-			const iv = randomBytes(12);
-			const cipher = createCipheriv('aes-256-gcm', key, iv);
-			cipher.setAAD(aad(context));
-			const encrypted = Buffer.concat([cipher.update(bytes), cipher.final()]);
+			const sealed = keyring.seal(bytes, aad(context));
 			return [
 				'v1',
 				keyId,
-				iv.toString('base64url'),
-				cipher.getAuthTag().toString('base64url'),
-				encrypted.toString('base64url'),
+				sealed.iv.toString('base64url'),
+				sealed.tag.toString('base64url'),
+				sealed.ciphertext.toString('base64url'),
 			].join('.');
 		},
 		decrypt(ciphertext, context) {
@@ -85,24 +102,30 @@ export function createWorkflowPayloadCodec(key: Buffer): WorkflowPayloadCodec {
 				ciphertext.split('.');
 			if (
 				version !== 'v1' ||
-				storedKeyId !== keyId ||
+				!storedKeyId?.startsWith(KEY_ID_PREFIX) ||
 				!encodedIv ||
 				!encodedTag ||
 				!encodedData
 			) {
 				throw new Error('WORKFLOW_PAYLOAD_UNREADABLE');
 			}
-			const decipher = createDecipheriv(
-				'aes-256-gcm',
-				key,
-				Buffer.from(encodedIv, 'base64url'),
-			);
-			decipher.setAAD(aad(context));
-			decipher.setAuthTag(Buffer.from(encodedTag, 'base64url'));
-			const clear = Buffer.concat([
-				decipher.update(Buffer.from(encodedData, 'base64url')),
-				decipher.final(),
-			]);
+			let clear: Buffer;
+			try {
+				clear = keyring.open(
+					{
+						keyId: storedKeyId.slice(KEY_ID_PREFIX.length),
+						iv: Buffer.from(encodedIv, 'base64url'),
+						tag: Buffer.from(encodedTag, 'base64url'),
+						ciphertext: Buffer.from(encodedData, 'base64url'),
+					},
+					aad(context),
+				);
+			} catch (error) {
+				if (error instanceof KeyringError) {
+					throw new Error('WORKFLOW_PAYLOAD_UNREADABLE', { cause: error });
+				}
+				throw error;
+			}
 			return JSON.parse(clear.toString('utf8')) as JsonValue;
 		},
 	};

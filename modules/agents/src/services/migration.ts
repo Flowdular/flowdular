@@ -763,6 +763,52 @@ CREATE POLICY module_agent_bindings_reconciliation_policy ON module_agent_bindin
 GRANT SELECT (tenant_id, agent_id) ON module_agent_bindings TO coreloom_background;
 `;
 
+export const AGENTS_MIGRATION_0022 = `-- The rotation command has to find the connections still sealed with a retired
+-- key before it knows whose they are. It is granted the routing columns and the
+-- key id alone: the nonce, the tag and the ciphertext stay unreadable on this
+-- connection, and every row it re-seals is read again under the tenant that row
+-- named.
+GRANT SELECT (tenant_id, credential_key_id)
+  ON agent_provider_connections TO coreloom_background;
+`;
+
+/* Mirrors migrations/0023_agents_retention_indexes.up.sql byte for byte. */
+export const AGENTS_MIGRATION_0023 = `-- The retention sweep of agents.core.runs asks one workspace for its oldest
+-- settled runs, and a subject erasure asks it for the runs one account
+-- requested. Both are bounded batches, so both need a range scan rather than a
+-- pass over the workspace's runs; the export walks the order
+-- agent_runs_tenant_queued_idx already carries and needs no index of its own.
+CREATE INDEX IF NOT EXISTS agent_runs_tenant_settled_idx
+  ON agent_runs (tenant_id, completed_at);
+CREATE INDEX IF NOT EXISTS agent_runs_tenant_requested_idx
+  ON agent_runs (tenant_id, requested_by, id);
+`;
+
+/* Mirrors migrations/0024_agent_meter_refusals.up.sql byte for byte. */
+export const AGENTS_MIGRATION_0024 = `-- A meter refusal stands until the workspace's month turns or its limit is
+-- raised, so recording it on every refused enqueue wrote the same fact to the
+-- hash-chained trail as fast as a caller could retry. This row is the claim
+-- that the refusal has already been recorded: the first refusal of a workspace,
+-- a meter and a month takes it and writes the audit event, and every refusal
+-- behind it is answered without touching the trail.
+--
+-- One row per workspace and meter at a time. The claim removes the rows of
+-- earlier months for that workspace and meter in the same transaction, so the
+-- table is bounded by the meters agents.core declares rather than by time.
+CREATE TABLE IF NOT EXISTS agent_meter_refusals (
+  tenant_id TEXT NOT NULL,
+  meter TEXT NOT NULL,
+  period TEXT NOT NULL,
+  first_refused_at BIGINT NOT NULL,
+  PRIMARY KEY (tenant_id, meter, period)
+);
+ALTER TABLE agent_meter_refusals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_meter_refusals FORCE ROW LEVEL SECURITY;
+CREATE POLICY agent_meter_refusals_tenant_policy ON agent_meter_refusals
+  USING (tenant_id = current_setting('coreloom.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+`;
+
 export const databaseMigrations: readonly DatabaseMigration[] = [
 	{
 		id: '0001_agents_core',
@@ -1148,5 +1194,44 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 					return result.rows[0]?.granted === true;
 				},
 			]),
+	},
+	{
+		id: '0022_credential_rotation_inventory',
+		sql: { postgresql: AGENTS_MIGRATION_0022 },
+		/* A grant leaves no object behind, so the column privilege itself is what
+		   proves this migration ran. */
+		inspectExisting: (database) =>
+			migrationObjectState([
+				async () => {
+					const result = await database.query<{ granted: boolean }>({
+						text: `SELECT CASE WHEN to_regclass('agent_provider_connections') IS NOT NULL THEN
+						  has_column_privilege('coreloom_background', 'agent_provider_connections', 'tenant_id', 'SELECT')
+						  AND has_column_privilege('coreloom_background', 'agent_provider_connections', 'credential_key_id', 'SELECT')
+						ELSE false END AS granted`,
+					});
+					return result.rows[0]?.granted === true;
+				},
+			]),
+	},
+	{
+		id: '0023_agents_retention_indexes',
+		sql: { postgresql: AGENTS_MIGRATION_0023 },
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() => database.schema.hasIndex('agent_runs_tenant_settled_idx'),
+				() => database.schema.hasIndex('agent_runs_tenant_requested_idx'),
+			]),
+	},
+
+	{
+		id: '0024_agent_meter_refusals',
+		sql: { postgresql: AGENTS_MIGRATION_0024 },
+		inspectExisting: (database) =>
+			postgresTenantTableState(
+				database,
+				'agent_meter_refusals',
+				'agent_meter_refusals_tenant_policy',
+				[],
+			),
 	},
 ];

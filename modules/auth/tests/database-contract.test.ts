@@ -49,6 +49,42 @@ async function seedTenant(
 }
 
 describe('auth database repository contract', () => {
+	it('answers one member by account and keeps the lookup tenant scoped', async () => {
+		const database = await fixture();
+		await seedTenant(database, 'tenant-a', 'account-a', 'a@example.com');
+		await seedTenant(database, 'tenant-b', 'account-b', 'b@example.com');
+
+		const found = await database.repository.findTenantMember(
+			'tenant-a',
+			'account-a',
+		);
+		expect(found).toMatchObject({
+			accountId: 'account-a',
+			email: 'a@example.com',
+			role: 'owner',
+			status: 'active',
+			membershipStatus: 'active',
+		});
+		expect(found?.scopes).toEqual([...OWNER_SCOPES].sort());
+		/* The same member read the long way answers the same record, so a caller
+		   may swap one read for the other. */
+		expect(found).toEqual(
+			(await database.repository.listTenantMembers('tenant-a')).find(
+				(member) => member.accountId === 'account-a',
+			),
+		);
+
+		expect(
+			await database.repository.findTenantMember('tenant-a', 'account-b'),
+		).toBeNull();
+		expect(
+			await database.repository.findTenantMember('tenant-b', 'account-a'),
+		).toBeNull();
+		expect(
+			await database.repository.findTenantMember('tenant-a', 'account-ghost'),
+		).toBeNull();
+	});
+
 	it('keeps memberships, scopes and audit rows tenant scoped', async () => {
 		const database = await fixture();
 		await seedTenant(database, 'tenant-a', 'account-a', 'a@example.com');

@@ -74,8 +74,23 @@ describe('auth greenfield', () => {
 				expect(admin?.scopes).toEqual(
 					expect.arrayContaining([
 						'users.members.manage',
-						'parties.records.manage',
-						'catalog.items.manage',
+						'agents.definitions.manage',
+						'sandbox.access.manage',
+						'notifications.webhooks.manage',
+						'notifications.deliveries.read',
+						'directory.tokens.manage',
+						'audit.retention.manage',
+						'approvals.requests.manage',
+						'documents.files.manage',
+						'metering.usage.read',
+						'import.jobs.manage',
+						'search.records.read',
+						'connectors.instances.manage',
+						'workflows.definitions.publish',
+						'workflows.runs.execute',
+						'automations.schedules.manage',
+						'automations.triggers.manage',
+						'profile.self.manage',
 					]),
 				);
 				expect(
@@ -86,11 +101,33 @@ describe('auth greenfield', () => {
 				expect(user?.scopes).not.toContain('system.modules.read');
 				expect(user?.scopes).not.toContain('system.specs.read');
 				expect(user?.scopes).not.toContain('system.runs.read');
+				expect(admin?.scopes).not.toContain('parties.records.manage');
+				expect(admin?.scopes).not.toContain('catalog.items.manage');
+				expect(user?.scopes).not.toContain('notifications.webhooks.manage');
+				expect(user?.scopes).not.toContain('notifications.deliveries.read');
+				expect(user?.scopes).not.toContain('directory.tokens.read');
+				expect(user?.scopes).not.toContain('audit.registry.read');
+				expect(user?.scopes).not.toContain('approvals.requests.manage');
+				expect(user?.scopes).not.toContain('metering.usage.read');
+				expect(user?.scopes).not.toContain('import.jobs.read');
+				expect(user?.scopes).not.toContain('connectors.instances.manage');
+				expect(user?.scopes).not.toContain('workflows.definitions.read');
+				expect(user?.scopes).not.toContain('automations.schedules.read');
 				expect(user?.scopes).toEqual(
 					expect.arrayContaining([
 						'users.members.read',
-						'parties.records.read',
-						'catalog.items.read',
+						'agents.definitions.read',
+						'agents.skills.read',
+						'notifications.inbox.read',
+						'notifications.inbox.manage',
+						'notifications.webhooks.read',
+						'documents.files.read',
+						'documents.files.manage',
+						'search.records.read',
+						'connectors.instances.read',
+						'approvals.requests.read',
+						'approvals.requests.decide',
+						'profile.self.manage',
 					]),
 				);
 				expect(

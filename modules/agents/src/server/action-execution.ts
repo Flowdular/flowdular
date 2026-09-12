@@ -8,6 +8,7 @@ import {
 	validateToolOutput,
 	type AgentTool,
 	type AgentToolAccessAuthorizer,
+	type AgentToolContext,
 	type JsonValue,
 } from '@flowdular/harness';
 import {
@@ -175,6 +176,38 @@ function descriptor(tool: AgentTool): VersionedActionDescriptor | null {
 	};
 }
 
+/**
+ * The same run-time gate the harness asks before an agent calls the tool. A
+ * workflow invocation asks it twice: once before the invocation is persisted,
+ * and again before the queued call runs, because the workspace may withdraw its
+ * consent while the invocation waits in the queue.
+ */
+async function assertConsent(
+	tool: AgentTool,
+	input: unknown,
+	context: AgentToolContext,
+): Promise<void> {
+	if (!tool.consent) return;
+	let granted = false;
+	let reason: string | undefined;
+	try {
+		/* Foreign code: a throw is a refusal, never a crash. */
+		const decision = await tool.consent.check(input, context);
+		granted = decision.granted;
+		reason = decision.reason;
+	} catch {
+		reason = 'ACTION_CONSENT_UNAVAILABLE';
+	}
+	if (!granted) {
+		throw new AgentActionCapabilityError(
+			reason !== undefined && /^[A-Z][A-Z0-9_]{2,63}$/.test(reason)
+				? reason
+				: 'ACTION_CONSENT_REFUSED',
+			`Action ${tool.id} was not consented for this workspace.`,
+		);
+	}
+}
+
 function safeCode(error: unknown): string {
 	if (
 		error instanceof AgentHarnessError ||
@@ -339,6 +372,26 @@ export function createAgentActionExecutionRuntime(
 					'The workflow actor no longer has permission for this action.',
 				);
 			}
+			const toolContext: AgentToolContext = {
+				runId: invocation.workflowRunId,
+				tenantId: invocation.tenantId,
+				requestedBy: invocation.actor.id,
+				invocation: 'workflow-action',
+				actor: invocation.actor,
+				...(invocation.authorizationSubject
+					? { authorizationSubject: invocation.authorizationSubject }
+					: {}),
+				...(invocation.actor.kind === 'agent'
+					? {
+							agentId: invocation.actor.id,
+							agentName: invocation.actor.label,
+						}
+					: {}),
+				idempotencyKey: invocation.idempotencyKey,
+				permissions,
+				signal: controller.signal,
+			};
+			await assertConsent(tool, invocation.input, toolContext);
 			const aborted = new Promise<never>((_, reject) => {
 				rejectAbort = () =>
 					reject(
@@ -354,24 +407,7 @@ export function createAgentActionExecutionRuntime(
 					});
 			});
 			const result = await Promise.race([
-				tool.execute(invocation.input, {
-					runId: invocation.workflowRunId,
-					tenantId: invocation.tenantId,
-					requestedBy: invocation.actor.id,
-					actor: invocation.actor,
-					...(invocation.authorizationSubject
-						? { authorizationSubject: invocation.authorizationSubject }
-						: {}),
-					...(invocation.actor.kind === 'agent'
-						? {
-								agentId: invocation.actor.id,
-								agentName: invocation.actor.label,
-							}
-						: {}),
-					idempotencyKey: invocation.idempotencyKey,
-					permissions,
-					signal: controller.signal,
-				}),
+				tool.execute(invocation.input, toolContext),
 				new Promise<never>((_, reject) => {
 					timer = setTimeout(() => {
 						reject(
@@ -671,6 +707,11 @@ export function createAgentActionExecutionRuntime(
 					]),
 				)
 				.digest('hex');
+			/* A replay of a key this workspace already accepted answers with the
+			   invocation it made, before the gate is asked: consent admits new work,
+			   and a workflow retrying a node it already enqueued must reach the same
+			   invocation however the workspace changed its mind since. The worker
+			   asks the gate again before that invocation runs. */
 			const existing = await repository.findActionByIdempotencyKey(
 				tenantId,
 				idempotencyKey,
@@ -684,6 +725,19 @@ export function createAgentActionExecutionRuntime(
 				}
 				return { actionInvocationId: existing.id, created: false };
 			}
+			/* Refused before the invocation is persisted, so an unconsented action
+			   never occupies the queue; the worker asks again before it runs. */
+			await assertConsent(toolById.get(action.id)!, request.input, {
+				runId: workflowRunId,
+				tenantId,
+				requestedBy: actor.id,
+				invocation: 'workflow-action',
+				actor,
+				authorizationSubject,
+				idempotencyKey,
+				permissions: livePermissions,
+				signal: context.signal,
+			});
 			const invocation: AgentActionInvocation = {
 				id: randomUUID(),
 				tenantId,

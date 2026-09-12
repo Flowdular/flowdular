@@ -1,0 +1,49 @@
+{
+	"name": "@flowdular/module-notifications",
+	"version": "0.1.5",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./client": "./src/client/index.ts",
+		"./server": "./src/server/index.ts",
+		"./platform": "./src/platform.ts",
+		"./module.json": "./module.json"
+	},
+	"files": [
+		"src",
+		"schemas",
+		"dist",
+		"bin",
+		"public",
+		"module.json",
+		"migrations",
+		"translations",
+		"spec",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"typecheck": "tsrx-tsc --noEmit -p tsconfig.json",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@flowdular/cli-protocol": "workspace:*",
+		"@flowdular/client": "workspace:*",
+		"@flowdular/contracts": "workspace:*",
+		"@flowdular/database": "workspace:*",
+		"@flowdular/kernel": "workspace:*",
+		"@flowdular/module-auth": "workspace:*",
+		"@flowdular/server": "workspace:*",
+		"@flowdular/ui": "workspace:*",
+		"octane": "0.1.51",
+		"segment-state": "0.2.1"
+	},
+	"devDependencies": {
+		"@flowdular/database-testing": "workspace:*",
+		"@tsrx/typescript-plugin": "0.3.120",
+		"@types/node": "24.13.3",
+		"typescript": "5.9.3",
+		"vitest": "4.1.11"
+	}
+}

@@ -1,0 +1,17 @@
+{
+	"protocolVersion": 1,
+	"moduleId": "notifications.core",
+	"commands": [
+		{
+			"path": ["notifications", "secrets-rotate"],
+			"capability": {
+				"id": "notifications.secrets.rotate",
+				"version": 1,
+				"summary": "Re-seal stored webhook signing secrets with the current encryption key.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		}
+	]
+}

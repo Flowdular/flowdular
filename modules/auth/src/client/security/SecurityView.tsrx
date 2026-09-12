@@ -100,7 +100,12 @@ export function SecurityView(props: SecurityViewProps) @{
 		setError('');
 		try {
 			await confirmMfa(submittedCode(event), props.csrfToken);
-			setFactor({ available: true, enrolled: true, pending: false });
+			setFactor({
+				available: true,
+				enrolled: true,
+				pending: false,
+				required: factor?.required === true,
+			});
 			setEnrollment({
 				secret: '',
 				otpauthUrl: '',
@@ -145,6 +150,9 @@ export function SecurityView(props: SecurityViewProps) @{
 			</section>
 		} @else {
 			<>
+				@if (factor?.required && !factor.enrolled) {
+					<Alert tone="warning">{t('auth.security.mfa.requiredNotice')}</Alert>
+				}
 				@if (error) {
 					<Alert>{error}</Alert>
 				}

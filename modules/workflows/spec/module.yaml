@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: workflows.core
-specVersion: 0.3.0
+specVersion: 0.6.4
 status: approved
 name: Agentic Workflows
 description: Builds, publishes, simulates, and executes durable tenant-scoped DAG workflows whose versioned nodes coordinate pinned agents, deterministic decisions, validated data, and registered module actions.
@@ -11,13 +11,14 @@ capabilities:
   - client
   - translations
   - integration
+  - cli
 dependencies:
   - id: system.core
-    range: 0.5.0
+    range: ^0.5.1
   - id: auth.core
-    range: 0.10.0
+    range: ^0.12.0
   - id: agents.core
-    range: 0.9.1
+    range: ^0.12.0
 tenancy: required
 locales:
   - en
@@ -31,12 +32,13 @@ invariants:
   - A workflow definition grants no authority. Live execution intersects the immutable node plan with the initiating actor's trusted permission snapshot and every referenced agent or action permission.
   - Manual and module-originated runs retain the real user or agent actor. Schedule and webhook runs retain a service actor with the configuring user snapshot, while trigger kind and identifier remain separate execution-origin fields.
   - Graph configuration contains declarative typed literal, path, and template mappings only. Arbitrary JavaScript, expressions with side effects, source code, shell commands, dynamic imports, and runtime-downloaded code are forbidden.
-  - Input, output, agent-decision, gate, validator, action, merge, and terminal output nodes communicate only through declared, schema-bound ports and immutable JSON envelopes.
+  - Input, output, agent-decision, gate, validator, action, human-approval, merge, and terminal output nodes communicate only through declared, schema-bound ports and immutable JSON envelopes.
   - An agent-decision node must return a schema-valid pass or fail decision with bounded structured data. Free-form text never decides a branch.
   - Deterministic gate nodes use a versioned allowlisted logic language. Agentic judgment is represented by an explicit agent-decision node, never hidden inside a gate.
   - A validator node emits pass only for data that satisfies its pinned schema and emits bounded structured validation errors on fail.
+  - A human-approval node declares its requirement in the published graph and is validated against the workspace roles at publish time; an unknown role or an absent approvals.core refuses publication with a stable code. At run time the node opens one request through approvals.requests.v1 keyed by the run and node, takes the run out of the claim queue until the request resolves or its bounded recheck falls due, resumes on approval, and fails the run with a stable code on rejection, expiry or cancellation. Whenever the run stops waiting for a pending request, whether the run is cancelled, the request's deadline passes, or the run's duration bound is reached, the request is withdrawn rather than left asking people to decide something nobody is waiting for. A simulated run approves without asking anybody. The prompt the node asks and its label are bounded at validation and publication by the limits approvals.core accepts for a request title, so a question that module would refuse fails the publish rather than the run that reaches the node.
   - An action node invokes only a registered, versioned action contract through agents.core, under the required permissions, input schema, timeout, output bound, idempotency key, and audit boundary.
-  - Version one admits only read and workspace-write actions. External and destructive actions are excluded from the workflow catalog, publication, and execution until a later approved human-approval and approval-receipt contract exists.
+  - Version one admits only read and workspace-write actions. External and destructive actions stay excluded from the workflow catalog, publication, and execution; the human-approval node gates a person's decision and never widens the action risk class.
   - Each live workflow run durably snapshots its workflow revision, actor, origin, permission digest, mode, input, limits, and idempotency key before enqueue returns.
   - Workflow workers claim runs with expiring leases, renew live claims, and recover queued or expired work after restart without concurrently owning the same run.
   - A node runs at most once successfully. Retries create immutable attempts and reuse a stable side-effect idempotency key so recovery cannot duplicate an agent enqueue or action mutation.
@@ -54,12 +56,14 @@ invariants:
   - Automated payload retention may remove separately stored payload blobs only after appending a retention event. Run identity, status, revisions, attempts, durations, cost, hashes, and audit linkage remain queryable.
   - Capability absence is detected through the platform registry returning null. A caller hides its optional workflow feature or refuses clearly before invocation; no absent module can return its own unavailable result.
   - automations.core remains a separate optional clock and ingress module. It may trigger workflows through an integration capability but workflows.core owns no schedules, webhook secrets, or polling clock.
-  - A live run is bounded by graph size, payload size, node attempts, total duration, and lineage depth. Cross-workflow invocation and cycles between workflows are not supported in version one.
+  - A live run is bounded by graph size, payload size, node attempts, total duration, and lineage depth. Cross-workflow invocation and cycles between workflows are not supported in version one. The total duration bound counts the time the run could work; time asleep on a human approval is excluded from it and bounded by that request's own expiry instead, so a person's window is never a run's.
   - Interactive history and audit pages use opaque versioned cursors bound to tenant, filters, sort order, and the first-page snapshot boundary. Malformed, foreign, or mismatched cursors are refused instead of being interpreted loosely.
   - Usage and cost use a versioned typed rollup with integer token counts, integer micro-USD amounts, pricing snapshot references, provisional or final state, and explicit unpriced child and action counts. Dry-run has no rollup and simulation uses not-applicable rollups.
   - Every state transition named as audit-required commits its run event, projection update, and hash-chained workflow audit event atomically. Edge data events remain ordered run evidence unless their transition also changes audited execution state.
   - Every request-time read and write runs on a tenant-scoped database handle. The worker claim poll and payload retention are the only cross-tenant reads, they run on a separate read-only role, and on PostgreSQL that role is granted only the columns that route the work under a policy of each table itself.
+  - Run outcome notifications are an optional integration. When a live run reaches a terminal state the worker resolves notifications.publish.v1 from the platform capability registry at that moment, never at composition time, and publishes the outcome keyed by the run id. notifications.core is never a declared dependency. An absent capability, a cancelled run, a simulated run, and a run with no person behind it publish nothing. A publisher failure is logged once at warning level and never changes the settled run, and the kind is read from the settled row so a worker that lost the settling race reports the outcome the run actually has.
   - A run found by the cross-tenant claim poll is read again and re-checked under the tenant that row named before it is claimed, and payload retention performs each redaction in its own transaction under the tenant that owns it.
+  - workflows.core declares three data classes to the platform registry while it composes, and performs their operations itself on its own leases under its own tenant transaction. workflows.core.runs holds the run record, its node states and attempts, its edge evidence, its ordered events and its sealed execution payloads, keeps them 90 days by default, sweeps only settled runs in bounded batches so a run still working, waiting on a child or asleep on an approval is never taken from its worker, exports one workspace by keyset in bounded pages, and erases in bounded batches the runs one account is the person behind, reporting a full batch as truncated. The person behind a run is the actor when a person started it, the account the actor was configured by when a schedule, a webhook or an automation started it, and the delegated authorization subject when an agent did, and the erasure matches all three so a run started on somebody's behalf is not left holding their account. A run resolves that person once when it is written and stores the answer, so an erasure is one indexed equality rather than a read of the stored actor document, which the forced row-level security policy would leave unindexable. workflows.core.audit-events is exportable and is kept until a person deletes it, because the trail is hash chained and removing its oldest links by age would make the next verification report a break it cannot tell from tampering. workflows.core.definitions is workspace configuration, is kept until a person deletes it and carries no sweep, and exports the published revision of each workflow alone. No export carries a sealed execution payload, because the archive carries the redacted evidence the run already recorded.
 permissions:
   - id: workflows.definitions.read
     description: Read workflow definitions, drafts, published revisions, and validation reports in the active tenant.
@@ -80,6 +84,7 @@ dataOwnership:
   - Business modules own their records and service operations. An action node can reach them only through a registered action contract and never through their repositories or databases.
   - auth.core owns accounts, memberships, sessions, scopes, and authorization evidence. Workflows stores the bounded invocation snapshot needed for durable execution, not credentials or session tokens.
   - automations.core owns schedules, webhook definitions, trigger secrets, and ingress audit. A triggered workflow stores only the service actor, configuring user snapshot, origin kind, and source reference.
+  - notifications.core owns inbox items, deliveries, and read state. workflows.core owns the run it reports and hands over only the run id, the outcome kind, a bounded English title and step summary, and the accountable member; it never writes or reads notification records and never receives them back.
 acceptanceScenarios:
   - id: WORKFLOW-CREATE
     given: A principal with workflow definition management permission supplies a valid name and empty draft graph.
@@ -221,7 +226,19 @@ acceptanceScenarios:
     given: A graph, mapping, input, output, fixture, retry policy, runtime, or lineage exceeds its declared bound.
     when: It is saved, published, simulated, or executed.
     then: The operation fails with a stable limit code before unbounded memory, storage, provider, or action work begins.
+  - id: WORKFLOWS-NOTIFY-RUN
+    given: A live workflow run started by a member reaches a terminal state, and the optional notifications module may or may not be composed.
+    when: The worker commits the terminal status.
+    then: With notifications.core composed, exactly one workflow-run-completed or workflow-run-failed notification is published after that commit, keyed by the run id, addressed to the member accountable for the run, and carrying no payload or evidence; without it, for a cancelled or simulated run, or when the publisher fails, the run settles unchanged and nothing is published.
   - id: WF-CLAIM-NARROW
     given: Two workspaces each own a queued live run.
     when: The worker polls for claimable work across tenants.
     then: The poll returns only the workspace id, run id, mode, status, lease expiry and queue time; the graph, actor, permission snapshot and payload ciphertext are unreadable on that connection, it cannot write, and each run is claimed exactly once under its own workspace.
+  - id: WORKFLOWS-HUMAN-APPROVAL
+    given: A published workflow revision carrying a human-approval node that requires a workspace role, and approvals.core composed.
+    when: A run reaches the node, an owner approves it, in a second run an owner rejects it, and in a third run nobody answers until the request's deadline passes.
+    then: The first run pauses with one pending request and resumes to completion after the approval; the second run fails with a stable code after the rejection; the third stays paused past the run duration bound and fails with a stable code at the request's deadline, withdrawing the pending request; a revision naming a role the workspace does not define, carrying a prompt or a label longer than a request title, or published while approvals.core is absent, is refused at publish time with a stable validation code; and a request resolved before the worker armed the wait still resumes its run rather than sleeping until the recheck.
+  - id: WORKFLOWS-DATA-CLASSES
+    given: Two workspaces hold workflow runs of several ages with node states, edge evidence and sealed payloads, one run still working, plus published workflows and a draft, and the platform has sealed the data class registry.
+    when: The platform sweeps, exports and erases the declared classes for one of them.
+    then: The sweep removes only that workspace's settled runs strictly older than the cutoff and at most the batch it was given, taking their node states, attempts, edges, events and sealed payloads with them while the working run stays; the export streams that workspace's runs with their nodes and edges, its audit trail in chain order, and its published workflows without their drafts, through the sink in keyset pages with the oldest and newest record time, answers no rows and no range for a workspace that holds none, and carries no payload ciphertext; the audit trail carries no sweep and no erasure; and erasing a subject removes the runs that account is the person behind in that workspace alone, including the ones a schedule or an agent started on its behalf, reporting a full batch as truncated.

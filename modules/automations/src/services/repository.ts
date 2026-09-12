@@ -116,4 +116,10 @@ export interface AutomationsRepository {
 		limit: number,
 	): Promise<readonly AutomationAuditEvent[]>;
 	verifyAuditChain(tenantId: string): Promise<AutomationAuditVerification>;
+	/** One keyset page of the trail, ordered by id, for the data class export. */
+	exportAuditEventsPage(
+		tenantId: string,
+		afterId: string,
+		limit: number,
+	): Promise<readonly AutomationAuditEvent[]>;
 }

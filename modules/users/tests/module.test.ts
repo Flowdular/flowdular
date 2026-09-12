@@ -1,6 +1,7 @@
 import { createContext } from '@octanejs/app-core';
 import type { DatabaseProvider } from '@flowdular/database';
 import { createPgliteTestProvider } from '@flowdular/database-testing';
+import type { TenantMember } from '@flowdular/module-auth';
 import type { AuthRuntime } from '@flowdular/module-auth/server';
 import {
 	createAuthRoutes,
@@ -113,6 +114,38 @@ async function callUsers(
 	return route.handler(context);
 }
 
+/* The member drawer's Reset MFA action posts to auth.core's administration
+   route with the same member management scope the users API requires. */
+async function callAuthMutation(
+	auth: AuthRuntime,
+	path: string,
+	session: Session | null,
+	body: unknown,
+): Promise<Response> {
+	const route = createAuthRoutes(auth).find(
+		(candidate) =>
+			candidate.path === path && candidate.methods.includes('POST'),
+	);
+	if (!route) throw new Error(`auth.core exposes no POST ${path}.`);
+	const context = createContext(
+		new Request(`${ORIGIN}${path}`, {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				origin: ORIGIN,
+				...(session
+					? { cookie: session.cookie, 'x-csrf-token': session.csrfToken }
+					: {}),
+			},
+			body: JSON.stringify(body),
+		}),
+		{},
+	);
+	return (await auth.middleware(context, () =>
+		Promise.resolve(route.handler(context)),
+	)) as Response;
+}
+
 async function signInMember(
 	auth: AuthRuntime,
 	email: string,
@@ -158,7 +191,7 @@ describe('users.core', () => {
 		const owner = await signUp(auth, 'owner@example.com', 'workspace-one');
 		const created = await callUsers(auth, '/api/users', 'POST', owner, {
 			email: 'manager@example.com',
-			password: 'manager password long',
+			password: 'quiet lantern voyage',
 			displayName: 'Man Ager',
 			role: 'member',
 		});
@@ -181,7 +214,7 @@ describe('users.core', () => {
 		const managerSession = await signInMember(
 			auth,
 			'manager@example.com',
-			'manager password long',
+			'quiet lantern voyage',
 		);
 		const escalation = await callUsers(
 			auth,
@@ -190,7 +223,7 @@ describe('users.core', () => {
 			managerSession,
 			{
 				email: 'evil@example.com',
-				password: 'evil password long enough',
+				password: 'brisk copper meadow',
 				displayName: 'Evil Owner',
 				role: 'owner',
 			},
@@ -294,7 +327,7 @@ describe('users.core', () => {
 		const owner = await signUp(auth, 'owner@example.com', 'workspace-one');
 		const created = await callUsers(auth, '/api/users', 'POST', owner, {
 			email: 'member@example.com',
-			password: 'member password long',
+			password: 'steady tangerine harbor',
 			displayName: 'Mem Ber',
 			role: 'member',
 		});
@@ -327,5 +360,184 @@ describe('users.core', () => {
 		expect(
 			await (await auth.service()).resolveSession(session.token),
 		).toBeNull();
+	});
+
+	it('USERS-MEMBERSHIP-STATUS: disables one workspace membership and leaves the account and the other workspace alone', async () => {
+		const auth = await authRuntime();
+		const owner = await signUp(auth, 'owner@example.com', 'workspace-one');
+		await signUp(auth, 'other@example.com', 'workspace-two');
+		const created = await callUsers(auth, '/api/users', 'POST', owner, {
+			email: 'member@example.com',
+			password: 'steady tangerine harbor',
+			displayName: 'Mem Ber',
+			role: 'member',
+		});
+		const member = ((await created.json()) as { user: { accountId: string } })
+			.user;
+		const service = await auth.service();
+		const elsewhere = await service.provisionMember({
+			workspace: 'workspace-two',
+			email: 'member@example.com',
+			role: 'member',
+			operator: 'tests',
+		});
+		const session = await service.signIn({
+			email: 'member@example.com',
+			password: 'steady tangerine harbor',
+		});
+		const token = await service.issueApiToken({
+			tenantId: owner.tenantId,
+			accountId: member.accountId,
+			label: 'Workspace one automation',
+			scopes: ['system.workspace.access'],
+			expiresAt: null,
+			createdBy: owner.accountId,
+		});
+
+		const disabled = await callAuthMutation(
+			auth,
+			'/api/auth/memberships/status',
+			owner,
+			{ accountId: member.accountId, status: 'disabled' },
+		);
+		expect(disabled.status).toBe(200);
+		expect(await disabled.json()).toEqual({
+			membership: { accountId: member.accountId, status: 'disabled' },
+		});
+		expect(await service.resolveSession(session.token)).toBeNull();
+		expect(await service.resolveApiToken(token.token)).toBeNull();
+
+		const listed = (await (
+			await callUsers(auth, '/api/users', 'GET', owner)
+		).json()) as { users: readonly TenantMember[] };
+		const row = listed.users.find(
+			(user) => user.accountId === member.accountId,
+		)!;
+		expect(row.membershipStatus).toBe('disabled');
+		/* The global block is the operator's and stays where it was. */
+		expect(row.status).toBe('active');
+
+		const elsewhereMembers = await service.listTenantMembers(
+			elsewhere.workspace.tenantId,
+		);
+		expect(
+			elsewhereMembers.find((user) => user.accountId === member.accountId)
+				?.membershipStatus,
+		).toBe('active');
+
+		/* Refused outright or resolved to the workspace that still has them; what
+		   must never happen again is a session in the workspace that disabled it. */
+		const landed = await service
+			.signIn({
+				email: 'member@example.com',
+				password: 'steady tangerine harbor',
+			})
+			.then((issued) => issued.principal.tenantId)
+			.catch(() => null);
+		expect(landed).not.toBe(owner.tenantId);
+
+		const enabled = await callAuthMutation(
+			auth,
+			'/api/auth/memberships/status',
+			owner,
+			{ accountId: member.accountId, status: 'active' },
+		);
+		expect(enabled.status).toBe(200);
+		const restored = (await (
+			await callUsers(auth, '/api/users', 'GET', owner)
+		).json()) as { users: readonly TenantMember[] };
+		expect(
+			restored.users.find((user) => user.accountId === member.accountId)
+				?.membershipStatus,
+		).toBe('active');
+		await expect(
+			service.signIn({
+				email: 'member@example.com',
+				password: 'steady tangerine harbor',
+			}),
+		).resolves.toMatchObject({ principal: { tenantId: owner.tenantId } });
+		/* Re-enabling restores sign-in, never a revoked token. */
+		expect(await service.resolveApiToken(token.token)).toBeNull();
+	});
+
+	it('USERS-MEMBERSHIP-STATUS: refuses the acting principal, a foreign account, and an anonymous caller', async () => {
+		const auth = await authRuntime();
+		const owner = await signUp(auth, 'owner@example.com', 'workspace-one');
+		const other = await signUp(auth, 'other@example.com', 'workspace-two');
+
+		const itself = await callAuthMutation(
+			auth,
+			'/api/auth/memberships/status',
+			owner,
+			{ accountId: owner.accountId, status: 'disabled' },
+		);
+		expect(itself.ok).toBe(false);
+		expect(await itself.json()).toMatchObject({
+			error: { code: 'SELF_TARGET' },
+		});
+
+		const foreign = await callAuthMutation(
+			auth,
+			'/api/auth/memberships/status',
+			owner,
+			{ accountId: other.accountId, status: 'disabled' },
+		);
+		expect(foreign.ok).toBe(false);
+		expect(await foreign.json()).toMatchObject({
+			error: { code: 'ACCOUNT_NOT_FOUND' },
+		});
+
+		const anonymous = await callAuthMutation(
+			auth,
+			'/api/auth/memberships/status',
+			null,
+			{ accountId: other.accountId, status: 'disabled' },
+		);
+		expect(anonymous.status).toBe(401);
+		const untouched = (await (
+			await callUsers(auth, '/api/users', 'GET', other)
+		).json()) as { users: readonly TenantMember[] };
+		expect(untouched.users[0]?.membershipStatus).toBe('active');
+	});
+
+	it('clears another member MFA factor for a member manager and denies the rest', async () => {
+		const auth = await authRuntime();
+		const owner = await signUp(auth, 'owner@example.com', 'workspace-one');
+		const created = await callUsers(auth, '/api/users', 'POST', owner, {
+			email: 'member@example.com',
+			password: 'steady tangerine harbor',
+			displayName: 'Mem Ber',
+			role: 'member',
+		});
+		const member = ((await created.json()) as { user: { accountId: string } })
+			.user;
+		const memberSession = await signInMember(
+			auth,
+			'member@example.com',
+			'steady tangerine harbor',
+		);
+
+		const allowed = await callAuthMutation(auth, '/api/auth/mfa/reset', owner, {
+			accountId: member.accountId,
+		});
+		const denied = await callAuthMutation(
+			auth,
+			'/api/auth/mfa/reset',
+			memberSession,
+			{ accountId: owner.accountId },
+		);
+		const anonymous = await callAuthMutation(
+			auth,
+			'/api/auth/mfa/reset',
+			null,
+			{
+				accountId: member.accountId,
+			},
+		);
+
+		expect(allowed.status).toBe(200);
+		expect(denied.status).toBe(403);
+		expect(await denied.json()).toMatchObject({ error: { code: 'FORBIDDEN' } });
+		expect(anonymous.status).toBe(401);
 	});
 });

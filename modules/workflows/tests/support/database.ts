@@ -98,6 +98,7 @@ export function createWorkflowsTestRuntime(
 	const runtime = createWorkflowsRuntime({ ...options, databases });
 	return {
 		service: () => runtime.service(),
+		repository: () => runtime.repository(),
 		start: () => runtime.start(),
 		stop: () => runtime.stop(),
 		async dispose() {

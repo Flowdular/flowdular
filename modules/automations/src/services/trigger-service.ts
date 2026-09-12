@@ -21,7 +21,7 @@ import type {
 	StoredAutomationTrigger,
 	StoredAutomationTriggerWithSecret,
 } from './repository.ts';
-import type { SecretVault } from './secret-vault.ts';
+import { secretContext, type SecretVault } from './secret-vault.ts';
 import {
 	createAutomationTargetRegistry,
 	type AutomationTargetJsonValue,
@@ -49,10 +49,6 @@ export interface TriggerFireRequest {
 	readonly body: string;
 	readonly signature: string | null;
 	readonly timestamp: string | null;
-}
-
-function secretContext(tenantId: string, triggerId: string): string {
-	return `${tenantId}:${triggerId}:automation-trigger`;
 }
 
 function bounded(value: string, field: string, max: number): string {

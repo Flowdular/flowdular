@@ -2141,6 +2141,120 @@ describe('workflow persistence boundary', () => {
 		}
 	});
 
+	it('claims a run parked on an approval only when its approval recheck is due', async () => {
+		const database = await openWorkflowsTestRepository();
+		const origin = { kind: 'manual' } as const;
+		const evidence = {
+			version: 1,
+			state: 'absent',
+			schemaId: 'schema.data',
+			hash: 'sha256:input',
+			originalByteSize: 0,
+			reason: 'not-emitted',
+		} as const;
+		const start = (nodeId: string, attempt: number, recordedAt: number) =>
+			database.repository.startAttempt(
+				{
+					tenantId: 'tenant-a',
+					runId: 'run-a',
+					nodeId,
+					nodeType: nodeId === 'input.start' ? 'input' : 'output',
+					attempt,
+					semanticGroup: `run-a:${nodeId}`,
+					sideEffectIdempotencyKey: `tenant-a:run-a:${nodeId}`,
+					input: { name: 'Ada' },
+					inputEvidence: evidence,
+					schemaId: 'schema.data',
+					recordedAt,
+				},
+				actor,
+				origin,
+			);
+		const stateOf = async (nodeId: string) =>
+			(await database.repository.readNodeStates('tenant-a', 'run-a')).find(
+				(node) => node.nodeId === nodeId,
+			);
+		try {
+			await database.repository.createRun(
+				queuedLiveRun('tenant-a', 'run-a', 'Alpha'),
+			);
+			await database.repository.claimNext('worker-1', 1_000, 2_000);
+			await start('input.start', 1, 1_000);
+			/* A failed attempt with a retry ahead of it arms the node's recheck. */
+			await database.repository.settleAttempt(
+				{
+					tenantId: 'tenant-a',
+					runId: 'run-a',
+					nodeId: 'input.start',
+					attempt: 1,
+					status: 'failed',
+					outcomePort: null,
+					outputEvidence: evidence,
+					schemaId: 'schema.data',
+					failureCode: 'AGENT_RUN_FAILED',
+					retryClassification: 'retryable',
+					selectedBackoffMs: 1_000,
+					nextAttemptAt: 3_000,
+					recordedAt: 1_500,
+				},
+				actor,
+				origin,
+			);
+			expect((await stateOf('input.start'))?.nextAttemptAt).toBe(3_000);
+
+			await database.repository.releaseLease('tenant-a', 'run-a', 'worker-1');
+			expect(
+				(await database.repository.claimNext('worker-2', 3_000, 4_000))?.id,
+			).toBe('run-a');
+
+			/* The run goes to sleep on a person, with a recheck hours away. */
+			await start('output.done', 1, 3_000);
+			await database.repository.markChildWaiting(
+				'tenant-a',
+				'run-a',
+				'output.done',
+				1,
+				'approval',
+				'approval-1',
+				900_000,
+				3_000,
+				600_000,
+			);
+
+			/* The retried node runs again and waits on an agent child. Its armed
+			   recheck fell due long ago, and nothing but an approval recheck may
+			   bring a sleeping run back into the claim queue. */
+			await start('input.start', 2, 3_100);
+			await database.repository.markChildWaiting(
+				'tenant-a',
+				'run-a',
+				'input.start',
+				2,
+				'agent',
+				'child-1',
+				60_000,
+				3_100,
+			);
+			expect(await stateOf('input.start')).toMatchObject({
+				status: 'waiting-child',
+				nextAttemptAt: null,
+			});
+			expect(
+				(await database.repository.getRun('tenant-a', 'run-a'))?.status,
+			).toBe('waiting-approval');
+
+			await database.repository.releaseLease('tenant-a', 'run-a', 'worker-2');
+			expect(
+				await database.repository.claimNext('worker-3', 5_000, 6_000),
+			).toBeNull();
+			expect(
+				(await database.repository.claimNext('worker-4', 600_000, 620_000))?.id,
+			).toBe('run-a');
+		} finally {
+			await database.dispose();
+		}
+	});
+
 	it('denies the background role every column outside the routing set and every write', async () => {
 		const database = await openWorkflowsTestRepository();
 		try {

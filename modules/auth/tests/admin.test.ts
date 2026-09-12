@@ -55,7 +55,7 @@ async function workspace(now: { value: number } = { value: 1_000 }) {
 		{
 			tenantId: owner.tenantId,
 			email: 'member@example.com',
-			password: 'member password long',
+			password: 'steady tangerine harbor',
 			displayName: 'Mem Ber',
 			role: 'member',
 		},
@@ -110,7 +110,7 @@ describe('member administration', () => {
 		const { service, owner, member } = await workspace();
 		const session = await service.signIn({
 			email: 'member@example.com',
-			password: 'member password long',
+			password: 'steady tangerine harbor',
 		});
 		const disabled = await service.setMemberStatus(
 			owner,
@@ -122,7 +122,7 @@ describe('member administration', () => {
 		await expect(
 			service.signIn({
 				email: 'member@example.com',
-				password: 'member password long',
+				password: 'steady tangerine harbor',
 			}),
 		).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' });
 		expect(
@@ -187,7 +187,7 @@ describe('member administration', () => {
 		const { service, owner, member } = await workspace();
 		const before = await service.signIn({
 			email: 'member@example.com',
-			password: 'member password long',
+			password: 'steady tangerine harbor',
 		});
 		const reset = await service.resetMemberPassword(
 			owner,
@@ -230,7 +230,7 @@ describe('member administration', () => {
 			{
 				tenantId: owner.tenantId,
 				email: 'manager@example.com',
-				password: 'manager password long',
+				password: 'quiet lantern voyage',
 				displayName: 'Man Ager',
 				role: 'member',
 			},

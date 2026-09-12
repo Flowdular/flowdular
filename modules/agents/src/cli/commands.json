@@ -14,6 +14,17 @@
 			}
 		},
 		{
+			"path": ["agents", "secrets-rotate"],
+			"capability": {
+				"id": "agents.secrets.rotate",
+				"version": 1,
+				"summary": "Re-seal stored provider credentials with the current encryption key.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		},
+		{
 			"path": ["agents", "audit-verify"],
 			"capability": {
 				"id": "agents.audit.verify",

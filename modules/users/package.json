@@ -1,6 +1,6 @@
 {
 	"name": "@flowdular/module-users",
-	"version": "0.6.0",
+	"version": "0.9.3",
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
@@ -17,6 +17,8 @@
 		"@flowdular/client": "workspace:*",
 		"@flowdular/contracts": "workspace:*",
 		"@flowdular/module-auth": "workspace:*",
+		"@flowdular/module-import": "workspace:*",
+		"@flowdular/module-search": "workspace:*",
 		"@flowdular/server": "workspace:*",
 		"@flowdular/ui": "workspace:*",
 		"octane": "0.1.51",

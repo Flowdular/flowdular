@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: system.core
-specVersion: 0.5.0
+specVersion: 0.5.1
 status: approved
 name: System Core
 description: Provides the application shell, platform health, module discovery, and the administration surface for module settings.

@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: profile.core
-specVersion: '1.5.0'
+specVersion: '1.5.1'
 status: approved
 name: Profile
 description: Allows a signed-in user to manage their own tenant-scoped display name and interface language, request a password change after confirming their current password, and review or end their own sessions.
@@ -15,7 +15,7 @@ capabilities:
 
 dependencies:
   - id: auth.core
-    range: 0.10.0
+    range: ^0.12.0
 
 tenancy: required
 
@@ -24,7 +24,7 @@ locales:
   - pl
 
 invariants:
-  - Every operation requires an authenticated principal and the declared profile permission.
+  - Every operation requires an authenticated principal and the declared profile permission; owners and members hold profile.self.manage by default, because every member manages their own profile, language, password and sessions.
   - A user can read or change only the profile identified by their authenticated principal in the current tenant.
   - The trusted tenant identifier and user identifier come from the authenticated principal and are never accepted from request data.
   - Every profile query and mutation is scoped by both the trusted tenant identifier and authenticated principal identifier.

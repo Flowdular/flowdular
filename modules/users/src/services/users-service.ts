@@ -2,6 +2,7 @@ import type {
 	AuthActor,
 	AuthPrincipal,
 	CreateTenantMemberInput,
+	CreateTenantMemberWithoutPasswordInput,
 	TenantMember,
 	TenantRole,
 } from '@flowdular/module-auth';
@@ -69,6 +70,22 @@ export class UsersService {
 			tenantId: principal.tenantId,
 		};
 		return (await this.#auth.service()).createTenantMember(
+			record,
+			actor(principal),
+		);
+	}
+
+	/* A member who holds no password: auth.core stores its unusable credential
+	   marker, so no secret is drawn here and none has to be delivered. */
+	async createWithoutPassword(
+		principal: AuthPrincipal,
+		input: Omit<CreateUserInput, 'password'>,
+	): Promise<TenantMember> {
+		const record: CreateTenantMemberWithoutPasswordInput = {
+			...input,
+			tenantId: principal.tenantId,
+		};
+		return (await this.#auth.service()).createTenantMemberWithoutPassword(
 			record,
 			actor(principal),
 		);

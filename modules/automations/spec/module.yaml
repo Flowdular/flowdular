@@ -1,22 +1,25 @@
 schemaVersion: 1
 id: automations.core
-specVersion: 0.4.0
+specVersion: 0.5.1
 status: approved
 name: Automations Core
-description: Runs agents without a person present, on a schedule or from a signed webhook, as a module a workspace can leave uninstalled.
+description: Runs agents or published workflows without a person present, on a schedule or from a signed webhook, as a module a workspace can leave uninstalled.
 profile: full
 capabilities:
   - api
   - database
   - client
   - translations
+  - cli
 dependencies:
   - id: system.core
-    range: 0.5.0
+    range: ^0.5.1
   - id: auth.core
-    range: 0.10.0
+    range: ^0.12.0
   - id: agents.core
-    range: 0.9.1
+    range: ^0.12.0
+  - id: workflows.core
+    range: ^0.6.0
 tenancy: required
 locales:
   - en
@@ -33,6 +36,13 @@ invariants:
   - A schedule stores its raw input template; only the queued run snapshot receives a single-pass resolved value from scope-filtered variable sources.
   - Every request-time read and write runs on a tenant-scoped PostgreSQL handle under forced row-level security. The scheduler poll and the webhook trigger lookup are the only cross-tenant reads, they run on a separate read-only role, and that role is granted only the columns that route the work to a tenant under a policy of the table itself.
   - A due schedule found by the cross-tenant poll, and a trigger found by the cross-tenant webhook lookup, are read again under the tenant that row named before anything acts on them, and a slot whose next run time moved in between is skipped.
+  - Automations reaches workflows.core only through the public workflows.execution.v1 capability. It owns no workflow worker, execution history, revision snapshot, or workflow permission, and while that capability is absent the workflow target is unavailable, existing workflow target configuration is retained, and automatic firing is skipped with safe audit evidence.
+  - A schedule or webhook can select a workflow only when the configuring user can read published workflows, execute workflow runs, and holds every permission the selected published workflow requires. The permission snapshot is captured from trusted authorization context and cannot be supplied or widened by a schedule template, webhook body, or adapter input.
+  - An automatic workflow invocation runs as the automations.core service actor with the configuring user in configuredBy and the schedule or trigger as a separate origin. Run now keeps the requesting user as the workflow actor with module origin automations.core and operation schedules.run-now.
+  - A workflow invocation uses a stable tenant-scoped idempotency key derived from the persisted schedule slot, the accepted webhook signature digest, or the Run now request id, so a repeated delivery resolves to the original run and a key reused for different input is refused by workflows.core without a retry under a new key.
+  - A missing, archived, unpublished, or newly unauthorized workflow never falls back to another workflow or agent and never substitutes a revision selected outside workflows.core; the schedule or trigger is made visibly unavailable until an authorized user updates it.
+  - The automations-workflows.schedule.run agent tool lets a workflow run node fire an automation schedule whose target is an agent only, for a non-agent run actor holding automations.schedules.manage, under a node-derived idempotency key, so neither a workflow nor an agent can re-enter itself through an automation.
+  - automations.core declares one data class to the platform registry, automations.core.audit-events, holding the audit trail. It is exportable, and its export walks one workspace by keyset in bounded pages under this module's own tenant-scoped transaction. It carries no retention period and no sweep, because the trail is hash chained from its first event and removing the oldest links by age would make the chain unverifiable; schedules and webhook triggers are configuration a person manages, so they are not declared as a class that ages.
 permissions:
   - id: automations.schedules.read
     description: Read schedules in the active tenant.
@@ -46,7 +56,12 @@ dataOwnership:
   - automations.core owns schedule definitions, webhook trigger definitions, their encrypted secrets, and its own audit trail.
   - agents.core keeps runs, run history, token usage, cost accounting, and budget caps, so cost protection survives with automations uninstalled.
   - Automations stores an agent identifier and never copies agent definitions, skills, or provider credentials.
+  - For a workflow target automations.core stores the published workflow key, the configuring user, the trusted permission snapshot, and the run correlation; workflows.core keeps the selected revision, execution payload, evidence, usage, cost, status, cancellation, and run history.
 acceptanceScenarios:
+  - id: AUTO-DATA-CLASS-EXPORT
+    given: Two workspaces hold automation audit events and the platform has sealed the data class registry.
+    when: The workspace export runs the automations.core.audit-events operation for one of them.
+    then: Every event of that workspace is written to the sink by a bounded keyset walk with the oldest and newest event time in the summary, the other workspace contributes nothing, a workspace without events answers no rows and no range, and the class declares no sweep so the hash chain keeps its first link.
   - id: AUTO-SCHEDULE-FIRES
     given: An enabled schedule on an existing agent is due.
     when: The worker ticks twice inside the same slot.
@@ -91,3 +106,47 @@ acceptanceScenarios:
     given: Two workspaces each own an enabled schedule that is due.
     when: The scheduler polls for due work across tenants.
     then: The poll returns only the workspace id, schedule id and next run time; the label, input template, configuring actor and permission snapshot are unreadable on that connection, and it cannot write.
+  - id: AUTO-WORKFLOW-REGISTER
+    given: automations.core and workflows.core are composed.
+    when: Platform composition completes before module start hooks run.
+    then: Exactly one workflow target adapter is available to automations.core, a duplicate registration stops boot, and no second scheduler, webhook ingress, or workflow worker starts.
+  - id: AUTO-WORKFLOW-OPTIONAL
+    given: workflows.core is unavailable.
+    when: A user opens automations or an automatic trigger becomes due.
+    then: Agent targets continue to work, workflow targets are hidden or marked unavailable, existing workflow target configuration is retained, no workflow run is created, and automations records a safe unavailable outcome without reading workflow storage.
+  - id: AUTO-WORKFLOW-CONFIGURE
+    given: A user can manage the schedule or trigger, read workflow definitions, execute workflow runs, and holds every permission required by a published workflow.
+    when: The user selects that workflow as the automation target.
+    then: automations.core stores the workflow key, configuring user, trusted permission snapshot, and target input configuration without copying a workflow revision, graph, secret, or execution record.
+  - id: AUTO-WORKFLOW-CONFIGURE-DENY
+    given: A user lacks automation management, workflow read, workflow execution, or one permission required by the selected workflow.
+    when: The user attempts to create or update a workflow schedule or trigger.
+    then: automations.core refuses before persisting the target and grants no permission of its own.
+  - id: AUTO-WORKFLOW-SCHEDULE
+    given: An enabled workflow schedule is due for a persisted slot and its once-resolved input template produces bounded JSON.
+    when: The automations worker fires that slot more than once because of polling or recovery.
+    then: One workflow is enqueued by published key with a schedule origin, the automations.core service actor, the configuring user, the trusted permission snapshot, and the same slot-derived idempotency key, and automations stores the returned run correlation.
+  - id: AUTO-WORKFLOW-RUN-NOW
+    given: An authorized user selects Run now on a workflow schedule and still holds every permission required by its published workflow.
+    when: automations.core invokes the target with a bounded request identifier.
+    then: The workflow actor is the real requesting user, the origin is module automations.core with operation schedules.run-now, the permission snapshot is the caller's current trusted snapshot, and the idempotency key derives from the request.
+  - id: AUTO-WORKFLOW-WEBHOOK
+    given: An enabled workflow trigger receives a fresh valid signature and a bounded JSON body.
+    when: The same signed request is delivered more than once.
+    then: automations.core verifies ingress once per delivery, passes the parsed JSON unchanged with a webhook origin and a stable signature-digest key, workflows.core returns the same run, and neither module exposes the secret or raw signature.
+  - id: AUTO-WORKFLOW-TENANT
+    given: Two tenants use the same workflow key and equivalent schedule or trigger identifiers and payloads.
+    when: Their automations fire.
+    then: Each invocation uses only its trusted tenant context, idempotency is isolated per tenant, each run resolves that tenant's published workflow, and neither tenant can observe or affect the other's target or run.
+  - id: AUTO-WORKFLOW-UNAVAILABLE-TARGET
+    given: A configured workflow is archived, unpublished, missing, or no longer authorized by the stored permission snapshot.
+    when: Its schedule or webhook attempts to fire.
+    then: workflows.core refuses with its stable code, no fallback target or revision is selected, automations records a safe correlated failure, and the schedule or trigger is made visibly unavailable until an authorized user updates it.
+  - id: AUTO-WORKFLOW-IDEMPOTENCY-CONFLICT
+    given: An automation source reuses a persisted slot or accepted signature digest with a different workflow key or parsed input hash.
+    when: automations.core calls workflows.execution.v1 with the existing idempotency key.
+    then: workflows.core returns WORKFLOW_IDEMPOTENCY_CONFLICT, no second run is created, and automations records the refusal without retrying under a new key.
+  - id: AUTO-WORKFLOW-ACTION
+    given: A workflow run node calls the automations-workflows.schedule.run tool with a durable node idempotency key.
+    when: The run actor is a user or service holding automations.schedules.manage, or an agent actor, or a caller without that permission or key.
+    then: Only the authorized non-agent actor fires the schedule, the schedule may dispatch an agent target only, a retried node attempt reuses the same automation key, and every other caller is refused before automations executes.
