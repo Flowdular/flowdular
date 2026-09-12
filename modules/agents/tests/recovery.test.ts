@@ -11,6 +11,7 @@ import {
 import { AgentHarness, type AgentProvider } from '@flowdular/harness';
 import type { CreateAgentInput } from '../src/domain/types.ts';
 import { AgentService } from '../src/services/agent-service.ts';
+import type { AgentRepository } from '../src/services/repository.ts';
 import { agentsDataClasses } from '../src/services/data-classes.ts';
 import {
 	AgentWorker,
@@ -639,6 +640,60 @@ describe('agent run recovery and lifecycle', () => {
 			),
 		).toBeNull();
 		expect((await service.getRun(tenantId, queued.id)).status).toBe('queued');
+	});
+
+	describe('an event write refused mid-run', () => {
+		function refusingRepository(owned: boolean): AgentRepository {
+			return new Proxy(database.repository, {
+				get(target, property) {
+					const value = Reflect.get(target, property) as unknown;
+					if (property === 'appendRunEvent')
+						return async () => {
+							throw new Error('connection reset');
+						};
+					if (property === 'renewLease') return async () => owned;
+					return typeof value === 'function' ? value.bind(target) : value;
+				},
+			}) as AgentRepository;
+		}
+
+		async function abortReason(
+			repository: AgentRepository,
+			workerId: string,
+		): Promise<readonly string[]> {
+			const provider = abortableProvider();
+			const harness = new AgentHarness({ providers: [provider] });
+			const worker = new AgentWorker(repository, harness, {
+				workerId,
+				concurrency: 1,
+				leaseMs: 1_000,
+			});
+			workers.push(worker);
+			const service = new AgentService(repository, harness, worker);
+			const agent = await activeAgent(service);
+			await worker.start();
+			await service.enqueueRun(tenantId, actor, [], {
+				agentId: agent.id,
+				trigger: 'service',
+				input: 'Write me an event.',
+				toolGrants: [],
+			});
+			await waitFor(() => provider.reasons.length === 1);
+			await waitFor(() => worker.status().inFlight === 0);
+			return provider.reasons;
+		}
+
+		it('reads as a lost lease when the worker no longer holds the run', async () => {
+			expect(
+				await abortReason(refusingRepository(false), 'worker:refused-lost'),
+			).toEqual(['lease-lost']);
+		});
+
+		it('reads as a persistence failure while the worker still holds the run', async () => {
+			expect(
+				await abortReason(refusingRepository(true), 'worker:refused-held'),
+			).toEqual(['event-persistence-failed']);
+		});
 	});
 
 	describe('AGENTS-ERASE-RUNNING-RUN', () => {

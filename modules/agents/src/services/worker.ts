@@ -336,7 +336,25 @@ export class AgentWorker {
 						event,
 					),
 				);
-				void eventWrites.catch((error) => {
+				void eventWrites.catch(async (error) => {
+					/* An event refused on a run this worker no longer holds is the lost
+					   lease, not a persistence fault: an erasure or another worker took
+					   the row, and which failure surfaces first is a matter of timing. */
+					let owned = false;
+					try {
+						owned = await this.repository.renewLease(
+							candidate.tenantId,
+							candidate.runId,
+							this.options.workerId,
+							this.#now() + this.options.leaseMs,
+						);
+					} catch {
+						owned = false;
+					}
+					if (!owned) {
+						controller.abort(LEASE_LOST);
+						return;
+					}
 					eventFailure = error;
 					controller.abort('event-persistence-failed');
 				});
