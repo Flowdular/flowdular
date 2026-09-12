@@ -1,0 +1,28 @@
+{
+	"protocolVersion": 1,
+	"moduleId": "metering.core",
+	"commands": [
+		{
+			"path": ["metering", "limits", "list"],
+			"capability": {
+				"id": "metering.limits.list",
+				"version": 1,
+				"summary": "List the monthly meter limits of one workspace.",
+				"risk": "read",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": false
+			}
+		},
+		{
+			"path": ["metering", "limits", "set"],
+			"capability": {
+				"id": "metering.limits.set",
+				"version": 1,
+				"summary": "Set the monthly limit of one meter for one workspace.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		}
+	]
+}

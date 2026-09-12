@@ -1,0 +1,257 @@
+schemaVersion: 2
+id: metering.core
+specVersion: 0.1.3
+status: approved
+name: Metering Core
+description: Counts what a workspace consumes through meters every module declares, keeps the facts in daily buckets under the tenant's own row-level security, shows usage to the workspace, and lets the deployment operator set per-workspace limits that a module checks before a costly operation and that refuse it once exhausted.
+profile: full
+capabilities:
+  - api
+  - database
+  - client
+  - translations
+  - cli
+dependencies:
+  - id: system.core
+    range: ^0.5.1
+  - id: auth.core
+    range: ^0.12.0
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - Persistence runs on the shared asynchronous database contract with explicit PostgreSQL SQL; every tenant table enables and forces row-level security with USING and WITH CHECK policies bound to the transaction-local tenant id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
+  - A meter is declared by its owning module through the public capability metering.meters.v1 at composition with a stable key, a label, a unit and whether it is cumulative per period or a gauge; metering.core records only what a module reports through the same capability and never reads another module's tables.
+  - A usage fact is reported through record(tenantId, meter, amount, at, sourceRef) and written by metering.core inside its own tenant-scoped transaction, never through the reporter's database handle; it lands in the day bucket of the workspace's calendar day in UTC, uses integer arithmetic, and is idempotent per (tenantId, meter, sourceRef) when the reporter names a source reference. An instant outside the range a UTC day covers is refused with a stable error before anything is written, and a month total past the safe integer range is read as that maximum rather than failing the fact that crossed it, because every ceiling is smaller.
+  - A limit is a per-workspace ceiling per meter per calendar month, set only by the deployment operator through the CLI or a platform setting, never by the workspace; a workspace without a limit is unlimited.
+  - A module asks check(tenantId, meter, amount) before a costly operation and receives allowed, warning or refused; refused is returned once the month's usage plus the amount exceeds the limit, and the refusal is recorded in the module's audit trail by the caller with the stable code METER_LIMIT_EXCEEDED.
+  - When a month's usage first crosses 80 percent of a limit, and again when it reaches 100 percent, metering.core publishes a notification of kind meter-threshold to the workspace owners through notifications.publish.v1 when present, once per meter per month per threshold.
+  - Usage and limits are readable by members holding metering.usage.read; the deployment operator lists and sets limits with the CLI, which writes a limit event with the operator label in the same transaction as the limit.
+  - Buckets sum amounts for both meter kinds; a gauge meter differs only in how the reporter chooses amounts and how a screen labels them, and a distinct gauge rollup is a later decision.
+  - Buckets older than the workspace's retention for the class metering.core.buckets are swept through the platform data class registry, at most the batch the registry asked for, taking the idempotency claims of the swept days with them and reporting the number of buckets removed; limits and threshold records are kept until the operator removes them.
+permissions:
+  - id: metering.usage.read
+    description: Read usage, meters and limits of the active workspace.
+dataOwnership:
+  - metering.core owns meter declarations as recorded, day buckets, monthly limits and threshold notifications.
+  - Each declaring module owns the operation it meters and decides when to ask and how to refuse; metering.core never performs the operation.
+entities:
+  - id: meter
+    name: Meter
+    description: One declared counter as the workspace sees it.
+    fields:
+      - id: key
+        type: string
+        required: true
+        unique: tenant
+        maxLength: 96
+        description: module id plus meter key, for example agents.core.run-tokens.
+      - id: moduleId
+        type: string
+        required: true
+        maxLength: 64
+      - id: label
+        type: string
+        required: true
+        maxLength: 120
+      - id: unit
+        type: string
+        required: true
+        maxLength: 32
+      - id: kind
+        type: enum
+        required: true
+        values:
+          - cumulative
+          - gauge
+  - id: bucket
+    name: Usage bucket
+    description: The usage of one meter on one UTC day.
+    fields:
+      - id: meter
+        type: reference
+        required: true
+        reference: meter
+      - id: day
+        type: date
+        required: true
+      - id: amount
+        type: integer
+        required: true
+      - id: events
+        type: integer
+        required: true
+  - id: limit
+    name: Monthly limit
+    description: The operator's ceiling for one meter in one workspace.
+    fields:
+      - id: meter
+        type: reference
+        required: true
+        reference: meter
+      - id: monthlyLimit
+        type: integer
+        required: true
+      - id: setBy
+        type: string
+        required: true
+        maxLength: 128
+        description: The operator label recorded by the CLI.
+      - id: updatedAt
+        type: datetime
+        required: true
+  - id: limit-event
+    name: Limit event
+    description: The immutable record of one limit change by the operator.
+    fields:
+      - id: meter
+        type: reference
+        required: true
+        reference: meter
+      - id: previousLimit
+        type: integer
+        required: false
+      - id: monthlyLimit
+        type: integer
+        required: true
+      - id: setBy
+        type: string
+        required: true
+        maxLength: 128
+      - id: occurredAt
+        type: datetime
+        required: true
+  - id: threshold-notice
+    name: Threshold notice
+    description: A record that a threshold notification was sent for a meter in a month.
+    fields:
+      - id: meter
+        type: reference
+        required: true
+        reference: meter
+      - id: month
+        type: string
+        required: true
+        maxLength: 7
+        description: YYYY-MM in UTC.
+      - id: threshold
+        type: enum
+        required: true
+        values:
+          - warning
+          - exhausted
+      - id: sentAt
+        type: datetime
+        required: true
+screens:
+  - id: usage
+    kind: list
+    entity: meter
+    title: Usage
+    columns:
+      - key
+      - label
+      - unit
+      - kind
+    filters:
+      - moduleId
+    navigationGroup: Administration
+  - id: limits
+    kind: list
+    entity: limit
+    title: Limits
+    columns:
+      - meter
+      - monthlyLimit
+      - setBy
+      - updatedAt
+    navigationGroup: Administration
+actions: []
+widgets:
+  - id: usage-summary
+    slot: dashboard.metrics
+    entity: bucket
+    description: This month's usage of the three busiest meters against their limits when limits exist.
+settings:
+  - key: warningPercent
+    type: integer
+    scope: platform
+    default: 80
+    description: Percent of a limit at which the warning notification is sent; 50 to 99.
+agentTools: []
+outOfScope:
+  - No module declares or reports a meter in this version. metering.core ships as the substrate only; agents.core run tokens is the first producer and is delivered as a separate change (D-METERING-PRODUCER).
+  - Billing, invoices, prices and payment collection are not offered; metering counts and limits.
+  - Workspace administrators cannot set their own limits; a self-imposed cost cap is a later decision.
+  - Real-time streaming of usage is not offered; the dashboard reads day buckets.
+decisions:
+  - id: D-METERING-SCOPE
+    question: What does the first version contain?
+    answer: A meter registry per module, day buckets under tenant RLS, a usage screen, operator-set per-workspace monthly limits, and a check that refuses once exhausted; no billing.
+    decidedBy: user
+  - id: D-METERING-LIMITS
+    question: Who sets limits and what happens when they are exceeded?
+    answer: The deployment operator through the CLI or platform settings; owners are notified at 80 percent and at 100 percent, the operation is refused with a stable error and audited, and the month resets on the calendar.
+    decidedBy: user
+  - id: D-METERING-REGISTRY
+    question: How do modules declare and report?
+    answer: Through the capability metering.meters.v1 with declare at composition and record and check at run time; metering.core writes the fact in its own tenant-scoped transaction and no database handle crosses the capability, so a fact commits independently of whatever the reporter is doing and a source reference is what makes a repeat a no-op.
+    decidedBy: default
+  - id: D-METERING-PERMISSIONS
+    question: Who reads usage?
+    answer: Owners hold metering.usage.read; members hold nothing.
+    decidedBy: default
+  - id: D-METERING-CLI
+    question: What does the operator use?
+    answer: The commands metering limits list and metering limits set --workspace --meter --monthly-limit [--apply], with dry run and audit; a command that is not applying anything verifies the migration ledger and applies no schema, so a read never creates this module's tables.
+    decidedBy: default
+  - id: D-METERING-PRODUCER
+    question: Which module reports the first facts?
+    answer: None in this version. The substrate ships first, so the capability, the store, the limits and the screens are delivered and proved against a stand-in reporter, and agents.core run tokens is the first real producer, delivered next as its own change on the schedule the coordinator sets.
+    decidedBy: user
+acceptanceScenarios:
+  - id: METERING-DECLARE-RECORD
+    given: A module declares a cumulative meter at composition and records two facts with source references on the same UTC day.
+    when: A principal holding metering.usage.read reads usage.
+    then: One bucket for that day holds the sum with two events, a repeat of a fact with the same source reference changes nothing, and the meter appears with its module, label and unit.
+  - id: METERING-CHECK
+    given: A workspace with a monthly limit of 100 on a meter and usage of 90 this month.
+    when: The module checks an amount of 5, then an amount of 20, then usage reaches 100 and it checks 1.
+    then: The first answers allowed, the second answers refused with METER_LIMIT_EXCEEDED before any write by the caller, and the third answers refused; a workspace without a limit always answers allowed.
+  - id: METERING-THRESHOLDS
+    given: A limit of 100 and a notifications capability present.
+    when: Usage crosses 80 and later reaches 100 within the same month, then more facts arrive.
+    then: One meter-threshold warning and one exhausted notification reach the workspace owners, each once, and the threshold records prevent repeats until the next month.
+  - id: METERING-LIMIT-SET
+    given: A workspace and a declared meter.
+    when: The operator runs metering limits set for the workspace and meter without --apply, then with --apply, then lists limits.
+    then: The dry run prints the plan and writes nothing, the apply persists the limit with the operator label and an audit event, and the list shows it; a member of the workspace cannot change it through any endpoint.
+  - id: METERING-MONTH-RESET
+    given: Usage exhausted a limit in one month.
+    when: The next calendar month begins and the module checks an amount.
+    then: The check answers allowed and the previous month's buckets remain readable.
+  - id: METERING-DENY
+    given: A principal is unauthenticated or lacks metering.usage.read.
+    when: The principal reads usage or limits.
+    then: The server denies the operation before repository access.
+  - id: METERING-TENANT-BOUNDARY
+    given: Two workspaces with buckets and limits on the same meter.
+    when: A runtime transaction bound to one workspace reads or writes any of them.
+    then: Only that workspace's rows are visible or mutable and a row carrying another tenant identifier is rejected by the forced policy.
+  - id: METERING-CLI-READONLY
+    given: A deployment database this module has never been migrated in.
+    when: The operator lists limits, or runs the set command without --apply.
+    then: The command applies no schema and refuses with a stable error naming the missing migration, and the tables appear only once a command runs with --apply or the platform starts.
+  - id: METERING-INSTANT-BOUNDS
+    given: A reporter passing an instant no UTC day covers.
+    when: It reports a fact.
+    then: The call is refused with a stable error and nothing is counted.
+  - id: METERING-SWEEP-BATCH
+    given: A workspace with buckets older than its retention.
+    when: The registry sweeps the class with a batch that is not a whole number, and again with one over the module's own ceiling.
+    then: Each pass removes rows under a batch clamped to a whole number within the ceiling, and neither is refused, because a batch this module would not have chosen is no reason to leave the rows unswept.
+  - id: METERING-ZERO-LIMIT
+    given: A meter whose workspace limit is zero.
+    when: A member reads usage.
+    then: The meter reads as fully consumed at 100 percent in the danger tone and its dashboard tile carries the attention badge, distinct from an unlimited meter, which carries no share.

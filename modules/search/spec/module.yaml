@@ -1,0 +1,177 @@
+schemaVersion: 2
+id: search.core
+specVersion: 0.1.3
+status: approved
+name: Search Core
+description: Lets a member find records across modules from one search box, by asking every module that registered a search provider to search its own tables under the member's permissions and merging the paginated hits, with PostgreSQL full-text indexes owned by each module and no central index.
+profile: full
+capabilities:
+  - api
+  - database
+  - client
+  - translations
+dependencies:
+  - id: system.core
+    range: ^0.5.1
+  - id: auth.core
+    range: ^0.12.0
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - Persistence runs on the shared asynchronous database contract with explicit PostgreSQL SQL; every tenant table enables and forces row-level security with USING and WITH CHECK policies bound to the transaction-local tenant id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
+  - A search provider is registered by its owning module through the public capability search.providers.v1 at composition with a stable key, a label, the permission a member needs to see its hits, and a search(tenantId, principal, query, page) operation that runs inside the owner's own tenant-scoped transaction over the owner's own tables; search.core never reads another module's tables and holds no index of its own.
+  - A query is bounded to 200 characters, normalised, and sent to every provider whose permission the principal holds, in parallel, with a per-provider time budget; a provider that fails or times out contributes no hits and is reported as unavailable in the response, never as an error for the whole search.
+  - Hits are merged by provider order and score, paginated with the platform pagination helpers, and carry only what the provider returned (record reference, title, snippet, view id and route); search.core never fetches the record.
+  - A provider searches its own tables with an index it owns, PostgreSQL full-text search where the owner holds the columns; the capability carries no index declaration, so composition validates the provider shape and bounds only, and the owner's tests prove the index or the bounded scan (users.core scans at most 500 memberships through the auth administration port because auth.core owns the table).
+  - Recent queries of a member are kept per workspace for their own recall (bounded to 50, deletable by the member) and are the data class search.core.recent-queries with a default retention of 90 days, swept through the platform registry; a query is kept only when the member submits it deliberately or opens one of its hits, never for a debounced prefix.
+  - The command palette shows record hits below navigation entries when a query is at least two characters long, debounced, and never blocks navigation; the full search screen lists hits with provider filters and pages further hits through the cursor the previous page answered with.
+permissions:
+  - id: search.records.read
+    description: Search records across modules in the active workspace within the member's own permissions.
+dataOwnership:
+  - search.core owns the registry of providers as recorded and the member's recent queries.
+  - Each provider module owns its index, its ranking and the permission that gates its hits.
+entities:
+  - id: provider
+    name: Search provider
+    description: One registered provider as the workspace sees it.
+    fields:
+      - id: key
+        type: string
+        required: true
+        unique: tenant
+        maxLength: 96
+      - id: moduleId
+        type: string
+        required: true
+        maxLength: 64
+      - id: label
+        type: string
+        required: true
+        maxLength: 120
+      - id: permission
+        type: string
+        required: true
+        maxLength: 96
+  - id: recent-query
+    name: Recent query
+    description: A query a member ran, for recall.
+    fields:
+      - id: accountId
+        type: string
+        required: true
+        maxLength: 128
+      - id: query
+        type: string
+        required: true
+        maxLength: 200
+      - id: ranAt
+        type: datetime
+        required: true
+screens:
+  - id: search
+    kind: list
+    entity: provider
+    title: Search
+    columns:
+      - label
+      - moduleId
+    filters:
+      - key
+    navigationGroup: Workspace
+actions:
+  - id: clear-recent
+    entity: recent-query
+    permission: search.records.read
+    kind: delete
+    risk: workspace-write
+    idempotent: true
+    description: Delete the member's own recent queries in this workspace.
+  - id: remember
+    entity: recent-query
+    permission: search.records.read
+    kind: create
+    risk: workspace-write
+    idempotent: true
+    description: Keep the query a member opened a hit from in their own recall list, as one write that outlives the screen it navigates away from; a repeat of the same query moves the existing row instead of adding one.
+widgets: []
+settings:
+  - key: providerTimeoutMs
+    type: integer
+    scope: platform
+    default: 1500
+    description: Time budget per provider per query; 200 to 10000.
+  - key: hitsPerProvider
+    type: integer
+    scope: platform
+    default: 20
+    description: Hits a provider may return per page; 5 to 100.
+agentTools: []
+outOfScope:
+  - A central index, a search service and cross-module ranking beyond provider order and score are rejected by RFC 0002 G7.
+  - Fuzzy matching and synonyms depend on each provider's index configuration; v1 uses the simple PostgreSQL configuration per locale.
+  - Searching document contents is not offered; documents.core indexes filenames and descriptions only.
+decisions:
+  - id: D-SEARCH-SHAPE
+    question: What is the first version?
+    answer: A provider contract per module, parallel querying with a time budget, merged paginated hits in the command palette and a search screen, PostgreSQL full-text indexes per module; the first providers are users members, notifications inbox, documents filenames and audit data classes.
+    decidedBy: user
+  - id: D-SEARCH-PERMISSIONS
+    question: Who may search?
+    answer: Every member holds search.records.read; each hit is additionally gated by the provider's permission.
+    decidedBy: default
+  - id: D-SEARCH-SCREEN
+    question: What does the Search screen show?
+    answer: The results of the query box, with a provider filter whose options read label and module id, and the unavailable providers named; the provider rows themselves are the filter, not a list of their own.
+    decidedBy: default
+  - id: D-SEARCH-RECENT
+    question: Are queries stored?
+    answer: Only the member's own last 50 per workspace, for recall, deletable, retained by policy, and only for a deliberate submit or an opened hit so a debounced prefix is never kept.
+    decidedBy: default
+  - id: D-SEARCH-TOPBAR
+    question: Does search.core contribute its own topbar widget?
+    answer: No. The shell already owns a topbar search button that opens the command palette, and a second widget in the same slot duplicated it; search.core contributes the palette hits and the screen only.
+    decidedBy: default
+acceptanceScenarios:
+  - id: SEARCH-PROVIDERS
+    given: Four modules registered providers at composition and one of them requires a permission the member lacks.
+    when: The member searches a term that matches records in all four.
+    then: Hits from the three permitted providers are merged and paginated, the fourth contributes nothing and is not listed as unavailable, and each hit carries a record reference, title, snippet and route only.
+  - id: SEARCH-TIMEOUT
+    given: A provider that exceeds the time budget.
+    when: A member searches.
+    then: The other providers' hits are returned within the budget, the slow provider is reported as unavailable, and no error is raised for the search.
+  - id: SEARCH-BOUNDS
+    given: A query over 200 characters or shorter than two.
+    when: A member searches.
+    then: The over-long query is refused with a stable error and the short query returns navigation entries only.
+  - id: SEARCH-RECENT
+    given: A member ran 51 queries.
+    when: The member lists recent queries and then clears them.
+    then: The newest 50 are listed for that member only and the clear removes them for that member in this workspace only.
+  - id: SEARCH-DENY
+    given: A principal is unauthenticated or lacks search.records.read.
+    when: The principal searches.
+    then: The server denies the operation before any provider is called.
+  - id: SEARCH-TENANT-BOUNDARY
+    given: Two workspaces with records and recent queries.
+    when: A member of one workspace searches.
+    then: Only that workspace's hits and recent queries appear, and a row carrying another tenant identifier is rejected by the forced policy.
+  - id: SEARCH-PAGING
+    given: More hits than one page holds.
+    when: The member asks for the next page from the search screen.
+    then: The cursor the previous page answered with is sent back, the further hits extend the list, and no cursor is answered past a provider that was unavailable on that page.
+  - id: SEARCH-RECENT-DELIBERATE
+    given: A member typing a query on the search screen.
+    when: The debounced searches run and the member then submits the query.
+    then: Only the submitted query is kept in recall, and the typed prefixes are not.
+  - id: SEARCH-STALE-ANSWER
+    given: A search of the search screen that has not answered yet, and an overlapping later request.
+    when: The member deletes the term back under the minimum, or types a different term, before the answer arrives.
+    then: The answer is discarded and no hits or page position are shown under a term that did not produce them; only the newest request answering the term the box still holds may write, and the screen's one load of the provider filter options, which asks with no term before the member has typed, still lands.
+  - id: SEARCH-OPEN-RECALL
+    given: A member opening one of the hits of the query on the search screen.
+    when: The screen navigates to the record.
+    then: The query is kept in the member's recall by one write that outlives the navigation and calls no provider; the write is refused without the permission and without the CSRF token, and a term under the minimum is not kept.

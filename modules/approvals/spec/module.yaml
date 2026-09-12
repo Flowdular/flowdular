@@ -1,0 +1,302 @@
+schemaVersion: 2
+id: approvals.core
+specVersion: 0.1.5
+status: approved
+name: Approvals Core
+description: Turns a policy decision that needs a person into an approval request with named requirements, a decision record that is append-only, notifications to the people who can decide, and a workflow node that waits for the decision, so every module delegates who may decide instead of writing its own approval state machine.
+profile: full
+capabilities:
+  - api
+  - database
+  - client
+  - translations
+dependencies:
+  - id: system.core
+    range: ^0.5.1
+  - id: auth.core
+    range: ^0.12.0
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - Persistence runs on the shared asynchronous database contract with explicit PostgreSQL SQL; every tenant table enables and forces row-level security with USING and WITH CHECK policies bound to the transaction-local tenant id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
+  - A module never decides an approval itself. It evaluates its policies through the kernel policy seam; when the decision reports requiresApproval, the module opens a request through the public capability approvals.requests.v1 and continues only when the request is approved.
+  - A request names the subject module, the subject reference, the permission and action it gates, the requirement resolved at creation into the set of eligible deciders (members holding the named role or scope in the workspace, excluding the requester), the number of decisions needed, and the expiry; eligibility is resolved again at decision time so a member who lost the role after the request cannot decide.
+  - The requester never decides their own request, and a decider decides once; a repeated decision by the same account is refused with a stable conflict.
+  - A decision is append-only. Approving, rejecting and the expiry are recorded as decision rows with the account, the time and an optional bounded comment; a request reaches approved when the needed number of approvals is recorded, rejected on the first rejection, expired when the expiry passes without a resolution, cancelled only by the requester or a member holding approvals.requests.manage while pending.
+  - Every state change publishes through notifications.publish.v1 when the capability is present, with the kinds approval-requested to the eligible deciders and approval-decided to the requester, and continues without notifying when it is absent.
+  - The subject module learns the outcome by reading the request through the capability or by the callback it registered when opening the request; the callback runs at most once per terminal state and outside the deciding transaction, and a callback failure never changes the recorded decision.
+  - Expiry is enforced by one poll loop on a fixed platform interval over routing columns on the background role, re-read under the workspace before the request is expired.
+  - The workflows.core human-approval node opens a request with the run as subject and pauses the run until the terminal state; approval resumes the run, rejection or expiry fails it with a stable code; the node's requirement is declared on the node and validated against the workspace roles at publish time.
+  - Opening is idempotent per subject, so one pending request exists per (subject module, subject reference) in a workspace, and a repeated open returns the pending request instead of asking the deciders twice, so a subject module recovering after a crash never duplicates a request.
+  - A requirement naming both a role key and a scope is satisfied only by members holding both; a requirement that resolves to no eligible decider, to fewer deciders than the decisions it needs, or to more than 200 deciders is refused at open with a stable code and no request is created.
+  - A member who gains eligibility after a request opened may decide it (eligibility is re-read at decision time) but is not listed as a decider, because the decider list is the snapshot taken at open.
+  - approvals.core declares one data class to the platform registry while it composes, and performs its operations itself on its own lease under its own tenant transaction. approvals.core.requests holds the request row, the eligibility snapshot taken when it opened and every decision recorded on it, keeps them 400 days by default, sweeps only resolved requests in bounded batches so a request still asking is never taken from the people who have to answer it however old it is, and exports one workspace by keyset in bounded pages carrying each request with its decisions and their comments. An erasure removes the resolved requests the subject opened with their eligibility and decision rows, and keeps but redacts every row naming the subject in somebody else's request, a decision as well as an eligibility row of a pending request, writing a fixed marker over a comment and a tombstone unique to the row over the account, because the ledger is append-only and one fixed account value would collide with the unique decider index, or with the eligibility key, as soon as two erased subjects had answered or been eligible for the same request; the remaining deciders keep their own rows and no account of the subject survives; the count answers every request the subject opened in any state.
+  - Whether a member may read a request is settled before its state is reported. A member who is neither the requester, nor named by the eligibility snapshot, nor eligible now, nor holding approvals.requests.manage is answered as if the request did not exist, on the read, on a decision and on a cancellation alike, so none of them reveals that the request exists or what became of it.
+permissions:
+  - id: approvals.requests.read
+    description: Read the approval requests of the active workspace that the member requested or may decide.
+  - id: approvals.requests.decide
+    description: Approve or reject a request the member is eligible for in the active workspace.
+  - id: approvals.requests.manage
+    description: Read every request of the active workspace and cancel a pending one.
+dataOwnership:
+  - approvals.core owns approval requests, resolved eligibility snapshots and decision rows.
+  - The subject module owns the record the request gates and its own domain state; it changes that state only after reading the request's terminal state.
+  - auth.core owns roles and memberships; eligibility is resolved through its public surface at creation and at decision time.
+entities:
+  - id: request
+    name: Approval request
+    description: One pending or resolved question of whether an action on a record may proceed.
+    fields:
+      - id: subjectModule
+        type: string
+        required: true
+        maxLength: 64
+      - id: subjectRef
+        type: string
+        required: true
+        maxLength: 200
+      - id: permission
+        type: string
+        required: true
+        maxLength: 96
+      - id: action
+        type: string
+        required: true
+        maxLength: 64
+      - id: title
+        type: string
+        required: true
+        maxLength: 200
+      - id: summary
+        type: text
+        required: false
+        maxLength: 2000
+      - id: requesterAccountId
+        type: string
+        required: true
+        maxLength: 128
+      - id: requirement
+        type: json
+        required: true
+        description: The resolved requirement as opened, with roleKey or scope, decisions needed and expiresInDays.
+      - id: decisionsNeeded
+        type: integer
+        required: true
+      - id: status
+        type: enum
+        required: true
+        values:
+          - pending
+          - approved
+          - rejected
+          - expired
+          - cancelled
+      - id: expiresAt
+        type: datetime
+        required: true
+      - id: resolvedAt
+        type: datetime
+        required: false
+    states:
+      field: status
+      values:
+        - pending
+        - approved
+        - rejected
+        - expired
+        - cancelled
+      transitions:
+        - from: pending
+          to: approved
+          permission: approvals.requests.decide
+        - from: pending
+          to: rejected
+          permission: approvals.requests.decide
+        - from: pending
+          to: expired
+        - from: pending
+          to: cancelled
+          permission: approvals.requests.manage
+  - id: decision
+    name: Decision
+    description: One append-only decision on a request.
+    fields:
+      - id: request
+        type: reference
+        required: true
+        reference: request
+      - id: deciderAccountId
+        type: string
+        required: true
+        maxLength: 128
+      - id: decision
+        type: enum
+        required: true
+        values:
+          - approve
+          - reject
+          - expire
+          - cancel
+      - id: comment
+        type: text
+        required: false
+        maxLength: 2000
+      - id: decidedAt
+        type: datetime
+        required: true
+screens:
+  - id: inbox
+    kind: list
+    entity: request
+    title: Approvals
+    columns:
+      - title
+      - subjectModule
+      - action
+      - requesterAccountId
+      - status
+      - expiresAt
+    filters:
+      - status
+    navigationGroup: Workspace
+  - id: request
+    kind: record
+    entity: request
+    title: Approval request
+    columns:
+      - title
+      - summary
+      - subjectModule
+      - subjectRef
+      - permission
+      - action
+      - requirement
+      - decisionsNeeded
+      - status
+      - expiresAt
+      - resolvedAt
+    navigationGroup: Workspace
+actions:
+  - id: approve
+    entity: request
+    permission: approvals.requests.decide
+    kind: custom
+    risk: workspace-write
+    idempotent: false
+    description: Record an approval by an eligible member; the request becomes approved when the needed count is reached.
+  - id: reject
+    entity: request
+    permission: approvals.requests.decide
+    kind: custom
+    risk: workspace-write
+    idempotent: false
+    description: Record a rejection by an eligible member; the request becomes rejected.
+  - id: cancel
+    entity: request
+    permission: approvals.requests.manage
+    kind: custom
+    risk: workspace-write
+    idempotent: true
+    description: Cancel a pending request; the requester may cancel their own request without the manage permission.
+widgets:
+  - id: pending-count
+    slot: dashboard.metrics
+    entity: request
+    description: The number of requests the member may decide; hidden at zero.
+settings:
+  - key: defaultExpiryDays
+    type: integer
+    scope: tenant
+    default: 7
+    description: Expiry applied when a requirement names none; 1 to 90.
+  - key: expiryIntervalMinutes
+    type: integer
+    scope: platform
+    default: 15
+    description: How often the expiry loop runs; 1 to 1440.
+agentTools: []
+outOfScope:
+  - Delegation of a decision to another member and out-of-office rules are not offered.
+  - Approval chains with ordered stages are not offered; a requirement is one set of deciders and one count.
+  - E-mail delivery of approval notifications follows the notifications module's own e-mail decision.
+decisions:
+  - id: D-APPROVALS-SCOPE
+    question: What does the first version contain?
+    answer: The kernel policy seam, this module with requests, decisions and notifications, and the workflows.core human-approval node, in one delivery.
+    decidedBy: user
+  - id: D-APPROVALS-DECIDERS
+    question: How are deciders resolved?
+    answer: By a workspace role or scope named in the requirement, with a needed count (default 1), the requester excluded, and an expiry (default 7 days) after which the request expires.
+    decidedBy: user
+  - id: D-APPROVALS-ELIGIBILITY-RECHECK
+    question: Is eligibility fixed at creation?
+    answer: A snapshot is kept for display, and eligibility is checked again at decision time against the live membership.
+    decidedBy: default
+  - id: D-APPROVALS-NOTIFY
+    question: How do deciders learn about a request?
+    answer: Through notifications.publish.v1 kinds approval-requested and approval-decided, tolerated absent; the Approvals screen lists what a member may decide.
+    decidedBy: default
+  - id: D-APPROVALS-CALLBACK
+    question: How does the subject module learn the outcome?
+    answer: By reading the request through the capability or through a callback registered at opening, run once per terminal state outside the deciding transaction.
+    decidedBy: default
+  - id: D-APPROVALS-WORKFLOW-NODE
+    question: How does a workflow wait for a person?
+    answer: A ninth node kind, human-approval, declared in workflows.core with its requirement, opening a request with the run as subject and pausing until the terminal state.
+    decidedBy: default
+  - id: D-APPROVALS-POLICY-WIRING
+    question: Which code turns a policy decision that reports requiresApproval into a request?
+    answer: None yet. The kernel policy seam carries the requirement shape and no module in this repository evaluates a record condition that reaches it, so the wiring from a denied policy decision to approvals.requests.v1 is deferred to the first module that needs one; until then a subject module opens a request directly, which is the path workflows.core uses.
+    decidedBy: default
+  - id: D-APPROVALS-PERMISSIONS
+    question: Which of the three permissions do the built-in roles hold by default?
+    answer: Owners hold approvals.requests.read, approvals.requests.decide and approvals.requests.manage; members hold approvals.requests.read and approvals.requests.decide, because a member must see and decide the requests their role makes them eligible for (D-APPROVALS-NOTIFY).
+    decidedBy: default
+  - id: D-APPROVALS-DATA-CLASSES
+    question: Which data classes does approvals.core declare, how long are they kept, and what does an erasure leave behind?
+    answer: One class, approvals.core.requests, covering requests, their eligibility rows and their decisions, kept 400 days by default. The sweep takes resolved requests only, with their eligibility and decision rows; a pending request is never swept however old it is. The export pages requests with their decisions and comments, keyset by id. An erasure removes the resolved requests the subject opened with their rows, and redacts rather than removes the rows naming the subject in somebody else's request, writing a fixed marker over a decision's comment and a per-row tombstone over the account on that decision and on the eligibility rows, in pending requests as well as resolved ones. The append-only ledger keeps its row count, a snapshot goes on reporting how many people could answer, the people who can still answer keep their own rows, and no account of the subject survives anywhere. The count answers how many requests the subject opened, in any state.
+    decidedBy: default
+acceptanceScenarios:
+  - id: APPROVALS-OPEN
+    given: A subject module needs a person to agree to an action on one of its records, with a role requirement and a count of 1.
+    when: The module opens a request through approvals.requests.v1 for a member.
+    then: A pending request is persisted with the resolved eligible deciders excluding the requester, the expiry from the requirement or the workspace default, an approval-requested notification is published to the deciders when the capability is present, and the request id is returned.
+  - id: APPROVALS-DECIDE
+    given: A pending request needing 2 approvals and three eligible deciders.
+    when: One decider approves, a second approves, and the third tries to approve afterwards.
+    then: The first approval keeps the request pending with one decision row, the second resolves it as approved with a resolvedAt and publishes approval-decided to the requester, the third is refused with a stable conflict, and the callback ran exactly once.
+  - id: APPROVALS-REJECT
+    given: A pending request needing 2 approvals.
+    when: An eligible decider rejects it.
+    then: The request is rejected immediately with one rejection row and no further decision is accepted.
+  - id: APPROVALS-INELIGIBLE
+    given: A pending request and a member who is the requester, holds no eligible role, or lost the role after the request was opened.
+    when: That member approves.
+    then: The decision is refused before any write with a stable error and the request stays pending.
+  - id: APPROVALS-EXPIRE
+    given: A pending request whose expiry passed.
+    when: The expiry loop runs.
+    then: The request becomes expired with an expire decision row, the callback runs once with the terminal state, and a later approval is refused.
+  - id: APPROVALS-CANCEL
+    given: A pending request.
+    when: The requester cancels it, and then a member holding approvals.requests.manage cancels another pending request.
+    then: Both requests become cancelled with a cancel decision row and no notification of approval-decided is published for a cancellation.
+  - id: APPROVALS-WORKFLOW-NODE
+    given: A published workflow revision with a human-approval node requiring the owner role.
+    when: A run reaches the node, an owner approves, and in a second run an owner rejects.
+    then: The first run pauses with a pending request and resumes to completion after the approval; the second run fails with a stable code after the rejection; a revision naming a role the workspace lacks is refused at publish time.
+  - id: APPROVALS-DENY
+    given: A principal is unauthenticated or lacks the required permission.
+    when: The principal reads or decides requests.
+    then: The server denies the operation before repository access, and a mutation without a CSRF proof is refused first.
+  - id: APPROVALS-DATA-CLASSES
+    given: Two workspaces hold approval requests of several ages with their eligibility snapshots and decisions, some resolved and one still pending, a subject has opened requests of their own, decided one somebody else opened, and is named in the eligibility snapshot of a pending request somebody else opened, and the platform has sealed the data class registry.
+    when: The platform sweeps, exports, counts and erases the declared class for one of them.
+    then: Only that workspace's requests resolved before the cutoff leave with their eligibility and decision rows and the pending request stays however old it is; the export carries every request of that workspace with its decisions and their comments in bounded keyset pages, and reports no rows and no range for a workspace holding none; the erasure removes the resolved requests the subject opened, keeps every decision the subject made in somebody else's request with a redacted comment and a tombstoned account that stays distinct per row, and tombstones the subject's row in the pending request's snapshot while that request stays pending and decidable by the members whose rows it did not touch; a batch that filled its limit reports itself truncated, and the count answers the requests the subject opened in any state.
+  - id: APPROVALS-TENANT-BOUNDARY
+    given: Two workspaces with requests and decisions.
+    when: A runtime transaction bound to one workspace reads or writes any of them, or the expiry routing read runs.
+    then: Only that workspace's rows are visible or mutable, the routing read sees routing columns alone on the background role, and a row carrying another tenant identifier is rejected by the forced policy.

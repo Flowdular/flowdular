@@ -1,0 +1,439 @@
+schemaVersion: 2
+id: connectors.core
+specVersion: 0.1.3
+status: approved
+name: Connectors Core
+description: Gives a workspace a governed way to call external systems through connector definitions a module or the platform ships, instances an owner configures with sealed credentials and a host allowlist, a test call, a call log without payloads, and an explicit per-instance consent that lets workflows and agents use the connector as an external action, with a generic HTTP JSON connector as the reference.
+profile: full
+capabilities:
+  - api
+  - database
+  - client
+  - translations
+dependencies:
+  - id: system.core
+    range: ^0.5.1
+  - id: auth.core
+    range: ^0.12.0
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - Persistence runs on the shared asynchronous database contract with explicit PostgreSQL SQL; every tenant table enables and forces row-level security with USING and WITH CHECK policies bound to the transaction-local tenant id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
+  - A connector definition lives only in the code registry, never in a tenant table; it is registered through the public capability connectors.definitions.v1 at composition with a stable key, a label, the authentication kinds it supports (api-key, bearer, oauth2-client-credentials, none), its operations (key, label, method, path template, input schema, output schema) and its default host allowlist; the platform ships the generic HTTP JSON definition, and a module may ship its own.
+  - An instance is created by a member holding connectors.instances.manage for one definition, with a base URL, an authentication kind and its credentials sealed under the module keyring FD_CONNECTORS_SECRET_KEY and never returned after creation, a host allowlist that defaults to the base URL host and must contain it, and two consent flags, allowWorkflows and allowAgents, both off by default and switched on only with an explicit confirmation recorded in the audit trail.
+  - Every outbound call from an instance obeys the notifications egress policy (https only, private, loopback and link-local ranges refused at save and at call, no redirects, a bounded timeout and response size) and the instance host allowlist, and is recorded in the call log with the operation, the outcome class, the status, the duration and the byte counts, never the request or response body, never a credential.
+  - A workflow action or an agent tool that calls a connector is exposed only for an instance whose consent flag is on; the tool is declared with risk workspace-write and the harness consent gate connectors.instance-consent, which admits the call only when the instance consent for that caller kind is on at invocation time; it runs only within the instance host allowlist and is audited per call with the run identity; the CLI runner and the harness keep refusing external risk, so a connector call is never an unattended CLI capability.
+  - A test call from the instance screen runs one operation with a member-supplied input and returns the outcome class and status only; the response body is shown truncated to a bounded size for diagnosis and is not stored.
+  - Disabling an instance stops every call at once, including calls already queued by workflows; deleting an instance requires it to be disabled and removes its sealed credentials, and the call log stays until retention removes it.
+  - Every outbound request is pinned to the addresses the egress check accepted, so the connection resolves nothing again and a name that answers publicly for the check and privately a moment later cannot be reached. The host name, the Host header and the TLS server name are unchanged, and the same pinning covers the OAuth2 token exchange.
+  - A call is refused before the socket unless its target is https on a port the definition names, and a definition that names no port accepts 443 only. The same rule applies to the OAuth2 token URL, at save and at call.
+  - The credential fingerprint an owner compares is a keyed digest under this module's own key, bound to the tenant and the instance, so holding the column reveals neither the credential nor whether two workspaces hold the same one. A cached access token is keyed by that fingerprint, so a replaced client secret can never be served from the token the previous one obtained.
+  - A connector call an unattended caller makes carries a durable idempotency key. connectors.core claims the key in connectors_call_keys before anything leaves the process and binds it to the recorded call in the same transaction as the call log row, so a replayed run answers the first call, success or failure, instead of reaching the external system twice.
+  - The caller kind of a tool call is the invocation the runtime states, an agent run or a workflow action, and never the tool's own assumption or anything in the input. connectors.core answers an agent run with allowAgents and a workflow action with allowWorkflows, in the consent gate and again in the call capability, and records that kind as the caller of the call log row.
+  - The idempotency key is claimed only once the credential is resolved, the OAuth2 token exchange included, and is bound to the recorded call only once the request was written to the socket. A refused call, and a failure raised before that point, leave the key unbound for the retry that follows the fix. Two attempts that read the same abandoned claim are answered by a retake that compares the claim time it read, so only one of them owns the key.
+  - A template value names a resource and never carries path syntax. A value with a segment that is a single or double dot is refused before the request is built, in the escaped expansion and in the reserved one.
+  - The agent tool has no server route. The harness runs it in this process, and a route under connectors.instances.read that made the credentialed call and returned the parsed body would give every member the connector itself. The run identity comes from the trusted tool context and never from a request header.
+  - connectors.core declares three data classes to the platform catalogue. Calls carry a 400 day default retention, a sweep and an export; audit rows and instances are kept until a person deletes them and are exportable, with instances exported without anything of the credential but its fingerprint. The call sweep removes the idempotency keys claimed before the same cutoff, so no key is left naming a call that is gone.
+permissions:
+  - id: connectors.instances.read
+    description: Read connector definitions, instances without credentials and the call log of the active workspace.
+  - id: connectors.instances.manage
+    description: Create, change, enable, disable, test, consent and delete connector instances in the active workspace.
+dataOwnership:
+  - connectors.core owns the definition registry, instances, sealed credentials, its own audit trail of instance changes and consents, and the call log.
+  - workflows.core and agents.core own the runs that call a connector and record the call in their own trails by call identifier.
+entities:
+  - id: definition
+    name: Connector definition
+    description: One registered connector kind as the workspace sees it. It is the read view of the code registry rather than a tenant table, so connectors.core stores no definition row and a workspace cannot add, change or remove one.
+    fields:
+      - id: key
+        type: string
+        required: true
+        unique: tenant
+        maxLength: 96
+      - id: moduleId
+        type: string
+        required: true
+        maxLength: 64
+      - id: label
+        type: string
+        required: true
+        maxLength: 120
+      - id: authKinds
+        type: json
+        required: true
+      - id: operations
+        type: json
+        required: true
+      - id: allowedPorts
+        type: json
+        required: false
+        description: Ports an instance of this definition may reach. Absent means 443 only, and a definition reaching a service on another port names every port it accepts.
+  - id: instance
+    name: Connector instance
+    description: A configured connection of one definition in the workspace.
+    fields:
+      - id: definition
+        type: reference
+        required: true
+        reference: definition
+      - id: name
+        type: string
+        required: true
+        unique: tenant
+        maxLength: 120
+      - id: baseUrl
+        type: string
+        required: true
+        maxLength: 2048
+      - id: authKind
+        type: enum
+        required: true
+        values:
+          - none
+          - api-key
+          - bearer
+          - oauth2-client-credentials
+      - id: credentialFingerprint
+        type: string
+        required: false
+        maxLength: 32
+      - id: allowedHosts
+        type: json
+        required: true
+      - id: allowWorkflows
+        type: boolean
+        required: true
+      - id: allowAgents
+        type: boolean
+        required: true
+      - id: status
+        type: enum
+        required: true
+        values:
+          - active
+          - disabled
+      - id: lastCallAt
+        type: datetime
+        required: false
+    states:
+      field: status
+      values:
+        - active
+        - disabled
+      transitions:
+        - from: active
+          to: disabled
+          permission: connectors.instances.manage
+        - from: disabled
+          to: active
+          permission: connectors.instances.manage
+  - id: audit-entry
+    name: Connector audit entry
+    description: One instance change or consent decision, written in the same transaction as the change.
+    fields:
+      - id: instance
+        type: reference
+        required: true
+        reference: instance
+      - id: action
+        type: string
+        required: true
+        maxLength: 64
+      - id: actorAccountId
+        type: string
+        required: true
+        maxLength: 128
+      - id: occurredAt
+        type: datetime
+        required: true
+  - id: call
+    name: Connector call
+    description: One outbound call as recorded.
+    fields:
+      - id: instance
+        type: reference
+        required: true
+        reference: instance
+      - id: operation
+        type: string
+        required: true
+        maxLength: 64
+      - id: caller
+        type: enum
+        required: true
+        values:
+          - test
+          - workflow
+          - agent
+      - id: callerRef
+        type: string
+        required: false
+        maxLength: 200
+      - id: outcome
+        type: enum
+        required: true
+        values:
+          - succeeded
+          - failed
+          - refused
+      - id: status
+        type: integer
+        required: false
+      - id: errorClass
+        type: string
+        required: false
+        maxLength: 64
+      - id: durationMs
+        type: integer
+        required: true
+      - id: requestBytes
+        type: integer
+        required: true
+      - id: responseBytes
+        type: integer
+        required: true
+      - id: occurredAt
+        type: datetime
+        required: true
+  - id: call-key
+    name: Connector call idempotency key
+    description: One durable key bound to one call, claimed before anything leaves the process so a replayed unattended caller writes at most once. Swept with the call log.
+    fields:
+      - id: idempotencyKey
+        type: string
+        required: true
+        unique: tenant
+        maxLength: 128
+      - id: operationId
+        type: string
+        required: true
+        maxLength: 200
+      - id: inputDigest
+        type: string
+        required: true
+        maxLength: 64
+      - id: call
+        type: reference
+        required: false
+        reference: call
+      - id: claimedAt
+        type: datetime
+        required: true
+      - id: completedAt
+        type: datetime
+        required: false
+screens:
+  - id: instances
+    kind: list
+    entity: instance
+    title: Connectors
+    columns:
+      - name
+      - definition
+      - baseUrl
+      - authKind
+      - status
+      - allowWorkflows
+      - allowAgents
+      - lastCallAt
+    filters:
+      - status
+      - definition
+    navigationGroup: Administration
+  - id: instance
+    kind: record
+    entity: instance
+    title: Connector
+    columns:
+      - name
+      - definition
+      - baseUrl
+      - authKind
+      - credentialFingerprint
+      - allowedHosts
+      - allowWorkflows
+      - allowAgents
+      - status
+    navigationGroup: Administration
+  - id: calls
+    kind: list
+    entity: call
+    title: Connector calls
+    columns:
+      - occurredAt
+      - instance
+      - operation
+      - caller
+      - outcome
+      - status
+      - errorClass
+      - durationMs
+    filters:
+      - outcome
+      - instance
+    navigationGroup: Administration
+actions:
+  - id: create-instance
+    entity: instance
+    permission: connectors.instances.manage
+    kind: create
+    risk: workspace-write
+    idempotent: false
+    description: Create an active instance with credentials accepted once and sealed; the base URL is validated against the egress policy and the definition's host allowlist.
+  - id: update-instance
+    entity: instance
+    permission: connectors.instances.manage
+    kind: update
+    risk: workspace-write
+    idempotent: true
+    description: Change name, base URL, allowed hosts or credentials; a changed URL is validated again.
+  - id: consent
+    entity: instance
+    permission: connectors.instances.manage
+    kind: custom
+    risk: workspace-write
+    idempotent: true
+    description: Turn allowWorkflows or allowAgents on or off with an explicit confirmation, recorded in the audit trail.
+  - id: test-call
+    entity: instance
+    permission: connectors.instances.manage
+    kind: custom
+    risk: workspace-write
+    idempotent: false
+    description: Run one operation with a supplied input and return the outcome class, status and a truncated body for diagnosis.
+  - id: disable-instance
+    entity: instance
+    permission: connectors.instances.manage
+    kind: custom
+    risk: workspace-write
+    idempotent: true
+    description: Stop every call at once.
+  - id: enable-instance
+    entity: instance
+    permission: connectors.instances.manage
+    kind: custom
+    risk: workspace-write
+    idempotent: true
+    description: Allow calls again.
+  - id: delete-instance
+    entity: instance
+    permission: connectors.instances.manage
+    kind: delete
+    risk: destructive
+    idempotent: true
+    description: Delete a disabled instance and its sealed credentials; the call log stays.
+widgets: []
+settings:
+  - key: callTimeoutMs
+    type: integer
+    scope: platform
+    default: 10000
+    description: Timeout per connector call; 1000 to 60000.
+  - key: maxResponseBytes
+    type: integer
+    scope: platform
+    default: 1048576
+    description: Response size cap per call; 1024 to 16777216.
+agentTools:
+  - id: connectors.call
+    permission: connectors.instances.read
+    description: Call an operation of a consented instance; exposed to an agent only for instances with allowAgents on, declared with risk workspace-write and admitted per call by the connectors.instance-consent gate, within the instance host allowlist and the definition port list. It declares contractVersion, an output schema, idempotency required with target-ledger protection and cooperative cancellation, so agents.core also publishes it as a workflow action. It has no server route, because the harness runs it in this process.
+    risk: workspace-write
+outOfScope:
+  - OAuth2 authorization-code flows with a person in the loop are not offered; client credentials only.
+  - Inbound calls from external systems are the automations webhook triggers, not connectors.
+  - Rate limiting per external system beyond the platform timeout and size caps is the definition's concern later.
+decisions:
+  - id: D-CONNECTORS-SCOPE
+    question: What is the first version?
+    answer: The definition contract and registry, owner-configured instances with sealed credentials and host allowlists, test calls, a call log without payloads, workflow actions and agent tools behind per-instance consent, and the generic HTTP JSON connector as the reference.
+    decidedBy: user
+  - id: D-CONNECTORS-EGRESS
+    question: How is the external risk ceiling raised?
+    answer: Only per instance with the owner's explicit consent, within the instance host allowlist, audited per call; the CLI runner still refuses external.
+    decidedBy: user
+  - id: D-CONNECTORS-TOOL-RISK
+    question: How is the agent tool declared given that the harness refuses external?
+    answer: The tool is declared with risk workspace-write on this module's surface and the harness is extended to admit it only when the instance consent is on, so the ceiling is raised by consent, not by a declaration a spec could copy.
+    decidedBy: default
+  - id: D-CONNECTORS-RETENTION
+    question: Who owns the retention of the call log, and for how long?
+    answer: connectors.core owns it and declares the data classes itself. Calls carry a 400 day default and are swept and exportable; audit rows and instances are kept until a person deletes them and are exportable, with instances exported without a credential. 400 days covers a financial year and the audit that follows it. The sweep removes the idempotency keys claimed before the same cutoff with the calls.
+    decidedBy: default
+  - id: D-CONNECTORS-PORTS
+    question: Which ports may an instance reach?
+    answer: 443 only, unless its definition names more through allowedPorts. A public address answering on an unnamed port is a different service from the one the definition was written for, so the port is part of the definition's contract rather than something an instance may choose.
+    decidedBy: default
+  - id: D-CONNECTORS-AGENT-ROUTE
+    question: Does the agent tool need a server route?
+    answer: No. The harness runs the tool in process, so a route would only add a second way in, under the read permission every member holds, that makes a credentialed outbound call and hands back the parsed body. The endpoint id stays as the tool's identity and nothing serves it.
+    decidedBy: default
+  - id: D-CONNECTORS-PERMISSIONS
+    question: Who manages connectors?
+    answer: Owners hold connectors.instances.read and manage; members hold read.
+    decidedBy: default
+acceptanceScenarios:
+  - id: CONNECTORS-INSTANCE-CRUD
+    given: A principal holding connectors.instances.manage supplies a unique name, an https base URL on a public host, an api-key credential and an allowed host list.
+    when: The instance is created, updated, disabled, enabled and deleted after disabling.
+    then: Each accepted transition is persisted under the workspace's forced policy, the credential is never readable after creation and only its fingerprint changes on update, deleting an active instance is refused, and a member without the permission is refused before repository access.
+  - id: CONNECTORS-EGRESS
+    given: A base URL with an http scheme, a loopback or private address, a host that resolves to one, or a host outside the instance allowlist.
+    when: The instance is created or a call is made.
+    then: The save is refused with a stable error before any write, and a call is refused with outcome refused and errorClass egress-refused before any request leaves.
+  - id: CONNECTORS-TEST-CALL
+    given: An active instance pointing at a test server.
+    when: The owner runs a test call of an operation.
+    then: The request carries the sealed credential in the definition's authentication form, obeys the timeout and size caps, and the response shows outcome, status and a truncated body while the call log stores no body.
+  - id: CONNECTORS-CONSENT
+    given: An instance with both consent flags off.
+    when: A workflow action and an agent tool try to call it, then the owner consents to workflows only and both try again.
+    then: Both are refused before any request at first; after consent the workflow call succeeds and is audited with the run identity, the agent call is still refused, and each consent change is an audit row.
+  - id: CONNECTORS-DISABLE
+    given: An active instance with a queued workflow call.
+    when: The owner disables the instance.
+    then: The queued call fails with a stable code without any request leaving and later calls are refused until the instance is enabled.
+  - id: CONNECTORS-DENY
+    given: A principal is unauthenticated or lacks the required permission.
+    when: The principal reads or mutates instances or runs a test call.
+    then: The server denies the operation before repository access, and a mutation without a CSRF proof is refused first.
+  - id: CONNECTORS-PINNED-EGRESS
+    given: A host that answers the egress check with a public address and every later resolution with a private one, and an instance whose base URL is http or on a port the definition does not name.
+    when: A call is made.
+    then: The call reaches the address the check accepted and never the later one, with the Host header unchanged, and the http or unnamed-port target is refused with outcome refused and errorClass egress-refused before any socket is opened.
+  - id: CONNECTORS-CALL-IDEMPOTENCY
+    given: An instance consented to agents and an unattended caller holding one durable idempotency key.
+    when: The caller makes the same call twice under that key, and once more under the key with a different operation.
+    then: The external system is reached once, the repeat answers the recorded call with replayed set and no body, a recorded failure is replayed the same way, and the key bound to another operation or input is refused with a stable conflict.
+  - id: CONNECTORS-CONSENT-PER-CALLER
+    given: An instance with allowWorkflows on and allowAgents off.
+    when: The owner confirms a change to the workflow consent from the instance screen.
+    then: Only the workflow flag moves, the agent flag stays off, and the confirmation names the caller kind and the value it is about to write.
+  - id: CONNECTORS-TOOL-CALLER-KIND
+    given: One instance with allowWorkflows on and allowAgents off, and one with the mirror state.
+    when: A workflow action and an agent run call each of them through the registered tool.
+    then: The workflow action is admitted only by the instance with allowWorkflows and its call log row carries caller workflow, the agent run is admitted only by the instance with allowAgents, and every other combination is refused by the gate and again by the call capability.
+  - id: CONNECTORS-KEY-BINDING
+    given: An instance whose OAuth2 token endpoint refuses the first exchange, and an instance whose host accepts no connection.
+    when: An unattended caller makes the call under one durable key and retries under the same key.
+    then: Neither the refused token exchange nor the failure raised before the request was written binds the key, and the retry makes the call instead of replaying an answer the external system never gave.
+  - id: CONNECTORS-KEY-RETAKE-RACE
+    given: An idempotency key whose claim was abandoned past the claim window and two attempts that read it at the same moment.
+    when: Both try to take the claim over.
+    then: Exactly one is answered claimed and makes the call, the other is answered in flight, and the ledger holds the claim time of the one that won.
+  - id: CONNECTORS-PATH-SEGMENT
+    given: An operation whose path template expands a caller value as one escaped segment, and one that expands it as a whole path.
+    when: The value is a single or double dot segment.
+    then: The call is refused with outcome refused and errorClass invalid-input before any request is built, while a value that merely contains dots is expanded unchanged.
+  - id: CONNECTORS-RETENTION
+    given: Two workspaces with calls, audit rows and instances, some older than the retention period.
+    when: The platform sweeps and exports the connectors data classes for one workspace.
+    then: Only that workspace's calls older than the cutoff are removed together with the idempotency keys claimed before it, the other workspace keeps its rows, and the export carries calls, audit rows and instances without any credential and without any request or response body.
+  - id: CONNECTORS-TENANT-BOUNDARY
+    given: Two workspaces with instances and calls.
+    when: A runtime transaction bound to one workspace reads or writes any of them.
+    then: Only that workspace's rows are visible or mutable and a row carrying another tenant identifier is rejected by the forced policy.

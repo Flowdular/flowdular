@@ -1,0 +1,34 @@
+{
+	"$schema": "../../packages/contracts/schemas/module.schema.json",
+	"schemaVersion": 1,
+	"id": "approvals.core",
+	"package": "@flowdular/module-approvals",
+	"version": "0.1.5",
+	"platformApi": "^0.1.0",
+	"profile": "full",
+	"capabilities": ["api", "database", "client", "translations"],
+	"platform": {
+		"server": true,
+		"client": true
+	},
+	"dependencies": [
+		{
+			"id": "system.core",
+			"range": "^0.5.1"
+		},
+		{
+			"id": "auth.core",
+			"range": "^0.12.0"
+		}
+	],
+	"provides": ["approvals.requests.v1"],
+	"requires": [
+		{
+			"id": "notifications.publish.v1",
+			"optional": true
+		}
+	],
+	"tenancy": "required",
+	"locales": ["en", "pl"],
+	"stability": "experimental"
+}

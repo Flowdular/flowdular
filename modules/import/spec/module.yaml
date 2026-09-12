@@ -1,0 +1,334 @@
+schemaVersion: 2
+id: import.core
+specVersion: 0.1.3
+status: approved
+name: Import Core
+description: Brings records into a workspace from a CSV file in bulk, through an import job with a per-row outcome, staged validation that reports every failure before anything is written, an explicit dry run, saved column mappings, and an import port each owning module implements so its own invariants and idempotency rules apply to every row.
+profile: full
+capabilities:
+  - api
+  - database
+  - client
+  - translations
+dependencies:
+  - id: system.core
+    range: ^0.5.1
+  - id: auth.core
+    range: ^0.12.0
+  - id: documents.core
+    range: ^0.1.2
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - Persistence runs on the shared asynchronous database contract with explicit PostgreSQL SQL; every tenant table enables and forces row-level security with USING and WITH CHECK policies bound to the transaction-local tenant id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
+  - The source of an import is a CSV document stored through documents.core; import.core reads it through open on the documents attachment capability, naming its own owner module and the record reference the file was uploaded against, never through a storage read URL and never from the object store, and it holds no bytes of its own beyond the parsed rows of one job. A source carries the content type text/csv and no other, decided by one rule that the start request and the stage opening the file both apply, so a document refused at start is never a document a stage goes on to read.
+  - An import target is an import port a module registers through the public capability import.ports.v1 with a target key, the fields it accepts (id, label, required, type), the natural key fields that make a repeat idempotent, and two operations, validate(tenantId, principal, rows) returning refusals alone, so a row it says nothing about counts as valid, and write(tenantId, principal, rows, mode) returning per-row outcomes, where a row the port says nothing about is recorded as failed with the reason PORT_SILENT instead of counted as written; import.core never writes another module's records itself.
+  - Every job runs in stages, parsed, validated and only then written; a job whose validation reports failures is written only for the valid rows when the requester chooses to proceed, and the failed rows are listed with row number, field and reason; a dry run stops after validation and writes nothing.
+  - A repeat import of the same rows is idempotent through the port's natural key; the mode per job is create-only, update-existing or skip-existing, and the port applies it inside its own tenant-scoped transaction per bounded batch.
+  - Whoever imports needs import.jobs.manage in addition to the target module's manage permission; the port checks the target permission on the acting principal, so import never widens what a member may write.
+  - Authorization is decided on the live principal, the target's own permission at start and again at continue, so a grant revoked after validation stops the write; what the background stages carry into a port call is a snapshot of the requester taken at start, bounded to 8 KB by the job row and refused at start with REQUESTER_TOO_LARGE when it would not fit, used so the port sees who is importing and never to widen a grant, and left out of both the job export and every API response, so a job crossing the API names its requester by account id alone and never carries the snapshot or the poll loop's claim.
+  - A job is bounded to 50000 rows and 25 MB of CSV; a document over the byte bound is refused at start before a job row exists, a file over the row bound fails the job while it is parsed, and a running job is processed by one poll loop in bounded batches so the request that starts it returns at once. Cells are cut out of the decoded file rather than accumulated character by character, so one job costs memory of the order of its own file.
+  - A claimed job renews its claim once per batch for as long as a stage is running, so a stage that outlasts the claim lease is never taken up by a second poll loop while it works; a claim nobody renewed within the lease belonged to a process that is gone, and its job is reclaimed and continued from the outcomes already recorded. Every renewal names the claim the stage holds, so a stage whose lease lapsed cannot renew over the loop that reclaimed its job, but stops there with CLAIM_LOST and records nothing, leaving the job to its new owner rather than settling work that is still running.
+  - Rows are checked against the port's declared natural key across the whole file before any batch is handed over, so the first row carrying a key is the one that is written, a later repeat is recorded invalid with NATURAL_KEY_DUPLICATE, and a port needs no state between calls to stay idempotent across batches. Which two values are one key belongs to the port, which folds a row into its own key, and without a fold the key fields are compared exactly, so import.core never decides that two spellings of one value mean one record.
+  - When a write stage ends, the job's written and failed counts are read back from its row outcomes in one grouped read rather than counted in the pass, so a job reclaimed after a crash reports the whole file instead of the batches the last process happened to run.
+  - A column mapping names the CSV header for each port field and is saved per workspace and target as a template for the next import; one header feeds at most one field, so a mapping naming one column twice is refused with MAPPING_COLUMN_REUSED before it is saved or started, a mapping whose serialized form would not fit the 8 KB the job row and the saved template each bound is refused with MAPPING_TOO_LARGE for the same reason, and a mapped header the file's header row does not carry fails the job with MAPPING_COLUMN_MISSING whether that field is required or not, rather than importing the file as if the column had been left out on purpose.
+  - One retention pass chooses its batch of settled jobs once, oldest by started_at then id, and removes those jobs together with their row outcomes, so no outcome outlives the job it belongs to; the pass is bounded by the module's own limit on jobs whatever limit the platform asks for.
+  - A job left validated by a requester who never continued it is cancelled by the retention pass after 7 days, a constant rather than a setting, so an abandoned job settles and falls under the same retention as every other job instead of waiting it out as work in flight.
+  - Every stable code this module constructs carries a sentence in each declared locale, read out of the source rather than kept by hand, so a code added without copy fails the gate; a row reason or a job failure code with no sentence of its own reads the one the refusal carrying that code has, and only a code a port invented reaches a reader bare.
+  - The data class export carries every record the module holds for a workspace, the jobs, their row outcomes and the saved mappings, each walked by its own ascending key so no page is unbounded and each naming which of the three it is.
+permissions:
+  - id: import.jobs.read
+    description: Read import jobs, their row outcomes and saved mappings in the active workspace.
+  - id: import.jobs.manage
+    description: Start, dry-run, continue and cancel import jobs and save mappings in the active workspace.
+dataOwnership:
+  - import.core owns jobs, row outcomes, mappings and the registry of import ports as recorded.
+  - The target module owns the records written and their invariants; documents.core owns the CSV file; the storage port owns its bytes.
+entities:
+  - id: job
+    name: Import job
+    description: One import of one CSV into one target.
+    fields:
+      - id: target
+        type: string
+        required: true
+        maxLength: 96
+        description: module id plus target key, for example users.core.members.
+      - id: documentId
+        type: string
+        required: true
+        maxLength: 128
+      - id: documentRef
+        type: string
+        required: true
+        maxLength: 200
+        description: The record reference the CSV was uploaded against; with the owner module import.core and documentId it is the triple that addresses the document in documents.core.
+      - id: mode
+        type: enum
+        required: true
+        values:
+          - create-only
+          - update-existing
+          - skip-existing
+      - id: dryRun
+        type: boolean
+        required: true
+      - id: status
+        type: enum
+        required: true
+        values:
+          - parsing
+          - validated
+          - writing
+          - completed
+          - failed
+          - cancelled
+      - id: totalRows
+        type: integer
+        required: true
+      - id: validRows
+        type: integer
+        required: true
+      - id: writtenRows
+        type: integer
+        required: true
+      - id: failedRows
+        type: integer
+        required: true
+      - id: requesterAccountId
+        type: string
+        required: true
+        maxLength: 128
+      - id: startedAt
+        type: datetime
+        required: true
+      - id: completedAt
+        type: datetime
+        required: false
+    states:
+      field: status
+      values:
+        - parsing
+        - validated
+        - writing
+        - completed
+        - failed
+        - cancelled
+      transitions:
+        - from: parsing
+          to: validated
+        - from: parsing
+          to: failed
+        - from: validated
+          to: writing
+          permission: import.jobs.manage
+        - from: validated
+          to: cancelled
+          permission: import.jobs.manage
+        - from: writing
+          to: completed
+        - from: writing
+          to: failed
+  - id: row-outcome
+    name: Row outcome
+    description: The verdict of one CSV row in one job.
+    fields:
+      - id: job
+        type: reference
+        required: true
+        reference: job
+      - id: rowNumber
+        type: integer
+        required: true
+      - id: outcome
+        type: enum
+        required: true
+        values:
+          - valid
+          - invalid
+          - created
+          - updated
+          - skipped
+          - failed
+      - id: field
+        type: string
+        required: false
+        maxLength: 64
+      - id: reason
+        type: string
+        required: false
+        maxLength: 200
+      - id: recordRef
+        type: string
+        required: false
+        maxLength: 200
+  - id: mapping
+    name: Column mapping
+    description: The saved header to field mapping for one target in one workspace.
+    fields:
+      - id: target
+        type: string
+        required: true
+        unique: tenant
+        maxLength: 96
+      - id: columns
+        type: json
+        required: true
+        description: Object from port field id to CSV header.
+      - id: updatedAt
+        type: datetime
+        required: true
+screens:
+  - id: jobs
+    kind: list
+    entity: job
+    title: Imports
+    columns:
+      - target
+      - status
+      - dryRun
+      - totalRows
+      - validRows
+      - writtenRows
+      - failedRows
+      - startedAt
+    filters:
+      - status
+      - target
+    navigationGroup: Operations
+  - id: job
+    kind: record
+    entity: job
+    title: Import job
+    columns:
+      - target
+      - documentId
+      - mode
+      - dryRun
+      - status
+      - totalRows
+      - validRows
+      - writtenRows
+      - failedRows
+      - completedAt
+    navigationGroup: Operations
+  - id: new-import
+    kind: form
+    entity: job
+    title: New import
+    columns:
+      - target
+      - documentId
+      - mode
+      - dryRun
+    navigationGroup: Operations
+actions:
+  - id: start
+    entity: job
+    permission: import.jobs.manage
+    kind: create
+    risk: workspace-write
+    idempotent: false
+    description: Start a job for a stored CSV document, a target and a mapping; the request returns once the job is recorded and parsing is queued.
+  - id: continue
+    entity: job
+    permission: import.jobs.manage
+    kind: custom
+    risk: workspace-write
+    idempotent: true
+    description: Move a validated job to writing, optionally only the valid rows; refused for a dry run.
+  - id: cancel
+    entity: job
+    permission: import.jobs.manage
+    kind: custom
+    risk: workspace-write
+    idempotent: true
+    description: Cancel a validated job before writing.
+  - id: save-mapping
+    entity: mapping
+    permission: import.jobs.manage
+    kind: update
+    risk: workspace-write
+    idempotent: true
+    description: Save the column mapping for a target as the workspace template.
+widgets: []
+settings:
+  - key: maxRows
+    type: integer
+    scope: platform
+    default: 50000
+    description: Rows a job may hold; 100 to 500000.
+  - key: batchSize
+    type: integer
+    scope: platform
+    default: 500
+    description: Rows per port write call; 50 to 5000.
+agentTools: []
+outOfScope:
+  - Formats other than CSV with a header row and UTF-8 are not parsed; Excel files are converted by the person first.
+  - A retry of failed rows creates a new job from the failed subset; in-place retry is not offered.
+  - Targets are ports the modules register; users.core members is the first target delivered with this module, and catalog and parties targets belong to their repository.
+decisions:
+  - id: D-IMPORT-SCOPE
+    question: What does the first version contain?
+    answer: CSV through documents.core, staged validation, dry run, saved mappings, an import port per module, and users.core members as the first target.
+    decidedBy: user
+  - id: D-IMPORT-IDEMPOTENCY
+    question: How are repeats and failures handled?
+    answer: Natural keys per port with create-only, update-existing or skip-existing modes; failed rows are reported and do not block valid rows; a job holds at most 50000 rows.
+    decidedBy: user
+  - id: D-IMPORT-PERMISSIONS
+    question: Who may import?
+    answer: A member holding import.jobs.manage and the target's manage permission; uploading the CSV needs documents.files.manage as well, because the file is stored through documents.core before an import names it; owners hold both import permissions by default.
+    decidedBy: default
+  - id: D-IMPORT-SOURCE
+    question: Where does the CSV come from?
+    answer: A document stored through documents.core and read through its capability; import.core stores no bytes.
+    decidedBy: default
+  - id: D-IMPORT-EXECUTION
+    question: How does a job run?
+    answer: A poll loop processes jobs in bounded batches per port call; the starting request returns at once, and the poll interval is a fixed 2 seconds rather than a setting.
+    decidedBy: default
+acceptanceScenarios:
+  - id: IMPORT-START-VALIDATE
+    given: A stored CSV with a header row and five rows, one missing a required field, and the users.core members port registered.
+    when: A principal holding import.jobs.manage and users.members.manage starts a dry run with a mapping.
+    then: The job parses and validates, reports four valid rows and one invalid row with its row number, field and reason, writes nothing, and completes as a dry run.
+  - id: IMPORT-WRITE
+    given: A validated job with four valid rows and one invalid row and mode create-only.
+    when: The requester continues with valid rows only.
+    then: The port writes four rows in bounded batches inside its own tenant-scoped transactions, the outcomes read created, the invalid row stays invalid, and the job completes with the counts.
+  - id: IMPORT-REPEAT
+    given: A completed job whose rows exist in the target.
+    when: The same CSV is imported again with skip-existing, then with update-existing.
+    then: The first reports every row skipped through the port's natural key and writes nothing, the second reports updated rows, and no duplicate record exists.
+  - id: IMPORT-PERMISSION
+    given: A principal holding import.jobs.manage but not the target's manage permission.
+    when: The principal starts an import into that target.
+    then: The port refuses before validation with the target's denial and no job proceeds past parsing.
+  - id: IMPORT-BOUNDS
+    given: A document that is not text/csv, one this workspace does not hold, an infected one, one over 25 MB, and a CSV over the row limit.
+    when: An import is started for each of them.
+    then: The content type, the byte size, the missing document and the infected one are each refused at start with a stable error and no job row is written, and the same content type rule refuses the document when a stage opens it; the row limit is only discovered while the file is parsed, so that job is recorded as failed with CSV_TOO_MANY_ROWS and carries no row outcomes.
+  - id: IMPORT-RESUME
+    given: A non-dry-run job writing a file in bounded batches whose process stops after the first batch was recorded.
+    when: The claim lease passes without a renewal and another poll loop reclaims the job.
+    then: The reclaimed pass writes only the rows still valid, the job completes, and its written and failed counts cover the whole file rather than the batches the second pass ran; a job whose claim is still being renewed is left to the process that holds it, and a stalled process whose claim was taken over stops at its next renewal instead of writing on.
+  - id: IMPORT-DUPLICATE-KEY
+    given: A file whose row 501 repeats the natural key of row 1, once exactly and once in another case, and a batch size of 500, so the two rows never meet inside one port call.
+    when: The job is validated and then written, against a port that folds its key and against one that folds nothing.
+    then: Row 501 is recorded invalid with NATURAL_KEY_DUPLICATE before any batch reaches the port, row 1 is written, and the target holds one record for that key; the differently spelled repeat is the same duplicate for the port that folds it and two keys the port answers for itself where no fold is declared.
+  - id: IMPORT-MAPPING
+    given: A saved mapping for a target.
+    when: A new import for the target is prepared.
+    then: The mapping is offered as the template, and saving a changed mapping replaces it for the workspace only.
+  - id: IMPORT-DENY
+    given: A principal is unauthenticated or lacks the required permission.
+    when: The principal reads jobs or starts, continues, cancels or saves a mapping.
+    then: The server denies the operation before repository access, and a mutation without a CSRF proof is refused first.
+  - id: IMPORT-TENANT-BOUNDARY
+    given: Two workspaces with jobs, outcomes and mappings.
+    when: A runtime transaction bound to one workspace reads or writes any of them, or the job routing read runs.
+    then: Only that workspace's rows are visible or mutable, the routing read sees routing columns alone on the background role, and a row carrying another tenant identifier is rejected by the forced policy.

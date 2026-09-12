@@ -1,0 +1,51 @@
+/* Approvals module: composites specific to this module. Primitives (buttons,
+   fields, tags, cards) come from @flowdular/ui and are not restyled here. */
+
+.approvals-summary {
+	margin: 0;
+	color: var(--ink-2);
+	line-height: 1.5;
+}
+
+.approvals-facts {
+	display: grid;
+	grid-template-columns: minmax(9rem, auto) 1fr;
+	gap: 8px 16px;
+	margin: 0;
+}
+
+.approvals-facts dt {
+	font-size: var(--text-sm);
+	color: var(--ink-3);
+}
+
+.approvals-facts dd {
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+
+.approvals-ledger__list {
+	display: grid;
+	gap: 8px;
+	padding: 0;
+	margin: 0;
+	list-style: none;
+}
+
+/* One decision per row: what was decided, by whom, when. The comment is its own
+   full-width line so a long one does not squeeze the three columns above it. */
+.approvals-ledger__list li {
+	display: grid;
+	grid-template-columns: auto 1fr auto;
+	gap: 8px;
+	align-items: baseline;
+	padding-block: 8px;
+	border-top: 1px solid var(--line);
+}
+
+.approvals-ledger__comment {
+	grid-column: 1 / -1;
+	margin: 0;
+	font-size: var(--text-sm);
+	color: var(--ink-3);
+}
