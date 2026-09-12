@@ -21,6 +21,18 @@ export interface JobBackoff {
 	readonly multiplier: number;
 }
 
+/**
+ * A pass that raised waits its own interval, doubling to ten times that
+ * and never past a minute, so a database refusing the claim gets room.
+ */
+export function jobBackoff(intervalMs: number): JobBackoff {
+	return {
+		initialMs: intervalMs,
+		maxMs: Math.max(intervalMs, Math.min(60_000, intervalMs * 10)),
+		multiplier: 2,
+	};
+}
+
 /** What one pass did. Every item is counted in exactly one of the three. */
 export interface JobPassReport {
 	readonly claimed: number;

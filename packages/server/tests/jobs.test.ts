@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	createJobRunner,
 	JOB_CLAIM_LOST,
+	jobBackoff,
 	JobClaimLostError,
 	type JobEvent,
 	type JobPassReport,
@@ -913,5 +914,29 @@ describe('the trace hook', () => {
 			failed: 0,
 			claimLost: 0,
 		});
+	});
+});
+
+describe('jobBackoff', () => {
+	it('starts at the interval, doubles, and caps at ten times the interval', () => {
+		expect(jobBackoff(500)).toEqual({
+			initialMs: 500,
+			maxMs: 5_000,
+			multiplier: 2,
+		});
+	});
+
+	it('never waits past a minute', () => {
+		expect(jobBackoff(30_000)).toEqual({
+			initialMs: 30_000,
+			maxMs: 60_000,
+			multiplier: 2,
+		});
+	});
+
+	it('never caps below the interval of a loop slower than a minute', () => {
+		const backoff = jobBackoff(120_000);
+		expect(backoff.maxMs).toBe(120_000);
+		expect(backoff.maxMs).toBeGreaterThanOrEqual(backoff.initialMs);
 	});
 });

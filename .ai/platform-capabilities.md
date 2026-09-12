@@ -98,13 +98,13 @@ Every value exported from `packages/ui/src/index.ts`:
 
 <!-- capabilities:ui-exports -->
 
-`BrandMark`, `MARK_VIEWBOX`, `MARK_WARP`, `MARK_WEFT`, `Icon`, `ICON_PATHS`, `Button`, `FormField`, `Select`, `DateField`, `DateRangeField`, `dateRangeReversed`, `formatDateValue`, `DatePicker`, `DATE_PRESET_IDS`, `datePresetRange`, `FileUpload`, `fileRefusal`, `SearchField`, `CheckGrid`, `Drawer`, `ScopeSummary`, `summarizeScopes`, `SettingRow`, `Tag`, `Table`, `TableCard`, `Pagination`, `pageRange`, `keysetPage`, `Kpi`, `Chart`, `PageHeader`, `EmptyState`, `Alert`, `Avatar`, `Switch`, `ConfirmDialog`, `Filters`, `Tabs`, `ToastHost`, `createToastStore`, `toasts`, `VariableTextarea`, `VariableInput`, `VariableSelect`, `initials`
+`BrandMark`, `MARK_VIEWBOX`, `MARK_WARP`, `MARK_WEFT`, `Icon`, `ICON_PATHS`, `Button`, `FormField`, `Select`, `DateField`, `DateRangeField`, `dateRangeReversed`, `formatDateValue`, `DatePicker`, `DATE_PRESET_IDS`, `datePresetRange`, `FileUpload`, `fileRefusal`, `SearchField`, `CheckGrid`, `Drawer`, `ScopeSummary`, `summarizeScopes`, `SettingRow`, `Tag`, `Table`, `TableCard`, `Pagination`, `pageRange`, `keysetPage`, `Kpi`, `Chart`, `PageHeader`, `EmptyState`, `Alert`, `Avatar`, `Switch`, `ConfirmDialog`, `focusableElements`, `trapFocus`, `Filters`, `Tabs`, `ToastHost`, `createToastStore`, `toasts`, `VariableTextarea`, `VariableInput`, `VariableSelect`, `initials`
 
 <!-- /capabilities:ui-exports -->
 
 `ICON_PATHS`, `MARK_*`, `DATE_PRESET_IDS`, `summarizeScopes`, `initials`, `pageRange`, `keysetPage`, `formatDateValue`, `dateRangeReversed`, `datePresetRange`, `fileRefusal`, `createToastStore` and `toasts` are constants and helpers, not components. There is no other shared component: a screen that needs one builds it module-locally on tokens and flags it as a promotion candidate.
 
-`Drawer` and `ConfirmDialog` trap Tab inside the open panel and return focus to whatever opened it. `Table` takes `mode="server"` for a list the module already sorted, narrowed and paged in SQL, and a `reason` on a `TableAction` that is read as the refused action's accessible description.
+`Drawer` and `ConfirmDialog` trap Tab inside the open panel and return focus to whatever opened it; `trapFocus(root)` is that trap for a module-owned modal (install on open, call the returned release on close) and `focusableElements(root)` lists its Tab stops. `Table` takes `mode="server"` for a list the module already sorted, narrowed and paged in SQL, and a `reason` on a `TableAction` that is read as the refused action's accessible description.
 
 Every visual class is defined once in `packages/ui/src/styles/components.css` and prefixed `ui-` (about 180 names in `ui-block__element--modifier` form; `.num` for tabular figures is the only exception). Tokens live in `tokens.css`. A module composes `ui-*` classes and never restyles one. The writable and component-owned subsets are listed in `.ai/skills/ux-design/SKILL.md`.
 

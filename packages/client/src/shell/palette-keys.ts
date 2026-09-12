@@ -25,18 +25,3 @@ export function nextPaletteIndex(
 	if (key === 'End') return count - 1;
 	return index;
 }
-
-/**
- * Where Tab goes inside the dialog. The palette is modal, so focus cycles
- * within it instead of walking the workspace behind the overlay; `current` is
- * -1 when focus is not on one of its own controls yet.
- */
-export function trappedFocusIndex(
-	current: number,
-	count: number,
-	backwards: boolean,
-): number {
-	if (count <= 0) return -1;
-	if (current < 0) return backwards ? count - 1 : 0;
-	return (current + (backwards ? -1 : 1) + count) % count;
-}

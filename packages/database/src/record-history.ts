@@ -14,6 +14,7 @@ import {
 	type DatabaseParameter,
 	type DatabaseSession,
 } from './contracts.ts';
+import { integer } from './decoders.ts';
 
 interface HistoryRow {
 	readonly id: string;
@@ -27,17 +28,6 @@ interface HistoryRow {
 	readonly configured_by_json: string | null;
 	readonly changes_json: string;
 	readonly occurred_at: number | bigint | string;
-}
-
-/* The server driver returns BIGINT as a string while the embedded build returns
-   a number, so every integer read crosses the same normalizer instead of
-   trusting whichever one a deployment happens to open. */
-function integer(value: number | bigint | string, field: string): number {
-	const normalized = Number(value);
-	if (!Number.isSafeInteger(normalized) || normalized < 0) {
-		throw new Error(`The history table returned an invalid ${field}.`);
-	}
-	return normalized;
 }
 
 function actorFromRow(row: HistoryRow): Actor {
@@ -115,7 +105,8 @@ export async function appendRecordHistory(
 		parameters: [write.tenantId, write.recordId],
 	});
 	const current = previous.rows[0]?.version ?? null;
-	const version = (current === null ? 0 : integer(current, 'version')) + 1;
+	const version =
+		(current === null ? 0 : integer(current, 'version', { min: 0 })) + 1;
 	const values: DatabaseParameter[] = [
 		randomUUID(),
 		write.tenantId,
@@ -185,11 +176,11 @@ export async function queryRecordHistory(
 		(row): HistoryEntry => ({
 			id: row.id,
 			recordId: row.record_id,
-			version: integer(row.version, 'version'),
+			version: integer(row.version, 'version', { min: 0 }),
 			action: row.action,
 			actor: actorFromRow(row),
 			changes: JSON.parse(row.changes_json) as RecordChanges,
-			occurredAt: integer(row.occurred_at, 'timestamp'),
+			occurredAt: integer(row.occurred_at, 'timestamp', { min: 0 }),
 		}),
 	);
 	const last = page[page.length - 1];
