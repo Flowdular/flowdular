@@ -239,6 +239,10 @@ export function createNotificationsRoutes(
 					principal.tenantId,
 					principal.accountId,
 				),
+				member: await service.memberSettings(
+					principal.tenantId,
+					principal.accountId,
+				),
 			});
 		},
 	});
@@ -264,6 +268,38 @@ export function createNotificationsRoutes(
 						principal.tenantId,
 						principal.accountId,
 						bodyOneOf<NotificationKind>(value, 'kind', NOTIFICATION_KINDS),
+						requiredBoolean(value, 'enabled'),
+					),
+				});
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
+	/* The workspace-wide switch of the signed-in member. It is a preference of
+	   their own account, so it carries the same permission as the per-kind one
+	   and reads the account from the principal. */
+	const saveEmailDelivery = defineEndpoint({
+		id: 'notifications.preferences.email',
+		path: '/api/notifications/preferences/email',
+		methods: ['POST'],
+		access: {
+			kind: 'permission',
+			permission: NOTIFICATIONS_PERMISSIONS.manage,
+		},
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			const denial = sessionMutationDenial(octane, auth);
+			if (denial) return denial;
+			try {
+				const value = await readJsonObject(octane.request);
+				const principal = principalFromContext(octane)!;
+				const service = await runtime.service();
+				return jsonResponse({
+					member: await service.saveEmailDelivery(
+						principal.tenantId,
+						principal.accountId,
 						requiredBoolean(value, 'enabled'),
 					),
 				});
@@ -496,6 +532,7 @@ export function createNotificationsRoutes(
 		archive.serverRoute,
 		listPreferences.serverRoute,
 		savePreference.serverRoute,
+		saveEmailDelivery.serverRoute,
 		listWebhooks.serverRoute,
 		createWebhook.serverRoute,
 		updateWebhook.serverRoute,
@@ -517,6 +554,7 @@ export const endpoints = [
 	'notifications.inbox.archive',
 	'notifications.preferences.list',
 	'notifications.preferences.save',
+	'notifications.preferences.email',
 	'notifications.webhooks.list',
 	'notifications.webhooks.create',
 	'notifications.webhooks.update',

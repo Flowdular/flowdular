@@ -1,14 +1,24 @@
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import { Agent, request as httpsRequest } from 'node:https';
+import { MailError, type MailPort } from '@flowdular/server';
 import { NOTIFICATIONS_PERMISSIONS } from '../acl/permissions.ts';
+import { DEFAULT_MAIL_LOCALE } from '../domain/locale.ts';
 import {
 	DELIVERY_STATUSES,
 	type DeliveryAttempt,
 	type DeliveryErrorClass,
+	type DeliveryRouting,
 	type NotificationsInbox,
 } from '../domain/types.ts';
-import { webhookPayloadFingerprint } from './delivery-payload.ts';
+import {
+	emailPayloadFingerprint,
+	webhookPayloadFingerprint,
+} from './delivery-payload.ts';
+import {
+	emailDeliveryAttempt,
+	notificationMailMessage,
+} from './email-channel.ts';
 import {
 	normalizeHost,
 	pinnedLookup,
@@ -60,7 +70,34 @@ export interface TenantDeliverySettings {
 /** A tenant member and the scopes it currently holds, from auth.core. */
 export interface TenantMemberScopes {
 	readonly accountId: string;
+	/** Resolved at send time, never copied into this module's tables. */
+	readonly email: string;
 	readonly scopes: readonly string[];
+}
+
+/**
+ * One workspace's members as one pass sees them. auth.core is asked once per
+ * tenant per pass; the index is what keeps addressing an attempt O(1) rather
+ * than a scan of the workspace per queued message.
+ */
+interface TenantMembers {
+	readonly list: readonly TenantMemberScopes[];
+	readonly byAccount: ReadonlyMap<string, TenantMemberScopes>;
+}
+
+type MemberLookup = (tenantId: string) => Promise<TenantMembers>;
+
+/** One pass over the delivery queue, and the workspace lookups it holds. */
+export interface DeliveryPass {
+	/**
+	 * Reads one routing row again under the workspace it named and takes it. Null
+	 * for an attempt that moved since the routing read, or one another process is
+	 * already sending: neither is this pass's work, and neither is an attempt it
+	 * has to report as one.
+	 */
+	claim(routing: DeliveryRouting, at: number): Promise<DeliveryAttempt | null>;
+	/** Sends one attempt this pass claimed and records what came back. */
+	deliver(attempt: DeliveryAttempt, at: number): Promise<void>;
 }
 
 export interface DeliveryOutcome {
@@ -102,6 +139,10 @@ export interface DeliveryServiceOptions {
 	readonly members: (
 		tenantId: string,
 	) => Promise<readonly TenantMemberScopes[]>;
+	/** Platform-owned outbound mail; the e-mail channel sends through it. */
+	readonly mail: MailPort;
+	/** The language one workspace's messages say they are written in. */
+	readonly locale?: (tenantId: string) => string;
 	readonly now?: () => number;
 	readonly transport?: DeliveryTransport;
 	readonly connect?: WebhookConnectSeam | undefined;
@@ -124,12 +165,42 @@ function classifyResponse(status: number): DeliveryOutcome {
 	return { status: 'failed', responseStatus: status, errorClass };
 }
 
+function failed(errorClass: DeliveryErrorClass): DeliveryOutcome {
+	return { status: 'failed', responseStatus: null, errorClass };
+}
+
+/**
+ * An e-mail failure no later pass would survive. The ledger records the class
+ * and the attempt ends there instead of spending the whole retry budget.
+ */
+interface PermanentEmailFailure {
+	readonly deadLetter: DeliveryErrorClass;
+}
+
+const UNREACHABLE_RECIPIENT: PermanentEmailFailure = {
+	deadLetter: 'recipient-unknown',
+};
+
+/* A rejected message is these bytes being unacceptable to the port, so every
+   attempt of the same message is refused the same way and the first one ends
+   it. A deployment that composed no transport may still compose one, and a
+   transport failure is the relay being unreachable; both keep the budget a
+   network error gets, under the class the ledger shows. */
+function classifyMailError(
+	error: unknown,
+): DeliveryOutcome | PermanentEmailFailure {
+	if (error instanceof MailError) {
+		if (error.code === 'MAIL_MESSAGE_REJECTED') {
+			return { deadLetter: 'mail-refused' };
+		}
+		return failed(
+			error.code === 'MAIL_DELIVERY_FAILED' ? 'network' : 'mail-refused',
+		);
+	}
+	return failed('network');
+}
+
 function classifyError(error: unknown): DeliveryOutcome {
-	const failed = (errorClass: DeliveryErrorClass): DeliveryOutcome => ({
-		status: 'failed',
-		responseStatus: null,
-		errorClass,
-	});
 	if (error instanceof WebhookEgressError) {
 		return failed(
 			error.code === 'WEBHOOK_HOST_UNRESOLVED' ? 'dns' : 'egress-refused',
@@ -268,6 +339,7 @@ export class DeliveryService {
 	readonly #options: DeliveryServiceOptions;
 	readonly #transport: DeliveryTransport;
 	readonly #now: () => number;
+	readonly #locale: (tenantId: string) => string;
 	/** Last tenant a retention pass reached; '' restarts the rotation. */
 	#retentionCursor = '';
 
@@ -276,6 +348,7 @@ export class DeliveryService {
 		this.#transport =
 			options.transport ?? createDeliveryTransport(options.connect);
 		this.#now = options.now ?? Date.now;
+		this.#locale = options.locale ?? (() => DEFAULT_MAIL_LOCALE);
 	}
 
 	async list(
@@ -318,12 +391,7 @@ export class DeliveryService {
 			);
 		}
 		const sequence =
-			(await this.#options.repository.latestDeliverySequence(
-				trustedTenantId,
-				existing.subscriptionId,
-				existing.kind,
-				existing.sourceRef,
-			)) + 1;
+			(await this.#options.repository.latestDeliverySequence(existing)) + 1;
 		const queued = await this.#append(existing, sequence, 1, this.#now());
 		if (!queued) {
 			throw new NotificationsServiceError(
@@ -335,27 +403,42 @@ export class DeliveryService {
 		return queued;
 	}
 
-	/** One poll pass: due attempts first, then a bounded retention sweep. */
-	async tick(limit = DELIVERY_TICK_LIMIT): Promise<number> {
-		const now = this.#now();
-		const routing = [
-			...(await this.#options.repository.listDueDeliveries(now, limit)),
-			/* A claim is invisible to the due read, so a process that died between
-			   claiming a row and writing its outcome would strand it. The poll asks
-			   for stale claims separately, under the same page bound. */
-			...(await this.#options.repository.listStrandedDeliveries(
-				now - DELIVERY_CLAIM_TIMEOUT_MS,
-				limit,
-			)),
-		];
-		let delivered = 0;
-		for (const candidate of routing) {
-			if (await this.#deliver(candidate.tenantId, candidate.id, now)) {
-				delivered += 1;
+	/**
+	 * One pass over the delivery queue. The workspace lookups it needs are asked
+	 * for once and held by the pass alone, bounded by the tenants its routing
+	 * rows named, so a membership or an address change is picked up by the next
+	 * pass rather than by the next attempt.
+	 */
+	pass(): DeliveryPass {
+		const members = this.#passMembers();
+		return {
+			/* The routing read crossed tenants; the row is authoritative only now,
+			   read back and claimed under its own tenant in one statement. The claim
+			   is what keeps two poll loops from repeating one request. */
+			claim: (routing, at) =>
+				this.#options.repository.claimDelivery({
+					tenantId: routing.tenantId,
+					id: routing.id,
+					now: at,
+					strandedBefore: at - DELIVERY_CLAIM_TIMEOUT_MS,
+				}),
+			deliver: (attempt, at) => this.#deliver(attempt, at, members),
+		};
+	}
+
+	#passMembers(): MemberLookup {
+		const pending = new Map<string, Promise<TenantMembers>>();
+		return (tenantId) => {
+			let members = pending.get(tenantId);
+			if (!members) {
+				members = this.#options.members(tenantId).then((list) => ({
+					list,
+					byAccount: new Map(list.map((member) => [member.accountId, member])),
+				}));
+				pending.set(tenantId, members);
 			}
-		}
-		await this.collectRetention(now);
-		return delivered;
+			return members;
+		};
 	}
 
 	/**
@@ -385,35 +468,31 @@ export class DeliveryService {
 	}
 
 	async #deliver(
-		tenantId: string,
-		deliveryId: string,
+		attempt: DeliveryAttempt,
 		now: number,
-	): Promise<boolean> {
-		/* The routing read crossed tenants; the row is authoritative only now,
-		   read back and claimed under its own tenant in one statement. A row that
-		   moved since, or one another process is already sending, is left alone:
-		   the claim is what keeps two poll loops from repeating one request. */
-		const attempt = await this.#options.repository.claimDelivery({
-			tenantId,
-			id: deliveryId,
-			now,
-			strandedBefore: now - DELIVERY_CLAIM_TIMEOUT_MS,
-		});
-		if (!attempt) return false;
+		members: MemberLookup,
+	): Promise<void> {
+		const tenantId = attempt.tenantId;
+		if (attempt.channel === 'email') {
+			const outcome = await this.#sendEmail(attempt, members);
+			/* A member who left the workspace or an item that is gone is the e-mail
+			   channel's missing subscription, and a message the port refuses is
+			   refused again on every attempt: no later pass would do better, so the
+			   attempt ends here instead of spending the retry budget. */
+			if ('deadLetter' in outcome) {
+				await this.#deadLetter(attempt, now, outcome.deadLetter);
+				return;
+			}
+			await this.#record(attempt, null, outcome, now, members);
+			return;
+		}
 		const subscription = await this.#options.repository.getSubscription(
 			tenantId,
-			attempt.subscriptionId,
+			attempt.subscriptionId ?? '',
 		);
 		if (!subscription) {
-			await this.#options.repository.completeDelivery({
-				tenantId,
-				id: attempt.id,
-				status: 'dead-letter',
-				completedAt: now,
-				responseStatus: null,
-				errorClass: 'egress-refused',
-			});
-			return false;
+			await this.#deadLetter(attempt, now, 'egress-refused');
+			return;
 		}
 		/* A paused or disabled subscription holds its queue: the attempt returns to
 		   it unchanged and nothing is counted against the retry budget. It is
@@ -425,7 +504,7 @@ export class DeliveryService {
 				attempt.id,
 				now + DELIVERY_HOLD_MS,
 			);
-			return false;
+			return;
 		}
 
 		const payload = webhookPayloadFingerprint({
@@ -438,8 +517,67 @@ export class DeliveryService {
 			occurredAt: attempt.occurredAt,
 		});
 		const outcome = await this.#send(subscription, payload.body, now);
-		await this.#record(attempt, subscription, outcome, now);
-		return outcome.status === 'succeeded';
+		await this.#record(attempt, subscription, outcome, now, members);
+	}
+
+	/** Ends one attempt without an outcome to retry; the ledger keeps the class. */
+	async #deadLetter(
+		attempt: DeliveryAttempt,
+		now: number,
+		errorClass: DeliveryErrorClass,
+	): Promise<void> {
+		await this.#options.repository.completeDelivery({
+			tenantId: attempt.tenantId,
+			id: attempt.id,
+			status: 'dead-letter',
+			completedAt: now,
+			responseStatus: null,
+			errorClass,
+		});
+	}
+
+	/**
+	 * One message to one member, through the platform port. The address comes
+	 * from auth.core at send time and the body from the member's own inbox item,
+	 * so nothing about the person is stored in this module's queue. A
+	 * `deadLetter` result means no later pass would do better.
+	 */
+	async #sendEmail(
+		attempt: DeliveryAttempt,
+		members: MemberLookup,
+	): Promise<DeliveryOutcome | PermanentEmailFailure> {
+		const recipient = attempt.recipientAccountId;
+		if (!recipient) return UNREACHABLE_RECIPIENT;
+		let member: TenantMemberScopes | undefined;
+		try {
+			member = (await members(attempt.tenantId)).byAccount.get(recipient);
+		} catch {
+			/* auth.core being unavailable is not this member's fault: the attempt
+			   keeps its budget and the next pass asks again. */
+			return failed('network');
+		}
+		/* The workspace no longer holds the member, so there is no address to
+		   resolve and none is kept here to fall back on. */
+		if (!member?.email) return UNREACHABLE_RECIPIENT;
+		const item = await this.#options.repository.findInboxItem(
+			attempt.tenantId,
+			recipient,
+			attempt.kind,
+			attempt.sourceRef,
+		);
+		if (!item) return UNREACHABLE_RECIPIENT;
+		try {
+			await this.#options.mail.send(
+				notificationMailMessage(
+					item,
+					member.email,
+					this.#locale(attempt.tenantId),
+				),
+			);
+			return { status: 'succeeded', responseStatus: null, errorClass: null };
+		} catch (error) {
+			return classifyMailError(error);
+		}
 	}
 
 	async #send(
@@ -493,9 +631,10 @@ export class DeliveryService {
 
 	async #record(
 		attempt: DeliveryAttempt,
-		subscription: StoredWebhookSubscription,
+		subscription: StoredWebhookSubscription | null,
 		outcome: DeliveryOutcome,
 		now: number,
+		members: MemberLookup,
 	): Promise<void> {
 		const { retryMaxAttempts, retryMaxBackoffMinutes } = this.#options.settings(
 			attempt.tenantId,
@@ -517,11 +656,13 @@ export class DeliveryService {
 		});
 		/* Another worker finished this attempt first; it owns what follows. */
 		if (!written) return;
-		await this.#options.repository.stampSubscriptionDelivery(
-			attempt.tenantId,
-			subscription.id,
-			now,
-		);
+		if (subscription) {
+			await this.#options.repository.stampSubscriptionDelivery(
+				attempt.tenantId,
+				subscription.id,
+				now,
+			);
+		}
 		if (status === 'succeeded') return;
 		if (status === 'failed') {
 			await this.#append(
@@ -532,7 +673,12 @@ export class DeliveryService {
 			);
 			return;
 		}
-		await this.#notifyDeadLetter(attempt, subscription, now);
+		/* An e-mail attempt has no subscription, and its dead letter writes no
+		   inbox item either. That item would be mailed to every member who asked
+		   for mail, fail the same way and dead-letter again under a new source
+		   reference; the ledger is where a failed message is read. */
+		if (!subscription) return;
+		await this.#notifyDeadLetter(attempt, subscription, now, members);
 	}
 
 	async #append(
@@ -541,19 +687,34 @@ export class DeliveryService {
 		attemptNumber: number,
 		scheduledFor: number,
 	): Promise<DeliveryAttempt | null> {
-		const payload = webhookPayloadFingerprint({
-			tenantId: source.tenantId,
-			subscriptionId: source.subscriptionId,
-			kind: source.kind,
-			sourceModule: source.sourceModule,
-			sourceRef: source.sourceRef,
-			title: source.title,
-			occurredAt: source.occurredAt,
-		});
+		/* Both fingerprints are taken from the row alone, so the digest of a retry
+		   and of a replay matches the one the first attempt recorded. */
+		const payload =
+			source.channel === 'email'
+				? emailPayloadFingerprint({
+						tenantId: source.tenantId,
+						recipientAccountId: source.recipientAccountId ?? '',
+						kind: source.kind,
+						sourceModule: source.sourceModule,
+						sourceRef: source.sourceRef,
+						title: source.title,
+						occurredAt: source.occurredAt,
+					})
+				: webhookPayloadFingerprint({
+						tenantId: source.tenantId,
+						subscriptionId: source.subscriptionId ?? '',
+						kind: source.kind,
+						sourceModule: source.sourceModule,
+						sourceRef: source.sourceRef,
+						title: source.title,
+						occurredAt: source.occurredAt,
+					});
 		return this.#options.repository.appendDelivery({
 			id: randomUUID(),
 			tenantId: source.tenantId,
+			channel: source.channel,
 			subscriptionId: source.subscriptionId,
+			recipientAccountId: source.recipientAccountId,
 			kind: source.kind,
 			sourceModule: source.sourceModule,
 			sourceRef: source.sourceRef,
@@ -580,10 +741,11 @@ export class DeliveryService {
 		attempt: DeliveryAttempt,
 		subscription: StoredWebhookSubscription,
 		now: number,
+		lookup: MemberLookup,
 	): Promise<void> {
 		let members: readonly TenantMemberScopes[];
 		try {
-			members = await this.#options.members(attempt.tenantId);
+			members = (await lookup(attempt.tenantId)).list;
 		} catch {
 			/* auth.core being unavailable must not undo a recorded dead letter. */
 			return;
@@ -607,7 +769,11 @@ export class DeliveryService {
 				createdAt: now,
 			});
 		}
-		await this.#options.repository.appendInboxItems(attempt.tenantId, records);
+		await this.#options.repository.appendInboxItems(
+			attempt.tenantId,
+			records,
+			(item) => emailDeliveryAttempt(item, this.#now()),
+		);
 	}
 }
 

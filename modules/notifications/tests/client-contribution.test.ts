@@ -17,12 +17,12 @@ import {
 	NOTIFICATION_KINDS,
 	SUBSCRIPTION_STATUSES,
 } from '../src/domain/types.ts';
+import { workspaceViewHref } from '@flowdular/client/routing';
 import {
 	NOTIFICATIONS_UNREAD_WIDGET,
 	NOTIFICATIONS_VIEWS,
 	notificationsAccountMenu,
 	notificationsNavigation,
-	workspaceViewHref,
 } from '../src/client/navigation.ts';
 
 const LOCALES = ['en', 'pl'];

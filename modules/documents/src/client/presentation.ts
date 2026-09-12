@@ -59,13 +59,37 @@ export function uploadRefusal(
 
 /**
  * Why a row cannot be downloaded, or empty when it can. An infected object was
- * deleted at once and a deleted one is gone, so the action carries the reason
- * in its own label: a disabled row action has nowhere else to put it.
+ * deleted the moment the scan found it, and a deleted one is gone.
  */
 export function downloadRefusal(record: DocumentAttachment): string {
-	if (record.scan === 'infected') return t('documents.action.downloadInfected');
-	if (record.status === 'deleted') return t('documents.action.downloadDeleted');
+	if (record.scan === 'infected')
+		return t('documents.action.downloadRefusedInfected');
+	if (record.status === 'deleted')
+		return t('documents.action.downloadRefusedDeleted');
 	return '';
+}
+
+/** The copy of a row action: its name, and why it is refused. */
+export interface ActionCopy {
+	readonly label: string;
+	readonly disabled: boolean;
+	/** Why the action is refused, empty while it is allowed. */
+	readonly reason: string;
+}
+
+/**
+ * What the download action says about this row. The label is the name of the
+ * action whatever the row is, and the refusal travels as the reason, which the
+ * table renders as the button's accessible description: an action whose name
+ * changes under the reader is a different action.
+ */
+export function downloadAction(record: DocumentAttachment): ActionCopy {
+	const reason = downloadRefusal(record);
+	return {
+		label: t('documents.action.download'),
+		disabled: reason !== '',
+		reason,
+	};
 }
 
 /**

@@ -8,11 +8,11 @@ import {
 	type AuditDataClass,
 	type SweepStatus,
 } from '../domain/types.ts';
-import type { BackupGuard } from './backup-guard.ts';
+import type { BackupGuard, BackupGuardResult } from './backup-guard.ts';
 import { DeclaredDataClasses } from './declared-classes.ts';
 import { noLegalHolds, type LegalHoldCheck } from './hold-service.ts';
 import { AUDIT_EVENTS_CLASS_ID } from './own-classes.ts';
-import type { AuditRepository } from './repository.ts';
+import type { AuditRepository, DataClassRouting } from './repository.ts';
 import { AuditServiceError } from './service-error.ts';
 
 const DAY_MS = 86_400_000;
@@ -41,19 +41,23 @@ export interface SweepServiceOptions {
 	readonly now?: () => number;
 }
 
-export interface SweepPassReport {
-	readonly examined: number;
-	readonly swept: number;
-	readonly removed: number;
-	readonly refused: number;
-	/** Classes an active hold withheld in this pass. */
-	readonly held: number;
+/**
+ * One due class as the pass that found it saw it: the routing row, the instant
+ * the pass read, and the backup evidence it refuses under. The instant and the
+ * evidence are the pass's own, so every class of one pass sweeps against the
+ * same cutoff and one backup read answers for all of them.
+ */
+export interface DueDataClass {
+	readonly routing: DataClassRouting;
+	readonly at: number;
+	readonly backup: BackupGuardResult;
 }
 
 /**
- * One retention pass. Due classes are found across workspaces on the routing
- * lease, every class is read again under the workspace the routing row named,
- * and the removal itself happens inside the owning module.
+ * The retention work of one class at a time. Due classes are found across
+ * workspaces on the routing lease, every class is read again under the
+ * workspace the routing row named, and the removal itself happens inside the
+ * owning module. The loop over them is the platform job runner's.
  */
 export class AuditSweepService {
 	readonly #repository: AuditRepository;
@@ -74,86 +78,78 @@ export class AuditSweepService {
 		this.#now = options.now ?? Date.now;
 	}
 
-	async tick(limit = SWEEP_ROUTING_PAGE): Promise<SweepPassReport> {
-		const now = this.#now();
+	/**
+	 * The classes one pass looks at, found across workspaces on the routing
+	 * lease. The backup evidence is read once here and carried on every class,
+	 * not asked per class: the answer is a property of the deployment and reading
+	 * it per class would be a file read per row. An idle pass reads neither.
+	 */
+	async due(limit = SWEEP_ROUTING_PAGE): Promise<readonly DueDataClass[]> {
+		const at = this.#now();
 		const due = await this.#repository.listDueDataClasses(
-			now - this.#intervalMs(),
+			at - this.#intervalMs(),
 			limit,
 		);
-		if (due.length === 0) {
-			return { examined: 0, swept: 0, removed: 0, refused: 0, held: 0 };
-		}
-		/* Asked once per pass, not once per class: the answer is a property of
-		   the deployment and reading it per class would be a file read per row. */
+		if (due.length === 0) return [];
 		const backup = await this.#backup();
-		let swept = 0;
-		let removed = 0;
-		let refused = 0;
-		let held = 0;
-		for (const routing of due) {
-			if (!backup.ok) {
-				if (
-					await this.#refuse(
-						routing.tenantId,
-						routing.classId,
-						AUDIT_REASONS.backupManifestMissing,
-						now,
-					)
-				) {
-					refused += 1;
-				}
-				continue;
-			}
-			/* The routing read crosses tenants and returns routing columns only.
-			   The class is read again under the workspace that row named, and one
-			   that moved in between is left to the next pass rather than swept
-			   against a period that is no longer current. */
-			const record = await this.#repository.getDataClass(
+		return due.map((routing) => ({ routing, at, backup }));
+	}
+
+	/**
+	 * One due class: refused for the deployment, withheld under an active hold,
+	 * left to the next pass when the workspace moved it, or swept.
+	 */
+	async sweep(due: DueDataClass): Promise<void> {
+		const { routing, at, backup } = due;
+		if (!backup.ok) {
+			await this.#refuse(
 				routing.tenantId,
 				routing.classId,
+				AUDIT_REASONS.backupManifestMissing,
+				at,
 			);
-			if (
-				!record ||
-				record.lastSweptAt !== routing.lastSweptAt ||
-				record.effectiveRetentionDays === null
-			) {
-				continue;
-			}
-			const owner = this.#declared.resolve(record.classId);
-			if (!owner?.declaration.sweep) continue;
-			const hold = await this.#holds({
-				tenantId: record.tenantId,
-				classId: record.classId,
-			});
-			if (hold.held) {
-				held += 1;
-				const heldBack =
-					hold.heldBack ??
-					(await this.#countHeld(record, record.effectiveRetentionDays, now));
-				if (
-					await this.#refuse(
-						record.tenantId,
-						record.classId,
-						AUDIT_REASONS.holdActive,
-						now,
-						heldBack,
-					)
-				) {
-					refused += 1;
-				}
-				continue;
-			}
-			const result = await this.#sweepClass(
-				record,
-				record.effectiveRetentionDays,
-				owner.declaration.sweep,
-				now,
-			);
-			removed += result.removed;
-			if (result.status === 'refused') refused += 1;
-			else swept += 1;
+			return;
 		}
-		return { examined: due.length, swept, removed, refused, held };
+		/* The routing read crosses tenants and returns routing columns only.
+		   The class is read again under the workspace that row named, and one
+		   that moved in between is left to the next pass rather than swept
+		   against a period that is no longer current. */
+		const record = await this.#repository.getDataClass(
+			routing.tenantId,
+			routing.classId,
+		);
+		if (
+			!record ||
+			record.lastSweptAt !== routing.lastSweptAt ||
+			record.effectiveRetentionDays === null
+		) {
+			return;
+		}
+		const owner = this.#declared.resolve(record.classId);
+		if (!owner?.declaration.sweep) return;
+		const hold = await this.#holds({
+			tenantId: record.tenantId,
+			classId: record.classId,
+		});
+		if (hold.held) {
+			const heldBack =
+				hold.heldBack ??
+				(await this.#countHeld(record, record.effectiveRetentionDays, at));
+			await this.#refuse(
+				record.tenantId,
+				record.classId,
+				AUDIT_REASONS.holdActive,
+				at,
+				heldBack,
+			);
+			return;
+		}
+		await this.#sweepClass(
+			record,
+			record.effectiveRetentionDays,
+			owner.declaration.sweep,
+			at,
+		);
 	}
 
 	/**
@@ -179,7 +175,7 @@ export class AuditSweepService {
 		retentionDays: number,
 		sweep: NonNullable<DataClassDeclaration['sweep']>,
 		now: number,
-	): Promise<{ readonly status: SweepStatus; readonly removed: number }> {
+	): Promise<void> {
 		const limit = this.#batchSize();
 		const cutoffMs = now - retentionDays * DAY_MS;
 		const cutoff = new Date(cutoffMs);
@@ -263,7 +259,6 @@ export class AuditSweepService {
 				this.#now(),
 			);
 		}
-		return { status, removed };
 	}
 
 	/**
@@ -277,9 +272,9 @@ export class AuditSweepService {
 		reason: string,
 		now: number,
 		heldBack: number | null = null,
-	): Promise<boolean> {
+	): Promise<void> {
 		const latest = await this.#repository.latestSweepRun(tenantId, classId);
-		if (latest?.status === 'refused' && latest.reason === reason) return false;
+		if (latest?.status === 'refused' && latest.reason === reason) return;
 		await this.#repository.appendSweepRun({
 			tenantId,
 			classId,
@@ -299,6 +294,5 @@ export class AuditSweepService {
 			metadata: { classId, reason },
 			occurredAt: now,
 		});
-		return true;
 	}
 }

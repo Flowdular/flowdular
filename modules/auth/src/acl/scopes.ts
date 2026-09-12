@@ -71,6 +71,11 @@ export const BUNDLED_MODULE_SCOPES = {
 	automationsTriggersRead: 'automations.triggers.read',
 	automationsTriggersManage: 'automations.triggers.manage',
 	profileSelfManage: 'profile.self.manage',
+	reportsWorkspaceRead: 'reports.workspace.read',
+	exportsListsRead: 'exports.lists.read',
+	exportsListsManage: 'exports.lists.manage',
+	accessReviewRead: 'access.review.read',
+	accessReviewManage: 'access.review.manage',
 } as const;
 
 export const OWNER_SCOPES = Object.freeze([

@@ -1,8 +1,8 @@
 import { useEffect } from 'octane';
 import { Kpi } from '@flowdular/ui';
-import { activeLocale, applicationPath, t } from '@flowdular/client';
+import { activeLocale, t, workspaceViewHref } from '@flowdular/client';
 import { useValue } from 'segment-state';
-import { APPROVALS_VIEWS, workspaceViewHref } from './navigation.ts';
+import { APPROVALS_VIEWS } from './navigation.ts';
 import {
 	clearPendingCount,
 	pendingCount,
@@ -45,11 +45,7 @@ export function PendingCountWidget() @{
 			label={t('approvals.widget.label')}
 			value={new Intl.NumberFormat(activeLocale()).format(pending)}
 			note={t('approvals.widget.note')}
-			href={workspaceViewHref(
-				APPROVALS_VIEWS.inbox,
-				typeof window === 'undefined' ? '' : window.location.pathname,
-				applicationPath(),
-			)}
+			href={workspaceViewHref(APPROVALS_VIEWS.inbox)}
 			linkLabel={t('approvals.widget.link')}
 		/>
 	}

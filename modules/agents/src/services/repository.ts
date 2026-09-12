@@ -86,6 +86,15 @@ export type PendingAgentAuditEvent = Omit<
 	'id' | 'sequence' | 'previousHash' | 'eventHash'
 >;
 
+/**
+ * What a caller that may be abandoned hands down to the statement. A read on a
+ * request path passes the signal the caller is bounded by, so the statement is
+ * cancelled with the work nobody is waiting for any more.
+ */
+export interface AgentReadOptions {
+	readonly signal?: AbortSignal | undefined;
+}
+
 export interface AgentRepository {
 	close(): Promise<void>;
 	reconcileModuleAgents(
@@ -252,6 +261,13 @@ export interface AgentRepository {
 		workerId: string,
 		leaseExpiresAt: number,
 	): Promise<boolean>;
+	/* Hands a claim back to the queue, clearing the lease, for work this worker
+	   took but will not perform. Answers whether the row was still its own. */
+	releaseAction(
+		tenantId: string,
+		invocationId: string,
+		workerId: string,
+	): Promise<boolean>;
 	completeAction(
 		tenantId: string,
 		invocationId: string,
@@ -331,6 +347,7 @@ export interface AgentRepository {
 		tenantId: string,
 		fromDay: string,
 		toDay: string,
+		options?: AgentReadOptions,
 	): Promise<readonly AgentUsageDay[]>;
 	usageByAgent(
 		tenantId: string,

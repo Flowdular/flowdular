@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: import.core
-specVersion: 0.1.3
+specVersion: 0.1.7
 status: approved
 name: Import Core
 description: Brings records into a workspace from a CSV file in bulk, through an import job with a per-row outcome, staged validation that reports every failure before anything is written, an explicit dry run, saved column mappings, and an import port each owning module implements so its own invariants and idempotency rules apply to every row.
@@ -12,9 +12,9 @@ capabilities:
   - translations
 dependencies:
   - id: system.core
-    range: ^0.5.1
+    range: ^0.7.0
   - id: auth.core
-    range: ^0.12.0
+    range: ^0.13.0
   - id: documents.core
     range: ^0.1.2
 tenancy: required
@@ -31,6 +31,7 @@ invariants:
   - Authorization is decided on the live principal, the target's own permission at start and again at continue, so a grant revoked after validation stops the write; what the background stages carry into a port call is a snapshot of the requester taken at start, bounded to 8 KB by the job row and refused at start with REQUESTER_TOO_LARGE when it would not fit, used so the port sees who is importing and never to widen a grant, and left out of both the job export and every API response, so a job crossing the API names its requester by account id alone and never carries the snapshot or the poll loop's claim.
   - A job is bounded to 50000 rows and 25 MB of CSV; a document over the byte bound is refused at start before a job row exists, a file over the row bound fails the job while it is parsed, and a running job is processed by one poll loop in bounded batches so the request that starts it returns at once. Cells are cut out of the decoded file rather than accumulated character by character, so one job costs memory of the order of its own file.
   - A claimed job renews its claim once per batch for as long as a stage is running, so a stage that outlasts the claim lease is never taken up by a second poll loop while it works; a claim nobody renewed within the lease belonged to a process that is gone, and its job is reclaimed and continued from the outcomes already recorded. Every renewal names the claim the stage holds, so a stage whose lease lapsed cannot renew over the loop that reclaimed its job, but stops there with CLAIM_LOST and records nothing, leaving the job to its new owner rather than settling work that is still running.
+  - A job records the trace it was enqueued in, as a W3C traceparent value on its own row, so the background pass that claims it is read against the request that asked for the import; a job started outside a traced scope records none and is a new root, and the value is bookkeeping for the loop that never crosses the wire.
   - Rows are checked against the port's declared natural key across the whole file before any batch is handed over, so the first row carrying a key is the one that is written, a later repeat is recorded invalid with NATURAL_KEY_DUPLICATE, and a port needs no state between calls to stay idempotent across batches. Which two values are one key belongs to the port, which folds a row into its own key, and without a fold the key fields are compared exactly, so import.core never decides that two spellings of one value mean one record.
   - When a write stage ends, the job's written and failed counts are read back from its row outcomes in one grouped read rather than counted in the pass, so a job reclaimed after a crash reports the whole file instead of the batches the last process happened to run.
   - A column mapping names the CSV header for each port field and is saved per workspace and target as a template for the next import; one header feeds at most one field, so a mapping naming one column twice is refused with MAPPING_COLUMN_REUSED before it is saved or started, a mapping whose serialized form would not fit the 8 KB the job row and the saved template each bound is refused with MAPPING_TOO_LARGE for the same reason, and a mapped header the file's header row does not carry fails the job with MAPPING_COLUMN_MISSING whether that field is required or not, rather than importing the file as if the column had been left out on purpose.

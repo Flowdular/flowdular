@@ -40,6 +40,7 @@ import {
 	type CreateRoleRecord,
 	type CreateSessionRecord,
 	type CreateTenantMembershipRecord,
+	type ExternalIdentityBinding,
 	type ExternalIdentityRecord,
 	type IdentityProviderPatch,
 	type IdentityProviderRecord,
@@ -61,6 +62,14 @@ import type { SealedMfaSecret } from './totp.ts';
  * a tenant id is a UUID.
  */
 export const IDENTITY_TENANT_CONTEXT = 'auth.core:identity';
+
+/**
+ * Rows one expired-session delete removes. The sweep walks a backlog of
+ * unknown size, and a single delete over it would hold the table for as long as
+ * it takes; a bounded batch keeps every statement short and leaves the rest to
+ * the next batch.
+ */
+export const EXPIRED_SESSION_SWEEP_BATCH = 1_000;
 
 /**
  * Storage tenant of a platform-scoped setting. The kernel addresses it as the
@@ -237,6 +246,20 @@ const TENANT_MEMBER_COLUMNS = `a.id AS account_id, a.email, a.display_name,
 	    WHERE s.account_id = m.account_id AND s.tenant_id = m.tenant_id) AS scopes`;
 
 /**
+ * The member search statement, exported so a plan assertion explains the
+ * statement the repository runs rather than a copy of it that can drift away
+ * from the indexes it was written for.
+ */
+export const TENANT_MEMBER_SEARCH_SQL = `SELECT ${TENANT_MEMBER_COLUMNS}
+       FROM auth_memberships m
+       JOIN auth_accounts a ON a.id = m.account_id
+       WHERE m.tenant_id = $1
+         AND (lower(a.display_name) LIKE $2 ESCAPE '\\'
+              OR a.email_normalized LIKE $2 ESCAPE '\\')
+       ORDER BY lower(a.display_name), a.id
+       LIMIT $3`;
+
+/**
  * One PostgreSQL `text[]` literal. A bound parameter carries no array type, so
  * a list travels as this literal and the statement casts it back. Every element
  * is quoted with its backslashes and quotes escaped, so no element can close
@@ -246,6 +269,13 @@ export function textArrayLiteral(values: readonly string[]): string {
 	return `{${values
 		.map((value) => `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`)
 		.join(',')}}`;
+}
+
+interface ExternalIdentityBindingRow {
+	account_id: string;
+	provider: string;
+	subject: string;
+	created_at: number | bigint | string;
 }
 
 function tenantMemberFrom(row: TenantMemberRow): TenantMember {
@@ -807,6 +837,26 @@ export class DatabaseAuthRepository implements AuthRepository {
 		return rows.map(tenantMemberFrom);
 	}
 
+	/* Keyset by account id, which migration 0030 indexes behind the workspace,
+	   so a page is an index range scan of exactly the rows it returns rather
+	   than a walk over every workspace's memberships after the cursor. */
+	async listTenantMembersPage(
+		tenantId: string,
+		afterAccountId: string,
+		limit: number,
+	): Promise<readonly TenantMember[]> {
+		const rows = await this.#query<TenantMemberRow>(tenantId, {
+			text: `SELECT ${TENANT_MEMBER_COLUMNS}
+			       FROM auth_memberships m
+			       JOIN auth_accounts a ON a.id = m.account_id
+			       WHERE m.tenant_id = $1 AND m.account_id > $2
+			       ORDER BY m.account_id
+			       LIMIT $3`,
+			parameters: [tenantId, afterAccountId, limit],
+		});
+		return rows.map(tenantMemberFrom);
+	}
+
 	async findTenantMember(
 		tenantId: string,
 		accountId: string,
@@ -844,15 +894,8 @@ export class DatabaseAuthRepository implements AuthRepository {
 		limit: number,
 	): Promise<readonly TenantMember[]> {
 		const rows = await this.#query<TenantMemberRow>(tenantId, {
-			text: `SELECT ${TENANT_MEMBER_COLUMNS}
-			       FROM auth_memberships m
-			       JOIN auth_accounts a ON a.id = m.account_id
-			       WHERE m.tenant_id = $1
-			         AND (lower(a.display_name) LIKE $2 ESCAPE '\\'
-			              OR a.email_normalized LIKE $3 ESCAPE '\\')
-			       ORDER BY lower(a.display_name), a.id
-			       LIMIT $4`,
-			parameters: [tenantId, `%${term}%`, `${term}%`, limit],
+			text: TENANT_MEMBER_SEARCH_SQL,
+			parameters: [tenantId, `${term}%`, limit],
 		});
 		return rows.map(tenantMemberFrom);
 	}
@@ -1426,17 +1469,38 @@ export class DatabaseAuthRepository implements AuthRepository {
 		return affected > 0;
 	}
 
-	async deleteExpiredSessions(now: number): Promise<number> {
+	/**
+	 * Removes sessions that expired before `now` in batches of
+	 * EXPIRED_SESSION_SWEEP_BATCH, at most `maxBatches` of them, and answers how
+	 * many rows went. A backlog of unknown size must not become one delete that
+	 * holds the table for the length of it, and what the bound leaves behind is
+	 * the next pass's work. Row security scopes a delete to one workspace, so
+	 * the rows are routed first and removed per tenant.
+	 */
+	async deleteExpiredSessions(
+		now: number,
+		maxBatches: number = Number.POSITIVE_INFINITY,
+	): Promise<number> {
 		const tenants = await this.#route<RoutedTenantRow>({
 			text: 'SELECT DISTINCT tenant_id FROM auth_sessions WHERE expires_at <= $1',
 			parameters: [now],
 		});
 		let removed = 0;
+		let batches = 0;
 		for (const tenant of tenants) {
-			removed += await this.#exec(tenant.tenant_id, {
-				text: 'DELETE FROM auth_sessions WHERE expires_at <= $1',
-				parameters: [now],
-			});
+			while (batches < maxBatches) {
+				batches += 1;
+				const gone = await this.#exec(tenant.tenant_id, {
+					text: `DELETE FROM auth_sessions
+					       WHERE id IN (SELECT id FROM auth_sessions
+					                    WHERE expires_at <= $1
+					                    LIMIT $2)`,
+					parameters: [now, EXPIRED_SESSION_SWEEP_BATCH],
+				});
+				removed += gone;
+				/* A short batch is the proof this workspace is drained. */
+				if (gone < EXPIRED_SESSION_SWEEP_BATCH) break;
+			}
 		}
 		return removed;
 	}
@@ -1788,6 +1852,32 @@ export class DatabaseAuthRepository implements AuthRepository {
 				record.now,
 			],
 		});
+	}
+
+	/* Keyset by (provider, subject), which the unique workspace index covers in
+	   that order, so a page is the rows it returns. The select list is the
+	   binding and nothing else: no token, ciphertext, fingerprint or reported
+	   address leaves this statement. A platform provider's binding carries no
+	   workspace, so the predicate never reaches one. */
+	async listExternalIdentitiesPage(
+		tenantId: string,
+		after: { readonly provider: string; readonly subject: string },
+		limit: number,
+	): Promise<readonly ExternalIdentityBinding[]> {
+		const rows = await this.#query<ExternalIdentityBindingRow>(tenantId, {
+			text: `SELECT account_id, provider, subject, created_at
+			       FROM auth_external_identities
+			       WHERE tenant_id = $1 AND (provider, subject) > ($2, $3)
+			       ORDER BY provider, subject
+			       LIMIT $4`,
+			parameters: [tenantId, after.provider, after.subject, limit],
+		});
+		return rows.map((row) => ({
+			accountId: row.account_id,
+			provider: row.provider,
+			subject: row.subject,
+			linkedAt: integer(row.created_at),
+		}));
 	}
 
 	/* A deleted provider takes its workspace's bindings with it; the accounts
@@ -2184,6 +2274,16 @@ export class DatabaseAuthRepository implements AuthRepository {
 			return `$${parameters.length}`;
 		};
 		if (query.action) conditions.push(`action = ${marker(query.action)}`);
+		/* The window is inclusive and each end is independent, so a caller asks
+		   for a date range instead of seeding the cursor at its ceiling and
+		   watching every page for the floor. It composes with the filters and the
+		   keyset rather than replacing any of them. */
+		if (query.from !== undefined && query.from !== null) {
+			conditions.push(`occurred_at >= ${marker(query.from)}`);
+		}
+		if (query.to !== undefined && query.to !== null) {
+			conditions.push(`occurred_at <= ${marker(query.to)}`);
+		}
 		if (query.actor) {
 			conditions.push(
 				`(actor_account_id = ${marker(query.actor)} OR actor_label = ${marker(query.actor)})`,

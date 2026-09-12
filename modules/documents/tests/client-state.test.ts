@@ -2,11 +2,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
 	registerModuleTranslations,
 	setActiveLocale,
+	t,
 } from '@flowdular/client/i18n';
 import type { DocumentAttachment } from '../src/domain/attachments.ts';
 import translationsEn from '../translations/en.json';
 import translationsPl from '../translations/pl.json';
 import {
+	downloadAction,
 	downloadRefusal,
 	tableEmpty,
 	uploadRefusal,
@@ -115,6 +117,27 @@ describe('documents placeholders and refusals', () => {
 		expect(downloadRefusal(attachment('a', { status: 'deleted' }))).not.toBe(
 			'',
 		);
+	});
+
+	/* A reader who cannot see the greyed button hears the action's name and its
+	   description. An action whose name changes under it is a different action,
+	   so the refusal belongs in the reason and never in the label. */
+	it('names the download action the same way whatever the row is', () => {
+		const allowed = downloadAction(attachment('a'));
+		const infected = downloadAction(attachment('a', { scan: 'infected' }));
+		const deleted = downloadAction(attachment('a', { status: 'deleted' }));
+
+		expect(allowed).toEqual({
+			label: t('documents.action.download'),
+			disabled: false,
+			reason: '',
+		});
+		expect(infected.label).toBe(allowed.label);
+		expect(deleted.label).toBe(allowed.label);
+		expect([infected.disabled, deleted.disabled]).toEqual([true, true]);
+		expect(infected.reason).not.toBe('');
+		expect(infected.reason).not.toContain(allowed.label);
+		expect(deleted.reason).not.toBe(infected.reason);
 	});
 
 	/* The port refuses an oversized file after it has been sent; the screen

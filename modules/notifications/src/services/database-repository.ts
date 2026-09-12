@@ -8,8 +8,10 @@ import type {
 import { runDatabaseMigrations } from '@flowdular/database';
 import type {
 	DeliveryAttempt,
+	DeliveryChannel,
 	DeliveryRouting,
 	DeliveryStatus,
+	MemberNotificationSettings,
 	NotificationKind,
 	NotificationPreference,
 	NotificationsInbox,
@@ -55,6 +57,14 @@ interface PreferenceRow {
 	updated_at: number | bigint | string;
 }
 
+interface MemberPreferenceRow {
+	tenant_id: string;
+	recipient_account_id: string;
+	email_delivery: number | bigint | string;
+	created_at: number | bigint | string;
+	updated_at: number | bigint | string;
+}
+
 interface SubscriptionRow {
 	id: string;
 	tenant_id: string;
@@ -85,7 +95,9 @@ type ClaimedDeliveryStatus = 'sending';
 interface DeliveryRow {
 	id: string;
 	tenant_id: string;
-	subscription_id: string;
+	channel: DeliveryChannel;
+	subscription_id: string | null;
+	recipient_account_id: string | null;
 	kind: NotificationKind;
 	source_module: string;
 	source_ref: string;
@@ -109,10 +121,10 @@ const SUBSCRIPTION_COLUMNS = `id, tenant_id, name, url, events_json,
 	 secret_revision, status, description, last_delivery_at, created_at,
 	 updated_at, created_by`;
 
-const DELIVERY_COLUMNS = `id, tenant_id, subscription_id, kind, source_module,
-	 source_ref, title, sequence, attempt_number, status, scheduled_for,
-	 completed_at, response_status, error_class, payload_digest, payload_bytes,
-	 occurred_at, created_at`;
+const DELIVERY_COLUMNS = `id, tenant_id, channel, subscription_id,
+	 recipient_account_id, kind, source_module, source_ref, title, sequence,
+	 attempt_number, status, scheduled_for, completed_at, response_status,
+	 error_class, payload_digest, payload_bytes, occurred_at, created_at`;
 
 /* Queries stay explicit. Values always travel in the adapter's parameter
    channel; nothing from a request is concatenated into SQL. */
@@ -139,6 +151,11 @@ const SQL = {
 	 WHERE tenant_id = $1 AND recipient_account_id = $2 AND status = 'unread'`,
 	getInboxItem: `SELECT * FROM notifications_inbox
 	 WHERE tenant_id = $1 AND recipient_account_id = $2 AND id = $3`,
+	/* The unique source index answers this; it is the key a publication is
+	   idempotent on, so one member holds at most one item per event. */
+	findInboxItem: `SELECT * FROM notifications_inbox
+	 WHERE tenant_id = $1 AND recipient_account_id = $2 AND kind = $3
+	   AND source_ref = $4`,
 	setInboxStatus: `UPDATE notifications_inbox SET status = $4, read_at = $5
 	 WHERE tenant_id = $1 AND recipient_account_id = $2 AND id = $3
 	 RETURNING *`,
@@ -166,6 +183,20 @@ const SQL = {
 	 VALUES ($1, $2, $3, $4, $5, $6, $7)
 	 ON CONFLICT (tenant_id, recipient_account_id, kind) DO UPDATE SET
 	   enabled = EXCLUDED.enabled, updated_at = EXCLUDED.updated_at
+	 RETURNING *`,
+
+	/* An absent row means the defaults, so only the members who asked for mail
+	   are read back; the set bounds the e-mail rows one publication writes. */
+	emailRecipients: `SELECT recipient_account_id
+	 FROM notifications_member_preferences
+	 WHERE tenant_id = $1 AND email_delivery = 1`,
+	getMemberSettings: `SELECT * FROM notifications_member_preferences
+	 WHERE tenant_id = $1 AND recipient_account_id = $2`,
+	saveMemberSettings: `INSERT INTO notifications_member_preferences
+	 (tenant_id, recipient_account_id, email_delivery, created_at, updated_at)
+	 VALUES ($1, $2, $3, $4, $5)
+	 ON CONFLICT (tenant_id, recipient_account_id) DO UPDATE SET
+	   email_delivery = EXCLUDED.email_delivery, updated_at = EXCLUDED.updated_at
 	 RETURNING *`,
 
 	activeSubscriptionsForKind: `SELECT ${SUBSCRIPTION_COLUMNS}
@@ -206,7 +237,7 @@ const SQL = {
 	 SET last_delivery_at = $3 WHERE tenant_id = $1 AND id = $2`,
 
 	insertDelivery: `INSERT INTO notifications_deliveries (${DELIVERY_COLUMNS})
-	 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+	 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 	 ON CONFLICT DO NOTHING
 	 RETURNING id`,
 	listDeliveries: `SELECT * FROM notifications_deliveries
@@ -232,8 +263,9 @@ const SQL = {
 	 WHERE tenant_id = $1 AND id = $2 AND status IN ('pending', 'sending')`,
 	latestSequence: `SELECT coalesce(max(sequence), 0) AS sequence
 	 FROM notifications_deliveries
-	 WHERE tenant_id = $1 AND subscription_id = $2 AND kind = $3
-	   AND source_ref = $4`,
+	 WHERE tenant_id = $1 AND channel = $2
+	   AND coalesce(subscription_id, recipient_account_id) = $3 AND kind = $4
+	   AND source_ref = $5`,
 	/* Read through the cross-tenant background lease; the attempt is read again
 	   under the tenant this returned before anything leaves the process. */
 	listDueDeliveries: `SELECT tenant_id, id, scheduled_for, status
@@ -316,6 +348,18 @@ function inboxFromRow(row: InboxRow): NotificationsInbox {
 	};
 }
 
+function memberSettingsFromRow(
+	row: MemberPreferenceRow,
+): MemberNotificationSettings {
+	return {
+		tenantId: row.tenant_id,
+		recipientAccountId: row.recipient_account_id,
+		emailDelivery: integer(row.email_delivery, 'preference flag') === 1,
+		createdAt: integer(row.created_at, 'timestamp'),
+		updatedAt: integer(row.updated_at, 'timestamp'),
+	};
+}
+
 function preferenceFromRow(row: PreferenceRow): NotificationPreference {
 	return {
 		id: row.id,
@@ -379,7 +423,9 @@ function deliveryFromRow(row: DeliveryRow): DeliveryAttempt {
 	return {
 		id: row.id,
 		tenantId: row.tenant_id,
+		channel: row.channel,
 		subscriptionId: row.subscription_id,
+		recipientAccountId: row.recipient_account_id,
 		kind: row.kind,
 		sourceModule: row.source_module,
 		sourceRef: row.source_ref,
@@ -422,7 +468,9 @@ function deliveryParameters(
 	return [
 		record.id,
 		record.tenantId,
+		record.channel,
 		record.subscriptionId,
+		record.recipientAccountId,
 		record.kind,
 		record.sourceModule,
 		record.sourceRef,
@@ -491,23 +539,39 @@ export class DatabaseNotificationsRepository
 								input.tenantId,
 								input.kind,
 							);
+				const mailed =
+					input.recipients.length === 0
+						? NO_RECIPIENTS
+						: await this.#emailRecipients(transaction, input.tenantId);
 				const inboxItemIds: string[] = [];
+				const deliveryIds: string[] = [];
 				let addressed = 0;
+				let queued = 0;
 				for (const recipient of input.recipients) {
 					if (disabled.has(recipient)) continue;
 					addressed += 1;
+					const item = input.inboxItem(recipient);
 					const written = await transaction.query<{ id: string }>({
 						text: SQL.insertInbox,
-						parameters: [...inboxParameters(input.inboxItem(recipient))],
+						parameters: [...inboxParameters(item)],
 					});
 					const id = written.rows[0]?.id;
 					if (id !== undefined) inboxItemIds.push(id);
+					/* The kind switch decided there is an item at all; this decides
+					   whether the item that exists is also mailed. */
+					if (!mailed.has(recipient)) continue;
+					queued += 1;
+					const mail = await transaction.query<{ id: string }>({
+						text: SQL.insertDelivery,
+						parameters: [...deliveryParameters(input.emailDelivery(item))],
+					});
+					const mailId = mail.rows[0]?.id;
+					if (mailId !== undefined) deliveryIds.push(mailId);
 				}
 				const subscriptions = await transaction.query<SubscriptionRow>({
 					text: SQL.activeSubscriptionsForKind,
 					parameters: [input.tenantId, input.kind],
 				});
-				const deliveryIds: string[] = [];
 				for (const row of subscriptions.rows) {
 					const written = await transaction.query<{ id: string }>({
 						text: SQL.insertDelivery,
@@ -525,7 +589,7 @@ export class DatabaseNotificationsRepository
 				   result of an insert that conflicted. */
 				if (
 					inboxItemIds.length < addressed ||
-					deliveryIds.length < subscriptions.rows.length
+					deliveryIds.length < subscriptions.rows.length + queued
 				) {
 					const written = await this.#existingEvent(transaction, input);
 					if (written) return written;
@@ -561,6 +625,19 @@ export class DatabaseNotificationsRepository
 			inboxItemIds: inbox.rows.map((row) => row.id),
 			deliveryIds: deliveries.rows.map((row) => row.id),
 		};
+	}
+
+	/* An absent row means the member never asked for mail, so only the ones who
+	   did are read back. Read once per publication, not once per recipient. */
+	async #emailRecipients(
+		transaction: DatabaseTransaction,
+		tenantId: string,
+	): Promise<ReadonlySet<string>> {
+		const result = await transaction.query<{ recipient_account_id: string }>({
+			text: SQL.emailRecipients,
+			parameters: [tenantId],
+		});
+		return new Set(result.rows.map((row) => row.recipient_account_id));
 	}
 
 	/* An absent preference row means enabled, so only the members who switched
@@ -671,11 +748,13 @@ export class DatabaseNotificationsRepository
 	async appendInboxItems(
 		tenantId: string,
 		records: readonly NotificationsInbox[],
+		emailDelivery: (item: NotificationsInbox) => DeliveryAttempt,
 	): Promise<readonly string[]> {
 		if (records.length === 0) return [];
 		return this.handles.runtime.transaction(
 			async (transaction) => {
 				const disabled = new Map<NotificationKind, ReadonlySet<string>>();
+				const mailed = await this.#emailRecipients(transaction, tenantId);
 				const written: string[] = [];
 				for (const record of records) {
 					let skipped = disabled.get(record.kind);
@@ -693,12 +772,64 @@ export class DatabaseNotificationsRepository
 						parameters: [...inboxParameters(record)],
 					});
 					const id = result.rows[0]?.id;
-					if (id !== undefined) written.push(id);
+					if (id === undefined) continue;
+					written.push(id);
+					/* Only a fresh item is mailed: a repeat wrote nothing, and the
+					   member was already told. */
+					if (!mailed.has(record.recipientAccountId)) continue;
+					await transaction.query<{ id: string }>({
+						text: SQL.insertDelivery,
+						parameters: [...deliveryParameters(emailDelivery(record))],
+					});
 				}
 				return written;
 			},
 			{ access: 'write', tenantId },
 		);
+	}
+
+	async findInboxItem(
+		tenantId: string,
+		recipientAccountId: string,
+		kind: NotificationKind,
+		sourceRef: string,
+	): Promise<NotificationsInbox | null> {
+		const rows = await this.#read<InboxRow>(tenantId, {
+			text: SQL.findInboxItem,
+			parameters: [tenantId, recipientAccountId, kind, sourceRef],
+		});
+		return rows[0] ? inboxFromRow(rows[0]) : null;
+	}
+
+	async getMemberSettings(
+		tenantId: string,
+		recipientAccountId: string,
+	): Promise<MemberNotificationSettings | null> {
+		const rows = await this.#read<MemberPreferenceRow>(tenantId, {
+			text: SQL.getMemberSettings,
+			parameters: [tenantId, recipientAccountId],
+		});
+		return rows[0] ? memberSettingsFromRow(rows[0]) : null;
+	}
+
+	async saveMemberSettings(
+		record: MemberNotificationSettings,
+	): Promise<MemberNotificationSettings> {
+		const result = await this.handles.runtime.transaction(
+			(transaction) =>
+				transaction.query<MemberPreferenceRow>({
+					text: SQL.saveMemberSettings,
+					parameters: [
+						record.tenantId,
+						record.recipientAccountId,
+						record.emailDelivery ? 1 : 0,
+						record.createdAt,
+						record.updatedAt,
+					],
+				}),
+			{ access: 'write', tenantId: record.tenantId },
+		);
+		return memberSettingsFromRow(result.rows[0]!);
 	}
 
 	async listPreferences(
@@ -1002,16 +1133,27 @@ export class DatabaseNotificationsRepository
 	}
 
 	async latestDeliverySequence(
-		tenantId: string,
-		subscriptionId: string,
-		kind: NotificationKind,
-		sourceRef: string,
+		attempt: Pick<
+			DeliveryAttempt,
+			| 'tenantId'
+			| 'channel'
+			| 'subscriptionId'
+			| 'recipientAccountId'
+			| 'kind'
+			| 'sourceRef'
+		>,
 	): Promise<number> {
 		const rows = await this.#read<{ sequence: number | bigint | string }>(
-			tenantId,
+			attempt.tenantId,
 			{
 				text: SQL.latestSequence,
-				parameters: [tenantId, subscriptionId, kind, sourceRef],
+				parameters: [
+					attempt.tenantId,
+					attempt.channel,
+					attempt.subscriptionId ?? attempt.recipientAccountId,
+					attempt.kind,
+					attempt.sourceRef,
+				],
 			},
 		);
 		return integer(rows[0]?.sequence ?? 0, 'sequence');

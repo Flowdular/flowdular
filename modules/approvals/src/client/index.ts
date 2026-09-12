@@ -13,7 +13,6 @@ export {
 	APPROVALS_PENDING_WIDGET,
 	APPROVALS_VIEWS,
 	approvalsNavigation,
-	workspaceViewHref,
 } from './navigation.ts';
 
 /* Canonical entry used by the generated platform composition. */

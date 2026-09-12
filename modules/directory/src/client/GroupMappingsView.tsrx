@@ -281,6 +281,7 @@ export function GroupMappingsView(props: GroupMappingsViewProps) @{
 							]}
 							help={t('directory.groups.form.roleHelp')}
 							disabled={!props.canManage}
+							autoFocus
 							onChange={setRoleKey}
 						/>
 						<FormField

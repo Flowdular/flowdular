@@ -15,7 +15,7 @@ capabilities:
 
 dependencies:
   - id: auth.core
-    range: ^0.12.0
+    range: ^0.13.0
 
 tenancy: required
 

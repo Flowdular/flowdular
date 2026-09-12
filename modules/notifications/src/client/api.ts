@@ -4,6 +4,7 @@ import type {
 	DeliveryAttempt,
 	DeliveryStatus,
 	NotificationKind,
+	MemberNotificationSettings,
 	NotificationPreference,
 	NotificationsInbox,
 	NotificationsInboxStatus,
@@ -156,6 +157,8 @@ export async function archiveInboxItem(
 export interface NotificationPreferences {
 	readonly kinds: readonly NotificationKind[];
 	readonly preferences: readonly NotificationPreference[];
+	/** The member's workspace-wide switches, defaults included. */
+	readonly member: MemberNotificationSettings;
 }
 
 export async function loadPreferences(): Promise<NotificationPreferences> {
@@ -174,6 +177,19 @@ export async function savePreference(
 			csrfToken,
 		)
 	).preference;
+}
+
+export async function saveEmailDelivery(
+	enabled: boolean,
+	csrfToken: string,
+): Promise<MemberNotificationSettings> {
+	return (
+		await post<{ readonly member: MemberNotificationSettings }>(
+			'/api/notifications/preferences/email',
+			{ enabled },
+			csrfToken,
+		)
+	).member;
 }
 
 export async function loadWebhooks(): Promise<readonly WebhookSubscription[]> {

@@ -15,9 +15,17 @@ import {
 import {
 	ModuleSettingsError,
 	type ModuleSettingEntry,
+	type ModuleSettingKind,
 	type ModuleSettingsRuntime,
+	type ModuleSettingValue,
 } from '@flowdular/kernel';
 import { SYSTEM_PERMISSIONS } from '../acl/permissions.ts';
+import {
+	InvalidTimeZoneError,
+	normalizeTimeZone,
+	SYSTEM_MODULE_ID,
+	TENANT_TIME_ZONE_KEY,
+} from '../domain/time-zone.ts';
 import { readModuleCatalog } from './module-catalog.ts';
 
 export interface SystemRouteOptions {
@@ -35,6 +43,8 @@ const MFA_KEY_REQUIRED =
 export interface SettingsEntryPayload {
 	readonly key: string;
 	readonly type: ModuleSettingEntry['definition']['type'];
+	/** Present only on a feature flag; the Flags screen selects on it. */
+	readonly kind?: ModuleSettingKind;
 	readonly scope: 'platform' | 'tenant';
 	readonly label: string;
 	readonly labelKey?: string;
@@ -99,6 +109,7 @@ function entryPayload(
 	return {
 		key: entry.key,
 		type: definition.type,
+		...(definition.kind ? { kind: definition.kind } : {}),
 		scope: definition.scope ?? 'tenant',
 		label: definition.label ?? entry.key,
 		...(definition.labelKey ? { labelKey: definition.labelKey } : {}),
@@ -116,6 +127,28 @@ function entryPayload(
 		...(definition.multiline ? { multiline: true } : {}),
 		...(lock ?? {}),
 	};
+}
+
+/* The declared pattern bounds the shape only, so the write surface canonicalizes
+   the workspace zone against the runtime zone database. A name this deployment
+   does not know never reaches storage, where every reader would fall back. */
+function timeZoneValue(
+	moduleId: string,
+	key: string,
+	value: ModuleSettingValue | null,
+): ModuleSettingValue | null {
+	if (moduleId !== SYSTEM_MODULE_ID || key !== TENANT_TIME_ZONE_KEY) {
+		return value;
+	}
+	if (typeof value !== 'string') return value;
+	try {
+		return normalizeTimeZone(value);
+	} catch (error) {
+		if (error instanceof InvalidTimeZoneError) {
+			throw new HttpProblem(error.code, error.message, 400);
+		}
+		throw error;
+	}
 }
 
 function settingsProblem(error: unknown): Response {
@@ -359,7 +392,7 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 					principal.tenantId,
 					moduleId,
 					key,
-					value ?? null,
+					timeZoneValue(moduleId, key, value) ?? null,
 					principal.accountId,
 				);
 				const entry = options.settings

@@ -1,4 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import {
+	currentTraceParent,
+	resumeJobTrace,
+	serverTracer,
+	type Tracer,
+} from '@flowdular/server';
 import type { AuthPrincipal } from '@flowdular/module-auth';
 import { readCsv, CsvError, type CsvDocument } from '../domain/csv.ts';
 import {
@@ -74,7 +80,12 @@ export interface ImportServiceOptions {
 	readonly batchSize: () => number;
 	readonly now?: () => number;
 	readonly newId?: () => string;
+	/** Defaults to the process tracer, which is the one `context.tracer` carries. */
+	readonly tracer?: Tracer;
 }
+
+/** One stage of one claimed job, in the trace that enqueued it. */
+const IMPORT_PERFORM_SPAN = 'import.core perform';
 
 const EMAIL = /^[^\s@]{1,64}@[^\s@.]{1,63}(\.[^\s@.]{1,63})+$/;
 const INTEGER = /^-?\d{1,15}$/;
@@ -159,6 +170,7 @@ export class ImportService {
 	readonly #batchSize: () => number;
 	readonly #now: () => number;
 	readonly #newId: () => string;
+	readonly #tracer: Tracer;
 
 	constructor(options: ImportServiceOptions) {
 		this.#repository = options.repository;
@@ -168,6 +180,7 @@ export class ImportService {
 		this.#batchSize = options.batchSize;
 		this.#now = options.now ?? (() => Date.now());
 		this.#newId = options.newId ?? (() => randomUUID());
+		this.#tracer = options.tracer ?? serverTracer();
 	}
 
 	targets(principal: AuthPrincipal): readonly ImportTargetView[] {
@@ -260,6 +273,9 @@ export class ImportService {
 			claimedAt: null,
 			startedAt: this.#now(),
 			completedAt: null,
+			/* Captured here, where the request that asked for the import is still
+			   the ambient trace; the poll that claims the job runs in none. */
+			traceparent: currentTraceParent(),
 		});
 	}
 
@@ -398,12 +414,32 @@ export class ImportService {
 	 * One stage of one claimed job. It never throws: a failure is the job's
 	 * recorded outcome, because the operator reads the job, not this process's
 	 * log.
+	 *
+	 * The stage runs in the trace the request that enqueued the job was part
+	 * of, from the `traceparent` that request stored on the row, so the spans
+	 * and the log lines of the background work carry the trace id of the
+	 * import that asked for it.
 	 */
-	async perform(job: ClaimedImportJob): Promise<ImportJob> {
+	async perform(
+		job: ClaimedImportJob,
+		signal?: AbortSignal,
+	): Promise<ImportJob> {
+		return resumeJobTrace(
+			this.#tracer,
+			job.traceparent,
+			IMPORT_PERFORM_SPAN,
+			() => this.#perform(job, signal),
+		);
+	}
+
+	async #perform(
+		job: ClaimedImportJob,
+		signal?: AbortSignal,
+	): Promise<ImportJob> {
 		try {
 			return job.status === 'parsing'
-				? await this.#parseAndValidate(job)
-				: await this.#write(job);
+				? await this.#parseAndValidate(job, signal)
+				: await this.#write(job, signal);
 		} catch (error) {
 			/* The lease lapsed and another loop reclaimed the job. It is that loop's
 			   work now, so this stage records nothing at all: failing the job here
@@ -431,7 +467,10 @@ export class ImportService {
 		}
 	}
 
-	async #parseAndValidate(job: ClaimedImportJob): Promise<ImportJob> {
+	async #parseAndValidate(
+		job: ClaimedImportJob,
+		signal: AbortSignal | undefined,
+	): Promise<ImportJob> {
 		const registered = this.#require(job.target);
 		const document = await this.#read(job);
 		const { rows, invalid } = this.#map(registered, job, document);
@@ -447,7 +486,6 @@ export class ImportService {
 
 		const batch = this.#batchSize();
 		const principal = principalOf(job);
-		const renew = this.#renewal(job);
 		for (let start = 0; start < pending.length; start += batch) {
 			const slice = pending.slice(start, start + batch);
 			for (const verdict of await this.#validate(registered, {
@@ -457,7 +495,7 @@ export class ImportService {
 			})) {
 				if (verdict.verdict === 'invalid') verdicts.set(verdict.row, verdict);
 			}
-			await renew();
+			this.#checkpoint(signal);
 		}
 
 		const outcomes: ImportJobRow[] = [];
@@ -490,7 +528,10 @@ export class ImportService {
 		);
 	}
 
-	async #write(job: ClaimedImportJob): Promise<ImportJob> {
+	async #write(
+		job: ClaimedImportJob,
+		signal: AbortSignal | undefined,
+	): Promise<ImportJob> {
 		const registered = this.#require(job.target);
 		const document = await this.#read(job);
 		const { rows } = this.#map(registered, job, document);
@@ -501,7 +542,6 @@ export class ImportService {
 
 		const batch = this.#batchSize();
 		const principal = principalOf(job);
-		const renew = this.#renewal(job);
 		for (let start = 0; start < writable.length; start += batch) {
 			const slice = writable.slice(start, start + batch);
 			const outcomes = await this.#writeBatch(registered, {
@@ -528,7 +568,7 @@ export class ImportService {
 				);
 			}
 			await this.#repository.recordJobRows(job.tenantId, recorded);
-			await renew();
+			this.#checkpoint(signal);
 		}
 
 		/* The counts are read back from the outcomes rather than counted in this
@@ -554,38 +594,19 @@ export class ImportService {
 	}
 
 	/**
-	 * The renewal this stage calls once per batch, so a job longer than the
-	 * runner's lease is not taken up a second time while it is still being
-	 * written. Every renewal is fenced on the claim the stage holds: one that
-	 * matches nothing means the lease lapsed and another loop reclaimed the job,
-	 * and the stage stops there rather than writing on behalf of a claim it no
-	 * longer has. A renewal the database could not answer at all is not the job's
-	 * failure: the claim is unchanged, so the next batch renews against it again.
+	 * The claim fence, read once per batch. The runner renews the claim on its
+	 * own timer so a job longer than the lease is not taken up a second time, and
+	 * aborts this signal when a renewal matches nothing: the lease lapsed and
+	 * another loop reclaimed the job. The stage stops there rather than writing
+	 * on behalf of a claim it no longer has.
 	 */
-	#renewal(job: ClaimedImportJob): () => Promise<void> {
-		let held = job.claimedAt;
-		return async () => {
-			const at = this.#now();
-			let renewed: boolean;
-			try {
-				renewed = await this.#repository.heartbeatJob(
-					job.tenantId,
-					job.id,
-					at,
-					held,
-				);
-			} catch {
-				return;
-			}
-			if (!renewed) {
-				throw new ImportServiceError(
-					'CLAIM_LOST',
-					'Another process took this import job over while it was running.',
-					409,
-				);
-			}
-			held = at;
-		};
+	#checkpoint(signal: AbortSignal | undefined): void {
+		if (!signal?.aborted) return;
+		throw new ImportServiceError(
+			'CLAIM_LOST',
+			'Another process took this import job over while it was running.',
+			409,
+		);
 	}
 
 	/**

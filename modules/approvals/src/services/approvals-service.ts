@@ -11,6 +11,7 @@ import {
 	type ApprovalMember,
 	type ApprovalRequest,
 	type ApprovalRequestDetail,
+	type ApprovalRouting,
 	type ApprovalViewerRights,
 	type TerminalApprovalStatus,
 } from '../domain/types.ts';
@@ -40,9 +41,6 @@ const DAY_MS = 24 * 60 * 60 * 1_000;
 
 /** Requests one page of a list answers with; the platform ceiling is 200. */
 export const APPROVALS_PAGE_LIMIT = 100;
-
-/** Requests one expiry pass takes. The next tick continues where it stopped. */
-export const EXPIRY_BATCH = 100;
 
 export interface ApprovalsServiceOptions {
 	readonly repository: ApprovalsRepository;
@@ -378,39 +376,23 @@ export class ApprovalsService {
 	}
 
 	/**
-	 * One expiry pass. The routing read is cross-tenant and carries routing
-	 * columns only; every request it names is read again under its own tenant
-	 * and expired only while it is still pending and still due.
+	 * Expires one request the cross-tenant routing read named. The row carries
+	 * routing columns only, so the request is read again under its own tenant
+	 * and expired only while it is still pending and still due. One request
+	 * that cannot be read or written is isolated by the job runner, which goes
+	 * on to the next and leaves this one to the next pass.
 	 */
-	async expireDue(limit = EXPIRY_BATCH): Promise<number> {
+	async expireRequest(routing: ApprovalRouting): Promise<void> {
 		const now = this.#now();
-		const due = await this.#repository.listDueExpiries(now, limit);
-		let expired = 0;
-		for (const routing of due) {
-			/* One workspace that cannot be read or written must not cost every
-			   other workspace its expiries; the next pass reads this one again. */
-			try {
-				const request = await this.#repository.get(
-					routing.tenantId,
-					routing.id,
-				);
-				if (!request || request.status !== 'pending') continue;
-				if (request.expiresAt > now) continue;
-				await this.#record(
-					request,
-					{ deciderAccountId: null, decision: 'expire', comment: null },
-					() => 'expired',
-					true,
-				);
-				expired += 1;
-			} catch (error) {
-				console.warn(
-					`[approvals] expiry of request ${routing.id} failed:`,
-					error instanceof Error ? error.message : error,
-				);
-			}
-		}
-		return expired;
+		const request = await this.#repository.get(routing.tenantId, routing.id);
+		if (!request || request.status !== 'pending') return;
+		if (request.expiresAt > now) return;
+		await this.#record(
+			request,
+			{ deciderAccountId: null, decision: 'expire', comment: null },
+			() => 'expired',
+			true,
+		);
 	}
 
 	/** The implementation behind `approvals.requests.v1`. */

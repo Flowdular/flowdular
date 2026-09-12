@@ -12,8 +12,14 @@ import {
 	type WebhookSubscription,
 } from '../domain/types.ts';
 import { webhookPayloadFingerprint } from './delivery-payload.ts';
+import { emailDeliveryAttempt } from './email-channel.ts';
 import type { NotificationsRepository } from './repository.ts';
-import { bounded, NotificationsServiceError, oneOf } from './service-error.ts';
+import {
+	bounded,
+	NotificationsServiceError,
+	oneOf,
+	singleLine,
+} from './service-error.ts';
 
 /**
  * The implementation behind `notifications.publish.v1`. Everything it writes
@@ -43,7 +49,8 @@ export class NotificationPublishService implements NotificationPublisher {
 			1,
 			PUBLISH_LIMITS.sourceRef,
 		);
-		const title = bounded(input.title, 'title', 1, PUBLISH_LIMITS.title);
+		/* The title becomes the subject of the e-mail the item is mailed as. */
+		const title = singleLine(input.title, 'title', 1, PUBLISH_LIMITS.title);
 		const body =
 			input.body === undefined || input.body.trim() === ''
 				? null
@@ -90,7 +97,9 @@ export class NotificationPublishService implements NotificationPublisher {
 			return {
 				id: randomUUID(),
 				tenantId,
+				channel: 'webhook',
 				subscriptionId: subscription.id,
+				recipientAccountId: null,
 				kind,
 				sourceModule,
 				sourceRef,
@@ -116,6 +125,9 @@ export class NotificationPublishService implements NotificationPublisher {
 			recipients,
 			inboxItem,
 			delivery,
+			/* Built from the item the member receives, so the queued attempt and the
+			   inbox row always describe the same event. */
+			emailDelivery: (item) => emailDeliveryAttempt(item, occurredAt),
 		});
 	}
 }

@@ -68,7 +68,7 @@ function scheduleInput(
 			min: 1,
 			max: 10_000,
 		}),
-		cadence: requiredString(value, 'cadence', { min: 7, max: 32 }),
+		cadence: requiredString(value, 'cadence', { min: 7, max: 200 }),
 		enabled: requiredBoolean(value, 'enabled'),
 	};
 }
@@ -126,6 +126,9 @@ export function createAutomationsRoutes(
 				schedules: await (
 					await runtime.scheduleService()
 				).list(principal.tenantId),
+				timeZone: (await runtime.scheduleService()).timeZone(
+					principal.tenantId,
+				),
 				variables: scheduleVariablesForScopes(principal.scopes),
 				agents: await (
 					await runtime.scheduleService()

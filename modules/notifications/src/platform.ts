@@ -2,6 +2,7 @@ import type {
 	PlatformServerComposition,
 	PlatformServerContext,
 } from '@flowdular/module-auth/server';
+import { tenantMailLocale } from './domain/locale.ts';
 import { NOTIFICATIONS_PUBLISH_CAPABILITY } from './domain/publish.ts';
 import type { NotificationPublisher } from './domain/publish.ts';
 import {
@@ -18,8 +19,9 @@ import {
 } from './settings.ts';
 
 /* The dead letter has to reach everyone who may read deliveries, and auth.core
-   owns that answer. It is asked at the moment a dead letter is recorded, never
-   cached, so a revoked scope stops producing items immediately. */
+   owns that answer; the e-mail channel resolves a member's address the same
+   way. Both are asked while the work is done and held for one poll pass at
+   most, so a revoked scope or a changed address takes effect immediately. */
 function tenantMembers(
 	context: PlatformServerContext,
 ): (tenantId: string) => Promise<readonly TenantMemberScopes[]> {
@@ -28,6 +30,7 @@ function tenantMembers(
 			.filter((member) => member.status === 'active')
 			.map((member) => ({
 				accountId: member.accountId,
+				email: member.email,
 				scopes: member.scopes,
 			}));
 }
@@ -50,6 +53,8 @@ export function createServerComposition(
 		egressAllowlist: () => notificationsEgressAllowlist(context.settings),
 		pollIntervalMs: () => notificationsPollIntervalMs(context.settings),
 		members: tenantMembers(context),
+		mail: context.mail,
+		locale: (tenantId) => tenantMailLocale(context.settings, tenantId),
 	});
 	/* Publishers resolve this and continue without notifying when it is absent,
 	   so it is registered before anything can start producing events. */

@@ -53,6 +53,18 @@ const PAGE_SIZES = [10, 25, 50, 100];
    160 px action column leave none of them a readable share of a 1140 px row.
    The two timestamps share one cell and so do the two halves of the outcome,
    which buys every header and the longest status tag the width it needs. */
+/** What the subscription column sorts and searches on, for either channel. */
+function targetLabel(
+	delivery: DeliveryAttempt,
+	names: ReadonlyMap<string, string>,
+): string {
+	if (delivery.channel === 'email') {
+		return t('notifications.deliveries.channel.email');
+	}
+	const id = delivery.subscriptionId ?? '';
+	return names.get(id) ?? id;
+}
+
 function columns(
 	names: ReadonlyMap<string, string>,
 ): readonly TableColumn<DeliveryAttempt>[] {
@@ -61,11 +73,15 @@ function columns(
 			key: 'subscription',
 			header: t('notifications.deliveries.column.subscription'),
 			width: '14%',
-			value: (delivery) =>
-				names.get(delivery.subscriptionId) ?? delivery.subscriptionId,
+			value: (delivery) => targetLabel(delivery, names),
 			cell: (delivery) => {
-				const name = names.get(delivery.subscriptionId);
-				return name ?? <span class="ui-mono">{delivery.subscriptionId}</span>;
+				/* An e-mail attempt is addressed to a member, not to a subscription,
+   so the column names the channel rather than an empty cell. */
+				if (delivery.channel === 'email') {
+					return t('notifications.deliveries.channel.email');
+				}
+				const id = delivery.subscriptionId ?? '';
+				return names.get(id) ?? <span class="ui-mono">{id}</span>;
 			},
 		},
 		{
@@ -170,7 +186,11 @@ export function DeliveriesView(props: DeliveriesViewProps) @{
 	/* Every subscription the ledger names, so the filter still works when the
    subscription list is not readable or a row outlived its subscription. */
 	const filterOptions = [
-		...new Set(deliveries.map((delivery) => delivery.subscriptionId)),
+		...new Set(deliveries.flatMap(
+			(delivery) => delivery.subscriptionId === null
+				? []
+				: [delivery.subscriptionId],
+		)),
 	].map((id) => ({ value: id, label: names.get(id) ?? id }));
 
 	const refresh = async (

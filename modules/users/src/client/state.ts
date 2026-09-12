@@ -27,6 +27,10 @@ export function createUsersClientState() {
 		status: cell<UsersStatus>('idle'),
 		error: '',
 		notice: '',
+		/* A started export outlives the click that started it, so it carries its
+		   own line to the Exports screen instead of the notice every other action
+		   shares and the next one overwrites. */
+		exportStarted: false,
 	});
 	return { store, state: store.state };
 }

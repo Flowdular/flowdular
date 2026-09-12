@@ -1,8 +1,8 @@
 import { useEffect } from 'octane';
 import { Icon } from '@flowdular/ui';
-import { activeLocale, applicationPath, t } from '@flowdular/client';
+import { activeLocale, t, workspaceViewHref } from '@flowdular/client';
 import { useValue } from 'segment-state';
-import { NOTIFICATIONS_VIEWS, workspaceViewHref } from './navigation.ts';
+import { NOTIFICATIONS_VIEWS } from './navigation.ts';
 import {
 	clearUnreadCount,
 	refreshUnreadCount,
@@ -44,11 +44,7 @@ export function UnreadCountWidget() @{
 	/* The address is read once per topbar mount, which is what the workspace
    slug in it lasts for. The shell turns a same-origin link to a view it can
    reach into an in-app move, so the badge never reloads the workspace. */
-	const inboxHref = workspaceViewHref(
-		NOTIFICATIONS_VIEWS.inbox,
-		typeof window === 'undefined' ? '' : window.location.pathname,
-		applicationPath(),
-	);
+	const inboxHref = workspaceViewHref(NOTIFICATIONS_VIEWS.inbox);
 
 	@if (unread > 0) {
 		<a

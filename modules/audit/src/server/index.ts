@@ -23,9 +23,19 @@ export {
 	SWEEP_ROUTING_PAGE,
 } from '../services/sweep-service.ts';
 export type {
-	SweepPassReport,
+	DueDataClass,
 	SweepServiceOptions,
 } from '../services/sweep-service.ts';
+export {
+	createAuditErasureRunner,
+	createAuditExportRunner,
+	createAuditSweepRunner,
+} from '../services/audit-runners.ts';
+export type {
+	AuditErasureRunnerOptions,
+	AuditExportRunnerOptions,
+	AuditSweepRunnerOptions,
+} from '../services/audit-runners.ts';
 export {
 	AuditExportService,
 	awaitExportRun,
@@ -40,7 +50,6 @@ export {
 export type {
 	ExportExclusion,
 	ExportManifest,
-	ExportPassReport,
 	ExportRequestInput,
 	ExportResult,
 	ExportedClass,

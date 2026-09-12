@@ -7,25 +7,6 @@ export const APPROVALS_VIEWS = {
 	inbox: 'approvals',
 } as const;
 
-/* The shell's own `viewHref` is internal, so an entry rendered outside a view
-   builds the same address: the installation path, the workspace slug the shell
-   keeps in the URL, then the view id. A single segment under the base is the
-   view itself, and the shell resolves that slugless form against the open
-   workspace. */
-export function workspaceViewHref(
-	viewId: string,
-	pathname: string,
-	basePath: string,
-): string {
-	const segments = pathname.split('/').filter(Boolean);
-	const inWorkspace =
-		segments[0] === basePath.slice(1) ? segments.slice(1) : [];
-	const workspaceSlug = inWorkspace.length > 1 ? inWorkspace[0] : null;
-	return workspaceSlug === null
-		? basePath + '/' + viewId
-		: basePath + '/' + workspaceSlug + '/' + viewId;
-}
-
 /* Labels are read every render so a locale change reaches an entry the shell
    built once. */
 export const approvalsNavigation: readonly NavigationContribution[] = [

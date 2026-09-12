@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createDataClassRegistry } from '@flowdular/kernel';
 import { AUDIT_EVENT_ACTIONS, AUDIT_REASONS } from '../src/domain/types.ts';
+import { createAuditSweepRunner } from '../src/services/audit-runners.ts';
 import { AuditHoldService } from '../src/services/hold-service.ts';
 import { AuditRetentionService } from '../src/services/retention-service.ts';
 import { AuditSweepService } from '../src/services/sweep-service.ts';
@@ -71,7 +72,12 @@ async function fixture() {
 			days: 30,
 		});
 	}
-	return { owner, holds, retention, sweep };
+	const runner = createAuditSweepRunner({
+		sweeps: async () => sweep,
+		intervalMs: 60 * 60_000,
+		now: () => NOW,
+	});
+	return { owner, holds, retention, runner };
 }
 
 describe('AUDIT-HOLD-PLACE', () => {
@@ -165,16 +171,19 @@ describe('AUDIT-HOLD-PLACE', () => {
 
 describe('AUDIT-HOLD-BLOCKS-SWEEP', () => {
 	it('never calls the owner and records the refusal with the stable code', async () => {
-		const { owner, holds, sweep } = await fixture();
+		const { owner, holds, runner } = await fixture();
 		await holds.place(ALPHA, 'account-ada', {
 			scopeKind: 'data-class',
 			classId: owner.classId,
 			reason: 'Pending litigation.',
 		});
 
-		const report = await sweep.tick();
-
-		expect(report).toMatchObject({ held: 1, swept: 1, refused: 1 });
+		expect(await runner.tick()).toEqual({
+			claimed: 2,
+			performed: 2,
+			failed: 0,
+			claimLost: 0,
+		});
 		expect(owner.sweepCalls.map((call) => call.tenantId)).toEqual([BETA]);
 		expect(owner.rows(ALPHA)).toHaveLength(3);
 		const [run] = await shared.repository.listSweepRuns(ALPHA, undefined, 10);
@@ -190,19 +199,19 @@ describe('AUDIT-HOLD-BLOCKS-SWEEP', () => {
 	});
 
 	it('lets the next pass sweep once the hold is lifted', async () => {
-		const { owner, holds, sweep } = await fixture();
+		const { owner, holds, runner } = await fixture();
 		const hold = await holds.place(ALPHA, 'account-ada', {
 			scopeKind: 'workspace',
 			reason: 'Pending litigation.',
 		});
-		await sweep.tick();
+		await runner.tick();
 		expect(owner.rows(ALPHA)).toHaveLength(3);
 
 		await holds.lift(ALPHA, 'account-ada', {
 			id: hold.id,
 			reason: 'Matter closed.',
 		});
-		await sweep.tick();
+		await runner.tick();
 
 		expect(owner.rows(ALPHA).map((row) => row.payload.ageDays)).toEqual([5]);
 	});
@@ -210,7 +219,7 @@ describe('AUDIT-HOLD-BLOCKS-SWEEP', () => {
 	/* An account or a date range names rows, and the kernel sweep input carries
 	   no row predicate, so such a hold withholds the whole class. */
 	it('withholds the whole class for a hold that names rows rather than a class', async () => {
-		const { owner, holds, sweep } = await fixture();
+		const { owner, holds, runner } = await fixture();
 		await holds.place(ALPHA, 'account-ada', {
 			scopeKind: 'date-range',
 			fromAt: NOW - 200 * DAY,
@@ -218,23 +227,23 @@ describe('AUDIT-HOLD-BLOCKS-SWEEP', () => {
 			reason: 'Investigation window.',
 		});
 
-		await sweep.tick();
+		await runner.tick();
 
 		expect(owner.sweepCalls.map((call) => call.tenantId)).toEqual([BETA]);
 		expect(owner.rows(ALPHA)).toHaveLength(3);
 	});
 
 	it('records a standing hold refusal once however often the sweep runs', async () => {
-		const { owner, holds, sweep } = await fixture();
+		const { owner, holds, runner } = await fixture();
 		await holds.place(ALPHA, 'account-ada', {
 			scopeKind: 'data-class',
 			classId: owner.classId,
 			reason: 'Pending litigation.',
 		});
 
-		await sweep.tick();
-		await sweep.tick();
-		await sweep.tick();
+		await runner.tick();
+		await runner.tick();
+		await runner.tick();
 
 		expect(
 			await shared.repository.listSweepRuns(ALPHA, 'refused', 10),

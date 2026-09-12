@@ -451,6 +451,7 @@ export function HoldsView(props: HoldsViewProps) @{
 								(scope) => ({ value: scope, label: holdScopeLabel(scope) }),
 							)}
 							help={t('audit.holds.form.scopeHelp')}
+							autoFocus
 							onChange={(value) => setFormScope(value as HoldScopeKind)}
 						/>
 						@if (formScope !== 'workspace') {

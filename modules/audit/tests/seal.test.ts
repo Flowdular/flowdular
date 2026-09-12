@@ -16,6 +16,7 @@ import { rotateAnchorSignatures } from '../src/services/anchor-rotation.ts';
 import { AuditHoldService } from '../src/services/hold-service.ts';
 import { AuditRetentionService } from '../src/services/retention-service.ts';
 import { AuditSealService } from '../src/services/seal-service.ts';
+import { createAuditSweepRunner } from '../src/services/audit-runners.ts';
 import { AuditSweepService } from '../src/services/sweep-service.ts';
 import { auditOwnDataClasses } from '../src/services/own-classes.ts';
 import {
@@ -364,14 +365,19 @@ describe('AUDIT-SWEEP-SEALED', () => {
 			mode: 'days',
 			days: 30,
 		});
-		return { sweep };
+		const runner = createAuditSweepRunner({
+			sweeps: async () => sweep,
+			intervalMs: 60 * 60_000,
+			now: () => NOW,
+		});
+		return { runner };
 	}
 
 	it('refuses to remove an event no segment file holds', async () => {
 		await writeEvents(3);
-		const { sweep } = await sweepFixture();
+		const { runner } = await sweepFixture();
 
-		await sweep.tick();
+		await runner.tick();
 
 		/* The two ledgers audit.core keeps about itself are swept on the same
 		   pass, so the run this case is about is selected by its class. */
@@ -396,9 +402,9 @@ describe('AUDIT-SWEEP-SEALED', () => {
 			classId: 'audit.core.events',
 			reason: 'Pending litigation.',
 		});
-		const { sweep } = await sweepFixture(holds);
+		const { runner } = await sweepFixture(holds);
 
-		await sweep.tick();
+		await runner.tick();
 
 		const run = (
 			await shared.repository.listSweepRuns(ALPHA, undefined, 10)
@@ -429,9 +435,9 @@ describe('AUDIT-SWEEP-SEALED', () => {
 		});
 		const sealedThrough =
 			(await shared.repository.latestAnchor(ALPHA))?.toSequence ?? 0;
-		const { sweep } = await sweepFixture();
+		const { runner } = await sweepFixture();
 
-		await sweep.tick();
+		await runner.tick();
 
 		const remaining = await shared.repository.listAuditEvents(ALPHA, 50);
 		expect(

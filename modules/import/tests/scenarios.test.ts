@@ -1,4 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import {
+	createTracer,
+	formatTraceParent,
+	runWithTrace,
+} from '@flowdular/server';
 import type { DocumentAttachment } from '@flowdular/module-documents';
 import { IMPORT_PERMISSIONS } from '../src/acl/permissions.ts';
 import type { ImportPort } from '../src/domain/ports.ts';
@@ -863,6 +868,84 @@ describe('the job lifecycle', () => {
 			staleBefore: now - 1_000,
 		});
 		expect(second).toBeNull();
+	});
+
+	it('stores the trace that enqueued the job and leaves an untraced start a root', async () => {
+		const stored = await harness.storeCsv(TENANT, FIVE_ROW_CSV);
+		const start = () =>
+			harness.service.start(principal(), {
+				target: MEMBERS_TARGET,
+				documentId: stored.documentId,
+				documentRef: stored.documentRef,
+				mode: 'create-only',
+				dryRun: true,
+				columns: MEMBERS_MAPPING,
+			});
+		const request = {
+			traceId: '4bf92f3577b34da6a3ce929d0e0e4736',
+			spanId: '00f067aa0ba902b7',
+			sampled: true,
+		};
+
+		const traced = await runWithTrace(request, start);
+		const untraced = await start();
+
+		/* The row carries the header of the request that asked for the import.
+		   Resuming it is the stage's own job, asserted in the case below. */
+		expect(
+			(await harness.repository.findJob(TENANT, traced.id))?.traceparent,
+		).toBe(formatTraceParent(request));
+		expect(
+			(await harness.repository.findJob(TENANT, untraced.id))?.traceparent,
+		).toBeNull();
+	});
+
+	it('performs the claimed job in the trace that enqueued it', async () => {
+		const tracer = createTracer();
+		const service = new ImportService({
+			repository: harness.repository,
+			ports: harness.ports,
+			source: createImportCsvSource({
+				attachments: () => harness.attachments,
+			}),
+			maxRows: () => 50_000,
+			batchSize: () => 500,
+			tracer,
+		});
+		const stored = await harness.storeCsv(TENANT, FIVE_ROW_CSV);
+		const request = {
+			traceId: '4bf92f3577b34da6a3ce929d0e0e4736',
+			spanId: '00f067aa0ba902b7',
+			sampled: true,
+		};
+		const job = await runWithTrace(request, () =>
+			service.start(principal(), {
+				target: MEMBERS_TARGET,
+				documentId: stored.documentId,
+				documentRef: stored.documentRef,
+				mode: 'create-only',
+				dryRun: true,
+				columns: MEMBERS_MAPPING,
+			}),
+		);
+		const at = Date.now();
+		const claimed = await harness.repository.claimJob({
+			tenantId: TENANT,
+			id: job.id,
+			claimedAt: at,
+			staleBefore: at - 1_000,
+		});
+
+		const performed = await service.perform(claimed!);
+		const span = tracer
+			.drain()
+			.find((recorded) => recorded.name === 'import.core perform');
+
+		expect(performed.status).toBe('completed');
+		/* The background stage belongs to the request that asked for the import,
+		   not to a trace of its own. */
+		expect(span?.traceId).toBe(request.traceId);
+		expect(span?.parentSpanId).toBe(request.spanId);
 	});
 
 	it('refuses a port registered after the registry was sealed', () => {

@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: metering.core
-specVersion: 0.1.3
+specVersion: 0.1.6
 status: approved
 name: Metering Core
 description: Counts what a workspace consumes through meters every module declares, keeps the facts in daily buckets under the tenant's own row-level security, shows usage to the workspace, and lets the deployment operator set per-workspace limits that a module checks before a costly operation and that refuse it once exhausted.
@@ -13,9 +13,16 @@ capabilities:
   - cli
 dependencies:
   - id: system.core
-    range: ^0.5.1
+    range: ^0.7.0
   - id: auth.core
-    range: ^0.12.0
+    range: ^0.13.0
+  - id: reports.core
+    range: ^0.1.0
+requires:
+  - id: notifications.publish.v1
+    optional: true
+  - id: reports.v1
+    optional: true
 tenancy: required
 locales:
   - en
@@ -23,6 +30,7 @@ locales:
 invariants:
   - Persistence runs on the shared asynchronous database contract with explicit PostgreSQL SQL; every tenant table enables and forces row-level security with USING and WITH CHECK policies bound to the transaction-local tenant id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
   - A meter is declared by its owning module through the public capability metering.meters.v1 at composition with a stable key, a label, a unit and whether it is cumulative per period or a gauge; metering.core records only what a module reports through the same capability and never reads another module's tables.
+  - metering.core registers the report provider metering.usage through the public capability reports.v1 at composition when reports.core is present, and continues without it when it is not. The provider answers this calendar month's usage per meter with the operator's monthly limit carried as the unit's context, ordered by usage and bounded to the tiles one provider answer may carry; it reads this module's own service inside this module's own tenant transaction and no other module's tables. It answers the calendar month it rolled up as the period of that answer, names itself with a key of this module's own translation bundle beside the English literal, and hands the reader's time budget to that transaction so the statement is cancelled when the budget expires.
   - A usage fact is reported through record(tenantId, meter, amount, at, sourceRef) and written by metering.core inside its own tenant-scoped transaction, never through the reporter's database handle; it lands in the day bucket of the workspace's calendar day in UTC, uses integer arithmetic, and is idempotent per (tenantId, meter, sourceRef) when the reporter names a source reference. An instant outside the range a UTC day covers is refused with a stable error before anything is written, and a month total past the safe integer range is read as that maximum rather than failing the fact that crossed it, because every ceiling is smaller.
   - A limit is a per-workspace ceiling per meter per calendar month, set only by the deployment operator through the CLI or a platform setting, never by the workspace; a workspace without a limit is unlimited.
   - A module asks check(tenantId, meter, amount) before a costly operation and receives allowed, warning or refused; refused is returned once the month's usage plus the amount exceeds the limit, and the refusal is recorded in the module's audit trail by the caller with the stable code METER_LIMIT_EXCEEDED.
@@ -255,3 +263,7 @@ acceptanceScenarios:
     given: A meter whose workspace limit is zero.
     when: A member reads usage.
     then: The meter reads as fully consumed at 100 percent in the danger tone and its dashboard tile carries the attention badge, distinct from an unlimited meter, which carries no share.
+  - id: METERING-REPORT-USAGE
+    given: A workspace with facts recorded on several meters this month and an operator limit on one of them.
+    when: The reports.core provider metering.usage is read.
+    then: It answers one tile per meter with this month's usage as the value and the meter's unit carrying the monthly limit as its context, ordered by usage, bounded to the tiles one provider answer may carry, and no series. It names its own calendar month as the period those tiles cover and names itself with a key of this module's bundle, and it passes the reader's time budget into its own tenant transaction so an expired budget cancels the statement instead of leaving it running.

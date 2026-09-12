@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: documents.core
-specVersion: 0.1.4
+specVersion: 0.1.6
 status: approved
 name: Documents Core
 description: Lets a workspace attach files to its records through the platform storage port, owning only the document metadata and the reference to the record, with tenant-scoped keys, encrypted bytes, size and type limits, and a scan state, so a module attaches by reference and never holds bytes.
@@ -12,9 +12,9 @@ capabilities:
   - translations
 dependencies:
   - id: system.core
-    range: ^0.5.1
+    range: ^0.7.0
   - id: auth.core
-    range: ^0.12.0
+    range: ^0.13.0
 tenancy: required
 locales:
   - en

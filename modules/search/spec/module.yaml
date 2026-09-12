@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: search.core
-specVersion: 0.1.3
+specVersion: 0.1.4
 status: approved
 name: Search Core
 description: Lets a member find records across modules from one search box, by asking every module that registered a search provider to search its own tables under the member's permissions and merging the paginated hits, with PostgreSQL full-text indexes owned by each module and no central index.
@@ -12,9 +12,9 @@ capabilities:
   - translations
 dependencies:
   - id: system.core
-    range: ^0.5.1
+    range: ^0.7.0
   - id: auth.core
-    range: ^0.12.0
+    range: ^0.13.0
 tenancy: required
 locales:
   - en
@@ -172,6 +172,6 @@ acceptanceScenarios:
     when: The member deletes the term back under the minimum, or types a different term, before the answer arrives.
     then: The answer is discarded and no hits or page position are shown under a term that did not produce them; only the newest request answering the term the box still holds may write, and the screen's one load of the provider filter options, which asks with no term before the member has typed, still lands.
   - id: SEARCH-OPEN-RECALL
-    given: A member opening one of the hits of the query on the search screen.
-    when: The screen navigates to the record.
-    then: The query is kept in the member's recall by one write that outlives the navigation and calls no provider; the write is refused without the permission and without the CSRF token, and a term under the minimum is not kept.
+    given: A member opening one of the hits of the query, on the search screen or in the command palette.
+    when: The shell navigates to the record.
+    then: The query that hit answered, and not whatever the box holds by then, is kept in the member's recall by one write that outlives the navigation and calls no provider; the write is refused without the permission and without the CSRF token, and a term under the minimum is not kept; the record opens whether or not the write lands.

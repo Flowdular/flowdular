@@ -6,6 +6,7 @@ import type {
 	DataClassErasureResult,
 	PlatformDataClassRegistry,
 } from '@flowdular/kernel';
+import { JOB_CLAIM_LOST } from '@flowdular/server';
 import {
 	AUDIT_EVENT_ACTIONS,
 	AUDIT_REASONS,
@@ -67,7 +68,10 @@ export interface ErasureCertificate {
 	readonly classes: readonly ErasureClassOutcome[];
 	readonly totals: {
 		readonly classes: number;
+		/** Rows the owners took out; a redacted row is not one of them. */
 		readonly rows: number;
+		/** Rows they kept but stripped of the subject, in a ledger or a snapshot. */
+		readonly redacted: number;
 		/** Classes that declare no erase operation, named on the certificate. */
 		readonly notErasable: number;
 	};
@@ -192,50 +196,24 @@ export class AuditErasureService {
 	}
 
 	/**
-	 * One pass over the requested runs. Requests are found across workspaces on
-	 * the routing lease and claimed under the workspace the routing row named,
-	 * so a run is performed once however many platform processes poll.
+	 * Answers one claimed run. It records a refusal as the run's own outcome
+	 * rather than throwing, because the operator reads the ledger, not this
+	 * process's log. The one thing it does throw is a lost claim: that run
+	 * belongs to the process holding it now, and this one settles nothing.
 	 */
-	async tick(limit = ERASURE_ROUTING_PAGE): Promise<{
-		readonly examined: number;
-		readonly completed: number;
-		readonly failed: number;
-		readonly expired: number;
-	}> {
-		const pending = await this.#repository.listPendingErasureRuns(limit);
-		let completed = 0;
-		let failed = 0;
-		let expired = 0;
-		for (const routing of pending) {
-			const now = this.#now();
-			const claimed = await this.#repository.claimErasureRun({
-				tenantId: routing.tenantId,
-				id: routing.id,
-				claimedAt: now,
-				staleBefore: now - ERASURE_CLAIM_TIMEOUT_MS,
-			});
-			if (!claimed) continue;
-			/* Claimed first, so the row this process expires is one no other
-			   process is performing. */
-			if (claimed.startedAt <= now - ERASURE_REQUEST_TTL_MS) {
-				await this.#finish(claimed, 'failed', {
+	async perform(
+		record: AuditErasureRun,
+		signal?: AbortSignal,
+	): Promise<AuditErasureRun> {
+		/* The caller claimed the row first, so the request this process expires is
+		   one no other process is performing. */
+		if (record.startedAt <= this.#now() - ERASURE_REQUEST_TTL_MS) {
+			return (
+				(await this.#finish(record, 'failed', {
 					reason: AUDIT_REASONS.erasureRequestExpired,
-				});
-				expired += 1;
-				continue;
-			}
-			const answered = await this.perform(claimed);
-			if (answered.status === 'failed') failed += 1;
-			else completed += 1;
+				})) ?? record
+			);
 		}
-		return { examined: pending.length, completed, failed, expired };
-	}
-
-	/**
-	 * Answers one claimed run. It never throws: a refusal is the run's recorded
-	 * outcome, because the operator reads the ledger, not this process's log.
-	 */
-	async perform(record: AuditErasureRun): Promise<AuditErasureRun> {
 		const subject = record.subject;
 		if (!subject) {
 			return (
@@ -245,16 +223,19 @@ export class AuditErasureService {
 			);
 		}
 		try {
-			const result = await this.run({
-				tenantId: record.tenantId,
-				subject,
-				slug: record.workspaceSlug,
-				name: record.workspaceName,
-				operator: record.requestedBy,
-				outputDirectory: record.outputDirectory ?? '',
-				apply: !record.dryRun,
-				destroyKey: record.destroyKey,
-			});
+			const result = await this.run(
+				{
+					tenantId: record.tenantId,
+					subject,
+					slug: record.workspaceSlug,
+					name: record.workspaceName,
+					operator: record.requestedBy,
+					outputDirectory: record.outputDirectory ?? '',
+					apply: !record.dryRun,
+					destroyKey: record.destroyKey,
+				},
+				signal,
+			);
 			return (
 				(await this.#finish(
 					record,
@@ -271,6 +252,10 @@ export class AuditErasureService {
 				)) ?? record
 			);
 		} catch (error) {
+			/* The lease lapsed and another loop reclaimed the run while this one
+			   was working. Recording a refusal here would settle a row that is
+			   somebody else's work now. */
+			if (signal?.aborted) throw error;
 			return (
 				(await this.#finish(record, 'failed', {
 					reason:
@@ -280,6 +265,21 @@ export class AuditErasureService {
 				})) ?? record
 			);
 		}
+	}
+
+	/**
+	 * The claim fence, read once per class. The runner renews the claim on its
+	 * own timer and aborts this signal when a renewal matches nothing, so a run
+	 * longer than the lease stops between two classes instead of erasing on
+	 * behalf of a claim it no longer holds.
+	 */
+	#checkpoint(signal: AbortSignal | undefined): void {
+		if (!signal?.aborted) return;
+		throw new AuditServiceError(
+			JOB_CLAIM_LOST,
+			'Another process took this erasure run over while it was running.',
+			409,
+		);
 	}
 
 	async #finish(
@@ -306,7 +306,10 @@ export class AuditErasureService {
 		});
 	}
 
-	async run(request: ErasureRequest): Promise<ErasureResult> {
+	async run(
+		request: ErasureRequest,
+		signal?: AbortSignal,
+	): Promise<ErasureResult> {
 		const subject = bounded(request.subject, 'subject', 1, 64);
 		const startedAt = this.#now();
 		/* Checked before anything is counted: a plan that walked every owner
@@ -328,7 +331,12 @@ export class AuditErasureService {
 		const classes = this.#classes();
 		const marker = erasureSubjectMarker(request.tenantId, subject);
 		if (!request.apply) {
-			const planned = await this.#plan(request.tenantId, subject, classes);
+			const planned = await this.#plan(
+				request.tenantId,
+				subject,
+				classes,
+				signal,
+			);
 			return {
 				applied: false,
 				subject,
@@ -354,8 +362,13 @@ export class AuditErasureService {
 		);
 		const outcomes: ErasureClassOutcome[] = [];
 		for (const entry of classes) {
+			this.#checkpoint(signal);
 			outcomes.push(await this.#erase(entry, request.tenantId, subject));
 		}
+		/* Asked once more before the irreversible half: destroying a subject key
+		   and signing a certificate for a claim this process no longer holds
+		   cannot be taken back, and the run belongs to its new owner. */
+		this.#checkpoint(signal);
 		/* The key goes before the closing event is written: an event sealed under
 		   a key that was just destroyed would create a new one and leave the
 		   subject readable again. */
@@ -436,9 +449,11 @@ export class AuditErasureService {
 		tenantId: string,
 		subject: string,
 		classes: readonly ErasableClass[],
+		signal: AbortSignal | undefined,
 	): Promise<readonly ErasureClassOutcome[]> {
 		const outcomes: ErasureClassOutcome[] = [];
 		for (const entry of classes) {
+			this.#checkpoint(signal);
 			const outcome = entry.erase ? 'erasable' : 'not-erasable';
 			if (!entry.count) {
 				outcomes.push({
@@ -489,6 +504,7 @@ export class AuditErasureService {
 			};
 		}
 		let erased = 0;
+		let redacted = 0;
 		let truncated = false;
 		for (let batch = 1; batch <= ERASURE_LIMITS.batches; batch += 1) {
 			let answer: DataClassErasureResult;
@@ -508,16 +524,28 @@ export class AuditErasureService {
 					classId: entry.classId,
 					outcome: 'failed',
 					rows: erased,
+					...(redacted > 0 ? { redacted } : {}),
 					failure: message(error),
 				};
 			}
-			const removed = Math.max(0, Math.trunc(answer?.removed ?? 0));
+			/* An unreadable count is no progress: the class is recorded truncated
+			   instead of looping through every batch on a NaN comparison. */
+			const removed = progressCount(answer?.removed);
+			const stripped = progressCount(answer?.redacted);
+			if (removed === null || stripped === null) {
+				truncated = true;
+				break;
+			}
 			erased += removed;
+			redacted += stripped;
 			truncated = answer?.truncated === true;
-			/* A class that took nothing has nothing left to take, whatever it says
-			   about the rest; its own flag is still what the certificate records. */
-			if (removed === 0) break;
-			if (!truncated && removed < ERASURE_LIMITS.batch) break;
+			/* A row the owner kept but stripped of the subject is as much progress
+			   as one it took, so a class that can only redact runs to its end. A
+			   class that did neither has nothing left to do, whatever it says about
+			   the rest; its own flag is still what the certificate records. */
+			const cleared = removed + stripped;
+			if (cleared === 0) break;
+			if (!truncated && cleared < ERASURE_LIMITS.batch) break;
 			if (batch === ERASURE_LIMITS.batches) truncated = true;
 		}
 		return {
@@ -525,6 +553,7 @@ export class AuditErasureService {
 			classId: entry.classId,
 			outcome: 'erased',
 			rows: erased,
+			...(redacted > 0 ? { redacted } : {}),
 			...(truncated ? { truncated: true } : {}),
 		};
 	}
@@ -584,6 +613,10 @@ export class AuditErasureService {
 				classes: input.classes.length,
 				rows: input.classes.reduce(
 					(total, entry) => total + (entry.rows ?? 0),
+					0,
+				),
+				redacted: input.classes.reduce(
+					(total, entry) => total + (entry.redacted ?? 0),
 					0,
 				),
 				notErasable: input.classes.filter(
@@ -728,4 +761,10 @@ export async function awaitErasureRun(
 		}
 		await sleep(pollMs);
 	}
+}
+
+function progressCount(value: unknown): number | null {
+	if (value === undefined) return 0;
+	if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+	return Math.max(0, Math.trunc(value));
 }

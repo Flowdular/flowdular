@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "auth.core",
 	"package": "@flowdular/module-auth",
-	"version": "0.12.6",
+	"version": "0.13.6",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations", "cli"],
 	"platform": {
@@ -12,7 +12,7 @@
 	"dependencies": [
 		{
 			"id": "system.core",
-			"range": "^0.5.1"
+			"range": "^0.7.0"
 		}
 	],
 	"tenancy": "required",

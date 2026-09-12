@@ -581,6 +581,9 @@ describe('auth migrations', () => {
 		   the member gets the four member defaults of 0023 and the two approval
 		   member defaults 0024 adds in the same pass. */
 		expect(seeded.scopes).toEqual([
+			/* 0029 runs in the same pass and grants these to the owner too. */
+			{ account_id: 'account-ada', scope: 'access.review.manage' },
+			{ account_id: 'account-ada', scope: 'access.review.read' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.decide' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.manage' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.read' },
@@ -600,10 +603,13 @@ describe('auth migrations', () => {
 			{ account_id: 'account-ada', scope: 'directory.tokens.read' },
 			{ account_id: 'account-ada', scope: 'documents.files.manage' },
 			{ account_id: 'account-ada', scope: 'documents.files.read' },
+			{ account_id: 'account-ada', scope: 'exports.lists.manage' },
+			{ account_id: 'account-ada', scope: 'exports.lists.read' },
 			{ account_id: 'account-ada', scope: 'import.jobs.manage' },
 			{ account_id: 'account-ada', scope: 'import.jobs.read' },
 			{ account_id: 'account-ada', scope: 'metering.usage.read' },
 			{ account_id: 'account-ada', scope: 'profile.self.manage' },
+			{ account_id: 'account-ada', scope: 'reports.workspace.read' },
 			{ account_id: 'account-ada', scope: 'search.records.read' },
 			{ account_id: 'account-ada', scope: 'workflows.definitions.manage' },
 			{ account_id: 'account-ada', scope: 'workflows.definitions.publish' },
@@ -659,6 +665,11 @@ describe('auth migrations', () => {
 			'automations.triggers.read',
 			'automations.triggers.manage',
 			'profile.self.manage',
+			'reports.workspace.read',
+			'exports.lists.read',
+			'exports.lists.manage',
+			'access.review.read',
+			'access.review.manage',
 		]);
 		expect(roles.get('member')).toEqual([
 			'auth.profile.read',
@@ -774,6 +785,9 @@ describe('auth migrations', () => {
 		/* The member gains the decide scope and nothing else, without a duplicate
 		   of the read scope it already held; the owner keeps exactly its three. */
 		expect(seeded.scopes).toEqual([
+			/* 0029 runs in the same pass and grants these to the owner too. */
+			{ account_id: 'account-ada', scope: 'access.review.manage' },
+			{ account_id: 'account-ada', scope: 'access.review.read' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.decide' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.manage' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.read' },
@@ -784,7 +798,10 @@ describe('auth migrations', () => {
 			{ account_id: 'account-ada', scope: 'automations.schedules.read' },
 			{ account_id: 'account-ada', scope: 'automations.triggers.manage' },
 			{ account_id: 'account-ada', scope: 'automations.triggers.read' },
+			{ account_id: 'account-ada', scope: 'exports.lists.manage' },
+			{ account_id: 'account-ada', scope: 'exports.lists.read' },
 			{ account_id: 'account-ada', scope: 'profile.self.manage' },
+			{ account_id: 'account-ada', scope: 'reports.workspace.read' },
 			{ account_id: 'account-ada', scope: 'workflows.definitions.manage' },
 			{ account_id: 'account-ada', scope: 'workflows.definitions.publish' },
 			{ account_id: 'account-ada', scope: 'workflows.definitions.read' },
@@ -827,6 +844,11 @@ describe('auth migrations', () => {
 			'automations.triggers.read',
 			'automations.triggers.manage',
 			'profile.self.manage',
+			'reports.workspace.read',
+			'exports.lists.read',
+			'exports.lists.manage',
+			'access.review.read',
+			'access.review.manage',
 		]);
 		/* A role the workspace wrote itself is not a default and stays as it is. */
 		expect(roles.get('auditor')).toEqual(['approvals.requests.read']);
@@ -1072,7 +1094,8 @@ describe('auth migrations', () => {
 			]),
 		);
 		/* The scopes already held keep their order and the ten missing ones are
-		   appended in the order acl/scopes.ts declares them. */
+		   appended in the order acl/scopes.ts declares them, 0029 after them
+		   because it runs later in the same pass. */
 		expect(roles.get('owner')).toEqual([
 			'auth.profile.read',
 			'workflows.definitions.read',
@@ -1086,6 +1109,11 @@ describe('auth migrations', () => {
 			'automations.triggers.read',
 			'automations.triggers.manage',
 			'profile.self.manage',
+			'reports.workspace.read',
+			'exports.lists.read',
+			'exports.lists.manage',
+			'access.review.read',
+			'access.review.manage',
 		]);
 		/* The member role row takes the one member default and none of the ten
 		   the workflow and automation modules keep with owners. */
@@ -1115,6 +1143,169 @@ describe('auth migrations', () => {
 		/* Her membership there is a member one, so none of the ten owner scopes
 		   follows the account into it and the one member default does. */
 		expect(other).toEqual([{ scope: 'profile.self.manage' }]);
+	});
+
+	/* reports.core, exports.core and access.core were enabled before their five
+	   permissions became owner defaults, so auth sync-scopes never reached an
+	   existing workspace with them and the seed lists reach only a workspace
+	   created from now on. D-REPORTS-AUDIENCE, D-OWNERS-ONLY and
+	   D-EXPORTS-PERMISSIONS keep all five with owners, so no member default is
+	   granted here. */
+	it('grants the report, export and access review scopes to owners alone, in both the memberships and the built-in role rows', async () => {
+		const granted = databaseMigrations.findIndex(
+			(migration) => migration.id === '0029_reports_exports_access_scopes',
+		);
+		expect(granted).toBeGreaterThan(0);
+		await runDatabaseMigrations(
+			lease.database,
+			'auth.core',
+			databaseMigrations.slice(0, granted),
+		);
+		await lease.database.transaction(
+			async (transaction) => {
+				await transaction.execute({
+					text: `INSERT INTO auth_tenants (id, name, slug, created_at)
+					       VALUES ('tenant-a', 'Contoso', 'tenant-a', 1)`,
+				});
+				await transaction.execute({
+					text: `INSERT INTO auth_accounts
+					       (id, email, email_normalized, password_hash, display_name, status, created_at)
+					       VALUES ('account-ada', 'ada@example.com', 'ada@example.com', 'hash', 'Ada', 'active', 1),
+					              ('account-bo', 'bo@example.com', 'bo@example.com', 'hash', 'Bo', 'active', 1)`,
+				});
+				await transaction.execute({
+					text: `INSERT INTO auth_memberships (account_id, tenant_id, role, created_at)
+					       VALUES ('account-ada', 'tenant-a', 'owner', 1),
+					              ('account-bo', 'tenant-a', 'member', 1)`,
+				});
+				/* The owner already holds one of the five, so the insert has to add
+				   the other four and leave that one alone. */
+				await transaction.execute({
+					text: `INSERT INTO auth_membership_scopes (account_id, tenant_id, scope)
+					       VALUES ('account-ada', 'tenant-a', 'exports.lists.read'),
+					              ('account-bo', 'tenant-a', 'documents.files.read')`,
+				});
+				await transaction.execute({
+					text: `INSERT INTO auth_roles
+					       (id, tenant_id, key, name, description, scopes_json, builtin, created_at, updated_at)
+					       VALUES ('tenant-a:owner', 'tenant-a', 'owner', 'Owner', 'Full access',
+					               '["auth.profile.read","exports.lists.read"]', 1, 1, 1),
+					              ('tenant-a:member', 'tenant-a', 'member', 'Member', 'Standard access',
+					               '["auth.profile.read","documents.files.read"]', 1, 1, 1),
+					              ('tenant-a:reviewer', 'tenant-a', 'reviewer', 'Reviewer', 'Custom',
+					               '["access.review.read"]', 0, 1, 1)`,
+				});
+			},
+			{ tenantId: 'tenant-a', access: 'write' },
+		);
+		/* The same person is a member of the second workspace, and a membership
+		   carries its own role, so the owner defaults must not follow the account. */
+		await lease.database.transaction(
+			async (transaction) => {
+				await transaction.execute({
+					text: `INSERT INTO auth_tenants (id, name, slug, created_at)
+					       VALUES ('tenant-b', 'Fabrikam', 'tenant-b', 1)`,
+				});
+				await transaction.execute({
+					text: `INSERT INTO auth_memberships (account_id, tenant_id, role, created_at)
+					       VALUES ('account-ada', 'tenant-b', 'member', 1)`,
+				});
+			},
+			{ tenantId: 'tenant-b', access: 'write' },
+		);
+
+		await apply();
+
+		const declared = `scope LIKE 'reports.%' OR scope LIKE 'exports.%'
+		                  OR scope LIKE 'access.%'`;
+		const seeded = await lease.database.transaction(
+			async (transaction) => ({
+				scopes: (
+					await transaction.query<{ account_id: string; scope: string }>({
+						text: `SELECT account_id, scope FROM auth_membership_scopes
+						       WHERE tenant_id = 'tenant-a' AND (${declared})
+						       ORDER BY account_id, scope`,
+					})
+				).rows,
+				roles: (
+					await transaction.query<{ key: string; scopes_json: string }>({
+						text: 'SELECT key, scopes_json FROM auth_roles ORDER BY key',
+					})
+				).rows,
+			}),
+			{ tenantId: 'tenant-a', access: 'read' },
+		);
+
+		/* The owner gains the four it lacked, without a duplicate of the one it
+		   held; the member gains none of the five. */
+		expect(seeded.scopes).toEqual([
+			{ account_id: 'account-ada', scope: 'access.review.manage' },
+			{ account_id: 'account-ada', scope: 'access.review.read' },
+			{ account_id: 'account-ada', scope: 'exports.lists.manage' },
+			{ account_id: 'account-ada', scope: 'exports.lists.read' },
+			{ account_id: 'account-ada', scope: 'reports.workspace.read' },
+		]);
+		const roles = new Map(
+			seeded.roles.map((row) => [
+				row.key,
+				JSON.parse(row.scopes_json) as string[],
+			]),
+		);
+		/* The scopes already held keep their order and the four missing ones are
+		   appended in the order acl/scopes.ts declares them. */
+		expect(roles.get('owner')).toEqual([
+			'auth.profile.read',
+			'exports.lists.read',
+			'reports.workspace.read',
+			'exports.lists.manage',
+			'access.review.read',
+			'access.review.manage',
+		]);
+		expect(
+			roles
+				.get('member')
+				?.filter(
+					(scope) =>
+						scope.startsWith('reports.') ||
+						scope.startsWith('exports.') ||
+						scope.startsWith('access.'),
+				),
+		).toEqual([]);
+		/* A role the workspace wrote itself is not a default and stays as it is. */
+		expect(roles.get('reviewer')).toEqual(['access.review.read']);
+
+		const other = await lease.database.transaction(
+			async (transaction) =>
+				(
+					await transaction.query<{ scope: string }>({
+						text: `SELECT scope FROM auth_membership_scopes
+						       WHERE tenant_id = 'tenant-b' AND (${declared})`,
+					})
+				).rows,
+			{ tenantId: 'tenant-b', access: 'read' },
+		);
+		/* Her membership there is a member one, and none of the five is a member
+		   default, so it receives nothing. */
+		expect(other).toEqual([]);
+	});
+
+	/* The paged member read walks (tenant_id, account_id), which the primary key
+	   leads with the other way round; without this index every page scans the
+	   deployment's memberships after the cursor and filters the workspace out. */
+	it('indexes the workspace first for the paged member walk', async () => {
+		await apply();
+
+		const indexes = await lease.database.query<{
+			indexname: string;
+			indexdef: string;
+		}>({
+			text: `SELECT indexname, indexdef FROM pg_indexes
+			       WHERE schemaname = current_schema()
+			         AND indexname = 'auth_memberships_tenant_keyset_idx'`,
+		});
+
+		expect(indexes.rows).toHaveLength(1);
+		expect(indexes.rows[0]?.indexdef).toContain('(tenant_id, account_id)');
 	});
 
 	/* The three export walks page by (tenant_id, id); without these the database

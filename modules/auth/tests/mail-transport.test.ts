@@ -1,7 +1,15 @@
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import {
+	createMailPort,
+	mailConfigFromEnvironment,
+	MailError,
+	NO_MAIL,
+	type MailPort,
+} from '@flowdular/server';
 import { authRuntimeOptionsFromEnvironment } from '../src/server/runtime.ts';
 import { AuthService } from '../src/services/auth-service.ts';
 import { DevelopmentMailDelivery } from '../src/services/mail-delivery.ts';
+import { createMailPortDelivery } from '../src/services/mail-port.ts';
 import {
 	SmtpMailDelivery,
 	type SmtpMessage,
@@ -342,6 +350,93 @@ describe('SmtpMailDelivery', () => {
 			expect(() => new SmtpMailDelivery({ url: SMTP_URL, from })).toThrow(
 				/FD_AUTH_MAIL_FROM/,
 			);
+		}
+	});
+});
+
+describe('auth as a sender on the platform mail port', () => {
+	function developmentPort(): MailPort {
+		return createMailPort(
+			mailConfigFromEnvironment({ FD_MAIL_TRANSPORT: 'development' }),
+		);
+	}
+
+	it('renders every kind into the port', async () => {
+		const mail = developmentPort();
+		const delivery = createMailPortDelivery(mail);
+		for (const kind of [
+			'password-reset',
+			'tenant-invitation',
+			'email-confirmation',
+		] as const) {
+			await delivery.send({ to: 'person@example.com', kind, url: RESET_URL });
+		}
+
+		expect(mail.outbox.map((message) => message.subject)).toEqual([
+			'Reset your password',
+			'You have been invited to a workspace',
+			'Confirm your email address',
+		]);
+		for (const message of mail.outbox) {
+			expect(message.to).toEqual(['person@example.com']);
+			expect(message.text).toContain(RESET_URL);
+			expect(message.html).toContain(
+				'href="https://erp.example/auth/reset-password?token=abc&amp;next=1"',
+			);
+		}
+	});
+
+	/* The port's refusal names the transport; what auth.core hands back names
+	   only the kind that failed. */
+	it('answers a refusal with the kind and nothing about the transport', async () => {
+		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const delivery = createMailPortDelivery({
+			adapter: 'smtp',
+			configured: true,
+			outbox: NO_MAIL,
+			send: async () => {
+				throw new MailError(
+					'MAIL_DELIVERY_FAILED',
+					'535 5.7.8 Authentication failed for relay@example with s3cr3t',
+				);
+			},
+		});
+
+		await expect(
+			delivery.send({
+				to: 'invited@example.com',
+				kind: 'tenant-invitation',
+				url: RESET_URL,
+			}),
+		).rejects.toThrow(/^Mail delivery failed for tenant-invitation\.$/);
+		expect(JSON.stringify(logged.mock.calls)).not.toContain('s3cr3t');
+	});
+
+	it('delivers a password reset through the port', async () => {
+		const database = await createAuthTestDatabase();
+		const mail = developmentPort();
+		try {
+			const service = new AuthService(database.repository, {
+				passwordHash: fastHash,
+				mailDelivery: createMailPortDelivery(mail),
+			});
+			await service.signUp({
+				email: 'owner@example.com',
+				password: 'correct horse battery staple',
+				displayName: 'Ada Owner',
+				organizationName: 'Example Operations',
+				organizationSlug: 'example-operations',
+			});
+
+			await service.requestPasswordReset('Owner@Example.com');
+
+			expect(mail.outbox).toHaveLength(1);
+			expect(mail.outbox[0]).toMatchObject({
+				to: ['owner@example.com'],
+				subject: 'Reset your password',
+			});
+		} finally {
+			await database.dispose();
 		}
 	});
 });

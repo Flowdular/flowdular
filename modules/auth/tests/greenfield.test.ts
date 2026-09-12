@@ -91,6 +91,11 @@ describe('auth greenfield', () => {
 						'automations.schedules.manage',
 						'automations.triggers.manage',
 						'profile.self.manage',
+						'reports.workspace.read',
+						'exports.lists.read',
+						'exports.lists.manage',
+						'access.review.read',
+						'access.review.manage',
 					]),
 				);
 				expect(
@@ -113,6 +118,11 @@ describe('auth greenfield', () => {
 				expect(user?.scopes).not.toContain('connectors.instances.manage');
 				expect(user?.scopes).not.toContain('workflows.definitions.read');
 				expect(user?.scopes).not.toContain('automations.schedules.read');
+				expect(user?.scopes).not.toContain('reports.workspace.read');
+				expect(user?.scopes).not.toContain('exports.lists.read');
+				expect(user?.scopes).not.toContain('exports.lists.manage');
+				expect(user?.scopes).not.toContain('access.review.read');
+				expect(user?.scopes).not.toContain('access.review.manage');
 				expect(user?.scopes).toEqual(
 					expect.arrayContaining([
 						'users.members.read',

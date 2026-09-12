@@ -293,6 +293,17 @@ export interface AuditRepository {
 	 * one export.
 	 */
 	claimExportRun(input: ClaimExportRunInput): Promise<AuditExportRun | null>;
+	/**
+	 * Renews the claim of a run this process is performing, fenced on the claim
+	 * instant it holds. False means the lease lapsed and another process took the
+	 * run over, so the pass holding it must stop without settling it.
+	 */
+	heartbeatExportRun(
+		tenantId: string,
+		id: string,
+		at: number,
+		claimedAt: number,
+	): Promise<boolean>;
 	listExportRuns(
 		tenantId: string,
 		status: ExportStatus | undefined,
@@ -470,6 +481,13 @@ export interface AuditRepository {
 	 * requested or another process holds an unexpired claim.
 	 */
 	claimErasureRun(input: ClaimErasureRunInput): Promise<AuditErasureRun | null>;
+	/** The same fenced renewal as the export one, for a run being erased. */
+	heartbeatErasureRun(
+		tenantId: string,
+		id: string,
+		at: number,
+		claimedAt: number,
+	): Promise<boolean>;
 	listErasureRuns(
 		tenantId: string,
 		limit: number,

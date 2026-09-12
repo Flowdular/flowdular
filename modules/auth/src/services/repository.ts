@@ -103,6 +103,25 @@ export interface ExternalIdentityRecord {
 	readonly now: number;
 }
 
+/**
+ * One binding as a reader sees it: the account it signs in, the provider key
+ * that asserted it, the subject that provider promises to keep stable, and
+ * when the binding was first recorded. No secret, ciphertext or fingerprint is
+ * part of it, and neither is the address the provider reported.
+ */
+export interface ExternalIdentityBinding {
+	readonly accountId: string;
+	readonly provider: string;
+	readonly subject: string;
+	readonly linkedAt: number;
+}
+
+export interface ExternalIdentityPage {
+	readonly identities: readonly ExternalIdentityBinding[];
+	/** `${provider}:${subject}` of the last binding of this page. */
+	readonly nextCursor: string | null;
+}
+
 /** A tenant-owned identity provider row, sealed client secret included. */
 export interface IdentityProviderRecord {
 	readonly id: string;
@@ -181,6 +200,12 @@ export interface TenantMember {
 	readonly scopes: readonly string[];
 	readonly passwordChangeRequired: boolean;
 	readonly createdAt: number;
+}
+
+export interface TenantMemberPage {
+	readonly members: readonly TenantMember[];
+	/** The account id of the last member of this page. */
+	readonly nextCursor: string | null;
 }
 
 export interface TenantSummary {
@@ -280,6 +305,17 @@ export interface AuthRepository {
 	): Promise<AccountCredential | null>;
 	listTenantAccess(accountId: string): Promise<readonly AuthTenantAccess[]>;
 	listTenantMembers(tenantId: string): Promise<readonly TenantMember[]>;
+	/**
+	 * One page of the workspace's members, keyset ordered by account id after
+	 * `afterAccountId` (`''` starts the walk) and cut to `limit` in the
+	 * database, for a caller that must not read a workspace of unknown size at
+	 * once. Migration 0030 indexes the pair, so a page is the rows it returns.
+	 */
+	listTenantMembersPage(
+		tenantId: string,
+		afterAccountId: string,
+		limit: number,
+	): Promise<readonly TenantMember[]>;
 	/** One member, for a caller that needs a single account rather than the roll. */
 	findTenantMember(
 		tenantId: string,
@@ -295,9 +331,9 @@ export interface AuthRepository {
 		normalizedEmails: readonly string[],
 	): Promise<readonly TenantMember[]>;
 	/**
-	 * The members of one workspace whose display name contains `term` or whose
-	 * address starts with it, ordered as `listTenantMembers` orders and cut to
-	 * `limit` in the database. `term` arrives already folded and LIKE-escaped.
+	 * The members of one workspace whose display name or address starts with
+	 * `term`, ordered as `listTenantMembers` orders and cut to `limit` in the
+	 * database. `term` arrives already folded and LIKE-escaped.
 	 */
 	searchTenantMembers(
 		tenantId: string,
@@ -378,7 +414,12 @@ export interface AuthRepository {
 	): Promise<readonly SessionSummary[]>;
 	deleteSession(tokenHash: string): Promise<void>;
 	deleteSessionById(accountId: string, id: string): Promise<boolean>;
-	deleteExpiredSessions(now: number): Promise<number>;
+	/**
+	 * Removes sessions that expired before `now` in bounded batches, at most
+	 * `maxBatches` of them, and answers how many rows went. What the bound leaves
+	 * behind is the next pass's work; a live session is never touched.
+	 */
+	deleteExpiredSessions(now: number, maxBatches?: number): Promise<number>;
 	createPasswordResetToken(record: PasswordResetTokenRecord): Promise<void>;
 	/** The account a live token names, without spending it. */
 	findPasswordResetTokenAccount(
@@ -446,6 +487,18 @@ export interface AuthRepository {
 		tenantId?: string | null,
 	): Promise<string | null>;
 	linkExternalIdentity(record: ExternalIdentityRecord): Promise<void>;
+	/**
+	 * One page of the bindings this workspace owns, keyset ordered by
+	 * (provider, subject) after the pair given (`''`, `''` starts the walk).
+	 * The unique workspace index covers exactly that order, so a page is the
+	 * rows it returns. A binding a platform provider made carries no workspace
+	 * and is none of these.
+	 */
+	listExternalIdentitiesPage(
+		tenantId: string,
+		after: { readonly provider: string; readonly subject: string },
+		limit: number,
+	): Promise<readonly ExternalIdentityBinding[]>;
 	deleteExternalIdentitiesOfProvider(
 		tenantId: string,
 		provider: string,

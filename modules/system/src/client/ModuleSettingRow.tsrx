@@ -39,7 +39,8 @@ function description(
 
 /* One declared setting: a switch for booleans, an input or select otherwise,
    and a write-only field for secrets. Booleans save on toggle; everything else
-   waits for its Save button. */
+   waits for its Save button. An overridden flag also offers Reset, because on
+   and off look the same whether the workspace chose them or the module did. */
 export function ModuleSettingRow(props: ModuleSettingRowProps) @{
 	const { t: translate } = useTranslation();
 	const draft = useMemo(
@@ -77,12 +78,21 @@ export function ModuleSettingRow(props: ModuleSettingRowProps) @{
 		status={props.result}
 	>
 		@if (definition.type === 'boolean') {
-			<Switch
-				checked={definition.value === true}
-				label={copy.label}
-				disabled={disabled}
-				onChange={(checked) => props.onSave(checked)}
-			/>
+			<>
+				<Switch
+					checked={definition.value === true}
+					label={copy.label}
+					disabled={disabled}
+					onChange={(checked) => props.onSave(checked)}
+				/>
+				@if (definition.kind === 'flag' && definition.hasValue) {
+					<Button
+						size="sm"
+						disabled={disabled}
+						onClick={() => props.onSave(null)}
+					>{translate('system.action.reset')}</Button>
+				}
+			</>
 		} @else if (definition.secret) {
 			<>
 				<input

@@ -36,7 +36,9 @@ export const REQUEST_RETENTION_DAYS = 400;
  * a request that resolved on two approvals has to go on showing two. The rows
  * naming the subject in somebody else's eligibility snapshot are redacted the
  * same way, pending requests included, so no account of theirs is left in the
- * workspace while the people who can still answer keep their own rows.
+ * workspace while the people who can still answer keep their own rows. The
+ * answer keeps the two apart: `removed` is what went, `redacted` is what
+ * stayed without the subject in it.
  *
  * The repository arrives as a thunk because declaring happens while the
  * platform composes, before anything has opened a database.
@@ -66,29 +68,32 @@ export function approvalsDataClasses(
 				/* Only once the subject's own requests are exhausted, so what these
 				   reach is somebody else's request: the subject never decides a
 				   request they opened and is never in its eligibility snapshot. */
-				let cleared = removed;
-				if (cleared < limit) {
-					cleared += await store.redactDecisionsBy(
+				let redacted = 0;
+				if (removed + redacted < limit) {
+					redacted += await store.redactDecisionsBy(
 						tenantId,
 						subject.accountId,
-						limit - cleared,
+						limit - removed - redacted,
 					);
 				}
-				if (cleared < limit) {
-					cleared += await store.redactEligibilityOf(
+				if (removed + redacted < limit) {
+					redacted += await store.redactEligibilityOf(
 						tenantId,
 						subject.accountId,
-						limit - cleared,
+						limit - removed - redacted,
 					);
 				}
-				/* A redacted row holds nothing of the subject any more, so it counts
-				   towards the batch the same way a removed one does. */
+				/* A redacted row holds nothing of the subject any more, so it fills
+				   the batch the same way a removed one does; it is answered apart
+				   from the removals because the row is still there. */
 				/* A full batch may have left more behind; the caller repeats and the
 				   next batch answers zero. Over-reporting one repeat is cheaper than
 				   reporting a subject as cleared while rows remain. */
-				return cleared === limit
-					? { removed: cleared, truncated: true }
-					: { removed: cleared };
+				return {
+					removed,
+					...(redacted > 0 ? { redacted } : {}),
+					...(removed + redacted === limit ? { truncated: true } : {}),
+				};
 			},
 			/* Every request the account opened, in any state. The erasure removes
 			   the resolved ones alone, so a subject still waiting on a decision is

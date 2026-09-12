@@ -1,8 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import type { JobEvent, JobRunner } from '@flowdular/server';
 import type { ImportPort } from '../src/domain/ports.ts';
 import type { ImportJob, ImportRowOutcome } from '../src/domain/types.ts';
 import { createImportCsvSource } from '../src/services/csv-source.ts';
-import { ImportRunner } from '../src/services/import-runner.ts';
+import { createImportJobRunner } from '../src/services/import-runner.ts';
 import { ImportService } from '../src/services/import-service.ts';
 import {
 	openImportHarness,
@@ -19,6 +20,8 @@ import {
 
 /** Shorter than a real lease and long enough to be unambiguous in a clock. */
 const LEASE_MS = 10_000;
+/** Short enough that a renewal lands inside a batch of a test-sized job. */
+const BEAT_MS = 20;
 const START = 1_700_000_000_000;
 
 let harness: ImportTestHarness;
@@ -27,6 +30,33 @@ let validateCalls = 0;
 let writeCalls = 0;
 let onValidate: ((call: number) => Promise<void>) | null = null;
 let onWrite: ((call: number) => Promise<void>) | null = null;
+let waiters: {
+	readonly type: JobEvent['type'];
+	readonly matches: (event: JobEvent) => boolean;
+	readonly resolve: () => void;
+}[] = [];
+
+/**
+ * Resolves on the next runner event of this type the predicate accepts. Every
+ * case that depends on a renewal waits for the renewal itself rather than for a
+ * span of wall time, so a slow database cannot make it flake.
+ */
+function nextEvent(
+	type: JobEvent['type'],
+	matches: (event: JobEvent) => boolean = () => true,
+): Promise<void> {
+	return new Promise<void>((resolve) => {
+		waiters = [...waiters, { type, matches, resolve }];
+	});
+}
+
+function observe(event: JobEvent): void {
+	const woken = waiters.filter(
+		(waiter) => waiter.type === event.type && waiter.matches(event),
+	);
+	waiters = waiters.filter((waiter) => !woken.includes(waiter));
+	for (const waiter of woken) waiter.resolve();
+}
 
 const fake = createFakeImportPort();
 
@@ -58,13 +88,20 @@ function service(): ImportService {
 	});
 }
 
-function runner(now: number): ImportRunner {
+/**
+ * The module's job on the platform runner. `now` is the clock of the process
+ * that holds the claim: a case pins it to model a loop whose clock stopped with
+ * it, and reads `() => clock` to model one that runs on with the stage.
+ */
+function runner(now: () => number): JobRunner {
 	const resolved = service();
-	return new ImportRunner({
-		repository: harness.repository,
+	return createImportJobRunner({
+		repository: async () => harness.repository,
 		service: async () => resolved,
 		claimTimeoutMs: LEASE_MS,
-		now: () => now,
+		heartbeatEveryMs: BEAT_MS,
+		now,
+		onEvent: observe,
 	});
 }
 
@@ -103,27 +140,34 @@ afterEach(async () => {
 	validateCalls = 0;
 	writeCalls = 0;
 	clock = START;
+	waiters = [];
 	await harness.reset();
 	fake.reset();
 });
 
 describe('the job claim', () => {
-	it('renews the claim once per batch while a stage is running', async () => {
+	it('renews the claim on the runner timer while a stage is running', async () => {
 		const job = await start();
 		const held: (number | null | undefined)[] = [];
-		onValidate = async () => {
-			held.push((await harness.repository.findJob(TENANT, job.id))?.claimedAt);
+		const renewed = START + 2 * LEASE_MS;
+		onValidate = async (call) => {
+			if (call !== 1) return;
 			/* This batch took longer than the whole lease. */
-			clock += 2 * LEASE_MS;
+			clock = renewed;
+			await nextEvent('heartbeat', (event) => event.at === renewed);
+			held.push((await harness.repository.findJob(TENANT, job.id))?.claimedAt);
 		};
 
-		await runner(START).tick();
+		expect(await runner(() => clock).tick()).toEqual({
+			claimed: 1,
+			performed: 1,
+			failed: 0,
+			claimLost: 0,
+		});
 
-		/* Four valid rows at two per batch: the claim the second batch finds is
-		   the one the first batch renewed, not the one the runner took. */
-		expect(held).toHaveLength(2);
-		expect(held[0]).toBe(START);
-		expect(held[1]).toBe(START + 2 * LEASE_MS);
+		/* The claim the rest of the stage runs under is the one the runner renewed
+		   on its own timer, not the one it took at the head of the pass. */
+		expect(held).toEqual([renewed]);
 		/* A settled job holds no claim at all. */
 		expect((await harness.repository.findJob(TENANT, job.id))?.claimedAt).toBe(
 			null,
@@ -148,8 +192,14 @@ describe('the job claim', () => {
 				START,
 			),
 		).toBe(true);
-		const second = runner(START + LEASE_MS + LEASE_MS / 2);
-		expect(await second.tick()).toEqual({ examined: 1, performed: 0 });
+		clock = START + LEASE_MS + LEASE_MS / 2;
+		const second = runner(() => clock);
+		expect(await second.tick()).toEqual({
+			claimed: 0,
+			performed: 0,
+			failed: 0,
+			claimLost: 0,
+		});
 		expect((await harness.service.job(TENANT, job.id)).status).toBe('parsing');
 
 		/* A renewal naming a claim the row no longer carries changes nothing. */
@@ -167,7 +217,12 @@ describe('the job claim', () => {
 				START + LEASE_MS,
 			),
 		).toBe(true);
-		expect(await second.tick()).toEqual({ examined: 1, performed: 1 });
+		expect(await second.tick()).toEqual({
+			claimed: 1,
+			performed: 1,
+			failed: 0,
+			claimLost: 0,
+		});
 		expect((await harness.service.job(TENANT, job.id)).status).toBe(
 			'validated',
 		);
@@ -192,9 +247,20 @@ describe('IMPORT-RESUME', () => {
 					staleBefore: clock - LEASE_MS,
 				}),
 			).not.toBeNull();
+			/* The stage waits for the renewal that finds the claim gone; without
+			   it the case would race the runner's timer. */
+			await nextEvent('claim-lost');
 		};
 
-		await runner(START).tick();
+		/* This loop's clock stopped with the process that holds the claim, so its
+		   renewals never carry the row out of the stale window the other loop
+		   claimed against. */
+		expect(await runner(() => START).tick()).toEqual({
+			claimed: 1,
+			performed: 0,
+			failed: 0,
+			claimLost: 1,
+		});
 
 		/* The renewal after the first batch matched nothing, so the stage stopped
 		   there: no second batch, no outcomes, and the job still parsing for the
@@ -212,7 +278,7 @@ describe('IMPORT-RESUME', () => {
 
 	it('completes a reclaimed write with the counts of the whole job', async () => {
 		const job = await start();
-		await runner(START).tick();
+		await runner(() => clock).tick();
 		await service().continue(principal(), job.id, true);
 
 		let reached = (): void => undefined;
@@ -227,7 +293,9 @@ describe('IMPORT-RESUME', () => {
 			await new Promise<never>(() => undefined);
 		};
 
-		void runner(START).tick();
+		/* The process running this batch is gone: its clock stopped with it, so
+		   nothing it renews carries the row out of the window below. */
+		void runner(() => START).tick();
 		await secondBatch;
 		expect(await outcomes(job.id)).toEqual([
 			[1, 'created'],
@@ -239,7 +307,12 @@ describe('IMPORT-RESUME', () => {
 
 		onWrite = null;
 		clock = START + 2 * LEASE_MS;
-		expect(await runner(clock).tick()).toEqual({ examined: 1, performed: 1 });
+		expect(await runner(() => clock).tick()).toEqual({
+			claimed: 1,
+			performed: 1,
+			failed: 0,
+			claimLost: 0,
+		});
 
 		const completed = await harness.service.job(TENANT, job.id);
 		expect({

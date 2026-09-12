@@ -27,7 +27,9 @@ import {
 	revokeMemberSessions,
 	setMemberScopes,
 	setMembershipStatus,
+	startListExport,
 } from './api.ts';
+import { MEMBER_EXPORT_LIST_ID } from '../domain/lists.ts';
 import { memberColumns } from './member-columns.tsrx';
 import { MemberDrawer } from './MemberDrawer.tsrx';
 import {
@@ -41,6 +43,8 @@ import { InviteMemberForm } from './InviteMemberForm.tsrx';
 export interface UsersViewProps {
 	readonly csrfToken: string;
 	readonly canManage: boolean;
+	/** Whether the principal may start an export job; exports.core owns it. */
+	readonly canExport: boolean;
 }
 
 const PAGE_SIZES = [10, 25, 50, 100];
@@ -86,6 +90,9 @@ export function UsersView(props: UsersViewProps) @{
 	const [selectedAccountId, setSelectedAccountId] = useValue(
 		usersState.state.selectedAccountId,
 	);
+	const [exportStarted, setExportStarted] = useValue(
+		usersState.state.exportStarted,
+	);
 	const confirm = useMemo(() => createStore({ remove: cell(false) }), []);
 	const [removeOpen, setRemoveOpen] = useValue(confirm.state.remove);
 	const [pageIndex, setPageIndex] = useState(0);
@@ -127,6 +134,7 @@ export function UsersView(props: UsersViewProps) @{
 					usersState.state.passwordMinLength,
 					directory.passwordMinLength,
 				);
+				transaction.set(usersState.state.exportStarted, false);
 				transaction.set(usersState.state.status, 'idle');
 			}, 'users/loaded');
 		} catch (loadError) {
@@ -252,6 +260,23 @@ export function UsersView(props: UsersViewProps) @{
 		}
 	};
 
+	/* exports.core answers as soon as the job is recorded, not when the file is
+   written, so the screen reports that it started and points at the screen
+   that hands it over. */
+	const startExport = async () => {
+		setStatus('submitting');
+		setError('');
+		setNotice('');
+		try {
+			await startListExport(MEMBER_EXPORT_LIST_ID, props.csrfToken);
+			setExportStarted(true);
+			setStatus('idle');
+		} catch (exportError) {
+			setError(message(exportError, t('users.export.error')));
+			setStatus('idle');
+		}
+	};
+
 	const openMember = (accountId: string) => {
 		setError('');
 		setNotice('');
@@ -297,6 +322,16 @@ export function UsersView(props: UsersViewProps) @{
 				<Icon name="refresh" size={14} />
 				{t('users.action.refresh')}
 			</Button>
+			@if (props.canExport) {
+				<Button
+					size="sm"
+					disabled={status === 'denied' || status === 'submitting'}
+					onClick={() => void startExport()}
+				>
+					<Icon name="download" size={14} />
+					{t('users.export.action')}
+				</Button>
+			}
 			@if (props.canManage) {
 				<>
 					<Button
@@ -339,6 +374,13 @@ export function UsersView(props: UsersViewProps) @{
 				}
 				@if (notice && !selected) {
 					<Alert tone="info">{notice}</Alert>
+				}
+				@if (exportStarted && !selected) {
+					<Alert tone="info">
+						{t('users.export.started')}
+						{' '}
+						<a href="/exports">{t('users.export.link')}</a>
+					</Alert>
 				}
 				<TableCard
 					title={t('users.table.title')}

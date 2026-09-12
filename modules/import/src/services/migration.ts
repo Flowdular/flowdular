@@ -98,6 +98,15 @@ CREATE INDEX IF NOT EXISTS import_jobs_tenant_export_idx
   ON import_jobs (tenant_id, started_at, id);
 `;
 
+export const IMPORT_MIGRATION_004_TRACEPARENT = `-- The trace that enqueued the job, as a W3C traceparent header value, so the
+-- pass that claims it can be read against the request that started it. Nullable
+-- because a job enqueued outside a traced scope, and every job that predates
+-- this column, is a new root. It is written once at insert and never used as a
+-- predicate, so it carries no index and stays off the background routing grant:
+-- the claim returns it under the tenant that owns the job.
+ALTER TABLE import_jobs ADD COLUMN IF NOT EXISTS traceparent text;
+`;
+
 export const databaseMigrations: readonly DatabaseMigration[] = [
 	{
 		id: '0001_import_core',
@@ -133,6 +142,14 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 		sql: { postgresql: IMPORT_MIGRATION_003_EXPORT_INDEX },
 		inspectExisting: async (database) =>
 			(await database.schema.hasIndex('import_jobs_tenant_export_idx'))
+				? 'complete'
+				: 'absent',
+	},
+	{
+		id: '0004_import_jobs_traceparent',
+		sql: { postgresql: IMPORT_MIGRATION_004_TRACEPARENT },
+		inspectExisting: async (database) =>
+			(await database.schema.hasColumn('import_jobs', 'traceparent'))
 				? 'complete'
 				: 'absent',
 	},

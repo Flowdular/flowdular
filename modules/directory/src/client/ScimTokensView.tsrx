@@ -3,7 +3,7 @@ import {
 	Alert,
 	Button,
 	ConfirmDialog,
-	DateField,
+	DatePicker,
 	Drawer,
 	EmptyState,
 	Filters,
@@ -33,6 +33,7 @@ import {
 import {
 	expiryFieldValue,
 	expiryToTimestamp,
+	rotateAction,
 	tableEmpty,
 	timestampLabel,
 	tokenDisplayStatus,
@@ -235,39 +236,33 @@ export function ScimTokensView(props: ScimTokensViewProps) @{
 		}
 	};
 
-	/* Rotation carries the stored expiry forward and the server refuses one
-   that has already passed, so an expired token is revoked, not rotated. The
-   label carries that reason: a disabled row action has nowhere else to put it. */
-	const rotatable = (token: ScimToken): boolean =>
-		tokenDisplayStatus(token) === 'active';
-
-	const rowActions = (token: ScimToken): readonly TableAction[] =>
-		props.canManage && token.status === 'active'
-			? [
-					{
-						id: 'rotate',
-						label: rotatable(token)
-							? t('directory.tokens.action.rotate')
-							: t('directory.tokens.action.rotateExpired'),
-						icon: 'refresh',
-						disabled: !rotatable(token),
-						onSelect: () => {
-							setSelectedId(token.id);
-							setConfirm('rotate');
-						},
-					},
-					{
-						id: 'revoke',
-						label: t('directory.tokens.action.revoke'),
-						icon: 'x',
-						tone: 'danger',
-						onSelect: () => {
-							setSelectedId(token.id);
-							setConfirm('revoke');
-						},
-					},
-				]
-			: [];
+	const rowActions = (token: ScimToken): readonly TableAction[] => {
+		if (!props.canManage || token.status !== 'active') return [];
+		const rotate = rotateAction(token);
+		return [
+			{
+				id: 'rotate',
+				label: rotate.label,
+				icon: 'refresh',
+				disabled: rotate.disabled,
+				reason: rotate.reason,
+				onSelect: () => {
+					setSelectedId(token.id);
+					setConfirm('rotate');
+				},
+			},
+			{
+				id: 'revoke',
+				label: t('directory.tokens.action.revoke'),
+				icon: 'x',
+				tone: 'danger',
+				onSelect: () => {
+					setSelectedId(token.id);
+					setConfirm('revoke');
+				},
+			},
+		];
+	};
 
 	<div class="ui-view">
 		<PageHeader
@@ -420,16 +415,19 @@ export function ScimTokensView(props: ScimTokensViewProps) @{
 									required
 								/>
 							</FormField>
-							<DateField
+							<DatePicker
 								id="directory-token-expiry"
 								kind="datetime"
 								label={t('directory.tokens.form.expiry')}
 								help={t('directory.tokens.form.expiryHelp')}
 								locale={locale}
-								value={expiresAt}
+								value={{ from: expiresAt, to: expiresAt }}
 								min={expiryFieldValue(Date.now())}
 								max={expiryFieldValue(Date.now() + MAX_TOKEN_LIFETIME_MS)}
-								onChange={setExpiresAt}
+								openLabel={t('directory.common.openCalendar')}
+								previousMonthLabel={t('directory.common.previousMonth')}
+								nextMonthLabel={t('directory.common.nextMonth')}
+								onChange={(next) => setExpiresAt(next.from)}
 							/>
 							@if (error) {
 								<Alert>{error}</Alert>

@@ -1,5 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import type { JobRunner } from '@flowdular/server';
 import type { ApprovalRequest } from '../src/domain/types.ts';
+import { createApprovalsExpiryRunner } from '../src/services/expiry-runner.ts';
 import type { NotificationPublishInput } from '../src/services/notifications.ts';
 import type { ApprovalsRepository } from '../src/services/repository.ts';
 import { ApprovalsServiceError } from '../src/services/service-error.ts';
@@ -60,15 +62,12 @@ function fixture(
 	return { members, publishes, resolved: [], clock, service };
 }
 
-/** The module repository with one request the tenant read cannot answer. */
-function unreadable(requestId: string): ApprovalsRepository {
+/** The module repository with some of its operations answered by the case. */
+function wrap(overrides: Partial<ApprovalsRepository>): ApprovalsRepository {
 	const base = shared.repository;
 	return {
 		create: base.create.bind(base),
-		get: async (tenantId, id) => {
-			if (id === requestId) throw new Error('tenant database unreachable');
-			return base.get(tenantId, id);
-		},
+		get: base.get.bind(base),
 		findPendingBySubject: base.findPendingBySubject.bind(base),
 		detail: base.detail.bind(base),
 		list: base.list.bind(base),
@@ -82,7 +81,32 @@ function unreadable(requestId: string): ApprovalsRepository {
 		redactDecisionsBy: base.redactDecisionsBy.bind(base),
 		redactEligibilityOf: base.redactEligibilityOf.bind(base),
 		countRequestedBy: base.countRequestedBy.bind(base),
+		...overrides,
 	};
+}
+
+/** The module repository with one request the tenant read cannot answer. */
+function unreadable(requestId: string): ApprovalsRepository {
+	return wrap({
+		get: async (tenantId, id) => {
+			if (id === requestId) throw new Error('tenant database unreachable');
+			return shared.repository.get(tenantId, id);
+		},
+	});
+}
+
+/** One expiry pass on the platform job runner, over the case's own clock. */
+function expiry(
+	service: Fixture['service'],
+	repository: ApprovalsRepository,
+	now: () => number,
+): JobRunner {
+	return createApprovalsExpiryRunner({
+		repository: async () => repository,
+		service: async () => service,
+		intervalMs: 60_000,
+		now,
+	});
 }
 
 function openInput(
@@ -462,13 +486,33 @@ describe('APPROVALS-EXPIRE', () => {
 	it('APPROVALS-EXPIRE expires a due request once, runs the callback and accepts nothing after it', async () => {
 		const context = fixture();
 		const request = await context.service.open(openInput(context));
+		const runner = expiry(
+			context.service,
+			shared.repository,
+			context.clock.now,
+		);
 
-		expect(await context.service.expireDue()).toBe(0);
+		expect(await runner.tick()).toEqual({
+			claimed: 0,
+			performed: 0,
+			failed: 0,
+			claimLost: 0,
+		});
 
 		context.clock.advance(7 * DAY_MS + 1);
-		expect(await context.service.expireDue()).toBe(1);
-		/* A second pass finds nothing: the request is no longer pending. */
-		expect(await context.service.expireDue()).toBe(0);
+		expect(await runner.tick()).toEqual({
+			claimed: 1,
+			performed: 1,
+			failed: 0,
+			claimLost: 0,
+		});
+		/* A second pass claims nothing: the request is no longer pending. */
+		expect(await runner.tick()).toEqual({
+			claimed: 0,
+			performed: 0,
+			failed: 0,
+			claimLost: 0,
+		});
 
 		const detail = await context.service.detail(TENANT, request.id);
 		expect(detail?.request.status).toBe('expired');
@@ -494,15 +538,19 @@ describe('APPROVALS-EXPIRE', () => {
 		);
 
 		/* One workspace whose read fails must not cost every workspace behind it
-		   in the same pass its expiry. */
+		   in the same pass its expiry: the runner isolates the request that raised
+		   and claims the next one. */
+		const repository = unreadable(failing.id);
 		const { service } = createHarness({
-			repository: unreadable(failing.id),
+			repository,
 			members: context.members,
 			now: context.clock.now,
 		});
 		context.clock.advance(7 * DAY_MS + 1);
 
-		expect(await service.expireDue()).toBe(2);
+		expect(await expiry(service, repository, context.clock.now).tick()).toEqual(
+			{ claimed: 3, performed: 2, failed: 1, claimLost: 0 },
+		);
 		expect((await context.service.get(TENANT, failing.id))?.status).toBe(
 			'pending',
 		);
@@ -517,12 +565,27 @@ describe('APPROVALS-EXPIRE', () => {
 		const context = fixture();
 		const request = await context.service.open(openInput(context));
 		context.clock.advance(7 * DAY_MS + 1);
+		/* The claim hands over the routing row as the poll read it, while the
+		   request was still pending; the decision lands before the pass writes. */
+		const due = await shared.repository.listDueExpiries(
+			context.clock.now(),
+			10,
+		);
 		await context.service.decide(TENANT, request.id, 'account-ada', 'approve');
 
-		expect(await context.service.expireDue()).toBe(0);
-		expect((await context.service.get(TENANT, request.id))?.status).toBe(
-			'approved',
-		);
+		expect(
+			await expiry(
+				context.service,
+				wrap({ listDueExpiries: async () => due }),
+				context.clock.now,
+			).tick(),
+		).toEqual({ claimed: 1, performed: 1, failed: 0, claimLost: 0 });
+
+		const detail = await context.service.detail(TENANT, request.id);
+		expect(detail?.request.status).toBe('approved');
+		expect(detail?.decisions.map((entry) => entry.decision)).toEqual([
+			'approve',
+		]);
 	});
 });
 

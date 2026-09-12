@@ -42,6 +42,8 @@ export async function loadAutomationSchedules(): Promise<{
 	readonly agents: readonly AutomationAgent[];
 	readonly targets: readonly AutomationTargetOption[];
 	readonly variables: readonly VariableDefinition[];
+	/** Workspace zone the cron slots and the listed times are read in. */
+	readonly timeZone: string;
 }> {
 	return payload(
 		await fetch('/api/automations/schedules', {

@@ -31,8 +31,16 @@ import { RETENTION_TENANT_LIMIT } from '../src/services/delivery-service.ts';
 
 const TENANT = 'tenant-delivery';
 const MEMBERS = [
-	{ accountId: 'account-ada', scopes: ['notifications.deliveries.read'] },
-	{ accountId: 'account-bo', scopes: ['notifications.inbox.read'] },
+	{
+		accountId: 'account-ada',
+		email: 'ada@example.com',
+		scopes: ['notifications.deliveries.read'],
+	},
+	{
+		accountId: 'account-bo',
+		email: 'bo@example.com',
+		scopes: ['notifications.inbox.read'],
+	},
 ];
 
 let shared: NotificationsTestDatabase;
@@ -105,11 +113,16 @@ describe('notifications delivery', () => {
 	it('NOTIFICATIONS-DELIVERY-SIGNED signs the request the shared scheme verifies and records the outcome without the payload', async () => {
 		const endpoint = await openEndpoint();
 		try {
-			const { vault, publisher, deliveries } = harness();
+			const { vault, publisher, deliveries, runner } = harness();
 			const subscription = await seedSubscription(vault, endpoint.url);
 			await publish(publisher, 'run-signed');
 
-			expect(await deliveries.tick()).toBe(1);
+			expect(await runner.tick()).toEqual({
+				claimed: 1,
+				performed: 1,
+				failed: 0,
+				claimLost: 0,
+			});
 
 			expect(endpoint.received).toHaveLength(1);
 			const request = endpoint.received[0]!;
@@ -173,6 +186,7 @@ describe('notifications delivery', () => {
 			   secret are not, and the row shape is what keeps them out. */
 			expect(Object.keys(attempts[0]!).sort()).toEqual([
 				'attemptNumber',
+				'channel',
 				'completedAt',
 				'createdAt',
 				'errorClass',
@@ -181,6 +195,7 @@ describe('notifications delivery', () => {
 				'occurredAt',
 				'payloadBytes',
 				'payloadDigest',
+				'recipientAccountId',
 				'responseStatus',
 				'scheduledFor',
 				'sequence',
@@ -200,14 +215,14 @@ describe('notifications delivery', () => {
 	it('NOTIFICATIONS-DELIVERY-SIGNED refuses a redirect instead of following it', async () => {
 		const endpoint = await openEndpoint();
 		try {
-			const { vault, publisher, deliveries } = harness();
+			const { vault, publisher, deliveries, runner } = harness();
 			await seedSubscription(vault, endpoint.url);
 			endpoint.respond((_request, reply) =>
 				reply(302, { location: 'https://elsewhere.example/receiver' }),
 			);
 			await publish(publisher, 'run-redirect');
 
-			await deliveries.tick();
+			await runner.tick();
 
 			expect(endpoint.received).toHaveLength(1);
 			const [attempt] = await deliveries.list(TENANT, { status: 'failed' });
@@ -251,11 +266,11 @@ describe('notifications delivery', () => {
 		);
 		const { port } = server.address() as AddressInfo;
 		try {
-			const { vault, publisher, deliveries } = harness();
+			const { vault, publisher, deliveries, runner } = harness();
 			await seedSubscription(vault, `https://${TEST_HOST}:${port}/receiver`);
 			await publish(publisher, 'run-large');
 
-			await deliveries.tick();
+			await runner.tick();
 
 			const [attempt] = await deliveries.list(TENANT, {});
 			expect(attempt?.status).toBe('succeeded');
@@ -285,12 +300,12 @@ describe('notifications delivery', () => {
 		);
 		const { port } = server.address() as AddressInfo;
 		try {
-			const { vault, publisher, deliveries } = harness();
+			const { vault, publisher, deliveries, runner } = harness();
 			await seedSubscription(vault, `https://${TEST_HOST}:${port}/receiver`);
 			await publish(publisher, 'run-timeout');
 
 			const started = Date.now();
-			await deliveries.tick();
+			await runner.tick();
 			const elapsed = Date.now() - started;
 
 			const [attempt] = await deliveries.list(TENANT, { status: 'failed' });
@@ -329,7 +344,7 @@ describe('notifications delivery', () => {
 		const { port } = stalling.address() as AddressInfo;
 		const endpoint = await openEndpoint();
 		try {
-			const { vault, publisher, deliveries } = harness();
+			const { vault, publisher, deliveries, runner } = harness();
 			const stalled = await seedSubscription(
 				vault,
 				`https://${TEST_HOST}:${port}/receiver`,
@@ -347,7 +362,12 @@ describe('notifications delivery', () => {
 				recipients: [],
 			});
 
-			expect(await deliveries.tick()).toBe(1);
+			expect(await runner.tick()).toEqual({
+				claimed: 2,
+				performed: 2,
+				failed: 0,
+				claimLost: 0,
+			});
 
 			const [attempt] = await deliveries.list(TENANT, {
 				subscriptionId: stalled.id,
@@ -382,7 +402,7 @@ describe('notifications delivery', () => {
 			members: MEMBERS,
 		});
 
-		await blocked.deliveries.tick();
+		await blocked.runner.tick();
 
 		const [attempt] = await blocked.deliveries.list(TENANT, {
 			subscriptionId: subscription.id,
@@ -396,7 +416,7 @@ describe('notifications delivery', () => {
 	});
 
 	it('NOTIFICATIONS-RETRY-DEADLETTER grows the backoff, stops at the tenant maximum and notifies every reader of deliveries', async () => {
-		const { vault, publisher, deliveries, inbox } = harness({
+		const { vault, publisher, deliveries, inbox, runner } = harness({
 			transport: failing,
 		});
 		const subscription = await seedSubscription(
@@ -411,7 +431,7 @@ describe('notifications delivery', () => {
 			expect(due).toBeDefined();
 			scheduled.push(due!.scheduledFor);
 			clock = due!.scheduledFor;
-			await deliveries.tick();
+			await runner.tick();
 		}
 
 		expect(scheduled.map((at, index) => at - scheduled[0]!)).toEqual([
@@ -443,13 +463,21 @@ describe('notifications delivery', () => {
 	});
 
 	it('NOTIFICATIONS-INBOX-PREFERENCE leaves the dead letter out of the inbox of a member who disabled the kind', async () => {
-		const { vault, publisher, deliveries, inbox } = createHarness({
+		const { vault, publisher, deliveries, inbox, runner } = createHarness({
 			repository: shared.repository,
 			now: () => clock,
 			resolve: testResolver(),
 			members: [
-				{ accountId: 'account-ada', scopes: ['notifications.deliveries.read'] },
-				{ accountId: 'account-cy', scopes: ['notifications.deliveries.read'] },
+				{
+					accountId: 'account-ada',
+					email: 'ada@example.com',
+					scopes: ['notifications.deliveries.read'],
+				},
+				{
+					accountId: 'account-cy',
+					email: 'cy@example.com',
+					scopes: ['notifications.deliveries.read'],
+				},
 			],
 			transport: failing,
 		});
@@ -464,7 +492,7 @@ describe('notifications delivery', () => {
 		for (let pass = 0; pass < TEST_SETTINGS.retryMaxAttempts; pass += 1) {
 			const [due] = await deliveries.list(TENANT, { status: 'pending' });
 			clock = due!.scheduledFor;
-			await deliveries.tick();
+			await runner.tick();
 		}
 
 		expect(
@@ -482,14 +510,14 @@ describe('notifications delivery', () => {
 	it('stamps lastDeliveryAt from a failed attempt as well as a successful one', async () => {
 		const endpoint = await openEndpoint();
 		try {
-			const { vault, publisher, deliveries, webhooks } = harness();
+			const { vault, publisher, deliveries, webhooks, runner } = harness();
 			const subscription = await seedSubscription(vault, endpoint.url, [
 				'agent-run-failed',
 			]);
 			endpoint.respond((_request, reply) => reply(503));
 			await publish(publisher, 'run-stamp');
 
-			await deliveries.tick();
+			await runner.tick();
 			const failedAt = clock;
 			expect((await webhooks.get(TENANT, subscription.id)).lastDeliveryAt).toBe(
 				failedAt,
@@ -498,7 +526,7 @@ describe('notifications delivery', () => {
 			endpoint.respond((_request, reply) => reply(200));
 			const [retry] = await deliveries.list(TENANT, { status: 'pending' });
 			clock = retry!.scheduledFor;
-			await deliveries.tick();
+			await runner.tick();
 
 			const stamped = await webhooks.get(TENANT, subscription.id);
 			expect(stamped.lastDeliveryAt).toBe(clock);
@@ -517,13 +545,15 @@ describe('notifications delivery', () => {
 	});
 
 	it('NOTIFICATIONS-REPLAY queues a fresh attempt run and keeps the earlier ledger', async () => {
-		const { vault, publisher, deliveries } = harness({ transport: failing });
+		const { vault, publisher, deliveries, runner } = harness({
+			transport: failing,
+		});
 		await seedSubscription(vault, `https://${TEST_HOST}:9/x`);
 		await publish(publisher, 'run-replay');
 		for (let pass = 0; pass < TEST_SETTINGS.retryMaxAttempts; pass += 1) {
 			const [due] = await deliveries.list(TENANT, { status: 'pending' });
 			clock = due!.scheduledFor;
-			await deliveries.tick();
+			await runner.tick();
 		}
 		const dead = (await deliveries.list(TENANT, { status: 'dead-letter' }))[0]!;
 
@@ -561,13 +591,13 @@ describe('notifications delivery', () => {
 	it('NOTIFICATIONS-PAUSE keeps deliveries pending without counting attempts until the subscription resumes', async () => {
 		const endpoint = await openEndpoint();
 		try {
-			const { vault, publisher, deliveries, webhooks } = harness();
+			const { vault, publisher, deliveries, webhooks, runner } = harness();
 			const subscription = await seedSubscription(vault, endpoint.url);
 			await publish(publisher, 'run-paused');
 			await webhooks.pause(TENANT, subscription.id);
 
 			clock += 600_000;
-			expect(await deliveries.tick()).toBe(0);
+			await runner.tick();
 
 			const [held] = await deliveries.list(TENANT, {});
 			expect(held).toMatchObject({
@@ -583,7 +613,7 @@ describe('notifications delivery', () => {
 
 			await webhooks.resume(TENANT, subscription.id);
 			clock += DELIVERY_HOLD_MS;
-			expect(await deliveries.tick()).toBe(1);
+			await runner.tick();
 			expect(endpoint.received).toHaveLength(1);
 			expect((await deliveries.list(TENANT, {}))[0]?.status).toBe('succeeded');
 		} finally {
@@ -597,7 +627,7 @@ describe('notifications delivery', () => {
 	it('NOTIFICATIONS-PAUSE parks a held backlog larger than one page and still delivers an active subscription', async () => {
 		const endpoint = await openEndpoint();
 		try {
-			const { vault, publisher, deliveries } = harness();
+			const { vault, publisher, deliveries, runner } = harness();
 			const paused = await seedSubscription(
 				vault,
 				`https://${TEST_HOST}:9/held`,
@@ -610,7 +640,9 @@ describe('notifications delivery', () => {
 				await shared.repository.appendDelivery({
 					id: `held-${String(index).padStart(3, '0')}`,
 					tenantId: TENANT,
+					channel: 'webhook',
 					subscriptionId: paused.id,
+					recipientAccountId: null,
 					kind: 'agent-run-failed',
 					sourceModule: 'agents.core',
 					sourceRef: `run-held-${index}`,
@@ -637,8 +669,8 @@ describe('notifications delivery', () => {
 				recipients: [],
 			});
 
-			await deliveries.tick();
-			expect(await deliveries.tick()).toBe(1);
+			await runner.tick();
+			await runner.tick();
 
 			expect(endpoint.received).toHaveLength(1);
 			const held = await deliveries.list(TENANT, { subscriptionId: paused.id });
@@ -734,7 +766,7 @@ describe('notifications delivery', () => {
 	});
 
 	it('leaves an attempt whose subscription is gone out of the queue', async () => {
-		const { vault, publisher, deliveries } = harness();
+		const { vault, publisher, deliveries, runner } = harness();
 		const subscription = await seedSubscription(
 			vault,
 			`https://${TEST_HOST}:9/x`,
@@ -749,7 +781,12 @@ describe('notifications delivery', () => {
 		await shared.repository.deleteSubscription(TENANT, subscription.id);
 
 		/* Deleting drops the pending queue, so nothing is left to send. */
-		expect(await deliveries.tick()).toBe(0);
+		expect(await runner.tick()).toEqual({
+			claimed: 0,
+			performed: 0,
+			failed: 0,
+			claimLost: 0,
+		});
 		expect(await deliveries.list(TENANT, {})).toHaveLength(0);
 	});
 
@@ -758,17 +795,17 @@ describe('notifications delivery', () => {
 	it('sends one request and records one attempt when two poll loops reach the same row', async () => {
 		const endpoint = await openEndpoint();
 		try {
-			const { vault, publisher, deliveries } = harness();
+			const { vault, publisher, deliveries, runner } = harness();
 			const other = harness();
 			await seedSubscription(vault, endpoint.url);
 			await publish(publisher, 'run-claimed');
 
-			const passes = await Promise.all([
-				deliveries.tick(),
-				other.deliveries.tick(),
-			]);
+			const passes = await Promise.all([runner.tick(), other.runner.tick()]);
 
-			expect(passes[0] + passes[1]).toBe(1);
+			/* Both routing reads answered the row; the claim is the fence, so only
+			   one of the two passes took it, and only that pass reports work. */
+			expect(passes.map((report) => report.claimed).sort()).toEqual([0, 1]);
+			expect(passes.map((report) => report.performed).sort()).toEqual([0, 1]);
 			expect(endpoint.received).toHaveLength(1);
 			const ledger = await deliveries.list(TENANT, {});
 			expect(ledger).toHaveLength(1);
@@ -785,7 +822,7 @@ describe('notifications delivery', () => {
 	it('takes over a claim its process abandoned once it goes stale', async () => {
 		const endpoint = await openEndpoint();
 		try {
-			const { vault, publisher, deliveries } = harness();
+			const { vault, publisher, deliveries, runner } = harness();
 			await seedSubscription(vault, endpoint.url);
 			await publish(publisher, 'run-stranded');
 			const [queued] = await deliveries.list(TENANT, { status: 'pending' });
@@ -806,11 +843,21 @@ describe('notifications delivery', () => {
 				completedAt: null,
 			});
 
-			expect(await deliveries.tick()).toBe(0);
+			expect(await runner.tick()).toEqual({
+				claimed: 0,
+				performed: 0,
+				failed: 0,
+				claimLost: 0,
+			});
 			expect(endpoint.received).toHaveLength(0);
 
 			clock += DELIVERY_CLAIM_TIMEOUT_MS + 1;
-			expect(await deliveries.tick()).toBe(1);
+			expect(await runner.tick()).toEqual({
+				claimed: 1,
+				performed: 1,
+				failed: 0,
+				claimLost: 0,
+			});
 
 			expect(endpoint.received).toHaveLength(1);
 			const ledger = await deliveries.list(TENANT, {});

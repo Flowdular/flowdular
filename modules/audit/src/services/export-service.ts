@@ -6,6 +6,7 @@ import type {
 	DataClassExportSink,
 	PlatformDataClassRegistry,
 } from '@flowdular/kernel';
+import { JOB_CLAIM_LOST } from '@flowdular/server';
 import {
 	AUDIT_EVENT_ACTIONS,
 	type AuditDataClass,
@@ -151,12 +152,6 @@ export interface ExportResult {
 	readonly run: AuditExportRun;
 }
 
-export interface ExportPassReport {
-	readonly examined: number;
-	readonly completed: number;
-	readonly failed: number;
-}
-
 export interface ExportServiceOptions {
 	readonly repository: AuditRepository;
 	readonly registry: PlatformDataClassRegistry;
@@ -166,7 +161,6 @@ export interface ExportServiceOptions {
 	readonly workspaceRoot: string;
 	/** Recorded in the manifest; read from the workspace configuration once. */
 	readonly platformVersion?: () => Promise<string>;
-	readonly claimTimeoutMs?: number;
 	readonly now?: () => number;
 }
 
@@ -191,7 +185,6 @@ export class AuditExportService {
 	readonly #environment: NodeJS.ProcessEnv;
 	readonly #workspaceRoot: string;
 	readonly #platformVersion: () => Promise<string>;
-	readonly #claimTimeoutMs: number;
 	readonly #now: () => number;
 	#version: Promise<string> | undefined;
 
@@ -205,7 +198,6 @@ export class AuditExportService {
 		this.#platformVersion =
 			options.platformVersion ??
 			(() => readPlatformVersion(this.#workspaceRoot));
-		this.#claimTimeoutMs = options.claimTimeoutMs ?? EXPORT_CLAIM_TIMEOUT_MS;
 		this.#now = options.now ?? Date.now;
 	}
 
@@ -228,37 +220,15 @@ export class AuditExportService {
 	}
 
 	/**
-	 * One pass over the requested runs. Requests are found across workspaces on
-	 * the routing lease and claimed under the workspace the routing row named,
-	 * so a run is performed once however many platform processes poll.
+	 * Answers one claimed run. It records a failure as the run's own outcome
+	 * rather than throwing, because the operator reads the ledger, not this
+	 * process's log. The one thing it does throw is a lost claim: that run
+	 * belongs to the process holding it now, and this one settles nothing.
 	 */
-	async tick(limit = EXPORT_ROUTING_PAGE): Promise<ExportPassReport> {
-		const pending = await this.#repository.listPendingExportRuns(limit);
-		let completed = 0;
-		let failed = 0;
-		for (const routing of pending) {
-			const now = this.#now();
-			const claimed = await this.#repository.claimExportRun({
-				tenantId: routing.tenantId,
-				id: routing.id,
-				claimedAt: now,
-				staleBefore: now - this.#claimTimeoutMs,
-			});
-			/* Another process holds it, or it was answered between the routing
-			   read and the claim. Either way it is not this pass's work. */
-			if (!claimed) continue;
-			const result = await this.perform(claimed);
-			if (result.run.status === 'completed') completed += 1;
-			else failed += 1;
-		}
-		return { examined: pending.length, completed, failed };
-	}
-
-	/**
-	 * Answers one claimed run. It never throws: a failure is the run's recorded
-	 * outcome, because the operator reads the ledger, not this process's log.
-	 */
-	async perform(run: AuditExportRun): Promise<ExportResult> {
+	async perform(
+		run: AuditExportRun,
+		signal?: AbortSignal,
+	): Promise<ExportResult> {
 		try {
 			await this.#event(run, AUDIT_EVENT_ACTIONS.exportStarted, {
 				formatVersion: run.formatVersion,
@@ -276,15 +246,34 @@ export class AuditExportService {
 				: this.#directory(run.outputDirectory ?? '');
 			const plans = await this.#plan(run.tenantId);
 			return directory === null
-				? await this.#count(run, plans, backup.evidence)
-				: await this.#archive(run, directory, plans, backup.evidence);
+				? await this.#count(run, plans, backup.evidence, signal)
+				: await this.#archive(run, directory, plans, backup.evidence, signal);
 		} catch (error) {
+			/* The lease lapsed and another loop reclaimed the run while this one
+			   was working. Recording a failure here would settle a row that is
+			   somebody else's work now. */
+			if (signal?.aborted) throw error;
 			return this.#fail(
 				run,
 				error instanceof AuditServiceError ? error.code : 'EXPORT_FAILED',
 				error instanceof Error ? error.message : String(error),
 			);
 		}
+	}
+
+	/**
+	 * The claim fence, read once per class. The runner renews the claim on its
+	 * own timer and aborts this signal when a renewal matches nothing, so a run
+	 * longer than the lease stops here instead of writing an archive for a claim
+	 * it no longer holds.
+	 */
+	#checkpoint(signal: AbortSignal | undefined): void {
+		if (!signal?.aborted) return;
+		throw new AuditServiceError(
+			JOB_CLAIM_LOST,
+			'Another process took this export run over while it was running.',
+			409,
+		);
 	}
 
 	#directory(requested: string): string {
@@ -311,10 +300,12 @@ export class AuditExportService {
 		run: AuditExportRun,
 		plans: readonly ClassPlan[],
 		backup: BackupEvidence,
+		signal: AbortSignal | undefined,
 	): Promise<ExportResult> {
 		const classes: ExportedClass[] = [];
 		const exclusions: ExportExclusion[] = [];
 		for (const plan of plans) {
+			this.#checkpoint(signal);
 			const excluded = exclusionFor(plan);
 			if (excluded) {
 				exclusions.push(excluded);
@@ -336,6 +327,7 @@ export class AuditExportService {
 		directory: string,
 		plans: readonly ClassPlan[],
 		backup: BackupEvidence,
+		signal: AbortSignal | undefined,
 	): Promise<ExportResult> {
 		/* The mode reaches only the directories this call creates; one that
 		   already exists keeps the mode it was made with. */
@@ -360,6 +352,7 @@ export class AuditExportService {
 				new Date(run.startedAt),
 			);
 			for (const plan of plans) {
+				this.#checkpoint(signal);
 				const excluded = exclusionFor(plan);
 				if (excluded) {
 					exclusions.push(excluded);

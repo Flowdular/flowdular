@@ -51,6 +51,16 @@ async function post<T>(
 	return payload<T>(response);
 }
 
+/* exports.core owns the job, its file and the screen that hands it over, so the
+   Members screen only starts one: what comes back is the job as that screen
+   will show it, and nothing here models it. */
+export async function startListExport(
+	list: string,
+	csrfToken: string,
+): Promise<void> {
+	await post<unknown>('/api/exports/start', { list }, csrfToken);
+}
+
 export async function loadTenantUsers(): Promise<UserDirectory> {
 	const response = await fetch('/api/users', {
 		headers: { accept: 'application/json' },

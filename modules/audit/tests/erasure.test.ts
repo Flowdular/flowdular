@@ -7,7 +7,9 @@ import {
 	AUDIT_SEALED_MARKER,
 } from '../src/domain/types.ts';
 import { createDataClassRegistry } from '@flowdular/kernel';
+import type { JobEvent, JobRunner } from '@flowdular/server';
 import { createAnchorSigner } from '../src/services/anchor-key.ts';
+import { createAuditErasureRunner } from '../src/services/audit-runners.ts';
 import { createErasureRegistry } from '../src/services/erasure-port.ts';
 import {
 	AuditErasureService,
@@ -16,9 +18,11 @@ import {
 	type ErasureCertificate,
 } from '../src/services/erasure-service.ts';
 import { AuditHoldService } from '../src/services/hold-service.ts';
+import type { AuditRepository } from '../src/services/repository.ts';
 import { AuditSealService } from '../src/services/seal-service.ts';
 import {
 	openAuditTestDatabase,
+	withRefusedWrite,
 	type AuditTestDatabase,
 } from './support/database.ts';
 import { FakeOwnerModule, type FakeRow } from './support/fake-modules.ts';
@@ -76,6 +80,10 @@ function fixture(
 	options: {
 		readonly count?: boolean;
 		readonly route?: 'declaration' | 'capability';
+		readonly repository?: AuditRepository;
+		readonly claimTimeoutMs?: number;
+		readonly heartbeatEveryMs?: number;
+		readonly onEvent?: (event: JobEvent) => void;
 	} = {},
 ) {
 	const owner = new FakeOwnerModule('agents.core', 'runs', [
@@ -104,13 +112,14 @@ function fixture(
 	const registry = createErasureRegistry();
 	if (capability) registry.register(owner.erasureEntry(options));
 	registry.seal();
-	const holds = new AuditHoldService(shared.repository, () => NOW);
+	const repository = options.repository ?? shared.repository;
+	const holds = new AuditHoldService(repository, () => NOW);
 	/* Advanced between two runs of one test: a certificate is named after the
 	   moment it was written, so two runs at the same instant collide on the
 	   file the first one created. */
 	const clock = { now: NOW };
 	const erasures = new AuditErasureService({
-		repository: shared.repository,
+		repository,
 		holds,
 		dataClasses,
 		adapter: registry,
@@ -118,7 +127,28 @@ function fixture(
 		workspaceRoot: operator.workspaceRoot,
 		now: () => clock.now,
 	});
-	return { owner, silent, dataClasses, registry, holds, erasures, clock };
+	const runner: JobRunner = createAuditErasureRunner({
+		erasures: async () => erasures,
+		repository: async () => repository,
+		now: () => clock.now,
+		...(options.claimTimeoutMs === undefined
+			? {}
+			: { claimTimeoutMs: options.claimTimeoutMs }),
+		...(options.heartbeatEveryMs === undefined
+			? {}
+			: { heartbeatEveryMs: options.heartbeatEveryMs }),
+		...(options.onEvent ? { onEvent: options.onEvent } : {}),
+	});
+	return {
+		owner,
+		silent,
+		dataClasses,
+		registry,
+		holds,
+		erasures,
+		runner,
+		clock,
+	};
 }
 
 /** The outcome of the class nobody can erase, which every run has to name. */
@@ -263,7 +293,7 @@ describe('AUDIT-ERASE-APPLY', () => {
 				},
 				NOT_ERASABLE,
 			],
-			totals: { classes: 2, rows: 3, notErasable: 1 },
+			totals: { classes: 2, rows: 3, redacted: 0, notErasable: 1 },
 			complete: true,
 			operator: 'cli:ada',
 		});
@@ -289,6 +319,56 @@ describe('AUDIT-ERASE-APPLY', () => {
 				AUDIT_EVENT_ACTIONS.erasureStarted,
 			].sort(),
 		);
+	});
+
+	/* A class that cannot take its rows out strips the subject out of them and
+	   answers redactions instead. The run has to read those as progress: a loop
+	   that watches removals alone asks such a class once, stops on the zero and
+	   leaves the subject in every row the first batch did not reach. */
+	it('keeps asking a class that only redacts and counts what it stripped', async () => {
+		const { owner, erasures } = fixture();
+		owner.redactsInstead = true;
+		owner.redactStep = 2;
+
+		const result = await erasures.run(request());
+
+		expect(owner.eraseCalls).toHaveLength(2);
+		expect(owner.subjectRows(ALPHA, SUBJECT)).toEqual([]);
+		/* Nothing was removed: the rows are still there, without the subject. */
+		expect(owner.rows(ALPHA)).toHaveLength(5);
+		expect(result.classes[0]).toEqual({
+			moduleId: 'agents.core',
+			classId: owner.classId,
+			outcome: 'erased',
+			rows: 0,
+			redacted: 3,
+		});
+		expect(result.complete).toBe(true);
+		expect(result.certificate?.totals).toEqual({
+			classes: 2,
+			rows: 0,
+			redacted: 3,
+			notErasable: 1,
+		});
+	});
+
+	/* A count the run cannot read is no progress. Without the guard every
+	   comparison against NaN is false and the loop runs through all its batches
+	   before it calls the class truncated. */
+	it('ends a class whose count is unreadable as truncated after one batch', async () => {
+		const { owner, erasures } = fixture();
+		owner.eraseAnswersGarbage = true;
+
+		const result = await erasures.run(request());
+
+		expect(owner.eraseCalls).toHaveLength(1);
+		expect(result.classes[0]).toMatchObject({
+			classId: owner.classId,
+			outcome: 'erased',
+			rows: 0,
+			truncated: true,
+		});
+		expect(result.complete).toBe(false);
 	});
 
 	it('records a failing class on the certificate and keeps the others', async () => {
@@ -609,7 +689,7 @@ describe('erasure requests', () => {
 	   answer. One nobody answers must not sit in the ledger for ever: the
 	   routing read pages through it on every interval. */
 	it('expires a request no platform answered within a day', async () => {
-		const { owner, erasures } = fixture();
+		const { owner, runner } = fixture();
 		await shared.repository.startErasureRun({
 			tenantId: ALPHA,
 			subject: SUBJECT,
@@ -623,11 +703,11 @@ describe('erasure requests', () => {
 			startedAt: NOW - ERASURE_REQUEST_TTL_MS - 1,
 		});
 
-		const pass = await erasures.tick();
-
-		expect({ expired: pass.expired, completed: pass.completed }).toEqual({
-			expired: 1,
-			completed: 0,
+		expect(await runner.tick()).toEqual({
+			claimed: 1,
+			performed: 1,
+			failed: 0,
+			claimLost: 0,
 		});
 		const [run] = await shared.repository.listErasureRuns(ALPHA, 10);
 		expect([run?.status, run?.reason]).toEqual([
@@ -638,8 +718,8 @@ describe('erasure requests', () => {
 	});
 
 	it('performs a request that is still inside the window', async () => {
-		const { owner, erasures } = fixture();
-		await shared.repository.startErasureRun({
+		const { owner, runner } = fixture();
+		const requested = await shared.repository.startErasureRun({
 			tenantId: ALPHA,
 			subject: SUBJECT,
 			subjectMarker: erasureSubjectMarker(ALPHA, SUBJECT),
@@ -652,12 +732,101 @@ describe('erasure requests', () => {
 			startedAt: NOW - ERASURE_REQUEST_TTL_MS + 1,
 		});
 
-		const pass = await erasures.tick();
-
-		expect({ expired: pass.expired, completed: pass.completed }).toEqual({
-			expired: 0,
-			completed: 1,
+		expect(await runner.tick()).toEqual({
+			claimed: 1,
+			performed: 1,
+			failed: 0,
+			claimLost: 0,
 		});
+		expect(
+			(await shared.repository.getErasureRun(ALPHA, requested.id))?.status,
+		).toBe('completed');
 		expect(owner.subjectRows(ALPHA, SUBJECT)).toEqual([]);
+	});
+});
+
+describe('the erasure pass on the platform runner', () => {
+	async function requested(tenantId: string, apply: boolean) {
+		return shared.repository.startErasureRun({
+			tenantId,
+			subject: SUBJECT,
+			subjectMarker: erasureSubjectMarker(tenantId, SUBJECT),
+			requestedBy: 'cli:ada',
+			outputDirectory: operator.allowed,
+			dryRun: !apply,
+			destroyKey: false,
+			workspaceSlug: tenantId,
+			workspaceName: tenantId,
+			startedAt: NOW,
+		});
+	}
+
+	it('stops the run and settles nothing when the claim changes hands', async () => {
+		let taken = (): void => undefined;
+		const lost = new Promise<void>((resolve) => {
+			taken = resolve;
+		});
+		const { owner, runner } = fixture({
+			claimTimeoutMs: 60_000,
+			/* Short enough that a renewal lands inside the owner call below; the
+			   case waits for the renewal itself rather than for wall time. */
+			heartbeatEveryMs: 5,
+			onEvent: (event) => {
+				if (event.type === 'claim-lost') taken();
+			},
+		});
+		const run = await requested(ALPHA, true);
+		owner.beforeErase = async () => {
+			/* Another platform process took the run over while this one was
+			   erasing, so the claim this pass renews under is gone. */
+			await shared.repository.claimErasureRun({
+				tenantId: ALPHA,
+				id: run.id,
+				claimedAt: NOW + 1,
+				staleBefore: NOW,
+			});
+			await lost;
+		};
+
+		expect(await runner.tick()).toEqual({
+			claimed: 1,
+			performed: 0,
+			failed: 0,
+			claimLost: 1,
+		});
+		/* The run is the other process's work now: this pass recorded no outcome
+		   and wrote no certificate saying the subject was erased. */
+		expect((await shared.repository.getErasureRun(ALPHA, run.id))?.status).toBe(
+			'requested',
+		);
+		expect(await certificates()).toEqual([]);
+	});
+
+	it('answers the rest of the page when one run raises', async () => {
+		const { owner, runner } = fixture({
+			repository: withRefusedWrite(
+				shared.repository,
+				'finishErasureRun',
+				ALPHA,
+			),
+		});
+		const first = await requested(ALPHA, true);
+		const second = await requested(BETA, true);
+
+		expect(await runner.tick()).toEqual({
+			claimed: 2,
+			performed: 1,
+			failed: 1,
+			claimLost: 0,
+		});
+		expect(
+			(await shared.repository.getErasureRun(BETA, second.id))?.status,
+		).toBe('completed');
+		/* The pass that raised settled nothing, so the request is still there for
+		   the process that takes the claim over once the lease lapses. */
+		expect(
+			(await shared.repository.getErasureRun(ALPHA, first.id))?.status,
+		).toBe('requested');
+		expect(owner.subjectRows(BETA, SUBJECT)).toEqual([]);
 	});
 });

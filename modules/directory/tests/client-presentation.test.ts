@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
 	registerModuleTranslations,
 	setActiveLocale,
+	t,
 } from '@flowdular/client/i18n';
 import translationsEn from '../translations/en.json';
 import translationsPl from '../translations/pl.json';
@@ -10,6 +11,7 @@ import {
 	expiryToTimestamp,
 	outcomeTone,
 	reasonLabel,
+	rotateAction,
 	tableEmpty,
 	timestampLabel,
 	tokenDisplayStatus,
@@ -85,6 +87,24 @@ describe('directory token status', () => {
 		expect(tokenStatusLabel('expired')).not.toBe(
 			'directory.tokens.status.expired',
 		);
+	});
+
+	/* A reader who cannot see the greyed button hears the action's name and its
+	   description. An action whose name changes under it is a different action,
+	   so the refusal belongs in the reason and never in the label. */
+	it('names the rotate action the same way whatever the token is', () => {
+		const live = rotateAction(token, token.expiresAt - 1);
+		const expired = rotateAction(token, token.expiresAt);
+
+		expect(live).toEqual({
+			label: t('directory.tokens.action.rotate'),
+			disabled: false,
+			reason: '',
+		});
+		expect(expired.label).toBe(live.label);
+		expect(expired.disabled).toBe(true);
+		expect(expired.reason).not.toBe('');
+		expect(expired.reason).not.toContain(live.label);
 	});
 
 	it('round trips the expiry field value through the timestamp it submits', () => {

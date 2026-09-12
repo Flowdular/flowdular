@@ -30,6 +30,23 @@ describe('users translations', () => {
 		setActiveLocale('en');
 	});
 
+	/* USERS-EXPORT: the screen that hands the file over belongs to exports.core,
+	   so the Members screen names it the way the shell does in both locales. */
+	it('names the export action and the screen it points at, in both locales', () => {
+		registerModuleTranslations([
+			{
+				moduleId: 'users.core',
+				translations: { en: translationsEn, pl: translationsPl },
+			},
+		]);
+		expect(t('users.export.action')).toBe('Export CSV');
+		expect(t('users.export.link')).toContain('Exports');
+		setActiveLocale('pl');
+		expect(t('users.export.action')).toBe('Eksportuj CSV');
+		expect(t('users.export.link')).toContain('Eksporty');
+		setActiveLocale('en');
+	});
+
 	/* USERS-EDIT: the account block belongs to the deployment operator, so the
 	   drawer says so instead of offering a control that would be refused. */
 	it('says the account block is an operator action, in both locales', () => {

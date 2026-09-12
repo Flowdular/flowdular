@@ -61,6 +61,15 @@ export interface UsageAgainstLimit {
 	readonly limit: number | null;
 }
 
+/**
+ * What a caller that may be abandoned hands down to the statement. A read on a
+ * request path passes the signal the caller is bounded by, so the statement is
+ * cancelled with the work nobody is waiting for any more.
+ */
+export interface MeteringReadOptions {
+	readonly signal?: AbortSignal | undefined;
+}
+
 /** The database-agnostic business port. No driver type crosses it. */
 export interface MeteringRepository {
 	/**
@@ -92,6 +101,7 @@ export interface MeteringRepository {
 	listMeterUsage(
 		tenantId: string,
 		month: string,
+		options?: MeteringReadOptions,
 	): Promise<readonly MeterUsage[]>;
 	listBuckets(
 		tenantId: string,

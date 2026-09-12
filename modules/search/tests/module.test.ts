@@ -6,7 +6,7 @@ import { SEARCH_PERMISSIONS } from '../src/acl/permissions.ts';
 import { SEARCH_PROVIDERS_CAPABILITY } from '../src/domain/providers.ts';
 import * as clientNavigation from '../src/client/navigation.ts';
 import {
-	searchCommandContribution,
+	createSearchCommandContribution,
 	searchNavigation,
 	workspaceRouteHref,
 } from '../src/client/navigation.ts';
@@ -50,7 +50,9 @@ describe('search.core', () => {
 	});
 
 	it('gates the palette contribution on the search permission', () => {
-		expect(searchCommandContribution.scope).toBe(SEARCH_PERMISSIONS.read);
+		expect(createSearchCommandContribution('csrf-1').scope).toBe(
+			SEARCH_PERMISSIONS.read,
+		);
 	});
 
 	it('writes no control byte into a source file', () => {

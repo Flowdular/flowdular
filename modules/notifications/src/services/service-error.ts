@@ -31,6 +31,27 @@ export function bounded(
 	return normalized;
 }
 
+/**
+ * A field that ends up on one line of a message or a header. A stored line
+ * break would be refused there on every attempt, which is a deterministic
+ * failure of the delivery rather than of this write, so it is refused here.
+ */
+export function singleLine(
+	value: string,
+	field: string,
+	minimum: number,
+	maximum: number,
+): string {
+	const normalized = bounded(value, field, minimum, maximum);
+	if (normalized.includes('\r') || normalized.includes('\n')) {
+		throw new NotificationsServiceError(
+			'INVALID_INPUT',
+			`${field} must be a single line.`,
+		);
+	}
+	return normalized;
+}
+
 export function oneOf<T extends string>(
 	value: string,
 	field: string,

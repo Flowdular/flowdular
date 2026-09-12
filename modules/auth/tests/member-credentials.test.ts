@@ -340,17 +340,37 @@ describe('AUTH-MEMBER-SEARCH', () => {
 		return { service, owner, mail, other };
 	}
 
-	it('matches a name anywhere and an address by its start, in its own workspace', async () => {
+	it('matches a name and an address by their start, in its own workspace', async () => {
 		const { service, owner, other } = await seeded();
 
+		/* The address does not start with this, so only the display name answers. */
 		expect(
 			(
 				await service.searchTenantMembers(owner.tenantId, {
-					query: 'lovelace',
+					query: 'alan t',
 					limit: 50,
 				})
 			).map((member) => member.email),
-		).toEqual(['ada@example.com']);
+		).toEqual(['alan@example.com']);
+		/* And the reverse: the display name is Grace Hopper, so only the address
+		   answers this one. */
+		expect(
+			(
+				await service.searchTenantMembers(owner.tenantId, {
+					query: 'grace@',
+					limit: 50,
+				})
+			).map((member) => member.email),
+		).toEqual(['grace@navy.example']);
+		/* A term inside a name no longer matches. Migration 0028 serves both
+		   branches from a prefix index, and a containment is a range no btree can
+		   answer: the search used to read and sort the workspace per keystroke. */
+		expect(
+			await service.searchTenantMembers(owner.tenantId, {
+				query: 'lovelace',
+				limit: 50,
+			}),
+		).toEqual([]);
 		expect(
 			(
 				await service.searchTenantMembers(owner.tenantId, {
@@ -374,12 +394,20 @@ describe('AUTH-MEMBER-SEARCH', () => {
 	it('cuts the answer to the limit it was given', async () => {
 		const { service, owner } = await seeded();
 
+		/* Ada and Alan both start with the term, so a limit of one proves the cut
+		   rather than the predicate. */
 		expect(
 			await service.searchTenantMembers(owner.tenantId, {
 				query: 'a',
-				limit: 2,
+				limit: 50,
 			}),
 		).toHaveLength(2);
+		expect(
+			await service.searchTenantMembers(owner.tenantId, {
+				query: 'a',
+				limit: 1,
+			}),
+		).toHaveLength(1);
 		for (const limit of [0, -1, TENANT_MEMBER_SEARCH_LIMIT + 1, 1.5]) {
 			await expect(
 				service.searchTenantMembers(owner.tenantId, { query: 'a', limit }),

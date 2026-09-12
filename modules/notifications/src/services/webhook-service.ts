@@ -16,7 +16,11 @@ import {
 	secretFingerprint,
 	type SecretVault,
 } from './secret-vault.ts';
-import { bounded, NotificationsServiceError } from './service-error.ts';
+import {
+	bounded,
+	NotificationsServiceError,
+	singleLine,
+} from './service-error.ts';
 
 export const SUBSCRIPTION_NAME_MAX = 120;
 export const SUBSCRIPTION_URL_MAX = 2_048;
@@ -100,7 +104,7 @@ export class WebhookSubscriptionService {
 		const record: StoredWebhookSubscription = {
 			id,
 			tenantId: trustedTenantId,
-			name: bounded(input.name, 'name', 1, SUBSCRIPTION_NAME_MAX),
+			name: singleLine(input.name, 'name', 1, SUBSCRIPTION_NAME_MAX),
 			url,
 			events: events(input.events),
 			secretFingerprint: secretFingerprint(secret),
@@ -128,7 +132,7 @@ export class WebhookSubscriptionService {
 		const updated = await this.repository.updateSubscription({
 			tenantId: existing.tenantId,
 			id: existing.id,
-			name: bounded(input.name, 'name', 1, SUBSCRIPTION_NAME_MAX),
+			name: singleLine(input.name, 'name', 1, SUBSCRIPTION_NAME_MAX),
 			url,
 			events: events(input.events),
 			description: this.#description(input.description),

@@ -64,6 +64,8 @@ export interface ErasureClassOutcome {
 	readonly classId: string;
 	readonly outcome: ErasureClassOutcomeKind;
 	readonly rows: number | null;
+	/** Rows the owner kept but stripped of the subject, when it reported any. */
+	readonly redacted?: number;
 	/** True when the class still holds rows of the subject after the batch cap. */
 	readonly truncated?: boolean;
 	/** The owner's own words when it answered with an error instead. */

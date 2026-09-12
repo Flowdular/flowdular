@@ -283,6 +283,10 @@ const SQL = {
 	 updated_at = $5
 	 WHERE tenant_id = $6 AND id = $7 AND enabled = 1
 	   AND next_run_at = $8`,
+	retimeSchedule: `UPDATE automations_schedules SET next_run_at = $1,
+	 updated_at = $2
+	 WHERE tenant_id = $3 AND id = $4 AND enabled = 1
+	   AND next_run_at = $5`,
 	disableSchedule: `UPDATE automations_schedules SET enabled = 0,
 	 disabled_reason = $1, updated_at = $2
 	 WHERE tenant_id = $3 AND id = $4 AND enabled = 1`,
@@ -470,6 +474,26 @@ export class DatabaseAutomationsRepository implements AutomationsRepository {
 				input.tenantId,
 				input.scheduleId,
 				input.firedSlot,
+			],
+		});
+		return affected === 1;
+	}
+
+	async retimeSchedule(input: {
+		readonly tenantId: string;
+		readonly scheduleId: string;
+		readonly expectedNextRunAt: number;
+		readonly nextRunAt: number;
+		readonly updatedAt: number;
+	}): Promise<boolean> {
+		const affected = await this.#write(input.tenantId, {
+			text: SQL.retimeSchedule,
+			parameters: [
+				input.nextRunAt,
+				input.updatedAt,
+				input.tenantId,
+				input.scheduleId,
+				input.expectedNextRunAt,
 			],
 		});
 		return affected === 1;

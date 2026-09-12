@@ -51,12 +51,15 @@ async function runAutomationSchedule(
 ) {
 	const id = scheduleId(input);
 	const actor = context.actor;
-	/* An agent actor would close the loop agent, automation, agent, so this
-	   action runs for the workflow run's own trusted actor only. */
-	if (!actor || actor.kind === 'agent') {
+	/* How the tool was reached decides, not who the actor is: a model turn firing
+	   an automation would close the loop agent, automation, agent, while a
+	   workflow node keeps its own run actor, which may itself be an agent. An
+	   absent kind is an agent run, because the workflow action runtime always
+	   states it. The actor stays identity for the run it dispatches. */
+	if (context.invocation !== 'workflow-action' || !actor) {
 		throw new WorkflowAutomationActionError(
 			'AUTOMATION_ACTION_ACTOR_DENIED',
-			'Only a workflow run actor can run an automation schedule.',
+			'Only a workflow action call with a run actor can run an automation schedule.',
 			403,
 		);
 	}

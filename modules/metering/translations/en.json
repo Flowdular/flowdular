@@ -63,5 +63,6 @@
 	"error.code.INVALID_INPUT": "The request was not accepted. Check the meter and the date range.",
 	"error.code.METER_NOT_DECLARED": "No composed module declares this meter.",
 	"settings.warningPercent.label": "Warning share of a limit (percent)",
-	"settings.warningPercent.description": "Share of a monthly limit at which the workspace owners are notified, before the limit itself refuses."
+	"settings.warningPercent.description": "Share of a monthly limit at which the workspace owners are notified, before the limit itself refuses.",
+	"report.usage.label": "Usage this month"
 }

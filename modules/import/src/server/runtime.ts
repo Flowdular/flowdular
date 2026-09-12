@@ -7,11 +7,10 @@ import {
 	DATABASE_CAPABILITY_IDS,
 	DATABASE_DIALECT_IDS,
 } from '@flowdular/database';
-import { serverLogger } from '@flowdular/server';
 import type { DocumentAttachments } from '@flowdular/module-documents';
 import { createImportCsvSource } from '../services/csv-source.ts';
 import { ImportService } from '../services/import-service.ts';
-import { ImportRunner } from '../services/import-runner.ts';
+import { createImportJobRunner } from '../services/import-runner.ts';
 import {
 	DatabaseImportRepository,
 	migrateImportDatabase,
@@ -21,13 +20,6 @@ import {
 	createImportPortRegistry,
 	type ImportPortRegistry,
 } from '../services/port-registry.ts';
-
-/**
- * How often the job poll runs. A constant rather than a setting: the spec
- * declares `maxRows` and `batchSize` and no cadence, and an operator who needs
- * a different one is asking for a spec change, not a knob.
- */
-export const IMPORT_POLL_INTERVAL_MS = 2_000;
 
 export interface ImportRuntimeOptions {
 	/** Platform-owned provider. Modules never receive a DSN or a pool. */
@@ -129,64 +121,30 @@ export function createImportRuntime(
 		return servicePromise;
 	};
 
-	const pass = async (): Promise<void> => {
-		const runner = new ImportRunner({
-			repository: await repository(),
-			service,
-		});
-		await runner.tick();
-	};
-
-	/* One background pass on its own interval. A pass never overlaps itself, and
-	   a failed pass never stops the interval: the next one finds the same work. */
-	let inFlight: Promise<void> | undefined;
-	let timer: ReturnType<typeof setInterval> | undefined;
-	const tick = (): Promise<void> => {
-		if (disposed || inFlight) return inFlight ?? Promise.resolve();
-		const pending = pass()
-			.catch((error: unknown) => {
-				serverLogger().error('import poll failed', {
-					module: 'import.core',
-					err: error,
-				});
-			})
-			.finally(() => {
-				if (inFlight === pending) inFlight = undefined;
-			});
-		inFlight = pending;
-		return pending;
-	};
-
-	const stop = () => {
-		if (timer) clearInterval(timer);
-		timer = undefined;
-	};
-
-	const quiesce = async () => {
-		stop();
-		await inFlight;
-	};
+	/* The platform runner owns the loop: the interval and its unref, the guard
+	   against overlapping passes, the bound on claims, the renewal timer, the
+	   backoff and the drain. This module keeps its table, its statements and its
+	   stale window. */
+	const jobs = createImportJobRunner({
+		repository,
+		service,
+		pollIntervalMs: options.pollIntervalMs,
+	});
 
 	return {
 		ports,
 		service,
 		repository,
-		tick,
-		start() {
-			if (disposed || timer) return;
-			void tick();
-			timer = setInterval(
-				() => void tick(),
-				options.pollIntervalMs ?? IMPORT_POLL_INTERVAL_MS,
-			);
-			timer.unref?.();
+		async tick() {
+			await jobs.tick();
 		},
-		stop,
-		quiesce,
+		start: () => jobs.start(),
+		stop: () => jobs.stop(),
+		quiesce: () => jobs.quiesce(),
 		async dispose() {
 			if (disposed) return;
 			disposed = true;
-			await quiesce();
+			await jobs.dispose();
 			/* An open still in flight would assign its leases after this read, so
 			   settle it first; a failed open must not surface as an unhandled
 			   rejection during teardown. */

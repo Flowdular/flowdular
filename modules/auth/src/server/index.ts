@@ -32,6 +32,9 @@ export {
 	createPlatformToolRegistry,
 } from '@flowdular/kernel';
 export { AuthServiceError } from '../services/auth-service-error.ts';
+/* The platform mail port opens its SMTP connection with this factory: auth.core
+   is the module that declares the mail client dependency. */
+export { nodemailerSmtpTransport } from '../services/mail-smtp.ts';
 export {
 	AUDIT_ACTIONS,
 	AUDIT_ACTION_LIST,

@@ -1,5 +1,9 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { userActor, type Actor } from '@flowdular/kernel';
+import {
+	userActor,
+	type Actor,
+	type ModuleSettingChange,
+} from '@flowdular/kernel';
 import { AUTH_SCOPES, MEMBER_SCOPES, OWNER_SCOPES } from '../acl/scopes.ts';
 import type {
 	ApiTokenRecord,
@@ -51,7 +55,9 @@ import {
 	type AccountCredential,
 	type AuditActorEvent,
 	type AuthRepository,
+	type ExternalIdentityPage,
 	type TenantMember,
+	type TenantMemberPage,
 	type TenantSummary,
 } from './repository.ts';
 import type { AuthMailDelivery } from './mail-delivery.ts';
@@ -290,6 +296,12 @@ export const TENANT_MEMBER_LOOKUP_LIMIT = 500;
 /** Members one `searchTenantMembers` call may answer. */
 export const TENANT_MEMBER_SEARCH_LIMIT = 500;
 
+/** Members one paged `listTenantMembers` call may answer. */
+export const TENANT_MEMBER_PAGE_LIMIT = 500;
+
+/** Bindings one `listExternalIdentities` call may answer. */
+export const EXTERNAL_IDENTITY_PAGE_LIMIT = 500;
+
 /** Characters a search term may carry; a longer one matches nothing useful. */
 export const TENANT_MEMBER_SEARCH_TERM_LENGTH = 200;
 
@@ -337,6 +349,7 @@ export const AUDIT_ACTIONS = Object.freeze({
 	roleUpdated: 'auth.role.updated',
 	roleDeleted: 'auth.role.deleted',
 	settingsUpdated: 'settings.updated',
+	settingsFlagChanged: 'settings.flag.changed',
 });
 
 export const AUDIT_ACTION_LIST = Object.freeze(Object.values(AUDIT_ACTIONS));
@@ -692,8 +705,77 @@ export class AuthService {
 		);
 	}
 
-	async listTenantMembers(tenantId: string): Promise<readonly TenantMember[]> {
-		return this.#repository.listTenantMembers(tenantId);
+	listTenantMembers(tenantId: string): Promise<readonly TenantMember[]>;
+	listTenantMembers(
+		tenantId: string,
+		page: { readonly cursor?: string | null; readonly limit: number },
+	): Promise<TenantMemberPage>;
+	/**
+	 * The members of one workspace. The unbounded call answers the whole roll
+	 * ordered by display name and stays what every caller holding a workspace of
+	 * known size already reads. The paged call walks the same members by account
+	 * id, one bounded page and the cursor of the next, for a caller that must
+	 * not read a workspace of unknown size in one statement.
+	 */
+	async listTenantMembers(
+		tenantId: string,
+		page?: { readonly cursor?: string | null; readonly limit: number },
+	): Promise<readonly TenantMember[] | TenantMemberPage> {
+		if (page === undefined) return this.#repository.listTenantMembers(tenantId);
+		const limit = this.#pageLimit(page.limit, TENANT_MEMBER_PAGE_LIMIT);
+		const members = await this.#repository.listTenantMembersPage(
+			this.#identifier(tenantId, 'tenantId'),
+			page.cursor ?? '',
+			limit + 1,
+		);
+		const answered = members.slice(0, limit);
+		const last = answered[answered.length - 1];
+		return {
+			members: answered,
+			nextCursor: members.length > limit && last ? last.accountId : null,
+		};
+	}
+
+	/**
+	 * The identity bindings this workspace's own providers assert about its
+	 * members, one bounded page per call. A binding names the account, the
+	 * provider key, the subject the provider keeps stable and when it was first
+	 * recorded; no token, secret, ciphertext or fingerprint is part of one, and
+	 * neither is the address the provider reported. A binding a platform
+	 * provider made carries no workspace and is not answered here. The
+	 * permission a reader needs is the calling module's to enforce; this is
+	 * scoped to the workspace it is given and nothing wider.
+	 */
+	async listExternalIdentities(
+		tenantId: string,
+		page: { readonly cursor?: string | null; readonly limit: number },
+	): Promise<ExternalIdentityPage> {
+		const limit = this.#pageLimit(page.limit, EXTERNAL_IDENTITY_PAGE_LIMIT);
+		/* A provider key carries no colon, so the first one separates the pair; a
+		   cursor that is not one starts the walk over rather than half-reading a
+		   position, the way a malformed audit cursor narrows nothing. */
+		const separator = page.cursor?.indexOf(':') ?? -1;
+		const after =
+			page.cursor && separator > 0
+				? {
+						provider: page.cursor.slice(0, separator),
+						subject: page.cursor.slice(separator + 1),
+					}
+				: { provider: '', subject: '' };
+		const identities = await this.#repository.listExternalIdentitiesPage(
+			this.#identifier(tenantId, 'tenantId'),
+			after,
+			limit + 1,
+		);
+		const answered = identities.slice(0, limit);
+		const last = answered[answered.length - 1];
+		return {
+			identities: answered,
+			nextCursor:
+				identities.length > limit && last
+					? `${last.provider}:${last.subject}`
+					: null,
+		};
 	}
 
 	/**
@@ -726,9 +808,9 @@ export class AuthService {
 	}
 
 	/**
-	 * Members of one workspace whose display name contains the term or whose
-	 * address starts with it, cut to `limit` in the database. The caller ranks
-	 * what comes back; this only bounds what a search reads.
+	 * Members of one workspace whose display name or address starts with the
+	 * term, cut to `limit` in the database. The caller ranks what comes back;
+	 * this only bounds what a search reads.
 	 */
 	async searchTenantMembers(
 		tenantId: string,
@@ -2654,19 +2736,31 @@ export class AuthService {
 		return this.#repository.deleteExpiredSessions(this.#now());
 	}
 
+	/**
+	 * The one audit row a committed settings change owes. A flag is recorded
+	 * under its own action with the values around the change, because an
+	 * operator reviewing a flag needs to see what it was turned to; every other
+	 * setting keeps the plain record, so no declared value ever reaches the
+	 * trail by the side door.
+	 */
 	async recordSettingsUpdate(
 		actor: AuthActor,
-		moduleId: string,
-		key: string,
-		cleared: boolean,
+		change: ModuleSettingChange,
 	): Promise<void> {
+		const flag = change.kind === 'flag';
 		await this.#audit(
 			actor.tenantId,
 			this.#actorOf(actor),
-			AUDIT_ACTIONS.settingsUpdated,
+			flag ? AUDIT_ACTIONS.settingsFlagChanged : AUDIT_ACTIONS.settingsUpdated,
 			'setting',
-			`${moduleId}.${key}`,
-			{ cleared },
+			`${change.moduleId}.${change.key}`,
+			flag
+				? {
+						cleared: change.cleared,
+						previous: change.previous,
+						next: change.next,
+					}
+				: { cleared: change.cleared },
 		);
 	}
 
@@ -2675,9 +2769,22 @@ export class AuthService {
 			Math.max(1, Math.trunc(query.limit)),
 			MAX_AUDIT_PAGE,
 		);
+		const from = this.#auditBound(query.from, 'from');
+		const to = this.#auditBound(query.to, 'to');
+		/* A window that ends before it starts would answer an empty page, which a
+		   caller cannot tell from a workspace with no events in the window. */
+		if (from !== null && to !== null && from > to) {
+			throw new AuthServiceError(
+				'INVALID_INPUT',
+				'from must not be later than to.',
+				400,
+			);
+		}
 		const events = await this.#repository.queryAudit({
 			...query,
 			tenantId: this.#identifier(query.tenantId, 'tenantId'),
+			from,
+			to,
 			limit: limit + 1,
 		});
 		const page = events.slice(0, limit);
@@ -2889,6 +2996,34 @@ export class AuthService {
 			scopes,
 			tenants: await this.#repository.listTenantAccess(membership.accountId),
 		};
+	}
+
+	/* One end of the audit window. An absent end is open; a bound that is not an
+	   epoch millisecond is a caller defect rather than an open end, because
+	   silently dropping it would answer a wider trail than was asked for. */
+	#auditBound(value: number | null | undefined, field: string): number | null {
+		if (value === null || value === undefined) return null;
+		if (!Number.isSafeInteger(value)) {
+			throw new AuthServiceError(
+				'INVALID_INPUT',
+				`${field} must be an epoch millisecond timestamp.`,
+				400,
+			);
+		}
+		return value;
+	}
+
+	/* The bound a paged read surface carries into SQL, so no caller of one can
+	   ask a workspace of unknown size for all of it. */
+	#pageLimit(limit: number, max: number): number {
+		if (!Number.isSafeInteger(limit) || limit < 1 || limit > max) {
+			throw new AuthServiceError(
+				'INVALID_INPUT',
+				`Limit must be 1 to ${max}.`,
+				400,
+			);
+		}
+		return limit;
 	}
 
 	#identifier(value: string, field: string): string {

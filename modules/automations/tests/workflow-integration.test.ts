@@ -299,6 +299,11 @@ describe('workflow automation target adapter', () => {
 
 describe('AUTO-WORKFLOW-ACTION workflow runs an automation schedule', () => {
 	const AUTOMATIONS_MANAGE = 'automations.schedules.manage';
+	const reviewerAgent = agentActor({
+		agentId: 'agent-1',
+		agentName: 'Reviewer',
+		runId: 'agent-run-1',
+	});
 
 	function executionCapability() {
 		const runScheduleNow = vi.fn<
@@ -318,6 +323,8 @@ describe('AUTO-WORKFLOW-ACTION workflow runs an automation schedule', () => {
 			runId: 'workflow-run-1',
 			tenantId: 'tenant-a',
 			requestedBy: 'operator-2',
+			/* What the workflow action runtime states when a node runs the tool. */
+			invocation: 'workflow-action',
 			idempotencyKey: 'tenant-a:workflow-run-1:node-3',
 			actor: requestingUser,
 			permissions: new Set([AUTOMATIONS_MANAGE]),
@@ -357,24 +364,37 @@ describe('AUTO-WORKFLOW-ACTION workflow runs an automation schedule', () => {
 		expect(capability.runScheduleNow).not.toHaveBeenCalled();
 	});
 
-	it('refuses an agent actor, so an agent cannot loop back through an automation', async () => {
+	it('refuses an agent run, whatever its actor, so an agent cannot loop back through an automation', async () => {
 		const capability = executionCapability();
-		await expect(
-			tool(capability).execute(
-				{ scheduleId: 'schedule-1' },
-				toolContext({
-					actor: agentActor({
-						agentId: 'agent-1',
-						agentName: 'Reviewer',
-						runId: 'agent-run-1',
-					}),
-				}),
-			),
-		).rejects.toMatchObject({
-			code: 'AUTOMATION_ACTION_ACTOR_DENIED',
-			status: 403,
-		});
+		const { invocation: _stated, ...unstated } = toolContext();
+		const { actor: _identity, ...withoutActor } = toolContext();
+		for (const context of [
+			unstated,
+			toolContext({ invocation: 'agent-run' }),
+			toolContext({ invocation: 'agent-run', actor: reviewerAgent }),
+			withoutActor,
+		]) {
+			await expect(
+				tool(capability).execute({ scheduleId: 'schedule-1' }, context),
+			).rejects.toMatchObject({
+				code: 'AUTOMATION_ACTION_ACTOR_DENIED',
+				status: 403,
+			});
+		}
 		expect(capability.runScheduleNow).not.toHaveBeenCalled();
+	});
+
+	/* The run actor of a workflow started by an agent is that agent, so reading
+	   the actor kind refused a legitimate workflow node. */
+	it('runs a workflow-action call whose actor is an agent, keeping the actor as identity', async () => {
+		const capability = executionCapability();
+		await tool(capability).execute(
+			{ scheduleId: 'schedule-1' },
+			toolContext({ actor: reviewerAgent }),
+		);
+		expect(capability.runScheduleNow).toHaveBeenCalledTimes(1);
+		const [, executionContext] = capability.runScheduleNow.mock.calls[0]!;
+		expect(executionContext.actor).toBe(reviewerAgent);
 	});
 
 	it('refuses without a durable idempotency key', async () => {

@@ -41,6 +41,7 @@ import {
 	DuplicateActionIdempotencyKeyError,
 	DuplicateRunIdempotencyKeyError,
 	ModuleAgentBindingConflictError,
+	type AgentReadOptions,
 	type AgentRepository,
 	type AgentRunExportCursor,
 	type ExportedAgentRun,
@@ -665,6 +666,7 @@ export interface AgentsPersistenceStatements {
 	readonly listRecoverableActions: string;
 	readonly claimAction: string;
 	readonly renewActionLease: string;
+	readonly releaseAction: string;
 	readonly completeAction: string;
 	readonly failAction: string;
 	readonly cancelAction: string;
@@ -955,6 +957,13 @@ export const AGENTS_SQL: AgentsPersistenceStatements = Object.freeze({
 	renewActionLease: `UPDATE agent_action_invocations SET lease_expires_at = $1
 					 WHERE tenant_id = $2 AND id = $3 AND status = 'running'
 					 AND lease_owner = $4`,
+	/* The claim handed back by the worker that took it, so the queue offers the
+	   invocation again at once instead of waiting out a lease nothing renews.
+	   `started_at` keeps the first claim instant, as a reclaim does. */
+	releaseAction: `UPDATE agent_action_invocations SET status = 'queued',
+					 lease_owner = NULL, lease_expires_at = NULL
+					 WHERE tenant_id = $1 AND id = $2 AND status = 'running'
+					 AND lease_owner = $3`,
 	completeAction: `UPDATE agent_action_invocations SET status = 'succeeded',
 					 output_json = $1, completed_at = $2, lease_owner = NULL,
 					 lease_expires_at = NULL WHERE tenant_id = $3 AND id = $4
@@ -1059,9 +1068,16 @@ export class DatabaseAgentRepository implements AgentRepository {
 		tenantId: string,
 		access: 'read' | 'write',
 		body: (transaction: DatabaseTransaction) => Promise<T>,
+		options?: AgentReadOptions,
 	): Promise<T> {
 		await this.readyPromise;
-		return this.handles.runtime.transaction(body, { access, tenantId });
+		return this.handles.runtime.transaction(body, {
+			access,
+			tenantId,
+			/* The caller's budget reaches the statement, so a read nobody waits
+			   for stops holding a connection open. */
+			...(options?.signal === undefined ? {} : { signal: options.signal }),
+		});
 	}
 
 	/* The recovery polls have to find work before they know whose it is. They
@@ -2534,6 +2550,22 @@ export class DatabaseAgentRepository implements AgentRepository {
 		});
 	}
 
+	async releaseAction(
+		tenantId: string,
+		invocationId: string,
+		workerId: string,
+	): Promise<boolean> {
+		return this.#tx(tenantId, 'write', async (transaction) => {
+			return (
+				(await this.#exec(transaction, AGENTS_SQL.releaseAction, [
+					tenantId,
+					invocationId,
+					workerId,
+				])) === 1
+			);
+		});
+	}
+
 	async completeAction(
 		tenantId: string,
 		invocationId: string,
@@ -2793,16 +2825,22 @@ export class DatabaseAgentRepository implements AgentRepository {
 		tenantId: string,
 		fromDay: string,
 		toDay: string,
+		options?: AgentReadOptions,
 	): Promise<readonly AgentUsageDay[]> {
-		return this.#tx(tenantId, 'read', async (transaction) => {
-			return (
-				(await this.#query(transaction, AGENTS_SQL.usageByDay, [
-					tenantId,
-					fromDay,
-					toDay,
-				])) as unknown as UsageRow[]
-			).map((row) => ({ day: row.day, ...fromUsageRow(row) }));
-		});
+		return this.#tx(
+			tenantId,
+			'read',
+			async (transaction) => {
+				return (
+					(await this.#query(transaction, AGENTS_SQL.usageByDay, [
+						tenantId,
+						fromDay,
+						toDay,
+					])) as unknown as UsageRow[]
+				).map((row) => ({ day: row.day, ...fromUsageRow(row) }));
+			},
+			options,
+		);
 	}
 
 	async usageByAgent(

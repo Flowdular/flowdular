@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "audit.core",
 	"package": "@flowdular/module-audit",
-	"version": "0.2.2",
+	"version": "0.2.7",
 	"platformApi": "^0.1.0",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations", "cli"],
@@ -14,11 +14,11 @@
 	"dependencies": [
 		{
 			"id": "system.core",
-			"range": "^0.5.1"
+			"range": "^0.7.0"
 		},
 		{
 			"id": "auth.core",
-			"range": "^0.12.0"
+			"range": "^0.13.0"
 		}
 	],
 	"provides": ["audit.erasure.v1"],

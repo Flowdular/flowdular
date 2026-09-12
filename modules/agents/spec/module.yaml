@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: agents.core
-specVersion: 0.12.1
+specVersion: 0.12.6
 status: approved
 name: Agentic Core
 description: Provides tenant-created and module-owned business agent definitions, tenant-scoped provider connections, reusable procedures, durable streamed execution, run history, and the public run queue used by optional automation modules.
@@ -14,17 +14,26 @@ capabilities:
   - cli
 dependencies:
   - id: system.core
-    range: ^0.5.1
+    range: ^0.7.0
   - id: auth.core
-    range: ^0.12.0
+    range: ^0.13.0
   - id: metering.core
     range: ^0.1.0
+  - id: reports.core
+    range: ^0.1.0
+requires:
+  - id: notifications.publish.v1
+    optional: true
+  - id: metering.meters.v1
+  - id: reports.v1
+    optional: true
 tenancy: required
 locales:
   - en
   - pl
 invariants:
   - Every agent managed by agents.core is a business agent with explicit ownership. A tenant-created definition is owned by one tenant; a module-owned definition is owned by one enabled module and receives a separate tenant-scoped execution binding. Sandbox coding specialists are outside agents.core. Every binding, run, and repository query receives the trusted tenant identifier.
+  - agents.core registers the report provider agents.runs through the public capability reports.v1 at composition when reports.core is present, and continues without it when it is not. The provider answers the runs and token totals of the requested range as tiles and runs and tokens per day as series, read from the existing agent run cost rollup inside this module's own tenant transaction; it prices nothing, writes nothing and opens no other module's tables. It names itself, each tile and each line with a key of this module's own translation bundle beside the English literal, and hands the reader's time budget to that transaction so the statement is cancelled when the budget expires.
   - An enabled module may register immutable business agent behavior during platform composition with defineAgent. Its stable identity is derived from module id and agent key, its positive definition revision is supplied by the module, and malformed or duplicate identities fail platform boot before workers start.
   - Module-owned instructions, names, maximum tool allowlists, and execution limits are read-only module source. A tenant administrator may bind an available provider and model, pause the binding, and reduce its enabled tool set, but cannot broaden the module allowlist or edit the module behavior in the Agents UI.
   - An unconfigured module-owned agent is visible as unconfigured but cannot be activated, published in a workflow, or executed until its tenant binding names a usable provider and model.
@@ -310,3 +319,7 @@ acceptanceScenarios:
     given: A run a worker of this process is executing, requested by the account an erasure names.
     when: The agents.core.runs erase operation removes it mid-flight.
     then: The worker's lease renewal cannot prove ownership, the execution is aborted as a lost lease, no terminal status and no terminal audit event are written for the run that is gone, and the worker returns to idle.
+  - id: AGENTS-REPORT-RUNS
+    given: A workspace with runs settled on several days inside the requested range and runs settled outside it.
+    when: The reports.core provider agents.runs is read.
+    then: It answers the runs and token totals of the range as tiles and runs and tokens per day as two series read from the existing rollup, counting only the days inside the range and writing nothing. It names itself, its tiles and its lines with keys of this module's bundle, and it passes the reader's time budget into its own tenant transaction so an expired budget cancels the statement instead of leaving it running.

@@ -369,6 +369,7 @@ export function DataClassesView(props: DataClassesViewProps) @{
 							help={editing !== null && !editing.sweepable
 								? t('audit.dataClasses.form.notSweepable')
 								: t('audit.dataClasses.form.modeHelp')}
+							autoFocus
 							onChange={(value) => setFormMode(value as RetentionMode)}
 						/>
 						@if (formMode === 'days') {

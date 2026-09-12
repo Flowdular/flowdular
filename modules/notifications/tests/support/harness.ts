@@ -1,4 +1,9 @@
 import {
+	createMailPort,
+	mailConfigFromEnvironment,
+	type MailPort,
+} from '@flowdular/server';
+import {
 	DeliveryService,
 	type DeliveryServiceOptions,
 	type TenantDeliverySettings,
@@ -11,6 +16,7 @@ import {
 	type HostAddressResolver,
 	type WebhookEgressPolicy,
 } from '../../src/services/egress.ts';
+import { createNotificationDeliveryRunner } from '../../src/services/delivery-runner.ts';
 import { NotificationsService } from '../../src/services/notifications-service.ts';
 import { NotificationPublishService } from '../../src/services/publish-service.ts';
 import type {
@@ -121,19 +127,43 @@ export interface HarnessOptions {
 	readonly members?: readonly TenantMemberScopes[];
 	readonly transport?: DeliveryServiceOptions['transport'];
 	readonly connect?: WebhookConnectSeam;
+	/** Defaults to the development port, whose outbox the harness exposes. */
+	readonly mail?: MailPort;
+	readonly locale?: (tenantId: string) => string;
+}
+
+/** The in-memory port every e-mail channel test reads its outbox from. */
+export function developmentMailPort(): MailPort {
+	return createMailPort(
+		mailConfigFromEnvironment({ FD_MAIL_TRANSPORT: 'development' }),
+	);
 }
 
 export function createHarness(options: HarnessOptions) {
 	const vault = new AesGcmSecretVault(Buffer.alloc(32, 0x4e));
+	const mail = options.mail ?? developmentMailPort();
 	const now = options.now ?? Date.now;
 	const policy = (): WebhookEgressPolicy =>
 		createWebhookEgressPolicy({
 			allowlist: webhookHostAllowlist(options.allowlist ?? ''),
 			resolve: options.resolve,
 		});
+	const deliveries = new DeliveryService({
+		repository: options.repository,
+		vault,
+		policy,
+		settings: () => options.settings ?? TEST_SETTINGS,
+		members: async () => options.members ?? [],
+		mail,
+		now,
+		...(options.locale ? { locale: options.locale } : {}),
+		...(options.transport ? { transport: options.transport } : {}),
+		...(options.connect ? { connect: options.connect } : {}),
+	});
 	return {
 		vault,
 		policy,
+		mail,
 		inbox: new NotificationsService(options.repository),
 		publisher: new NotificationPublishService(options.repository, now),
 		webhooks: new WebhookSubscriptionService(
@@ -142,15 +172,14 @@ export function createHarness(options: HarnessOptions) {
 			policy,
 			now,
 		),
-		deliveries: new DeliveryService({
-			repository: options.repository,
-			vault,
-			policy,
-			settings: () => options.settings ?? TEST_SETTINGS,
-			members: async () => options.members ?? [],
+		deliveries,
+		/* The delivery pass as the platform runs it. Every case drives `tick()`
+		   itself, so the interval is never scheduled. */
+		runner: createNotificationDeliveryRunner({
+			repository: async () => options.repository,
+			deliveries: async () => deliveries,
+			intervalMs: 1_000,
 			now,
-			...(options.transport ? { transport: options.transport } : {}),
-			...(options.connect ? { connect: options.connect } : {}),
 		}),
 	};
 }

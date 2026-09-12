@@ -20,8 +20,10 @@ import {
 } from '@flowdular/kernel';
 import {
 	createSecurityHeadersMiddleware,
+	mailConfigFromEnvironment,
 	DEVELOPMENT_CONTENT_SECURITY_POLICY,
 	PRODUCTION_CONTENT_SECURITY_POLICY,
+	type MailPort,
 } from '@flowdular/server';
 import { createAuthenticationMiddleware } from '../middleware/authentication.ts';
 import { AuthService, type AuthPolicy } from '../services/auth-service.ts';
@@ -34,8 +36,10 @@ import {
 	DevelopmentMailDelivery,
 	type AuthMailDelivery,
 } from '../services/mail-delivery.ts';
+import { createMailPortDelivery } from '../services/mail-port.ts';
 import { SmtpMailDelivery } from '../services/mail-smtp.ts';
 import type { AuthRepository } from '../services/repository.ts';
+import { createSessionSweepRunner } from '../services/session-sweep-runner.ts';
 import {
 	createAuthSettingsStore,
 	type AuthSettingsStore,
@@ -73,6 +77,12 @@ export interface AuthRuntimeOptions extends AuthRuntimeEnvironmentOptions {
 	 * workspace sees auth.core holding no class.
 	 */
 	readonly dataClasses?: PlatformDataClassRegistry;
+	/**
+	 * The platform mail port. When it is composed and configured it is the
+	 * transport, ahead of anything this module derived from the environment:
+	 * both read the same variables, and one deployment has one outbox.
+	 */
+	readonly mail?: MailPort;
 }
 
 /** Everything the process environment can decide on its own. */
@@ -309,76 +319,23 @@ function publicOriginEnvironment(
 	return url.origin;
 }
 
-const MAIL_TRANSPORTS = ['none', 'development', 'smtp'] as const;
-
-type MailTransportId = (typeof MAIL_TRANSPORTS)[number];
-
-function mailTransportId(value: string): MailTransportId {
-	const found = MAIL_TRANSPORTS.find((candidate) => candidate === value);
-	if (!found) {
-		throw new Error(
-			`FD_AUTH_MAIL_TRANSPORT must be one of ${MAIL_TRANSPORTS.join(', ')}.`,
-		);
-	}
-	return found;
-}
-
-/* The transport is chosen here so a deployment configures mail with environment
-   variables instead of forking the platform composition. */
+/* The transport is chosen here so a deployment that composes auth.core without
+   the platform, the sandbox preview runtime above all, still configures mail
+   with environment variables. The variables, their retired auth.core names and
+   every refusal come from the platform reader, so both paths answer the same
+   environment the same way. */
 function mailDeliveryFromEnvironment(
 	environment: NodeJS.ProcessEnv,
-	production: boolean,
 ): AuthMailDelivery | undefined {
-	const developmentMail = booleanEnvironment(
-		environment.FD_AUTH_DEVELOPMENT_MAIL,
-		false,
-		'FD_AUTH_DEVELOPMENT_MAIL',
-	);
-	const configured = environment.FD_AUTH_MAIL_TRANSPORT?.trim();
-	const transport = configured
-		? mailTransportId(configured)
-		: developmentMail
-			? 'development'
-			: 'none';
-	if (developmentMail && transport !== 'development') {
-		throw new Error(
-			`FD_AUTH_DEVELOPMENT_MAIL cannot be combined with FD_AUTH_MAIL_TRANSPORT=${transport}.`,
-		);
-	}
-	if (transport === 'none') return undefined;
-	if (transport === 'development') {
-		if (production) {
-			throw new Error(
-				`${configured ? 'FD_AUTH_MAIL_TRANSPORT=development' : 'FD_AUTH_DEVELOPMENT_MAIL'} is only allowed outside production.`,
-			);
-		}
-		return new DevelopmentMailDelivery();
-	}
-	const url = environment.FD_AUTH_SMTP_URL?.trim();
-	if (!url) {
-		throw new Error(
-			'FD_AUTH_SMTP_URL is required when FD_AUTH_MAIL_TRANSPORT is smtp.',
-		);
-	}
-	const from = environment.FD_AUTH_MAIL_FROM?.trim();
-	if (!from) {
-		throw new Error(
-			'FD_AUTH_MAIL_FROM is required when FD_AUTH_MAIL_TRANSPORT is smtp.',
-		);
-	}
+	const config = mailConfigFromEnvironment(environment);
+	if (config.adapter === 'none') return undefined;
+	if (config.adapter === 'development') return new DevelopmentMailDelivery();
 	return new SmtpMailDelivery({
-		url,
-		from,
-		rejectUnauthorized: booleanEnvironment(
-			environment.FD_AUTH_SMTP_TLS_REJECT_UNAUTHORIZED,
-			true,
-			'FD_AUTH_SMTP_TLS_REJECT_UNAUTHORIZED',
-		),
-		requireTLS: booleanEnvironment(
-			environment.FD_AUTH_SMTP_REQUIRE_TLS,
-			true,
-			'FD_AUTH_SMTP_REQUIRE_TLS',
-		),
+		url: config.smtp.url,
+		from: config.from,
+		rejectUnauthorized: config.smtp.rejectUnauthorized,
+		requireTLS: config.smtp.requireTLS,
+		variables: { url: config.variables.url, from: config.variables.from },
 	});
 }
 
@@ -407,7 +364,7 @@ export function authRuntimeOptionsFromEnvironment(
 	workspaceRoot = process.cwd(),
 ): AuthRuntimeEnvironmentOptions {
 	const production = environment.NODE_ENV === 'production';
-	const mailDelivery = mailDeliveryFromEnvironment(environment, production);
+	const mailDelivery = mailDeliveryFromEnvironment(environment);
 	const mailTransport = mailDelivery !== undefined;
 	const emailConfirmation = booleanEnvironment(
 		environment.FD_AUTH_EMAIL_CONFIRMATION,
@@ -641,7 +598,6 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 	}
 	let opened: Promise<OpenedAuthDatabase> | undefined;
 	let servicePromise: Promise<AuthService> | undefined;
-	let sessionSweep: ReturnType<typeof setInterval> | undefined;
 	let disposed = false;
 	const open = (): Promise<OpenedAuthDatabase> => {
 		if (disposed) throw new Error('Auth runtime is disposed.');
@@ -658,6 +614,13 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 	   a binding: the same runtime composes in processes that hand it an unbound
 	   registry. */
 	options.dataClasses?.declare('auth.core', authDataClasses(repository));
+	const mailDelivery = options.mail?.configured
+		? createMailPortDelivery(options.mail)
+		: options.mailDelivery;
+	/* A composed delivery is a transport whatever the flag says; the flag alone
+	   still answers for a caller that composes none. */
+	const mailTransport =
+		mailDelivery !== undefined || (options.mailTransport ?? false);
 	const mfaKeyConfigured = options.mfaEncryptionKey !== undefined;
 	/* The settings runtime auth hands to the platform is where a workspace turns
 	   requireMfa on, so it is where a keyless deployment has to be refused. */
@@ -693,10 +656,7 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 			return read<boolean>('allowSignUp');
 		},
 		get emailConfirmation() {
-			return (
-				(options.mailTransport ?? options.mailDelivery !== undefined) &&
-				read<boolean>('emailConfirmation')
-			);
+			return mailTransport && read<boolean>('emailConfirmation');
 		},
 		get signInProviders() {
 			return parseProviderList(read<string>('signInProviders'));
@@ -781,22 +741,13 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 			...(options.mfaPreviousEncryptionKeys
 				? { mfaPreviousEncryptionKeys: options.mfaPreviousEncryptionKeys }
 				: {}),
-			...(options.mailDelivery ? { mailDelivery: options.mailDelivery } : {}),
+			...(mailDelivery ? { mailDelivery } : {}),
 			...(options.publicBaseUrl
 				? { publicBaseUrl: options.publicBaseUrl }
 				: {}),
 		});
 		// Expired rows only matter for storage; the lookup already filters them.
-		sessionSweep = setInterval(() => {
-			void authService.deleteExpiredSessions().catch((error: unknown) => {
-				/* Repository errors can contain SQL parameters. Keep the recurring
-				   maintenance log useful without serializing the thrown value. */
-				console.error(
-					`[auth.core] expired session sweep failed (${error instanceof Error ? 'Error' : 'non-error'})`,
-				);
-			});
-		}, EXPIRED_SESSION_SWEEP_MS);
-		sessionSweep.unref();
+		sessionSweep.start();
 		return authService;
 	};
 	const service = (): Promise<AuthService> => {
@@ -805,6 +756,13 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 		}
 		return (servicePromise ??= create());
 	};
+	/* The platform runner owns the loop: its interval and unref, the guard
+	   against overlapping passes and the drain on dispose. It starts with the
+	   service it sweeps through, so a runtime nobody uses opens no database. */
+	const sessionSweep = createSessionSweepRunner({
+		sweep: service,
+		intervalMs: EXPIRED_SESSION_SWEEP_MS,
+	});
 	/* Settings writes are audited at the store owner, so the settings
 	   administration API in system.core needs no audit dependency. The kernel
 	   change listener is synchronous, so the audit row is written after it
@@ -829,12 +787,13 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 					role: membership?.role ?? '',
 					scopes: membership?.scopes ?? [],
 				},
-				change.moduleId,
-				change.key,
-				change.cleared,
+				change,
 			);
-		})().catch(() => {
-			console.error('[auth.core] settings audit write failed');
+		})().catch((error: unknown) => {
+			console.error(
+				`[auth.core] settings audit write failed for ${change.moduleId}.${change.key}:`,
+				error instanceof Error ? error.message : error,
+			);
 		});
 		settingsAuditWrites.add(write);
 		void write.finally(() => settingsAuditWrites.delete(write));
@@ -861,7 +820,7 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 		oidcVerifier,
 		tenantSettings,
 		trustProxy: options.trustProxy ?? false,
-		mailTransport: options.mailTransport ?? options.mailDelivery !== undefined,
+		mailTransport,
 		mfaKeyConfigured,
 		workspaceRoot: options.workspaceRoot ?? null,
 		oidcProviders: options.oidcProviders ?? [],
@@ -888,8 +847,9 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 			disposed = true;
 			detachSettingsAudit();
 			await Promise.allSettled([...settingsAuditWrites]);
-			if (sessionSweep) clearInterval(sessionSweep);
-			sessionSweep = undefined;
+			/* A sweep in flight holds the lease it deletes under, so the loop is
+			   drained before anything is released. */
+			await sessionSweep.dispose();
 			const database = opened;
 			opened = undefined;
 			servicePromise = undefined;

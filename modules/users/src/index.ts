@@ -25,6 +25,8 @@ export const moduleDefinition = {
 
 export { USER_PERMISSIONS } from './acl/permissions.ts';
 export type { CreateUserInput } from './services/users-service.ts';
+export { MEMBER_EXPORT_LIST_ID } from './domain/lists.ts';
+export { createMemberListExport } from './services/member-export.ts';
 export {
 	createMemberImportPort,
 	MEMBER_IMPORT_PORT_KEY,

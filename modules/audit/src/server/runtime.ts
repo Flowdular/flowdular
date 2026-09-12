@@ -8,11 +8,16 @@ import {
 	DATABASE_DIALECT_IDS,
 } from '@flowdular/database';
 import type { PlatformDataClassRegistry } from '@flowdular/kernel';
-import { serverLogger } from '@flowdular/server';
+import type { JobRunner } from '@flowdular/server';
 import {
 	anchorSignerFromEnvironment,
 	type AnchorSigner,
 } from '../services/anchor-key.ts';
+import {
+	createAuditErasureRunner,
+	createAuditExportRunner,
+	createAuditSweepRunner,
+} from '../services/audit-runners.ts';
 import {
 	createBackupGuard,
 	type BackupGuard,
@@ -25,14 +30,8 @@ import {
 	createErasureRegistry,
 	type MutableAuditErasureRegistry,
 } from '../services/erasure-port.ts';
-import {
-	AuditErasureService,
-	ERASURE_POLL_INTERVAL_MS,
-} from '../services/erasure-service.ts';
-import {
-	AuditExportService,
-	EXPORT_POLL_INTERVAL_MS,
-} from '../services/export-service.ts';
+import { AuditErasureService } from '../services/erasure-service.ts';
+import { AuditExportService } from '../services/export-service.ts';
 import {
 	AuditHoldService,
 	type LegalHoldCheck,
@@ -225,67 +224,41 @@ export function createAuditRuntime(options: AuditRuntimeOptions): AuditRuntime {
 			now,
 		}));
 
-	/**
-	 * One background pass on its own interval. A pass never overlaps itself,
-	 * and a failed pass never stops the interval: the next one finds the same
-	 * work.
-	 */
-	const loop = (label: string, work: () => Promise<unknown>) => {
-		let inFlight: Promise<void> | undefined;
-		let timer: ReturnType<typeof setInterval> | undefined;
-		const tick = () => {
-			if (disposed || inFlight) return;
-			const pending = work()
-				.then(() => undefined)
-				.catch((error: unknown) => {
-					serverLogger().error(`${label} failed`, {
-						module: 'audit.core',
-						err: error,
-					});
-				})
-				.finally(() => {
-					if (inFlight === pending) inFlight = undefined;
-				});
-			inFlight = pending;
-		};
-		return {
-			start(intervalMs: number) {
-				if (disposed || timer) return;
-				tick();
-				timer = setInterval(tick, intervalMs);
-				timer.unref?.();
-			},
-			stop() {
-				if (timer) clearInterval(timer);
-				timer = undefined;
-			},
-			drain: async () => {
-				await inFlight;
-			},
-		};
-	};
-
-	const sweepLoop = loop('retention sweep', async () =>
-		(await sweepService()).tick(),
-	);
-	const exportLoop = loop('export run', async () =>
-		(await exportService()).tick(),
-	);
-	const erasureLoop = loop('erasure run', async () =>
-		(await erasureService()).tick(),
-	);
+	/* The platform runner owns each loop: the interval and its unref, the guard
+	   against overlapping passes, the bound on the work one pass takes, the
+	   per-item isolation, the renewal timer and the drain. This module keeps its
+	   tables, its routing reads, its claims and its stale windows. The sweep
+	   cadence is read once, as the runtime is composed and before the platform
+	   starts it, so an edited cadence reaches the loop at the next start; the
+	   setting's description says so. The batch size is read per pass and changes
+	   immediately. */
+	const runners: readonly JobRunner[] = [
+		createAuditSweepRunner({
+			sweeps: sweepService,
+			intervalMs: options.sweepIntervalMs(),
+			now: options.now,
+		}),
+		createAuditExportRunner({
+			exports: exportService,
+			repository: repositoryInstance,
+			now: options.now,
+		}),
+		createAuditErasureRunner({
+			erasures: erasureService,
+			repository: repositoryInstance,
+			now: options.now,
+		}),
+	];
 
 	const stop = () => {
-		sweepLoop.stop();
-		exportLoop.stop();
-		erasureLoop.stop();
+		for (const runner of runners) runner.stop();
 	};
 
+	/* Every timer is cleared before the first drain is awaited, so a loop still
+	   ticking cannot start a pass while another one is being waited on. */
 	const quiesce = async () => {
 		stop();
-		await sweepLoop.drain();
-		await exportLoop.drain();
-		await erasureLoop.drain();
+		for (const runner of runners) await runner.quiesce();
 	};
 
 	return {
@@ -303,19 +276,15 @@ export function createAuditRuntime(options: AuditRuntimeOptions): AuditRuntime {
 			   is the point at which the set of erase operations is the one every
 			   module agreed on; a later registration throws. */
 			erasureRegistry.seal();
-			/* The interval is read once here, so an edited cadence reaches the
-			   loop at the next start; the setting's description says so. The
-			   batch size is read per pass and changes immediately. */
-			sweepLoop.start(options.sweepIntervalMs());
-			exportLoop.start(EXPORT_POLL_INTERVAL_MS);
-			erasureLoop.start(ERASURE_POLL_INTERVAL_MS);
+			for (const runner of runners) runner.start();
 		},
 		stop,
 		quiesce,
 		async dispose() {
 			if (disposed) return;
 			disposed = true;
-			await quiesce();
+			stop();
+			for (const runner of runners) await runner.dispose();
 			/* An open still in flight would assign its leases after this read, so
 			   settle it first; a failed open must not surface as an unhandled
 			   rejection during teardown. */

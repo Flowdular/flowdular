@@ -246,6 +246,7 @@ describe('the import data class', () => {
 			claimedAt: null,
 			startedAt,
 			completedAt: status === 'validated' ? null : startedAt + 1,
+			traceparent: null,
 		});
 		await harness.repository.recordJobRows(TENANT, [
 			{

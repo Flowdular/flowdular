@@ -13,6 +13,7 @@ import {
 	migrateAuditDatabase,
 } from '../../src/services/database-repository.ts';
 import { AUDIT_TENANT_TABLES } from '../../src/services/migration.ts';
+import type { AuditRepository } from '../../src/services/repository.ts';
 
 export interface AuditTestDatabase {
 	/** Migrated provider, for a runtime that should acquire its own leases. */
@@ -103,4 +104,37 @@ export async function openAuditTestDatabase(): Promise<AuditTestDatabase> {
 		await databases.dispose();
 		throw error;
 	}
+}
+
+/** Writes a case can refuse; each takes one input object naming the workspace. */
+type RefusableWrite = 'appendAuditEvent' | 'finishErasureRun';
+
+/**
+ * The repository with one write refused for one workspace, which is how a case
+ * makes one item of a pass raise while the rest of its page is healthy. Every
+ * other member is bound to the real instance: its private members are not
+ * reachable through a proxy receiver.
+ */
+export function withRefusedWrite(
+	repository: AuditRepository,
+	method: RefusableWrite,
+	tenantId: string,
+): AuditRepository {
+	const real = repository[method].bind(repository) as (
+		input: unknown,
+	) => Promise<unknown>;
+	return new Proxy(repository, {
+		get(target, key, receiver) {
+			if (key === method) {
+				return async (input: { readonly tenantId: string }) => {
+					if (input.tenantId === tenantId) {
+						throw new Error(`${method} is unreachable for ${tenantId}`);
+					}
+					return real(input);
+				};
+			}
+			const value: unknown = Reflect.get(target, key, receiver);
+			return typeof value === 'function' ? value.bind(target) : value;
+		},
+	});
 }

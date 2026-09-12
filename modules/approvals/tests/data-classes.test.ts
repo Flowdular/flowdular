@@ -377,8 +377,10 @@ describe('approvals.core data classes', () => {
 
 		/* One request removed, one decision redacted and the eligibility row that
 		   let the subject answer that request tombstoned, so the batch cleared
-		   three rows without shortening anybody's ledger or snapshot. */
-		expect(result).toEqual({ removed: 3 });
+		   three rows without shortening anybody's ledger or snapshot. The two
+		   redactions are reported apart from the removal: the rows are still in
+		   the ledger and the snapshot, with nothing of the subject in them. */
+		expect(result).toEqual({ removed: 1, redacted: 2 });
 		expect(await exportedIds(TENANT)).toEqual([others, stillOpen].sort());
 		expect(await exportedIds(OTHER)).toEqual([foreign]);
 		expect(await count('approvals_decisions', TENANT)).toBe(1);
@@ -441,7 +443,7 @@ describe('approvals.core data classes', () => {
 			limit: 100,
 		});
 
-		expect(result).toEqual({ removed: 1 });
+		expect(result).toEqual({ removed: 0, redacted: 1 });
 		const after = await storedEligible(TENANT, pending);
 		expect(after).toHaveLength(2);
 		expect(after).toContain(CY);
@@ -510,6 +512,22 @@ describe('approvals.core data classes', () => {
 		expect(first).toEqual({ removed: 2, truncated: true });
 		expect(second).toEqual({ removed: 1 });
 		expect(await exportedIds(TENANT)).toEqual([]);
+	});
+
+	/* A redacted row fills the batch like a removed one, so a pass made only of
+	   redactions still reports itself truncated and the run comes back for the
+	   rows it did not reach. */
+	it('reports a batch filled by redactions alone as truncated', async () => {
+		await resolved(TENANT, 'first', BO, ADA, SEPTEMBER, 'Yes from Ada.');
+		await resolved(TENANT, 'second', BO, ADA, SEPTEMBER, 'Also yes.');
+
+		const first = await declared().erase!({
+			tenantId: TENANT,
+			subject: { accountId: ADA },
+			limit: 2,
+		});
+
+		expect(first).toEqual({ removed: 0, redacted: 2, truncated: true });
 	});
 
 	it('APPROVALS-DATA-CLASSES counts every request the subject opened in any state', async () => {

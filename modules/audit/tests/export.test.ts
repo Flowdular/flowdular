@@ -11,10 +11,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createDataClassRegistry } from '@flowdular/kernel';
+import type { JobEvent, JobRunner } from '@flowdular/server';
 import {
 	AUDIT_EVENT_ACTIONS,
 	type AuditExportRun,
 } from '../src/domain/types.ts';
+import { createAuditExportRunner } from '../src/services/audit-runners.ts';
 import {
 	AuditExportService,
 	awaitExportRun,
@@ -23,9 +25,11 @@ import {
 	EXPORT_FORMAT_VERSION,
 	type ExportManifest,
 } from '../src/services/export-service.ts';
+import type { AuditRepository } from '../src/services/repository.ts';
 import { AuditRetentionService } from '../src/services/retention-service.ts';
 import {
 	openAuditTestDatabase,
+	withRefusedWrite,
 	type AuditTestDatabase,
 } from './support/database.ts';
 import {
@@ -87,6 +91,8 @@ function owners(): readonly FakeOwnerModule[] {
 interface Fixture {
 	readonly runs: FakeOwnerModule;
 	readonly service: AuditExportService;
+	/** The platform loop, which is what one pass is driven through. */
+	readonly runner: JobRunner;
 	readonly request: (
 		tenantId: string,
 		apply: boolean,
@@ -103,6 +109,9 @@ async function fixture(
 		readonly backup?: ReturnType<typeof backupPresent>;
 		readonly directory?: string | undefined;
 		readonly claimTimeoutMs?: number;
+		readonly heartbeatEveryMs?: number;
+		readonly onEvent?: (event: JobEvent) => void;
+		readonly repository?: AuditRepository;
 		readonly extra?: readonly FakeOwnerModule[];
 	} = {},
 ): Promise<Fixture> {
@@ -132,13 +141,10 @@ async function fixture(
 	output = await realpath(
 		await mkdtemp(join(tmpdir(), 'flowdular-audit-export-')),
 	);
-	const retention = new AuditRetentionService(
-		shared.repository,
-		registry,
-		() => NOW,
-	);
+	const repository = options.repository ?? shared.repository;
+	const retention = new AuditRetentionService(repository, registry, () => NOW);
 	const service = new AuditExportService({
-		repository: shared.repository,
+		repository,
 		registry,
 		retention,
 		backup: options.backup ?? backupPresent(),
@@ -148,10 +154,19 @@ async function fixture(
 				: { FD_AUDIT_EXPORT_DIRECTORY: options.directory },
 		workspaceRoot: WORKSPACE_ROOT,
 		platformVersion: async () => '0.2.0',
+		now: () => NOW,
+	});
+	const runner = createAuditExportRunner({
+		exports: async () => service,
+		repository: async () => repository,
+		now: () => NOW,
 		...(options.claimTimeoutMs === undefined
 			? {}
 			: { claimTimeoutMs: options.claimTimeoutMs }),
-		now: () => NOW,
+		...(options.heartbeatEveryMs === undefined
+			? {}
+			: { heartbeatEveryMs: options.heartbeatEveryMs }),
+		...(options.onEvent ? { onEvent: options.onEvent } : {}),
 	});
 	const request = (tenantId: string, apply: boolean) =>
 		service.request({
@@ -165,14 +180,12 @@ async function fixture(
 	return {
 		runs: runs!,
 		service,
+		runner,
 		request,
 		answered: async (tenantId, apply) => {
 			const requested = await request(tenantId, apply);
-			await service.tick();
-			const settled = await shared.repository.getExportRun(
-				tenantId,
-				requested.id,
-			);
+			await runner.tick();
+			const settled = await repository.getExportRun(tenantId, requested.id);
 			if (!settled) throw new Error('The export run vanished.');
 			return settled;
 		},
@@ -454,7 +467,7 @@ describe('AUDIT-EXPORT-DRY-RUN', () => {
 
 describe('one run, one platform process', () => {
 	it('leaves a run another process holds alone', async () => {
-		const { request, service } = await fixture();
+		const { request, runner } = await fixture();
 		const run = await request(ALPHA, true);
 		await shared.repository.claimExportRun({
 			tenantId: ALPHA,
@@ -463,10 +476,11 @@ describe('one run, one platform process', () => {
 			staleBefore: NOW - EXPORT_CLAIM_TIMEOUT_MS,
 		});
 
-		expect(await service.tick()).toEqual({
-			examined: 1,
-			completed: 0,
+		expect(await runner.tick()).toEqual({
+			claimed: 0,
+			performed: 0,
 			failed: 0,
+			claimLost: 0,
 		});
 		expect(await readdir(output)).toEqual([]);
 		expect((await shared.repository.getExportRun(ALPHA, run.id))?.status).toBe(
@@ -475,7 +489,7 @@ describe('one run, one platform process', () => {
 	});
 
 	it('takes a run over from a process that stopped holding it', async () => {
-		const { request, service } = await fixture();
+		const { request, runner } = await fixture();
 		const run = await request(ALPHA, true);
 		await shared.repository.claimExportRun({
 			tenantId: ALPHA,
@@ -484,10 +498,11 @@ describe('one run, one platform process', () => {
 			staleBefore: NOW - EXPORT_CLAIM_TIMEOUT_MS,
 		});
 
-		expect(await service.tick()).toEqual({
-			examined: 1,
-			completed: 1,
+		expect(await runner.tick()).toEqual({
+			claimed: 1,
+			performed: 1,
 			failed: 0,
+			claimLost: 0,
 		});
 		expect((await shared.repository.getExportRun(ALPHA, run.id))?.status).toBe(
 			'completed',
@@ -497,13 +512,13 @@ describe('one run, one platform process', () => {
 
 describe('waiting for the platform to answer', () => {
 	it('answers with the run the platform completed', async () => {
-		const { request, service } = await fixture();
+		const { request, runner } = await fixture();
 		const requested = await request(ALPHA, true);
 
 		const run = await awaitExportRun(shared.repository, ALPHA, requested.id, {
 			pollMs: 0,
 			sleep: async () => {
-				await service.tick();
+				await runner.tick();
 			},
 		});
 
@@ -556,5 +571,73 @@ describe('AUDIT-SWEEP-NO-BACKUP (export half)', () => {
 			'BACKUP_MANIFEST_MISSING',
 		]);
 		expect(await readdir(output)).toEqual([]);
+	});
+});
+
+describe('the export pass on the platform runner', () => {
+	it('stops the stage and settles nothing when the claim changes hands', async () => {
+		let taken = (): void => undefined;
+		const lost = new Promise<void>((resolve) => {
+			taken = resolve;
+		});
+		const { runs, request, runner } = await fixture({
+			claimTimeoutMs: 60_000,
+			/* Short enough that a renewal lands inside the owner call below; the
+			   case waits for the renewal itself rather than for wall time. */
+			heartbeatEveryMs: 5,
+			onEvent: (event) => {
+				if (event.type === 'claim-lost') taken();
+			},
+		});
+		const requested = await request(ALPHA, true);
+		runs.beforeExport = async () => {
+			/* Another platform process took the run over while this one was
+			   writing, so the claim this pass renews under is gone. */
+			await shared.repository.claimExportRun({
+				tenantId: ALPHA,
+				id: requested.id,
+				claimedAt: NOW + 1,
+				staleBefore: NOW,
+			});
+			await lost;
+		};
+
+		expect(await runner.tick()).toEqual({
+			claimed: 1,
+			performed: 0,
+			failed: 0,
+			claimLost: 1,
+		});
+		/* The run is the other process's work now: this pass recorded no outcome
+		   and left no half-written archive behind. */
+		expect(
+			(await shared.repository.getExportRun(ALPHA, requested.id))?.status,
+		).toBe('started');
+		expect(await readdir(output)).toEqual([]);
+	});
+
+	it('answers the rest of the page when one run raises', async () => {
+		const { request, runner } = await fixture({
+			repository: withRefusedWrite(
+				shared.repository,
+				'appendAuditEvent',
+				ALPHA,
+			),
+		});
+		const first = await request(ALPHA, false);
+		const second = await request(BETA, false);
+
+		expect(await runner.tick()).toEqual({
+			claimed: 2,
+			performed: 1,
+			failed: 1,
+			claimLost: 0,
+		});
+		expect(
+			(await shared.repository.getExportRun(BETA, second.id))?.status,
+		).toBe('completed');
+		expect(
+			(await shared.repository.getExportRun(ALPHA, first.id))?.status,
+		).toBe('failed');
 	});
 });

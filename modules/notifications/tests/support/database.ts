@@ -29,6 +29,7 @@ export interface NotificationsTestDatabase {
 export const NOTIFICATIONS_TENANT_TABLES = [
 	'notifications_inbox',
 	'notifications_preferences',
+	'notifications_member_preferences',
 	'notifications_webhook_subscriptions',
 	'notifications_deliveries',
 ] as const;

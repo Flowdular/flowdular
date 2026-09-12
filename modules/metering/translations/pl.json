@@ -63,5 +63,6 @@
 	"error.code.INVALID_INPUT": "Żądanie nie zostało przyjęte. Sprawdź licznik i zakres dat.",
 	"error.code.METER_NOT_DECLARED": "Żaden złożony moduł nie deklaruje tego licznika.",
 	"settings.warningPercent.label": "Próg ostrzeżenia dla limitu (procent)",
-	"settings.warningPercent.description": "Udział limitu miesięcznego, przy którym właściciele obszaru roboczego są powiadamiani, zanim limit odrzuci operację."
+	"settings.warningPercent.description": "Udział limitu miesięcznego, przy którym właściciele obszaru roboczego są powiadamiani, zanim limit odrzuci operację.",
+	"report.usage.label": "Zużycie w tym miesiącu"
 }

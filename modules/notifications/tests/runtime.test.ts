@@ -11,7 +11,11 @@ import {
 	openNotificationsTestDatabase,
 	type NotificationsTestDatabase,
 } from './support/database.ts';
-import { publicResolver, TEST_SETTINGS } from './support/harness.ts';
+import {
+	developmentMailPort,
+	publicResolver,
+	TEST_SETTINGS,
+} from './support/harness.ts';
 
 const TENANT = 'tenant-runtime';
 
@@ -40,6 +44,7 @@ function runtimeWith(transport: DeliveryTransport, pollIntervalMs = 20) {
 			deliverySettings: () => TEST_SETTINGS,
 			egressAllowlist: () => '',
 			pollIntervalMs: () => pollIntervalMs,
+			mail: developmentMailPort(),
 			members: async () => [],
 			hostResolver: publicResolver({ 'hooks.example': '93.184.216.34' }),
 			transport,
@@ -109,6 +114,104 @@ describe('notifications runtime lifecycle', () => {
 				(await (await runtime.deliveries()).list(TENANT, {}))[0]?.status,
 			).toBe('succeeded');
 		} finally {
+			await runtime.dispose();
+		}
+	});
+
+	it('waits for a delivery that is in flight before quiesce answers', async () => {
+		let release = (): void => undefined;
+		const open = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let sending = 0;
+		const { vault, runtime } = runtimeWith({
+			send: async () => {
+				sending += 1;
+				await open;
+				return { status: 'succeeded', responseStatus: 200, errorClass: null };
+			},
+		});
+		try {
+			await queueOne(vault);
+			runtime.start();
+			expect(await settle(async () => sending > 0)).toBe(true);
+
+			let drained = false;
+			const quiesced = runtime.quiesce().then(() => {
+				drained = true;
+			});
+			await new Promise((resolve) => setTimeout(resolve, 60));
+			/* The send is still open, so the pass is still in flight and quiesce is
+			   still waiting on it. */
+			expect(drained).toBe(false);
+			release();
+			await quiesced;
+
+			expect(
+				(await (await runtime.deliveries()).list(TENANT, {}))[0]?.status,
+			).toBe('succeeded');
+		} finally {
+			release();
+			await runtime.dispose();
+		}
+	});
+
+	it('stops every loop before it waits for the first one to drain', async () => {
+		let release = (): void => undefined;
+		const open = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let sending = 0;
+		let sweeps = 0;
+		/* The retention loop's own read, counted through the repository it shares
+		   with the delivery loop. */
+		const repository = new Proxy(shared.repository, {
+			get(target, property) {
+				const value = Reflect.get(target, property) as unknown;
+				if (property === 'listDeliveryTenants') {
+					return async (limit: number, after: string) => {
+						sweeps += 1;
+						return target.listDeliveryTenants(limit, after);
+					};
+				}
+				return typeof value === 'function' ? value.bind(target) : value;
+			},
+		});
+		const vault = new AesGcmSecretVault(Buffer.alloc(32, 0x4e));
+		const runtime = createNotificationsRuntime({
+			databases: shared.databases,
+			repository,
+			secretVault: vault,
+			deliverySettings: () => TEST_SETTINGS,
+			egressAllowlist: () => '',
+			pollIntervalMs: () => 20,
+			mail: developmentMailPort(),
+			members: async () => [],
+			hostResolver: publicResolver({ 'hooks.example': '93.184.216.34' }),
+			transport: {
+				send: async () => {
+					sending += 1;
+					await open;
+					return { status: 'succeeded', responseStatus: 200, errorClass: null };
+				},
+			},
+		});
+		try {
+			await queueOne(vault);
+			runtime.start();
+			expect(await settle(async () => sending > 0)).toBe(true);
+
+			/* Disposal starts while the delivery pass is still open. */
+			const disposed = runtime.dispose();
+			const swept = sweeps;
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			/* Ten retention intervals passed. A loop left running while the first
+			   one drained would have polled the repository through every one. */
+			expect(sweeps - swept).toBeLessThanOrEqual(1);
+			release();
+			await disposed;
+		} finally {
+			release();
 			await runtime.dispose();
 		}
 	});

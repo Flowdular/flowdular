@@ -82,7 +82,9 @@ function attempt(
 	return {
 		id,
 		tenantId,
+		channel: 'webhook',
 		subscriptionId: 'subscription-1',
+		recipientAccountId: null,
 		kind: 'agent-run-failed',
 		sourceModule: 'agents.core',
 		sourceRef: id,

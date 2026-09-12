@@ -93,6 +93,49 @@ describe('notifications tenant boundary', () => {
 		).rejects.toThrow();
 	});
 
+	/* The switch is keyed by (tenant, account), and one person is a member of
+	   several workspaces under the same account id: what they asked for in one
+	   must not decide what the other workspace mails them. */
+	it('NOTIFICATIONS-TENANT-BOUNDARY keeps a member e-mail switch inside its own workspace', async () => {
+		const { inbox } = harness();
+		await inbox.saveEmailDelivery('tenant-alpha', 'member-shared', true, 1_000);
+
+		expect(
+			await inbox.memberSettings('tenant-beta', 'member-shared'),
+		).toMatchObject({ emailDelivery: false });
+		await inbox.saveEmailDelivery('tenant-beta', 'member-shared', false, 2_000);
+		expect(
+			await inbox.memberSettings('tenant-alpha', 'member-shared'),
+		).toMatchObject({ emailDelivery: true });
+
+		/* A statement naming another workspace is refused by the policy rather
+		   than silently writing there, and one that names none reaches only the
+		   rows of the workspace it runs under. */
+		await expect(
+			shared.runtime.transaction(
+				(transaction) =>
+					transaction.execute({
+						text: `INSERT INTO notifications_member_preferences
+						 (tenant_id, recipient_account_id, email_delivery, created_at, updated_at)
+						 VALUES ($1, $2, 1, $3, $3)`,
+						parameters: ['tenant-beta', 'member-smuggled', 3_000],
+					}),
+				{ access: 'write', tenantId: 'tenant-alpha' },
+			),
+		).rejects.toThrow();
+		await shared.runtime.transaction(
+			(transaction) =>
+				transaction.execute({
+					text: 'UPDATE notifications_member_preferences SET email_delivery = 0',
+				}),
+			{ access: 'write', tenantId: 'tenant-beta' },
+		);
+
+		expect(
+			await inbox.memberSettings('tenant-alpha', 'member-shared'),
+		).toMatchObject({ emailDelivery: true });
+	});
+
 	it('NOTIFICATIONS-TENANT-BOUNDARY lets the poll read routing columns only, across tenants', async () => {
 		await seedTenant('tenant-alpha', 'run-alpha');
 		await seedTenant('tenant-beta', 'run-beta');

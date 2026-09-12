@@ -3,7 +3,12 @@ import { useTranslation } from '@flowdular/client';
 import { Button, FormField, VariableTextarea } from '@flowdular/ui';
 import type { VariableDefinition } from '@flowdular/contracts';
 import { createStore, useValue } from 'segment-state';
-import { cadenceMinutes } from '../domain/cadence.ts';
+import {
+	cadenceKind,
+	cadenceMinutes,
+	cronExpression,
+	MAX_CRON_LENGTH,
+} from '../domain/cadence.ts';
 import type {
 	AutomationSchedule,
 	AutomationTargetOption,
@@ -19,6 +24,8 @@ export interface AutomationScheduleFormProps {
 	readonly schedule: AutomationSchedule | null;
 	readonly targets: readonly AutomationTargetOption[];
 	readonly variables: readonly VariableDefinition[];
+	/** Workspace zone a cron expression is read in. */
+	readonly timeZone: string;
 	readonly busy: boolean;
 	readonly onCancel: () => void;
 	readonly onDelete: (() => Promise<void>) | undefined;
@@ -40,6 +47,9 @@ export function AutomationScheduleForm(props: AutomationScheduleFormProps) @{
 	);
 	const formState = useMemo(
 		() => createStore({
+			cadenceMode: props.schedule
+				? cadenceKind(props.schedule.cadence)
+				: 'every',
 			enabled: props.schedule?.enabled ?? true,
 			inputTemplate: props.schedule?.inputTemplate ?? '',
 			targetValue: props.schedule
@@ -53,6 +63,7 @@ export function AutomationScheduleForm(props: AutomationScheduleFormProps) @{
 		}),
 		[],
 	);
+	const [cadenceMode, setCadenceMode] = useValue(formState.state.cadenceMode);
 	const [enabled, setEnabled] = useValue(formState.state.enabled);
 	const [inputTemplate, setInputTemplate] = useValue(
 		formState.state.inputTemplate,
@@ -81,7 +92,9 @@ export function AutomationScheduleForm(props: AutomationScheduleFormProps) @{
 			targetKey: target.key,
 			label: stringValue(form, 'label'),
 			inputTemplate: stringValue(form, 'inputTemplate'),
-			cadence: 'every:' + stringValue(form, 'minutes'),
+			cadence: cadenceMode === 'cron'
+				? 'cron:' + stringValue(form, 'cron')
+				: 'every:' + stringValue(form, 'minutes'),
 			enabled,
 		});
 	};
@@ -123,23 +136,68 @@ export function AutomationScheduleForm(props: AutomationScheduleFormProps) @{
 						/>
 					</FormField>
 				</div>
-				<FormField
-					label={t('automations.schedules.form.interval')}
-					help={t('automations.schedules.form.intervalHelp')}
-					required
-				>
-					<input
-						class="ui-input"
-						name="minutes"
-						type="number"
-						defaultValue={String(
-							props.schedule ? cadenceMinutes(props.schedule.cadence) : 60,
-						)}
-						min={1}
-						max={10080}
-						required
-					/>
-				</FormField>
+				<div class="ui-form__row">
+					<FormField label={t('automations.schedules.form.cadenceMode')}>
+						<select
+							class="ui-select"
+							name="cadenceMode"
+							value={cadenceMode}
+							onChange={(event: Event) => setCadenceMode(
+								(event.currentTarget as HTMLSelectElement).value === 'cron'
+									? 'cron'
+									: 'every',
+							)}
+						>
+							<option value="every">{t(
+								'automations.schedules.form.cadenceModeInterval',
+							)}</option>
+							<option value="cron">{t(
+								'automations.schedules.form.cadenceModeCron',
+							)}</option>
+						</select>
+					</FormField>
+					@if (cadenceMode === 'cron') {
+						<FormField
+							label={t('automations.schedules.form.cron')}
+							help={t('automations.schedules.form.cronHelp', {
+								zone: props.timeZone,
+							})}
+							required
+						>
+							<input
+								class="ui-input"
+								name="cron"
+								defaultValue={props.schedule
+									? cronExpression(props.schedule.cadence)
+									: '0 6 * * 1-5'}
+								placeholder="0 6 * * 1-5"
+								maxlength={MAX_CRON_LENGTH}
+								required
+							/>
+						</FormField>
+					} @else {
+						<FormField
+							label={t('automations.schedules.form.interval')}
+							help={t('automations.schedules.form.intervalHelp')}
+							required
+						>
+							<input
+								class="ui-input"
+								name="minutes"
+								type="number"
+								defaultValue={String(
+									props.schedule &&
+									cadenceKind(props.schedule.cadence) === 'every'
+										? cadenceMinutes(props.schedule.cadence)
+										: 60,
+								)}
+								min={1}
+								max={10080}
+								required
+							/>
+						</FormField>
+					}
+				</div>
 				<FormField
 					label={t('automations.schedules.form.input')}
 					help={t(

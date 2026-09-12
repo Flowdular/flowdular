@@ -2,6 +2,7 @@ import type {
 	DeliveryAttempt,
 	DeliveryRouting,
 	DeliveryStatus,
+	MemberNotificationSettings,
 	NotificationKind,
 	NotificationPreference,
 	NotificationsInbox,
@@ -56,6 +57,8 @@ export interface PublishEventInput {
 	readonly recipients: readonly string[];
 	readonly inboxItem: (recipientAccountId: string) => NotificationsInbox;
 	readonly delivery: (subscription: WebhookSubscription) => DeliveryAttempt;
+	/** Queued for every addressed member who turned e-mail delivery on. */
+	readonly emailDelivery: (item: NotificationsInbox) => DeliveryAttempt;
 }
 
 export interface PublishEventResult {
@@ -99,6 +102,17 @@ export interface NotificationsRepository {
 		recipientAccountId: string,
 		id: string,
 	): Promise<NotificationsInbox | null>;
+	/**
+	 * The item one published event wrote for one member, by the natural key the
+	 * publication is idempotent on. The e-mail channel reads the body from it at
+	 * send time instead of copying it onto the attempt row.
+	 */
+	findInboxItem(
+		tenantId: string,
+		recipientAccountId: string,
+		kind: NotificationKind,
+		sourceRef: string,
+	): Promise<NotificationsInbox | null>;
 	setInboxStatus(
 		tenantId: string,
 		recipientAccountId: string,
@@ -113,6 +127,7 @@ export interface NotificationsRepository {
 	appendInboxItems(
 		tenantId: string,
 		records: readonly NotificationsInbox[],
+		emailDelivery: (item: NotificationsInbox) => DeliveryAttempt,
 	): Promise<readonly string[]>;
 	/**
 	 * Every inbox item of one workspace, oldest first, one keyset page at a
@@ -142,6 +157,14 @@ export interface NotificationsRepository {
 	savePreference(
 		record: NotificationPreference,
 	): Promise<NotificationPreference>;
+	/** Null when the member never saved one; the caller applies the defaults. */
+	getMemberSettings(
+		tenantId: string,
+		recipientAccountId: string,
+	): Promise<MemberNotificationSettings | null>;
+	saveMemberSettings(
+		record: MemberNotificationSettings,
+	): Promise<MemberNotificationSettings>;
 
 	listSubscriptions(
 		tenantId: string,
@@ -225,12 +248,17 @@ export interface NotificationsRepository {
 	): Promise<boolean>;
 	/** Moves one open attempt, pending or claimed, to a terminal state. */
 	completeDelivery(input: CompleteDeliveryInput): Promise<boolean>;
-	/** Highest attempt run recorded for one event on one subscription. */
+	/** Highest attempt run recorded for one event on one delivery target. */
 	latestDeliverySequence(
-		tenantId: string,
-		subscriptionId: string,
-		kind: NotificationKind,
-		sourceRef: string,
+		attempt: Pick<
+			DeliveryAttempt,
+			| 'tenantId'
+			| 'channel'
+			| 'subscriptionId'
+			| 'recipientAccountId'
+			| 'kind'
+			| 'sourceRef'
+		>,
 	): Promise<number>;
 
 	/** Cross-tenant, routing columns only, on the read-only background lease. */

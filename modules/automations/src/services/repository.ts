@@ -72,6 +72,14 @@ export interface AutomationsRepository {
 		readonly lastRunId: string | null;
 		readonly lastError: string | null;
 	}): Promise<boolean>;
+	/** Moves a pending slot only while it still holds the value that was read. */
+	retimeSchedule(input: {
+		readonly tenantId: string;
+		readonly scheduleId: string;
+		readonly expectedNextRunAt: number;
+		readonly nextRunAt: number;
+		readonly updatedAt: number;
+	}): Promise<boolean>;
 	disableSchedule(
 		tenantId: string,
 		scheduleId: string,

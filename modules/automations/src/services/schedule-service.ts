@@ -22,10 +22,13 @@ import {
 } from '../domain/variables.ts';
 import {
 	InvalidCadenceError,
-	cadenceMinutes,
-	nextSlotAfter,
+	firstCadenceSlot,
+	nextCadenceSlot,
 	normalizeCadence,
+	parseCadence,
+	type Cadence,
 } from '../domain/cadence.ts';
+import { DEFAULT_TIME_ZONE } from '../domain/time-zone.ts';
 import {
 	createAutomationTargetRegistry,
 	type AutomationTargetJsonValue,
@@ -33,6 +36,7 @@ import {
 } from '../server/targets.ts';
 import { AutomationsServiceError } from './automations-service.ts';
 import type {
+	AutomationScheduleRouting,
 	AutomationsRepository,
 	StoredAutomationSchedule,
 } from './repository.ts';
@@ -64,6 +68,17 @@ function bounded(
 function cadence(value: string): string {
 	try {
 		return normalizeCadence(value);
+	} catch (error) {
+		if (error instanceof InvalidCadenceError) {
+			throw new AutomationsServiceError('INVALID_CADENCE', error.message);
+		}
+		throw error;
+	}
+}
+
+function cadenceSlot(compute: () => number): number {
+	try {
+		return compute();
 	} catch (error) {
 		if (error instanceof InvalidCadenceError) {
 			throw new AutomationsServiceError('INVALID_CADENCE', error.message);
@@ -203,9 +218,25 @@ export class AutomationScheduleService {
 		private readonly signal: AbortSignal = new AbortController().signal,
 		variables?: PlatformVariableRegistry,
 		targets?: AutomationTargetRegistry,
+		/* The workspace zone a cron slot is computed in, read live so a change
+		   applies to the next slot rather than to the next deployment. */
+		private readonly timeZoneOf: (tenantId: string) => string = () =>
+			DEFAULT_TIME_ZONE,
 	) {
 		this.variables = variables ?? createScheduleVariableRegistry(this.runs);
 		this.targets = targets ?? createAutomationTargetRegistry();
+	}
+
+	/** The zone this workspace's wall clock slots and screens use. */
+	timeZone(tenantId: string): string {
+		return this.timeZoneOf(bounded(tenantId, 'tenantId', 1, 128));
+	}
+
+	/* An interval cadence carries no zone, so it never pays for the read. */
+	private zoneFor(cadence: Cadence, tenantId: string): string {
+		return cadence.kind === 'cron'
+			? this.timeZoneOf(tenantId)
+			: DEFAULT_TIME_ZONE;
 	}
 
 	async list(tenantId: string): Promise<readonly AutomationSchedule[]> {
@@ -307,7 +338,7 @@ export class AutomationScheduleService {
 			cadence: normalized,
 			enabled: input.enabled === true,
 			disabledReason: null,
-			nextRunAt: now + cadenceMinutes(normalized) * 60_000,
+			nextRunAt: this.firstSlot(normalized, trustedTenantId, now),
 			lastRunAt: null,
 			lastRunId: null,
 			lastError: null,
@@ -361,7 +392,7 @@ export class AutomationScheduleService {
 		const nextRunAt =
 			nextCadence === existing.cadence && existing.enabled === input.enabled
 				? existing.nextRunAt
-				: now + cadenceMinutes(nextCadence) * 60_000;
+				: this.firstSlot(nextCadence, trustedTenantId, now);
 		const inputTemplate = bounded(input.inputTemplate, 'input', 1, 10_000);
 		validateScheduleTemplate(inputTemplate, scopes);
 		if (
@@ -541,22 +572,19 @@ export class AutomationScheduleService {
 		return { id, created, targetKind: stored.targetKind };
 	}
 
-	async tick(limit = 20): Promise<number> {
-		const now = this.now();
-		const due = await this.repository.listDueSchedules(now, limit);
-		let fired = 0;
-		for (const routing of due) {
-			/* The poll crosses tenants and returns routing data only. The schedule
-			   itself is read under the tenant that row named, and a slot that moved
-			   in between is skipped rather than fired twice. */
-			const schedule = await this.repository.getSchedule(
-				routing.tenantId,
-				routing.id,
-			);
-			if (!schedule || schedule.nextRunAt !== routing.nextRunAt) continue;
-			if (await this.fire(schedule, now)) fired += 1;
-		}
-		return fired;
+	/**
+	 * One due schedule the cross-tenant poll routed here. The poll returns
+	 * routing data only, so the schedule itself is read under the tenant that row
+	 * named, and a slot that moved in between is skipped rather than fired twice.
+	 * Answers whether the slot dispatched a run.
+	 */
+	async fireDue(routing: AutomationScheduleRouting): Promise<boolean> {
+		const schedule = await this.repository.getSchedule(
+			routing.tenantId,
+			routing.id,
+		);
+		if (!schedule || schedule.nextRunAt !== routing.nextRunAt) return false;
+		return await this.fire(schedule, this.now());
 	}
 
 	private async fire(
@@ -564,6 +592,42 @@ export class AutomationScheduleService {
 		now: number,
 	): Promise<boolean> {
 		const slot = schedule.nextRunAt;
+		/* Resolved before anything is dispatched: a cadence whose next slot cannot
+		   be computed disables the schedule instead of firing a slot it could
+		   never advance past. */
+		let nextRunAt: number;
+		try {
+			const cadence = parseCadence(schedule.cadence);
+			nextRunAt = nextCadenceSlot(
+				cadence,
+				slot,
+				now,
+				this.zoneFor(cadence, schedule.tenantId),
+			);
+		} catch (error) {
+			if (!(error instanceof InvalidCadenceError)) throw error;
+			const reason = `INVALID_CADENCE: ${error.message}`.slice(
+				0,
+				MAX_ERROR_LENGTH,
+			);
+			if (
+				await this.repository.disableSchedule(
+					schedule.tenantId,
+					schedule.id,
+					reason,
+					now,
+				)
+			) {
+				await this.audit(
+					schedule,
+					'system',
+					'automation-schedule.disabled',
+					now,
+					{ reason: 'INVALID_CADENCE', targetKind: schedule.targetKind },
+				);
+			}
+			return false;
+		}
 		let runId: string | null = null;
 		let failure: string | null = null;
 		try {
@@ -647,7 +711,7 @@ export class AutomationScheduleService {
 			tenantId: schedule.tenantId,
 			scheduleId: schedule.id,
 			firedSlot: slot,
-			nextRunAt: nextSlotAfter(slot, cadenceMinutes(schedule.cadence), now),
+			nextRunAt,
 			lastRunAt: now,
 			lastRunId: runId ?? schedule.lastRunId,
 			lastError: failure,
@@ -667,6 +731,56 @@ export class AutomationScheduleService {
 					},
 		);
 		return runId !== null;
+	}
+
+	private firstSlot(normalized: string, tenantId: string, now: number): number {
+		const cadence = parseCadence(normalized);
+		return cadenceSlot(() =>
+			firstCadenceSlot(cadence, now, this.zoneFor(cadence, tenantId)),
+		);
+	}
+
+	/**
+	 * Moves every pending cron slot of one workspace into the zone it now uses.
+	 * A slot already due is left alone so the fire it owes is not lost, and each
+	 * write is conditional on the slot this read saw, so a concurrent fire wins.
+	 */
+	async retime(tenantId: string): Promise<number> {
+		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
+		const now = this.now();
+		const timeZone = this.timeZoneOf(trustedTenantId);
+		let moved = 0;
+		for (const schedule of await this.repository.listSchedules(
+			trustedTenantId,
+		)) {
+			if (!schedule.enabled || schedule.nextRunAt <= now) continue;
+			let nextRunAt: number;
+			try {
+				const cadence = parseCadence(schedule.cadence);
+				if (cadence.kind !== 'cron') continue;
+				nextRunAt = firstCadenceSlot(cadence, now, timeZone);
+			} catch (error) {
+				/* A cadence that no longer parses is left for the fire path, which
+				   disables it with the reason on the schedule. */
+				if (error instanceof InvalidCadenceError) continue;
+				throw error;
+			}
+			if (nextRunAt === schedule.nextRunAt) continue;
+			const applied = await this.repository.retimeSchedule({
+				tenantId: trustedTenantId,
+				scheduleId: schedule.id,
+				expectedNextRunAt: schedule.nextRunAt,
+				nextRunAt,
+				updatedAt: now,
+			});
+			if (!applied) continue;
+			moved += 1;
+			await this.audit(schedule, 'system', 'automation-schedule.retimed', now, {
+				timeZone,
+				nextRunAt,
+			});
+		}
+		return moved;
 	}
 
 	private async validateTarget(

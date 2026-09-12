@@ -1,9 +1,9 @@
 import { useEffect, useMemo } from 'octane';
 import { Kpi } from '@flowdular/ui';
-import { activeLocale, applicationPath, t } from '@flowdular/client';
+import { activeLocale, t, workspaceViewHref } from '@flowdular/client';
 import { useValue } from 'segment-state';
 import { loadMeters } from './api.ts';
-import { METERING_VIEWS, workspaceViewHref } from './navigation.ts';
+import { METERING_VIEWS } from './navigation.ts';
 import { numberLabel, usageLabel, usageShare } from './presentation.ts';
 import { createUsageClientState } from './state.ts';
 
@@ -40,11 +40,7 @@ export function UsageSummaryWidget() @{
 	const busiest = [...meters].sort(
 		(left, right) => right.used - left.used,
 	).slice(0, TILES).filter((entry) => entry.used > 0);
-	const usageHref = workspaceViewHref(
-		METERING_VIEWS.usage,
-		typeof window === 'undefined' ? '' : window.location.pathname,
-		applicationPath(),
-	);
+	const usageHref = workspaceViewHref(METERING_VIEWS.usage);
 
 	@for (const entry of busiest; key entry.meter.key) {
 		<Kpi

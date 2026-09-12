@@ -49,6 +49,37 @@ export function tokenStatusTone(status: TokenDisplayStatus): TagTone {
 	return status === 'expired' ? 'warning' : 'neutral';
 }
 
+/** The copy of a row action: its name, and why it is refused. */
+export interface ActionCopy {
+	readonly label: string;
+	readonly disabled: boolean;
+	/** Why the action is refused, empty while it is allowed. */
+	readonly reason: string;
+}
+
+/**
+ * What the rotate action says about this token. Rotation carries the stored
+ * expiry forward and the server refuses one that has already passed, so an
+ * expired token is revoked rather than rotated. The label is the name of the
+ * action whatever the token is, and the refusal travels as the reason, which
+ * the table renders as the button's accessible description: an action whose
+ * name changes under the reader is a different action.
+ */
+export function rotateAction(
+	token: Pick<ScimToken, 'status' | 'expiresAt'>,
+	at: number = Date.now(),
+): ActionCopy {
+	const reason =
+		tokenDisplayStatus(token, at) === 'active'
+			? ''
+			: t('directory.tokens.action.rotateRefused');
+	return {
+		label: t('directory.tokens.action.rotate'),
+		disabled: reason !== '',
+		reason,
+	};
+}
+
 export function operationLabel(operation: ProvisioningOperation): string {
 	return t('directory.log.operation.' + operation);
 }

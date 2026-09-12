@@ -10,6 +10,9 @@ import type {
 	BackupGuardResult,
 } from '../../src/services/backup-guard.ts';
 
+/** What a redacting owner writes over the subject of a row it keeps. */
+export const REDACTED_SUBJECT = 'account-redacted';
+
 export interface FakeRow {
 	readonly tenantId: string;
 	readonly id: string;
@@ -34,9 +37,27 @@ export class FakeOwnerModule {
 	failSweep = false;
 	failExport = false;
 	failErase = false;
+	/** Makes every erase call answer a count no run can read. */
+	eraseAnswersGarbage = false;
 	failCount = false;
 	/** Makes every erase call claim rows of the subject are left behind. */
 	eraseTruncated = false;
+	/**
+	 * Makes the owner keep its rows and strip the subject out of them instead,
+	 * the way a module holding an append-only ledger has to answer. Such a class
+	 * removes nothing at all, so a run that reads only `removed` never asks it a
+	 * second time.
+	 */
+	redactsInstead = false;
+	/** Rows one redacting call reaches, below the limit it was given. */
+	redactStep = Number.POSITIVE_INFINITY;
+	/**
+	 * Run inside the owner's own operation, so a case can interleave with the
+	 * pass that called it: take the claim over, advance a clock, wait for an
+	 * event. Foreign code is the only place a test reaches the middle of a run.
+	 */
+	beforeErase: (() => Promise<void>) | null = null;
+	beforeExport: (() => Promise<void>) | null = null;
 
 	constructor(
 		readonly moduleId: string,
@@ -77,8 +98,27 @@ export class FakeOwnerModule {
 		limit,
 	}: DataClassErasureInput): Promise<DataClassErasureResult> => {
 		this.eraseCalls.push({ tenantId, subject: subject.accountId, limit });
+		if (this.beforeErase) await this.beforeErase();
 		if (this.failErase) throw new Error('owner erase is broken');
+		if (this.eraseAnswersGarbage) {
+			return { removed: Number.NaN } as unknown as DataClassErasureResult;
+		}
 		const mine = this.subjectRows(tenantId, subject.accountId);
+		if (this.redactsInstead) {
+			const reached = mine.slice(0, Math.min(limit, this.redactStep));
+			const stripping = new Set(reached.map((row) => row.id));
+			this.#rows = this.#rows.map((row) =>
+				row.tenantId === tenantId && stripping.has(row.id)
+					? { ...row, payload: { ...row.payload, subject: REDACTED_SUBJECT } }
+					: row,
+			);
+			const left = mine.length > reached.length;
+			return {
+				removed: 0,
+				redacted: reached.length,
+				...(left || this.eraseTruncated ? { truncated: true } : {}),
+			};
+		}
 		const doomed = mine.slice(0, limit);
 		const removing = new Set(doomed.map((row) => row.id));
 		this.#rows = this.#rows.filter(
@@ -139,6 +179,7 @@ export class FakeOwnerModule {
 			},
 			export: async ({ tenantId, sink }) => {
 				this.exportCalls.push(tenantId);
+				if (this.beforeExport) await this.beforeExport();
 				if (this.failExport) throw new Error('owner export is broken');
 				const mine = this.rows(tenantId);
 				for (const row of mine) {

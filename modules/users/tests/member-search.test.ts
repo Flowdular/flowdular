@@ -16,6 +16,7 @@ import {
 	matchMembers,
 	memberScore,
 	MEMBER_SEARCH_PROVIDER_KEY,
+	MEMBER_SEARCH_PUSHDOWN_LIMIT,
 	MEMBER_SEARCH_SCAN_LIMIT,
 } from '../src/services/member-search.ts';
 
@@ -49,24 +50,29 @@ const DIRECTORY: Readonly<Record<string, readonly TenantMember[]>> = {
 	],
 };
 
+/** The address as auth.core stores it in `email_normalized`. */
+function normalized(value: string): string {
+	return value.trim().normalize('NFKC').toLowerCase();
+}
+
 /**
- * What auth.core applies in SQL: the display name contains the term or the
- * address starts with it, ordered by name then account id and cut to the limit.
- * The bound and the predicate are asserted against the database in auth.core;
- * here they stand in so the provider's own term selection, ranking and paging
- * are what the cases exercise.
+ * What auth.core applies in SQL: the lower-cased display name or the
+ * normalised address starts with the term, ordered by name then account id and
+ * cut to the limit. The bound and the predicate are asserted against the
+ * database in auth.core; here they stand in so the provider's own term
+ * selection, ranking and paging are what the cases exercise.
  */
 function matchingMembers(
 	members: readonly TenantMember[],
 	query: string,
 	limit: number,
 ): readonly TenantMember[] {
-	const term = query.trim().normalize('NFKC').toLowerCase();
+	const term = normalized(query);
 	return [...members]
 		.filter(
 			(entry) =>
-				entry.displayName.toLowerCase().includes(term) ||
-				entry.email.toLowerCase().startsWith(term),
+				entry.displayName.toLowerCase().startsWith(term) ||
+				normalized(entry.email).startsWith(term),
 		)
 		.sort(
 			(left, right) =>
@@ -178,9 +184,9 @@ describe('USERS-SEARCH', () => {
 		const service = searchService(
 			authRuntime([], [], {
 				'tenant-a': [
-					member('account-ada', 'Ada Delta', 'ada@example.com'),
-					member('account-alan', 'Alan Delta', 'alan@example.com'),
-					member('account-grace', 'Grace Delta', 'grace@navy.example'),
+					member('account-ada', 'Delta Ada', 'ada@example.com'),
+					member('account-alan', 'Delta Alan', 'alan@example.com'),
+					member('account-grace', 'Delta Grace', 'grace@navy.example'),
 				],
 			}),
 		);
@@ -261,9 +267,10 @@ describe('member matching', () => {
 		expect(page.hits).toHaveLength(MEMBER_SEARCH_SCAN_LIMIT);
 	});
 
-	/* Every term still has to land, and the one pushed down is the longest, so
-	   the word order a person typed does not change what is found. */
-	it('filters on the longest term and answers the same set either way', async () => {
+	/* The port matches a prefix, so a term that opens no name and no address
+	   answers nothing; falling through to the next term in turn keeps the word
+	   order a person typed from changing what is found. */
+	it('pushes the terms in order until one answers and finds the member either way', async () => {
 		const seen: SearchCall[] = [];
 		const provider = createMemberSearchProvider(authRuntime([], seen));
 		const query = (text: string) =>
@@ -277,10 +284,39 @@ describe('member matching', () => {
 		expect((await query('ada lovelace')).hits.map((hit) => hit.ref)).toEqual([
 			'account-ada',
 		]);
+		expect(seen.map((call) => call.query)).toEqual(['ada']);
+
+		seen.length = 0;
 		expect((await query('lovelace ada')).hits.map((hit) => hit.ref)).toEqual([
 			'account-ada',
 		]);
-		expect(seen.map((call) => call.query)).toEqual(['lovelace', 'lovelace']);
+		expect(seen.map((call) => call.query)).toEqual(['lovelace', 'ada']);
+	});
+
+	/* The fall-through is bounded, so a query of many terms is a bounded number
+	   of reads and a member only its fourth term opens is missed rather than
+	   read for. */
+	it('pushes at most the documented number of terms, each under the bound', async () => {
+		const seen: SearchCall[] = [];
+		const provider = createMemberSearchProvider(authRuntime([], seen));
+
+		const page = await provider.search({
+			tenantId: 'tenant-a',
+			principal: principal([USER_PERMISSIONS.read]),
+			query: 'countess of lovelace ada',
+			limit: 20,
+		});
+
+		expect(page.hits).toEqual([]);
+		expect(seen.map((call) => call.query)).toEqual([
+			'countess',
+			'of',
+			'lovelace',
+		]);
+		expect(seen).toHaveLength(MEMBER_SEARCH_PUSHDOWN_LIMIT);
+		expect([...new Set(seen.map((call) => call.limit))]).toEqual([
+			MEMBER_SEARCH_SCAN_LIMIT,
+		]);
 	});
 
 	it('asks auth.core nothing for a query of only whitespace', async () => {

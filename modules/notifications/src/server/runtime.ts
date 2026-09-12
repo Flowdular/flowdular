@@ -7,7 +7,7 @@ import {
 	DATABASE_CAPABILITY_IDS,
 	DATABASE_DIALECT_IDS,
 } from '@flowdular/database';
-import { serverLogger } from '@flowdular/server';
+import type { JobRunner, MailPort } from '@flowdular/server';
 import {
 	createWebhookEgressPolicy,
 	webhookHostAllowlist,
@@ -20,6 +20,10 @@ import {
 	type TenantDeliverySettings,
 	type TenantMemberScopes,
 } from '../services/delivery-service.ts';
+import {
+	createNotificationDeliveryRunner,
+	createNotificationRetentionRunner,
+} from '../services/delivery-runner.ts';
 import {
 	DatabaseNotificationsRepository,
 	migrateNotificationsDatabase,
@@ -51,6 +55,10 @@ export interface NotificationsRuntimeOptions {
 	readonly members: (
 		tenantId: string,
 	) => Promise<readonly TenantMemberScopes[]>;
+	/** The platform mail port the e-mail channel sends through. */
+	readonly mail: MailPort;
+	/** The language one workspace's messages say they are written in. */
+	readonly locale?: (tenantId: string) => string;
 	readonly repository?: NotificationsRepository;
 	/** Test seam for the address check; never reachable from configuration. */
 	readonly hostResolver?: HostAddressResolver;
@@ -146,8 +154,7 @@ export function createNotificationsRuntime(
 	let webhooks: WebhookSubscriptionService | undefined;
 	let deliveries: DeliveryService | undefined;
 	let publisher: NotificationPublishService | undefined;
-	let poll: ReturnType<typeof setInterval> | undefined;
-	let tickInFlight: Promise<void> | undefined;
+	let jobs: readonly JobRunner[] | undefined;
 	let disposed = false;
 
 	const service = async () =>
@@ -166,7 +173,9 @@ export function createNotificationsRuntime(
 			policy,
 			settings: options.deliverySettings,
 			members: options.members,
+			mail: options.mail,
 			now,
+			...(options.locale ? { locale: options.locale } : {}),
 			...(options.transport ? { transport: options.transport } : {}),
 		}));
 	const publishService = async () =>
@@ -175,33 +184,32 @@ export function createNotificationsRuntime(
 			now,
 		));
 
-	const tick = () => {
-		if (disposed || tickInFlight) return;
-		const pending = deliveryService()
-			.then((delivery) => delivery.tick())
-			.then(() => undefined)
-			.catch((error: unknown) => {
-				/* A failed pass must never stop the interval: the next tick retries
-				   the same due rows. */
-				serverLogger().error('delivery tick failed', {
-					module: 'notifications.core',
-					err: error,
-				});
-			})
-			.finally(() => {
-				if (tickInFlight === pending) tickInFlight = undefined;
-			});
-		tickInFlight = pending;
+	/* The cadence is read when the loops are built, as the setting's description
+	   says: an edited interval applies the next time the platform starts. */
+	const runners = (): readonly JobRunner[] => {
+		if (jobs) return jobs;
+		const intervalMs = options.pollIntervalMs();
+		return (jobs = [
+			createNotificationDeliveryRunner({
+				repository: repositoryInstance,
+				deliveries: deliveryService,
+				intervalMs,
+				now,
+			}),
+			createNotificationRetentionRunner({
+				deliveries: deliveryService,
+				intervalMs,
+				now,
+			}),
+		]);
 	};
 
 	const stop = () => {
-		if (poll) clearInterval(poll);
-		poll = undefined;
+		for (const runner of jobs ?? []) runner.stop();
 	};
 
 	const quiesce = async () => {
-		stop();
-		await tickInFlight;
+		for (const runner of jobs ?? []) await runner.quiesce();
 	};
 
 	return {
@@ -211,17 +219,20 @@ export function createNotificationsRuntime(
 		deliveries: deliveryService,
 		publisher: publishService,
 		start() {
-			if (disposed || poll) return;
-			tick();
-			poll = setInterval(tick, options.pollIntervalMs());
-			poll.unref?.();
+			if (disposed) return;
+			for (const runner of runners()) runner.start();
 		},
 		stop,
 		quiesce,
 		async dispose() {
 			if (disposed) return;
 			disposed = true;
-			await quiesce();
+			/* Every loop stops before the first drain is awaited: a runner still
+			   scheduling passes while another is being drained would keep opening
+			   work against a repository this call is about to release. */
+			stop();
+			for (const runner of jobs ?? []) await runner.dispose();
+			jobs = undefined;
 			/* An open still in flight would assign its leases after this read, so
 			   settle it first; a failed open must not surface as an unhandled
 			   rejection during teardown. */

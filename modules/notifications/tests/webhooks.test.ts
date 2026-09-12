@@ -307,6 +307,27 @@ describe('notifications webhook subscriptions', () => {
 		).toEqual([...legacy]);
 	});
 
+	/* The name is quoted in the title of the dead-letter item, which is mailed as
+	   a subject; a line break in it would be refused there on every attempt. */
+	it('rejects a name that is not one line, on create and on rename', async () => {
+		const { webhooks } = harness();
+		const created = await webhooks.create(TENANT, 'account-owner', INPUT);
+		for (const name of [
+			'Ops\nBcc: everyone@example.com',
+			'Ops\r\nBcc: everyone@example.com',
+		]) {
+			await expect(
+				webhooks.create(TENANT, 'account-owner', { ...INPUT, name }),
+			).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+			await expect(
+				webhooks.update(TENANT, created.subscription.id, { ...INPUT, name }),
+			).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+		}
+		expect((await webhooks.get(TENANT, created.subscription.id)).name).toBe(
+			INPUT.name,
+		);
+	});
+
 	it('rejects an empty or unknown event selection', async () => {
 		const { webhooks } = harness();
 		for (const events of [[], ['not-a-kind']]) {

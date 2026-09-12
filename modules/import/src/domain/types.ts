@@ -97,6 +97,12 @@ export interface ImportJob {
 	readonly claimedAt: number | null;
 	readonly startedAt: number;
 	readonly completedAt: number | null;
+	/**
+	 * The trace that enqueued the job, as a `traceparent` header value. Null
+	 * when the job was started outside a traced scope, which the claim reads as
+	 * a new root.
+	 */
+	readonly traceparent: string | null;
 }
 
 /**
@@ -112,10 +118,13 @@ export const IMPORT_UNEXPECTED_FAILURE = 'JOB_FAILED';
 /**
  * The job as an API response carries it. The requester snapshot is bookkeeping
  * a port needs in a background stage and no reader of the screen does, and the
- * claim is the poll loop's own lease, so neither crosses the wire: a job read
- * names the requester by account id alone.
+ * claim and the trace it was enqueued in are the poll loop's own, so none of
+ * them crosses the wire: a job read names the requester by account id alone.
  */
-export type ImportJobView = Omit<ImportJob, 'requester' | 'claimedAt'>;
+export type ImportJobView = Omit<
+	ImportJob,
+	'requester' | 'claimedAt' | 'traceparent'
+>;
 
 /* Every field is named rather than spread, so a field added to the job is a
    decision taken here instead of an addition the wire makes silently. */

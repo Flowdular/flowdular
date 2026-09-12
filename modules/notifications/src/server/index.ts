@@ -27,10 +27,20 @@ export {
 } from '../services/delivery-service.ts';
 export type {
 	DeliveryOutcome,
+	DeliveryPass,
 	DeliveryTransport,
 	TenantDeliverySettings,
 	TenantMemberScopes,
 } from '../services/delivery-service.ts';
+export {
+	createNotificationDeliveryRunner,
+	createNotificationRetentionRunner,
+	DELIVERY_CONCURRENCY,
+} from '../services/delivery-runner.ts';
+export type {
+	NotificationsDeliveryRunnerOptions,
+	NotificationsRetentionRunnerOptions,
+} from '../services/delivery-runner.ts';
 export { NotificationPublishService } from '../services/publish-service.ts';
 export {
 	WebhookSubscriptionService,

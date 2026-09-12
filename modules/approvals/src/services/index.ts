@@ -1,9 +1,7 @@
-export {
-	ApprovalsService,
-	APPROVALS_PAGE_LIMIT,
-	EXPIRY_BATCH,
-} from './approvals-service.ts';
+export { ApprovalsService, APPROVALS_PAGE_LIMIT } from './approvals-service.ts';
 export type { ApprovalsServiceOptions } from './approvals-service.ts';
+export { createApprovalsExpiryRunner, EXPIRY_BATCH } from './expiry-runner.ts';
+export type { ApprovalsExpiryRunnerOptions } from './expiry-runner.ts';
 export { createApprovalCallbackRegistry } from './callbacks.ts';
 export type {
 	ApprovalCallbackRegistry,

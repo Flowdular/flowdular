@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import {
+	DEFAULT_EMAIL_DELIVERY,
 	INBOX_STATUSES,
 	NOTIFICATION_KINDS,
+	type MemberNotificationSettings,
 	type NotificationKind,
 	type NotificationPreference,
 	type NotificationsInbox,
@@ -136,6 +138,44 @@ export class NotificationsService {
 			),
 			kind: oneOf(kind, 'kind', NOTIFICATION_KINDS),
 			enabled: enabled === true,
+			createdAt: now,
+			updatedAt: now,
+		});
+	}
+
+	/** The member's own workspace-wide switches; the defaults when none exist. */
+	async memberSettings(
+		tenantId: string,
+		recipientAccountId: string,
+	): Promise<MemberNotificationSettings> {
+		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
+		const account = bounded(recipientAccountId, 'recipientAccountId', 1, 128);
+		return (
+			(await this.repository.getMemberSettings(trustedTenantId, account)) ?? {
+				tenantId: trustedTenantId,
+				recipientAccountId: account,
+				emailDelivery: DEFAULT_EMAIL_DELIVERY,
+				createdAt: 0,
+				updatedAt: 0,
+			}
+		);
+	}
+
+	async saveEmailDelivery(
+		tenantId: string,
+		recipientAccountId: string,
+		enabled: boolean,
+		now = Date.now(),
+	): Promise<MemberNotificationSettings> {
+		return this.repository.saveMemberSettings({
+			tenantId: bounded(tenantId, 'tenantId', 1, 128),
+			recipientAccountId: bounded(
+				recipientAccountId,
+				'recipientAccountId',
+				1,
+				128,
+			),
+			emailDelivery: enabled === true,
 			createdAt: now,
 			updatedAt: now,
 		});

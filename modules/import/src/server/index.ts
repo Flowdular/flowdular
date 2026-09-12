@@ -13,11 +13,12 @@ export type {
 	ImportTargetView,
 	StartImportInput,
 } from '../services/import-service.ts';
-export { ImportRunner } from '../services/import-runner.ts';
-export type {
-	ImportPassReport,
-	ImportRunnerOptions,
+export {
+	createImportJobRunner,
+	IMPORT_CLAIM_TIMEOUT_MS,
+	IMPORT_POLL_INTERVAL_MS,
 } from '../services/import-runner.ts';
+export type { ImportRunnerOptions } from '../services/import-runner.ts';
 export {
 	createImportPortRegistry,
 	ImportPortError,
@@ -44,5 +45,5 @@ export {
 	importMaxRows,
 	IMPORT_MODULE_SETTINGS,
 } from '../settings.ts';
-export { createImportRuntime, IMPORT_POLL_INTERVAL_MS } from './runtime.ts';
+export { createImportRuntime } from './runtime.ts';
 export type { ImportRuntime, ImportRuntimeOptions } from './runtime.ts';

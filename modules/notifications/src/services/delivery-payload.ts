@@ -53,3 +53,41 @@ export function webhookPayloadFingerprint(
 		bytes: Buffer.byteLength(body, 'utf8'),
 	};
 }
+
+export interface EmailPayloadSource {
+	readonly tenantId: string;
+	readonly recipientAccountId: string;
+	readonly kind: NotificationKind;
+	readonly sourceModule: string;
+	readonly sourceRef: string;
+	readonly title: string;
+	readonly occurredAt: number;
+}
+
+/**
+ * What an e-mail attempt records in the ledger: the addressed event, not the
+ * rendered message. The body is never copied onto the attempt row; it is read
+ * from the member's inbox item when the message is built, so the ledger keeps
+ * holding a digest and a size rather than a payload.
+ */
+export function emailPayloadFingerprint(
+	source: EmailPayloadSource,
+): PayloadFingerprint {
+	/* Key order is fixed by the literal, so the digest is stable across
+	   processes and comparable between attempts of one event. */
+	const body = JSON.stringify({
+		version: 'notifications.email.v1',
+		event: source.kind,
+		tenantId: source.tenantId,
+		recipientAccountId: source.recipientAccountId,
+		sourceModule: source.sourceModule,
+		sourceRef: source.sourceRef,
+		title: source.title,
+		occurredAt: source.occurredAt,
+	});
+	return {
+		body,
+		digest: createHash('sha256').update(body, 'utf8').digest('hex'),
+		bytes: Buffer.byteLength(body, 'utf8'),
+	};
+}

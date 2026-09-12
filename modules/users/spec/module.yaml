@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: users.core
-specVersion: 0.9.3
+specVersion: 0.9.6
 status: approved
 name: User Management Core
 description: Provides the tenant-scoped user directory and member administration (creation, display name, role assignment, per-member scopes, account status, password reset, session revocation, removal) through the public auth administration port.
@@ -11,17 +11,21 @@ capabilities:
   - translations
 dependencies:
   - id: system.core
-    range: ^0.5.1
+    range: ^0.7.0
   - id: auth.core
-    range: ^0.12.0
+    range: ^0.13.0
   - id: search.core
     range: ^0.1.0
   - id: import.core
     range: ^0.1.0
+  - id: exports.core
+    range: ^0.2.0
 requires:
   - id: search.providers.v1
     optional: true
   - id: import.ports.v1
+    optional: true
+  - id: exports.lists.v1
     optional: true
 tenancy: required
 locales:
@@ -38,8 +42,9 @@ invariants:
   - Only an owner may create or promote an owner, change another owner, or hand out scopes it does not hold itself.
   - Disabling, removing, or demoting a member never leaves the tenant without an active owner, and never targets the acting principal.
   - Every member administration write is recorded in the auth audit trail with the acting principal.
-  - The member search provider registered with search.providers.v1 reads members only through the auth administration port, under the tenant of the searching principal and behind users.members.read; it holds no index and no copy of a membership. The predicate and the bound are pushed into the port, which answers at most the documented number of members whose display name contains the longest term of the query or whose address starts with it, so a request never reads a workspace of unknown size; the remaining terms and the ranking are applied to that bounded set.
+  - The member search provider registered with search.providers.v1 reads members only through the auth administration port, under the tenant of the searching principal and behind users.members.read; it holds no index and no copy of a membership. The predicate and the bound are pushed into the port, which answers at most the documented number of members whose display name or whose normalised address starts with the term. Because that rule is a prefix, the provider pushes the terms of the query in the order they were typed, one read each, stops at the first term that answers rows and makes at most three reads for one query, so a request never reads a workspace of unknown size and the same set is found whichever order the terms were typed in; every term and the ranking are then applied to the rows that came back, and a member no term of the first three opens is not found.
   - The members import target registered with import.ports.v1 as users.core.members accepts email (required), displayName (required) and role (optional, a role key of the workspace, defaulting to member), keys rows by the address folded the way auth.core stores one, trimmed, NFKC normalised and lower cased, so import.core refuses a repeat spelled in another case wherever in the file it stands, resolves that natural key per batch by asking the auth administration port about the addresses the batch names rather than by listing the workspace, and is behind users.members.manage; create-only creates an absent member and refuses an existing one with ALREADY_EXISTS, update-existing creates an absent member and applies the display name and then the role of an existing one, so the write that can only be refused for its own shape lands first and a role auth.core refuses afterwards leaves the row updated with the reason ROLE_UNCHANGED:<code> rather than denying a change that already happened, skip-existing leaves an existing member untouched; every write goes through the auth administration port with the principal that started the job, a refused row never fails another row, and a deployment without import.core still composes users.core.
+  - The members list export registered with exports.lists.v1 as users.core.members declares the e-mail, display name, role, workspace status and joined-at columns, is behind users.members.read, and is walked by exports.core under the principal that started the job through the auth administration port, so a file can never carry a member of another workspace or a column the Members screen would not have shown. The walk is the administration port's own paged member listing, one bounded page per call, so an export of M members reads M rows rather than one roll per page. Its keyset is the account id and not the display name the unpaged roll is ordered by, so a member renamed while a long walk runs cannot cross a page boundary and be written twice or skipped, and a member removed mid-walk does not strand the cursor. The Members screen starts a job through exports.core's own start route and links to the Exports screen, and a deployment without exports.core still composes users.core and registers nothing.
 permissions:
   - id: users.members.read
     description: Read memberships in the active tenant.
@@ -97,6 +102,10 @@ acceptanceScenarios:
     given: import.core composed before users.core and a principal holding users.members.manage that started an import job into users.core.members with rows of email, display name and role.
     when: The file is written with create-only, repeated with create-only, skip-existing and update-existing, and a row names a role the workspace does not have, an address that is already an account elsewhere, or an address a row above it already carried in another case.
     then: The first run creates the members with their role, their account id as the record reference and no password at all, so a sign-in is refused and a self-service credential change answers PASSWORD_NOT_SET rather than a wrong-password refusal; the repeat reports ALREADY_EXISTS, then skipped, then updated with the display name and role of the file; the unknown role and the repeated address are refused before any write, a role refused at write time after the display name was already changed leaves the row updated with ROLE_UNCHANGED and the member's new name, the address taken elsewhere fails its own row alone, and no member of another workspace is created or changed.
+  - id: USERS-EXPORT
+    given: exports.core composed either before or after users.core and a principal holding users.members.read in a workspace with more members than one export page carries.
+    when: exports.core walks users.core.members for a job that principal started from the Members screen, while another workspace holds members of its own and a member of the exported workspace is removed mid-walk.
+    then: The file carries the header and every member of the principal's workspace exactly once in account id order with their e-mail, display name, role, workspace status and joined-at instant, no member of the other workspace appears, the removed member's page cursor still answers the members that sort after it rather than ending the job, the list is registered exactly once whichever of the two modules composed first, and a deployment without exports.core composes users.core with no list registered.
   - id: USERS-SEARCH
     given: search.core composed before users.core and a principal holding users.members.read.
     when: The principal searches a term that matches a member's display name or e-mail.

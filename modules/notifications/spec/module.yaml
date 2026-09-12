@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: notifications.core
-specVersion: 0.1.5
+specVersion: 0.2.5
 status: approved
 name: Notifications Core
 description: Delivers what a person and a customer system need to hear about, as an in-app inbox per member and signed outbound webhooks per workspace with a delivery ledger, bounded retry and a dead letter an administrator can inspect and replay.
@@ -13,9 +13,9 @@ capabilities:
   - cli
 dependencies:
   - id: system.core
-    range: ^0.5.1
+    range: ^0.7.0
   - id: auth.core
-    range: ^0.12.0
+    range: ^0.13.0
 tenancy: required
 locales:
   - en
@@ -29,10 +29,13 @@ invariants:
   - Every outbound request is signed the way inbound automations triggers are verified, HMAC-SHA256 over a versioned string of timestamp and body, sent in x-flowdular-signature with x-flowdular-timestamp, so a customer implements one scheme in both directions.
   - A subscription URL must be https, must not resolve to a loopback, link-local, private or reserved address at save time and again at every delivery, is never followed through a redirect, receives a 10 second timeout and a 64 KB response cap, and when the platform allowlist setting is non-empty the host must be on it.
   - A delivery opens its socket over node:https to one of the addresses the delivery-time check accepted, pinned to them for that one request on an agent created and destroyed with it, and the https scheme is refused again immediately before the socket; nothing between the check and the connection resolves the host name a second time, so a name answering publicly while the check runs and privately a moment later is unreachable.
+  - A member switches e-mail delivery on for their own account and for the whole workspace; it is off until they do, and it only decides whether an inbox item the member already receives is also sent to the address auth.core holds for them, so a kind they disabled is still not sent. The e-mail channel shares the queue, the claim, the retry budget, the backoff and the dead letter with webhooks; a dead-lettered message writes no inbox item, because that item would be mailed, fail and dead-letter again under a new source reference.
+  - An e-mail attempt stores the channel and the addressed member account and nothing else about the message; the address is read from auth.core and the title and body from the member's own inbox item at send time, so a changed address is honoured by the next attempt and no copy of either lives in the queue.
+  - Every message leaves through the platform mail port on the server context; this module never selects a transport, and a deployment that composed none records the attempt as refused instead of dropping it.
   - A delivery attempt stores the outcome, the response status, the error class, the payload SHA-256 and the payload size; it never stores the payload, the signature or the secret, and the payload is regenerated from the delivery row for a replay.
   - The webhook payload is a JSON object with version, event kind, tenant id, subscription id, source module, source reference, title and occurredAt; a customer fetches further details from the source module by that reference.
   - The module signing key is rotated through the platform keyring with a module CLI command that re-seals stored secrets in bounded batches, idempotently, and never prints a secret.
-  - Delivery runs in a module-owned queue table drained by one poll loop with the same lease discipline as automations.core, where the cross-tenant poll runs on the read-only background role over the routing columns alone, and every attempt is read again and written under the tenant the row named before any request leaves.
+  - Delivery runs in a module-owned queue table drained by the platform job runner, which owns the pass, its bound, the isolation of one attempt from the next and the drain on stop and sends at most four attempts at a time, where the cross-tenant queue read runs on the read-only background role over the routing columns alone, and every attempt is read again, claimed and written under the tenant the row named before any request leaves; retention sweeps on a runner of its own rather than as a tail of every delivery pass.
   - A failed delivery is retried with exponential backoff from one minute up to the tenant's maximum, at most the tenant's configured number of attempts, after which the delivery moves to dead letter and an inbox item of kind webhook-dead-letter is created for every member holding notifications.deliveries.read; a manual replay starts a fresh attempt sequence and never resets the ledger.
   - Delivery attempts older than the tenant retention window are deleted by the poll loop in bounded batches; a member archives an inbox item and never deletes one, and an item leaves only when the workspace retention period of notifications.core.inbox passes.
   - The module declares notifications.core.inbox (365 days by default) and notifications.core.deliveries (30 days by default, the retentionDays setting the poll loop already enforces) to the platform data class registry while it composes; both are exportable, both sweep in bounded batches inside this module's own tenant-scoped transaction, and preferences and webhook subscriptions are declared by neither because they are workspace configuration rather than history. The delivery sweep runs the same statement as the poll loop, so a queued or in-flight attempt is never removed by retention.
@@ -51,6 +54,7 @@ permissions:
     description: Read delivery attempts and the dead letter of the active tenant and replay a dead-lettered delivery.
 dataOwnership:
   - notifications.core owns inbox items, member notification preferences, webhook subscriptions, the encrypted signing secrets, the delivery queue and the delivery attempt ledger.
+  - auth.core owns the e-mail address a message is sent to; this module reads it through the auth public surface while it sends and stores no copy.
   - agents.core and workflows.core own the run records that produce notifications; they call notifications.publish.v1 with a source reference and never write inbox or delivery rows themselves.
   - auth.core owns the member accounts a notification is addressed to; this module stores the account id and resolves display names through the auth public surface at read time.
 entities:
@@ -145,6 +149,18 @@ entities:
       - id: enabled
         type: boolean
         required: true
+  - id: member-preference
+    name: Member notification settings
+    description: The switches a member holds for the whole workspace rather than for one kind; absent means the defaults.
+    fields:
+      - id: recipientAccountId
+        type: string
+        required: true
+        maxLength: 128
+      - id: emailDelivery
+        type: boolean
+        required: true
+        description: Also send every inbox item this member receives to the address auth.core holds for them; off by default.
   - id: webhook-subscription
     name: Webhook subscription
     description: A customer endpoint that receives signed events of the selected kinds.
@@ -207,12 +223,24 @@ entities:
           permission: notifications.webhooks.manage
   - id: delivery
     name: Delivery attempt
-    description: One attempt to deliver one event to one subscription, kept for the retention window.
+    description: One attempt to deliver one event to one subscription or one member, kept for the retention window.
     fields:
+      - id: channel
+        type: enum
+        required: true
+        values:
+          - webhook
+          - email
+        description: Where the attempt is addressed; a webhook names a subscription and an e-mail names a member.
       - id: subscription
         type: reference
-        required: true
+        required: false
         reference: webhook-subscription
+      - id: recipientAccountId
+        type: string
+        required: false
+        maxLength: 128
+        description: The member an e-mail attempt is addressed to; absent on a webhook attempt.
       - id: kind
         type: enum
         required: true
@@ -392,6 +420,13 @@ actions:
     risk: workspace-write
     idempotent: true
     description: Enable or disable one kind for the member's own account; the row is created on first save.
+  - id: save-email-delivery
+    entity: member-preference
+    permission: notifications.inbox.manage
+    kind: update
+    risk: workspace-write
+    idempotent: true
+    description: Turn e-mail delivery on or off for the member's own account; the row is created on first save.
   - id: create-subscription
     entity: webhook-subscription
     permission: notifications.webhooks.manage
@@ -481,7 +516,8 @@ settings:
     description: How often the delivery loop looks for due attempts; 5 to 300.
 agentTools: []
 outOfScope:
-  - E-mail delivery of notifications to members is deferred; it needs the mail port promoted from auth.core to the platform context and receives its own specification after G1.
+  - Per-kind e-mail preferences are not offered; e-mail delivery is one switch per member over the kinds they already receive.
+  - A digest is not offered; one inbox item is one message.
   - Notification sources other than agent runs, workflow runs and dead letters are deferred; auth.core membership events arrive through a later edit of that module's specification.
   - There is no event bus; publishers call notifications.publish.v1 synchronously inside their own request or worker and tolerate its absence.
   - Full-text search of the inbox is not available; the inbox filters by status and kind only.
@@ -521,9 +557,13 @@ decisions:
     answer: https only, private, loopback and link-local ranges blocked at save and at delivery, no redirects, 10 second timeout, 64 KB response cap, optional platform host allowlist.
     decidedBy: user
   - id: D-EMAIL
-    question: Does v1 deliver notifications by e-mail?
-    answer: No; e-mail delivery is out of scope and gets its own specification once the mail port is platform-level.
+    question: Does this module deliver notifications by e-mail?
+    answer: Yes since 0.2.0, through the platform mail port on the server context, as one switch per member over the kinds they already receive; RFC 0004 H1 made the port platform-level and this module its second sender.
     decidedBy: user
+  - id: D-EMAIL-DEAD-LETTER
+    question: What does a dead-lettered e-mail produce?
+    answer: A ledger row and nothing else; an inbox item for it would be mailed, fail and dead-letter again under a new source reference.
+    decidedBy: default
   - id: D-ACTORS
     question: Which roles hold which permissions by default?
     answer: Owner manages webhooks and reads deliveries; member reads webhooks and manages only their own inbox.
@@ -601,6 +641,14 @@ acceptanceScenarios:
     given: A member disabled the kind agent-run-completed.
     when: An event of that kind is published with that member as recipient.
     then: No inbox item is created for that member, while webhook deliveries are unaffected.
+  - id: NOTIFICATIONS-EMAIL-CHANNEL
+    given: A member turned e-mail delivery on and another member of the same workspace did not.
+    when: An event addressed to both is published and the delivery loop runs.
+    then: Exactly one message is sent, to the address auth.core holds for the member who asked, carrying the item's title and body with the HTML part escaped; the attempt is recorded as succeeded with a payload digest and size and no copy of the message or the address, the other member receives only the inbox item, and publishing the same event again sends nothing further.
+  - id: NOTIFICATIONS-EMAIL-REFUSED
+    given: A member asked for e-mail and the deployment composed no transport, the relay fails, or the port's gate rejects the message itself.
+    when: The delivery loop runs.
+    then: A missing transport and a relay failure are recorded with their class and retried with the same backoff a webhook gets until the attempts are exhausted; a message the gate rejects is recorded once and reaches the dead letter on that first attempt because a retry cannot change it; in every case the delivery ends in the dead letter and no inbox item is created for the failure.
   - id: NOTIFICATIONS-WEBHOOK-CREATE
     given: A principal holding notifications.webhooks.manage supplies a unique name, an https URL to a public host and a non-empty list of kinds.
     when: The subscription is created.

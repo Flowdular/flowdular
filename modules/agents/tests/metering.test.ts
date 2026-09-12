@@ -498,7 +498,11 @@ describe('AGENTS-METERING-REQUIRED', () => {
 		};
 	}
 
-	const platform = [stub('system.core', '0.5.1'), stub('auth.core', '0.12.0')];
+	const platform = [
+		stub('system.core', '0.7.0'),
+		stub('auth.core', '0.13.0'),
+		stub('reports.core', '0.1.0', ['reports.v1']),
+	];
 	const metering = stub('metering.core', '0.1.3', ['metering.meters.v1']);
 
 	it('refuses a composition that leaves metering.core out', () => {

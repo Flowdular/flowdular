@@ -18,6 +18,7 @@ import type {
 import { databaseMigrations } from './migration.ts';
 import type {
 	BucketQuery,
+	MeteringReadOptions,
 	MeteringRepository,
 	RecordFactInput,
 	RecordFactResult,
@@ -253,10 +254,17 @@ export class DatabaseMeteringRepository implements MeteringRepository {
 	async #read<Row extends object>(
 		tenantId: string,
 		statement: DatabaseStatement,
+		options?: MeteringReadOptions,
 	): Promise<readonly Row[]> {
 		const result = await this.runtime.transaction(
 			(transaction) => transaction.query<Row>(statement),
-			{ access: 'read', tenantId },
+			{
+				access: 'read',
+				tenantId,
+				/* The caller's budget reaches the statement, so a read nobody waits
+				   for stops holding a connection open. */
+				...(options?.signal === undefined ? {} : { signal: options.signal }),
+			},
 		);
 		return result.rows;
 	}
@@ -412,12 +420,17 @@ export class DatabaseMeteringRepository implements MeteringRepository {
 	async listMeterUsage(
 		tenantId: string,
 		month: string,
+		options?: MeteringReadOptions,
 	): Promise<readonly MeterUsage[]> {
 		const range = monthRange(month);
-		const rows = await this.#read<MeterUsageRow>(tenantId, {
-			text: SQL.listMeterUsage,
-			parameters: [tenantId, range.from, range.to],
-		});
+		const rows = await this.#read<MeterUsageRow>(
+			tenantId,
+			{
+				text: SQL.listMeterUsage,
+				parameters: [tenantId, range.from, range.to],
+			},
+			options,
+		);
 		return rows.map((row) => ({
 			meter: meterFromRow(row),
 			month,

@@ -289,6 +289,12 @@ const SQL = {
 	 WHERE tenant_id = $1 AND id = $2 AND status = 'started'
 	   AND (claimed_at IS NULL OR claimed_at <= $4)
 	 RETURNING *`,
+	/* Renewed by the loop that holds the claim. The status guard keeps a run
+	   that already settled from looking claimed again, and the claim guard keeps
+	   a pass whose lease lapsed from renewing over the loop that reclaimed it. */
+	heartbeatExportRun: `UPDATE audit_export_runs SET claimed_at = $3
+	 WHERE tenant_id = $1 AND id = $2 AND claimed_at = $4
+	   AND status = 'started'`,
 	listExportRuns: `SELECT * FROM audit_export_runs
 	 WHERE tenant_id = $1 AND ($2::text IS NULL OR status = $2)
 	 ORDER BY started_at DESC, id
@@ -426,6 +432,9 @@ const SQL = {
 	 WHERE tenant_id = $1 AND id = $2 AND status = 'requested'
 	   AND (claimed_at IS NULL OR claimed_at <= $4)
 	 RETURNING ${ERASURE_RUN_COLUMNS}`,
+	heartbeatErasureRun: `UPDATE audit_erasure_runs SET claimed_at = $3
+	 WHERE tenant_id = $1 AND id = $2 AND claimed_at = $4
+	   AND status = 'requested'`,
 	listErasureRuns: `SELECT ${ERASURE_RUN_COLUMNS} FROM audit_erasure_runs
 	 WHERE tenant_id = $1 ORDER BY started_at DESC, id LIMIT $2`,
 	exportLegalHolds: `SELECT ${HOLD_COLUMNS} FROM audit_legal_holds
@@ -1181,6 +1190,23 @@ export class DatabaseAuditRepository implements AuditRepository {
 		return row ? exportRunFromRow(row) : null;
 	}
 
+	async heartbeatExportRun(
+		tenantId: string,
+		id: string,
+		at: number,
+		claimedAt: number,
+	): Promise<boolean> {
+		const result = await this.handles.runtime.transaction(
+			(transaction) =>
+				transaction.execute({
+					text: SQL.heartbeatExportRun,
+					parameters: [tenantId, id, at, claimedAt],
+				}),
+			{ access: 'write', tenantId },
+		);
+		return result.affectedRows > 0;
+	}
+
 	async listExportRuns(
 		tenantId: string,
 		status: ExportStatus | undefined,
@@ -1837,6 +1863,23 @@ export class DatabaseAuditRepository implements AuditRepository {
 		);
 		const row = result.rows[0];
 		return row ? erasureRunFromRow(row) : null;
+	}
+
+	async heartbeatErasureRun(
+		tenantId: string,
+		id: string,
+		at: number,
+		claimedAt: number,
+	): Promise<boolean> {
+		const result = await this.handles.runtime.transaction(
+			(transaction) =>
+				transaction.execute({
+					text: SQL.heartbeatErasureRun,
+					parameters: [tenantId, id, at, claimedAt],
+				}),
+			{ access: 'write', tenantId },
+		);
+		return result.affectedRows > 0;
 	}
 
 	async listErasureRuns(

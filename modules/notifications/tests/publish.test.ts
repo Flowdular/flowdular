@@ -415,6 +415,29 @@ describe('notifications.publish.v1', () => {
 		expect(await inbox.list(TENANT, 'account-ada')).toHaveLength(0);
 	});
 
+	/* The title is the subject of the message the item is mailed as, and a
+	   subject carrying a line break is refused by the mail port on every attempt
+	   of it, so the publication is refused instead. */
+	it('refuses a title that would not fit one subject line', async () => {
+		const { publisher, inbox } = harness();
+		for (const title of [
+			'Nightly run failed\nBcc: everyone@example.com',
+			'Nightly run failed\r\nBcc: everyone@example.com',
+		]) {
+			await expect(
+				publisher.publish({
+					tenantId: TENANT,
+					kind: 'agent-run-failed',
+					sourceModule: 'agents.core',
+					sourceRef: 'run-title',
+					title,
+					recipients: ['account-ada'],
+				}),
+			).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+		}
+		expect(await inbox.list(TENANT, 'account-ada')).toHaveLength(0);
+	});
+
 	it('publishes under a capability id the registry accepts', () => {
 		expect(NOTIFICATIONS_PUBLISH_CAPABILITY).toBe('notifications.publish.v1');
 		expect(NOTIFICATIONS_PUBLISH_CAPABILITY).toMatch(

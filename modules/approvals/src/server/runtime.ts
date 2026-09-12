@@ -7,7 +7,7 @@ import {
 	DATABASE_CAPABILITY_IDS,
 	DATABASE_DIALECT_IDS,
 } from '@flowdular/database';
-import { serverLogger } from '@flowdular/server';
+import type { JobRunner } from '@flowdular/server';
 import type { ApprovalMember } from '../domain/types.ts';
 import {
 	createApprovalCallbackRegistry,
@@ -17,6 +17,7 @@ import {
 	DatabaseApprovalsRepository,
 	migrateApprovalsDatabase,
 } from '../services/database-repository.ts';
+import { createApprovalsExpiryRunner } from '../services/expiry-runner.ts';
 import type { NotificationPublisherResolver } from '../services/notifications.ts';
 import type { ApprovalsRepository } from '../services/repository.ts';
 import { ApprovalsService } from '../services/approvals-service.ts';
@@ -61,8 +62,7 @@ export function createApprovalsRuntime(
 	let repositoryPromise: Promise<ApprovalsRepository> | undefined;
 	let leases: readonly DatabaseAdapterLease[] = [];
 	let service: ApprovalsService | undefined;
-	let poll: ReturnType<typeof setInterval> | undefined;
-	let tickInFlight: Promise<void> | undefined;
+	let jobs: JobRunner | undefined;
 	let disposed = false;
 
 	const acquire = (purpose: DatabaseProviderRequest['purpose']) =>
@@ -123,50 +123,35 @@ export function createApprovalsRuntime(
 			...(options.now ? { now: options.now } : {}),
 		}));
 
-	const tick = () => {
-		if (disposed || tickInFlight) return;
-		const pending = resolved()
-			.then((instance) => instance.expireDue())
-			.then(() => undefined)
-			.catch((error: unknown) => {
-				/* A failed pass must never stop the interval: the next tick reads the
-				   same due requests again. */
-				serverLogger().error('approval expiry tick failed', {
-					module: 'approvals.core',
-					err: error,
-				});
-			})
-			.finally(() => {
-				if (tickInFlight === pending) tickInFlight = undefined;
-			});
-		tickInFlight = pending;
-	};
-
-	const stop = () => {
-		if (poll) clearInterval(poll);
-		poll = undefined;
-	};
-
-	const quiesce = async () => {
-		stop();
-		await tickInFlight;
-	};
+	/* The platform runner owns the loop: the interval and its unref, the guard
+	   against overlapping passes, the bound on claims, the isolation of one
+	   request from the next, and the drain. This module keeps its routing read
+	   and its transition. The interval is the platform setting as it reads when
+	   the loop starts, so the runner is built there rather than while the
+	   platform composes, before the setting is declared. */
+	const runner = (): JobRunner =>
+		(jobs ??= createApprovalsExpiryRunner({
+			repository: repositoryInstance,
+			service: resolved,
+			intervalMs: options.expiryIntervalMs(),
+			...(options.now ? { now: options.now } : {}),
+		}));
 
 	return {
 		service: resolved,
 		repository: repositoryInstance,
 		start() {
-			if (disposed || poll) return;
-			tick();
-			poll = setInterval(tick, options.expiryIntervalMs());
-			poll.unref?.();
+			if (disposed) return;
+			runner().start();
 		},
-		stop,
-		quiesce,
+		stop: () => jobs?.stop(),
+		async quiesce() {
+			await jobs?.quiesce();
+		},
 		async dispose() {
 			if (disposed) return;
 			disposed = true;
-			await quiesce();
+			await jobs?.dispose();
 			/* An open still in flight would assign its leases after this read, so
 			   settle it first; a failed open must not surface as an unhandled
 			   rejection during teardown. */

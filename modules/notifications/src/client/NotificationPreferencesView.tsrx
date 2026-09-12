@@ -15,10 +15,14 @@ import {
 	loadPreferences,
 	NotificationsApiError,
 	notificationsErrorMessage,
+	saveEmailDelivery,
 	savePreference,
 } from './api.ts';
 import { kindLabel } from './presentation.ts';
-import { createPreferencesClientState } from './state.ts';
+import {
+	createPreferencesClientState,
+	emailDeliverySwitchState,
+} from './state.ts';
 
 export interface NotificationPreferencesViewProps {
 	readonly csrfToken: string;
@@ -34,10 +38,18 @@ export function NotificationPreferencesView(
 	const [status, setStatus] = useValue(client.state.status);
 	const [error, setError] = useValue(client.state.error);
 	const [busyKind, setBusyKind] = useValue(client.state.busyKind);
+	const [emailDelivery, setEmailDelivery] = useValue(
+		client.state.emailDelivery,
+	);
 	const [results, setResults] = useValue(client.state.results);
 	/* A kind without a stored row is enabled: the member opted out of nothing. */
 	const enabled = (kind: NotificationKind): boolean =>
 		preferences.find((preference) => preference.kind === kind)?.enabled ?? true;
+	const emailSwitch = emailDeliverySwitchState({
+		status,
+		canManage: props.canManage,
+		busy: busyKind !== '',
+	});
 
 	const refresh = async () => {
 		setStatus('loading');
@@ -47,6 +59,10 @@ export function NotificationPreferencesView(
 			client.store.act((transaction) => {
 				transaction.set(client.state.kinds, loaded.kinds);
 				transaction.set(client.state.preferences, loaded.preferences);
+				transaction.set(
+					client.state.emailDelivery,
+					loaded.member.emailDelivery,
+				);
 				transaction.set(client.state.status, 'idle');
 			}, 'notifications/preferences-loaded');
 		} catch (loadError) {
@@ -101,6 +117,36 @@ export function NotificationPreferencesView(
 		}
 	};
 
+	/* The workspace-wide switch shares the one-save-at-a-time rule with the
+   per-kind ones: they all write the same member. */
+	const toggleEmail = async (next: boolean) => {
+		setBusyKind('email');
+		setError('');
+		try {
+			const saved = await saveEmailDelivery(next, props.csrfToken);
+			client.store.act((transaction) => {
+				transaction.set(client.state.emailDelivery, saved.emailDelivery);
+				transaction.set(client.state.results, {
+					...results,
+					email: { ok: true, message: t('notifications.preferences.saved') },
+				});
+			}, 'notifications/email-delivery-saved');
+		} catch (saveError) {
+			setResults({
+				...results,
+				email: {
+					ok: false,
+					message: notificationsErrorMessage(
+						saveError,
+						'notifications.preferences.error.save',
+					),
+				},
+			});
+		} finally {
+			setBusyKind('');
+		}
+	};
+
 	<div class="ui-view">
 		<PageHeader
 			eyebrow={t('notifications.common.workspace')}
@@ -138,6 +184,22 @@ export function NotificationPreferencesView(
 						</span>
 					</div>
 					<div class="ui-card__body">
+						@if (emailSwitch.shown) {
+							<SettingRow
+								label={t('notifications.preferences.emailDelivery.label')}
+								description={t(
+									'notifications.preferences.emailDelivery.description',
+								)}
+								status={results['email'] ?? null}
+							>
+								<Switch
+									checked={emailDelivery}
+									label={t('notifications.preferences.emailDelivery.label')}
+									disabled={emailSwitch.disabled}
+									onChange={(next) => void toggleEmail(next)}
+								/>
+							</SettingRow>
+						}
 						@if (kinds.length === 0) {
 							@if (status === 'loading') {
 								<p class="ui-note">

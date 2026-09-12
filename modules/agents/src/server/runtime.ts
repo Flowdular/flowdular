@@ -41,6 +41,7 @@ import {
 	type DatabaseProvider,
 	type DatabaseProviderRequest,
 } from '@flowdular/database';
+import { serverTracer, type Tracer } from '@flowdular/server';
 import { preflightModuleAgentDefinitions } from '../services/module-agent-preflight.ts';
 import { AgentWorker } from '../services/worker.ts';
 import type { AgentSettingsReader } from '../settings.ts';
@@ -91,6 +92,12 @@ export interface AgentRuntimeOptions {
 	readonly purpose?:
 		| Exclude<DatabaseProviderRequest['purpose'], 'migration'>
 		| undefined;
+	/**
+	 * Spans for provider and tool calls. Defaults to the process tracer, which
+	 * is the one `context.tracer` carries, so a run joins the trace of whatever
+	 * started it.
+	 */
+	readonly tracer?: Tracer;
 }
 
 export interface AgentRuntime {
@@ -314,6 +321,7 @@ export function createAgentRuntime(
 			const harness = new AgentHarness({
 				providers: options.providers ?? [new LocalSimulationProvider()],
 				tools,
+				tracer: options.tracer ?? serverTracer(),
 				...(options.authorizeToolAccess
 					? { authorizeToolAccess: options.authorizeToolAccess }
 					: {}),
@@ -377,6 +385,7 @@ export function createAgentRuntime(
 			);
 			actionRuntime = createAgentActionExecutionRuntime(repository, tools, {
 				leaseMs: options.workerLeaseMs,
+				...(options.tracer ? { tracer: options.tracer } : {}),
 				...(options.authorizeToolAccess
 					? { authorizeToolAccess: options.authorizeToolAccess }
 					: {}),

@@ -1,14 +1,10 @@
 import { useMemo } from 'octane';
-import { Alert, Button, FormField } from '@flowdular/ui';
+import { Alert, Button, FileUpload, FormField } from '@flowdular/ui';
 import { t } from '@flowdular/client';
 import { cell, createStore, useValue } from 'segment-state';
 import { DOCUMENT_LIMITS } from '../domain/types.ts';
 import type { DocumentLimits } from './api.ts';
 import { byteLabel, uploadRefusal } from './presentation.ts';
-
-/* Module-local on purpose: the shared library has no FileUpload yet, and this
-   screen is the first caller. Promotion candidate for @flowdular/ui once a
-   second module needs the same control. */
 
 export interface DocumentUploadValue {
 	readonly file: File;
@@ -26,6 +22,8 @@ export interface DocumentUploaderProps {
 	readonly onSubmit: (value: DocumentUploadValue) => void;
 }
 
+const FILE_FIELD_ID = 'documents-upload-file';
+
 function stringValue(form: FormData, key: string): string {
 	const value = form.get(key);
 	return typeof value === 'string' ? value.trim() : '';
@@ -33,36 +31,17 @@ function stringValue(form: FormData, key: string): string {
 
 export function DocumentUploader(props: DocumentUploaderProps) @{
 	const formState = useMemo(
-		() => createStore({
-			chosen: cell<File | null>(null),
-			refusal: '',
-		}),
+		() => createStore({ chosen: cell<File | null>(null) }),
 		[],
 	);
 	const [chosen, setChosen] = useValue(formState.state.chosen);
-	const [refusal, setRefusal] = useValue(formState.state.refusal);
 	const maxObjectBytes = props.limits?.maxObjectBytes ?? null;
 
-	const choose = (event: Event) => {
-		const input = event.currentTarget as HTMLInputElement;
-		const file = input.files?.[0] ?? null;
-		const refused =
-			file === null ? '' : uploadRefusal(file.size, maxObjectBytes);
-		formState.act((transaction) => {
-			transaction.set(formState.state.refusal, refused);
-			transaction.set(formState.state.chosen, refused === '' ? file : null);
-		}, 'documents/upload-chosen');
-	};
-
+	/* The control refuses a file the port would not take and hands back null, so
+   a submit can only ever carry a file that passed the same check. */
 	const submit = (event: SubmitEvent) => {
 		event.preventDefault();
 		if (!chosen) return;
-		const refused = uploadRefusal(chosen.size, maxObjectBytes);
-		if (refused !== '') {
-			setRefusal(refused);
-			return;
-		}
-		setRefusal('');
 		const form = new FormData(event.currentTarget as HTMLFormElement);
 		props.onSubmit({
 			file: chosen,
@@ -78,34 +57,32 @@ export function DocumentUploader(props: DocumentUploaderProps) @{
 				@if (props.error) {
 					<Alert>{props.error}</Alert>
 				}
-				<FormField
+				<FileUpload
+					id={FILE_FIELD_ID}
+					name="file"
 					label={t('documents.upload.form.file')}
+					accept={props.limits?.contentTypes}
+					maxBytes={maxObjectBytes}
+					value={chosen}
+					busy={props.busy}
+					busyLabel={t('documents.upload.action.uploading')}
+					hint={maxObjectBytes === null
+						? t('documents.upload.form.fileHelp')
+						: t('documents.upload.form.fileHelpLimited', {
+								limit: byteLabel(maxObjectBytes),
+							})}
+					chosen={(file) => t('documents.upload.form.chosen', {
+						name: file.name,
+						size: byteLabel(file.size),
+					})}
+					clearLabel={t('documents.upload.form.clear')}
+					refusal={(reason, file) => reason === 'size'
+						? uploadRefusal(file.size, maxObjectBytes)
+						: t('documents.upload.form.typeRefused')}
 					required
-					error={refusal}
-					help={chosen
-						? t('documents.upload.form.chosen', {
-								name: chosen.name,
-								size: byteLabel(chosen.size),
-							})
-						: maxObjectBytes === null
-							? t('documents.upload.form.fileHelp')
-							: t('documents.upload.form.fileHelpLimited', {
-									limit: byteLabel(maxObjectBytes),
-								})}
-				>
-					<input
-						class="ui-input"
-						type="file"
-						name="file"
-						accept={props.limits
-							? props.limits.contentTypes.join(',')
-							: undefined}
-						disabled={props.busy}
-						autoFocus
-						required
-						onChange={choose}
-					/>
-				</FormField>
+					autoFocus
+					onChange={setChosen}
+				/>
 				<div class="ui-form__row">
 					<FormField
 						label={t('documents.upload.form.ownerModule')}

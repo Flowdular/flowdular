@@ -4,6 +4,10 @@ import type {
 } from '@flowdular/module-auth/server';
 import type { ModuleSettingsDeclaration } from '@flowdular/kernel';
 import type { AgentTool } from '@flowdular/harness';
+import {
+	REPORTS_PROVIDERS_CAPABILITY,
+	type ReportProviderRegistry,
+} from '@flowdular/module-reports';
 import type { ModuleAgentDefinition } from './domain/types.ts';
 import {
 	AGENT_ACTION_EXECUTION_CAPABILITY,
@@ -15,6 +19,7 @@ import {
 	createAgentRuntime,
 } from './server/index.ts';
 import { agentsDataClasses } from './services/data-classes.ts';
+import { createAgentRunsReportProvider } from './services/reports.ts';
 import {
 	AGENT_METER_DECLARATIONS,
 	METERING_METERS_CAPABILITY,
@@ -88,6 +93,14 @@ export function createServerComposition(
 	   leases and under its own tenant transaction; the platform only holds the
 	   declaration. */
 	context.dataClasses.declare(agentsDataClasses(() => runtime.repository()));
+	/* reports.core is a declared dependency, so it has composed and its registry
+	   is still open. The capability stays optional all the same: a deployment
+	   that leaves reports out still composes this module. */
+	context.capabilities
+		.get<ReportProviderRegistry>(REPORTS_PROVIDERS_CAPABILITY)
+		?.register('agents.core', [
+			createAgentRunsReportProvider(() => runtime.repository()),
+		]);
 	context.capabilities.register(
 		AGENT_RUN_QUEUE_CAPABILITY,
 		createAgentRunQueue(() => runtime.service()),

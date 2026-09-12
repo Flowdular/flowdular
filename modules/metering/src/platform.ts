@@ -3,11 +3,16 @@ import type {
 	PlatformServerContext,
 } from '@flowdular/module-auth/server';
 import {
+	REPORTS_PROVIDERS_CAPABILITY,
+	type ReportProviderRegistry,
+} from '@flowdular/module-reports';
+import {
 	METERING_METERS_CAPABILITY,
 	type MeterRegistry,
 } from './domain/meters.ts';
 import { createMeteringRoutes, createMeteringRuntime } from './server/index.ts';
 import { meteringDataClasses } from './services/data-classes.ts';
+import { createUsageReportProvider } from './services/reports.ts';
 import {
 	NOTIFICATIONS_PUBLISH_CAPABILITY,
 	type NotificationPublisher,
@@ -56,6 +61,14 @@ export function createServerComposition(
 		METERING_METERS_CAPABILITY,
 		runtime.meters,
 	);
+	/* reports.core is a declared dependency, so it has composed and its registry
+	   is still open. The capability stays optional all the same: a deployment
+	   that leaves reports out still composes this module. */
+	context.capabilities
+		.get<ReportProviderRegistry>(REPORTS_PROVIDERS_CAPABILITY)
+		?.register('metering.core', [
+			createUsageReportProvider(() => runtime.service()),
+		]);
 	/* The sweep and the export run here, on this module's own leases and under
 	   its own tenant transaction; the platform only holds the declaration. */
 	context.dataClasses.declare(

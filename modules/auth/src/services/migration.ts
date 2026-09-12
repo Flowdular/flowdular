@@ -950,6 +950,99 @@ WHERE builtin = 1 AND key = 'member';
 ALTER TABLE auth_roles FORCE ROW LEVEL SECURITY;
 `;
 
+export const AUTH_MIGRATION_028_AUTH_MEMBER_SEARCH_PREFIX_INDEXES = `-- Member search matched a display name anywhere, LIKE '%term%', which no index
+-- can answer: every keystroke read the workspace and sorted it before the LIMIT
+-- cut it. Both branches are prefixes now, and these indexes turn each branch
+-- into a range scan of the rows it returns. The ordering is still a sort, over
+-- the rows the prefix matched rather than over the workspace.
+--
+-- The operator class is the load-bearing part. A btree over text in any
+-- collation but C orders by that collation, while LIKE 'term%' is a range in
+-- byte order, so an index in the database's default collation is ignored on a
+-- deployment created with a locale and the workspace scan comes back unnoticed.
+-- text_pattern_ops states the byte order the prefix needs, so the same plan
+-- holds under every collation. The unique index on email_normalized stays the
+-- key it is; it answers equality, and under C collation the prefix as well.
+--
+-- Neither index carries a workspace column because auth_accounts carries none.
+-- A search reaches an account through auth_memberships, whose policy and
+-- primary key bind the workspace to it.
+CREATE INDEX IF NOT EXISTS auth_accounts_display_name_prefix_idx
+  ON auth_accounts (lower(display_name) text_pattern_ops);
+CREATE INDEX IF NOT EXISTS auth_accounts_email_prefix_idx
+  ON auth_accounts (email_normalized text_pattern_ops);
+`;
+
+export const AUTH_MIGRATION_029_REPORTS_EXPORTS_ACCESS_SCOPES = `-- reports.core, exports.core and access.core declare five permissions between
+-- them, and owners hold every permission an enabled module declares. All three
+-- were already enabled when the owner defaults gained them, so auth sync-scopes
+-- does not reach an existing workspace: it grants a module's scopes when the
+-- module is enabled and to the workspaces that exist at that moment. The seed
+-- lists in acl/scopes.ts reach a workspace created from now on and no earlier
+-- one. This grants the five to every owner membership and appends them to the
+-- built-in owner role row.
+--
+-- Members receive none of them. D-REPORTS-AUDIENCE keeps the workspace report
+-- with owners because it composes spend, usage and volume across modules;
+-- D-OWNERS-ONLY keeps both access review permissions with owners because the
+-- review names every scope, token and provider of the workspace; and
+-- D-EXPORTS-PERMISSIONS states what starting an export and opening a file
+-- require of the live principal rather than granting a role anything, so the
+-- two export permissions stay owner defaults and a workspace that wants a
+-- member to export assigns a role carrying them.
+--
+-- Row security is forced on both tables, and a migration role that is not a
+-- superuser is subject to it like any other, so a plain statement would reach
+-- no row on a real deployment. The force flag is lifted for the owner and put
+-- back inside the same transaction; a role that does not own these tables fails
+-- here loudly instead of leaving the grants missing. Nothing else runs against
+-- them while the migration lock is held.
+ALTER TABLE auth_membership_scopes NO FORCE ROW LEVEL SECURITY;
+INSERT INTO auth_membership_scopes (account_id, tenant_id, scope)
+SELECT account_id, tenant_id, scope
+FROM auth_memberships
+CROSS JOIN unnest(ARRAY['reports.workspace.read', 'exports.lists.read', 'exports.lists.manage', 'access.review.read', 'access.review.manage']) AS granted(scope)
+WHERE auth_memberships.role = 'owner'
+ON CONFLICT DO NOTHING;
+ALTER TABLE auth_membership_scopes FORCE ROW LEVEL SECURITY;
+-- A role row grants too: assigning a role replaces the membership scopes with
+-- the list it carries, so a scope missing from the built-in owner row would be
+-- taken away again at the next assignment. The scopes already held keep their
+-- order and the missing ones are appended in the order acl/scopes.ts declares
+-- them, which is the order a freshly seeded workspace writes.
+ALTER TABLE auth_roles NO FORCE ROW LEVEL SECURITY;
+UPDATE auth_roles
+SET scopes_json = (
+      SELECT json_agg(entry.scope ORDER BY entry.origin, entry.position)::text
+        FROM (
+               SELECT 0 AS origin, held.position, held.scope
+                 FROM json_array_elements_text(auth_roles.scopes_json::json)
+                      WITH ORDINALITY AS held(scope, position)
+               UNION ALL
+               SELECT 1 AS origin, added.position, added.scope
+                 FROM unnest(ARRAY['reports.workspace.read', 'exports.lists.read', 'exports.lists.manage', 'access.review.read', 'access.review.manage'])
+                      WITH ORDINALITY AS added(scope, position)
+                WHERE added.scope NOT IN (
+                        SELECT existing.scope
+                          FROM json_array_elements_text(auth_roles.scopes_json::json) AS existing(scope))
+             ) AS entry
+    )
+WHERE builtin = 1 AND key = 'owner';
+ALTER TABLE auth_roles FORCE ROW LEVEL SECURITY;
+`;
+
+export const AUTH_MIGRATION_030_AUTH_MEMBERSHIP_KEYSET_INDEX = `-- The paged member read walks one workspace by keyset:
+-- WHERE tenant_id = $1 AND account_id > $2 ORDER BY account_id LIMIT $3. The
+-- primary key of auth_memberships is (account_id, tenant_id), which leads with
+-- the account, so that walk is a scan over every workspace's rows after the
+-- cursor with the workspace applied as a filter. This index leads with the
+-- workspace, which turns each page into an index range scan of exactly the
+-- rows it returns and makes the walk linear in the members it carries rather
+-- than in the deployment.
+CREATE INDEX IF NOT EXISTS auth_memberships_tenant_keyset_idx
+  ON auth_memberships (tenant_id, account_id);
+`;
+
 /* The scope backfills carry no schema, so they have nothing to adopt. They also
    reach no rows: row security is forced on both tables they read, and the
    migration role is subject to it like any other, so the SELECT they insert
@@ -1187,5 +1280,29 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 	{
 		id: '0027_workflow_automation_profile_scopes',
 		sql: { postgresql: AUTH_MIGRATION_027_WORKFLOW_AUTOMATION_PROFILE_SCOPES },
+	},
+	{
+		id: '0028_auth_member_search_prefix_indexes',
+		sql: { postgresql: AUTH_MIGRATION_028_AUTH_MEMBER_SEARCH_PREFIX_INDEXES },
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() => database.schema.hasIndex('auth_accounts_display_name_prefix_idx'),
+				() => database.schema.hasIndex('auth_accounts_email_prefix_idx'),
+			]),
+	},
+	/* Data-only like 0018, 0019, 0022, 0023, 0024, 0025 and 0027, and for the same
+	   reason it declares no inspectExisting: a probe over the rows would report a
+	   fresh database, which receives these scopes from acl/scopes.ts, as adopted. */
+	{
+		id: '0029_reports_exports_access_scopes',
+		sql: { postgresql: AUTH_MIGRATION_029_REPORTS_EXPORTS_ACCESS_SCOPES },
+	},
+	{
+		id: '0030_auth_membership_keyset_index',
+		sql: { postgresql: AUTH_MIGRATION_030_AUTH_MEMBERSHIP_KEYSET_INDEX },
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() => database.schema.hasIndex('auth_memberships_tenant_keyset_idx'),
+			]),
 	},
 ];

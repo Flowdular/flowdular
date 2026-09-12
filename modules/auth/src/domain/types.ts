@@ -179,6 +179,14 @@ export interface AuditQuery {
 	readonly tenantId: string;
 	readonly action?: string | null;
 	readonly actor?: string | null;
+	/**
+	 * An inclusive epoch-millisecond window over `occurredAt`, applied in SQL
+	 * beside the keyset. An absent end is open, so a caller reading a date
+	 * window states the window rather than seeding the cursor at its ceiling
+	 * and watching for the floor.
+	 */
+	readonly from?: number | null;
+	readonly to?: number | null;
 	readonly limit: number;
 	/** `${occurredAt}:${id}` of the last event of the previous page. */
 	readonly cursor?: string | null;

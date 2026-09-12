@@ -70,7 +70,7 @@ describe('pinned webhook delivery', () => {
 		try {
 			const rebinding = rebindingResolver();
 			const dialled: string[] = [];
-			const { vault, publisher, deliveries } = harness(
+			const { vault, publisher, deliveries, runner } = harness(
 				rebinding.resolve,
 				dialled,
 			);
@@ -90,7 +90,12 @@ describe('pinned webhook delivery', () => {
 				recipients: [],
 			});
 
-			expect(await deliveries.tick()).toBe(1);
+			expect(await runner.tick()).toEqual({
+				claimed: 1,
+				performed: 1,
+				failed: 0,
+				claimLost: 0,
+			});
 
 			expect(dialled).toEqual([TEST_PUBLIC_ADDRESS]);
 			/* The policy asked once; nothing between the check and the socket went
@@ -115,7 +120,10 @@ describe('pinned webhook delivery', () => {
 		const endpoint = await openEndpoint();
 		try {
 			const dialled: string[] = [];
-			const { vault, publisher, deliveries } = harness(testResolver(), dialled);
+			const { vault, publisher, deliveries, runner } = harness(
+				testResolver(),
+				dialled,
+			);
 			await seedSubscription({
 				repository: shared.repository,
 				vault,
@@ -132,7 +140,7 @@ describe('pinned webhook delivery', () => {
 				recipients: [],
 			});
 
-			await deliveries.tick();
+			await runner.tick();
 
 			expect(dialled).toEqual([]);
 			expect(endpoint.received).toHaveLength(0);

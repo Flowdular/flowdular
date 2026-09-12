@@ -40,12 +40,42 @@ export function createPreferencesClientState() {
 	const store = createStore({
 		kinds: cell<readonly NotificationKind[]>([]),
 		preferences: cell<readonly NotificationPreference[]>([]),
+		/* The workspace-wide switch; off until the loaded settings say otherwise. */
+		emailDelivery: false,
 		status: cell<ScreenStatus>('idle'),
 		error: '',
-		busyKind: cell<NotificationKind | ''>(''),
+		/* Which switch is saving: a kind, the workspace-wide 'email', or none. */
+		busyKind: cell<NotificationKind | 'email' | ''>(''),
 		results: cell<Readonly<Record<string, SaveResult>>>({}),
 	});
 	return { store, state: store.state };
+}
+
+export interface EmailDeliverySwitchInput {
+	readonly status: ScreenStatus;
+	readonly canManage: boolean;
+	readonly busy: boolean;
+}
+
+export interface EmailDeliverySwitchState {
+	readonly shown: boolean;
+	readonly disabled: boolean;
+}
+
+/**
+ * The workspace-wide e-mail switch. It has no stored row to fall back on the
+ * way a kind does, so before the load answers and after one that failed the
+ * screen would show the store's `false` as the member's own answer and write
+ * that answer back on the first click.
+ */
+export function emailDeliverySwitchState(
+	input: EmailDeliverySwitchInput,
+): EmailDeliverySwitchState {
+	const loaded = input.status === 'idle';
+	return {
+		shown: loaded,
+		disabled: !input.canManage || input.busy || !loaded,
+	};
 }
 
 /** Which manage action is waiting for its confirmation dialog. */

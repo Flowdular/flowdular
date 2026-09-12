@@ -13,7 +13,11 @@ import {
 	openNotificationsTestDatabase,
 	type NotificationsTestDatabase,
 } from './support/database.ts';
-import { publicResolver, TEST_SETTINGS } from './support/harness.ts';
+import {
+	developmentMailPort,
+	publicResolver,
+	TEST_SETTINGS,
+} from './support/harness.ts';
 
 const ORIGIN = 'https://erp.example';
 const SESSION_TOKEN = 'session-token-0001';
@@ -93,6 +97,7 @@ function fixture(session: AuthPrincipal | null) {
 		deliverySettings: () => TEST_SETTINGS,
 		egressAllowlist: () => '',
 		pollIntervalMs: () => 60_000,
+		mail: developmentMailPort(),
 		members: async () => [],
 		hostResolver: publicResolver({ 'hooks.example': '93.184.216.34' }),
 	});
@@ -167,6 +172,7 @@ const MUTATION_PATHS = [
 	['/api/notifications/inbox/mark-unread', NOTIFICATIONS_PERMISSIONS.manage],
 	['/api/notifications/inbox/archive', NOTIFICATIONS_PERMISSIONS.manage],
 	['/api/notifications/preferences/save', NOTIFICATIONS_PERMISSIONS.manage],
+	['/api/notifications/preferences/email', NOTIFICATIONS_PERMISSIONS.manage],
 	['/api/notifications/webhooks', NOTIFICATIONS_PERMISSIONS.webhooksManage],
 	[
 		'/api/notifications/webhooks/update',
@@ -294,6 +300,28 @@ describe('notifications HTTP boundary', () => {
 		).toEqual([
 			expect.objectContaining({ kind: 'agent-run-failed', enabled: false }),
 		]);
+	});
+
+	it('serves e-mail delivery off until the member turns it on', async () => {
+		const owner = fixture(principal(ALL_SCOPES));
+		const read = async () =>
+			(
+				(await (await owner.call('/api/notifications/preferences')).json()) as {
+					member: { emailDelivery: boolean };
+				}
+			).member.emailDelivery;
+
+		expect(await read()).toBe(false);
+		const saved = await owner.mutation('/api/notifications/preferences/email', {
+			enabled: true,
+		});
+		expect(saved.status).toBe(200);
+		expect(await read()).toBe(true);
+
+		await owner.mutation('/api/notifications/preferences/email', {
+			enabled: false,
+		});
+		expect(await read()).toBe(false);
 	});
 
 	it('offers both approval kinds in the preference list and saves one', async () => {

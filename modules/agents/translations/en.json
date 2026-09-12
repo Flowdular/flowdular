@@ -399,5 +399,10 @@
 	"settings.monthlyCostCapUsd.label": "Monthly agent budget (USD)",
 	"settings.monthlyCostCapUsd.description": "Enqueue is refused once the calendar month costs this much. Zero means no cap. A run already executing is never stopped.",
 	"settings.agentMonthlyCostCapUsd.label": "Monthly budget per agent (USD)",
-	"settings.agentMonthlyCostCapUsd.description": "Applied to every agent on its own, in addition to the workspace budget. Zero means no cap."
+	"settings.agentMonthlyCostCapUsd.description": "Applied to every agent on its own, in addition to the workspace budget. Zero means no cap.",
+	"report.runs.label": "Agent runs",
+	"report.runs.tile.runs": "Runs",
+	"report.runs.tile.tokens": "Tokens",
+	"report.runs.series.runsPerDay": "Runs per day",
+	"report.runs.series.tokensPerDay": "Tokens per day"
 }

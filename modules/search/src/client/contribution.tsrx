@@ -2,7 +2,7 @@ import { type ModuleClientContribution } from '@flowdular/client';
 import translationsEn from '../../translations/en.json';
 import translationsPl from '../../translations/pl.json';
 import {
-	searchCommandContribution,
+	createSearchCommandContribution,
 	searchNavigation,
 	SEARCH_VIEWS,
 } from './navigation.ts';
@@ -26,6 +26,6 @@ export function createSearchClientContribution(
 				render: () => <SearchView csrfToken={options.csrfToken} />,
 			},
 		],
-		commandSearch: searchCommandContribution,
+		commandSearch: createSearchCommandContribution(options.csrfToken),
 	};
 }

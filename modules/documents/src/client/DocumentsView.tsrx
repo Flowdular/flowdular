@@ -38,7 +38,7 @@ import {
 } from './DocumentUploader.tsrx';
 import {
 	byteLabel,
-	downloadRefusal,
+	downloadAction,
 	scanLabel,
 	scanTone,
 	tableEmpty,
@@ -270,26 +270,30 @@ export function DocumentsView(props: DocumentsViewProps) @{
 		}
 	};
 
-	const rowActions = (record: DocumentAttachment): readonly TableAction[] => [
-		{
-			id: 'download',
-			label: downloadRefusal(record) || t('documents.action.download'),
-			icon: 'download',
-			disabled: downloadRefusal(record) !== '',
-			onSelect: () => void download(record),
-		},
-		...(props.canManage && record.status === 'stored'
-			? [
-					{
-						id: 'delete',
-						label: t('documents.action.delete'),
-						icon: 'x',
-						tone: 'danger' as const,
-						onSelect: () => setConfirmDeleteId(record.id),
-					},
-				]
-			: []),
-	];
+	const rowActions = (record: DocumentAttachment): readonly TableAction[] => {
+		const copy = downloadAction(record);
+		return [
+			{
+				id: 'download',
+				label: copy.label,
+				icon: 'download',
+				disabled: copy.disabled,
+				reason: copy.reason,
+				onSelect: () => void download(record),
+			},
+			...(props.canManage && record.status === 'stored'
+				? [
+						{
+							id: 'delete',
+							label: t('documents.action.delete'),
+							icon: 'x',
+							tone: 'danger' as const,
+							onSelect: () => setConfirmDeleteId(record.id),
+						},
+					]
+				: []),
+		];
+	};
 
 	<div class="ui-view">
 		<PageHeader

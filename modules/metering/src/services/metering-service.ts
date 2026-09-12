@@ -21,7 +21,7 @@ import {
 	publishThresholdNotice,
 	type NotificationPublisherResolver,
 } from './notifications.ts';
-import type { MeteringRepository } from './repository.ts';
+import type { MeteringReadOptions, MeteringRepository } from './repository.ts';
 import { bounded, MeteringServiceError, wholeNumber } from './service-error.ts';
 
 /** Widest window a bucket read may cover, which is the default retention. */
@@ -183,11 +183,20 @@ export class MeteringService {
 		return this.#percent();
 	}
 
+	/** The calendar month `usage` rolls up, as `YYYY-MM`. */
+	currentMonth(): string {
+		return utcMonth(this.#now());
+	}
+
 	/** Every meter this workspace recorded, with this month's usage and limit. */
-	usage(tenantId: string): Promise<readonly MeterUsage[]> {
+	usage(
+		tenantId: string,
+		options?: MeteringReadOptions,
+	): Promise<readonly MeterUsage[]> {
 		return this.#repository.listMeterUsage(
 			bounded(tenantId, 'tenantId', 1, METER_LIMITS.tenantId),
 			utcMonth(this.#now()),
+			options,
 		);
 	}
 

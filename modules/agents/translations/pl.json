@@ -399,5 +399,10 @@
 	"settings.monthlyCostCapUsd.label": "Miesięczny budżet agentów (USD)",
 	"settings.monthlyCostCapUsd.description": "Po osiągnięciu tej kwoty w miesiącu nowe uruchomienia są odrzucane. Zero wyłącza limit. Trwające uruchomienie nie jest przerywane.",
 	"settings.agentMonthlyCostCapUsd.label": "Miesięczny budżet jednego agenta (USD)",
-	"settings.agentMonthlyCostCapUsd.description": "Obowiązuje osobno dla każdego agenta, niezależnie od budżetu przestrzeni roboczej. Zero wyłącza limit."
+	"settings.agentMonthlyCostCapUsd.description": "Obowiązuje osobno dla każdego agenta, niezależnie od budżetu przestrzeni roboczej. Zero wyłącza limit.",
+	"report.runs.label": "Uruchomienia agentów",
+	"report.runs.tile.runs": "Uruchomienia",
+	"report.runs.tile.tokens": "Tokeny",
+	"report.runs.series.runsPerDay": "Uruchomienia dziennie",
+	"report.runs.series.tokensPerDay": "Tokeny dziennie"
 }

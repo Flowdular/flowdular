@@ -27,7 +27,7 @@ import type {
 const JOB_COLUMNS = `id, tenant_id, target, document_id, document_ref, mode,
 	dry_run, valid_only, status, total_rows, valid_rows, written_rows,
 	failed_rows, requester_account_id, requester_json, columns_json,
-	failure_code, claimed_at, started_at, completed_at`;
+	failure_code, claimed_at, started_at, completed_at, traceparent`;
 
 const ROW_COLUMNS = `id, tenant_id, job_id, row_number, outcome, field, reason,
 	record_ref`;
@@ -37,7 +37,7 @@ const ROW_COLUMNS = `id, tenant_id, job_id, row_number, outcome, field, reason,
 const SQL = {
 	insertJob: `INSERT INTO import_jobs (${JOB_COLUMNS})
 	 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-	         $16, $17, $18, $19, $20)`,
+	         $16, $17, $18, $19, $20, $21)`,
 
 	findJob: `SELECT ${JOB_COLUMNS} FROM import_jobs
 	 WHERE tenant_id = $1 AND id = $2`,
@@ -162,6 +162,7 @@ interface JobRow {
 	claimed_at: number | bigint | string | null;
 	started_at: number | bigint | string;
 	completed_at: number | bigint | string | null;
+	traceparent: string | null;
 }
 
 interface OutcomeRow {
@@ -240,6 +241,7 @@ function jobFromRow(row: JobRow): ImportJob {
 		claimedAt: optionalInteger(row.claimed_at, 'timestamp'),
 		startedAt: integer(row.started_at, 'timestamp'),
 		completedAt: optionalInteger(row.completed_at, 'timestamp'),
+		traceparent: row.traceparent,
 	};
 }
 
@@ -278,6 +280,7 @@ function jobParameters(job: ImportJob): readonly (string | number | null)[] {
 		job.claimedAt,
 		job.startedAt,
 		job.completedAt,
+		job.traceparent,
 	];
 }
 

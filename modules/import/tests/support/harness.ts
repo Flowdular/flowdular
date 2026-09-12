@@ -11,6 +11,7 @@ import {
 	DATABASE_DIALECT_IDS,
 } from '@flowdular/database';
 import { createPgliteTestProvider } from '@flowdular/database-testing';
+import type { JobRunner } from '@flowdular/server';
 import type { AuthPrincipal } from '@flowdular/module-auth';
 import type { DocumentAttachments } from '@flowdular/module-documents';
 import {
@@ -32,7 +33,7 @@ import {
 } from '../../src/services/database-repository.ts';
 import { createImportCsvSource } from '../../src/services/csv-source.ts';
 import { ImportService } from '../../src/services/import-service.ts';
-import { ImportRunner } from '../../src/services/import-runner.ts';
+import { createImportJobRunner } from '../../src/services/import-runner.ts';
 import {
 	createImportPortRegistry,
 	type ImportPortRegistry,
@@ -69,7 +70,7 @@ export interface ImportTestHarness {
 	readonly storage: StoragePort;
 	readonly attachments: DocumentAttachments;
 	readonly service: ImportService;
-	readonly runner: ImportRunner;
+	readonly runner: JobRunner;
 	/** Stores a CSV the way the New import screen does, through documents.core. */
 	storeCsv(
 		tenantId: string,
@@ -160,8 +161,8 @@ export async function openImportHarness(
 			maxRows: () => options.maxRows ?? 50_000,
 			batchSize: () => options.batchSize ?? 500,
 		});
-		const runner = new ImportRunner({
-			repository,
+		const runner = createImportJobRunner({
+			repository: async () => repository,
 			service: async () => service,
 		});
 

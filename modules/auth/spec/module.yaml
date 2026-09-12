@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: auth.core
-specVersion: 0.12.6
+specVersion: 0.13.6
 status: approved
 name: Authentication Core
 description: Provides tenant-aware accounts, password authentication, sessions, scopes, tenant roles, API tokens for machine clients, the module settings store, the auth audit trail, security headers, authentication screens, and server authorization middleware.
@@ -13,7 +13,7 @@ capabilities:
   - cli
 dependencies:
   - id: system.core
-    range: ^0.5.1
+    range: ^0.7.0
 tenancy: required
 locales:
   - en
@@ -29,12 +29,16 @@ invariants:
   - Authorization is evaluated server-side and missing scopes are denied.
   - Sign-up availability is controlled by the auth.allowSignUp module setting and is enforced by both the API and client.
   - An account may hold no password at all. The administration port creates such a member with an unusable credential marker rather than a placeholder secret, so nothing was drawn that could be guessed or leaked. A password sign-in for it is refused exactly as an unregistered address is, with the same code and the same derivation cost, so the refusal never reports which addresses exist and hold no password yet; the public reset flow and an administrative temporary password both set the first one, an external identity signs the account in unchanged, and a self-service credential change is refused with PASSWORD_NOT_SET, which only a caller already authenticated as the account can reach.
-  - The administration port answers the members of one workspace by address and by search term in the database. A lookup names at most 500 addresses, folded the way a stored address is folded and bound as one array parameter; a search pushes its term and a limit of 1 to 500 into SQL as a display-name containment or an address prefix. A caller therefore never lists a workspace of unknown size to find the members it already named, and a LIKE wildcard in a term is matched as a character.
+  - The administration port answers the members of one workspace by address and by search term in the database. A lookup names at most 500 addresses, folded the way a stored address is folded and bound as one array parameter; a search pushes its term and a limit of 1 to 500 into SQL as a display-name prefix or an address prefix, and a byte-ordered expression index covers both, so a keystroke reads the rows the prefix matched rather than the workspace. The display name was matched anywhere until then; a containment is a range no btree answers, so a term inside a name no longer matches. A caller therefore never lists a workspace of unknown size to find the members it already named, and a LIKE wildcard in a term is matched as a character.
+  - The audit query takes an optional inclusive from and to in epoch milliseconds, applied in SQL beside the action, the actor and the keyset cursor and answered by the same (tenant_id, occurred_at, id) index, so a reader of a date window states the window instead of seeding the cursor at its ceiling and watching for its floor. An absent end is open; a bound that is no epoch millisecond, and a window that ends before it starts, are refused with a stable code before the read.
+  - listExternalIdentities answers one bounded page of the identity bindings a workspace's own providers assert, keyset ordered by provider and subject over the unique workspace index. A binding names the account, the provider key, the subject the provider keeps stable and when it was first recorded, and never a token, a secret, a ciphertext, a fingerprint or the address the provider reported. A binding a platform provider made carries no workspace and is not answered; the read is scoped to the workspace it is given, and the permission a reader needs is the calling module's to enforce at its own endpoint.
+  - listTenantMembers keeps its unbounded roll for the callers that hold a workspace of known size and gains a paged form of 1 to 500 members, keyset ordered by account id and answering the cursor of the next page, so a caller may walk a workspace of unknown size without reading it in one statement. Migration 0030 indexes (tenant_id, account_id), which is the order that walk reads.
   - A workspace created after a module was enabled receives that module's permissions only through the seed lists in acl/scopes.ts, because auth sync-scopes reaches the workspaces that exist when it runs and no later one. A permission an enabled module declares and OWNER_SCOPES does not carry is therefore a defect, and a guard test compares the two against every enabled module specification of flowdular.json, checks what each permissions decision says members hold, and names the declarations still open so none is added silently.
   - auth.core erases one subject inside one workspace. The sessions and the API tokens that subject holds there are removed outright, live ones included, and the same subject's rows in another workspace are untouched. A call removes at most its batch and reports truncated when it filled one, so the caller comes back rather than believing the class complete. The authentication audit events declare no erase, because the audit specification excludes them as the evidence the data lifecycle happened; retention bounds them instead.
   - Every data class export walks one workspace by keyset over (tenant_id, id), and an index covers that pair on the sessions, the API tokens and the audit events, so a page is the rows it returns rather than a sort of the workspace.
   - Bundled module scopes are assigned from explicit owner and member defaults and migrated for existing tenant memberships.
   - The built-in owner role carries the enterprise module scopes directory.tokens.read, directory.tokens.manage, directory.provisioning.read, audit.registry.read, audit.retention.manage, approvals.requests.read, approvals.requests.decide, approvals.requests.manage, documents.files.read, documents.files.manage, metering.usage.read, import.jobs.read, import.jobs.manage, search.records.read, connectors.instances.read and connectors.instances.manage, and the built-in member role carries documents.files.read, documents.files.manage, search.records.read, connectors.instances.read, approvals.requests.read and approvals.requests.decide, because a member decides the requests their role makes them eligible for.
+  - The built-in owner role carries reports.workspace.read, exports.lists.read, exports.lists.manage, access.review.read and access.review.manage, and the built-in member role carries none of them, because a workspace report composes spend, usage and volume across modules (D-REPORTS-AUDIENCE), an access review names every scope, token and provider of the workspace (D-OWNERS-ONLY), and the export decision states what starting an export and opening a file require of the live principal rather than granting a role anything (D-EXPORTS-PERMISSIONS). Migration 0029 grants the five to the owner memberships and the built-in owner role row of every workspace that already exists, and to no member membership and no member role row.
   - auth.core declares the workspace data it keeps by age as data classes, when the platform hands it the registry. auth.core.sessions is kept for 30 days, auth.core.api-tokens and auth.core.audit-events for 400 days. Each is exportable and swept in bounded batches inside its own tenant transaction; a sweep removes only a session that already expired and a credential already revoked or expired, and no export carries a session token hash, a CSRF token or an API token hash. Memberships, membership scopes, roles, identity providers and module settings are configuration rather than swept classes.
   - An API token is a tenant-scoped machine credential bound to one membership. Only its hash is stored, the raw value is returned exactly once at creation, and it is never recoverable afterwards.
   - API token authority is the intersection of its recorded scopes with the live membership scopes at every request. Revoking a scope or disabling the membership takes effect immediately without touching the token.
@@ -48,6 +52,7 @@ invariants:
   - Every tenant carries the built-in owner and member roles as rows; custom roles are tenant-scoped, grant only grantable scopes, and cannot be edited, deleted, or shadowed when built in or in use.
   - Assigning a role replaces the membership scopes with the role's scopes and keeps the role key on the membership in sync.
   - Module settings are declared by their owning module, stored per tenant (or once for the platform), validated against the declaration on every write, and secret values are never returned.
+  - Every committed module settings change appends exactly one audit event. A setting declared as a feature flag is recorded as settings.flag.changed, carrying the module, the key, the previous and next effective values and the actor; every other setting is recorded as settings.updated, carrying the module, the key, whether the value was cleared and the actor. No declared value of a non-flag setting and no secret value ever reaches the trail.
   - Email confirmation cannot be enabled without a composed mail transport.
   - Password reset and tenant invitation tokens are random, hashed at rest, short lived, single use, and never returned by HTTP APIs.
   - Operator provisioning creates a workspace, its owner and the owner scopes exactly as sign-up does, works against the deployment database, and never reads the sign-up setting.
@@ -294,6 +299,7 @@ outOfScope:
   - SAML and LDAP are not offered; a provider is OIDC with discovery.
   - Discovering a workspace from an e-mail address is not offered; the person names the workspace first.
   - E-mailing a provisioned member is deferred to the notifications delivery path once auth mail kinds are extended.
+  - Wording a message in the recipient's own language is deferred; every auth.core message is written in English and declares that locale, so a client renders and reads it as English.
 decisions:
   - id: D-G2-SCOPE
     question: What does this G2 delivery contain?
@@ -436,6 +442,10 @@ acceptanceScenarios:
     given: A module setting is written through the shared settings runtime by an identified actor.
     when: The value passes the declared validation and the write commits.
     then: The value is persisted in auth.db per tenant (or once for the platform), the next read returns it, and a settings.updated audit event records the actor, the setting, and whether the value was cleared.
+  - id: AUTH-SETTINGS-FLAG-AUDIT
+    given: A setting declared with kind flag is turned on or reset through the shared settings runtime by an identified actor.
+    when: The write commits.
+    then: One settings.flag.changed audit event is appended for the actor's workspace with the module, the key, the previous and next effective values and the actor, no settings.updated event is written for that change, and a failed audit write is reported without undoing the committed setting.
   - id: AUTH-WORKSPACE-SETTINGS
     given: An owner with system.settings.manage on Administration > Settings.
     when: The owner renames the workspace or picks a default locale.

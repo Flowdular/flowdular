@@ -19,6 +19,14 @@ export type NotificationsInboxStatus = (typeof INBOX_STATUSES)[number];
 export const SUBSCRIPTION_STATUSES = ['active', 'paused', 'disabled'] as const;
 export type WebhookSubscriptionStatus = (typeof SUBSCRIPTION_STATUSES)[number];
 
+/**
+ * How an attempt leaves the process. A webhook attempt is addressed to a
+ * subscription of the workspace, an e-mail attempt to one member who asked for
+ * it; both share the queue, the retry budget and the dead letter.
+ */
+export const DELIVERY_CHANNELS = ['webhook', 'email'] as const;
+export type DeliveryChannel = (typeof DELIVERY_CHANNELS)[number];
+
 export const DELIVERY_STATUSES = [
 	'pending',
 	'succeeded',
@@ -35,6 +43,10 @@ export const DELIVERY_ERROR_CLASSES = [
 	'response-4xx',
 	'response-5xx',
 	'network',
+	/** The port refused it: no transport, or a message it would not accept. */
+	'mail-refused',
+	/** The addressed member has no readable address or no inbox item left. */
+	'recipient-unknown',
 ] as const;
 export type DeliveryErrorClass = (typeof DELIVERY_ERROR_CLASSES)[number];
 
@@ -51,6 +63,21 @@ export interface NotificationsInbox {
 	readonly readAt: string | null;
 	readonly createdAt: number;
 }
+
+/**
+ * The switches a member holds for the whole workspace rather than per kind. An
+ * absent row means the defaults: e-mail delivery off.
+ */
+export interface MemberNotificationSettings {
+	readonly tenantId: string;
+	readonly recipientAccountId: string;
+	/** Also send every inbox item this member receives to their address. */
+	readonly emailDelivery: boolean;
+	readonly createdAt: number;
+	readonly updatedAt: number;
+}
+
+export const DEFAULT_EMAIL_DELIVERY = false;
 
 export interface NotificationPreference {
 	readonly id: string;
@@ -100,7 +127,11 @@ export interface UpdateWebhookSubscriptionInput
 export interface DeliveryAttempt {
 	readonly id: string;
 	readonly tenantId: string;
-	readonly subscriptionId: string;
+	readonly channel: DeliveryChannel;
+	/** The subscription a webhook attempt is addressed to; null on e-mail. */
+	readonly subscriptionId: string | null;
+	/** The member an e-mail attempt is addressed to; null on a webhook. */
+	readonly recipientAccountId: string | null;
 	readonly kind: NotificationKind;
 	readonly sourceModule: string;
 	readonly sourceRef: string;
