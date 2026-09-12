@@ -1,7 +1,7 @@
 # RFC 0005: Server-side lists, official module distribution and the recorded debt
 
-- Status: proposed on 2026-09-12; nothing below is scheduled until the owner
-  accepts a wave
+- Status: accepted by the owner on 2026-09-12; first wave I1, I4, I2, I3, I6
+  in that order, I7 at any point; see the decisions at the end
 - Date: 2026-09-12
 - Follows: RFC 0004 (platform services, first wave delivered on 2026-09-12,
   see `docs/reviews/platform-services-rfc0004-2026-09-12.md`), RFC 0003
@@ -228,7 +228,16 @@ Nothing in this reading changes those verdicts.
 6. **I7, documentation.** Can land any time.
 7. **I5, I8.** When asked for.
 
-## Open questions for the owner
+## Decisions recorded on 2026-09-12
+
+- First wave: I1, then I4 with the small I6 items, then I2, then I3, in the
+  order proposed above; I7 lands at any point.
+- I1 lands as its own pull request in the official module repository,
+  tested against the SDK packed from this tree, before the npm publication.
+- I3 starts on the users members list as soon as that list is on the server
+  mode; the other screens follow as I2 moves them.
+
+## Open questions for the owner, as they stood before the decisions
 
 - Does I1 land in the official module repository as its own pull request
   before the npm publication, or together with it.
