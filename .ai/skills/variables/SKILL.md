@@ -5,9 +5,7 @@ description: >-
   mask, and server-side resolution, with agents.core as the worked example.
 roles:
   - frontend-engineer
-  - ux-designer
   - agentic-engineer
-  - backend-engineer
   - module-executor
 when: A field must let a value embed {{ variable }} tokens filled from other fields, the request context, or another module.
 ---

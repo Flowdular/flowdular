@@ -1,6 +1,6 @@
 # RFC 0002: Enterprise modules and capabilities
 
-- Status: draft, not accepted
+- Status: accepted by the owner on 2026-09-11; delivery follows the proposed order
 - Date: 2026-09-02
 - Companion to: RFC 0001 (enterprise readiness, data retention first)
 - Relates to: ADR 0003 (module settings), ADR 0004 (enterprise access and audit), ADR 0006 (agentic workflows), ADR 0007 (module-owned agents), ADR 0008 (database adapter contract)
@@ -64,20 +64,19 @@ a blueprint version bump.
 
 ### The twelve modules
 
-| Module                              | Owns                                                                                                                                                |
-| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `system.core`                       | Application shell, module discovery, the module settings screen. Owns no tables.                                                                    |
-| `auth.core`                         | Accounts, sessions, memberships, scopes, roles, API tokens, invitations, TOTP MFA, the module settings store, the auth audit trail. Fifteen tables. |
-| `users.core`                        | The member directory and administration screens. Owns no tables; calls auth.core's administration port.                                             |
-| `profile.core`                      | A person's own display name, interface language, own sessions. Two tables.                                                                          |
-| `agents.core`                       | Agent definitions, provider connections, procedures, durable run execution, run history, cost metering.                                             |
-| `workflows.core`                    | Versioned DAG definitions, publication, simulation, durable run execution.                                                                          |
-| `automations.core`                  | Schedules and signed inbound webhooks that start agent or workflow work.                                                                            |
-| `automations-workflows.integration` | Nothing of its own. Wires two capabilities together.                                                                                                |
-| `catalog.core`                      | Products and services with SKUs, prices, lifecycle state, revision history.                                                                         |
-| `parties.core`                      | Customers and suppliers, the same shape as catalog.                                                                                                 |
-| `expenses.core`                     | Expense claims with a submit and decide flow.                                                                                                       |
-| `sandbox.core`                      | Sandbox access grants, session metadata, audit chain.                                                                                               |
+| Module             | Owns                                                                                                                                                |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `system.core`      | Application shell, module discovery, the module settings screen. Owns no tables.                                                                    |
+| `auth.core`        | Accounts, sessions, memberships, scopes, roles, API tokens, invitations, TOTP MFA, the module settings store, the auth audit trail. Fifteen tables. |
+| `users.core`       | The member directory and administration screens. Owns no tables; calls auth.core's administration port.                                             |
+| `profile.core`     | A person's own display name, interface language, own sessions. Two tables.                                                                          |
+| `agents.core`      | Agent definitions, provider connections, procedures, durable run execution, run history, cost metering.                                             |
+| `workflows.core`   | Versioned DAG definitions, publication, simulation, durable run execution.                                                                          |
+| `automations.core` | Schedules and signed inbound webhooks that start agent or workflow work.                                                                            |
+| `catalog.core`     | Products and services with SKUs, prices, lifecycle state, revision history.                                                                         |
+| `parties.core`     | Customers and suppliers, the same shape as catalog.                                                                                                 |
+| `expenses.core`    | Expense claims with a submit and decide flow.                                                                                                       |
+| `sandbox.core`     | Sandbox access grants, session metadata, audit chain.                                                                                               |
 
 Sixty-seven tables across the ten modules that own any. Every module declares
 `tenancy: required` and `stability: experimental`. Eleven use `profile: full`;
@@ -250,9 +249,9 @@ consumer imports the provider's types directly, so it takes a hard package
 dependency anyway.
 
 Nothing can react to another module's domain change. There is no publish, no
-subscribe, no fan-out, no ordering, no delivery guarantee and no replay. The
-`automations-workflows.integration` module exists solely to glue two
-capabilities together, which is what a bus would otherwise do.
+subscribe, no fan-out, no ordering, no delivery guarantee and no replay.
+`automations.core` glues the workflow execution capability to its own target
+registry in code, which is what a bus would otherwise do.
 
 One more platform fact with consequences: there is no permission registry.
 `RegisteredModule.permissions` exists in contracts and nothing at runtime reads

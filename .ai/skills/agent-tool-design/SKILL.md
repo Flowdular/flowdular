@@ -5,7 +5,6 @@ description: >-
   the real harness, permission, idempotency, audit, and test contract.
 roles:
   - agentic-engineer
-  - backend-engineer
   - module-executor
 when: A brief asks to expose a module operation as a tool to business agents or workflows.
 ---

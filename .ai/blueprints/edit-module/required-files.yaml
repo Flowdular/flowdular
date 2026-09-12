@@ -44,9 +44,18 @@ byChange:
     - 'src/client/XView.tsrx'
     - 'src/client/contribution.tsrx'
     - 'src/client/index.ts'
+    - 'translations/*.json'
+    - 'tests/module.test.ts'
   widget:
     - 'src/client/*.tsrx'
     - 'src/client/contribution.tsrx'
+    - 'translations/*.json'
+    - 'tests/module.test.ts'
+  translations:
+    - 'translations/*.json'
+    - 'src/client/contribution.tsrx'
+    - 'spec/module.yaml'
+    - 'module.json'
   permission:
     - 'spec/module.yaml'
     - 'src/acl/permissions.ts'

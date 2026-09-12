@@ -4,6 +4,7 @@ Flowdular is an agentic foundation framework: the platform is the foundation, an
 
 | Skill                   | One line                                                                                                              |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `spec-interview`        | Interview a request into a v2 spec: capability card defaults, the questions protocol, decisions and out of scope.     |
 | `module-new`            | Create a module from an approved spec: scaffold, what the scaffold lacks, server and client file sets, enable, grant. |
 | `module-update`         | Change an existing module with a fixed touch list per change class and the version bump rules.                        |
 | `spec-approval`         | Record explicit user approval of an exact current module spec without letting an agent approve its own work.          |
@@ -23,8 +24,17 @@ Flowdular is an agentic foundation framework: the platform is the foundation, an
 | `variables`             | Variable-aware fields and templates: the `{{ }}` contract, the scope mask, server-side resolution, adding a source.   |
 | `workflow-development`  | Build, publish, invoke, simulate, and test typed durable workflows and their module integration capability.           |
 | `release-eject-pr`      | Sandbox eject sequence, repository gates, branch and PR conventions, post-merge scope grant.                          |
+| `deploy-operate`        | Container build, production env keys, migrations at rollout, health and readiness, backup and restore, rollback.      |
 
 Choose one skill per task phase: the most specific matching entry above. For ordinary module work use `module-new` or `module-update`. Finish the phase before switching; do not recursively load other SKILL.md files mentioned in a skill. Consult relevant code and supporting references only as needed. `spec-approval` is host-only and requires an explicit user approval instruction.
+
+The normal path for a module is one phase per step:
+
+```text
+request -> spec-interview -> operator approval (spec-approval) -> module-new -> auto-review
+```
+
+An existing module takes the same path with `module-update` in place of `module-new`. `spec-interview` reads `.ai/platform-capabilities.md` and asks for the decisions it cannot infer; implementation reads the approved spec and the touch list instead of scanning the repository, and reports anything the spec lacks as a spec defect.
 
 Where they are read:
 

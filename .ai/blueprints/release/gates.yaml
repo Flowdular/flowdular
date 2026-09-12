@@ -5,6 +5,10 @@ gates:
     command: eject stream runs spec-schema and module-schema once, then dependencies, typecheck, tests, format per draft module
     required: true
     appliesTo: sandbox-eject
+  - id: auto-review
+    command: run the auto-review skill as a separate read-only phase over the finished change
+    sandbox: every draft module needs a passing auto-review record that matches its current contents; GATES in packages/sandbox/src/server/delivery/plan.ts lists it with the deterministic gates and eject stops on a missing or stale record
+    required: true
   - id: verify
     command: pnpm verify
     required: true

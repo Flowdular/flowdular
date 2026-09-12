@@ -6,7 +6,6 @@ description: >-
   audit boundaries.
 roles:
   - agentic-engineer
-  - backend-engineer
   - frontend-engineer
   - module-executor
 when: A brief asks for a workflow, pipeline, canvas node, workflow action, or a module feature that starts a workflow.

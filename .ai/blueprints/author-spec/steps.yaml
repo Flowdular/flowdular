@@ -2,17 +2,17 @@ schemaVersion: 1
 steps:
   - id: collect
     role: business-manager
-    action: Validate the brief against input.schema.json (module id, outcome, actors); list the business facts still missing.
-    inputs: [brief]
-    outputs: [open questions]
+    action: Validate the brief against input.schema.json (module id, outcome, actors); walk the spec-interview decision checklist against .ai/platform-capabilities.md, propose a platform default for every decision and list the ones that cannot be inferred.
+    inputs: [brief, platform-capabilities.md]
+    outputs: [proposed decisions, open questions]
   - id: ask
     role: business-manager
-    action: Stop and ask for every unresolved business or security decision instead of guessing.
+    action: Ask every unresolved decision through the questions protocol (one fenced questions block in the sandbox, the question tool in Claude Code) instead of guessing; each answer becomes a decisions[] entry.
     inputs: [open questions]
     outputs: [answers]
   - id: draft
     role: business-manager
-    action: Write spec/module.yaml from templates/module.yaml with status draft; permissions, invariants, dataOwnership, acceptanceScenarios complete.
+    action: Write spec/module.yaml (schemaVersion 2) from templates/module.yaml with status draft; permissions, invariants, dataOwnership, acceptanceScenarios, entities with typed fields, screens, actions, outOfScope and decisions complete.
     inputs: [answers]
     outputs: [spec/module.yaml]
     gates: [spec-schema]

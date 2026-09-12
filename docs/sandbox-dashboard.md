@@ -56,6 +56,22 @@ also removes that local evidence. Planning before a failed session creation,
 provider usage that was never emitted, and historical planner calls cannot be
 reconstructed from these records.
 
+## Open decisions
+
+When the last turn asked for decisions, the session view renders them under the
+open handoff as a form: one radio group per question, the specialist's
+recommendation preselected, a free-text field only where the specialist allowed
+one, and an optional note. Its states are explicit. While a turn is in flight
+the form says the specialist is still working; a handoff that asked in prose
+only says so and points at the message box; a delivered or archived session says
+it no longer accepts decisions; a refused submission shows the server's reason
+beside the button. Submit stays disabled until every question has an answer.
+
+Answering is a turn, not a side channel: it clears the stored questions, starts
+the specialist that asked in the module it asked about, and records the
+decisions in the transcript as the operator's message. The protocol and its
+bounds are in [the sandbox document](sandbox.md).
+
 ## Stages
 
 - Draft: work not yet approved, including partially approved multi-module work.
@@ -82,6 +98,17 @@ account, tenant and platform isolation, owner spoofing, planner accounting and
 reject/restore behavior. `scaffold-flow.test.ts` invokes the real checkout CLI
 in an isolated workspace and verifies the approval gate, PostgreSQL scaffold,
 preserved business translations and idempotent repeated scaffolding.
+
+`questions.test.ts` covers the block parser with its bounds, the turn that
+stores or warns, and the answers route: the composed request text, the CSRF
+refusal, the refused answer, an absent question set, a delivered session, and
+every state of the form in both locales. `e2e-new-module.test.ts` runs one brief
+through the whole pipeline in a temporary workspace: the planner, a business
+manager turn, the approval route, the real checkout CLI scaffold, the real
+session install, all six gates, an auto-review record and the workspace
+delivery. Its delivery runs `module enable` through the real command runner and
+records `pnpm install`, `auth sync-scopes` and the platform typecheck, which act
+on an installed application and a database a throwaway workspace does not have.
 
 The browser check uses synthetic data with the real sandbox UI. It does not
 invoke a paid model or validate the quality of a model-generated business module.

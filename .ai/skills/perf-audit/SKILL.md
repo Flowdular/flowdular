@@ -5,7 +5,6 @@ description: >-
   change only what a measurement justifies.
 roles:
   - backend-engineer
-  - frontend-engineer
   - module-executor
   - reviewer
 when: A screen or endpoint is slow, a list grows, or a review asks whether the change scales.

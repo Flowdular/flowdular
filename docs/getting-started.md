@@ -38,8 +38,8 @@ It creates two demo tenants (Operations Demo, Finance Demo) and two logins:
 
 | Account             | Password         | Role                       |
 | ------------------- | ---------------- | -------------------------- |
-| `admin@example.com` | `Admin!23456789` | Owner of both demo tenants |
-| `user@example.com`  | `User!234567890` | Reduced scope member       |
+| `admin@example.com` | `Owner!23456789` | Owner of both demo tenants |
+| `user@example.com`  | `Member!2345678` | Reduced scope member       |
 
 ## Run the platform
 

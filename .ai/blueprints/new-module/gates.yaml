@@ -28,3 +28,7 @@ gates:
     command: pnpm format:check
     sandbox: prettier --check . (cwd module)
     required: true
+  - id: auto-review
+    command: run the auto-review skill as a separate read-only phase over the finished change
+    sandbox: inspectAutoReview(paths, module) in packages/sandbox/src/server/auto-review.ts; the record must match the current module contents, and eject refuses a missing or stale review (GATES in packages/sandbox/src/server/delivery/plan.ts)
+    required: true

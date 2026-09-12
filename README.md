@@ -85,8 +85,8 @@ pnpm dev
 
 | Account             | Password         | Access                                    |
 | ------------------- | ---------------- | ----------------------------------------- |
-| `admin@example.com` | `Admin!23456789` | Owner of Operations Demo and Finance Demo |
-| `user@example.com`  | `User!234567890` | Reduced-scope member of Operations Demo   |
+| `admin@example.com` | `Owner!23456789` | Owner of Operations Demo and Finance Demo |
+| `user@example.com`  | `Member!2345678` | Reduced-scope member of Operations Demo   |
 
 These credentials are public development defaults. Never use them in a
 deployment. Local database files and development keys live in `.flowdular/data`.
@@ -248,6 +248,7 @@ pnpm sandbox                          # Module-building workspace
 pnpm verify                           # Rules, types, tests, validation, formatting
 pnpm build                            # CLI smoke checks and production build
 pnpm flowdular module validate         # Manifests, composition and translations
+pnpm flowdular module version bump <id> <level> --apply  # One bump for module.json, package.json, spec and dependents
 ```
 
 CI runs repository verification, a PostgreSQL adapter matrix, the production

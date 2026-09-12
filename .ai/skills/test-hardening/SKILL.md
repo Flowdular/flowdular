@@ -9,6 +9,7 @@ roles:
   - frontend-engineer
   - reviewer
   - module-executor
+  - agentic-engineer
 when: A module has few or tautological tests, a bug escaped the suite, or a reviewer asks whether the tests guard the change.
 ---
 

@@ -65,8 +65,17 @@ Read-only master-detail (runs, playground) keeps `ui-two-col` (+ `--wide-aside`)
 - `Button`: `variant` primary, secondary (default), ghost, danger; `size` sm, md, lg; `type` button, submit; `block`; `disabled`; `onClick`.
 - `FormField`: `label`, `required`, `help`, `error`; one control child with `ui-input`, `ui-select` or `ui-textarea`.
 - `SearchField`: `value`, `placeholder`, `label` (accessible name), `onInput(value)`.
-- `Table`: `columns: TableColumn<Row>[]` (`key`, `header`, required `width`, `cell(row)`, `numeric`), `rows`, `rowKey(row)`, `status`, `loadingLabel`, `empty`, `emptyFiltered`, `filtered`, `actions(row): TableAction[]`, `actionsLabel`, optional stable `actionsWidth` (160 px default, 280 px for two actions), `onSelect(row)`, `selectedKey`, `caption`.
+- `Table`: `columns: TableColumn<Row>[]` (`key`, `header`, required `width`, `cell(row)`, `numeric`, `value(row)` for the comparable and searchable value behind the cell), `rows`, `rowKey(row)`, `status`, `loadingLabel`, `empty`, `emptyFiltered`, `filtered`, `sorting` with `sortingState` and `onSortingChange`, `globalFilter`, `pagination` (`pageIndex`, `pageSize`, `onPageChange`, `totalRows` when the module paged in SQL), `actions(row): TableAction[]`, `actionsLabel`, optional stable `actionsWidth` (160 px default, 280 px for two actions), `onSelect(row)`, `selectedKey`, `caption`. Only a column with `value` is sortable and searched.
 - `TableCard`: every `Table` prop plus `title`, `count`, `head`, `search`, `filters`, `before`, `after`, `note`, `noteIcon`.
+- `Pagination`: the pager for the `TableCard` `after` slot: `pageIndex`, `pageSize`, `totalRows` (after the screen's own filtering), `onPageChange(pageIndex)`, `pageSizes` with `onPageSizeChange(pageSize)` (both or neither), `label`, `previousLabel`, `nextLabel`, `pageSizeLabel`, `summary(range)` that the screen translates. It reads "1 of 1" over an empty set, so it is rendered unconditionally.
+- `Select`: the labelled native select: required `id`, `label`, `options` (`value`, `label`, `disabled`), `value`, `onChange(value)`, `placeholder`, `name` (defaults to `id`), `required`, `disabled`, `invalid`, `help`, `error`.
+- `DateField`: required `id`, `label`, ISO `value` (`YYYY-MM-DD`, or `YYYY-MM-DDTHH:mm` for `kind="datetime"`), `onChange(value)`, `kind`, `locale` from `activeLocale()`, `min`, `max`, `name`, `required`, `disabled`, `invalid`, `help`, `error`, `describedBy` for a message a group around it owns. The reading beside the input repeats the value in the reader's locale.
+- `DateRangeField`: required `id`, `legend`, `fromLabel`, `toLabel`, `value` (`from`, `to`), `onChange(value)`, `kind`, `locale`, `min`, `max`, `required`, `disabled`, `reversedMessage`, `help`, `error`; each side bounds the other and a reversed range is reported, never swapped.
+- `Tabs`: required `id`, `items` (`id`, `label`, `disabled`), `active`, `onChange(id)`, `label`; it renders only the tablist, and the caller renders `<id>-panel-<active>` labelled by `<id>-tab-<active>`.
+- `ToastHost`: `label`, `closeLabel`, optional `store`. One per screen that raises toasts, rendered even while empty; `toasts.success`, `.error` and `.info` raise them and `createToastStore` makes a scoped queue.
+
+`Select`, `DateField` and `DateRangeField` own their label, so they go straight into a `ui-form__row` and never inside a `FormField`.
+
 - `Filters`: `open`, `onToggle`, `activeCount`, `label`; children are the filter controls, which belong in the dropdown and nowhere else.
 - `CheckGrid`: `groups: { label, options: { value, label, hint? }[] }[]`, `value: string[]`, `mono`, `disabled`, `onChange(next)`.
 - `Drawer`: `open`, `title`, `subtitle`, `width` md or lg, `onClose`; child is `ui-drawer__form` or `ui-drawer__body`. Escape and the scrim close it.
@@ -79,15 +88,37 @@ Read-only master-detail (runs, playground) keeps `ui-two-col` (+ `--wide-aside`)
 - `Icon`: `name`, `size` (18 default, 16 in controls, 14 in `Button size="sm"`), `strokeWidth`.
 - `BrandMark`: `size`, `signature`, `tone`; brand moments only.
 
-Icon keys (`ICON_PATHS`, `packages/ui/src/icons/Icon.tsrx`): `dashboard`, `parties`, `catalog`, `user`, `users`, `shield`, `code`, `modules`, `file-text`, `play`, `bot`, `flask`, `activity`, `plug`, `search`, `chevron-down`, `chevrons-up-down`, `plus`, `panel-left`, `check`, `filter`, `download`, `more`, `external`, `alert`, `x`, `sign-out`, `refresh`, `help`, `key`, `settings`, `braces`. An unknown name renders `modules` silently, so check the list.
+Icon keys (`ICON_PATHS`, `packages/ui/src/icons/Icon.tsrx`): `dashboard`, `parties`, `catalog`, `user`, `users`, `shield`, `code`, `modules`, `file-text`, `play`, `bot`, `flask`, `activity`, `plug`, `search`, `chevron-down`, `chevron-left`, `chevron-right`, `chevrons-up-down`, `sort`, `calendar`, `plus`, `panel-left`, `check`, `filter`, `download`, `more`, `external`, `alert`, `x`, `sign-out`, `refresh`, `help`, `info`, `key`, `settings`, `braces`. An unknown name renders `modules` silently, so check the list.
 
 ## 5. Classes a module writes by hand (`packages/ui/src/styles/components.css`)
 
-Layout `ui-view`, `ui-two-col` (+`--wide-aside`), `ui-grid-2`, `ui-kpi-grid`, `ui-tag-cloud`, `ui-section-head` (h2 plus actions inside a view), `ui-toolbar` (+`__spacer`). Surfaces `ui-card` (+`__head`, `__title`, `__body`). Data `ui-table` (+`ui-table-wrap`, `ui-table__empty`, `ui-table__state` for a dot plus label, `.num`), `ui-cell` (+`ui-cell__muted`), `ui-mono`, `ui-code`, `ui-dot` (+`--muted`). Row action classes are component-owned and are never written by a module. Forms `ui-form` (+`__row`, `__row--4`, `__foot`, `__actions`), `ui-input` (+`--error`), `ui-select`, `ui-textarea` (+`--error`), `ui-checkbox`, `ui-label`, `ui-help` (+`--error`). Drawer `ui-drawer__form`, `ui-drawer__body`, `ui-drawer__foot`. Bits `ui-kbd`, `ui-note`, `ui-menu` (+`__label`, `__item`, `__item--active`, `__item--danger`, `__sep`), `ui-btn ui-btn--icon` for an icon-only button. Classes rendered by components (`ui-drawer__panel`, `ui-search`, `ui-page-head*`, `ui-field`, `ui-empty*`, `ui-alert*`, `ui-tag*`, `ui-kpi__*`, `ui-checks*`, `ui-avatar*`) are not written by hand.
+Layout `ui-view`, `ui-two-col` (+`--wide-aside`), `ui-grid-2`, `ui-kpi-grid`, `ui-tag-cloud`, `ui-section-head` (h2 plus actions inside a view), `ui-toolbar` (+`__spacer`). Surfaces `ui-card` (+`__head`, `__title`, `__body`). Data `ui-table` (+`ui-table-wrap`, `ui-table__empty`, `ui-table__state` for a dot plus label, `.num`), `ui-cell` (+`ui-cell__muted`), `ui-mono`, `ui-code`, `ui-dot` (+`--muted`). Row action classes are component-owned and are never written by a module. Forms `ui-form` (+`__row`, `__row--4`, `__foot`, `__actions`), `ui-input` (+`--error`), `ui-select`, `ui-textarea` (+`--error`), `ui-checkbox`, `ui-label`, `ui-help` (+`--error`). Drawer `ui-drawer__form`, `ui-drawer__body`, `ui-drawer__foot`. Bits `ui-kbd`, `ui-note`, `ui-menu` (+`__label`, `__item`, `__item--active`, `__item--danger`, `__sep`), `ui-btn ui-btn--icon` for an icon-only button. Classes rendered by components (`ui-drawer__panel`, `ui-search`, `ui-page-head*`, `ui-field`, `ui-empty*`, `ui-alert*`, `ui-tag*`, `ui-kpi__*`, `ui-checks*`, `ui-avatar*`, `ui-table__sort`, `ui-pagination` (+`__summary`, `__size`, `__pages`), `ui-datefield` (+`__reading`), `ui-daterange` (+`__row`), `ui-tabs` (+`__tab`), `ui-toasts` with `ui-toast`) are not written by hand.
 
 ## 6. Copy
 
 User-facing copy lives in every declared `translations/*.json` bundle and is read with fully qualified `t()` keys. Eyebrow names the domain, title names the records, and description is one sentence. Table headers say what the value is. Buttons start with a verb. Loading text ends with `…`. Drawer footer states the constraint the user cannot see. Write natural copy in each locale, with no exclamation marks or database jargon.
+
+## 7. Inspect the rendered screen
+
+A screen is not finished until it has been looked at. Typecheck and tests say nothing about overflow, alignment, a duplicate label or a column that collapses.
+
+Where to look:
+
+- Repository root: `pnpm dev`, then `http://localhost:4310`. `pnpm flowdular setup quick --apply --confirm reset-local-auth` (stop `pnpm dev` first; local only) seeds two demo tenants and two logins: `admin@example.com` / `Owner!23456789` owns both tenants, `user@example.com` / `Member!2345678` is a reduced-scope member. Navigate to the entry's navigation group and open the view.
+- Sandbox: the session preview panel renders the draft module. Use it; a specialist has no shell and no dev server.
+- No browser at hand: a headless Chrome screenshot (`--headless --window-size=1440,900 --screenshot=<file>`) captures what a fresh, signed-out session sees, which covers sign-in and public pages only. A protected screen needs a real session, so drive it with whatever browser automation the host offers rather than a bare screenshot flag.
+
+Record one piece of evidence per state before handing off. A state you could not reach is stated as such, not assumed:
+
+| State     | How to reach it                                                       | What to check                                                                         |
+| --------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Loading   | First paint before the fetch resolves, or a throttled network profile | Column widths match the populated table, the head does not jump, a refresh keeps rows |
+| Empty     | A tenant with no records                                              | The icon renders, the sentence names the first action, `emptyFiltered` differs        |
+| Error     | Make the request fail (sign out in a second tab, or drop the scope)   | `Alert` under the header, no blank screen, no raw stack or SQL in the message         |
+| Populated | Several real records, including the longest realistic value           | No horizontal page scroll, identifiers in `ui-mono`, numbers tabular, actions aligned |
+| Denied    | Sign in as `user@example.com`                                         | The manage action is absent, navigation is hidden, a forced request still returns 403 |
+
+Check the drawer form in the same pass: one label per field, fields top-aligned, the footer constraint visible, the submit button disabled while busy.
 
 ## Pitfalls
 
