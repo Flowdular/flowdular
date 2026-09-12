@@ -127,8 +127,11 @@ export function createServerComposition(context) {
 		try {
 			const composition = await runtime.compose(session);
 			expect(composition.error).toBeNull();
+			/* agents.core declares metering.core as a dependency, so a preview that
+			   pulls agents composes the meter registry ahead of it. */
 			expect(composition.modules.map((module) => module.id)).toEqual([
 				'system.core',
+				'metering.core',
 				'agents.core',
 				'workflows.core',
 				'preview.core',

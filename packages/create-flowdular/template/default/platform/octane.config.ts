@@ -4,11 +4,14 @@ import {
 	createApplicationRoutes,
 	validateApplicationPath,
 } from '@flowdular/sdk/server';
+import { createDataClassRegistry } from '@flowdular/sdk/kernel';
 import { resolve } from 'node:path';
 import { defineConfig, RenderRoute } from '@octanejs/vite-plugin';
 import {
 	authRuntimeOptionsFromEnvironment,
 	createAuthRoutes,
+	isTokenPrincipal,
+	mfaEnrolmentSatisfied,
 	principalFromContext,
 	createAuthRuntime,
 	createPlatformAgentRegistry,
@@ -24,6 +27,17 @@ import {
 	createPlatformDatabaseProvider,
 	databaseProviderConfigFromEnvironment,
 } from './src/server/database.ts';
+import {
+	createReadinessEndpoint,
+	healthEndpoint,
+} from './src/server/health.ts';
+import { createMetricsRoutes } from './src/server/metrics.ts';
+import {
+	createStorageKeyring,
+	createStoragePort,
+	createStorageRoutes,
+	storageConfigFromEnvironment,
+} from './src/server/storage.ts';
 
 function checkedRoutes<T extends Parameters<typeof assertRouteConflicts>[0]>(
 	routes: T,
@@ -42,6 +56,14 @@ const databases = createPlatformDatabaseProvider(
 		workspaceRoot,
 	),
 );
+const storageKeyring = createStorageKeyring(process.env, workspaceRoot);
+const storage = createStoragePort(
+	storageConfigFromEnvironment(
+		building ? { ...process.env, NODE_ENV: 'development' } : process.env,
+		workspaceRoot,
+	),
+	{ keyring: storageKeyring },
+);
 const configuredApplicationPath = validateApplicationPath(
 	process.env.FD_APPLICATION_PATH ?? applicationBasePath,
 );
@@ -55,6 +77,7 @@ const authRuntime = createAuthRuntime({
    with "pnpm flowdular module enable <id> --apply"; never wire them here by hand. */
 const settings = authRuntime.moduleSettings;
 const agentDefinitions = createPlatformAgentRegistry();
+const dataClasses = createDataClassRegistry();
 const moduleCompositions = composeModuleServer({
 	environment: process.env,
 	workspaceRoot,
@@ -63,12 +86,17 @@ const moduleCompositions = composeModuleServer({
 	agentTools: createPlatformToolRegistry(),
 	agentDefinitions,
 	capabilities: createPlatformCapabilityRegistry(),
+	dataClasses,
 	databases,
+	storage,
 });
 for (const composition of moduleCompositions) {
 	if (composition.settings) settings.declare(composition.settings);
 }
 agentDefinitions.seal();
+/* Sealed once every composition has run and before any start hook reads the
+   catalogue, so every reader sees the declarations the modules agreed on. */
+dataClasses.seal();
 
 /* check() proves the runtime role holds neither SUPERUSER nor BYPASSRLS before
    any module reads a row. */
@@ -87,6 +115,7 @@ const shutdown = async () => {
 		await composition.dispose?.();
 	}
 	await authRuntime.dispose();
+	await storage.dispose();
 	await databases.dispose();
 };
 // Bundling needs route declarations without background work or retained leases.
@@ -106,21 +135,37 @@ export default defineConfig({
 				entry: SHELL,
 				publicRoot: moduleWebMounts.some((site) => site.path === '/'),
 			}),
+			healthEndpoint.serverRoute,
+			createReadinessEndpoint(databases).serverRoute,
+			...createMetricsRoutes({ environment: process.env }),
+			...createStorageRoutes({
+				storage,
+				keyring: storageKeyring,
+				environment: process.env,
+			}),
 			...createAuthRoutes(authRuntime),
 			...moduleCompositions.flatMap((composition) => composition.routes),
 			...createModuleWebRoutes({
 				modules: moduleCompositions,
 				mounts: moduleWebMounts,
 				applicationPath: configuredApplicationPath,
-				resolveIdentity: (context) => {
+				resolveIdentity: async (context) => {
 					const principal = principalFromContext(context);
-					return principal
-						? {
-								subjectId: principal.accountId,
-								tenantId: principal.tenantId,
-								permissions: new Set(principal.scopes),
-							}
-						: null;
+					if (!principal) return null;
+					/* The /api gate does not reach these pages, and a member who
+					   still owes enrolment must not read workspace data from one.
+					   Machine credentials cannot enrol and stay exempt there too. */
+					if (
+						!isTokenPrincipal(context) &&
+						!(await mfaEnrolmentSatisfied(authRuntime, principal))
+					) {
+						return null;
+					}
+					return {
+						subjectId: principal.accountId,
+						tenantId: principal.tenantId,
+						permissions: new Set(principal.scopes),
+					};
 				},
 			}),
 		]),

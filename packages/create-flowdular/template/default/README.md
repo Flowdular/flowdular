@@ -24,8 +24,11 @@ install. Data lives under `.flowdular/data`.
 | ----------------- | ------------------------------------------------------------ |
 | `platform`        | The deployable composition root and the application shell    |
 | `modules/example` | A tenant-scoped record module: API, migration, screen, tests |
+| `specs`           | The platform spec of this application                        |
+| `infra`           | Dockerfile, compose stack and Kubernetes base                |
 | `flowdular.json`  | Enabled modules and locales, owned by the CLI                |
 | `.env`            | The keys generated for this app. Never commit it             |
+| `.env.example`    | Every key a production deployment reads                      |
 
 ## Work with coding agents
 
@@ -56,11 +59,44 @@ tests.
 `modules.enabled` in `flowdular.json` are written by the CLI. Never edit them by
 hand.
 
+## Build a module by chat
+
+```bash
+pnpm sandbox
+```
+
+The sandbox is a chat-first builder on `http://127.0.0.1:4320`. You describe the
+change, it writes the module in an isolated workspace, runs the same gates this
+repository runs, and previews the result inside the real application shell.
+`--port`, `--workspace`, `--host` and `--mode` override the defaults.
+
+It is a client of a running application and never opens its database. Connect it
+once: in the app open Administration, API tokens, issue a token with
+`sandbox.access.use` plus the read scopes the preview should see, grant the
+account access, then paste the token and the application address into the
+connect screen.
+
+```bash
+pnpm flowdular sandbox grant --email admin@example.com --tenant operations-demo --apply
+```
+
+## Deploy
+
+```bash
+cp .env.example infra/docker/.env   # then fill in every value
+docker compose -f infra/docker/compose.yaml up --build
+```
+
+`.env.example` lists every key the server reads in production. `infra/README.md`
+covers the container image, the PostgreSQL roles and TLS, migrations on rollout,
+and the Kubernetes base.
+
 ## Commands
 
 ```bash
 pnpm dev              # platform with HMR on http://localhost:4310
-pnpm verify           # typecheck, tests, module validation, format
+pnpm sandbox          # chat-first module builder on http://127.0.0.1:4320
+pnpm verify           # typecheck, tests, spec and module validation, format
 pnpm flowdular doctor  # workspace health
 ```
 

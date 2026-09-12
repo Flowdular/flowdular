@@ -1,5 +1,9 @@
 import { findBlueprintFiles } from './agent-resources.ts';
-import { RegistryError } from '@flowdular/kernel';
+import {
+	PLATFORM_API_VERSION,
+	RegistryError,
+	satisfiesModuleVersion,
+} from '@flowdular/kernel';
 import { loadModuleCatalog } from './module-catalog.ts';
 import {
 	installModule,
@@ -23,6 +27,7 @@ import {
 } from '@flowdular/database';
 import { capabilities, capability as coreCapability } from './capabilities.ts';
 import { createCliDatabaseProvider, databaseReset } from './database.ts';
+import { databaseBackup, databaseRestore } from './database-backup.ts';
 import { migrationScaffold } from './migration-new.ts';
 import { runDoctor } from './doctor.ts';
 import {
@@ -43,11 +48,13 @@ import {
 	syncPlatformModules,
 } from './module-sync.ts';
 import { validateModules } from './module-validate.ts';
+import { bumpModuleVersion, describeModuleVersion } from './module-version.ts';
 import {
 	findNamedFiles,
 	listPlatformSpecs,
 	validateBlueprint,
 	validateFile,
+	validateModuleSpec,
 	validators,
 } from './validation.ts';
 import {
@@ -141,8 +148,8 @@ async function runExtensionCommand(
 			);
 		}
 		const specPath = await resolveExistingInside(workspace.root, specFlag);
-		const report = await validateFile(specPath, validators.moduleSpec);
-		if (!report.valid) {
+		const report = await validateModuleSpec(specPath);
+		if (report.issues.some((issue) => issue.severity === 'error')) {
 			return failure(
 				'SPEC_VALIDATION_FAILED',
 				'The capability spec is invalid.',
@@ -227,6 +234,8 @@ export async function runCommand(
 					'module list|validate [--locked]|sync [--apply]|enable <id> [--apply]|disable <id> [--apply]|new <id> --spec <path> [--apply]',
 					'migration status [--module <id>]|apply --module <id> [--apply]|verify|new <name> --module <id> [--apply]',
 					'database reset [--module <id>] [--apply --confirm reset-database]',
+					'database backup --output <dir> [--apply]',
+					'database restore --input <dir> --apply --confirm restore-database',
 					'setup (interactive)|check|quick [--apply --confirm reset-local-auth]|migrate-state [--apply --confirm migrate-legacy-state]',
 					...extensionCommands.map((entry) => entry.command.path.join(' ')),
 				],
@@ -334,6 +343,8 @@ export async function runCommand(
 					'migration.apply.local': ['migration', 'apply'],
 					'workspace.state.migrate': ['setup', 'migrate-state'],
 					'database.reset.local': ['database', 'reset'],
+					'database.backup': ['database', 'backup'],
+					'database.restore': ['database', 'restore'],
 				};
 				const alias = aliases[target];
 				if (alias)
@@ -364,7 +375,7 @@ export async function runCommand(
 				await findNamedFiles(workspace.root, 'module.yaml')
 			).filter((file) => file.includes('/modules/'));
 			const reports = await Promise.all(
-				files.map((file) => validateFile(file, validators.moduleSpec)),
+				files.map((file) => validateModuleSpec(file)),
 			);
 			if (arguments_.flags.has('all')) {
 				const platformRoot =
@@ -418,20 +429,45 @@ export async function runCommand(
 		}
 
 		if (group === 'database') {
-			if (action !== 'reset') {
-				return failure(
-					'USAGE_ERROR',
-					'Use database reset [--module <id>] [--apply --confirm reset-database].',
+			if (action === 'reset') {
+				const descriptor = coreCapability('database.reset.local')!;
+				const refused =
+					environmentRefusal(descriptor) ??
+					writeRefusal(descriptor, arguments_);
+				if (refused) return refused;
+				return databaseReset(
+					workspace,
+					stringFlag(arguments_, 'module'),
+					arguments_.flags.has('apply'),
 				);
 			}
-			const descriptor = coreCapability('database.reset.local')!;
-			const refused =
-				environmentRefusal(descriptor) ?? writeRefusal(descriptor, arguments_);
-			if (refused) return refused;
-			return databaseReset(
-				workspace,
-				stringFlag(arguments_, 'module'),
-				arguments_.flags.has('apply'),
+			if (action === 'backup') {
+				const descriptor = coreCapability('database.backup')!;
+				const refused =
+					environmentRefusal(descriptor) ??
+					writeRefusal(descriptor, arguments_);
+				if (refused) return refused;
+				return await databaseBackup(
+					workspace,
+					stringFlag(arguments_, 'output'),
+					arguments_.flags.has('apply'),
+				);
+			}
+			if (action === 'restore') {
+				const descriptor = coreCapability('database.restore')!;
+				const refused =
+					environmentRefusal(descriptor) ??
+					writeRefusal(descriptor, arguments_);
+				if (refused) return refused;
+				return await databaseRestore(
+					workspace,
+					stringFlag(arguments_, 'input'),
+					arguments_.flags.has('apply'),
+				);
+			}
+			return failure(
+				'USAGE_ERROR',
+				'Use database reset [--module <id>] [--apply --confirm reset-database], database backup --output <dir> [--apply], or database restore --input <dir> --apply --confirm restore-database.',
 			);
 		}
 
@@ -489,17 +525,27 @@ export async function runCommand(
 			const { catalog } = await loadModuleCatalog(
 				stringFlag(arguments_, 'registry'),
 			);
-			const releases = catalog.releases.filter((release) =>
-				action === 'info'
-					? release.manifest.id === target
-					: !target || release.manifest.id.includes(target),
-			);
+			const compatibleOnly = arguments_.flags.has('compatible');
+			const releases = catalog.releases
+				.map((release) => ({
+					...release,
+					compatible: satisfiesModuleVersion(
+						PLATFORM_API_VERSION,
+						release.manifest.platformApi ?? '*',
+					),
+				}))
+				.filter((release) =>
+					action === 'info'
+						? release.manifest.id === target
+						: (!target || release.manifest.id.includes(target)) &&
+							(!compatibleOnly || release.compatible),
+				);
 			if (action === 'info' && !releases.length)
 				return failure(
 					'MODULE_NOT_FOUND',
 					`No official module ${target ?? ''}.`,
 				);
-			return success({ releases });
+			return success({ platformApi: PLATFORM_API_VERSION, releases });
 		}
 		if (group === 'module' && (action === 'install' || action === 'update')) {
 			if (!target)
@@ -531,6 +577,31 @@ export async function runCommand(
 			return success({
 				modules: files.map((file) => relative(workspace.root, file)),
 			});
+		}
+
+		if (group === 'module' && action === 'version') {
+			if (target === 'bump') {
+				const [, , , id, level] = arguments_.positionals;
+				if (!id || !level)
+					return failure(
+						'USAGE_ERROR',
+						'Use module version bump <id> <patch|minor|major> [--apply].',
+					);
+				const descriptor = coreCapability('module.version.bump')!;
+				const refused = writeRefusal(descriptor, arguments_);
+				if (refused) return refused;
+				return bumpModuleVersion(workspace, {
+					id,
+					level,
+					apply: arguments_.flags.has('apply'),
+				});
+			}
+			if (!target)
+				return failure(
+					'USAGE_ERROR',
+					'Use module version <id> or module version bump <id> <patch|minor|major> [--apply].',
+				);
+			return describeModuleVersion(workspace, target);
 		}
 
 		if (group === 'module' && action === 'validate') {

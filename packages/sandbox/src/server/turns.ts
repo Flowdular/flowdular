@@ -53,6 +53,7 @@ import {
 	type RoutingContext,
 } from './planning.ts';
 import type { PlatformClient } from './platform-client.ts';
+import { readQuestions } from './questions.ts';
 import { listSkills, writeAgentPointer } from './reference.ts';
 import {
 	appendChatEntry,
@@ -97,6 +98,10 @@ export interface TurnInput {
 	readonly freshContext?: boolean;
 	readonly sessionId: string;
 	readonly message: string;
+	/* The operator's own words, when the request text also carries text a
+	   specialist wrote. Only this is scanned for an explicit $skill, so a
+	   question can never choose the skill of the turn that answers it. */
+	readonly skillTask?: string;
 	readonly role?: string;
 	/* The draft module directory this turn works in. Defaults to the module the
 	   last handoff named, then to the primary module. */
@@ -646,7 +651,14 @@ export async function* runTurn(
 		sessionKind: active.kind === 'new' ? 'new-module' : 'edit-module',
 		blueprint: session.blueprint,
 		task: message,
+		...(input.skillTask === undefined
+			? {}
+			: { explicitSkillSource: input.skillTask }),
 		available: await listSkills(context.workspaceRoot),
+		/* The gate of the module this turn works in, read before the driver ran:
+		   until the operator approved that exact text there is nothing to
+		   implement from, so a new module starts as an interview. */
+		specApproved: gate.approved === true,
 	});
 	const reviewing = skill === 'auto-review';
 	if (reviewing) await prepareAutoReview(context.workspaceRoot, paths, active);
@@ -736,6 +748,9 @@ export async function* runTurn(
 	let nextResumeId = resumeId;
 	let failed = false;
 	let closing = '';
+	/* The transcript entry the closing message landed on, so a questions block
+	   the operator answers stays tied to the message that asked. */
+	let closingSequence = 0;
 	/* This snapshot is the enforcement point for role ownership. The workspace
 	   remains readable to the agent, but changes outside its module allowlist are
 	   quarantined and restored before any formatter, gate, checkpoint or delivery
@@ -758,14 +773,18 @@ export async function* runTurn(
 			model: session.model,
 			signal: input.signal,
 		})) {
-			yield await appendChatEntry(context.workspaceRoot, session, {
+			const recorded = await appendChatEntry(context.workspaceRoot, session, {
 				kind: eventKind(event),
 				role: roleId,
 				module: active.directory,
 				...(event.type === 'assistant.message' ? { text: event.text } : {}),
 				event,
 			});
-			if (event.type === 'assistant.message') closing = event.text;
+			yield recorded;
+			if (event.type === 'assistant.message') {
+				closing = event.text;
+				closingSequence = recorded.sequence;
+			}
 			if (event.type === 'turn.completed') {
 				nextResumeId = event.resumeId ?? nextResumeId;
 				failed = event.finishReason === 'error';
@@ -806,6 +825,19 @@ export async function* runTurn(
 				code: 'ALLOWED_PATHS_VIOLATION',
 				message: evidence.slice(0, 500),
 			} as CodingAgentEvent,
+		});
+	}
+
+	/* A specialist that needs decisions closes with a questions block. A block
+	   the protocol cannot read is a warning on this turn, never a failure: the
+	   words of the reply still stand. */
+	const asked = closing ? readQuestions(closing) : ({ kind: 'none' } as const);
+	if (asked.kind === 'invalid') {
+		yield await appendChatEntry(context.workspaceRoot, session, {
+			kind: 'system',
+			role: roleId,
+			module: active.directory,
+			text: `The questions block in this reply was ignored: ${asked.reason}`,
 		});
 	}
 
@@ -1013,6 +1045,16 @@ export async function* runTurn(
 	if (nextResumeId) resumeIds[resumeKey] = nextResumeId;
 	const updated = await updateSession(context.workspaceRoot, session.id, {
 		resumeIds,
+		pendingQuestions:
+			asked.kind === 'valid' && !failed
+				? {
+						sequence: closingSequence,
+						role: roleId,
+						module: active.directory,
+						askedAt: Date.now(),
+						questions: asked.questions,
+					}
+				: null,
 		state: failed
 			? 'failed'
 			: handoff.kind === 'approval' || handoff.kind === 'question'

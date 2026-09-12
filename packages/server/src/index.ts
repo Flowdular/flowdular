@@ -26,6 +26,17 @@ export type {
 	EndpointExecutionContext,
 	EndpointIdentity,
 } from './endpoint.ts';
+export { createMetricsRegistry, serverMetrics } from './metrics.ts';
+export type { HttpRequestSample, MetricsRegistry } from './metrics.ts';
+export { createLogger, serverLogger } from './log.ts';
+export type {
+	LogEvent,
+	LogFields,
+	LogFormat,
+	LogLevel,
+	Logger,
+	LoggerOptions,
+} from './log.ts';
 export {
 	HttpProblem,
 	jsonResponse,
@@ -35,6 +46,24 @@ export {
 	requiredInteger,
 	requiredString,
 } from './http.ts';
+export {
+	decodeCursor,
+	DEFAULT_PAGE_LIMIT,
+	encodeCursor,
+	keysetWhere,
+	MAX_CURSOR_LENGTH,
+	MAX_KEYSET_COLUMNS,
+	MAX_PAGE_LIMIT,
+	pageResponse,
+	readPageQuery,
+} from './pagination.ts';
+export type {
+	KeysetOptions,
+	KeysetPredicate,
+	PageQuery,
+	PageQueryOptions,
+	PageResult,
+} from './pagination.ts';
 export {
 	createSecurityHeadersMiddleware,
 	DEVELOPMENT_CONTENT_SECURITY_POLICY,

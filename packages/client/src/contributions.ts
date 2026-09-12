@@ -60,6 +60,40 @@ export interface AccountMenuContribution {
 	readonly order: number;
 }
 
+/** One record a contributed search answered with. */
+export interface CommandSearchHit {
+	/** Stable inside one result set, so a list can key on it. */
+	readonly id: string;
+	/** Groups the hit in the palette; the shell never interprets it. */
+	readonly provider: string;
+	readonly providerLabel: string;
+	readonly title: string;
+	readonly snippet: string;
+	/** The view the hit opens, as a `views` contribution declares its id. */
+	readonly viewId: string;
+	/** Workspace-relative path starting with "/", such as `/users?member=a1`. */
+	readonly route: string;
+}
+
+export interface CommandSearchRequest {
+	readonly query: string;
+	/** Aborted when the member types on, so a stale answer is never shown. */
+	readonly signal: AbortSignal;
+}
+
+/**
+ * Record hits for the command palette. The shell knows nothing about who
+ * answers or how: it asks every contribution whose scope the member holds and
+ * lists what comes back below the navigation entries. A contribution that
+ * fails contributes nothing and never blocks navigation.
+ */
+export interface CommandSearchContribution {
+	readonly id: string;
+	readonly scope: string;
+	readonly order: number;
+	search(request: CommandSearchRequest): Promise<readonly CommandSearchHit[]>;
+}
+
 export interface WidgetContribution {
 	readonly id: string;
 	readonly slot: WorkspaceSlot;
@@ -80,6 +114,8 @@ export interface ModuleClientContribution {
 	readonly accountMenu?: readonly AccountMenuContribution[];
 	readonly views?: readonly ClientViewContribution[];
 	readonly widgets?: readonly WidgetContribution[];
+	/** Record hits the command palette lists below the navigation entries. */
+	readonly commandSearch?: CommandSearchContribution;
 }
 
 export interface ClientContributionRegistry {
@@ -87,6 +123,7 @@ export interface ClientContributionRegistry {
 	readonly accountMenu: readonly AccountMenuContribution[];
 	readonly views: readonly ClientViewContribution[];
 	readonly widgets: readonly WidgetContribution[];
+	readonly commandSearch: readonly CommandSearchContribution[];
 }
 
 function assertUnique(values: readonly string[], kind: string): void {
@@ -111,7 +148,14 @@ export function createClientContributionRegistry(
 	const accountMenu = modules.flatMap((module) => module.accountMenu ?? []);
 	const views = modules.flatMap((module) => module.views ?? []);
 	const widgets = modules.flatMap((module) => module.widgets ?? []);
+	const commandSearch = modules.flatMap((module) =>
+		module.commandSearch ? [module.commandSearch] : [],
+	);
 
+	assertUnique(
+		commandSearch.map((entry) => entry.id),
+		'command search id',
+	);
 	assertUnique(
 		navigation.map((item) => item.id),
 		'navigation id',
@@ -165,6 +209,10 @@ export function createClientContributionRegistry(
 		),
 		views: [...views].sort((left, right) => left.id.localeCompare(right.id)),
 		widgets: [...widgets].sort(
+			(left, right) =>
+				left.order - right.order || left.id.localeCompare(right.id),
+		),
+		commandSearch: [...commandSearch].sort(
 			(left, right) =>
 				left.order - right.order || left.id.localeCompare(right.id),
 		),

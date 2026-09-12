@@ -36,6 +36,9 @@ export async function referenceSource(
 const REFERENCE_SOURCES: readonly {
 	readonly from: string;
 	readonly to: string;
+	/* A source whose absence is a defect rather than a shape the workspace may
+	   legitimately have, so a failed copy is reported instead of swallowed. */
+	readonly required?: boolean;
 }[] = [
 	{ from: 'packages/server/src', to: 'reference/packages/server/src' },
 	{
@@ -53,6 +56,14 @@ const REFERENCE_SOURCES: readonly {
 	{
 		from: 'packages/contracts/schemas',
 		to: 'reference/packages/contracts/schemas',
+	},
+	{
+		from: 'packages/kernel/src/data-class-registry.ts',
+		to: 'reference/packages/kernel/data-class-registry.ts',
+	},
+	{
+		from: 'packages/storage/src/index.ts',
+		to: 'reference/packages/storage/index.ts',
 	},
 	{ from: 'packages/ui/src/index.ts', to: 'reference/packages/ui/index.ts' },
 	{
@@ -89,6 +100,11 @@ const REFERENCE_SOURCES: readonly {
 		to: 'reference/auth-core/auth-service.ts',
 	},
 	{ from: 'AGENTS.md', to: 'reference/AGENTS.md' },
+	{
+		from: '.ai/platform-capabilities.md',
+		to: 'reference/platform-capabilities.md',
+		required: true,
+	},
 	{ from: 'docs/design-system.md', to: 'reference/design-system.md' },
 	{ from: 'docs/agent-contract.md', to: 'reference/agent-contract.md' },
 	{ from: '.ai/skills', to: 'reference/skills' },
@@ -109,10 +125,13 @@ not ejected.
 - packages/server: defineEndpoint, HTTP helpers, and the endpoint identity contract.
 - packages/client: the client contribution contract (createClientContribution, ModuleClientContext), shell slots, and shell state.
 - packages/contracts: module manifest, spec, and blueprint schemas.
+- packages/kernel/data-class-registry.ts: the data class declaration a module owning rows makes through context.dataClasses, with its sweep and export operations.
+- packages/storage/index.ts: the object storage port a module writes files through.
 - packages/ui: every shared primitive and the ui-* class list.
 - example-module: a complete module, from ACL to client view, including src/platform.ts. Follow its shape.
 - adapter-module: the same shape on the @flowdular/database provider contract, with an async repository, dialect-explicit migrations and a lease-owning runtime. Follow it when the module stores data.
 - auth-core: the public surface of auth.core, including its scopes, the PlatformServerContext composition contract, and its service API.
+- platform-capabilities.md: what a module can be built from and what the platform does not have yet. Read it before a specification promises anything.
 - AGENTS.md and design-system.md: the workspace rules that gates enforce.
 - agent-contract.md: detailed lookup reference, not required reading.
 - skills: read only the Task skill named in your Session instruction. Other files are available for later tasks, not for preloading.
@@ -166,7 +185,14 @@ export async function materializeReference(
 				!relative(from, path)
 					.split('/')
 					.some((segment) => EXCLUDED.has(segment)),
-		}).catch(() => undefined);
+		}).catch((error: unknown) => {
+			if (!source.required) return;
+			console.warn(
+				`Sandbox reference: ${source.from} was not copied into the session workspace (${
+					error instanceof Error ? error.message : String(error)
+				}). A skill that cites it will not find it.`,
+			);
+		});
 	}
 	await materializeSdkReference(workspaceRoot, sessionWorkspace);
 	const skills = await listSkills(workspaceRoot);

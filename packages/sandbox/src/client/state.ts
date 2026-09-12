@@ -26,6 +26,27 @@ export interface PendingAttachment {
 	readonly error?: string;
 }
 
+/* A refused answer submission, stamped with the session and the question set it
+   answered, so it can never be shown beside another form. */
+export interface AnswersRefusal {
+	readonly session: string;
+	readonly sequence: number;
+	readonly message: string;
+}
+
+/* A refusal outlives the record it answered, because a submission that already
+   consumed the questions still has to say why it failed. It does not outlive
+   the session it was refused in, nor a newer question set. */
+export function answersErrorFor(
+	refusal: AnswersRefusal | null,
+	sessionId: string,
+	pending: { readonly sequence: number } | null,
+): string {
+	if (!refusal || refusal.session !== sessionId) return '';
+	if (pending && pending.sequence > refusal.sequence) return '';
+	return refusal.message;
+}
+
 export function createSandboxClientState() {
 	const store = createStore({
 		state: cell<SandboxState | null>(null),

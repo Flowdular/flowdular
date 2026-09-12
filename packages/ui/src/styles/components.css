@@ -237,6 +237,104 @@
 	color: var(--danger);
 }
 
+/* Date fields. The native control keeps the ISO value; the reading beside it
+   is the same instant in the reader's locale, since the browser picks the
+   format inside the control and no page can change it. */
+.ui-datefield {
+	display: flex;
+	min-width: 0;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 10px;
+}
+
+/* The native control never shrinks below its own readable width: in a
+   two-column row inside a drawer the reading moves under it instead. */
+.ui-datefield > .ui-input {
+	width: auto;
+	min-width: min(100%, 190px);
+	flex: 1 1 auto;
+}
+
+.ui-datefield__reading {
+	display: inline-flex;
+	min-width: 0;
+	flex: 0 1 auto;
+	align-items: center;
+	gap: 6px;
+	overflow: hidden;
+	font-size: var(--text-sm);
+	color: var(--ink-3);
+	white-space: nowrap;
+}
+
+.ui-datefield__reading .ui-icon {
+	color: var(--ink-4);
+}
+
+.ui-daterange {
+	display: grid;
+	min-width: 0;
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+/* The group name sits above two labelled fields, so it takes the uppercase
+   label scale to stay above them in the hierarchy. */
+.ui-daterange > legend {
+	padding: 0;
+	font-size: var(--text-xs);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--ink-3);
+}
+
+.ui-daterange__row {
+	display: grid;
+	min-width: 0;
+	gap: 12px;
+	grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+/* Tabs: one row of sections inside a view. The active tab carries the only
+   accent, so a tablist never competes with the page actions. */
+.ui-tabs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	border-bottom: 1px solid var(--line-2);
+}
+
+.ui-tabs__tab {
+	height: var(--control-h);
+	padding: 0 12px;
+	font-size: var(--text-md);
+	font-weight: 500;
+	color: var(--ink-3);
+	background: none;
+	border: 0;
+	border-bottom: 2px solid transparent;
+	transition:
+		color var(--t-fast) var(--ease),
+		border-color var(--t-fast) var(--ease);
+}
+
+.ui-tabs__tab:hover:not(:disabled) {
+	color: var(--ink);
+}
+
+.ui-tabs__tab--on {
+	color: var(--primary);
+	border-bottom-color: var(--primary);
+}
+
+.ui-tabs__tab:disabled {
+	color: var(--ink-4);
+	cursor: not-allowed;
+}
+
 .ui-checkbox {
 	display: flex;
 	align-items: center;
@@ -915,6 +1013,81 @@
 
 .ui-table tbody tr.ui-table__placeholder > td.ui-table__empty {
 	padding: 40px 16px;
+}
+
+/* Sortable header. The button fills the cell so the whole header is the
+   target, and inherits the head type so sorting changes nothing but the
+   indicator. The cell hands its inset to the button for that reason. */
+.ui-table th:has(> .ui-table__sort) {
+	padding: 0;
+}
+
+.ui-table th > .ui-table__sort {
+	display: inline-flex;
+	width: 100%;
+	height: 100%;
+	align-items: center;
+	gap: 6px;
+	margin: 0;
+	padding: 0 16px;
+	font: inherit;
+	letter-spacing: inherit;
+	text-transform: inherit;
+	color: inherit;
+	background: none;
+	border: 0;
+}
+
+.ui-table th > .ui-table__sort:hover {
+	color: var(--ink-2);
+}
+
+.ui-table th.num > .ui-table__sort {
+	flex-direction: row-reverse;
+}
+
+.ui-table__sort-icon {
+	display: inline-flex;
+	color: var(--ink-4);
+	transition: transform var(--t-fast) var(--ease);
+}
+
+.ui-table__sort-icon--on {
+	color: var(--primary);
+}
+
+.ui-table__sort-icon--asc {
+	transform: rotate(180deg);
+}
+
+/* Pager under a table, inside the card. */
+.ui-pagination {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px;
+	padding: 10px 16px;
+	border-top: 1px solid var(--line-2);
+}
+
+.ui-pagination__summary {
+	flex: 1 1 auto;
+	min-width: 0;
+	font-size: var(--text-sm);
+	font-variant-numeric: tabular-nums;
+	color: var(--ink-3);
+}
+
+.ui-pagination__size {
+	width: auto;
+	height: var(--button-h);
+	flex: 0 0 auto;
+}
+
+.ui-pagination__pages {
+	display: flex;
+	align-items: center;
+	gap: 6px;
 }
 
 .ui-cell {
@@ -1856,4 +2029,92 @@
 	padding: 10px;
 	font-size: var(--text-sm);
 	color: var(--ink-3);
+}
+
+/* Toasts: transient confirmations above every surface, including a drawer and
+   a dialog. The region keeps its place while empty and takes no pointer, so
+   only a live toast is clickable. The reduced-motion rule in base.css already
+   neutralises the entry animation. */
+.ui-toasts {
+	position: fixed;
+	right: 16px;
+	bottom: 16px;
+	z-index: 80;
+	display: grid;
+	width: min(380px, calc(100vw - 32px));
+	gap: 8px;
+	justify-items: stretch;
+	pointer-events: none;
+}
+
+.ui-toast {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 12px 12px 12px 14px;
+	font-size: var(--text-md);
+	color: var(--ink);
+	background: var(--surface);
+	border: 1px solid var(--line);
+	border-left: 3px solid var(--ink-4);
+	border-radius: var(--r-md);
+	box-shadow: var(--shadow-md);
+	pointer-events: auto;
+	animation: ui-toast-in var(--t-base) var(--ease);
+}
+
+.ui-toast--success {
+	border-left-color: var(--success);
+}
+
+.ui-toast--success > .ui-icon {
+	color: var(--success);
+}
+
+.ui-toast--error {
+	border-left-color: var(--danger);
+}
+
+.ui-toast--error > .ui-icon {
+	color: var(--danger);
+}
+
+.ui-toast--info {
+	border-left-color: var(--primary);
+}
+
+.ui-toast--info > .ui-icon {
+	color: var(--primary);
+}
+
+.ui-toast__message {
+	flex: 1 1 auto;
+	min-width: 0;
+	line-height: 1.45;
+}
+
+.ui-toast__close {
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	color: var(--ink-4);
+	background: none;
+	border: 0;
+	border-radius: var(--r-sm);
+}
+
+.ui-toast__close:hover {
+	color: var(--ink-2);
+	background: var(--surface-2);
+}
+
+@keyframes ui-toast-in {
+	from {
+		opacity: 0;
+		transform: translateY(8px);
+	}
 }

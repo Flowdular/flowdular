@@ -14,8 +14,10 @@ import {
 	moduleSpecSchema,
 	platformSpecSchema,
 	projectSchema,
+	type ModuleSpec,
 	type ValidationIssue,
 } from '@flowdular/contracts';
+import { reservedFieldReason } from './module-templates.ts';
 
 const ajv = new Ajv2020({ allErrors: true, strict: true });
 const validators = {
@@ -41,11 +43,276 @@ function issuesFrom(
 	errors: ErrorObject[] | null | undefined,
 ): ValidationIssue[] {
 	return (errors ?? []).map((error) => ({
-		code: `SCHEMA_${error.keyword.toUpperCase()}`,
+		/* Ajv reports a rejected branch as the keyword "false schema". */
+		code: `SCHEMA_${error.keyword.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`,
 		message: error.message ?? 'Schema validation failed.',
 		path: error.instancePath || '/',
 		severity: 'error' as const,
 	}));
+}
+
+function specIssue(
+	code: string,
+	message: string,
+	path: string,
+): ValidationIssue {
+	return { code, message, path, severity: 'error' };
+}
+
+function duplicateIssues<T>(
+	items: readonly T[] | undefined,
+	key: keyof T & string,
+	section: string,
+): ValidationIssue[] {
+	const seen = new Set<string>();
+	const issues: ValidationIssue[] = [];
+	(items ?? []).forEach((item, index) => {
+		const id = item[key];
+		if (typeof id !== 'string') return;
+		if (seen.has(id)) {
+			issues.push(
+				specIssue(
+					'SPEC_DUPLICATE_ID',
+					`${section} declares "${id}" more than once.`,
+					`/${section}/${index}/${key}`,
+				),
+			);
+		}
+		seen.add(id);
+	});
+	return issues;
+}
+
+/* Cross-document checks the JSON schema cannot express. A version 1 document
+   carries none of the referenced sections, so it is never inspected. */
+export function moduleSpecIssues(value: unknown): ValidationIssue[] {
+	const spec = value as ModuleSpec;
+	if (!spec || typeof spec !== 'object' || spec.schemaVersion !== 2) return [];
+
+	const entities = spec.entities ?? [];
+	const fieldsByEntity = new Map<string, ReadonlySet<string>>(
+		entities.map((entity) => [
+			entity.id,
+			new Set((entity.fields ?? []).map((field) => field.id)),
+		]),
+	);
+	const permissions = new Set((spec.permissions ?? []).map((item) => item.id));
+	const modules = new Set([
+		spec.id,
+		...(spec.dependencies ?? []).map((dependency) => dependency.id),
+	]);
+	const capabilities = new Set(spec.capabilities ?? []);
+
+	const issues: ValidationIssue[] = [
+		...duplicateIssues(entities, 'id', 'entities'),
+		...duplicateIssues(spec.screens, 'id', 'screens'),
+		...duplicateIssues(spec.actions, 'id', 'actions'),
+		...duplicateIssues(spec.widgets, 'id', 'widgets'),
+		...duplicateIssues(spec.settings, 'key', 'settings'),
+		...duplicateIssues(spec.agentTools, 'id', 'agentTools'),
+		...duplicateIssues(spec.decisions, 'id', 'decisions'),
+	];
+
+	if (capabilities.has('database') && entities.length === 0) {
+		issues.push(
+			specIssue(
+				'SPEC_ENTITY_REQUIRED',
+				'A specification with the database capability must declare at least one entity.',
+				'/entities',
+			),
+		);
+	}
+
+	entities.forEach((entity, index) => {
+		issues.push(
+			...duplicateIssues(entity.fields, 'id', `entities/${index}/fields`),
+		);
+		const statePath = `/entities/${index}/states/field`;
+		const stateField = (entity.fields ?? []).find(
+			(field) => field.id === entity.states?.field,
+		);
+		if (entity.states && !stateField) {
+			issues.push(
+				specIssue(
+					'SPEC_FIELD_UNKNOWN',
+					`"${entity.states.field}" is not a field of entity "${entity.id}".`,
+					statePath,
+				),
+			);
+		}
+		/* The service writes the first lifecycle value into the column, so the
+		   field has to be the enum that declares exactly those values. */
+		if (entity.states && stateField && stateField.type !== 'enum') {
+			issues.push(
+				specIssue(
+					'SPEC_STATE_FIELD_INVALID',
+					`Lifecycle field "${entity.id}.${stateField.id}" is a ${stateField.type} field; a lifecycle field must be an enum.`,
+					statePath,
+				),
+			);
+		}
+		if (
+			entity.states &&
+			stateField?.type === 'enum' &&
+			(stateField.values ?? []).join('\u0000') !==
+				entity.states.values.join('\u0000')
+		) {
+			issues.push(
+				specIssue(
+					'SPEC_STATE_FIELD_INVALID',
+					`Lifecycle values of "${entity.id}" differ from the values of enum field "${stateField.id}".`,
+					`/entities/${index}/states/values`,
+				),
+			);
+		}
+		(entity.fields ?? []).forEach((field, fieldIndex) => {
+			const path = `/entities/${index}/fields/${fieldIndex}`;
+			const reserved = reservedFieldReason(field.id);
+			if (reserved) {
+				issues.push(
+					specIssue(
+						'SPEC_FIELD_RESERVED',
+						`Field "${entity.id}.${field.id}" ${reserved}.`,
+						`${path}/id`,
+					),
+				);
+			}
+			if (field.type === 'enum' && (field.values ?? []).length === 0) {
+				issues.push(
+					specIssue(
+						'SPEC_ENUM_VALUES_REQUIRED',
+						`Enum field "${entity.id}.${field.id}" declares no values.`,
+						`${path}/values`,
+					),
+				);
+			}
+			if (field.type !== 'reference') return;
+			const target = field.reference ?? '';
+			const segments = target.split('.');
+			const owner = segments.slice(0, -1).join('.');
+			/* A reference into this specification names a local entity however it
+			   is spelled, so the qualified form resolves against the same set. */
+			const known =
+				segments.length === 1 || owner === spec.id
+					? fieldsByEntity.has(segments[segments.length - 1] ?? '')
+					: modules.has(owner);
+			if (!known) {
+				issues.push(
+					specIssue(
+						'SPEC_REFERENCE_UNKNOWN',
+						`Reference field "${entity.id}.${field.id}" points at "${target}", which is neither an entity of this specification nor an entity of a declared dependency.`,
+						`${path}/reference`,
+					),
+				);
+			}
+		});
+		if (
+			capabilities.has('database') &&
+			!(entity.fields ?? []).some((field) => field.unique === 'tenant')
+		) {
+			issues.push({
+				code: 'SPEC_ENTITY_UNIQUE_MISSING',
+				message: `Entity "${entity.id}" declares no field unique inside a tenant.`,
+				path: `/entities/${index}`,
+				severity: 'warning',
+			});
+		}
+	});
+
+	const entityIssue = (
+		entity: string | undefined,
+		path: string,
+	): ValidationIssue | undefined => {
+		if (entity === undefined || fieldsByEntity.has(entity)) return undefined;
+		return specIssue(
+			'SPEC_ENTITY_UNKNOWN',
+			`"${entity}" is not an entity of this specification.`,
+			`${path}/entity`,
+		);
+	};
+
+	(spec.screens ?? []).forEach((screen, index) => {
+		const path = `/screens/${index}`;
+		const unknownEntity = entityIssue(screen.entity, path);
+		if (unknownEntity) issues.push(unknownEntity);
+		const fields = screen.entity
+			? fieldsByEntity.get(screen.entity)
+			: undefined;
+		for (const key of ['columns', 'filters'] as const) {
+			const names = screen[key] ?? [];
+			if (names.length === 0) continue;
+			if (!fields) {
+				if (!unknownEntity) {
+					issues.push(
+						specIssue(
+							'SPEC_ENTITY_UNKNOWN',
+							`Screen "${screen.id}" lists ${key} but names no entity.`,
+							`${path}/entity`,
+						),
+					);
+				}
+				continue;
+			}
+			names.forEach((name, nameIndex) => {
+				if (fields.has(name)) return;
+				issues.push(
+					specIssue(
+						'SPEC_FIELD_UNKNOWN',
+						`"${name}" is not a field of entity "${screen.entity}".`,
+						`${path}/${key}/${nameIndex}`,
+					),
+				);
+			});
+		}
+	});
+
+	(spec.actions ?? []).forEach((action, index) => {
+		const path = `/actions/${index}`;
+		const unknownEntity = entityIssue(action.entity, path);
+		if (unknownEntity) issues.push(unknownEntity);
+		if (!permissions.has(action.permission)) {
+			issues.push(
+				specIssue(
+					'SPEC_ACTION_PERMISSION_UNKNOWN',
+					`Action "${action.id}" requires permission "${action.permission}", which the specification does not declare.`,
+					`${path}/permission`,
+				),
+			);
+		}
+	});
+
+	(spec.widgets ?? []).forEach((widget, index) => {
+		const unknownEntity = entityIssue(widget.entity, `/widgets/${index}`);
+		if (unknownEntity) issues.push(unknownEntity);
+	});
+
+	(spec.settings ?? []).forEach((setting, index) => {
+		if (setting.type !== 'enum' || (setting.values ?? []).length > 0) return;
+		issues.push(
+			specIssue(
+				'SPEC_ENUM_VALUES_REQUIRED',
+				`Enum setting "${setting.key}" declares no values.`,
+				`/settings/${index}/values`,
+			),
+		);
+	});
+
+	/* The scaffold builds the workspace view from a list screen, so a client
+	   without one has nothing to render. */
+	if (
+		capabilities.has('client') &&
+		!(spec.screens ?? []).some((screen) => screen.kind === 'list')
+	) {
+		issues.push({
+			code: 'SPEC_SCREENS_MISSING',
+			message:
+				'A specification with the client capability declares no list screen.',
+			path: '/screens',
+			severity: 'warning',
+		});
+	}
+
+	return issues;
 }
 
 async function parseFile(path: string): Promise<unknown> {
@@ -58,11 +325,21 @@ async function parseFile(path: string): Promise<unknown> {
 export async function validateFile(
 	path: string,
 	validator: ValidateFunction,
+	/* Checks across the parsed document, run only once it matches the schema. */
+	crossCheck?: (value: unknown) => readonly ValidationIssue[],
 ): Promise<FileValidation> {
 	try {
 		const value = await parseFile(path);
 		const valid = validator(value);
-		return { file: path, valid, issues: issuesFrom(validator.errors) };
+		const issues = [
+			...issuesFrom(validator.errors),
+			...(valid && crossCheck ? crossCheck(value) : []),
+		];
+		return {
+			file: path,
+			valid: issues.every((issue) => issue.severity !== 'error'),
+			issues,
+		};
 	} catch (error) {
 		return {
 			file: path,
@@ -76,6 +353,11 @@ export async function validateFile(
 			],
 		};
 	}
+}
+
+/** Schema plus the cross-document checks of a module specification. */
+export function validateModuleSpec(path: string): Promise<FileValidation> {
+	return validateFile(path, validators.moduleSpec, moduleSpecIssues);
 }
 
 /* Dependencies, build output, and tool state are never workspace sources.

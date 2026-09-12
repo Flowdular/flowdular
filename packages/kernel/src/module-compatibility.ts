@@ -1,9 +1,40 @@
-import { satisfies, valid, validRange, rcompare } from 'semver';
-import type { ModuleManifest } from '@flowdular/contracts';
+import { inc, satisfies, valid, validRange, rcompare } from 'semver';
+import {
+	PLATFORM_API_VERSION,
+	type ModuleManifest,
+} from '@flowdular/contracts';
 import { RegistryError } from './errors.ts';
 
-/** Version of the public platform contract, independent of application versions. */
-export const PLATFORM_API_VERSION = '0.1.0';
+export { PLATFORM_API_VERSION };
+
+export type ModuleVersionLevel = 'patch' | 'minor' | 'major';
+
+export function incrementModuleVersion(
+	version: string,
+	level: ModuleVersionLevel,
+): string {
+	const next = valid(version) === null ? null : inc(version, level);
+	if (!next)
+		throw new RegistryError(
+			'MODULE_VERSION_INVALID',
+			`Cannot bump invalid version ${version}.`,
+		);
+	return next;
+}
+
+/* A dependent's range is left alone while it still accepts the new version.
+   Otherwise the version part is replaced and the operator kept, so `^0.11.0`
+   becomes `^0.12.0` and an exact pin stays an exact pin. A compound range is
+   returned as null for the caller to retarget by hand. */
+export function retargetModuleRange(
+	range: string,
+	version: string,
+): string | null {
+	if (satisfiesModuleVersion(version, range)) return range;
+	const simple = /^([\^~]?)\d+\.\d+\.\d+$/.exec(range.trim());
+	if (!simple) return null;
+	return `${simple[1]}${version}`;
+}
 
 export function satisfiesModuleVersion(
 	version: string,

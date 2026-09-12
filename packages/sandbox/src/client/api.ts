@@ -701,34 +701,25 @@ async function consumeTurnStream(
 	});
 }
 
-/* The turn runs on the server whatever this stream does. Aborting the
-   controller only closes this browser's view of it; stopTurn stops the agent. */
-export function streamTurn(
-	sessionId: string,
-	input: {
-		readonly message: string;
-		readonly freshContext?: boolean;
-		readonly role: string;
-		/* The draft module directory the turn works in; absent lets the sandbox
-		   decide from the last handoff. */
-		readonly module?: string;
-		readonly driver: string;
-	},
+/* Every route that starts a turn answers with the same stream, so they share
+   one transport. The turn runs on the server whatever this stream does:
+   aborting the controller only closes this browser's view of it, and stopTurn
+   stops the agent. */
+function postTurnStream(
+	path: string,
+	input: unknown,
 	handlers: TurnHandlers,
 ): AbortController {
 	const controller = new AbortController();
 	void (async () => {
 		try {
-			const response = await fetch(
-				`/sandbox/api/sessions/${encodeURIComponent(sessionId)}/turn`,
-				{
-					method: 'POST',
-					headers: MUTATION_HEADERS,
-					credentials: 'same-origin',
-					body: JSON.stringify(input),
-					signal: controller.signal,
-				},
-			);
+			const response = await fetch(path, {
+				method: 'POST',
+				headers: MUTATION_HEADERS,
+				credentials: 'same-origin',
+				body: JSON.stringify(input),
+				signal: controller.signal,
+			});
 			if (!response.ok || !response.body) {
 				const value = (await response
 					.json()
@@ -749,6 +740,47 @@ export function streamTurn(
 		}
 	})();
 	return controller;
+}
+
+export function streamTurn(
+	sessionId: string,
+	input: {
+		readonly message: string;
+		readonly freshContext?: boolean;
+		readonly role: string;
+		/* The draft module directory the turn works in; absent lets the sandbox
+		   decide from the last handoff. */
+		readonly module?: string;
+		readonly driver: string;
+	},
+	handlers: TurnHandlers,
+): AbortController {
+	return postTurnStream(
+		`/sandbox/api/sessions/${encodeURIComponent(sessionId)}/turn`,
+		input,
+		handlers,
+	);
+}
+
+export interface SubmittedAnswer {
+	readonly id: string;
+	readonly answer: string;
+}
+
+/* The decisions the operator made on the questions the last turn asked. The
+   server prepends them to the optional message and starts the next turn in the
+   role that asked, so this is a turn stream like any other. */
+export function submitAnswers(
+	sessionId: string,
+	answers: readonly SubmittedAnswer[],
+	message: string,
+	handlers: TurnHandlers,
+): AbortController {
+	return postTurnStream(
+		`/sandbox/api/sessions/${encodeURIComponent(sessionId)}/answers`,
+		{ answers, ...(message ? { message } : {}) },
+		handlers,
+	);
 }
 
 /* Attach to a turn that is already running, after a reload or from another

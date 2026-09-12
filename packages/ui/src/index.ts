@@ -17,6 +17,17 @@ export type {
 } from './components/Button.tsrx';
 export { FormField } from './components/FormField.tsrx';
 export type { FormFieldProps } from './components/FormField.tsrx';
+export { Select } from './components/Select.tsrx';
+export type { SelectOption, SelectProps } from './components/Select.tsrx';
+export { DateField } from './components/DateField.tsrx';
+export type { DateFieldProps } from './components/DateField.tsrx';
+export { DateRangeField } from './components/DateRangeField.tsrx';
+export type {
+	DateRange,
+	DateRangeFieldProps,
+} from './components/DateRangeField.tsrx';
+export { dateRangeReversed, formatDateValue } from './components/date-field.ts';
+export type { DateFieldKind } from './components/date-field.ts';
 export { SearchField } from './components/SearchField.tsrx';
 export type { SearchFieldProps } from './components/SearchField.tsrx';
 export { CheckGrid } from './components/CheckGrid.tsrx';
@@ -41,11 +52,17 @@ export type {
 	TableAction,
 	TableColumn,
 	TableEmpty,
+	TablePagination,
 	TableProps,
 	TableStatus,
 } from './components/Table.tsrx';
+export type { TableSort, TableSortChange } from './components/table-sorting.ts';
 export { TableCard } from './components/TableCard.tsrx';
 export type { TableCardProps } from './components/TableCard.tsrx';
+export { Pagination } from './components/Pagination.tsrx';
+export type { PaginationProps } from './components/Pagination.tsrx';
+export { pageRange } from './components/pagination.ts';
+export type { PageRange } from './components/pagination.ts';
 export { Kpi } from './components/Kpi.tsrx';
 export type { KpiProps } from './components/Kpi.tsrx';
 export { Chart } from './components/Chart.tsrx';
@@ -68,6 +85,18 @@ export { ConfirmDialog } from './components/ConfirmDialog.tsrx';
 export type { ConfirmDialogProps } from './components/ConfirmDialog.tsrx';
 export { Filters } from './components/Filters.tsrx';
 export type { FiltersProps } from './components/Filters.tsrx';
+export { Tabs } from './components/Tabs.tsrx';
+export type { TabsProps } from './components/Tabs.tsrx';
+export type { TabItem } from './components/tabs.ts';
+export { ToastHost } from './components/ToastHost.tsrx';
+export type { ToastHostProps } from './components/ToastHost.tsrx';
+export { createToastStore, toasts } from './components/toast-store.ts';
+export type {
+	Toast,
+	ToastStore,
+	ToastStoreOptions,
+	ToastTone,
+} from './components/toast-store.ts';
 export { VariableTextarea } from './components/VariableTextarea.tsrx';
 export type { VariableTextareaProps } from './components/VariableTextarea.tsrx';
 export { VariableInput } from './components/VariableInput.tsrx';

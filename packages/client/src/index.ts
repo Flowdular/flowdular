@@ -9,6 +9,9 @@ export type {
 	AccountMenuContribution,
 	ClientContributionRegistry,
 	ClientViewContribution,
+	CommandSearchContribution,
+	CommandSearchHit,
+	CommandSearchRequest,
 	ModuleClientContext,
 	ModuleClientInitializationContext,
 	ModuleClientContribution,
@@ -17,6 +20,11 @@ export type {
 	WidgetContribution,
 	WorkspaceSlot,
 } from './contributions.ts';
+export { openCommandPalette } from './shell/command.ts';
+export {
+	COMMAND_SEARCH_DEBOUNCE_MS,
+	COMMAND_SEARCH_MINIMUM,
+} from './shell/command-search.ts';
 export { FALLBACK_LOCALE, resolveLocale } from './i18n/locale.ts';
 export type { LocaleResolution } from './i18n/locale.ts';
 export {

@@ -64,6 +64,7 @@
 		"@flowdular/kernel": "workspace:*",
 		"@flowdular/module-auth": "workspace:*",
 		"@flowdular/server": "workspace:*",
+		"@flowdular/storage": "workspace:*",
 		"@flowdular/ui": "workspace:*",
 		"@octanejs/seo": "0.0.38",
 		"@octanejs/vite-plugin": "0.1.51",

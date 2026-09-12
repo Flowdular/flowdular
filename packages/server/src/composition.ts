@@ -1,11 +1,13 @@
 import type { ServerRoute } from '@octanejs/app-core';
 import type { ModuleWebSurface } from '@flowdular/contracts';
 import type { DatabaseProvider } from '@flowdular/database';
+import type { StoragePort } from '@flowdular/storage';
 import type {
 	ModuleSettingsDeclaration,
 	ModuleSettingsRuntime,
 	PlatformAgentRegistry,
 	PlatformCapabilityRegistry,
+	PlatformDataClassRegistry,
 	PlatformToolRegistry,
 } from '@flowdular/kernel';
 
@@ -24,10 +26,23 @@ export interface ModuleServerContext<Auth> {
 	readonly agentTools: PlatformToolRegistry;
 	/** Business agent definitions modules register before the platform starts. */
 	readonly agentDefinitions: PlatformAgentRegistry;
+	/**
+	 * The data a module owns, declared while it composes. The platform seals
+	 * the registry after every composition ran, so `list()` answers the whole
+	 * catalogue from any module's view; the binding limits what a module may
+	 * declare, never what it may read.
+	 */
+	readonly dataClasses: PlatformDataClassRegistry;
 	/** Typed public services shared by composed modules without database access. */
 	readonly capabilities: PlatformCapabilityRegistry;
 	/** Platform-owned database leases. Modules never receive a DSN or pool. */
 	readonly databases: DatabaseProvider;
+	/**
+	 * Platform-owned object storage. The tenant id is the first key segment and
+	 * comes from the principal, never from the request, because no row-level
+	 * security reaches an object store.
+	 */
+	readonly storage: StoragePort;
 }
 
 export interface ModuleServerComposition {

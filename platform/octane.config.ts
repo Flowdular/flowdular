@@ -2,12 +2,16 @@ import {
 	assertRouteConflicts,
 	createModuleWebRoutes,
 	createApplicationRoutes,
+	serverLogger,
 	validateApplicationPath,
 } from '@flowdular/server';
+import { createDataClassRegistry } from '@flowdular/kernel';
 import { resolve } from 'node:path';
 import { defineConfig, RenderRoute, ServerRoute } from '@octanejs/vite-plugin';
 import {
 	createAuthRoutes,
+	isTokenPrincipal,
+	mfaEnrolmentSatisfied,
 	principalFromContext,
 	createAuthRuntime,
 	createPlatformAgentRegistry,
@@ -35,6 +39,13 @@ import {
 	createPlatformRuntimeLifecycle,
 	prepareAndActivatePlatformRuntimeLifecycle,
 } from './src/server/lifecycle.ts';
+import { createMetricsRoutes } from './src/server/metrics.ts';
+import {
+	createStorageKeyring,
+	createStoragePort,
+	createStorageRoutes,
+	storageConfigFromEnvironment,
+} from './src/server/storage.ts';
 import {
 	clearSetupToken,
 	createFirstRunSetup,
@@ -114,10 +125,25 @@ async function createPlatformConfig() {
 		),
 	);
 	lifecycle.add(() => databases.dispose());
+	const storageKeyring = createStorageKeyring(process.env, workspaceRoot);
+	const storage = createStoragePort(
+		storageConfigFromEnvironment(
+			process.env.FD_INTERNAL_BUILD === 'true'
+				? { ...process.env, NODE_ENV: 'development' }
+				: process.env,
+			workspaceRoot,
+		),
+		{ keyring: storageKeyring },
+	);
+	lifecycle.add(() => storage.dispose());
+	/* Created before the auth runtime so auth.core, which composes outside the
+	   generated module list, declares its data classes into the same registry. */
+	const dataClasses = createDataClassRegistry();
 	const authRuntime = createAuthRuntime({
 		...authRuntimeOptionsFromEnvironment(process.env, workspaceRoot),
 		applicationPath: configuredApplicationPath,
 		databases,
+		dataClasses,
 	});
 	lifecycle.add(() => authRuntime.dispose());
 	try {
@@ -136,7 +162,9 @@ async function createPlatformConfig() {
 			agentTools,
 			agentDefinitions,
 			capabilities,
+			dataClasses,
 			databases,
+			storage,
 		});
 		for (const composition of moduleCompositions) {
 			if (composition.settings) settings.declare(composition.settings);
@@ -144,6 +172,10 @@ async function createPlatformConfig() {
 			if (composition.dispose) lifecycle.add(composition.dispose);
 		}
 		agentDefinitions.seal();
+		/* Sealed here rather than in a module: every composition has run, which
+		   is exactly when the declarations are final and before any start hook
+		   reads the catalogue. */
+		dataClasses.seal();
 		const config = defineConfig({
 			middlewares: [lifecycle.middleware, authRuntime.middleware],
 			router: {
@@ -155,21 +187,35 @@ async function createPlatformConfig() {
 					}),
 					healthEndpoint.serverRoute,
 					readinessEndpoint.serverRoute,
+					...createMetricsRoutes({ environment: process.env }),
+					...createStorageRoutes({
+						storage,
+						keyring: storageKeyring,
+						environment: process.env,
+					}),
 					...createAuthRoutes(authRuntime),
 					...moduleCompositions.flatMap((composition) => composition.routes),
 					...createModuleWebRoutes({
 						modules: moduleCompositions,
 						mounts: moduleWebMounts,
 						applicationPath: configuredApplicationPath,
-						resolveIdentity: (context) => {
+						resolveIdentity: async (context) => {
 							const principal = principalFromContext(context);
-							return principal
-								? {
-										subjectId: principal.accountId,
-										tenantId: principal.tenantId,
-										permissions: new Set(principal.scopes),
-									}
-								: null;
+							if (!principal) return null;
+							/* The /api gate does not reach these pages, and a member who
+							   still owes enrolment must not read workspace data from one.
+							   Machine credentials cannot enrol and stay exempt there too. */
+							if (
+								!isTokenPrincipal(context) &&
+								!(await mfaEnrolmentSatisfied(authRuntime, principal))
+							) {
+								return null;
+							}
+							return {
+								subjectId: principal.accountId,
+								tenantId: principal.tenantId,
+								permissions: new Set(principal.scopes),
+							};
 						},
 					}),
 					// The explicit /api fallback is more specific than the workspace
@@ -200,10 +246,10 @@ async function createPlatformConfig() {
 		return config;
 	} catch (error) {
 		void lifecycle.retire().catch((disposeError: unknown) => {
-			console.error(
-				'[flowdular] failed platform boot cleanup failed',
-				disposeError,
-			);
+			serverLogger().error('failed platform boot cleanup failed', {
+				module: 'platform',
+				err: disposeError,
+			});
 		});
 		throw error;
 	}

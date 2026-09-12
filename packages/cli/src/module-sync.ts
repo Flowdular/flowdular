@@ -9,6 +9,7 @@ import { findModuleFiles } from './module-files.ts';
 import {
 	assertModuleCompatibility,
 	assertModuleDependency,
+	capabilityProviders,
 } from '@flowdular/kernel';
 import type { Workspace } from './workspace.ts';
 
@@ -93,6 +94,18 @@ function clientImport(id: string, pkg: string): string {
 	return `import { createClientContribution as ${identifier(id)} } from '${pkg}/client';`;
 }
 
+/* The manifest's provides/requires travel into the composition so the kernel
+   can hold each module to them; a descriptor without a manifest (tests, older
+   generators) keeps the open registry. */
+function capabilityScope(module: PlatformModuleDescriptor): string {
+	if (!module.manifest) return '';
+	const declaration = JSON.stringify({
+		provides: module.manifest.provides ?? [],
+		requires: module.manifest.requires ?? [],
+	});
+	return `\t\t\tcapabilities: context.capabilities.forModule('${module.id}', ${declaration}),\n`;
+}
+
 export function generateServerComposition(
 	modules: readonly PlatformModuleDescriptor[],
 	sdk = false,
@@ -135,6 +148,8 @@ export function generateServerComposition(
 				`\t\t{ ...${identifier(module.id)}({\n` +
 				`\t\t\t...context,\n` +
 				`\t\t\tagentDefinitions: context.agentDefinitions.forModule('${module.id}'),\n` +
+				`\t\t\tdataClasses: context.dataClasses.forModule('${module.id}'),\n` +
+				capabilityScope(module) +
 				`\t\t}), moduleId: '${module.id}' },`,
 		)
 		.join('\n');
@@ -246,6 +261,11 @@ function moduleOrder(
 	const visiting: string[] = [];
 	const visited = new Set<string>();
 	const ordered: PlatformModuleDescriptor[] = [];
+	const providers = capabilityProviders(
+		[...manifests.values()].flatMap((descriptor) =>
+			descriptor.manifest ? [{ manifest: descriptor.manifest }] : [],
+		),
+	);
 
 	const visit = (id: string, requiredBy?: string): void => {
 		if (visited.has(id)) return;
@@ -280,6 +300,24 @@ function moduleOrder(
 			if (constraint && version)
 				assertModuleDependency(id, constraint, version);
 			visit(dependency, id);
+		}
+		for (const requirement of [...(current.manifest?.requires ?? [])].sort(
+			(left, right) => left.id.localeCompare(right.id),
+		)) {
+			if (requirement.optional) continue;
+			const provider = providers.get(requirement.id);
+			if (!provider) {
+				throw new Error(
+					`Module "${id}" requires capability "${requirement.id}" and no module provides it.`,
+				);
+			}
+			if (provider === id) continue;
+			if (!includeDependencies && !requested.has(provider)) {
+				throw new Error(
+					`Enabled module "${id}" requires capability "${requirement.id}" from disabled module "${provider}". Enable the provider first.`,
+				);
+			}
+			visit(provider, id);
 		}
 		visiting.pop();
 		visited.add(id);

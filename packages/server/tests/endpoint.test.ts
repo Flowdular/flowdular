@@ -85,8 +85,9 @@ describe('defineEndpoint', () => {
 			error: { code: 'INTERNAL_ERROR' },
 			requestId: 'request-1',
 		});
-		expect(logged).toHaveBeenCalledWith(
-			'[request-1] endpoint system.failure failed (Error)',
+		expect(logged).toHaveBeenCalledTimes(1);
+		expect(String(logged.mock.calls[0]?.[0])).toContain(
+			'requestId=request-1 endpoint=system.failure err=Error',
 		);
 		expect(JSON.stringify(logged.mock.calls)).not.toContain('sk-secret-value');
 		logged.mockRestore();

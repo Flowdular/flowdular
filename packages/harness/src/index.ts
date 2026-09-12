@@ -32,6 +32,8 @@ export type {
 	AgentTool,
 	AgentToolAccessAuthorizer,
 	AgentToolAuthorizationRequest,
+	AgentToolConsent,
+	AgentToolConsentDecision,
 	AgentToolContext,
 	AgentUsage,
 	JsonValue,

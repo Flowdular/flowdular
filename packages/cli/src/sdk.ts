@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import type { Workspace } from './workspace.ts';
 import { resolveExistingInside } from './workspace.ts';
 
-export const SDK_VERSION = '0.2.3';
+export const SDK_VERSION = '0.2.4';
 const LIBRARIES = new Set([
 	'ai-provider',
 	'cli-protocol',
@@ -23,7 +23,6 @@ const CORE_MODULES = new Set([
 	'agents',
 	'auth',
 	'automations',
-	'automations-workflows-integration',
 	'profile',
 	'sandbox',
 	'system',

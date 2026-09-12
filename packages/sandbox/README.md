@@ -459,6 +459,31 @@ anyone else works, so a broken change never travels down the chain. The fix
 prompt carries the gate command and the first 4000 characters of its output;
 the transcript keeps the whole output (head and tail of a long one).
 
+### Active questions
+
+A specialist that needs a business decision closes its reply with one fenced
+block tagged `questions` holding
+`{"questions":[{"id":"Q-1","question":"...","options":["..."],"recommended":"...","allowFreeText":true}]}`.
+The sandbox parses and bounds it (at most 12 questions with unique `Q-n` ids, a
+question of 1 to 400 characters, at most 8 options of 1 to 120 characters, a
+recommendation that is one of them) and stores it on the session as
+`pendingQuestions`; a block it cannot read is a turn warning, not a failed turn.
+The transcript lists the questions instead of showing JSON, and the session view
+offers a form with the recommendation preselected.
+
+```
+POST /sandbox/api/sessions/:id/answers
+{ "answers": [{ "id": "Q-1", "answer": "Only the owner" }], "message": "optional" }
+```
+
+Behind the same boundary as every other mutation. It clears the questions and
+starts the next turn in the role that asked, in the module it asked about, with
+`Decisions:` and one `- Q-1: <question> -> <answer>` line per decision leading
+the operator's optional message. Refusals: `409 NO_PENDING_QUESTIONS`, `409
+SESSION_ARCHIVED`, `409 SESSION_DELIVERED`, and `400 INVALID_INPUT` for an
+unanswered question, an unknown id, an over-long answer, or an answer that is
+not one of the offered options when no free text was allowed.
+
 ## Turn lifetime
 
 A turn runs to completion on the server whatever happens to the browser: the

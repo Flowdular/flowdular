@@ -1,6 +1,13 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import {
+	mkdtemp,
+	readdir,
+	readFile,
+	rm,
+	stat,
+	writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { scaffold, ScaffoldError } from '../src/scaffold.ts';
 import { SECRET_KEYS } from '../src/secrets.ts';
@@ -24,6 +31,54 @@ function exists(path: string): Promise<boolean> {
 		() => true,
 		() => false,
 	);
+}
+
+/* Inline and reference links; a bare autolink carries no relative target. */
+const MARKDOWN_LINK = /\[[^\]]*\]\(<?([^)>\s]+)>?(?:\s+"[^"]*")?\)/g;
+
+async function markdownFiles(directory: string): Promise<readonly string[]> {
+	const found: string[] = [];
+	for (const entry of await readdir(directory, {
+		withFileTypes: true,
+		recursive: true,
+	})) {
+		if (entry.isFile() && entry.name.endsWith('.md')) {
+			found.push(join(entry.parentPath, entry.name));
+		}
+	}
+	return found;
+}
+
+/* Docker matches a pattern against the whole context-relative path, never
+   segment by segment, so a pattern without "**" only ever reaches the root. */
+function patternMatcher(pattern: string): RegExp {
+	let source = '';
+	for (let index = 0; index < pattern.length; index += 1) {
+		if (pattern.startsWith('**/', index)) {
+			source += '(?:.*/)?';
+			index += 2;
+			continue;
+		}
+		const character = pattern[index]!;
+		if (character === '*') source += '[^/]*';
+		else if (character === '?') source += '[^/]';
+		else source += character.replace(/[.+^${}()|[\]\\]/, '\\$&');
+	}
+	return new RegExp(`^${source}(?:/.*)?$`);
+}
+
+/* Last matching line wins, and a leading "!" re-includes. */
+function excluded(ignoreFile: string, path: string): boolean {
+	let result = false;
+	for (const line of ignoreFile.split('\n')) {
+		const pattern = line.trim();
+		if (pattern === '' || pattern.startsWith('#')) continue;
+		const negated = pattern.startsWith('!');
+		if (patternMatcher(negated ? pattern.slice(1) : pattern).test(path)) {
+			result = !negated;
+		}
+	}
+	return result;
 }
 
 describe('scaffold', () => {
@@ -88,6 +143,8 @@ describe('scaffold', () => {
 			'tsconfig.base.json',
 			'README.md',
 			'.ai/README.md',
+			/* The capability card every spec interview and skill cites. */
+			'.ai/platform-capabilities.md',
 			'.ai/guides/application-development.md',
 			'.ai/skills/auto-review/SKILL.md',
 			'.ai/agents/reviewer.md',
@@ -117,8 +174,83 @@ describe('scaffold', () => {
 			'modules/example/translations/en.json',
 			'modules/example/translations/pl.json',
 			'modules/example/tests/module.test.ts',
+			'specs/application.yaml',
+			'.env.example',
+			'.dockerignore',
+			'infra/README.md',
+			'infra/docker/Dockerfile',
+			'infra/docker/compose.yaml',
+			'infra/docker/postgres/10-roles.sh',
+			'infra/docker/postgres/tls-init.sh',
+			'infra/kubernetes/kustomization.yaml',
+			'infra/kubernetes/deployment.yaml',
+			'docs/sandbox.md',
+			'docs/cli.md',
+			'docs/getting-started.md',
+			'docs/cli-extensions.md',
+			'docs/module-web-surfaces.md',
 		]) {
 			expect(await exists(join(result.directory, path)), path).toBe(true);
+		}
+		expect(manifest.scripts.sandbox).toContain('@flowdular/sandbox');
+		expect(manifest.scripts.verify).toContain('spec validate --all');
+	});
+
+	it('names the application spec after the directory it scaffolds into', async () => {
+		const cwd = await workspace();
+
+		const result = await scaffold({
+			cwd,
+			target: 'my.app_1',
+			template: 'default',
+			force: false,
+		});
+
+		const spec = await readFile(
+			join(result.directory, 'specs/application.yaml'),
+			'utf8',
+		);
+		expect(spec).toContain('id: application.my-app-1');
+		expect(spec).toContain('status: approved');
+		expect(spec).not.toContain('application.app-name');
+	});
+
+	it('documents every production key it cannot generate a value for', async () => {
+		const cwd = await workspace();
+
+		const result = await scaffold({
+			cwd,
+			target: 'my-app',
+			template: 'default',
+			force: false,
+		});
+
+		const example = await readFile(
+			join(result.directory, '.env.example'),
+			'utf8',
+		);
+		for (const key of [
+			...SECRET_KEYS,
+			/* Rotation needs the retired key alongside the new one; an operator
+			   who cannot see it here replaces the key and loses what it sealed. */
+			...SECRET_KEYS.filter((key) => key !== 'FD_AGENT_RUN_GRANT_KEY').map(
+				(key) => `${key}_PREVIOUS`,
+			),
+			'FD_DATABASE_URL',
+			'FD_DATABASE_MIGRATOR_URL',
+			'FD_DATABASE_BACKGROUND_URL',
+			'FD_AUTH_SECURE_COOKIE',
+			/* Both topologies in infra/ terminate TLS in front of the app. */
+			'FD_TRUST_PROXY',
+			'FD_AUTH_MAIL_TRANSPORT',
+			'FD_AUTH_SMTP_URL',
+			'FD_AUTH_MAIL_FROM',
+		]) {
+			expect(example, key).toContain(`\n${key}=`);
+		}
+		/* A placeholder file that leaked a real value would be committed. */
+		for (const key of SECRET_KEYS) {
+			expect(example, key).toContain(`\n${key}=\n`);
 		}
 	});
 
@@ -137,6 +269,36 @@ describe('scaffold', () => {
 		expect(
 			await readFile(join(result.directory, '.gitignore'), 'utf8'),
 		).toContain('.env');
+	});
+
+	it('keeps every environment file out of the docker build context', async () => {
+		const cwd = await workspace();
+
+		const result = await scaffold({
+			cwd,
+			target: 'my-app',
+			template: 'default',
+			force: false,
+		});
+
+		const ignore = await readFile(
+			join(result.directory, '.dockerignore'),
+			'utf8',
+		);
+		/* infra/README.md tells the operator to write infra/docker/.env, and
+		   "COPY . ." in infra/docker/Dockerfile would otherwise bake it in. */
+		for (const path of [
+			'.env',
+			'.env.local',
+			'.env.production',
+			'infra/docker/.env',
+			'platform/.env.local',
+		]) {
+			expect(excluded(ignore, path), path).toBe(true);
+		}
+		for (const path of ['.env.example', 'infra/docker/.env.example']) {
+			expect(excluded(ignore, path), path).toBe(false);
+		}
 	});
 
 	it('writes an .env whose keys differ between two scaffolds', async () => {
@@ -172,6 +334,36 @@ describe('scaffold', () => {
 		for (const [index, value] of firstKeys.entries()) {
 			expect(secondKeys[index]).not.toBe(value);
 		}
+	});
+
+	it('resolves every relative link its guidance and documentation carry', async () => {
+		const cwd = await workspace();
+
+		const result = await scaffold({
+			cwd,
+			target: 'my-app',
+			template: 'default',
+			force: false,
+		});
+
+		/* An agent follows these links inside the generated workspace, so a
+		   document the copy list forgot reads as a missing capability. */
+		const broken: string[] = [];
+		for (const directory of ['docs', '.ai']) {
+			for (const file of await markdownFiles(
+				join(result.directory, directory),
+			)) {
+				const source = await readFile(file, 'utf8');
+				for (const match of source.matchAll(MARKDOWN_LINK)) {
+					const target = match[1] ?? '';
+					const path = target.split('#')[0] ?? '';
+					if (path === '' || /^[a-z][a-z0-9+.-]*:/i.test(path)) continue;
+					if (await exists(resolve(dirname(file), path))) continue;
+					broken.push(`${relative(result.directory, file)} -> ${target}`);
+				}
+			}
+		}
+		expect(broken).toEqual([]);
 	});
 
 	it('refuses a directory that is not empty', async () => {

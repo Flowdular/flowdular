@@ -78,6 +78,7 @@ import {
 	specPathOf,
 	type ModuleSpecReview,
 } from './spec.ts';
+import { formatDecisions, resolveAnswers } from './questions.ts';
 import type { BrowserSession, SandboxRuntime } from './runtime.ts';
 import { PlatformClient } from './platform-client.ts';
 import { SandboxSetupError } from './workspace-root.ts';
@@ -131,6 +132,7 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
 	MODULE_ALREADY_IN_SESSION: 409,
 	SPEC_NOT_FOUND: 404,
 	SPEC_NOT_APPROVED: 409,
+	NO_PENDING_QUESTIONS: 409,
 	EJECT_SPEC_MISSING: 409,
 	EJECT_SPEC_NOT_APPROVED: 409,
 	EJECT_SPEC_VERSION_UNCHANGED: 409,
@@ -143,6 +145,9 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
 const MAX_SPEC_TEXT = 200_000;
 const MAX_SPEC_COMMENT = 4_000;
 const MAX_JSON_BODY_BYTES = 256_000;
+/* What an operator may add beside the decisions. The decision list is bounded
+   by the questions protocol, so the two together stay inside a turn message. */
+const MAX_ANSWER_NOTE = 8_000;
 
 export interface SandboxRouteOptions {
 	/* The port the launcher bound. A loopback request must name it in its Host
@@ -626,6 +631,14 @@ function assertNotDelivered(session: SandboxSession): void {
 	}
 }
 
+/* The turn one accepted answer set starts: the decisions the specialist reads
+   back, in the role and the module that asked for them. */
+interface AnsweredTurn {
+	readonly message: string;
+	readonly role: string;
+	readonly module?: string;
+}
+
 /* A turn, or a chain of automatically continued turns, runs to completion on
    the server whatever happens to the browser. Streams subscribe to it and can
    leave at any time; stopping is an explicit action. The finished promise is
@@ -666,6 +679,7 @@ export function createSandboxRoutes(
 		sessionId: string,
 		input: {
 			message: string;
+			skillTask?: string;
 			freshContext?: boolean;
 			role?: string;
 			module?: string;
@@ -701,6 +715,7 @@ export function createSandboxRoutes(
 				});
 				let next: {
 					message: string;
+					skillTask?: string;
 					role?: string;
 					module?: string;
 					driver?: string;
@@ -1546,6 +1561,60 @@ export function createSandboxRoutes(
 		},
 	});
 
+	/* Answering the questions the last turn asked is a turn of its own: the
+	   decisions lead the request text, the operator's own words follow them, and
+	   the specialist that asked takes the turn in the module it asked about. */
+	const answerQuestions = new ServerRoute({
+		path: '/sandbox/api/sessions/:id/answers',
+		methods: ['POST'],
+		handler: async (context) => {
+			try {
+				await authorize(runtime, context, options, { mutation: true });
+				const sessionId = sessionIdParam(context);
+				const value = await body(context.request);
+				const note = optionalText(value, 'message', MAX_ANSWER_NOTE);
+				let answered: AnsweredTurn | null = null;
+				/* Reading the questions, resolving them and clearing them is one
+				   step under the session lock: two submissions arriving together
+				   must not both find the same decisions pending and start a turn
+				   from them. */
+				await updateSession(runtime.workspaceRoot, sessionId, (current) => {
+					assertNotArchived(current);
+					assertNotDelivered(current);
+					const pending = current.pendingQuestions;
+					if (!pending || pending.questions.length === 0) {
+						throw new SandboxSetupError(
+							'NO_PENDING_QUESTIONS',
+							'This session is not waiting for a decision.',
+						);
+					}
+					const resolved = resolveAnswers(pending, value.answers);
+					if (!resolved.ok) {
+						throw new SandboxSetupError('INVALID_INPUT', resolved.reason);
+					}
+					const decisions = formatDecisions(resolved.decisions);
+					answered = {
+						message: note ? `${decisions}\n\n${note}` : decisions,
+						role: pending.role,
+						...(pending.module ? { module: pending.module } : {}),
+					};
+					return { pendingQuestions: null };
+				});
+				const turn: AnsweredTurn = answered!;
+				const channel = startTurn(
+					sessionId,
+					/* The decisions text is the specialist's own words read back, so
+					   only the operator's note may name a skill for this turn. */
+					{ ...turn, skillTask: note ?? '' },
+					actingPlatform(runtime, context),
+				);
+				return streamChannel(channel);
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
 	/* Follow a turn another browser, or an earlier page load, started. */
 	const followTurn = new ServerRoute({
 		path: '/sandbox/api/sessions/:id/turn/stream',
@@ -2232,6 +2301,7 @@ export function createSandboxRoutes(
 		restoreSandboxCheckpoint,
 		removeSandboxSession,
 		turn,
+		answerQuestions,
 		followTurn,
 		stop,
 		settings,

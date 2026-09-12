@@ -1,5 +1,9 @@
 import type { CapabilityRisk } from '@flowdular/contracts';
-import type { AgentTool, AgentToolContext } from './runtime.ts';
+import type {
+	AgentTool,
+	AgentToolConsent,
+	AgentToolContext,
+} from './runtime.ts';
 
 interface AgentToolBase {
 	readonly id: string;
@@ -9,6 +13,9 @@ interface AgentToolBase {
 	readonly contractVersion?: number;
 	readonly outputSchema?: Readonly<Record<string, unknown>>;
 	readonly risk?: 'read' | 'workspace-write' | 'external' | 'destructive';
+	/* Asked per call, after input validation, by every caller that runs the
+	   tool: the harness and the workflow action runtime. */
+	readonly consent?: AgentToolConsent;
 	readonly idempotency?: 'required';
 	readonly idempotencyProtection?: 'target-ledger';
 	readonly cancellation?: 'cooperative' | 'not-supported';
@@ -36,6 +43,11 @@ function dottedIdentifier(value: string, field: string): string {
 export function defineApiAgentTool(
 	definition: ApiAgentToolDefinition,
 ): AgentTool {
+	if (definition.risk === 'external') {
+		throw new Error(
+			`Tool ${definition.id} declares external risk and cannot be registered as an unattended agent tool.`,
+		);
+	}
 	return Object.freeze({
 		id: dottedIdentifier(definition.id, 'Tool id'),
 		transport: 'api' as const,
@@ -49,6 +61,9 @@ export function defineApiAgentTool(
 			? {}
 			: { outputSchema: definition.outputSchema }),
 		...(definition.risk === undefined ? {} : { risk: definition.risk }),
+		...(definition.consent === undefined
+			? {}
+			: { consent: definition.consent }),
 		...(definition.idempotency === undefined
 			? {}
 			: { idempotency: definition.idempotency }),
@@ -89,6 +104,9 @@ export function defineCliAgentTool(
 			? {}
 			: { outputSchema: definition.outputSchema }),
 		...(definition.risk === undefined ? {} : { risk: definition.risk }),
+		...(definition.consent === undefined
+			? {}
+			: { consent: definition.consent }),
 		...(definition.idempotency === undefined
 			? {}
 			: { idempotency: definition.idempotency }),

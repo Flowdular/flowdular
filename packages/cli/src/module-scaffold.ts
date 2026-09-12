@@ -13,7 +13,7 @@ import { parse as parseYaml } from 'yaml';
 import type { ModuleSpec } from '@flowdular/contracts';
 import { loadWorkspaceFormatter, type Formatter } from './format.ts';
 import { packageSuffix, planScaffold } from './module-templates.ts';
-import { findNamedFiles, validateFile, validators } from './validation.ts';
+import { findNamedFiles, validateModuleSpec } from './validation.ts';
 import {
 	resolveExistingInside,
 	resolveInside,
@@ -147,10 +147,13 @@ export async function scaffoldModule(
 		workspace.root,
 		request.specPath,
 	);
-	const specReport = await validateFile(specPath, validators.moduleSpec);
+	const specReport = await validateModuleSpec(specPath);
 	if (!specReport.valid) {
 		throw new Error(
-			`Module specification is invalid: ${specReport.issues.map((issue) => issue.message).join('; ')}`,
+			`Module specification is invalid: ${specReport.issues
+				.filter((issue) => issue.severity === 'error')
+				.map((issue) => issue.message)
+				.join('; ')}`,
 		);
 	}
 	const specSource = await readFile(specPath, 'utf8');

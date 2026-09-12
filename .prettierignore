@@ -22,3 +22,6 @@ release-artifacts/
 
 # Generated from canonical agent guidance at generator build time.
 packages/create-flowdular/agent-template/
+
+# Declaration emit of the platform API surface, written by scripts/platform-api.mjs.
+packages/kernel/platform-api.snapshot.d.ts

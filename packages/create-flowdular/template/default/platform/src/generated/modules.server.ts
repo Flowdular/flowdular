@@ -6,13 +6,21 @@ import type {
 } from '@flowdular/sdk/modules/auth/server';
 import type { WebMount } from '@flowdular/sdk/server';
 import { createServerComposition as system_core } from '@flowdular/sdk/modules/system/platform';
+import { createServerComposition as metering_core } from '@flowdular/sdk/modules/metering/platform';
 import { createServerComposition as agents_core } from '@flowdular/sdk/modules/agents/platform';
-import { createServerComposition as automations_core } from '@flowdular/sdk/modules/automations/platform';
+import { createServerComposition as approvals_core } from '@flowdular/sdk/modules/approvals/platform';
+import { createServerComposition as audit_core } from '@flowdular/sdk/modules/audit/platform';
 import { createServerComposition as workflows_core } from '@flowdular/sdk/modules/workflows/platform';
-import { createServerComposition as automations_workflows_integration } from '@flowdular/sdk/modules/automations-workflows-integration/platform';
+import { createServerComposition as automations_core } from '@flowdular/sdk/modules/automations/platform';
+import { createServerComposition as connectors_core } from '@flowdular/sdk/modules/connectors/platform';
+import { createServerComposition as directory_core } from '@flowdular/sdk/modules/directory/platform';
+import { createServerComposition as documents_core } from '@flowdular/sdk/modules/documents/platform';
 import { createServerComposition as example_core } from '@app/module-example/platform';
+import { createServerComposition as import_core } from '@flowdular/sdk/modules/import/platform';
+import { createServerComposition as notifications_core } from '@flowdular/sdk/modules/notifications/platform';
 import { createServerComposition as profile_core } from '@flowdular/sdk/modules/profile/platform';
 import { createServerComposition as sandbox_core } from '@flowdular/sdk/modules/sandbox/platform';
+import { createServerComposition as search_core } from '@flowdular/sdk/modules/search/platform';
 import { createServerComposition as users_core } from '@flowdular/sdk/modules/users/platform';
 
 export function composeModuleServer(
@@ -23,51 +31,184 @@ export function composeModuleServer(
 			...system_core({
 				...context,
 				agentDefinitions: context.agentDefinitions.forModule('system.core'),
+				dataClasses: context.dataClasses.forModule('system.core'),
+				capabilities: context.capabilities.forModule('system.core', {
+					provides: [],
+					requires: [],
+				}),
 			}),
 			moduleId: 'system.core',
+		},
+		{
+			...metering_core({
+				...context,
+				agentDefinitions: context.agentDefinitions.forModule('metering.core'),
+				dataClasses: context.dataClasses.forModule('metering.core'),
+				capabilities: context.capabilities.forModule('metering.core', {
+					provides: ['metering.meters.v1'],
+					requires: [{ id: 'notifications.publish.v1', optional: true }],
+				}),
+			}),
+			moduleId: 'metering.core',
 		},
 		{
 			...agents_core({
 				...context,
 				agentDefinitions: context.agentDefinitions.forModule('agents.core'),
+				dataClasses: context.dataClasses.forModule('agents.core'),
+				capabilities: context.capabilities.forModule('agents.core', {
+					provides: [
+						'agents.run-queue',
+						'agents.run-execution.v2',
+						'agents.actions.v1',
+					],
+					requires: [
+						{ id: 'notifications.publish.v1', optional: true },
+						{ id: 'metering.meters.v1' },
+					],
+				}),
 			}),
 			moduleId: 'agents.core',
+		},
+		{
+			...approvals_core({
+				...context,
+				agentDefinitions: context.agentDefinitions.forModule('approvals.core'),
+				dataClasses: context.dataClasses.forModule('approvals.core'),
+				capabilities: context.capabilities.forModule('approvals.core', {
+					provides: ['approvals.requests.v1'],
+					requires: [{ id: 'notifications.publish.v1', optional: true }],
+				}),
+			}),
+			moduleId: 'approvals.core',
+		},
+		{
+			...audit_core({
+				...context,
+				agentDefinitions: context.agentDefinitions.forModule('audit.core'),
+				dataClasses: context.dataClasses.forModule('audit.core'),
+				capabilities: context.capabilities.forModule('audit.core', {
+					provides: ['audit.erasure.v1'],
+					requires: [],
+				}),
+			}),
+			moduleId: 'audit.core',
+		},
+		{
+			...workflows_core({
+				...context,
+				agentDefinitions: context.agentDefinitions.forModule('workflows.core'),
+				dataClasses: context.dataClasses.forModule('workflows.core'),
+				capabilities: context.capabilities.forModule('workflows.core', {
+					provides: ['workflows.execution.v1'],
+					requires: [
+						{ id: 'agents.run-execution.v2' },
+						{ id: 'agents.actions.v1' },
+						{ id: 'notifications.publish.v1', optional: true },
+						{ id: 'approvals.requests.v1', optional: true },
+					],
+				}),
+			}),
+			moduleId: 'workflows.core',
 		},
 		{
 			...automations_core({
 				...context,
 				agentDefinitions:
 					context.agentDefinitions.forModule('automations.core'),
+				dataClasses: context.dataClasses.forModule('automations.core'),
+				capabilities: context.capabilities.forModule('automations.core', {
+					provides: ['automations.targets.v1', 'automations.execution.v1'],
+					requires: [
+						{ id: 'agents.run-queue' },
+						{ id: 'workflows.execution.v1', optional: true },
+					],
+				}),
 			}),
 			moduleId: 'automations.core',
 		},
 		{
-			...workflows_core({
+			...connectors_core({
 				...context,
-				agentDefinitions: context.agentDefinitions.forModule('workflows.core'),
+				agentDefinitions: context.agentDefinitions.forModule('connectors.core'),
+				dataClasses: context.dataClasses.forModule('connectors.core'),
+				capabilities: context.capabilities.forModule('connectors.core', {
+					provides: ['connectors.definitions.v1', 'connectors.calls.v1'],
+					requires: [],
+				}),
 			}),
-			moduleId: 'workflows.core',
+			moduleId: 'connectors.core',
 		},
 		{
-			...automations_workflows_integration({
+			...directory_core({
 				...context,
-				agentDefinitions: context.agentDefinitions.forModule(
-					'automations-workflows.integration',
-				),
+				agentDefinitions: context.agentDefinitions.forModule('directory.core'),
+				dataClasses: context.dataClasses.forModule('directory.core'),
+				capabilities: context.capabilities.forModule('directory.core', {
+					provides: [],
+					requires: [],
+				}),
 			}),
-			moduleId: 'automations-workflows.integration',
+			moduleId: 'directory.core',
+		},
+		{
+			...documents_core({
+				...context,
+				agentDefinitions: context.agentDefinitions.forModule('documents.core'),
+				dataClasses: context.dataClasses.forModule('documents.core'),
+				capabilities: context.capabilities.forModule('documents.core', {
+					provides: ['documents.attachments.v1'],
+					requires: [],
+				}),
+			}),
+			moduleId: 'documents.core',
 		},
 		{
 			...example_core({
 				...context,
 				agentDefinitions: context.agentDefinitions.forModule('example.core'),
+				dataClasses: context.dataClasses.forModule('example.core'),
+				capabilities: context.capabilities.forModule('example.core', {
+					provides: [],
+					requires: [],
+				}),
 			}),
 			moduleId: 'example.core',
+		},
+		{
+			...import_core({
+				...context,
+				agentDefinitions: context.agentDefinitions.forModule('import.core'),
+				dataClasses: context.dataClasses.forModule('import.core'),
+				capabilities: context.capabilities.forModule('import.core', {
+					provides: ['import.ports.v1'],
+					requires: [{ id: 'documents.attachments.v1' }],
+				}),
+			}),
+			moduleId: 'import.core',
+		},
+		{
+			...notifications_core({
+				...context,
+				agentDefinitions:
+					context.agentDefinitions.forModule('notifications.core'),
+				dataClasses: context.dataClasses.forModule('notifications.core'),
+				capabilities: context.capabilities.forModule('notifications.core', {
+					provides: ['notifications.publish.v1'],
+					requires: [],
+				}),
+			}),
+			moduleId: 'notifications.core',
 		},
 		{
 			...profile_core({
 				...context,
 				agentDefinitions: context.agentDefinitions.forModule('profile.core'),
+				dataClasses: context.dataClasses.forModule('profile.core'),
+				capabilities: context.capabilities.forModule('profile.core', {
+					provides: [],
+					requires: [],
+				}),
 			}),
 			moduleId: 'profile.core',
 		},
@@ -75,13 +216,38 @@ export function composeModuleServer(
 			...sandbox_core({
 				...context,
 				agentDefinitions: context.agentDefinitions.forModule('sandbox.core'),
+				dataClasses: context.dataClasses.forModule('sandbox.core'),
+				capabilities: context.capabilities.forModule('sandbox.core', {
+					provides: [],
+					requires: [],
+				}),
 			}),
 			moduleId: 'sandbox.core',
+		},
+		{
+			...search_core({
+				...context,
+				agentDefinitions: context.agentDefinitions.forModule('search.core'),
+				dataClasses: context.dataClasses.forModule('search.core'),
+				capabilities: context.capabilities.forModule('search.core', {
+					provides: ['search.providers.v1'],
+					requires: [],
+				}),
+			}),
+			moduleId: 'search.core',
 		},
 		{
 			...users_core({
 				...context,
 				agentDefinitions: context.agentDefinitions.forModule('users.core'),
+				dataClasses: context.dataClasses.forModule('users.core'),
+				capabilities: context.capabilities.forModule('users.core', {
+					provides: [],
+					requires: [
+						{ id: 'search.providers.v1', optional: true },
+						{ id: 'import.ports.v1', optional: true },
+					],
+				}),
 			}),
 			moduleId: 'users.core',
 		},

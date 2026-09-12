@@ -1,4 +1,6 @@
 import { ServerRoute, type Context } from '@octanejs/app-core';
+import { serverLogger } from './log.ts';
+import { serverMetrics } from './metrics.ts';
 
 export interface EndpointIdentity {
 	readonly subjectId: string;
@@ -86,21 +88,26 @@ export function defineEndpoint(
 		methods: definition.methods.map((method) => method.toUpperCase()),
 		handler: async (context) => {
 			const requestId = requestIdOf(context);
+			const startedAt = performance.now();
 			let identity: EndpointIdentity | null = null;
+			let status = 500;
 			try {
 				if (
 					definition.access.kind === 'permission' &&
 					'resolveIdentity' in definition
 				) {
 					identity = await definition.resolveIdentity(context);
-					if (!identity)
+					if (!identity) {
+						status = 401;
 						return problem(
 							401,
 							'UNAUTHENTICATED',
 							'Authentication is required.',
 							requestId,
 						);
+					}
 					if (!identity.permissions.has(definition.access.permission)) {
+						status = 403;
 						return problem(
 							403,
 							'FORBIDDEN',
@@ -116,20 +123,30 @@ export function defineEndpoint(
 					octane: context,
 				});
 				response.headers.set('x-request-id', requestId);
+				status = response.status;
 				return response;
 			} catch (error) {
 				/* An unexpected error may carry SQL parameters, provider responses, or
 				   credentials in its message and attached fields. The request id and
 				   endpoint identify the failure without sending that value to a logger. */
-				console.error(
-					`[${requestId}] endpoint ${definition.id} failed (${error instanceof Error ? 'Error' : 'non-error'})`,
-				);
+				serverLogger().error('endpoint failed', {
+					requestId,
+					endpoint: definition.id,
+					err: { name: error instanceof Error ? error.name : 'non-error' },
+				});
 				return problem(
 					500,
 					'INTERNAL_ERROR',
 					'The request could not be completed.',
 					requestId,
 				);
+			} finally {
+				serverMetrics().recordHttpRequest({
+					endpoint: definition.id,
+					method: context.request.method,
+					status,
+					durationSeconds: (performance.now() - startedAt) / 1000,
+				});
 			}
 		},
 	});

@@ -81,7 +81,9 @@ it('serves a public root alongside a configurable dashboard and preserves legacy
 	expect(redirect.headers.get('location')).toBe(
 		'/backoffice/acme/settings?q=1',
 	);
-	expect(router.match('GET', '/unknown/deep')?.route.type).toBe('server');
+	// Outside the dashboard and outside the mount: nothing in the platform
+	// claims it, so the host's asset layer sees it and answers 404.
+	expect(router.match('GET', '/unknown/deep')).toBeNull();
 });
 
 it.each([
