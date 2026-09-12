@@ -581,17 +581,15 @@ describe('auth migrations', () => {
 		   the member gets the four member defaults of 0023 and the two approval
 		   member defaults 0024 adds in the same pass. */
 		expect(seeded.scopes).toEqual([
-			/* 0029 runs in the same pass and grants these to the owner too. */
+			/* 0024, 0025, 0027 and 0029 run in the same pass and grant their scopes too, and 0031 repeats every backfill since 0019 with the memberships readable, so the owner ends with every owner default and the member with every member default declared by those migrations. */
 			{ account_id: 'account-ada', scope: 'access.review.manage' },
 			{ account_id: 'account-ada', scope: 'access.review.read' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.decide' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.manage' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.read' },
-			/* 0025 runs in the same pass and grants this one to the owner. */
 			{ account_id: 'account-ada', scope: 'audit.holds.manage' },
 			{ account_id: 'account-ada', scope: 'audit.registry.read' },
 			{ account_id: 'account-ada', scope: 'audit.retention.manage' },
-			/* 0027 runs in the same pass and grants these to the owner too. */
 			{ account_id: 'account-ada', scope: 'automations.schedules.manage' },
 			{ account_id: 'account-ada', scope: 'automations.schedules.read' },
 			{ account_id: 'account-ada', scope: 'automations.triggers.manage' },
@@ -622,7 +620,9 @@ describe('auth migrations', () => {
 			{ account_id: 'account-bo', scope: 'connectors.instances.read' },
 			{ account_id: 'account-bo', scope: 'documents.files.manage' },
 			{ account_id: 'account-bo', scope: 'documents.files.read' },
-			/* 0027 gives every member this one, and only this one of its eleven. */
+			{ account_id: 'account-bo', scope: 'notifications.inbox.manage' },
+			{ account_id: 'account-bo', scope: 'notifications.inbox.read' },
+			{ account_id: 'account-bo', scope: 'notifications.webhooks.read' },
 			{ account_id: 'account-bo', scope: 'profile.self.manage' },
 			{ account_id: 'account-bo', scope: 'search.records.read' },
 		]);
@@ -703,6 +703,10 @@ describe('auth migrations', () => {
 			{ account_id: 'account-ada', scope: 'connectors.instances.read' },
 			{ account_id: 'account-ada', scope: 'documents.files.manage' },
 			{ account_id: 'account-ada', scope: 'documents.files.read' },
+			/* 0031 repeats the 0019 member grant with the memberships readable. */
+			{ account_id: 'account-ada', scope: 'notifications.inbox.manage' },
+			{ account_id: 'account-ada', scope: 'notifications.inbox.read' },
+			{ account_id: 'account-ada', scope: 'notifications.webhooks.read' },
 			{ account_id: 'account-ada', scope: 'profile.self.manage' },
 			{ account_id: 'account-ada', scope: 'search.records.read' },
 		]);
@@ -711,7 +715,7 @@ describe('auth migrations', () => {
 	/* A member is a decider now, so the member defaults carry the read and the
 	   decide scope. 0023 gave the approval scopes to owners alone, so only the
 	   member path is missing from a workspace that already exists. */
-	it('grants the approval member scopes to member memberships and leaves owners as 0023 left them', async () => {
+	it('grants the approval member scopes to member memberships without touching what owners hold', async () => {
 		const granted = databaseMigrations.findIndex(
 			(migration) => migration.id === '0024_approvals_member_scopes',
 		);
@@ -785,23 +789,36 @@ describe('auth migrations', () => {
 		/* The member gains the decide scope and nothing else, without a duplicate
 		   of the read scope it already held; the owner keeps exactly its three. */
 		expect(seeded.scopes).toEqual([
-			/* 0029 runs in the same pass and grants these to the owner too. */
+			/* 0025, 0027 and 0029 run in the same pass and grant their scopes too, and 0031 repeats every backfill since 0019 with the memberships readable, so both memberships end with every default declared by those migrations. */
 			{ account_id: 'account-ada', scope: 'access.review.manage' },
 			{ account_id: 'account-ada', scope: 'access.review.read' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.decide' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.manage' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.read' },
-			/* 0025 runs in the same pass and grants this one to the owner. */
 			{ account_id: 'account-ada', scope: 'audit.holds.manage' },
-			/* 0027 runs in the same pass and grants these to the owner too. */
+			{ account_id: 'account-ada', scope: 'audit.registry.read' },
+			{ account_id: 'account-ada', scope: 'audit.retention.manage' },
+			{ account_id: 'account-ada', scope: 'auth.providers.manage' },
+			{ account_id: 'account-ada', scope: 'auth.providers.read' },
 			{ account_id: 'account-ada', scope: 'automations.schedules.manage' },
 			{ account_id: 'account-ada', scope: 'automations.schedules.read' },
 			{ account_id: 'account-ada', scope: 'automations.triggers.manage' },
 			{ account_id: 'account-ada', scope: 'automations.triggers.read' },
+			{ account_id: 'account-ada', scope: 'connectors.instances.manage' },
+			{ account_id: 'account-ada', scope: 'connectors.instances.read' },
+			{ account_id: 'account-ada', scope: 'directory.provisioning.read' },
+			{ account_id: 'account-ada', scope: 'directory.tokens.manage' },
+			{ account_id: 'account-ada', scope: 'directory.tokens.read' },
+			{ account_id: 'account-ada', scope: 'documents.files.manage' },
+			{ account_id: 'account-ada', scope: 'documents.files.read' },
 			{ account_id: 'account-ada', scope: 'exports.lists.manage' },
 			{ account_id: 'account-ada', scope: 'exports.lists.read' },
+			{ account_id: 'account-ada', scope: 'import.jobs.manage' },
+			{ account_id: 'account-ada', scope: 'import.jobs.read' },
+			{ account_id: 'account-ada', scope: 'metering.usage.read' },
 			{ account_id: 'account-ada', scope: 'profile.self.manage' },
 			{ account_id: 'account-ada', scope: 'reports.workspace.read' },
+			{ account_id: 'account-ada', scope: 'search.records.read' },
 			{ account_id: 'account-ada', scope: 'workflows.definitions.manage' },
 			{ account_id: 'account-ada', scope: 'workflows.definitions.publish' },
 			{ account_id: 'account-ada', scope: 'workflows.definitions.read' },
@@ -810,9 +827,14 @@ describe('auth migrations', () => {
 			{ account_id: 'account-ada', scope: 'workflows.runs.read' },
 			{ account_id: 'account-bo', scope: 'approvals.requests.decide' },
 			{ account_id: 'account-bo', scope: 'approvals.requests.read' },
+			{ account_id: 'account-bo', scope: 'connectors.instances.read' },
+			{ account_id: 'account-bo', scope: 'documents.files.manage' },
 			{ account_id: 'account-bo', scope: 'documents.files.read' },
-			/* 0027 gives every member this one, and only this one of its eleven. */
+			{ account_id: 'account-bo', scope: 'notifications.inbox.manage' },
+			{ account_id: 'account-bo', scope: 'notifications.inbox.read' },
+			{ account_id: 'account-bo', scope: 'notifications.webhooks.read' },
 			{ account_id: 'account-bo', scope: 'profile.self.manage' },
+			{ account_id: 'account-bo', scope: 'search.records.read' },
 		]);
 		const roles = new Map(
 			seeded.roles.map((row) => [
