@@ -1,0 +1,225 @@
+schemaVersion: 2
+id: access.core
+specVersion: 0.1.1
+status: approved
+name: Access Review
+description: Point-in-time access review, an audit-trail diff between two dates, an administrative activity report over privileged actions, and a recorded attestation that someone reviewed them.
+profile: full
+capabilities:
+  - api
+  - database
+  - client
+  - translations
+dependencies:
+  - id: system.core
+    range: ^0.7.0
+  - id: auth.core
+    range: ^0.13.0
+requires:
+  - id: exports.lists.v1
+    optional: true
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - The tenant comes from the authenticated principal. No request input selects a workspace, and every statement runs inside a tenant-scoped transaction on the module's own lease.
+  - access_attestations enables and forces row-level security with a USING and WITH CHECK policy bound to transaction-local coreloom.tenant_id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
+  - Attestations are append-only. The module publishes no endpoint, service method or SQL that updates or deletes a recorded attestation.
+  - The review, the diff and the activity report hold no state. They are computed per request from the auth.core read surfaces on the acting principal's workspace, and access.core never opens another module's database.
+  - Summary counts on an attestation are computed by the server from the same read surfaces inside the attesting request. A count supplied by the caller is ignored.
+  - No credential ever enters a report or an attestation. API tokens are reported by label, prefix and scopes; identity providers by key, label, issuer and rules; never a secret, a fingerprint or a hash.
+  - Every range is bounded before any read. from and to are UTC calendar dates, to is inclusive, a reversed range and a range longer than the declared maximum are refused with a stable code.
+  - The diff and the activity report walk the auth audit trail in bounded pages. One request scans at most the declared page budget and answers a cursor for the rest, so no request walks a workspace's whole trail.
+  - The review lists at most the declared row bound per section and says so; the counts it reports are exact.
+  - A file of the review is not capped. Its walk reads auth.core's paged member surface rather than the review's own listing, one bounded page per call keyed on the account id, so a workspace with more members than the review lists exports every one of them, and a member renamed or removed while the walk runs is neither written twice nor dropped because an account id does not move and the next page is whatever still sorts after the id the cursor names.
+  - Recording an attestation is a mutation and passes the session CSRF and origin check before any read or write.
+  - Both permissions are workspace owner permissions. Neither is granted to members by enabling the module.
+permissions:
+  - id: access.review.read
+    description: Read the access review, the change diff, the administrative activity report and the recorded attestations of the active workspace.
+  - id: access.review.manage
+    description: Record an attestation that the access review of a period was performed.
+dataOwnership:
+  - access.core owns access_attestations and nothing else. A row is one review someone performed for one period, with the counts the server computed at that moment.
+  - Memberships, roles, membership scopes, API tokens, identity providers and the audit trail stay owned by auth.core. access.core reads them live through the auth runtime the platform composes and copies none of them.
+  - The review, the diff and the activity report are derived reports. They are recomputed per request and are never persisted, so a report always reflects the auth data at the moment it was asked for.
+entities:
+  - id: attestations
+    name: Access attestation
+    description: An append-only record that a named reviewer reviewed the access of one period, with the counts the server computed at that moment.
+    fields:
+      - id: reviewerAccountId
+        type: string
+        required: true
+        maxLength: 64
+        description: The account that recorded the attestation, taken from the principal.
+      - id: reviewerLabel
+        type: string
+        required: true
+        maxLength: 254
+        description: The reviewer's e-mail as it stood when the attestation was recorded, so the evidence survives a later rename.
+      - id: periodFrom
+        type: datetime
+        required: true
+        description: First instant of the reviewed period, UTC.
+      - id: periodTo
+        type: datetime
+        required: true
+        description: Last instant of the reviewed period, UTC.
+      - id: memberCount
+        type: integer
+        required: true
+        description: Memberships the review listed.
+      - id: activeMemberCount
+        type: integer
+        required: true
+        description: Memberships that were active in the workspace.
+      - id: roleCount
+        type: integer
+        required: true
+        description: Roles the workspace held.
+      - id: extraScopeCount
+        type: integer
+        required: true
+        description: Scope grants a member held beyond the scopes of the assigned role.
+      - id: tokenCount
+        type: integer
+        required: true
+        description: API tokens that were usable, so neither revoked nor expired.
+      - id: providerCount
+        type: integer
+        required: true
+        description: Identity providers the workspace could sign in with.
+      - id: note
+        type: text
+        maxLength: 2000
+        description: What the reviewer wants the next reviewer to know.
+screens:
+  - id: review
+    kind: list
+    title: Access review
+    navigationGroup: Administration
+  - id: activity
+    kind: list
+    title: Access activity
+    navigationGroup: Administration
+  - id: attestations
+    kind: list
+    entity: attestations
+    title: Attestations
+    navigationGroup: Administration
+    columns:
+      - periodFrom
+      - periodTo
+      - reviewerLabel
+      - memberCount
+      - extraScopeCount
+      - tokenCount
+actions:
+  - id: attest
+    entity: attestations
+    permission: access.review.manage
+    kind: create
+    risk: workspace-write
+    idempotent: false
+    description: Record an attestation for a period. The server computes the counts from the current review and appends the row.
+acceptanceScenarios:
+  - id: ACCESS-REVIEW
+    given: A workspace holds memberships with roles, a member carrying a scope its role does not grant, a usable API token and a configured identity provider.
+    when: A principal holding access.review.read reads the review.
+    then: The report lists every membership with its account and workspace status and its role, names the scopes that member holds beyond the role, lists the usable API tokens with their labels, prefixes and scopes, lists the identity providers with their status and joining rules, carries no secret of any kind, and reports counts that match what it listed.
+  - id: ACCESS-REVIEW-TOKENS
+    given: A workspace holds one usable API token, one revoked token and one expired token.
+    when: The review is read.
+    then: Only the usable token is listed and the token count is one, because the review answers who holds access now.
+  - id: ACCESS-REVIEW-EXPORT
+    given: exports.core is composed and a workspace holds more members than the review lists, with a member renamed while the export runs.
+    when: The review list registered with exports.lists.v1 is walked page by page into a file.
+    then: Every member of the workspace reaches the file exactly once in account id order however far past the review's listing bound the workspace is, the rename does not repeat or drop a row, and a cursor naming a member who has since left the workspace pages on from the members that sort after them rather than ending the job.
+  - id: ACCESS-DIFF
+    given: A member's role was changed between two dates and unrelated activity happened outside that window.
+    when: A principal holding access.review.read asks for the diff of that window.
+    then: The change is listed with its subject, actor and time, changes outside the window are absent, and a window wider than one page answers a cursor that continues the walk without repeating or skipping a change.
+  - id: ACCESS-ACTIVITY
+    given: The audit trail of a window holds privileged actions and ordinary sign-in activity.
+    when: A principal holding access.review.read asks for the activity report of that window.
+    then: Only privileged actions are listed, in time order, newest first, and ordinary sign-in, sign-out and session activity is absent.
+  - id: ACCESS-RANGE-BOUNDS
+    given: A principal holding access.review.read asks for a report.
+    when: The request omits a date, reverses the range or asks for a range longer than the maximum.
+    then: The server answers a stable input error before reading the audit trail.
+  - id: ACCESS-ATTEST
+    given: A principal holds access.review.manage and a valid session.
+    when: The principal records an attestation for a period with a note.
+    then: A row is appended carrying the principal's account and e-mail, the period, the counts the server computed from the current review rather than any count in the request, and the note, and the attestation list returns it newest first in bounded pages.
+  - id: ACCESS-ATTEST-APPEND-ONLY
+    given: An attestation was recorded for a period.
+    when: The same period is attested again.
+    then: A second row is appended and the first is unchanged, and the module exposes no route, service method or statement that updates or deletes an attestation.
+  - id: ACCESS-DENY
+    given: A request carries no session, or a session whose scopes lack the permission the route requires.
+    when: The request reaches any access.core route.
+    then: The server answers 401 without an identity and 403 without the permission, before any read of auth data or any write, and a principal holding only access.review.read is refused when it attests.
+  - id: ACCESS-CSRF
+    given: A principal holds access.review.manage and a valid session.
+    when: The attestation request arrives without the session CSRF proof or from another origin.
+    then: The server refuses it before computing the review or writing a row.
+  - id: ACCESS-TENANT-BOUNDARY
+    given: Two workspaces have recorded attestations.
+    when: A principal of one workspace lists attestations, and a transaction bound to that workspace attempts to write a row carrying the other workspace's identifier.
+    then: Only its own workspace's attestations are visible, and the forced row-level security policy rejects the foreign row.
+outOfScope:
+  - Per-member identity provider bindings. auth.core exposes no read of which account is linked to which provider, so the review lists the providers a workspace has configured and their joining rules; the per-member binding waits for an auth.core read surface and is recorded as a follow-up.
+  - A screen that starts an export. access.core registers its two lists with exports.core when that module is present, and the export is started from the exports screen; access.core adds no export button of its own.
+  - Holds and erasures in the activity report. They belong to audit.core's own trail, which publishes no read capability, so the activity report covers the auth.core trail and names the missing source rather than guessing at it.
+  - The agents and sandbox audit sources. ADR 0004's source selector reads them behind their own scopes in auth.core's Audit screen; access.core reports the platform trail only.
+  - A reconstructed point-in-time membership state for a past date. The diff is the recorded change list of a window, which is what the trail can answer honestly.
+  - Reminders, schedules and periodic attestation campaigns. An attestation is recorded when someone performs the review.
+  - Erasure of attestations. The ledger is the evidence that a review happened, so its rows are kept like an audit event rather than erased with a subject.
+  - PDF output. The platform has no renderer, so a file of a review is the CSV exports.core writes.
+decisions:
+  - id: D-EXPORT-LISTS
+    question: How is a review exported to a file?
+    answer: Through exports.core. access.core registers two lists with exports.lists.v1 when that module is composed, the review's memberships (walked from the member the page last carried) and the attestation ledger (whose rows never change). The capability is optional, so a deployment without exports.core registers nothing.
+    decidedBy: default
+  - id: D-OWNERS-ONLY
+    question: Who may read the access review and who may record an attestation?
+    answer: Workspace owners only. Both permissions are granted to owners when the module is enabled and neither is added to the member scope list, because the review names every scope, token and provider of the workspace.
+    decidedBy: user
+  - id: D-SERVER-COUNTS
+    question: Where do the counts stored on an attestation come from?
+    answer: The server recomputes the review inside the attesting request and stores its own counts. A count in the request body is ignored, so the evidence cannot be fabricated by the caller.
+    decidedBy: default
+  - id: D-APPEND-ONLY
+    question: May an attestation be corrected or withdrawn?
+    answer: No. The ledger is append-only; a second attestation for the same period is appended and the earlier row stays as it was recorded.
+    decidedBy: default
+  - id: D-ACTIVE-ACCESS
+    question: Does the review list revoked and expired API tokens?
+    answer: No. The review answers who holds access now, so it lists usable tokens only. Issuance and revocation appear in the activity report.
+    decidedBy: default
+  - id: D-RANGE-BOUND
+    question: How long a period may a diff or an activity report cover?
+    answer: At most 366 days, given as UTC calendar dates with an inclusive end. A longer or reversed range is refused with a stable code before any read.
+    decidedBy: default
+  - id: D-BOUNDED-WALK
+    question: How does a report stay bounded when a workspace's trail is large?
+    answer: One request scans a fixed budget of audit pages and answers a signed cursor for the rest. The cursor is the last position scanned, not the last row shown, so a page that matched nothing still advances.
+    decidedBy: default
+  - id: D-AUDIT-WINDOW-GAP
+    question: Where is the date window of a report applied?
+    answer: In auth.core. The audit query carries the window as an inclusive from and to over the recorded instant, applied in SQL beside the keyset, so access.core states the period and pages the positions rather than seeding the cursor at a ceiling and watching for a floor. An event on the first or the last millisecond of the window belongs to it, and nothing in access.core reads auth tables directly.
+    decidedBy: default
+  - id: D-REPORT-SCREENS
+    question: How are the review and activity screens specified when they render no entity?
+    answer: They name no entity and no columns, because they render reports computed from auth.core. What each one carries is fixed by the acceptance scenarios rather than by entity fields.
+    decidedBy: default
+  - id: D-REVIEW-BOUND
+    question: What happens when a workspace holds more members or tokens than one review can list?
+    answer: Each section lists at most its declared bound and says it was capped, while the counts stay exact. Only the screen is bounded that way, because a file of the review walks auth.core's paged member surface and carries every member of the workspace.
+    decidedBy: default
+  - id: D-NO-ATTESTATION-ERASURE
+    question: Is an attestation erased when its reviewer requests erasure?
+    answer: No. The data class is declared kept and exportable and carries no erase operation, so an erasure certificate names it as not erasable, the same answer audit events give.
+    decidedBy: default

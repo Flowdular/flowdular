@@ -1,0 +1,19 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"target": "ESNext",
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"allowImportingTsExtensions": true,
+		"isolatedModules": true,
+		"jsx": "react-jsx",
+		"jsxImportSource": "octane",
+		"types": ["node"],
+		"plugins": [
+			{
+				"name": "@tsrx/typescript-plugin"
+			}
+		]
+	},
+	"include": ["src/**/*", "tests/**/*.ts"]
+}

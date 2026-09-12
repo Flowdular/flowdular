@@ -1,0 +1,28 @@
+{
+	"$schema": "../../packages/contracts/schemas/module.schema.json",
+	"schemaVersion": 1,
+	"id": "exports.core",
+	"package": "@flowdular/module-exports",
+	"version": "0.2.1",
+	"platformApi": "^0.1.2",
+	"profile": "full",
+	"capabilities": ["api", "database", "client", "translations"],
+	"platform": {
+		"server": true,
+		"client": true
+	},
+	"dependencies": [
+		{
+			"id": "system.core",
+			"range": "^0.7.0"
+		},
+		{
+			"id": "auth.core",
+			"range": "^0.13.0"
+		}
+	],
+	"provides": ["exports.lists.v1"],
+	"tenancy": "required",
+	"locales": ["en", "pl"],
+	"stability": "experimental"
+}

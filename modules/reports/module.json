@@ -1,0 +1,28 @@
+{
+	"$schema": "../../packages/contracts/schemas/module.schema.json",
+	"schemaVersion": 1,
+	"id": "reports.core",
+	"package": "@flowdular/module-reports",
+	"version": "0.1.2",
+	"platformApi": "^0.1.2",
+	"profile": "full",
+	"capabilities": ["api", "client", "translations"],
+	"platform": {
+		"server": true,
+		"client": true
+	},
+	"dependencies": [
+		{
+			"id": "system.core",
+			"range": "^0.7.0"
+		},
+		{
+			"id": "auth.core",
+			"range": "^0.13.0"
+		}
+	],
+	"provides": ["reports.v1"],
+	"tenancy": "required",
+	"locales": ["en", "pl"],
+	"stability": "experimental"
+}
