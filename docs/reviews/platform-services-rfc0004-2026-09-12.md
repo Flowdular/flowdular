@@ -124,6 +124,31 @@ local adapter; the ceiling now falls back to the storage default there):
   installed, set up, started, verified and built; its regenerated composition
   is byte-identical to the template.
 
+## After the push: what CI found
+
+The pull request CI ran the adapter matrix on PostgreSQL 17 with a migrator
+role that is neither superuser nor `BYPASSRLS`, which no local run had.
+
+- Seven auth scope backfills (0019, 0022, 0023, 0024, 0025, 0027, 0029)
+  granted nothing there: each lifted the force flag on the target tables but
+  selected the memberships from `auth_memberships`, which forces row
+  security too, so the migrator saw no rows. PGlite runs as a superuser and
+  never noticed. Applied migrations stay as they are; auth 0031 repeats the
+  seven membership grants with the source table's flag lifted as well, and
+  the migration tests now assert the state after the whole pass. Proven on a
+  local PostgreSQL 17 cluster with the CI roles: database-testing 7, auth
+  319, agents 196, profile 31 tests. auth.core 0.13.7, spec hash
+  `1c39839f47423a04`.
+- The SDK smoke's standalone sandbox check crashed the sandbox server on a
+  runner without a `claude` binary: `spawnLineStream` rejected its
+  `finished` promise on a spawn failure before the caller had drained the
+  lines, an unhandled rejection. The promise now carries its own handler, and
+  a regression test probes a missing binary (it failed with an unhandled
+  rejection before the fix). The smoke was rerun locally with the coding
+  agent binaries hidden from `PATH`.
+- The container job was cancelled by the matrix failure and had no finding
+  of its own.
+
 ## Incidents
 
 - One implementation agent ran a scoped `git stash push` and `pop` on the

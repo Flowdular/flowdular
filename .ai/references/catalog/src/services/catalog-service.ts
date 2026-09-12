@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import {
 	normalizeActor,
 	type Actor,
+	type DataClassExportSink,
+	type DataClassExportSummary,
 	type HistoryPage,
 	type HistoryRequest,
 } from '@flowdular/sdk/kernel';
@@ -11,7 +13,11 @@ import type {
 	CreateCatalogItemInput,
 	UpdateCatalogItemInput,
 } from '../domain/types.ts';
-import { DuplicateSkuError, type CatalogRepository } from './repository.ts';
+import {
+	DuplicateSkuError,
+	type CatalogRepository,
+	type ExportCursor,
+} from './repository.ts';
 import {
 	canonicalDigest,
 	TargetIdempotencyConflictError,
@@ -21,6 +27,9 @@ export interface CatalogIdempotencyRequest {
 	readonly key: string;
 	readonly operationId: string;
 }
+
+/** Rows one export read carries; the whole tenant is walked page by page. */
+export const EXPORT_PAGE = 200;
 
 export class CatalogServiceError extends Error {
 	constructor(
@@ -271,6 +280,60 @@ export class CatalogService {
 		});
 	}
 
+	async exportItemsTo(
+		tenantId: string,
+		sink: DataClassExportSink,
+	): Promise<DataClassExportSummary> {
+		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
+		return await exportPaged(
+			(cursor) =>
+				this.repository.listItemsForExport(
+					trustedTenantId,
+					cursor,
+					EXPORT_PAGE,
+				),
+			(item) => item.createdAt,
+			(item) => ({
+				id: item.id,
+				sku: item.sku,
+				name: item.name,
+				kind: item.kind,
+				unit: item.unit,
+				basePriceMinor: item.basePriceMinor,
+				currency: item.currency,
+				status: item.status,
+				createdAt: new Date(item.createdAt).toISOString(),
+			}),
+			sink,
+		);
+	}
+
+	async exportHistoryTo(
+		tenantId: string,
+		sink: DataClassExportSink,
+	): Promise<DataClassExportSummary> {
+		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
+		return await exportPaged(
+			(cursor) =>
+				this.repository.listHistoryForExport(
+					trustedTenantId,
+					cursor,
+					EXPORT_PAGE,
+				),
+			(entry) => entry.occurredAt,
+			(entry) => ({
+				id: entry.id,
+				recordId: entry.recordId,
+				version: entry.version,
+				action: entry.action,
+				actor: entry.actor,
+				changes: entry.changes,
+				occurredAt: new Date(entry.occurredAt).toISOString(),
+			}),
+			sink,
+		);
+	}
+
 	private async item(tenantId: string, id: string): Promise<CatalogItem> {
 		const item = await this.repository.find(
 			tenantId,
@@ -303,4 +366,29 @@ export class CatalogService {
 		if (!item) throw this.notFound();
 		return item;
 	}
+}
+
+async function exportPaged<T extends { readonly id: string }>(
+	page: (after: ExportCursor | null) => Promise<readonly T[]>,
+	at: (record: T) => number,
+	row: (record: T) => Record<string, unknown>,
+	sink: DataClassExportSink,
+): Promise<DataClassExportSummary> {
+	let cursor: ExportCursor | null = null;
+	let rows = 0;
+	let from: Date | null = null;
+	let to: Date | null = null;
+	for (;;) {
+		const records = await page(cursor);
+		for (const record of records) {
+			await sink.write(row(record));
+			rows += 1;
+			from ??= new Date(at(record));
+			to = new Date(at(record));
+		}
+		if (records.length < EXPORT_PAGE) break;
+		const last = records[records.length - 1]!;
+		cursor = { at: at(last), id: last.id };
+	}
+	return { rows, from, to };
 }

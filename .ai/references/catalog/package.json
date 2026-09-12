@@ -1,6 +1,6 @@
 {
 	"name": "@flowdular/module-catalog",
-	"version": "0.6.1",
+	"version": "0.7.0",
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
@@ -16,7 +16,7 @@
 	"dependencies": {
 		"octane": "0.1.51",
 		"segment-state": "0.2.0",
-		"@flowdular/sdk": "0.1.0"
+		"@flowdular/sdk": "0.2.4"
 	},
 	"devDependencies": {
 		"@tsrx/typescript-plugin": "0.3.120",
