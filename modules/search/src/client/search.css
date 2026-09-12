@@ -1,0 +1,56 @@
+/* Search module: composites specific to this module. Primitives (buttons,
+   fields, tags, cards) come from @flowdular/ui and are not restyled here. */
+
+.search-recent__list {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	padding: 12px 20px 16px;
+}
+
+/* A recall entry is a whole query, not a label, so it is a button sized by its
+   text. Promotion candidate: a shared chip once a second module needs one. */
+.search-recent__item {
+	max-width: 100%;
+	overflow: hidden;
+	padding: 4px 10px;
+	font-size: var(--text-xs);
+	color: var(--ink-2);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	cursor: pointer;
+	background: var(--surface);
+	border: 1px solid var(--line);
+	border-radius: 999px;
+}
+
+.search-recent__item:hover {
+	color: var(--primary);
+	border-color: var(--primary);
+}
+
+/* The hit cell is the whole record: the title and its snippet share one link so
+   the entire row target is reachable with one tab stop. */
+.search-hit {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	color: inherit;
+	text-decoration: none;
+}
+
+.search-hit:hover b {
+	color: var(--primary);
+}
+
+/* The search field submits on Enter, which is what records the query; the form
+   is a wrapper only and must not change the field's own layout. */
+.search-submit {
+	display: contents;
+}
+
+.search-more {
+	display: flex;
+	justify-content: flex-end;
+	padding: 12px 14px;
+}

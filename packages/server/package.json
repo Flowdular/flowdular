@@ -13,7 +13,8 @@
 		"@octanejs/app-core": "0.0.47",
 		"@flowdular/contracts": "workspace:*",
 		"@flowdular/kernel": "workspace:*",
-		"@flowdular/database": "workspace:*"
+		"@flowdular/database": "workspace:*",
+		"@flowdular/storage": "workspace:*"
 	},
 	"devDependencies": {
 		"typescript": "5.9.3",

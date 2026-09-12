@@ -15,9 +15,31 @@ function compareModules(
 	return left.manifest.id.localeCompare(right.manifest.id);
 }
 
+/* Every provider of a capability id, by module id. A capability has one
+   provider: two modules registering the same id would race at composition. */
+export function capabilityProviders(
+	modules: Iterable<RegisteredModule>,
+): ReadonlyMap<string, string> {
+	const providers = new Map<string, string>();
+	for (const module of modules) {
+		for (const capability of module.manifest.provides ?? []) {
+			const existing = providers.get(capability);
+			if (existing && existing !== module.manifest.id) {
+				throw new RegistryError(
+					'MODULE_CAPABILITY_DUPLICATE',
+					`Capability "${capability}" is provided by both "${existing}" and "${module.manifest.id}".`,
+				);
+			}
+			providers.set(capability, module.manifest.id);
+		}
+	}
+	return providers;
+}
+
 function visitModule(
 	id: string,
 	modules: ReadonlyMap<string, RegisteredModule>,
+	providers: ReadonlyMap<string, string>,
 	visiting: Set<string>,
 	visited: Set<string>,
 	ordered: RegisteredModule[],
@@ -53,7 +75,24 @@ function visitModule(
 			dependency,
 			modules.get(dependency.id)!.manifest.version,
 		);
-		visitModule(dependency.id, modules, visiting, visited, ordered);
+		visitModule(dependency.id, modules, providers, visiting, visited, ordered);
+	}
+	/* A required capability orders its provider first, like a dependency. An
+	   optional one is resolved lazily by the consumer, so it neither fails when
+	   absent nor takes part in ordering. */
+	for (const requirement of [...(current.manifest.requires ?? [])].sort(
+		(a, b) => a.id.localeCompare(b.id),
+	)) {
+		if (requirement.optional) continue;
+		const provider = providers.get(requirement.id);
+		if (!provider) {
+			throw new RegistryError(
+				'MODULE_CAPABILITY_MISSING',
+				`Module "${id}" requires capability "${requirement.id}" and no registered module provides it.`,
+			);
+		}
+		if (provider === id) continue;
+		visitModule(provider, modules, providers, visiting, visited, ordered);
 	}
 	visiting.delete(id);
 	visited.add(id);
@@ -96,11 +135,19 @@ export function createModuleRegistry(
 		}
 	}
 
+	const providers = capabilityProviders(byId.values());
 	const ordered: RegisteredModule[] = [];
 	const visiting = new Set<string>();
 	const visited = new Set<string>();
 	for (const module of [...input].sort(compareModules)) {
-		visitModule(module.manifest.id, byId, visiting, visited, ordered);
+		visitModule(
+			module.manifest.id,
+			byId,
+			providers,
+			visiting,
+			visited,
+			ordered,
+		);
 	}
 
 	return Object.freeze({

@@ -1,0 +1,4 @@
+-- Documentation only; Flowdular never executes a down script. This migration
+-- granted nothing 0019 to 0029 did not already intend, so reversing it means
+-- reversing those: their down scripts take the scopes back from the
+-- memberships and the built-in role rows. Nothing is rewritten here.

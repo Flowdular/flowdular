@@ -58,6 +58,17 @@
 			}
 		},
 		{
+			"path": ["auth", "secrets-rotate"],
+			"capability": {
+				"id": "auth.secrets.rotate",
+				"version": 1,
+				"summary": "Re-seal enrolled TOTP secrets and workspace provider secrets with the current auth encryption key.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		},
+		{
 			"path": ["auth", "greenfield"],
 			"capability": {
 				"id": "auth.greenfield.reset",

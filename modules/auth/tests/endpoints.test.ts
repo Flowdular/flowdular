@@ -226,6 +226,7 @@ describe('auth HTTP boundary', () => {
 			available: true,
 			enrolled: false,
 			pending: false,
+			required: false,
 		});
 	});
 
@@ -508,13 +509,13 @@ describe('workspace settings', () => {
 		await service.createTenantMember({
 			tenantId: owner.tenantId,
 			email: 'member@example.com',
-			password: 'member password long',
+			password: 'steady tangerine harbor',
 			displayName: 'Mem Ber',
 			role: 'member',
 		});
 		const memberSession = await service.signIn({
 			email: 'member@example.com',
-			password: 'member password long',
+			password: 'steady tangerine harbor',
 		});
 		const denied = await call(
 			auth,

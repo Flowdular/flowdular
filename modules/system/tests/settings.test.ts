@@ -14,6 +14,7 @@ import {
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createSystemRoutes } from '../src/server/endpoints.ts';
 import type { SettingsEntryPayload } from '../src/server/endpoints.ts';
+import { SYSTEM_MODULE_SETTINGS } from '../src/settings.ts';
 
 const ORIGIN = 'https://erp.example';
 
@@ -60,6 +61,8 @@ describe('settings API', () => {
 	let routes: readonly ServerRoute[];
 	let owner: Session;
 	let member: Session;
+	/** A second workspace, so a tenant override can be shown not to leak. */
+	let other: Session;
 
 	const call = async (path: string, request: Request): Promise<Response> => {
 		const route = routes.find(
@@ -106,6 +109,7 @@ describe('settings API', () => {
 			signInProviders: [],
 			workspaceRoot: workspace(),
 		});
+		runtime.moduleSettings.declare(SYSTEM_MODULE_SETTINGS);
 		runtime.moduleSettings.declare(
 			defineModuleSettings({
 				moduleId: 'demo.core',
@@ -117,6 +121,16 @@ describe('settings API', () => {
 						client: false,
 						secret: true,
 						label: 'API key',
+					},
+					fastCheckout: {
+						type: 'boolean',
+						defaultValue: false,
+						visibility: 'private',
+						client: false,
+						kind: 'flag',
+						scope: 'tenant',
+						label: 'Fast checkout',
+						description: 'Skips the review step when the basket is small.',
 					},
 				},
 			}),
@@ -142,7 +156,7 @@ describe('settings API', () => {
 			{
 				tenantId: owner.tenantId,
 				email: 'member@example.com',
-				password: 'member password long',
+				password: 'workspace passphrase long',
 				displayName: 'Mem Ber',
 				role: 'member',
 			},
@@ -158,13 +172,28 @@ describe('settings API', () => {
 			await runtime.service()
 		).signIn({
 			email: 'member@example.com',
-			password: 'member password long',
+			password: 'workspace passphrase long',
 		});
 		member = {
 			cookie: `coreloom_session_dev=${memberSession.token}`,
 			csrfToken: memberSession.csrfToken,
 			accountId: memberSession.principal.accountId,
 			tenantId: memberSession.principal.tenantId,
+		};
+		const otherSession = await (
+			await runtime.service()
+		).signUp({
+			email: 'owner@second.example',
+			password: 'another workspace passphrase',
+			displayName: 'Bo Owner',
+			organizationName: 'Second Operations',
+			organizationSlug: 'second-operations',
+		});
+		other = {
+			cookie: `coreloom_session_dev=${otherSession.token}`,
+			csrfToken: otherSession.csrfToken,
+			accountId: otherSession.principal.accountId,
+			tenantId: otherSession.principal.tenantId,
 		};
 		routes = createSystemRoutes({
 			workspaceRoot: runtime.workspaceRoot!,
@@ -222,6 +251,14 @@ describe('settings API', () => {
 			auth.settings.find((setting) => setting.key === 'emailConfirmation')
 				?.lockedKey,
 		).toBe('system.settings.mailTransportRequired');
+		/* The runtime under test carries no MFA key, so the screen must render the
+		   requirement locked instead of offering a toggle the write refuses. */
+		expect(
+			auth.settings.find((setting) => setting.key === 'requireMfa'),
+		).toMatchObject({
+			locked: expect.stringContaining('MFA encryption key'),
+			lockedKey: 'system.settings.mfaKeyRequired',
+		});
 		expect(body.modules.some((module) => module.moduleId === 'demo.core')).toBe(
 			true,
 		);
@@ -314,6 +351,174 @@ describe('settings API', () => {
 		expect(await mail.json()).toMatchObject({
 			error: { code: 'MAIL_TRANSPORT_REQUIRED' },
 		});
+	});
+
+	/* Without a deployment key enrolment has nothing to seal a secret with, so
+	   the requirement would close the workspace with no way to satisfy it. The
+	   refusal reaches the screen as a stable problem, not as a stored value. */
+	it('refuses requireMfa on a deployment with no MFA key', async () => {
+		const refused = await call(
+			'/api/settings/update',
+			update({ moduleId: 'auth.core', key: 'requireMfa', value: true }, owner),
+		);
+
+		expect(refused.status).toBe(409);
+		expect(await refused.json()).toMatchObject({
+			error: { code: 'MFA_KEY_REQUIRED' },
+		});
+		expect(
+			runtime.moduleSettings.get(owner.tenantId, 'auth.core', 'requireMfa'),
+		).toBe(false);
+	});
+
+	/* The declaration bounds the shape of a zone name; only the runtime zone
+	   database says whether the name exists, so the write surface checks it. */
+	it('stores a canonical workspace time zone and refuses an unknown one', async () => {
+		const stored = await call(
+			'/api/settings/update',
+			update(
+				{ moduleId: 'system.core', key: 'timeZone', value: 'europe/warsaw' },
+				owner,
+			),
+		);
+		expect(stored.status).toBe(200);
+		expect(
+			runtime.moduleSettings.get(owner.tenantId, 'system.core', 'timeZone'),
+		).toBe('Europe/Warsaw');
+
+		const refused = await call(
+			'/api/settings/update',
+			update(
+				{ moduleId: 'system.core', key: 'timeZone', value: 'Mars/Olympus' },
+				owner,
+			),
+		);
+		expect(refused.status).toBe(400);
+		expect(await refused.json()).toMatchObject({
+			error: { code: 'INVALID_TIME_ZONE' },
+		});
+		expect(
+			runtime.moduleSettings.get(owner.tenantId, 'system.core', 'timeZone'),
+		).toBe('Europe/Warsaw');
+
+		const denied = await call(
+			'/api/settings/update',
+			update(
+				{ moduleId: 'system.core', key: 'timeZone', value: 'UTC' },
+				member,
+			),
+		);
+		expect(denied.status).toBe(403);
+		expect(
+			runtime.moduleSettings.get(owner.tenantId, 'system.core', 'timeZone'),
+		).toBe('Europe/Warsaw');
+	});
+
+	/* A flag rides the settings read and write, so the surface has to carry the
+	   kind through to the screen, keep an override inside the workspace that set
+	   it, and record the change under its own audit action with both values. */
+	it('overrides a flag per workspace and audits the change as a flag change', async () => {
+		const listed = await call('/api/settings', read(owner));
+		const demo = ((await listed.json()) as SettingsBody).modules.find(
+			(module) => module.moduleId === 'demo.core',
+		)!;
+		expect(
+			demo.settings.find((setting) => setting.key === 'fastCheckout'),
+		).toMatchObject({
+			kind: 'flag',
+			type: 'boolean',
+			scope: 'tenant',
+			value: false,
+			hasValue: false,
+			defaultValue: false,
+			label: 'Fast checkout',
+		});
+		/* The neighbouring non-flag setting must stay unmarked, or the Flags
+		   screen would list every declared setting. */
+		expect(
+			demo.settings.find((setting) => setting.key === 'apiKey'),
+		).not.toHaveProperty('kind');
+
+		const enabled = await call(
+			'/api/settings/update',
+			update(
+				{ moduleId: 'demo.core', key: 'fastCheckout', value: true },
+				owner,
+			),
+		);
+		expect(enabled.status).toBe(200);
+		expect(
+			runtime.moduleSettings.get(owner.tenantId, 'demo.core', 'fastCheckout'),
+		).toBe(true);
+		expect(
+			runtime.moduleSettings.get(other.tenantId, 'demo.core', 'fastCheckout'),
+		).toBe(false);
+
+		const cleared = await call(
+			'/api/settings/update',
+			update(
+				{ moduleId: 'demo.core', key: 'fastCheckout', value: null },
+				owner,
+			),
+		);
+		expect(cleared.status).toBe(200);
+		expect(
+			runtime.moduleSettings.get(owner.tenantId, 'demo.core', 'fastCheckout'),
+		).toBe(false);
+
+		await runtime.settingsAuditSettled();
+		const events = (
+			await (
+				await runtime.service()
+			).queryAudit({ tenantId: owner.tenantId, limit: 20 })
+		).events.filter((event) => event.action === 'settings.flag.changed');
+		expect(events).toHaveLength(2);
+		/* Newest first: the reset, then the switch on. */
+		expect(events[0]).toMatchObject({
+			actorLabel: 'owner@example.com',
+			subjectId: 'demo.core.fastCheckout',
+			metadata: { cleared: true, previous: true, next: false },
+		});
+		expect(events[1]).toMatchObject({
+			actorLabel: 'owner@example.com',
+			subjectId: 'demo.core.fastCheckout',
+			metadata: { cleared: false, previous: false, next: true },
+		});
+		/* A plain setting keeps the plain action, so the flag trail stays a
+		   trail of flags. */
+		expect(
+			(
+				await (
+					await runtime.service()
+				).queryAudit({ tenantId: owner.tenantId, limit: 20 })
+			).events.some(
+				(event) =>
+					event.action === 'settings.updated' &&
+					event.subjectId === 'demo.core.fastCheckout',
+			),
+		).toBe(false);
+	});
+
+	it('refuses a flag change without system.settings.manage', async () => {
+		const denied = await call(
+			'/api/settings/update',
+			update(
+				{ moduleId: 'demo.core', key: 'fastCheckout', value: true },
+				member,
+			),
+		);
+		expect(denied.status).toBe(403);
+		expect(
+			runtime.moduleSettings.get(owner.tenantId, 'demo.core', 'fastCheckout'),
+		).toBe(false);
+		await runtime.settingsAuditSettled();
+		expect(
+			(
+				await (
+					await runtime.service()
+				).queryAudit({ tenantId: owner.tenantId, limit: 50 })
+			).events.filter((event) => event.action === 'settings.flag.changed'),
+		).toHaveLength(2);
 	});
 
 	it('keeps secret values write-only', async () => {

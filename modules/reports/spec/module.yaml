@@ -1,0 +1,231 @@
+schemaVersion: 2
+id: reports.core
+specVersion: 0.1.2
+status: approved
+name: Reports Core
+description: Composes one workspace report out of the rollups other modules already hold, by asking every module that registered a report provider for its own tiles and series over a date range under the reader's permissions, and rendering them on one screen and one dashboard widget; reports.core holds no rows, no index and no copy of another module's data.
+profile: full
+capabilities:
+  - api
+  - client
+  - translations
+dependencies:
+  - id: system.core
+    range: ^0.7.0
+  - id: auth.core
+    range: ^0.13.0
+provides:
+  - reports.v1
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - reports.core owns no table, no migration and no data class beyond an empty declaration; every number it shows was computed by the module that owns the rows, inside that module's own tenant-scoped transaction, and reaches reports.core only through the public capability reports.v1.
+  - A report provider is registered by its owning module at composition through reports.v1 with a stable key, a label, the permission a reader needs before the provider is asked at all, and a read({ tenantId, principal, range }) operation; registration is sealed when reports.core starts, so every request reads the same providers in the same order.
+  - A provider may name its label, each tile label and each series label with a key into its own module's translation bundle beside the English literal. reports.core renders the module's translation when the reader's locale carries the key and the literal when it does not, so copy stays owned by the module that computed the number and a missing key never shows a raw key.
+  - A provider whose rollup covers a period of its own answers that period with its tiles, and the screen captions that report with it; a provider that answers none is captioned with the range the request asked for. The metering usage provider answers its calendar month, because its numbers are the month's rollup whatever range the reader picked.
+  - The registry is bounded at composition to at most 64 providers in a deployment, and a provider answer to at most 16 tiles, 8 series and 400 points. A provider that exceeds a bound, fails, or answers something unreadable contributes nothing and is named as unavailable; it never turns the workspace report into an error.
+  - Permission filtering happens before any provider is called. A provider whose permission the principal does not hold is not asked, is not listed, and is not reported as unavailable, so the report never reveals that the provider exists.
+  - Every provider gets the same per-provider time budget, a platform setting defaulting to 3000 milliseconds, and the fan-out is parallel; a provider over its budget is abandoned with its abort signal raised and named as unavailable, and the report still answers within the budget. A shipped provider passes that signal into its own tenant transaction, so the statement it is waiting on is cancelled with the answer nobody is waiting for.
+  - The range is two UTC days, from and to inclusive, defaulting to the last 30 days and bounded to 400 days; a reversed or malformed range is refused with a stable code before any provider is called, and the screen refuses the same width before it spends a request on it, keeping the filter card on screen so the reader can correct the dates.
+  - The screen renders a report that answered only lines. A provider with series and no tile is something to show, and the empty state is kept for a report that carries neither.
+  - GET /api/reports is a read behind reports.workspace.read, resolved from the authenticated principal's tenant; it carries no CSRF requirement because it mutates nothing, and it accepts no tenant identifier from the request.
+permissions:
+  - id: reports.workspace.read
+    description: Read the composed workspace report in the active workspace, within the reader's own permissions per provider.
+dataOwnership:
+  - reports.core owns the registry of report providers as composed, and nothing else; it declares an empty data class list so a workspace can see it holds no rows.
+  - Each provider module owns its rollup, its arithmetic, its retention and the permission that gates its tiles.
+entities:
+  - id: report
+    name: Report
+    description: One provider's answer for the requested range, as the screen shows it, carrying the period its provider rolled up when that is not the requested range.
+    fields:
+      - id: key
+        type: string
+        required: true
+        unique: tenant
+        maxLength: 96
+      - id: moduleId
+        type: string
+        required: true
+        maxLength: 64
+      - id: label
+        type: string
+        required: true
+        maxLength: 120
+      - id: labelKey
+        type: string
+        maxLength: 96
+        description: Key into the provider module's own translation bundle, rendered instead of label when the reader's locale carries it.
+      - id: permission
+        type: string
+        required: true
+        maxLength: 96
+  - id: tile
+    name: Report tile
+    description: One number of a report, with the unit it is counted in.
+    fields:
+      - id: key
+        type: string
+        required: true
+        maxLength: 96
+      - id: label
+        type: string
+        required: true
+        maxLength: 120
+      - id: value
+        type: decimal
+        required: true
+      - id: tileLabelKey
+        type: string
+        maxLength: 96
+        description: Key into the provider module's own translation bundle, rendered instead of label when the reader's locale carries it.
+      - id: unit
+        type: string
+        maxLength: 32
+      - id: delta
+        type: decimal
+        description: Change against the provider's own comparison period, when the provider states one.
+  - id: series
+    name: Report series
+    description: One line of a report over the range, at most 400 points.
+    fields:
+      - id: key
+        type: string
+        required: true
+        maxLength: 96
+      - id: label
+        type: string
+        required: true
+        maxLength: 120
+      - id: seriesLabelKey
+        type: string
+        maxLength: 96
+        description: Key into the provider module's own translation bundle, rendered instead of label when the reader's locale carries it.
+      - id: at
+        type: string
+        required: true
+        maxLength: 32
+        description: The point's position on the range axis, a UTC day in YYYY-MM-DD form for the shipped providers.
+      - id: value
+        type: decimal
+        required: true
+screens:
+  - id: reports
+    kind: dashboard
+    entity: report
+    title: Reports
+    columns:
+      - label
+      - moduleId
+    navigationGroup: Administration
+actions:
+  - id: read
+    entity: report
+    permission: reports.workspace.read
+    kind: custom
+    risk: read
+    idempotent: true
+    description: Read the composed workspace report for a date range by fanning out to every permitted provider under a per-provider time budget.
+widgets:
+  - id: reports-summary
+    slot: dashboard.metrics
+    entity: tile
+    description: The three largest tiles of the workspace report, so the dashboard carries the numbers without opening the screen.
+settings:
+  - key: providerTimeoutMs
+    type: integer
+    scope: platform
+    default: 3000
+    description: Time budget per report provider per request before it is reported unavailable; 200 to 30000.
+agentTools: []
+outOfScope:
+  - CSV and PDF export of a report are not platform capabilities; a reader reads the report on screen and the workspace export in audit.core stays the way out for whole data classes.
+  - Scheduled and mailed reports are not offered; a reader opens the screen or the dashboard widget.
+  - Cross-provider arithmetic, a shared measure catalogue and ranking across modules are refused by the data ownership rule; a report is exactly what one owning module computed, and provider order is registration order.
+  - A saved report, a custom report builder and a per-reader layout are deferred; the screen renders every permitted provider in registration order.
+  - Server-side paging of tiles does not exist and is not needed, because a provider answers at most 16 tiles and 8 series, so one request carries a whole report.
+decisions:
+  - id: D-REPORTS-AUDIENCE
+    question: May a member read the workspace report, or owners only?
+    answer: Owners only. A workspace report composes spend, usage and volume across modules, which is an administrative view, so reports.workspace.read is granted to the owners of every workspace by auth sync-scopes and is not added to the member scopes. A member keeps the per-module screens their own permissions already open.
+    decidedBy: default
+  - id: D-REPORTS-SHAPE
+    question: What does a provider answer?
+    answer: Tiles and optional series. A tile is a key, a label, a number, an optional unit and an optional delta; a series is a key, a label and points of an axis position and a number. Nothing else, so reports.core never has to understand a module's domain to render it.
+    decidedBy: default
+  - id: D-REPORTS-BOUNDS
+    question: What bounds the fan-out?
+    answer: 64 providers in a deployment, 16 tiles, 8 series and 400 points per provider answer, and a per-provider time budget that is a platform setting defaulting to 3000 ms. A provider over any bound is named unavailable rather than failing the report.
+    decidedBy: default
+  - id: D-REPORTS-RANGE
+    question: What range does the screen ask for?
+    answer: Two UTC days, from and to inclusive, defaulting to the last 30 days and bounded to 400 days, which is also the point bound, so a daily series can never exceed it.
+    decidedBy: default
+  - id: D-REPORTS-NO-DATA
+    question: Does reports.core store anything?
+    answer: No. It has no database capability, no migration and no table; it declares an empty data class list so a workspace sees that it holds no rows, and every number it shows is read live from the owning module.
+    decidedBy: default
+  - id: D-REPORTS-WIDGET
+    question: What does the dashboard widget show?
+    answer: The three largest tiles of the report by value, across every permitted provider, each as a Kpi linking to the Reports screen.
+    decidedBy: default
+  - id: D-REPORTS-PROVIDERS
+    question: Which providers ship first?
+    answer: metering.core registers usage, this calendar month's rollup per meter with the operator's monthly limit carried as the unit context; agents.core registers runs, runs and tokens per day over the range read from the agent run cost rollup.
+    decidedBy: user
+acceptanceScenarios:
+  - id: REPORTS-FANOUT
+    given: Three permitted providers, one of which never answers within the time budget.
+    when: An owner reads the workspace report.
+    then: The two responsive providers' tiles and series are returned within the budget, the slow provider contributes nothing, is named in the unavailable list and has its abort signal raised, and the read is not an error. A provider that throws before its first await, rather than rejecting, is named the same way and costs the reader only that provider.
+  - id: REPORTS-PERMISSION
+    given: A provider whose permission the reader does not hold.
+    when: The reader reads the workspace report.
+    then: The provider's read operation is never called, the provider is absent from the reports and from the unavailable list, and only permitted providers appear.
+  - id: REPORTS-BOUNDS
+    given: A provider answering 17 tiles, one answering 9 series, one answering 401 points, and a deployment registering a 65th provider.
+    when: The report is read and the registry is loaded.
+    then: Each over-bound answer makes only that provider unavailable, the rest of the report is unaffected, and the 65th registration is refused at composition with a stable code.
+  - id: REPORTS-SEALED
+    given: reports.core has started.
+    when: A module registers a provider.
+    then: The registration is refused with a stable code and the provider list a request reads is unchanged.
+  - id: REPORTS-RANGE
+    given: A request with a reversed range, a malformed day, or a range wider than 400 days.
+    when: The report is read.
+    then: The request is refused with a stable code and a 400 status before any provider is called, a request with no range reads the last 30 days, and the screen refuses a range wider than 400 days itself, keeping the filter card and the reader's dates on screen with the failure shown on the field.
+  - id: REPORTS-DENY
+    given: A principal that is unauthenticated, and a principal without reports.workspace.read.
+    when: The principal reads the workspace report.
+    then: The server answers 401 and 403 respectively, before any provider is called.
+  - id: REPORTS-READ-CSRF-FREE
+    given: An owner with reports.workspace.read and no CSRF token on the request.
+    when: The owner reads the workspace report.
+    then: The read succeeds, because it mutates nothing; the endpoint accepts no body and no tenant identifier from the request.
+  - id: REPORTS-TENANT-BOUNDARY
+    given: Two workspaces whose providers hold different rollups.
+    when: An owner of one workspace reads the report.
+    then: Every provider is called with the tenant of the authenticated principal only, and no number of the other workspace appears.
+  - id: REPORTS-WIDGET
+    given: A report whose providers answer more than three tiles.
+    when: The dashboard widget renders.
+    then: The three largest tiles by value are shown, in descending order, and a report with no tile shows nothing rather than an error.
+  - id: REPORTS-LABELS
+    given: A provider that named its label, its tile labels and its series labels with keys of its own module's bundle, and a reader whose locale carries some of those keys.
+    when: The report is read and rendered.
+    then: Each key survives the answer reader beside the literal, the screen shows the module's own translation for a key the locale carries, and the provider's English literal for a key it does not.
+  - id: REPORTS-PERIOD
+    given: One provider that answers a period of its own and one that answers none.
+    when: The report is read and rendered.
+    then: The first report carries that period and its card is captioned with it, and the second carries none and its card is captioned with the range the request asked for.
+  - id: REPORTS-METERING-USAGE
+    given: A workspace with recorded meter facts this month and an operator limit on one meter.
+    when: The metering usage provider is read.
+    then: It answers one tile per meter with this month's usage as the value, the meter's unit carrying the monthly limit as its context, at most 16 tiles ordered by usage, and no series, and it names its own calendar month as the period those tiles cover.
+  - id: REPORTS-AGENTS-RUNS
+    given: A workspace with agent runs settled on several days inside and outside the range.
+    when: The agents runs provider is read.
+    then: It answers the runs and token totals of the range as tiles and runs and tokens per day as two series read from the existing rollup, with only the days inside the range, and names itself, its tiles and its lines with keys of its own bundle.

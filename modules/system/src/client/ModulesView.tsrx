@@ -9,14 +9,18 @@ import {
 	ScopeSummary,
 	SearchField,
 	TableCard,
+	Tabs,
 	Tag,
 } from '@flowdular/ui';
 import { activeLocale, t } from '@flowdular/client';
 import { useValue } from 'segment-state';
 import { ApiError, loadModuleCatalog, type ModuleCatalogEntry } from './api.ts';
+import { FlagsPanel } from './FlagsPanel.tsrx';
 import { moduleColumns, surfaces } from './module-columns.tsrx';
 import { ModuleSettingsSection } from './ModuleSettingsSection.tsrx';
 import { createModulesClientState } from './state.ts';
+
+const TABS_ID = 'system-modules';
 
 export interface ModulesViewProps {
 	readonly csrfToken: string;
@@ -33,6 +37,7 @@ export function ModulesView(props: ModulesViewProps) @{
 	const [selectedModuleId, setSelectedModuleId] = useValue(
 		client.state.selectedModuleId,
 	);
+	const [tab, setTab] = useValue(client.state.tab);
 	const selected =
 		modules.find((module) => module.id === selectedModuleId) ?? null;
 	const term = query.trim().toLocaleLowerCase(activeLocale());
@@ -82,73 +87,94 @@ export function ModulesView(props: ModulesViewProps) @{
 				{t('system.action.refresh')}
 			</Button>
 		</PageHeader>
-		@if (status === 'denied') {
-			<section class="ui-card">
-				<EmptyState icon="shield" title={t('system.denied.title')}>{t(
-					'system.denied.hint',
-				)}</EmptyState>
-			</section>
-		} @else {
-			<>
-				@if (status === 'error') {
-					<Alert>{error}</Alert>
-				}
-				<TableCard
-					title={t('system.table.title')}
-					count={t('system.table.count', {
-						enabled: enabled.length,
-						total: modules.length,
-					})}
-					search={<SearchField
-						value={query}
-						placeholder={t('system.search.placeholder')}
-						label={t('system.search.label')}
-						onInput={setQuery}
-					/>}
-					caption={t('system.table.caption')}
-					columns={moduleColumns()}
-					rows={visible}
-					rowKey={(module) => module.id}
-					status={status === 'loading' && modules.length === 0
-						? 'loading'
-						: 'idle'}
-					loadingLabel={t('system.table.loading')}
-					filtered={term !== ''}
-					empty={{
-						icon: 'modules',
-						title: t('system.table.emptyTitle'),
-						hint: t('system.table.emptyHint'),
-					}}
-					emptyFiltered={{
-						icon: 'modules',
-						title: t('system.table.emptyFilteredTitle'),
-						hint: t('system.table.emptyFilteredHint'),
-					}}
-					onSelect={(module) => setSelectedModuleId(module.id)}
-					actionsLabel={t('system.table.actions')}
-					actions={(module) => [
-						{
-							id: 'open',
-							label: t('system.action.open'),
-							icon: 'external',
-							onSelect: () => setSelectedModuleId(module.id),
-						},
-					]}
-					noteIcon="code"
-					note={<>
-						{t('system.table.cliNote')}
-						{' '}
-						<code class="ui-mono">{commands.enable ?? ''}</code>
-						{' · '}
-						<code class="ui-mono">{commands.disable ?? ''}</code>
-						{' · '}
-						<code class="ui-mono">{commands.grantScopes ?? ''}</code>
-					</>}
+		<Tabs
+			id={TABS_ID}
+			items={[
+				{ id: 'catalog', label: t('system.tab.catalog') },
+				{ id: 'flags', label: t('system.tab.flags') },
+			]}
+			active={tab}
+			label={t('system.tab.label')}
+			onChange={(next) => setTab(next === 'flags' ? 'flags' : 'catalog')}
+		/>
+		<div
+			id={TABS_ID + '-panel-' + tab}
+			role="tabpanel"
+			aria-labelledby={TABS_ID + '-tab-' + tab}
+		>
+			@if (tab === 'flags') {
+				<FlagsPanel
+					csrfToken={props.csrfToken}
+					canManage={props.canManageSettings}
 				/>
-			</>
-		}
+			} @else if (status === 'denied') {
+				<section class="ui-card">
+					<EmptyState icon="shield" title={t('system.denied.title')}>{t(
+						'system.denied.hint',
+					)}</EmptyState>
+				</section>
+			} @else {
+				<>
+					@if (status === 'error') {
+						<Alert>{error}</Alert>
+					}
+					<TableCard
+						title={t('system.table.title')}
+						count={t('system.table.count', {
+							enabled: enabled.length,
+							total: modules.length,
+						})}
+						search={<SearchField
+							value={query}
+							placeholder={t('system.search.placeholder')}
+							label={t('system.search.label')}
+							onInput={setQuery}
+						/>}
+						caption={t('system.table.caption')}
+						columns={moduleColumns()}
+						rows={visible}
+						rowKey={(module) => module.id}
+						status={status === 'loading' && modules.length === 0
+							? 'loading'
+							: 'idle'}
+						loadingLabel={t('system.table.loading')}
+						filtered={term !== ''}
+						empty={{
+							icon: 'modules',
+							title: t('system.table.emptyTitle'),
+							hint: t('system.table.emptyHint'),
+						}}
+						emptyFiltered={{
+							icon: 'modules',
+							title: t('system.table.emptyFilteredTitle'),
+							hint: t('system.table.emptyFilteredHint'),
+						}}
+						onSelect={(module) => setSelectedModuleId(module.id)}
+						actionsLabel={t('system.table.actions')}
+						actions={(module) => [
+							{
+								id: 'open',
+								label: t('system.action.open'),
+								icon: 'external',
+								onSelect: () => setSelectedModuleId(module.id),
+							},
+						]}
+						noteIcon="code"
+						note={<>
+							{t('system.table.cliNote')}
+							{' '}
+							<code class="ui-mono">{commands.enable ?? ''}</code>
+							{' · '}
+							<code class="ui-mono">{commands.disable ?? ''}</code>
+							{' · '}
+							<code class="ui-mono">{commands.grantScopes ?? ''}</code>
+						</>}
+					/>
+				</>
+			}
+		</div>
 		<Drawer
-			open={selected !== null}
+			open={tab === 'catalog' && selected !== null}
 			title={selected?.name ?? t('system.drawer.module')}
 			subtitle={selected?.id ?? ''}
 			width="lg"

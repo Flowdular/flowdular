@@ -1,7 +1,11 @@
 .git
 .github
 .DS_Store
-.env*
+# Matched against the whole context-relative path, so a root-anchored .env*
+# would still copy infra/docker/.env into the builder image.
+**/.env
+**/.env.*
+!**/.env.example
 **/node_modules
 **/dist
 **/coverage

@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "users.core",
 	"package": "@flowdular/module-users",
-	"version": "0.6.0",
+	"version": "0.9.6",
 	"profile": "full",
 	"capabilities": ["api", "client", "translations"],
 	"platform": {
@@ -13,15 +13,41 @@
 	"dependencies": [
 		{
 			"id": "system.core",
-			"range": "0.5.0"
+			"range": "^0.7.0"
 		},
 		{
 			"id": "auth.core",
-			"range": "0.10.0"
+			"range": "^0.13.0"
+		},
+		{
+			"id": "search.core",
+			"range": "^0.1.0"
+		},
+		{
+			"id": "import.core",
+			"range": "^0.1.0"
+		},
+		{
+			"id": "exports.core",
+			"range": "^0.2.0"
+		}
+	],
+	"requires": [
+		{
+			"id": "search.providers.v1",
+			"optional": true
+		},
+		{
+			"id": "import.ports.v1",
+			"optional": true
+		},
+		{
+			"id": "exports.lists.v1",
+			"optional": true
 		}
 	],
 	"tenancy": "required",
 	"locales": ["en", "pl"],
 	"stability": "experimental",
-	"platformApi": "0.1.0"
+	"platformApi": "^0.1.2"
 }

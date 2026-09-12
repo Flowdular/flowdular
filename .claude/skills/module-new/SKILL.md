@@ -10,6 +10,35 @@ The reference module is `.ai/references/catalog` (in a sandbox session: `referen
 
 Two ways to land the same module: the sandbox (a brief, specialist turns, gates after every turn, preview, eject) or the direct path (this skill in your own coding tool, the gates by hand, `pnpm verify`, a pull request). The sections below mark the differences.
 
+## Spec is the contract
+
+With an approved `schemaVersion: 2` spec, the specification is the requirement document and you do not go looking for one. Read the spec, the files on this skill's touch list, and `.ai/references/catalog` for shape. Do not scan `modules/` or `packages/`; `.ai/platform-capabilities.md` answers what the platform provides, and the reference module answers what the code looks like.
+
+Anything the spec does not say is a spec defect, not a decision you make. A missing field, an unstated conflict behaviour, an undefined state transition, a screen without columns: report it back. In the sandbox that is `HANDOFF: business-manager - <what is missing>`; on a host it is a question to the user. Never fill the gap with a plausible guess, and never implement anything listed in `outOfScope[]`.
+
+Every `acceptanceScenarios[]` entry maps to at least one test in `tests/`. A scenario with no test is unfinished work, and the scenario id belongs in the test name so the mapping is readable.
+
+Each spec element maps to files:
+
+| Spec element                  | Files it produces                                                                                                                                       |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `entities[]`                  | `src/domain/types.ts`, `migrations/000N_<module>_<name>.{up,down}.sql`, `src/services/migration.ts`, `src/services/{repository,database-repository}.ts` |
+| `entities[].fields[]`         | the columns and row mapping above, the validation bounds in `src/api/endpoints.ts`, the form field and table cell in `src/client/*.tsrx`                |
+| `fields[].unique: tenant`     | a `(tenant_id, <field>)` unique index in the migration plus the stable conflict code in the service                                                     |
+| `entities[].states`           | the status column, the transition guard in the service, the `Tag` tone in the view                                                                      |
+| `screens[]`                   | `src/client/<Pascal>View.tsrx`, a `views` entry and a `navigation` entry in `src/client/contribution.tsrx`, `translations/*.json`                       |
+| `screens[].columns`/`filters` | the `TableColumn[]` outside the component, and the controls inside the `Filters` dropdown                                                               |
+| `screens[].navigationGroup`   | the navigation entry's `group`                                                                                                                          |
+| `actions[]`                   | the service method with its error code, the `defineEndpoint` route, the fetch in `src/client/api.ts`                                                    |
+| `widgets[]`                   | a widget component plus a `widgets` entry with its `slot` in `src/client/contribution.tsrx`                                                             |
+| `settings[]`                  | `src/settings.ts` (`defineModuleSettings`) and `settings:` in `src/platform.ts`                                                                         |
+| `agentTools[]`                | `src/agent/tools.ts` and the `context.agentTools.register` call, as a separate `agent-tool-design` phase                                                |
+| `permissions[]`               | `src/acl/permissions.ts`, the endpoint `access.permission`, the client `scope`                                                                          |
+| `acceptanceScenarios[]`       | `tests/module.test.ts` and its siblings, at least one case each                                                                                         |
+| `outOfScope[]`, `decisions[]` | no code. Read them so you do not rebuild a decision or implement a deferred feature.                                                                    |
+
+A v1 spec stays valid and carries none of these arrays. Then the requirements are `invariants`, `permissions` and `acceptanceScenarios`, and everything the spec leaves open is still a question rather than a guess.
+
 ## 1. Preconditions
 
 - `pnpm flowdular doctor --json` reports `status: healthy` (repository root only; the sandbox runs gates for you).

@@ -21,4 +21,5 @@
 ## Operating it
 
 - [Deployment](../infra/README.md): container, Compose, Kubernetes, published images.
+- [Operations](operations.md): backup and restore, key rotation, production checklist, rollback.
 - [Platform releases](platform-releases.md): manual GitHub Releases, signed artifacts and full changelogs.

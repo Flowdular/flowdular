@@ -136,6 +136,45 @@ describe('platform composition generator', () => {
 		);
 	});
 
+	it('scopes the capability registry to the manifest declaration', () => {
+		const declared = manifest('agents.core');
+		const source = generateServerComposition([
+			{
+				id: 'agents.core',
+				package: '@flowdular/module-agents',
+				server: true,
+				client: false,
+				dependencies: [],
+				manifest: {
+					...declared,
+					provides: ['agents.run-queue'],
+					requires: [{ id: 'notifications.publish.v1', optional: true }],
+				},
+			},
+		]);
+		expect(source).toContain(
+			`capabilities: context.capabilities.forModule('agents.core', {"provides":["agents.run-queue"],"requires":[{"id":"notifications.publish.v1","optional":true}]})`,
+		);
+		expect(generateServerComposition(modules)).not.toContain(
+			'capabilities: context.capabilities.forModule',
+		);
+	});
+
+	it('binds the metrics of each module and hands every module the same tracer', () => {
+		const source = generateServerComposition(modules);
+		expect(source).toContain(
+			"import { createModuleMetrics } from '@flowdular/server';",
+		);
+		expect(source).toContain("metrics: createModuleMetrics('users.core'),");
+		expect(source).toContain("metrics: createModuleMetrics('billing.core'),");
+		/* The tracer is the platform's, not a per-module binding, so it reaches a
+		   module through the context the call spreads. */
+		expect(source).toContain('...context,');
+		expect(generateServerComposition(modules, true)).toContain(
+			"import { createModuleMetrics } from '@flowdular/sdk/server';",
+		);
+	});
+
 	it('wires client contributions only for client-capable modules', () => {
 		const source = generateClientComposition(modules);
 		expect(source).toContain('users_core(context)');
@@ -146,6 +185,7 @@ describe('platform composition generator', () => {
 		expect(generateServerComposition([])).toContain('return [];');
 		expect(generateClientComposition([])).toContain('return [];');
 		expect(generateServerComposition([])).not.toContain('/platform');
+		expect(generateServerComposition([])).not.toContain('createModuleMetrics');
 	});
 });
 
@@ -205,6 +245,33 @@ describe('module dependency lifecycle', () => {
 		);
 		expect(source.indexOf('auth_core({')).toBeLessThan(
 			source.indexOf('feature_core({'),
+		);
+	});
+
+	it('orders a required capability provider before its consumer and refuses a disabled provider', async () => {
+		const provider = {
+			...manifest('agents.core'),
+			provides: ['agents.run-queue'],
+		};
+		const consumer = {
+			...manifest('automations.core'),
+			requires: [
+				{ id: 'agents.run-queue' },
+				{ id: 'workflows.execution.v1', optional: true },
+			],
+		};
+		const enabled = createWorkspace([consumer, provider], ['automations.core']);
+		await expect(syncPlatformModules(enabled, false)).rejects.toThrow(
+			'Enabled module "automations.core" requires capability "agents.run-queue" from disabled module "agents.core". Enable the provider first.',
+		);
+		const closure = createWorkspace([consumer, provider], []);
+		const report = await enableModule(closure, 'automations.core', false);
+		expect(report.modules).toEqual(['agents.core', 'automations.core']);
+		const orphan = createWorkspace([consumer], []);
+		await expect(
+			enableModule(orphan, 'automations.core', false),
+		).rejects.toThrow(
+			'Module "automations.core" requires capability "agents.run-queue" and no module provides it.',
 		);
 	});
 

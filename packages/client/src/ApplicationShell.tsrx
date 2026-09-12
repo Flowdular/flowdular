@@ -3,8 +3,12 @@ import { useEffect, useMemo } from 'octane';
 import { cell, createStore, useValue } from 'segment-state';
 import {
 	createClientContributionRegistry,
+	type CommandSearchHit,
 	type NavigationGroup,
 } from './contributions.ts';
+import { applicationPath } from './routing.ts';
+import { commandSearchHitOpened } from './shell/command-search.ts';
+import { onOpenCommandPalette } from './shell/command.ts';
 import { CommandPalette } from './shell/CommandPalette.tsrx';
 import { widgetsForSlot } from './shell/ContributionOutlets.tsrx';
 import { registerModuleTranslations, useTranslation } from './i18n/runtime.ts';
@@ -14,6 +18,7 @@ import {
 	navigationForIdentity,
 	navigationGroupLabel,
 	viewHref,
+	workspaceHitRoute,
 } from './shell/navigation.ts';
 import { Sidebar } from './shell/Sidebar.tsrx';
 import { Topbar } from './shell/Topbar.tsrx';
@@ -119,6 +124,14 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 	const visibleWidgets = registry.widgets.filter(
 		(widget) => grantedScopes.has(widget.scope),
 	);
+	/* Memoized because the palette debounces on this list's identity: a fresh
+   array every render would restart the wait on every keystroke. */
+	const visibleSearches = useMemo(
+		() => registry.commandSearch.filter(
+			(entry) => props.identity.scopes.includes(entry.scope),
+		),
+		[registry, props.identity.scopes.join(' ')],
+	);
 	const topbarWidgets = widgetsForSlot(visibleWidgets, 'topbar.actions');
 	const activeTenantName =
 		props.identity.tenants.find(
@@ -129,6 +142,24 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 	const navigate = (viewId: ShellView) => {
 		history.pushState(null, '', viewHref(viewId, activeWorkspaceSlug));
 		setActiveView(viewId);
+		setNavigationOpen(false);
+		setCommandOpen(false);
+	};
+
+	/* A hit's route is workspace-relative and comes from a module, so anything
+   that is not a plain in-workspace path falls back to the hit's view rather
+   than being pushed at the browser. */
+	const openHit = (hit: CommandSearchHit) => {
+		commandSearchHitOpened(hit);
+		const base =
+			activeWorkspaceSlug
+				? applicationPath() + '/' + activeWorkspaceSlug
+				: applicationPath();
+		const route = workspaceHitRoute(hit.route);
+		const relative =
+			route === null ? viewHref(hit.viewId, activeWorkspaceSlug) : base + route;
+		history.pushState(null, '', relative);
+		setActiveView(hit.viewId);
 		setNavigationOpen(false);
 		setCommandOpen(false);
 	};
@@ -230,6 +261,16 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 			);
 		}
 	}, [activeWorkspaceSlug, effectiveView]);
+
+	/* A module widget opens the palette through this, so the shell keeps owning
+   the palette state and no contribution has to reach into it. */
+	useEffect(
+		() => onOpenCommandPalette((seed) => {
+			if (seed !== '') setQuery(seed);
+			setCommandOpen(true);
+		}),
+		[setCommandOpen, setQuery],
+	);
 
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
@@ -363,9 +404,11 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 			@if (commandOpen) {
 				<CommandPalette
 					items={visibleNavigation}
+					searches={visibleSearches}
 					query={query}
 					onQuery={setQuery}
 					onNavigate={navigate}
+					onOpenHit={openHit}
 					onClose={() => setCommandOpen(false)}
 				/>
 			}

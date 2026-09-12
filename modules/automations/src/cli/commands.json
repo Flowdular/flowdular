@@ -1,0 +1,17 @@
+{
+	"protocolVersion": 1,
+	"moduleId": "automations.core",
+	"commands": [
+		{
+			"path": ["automations", "secrets-rotate"],
+			"capability": {
+				"id": "automations.secrets.rotate",
+				"version": 1,
+				"summary": "Re-seal stored trigger secrets with the current encryption key.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		}
+	]
+}

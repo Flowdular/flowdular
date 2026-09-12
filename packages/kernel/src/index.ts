@@ -1,5 +1,21 @@
-export { authorize } from './acl.ts';
-export type { AccessDecision, Principal } from './acl.ts';
+export {
+	authorize,
+	authorizeRecord,
+	createPolicyRegistry,
+	definePolicy,
+	MAX_POLICIES,
+} from './acl.ts';
+export type {
+	AccessDecision,
+	ApprovalRequirement,
+	MutablePolicyRegistry,
+	Policy,
+	PolicyDecision,
+	PolicyDefinition,
+	PolicyEvaluationContext,
+	PolicyRegistry,
+	Principal,
+} from './acl.ts';
 export { createPlatformAgentRegistry } from './agent-registry.ts';
 export type {
 	MutablePlatformAgentRegistry,
@@ -24,9 +40,47 @@ export type {
 	UserActor,
 	UserActorSource,
 } from './actor.ts';
+export {
+	createDataClassRegistry,
+	DATA_CLASS_LIMITS,
+} from './data-class-registry.ts';
+export type {
+	DataClassCountInput,
+	DataClassDeclaration,
+	DataClassErasureInput,
+	DataClassErasureResult,
+	DataClassExportInput,
+	DataClassExportSink,
+	DataClassExportSummary,
+	DataClassModuleEntry,
+	DataClassSubject,
+	DataClassSweepInput,
+	MutablePlatformDataClassRegistry,
+	PlatformDataClassRegistry,
+} from './data-class-registry.ts';
 export { createPlatformCapabilityRegistry } from './capability-registry.ts';
-export type { PlatformCapabilityRegistry } from './capability-registry.ts';
+export type {
+	ModuleCapabilityDeclaration,
+	PlatformCapabilityRegistry,
+} from './capability-registry.ts';
 export { RegistryError } from './errors.ts';
+export {
+	createKeyring,
+	keyFingerprint,
+	KeyringError,
+	KEYRING_IV_BYTES,
+	KEYRING_KEY_BYTES,
+	KEYRING_MAX_PREVIOUS_KEYS,
+	KEYRING_TAG_BYTES,
+	parsePreviousKeys,
+} from './keyring.ts';
+export type {
+	Keyring,
+	KeyringErrorCode,
+	KeyringOptions,
+	SealedEnvelope,
+	StoredEnvelope,
+} from './keyring.ts';
 export {
 	DEFAULT_HISTORY_PAGE,
 	diffFields,
@@ -44,7 +98,10 @@ export type {
 	RecordChanges,
 	TrackedFields,
 } from './record-history.ts';
-export { createModuleRegistry } from './module-registry.ts';
+export {
+	capabilityProviders,
+	createModuleRegistry,
+} from './module-registry.ts';
 export {
 	assertSettingValue,
 	createModuleSettingsRuntime,
@@ -56,6 +113,7 @@ export type {
 	ModuleSettingChange,
 	ModuleSettingDefinition,
 	ModuleSettingEntry,
+	ModuleSettingKind,
 	ModuleSettingRecord,
 	ModuleSettingScope,
 	ModuleSettingsDeclaration,
@@ -87,4 +145,7 @@ export {
 	assertModuleDependency,
 	satisfiesModuleVersion,
 	compareModuleVersions,
+	incrementModuleVersion,
+	retargetModuleRange,
 } from './module-compatibility.ts';
+export type { ModuleVersionLevel } from './module-compatibility.ts';

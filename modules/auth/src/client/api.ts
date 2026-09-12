@@ -1,6 +1,6 @@
 import { applicationPath } from '@flowdular/client/routing';
 import { setTenantDefaultLocale, t } from '@flowdular/client/i18n';
-import type { AuthPrincipal } from '../domain/types.ts';
+import type { AuthPrincipal, SignInProviderOption } from '../domain/types.ts';
 import type { AuthClientState } from './state.ts';
 
 interface SessionPayload {
@@ -29,6 +29,8 @@ export interface MfaStatusPayload {
 	readonly available: boolean;
 	readonly enrolled: boolean;
 	readonly pending: boolean;
+	/** The workspace holds unenrolled members at enrolment. */
+	readonly required: boolean;
 }
 
 export interface MfaEnrollmentPayload {
@@ -45,17 +47,29 @@ export interface WorkspaceAvailability {
 
 export async function loadAuthConfiguration(
 	auth: AuthClientState,
+	/** The workspace being entered; its enabled providers come back with it. */
+	workspace = '',
 ): Promise<void> {
 	try {
-		const response = await fetch('/api/auth/config', {
-			credentials: 'same-origin',
-			headers: { accept: 'application/json' },
-		});
+		const response = await fetch(
+			workspace
+				? `/api/auth/config?workspace=${encodeURIComponent(workspace)}`
+				: '/api/auth/config',
+			{
+				credentials: 'same-origin',
+				headers: { accept: 'application/json' },
+			},
+		);
 		const body = (await response.json()) as {
 			readonly allowSignUp?: boolean;
 			readonly emailConfirmation?: boolean;
 			readonly signInProviders?: readonly string[];
 			readonly passwordMinLength?: number;
+			readonly workspace?: {
+				readonly slug?: string;
+				readonly name?: string;
+			} | null;
+			readonly providers?: readonly SignInProviderOption[];
 		};
 		if (!response.ok || typeof body.allowSignUp !== 'boolean') {
 			throw new Error(t('auth.error.configuration'));
@@ -65,6 +79,16 @@ export async function loadAuthConfiguration(
 					(provider): provider is string => typeof provider === 'string',
 				)
 			: [];
+		const options = Array.isArray(body.providers)
+			? body.providers.filter(
+					(option): option is SignInProviderOption =>
+						!!option &&
+						typeof option.key === 'string' &&
+						typeof option.label === 'string' &&
+						typeof option.startPath === 'string' &&
+						option.startPath.startsWith('/api/auth/oidc/'),
+				)
+			: [];
 		auth.store.act((transaction) => {
 			transaction.set(auth.state.allowSignUp, body.allowSignUp!);
 			transaction.set(
@@ -72,6 +96,17 @@ export async function loadAuthConfiguration(
 				body.emailConfirmation === true,
 			);
 			transaction.set(auth.state.signInProviders, providers);
+			transaction.set(auth.state.providerOptions, options);
+			transaction.set(
+				auth.state.signInWorkspaceName,
+				typeof body.workspace?.name === 'string' ? body.workspace.name : '',
+			);
+			/* A resolved workspace answers with its canonical id, and that is what
+			   the sign-in request carries, so the session opens where the screen
+			   says it does. An unresolved reference keeps what was typed. */
+			if (typeof body.workspace?.slug === 'string') {
+				transaction.set(auth.state.signInWorkspace, body.workspace.slug);
+			}
 			if (typeof body.passwordMinLength === 'number') {
 				transaction.set(auth.state.passwordMinLength, body.passwordMinLength);
 			}
@@ -175,7 +210,12 @@ export async function loadSession(auth: AuthClientState): Promise<void> {
 
 export async function signIn(
 	auth: AuthClientState,
-	input: { readonly email: string; readonly password: string },
+	input: {
+		readonly email: string;
+		readonly password: string;
+		/** The workspace the screen resolved; the session opens in it. */
+		readonly workspace?: string;
+	},
 ): Promise<void> {
 	auth.store.act((transaction) => {
 		transaction.set(auth.state.status, 'submitting');
@@ -359,6 +399,32 @@ export async function confirmMfa(
 	csrfToken: string,
 ): Promise<void> {
 	await sessionMutation('/api/auth/mfa/confirm', { code }, csrfToken);
+}
+
+/* The CSRF token of the live session, for an administration surface that holds
+   no session state of its own. */
+export async function loadSessionCsrfToken(): Promise<string> {
+	const response = await fetch('/api/auth/session', {
+		credentials: 'same-origin',
+		headers: { accept: 'application/json' },
+	});
+	const value = (await response.json()) as Partial<SessionPayload> &
+		ErrorPayload;
+	if (!response.ok || typeof value.csrfToken !== 'string') {
+		throw new AuthClientApiError(
+			response.status,
+			value.error?.message ?? t('auth.error.request'),
+		);
+	}
+	return value.csrfToken;
+}
+
+/** Clears another member's second factor; needs users.members.manage. */
+export async function resetMemberMfa(
+	accountId: string,
+	csrfToken: string,
+): Promise<void> {
+	await sessionMutation('/api/auth/mfa/reset', { accountId }, csrfToken);
 }
 
 export async function createTenantInvitation(

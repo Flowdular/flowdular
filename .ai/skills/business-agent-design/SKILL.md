@@ -6,7 +6,6 @@ description: >-
   automation delivered by a module, not for sandbox coding specialists.
 roles:
   - agentic-engineer
-  - backend-engineer
   - module-executor
 when: A module should provide a ready business agent that tenants can configure and run.
 ---

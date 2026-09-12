@@ -1,37 +1,15 @@
 import { useEffect, useMemo } from 'octane';
-import type { ModuleSettingValue } from '@flowdular/kernel';
 import { t } from '@flowdular/client';
-import { cell, createStore, useValue } from 'segment-state';
+import { useValue } from 'segment-state';
 import { ApiError } from './api.ts';
 import { ModuleSettingRow } from './ModuleSettingRow.tsrx';
-import {
-	loadSettings,
-	updateSetting,
-	type SettingsEntryPayload,
-} from './settings-api.ts';
+import { loadSettings } from './settings-api.ts';
+import { createSectionState, saveSetting } from './settings-state.ts';
 
 export interface ModuleSettingsSectionProps {
 	readonly moduleId: string;
 	readonly csrfToken: string;
 	readonly canManage: boolean;
-}
-
-interface RowResult {
-	readonly ok: boolean;
-	readonly message: string;
-}
-
-type SectionStatus = 'loading' | 'idle' | 'denied' | 'error';
-
-function createSectionState() {
-	const store = createStore({
-		settings: cell<readonly SettingsEntryPayload[]>([]),
-		status: cell<SectionStatus>('loading'),
-		error: '',
-		busyKey: cell<string | null>(null),
-		results: cell<ReadonlyMap<string, RowResult>>(new Map()),
-	});
-	return { store, state: store.state };
 }
 
 /* The Settings section of the Modules drawer: the selected module's declared
@@ -74,51 +52,6 @@ export function ModuleSettingsSection(props: ModuleSettingsSectionProps) @{
 		void refresh();
 	}, [props.moduleId]);
 
-	const save = async (key: string, value: ModuleSettingValue | null) => {
-		client.store.act((transaction) => {
-			transaction.set(client.state.busyKey, key);
-		}, 'system/module-setting-saving');
-		try {
-			const updated = await updateSetting(
-				props.moduleId,
-				key,
-				value,
-				props.csrfToken,
-			);
-			client.store.act((transaction) => {
-				transaction.set(
-					client.state.settings,
-					settings.map(
-						(setting) => setting.key === key && updated ? updated : setting,
-					),
-				);
-				transaction.set(
-					client.state.results,
-					new Map(results).set(key, {
-						ok: true,
-						message: value === null
-							? t('system.settings.resetDone')
-							: t('system.settings.saved'),
-					}),
-				);
-				transaction.set(client.state.busyKey, null);
-			}, 'system/module-setting-saved');
-		} catch (saveError) {
-			client.store.act((transaction) => {
-				transaction.set(
-					client.state.results,
-					new Map(results).set(key, {
-						ok: false,
-						message: saveError instanceof Error
-							? saveError.message
-							: t('system.settings.errorSave'),
-					}),
-				);
-				transaction.set(client.state.busyKey, null);
-			}, 'system/module-setting-save-failed');
-		}
-	};
-
 	<div class="ui-form__section">
 		<div class="ui-form__section-head">
 			<b>{t('system.settings.title')}</b>
@@ -145,7 +78,13 @@ export function ModuleSettingsSection(props: ModuleSettingsSectionProps) @{
 							busy={busyKey === setting.key}
 							showScope={true}
 							result={results.get(setting.key) ?? null}
-							onSave={(value) => void save(setting.key, value)}
+							onSave={(value) => void saveSetting(
+								client,
+								props.moduleId,
+								setting.key,
+								value,
+								props.csrfToken,
+							)}
 						/>
 					}
 				</div>

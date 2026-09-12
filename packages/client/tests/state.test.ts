@@ -4,6 +4,7 @@ import {
 	navigationForIdentity,
 	viewHref,
 } from '../src/shell/navigation.ts';
+import { workspaceViewHref } from '../src/routing.ts';
 import {
 	shellLocationFromUrl,
 	shellViewFromUrl,
@@ -51,6 +52,34 @@ describe('application links', () => {
 			'/app/operations-demo/parties',
 		);
 		expect(viewHref('overview')).toBe('/app');
+	});
+});
+
+/* A module contributes widgets the shell renders outside any view, so they are
+   handed no workspace slug and read it back from the address instead. */
+describe('links a module builds from the open address', () => {
+	it('keeps the workspace the reader is in', () => {
+		expect(workspaceViewHref('audit', '/app/northwind/modules', '/app')).toBe(
+			'/app/northwind/audit',
+		);
+		expect(
+			workspaceViewHref('audit', '/backoffice/northwind/audit', '/backoffice'),
+		).toBe('/backoffice/northwind/audit');
+	});
+
+	/* One segment under the base is the view, not a workspace; the shell resolves
+	   the slugless form against the open workspace. */
+	it.each(['/app', '/app/', '/app/modules', '/', ''])(
+		'leaves the workspace out of %s',
+		(pathname) => {
+			expect(workspaceViewHref('audit', pathname, '/app')).toBe('/app/audit');
+		},
+	);
+
+	it('ignores an address outside the installation', () => {
+		expect(workspaceViewHref('audit', '/other/northwind/modules', '/app')).toBe(
+			'/app/audit',
+		);
 	});
 });
 

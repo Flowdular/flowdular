@@ -15,26 +15,34 @@
 
 ## Routes
 
-| Method | Route                         | Purpose                                  |
-| ------ | ----------------------------- | ---------------------------------------- |
-| GET    | `/api/auth/config`            | Public sign-in configuration             |
-| GET    | `/api/auth/session`           | Resolve the current session              |
-| POST   | `/api/auth/sign-up`           | Create a tenant owner account            |
-| POST   | `/api/auth/sign-in`           | Create a new session                     |
-| POST   | `/api/auth/switch-tenant`     | Rotate into another membership           |
-| POST   | `/api/auth/sign-out`          | Revoke the current session               |
-| POST   | `/api/auth/password`          | Change the own password                  |
-| POST   | `/api/auth/workspace`         | Rename the active workspace              |
-| GET    | `/api/auth/api-tokens`        | List tenant API tokens                   |
-| POST   | `/api/auth/api-tokens`        | Issue an API token                       |
-| POST   | `/api/auth/api-tokens/revoke` | Revoke an API token                      |
-| GET    | `/api/auth/roles`             | Tenant roles and grantable scopes        |
-| POST   | `/api/auth/roles`             | Create a custom role                     |
-| POST   | `/api/auth/roles/update`      | Change a custom role                     |
-| POST   | `/api/auth/roles/delete`      | Delete an unused custom role             |
-| GET    | `/api/auth/audit`             | Page through the tenant audit trail      |
-| GET    | `/api/auth/sessions`          | List the own sessions                    |
-| POST   | `/api/auth/sessions/revoke`   | End an own session, or all of a member's |
+| Method | Route                               | Purpose                                   |
+| ------ | ----------------------------------- | ----------------------------------------- |
+| GET    | `/api/auth/config`                  | Public sign-in configuration              |
+| GET    | `/api/auth/session`                 | Resolve the current session               |
+| POST   | `/api/auth/sign-up`                 | Create a tenant owner account             |
+| POST   | `/api/auth/sign-in`                 | Create a new session                      |
+| POST   | `/api/auth/switch-tenant`           | Rotate into another membership            |
+| POST   | `/api/auth/sign-out`                | Revoke the current session                |
+| POST   | `/api/auth/password`                | Change the own password                   |
+| POST   | `/api/auth/workspace`               | Rename the active workspace               |
+| GET    | `/api/auth/api-tokens`              | List tenant API tokens                    |
+| POST   | `/api/auth/api-tokens`              | Issue an API token                        |
+| POST   | `/api/auth/api-tokens/revoke`       | Revoke an API token                       |
+| GET    | `/api/auth/roles`                   | Tenant roles and grantable scopes         |
+| POST   | `/api/auth/roles`                   | Create a custom role                      |
+| POST   | `/api/auth/roles/update`            | Change a custom role                      |
+| POST   | `/api/auth/roles/delete`            | Delete an unused custom role              |
+| GET    | `/api/auth/audit`                   | Page through the tenant audit trail       |
+| GET    | `/api/auth/sessions`                | List the own sessions                     |
+| POST   | `/api/auth/sessions/revoke`         | End an own session, or all of a member's  |
+| GET    | `/api/auth/providers`               | Workspace and platform identity providers |
+| POST   | `/api/auth/providers`               | Create a workspace identity provider      |
+| POST   | `/api/auth/providers/update`        | Change a workspace identity provider      |
+| POST   | `/api/auth/providers/enable`        | Offer it on the sign-in screen            |
+| POST   | `/api/auth/providers/disable`       | Stop offering it                          |
+| POST   | `/api/auth/providers/rotate-secret` | Replace its client secret                 |
+| POST   | `/api/auth/providers/delete`        | Delete a disabled provider                |
+| POST   | `/api/auth/memberships/status`      | Disable or re-enable one membership       |
 
 `GET /api/settings` and `POST /api/settings/update` are served by system.core;
 auth.core owns the store and appends the `settings.updated` audit row through
@@ -47,6 +55,42 @@ Mutation requests require a matching `Origin` or `Referer`. Sign-out also requir
 API tokens are machine credentials for clients that cannot hold a browser session, such as a sandbox connected to a remote deployment. An owner with `auth.tokens.manage` issues one from Administration or through the API. The raw value (`clat_...`) is returned once and stored only as a SHA-256 hash.
 
 A client presents it as `Authorization: Bearer clat_...`. The authentication middleware resolves it only when no session cookie is present, and the effective scopes are the intersection of the token's recorded scopes with the membership's current scopes. Session-guarded mutations reject tokens with `TOKEN_MUTATION_DENIED`, so a token can read platform data and prove sandbox authority but cannot drive CSRF-protected writes. Revocation, expiry, and scope removal take effect on the next request.
+
+## Identity providers
+
+A workspace adds OIDC providers of its own in Administration, Identity
+providers, behind `auth.providers.read` and `auth.providers.manage`. The issuer
+is verified through its discovery document when it is saved, the endpoints that
+document publishes are stored with it, and the client secret is sealed with the
+deployment authentication key (`FD_AUTH_MFA_KEY`) under a provider-specific
+context. Nothing returns the secret afterwards: administrators see its
+fingerprint, and `pnpm flowdular auth secrets-rotate` re-seals provider secrets
+beside the enrolled TOTP factors.
+
+Sign-in is routed by workspace. `GET /api/auth/config?workspace=<slug>` answers
+with the password form, that workspace's enabled providers and the platform
+providers from `FD_AUTH_OIDC_PROVIDERS`. A workspace provider starts at
+`/api/auth/oidc/<workspace>/<key>/start`; the signed state cookie binds both,
+and a callback whose state names another workspace is refused. A platform
+provider keeps its own `/api/auth/oidc/<id>/start` route and keeps binding
+identities without a workspace.
+
+Just-in-time provisioning is off per provider. Turned on, it takes a non-empty
+list of allowed e-mail domains and the role a new member receives (`member` by
+default). A verified address inside those domains creates or reuses the account,
+creates an active membership with the role's scopes and an `auth.member.provisioned`
+audit row. Without it, an external sign-in needs an existing membership; an
+address outside the domains is refused before anything is written.
+
+## Membership status
+
+Every membership carries its own status. `POST /api/auth/memberships/status`
+(`users.members.manage`, session and CSRF required) disables or re-enables the
+membership of the acting workspace: disabling revokes that workspace's sessions
+and API tokens for the account, refuses its sign-in and tenant switch, and
+leaves the person's other workspaces untouched. Re-enabling restores sign-in;
+the revoked tokens stay revoked. The account status column stays what it was,
+the deployment operator's platform-level block.
 
 ## Configuration
 
@@ -158,10 +202,10 @@ The command mints that token itself rather than going through
 `requestPasswordReset` or `createTenantInvitation`. Both of those hand their
 token to the injected `AuthMailDelivery` adapter and to nobody else:
 `createTenantInvitation` refuses with `MAIL_NOT_CONFIGURED` when none is
-composed, and `requestPasswordReset` returns silently. The only adapter that
-ships is in-memory and its flag is refused in production, so an operator
-standing at a shell on the server is the delivery channel, and the terminal is
-the one channel that always exists.
+composed, and `requestPasswordReset` answers generically while the server logs
+that the message was not delivered. A deployment that configures no transport
+still has an operator standing at a shell on the server as its delivery channel,
+and the terminal is the one channel that always exists.
 
 `--password-env` takes the **name** of an environment variable, never the
 password. A password passed as a flag value lands in shell history and in the
@@ -196,8 +240,8 @@ pnpm flowdular setup quick --apply --confirm reset-local-auth
 
 The command resets only the workspace's local embedded database, and refuses to run when a PostgreSQL server is configured. It creates:
 
-- `admin@example.com` / `Admin!23456789`, an owner of Operations Demo and Finance Demo.
-- `user@example.com` / `User!234567890`, a reduced-scope member of Operations Demo.
+- `admin@example.com` / `Owner!23456789`, an owner of Operations Demo and Finance Demo.
+- `user@example.com` / `Member!2345678`, a reduced-scope member of Operations Demo.
 
 The application shell exposes the active tenant selector. Switching it rotates the session cookie and reloads the target membership's role and scopes. All seed values are public development defaults. The command refuses a configured PostgreSQL server and non-development environments. `auth greenfield` remains the module-owned equivalent of `setup quick`.
 
@@ -210,6 +254,10 @@ tenant invitations, TOTP MFA, and OIDC use injected deployment configuration:
 `FD_AUTH_MFA_KEY` is a 32-byte AES key encoded as 64 hexadecimal characters
 or base64url, `FD_AUTH_PUBLIC_ORIGIN` is the public HTTPS origin, and
 `FD_AUTH_OIDC_PROVIDERS` is a JSON list of configured OIDC endpoints and
-credentials. Email delivery is injected through `AuthMailDelivery`; local-only
-evidence can use `FD_AUTH_DEVELOPMENT_MAIL=true`, which keeps messages in
-memory and never logs or exposes raw tokens.
+credentials, which every workspace is offered read-only. Email delivery is
+injected through `AuthMailDelivery` and selected
+by `FD_AUTH_MAIL_TRANSPORT`: `smtp` relays through `FD_AUTH_SMTP_URL` and
+`FD_AUTH_MAIL_FROM`, while `development` (also reached by the older
+`FD_AUTH_DEVELOPMENT_MAIL=true`) keeps messages in memory and is refused in
+production. No transport logs or exposes a raw token, an address, or the relay
+credentials.

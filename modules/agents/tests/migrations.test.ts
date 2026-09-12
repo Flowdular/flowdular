@@ -212,6 +212,43 @@ describe('agents migrations', () => {
 		await expect(apply()).rejects.toMatchObject({ code: 'PARTIAL_MIGRATION' });
 	});
 
+	/* The standing refusal table is what keeps one refused meter out of the
+	   chained trail on every retry. A pre-ledger schema that does not carry it
+	   must not be adopted as if the migration had run, or the refusals would be
+	   unbounded again on a deployment that reports itself up to date. */
+	it('creates the meter refusal table on a schema that predates it', async () => {
+		await apply();
+		await lease.database.execute({ text: 'DROP TABLE agent_meter_refusals' });
+		await lease.database.execute({
+			text: `DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = 'agents.core'`,
+		});
+
+		const states = await status();
+		expect(states.map((entry) => [entry.id, entry.state])).toContainEqual([
+			'0024_agent_meter_refusals',
+			'pending',
+		]);
+		/* Every other migration is adopted, so the probe answers for this table
+		   alone rather than for the schema as a whole. */
+		expect(
+			states
+				.filter((entry) => entry.id !== '0024_agent_meter_refusals')
+				.every((entry) => entry.state === 'adopted'),
+		).toBe(true);
+
+		expect(
+			(await apply()).find((entry) => entry.id === '0024_agent_meter_refusals')
+				?.action,
+		).toBe('applied');
+		expect(
+			(
+				await lease.database.query<{ present: boolean }>({
+					text: `SELECT to_regclass('agent_meter_refusals') IS NOT NULL AS present`,
+				})
+			).rows[0]?.present,
+		).toBe(true);
+	});
+
 	it('reports a ledger entry that no longer matches its migration', async () => {
 		await apply();
 		const drifted = databaseMigrations[0]!.id;

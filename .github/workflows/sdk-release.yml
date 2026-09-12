@@ -1,6 +1,14 @@
 name: SDK release artifacts
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/**'
+      - 'modules/**'
+      - 'scripts/**'
+      - '.github/workflows/sdk-release.yml'
   pull_request:
     paths:
       - 'packages/**'

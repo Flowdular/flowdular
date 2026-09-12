@@ -30,6 +30,8 @@ import {
 	DatabaseAgentRepository,
 	migrateAgentsDatabase,
 } from '../services/database-repository.ts';
+import type { NotificationPublisherResolver } from '../services/notifications.ts';
+import type { MeterRegistryResolver } from '../services/metering.ts';
 import type { AgentRepository } from '../services/repository.ts';
 import { AgentUsageService } from '../services/usage-service.ts';
 import {
@@ -39,6 +41,7 @@ import {
 	type DatabaseProvider,
 	type DatabaseProviderRequest,
 } from '@flowdular/database';
+import { serverTracer, type Tracer } from '@flowdular/server';
 import { preflightModuleAgentDefinitions } from '../services/module-agent-preflight.ts';
 import { AgentWorker } from '../services/worker.ts';
 import type { AgentSettingsReader } from '../settings.ts';
@@ -76,15 +79,33 @@ export interface AgentRuntimeOptions {
 	readonly workspaceRoot?: string;
 	/* Live admin settings. Absent means the options above are final. */
 	readonly settings?: AgentSettingsReader;
+	/* Resolves the optional notifications publisher when a run settles, never
+	   at composition time: the platform may compose notifications.core after
+	   agents.core, or not at all. */
+	readonly notifications?: NotificationPublisherResolver;
+	/* Resolves the meter registry when a run starts and when it settles, so
+	   both read the registry the platform holds then. Absent only in a process
+	   that built the runtime outside the module composition, such as a test. */
+	readonly meters?: MeterRegistryResolver;
 	/** Platform-owned provider. Composition passes this instead of a path. */
 	readonly databases?: DatabaseProvider | undefined;
 	readonly purpose?:
 		| Exclude<DatabaseProviderRequest['purpose'], 'migration'>
 		| undefined;
+	/**
+	 * Spans for provider and tool calls. Defaults to the process tracer, which
+	 * is the one `context.tracer` carries, so a run joins the trace of whatever
+	 * started it.
+	 */
+	readonly tracer?: Tracer;
 }
 
 export interface AgentRuntime {
 	service(): Promise<AgentService>;
+	/* The store the declared data classes sweep, export and erase through. It
+	   opens the runtime's own leases on first use, like every other accessor
+	   here, so declaring a class at composition opens no connection. */
+	repository(): Promise<AgentRepository>;
 	providerService(): Promise<AgentProviderService>;
 	usageService(): Promise<AgentUsageService>;
 	workerStatus(): Promise<AgentWorkerStatus>;
@@ -300,6 +321,7 @@ export function createAgentRuntime(
 			const harness = new AgentHarness({
 				providers: options.providers ?? [new LocalSimulationProvider()],
 				tools,
+				tracer: options.tracer ?? serverTracer(),
 				...(options.authorizeToolAccess
 					? { authorizeToolAccess: options.authorizeToolAccess }
 					: {}),
@@ -344,6 +366,10 @@ export function createAgentRuntime(
 					leaseMs: settings?.workerLeaseMs() ?? options.workerLeaseMs,
 					runGrantAuthority,
 					providerBroker,
+					...(options.notifications
+						? { notifications: options.notifications }
+						: {}),
+					...(options.meters ? { meters: options.meters } : {}),
 				},
 				providerService,
 			);
@@ -355,9 +381,11 @@ export function createAgentRuntime(
 				Date.now,
 				settings,
 				usageService,
+				options.meters,
 			);
 			actionRuntime = createAgentActionExecutionRuntime(repository, tools, {
 				leaseMs: options.workerLeaseMs,
+				...(options.tracer ? { tracer: options.tracer } : {}),
 				...(options.authorizeToolAccess
 					? { authorizeToolAccess: options.authorizeToolAccess }
 					: {}),
@@ -405,6 +433,10 @@ export function createAgentRuntime(
 	};
 	return {
 		service: resolved,
+		repository: async () => {
+			await resolved();
+			return repository!;
+		},
 		providerService: async () => {
 			await resolved();
 			return providers!;

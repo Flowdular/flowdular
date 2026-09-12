@@ -222,6 +222,13 @@ export async function simulateWorkflow(
 					outcomePort = 'data';
 					output = nodeInput;
 					break;
+				/* A simulation asks nobody, so the person is assumed to agree. The
+				   node still has to be rehearsable, and a fixture that wanted a
+				   rejection would be a second outcome port this node does not have. */
+				case 'human-approval':
+					outcomePort = 'approved';
+					output = nodeInput;
+					break;
 				case 'output':
 					outcomePort = 'complete';
 					output = nodeInput;

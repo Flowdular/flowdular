@@ -183,10 +183,37 @@ export function resolveModuleReleases(
 		entries.sort((a, b) =>
 			compareModuleVersions(a.manifest.version, b.manifest.version),
 		);
+	/* Providers of each capability id across the catalog, newest first, so a
+	   required capability resolves to a module even when no dependency names it. */
+	const providers = new Map<string, ModuleRelease[]>();
+	for (const entries of candidates.values())
+		for (const release of entries)
+			for (const capability of release.manifest.provides ?? []) {
+				const list = providers.get(capability) ?? [];
+				list.push(release);
+				providers.set(capability, list);
+			}
+	type Pending =
+		| { readonly id: string; readonly range: string }
+		| { readonly capability: string };
+	function wanted(manifest: ModuleManifest): Pending[] {
+		return [
+			...manifest.dependencies,
+			...(manifest.requires ?? [])
+				.filter((requirement) => !requirement.optional)
+				.map((requirement) => ({ capability: requirement.id })),
+		];
+	}
+	function platformCompatible(candidate: ModuleRelease): boolean {
+		return satisfiesModuleVersion(
+			PLATFORM_API_VERSION,
+			candidate.manifest.platformApi!,
+		);
+	}
 	let attempts = 0;
 	function search(
 		selected: Map<string, ModuleRelease>,
-		pending: readonly { id: string; range: string }[],
+		pending: readonly Pending[],
 	): Map<string, ModuleRelease> | undefined {
 		distributionAssert(
 			++attempts <= 10_000 && pending.length <= 4096 && selected.size <= 256,
@@ -195,6 +222,27 @@ export function resolveModuleReleases(
 		);
 		const [next, ...rest] = pending;
 		if (!next) return selected;
+		if ('capability' in next) {
+			const provided = [
+				...installed,
+				...[...selected.values()].map((release) => release.manifest),
+			].some((manifest) => manifest.provides?.includes(next.capability));
+			if (provided) return search(selected, rest);
+			for (const candidate of providers.get(next.capability) ?? []) {
+				if (
+					selected.has(candidate.manifest.id) ||
+					existing.has(candidate.manifest.id) ||
+					!platformCompatible(candidate)
+				)
+					continue;
+				const found = search(
+					new Map([...selected, [candidate.manifest.id, candidate]]),
+					[...wanted(candidate.manifest), ...rest],
+				);
+				if (found) return found;
+			}
+			return undefined;
+		}
 		const fixed = selected.get(next.id)?.manifest ?? existing.get(next.id);
 		if (fixed)
 			return satisfiesModuleVersion(fixed.version, next.range)
@@ -203,14 +251,11 @@ export function resolveModuleReleases(
 		for (const candidate of candidates.get(next.id) ?? []) {
 			if (
 				!satisfiesModuleVersion(candidate.manifest.version, next.range) ||
-				!satisfiesModuleVersion(
-					PLATFORM_API_VERSION,
-					candidate.manifest.platformApi!,
-				)
+				!platformCompatible(candidate)
 			)
 				continue;
 			const found = search(new Map([...selected, [next.id, candidate]]), [
-				...candidate.manifest.dependencies,
+				...wanted(candidate.manifest),
 				...rest,
 			]);
 			if (found) return found;

@@ -375,11 +375,11 @@ describe('operator member provisioning', () => {
 		await service.acceptTenantInvitation({
 			token: tokenOf(invited.credential.url),
 			displayName: 'New Comer',
-			password: 'newcomer chosen password',
+			password: 'steady tangerine harbor',
 		});
 		const session = await service.signIn({
 			email: 'newcomer@example.com',
-			password: 'newcomer chosen password',
+			password: 'steady tangerine harbor',
 		});
 		expect(session.principal).toMatchObject({
 			tenantId: workspace.workspace.tenantId,

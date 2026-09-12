@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { checkProjectName, checkTargetPath } from '../src/name.ts';
+import {
+	applicationSlug,
+	checkProjectName,
+	checkTargetPath,
+} from '../src/name.ts';
 
 describe('checkProjectName', () => {
 	it('accepts the names npm accepts', () => {
@@ -27,6 +31,36 @@ describe('checkProjectName', () => {
 
 	it('explains why a name was rejected', () => {
 		expect(checkProjectName('MyApp').reason).toContain('uppercase');
+	});
+});
+
+describe('applicationSlug', () => {
+	/* One segment of the id pattern in platform-spec.schema.json. */
+	const SEGMENT = /^[a-z][a-z0-9-]*$/;
+
+	it('keeps a name that is already one lowercase hyphenated segment', () => {
+		expect(applicationSlug('my-app')).toBe('my-app');
+	});
+
+	it('replaces every character a spec id cannot carry', () => {
+		expect(applicationSlug('my.app_1')).toBe('my-app-1');
+		expect(applicationSlug('my~app')).toBe('my-app');
+		expect(applicationSlug('-app-')).toBe('app');
+	});
+
+	it('starts the segment with a letter for every name npm accepts', () => {
+		for (const name of [
+			'my-app',
+			'app',
+			'my.app_1',
+			'a',
+			'1st-app',
+			'9',
+			'~',
+		]) {
+			expect(checkProjectName(name), name).toMatchObject({ valid: true });
+			expect(applicationSlug(name), name).toMatch(SEGMENT);
+		}
 	});
 });
 

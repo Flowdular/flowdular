@@ -166,6 +166,14 @@ REVOKE SELECT ON automations_triggers FROM coreloom_background;
 GRANT SELECT (tenant_id, id) ON automations_triggers TO coreloom_background;
 `;
 
+export const AUTOMATIONS_MIGRATION_005_SECRET_ROTATION_INVENTORY = `-- The rotation command has to find the triggers still sealed with a retired key
+-- before it knows whose they are. The cross-tenant lookup already reads the two
+-- routing columns; this adds the key id and nothing else. The nonce, the tag and
+-- the ciphertext stay unreadable on this connection, and every row it re-seals
+-- is read again under the tenant that row named.
+GRANT SELECT (secret_key_id) ON automations_triggers TO coreloom_background;
+`;
+
 export const databaseMigrations: readonly DatabaseMigration[] = [
 	{
 		id: '0001_automations_core',
@@ -219,5 +227,19 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 			(await database.schema.hasIndex('automations_triggers_routing_idx'))
 				? 'complete'
 				: 'absent',
+	},
+	{
+		id: '0005_secret_rotation_inventory',
+		sql: { postgresql: AUTOMATIONS_MIGRATION_005_SECRET_ROTATION_INVENTORY },
+		/* A grant leaves no object behind, so the column privilege itself is what
+		   proves this migration ran. */
+		inspectExisting: async (database) => {
+			const result = await database.query<{ granted: boolean }>({
+				text: `SELECT CASE WHEN to_regclass('automations_triggers') IS NOT NULL THEN
+				  has_column_privilege('coreloom_background', 'automations_triggers', 'secret_key_id', 'SELECT')
+				ELSE false END AS granted`,
+			});
+			return result.rows[0]?.granted === true ? 'complete' : 'absent';
+		},
 	},
 ];

@@ -35,8 +35,15 @@ export type {
 	AuthTenantAccess,
 	CreateRoleInput,
 	CreateTenantMemberInput,
+	CreateTenantMemberWithoutPasswordInput,
 	SessionSummary,
 	TenantRole,
 	UpdateRoleInput,
 } from './domain/types.ts';
-export type { TenantMember, TenantSummary } from './services/repository.ts';
+export type {
+	ExternalIdentityBinding,
+	ExternalIdentityPage,
+	TenantMember,
+	TenantMemberPage,
+	TenantSummary,
+} from './services/repository.ts';

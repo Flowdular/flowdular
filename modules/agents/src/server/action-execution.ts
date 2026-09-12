@@ -8,6 +8,7 @@ import {
 	validateToolOutput,
 	type AgentTool,
 	type AgentToolAccessAuthorizer,
+	type AgentToolContext,
 	type JsonValue,
 } from '@flowdular/harness';
 import {
@@ -16,6 +17,13 @@ import {
 	type Actor,
 	type UserActor,
 } from '@flowdular/kernel';
+import {
+	createJobRunner,
+	createJobTraceSink,
+	serverLogger,
+	type JobBackoff,
+	type Tracer,
+} from '@flowdular/server';
 import type { AgentActionInvocation } from '../domain/types.ts';
 import {
 	DuplicateActionIdempotencyKeyError,
@@ -175,6 +183,38 @@ function descriptor(tool: AgentTool): VersionedActionDescriptor | null {
 	};
 }
 
+/**
+ * The same run-time gate the harness asks before an agent calls the tool. A
+ * workflow invocation asks it twice: once before the invocation is persisted,
+ * and again before the queued call runs, because the workspace may withdraw its
+ * consent while the invocation waits in the queue.
+ */
+async function assertConsent(
+	tool: AgentTool,
+	input: unknown,
+	context: AgentToolContext,
+): Promise<void> {
+	if (!tool.consent) return;
+	let granted = false;
+	let reason: string | undefined;
+	try {
+		/* Foreign code: a throw is a refusal, never a crash. */
+		const decision = await tool.consent.check(input, context);
+		granted = decision.granted;
+		reason = decision.reason;
+	} catch {
+		reason = 'ACTION_CONSENT_UNAVAILABLE';
+	}
+	if (!granted) {
+		throw new AgentActionCapabilityError(
+			reason !== undefined && /^[A-Z][A-Z0-9_]{2,63}$/.test(reason)
+				? reason
+				: 'ACTION_CONSENT_REFUSED',
+			`Action ${tool.id} was not consented for this workspace.`,
+		);
+	}
+}
+
 function safeCode(error: unknown): string {
 	if (
 		error instanceof AgentHarnessError ||
@@ -210,6 +250,27 @@ function trustedAuthorizationSubject(
 	return trusted;
 }
 
+/**
+ * The page the recovery read answers, and the invocations this worker performs
+ * at once: the drain loop's own bound, now the runner's. A pass takes four
+ * pages of claims, so a deep queue keeps draining rather than waiting out the
+ * poll interval between passes, as the drain loop's own re-kick did.
+ */
+const ACTION_ROUTING_PAGE = 8;
+
+/**
+ * What the loop waits after a pass that raised: its own interval, doubling to
+ * ten times that and never past a minute, so a database refusing the claim gets
+ * room while a loop slower than a minute keeps its own cadence.
+ */
+function actionBackoff(intervalMs: number): JobBackoff {
+	return {
+		initialMs: intervalMs,
+		maxMs: Math.max(intervalMs, Math.min(60_000, intervalMs * 10)),
+		multiplier: 2,
+	};
+}
+
 export function createAgentActionExecutionRuntime(
 	repository: AgentRepository,
 	tools: readonly AgentTool[],
@@ -218,6 +279,8 @@ export function createAgentActionExecutionRuntime(
 		readonly leaseMs?: number;
 		readonly now?: () => number;
 		readonly authorizeToolAccess?: AgentToolAccessAuthorizer;
+		/** Defaults to the process tracer, which is the one `context.tracer` carries. */
+		readonly tracer?: Tracer;
 	} = {},
 ): AgentActionRuntime {
 	const now = options.now ?? Date.now;
@@ -227,6 +290,7 @@ export function createAgentActionExecutionRuntime(
 	}
 	const workerId =
 		options.workerId ?? `agent-action-worker:${process.pid}:${randomUUID()}`;
+	const intervalMs = Math.max(1_000, Math.floor(leaseMs / 2));
 	const toolById = new Map(tools.map((tool) => [tool.id, tool]));
 	const actions = tools
 		.map(descriptor)
@@ -238,11 +302,7 @@ export function createAgentActionExecutionRuntime(
 		string,
 		{ readonly signal: AbortSignal; readonly listener: () => void }
 	>();
-	const idleWaiters = new Set<() => void>();
-	let poll: ReturnType<typeof setInterval> | undefined;
-	let kickTimer: ReturnType<typeof setTimeout> | undefined;
 	let stopped = true;
-	let scheduled = false;
 
 	const detachCallerSignal = (id: string) => {
 		const caller = callerSignals.get(id);
@@ -254,10 +314,6 @@ export function createAgentActionExecutionRuntime(
 	const finish = (id: string) => {
 		inFlight.delete(id);
 		detachCallerSignal(id);
-		if (inFlight.size === 0) {
-			for (const resolve of idleWaiters) resolve();
-			idleWaiters.clear();
-		}
 	};
 
 	const execute = async (
@@ -293,25 +349,6 @@ export function createAgentActionExecutionRuntime(
 			);
 			return;
 		}
-		const renewal = setInterval(
-			() => {
-				/* The timer cannot await, so a lost renewal aborts through the
-				   controller the next tick observes. */
-				void repository
-					.renewActionLease(
-						invocation.tenantId,
-						invocation.id,
-						workerId,
-						now() + leaseMs,
-					)
-					.then((renewed) => {
-						if (!renewed) controller.abort('lease-lost');
-					})
-					.catch(() => controller.abort('lease-lost'));
-			},
-			Math.max(500, Math.floor(leaseMs / 2)),
-		);
-		renewal.unref?.();
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let rejectAbort: (() => void) | undefined;
 		try {
@@ -339,6 +376,26 @@ export function createAgentActionExecutionRuntime(
 					'The workflow actor no longer has permission for this action.',
 				);
 			}
+			const toolContext: AgentToolContext = {
+				runId: invocation.workflowRunId,
+				tenantId: invocation.tenantId,
+				requestedBy: invocation.actor.id,
+				invocation: 'workflow-action',
+				actor: invocation.actor,
+				...(invocation.authorizationSubject
+					? { authorizationSubject: invocation.authorizationSubject }
+					: {}),
+				...(invocation.actor.kind === 'agent'
+					? {
+							agentId: invocation.actor.id,
+							agentName: invocation.actor.label,
+						}
+					: {}),
+				idempotencyKey: invocation.idempotencyKey,
+				permissions,
+				signal: controller.signal,
+			};
+			await assertConsent(tool, invocation.input, toolContext);
 			const aborted = new Promise<never>((_, reject) => {
 				rejectAbort = () =>
 					reject(
@@ -354,24 +411,7 @@ export function createAgentActionExecutionRuntime(
 					});
 			});
 			const result = await Promise.race([
-				tool.execute(invocation.input, {
-					runId: invocation.workflowRunId,
-					tenantId: invocation.tenantId,
-					requestedBy: invocation.actor.id,
-					actor: invocation.actor,
-					...(invocation.authorizationSubject
-						? { authorizationSubject: invocation.authorizationSubject }
-						: {}),
-					...(invocation.actor.kind === 'agent'
-						? {
-								agentId: invocation.actor.id,
-								agentName: invocation.actor.label,
-							}
-						: {}),
-					idempotencyKey: invocation.idempotencyKey,
-					permissions,
-					signal: controller.signal,
-				}),
+				tool.execute(invocation.input, toolContext),
 				new Promise<never>((_, reject) => {
 					timer = setTimeout(() => {
 						reject(
@@ -445,65 +485,123 @@ export function createAgentActionExecutionRuntime(
 			if (timer !== undefined) clearTimeout(timer);
 			if (rejectAbort)
 				controller.signal.removeEventListener('abort', rejectAbort);
-			clearInterval(renewal);
 		}
 	};
 
-	const drain = async () => {
-		if (stopped) return;
-		for (const candidate of await repository.listRecoverableActions(now(), 8)) {
-			if (inFlight.has(candidate.invocationId)) continue;
-			const claimedAt = now();
-			const invocation = await repository.claimAction(
-				candidate.tenantId,
-				candidate.invocationId,
-				workerId,
-				claimedAt,
-				claimedAt + leaseMs,
-				{
-					tenantId: candidate.tenantId,
-					actorId: workerId,
-					action: 'agent-action.claimed',
-					subjectType: 'agent-action',
-					subjectId: candidate.invocationId,
-					metadata: {},
-					occurredAt: claimedAt,
-				},
-			);
-			if (!invocation) continue;
-			const controller = new AbortController();
-			inFlight.set(invocation.id, controller);
-			void execute(invocation, controller)
-				.catch((error: unknown) => {
-					console.error(
-						`[agents] worker failed to settle action ${invocation.id}:`,
-						error instanceof Error ? error.message : error,
+	/* The recovery read answers routing columns alone, so the page is kept here
+	   and refilled only once it is drained: a pass reads the queue once per page
+	   however many invocations it claims. */
+	let queue: { readonly tenantId: string; readonly invocationId: string }[] =
+		[];
+	let refillable = true;
+
+	const runner = createJobRunner<AgentActionInvocation>({
+		name: 'agents.core.actions',
+		intervalMs,
+		staleAfterMs: leaseMs,
+		/* No `heartbeatEveryMs`: the runner's default is a third of the lease, so
+		   a renewal the database refuses once is asked again inside the window. */
+		backoff: actionBackoff(intervalMs),
+		concurrency: ACTION_ROUTING_PAGE,
+		batchLimit: ACTION_ROUTING_PAGE * 4,
+		logger: serverLogger,
+		now,
+		onEvent: createJobTraceSink(
+			options.tracer ? { tracer: options.tracer } : {},
+		),
+		claim: async (at) => {
+			if (stopped) return null;
+			if (queue.length === 0) {
+				if (!refillable) {
+					refillable = true;
+					return null;
+				}
+				const page = await repository.listRecoverableActions(
+					at,
+					ACTION_ROUTING_PAGE,
+				);
+				refillable = page.length === ACTION_ROUTING_PAGE;
+				queue = [...page];
+			}
+			for (;;) {
+				const candidate = queue.shift();
+				if (!candidate) {
+					refillable = true;
+					return null;
+				}
+				/* A row this worker is already performing is not work to take. */
+				if (inFlight.has(candidate.invocationId)) continue;
+				const invocation = await repository.claimAction(
+					candidate.tenantId,
+					candidate.invocationId,
+					workerId,
+					at,
+					at + leaseMs,
+					{
+						tenantId: candidate.tenantId,
+						actorId: workerId,
+						action: 'agent-action.claimed',
+						subjectType: 'agent-action',
+						subjectId: candidate.invocationId,
+						metadata: {},
+						occurredAt: at,
+					},
+				);
+				if (!invocation) continue;
+				/* The stop landed while this claim was still in the database. No work
+				   starts under it, so the claim goes back to the queue at once rather
+				   than holding a lease nothing renews, and dispose cannot be left
+				   draining an invocation its abort never reached. */
+				if (stopped) {
+					await repository.releaseAction(
+						invocation.tenantId,
+						invocation.id,
+						workerId,
 					);
-				})
-				.finally(() => {
-					finish(invocation.id);
-					kick();
-				});
-		}
-	};
-
-	const kick = () => {
-		if (stopped || scheduled) return;
-		scheduled = true;
-		kickTimer = setTimeout(() => {
-			kickTimer = undefined;
-			scheduled = false;
+					return null;
+				}
+				inFlight.set(invocation.id, new AbortController());
+				return invocation;
+			}
+		},
+		heartbeat: async (invocation, at) =>
+			repository.renewActionLease(
+				invocation.tenantId,
+				invocation.id,
+				workerId,
+				at + leaseMs,
+			),
+		perform: async (invocation, signal) => {
+			const controller = inFlight.get(invocation.id)!;
+			/* The fence aborts the controller the module already tracks, so a lease
+			   another process took stops the work where a cancellation does. */
+			const lost = () => controller.abort('lease-lost');
+			signal.addEventListener('abort', lost, { once: true });
 			try {
-				drain();
+				await execute(invocation, controller);
 			} catch (error) {
-				/* A transactional claim can fail with the row still queued. Keep the
-				   process alive so the poller can retry after the database recovers. */
+				/* A transactional settle can fail with the row still claimed. Keep the
+				   process alive so the loop retries after the database recovers. */
 				console.error(
-					'[agents] action worker drain failed:',
+					`[agents] worker failed to settle action ${invocation.id}:`,
 					error instanceof Error ? error.message : error,
 				);
+			} finally {
+				signal.removeEventListener('abort', lost);
+				finish(invocation.id);
 			}
-		}, 0);
+			/* A row another process reclaimed is contention rather than work this
+			   pass performed, and the pass learns which by the stage raising. */
+			signal.throwIfAborted();
+		},
+	});
+
+	/* The enqueue that just landed is invisible to a pass already reading the
+	   queue, so the loop is woken rather than ticked: a tick would join that pass
+	   and leave the invocation waiting out the poll interval. */
+	const kick = () => {
+		if (stopped) return;
+		runner.wake();
 	};
 
 	const cancellation = async (
@@ -671,6 +769,11 @@ export function createAgentActionExecutionRuntime(
 					]),
 				)
 				.digest('hex');
+			/* A replay of a key this workspace already accepted answers with the
+			   invocation it made, before the gate is asked: consent admits new work,
+			   and a workflow retrying a node it already enqueued must reach the same
+			   invocation however the workspace changed its mind since. The worker
+			   asks the gate again before that invocation runs. */
 			const existing = await repository.findActionByIdempotencyKey(
 				tenantId,
 				idempotencyKey,
@@ -684,6 +787,19 @@ export function createAgentActionExecutionRuntime(
 				}
 				return { actionInvocationId: existing.id, created: false };
 			}
+			/* Refused before the invocation is persisted, so an unconsented action
+			   never occupies the queue; the worker asks again before it runs. */
+			await assertConsent(toolById.get(action.id)!, request.input, {
+				runId: workflowRunId,
+				tenantId,
+				requestedBy: actor.id,
+				invocation: 'workflow-action',
+				actor,
+				authorizationSubject,
+				idempotencyKey,
+				permissions: livePermissions,
+				signal: context.signal,
+			});
 			const invocation: AgentActionInvocation = {
 				id: randomUUID(),
 				tenantId,
@@ -782,20 +898,14 @@ export function createAgentActionExecutionRuntime(
 
 	return {
 		capability,
-		async start() {
+		start() {
 			if (!stopped) return;
 			stopped = false;
-			poll = setInterval(kick, Math.max(1_000, Math.floor(leaseMs / 2)));
-			poll.unref?.();
-			kick();
+			runner.start();
 		},
 		stop() {
 			stopped = true;
-			if (poll !== undefined) clearInterval(poll);
-			poll = undefined;
-			if (kickTimer !== undefined) clearTimeout(kickTimer);
-			kickTimer = undefined;
-			scheduled = false;
+			runner.stop();
 		},
 		async dispose() {
 			this.stop();
@@ -803,9 +913,7 @@ export function createAgentActionExecutionRuntime(
 			for (const controller of inFlight.values()) {
 				controller.abort('worker-shutdown');
 			}
-			if (inFlight.size > 0) {
-				await new Promise<void>((resolve) => idleWaiters.add(resolve));
-			}
+			await runner.dispose();
 		},
 	};
 }

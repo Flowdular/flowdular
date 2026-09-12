@@ -1,0 +1,541 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`module scaffolding > produces unchanged output for a version 1 specification > migrations/0001_inventory_core.up.sql 1`] = `
+"CREATE TABLE IF NOT EXISTS inventory_records (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('active', 'archived')),
+  created_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS inventory_records_tenant_name_idx
+  ON inventory_records (tenant_id, name, id);
+ALTER TABLE inventory_records ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inventory_records FORCE ROW LEVEL SECURITY;
+CREATE POLICY inventory_records_tenant_policy ON inventory_records
+  USING (tenant_id = current_setting('coreloom.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+"
+`;
+
+exports[`module scaffolding > produces unchanged output for a version 1 specification > src/api/endpoints.ts 1`] = `
+"import {
+	defineEndpoint,
+	jsonResponse,
+	problemResponse,
+	readJsonObject,
+	requiredString,
+} from '@flowdular/server';
+import type { AuthRuntime } from '@flowdular/module-auth/server';
+import {
+	endpointIdentityFromContext,
+	principalFromContext,
+	sessionMutationDenial,
+} from '@flowdular/module-auth/server';
+import { INVENTORY_PERMISSIONS } from '../acl/permissions.ts';
+import type { InventoryRuntime } from '../server/runtime.ts';
+import { InventoryServiceError } from '../services/inventory-service.ts';
+
+function failure(error: unknown): Response {
+	if (error instanceof InventoryServiceError) {
+		return jsonResponse(
+			{ error: { code: error.code, message: error.message } },
+			error.status,
+		);
+	}
+	return problemResponse(error, 'The inventory operation failed.');
+}
+
+export function createInventoryRoutes(
+	auth: AuthRuntime,
+	runtime: InventoryRuntime,
+) {
+	const list = defineEndpoint({
+		id: 'inventory.records.list',
+		path: '/api/inventory/records',
+		methods: ['GET'],
+		access: { kind: 'permission', permission: INVENTORY_PERMISSIONS.read },
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			const service = await runtime.service();
+			return jsonResponse({
+				records: await service.list(principalFromContext(octane)!.tenantId),
+			});
+		},
+	});
+	const create = defineEndpoint({
+		id: 'inventory.records.create',
+		path: '/api/inventory/records',
+		methods: ['POST'],
+		access: { kind: 'permission', permission: INVENTORY_PERMISSIONS.manage },
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			const denial = sessionMutationDenial(octane, auth);
+			if (denial) return denial;
+			try {
+				const value = await readJsonObject(octane.request);
+				const service = await runtime.service();
+				const record = await service.create(
+					principalFromContext(octane)!.tenantId,
+					{ name: requiredString(value, 'name', { min: 2, max: 160 }) },
+				);
+				return jsonResponse({ record }, 201);
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+	return [list.serverRoute, create.serverRoute] as const;
+}
+
+export const endpoints = [
+	'inventory.records.list',
+	'inventory.records.create',
+] as const;
+"
+`;
+
+exports[`module scaffolding > produces unchanged output for a version 1 specification > src/client/InventoryView.tsrx 1`] = `
+"import { useEffect, useMemo } from 'octane';
+import { t } from '@flowdular/client';
+import {
+	Alert,
+	Button,
+	Icon,
+	PageHeader,
+	TableCard,
+	type TableColumn,
+} from '@flowdular/ui';
+import { useValue } from 'segment-state';
+import type { InventoryRecord } from '../domain/types.ts';
+import { loadInventoryRecords } from './api.ts';
+import { createInventoryClientState } from './state.ts';
+
+export interface InventoryViewProps {
+	readonly csrfToken: string;
+}
+
+function columns(): readonly TableColumn<InventoryRecord>[] {
+	return [
+		{
+			key: 'name',
+			header: t('inventory.table.column.name'),
+			width: '65%',
+			cell: (record) => <b>{record.name}</b>,
+		},
+		{
+			key: 'status',
+			header: t('inventory.table.column.status'),
+			width: '35%',
+			cell: (record) => t('inventory.status.' + record.status),
+		},
+	];
+}
+
+export function InventoryView(_props: InventoryViewProps) @{
+	const viewState = useMemo(() => createInventoryClientState(), []);
+	const [records] = useValue(viewState.state.records);
+	const [status, setStatus] = useValue(viewState.state.status);
+	const [error, setError] = useValue(viewState.state.error);
+
+	const refresh = async () => {
+		setStatus('loading');
+		setError('');
+		try {
+			const loaded = await loadInventoryRecords();
+			viewState.store.act(
+				(transaction) => transaction.set(viewState.state.records, loaded),
+				'inventory/loaded',
+			);
+		} catch (loadError) {
+			setError(
+				loadError instanceof Error
+					? loadError.message
+					: t('inventory.error.load'),
+			);
+		} finally {
+			setStatus('idle');
+		}
+	};
+
+	useEffect(() => {
+		void refresh();
+	}, []);
+
+	<div class="ui-view">
+		<PageHeader
+			eyebrow={t('inventory.page.eyebrow')}
+			title={t('inventory.page.title')}
+			description={t('inventory.page.description')}
+		>
+			<Button size="sm" onClick={() => void refresh()}>
+				<Icon name="refresh" size={14} />
+				{t('inventory.action.refresh')}
+			</Button>
+		</PageHeader>
+		@if (error) {
+			<Alert>{error}</Alert>
+		}
+		<TableCard
+			title={t('inventory.table.title')}
+			count={t('inventory.table.count', {
+				count: records.length,
+			})}
+			caption={t('inventory.table.caption')}
+			columns={columns()}
+			rows={records}
+			rowKey={(record) => record.id}
+			status={status === 'loading' && records.length === 0 ? 'loading' : 'idle'}
+			loadingLabel={t('inventory.table.loading')}
+			empty={{
+				icon: 'modules',
+				title: t('inventory.table.emptyTitle'),
+				hint: t('inventory.table.emptyHint'),
+			}}
+		/>
+	</div>
+}
+"
+`;
+
+exports[`module scaffolding > produces unchanged output for a version 1 specification > src/domain/types.ts 1`] = `
+"export interface InventoryRecord {
+	readonly id: string;
+	readonly tenantId: string;
+	readonly name: string;
+	readonly status: 'active' | 'archived';
+	readonly createdAt: number;
+}
+
+export interface CreateInventoryRecordInput {
+	readonly name: string;
+}
+"
+`;
+
+exports[`module scaffolding > produces unchanged output for a version 1 specification > src/services/database-repository.ts 1`] = `
+"import type { DatabaseHandle } from '@flowdular/database';
+import { runDatabaseMigrations } from '@flowdular/database';
+import type { InventoryRecord } from '../domain/types.ts';
+import { databaseMigrations } from './migration.ts';
+import type { InventoryRepository } from './repository.ts';
+
+interface InventoryRecordRow {
+	id: string;
+	tenant_id: string;
+	name: string;
+	status: InventoryRecord['status'];
+	created_at: number | bigint | string;
+}
+
+/* Queries stay explicit. Values always travel in the adapter's parameter
+   channel; nothing from a request is concatenated into SQL. */
+const LIST = \`SELECT id, tenant_id, name, status, created_at
+			 FROM inventory_records
+			 WHERE tenant_id = $1
+			 ORDER BY lower(name), id\`;
+
+const CREATE = \`INSERT INTO inventory_records
+			 (id, tenant_id, name, status, created_at)
+			 VALUES ($1, $2, $3, $4, $5)\`;
+
+/* PostgreSQL returns BIGINT as a string, so every numeric read is normalized
+   before it reaches the domain. */
+function integer(value: InventoryRecordRow['created_at']): number {
+	const normalized = Number(value);
+	if (!Number.isSafeInteger(normalized) || normalized < 0) {
+		throw new Error('The inventory database returned an invalid timestamp.');
+	}
+	return normalized;
+}
+
+function fromRow(row: InventoryRecordRow): InventoryRecord {
+	return {
+		id: row.id,
+		tenantId: row.tenant_id,
+		name: row.name,
+		status: row.status,
+		createdAt: integer(row.created_at),
+	};
+}
+
+/** A repository over a platform-owned PostgreSQL handle. */
+export class DatabaseInventoryRepository implements InventoryRepository {
+	constructor(private readonly database: DatabaseHandle) {}
+
+	async list(tenantId: string): Promise<readonly InventoryRecord[]> {
+		const result = await this.database.transaction(
+			(transaction) =>
+				transaction.query<InventoryRecordRow>({
+					text: LIST,
+					parameters: [tenantId],
+				}),
+			{ access: 'read', tenantId },
+		);
+		return result.rows.map(fromRow);
+	}
+
+	async create(record: InventoryRecord): Promise<InventoryRecord> {
+		await this.database.transaction(
+			(transaction) =>
+				transaction.execute({
+					text: CREATE,
+					parameters: [
+						record.id,
+						record.tenantId,
+						record.name,
+						record.status,
+						record.createdAt,
+					],
+				}),
+			{ access: 'write', tenantId: record.tenantId },
+		);
+		return record;
+	}
+}
+
+export async function migrateInventoryDatabase(
+	database: DatabaseHandle,
+): Promise<void> {
+	await runDatabaseMigrations(database, 'inventory.core', databaseMigrations);
+}
+"
+`;
+
+exports[`module scaffolding > produces unchanged output for a version 1 specification > src/services/inventory-service.ts 1`] = `
+"import { randomUUID } from 'node:crypto';
+import type {
+	CreateInventoryRecordInput,
+	InventoryRecord,
+} from '../domain/types.ts';
+import type { InventoryRepository } from './repository.ts';
+
+export class InventoryServiceError extends Error {
+	constructor(
+		readonly code: string,
+		message: string,
+		readonly status = 400,
+	) {
+		super(message);
+		this.name = 'InventoryServiceError';
+	}
+}
+
+function bounded(
+	value: string,
+	field: string,
+	min: number,
+	max: number,
+): string {
+	const normalized = value.trim();
+	if (normalized.length < min || normalized.length > max) {
+		throw new InventoryServiceError(
+			'INVALID_INPUT',
+			\`\${field} must contain between \${min} and \${max} characters.\`,
+		);
+	}
+	return normalized;
+}
+
+export class InventoryService {
+	constructor(private readonly repository: InventoryRepository) {}
+
+	list(tenantId: string): Promise<readonly InventoryRecord[]> {
+		return this.repository.list(bounded(tenantId, 'tenantId', 1, 128));
+	}
+
+	create(
+		tenantId: string,
+		input: CreateInventoryRecordInput,
+	): Promise<InventoryRecord> {
+		return this.repository.create({
+			id: randomUUID(),
+			tenantId: bounded(tenantId, 'tenantId', 1, 128),
+			name: bounded(input.name, 'name', 2, 160),
+			status: 'active',
+			createdAt: Date.now(),
+		});
+	}
+}
+"
+`;
+
+exports[`module scaffolding > produces unchanged output for a version 1 specification > src/services/migration.ts 1`] = `
+"import type { DatabaseMigration } from '@flowdular/database';
+import { postgresTenantTableState } from '@flowdular/database';
+
+/* Mirrors migrations/0001_inventory_core.up.sql byte for byte. */
+export const INVENTORY_MIGRATION_001 = \`CREATE TABLE IF NOT EXISTS inventory_records (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('active', 'archived')),
+  created_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS inventory_records_tenant_name_idx
+  ON inventory_records (tenant_id, name, id);
+ALTER TABLE inventory_records ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inventory_records FORCE ROW LEVEL SECURITY;
+CREATE POLICY inventory_records_tenant_policy ON inventory_records
+  USING (tenant_id = current_setting('coreloom.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+\`;
+
+export const databaseMigrations: readonly DatabaseMigration[] = [
+	{
+		id: '0001_inventory_core',
+		sql: { postgresql: INVENTORY_MIGRATION_001 },
+		inspectExisting: (database) =>
+			postgresTenantTableState(
+				database,
+				'inventory_records',
+				'inventory_records_tenant_policy',
+				[() => database.schema.hasIndex('inventory_records_tenant_name_idx')],
+			),
+	},
+];
+"
+`;
+
+exports[`module scaffolding > produces unchanged output for a version 1 specification > tests/module.test.ts 1`] = `
+"import type { DatabaseProvider } from '@flowdular/database';
+import { createPgliteTestProvider } from '@flowdular/database-testing';
+import { afterAll, describe, expect, it } from 'vitest';
+import { moduleDefinition } from '../src/index.ts';
+import { InventoryService } from '../src/services/inventory-service.ts';
+import {
+	DatabaseInventoryRepository,
+	migrateInventoryDatabase,
+} from '../src/services/database-repository.ts';
+
+interface TestDatabase {
+	readonly provider: DatabaseProvider;
+	readonly service: InventoryService;
+	release(): Promise<void>;
+}
+
+let shared: Promise<TestDatabase> | undefined;
+
+async function open(): Promise<TestDatabase> {
+	const provider = createPgliteTestProvider();
+	const migration = await provider.acquire({
+		namespace: 'inventory.core',
+		purpose: 'migration',
+	});
+	try {
+		await migrateInventoryDatabase(migration.database);
+	} finally {
+		await migration.release();
+	}
+	const lease = await provider.acquire({
+		namespace: 'inventory.core',
+		purpose: 'test',
+	});
+	return {
+		provider,
+		service: new InventoryService(
+			new DatabaseInventoryRepository(lease.database),
+		),
+		release: () => lease.release(),
+	};
+}
+
+/* Booting an embedded PostgreSQL costs about two seconds, so the file shares one
+   migrated database and every case starts from truncated tables. The runtime
+   role holds no BYPASSRLS, so the isolation below is enforced by the database. */
+async function inventoryService(): Promise<InventoryService> {
+	shared ??= open();
+	const database = await shared;
+	const migration = await database.provider.acquire({
+		namespace: 'inventory.core',
+		purpose: 'migration',
+	});
+	try {
+		await migration.database.execute({
+			text: 'TRUNCATE inventory_records RESTART IDENTITY CASCADE',
+		});
+	} finally {
+		await migration.release();
+	}
+	return database.service;
+}
+
+afterAll(async () => {
+	const pending = shared;
+	shared = undefined;
+	if (!pending) return;
+	const database = await pending;
+	await database.release();
+	await database.provider.dispose();
+});
+
+describe('inventory.core', () => {
+	it('exports its validated identity', () => {
+		expect(moduleDefinition.manifest.id).toBe('inventory.core');
+	});
+
+	it('isolates records by trusted tenant id', async () => {
+		const service = await inventoryService();
+		await service.create('tenant-a', { name: 'Alpha' });
+		await service.create('tenant-b', { name: 'Beta' });
+
+		expect(
+			(await service.list('tenant-a')).map((record) => record.name),
+		).toEqual(['Alpha']);
+		expect(
+			(await service.list('tenant-b')).map((record) => record.name),
+		).toEqual(['Beta']);
+	});
+});
+"
+`;
+
+exports[`module scaffolding > produces unchanged output for a version 1 specification > translations/en.json 1`] = `
+"{
+	"module.name": "Inventory Core",
+	"navigation.label": "Inventory Core",
+	"navigation.description": "Tracks tenant-owned stock for tests.",
+	"page.eyebrow": "Operations",
+	"page.title": "Inventory Core",
+	"page.description": "Tracks tenant-owned stock for tests.",
+	"action.refresh": "Refresh",
+	"table.title": "Records",
+	"table.caption": "Inventory Core records",
+	"table.count": "{count} records",
+	"table.column.name": "Name",
+	"table.column.status": "Status",
+	"table.loading": "Loading records…",
+	"table.emptyTitle": "No records yet",
+	"table.emptyHint": "Records created in this workspace appear here.",
+	"status.active": "Active",
+	"status.archived": "Archived",
+	"error.load": "Could not load records.",
+	"error.request": "The records operation failed."
+}
+"
+`;
+
+exports[`module scaffolding > produces unchanged output for a version 1 specification > translations/pl.json 1`] = `
+"{
+	"module.name": "Moduł Inventory Core",
+	"navigation.label": "Inventory Core",
+	"navigation.description": "Dane modułu Inventory Core",
+	"page.eyebrow": "Dane operacyjne",
+	"page.title": "Inventory Core",
+	"page.description": "Obsługa danych modułu Inventory Core.",
+	"action.refresh": "Odśwież",
+	"table.title": "Rekordy",
+	"table.caption": "Rekordy modułu Inventory Core",
+	"table.count": "Liczba rekordów: {count}",
+	"table.column.name": "Nazwa",
+	"table.column.status": "Status",
+	"table.loading": "Wczytywanie rekordów…",
+	"table.emptyTitle": "Brak rekordów",
+	"table.emptyHint": "Utworzone rekordy pojawią się w tym miejscu.",
+	"status.active": "Aktywny",
+	"status.archived": "Zarchiwizowany",
+	"error.load": "Nie udało się wczytać rekordów.",
+	"error.request": "Operacja na rekordach nie powiodła się."
+}
+"
+`;

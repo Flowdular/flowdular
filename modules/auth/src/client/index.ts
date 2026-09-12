@@ -14,7 +14,13 @@ export type { AuthClientState, AuthClientStatus, AuthScreen } from './state.ts';
 export { createAuthClientContribution } from './contribution.tsrx';
 export type { AuthClientContributionOptions } from './contribution.tsrx';
 export { ApiTokensView } from './tokens/ApiTokensView.tsrx';
+export { IdentityProvidersView } from './providers/IdentityProvidersView.tsrx';
 export { SecurityView } from './security/SecurityView.tsrx';
+export {
+	AuthClientApiError,
+	loadSessionCsrfToken,
+	resetMemberMfa,
+} from './api.ts';
 import type {
 	ModuleClientContext,
 	ModuleClientContribution,

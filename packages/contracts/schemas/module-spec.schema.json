@@ -18,7 +18,7 @@
 	],
 	"properties": {
 		"$schema": { "type": "string" },
-		"schemaVersion": { "const": 1 },
+		"schemaVersion": { "enum": [1, 2] },
 		"id": {
 			"type": "string",
 			"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
@@ -56,6 +56,29 @@
 				"properties": {
 					"id": { "type": "string" },
 					"range": { "type": "string" }
+				}
+			}
+		},
+		"provides": {
+			"type": "array",
+			"items": {
+				"type": "string",
+				"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+			},
+			"uniqueItems": true
+		},
+		"requires": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": ["id"],
+				"properties": {
+					"id": {
+						"type": "string",
+						"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+					},
+					"optional": { "type": "boolean" }
 				}
 			}
 		},
@@ -106,6 +129,269 @@
 				}
 			},
 			"uniqueItems": true
+		},
+		"entities": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/entity" },
+			"uniqueItems": true
+		},
+		"screens": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/screen" },
+			"uniqueItems": true
+		},
+		"actions": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/action" },
+			"uniqueItems": true
+		},
+		"widgets": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/widget" },
+			"uniqueItems": true
+		},
+		"settings": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/setting" },
+			"uniqueItems": true
+		},
+		"agentTools": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/agentTool" },
+			"uniqueItems": true
+		},
+		"outOfScope": {
+			"type": "array",
+			"items": { "type": "string", "minLength": 1 },
+			"uniqueItems": true
+		},
+		"decisions": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/decision" },
+			"uniqueItems": true
+		}
+	},
+	"allOf": [
+		{
+			"if": {
+				"required": ["schemaVersion"],
+				"properties": { "schemaVersion": { "const": 1 } }
+			},
+			"then": {
+				"properties": {
+					"entities": false,
+					"screens": false,
+					"actions": false,
+					"widgets": false,
+					"settings": false,
+					"agentTools": false,
+					"outOfScope": false,
+					"decisions": false
+				}
+			}
+		}
+	],
+	"$defs": {
+		"entityId": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+		"fieldId": { "type": "string", "pattern": "^[a-z][a-zA-Z0-9]*$" },
+		"enumValue": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+		"entity": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["id", "name", "fields"],
+			"properties": {
+				"id": { "$ref": "#/$defs/entityId" },
+				"name": { "type": "string", "minLength": 1 },
+				"description": { "type": "string", "minLength": 1 },
+				"fields": {
+					"type": "array",
+					"minItems": 1,
+					"items": { "$ref": "#/$defs/field" },
+					"uniqueItems": true
+				},
+				"states": {
+					"type": "object",
+					"additionalProperties": false,
+					"required": ["field", "values"],
+					"properties": {
+						"field": { "$ref": "#/$defs/fieldId" },
+						"values": {
+							"type": "array",
+							"minItems": 1,
+							"items": { "$ref": "#/$defs/enumValue" },
+							"uniqueItems": true
+						},
+						"transitions": {
+							"type": "array",
+							"items": {
+								"type": "object",
+								"additionalProperties": false,
+								"required": ["from", "to"],
+								"properties": {
+									"from": { "type": "string", "minLength": 1 },
+									"to": { "type": "string", "minLength": 1 },
+									"permission": { "type": "string", "minLength": 1 }
+								}
+							},
+							"uniqueItems": true
+						}
+					}
+				}
+			}
+		},
+		"field": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["id", "type"],
+			"properties": {
+				"id": { "$ref": "#/$defs/fieldId" },
+				"type": {
+					"enum": [
+						"string",
+						"text",
+						"integer",
+						"decimal",
+						"boolean",
+						"date",
+						"datetime",
+						"enum",
+						"reference",
+						"json"
+					]
+				},
+				"required": { "type": "boolean" },
+				"unique": { "enum": ["tenant", "none"] },
+				"maxLength": { "type": "integer", "minimum": 1 },
+				"values": {
+					"type": "array",
+					"minItems": 1,
+					"items": { "$ref": "#/$defs/enumValue" },
+					"uniqueItems": true
+				},
+				"reference": {
+					"type": "string",
+					"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$"
+				},
+				"description": { "type": "string", "minLength": 1 }
+			}
+		},
+		"screen": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["id", "kind"],
+			"properties": {
+				"id": { "$ref": "#/$defs/entityId" },
+				"kind": { "enum": ["list", "record", "form", "dashboard"] },
+				"entity": { "$ref": "#/$defs/entityId" },
+				"title": { "type": "string", "minLength": 1 },
+				"columns": {
+					"type": "array",
+					"items": { "$ref": "#/$defs/fieldId" },
+					"uniqueItems": true
+				},
+				"filters": {
+					"type": "array",
+					"items": { "$ref": "#/$defs/fieldId" },
+					"uniqueItems": true
+				},
+				"navigationGroup": { "type": "string", "minLength": 1 }
+			}
+		},
+		"action": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"id",
+				"permission",
+				"kind",
+				"risk",
+				"idempotent",
+				"description"
+			],
+			"properties": {
+				"id": { "$ref": "#/$defs/entityId" },
+				"entity": { "$ref": "#/$defs/entityId" },
+				"permission": {
+					"type": "string",
+					"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+				},
+				"kind": { "enum": ["create", "update", "delete", "custom"] },
+				"risk": {
+					"enum": ["read", "workspace-write", "external", "destructive"]
+				},
+				"idempotent": { "type": "boolean" },
+				"description": { "type": "string", "minLength": 1 }
+			}
+		},
+		"widget": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["id", "slot", "description"],
+			"properties": {
+				"id": { "$ref": "#/$defs/entityId" },
+				"slot": {
+					"enum": [
+						"dashboard.metrics",
+						"dashboard.main",
+						"dashboard.aside",
+						"topbar.actions"
+					]
+				},
+				"entity": { "$ref": "#/$defs/entityId" },
+				"description": { "type": "string", "minLength": 1 }
+			}
+		},
+		"setting": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["key", "type", "scope", "description"],
+			"properties": {
+				"key": { "$ref": "#/$defs/fieldId" },
+				"type": { "enum": ["string", "integer", "boolean", "enum"] },
+				"scope": { "enum": ["tenant", "platform"] },
+				"default": {
+					"oneOf": [
+						{ "type": "string" },
+						{ "type": "integer" },
+						{ "type": "boolean" }
+					]
+				},
+				"values": {
+					"type": "array",
+					"minItems": 1,
+					"items": { "type": "string", "minLength": 1 },
+					"uniqueItems": true
+				},
+				"description": { "type": "string", "minLength": 1 }
+			}
+		},
+		"agentTool": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["id", "permission", "description", "risk"],
+			"properties": {
+				"id": {
+					"type": "string",
+					"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+				},
+				"permission": {
+					"type": "string",
+					"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+				},
+				"description": { "type": "string", "minLength": 1 },
+				"risk": { "enum": ["read", "workspace-write"] }
+			}
+		},
+		"decision": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["id", "question", "answer", "decidedBy"],
+			"properties": {
+				"id": { "type": "string", "pattern": "^[A-Z][A-Z0-9-]+$" },
+				"question": { "type": "string", "minLength": 1 },
+				"answer": { "type": "string", "minLength": 1 },
+				"decidedBy": { "enum": ["user", "default"] }
+			}
 		}
 	}
 }

@@ -1,0 +1,11 @@
+-- The payload carries the published title so a customer system can show the
+-- event without calling back into the source module. It is part of the signed
+-- body, so it has to live on the attempt row: a retry and a replay rebuild the
+-- payload from the row alone and must produce the same bytes.
+--
+-- The default is empty rather than absent because the column is NOT NULL and a
+-- deployment may already hold attempt rows. Such a row carries no title, so an
+-- attempt left pending across this upgrade sends a body with an empty title
+-- while the digest on it was taken before the field existed; the retry that
+-- attempt schedules is digested from the row again and matches.
+ALTER TABLE notifications_deliveries ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT '';

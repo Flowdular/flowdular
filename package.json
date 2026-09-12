@@ -1,6 +1,6 @@
 {
 	"name": "flowdular",
-	"version": "0.2.3",
+	"version": "0.2.4",
 	"private": true,
 	"type": "module",
 	"description": "Flowdular is an agentic foundation framework for OctaneJS: a production platform core that teams extend with modules built by AI agents.",
@@ -23,10 +23,13 @@
 		"rules:generate": "rulesync generate",
 		"rules:check": "rulesync generate --check",
 		"validate": "pnpm flowdular spec validate --all && pnpm flowdular blueprint validate --all && pnpm flowdular module validate",
-		"verify": "pnpm rules:check && pnpm reference:check && pnpm typecheck && pnpm test && pnpm validate && pnpm format:check",
+		"verify": "pnpm rules:check && pnpm reference:check && pnpm capabilities:check && pnpm platform-api:check && pnpm typecheck && pnpm test && pnpm validate && pnpm format:check",
 		"release:pack": "node scripts/package-sdk.mjs",
 		"release:smoke": "node scripts/smoke-sdk.mjs",
 		"reference:check": "node scripts/module-reference.mjs --check",
+		"capabilities:check": "node scripts/platform-capabilities.mjs --check",
+		"platform-api:check": "node scripts/platform-api.mjs --check",
+		"platform-api:update": "node scripts/platform-api.mjs --update",
 		"release:publish": "node scripts/publish-sdk.mjs"
 	},
 	"devDependencies": {

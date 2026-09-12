@@ -9,6 +9,7 @@
 	},
 	"scripts": {
 		"dev": "node --env-file-if-exists=.env platform/scripts/dev.mjs",
+		"sandbox": "npx @flowdular/sandbox",
 		"typecheck": "pnpm -r --if-present typecheck",
 		"test": "pnpm -r --if-present test",
 		"format": "prettier --write .",
@@ -16,7 +17,7 @@
 		"flowdular": "flowdular",
 		"cl": "flowdular",
 		"doctor": "flowdular doctor",
-		"verify": "pnpm rules:check && pnpm typecheck && pnpm test && flowdular module validate && pnpm format:check",
+		"verify": "pnpm rules:check && pnpm typecheck && pnpm test && flowdular spec validate --all && flowdular module validate && pnpm format:check",
 		"rules:generate": "rulesync generate",
 		"rules:check": "rulesync generate --check",
 		"build": "flowdular module sync --apply && pnpm --filter @app/platform build"

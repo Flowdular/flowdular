@@ -17,6 +17,7 @@ import type {
 	ModuleReviewEvidence,
 	ModuleRelease,
 } from '@flowdular/contracts';
+import { PLATFORM_API_VERSION } from '@flowdular/contracts';
 import {
 	hashBytes,
 	packModule,
@@ -51,7 +52,7 @@ function manifest(
 		id,
 		package: `@flowdular/module-${id.split('.')[0]}`,
 		version,
-		platformApi: '0.1.0',
+		platformApi: `^${PLATFORM_API_VERSION}`,
 		profile: 'headless',
 		capabilities: [],
 		dependencies,
@@ -390,6 +391,63 @@ describe('module distribution', () => {
 			),
 		).toThrow(/cycle/i);
 	});
+	it('resolves a required capability to its newest compatible provider', async () => {
+		const f = await fixture();
+		const release = (m: ModuleManifest): ModuleRelease => ({
+			manifest: m,
+			artifact: `${m.id}-${m.version}.json`,
+			sha256: 'b'.repeat(64),
+			sourceCommit: 'a'.repeat(40),
+			license: 'MIT',
+		});
+		void f;
+		const consumer: ModuleManifest = {
+			...manifest('automations.core', '1.0.0'),
+			requires: [
+				{ id: 'agents.run-queue' },
+				{ id: 'workflows.execution.v1', optional: true },
+			],
+		};
+		const records = [
+			release(consumer),
+			release({
+				...manifest('agents.core', '1.0.0'),
+				provides: ['agents.run-queue'],
+			}),
+			release({
+				...manifest('agents.core', '1.1.0'),
+				provides: ['agents.run-queue'],
+			}),
+		];
+		const result = resolveModuleReleases(
+			{ schemaVersion: 1, releases: records },
+			'automations.core',
+			[],
+		);
+		expect(
+			result.map((entry) => `${entry.manifest.id}@${entry.manifest.version}`),
+		).toEqual(['agents.core@1.1.0', 'automations.core@1.0.0']);
+		expect(
+			resolveModuleReleases(
+				{ schemaVersion: 1, releases: records },
+				'automations.core',
+				[
+					{
+						...manifest('agents.core', '1.0.0'),
+						provides: ['agents.run-queue'],
+					},
+				],
+			).map((entry) => entry.manifest.id),
+		).toEqual(['automations.core']);
+		expect(() =>
+			resolveModuleReleases(
+				{ schemaVersion: 1, releases: [release(consumer)] },
+				'automations.core',
+				[],
+			),
+		).toThrow(/No compatible dependency closure/);
+	});
+
 	it('rejects nonofficial remote catalogs', async () => {
 		await expect(
 			loadModuleCatalog('https://example.com/catalog.json'),

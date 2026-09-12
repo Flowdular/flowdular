@@ -12,6 +12,7 @@ await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
 for (const path of [
 	'.ai/README.md',
+	'.ai/platform-capabilities.md',
 	'.ai/agents',
 	'.ai/blueprints',
 	'.ai/examples',
@@ -24,12 +25,26 @@ for (const path of [
 	'docs/adr',
 	'docs/design-system.md',
 	'docs/modules.md',
+	'docs/module-distribution.md',
 	'docs/database-adapters.md',
 	'docs/configuration.md',
+	'docs/getting-started.md',
+	'docs/cli.md',
+	'docs/cli-extensions.md',
+	'docs/module-web-surfaces.md',
+	'docs/sandbox.md',
 	'rulesync.jsonc',
 	'platform/scripts/build.mjs',
 ]) {
 	await cp(join(root, path), join(output, path), { recursive: true });
+}
+// Copied once it exists upstream; a release before then still builds.
+for (const path of ['docs/operations.md']) {
+	try {
+		await cp(join(root, path), join(output, path));
+	} catch (error) {
+		if (error.code !== 'ENOENT') throw error;
+	}
 }
 async function rewrite(directory) {
 	for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -50,10 +65,22 @@ async function rewrite(directory) {
 			);
 			await writeFile(
 				path,
-				sdkSource(protectedSource).replace(
-					/FLOWDULAR_FILTER_(\d+)/g,
-					(_, index) => filters[Number(index)],
-				),
+				sdkSource(protectedSource)
+					.replace(
+						/FLOWDULAR_FILTER_(\d+)/g,
+						(_, index) => filters[Number(index)],
+					)
+					// Monorepo-relative links to packages the SDK does not ship.
+					.replace(
+						/\]\(\.\.\/packages\/sandbox\/README\.md\)/g,
+						'](https://github.com/flowdular/flowdular/blob/main/packages/sandbox/README.md)',
+					)
+					// Releasing the SDK is a core-repository procedure, not an
+					// application one, so that document is never copied out.
+					.replace(
+						/\]\(npm-publication\.md\)/g,
+						'](https://github.com/flowdular/flowdular/blob/main/docs/npm-publication.md)',
+					),
 			);
 		}
 	}

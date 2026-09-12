@@ -54,6 +54,10 @@ Do not load the whole skill catalog into the task context.
 12. Keep handoffs short and factual. No AI attribution footers or em/en dashes.
     Sandbox final line: `HANDOFF: <allowed-role> - <why>` or
     `HANDOFF: none - <why>`, never your own role.
+13. Flow: request, `spec-interview`, approval, `module-new`/`module-update`,
+    `auto-review`. Implement from the approved spec and its touch list; do not
+    scan `modules/` or `packages/`. First lookup is `.ai/platform-capabilities.md`.
+    What the spec lacks is a spec defect to report, never a guess.
 
 Detailed recipes: `docs/agent-contract.md` (lookup only).
 Reference module: `.ai/references/catalog`; visual contract: `docs/design-system.md`.

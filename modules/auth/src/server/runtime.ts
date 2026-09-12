@@ -12,17 +12,22 @@ import {
 import {
 	createModuleSettingsRuntime as createKernelSettingsRuntime,
 	normalizeActor,
+	parsePreviousKeys,
 	PLATFORM_SETTINGS_TENANT,
 	type Actor,
 	type ModuleSettingsRuntime,
+	type PlatformDataClassRegistry,
 } from '@flowdular/kernel';
 import {
 	createSecurityHeadersMiddleware,
+	mailConfigFromEnvironment,
 	DEVELOPMENT_CONTENT_SECURITY_POLICY,
 	PRODUCTION_CONTENT_SECURITY_POLICY,
+	type MailPort,
 } from '@flowdular/server';
 import { createAuthenticationMiddleware } from '../middleware/authentication.ts';
 import { AuthService, type AuthPolicy } from '../services/auth-service.ts';
+import { authDataClasses } from '../services/data-classes.ts';
 import {
 	DatabaseAuthRepository,
 	migrateAuthDatabase,
@@ -31,7 +36,10 @@ import {
 	DevelopmentMailDelivery,
 	type AuthMailDelivery,
 } from '../services/mail-delivery.ts';
+import { createMailPortDelivery } from '../services/mail-port.ts';
+import { SmtpMailDelivery } from '../services/mail-smtp.ts';
 import type { AuthRepository } from '../services/repository.ts';
+import { createSessionSweepRunner } from '../services/session-sweep-runner.ts';
 import {
 	createAuthSettingsStore,
 	type AuthSettingsStore,
@@ -44,13 +52,37 @@ import {
 	DEFAULT_SESSION_TTL_HOURS,
 	parseProviderList,
 	type AuthSettings,
+	type AuthTenantSettings,
 } from '../settings.ts';
+import {
+	createMfaEnrolmentMiddleware,
+	guardMfaSettings,
+} from './mfa-enforcement.ts';
+import {
+	createOidcVerifier,
+	discoverOidcProvider,
+	type OidcVerifier,
+} from './oidc.ts';
+import { providerHostAllowlist } from './provider-host.ts';
 
 export interface AuthRuntimeOptions extends AuthRuntimeEnvironmentOptions {
 	/** Platform-owned provider. auth.core never receives a DSN or a pool. */
 	readonly databases: DatabaseProvider;
 	/** Tenant-scoped lease purpose; `migration` is taken and released internally. */
 	readonly purpose?: Exclude<DatabaseProviderRequest['purpose'], 'migration'>;
+	/**
+	 * The platform registry this module declares into. auth.core composes ahead
+	 * of the module composition, so it receives the registry here rather than
+	 * through a module server context. Absent, nothing is declared and the
+	 * workspace sees auth.core holding no class.
+	 */
+	readonly dataClasses?: PlatformDataClassRegistry;
+	/**
+	 * The platform mail port. When it is composed and configured it is the
+	 * transport, ahead of anything this module derived from the environment:
+	 * both read the same variables, and one deployment has one outbox.
+	 */
+	readonly mail?: MailPort;
 }
 
 /** Everything the process environment can decide on its own. */
@@ -76,9 +108,13 @@ export interface AuthRuntimeEnvironmentOptions {
 	readonly mailTransport?: boolean;
 	readonly mailDelivery?: AuthMailDelivery;
 	readonly mfaEncryptionKey?: string;
+	/** Retired keys that still open stored factors; nothing is written with them. */
+	readonly mfaPreviousEncryptionKeys?: readonly string[];
 	readonly publicBaseUrl?: string;
 	readonly applicationPath?: string;
 	readonly oidcProviders?: readonly OidcProvider[];
+	/** Hosts a provider URL may name; empty allows every public host. */
+	readonly providerHosts?: readonly string[];
 	readonly production?: boolean;
 	readonly contentSecurityPolicy?: string | null;
 	readonly contentSecurityPolicyReportOnly?: boolean;
@@ -88,6 +124,8 @@ export interface AuthRuntimeEnvironmentOptions {
 
 export interface OidcProvider {
 	readonly id: string;
+	/** Exact `iss` value; discovery and every ID token are bound to it. */
+	readonly issuer: string;
 	readonly authorizationEndpoint: string;
 	readonly tokenEndpoint: string;
 	readonly userInfoEndpoint: string;
@@ -101,15 +139,32 @@ export interface AuthRuntime {
 	/** Live view of the declared auth.core settings. */
 	readonly settings: AuthSettings;
 	readonly moduleSettings: ModuleSettingsRuntime;
+	/** Verifies provider ID tokens; its key cache lives with this runtime. */
+	readonly oidcVerifier: OidcVerifier;
 	readonly trustProxy: boolean;
 	readonly mailTransport: boolean;
+	/** True once a deployment MFA key is composed; gates requireMfa. */
+	readonly mfaKeyConfigured: boolean;
 	readonly workspaceRoot: string | null;
 	readonly oidcProviders: readonly OidcProvider[];
+	/**
+	 * FD_AUTH_PROVIDER_HOST_ALLOWLIST. Every provider URL this runtime fetches,
+	 * a workspace's discovery request and the stored token and userinfo
+	 * endpoints alike, has to name one of these hosts; empty allows any public
+	 * host and still refuses loopback names and literal addresses.
+	 */
+	readonly providerHosts: readonly string[];
 	readonly publicBaseUrl: string | null;
 	readonly applicationPath?: string;
 	/* Resolves once the schema is migrated and the leases are held. Concurrent
 	   first callers await the same initialization. */
 	service(): Promise<AuthService>;
+	/**
+	 * Tenant-scoped auth.core settings of one workspace. The stored values are
+	 * loaded once per workspace before the first answer, so a security decision
+	 * never observes the declared default in place of a stored value.
+	 */
+	tenantSettings(tenantId: string): Promise<AuthTenantSettings>;
 	/* Re-read at the point of use. A stored run snapshot is only a ceiling and
 	   never substitutes for the actor's current membership. */
 	authorizeAgentToolAccess(
@@ -195,10 +250,15 @@ function oidcProvidersEnvironment(
 		const id = text('id').toLowerCase();
 		if (!PROVIDER_PATTERN.test(id))
 			throw new Error('OIDC provider id is invalid.');
+		/* Required: the ID token is verified against this exact issuer, and the
+		   key set is discovered under it. A provider without one cannot be
+		   verified, so it is refused at boot rather than trusted at sign-in. */
+		const issuer = text('issuer');
 		const authorizationEndpoint = text('authorizationEndpoint');
 		const tokenEndpoint = text('tokenEndpoint');
 		const userInfoEndpoint = text('userInfoEndpoint');
 		for (const value of [
+			issuer,
 			authorizationEndpoint,
 			tokenEndpoint,
 			userInfoEndpoint,
@@ -211,6 +271,7 @@ function oidcProvidersEnvironment(
 		}
 		return {
 			id,
+			issuer,
 			authorizationEndpoint,
 			tokenEndpoint,
 			userInfoEndpoint,
@@ -258,6 +319,26 @@ function publicOriginEnvironment(
 	return url.origin;
 }
 
+/* The transport is chosen here so a deployment that composes auth.core without
+   the platform, the sandbox preview runtime above all, still configures mail
+   with environment variables. The variables, their retired auth.core names and
+   every refusal come from the platform reader, so both paths answer the same
+   environment the same way. */
+function mailDeliveryFromEnvironment(
+	environment: NodeJS.ProcessEnv,
+): AuthMailDelivery | undefined {
+	const config = mailConfigFromEnvironment(environment);
+	if (config.adapter === 'none') return undefined;
+	if (config.adapter === 'development') return new DevelopmentMailDelivery();
+	return new SmtpMailDelivery({
+		url: config.smtp.url,
+		from: config.from,
+		rejectUnauthorized: config.smtp.rejectUnauthorized,
+		requireTLS: config.smtp.requireTLS,
+		variables: { url: config.variables.url, from: config.variables.from },
+	});
+}
+
 /* The tenant default locale is validated against the workspace locales; a
    missing or unreadable flowdular.json falls back to the module's own list. */
 function workspaceLocales(
@@ -283,19 +364,7 @@ export function authRuntimeOptionsFromEnvironment(
 	workspaceRoot = process.cwd(),
 ): AuthRuntimeEnvironmentOptions {
 	const production = environment.NODE_ENV === 'production';
-	const developmentMail = booleanEnvironment(
-		environment.FD_AUTH_DEVELOPMENT_MAIL,
-		false,
-		'FD_AUTH_DEVELOPMENT_MAIL',
-	);
-	if (developmentMail && production) {
-		throw new Error(
-			'FD_AUTH_DEVELOPMENT_MAIL is only allowed outside production.',
-		);
-	}
-	const mailDelivery = developmentMail
-		? new DevelopmentMailDelivery()
-		: undefined;
+	const mailDelivery = mailDeliveryFromEnvironment(environment);
 	const mailTransport = mailDelivery !== undefined;
 	const emailConfirmation = booleanEnvironment(
 		environment.FD_AUTH_EMAIL_CONFIRMATION,
@@ -310,6 +379,13 @@ export function authRuntimeOptionsFromEnvironment(
 	if (environment.FD_AUTH_MFA_KEY) {
 		assertMfaEncryptionKey(environment.FD_AUTH_MFA_KEY, 'FD_AUTH_MFA_KEY');
 	}
+	const mfaPreviousEncryptionKeys = parsePreviousKeys(
+		environment.FD_AUTH_MFA_KEY_PREVIOUS,
+		(entry) => {
+			assertMfaEncryptionKey(entry, 'Every FD_AUTH_MFA_KEY_PREVIOUS entry');
+			return entry;
+		},
+	);
 	const publicBaseUrl = publicOriginEnvironment(
 		environment.FD_AUTH_PUBLIC_ORIGIN,
 	);
@@ -360,6 +436,9 @@ export function authRuntimeOptionsFromEnvironment(
 			'FD_AUTH_SIGN_IN_PROVIDERS',
 		),
 		oidcProviders: oidcProvidersEnvironment(environment.FD_AUTH_OIDC_PROVIDERS),
+		providerHosts: providerHostAllowlist(
+			environment.FD_AUTH_PROVIDER_HOST_ALLOWLIST,
+		),
 		...(locales ? { locales } : {}),
 		workspaceRoot,
 		trustProxy: booleanEnvironment(
@@ -371,6 +450,9 @@ export function authRuntimeOptionsFromEnvironment(
 		...(mailDelivery ? { mailDelivery } : {}),
 		...(environment.FD_AUTH_MFA_KEY
 			? { mfaEncryptionKey: environment.FD_AUTH_MFA_KEY }
+			: {}),
+		...(mfaPreviousEncryptionKeys.length > 0
+			? { mfaPreviousEncryptionKeys }
 			: {}),
 		...(publicBaseUrl ? { publicBaseUrl } : {}),
 		production,
@@ -406,6 +488,9 @@ function cookieName(options: AuthRuntimeOptions): string {
 }
 
 const EXPIRED_SESSION_SWEEP_MS = 15 * 60 * 1000;
+/* Bound on remembered per-workspace settings primes; least recently added is
+   evicted, and an evicted workspace is primed again on its next request. */
+const PRIMED_TENANT_LIMIT = 1024;
 
 const RUNTIME_REQUIREMENTS = {
 	dialectIds: [DATABASE_DIALECT_IDS.postgresql],
@@ -508,9 +593,11 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 	if (options.mfaEncryptionKey) {
 		assertMfaEncryptionKey(options.mfaEncryptionKey, 'The MFA encryption key');
 	}
+	for (const key of options.mfaPreviousEncryptionKeys ?? []) {
+		assertMfaEncryptionKey(key, 'Every previous MFA encryption key');
+	}
 	let opened: Promise<OpenedAuthDatabase> | undefined;
 	let servicePromise: Promise<AuthService> | undefined;
-	let sessionSweep: ReturnType<typeof setInterval> | undefined;
 	let disposed = false;
 	const open = (): Promise<OpenedAuthDatabase> => {
 		if (disposed) throw new Error('Auth runtime is disposed.');
@@ -519,10 +606,28 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 			options.purpose ?? 'runtime',
 		));
 	};
-	const store: AuthSettingsStore = createAuthSettingsStore(
-		async () => (await open()).repository,
+	const repository = async (): Promise<AuthRepository> =>
+		(await open()).repository;
+	const store: AuthSettingsStore = createAuthSettingsStore(repository);
+	/* Declared while the platform composes, because the registry is sealed
+	   before any start hook runs. auth.core names itself rather than relying on
+	   a binding: the same runtime composes in processes that hand it an unbound
+	   registry. */
+	options.dataClasses?.declare('auth.core', authDataClasses(repository));
+	const mailDelivery = options.mail?.configured
+		? createMailPortDelivery(options.mail)
+		: options.mailDelivery;
+	/* A composed delivery is a transport whatever the flag says; the flag alone
+	   still answers for a caller that composes none. */
+	const mailTransport =
+		mailDelivery !== undefined || (options.mailTransport ?? false);
+	const mfaKeyConfigured = options.mfaEncryptionKey !== undefined;
+	/* The settings runtime auth hands to the platform is where a workspace turns
+	   requireMfa on, so it is where a keyless deployment has to be refused. */
+	const moduleSettings = guardMfaSettings(
+		options.settings ?? createKernelSettingsRuntime(store),
+		mfaKeyConfigured,
 	);
-	const moduleSettings = options.settings ?? createKernelSettingsRuntime(store);
 	moduleSettings.declare(
 		createAuthModuleSettings({
 			allowSignUp: options.allowSignUp,
@@ -551,10 +656,7 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 			return read<boolean>('allowSignUp');
 		},
 		get emailConfirmation() {
-			return (
-				(options.mailTransport ?? options.mailDelivery !== undefined) &&
-				read<boolean>('emailConfirmation')
-			);
+			return mailTransport && read<boolean>('emailConfirmation');
 		},
 		get signInProviders() {
 			return parseProviderList(read<string>('signInProviders'));
@@ -569,6 +671,41 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 			return read<number>('passwordMinLength');
 		},
 	};
+	/* A workspace snapshot is filled asynchronously, so the first read for a
+	   workspace would otherwise see the declared default in place of a stored
+	   value. Priming is awaited once per workspace and remembered; a failed
+	   prime drops out of the map so the next request retries instead of
+	   answering from an empty snapshot forever. Evicting an entry only costs a
+	   repeat prime over a snapshot the store already holds. */
+	const primed = new Map<string, Promise<void>>();
+	const primeTenant = (tenantId: string): Promise<void> => {
+		const existing = primed.get(tenantId);
+		if (existing) return existing;
+		const pending = store
+			.prime(tenantId, 'auth.core')
+			.catch((error: unknown) => {
+				primed.delete(tenantId);
+				throw error;
+			});
+		if (primed.size >= PRIMED_TENANT_LIMIT) {
+			const oldest = primed.keys().next().value;
+			if (oldest !== undefined) primed.delete(oldest);
+		}
+		primed.set(tenantId, pending);
+		return pending;
+	};
+	const tenantSettings = async (
+		tenantId: string,
+	): Promise<AuthTenantSettings> => {
+		await primeTenant(tenantId);
+		return {
+			requireMfa: moduleSettings.get<boolean>(
+				tenantId,
+				'auth.core',
+				'requireMfa',
+			),
+		};
+	};
 	const policy = (): AuthPolicy => ({
 		sessionTtlMs: settings.sessionTtlMs,
 		sessionIdleMs: settings.sessionIdleMs,
@@ -581,6 +718,10 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 			return Math.floor(settings.sessionTtlMs / 1000);
 		},
 	};
+	/* The verifier this runtime serves with. The service invalidates its cached
+	   key sets when a workspace changes or deletes a provider row. */
+	const oidcVerifier = createOidcVerifier();
+	const providerHosts = options.providerHosts ?? [];
 	const create = async (): Promise<AuthService> => {
 		const { repository } = await open();
 		/* The settings this runtime reads on every request are platform scoped.
@@ -589,25 +730,24 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 		await store.prime(PLATFORM_SETTINGS_TENANT, 'auth.core');
 		const authService = new AuthService(repository, {
 			policy,
+			/* Saving a workspace provider verifies its issuer the same way every
+			   ID token is verified against it: discovery under the issuer, naming
+			   the issuer back. */
+			oidcDiscovery: (issuer) => discoverOidcProvider(issuer, providerHosts),
+			forgetProviderKeys: (providerId) => oidcVerifier.forget(providerId),
 			...(options.mfaEncryptionKey
 				? { mfaEncryptionKey: options.mfaEncryptionKey }
 				: {}),
-			...(options.mailDelivery ? { mailDelivery: options.mailDelivery } : {}),
+			...(options.mfaPreviousEncryptionKeys
+				? { mfaPreviousEncryptionKeys: options.mfaPreviousEncryptionKeys }
+				: {}),
+			...(mailDelivery ? { mailDelivery } : {}),
 			...(options.publicBaseUrl
 				? { publicBaseUrl: options.publicBaseUrl }
 				: {}),
 		});
 		// Expired rows only matter for storage; the lookup already filters them.
-		sessionSweep = setInterval(() => {
-			void authService.deleteExpiredSessions().catch((error: unknown) => {
-				/* Repository errors can contain SQL parameters. Keep the recurring
-				   maintenance log useful without serializing the thrown value. */
-				console.error(
-					`[auth.core] expired session sweep failed (${error instanceof Error ? 'Error' : 'non-error'})`,
-				);
-			});
-		}, EXPIRED_SESSION_SWEEP_MS);
-		sessionSweep.unref();
+		sessionSweep.start();
 		return authService;
 	};
 	const service = (): Promise<AuthService> => {
@@ -616,6 +756,13 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 		}
 		return (servicePromise ??= create());
 	};
+	/* The platform runner owns the loop: its interval and unref, the guard
+	   against overlapping passes and the drain on dispose. It starts with the
+	   service it sweeps through, so a runtime nobody uses opens no database. */
+	const sessionSweep = createSessionSweepRunner({
+		sweep: service,
+		intervalMs: EXPIRED_SESSION_SWEEP_MS,
+	});
 	/* Settings writes are audited at the store owner, so the settings
 	   administration API in system.core needs no audit dependency. The kernel
 	   change listener is synchronous, so the audit row is written after it
@@ -640,12 +787,13 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 					role: membership?.role ?? '',
 					scopes: membership?.scopes ?? [],
 				},
-				change.moduleId,
-				change.key,
-				change.cleared,
+				change,
 			);
-		})().catch(() => {
-			console.error('[auth.core] settings audit write failed');
+		})().catch((error: unknown) => {
+			console.error(
+				`[auth.core] settings audit write failed for ${change.moduleId}.${change.key}:`,
+				error instanceof Error ? error.message : error,
+			);
 		});
 		settingsAuditWrites.add(write);
 		void write.finally(() => settingsAuditWrites.delete(write));
@@ -661,14 +809,22 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 		reportOnly: options.contentSecurityPolicyReportOnly ?? !options.production,
 	});
 	const authentication = createAuthenticationMiddleware(service, cookie);
+	const mfaEnrolment = createMfaEnrolmentMiddleware({
+		tenantSettings,
+		service,
+	});
 	return {
 		cookie,
 		settings,
 		moduleSettings,
+		oidcVerifier,
+		tenantSettings,
 		trustProxy: options.trustProxy ?? false,
-		mailTransport: options.mailTransport ?? options.mailDelivery !== undefined,
+		mailTransport,
+		mfaKeyConfigured,
 		workspaceRoot: options.workspaceRoot ?? null,
 		oidcProviders: options.oidcProviders ?? [],
+		providerHosts,
 		publicBaseUrl: options.publicBaseUrl ?? null,
 		applicationPath: validateApplicationPath(options.applicationPath ?? '/app'),
 		service,
@@ -678,7 +834,8 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 			const membership = await (
 				await open()
 			).repository.findAccountMembership(identity.id, tenantId);
-			return membership?.status === 'active'
+			return membership?.status === 'active' &&
+				membership.membershipStatus === 'active'
 				? [...new Set(membership.scopes)].sort()
 				: [];
 		},
@@ -690,8 +847,9 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 			disposed = true;
 			detachSettingsAudit();
 			await Promise.allSettled([...settingsAuditWrites]);
-			if (sessionSweep) clearInterval(sessionSweep);
-			sessionSweep = undefined;
+			/* A sweep in flight holds the lease it deletes under, so the loop is
+			   drained before anything is released. */
+			await sessionSweep.dispose();
 			const database = opened;
 			opened = undefined;
 			servicePromise = undefined;
@@ -701,9 +859,15 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 			await store.ready().catch(() => undefined);
 			for (const lease of (await database).leases) await lease.release();
 		},
+		/* Enrolment runs inside authentication: it needs the resolved principal,
+		   and it must cover every route an endpoint identity resolver covers. */
 		middleware: (context, next) =>
 			securityHeaders(context, () =>
-				Promise.resolve(authentication(context, next)),
+				Promise.resolve(
+					authentication(context, () =>
+						Promise.resolve(mfaEnrolment(context, next)),
+					),
+				),
 			),
 	};
 }

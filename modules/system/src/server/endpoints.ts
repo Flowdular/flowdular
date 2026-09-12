@@ -15,9 +15,17 @@ import {
 import {
 	ModuleSettingsError,
 	type ModuleSettingEntry,
+	type ModuleSettingKind,
 	type ModuleSettingsRuntime,
+	type ModuleSettingValue,
 } from '@flowdular/kernel';
 import { SYSTEM_PERMISSIONS } from '../acl/permissions.ts';
+import {
+	InvalidTimeZoneError,
+	normalizeTimeZone,
+	SYSTEM_MODULE_ID,
+	TENANT_TIME_ZONE_KEY,
+} from '../domain/time-zone.ts';
 import { readModuleCatalog } from './module-catalog.ts';
 
 export interface SystemRouteOptions {
@@ -29,9 +37,14 @@ export interface SystemRouteOptions {
 const MAIL_TRANSPORT_REQUIRED =
 	'Email confirmation needs a composed mail transport; none is available in this deployment.';
 
+const MFA_KEY_REQUIRED =
+	'Required multi-factor authentication needs a deployment MFA encryption key; none is configured.';
+
 export interface SettingsEntryPayload {
 	readonly key: string;
 	readonly type: ModuleSettingEntry['definition']['type'];
+	/** Present only on a feature flag; the Flags screen selects on it. */
+	readonly kind?: ModuleSettingKind;
 	readonly scope: 'platform' | 'tenant';
 	readonly label: string;
 	readonly labelKey?: string;
@@ -58,22 +71,45 @@ export interface SettingsModulePayload {
 	readonly settings: readonly SettingsEntryPayload[];
 }
 
+/** What the deployment composed; both gate an auth.core setting. */
+interface SettingsDeployment {
+	readonly mailTransport: boolean;
+	readonly mfaKeyConfigured: boolean;
+}
+
+/* auth.core refuses these two writes while the deployment configuration they
+   need is missing. The row stays visible but locked, so the screen never offers
+   a control whose write the runtime will answer with a 409. */
+function lockReason(
+	entry: ModuleSettingEntry,
+	deployment: SettingsDeployment,
+): { readonly locked: string; readonly lockedKey: string } | undefined {
+	if (entry.moduleId !== 'auth.core') return undefined;
+	if (entry.key === 'emailConfirmation' && !deployment.mailTransport) {
+		return {
+			locked: MAIL_TRANSPORT_REQUIRED,
+			lockedKey: 'system.settings.mailTransportRequired',
+		};
+	}
+	if (entry.key === 'requireMfa' && !deployment.mfaKeyConfigured) {
+		return {
+			locked: MFA_KEY_REQUIRED,
+			lockedKey: 'system.settings.mfaKeyRequired',
+		};
+	}
+	return undefined;
+}
+
 function entryPayload(
 	entry: ModuleSettingEntry,
-	mailTransport: boolean,
+	deployment: SettingsDeployment,
 ): SettingsEntryPayload {
 	const definition = entry.definition;
-	/* auth.core cannot honor email confirmation without a composed mail
-	   transport; the row stays visible but locked until one exists. */
-	const locked =
-		entry.moduleId === 'auth.core' &&
-		entry.key === 'emailConfirmation' &&
-		!mailTransport
-			? MAIL_TRANSPORT_REQUIRED
-			: undefined;
+	const lock = lockReason(entry, deployment);
 	return {
 		key: entry.key,
 		type: definition.type,
+		...(definition.kind ? { kind: definition.kind } : {}),
 		scope: definition.scope ?? 'tenant',
 		label: definition.label ?? entry.key,
 		...(definition.labelKey ? { labelKey: definition.labelKey } : {}),
@@ -89,13 +125,30 @@ function entryPayload(
 		...(definition.min !== undefined ? { min: definition.min } : {}),
 		...(definition.max !== undefined ? { max: definition.max } : {}),
 		...(definition.multiline ? { multiline: true } : {}),
-		...(locked
-			? {
-					locked,
-					lockedKey: 'system.settings.mailTransportRequired',
-				}
-			: {}),
+		...(lock ?? {}),
 	};
+}
+
+/* The declared pattern bounds the shape only, so the write surface canonicalizes
+   the workspace zone against the runtime zone database. A name this deployment
+   does not know never reaches storage, where every reader would fall back. */
+function timeZoneValue(
+	moduleId: string,
+	key: string,
+	value: ModuleSettingValue | null,
+): ModuleSettingValue | null {
+	if (moduleId !== SYSTEM_MODULE_ID || key !== TENANT_TIME_ZONE_KEY) {
+		return value;
+	}
+	if (typeof value !== 'string') return value;
+	try {
+		return normalizeTimeZone(value);
+	} catch (error) {
+		if (error instanceof InvalidTimeZoneError) {
+			throw new HttpProblem(error.code, error.message, 400);
+		}
+		throw error;
+	}
 }
 
 function settingsProblem(error: unknown): Response {
@@ -276,7 +329,7 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 				const grouped = new Map<string, SettingsEntryPayload[]>();
 				for (const entry of options.settings.list(principal.tenantId)) {
 					const group = grouped.get(entry.moduleId) ?? [];
-					group.push(entryPayload(entry, options.auth.mailTransport));
+					group.push(entryPayload(entry, options.auth));
 					grouped.set(entry.moduleId, group);
 				}
 				const payload: SettingsModulePayload[] = [...grouped].map(
@@ -339,16 +392,14 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 					principal.tenantId,
 					moduleId,
 					key,
-					value ?? null,
+					timeZoneValue(moduleId, key, value) ?? null,
 					principal.accountId,
 				);
 				const entry = options.settings
 					.list(principal.tenantId)
 					.find((item) => item.moduleId === moduleId && item.key === key);
 				return jsonResponse({
-					setting: entry
-						? entryPayload(entry, options.auth.mailTransport)
-						: null,
+					setting: entry ? entryPayload(entry, options.auth) : null,
 				});
 			} catch (error) {
 				return settingsProblem(error);

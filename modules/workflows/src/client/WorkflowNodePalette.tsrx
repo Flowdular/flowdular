@@ -14,6 +14,7 @@ function icon(type: WorkflowNodeType): string {
 	if (type === 'gate') return 'shield';
 	if (type === 'validator') return 'check';
 	if (type === 'action') return 'plug';
+	if (type === 'human-approval') return 'user';
 	if (type === 'input') return 'download';
 	if (type === 'output') return 'external';
 	return 'modules';

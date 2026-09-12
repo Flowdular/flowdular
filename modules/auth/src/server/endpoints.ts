@@ -7,7 +7,11 @@ import {
 import { ServerRoute, type Context } from '@octanejs/app-core';
 import { readJsonObject } from '@flowdular/server';
 import { BUNDLED_MODULE_SCOPES, PLATFORM_SCOPES } from '../acl/scopes.ts';
-import type { SignInInput, SignUpInput } from '../domain/types.ts';
+import type {
+	SignInInput,
+	SignInProviderOption,
+	SignUpInput,
+} from '../domain/types.ts';
 import { AttemptLimiter } from '../api/attempt-limiter.ts';
 import { clientAddress } from '../api/client-address.ts';
 import {
@@ -18,8 +22,12 @@ import {
 import { assertSameOrigin } from '../api/origin.ts';
 import { sessionFromContext } from '../middleware/authentication.ts';
 import { AuthServiceError } from '../services/auth-service-error.ts';
+import type { TenantProviderSignIn } from '../services/auth-service.ts';
+import type { TenantSummary } from '../services/repository.ts';
 import { normalizeEmail } from '../services/validation.ts';
 import { createAuditRoutes } from './audit-endpoints.ts';
+import { createMembershipRoutes } from './membership-endpoints.ts';
+import { createIdentityProviderRoutes } from './provider-endpoints.ts';
 import {
 	actorOf,
 	errorResponse,
@@ -29,6 +37,8 @@ import {
 	sessionPayload,
 	stringField,
 } from './http.ts';
+import { oidcFailure, readOidcJson, OIDC_REQUEST_TIMEOUT_MS } from './oidc.ts';
+import { assertProviderHostAllowed } from './provider-host.ts';
 import { createRoleRoutes } from './roles-endpoints.ts';
 import type { AuthRuntime, OidcProvider } from './runtime.ts';
 import { sessionMutationDenial } from './session-security.ts';
@@ -41,17 +51,27 @@ import { createApiTokenRoutes } from './token-endpoints.ts';
 const emailAttempts = new AttemptLimiter();
 const addressAttempts = new AttemptLimiter(20, 5 * 60 * 1000);
 const availabilityAttempts = new AttemptLimiter(60, 60_000);
+/* The sign-in screen resolves a workspace before it can offer its providers,
+   and it does so for anonymous callers, so the lookup is bounded per workspace
+   reference. One screen costs a handful of that workspace's allowance: the page
+   load, the typed workspace, and the authorization round trip of every provider
+   button that is pressed. */
+const workspaceLookupAttempts = new AttemptLimiter(120, 60_000);
 const passwordResetEmailAttempts = new AttemptLimiter(3, 15 * 60 * 1000);
 const passwordResetAddressAttempts = new AttemptLimiter(20, 15 * 60 * 1000);
 const MFA_CHALLENGE_COOKIE = 'coreloom_mfa_challenge';
 const OIDC_STATE_COOKIE = 'coreloom_oidc_state';
-const OIDC_REQUEST_TIMEOUT_MS = 10_000;
-const OIDC_RESPONSE_MAX_BYTES = 64 * 1024;
 
 interface OidcState {
 	readonly provider: string;
 	readonly state: string;
 	readonly verifier: string;
+	/* Bound into the same signed cookie as the state, so the ID token can only
+	   be replayed into the browser transaction that asked for it. */
+	readonly nonce: string;
+	/* The workspace a tenant-owned provider signs into. A platform provider
+	   names none, exactly as before. */
+	readonly workspace?: string;
 }
 
 function oidcStateCookie(value: string, secure: boolean, maxAge = 600): string {
@@ -103,7 +123,11 @@ function openOidcState(value: string, provider: OidcProvider): OidcState {
 		typeof state.state !== 'string' ||
 		!/^[A-Za-z0-9_-]{32}$/.test(state.state) ||
 		typeof state.verifier !== 'string' ||
-		!/^[A-Za-z0-9_-]{43}$/.test(state.verifier)
+		!/^[A-Za-z0-9_-]{43}$/.test(state.verifier) ||
+		typeof state.nonce !== 'string' ||
+		!/^[A-Za-z0-9_-]{32}$/.test(state.nonce) ||
+		(state.workspace !== undefined &&
+			(typeof state.workspace !== 'string' || state.workspace.length > 128))
 	) {
 		throw new Error('invalid OIDC state');
 	}
@@ -111,6 +135,8 @@ function openOidcState(value: string, provider: OidcProvider): OidcState {
 		provider: state.provider,
 		state: state.state,
 		verifier: state.verifier,
+		nonce: state.nonce,
+		...(state.workspace === undefined ? {} : { workspace: state.workspace }),
 	};
 }
 
@@ -125,42 +151,6 @@ function responseWithCookies(
 		statusText: response.statusText,
 		headers,
 	});
-}
-
-function oidcFailure(): AuthServiceError {
-	return new AuthServiceError(
-		'OIDC_AUTHENTICATION_FAILED',
-		'External sign-in could not be completed.',
-		401,
-	);
-}
-
-async function readOidcJson(response: Response): Promise<unknown> {
-	const declared = Number(response.headers.get('content-length') ?? 0);
-	if (
-		(Number.isFinite(declared) && declared > OIDC_RESPONSE_MAX_BYTES) ||
-		!response.body
-	)
-		throw oidcFailure();
-	const reader = response.body.getReader();
-	const chunks: Uint8Array[] = [];
-	let total = 0;
-	try {
-		for (;;) {
-			const chunk = await reader.read();
-			if (chunk.done) break;
-			total += chunk.value.byteLength;
-			if (total > OIDC_RESPONSE_MAX_BYTES) {
-				await reader.cancel();
-				throw oidcFailure();
-			}
-			chunks.push(chunk.value);
-		}
-		return JSON.parse(Buffer.concat(chunks, total).toString('utf8')) as unknown;
-	} catch (error) {
-		if (error instanceof AuthServiceError) throw error;
-		throw oidcFailure();
-	}
 }
 
 function mfaChallengeCookie(
@@ -215,19 +205,137 @@ function safeEqual(left: string, right: string): boolean {
 }
 
 export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
+	/* A workspace id or slug arrives from an anonymous browser, so the lookup is
+	   bounded and throttled before it reaches the database. */
+	const workspaceOf = async (
+		context: Context,
+		reference: string,
+	): Promise<TenantSummary | null> => {
+		if (reference.length === 0 || reference.length > 128) return null;
+		const address = clientAddress(context.request, runtime.trustProxy);
+		/* Without a trusted proxy there is no client address, and a user-agent is
+		   whatever the caller sends, so keying on one would put every anonymous
+		   visitor in the same bucket. The workspace being asked for is the thing
+		   worth bounding: one reference can be enumerated only at this rate, and
+		   asking for another workspace never spends its allowance. */
+		const bucket = reference.trim().toLowerCase();
+		if (
+			!workspaceLookupAttempts.consume(
+				address === null
+					? `workspace:${bucket}`
+					: `workspace:${address}:${bucket}`,
+			)
+		) {
+			throw new AuthServiceError('RATE_LIMITED', 'Try again later.', 429);
+		}
+		return (await runtime.service()).findTenant(reference);
+	};
+
+	/* Sign-in is routed by workspace, so the platform providers a deployment
+	   offers everywhere and the workspace's own providers arrive as one list of
+	   buttons, each carrying where it starts. */
+	const signInProviderOptions = async (
+		workspace: TenantSummary | null,
+	): Promise<readonly SignInProviderOption[]> => {
+		const platform = runtime.settings.signInProviders
+			.filter((id) => runtime.oidcProviders.some((entry) => entry.id === id))
+			.map(
+				(id): SignInProviderOption => ({
+					key: id,
+					label: id,
+					scope: 'platform',
+					startPath: `/api/auth/oidc/${encodeURIComponent(id)}/start`,
+				}),
+			);
+		if (!workspace) return platform;
+		const owned = await (
+			await runtime.service()
+		).identityProviders.listEnabled(workspace.tenantId);
+		return [
+			...owned.map(
+				(provider): SignInProviderOption => ({
+					key: provider.key,
+					label: provider.label,
+					scope: 'tenant',
+					startPath: `/api/auth/oidc/${encodeURIComponent(workspace.slug)}/${encodeURIComponent(provider.key)}/start`,
+				}),
+			),
+			...platform,
+		];
+	};
+
 	const configuration = new ServerRoute({
 		path: '/api/auth/config',
 		methods: ['GET'],
-		handler: () =>
-			response({
-				allowSignUp: runtime.settings.allowSignUp,
-				emailConfirmation: runtime.settings.emailConfirmation,
-				signInProviders: runtime.settings.signInProviders.filter((id) =>
-					runtime.oidcProviders.some((provider) => provider.id === id),
-				),
-				passwordMinLength: runtime.settings.passwordMinLength,
-			}),
+		handler: async (context) => {
+			try {
+				const requested =
+					new URL(context.request.url).searchParams.get('workspace') ?? '';
+				/* An unknown workspace answers exactly as none at all: the password
+				   form and the platform providers, and nothing that tells an
+				   anonymous caller which workspace ids exist. */
+				const workspace = requested
+					? await workspaceOf(context, requested)
+					: null;
+				return response({
+					allowSignUp: runtime.settings.allowSignUp,
+					emailConfirmation: runtime.settings.emailConfirmation,
+					signInProviders: runtime.settings.signInProviders.filter((id) =>
+						runtime.oidcProviders.some((provider) => provider.id === id),
+					),
+					passwordMinLength: runtime.settings.passwordMinLength,
+					workspace: workspace
+						? { slug: workspace.slug, name: workspace.name }
+						: null,
+					providers: await signInProviderOptions(workspace),
+				});
+			} catch (error) {
+				return errorResponse(error);
+			}
+		},
 	});
+
+	const startAuthorization = (options: {
+		readonly provider: OidcProvider;
+		readonly callback: string;
+		readonly scopes: readonly string[];
+		readonly workspace?: string;
+	}): Response => {
+		const state = randomBytes(24).toString('base64url');
+		const nonce = randomBytes(24).toString('base64url');
+		const verifier = randomBytes(32).toString('base64url');
+		const challenge = createHash('sha256').update(verifier).digest('base64url');
+		const authorization = new URL(options.provider.authorizationEndpoint);
+		authorization.searchParams.set('response_type', 'code');
+		authorization.searchParams.set('client_id', options.provider.clientId);
+		authorization.searchParams.set('redirect_uri', options.callback);
+		authorization.searchParams.set('scope', options.scopes.join(' '));
+		authorization.searchParams.set('state', state);
+		authorization.searchParams.set('nonce', nonce);
+		authorization.searchParams.set('code_challenge', challenge);
+		authorization.searchParams.set('code_challenge_method', 'S256');
+		return new Response(null, {
+			status: 302,
+			headers: {
+				location: authorization.toString(),
+				'set-cookie': oidcStateCookie(
+					sealOidcState(
+						{
+							provider: options.provider.id,
+							state,
+							verifier,
+							nonce,
+							...(options.workspace === undefined
+								? {}
+								: { workspace: options.workspace }),
+						},
+						options.provider,
+					),
+					runtime.cookie.secure,
+				),
+			},
+		});
+	};
 
 	const oidcStart = new ServerRoute({
 		path: '/api/auth/oidc/:provider/start',
@@ -247,32 +355,10 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 						'This sign-in provider is not configured.',
 						404,
 					);
-				const state = randomBytes(24).toString('base64url');
-				const verifier = randomBytes(32).toString('base64url');
-				const challenge = createHash('sha256')
-					.update(verifier)
-					.digest('base64url');
-				const callback = `${runtime.publicBaseUrl.replace(/\/$/, '')}/api/auth/oidc/${provider.id}/callback`;
-				const authorization = new URL(provider.authorizationEndpoint);
-				authorization.searchParams.set('response_type', 'code');
-				authorization.searchParams.set('client_id', provider.clientId);
-				authorization.searchParams.set('redirect_uri', callback);
-				authorization.searchParams.set('scope', 'openid email profile');
-				authorization.searchParams.set('state', state);
-				authorization.searchParams.set('code_challenge', challenge);
-				authorization.searchParams.set('code_challenge_method', 'S256');
-				return new Response(null, {
-					status: 302,
-					headers: {
-						location: authorization.toString(),
-						'set-cookie': oidcStateCookie(
-							sealOidcState(
-								{ provider: provider.id, state, verifier },
-								provider,
-							),
-							runtime.cookie.secure,
-						),
-					},
+				return startAuthorization({
+					provider,
+					callback: `${runtime.publicBaseUrl.replace(/\/$/, '')}/api/auth/oidc/${provider.id}/callback`,
+					scopes: ['openid', 'email', 'profile'],
 				});
 			} catch (error) {
 				return errorResponse(error);
@@ -280,104 +366,259 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 		},
 	});
 
+	/**
+	 * The workspace-routed authorization request. The key names a provider the
+	 * workspace owns and offers; the signed state binds both, so a callback that
+	 * arrives for another workspace or another provider is refused before
+	 * anything is exchanged.
+	 */
+	const workspaceOidcStart = new ServerRoute({
+		path: '/api/auth/oidc/:workspace/:key/start',
+		methods: ['GET'],
+		handler: async (context) => {
+			try {
+				const workspace = await workspaceOf(
+					context,
+					context.params.workspace ?? '',
+				);
+				const resolved = workspace
+					? await (
+							await runtime.service()
+						).identityProviders.resolveSignIn(
+							workspace.tenantId,
+							context.params.key ?? '',
+						)
+					: null;
+				if (!resolved || !runtime.publicBaseUrl) {
+					throw new AuthServiceError(
+						'OIDC_NOT_CONFIGURED',
+						'This sign-in provider is not configured.',
+						404,
+					);
+				}
+				return startAuthorization({
+					provider: resolved.oidc,
+					callback: `${runtime.publicBaseUrl.replace(/\/$/, '')}/api/auth/oidc/${encodeURIComponent(context.params.workspace!)}/${encodeURIComponent(resolved.key)}/callback`,
+					scopes: resolved.scopes,
+					workspace: resolved.tenantId,
+				});
+			} catch (error) {
+				return errorResponse(error);
+			}
+		},
+	});
+
+	/* Everything after the browser comes back: the state check, the exchange,
+	   the verified token and the session. The platform route and the
+	   workspace-routed one differ only in what they resolved beforehand. */
+	const completeAuthorization = async (
+		context: Context,
+		options: {
+			readonly provider: OidcProvider;
+			readonly callback: string | null;
+			/** The provider name the binding is stored under. */
+			readonly binding: string;
+			readonly workspace: TenantProviderSignIn | null;
+		},
+	): Promise<Response> => {
+		const expiredState = oidcStateCookie('', runtime.cookie.secure, 0);
+		try {
+			const provider = options.provider;
+			const callback = options.callback;
+			const url = new URL(context.request.url);
+			const encoded = readCookie(context.request, OIDC_STATE_COOKIE);
+			const code = url.searchParams.get('code');
+			const submittedState = url.searchParams.get('state') ?? '';
+			if (
+				!callback ||
+				!encoded ||
+				url.searchParams.get('error') ||
+				!code ||
+				code.length > 4_096 ||
+				submittedState.length > 128
+			)
+				throw oidcFailure();
+			let state: OidcState;
+			try {
+				state = openOidcState(encoded, provider);
+			} catch {
+				throw oidcFailure();
+			}
+			if (!safeEqual(state.state, submittedState)) throw oidcFailure();
+			/* The transaction names the workspace it started in. A state from
+			   another workspace ends here, before the code is exchanged. */
+			if ((state.workspace ?? null) !== (options.workspace?.tenantId ?? null))
+				throw oidcFailure();
+			/* The stored endpoints are guarded again here: a row written before the
+			   guard existed, or a deployment provider configured by hand, must not
+			   turn a sign-in into a request at the deployment's own network. An
+			   anonymous caller learns nothing beyond the generic failure. */
+			try {
+				assertProviderHostAllowed(
+					provider.tokenEndpoint,
+					runtime.providerHosts,
+					'tokenEndpoint',
+				);
+				assertProviderHostAllowed(
+					provider.userInfoEndpoint,
+					runtime.providerHosts,
+					'userInfoEndpoint',
+				);
+			} catch {
+				throw oidcFailure();
+			}
+			const tokenResponse = await fetch(provider.tokenEndpoint, {
+				method: 'POST',
+				headers: {
+					'content-type': 'application/x-www-form-urlencoded',
+					accept: 'application/json',
+				},
+				body: new URLSearchParams({
+					grant_type: 'authorization_code',
+					code,
+					redirect_uri: callback,
+					client_id: provider.clientId,
+					client_secret: provider.clientSecret,
+					code_verifier: state.verifier,
+				}),
+				signal: AbortSignal.timeout(OIDC_REQUEST_TIMEOUT_MS),
+			});
+			if (!tokenResponse.ok) throw oidcFailure();
+			const tokenBody = (await readOidcJson(tokenResponse)) as {
+				access_token?: unknown;
+				id_token?: unknown;
+			};
+			if (
+				typeof tokenBody.access_token !== 'string' ||
+				tokenBody.access_token.length > 8192 ||
+				typeof tokenBody.id_token !== 'string'
+			)
+				throw oidcFailure();
+			/* The ID token is what this server trusts. The access token only
+			   fetches the profile, and the profile is accepted only for the
+			   subject the signed token named. */
+			const identity = await runtime.oidcVerifier.verifyIdToken(
+				provider,
+				tokenBody.id_token,
+				state.nonce,
+			);
+			const profileResponse = await fetch(provider.userInfoEndpoint, {
+				headers: {
+					authorization: `Bearer ${tokenBody.access_token}`,
+					accept: 'application/json',
+				},
+				signal: AbortSignal.timeout(OIDC_REQUEST_TIMEOUT_MS),
+			});
+			if (!profileResponse.ok) throw oidcFailure();
+			const profile = (await readOidcJson(profileResponse)) as {
+				sub?: unknown;
+				email?: unknown;
+				email_verified?: unknown;
+			};
+			if (
+				typeof profile.email !== 'string' ||
+				profile.email.length > 254 ||
+				profile.email_verified !== true ||
+				(profile.sub !== undefined &&
+					(typeof profile.sub !== 'string' ||
+						!safeEqual(profile.sub, identity.subject)))
+			)
+				throw oidcFailure();
+			/* How the account lookup ended is not something an external caller
+			   may tell apart from a token this server refused. */
+			const issued = await (
+				await runtime.service()
+			)
+				.signInExternalIdentity({
+					provider: options.binding,
+					subject: identity.subject,
+					email: profile.email,
+					...(options.workspace ? { workspace: options.workspace } : {}),
+				})
+				.catch(() => {
+					throw oidcFailure();
+				});
+			if ('mfaRequired' in issued) {
+				const headers = new Headers({ location: '/auth/mfa?mfa=oidc' });
+				headers.append(
+					'set-cookie',
+					mfaChallengeCookie(issued.token, runtime.cookie.secure),
+				);
+				headers.append('set-cookie', expiredState);
+				return new Response(null, { status: 302, headers });
+			}
+			const headers = new Headers({
+				location: runtime.applicationPath ?? '/app',
+			});
+			headers.append('set-cookie', sessionCookie(issued.token, runtime.cookie));
+			headers.append('set-cookie', expiredState);
+			return new Response(null, { status: 302, headers });
+		} catch (error) {
+			return responseWithCookies(
+				errorResponse(
+					error instanceof AuthServiceError ? error : oidcFailure(),
+				),
+				expiredState,
+			);
+		}
+	};
+
 	const oidcCallback = new ServerRoute({
 		path: '/api/auth/oidc/:provider/callback',
 		methods: ['GET'],
 		handler: async (context) => {
+			const provider = runtime.oidcProviders.find(
+				(entry) => entry.id === context.params.provider,
+			);
+			if (
+				!provider ||
+				!runtime.settings.signInProviders.includes(provider.id) ||
+				!runtime.publicBaseUrl
+			) {
+				return responseWithCookies(
+					errorResponse(oidcFailure()),
+					oidcStateCookie('', runtime.cookie.secure, 0),
+				);
+			}
+			return completeAuthorization(context, {
+				provider,
+				callback: `${runtime.publicBaseUrl.replace(/\/$/, '')}/api/auth/oidc/${context.params.provider}/callback`,
+				binding: provider.id,
+				workspace: null,
+			});
+		},
+	});
+
+	const workspaceOidcCallback = new ServerRoute({
+		path: '/api/auth/oidc/:workspace/:key/callback',
+		methods: ['GET'],
+		handler: async (context) => {
 			const expiredState = oidcStateCookie('', runtime.cookie.secure, 0);
 			try {
-				const provider = runtime.oidcProviders.find(
-					(entry) => entry.id === context.params.provider,
+				const workspace = await workspaceOf(
+					context,
+					context.params.workspace ?? '',
 				);
-				const callback = runtime.publicBaseUrl
-					? `${runtime.publicBaseUrl.replace(/\/$/, '')}/api/auth/oidc/${context.params.provider}/callback`
+				const resolved = workspace
+					? await (
+							await runtime.service()
+						).identityProviders.resolveSignIn(
+							workspace.tenantId,
+							context.params.key ?? '',
+						)
 					: null;
-				const url = new URL(context.request.url);
-				const encoded = readCookie(context.request, OIDC_STATE_COOKIE);
-				const code = url.searchParams.get('code');
-				const submittedState = url.searchParams.get('state') ?? '';
-				if (
-					!provider ||
-					!runtime.settings.signInProviders.includes(provider.id) ||
-					!callback ||
-					!encoded ||
-					url.searchParams.get('error') ||
-					!code ||
-					code.length > 4_096 ||
-					submittedState.length > 128
-				)
-					throw oidcFailure();
-				let state: OidcState;
-				try {
-					state = openOidcState(encoded, provider);
-				} catch {
-					throw oidcFailure();
-				}
-				if (!safeEqual(state.state, submittedState)) throw oidcFailure();
-				const tokenResponse = await fetch(provider.tokenEndpoint, {
-					method: 'POST',
-					headers: {
-						'content-type': 'application/x-www-form-urlencoded',
-						accept: 'application/json',
+				if (!resolved || !runtime.publicBaseUrl) throw oidcFailure();
+				return await completeAuthorization(context, {
+					provider: resolved.oidc,
+					callback: `${runtime.publicBaseUrl.replace(/\/$/, '')}/api/auth/oidc/${encodeURIComponent(context.params.workspace!)}/${encodeURIComponent(resolved.key)}/callback`,
+					binding: resolved.key,
+					workspace: {
+						tenantId: resolved.tenantId,
+						jitEnabled: resolved.jitEnabled,
+						allowedDomains: resolved.allowedDomains,
+						jitRole: resolved.jitRole,
 					},
-					body: new URLSearchParams({
-						grant_type: 'authorization_code',
-						code,
-						redirect_uri: callback,
-						client_id: provider.clientId,
-						client_secret: provider.clientSecret,
-						code_verifier: state.verifier,
-					}),
-					signal: AbortSignal.timeout(OIDC_REQUEST_TIMEOUT_MS),
 				});
-				if (!tokenResponse.ok) throw oidcFailure();
-				const tokenBody = (await readOidcJson(tokenResponse)) as {
-					access_token?: unknown;
-				};
-				if (
-					typeof tokenBody.access_token !== 'string' ||
-					tokenBody.access_token.length > 8192
-				)
-					throw oidcFailure();
-				const profileResponse = await fetch(provider.userInfoEndpoint, {
-					headers: {
-						authorization: `Bearer ${tokenBody.access_token}`,
-						accept: 'application/json',
-					},
-					signal: AbortSignal.timeout(OIDC_REQUEST_TIMEOUT_MS),
-				});
-				if (!profileResponse.ok) throw oidcFailure();
-				const profile = (await readOidcJson(profileResponse)) as {
-					email?: unknown;
-					email_verified?: unknown;
-				};
-				if (
-					typeof profile.email !== 'string' ||
-					profile.email.length > 254 ||
-					profile.email_verified !== true
-				)
-					throw oidcFailure();
-				const issued = await (
-					await runtime.service()
-				).signInVerifiedExternalEmail(profile.email);
-				if ('mfaRequired' in issued) {
-					const headers = new Headers({ location: '/auth/mfa?mfa=oidc' });
-					headers.append(
-						'set-cookie',
-						mfaChallengeCookie(issued.token, runtime.cookie.secure),
-					);
-					headers.append('set-cookie', expiredState);
-					return new Response(null, { status: 302, headers });
-				}
-				const headers = new Headers({
-					location: runtime.applicationPath ?? '/app',
-				});
-				headers.append(
-					'set-cookie',
-					sessionCookie(issued.token, runtime.cookie),
-				);
-				headers.append('set-cookie', expiredState);
-				return new Response(null, { status: 302, headers });
 			} catch (error) {
 				return responseWithCookies(
 					errorResponse(
@@ -477,9 +718,16 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 			try {
 				assertSameOrigin(context);
 				const body = await readJsonObject(context.request);
+				/* The screen sends the workspace it is on. An empty field is the
+				   same request the screen made before workspaces were routed. */
+				const workspace =
+					body.workspace === undefined
+						? ''
+						: stringField(body, 'workspace').trim();
 				const input: SignInInput = {
 					email: stringField(body, 'email'),
 					password: stringField(body, 'password'),
+					...(workspace === '' ? {} : { workspace }),
 				};
 				const attempt = throttle(context, runtime, input.email);
 				const issued = await (
@@ -602,11 +850,11 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 		handler: async (context) => {
 			try {
 				const session = requireSession(context);
-				return response(
-					await (
-						await runtime.service()
-					).mfaStatus(session.principal.accountId),
-				);
+				const [status, tenant] = await Promise.all([
+					(await runtime.service()).mfaStatus(session.principal.accountId),
+					runtime.tenantSettings(session.principal.tenantId),
+				]);
+				return response({ ...status, required: tenant.requireMfa });
 			} catch (error) {
 				return errorResponse(error);
 			}
@@ -657,6 +905,37 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 					await runtime.service()
 				).confirmTotp(session.principal.accountId, code);
 				return response({ confirmed: true });
+			} catch (error) {
+				return errorResponse(error);
+			}
+		},
+	});
+
+	/* Administrative clearing of a lost factor. It lives beside the enrolment
+	   routes because the factor is auth.core's, and it answers to the member
+	   management scope because that is who administers members. */
+	const mfaReset = new ServerRoute({
+		path: '/api/auth/mfa/reset',
+		methods: ['POST'],
+		handler: async (context) => {
+			const denial = sessionMutationDenial(context, runtime);
+			if (denial) return denial;
+			try {
+				const session = requireSession(context);
+				requireScope(session, BUNDLED_MODULE_SCOPES.usersManage);
+				const body = await readJsonObject(context.request);
+				const accountId = stringField(body, 'accountId');
+				if (accountId.length === 0 || accountId.length > 128) {
+					throw new AuthServiceError(
+						'INVALID_INPUT',
+						'accountId is invalid.',
+						400,
+					);
+				}
+				await (
+					await runtime.service()
+				).resetMemberMfa(actorOf(session), accountId);
+				return response({ reset: true });
 			} catch (error) {
 				return errorResponse(error);
 			}
@@ -871,6 +1150,8 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 		configuration,
 		oidcStart,
 		oidcCallback,
+		workspaceOidcStart,
+		workspaceOidcCallback,
 		changePassword,
 		workspaceAvailability,
 		session,
@@ -882,6 +1163,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 		mfaStatus,
 		mfaEnroll,
 		mfaConfirm,
+		mfaReset,
 		createInvitation,
 		acceptInvitation,
 		switchTenant,
@@ -891,5 +1173,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 		...createRoleRoutes(runtime),
 		...createAuditRoutes(runtime),
 		...createSessionRoutes(runtime),
+		...createIdentityProviderRoutes(runtime),
+		...createMembershipRoutes(runtime),
 	];
 }

@@ -13,7 +13,6 @@ import {
 } from '@flowdular/ui';
 import { activeLocale, t } from '@flowdular/client';
 import { useValue } from 'segment-state';
-import { cadenceMinutes } from '../domain/cadence.ts';
 import type {
 	AutomationSchedule,
 	CreateAutomationScheduleInput,
@@ -43,7 +42,9 @@ function ScheduleSummary(props: { readonly schedule: AutomationSchedule }) @{
 	</span>
 }
 
-function scheduleColumns(): readonly TableColumn<AutomationSchedule>[] {
+function scheduleColumns(
+	timeZone: string,
+): readonly TableColumn<AutomationSchedule>[] {
 	return [
 		{
 			key: 'schedule',
@@ -70,20 +71,20 @@ function scheduleColumns(): readonly TableColumn<AutomationSchedule>[] {
 			key: 'cadence',
 			header: t('automations.schedules.column.cadence'),
 			width: '12%',
-			cell: (schedule) => cadenceLabel(cadenceMinutes(schedule.cadence)),
+			cell: (schedule) => cadenceLabel(schedule.cadence),
 		},
 		{
 			key: 'last-run',
 			header: t('automations.schedules.column.lastRun'),
 			width: '16%',
-			cell: (schedule) => timestampLabel(schedule.lastRunAt),
+			cell: (schedule) => timestampLabel(schedule.lastRunAt, timeZone),
 		},
 		{
 			key: 'next-run',
 			header: t('automations.schedules.column.nextRun'),
 			width: '16%',
 			cell: (schedule) => schedule.enabled
-				? timestampLabel(schedule.nextRunAt)
+				? timestampLabel(schedule.nextRunAt, timeZone)
 				: t('automations.common.paused'),
 		},
 		{
@@ -105,6 +106,7 @@ export function AutomationSchedulesView(props: AutomationSchedulesViewProps) @{
 	const [schedules] = useValue(client.state.schedules);
 	const [targets] = useValue(client.state.targets);
 	const [variables] = useValue(client.state.variables);
+	const [timeZone] = useValue(client.state.timeZone);
 	const [selectedId, setSelectedId] = useValue(client.state.selectedScheduleId);
 	const [status, setStatus] = useValue(client.state.status);
 	const [error, setError] = useValue(client.state.error);
@@ -134,6 +136,7 @@ export function AutomationSchedulesView(props: AutomationSchedulesViewProps) @{
 				transaction.set(client.state.schedules, result.schedules);
 				transaction.set(client.state.targets, result.targets);
 				transaction.set(client.state.variables, result.variables);
+				transaction.set(client.state.timeZone, result.timeZone);
 			}, 'automation-schedules/loaded');
 		} catch (loadError) {
 			setError(
@@ -275,7 +278,7 @@ export function AutomationSchedulesView(props: AutomationSchedulesViewProps) @{
 					<span>{t('automations.common.enabledOnly')}</span>
 				</label>
 			</Filters>}
-			columns={scheduleColumns()}
+			columns={scheduleColumns(timeZone)}
 			rows={visible}
 			rowKey={(schedule) => schedule.id}
 			status={status === 'loading' && schedules.length === 0
@@ -311,7 +314,8 @@ export function AutomationSchedulesView(props: AutomationSchedulesViewProps) @{
 						},
 					]
 				: undefined}
-			note={t('automations.schedules.note')}
+			note={t('automations.schedules.note') + ' ' +
+				t('automations.schedules.timeZoneNote', { zone: timeZone })}
 			noteIcon="shield"
 			caption={t('automations.schedules.table.caption')}
 		/>
@@ -329,6 +333,7 @@ export function AutomationSchedulesView(props: AutomationSchedulesViewProps) @{
 				schedule={selected}
 				targets={targets}
 				variables={variables}
+				timeZone={timeZone}
 				busy={status === 'submitting'}
 				onCancel={() => setEditorOpen(false)}
 				onDelete={selected && props.canManage ? () => remove() : undefined}

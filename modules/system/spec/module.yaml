@@ -1,6 +1,6 @@
-schemaVersion: 1
+schemaVersion: 2
 id: system.core
-specVersion: 0.5.0
+specVersion: 0.7.2
 status: approved
 name: System Core
 description: Provides the application shell, platform health, module discovery, and the administration surface for module settings.
@@ -24,6 +24,8 @@ invariants:
   - Document metadata is rendered during SSR, adopted during hydration, and updated from the active authorized navigation entry.
   - The module catalog exposed to administrators is read from workspace manifests and specifications; it never loads module code and never changes the enabled set.
   - Module settings are declared by their owning module, stored per tenant by auth.core, and changed only through the settings administration API served by system.core, with an audit record.
+  - system.core declares the workspace time zone as a shared tenant setting, system.core.timeZone, defaulting to UTC. Only a name the runtime zone database resolves is stored, in its canonical IANA spelling, and any module that declares a dependency on system.core reads it live through the settings runtime; a value this deployment cannot resolve reads back as UTC instead of failing the reader.
+  - A feature flag is a module setting declared with kind flag, which is a non-secret boolean with a declared default, a label, a description, and tenant scope, the only scope a flag may take. It is stored, read, validated and overridden exactly like any other setting, so a module reads it on the request path through the settings runtime at no cost beyond the settings read itself; system.core adds no flag store, no flag endpoint and no second write path.
 permissions:
   - id: system.workspace.access
     description: Open the authenticated ERP workspace.
@@ -40,7 +42,8 @@ permissions:
 dataOwnership:
   - system.core owns application-shell layout, navigation behavior, route selection, and contribution composition.
   - Feature modules own their navigation metadata and screen implementations.
-  - Module settings values are stored by auth.core on behalf of the declaring module; system.core owns the settings API, the per-module settings section of the Modules drawer, and the settings permissions.
+  - Module settings values are stored by auth.core on behalf of the declaring module; system.core owns the settings API, the per-module settings section of the Modules drawer, the Flags screen, and the settings permissions.
+  - A feature flag is owned by the module that declares it; system.core only lists and edits it, and auth.core records the change.
 acceptanceScenarios:
   - id: SYSTEM-MULTI-VIEW-MODULE
     given: An enabled module contributes multiple valid navigation entries and matching views.
@@ -98,7 +101,31 @@ acceptanceScenarios:
     given: A principal with system.settings.manage submits a value outside the declared type, bounds, or enum, or names an undeclared setting.
     when: The update is processed.
     then: The server rejects it with 400 or 404 and the stored value is unchanged.
+  - id: SYSTEM-TIME-ZONE
+    given: A principal with system.settings.manage sets the workspace time zone to an IANA zone name.
+    when: The value is stored and another module reads system.core.timeZone for that workspace.
+    then: The canonical zone name is stored for that workspace alone, the reader sees it on its next read, and a workspace that set nothing reads UTC.
+  - id: SYSTEM-TIME-ZONE-INVALID
+    given: A principal with system.settings.manage submits a zone name this deployment cannot resolve.
+    when: The update is processed.
+    then: The server rejects it with 400 INVALID_TIME_ZONE, the stored value is unchanged, and no module ever reads an unresolvable zone.
   - id: SYSTEM-SETTINGS-DENY
     given: A principal without the required settings scope, or a mutation carrying an API token instead of a browser session.
     when: The principal reads or changes a setting.
     then: The server returns 401 or 403 and the stored value is unchanged.
+  - id: SYSTEM-FLAGS
+    given: Enabled modules declare feature flags and a principal with system.settings.read opens the Flags screen in Administration > Modules.
+    when: The principal reads the flags and a principal with system.settings.manage turns one on for this workspace, then resets it.
+    then: Every declared flag is listed grouped by its owning module with its current value and a link to the audit trail; the override applies to that workspace alone and takes effect on the next settings read; a reset restores the declared default; each change appends one settings.flag.changed audit event carrying the module, the key, the previous and next values and the actor; and a principal without system.settings.manage is refused with 401 or 403 and changes nothing.
+screens:
+  - id: flags
+    kind: list
+    title: Flags
+    navigationGroup: Administration
+actions:
+  - id: set-flag
+    permission: system.settings.manage
+    kind: update
+    risk: workspace-write
+    idempotent: true
+    description: Turn a declared feature flag on or off for this workspace, or clear the override so the module default applies again.

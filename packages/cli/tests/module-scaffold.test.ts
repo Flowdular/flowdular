@@ -1,3 +1,4 @@
+import { PLATFORM_API_VERSION } from '@flowdular/contracts';
 import {
 	mkdir,
 	mkdtemp,
@@ -87,12 +88,15 @@ describe('module scaffolding', () => {
 			const manifest = JSON.parse(await read(ws.root, 'module.json')) as {
 				platform: unknown;
 				version: string;
+				platformApi: string;
 			};
 			expect(manifest.platform).toEqual({ server: true, client: true });
 			expect(manifest.version).toBe('0.1.0');
+			expect(manifest.platformApi).toBe(`^${PLATFORM_API_VERSION}`);
 
 			const packageJson = JSON.parse(await read(ws.root, 'package.json')) as {
 				exports: Record<string, string>;
+				files: readonly string[];
 				scripts: Record<string, string>;
 				dependencies: Record<string, string>;
 			};
@@ -101,7 +105,16 @@ describe('module scaffolding', () => {
 				'./client': './src/client/index.ts',
 				'./server': './src/server/index.ts',
 				'./platform': './src/platform.ts',
+				'./module.json': './module.json',
 			});
+			expect(packageJson.files).toEqual([
+				'src',
+				'module.json',
+				'migrations',
+				'translations',
+				'spec',
+				'README.md',
+			]);
 			expect(packageJson.scripts.typecheck).toContain('tsrx-tsc');
 			expect(packageJson.dependencies.octane).toBe('0.1.51');
 
@@ -205,6 +218,32 @@ describe('module scaffolding', () => {
 			expect(test).toContain('TRUNCATE inventory_records');
 			expect(test).toContain("'tenant-a'");
 			expect(test).toContain("'tenant-b'");
+		} finally {
+			await rm(ws.root, { recursive: true, force: true });
+		}
+	});
+
+	/* Every file below is generated from one field model shared with version 2
+	   specifications. The snapshot is the guard that a version 1 module keeps
+	   scaffolding exactly what it scaffolded before. */
+	it('produces unchanged output for a version 1 specification', async () => {
+		const ws = await workspace();
+		try {
+			await scaffoldModule(ws, { id: 'inventory.core', specPath, apply: true });
+			for (const path of [
+				'src/domain/types.ts',
+				'src/services/inventory-service.ts',
+				'src/services/database-repository.ts',
+				'src/services/migration.ts',
+				'migrations/0001_inventory_core.up.sql',
+				'src/api/endpoints.ts',
+				'src/client/InventoryView.tsrx',
+				'tests/module.test.ts',
+				'translations/en.json',
+				'translations/pl.json',
+			]) {
+				expect(await read(ws.root, path)).toMatchSnapshot(path);
+			}
 		} finally {
 			await rm(ws.root, { recursive: true, force: true });
 		}

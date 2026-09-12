@@ -200,9 +200,11 @@ substitute the run id as if it were an agent identity.
 
 ### Automations triggers a workflow
 
-Version one preserves module independence with an optional integration module,
-for example `automations-workflows.integration`. It depends on both modules and
-maps a schedule or signed webhook to the execution capability.
+Version one keeps the coupling inside `automations.core`: it declares
+`workflows.core` as a dependency, registers a workflow target adapter in its own
+target registry, and maps a schedule or signed webhook to the execution
+capability. The adapter resolves the capability per call, so a workspace may
+still leave `workflows.core` uninstalled.
 
 ```ts
 await workflows.enqueue(

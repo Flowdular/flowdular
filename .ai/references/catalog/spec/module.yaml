@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: catalog.core
-specVersion: 0.6.1
+specVersion: 0.7.0
 status: approved
 name: Product Catalog Core
 description: Provides tenant-scoped products and services with stable SKUs, units, prices, currencies, and lifecycle state.
@@ -12,9 +12,9 @@ capabilities:
   - translations
 dependencies:
   - id: system.core
-    range: 0.5.0
+    range: ^0.7.0
   - id: auth.core
-    range: 0.10.0
+    range: ^0.13.0
 tenancy: required
 locales:
   - en
@@ -30,6 +30,7 @@ invariants:
   - One tenant-scoped durable target ledger is shared by mutating agent tools and workflow actions; each entry binds an idempotency key to the exact tool identifier or versioned workflow action identifier, canonical input digest, and first persisted result in the same transaction as the catalog mutation.
   - Replaying the same idempotency key for the same operation and canonical input returns the original result without another catalog item or history row, while reuse for another operation or input fails with a stable conflict.
   - Idempotency ledger entries remain after a catalog item is deleted, and audit metadata records identifiers, input digests, and outcomes without raw tool input, credentials, secrets, or result payloads.
+  - catalog.core declares three data classes to the platform registry while it composes and performs their export itself on its own lease under its own tenant transaction. catalog.core.items and catalog.core.history are master data, and each export walks every row of one workspace by keyset in bounded pages, and neither class carries a retention period, a sweep, or an erasure, so a row leaves only when a person deletes it. catalog.core.idempotency-ledger is operational, is never swept, and is excluded from the export with a stated reason because the item it points at is already exported.
 permissions:
   - id: catalog.items.read
     description: Read products and services in the active tenant.
@@ -38,6 +39,7 @@ permissions:
 dataOwnership:
   - catalog.core owns SKU, item identity, kind, unit, base price, currency, and lifecycle status.
   - catalog.core owns the idempotency ledger for its mutating agent tools and workflow actions; callers supply the key but do not maintain a second target ledger.
+  - catalog.core declares the data classes catalog.core.items (catalog_items), catalog.core.history (catalog_items_history_v2, which holds every row of the superseded catalog_items_history) and catalog.core.idempotency-ledger (catalog_idempotency_ledger); items and history are exported per workspace, the ledger is excluded with a stated reason.
   - Sales and purchasing modules reference catalog item identifiers and snapshot commercial terms when required by their specs.
 acceptanceScenarios:
   - id: CATALOG-LIST

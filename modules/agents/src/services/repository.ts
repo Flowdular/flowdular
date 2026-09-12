@@ -69,10 +69,31 @@ export interface CompletedRunCost {
 	readonly costMicroUsd: number | null;
 }
 
+/** Where a run export page resumes: newest queue time first, then run id. */
+export interface AgentRunExportCursor {
+	readonly queuedAt: number;
+	readonly id: string;
+}
+
+/** One run and its steps, as the workspace export presents them. */
+export interface ExportedAgentRun {
+	readonly run: AgentRun;
+	readonly events: readonly AgentExecutionEvent[];
+}
+
 export type PendingAgentAuditEvent = Omit<
 	AgentAuditEvent,
 	'id' | 'sequence' | 'previousHash' | 'eventHash'
 >;
+
+/**
+ * What a caller that may be abandoned hands down to the statement. A read on a
+ * request path passes the signal the caller is bounded by, so the statement is
+ * cancelled with the work nobody is waiting for any more.
+ */
+export interface AgentReadOptions {
+	readonly signal?: AbortSignal | undefined;
+}
 
 export interface AgentRepository {
 	close(): Promise<void>;
@@ -240,6 +261,13 @@ export interface AgentRepository {
 		workerId: string,
 		leaseExpiresAt: number,
 	): Promise<boolean>;
+	/* Hands a claim back to the queue, clearing the lease, for work this worker
+	   took but will not perform. Answers whether the row was still its own. */
+	releaseAction(
+		tenantId: string,
+		invocationId: string,
+		workerId: string,
+	): Promise<boolean>;
 	completeAction(
 		tenantId: string,
 		invocationId: string,
@@ -262,9 +290,49 @@ export interface AgentRepository {
 		completedAt: number,
 		audit: PendingAgentAuditEvent,
 	): Promise<AgentActionInvocation['status'] | null>;
+	/* Keyset page of the run export, newest queue time first, with the steps of
+	   every run on the page. */
+	exportRunsPage(
+		tenantId: string,
+		after: AgentRunExportCursor | null,
+		limit: number,
+	): Promise<readonly ExportedAgentRun[]>;
+	/* Removes at most `limit` settled runs completed before `before`, taking
+	   their steps and child rows with them. A queued or running run is never
+	   removed, whatever the age of the request behind it. */
+	deleteSettledRunsBefore(
+		tenantId: string,
+		before: number,
+		limit: number,
+	): Promise<number>;
+	/* Removes at most `limit` runs one account requested, in any state. */
+	deleteRunsRequestedBy(
+		tenantId: string,
+		accountId: string,
+		limit: number,
+	): Promise<number>;
+	/**
+	 * Takes the standing refusal of one workspace, meter and month, and answers
+	 * whether this call is the one that took it. A refusal stands until the
+	 * month turns or the limit is raised, so only the call that takes it writes
+	 * the audit event and a retry loop adds no second row. The claim removes the
+	 * rows of earlier months, so a workspace holds one row per meter.
+	 */
+	claimMeterRefusal(
+		tenantId: string,
+		meter: string,
+		period: string,
+		at: number,
+	): Promise<boolean>;
 	appendAuditEvent(event: PendingAgentAuditEvent): Promise<AgentAuditEvent>;
 	listAuditEvents(
 		tenantId: string,
+		limit: number,
+	): Promise<readonly AgentAuditEvent[]>;
+	/* Keyset page of the tenant trail in chain order, oldest first. */
+	exportAuditEventsPage(
+		tenantId: string,
+		afterSequence: number,
 		limit: number,
 	): Promise<readonly AgentAuditEvent[]>;
 	/* Keyset page over the tenant trail, newest first, cursor `occurredAt:sequence`. */
@@ -279,6 +347,7 @@ export interface AgentRepository {
 		tenantId: string,
 		fromDay: string,
 		toDay: string,
+		options?: AgentReadOptions,
 	): Promise<readonly AgentUsageDay[]>;
 	usageByAgent(
 		tenantId: string,

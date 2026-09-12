@@ -15,6 +15,25 @@ describe('generateSecrets', () => {
 		}
 	});
 
+	it('covers every module that refuses to boot in production without a key', () => {
+		expect([...SECRET_KEYS]).toEqual(
+			expect.arrayContaining([
+				'FD_AGENT_CREDENTIAL_KEY',
+				'FD_AGENT_RUN_GRANT_KEY',
+				'FD_AUTOMATIONS_CREDENTIAL_KEY',
+				'FD_WORKFLOWS_PAYLOAD_KEY',
+				'FD_WORKFLOWS_CURSOR_KEY',
+				'FD_NOTIFICATIONS_SECRET_KEY',
+				'FD_STORAGE_ENCRYPTION_KEY',
+				'FD_CONNECTORS_SECRET_KEY',
+				'FD_AUDIT_ANCHOR_KEY',
+			]),
+		);
+		expect(
+			Buffer.from(generateSecrets().FD_AUTOMATIONS_CREDENTIAL_KEY, 'base64'),
+		).toHaveLength(32);
+	});
+
 	it('never repeats a value inside one run', () => {
 		const secrets = generateSecrets();
 

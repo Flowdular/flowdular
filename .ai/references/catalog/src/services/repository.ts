@@ -1,4 +1,9 @@
-import type { Actor, HistoryPage, HistoryQuery } from '@flowdular/sdk/kernel';
+import type {
+	Actor,
+	HistoryEntry,
+	HistoryPage,
+	HistoryQuery,
+} from '@flowdular/sdk/kernel';
 import type { CatalogItem } from '../domain/types.ts';
 import type { TargetIdempotencyRequest } from './target-idempotency.ts';
 
@@ -9,9 +14,25 @@ export class DuplicateSkuError extends Error {
 	}
 }
 
+/** Keyset position of an export page: the record time and id of its last row. */
+export interface ExportCursor {
+	readonly at: number;
+	readonly id: string;
+}
+
 /** The database-agnostic business port. No driver type crosses it. */
 export interface CatalogRepository {
 	list(tenantId: string): Promise<readonly CatalogItem[]>;
+	listItemsForExport(
+		tenantId: string,
+		after: ExportCursor | null,
+		limit: number,
+	): Promise<readonly CatalogItem[]>;
+	listHistoryForExport(
+		tenantId: string,
+		after: ExportCursor | null,
+		limit: number,
+	): Promise<readonly HistoryEntry[]>;
 	find(tenantId: string, id: string): Promise<CatalogItem | null>;
 	create(
 		item: CatalogItem,

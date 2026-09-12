@@ -1,15 +1,24 @@
 import {
 	assertRouteConflicts,
+	createMailPort,
+	createModuleMetrics,
 	createModuleWebRoutes,
 	createApplicationRoutes,
+	mailConfigFromEnvironment,
+	serverLogger,
+	serverTracer,
 	validateApplicationPath,
 } from '@flowdular/server';
+import { createDataClassRegistry } from '@flowdular/kernel';
 import { resolve } from 'node:path';
 import { defineConfig, RenderRoute, ServerRoute } from '@octanejs/vite-plugin';
 import {
 	createAuthRoutes,
+	isTokenPrincipal,
+	mfaEnrolmentSatisfied,
 	principalFromContext,
 	createAuthRuntime,
+	nodemailerSmtpTransport,
 	createPlatformAgentRegistry,
 	createPlatformCapabilityRegistry,
 	createPlatformToolRegistry,
@@ -35,6 +44,14 @@ import {
 	createPlatformRuntimeLifecycle,
 	prepareAndActivatePlatformRuntimeLifecycle,
 } from './src/server/lifecycle.ts';
+import { createMetricsRoutes } from './src/server/metrics.ts';
+import { createPlatformObservability } from './src/server/tracing.ts';
+import {
+	createStorageKeyring,
+	createStoragePort,
+	createStorageRoutes,
+	storageConfigFromEnvironment,
+} from './src/server/storage.ts';
 import {
 	clearSetupToken,
 	createFirstRunSetup,
@@ -105,6 +122,16 @@ async function createPlatformConfig() {
 	if (!platformDatabaseConfigured(process.env)) return createFirstRunConfig();
 	clearSetupToken(workspaceRoot);
 	const lifecycle = createPlatformRuntimeLifecycle();
+	/* Composed first and drained last: a trace or an error report is evidence
+	   about the boot that follows it, and both egresses refuse a misconfigured
+	   endpoint here rather than at the first request that needed them. */
+	const observability = createPlatformObservability({
+		environment:
+			process.env.FD_INTERNAL_BUILD === 'true'
+				? { ...process.env, NODE_ENV: 'development' }
+				: process.env,
+	});
+	lifecycle.addQuiesce(() => observability.dispose());
 	const databases = createPlatformDatabaseProvider(
 		databaseProviderConfigFromEnvironment(
 			process.env.FD_INTERNAL_BUILD === 'true'
@@ -114,10 +141,42 @@ async function createPlatformConfig() {
 		),
 	);
 	lifecycle.add(() => databases.dispose());
+	const storageKeyring = createStorageKeyring(process.env, workspaceRoot);
+	const storage = createStoragePort(
+		storageConfigFromEnvironment(
+			process.env.FD_INTERNAL_BUILD === 'true'
+				? { ...process.env, NODE_ENV: 'development' }
+				: process.env,
+			workspaceRoot,
+		),
+		{ keyring: storageKeyring },
+	);
+	lifecycle.add(() => storage.dispose());
+	/* One outbound transport for the whole deployment. auth.core is only its
+	   first sender; the SMTP client comes from that module because it is the one
+	   that declares the dependency. */
+	const mail = createMailPort(
+		mailConfigFromEnvironment(
+			process.env.FD_INTERNAL_BUILD === 'true'
+				? { ...process.env, NODE_ENV: 'development' }
+				: process.env,
+		),
+		{ createSmtpTransport: nodemailerSmtpTransport },
+	);
+	/* Created before the auth runtime so auth.core, which composes outside the
+	   generated module list, declares its data classes into the same registry. */
+	const dataClasses = createDataClassRegistry();
 	const authRuntime = createAuthRuntime({
-		...authRuntimeOptionsFromEnvironment(process.env, workspaceRoot),
+		...authRuntimeOptionsFromEnvironment(
+			process.env.FD_INTERNAL_BUILD === 'true'
+				? { ...process.env, NODE_ENV: 'development' }
+				: process.env,
+			workspaceRoot,
+		),
 		applicationPath: configuredApplicationPath,
 		databases,
+		dataClasses,
+		mail,
 	});
 	lifecycle.add(() => authRuntime.dispose());
 	try {
@@ -136,7 +195,14 @@ async function createPlatformConfig() {
 			agentTools,
 			agentDefinitions,
 			capabilities,
+			dataClasses,
 			databases,
+			storage,
+			mail,
+			/* Rebound to the composing module by the generated composition; this
+			   binding is what a series the platform itself records would carry. */
+			metrics: createModuleMetrics('platform'),
+			tracer: serverTracer(),
 		});
 		for (const composition of moduleCompositions) {
 			if (composition.settings) settings.declare(composition.settings);
@@ -144,6 +210,10 @@ async function createPlatformConfig() {
 			if (composition.dispose) lifecycle.add(composition.dispose);
 		}
 		agentDefinitions.seal();
+		/* Sealed here rather than in a module: every composition has run, which
+		   is exactly when the declarations are final and before any start hook
+		   reads the catalogue. */
+		dataClasses.seal();
 		const config = defineConfig({
 			middlewares: [lifecycle.middleware, authRuntime.middleware],
 			router: {
@@ -155,21 +225,35 @@ async function createPlatformConfig() {
 					}),
 					healthEndpoint.serverRoute,
 					readinessEndpoint.serverRoute,
+					...createMetricsRoutes({ environment: process.env }),
+					...createStorageRoutes({
+						storage,
+						keyring: storageKeyring,
+						environment: process.env,
+					}),
 					...createAuthRoutes(authRuntime),
 					...moduleCompositions.flatMap((composition) => composition.routes),
 					...createModuleWebRoutes({
 						modules: moduleCompositions,
 						mounts: moduleWebMounts,
 						applicationPath: configuredApplicationPath,
-						resolveIdentity: (context) => {
+						resolveIdentity: async (context) => {
 							const principal = principalFromContext(context);
-							return principal
-								? {
-										subjectId: principal.accountId,
-										tenantId: principal.tenantId,
-										permissions: new Set(principal.scopes),
-									}
-								: null;
+							if (!principal) return null;
+							/* The /api gate does not reach these pages, and a member who
+							   still owes enrolment must not read workspace data from one.
+							   Machine credentials cannot enrol and stay exempt there too. */
+							if (
+								!isTokenPrincipal(context) &&
+								!(await mfaEnrolmentSatisfied(authRuntime, principal))
+							) {
+								return null;
+							}
+							return {
+								subjectId: principal.accountId,
+								tenantId: principal.tenantId,
+								permissions: new Set(principal.scopes),
+							};
 						},
 					}),
 					// The explicit /api fallback is more specific than the workspace
@@ -200,10 +284,10 @@ async function createPlatformConfig() {
 		return config;
 	} catch (error) {
 		void lifecycle.retire().catch((disposeError: unknown) => {
-			console.error(
-				'[flowdular] failed platform boot cleanup failed',
-				disposeError,
-			);
+			serverLogger().error('failed platform boot cleanup failed', {
+				module: 'platform',
+				err: disposeError,
+			});
 		});
 		throw error;
 	}

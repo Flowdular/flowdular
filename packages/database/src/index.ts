@@ -67,6 +67,22 @@ export type {
 	DatabaseProviderFactories,
 	DatabaseReadiness,
 } from './provider.ts';
+export {
+	backupKeyFingerprint,
+	backupKeyFingerprints,
+	compareBackupKeys,
+	createBackupManifest,
+	parseBackupManifest,
+	BACKUP_KEY_VARIABLES,
+	BACKUP_MANIFEST_FILE,
+	BACKUP_MANIFEST_VERSION,
+} from './backup.ts';
+export type {
+	BackupKeyComparison,
+	BackupKeyFingerprint,
+	BackupKeyStatus,
+	BackupManifest,
+} from './backup.ts';
 export { appendRecordHistory, queryRecordHistory } from './record-history.ts';
 export { databaseResetPlan, resetDatabase } from './reset.ts';
 export type {

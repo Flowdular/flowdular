@@ -387,7 +387,11 @@ export function createModuleWebRoutes(options: {
 			!surface.pages.some((page) => page.path === '/')
 		)
 			routes.push(fallback(site.path));
-		routes.push(fallback(base + '/*unmatched'));
+		/* A nested mount closes its own subtree. A root mount gets no catch-all:
+		   it would claim the whole origin, and a matched server route pre-empts
+		   the host layers that serve development transforms, built assets and
+		   public files. Unmatched addresses reach those layers and 404 there. */
+		if (base) routes.push(fallback(base + '/*unmatched'));
 	}
 	if (
 		mounts.some((site) => site.path.startsWith('/sites/')) &&

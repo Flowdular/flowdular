@@ -1,7 +1,21 @@
 import type { TagTone } from '@flowdular/ui';
 import { activeLocale, t } from '@flowdular/client/i18n';
+import {
+	cadenceKind,
+	cadenceMinutes,
+	cronExpression,
+} from '../domain/cadence.ts';
 
-export function cadenceLabel(minutes: number): string {
+export function cadenceLabel(cadence: string): string {
+	if (cadenceKind(cadence) === 'cron') {
+		return t('automations.cadence.cron', {
+			expression: cronExpression(cadence),
+		});
+	}
+	return intervalLabel(cadenceMinutes(cadence));
+}
+
+function intervalLabel(minutes: number): string {
 	if (minutes < 60) {
 		return t('automations.cadence.minutes', { count: minutes });
 	}
@@ -25,11 +39,15 @@ export function cadenceLabel(minutes: number): string {
 	});
 }
 
-export function timestampLabel(value: number | null): string {
+export function timestampLabel(
+	value: number | null,
+	timeZone?: string,
+): string {
 	if (value === null) return t('automations.common.notYet');
 	return new Intl.DateTimeFormat(activeLocale(), {
 		dateStyle: 'medium',
 		timeStyle: 'short',
+		...(timeZone ? { timeZone } : {}),
 	}).format(value);
 }
 

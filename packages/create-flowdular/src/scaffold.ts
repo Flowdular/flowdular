@@ -1,6 +1,6 @@
 import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
-import { checkProjectName } from './name.ts';
+import { applicationSlug, checkProjectName } from './name.ts';
 import {
 	generateSecrets,
 	renderEnvironmentFile,
@@ -61,6 +61,27 @@ async function rewritePackageName(
 	await writeFile(path, JSON.stringify(manifest, undefined, '\t') + '\n');
 }
 
+/* Every scaffold would otherwise ship its platform spec under one shared
+   identity, so a lost placeholder has to fail the scaffold. */
+const APPLICATION_SPEC_ID = 'application.app-name';
+
+async function rewriteApplicationSpecId(
+	directory: string,
+	name: string,
+): Promise<void> {
+	const path = join(directory, 'specs', 'application.yaml');
+	const spec = await readFile(path, 'utf8');
+	if (!spec.includes(APPLICATION_SPEC_ID)) {
+		throw new ScaffoldError(
+			`The template spec ${path} no longer carries the "${APPLICATION_SPEC_ID}" placeholder.`,
+		);
+	}
+	await writeFile(
+		path,
+		spec.replace(APPLICATION_SPEC_ID, `application.${applicationSlug(name)}`),
+	);
+}
+
 export async function scaffold(
 	request: ScaffoldRequest,
 ): Promise<ScaffoldResult> {
@@ -86,6 +107,7 @@ export async function scaffold(
 		(await copyTemplate(template, directory)) +
 		(await copyTemplate(agentTemplate, directory));
 	await rewritePackageName(directory, name);
+	await rewriteApplicationSpecId(directory, name);
 	await writeFile(
 		join(directory, '.env'),
 		renderEnvironmentFile(request.secrets ?? generateSecrets()),

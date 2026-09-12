@@ -1,0 +1,211 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flowdular-app
+  labels:
+    app.kubernetes.io/name: flowdular-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: flowdular-app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: flowdular-app
+      annotations:
+        prometheus.io/scrape: 'true'
+        prometheus.io/path: /api/metrics
+        prometheus.io/port: '3000'
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 1001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          # Replace with the image you publish; kustomization.yaml pins the tag.
+          image: ghcr.io/OWNER/REPOSITORY:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: '3000'
+            - name: FD_DATABASE_ADAPTER
+              value: postgresql
+            - name: FD_DATABASE_TLS
+              value: verify-full
+            # One database for the whole deployment. The runtime role holds
+            # neither SUPERUSER nor BYPASSRLS, the migrator owns the schema, and
+            # the background role serves the cross-tenant scheduler poll.
+            - name: FD_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: flowdular-database
+                  key: runtimeUrl
+            - name: FD_DATABASE_MIGRATOR_URL
+              valueFrom:
+                secretKeyRef:
+                  name: flowdular-database
+                  key: migratorUrl
+            - name: FD_DATABASE_BACKGROUND_URL
+              valueFrom:
+                secretKeyRef:
+                  name: flowdular-database
+                  key: backgroundUrl
+            - name: FD_AUTH_ALLOW_SIGN_UP
+              value: 'false'
+            - name: FD_AUTH_SECURE_COOKIE
+              value: 'true'
+            # With none, invitations and password resets are refused. The smtp
+            # transport also needs FD_AUTH_SMTP_URL, which carries the relay
+            # password and belongs in a Secret, and FD_AUTH_MAIL_FROM.
+            # The Service and any ingress sit in front of this port. Set true
+            # only when that ingress overwrites x-forwarded-for.
+            - name: FD_TRUST_PROXY
+              value: 'false'
+            - name: FD_METRICS
+              value: 'true'
+            # Without a token /api/metrics answers any client that can reach the
+            # application port. Optional so a cluster that keeps the port on a
+            # scrape-only network can decide to leave it unset.
+            - name: FD_METRICS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: flowdular-secrets
+                  key: metricsToken
+                  optional: true
+            # Outgoing mail. none refuses workspace invitations and delivers no
+            # password reset message. Switch to smtp once the Secret carries
+            # smtpUrl and set the sender the relay accepts.
+            - name: FD_AUTH_MAIL_TRANSPORT
+              value: 'none'
+            # agents.core, automations.core and workflows.core refuse to boot in
+            # production without their key. See secrets.example.yaml.
+            - name: FD_AGENT_CREDENTIAL_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flowdular-secrets
+                  key: agentCredentialKey
+            - name: FD_AGENT_RUN_GRANT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flowdular-secrets
+                  key: agentRunGrantKey
+            - name: FD_AUTOMATIONS_CREDENTIAL_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flowdular-secrets
+                  key: automationsCredentialKey
+            - name: FD_NOTIFICATIONS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flowdular-secrets
+                  key: notificationsSecretKey
+            - name: FD_WORKFLOWS_PAYLOAD_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flowdular-secrets
+                  key: workflowsPayloadKey
+            - name: FD_WORKFLOWS_CURSOR_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flowdular-secrets
+                  key: workflowsCursorKey
+            # Object storage. Production refuses the local adapter, so every object
+            # goes to an S3-compatible bucket, encrypted under
+            # FD_STORAGE_ENCRYPTION_KEY before it leaves the pod.
+            - name: FD_STORAGE_ADAPTER
+              value: s3
+            - name: FD_STORAGE_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flowdular-secrets
+                  key: storageEncryptionKey
+            - name: FD_CONNECTORS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flowdular-secrets
+                  key: connectorsSecretKey
+            - name: FD_AUDIT_ANCHOR_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flowdular-secrets
+                  key: auditAnchorKey
+            - name: FD_STORAGE_S3_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: flowdular-secrets
+                  key: storageBucket
+            - name: FD_STORAGE_S3_REGION
+              valueFrom:
+                secretKeyRef:
+                  name: flowdular-secrets
+                  key: storageRegion
+            # Empty for AWS. MinIO and R2 set their own endpoint, and most
+            # self-hosted gateways also need FD_STORAGE_S3_FORCE_PATH_STYLE.
+            - name: FD_STORAGE_S3_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: flowdular-secrets
+                  key: storageEndpoint
+                  optional: true
+            - name: FD_STORAGE_S3_FORCE_PATH_STYLE
+              value: 'false'
+            - name: FD_STORAGE_S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: flowdular-secrets
+                  key: storageAccessKeyId
+            - name: FD_STORAGE_S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flowdular-secrets
+                  key: storageSecretAccessKey
+            # Optional: without it only MFA enrollment is unavailable.
+            - name: FD_AUTH_MFA_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flowdular-secrets
+                  key: authMfaKey
+                  optional: true
+          # Readiness also proves the database answers and that the runtime role
+          # holds neither SUPERUSER nor BYPASSRLS; liveness stays static.
+          readinessProbe:
+            httpGet:
+              path: /api/ready
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

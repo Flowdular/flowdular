@@ -1,6 +1,6 @@
-schemaVersion: 1
+schemaVersion: 2
 id: auth.core
-specVersion: 0.10.0
+specVersion: 0.13.7
 status: approved
 name: Authentication Core
 description: Provides tenant-aware accounts, password authentication, sessions, scopes, tenant roles, API tokens for machine clients, the module settings store, the auth audit trail, security headers, authentication screens, and server authorization middleware.
@@ -13,7 +13,7 @@ capabilities:
   - cli
 dependencies:
   - id: system.core
-    range: 0.5.0
+    range: ^0.7.0
 tenancy: required
 locales:
   - en
@@ -28,7 +28,18 @@ invariants:
   - Switching tenant context rotates the session and loads scopes from the target membership.
   - Authorization is evaluated server-side and missing scopes are denied.
   - Sign-up availability is controlled by the auth.allowSignUp module setting and is enforced by both the API and client.
+  - An account may hold no password at all. The administration port creates such a member with an unusable credential marker rather than a placeholder secret, so nothing was drawn that could be guessed or leaked. A password sign-in for it is refused exactly as an unregistered address is, with the same code and the same derivation cost, so the refusal never reports which addresses exist and hold no password yet; the public reset flow and an administrative temporary password both set the first one, an external identity signs the account in unchanged, and a self-service credential change is refused with PASSWORD_NOT_SET, which only a caller already authenticated as the account can reach.
+  - The administration port answers the members of one workspace by address and by search term in the database. A lookup names at most 500 addresses, folded the way a stored address is folded and bound as one array parameter; a search pushes its term and a limit of 1 to 500 into SQL as a display-name prefix or an address prefix, and a byte-ordered expression index covers both, so a keystroke reads the rows the prefix matched rather than the workspace. The display name was matched anywhere until then; a containment is a range no btree answers, so a term inside a name no longer matches. A caller therefore never lists a workspace of unknown size to find the members it already named, and a LIKE wildcard in a term is matched as a character.
+  - The audit query takes an optional inclusive from and to in epoch milliseconds, applied in SQL beside the action, the actor and the keyset cursor and answered by the same (tenant_id, occurred_at, id) index, so a reader of a date window states the window instead of seeding the cursor at its ceiling and watching for its floor. An absent end is open; a bound that is no epoch millisecond, and a window that ends before it starts, are refused with a stable code before the read.
+  - listExternalIdentities answers one bounded page of the identity bindings a workspace's own providers assert, keyset ordered by provider and subject over the unique workspace index. A binding names the account, the provider key, the subject the provider keeps stable and when it was first recorded, and never a token, a secret, a ciphertext, a fingerprint or the address the provider reported. A binding a platform provider made carries no workspace and is not answered; the read is scoped to the workspace it is given, and the permission a reader needs is the calling module's to enforce at its own endpoint.
+  - listTenantMembers keeps its unbounded roll for the callers that hold a workspace of known size and gains a paged form of 1 to 500 members, keyset ordered by account id and answering the cursor of the next page, so a caller may walk a workspace of unknown size without reading it in one statement. Migration 0030 indexes (tenant_id, account_id), which is the order that walk reads.
+  - A workspace created after a module was enabled receives that module's permissions only through the seed lists in acl/scopes.ts, because auth sync-scopes reaches the workspaces that exist when it runs and no later one. A permission an enabled module declares and OWNER_SCOPES does not carry is therefore a defect, and a guard test compares the two against every enabled module specification of flowdular.json, checks what each permissions decision says members hold, and names the declarations still open so none is added silently.
+  - auth.core erases one subject inside one workspace. The sessions and the API tokens that subject holds there are removed outright, live ones included, and the same subject's rows in another workspace are untouched. A call removes at most its batch and reports truncated when it filled one, so the caller comes back rather than believing the class complete. The authentication audit events declare no erase, because the audit specification excludes them as the evidence the data lifecycle happened; retention bounds them instead.
+  - Every data class export walks one workspace by keyset over (tenant_id, id), and an index covers that pair on the sessions, the API tokens and the audit events, so a page is the rows it returns rather than a sort of the workspace.
   - Bundled module scopes are assigned from explicit owner and member defaults and migrated for existing tenant memberships.
+  - The built-in owner role carries the enterprise module scopes directory.tokens.read, directory.tokens.manage, directory.provisioning.read, audit.registry.read, audit.retention.manage, approvals.requests.read, approvals.requests.decide, approvals.requests.manage, documents.files.read, documents.files.manage, metering.usage.read, import.jobs.read, import.jobs.manage, search.records.read, connectors.instances.read and connectors.instances.manage, and the built-in member role carries documents.files.read, documents.files.manage, search.records.read, connectors.instances.read, approvals.requests.read and approvals.requests.decide, because a member decides the requests their role makes them eligible for.
+  - The built-in owner role carries reports.workspace.read, exports.lists.read, exports.lists.manage, access.review.read and access.review.manage, and the built-in member role carries none of them, because a workspace report composes spend, usage and volume across modules (D-REPORTS-AUDIENCE), an access review names every scope, token and provider of the workspace (D-OWNERS-ONLY), and the export decision states what starting an export and opening a file require of the live principal rather than granting a role anything (D-EXPORTS-PERMISSIONS). Migration 0029 grants the five to the owner memberships and the built-in owner role row of every workspace that already exists, and to no member membership and no member role row.
+  - auth.core declares the workspace data it keeps by age as data classes, when the platform hands it the registry. auth.core.sessions is kept for 30 days, auth.core.api-tokens and auth.core.audit-events for 400 days. Each is exportable and swept in bounded batches inside its own tenant transaction; a sweep removes only a session that already expired and a credential already revoked or expired, and no export carries a session token hash, a CSRF token or an API token hash. Memberships, membership scopes, roles, identity providers and module settings are configuration rather than swept classes.
   - An API token is a tenant-scoped machine credential bound to one membership. Only its hash is stored, the raw value is returned exactly once at creation, and it is never recoverable afterwards.
   - API token authority is the intersection of its recorded scopes with the live membership scopes at every request. Revoking a scope or disabling the membership takes effect immediately without touching the token.
   - An API token can never pass a session-guarded mutation. Requests carrying a token instead of a browser session are denied before the handler runs.
@@ -41,16 +52,33 @@ invariants:
   - Every tenant carries the built-in owner and member roles as rows; custom roles are tenant-scoped, grant only grantable scopes, and cannot be edited, deleted, or shadowed when built in or in use.
   - Assigning a role replaces the membership scopes with the role's scopes and keeps the role key on the membership in sync.
   - Module settings are declared by their owning module, stored per tenant (or once for the platform), validated against the declaration on every write, and secret values are never returned.
+  - Every committed module settings change appends exactly one audit event. A setting declared as a feature flag is recorded as settings.flag.changed, carrying the module, the key, the previous and next effective values and the actor; every other setting is recorded as settings.updated, carrying the module, the key, whether the value was cleared and the actor. No declared value of a non-flag setting and no secret value ever reaches the trail.
   - Email confirmation cannot be enabled without a composed mail transport.
   - Password reset and tenant invitation tokens are random, hashed at rest, short lived, single use, and never returned by HTTP APIs.
   - Operator provisioning creates a workspace, its owner and the owner scopes exactly as sign-up does, works against the deployment database, and never reads the sign-up setting.
   - An operator command never returns a password the operator did not supply. It emits a single-use setup or invitation link once, and a supplied password is read from the environment rather than from a command flag.
   - Every operator provisioning command appends an audit row whose actor identifies the operator shell that ran it.
   - TOTP secrets are encrypted with a deployment-provided AES-256 key; a successful password check creates a short-lived, single-use MFA challenge rather than a session.
+  - Every stored TOTP secret records the id of the key that sealed it, and a factor sealed before that id existed stays readable. Retired keys listed in FD_AUTH_MFA_KEY_PREVIOUS open stored factors and seal nothing, and the operator rotation re-seals the stale rows in bounded batches without clobbering a factor re-enrolled while it runs.
+  - A workspace whose auth.core.requireMfa setting is on answers no workspace API and no module web page to a member without a confirmed second factor; a web page resolves no identity for that member and answers 401. Only the platform health and readiness probes, the public sign-in configuration, the account routes that complete enrolment, change the password, switch workspace, or sign out, the settings read, and the settings write whose body targets auth.core.requireMfa stay open; every other settings write is held like any other workspace API. The refusal is the stable MFA_ENROLMENT_REQUIRED problem, and the setting binds the workspace it is stored for and no other.
+  - An API token is exempt from the enrolment requirement, because a service account cannot enrol and its authority is already the intersection of its recorded scopes with the live membership. Browser sessions stay gated.
+  - The requireMfa setting cannot be turned on without a deployment MFA encryption key. The write is refused with MFA_KEY_REQUIRED, the way email confirmation is refused without a composed mail transport, so a workspace can never close itself with no way back.
+  - Clearing another account's second factor requires the member management scope on a browser session, resolves the target inside the acting workspace, removes the factor together with every recovery code, and appends an audit row naming the actor and the target. An account of another workspace answers exactly as an unknown one.
+  - An external sign-in is accepted only after the provider ID token is verified against the key set discovered under the configured issuer, covering the signature, the issuer, the audience, an expiry and issue time within five minutes, and the nonce bound to the signed state cookie. A provider without a configured issuer is refused at boot.
+  - An external identity is the provider subject. It is stored on the account at the first sign-in and resolves the account afterwards; the reported address only bootstraps that first link, and an account already bound to another subject of the same provider is never re-bound.
+  - A password must clear the configured minimum length, must not be one of the hundred most common passwords, and must not contain the local part of the account address.
   - External email delivery is an injected deployment adapter. The local in-memory adapter is development-only and never exposes tokens over HTTP or logs.
+  - The mail transport is chosen by deployment configuration, either none, the in-memory development adapter outside production, or an SMTP relay. A misconfigured transport refuses the boot by naming the variable, and the relay URL and its credentials never reach a response, a log line, or an audit row.
   - Authentication and administration events are appended to an auth audit trail that is readable per tenant and never contains credentials or raw tokens.
   - Every request-time read and write runs on a tenant-scoped database handle, under forced row-level security bound to the transaction tenant.
   - A lookup that arrives with a key and no workspace, such as a session cookie, a bearer token, an invitation link or an email address, resolves the owning tenant on a read-only cross-tenant handle that is granted only the routing columns, and the work that follows runs under the tenant that lookup named.
+  - An OIDC identity provider is either platform-scoped, read from FD_AUTH_OIDC_PROVIDERS at boot and available read-only to every workspace, or tenant-owned, stored in an auth table under forced row-level security and managed only by a principal holding auth.providers.manage in that workspace.
+  - A tenant-owned provider's client secret is generated or entered once, sealed with the auth module keyring under a provider-specific context, rotatable through auth secrets-rotate, returned to nobody after creation, and represented to administrators by its fingerprint alone.
+  - Sign-in is routed by the workspace the person is entering, so the sign-in screen resolves a workspace from the URL or a typed workspace id and offers only that workspace's enabled providers plus the password form; the platform never discovers workspaces from an e-mail address.
+  - An external identity is bound per workspace, provider and subject. A tenant-owned provider can sign an account into its own workspace only; it never grants access to another workspace, and an account already bound to another subject of the same provider in the same workspace is never re-bound.
+  - Just-in-time provisioning is off by default and is enabled per provider together with a required list of allowed e-mail domains and the built-in or custom role a new member receives; without JIT, an external sign-in requires an existing membership, and with JIT a verified address outside the allowed domains is refused before any account or membership is written.
+  - Just-in-time provisioning reuses an existing account only when that account holds no other membership; an address that already belongs to a member of another workspace is refused with a stable error and the workspace invites the person instead, so a tenant-owned provider can never absorb an account that other workspaces rely on.
+  - Membership status is per workspace, so disabling a member in one workspace revokes that membership's sessions and API tokens and refuses its sign-in, leaves the person's other memberships untouched, and the global account status remains the deployment operator's platform-level block.
 permissions:
   - id: auth.profile.read
     description: Read the current account profile.
@@ -70,12 +98,282 @@ permissions:
     description: Create, change, and delete custom tenant roles.
   - id: auth.audit.read
     description: Read the authentication and administration audit trail of the active tenant.
+  - id: auth.providers.read
+    description: Read the identity providers of the active workspace without their secrets.
+  - id: auth.providers.manage
+    description: Create, change, enable, disable, rotate and delete tenant-owned identity providers of the active workspace.
 dataOwnership:
+  - auth.core owns tenant-owned identity providers, their sealed client secrets, the per-workspace external identity bindings and the per-membership status; users.core renders the membership status control and calls the auth administration port.
   - Accounts, tenant memberships, scope grants, and hashed sessions are owned by auth.core.
   - API token identity, hashed secret, recorded scopes, expiry, revocation state, and last use are owned by auth.core.
   - Tenant roles, sign-in failure counters, module settings values, and the auth audit trail are owned by auth.core.
   - Other modules may reference account and tenant identifiers but may not write authentication tables.
+entities:
+  - id: identity-provider
+    name: Identity provider
+    description: A tenant-owned OIDC provider a workspace offers on its sign-in screen; platform providers from the environment are listed alongside, read-only.
+    fields:
+      - id: key
+        type: string
+        required: true
+        unique: tenant
+        maxLength: 64
+        description: The stable identifier used in the sign-in URL for this workspace; lower-case letters, digits and hyphens.
+      - id: label
+        type: string
+        required: true
+        maxLength: 120
+      - id: issuer
+        type: string
+        required: true
+        maxLength: 2048
+        description: The https issuer whose discovery document names it back; verified as today.
+      - id: clientId
+        type: string
+        required: true
+        maxLength: 256
+      - id: secretFingerprint
+        type: string
+        required: true
+        maxLength: 32
+        description: Truncated SHA-256 of the sealed client secret; the secret itself is never readable.
+      - id: scopes
+        type: json
+        required: true
+        description: Array of OIDC scopes requested at authorization; openid and email are always included.
+      - id: jitEnabled
+        type: boolean
+        required: true
+      - id: allowedDomains
+        type: json
+        required: true
+        description: Array of lower-case e-mail domains; required non-empty when jitEnabled is true.
+      - id: jitRole
+        type: string
+        required: true
+        maxLength: 64
+        description: The role key a provisioned member receives; must be a role of the workspace.
+      - id: status
+        type: enum
+        required: true
+        values:
+          - active
+          - disabled
+    states:
+      field: status
+      values:
+        - active
+        - disabled
+      transitions:
+        - from: active
+          to: disabled
+          permission: auth.providers.manage
+        - from: disabled
+          to: active
+          permission: auth.providers.manage
+  - id: external-identity
+    name: External identity binding
+    description: The provider subject bound to an account inside one workspace; platform providers bind without a workspace, as today.
+    fields:
+      - id: provider
+        type: string
+        required: true
+        maxLength: 64
+      - id: subject
+        type: string
+        required: true
+        maxLength: 256
+      - id: accountId
+        type: string
+        required: true
+        maxLength: 128
+  - id: membership
+    name: Membership
+    description: The existing account membership of a workspace, extended with its own status.
+    fields:
+      - id: accountId
+        type: string
+        required: true
+        maxLength: 128
+      - id: role
+        type: string
+        required: true
+        maxLength: 64
+      - id: status
+        type: enum
+        required: true
+        values:
+          - active
+          - disabled
+    states:
+      field: status
+      values:
+        - active
+        - disabled
+      transitions:
+        - from: active
+          to: disabled
+          permission: users.members.manage
+        - from: disabled
+          to: active
+          permission: users.members.manage
+screens:
+  - id: identity-providers
+    kind: list
+    entity: identity-provider
+    title: Identity providers
+    columns:
+      - key
+      - label
+      - issuer
+      - status
+      - jitEnabled
+      - secretFingerprint
+    filters:
+      - status
+    navigationGroup: Administration
+  - id: identity-provider
+    kind: record
+    entity: identity-provider
+    title: Identity provider
+    columns:
+      - key
+      - label
+      - issuer
+      - clientId
+      - scopes
+      - jitEnabled
+      - allowedDomains
+      - jitRole
+      - status
+      - secretFingerprint
+    navigationGroup: Administration
+actions:
+  - id: create-provider
+    entity: identity-provider
+    permission: auth.providers.manage
+    kind: create
+    risk: workspace-write
+    idempotent: false
+    description: Create an active tenant-owned provider; the client secret is accepted once in the request, sealed, and only its fingerprint is returned.
+  - id: update-provider
+    entity: identity-provider
+    permission: auth.providers.manage
+    kind: update
+    risk: workspace-write
+    idempotent: true
+    description: Change label, issuer, client id, scopes, JIT settings or role; a changed issuer is re-verified through discovery.
+  - id: rotate-provider-secret
+    entity: identity-provider
+    permission: auth.providers.manage
+    kind: custom
+    risk: workspace-write
+    idempotent: false
+    description: Accept a new client secret once, seal it and update the fingerprint.
+  - id: disable-provider
+    entity: identity-provider
+    permission: auth.providers.manage
+    kind: custom
+    risk: workspace-write
+    idempotent: true
+    description: Stop offering the provider on the sign-in screen; existing sessions stay valid.
+  - id: enable-provider
+    entity: identity-provider
+    permission: auth.providers.manage
+    kind: custom
+    risk: workspace-write
+    idempotent: true
+    description: Offer the provider again.
+  - id: delete-provider
+    entity: identity-provider
+    permission: auth.providers.manage
+    kind: delete
+    risk: destructive
+    idempotent: true
+    description: Delete a disabled provider and its bindings in this workspace; members keep their accounts and can sign in by password or another provider.
+widgets: []
+settings: []
+agentTools: []
+outOfScope:
+  - SCIM 2.0 users and groups provisioning is a separate module, directory.core, specified after this delivery lands, because per-membership status has to exist first.
+  - SAML and LDAP are not offered; a provider is OIDC with discovery.
+  - Discovering a workspace from an e-mail address is not offered; the person names the workspace first.
+  - E-mailing a provisioned member is deferred to the notifications delivery path once auth mail kinds are extended.
+  - Wording a message in the recipient's own language is deferred; every auth.core message is written in English and declares that locale, so a client renders and reads it as English.
+decisions:
+  - id: D-G2-SCOPE
+    question: What does this G2 delivery contain?
+    answer: Tenant-owned providers, just-in-time provisioning and per-membership status in auth.core; SCIM as a later directory.core specification.
+    decidedBy: user
+  - id: D-G2-ROUTING
+    question: How is a sign-in routed to a workspace when providers are tenant-owned?
+    answer: Workspace first, then the providers of that workspace plus the password form; no discovery by e-mail address.
+    decidedBy: user
+  - id: D-G2-ACCOUNTS
+    question: One global account or identities per workspace?
+    answer: One global account with external identities bound per workspace, provider and subject; a tenant provider signs into its own workspace only.
+    decidedBy: user
+  - id: D-G2-JIT
+    question: What are the JIT defaults?
+    answer: Off by default; enabled per provider with a required allowed-domain list and the role for new members, member by default.
+    decidedBy: user
+  - id: D-G2-MEMBERSHIP-STATUS
+    question: Is member status global or per workspace?
+    answer: Per membership; the global account status stays as the deployment operator's block.
+    decidedBy: user
+  - id: D-G2-ENV-PROVIDERS
+    question: What happens to FD_AUTH_OIDC_PROVIDERS?
+    answer: Kept as platform-scoped providers available read-only to every workspace; tenants add their own.
+    decidedBy: user
+  - id: D-G2-JIT-REUSE
+    question: May JIT attach an existing account that already belongs to other workspaces?
+    answer: No. JIT reuses only an account with no other membership; otherwise the sign-in is refused and the workspace invites the person, because a tenant provider must not absorb an account other workspaces rely on.
+    decidedBy: default
+  - id: D-G2-SECRET-KEY
+    question: Which key seals tenant provider client secrets?
+    answer: The auth module keyring already used for TOTP secrets, under a provider-specific context, so auth secrets-rotate covers both and no new deployment key is introduced.
+    decidedBy: default
+  - id: D-G2-PERMISSIONS
+    question: Who manages tenant providers and membership status?
+    answer: Owners hold auth.providers.read and auth.providers.manage; members hold neither. Membership status changes are users.core actions behind users.members.manage, served by the auth administration port.
+    decidedBy: default
+  - id: D-G2-SCREENS
+    question: Which screens exist?
+    answer: An identity providers list and record drawer under Administration in auth.core; the membership status toggle lives in the users.core member drawer.
+    decidedBy: default
+  - id: D-G2-PROVIDER-KEY
+    question: What identifies a provider in the sign-in URL?
+    answer: A tenant-unique key; the callback path carries the workspace and the key, and the signed state cookie binds both.
+    decidedBy: default
 acceptanceScenarios:
+  - id: AUTH-MEMBER-NO-PASSWORD
+    given: An owner of a workspace creating a member through the administration port without a credential.
+    when: Someone tries to sign that member in with a password, the member completes the public reset flow, and the member tries to change their own password before it is set.
+    then: The sign-in is refused with the same code and the same work an unregistered address is refused with, the reset link sets the first password and signs the member in, the self-service change answers PASSWORD_NOT_SET, and the audit trail names the acting owner, the address, the role and that no credential was stored.
+  - id: AUTH-MEMBER-LOOKUP
+    given: Two workspaces each holding members, and a caller that names addresses rather than listing a workspace.
+    when: The caller looks members up by address, by a search term, with an address in another workspace, past the bound of 500 addresses, and with a LIKE wildcard or a quoting character in the input.
+    then: Only members of the named workspace are answered, the folded address matches whatever the caller typed, the search answers at most the limit it was given, over the bound is refused with INVALID_INPUT, and a wildcard or a quote is matched as a character rather than changing the statement.
+  - id: AUTH-SCOPE-COVERAGE
+    given: The enabled modules of flowdular.json and their specifications.
+    when: The declared permissions are compared with the owner and member seed lists of acl/scopes.ts.
+    then: Every declared permission an enabled module carries is in OWNER_SCOPES or is named in the open list the guard keeps, every permissions decision that says members hold a permission is held by MEMBER_SCOPES, and every one that says they hold none is absent from it.
+  - id: AUTH-AUDIT-HOLDS-SCOPE
+    given: A workspace created before audit.core declared audit.holds.manage, with an owner, a member and a role the workspace wrote itself.
+    when: The migration ledger is applied.
+    then: The owner membership and the built-in owner role row carry the permission without a duplicate of the ones they held, the member and the workspace's own role are untouched, and a membership of the same account in another workspace receives nothing.
+  - id: AUTH-WORKFLOW-AUTOMATION-PROFILE-SCOPES
+    given: A workspace created before the eleven permissions of workflows.core, automations.core and profile.core became owner defaults, with an owner, a member and a role the workspace wrote itself.
+    when: The migration ledger is applied.
+    then: The owner membership and the built-in owner role row carry all eleven without a duplicate of the ones they held, the member membership and the built-in member role row carry profile.self.manage and none of the other ten, the workspace's own role is untouched, and a member membership of the same account in another workspace receives profile.self.manage alone.
+  - id: AUTH-ERASE-SUBJECT
+    given: Two workspaces holding sessions and API tokens of the same subject, and a second subject in the first workspace.
+    when: The erasure of the first subject runs in the first workspace, once with a batch smaller than the rows it holds and again until it is done.
+    then: Only that subject's sessions and tokens in that workspace are removed, live ones included, the other subject and the other workspace keep theirs, a filled batch is reported truncated and the next call finishes, and the authentication audit events report no erase operation at all.
+  - id: AUTH-DATA-CLASSES
+    given: A workspace holding a session that expired long ago, a revoked API token, audit rows older than the retention period, a live session, a usable token and recent audit rows, beside a second workspace holding the same.
+    when: The platform sweeps and exports the auth.core data classes for the first workspace.
+    then: Only the expired session, the retired token and the audit rows older than the cutoff are removed, never more than the batch limit and never a row of the second workspace, and the export carries the remaining rows of the first workspace with no session token hash, CSRF token or API token hash.
   - id: AUTH-TOKEN-ISSUE
     given: An owner with auth.tokens.manage and an active browser session.
     when: The owner issues an API token with a label, a scope subset, and an optional expiry.
@@ -144,6 +442,10 @@ acceptanceScenarios:
     given: A module setting is written through the shared settings runtime by an identified actor.
     when: The value passes the declared validation and the write commits.
     then: The value is persisted in auth.db per tenant (or once for the platform), the next read returns it, and a settings.updated audit event records the actor, the setting, and whether the value was cleared.
+  - id: AUTH-SETTINGS-FLAG-AUDIT
+    given: A setting declared with kind flag is turned on or reset through the shared settings runtime by an identified actor.
+    when: The write commits.
+    then: One settings.flag.changed audit event is appended for the actor's workspace with the module, the key, the previous and next effective values and the actor, no settings.updated event is written for that change, and a failed audit write is reported without undoing the committed setting.
   - id: AUTH-WORKSPACE-SETTINGS
     given: An owner with system.settings.manage on Administration > Settings.
     when: The owner renames the workspace or picks a default locale.
@@ -168,10 +470,38 @@ acceptanceScenarios:
     given: A workspace administrator delivered a tenant invitation through the configured mail adapter.
     when: The invited person submits the unexpired, single-use token with account details.
     then: The account gains only the invited workspace role, the token cannot be reused, and no token appears in logs or audit metadata.
+  - id: AUTH-MAIL-SMTP
+    given: A deployment selects the smtp mail transport with a relay URL and a sender address.
+    when: The server boots and an invitation or a password reset is requested.
+    then: The message is relayed over that transport with a subject and the single-use link, a missing or malformed variable refuses the boot by naming it, and a delivery failure reports a stable error carrying neither the SMTP exchange nor the relay credentials.
   - id: AUTH-MFA-ENROLL
     given: An authenticated account and a configured MFA encryption key.
     when: The account enrolls a TOTP authenticator and confirms a valid rotating code.
     then: The secret stays encrypted at rest, recovery codes are returned only during enrollment, and future sign-in requires a TOTP or unused recovery code.
+  - id: AUTH-MFA-REQUIRED
+    given: A workspace whose auth.core.requireMfa setting is on and a member of it without a confirmed second factor.
+    when: The member calls a workspace API, then the routes that complete enrolment, and finally the same workspace API after confirming a factor.
+    then: The workspace API answers 403 MFA_ENROLMENT_REQUIRED, the enrolment routes answer normally and report that enrolment is required, the same member in a workspace that does not require it is unaffected, and the workspace API answers again once the factor is confirmed.
+  - id: AUTH-MFA-ADMIN-RESET
+    given: An administrator with the member management scope and a member of the same workspace with an enrolled factor and recovery codes.
+    when: The administrator confirms the reset from the member drawer.
+    then: The factor and every recovery code are removed, an auth.mfa.reset audit row names the actor and the target, the member can enrol again, and the same call from a member without the scope, without a session, without a CSRF proof, for the acting account itself, or for an account of another workspace is refused without revealing that the account exists.
+  - id: AUTH-MFA-KEY-ROTATE
+    given: Enrolled TOTP factors sealed with the current MFA encryption key, including rows written before the sealing key id was recorded.
+    when: The deployment boots with a new key in FD_AUTH_MFA_KEY and the old one in FD_AUTH_MFA_KEY_PREVIOUS, and an operator runs auth secrets-rotate without apply and then with it.
+    then: Sign-in challenges keep verifying throughout, the dry run counts the rows per key id and writes nothing, apply re-seals every stale row under the current key, a second run changes nothing, a key in neither slot is refused on the stable MFA_CONFIGURATION_INVALID error, and no output carries key material or an enrolled secret.
+  - id: AUTH-OIDC-VERIFY
+    given: An enabled OIDC provider with a configured issuer.
+    when: The provider returns an authorization code and the callback exchanges it.
+    then: The ID token is verified against the discovered key set for signature, issuer, audience, freshness and the nonce of this transaction, a failure of any of them ends the flow on the stable external sign-in error, and a provider configured without an issuer is refused at boot.
+  - id: AUTH-OIDC-SUBJECT
+    given: An account that has signed in once through an OIDC provider.
+    when: The provider reports another address for the same subject, or another subject for the same address.
+    then: The stored subject resolves the account in the first case, and the second case is refused on the external sign-in error without binding a second identity.
+  - id: AUTH-PASSWORD-DENYLIST
+    given: Any credential path that sets a password.
+    when: The submitted password is one of the hundred most common passwords, or contains the local part of the account address.
+    then: The password is refused with PASSWORD_TOO_COMMON or PASSWORD_CONTAINS_EMAIL, the minimum length keeps its own code, and an unrelated password of sufficient length is accepted.
   - id: AUTH-MFA-OIDC
     given: An account with confirmed TOTP signs in through an enabled, configured OIDC provider.
     when: The provider returns a verified email for that account.
@@ -188,3 +518,39 @@ acceptanceScenarios:
     given: An existing workspace in a deployment with public sign-up disabled.
     when: An operator adds an email address to that workspace with a role.
     then: A known account joins immediately with that role's scopes, an unknown address receives a single-use invitation link that is shown once, and either outcome is appended to the workspace audit trail with the operator as the actor.
+  - id: AUTH-PROVIDER-TENANT-CRUD
+    given: A principal holding auth.providers.manage supplies a unique key, a label, an https issuer that discovers itself, a client id and a client secret.
+    when: The provider is created, updated, disabled, enabled, rotated and deleted after disabling.
+    then: Each accepted transition is persisted under the workspace's forced policy, the secret is never readable after creation and only its fingerprint changes on rotation, deleting an active provider is refused, and a member without the permission is refused before repository access.
+  - id: AUTH-PLATFORM-PROVIDERS
+    given: A deployment configures FD_AUTH_OIDC_PROVIDERS.
+    when: Any workspace's providers are listed or its sign-in screen is rendered.
+    then: The platform providers appear read-only next to the workspace's own, cannot be changed through the workspace API, and keep binding identities without a workspace as before.
+  - id: AUTH-SIGNIN-WORKSPACE-ROUTING
+    given: Two workspaces with different tenant-owned providers.
+    when: A person opens the sign-in screen for one workspace by URL or by typing its id.
+    then: Only that workspace's enabled providers and the platform providers are offered, the authorization state names the workspace and the provider, and a callback whose state names another workspace is refused.
+  - id: AUTH-OIDC-TENANT-BINDING
+    given: A tenant-owned provider of workspace A has bound a subject to an account.
+    when: The same subject signs in through workspace A's provider again, and then a provider of workspace B asserts the same address.
+    then: The first sign-in resolves the account and opens a session in A only; the second is refused unless the account is already a member of B or B's provider provisions it, and it never opens a session in A.
+  - id: AUTH-JIT-PROVISION
+    given: A provider with JIT enabled, allowed domain example.com and role member.
+    when: A verified address at example.com without a membership signs in, and then an address at another domain does.
+    then: The first creates or reuses the account, creates an active member membership with the role's scopes and an audit row, and opens a session; the second is refused with a stable error before any write.
+  - id: AUTH-JIT-DISABLED
+    given: A provider with JIT disabled.
+    when: A verified address without a membership signs in.
+    then: The sign-in is refused with a stable error and no account or membership is written.
+  - id: AUTH-MEMBERSHIP-DISABLE
+    given: An account with active memberships in workspaces A and B and a session and an API token in each.
+    when: An administrator of A disables the membership in A and later re-enables it.
+    then: The sessions and tokens of A are revoked and sign-in into A is refused while B keeps working; after re-enabling, sign-in into A works and previous tokens stay revoked.
+  - id: AUTH-PROVIDER-SECRET-ROTATE
+    given: Tenant-owned providers sealed under the current auth key.
+    when: The deployment rotates the auth key with a previous key configured and runs auth secrets-rotate.
+    then: Every provider secret is re-sealed under the current key in bounded batches, sign-in through those providers keeps working throughout, and the report names no secret.
+  - id: AUTH-JIT-NO-ABSORPTION
+    given: A provider with JIT enabled and an address whose account is already a member of another workspace.
+    when: That address signs in through the provider without a membership here.
+    then: The sign-in is refused with a stable error, no membership or binding is written, and an audit row records the refusal without the address.

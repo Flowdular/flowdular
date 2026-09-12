@@ -1,5 +1,9 @@
 schemaVersion: 1
 # Keys below exist in packages/contracts/schemas/module-spec.schema.json.
+# A new specification is authored at specSchemaVersion 2: it carries the domain
+# model, so the implementing agent reads the spec instead of the repository.
+# An existing version 1 specification stays valid and is not rewritten.
+specSchemaVersion: 2
 status:
   initial: draft
   allowed:
@@ -22,14 +26,54 @@ requiredKeys:
   - permissions
   - dataOwnership
   - acceptanceScenarios
+  - decisions
+  - outOfScope
+byCapability:
+  database:
+    entities: at least one, with every persisted field typed and one field unique inside the tenant
+  client:
+    screens: at least one list screen whose columns and filters are field ids of its entity
+  api:
+    actions: one per mutation, each naming a permission the spec declares
 identifiers:
   id: ^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$
   permissions: <module>.<entity>.read and <module>.<entity>.manage
   acceptanceScenarios: ^[A-Z][A-Z0-9-]+$
+  entities: ^[a-z][a-z0-9-]*$
+  fields: ^[a-z][a-zA-Z0-9]*$
+  screens, actions, widgets: ^[a-z][a-z0-9-]*$
+  settings: ^[a-z][a-zA-Z0-9]*$
+  agentTools: <module>.<entity>.<verb>, the dotted tool identity the registry uses
+  decisions: ^[A-Z][A-Z0-9-]+$
+entities:
+  fieldTypes:
+    - string
+    - text
+    - integer
+    - decimal
+    - boolean
+    - date
+    - datetime
+    - enum
+    - reference
+    - json
+  rules:
+    - an enum field declares values; a reference field names an entity of this
+      spec or <moduleId>.<entityId> of a declared dependency
+    - 'the first entity drives the scaffold: fields become the domain type, the
+      0001 migration columns, the repository mapping and the create input'
+    - states.field names the enum field that declares exactly states.values
+    - no field is called id, tenantId or createdAt; every tenant table owns them
+    - no field is a PostgreSQL reserved word such as order, user, group or end
 acceptanceScenarios:
   minimum: 3
   mustInclude:
     - denial
     - tenant isolation
+decisions:
+  policy: every answered question is recorded, decidedBy user when the operator
+    answered and default when a platform default was applied instead
+outOfScope:
+  policy: what the business excluded, and what the platform does not provide yet
 openQuestions:
   policy: stay in the handoff message; never guessed into the file

@@ -6,9 +6,11 @@ import type {
 	WorkflowAgentNodeV1,
 	WorkflowEdgeV1,
 	WorkflowGraphV1,
+	WorkflowHumanApprovalNodeV1,
 	WorkflowNodeFailurePolicyV1,
 	WorkflowNodeV1,
 } from '../domain/types.ts';
+import { WORKFLOW_LIMITS } from '../domain/types.ts';
 import type {
 	WorkflowActionCatalogItem,
 	WorkflowAgentCatalogItem,
@@ -45,6 +47,113 @@ function boundedInteger(
 	const parsed = Number.parseInt(value, 10);
 	if (!Number.isFinite(parsed)) return minimum;
 	return Math.min(maximum, Math.max(minimum, parsed));
+}
+
+/* The whole requirement is pinned into the published graph, so this is where a
+   role that does not exist becomes a publish error rather than a run that
+   pauses on nobody. */
+function ApprovalRequirementEditor(props: {
+	readonly node: WorkflowHumanApprovalNodeV1;
+	readonly editable: boolean;
+	readonly onChange: (node: WorkflowNodeV1) => void;
+}) @{
+	const requirement = props.node.requirement;
+	const replace = (next: WorkflowHumanApprovalNodeV1['requirement']) =>
+		props.onChange({ ...props.node, requirement: next });
+
+	<div class="ui-form__section">
+		<FormField
+			label={t('workflows.inspector.approvalRole')}
+			help={t('workflows.inspector.approvalRoleHelp')}
+		>
+			<input
+				class="ui-input"
+				value={requirement.roleKey ?? ''}
+				maxlength={64}
+				disabled={!props.editable}
+				onInput={(event) => {
+					const value = event.currentTarget.value.trim();
+					const { roleKey: _dropped, ...rest } = requirement;
+					replace(value === '' ? rest : { ...rest, roleKey: value });
+				}}
+			/>
+		</FormField>
+		<FormField
+			label={t('workflows.inspector.approvalScope')}
+			help={t('workflows.inspector.approvalScopeHelp')}
+		>
+			<input
+				class="ui-input"
+				value={requirement.scope ?? ''}
+				maxlength={96}
+				disabled={!props.editable}
+				onInput={(event) => {
+					const value = event.currentTarget.value.trim();
+					const { scope: _dropped, ...rest } = requirement;
+					replace(value === '' ? rest : { ...rest, scope: value });
+				}}
+			/>
+		</FormField>
+		<FormField label={t('workflows.inspector.approvalDecisions')}>
+			<input
+				class="ui-input"
+				type="number"
+				min="1"
+				max={String(WORKFLOW_LIMITS.maxApprovalDecisions)}
+				value={requirement.decisions ?? 1}
+				disabled={!props.editable}
+				onInput={(event) => replace({
+					...requirement,
+					decisions: boundedInteger(
+						event.currentTarget.value,
+						1,
+						WORKFLOW_LIMITS.maxApprovalDecisions,
+					),
+				})}
+			/>
+		</FormField>
+		<FormField label={t('workflows.inspector.approvalExpiryDays')}>
+			<input
+				class="ui-input"
+				type="number"
+				min="1"
+				max={String(WORKFLOW_LIMITS.maxApprovalExpiryDays)}
+				value={requirement.expiresInDays ?? ''}
+				disabled={!props.editable}
+				onInput={(event) => {
+					const raw = event.currentTarget.value.trim();
+					const { expiresInDays: _dropped, ...rest } = requirement;
+					replace(
+						raw === ''
+							? rest
+							: {
+									...rest,
+									expiresInDays: boundedInteger(
+										raw,
+										1,
+										WORKFLOW_LIMITS.maxApprovalExpiryDays,
+									),
+								},
+					);
+				}}
+			/>
+		</FormField>
+		<FormField label={t('workflows.inspector.approvalPrompt')}>
+			<input
+				class="ui-input"
+				value={props.node.prompt ?? ''}
+				maxlength={200}
+				disabled={!props.editable}
+				onInput={(event) => {
+					const value = event.currentTarget.value;
+					const { prompt: _dropped, ...rest } = props.node;
+					props.onChange(
+						value.trim() === '' ? rest : { ...rest, prompt: value },
+					);
+				}}
+			/>
+		</FormField>
+	</div>
 }
 
 function FailurePolicyEditor(props: {
@@ -358,6 +467,13 @@ export function WorkflowInspector(props: WorkflowInspectorProps) @{
 					<AgentReferenceEditor
 						node={props.node}
 						agents={props.agents}
+						editable={props.editable}
+						onChange={props.onReplaceNode}
+					/>
+				}
+				@if (props.node.type === 'human-approval') {
+					<ApprovalRequirementEditor
+						node={props.node}
 						editable={props.editable}
 						onChange={props.onReplaceNode}
 					/>

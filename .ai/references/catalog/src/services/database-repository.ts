@@ -11,13 +11,20 @@ import {
 import {
 	diffFields,
 	type Actor,
+	type HistoryEntry,
 	type HistoryPage,
 	type HistoryQuery,
+	type RecordChanges,
 	type TrackedFields,
+	type UserActor,
 } from '@flowdular/sdk/kernel';
 import type { CatalogItem } from '../domain/types.ts';
 import { databaseMigrations } from './migration.ts';
-import { DuplicateSkuError, type CatalogRepository } from './repository.ts';
+import {
+	DuplicateSkuError,
+	type CatalogRepository,
+	type ExportCursor,
+} from './repository.ts';
 import {
 	canonicalDigest,
 	TargetIdempotencyCorruptionError,
@@ -35,6 +42,18 @@ const COLUMNS = `id, tenant_id, sku, name, kind, unit, base_price_minor,
    values always use the adapter's parameter channel. */
 const LIST = `SELECT ${COLUMNS} FROM catalog_items
 			 WHERE tenant_id = $1 ORDER BY sku_normalized, id`;
+
+const LIST_FOR_EXPORT = `SELECT ${COLUMNS} FROM catalog_items
+			 WHERE tenant_id = $1
+			   AND ($2::bigint IS NULL OR (created_at, id) > ($2::bigint, $3::text))
+			 ORDER BY created_at, id LIMIT $4`;
+
+const LIST_HISTORY_FOR_EXPORT = `SELECT id, record_id, version, action, actor_kind,
+			  actor_id, actor_label, run_id, configured_by_json, changes_json, occurred_at
+			 FROM ${HISTORY_TABLE}
+			 WHERE tenant_id = $1
+			   AND ($2::bigint IS NULL OR (occurred_at, id) > ($2::bigint, $3::text))
+			 ORDER BY occurred_at, id LIMIT $4`;
 
 const FIND = `SELECT ${COLUMNS} FROM catalog_items WHERE tenant_id = $1 AND id = $2`;
 
@@ -72,6 +91,20 @@ interface CatalogItemRow {
 	currency: string;
 	status: CatalogItem['status'];
 	created_at: number | bigint | string;
+}
+
+interface HistoryRow {
+	id: string;
+	record_id: string;
+	version: number | bigint | string;
+	action: string;
+	actor_kind: Actor['kind'];
+	actor_id: string;
+	actor_label: string;
+	run_id: string | null;
+	configured_by_json: string | null;
+	changes_json: string;
+	occurred_at: number | bigint | string;
 }
 
 interface IdempotencyRow {
@@ -119,6 +152,36 @@ function fromRow(row: CatalogItemRow): CatalogItem {
 	};
 }
 
+function actorFromRow(row: HistoryRow): Actor {
+	const identity = { id: row.actor_id, label: row.actor_label };
+	if (row.actor_kind === 'user') return { kind: 'user', ...identity };
+	if (row.actor_kind === 'agent' && row.run_id !== null) {
+		return { kind: 'agent', ...identity, runId: row.run_id };
+	}
+	if (row.actor_kind === 'service' && row.configured_by_json !== null) {
+		return {
+			kind: 'service',
+			...identity,
+			configuredBy: JSON.parse(row.configured_by_json) as UserActor,
+		};
+	}
+	throw new Error(
+		`The catalog history table returned an invalid actor for "${row.id}".`,
+	);
+}
+
+function historyFromRow(row: HistoryRow): HistoryEntry {
+	return {
+		id: row.id,
+		recordId: row.record_id,
+		version: integer(row.version, 'version'),
+		action: row.action,
+		actor: actorFromRow(row),
+		changes: JSON.parse(row.changes_json) as RecordChanges,
+		occurredAt: integer(row.occurred_at, 'timestamp'),
+	};
+}
+
 /* The fields a history version reports on. Identity, tenancy and creation time
    cannot change and are never part of a diff. */
 function tracked(item: CatalogItem): TrackedFields {
@@ -157,6 +220,40 @@ export class DatabaseCatalogRepository implements CatalogRepository {
 			{ access: 'read', tenantId },
 		);
 		return result.rows.map(fromRow);
+	}
+
+	async listItemsForExport(
+		tenantId: string,
+		after: ExportCursor | null,
+		limit: number,
+	): Promise<readonly CatalogItem[]> {
+		await this.readyPromise;
+		const result = await this.database.transaction(
+			(transaction) =>
+				transaction.query<CatalogItemRow>({
+					text: LIST_FOR_EXPORT,
+					parameters: [tenantId, after?.at ?? null, after?.id ?? null, limit],
+				}),
+			{ access: 'read', tenantId },
+		);
+		return result.rows.map(fromRow);
+	}
+
+	async listHistoryForExport(
+		tenantId: string,
+		after: ExportCursor | null,
+		limit: number,
+	): Promise<readonly HistoryEntry[]> {
+		await this.readyPromise;
+		const result = await this.database.transaction(
+			(transaction) =>
+				transaction.query<HistoryRow>({
+					text: LIST_HISTORY_FOR_EXPORT,
+					parameters: [tenantId, after?.at ?? null, after?.id ?? null, limit],
+				}),
+			{ access: 'read', tenantId },
+		);
+		return result.rows.map(historyFromRow);
 	}
 
 	async find(tenantId: string, id: string): Promise<CatalogItem | null> {

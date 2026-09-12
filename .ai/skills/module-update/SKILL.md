@@ -6,14 +6,20 @@ description: >-
 roles:
   - backend-engineer
   - frontend-engineer
-  - ux-designer
   - business-manager
-  - agentic-engineer
   - module-executor
 when: A brief names an existing module, or a sandbox session is labelled edit-module.
 ---
 
 # Update an existing module
+
+## Spec is the contract
+
+With an approved `schemaVersion: 2` spec delta, the specification is the requirement document. Read the spec, the module itself, the touch list for the change class below, and `.ai/references/catalog` for shape. Do not scan `modules/` or `packages/`: `.ai/platform-capabilities.md` answers what the platform provides.
+
+Anything the delta does not say is a spec defect, not your decision. Report it back (`HANDOFF: business-manager - <what is missing>` in the sandbox, a question to the user on a host) instead of guessing, and never implement an item the spec parks in `outOfScope[]`. Every new or changed `acceptanceScenarios[]` entry maps to at least one test, with the scenario id in the test name.
+
+The spec-element to file mapping is the table in `module-new`; the change classes below are the same mapping arranged by what you are changing.
 
 ## 1. Read first
 
@@ -71,7 +77,7 @@ Business agent: use `business-agent-design` as a separate phase; add the approve
 
 ## 3. Versions and spec
 
-Bump `spec/module.yaml` `specVersion`, `module.json` `version` and `package.json` `version` together (patch for a fix, minor for a new endpoint, screen or column). Add an acceptance scenario for every new behaviour and an invariant for every new rule; the scenario id matches `^[A-Z][A-Z0-9-]+$`. In the sandbox the business manager leaves the changed spec in `draft` or `in-review`; only the operator approval route records the approved hash and permits implementation.
+Bump `spec/module.yaml` `specVersion`, `module.json` `version` and `package.json` `version` together with `pnpm flowdular module version bump <id> <patch|minor|major> --apply` (patch for a fix, minor for a new endpoint, screen or column); it also retargets every dependent `^` range that stops matching. A new `context.capabilities.register` id goes under `provides` in `module.json`; a new `context.capabilities.get` id goes under `requires`. Add an acceptance scenario for every new behaviour and an invariant for every new rule; the scenario id matches `^[A-Z][A-Z0-9-]+$`. In the sandbox the business manager leaves the changed spec in `draft` or `in-review`; only the operator approval route records the approved hash and permits implementation.
 
 ## 4. Gates
 

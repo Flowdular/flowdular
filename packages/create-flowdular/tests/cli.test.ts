@@ -135,6 +135,8 @@ describe('run', () => {
 		expect(out).toContain('pnpm flowdular setup');
 		expect(out).toContain('pnpm dev');
 		expect(out).toContain('http://localhost:4310');
+		expect(out).toContain('pnpm sandbox');
+		expect(out).toContain('AGENTS.md, CLAUDE.md, .ai/skills');
 		expect(
 			JSON.parse(
 				await readFile(join(cwd, 'my-app', 'package.json'), 'utf8'),

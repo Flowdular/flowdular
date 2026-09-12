@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import type { ServerRoute } from '@octanejs/app-core';
 import { createRouter, type Router } from '@octanejs/app-core';
 import {
+	createDataClassRegistry,
 	createModuleSettingsRuntime,
 	createPlatformAgentRegistry,
 	createPlatformCapabilityRegistry,
@@ -28,6 +29,17 @@ import {
 	type SessionModule,
 } from './sessions.ts';
 import type { DatabaseProvider } from '@flowdular/database';
+import {
+	createStorageKeyring,
+	createStoragePort,
+	storageConfigFromEnvironment,
+} from '@flowdular/storage';
+import {
+	createMailPort,
+	createModuleMetrics,
+	mailConfigFromEnvironment,
+	serverTracer,
+} from '@flowdular/server';
 import { createIsolatedPreviewRuntime } from './preview-worker-manager.ts';
 import {
 	resolvePreviewModules,
@@ -152,7 +164,9 @@ async function createPreviewAuth(
 	} catch {
 		credentials = {
 			email: PREVIEW_EMAIL,
-			password: `preview-${randomBytes(12).toString('base64url')}`,
+			/* Entropy only: the platform password policy refuses a password that
+			   carries the local part of the account's own email address. */
+			password: randomBytes(24).toString('base64url'),
 		};
 		await mkdir(paths.data, { recursive: true, mode: 0o700 });
 		await writeFile(credentialPath, JSON.stringify(credentials), {
@@ -204,6 +218,8 @@ async function loadDraftComposition(
 		const composition = draft.createServerComposition({
 			...context,
 			agentDefinitions: context.agentDefinitions.forModule(module.id),
+			dataClasses: context.dataClasses.forModule(module.id),
+			metrics: createModuleMetrics(module.id),
 			workspaceRoot: paths.root,
 		});
 		if (composition.settings) context.settings.declare(composition.settings);
@@ -336,6 +352,17 @@ export function createInProcessPreviewRuntime(
 			const modules: PreviewModuleComposition[] = [];
 			const errors: string[] = [];
 			const agentDefinitions = createPlatformAgentRegistry();
+			const dataClasses = createDataClassRegistry();
+			/* A preview writes objects under its own session directory, never to a
+			   configured object store: a draft module must not reach a deployment's
+			   bucket, and the session directory is removed with the session. */
+			const storage = createStoragePort(
+				storageConfigFromEnvironment(
+					{ ...process.env, NODE_ENV: 'test', FD_STORAGE_ADAPTER: 'local' },
+					paths.root,
+				),
+				{ keyring: createStorageKeyring(process.env, paths.root) },
+			);
 			const context: Omit<PlatformServerContext, 'workspaceRoot'> = {
 				environment: process.env,
 				auth,
@@ -343,7 +370,22 @@ export function createInProcessPreviewRuntime(
 				agentTools: createPlatformToolRegistry() as PlatformToolRegistry,
 				agentDefinitions,
 				capabilities: createPlatformCapabilityRegistry(),
+				dataClasses,
 				databases,
+				storage,
+				/* In memory for the same reason the object store is session-local: a
+				   draft module must not reach anyone from a preview. */
+				mail: createMailPort(
+					mailConfigFromEnvironment({
+						...process.env,
+						NODE_ENV: 'test',
+						FD_MAIL_TRANSPORT: 'development',
+					}),
+				),
+				/* Rebound to each draft module as it composes, as the generated
+				   composition does; this binding is the preview's own. */
+				metrics: createModuleMetrics('sandbox.preview'),
+				tracer: serverTracer(),
 			};
 			for (const module of sources) {
 				const draft = await loadDraftComposition(
@@ -369,6 +411,7 @@ export function createInProcessPreviewRuntime(
 				});
 			}
 			agentDefinitions.seal();
+			dataClasses.seal();
 
 			const account = await (
 				await auth.service()
@@ -417,8 +460,11 @@ export function createInProcessPreviewRuntime(
 						{ status: 500, headers: { 'content-type': 'application/json' } },
 					),
 				/* The session engine outlives a generation, so retiring one releases
-				   the drafts and nothing else. */
-				dispose: () => disposeAll(drafts),
+				   the drafts and the preview object store, and nothing else. */
+				dispose: async () => {
+					await disposeAll(drafts);
+					await storage.dispose();
+				},
 			};
 			compositions.set(session.id, composition);
 			return composition;

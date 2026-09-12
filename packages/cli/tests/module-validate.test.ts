@@ -1,3 +1,4 @@
+import { PLATFORM_API_VERSION } from '@flowdular/contracts';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +13,7 @@ const manifest: ModuleManifest & {
 	id: 'billing.core',
 	package: '@flowdular/module-billing',
 	version: '0.1.0',
+	platformApi: '^0.1.0',
 	profile: 'full',
 	capabilities: ['api', 'client', 'translations'],
 	platform: { server: true, client: true },
@@ -237,6 +239,50 @@ describe('module layout validation', () => {
 			expect(codes(await moduleLayoutIssues(root, manifest))).not.toContain(
 				'error:RAW_TABLE_FORBIDDEN',
 			);
+		} finally {
+			await dispose();
+		}
+	});
+});
+
+describe('module contract drift', () => {
+	it('requires platformApi on an authored module', async () => {
+		const { root, dispose } = await moduleRoot(complete);
+		try {
+			const { platformApi: _omitted, ...withoutPlatformApi } = manifest;
+			const issues = await moduleLayoutIssues(root, withoutPlatformApi);
+			expect(codes(issues)).toContain('error:PLATFORM_API_MISSING');
+			expect(
+				issues.find((issue) => issue.code === 'PLATFORM_API_MISSING')?.message,
+			).toContain(`"platformApi": "^${PLATFORM_API_VERSION}"`);
+		} finally {
+			await dispose();
+		}
+	});
+
+	it('warns when the specification dependencies drift from module.json', async () => {
+		const { root, dispose } = await moduleRoot({
+			...complete,
+			'spec/module.yaml':
+				'id: billing.core\nspecVersion: 0.1.0\ndependencies:\n  - id: auth.core\n    range: 0.11.0\n',
+		});
+		try {
+			const issues = await moduleLayoutIssues(root, {
+				...manifest,
+				dependencies: [{ id: 'auth.core', range: '^0.11.0' }],
+			});
+			expect(codes(issues)).toContain('warning:SPEC_DEPENDENCY_DRIFT');
+			expect(
+				issues.find((issue) => issue.code === 'SPEC_DEPENDENCY_DRIFT')?.message,
+			).toContain('auth.core@0.11.0, auth.core@^0.11.0');
+			expect(
+				codes(
+					await moduleLayoutIssues(root, {
+						...manifest,
+						dependencies: [{ id: 'auth.core', range: '0.11.0' }],
+					}),
+				),
+			).not.toContain('warning:SPEC_DEPENDENCY_DRIFT');
 		} finally {
 			await dispose();
 		}

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { EventEmitter } from 'node:events';
 import { BroadcastChannel } from 'node:worker_threads';
 import type { Middleware } from '@octanejs/app-core';
-import { trackResponseBody } from '@flowdular/server';
+import { serverLogger, trackResponseBody } from '@flowdular/server';
 
 export const PLATFORM_LIFECYCLE_SYMBOL = Symbol.for(
 	'flowdular.platform.runtime-lifecycle',
@@ -106,7 +106,10 @@ export function createPlatformRuntimeLifecycle(): PlatformRuntimeLifecycle {
 				void Promise.resolve()
 					.then(quiesce)
 					.catch((error: unknown) => {
-						console.error('[flowdular] late platform quiesce failed', error);
+						serverLogger().error('late platform quiesce failed', {
+							module: 'platform',
+							err: error,
+						});
 					});
 				return;
 			}
@@ -117,7 +120,10 @@ export function createPlatformRuntimeLifecycle(): PlatformRuntimeLifecycle {
 				void Promise.resolve()
 					.then(dispose)
 					.catch((error: unknown) => {
-						console.error('[flowdular] late platform teardown failed', error);
+						serverLogger().error('late platform teardown failed', {
+							module: 'platform',
+							err: error,
+						});
 					});
 				return;
 			}
@@ -163,7 +169,10 @@ export function activatePlatformRuntimeLifecycle(
 		const retirement = lifecycle.retire();
 		report?.(retirement);
 		void retirement.catch((error: unknown) => {
-			console.error('[flowdular] stale platform teardown failed', error);
+			serverLogger().error('stale platform teardown failed', {
+				module: 'platform',
+				err: error,
+			});
 		});
 	};
 	const onRetire = (report: (retirement: Promise<void>) => void) => {
@@ -183,10 +192,10 @@ export function activatePlatformRuntimeLifecycle(
 		   teardown cannot deadlock the generation it is releasing. */
 		queueMicrotask(() => {
 			void lifecycle.retire().catch((error: unknown) => {
-				console.error(
-					'[flowdular] cross-runner platform teardown failed',
-					error,
-				);
+				serverLogger().error('cross-runner platform teardown failed', {
+					module: 'platform',
+					err: error,
+				});
 			});
 		});
 	};
@@ -211,7 +220,10 @@ export function activatePlatformRuntimeLifecycle(
 		const retirement = previous.retire();
 		retirements.add(retirement);
 		void retirement.catch((error: unknown) => {
-			console.error('[flowdular] stale platform teardown failed', error);
+			serverLogger().error('stale platform teardown failed', {
+				module: 'platform',
+				err: error,
+			});
 		});
 	}
 	return Promise.all(retirements).then(() => undefined);

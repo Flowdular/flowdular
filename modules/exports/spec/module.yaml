@@ -1,0 +1,229 @@
+schemaVersion: 2
+id: exports.core
+specVersion: 0.2.1
+status: approved
+name: Exports Core
+description: Exports any list endpoint that already pages with the platform keyset helpers as one CSV file, through an export job that streams the list's own pages under the requester's grants, writes an RFC 4180 file with a UTF-8 byte order mark to the storage port, bounds the result by rows and by bytes, and answers a short-lived signed read URL; the list itself stays with the module that owns it and registers a declaration through the public capability exports.lists.v1.
+profile: full
+capabilities:
+  - api
+  - database
+  - client
+  - translations
+dependencies:
+  - id: system.core
+    range: ^0.7.0
+  - id: auth.core
+    range: ^0.13.0
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - Persistence runs on the shared asynchronous database contract with explicit PostgreSQL SQL; the job table enables and forces row-level security with USING and WITH CHECK policies bound to the transaction-local tenant id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
+  - An exportable list is a declaration a module registers through the public capability exports.lists.v1 while the platform composes, built with defineListExport from the server package, carrying a dotted id prefixed by the registering module id, a label, the permission the list endpoint itself requires, 1 to 64 columns of key, header and value, and the same page(principal, cursor, limit) the list endpoint already implements. Registration is sealed before the first request, so the catalogue a job was started against cannot change under it, and a declaration naming a module other than the one registering it is refused where it is declared.
+  - exports.core reads no other module's database. Every row it writes into a file came back from that module's own page call, under the same cursor contract, the same ordering and the same tenant predicate the list endpoint applies, so an export can never carry a row the endpoint would not have returned.
+  - Starting an export needs exports.lists.manage and the declared permission of the list being exported, both checked on the live principal before a job row exists, so an export never widens what a member may read. What the background stage carries is a snapshot of the requester taken at start, bounded to 8 KB by the job row and refused at start with REQUESTER_TOO_LARGE when it would not fit; it carries the decision forward and never makes one, is left out of every API response and out of the data class export, and names the job's own workspace rather than any other membership the requester holds.
+  - The Exports screen is where an export is started. It reads the catalogue of registered lists behind exports.lists.read, which answers each list's id, label and registering module and whether the asking principal holds the permission that list declares, and never the permission id itself. The start control is rendered only for a reader holding exports.lists.manage and offers only the lists that reader may export, because a list they may not export could only be refused; both permissions are decided again on the live principal when the start is served, so the catalogue and the control are presentation and never the authorization.
+  - A job is claimed and run by one poll loop on the platform job runner, which owns the timer, the bound on claims per pass, the per-item isolation, the renewal timer and the drain; this module keeps its table, its routing read, its claim statement with its stale window, its renewal statement and every outcome it records. The cross-workspace routing read sees the routing columns alone on the background role, and each job it picks is claimed and run under the workspace that routing row named. A stage whose claim lapsed stops with CLAIM_LOST, records nothing and leaves the job to whoever holds it now.
+  - A file is RFC 4180, with fields separated by commas, records terminated by CRLF, a field quoted only when it carries a comma, a quotation mark, a carriage return or a line feed, and an embedded quotation mark doubled. The file opens with a UTF-8 byte order mark so a spreadsheet reads it as UTF-8 rather than as the reader's code page. Values are written as the declaration answered them and never rewritten, so a cell beginning with an equals sign is data, and this module neither prefixes nor escapes it as a formula.
+  - Neither bound truncates. A job that would cross maxRows fails with EXPORT_ROWS_EXCEEDED and a job that would cross maxBytes fails with EXPORT_BYTES_EXCEEDED, both before an object is written, because half a file that looks whole is worse than no file. The storage port carries its own object ceiling (25 MB by default) and refuses anything larger, so the effective byte bound of an export is the lower of maxBytes and that ceiling, and the refusal is recorded under the same EXPORT_BYTES_EXCEEDED code rather than as two bounds a reader would have to reconcile.
+  - A list that answers a next cursor answers at least one row with it and never answers the cursor it was given, so a walk over a list always ends; a page that breaks either rule fails the job with EXPORT_LIST_STALLED rather than looping. A page longer than the limit it was asked for fails with EXPORT_PAGE_OVERSIZE, and anything a foreign page or column value raises reaches the job as EXPORT_LIST_FAILED, so a defect in another module is recorded as one stable code and never as its own error shape.
+  - The file is written to the storage port under the module id exports.core with the tenant id taken from the job row, which took it from the authenticated principal; no row-level security reaches an object store, so the workspace prefix of the key is the only separation there is. A completed job carries exactly one object and one object belongs to exactly one job.
+  - A read URL is minted per request through the storage port's signed route, never stored on the job and never returned by a list or a plain read, so a signed credential does not reach a log line or a page of results. Minting one needs exports.lists.read, the exported list's own permission on the live principal and a CSRF proof, so a grant revoked after the export stops the download and a member who may see the job list can never open a file whose rows that list would not have shown them; it expires within the hour and answers EXPORT_OBJECT_GONE for a job whose object retention already removed.
+  - The job table is this module's own ledger and the only record it keeps; it writes no audit trail of its own and depends on no audit module.
+  - The data class exports.core.jobs holds the job rows for 30 days. One retention pass chooses its batch of settled jobs once, oldest by started_at then id, deletes each job's storage object before its row, and is bounded by the module's own limit on jobs whatever limit the platform asks for; deleting the object first means the worst outcome of an interrupted pass is a row naming an object that is gone, which the next pass removes, rather than an object nothing references and nothing can ever reclaim. The class export carries the job metadata alone, never the requester snapshot and never the exported file.
+  - Every stable code this module constructs carries a sentence in each declared locale, read out of the source rather than kept by hand, so a code added without copy fails the gate.
+permissions:
+  - id: exports.lists.read
+    description: Read export jobs and open the file of a completed one in the active workspace.
+  - id: exports.lists.manage
+    description: Start an export of a list in the active workspace, alongside the permission that list itself requires.
+dataOwnership:
+  - exports.core owns export jobs, the files it writes under its own module id in the storage port, and the registry of list declarations as recorded.
+  - The module that registered a list owns its rows, its ordering and its permission; the storage port owns the bytes and their encryption; auth.core owns the principal a job runs under.
+entities:
+  - id: job
+    name: Export job
+    description: One export of one registered list into one CSV file.
+    fields:
+      - id: listId
+        type: string
+        required: true
+        maxLength: 96
+        description: The registered list id, module id first, for example users.core.members.
+      - id: status
+        type: enum
+        required: true
+        values:
+          - requested
+          - running
+          - completed
+          - failed
+      - id: rowCount
+        type: integer
+        required: true
+        description: Rows written, excluding the header record.
+      - id: byteCount
+        type: integer
+        required: true
+      - id: objectId
+        type: string
+        required: false
+        unique: tenant
+        maxLength: 128
+        description: The storage object holding the file; absent until the job completes, and one object belongs to one job.
+      - id: requesterAccountId
+        type: string
+        required: true
+        maxLength: 128
+      - id: failureCode
+        type: string
+        required: false
+        maxLength: 64
+        description: The stable code behind a failed job; absent in every other status.
+      - id: startedAt
+        type: datetime
+        required: true
+      - id: completedAt
+        type: datetime
+        required: false
+    states:
+      field: status
+      values:
+        - requested
+        - running
+        - completed
+        - failed
+      transitions:
+        - from: requested
+          to: running
+        - from: running
+          to: completed
+        - from: running
+          to: failed
+screens:
+  - id: jobs
+    kind: list
+    entity: job
+    title: Exports
+    columns:
+      - listId
+      - status
+      - rowCount
+      - byteCount
+      - startedAt
+      - completedAt
+    filters:
+      - status
+    navigationGroup: Operations
+actions:
+  - id: start
+    entity: job
+    permission: exports.lists.manage
+    kind: create
+    risk: workspace-write
+    idempotent: false
+    description: Start an export of a registered list; the request returns once the job is recorded and the poll loop has it.
+  - id: read-url
+    entity: job
+    permission: exports.lists.read
+    kind: custom
+    risk: read
+    idempotent: true
+    description: Mint a short-lived signed URL for the file of a completed job.
+  - id: lists
+    permission: exports.lists.read
+    kind: custom
+    risk: read
+    idempotent: true
+    description: Read the catalogue of registered lists, each with its label, its registering module and whether the asking principal may export it, so the Exports screen can offer a start.
+widgets: []
+settings:
+  - key: maxRows
+    type: integer
+    scope: platform
+    default: 100000
+    description: Rows one export may hold; 100 to 5000000. A list longer than this fails rather than being cut short.
+  - key: maxBytes
+    type: integer
+    scope: platform
+    default: 52428800
+    description: Bytes one export may hold; 1024 to 268435456. The storage port's own object ceiling still applies and is usually lower.
+agentTools: []
+outOfScope:
+  - Formats other than CSV. A spreadsheet workbook, a PDF and a JSON archive are not produced; a workspace archive is audit.core's export.
+  - Bulk actions over a selection. Acting on many rows at once is a screen concern and waits for the Table selection model; this module exports and does nothing else.
+  - Scheduling an export or mailing the file. An export is started by a person and the file is opened from the Exports screen.
+  - Choosing or reordering columns per export. The registering module declares the columns and every export of that list carries all of them.
+  - Exporting a list that does not page with the keyset helpers. A list that loads a whole set has no page to walk and registers no declaration until it is retrofitted.
+decisions:
+  - id: D-EXPORTS-SCOPE
+    question: What does the first version contain?
+    answer: A CSV export of any registered list, a job with its own table and poll loop, a file in the storage port, a signed read URL and the Exports screen; bulk actions ship with the Table selection model instead.
+    decidedBy: user
+  - id: D-EXPORTS-REGISTRATION
+    question: How does a list become exportable?
+    answer: The module owning the list registers a defineListExport declaration through exports.lists.v1 while it composes; exports.core never reads another module's database and never guesses a column.
+    decidedBy: default
+  - id: D-EXPORTS-PERMISSIONS
+    question: Who may export?
+    answer: A member holding exports.lists.manage and the exported list's own permission, both checked on the live principal at start; reading the job list and opening a file needs exports.lists.read.
+    decidedBy: default
+  - id: D-EXPORTS-BOUNDS
+    question: What happens to an export that is too large?
+    answer: It fails with a stable code naming the bound it crossed and writes no file; maxRows defaults to 100000 rows and maxBytes to 50 MB, both platform settings, and the storage port's object ceiling applies underneath them.
+    decidedBy: user
+  - id: D-EXPORTS-DELIVERY
+    question: How does a reader get the file?
+    answer: A short-lived signed storage route minted per request behind exports.lists.read, the exported list's own permission and a CSRF proof, never stored on the job and never carried by a list response.
+    decidedBy: default
+  - id: D-EXPORTS-RETENTION
+    question: How long is an export kept?
+    answer: 30 days as the data class default; the retention pass deletes the storage object and then the job row, so no file outlives the job that names it.
+    decidedBy: default
+acceptanceScenarios:
+  - id: EXPORTS-START
+    given: A registered list of five rows and a principal holding exports.lists.manage and that list's own permission.
+    when: The principal starts an export and the poll loop runs one pass.
+    then: The job completes, the stored file opens with a UTF-8 byte order mark, carries the header record and the five rows in list order with CRLF terminators, and the job records the row count and the byte count of what was written.
+  - id: EXPORTS-LIST-PERMISSION
+    given: A principal holding exports.lists.manage but not the permission the list declares.
+    when: The principal starts an export of that list.
+    then: The start is refused with 403 before a job row exists, and no file is written.
+  - id: EXPORTS-UNKNOWN-LIST
+    given: A list id no module registered.
+    when: A principal holding both permissions starts an export of it.
+    then: The start is refused with 404 and no job row exists.
+  - id: EXPORTS-ROW-BOUND
+    given: A registered list longer than maxRows.
+    when: An export of it runs.
+    then: The job fails with EXPORT_ROWS_EXCEEDED, no storage object is written, and the failure names the bound rather than cutting the file short.
+  - id: EXPORTS-BYTE-BOUND
+    given: A registered list whose rows would cross maxBytes before maxRows.
+    when: An export of it runs.
+    then: The job fails with EXPORT_BYTES_EXCEEDED and no storage object is written.
+  - id: EXPORTS-READ-URL
+    given: A completed export job.
+    when: A principal holding exports.lists.read and the exported list's own permission asks for its read URL, and then a principal holding only exports.lists.read asks for the same.
+    then: The first is answered with a signed storage route under the platform origin that expires within the hour, the second is refused with 403 before any route is minted, and the same request for a job whose object is gone answers EXPORT_OBJECT_GONE.
+  - id: EXPORTS-RETENTION
+    given: A completed export job older than the retention of exports.core.jobs.
+    when: The retention sweep runs for that workspace.
+    then: The storage object and the job row are both gone, and the class export of the workspace carries the remaining job metadata without the requester snapshot and without any file.
+  - id: EXPORTS-CATALOGUE
+    given: Two registered lists, one whose declared permission the principal holds and one it does not.
+    when: A principal holding exports.lists.read reads the catalogue of lists, and then a principal without that permission asks for it.
+    then: The first is answered both lists with their id, label and registering module, the list whose permission the principal holds marked as one it may export and the other not, and no permission id anywhere in the answer; the second is refused with 403.
+  - id: EXPORTS-START-CONTROL
+    given: A principal holding exports.lists.manage on the Exports screen, and a principal holding only exports.lists.read.
+    when: Each of them opens the screen, and the first starts an export of a list it may export.
+    then: The first sees a start control offering only the lists it may export, rendering its loading, empty, error, denied and populated states with copy in every declared locale, and the start records the job and reads the job table again under the filter in force; the second sees no start control at all.
+  - id: EXPORTS-DENY
+    given: A principal is unauthenticated or lacks the required permission.
+    when: The principal reads jobs, starts an export or asks for a read URL.
+    then: The server denies the operation before repository access, and a mutation without a CSRF proof is refused first.
+  - id: EXPORTS-TENANT-BOUNDARY
+    given: Two workspaces with export jobs.
+    when: A runtime transaction bound to one workspace reads or writes them, or the job routing read runs.
+    then: Only that workspace's rows are visible or mutable, the routing read sees routing columns alone on the background role, and a row carrying another tenant identifier is rejected by the forced policy.

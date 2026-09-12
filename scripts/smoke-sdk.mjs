@@ -78,6 +78,7 @@ function run(args, cwd = consumer) {
 console.log(`Clean SDK consumer: ${consumer}`);
 for (const path of [
 	'.ai/README.md',
+	'.ai/platform-capabilities.md',
 	'.ai/guides/application-development.md',
 	'.ai/agents/reviewer.md',
 	'.ai/skills/auto-review/SKILL.md',
@@ -88,6 +89,11 @@ for (const path of [
 	'CLAUDE.md',
 	'rulesync.jsonc',
 	'docs/agent-contract.md',
+	'docs/module-distribution.md',
+	'docs/sandbox.md',
+	'specs/application.yaml',
+	'infra/docker/Dockerfile',
+	'.env.example',
 ])
 	await access(join(consumer, path));
 try {
@@ -98,6 +104,14 @@ try {
 }
 // Exercise the same build-script policy as a normal generated-app install.
 run(['install']);
+// The packed SDK is the sandbox reference fallback for a workspace without its
+// own .ai tree, so it must carry the capability card the skills cite.
+await access(
+	join(
+		consumer,
+		'platform/node_modules/@flowdular/sdk/.ai/platform-capabilities.md',
+	),
+);
 // Only the fixture's tarball overrides were appended outside the formatter.
 run(['exec', 'prettier', '--write', 'pnpm-workspace.yaml']);
 run(['rules:check']);

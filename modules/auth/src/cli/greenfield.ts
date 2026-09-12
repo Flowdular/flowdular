@@ -20,12 +20,12 @@ import { localDatabaseProvider, MIGRATION_REQUIREMENTS } from './database.ts';
 export const GREENFIELD_ACCOUNTS = Object.freeze({
 	admin: Object.freeze({
 		email: 'admin@example.com',
-		password: 'Admin!23456789',
+		password: 'Owner!23456789',
 		displayName: 'Local Administrator',
 	}),
 	user: Object.freeze({
 		email: 'user@example.com',
-		password: 'User!234567890',
+		password: 'Member!2345678',
 		displayName: 'Demo User',
 	}),
 });

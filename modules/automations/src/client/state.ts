@@ -11,6 +11,7 @@ export function createAutomationScheduleClientState() {
 		schedules: cell<readonly AutomationSchedule[]>([]),
 		targets: cell<readonly AutomationTargetOption[]>([]),
 		variables: cell<readonly VariableDefinition[]>([]),
+		timeZone: 'UTC',
 		selectedScheduleId: '',
 		status: cell<'idle' | 'loading' | 'submitting'>('idle'),
 		error: '',

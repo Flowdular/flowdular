@@ -31,9 +31,11 @@ import {
 	stopTurn,
 	streamEject,
 	streamTurn,
+	submitAnswers,
 	uploadAttachment,
 	type EjectPlanView,
 	type EjectTargetId,
+	type SubmittedAnswer,
 	type TurnHandlers,
 } from './client/api.ts';
 import { ChatPane } from './client/ChatPane.tsrx';
@@ -54,11 +56,13 @@ import {
 	type GitHubSettingsInput,
 } from './client/GitHubSettingsModal.tsrx';
 import {
+	answersErrorFor,
 	createSandboxClientState,
 	mergeEntries,
 	mergeSteps,
 	signalReady,
 	sessionIdFromUrl,
+	type AnswersRefusal,
 	type PreviewSelection,
 } from './client/state.ts';
 import {
@@ -121,6 +125,11 @@ export function App(props?: RenderRouteProps) @{
 	const [ejecting, setEjecting] = useValue(sandbox.state.ejecting);
 	const [ejectBuild, setEjectBuild] = useValue(sandbox.state.ejectBuild);
 	const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
+	/* A refused answer belongs beside the form that was refused, not in the
+   session-wide banner and not beside another session's form. */
+	const [answersRefusal, setAnswersRefusal] = useState<AnswersRefusal | null>(
+		null,
+	);
 	const [menuOpen, setMenuOpen] = useValue(sandbox.state.menuOpen);
 	const [githubSettingsOpen, setGitHubSettingsOpen] = useValue(
 		sandbox.state.githubSettingsOpen,
@@ -378,6 +387,35 @@ export function App(props?: RenderRouteProps) @{
 			explicit === undefined ? draft : undefined,
 			freshContext,
 		);
+	};
+
+	/* Answering the open questions is a turn the server composes: it prepends the
+   decisions to the optional note and resumes the specialist that asked. */
+	const answerQuestions = (
+		answers: readonly SubmittedAnswer[],
+		note: string,
+	) => {
+		const session = currentSession();
+		if (!session || sandbox.store.get(sandbox.state.running)) return;
+		const sequence = session.pendingQuestions?.sequence ?? -1;
+		setAnswersRefusal(null);
+		detach();
+		setRunning(true);
+		setError('');
+		const handlers = handlersFor(session.id);
+		turn.controller = submitAnswers(session.id, answers, note, {
+			...handlers,
+			onFailed: (failure) => {
+				if (sandbox.store.get(sandbox.state.activeSessionId) !== session.id) {
+					return;
+				}
+				setAnswersRefusal({
+					session: session.id,
+					sequence,
+					message: failure,
+				});
+			},
+		});
 	};
 
 	const continueWith = (handoff: HandoffPlan) => {
@@ -863,6 +901,7 @@ export function App(props?: RenderRouteProps) @{
 								<ChatPane
 									entries={entries}
 									delivered={Boolean(view.session.ejectedAt)}
+									archived={Boolean(view.session.archivedAt)}
 									roles={state.roles}
 									drivers={state.drivers}
 									modules={view.session.modules}
@@ -875,6 +914,12 @@ export function App(props?: RenderRouteProps) @{
 									busy={busy}
 									selection={selection}
 									autoContinue={view.session.autoContinue}
+									pendingQuestions={view.session.pendingQuestions ?? null}
+									answersError={answersErrorFor(
+										answersRefusal,
+										view.session.id,
+										view.session.pendingQuestions ?? null,
+									)}
 									pendingBrief={startingPoint(view.session, entries)}
 									onStart={() => send(startingPoint(view.session, entries))}
 									onContinue={continueWith}
@@ -893,6 +938,7 @@ export function App(props?: RenderRouteProps) @{
 									onDriver={setDriver}
 									onMessage={setDraft}
 									onSend={(fresh) => send(undefined, fresh)}
+									onAnswers={answerQuestions}
 									onStop={stop}
 									onClearSelection={() => setSelection(null)}
 								/>

@@ -37,3 +37,14 @@ export {
 	automationsModuleSettingsFromEnvironment,
 	automationsSchedulerPollMs,
 } from '../settings.ts';
+export {
+	createWorkflowAutomationTargetAdapter,
+	registerWorkflowAutomationTarget,
+	WorkflowAutomationTargetError,
+} from './workflow-target.ts';
+export {
+	AUTOMATION_SCHEDULE_ACTION_ID,
+	createAutomationWorkflowActionTools,
+	WORKFLOW_DISPATCHABLE_TARGET_KINDS,
+	WorkflowAutomationActionError,
+} from './workflow-tools.ts';

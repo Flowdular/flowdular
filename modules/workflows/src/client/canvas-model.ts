@@ -16,6 +16,7 @@ export const WORKFLOW_NODE_TYPES = [
 	'gate',
 	'validator',
 	'action',
+	'human-approval',
 	'merge',
 	'output',
 ] as const;
@@ -190,6 +191,17 @@ function nodeTemplate(
 				inputPorts: [input],
 				outputPorts: [success, failure],
 				action: { actionId: '', contractVersion: 1 },
+			};
+		case 'human-approval':
+			return {
+				id,
+				label,
+				type,
+				inputPorts: [input],
+				/* One outcome: the run goes on. A rejection or an expiry fails the
+				   run with its own code rather than branching it. */
+				outputPorts: [{ name: 'approved', schemaId: DATA_SCHEMA }],
+				requirement: { roleKey: 'owner', decisions: 1 },
 			};
 		case 'merge':
 			return {

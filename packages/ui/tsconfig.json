@@ -10,5 +10,5 @@
 		"jsxImportSource": "octane",
 		"plugins": [{ "name": "@tsrx/typescript-plugin" }]
 	},
-	"include": ["src/**/*"]
+	"include": ["src/**/*", "tests/**/*"]
 }

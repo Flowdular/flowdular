@@ -69,6 +69,31 @@
 				}
 			}
 		},
+		"provides": {
+			"type": "array",
+			"items": {
+				"type": "string",
+				"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+			},
+			"uniqueItems": true
+		},
+		"requires": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": ["id"],
+				"properties": {
+					"id": {
+						"type": "string",
+						"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+					},
+					"optional": {
+						"type": "boolean"
+					}
+				}
+			}
+		},
 		"tenancy": {
 			"enum": ["required", "optional", "none"]
 		},

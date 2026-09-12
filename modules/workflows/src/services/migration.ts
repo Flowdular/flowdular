@@ -332,6 +332,117 @@ const TENANT_TABLES: readonly (readonly [string, string, string])[] = [
 	],
 ];
 
+export const WORKFLOWS_MIGRATION_004 = `-- The rotation command has to find the payloads still sealed with a retired key
+-- before it knows whose they are. The retention sweep sees only payloads with an
+-- expiry; a rotation covers every live one, so it reads under a policy of its
+-- own and is granted the key id alone. The ciphertext stays unreadable on this
+-- connection, and every payload it re-seals is read again under the tenant that
+-- row named.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
+    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  END IF;
+END
+$$;
+CREATE POLICY workflow_payloads_rotation_policy ON workflow_payloads
+  FOR SELECT TO coreloom_background
+  USING (kind = 'execution');
+GRANT SELECT (encryption_key_id) ON workflow_payloads TO coreloom_background;
+`;
+
+/* Mirrors migrations/0005_workflows_human_approval.up.sql byte for byte. */
+export const WORKFLOWS_MIGRATION_005_HUMAN_APPROVAL = `-- A run waiting on a person waits for days, not for the seconds an agent or an
+-- action takes. Leaving it in 'running' would keep it at the head of the claim
+-- queue, where it would be re-claimed every poll and, because the queue is
+-- ordered by queued_at, would starve every run queued after it.
+--
+-- 'waiting-approval' is the status that takes such a run out of the queue. It
+-- comes back when approvals.core calls back, which sets the node's
+-- next_attempt_at to now, or when the recheck the node armed falls due; the
+-- claim predicate reads that column exactly as it already does for a retry.
+--
+-- The approval itself is the third child kind. It reuses the attempt's
+-- waiting-child machinery, so the request id is stored in child_id and recovery
+-- after a restart finds the open request instead of opening a second one.
+ALTER TABLE workflow_runs DROP CONSTRAINT IF EXISTS workflow_runs_status_check;
+ALTER TABLE workflow_runs ADD CONSTRAINT workflow_runs_status_check
+  CHECK (status IN ('queued', 'running', 'waiting-agent', 'waiting-approval', 'waiting-retry', 'cancel-requested', 'succeeded', 'failed', 'refused', 'cancelled'));
+ALTER TABLE workflow_node_attempts DROP CONSTRAINT IF EXISTS workflow_node_attempts_child_kind_check;
+ALTER TABLE workflow_node_attempts ADD CONSTRAINT workflow_node_attempts_child_kind_check
+  CHECK (child_kind IN ('agent', 'action', 'approval'));
+-- The claim poll has to see that a node is asleep on an approval before it can
+-- decide whether the run is due, and the cross-tenant policy showed it retries
+-- only. It is widened to the second waiting state and no further: the four
+-- routing columns it was already granted stay the whole of what it can read,
+-- and the run is read again under its own tenant before anything is written.
+DROP POLICY IF EXISTS workflow_node_states_background_policy ON workflow_node_states;
+CREATE POLICY workflow_node_states_background_policy ON workflow_node_states
+  FOR SELECT TO coreloom_background
+  USING (status IN ('waiting-retry', 'waiting-child'));
+`;
+
+/* Mirrors migrations/0006_workflows_retention_indexes.up.sql byte for byte. */
+export const WORKFLOWS_MIGRATION_006_RETENTION_INDEXES = `-- The retention sweep of workflows.core.runs asks one workspace for its oldest
+-- settled runs, and a subject erasure asks it for the runs one account
+-- requested. Both are bounded batches, so both need a range scan rather than a
+-- pass over the workspace's runs. The requester lives inside the stored actor
+-- document, so the index is over that one field of it; the export walks the
+-- order workflow_runs_tenant_queue_idx already carries and needs no index of
+-- its own.
+CREATE INDEX IF NOT EXISTS workflow_runs_tenant_settled_idx
+  ON workflow_runs (tenant_id, completed_at);
+CREATE INDEX IF NOT EXISTS workflow_runs_tenant_requester_idx
+  ON workflow_runs (tenant_id, (actor_json::jsonb ->> 'id'), id);
+`;
+
+/* Mirrors migrations/0007_workflows_erasure_subject_indexes.up.sql byte for byte. */
+export const WORKFLOWS_MIGRATION_007_ERASURE_SUBJECT_INDEXES = `-- A subject erasure asks one workspace for the runs a person is behind, and
+-- that is three questions rather than one: the runs the person started, the
+-- runs a service actor they configured started, and the runs an agent started
+-- on their behalf. 0006 indexed the first, which is the only one held in the
+-- actor's own id. These give the other two the same support.
+-- Neither is reachable from the connection the erasure runs on, and 0006's is
+-- not either. The jsonb extraction operator is not leakproof, so under the
+-- forced row level security policy PostgreSQL applies the policy first and the
+-- comparison stays a filter rather than an index condition: measured over
+-- 20000 runs, the runtime role scans the workspace while the migration role
+-- uses the index. The batch limit is what bounds an erasure until the subject
+-- account is stored in a column of its own, which compares leakproof and
+-- indexes plainly; that column is the precise fix and it retires all three.
+CREATE INDEX IF NOT EXISTS workflow_runs_tenant_configured_by_idx
+  ON workflow_runs (tenant_id, (actor_json::jsonb -> 'configuredBy' ->> 'id'), id);
+CREATE INDEX IF NOT EXISTS workflow_runs_tenant_subject_idx
+  ON workflow_runs (tenant_id, (authorization_subject_json::jsonb ->> 'id'), id);
+`;
+
+/* Mirrors migrations/0008_workflows_subject_account.up.sql byte for byte. */
+export const WORKFLOWS_MIGRATION_008_SUBJECT_ACCOUNT = `-- The person behind a run, resolved once at write time instead of read out of
+-- the stored actor document on every erasure. A run started by a person names
+-- them in its actor, a run started by a schedule, a webhook or an automation
+-- names them in the service actor's configuredBy, and a run an agent started
+-- names them in the delegated authorization subject; this column is that one
+-- answer, and the three predicates it replaces become a single equality.
+-- This supersedes the expression indexes of 0006 and 0007, which the erasure
+-- cannot use: the jsonb extraction operator is not leakproof, so under the
+-- forced row level security policy PostgreSQL applies the policy first and the
+-- comparison can never become an index condition. A plain text column compares
+-- leakproof and indexes normally, so the same query becomes an index scan on
+-- the connection the erasure actually runs on. Both older indexes stay because
+-- an applied migration is immutable; they are dead weight, not a hazard.
+ALTER TABLE workflow_runs
+  ADD COLUMN subject_account_id TEXT;
+UPDATE workflow_runs
+SET subject_account_id = COALESCE(
+  actor_json::jsonb -> 'configuredBy' ->> 'id',
+  authorization_subject_json::jsonb ->> 'id',
+  actor_json::jsonb ->> 'id'
+)
+WHERE subject_account_id IS NULL;
+CREATE INDEX IF NOT EXISTS workflow_runs_tenant_subject_account_idx
+  ON workflow_runs (tenant_id, subject_account_id, id);
+`;
+
 export const databaseMigrations: readonly DatabaseMigration[] = [
 	{
 		id: '0001_workflows_core',
@@ -370,6 +481,110 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 			migrationObjectState([
 				() => database.schema.hasIndex('workflow_runs_claim_idx'),
 				() => database.schema.hasIndex('workflow_payloads_retention_idx'),
+			]),
+	},
+	{
+		id: '0004_payload_rotation_inventory',
+		sql: { postgresql: WORKFLOWS_MIGRATION_004 },
+		/* A policy and a grant leave no object the schema reader can see, so the
+		   policy itself proves this migration ran. */
+		inspectExisting: async (database) => {
+			const result = await database.query<{ present: boolean }>({
+				text: `SELECT EXISTS (
+				         SELECT 1 FROM pg_policy
+				         JOIN pg_class ON pg_class.oid = pg_policy.polrelid
+				         JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace
+				         WHERE pg_namespace.nspname = current_schema()
+				           AND pg_class.relname = 'workflow_payloads'
+				           AND pg_policy.polname = 'workflow_payloads_rotation_policy'
+				       ) AS present`,
+			});
+			return result.rows[0]?.present === true ? 'complete' : 'absent';
+		},
+	},
+	{
+		id: '0005_workflows_human_approval',
+		sql: { postgresql: WORKFLOWS_MIGRATION_005_HUMAN_APPROVAL },
+		/* A replaced check constraint leaves no new schema object behind, so each
+		   of the two is proved against the catalogue and a schema carrying only
+		   one of them is partial. The rows are narrowed to this schema's objects
+		   before anything is deparsed: a deparse over the whole catalogue reaches
+		   relations another connection is dropping and fails with a cache lookup
+		   error instead of an answer. */
+		inspectExisting: (database) =>
+			migrationObjectState([
+				async () =>
+					(
+						await database.query<{ present: boolean }>({
+							text: `WITH candidate AS MATERIALIZED (
+							         SELECT oid FROM pg_constraint
+							         WHERE conrelid = to_regclass('workflow_runs')
+							           AND conname = 'workflow_runs_status_check'
+							       )
+							       SELECT EXISTS (
+							         SELECT 1 FROM candidate
+							         WHERE pg_get_constraintdef(oid) LIKE '%waiting-approval%'
+							       ) AS present`,
+						})
+					).rows[0]?.present === true,
+				async () =>
+					(
+						await database.query<{ present: boolean }>({
+							text: `WITH candidate AS MATERIALIZED (
+							         SELECT oid FROM pg_constraint
+							         WHERE conrelid = to_regclass('workflow_node_attempts')
+							           AND conname = 'workflow_node_attempts_child_kind_check'
+							       )
+							       SELECT EXISTS (
+							         SELECT 1 FROM candidate
+							         WHERE pg_get_constraintdef(oid) LIKE '%approval%'
+							       ) AS present`,
+						})
+					).rows[0]?.present === true,
+				async () =>
+					(
+						await database.query<{ present: boolean }>({
+							text: `WITH candidate AS MATERIALIZED (
+							         SELECT pg_policy.polqual, pg_policy.polrelid
+							         FROM pg_policy
+							         WHERE pg_policy.polrelid = to_regclass('workflow_node_states')
+							           AND pg_policy.polname = 'workflow_node_states_background_policy'
+							       )
+							       SELECT EXISTS (
+							         SELECT 1 FROM candidate
+							         WHERE pg_get_expr(polqual, polrelid) LIKE '%waiting-child%'
+							       ) AS present`,
+						})
+					).rows[0]?.present === true,
+			]),
+	},
+	{
+		id: '0006_workflows_retention_indexes',
+		sql: { postgresql: WORKFLOWS_MIGRATION_006_RETENTION_INDEXES },
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() => database.schema.hasIndex('workflow_runs_tenant_settled_idx'),
+				() => database.schema.hasIndex('workflow_runs_tenant_requester_idx'),
+			]),
+	},
+	{
+		id: '0007_workflows_erasure_subject_indexes',
+		sql: { postgresql: WORKFLOWS_MIGRATION_007_ERASURE_SUBJECT_INDEXES },
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() =>
+					database.schema.hasIndex('workflow_runs_tenant_configured_by_idx'),
+				() => database.schema.hasIndex('workflow_runs_tenant_subject_idx'),
+			]),
+	},
+	{
+		id: '0008_workflows_subject_account',
+		sql: { postgresql: WORKFLOWS_MIGRATION_008_SUBJECT_ACCOUNT },
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() => database.schema.hasColumn('workflow_runs', 'subject_account_id'),
+				() =>
+					database.schema.hasIndex('workflow_runs_tenant_subject_account_idx'),
 			]),
 	},
 ];

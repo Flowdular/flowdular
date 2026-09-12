@@ -90,6 +90,7 @@ describe('session approval rendering', () => {
 				},
 			],
 			delivered: false,
+			archived: false,
 			roles: [],
 			drivers: [],
 			modules: [],
@@ -131,6 +132,8 @@ describe('session approval rendering', () => {
 			running: false,
 			selection: null,
 			autoContinue: false,
+			pendingQuestions: null,
+			answersError: '',
 			pendingBrief: '',
 			onStart: noop,
 			onContinue: noop,
@@ -143,6 +146,7 @@ describe('session approval rendering', () => {
 			onDriver: noop,
 			onMessage: noop,
 			onSend: noop,
+			onAnswers: noop,
 			onStop: noop,
 			onClearSelection: noop,
 		};
@@ -150,5 +154,75 @@ describe('session approval rendering', () => {
 		expect(rendered.html).toContain('Zatwierdź');
 		expect(rendered.html).toContain('Plan rezerwacji');
 		expect(rendered.html).toContain('Edytuj specyfikację');
+	});
+	it('answers nothing in an archived session that still has open questions', () => {
+		registerSandboxTranslations();
+		setActiveLocale('en');
+		const noop = () => {};
+		const props: ChatPaneProps = {
+			entries: [
+				{
+					sequence: 4,
+					at: 1,
+					kind: 'system',
+					role: 'business-manager',
+					handoff: {
+						kind: 'question',
+						role: 'business-manager',
+						roleName: 'Business manager',
+						prompt: '',
+						reason: 'Two decisions',
+						module: 'booking',
+					},
+				},
+			],
+			delivered: false,
+			archived: true,
+			roles: [],
+			drivers: [],
+			modules: [],
+			specs: [],
+			role: 'auto',
+			module: '',
+			driver: '',
+			message: '',
+			running: false,
+			selection: null,
+			autoContinue: false,
+			pendingQuestions: {
+				sequence: 4,
+				role: 'business-manager',
+				module: 'booking',
+				askedAt: 1,
+				questions: [
+					{
+						id: 'Q-1',
+						question: 'Who may cancel a booking?',
+						options: ['Only the owner', 'Any team member'],
+						allowFreeText: false,
+					},
+				],
+			},
+			answersError: '',
+			pendingBrief: '',
+			onStart: noop,
+			onContinue: noop,
+			onApprove: noop,
+			onRequestChanges: noop,
+			onEditSpec: noop,
+			onAutoContinue: noop,
+			onRole: noop,
+			onModule: noop,
+			onDriver: noop,
+			onMessage: noop,
+			onSend: noop,
+			onAnswers: noop,
+			onStop: noop,
+			onClearSelection: noop,
+		};
+		const rendered = renderToString(ChatPane, props);
+		expect(rendered.html).toContain('no longer accepts decisions');
+		expect(rendered.html).not.toContain('type="radio"');
+		expect(rendered.html).not.toContain('Send decisions');
 	});
 });

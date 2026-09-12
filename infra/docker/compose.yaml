@@ -65,12 +65,38 @@ services:
       # TLS terminates in front of this container. Only a plain-HTTP run on a
       # workstation may set FD_AUTH_SECURE_COOKIE=false in .env.
       FD_AUTH_SECURE_COOKIE: ${FD_AUTH_SECURE_COOKIE:-true}
-      # Both keys come from infra/docker/.env (copy .env.example). Compose
+      # Outgoing mail. none refuses invitations and delivers no password reset
+      # message; smtp requires the URL and the sender below.
+      FD_AUTH_MAIL_TRANSPORT: ${FD_AUTH_MAIL_TRANSPORT:-none}
+      FD_TRUST_PROXY: ${FD_TRUST_PROXY:-false}
+      FD_METRICS: ${FD_METRICS:-false}
+      FD_METRICS_TOKEN: ${FD_METRICS_TOKEN:-}
+      FD_AUTH_SMTP_URL: ${FD_AUTH_SMTP_URL:-}
+      FD_AUTH_MAIL_FROM: ${FD_AUTH_MAIL_FROM:-}
+      # Every key comes from infra/docker/.env (copy .env.example). Compose
       # refuses to start without them; the app would refuse at boot anyway.
       FD_AGENT_CREDENTIAL_KEY: ${FD_AGENT_CREDENTIAL_KEY:?Set FD_AGENT_CREDENTIAL_KEY in infra/docker/.env (openssl rand -base64 32)}
       FD_AGENT_RUN_GRANT_KEY: ${FD_AGENT_RUN_GRANT_KEY:?Set FD_AGENT_RUN_GRANT_KEY in infra/docker/.env (openssl rand -base64 32)}
+      FD_AUTOMATIONS_CREDENTIAL_KEY: ${FD_AUTOMATIONS_CREDENTIAL_KEY:?Set FD_AUTOMATIONS_CREDENTIAL_KEY in infra/docker/.env (openssl rand -base64 32)}
+      FD_NOTIFICATIONS_SECRET_KEY: ${FD_NOTIFICATIONS_SECRET_KEY:?Set FD_NOTIFICATIONS_SECRET_KEY in infra/docker/.env (openssl rand -base64 32)}
       FD_WORKFLOWS_PAYLOAD_KEY: ${FD_WORKFLOWS_PAYLOAD_KEY:?Set FD_WORKFLOWS_PAYLOAD_KEY in infra/docker/.env (openssl rand -base64 32)}
       FD_WORKFLOWS_CURSOR_KEY: ${FD_WORKFLOWS_CURSOR_KEY:?Set FD_WORKFLOWS_CURSOR_KEY in infra/docker/.env (openssl rand -base64 32)}
+      FD_STORAGE_ENCRYPTION_KEY: ${FD_STORAGE_ENCRYPTION_KEY:?Set FD_STORAGE_ENCRYPTION_KEY in infra/docker/.env (openssl rand -base64 32)}
+      FD_CONNECTORS_SECRET_KEY: ${FD_CONNECTORS_SECRET_KEY:?Set FD_CONNECTORS_SECRET_KEY in infra/docker/.env (openssl rand -base64 32)}
+      FD_AUDIT_ANCHOR_KEY: ${FD_AUDIT_ANCHOR_KEY:?Set FD_AUDIT_ANCHOR_KEY in infra/docker/.env (openssl rand -base64 32)}
+      # Object storage. Production refuses the local adapter, so the app writes
+      # to an S3-compatible bucket and encrypts every object under
+      # FD_STORAGE_ENCRYPTION_KEY before it leaves the process. The named volume
+      # below is the writable path the local adapter needs when this stack is
+      # run outside production for a demonstration.
+      FD_STORAGE_ADAPTER: ${FD_STORAGE_ADAPTER:-s3}
+      FD_STORAGE_LOCAL_DIRECTORY: /var/lib/flowdular/storage
+      FD_STORAGE_S3_BUCKET: ${FD_STORAGE_S3_BUCKET:-}
+      FD_STORAGE_S3_REGION: ${FD_STORAGE_S3_REGION:-}
+      FD_STORAGE_S3_ENDPOINT: ${FD_STORAGE_S3_ENDPOINT:-}
+      FD_STORAGE_S3_ACCESS_KEY_ID: ${FD_STORAGE_S3_ACCESS_KEY_ID:-}
+      FD_STORAGE_S3_SECRET_ACCESS_KEY: ${FD_STORAGE_S3_SECRET_ACCESS_KEY:-}
+      FD_STORAGE_S3_FORCE_PATH_STYLE: ${FD_STORAGE_S3_FORCE_PATH_STYLE:-false}
     ports:
       - '${FD_PORT:-3000}:3000'
     healthcheck:
@@ -89,6 +115,7 @@ services:
       - /tmp:size=64m,mode=1777
     volumes:
       - flowdular-postgres-tls:/tls:ro
+      - flowdular-storage:/var/lib/flowdular/storage
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
@@ -96,3 +123,5 @@ services:
 volumes:
   flowdular-postgres:
   flowdular-postgres-tls:
+  # Only the local adapter writes here; a production run uses the S3 bucket.
+  flowdular-storage:

@@ -884,6 +884,7 @@ const SESSION: SandboxSession = {
 	chainDepth: 0,
 	attachments: [],
 	checkpoints: [],
+	pendingQuestions: null,
 	state: 'draft',
 	createdAt: 0,
 	updatedAt: 0,

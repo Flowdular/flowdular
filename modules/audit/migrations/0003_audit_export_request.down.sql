@@ -1,0 +1,12 @@
+REVOKE SELECT (tenant_id, id, status, started_at) ON audit_export_runs FROM coreloom_background;
+DROP POLICY IF EXISTS audit_export_runs_background_policy ON audit_export_runs;
+DROP INDEX IF EXISTS audit_export_runs_pending_idx;
+ALTER TABLE audit_export_runs DROP CONSTRAINT IF EXISTS audit_export_runs_dry_run_check;
+ALTER TABLE audit_export_runs DROP COLUMN IF EXISTS claimed_at;
+ALTER TABLE audit_export_runs DROP COLUMN IF EXISTS summary_json;
+ALTER TABLE audit_export_runs DROP COLUMN IF EXISTS reason;
+ALTER TABLE audit_export_runs DROP COLUMN IF EXISTS archive_path;
+ALTER TABLE audit_export_runs DROP COLUMN IF EXISTS workspace_name;
+ALTER TABLE audit_export_runs DROP COLUMN IF EXISTS workspace_slug;
+ALTER TABLE audit_export_runs DROP COLUMN IF EXISTS dry_run;
+ALTER TABLE audit_export_runs DROP COLUMN IF EXISTS output_directory;

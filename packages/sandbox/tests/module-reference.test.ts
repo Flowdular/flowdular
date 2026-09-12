@@ -40,6 +40,51 @@ it('prepares the offline catalog example without a bundled catalog module', asyn
 	}
 });
 
+it('copies the platform capability card the specification skills cite', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'flowdular-capabilities-'));
+	try {
+		await mkdir(join(root, '.ai'), { recursive: true });
+		await writeFile(
+			join(root, '.ai/platform-capabilities.md'),
+			'# Platform capabilities\n',
+		);
+		const session = join(root, 'session');
+		await mkdir(session);
+		await materializeReference(root, session);
+		expect(
+			await readFile(
+				join(session, 'reference/platform-capabilities.md'),
+				'utf8',
+			),
+		).toContain('Platform capabilities');
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+it('names the capability card in the reference README and warns when it is missing', async () => {
+	const root = await mkdtemp(join(tmpdir(), 'flowdular-capabilities-gap-'));
+	const warnings: string[] = [];
+	const warn = console.warn;
+	console.warn = (...parts: readonly unknown[]) => {
+		warnings.push(parts.map(String).join(' '));
+	};
+	try {
+		const session = join(root, 'session');
+		await mkdir(session);
+		await materializeReference(root, session);
+		expect(
+			await readFile(join(session, 'reference/README.md'), 'utf8'),
+		).toContain('platform-capabilities.md');
+		expect(
+			warnings.filter((line) => line.includes('.ai/platform-capabilities.md')),
+		).toHaveLength(1);
+	} finally {
+		console.warn = warn;
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 it('loads SDK reference files and skills when the consumer has no core sources', async () => {
 	const root = await mkdtemp(join(tmpdir(), 'flowdular-sdk-reference-'));
 	try {

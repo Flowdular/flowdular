@@ -1,6 +1,6 @@
 {
 	"name": "@flowdular/module-agents",
-	"version": "0.9.1",
+	"version": "0.12.6",
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
@@ -21,6 +21,7 @@
 		"@flowdular/harness": "workspace:*",
 		"@flowdular/kernel": "workspace:*",
 		"@flowdular/module-auth": "workspace:*",
+		"@flowdular/module-reports": "workspace:*",
 		"@flowdular/server": "workspace:*",
 		"@flowdular/ui": "workspace:*",
 		"octane": "0.1.51",

@@ -1,6 +1,9 @@
 # Replace every {placeholder}. Keys are the ones module-spec.schema.json knows;
 # nothing else is accepted. Keep status: draft; a human approves.
-schemaVersion: 1
+# schemaVersion 2 adds the domain model below, so an implementing agent never
+# has to scan the repository. Every version 2 section is optional: delete the
+# ones the module does not need, keep the ones it does.
+schemaVersion: 2
 id: '{moduleId}'
 specVersion: 0.1.0
 status: draft
@@ -14,9 +17,9 @@ capabilities:
   - translations
 dependencies:
   - id: system.core
-    range: ^0.1.0
+    range: ^0.5.0
   - id: auth.core
-    range: ^0.1.0
+    range: ^0.11.0
 tenancy: required
 locales:
   - en
@@ -30,6 +33,99 @@ permissions:
     description: Create and update {entities} in the active tenant.
 dataOwnership:
   - '{moduleId} owns {entity} identity and lifecycle status.'
+# The first entity drives the scaffold: its fields become the domain type, the
+# 0001 migration columns, the repository mapping and the create input.
+entities:
+  - id: '{entities}'
+    name: '{Entity}'
+    description: '{what one record is}'
+    fields:
+      # type: string | text | integer | decimal | boolean | date | datetime |
+      #       enum | reference | json
+      - id: '{code}'
+        type: string
+        required: true
+        unique: tenant
+        maxLength: 64
+        description: '{business identifier}'
+      - id: '{title}'
+        type: string
+        required: true
+        maxLength: 160
+      - id: status
+        type: enum
+        required: true
+        values:
+          - active
+          - archived
+      # reference: '<entityId>' in this spec, or '<moduleId>.<entityId>'
+      - id: '{ownerId}'
+        type: reference
+        reference: auth.core.users
+    states:
+      field: status
+      values:
+        - active
+        - archived
+      transitions:
+        - from: active
+          to: archived
+          permission: '{module}.{entities}.manage'
+screens:
+  - id: '{entities}'
+    kind: list
+    entity: '{entities}'
+    title: '{Entities}'
+    columns:
+      - '{code}'
+      - '{title}'
+      - status
+    filters:
+      - status
+    navigationGroup: Operations
+actions:
+  - id: 'create-{entity}'
+    entity: '{entities}'
+    permission: '{module}.{entities}.manage'
+    kind: create
+    risk: workspace-write
+    idempotent: false
+    description: Create a {entity} in the active tenant.
+  - id: 'archive-{entity}'
+    entity: '{entities}'
+    permission: '{module}.{entities}.manage'
+    kind: update
+    risk: workspace-write
+    idempotent: true
+    description: Archive a {entity} without deleting its history.
+widgets:
+  - id: '{entities}-total'
+    slot: dashboard.metrics
+    entity: '{entities}'
+    description: Number of active {entities} in the active tenant.
+settings:
+  - key: '{settingKey}'
+    type: integer
+    scope: tenant
+    default: 30
+    description: '{what the number controls}'
+agentTools:
+  - id: '{module}.{entity}.list'
+    permission: '{module}.{entities}.read'
+    description: List {entities} of the active tenant.
+    risk: read
+outOfScope:
+  - '{what the platform does not provide yet, for example file attachments}'
+  - '{what the business excluded, for example e-mail notifications}'
+decisions:
+  - id: '{MODULE}-STATUS'
+    question: '{the question that was open}'
+    answer: '{the answer that was given}'
+    decidedBy: user
+  - id: '{MODULE}-RETENTION'
+    question: '{a question nobody answered}'
+    answer: '{the platform default that was applied instead}'
+    decidedBy: default
 acceptanceScenarios:
   - id: '{MODULE}-LIST'
     given: Tenant-scoped {entities} exist.

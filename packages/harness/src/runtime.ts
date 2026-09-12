@@ -106,6 +106,12 @@ export interface AgentToolContext {
 	   refuse when the trusted identity is absent. */
 	readonly agentId?: string;
 	readonly agentName?: string;
+	/* How the tool was reached: a model turn inside an agent run, or a workflow
+	   node running it as a published action. A tool whose admission differs per
+	   caller kind reads this instead of assuming one. Optional keeps v1 callers
+	   and direct module tests source-compatible; absent means an agent run,
+	   because the workflow action runtime always states it. */
+	readonly invocation?: 'agent-run' | 'workflow-action';
 	readonly idempotencyKey?: string;
 	/* Trusted provenance for record history. Optional preserves v1 direct tool
 	   callers; harness and workflow executions always provide it. */
@@ -113,6 +119,28 @@ export interface AgentToolContext {
 	readonly authorizationSubject?: UserActor;
 	readonly permissions: ReadonlySet<string>;
 	readonly signal: AbortSignal;
+}
+
+export interface AgentToolConsentDecision {
+	readonly granted: boolean;
+	/** Stable code recorded on the denial event when the gate refuses. */
+	readonly reason?: string;
+}
+
+/**
+ * A module-owned gate asked before every call of a tool that declares one, so
+ * a workspace can admit a tool per record (a connector instance an owner
+ * consented to) without the tool declaring a risk the harness refuses outright.
+ * The answer is computed per call from the already validated input and is never
+ * cached; a gate that throws denies.
+ */
+export interface AgentToolConsent {
+	/** Stable id of the gate, recorded on the denial event. */
+	readonly id: string;
+	check(
+		input: unknown,
+		context: AgentToolContext,
+	): Promise<AgentToolConsentDecision> | AgentToolConsentDecision;
 }
 
 export interface AgentTool {
@@ -125,6 +153,9 @@ export interface AgentTool {
 	readonly contractVersion?: number;
 	readonly outputSchema?: Readonly<Record<string, unknown>>;
 	readonly risk?: 'read' | 'workspace-write' | 'external' | 'destructive';
+	/* Run-time admission on top of the permission snapshot. A tool declaring one
+	   is offered to the model as usual and refused per call when the gate says so. */
+	readonly consent?: AgentToolConsent;
 	readonly idempotency?: 'required';
 	/* A mutating tool is executable only when its target persists the key and
 	   returns the first result on retry. Declaring `required` alone is not that
@@ -355,15 +386,92 @@ function toolFailure(error: unknown): { code: string; message: string } {
 	return { code: 'TOOL_EXECUTION_FAILED', message };
 }
 
+/**
+ * `external` is the ceiling no unattended caller crosses: the CLI runner
+ * refuses it, `defineCliAgentTool` and `defineApiAgentTool` refuse to build it,
+ * and a hand-built tool object is refused here as well, before the model is
+ * ever told the tool exists.
+ */
+function admissibleRisk(tool: AgentTool): boolean {
+	return tool.risk !== 'external';
+}
+
+/* A refusal code comes from module code, so it is bounded to the shape an
+   event metadata field may carry before it is recorded. */
+function consentReason(reason: string | undefined): string {
+	return reason !== undefined && /^[A-Z][A-Z0-9_]{2,63}$/.test(reason)
+		? reason
+		: 'TOOL_CONSENT_REFUSED';
+}
+
+/**
+ * The narrow tracing port the harness needs, declared here rather than
+ * imported: `@flowdular/server` is a sibling package, not a dependency of the
+ * harness, and its tracer satisfies this shape structurally. The composer that
+ * owns both hands one in; without it the harness records nothing and pays one
+ * optional call per provider and per tool.
+ */
+export interface AgentTraceContext {
+	readonly traceId: string;
+	readonly spanId: string;
+	readonly sampled: boolean;
+}
+
+export interface AgentTraceSpan {
+	readonly context: AgentTraceContext;
+	setAttribute(key: string, value: string | number | boolean): void;
+	end(status?: 'unset' | 'ok' | 'error', message?: string): void;
+}
+
+export interface AgentSpanOptions {
+	readonly parent?: AgentTraceContext | null;
+	readonly kind?: 'internal' | 'client';
+	readonly attributes?: Readonly<Record<string, string | number | boolean>>;
+}
+
+export interface AgentTracer {
+	startSpan(name: string, options?: AgentSpanOptions): AgentTraceSpan;
+}
+
+/* Foreign code on the run path: a tracer that throws must cost the run
+   nothing, so both ends answer with an absent span instead of raising. */
+function startSpan(
+	tracer: AgentTracer | undefined,
+	name: string,
+	options: AgentSpanOptions,
+): AgentTraceSpan | undefined {
+	if (!tracer) return undefined;
+	try {
+		return tracer.startSpan(name, options);
+	} catch {
+		return undefined;
+	}
+}
+
+function endSpan(
+	span: AgentTraceSpan | undefined,
+	status: 'ok' | 'error',
+	message?: string,
+): void {
+	if (!span) return;
+	try {
+		span.end(status, message);
+	} catch {
+		/* An observer that throws is the observer's defect, not the run's. */
+	}
+}
+
 export class AgentHarness {
 	readonly #providers: ReadonlyMap<string, AgentProvider>;
 	readonly #tools: ReadonlyMap<string, AgentTool>;
 	readonly #authorizeToolAccess: AgentToolAccessAuthorizer;
+	readonly #tracer: AgentTracer | undefined;
 
 	constructor(options: {
 		readonly providers: readonly AgentProvider[];
 		readonly tools?: readonly AgentTool[];
 		readonly authorizeToolAccess?: AgentToolAccessAuthorizer;
+		readonly tracer?: AgentTracer;
 	}) {
 		const providers = new Map<string, AgentProvider>();
 		for (const provider of options.providers) {
@@ -385,6 +493,9 @@ export class AgentHarness {
 					`Tool ${id} is already registered.`,
 				);
 			}
+			/* The gate id reaches the denial event, so it is held to the same
+			   shape as the tool id rather than checked only where it is emitted. */
+			if (tool.consent) identifier(tool.consent.id, 'tool.consent.id');
 			toolTimeoutMs(tool.timeoutMs);
 			tools.set(id, tool);
 		}
@@ -394,6 +505,7 @@ export class AgentHarness {
 		   service actors fail-closed instead of treating a stored snapshot as a
 		   permanent credential. */
 		this.#authorizeToolAccess = options.authorizeToolAccess ?? (() => []);
+		this.#tracer = options.tracer;
 	}
 
 	providers(): readonly string[] {
@@ -514,6 +626,7 @@ export class AgentHarness {
 		const initialPermissions = await livePermissions();
 		const availableTools = [...this.#tools.values()]
 			.filter((tool) => snapshotGrants.has(tool.id))
+			.filter(admissibleRisk)
 			.filter((tool) =>
 				tool.requiredPermissions.every((permission) =>
 					initialPermissions.has(permission),
@@ -547,6 +660,8 @@ export class AgentHarness {
 			model: request.definition.model,
 		});
 		const grantedIds = new Set(availableTools.map((tool) => tool.id));
+		const tracer = this.#tracer;
+		let providerSpan: AgentTraceSpan | undefined;
 		let toolCallOrdinal = 0;
 		const invokeTool = async (
 			id: string,
@@ -555,6 +670,16 @@ export class AgentHarness {
 		): Promise<unknown> => {
 			const ordinal = ++toolCallOrdinal;
 			const tool = this.#tools.get(id);
+			if (tool && !admissibleRisk(tool)) {
+				emit('tool.denied', `Tool ${id} was denied.`, {
+					tool: id,
+					reason: 'TOOL_RISK_REFUSED',
+				});
+				throw new AgentHarnessError(
+					'TOOL_RISK_REFUSED',
+					`Tool ${id} declares external risk and cannot run unattended.`,
+				);
+			}
 			if (!tool || !grantedIds.has(id)) {
 				emit('tool.denied', `Tool ${id} was denied.`, {
 					tool: id,
@@ -623,6 +748,47 @@ export class AgentHarness {
 				});
 				throw error;
 			}
+			if (tool.consent) {
+				/* Foreign code: a throw is a refusal, never a crash. The run deadline
+				   already bounds it, because the provider call this runs inside races
+				   the execution timeout. */
+				let decision: AgentToolConsentDecision;
+				try {
+					decision = await tool.consent.check(input, {
+						runId: request.runId,
+						tenantId: request.tenantId,
+						requestedBy: request.requestedBy,
+						agentId: request.definition.id,
+						agentName: request.definition.name,
+						invocation: 'agent-run',
+						actor: {
+							kind: 'agent',
+							id: request.definition.id,
+							label: request.definition.name,
+							runId: request.runId,
+						},
+						...(authorizationSubject?.kind === 'user'
+							? { authorizationSubject }
+							: {}),
+						permissions,
+						signal: controller.signal,
+					});
+				} catch {
+					decision = { granted: false, reason: 'TOOL_CONSENT_UNAVAILABLE' };
+				}
+				if (!decision.granted) {
+					const reason = consentReason(decision.reason);
+					emit('tool.denied', `Tool ${id} was denied.`, {
+						tool: id,
+						consent: tool.consent.id,
+						reason,
+					});
+					throw new AgentHarnessError(
+						reason,
+						`Tool ${id} was not consented for this workspace.`,
+					);
+				}
+			}
 			emit('tool.started', `Tool ${id} started.`, {
 				tool: id,
 				ordinal,
@@ -658,6 +824,7 @@ export class AgentHarness {
 						requestedBy: request.requestedBy,
 						agentId: request.definition.id,
 						agentName: request.definition.name,
+						invocation: 'agent-run',
 						actor: {
 							kind: 'agent',
 							id: request.definition.id,
@@ -710,6 +877,38 @@ export class AgentHarness {
 				controller.signal.removeEventListener('abort', abortTool);
 			}
 		};
+		/* Wrapped rather than instrumented inside: the wrapper sees exactly what
+		   the provider sees, so a denial before the tool ever runs is a span too.
+		   Without a tracer the provider is handed the original function. */
+		const tracedInvokeTool: typeof invokeTool = !tracer
+			? invokeTool
+			: async (id, input, invocation = {}) => {
+					const span = startSpan(tracer, `tool ${id}`, {
+						...(providerSpan ? { parent: providerSpan.context } : {}),
+						kind: 'internal',
+						attributes: {
+							'flowdular.tool': id,
+							...(invocation.providerCallId
+								? {
+										'flowdular.tool.provider_call_id':
+											invocation.providerCallId.slice(0, 128),
+									}
+								: {}),
+						},
+					});
+					try {
+						const output = await invokeTool(id, input, invocation);
+						endSpan(span, 'ok');
+						return output;
+					} catch (error) {
+						endSpan(
+							span,
+							'error',
+							error instanceof AgentHarnessError ? error.code : 'TOOL_FAILED',
+						);
+						throw error;
+					}
+				};
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let rejectProviderAbort: (() => void) | undefined;
 		try {
@@ -738,6 +937,16 @@ export class AgentHarness {
 					controller.abort('timeout');
 				}, request.definition.timeoutMs);
 			});
+			providerSpan = startSpan(tracer, `provider ${provider.id}`, {
+				kind: 'client',
+				attributes: {
+					'flowdular.agent.run_id': request.runId,
+					'flowdular.agent.id': request.definition.id,
+					'flowdular.agent.provider': provider.id,
+					'flowdular.agent.model': request.definition.model,
+					'flowdular.agent.trigger': request.trigger,
+				},
+			});
 			const providerResult = await Promise.race([
 				provider.execute({
 					request,
@@ -752,7 +961,7 @@ export class AgentHarness {
 							additionalProperties: false,
 						},
 					})),
-					invokeTool,
+					invokeTool: tracedInvokeTool,
 					emit,
 				}),
 				timeout,
@@ -779,6 +988,7 @@ export class AgentHarness {
 			emit('provider.completed', `Provider ${provider.id} completed.`, {
 				finishReason: providerResult.finishReason,
 			});
+			endSpan(providerSpan, 'ok', providerResult.finishReason);
 			const completedAt = Date.now();
 			emit('run.completed', 'Harness completed the run.');
 			return {
@@ -788,6 +998,13 @@ export class AgentHarness {
 				startedAt,
 				completedAt,
 			};
+		} catch (error) {
+			endSpan(
+				providerSpan,
+				'error',
+				error instanceof AgentHarnessError ? error.code : 'PROVIDER_FAILED',
+			);
+			throw error;
 		} finally {
 			acceptingEvents = false;
 			if (timer !== undefined) clearTimeout(timer);

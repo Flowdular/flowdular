@@ -227,6 +227,42 @@ describe('AuthService', () => {
 		).rejects.toMatchObject({ code: 'RESET_TOKEN_INVALID' });
 	});
 
+	/* The address rule needs the account the link names, and looking that up
+	   used to cost the link: the visitor got one refusal and a dead token. */
+	it('keeps the reset link usable after the password policy refuses a submission', async () => {
+		const mailbox = new Mailbox();
+		const service = new AuthService((await fixture()).repository, {
+			passwordHash: fastHash,
+			mailDelivery: mailbox,
+			publicBaseUrl: 'https://erp.example',
+		});
+		await service.signUp({
+			email: 'ada.lovelace@example.com',
+			password: 'correct horse battery staple',
+			displayName: 'Ada Owner',
+			organizationName: 'Example Operations',
+			organizationSlug: 'example-operations',
+		});
+		await service.requestPasswordReset('ada.lovelace@example.com');
+		const token = new URL(mailbox.messages[0]!.url).searchParams.get('token')!;
+
+		await expect(
+			service.completePasswordReset(token, 'ada.lovelace summer harbor'),
+		).rejects.toMatchObject({ code: 'PASSWORD_CONTAINS_EMAIL', status: 400 });
+
+		await expect(
+			service.completePasswordReset(token, 'steady tangerine harbor'),
+		).resolves.toBeUndefined();
+		await expect(
+			service.signIn({
+				email: 'ada.lovelace@example.com',
+				password: 'steady tangerine harbor',
+			}),
+		).resolves.toMatchObject({
+			principal: { email: 'ada.lovelace@example.com' },
+		});
+	});
+
 	it('requires an enrolled TOTP factor and consumes recovery codes only once', async () => {
 		let now = 1_000_000;
 		const service = new AuthService((await fixture()).repository, {
@@ -307,7 +343,11 @@ describe('AuthService', () => {
 			totp(enrolled.secret, now),
 		);
 		await expect(
-			service.signInVerifiedExternalEmail('owner@example.com'),
+			service.signInExternalIdentity({
+				provider: 'example',
+				subject: 'provider-subject-1',
+				email: 'owner@example.com',
+			}),
 		).resolves.toMatchObject({
 			mfaRequired: true,
 			csrfToken: '',
@@ -356,7 +396,7 @@ describe('AuthService', () => {
 		await service.acceptTenantInvitation({
 			token,
 			displayName: 'Invited Member',
-			password: 'invitee password long enough',
+			password: 'quiet lantern voyage steady',
 		});
 		expect(
 			JSON.stringify(
@@ -368,7 +408,7 @@ describe('AuthService', () => {
 		).not.toContain(token);
 		const signedIn = await service.signIn({
 			email: 'invitee@example.com',
-			password: 'invitee password long enough',
+			password: 'quiet lantern voyage steady',
 		});
 		expect(signedIn.principal.tenantId).toBe(owner.principal.tenantId);
 		expect(signedIn.principal.tenants.map((tenant) => tenant.tenantId)).toEqual(
@@ -384,7 +424,7 @@ describe('AuthService', () => {
 			service.acceptTenantInvitation({
 				token,
 				displayName: 'Invited Member',
-				password: 'invitee password long enough',
+				password: 'quiet lantern voyage steady',
 			}),
 		).rejects.toMatchObject({ code: 'INVITATION_INVALID' });
 	});

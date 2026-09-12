@@ -99,6 +99,16 @@ or an uninstalled/disabled module leaves its configured address returning 404.
 Keep that disabled binding when retiring an address so it cannot fall through
 to legacy workspace routing. Remove the binding only when releasing the address.
 
+A mount owns the addresses its pages declare. A mount under a custom path also
+answers 404 below its own base, so do not put a `platform/public` file there.
+A root mount claims nothing beyond its pages: the host serves built assets,
+`platform/public` files and, in development, Vite's module and transform
+requests from addresses the router leaves unmatched, and answers 404 for the
+rest. An unknown public URL under a root mount therefore still returns 404, and
+a root mount never shadows `/assets/...`, `/favicon.svg` or `/@vite/client`.
+A deployment that wraps the exported handler itself must serve `dist/client`
+in front of it, as the bundled Node server does.
+
 ### Backoffice address
 
 The first-run setup includes **Backoffice address**, defaulting to `/app` (or the

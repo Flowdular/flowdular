@@ -1,6 +1,7 @@
 import { t, type ModuleClientContribution } from '@flowdular/client';
 import { AUTH_SCOPES, PLATFORM_SCOPES } from '../acl/scopes.ts';
 import { AuditView } from './audit/AuditView.tsrx';
+import { IdentityProvidersView } from './providers/IdentityProvidersView.tsrx';
 import { SettingsView } from './settings/SettingsView.tsrx';
 import { SecurityView } from './security/SecurityView.tsrx';
 import { ApiTokensView } from './tokens/ApiTokensView.tsrx';
@@ -49,6 +50,20 @@ export function createAuthClientContribution(
 				order: 30,
 			},
 			{
+				id: 'auth.navigation.providers',
+				viewId: 'identity-providers',
+				group: 'Administration',
+				get label() {
+					return t('auth.navigation.providers');
+				},
+				glyph: 'shield',
+				get description() {
+					return t('auth.navigation.providersDescription');
+				},
+				scope: AUTH_SCOPES.providersRead,
+				order: 35,
+			},
+			{
 				id: 'auth.navigation.audit',
 				viewId: 'audit',
 				group: 'Administration',
@@ -85,6 +100,14 @@ export function createAuthClientContribution(
 			{
 				id: 'api-tokens',
 				render: () => <ApiTokensView csrfToken={options.csrfToken} />,
+			},
+			{
+				id: 'identity-providers',
+				render: () =>
+					<IdentityProvidersView
+						csrfToken={options.csrfToken}
+						canManage={scopes.includes(AUTH_SCOPES.providersManage)}
+					/>,
 			},
 			{ id: 'audit', render: () => <AuditView scopes={scopes} /> },
 			{

@@ -11,7 +11,7 @@ import type {
 	RegisteredModule,
 	ValidationIssue,
 } from '@flowdular/contracts';
-import { createModuleRegistry } from '@flowdular/kernel';
+import { createModuleRegistry, PLATFORM_API_VERSION } from '@flowdular/kernel';
 import {
 	findNamedFiles,
 	validateFile,
@@ -101,6 +101,15 @@ async function platformIssues(
 			),
 		);
 	}
+	if (manifest.platformApi === undefined) {
+		issues.push(
+			issue(
+				'PLATFORM_API_MISSING',
+				`module.json declares no platformApi; add "platformApi": "^${PLATFORM_API_VERSION}" so the platform contract the module was built against is checked.`,
+				'module.json',
+			),
+		);
+	}
 	if (packageVersion !== manifest.version) {
 		issues.push(
 			issue(
@@ -159,7 +168,11 @@ async function specIssues(
 	specDirectory: string,
 ): Promise<ValidationIssue[]> {
 	const specPath = join(specDirectory, 'module.yaml');
-	let spec: { id?: unknown; specVersion?: unknown };
+	let spec: {
+		id?: unknown;
+		specVersion?: unknown;
+		dependencies?: unknown;
+	};
 	try {
 		spec = parseYaml(
 			await readFile(join(moduleRoot, specPath), 'utf8'),
@@ -193,6 +206,28 @@ async function specIssues(
 				'warning',
 			),
 		);
+	}
+	if (Array.isArray(spec.dependencies)) {
+		const declared = (
+			spec.dependencies as { id?: unknown; range?: unknown }[]
+		).map((entry) => `${String(entry.id)}@${String(entry.range)}`);
+		const actual = manifest.dependencies.map(
+			(entry) => `${entry.id}@${entry.range}`,
+		);
+		const drift = [
+			...declared.filter((entry) => !actual.includes(entry)),
+			...actual.filter((entry) => !declared.includes(entry)),
+		];
+		if (drift.length > 0) {
+			issues.push(
+				issue(
+					'SPEC_DEPENDENCY_DRIFT',
+					`Specification dependencies differ from module.json: ${drift.join(', ')}. Run module version bump or align the ranges by hand.`,
+					specPath,
+					'warning',
+				),
+			);
+		}
 	}
 	return issues;
 }

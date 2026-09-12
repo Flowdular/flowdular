@@ -28,7 +28,12 @@ export {
 	type InstructionContext,
 } from './roles/contract.ts';
 export { parseHandoff, type HandoffDeclaration } from './roles/handoff.ts';
-export { selectTaskSkill, type TaskSkillContext } from './roles/skills.ts';
+export {
+	ALWAYS_ELIGIBLE_SKILLS,
+	ROLE_SKILLS,
+	selectTaskSkill,
+	type TaskSkillContext,
+} from './roles/skills.ts';
 export { DEFAULT_AGENT_ROLES } from './roles/defaults.ts';
 export type { AgentRoleDefinition } from './roles/defaults.ts';
 export {

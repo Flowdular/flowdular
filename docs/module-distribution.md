@@ -30,9 +30,10 @@ a lock and checks source hashes as well as ordinary manifest/dependency validati
 The installer resolves a consistent dependency closure, including diamond
 constraints, within a bounded search budget. Existing workspace/package versions
 are preserved. Registry and runtime validation share semver semantics, including
-pre-1.0 caret ranges. Distributed modules explicitly declare `platformApi`; the
-current platform API is `0.1.0`. Existing local modules may omit that optional
-field for compatibility.
+pre-1.0 caret ranges. Every module declares `platformApi` as a range
+(`^0.1.0`); the current platform API is `0.1.3` and `module search --compatible`
+filters releases by it. A release that declares `requires` is resolved together
+with the newest compatible release providing each required capability.
 
 ## Trust and recovery
 

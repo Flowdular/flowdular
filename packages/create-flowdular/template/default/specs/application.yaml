@@ -1,0 +1,15 @@
+# The platform spec of this application. "flowdular spec validate --all"
+# validates it together with every modules/*/spec/module.yaml.
+schemaVersion: 1
+id: application.app-name
+version: 0.1.0
+status: approved
+principles:
+  - spec-before-implementation
+  - default-deny
+  - tenant-scoped-data
+repositoryRoots:
+  platform: platform
+  modules: modules
+  infrastructure: infra
+  agentConfiguration: .ai

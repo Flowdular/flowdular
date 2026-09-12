@@ -1,5 +1,5 @@
 import { cell, createStore } from 'segment-state';
-import type { AuthPrincipal } from '../domain/types.ts';
+import type { AuthPrincipal, SignInProviderOption } from '../domain/types.ts';
 
 export type AuthClientStatus =
 	| 'checking'
@@ -84,6 +84,14 @@ export function authScreenFromUrl(value: string): AuthScreen {
 	return 'sign-in';
 }
 
+/** The workspace a sign-in link names, lower-cased and bounded. */
+export function workspaceFromUrl(value: string): string {
+	const requested = new URL(value, 'https://flowdular.local').searchParams.get(
+		'workspace',
+	);
+	return requested ? requested.trim().toLowerCase().slice(0, 64) : '';
+}
+
 export function createAuthClientState(initialScreen: AuthScreen = 'sign-in') {
 	const store = createStore({
 		status: cell<AuthClientStatus>('checking'),
@@ -95,6 +103,12 @@ export function createAuthClientState(initialScreen: AuthScreen = 'sign-in') {
 		allowSignUp: false,
 		emailConfirmation: false,
 		signInProviders: cell<readonly string[]>([]),
+		/* Sign-in is routed by workspace: the id in the URL or the one the person
+		   types, and the buttons that workspace offers. */
+		signInWorkspace: '',
+		signInWorkspaceName: '',
+		signInWorkspaceFromUrl: false,
+		providerOptions: cell<readonly SignInProviderOption[]>([]),
 		signUpStep: cell<SignUpStep>(1),
 		workspaceName: '',
 		workspaceSlug: '',

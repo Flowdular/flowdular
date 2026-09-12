@@ -7,7 +7,6 @@ description: >-
 roles:
   - module-executor
   - reviewer
-  - backend-engineer
 when: A change is ready to leave a sandbox session or a working tree and reach the platform.
 ---
 

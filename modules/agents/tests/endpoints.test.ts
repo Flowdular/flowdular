@@ -16,6 +16,7 @@ import {
 } from '@flowdular/module-auth/server';
 import type { AgentTool } from '@flowdular/harness';
 import {
+	createDataClassRegistry,
 	createPlatformAgentRegistry,
 	createPlatformCapabilityRegistry,
 } from '@flowdular/kernel';
@@ -163,6 +164,7 @@ function composition(session: AuthPrincipal | null) {
 			list: () => registered,
 		},
 		agentDefinitions: createPlatformAgentRegistry(),
+		dataClasses: createDataClassRegistry().forModule('agents.core'),
 		capabilities: createPlatformCapabilityRegistry(),
 	};
 	const composed = createServerComposition(

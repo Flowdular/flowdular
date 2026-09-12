@@ -1,0 +1,236 @@
+schemaVersion: 2
+id: documents.core
+specVersion: 0.1.6
+status: approved
+name: Documents Core
+description: Lets a workspace attach files to its records through the platform storage port, owning only the document metadata and the reference to the record, with tenant-scoped keys, encrypted bytes, size and type limits, and a scan state, so a module attaches by reference and never holds bytes.
+profile: full
+capabilities:
+  - api
+  - database
+  - client
+  - translations
+dependencies:
+  - id: system.core
+    range: ^0.7.0
+  - id: auth.core
+    range: ^0.13.0
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - Persistence runs on the shared asynchronous database contract with explicit PostgreSQL SQL; every tenant table enables and forces row-level security with USING and WITH CHECK policies bound to the transaction-local tenant id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
+  - Bytes live only in the platform storage port under a key whose first segment is the tenant id taken from the principal; documents.core stores metadata and never a byte, and a module attaches a document to its record by reference through the public capability documents.attachments.v1, never by reading the store. The capability offers list, open and delete on that reference; open streams the decrypted bytes through documents.core's own storage access and answers nothing for a reference with no readable object behind it, an infected or deleted document included, so the storage key never leaves this module.
+  - An upload is one request whose body is the file, bounded by the platform object limit, with the declared content type checked against the platform allowlist and the magic bytes before the object is stored; a refusal leaves no metadata row and no object.
+  - A download is a short-lived signed read URL from the storage port; documents.core serves no route that streams bytes, and the URL is issued only to a principal allowed to read the owning record's documents.
+  - The scan state follows the storage port's verdict; an infected object is deleted from the store immediately, its row keeps the infected state for the audit trail, and it can never be downloaded; an unscanned object is downloadable and labelled as such.
+  - Deleting a document deletes the object first and the row after; a document referenced by a record is deleted only through the owning module's capability call or by a member holding documents.files.manage.
+  - Every workspace has a storage quota setting; an upload that would exceed it is refused with a stable error before any byte is stored.
+  - The document list is filtered, searched and paged by the server. The owner module, the record reference, the scan verdict and the screen's search term narrow the query; the term travels as the bounded query parameter q, matches the filename or the description, and reaches SQL as a parameter whose LIKE wildcards are escaped, so a wildcard a reader types searches for that character. The page is a keyset cursor the module signs with a secret of its own process, so a cursor issued by one replica is refused by another with CURSOR_INVALID and the client starts over. The screen shows either a real total or that more rows remain, and never narrows or pages the rows of one answer as if they were the workspace.
+  - Upload metadata travels in headers, which carry ASCII only, so a value holding a code point above 0x7F is refused and a client percent-encodes it; a name is stored as it was sent or not at all.
+  - The object ceiling and the accepted content types are served to the screen, which states them and refuses a file past the ceiling before it sends one. The storage port stays the authority on both and refuses again on the bytes it receives.
+  - Documents are a data class declared through the platform data class registry, exportable as metadata rows that name the storage key while the bytes stay in the object store until the export sink gains an attachment channel, and swept only by explicit deletion, never by retention.
+permissions:
+  - id: documents.files.read
+    description: List documents of the active workspace and obtain read URLs for them.
+  - id: documents.files.manage
+    description: Upload, replace and delete documents in the active workspace.
+dataOwnership:
+  - documents.core owns document metadata, the storage key, the checksum, the scan state and the attachment reference.
+  - The platform storage port owns the bytes and their encryption; the owning module owns the record a document is attached to and decides through its own permissions who may see the record.
+entities:
+  - id: document
+    name: Document
+    description: One stored file and the record it is attached to.
+    fields:
+      - id: ownerModule
+        type: string
+        required: true
+        maxLength: 64
+      - id: recordRef
+        type: string
+        required: true
+        maxLength: 200
+      - id: filename
+        type: string
+        required: true
+        maxLength: 255
+      - id: contentType
+        type: string
+        required: true
+        maxLength: 128
+      - id: bytes
+        type: integer
+        required: true
+      - id: checksum
+        type: string
+        required: false
+        maxLength: 80
+        description: The port's algorithm-prefixed digest; absent for a refused infected upload that left no object.
+      - id: storageKey
+        type: string
+        required: true
+        maxLength: 512
+      - id: uploaderAccountId
+        type: string
+        required: true
+        maxLength: 128
+      - id: scan
+        type: enum
+        required: true
+        values:
+          - unscanned
+          - clean
+          - infected
+      - id: status
+        type: enum
+        required: true
+        values:
+          - stored
+          - deleted
+      - id: description
+        type: text
+        required: false
+        maxLength: 1000
+    states:
+      field: status
+      values:
+        - stored
+        - deleted
+      transitions:
+        - from: stored
+          to: deleted
+          permission: documents.files.manage
+screens:
+  - id: documents
+    kind: list
+    entity: document
+    title: Documents
+    columns:
+      - filename
+      - ownerModule
+      - recordRef
+      - contentType
+      - bytes
+      - scan
+      - uploaderAccountId
+    filters:
+      - ownerModule
+      - scan
+      - filename
+      - description
+    navigationGroup: Workspace
+actions:
+  - id: upload
+    entity: document
+    permission: documents.files.manage
+    kind: create
+    risk: workspace-write
+    idempotent: false
+    description: Store one file for a record reference; refused over the object limit, outside the allowlist, on a magic-byte mismatch or over the workspace quota.
+  - id: read-limits
+    entity: document
+    permission: documents.files.read
+    kind: custom
+    risk: read
+    idempotent: true
+    description: Answer the platform object ceiling and the accepted content types, so the uploader states them and refuses a file before it is sent.
+  - id: read-url
+    entity: document
+    permission: documents.files.read
+    kind: custom
+    risk: read
+    idempotent: true
+    description: Issue a signed read URL valid for a bounded number of seconds; refused for an infected document.
+  - id: delete
+    entity: document
+    permission: documents.files.manage
+    kind: delete
+    risk: destructive
+    idempotent: true
+    description: Delete the object, then mark the row deleted.
+widgets: []
+settings:
+  - key: quotaBytes
+    type: integer
+    scope: tenant
+    default: 10737418240
+    description: Storage quota of the workspace in bytes; 0 means no uploads.
+  - key: readUrlSeconds
+    type: integer
+    scope: platform
+    default: 300
+    description: Lifetime of a read URL; 30 to 3600.
+agentTools: []
+outOfScope:
+  - Previews, thumbnails and in-browser rendering are not offered; a document is downloaded.
+  - Versioning of a document is not offered; replacing is an upload plus a delete by the owning module.
+  - A shared FileUpload component does not exist yet; the Documents screen builds its uploader locally and flags it as a promotion candidate.
+  - Malware scanning runs only when the deployment configures a scanner for the storage port; otherwise documents are labelled unscanned.
+decisions:
+  - id: D-DOCUMENTS-STORAGE
+    question: Where do bytes live?
+    answer: In the platform storage port with a local adapter for development and an S3-compatible adapter for deployments, encrypted under the storage keyring.
+    decidedBy: user
+  - id: D-DOCUMENTS-LIMITS
+    question: What limits apply?
+    answer: 25 MB per object by default, a content type allowlist with magic-byte verification, a scanner hook, and a 10 GB workspace quota by default.
+    decidedBy: user
+  - id: D-DOCUMENTS-ATTACH
+    question: How does a module attach a file?
+    answer: By reference through documents.attachments.v1, naming its module id and record reference; the module never holds bytes.
+    decidedBy: default
+  - id: D-DOCUMENTS-INFECTED
+    question: What happens to an infected file?
+    answer: The object is deleted at once, the row stays infected for the trail, and a download is refused.
+    decidedBy: default
+  - id: D-DOCUMENTS-PERMISSIONS
+    question: Who reads and manages documents?
+    answer: Members hold documents.files.read and documents.files.manage by default; the owning module may narrow through its own record permissions.
+    decidedBy: default
+  - id: D-DOCUMENTS-ATTACH-AUTHORITY
+    question: Who may attach a file to another module's record?
+    answer: Attaching is workspace-wide under documents.files.manage. documents.core holds no per-module attach predicate and does not ask the owning module whether the reference it was given is a record at all, so any member who may upload may name any owner module and record reference. An owning module narrows on read alone, through the capability, where its own record permission decides who sees an attachment. A per-module attach predicate stays out of scope until a module needs to refuse a reference at upload time.
+    decidedBy: default
+acceptanceScenarios:
+  - id: DOCUMENTS-UPLOAD
+    given: A principal holding documents.files.manage uploads a PDF under the object limit for a record reference.
+    when: The upload completes.
+    then: The object is stored encrypted under a key whose first segment is the principal's tenant, a metadata row records filename, content type, bytes, checksum, uploader and scan state, and the response carries the document id.
+  - id: DOCUMENTS-REFUSE
+    given: A principal uploads a file over the object limit, an executable, a file whose magic bytes do not match its declared type, or a file that would exceed the workspace quota.
+    when: The upload is attempted.
+    then: Each is refused with a stable error before any byte is stored and no row is written.
+  - id: DOCUMENTS-READ-URL
+    given: A stored document.
+    when: A principal holding documents.files.read requests a read URL, waits past its lifetime, and requests one for an infected document.
+    then: The first URL streams the decrypted bytes with the stored content type, the expired URL answers not found, and the infected document is refused.
+  - id: DOCUMENTS-ATTACH-BY-REFERENCE
+    given: A module holds a record and a document id.
+    when: The module lists documents for its record reference through documents.attachments.v1 and deletes one.
+    then: Only documents of that module and reference in the caller's tenant are returned, the delete removes the object first and marks the row, and a document of another module or tenant is not visible.
+  - id: DOCUMENTS-OPEN
+    given: A module owns a record with a stored document, another module names the same document id under its own reference pair, and the record also holds an infected document.
+    when: Each of them is opened through documents.attachments.v1.
+    then: The owning module's own reference streams the decrypted bytes with the stored content type, byte count and filename and no storage key, the other module's reference pair answers nothing, and the infected document answers nothing as well.
+  - id: DOCUMENTS-PAGE
+    given: A workspace holding more documents than one page carries, some of them another module's.
+    when: A screen lists them with a page limit, follows the cursor it receives to the end, filters on the owner module, searches a term the filename or the description carries, and presents a cursor this server did not sign.
+    then: Every row is answered exactly once across the pages, the cursor is null on the last one, the owner module filter and the search term are applied by the query rather than by the screen, the term pages with the cursor, a term that is only a LIKE wildcard matches nothing instead of the workspace, a term past its bound is refused, and the forged cursor is refused with CURSOR_INVALID.
+  - id: DOCUMENTS-HEADER-ASCII
+    given: A client uploading a file whose name is not ASCII.
+    when: The name travels raw in the header and, on a second attempt, percent-encoded.
+    then: The raw value is refused before any byte is stored, and the percent-encoded one is stored and read back as the name that was sent.
+  - id: DOCUMENTS-LIMITS
+    given: A principal holding documents.files.read.
+    when: The screen asks for the upload limits.
+    then: The platform object ceiling and the accepted content types are answered, an unauthenticated request is refused, and the uploader refuses a larger file before it sends one.
+  - id: DOCUMENTS-DENY
+    given: A principal is unauthenticated or lacks the required permission.
+    when: The principal uploads, lists, requests a read URL or deletes.
+    then: The server denies the operation before repository access, and a mutation without a CSRF proof is refused first.
+  - id: DOCUMENTS-TENANT-BOUNDARY
+    given: Two workspaces with documents.
+    when: A runtime transaction bound to one workspace reads or writes rows, or a read URL of one workspace is presented for the other's object.
+    then: Only that workspace's rows are visible or mutable, the storage key prefix keeps the objects apart, and the foreign URL answers not found.

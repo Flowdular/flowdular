@@ -8,7 +8,14 @@ The production artifact is the Octane fullstack server built from `platform`. It
 docker compose -f infra/docker/compose.yaml up --build
 ```
 
-Before the first start, copy `infra/docker/.env.example` to `infra/docker/.env` and fill in `FD_AGENT_CREDENTIAL_KEY`, `FD_AGENT_RUN_GRANT_KEY`, `FD_WORKFLOWS_PAYLOAD_KEY`, and `FD_WORKFLOWS_CURSOR_KEY` (`openssl rand -base64 32` each). Compose refuses to start without them. The owning modules also refuse to boot in production without them, so a missing key fails at startup rather than during the first run.
+Before the first start, copy `infra/docker/.env.example` to `infra/docker/.env` and fill in `FD_AGENT_CREDENTIAL_KEY`, `FD_AGENT_RUN_GRANT_KEY`, `FD_AUTOMATIONS_CREDENTIAL_KEY`, `FD_NOTIFICATIONS_SECRET_KEY`, `FD_WORKFLOWS_PAYLOAD_KEY`, `FD_WORKFLOWS_CURSOR_KEY`, `FD_STORAGE_ENCRYPTION_KEY`, `FD_CONNECTORS_SECRET_KEY` and `FD_AUDIT_ANCHOR_KEY` (`openssl rand -base64 32` each). Compose refuses to start without them. The owning modules also refuse to boot in production without them, so a missing key fails at startup rather than during the first run.
+
+Outgoing mail is off until it is configured: with `FD_AUTH_MAIL_TRANSPORT=none` a
+workspace invitation is refused and a password reset is never delivered. Set
+`FD_AUTH_MAIL_TRANSPORT=smtp` with `FD_AUTH_SMTP_URL` (an `smtp://` or `smtps://`
+relay URL carrying the relay password, so keep it in `.env` or the Secret, never
+in the manifest) and `FD_AUTH_MAIL_FROM`. In Kubernetes the URL comes from the
+optional `smtpUrl` entry of the `flowdular-agents` Secret.
 
 The service is available on `http://localhost:3000`. Set `FD_PORT` to change the host port.
 
@@ -36,12 +43,14 @@ Tagging a release such as `v0.1.0`, or manually running the `Publish container` 
 kubectl create secret generic flowdular-agents \
   --from-literal=credentialKey="$(openssl rand -base64 32)" \
   --from-literal=runGrantKey="$(openssl rand -base64 32)" \
+  --from-literal=automationsCredentialKey="$(openssl rand -base64 32)" \
+  --from-literal=notificationsSecretKey="$(openssl rand -base64 32)" \
   --from-literal=workflowsPayloadKey="$(openssl rand -base64 32)" \
   --from-literal=workflowsCursorKey="$(openssl rand -base64 32)"
 kubectl apply -k infra/kubernetes
 ```
 
-The Deployment reads all four keys from the `flowdular-agents` Secret. `agents-secret.example.yaml` shows its shape with placeholders and is deliberately not part of the kustomization. Rotating `credentialKey` invalidates every stored provider credential; re-enter them under Providers afterwards. Rotating `workflowsPayloadKey` makes retained workflow execution payloads unreadable, so drain runs and let retention remove payloads before rotating it.
+The Deployment reads all six keys from the `flowdular-agents` Secret. `agents-secret.example.yaml` shows its shape with placeholders and is deliberately not part of the kustomization. Rotating `credentialKey` invalidates every stored provider credential; re-enter them under Providers afterwards. Rotating `workflowsPayloadKey` makes retained workflow execution payloads unreadable, so drain runs and let retention remove payloads before rotating it.
 
 The Kubernetes base carries no volume for application data: the deployment is stateless and every module writes to PostgreSQL. Create the `flowdular-database` Secret with the three connection strings before applying it; `database-secret.example.yaml` shows its shape with placeholders and is deliberately not part of the kustomization.
 

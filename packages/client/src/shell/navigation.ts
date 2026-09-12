@@ -58,6 +58,18 @@ export function navigationForIdentity(
 	);
 }
 
+/**
+ * A hit's route, or null when it is not a plain path inside this workspace.
+ * The route comes from a module, and the shell pushes it at the browser: a
+ * protocol-relative `//host` leaves the application, and a backslash does the
+ * same once the URL parser normalizes it to a slash.
+ */
+export function workspaceHitRoute(route: string): string | null {
+	if (typeof route !== 'string') return null;
+	if (!route.startsWith('/') || route.startsWith('//')) return null;
+	return route.includes('\\') ? null : route;
+}
+
 export function viewHref(
 	viewId: ShellView,
 	workspaceSlug?: string | null,

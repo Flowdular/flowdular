@@ -117,6 +117,26 @@ export const capabilities: readonly CapabilityDescriptor[] = [
 		confirmation: 'reset-database',
 	},
 	{
+		id: 'database.backup',
+		version: 1,
+		summary:
+			'Copy the configured database and its key fingerprints into a backup directory.',
+		risk: 'process',
+		requiresApprovedSpec: false,
+		supportsDryRun: true,
+	},
+	{
+		id: 'database.restore',
+		version: 1,
+		summary:
+			'Replace the configured database with the contents of a backup directory.',
+		risk: 'destructive',
+		requiresApprovedSpec: false,
+		supportsDryRun: true,
+		localOnly: true,
+		confirmation: 'restore-database',
+	},
+	{
 		id: 'migration.scaffold',
 		version: 1,
 		summary: 'Scaffold the up and down scripts of one module migration.',
@@ -134,6 +154,24 @@ export const capabilities: readonly CapabilityDescriptor[] = [
 		supportsDryRun: true,
 		localOnly: true,
 		confirmation: 'migrate-legacy-state',
+	},
+	{
+		id: 'module.version',
+		version: 1,
+		summary:
+			'Show a module version, its platform API range and its dependents.',
+		risk: 'read',
+		requiresApprovedSpec: false,
+		supportsDryRun: false,
+	},
+	{
+		id: 'module.version.bump',
+		version: 1,
+		summary:
+			'Bump module.json, package.json and specVersion together and retarget dependent ranges.',
+		risk: 'workspace-write',
+		requiresApprovedSpec: false,
+		supportsDryRun: true,
 	},
 	{
 		id: 'module.create',

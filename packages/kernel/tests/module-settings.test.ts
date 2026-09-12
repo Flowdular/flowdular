@@ -4,7 +4,9 @@ import {
 	defineModuleSettings,
 	PLATFORM_SETTINGS_TENANT,
 	type ModuleSettingChange,
+	type ModuleSettingDefinition,
 	type ModuleSettingRecord,
+	type ModuleSettingsDeclaration,
 	type ModuleSettingsStore,
 } from '../src/index.ts';
 
@@ -34,6 +36,24 @@ function memoryStore(): ModuleSettingsStore & {
 		},
 	};
 	return store;
+}
+
+/** How many regular expressions the run built. */
+function countRegExps(run: () => void): number {
+	const real = globalThis.RegExp;
+	let built = 0;
+	globalThis.RegExp = new Proxy(real, {
+		construct: (target, args, newTarget) => {
+			built += 1;
+			return Reflect.construct(target, args, newTarget) as object;
+		},
+	});
+	try {
+		run();
+	} finally {
+		globalThis.RegExp = real;
+	}
+	return built;
 }
 
 const declaration = defineModuleSettings({
@@ -71,6 +91,16 @@ const declaration = defineModuleSettings({
 			visibility: 'shared',
 			client: true,
 			scope: 'platform',
+		},
+		streamingRuns: {
+			type: 'boolean',
+			defaultValue: false,
+			visibility: 'private',
+			client: false,
+			kind: 'flag',
+			scope: 'tenant',
+			label: 'Streaming runs',
+			description: 'Streams run output to the screen while the run works.',
 		},
 	},
 });
@@ -138,6 +168,37 @@ describe('module settings runtime', () => {
 		expect(store.loads).toBe(2);
 	});
 
+	/* A pattern is one regular expression per declared setting, built where the
+	   declaration is checked. Reads sit on the request path, so none of them may
+	   build it again. */
+	it('compiles a declared pattern once, not on every read', () => {
+		const runtime = createModuleSettingsRuntime(memoryStore());
+		const patterned = defineModuleSettings({
+			moduleId: 'patterned.core',
+			settings: {
+				zone: {
+					type: 'string',
+					defaultValue: 'UTC',
+					visibility: 'shared',
+					client: false,
+					pattern: '[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+){0,2}',
+				},
+			},
+		});
+		runtime.declare(patterned);
+		runtime.set('tenant-a', 'patterned.core', 'zone', 'Europe/Warsaw', 'owner');
+
+		const values: string[] = [];
+		const built = countRegExps(() => {
+			for (let index = 0; index < 50; index += 1) {
+				values.push(runtime.get<string>('tenant-a', 'patterned.core', 'zone'));
+			}
+		});
+
+		expect(built).toBe(0);
+		expect([...new Set(values)]).toEqual(['Europe/Warsaw']);
+	});
+
 	it('notifies listeners and isolates a throwing one', () => {
 		const runtime = createModuleSettingsRuntime(memoryStore());
 		runtime.declare(declaration);
@@ -157,6 +218,8 @@ describe('module settings runtime', () => {
 				moduleId: 'agents.core',
 				key: 'defaultModel',
 				cleared: false,
+				previous: 'small',
+				next: 'large',
 				actor: { accountId: 'owner', tenantId: 'tenant-a' },
 			},
 			{
@@ -164,11 +227,150 @@ describe('module settings runtime', () => {
 				moduleId: 'agents.core',
 				key: 'defaultModel',
 				cleared: true,
+				previous: 'large',
+				next: 'small',
 				actor: { accountId: 'owner', tenantId: 'tenant-a' },
 			},
 		]);
 		expect(error).toHaveBeenCalled();
 		error.mockRestore();
+	});
+
+	it('keeps a secret value out of the change a listener sees', () => {
+		const runtime = createModuleSettingsRuntime(memoryStore());
+		runtime.declare(declaration);
+		const seen: ModuleSettingChange[] = [];
+		runtime.onChange((change) => seen.push(change));
+		runtime.set('tenant-a', 'agents.core', 'apiKey', 'sk-live', 'owner');
+		expect(seen[0]).toMatchObject({ previous: null, next: null });
+		expect(JSON.stringify(seen)).not.toContain('sk-live');
+	});
+
+	it('reports a flag override and its reset with both values', () => {
+		const runtime = createModuleSettingsRuntime(memoryStore());
+		runtime.declare(declaration);
+		const seen: ModuleSettingChange[] = [];
+		runtime.onChange((change) => seen.push(change));
+		expect(runtime.get('tenant-a', 'agents.core', 'streamingRuns')).toBe(false);
+
+		runtime.set('tenant-a', 'agents.core', 'streamingRuns', true, 'owner');
+		expect(runtime.get('tenant-a', 'agents.core', 'streamingRuns')).toBe(true);
+		/* A tenant override is that tenant's alone; the next workspace still
+		   reads the declared default. */
+		expect(runtime.get('tenant-b', 'agents.core', 'streamingRuns')).toBe(false);
+
+		runtime.set('tenant-a', 'agents.core', 'streamingRuns', null, 'owner');
+		expect(runtime.get('tenant-a', 'agents.core', 'streamingRuns')).toBe(false);
+		expect(seen).toEqual([
+			{
+				tenantId: 'tenant-a',
+				moduleId: 'agents.core',
+				key: 'streamingRuns',
+				cleared: false,
+				kind: 'flag',
+				previous: false,
+				next: true,
+				actor: { accountId: 'owner', tenantId: 'tenant-a' },
+			},
+			{
+				tenantId: 'tenant-a',
+				moduleId: 'agents.core',
+				key: 'streamingRuns',
+				cleared: true,
+				kind: 'flag',
+				previous: true,
+				next: false,
+				actor: { accountId: 'owner', tenantId: 'tenant-a' },
+			},
+		]);
+	});
+
+	it('rejects a flag that is not a described, non-secret boolean', () => {
+		const flag =
+			(
+				definition: ModuleSettingDefinition,
+			): (() => ModuleSettingsDeclaration) =>
+			() =>
+				defineModuleSettings({
+					moduleId: 'broken.core',
+					settings: { fast: definition },
+				});
+		const described = {
+			visibility: 'private',
+			client: false,
+			kind: 'flag',
+			label: 'Fast path',
+			description: 'Takes the fast path.',
+		} as const;
+		expect(flag({ ...described, type: 'string', defaultValue: 'off' })).toThrow(
+			/non-secret boolean/,
+		);
+		expect(
+			flag({
+				type: 'boolean',
+				defaultValue: false,
+				kind: 'flag',
+				label: 'Fast path',
+				description: 'Takes the fast path.',
+				visibility: 'private',
+				client: false,
+				secret: true,
+			}),
+		).toThrow(/non-secret boolean/);
+		expect(
+			flag({
+				type: 'boolean',
+				defaultValue: false,
+				visibility: 'private',
+				client: false,
+				kind: 'flag',
+				description: 'Takes the fast path.',
+			}),
+		).toThrow(/label and a description/);
+		expect(
+			flag({
+				type: 'boolean',
+				defaultValue: false,
+				visibility: 'private',
+				client: false,
+				kind: 'flag',
+				label: 'Fast path',
+			}),
+		).toThrow(/label and a description/);
+		expect(
+			flag({ ...described, type: 'boolean', defaultValue: false }),
+		).not.toThrow();
+		expect(
+			flag({
+				...described,
+				type: 'boolean',
+				defaultValue: false,
+				scope: 'tenant',
+			}),
+		).not.toThrow();
+	});
+
+	/* A flag is on or off for a workspace, and the screen that turns it on is
+	   the workspace's. A platform-scoped one would be a deployment-wide switch
+	   an operator flips from inside one workspace for every other. */
+	it('refuses a flag that is not scoped to a workspace', () => {
+		expect(() =>
+			defineModuleSettings({
+				moduleId: 'broken.core',
+				settings: {
+					fast: {
+						type: 'boolean',
+						defaultValue: false,
+						visibility: 'private',
+						client: false,
+						kind: 'flag',
+						scope: 'platform',
+						label: 'Fast path',
+						description: 'Takes the fast path.',
+					},
+				},
+			}),
+		).toThrow(/tenant-scoped/);
 	});
 
 	it('rejects declarations whose defaults break their own rules', () => {

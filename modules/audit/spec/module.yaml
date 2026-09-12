@@ -1,0 +1,809 @@
+schemaVersion: 2
+id: audit.core
+specVersion: 0.2.7
+status: approved
+name: Audit and Data Lifecycle Core
+description: Gives a workspace one place to see what data classes the platform holds, how long each is kept, and to take everything out, through a data class registry every module declares into, one retention sweep with tenant-scoped periods, and a per-tenant export in a documented format.
+profile: full
+capabilities:
+  - api
+  - database
+  - client
+  - translations
+  - cli
+dependencies:
+  - id: system.core
+    range: ^0.7.0
+  - id: auth.core
+    range: ^0.13.0
+provides:
+  - audit.erasure.v1
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - Persistence runs on the shared asynchronous database contract with explicit PostgreSQL SQL; every tenant table enables and forces row-level security with USING and WITH CHECK policies bound to the transaction-local tenant id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
+  - The data class registry is a platform registry handed to every module as context.dataClasses, created by the kernel and sealed by the platform after every composition ran, the same way agent definitions are; a module declares each class it owns with a stable id, a human label, the default retention in days or none, whether the class may be exported, and an owner port with two operations, sweep(tenantId, cutoff, limit) and export(tenantId, sink), executed by the owning module on its own tables. audit.core reads the sealed registry and never reads another module's database; auth.core declares its classes through the same registry handed to its runtime by the platform.
+  - A module that declares no classes is listed as holding none; a class declared without a sweep operation is never swept, and a class declared without an export operation is reported in the export manifest as excluded with the declared reason.
+  - Retention is a period in days per class per workspace, edited behind audit.retention.manage with the declared default as the initial value and none meaning kept until a person deletes; business records default to none.
+  - One retention sweep runs on a fixed platform interval, finds due workspaces and classes on the background role over routing columns alone, re-reads under the workspace, calls the owner sweep operation in bounded batches, and records an audit event naming the class, the cutoff and the count before each batch is removed; a sweep never runs for a class or workspace an active legal hold covers.
+  - The retention sweep and the export are refused while the deployment names no backup manifest, so a policy defect can never destroy data no backup holds; the check reads the manifest that database backup writes, named by FD_AUDIT_BACKUP_MANIFEST.
+  - An export runs per workspace under that workspace's transaction context so row-level security enforces the boundary, produces a ZIP archive with manifest.json (format version, workspace, generated time, classes, row counts, time ranges, exclusions with reasons, the platform version) and one JSON Lines file per class, decrypts sealed payloads it is allowed to decrypt into the export and excludes secrets and password hashes with a stated reason, and writes an audit event before it starts and when it completes.
+  - An export is requested by the operator CLI command, which records an export request for the workspace and waits for it; the running platform process, which holds the sealed registry, performs the export in its poll loop, writes the archive under the deployment's export directory FD_AUDIT_EXPORT_DIRECTORY with owner-only modes, and records the run; the CLI reports the archive path and digest. A workspace administrator sees the registry, the retention periods and the export history in the Administration screens, and requests an export from the UI only once file storage exists.
+  - The three background loops (the retention sweep, the export requests and the erasure requests) run on the platform job runner of @flowdular/server, one runner each because their intervals and routing pages differ; the runner owns the interval, the guard against overlapping passes, the bound on the work one pass takes, the isolation of one item from the next and the drain on stop, and audit.core keeps its routing reads, its claim statements with their stale windows, the backup and legal-hold guards, the 24 hour expiry of an unanswered erasure request and every outcome it records. A claimed export or erasure renews its claim on the runner's timer, fenced on the claim the pass holds, and a renewal that matches nothing stops the stage with CLAIM_LOST so the run settles nothing and is left to the process that took it over; the retention sweep claims nothing and is fenced by the sweep stamp its routing row carried.
+  - audit.core keeps its own hash-chained event trail per workspace, with a monotonic sequence, the previous hash and the event hash; the sequence the chain already carries is what a segment is cut on, so sealing adds no second ordering.
+  - Sealing closes one segment of one workspace's chain. audit seal reads every event after the last anchor's sequence up to the newest in sequence order and bounded pages, writes the segment into the operator directory as JSON Lines with the anchor as its first line, and records the same anchor in the database. The segment hash is a chain over the segment continuing from the previous anchor's hash; the anchor seals the last sequence, the segment hash, the row count, the time range and the previous anchor hash, and carries an HMAC-SHA256 signature under FD_AUDIT_ANCHOR_KEY, with FD_AUDIT_ANCHOR_KEY_PREVIOUS holding the keys a rotation has not finished retiring. Without --apply the command prints the plan and writes neither file nor row.
+  - audit verify reads the segment files of a directory, recomputes every event hash from the stored line, recomputes the segment chain from the previous anchor, checks each anchor signature under the keyring and checks that every anchor links to the anchor before it and to the anchors the workspace recorded. It names the first line and the first anchor that do not match rather than answering one boolean, and it reports how many events in the segment are plaintext rows written before 0.2.0.
+  - A verification is answerable to the anchors the workspace recorded, not only to the files that are still there. A directory may begin above anchor one, because an operator may verify one holding the newest segments alone; every recorded anchor at or above the oldest anchor the directory does hold must have a segment file, and one that does not fails the verification naming that anchor. A file carrying this workspace's segment name whose anchor names another workspace fails as well, because the name is what selected it to be read and a rewritten anchor is not a foreign file.
+  - One verification pass reads the newest 4096 segment files of the directory and the newest 4096 anchors of the workspace, so both windows are the same end of the chain, and the report states that window and whether it was reached. A deployment holding more segments than one window verifies the older ones in a directory of their own.
+  - audit secrets-rotate re-signs every anchor whose signature was made under a retired key with the current key. The anchor hash, the segment hash and the chain are untouched, so a re-signed anchor still verifies against segment files already written, and a second run finds nothing to do.
+  - A chain is aged only after it is sealed. The retention sweep of audit.core.events removes only events whose sequence is at or below the newest anchor of the workspace; when events older than the cutoff are not yet in a segment file the run is recorded refused with the stable reason SEGMENT_NOT_SEALED and nothing of them is removed, never passed over in silence. Erasure never removes an audit event.
+  - A legal hold is a workspace row naming a scope kind (account, workspace, data class or date range), optionally narrowed by an account, a class and a date range together, the reason it was placed, the account that placed it and, once lifted, the account that lifted it and why. Only a principal holding audit.holds.manage places or lifts one, through the API or the Holds screen, and each is written to the audit trail as an event of its own.
+  - The retention sweep and erasure refuse for anything an active hold covers, with the stable code HOLD_ACTIVE, and record the refusal. The sweep ledger names the class, the reason and the rows held back where audit.core owns the class and can count them, and leaves the count absent where only the owning module could. The kernel sweep input carries no row predicate, so a hold that names rows rather than a class withholds every class of that workspace it reaches; the over-approximation is deliberate, because a hold that withholds more than it covers is safe and one that withholds less is not, and the precise fix is a row predicate on the kernel sweep input.
+  - Erasure of one subject walks the sealed platform data class registry. A module declares the erase operation on the data class it owns, as two optional members of DataClassDeclaration beside sweep and export. erase({ tenantId, subject with its accountId, limit }) answers { removed, redacted?, truncated? }, where removed counts rows that are gone and redacted counts rows the owner kept but stripped of the subject, the run counts both as the batch's progress, an unreadable count ends the class as truncated, and the certificate carries both totals; count?({ tenantId, subject }) answers a number or none. Every class of the registry gets an outcome, and a class that declares no erase is named not-erasable rather than left out. The public capability audit.erasure.v1 stays as a thin adapter carrying the same two operations, for a module that composes after audit.core and prefers to register rather than declare; a declaration always wins over a registration for the same class.
+  - An erasure run writes an audit event before and after, runs each class inside the owning module's own transaction, is refused under a hold, and writes a JSON certificate naming the workspace, the subject, every class of the registry with its outcome and its count, the timestamps, the operator label and the newest anchor of the workspace into the operator directory. A class that reports truncated, or whose owner failed, leaves the certificate incomplete and the run recorded partial rather than completed. Without --apply the platform counts through every class and writes nothing but the request row, which expires after 24 hours when no platform answers it.
+  - A subject whose audit data key was destroyed never receives a second one. The key row keeps a subject marker that outlives the account it named, so the tombstone is findable after the account is gone; a later event about that subject is written under the marker, and a write that would create a new key for it is refused with SUBJECT_KEY_DESTROYED.
+  - Audit events are excluded from erasure on the documented basis that they are the evidence the data lifecycle of a workspace actually happened, and they are bounded by retention instead. From 0.2.0 an audit event that names a person seals the actor identifier, the subject identifier and the details under a per-subject data key held in audit_subject_keys, and the event hash covers the sealed bytes rather than the plaintext, so destroying that key with audit erase --destroy-key makes the fields unreadable for ever while the chain still verifies. Events written before 0.2.0 stay plaintext and verify reports them as such.
+  - The operator commands seal, verify, erase, secrets-rotate and holds are process risk, are a dry run without --apply, and run outside a workspace session, so they carry no workspace permission and an erasure that applies also needs --confirm erase-subject.
+  - The event hash covers every stored column of the row, including its identifier, the subject key it points at, whether it is sealed and the event format that wrote it, so no stored column can be edited without breaking the chain.
+  - An audit event is appended under the workspace's own advisory lock, taken inside the same transaction that reads the newest sequence, so concurrent writers of one workspace take consecutive sequences instead of racing for one and losing an event to the unique constraint. Workspaces never wait for each other.
+  - A stored event records the event format that wrote it. verify reports as plaintext only the events that carry no format, which are the ones written before audit.core sealed anything; an event about nobody is not reported as one.
+  - One operator directory holds the segments of every workspace. verify reads the files named after the workspace it was asked about, so another workspace's segments and any other file of the directory are never opened, and neither is failed on.
+  - audit secrets-rotate verifies the stored signature of an anchor under the keyring before re-signing it. An anchor on a key no ring holds, or one whose signature does not verify, is reported and left untouched, because a new signature would replace evidence with one this deployment vouches for. FD_AUDIT_ANCHOR_KEY_PREVIOUS holds at most the eight retired keys the kernel keyring accepts.
+  - A legal hold names the account it covers and the matter behind it, so listing, placing and lifting one all require audit.holds.manage; audit.registry.read alone is refused.
+  - audit.core keeps its own three classes for 400 days by default, the chain and both ledgers alike, so a workspace that sets no period still stops carrying them for ever. An export run the platform has not answered is never removed by age.
+  - Every tenant table audit.core owns is a declared class of the registry, so the catalogue a workspace reads is the deployment rather than the part of it that is swept. Beside the chain and the two ledgers it declares the legal holds, the erasure history, the chain anchors and the subject data keys. The four are kept until a person deletes them and carry no sweep and no erase, because a hold and an erasure record are the evidence a lifecycle decision was taken, and the anchors and the subject keys are the integrity material the chain is verified and the sealed events are read through. Holds and erasure history are exportable, the anchors and the subject keys are not and state that reason in the export manifest, and the erasure plan counts the holds naming the subject so the certificate says which evidence about them stays. The one tenant table that is not a class is the registry's own projection of the declarations.
+  - Reading the registry is a read. A workspace's catalogue rows are written when it holds none and when a composition changed a label, a default or the operations a class carries; a read that finds them current opens no write transaction, and the rows exist so the cross-workspace routing read of the sweep can find a class at all.
+  - Migrations 0003, 0004 and 0005 add their constraints inside DO blocks that read pg_constraint by name alone, which a same-named constraint on another schema of the search path would satisfy. Those files are applied and immutable, so the adoption probes, which live in code, prove every one of those constraints against the current schema and by definition where a later migration replaced one under the same name; a schema missing any of them is reported partial and refused rather than adopted.
+permissions:
+  - id: audit.registry.read
+    description: Read the data class registry, the retention periods and the export history of the active workspace.
+  - id: audit.retention.manage
+    description: Change the retention period of a data class in the active workspace.
+  - id: audit.holds.manage
+    description: Place and lift the legal holds of the active workspace; owners only.
+dataOwnership:
+  - audit.core owns the data class registry, the per-workspace retention periods, the sweep ledger, the export history, the erasure history, the chain anchors, the legal holds and the per-subject data keys.
+  - audit.core declares all of them it holds rows of as its own data classes, namely audit.core.events, audit.core.sweep-runs and audit.core.export-runs for 400 days, and audit.core.legal-holds, audit.core.erasure-runs, audit.core.anchors and audit.core.subject-keys kept until a person deletes them. The last two are excluded from the export as integrity material with the reason on the manifest; none of the seven declares an erase operation.
+  - Every declaring module owns the rows of its classes and performs the sweep and the export of them through its own port; auth.core, agents.core, workflows.core, automations.core and notifications.core declare their classes in the same delivery.
+entities:
+  - id: data-class
+    name: Data class
+    description: One class a module declared, as the workspace sees it, with its retention period.
+    fields:
+      - id: classId
+        type: string
+        required: true
+        unique: tenant
+        maxLength: 96
+        description: module id plus class key, for example agents.core.runs.
+      - id: moduleId
+        type: string
+        required: true
+        maxLength: 64
+      - id: label
+        type: string
+        required: true
+        maxLength: 120
+      - id: exportable
+        type: boolean
+        required: true
+      - id: sweepable
+        type: boolean
+        required: true
+      - id: defaultRetentionDays
+        type: integer
+        required: false
+      - id: retentionDays
+        type: integer
+        required: false
+        description: The workspace's period; absent means the default, zero is refused, none means kept.
+      - id: lastSweptAt
+        type: datetime
+        required: false
+  - id: sweep-run
+    name: Sweep run
+    description: One retention pass over one class of one workspace.
+    fields:
+      - id: dataClass
+        type: reference
+        required: true
+        reference: data-class
+      - id: cutoff
+        type: datetime
+        required: true
+      - id: removed
+        type: integer
+        required: true
+      - id: status
+        type: enum
+        required: true
+        values:
+          - completed
+          - partial
+          - refused
+      - id: reason
+        type: string
+        required: false
+        maxLength: 64
+      - id: heldBack
+        type: integer
+        required: false
+        description: Rows an active hold withheld, where audit.core owns the class and can count them; absent when only the owning module could.
+      - id: occurredAt
+        type: datetime
+        required: true
+  - id: export-run
+    name: Export run
+    description: One per-workspace export as recorded in the workspace.
+    fields:
+      - id: formatVersion
+        type: string
+        required: true
+        maxLength: 16
+      - id: status
+        type: enum
+        required: true
+        values:
+          - started
+          - completed
+          - failed
+      - id: classes
+        type: integer
+        required: true
+      - id: rows
+        type: integer
+        required: true
+      - id: archiveDigest
+        type: string
+        required: false
+        maxLength: 64
+      - id: requestedBy
+        type: string
+        required: true
+        maxLength: 128
+        description: The operator label recorded by the CLI.
+      - id: reason
+        type: string
+        required: false
+        maxLength: 64
+        description: A stable reason when the run failed or was refused.
+      - id: dryRun
+        type: boolean
+        required: true
+        description: A plan; the platform counts through every owner and writes no archive.
+      - id: outputDirectory
+        type: string
+        required: false
+        maxLength: 512
+        description: What the operator asked for, inside FD_AUDIT_EXPORT_DIRECTORY; a deployment path, never the workspace's data.
+      - id: archivePath
+        type: string
+        required: false
+        maxLength: 512
+      - id: workspaceSlug
+        type: string
+        required: false
+        maxLength: 64
+      - id: workspaceName
+        type: string
+        required: false
+        maxLength: 200
+      - id: summary
+        type: json
+        required: false
+        description: Classes, counts, time ranges and exclusions, bounded, so the command and the screens read the outcome without opening the archive.
+      - id: claimedAt
+        type: datetime
+        required: false
+        description: The lease that keeps two platform processes from writing one archive twice.
+      - id: startedAt
+        type: datetime
+        required: true
+      - id: completedAt
+        type: datetime
+        required: false
+  - id: erasure-run
+    name: Erasure run
+    description: One erasure of one subject as the workspace records it; the operator command writes the request columns and the running platform the result ones.
+    fields:
+      - id: subject
+        type: string
+        required: false
+        maxLength: 64
+        description: The account to erase; kept while the run needs it and blanked when it finishes, so the history names nobody.
+      - id: subjectMarker
+        type: string
+        required: true
+        maxLength: 32
+        description: The hash the certificate file is named after and the subject key row keeps; it names nobody.
+      - id: status
+        type: enum
+        required: true
+        values:
+          - requested
+          - completed
+          - partial
+          - failed
+      - id: dryRun
+        type: boolean
+        required: true
+      - id: destroyKey
+        type: boolean
+        required: true
+      - id: requestedBy
+        type: string
+        required: true
+        maxLength: 128
+      - id: outputDirectory
+        type: string
+        required: false
+        maxLength: 512
+      - id: workspaceSlug
+        type: string
+        required: false
+        maxLength: 64
+      - id: workspaceName
+        type: string
+        required: false
+        maxLength: 200
+      - id: classes
+        type: integer
+        required: true
+      - id: rows
+        type: integer
+        required: true
+      - id: certificatePath
+        type: string
+        required: false
+        maxLength: 512
+      - id: outcome
+        type: json
+        required: false
+        description: Every class of the registry with its outcome, its count and whether it was truncated.
+      - id: reason
+        type: string
+        required: false
+        maxLength: 64
+      - id: claimedAt
+        type: datetime
+        required: false
+      - id: startedAt
+        type: datetime
+        required: true
+      - id: completedAt
+        type: datetime
+        required: false
+  - id: audit-event
+    name: Audit event
+    description: One hash-chained event of this module's own trail.
+    fields:
+      - id: sequence
+        type: integer
+        required: true
+      - id: action
+        type: string
+        required: true
+        maxLength: 64
+      - id: subject
+        type: string
+        required: true
+        maxLength: 200
+      - id: metadata
+        type: json
+        required: true
+      - id: previousHash
+        type: string
+        required: false
+        maxLength: 64
+      - id: eventHash
+        type: string
+        required: true
+        maxLength: 64
+      - id: sealed
+        type: boolean
+        required: true
+        description: True when the actor, the subject and the details are sealed under a per-subject data key.
+      - id: subjectKeyId
+        type: string
+        required: false
+        maxLength: 64
+        description: The subject key row that sealed this event; the account it belonged to is not stored on the event.
+      - id: sealFormat
+        type: string
+        required: false
+        maxLength: 32
+        description: The event format that wrote the row; absent for a row written before audit.core recorded one, which is what verify reports as plaintext.
+      - id: occurredAt
+        type: datetime
+        required: true
+  - id: chain-anchor
+    name: Chain anchor
+    description: One sealed segment of the workspace's audit event chain.
+    fields:
+      - id: anchorSequence
+        type: integer
+        required: true
+        unique: tenant
+        description: Position of the anchor in the workspace's anchor chain, from one.
+      - id: fromSequence
+        type: integer
+        required: true
+      - id: toSequence
+        type: integer
+        required: true
+      - id: rowCount
+        type: integer
+        required: true
+      - id: firstOccurredAt
+        type: datetime
+        required: true
+      - id: lastOccurredAt
+        type: datetime
+        required: true
+      - id: segmentHash
+        type: string
+        required: true
+        maxLength: 64
+      - id: previousAnchorHash
+        type: string
+        required: false
+        maxLength: 64
+      - id: anchorHash
+        type: string
+        required: true
+        maxLength: 64
+      - id: signature
+        type: string
+        required: true
+        maxLength: 128
+        description: HMAC-SHA256 of the anchor hash under the anchor key.
+      - id: keyId
+        type: string
+        required: true
+        maxLength: 32
+      - id: segmentFile
+        type: string
+        required: true
+        maxLength: 200
+      - id: sealedBy
+        type: string
+        required: true
+        maxLength: 128
+      - id: sealedAt
+        type: datetime
+        required: true
+  - id: legal-hold
+    name: Legal hold
+    description: One standing instruction not to remove the data it covers.
+    fields:
+      - id: scopeKind
+        type: enum
+        required: true
+        values:
+          - account
+          - workspace
+          - data-class
+          - date-range
+      - id: accountId
+        type: string
+        required: false
+        maxLength: 64
+      - id: classId
+        type: string
+        required: false
+        maxLength: 96
+      - id: fromAt
+        type: datetime
+        required: false
+      - id: toAt
+        type: datetime
+        required: false
+      - id: reason
+        type: string
+        required: true
+        maxLength: 400
+      - id: status
+        type: enum
+        required: true
+        values:
+          - active
+          - lifted
+      - id: placedBy
+        type: string
+        required: true
+        maxLength: 64
+      - id: placedAt
+        type: datetime
+        required: true
+      - id: liftedBy
+        type: string
+        required: false
+        maxLength: 64
+      - id: liftReason
+        type: string
+        required: false
+        maxLength: 400
+      - id: liftedAt
+        type: datetime
+        required: false
+    states:
+      field: status
+      values:
+        - active
+        - lifted
+      transitions:
+        - from: active
+          to: lifted
+          permission: audit.holds.manage
+  - id: subject-key
+    name: Subject key
+    description: The data key one subject's audit metadata is sealed under, and its destruction.
+    fields:
+      - id: subject
+        type: string
+        required: false
+        unique: tenant
+        maxLength: 64
+        description: The account the key belongs to; cleared with the material when the key is destroyed.
+      - id: subjectMarker
+        type: string
+        required: false
+        unique: tenant
+        maxLength: 32
+        description: The name the subject keeps once its key is gone, so a destroyed key is findable and the subject is never given a second one.
+      - id: keyState
+        type: enum
+        required: true
+        values:
+          - active
+          - destroyed
+      - id: sealedAt
+        type: datetime
+        required: true
+      - id: destroyedAt
+        type: datetime
+        required: false
+screens:
+  - id: data-classes
+    kind: list
+    entity: data-class
+    title: Data classes
+    columns:
+      - classId
+      - moduleId
+      - label
+      - retentionDays
+      - defaultRetentionDays
+      - exportable
+      - lastSweptAt
+    filters:
+      - moduleId
+    navigationGroup: Administration
+  - id: sweeps
+    kind: list
+    entity: sweep-run
+    title: Retention sweeps
+    columns:
+      - occurredAt
+      - dataClass
+      - cutoff
+      - removed
+      - status
+      - reason
+    filters:
+      - status
+    navigationGroup: Administration
+  - id: exports
+    kind: list
+    entity: export-run
+    title: Exports
+    columns:
+      - startedAt
+      - status
+      - classes
+      - rows
+      - archiveDigest
+      - requestedBy
+    filters:
+      - status
+    navigationGroup: Administration
+  - id: holds
+    kind: list
+    entity: legal-hold
+    title: Legal holds
+    columns:
+      - placedAt
+      - scopeKind
+      - accountId
+      - classId
+      - reason
+      - placedBy
+      - status
+    filters:
+      - status
+      - scopeKind
+    navigationGroup: Administration
+actions:
+  - id: set-retention
+    entity: data-class
+    permission: audit.retention.manage
+    kind: update
+    risk: workspace-write
+    idempotent: true
+    description: Set the workspace's retention period for a class in days, or none; refused for a class that cannot be swept and for zero.
+  - id: place-hold
+    entity: legal-hold
+    permission: audit.holds.manage
+    kind: create
+    risk: workspace-write
+    idempotent: false
+    description: Place a hold over an account, the workspace, a data class or a date range, with the reason it is placed; the scope fields the kind needs are required and the rest are optional narrowings.
+  - id: lift-hold
+    entity: legal-hold
+    permission: audit.holds.manage
+    kind: update
+    risk: workspace-write
+    idempotent: true
+    description: Lift an active hold with the reason it is lifted; lifting one that is already lifted changes nothing and answers the same row.
+widgets: []
+settings:
+  - key: sweepIntervalMinutes
+    type: integer
+    scope: platform
+    default: 60
+    description: How often the retention sweep looks for due classes; 5 to 1440.
+  - key: sweepBatchSize
+    type: integer
+    scope: platform
+    default: 500
+    description: Rows removed per owner call per class; 50 to 5000.
+agentTools: []
+outOfScope:
+  - Export requested from the UI and stored for download needs file storage (RFC 0002 G3); v1 exports through the operator CLI only.
+  - Data residency is a deployment property outside this module.
+  - Archiving a sealed segment to S3 or any other object store is out of scope; the operator writes segments into the deployment's own directory and the storage port may carry them later.
+  - Sealing, verification and erasure have no screen; they are operator commands, and the Holds screen is the only new surface a workspace administrator sees.
+  - A row-level hold predicate on the kernel sweep input is out of scope; a hold that names rows withholds the whole class of that workspace and the sweep ledger says so.
+  - Erasing a subject from a class whose declaration carries no erase operation is out of scope; the plan and the certificate name the class as not-erasable rather than pretending it was cleared.
+  - Cancelling a recorded erasure request from the command line is out of scope; a request no platform answered within 24 hours is recorded failed with ERASURE_REQUEST_EXPIRED instead.
+  - Restarting the retention sweep interval while the platform runs is out of scope; an edited cadence applies at the next start and the setting's description says so.
+decisions:
+  - id: D-AUDIT-SCOPE
+    question: What is the first version of audit.core?
+    answer: The data class registry, tenant-scoped retention with one sweep, and the per-workspace export; archival, hold and erasure follow in the next specification.
+    decidedBy: user
+  - id: D-AUDIT-RETENTION-DEFAULTS
+    question: What are the default retention periods?
+    answer: Audit events 400 days, agent runs and workflow payloads 90 days, authentication events 180 days, business records none; each declared by the owning module and editable per workspace.
+    decidedBy: user
+  - id: D-AUDIT-EXPORT-FORMAT
+    question: What does an export look like?
+    answer: A ZIP archive with manifest.json and one JSON Lines file per class; sealed payloads decrypted where permitted, secrets and password hashes excluded with a reason.
+    decidedBy: user
+  - id: D-AUDIT-EXPORT-DELIVERY
+    question: How is an export produced?
+    answer: An operator CLI command writing to a directory outside the workspace, audited; UI download waits for file storage.
+    decidedBy: user
+  - id: D-AUDIT-REGISTRY
+    question: How do modules join the registry?
+    answer: Through the platform registry context.dataClasses at composition, sealed by the platform after every composition, each with its own sweep and export operations; audit.core reads no foreign table, and auth.core declares through the registry the platform hands its runtime.
+    decidedBy: default
+  - id: D-AUDIT-EXPORT-PROCESS
+    question: Which process performs the export?
+    answer: The running platform process, because only it holds the sealed registry with every owner port; the CLI records the request, waits and reports the archive.
+    decidedBy: default
+  - id: D-AUDIT-BACKUP-GUARD
+    question: May a sweep run before a backup exists?
+    answer: No; the sweep and the export refuse while the deployment has no backup manifest fingerprint, as RFC 0001 orders backup before retention.
+    decidedBy: default
+  - id: D-AUDIT-PERMISSIONS
+    question: Who sees and edits retention?
+    answer: Owners hold audit.registry.read and audit.retention.manage; members hold neither.
+    decidedBy: default
+  - id: D-AUDIT-SEAL
+    question: How is the audit event chain archived?
+    answer: flowdular audit seal closes the segment from the last anchor to the newest event, writes the rows as JSON Lines into the operator directory with the anchor as the first line of the file, and records the anchor in the database; flowdular audit verify checks a directory of segments and the anchor chain, and the dry run prints the plan.
+    decidedBy: user
+  - id: D-AUDIT-ANCHOR-KEY
+    question: What signs an anchor?
+    answer: HMAC-SHA256 under FD_AUDIT_ANCHOR_KEY, with FD_AUDIT_ANCHOR_KEY_PREVIOUS holding retired keys and flowdular audit secrets-rotate re-signing anchors under the current key.
+    decidedBy: user
+  - id: D-AUDIT-SEAL-ARCHIVE
+    question: Does sealing push segments to S3?
+    answer: No. The operator directory is the archive for now; the storage port may carry an S3 target later.
+    decidedBy: user
+  - id: D-AUDIT-SEALED-RETENTION
+    question: May retention remove an event that is not in a segment file?
+    answer: No. Sealed events stay readable in the database until retention removes them, and an unsealed event is refused with SEGMENT_NOT_SEALED rather than skipped in silence.
+    decidedBy: user
+  - id: D-AUDIT-HOLD-SCOPE
+    question: What may a legal hold cover?
+    answer: An account, the whole workspace, one data class or a date range, with an optional combination of account plus class plus range, each with the reason it was placed and the reason it was lifted.
+    decidedBy: user
+  - id: D-AUDIT-HOLD-PERMISSION
+    question: Who places and lifts a hold?
+    answer: Owners holding the new permission audit.holds.manage, through the API and the Holds screen in Administration; both acts are audited.
+    decidedBy: user
+  - id: D-AUDIT-HOLD-PREDICATE
+    question: How does a hold reach a module's sweep?
+    answer: It does not. audit.core filters at the registry boundary, skipping the classes and workspaces a hold covers and reporting them with HOLD_ACTIVE, because DataClassSweepInput belongs to the kernel and a per-row predicate would make every owning module reimplement hold semantics; a hold that names rows withholds the whole class, which is the safe direction.
+    decidedBy: user
+  - id: D-AUDIT-ERASURE-OPTION
+    question: How is erasure on request delivered?
+    answer: Option C now, with option B built into new audit writes. flowdular audit erase deletes the subject's records in every declaring class, and new audit events seal the subject-identifying fields under a per-subject key so a later key destruction is itself an erasure.
+    decidedBy: user
+  - id: D-AUDIT-ERASURE-PORT
+    question: Where does the erase operation live?
+    answer: On the platform data class declaration in packages/kernel, as the optional members erase and count beside sweep and export, so a module declares its classes and their erasure in one place and no composition order is involved. audit.erasure.v1 remains a thin adapter over the same two operations for a module that composes after audit.core; the declaration wins where both exist.
+    decidedBy: user
+  - id: D-AUDIT-ERASURE-EXCLUSION
+    question: Are audit events erased with the subject?
+    answer: No. They are the evidence the lifecycle happened, are bounded by retention, and their subject-identifying fields are sealed per subject so audit erase --destroy-key makes them unreadable while the chain still verifies.
+    decidedBy: user
+  - id: D-AUDIT-SEALING-SCOPE
+    question: What happens to events written before 0.2.0?
+    answer: They stay plaintext and are reported as plaintext by verify; only new writes are sealed, because rewriting a stored row would break every hash after it.
+    decidedBy: user
+  - id: D-AUDIT-CLI-RISK
+    question: How are the new operator commands gated?
+    answer: seal, verify, erase, secrets-rotate and holds are operator-only, risk process, a dry run without --apply, and erase also needs --confirm erase-subject.
+    decidedBy: user
+acceptanceScenarios:
+  - id: AUDIT-REGISTRY-DECLARE
+    given: auth.core, agents.core, workflows.core, automations.core and notifications.core compose after audit.core.
+    when: A principal holding audit.registry.read lists the data classes.
+    then: Every declared class appears with its module, label, default retention, exportability and the workspace period, and a module that declared nothing is listed as holding none.
+  - id: AUDIT-RETENTION-SET
+    given: A class with a default of 90 days.
+    when: A principal holding audit.retention.manage sets 30 days, then none, then zero.
+    then: The first two are persisted and audited, the third is refused with a stable error, and a member without the permission is refused before repository access.
+  - id: AUDIT-SWEEP
+    given: Two workspaces with rows older and newer than their periods in a sweepable class, and a backup manifest present.
+    when: The sweep runs.
+    then: Only rows older than each workspace's cutoff are removed by the owner module in bounded batches, an audit event precedes each batch, the sweep ledger records the counts per workspace and class, and the other workspace's rows are untouched.
+  - id: AUDIT-SWEEP-NO-BACKUP
+    given: No backup manifest fingerprint for the deployment.
+    when: The sweep or the export runs.
+    then: Both are refused with a stable reason recorded in the ledger and nothing is removed or written.
+  - id: AUDIT-EXPORT
+    given: A workspace with rows in every exportable class and a sealed payload in one of them, and a running platform with an export directory configured.
+    when: The operator runs the export command with --apply and the platform loop picks the request up.
+    then: A ZIP with manifest.json and one JSON Lines file per class is written under the export directory with owner-only modes, the manifest lists classes, counts, time ranges and exclusions with reasons, the sealed payload appears decrypted and no secret or password hash appears, the export history shows the run with the archive digest, and rows of other workspaces are absent.
+  - id: AUDIT-EXPORT-DRY-RUN
+    given: A workspace with exportable rows.
+    when: The operator runs the export command without --apply.
+    then: The plan lists the classes and counts and nothing is written.
+  - id: AUDIT-DENY
+    given: A principal is unauthenticated or lacks the required permission.
+    when: The principal reads the registry or changes a period.
+    then: The server denies the operation before repository access, and a mutation without a CSRF proof is refused first.
+  - id: AUDIT-TENANT-BOUNDARY
+    given: Two workspaces with periods, sweep runs and export runs.
+    when: A runtime transaction bound to one workspace reads or writes any of them, or the cross-tenant sweep routing read runs.
+    then: Only that workspace's rows are visible or mutable, the routing read sees routing columns alone on the background role, and a row carrying another tenant identifier is rejected by the forced policy.
+  - id: AUDIT-SEAL-CHAIN
+    given: A workspace whose chain was sealed once and has written more events since.
+    when: The operator runs audit seal with --apply a second time into the same directory.
+    then: A second segment file holds exactly the events after the first anchor's sequence, its anchor names the first anchor's hash as its previous hash, both anchors are recorded in the workspace, and audit verify over the directory accepts both segments and the chain between them.
+  - id: AUDIT-SEAL-TAMPER
+    given: A sealed segment file.
+    when: One line of the file is edited and audit verify runs over the directory.
+    then: Verification fails naming that line, the segment hash mismatch and the anchor it belongs to, and nothing in the workspace is changed.
+  - id: AUDIT-SEAL-DRY-RUN
+    given: A workspace with unsealed events.
+    when: The operator runs audit seal without --apply.
+    then: The plan names the sequence range, the row count and the file that would be written, no file exists and no anchor is recorded.
+  - id: AUDIT-SEAL-ROTATE
+    given: Anchors signed under a key that is now in FD_AUDIT_ANCHOR_KEY_PREVIOUS.
+    when: The operator runs audit secrets-rotate with --apply and then verify.
+    then: Every anchor carries the current key id and a signature that verifies, the anchor hashes and segment hashes are unchanged, the segment files still verify, and a second run reports nothing stale.
+  - id: AUDIT-SWEEP-SEALED
+    given: A workspace whose audit events are older than the period and whose newest events are not in any segment file.
+    when: The retention sweep runs over audit.core.events.
+    then: Only events at or below the newest anchor's sequence are removed, the run is recorded with the stable reason SEGMENT_NOT_SEALED, and no unsealed event is removed.
+  - id: AUDIT-HOLD-PLACE
+    given: A principal holding audit.holds.manage.
+    when: The principal places a hold over one account with a reason and later lifts it with a reason.
+    then: Both rows are persisted with who acted and why, both are written to the audit trail as their own events, and a principal without the permission is refused before repository access.
+  - id: AUDIT-HOLD-BLOCKS-SWEEP
+    given: An active hold covering one data class of a workspace and rows older than the period in it.
+    when: The retention sweep runs.
+    then: The owner sweep is never called, the ledger records the class refused with HOLD_ACTIVE and the rows held back where audit.core can count them, the other workspace is swept normally, and lifting the hold lets the next pass remove the rows.
+  - id: AUDIT-HOLD-BLOCKS-ERASE
+    given: An active hold covering the subject of an erasure request.
+    when: The operator runs audit erase, with and without --apply.
+    then: Both are refused with HOLD_ACTIVE naming the hold, no class erase operation is called, and no certificate is written.
+  - id: AUDIT-ERASE-DRY-RUN
+    given: A workspace with the subject's records in a declaring class.
+    when: The operator runs audit erase without --apply.
+    then: The plan lists every module and class with the count it would erase, or states that a class cannot be counted, nothing is removed and no certificate is written.
+  - id: AUDIT-ERASE-APPLY
+    given: The same workspace and a declaring class that registered an erase operation.
+    when: The operator runs audit erase with --apply and --confirm erase-subject.
+    then: The subject's rows are gone from that class, an audit event is written before and after, a JSON certificate naming the workspace, the subject, the classes, the counts, the operator and the newest anchor is written to the output directory, and the rows of another workspace and another subject are untouched.
+  - id: AUDIT-ERASE-KEY-DESTROYED
+    given: Audit events sealed under one subject's data key.
+    when: The operator runs audit erase with --destroy-key and --apply, and audit verify runs afterwards.
+    then: The actor, the subject and the details of those events read as redacted and can never be opened again, the key row records the destruction and names no account, and verification of the chain and of every sealed segment still passes.
+  - id: AUDIT-DENY-HOLDS
+    given: A principal is unauthenticated, or holds only audit.registry.read.
+    when: The principal lists, places or lifts a hold.
+    then: The server denies before repository access, 401 without an identity and 403 without audit.holds.manage on the list as well as on both mutations, the registry, sweep and export reads still answer 200 for that principal, and a mutation without a CSRF proof is refused first.
+  - id: AUDIT-TENANT-BOUNDARY-0-2
+    given: Two workspaces with holds, anchors and subject keys.
+    when: A runtime transaction bound to one workspace reads or writes any of them.
+    then: Only that workspace's rows are visible or mutable, and a row carrying another tenant identifier is rejected by the forced policy.
+  - id: AUDIT-ERASE-NOT-ERASABLE
+    given: A composed module declaring a data class with no erase operation.
+    when: The operator runs audit erase with and without --apply.
+    then: The plan and the certificate name that class with the outcome not-erasable and no count of its own, the certificate totals say how many classes could not be erased, and the classes that can be erased are unaffected.
+  - id: AUDIT-ERASE-PARTIAL
+    given: A declaring class whose erase answers truncated, so rows of the subject are left.
+    when: The operator runs audit erase with --apply.
+    then: The class outcome carries truncated, the certificate is marked incomplete and the run is recorded partial rather than completed.
+  - id: AUDIT-ERASE-KEY-TOMBSTONE
+    given: A subject whose audit data key an earlier run destroyed.
+    when: The operator runs audit erase for the same subject again.
+    then: The workspace still holds exactly one key row for that subject, it is the tombstone and names no account, the events of the second run name the subject by its marker, and nothing in the trail reads back as the account.
+  - id: AUDIT-ERASE-REQUEST-EXPIRES
+    given: An erasure request recorded more than 24 hours ago that no platform answered.
+    when: The erasure loop takes its next pass.
+    then: The run is recorded failed with ERASURE_REQUEST_EXPIRED, no class erase operation is called, and a request inside the window is performed normally.
+  - id: AUDIT-SEAL-SHARED-DIRECTORY
+    given: Two workspaces sealed into one operator directory.
+    when: audit verify runs for each of them.
+    then: Each verification reads its own workspace's segments, accepts them, and neither fails on the other workspace's anchors.
+  - id: AUDIT-SEAL-EVENT-FORMAT
+    given: A segment holding events this build wrote and one written before audit.core recorded an event format.
+    when: audit verify runs over the directory.
+    then: Verification passes and reports exactly the one event with no format as plaintext; the events about nobody are not reported.
+  - id: AUDIT-SEAL-TAMPER-SEALED
+    given: A sealed segment whose sealed line is repointed at another subject key.
+    when: audit verify runs over the directory.
+    then: Verification fails naming that line and its hash mismatch.
+  - id: AUDIT-SEAL-ROTATE-UNVERIFIED
+    given: An anchor whose stored signature does not verify under the keyring, or whose key is in no ring.
+    when: The operator runs audit secrets-rotate with --apply.
+    then: The anchor is reported and not re-signed, its stored signature and key id are unchanged, and the command warns naming the anchor.
+  - id: AUDIT-CHAIN-CONCURRENT-APPEND
+    given: Several writers appending audit events to one workspace at the same time.
+    when: The appends run concurrently.
+    then: Every append is recorded with its own consecutive sequence and its own previous hash, none is lost to the unique constraint, and another workspace appends at the same time without waiting.
+  - id: AUDIT-LEDGER-RETENTION
+    given: Sweep runs and export runs older than 400 days in one workspace and newer ones beside them.
+    when: The retention sweep runs over audit.core.sweep-runs and audit.core.export-runs.
+    then: Only the older rows are removed, an export run the platform has not answered stays whatever its age, and another workspace's rows are untouched.
+  - id: AUDIT-EXPORT-DIRECTORY-LINK
+    given: A symbolic link inside FD_AUDIT_EXPORT_DIRECTORY pointing outside it.
+    when: An operator command asks to write through that link.
+    then: The request is refused with EXPORT_OUTPUT_NOT_ALLOWED, and a link that stays inside the allowed directory is accepted.
+  - id: AUDIT-MIGRATION-ADOPTION
+    given: A schema that predates the ledger, one missing a column or an index migration 0004 adds, and a ledger entry whose checksum drifted.
+    when: The migration runner inspects and applies.
+    then: The complete schema is adopted without changing its rows, the incomplete one is reported partial and refused with PARTIAL_MIGRATION, the drifted entry is refused with CHECKSUM_MISMATCH, a dry run writes nothing, and a same-named table in another schema never satisfies an adoption probe.
+  - id: AUDIT-SEAL-SEGMENT-MISSING
+    given: A workspace whose directory has lost its newest segment file, and one whose oldest segment was rewritten to name another workspace.
+    when: audit verify runs over the directory.
+    then: Both fail; the first names the recorded anchor the directory holds no segment for, the second names the file and the workspace its anchor claims, and the segments that are still this workspace's own still verify.
+  - id: AUDIT-SEAL-VERIFY-WINDOW
+    given: A directory holding more segment files of one workspace than a verification pass reads.
+    when: audit verify runs over it.
+    then: The pass reads the newest files and the newest anchors, accepts them, and the report states the window it read and that more was sealed before it.
+  - id: AUDIT-EVENT-HASH-PREIMAGE
+    given: A stored audit event of a workspace, sealed under a subject key.
+    when: A digest is built independently over the thirteen stored fields in the documented order.
+    then: It equals the event hash the row carries, so a field added to, removed from or reordered in the preimage is a change the chain refuses.
+  - id: AUDIT-OWN-CLASS-CATALOGUE
+    given: A workspace holding a legal hold, an erasure run, chain anchors and subject keys.
+    when: The workspace reads the registry and the classes audit.core owns are exported.
+    then: Every tenant table audit.core owns is a declared class, the holds and the erasure history export with one workspace's rows alone, the anchors and the subject keys are reported excluded with their reason, and an erasure plan counts the holds naming the subject and erases none of them.
+  - id: AUDIT-REGISTRY-READ-ONLY
+    given: A workspace that has read the registry once already.
+    when: It reads GET /api/audit/data-classes again.
+    then: The response carries the same catalogue and the request opens no write transaction; a workspace that holds no rows yet is written once so the sweep can find its classes.
+  - id: AUDIT-MIGRATION-CONSTRAINT-PROBE
+    given: A schema that lost a constraint migration 0005 adds, and one whose status constraint is still the narrower one migration 0004 created under the same name.
+    when: The migration runner inspects for adoption.
+    then: Both are reported partial and refused with PARTIAL_MIGRATION rather than adopted, and a complete schema is adopted unchanged.

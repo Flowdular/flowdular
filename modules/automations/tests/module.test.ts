@@ -9,6 +9,7 @@ import {
 } from 'vitest';
 import type { DatabaseProvider } from '@flowdular/database';
 import type { AgentRunQueue } from '@flowdular/module-agents/server';
+import type { JobRunner } from '@flowdular/server';
 import {
 	registerModuleTranslations,
 	setActiveLocale,
@@ -26,7 +27,9 @@ import {
 import { AUTOMATIONS_PERMISSIONS } from '../src/acl/permissions.ts';
 import { moduleDefinition } from '../src/index.ts';
 import { createAutomationsRuntime } from '../src/server/runtime.ts';
+import { createAutomationScheduleRunner } from '../src/services/schedule-runner.ts';
 import { AutomationScheduleService } from '../src/services/schedule-service.ts';
+import type { AutomationsRepository } from '../src/services/repository.ts';
 import { AesGcmSecretVault } from '../src/services/secret-vault.ts';
 import {
 	AutomationTriggerService,
@@ -88,6 +91,50 @@ function runQueue(allowedTools: readonly string[] = []) {
 	return { queue, runs };
 }
 
+/**
+ * The module repository with one schedule row that cannot be read, the way a
+ * transient database failure reaches a single item of a pass. Every other
+ * method is bound to the real instance, which keeps its private handles
+ * reachable.
+ */
+function repositoryFailingToRead(
+	repository: AutomationsRepository,
+	scheduleId: string,
+): AutomationsRepository {
+	return new Proxy(repository, {
+		get(target, property) {
+			if (property === 'getSchedule') {
+				return async (tenantId: string, id: string) => {
+					if (id === scheduleId) {
+						throw new Error('The schedule row could not be read.');
+					}
+					return await target.getSchedule(tenantId, id);
+				};
+			}
+			const value: unknown = Reflect.get(target, property);
+			return typeof value === 'function' ? value.bind(target) : value;
+		},
+	});
+}
+
+/**
+ * The scheduler pass as the platform runner drives it. Every case that used to
+ * call the service loop drives one of these instead, so the poll, the bound and
+ * the drain under test are the ones the runtime starts.
+ */
+function scheduleRunner(
+	repository: AutomationsRepository,
+	service: AutomationScheduleService,
+	now: () => number,
+): JobRunner {
+	return createAutomationScheduleRunner({
+		repository: async () => repository,
+		service: async () => service,
+		intervalMs: 30_000,
+		now,
+	});
+}
+
 describe('automations.core', () => {
 	it('owns a versioned target registry and refuses duplicate adapters', async () => {
 		const registry = createAutomationTargetRegistry();
@@ -135,8 +182,8 @@ describe('automations.core', () => {
 			},
 		]);
 		setActiveLocale('pl');
-		expect(cadenceLabel(60)).toBe('Co godzinę');
-		expect(cadenceLabel(180)).toBe('Co 3 godz.');
+		expect(cadenceLabel('every:60')).toBe('Co godzinę');
+		expect(cadenceLabel('every:180')).toBe('Co 3 godz.');
 		expect(timestampLabel(null)).toBe('Jeszcze nie uruchomiono');
 		setActiveLocale('en');
 	});
@@ -267,7 +314,7 @@ describe('automations.core', () => {
 			[AUTOMATIONS_PERMISSIONS.manage],
 		);
 		now += 60_000;
-		await schedules.tick();
+		await scheduleRunner(repository, schedules, () => now).tick();
 
 		expect(
 			(await repository.getSchedule('tenant-a', created.id))?.inputTemplate,
@@ -443,8 +490,21 @@ describe('automations.core', () => {
 		});
 		now += 60_000;
 
-		expect(await schedules.tick()).toBe(1);
-		expect(await schedules.tick()).toBe(0);
+		const runner = scheduleRunner(repository, schedules, () => now);
+		expect(await runner.tick()).toEqual({
+			claimed: 1,
+			performed: 1,
+			failed: 0,
+			claimLost: 0,
+		});
+		/* The slot the first pass fired is gone from the poll, so the second pass
+		   claims nothing rather than refusing a second run. */
+		expect(await runner.tick()).toEqual({
+			claimed: 0,
+			performed: 0,
+			failed: 0,
+			claimLost: 0,
+		});
 		expect(runs.size).toBe(1);
 		await expect(repository.verifyAuditChain('tenant-a')).resolves.toEqual({
 			verified: true,
@@ -497,12 +557,144 @@ describe('automations.core', () => {
 		agentExists = false;
 		now += 60_000;
 
-		expect(await schedules.tick()).toBe(0);
+		const runner = scheduleRunner(repository, schedules, () => now);
+		expect(await runner.tick()).toEqual({
+			claimed: 1,
+			performed: 1,
+			failed: 0,
+			claimLost: 0,
+		});
 		expect(await schedules.get('tenant-a', created.id)).toMatchObject({
 			enabled: false,
 			disabledReason: expect.stringContaining('AGENT_NOT_FOUND'),
 		});
 		expect(enqueue).not.toHaveBeenCalled();
+	});
+
+	it('fires the rest of the pass when one due schedule cannot be read', async () => {
+		let now = 10_000;
+		const { repository } = shared;
+		const { queue, runs } = runQueue();
+		const broken = await new AutomationScheduleService(
+			repository,
+			queue,
+			() => now,
+		).create('tenant-a', 'user-a', {
+			agentId: 'tenant-a-agent',
+			label: 'Unreadable schedule',
+			inputTemplate: 'Run once.',
+			cadence: 'every:1',
+			enabled: true,
+		});
+		now += 1_000;
+		/* The poll orders by slot, so the schedule that raises is the first item of
+		   the pass and a loop without per-item isolation never reaches the second. */
+		const unstable = repositoryFailingToRead(repository, broken.id);
+		const schedules = new AutomationScheduleService(unstable, queue, () => now);
+		const healthy = await schedules.create('tenant-a', 'user-a', {
+			agentId: 'tenant-a-agent',
+			label: 'Healthy schedule',
+			inputTemplate: 'Run once.',
+			cadence: 'every:1',
+			enabled: true,
+		});
+		now = 80_000;
+
+		const runner = scheduleRunner(unstable, schedules, () => now);
+		expect(await runner.tick()).toEqual({
+			claimed: 2,
+			performed: 1,
+			failed: 1,
+			claimLost: 0,
+		});
+		expect(runs.size).toBe(1);
+		expect(await repository.getSchedule('tenant-a', healthy.id)).toMatchObject({
+			lastRunId: 'run-1',
+			lastRunAt: 80_000,
+			nextRunAt: 131_000,
+		});
+		/* The schedule that raised kept its slot, so the next pass owes it a fire. */
+		expect(await repository.getSchedule('tenant-a', broken.id)).toMatchObject({
+			enabled: true,
+			lastRunId: null,
+			nextRunAt: 70_000,
+		});
+	});
+
+	it('drains an in-flight fire before quiesce settles', async () => {
+		let now = 10_000;
+		const { repository } = shared;
+		let releaseEnqueue: (() => void) | undefined;
+		let dispatching = (): void => undefined;
+		const reachedQueue = new Promise<void>((resolve) => {
+			dispatching = resolve;
+		});
+		const enqueue = vi.fn<AgentRunQueue['enqueue']>(async () => {
+			dispatching();
+			await new Promise<void>((resolve) => {
+				releaseEnqueue = resolve;
+			});
+			return { id: 'run-1' } as Awaited<ReturnType<AgentRunQueue['enqueue']>>;
+		});
+		const queue: AgentRunQueue = {
+			listAgents: async (tenantId) => [
+				{
+					id: tenantId + '-agent',
+					name: 'Workspace agent',
+					status: 'active',
+					allowedTools: [],
+					revision: 1,
+					ownership: { kind: 'tenant' },
+				},
+			],
+			enqueue,
+			enqueueWithOutcome: async (context, input) => ({
+				run: await enqueue(context, input),
+				created: true,
+			}),
+		};
+		const schedules = new AutomationScheduleService(
+			repository,
+			queue,
+			() => now,
+		);
+		const created = await schedules.create('tenant-a', 'user-a', {
+			agentId: 'tenant-a-agent',
+			label: 'Slow schedule',
+			inputTemplate: 'Run once.',
+			cadence: 'every:1',
+			enabled: true,
+		});
+		now += 60_000;
+
+		const runner = scheduleRunner(repository, schedules, () => now);
+		let settled = false;
+		const pass = runner.tick().then((report) => {
+			settled = true;
+			return report;
+		});
+		await reachedQueue;
+		/* Read when the drain resolves: a stop that only cleared the timer would
+		   answer here while the dispatch below had not returned yet. */
+		let passSettledFirst: boolean | undefined;
+		const drained = runner.quiesce().then(() => {
+			passSettledFirst = settled;
+		});
+		releaseEnqueue?.();
+		await drained;
+
+		expect(passSettledFirst).toBe(true);
+		expect(await pass).toEqual({
+			claimed: 1,
+			performed: 1,
+			failed: 0,
+			claimLost: 0,
+		});
+		expect(enqueue).toHaveBeenCalledTimes(1);
+		expect(await repository.getSchedule('tenant-a', created.id)).toMatchObject({
+			lastRunId: 'run-1',
+			nextRunAt: 130_000,
+		});
 	});
 
 	it('accepts a fresh signed webhook and makes a replay idempotent', async () => {

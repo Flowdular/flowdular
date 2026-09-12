@@ -3,9 +3,9 @@
 	"schemaVersion": 1,
 	"id": "automations.core",
 	"package": "@flowdular/module-automations",
-	"version": "0.4.0",
+	"version": "0.6.4",
 	"profile": "full",
-	"capabilities": ["api", "database", "client", "translations"],
+	"capabilities": ["api", "database", "client", "translations", "cli"],
 	"platform": {
 		"server": true,
 		"client": true
@@ -13,19 +13,37 @@
 	"dependencies": [
 		{
 			"id": "system.core",
-			"range": "0.5.0"
+			"range": "^0.7.0"
 		},
 		{
 			"id": "auth.core",
-			"range": "0.10.0"
+			"range": "^0.13.0"
 		},
 		{
 			"id": "agents.core",
-			"range": "0.9.1"
+			"range": "^0.12.0"
+		},
+		{
+			"id": "workflows.core",
+			"range": "^0.6.0"
+		}
+	],
+	"provides": ["automations.targets.v1", "automations.execution.v1"],
+	"requires": [
+		{
+			"id": "agents.run-queue"
+		},
+		{
+			"id": "workflows.execution.v1",
+			"optional": true
 		}
 	],
 	"tenancy": "required",
 	"locales": ["en", "pl"],
 	"stability": "experimental",
-	"platformApi": "0.1.0"
+	"cli": {
+		"catalog": "src/cli/commands.json",
+		"entry": "src/cli/index.ts"
+	},
+	"platformApi": "^0.1.0"
 }

@@ -45,6 +45,14 @@ core:
     command: pnpm flowdular module validate
     risk: read
     note: 'schema plus composition entries (PLATFORM_SERVER_ENTRY_MISSING, PLATFORM_EXPORT_MISSING, PLATFORM_CLIENT_ENTRY_MISSING, PLATFORM_CLIENT_EXPORT_MISSING), PACKAGE_NAME_MISMATCH, SPEC_ID_MISMATCH, TRANSLATION_FILE_MISSING, TRANSLATION_KEYS_MISMATCH; warnings SPEC_VERSION_DRIFT, LOCALE_NOT_IN_PROJECT (packages/cli/src/module-validate.ts)'
+  module.version:
+    command: pnpm flowdular module version <id>
+    risk: read
+  module.version.bump:
+    command: pnpm flowdular module version bump <id> <patch|minor|major> [--apply]
+    risk: workspace-write
+    supportsDryRun: true
+    note: one edit for module.json, package.json, specVersion and every dependent range that stops matching
   module.create:
     command: pnpm flowdular module new <id> --spec <path> [--apply]
     risk: workspace-write
@@ -64,6 +72,18 @@ core:
     localOnly: true
     supportsDryRun: true
     effect: applies or adopts the outstanding migrations of one module against the configured PostgreSQL (embedded PGlite outside production) and writes the _coreloom_migrations_v2 ledger; without --apply it reports the plan and writes nothing
+  database.backup:
+    command: pnpm flowdular database backup --output <dir> [--apply]
+    risk: process
+    supportsDryRun: true
+    effect: 'writes the configured database into <dir> plus a backup.json manifest (timestamp, adapter, platform version, enabled modules, SHA-256 fingerprints of the six encryption keys, never the key material); PostgreSQL runs pg_dump --format=custom on the migrator connection with the credentials passed as PG* variables, the embedded adapter is a directory copy; BACKUP_TOOL_MISSING when pg_dump is not on PATH, BACKUP_TARGET_EXISTS when the directory already holds a backup'
+  database.restore:
+    command: pnpm flowdular database restore --input <dir> --apply --confirm restore-database
+    risk: destructive
+    localOnly: true
+    confirmation: restore-database
+    supportsDryRun: true
+    effect: 'replaces the configured database with the backup in <dir> (pg_restore --clean --if-exists, or a staged replacement of the embedded data directory); refuses BACKUP_ADAPTER_MISMATCH across adapters and warns BACKUP_KEY_MISMATCH when the running environment holds keys the backup was not taken with'
   workspace.state.migrate:
     command: pnpm flowdular setup migrate-state [--apply --confirm migrate-legacy-state]
     risk: destructive
@@ -95,6 +115,11 @@ modules:
       risk: process
       supportsDryRun: true
       effect: grants the module spec permissions to every tenant owner in the auth database
+    auth.secrets.rotate:
+      command: pnpm flowdular auth secrets-rotate [--apply]
+      risk: process
+      supportsDryRun: true
+      note: re-seals enrolled TOTP secrets with the current MFA key; batches of 200 rows, idempotent, and never prints key material or a secret
     auth.greenfield.reset:
       command: pnpm flowdular auth greenfield --apply --confirm reset-local-auth
       risk: destructive
@@ -110,6 +135,81 @@ modules:
       command: pnpm flowdular agents audit-verify --tenant <id>
       risk: read
       localOnly: true
+    agents.secrets.rotate:
+      command: pnpm flowdular agents secrets-rotate [--apply]
+      risk: process
+      supportsDryRun: true
+      note: re-seals stored provider credentials with the current encryption key; batches of 200 rows in one tenant-scoped transaction each, idempotent, and never prints a credential
+  automations.core:
+    automations.secrets.rotate:
+      command: pnpm flowdular automations secrets-rotate [--apply]
+      risk: process
+      supportsDryRun: true
+      note: re-seals stored trigger secrets with the current encryption key; batches of 200 rows in one tenant-scoped transaction each, idempotent, and never prints a secret
+  notifications.core:
+    notifications.secrets.rotate:
+      command: pnpm flowdular notifications secrets-rotate [--apply]
+      risk: process
+      supportsDryRun: true
+      note: re-seals stored webhook signing secrets with the current encryption key; batches of 200 rows in one tenant-scoped transaction each, idempotent, and never prints a secret
+  audit.core:
+    audit.export:
+      command: pnpm flowdular audit export --workspace <slug|id> --output <dir> [--apply]
+      risk: process
+      supportsDryRun: true
+      note: records an export request the running platform performs into FD_AUDIT_EXPORT_DIRECTORY; the dry run counts rows per class and writes nothing; the archive is owner-only
+    audit.seal:
+      command: pnpm flowdular audit seal --workspace <slug|id> --output <dir> [--apply]
+      risk: process
+      supportsDryRun: true
+      note: closes a segment of the workspace audit chain into a signed JSON Lines file under FD_AUDIT_EXPORT_DIRECTORY and records its anchor; the dry run prints the range and writes neither file nor row
+    audit.verify:
+      command: pnpm flowdular audit verify --workspace <slug|id> --input <dir>
+      risk: read
+      supportsDryRun: false
+      note: recomputes every event hash, the segment chain and the anchor signatures of the segments named after that workspace, leaving another workspace's files unread, and names the first line that does not match; it also fails when a recorded anchor has no segment file in the directory and when a file named after this workspace carries another workspace's anchor; one pass reads the newest 4096 files and anchors and reports that window; reads only
+    audit.erase:
+      command: pnpm flowdular audit erase --workspace <slug|id> --account <id> --output <dir> [--apply --confirm erase-subject] [--destroy-key]
+      risk: process
+      supportsDryRun: true
+      note: records an erasure request the running platform performs across every class of the sealed data class registry, through the erase operation each declares; a class declaring none is named not-erasable; refused under a legal hold with HOLD_ACTIVE; the dry run lists what would be erased and writes nothing but the request row, which expires after 24 hours; apply needs --confirm erase-subject and writes an owner-only certificate
+    audit.secrets.rotate:
+      command: pnpm flowdular audit secrets-rotate [--apply]
+      risk: process
+      supportsDryRun: true
+      note: re-signs stored chain anchors with the current FD_AUDIT_ANCHOR_KEY once their stored signature verifies under the ring, reporting an anchor on an unknown key or one that does not verify instead of rotating it; the anchor and segment hashes are untouched so written segment files still verify, idempotent, and never prints key material
+    audit.holds.list:
+      command: pnpm flowdular audit holds list --workspace <slug|id> [--status active|lifted]
+      risk: read
+      supportsDryRun: false
+      note: lists the legal holds of one workspace, which name the account covered and the matter behind it; reads only
+    audit.holds.place:
+      command: pnpm flowdular audit holds place --workspace <slug|id> --scope <account|workspace|data-class|date-range> --reason <text> [--account <id>] [--class <id>] [--from <date>] [--to <date>] [--apply]
+      risk: process
+      supportsDryRun: true
+      note: places a legal hold and writes the audit event in the same workspace transaction; the dry run prints the plan and writes nothing
+    audit.holds.lift:
+      command: pnpm flowdular audit holds lift --workspace <slug|id> --hold <id> --reason <text> [--apply]
+      risk: process
+      supportsDryRun: true
+      note: lifts one active hold with the reason it is lifted and writes the audit event; lifting an already lifted hold changes nothing; the dry run prints the plan and writes nothing
+  metering.core:
+    metering.limits.list:
+      command: pnpm flowdular metering limits list --workspace <slug|id>
+      risk: read
+      supportsDryRun: false
+      note: lists the workspace's monthly limits per meter; reads only
+    metering.limits.set:
+      command: pnpm flowdular metering limits set --workspace <slug|id> --meter <key> --monthly-limit <n> [--apply]
+      risk: process
+      supportsDryRun: true
+      note: sets one workspace's monthly ceiling for a meter and writes a limit event with the operator label in the same transaction; the dry run prints the plan and writes nothing; an undeclared meter is a warning
+  workflows.core:
+    workflows.secrets.rotate:
+      command: pnpm flowdular workflows secrets-rotate [--apply]
+      risk: process
+      supportsDryRun: true
+      note: re-seals stored run payloads with the current encryption key; batches of 200 payloads in one tenant-scoped transaction each, idempotent, and never prints a payload
   sandbox.core:
     sandbox.access.list:
       command: pnpm flowdular sandbox access

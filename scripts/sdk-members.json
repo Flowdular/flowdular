@@ -47,9 +47,9 @@
 		"directory": "packages/kernel",
 		"export": "kernel"
 	},
-	"@flowdular/module-automations-workflows-integration": {
-		"directory": "modules/automations-workflows-integration",
-		"export": "modules/automations-workflows-integration"
+	"@flowdular/storage": {
+		"directory": "packages/storage",
+		"export": "storage"
 	},
 	"@flowdular/module-auth": {
 		"directory": "modules/auth",
@@ -82,5 +82,53 @@
 	"@flowdular/module-automations": {
 		"directory": "modules/automations",
 		"export": "modules/automations"
+	},
+	"@flowdular/module-notifications": {
+		"directory": "modules/notifications",
+		"export": "modules/notifications"
+	},
+	"@flowdular/module-directory": {
+		"directory": "modules/directory",
+		"export": "modules/directory"
+	},
+	"@flowdular/module-audit": {
+		"directory": "modules/audit",
+		"export": "modules/audit"
+	},
+	"@flowdular/module-approvals": {
+		"directory": "modules/approvals",
+		"export": "modules/approvals"
+	},
+	"@flowdular/module-documents": {
+		"directory": "modules/documents",
+		"export": "modules/documents"
+	},
+	"@flowdular/module-metering": {
+		"directory": "modules/metering",
+		"export": "modules/metering"
+	},
+	"@flowdular/module-search": {
+		"directory": "modules/search",
+		"export": "modules/search"
+	},
+	"@flowdular/module-connectors": {
+		"directory": "modules/connectors",
+		"export": "modules/connectors"
+	},
+	"@flowdular/module-import": {
+		"directory": "modules/import",
+		"export": "modules/import"
+	},
+	"@flowdular/module-reports": {
+		"directory": "modules/reports",
+		"export": "modules/reports"
+	},
+	"@flowdular/module-access": {
+		"directory": "modules/access",
+		"export": "modules/access"
+	},
+	"@flowdular/module-exports": {
+		"directory": "modules/exports",
+		"export": "modules/exports"
 	}
 }

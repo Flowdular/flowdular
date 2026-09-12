@@ -740,6 +740,72 @@ describe('versioned workflow action capability', () => {
 		).toBe('running');
 	});
 
+	/* The drain loop fired every invocation of a routing page at once. The runner
+	   holds that same ceiling, so the invocation after a full page is not even
+	   claimed until one of the eight in flight is settled. */
+	it('performs a page of invocations at once and leaves the next one queued', async () => {
+		const repository = database.repository;
+		const entered: string[] = [];
+		const gates = new Map<string, () => void>();
+		const runtime = trackedActionRuntime(
+			[
+				workflowAction({
+					timeoutMs: 30_000,
+					execute: async (input) => {
+						const id = (input as { readonly id: string }).id;
+						entered.push(id);
+						await new Promise<void>((resolve) => gates.set(id, resolve));
+						return { name: id };
+					},
+				}),
+			],
+			{
+				workerId: 'action-worker:concurrent',
+				leaseMs: 5_000,
+				authorizeToolAccess: authorizeWorkflowRead,
+			},
+		);
+		const accepted: string[] = [];
+		for (let index = 0; index < 9; index += 1) {
+			accepted.push(
+				(
+					await runtime.capability.start(
+						{
+							actionId: 'parties.customer.lookup',
+							contractVersion: 1,
+							input: { id: `customer-${index}` },
+							idempotencyKey: `workflow-run-concurrent:node-${index}`,
+						},
+						{
+							tenantId,
+							workflowRunId: 'workflow-run-concurrent',
+							nodeRunId: `node-${index}`,
+							actor,
+							permissionSnapshot: ['parties.records.read'],
+							signal: new AbortController().signal,
+						},
+					)
+				).actionInvocationId,
+			);
+		}
+
+		runtime.start();
+		await waitFor(() => entered.length >= 8);
+		/* Long enough that a ninth would have started if nothing bounded the pool. */
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		expect(entered).toHaveLength(8);
+
+		gates.get(entered[0]!)!();
+		await waitFor(() => entered.length === 9);
+		for (const release of gates.values()) release();
+		await waitFor(async () => {
+			const rows = await Promise.all(
+				accepted.map((id) => repository.getAction(tenantId, id)),
+			);
+			return rows.every((row) => row?.status === 'succeeded');
+		});
+	});
+
 	it('refuses non-JSON action input with a stable error before persistence', async () => {
 		const repository = database.repository;
 		const runtime = trackedActionRuntime([workflowAction()], {

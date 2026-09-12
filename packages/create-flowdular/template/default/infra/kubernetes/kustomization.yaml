@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  - service.yaml
+images:
+  # Replace with the image you publish.
+  - name: ghcr.io/OWNER/REPOSITORY
+    newTag: 0.1.0

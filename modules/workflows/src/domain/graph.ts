@@ -5,13 +5,14 @@ import type {
 	WorkflowDryRunResponseV1,
 	WorkflowGateExpressionV1,
 	WorkflowGraphV1,
+	WorkflowHumanApprovalNodeV1,
 	WorkflowNodeV1,
 	WorkflowPayloadEvidenceV1,
 	WorkflowReferenceSummaryV1,
 	WorkflowTargetMappingV1,
 	WorkflowValidationIssueV1,
 } from './types.ts';
-import { WORKFLOW_LIMITS } from './types.ts';
+import { APPROVAL_LIMITS, WORKFLOW_LIMITS } from './types.ts';
 
 const IDENTIFIER = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/;
 const PORT = /^[a-z][a-z0-9-]*$/;
@@ -42,6 +43,16 @@ export interface WorkflowReferenceCatalog {
 		readonly requiredPermissions: readonly string[];
 		readonly risk?: 'read' | 'workspace-write' | 'external' | 'destructive';
 		readonly idempotency?: 'required' | 'none';
+	};
+	/**
+	 * approvals.core and the roles the workspace defines, resolved once before
+	 * the compiler walks the graph. A catalog without this member reads as an
+	 * absent approvals module, which is the answer a graph compiled with no
+	 * catalog at all already gets.
+	 */
+	approval?(): {
+		readonly available: boolean;
+		readonly roleKeys: readonly string[];
 	};
 }
 
@@ -137,6 +148,7 @@ const EXPECTED_PORTS: Record<
 	gate: { inputs: ['input'], outputs: ['pass', 'fail'] },
 	validator: { inputs: ['input'], outputs: ['pass', 'fail'] },
 	action: { inputs: ['input'], outputs: ['success', 'failure'] },
+	'human-approval': { inputs: ['input'], outputs: ['approved'] },
 	merge: { inputs: ['items'], outputs: ['data'] },
 	output: { inputs: ['input'], outputs: [] },
 };
@@ -449,6 +461,112 @@ function stableTopologicalOrder(
 	return { order, cyclic: order.length !== nodes.length };
 }
 
+/**
+ * A human-approval node carries the whole requirement in the published graph,
+ * so publishing is where a role the workspace does not define has to be caught:
+ * a run that reached the node with an unresolvable requirement would pause on
+ * nobody. An absent approvals module is the same class of problem and gets its
+ * own stable code.
+ */
+function approvalIssues(
+	node: WorkflowHumanApprovalNodeV1,
+	catalog: WorkflowReferenceCatalog | undefined,
+): readonly WorkflowValidationIssueV1[] {
+	const issues: WorkflowValidationIssueV1[] = [];
+	const at = { kind: 'node', nodeId: node.id } as const;
+	const approval = catalog?.approval?.();
+	if (!approval?.available) {
+		issues.push(
+			issue(
+				'WORKFLOW_APPROVAL_CAPABILITY_UNAVAILABLE',
+				`Node "${node.id}" needs approvals.core, which is not composed.`,
+				at,
+			),
+		);
+	}
+	/* approvals.core receives `prompt ?? label` as the request title and a
+	   summary naming the label, so a value it would refuse has to fail the
+	   publish rather than the run that reaches the node. The label carries the
+	   title limit because it is the title whenever no prompt is set, and being
+	   bounded there keeps the composed summary inside APPROVAL_LIMITS.summary. */
+	for (const [name, value] of [
+		['prompt', node.prompt],
+		['label', node.label],
+	] as const) {
+		if (typeof value === 'string' && value.length > APPROVAL_LIMITS.title) {
+			issues.push(
+				issue(
+					'WORKFLOW_LIMIT_EXCEEDED',
+					`Node "${node.id}" sets a ${name} of ${value.length} characters; approvals.core accepts ${APPROVAL_LIMITS.title}.`,
+					{ ...at, path: `/${name}` },
+				),
+			);
+		}
+	}
+	const requirement: unknown = node.requirement;
+	if (!isRecord(requirement)) {
+		issues.push(
+			issue(
+				'WORKFLOW_APPROVAL_REQUIREMENT_INVALID',
+				`Node "${node.id}" declares no approval requirement.`,
+				{ ...at, path: '/requirement' },
+			),
+		);
+		return issues;
+	}
+	const roleKey = requirement.roleKey;
+	const scope = requirement.scope;
+	const hasRole = typeof roleKey === 'string' && roleKey !== '';
+	const hasScope = typeof scope === 'string' && scope !== '';
+	if (!hasRole && !hasScope) {
+		issues.push(
+			issue(
+				'WORKFLOW_APPROVAL_REQUIREMENT_INVALID',
+				`Node "${node.id}" must name a role key or a scope.`,
+				{ ...at, path: '/requirement' },
+			),
+		);
+	}
+	const bound = (value: unknown, name: string, max: number): void => {
+		if (value === undefined) return;
+		if (
+			!Number.isSafeInteger(value) ||
+			(value as number) < 1 ||
+			(value as number) > max
+		) {
+			issues.push(
+				issue(
+					'WORKFLOW_APPROVAL_REQUIREMENT_INVALID',
+					`Node "${node.id}" must set ${name} between 1 and ${max}.`,
+					{ ...at, path: `/requirement/${name}` },
+				),
+			);
+		}
+	};
+	bound(
+		requirement.decisions,
+		'decisions',
+		WORKFLOW_LIMITS.maxApprovalDecisions,
+	);
+	bound(
+		requirement.expiresInDays,
+		'expiresInDays',
+		WORKFLOW_LIMITS.maxApprovalExpiryDays,
+	);
+	/* A scope requirement is shape-checked only: scopes come from every composed
+	   module, and this compiler resolves the workspace's roles alone. */
+	if (hasRole && approval && !approval.roleKeys.includes(roleKey as string)) {
+		issues.push(
+			issue(
+				'WORKFLOW_APPROVAL_ROLE_UNKNOWN',
+				`Node "${node.id}" names role "${roleKey as string}", which this workspace does not define.`,
+				{ ...at, path: '/requirement/roleKey' },
+			),
+		);
+	}
+	return issues;
+}
+
 export function compileWorkflowGraph(
 	graph: WorkflowGraphV1,
 	catalog?: WorkflowReferenceCatalog,
@@ -621,6 +739,22 @@ export function compileWorkflowGraph(
 				id: node.agent.agentId,
 				version: String(node.agent.revision),
 				available,
+			});
+		}
+		if (node.type === 'human-approval') {
+			issues.push(...approvalIssues(node, catalog));
+			/* validate() accepts an unparsed graph, so the node may carry no
+			   requirement at all. `approvalIssues` has already reported that;
+			   the reference names nothing rather than throwing over it. */
+			const requirement: unknown = node.requirement;
+			const named = isRecord(requirement)
+				? (requirement.roleKey ?? requirement.scope)
+				: undefined;
+			references.push({
+				kind: 'approval',
+				id: typeof named === 'string' ? named : '',
+				version: '1',
+				available: catalog?.approval?.().available === true,
 			});
 		}
 		if (node.type === 'action') {

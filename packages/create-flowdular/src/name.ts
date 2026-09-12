@@ -41,6 +41,15 @@ export function checkProjectName(name: string): NameCheck {
 	return { valid: true };
 }
 
+/* A platform spec id accepts only lowercase letters, digits and hyphens inside
+   a dotted segment, while an npm name may also carry ".", "_" and "~" and may
+   start with a digit. */
+export function applicationSlug(name: string): string {
+	const slug = name.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+	if (slug.length === 0) return 'app';
+	return /^[a-z]/.test(slug) ? slug : `app-${slug}`;
+}
+
 /* The positional argument is a directory, so a nested path is legitimate while
    an upward segment is not: the scaffolder never writes above the invocation. */
 export function checkTargetPath(target: string): NameCheck {

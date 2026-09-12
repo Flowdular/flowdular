@@ -29,6 +29,8 @@ flowdular spec validate [--all]                    # module specs, --all adds sp
 flowdular blueprint list|validate --all            # blueprint manifests and guardrail files
 flowdular module list|validate                     # manifests, composition entries, translations
 flowdular module sync [--apply]                    # regenerate the composition
+flowdular module version <id>                      # version, platformApi range, dependents
+flowdular module version bump <id> <level> [--apply] # patch|minor|major across module.json, package.json, specVersion and dependent ranges
 flowdular module new <id> --spec <path> [--apply]  # scaffold from an approved spec
 flowdular module enable|disable <id> [--apply]     # composition and scope grants
 flowdular migration status [--module <id>]         # migration ledger
@@ -37,6 +39,8 @@ flowdular migration verify                         # checksum drift, row securit
 flowdular migration new <name> --module <id> [--apply]  # scaffold the up and down pair
 flowdular database reset                           # plan a destructive reset of the configured database
 flowdular database reset --apply --confirm reset-database
+flowdular database backup --output <dir> [--apply]  # dump plus a key fingerprint manifest
+flowdular database restore --input <dir> --apply --confirm restore-database
 flowdular setup check                              # alias of doctor
 flowdular setup quick [--apply --confirm reset-local-auth]
 flowdular setup migrate-state [--apply --confirm migrate-legacy-state]
@@ -70,6 +74,27 @@ rather than silently dropping other modules' tables.
 Like every destructive capability it runs only when `FD_ENV` or `NODE_ENV` is
 `development` or `test`.
 
+### Backing a database up and restoring it
+
+`database backup` writes the configured database into a directory together with
+a `backup.json` manifest: timestamp, adapter, platform version, enabled modules
+and a SHA-256 fingerprint of each of the six encryption keys, never the key
+material. PostgreSQL is dumped with `pg_dump --format=custom` through the
+migrator connection, with the credentials passed as `PG*` variables instead of
+arguments; the embedded adapter is copied file by file and wants the application
+stopped. A missing client tool fails with `BACKUP_TOOL_MISSING`.
+
+`database restore` reads such a directory, refuses a backup from another
+adapter, and warns with `BACKUP_KEY_MISMATCH` when the running environment holds
+different keys, because the rows would come back unreadable. It runs
+`pg_restore --clean --if-exists`, or replaces the embedded data directory only
+once the restored copy is staged. Being destructive, it needs
+`--apply --confirm restore-database` and, like `database reset`, runs only when
+`FD_ENV` or `NODE_ENV` is `development` or `test`.
+
+The full procedure, the key trap and the rotation status are in
+[operations.md](operations.md).
+
 ## Commands provided by modules
 
 Enabled modules add namespaced commands. Discovery reads a declarative JSON
@@ -83,10 +108,15 @@ flowdular auth sync-scopes --module <id> [--apply] # re-grant a module's scopes 
 flowdular auth workspaces [--limit <n>]            # workspaces of this deployment and their owners
 flowdular auth workspace-create --name <name> --owner-email <email> --owner-name <name> [--slug <id>] [--password-env <VAR>] [--actor <label>] [--apply]
 flowdular auth member-add --workspace <slug|id> --email <email> [--role <key>] [--actor <label>] [--apply]
+flowdular auth secrets-rotate [--apply]              # re-seal enrolled TOTP secrets with the current MFA key
 flowdular auth greenfield                          # destructive local auth reset (setup quick)
 
 flowdular agents status                            # agents.core runtime status
 flowdular agents audit-verify                      # verify the tenant-scoped audit hash chain
+flowdular agents secrets-rotate [--apply]          # re-seal stored provider credentials
+flowdular automations secrets-rotate [--apply]     # re-seal stored trigger secrets
+flowdular workflows secrets-rotate [--apply]       # re-seal stored run payloads
+flowdular notifications secrets-rotate [--apply]   # re-seal stored webhook signing secrets
 
 flowdular sandbox access --tenant <tenant>         # grants and eligible members
 flowdular sandbox grant --email <email> --tenant <tenant> [--apply]

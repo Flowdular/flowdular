@@ -1,0 +1,28 @@
+{
+	"$schema": "../../packages/contracts/schemas/module.schema.json",
+	"schemaVersion": 1,
+	"id": "connectors.core",
+	"package": "@flowdular/module-connectors",
+	"version": "0.1.3",
+	"platformApi": "^0.1.0",
+	"profile": "full",
+	"capabilities": ["api", "database", "client", "translations"],
+	"platform": {
+		"server": true,
+		"client": true
+	},
+	"dependencies": [
+		{
+			"id": "system.core",
+			"range": "^0.7.0"
+		},
+		{
+			"id": "auth.core",
+			"range": "^0.13.0"
+		}
+	],
+	"tenancy": "required",
+	"locales": ["en", "pl"],
+	"stability": "experimental",
+	"provides": ["connectors.definitions.v1", "connectors.calls.v1"]
+}

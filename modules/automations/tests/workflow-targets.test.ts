@@ -1,5 +1,6 @@
 import { userActor } from '@flowdular/kernel';
 import type { AgentRunQueue } from '@flowdular/module-agents/server';
+import type { JobRunner } from '@flowdular/server';
 import {
 	afterAll,
 	afterEach,
@@ -21,7 +22,9 @@ import {
 	type AutomationTargetInvocationContext,
 	type AutomationTargetInvocationRequest,
 } from '../src/server/targets.ts';
+import { createAutomationScheduleRunner } from '../src/services/schedule-runner.ts';
 import { AutomationScheduleService } from '../src/services/schedule-service.ts';
+import type { AutomationsRepository } from '../src/services/repository.ts';
 import { AesGcmSecretVault } from '../src/services/secret-vault.ts';
 import {
 	openAutomationsTestDatabase,
@@ -106,6 +109,20 @@ function targetFixture() {
 	const registry = createAutomationTargetRegistry();
 	registry.register(adapter);
 	return { registry, validate, invocations };
+}
+
+/** The scheduler pass as the platform runner drives it. */
+function scheduleRunner(
+	repository: AutomationsRepository,
+	service: AutomationScheduleService,
+	now: () => number,
+): JobRunner {
+	return createAutomationScheduleRunner({
+		repository: async () => repository,
+		service: async () => service,
+		intervalMs: 30_000,
+		now,
+	});
 }
 
 /* Starting the embedded engine costs about half a second, so the file shares
@@ -231,7 +248,13 @@ describe('workflow automation targets', () => {
 			scopes,
 		);
 		now += 60_000;
-		expect(await service.tick()).toBe(1);
+		const runner = scheduleRunner(repository, service, () => now);
+		expect(await runner.tick()).toEqual({
+			claimed: 1,
+			performed: 1,
+			failed: 0,
+			claimLost: 0,
+		});
 		expect(target.invocations[0]).toEqual({
 			request: {
 				targetKey: 'party-review',
@@ -362,7 +385,13 @@ describe('workflow automation targets', () => {
 		);
 		available = false;
 		now += 60_000;
-		expect(await service.tick()).toBe(0);
+		const runner = scheduleRunner(repository, service, () => now);
+		expect(await runner.tick()).toEqual({
+			claimed: 1,
+			performed: 1,
+			failed: 0,
+			claimLost: 0,
+		});
 		expect(await service.get('tenant-a', created.id)).toMatchObject({
 			targetKind: 'workflow',
 			targetKey: 'party-review',

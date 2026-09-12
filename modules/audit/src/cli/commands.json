@@ -1,0 +1,95 @@
+{
+	"protocolVersion": 1,
+	"moduleId": "audit.core",
+	"commands": [
+		{
+			"path": ["audit", "export"],
+			"capability": {
+				"id": "audit.export",
+				"version": 1,
+				"summary": "Request one workspace's export from the running platform and report the archive it wrote.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		},
+		{
+			"path": ["audit", "seal"],
+			"capability": {
+				"id": "audit.seal",
+				"version": 1,
+				"summary": "Close a segment of one workspace's audit event chain into a signed segment file and record its anchor.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		},
+		{
+			"path": ["audit", "verify"],
+			"capability": {
+				"id": "audit.verify",
+				"version": 1,
+				"summary": "Verify the segment files of a directory and the anchor chain of one workspace.",
+				"risk": "read",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": false
+			}
+		},
+		{
+			"path": ["audit", "erase"],
+			"capability": {
+				"id": "audit.erase",
+				"version": 1,
+				"summary": "Erase one subject's records from every declaring class of a workspace and write the certificate.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true,
+				"confirmation": "erase-subject"
+			}
+		},
+		{
+			"path": ["audit", "secrets-rotate"],
+			"capability": {
+				"id": "audit.secrets.rotate",
+				"version": 1,
+				"summary": "Re-sign stored chain anchors with the current anchor key.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		},
+		{
+			"path": ["audit", "holds", "list"],
+			"capability": {
+				"id": "audit.holds.list",
+				"version": 1,
+				"summary": "List the legal holds of one workspace.",
+				"risk": "read",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": false
+			}
+		},
+		{
+			"path": ["audit", "holds", "place"],
+			"capability": {
+				"id": "audit.holds.place",
+				"version": 1,
+				"summary": "Place a legal hold over an account, a workspace, a data class or a date range.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		},
+		{
+			"path": ["audit", "holds", "lift"],
+			"capability": {
+				"id": "audit.holds.lift",
+				"version": 1,
+				"summary": "Lift one active legal hold with the reason it is lifted.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		}
+	]
+}

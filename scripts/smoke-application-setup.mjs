@@ -65,7 +65,7 @@ try {
 		headers: { origin, 'content-type': 'application/json' },
 		body: JSON.stringify({
 			email: 'admin@example.com',
-			password: 'Admin!23456789',
+			password: 'Owner!23456789',
 		}),
 		signal: AbortSignal.timeout(30000),
 	});

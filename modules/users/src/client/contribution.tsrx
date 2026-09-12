@@ -16,6 +16,10 @@ export interface UsersClientContributionOptions {
 
 const ROLES_READ = 'auth.roles.read';
 const ROLES_MANAGE = 'auth.roles.manage';
+/* exports.core's own scope, held here as a string the same way the auth role
+   scopes are: a deployment without that module grants it to nobody, so the
+   action is simply absent rather than offered and refused. */
+const EXPORTS_MANAGE = 'exports.lists.manage';
 
 export function createUsersClientContribution(
 	options: UsersClientContributionOptions,
@@ -61,6 +65,7 @@ export function createUsersClientContribution(
 					<UsersView
 						csrfToken={options.csrfToken}
 						canManage={has(USER_PERMISSIONS.manage)}
+						canExport={has(EXPORTS_MANAGE)}
 					/>,
 			},
 			{

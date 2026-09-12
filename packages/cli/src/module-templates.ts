@@ -1,4 +1,10 @@
-import type { ModuleSpec } from '@flowdular/contracts';
+import type {
+	ModuleSpec,
+	ModuleSpecEntity,
+	ModuleSpecField,
+	ModuleSpecFieldType,
+} from '@flowdular/contracts';
+import { PLATFORM_API_VERSION } from '@flowdular/contracts';
 
 export interface ScaffoldNames {
 	readonly id: string;
@@ -24,10 +30,35 @@ interface ScaffoldPermission {
 	readonly action: string;
 }
 
+/* One persisted column of the scaffolded entity. A version 1 specification
+   carries no domain model and scaffolds DEFAULT_FIELDS; a version 2 entity
+   replaces them field by field. */
+interface ScaffoldField {
+	readonly id: string;
+	readonly column: string;
+	readonly type: ModuleSpecFieldType;
+	readonly required: boolean;
+	/* Unique inside a tenant: UNIQUE (tenant_id, column). */
+	readonly unique: boolean;
+	/* Bounds for a value carried as text; ignored for every other type. */
+	readonly min: number;
+	readonly max: number;
+	/* Enum members, empty for every other type. */
+	readonly values: readonly string[];
+	/* The lifecycle field: the service sets it, so it is never request input. */
+	readonly state: boolean;
+}
+
 interface ScaffoldModel {
 	readonly spec: ModuleSpec;
 	readonly names: ScaffoldNames;
 	readonly entity: ScaffoldEntity;
+	readonly fields: readonly ScaffoldField[];
+	/* Fields the create endpoint accepts, in declaration order. */
+	readonly inputFields: readonly ScaffoldField[];
+	/* Deterministic list order, and the leading table column. */
+	readonly orderField: ScaffoldField | undefined;
+	readonly columns: readonly ScaffoldField[];
 	readonly permissions: readonly ScaffoldPermission[];
 	/* Primary read permission: guards navigation and, with api, the list route. */
 	readonly readPermission: ScaffoldPermission | undefined;
@@ -155,6 +186,275 @@ function translationRegistry(spec: ModuleSpec): string {
 
 const DEFAULT_ENTITY = 'records';
 
+/* The demo shape every version 1 specification scaffolds: one named record with
+   a lifecycle status. */
+const DEFAULT_FIELDS: readonly ScaffoldField[] = [
+	{
+		id: 'name',
+		column: 'name',
+		type: 'string',
+		required: true,
+		unique: false,
+		min: 2,
+		max: 160,
+		values: [],
+		state: false,
+	},
+	{
+		id: 'status',
+		column: 'status',
+		type: 'enum',
+		required: true,
+		unique: false,
+		min: 1,
+		max: 64,
+		values: ['active', 'archived'],
+		state: true,
+	},
+];
+
+const SQL_TYPES: Record<ModuleSpecFieldType, string> = {
+	string: 'TEXT',
+	text: 'TEXT',
+	integer: 'BIGINT',
+	decimal: 'NUMERIC',
+	boolean: 'BOOLEAN',
+	date: 'DATE',
+	datetime: 'TIMESTAMPTZ',
+	enum: 'TEXT',
+	reference: 'TEXT',
+	json: 'JSONB',
+};
+
+/* Upper bound for a value the transport carries as text, when the
+   specification states none. */
+const TEXT_LIMITS: Partial<Record<ModuleSpecFieldType, number>> = {
+	string: 160,
+	text: 2000,
+	decimal: 32,
+	date: 32,
+	datetime: 64,
+	enum: 64,
+	reference: 128,
+};
+
+/* Columns the scaffold owns on every table; an entity cannot redeclare them. */
+const OWNED_COLUMNS: ReadonlySet<string> = new Set([
+	'id',
+	'tenantId',
+	'createdAt',
+]);
+
+/* PostgreSQL reserved words that cannot name a column unquoted, compared
+   against the snake-cased field id: a camelCase id such as "currentUser"
+   becomes the multi-word reserved name current_user. Generated SQL quotes no
+   identifier, so a colliding field is refused at the specification instead of
+   producing a migration that does not parse. */
+const RESERVED_SQL_WORDS: ReadonlySet<string> = new Set([
+	'all',
+	'analyse',
+	'analyze',
+	'and',
+	'any',
+	'array',
+	'as',
+	'asc',
+	'asymmetric',
+	'both',
+	'case',
+	'cast',
+	'check',
+	'collate',
+	'column',
+	'constraint',
+	'create',
+	'current_catalog',
+	'current_date',
+	'current_role',
+	'current_schema',
+	'current_time',
+	'current_timestamp',
+	'current_user',
+	'default',
+	'deferrable',
+	'desc',
+	'distinct',
+	'do',
+	'else',
+	'end',
+	'except',
+	'false',
+	'fetch',
+	'for',
+	'foreign',
+	'from',
+	'grant',
+	'group',
+	'having',
+	'in',
+	'initially',
+	'intersect',
+	'into',
+	'lateral',
+	'leading',
+	'limit',
+	'localtime',
+	'localtimestamp',
+	'not',
+	'null',
+	'offset',
+	'on',
+	'only',
+	'or',
+	'order',
+	'placing',
+	'primary',
+	'references',
+	'returning',
+	'select',
+	'session_user',
+	'system_user',
+	'some',
+	'symmetric',
+	'table',
+	'then',
+	'to',
+	'trailing',
+	'true',
+	'union',
+	'unique',
+	'user',
+	'using',
+	'variadic',
+	'when',
+	'where',
+	'window',
+	'with',
+]);
+
+/** Why a field id cannot become a column, or undefined when it can. */
+export function reservedFieldReason(id: string): string | undefined {
+	if (OWNED_COLUMNS.has(id)) {
+		return 'collides with the id, tenantId or createdAt column every tenant table owns';
+	}
+	if (RESERVED_SQL_WORDS.has(snakeCase(id))) {
+		return 'is a PostgreSQL reserved word and cannot name a column';
+	}
+	return undefined;
+}
+
+function snakeCase(value: string): string {
+	return value.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+}
+
+function textLimit(field: ModuleSpecField): number {
+	return field.maxLength ?? TEXT_LIMITS[field.type] ?? 160;
+}
+
+function scaffoldField(
+	field: ModuleSpecField,
+	states: ModuleSpecEntity['states'],
+): ScaffoldField {
+	const reserved = reservedFieldReason(field.id);
+	if (reserved) {
+		throw new Error(`Entity field "${field.id}" ${reserved}.`);
+	}
+	const required = field.required === true;
+	return {
+		id: field.id,
+		column: snakeCase(field.id),
+		type: field.type,
+		required,
+		unique: field.unique === 'tenant',
+		min: required ? 1 : 0,
+		max: textLimit(field),
+		values: field.type === 'enum' ? (field.values ?? []) : [],
+		/* Only an enum carries a lifecycle: the service writes its first member,
+		   which has to be a value the column's CHECK constraint accepts. */
+		state: states?.field === field.id && field.type === 'enum',
+	};
+}
+
+/* Text a bounded string helper guards; every other type is validated by its
+   own helper and reaches the service already narrowed. */
+function isText(field: ScaffoldField): boolean {
+	return (
+		field.type === 'string' ||
+		field.type === 'text' ||
+		field.type === 'decimal' ||
+		field.type === 'date' ||
+		field.type === 'datetime' ||
+		field.type === 'reference'
+	);
+}
+
+/* Sorted with lower(), so only a column PostgreSQL stores as text qualifies:
+   NUMERIC, DATE and TIMESTAMPTZ have no lower(). */
+function isSortable(field: ScaffoldField): boolean {
+	return (
+		field.required &&
+		(field.type === 'string' ||
+			field.type === 'text' ||
+			field.type === 'reference')
+	);
+}
+
+function domainType(field: ScaffoldField): string {
+	const base =
+		field.type === 'enum'
+			? field.values.map(stringLiteral).join(' | ')
+			: field.type === 'integer'
+				? 'number'
+				: field.type === 'boolean'
+					? 'boolean'
+					: field.type === 'json'
+						? 'Record<string, unknown>'
+						: 'string';
+	return field.required ? base : `${base} | null`;
+}
+
+function listScreenColumns(
+	spec: ModuleSpec,
+	entity: ModuleSpecEntity,
+	fields: readonly ScaffoldField[],
+): readonly ScaffoldField[] {
+	const screen = (spec.screens ?? []).find(
+		(candidate) =>
+			candidate.kind === 'list' &&
+			(candidate.entity === undefined || candidate.entity === entity.id),
+	);
+	const named = (screen?.columns ?? [])
+		.map((column) => fields.find((field) => field.id === column))
+		.filter((field): field is ScaffoldField => field !== undefined);
+	return named.length > 0 ? named : fields.slice(0, 2);
+}
+
+/* The scaffold builds one table, so it takes the entity the permissions name
+   and falls back to the first one declared. */
+function scaffoldEntity(
+	spec: ModuleSpec,
+	plural: string,
+): ModuleSpecEntity | undefined {
+	if (spec.schemaVersion !== 2) return undefined;
+	const entities = spec.entities ?? [];
+	return entities.find((entity) => entity.id === plural) ?? entities[0];
+}
+
+function buildFields(
+	spec: ModuleSpec,
+	plural: string,
+): {
+	readonly fields: readonly ScaffoldField[];
+	readonly columns: readonly ScaffoldField[];
+} {
+	const entity = scaffoldEntity(spec, plural);
+	if (!entity) return { fields: DEFAULT_FIELDS, columns: DEFAULT_FIELDS };
+	const fields = entity.fields.map((field) =>
+		scaffoldField(field, entity.states),
+	);
+	return { fields, columns: listScreenColumns(spec, entity, fields) };
+}
+
 function buildModel(spec: ModuleSpec): ScaffoldModel {
 	const names = scaffoldNames(spec.id);
 	const declared = spec.permissions ?? [];
@@ -190,10 +490,15 @@ function buildModel(spec: ModuleSpec): ScaffoldModel {
 	const readPermission = permissions.find(
 		(permission) => permission.primary && permission.action === 'read',
 	);
+	const { fields, columns } = buildFields(spec, plural);
 	return {
 		spec,
 		names,
 		entity,
+		fields,
+		inputFields: fields.filter((field) => field.required && !field.state),
+		orderField: fields.find(isSortable),
+		columns,
 		permissions,
 		readPermission,
 		listPermission: hasApi ? readPermission : undefined,
@@ -217,6 +522,7 @@ function manifest(model: ScaffoldModel): string {
 		id: spec.id,
 		package: names.packageName,
 		version: spec.specVersion,
+		platformApi: `^${PLATFORM_API_VERSION}`,
 		profile: spec.profile,
 		capabilities: spec.capabilities,
 		...(hasApi || hasClient
@@ -228,6 +534,8 @@ function manifest(model: ScaffoldModel): string {
 				}
 			: {}),
 		dependencies: spec.dependencies,
+		...(spec.provides?.length ? { provides: spec.provides } : {}),
+		...(spec.requires?.length ? { requires: spec.requires } : {}),
 		tenancy: spec.tenancy,
 		locales: spec.locales,
 		stability: 'experimental',
@@ -258,7 +566,18 @@ function packageJson(model: ScaffoldModel): string {
 						'./platform': './src/platform.ts',
 					}
 				: {}),
+			'./module.json': './module.json',
 		},
+		/* The SDK packer copies only the paths a module declares here, so an
+		   undeclared module ships as an empty directory in a generated app. */
+		files: [
+			'src',
+			'module.json',
+			'migrations',
+			'translations',
+			'spec',
+			'README.md',
+		],
 		scripts: {
 			typecheck: hasClient
 				? 'tsrx-tsc --noEmit -p tsconfig.json'
@@ -369,18 +688,20 @@ export const permissions = Object.freeze(Object.values(${constant}));
 }
 
 function domainTypes(model: ScaffoldModel): string {
-	const { entity } = model;
+	const { entity, fields, inputFields } = model;
+	const members = fields
+		.map((field) => `\treadonly ${field.id}: ${domainType(field)};\n`)
+		.join('');
+	const input = inputFields
+		.map((field) => `\treadonly ${field.id}: ${domainType(field)};\n`)
+		.join('');
 	return `export interface ${entity.type} {
 	readonly id: string;
 	readonly tenantId: string;
-	readonly name: string;
-	readonly status: 'active' | 'archived';
-	readonly createdAt: number;
+${members}	readonly createdAt: number;
 }
 
-export interface Create${entity.type}Input {
-	readonly name: string;
-}
+export interface Create${entity.type}Input ${input === '' ? '{}' : `{\n${input}}`}
 `;
 }
 
@@ -437,31 +758,62 @@ export class ${names.pascal}Service {
 
 	create(
 		tenantId: string,
-		input: Create${entity.type}Input,
+		${model.inputFields.length === 0 ? '_input' : 'input'}: Create${entity.type}Input,
 	): Promise<${entity.type}> {
 		return this.repository.create({
 			id: randomUUID(),
 			tenantId: bounded(tenantId, 'tenantId', 1, 128),
-			name: bounded(input.name, 'name', 2, 160),
-			status: 'active',
-			createdAt: Date.now(),
+${model.fields.map((field) => `\t\t\t${field.id}: ${createValue(field)},\n`).join('')}			createdAt: Date.now(),
 		});
 	}
 }
 `;
 }
 
+/* What the service stores for a field: the first lifecycle value, a bounded
+   copy of request text, the validated input, or nothing yet. */
+function createValue(field: ScaffoldField): string {
+	if (field.state) return stringLiteral(field.values[0] ?? 'active');
+	if (!field.required) return 'null';
+	if (isText(field)) {
+		return `bounded(input.${field.id}, '${field.id}', ${field.min}, ${field.max})`;
+	}
+	return `input.${field.id}`;
+}
+
+function indexName(model: ScaffoldModel): string {
+	return `${model.entity.table}_tenant_${model.orderField?.column ?? 'id'}_idx`;
+}
+
+/** A PostgreSQL string literal; the only escape inside one is a doubled quote. */
+export function sqlStringLiteral(value: string): string {
+	return `'${value.replace(/'/g, "''")}'`;
+}
+
+function columnSql(field: ScaffoldField): string {
+	const check =
+		field.values.length > 0
+			? ` CHECK (${field.column} IN (${field.values.map(sqlStringLiteral).join(', ')}))`
+			: '';
+	return `  ${field.column} ${SQL_TYPES[field.type]}${field.required ? ' NOT NULL' : ''}${check},\n`;
+}
+
 function migrationSql(model: ScaffoldModel): string {
-	const { entity } = model;
+	const { entity, fields } = model;
+	const unique = fields
+		.filter((field) => field.unique)
+		.map((field) => `,\n  UNIQUE (tenant_id, ${field.column})`)
+		.join('');
+	const order = model.orderField?.column;
+	const index = order
+		? `${indexName(model)}\n  ON ${entity.table} (tenant_id, ${order}, id)`
+		: `${indexName(model)}\n  ON ${entity.table} (tenant_id, id)`;
 	return `CREATE TABLE IF NOT EXISTS ${entity.table} (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
-  name TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('active', 'archived')),
-  created_at BIGINT NOT NULL
+${fields.map(columnSql).join('')}  created_at BIGINT NOT NULL${unique}
 );
-CREATE INDEX IF NOT EXISTS ${entity.table}_tenant_name_idx
-  ON ${entity.table} (tenant_id, name, id);
+CREATE INDEX IF NOT EXISTS ${index};
 ALTER TABLE ${entity.table} ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ${entity.table} FORCE ROW LEVEL SECURITY;
 CREATE POLICY ${entity.table}_tenant_policy ON ${entity.table}
@@ -487,15 +839,103 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 				database,
 				'${entity.table}',
 				'${entity.table}_tenant_policy',
-				[() => database.schema.hasIndex('${entity.table}_tenant_name_idx')],
+				[() => database.schema.hasIndex('${indexName(model)}')],
 			),
 	},
 ];
 `;
 }
 
+/* A DATE carries no zone, and the drivers disagree on the Date they build from
+   it: node-postgres uses local midnight, PGlite uses UTC midnight, so either
+   formatting shifts a day somewhere. Reading the column as text is the only
+   answer that is right on both. A TIMESTAMPTZ is an absolute instant and needs
+   no cast. */
+function selectExpression(field: ScaffoldField): string {
+	return field.type === 'date'
+		? `${field.column}::text AS ${field.column}`
+		: field.column;
+}
+
+/* What the driver hands back for a column, before fromRow narrows it. */
+function rowType(field: ScaffoldField, entity: ScaffoldEntity): string {
+	const base =
+		field.type === 'enum'
+			? `${entity.type}['${field.id}']`
+			: field.type === 'integer'
+				? 'number | bigint | string'
+				: field.type === 'boolean'
+					? 'boolean'
+					: field.type === 'json'
+						? 'Record<string, unknown>'
+						: field.type === 'datetime'
+							? 'Date | string'
+							: 'string';
+	return field.required ? base : `${base} | null`;
+}
+
+/* A statement parameter is text, a number or null, so a boolean and a JSON
+   document travel as the text PostgreSQL parses back into the column type. */
+function createParameter(field: ScaffoldField): string {
+	const access = `record.${field.id}`;
+	const write =
+		field.type === 'boolean'
+			? `String(${access})`
+			: field.type === 'json'
+				? `JSON.stringify(${access})`
+				: access;
+	if (field.required || write === access) return write;
+	return `${access} === null ? null : ${write}`;
+}
+
+function rowRead(field: ScaffoldField): string {
+	const read =
+		field.type === 'integer'
+			? `whole(row.${field.column})`
+			: field.type === 'datetime'
+				? `isoText(row.${field.column})`
+				: `row.${field.column}`;
+	if (field.required || read === `row.${field.column}`) return read;
+	return `row.${field.column} === null ? null : ${read}`;
+}
+
 function databaseRepositoryFile(model: ScaffoldModel): string {
-	const { names, entity } = model;
+	const { names, entity, fields } = model;
+	const columns = ['id', 'tenant_id', ...fields.map((field) => field.column)];
+	const selected = [
+		'id',
+		'tenant_id',
+		...fields.map(selectExpression),
+		'created_at',
+	];
+	const parameters = [...columns, 'created_at'].map(
+		(_column, index) => `$${index + 1}`,
+	);
+	const order = model.orderField
+		? `lower(${model.orderField.column}), id`
+		: 'id';
+	const helpers = [
+		fields.some((field) => field.type === 'integer')
+			? `
+/* A domain integer may be negative, so only the timestamp keeps that bound. */
+function whole(value: ${entity.type}Row['created_at']): number {
+	const normalized = Number(value);
+	if (!Number.isSafeInteger(normalized)) {
+		throw new Error('The ${names.suffix} database returned an invalid number.');
+	}
+	return normalized;
+}
+`
+			: '',
+		fields.some((field) => field.type === 'datetime')
+			? `
+/* The driver returns a timestamp as a Date; the domain keeps ISO text. */
+function isoText(value: Date | string): string {
+	return value instanceof Date ? value.toISOString() : value;
+}
+`
+			: '',
+	].join('');
 	return `import type { DatabaseHandle } from '@flowdular/database';
 import { runDatabaseMigrations } from '@flowdular/database';
 import type { ${entity.type} } from '../domain/types.ts';
@@ -505,21 +945,19 @@ import type { ${names.pascal}Repository } from './repository.ts';
 interface ${entity.type}Row {
 	id: string;
 	tenant_id: string;
-	name: string;
-	status: ${entity.type}['status'];
-	created_at: number | bigint | string;
+${fields.map((field) => `\t${field.column}: ${rowType(field, entity)};\n`).join('')}	created_at: number | bigint | string;
 }
 
 /* Queries stay explicit. Values always travel in the adapter's parameter
    channel; nothing from a request is concatenated into SQL. */
-const LIST = \`SELECT id, tenant_id, name, status, created_at
+const LIST = \`SELECT ${selected.join(', ')}
 			 FROM ${entity.table}
 			 WHERE tenant_id = $1
-			 ORDER BY lower(name), id\`;
+			 ORDER BY ${order}\`;
 
 const CREATE = \`INSERT INTO ${entity.table}
-			 (id, tenant_id, name, status, created_at)
-			 VALUES ($1, $2, $3, $4, $5)\`;
+			 (${columns.join(', ')}, created_at)
+			 VALUES (${parameters.join(', ')})\`;
 
 /* PostgreSQL returns BIGINT as a string, so every numeric read is normalized
    before it reaches the domain. */
@@ -530,14 +968,12 @@ function integer(value: ${entity.type}Row['created_at']): number {
 	}
 	return normalized;
 }
-
+${helpers}
 function fromRow(row: ${entity.type}Row): ${entity.type} {
 	return {
 		id: row.id,
 		tenantId: row.tenant_id,
-		name: row.name,
-		status: row.status,
-		createdAt: integer(row.created_at),
+${fields.map((field) => `\t\t${field.id}: ${rowRead(field)},\n`).join('')}		createdAt: integer(row.created_at),
 	};
 }
 
@@ -565,9 +1001,7 @@ export class Database${names.pascal}Repository implements ${names.pascal}Reposit
 					parameters: [
 						record.id,
 						record.tenantId,
-						record.name,
-						record.status,
-						record.createdAt,
+${fields.map((field) => `\t\t\t\t\t\t${createParameter(field)},\n`).join('')}						record.createdAt,
 					],
 				}),
 			{ access: 'write', tenantId: record.tenantId },
@@ -585,7 +1019,10 @@ export async function migrate${names.pascal}Database(
 }
 
 function memoryRepositoryFile(model: ScaffoldModel): string {
-	const { names, entity } = model;
+	const { names, entity, orderField } = model;
+	const order = orderField
+		? `\n\t\t\t(left, right) =>\n\t\t\t\tleft.${orderField.id}.localeCompare(right.${orderField.id}) || left.id.localeCompare(right.id),\n\t\t`
+		: `(left, right) => left.id.localeCompare(right.id)`;
 	return `import type { ${entity.type} } from '../domain/types.ts';
 import type { ${names.pascal}Repository } from './repository.ts';
 
@@ -595,10 +1032,7 @@ export class Memory${names.pascal}Repository implements ${names.pascal}Repositor
 	readonly #records = new Map<string, ${entity.type}[]>();
 
 	async list(tenantId: string): Promise<readonly ${entity.type}[]> {
-		return [...(this.#records.get(tenantId) ?? [])].sort(
-			(left, right) =>
-				left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
-		);
+		return [...(this.#records.get(tenantId) ?? [])].sort(${order});
 	}
 
 	async create(record: ${entity.type}): Promise<${entity.type}> {
@@ -794,6 +1228,98 @@ export function createServerComposition(
 `;
 }
 
+/* An enum is checked against its declared members through requiredString. */
+function usesRequiredString(field: ScaffoldField): boolean {
+	return (
+		field.type !== 'integer' &&
+		field.type !== 'boolean' &&
+		field.type !== 'json'
+	);
+}
+
+function inputExpression(field: ScaffoldField): string {
+	if (field.type === 'integer') return `requiredInteger(value, '${field.id}')`;
+	if (field.type === 'boolean') return `flag(value, '${field.id}')`;
+	if (field.type === 'json') return `jsonObject(value, '${field.id}')`;
+	if (field.type === 'enum') {
+		return `oneOf(value, '${field.id}', [${field.values
+			.map(stringLiteral)
+			.join(', ')}] as const)`;
+	}
+	return `requiredString(value, '${field.id}', { min: ${field.min}, max: ${field.max} })`;
+}
+
+/* The create argument: inline while Prettier would keep it on one line. */
+function inputLiteral(fields: readonly ScaffoldField[]): string {
+	if (fields.length === 0) return '{}';
+	const entries = fields.map(
+		(field) => `${field.id}: ${inputExpression(field)}`,
+	);
+	const inline = `{ ${entries.join(', ')} }`;
+	const indent = 5;
+	if (
+		entries.length === 1 &&
+		indent * TAB_WIDTH + inline.length + 1 <= PRINT_WIDTH
+	) {
+		return inline;
+	}
+	return `{\n${entries
+		.map((entry) => `${'\t'.repeat(indent + 1)}${entry},\n`)
+		.join('')}${'\t'.repeat(indent)}}`;
+}
+
+/* Local input guards for the types @flowdular/server has no helper for. */
+function inputGuards(fields: readonly ScaffoldField[]): string {
+	const types = new Set(fields.map((field) => field.type));
+	const guards = [
+		types.has('enum')
+			? `
+function oneOf<T extends string>(
+	value: Record<string, unknown>,
+	key: string,
+	values: readonly T[],
+): T {
+	const text = requiredString(value, key);
+	if (!(values as readonly string[]).includes(text)) {
+		throw new HttpProblem(
+			'INVALID_INPUT',
+			\`\${key} must be one of: \${values.join(', ')}.\`,
+			400,
+		);
+	}
+	return text as T;
+}
+`
+			: '',
+		types.has('boolean')
+			? `
+function flag(value: Record<string, unknown>, key: string): boolean {
+	const result = value[key];
+	if (typeof result !== 'boolean') {
+		throw new HttpProblem('INVALID_INPUT', \`\${key} must be a boolean.\`, 400);
+	}
+	return result;
+}
+`
+			: '',
+		types.has('json')
+			? `
+function jsonObject(
+	value: Record<string, unknown>,
+	key: string,
+): Record<string, unknown> {
+	const nested = value[key];
+	if (!nested || typeof nested !== 'object' || Array.isArray(nested)) {
+		throw new HttpProblem('INVALID_INPUT', \`\${key} must be an object.\`, 400);
+	}
+	return nested as Record<string, unknown>;
+}
+`
+			: '',
+	];
+	return guards.join('');
+}
+
 function endpointsFile(model: ScaffoldModel): string {
 	const { names, entity, listPermission, createPermission, hasApi } = model;
 	if (!hasApi) return `export const endpoints = [] as const;\n`;
@@ -801,11 +1327,18 @@ function endpointsFile(model: ScaffoldModel): string {
 	const path = `/api/${names.suffix}/${entity.plural}`;
 	const listId = `${names.namespace}.${entity.plural}.list`;
 	const createId = `${names.namespace}.${entity.plural}.create`;
+	const input = createPermission ? model.inputFields : [];
+	const guards = inputGuards(input);
 	const serverImports = [
 		'defineEndpoint',
+		...(guards ? ['HttpProblem'] : []),
 		'jsonResponse',
-		...(createPermission
-			? ['problemResponse', 'readJsonObject', 'requiredString']
+		...(createPermission ? ['problemResponse', 'readJsonObject'] : []),
+		...(input.some((field) => field.type === 'integer')
+			? ['requiredInteger']
+			: []),
+		...(input.some((field) => usesRequiredString(field))
+			? ['requiredString']
 			: []),
 	];
 	const authImports = [
@@ -844,7 +1377,7 @@ function failure(error: unknown): Response {
 	}
 	return problemResponse(error, 'The ${names.suffix} operation failed.');
 }
-`
+${guards}`
 		: ''
 }`;
 	const list = listPermission
@@ -880,7 +1413,7 @@ function failure(error: unknown): Response {
 				const service = await runtime.service();
 				const record = await service.create(
 					principalFromContext(octane)!.tenantId,
-					{ name: requiredString(value, 'name', { min: 2, max: 160 }) },
+					${inputLiteral(input)},
 				);
 				return jsonResponse({ record }, 201);
 			} catch (error) {
@@ -1039,6 +1572,49 @@ export function create${names.pascal}ClientState() {
 `;
 }
 
+/* The identity column keeps the width the rest do not need, so a table stays
+   readable as columns are added. */
+function columnWidth(index: number, count: number): string {
+	if (count < 2) return '100%';
+	const rest = Math.max(1, Math.floor(35 / (count - 1)));
+	return index === 0 ? `${Math.max(1, 100 - rest * (count - 1))}%` : `${rest}%`;
+}
+
+function cellValue(field: ScaffoldField, namespace: string): string {
+	const access = `record.${field.id}`;
+	if (field.type === 'enum') {
+		const label = `t('${namespace}.${field.id}.' + ${access})`;
+		return field.required ? label : `${access} === null ? '' : ${label}`;
+	}
+	if (field.type === 'json') return `JSON.stringify(${access})`;
+	if (field.type === 'integer' || field.type === 'boolean') {
+		return field.required
+			? `String(${access})`
+			: `${access} === null ? '' : String(${access})`;
+	}
+	return field.required ? access : `${access} ?? ''`;
+}
+
+function tableColumns(model: ScaffoldModel): string {
+	const { columns, names } = model;
+	return columns
+		.map((field, index) => {
+			const value = cellValue(field, names.namespace);
+			const cell = index === 0 ? `<b>{${value}}</b>` : value;
+			const numeric =
+				field.type === 'integer' || field.type === 'decimal'
+					? '\t\t\tnumeric: true,\n'
+					: '';
+			return `\t\t{
+			key: '${field.id}',
+			header: t('${names.namespace}.table.column.${field.id}'),
+			width: '${columnWidth(index, columns.length)}',
+${numeric}			cell: (record) => ${cell},
+		},\n`;
+		})
+		.join('');
+}
+
 function viewFile(model: ScaffoldModel): string {
 	const { names, entity, listPermission } = model;
 	if (!listPermission) {
@@ -1085,19 +1661,7 @@ export interface ${names.pascal}ViewProps {
 
 function columns(): readonly TableColumn<${entity.type}>[] {
 	return [
-		{
-			key: 'name',
-			header: t('${names.namespace}.table.column.name'),
-			width: '65%',
-			cell: (record) => <b>{record.name}</b>,
-		},
-		{
-			key: 'status',
-			header: t('${names.namespace}.table.column.status'),
-			width: '35%',
-			cell: (record) => t('${names.namespace}.status.' + record.status),
-		},
-	];
+${tableColumns(model)}	];
 }
 
 export function ${names.pascal}View(_props: ${names.pascal}ViewProps) @{
@@ -1168,19 +1732,62 @@ export function ${names.pascal}View(_props: ${names.pascal}ViewProps) @{
 `;
 }
 
+/* Distinct sample values per tenant, inside every declared bound. */
+function sampleValue(field: ScaffoldField, index: number): string {
+	const text = (first: string, second: string) =>
+		`'${(index === 0 ? first : second).slice(0, field.max)}'`;
+	switch (field.type) {
+		case 'integer':
+			return index === 0 ? '1' : '2';
+		case 'boolean':
+			return index === 0 ? 'true' : 'false';
+		case 'json':
+			return '{}';
+		case 'enum':
+			return stringLiteral(field.values[0] ?? '');
+		case 'decimal':
+			return text('10.00', '20.00');
+		case 'date':
+			return text('2024-01-01', '2024-02-01');
+		case 'datetime':
+			return text('2024-01-01T00:00:00.000Z', '2024-02-01T00:00:00.000Z');
+		default:
+			return text('Alpha', 'Beta');
+	}
+}
+
+function sampleLiteral(
+	fields: readonly ScaffoldField[],
+	index: number,
+): string {
+	if (fields.length === 0) return '{}';
+	const entries = fields.map(
+		(field) => `${field.id}: ${sampleValue(field, index)}`,
+	);
+	const inline = `{ ${entries.join(', ')} }`;
+	/* "\t\tawait service.create('tenant-a', " plus the closing ");". */
+	if (2 * TAB_WIDTH + 33 + inline.length + 2 <= PRINT_WIDTH) return inline;
+	return `{\n${entries.map((entry) => `\t\t\t${entry},\n`).join('')}\t\t}`;
+}
+
 function testFile(model: ScaffoldModel): string {
-	const { names, entity, hasDatabase } = model;
+	const { names, entity, hasDatabase, inputFields, orderField } = model;
+	const assertField = inputFields.includes(orderField as ScaffoldField)
+		? orderField
+		: undefined;
+	const assertion = (tenant: string, index: number) =>
+		assertField
+			? `		expect((await service.list('${tenant}')).map((record) => record.${assertField.id})).toEqual(
+			[${sampleValue(assertField, index)}],
+		);`
+			: `		expect((await service.list('${tenant}')).length).toEqual(1);`;
 	const isolation = `	it('isolates ${entity.plural} by trusted tenant id', async () => {
 		const service = await ${names.camel}Service();
-		await service.create('tenant-a', { name: 'Alpha' });
-		await service.create('tenant-b', { name: 'Beta' });
+		await service.create('tenant-a', ${sampleLiteral(inputFields, 0)});
+		await service.create('tenant-b', ${sampleLiteral(inputFields, 1)});
 
-		expect((await service.list('tenant-a')).map((record) => record.name)).toEqual(
-			['Alpha'],
-		);
-		expect((await service.list('tenant-b')).map((record) => record.name)).toEqual(
-			['Beta'],
-		);
+${assertion('tenant-a', 0)}
+${assertion('tenant-b', 1)}
 	});`;
 	if (!hasDatabase) {
 		return `import { describe, expect, it } from 'vitest';
@@ -1342,13 +1949,66 @@ export default defineCliExtension({
 `;
 }
 
+/* Polish copy for the shape a version 1 specification scaffolds. A field
+   derived from an entity keeps a humanized identifier until its author
+   translates it. */
+const POLISH_LABELS: Record<string, string> = {
+	name: 'Nazwa',
+	status: 'Status',
+	active: 'Aktywny',
+	archived: 'Zarchiwizowany',
+};
+
+function humanize(value: string): string {
+	const words = value
+		.replace(/[-_]/g, ' ')
+		.replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+		.toLowerCase();
+	return words[0]!.toUpperCase() + words.slice(1);
+}
+
+function label(locale: string, key: string): string {
+	return (locale === 'pl' ? POLISH_LABELS[key] : undefined) ?? humanize(key);
+}
+
+function columnLabels(
+	model: ScaffoldModel,
+	locale: string,
+): Record<string, string> {
+	return Object.fromEntries(
+		model.columns.map((field) => [
+			`table.column.${field.id}`,
+			label(locale, field.id),
+		]),
+	);
+}
+
+function valueLabels(
+	model: ScaffoldModel,
+	locale: string,
+): Record<string, string> {
+	return Object.fromEntries(
+		model.columns
+			.filter((field) => field.type === 'enum')
+			.flatMap((field) =>
+				field.values.map((value) => [
+					`${field.id}.${value}`,
+					label(locale, value),
+				]),
+			),
+	);
+}
+
 /* The scaffold owns generic, complete runtime copy. A business-manager may
    replace it with domain-specific wording before the module gates run. */
 function translation(
 	locale: string,
 	name: string,
 	description: string,
+	model: ScaffoldModel,
 ): string {
+	const columns = columnLabels(model, locale);
+	const values = valueLabels(model, locale);
 	if (locale === 'pl') {
 		return json({
 			'module.name': `Moduł ${name}`,
@@ -1361,13 +2021,11 @@ function translation(
 			'table.title': 'Rekordy',
 			'table.caption': `Rekordy modułu ${name}`,
 			'table.count': 'Liczba rekordów: {count}',
-			'table.column.name': 'Nazwa',
-			'table.column.status': 'Status',
+			...columns,
 			'table.loading': 'Wczytywanie rekordów…',
 			'table.emptyTitle': 'Brak rekordów',
 			'table.emptyHint': 'Utworzone rekordy pojawią się w tym miejscu.',
-			'status.active': 'Aktywny',
-			'status.archived': 'Zarchiwizowany',
+			...values,
 			'error.load': 'Nie udało się wczytać rekordów.',
 			'error.request': 'Operacja na rekordach nie powiodła się.',
 		});
@@ -1383,13 +2041,11 @@ function translation(
 		'table.title': 'Records',
 		'table.caption': `${name} records`,
 		'table.count': '{count} records',
-		'table.column.name': 'Name',
-		'table.column.status': 'Status',
+		...columns,
 		'table.loading': 'Loading records…',
 		'table.emptyTitle': 'No records yet',
 		'table.emptyHint': 'Records created in this workspace appear here.',
-		'status.active': 'Active',
-		'status.archived': 'Archived',
+		...values,
 		'error.load': 'Could not load records.',
 		'error.request': 'The records operation failed.',
 	});
@@ -1459,7 +2115,7 @@ export function planScaffold(
 	for (const locale of new Set(['en', ...spec.locales])) {
 		files.set(
 			`translations/${locale}.json`,
-			translation(locale, spec.name, spec.description),
+			translation(locale, spec.name, spec.description, model),
 		);
 	}
 	return files;

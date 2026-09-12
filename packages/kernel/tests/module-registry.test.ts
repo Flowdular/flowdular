@@ -88,3 +88,80 @@ it('rejects invalid ranges and incompatible platform APIs', () => {
 		]),
 	).toThrow(/invalid range/);
 });
+
+describe('capability provides and requires', () => {
+	function withCapabilities(
+		module: RegisteredModule,
+		provides: string[],
+		requires: { id: string; optional?: boolean }[] = [],
+	): RegisteredModule {
+		return {
+			...module,
+			manifest: { ...module.manifest, provides, requires },
+		};
+	}
+
+	it('orders a required capability provider before its consumer', () => {
+		const registry = createModuleRegistry([
+			withCapabilities(
+				moduleOf('automations.core'),
+				[],
+				[{ id: 'agents.run-queue' }],
+			),
+			withCapabilities(moduleOf('agents.core'), ['agents.run-queue']),
+		]);
+		expect(registry.modules.map((module) => module.manifest.id)).toEqual([
+			'agents.core',
+			'automations.core',
+		]);
+	});
+
+	it('rejects a required capability nobody provides and tolerates an optional one', () => {
+		expect(() =>
+			createModuleRegistry([
+				withCapabilities(
+					moduleOf('automations.core'),
+					[],
+					[{ id: 'agents.run-queue' }],
+				),
+			]),
+		).toThrow(/requires capability "agents.run-queue"/);
+		expect(() =>
+			createModuleRegistry([
+				withCapabilities(
+					moduleOf('agents.core'),
+					[],
+					[{ id: 'notifications.publish.v1', optional: true }],
+				),
+			]),
+		).not.toThrow();
+	});
+
+	it('rejects two providers of one capability', () => {
+		expect(() =>
+			createModuleRegistry([
+				withCapabilities(moduleOf('agents.core'), ['agents.run-queue']),
+				withCapabilities(moduleOf('other.core'), ['agents.run-queue']),
+			]),
+		).toThrow(/provided by both/);
+	});
+
+	it('lets an optional requirement close a cycle without ordering it', () => {
+		const registry = createModuleRegistry([
+			withCapabilities(
+				moduleOf('agents.core'),
+				['agents.run-queue'],
+				[{ id: 'notifications.publish.v1', optional: true }],
+			),
+			withCapabilities(
+				moduleOf('notifications.core'),
+				['notifications.publish.v1'],
+				[{ id: 'agents.run-queue' }],
+			),
+		]);
+		expect(registry.modules.map((module) => module.manifest.id)).toEqual([
+			'agents.core',
+			'notifications.core',
+		]);
+	});
+});

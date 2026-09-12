@@ -1,6 +1,6 @@
 {
 	"name": "@flowdular/module-workflows",
-	"version": "0.3.0",
+	"version": "0.6.5",
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
@@ -14,6 +14,7 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
+		"@flowdular/cli-protocol": "workspace:*",
 		"@flowdular/client": "workspace:*",
 		"@flowdular/contracts": "workspace:*",
 		"@flowdular/database": "workspace:*",

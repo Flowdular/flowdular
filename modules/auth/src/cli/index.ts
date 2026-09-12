@@ -10,6 +10,7 @@ import {
 	createWorkspace,
 	listWorkspaces,
 } from './provisioning.ts';
+import { rotateMfaSecretsCommand } from './secrets.ts';
 import {
 	authRuntimeOptionsFromEnvironment,
 	createAuthRuntime,
@@ -169,6 +170,19 @@ export const cliExtension = defineCliExtension({
 				supportsDryRun: true,
 			},
 			execute: addWorkspaceMember,
+		},
+		{
+			path: ['auth', 'secrets-rotate'],
+			capability: {
+				id: 'auth.secrets.rotate',
+				version: 1,
+				summary:
+					'Re-seal enrolled TOTP secrets and workspace provider secrets with the current auth encryption key.',
+				risk: 'process' as const,
+				requiresApprovedSpec: false,
+				supportsDryRun: true,
+			},
+			execute: rotateMfaSecretsCommand,
 		},
 		{
 			path: ['auth', 'greenfield'],

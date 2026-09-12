@@ -20,6 +20,8 @@ const TABLES = [
 	'auth_mfa_totp',
 	'auth_mfa_recovery_codes',
 	'auth_mfa_challenges',
+	'auth_external_identities',
+	'auth_identity_providers',
 	'module_settings',
 ];
 

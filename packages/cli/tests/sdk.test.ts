@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { sdkScaffold, sdkSource } from '../src/sdk.ts';
+import { SDK_VERSION, sdkScaffold, sdkSource } from '../src/sdk.ts';
 
 it('keeps the standalone sandbox distinct from the SDK sandbox access module', () => {
 	expect(sdkSource("import '@flowdular/sandbox/server';")).toBe(
@@ -48,7 +48,15 @@ it('preserves the approved specification and module identity byte for byte while
 	);
 	expect(JSON.parse(files.get('package.json')!)).toEqual({
 		name: '@flowdular/module-example',
-		dependencies: { octane: '0.1.51', '@flowdular/sdk': '0.2.3' },
+		dependencies: { octane: '0.1.51', '@flowdular/sdk': SDK_VERSION },
 		devDependencies: { vitest: '4.1.11' },
 	});
+});
+
+it('pins the same SDK version the workspace publishes', async () => {
+	const { readFile } = await import('node:fs/promises');
+	const sdk = JSON.parse(
+		await readFile(new URL('../../sdk/package.json', import.meta.url), 'utf8'),
+	) as { version: string };
+	expect(SDK_VERSION).toBe(sdk.version);
 });

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'octane';
+import { useEffect, useMemo, useState } from 'octane';
 import {
 	Alert,
 	Button,
@@ -8,6 +8,7 @@ import {
 	Icon,
 	Kpi,
 	PageHeader,
+	Pagination,
 	SearchField,
 	TableCard,
 } from '@flowdular/ui';
@@ -25,18 +26,39 @@ import {
 	resetMemberPassword,
 	revokeMemberSessions,
 	setMemberScopes,
-	setMemberStatus,
+	setMembershipStatus,
+	startListExport,
 } from './api.ts';
+import { MEMBER_EXPORT_LIST_ID } from '../domain/lists.ts';
 import { memberColumns } from './member-columns.tsrx';
 import { MemberDrawer } from './MemberDrawer.tsrx';
-import { createUsersClientState, replaceMember } from './state.ts';
+import {
+	createUsersClientState,
+	membershipStatusMessage,
+	replaceMember,
+} from './state.ts';
 import { UserAccountForm } from './UserAccountForm.tsrx';
 import { InviteMemberForm } from './InviteMemberForm.tsrx';
 
 export interface UsersViewProps {
 	readonly csrfToken: string;
 	readonly canManage: boolean;
+	/** Whether the principal may start an export job; exports.core owns it. */
+	readonly canExport: boolean;
 }
+
+const PAGE_SIZES = [10, 25, 50, 100];
+
+/* memberColumns renders the cells; the screen supplies the value each column
+   is ordered by, since the user column shows a name over an email. */
+const SORT_VALUES: Readonly<
+	Record<string, (user: TenantMember) => string | number>
+> = {
+	user: (user) => user.displayName,
+	role: (user) => user.role,
+	status: (user) => user.membershipStatus,
+	scopes: (user) => user.scopes.length,
+};
 
 function formValue(form: FormData, key: string): string {
 	const value = form.get(key);
@@ -68,13 +90,21 @@ export function UsersView(props: UsersViewProps) @{
 	const [selectedAccountId, setSelectedAccountId] = useValue(
 		usersState.state.selectedAccountId,
 	);
+	const [exportStarted, setExportStarted] = useValue(
+		usersState.state.exportStarted,
+	);
 	const confirm = useMemo(() => createStore({ remove: cell(false) }), []);
 	const [removeOpen, setRemoveOpen] = useValue(confirm.state.remove);
+	const [pageIndex, setPageIndex] = useState(0);
+	const [pageSize, setPageSize] = useState(25);
 	const selected =
 		users.find((user) => user.accountId === selectedAccountId) ?? null;
 	const columns = memberColumns(
 		new Map(roles.map((role) => [role.key, role.name])),
-	);
+	).map((column) => {
+		const value = SORT_VALUES[column.key];
+		return value ? { ...column, value } : column;
+	});
 	const owners = users.filter((user) => user.role === 'owner');
 	const locale = activeLocale();
 	const term = query.trim().toLocaleLowerCase(locale);
@@ -104,6 +134,7 @@ export function UsersView(props: UsersViewProps) @{
 					usersState.state.passwordMinLength,
 					directory.passwordMinLength,
 				);
+				transaction.set(usersState.state.exportStarted, false);
 				transaction.set(usersState.state.status, 'idle');
 			}, 'users/loaded');
 		} catch (loadError) {
@@ -125,6 +156,10 @@ export function UsersView(props: UsersViewProps) @{
 	const mutate = async (
 		run: () => Promise<TenantMember | null>,
 		done: string,
+		describeError: (error: unknown) => string = (error) => message(
+			error,
+			t('users.error.save'),
+		),
 	) => {
 		setStatus('submitting');
 		setError('');
@@ -143,10 +178,30 @@ export function UsersView(props: UsersViewProps) @{
 			setNotice(done);
 			setStatus('idle');
 		} catch (mutationError) {
-			setError(message(mutationError, t('users.error.save')));
+			setError(describeError(mutationError));
 			setStatus('idle');
 		}
 	};
+
+	/* The membership route answers with the new status only, so the row it
+   belongs to is patched here rather than reloaded. */
+	const changeMembership = (
+		member: TenantMember,
+		next: 'active' | 'disabled',
+	) => mutate(
+		async () => ({
+			...member,
+			membershipStatus: (await setMembershipStatus(
+				member.accountId,
+				next,
+				props.csrfToken,
+			)).status,
+		}),
+		next === 'disabled'
+			? t('users.notice.membershipDisabled')
+			: t('users.notice.membershipEnabled'),
+		membershipStatusMessage,
+	);
 
 	const submitCreate = async (event: SubmitEvent) => {
 		event.preventDefault();
@@ -205,6 +260,23 @@ export function UsersView(props: UsersViewProps) @{
 		}
 	};
 
+	/* exports.core answers as soon as the job is recorded, not when the file is
+   written, so the screen reports that it started and points at the screen
+   that hands it over. */
+	const startExport = async () => {
+		setStatus('submitting');
+		setError('');
+		setNotice('');
+		try {
+			await startListExport(MEMBER_EXPORT_LIST_ID, props.csrfToken);
+			setExportStarted(true);
+			setStatus('idle');
+		} catch (exportError) {
+			setError(message(exportError, t('users.export.error')));
+			setStatus('idle');
+		}
+	};
+
 	const openMember = (accountId: string) => {
 		setError('');
 		setNotice('');
@@ -250,6 +322,16 @@ export function UsersView(props: UsersViewProps) @{
 				<Icon name="refresh" size={14} />
 				{t('users.action.refresh')}
 			</Button>
+			@if (props.canExport) {
+				<Button
+					size="sm"
+					disabled={status === 'denied' || status === 'submitting'}
+					onClick={() => void startExport()}
+				>
+					<Icon name="download" size={14} />
+					{t('users.export.action')}
+				</Button>
+			}
 			@if (props.canManage) {
 				<>
 					<Button
@@ -293,6 +375,13 @@ export function UsersView(props: UsersViewProps) @{
 				@if (notice && !selected) {
 					<Alert tone="info">{notice}</Alert>
 				}
+				@if (exportStarted && !selected) {
+					<Alert tone="info">
+						{t('users.export.started')}
+						{' '}
+						<a href="/exports">{t('users.export.link')}</a>
+					</Alert>
+				}
 				<TableCard
 					title={t('users.table.title')}
 					count={t('users.table.count', {
@@ -303,12 +392,40 @@ export function UsersView(props: UsersViewProps) @{
 						value={query}
 						placeholder={t('users.search.placeholder')}
 						label={t('users.search.label')}
-						onInput={setQuery}
+						onInput={(value) => {
+							setQuery(value);
+							setPageIndex(0);
+						}}
 					/>}
 					caption={t('users.table.caption')}
 					columns={columns}
 					rows={visible}
 					rowKey={(user) => user.accountId}
+					sorting
+					onSortingChange={() => setPageIndex(0)}
+					pagination={{ pageIndex, pageSize, onPageChange: setPageIndex }}
+					after={<Pagination
+						pageIndex={pageIndex}
+						pageSize={pageSize}
+						totalRows={visible.length}
+						pageSizes={PAGE_SIZES}
+						onPageChange={setPageIndex}
+						onPageSizeChange={(size) => {
+							setPageSize(size);
+							setPageIndex(0);
+						}}
+						label={t('users.pagination.label')}
+						previousLabel={t('users.pagination.previous')}
+						nextLabel={t('users.pagination.next')}
+						pageSizeLabel={t('users.pagination.size')}
+						summary={(range) => t('users.pagination.summary', {
+							page: range.pageIndex + 1,
+							pages: range.pageCount,
+							from: range.from,
+							to: range.to,
+							total: range.totalRows,
+						})}
+					/>}
 					status={status === 'loading' && users.length === 0
 						? 'loading'
 						: 'idle'}
@@ -407,11 +524,9 @@ export function UsersView(props: UsersViewProps) @{
 						() => setMemberScopes(selected.accountId, scopes, props.csrfToken),
 						t('users.notice.scopesSaved'),
 					)}
-					onSetStatus={(next) => void mutate(
-						() => setMemberStatus(selected.accountId, next, props.csrfToken),
-						next === 'disabled'
-							? t('users.notice.accountDisabled')
-							: t('users.notice.accountEnabled'),
+					onSetMembershipStatus={(next) => void changeMembership(
+						selected,
+						next,
 					)}
 					onResetPassword={(temporaryPassword) => void mutate(
 						() => resetMemberPassword(

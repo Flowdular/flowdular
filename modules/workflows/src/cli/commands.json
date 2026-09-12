@@ -1,0 +1,17 @@
+{
+	"protocolVersion": 1,
+	"moduleId": "workflows.core",
+	"commands": [
+		{
+			"path": ["workflows", "secrets-rotate"],
+			"capability": {
+				"id": "workflows.secrets.rotate",
+				"version": 1,
+				"summary": "Re-seal stored run payloads with the current encryption key.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		}
+	]
+}

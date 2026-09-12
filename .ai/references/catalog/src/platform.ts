@@ -4,6 +4,7 @@ import type {
 } from '@flowdular/sdk/modules/auth/server';
 import { platformVariableRegistry } from '@flowdular/sdk/kernel';
 import { registerCatalogVariableSource } from './domain/variables.ts';
+import { catalogDataClasses } from './services/data-classes.ts';
 import {
 	catalogAgentTools,
 	createCatalogRoutes,
@@ -28,6 +29,7 @@ export function createServerComposition(
 		platformVariableRegistry(context.capabilities),
 		tools,
 	);
+	context.dataClasses.declare(catalogDataClasses(() => runtime.service()));
 	return {
 		routes: createCatalogRoutes(context.auth, runtime),
 		dispose: () => runtime.dispose(),

@@ -15,6 +15,7 @@ import {
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import type { CodingAgentEvent } from '@flowdular/coding-agent';
 import { sandboxDirectory } from './config.ts';
+import type { PendingQuestions } from './questions.ts';
 import { materializeModuleGraph, materializeReference } from './reference.ts';
 import { hashSpec } from './spec.ts';
 import { forgetDiffs } from './turns.ts';
@@ -121,6 +122,10 @@ export interface SandboxSession {
 	/* Restore points, oldest first. Bounded; see checkpoints.ts for the cap and
 	   the pruning that never drops the start. */
 	readonly checkpoints: readonly SessionCheckpoint[];
+	/* The decisions the last turn asked the operator for, or null when it asked
+	   for none. Every turn rewrites it, so the form can only ever show what the
+	   newest specialist is still waiting on. */
+	readonly pendingQuestions: PendingQuestions | null;
 	readonly state: SandboxSessionState;
 	readonly createdAt: number;
 	readonly updatedAt: number;
@@ -456,6 +461,7 @@ export async function createSession(
 		checkpoints: [
 			{ sequence: 0, at: now, label: 'the starting point', role: input.role },
 		],
+		pendingQuestions: null,
 		state: 'draft',
 		createdAt: now,
 		updatedAt: now,
@@ -551,6 +557,7 @@ export async function readSession(
 			chainDepth: record.chainDepth ?? 0,
 			attachments: record.attachments ?? [],
 			checkpoints: record.checkpoints ?? [],
+			pendingQuestions: record.pendingQuestions ?? null,
 			ejectedAt: record.ejectedAt ?? null,
 			archivedAt: record.archivedAt ?? null,
 		};

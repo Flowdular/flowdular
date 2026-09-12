@@ -1,0 +1,70 @@
+/* Notifications module: composites specific to this module. Primitives (buttons,
+   fields, tags, cards) come from @flowdular/ui and are not restyled here. */
+
+.notifications-unread {
+	display: inline-flex;
+	height: 34px;
+	align-items: center;
+	gap: 6px;
+	padding: 0 10px;
+	color: var(--ink-2);
+	text-decoration: none;
+	background: var(--surface);
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+}
+
+.notifications-unread:hover {
+	color: var(--primary);
+	border-color: var(--primary);
+}
+
+.notifications-unread__count {
+	min-width: 18px;
+	padding: 0 5px;
+	font-size: var(--text-xs);
+	font-weight: 600;
+	line-height: 18px;
+	color: var(--primary);
+	text-align: center;
+	background: var(--primary-tint);
+	border-radius: 999px;
+}
+
+/* A ledger reference is one token with nowhere to break, so it would push the
+   row sideways. The cell keeps its budget and the full value stays readable in
+   the title. */
+.notifications-truncate {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.notifications-facts {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+	gap: 10px 16px;
+	margin: 0;
+}
+
+.notifications-facts__item {
+	display: grid;
+	min-width: 0;
+	gap: 4px;
+}
+
+.notifications-facts dd {
+	min-width: 0;
+	margin: 0;
+	font-size: var(--text-md);
+	overflow-wrap: anywhere;
+}
+
+.notifications-body {
+	margin: 0;
+	font-size: var(--text-md);
+	line-height: 1.55;
+	color: var(--ink-2);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}

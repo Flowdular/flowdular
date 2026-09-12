@@ -109,6 +109,18 @@ export function createAuthModuleSettings(
 				max: 200,
 				pattern: PROVIDER_LIST_PATTERN,
 			},
+			requireMfa: {
+				type: 'boolean',
+				defaultValue: false,
+				visibility: 'private',
+				client: false,
+				scope: 'tenant',
+				labelKey: 'auth.moduleSettings.requireMfa.label',
+				label: 'Require multi-factor authentication',
+				descriptionKey: 'auth.moduleSettings.requireMfa.description',
+				description:
+					'Members of this workspace must enrol an authenticator before any workspace API or page answers them. API tokens are exempt, and the deployment needs an MFA encryption key.',
+			},
 			defaultLocale: {
 				type: 'string',
 				defaultValue: locales[0]!,
@@ -136,6 +148,12 @@ export interface AuthSettings {
 	readonly sessionTtlMs: number;
 	readonly sessionIdleMs: number;
 	readonly passwordMinLength: number;
+}
+
+/** The auth.core settings a single workspace decides for itself. */
+export interface AuthTenantSettings {
+	/** Members without a confirmed second factor are held at enrolment. */
+	readonly requireMfa: boolean;
 }
 
 export function parseProviderList(value: string): readonly string[] {

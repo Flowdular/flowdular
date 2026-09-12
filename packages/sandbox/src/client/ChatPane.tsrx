@@ -16,7 +16,14 @@ import {
 	type DriverSummary,
 	type ModuleSpecReview,
 	type RoleSummary,
+	type SubmittedAnswer,
 } from './api.ts';
+import {
+	readQuestions,
+	type PendingQuestion,
+	type PendingQuestions,
+} from '../server/questions.ts';
+import { PendingQuestionsCard } from './PendingQuestionsCard.tsrx';
 import { ToolEvent } from './ToolEvent.tsrx';
 import { transcriptRows, type TranscriptRow } from './transcript.ts';
 import { TurnActivity } from './TurnActivity.tsrx';
@@ -34,6 +41,9 @@ import { roleLabel, handoffLabel } from './session-labels.ts';
 export interface ChatPaneProps {
 	readonly entries: readonly ChatEntry[];
 	readonly delivered: boolean;
+	/* Archived and delivered both close the session to work, so a pending
+   decision form is read-only under either. */
+	readonly archived: boolean;
 	readonly roles: readonly RoleSummary[];
 	readonly drivers: readonly DriverSummary[];
 	readonly modules: readonly SessionModule[];
@@ -48,6 +58,9 @@ export interface ChatPaneProps {
 	readonly busy?: boolean;
 	readonly selection: PreviewSelection | null;
 	readonly autoContinue: boolean;
+	/* The decisions the specialist that asked is still waiting for. */
+	readonly pendingQuestions: PendingQuestions | null;
+	readonly answersError: string;
 	/* Set when the session has never run a turn, so the brief can still start it. */
 	readonly pendingBrief: string;
 	readonly onStart: () => void;
@@ -61,6 +74,7 @@ export interface ChatPaneProps {
 	readonly onDriver: (driver: string) => void;
 	readonly onMessage: (message: string) => void;
 	readonly onSend: (freshContext?: boolean) => void;
+	readonly onAnswers: (answers: readonly SubmittedAnswer[], message: string) => void;
 	readonly onStop: () => void;
 	readonly onClearSelection: () => void;
 }
@@ -103,10 +117,11 @@ function isError(entry: ChatEntry): boolean {
 
 const HANDOFF_LINE = /^handoff\s*:/i;
 
-/* The handoff line is protocol, not conversation: the card below the message
-   already says who continues, so the transcript shows the words only. */
-function spoken(entry: ChatEntry): string {
-	const lines = (entry.text ?? '').split('\n');
+/* The handoff line and the questions block are protocol, not conversation: the
+   cards below the message already say who continues and what is being asked,
+   so the transcript shows the words only. */
+function spoken(entry: ChatEntry, text: string): string {
+	const lines = text.split('\n');
 	while (lines.length > 0 &&
 		lines[lines.length - 1]!.trim() === '') lines.pop();
 	const last = lines[lines.length - 1]?.replace(/[`*_]/g, '').trim() ?? '';
@@ -120,6 +135,11 @@ interface StreamBlock {
 	readonly key: number;
 	readonly entry: ChatEntry | null;
 	readonly events: readonly TranscriptRow[] | null;
+	/* The message as words, with the protocol lines taken out. */
+	readonly speech: string;
+	/* The decisions this message asked for, read once so the transcript can
+   list them instead of showing the operator raw JSON. */
+	readonly questions: readonly PendingQuestion[];
 }
 
 /* One stream in the order it happened: a message, then the tool activity that
@@ -150,13 +170,26 @@ function streamBlocks(entries: readonly ChatEntry[]): readonly StreamBlock[] {
 		}
 		blocks.push({ key: entry.sequence, entry, events: null });
 	}
-	return blocks.map(
-		(block) => ({
+	return blocks.map((block) => {
+		const reading =
+			block.entry?.kind === 'agent'
+				? readQuestions(block.entry.text ?? '')
+				: null;
+		return {
 			key: block.key,
 			entry: block.entry,
 			events: block.events,
-		}),
-	);
+			speech: block.entry
+				? spoken(
+						block.entry,
+						reading?.kind === 'valid'
+							? reading.remainder
+							: block.entry.text ?? '',
+					)
+				: '',
+			questions: reading?.kind === 'valid' ? reading.questions : [],
+		};
+	});
 }
 
 function blockKey(block: StreamBlock): number {
@@ -484,8 +517,19 @@ export function ChatPane(props: ChatPaneProps) @{
 									<p class="chat__text">{block.entry!.text}</p>
 								</details>
 							}
-							@if (block.entry!.sequence === open && !props.running) {
-								@if (block.entry!.handoff!.kind === 'approval') {
+							@if (block.entry!.sequence === open) {
+								@if (block.entry!.handoff!.kind === 'question') {
+									<PendingQuestionsCard
+										pending={props.pendingQuestions}
+										loading={props.running}
+										denied={props.delivered || props.archived}
+										busy={props.busy === true}
+										error={props.answersError}
+										onSubmit={props.onAnswers}
+									/>
+								} @else if (
+									block.entry!.handoff!.kind === 'approval' && !props.running
+								) {
 									<ApprovalHandoff
 										handoff={block.entry!.handoff!}
 										reviews={props.specs}
@@ -494,7 +538,9 @@ export function ChatPane(props: ChatPaneProps) @{
 										onRequestChanges={props.onRequestChanges}
 										onEdit={props.onEditSpec}
 									/>
-								} @else if (block.entry!.handoff!.kind === 'continue') {
+								} @else if (
+									block.entry!.handoff!.kind === 'continue' && !props.running
+								) {
 									<div class="ui-form__actions">
 										<Button
 											size="sm"
@@ -530,7 +576,22 @@ export function ChatPane(props: ChatPaneProps) @{
 								</span>
 								{moduleLabel(block.entry!)}
 							</header>
-							<p class="chat__text">{spoken(block.entry!)}</p>
+							<p class="chat__text">{block.speech}</p>
+							@if (block.questions.length > 0) {
+								<ul>
+									@for (const question of block.questions; key question.id) {
+										<li>
+											<span class="ui-mono">{question.id}</span>
+											{' ' + question.question}
+											@if (question.options.length > 0) {
+												<span class="ui-help">{question.options.join(
+													' · ',
+												)}</span>
+											}
+										</li>
+									}
+								</ul>
+							}
 							{restoreRow(block.key)}
 						</article>
 					}

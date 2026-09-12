@@ -2,6 +2,7 @@ import { createContext, type ServerRoute } from '@octanejs/app-core';
 import type { DatabaseProvider } from '@flowdular/database';
 import { createPgliteTestProvider } from '@flowdular/database-testing';
 import {
+	AUTH_PRINCIPAL_STATE_KEY,
 	createAuthRuntime,
 	type AuthRuntime,
 } from '@flowdular/module-auth/server';
@@ -103,11 +104,33 @@ describe('profile language endpoints', () => {
 			organizationName: 'Example Operations',
 			organizationSlug: 'example-operations',
 		});
-		const cookie = `${auth.cookie.name}=${issued.token}`;
-		expect((await call(read(cookie))).status).toBe(403);
-		expect((await call(update('pl', cookie, issued.csrfToken))).status).toBe(
-			403,
-		);
+		/* A founding owner holds profile.self.manage by default since auth.core
+		   0.12.6, so the denial is proved with a principal that carries no
+		   scopes at all, injected the way the auth middleware would. */
+		const denied = async (request: Request): Promise<Response> => {
+			const route = routes.find(
+				(candidate) =>
+					candidate.path === '/api/profile/language' &&
+					candidate.methods.includes(request.method),
+			);
+			if (!route) throw new Error(`Missing ${request.method} language route.`);
+			const context = createContext(request, {});
+			context.state.set(AUTH_PRINCIPAL_STATE_KEY, {
+				...issued.principal,
+				scopes: [],
+			});
+			return (await route.handler(context)) as Response;
+		};
+		const refusals = [
+			await denied(read()),
+			await denied(update('pl', '', issued.csrfToken)),
+		];
+		for (const refusal of refusals) {
+			expect([
+				refusal.status,
+				((await refusal.json()) as { error: { code: string } }).error.code,
+			]).toEqual([403, 'FORBIDDEN']);
+		}
 		await expect(
 			(await profile.service()).readLanguage(
 				issued.principal.tenantId,

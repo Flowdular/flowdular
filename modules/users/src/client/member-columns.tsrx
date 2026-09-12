@@ -29,11 +29,17 @@ export function memberColumns(
 			header: t('users.table.status'),
 			width: '28%',
 			cell: (user) => <span class="ui-table__state">
-				<Tag tone={user.status === 'active' ? 'success' : 'neutral'} dot>
-					{user.status === 'active'
+				<Tag
+					tone={user.membershipStatus === 'active' ? 'success' : 'neutral'}
+					dot
+				>
+					{user.membershipStatus === 'active'
 						? t('users.status.active')
 						: t('users.status.disabled')}
 				</Tag>
+				{user.status === 'disabled'
+					? <small>{t('users.status.blocked')}</small>
+					: null}
 				{user.passwordChangeRequired
 					? <small>{t('users.status.passwordResetPending')}</small>
 					: null}

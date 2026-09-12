@@ -1,0 +1,2 @@
+DROP POLICY IF EXISTS notifications_webhook_subscriptions_background_policy ON notifications_webhook_subscriptions;
+REVOKE SELECT (tenant_id, secret_key_id) ON notifications_webhook_subscriptions FROM coreloom_background;

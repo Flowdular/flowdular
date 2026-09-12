@@ -9,6 +9,7 @@ import {
 } from '@flowdular/database';
 import type { PlatformVariableRegistry } from '@flowdular/kernel';
 import type { AgentRunQueue } from '@flowdular/module-agents/server';
+import type { JobRunner } from '@flowdular/server';
 import {
 	createAutomationTargetRegistry,
 	type AutomationTargetRegistry,
@@ -18,6 +19,7 @@ import type {
 	AutomationAuditVerification,
 } from '../domain/types.ts';
 import type { AutomationsRepository } from '../services/repository.ts';
+import { createAutomationScheduleRunner } from '../services/schedule-runner.ts';
 import { AutomationScheduleService } from '../services/schedule-service.ts';
 import {
 	secretVaultFromEnvironment,
@@ -40,6 +42,8 @@ export interface AutomationsRuntimeOptions {
 	readonly workspaceRoot?: string;
 	readonly secretVault?: SecretVault;
 	readonly schedulerPollMs?: number | (() => number);
+	/** Reads the workspace zone a cron slot is computed in, live per call. */
+	readonly timeZone?: (tenantId: string) => string;
 	readonly repository?: AutomationsRepository;
 	readonly variables?: PlatformVariableRegistry;
 	readonly targets?: AutomationTargetRegistry;
@@ -53,6 +57,14 @@ export interface AutomationsRuntime {
 		limit: number,
 	): Promise<readonly AutomationAuditEvent[]>;
 	verifyAudit(tenantId: string): Promise<AutomationAuditVerification>;
+	/** Opens the repository, for the data class operations the module owns. */
+	repository(): Promise<AutomationsRepository>;
+	/**
+	 * Re-times this workspace's pending cron slots after its zone changed. The
+	 * work is queued behind the previous one and drained by `quiesce`, so the
+	 * settings write that triggered it never waits for the database.
+	 */
+	retimeSchedules(tenantId: string): void;
 	start(): void;
 	stop(): void;
 	quiesce(): Promise<void>;
@@ -130,8 +142,8 @@ export function createAutomationsRuntime(
 	const targets = options.targets ?? createAutomationTargetRegistry();
 	let schedules: AutomationScheduleService | undefined;
 	let triggers: AutomationTriggerService | undefined;
-	let poll: ReturnType<typeof setInterval> | undefined;
-	let tickInFlight: Promise<void> | undefined;
+	let jobs: JobRunner | undefined;
+	let retimeInFlight: Promise<void> = Promise.resolve();
 	const resolutionController = new AbortController();
 	let disposed = false;
 	const scheduleService = async () =>
@@ -142,6 +154,7 @@ export function createAutomationsRuntime(
 			resolutionController.signal,
 			options.variables,
 			targets,
+			options.timeZone,
 		));
 	const triggerService = async () =>
 		(triggers ??= new AutomationTriggerService(
@@ -152,30 +165,42 @@ export function createAutomationsRuntime(
 			undefined,
 			targets,
 		));
-	const tick = () => {
-		if (disposed || tickInFlight) return;
-		const pending = scheduleService()
-			.then((service) => service.tick())
+	/* The platform runner owns the loop: the interval and its unref, the guard
+	   against overlapping passes, the bound on claims, the isolation of one
+	   schedule from the next and the drain. This module keeps its cross-tenant
+	   poll, the re-read under the workspace and the slot advance. The interval is
+	   a live setting read when the loop starts, so the runner is built there
+	   rather than while the composition is assembled. */
+	const runner = (): JobRunner =>
+		(jobs ??= createAutomationScheduleRunner({
+			repository: repositoryInstance,
+			service: scheduleService,
+			intervalMs:
+				typeof options.schedulerPollMs === 'function'
+					? options.schedulerPollMs()
+					: (options.schedulerPollMs ?? 30_000),
+		}));
+	const retimeSchedules = (tenantId: string) => {
+		if (disposed) return;
+		retimeInFlight = retimeInFlight
+			.then(() => scheduleService())
+			.then((service) => service.retime(tenantId))
 			.then(() => undefined)
 			.catch((error: unknown) => {
 				console.error(
-					'[automations] scheduler tick failed:',
+					'[automations] schedule re-timing failed:',
 					error instanceof Error ? error.message : error,
 				);
-			})
-			.finally(() => {
-				if (tickInFlight === pending) tickInFlight = undefined;
 			});
-		tickInFlight = pending;
 	};
 	const stop = () => {
-		if (poll) clearInterval(poll);
-		poll = undefined;
+		jobs?.stop();
 	};
 	const quiesce = async () => {
 		stop();
 		resolutionController.abort('automations-runtime-stopped');
-		await tickInFlight;
+		await jobs?.quiesce();
+		await retimeInFlight;
 	};
 	return {
 		scheduleService,
@@ -187,16 +212,11 @@ export function createAutomationsRuntime(
 			),
 		verifyAudit: async (tenantId) =>
 			(await repositoryInstance()).verifyAuditChain(tenantId),
+		repository: repositoryInstance,
+		retimeSchedules,
 		start() {
 			if (disposed) return;
-			if (poll) return;
-			tick();
-			const pollMs =
-				typeof options.schedulerPollMs === 'function'
-					? options.schedulerPollMs()
-					: (options.schedulerPollMs ?? 30_000);
-			poll = setInterval(tick, pollMs);
-			poll.unref?.();
+			runner().start();
 		},
 		stop,
 		quiesce,
@@ -204,6 +224,7 @@ export function createAutomationsRuntime(
 			if (disposed) return;
 			disposed = true;
 			await quiesce();
+			await jobs?.dispose();
 			/* An open still in flight would assign its leases after this read, so
 			   settle it first; a failed open must not surface as an unhandled
 			   rejection during teardown. */
