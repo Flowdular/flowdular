@@ -1,3 +1,4 @@
+import { probeCommand } from '../src/workspace.ts';
 import {
 	chmod,
 	mkdir,
@@ -631,5 +632,16 @@ describe('workspace guards', () => {
 				resolveWritableInsideWorkspace(root, path, ['**']),
 			).rejects.toMatchObject({ code: 'PATH_NOT_ALLOWED' });
 		}
+	});
+});
+
+describe('probeCommand', () => {
+	it('answers unavailable for a binary that does not exist without an unhandled rejection', async () => {
+		const missing = join(tmpdir(), `absent-${process.pid}-${Date.now()}`);
+		await expect(probeCommand(missing, ['--version'])).resolves.toEqual({
+			available: false,
+			detail: expect.stringMatching(/Could not start/),
+			version: null,
+		});
 	});
 });

@@ -229,6 +229,10 @@ export function spawnLineStream(options: SpawnJsonOptions): ProcessLineStream {
 		});
 	});
 
+	/* A spawn failure rejects before the caller has drained the lines and
+	   awaited this promise; without a handler of its own that rejection is
+	   unhandled and takes the process down. */
+	finished.catch(() => undefined);
 	return {
 		lines: createInterface({ input: child.stdout, crlfDelay: Infinity }),
 		finished,
