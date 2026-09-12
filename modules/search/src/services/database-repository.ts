@@ -1,5 +1,5 @@
 import type { DatabaseHandle } from '@flowdular/database';
-import { runDatabaseMigrations } from '@flowdular/database';
+import { integer, runDatabaseMigrations } from '@flowdular/database';
 import type { RecentQuery } from '../domain/types.ts';
 import { databaseMigrations } from './migration.ts';
 import type {
@@ -58,18 +58,8 @@ const EXPORT = `SELECT id, account_id, query, ran_at
 			 ORDER BY id
 			 LIMIT $3`;
 
-/* PostgreSQL returns BIGINT as a string, so every numeric read is normalized
-   before it reaches the domain. */
-function integer(value: RecentQueryRow['ran_at']): number {
-	const normalized = Number(value);
-	if (!Number.isSafeInteger(normalized) || normalized < 0) {
-		throw new Error('The search database returned an invalid timestamp.');
-	}
-	return normalized;
-}
-
 function fromRow(row: RecentQueryRow): RecentQuery {
-	return { query: row.query, ranAt: integer(row.ran_at) };
+	return { query: row.query, ranAt: integer(row.ran_at, 'ran_at', { min: 0 }) };
 }
 
 /** A repository over a platform-owned PostgreSQL handle. */
@@ -161,7 +151,7 @@ export class DatabaseSearchRepository implements SearchRepository {
 			id: row.id,
 			accountId: row.account_id,
 			query: row.query,
-			ranAt: integer(row.ran_at),
+			ranAt: integer(row.ran_at, 'ran_at', { min: 0 }),
 		}));
 	}
 }

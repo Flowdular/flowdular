@@ -5,7 +5,7 @@ import type {
 	DatabaseStatement,
 	DatabaseTransaction,
 } from '@flowdular/database';
-import { runDatabaseMigrations } from '@flowdular/database';
+import { integer, runDatabaseMigrations } from '@flowdular/database';
 import type {
 	Meter,
 	MeterKind,
@@ -166,15 +166,6 @@ const SQL = {
 	 FROM metering_limit_events WHERE tenant_id = $1
 	 ORDER BY occurred_at DESC, id DESC LIMIT $2`,
 } as const;
-
-/* PostgreSQL returns BIGINT as a string, so every counter crosses this. */
-function integer(value: number | bigint | string, field: string): number {
-	const normalized = Number(value);
-	if (!Number.isSafeInteger(normalized)) {
-		throw new Error(`The metering database returned an invalid ${field}.`);
-	}
-	return normalized;
-}
 
 /**
  * A month sum, over-approximated at the top of the safe integer range. The sum

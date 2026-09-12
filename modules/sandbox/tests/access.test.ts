@@ -1,9 +1,11 @@
-import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import type { AuthRuntime } from '@flowdular/module-auth/server';
 import { SandboxService } from '../src/services/sandbox-service.ts';
 import { SandboxServiceError } from '../src/services/sandbox-service-error.ts';
-import type {
-	SandboxDirectory,
-	SandboxDirectoryMember,
+import {
+	directoryFromAuthRuntime,
+	type SandboxDirectory,
+	type SandboxDirectoryMember,
 } from '../src/services/directory.ts';
 import {
 	closeSandboxTestDatabases,
@@ -34,6 +36,10 @@ function directory(
 	return {
 		listMembers: async (tenantId) => (tenantId === 'tenant-a' ? members : []),
 		listScopes: async (accountId) => scopes[accountId] ?? [],
+		listScopesForMembers: async (accountIds) =>
+			new Map(
+				accountIds.map((accountId) => [accountId, scopes[accountId] ?? []]),
+			),
 	};
 }
 
@@ -70,6 +76,70 @@ async function serviceWith(
 function ownerService(): Promise<SandboxService> {
 	return serviceWith({ 'account-owner': FULL_SCOPES, 'account-member': [] });
 }
+
+describe('sandbox access candidates', () => {
+	/* The directory is the only cross-module read, and a workspace has many
+	   members: the candidate list costs one scope read, not one per member. */
+	it('reads the scopes of every member in one directory call', async () => {
+		const members = Array.from({ length: 12 }, (_, index) => ({
+			...MEMBER,
+			accountId: `account-${String(index)}`,
+			email: `member-${String(index)}@example.com`,
+		}));
+		const scopes = Object.fromEntries(
+			members.map((member, index) => [
+				member.accountId,
+				index % 2 === 0 ? FULL_SCOPES : [],
+			]),
+		);
+		const listScopes = vi.fn(directory(scopes, members).listScopes);
+		const listScopesForMembers = vi.fn(
+			directory(scopes, members).listScopesForMembers,
+		);
+		const database = await sandboxFixture();
+		const service = new SandboxService(database.repository, {
+			listMembers: async () => members,
+			listScopes,
+			listScopesForMembers,
+		});
+
+		const candidates = await service.listCandidates('tenant-a');
+		expect(candidates).toHaveLength(12);
+		expect(
+			candidates.map((candidate) => candidate.availableCapabilities),
+		).toEqual(members.map((_, index) => (index % 2 === 0 ? FULL_SCOPES : [])));
+		expect(listScopesForMembers).toHaveBeenCalledTimes(1);
+		expect(listScopesForMembers).toHaveBeenCalledWith(
+			members.map((member) => member.accountId),
+			'tenant-a',
+		);
+		expect(listScopes).not.toHaveBeenCalled();
+	});
+
+	it('answers the bulk scope read from one auth member listing', async () => {
+		const listTenantMembers = vi.fn(async () => [
+			{ ...OWNER, scopes: FULL_SCOPES },
+			{ ...MEMBER, scopes: ['sandbox.access.use'] },
+			{ ...MEMBER, accountId: 'account-other', scopes: FULL_SCOPES },
+		]);
+		const listMembershipScopes = vi.fn();
+		const auth = {
+			service: async () => ({ listTenantMembers, listMembershipScopes }),
+		} as unknown as AuthRuntime;
+
+		const scopes = await directoryFromAuthRuntime(auth).listScopesForMembers(
+			[OWNER.accountId, MEMBER.accountId],
+			'tenant-a',
+		);
+		expect([...scopes.entries()]).toEqual([
+			[OWNER.accountId, FULL_SCOPES],
+			[MEMBER.accountId, ['sandbox.access.use']],
+		]);
+		expect(listTenantMembers).toHaveBeenCalledTimes(1);
+		expect(listTenantMembers).toHaveBeenCalledWith('tenant-a');
+		expect(listMembershipScopes).not.toHaveBeenCalled();
+	});
+});
 
 describe('sandbox access grants', () => {
 	it('grants every sandbox capability the membership holds', async () => {

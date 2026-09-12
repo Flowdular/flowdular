@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: approvals.core
-specVersion: 0.1.10
+specVersion: 0.1.11
 status: approved
 name: Approvals Core
 description: Turns a policy decision that needs a person into an approval request with named requirements, a decision record that is append-only, notifications to the people who can decide, and a workflow node that waits for the decision, so every module delegates who may decide instead of writing its own approval state machine.

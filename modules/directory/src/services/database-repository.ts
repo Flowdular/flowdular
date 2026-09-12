@@ -3,7 +3,7 @@ import type {
 	DatabaseParameter,
 	DatabaseTransaction,
 } from '@flowdular/database';
-import { runDatabaseMigrations } from '@flowdular/database';
+import { integer, runDatabaseMigrations } from '@flowdular/database';
 import { keysetWhere } from '@flowdular/server';
 import type {
 	ProvisioningEvent,
@@ -130,20 +130,11 @@ async function translatingUniqueViolation<T>(
 	}
 }
 
-/* PostgreSQL returns BIGINT as a string, so every numeric read is normalized
-   before it reaches the domain. */
-function integer(value: number | bigint | string): number {
-	const normalized = Number(value);
-	if (!Number.isSafeInteger(normalized)) {
-		throw new Error('The directory database returned an invalid number.');
-	}
-	return normalized;
-}
-
 function optionalInteger(
 	value: number | bigint | string | null,
+	field: string,
 ): number | null {
-	return value === null ? null : integer(value);
+	return value === null ? null : integer(value, field);
 }
 
 const TOKEN_COLUMNS = `id, tenant_id, label, token_fingerprint, token_hash, status,
@@ -168,10 +159,10 @@ function tokenFromRow(row: TokenRow): ScimTokenSecret {
 		tokenHash: row.token_hash,
 		status: row.status,
 		createdBy: row.created_by,
-		createdAt: integer(row.created_at),
-		lastUsedAt: optionalInteger(row.last_used_at),
-		expiresAt: optionalInteger(row.expires_at),
-		revokedAt: optionalInteger(row.revoked_at),
+		createdAt: integer(row.created_at, 'created_at'),
+		lastUsedAt: optionalInteger(row.last_used_at, 'last_used_at'),
+		expiresAt: optionalInteger(row.expires_at, 'expires_at'),
+		revokedAt: optionalInteger(row.revoked_at, 'revoked_at'),
 	};
 }
 
@@ -188,8 +179,8 @@ function userFromRow(row: UserRow): ScimUserMapping {
 		userName: row.user_name,
 		accountId: row.account_id,
 		active: Number(row.active) === 1,
-		createdAt: integer(row.created_at),
-		lastSyncedAt: integer(row.last_synced_at),
+		createdAt: integer(row.created_at, 'created_at'),
+		lastSyncedAt: integer(row.last_synced_at, 'last_synced_at'),
 	};
 }
 
@@ -200,24 +191,24 @@ function groupFromRow(row: GroupRow): ScimGroupMapping {
 		externalId: row.external_id,
 		displayName: row.display_name,
 		roleKey: row.role_key,
-		precedence: integer(row.precedence),
-		memberCount: integer(row.member_count),
-		createdAt: integer(row.created_at),
-		updatedAt: integer(row.updated_at),
+		precedence: integer(row.precedence, 'precedence'),
+		memberCount: integer(row.member_count, 'member_count'),
+		createdAt: integer(row.created_at, 'created_at'),
+		updatedAt: integer(row.updated_at, 'updated_at'),
 	};
 }
 
 function eventFromRow(row: EventRow): ProvisioningEvent {
 	return {
 		id: row.id,
-		sequence: integer(row.sequence),
+		sequence: integer(row.sequence, 'sequence'),
 		tenantId: row.tenant_id,
 		tokenId: row.token_id,
 		operation: row.operation,
 		subject: row.subject,
 		outcome: row.outcome,
 		reason: row.reason,
-		occurredAt: integer(row.occurred_at),
+		occurredAt: integer(row.occurred_at, 'occurred_at'),
 	};
 }
 
@@ -430,7 +421,7 @@ export class DatabaseDirectoryRepository implements DirectoryRepository {
 			});
 			return {
 				records: rows.rows.map(userFromRow),
-				totalResults: integer(total.rows[0]?.total ?? 0),
+				totalResults: integer(total.rows[0]?.total ?? 0, 'total'),
 			};
 		});
 	}
@@ -568,7 +559,7 @@ export class DatabaseDirectoryRepository implements DirectoryRepository {
 			});
 			return {
 				records: rows.rows.map(groupFromRow),
-				totalResults: integer(total.rows[0]?.total ?? 0),
+				totalResults: integer(total.rows[0]?.total ?? 0, 'total'),
 			};
 		});
 	}

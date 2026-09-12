@@ -14,8 +14,8 @@
 import {
 	createJobRunner,
 	createJobTraceSink,
+	jobBackoff,
 	serverLogger,
-	type JobBackoff,
 	type JobEvent,
 	type JobRunner,
 	type Tracer,
@@ -55,19 +55,6 @@ function traceSink(options: RunnerSeams): (event: JobEvent) => void {
 		options.onEvent ??
 		createJobTraceSink(options.tracer ? { tracer: options.tracer } : {})
 	);
-}
-
-/**
- * What a loop waits after a pass that raised: its own interval, doubling to ten
- * times that and never past a minute, so a database refusing a claim gets room
- * while a loop slower than a minute keeps its own cadence.
- */
-function backoffFrom(intervalMs: number): JobBackoff {
-	return {
-		initialMs: intervalMs,
-		maxMs: Math.max(intervalMs, Math.min(60_000, intervalMs * 10)),
-		multiplier: 2,
-	};
 }
 
 export interface AuditSweepRunnerOptions extends RunnerSeams {
@@ -135,7 +122,7 @@ export function createAuditSweepRunner(
 		/* No claim and no renewal, so no window: the runner reads the field only
 		   to space heartbeats this loop does not have. */
 		staleAfterMs: options.intervalMs,
-		backoff: backoffFrom(options.intervalMs),
+		backoff: jobBackoff(options.intervalMs),
 		batchLimit: SWEEP_ROUTING_PAGE,
 		logger: serverLogger,
 		now: options.now,
@@ -177,7 +164,7 @@ export function createAuditExportRunner(
 		name: 'audit.core.export',
 		intervalMs,
 		staleAfterMs,
-		backoff: backoffFrom(intervalMs),
+		backoff: jobBackoff(intervalMs),
 		batchLimit: EXPORT_ROUTING_PAGE,
 		heartbeatEveryMs: options.heartbeatEveryMs,
 		logger: serverLogger,
@@ -219,7 +206,7 @@ export function createAuditErasureRunner(
 		name: 'audit.core.erasure',
 		intervalMs,
 		staleAfterMs,
-		backoff: backoffFrom(intervalMs),
+		backoff: jobBackoff(intervalMs),
 		batchLimit: ERASURE_ROUTING_PAGE,
 		heartbeatEveryMs: options.heartbeatEveryMs,
 		logger: serverLogger,

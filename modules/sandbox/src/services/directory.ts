@@ -13,6 +13,11 @@ export interface SandboxDirectoryMember {
 export interface SandboxDirectory {
 	listMembers(tenantId: string): Promise<readonly SandboxDirectoryMember[]>;
 	listScopes(accountId: string, tenantId: string): Promise<readonly string[]>;
+	/** The scopes of many members in one auth read, keyed by account id. */
+	listScopesForMembers(
+		accountIds: readonly string[],
+		tenantId: string,
+	): Promise<ReadonlyMap<string, readonly string[]>>;
 }
 
 export function directoryFromAuthRuntime(auth: AuthRuntime): SandboxDirectory {
@@ -29,5 +34,16 @@ export function directoryFromAuthRuntime(auth: AuthRuntime): SandboxDirectory {
 			),
 		listScopes: async (accountId, tenantId) =>
 			(await auth.service()).listMembershipScopes(accountId, tenantId),
+		listScopesForMembers: async (accountIds, tenantId) => {
+			const wanted = new Set(accountIds);
+			const scopes = new Map<string, readonly string[]>();
+			for (const member of await (
+				await auth.service()
+			).listTenantMembers(tenantId)) {
+				if (wanted.has(member.accountId))
+					scopes.set(member.accountId, member.scopes);
+			}
+			return scopes;
+		},
 	};
 }

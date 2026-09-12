@@ -1,4 +1,4 @@
-import type { DatabaseMigration } from '@flowdular/database';
+import type { DatabaseMigration, DatabaseSession } from '@flowdular/database';
 import {
 	migrationObjectState,
 	postgresTenantTableState,
@@ -174,6 +174,36 @@ export const AUTOMATIONS_MIGRATION_005_SECRET_ROTATION_INVENTORY = `-- The rotat
 GRANT SELECT (secret_key_id) ON automations_triggers TO coreloom_background;
 `;
 
+/* Narrowed to this schema's relation through to_regclass and never deparsed:
+   a deparse over the whole catalogue reaches relations another connection is
+   dropping and fails with a cache lookup error instead of an answer. */
+async function backgroundPolicyPresent(
+	database: DatabaseSession,
+	table: string,
+	policy: string,
+): Promise<boolean> {
+	const result = await database.query<{ present: boolean }>({
+		text: `SELECT EXISTS (
+		         SELECT 1 FROM pg_policy
+		         WHERE polrelid = to_regclass('${table}') AND polname = '${policy}'
+		       ) AS present`,
+	});
+	return result.rows[0]?.present === true;
+}
+
+async function backgroundColumnGranted(
+	database: DatabaseSession,
+	table: string,
+	column: string,
+): Promise<boolean> {
+	const result = await database.query<{ granted: boolean }>({
+		text: `SELECT CASE WHEN to_regclass('${table}') IS NOT NULL THEN
+		  has_column_privilege('coreloom_background', '${table}', '${column}', 'SELECT')
+		ELSE false END AS granted`,
+	});
+	return result.rows[0]?.granted === true;
+}
+
 export const databaseMigrations: readonly DatabaseMigration[] = [
 	{
 		id: '0001_automations_core',
@@ -215,18 +245,45 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 	{
 		id: '0003_automations_scheduler_role',
 		sql: { postgresql: AUTOMATIONS_MIGRATION_003_SCHEDULER_ROLE },
-		inspectExisting: async (database) =>
-			(await database.schema.hasIndex('automations_schedules_routing_idx'))
-				? 'complete'
-				: 'absent',
+		/* The index is one of three objects; the background policy and the
+		   column grant leave nothing the schema reader sees, so each is proved
+		   against the catalogue and a schema carrying only some is partial. */
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() => database.schema.hasIndex('automations_schedules_routing_idx'),
+				() =>
+					backgroundPolicyPresent(
+						database,
+						'automations_schedules',
+						'automations_schedules_background_policy',
+					),
+				() =>
+					backgroundColumnGranted(
+						database,
+						'automations_schedules',
+						'next_run_at',
+					),
+			]),
 	},
 	{
 		id: '0004_automations_trigger_routing_role',
 		sql: { postgresql: AUTOMATIONS_MIGRATION_004_TRIGGER_ROUTING_ROLE },
-		inspectExisting: async (database) =>
-			(await database.schema.hasIndex('automations_triggers_routing_idx'))
-				? 'complete'
-				: 'absent',
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() => database.schema.hasIndex('automations_triggers_routing_idx'),
+				() =>
+					backgroundPolicyPresent(
+						database,
+						'automations_triggers',
+						'automations_triggers_background_policy',
+					),
+				() =>
+					backgroundColumnGranted(
+						database,
+						'automations_triggers',
+						'tenant_id',
+					),
+			]),
 	},
 	{
 		id: '0005_secret_rotation_inventory',

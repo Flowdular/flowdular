@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: notifications.core
-specVersion: 0.2.5
+specVersion: 0.2.6
 status: approved
 name: Notifications Core
 description: Delivers what a person and a customer system need to hear about, as an in-app inbox per member and signed outbound webhooks per workspace with a delivery ledger, bounded retry and a dead letter an administrator can inspect and replay.

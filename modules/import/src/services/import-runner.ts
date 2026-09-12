@@ -1,6 +1,7 @@
 import {
 	createJobRunner,
 	createJobTraceSink,
+	jobBackoff,
 	serverLogger,
 	type JobEvent,
 	type JobRunner,
@@ -65,13 +66,7 @@ export function createImportJobRunner(options: ImportRunnerOptions): JobRunner {
 		name: 'import.core',
 		intervalMs,
 		staleAfterMs,
-		/* A pass that raised waits its own interval, doubling to ten times that
-		   and never past a minute, so a database refusing the claim gets room. */
-		backoff: {
-			initialMs: intervalMs,
-			maxMs: Math.max(intervalMs, Math.min(60_000, intervalMs * 10)),
-			multiplier: 2,
-		},
+		backoff: jobBackoff(intervalMs),
 		batchLimit: IMPORT_LIMITS.routingPage,
 		heartbeatEveryMs: options.heartbeatEveryMs,
 		logger: serverLogger,

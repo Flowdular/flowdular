@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "audit.core",
 	"package": "@flowdular/module-audit",
-	"version": "0.2.7",
+	"version": "0.2.8",
 	"platformApi": "^0.1.0",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations", "cli"],

@@ -266,6 +266,10 @@ export class AgentWorker {
 	): Promise<void> {
 		let eventWrites = Promise.resolve();
 		let eventFailure: unknown;
+		/* The abort a refused event write decides on waits for one ownership
+		   probe; the failure path awaits this so the reason is known before the
+		   run is settled, and the release waits for it so nothing outruns it. */
+		let eventClassification = Promise.resolve();
 		const renewal = setInterval(
 			async () => {
 				try {
@@ -336,10 +340,13 @@ export class AgentWorker {
 						event,
 					),
 				);
-				void eventWrites.catch(async (error) => {
+				eventClassification = eventWrites.catch(async (error) => {
 					/* An event refused on a run this worker no longer holds is the lost
 					   lease, not a persistence fault: an erasure or another worker took
-					   the row, and which failure surfaces first is a matter of timing. */
+					   the row, and which failure surfaces first is a matter of timing.
+					   One rejection reaches every later write; classify it once. */
+					if (eventFailure !== undefined) return;
+					eventFailure = error;
 					let owned = false;
 					try {
 						owned = await this.repository.renewLease(
@@ -351,12 +358,7 @@ export class AgentWorker {
 					} catch {
 						owned = false;
 					}
-					if (!owned) {
-						controller.abort(LEASE_LOST);
-						return;
-					}
-					eventFailure = error;
-					controller.abort('event-persistence-failed');
+					controller.abort(owned ? 'event-persistence-failed' : LEASE_LOST);
 				});
 			};
 			const result = await this.harness.execute(
@@ -410,6 +412,7 @@ export class AgentWorker {
 			});
 		} catch (error) {
 			await eventWrites.catch(() => undefined);
+			await eventClassification;
 			/* The service already moved a cancelled row and wrote its audit event;
 			   the worker only had to stop. */
 			if (controller.signal.aborted && controller.signal.reason === CANCELLED) {
@@ -469,6 +472,7 @@ export class AgentWorker {
 		} finally {
 			clearInterval(renewal);
 			await eventWrites.catch(() => undefined);
+			await eventClassification;
 		}
 	}
 

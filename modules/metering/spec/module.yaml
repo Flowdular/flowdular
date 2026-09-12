@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: metering.core
-specVersion: 0.1.6
+specVersion: 0.1.7
 status: approved
 name: Metering Core
 description: Counts what a workspace consumes through meters every module declares, keeps the facts in daily buckets under the tenant's own row-level security, shows usage to the workspace, and lets the deployment operator set per-workspace limits that a module checks before a costly operation and that refuse it once exhausted.

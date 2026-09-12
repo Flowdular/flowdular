@@ -5,7 +5,7 @@ import type {
 	DatabaseStatement,
 	DatabaseTransaction,
 } from '@flowdular/database';
-import { runDatabaseMigrations } from '@flowdular/database';
+import { integer, runDatabaseMigrations } from '@flowdular/database';
 import type {
 	ApprovalDecision,
 	ApprovalDecisionKind,
@@ -183,14 +183,6 @@ const SQL = {
 /* The adapter's own parameter channel plus the id list a batched statement
    binds to an ANY($n::text[]) predicate, which the scalar type does not cover. */
 type StatementParameter = DatabaseParameter | readonly string[];
-
-function integer(value: number | bigint | string, field: string): number {
-	const normalized = Number(value);
-	if (!Number.isSafeInteger(normalized)) {
-		throw new Error(`The approvals database returned an invalid ${field}.`);
-	}
-	return normalized;
-}
 
 function optionalInteger(
 	value: number | bigint | string | null,

@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: workflows.core
-specVersion: 0.6.5
+specVersion: 0.6.6
 status: approved
 name: Agentic Workflows
 description: Builds, publishes, simulates, and executes durable tenant-scoped DAG workflows whose versioned nodes coordinate pinned agents, deterministic decisions, validated data, and registered module actions.

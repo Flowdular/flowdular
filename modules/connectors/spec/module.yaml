@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: connectors.core
-specVersion: 0.1.3
+specVersion: 0.1.4
 status: approved
 name: Connectors Core
 description: Gives a workspace a governed way to call external systems through connector definitions a module or the platform ships, instances an owner configures with sealed credentials and a host allowlist, a test call, a call log without payloads, and an explicit per-instance consent that lets workflows and agents use the connector as an external action, with a generic HTTP JSON connector as the reference.

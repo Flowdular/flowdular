@@ -1,6 +1,7 @@
 import {
 	createJobRunner,
 	createJobTraceSink,
+	jobBackoff,
 	serverLogger,
 	type JobEvent,
 	type JobRunner,
@@ -48,16 +49,7 @@ export function createApprovalsExpiryRunner(
 		/* Expiry claims nothing: the pending status the transition compares and
 		   swaps is its own fence, so no lease is held and no renewal runs. */
 		staleAfterMs: options.intervalMs,
-		/* A pass that raised waits its own interval, doubling to ten times that
-		   and never past a minute, so a database refusing the read gets room. */
-		backoff: {
-			initialMs: options.intervalMs,
-			maxMs: Math.max(
-				options.intervalMs,
-				Math.min(60_000, options.intervalMs * 10),
-			),
-			multiplier: 2,
-		},
+		backoff: jobBackoff(options.intervalMs),
 		batchLimit: EXPIRY_BATCH,
 		logger: serverLogger,
 		now: options.now,

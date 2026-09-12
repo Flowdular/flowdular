@@ -25,7 +25,10 @@ import {
 	type ExportJobStatus,
 } from '../domain/types.ts';
 import type { ExportsRuntime } from '../server/runtime.ts';
-import { ExportServiceError } from '../services/export-service.ts';
+import {
+	exportCatalogue,
+	ExportServiceError,
+} from '../services/export-service.ts';
 import { ExportListError } from '../services/list-registry.ts';
 import type { ExportJobCursor } from '../services/repository.ts';
 
@@ -108,16 +111,10 @@ export function createExportRoutes(auth: AuthRuntime, runtime: ExportsRuntime) {
 		methods: ['GET'],
 		access: { kind: 'permission', permission: EXPORTS_PERMISSIONS.read },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: async ({ octane }) => {
-			try {
-				const service = await runtime.service();
-				return jsonResponse({
-					lists: service.lists(principalFromContext(octane)!),
-				});
-			} catch (error) {
-				return failure(error);
-			}
-		},
+		handler: ({ octane }) =>
+			jsonResponse({
+				lists: exportCatalogue(runtime.lists, principalFromContext(octane)!),
+			}),
 	});
 
 	const getJob = defineEndpoint({

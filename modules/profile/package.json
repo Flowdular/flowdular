@@ -1,6 +1,6 @@
 {
 	"name": "@flowdular/module-profile",
-	"version": "1.5.1",
+	"version": "1.5.2",
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",

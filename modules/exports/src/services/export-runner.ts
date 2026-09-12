@@ -1,6 +1,7 @@
 import {
 	createJobRunner,
 	createJobTraceSink,
+	jobBackoff,
 	serverLogger,
 	type JobEvent,
 	type JobRunner,
@@ -60,11 +61,7 @@ export function createExportJobRunner(options: ExportRunnerOptions): JobRunner {
 	return createJobRunner<ClaimedExportJob>({
 		name: 'exports.core',
 		intervalMs,
-		backoff: {
-			initialMs: intervalMs,
-			maxMs: Math.max(intervalMs, Math.min(60_000, intervalMs * 10)),
-			multiplier: 2,
-		},
+		backoff: jobBackoff(intervalMs),
 		staleAfterMs,
 		batchLimit: EXPORT_LIMITS.routingPage,
 		heartbeatEveryMs: options.heartbeatEveryMs,

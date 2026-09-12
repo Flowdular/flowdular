@@ -1,4 +1,5 @@
 import type { DatabaseHandle, DatabaseTransaction } from '@flowdular/database';
+import { integer } from '@flowdular/database';
 import { modelSupportsTemperature } from '@flowdular/harness/catalog';
 import type {
 	AgentModelReadiness,
@@ -106,9 +107,9 @@ function readinessMap(
 			result.get(row.provider_id) ?? new Map<string, AgentModelReadiness>();
 		models.set(row.model_id, {
 			status: row.status,
-			latencyMs: integerOrNull(row.latency_ms),
+			latencyMs: integerOrNull(row.latency_ms, 'latency_ms'),
 			errorCode: row.error_code,
-			checkedAt: integer(row.checked_at),
+			checkedAt: integer(row.checked_at, 'checked_at'),
 		});
 		result.set(row.provider_id, models);
 	}
@@ -134,9 +135,9 @@ function fromRow(
 			credentialRevision: row.credential_revision,
 			revision: row.revision,
 			createdBy: row.created_by,
-			createdAt: integer(row.created_at),
+			createdAt: integer(row.created_at, 'created_at'),
 			updatedBy: row.updated_by,
-			updatedAt: integer(row.updated_at),
+			updatedAt: integer(row.updated_at, 'updated_at'),
 		},
 		credential: {
 			keyId: row.credential_key_id,
@@ -180,20 +181,10 @@ export interface ProviderRepository {
 
 type Int = number | bigint | string;
 
-/* PostgreSQL returns BIGINT and NUMERIC aggregates as strings, so a count read
-   raw compares against text where it should compare against a number. */
-function integer(value: Int): number {
-	const normalized = Number(value);
-	if (!Number.isSafeInteger(normalized)) {
-		throw new Error('The agents database returned an invalid integer.');
-	}
-	return normalized;
-}
-
 /* A nullable BIGINT must stay null: coercing it to 0 would turn "never checked"
    into "checked at the epoch". */
-function integerOrNull(value: Int | null): number | null {
-	return value === null ? null : integer(value);
+function integerOrNull(value: Int | null, field: string): number | null {
+	return value === null ? null : integer(value, field);
 }
 
 export interface ProvidersPersistenceStatements {
@@ -326,8 +317,8 @@ export class DatabaseProviderRepository implements ProviderRepository {
 		);
 		const row = result.rows[0]!;
 		return {
-			connections: integer(row.connections),
-			enabled: integer(row.enabled),
+			connections: integer(row.connections, 'connections'),
+			enabled: integer(row.enabled, 'enabled'),
 		};
 	}
 

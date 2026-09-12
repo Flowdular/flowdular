@@ -14,6 +14,10 @@ interface StoredModuleAgentDefinition {
 	readonly content_hash: string;
 }
 
+/* The catalogue has no tenant column; the repository reconciles it under this
+   sentinel tenant on the runtime handle, so the boot read uses the same one. */
+const MODULE_AGENT_CATALOG_TENANT = '__flowdular_module_agents__';
+
 /* Validate persisted revision high-water marks before HMR retires the healthy
    generation. This read is deliberately the only database work the new
    generation does up front: migrations, reconciliation, vault access, workers
@@ -28,7 +32,7 @@ export async function preflightModuleAgentDefinitions(
 
 	const lease = await databases.acquire({
 		namespace: 'agents.core',
-		purpose: 'migration',
+		purpose: 'runtime',
 		requirements: {
 			dialectIds: [DATABASE_DIALECT_IDS.postgresql],
 			capabilities: [
@@ -38,18 +42,22 @@ export async function preflightModuleAgentDefinitions(
 		},
 	});
 	try {
-		/* A first run has no catalog table yet, and that is not a downgrade. */
-		if (!(await lease.database.schema.hasTable('module_agent_definitions'))) {
-			return normalized;
-		}
 		const stored = await lease.database.transaction(
-			(transaction) =>
-				transaction.query<StoredModuleAgentDefinition & { agent_id: string }>({
+			async (transaction) => {
+				/* A first run has no catalog table yet, and that is not a downgrade. */
+				if (!(await transaction.schema.hasTable('module_agent_definitions'))) {
+					return undefined;
+				}
+				return transaction.query<
+					StoredModuleAgentDefinition & { agent_id: string }
+				>({
 					text: `SELECT agent_id, definition_revision, content_hash
 					       FROM module_agent_definitions`,
-				}),
-			{ access: 'read' },
+				});
+			},
+			{ access: 'read', tenantId: MODULE_AGENT_CATALOG_TENANT },
 		);
+		if (!stored) return normalized;
 		const byAgent = new Map(stored.rows.map((row) => [row.agent_id, row]));
 		for (const definition of normalized) {
 			const previous = byAgent.get(definition.id);
