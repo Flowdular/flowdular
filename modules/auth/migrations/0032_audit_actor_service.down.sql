@@ -1,0 +1,9 @@
+-- Documentation only; Flowdular never executes a down script. Reversing this
+-- means rewriting every service row the way 0014 recorded it before the check
+-- can narrow again:
+-- UPDATE auth_audit SET actor_kind = 'user', configured_by_json = NULL
+--   WHERE actor_kind = 'service';
+-- ALTER TABLE auth_audit DROP CONSTRAINT IF EXISTS auth_audit_actor_kind_check;
+-- ALTER TABLE auth_audit ADD CONSTRAINT auth_audit_actor_kind_check
+--   CHECK (actor_kind IN ('user', 'agent'));
+-- ALTER TABLE auth_audit DROP COLUMN IF EXISTS configured_by_json;

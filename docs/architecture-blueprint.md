@@ -959,195 +959,53 @@ Every step is idempotent. The command shows a plan before writing. Existing conf
 
 ## 14. Part 4: agentic harness and `.ai`
 
-> Not implemented as drawn (2026-09-11). The real `.ai` tree is `rules/` (one file, `flowdular.md`, from which RuleSync generates the root `AGENTS.md` and `CLAUDE.md`), `agents/` (sandbox roles loaded by `packages/coding-agent`, plus root roles), `skills/` (21 skills copied into sandbox sessions and exposed to Claude Code and Codex), `blueprints/` (8), `policies/`, `examples/`, `guides/` and `references/catalog` (the pinned reference module). There are no run artifacts (`.flowdular/runs`) and no task-packet executor; the sandbox (`packages/sandbox`) is the coding orchestrator, with roles, gates, and handoffs described in `.ai/README.md`. Specification work is an interview rather than a form: `skills/spec-interview` reads the closed capability card in `.ai/platform-capabilities.md`, proposes a default for every decision, and asks the rest through the questions protocol (a fenced `questions` block the sandbox renders as a form, a question tool in Claude Code, plain text in Codex). The optional `workflows.core` module owns business workflow definitions and runs.
+State on 2026-09-12. The agent layer is the `.ai` tree plus the sandbox server in `packages/sandbox/src/server`. `.ai/README.md` lists what consumes each path; this section summarises it.
 
-### 14.1. Tree
-
-```text
-.ai/
-├── rules/
-│   ├── global.md
-│   ├── module-boundaries.md
-│   ├── security.md
-│   ├── tsrx.md
-│   └── migrations.md
-├── blueprints/
-│   ├── framework-slice/
-│   ├── author-spec/
-│   ├── new-module/
-│   ├── add-use-case/
-│   ├── add-endpoint/
-│   ├── add-screen/
-│   ├── add-permission/
-│   ├── add-migration/
-│   ├── add-integration/
-│   ├── contract-change/
-│   └── release/
-├── skills/
-│   ├── execute-blueprint/SKILL.md
-│   ├── create-erp-module/SKILL.md
-│   ├── add-api-endpoint/SKILL.md
-│   ├── add-migration/SKILL.md
-│   ├── add-tsrx-screen/SKILL.md
-│   ├── add-permission/SKILL.md
-│   ├── validate-module/SKILL.md
-│   └── evolve-platform-contract/SKILL.md
-├── agents/
-│   ├── orchestrator.md
-│   ├── architect.md
-│   ├── spec-author.md
-│   ├── basic-executor.md
-│   ├── platform-builder.md
-│   ├── module-builder.md
-│   ├── migration-author.md
-│   ├── security-reviewer.md
-│   ├── ui-reviewer.md
-│   └── verifier.md
-├── workflows/
-│   ├── build-framework-slice.yaml
-│   ├── build-module.yaml
-│   ├── change-blueprint.yaml
-│   ├── change-contract.yaml
-│   └── release.yaml
-├── policies/
-│   ├── capabilities.yaml
-│   ├── path-ownership.yaml
-│   ├── model-routing.yaml
-│   ├── task-budgets.yaml
-│   └── approvals.yaml
-└── examples/
-    ├── good-module/
-    ├── forbidden-client-db-import/
-    ├── unsafe-migration/
-    ├── missing-acl/
-    ├── incomplete-translations/
-    ├── missing-blueprint/
-    └── executor-basic/
-```
-
-`.ai/rules` and `.ai/skills` are the source of truth. RuleSync generates `AGENTS.md`, `CLAUDE.md`, `.agents/skills` and `.claude/skills`. The root copies carry the source notice, and `pnpm rules:check` rejects drift in `pnpm verify`.
-
-### 14.2. Agent roles
-
-| Agent             | Scope                                     | Write access                             | Required output                                |
-| ----------------- | ----------------------------------------- | ---------------------------------------- | ---------------------------------------------- |
-| Orchestrator      | Classifies work and enforces the workflow | Run artifacts only                       | Blueprint selection, plan, status, evidence    |
-| Architect         | Contracts, ADRs, blueprint evolution      | `docs/adr` and approved blueprint paths  | ADR and compatibility impact                   |
-| Spec author       | Product intent and acceptance criteria    | Approved `spec/` paths only              | Validated specification and traceability graph |
-| Basic executor    | One atomic step from a locked task packet | Exact packet paths only                  | Structured patch and gate request              |
-| Platform builder  | One framework package                     | Assigned package and tests               | Code, tests, contract update                   |
-| Module builder    | One module                                | Assigned module paths from the blueprint | Schema-valid module change                     |
-| Migration author  | Migration and repository                  | Approved DB paths and tests              | Plan, SQL, verify, risk assessment             |
-| Security reviewer | ACL, API, CLI, secrets                    | No production-code writes                | Findings with stable codes                     |
-| UI reviewer       | Preview, accessibility, UI states         | Fixtures or review artifact only         | View evidence and findings                     |
-| Verifier          | Final gates                               | No production-code writes                | Machine-readable pass or fail report           |
-
-A reviewer does not fix the code it reviews in the same role. A finding returns to the author with a code, path, violated rule, and required evidence.
-
-### 14.3. Run artifacts
-
-Every run creates a Git-ignored directory:
+### 14.1. Request flow
 
 ```text
-.flowdular/runs/<run-id>/
-├── request.json
-├── classification.json
-├── blueprint-lock.json
-├── spec-lock.json
-├── context.json
-├── plan.json
-├── task-packets/
-├── path-locks.json
-├── changes.json
-├── executor-results/
-├── validation.json
-├── security-review.json
-├── preview.json
-├── evidence.json
-└── final.json
+request -> spec-interview -> spec-approval -> module-new | module-update -> auto-review
 ```
 
-Every artifact conforms to JSON Schema. Agents exchange data and evidence, not free-form summaries.
+`spec-interview` reads the closed capability card `.ai/platform-capabilities.md`, proposes a platform default for every decision and asks only what it cannot infer, through the questions protocol (a fenced `questions` block that the sandbox renders as a form). `spec-approval` records the operator's explicit approval of the exact current `spec/module.yaml` text as a hash; any later edit makes the hash stale and routes the work back to approval (`planSpecGateHandoff` in `packages/sandbox/src/server/planning.ts`, `isSpecApproved` in `spec.ts`). Implementation reads the approved spec and the skill's touch list instead of scanning `modules/` or `packages/`; a missing decision is reported as a spec defect. `auto-review` is a separate read-only phase before delivery.
 
-### 14.4. Framework workflow
+### 14.2. Skill catalogue (`.ai/skills`)
 
-```text
-request
-  → classify into approved framework blueprint
-  → lock blueprint ID, version, and hash
-  → author or update platform specification
-  → validate and lock specification
-  → ADR if the public boundary changes
-  → plan with allowed paths
-  → implement one vertical slice
-  → unit and contract tests
-  → dependency graph validation
-  → security review
-  → reference-module integration
-  → verifier
-  → human approval
-```
+Each `.ai/skills/<name>/SKILL.md` carries front matter `name`, `description`, `roles`, `when` and is reviewed against the code it cites. One skill per task phase, chosen from `.ai/skills/README.md`:
 
-The framework grows through small, working vertical slices. The first slice covers one module, one permission, one query, one command, one endpoint, one table, one migration, one TSRX page, and translations.
+| Purpose                 | Skills                                                                                                     |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Specification and flow  | `spec-interview`, `spec-approval`, `auto-review`                                                           |
+| Module work             | `module-new`, `module-update`, `ux-design`, `translations-i18n`, `migration-authoring`, `database-adapter` |
+| Module extensions       | `cli-extension`, `agent-tool-design`, `business-agent-design`, `variables`, `workflow-development`         |
+| Platform and quality    | `core-extend`, `bug-hunt`, `perf-audit`, `auth-security-review`, `test-hardening`                          |
+| Delivery and operations | `release-eject-pr`, `deploy-operate`                                                                       |
 
-### 14.5. Module workflow
+Where they are read: a sandbox session gets copies under `reference/skills/` (`packages/sandbox/src/server/reference.ts`) but each turn receives exactly one skill; RuleSync generates the discovery copies `.claude/skills` and `.agents/skills` for Claude Code and Codex, and `pnpm rules:check` rejects drift.
 
-```text
-business request
-  → blueprint classify
-  → module show and dependency graph
-  → author use case, permission, API, data, UI, and acceptance specifications
-  → validate and lock specifications
-  → plan implementation from locked spec IDs
-  → module new or edit existing module
-  → contracts and domain
-  → ACL and services
-  → API, DB, client, and i18n
-  → module validate
-  → module test
-  → module preview
-  → security review
-  → migration plan if required
-  → final evidence
-```
+### 14.3. Rules, roles, blueprints, policies, examples
 
-Implementation cannot start until `plan.json` contains:
+- Rules: one file, `.ai/rules/flowdular.md`. RuleSync generates the root `AGENTS.md` and `CLAUDE.md` from it. It carries the one-skill routing rule and the always-active invariants; recipes live in `docs/agent-contract.md`.
+- Roles: `.ai/agents/sandbox/{business-manager,backend-engineer,ux-designer,frontend-engineer,agentic-engineer}.md` are loaded at sandbox start by `packages/coding-agent/src/roles/registry.ts`; their front matter `allowedPaths`, `gates` and `handoff` are enforced. `.ai/agents/{spec-author,module-executor,reviewer}.md` describe the same jobs for an agent at the repository root and are named by blueprints only.
+- Blueprints: `.ai/blueprints/{author-spec,new-module,edit-module,add-migration,bug-fix,core-extend,security-review,release}`, each with `blueprint.json`, `README.md`, `input.schema.json`, `plan.schema.json`, `spec-requirements.yaml`, `allowed-paths.yaml`, `required-files.yaml`, `steps.yaml`, `gates.yaml` and `examples/`. `pnpm flowdular blueprint validate --all` checks the manifest and the companion files; nothing executes `steps.yaml` or `gates.yaml`. The sandbox labels sessions `new-module@1.0.0` and `edit-module@1.0.0`.
+- Policies: `.ai/policies/capabilities.yaml` and `model-routing.yaml` are existence-checked by `pnpm flowdular doctor` and document what the CLI runner and the sandbox planner enforce in code. `task-budgets.yaml` and `path-ownership.yaml` are read by the `git-pr` delivery target for the changed-file budget and the cross-owner reviewer note.
+- Examples: `.ai/examples/client-contribution`, `customer-cli-extension`, `module-create/task-packet.json` and three negative shapes under `bad/`. Not compiled or tested; `.ai/references/catalog` is the compiled reference module.
 
-- blueprint ID, version, and content hash,
-- specification IDs, versions, and content hashes,
-- goal and acceptance criteria,
-- use case list,
-- permission IDs,
-- API changes,
-- data and migration changes,
-- allowed paths,
-- required files and templates,
-- risks and required reviewers,
-- exact validation gates.
+### 14.4. Sandbox loop
 
-### 14.6. General guardrails
+- Planning: `planning.ts` classifies a brief into `new-module` or `edit-module` with the modules it touches (a bounded planner turn, with rule-based fallback) and `routeRole` picks the next role from the state of the module: no approved spec routes to `business-manager`, then agent, UI or server words move the choice between the roles valid for that state. A `HANDOFF:` line is honoured only when it names a role in the current role's list.
+- One skill per turn: `turns.ts` calls `selectTaskSkill` (`packages/coding-agent/src/roles/skills.ts`) with the role, session kind, blueprint and request; an explicit `$skill` wins only if installed and eligible for the role. The instruction carries the role, the allowed paths, that one skill and the team list. Writes outside the role allowlist fail the turn and are restored (`path-guard.ts`).
+- Gates: after a turn that changed files the sandbox runs `dependencies` plus the role's gates from `gates.ts` (`spec-schema`, `module-schema`, `dependencies`, `typecheck`, `tests`, `format`). Agents never run commands; the failing gate's command and output go into the fix prompt.
+- Review record: an `auto-review` turn is read-only with an empty write allowlist. `auto-review.ts` hashes the module bytes before the turn and records a passing report under `.flowdular/sandbox/sessions/<id>/auto-reviews/` only when every other gate passed and the bytes are unchanged afterwards. Any later edit invalidates the record, and the deterministic gates and the agent's assessment stay independent requirements.
+- Delivery: `delivery/index.ts` maps the targets `workspace` (`delivery/local.ts`, copies into `modules/`, `pnpm install`, `module enable`, `auth sync-scopes`, platform typecheck) and `git-pr` (`delivery/git-pr.ts`, branch and pull request from a detached worktree; see `docs/sandbox.md`). Both start from `delivery/plan.ts`: approved spec hash, immutable applied migrations, every gate in `GATES` including `auto-review`, and a spec that covers an edit. `official-modules` is a third, catalog-owned target.
 
-The harness blocks a change when:
+### 14.5. What the original drawing had and why it was not built
 
-- the agent writes outside assigned paths,
-- the plan does not lock an approved blueprint,
-- implementation starts without an approved spec lock,
-- source behavior has no trace to a specification ID,
-- a locked specification changes without invalidating the implementation plan,
-- the agent adds a package dependency without approval,
-- a module bypasses another module's public export,
-- an endpoint lacks a schema or ACL declaration,
-- client code imports server code,
-- a migration edits an applied file,
-- a destructive migration lacks a data plan,
-- translation keys do not match,
-- a test is removed or weakened without an approved contract change,
-- a generated file is edited manually,
-- a command requests a secret value,
-- validation produces no evidence,
-- technical documentation is added in a language other than English.
-
-Invalid modules under `.ai/examples` are part of agent evals. The agent must identify the violation and select the approved repair blueprint.
+- Run artifact ledger under `.flowdular/runs`: replaced by the session directory `.flowdular/sandbox/sessions/<id>` (chat transcript with handoffs, gate results, auto-review records, `delivery.json`), which the sandbox writes as evidence of the work it actually ran.
+- Ten agent roles with a write-access matrix: replaced by five sandbox roles whose `allowedPaths`, `gates` and `handoff` are enforced by code, plus three root role descriptions; the orchestrator, verifier and reviewer jobs became the planner, the gate runner and the `auto-review` turn.
+- YAML workflows: replaced by the deterministic routing in `planning.ts` and the request flow in 14.1; blueprint `steps.yaml` files remain documentation.
+- Verb-named skills (`execute-blueprint`, `add-api-endpoint`, `validate-module` and the rest): replaced by 21 skills named by task, one per phase, with `module-new` and `module-update` carrying a fixed touch list per change class instead of one skill per artifact.
+- Approvals policy and seven example fixtures: approval is the spec hash gate and the CLI runner's per-command approval; the examples shrank to the shapes in 14.3.
 
 ## 15. Enforced blueprint system
 

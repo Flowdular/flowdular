@@ -96,6 +96,7 @@ export { Switch } from './components/Switch.tsrx';
 export type { SwitchProps } from './components/Switch.tsrx';
 export { ConfirmDialog } from './components/ConfirmDialog.tsrx';
 export type { ConfirmDialogProps } from './components/ConfirmDialog.tsrx';
+export { focusableElements, trapFocus } from './components/focus-trap.ts';
 export { Filters } from './components/Filters.tsrx';
 export type { FiltersProps } from './components/Filters.tsrx';
 export { Tabs } from './components/Tabs.tsrx';

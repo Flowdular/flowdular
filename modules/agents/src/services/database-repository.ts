@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
+	integer,
 	runDatabaseMigrations,
 	type DatabaseHandle,
 	type DatabaseTransaction,
@@ -251,7 +252,7 @@ interface UsageRow {
 	input_tokens: number | string;
 	output_tokens: number | string;
 	cost_micro_usd: number | string | null;
-	unpriced_runs: number | string;
+	unpriced_runs: number | string | null;
 }
 
 function stringArray(value: string): readonly string[] {
@@ -304,15 +305,15 @@ function fromAgentRow(row: AgentRow): AgentDefinition {
 		allowedTools: stringArray(row.allowed_tools_json),
 		procedureIds: [],
 		maxSteps: row.max_steps,
-		timeoutMs: integer(row.timeout_ms),
+		timeoutMs: integer(row.timeout_ms, 'timeout_ms'),
 		temperature: row.temperature_milli / 1_000,
-		maxOutputTokens: integer(row.max_output_tokens),
+		maxOutputTokens: integer(row.max_output_tokens, 'max_output_tokens'),
 		status: row.status,
 		revision: row.revision,
 		createdBy: row.created_by,
-		createdAt: integer(row.created_at),
+		createdAt: integer(row.created_at, 'created_at'),
 		updatedBy: row.updated_by,
-		updatedAt: integer(row.updated_at),
+		updatedAt: integer(row.updated_at, 'updated_at'),
 	};
 }
 
@@ -351,10 +352,10 @@ function fromRunRow(row: RunRow): AgentRun {
 		failureCode: row.failure_code,
 		failureMessage: row.failure_message,
 		attempt: row.attempt,
-		queuedAt: integer(row.queued_at),
-		startedAt: integerOrNull(row.started_at),
-		completedAt: integerOrNull(row.completed_at),
-		leaseExpiresAt: integerOrNull(row.lease_expires_at),
+		queuedAt: integer(row.queued_at, 'queued_at'),
+		startedAt: integerOrNull(row.started_at, 'started_at'),
+		completedAt: integerOrNull(row.completed_at, 'completed_at'),
+		leaseExpiresAt: integerOrNull(row.lease_expires_at, 'lease_expires_at'),
 	};
 }
 
@@ -372,9 +373,9 @@ function fromRevisionRow(row: AgentRevisionRow): AgentDefinitionRevision {
 		allowedTools: stringArray(row.allowed_tools_json),
 		procedures: JSON.parse(row.skills_json) as AgentRevisionProcedure[],
 		maxSteps: row.max_steps,
-		timeoutMs: integer(row.timeout_ms),
+		timeoutMs: integer(row.timeout_ms, 'timeout_ms'),
 		temperature: row.temperature_milli / 1_000,
-		maxOutputTokens: integer(row.max_output_tokens),
+		maxOutputTokens: integer(row.max_output_tokens, 'max_output_tokens'),
 		status: row.status,
 		ownership:
 			row.module_id === null
@@ -386,7 +387,7 @@ function fromRevisionRow(row: AgentRevisionRow): AgentDefinitionRevision {
 					},
 		moduleDefinitionRevision: row.module_definition_revision,
 		retainedBy: row.retained_by,
-		retainedAt: integer(row.retained_at),
+		retainedAt: integer(row.retained_at, 'retained_at'),
 	};
 }
 
@@ -402,7 +403,7 @@ function fromModuleBindingRow(row: ModuleAgentBindingRow): ModuleAgentBinding {
 		executableRevision: row.executable_revision,
 		revision: row.revision,
 		updatedBy: row.updated_by,
-		updatedAt: integer(row.updated_at),
+		updatedAt: integer(row.updated_at, 'updated_at'),
 	};
 }
 
@@ -429,10 +430,10 @@ function fromActionRow(row: ActionRow): AgentActionInvocation {
 		output: jsonValue(row.output_json),
 		code: row.failure_code,
 		attempt: row.attempt,
-		queuedAt: integer(row.queued_at),
-		startedAt: integerOrNull(row.started_at),
-		completedAt: integerOrNull(row.completed_at),
-		leaseExpiresAt: integerOrNull(row.lease_expires_at),
+		queuedAt: integer(row.queued_at, 'queued_at'),
+		startedAt: integerOrNull(row.started_at, 'started_at'),
+		completedAt: integerOrNull(row.completed_at, 'completed_at'),
+		leaseExpiresAt: integerOrNull(row.lease_expires_at, 'lease_expires_at'),
 	};
 }
 
@@ -448,9 +449,9 @@ function fromSkillRow(row: SkillRow): AgentProcedure {
 		status: row.status,
 		revision: row.revision,
 		createdBy: row.created_by,
-		createdAt: integer(row.created_at),
+		createdAt: integer(row.created_at, 'created_at'),
 		updatedBy: row.updated_by,
-		updatedAt: integer(row.updated_at),
+		updatedAt: integer(row.updated_at, 'updated_at'),
 	};
 }
 
@@ -464,32 +465,29 @@ function executionFromRow(row: RunRow): AgentRunExecution {
 		model: row.model,
 		allowedTools: stringArray(row.allowed_tools_json),
 		maxSteps: row.max_steps,
-		timeoutMs: integer(row.timeout_ms),
+		timeoutMs: integer(row.timeout_ms, 'timeout_ms'),
 		temperature: row.temperature_milli / 1_000,
-		maxOutputTokens: integer(row.max_output_tokens),
+		maxOutputTokens: integer(row.max_output_tokens, 'max_output_tokens'),
 	};
 	return { run: fromRunRow(row), definition };
 }
 
-/* SUM() over BIGINT is NUMERIC in PostgreSQL, and the driver hands NUMERIC
-   back as a string. Aggregates leave this repository as numbers. */
-function integer(value: number | string | null): number {
-	return typeof value === 'number' ? value : Number(value ?? 0);
-}
-
 /* A nullable BIGINT must stay null: coercing it to 0 would turn "never started"
    into "started at the epoch". */
-function integerOrNull(value: number | string | null): number | null {
-	return value === null ? null : integer(value);
+function integerOrNull(
+	value: number | string | null,
+	field: string,
+): number | null {
+	return value === null ? null : integer(value, field);
 }
 
 function fromUsageRow(row: UsageRow): AgentUsageBucket {
 	return {
-		runs: integer(row.runs),
-		inputTokens: integer(row.input_tokens),
-		outputTokens: integer(row.output_tokens),
-		costMicroUsd: integer(row.cost_micro_usd),
-		unpricedRuns: integer(row.unpriced_runs),
+		runs: integer(row.runs, 'runs'),
+		inputTokens: integer(row.input_tokens, 'input_tokens'),
+		outputTokens: integer(row.output_tokens, 'output_tokens'),
+		costMicroUsd: integer(row.cost_micro_usd ?? 0, 'cost_micro_usd'),
+		unpricedRuns: integer(row.unpriced_runs ?? 0, 'unpriced_runs'),
 	};
 }
 
@@ -501,9 +499,9 @@ const USAGE_COLUMNS = `COUNT(*) AS runs,
 
 function fromRunEventRow(row: RunEventRow): AgentExecutionEvent {
 	return {
-		sequence: integer(row.sequence),
+		sequence: integer(row.sequence, 'sequence'),
 		type: row.event_type,
-		timestamp: integer(row.occurred_at),
+		timestamp: integer(row.occurred_at, 'occurred_at'),
 		message: row.message,
 		metadata: metadata(row.metadata_json),
 	};
@@ -513,13 +511,13 @@ function fromAuditRow(row: AuditRow): AgentAuditEvent {
 	return {
 		id: row.id,
 		tenantId: row.tenant_id,
-		sequence: integer(row.sequence),
+		sequence: integer(row.sequence, 'sequence'),
 		actorId: row.actor_id,
 		action: row.action,
 		subjectType: row.subject_type,
 		subjectId: row.subject_id,
 		metadata: metadata(row.metadata_json),
-		occurredAt: integer(row.occurred_at),
+		occurredAt: integer(row.occurred_at, 'occurred_at'),
 		previousHash: row.previous_hash,
 		eventHash: row.event_hash,
 	};
@@ -1645,8 +1643,8 @@ export class DatabaseAgentRepository implements AgentRepository {
 				])
 			)[0] as unknown as { count: number | string };
 			return {
-				definitions: integer(definitions.count),
-				pendingRuns: integer(pendingRuns.count),
+				definitions: integer(definitions.count, 'count'),
+				pendingRuns: integer(pendingRuns.count, 'count'),
 			};
 		});
 	}
@@ -2671,7 +2669,7 @@ export class DatabaseAgentRepository implements AgentRepository {
 		/* count and every BIGINT arrive as a string from the server driver, so the
 		   next sequence must be added as a number. Without this the chain reads
 		   1, then "11", then "111". */
-		const sequence = integer(previous?.sequence ?? 0) + 1;
+		const sequence = integer(previous?.sequence ?? 0, 'sequence') + 1;
 		const previousHash = previous?.event_hash ?? null;
 		const metadataJson = stableMetadata(event.metadata);
 		const eventHash = auditHash({

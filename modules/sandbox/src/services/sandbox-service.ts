@@ -151,18 +151,20 @@ export class SandboxService {
 	): Promise<readonly SandboxAccessCandidate[]> {
 		const tenant = identifier(tenantId, 'tenantId');
 		const members = await this.directory.listMembers(tenant);
-		return await Promise.all(
-			members.map(async (member) => ({
-				accountId: member.accountId,
-				email: member.email,
-				displayName: member.displayName,
-				role: member.role,
-				status: member.status,
-				availableCapabilities: sandboxCapabilitiesOf(
-					await this.directory.listScopes(member.accountId, tenant),
-				),
-			})),
+		const scopes = await this.directory.listScopesForMembers(
+			members.map((member) => member.accountId),
+			tenant,
 		);
+		return members.map((member) => ({
+			accountId: member.accountId,
+			email: member.email,
+			displayName: member.displayName,
+			role: member.role,
+			status: member.status,
+			availableCapabilities: sandboxCapabilitiesOf(
+				scopes.get(member.accountId) ?? [],
+			),
+		}));
 	}
 
 	async listGrants(tenantId: string): Promise<readonly SandboxAccessGrant[]> {

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseHandle, DatabaseTransaction } from '@flowdular/database';
-import { runDatabaseMigrations } from '@flowdular/database';
+import { integer, runDatabaseMigrations } from '@flowdular/database';
 import type {
 	SandboxAccessGrant,
 	SandboxAuditChainVerification,
@@ -57,21 +57,11 @@ interface AuditRow {
 	event_hash: string;
 }
 
-/* PostgreSQL returns BIGINT as a string. The audit hash covers sequence and
-   occurredAt, so a string here would silently break every chain verification
-   rather than merely look wrong. */
-function integer(value: number | bigint | string): number {
-	const normalized = Number(value);
-	if (!Number.isSafeInteger(normalized)) {
-		throw new Error('The sandbox database returned an invalid integer.');
-	}
-	return normalized;
-}
-
 function optionalInteger(
 	value: number | bigint | string | null,
+	field: string,
 ): number | null {
-	return value === null ? null : integer(value);
+	return value === null ? null : integer(value, field);
 }
 
 function fromGrantRow(row: GrantRow): SandboxAccessGrant {
@@ -86,9 +76,9 @@ function fromGrantRow(row: GrantRow): SandboxAccessGrant {
 		) as readonly SandboxGrantCapability[],
 		note: row.note,
 		grantedBy: row.granted_by,
-		grantedAt: integer(row.granted_at),
-		expiresAt: optionalInteger(row.expires_at),
-		revokedAt: optionalInteger(row.revoked_at),
+		grantedAt: integer(row.granted_at, 'granted_at'),
+		expiresAt: optionalInteger(row.expires_at, 'expires_at'),
+		revokedAt: optionalInteger(row.revoked_at, 'revoked_at'),
 		revokedBy: row.revoked_by,
 	};
 }
@@ -104,10 +94,10 @@ function fromSessionRow(row: SessionRow): SandboxSessionRecord {
 		driver: row.driver,
 		mode: row.mode,
 		state: row.state,
-		createdAt: integer(row.created_at),
-		updatedAt: integer(row.updated_at),
-		ejectedAt: optionalInteger(row.ejected_at),
-		archivedAt: optionalInteger(row.archived_at),
+		createdAt: integer(row.created_at, 'created_at'),
+		updatedAt: integer(row.updated_at, 'updated_at'),
+		ejectedAt: optionalInteger(row.ejected_at, 'ejected_at'),
+		archivedAt: optionalInteger(row.archived_at, 'archived_at'),
 	};
 }
 
@@ -115,13 +105,13 @@ function fromAuditRow(row: AuditRow): SandboxAuditEvent {
 	return {
 		id: row.id,
 		tenantId: row.tenant_id,
-		sequence: integer(row.sequence),
+		sequence: integer(row.sequence, 'sequence'),
 		actorId: row.actor_id,
 		action: row.action,
 		subjectType: row.subject_type,
 		subjectId: row.subject_id,
 		metadata: JSON.parse(row.metadata_json) as SandboxAuditEvent['metadata'],
-		occurredAt: integer(row.occurred_at),
+		occurredAt: integer(row.occurred_at, 'occurred_at'),
 		previousHash: row.previous_hash,
 		eventHash: row.event_hash,
 	};
@@ -397,7 +387,8 @@ export class DatabaseSandboxRepository implements SandboxRepository {
 					parameters: [event.tenantId],
 				});
 				const previous = latest.rows[0];
-				const sequence = (previous ? integer(previous.sequence) : 0) + 1;
+				const sequence =
+					(previous ? integer(previous.sequence, 'sequence') : 0) + 1;
 				const previousHash = previous?.event_hash ?? null;
 				const metadataJson = stableMetadata(event.metadata);
 				const created: SandboxAuditEvent = {

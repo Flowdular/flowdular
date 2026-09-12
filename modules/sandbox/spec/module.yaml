@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: sandbox.core
-specVersion: 0.4.0
+specVersion: 0.4.1
 status: approved
 name: Sandbox Access
 description: Owns sandbox access grants, sandbox session records, and the audit evidence that lets an authorized account open the Flowdular sandbox, preview a draft module against live platform data, and eject an accepted module into the workspace.

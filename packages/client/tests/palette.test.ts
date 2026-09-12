@@ -3,7 +3,6 @@ import { workspaceHitRoute } from '../src/shell/navigation.ts';
 import {
 	nextPaletteIndex,
 	paletteOptionId,
-	trappedFocusIndex,
 } from '../src/shell/palette-keys.ts';
 
 describe('command palette selection', () => {
@@ -37,26 +36,6 @@ describe('command palette selection', () => {
 	it('names an option by its position, so the input can point at it', () => {
 		expect(paletteOptionId(0)).toBe('command-option-0');
 		expect(paletteOptionId(12)).not.toBe(paletteOptionId(1));
-	});
-});
-
-describe('command palette focus trap', () => {
-	it('cycles forwards and backwards inside the dialog', () => {
-		expect(trappedFocusIndex(0, 2, false)).toBe(1);
-		expect(trappedFocusIndex(1, 2, false)).toBe(0);
-		expect(trappedFocusIndex(0, 2, true)).toBe(1);
-		expect(trappedFocusIndex(1, 2, true)).toBe(0);
-	});
-
-	/* Focus is somewhere outside the dialog: it comes back in at the end Tab
-	   was heading for, instead of leaving the modal behind. */
-	it('pulls focus back in when it is not on one of the dialog controls', () => {
-		expect(trappedFocusIndex(-1, 3, false)).toBe(0);
-		expect(trappedFocusIndex(-1, 3, true)).toBe(2);
-	});
-
-	it('has nowhere to go when the dialog holds no control', () => {
-		expect(trappedFocusIndex(-1, 0, false)).toBe(-1);
 	});
 });
 

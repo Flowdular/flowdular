@@ -5,7 +5,7 @@ import type {
 	DatabaseStatement,
 	DatabaseTransaction,
 } from '@flowdular/database';
-import { runDatabaseMigrations } from '@flowdular/database';
+import { integer, runDatabaseMigrations } from '@flowdular/database';
 import {
 	AUDIT_SEALED_MARKER,
 	type AuditChainAnchor,
@@ -513,16 +513,6 @@ function subjectKeysByIds(count: number): string {
 	).join(', ');
 	return `SELECT id, material FROM audit_subject_keys
 	 WHERE tenant_id = $1 AND id IN (${placeholders})`;
-}
-
-/* PostgreSQL returns BIGINT as a string, so every integer read crosses this
-   instead of trusting the driver's representation. */
-function integer(value: number | bigint | string, field: string): number {
-	const normalized = Number(value);
-	if (!Number.isSafeInteger(normalized)) {
-		throw new Error(`The audit database returned an invalid ${field}.`);
-	}
-	return normalized;
 }
 
 function optionalInteger(

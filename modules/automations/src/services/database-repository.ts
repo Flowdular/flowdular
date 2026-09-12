@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseHandle, DatabaseTransaction } from '@flowdular/database';
-import { runDatabaseMigrations } from '@flowdular/database';
+import { integer, runDatabaseMigrations } from '@flowdular/database';
 import { normalizeActor } from '@flowdular/kernel';
 import type { UserActor } from '@flowdular/kernel';
 import type {
@@ -77,21 +77,11 @@ interface AuditRow {
 	event_hash: string;
 }
 
-/* PostgreSQL returns BIGINT as a string. The audit hash covers sequence and
-   occurredAt, so a string here would break the chain rather than merely look
-   wrong. */
-function integer(value: number | bigint | string): number {
-	const normalized = Number(value);
-	if (!Number.isSafeInteger(normalized)) {
-		throw new Error('The automations database returned an invalid integer.');
-	}
-	return normalized;
-}
-
 function optionalInteger(
 	value: number | bigint | string | null,
+	field: string,
 ): number | null {
-	return value === null ? null : integer(value);
+	return value === null ? null : integer(value, field);
 }
 
 function configuredBy(value: string | null, createdBy: string): UserActor {
@@ -131,14 +121,14 @@ function schedule(row: ScheduleRow): StoredAutomationSchedule {
 		label: row.label,
 		inputTemplate: row.input_template,
 		cadence: row.cadence,
-		enabled: integer(row.enabled) === 1,
+		enabled: integer(row.enabled, 'enabled') === 1,
 		disabledReason: row.disabled_reason,
-		nextRunAt: integer(row.next_run_at),
-		lastRunAt: optionalInteger(row.last_run_at),
+		nextRunAt: integer(row.next_run_at, 'next_run_at'),
+		lastRunAt: optionalInteger(row.last_run_at, 'last_run_at'),
 		lastRunId: row.last_run_id,
 		lastError: row.last_error,
-		createdAt: integer(row.created_at),
-		updatedAt: integer(row.updated_at),
+		createdAt: integer(row.created_at, 'created_at'),
+		updatedAt: integer(row.updated_at, 'updated_at'),
 		createdBy: row.created_by,
 		configuredBy: configuredBy(row.configured_by_json, row.created_by),
 		permissionSnapshot: permissionSnapshot(row.permission_snapshot_json),
@@ -155,14 +145,14 @@ function trigger(row: TriggerRow): StoredAutomationTrigger {
 		targetKey,
 		agentId: targetKind === 'agent' ? targetKey : '',
 		label: row.label,
-		enabled: integer(row.enabled) === 1,
-		secretRevision: integer(row.secret_revision),
-		createdAt: integer(row.created_at),
-		updatedAt: integer(row.updated_at),
+		enabled: integer(row.enabled, 'enabled') === 1,
+		secretRevision: integer(row.secret_revision, 'secret_revision'),
+		createdAt: integer(row.created_at, 'created_at'),
+		updatedAt: integer(row.updated_at, 'updated_at'),
 		createdBy: row.created_by,
-		lastFiredAt: optionalInteger(row.last_fired_at),
-		acceptedCount: integer(row.accepted_count),
-		rejectedCount: integer(row.rejected_count),
+		lastFiredAt: optionalInteger(row.last_fired_at, 'last_fired_at'),
+		acceptedCount: integer(row.accepted_count, 'accepted_count'),
+		rejectedCount: integer(row.rejected_count, 'rejected_count'),
 		configuredBy: configuredBy(row.configured_by_json, row.created_by),
 		permissionSnapshot: permissionSnapshot(row.permission_snapshot_json),
 	};
@@ -221,7 +211,7 @@ function audit(row: AuditRow): AutomationAuditEvent {
 	return {
 		id: row.id,
 		tenantId: row.tenant_id,
-		sequence: integer(row.sequence),
+		sequence: integer(row.sequence, 'sequence'),
 		actorId: row.actor_id,
 		action: row.action,
 		subjectType: row.subject_type,
@@ -229,7 +219,7 @@ function audit(row: AuditRow): AutomationAuditEvent {
 		metadata: JSON.parse(row.metadata_json) as Readonly<
 			Record<string, string | number | boolean>
 		>,
-		occurredAt: integer(row.occurred_at),
+		occurredAt: integer(row.occurred_at, 'occurred_at'),
 		previousHash: row.previous_hash,
 		eventHash: row.event_hash,
 	};
@@ -450,7 +440,7 @@ export class DatabaseAutomationsRepository implements AutomationsRepository {
 		return result.rows.map((row) => ({
 			tenantId: row.tenant_id,
 			id: row.id,
-			nextRunAt: integer(row.next_run_at),
+			nextRunAt: integer(row.next_run_at, 'next_run_at'),
 		}));
 	}
 
@@ -670,7 +660,8 @@ export class DatabaseAutomationsRepository implements AutomationsRepository {
 					parameters: [event.tenantId],
 				});
 				const previous = latest.rows[0];
-				const sequence = (previous ? integer(previous.sequence) : 0) + 1;
+				const sequence =
+					(previous ? integer(previous.sequence, 'sequence') : 0) + 1;
 				const previousHash = previous?.event_hash ?? null;
 				const metadataJson = stableMetadata(event.metadata);
 				const created: AutomationAuditEvent = {

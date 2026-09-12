@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "notifications.core",
 	"package": "@flowdular/module-notifications",
-	"version": "0.2.5",
+	"version": "0.2.6",
 	"platformApi": "^0.1.0",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations", "cli"],

@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: directory.core
-specVersion: 0.1.6
+specVersion: 0.1.7
 status: approved
 name: Directory Core
 description: Lets an identity provider provision and deprovision workspace members and groups through SCIM 2.0, with a workspace-scoped bearer token, group to role mapping and deactivation that disables the membership without ever deleting the account.

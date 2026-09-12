@@ -17,6 +17,7 @@ import type { WorkflowGraphV1 } from '../src/domain/types.ts';
 import { WORKFLOW_LIMITS } from '../src/domain/types.ts';
 import type { WorkflowsRuntime } from '../src/server/runtime.ts';
 import { createWorkflowsTestRuntime } from './support/database.ts';
+import { openHttpHarness, type HttpHarness } from './support/harness.ts';
 
 function principal(
 	scopes: readonly string[],
@@ -586,5 +587,260 @@ describe('workflow HTTP boundary', () => {
 		);
 		expect(conflicting.status).toBe(409);
 		await runtime.dispose();
+	});
+});
+
+async function waitFor(
+	predicate: () => Promise<boolean>,
+	timeout = 5_000,
+): Promise<void> {
+	const deadline = Date.now() + timeout;
+	while (!(await predicate())) {
+		if (Date.now() > deadline)
+			throw new Error('Timed out waiting for workflow state.');
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	}
+}
+
+describe('workflow write routes with a browser session', () => {
+	async function createDefinition(harness: HttpHarness, key: string) {
+		const created = await harness.mutation('/api/workflows', {
+			key,
+			name: `Flow ${key}`,
+			description: '',
+		});
+		expect(created.status).toBe(201);
+		return (await created.json()).definition as { id: string };
+	}
+
+	async function publishDirect(harness: HttpHarness, key: string) {
+		const definition = await createDefinition(harness, key);
+		const updated = await harness.mutation('/api/workflows/update', {
+			workflowId: definition.id,
+			expectedRevision: 1,
+			name: `Flow ${key}`,
+			description: '',
+			graph,
+		});
+		expect(updated.status).toBe(200);
+		const published = await harness.mutation('/api/workflows/publish', {
+			workflowId: definition.id,
+			expectedRevision: 2,
+		});
+		expect(published.status).toBe(200);
+		return definition;
+	}
+
+	it('creates, updates, validates and publishes a definition that reads back pinned', async () => {
+		const harness = openHttpHarness({
+			payloadKey: Buffer.alloc(32, 41),
+			cursorKey: Buffer.alloc(32, 42),
+		});
+		try {
+			const created = await harness.mutation('/api/workflows', {
+				key: 'session-create',
+				name: 'Session create',
+				description: 'Created over HTTP',
+			});
+			expect(created.status).toBe(201);
+			const { definition } = await created.json();
+			expect(definition).toMatchObject({
+				key: 'session-create',
+				currentDraftRevision: 1,
+				publishedRevision: null,
+			});
+			const listed = await harness.call('/api/workflows');
+			expect(
+				(await listed.json()).definitions.map(
+					(entry: { id: string }) => entry.id,
+				),
+			).toEqual([definition.id]);
+
+			const updated = await harness.mutation('/api/workflows/update', {
+				workflowId: definition.id,
+				expectedRevision: 1,
+				name: 'Session updated',
+				description: 'Updated over HTTP',
+				graph,
+			});
+			expect(updated.status).toBe(200);
+			expect((await updated.json()).detail.definition).toMatchObject({
+				name: 'Session updated',
+				currentDraftRevision: 2,
+			});
+
+			const validated = await harness.mutation('/api/workflows/validate', {
+				graph,
+			});
+			expect(validated.status).toBe(200);
+			expect((await validated.json()).report.valid).toBe(true);
+
+			const published = await harness.mutation('/api/workflows/publish', {
+				workflowId: definition.id,
+				expectedRevision: 2,
+			});
+			expect(published.status).toBe(200);
+			expect((await published.json()).detail.definition.publishedRevision).toBe(
+				2,
+			);
+			const detail = await harness.call(
+				`/api/workflows/detail?id=${definition.id}`,
+			);
+			expect(detail.status).toBe(200);
+			const read = (await detail.json()).detail;
+			expect(read.definition).toMatchObject({
+				name: 'Session updated',
+				description: 'Updated over HTTP',
+				publishedRevision: 2,
+			});
+			expect(read.draft.graph).toEqual(graph);
+		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it('archives a definition and deletes an unpublished one', async () => {
+		const harness = openHttpHarness({
+			payloadKey: Buffer.alloc(32, 43),
+			cursorKey: Buffer.alloc(32, 44),
+		});
+		try {
+			const archived = await createDefinition(harness, 'session-archive');
+			const archive = await harness.mutation('/api/workflows/archive', {
+				workflowId: archived.id,
+			});
+			expect(archive.status).toBe(200);
+			expect((await archive.json()).definition.status).toBe('archived');
+			const detail = await harness.call(
+				`/api/workflows/detail?id=${archived.id}`,
+			);
+			expect((await detail.json()).detail.definition.status).toBe('archived');
+
+			const removed = await createDefinition(harness, 'session-delete');
+			const remove = await harness.mutation('/api/workflows/delete', {
+				workflowId: removed.id,
+			});
+			expect(remove.status).toBe(200);
+			expect(await remove.json()).toEqual({ deleted: true });
+			expect(
+				(await harness.call(`/api/workflows/detail?id=${removed.id}`)).status,
+			).toBe(404);
+			expect(
+				(await (await harness.call('/api/workflows')).json()).definitions.map(
+					(entry: { id: string }) => entry.id,
+				),
+			).toEqual([archived.id]);
+		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it('simulates, enqueues, cancels and retries a run through the session', async () => {
+		const harness = openHttpHarness({
+			payloadKey: Buffer.alloc(32, 45),
+			cursorKey: Buffer.alloc(32, 46),
+			worker: { pollMs: 250, leaseMs: 1_000 },
+		});
+		try {
+			const definition = await publishDirect(harness, 'session-runs');
+
+			const simulated = await harness.mutation('/api/workflow-runs/simulate', {
+				workflowId: definition.id,
+				input: { name: 'Ada' },
+				fixtures: [],
+			});
+			expect(simulated.status).toBe(200);
+			const simulation = (await simulated.json()).run;
+			expect(simulation.run).toMatchObject({
+				mode: 'simulate',
+				status: 'succeeded',
+			});
+			const simulationDetail = await harness.call(
+				`/api/workflow-runs/detail?id=${simulation.run.id}`,
+			);
+			expect((await simulationDetail.json()).run.status).toBe('succeeded');
+
+			const enqueued = await harness.mutation('/api/workflow-runs', {
+				workflowKey: 'session-runs',
+				input: { name: 'Ada' },
+				idempotencyKey: 'session-runs:1',
+			});
+			expect(enqueued.status).toBe(202);
+			const { accepted } = await enqueued.json();
+			expect(accepted).toMatchObject({
+				workflowId: definition.id,
+				workflowRevision: 2,
+				status: 'queued',
+				created: true,
+			});
+			const listed = await harness.call('/api/workflow-runs?mode=live');
+			expect(
+				(await listed.json()).runs.map((entry: { id: string }) => entry.id),
+			).toEqual([accepted.runId]);
+
+			const cancelled = await harness.mutation('/api/workflow-runs/cancel', {
+				runId: accepted.runId,
+			});
+			expect(cancelled.status).toBe(200);
+			expect(await cancelled.json()).toEqual({
+				runId: accepted.runId,
+				status: 'cancel-requested',
+				requested: true,
+			});
+			harness.runtime.start();
+			await waitFor(
+				async () =>
+					(
+						await (
+							await harness.call(
+								`/api/workflow-runs/detail?id=${accepted.runId}`,
+							)
+						).json()
+					).run.status === 'cancelled',
+			);
+
+			const retried = await harness.mutation('/api/workflow-runs/retry', {
+				runId: accepted.runId,
+			});
+			expect(retried.status).toBe(200);
+			const retry = await retried.json();
+			expect(retry).toMatchObject({
+				workflowId: definition.id,
+				workflowRevision: 2,
+				status: 'queued',
+			});
+			expect(retry.runId).not.toBe(accepted.runId);
+			const afterRetry = await harness.call(
+				`/api/workflow-runs?workflowId=${definition.id}&mode=live`,
+			);
+			expect(
+				(await afterRetry.json()).runs
+					.map((entry: { id: string }) => entry.id)
+					.sort(),
+			).toEqual([accepted.runId, retry.runId].sort());
+		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it('refuses a mutation whose CSRF token does not match the session', async () => {
+		const harness = openHttpHarness({
+			payloadKey: Buffer.alloc(32, 47),
+			cursorKey: Buffer.alloc(32, 48),
+		});
+		try {
+			const response = await harness.mutation(
+				'/api/workflows',
+				{ key: 'session-csrf', name: 'Session CSRF', description: '' },
+				{ csrfToken: 'wrong' },
+			);
+			expect(response.status).toBe(403);
+			expect((await response.json()).error.code).toBe('CSRF_REJECTED');
+			expect(
+				(await (await harness.call('/api/workflows')).json()).definitions,
+			).toEqual([]);
+		} finally {
+			await harness.dispose();
+		}
 	});
 });

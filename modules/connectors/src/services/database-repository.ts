@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseHandle, DatabaseParameter } from '@flowdular/database';
-import { runDatabaseMigrations } from '@flowdular/database';
+import { integer, runDatabaseMigrations } from '@flowdular/database';
 import type {
 	ConnectorAuditAction,
 	ConnectorAuditEvent,
@@ -234,14 +234,6 @@ function isDuplicateCallKey(error: unknown): boolean {
 		(String(cause?.constraint ?? '').includes('connectors_call_keys') ||
 			text.includes('connectors_call_keys'))
 	);
-}
-
-function integer(value: number | bigint | string, field: string): number {
-	const normalized = Number(value);
-	if (!Number.isSafeInteger(normalized)) {
-		throw new Error(`The connectors database returned an invalid ${field}.`);
-	}
-	return normalized;
 }
 
 /* The flag columns are SMALLINT, the house shape for a boolean, so a driver

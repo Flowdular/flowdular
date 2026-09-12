@@ -1,5 +1,5 @@
 import type { DatabaseHandle } from '@flowdular/database';
-import { runDatabaseMigrations } from '@flowdular/database';
+import { integer, runDatabaseMigrations } from '@flowdular/database';
 import type { Profile, ProfileLanguagePreference } from '../domain/types.ts';
 import { databaseMigrations } from './migration.ts';
 import type { ProfileRepository } from './repository.ts';
@@ -42,22 +42,12 @@ const SAVE_LANGUAGE = `INSERT INTO profile_language_preferences
 			   locale = excluded.locale,
 			   updated_at = excluded.updated_at`;
 
-/* PostgreSQL returns BIGINT as a string, so every numeric read is normalized
-   before it reaches the domain. */
-function integer(value: ProfileRow['updated_at']): number {
-	const normalized = Number(value);
-	if (!Number.isSafeInteger(normalized) || normalized < 0) {
-		throw new Error('The profile database returned an invalid timestamp.');
-	}
-	return normalized;
-}
-
 function fromRow(row: ProfileRow): Profile {
 	return {
 		tenantId: row.tenant_id,
 		accountId: row.account_id,
 		displayName: row.display_name,
-		updatedAt: integer(row.updated_at),
+		updatedAt: integer(row.updated_at, 'updated_at', { min: 0 }),
 	};
 }
 
@@ -66,7 +56,7 @@ function languageFromRow(row: ProfileLanguageRow): ProfileLanguagePreference {
 		tenantId: row.tenant_id,
 		accountId: row.account_id,
 		locale: row.locale,
-		updatedAt: integer(row.updated_at),
+		updatedAt: integer(row.updated_at, 'updated_at', { min: 0 }),
 	};
 }
 

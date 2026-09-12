@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'octane';
-import { Icon } from '@flowdular/ui';
+import { Icon, trapFocus } from '@flowdular/ui';
 import type {
 	CommandSearchContribution,
 	CommandSearchHit,
@@ -14,11 +14,7 @@ import {
 	COMMAND_SEARCH_DEBOUNCE_MS,
 } from './command-search.ts';
 import { navigationGroupLabel } from './navigation.ts';
-import {
-	nextPaletteIndex,
-	paletteOptionId,
-	trappedFocusIndex,
-} from './palette-keys.ts';
+import { nextPaletteIndex, paletteOptionId } from './palette-keys.ts';
 import type { NavigateToView } from './types.ts';
 
 export interface CommandPaletteProps {
@@ -67,7 +63,10 @@ export function CommandPalette(props: CommandPaletteProps) @{
 	/* Navigation entries first, then the record hits in the order they are
    listed: one sequence, so an index is all the selection has to carry. */
 	const options: PaletteOption[] = [];
-	for (const item of matches) options.push({ kind: 'view', item });
+	const views = matches.map((item, index) => {
+		options.push({ kind: 'view', item });
+		return { item, index };
+	});
 	const hitGroups = groups.map(
 		(group) => ({
 			provider: group.provider,
@@ -89,32 +88,7 @@ export function CommandPalette(props: CommandPaletteProps) @{
 		else props.onOpenHit(option.hit);
 	};
 
-	/* The palette is modal: Tab cycles inside it instead of walking the
-   workspace behind the overlay. The options are reached with the arrow
-   keys and carry tabindex -1, so the only stop left is the input. */
-	const trapFocus = (event: KeyboardEvent) => {
-		const element = dialog.current;
-		if (!element) return;
-		const focusable = [
-			...element.querySelectorAll<HTMLElement>(
-				'input, button:not([tabindex="-1"])',
-			),
-		];
-		if (focusable.length === 0) return;
-		event.preventDefault();
-		const current = focusable.indexOf(document.activeElement as HTMLElement);
-		focusable[trappedFocusIndex(
-			current,
-			focusable.length,
-			event.shiftKey,
-		)]?.focus();
-	};
-
 	const keyDown = (event: KeyboardEvent) => {
-		if (event.key === 'Tab') {
-			trapFocus(event);
-			return;
-		}
 		if (SELECTION_KEYS.includes(event.key)) {
 			event.preventDefault();
 			setActive(nextPaletteIndex(activeIndex, options.length, event.key));
@@ -174,15 +148,12 @@ export function CommandPalette(props: CommandPaletteProps) @{
 			selected.bottom - bounds.bottom;
 	}, [activeIndex]);
 
-	/* Closing puts the member back where they opened it from, which is the
-   topbar button or whatever had focus when the shortcut was pressed. */
+	/* The palette is modal: Tab stays inside it, and closing puts the member
+   back where they opened it from, which is the topbar button or whatever had
+   focus when the shortcut was pressed. */
 	useEffect(() => {
-		const opener = document.activeElement;
-		return () => {
-			if (opener instanceof HTMLElement && document.contains(opener)) {
-				opener.focus();
-			}
-		};
+		const element = dialog.current;
+		return element === null ? undefined : trapFocus(element);
 	}, []);
 
 	<div class="command-layer" role="presentation" onClick={props.onClose}>
@@ -191,6 +162,7 @@ export function CommandPalette(props: CommandPaletteProps) @{
 			role="dialog"
 			aria-modal="true"
 			aria-label={t('shell.command.label')}
+			tabIndex={-1}
 			ref={dialog}
 			onClick={(event) => event.stopPropagation()}
 			onKeyDown={keyDown}
@@ -198,7 +170,6 @@ export function CommandPalette(props: CommandPaletteProps) @{
 			<label class="command-dialog__input">
 				<Icon name="search" size={16} />
 				<input
-					autoFocus
 					type="search"
 					role="combobox"
 					aria-expanded={options.length > 0}
@@ -227,24 +198,25 @@ export function CommandPalette(props: CommandPaletteProps) @{
 						query: props.query,
 					})}</p>
 				}
-				@for (const [index, item] of matches.entries(); key item.id) {
+				@for (const view of views; key view.item.id) {
 					<button
 						class={[
 							'command-item',
-							index === activeIndex && 'command-item--active',
+							view.index === activeIndex && 'command-item--active',
 						]}
 						type="button"
 						role="option"
-						id={paletteOptionId(index)}
-						aria-selected={index === activeIndex}
+						id={paletteOptionId(view.index)}
+						aria-selected={view.index === activeIndex}
 						tabIndex={-1}
-						onClick={() => props.onNavigate(item.viewId)}
+						onClick={() => props.onNavigate(view.item.viewId)}
 					>
-						<Icon name={item.glyph} size={16} />
+						<Icon name={view.item.glyph} size={16} />
 						<span class="ui-cell">
-							<b>{item.label}</b>
+							<b>{view.item.label}</b>
 							<small>
-								{navigationGroupLabel(t, item.group) + ' · ' + item.description}
+								{navigationGroupLabel(t, view.item.group) + ' · ' +
+									view.item.description}
 							</small>
 						</span>
 						<span class="ui-kbd">↵</span>

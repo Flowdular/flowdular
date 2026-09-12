@@ -20,8 +20,8 @@ import {
 import {
 	createJobRunner,
 	createJobTraceSink,
+	jobBackoff,
 	serverLogger,
-	type JobBackoff,
 	type Tracer,
 } from '@flowdular/server';
 import type { AgentActionInvocation } from '../domain/types.ts';
@@ -258,19 +258,6 @@ function trustedAuthorizationSubject(
  */
 const ACTION_ROUTING_PAGE = 8;
 
-/**
- * What the loop waits after a pass that raised: its own interval, doubling to
- * ten times that and never past a minute, so a database refusing the claim gets
- * room while a loop slower than a minute keeps its own cadence.
- */
-function actionBackoff(intervalMs: number): JobBackoff {
-	return {
-		initialMs: intervalMs,
-		maxMs: Math.max(intervalMs, Math.min(60_000, intervalMs * 10)),
-		multiplier: 2,
-	};
-}
-
 export function createAgentActionExecutionRuntime(
 	repository: AgentRepository,
 	tools: readonly AgentTool[],
@@ -501,7 +488,7 @@ export function createAgentActionExecutionRuntime(
 		staleAfterMs: leaseMs,
 		/* No `heartbeatEveryMs`: the runner's default is a third of the lease, so
 		   a renewal the database refuses once is asked again inside the window. */
-		backoff: actionBackoff(intervalMs),
+		backoff: jobBackoff(intervalMs),
 		concurrency: ACTION_ROUTING_PAGE,
 		batchLimit: ACTION_ROUTING_PAGE * 4,
 		logger: serverLogger,

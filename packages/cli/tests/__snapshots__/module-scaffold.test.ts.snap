@@ -215,7 +215,7 @@ export interface CreateInventoryRecordInput {
 
 exports[`module scaffolding > produces unchanged output for a version 1 specification > src/services/database-repository.ts 1`] = `
 "import type { DatabaseHandle } from '@flowdular/database';
-import { runDatabaseMigrations } from '@flowdular/database';
+import { integer, runDatabaseMigrations } from '@flowdular/database';
 import type { InventoryRecord } from '../domain/types.ts';
 import { databaseMigrations } from './migration.ts';
 import type { InventoryRepository } from './repository.ts';
@@ -239,23 +239,13 @@ const CREATE = \`INSERT INTO inventory_records
 			 (id, tenant_id, name, status, created_at)
 			 VALUES ($1, $2, $3, $4, $5)\`;
 
-/* PostgreSQL returns BIGINT as a string, so every numeric read is normalized
-   before it reaches the domain. */
-function integer(value: InventoryRecordRow['created_at']): number {
-	const normalized = Number(value);
-	if (!Number.isSafeInteger(normalized) || normalized < 0) {
-		throw new Error('The inventory database returned an invalid timestamp.');
-	}
-	return normalized;
-}
-
 function fromRow(row: InventoryRecordRow): InventoryRecord {
 	return {
 		id: row.id,
 		tenantId: row.tenant_id,
 		name: row.name,
 		status: row.status,
-		createdAt: integer(row.created_at),
+		createdAt: integer(row.created_at, 'created_at', { min: 0 }),
 	};
 }
 

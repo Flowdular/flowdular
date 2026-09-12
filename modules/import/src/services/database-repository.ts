@@ -1,5 +1,5 @@
 import type { DatabaseHandle, DatabaseTransaction } from '@flowdular/database';
-import { runDatabaseMigrations } from '@flowdular/database';
+import { integer, runDatabaseMigrations } from '@flowdular/database';
 import type { DataClassExportSink } from '@flowdular/kernel';
 import type { ImportMode } from '../domain/ports.ts';
 import {
@@ -174,16 +174,6 @@ interface OutcomeRow {
 	field: string | null;
 	reason: string | null;
 	record_ref: string | null;
-}
-
-/* PostgreSQL returns BIGINT as a string, so every integer read crosses this
-   instead of trusting the driver's representation. */
-function integer(value: number | bigint | string, field: string): number {
-	const normalized = Number(value);
-	if (!Number.isSafeInteger(normalized)) {
-		throw new Error(`The import database returned an invalid ${field}.`);
-	}
-	return normalized;
 }
 
 function optionalInteger(

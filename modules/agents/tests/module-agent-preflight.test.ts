@@ -117,6 +117,29 @@ describe('module agent boot preflight', () => {
 		).rejects.toThrow(/MODULE_AGENT_REVISION_DRIFT/);
 	});
 
+	it('reads the catalog on a runtime lease, never the migration role', async () => {
+		await registered(2);
+		const purposes: string[] = [];
+		const noMigration: DatabaseProvider = {
+			acquire(request) {
+				purposes.push(request.purpose);
+				if (request.purpose === 'migration') {
+					throw new Error('migration leases are for DDL only');
+				}
+				return database.databases.acquire(request);
+			},
+			dispose: () => Promise.resolve(),
+		};
+
+		expect(
+			await preflightModuleAgentDefinitions(noMigration, [definition(2)]),
+		).toHaveLength(1);
+		await expect(
+			preflightModuleAgentDefinitions(noMigration, [definition(1)]),
+		).rejects.toThrow(/MODULE_AGENT_REVISION_DOWNGRADE/);
+		expect(purposes).toEqual(['runtime', 'runtime']);
+	});
+
 	it('treats a database with no catalog yet as a first run, not a downgrade', async () => {
 		const bare: DatabaseProvider = createPgliteTestProvider();
 		try {

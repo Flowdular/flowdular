@@ -177,6 +177,7 @@ async function createPlatformConfig() {
 		databases,
 		dataClasses,
 		mail,
+		metrics: createModuleMetrics('auth.core'),
 	});
 	lifecycle.add(() => authRuntime.dispose());
 	try {

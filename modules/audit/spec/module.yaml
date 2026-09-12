@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: audit.core
-specVersion: 0.2.7
+specVersion: 0.2.8
 status: approved
 name: Audit and Data Lifecycle Core
 description: Gives a workspace one place to see what data classes the platform holds, how long each is kept, and to take everything out, through a data class registry every module declares into, one retention sweep with tenant-scoped periods, and a per-tenant export in a documented format.

@@ -99,6 +99,23 @@ function failureCodeOf(error: unknown): string {
 	return EXPORT_UNEXPECTED_FAILURE;
 }
 
+/**
+ * The catalogue a reader sees. It needs the sealed registry and the caller's
+ * scopes only, so the endpoint answers it without a repository or a lease.
+ */
+export function exportCatalogue(
+	lists: Pick<ExportListRegistry, 'list'>,
+	principal: AuthPrincipal,
+): readonly ExportListView[] {
+	const held = new Set(principal.scopes);
+	return lists.list().map((entry) => ({
+		id: entry.id,
+		label: entry.definition.label,
+		moduleId: entry.moduleId,
+		permitted: held.has(entry.definition.permission),
+	}));
+}
+
 export class ExportService {
 	readonly #repository: ExportRepository;
 	readonly #lists: ExportListRegistry;
@@ -172,16 +189,6 @@ export class ExportService {
 	 * permission is decided again on the live principal when a job is started, so
 	 * this is what a screen offers and never what authorizes an export.
 	 */
-	lists(principal: AuthPrincipal): readonly ExportListView[] {
-		const held = new Set(principal.scopes);
-		return this.#lists.list().map((entry) => ({
-			id: entry.id,
-			label: entry.definition.label,
-			moduleId: entry.moduleId,
-			permitted: held.has(entry.definition.permission),
-		}));
-	}
-
 	jobs(tenantId: string, query: ExportJobQuery): Promise<ExportJobPage> {
 		return this.#repository.listJobs(tenantId, query);
 	}

@@ -30,6 +30,7 @@ export {
 	createJobRunner,
 	DEFAULT_JOB_BATCH_LIMIT,
 	JOB_CLAIM_LOST,
+	jobBackoff,
 	JobClaimLostError,
 } from './jobs/index.ts';
 export { createJobTraceSink, resumeJobTrace } from './jobs/index.ts';

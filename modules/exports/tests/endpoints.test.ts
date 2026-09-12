@@ -7,7 +7,11 @@ import {
 import { EXPORTS_PERMISSIONS } from '../src/acl/permissions.ts';
 import type { ExportJobView } from '../src/domain/types.ts';
 import { createExportRoutes } from '../src/api/endpoints.ts';
-import { createExportsRuntime } from '../src/server/runtime.ts';
+import {
+	createExportsRuntime,
+	type ExportsRuntime,
+} from '../src/server/runtime.ts';
+import { createExportListRegistry } from '../src/services/list-registry.ts';
 import {
 	openExportHarness,
 	principal,
@@ -74,8 +78,9 @@ interface InvokeInit extends RequestInit {
 	readonly params?: Record<string, string>;
 }
 
-function fixture(session: AuthPrincipal | null) {
-	const runtime = createExportsRuntime({
+function fixture(
+	session: AuthPrincipal | null,
+	runtime: ExportsRuntime = createExportsRuntime({
 		databases: harness.databases,
 		purpose: 'test',
 		storage: harness.storage,
@@ -83,7 +88,8 @@ function fixture(session: AuthPrincipal | null) {
 		maxRows: () => 100_000,
 		maxBytes: () => 50 * 1024 * 1024,
 		maxObjectBytes: () => 1_048_576,
-	});
+	}),
+) {
 	const list = createFakeList();
 	runtime.lists.register('users.core', [list.definition]);
 	runtime.lists.seal();
@@ -228,6 +234,34 @@ describe('the export endpoints', () => {
 			]);
 			/* The grant that decides an export is not part of what a screen reads. */
 			expect(JSON.stringify(body)).not.toContain(LIST_PERMISSION);
+		} finally {
+			await runtime.dispose();
+		}
+	});
+
+	/* A screen reads the catalogue on every visit; the answer is the sealed
+	   registry and the caller's scopes, so it must not open a database lease or
+	   run the migrations behind the repository. */
+	it('answers the catalogue without resolving the repository', async () => {
+		const untouched = () =>
+			Promise.reject(new Error('The catalogue resolved the repository.'));
+		const { runtime, call } = fixture(principal(), {
+			lists: createExportListRegistry(),
+			service: untouched,
+			repository: untouched,
+			tick: untouched,
+			start: () => {},
+			stop: () => {},
+			quiesce: async () => {},
+			dispose: async () => {},
+		});
+		try {
+			const response = await call('/api/exports/lists');
+			expect(response.status).toBe(200);
+			const body = (await response.json()) as {
+				lists: readonly { id: string }[];
+			};
+			expect(body.lists.map((entry) => entry.id)).toEqual([MEMBERS_LIST]);
 		} finally {
 			await runtime.dispose();
 		}

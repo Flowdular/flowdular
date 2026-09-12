@@ -1,9 +1,12 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
+	serviceActor,
 	userActor,
 	type Actor,
 	type ModuleSettingChange,
+	type UserActor,
 } from '@flowdular/kernel';
+import type { ErrorSink, ModuleMetrics } from '@flowdular/server';
 import { AUTH_SCOPES, MEMBER_SCOPES, OWNER_SCOPES } from '../acl/scopes.ts';
 import type {
 	ApiTokenRecord,
@@ -123,8 +126,18 @@ export interface AuthServiceOptions {
 	readonly forgetProviderKeys?: (providerId: string) => void;
 	/** Deployment-owned delivery adapter. auth.core never selects an email vendor. */
 	readonly mailDelivery?: AuthMailDelivery;
+	/**
+	 * The locale a workspace's messages are worded in. The server resolves it
+	 * from the workspace's defaultLocale setting; without one every message is
+	 * English.
+	 */
+	readonly mailLocale?: (tenantId: string) => Promise<string> | string;
 	/** Public origin used to form opaque, one-time delivery links. */
 	readonly publicBaseUrl?: string;
+	/** Counts the audit writes that failed; a failed write never fails its operation. */
+	readonly metrics?: ModuleMetrics;
+	/** Receives a failed audit write as a name and a module, never as the driver's words. */
+	readonly errorSink?: ErrorSink;
 }
 
 export interface MfaChallenge extends IssuedSession {
@@ -354,19 +367,39 @@ export const AUDIT_ACTIONS = Object.freeze({
 
 export const AUDIT_ACTION_LIST = Object.freeze(Object.values(AUDIT_ACTIONS));
 
+/* The actor an audit row records. A kernel service actor always names its
+   configuring user; a provider row stores none, so the trail admits a service
+   actor whose configuring user is unknown and persists it as null. */
+interface ServiceAuditActor {
+	readonly kind: 'service';
+	readonly id: string;
+	readonly label: string;
+	readonly configuredBy: UserActor | null;
+}
+
+type AuditActor = Actor | ServiceAuditActor;
+
 /* An operator command runs from a deployment shell and belongs to no account.
-   The audit actor_kind column accepts only 'user' or 'agent', so the operator
-   is recorded as a user whose identifier carries the cli: prefix the label
-   filter can search for. */
+   The shell is the service and the person at it, whose identifier carries the
+   cli: prefix the label filter can search for, is who configured it. */
 function operatorActor(operator: string): Actor {
-	return { kind: 'user', id: operator, label: operator };
+	return serviceActor({
+		serviceId: operator,
+		label: operator,
+		configuredBy: { kind: 'user', id: operator, label: operator },
+	});
 }
 
 /* A refused just-in-time sign-in belongs to no account of this workspace, so
    the provider that asserted the identity is the actor and the address it
    reported never reaches the trail. */
-function providerActor(provider: string): Actor {
-	return { kind: 'user', id: `oidc:${provider}`, label: `oidc:${provider}` };
+function providerActor(provider: string): ServiceAuditActor {
+	return {
+		kind: 'service',
+		id: `oidc:${provider}`,
+		label: `oidc:${provider}`,
+		configuredBy: null,
+	};
 }
 
 function member(account: AccountCredential, createdAt: number): TenantMember {
@@ -397,7 +430,10 @@ export class AuthService {
 	readonly #oidcDiscovery: OidcDiscoveryPort;
 	readonly #forgetProviderKeys: (providerId: string) => void;
 	readonly #mailDelivery: AuthMailDelivery | undefined;
+	readonly #mailLocale: (tenantId: string) => Promise<string> | string;
 	readonly #publicBaseUrl: string;
+	readonly #metrics: ModuleMetrics | undefined;
+	readonly #errorSink: ErrorSink | undefined;
 
 	constructor(repository: AuthRepository, options: AuthServiceOptions = {}) {
 		this.#repository = repository;
@@ -416,10 +452,13 @@ export class AuthService {
 			options.oidcDiscovery ?? (() => Promise.reject(discoveryUnavailable()));
 		this.#forgetProviderKeys = options.forgetProviderKeys ?? (() => undefined);
 		this.#mailDelivery = options.mailDelivery;
+		this.#mailLocale = options.mailLocale ?? (() => 'en');
 		this.#publicBaseUrl = (options.publicBaseUrl ?? 'http://localhost').replace(
 			/\/$/,
 			'',
 		);
+		this.#metrics = options.metrics;
+		this.#errorSink = options.errorSink;
 	}
 
 	get policy(): AuthPolicy {
@@ -430,7 +469,7 @@ export class AuthService {
 	   describe; a failing write is reported and swallowed. */
 	async #audit(
 		tenantId: string,
-		actor: Actor,
+		actor: AuditActor,
 		action: string,
 		subjectType: string,
 		subjectId: string,
@@ -443,6 +482,7 @@ export class AuthService {
 				actorLabel: actor.label,
 				actorKind: actor.kind,
 				actorRunId: actor.kind === 'agent' ? actor.runId : null,
+				configuredBy: actor.kind === 'service' ? actor.configuredBy : null,
 				action,
 				subjectType,
 				subjectId,
@@ -454,6 +494,13 @@ export class AuthService {
 			   bound values from the operation being audited. */
 			void error;
 			console.error('[auth.core] audit write failed');
+			this.#metrics?.counter('audit_write_failures_total', { action });
+			this.#errorSink?.report({
+				at: this.#now(),
+				name: 'AuditWriteFailed',
+				module: 'auth.core',
+				message: `Audit write failed for ${action}.`,
+			});
 		}
 	}
 
@@ -1700,11 +1747,10 @@ export class AuthService {
 			PASSWORD_RESET_TTL_MS,
 		);
 		try {
-			await this.#mailDelivery.send({
-				to: account.email,
-				kind: 'password-reset',
-				url: reset.url,
-			});
+			await this.#mailDelivery.send(
+				{ to: account.email, kind: 'password-reset', url: reset.url },
+				await this.#mailLocale(account.tenantId),
+			);
 			await this.#audit(
 				account.tenantId,
 				{ kind: 'user', id: account.accountId, label: account.email },
@@ -1810,11 +1856,10 @@ export class AuthService {
 			createdBy: actor.accountId,
 		});
 		try {
-			await this.#mailDelivery.send({
-				to: normalized,
-				kind: 'tenant-invitation',
-				url: invitation.url,
-			});
+			await this.#mailDelivery.send(
+				{ to: normalized, kind: 'tenant-invitation', url: invitation.url },
+				await this.#mailLocale(actor.tenantId),
+			);
 		} catch {
 			throw new AuthServiceError(
 				'MAIL_DELIVERY_FAILED',

@@ -140,6 +140,60 @@ describe('automations migrations', () => {
 		expect(adopted.every((result) => result.action === 'adopted')).toBe(true);
 	});
 
+	it('adopts the scheduler and trigger role migrations only with their policy and grant', async () => {
+		const database = await migrator();
+		await database.transaction(
+			async (transaction) => {
+				for (const migration of databaseMigrations) {
+					await transaction.executeScript(migration.sql.postgresql!);
+				}
+			},
+			{ access: 'write' },
+		);
+		const status = await databaseMigrationStatus(
+			database,
+			'automations.core',
+			databaseMigrations,
+		);
+		expect(status.map((entry) => entry.state)).toEqual(
+			databaseMigrations.map(() => 'adopted'),
+		);
+	});
+
+	it('refuses a schema carrying the routing indexes without the background policy or grant', async () => {
+		const database = await migrator();
+		await migrateAutomationsDatabase(database);
+		await database.transaction(
+			(transaction) =>
+				transaction.executeScript(`
+					DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = 'automations.core';
+					DROP POLICY automations_schedules_background_policy ON automations_schedules;
+					REVOKE SELECT (tenant_id, id, next_run_at, enabled)
+					  ON automations_schedules FROM coreloom_background;
+					DROP POLICY automations_triggers_background_policy ON automations_triggers;
+					REVOKE SELECT (tenant_id, id)
+					  ON automations_triggers FROM coreloom_background;
+				`),
+			{ access: 'write' },
+		);
+
+		const status = await databaseMigrationStatus(
+			database,
+			'automations.core',
+			databaseMigrations,
+		);
+		expect(status.map((entry) => [entry.id, entry.state])).toEqual([
+			['0001_automations_core', 'adopted'],
+			['0002_automations_targets', 'adopted'],
+			['0003_automations_scheduler_role', 'partial'],
+			['0004_automations_trigger_routing_role', 'partial'],
+			['0005_secret_rotation_inventory', 'adopted'],
+		]);
+		await expect(
+			runDatabaseMigrations(database, 'automations.core', databaseMigrations),
+		).rejects.toThrow('0003_automations_scheduler_role');
+	});
+
 	it('reports a pending schema before anything is applied', async () => {
 		const database = await migrator();
 		const status = await databaseMigrationStatus(

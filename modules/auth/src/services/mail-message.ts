@@ -1,57 +1,52 @@
 import { renderMailTemplate, type MailMessage } from '@flowdular/server';
+import translationsEn from '../../translations/en.json' with { type: 'json' };
+import translationsPl from '../../translations/pl.json' with { type: 'json' };
 import type { AuthMailKind, AuthMailMessage } from './mail-delivery.ts';
 
-/* What auth.core's three messages say. The wording lives here rather than in a
-   transport, so the SMTP relay and the platform mail port send the same bytes. */
+/* What auth.core's three messages say, in every shipped locale. The wording
+   lives here rather than in a transport, so the SMTP relay and the platform
+   mail port send the same bytes. */
 
-interface AuthMailTemplate {
-	readonly subject: string;
-	readonly intro: string;
-	readonly action: string;
-}
+type MailBundle = Readonly<Record<string, string>>;
 
-const TEMPLATES: Record<AuthMailKind, AuthMailTemplate> = {
-	'password-reset': {
-		subject: 'Reset your password',
-		intro:
-			'A password reset was requested for this address. Open the link below to choose a new password.',
-		action: 'Reset your password',
-	},
-	'tenant-invitation': {
-		subject: 'You have been invited to a workspace',
-		intro:
-			'You have been invited to a workspace. Open the link below to accept the invitation and set up your account.',
-		action: 'Accept the invitation',
-	},
-	'email-confirmation': {
-		subject: 'Confirm your email address',
-		intro:
-			'Confirm this address to finish setting up your account. Open the link below to complete the confirmation.',
-		action: 'Confirm your address',
-	},
+const FALLBACK_LOCALE = 'en';
+
+const BUNDLES: Readonly<Record<string, MailBundle>> = {
+	en: translationsEn,
+	pl: translationsPl,
 };
 
-const CLOSING =
-	'The link expires and can be used only once. If you did not expect this message, you can ignore it.';
+function resolveLocale(locale: string): string {
+	return Object.hasOwn(BUNDLES, locale) ? locale : FALLBACK_LOCALE;
+}
 
-/* The wording above is English, so every message says so and a client renders
-   it as English. Choosing the wording by the recipient's own locale is out of
-   scope in this module's specification. */
-const LOCALE = 'en';
+function wording(bundle: MailBundle, key: string): string {
+	return bundle[key] ?? BUNDLES[FALLBACK_LOCALE]![key] ?? key;
+}
 
 /**
- * One auth.core message, rendered. The link is the only value that reaches the
- * body, and the template helper escapes it for the HTML part, so a URL can
+ * One auth.core message, rendered from the bundle of `locale`; an unknown
+ * locale renders English and says so. The link is the only value that reaches
+ * the body, and the template helper escapes it for the HTML part, so a URL can
  * never close the anchor it sits in.
  */
-export function authMailMessage(message: AuthMailMessage): MailMessage {
-	const template = TEMPLATES[message.kind];
+export function authMailMessage(
+	message: AuthMailMessage,
+	locale: string,
+): MailMessage {
+	const resolved = resolveLocale(locale);
+	const bundle = BUNDLES[resolved]!;
+	const kind: AuthMailKind = message.kind;
+	const subject = wording(bundle, `mail.${kind}.subject`);
+	const intro = wording(bundle, `mail.${kind}.intro`);
+	const action = wording(bundle, `mail.${kind}.action`);
+	const closing = wording(bundle, 'mail.closing');
 	const rendered = renderMailTemplate(
 		{
-			subject: template.subject,
-			text: `${template.intro}\n\n{{url}}\n\n${CLOSING}\n`,
-			html: `<p>${template.intro}</p><p><a href="{{url}}">${template.action}</a></p><p>{{url}}</p><p>${CLOSING}</p>`,
-			locale: LOCALE,
+			subject,
+			text: `${intro}\n\n{{url}}\n\n${closing}\n`,
+			html: `<p>${intro}</p><p><a href="{{url}}">${action}</a></p><p>{{url}}</p><p>${closing}</p>`,
+			locale: resolved,
 		},
 		{ url: message.url },
 	);

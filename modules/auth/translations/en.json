@@ -332,5 +332,15 @@
 	"providers.error.delete": "The provider could not be deleted.",
 	"signin.workspace.label": "Workspace id",
 	"signin.workspace.help": "Enter it to see the sign-in options of that workspace.",
-	"signin.workspace.entering": "Signing in to {workspace}."
+	"signin.workspace.entering": "Signing in to {workspace}.",
+	"mail.password-reset.subject": "Reset your password",
+	"mail.password-reset.intro": "A password reset was requested for this address. Open the link below to choose a new password.",
+	"mail.password-reset.action": "Reset your password",
+	"mail.tenant-invitation.subject": "You have been invited to a workspace",
+	"mail.tenant-invitation.intro": "You have been invited to a workspace. Open the link below to accept the invitation and set up your account.",
+	"mail.tenant-invitation.action": "Accept the invitation",
+	"mail.email-confirmation.subject": "Confirm your email address",
+	"mail.email-confirmation.intro": "Confirm this address to finish setting up your account. Open the link below to complete the confirmation.",
+	"mail.email-confirmation.action": "Confirm your address",
+	"mail.closing": "The link expires and can be used only once. If you did not expect this message, you can ignore it."
 }

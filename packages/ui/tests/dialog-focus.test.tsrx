@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ConfirmDialog } from '../src/components/ConfirmDialog.tsrx';
 import { Drawer } from '../src/components/Drawer.tsrx';
+import { focusableElements, trapFocus } from '../src/index.ts';
 import { mount, run } from './dom.ts';
 
 function drawer(open: boolean, onClose: () => void, autoFocus = false) {
@@ -149,4 +150,47 @@ describe('ConfirmDialog focus', () => {
 		expect(document.activeElement?.textContent).toBe('Confirm');
 		mounted.unmount();
 	});
+});
+
+/* The shell's command palette and a module dialog hold Tab the same way, so
+   the trap is a public export rather than a copy per surface. */
+describe('trapFocus export', () => {
+	it('lists the Tab stops of a panel in document order', () => {
+		const panel = document.createElement('section');
+		panel.innerHTML =
+			'<input class="first" /><button tabindex="-1">skipped</button>' +
+			'<button disabled>skipped</button><a href="#" class="last">Docs</a>';
+		expect(focusableElements(panel).map((stop) => stop.className)).toEqual([
+			'first',
+			'last',
+		]);
+	});
+
+	it(
+		'holds Tab inside the panel and returns focus to the opener on release',
+		() => {
+			const opener = document.createElement('button');
+			opener.className = 'opener';
+			const panel = document.createElement('section');
+			panel.tabIndex = -1;
+			panel.innerHTML =
+				'<input class="first" /><button class="last">Go</button>';
+			document.body.append(opener, panel);
+			opener.focus();
+
+			const release = trapFocus(panel);
+			expect(active()).toBe('first');
+			press('Tab', true);
+			expect(active()).toBe('last');
+			press('Tab');
+			expect(active()).toBe('first');
+
+			release();
+			expect(active()).toBe('opener');
+			press('Tab');
+			expect(active()).toBe('opener');
+			opener.remove();
+			panel.remove();
+		},
+	);
 });

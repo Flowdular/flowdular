@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: profile.core
-specVersion: '1.5.1'
+specVersion: '1.5.2'
 status: approved
 name: Profile
 description: Allows a signed-in user to manage their own tenant-scoped display name and interface language, request a password change after confirming their current password, and review or end their own sessions.

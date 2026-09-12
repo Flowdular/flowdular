@@ -69,10 +69,10 @@ export class SmtpMailDelivery implements AuthMailDelivery {
 		});
 	}
 
-	async send(message: AuthMailMessage): Promise<void> {
+	async send(message: AuthMailMessage, locale: string): Promise<void> {
 		/* Accepted before the connection is opened, so an implausible recipient
 		   never reaches the relay and the caller learns why. */
-		const accepted = acceptMailMessage(authMailMessage(message));
+		const accepted = acceptMailMessage(authMailMessage(message, locale));
 		try {
 			await this.#adapter.deliver(accepted);
 		} catch {

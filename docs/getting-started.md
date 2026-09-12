@@ -81,10 +81,12 @@ pnpm flowdular setup migrate-state
 pnpm flowdular setup migrate-state --apply --confirm migrate-legacy-state
 ```
 
-The dry run lists every source, destination, collision and open database
-sidecar. Apply refuses symbolic links, existing destination files, and files
-with `-wal`, `-shm` or `-journal` state. It verifies every copied file and never
-removes the legacy source directory.
+The dry run lists every source, destination and collision. Apply copies the
+vault key files, refuses symbolic links and existing destination files, verifies
+every copied file and never removes the legacy source directory. SQLite database
+files are reported by name and left in place: the PostgreSQL and PGlite adapters
+cannot read them, so start a fresh workspace on the current adapter; that data
+does not carry over.
 
 ## Agents in a local workspace
 

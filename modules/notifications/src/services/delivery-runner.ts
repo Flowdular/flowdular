@@ -1,8 +1,8 @@
 import {
 	createJobRunner,
 	createJobTraceSink,
+	jobBackoff,
 	serverLogger,
-	type JobBackoff,
 	type JobEvent,
 	type JobRunner,
 	type Tracer,
@@ -43,19 +43,6 @@ interface ClaimedDelivery {
 }
 
 /**
- * What a loop waits after a pass that raised: its own interval, doubling to ten
- * times that and never past a minute, so a database refusing a claim gets room
- * while a loop slower than a minute keeps its own cadence.
- */
-function backoffFrom(intervalMs: number): JobBackoff {
-	return {
-		initialMs: intervalMs,
-		maxMs: Math.max(intervalMs, Math.min(60_000, intervalMs * 10)),
-		multiplier: 2,
-	};
-}
-
-/**
  * The delivery queue as the platform runner sees it: a routing read that hands
  * out one attempt per claim and one attempt delivered per claim. The loop, its
  * bound, the guard against overlapping passes, the isolation of one attempt
@@ -83,7 +70,7 @@ export function createNotificationDeliveryRunner(
 		   alone, and the stranded read is what hands it to another process once
 		   the one holding it is gone. */
 		staleAfterMs: DELIVERY_CLAIM_TIMEOUT_MS,
-		backoff: backoffFrom(options.intervalMs),
+		backoff: jobBackoff(options.intervalMs),
 		batchLimit: DELIVERY_TICK_LIMIT * 2 + 1,
 		concurrency: DELIVERY_CONCURRENCY,
 		logger: serverLogger,
@@ -167,7 +154,7 @@ export function createNotificationRetentionRunner(
 		/* No claim and no renewal, so no window: the runner reads the field only
 		   to space heartbeats this loop does not have. */
 		staleAfterMs: options.intervalMs,
-		backoff: backoffFrom(options.intervalMs),
+		backoff: jobBackoff(options.intervalMs),
 		/* One sweep per pass: the bound of a single claim is what ends it. */
 		batchLimit: 1,
 		logger: serverLogger,

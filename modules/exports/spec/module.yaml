@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: exports.core
-specVersion: 0.2.1
+specVersion: 0.2.2
 status: approved
 name: Exports Core
 description: Exports any list endpoint that already pages with the platform keyset helpers as one CSV file, through an export job that streams the list's own pages under the requester's grants, writes an RFC 4180 file with a UTF-8 byte order mark to the storage port, bounds the result by rows and by bytes, and answers a short-lived signed read URL; the list itself stays with the module that owns it and registers a declaration through the public capability exports.lists.v1.

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
+	integer,
 	runDatabaseMigrations,
 	type DatabaseHandle,
 	type DatabaseTransaction,
@@ -58,20 +59,11 @@ const TERMINAL_RUNS = new Set<WorkflowRunStatus>([
 	'cancelled',
 ]);
 
-/* PostgreSQL returns BIGINT as a string, so every integer column is
-   normalized on the way out of a row. */
-function integer(value: number | bigint | string): number {
-	const normalized = Number(value);
-	if (!Number.isSafeInteger(normalized)) {
-		throw new Error('The workflows database returned an invalid integer.');
-	}
-	return normalized;
-}
-
 function optionalInteger(
 	value: number | bigint | string | null,
+	field: string,
 ): number | null {
-	return value === null ? null : integer(value);
+	return value === null ? null : integer(value, field);
 }
 
 type Int = number | bigint | string;
@@ -259,10 +251,16 @@ function definitionFromRow(row: DefinitionRow): WorkflowDefinition {
 		name: row.name,
 		description: row.description,
 		status: row.status,
-		currentDraftRevision: integer(row.current_draft_revision),
-		publishedRevision: optionalInteger(row.published_revision),
-		createdAt: integer(row.created_at),
-		updatedAt: integer(row.updated_at),
+		currentDraftRevision: integer(
+			row.current_draft_revision,
+			'current_draft_revision',
+		),
+		publishedRevision: optionalInteger(
+			row.published_revision,
+			'published_revision',
+		),
+		createdAt: integer(row.created_at, 'created_at'),
+		updatedAt: integer(row.updated_at, 'updated_at'),
 	};
 }
 
@@ -270,12 +268,12 @@ function revisionFromRow(row: RevisionRow): WorkflowRevision {
 	return {
 		id: row.id,
 		workflowId: row.workflow_id,
-		revision: integer(row.revision),
+		revision: integer(row.revision, 'revision'),
 		graph: parse<WorkflowGraphV1>(row.graph_json),
 		graphChecksum: row.graph_checksum,
-		compilerVersion: integer(row.compiler_version) as 1,
+		compilerVersion: integer(row.compiler_version, 'compiler_version') as 1,
 		compiledOrder: parse<readonly string[]>(row.compiled_order_json),
-		publishedAt: optionalInteger(row.published_at),
+		publishedAt: optionalInteger(row.published_at, 'published_at'),
 		publishedBy:
 			row.published_actor_json === null
 				? null
@@ -290,12 +288,12 @@ function nodeExecutionFromRow(
 	return {
 		nodeId: row.node_id,
 		status: row.status,
-		latestAttempt: integer(row.latest_attempt),
+		latestAttempt: integer(row.latest_attempt, 'latest_attempt'),
 		selectedOutcomePort: row.selected_outcome_port,
-		nextAttemptAt: optionalInteger(row.next_attempt_at),
-		readyAt: optionalInteger(row.ready_at),
-		startedAt: optionalInteger(row.started_at),
-		settledAt: optionalInteger(row.settled_at),
+		nextAttemptAt: optionalInteger(row.next_attempt_at, 'next_attempt_at'),
+		readyAt: optionalInteger(row.ready_at, 'ready_at'),
+		startedAt: optionalInteger(row.started_at, 'started_at'),
+		settledAt: optionalInteger(row.settled_at, 'settled_at'),
 		attempts,
 	};
 }
@@ -305,26 +303,29 @@ function edgeFromRow(row: EdgeRow): WorkflowEdgeTransfer {
 		edgeId: row.edge_id,
 		sourceNodeId: row.source_node_id,
 		sourcePort: row.source_port,
-		sourceAttempt: optionalInteger(row.source_attempt),
+		sourceAttempt: optionalInteger(row.source_attempt, 'source_attempt'),
 		targetNodeId: row.target_node_id,
 		targetPort: row.target_port,
 		state: row.state,
 		reason: row.reason,
 		evidence: parse<WorkflowPayloadEvidenceV1>(row.evidence_json),
-		settledAt: integer(row.settled_at),
+		settledAt: integer(row.settled_at, 'settled_at'),
 	};
 }
 
 function runFromRow(row: RunRow): WorkflowRunRecord {
-	const queuedAt = integer(row.queued_at);
-	const completedAt = optionalInteger(row.completed_at);
+	const queuedAt = integer(row.queued_at, 'queued_at');
+	const completedAt = optionalInteger(row.completed_at, 'completed_at');
 	return {
 		id: row.id,
 		tenantId: row.tenant_id,
 		workflowId: row.workflow_id,
 		workflowKey: row.workflow_key,
 		workflowName: row.workflow_name,
-		workflowRevision: optionalInteger(row.workflow_revision),
+		workflowRevision: optionalInteger(
+			row.workflow_revision,
+			'workflow_revision',
+		),
 		graphChecksum: row.graph_checksum,
 		graph: parse<WorkflowGraphV1>(row.graph_json),
 		compiledOrder: parse<readonly string[]>(row.compiled_order_json),
@@ -342,24 +343,27 @@ function runFromRow(row: RunRow): WorkflowRunRecord {
 		inputPayloadId: row.input_payload_id,
 		idempotencyKey: row.idempotency_key,
 		leaseOwner: row.lease_owner,
-		leaseExpiresAt: optionalInteger(row.lease_expires_at),
-		completedNodes: integer(row.completed_nodes),
-		totalNodes: integer(row.total_nodes),
+		leaseExpiresAt: optionalInteger(row.lease_expires_at, 'lease_expires_at'),
+		completedNodes: integer(row.completed_nodes, 'completed_nodes'),
+		totalNodes: integer(row.total_nodes, 'total_nodes'),
 		usage: parse<WorkflowUsageRollupV1>(row.usage_json),
 		cost: parse<WorkflowCostRollupV1>(row.cost_json),
 		failureCode: row.failure_code,
 		queuedAt,
-		startedAt: optionalInteger(row.started_at),
+		startedAt: optionalInteger(row.started_at, 'started_at'),
 		completedAt,
 		durationMs: completedAt === null ? null : completedAt - queuedAt,
-		cancellationRequestedAt: optionalInteger(row.cancellation_requested_at),
+		cancellationRequestedAt: optionalInteger(
+			row.cancellation_requested_at,
+			'cancellation_requested_at',
+		),
 	};
 }
 
 function attemptFromRow(row: AttemptRow): WorkflowNodeAttempt {
 	return {
 		nodeId: row.node_id,
-		attempt: integer(row.attempt),
+		attempt: integer(row.attempt, 'attempt'),
 		nodeType: row.node_type,
 		status: row.status,
 		outcomePort: row.outcome_port,
@@ -371,27 +375,34 @@ function attemptFromRow(row: AttemptRow): WorkflowNodeAttempt {
 		childId: row.child_id,
 		childObservationDeadlineAt: optionalInteger(
 			row.child_observation_deadline_at,
+			'child_observation_deadline_at',
 		),
 		failureCode: row.failure_code,
 		retryClassification: row.retry_classification,
-		selectedBackoffMs: optionalInteger(row.selected_backoff_ms),
-		nextAttemptAt: optionalInteger(row.next_attempt_at),
-		startedAt: integer(row.started_at),
-		completedAt: optionalInteger(row.completed_at),
-		durationMs: optionalInteger(row.duration_ms),
+		selectedBackoffMs: optionalInteger(
+			row.selected_backoff_ms,
+			'selected_backoff_ms',
+		),
+		nextAttemptAt: optionalInteger(row.next_attempt_at, 'next_attempt_at'),
+		startedAt: integer(row.started_at, 'started_at'),
+		completedAt: optionalInteger(row.completed_at, 'completed_at'),
+		durationMs: optionalInteger(row.duration_ms, 'duration_ms'),
 	};
 }
 
 function eventFromRow(row: EventRow): WorkflowRunEventV1 {
-	const virtualOffsetMs = optionalInteger(row.virtual_offset_ms);
+	const virtualOffsetMs = optionalInteger(
+		row.virtual_offset_ms,
+		'virtual_offset_ms',
+	);
 	return {
 		eventId: row.event_id,
 		schemaVersion: 1,
 		tenantId: row.tenant_id,
 		runId: row.run_id,
-		sequence: integer(row.sequence),
+		sequence: integer(row.sequence, 'sequence'),
 		type: row.event_type,
-		recordedAt: integer(row.recorded_at),
+		recordedAt: integer(row.recorded_at, 'recorded_at'),
 		...(virtualOffsetMs === null ? {} : { virtualOffsetMs }),
 		payload: parse<Readonly<Record<string, JsonValue>>>(row.payload_json),
 	};
@@ -399,14 +410,14 @@ function eventFromRow(row: EventRow): WorkflowRunEventV1 {
 
 function auditFromRow(row: AuditRow): WorkflowAuditEvent {
 	return {
-		sequence: integer(row.sequence),
+		sequence: integer(row.sequence, 'sequence'),
 		actor: parse<Actor>(row.actor_json),
 		origin: parse<WorkflowExecutionOrigin>(row.origin_json),
 		action: row.action,
 		subjectType: row.subject_type,
 		subjectId: row.subject_id,
 		metadata: parse<Readonly<Record<string, JsonValue>>>(row.metadata_json),
-		occurredAt: integer(row.occurred_at),
+		occurredAt: integer(row.occurred_at, 'occurred_at'),
 		previousHash: row.previous_hash,
 		eventHash: row.event_hash,
 	};
@@ -880,7 +891,7 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 			)
 		)[0];
 		const base = {
-			sequence: (previous ? integer(previous.sequence) : 0) + 1,
+			sequence: (previous ? integer(previous.sequence, 'sequence') : 0) + 1,
 			actor,
 			origin,
 			action,
@@ -923,7 +934,8 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 				[tenantId, runId],
 			)
 		)[0];
-		const sequence = (optionalInteger(previous?.sequence ?? null) ?? 0) + 1;
+		const sequence =
+			(optionalInteger(previous?.sequence ?? null, 'sequence') ?? 0) + 1;
 		if (sequence > WORKFLOW_LIMITS.maxRunEvents) {
 			throw new Error('WORKFLOW_LIMIT_EXCEEDED');
 		}
@@ -1288,7 +1300,7 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 			)[0];
 			if (
 				definition.publishedRevision !== null ||
-				integer(runs?.count ?? 0) > 0
+				integer(runs?.count ?? 0, 'count') > 0
 			) {
 				return 'in-use';
 			}
@@ -1331,7 +1343,7 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 				id: row.id,
 				key: row.workflow_key,
 				name: row.name,
-				revision: integer(row.published_revision),
+				revision: integer(row.published_revision, 'published_revision'),
 				graphChecksum: row.graph_checksum,
 			})),
 		);
@@ -1639,7 +1651,8 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 			)[0];
 			if (!row) return null;
 			const leaseExpired =
-				row.lease_expires_at === null || integer(row.lease_expires_at) <= now;
+				row.lease_expires_at === null ||
+				integer(row.lease_expires_at, 'lease_expires_at') <= now;
 			const claimable =
 				row.mode === 'live' &&
 				(row.status === 'queued' ||
@@ -2044,7 +2057,7 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 						);
 			const duration = Math.max(
 				0,
-				write.recordedAt - integer(prior.started_at),
+				write.recordedAt - integer(prior.started_at, 'started_at'),
 			);
 			await this.#exec(transaction, SQL.settleAttempt, [
 				write.status,
@@ -2623,7 +2636,7 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 						[row.tenant_id, row.run_id],
 					)
 				)[0];
-				if (integer(remaining?.count ?? 0) === 0) {
+				if (integer(remaining?.count ?? 0, 'count') === 0) {
 					await this.#exec(transaction, SQL.expireRunOutputEvidence, [
 						row.tenant_id,
 						row.run_id,
@@ -2645,7 +2658,7 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 					])
 				)[0],
 		);
-		return integer(row?.count ?? 0);
+		return integer(row?.count ?? 0, 'count');
 	}
 
 	/* The operations behind the declared data classes. Each runs on this

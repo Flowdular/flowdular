@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: search.core
-specVersion: 0.1.4
+specVersion: 0.1.5
 status: approved
 name: Search Core
 description: Lets a member find records across modules from one search box, by asking every module that registered a search provider to search its own tables under the member's permissions and merging the paginated hits, with PostgreSQL full-text indexes owned by each module and no central index.

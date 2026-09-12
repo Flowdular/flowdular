@@ -84,6 +84,7 @@ export type {
 	BackupManifest,
 } from './backup.ts';
 export { appendRecordHistory, queryRecordHistory } from './record-history.ts';
+export { integer } from './decoders.ts';
 export { databaseResetPlan, resetDatabase } from './reset.ts';
 export type {
 	DatabaseResetAuthorization,

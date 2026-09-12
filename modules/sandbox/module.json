@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "sandbox.core",
 	"package": "@flowdular/module-sandbox",
-	"version": "0.4.0",
+	"version": "0.4.1",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations", "cli"],
 	"platform": {

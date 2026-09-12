@@ -65,6 +65,77 @@ so a workspace can change them.
 When the work is done, eject it into `modules/` and enable it, or open a pull
 request with the gate evidence attached.
 
+## Deliver as a pull request
+
+The eject route (`POST /sandbox/api/sessions/:id/eject`) takes `target:
+'workspace' | 'git-pr'`. `workspace` copies the session modules into `modules/`
+of this checkout. `git-pr` (`packages/sandbox/src/server/delivery/git-pr.ts`)
+commits the same change on a branch and opens a pull request; the operator's
+working tree and index stay untouched because the work happens in a detached
+worktree under `.flowdular/sandbox/worktrees/<session id>`, removed afterwards.
+
+### Configuration
+
+Project settings live in `flowdular.json` under `sandbox.delivery`, read at
+request time (`delivery/configuration.ts`): `targets`, `default`,
+`maxChangedFiles` and `git` with `remote`
+(`origin`), `repository` (`owner/name`, derived from the remote when null),
+`baseBranch` (`main`), `branchPrefix` (`sandbox`), `provider` (`github` or
+`none`), `mode` (`auto`, `direct` or `fork`), `forkOwner` and `reviewers`.
+
+Operator settings live in the sandbox configuration
+(`.flowdular/sandbox/config.json`, `GitHubDeliveryConfiguration` in
+`server/config.ts`) and are set from the sandbox settings screen, not from
+environment variables: `enabled`, `overridesProject`, `remote`, `repository`,
+`baseBranch`, `branchPrefix`, `mode`, `forkOwner`, `reviewers` (settings
+request fields `githubEnabled`, `githubOverridesProject`, `githubRemote` and so
+on). With `overridesProject` the operator values replace the project `git`
+block except `provider`. `enabled: false` disables the target with
+`EJECT_TARGET_DISABLED`. A provider token (`githubToken` in the settings
+request, stored sealed as `gitProviderToken`) is handed to `gh` as `GH_TOKEN`
+and to `git` as a redacted authorization header; it never appears in command
+arguments, remote URLs or step output.
+
+### Branch and pull request
+
+The branch is `<branchPrefix>/<module directory>-<first 8 characters of the
+session id>`, created from `<remote>/<baseBranch>`. In the worktree the sandbox
+stages the modules, runs `pnpm install`, `module enable` for each new module and
+the platform typecheck, then checks the guardrails: changed paths limited to the
+session modules, the lockfile and the CLI-owned composition files, the file
+count within `maxChangedFiles` (else `.ai/policies/task-budgets.yaml`), new
+packages within `maxNewDependencies` from `.ai/policies/task-budgets.yaml`
+(default 0, per-kind overrides). Owners and the cross-owner reviewer
+requirement (`crossOwnerChanges.requireReviewer`) come from
+`.ai/policies/path-ownership.yaml`. The commit reads
+`sandbox: add|update <module id>` with the session id and the gate summary; the
+push uses `--force-with-lease`. A branch that exists but was not created for
+this session is refused (`GIT_BRANCH_CONFLICT`).
+
+With `provider: github` and a working `gh auth status`, `gh pr create` opens the
+pull request against `baseBranch` with `--reviewer` from `reviewers`; when a
+pull request for the branch is already open, the push updates it. `mode: auto`
+uses a direct push only after GitHub confirms push access and otherwise asks the
+operator to choose `direct` or `fork`; only an explicit `fork` creates or reuses
+`<forkOwner>/<name>`. Without `gh`, without a login, or with `provider: none`,
+the branch is still pushed; the plan shows a GitHub compare link when
+`repository` is configured or derived from a GitHub remote URL, otherwise the
+remote and branch name.
+`.flowdular/sandbox/sessions/<id>/delivery.json` keeps the branch and the URL.
+
+### Gates as evidence
+
+Delivery reruns every gate from `delivery/plan.ts` (`spec-schema`,
+`module-schema`, `dependencies`, `typecheck`, `tests`, `format`, `auto-review`)
+before anything is committed; a missing, failed or skipped result stops it
+(`EJECT_GATES_MISSING`, `EJECT_GATES_FAILED`), and each module needs a current
+review record (`EJECT_REVIEW_REQUIRED`) and an approved spec hash. The pull
+request body carries the spec version and status per module, a table of gate,
+module and result, the files added, modified and removed, the risks the
+guardrails noticed, and the post-merge `auth sync-scopes` command. The table is
+what the sandbox measured on the delivered bytes; `pnpm verify` on the branch
+and a human review remain the repository's own gate.
+
 ## Decisions the specialist needs
 
 A specialist that cannot continue without a business decision ends its reply

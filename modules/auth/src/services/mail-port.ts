@@ -9,9 +9,9 @@ import { authMailMessage } from './mail-message.ts';
  */
 export function createMailPortDelivery(mail: MailPort): AuthMailDelivery {
 	return {
-		async send(message: AuthMailMessage): Promise<void> {
+		async send(message: AuthMailMessage, locale: string): Promise<void> {
 			try {
-				await mail.send(authMailMessage(message));
+				await mail.send(authMailMessage(message, locale));
 			} catch (error) {
 				const code = error instanceof MailError ? error.code : 'MAIL_FAILED';
 				console.error(`[auth.core] mail delivery failed (${message.kind})`, {

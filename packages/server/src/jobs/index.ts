@@ -79,6 +79,7 @@ export {
 	createJobRunner,
 	DEFAULT_JOB_BATCH_LIMIT,
 	JOB_CLAIM_LOST,
+	jobBackoff,
 	JobClaimLostError,
 } from './runner.ts';
 export type {

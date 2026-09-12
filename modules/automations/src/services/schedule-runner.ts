@@ -1,6 +1,7 @@
 import {
 	createJobRunner,
 	createJobTraceSink,
+	jobBackoff,
 	serverLogger,
 	type JobEvent,
 	type JobRunner,
@@ -51,16 +52,7 @@ export function createAutomationScheduleRunner(
 		   swaps, and the slot key the run carries, are its fence, so no lease is
 		   held and no renewal runs. */
 		staleAfterMs: options.intervalMs,
-		/* A pass that raised waits its own interval, doubling to ten times that
-		   and never past a minute, so a database refusing the poll gets room. */
-		backoff: {
-			initialMs: options.intervalMs,
-			maxMs: Math.max(
-				options.intervalMs,
-				Math.min(60_000, options.intervalMs * 10),
-			),
-			multiplier: 2,
-		},
+		backoff: jobBackoff(options.intervalMs),
 		batchLimit: SCHEDULE_POLL_PAGE,
 		logger: serverLogger,
 		now: options.now,

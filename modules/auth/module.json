@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "auth.core",
 	"package": "@flowdular/module-auth",
-	"version": "0.13.7",
+	"version": "0.13.8",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations", "cli"],
 	"platform": {

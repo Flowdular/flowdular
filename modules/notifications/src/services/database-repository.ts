@@ -5,7 +5,7 @@ import type {
 	DatabaseStatement,
 	DatabaseTransaction,
 } from '@flowdular/database';
-import { runDatabaseMigrations } from '@flowdular/database';
+import { integer, runDatabaseMigrations } from '@flowdular/database';
 import type {
 	DeliveryAttempt,
 	DeliveryChannel,
@@ -308,16 +308,6 @@ function isDuplicateName(error: unknown): boolean {
 		) ||
 			text.includes('notifications_webhook_subscriptions_name_idx'))
 	);
-}
-
-/* PostgreSQL returns BIGINT as a string, so every integer read crosses this
-   instead of trusting the driver's representation. */
-function integer(value: number | bigint | string, field: string): number {
-	const normalized = Number(value);
-	if (!Number.isSafeInteger(normalized)) {
-		throw new Error(`The notifications database returned an invalid ${field}.`);
-	}
-	return normalized;
 }
 
 function optionalInteger(

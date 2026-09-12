@@ -1,6 +1,9 @@
 schemaVersion: 1
-# Consumed by nobody (zero references under packages/). Review guidance: who
-# answers for a path and which role may write it.
+# Read by the git-pr delivery target (packages/sandbox/src/server/delivery/
+# policies.ts, loadPathOwnership): owners name who answers for a changed path
+# and crossOwnerChanges.requireReviewer asks for a reviewer from each owner in
+# the pull request body. Otherwise review guidance: who answers for a path and
+# which role may write it.
 owners:
   packages/contracts/**: platform-architecture
   packages/kernel/**: platform-architecture

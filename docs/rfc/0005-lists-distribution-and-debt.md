@@ -1,8 +1,9 @@
 # RFC 0005: Server-side lists, official module distribution and the recorded debt
 
 - Status: accepted by the owner on 2026-09-12; first wave I1, I4, I2, I3, I6
-  in that order, I7 at any point; I1 delivered on 2026-09-12, see
-  `docs/reviews/lists-distribution-rfc0005-2026-09-12.md`
+  in that order, I7 at any point; I1, I4, the small I6 items and I7
+  delivered on 2026-09-12, see
+  `docs/reviews/lists-distribution-rfc0005-2026-09-12.md`; I2 and I3 next
 - Date: 2026-09-12
 - Follows: RFC 0004 (platform services, first wave delivered on 2026-09-12,
   see `docs/reviews/platform-services-rfc0004-2026-09-12.md`), RFC 0003

@@ -1,6 +1,7 @@
 import {
 	createJobRunner,
 	createJobTraceSink,
+	jobBackoff,
 	serverLogger,
 	type JobRunner,
 	type Logger,
@@ -54,16 +55,7 @@ export function createSessionSweepRunner(
 		/* The sweep claims nothing: no row is leased, so no renewal can lapse and
 		   nothing can take the work over while a pass runs. */
 		staleAfterMs: options.intervalMs,
-		/* A pass that raised waits its own interval, doubling to ten times that
-		   and never past a minute, so a database refusing the delete gets room. */
-		backoff: {
-			initialMs: options.intervalMs,
-			maxMs: Math.max(
-				options.intervalMs,
-				Math.min(60_000, options.intervalMs * 10),
-			),
-			multiplier: 2,
-		},
+		backoff: jobBackoff(options.intervalMs),
 		/* One claim per pass, and the claim is the pass itself: the delete it
 		   performs carries its own row bound and leaves the rest to the next. */
 		batchLimit: 1,

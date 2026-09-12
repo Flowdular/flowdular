@@ -1,5 +1,5 @@
 import type { DatabaseHandle } from '@flowdular/database';
-import { runDatabaseMigrations } from '@flowdular/database';
+import { integer, runDatabaseMigrations } from '@flowdular/database';
 import type {
 	DataClassExportSink,
 	DataClassExportSummary,
@@ -94,16 +94,6 @@ interface JobRow {
 	claimed_at: number | bigint | string | null;
 	started_at: number | bigint | string;
 	completed_at: number | bigint | string | null;
-}
-
-/* PostgreSQL returns BIGINT as a string, so every integer read crosses this
-   instead of trusting the driver's representation. */
-function integer(value: number | bigint | string, field: string): number {
-	const normalized = Number(value);
-	if (!Number.isSafeInteger(normalized)) {
-		throw new Error(`The export database returned an invalid ${field}.`);
-	}
-	return normalized;
 }
 
 function optionalInteger(
