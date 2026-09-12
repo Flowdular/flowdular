@@ -1,6 +1,6 @@
 # RFC 0001: Enterprise readiness, data retention first
 
-- Status: draft, not accepted
+- Status: G1 to G7 delivered with RFC 0002 (2026-09-12); G8 and G9 carried into RFC 0004
 - Date: 2026-09-02
 - Relates to: ADR 0003 (module settings), ADR 0004 (enterprise access and audit), ADR 0006 (agentic workflows), ADR 0008 (database adapter contract)
 
