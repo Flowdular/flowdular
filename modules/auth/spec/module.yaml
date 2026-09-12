@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: auth.core
-specVersion: 0.13.7
+specVersion: 0.13.8
 status: approved
 name: Authentication Core
 description: Provides tenant-aware accounts, password authentication, sessions, scopes, tenant roles, API tokens for machine clients, the module settings store, the auth audit trail, security headers, authentication screens, and server authorization middleware.
@@ -58,6 +58,7 @@ invariants:
   - Operator provisioning creates a workspace, its owner and the owner scopes exactly as sign-up does, works against the deployment database, and never reads the sign-up setting.
   - An operator command never returns a password the operator did not supply. It emits a single-use setup or invitation link once, and a supplied password is read from the environment rather than from a command flag.
   - Every operator provisioning command appends an audit row whose actor identifies the operator shell that ran it.
+  - An audit row records its actor as one of the kernel kinds user, agent or service. An operator command and an identity provider are service actors, an account id is stored for a user only, an agent row names its run, and a service row stores the user who configured it, or null when that user is not stored, as an identity provider's is not.
   - TOTP secrets are encrypted with a deployment-provided AES-256 key; a successful password check creates a short-lived, single-use MFA challenge rather than a session.
   - Every stored TOTP secret records the id of the key that sealed it, and a factor sealed before that id existed stays readable. Retired keys listed in FD_AUTH_MFA_KEY_PREVIOUS open stored factors and seal nothing, and the operator rotation re-seals the stale rows in bounded batches without clobbering a factor re-enrolled while it runs.
   - A workspace whose auth.core.requireMfa setting is on answers no workspace API and no module web page to a member without a confirmed second factor; a web page resolves no identity for that member and answers 401. Only the platform health and readiness probes, the public sign-in configuration, the account routes that complete enrolment, change the password, switch workspace, or sign out, the settings read, and the settings write whose body targets auth.core.requireMfa stay open; every other settings write is held like any other workspace API. The refusal is the stable MFA_ENROLMENT_REQUIRED problem, and the setting binds the workspace it is stored for and no other.
@@ -68,6 +69,7 @@ invariants:
   - An external identity is the provider subject. It is stored on the account at the first sign-in and resolves the account afterwards; the reported address only bootstraps that first link, and an account already bound to another subject of the same provider is never re-bound.
   - A password must clear the configured minimum length, must not be one of the hundred most common passwords, and must not contain the local part of the account address.
   - External email delivery is an injected deployment adapter. The local in-memory adapter is development-only and never exposes tokens over HTTP or logs.
+  - Every auth.core message is worded in the default locale of the workspace it concerns, read from that workspace's auth.core.defaultLocale setting when the message is sent, and declares that locale; a locale the module ships no bundle for is rendered as English and declares en.
   - The mail transport is chosen by deployment configuration, either none, the in-memory development adapter outside production, or an SMTP relay. A misconfigured transport refuses the boot by naming the variable, and the relay URL and its credentials never reach a response, a log line, or an audit row.
   - Authentication and administration events are appended to an auth audit trail that is readable per tenant and never contains credentials or raw tokens.
   - Every request-time read and write runs on a tenant-scoped database handle, under forced row-level security bound to the transaction tenant.
@@ -299,7 +301,7 @@ outOfScope:
   - SAML and LDAP are not offered; a provider is OIDC with discovery.
   - Discovering a workspace from an e-mail address is not offered; the person names the workspace first.
   - E-mailing a provisioned member is deferred to the notifications delivery path once auth mail kinds are extended.
-  - Wording a message in the recipient's own language is deferred; every auth.core message is written in English and declares that locale, so a client renders and reads it as English.
+  - Wording a message in a workspace's own custom phrasing is deferred; every auth.core message is rendered from the shipped locale bundles, so a workspace picks a language and never its own text.
 decisions:
   - id: D-G2-SCOPE
     question: What does this G2 delivery contain?

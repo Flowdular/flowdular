@@ -187,9 +187,13 @@ describe('operator workspace provisioning', () => {
 		const provisioned = audit.events.find(
 			(event) => event.action === 'auth.workspace.provisioned',
 		);
+		/* The shell is a service configured by the person at it, never an
+		   account of the workspace it created. */
 		expect(provisioned).toMatchObject({
 			actorLabel: OPERATOR,
-			actorAccountId: OPERATOR,
+			actorAccountId: null,
+			actorKind: 'service',
+			configuredBy: { kind: 'user', id: OPERATOR, label: OPERATOR },
 			subjectType: 'tenant',
 			subjectId: created.workspace.tenantId,
 			metadata: { slug: 'example-operations', name: 'Example Operations' },

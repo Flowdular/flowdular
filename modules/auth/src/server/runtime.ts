@@ -21,12 +21,19 @@ import {
 import {
 	createSecurityHeadersMiddleware,
 	mailConfigFromEnvironment,
+	serverErrorSink,
 	DEVELOPMENT_CONTENT_SECURITY_POLICY,
 	PRODUCTION_CONTENT_SECURITY_POLICY,
+	type ErrorSink,
 	type MailPort,
+	type ModuleMetrics,
 } from '@flowdular/server';
 import { createAuthenticationMiddleware } from '../middleware/authentication.ts';
-import { AuthService, type AuthPolicy } from '../services/auth-service.ts';
+import {
+	AUDIT_ACTIONS,
+	AuthService,
+	type AuthPolicy,
+} from '../services/auth-service.ts';
 import { authDataClasses } from '../services/data-classes.ts';
 import {
 	DatabaseAuthRepository,
@@ -83,6 +90,13 @@ export interface AuthRuntimeOptions extends AuthRuntimeEnvironmentOptions {
 	 * both read the same variables, and one deployment has one outbox.
 	 */
 	readonly mail?: MailPort;
+	/**
+	 * The series auth.core records, bound to its id by the composition. Absent,
+	 * a failed audit write is still logged and reported, only not counted.
+	 */
+	readonly metrics?: ModuleMetrics;
+	/** Where a failed audit write is reported; defaults to the process sink. */
+	readonly errorSink?: ErrorSink;
 }
 
 /** Everything the process environment can decide on its own. */
@@ -706,6 +720,13 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 			),
 		};
 	};
+	/* An invitation and a reset go to an address, so the workspace default is
+	   the one locale every message has. */
+	const mailLocale = async (tenantId: string): Promise<string> => {
+		await primeTenant(tenantId);
+		return moduleSettings.get<string>(tenantId, 'auth.core', 'defaultLocale');
+	};
+	const errorSink = options.errorSink ?? serverErrorSink();
 	const policy = (): AuthPolicy => ({
 		sessionTtlMs: settings.sessionTtlMs,
 		sessionIdleMs: settings.sessionIdleMs,
@@ -742,9 +763,12 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 				? { mfaPreviousEncryptionKeys: options.mfaPreviousEncryptionKeys }
 				: {}),
 			...(mailDelivery ? { mailDelivery } : {}),
+			mailLocale,
 			...(options.publicBaseUrl
 				? { publicBaseUrl: options.publicBaseUrl }
 				: {}),
+			...(options.metrics ? { metrics: options.metrics } : {}),
+			errorSink,
 		});
 		// Expired rows only matter for storage; the lookup already filters them.
 		sessionSweep.start();
@@ -794,6 +818,17 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 				`[auth.core] settings audit write failed for ${change.moduleId}.${change.key}:`,
 				error instanceof Error ? error.message : error,
 			);
+			const action =
+				change.kind === 'flag'
+					? AUDIT_ACTIONS.settingsFlagChanged
+					: AUDIT_ACTIONS.settingsUpdated;
+			options.metrics?.counter('audit_write_failures_total', { action });
+			errorSink.report({
+				at: Date.now(),
+				name: 'AuditWriteFailed',
+				module: 'auth.core',
+				message: `Audit write failed for ${action}.`,
+			});
 		});
 		settingsAuditWrites.add(write);
 		void write.finally(() => settingsAuditWrites.delete(write));

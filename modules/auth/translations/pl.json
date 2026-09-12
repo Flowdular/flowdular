@@ -332,5 +332,15 @@
 	"providers.error.delete": "Nie udało się usunąć dostawcy.",
 	"signin.workspace.label": "Identyfikator obszaru",
 	"signin.workspace.help": "Podaj go, aby zobaczyć opcje logowania tego obszaru.",
-	"signin.workspace.entering": "Logowanie do {workspace}."
+	"signin.workspace.entering": "Logowanie do {workspace}.",
+	"mail.password-reset.subject": "Zresetuj swoje hasło",
+	"mail.password-reset.intro": "Dla tego adresu poproszono o zresetowanie hasła. Otwórz poniższy link, aby wybrać nowe hasło.",
+	"mail.password-reset.action": "Zresetuj hasło",
+	"mail.tenant-invitation.subject": "Zaproszenie do obszaru roboczego",
+	"mail.tenant-invitation.intro": "Otrzymałeś zaproszenie do obszaru roboczego. Otwórz poniższy link, aby przyjąć zaproszenie i skonfigurować konto.",
+	"mail.tenant-invitation.action": "Przyjmij zaproszenie",
+	"mail.email-confirmation.subject": "Potwierdź swój adres e-mail",
+	"mail.email-confirmation.intro": "Potwierdź ten adres, aby dokończyć zakładanie konta. Otwórz poniższy link, aby zakończyć potwierdzanie.",
+	"mail.email-confirmation.action": "Potwierdź adres",
+	"mail.closing": "Link wygasa i można go użyć tylko raz. Jeśli nie spodziewałeś się tej wiadomości, możesz ją zignorować."
 }

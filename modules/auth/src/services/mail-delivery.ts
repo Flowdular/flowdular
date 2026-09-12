@@ -12,15 +12,16 @@ export interface AuthMailMessage {
 }
 
 export interface AuthMailDelivery {
-	send(message: AuthMailMessage): Promise<void>;
+	/** `locale` is the workspace default the wording is rendered in. */
+	send(message: AuthMailMessage, locale: string): Promise<void>;
 }
 
 export class DevelopmentMailDelivery implements AuthMailDelivery {
-	readonly messages: AuthMailMessage[] = [];
+	readonly messages: (AuthMailMessage & { readonly locale: string })[] = [];
 
-	async send(message: AuthMailMessage): Promise<void> {
+	async send(message: AuthMailMessage, locale: string): Promise<void> {
 		/* Local-only evidence for tests and the dev composition. It is intentionally
 		   in memory, never exposed over HTTP or written to logs. */
-		this.messages.push({ ...message });
+		this.messages.push({ ...message, locale });
 	}
 }

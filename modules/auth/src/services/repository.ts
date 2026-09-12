@@ -2,6 +2,7 @@ import type {
 	ActorKind,
 	ModuleSettingRecord,
 	ModuleSettingValue,
+	UserActor,
 } from '@flowdular/kernel';
 import type {
 	ApiTokenRecord,
@@ -237,6 +238,9 @@ export interface AuditRecord {
 	readonly actorKind: ActorKind;
 	/* The agent run the entry is traceable to; null for a user. */
 	readonly actorRunId: string | null;
+	/* The user who configured a service actor; null for every other kind and
+	   for a service whose configuring user is not stored. */
+	readonly configuredBy?: UserActor | null;
 	readonly action: string;
 	readonly subjectType: string;
 	readonly subjectId: string;
@@ -249,6 +253,8 @@ export interface AuditRecord {
 export interface AuditActorEvent extends AuditEvent {
 	readonly actorKind: ActorKind;
 	readonly actorRunId: string | null;
+	/** The user who configured a service actor; null for every other kind. */
+	readonly configuredBy: UserActor | null;
 }
 
 /**

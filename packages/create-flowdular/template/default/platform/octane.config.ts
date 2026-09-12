@@ -102,6 +102,7 @@ const authRuntime = createAuthRuntime({
 	databases,
 	dataClasses,
 	mail,
+	metrics: createModuleMetrics('auth.core'),
 });
 
 /* Module APIs come from the generated composition. Enable or disable modules

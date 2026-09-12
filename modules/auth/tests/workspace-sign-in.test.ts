@@ -631,7 +631,12 @@ describe('AUTH-JIT-NO-ABSORPTION', () => {
 		const refusal = audit.events.find(
 			(event) => event.action === 'auth.jit.refused',
 		);
+		/* The provider row stores no configuring account, so the service actor
+		   carries none. */
 		expect(refusal).toMatchObject({
+			actorKind: 'service',
+			actorAccountId: null,
+			configuredBy: null,
 			subjectType: 'sign-in',
 			subjectId: 'workforce',
 			metadata: {

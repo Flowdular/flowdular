@@ -156,16 +156,22 @@ describe('SmtpMailDelivery', () => {
 			from: FROM,
 			createTransport: transport.createTransport,
 		});
-		await delivery.send({
-			to: 'invited@example.com',
-			kind: 'tenant-invitation',
-			url: RESET_URL,
-		});
-		await delivery.send({
-			to: 'invited@example.com',
-			kind: 'password-reset',
-			url: RESET_URL,
-		});
+		await delivery.send(
+			{
+				to: 'invited@example.com',
+				kind: 'tenant-invitation',
+				url: RESET_URL,
+			},
+			'en',
+		);
+		await delivery.send(
+			{
+				to: 'invited@example.com',
+				kind: 'password-reset',
+				url: RESET_URL,
+			},
+			'en',
+		);
 
 		expect(transport.created).toEqual([
 			{
@@ -178,11 +184,14 @@ describe('SmtpMailDelivery', () => {
 				greetingTimeout: 10_000,
 			},
 		]);
-		await delivery.send({
-			to: 'invited@example.com',
-			kind: 'email-confirmation',
-			url: RESET_URL,
-		});
+		await delivery.send(
+			{
+				to: 'invited@example.com',
+				kind: 'email-confirmation',
+				url: RESET_URL,
+			},
+			'en',
+		);
 		expect(transport.created).toHaveLength(1);
 	});
 
@@ -193,11 +202,14 @@ describe('SmtpMailDelivery', () => {
 			from: 'no-reply@example.com',
 			rejectUnauthorized: false,
 			createTransport: transport.createTransport,
-		}).send({
-			to: 'person@example.com',
-			kind: 'password-reset',
-			url: RESET_URL,
-		});
+		}).send(
+			{
+				to: 'person@example.com',
+				kind: 'password-reset',
+				url: RESET_URL,
+			},
+			'en',
+		);
 
 		expect(transport.created[0]).toEqual({
 			host: 'smtp.example.com',
@@ -226,11 +238,14 @@ describe('SmtpMailDelivery', () => {
 				from: FROM,
 				...(requireTLS === undefined ? {} : { requireTLS }),
 				createTransport: transport.createTransport,
-			}).send({
-				to: 'person@example.com',
-				kind: 'password-reset',
-				url: RESET_URL,
-			});
+			}).send(
+				{
+					to: 'person@example.com',
+					kind: 'password-reset',
+					url: RESET_URL,
+				},
+				'en',
+			);
 		}
 
 		expect(enforced.created[0]?.requireTLS).toBe(true);
@@ -245,11 +260,14 @@ describe('SmtpMailDelivery', () => {
 			url: SMTP_URL,
 			from: FROM,
 			createTransport: transport.createTransport,
-		}).send({
-			to: 'person@example.com',
-			kind: 'password-reset',
-			url: RESET_URL,
-		});
+		}).send(
+			{
+				to: 'person@example.com',
+				kind: 'password-reset',
+				url: RESET_URL,
+			},
+			'en',
+		);
 
 		expect(transport.created[0]).not.toHaveProperty('requireTLS');
 	});
@@ -276,7 +294,10 @@ describe('SmtpMailDelivery', () => {
 			'tenant-invitation',
 			'email-confirmation',
 		] as const) {
-			await delivery.send({ to: 'person@example.com', kind, url: RESET_URL });
+			await delivery.send(
+				{ to: 'person@example.com', kind, url: RESET_URL },
+				'en',
+			);
 		}
 
 		expect(transport.sent.map((message) => message.subject)).toEqual([
@@ -310,7 +331,7 @@ describe('SmtpMailDelivery', () => {
 			'person@example.com, other@example.com',
 		]) {
 			await expect(
-				delivery.send({ to, kind: 'password-reset', url: RESET_URL }),
+				delivery.send({ to, kind: 'password-reset', url: RESET_URL }, 'en'),
 			).rejects.toThrow(/not deliverable/);
 		}
 		expect(transport.created).toHaveLength(0);
@@ -329,11 +350,14 @@ describe('SmtpMailDelivery', () => {
 		});
 
 		await expect(
-			delivery.send({
-				to: 'invited@example.com',
-				kind: 'tenant-invitation',
-				url: RESET_URL,
-			}),
+			delivery.send(
+				{
+					to: 'invited@example.com',
+					kind: 'tenant-invitation',
+					url: RESET_URL,
+				},
+				'en',
+			),
 		).rejects.toThrow(/^Mail delivery failed for tenant-invitation\.$/);
 		expect(logged).toHaveBeenCalledWith(
 			'[auth.core] smtp delivery failed (tenant-invitation)',
@@ -369,7 +393,10 @@ describe('auth as a sender on the platform mail port', () => {
 			'tenant-invitation',
 			'email-confirmation',
 		] as const) {
-			await delivery.send({ to: 'person@example.com', kind, url: RESET_URL });
+			await delivery.send(
+				{ to: 'person@example.com', kind, url: RESET_URL },
+				'en',
+			);
 		}
 
 		expect(mail.outbox.map((message) => message.subject)).toEqual([
@@ -403,11 +430,14 @@ describe('auth as a sender on the platform mail port', () => {
 		});
 
 		await expect(
-			delivery.send({
-				to: 'invited@example.com',
-				kind: 'tenant-invitation',
-				url: RESET_URL,
-			}),
+			delivery.send(
+				{
+					to: 'invited@example.com',
+					kind: 'tenant-invitation',
+					url: RESET_URL,
+				},
+				'en',
+			),
 		).rejects.toThrow(/^Mail delivery failed for tenant-invitation\.$/);
 		expect(JSON.stringify(logged.mock.calls)).not.toContain('s3cr3t');
 	});

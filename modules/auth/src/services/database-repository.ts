@@ -1,4 +1,5 @@
 import {
+	integer,
 	runDatabaseMigrations,
 	type DatabaseHandle,
 	type DatabaseParameter,
@@ -9,6 +10,7 @@ import type {
 	ActorKind,
 	ModuleSettingRecord,
 	ModuleSettingValue,
+	UserActor,
 } from '@flowdular/kernel';
 import { BUILTIN_ROLES } from '../acl/scopes.ts';
 import type {
@@ -197,6 +199,7 @@ interface AuditRow {
 	actor_label: string;
 	actor_kind: ActorKind;
 	actor_run_id: string | null;
+	configured_by_json: string | null;
 	action: string;
 	subject_type: string;
 	subject_id: string;
@@ -214,22 +217,11 @@ interface CountRow {
 	total: number | bigint | string;
 }
 
-/* PostgreSQL returns BIGINT as a string, and every timestamp, expiry and
-   counter here is one. An unnormalized read would compare and serialize as
-   text: a session would never look expired and a role would never look
-   built in. */
-function integer(value: number | bigint | string): number {
-	const normalized = Number(value);
-	if (!Number.isSafeInteger(normalized)) {
-		throw new Error('The auth database returned an invalid integer.');
-	}
-	return normalized;
-}
-
 function optionalInteger(
 	value: number | bigint | string | null,
+	field: string,
 ): number | null {
-	return value === null ? null : integer(value);
+	return value === null ? null : integer(value, field);
 }
 
 const ACCOUNT_COLUMNS = `a.id AS account_id, m.tenant_id, a.email, a.display_name,
@@ -288,8 +280,9 @@ function tenantMemberFrom(row: TenantMemberRow): TenantMember {
 		status: row.status,
 		membershipStatus: row.membership_status,
 		scopes: row.scopes ? row.scopes.split(' ') : [],
-		passwordChangeRequired: integer(row.password_change_required) === 1,
-		createdAt: integer(row.created_at),
+		passwordChangeRequired:
+			integer(row.password_change_required, 'password_change_required') === 1,
+		createdAt: integer(row.created_at, 'created_at'),
 	};
 }
 
@@ -306,10 +299,10 @@ function fromApiTokenRow(row: ApiTokenRow): ApiTokenRecord {
 		prefix: row.prefix,
 		scopes: JSON.parse(row.scopes_json) as readonly string[],
 		createdBy: row.created_by,
-		createdAt: integer(row.created_at),
-		expiresAt: optionalInteger(row.expires_at),
-		lastUsedAt: optionalInteger(row.last_used_at),
-		revokedAt: optionalInteger(row.revoked_at),
+		createdAt: integer(row.created_at, 'created_at'),
+		expiresAt: optionalInteger(row.expires_at, 'expires_at'),
+		lastUsedAt: optionalInteger(row.last_used_at, 'last_used_at'),
+		revokedAt: optionalInteger(row.revoked_at, 'revoked_at'),
 		revokedBy: row.revoked_by,
 	};
 }
@@ -322,9 +315,9 @@ function fromRoleRow(row: RoleRow): TenantRole {
 		name: row.name,
 		description: row.description,
 		scopes: JSON.parse(row.scopes_json) as readonly string[],
-		builtin: integer(row.builtin) === 1,
-		createdAt: integer(row.created_at),
-		updatedAt: integer(row.updated_at),
+		builtin: integer(row.builtin, 'builtin') === 1,
+		createdAt: integer(row.created_at, 'created_at'),
+		updatedAt: integer(row.updated_at, 'updated_at'),
 	};
 }
 
@@ -345,12 +338,12 @@ function fromIdentityProviderRow(
 		secretKeyId: row.client_secret_key_id,
 		secretFingerprint: row.client_secret_fingerprint,
 		scopes: JSON.parse(row.scopes_json) as readonly string[],
-		jitEnabled: integer(row.jit_enabled) === 1,
+		jitEnabled: integer(row.jit_enabled, 'jit_enabled') === 1,
 		allowedDomains: JSON.parse(row.allowed_domains_json) as readonly string[],
 		jitRole: row.jit_role,
 		status: row.status,
-		createdAt: integer(row.created_at),
-		updatedAt: integer(row.updated_at),
+		createdAt: integer(row.created_at, 'created_at'),
+		updatedAt: integer(row.updated_at, 'updated_at'),
 	};
 }
 
@@ -498,7 +491,8 @@ export class DatabaseAuthRepository implements AuthRepository {
 			roleId: row.role_id,
 			status: row.status,
 			membershipStatus: row.membership_status,
-			passwordChangeRequired: integer(row.password_change_required) === 1,
+			passwordChangeRequired:
+				integer(row.password_change_required, 'password_change_required') === 1,
 			scopes: await this.#scopes(transaction, row.account_id, row.tenant_id),
 		};
 	}
@@ -780,7 +774,7 @@ export class DatabaseAuthRepository implements AuthRepository {
 			text: 'SELECT count(*) AS total FROM auth_memberships WHERE account_id = $1',
 			parameters: [accountId],
 		});
-		return rows[0] ? integer(rows[0].total) : 0;
+		return rows[0] ? integer(rows[0].total, 'total') : 0;
 	}
 
 	/* The account row is the identity. Its memberships, sessions and tokens go
@@ -801,7 +795,7 @@ export class DatabaseAuthRepository implements AuthRepository {
 			         AND a.status = 'active' AND m.status = 'active'`,
 			parameters: [tenantId],
 		});
-		return rows[0] ? integer(rows[0].total) : 0;
+		return rows[0] ? integer(rows[0].total, 'total') : 0;
 	}
 
 	/* Which workspaces an account may enter is the one question that spans
@@ -1364,7 +1358,7 @@ export class DatabaseAuthRepository implements AuthRepository {
 			});
 			const row = result.rows[0];
 			if (!row) return null;
-			const lastSeenAt = integer(row.last_seen_at);
+			const lastSeenAt = integer(row.last_seen_at, 'last_seen_at');
 			if (now - lastSeenAt > idleMs) {
 				await transaction.execute({
 					text: 'DELETE FROM auth_sessions WHERE token_hash = $1',
@@ -1396,10 +1390,13 @@ export class DatabaseAuthRepository implements AuthRepository {
 		return {
 			principal,
 			csrfToken: session.row.csrf_token,
-			expiresAt: integer(session.row.expires_at),
+			expiresAt: integer(session.row.expires_at, 'expires_at'),
 			sessionId: session.row.session_id,
 			passwordChangeRequired:
-				integer(session.row.password_change_required) === 1,
+				integer(
+					session.row.password_change_required,
+					'password_change_required',
+				) === 1,
 		};
 	}
 
@@ -1429,9 +1426,9 @@ export class DatabaseAuthRepository implements AuthRepository {
 					id: row.id,
 					tenantId: row.tenant_id,
 					tenantName: row.tenant_name,
-					createdAt: integer(row.created_at),
-					lastSeenAt: integer(row.last_seen_at),
-					expiresAt: integer(row.expires_at),
+					createdAt: integer(row.created_at, 'created_at'),
+					lastSeenAt: integer(row.last_seen_at, 'last_seen_at'),
+					expiresAt: integer(row.expires_at, 'expires_at'),
 				});
 			}
 		}
@@ -1672,7 +1669,7 @@ export class DatabaseAuthRepository implements AuthRepository {
 			? {
 					secretCiphertext: row.secret_ciphertext,
 					keyId: row.key_id,
-					confirmedAt: optionalInteger(row.confirmed_at),
+					confirmedAt: optionalInteger(row.confirmed_at, 'confirmed_at'),
 				}
 			: null;
 	}
@@ -1876,7 +1873,7 @@ export class DatabaseAuthRepository implements AuthRepository {
 			accountId: row.account_id,
 			provider: row.provider,
 			subject: row.subject,
-			linkedAt: integer(row.created_at),
+			linkedAt: integer(row.created_at, 'created_at'),
 		}));
 	}
 
@@ -2067,8 +2064,8 @@ export class DatabaseAuthRepository implements AuthRepository {
 		const row = rows[0];
 		return row
 			? {
-					failures: integer(row.failures),
-					lockedUntil: optionalInteger(row.locked_until),
+					failures: integer(row.failures, 'failures'),
+					lockedUntil: optionalInteger(row.locked_until, 'locked_until'),
 				}
 			: null;
 	}
@@ -2099,12 +2096,13 @@ export class DatabaseAuthRepository implements AuthRepository {
 				parameters: [normalizedEmail],
 			});
 			const previous = current.rows[0];
-			const failures = (previous ? integer(previous.failures) : 0) + 1;
+			const failures =
+				(previous ? integer(previous.failures, 'failures') : 0) + 1;
 			const lockedUntil =
 				failures >= lockThreshold
 					? now + lockMs
 					: previous
-						? optionalInteger(previous.locked_until)
+						? optionalInteger(previous.locked_until, 'locked_until')
 						: null;
 			await transaction.execute({
 				text: `INSERT INTO auth_sign_in_failures
@@ -2242,21 +2240,23 @@ export class DatabaseAuthRepository implements AuthRepository {
 			       WHERE tenant_id = $1 AND role_id = $2`,
 			parameters: [tenantId, roleId],
 		});
-		return rows[0] ? integer(rows[0].total) : 0;
+		return rows[0] ? integer(rows[0].total, 'total') : 0;
 	}
 
 	async appendAudit(record: AuditRecord): Promise<void> {
 		await this.#exec(record.tenantId, {
 			text: `INSERT INTO auth_audit
 			       (tenant_id, actor_account_id, actor_label, actor_kind, actor_run_id,
-			        action, subject_type, subject_id, metadata_json, occurred_at)
-			       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+			        configured_by_json, action, subject_type, subject_id, metadata_json,
+			        occurred_at)
+			       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 			parameters: [
 				record.tenantId,
 				record.actorAccountId,
 				record.actorLabel,
 				record.actorKind,
 				record.actorRunId,
+				record.configuredBy ? JSON.stringify(record.configuredBy) : null,
 				record.action,
 				record.subjectType,
 				record.subjectId,
@@ -2303,17 +2303,20 @@ export class DatabaseAuthRepository implements AuthRepository {
 			parameters,
 		});
 		return rows.map((row) => ({
-			id: integer(row.id),
+			id: integer(row.id, 'id'),
 			tenantId: row.tenant_id,
 			actorAccountId: row.actor_account_id,
 			actorLabel: row.actor_label,
 			actorKind: row.actor_kind,
 			actorRunId: row.actor_run_id,
+			configuredBy: row.configured_by_json
+				? (JSON.parse(row.configured_by_json) as UserActor)
+				: null,
 			action: row.action,
 			subjectType: row.subject_type,
 			subjectId: row.subject_id,
 			metadata: JSON.parse(row.metadata_json) as Record<string, unknown>,
-			occurredAt: integer(row.occurred_at),
+			occurredAt: integer(row.occurred_at, 'occurred_at'),
 		}));
 	}
 
@@ -2334,9 +2337,9 @@ export class DatabaseAuthRepository implements AuthRepository {
 			id: row.id,
 			tenantId: row.tenant_id,
 			accountId: row.account_id,
-			createdAt: integer(row.created_at),
-			expiresAt: integer(row.expires_at),
-			lastSeenAt: integer(row.last_seen_at),
+			createdAt: integer(row.created_at, 'created_at'),
+			expiresAt: integer(row.expires_at, 'expires_at'),
+			lastSeenAt: integer(row.last_seen_at, 'last_seen_at'),
 		}));
 	}
 
@@ -2395,7 +2398,7 @@ export class DatabaseAuthRepository implements AuthRepository {
 			parameters: [tenantId, afterId, limit],
 		});
 		return rows.map((row) => ({
-			id: integer(row.id),
+			id: integer(row.id, 'id'),
 			tenantId: row.tenant_id,
 			actorAccountId: row.actor_account_id,
 			actorLabel: row.actor_label,
@@ -2403,7 +2406,7 @@ export class DatabaseAuthRepository implements AuthRepository {
 			subjectType: row.subject_type,
 			subjectId: row.subject_id,
 			metadata: JSON.parse(row.metadata_json) as Record<string, unknown>,
-			occurredAt: integer(row.occurred_at),
+			occurredAt: integer(row.occurred_at, 'occurred_at'),
 		}));
 	}
 

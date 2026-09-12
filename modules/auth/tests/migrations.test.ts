@@ -1352,6 +1352,66 @@ describe('auth migrations', () => {
 		]);
 	});
 
+	/* Before 0032 an operator command and an identity provider were recorded as
+	   users because the check admitted nothing else. */
+	it('admits a service actor row with its configuring user', async () => {
+		await apply();
+		const configuredBy = JSON.stringify({
+			kind: 'user',
+			id: 'cli:ada',
+			label: 'cli:ada',
+		});
+
+		await lease.database.transaction(
+			(transaction) =>
+				transaction.execute({
+					text: `INSERT INTO auth_audit
+			       (tenant_id, actor_account_id, actor_label, actor_kind, actor_run_id,
+			        configured_by_json, action, subject_type, subject_id, metadata_json,
+			        occurred_at)
+			       VALUES ('tenant-a', NULL, 'cli:ada', 'service', NULL, $1,
+			               'auth.workspace.provisioned', 'tenant', 'tenant-a', '{}', 1)`,
+					parameters: [configuredBy],
+				}),
+			{ tenantId: 'tenant-a', access: 'write' },
+		);
+
+		expect(
+			(
+				await lease.database.transaction(
+					(transaction) =>
+						transaction.query<{
+							actor_kind: string;
+							actor_account_id: string | null;
+							configured_by_json: string | null;
+						}>({
+							text: `SELECT actor_kind, actor_account_id, configured_by_json
+			       FROM auth_audit WHERE tenant_id = 'tenant-a'`,
+						}),
+					{ tenantId: 'tenant-a', access: 'read' },
+				)
+			).rows,
+		).toEqual([
+			{
+				actor_kind: 'service',
+				actor_account_id: null,
+				configured_by_json: configuredBy,
+			},
+		]);
+		await expect(
+			lease.database.transaction(
+				(transaction) =>
+					transaction.execute({
+						text: `INSERT INTO auth_audit
+			       (tenant_id, actor_label, actor_kind, action, subject_type, subject_id,
+			        metadata_json, occurred_at)
+			       VALUES ('tenant-a', 'x', 'schedule', 'a', 'b', 'c', '{}', 2)`,
+					}),
+				{ tenantId: 'tenant-a', access: 'write' },
+			),
+		).rejects.toThrow();
+	});
+
 	it('runs clean on a second migration pass', async () => {
 		await apply();
 
