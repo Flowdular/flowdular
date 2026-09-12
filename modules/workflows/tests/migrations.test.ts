@@ -73,6 +73,58 @@ describe('workflows migrations', () => {
 		}
 	});
 
+	it('reads the 0005 adoption from this schema alone, whatever another schema holds', async () => {
+		const databases = createWorkflowsTestProvider();
+		/* The decoy lives outside the per-test schema, in the database every
+		   worker shares, so its name is unique and it is dropped on the way out. */
+		const decoy = `workflows_decoy_${process.pid}_${Date.now()}`;
+		try {
+			await withOwnerHandle(databases, (database) =>
+				database.transaction(
+					async (transaction) => {
+						for (const migration of databaseMigrations) {
+							await transaction.executeScript(migration.sql.postgresql!);
+						}
+						/* A same-named table set in another schema, shaped as it was
+						   before 0005, must neither be read as this schema's state nor be
+						   deparsed while the probe runs. */
+						await transaction.executeScript(`
+							CREATE SCHEMA ${decoy};
+							CREATE TABLE ${decoy}.workflow_runs (
+							  status TEXT NOT NULL,
+							  CONSTRAINT workflow_runs_status_check CHECK (status IN ('queued', 'running'))
+							);
+							CREATE TABLE ${decoy}.workflow_node_attempts (
+							  child_kind TEXT NOT NULL,
+							  CONSTRAINT workflow_node_attempts_child_kind_check CHECK (child_kind IN ('agent', 'action'))
+							);
+							CREATE TABLE ${decoy}.workflow_node_states (status TEXT NOT NULL);
+							ALTER TABLE ${decoy}.workflow_node_states ENABLE ROW LEVEL SECURITY;
+							CREATE POLICY workflow_node_states_background_policy
+							  ON ${decoy}.workflow_node_states FOR SELECT
+							  USING (status IN ('waiting-retry'));
+						`);
+					},
+					{ access: 'write', tenantId: 'tenant-a' },
+				),
+			);
+			expect(await states(databases)).toEqual(
+				databaseMigrations.map(() => 'adopted'),
+			);
+		} finally {
+			await withOwnerHandle(databases, (database) =>
+				database.transaction(
+					(transaction) =>
+						transaction.executeScript(
+							`DROP SCHEMA IF EXISTS ${decoy} CASCADE;`,
+						),
+					{ access: 'write', tenantId: 'tenant-a' },
+				),
+			);
+			await databases.dispose();
+		}
+	});
+
 	it('adopts a complete pre-ledger schema without replaying or losing data', async () => {
 		const databases = createWorkflowsTestProvider();
 		try {

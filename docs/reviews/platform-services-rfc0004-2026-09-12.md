@@ -146,6 +146,18 @@ role that is neither superuser nor `BYPASSRLS`, which no local run had.
   a regression test probes a missing binary (it failed with an unhandled
   rejection before the fix). The smoke was rerun locally with the coding
   agent binaries hidden from `PATH`.
+- The second matrix run reached the workflows suite and failed its
+  migration 0005 adoption probe with `cache lookup failed for relation` and
+  `could not open relation with OID`: the probe called
+  `pg_get_constraintdef` and `pg_get_expr` over the whole catalogue, one of
+  them without a schema filter, while a parallel test file dropped its own
+  schema, so the deparse reached a relation that no longer existed. The
+  probes now narrow to this schema's objects in a materialized CTE before
+  deparsing; a test holds same-named pre-0005 objects in another schema and
+  expects the adoption to read this schema alone. The race itself has no
+  deterministic unit test; the suite was run three times against a local
+  PostgreSQL 17 with the CI roles. workflows.core 0.6.5, spec hash
+  `c585491ff376c4a3`.
 - The container job was cancelled by the matrix failure and had no finding
   of its own.
 

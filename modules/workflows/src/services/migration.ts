@@ -507,41 +507,52 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 		sql: { postgresql: WORKFLOWS_MIGRATION_005_HUMAN_APPROVAL },
 		/* A replaced check constraint leaves no new schema object behind, so each
 		   of the two is proved against the catalogue and a schema carrying only
-		   one of them is partial. */
+		   one of them is partial. The rows are narrowed to this schema's objects
+		   before anything is deparsed: a deparse over the whole catalogue reaches
+		   relations another connection is dropping and fails with a cache lookup
+		   error instead of an answer. */
 		inspectExisting: (database) =>
 			migrationObjectState([
 				async () =>
 					(
 						await database.query<{ present: boolean }>({
-							text: `SELECT EXISTS (
-							         SELECT 1 FROM pg_constraint
+							text: `WITH candidate AS MATERIALIZED (
+							         SELECT oid FROM pg_constraint
 							         WHERE conrelid = to_regclass('workflow_runs')
 							           AND conname = 'workflow_runs_status_check'
-							           AND pg_get_constraintdef(oid) LIKE '%waiting-approval%'
+							       )
+							       SELECT EXISTS (
+							         SELECT 1 FROM candidate
+							         WHERE pg_get_constraintdef(oid) LIKE '%waiting-approval%'
 							       ) AS present`,
 						})
 					).rows[0]?.present === true,
 				async () =>
 					(
 						await database.query<{ present: boolean }>({
-							text: `SELECT EXISTS (
-							         SELECT 1 FROM pg_constraint
+							text: `WITH candidate AS MATERIALIZED (
+							         SELECT oid FROM pg_constraint
 							         WHERE conrelid = to_regclass('workflow_node_attempts')
 							           AND conname = 'workflow_node_attempts_child_kind_check'
-							           AND pg_get_constraintdef(oid) LIKE '%approval%'
+							       )
+							       SELECT EXISTS (
+							         SELECT 1 FROM candidate
+							         WHERE pg_get_constraintdef(oid) LIKE '%approval%'
 							       ) AS present`,
 						})
 					).rows[0]?.present === true,
 				async () =>
 					(
 						await database.query<{ present: boolean }>({
-							text: `SELECT EXISTS (
-							         SELECT 1 FROM pg_policy
-							         JOIN pg_class ON pg_class.oid = pg_policy.polrelid
-							         WHERE pg_class.relname = 'workflow_node_states'
+							text: `WITH candidate AS MATERIALIZED (
+							         SELECT pg_policy.polqual, pg_policy.polrelid
+							         FROM pg_policy
+							         WHERE pg_policy.polrelid = to_regclass('workflow_node_states')
 							           AND pg_policy.polname = 'workflow_node_states_background_policy'
-							           AND pg_get_expr(pg_policy.polqual, pg_policy.polrelid)
-							             LIKE '%waiting-child%'
+							       )
+							       SELECT EXISTS (
+							         SELECT 1 FROM candidate
+							         WHERE pg_get_expr(polqual, polrelid) LIKE '%waiting-child%'
 							       ) AS present`,
 						})
 					).rows[0]?.present === true,
