@@ -1,7 +1,9 @@
 schemaVersion: 1
-# Consumed by nobody (zero references under packages/). The values are the
-# review expectation for a change; the sandbox enforces only the limits marked
-# as code.
+# Read by the git-pr delivery target (packages/sandbox/src/server/delivery/
+# policies.ts, loadTaskBudgets): defaults and per-kind overrides of
+# maxChangedFiles and maxNewDependencies bound a pull request delivery.
+# flowdular.json sandbox.delivery.maxChangedFiles takes precedence. Other
+# values are the review expectation for a change.
 defaults:
   maxChangedFiles: 18
   maxRepairLoops: 2
