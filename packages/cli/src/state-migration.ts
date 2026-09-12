@@ -5,6 +5,7 @@ import {
 	copyFile,
 	lstat,
 	mkdir,
+	readdir,
 	readFile,
 	rm,
 	stat,
@@ -23,22 +24,16 @@ import type { Workspace } from './workspace.ts';
    the shared startup guard. Remove both after pre-Flowdular workspaces no longer
    need this migration. */
 const STATE_FILES = [
-	'agents.db',
-	'auth.db',
-	'automations.db',
-	'catalog.db',
-	'expenses.db',
-	'parties.db',
-	'profile.db',
-	'sandbox.db',
 	'agent-credential.key',
 	'agent-run-grant.key',
 	'automations-credential.key',
 ] as const;
 
-const DATABASE_FILES: ReadonlySet<string> = new Set(
-	STATE_FILES.filter((name) => name.endsWith('.db')),
-);
+/* SQLite files from the pre-PostgreSQL platform. Neither the PostgreSQL nor the
+   PGlite adapter can open them, so they are reported and left in place. */
+function isLegacyDatabase(name: string): boolean {
+	return name.endsWith('.db');
+}
 
 interface FilePlan {
 	readonly name: string;
@@ -51,6 +46,7 @@ interface StateMigrationPlan {
 	readonly destinationDirectory: string;
 	readonly files: readonly FilePlan[];
 	readonly missing: readonly string[];
+	readonly unsupported: readonly string[];
 	readonly blockers: readonly string[];
 }
 
@@ -84,6 +80,7 @@ async function migrationPlan(
 	const destinationLabel = relativePath(workspace, destinationDirectory);
 	const blockers: string[] = [];
 	const missing: string[] = [];
+	const unsupported: string[] = [];
 	const files: FilePlan[] = [];
 	const sourceState = await pathState(sourceDirectory);
 	if (sourceState?.isSymbolicLink()) {
@@ -109,8 +106,12 @@ async function migrationPlan(
 			destinationDirectory,
 			files,
 			missing: [...STATE_FILES],
+			unsupported,
 			blockers,
 		};
+	}
+	for (const name of (await readdir(sourceDirectory)).sort()) {
+		if (isLegacyDatabase(name)) unsupported.push(name);
 	}
 	for (const name of STATE_FILES) {
 		const source = join(sourceDirectory, name);
@@ -124,28 +125,20 @@ async function migrationPlan(
 			blockers.push(`${LEGACY_DATA_DIRECTORY}/${name} is not a regular file.`);
 			continue;
 		}
-		let blocked = false;
 		if (await pathState(destination)) {
 			blockers.push(`${destinationLabel}/${name} already exists.`);
-			blocked = true;
+			continue;
 		}
-		if (DATABASE_FILES.has(name)) {
-			for (const suffix of ['-wal', '-shm', '-journal']) {
-				if (await pathState(`${destination}${suffix}`)) {
-					blockers.push(`${destinationLabel}/${name}${suffix} already exists.`);
-					blocked = true;
-				}
-				if (await pathState(`${source}${suffix}`)) {
-					blockers.push(
-						`${LEGACY_DATA_DIRECTORY}/${name}${suffix} exists. Stop every Flowdular process and close database clients before migrating.`,
-					);
-					blocked = true;
-				}
-			}
-		}
-		if (!blocked) files.push({ name, source, destination });
+		files.push({ name, source, destination });
 	}
-	return { sourceDirectory, destinationDirectory, files, missing, blockers };
+	return {
+		sourceDirectory,
+		destinationDirectory,
+		files,
+		missing,
+		unsupported,
+		blockers,
+	};
 }
 
 async function digest(path: string): Promise<string> {
@@ -200,28 +193,10 @@ async function copyPlan(plan: StateMigrationPlan): Promise<void> {
 			) {
 				throw new Error(`Source changed while copying ${file.name}.`);
 			}
-			if (DATABASE_FILES.has(file.name)) {
-				for (const suffix of ['-wal', '-shm', '-journal']) {
-					if (await pathState(`${file.source}${suffix}`)) {
-						throw new Error(
-							`Database sidecar appeared while copying ${file.name}.`,
-						);
-					}
-				}
-			}
 		}
 		for (const file of plan.files) {
 			if ((await digest(file.source)) !== (await digest(file.destination))) {
 				throw new Error(`Source changed after copying ${file.name}.`);
-			}
-			if (DATABASE_FILES.has(file.name)) {
-				for (const suffix of ['-wal', '-shm', '-journal']) {
-					if (await pathState(`${file.source}${suffix}`)) {
-						throw new Error(
-							`Database sidecar appeared after copying ${file.name}.`,
-						);
-					}
-				}
 			}
 		}
 	} catch (error) {
@@ -241,9 +216,17 @@ function data(plan: StateMigrationPlan, applied: boolean) {
 		),
 		files: plan.files.map((file) => file.name),
 		missing: plan.missing,
+		unsupported: plan.unsupported,
 		blockers: plan.blockers,
 		sourcePreserved: true,
 	};
+}
+
+function unsupportedWarnings(plan: StateMigrationPlan): string[] {
+	return plan.unsupported.map(
+		(name) =>
+			`${LEGACY_DATA_DIRECTORY}/${name} is a SQLite database and cannot be migrated to the PostgreSQL or PGlite adapter; it was left in place. Start a fresh workspace on the current adapter; its data does not carry over.`,
+	);
 }
 
 export async function migrateLegacyState(
@@ -264,6 +247,7 @@ export async function migrateLegacyState(
 				(file) => `${LEGACY_DATA_DIRECTORY}/${file.name}`,
 			),
 			warnings: [
+				...unsupportedWarnings(plan),
 				...(plan.blockers.length > 0
 					? ['Resolve every blocker before applying the migration.']
 					: []),
@@ -285,6 +269,7 @@ export async function migrateLegacyState(
 			relativePath(workspace, join(plan.destinationDirectory, file.name)),
 		),
 		warnings: [
+			...unsupportedWarnings(plan),
 			`The source directory ${LEGACY_DATA_DIRECTORY} was preserved. Remove it only after verifying the new Flowdular data directory.`,
 		],
 	});

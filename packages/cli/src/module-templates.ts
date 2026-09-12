@@ -937,7 +937,7 @@ function isoText(value: Date | string): string {
 			: '',
 	].join('');
 	return `import type { DatabaseHandle } from '@flowdular/database';
-import { runDatabaseMigrations } from '@flowdular/database';
+import { integer, runDatabaseMigrations } from '@flowdular/database';
 import type { ${entity.type} } from '../domain/types.ts';
 import { databaseMigrations } from './migration.ts';
 import type { ${names.pascal}Repository } from './repository.ts';
@@ -959,21 +959,12 @@ const CREATE = \`INSERT INTO ${entity.table}
 			 (${columns.join(', ')}, created_at)
 			 VALUES (${parameters.join(', ')})\`;
 
-/* PostgreSQL returns BIGINT as a string, so every numeric read is normalized
-   before it reaches the domain. */
-function integer(value: ${entity.type}Row['created_at']): number {
-	const normalized = Number(value);
-	if (!Number.isSafeInteger(normalized) || normalized < 0) {
-		throw new Error('The ${names.suffix} database returned an invalid timestamp.');
-	}
-	return normalized;
-}
 ${helpers}
 function fromRow(row: ${entity.type}Row): ${entity.type} {
 	return {
 		id: row.id,
 		tenantId: row.tenant_id,
-${fields.map((field) => `\t\t${field.id}: ${rowRead(field)},\n`).join('')}		createdAt: integer(row.created_at),
+${fields.map((field) => `\t\t${field.id}: ${rowRead(field)},\n`).join('')}		createdAt: integer(row.created_at, 'created_at', { min: 0 }),
 	};
 }
 
