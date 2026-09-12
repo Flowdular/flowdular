@@ -97,6 +97,52 @@ describe('Pagination', () => {
 		mounted.unmount();
 	});
 
+	/* A keyset page was never counted, so the pager can say where it starts and
+   whether another follows, and nothing about how many there are. */
+	it('pages a keyset set on hasMore alone', async () => {
+		const onPageChange = vi.fn();
+		const mounted = await mount(
+			<Pagination
+				pageIndex={1}
+				pageSize={25}
+				hasMore
+				onPageChange={onPageChange}
+				label="Member pages"
+				previousLabel="Previous"
+				nextLabel="Next"
+				summary={(page) => `from ${page.from}`}
+			/>,
+		);
+		expect(
+			text(mounted.container.querySelector('.ui-pagination__summary')),
+		).toBe('from 26');
+		const [previous, next] = buttons(mounted.container);
+		expect(previous?.disabled).toBe(false);
+		expect(next?.disabled).toBe(false);
+		await run(() => next?.click());
+		expect(onPageChange).toHaveBeenCalledWith(2);
+		mounted.unmount();
+	});
+
+	it('stops the last keyset page rather than offering another', async () => {
+		const mounted = await mount(
+			<Pagination
+				pageIndex={0}
+				pageSize={25}
+				hasMore={false}
+				onPageChange={() => {}}
+				label="Member pages"
+				previousLabel="Previous"
+				nextLabel="Next"
+				summary={(page) => `from ${page.from}`}
+			/>,
+		);
+		expect(
+			buttons(mounted.container).map((button) => button.disabled),
+		).toEqual([true, true]);
+		mounted.unmount();
+	});
+
 	it(
 		'offers the page sizes with the pager as the accessible name',
 		async () => {

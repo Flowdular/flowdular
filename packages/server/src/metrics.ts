@@ -8,9 +8,34 @@ export interface HttpRequestSample {
 	readonly durationSeconds: number;
 }
 
+export interface ModuleMetricLabels {
+	readonly [name: string]: string;
+}
+
+/**
+ * Counters and histograms a module owns, bound to its id. Series are named
+ * `flowdular_module_<module id>_<name>` and carry the labels the module names,
+ * under the same ceilings the request series have: a module cannot open an
+ * unbounded number of series and cannot slow a request down by recording one.
+ *
+ * A module calls `context.metrics` once while it composes and keeps the
+ * binder; every refused sample is counted in the dropped samples series.
+ */
+export interface ModuleMetrics {
+	/** Adds one to `flowdular_module_<module>_<name>_total`. */
+	counter(name: string, labels?: ModuleMetricLabels): void;
+	/**
+	 * Observes `value` into `flowdular_module_<module>_<name>`, with the same
+	 * buckets the request duration histogram uses (seconds, 0.005 to 10).
+	 */
+	histogram(name: string, value: number, labels?: ModuleMetricLabels): void;
+}
+
 export interface MetricsRegistry {
 	/** Called once per served request; never throws into the request path. */
 	recordHttpRequest(sample: HttpRequestSample): void;
+	/** A binder for one module's own series. Call it once while composing. */
+	moduleMetrics(moduleId: string): ModuleMetrics;
 	setBuildVersion(version: string): void;
 	/** Prometheus text exposition, format version 0.0.4. */
 	expose(): string;
@@ -36,7 +61,33 @@ const METHODS = new Set([
 	'OPTIONS',
 ]);
 const UNSAFE_LABEL = /["\\\n]/;
+/* Every control character the exposition format cannot carry escaped. A raw
+   carriage return ends the line a scrape reads, so one label value would forge
+   the next series; the newline below it is escaped instead, as the format
+   allows. */
+const UNESCAPABLE_CHARACTER = /[\u0000-\u0009\u000b-\u001f\u007f]/g;
 const SEPARATOR = '\u0000';
+
+/* A module names its own series, so the name space is the one thing a module
+   could grow without bound. Families are capped per process and label sets per
+   family reuse the request ceiling; a refusal is a dropped sample, never an
+   error thrown back into the module's work. */
+const MAX_MODULE_FAMILIES = 256;
+const MAX_MODULE_LABELS = 8;
+const METRIC_NAME = /^[a-z][a-z0-9_]{0,63}$/;
+const UNSAFE_NAME_CHARACTER = /[^a-z0-9_]/g;
+
+interface ModuleCounter {
+	readonly labels: string;
+	count: number;
+}
+
+interface ModuleHistogram {
+	readonly labels: string;
+	readonly buckets: number[];
+	count: number;
+	sum: number;
+}
 
 interface RequestCounter {
 	readonly endpoint: string;
@@ -53,7 +104,9 @@ interface DurationHistogram {
 }
 
 function labelValue(value: string): string {
-	const bounded = value.length <= MAX_LABEL ? value : value.slice(0, MAX_LABEL);
+	const bounded = (
+		value.length <= MAX_LABEL ? value : value.slice(0, MAX_LABEL)
+	).replace(UNESCAPABLE_CHARACTER, ' ');
 	return UNSAFE_LABEL.test(bounded)
 		? bounded.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')
 		: bounded;
@@ -71,6 +124,31 @@ function statusClass(status: number): string {
 function methodLabel(method: string): string {
 	const normalized = method.toUpperCase();
 	return METHODS.has(normalized) ? normalized : 'other';
+}
+
+/** `agents.core` becomes `agents_core`: a dot is not a Prometheus name. */
+function moduleNamePart(moduleId: string): string {
+	return (
+		moduleId
+			.toLowerCase()
+			.slice(0, 64)
+			.replace(UNSAFE_NAME_CHARACTER, '_')
+			.replace(/^[^a-z]+/, '') || 'unknown'
+	);
+}
+
+/* Sorted so one label set is always one series key, whatever order the module
+   wrote the object in. Null refuses the sample. */
+function moduleLabels(labels: ModuleMetricLabels | undefined): string | null {
+	if (!labels) return '';
+	const names = Object.keys(labels).sort();
+	if (names.length > MAX_MODULE_LABELS) return null;
+	const parts: string[] = [];
+	for (const name of names) {
+		if (!METRIC_NAME.test(name)) return null;
+		parts.push(`${name}="${labelValue(String(labels[name]))}"`);
+	}
+	return parts.join(',');
 }
 
 let eventLoopDelay: ReturnType<typeof monitorEventLoopDelay> | null | undefined;
@@ -109,6 +187,8 @@ function residentMemoryBytes(): number | null {
 export function createMetricsRegistry(): MetricsRegistry {
 	const counters = new Map<string, RequestCounter>();
 	const durations = new Map<string, DurationHistogram>();
+	const moduleCounters = new Map<string, Map<string, ModuleCounter>>();
+	const moduleHistograms = new Map<string, Map<string, ModuleHistogram>>();
 	const startTimeSeconds = Date.now() / 1000 - process.uptime();
 	let dropped = 0;
 	let version: string | null = null;
@@ -155,6 +235,123 @@ export function createMetricsRegistry(): MetricsRegistry {
 		}
 	};
 
+	/* One lookup and at most one insertion per sample, so a module pays O(1)
+	   whether it records its first series or its two thousandth. */
+	function moduleSeries<Series>(
+		families: Map<string, Map<string, Series>>,
+		moduleId: string,
+		name: string,
+		labels: ModuleMetricLabels | undefined,
+		create: (labels: string) => Series,
+	): Series | null {
+		if (!METRIC_NAME.test(name)) {
+			dropped += 1;
+			return null;
+		}
+		const rendered = moduleLabels(labels);
+		if (rendered === null) {
+			dropped += 1;
+			return null;
+		}
+		const family = `flowdular_module_${moduleNamePart(moduleId)}_${name}`;
+		let series = families.get(family);
+		if (!series) {
+			if (families.size >= MAX_MODULE_FAMILIES) {
+				dropped += 1;
+				return null;
+			}
+			series = new Map<string, Series>();
+			families.set(family, series);
+		}
+		const existing = series.get(rendered);
+		if (existing) return existing;
+		if (series.size >= MAX_SERIES) {
+			dropped += 1;
+			return null;
+		}
+		const created = create(rendered);
+		series.set(rendered, created);
+		return created;
+	}
+
+	const moduleMetrics = (moduleId: string): ModuleMetrics =>
+		Object.freeze({
+			counter: (name: string, labels?: ModuleMetricLabels): void => {
+				const series = moduleSeries(
+					moduleCounters,
+					moduleId,
+					name,
+					labels,
+					(rendered) => ({ labels: rendered, count: 0 }),
+				);
+				if (series) series.count += 1;
+			},
+			histogram: (
+				name: string,
+				value: number,
+				labels?: ModuleMetricLabels,
+			): void => {
+				const series = moduleSeries(
+					moduleHistograms,
+					moduleId,
+					name,
+					labels,
+					(rendered) => ({
+						labels: rendered,
+						buckets: new Array<number>(BUCKETS.length).fill(0),
+						count: 0,
+						sum: 0,
+					}),
+				);
+				if (!series) return;
+				const observed = Number.isFinite(value) && value > 0 ? value : 0;
+				series.count += 1;
+				series.sum += observed;
+				for (let index = 0; index < BUCKETS.length; index += 1) {
+					if (observed <= BUCKETS[index]!) {
+						series.buckets[index]! += 1;
+						break;
+					}
+				}
+			},
+		});
+
+	const exposeModuleSeries = (lines: string[]): void => {
+		for (const [family, series] of moduleCounters) {
+			lines.push(
+				`# HELP ${family} Counter owned by a module.`,
+				`# TYPE ${family} counter`,
+			);
+			for (const entry of series.values()) {
+				lines.push(
+					`${family}_total${entry.labels ? `{${entry.labels}}` : ''} ${entry.count}`,
+				);
+			}
+		}
+		for (const [family, series] of moduleHistograms) {
+			lines.push(
+				`# HELP ${family} Histogram owned by a module.`,
+				`# TYPE ${family} histogram`,
+			);
+			for (const entry of series.values()) {
+				const prefix = entry.labels ? `${entry.labels},` : '';
+				let cumulative = 0;
+				for (let index = 0; index < BUCKETS.length; index += 1) {
+					cumulative += entry.buckets[index]!;
+					lines.push(
+						`${family}_bucket{${prefix}le="${BUCKET_LABELS[index]!}"} ${cumulative}`,
+					);
+				}
+				const suffix = entry.labels ? `{${entry.labels}}` : '';
+				lines.push(
+					`${family}_bucket{${prefix}le="+Inf"} ${entry.count}`,
+					`${family}_sum${suffix} ${entry.sum}`,
+					`${family}_count${suffix} ${entry.count}`,
+				);
+			}
+		}
+	};
+
 	const expose = (): string => {
 		const lines: string[] = [
 			'# HELP flowdular_http_requests_total Requests completed by a defined endpoint.',
@@ -183,6 +380,7 @@ export function createMetricsRegistry(): MetricsRegistry {
 				`flowdular_http_request_duration_seconds_count{endpoint="${series.endpoint}"} ${series.count}`,
 			);
 		}
+		exposeModuleSeries(lines);
 		lines.push(
 			'# HELP flowdular_metrics_dropped_samples_total Samples refused because the label set ceiling was reached.',
 			'# TYPE flowdular_metrics_dropped_samples_total counter',
@@ -219,6 +417,7 @@ export function createMetricsRegistry(): MetricsRegistry {
 
 	return Object.freeze({
 		recordHttpRequest,
+		moduleMetrics,
 		setBuildVersion: (value: string) => {
 			version = labelValue(value);
 		},
@@ -235,4 +434,14 @@ let processMetrics: MetricsRegistry | undefined;
  */
 export function serverMetrics(): MetricsRegistry {
 	return (processMetrics ??= createMetricsRegistry());
+}
+
+/**
+ * The counters and histograms one module owns, on the process registry. A
+ * module calls it once while it composes: the binder is what `context.metrics`
+ * hands over, and every series it opens is exposed on `/api/metrics` under the
+ * same `FD_METRICS_TOKEN` the request series are.
+ */
+export function createModuleMetrics(moduleId: string): ModuleMetrics {
+	return serverMetrics().moduleMetrics(moduleId);
 }

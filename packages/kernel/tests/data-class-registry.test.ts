@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createDataClassRegistry, RegistryError } from '../src/index.ts';
-import type { DataClassDeclaration } from '../src/index.ts';
+import type {
+	DataClassDeclaration,
+	DataClassErasureResult,
+} from '../src/index.ts';
 
 function runs(
 	overrides: Partial<Record<keyof DataClassDeclaration, unknown>> = {},
@@ -210,6 +213,31 @@ describe('platform data class registry', () => {
 				subject: { accountId: 'account-bob' },
 			}),
 		).toBe(7);
+	});
+
+	/* A class whose rows cannot go answers its redactions apart from its
+	   removals, and the catalogue a run reads carries both counts as the owner
+	   reported them: the registry is the contract for what an erase answers, and
+	   a reader that saw only `removed` would read a redacting class as stuck. */
+	it('carries a redaction count on an erase result through the seal', async () => {
+		const registry = createDataClassRegistry();
+		const erase = async (): Promise<DataClassErasureResult> => ({
+			removed: 1,
+			redacted: 2,
+			truncated: true,
+		});
+		registry.declare('approvals.core', [runs({ key: 'requests', erase })]);
+
+		registry.seal();
+
+		const [declaration] = registry.list()[0]!.classes;
+		expect(
+			await declaration!.erase!({
+				tenantId: 'tenant-alpha',
+				subject: { accountId: 'account-bob' },
+				limit: 500,
+			}),
+		).toEqual({ removed: 1, redacted: 2, truncated: true });
 	});
 
 	it('binds declaration ownership to the composing module', () => {

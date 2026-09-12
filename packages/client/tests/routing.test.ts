@@ -4,6 +4,7 @@ import {
 	applicationPath,
 	configureApplicationFromPage,
 	configureApplicationRouting,
+	workspaceViewHref,
 } from '../src/routing.ts';
 import { shellLocationFromUrl } from '../src/state.ts';
 
@@ -31,4 +32,15 @@ it('uses the runtime dashboard path for SSR, hydration and workspace parsing', (
 it('keeps the generated default when no runtime data exists', () => {
 	configureApplicationFromPage(undefined, '/office');
 	expect(applicationPath()).toBe('/office');
+});
+/* A module widget passes neither, so the installation path and the open address
+   are read at the call: a server render has no address and lands on the
+   slugless form the shell resolves against the open workspace. */
+it('defaults a module link to the installation path and the open address', () => {
+	configureApplicationRouting('/backoffice');
+	expect(workspaceViewHref('audit')).toBe('/backoffice/audit');
+	vi.stubGlobal('window', {
+		location: { pathname: '/backoffice/northwind/modules' },
+	});
+	expect(workspaceViewHref('audit')).toBe('/backoffice/northwind/audit');
 });

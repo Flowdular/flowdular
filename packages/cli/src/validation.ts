@@ -59,6 +59,12 @@ function specIssue(
 	return { code, message, path, severity: 'error' };
 }
 
+/**
+ * Screen kinds a client renders on its own. A form is a drawer inside one of
+ * these, so it is not what a workspace view is built from.
+ */
+const RENDERABLE_SCREEN_KINDS = new Set(['list', 'record', 'dashboard']);
+
 function duplicateIssues<T>(
 	items: readonly T[] | undefined,
 	key: keyof T & string,
@@ -297,16 +303,18 @@ export function moduleSpecIssues(value: unknown): ValidationIssue[] {
 		);
 	});
 
-	/* The scaffold builds the workspace view from a list screen, so a client
-	   without one has nothing to render. */
+	/* The scaffold builds the workspace view from a screen the client renders
+	   on its own, so a client that declares none has nothing to render. */
 	if (
 		capabilities.has('client') &&
-		!(spec.screens ?? []).some((screen) => screen.kind === 'list')
+		!(spec.screens ?? []).some((screen) =>
+			RENDERABLE_SCREEN_KINDS.has(screen.kind),
+		)
 	) {
 		issues.push({
 			code: 'SPEC_SCREENS_MISSING',
 			message:
-				'A specification with the client capability declares no list screen.',
+				'A specification with the client capability declares no screen to render.',
 			path: '/screens',
 			severity: 'warning',
 		});

@@ -4,6 +4,11 @@ export type ModuleSettingType = 'string' | 'number' | 'boolean';
    shared by every tenant; auth uses them for knobs that apply before a tenant
    is known, such as sign-up availability. */
 export type ModuleSettingScope = 'platform' | 'tenant';
+/* A feature flag is a boolean setting an operator turns on or off per
+   workspace. It is stored, read and validated exactly like any other setting;
+   the kind is what makes the change audited as a flag change and listed on the
+   Flags screen. */
+export type ModuleSettingKind = 'flag';
 
 export interface ModuleSettingDefinition {
 	readonly type: ModuleSettingType;
@@ -12,6 +17,8 @@ export interface ModuleSettingDefinition {
 	readonly client: boolean;
 	/** Write-only: the API never returns the value, only whether one is set. */
 	readonly secret?: boolean;
+	/** `flag` requires a tenant-scoped, non-secret boolean, labelled and described. */
+	readonly kind?: ModuleSettingKind;
 	readonly scope?: ModuleSettingScope;
 	/** Fully qualified client translation key; `label` remains the fallback. */
 	readonly labelKey?: string;
@@ -71,6 +78,15 @@ export interface ModuleSettingChange {
 	readonly key: string;
 	/** True when the stored value was removed and the default applies again. */
 	readonly cleared: boolean;
+	/** Declared kind, so a listener can audit a flag change as a flag change. */
+	readonly kind?: ModuleSettingKind;
+	/**
+	 * Effective values around the write, default included, so an audit trail
+	 * records what an operator actually changed. Both are null for a secret,
+	 * whose value never leaves the store.
+	 */
+	readonly previous: ModuleSettingValue | null;
+	readonly next: ModuleSettingValue | null;
 	/** The set() caller and the workspace the change was made from. */
 	readonly actor: {
 		readonly accountId: string;
@@ -124,6 +140,22 @@ function invalid(name: string, detail: string): ModuleSettingsError {
 	);
 }
 
+/* One compiled pattern per declared setting. Every read validates the stored
+   value against its declaration, so compiling here rather than per call keeps
+   the regular expression off the request path; `defineModuleSettings` builds it
+   while it checks the declared default. Keyed by the definition, so a
+   declaration that goes away takes its pattern with it. */
+const patterns = new WeakMap<ModuleSettingDefinition, RegExp>();
+
+function patternOf(definition: ModuleSettingDefinition): RegExp {
+	let compiled = patterns.get(definition);
+	if (compiled === undefined) {
+		compiled = new RegExp(`^(?:${definition.pattern})$`, 'u');
+		patterns.set(definition, compiled);
+	}
+	return compiled;
+}
+
 export function assertSettingValue(
 	moduleId: string,
 	key: string,
@@ -158,7 +190,7 @@ export function assertSettingValue(
 		}
 		if (
 			definition.pattern !== undefined &&
-			!new RegExp(`^(?:${definition.pattern})$`, 'u').test(value)
+			!patternOf(definition).test(value)
 		) {
 			throw invalid(name, 'has an unsupported format.');
 		}
@@ -224,6 +256,30 @@ export function defineModuleSettings(
 			throw new Error(
 				`Secret setting ${declaration.moduleId}.${key} cannot be shared or sent to clients.`,
 			);
+		}
+		/* A flag is offered to an operator as a bare switch on a screen that
+		   shows no module documentation, so the declaration has to carry the
+		   words that explain it; a secret one could be neither read back nor
+		   audited with its values. A flag is on or off for one workspace, and
+		   the screen that turns it on is that workspace's, so a platform-scoped
+		   one would let an operator switch every other workspace from inside
+		   their own. */
+		if (definition.kind === 'flag') {
+			if (definition.type !== 'boolean' || definition.secret) {
+				throw new Error(
+					`Flag ${declaration.moduleId}.${key} must be a non-secret boolean setting.`,
+				);
+			}
+			if (definition.scope === 'platform') {
+				throw new Error(
+					`Flag ${declaration.moduleId}.${key} must be tenant-scoped; a platform setting carries one value for every workspace.`,
+				);
+			}
+			if (!definition.label || !definition.description) {
+				throw new Error(
+					`Flag ${declaration.moduleId}.${key} must declare a label and a description.`,
+				);
+			}
 		}
 	}
 	return Object.freeze(declaration);
@@ -364,6 +420,16 @@ export function createModuleSettingsRuntime(
 		set(tenantId, moduleId, key, value, actor) {
 			const definition = definitionOf(moduleId, key);
 			const target = storageTenant(definition, moduleId, key, tenantId);
+			const next =
+				value === null
+					? definition.defaultValue
+					: assertSettingValue(moduleId, key, definition, value);
+			/* Read before the write, so the change carries the value that was
+			   replaced. The value after the write is known here, so the cache
+			   this write invalidates is never reloaded to report it. */
+			const previous = definition.secret
+				? null
+				: resolve(tenantId, moduleId, key, definition).value;
 			if (value === null) {
 				store.clear(target, moduleId, key);
 			} else {
@@ -371,7 +437,7 @@ export function createModuleSettingsRuntime(
 					tenantId: target,
 					moduleId,
 					key,
-					value: assertSettingValue(moduleId, key, definition, value),
+					value: next,
 					updatedBy: actor,
 					updatedAt: now(),
 				});
@@ -382,6 +448,9 @@ export function createModuleSettingsRuntime(
 				moduleId,
 				key,
 				cleared: value === null,
+				...(definition.kind ? { kind: definition.kind } : {}),
+				previous,
+				next: definition.secret ? null : next,
 				actor: { accountId: actor, tenantId },
 			};
 			for (const listener of listeners) {

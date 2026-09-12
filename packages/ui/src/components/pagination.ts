@@ -11,6 +11,17 @@ export interface PageRange {
 	readonly totalRows: number;
 }
 
+/** The page a keyset pager describes, over a set nobody counted. */
+export interface KeysetPage {
+	/** Zero-based index of the page on screen. */
+	readonly pageIndex: number;
+	readonly pageSize: number;
+	/** One-based position of the first row on the page. */
+	readonly from: number;
+	/** Whether a page follows this one. */
+	readonly hasMore: boolean;
+}
+
 function whole(value: number, minimum: number): number {
 	return Number.isFinite(value)
 		? Math.max(minimum, Math.trunc(value))
@@ -39,4 +50,19 @@ export function pageRange(
 		to: Math.min(rows, (index + 1) * size),
 		totalRows: rows,
 	};
+}
+
+/**
+ * The same arithmetic over a page nobody counted. There is no page count to
+ * clamp against, so the index the screen holds stands and `hasMore` is all that
+ * is known about what follows it.
+ */
+export function keysetPage(
+	pageIndex: number,
+	pageSize: number,
+	hasMore: boolean,
+): KeysetPage {
+	const index = whole(pageIndex, 0);
+	const size = whole(pageSize, 1);
+	return { pageIndex: index, pageSize: size, from: index * size + 1, hasMore };
 }

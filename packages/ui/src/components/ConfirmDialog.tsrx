@@ -1,6 +1,7 @@
-import { useEffect } from 'octane';
+import { useEffect, useRef } from 'octane';
 import type { OctaneNode } from 'octane';
 import { Button } from './Button.tsrx';
+import { trapFocus } from './focus-trap.ts';
 
 export interface ConfirmDialogProps {
 	open: boolean;
@@ -17,13 +18,21 @@ export interface ConfirmDialogProps {
 }
 
 export function ConfirmDialog(props: ConfirmDialogProps) @{
+	const panelRef = useRef<HTMLDivElement | null>(null);
+
 	useEffect(() => {
 		if (!props.open) return;
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.key === 'Escape') props.onCancel();
 		};
 		window.addEventListener('keydown', onKeyDown);
-		return () => window.removeEventListener('keydown', onKeyDown);
+		const panel = panelRef.current;
+		const release =
+			panel === null ? undefined : trapFocus(panel);
+		return () => {
+			window.removeEventListener('keydown', onKeyDown);
+			release?.();
+		};
 	}, [props.open]);
 
 	<div class="ui-drawer-slot">
@@ -38,6 +47,8 @@ export function ConfirmDialog(props: ConfirmDialogProps) @{
 					role="alertdialog"
 					aria-modal="true"
 					aria-label={props.title}
+					tabindex={-1}
+					ref={panelRef}
 					onClick={(event: MouseEvent) => event.stopPropagation()}
 				>
 					<b class="ui-dialog__title">{props.title}</b>

@@ -113,12 +113,13 @@ export function generateServerComposition(
 	applicationPath = '/app',
 ): string {
 	const server = modules.filter((module) => module.server);
+	const serverPackage = sdk ? '@flowdular/sdk/server' : '@flowdular/server';
 	const typeImport =
 		'import type {\n' +
 		'\tPlatformServerComposition,\n' +
 		'\tPlatformServerContext,\n' +
 		`} from '${sdk ? '@flowdular/sdk/modules/auth' : '@flowdular/module-auth'}/server';\n` +
-		`import type { WebMount } from '${sdk ? '@flowdular/sdk/server' : '@flowdular/server'}';\n`;
+		`import type { WebMount } from '${serverPackage}';\n`;
 	if (server.length === 0) {
 		return (
 			GENERATED_HEADER +
@@ -150,12 +151,14 @@ export function generateServerComposition(
 				`\t\t\tagentDefinitions: context.agentDefinitions.forModule('${module.id}'),\n` +
 				`\t\t\tdataClasses: context.dataClasses.forModule('${module.id}'),\n` +
 				capabilityScope(module) +
+				`\t\t\tmetrics: createModuleMetrics('${module.id}'),\n` +
 				`\t\t}), moduleId: '${module.id}' },`,
 		)
 		.join('\n');
 	return (
 		GENERATED_HEADER +
 		typeImport +
+		`import { createModuleMetrics } from '${serverPackage}';\n` +
 		imports +
 		'\n\n' +
 		'export function composeModuleServer(\n' +

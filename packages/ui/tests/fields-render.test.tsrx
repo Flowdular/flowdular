@@ -83,6 +83,33 @@ describe('Select', () => {
 			mounted.unmount();
 		},
 	);
+
+	it('takes focus on mount only when the screen asked for it', async () => {
+		const plain = await mount(
+			<Select
+				id="role"
+				label="Role"
+				options={OPTIONS}
+				value=""
+				onChange={() => {}}
+			/>,
+		);
+		expect(document.activeElement?.id).not.toBe('role');
+		plain.unmount();
+
+		const focused = await mount(
+			<Select
+				id="role"
+				label="Role"
+				options={OPTIONS}
+				value=""
+				autoFocus
+				onChange={() => {}}
+			/>,
+		);
+		expect(document.activeElement?.id).toBe('role');
+		focused.unmount();
+	});
 });
 
 describe('DateField', () => {

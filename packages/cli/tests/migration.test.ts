@@ -114,6 +114,7 @@ describe('migration status', () => {
 			mismatch: 0,
 		});
 		expect(result.data.modules.map((module) => module.moduleId)).toEqual([
+			'access.core',
 			'agents.core',
 			'approvals.core',
 			'audit.core',
@@ -122,6 +123,7 @@ describe('migration status', () => {
 			'connectors.core',
 			'directory.core',
 			'documents.core',
+			'exports.core',
 			'import.core',
 			'metering.core',
 			'notifications.core',

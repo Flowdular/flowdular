@@ -404,15 +404,74 @@ function consentReason(reason: string | undefined): string {
 		: 'TOOL_CONSENT_REFUSED';
 }
 
+/**
+ * The narrow tracing port the harness needs, declared here rather than
+ * imported: `@flowdular/server` is a sibling package, not a dependency of the
+ * harness, and its tracer satisfies this shape structurally. The composer that
+ * owns both hands one in; without it the harness records nothing and pays one
+ * optional call per provider and per tool.
+ */
+export interface AgentTraceContext {
+	readonly traceId: string;
+	readonly spanId: string;
+	readonly sampled: boolean;
+}
+
+export interface AgentTraceSpan {
+	readonly context: AgentTraceContext;
+	setAttribute(key: string, value: string | number | boolean): void;
+	end(status?: 'unset' | 'ok' | 'error', message?: string): void;
+}
+
+export interface AgentSpanOptions {
+	readonly parent?: AgentTraceContext | null;
+	readonly kind?: 'internal' | 'client';
+	readonly attributes?: Readonly<Record<string, string | number | boolean>>;
+}
+
+export interface AgentTracer {
+	startSpan(name: string, options?: AgentSpanOptions): AgentTraceSpan;
+}
+
+/* Foreign code on the run path: a tracer that throws must cost the run
+   nothing, so both ends answer with an absent span instead of raising. */
+function startSpan(
+	tracer: AgentTracer | undefined,
+	name: string,
+	options: AgentSpanOptions,
+): AgentTraceSpan | undefined {
+	if (!tracer) return undefined;
+	try {
+		return tracer.startSpan(name, options);
+	} catch {
+		return undefined;
+	}
+}
+
+function endSpan(
+	span: AgentTraceSpan | undefined,
+	status: 'ok' | 'error',
+	message?: string,
+): void {
+	if (!span) return;
+	try {
+		span.end(status, message);
+	} catch {
+		/* An observer that throws is the observer's defect, not the run's. */
+	}
+}
+
 export class AgentHarness {
 	readonly #providers: ReadonlyMap<string, AgentProvider>;
 	readonly #tools: ReadonlyMap<string, AgentTool>;
 	readonly #authorizeToolAccess: AgentToolAccessAuthorizer;
+	readonly #tracer: AgentTracer | undefined;
 
 	constructor(options: {
 		readonly providers: readonly AgentProvider[];
 		readonly tools?: readonly AgentTool[];
 		readonly authorizeToolAccess?: AgentToolAccessAuthorizer;
+		readonly tracer?: AgentTracer;
 	}) {
 		const providers = new Map<string, AgentProvider>();
 		for (const provider of options.providers) {
@@ -446,6 +505,7 @@ export class AgentHarness {
 		   service actors fail-closed instead of treating a stored snapshot as a
 		   permanent credential. */
 		this.#authorizeToolAccess = options.authorizeToolAccess ?? (() => []);
+		this.#tracer = options.tracer;
 	}
 
 	providers(): readonly string[] {
@@ -600,6 +660,8 @@ export class AgentHarness {
 			model: request.definition.model,
 		});
 		const grantedIds = new Set(availableTools.map((tool) => tool.id));
+		const tracer = this.#tracer;
+		let providerSpan: AgentTraceSpan | undefined;
 		let toolCallOrdinal = 0;
 		const invokeTool = async (
 			id: string,
@@ -815,6 +877,38 @@ export class AgentHarness {
 				controller.signal.removeEventListener('abort', abortTool);
 			}
 		};
+		/* Wrapped rather than instrumented inside: the wrapper sees exactly what
+		   the provider sees, so a denial before the tool ever runs is a span too.
+		   Without a tracer the provider is handed the original function. */
+		const tracedInvokeTool: typeof invokeTool = !tracer
+			? invokeTool
+			: async (id, input, invocation = {}) => {
+					const span = startSpan(tracer, `tool ${id}`, {
+						...(providerSpan ? { parent: providerSpan.context } : {}),
+						kind: 'internal',
+						attributes: {
+							'flowdular.tool': id,
+							...(invocation.providerCallId
+								? {
+										'flowdular.tool.provider_call_id':
+											invocation.providerCallId.slice(0, 128),
+									}
+								: {}),
+						},
+					});
+					try {
+						const output = await invokeTool(id, input, invocation);
+						endSpan(span, 'ok');
+						return output;
+					} catch (error) {
+						endSpan(
+							span,
+							'error',
+							error instanceof AgentHarnessError ? error.code : 'TOOL_FAILED',
+						);
+						throw error;
+					}
+				};
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let rejectProviderAbort: (() => void) | undefined;
 		try {
@@ -843,6 +937,16 @@ export class AgentHarness {
 					controller.abort('timeout');
 				}, request.definition.timeoutMs);
 			});
+			providerSpan = startSpan(tracer, `provider ${provider.id}`, {
+				kind: 'client',
+				attributes: {
+					'flowdular.agent.run_id': request.runId,
+					'flowdular.agent.id': request.definition.id,
+					'flowdular.agent.provider': provider.id,
+					'flowdular.agent.model': request.definition.model,
+					'flowdular.agent.trigger': request.trigger,
+				},
+			});
 			const providerResult = await Promise.race([
 				provider.execute({
 					request,
@@ -857,7 +961,7 @@ export class AgentHarness {
 							additionalProperties: false,
 						},
 					})),
-					invokeTool,
+					invokeTool: tracedInvokeTool,
 					emit,
 				}),
 				timeout,
@@ -884,6 +988,7 @@ export class AgentHarness {
 			emit('provider.completed', `Provider ${provider.id} completed.`, {
 				finishReason: providerResult.finishReason,
 			});
+			endSpan(providerSpan, 'ok', providerResult.finishReason);
 			const completedAt = Date.now();
 			emit('run.completed', 'Harness completed the run.');
 			return {
@@ -893,6 +998,13 @@ export class AgentHarness {
 				startedAt,
 				completedAt,
 			};
+		} catch (error) {
+			endSpan(
+				providerSpan,
+				'error',
+				error instanceof AgentHarnessError ? error.code : 'PROVIDER_FAILED',
+			);
+			throw error;
 		} finally {
 			acceptingEvents = false;
 			if (timer !== undefined) clearTimeout(timer);

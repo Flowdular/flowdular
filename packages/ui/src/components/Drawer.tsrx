@@ -1,6 +1,7 @@
-import { useEffect } from 'octane';
+import { useEffect, useRef } from 'octane';
 import type { OctaneNode } from 'octane';
 import { Icon } from '../icons/Icon.tsrx';
+import { trapFocus } from './focus-trap.ts';
 
 export type DrawerWidth = 'md' | 'lg';
 
@@ -16,6 +17,8 @@ export interface DrawerProps {
 }
 
 export function Drawer(props: DrawerProps) @{
+	const panelRef = useRef<HTMLElement | null>(null);
+
 	useEffect(() => {
 		if (!props.open) return;
 		const onKeyDown = (event: KeyboardEvent) => {
@@ -24,9 +27,13 @@ export function Drawer(props: DrawerProps) @{
 		const restore = document.body.style.overflow;
 		document.body.style.overflow = 'hidden';
 		window.addEventListener('keydown', onKeyDown);
+		const panel = panelRef.current;
+		const release =
+			panel === null ? undefined : trapFocus(panel);
 		return () => {
 			document.body.style.overflow = restore;
 			window.removeEventListener('keydown', onKeyDown);
+			release?.();
 		};
 	}, [props.open]);
 
@@ -45,6 +52,8 @@ export function Drawer(props: DrawerProps) @{
 					role="dialog"
 					aria-modal="true"
 					aria-label={props.title}
+					tabindex={-1}
+					ref={panelRef}
 					onClick={(event: MouseEvent) => event.stopPropagation()}
 				>
 					<header class="ui-drawer__head">

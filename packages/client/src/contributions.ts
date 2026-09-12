@@ -92,6 +92,13 @@ export interface CommandSearchContribution {
 	readonly scope: string;
 	readonly order: number;
 	search(request: CommandSearchRequest): Promise<readonly CommandSearchHit[]>;
+	/**
+	 * The member opened a hit this contribution answered with. Called once, on
+	 * that contribution alone, while the shell is already navigating: the result
+	 * is never awaited and a throw or a rejection is isolated, so bookkeeping of
+	 * any kind cannot delay or stop the record from opening.
+	 */
+	onOpen?(hit: CommandSearchHit): void | Promise<void>;
 }
 
 export interface WidgetContribution {

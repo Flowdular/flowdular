@@ -426,4 +426,24 @@ describe('module specification validation', () => {
 			'warning:SPEC_SCREENS_MISSING',
 		]);
 	});
+
+	/* A workspace view is built from any screen the client renders on its own,
+	   not from a list in particular, so a record or dashboard screen answers
+	   the client capability the same way. */
+	it('accepts a record or a dashboard as the screen a client renders', async () => {
+		for (const kind of ['list', 'record', 'dashboard']) {
+			const spec = draft();
+			(spec.screens as Record<string, unknown>[])[0]!.kind = kind;
+			expect([kind, codes((await report(spec)).issues)]).toEqual([kind, []]);
+		}
+	});
+
+	/* A form is the drawer of another screen, so it is not one on its own. */
+	it('still warns when a client declares only a form screen', async () => {
+		const spec = draft();
+		(spec.screens as Record<string, unknown>[])[0]!.kind = 'form';
+		expect(codes((await report(spec)).issues)).toEqual([
+			'warning:SPEC_SCREENS_MISSING',
+		]);
+	});
 });

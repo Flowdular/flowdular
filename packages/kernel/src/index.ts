@@ -113,6 +113,7 @@ export type {
 	ModuleSettingChange,
 	ModuleSettingDefinition,
 	ModuleSettingEntry,
+	ModuleSettingKind,
 	ModuleSettingRecord,
 	ModuleSettingScope,
 	ModuleSettingsDeclaration,

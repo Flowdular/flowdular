@@ -28,6 +28,18 @@ export type {
 } from './components/DateRangeField.tsrx';
 export { dateRangeReversed, formatDateValue } from './components/date-field.ts';
 export type { DateFieldKind } from './components/date-field.ts';
+export { DatePicker } from './components/DatePicker.tsrx';
+export type {
+	DatePickerMode,
+	DatePickerPreset,
+	DatePickerProps,
+} from './components/DatePicker.tsrx';
+export { DATE_PRESET_IDS, datePresetRange } from './components/calendar.ts';
+export type { DatePresetId } from './components/calendar.ts';
+export { FileUpload } from './components/FileUpload.tsrx';
+export type { FileUploadProps } from './components/FileUpload.tsrx';
+export { fileRefusal } from './components/file-upload.ts';
+export type { FileFacts, FileRefusalReason } from './components/file-upload.ts';
 export { SearchField } from './components/SearchField.tsrx';
 export type { SearchFieldProps } from './components/SearchField.tsrx';
 export { CheckGrid } from './components/CheckGrid.tsrx';
@@ -52,6 +64,7 @@ export type {
 	TableAction,
 	TableColumn,
 	TableEmpty,
+	TableMode,
 	TablePagination,
 	TableProps,
 	TableStatus,
@@ -61,8 +74,8 @@ export { TableCard } from './components/TableCard.tsrx';
 export type { TableCardProps } from './components/TableCard.tsrx';
 export { Pagination } from './components/Pagination.tsrx';
 export type { PaginationProps } from './components/Pagination.tsrx';
-export { pageRange } from './components/pagination.ts';
-export type { PageRange } from './components/pagination.ts';
+export { keysetPage, pageRange } from './components/pagination.ts';
+export type { KeysetPage, PageRange } from './components/pagination.ts';
 export { Kpi } from './components/Kpi.tsrx';
 export type { KpiProps } from './components/Kpi.tsrx';
 export { Chart } from './components/Chart.tsrx';

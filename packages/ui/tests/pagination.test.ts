@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pageRange } from '../src/components/pagination.ts';
+import { keysetPage, pageRange } from '../src/components/pagination.ts';
 
 describe('page arithmetic', () => {
 	it('describes the rows on the requested page', () => {
@@ -48,5 +48,29 @@ describe('page arithmetic', () => {
 		});
 		expect(pageRange(10, Number.NaN, 0).pageCount).toBe(10);
 		expect(pageRange(Number.NaN, 25, Number.NaN).pageCount).toBe(1);
+	});
+});
+
+describe('keyset page arithmetic', () => {
+	it('says where the page starts and whether another follows', () => {
+		expect(keysetPage(1, 25, true)).toEqual({
+			pageIndex: 1,
+			pageSize: 25,
+			from: 26,
+			hasMore: true,
+		});
+	});
+
+	/* Nobody counted the set, so there is no page count to clamp against: the
+	   index the screen holds stands. */
+	it('clamps nothing but the values a caller should never pass', () => {
+		expect(keysetPage(400, 25, false).from).toBe(10_001);
+		expect(keysetPage(-3, 0, false)).toEqual({
+			pageIndex: 0,
+			pageSize: 1,
+			from: 1,
+			hasMore: false,
+		});
+		expect(keysetPage(Number.NaN, Number.NaN, true).from).toBe(1);
 	});
 });

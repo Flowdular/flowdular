@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'octane';
+import { useEffect, useId, useMemo, useState } from 'octane';
 import type { OctaneNode } from 'octane';
 import {
 	columnFilteringFeature,
@@ -27,6 +27,9 @@ import {
 
 export type TableStatus = 'idle' | 'loading';
 
+/** 'server' means the module already sorted, narrowed and paged in SQL. */
+export type TableMode = 'client' | 'server';
+
 export interface TableColumn<Row extends RowData> {
 	readonly key: string;
 	readonly header: string;
@@ -52,6 +55,8 @@ export interface TableAction {
 	readonly icon?: string | undefined;
 	readonly tone?: 'default' | 'danger' | undefined;
 	readonly disabled?: boolean | undefined;
+	/** Why this action is refused. Read only while `disabled`, as the button's accessible description. */
+	readonly reason?: string | undefined;
 	readonly onSelect: () => void;
 }
 
@@ -61,14 +66,18 @@ export interface TablePagination {
 	readonly pageSize: number;
 	/** The page the table clamped to, reported once the render commits. It moves the page for no other reason. */
 	readonly onPageChange: (pageIndex: number) => void;
-	/** Rows behind the table when `rows` is already one page. Omit to page client-side over `rows`. */
+	/** Rows behind the table when `rows` is already one page. Omit to page client-side over `rows`, or, in server mode, for a keyset page nobody counted. */
 	readonly totalRows?: number | undefined;
+	/** Whether a page follows this one. Read only when `totalRows` is absent: a keyset page knows there is more without knowing how much. */
+	readonly hasMore?: boolean | undefined;
 }
 
 export interface TableProps<Row extends RowData> {
 	readonly columns: readonly TableColumn<Row>[];
 	readonly rows: readonly Row[];
 	readonly rowKey: (row: Row) => string;
+	/** 'server' renders `rows` as they arrive and reports every sort and page change instead of narrowing. */
+	readonly mode?: TableMode | undefined;
 	/** 'loading' replaces the body with the loading row; the screen decides when. */
 	readonly status?: TableStatus | undefined;
 	readonly loadingLabel?: string | undefined;
@@ -123,24 +132,48 @@ const FEATURES = tableFeatures({
 });
 
 function ActionButtons(props: { readonly actions: readonly TableAction[] }) @{
-	const entries = props.actions.map((action) => ({ key: action.id, action }));
+	const base = useId();
+	/* A reason answers "why can I not do this", so it is read only while the
+   action is refused; an enabled action pays for no description node. */
+	const entries = props.actions.map((action) => {
+		const reason =
+			action.disabled === true ? action.reason ?? '' : '';
+		return {
+			key: action.id,
+			action,
+			reason,
+			reasonId: reason === '' ? undefined : base + '-' + action.id,
+		};
+	});
 	@if (entries.length > 0) {
 		<div
 			class="ui-table-action-buttons"
 			onClick={(event: MouseEvent) => event.stopPropagation()}
 		>
 			@for (const entry of entries; key entry.key) {
-				<Button
-					size="sm"
-					variant={entry.action.tone === 'danger' ? 'danger' : 'secondary'}
-					disabled={entry.action.disabled ?? false}
-					onClick={entry.action.onSelect}
+				<span
+					class="ui-table-action"
+					title={entry.reason === '' ? undefined : entry.reason}
 				>
-					@if (entry.action.icon) {
-						<Icon name={entry.action.icon} size={16} />
+					<Button
+						size="sm"
+						variant={entry.action.tone === 'danger' ? 'danger' : 'secondary'}
+						disabled={entry.action.disabled ?? false}
+						describedBy={entry.reasonId}
+						onClick={entry.action.onSelect}
+					>
+						@if (entry.action.icon) {
+							<Icon name={entry.action.icon} size={16} />
+						}
+						{entry.action.label}
+					</Button>
+					@if (entry.reasonId) {
+						<span
+							class="ui-visually-hidden"
+							id={entry.reasonId}
+						>{entry.reason}</span>
 					}
-					{entry.action.label}
-				</Button>
+				</span>
 			}
 		</div>
 	}
@@ -251,16 +284,17 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 		[signature],
 	);
 	const pagination = props.pagination;
-	/* The module paginated in SQL, so `rows` is already the page on screen. */
-	const serverPaged = pagination?.totalRows !== undefined;
+	/* Server mode: the module sorted, narrowed and cut the page in SQL, so every
+   stage here stays inert and the header and pager only report. */
+	const server = props.mode === 'server';
 	const table = useTable({
 		features: FEATURES,
 		data: props.rows,
 		columns,
 		getRowId: (row) => props.rowKey(row),
 		enableSorting: sortable,
-		manualSorting: !sortable,
-		manualFiltering: props.globalFilter === undefined,
+		manualSorting: server || !sortable,
+		manualFiltering: server || props.globalFilter === undefined,
 		/* The engine filters and sorts; the page window is taken below. The row
    count to clamp a page index against exists only once the engine has
    filtered, so a page slice fed back into the engine would have to be
@@ -291,23 +325,41 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 			: {}),
 	});
 	const pagedRows = table.getRowModel().rows;
-	const range = pageRange(
-		pagination?.totalRows ?? pagedRows.length,
-		pagination?.pageSize ?? 1,
-		pagination?.pageIndex ?? 0,
-	);
+	/* A keyset page was never counted, so there is no total to clamp against and
+   `hasMore` is all the table knows about what is behind it. */
+	const total = server
+		? pagination?.totalRows
+		: pagination?.totalRows ?? pagedRows.length;
+	const range =
+		pagination !== undefined && total !== undefined
+			? pageRange(total, pagination.pageSize, pagination.pageIndex)
+			: undefined;
 	/* The table owns no page of its own: it clamps for this render and tells the
    screen once the render commits, so a row set that shrinks under the reader
    never updates the screen's state from inside the render. */
 	useEffect(() => {
+		if (!pagination) return;
+		if (range) {
+			if (range.pageIndex !== pagination.pageIndex) pagination.onPageChange(
+				range.pageIndex,
+			);
+			return;
+		}
+		/* An empty keyset page with nothing behind it is the only proof the
+	   reader walked off the end of the set. A page still waiting on its rows is
+	   not that proof: it is empty because the request is in flight. */
 		if (
-			pagination && range.pageIndex !== pagination.pageIndex
-		) pagination.onPageChange(range.pageIndex);
-	}, [range.pageIndex, pagination?.pageIndex]);
+			props.status !== 'loading' && pagination.pageIndex > 0 &&
+				pagedRows.length === 0 &&
+				pagination.hasMore !== true
+		) pagination.onPageChange(pagination.pageIndex - 1);
+	}, [range?.pageIndex, pagination?.pageIndex, pagedRows.length, props.status]);
+	/* The module paginated in SQL, so `rows` is already the page on screen. */
+	const prePaged = server || pagination?.totalRows !== undefined;
 	/* `from` and `to` are the same one-based positions the pager reads, so the
    rows on screen and the reading under them can never disagree. */
 	const windowRows =
-		pagination && !serverPaged
+		range !== undefined && !prePaged
 			? pagedRows.slice(Math.max(0, range.from - 1), range.to)
 			: pagedRows;
 	const narrowed = props.filtered === true || (props.globalFilter ?? '') !== '';

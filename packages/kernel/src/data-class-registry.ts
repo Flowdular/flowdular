@@ -46,7 +46,16 @@ export interface DataClassErasureInput {
 }
 
 export interface DataClassErasureResult {
+	/** Rows the call took out of the class, and nothing else. */
 	readonly removed: number;
+	/**
+	 * Rows it kept but stripped of the subject, for a class whose row cannot go:
+	 * an append-only ledger, or a snapshot another person's row is part of. A
+	 * non-negative integer when present. The caller counts a redacted row as
+	 * progress the same way it counts a removed one, so a batch that only
+	 * redacts still moves the run on and `removed` goes on meaning what it says.
+	 */
+	readonly redacted?: number;
 	/**
 	 * True when rows of the subject are left that this call did not reach. The
 	 * caller repeats the call up to its own batch cap and records the class as

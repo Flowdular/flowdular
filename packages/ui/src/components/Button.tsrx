@@ -9,6 +9,8 @@ export interface ButtonProps {
 	type?: 'button' | 'submit';
 	block?: boolean;
 	disabled?: boolean;
+	/** Id of the element describing the button, e.g. why this one is disabled. */
+	describedBy?: string | undefined;
 	onClick?: () => void;
 	children?: OctaneNode;
 }
@@ -24,6 +26,7 @@ export function Button(props: ButtonProps) @{
 		]}
 		type={props.type ?? 'button'}
 		disabled={props.disabled ?? false}
+		aria-describedby={props.describedBy}
 		onClick={() => props.onClick?.()}
 	>{props.children}</button>
 }

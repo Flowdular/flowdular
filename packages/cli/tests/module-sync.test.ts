@@ -160,6 +160,21 @@ describe('platform composition generator', () => {
 		);
 	});
 
+	it('binds the metrics of each module and hands every module the same tracer', () => {
+		const source = generateServerComposition(modules);
+		expect(source).toContain(
+			"import { createModuleMetrics } from '@flowdular/server';",
+		);
+		expect(source).toContain("metrics: createModuleMetrics('users.core'),");
+		expect(source).toContain("metrics: createModuleMetrics('billing.core'),");
+		/* The tracer is the platform's, not a per-module binding, so it reaches a
+		   module through the context the call spreads. */
+		expect(source).toContain('...context,');
+		expect(generateServerComposition(modules, true)).toContain(
+			"import { createModuleMetrics } from '@flowdular/sdk/server';",
+		);
+	});
+
 	it('wires client contributions only for client-capable modules', () => {
 		const source = generateClientComposition(modules);
 		expect(source).toContain('users_core(context)');
@@ -170,6 +185,7 @@ describe('platform composition generator', () => {
 		expect(generateServerComposition([])).toContain('return [];');
 		expect(generateClientComposition([])).toContain('return [];');
 		expect(generateServerComposition([])).not.toContain('/platform');
+		expect(generateServerComposition([])).not.toContain('createModuleMetrics');
 	});
 });
 

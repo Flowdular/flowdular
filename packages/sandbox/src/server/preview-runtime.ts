@@ -34,6 +34,12 @@ import {
 	createStoragePort,
 	storageConfigFromEnvironment,
 } from '@flowdular/storage';
+import {
+	createMailPort,
+	createModuleMetrics,
+	mailConfigFromEnvironment,
+	serverTracer,
+} from '@flowdular/server';
 import { createIsolatedPreviewRuntime } from './preview-worker-manager.ts';
 import {
 	resolvePreviewModules,
@@ -213,6 +219,7 @@ async function loadDraftComposition(
 			...context,
 			agentDefinitions: context.agentDefinitions.forModule(module.id),
 			dataClasses: context.dataClasses.forModule(module.id),
+			metrics: createModuleMetrics(module.id),
 			workspaceRoot: paths.root,
 		});
 		if (composition.settings) context.settings.declare(composition.settings);
@@ -366,6 +373,19 @@ export function createInProcessPreviewRuntime(
 				dataClasses,
 				databases,
 				storage,
+				/* In memory for the same reason the object store is session-local: a
+				   draft module must not reach anyone from a preview. */
+				mail: createMailPort(
+					mailConfigFromEnvironment({
+						...process.env,
+						NODE_ENV: 'test',
+						FD_MAIL_TRANSPORT: 'development',
+					}),
+				),
+				/* Rebound to each draft module as it composes, as the generated
+				   composition does; this binding is the preview's own. */
+				metrics: createModuleMetrics('sandbox.preview'),
+				tracer: serverTracer(),
 			};
 			for (const module of sources) {
 				const draft = await loadDraftComposition(

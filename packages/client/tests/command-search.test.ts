@@ -5,6 +5,7 @@ import type {
 	CommandSearchHit,
 } from '../src/contributions.ts';
 import {
+	commandSearchHitOpened,
 	commandSearchOutcome,
 	commandSearchReady,
 	groupCommandSearchHits,
@@ -209,6 +210,132 @@ describe('running contributed searches', () => {
 		);
 
 		expect(seen).toEqual([controller.signal, controller.signal]);
+	});
+});
+
+describe('opening a record hit', () => {
+	type RejectionListener = (reason: unknown) => void;
+	/* What escaped the shell, read from the test host. The package carries no
+	   node types, and this is all the tests need of it. */
+	const host = (
+		globalThis as unknown as {
+			readonly process: {
+				on(event: 'unhandledRejection', listener: RejectionListener): void;
+				off(event: 'unhandledRejection', listener: RejectionListener): void;
+			};
+		}
+	).process;
+
+	async function answeredHits(
+		contributions: readonly CommandSearchContribution[],
+	): Promise<readonly CommandSearchHit[]> {
+		const found = await runCommandSearch(
+			contributions,
+			'ad',
+			new AbortController().signal,
+		);
+		return found.hits;
+	}
+
+	interface Activation {
+		readonly by: string;
+		readonly hit: CommandSearchHit;
+	}
+
+	function watched(
+		id: string,
+		reference: string,
+		opened: Activation[],
+		onOpen?: () => void | Promise<void>,
+	): CommandSearchContribution {
+		return {
+			...contribution(id, async () => [hit('users.members', reference)]),
+			onOpen: (entry) => {
+				opened.push({ by: id, hit: entry });
+				return onOpen?.();
+			},
+		};
+	}
+
+	/* What a module keeps when a record is opened is its own bookkeeping about
+	   its own answer. A contribution that did not answer with the hit knows
+	   nothing about it and must not be told a record it never found was opened. */
+	it('tells the contribution that answered with the hit and nobody else', async () => {
+		const opened: Activation[] = [];
+		const hits = await answeredHits([
+			watched('search.core.records', 'ada', opened),
+			watched('documents.core.files', 'report', opened),
+		]);
+
+		commandSearchHitOpened(hits[1]!);
+
+		expect(opened).toEqual([{ by: 'documents.core.files', hit: hits[1] }]);
+	});
+
+	it('tells it once for each activation', async () => {
+		const opened: Activation[] = [];
+		const hits = await answeredHits([
+			watched('search.core.records', 'ada', opened),
+		]);
+
+		commandSearchHitOpened(hits[0]!);
+		expect(opened).toHaveLength(1);
+
+		commandSearchHitOpened(hits[0]!);
+		expect(opened).toHaveLength(2);
+	});
+
+	it('tells nobody about a hit no contribution answered with', async () => {
+		const opened: Activation[] = [];
+		await answeredHits([watched('search.core.records', 'ada', opened)]);
+
+		commandSearchHitOpened(hit('users.members', 'ada'));
+
+		expect(opened).toEqual([]);
+	});
+
+	it('opens a hit from a contribution that declares no callback', async () => {
+		const hits = await answeredHits([
+			contribution('search.core.records', async () => [
+				hit('search.core.records', 'ada'),
+			]),
+		]);
+
+		expect(() => commandSearchHitOpened(hits[0]!)).not.toThrow();
+	});
+
+	/* The callback runs while the shell is already navigating. A rejection that
+	   reached the page would be an unhandled one on the member's way to the
+	   record, for bookkeeping they never asked about. */
+	it('swallows a rejected callback', async () => {
+		const opened: Activation[] = [];
+		const unhandled: unknown[] = [];
+		const collect = (reason: unknown) => unhandled.push(reason);
+		const hits = await answeredHits([
+			watched('search.core.records', 'ada', opened, async () => {
+				throw new Error('recall is down');
+			}),
+		]);
+
+		host.on('unhandledRejection', collect);
+		expect(() => commandSearchHitOpened(hits[0]!)).not.toThrow();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		host.off('unhandledRejection', collect);
+
+		expect(opened).toHaveLength(1);
+		expect(unhandled).toEqual([]);
+	});
+
+	it('swallows a callback that throws before it returns a promise', async () => {
+		const opened: Activation[] = [];
+		const hits = await answeredHits([
+			watched('search.core.records', 'ada', opened, () => {
+				throw new Error('recall is down');
+			}),
+		]);
+
+		expect(() => commandSearchHitOpened(hits[0]!)).not.toThrow();
+		expect(opened).toHaveLength(1);
 	});
 });
 

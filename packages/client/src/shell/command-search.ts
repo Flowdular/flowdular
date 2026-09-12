@@ -52,6 +52,28 @@ export interface CommandSearchAnswer {
 	readonly failed: readonly string[];
 }
 
+/* Which contribution answered with a hit, so opening one reaches its author and
+   nobody else. Weakly keyed by the hit: an answer the palette replaced takes its
+   entries with it, so nothing is pruned and nothing is held alive. */
+const hitOrigin = new WeakMap<CommandSearchHit, CommandSearchContribution>();
+
+/**
+ * Tells the contribution that answered with this hit that the member opened it.
+ * Fire and forget on the navigation path: the answer is never awaited and a
+ * contribution that throws or rejects is isolated here, so whatever it does the
+ * record still opens. A hit from no known answer reaches nobody.
+ */
+export function commandSearchHitOpened(hit: CommandSearchHit): void {
+	const contribution = hitOrigin.get(hit);
+	if (!contribution?.onOpen) return;
+	try {
+		void Promise.resolve(contribution.onOpen(hit)).catch(() => undefined);
+	} catch {
+		/* A contribution that throws before it returns a promise is the same
+		   failure as one that rejects, and costs the member the same nothing. */
+	}
+}
+
 /**
  * Asks every contribution in parallel and keeps their declared order. A
  * contribution is foreign code on the shell's critical path: one that rejects
@@ -83,6 +105,7 @@ export async function runCommandSearch(
 		for (const hit of answer.value) {
 			if (hit && typeof hit.id === 'string' && typeof hit.title === 'string') {
 				hits.push(hit);
+				hitOrigin.set(hit, contributions[index]!);
 			}
 		}
 	}

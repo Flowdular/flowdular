@@ -2,6 +2,9 @@ import type { ServerRoute } from '@octanejs/app-core';
 import type { ModuleWebSurface } from '@flowdular/contracts';
 import type { DatabaseProvider } from '@flowdular/database';
 import type { StoragePort } from '@flowdular/storage';
+import type { MailPort } from './mail/index.ts';
+import type { ModuleMetrics } from './metrics.ts';
+import type { Tracer } from './trace/index.ts';
 import type {
 	ModuleSettingsDeclaration,
 	ModuleSettingsRuntime,
@@ -43,6 +46,26 @@ export interface ModuleServerContext<Auth> {
 	 * security reaches an object store.
 	 */
 	readonly storage: StoragePort;
+	/**
+	 * Platform-owned outbound mail. A module hands it a bounded message and
+	 * never selects a transport; `configured` is false when the deployment
+	 * composed none, and every send is refused with MAIL_NOT_CONFIGURED.
+	 */
+	readonly mail: MailPort;
+	/**
+	 * The counters and histograms this module owns, already bound to its id by
+	 * the generated composition. Every series it opens is exposed on
+	 * `/api/metrics` as `flowdular_module_<module id>_<name>`, under the same
+	 * bounds the request series have.
+	 */
+	readonly metrics: ModuleMetrics;
+	/**
+	 * Spans for the work this module does. A module that enqueues work stores
+	 * `currentTraceParent()` on the row it enqueues and hands that value back as
+	 * `traceparent` when it starts the span for the claimed item, so a job
+	 * carries the trace that enqueued it.
+	 */
+	readonly tracer: Tracer;
 }
 
 export interface ModuleServerComposition {

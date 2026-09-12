@@ -1,3 +1,10 @@
+import { currentTrace } from './trace/context.ts';
+import {
+	serverErrorSink,
+	type ErrorSink,
+	NO_ERRORS,
+} from './trace/error-sink.ts';
+
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 export type LogFormat = 'json' | 'text';
 
@@ -33,6 +40,11 @@ export interface LoggerOptions {
 	/** Defaults to the console: warn and error on stderr, the rest on stdout. */
 	readonly write?: (level: LogLevel, line: string) => void;
 	readonly now?: () => Date;
+	/**
+	 * Where error lines are reported beyond the log stream. Defaults to none;
+	 * `serverLogger()` takes the one the deployment configured.
+	 */
+	readonly errorSink?: ErrorSink;
 }
 
 const LEVELS: Readonly<Record<LogLevel, number>> = Object.freeze({
@@ -195,6 +207,8 @@ export function createLogger(options: LoggerOptions = {}): Logger {
 	   one only when the operator asked for debug output. */
 	const withStack = !production || level === 'debug';
 
+	const errorSink = options.errorSink ?? NO_ERRORS;
+
 	const emit = (
 		entryLevel: LogLevel,
 		message: string,
@@ -206,6 +220,13 @@ export function createLogger(options: LoggerOptions = {}): Logger {
 			level: entryLevel,
 			msg: boundedString(message),
 		};
+		/* Ambient, so every line of a served request correlates with the span the
+		   endpoint opened without a caller threading an id through its helpers. */
+		const trace = currentTrace();
+		if (trace) {
+			record.traceId = trace.traceId;
+			record.spanId = trace.spanId;
+		}
 		if (event?.requestId) record.requestId = boundedString(event.requestId);
 		if (event?.endpoint) record.endpoint = boundedString(event.endpoint);
 		if (event?.module) record.module = boundedString(event.module);
@@ -217,6 +238,23 @@ export function createLogger(options: LoggerOptions = {}): Logger {
 			entryLevel,
 			format === 'json' ? JSON.stringify(record) : textLine(record),
 		);
+		if (entryLevel !== 'error' || errorSink.kind === 'none') return;
+		/* Foreign code behind a configured URL: a throw here would fail the very
+		   line that is already reporting a failure. */
+		try {
+			const err = record.err as LoggedError | undefined;
+			errorSink.report({
+				at: Date.parse(record.time as string) || 0,
+				name: err?.name ?? 'error',
+				message: err?.message ?? (record.msg as string),
+				...(event?.endpoint ? { endpoint: event.endpoint } : {}),
+				...(event?.module ? { module: event.module } : {}),
+				...(event?.requestId ? { requestId: event.requestId } : {}),
+				...(trace ? { traceId: trace.traceId, spanId: trace.spanId } : {}),
+			});
+		} catch {
+			/* An unreachable sink must never turn one failure into two. */
+		}
 	};
 
 	const logger: Logger = {
@@ -249,5 +287,5 @@ let processLogger: Logger | undefined;
  * own sink call `createLogger` instead.
  */
 export function serverLogger(): Logger {
-	return (processLogger ??= createLogger());
+	return (processLogger ??= createLogger({ errorSink: serverErrorSink() }));
 }

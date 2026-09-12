@@ -17,6 +17,8 @@ export interface SelectProps {
 	readonly name?: string | undefined;
 	readonly required?: boolean | undefined;
 	readonly disabled?: boolean | undefined;
+	/** Takes focus when the control mounts: the first field of a drawer that opened. */
+	readonly autoFocus?: boolean | undefined;
 	/** Marks the control invalid without occupying the error line. */
 	readonly invalid?: boolean | undefined;
 	readonly help?: string | undefined;
@@ -44,6 +46,7 @@ export function Select(props: SelectProps) @{
 			value={props.value}
 			required={props.required ?? false}
 			disabled={props.disabled ?? false}
+			autoFocus={props.autoFocus ?? false}
 			aria-invalid={invalid}
 			aria-describedby={props.error
 				? props.id + '-error'

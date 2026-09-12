@@ -4,7 +4,16 @@
    removed or changed. The surface is pinned by
    packages/kernel/platform-api.snapshot.d.ts; `pnpm platform-api:check` fails
    when the surface changes without a bump here. */
-export const PLATFORM_API_VERSION = '0.1.1';
+export const PLATFORM_API_VERSION = '0.1.3';
+
+/* The workspace time zone: one tenant setting, declared by the module named
+   here and read by any module that shows or schedules a local time. The id, the
+   key and the fallback live here so a reader never restates them. */
+export const TENANT_TIME_ZONE_SETTING = {
+	moduleId: 'system.core',
+	key: 'timeZone',
+	defaultValue: 'UTC',
+} as const;
 
 export type ModuleCapability =
 	| 'api'

@@ -7,6 +7,7 @@ import {
 	type NavigationGroup,
 } from './contributions.ts';
 import { applicationPath } from './routing.ts';
+import { commandSearchHitOpened } from './shell/command-search.ts';
 import { onOpenCommandPalette } from './shell/command.ts';
 import { CommandPalette } from './shell/CommandPalette.tsrx';
 import { widgetsForSlot } from './shell/ContributionOutlets.tsrx';
@@ -149,6 +150,7 @@ export function ApplicationShell(props: ApplicationShellProps) @{
    that is not a plain in-workspace path falls back to the hit's view rather
    than being pushed at the browser. */
 	const openHit = (hit: CommandSearchHit) => {
+		commandSearchHitOpened(hit);
 		const base =
 			activeWorkspaceSlug
 				? applicationPath() + '/' + activeWorkspaceSlug
