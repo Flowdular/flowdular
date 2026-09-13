@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from 'octane';
+import { useEffect, useId, useMemo, useRef, useState } from 'octane';
 import type { OctaneNode } from 'octane';
 import {
 	columnFilteringFeature,
@@ -8,11 +8,13 @@ import {
 	flexRender,
 	globalFilteringFeature,
 	rowPaginationFeature,
+	rowSelectionFeature,
 	rowSortingFeature,
 	tableFeatures,
 	useTable,
 	type ColumnDef,
 	type RowData,
+	type RowSelectionState,
 } from '@octanejs/tanstack-table';
 import { Icon } from '../icons/Icon.tsrx';
 import { Button } from './Button.tsrx';
@@ -60,6 +62,31 @@ export interface TableAction {
 	readonly onSelect: () => void;
 }
 
+export interface TableSelection<Row extends RowData> {
+	/** Controlled by the screen, which resets it on a page, sort or filter change. The header checkbox touches only the rows on screen; the clear button empties the whole set. */
+	readonly selectedKeys: ReadonlySet<string>;
+	readonly onSelectionChange: (keys: ReadonlySet<string>) => void;
+	/** Accessible name of the header checkbox. */
+	readonly label: string;
+	/** Accessible name of a row's checkbox. */
+	readonly rowLabel: (row: Row) => string;
+	/** false: the row has no checkbox and the header checkbox skips it. */
+	readonly selectable?: ((row: Row) => boolean) | undefined;
+	/** Label of the clear-selection button in the bulk bar. */
+	readonly clearLabel?: string | undefined;
+}
+
+export interface TableBulkAction {
+	readonly id: string;
+	readonly label: string;
+	readonly icon?: string | undefined;
+	readonly tone?: 'default' | 'danger' | undefined;
+	readonly disabled?: boolean | undefined;
+	/** Why this action is refused. Read only while `disabled`, like `TableAction.reason`. */
+	readonly reason?: string | undefined;
+	readonly onSelect: (keys: readonly string[]) => void;
+}
+
 export interface TablePagination {
 	/** Zero-based index of the page on screen. */
 	readonly pageIndex: number;
@@ -103,6 +130,12 @@ export interface TableProps<Row extends RowData> {
 	readonly actionsWidth?: string | undefined;
 	readonly onSelect?: ((row: Row) => void) | undefined;
 	readonly selectedKey?: string | undefined;
+	/** Multi-row selection through a leading checkbox column. The header checkbox toggles the rows on screen. */
+	readonly selection?: TableSelection<Row> | undefined;
+	/** Buttons in the bar above the table while at least one row is selected. */
+	readonly bulkActions?: readonly TableBulkAction[] | undefined;
+	/** Text of the bulk bar and the polite announcement, e.g. "3 selected". */
+	readonly selectionSummary?: ((count: number) => string) | undefined;
 	/** Accessible name for the table, rendered as its aria-label. */
 	readonly caption?: string | undefined;
 }
@@ -128,8 +161,59 @@ const FEATURES = tableFeatures({
 	rowSortingFeature,
 	sortedRowModel: createSortedRowModel(),
 	rowPaginationFeature,
+	rowSelectionFeature,
 	columnMeta: {} as FlowdularColumnMeta,
 });
+
+const SELECT_WIDTH = '44px';
+
+function defaultSelectionSummary(count: number): string {
+	return count + ' selected';
+}
+
+/* A checkbox answers Space on its own; Enter is added so both keys the row
+   contract names toggle the same way. */
+function enterToggles(toggle: () => void): (event: KeyboardEvent) => void {
+	return (event) => {
+		if (event.key !== 'Enter') return;
+		event.preventDefault();
+		toggle();
+	};
+}
+
+function stopClick(event: MouseEvent): void {
+	event.stopPropagation();
+}
+
+function SelectAll(props: {
+	readonly label: string;
+	readonly checked: boolean;
+	readonly mixed: boolean;
+	readonly disabled: boolean;
+	readonly onToggle: () => void;
+}) @{
+	const ref = useRef<HTMLInputElement | null>(null);
+	/* Every render: a click the screen ignored has already cleared the native
+   flag while `mixed` still holds. */
+	useEffect(() => {
+		if (ref.current) ref.current.indeterminate = props.mixed;
+	});
+
+	<input
+		type="checkbox"
+		ref={ref}
+		aria-label={props.label}
+		aria-checked={props.mixed
+			? 'mixed'
+			: props.checked
+				? 'true'
+				: 'false'}
+		checked={props.checked}
+		disabled={props.disabled}
+		onChange={props.onToggle}
+		onKeyDown={enterToggles(props.onToggle)}
+	/>
+}
 
 function ActionButtons(props: { readonly actions: readonly TableAction[] }) @{
 	const base = useId();
@@ -283,6 +367,17 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 		() => sorts.map((sort) => ({ id: sort.key, desc: sort.desc })),
 		[signature],
 	);
+	const selection = props.selection;
+	const selectedKeys = selection?.selectedKeys;
+	/* Same reference rule as sorting: the engine's selection slice is rebuilt
+   only when the set of keys changed, never for a Set the screen recreated. */
+	const selectionSignature =
+		selectedKeys === undefined ? '' : [...selectedKeys].sort().join('\n');
+	const rowSelection = useMemo<RowSelectionState>(() => {
+		const state: Record<string, true> = {};
+		if (selectedKeys) for (const key of selectedKeys) state[key] = true;
+		return state;
+	}, [selectionSignature]);
 	const pagination = props.pagination;
 	/* Server mode: the module sorted, narrowed and cut the page in SQL, so every
    stage here stays inert and the header and pager only report. */
@@ -301,11 +396,15 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
    computed before the number it depends on. */
 		manualPagination: true,
 		getColumnCanGlobalFilter: () => true,
+		enableRowSelection: selection === undefined
+			? false
+			: (row) => selection.selectable?.(row.original) ?? true,
 		state: {
 			...(sortable ? { sorting: engineSorting } : {}),
 			...(props.globalFilter === undefined
 				? {}
 				: { globalFilter: props.globalFilter }),
+			...(selection === undefined ? {} : { rowSelection }),
 		},
 		...(sortable
 			? {
@@ -364,7 +463,40 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 			: pagedRows;
 	const narrowed = props.filtered === true || (props.globalFilter ?? '') !== '';
 	const empty = narrowed && props.emptyFiltered || props.empty;
-	const span = columns.length;
+	const span = columns.length + (selection === undefined ? 0 : 1);
+	const change = (keys: readonly string[], checked: boolean) => {
+		if (!selection) return;
+		const next = new Set(selection.selectedKeys);
+		for (const key of keys) {
+			if (checked) next.add(key);
+			else next.delete(key);
+		}
+		selection.onSelectionChange(next);
+	};
+	/* The header checkbox covers exactly the rows on screen: in server mode that
+   is the page the module gave, never the whole set behind it. */
+	const selectableRows =
+		selection === undefined
+			? []
+			: windowRows.filter((row) => row.getCanSelect());
+	const checkedOnScreen = selectableRows.filter(
+		(row) => row.getIsSelected(),
+	).length;
+	const allChecked =
+		selectableRows.length > 0 && checkedOnScreen === selectableRows.length;
+	const toggleAll = () => change(
+		selectableRows.map((row) => row.id),
+		!allChecked,
+	);
+	const selectedCount = selectedKeys?.size ?? 0;
+	const summarize = props.selectionSummary ?? defaultSelectionSummary;
+	const summary = summarize(selectedCount);
+	const bulk = (props.bulkActions ?? []).map(
+		(action): TableAction => ({
+			...action,
+			onSelect: () => action.onSelect([...(selectedKeys ?? [])]),
+		}),
+	);
 	/* TanStack row/header/cell objects are live compatibility objects. Render
    them here and carry immutable values into keyed TSRX loops. */
 	const headerGroups = table.getHeaderGroups().map(
@@ -395,6 +527,10 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 			selected: props.selectedKey === row.id,
 			clickable: props.onSelect !== undefined,
 			onClick: () => props.onSelect?.(row.original),
+			selectable: row.getCanSelect(),
+			checked: row.getIsSelected(),
+			checkLabel: selection?.rowLabel(row.original) ?? '',
+			onCheck: (checked: boolean) => change([row.id], checked),
 			cells: row.getAllCells().map(
 				(cell) => ({
 					key: cell.id,
@@ -411,81 +547,138 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 		}),
 	);
 
-	<div class="ui-table-wrap">
-		<table class="ui-table" aria-label={props.caption ?? ''}>
-			<colgroup>
-				@for (const column of leafColumns; key column.key) {
-					<col
-						class={column.meta?.actions && 'ui-table__actions-column'}
-						style={widthStyle(column.meta?.width)}
-					/>
-				}
-			</colgroup>
-			<thead>
-				@for (const group of headerGroups; key group.key) {
-					<tr>
-						@for (const header of group.headers; key header.key) {
-							<th
-								class={[
-									header.meta?.numeric && 'num',
-									header.meta?.actions && 'ui-table__actions',
-								]}
-								style={widthStyle(header.meta?.width)}
-								aria-label={header.meta?.actions
-									? header.meta.actionsLabel ?? ''
-									: ''}
-								aria-sort={header.sort}
-							>
-								{header.canSort
-									? <button
-											class="ui-table__sort"
-											type="button"
-											onClick={header.onToggle}
-										>
-											{header.content}
-											<SortIndicator direction={header.direction} />
-										</button>
-									: header.content}
-							</th>
-						}
-					</tr>
-				}
-			</thead>
-			<tbody>
-				@if (props.status === 'loading') {
-					<tr class="ui-table__placeholder">
-						<td class="ui-table__empty" colspan={span}>
-							{props.loadingLabel ?? 'Loading…'}
-						</td>
-					</tr>
-				} @else if (renderedRows.length === 0) {
-					<tr class="ui-table__placeholder">
-						<td colspan={span}>
-							<EmptyState
-								icon={empty.icon}
-								title={empty.title}
-								code={empty.code ?? ''}
-							>{empty.hint}</EmptyState>
-						</td>
-					</tr>
-				} @else {
-					@for (const row of renderedRows; key row.key) {
-						<tr
-							class={rowClass(row.clickable, row.selected)}
-							onClick={row.onClick}
-						>
-							@for (const cell of row.cells; key cell.key) {
-								<td
+	<>
+		@if (selection) {
+			<div class="ui-visually-hidden" aria-live="polite">{summary}</div>
+		}
+		@if (selection && selectedCount > 0) {
+			<div class="ui-table__bulk">
+				<span class="ui-table__bulk-count">{summary}</span>
+				<ActionButtons actions={bulk} />
+				<Button
+					size="sm"
+					variant="ghost"
+					onClick={() => selection.onSelectionChange(new Set())}
+				>
+					{selection.clearLabel ?? 'Clear selection'}
+				</Button>
+			</div>
+		}
+		<div class="ui-table-wrap">
+			<table class="ui-table" aria-label={props.caption ?? ''}>
+				<colgroup>
+					@if (selection) {
+						<col
+							class="ui-table__select-column"
+							style={widthStyle(SELECT_WIDTH)}
+						/>
+					}
+					@for (const column of leafColumns; key column.key) {
+						<col
+							class={column.meta?.actions && 'ui-table__actions-column'}
+							style={widthStyle(column.meta?.width)}
+						/>
+					}
+				</colgroup>
+				<thead>
+					@for (const group of headerGroups; key group.key) {
+						<tr>
+							@if (selection) {
+								<th class="ui-table__select" style={widthStyle(SELECT_WIDTH)}>
+									<SelectAll
+										label={selection.label}
+										checked={allChecked}
+										mixed={checkedOnScreen > 0 && !allChecked}
+										disabled={selectableRows.length === 0}
+										onToggle={toggleAll}
+									/>
+								</th>
+							}
+							@for (const header of group.headers; key header.key) {
+								<th
 									class={[
-										cell.meta?.numeric && 'num',
-										cell.meta?.actions && 'ui-table__actions',
+										header.meta?.numeric && 'num',
+										header.meta?.actions && 'ui-table__actions',
 									]}
-								>{cell.content}</td>
+									style={widthStyle(header.meta?.width)}
+									aria-label={header.meta?.actions
+										? header.meta.actionsLabel ?? ''
+										: ''}
+									aria-sort={header.sort}
+								>
+									{header.canSort
+										? <button
+												class="ui-table__sort"
+												type="button"
+												onClick={header.onToggle}
+											>
+												{header.content}
+												<SortIndicator direction={header.direction} />
+											</button>
+										: header.content}
+								</th>
 							}
 						</tr>
 					}
-				}
-			</tbody>
-		</table>
-	</div>
+				</thead>
+				<tbody>
+					@if (props.status === 'loading') {
+						<tr class="ui-table__placeholder">
+							<td class="ui-table__empty" colspan={span}>
+								{props.loadingLabel ?? 'Loading…'}
+							</td>
+						</tr>
+					} @else if (renderedRows.length === 0) {
+						<tr class="ui-table__placeholder">
+							<td colspan={span}>
+								<EmptyState
+									icon={empty.icon}
+									title={empty.title}
+									code={empty.code ?? ''}
+								>{empty.hint}</EmptyState>
+							</td>
+						</tr>
+					} @else {
+						@for (const row of renderedRows; key row.key) {
+							<tr
+								class={rowClass(row.clickable, row.selected)}
+								aria-selected={selection === undefined
+									? undefined
+									: row.checked
+										? 'true'
+										: 'false'}
+								onClick={row.onClick}
+							>
+								@if (selection) {
+									<td class="ui-table__select" onClick={stopClick}>
+										@if (row.selectable) {
+											<input
+												type="checkbox"
+												aria-label={row.checkLabel}
+												checked={row.checked}
+												onChange={(event: Event) => row.onCheck(
+													(event.currentTarget as HTMLInputElement).checked,
+												)}
+												onKeyDown={enterToggles(
+													() => row.onCheck(!row.checked),
+												)}
+											/>
+										}
+									</td>
+								}
+								@for (const cell of row.cells; key cell.key) {
+									<td
+										class={[
+											cell.meta?.numeric && 'num',
+											cell.meta?.actions && 'ui-table__actions',
+										]}
+									>{cell.content}</td>
+								}
+							</tr>
+						}
+					}
+				</tbody>
+			</table>
+		</div>
+	</>
 }

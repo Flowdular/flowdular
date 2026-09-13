@@ -1,5 +1,10 @@
+import { useState } from 'octane';
 import { describe, expect, it, vi } from 'vitest';
-import { Table, type TableColumn } from '../src/components/Table.tsrx';
+import {
+	Table,
+	type TableBulkAction,
+	type TableColumn,
+} from '../src/components/Table.tsrx';
 import { mount, run, text } from './dom.ts';
 
 interface Person {
@@ -539,6 +544,324 @@ describe('Table action reasons', () => {
 				'title',
 			),
 		).toBeNull();
+		mounted.unmount();
+	});
+});
+
+function Selectable(props: {
+	readonly rows: readonly Person[];
+	readonly initial?: readonly string[] | undefined;
+	readonly mode?: 'client' | 'server' | undefined;
+	readonly selectable?: ((row: Person) => boolean) | undefined;
+	readonly onSelect?: ((row: Person) => void) | undefined;
+	readonly bulk?: readonly TableBulkAction[] | undefined;
+	readonly totalRows?: number | undefined;
+}) @{
+	const [keys, setKeys] = useState<ReadonlySet<string>>(
+		new Set(props.initial ?? []),
+	);
+
+	<Table
+		columns={COLUMNS}
+		rows={props.rows}
+		rowKey={(row) => row.id}
+		mode={props.mode}
+		pagination={{
+			pageIndex: 0,
+			pageSize: 2,
+			totalRows: props.totalRows,
+			onPageChange: () => {},
+		}}
+		selection={{
+			selectedKeys: keys,
+			onSelectionChange: setKeys,
+			label: 'Select all people',
+			rowLabel: (row) => 'Select ' + row.name,
+			selectable: props.selectable,
+			clearLabel: 'Clear',
+		}}
+		bulkActions={props.bulk}
+		onSelect={props.onSelect}
+		empty={EMPTY}
+		caption="People"
+	/>
+}
+
+describe('Table selection', () => {
+	function header(container: HTMLElement): HTMLInputElement {
+		return container.querySelector(
+			'th.ui-table__select input',
+		) as HTMLInputElement;
+	}
+
+	function boxes(container: HTMLElement): readonly HTMLInputElement[] {
+		return [
+			...container.querySelectorAll<HTMLInputElement>(
+				'td.ui-table__select input',
+			),
+		];
+	}
+
+	function live(container: HTMLElement): string {
+		return text(container.querySelector('[aria-live="polite"]'));
+	}
+
+	it('renders no checkbox column without the prop', async () => {
+		const mounted = await mount(
+			<Table
+				columns={COLUMNS}
+				rows={members(2)}
+				rowKey={(row) => row.id}
+				empty={EMPTY}
+				caption="People"
+			/>,
+		);
+		expect(mounted.container.querySelector('.ui-table__select')).toBeNull();
+		expect(mounted.container.querySelector('[aria-live]')).toBeNull();
+		expect(
+			mounted.container.querySelector('tbody tr')?.hasAttribute(
+				'aria-selected',
+			),
+		).toBe(false);
+		mounted.unmount();
+	});
+
+	it('toggles only the page on screen from the header', async () => {
+		const mounted = await mount(<Selectable rows={members(5)} />);
+		expect(header(mounted.container).getAttribute('aria-checked')).toBe(
+			'false',
+		);
+		await run(() => header(mounted.container).click());
+		expect(boxes(mounted.container).map((box) => box.checked)).toEqual([
+			true,
+			true,
+		]);
+		expect(live(mounted.container)).toBe('2 selected');
+		expect(header(mounted.container).getAttribute('aria-checked')).toBe('true');
+		await run(() => header(mounted.container).click());
+		expect(boxes(mounted.container).map((box) => box.checked)).toEqual([
+			false,
+			false,
+		]);
+		expect(live(mounted.container)).toBe('0 selected');
+		mounted.unmount();
+	});
+
+	it('toggles the page the module gave in server mode', async () => {
+		const onSelect = vi.fn();
+		const mounted = await mount(
+			<Selectable
+				rows={members(3)}
+				mode="server"
+				totalRows={30}
+				bulk={[
+					{ id: 'go', label: 'Go', onSelect },
+				]}
+			/>,
+		);
+		await run(() => header(mounted.container).click());
+		expect(boxes(mounted.container).map((box) => box.checked)).toEqual([
+			true,
+			true,
+			true,
+		]);
+		await run(() => {
+			(mounted.container.querySelector(
+				'.ui-table__bulk .ui-table-action-buttons button',
+			) as HTMLButtonElement).click();
+		});
+		expect(onSelect).toHaveBeenCalledWith(['member-0', 'member-1', 'member-2']);
+		mounted.unmount();
+	});
+
+	it('reads mixed while only some rows on screen are selected', async () => {
+		const mounted = await mount(<Selectable rows={members(3)} />);
+		await run(() => (boxes(mounted.container)[0] as HTMLInputElement).click());
+		const all = header(mounted.container);
+		expect(all.getAttribute('aria-checked')).toBe('mixed');
+		expect(all.indeterminate).toBe(true);
+		expect(all.checked).toBe(false);
+		/* Mixed resolves to everything on screen selected, never to nothing. */
+		await run(() => all.click());
+		expect(boxes(mounted.container).map((box) => box.checked)).toEqual([
+			true,
+			true,
+		]);
+		expect(header(mounted.container).indeterminate).toBe(false);
+		mounted.unmount();
+	});
+
+	it('keeps a row checkbox click away from the row action', async () => {
+		const onSelect = vi.fn();
+		const mounted = await mount(
+			<Selectable rows={members(2)} onSelect={onSelect} />,
+		);
+		await run(() => (boxes(mounted.container)[1] as HTMLInputElement).click());
+		expect(onSelect).not.toHaveBeenCalled();
+		expect(boxes(mounted.container)[1]?.checked).toBe(true);
+		expect(
+			[...mounted.container.querySelectorAll('tbody tr')].map(
+				(row) => row.getAttribute('aria-selected'),
+			),
+		).toEqual(['false', 'true']);
+		await run(() => {
+			(mounted.container.querySelector(
+				'tbody td:nth-child(2)',
+			) as HTMLElement).click();
+		});
+		expect(onSelect).toHaveBeenCalledTimes(1);
+		mounted.unmount();
+	});
+
+	it('toggles from the keyboard', async () => {
+		const mounted = await mount(<Selectable rows={members(2)} />);
+		const box = boxes(mounted.container)[0] as HTMLInputElement;
+		const space = new KeyboardEvent('keydown', {
+			key: ' ',
+			bubbles: true,
+			cancelable: true,
+		});
+		await run(() => box.dispatchEvent(space));
+		/* Space is the checkbox's own key: nothing intercepts it. */
+		expect(space.defaultPrevented).toBe(false);
+		await run(() => {
+			box.dispatchEvent(
+				new KeyboardEvent('keydown', {
+					key: 'Enter',
+					bubbles: true,
+					cancelable: true,
+				}),
+			);
+		});
+		expect(boxes(mounted.container)[0]?.checked).toBe(true);
+		await run(() => {
+			header(mounted.container).dispatchEvent(
+				new KeyboardEvent('keydown', {
+					key: 'Enter',
+					bubbles: true,
+					cancelable: true,
+				}),
+			);
+		});
+		expect(boxes(mounted.container).map((box) => box.checked)).toEqual([
+			true,
+			true,
+		]);
+		mounted.unmount();
+	});
+
+	it(
+		'gives an unselectable row no checkbox and skips it in the header',
+		async () => {
+			const mounted = await mount(
+				<Selectable
+					rows={members(2)}
+					selectable={(row) => row.id !== 'member-0'}
+				/>,
+			);
+			const cells = mounted.container.querySelectorAll('td.ui-table__select');
+			expect(cells).toHaveLength(2);
+			expect(cells[0]?.querySelector('input')).toBeNull();
+			expect(cells[1]?.querySelector('input')?.getAttribute('aria-label')).toBe(
+				'Select Member 1',
+			);
+			await run(() => header(mounted.container).click());
+			expect(live(mounted.container)).toBe('1 selected');
+			expect(header(mounted.container).getAttribute('aria-checked')).toBe(
+				'true',
+			);
+			mounted.unmount();
+		},
+	);
+
+	it('shows the bulk bar with a selection and clears it', async () => {
+		const archive = vi.fn();
+		const mounted = await mount(
+			<Selectable
+				rows={members(3)}
+				initial={['member-0', 'member-2']}
+				bulk={[
+					{ id: 'archive', label: 'Archive', onSelect: archive },
+					{
+						id: 'delete',
+						label: 'Delete',
+						tone: 'danger',
+						disabled: true,
+						reason: 'Locked records cannot be deleted.',
+						onSelect: () => {},
+					},
+				]}
+			/>,
+		);
+		const bar = mounted.container.querySelector(
+			'.ui-table__bulk',
+		) as HTMLElement;
+		expect(text(bar.querySelector('.ui-table__bulk-count'))).toBe('2 selected');
+		expect(live(mounted.container)).toBe('2 selected');
+		const buttons = [
+			...bar.querySelectorAll<HTMLButtonElement>(
+				'.ui-table-action-buttons button',
+			),
+		];
+		expect(buttons.map((button) => text(button))).toEqual([
+			'Archive',
+			'Delete',
+		]);
+		expect(buttons[0]?.getAttribute('aria-describedby')).toBeNull();
+		const reasonId = buttons[1]?.getAttribute('aria-describedby') ?? '';
+		expect(buttons[1]?.disabled).toBe(true);
+		expect(text(document.getElementById(reasonId))).toBe(
+			'Locked records cannot be deleted.',
+		);
+		await run(() => buttons[0]?.click());
+		expect(archive).toHaveBeenCalledWith(['member-0', 'member-2']);
+		const clear = [...bar.querySelectorAll('button')].find(
+			(button) => text(button) === 'Clear',
+		) as HTMLButtonElement;
+		await run(() => clear.click());
+		expect(mounted.container.querySelector('.ui-table__bulk')).toBeNull();
+		expect(boxes(mounted.container).some((box) => box.checked)).toBe(false);
+		expect(live(mounted.container)).toBe('0 selected');
+		mounted.unmount();
+	});
+
+	it('announces through the summary the screen translated', async () => {
+		const mounted = await mount(
+			<Table
+				columns={COLUMNS}
+				rows={members(2)}
+				rowKey={(row) => row.id}
+				selection={{
+					selectedKeys: new Set(['member-1']),
+					onSelectionChange: () => {},
+					label: 'Select all people',
+					rowLabel: (row) => row.name,
+				}}
+				selectionSummary={(count) => 'Wybrano: ' + count}
+				empty={EMPTY}
+				caption="People"
+			/>,
+		);
+		expect(live(mounted.container)).toBe('Wybrano: 1');
+		expect(text(mounted.container.querySelector('.ui-table__bulk-count'))).toBe(
+			'Wybrano: 1',
+		);
+		mounted.unmount();
+	});
+
+	it('leaves the bulk bar out while nothing is selected', async () => {
+		const mounted = await mount(
+			<Selectable
+				rows={members(2)}
+				bulk={[
+					{ id: 'archive', label: 'Archive', onSelect: () => {} },
+				]}
+			/>,
+		);
+		expect(mounted.container.querySelector('.ui-table__bulk')).toBeNull();
+		expect(header(mounted.container).getAttribute('aria-label')).toBe(
+			'Select all people',
+		);
 		mounted.unmount();
 	});
 });
