@@ -62,3 +62,80 @@ kubectl create secret generic flowdular-database \
 ```
 
 Scaling writers across nodes needs nothing beyond the database it already shares.
+
+## Backups and PITR
+
+Logical backups are `flowdular database backup` and the restore commands in
+[docs/operations.md](../docs/operations.md); they restore a whole dump and
+nothing in between two dumps. Point-in-time recovery (PITR) fills that gap for
+the compose stack: the `postgres` service runs with `wal_level=replica`,
+`archive_mode=on` and an `archive_command` that copies every completed WAL
+segment into the `flowdular-postgres-wal` volume (`archive_timeout=300`, so a
+quiet database still ships a segment every five minutes). A base backup plus
+the archive can then be replayed to any moment after the base backup.
+
+What the plain `cp` archive does not do, and what to add before relying on it:
+
+- It does not `fsync` the copy, so a host crash can lose the last segments;
+  the copy is only as durable as the volume it lands on.
+- It writes to the same host as the data directory. A disk that takes the data
+  volume takes the archive with it. Copy the archive off the host (`docker
+compose cp postgres:/var/lib/postgresql/wal-archive <dir>`, or a sync job on
+  the volume) on the schedule the data policy sets.
+- It never prunes. When the copy fails (a full volume, wrong permissions),
+  PostgreSQL retries forever and `pg_wal` grows until the disk is full; watch
+  `docker compose logs postgres` for `archive command failed`. Prune segments
+  older than the oldest base backup you keep with
+  `docker compose exec -u postgres postgres pg_archivecleanup /var/lib/postgresql/wal-archive <name>.backup`,
+  where `<name>.backup` is the history file the archive received when that base
+  backup finished.
+- It is neither compressed nor encrypted. The archive holds every row of every
+  tenant in the clear; the volume is mode 0700 and the copy off the host must
+  be treated like a dump.
+
+`infra/docker/pitr.sh` wraps the two steps:
+
+```bash
+infra/docker/pitr.sh base-backup            # pg_basebackup -Ft -z -X fetch into base/<stamp>
+infra/docker/pitr.sh list                   # the base backups the archive holds
+infra/docker/pitr.sh restore --base <stamp> --target-time '2026-09-14 09:30:00+00' \
+  --confirm replace-cluster [--stop-app]
+```
+
+`base-backup` runs `pg_basebackup` from the same `postgres:17` image over the
+container socket while the database serves, and writes the tarball into the
+archive volume under `base/<stamp>`. Take one after every rollout and at least
+weekly; the archive between two base backups is what a restore replays, so the
+older the base, the longer the replay.
+
+`restore` refuses while the `app` container is running unless `--stop-app` is
+passed, because the app would keep serving a cluster that is about to be
+deleted. It then stops `postgres`, deletes the current data directory (there is
+no undo: take a `base-backup` first if the current cluster may still be
+needed), unpacks the base backup, appends `restore_command`,
+`recovery_target_time` and `recovery_target_action = 'promote'` to
+`postgresql.conf`, creates `recovery.signal` and starts `postgres` again. It
+waits for `pg_is_in_recovery()` to turn false, which is the promotion. Without
+`--target-time` the archive is replayed to its end. A target time earlier than
+the end of the base backup makes PostgreSQL stop with `recovery ended before
+configured recovery target was reached`; pick an older base. After promotion
+the server is on a new timeline and archives onto it, so the segments of the
+old timeline stay in the archive and a second restore to the same base is still
+possible.
+
+After the restore: `docker compose up -d app`, then `pnpm flowdular migration verify`
+and `GET /api/ready`. The encryption keys are outside the database and PITR
+changes nothing about them: the keys the restored rows were written under must
+be the ones in `infra/docker/.env`.
+
+**Kubernetes.** The base carries no PostgreSQL workload, and none is planned:
+the connection strings in the `flowdular-database` Secret point at a server the
+managed provider runs, and PITR is that provider's job. The provider has to
+offer, and the deployment has to turn on: continuous WAL archiving to storage
+outside the database host, scheduled base backups with a retention that covers
+the recovery window the business needs, a restore that accepts a recovery
+target (a timestamp, at minimum) and lands on a new instance or a new database
+so the current one can be kept for comparison, and a record of the backup and
+restore runs the operator can read. The `flowdular database backup` dump remains
+the portable copy that leaves the provider; take it on the runbook's schedule
+regardless.

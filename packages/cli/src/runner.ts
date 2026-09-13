@@ -1,8 +1,11 @@
 import { findBlueprintFiles } from './agent-resources.ts';
 import {
+	approvalGrantKeyringFromEnvironment,
+	approvalInputDigest,
 	PLATFORM_API_VERSION,
 	RegistryError,
 	satisfiesModuleVersion,
+	verifyApprovalGrant,
 } from '@flowdular/kernel';
 import { loadModuleCatalog } from './module-catalog.ts';
 import {
@@ -63,7 +66,7 @@ import {
 	type Workspace,
 } from './workspace.ts';
 import type { ParsedArguments } from './arguments.ts';
-import { stringFlag } from './arguments.ts';
+import { grantFlag, stringFlag } from './arguments.ts';
 
 function relativeReports(
 	root: string,
@@ -75,24 +78,70 @@ function relativeReports(
 	}));
 }
 
+/* The flags that steer the runner rather than the capability. The grant binds
+   the rest, --apply included: an approval names the applied run, and a dry run
+   is a different invocation. --root stays out because it is the path of the
+   checkout on the operator's host and the deployment the command reaches comes
+   from the environment, not from that path. */
+const RUNNER_FLAGS = new Set(['confirm', 'grant', 'json', 'root', 'tenant']);
+
+/**
+ * The digest an approval request has to name for this invocation: the
+ * positional arguments after the command path and every capability flag, in
+ * name order, so the requester and the runner compute it from the same input.
+ */
+export function invocationDigest(
+	arguments_: ParsedArguments,
+	commandArguments: readonly string[],
+): string {
+	const flags = [...arguments_.flags]
+		.filter(([name]) => !RUNNER_FLAGS.has(name))
+		.sort(([left], [right]) => left.localeCompare(right));
+	return approvalInputDigest({
+		arguments: commandArguments,
+		flags: Object.fromEntries(flags),
+	});
+}
+
+/* The runner cannot record a use: it runs outside the platform, so a grant is
+   good for the same invocation until its expiry rather than once. */
+function approvalRefusal(
+	descriptor: CapabilityDescriptor,
+	arguments_: ParsedArguments,
+	commandArguments: readonly string[],
+): CommandEnvelope | undefined {
+	const gated =
+		descriptor.risk === 'external' ||
+		(descriptor.risk === 'destructive' && !descriptor.localOnly);
+	if (!gated) return undefined;
+	const token = grantFlag(arguments_);
+	const keyring = approvalGrantKeyringFromEnvironment(process.env);
+	if (!token || !keyring) {
+		return failure(
+			'APPROVAL_VERIFIER_REQUIRED',
+			`Capability "${descriptor.id}" runs only with --grant <token> from an approved approvals.core request, verified under FD_APPROVAL_GRANT_KEY.`,
+		);
+	}
+	const verification = verifyApprovalGrant(keyring, token, {
+		tenantId: stringFlag(arguments_, 'tenant') ?? '',
+		capabilityId: descriptor.id,
+		inputDigest: invocationDigest(arguments_, commandArguments),
+	});
+	return verification.ok
+		? undefined
+		: failure(verification.reason, verification.message);
+}
+
 /* The approval gates of packages/cli/src/capabilities.ts and every module
    catalog, in the order .ai/policies/capabilities.yaml documents. The spec gate
    sits between the two halves because only it needs the workspace. */
 function environmentRefusal(
 	descriptor: CapabilityDescriptor,
+	arguments_: ParsedArguments,
+	commandArguments: readonly string[] = [],
 ): CommandEnvelope | undefined {
-	if (descriptor.risk === 'external') {
-		return failure(
-			'APPROVAL_VERIFIER_REQUIRED',
-			`Capability "${descriptor.id}" is disabled until a signed approval verifier is configured.`,
-		);
-	}
-	if (descriptor.risk === 'destructive' && !descriptor.localOnly) {
-		return failure(
-			'APPROVAL_VERIFIER_REQUIRED',
-			`Destructive capability "${descriptor.id}" is disabled until a signed approval verifier is configured.`,
-		);
-	}
+	const approval = approvalRefusal(descriptor, arguments_, commandArguments);
+	if (approval) return approval;
 	const environment =
 		process.env.FD_ENV ?? process.env.NODE_ENV ?? 'development';
 	if (
@@ -137,7 +186,13 @@ async function runExtensionCommand(
 	arguments_: ParsedArguments,
 ): Promise<CommandEnvelope> {
 	const descriptor = extension.command.capability;
-	const refused = environmentRefusal(descriptor);
+	const invokedByCapability =
+		arguments_.positionals[0] === 'capability' &&
+		arguments_.positionals[1] === 'run';
+	const commandArguments = arguments_.positionals.slice(
+		invokedByCapability ? 3 : extension.command.path.length,
+	);
+	const refused = environmentRefusal(descriptor, arguments_, commandArguments);
 	if (refused) return refused;
 	if (descriptor.requiresApprovedSpec) {
 		const specFlag = stringFlag(arguments_, 'spec');
@@ -170,9 +225,6 @@ async function runExtensionCommand(
 	if (writeRefused) return writeRefused;
 	const apply = arguments_.flags.has('apply');
 	const command = await loadCliCommand(extension);
-	const invokedByCapability =
-		arguments_.positionals[0] === 'capability' &&
-		arguments_.positionals[1] === 'run';
 	let databases: ConfiguredDatabaseProvider | undefined;
 	try {
 		const result = await command.execute({
@@ -180,9 +232,7 @@ async function runExtensionCommand(
 			moduleRoot: extension.moduleRoot,
 			apply,
 			flags: arguments_.flags,
-			arguments: arguments_.positionals.slice(
-				invokedByCapability ? 3 : extension.command.path.length,
-			),
+			arguments: commandArguments,
 			/* Built on first read, so a command that touches no database starts no
 			   embedded PostgreSQL and opens no pool. The runner owns it for the
 			   length of the command: an extension releases the leases it takes and
@@ -236,6 +286,7 @@ export async function runCommand(
 					'database reset [--module <id>] [--apply --confirm reset-database]',
 					'database backup --output <dir> [--apply]',
 					'database restore --input <dir> --apply --confirm restore-database',
+					'database restore-production --input <dir> --target <database> --grant <token> --tenant <id> [--allow-key-mismatch] [--platform-url <origin>|--platform-stopped] --apply --confirm restore-database',
 					'setup (interactive)|check|quick [--apply --confirm reset-local-auth]|migrate-state [--apply --confirm migrate-legacy-state]',
 					...extensionCommands.map((entry) => entry.command.path.join(' ')),
 				],
@@ -289,7 +340,8 @@ export async function runCommand(
 		if (group === 'setup' && action === 'migrate-state') {
 			const descriptor = coreCapability('workspace.state.migrate')!;
 			const refused =
-				environmentRefusal(descriptor) ?? writeRefusal(descriptor, arguments_);
+				environmentRefusal(descriptor, arguments_) ??
+				writeRefusal(descriptor, arguments_);
 			if (refused) return refused;
 			return migrateLegacyState(workspace, arguments_.flags.has('apply'));
 		}
@@ -345,6 +397,7 @@ export async function runCommand(
 					'database.reset.local': ['database', 'reset'],
 					'database.backup': ['database', 'backup'],
 					'database.restore': ['database', 'restore'],
+					'database.restore.production': ['database', 'restore-production'],
 				};
 				const alias = aliases[target];
 				if (alias)
@@ -432,7 +485,7 @@ export async function runCommand(
 			if (action === 'reset') {
 				const descriptor = coreCapability('database.reset.local')!;
 				const refused =
-					environmentRefusal(descriptor) ??
+					environmentRefusal(descriptor, arguments_) ??
 					writeRefusal(descriptor, arguments_);
 				if (refused) return refused;
 				return databaseReset(
@@ -444,7 +497,7 @@ export async function runCommand(
 			if (action === 'backup') {
 				const descriptor = coreCapability('database.backup')!;
 				const refused =
-					environmentRefusal(descriptor) ??
+					environmentRefusal(descriptor, arguments_) ??
 					writeRefusal(descriptor, arguments_);
 				if (refused) return refused;
 				return await databaseBackup(
@@ -456,7 +509,7 @@ export async function runCommand(
 			if (action === 'restore') {
 				const descriptor = coreCapability('database.restore')!;
 				const refused =
-					environmentRefusal(descriptor) ??
+					environmentRefusal(descriptor, arguments_) ??
 					writeRefusal(descriptor, arguments_);
 				if (refused) return refused;
 				return await databaseRestore(
@@ -465,9 +518,27 @@ export async function runCommand(
 					arguments_.flags.has('apply'),
 				);
 			}
+			if (action === 'restore-production') {
+				const descriptor = coreCapability('database.restore.production')!;
+				const refused =
+					environmentRefusal(descriptor, arguments_) ??
+					writeRefusal(descriptor, arguments_);
+				if (refused) return refused;
+				return await databaseRestore(
+					workspace,
+					stringFlag(arguments_, 'input'),
+					arguments_.flags.has('apply'),
+					{
+						target: stringFlag(arguments_, 'target'),
+						allowKeyMismatch: arguments_.flags.has('allow-key-mismatch'),
+						platformUrl: stringFlag(arguments_, 'platform-url'),
+						platformStopped: arguments_.flags.has('platform-stopped'),
+					},
+				);
+			}
 			return failure(
 				'USAGE_ERROR',
-				'Use database reset [--module <id>] [--apply --confirm reset-database], database backup --output <dir> [--apply], or database restore --input <dir> --apply --confirm restore-database.',
+				'Use database reset [--module <id>] [--apply --confirm reset-database], database backup --output <dir> [--apply], database restore --input <dir> --apply --confirm restore-database, or database restore-production --input <dir> --target <database> --grant <token> --tenant <id> --apply --confirm restore-database.',
 			);
 		}
 
@@ -503,7 +574,7 @@ export async function runCommand(
 				}
 				const descriptor = coreCapability('migration.apply.local')!;
 				const refused =
-					environmentRefusal(descriptor) ??
+					environmentRefusal(descriptor, arguments_) ??
 					writeRefusal(descriptor, arguments_);
 				if (refused) return refused;
 				return migrationApply(

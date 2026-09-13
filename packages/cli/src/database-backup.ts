@@ -36,6 +36,19 @@ const POSTGRES_DUMP_FILE = 'database.dump';
 const PGLITE_PAYLOAD_DIRECTORY = 'pglite';
 /* Enough for a client tool's diagnostics without buffering a runaway log. */
 const TOOL_OUTPUT_LIMIT = 4_000;
+const PLATFORM_PROBE_TIMEOUT_MS = 3_000;
+const PLATFORM_URL_LIMIT = 2_048;
+
+/** What `database restore-production` adds on top of the local restore. */
+export interface ProductionRestoreOptions {
+	/** Must repeat the database the migrator DSN names. */
+	readonly target: string | undefined;
+	readonly allowKeyMismatch: boolean;
+	/** Origin of the platform to probe; `/api/health` is appended. */
+	readonly platformUrl: string | undefined;
+	/** The operator's attestation when no endpoint can be probed. */
+	readonly platformStopped: boolean;
+}
 
 const runFile = promisify(execFile);
 
@@ -339,15 +352,153 @@ async function restrictTree(root: string): Promise<void> {
 	}
 }
 
+/* The name a production restore has to repeat: the database of the migrator
+   DSN, or the data directory of the embedded adapter. */
+function restoreTarget(config: DatabaseProviderConfig): string | undefined {
+	if (config.adapter === 'postgresql') {
+		const url = new URL(config.postgresql!.migrator.connectionString!);
+		return decodeURIComponent(url.pathname.slice(1));
+	}
+	const directory = config.pglite?.dataDirectory;
+	return directory === undefined
+		? undefined
+		: resolve(config.workspaceRoot, directory);
+}
+
+function describeKeyMismatch(
+	divergent: readonly { variable: string; status: string }[],
+): string {
+	return divergent.map((key) => `${key.variable} (${key.status})`).join(', ');
+}
+
+function platformEndpoint(
+	options: ProductionRestoreOptions,
+	environment: NodeJS.ProcessEnv,
+): string | undefined {
+	if (options.platformUrl !== undefined) {
+		return `${options.platformUrl.replace(/\/+$/, '')}/api/health`;
+	}
+	const port = environment.FD_PORT?.trim();
+	return port && /^[1-9]\d{0,4}$/.test(port)
+		? `http://127.0.0.1:${port}/api/health`
+		: undefined;
+}
+
+function connectionRefused(cause: unknown): boolean {
+	const failure_ = cause as { code?: string; errors?: unknown[] } | undefined;
+	if (failure_?.code === 'ECONNREFUSED') return true;
+	return (
+		Array.isArray(failure_?.errors) &&
+		failure_.errors.length > 0 &&
+		failure_.errors.every((entry) => connectionRefused(entry))
+	);
+}
+
+/* Any answer means the platform is up, whatever it says about itself. Only a
+   refused connection proves it is down: a timeout, an unknown host or a
+   certificate that does not verify says nothing about the process. */
+async function platformState(
+	endpoint: string,
+): Promise<'running' | 'stopped' | 'unknown'> {
+	try {
+		await fetch(endpoint, {
+			redirect: 'manual',
+			signal: AbortSignal.timeout(PLATFORM_PROBE_TIMEOUT_MS),
+		});
+		return 'running';
+	} catch (error) {
+		return connectionRefused((error as { cause?: unknown }).cause)
+			? 'stopped'
+			: 'unknown';
+	}
+}
+
+async function platformRefusal(
+	options: ProductionRestoreOptions,
+	environment: NodeJS.ProcessEnv,
+): Promise<CommandEnvelope | undefined> {
+	const endpoint = platformEndpoint(options, environment);
+	if (!endpoint) {
+		return options.platformStopped
+			? undefined
+			: failure(
+					'PLATFORM_STATE_UNKNOWN',
+					'Nothing names the platform to probe. Pass --platform-url <origin>, set FD_PORT, or pass --platform-stopped to attest that it is not running.',
+				);
+	}
+	const state = await platformState(endpoint);
+	if (state === 'running') {
+		return failure(
+			'PLATFORM_RUNNING',
+			`The platform still answers at ${endpoint}. Stop it or take it out of the load balancer before restoring.`,
+		);
+	}
+	if (state === 'unknown' && !options.platformStopped) {
+		return failure(
+			'PLATFORM_STATE_UNKNOWN',
+			`${endpoint} could not be probed (no answer within ${PLATFORM_PROBE_TIMEOUT_MS}ms, an unknown host or an untrusted certificate), so the platform may still be running. Pass --platform-stopped to attest that it is not.`,
+		);
+	}
+	return undefined;
+}
+
+function productionRefusal(
+	options: ProductionRestoreOptions,
+	config: DatabaseProviderConfig,
+): CommandEnvelope | undefined {
+	if (!options.target) {
+		return failure(
+			'INPUT_REQUIRED',
+			'--target <database name> is required: it must repeat the database the migrator DSN names.',
+		);
+	}
+	const expected = restoreTarget(config);
+	const target =
+		config.adapter === 'pglite'
+			? resolve(config.workspaceRoot, options.target)
+			: options.target;
+	if (target !== expected) {
+		return failure(
+			'RESTORE_TARGET_MISMATCH',
+			`--target names "${options.target}", but the migrator connection points at "${expected ?? ''}".`,
+		);
+	}
+	if (
+		options.platformUrl !== undefined &&
+		(options.platformUrl.length > PLATFORM_URL_LIMIT ||
+			!/^https?:\/\//.test(options.platformUrl) ||
+			!URL.canParse(options.platformUrl))
+	) {
+		return failure(
+			'INVALID_ARGUMENT',
+			'--platform-url must be an http or https origin.',
+		);
+	}
+	if (
+		config.adapter === 'postgresql' &&
+		new URL(config.postgresql!.migrator.connectionString!).username ===
+			new URL(config.postgresql!.runtime.connectionString!).username
+	) {
+		return failure(
+			'MIGRATOR_ROLE_REQUIRED',
+			'A production restore runs under the migrator role only. Set FD_DATABASE_MIGRATOR_URL to a connection whose user differs from the one in FD_DATABASE_URL.',
+		);
+	}
+	return undefined;
+}
+
 export async function databaseRestore(
 	workspace: Workspace,
 	input: string | undefined,
 	apply: boolean,
+	production?: ProductionRestoreOptions,
 ): Promise<CommandEnvelope> {
 	if (!input) {
 		return failure(
 			'INPUT_REQUIRED',
-			'Use database restore --input <dir> --apply --confirm restore-database.',
+			production
+				? 'Use database restore-production --input <dir> --target <database> --grant <token> --tenant <id> --apply --confirm restore-database.'
+				: 'Use database restore --input <dir> --apply --confirm restore-database.',
 		);
 	}
 	let config: DatabaseProviderConfig;
@@ -377,20 +528,31 @@ export async function databaseRestore(
 			`The backup was taken from the ${manifest.adapter} adapter, but this workspace is configured for ${config.adapter}.`,
 		);
 	}
+	if (production) {
+		const refused = productionRefusal(production, config);
+		if (refused) return refused;
+	}
 	const keys = compareBackupKeys(manifest, config.environment);
 	const divergent = keys.filter((key) => key.status !== 'match');
+	if (production && divergent.length > 0 && !production.allowKeyMismatch) {
+		return failure(
+			'BACKUP_KEY_MISMATCH',
+			`The running environment holds keys this backup was not taken with: ${describeKeyMismatch(divergent)}. Restore the keys first, or pass --allow-key-mismatch to restore rows that stay unreadable.`,
+			{ keys },
+		);
+	}
 	const warnings = [
 		...(divergent.length === 0
 			? []
 			: [
-					`BACKUP_KEY_MISMATCH: ${divergent
-						.map((key) => `${key.variable} (${key.status})`)
-						.join(
-							', ',
-						)}. Restore the keys this backup was taken with, or the credentials, MFA secrets and workflow payloads it carries stay unreadable.`,
+					`BACKUP_KEY_MISMATCH: ${describeKeyMismatch(divergent)}. Restore the keys this backup was taken with, or the credentials, MFA secrets and workflow payloads it carries stay unreadable.`,
 				]),
 		...(apply ? [] : ['Dry run only. Pass --apply to restore the database.']),
 	];
+	if (production && apply) {
+		const refused = await platformRefusal(production, config.environment);
+		if (refused) return refused;
+	}
 
 	if (config.adapter === 'postgresql') {
 		const tool = await resolveTool('pg_restore', process.env);
@@ -415,6 +577,7 @@ export async function databaseRestore(
 			tool,
 			manifest,
 			keys,
+			...(production ? { target: production.target } : {}),
 		};
 		if (!apply) return success(plan, { warnings });
 		const result = await withPostgresConnection(config, (connection) =>

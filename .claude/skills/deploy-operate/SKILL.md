@@ -76,9 +76,12 @@ Both are served by `platform/src/server/health.ts`. The shipped Docker and Kuber
 pnpm flowdular database backup --output <dir>                            # dry run
 pnpm flowdular database backup --output <dir> --apply
 pnpm flowdular database restore --input <dir> --apply --confirm restore-database
+pnpm flowdular database restore-production --input <dir> --target <db> --grant <token> --tenant <id> [--platform-url <origin>|--platform-stopped] --apply --confirm restore-database
 ```
 
-The trap: **the encryption keys live outside the database.** Agent provider credentials, agent run grants, workflow payloads and cursors, automation secrets and MFA secrets are all stored as ciphertext, and the keys are environment variables (`FD_AGENT_CREDENTIAL_KEY`, `FD_AGENT_RUN_GRANT_KEY`, `FD_WORKFLOWS_PAYLOAD_KEY`, `FD_WORKFLOWS_CURSOR_KEY`, `FD_AUTOMATIONS_CREDENTIAL_KEY`, `FD_AUTH_MFA_KEY`, `FD_NOTIFICATIONS_SECRET_KEY`, `FD_STORAGE_ENCRYPTION_KEY`, `FD_CONNECTORS_SECRET_KEY`, `FD_AUDIT_ANCHOR_KEY`). A database backup without the matching keys restores rows nobody can read, and rotating a key without re-encrypting orphans everything encrypted under the old one. Back the keys up separately, restore them together with the dump, and record which key version a dump belongs to.
+Production restores run `database.restore.production`: an approval grant bound to the exact flags, `--target` equal to the migrator DSN database, a separate migrator DSN, a key mismatch refused unless the approval included `--allow-key-mismatch`, and a refusal while the health endpoint answers. PITR for the compose stack is `infra/docker/pitr.sh` (see `infra/README.md`); in Kubernetes it is the managed provider's job.
+
+The trap: **the encryption keys live outside the database.** Agent provider credentials, agent run grants, workflow payloads and cursors, automation secrets, MFA secrets, stored objects and connector credentials are all stored as ciphertext, and the keys are environment variables (`FD_AGENT_CREDENTIAL_KEY`, `FD_AGENT_RUN_GRANT_KEY`, `FD_WORKFLOWS_PAYLOAD_KEY`, `FD_WORKFLOWS_CURSOR_KEY`, `FD_AUTOMATIONS_CREDENTIAL_KEY`, `FD_AUTH_MFA_KEY`, `FD_NOTIFICATIONS_SECRET_KEY`, `FD_STORAGE_ENCRYPTION_KEY`, `FD_CONNECTORS_SECRET_KEY`, `FD_AUDIT_ANCHOR_KEY`). A database backup without the matching keys restores rows nobody can read, and rotating a key without re-encrypting orphans everything encrypted under the old one; every sealing key has a `secrets-rotate` command in the runbook's rotation table, the storage key two (`documents` and `exports`). Back the keys up separately, restore them together with the dump, and record which key version a dump belongs to.
 
 ## 6. Rollback
 
@@ -86,6 +89,8 @@ The trap: **the encryption keys live outside the database.** Agent provider cred
 2. Never run a `.down.sql` to roll back a release. They document the reverse for review, and applying one against live data is data loss.
 3. To take one module out of service without a redeploy: `pnpm flowdular module disable <id> --apply` (it is a dry run without `--apply`), then rebuild the composition and redeploy. Its tables stay.
 4. If the rollback is because of a key change, restore the previous key first; the image alone will not fix unreadable ciphertext.
+
+- For data loss between two dumps use PITR (`pitr.sh restore --target-time`), never a `.down.sql`.
 
 ## 7. Production checklist
 
@@ -98,7 +103,7 @@ The trap: **the encryption keys live outside the database.** Agent provider cred
 - Sign-up closed (`FD_AUTH_ALLOW_SIGN_UP`) unless the deployment is public; the first owner created with `flowdular auth workspace-create` (see `docs/cli.md`).
 - Liveness on `/api/health`, readiness on `/api/ready`.
 - `pnpm flowdular migration verify` clean after rollout, and `pnpm flowdular doctor --json` reports `status: healthy`.
-- A restore has been rehearsed once, keys included.
+- A restore has been rehearsed once, keys included, and a PITR restore once from the newest base backup.
 
 ## Pitfalls
 
