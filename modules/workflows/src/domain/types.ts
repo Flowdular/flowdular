@@ -488,20 +488,57 @@ export interface WorkflowRunDetail {
 	readonly output: WorkflowPayloadEvidenceV1;
 }
 
+export type WorkflowSortDirection = 'asc' | 'desc';
+
+/** The page of a keyset list: `sort` and `direction` name an indexed order. */
+export interface WorkflowListQuery<Sort extends string> {
+	readonly sort?: Sort;
+	readonly direction?: WorkflowSortDirection;
+	readonly limit?: number;
+	readonly cursor?: string | null;
+}
+
+export interface WorkflowDefinitionFilters {
+	readonly status?: WorkflowDefinition['status'];
+	/** Matched inside the name or the key, case-insensitively. */
+	readonly search?: string;
+}
+
+export type WorkflowDefinitionSort = 'name' | 'updatedAt';
+
+export interface WorkflowDefinitionListQuery
+	extends WorkflowDefinitionFilters,
+		WorkflowListQuery<WorkflowDefinitionSort> {}
+
+export interface WorkflowDefinitionPage {
+	readonly definitions: readonly WorkflowDefinition[];
+	readonly nextCursor: string | null;
+}
+
 export interface WorkflowRunFilters {
 	readonly workflowId?: string;
 	readonly mode?: WorkflowRunMode;
 	readonly status?: WorkflowRunStatus;
 	readonly actorKind?: Actor['kind'];
 	readonly originKind?: WorkflowExecutionOrigin['kind'];
-	readonly limit?: number;
-	readonly cursor?: string | null;
+	/** Matched inside the workflow name or key, the actor label or the run id. */
+	readonly search?: string;
 }
+
+export type WorkflowRunSort = 'queuedAt';
+
+export interface WorkflowRunListQuery
+	extends WorkflowRunFilters,
+		WorkflowListQuery<WorkflowRunSort> {}
 
 export interface WorkflowRunPage {
 	readonly runs: readonly WorkflowRunSummary[];
 	readonly nextCursor: string | null;
 }
+
+export type WorkflowAuditSort = 'sequence' | 'occurredAt';
+
+export type WorkflowAuditListQuery = WorkflowListQuery<WorkflowAuditSort>;
 
 export interface WorkflowSimulationFixture {
 	readonly nodeId: string;

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'octane';
+import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	ConfirmDialog,
 	EmptyState,
 	Filters,
 	Icon,
@@ -10,12 +11,16 @@ import {
 	Select,
 	TableCard,
 	Tag,
+	ToastHost,
+	toasts,
 	type TableColumn,
+	type TableSort,
 } from '@flowdular/ui';
 import { t } from '@flowdular/client';
 import { useValue } from 'segment-state';
 import {
 	APPROVAL_STATUSES,
+	type ApprovalListDirection,
 	type ApprovalRequest,
 	type ApprovalStatus,
 } from '../domain/types.ts';
@@ -24,32 +29,48 @@ import {
 	approveRequest,
 	approvalsErrorMessage,
 	cancelRequest,
+	decideRequests,
 	loadRequest,
 	loadRequests,
 	rejectRequest,
 	type ApprovalsListScope,
+	type BulkDecision,
 } from './api.ts';
 import { ApprovalRequestDrawer } from './ApprovalRequestDrawer.tsrx';
 import { statusLabel, statusTone, timestampLabel } from './presentation.ts';
 import { refreshPendingCount } from './pending-count.ts';
-import { approvalsListing, createApprovalsClientState } from './state.ts';
+import {
+	approvalsListing,
+	canOpenPage,
+	createApprovalsClientState,
+	decidableIds,
+	decideOutcomeCounts,
+	FIRST_PAGE,
+	pageCursor,
+	recordNextCursor,
+	type CursorStack,
+} from './state.ts';
 
 export interface ApprovalsViewProps {
 	readonly csrfToken: string;
 	/* Only the scope selector needs this; what a member may do with one request
    is the server's answer, carried on the request it returns. */
 	readonly canManage: boolean;
+	/* Whether the principal holds the decide permission; which rows they may
+   actually decide is still the server's answer, per request. */
+	readonly canDecide: boolean;
 }
 
 const PAGE_SIZES = [10, 25, 50, 100];
 
+/* The server orders by createdAt alone, so that is the one column with a
+   sortable header; its `value` is the flag, the server does the ordering. */
 function columns(): readonly TableColumn<ApprovalRequest>[] {
 	return [
 		{
 			key: 'status',
 			header: t('approvals.column.status'),
 			width: '12%',
-			value: (item) => item.status,
 			cell: (item) =>
 				<Tag tone={statusTone(item.status)} dot>{statusLabel(
 					item.status,
@@ -58,8 +79,7 @@ function columns(): readonly TableColumn<ApprovalRequest>[] {
 		{
 			key: 'title',
 			header: t('approvals.column.title'),
-			width: '26%',
-			value: (item) => item.title,
+			width: '22%',
 			cell: (item) => <span class="ui-cell">
 				<b>{item.title}</b>
 				<small class="ui-mono">{item.subjectRef}</small>
@@ -68,32 +88,45 @@ function columns(): readonly TableColumn<ApprovalRequest>[] {
 		{
 			key: 'subjectModule',
 			header: t('approvals.column.subjectModule'),
-			width: '16%',
-			value: (item) => item.subjectModule,
+			width: '14%',
 			cell: (item) => <span class="ui-mono">{item.subjectModule}</span>,
 		},
 		{
 			key: 'action',
 			header: t('approvals.column.action'),
 			width: '14%',
-			value: (item) => item.action,
 			cell: (item) => <span class="ui-mono">{item.action}</span>,
 		},
 		{
 			key: 'requester',
 			header: t('approvals.column.requester'),
-			width: '16%',
-			value: (item) => item.requesterAccountId,
+			width: '14%',
 			cell: (item) => <span class="ui-mono">{item.requesterAccountId}</span>,
+		},
+		{
+			key: 'createdAt',
+			header: t('approvals.column.createdAt'),
+			width: '14%',
+			value: (item) => item.createdAt,
+			cell: (item) => timestampLabel(item.createdAt),
 		},
 		{
 			key: 'expiresAt',
 			header: t('approvals.column.expiresAt'),
-			width: '16%',
-			value: (item) => String(item.expiresAt),
+			width: '14%',
 			cell: (item) => timestampLabel(item.expiresAt),
 		},
 	];
+}
+
+/** Everything one page request depends on. */
+interface PageTarget {
+	readonly scope: ApprovalsListScope;
+	readonly status: ApprovalStatus | '';
+	readonly direction: ApprovalListDirection;
+	readonly pageIndex: number;
+	readonly pageSize: number;
+	readonly cursors: CursorStack;
 }
 
 export function ApprovalsView(props: ApprovalsViewProps) @{
@@ -103,26 +136,49 @@ export function ApprovalsView(props: ApprovalsViewProps) @{
 	const [error, setError] = useValue(client.state.error);
 	const [scope] = useValue(client.state.scope);
 	const [statusFilter] = useValue(client.state.statusFilter);
+	const [direction] = useValue(client.state.direction);
+	const [pageIndex] = useValue(client.state.pageIndex);
+	const [pageSize] = useValue(client.state.pageSize);
+	const [cursors] = useValue(client.state.cursors);
 	const [filtersOpen, setFiltersOpen] = useValue(client.state.filtersOpen);
 	const [selected, setSelected] = useValue(client.state.selected);
 	const [comment, setComment] = useValue(client.state.comment);
-	const [pageIndex, setPageIndex] = useState(0);
-	const [pageSize, setPageSize] = useState(25);
+	const [selectedIds, setSelectedIds] = useValue(client.state.selectedIds);
+	const [confirmDecision, setConfirmDecision] = useValue(
+		client.state.confirmDecision,
+	);
+	const [bulkComment, setBulkComment] = useValue(client.state.bulkComment);
+	const decidable = decidableIds(requests, selectedIds);
 	const listing = approvalsListing(requests, scope, statusFilter, status);
+	const sortingState = useMemo<readonly TableSort[]>(
+		() => [
+			{ key: 'createdAt', desc: direction === 'desc' },
+		],
+		[direction],
+	);
+	const hasMore = canOpenPage(cursors, pageIndex + 1);
 
-	const refresh = async (
-		nextScope: ApprovalsListScope,
-		nextStatus: ApprovalStatus | '',
-	) => {
+	const load = async (target: PageTarget) => {
 		setStatus('loading');
 		setError('');
 		try {
-			const loaded = await loadRequests({
-				scope: nextScope,
-				status: nextStatus,
+			const page = await loadRequests({
+				scope: target.scope,
+				status: target.status,
+				sort: 'createdAt',
+				direction: target.direction,
+				limit: target.pageSize,
+				cursor: pageCursor(target.cursors, target.pageIndex),
 			});
 			client.store.act((transaction) => {
-				transaction.set(client.state.requests, loaded);
+				transaction.set(client.state.requests, page.items);
+				transaction.set(
+					client.state.cursors,
+					recordNextCursor(target.cursors, target.pageIndex, page.nextCursor),
+				);
+				/* A new listing is a new set of rows; nothing checked before it is
+   still selected. */
+				transaction.set(client.state.selectedIds, new Set());
 				transaction.set(client.state.status, 'idle');
 			}, 'approvals/loaded');
 		} catch (loadError) {
@@ -135,28 +191,62 @@ export function ApprovalsView(props: ApprovalsViewProps) @{
 		}
 	};
 
+	const current = (): PageTarget => ({
+		scope,
+		status: statusFilter,
+		direction,
+		pageIndex,
+		pageSize,
+		cursors,
+	});
+
+	/* A filter, sort or page size change names a different list, so the walk
+   starts again from its first page. */
+	const restart = (
+		change: Partial<
+			Pick<PageTarget, 'scope' | 'status' | 'direction' | 'pageSize'>
+		>,
+		label: string,
+	) => {
+		const target: PageTarget = {
+			...current(),
+			...change,
+			pageIndex: 0,
+			cursors: FIRST_PAGE,
+		};
+		client.store.act((transaction) => {
+			transaction.set(client.state.scope, target.scope);
+			transaction.set(client.state.statusFilter, target.status);
+			transaction.set(client.state.direction, target.direction);
+			transaction.set(client.state.pageSize, target.pageSize);
+			transaction.set(client.state.pageIndex, 0);
+			transaction.set(client.state.cursors, FIRST_PAGE);
+			transaction.set(client.state.selected, null);
+			transaction.set(client.state.selectedIds, new Set());
+		}, label);
+		void load(target);
+	};
+
+	const goToPage = (next: number) => {
+		if (next === pageIndex || !canOpenPage(cursors, next)) return;
+		client.store.act((transaction) => {
+			transaction.set(client.state.pageIndex, next);
+			transaction.set(client.state.selected, null);
+			transaction.set(client.state.selectedIds, new Set());
+		}, 'approvals/page');
+		void load({ ...current(), pageIndex: next });
+	};
+
+	const applySorting = (sorts: readonly TableSort[]) => {
+		const next: ApprovalListDirection =
+			sorts[0]?.desc ?? true ? 'desc' : 'asc';
+		if (next !== direction) restart({ direction: next }, 'approvals/sort');
+	};
+
 	useEffect(() => {
-		void refresh('decidable', '');
+		void load(current());
 		void refreshPendingCount();
 	}, []);
-
-	const applyScope = (next: ApprovalsListScope) => {
-		client.store.act((transaction) => {
-			transaction.set(client.state.scope, next);
-			transaction.set(client.state.selected, null);
-		}, 'approvals/scope-filter');
-		setPageIndex(0);
-		void refresh(next, statusFilter);
-	};
-
-	const applyStatus = (next: ApprovalStatus | '') => {
-		client.store.act((transaction) => {
-			transaction.set(client.state.statusFilter, next);
-			transaction.set(client.state.selected, null);
-		}, 'approvals/status-filter');
-		setPageIndex(0);
-		void refresh(scope, next);
-	};
 
 	const open = async (request: ApprovalRequest) => {
 		setError('');
@@ -201,6 +291,36 @@ export function ApprovalsView(props: ApprovalsViewProps) @{
 		}
 	};
 
+	/* One decision per selected row through the single decision path; the
+   listing is read again because a resolved row may leave the scope on screen. */
+	const decideSelected = async () => {
+		const decision = confirmDecision;
+		const ids = decidable;
+		setConfirmDecision(null);
+		if (!decision || ids.length === 0) return;
+		setStatus('submitting');
+		setError('');
+		try {
+			const outcomes = await decideRequests(
+				ids,
+				decision,
+				bulkComment,
+				props.csrfToken,
+			);
+			setBulkComment('');
+			await load(current());
+			toasts.success(
+				t('approvals.notice.decidedMany', decideOutcomeCounts(outcomes)),
+			);
+			void refreshPendingCount();
+		} catch (decideError) {
+			setError(
+				approvalsErrorMessage(decideError, 'approvals.error.decideMany'),
+			);
+			setStatus('idle');
+		}
+	};
+
 	<div class="ui-view">
 		<PageHeader
 			eyebrow={t('approvals.common.workspace')}
@@ -210,7 +330,7 @@ export function ApprovalsView(props: ApprovalsViewProps) @{
 			<Button
 				size="sm"
 				disabled={status === 'denied'}
-				onClick={() => void refresh(scope, statusFilter)}
+				onClick={() => void load(current())}
 			>
 				<Icon name="refresh" size={14} />
 				{status === 'loading'
@@ -265,7 +385,10 @@ export function ApprovalsView(props: ApprovalsViewProps) @{
 										]
 									: []),
 							]}
-							onChange={(value) => applyScope(value as ApprovalsListScope)}
+							onChange={(value) => restart(
+								{ scope: value as ApprovalsListScope },
+								'approvals/scope-filter',
+							)}
 						/>
 						<Select
 							id="approvals-status"
@@ -280,36 +403,38 @@ export function ApprovalsView(props: ApprovalsViewProps) @{
 									}),
 								),
 							]}
-							onChange={(value) => applyStatus(value as ApprovalStatus | '')}
+							onChange={(value) => restart(
+								{ status: value as ApprovalStatus | '' },
+								'approvals/status-filter',
+							)}
 						/>
 					</Filters>}
 					caption={t('approvals.inbox.table.caption')}
 					columns={columns()}
 					rows={listing.visible}
 					rowKey={(item) => item.id}
+					mode="server"
 					sorting
-					onSortingChange={() => setPageIndex(0)}
-					pagination={{ pageIndex, pageSize, onPageChange: setPageIndex }}
+					sortingState={sortingState}
+					onSortingChange={applySorting}
+					pagination={{ pageIndex, pageSize, onPageChange: goToPage, hasMore }}
 					after={<Pagination
 						pageIndex={pageIndex}
 						pageSize={pageSize}
-						totalRows={listing.visible.length}
+						hasMore={hasMore}
 						pageSizes={PAGE_SIZES}
-						onPageChange={setPageIndex}
-						onPageSizeChange={(size) => {
-							setPageSize(size);
-							setPageIndex(0);
-						}}
+						onPageChange={goToPage}
+						onPageSizeChange={(size) => restart(
+							{ pageSize: size },
+							'approvals/page-size',
+						)}
 						label={t('approvals.pagination.label')}
 						previousLabel={t('approvals.pagination.previous')}
 						nextLabel={t('approvals.pagination.next')}
 						pageSizeLabel={t('approvals.pagination.size')}
-						summary={(range) => t('approvals.pagination.summary', {
-							page: range.pageIndex + 1,
-							pages: range.pageCount,
-							from: range.from,
-							to: range.to,
-							total: range.totalRows,
+						summary={(page) => t('approvals.pagination.summary', {
+							page: page.pageIndex + 1,
+							from: page.from,
 						})}
 					/>}
 					status={status === 'loading' && requests.length === 0
@@ -329,6 +454,46 @@ export function ApprovalsView(props: ApprovalsViewProps) @{
 					}}
 					onSelect={(item) => void open(item)}
 					selectedKey={selected?.request.id ?? undefined}
+					selection={props.canDecide
+						? {
+								selectedKeys: selectedIds,
+								onSelectionChange: setSelectedIds,
+								label: t('approvals.selection.label'),
+								rowLabel: (item) => t('approvals.selection.rowLabel', {
+									title: item.title,
+								}),
+								selectable: (item) => item.status === 'pending',
+								clearLabel: t('approvals.selection.clear'),
+							}
+						: undefined}
+					bulkActions={props.canDecide
+						? [
+								{
+									id: 'approve-selected',
+									label: t('approvals.action.approveSelected'),
+									icon: 'check',
+									disabled: decidable.length === 0 || status === 'submitting',
+									reason: decidable.length === 0
+										? t('approvals.action.selectedRefused')
+										: undefined,
+									onSelect: () => setConfirmDecision('approve'),
+								},
+								{
+									id: 'reject-selected',
+									label: t('approvals.action.rejectSelected'),
+									icon: 'x',
+									tone: 'danger',
+									disabled: decidable.length === 0 || status === 'submitting',
+									reason: decidable.length === 0
+										? t('approvals.action.selectedRefused')
+										: undefined,
+									onSelect: () => setConfirmDecision('reject'),
+								},
+							]
+						: undefined}
+					selectionSummary={(count) => t('approvals.selection.summary', {
+						count,
+					})}
 					noteIcon="shield"
 					note={t('approvals.inbox.note')}
 				/>
@@ -358,6 +523,40 @@ export function ApprovalsView(props: ApprovalsViewProps) @{
 				if (id) void mutate(() => cancelRequest(id, props.csrfToken));
 			}}
 			onClose={() => setSelected(null)}
+		/>
+		<ConfirmDialog
+			open={confirmDecision !== null}
+			title={confirmDecision === 'reject'
+				? t('approvals.decideMany.rejectTitle')
+				: t('approvals.decideMany.approveTitle')}
+			confirmLabel={confirmDecision === 'reject'
+				? t('approvals.action.rejectSelected')
+				: t('approvals.action.approveSelected')}
+			tone={confirmDecision === 'reject' ? 'danger' : 'primary'}
+			busy={status === 'submitting'}
+			onConfirm={() => void decideSelected()}
+			onCancel={() => setConfirmDecision(null)}
+		>
+			<p>{t('approvals.decideMany.description', {
+				count: decidable.length,
+			})}</p>
+			<label class="ui-field">
+				<span class="ui-label">{t('approvals.request.comment')}</span>
+				<textarea
+					class="ui-textarea"
+					rows={3}
+					maxlength={2000}
+					value={bulkComment}
+					disabled={status === 'submitting'}
+					onInput={(event: Event) => setBulkComment(
+						(event.target as HTMLTextAreaElement).value,
+					)}
+				/>
+			</label>
+		</ConfirmDialog>
+		<ToastHost
+			label={t('approvals.common.messages')}
+			closeLabel={t('approvals.common.close')}
 		/>
 	</div>
 }

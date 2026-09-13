@@ -17,6 +17,8 @@ import type {
 } from '../domain/types.ts';
 import { AutomationsServiceError } from './automations-service.ts';
 import type {
+	AutomationListPage,
+	AutomationListQuery,
 	AutomationsRepository,
 	StoredAutomationTrigger,
 	StoredAutomationTriggerWithSecret,
@@ -170,12 +172,17 @@ export class AutomationTriggerService {
 		this.#limiter = limiter ?? new TriggerRateLimiter();
 	}
 
-	async list(tenantId: string): Promise<readonly AutomationTrigger[]> {
-		return Promise.all(
-			(await this.repository.listTriggers(tenantId)).map((record) =>
-				this.present(record),
+	async list(
+		tenantId: string,
+		query: AutomationListQuery,
+	): Promise<AutomationListPage<AutomationTrigger>> {
+		const page = await this.repository.listTriggersPage(tenantId, query);
+		return {
+			items: await Promise.all(
+				page.items.map((record) => this.present(record)),
 			),
-		);
+			next: page.next,
+		};
 	}
 
 	async create(

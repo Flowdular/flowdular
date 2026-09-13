@@ -19,6 +19,14 @@ import {
 	workflowOverlay,
 	workflowChangeSummary,
 } from '../src/client/canvas-model.ts';
+import {
+	FIRST_PAGE,
+	FIRST_PAGE_REQUEST,
+	listOrder,
+	pageOpened,
+	pageRequest,
+	searchPending,
+} from '../src/client/state.ts';
 
 function graphWith(type: 'input' | 'agent' | 'gate' | 'merge' | 'output') {
 	return addWorkflowNode(emptyWorkflowGraph(), type, type);
@@ -212,5 +220,76 @@ describe('workflow client translations', () => {
 				);
 			}
 		}
+	});
+});
+
+describe('workflow list paging state', () => {
+	/* Forward pages open with the cursor the page before handed back, an
+	   earlier page reopens with the cursor stored for it, and a reader can only
+	   step one page past what was walked. */
+	it('keeps one cursor per page walked and steps back through them', () => {
+		expect(pageRequest(FIRST_PAGE, 0)).toEqual(FIRST_PAGE_REQUEST);
+		expect(pageRequest(FIRST_PAGE, 1)).toBeNull();
+
+		const first = pageOpened(FIRST_PAGE, FIRST_PAGE_REQUEST, 'c1');
+		expect(first).toEqual({ pageIndex: 0, cursors: [''], nextCursor: 'c1' });
+		expect(pageRequest(first, 2)).toBeNull();
+		const toSecond = pageRequest(first, 1)!;
+		expect(toSecond).toEqual({ pageIndex: 1, cursor: 'c1' });
+
+		const second = pageOpened(first, toSecond, 'c2');
+		const toThird = pageRequest(second, 2)!;
+		expect(toThird).toEqual({ pageIndex: 2, cursor: 'c2' });
+		const third = pageOpened(second, toThird, null);
+		expect(third.cursors).toEqual(['', 'c1', 'c2']);
+		expect(pageRequest(third, 3)).toBeNull();
+
+		expect(pageRequest(third, 1)).toEqual({ pageIndex: 1, cursor: 'c1' });
+		expect(pageRequest(third, 0)).toEqual(FIRST_PAGE_REQUEST);
+		/* Stepping back keeps the pages before, and the page reopened hands back
+		   its own next cursor again. */
+		const back = pageOpened(third, pageRequest(third, 1)!, 'c2-again');
+		expect(back).toEqual({
+			pageIndex: 1,
+			cursors: ['', 'c1'],
+			nextCursor: 'c2-again',
+		});
+	});
+
+	/* A filter or sort change asks for the first page again: the stack starts
+	   over from the request the screen sends, whatever it held before. */
+	it('resets to the first page when a listing is reloaded from the start', () => {
+		const deep = pageOpened(
+			pageOpened(FIRST_PAGE, FIRST_PAGE_REQUEST, 'c1'),
+			{ pageIndex: 1, cursor: 'c1' },
+			'c2',
+		);
+		expect(pageOpened(deep, FIRST_PAGE_REQUEST, 'other')).toEqual({
+			pageIndex: 0,
+			cursors: [''],
+			nextCursor: 'other',
+		});
+	});
+
+	it('maps the sorted column to a server sort key or falls back to the default', () => {
+		const columns = { workflow: 'name', updated: 'updatedAt' } as const;
+		const fallback = { sort: 'name', direction: 'asc' } as const;
+		expect(listOrder([], columns, fallback)).toEqual(fallback);
+		expect(
+			listOrder([{ key: 'updated', desc: true }], columns, fallback),
+		).toEqual({ sort: 'updatedAt', direction: 'desc' });
+		expect(
+			listOrder([{ key: 'workflow', desc: false }], columns, fallback),
+		).toEqual({ sort: 'name', direction: 'asc' });
+		expect(
+			listOrder([{ key: 'status', desc: true }], columns, fallback),
+		).toEqual(fallback);
+	});
+
+	it('holds a typed term pending until a page was loaded with it', () => {
+		expect(searchPending('invoice', '')).toBe(true);
+		expect(searchPending('invoice ', 'invoice')).toBe(false);
+		expect(searchPending('   ', '')).toBe(false);
+		expect(searchPending('', 'invoice')).toBe(true);
 	});
 });

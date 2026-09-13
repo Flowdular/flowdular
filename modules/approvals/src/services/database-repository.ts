@@ -6,9 +6,11 @@ import type {
 	DatabaseTransaction,
 } from '@flowdular/database';
 import { integer, runDatabaseMigrations } from '@flowdular/database';
+import { keysetWhere } from '@flowdular/server';
 import type {
 	ApprovalDecision,
 	ApprovalDecisionKind,
+	ApprovalListPage,
 	ApprovalRequest,
 	ApprovalRequestDetail,
 	ApprovalRequirementRecord,
@@ -91,6 +93,8 @@ const SQL = {
 	 WHERE tenant_id = $1 AND id = $2`,
 	lockRequest: `SELECT ${REQUEST_COLUMNS} FROM approvals_requests
 	 WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+	/* The keyset predicate and the ORDER BY are appended by `listStatement`;
+	   the unqualified created_at and id it names resolve to r. */
 	listRequests: `SELECT ${REQUEST_COLUMNS} FROM approvals_requests r
 	 WHERE r.tenant_id = $1
 	   AND ($2::text IS NULL OR r.status = $2)
@@ -100,9 +104,7 @@ const SQL = {
 	   AND ($6::text IS NULL OR EXISTS (
 	     SELECT 1 FROM approvals_eligible e
 	     WHERE e.tenant_id = r.tenant_id AND e.request_id = r.id
-	       AND e.account_id = $6))
-	 ORDER BY r.created_at DESC, r.id
-	 LIMIT $7`,
+	       AND e.account_id = $6))`,
 	countDecidable: `SELECT count(*) AS total FROM approvals_requests r
 	 WHERE r.tenant_id = $1 AND r.status = 'pending'
 	   AND EXISTS (
@@ -183,6 +185,46 @@ const SQL = {
 /* The adapter's own parameter channel plus the id list a batched statement
    binds to an ANY($n::text[]) predicate, which the scalar type does not cover. */
 type StatementParameter = DatabaseParameter | readonly string[];
+
+const LIST_FILTER_PARAMETERS = 6;
+const LIST_SORT_COLUMNS: Record<ApprovalListPage['sort'], string> = {
+	createdAt: 'created_at',
+};
+
+/**
+ * One statement for the capability's first page and the inbox's keyset page,
+ * so both walk the same order and the same index. Exported for the plan test,
+ * which explains the statement the repository runs rather than a copy.
+ */
+export function listStatement(
+	tenantId: string,
+	filters: ApprovalRequestFilters,
+	page: ApprovalListPage,
+): DatabaseStatement {
+	const parameters: DatabaseParameter[] = [
+		tenantId,
+		filters.status ?? null,
+		filters.subjectModule ?? null,
+		filters.subjectRef ?? null,
+		filters.requesterAccountId ?? null,
+		filters.decidableBy ?? null,
+	];
+	const column = LIST_SORT_COLUMNS[page.sort];
+	let text = SQL.listRequests;
+	if (page.after) {
+		const keyset = keysetWhere(
+			[column, 'id'],
+			[page.after.createdAt, page.after.id],
+			{ direction: page.direction, parameterOffset: LIST_FILTER_PARAMETERS },
+		);
+		text += ` AND ${keyset.text}`;
+		parameters.push(...keyset.parameters);
+	}
+	const order = page.direction === 'asc' ? 'ASC' : 'DESC';
+	parameters.push(page.limit);
+	text += ` ORDER BY ${column} ${order}, id ${order} LIMIT $${parameters.length}`;
+	return { text, parameters };
+}
 
 function optionalInteger(
 	value: number | bigint | string | null,
@@ -394,18 +436,23 @@ export class DatabaseApprovalsRepository implements ApprovalsRepository {
 		filters: ApprovalRequestFilters,
 		limit: number,
 	): Promise<readonly ApprovalRequest[]> {
-		const rows = await this.#read<RequestRow>(tenantId, {
-			text: SQL.listRequests,
-			parameters: [
-				tenantId,
-				filters.status ?? null,
-				filters.subjectModule ?? null,
-				filters.subjectRef ?? null,
-				filters.requesterAccountId ?? null,
-				filters.decidableBy ?? null,
-				limit,
-			],
+		return this.listPage(tenantId, filters, {
+			limit,
+			sort: 'createdAt',
+			direction: 'desc',
+			after: null,
 		});
+	}
+
+	async listPage(
+		tenantId: string,
+		filters: ApprovalRequestFilters,
+		page: ApprovalListPage,
+	): Promise<readonly ApprovalRequest[]> {
+		const rows = await this.#read<RequestRow>(
+			tenantId,
+			listStatement(tenantId, filters, page),
+		);
 		return rows.map(requestFrom);
 	}
 

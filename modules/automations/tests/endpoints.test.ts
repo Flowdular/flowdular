@@ -288,8 +288,8 @@ describe('automations HTTP boundary', () => {
 			.schedule;
 		const listed = (await (
 			await owner.call('/api/automations/schedules')
-		).json()) as { schedules: readonly { id: string }[] };
-		expect(listed.schedules.map((entry) => entry.id)).toEqual([schedule.id]);
+		).json()) as { items: readonly { id: string }[] };
+		expect(listed.items.map((entry) => entry.id)).toEqual([schedule.id]);
 
 		const crossDelete = await owner.mutation(
 			'/api/automations/schedules/delete',
@@ -306,12 +306,15 @@ describe('automations HTTP boundary', () => {
 		).toBe(200);
 	});
 
-	it('does not expose agent tool grants through the schedule endpoint', async () => {
+	it('serves the form options apart from the lists without agent tool grants', async () => {
 		const owner = await fixture(principal(ALL_SCOPES));
-		const response = await owner.call('/api/automations/schedules');
+		const response = await owner.call('/api/automations/options');
 		expect(response.status).toBe(200);
 		const body = (await response.json()) as {
 			agents: readonly Record<string, unknown>[];
+			targets: readonly Record<string, unknown>[];
+			variables: readonly Record<string, unknown>[];
+			timeZone: string;
 		};
 		expect(body.agents).toEqual([
 			{
@@ -321,6 +324,286 @@ describe('automations HTTP boundary', () => {
 			},
 		]);
 		expect(body.agents[0]).not.toHaveProperty('allowedTools');
+		expect(body.targets).toContainEqual({
+			kind: 'agent',
+			key: 'tenant-http-agent',
+			label: 'Workspace agent',
+			available: true,
+		});
+		expect(body.variables.length).toBeGreaterThan(0);
+		expect(body.timeZone).toBe('UTC');
+
+		for (const path of [
+			'/api/automations/schedules',
+			'/api/automations/triggers',
+		]) {
+			const list = (await (await owner.call(path)).json()) as Record<
+				string,
+				unknown
+			>;
+			expect(Object.keys(list).sort()).toEqual(['items', 'page']);
+		}
+		const triggerReader = principal([AUTOMATIONS_PERMISSIONS.triggersRead]);
+		expect(
+			(await owner.call('/api/automations/options', { as: triggerReader }))
+				.status,
+		).toBe(403);
+		const triggerOptions = await owner.call(
+			'/api/automations/triggers/options',
+			{
+				as: triggerReader,
+			},
+		);
+		expect(triggerOptions.status).toBe(200);
+		const triggerBody = (await triggerOptions.json()) as Record<
+			string,
+			unknown
+		>;
+		expect(Object.keys(triggerBody).sort()).toEqual(['agents', 'targets']);
+		expect(triggerBody.agents).toEqual(body.agents);
+		expect(triggerBody.targets).toEqual(body.targets);
+	});
+
+	interface ListBody {
+		readonly items: readonly {
+			readonly id: string;
+			readonly label: string;
+			readonly enabled: boolean;
+			readonly updatedAt: number;
+		}[];
+		readonly page: {
+			readonly nextCursor: string | null;
+			readonly limit: number;
+		};
+	}
+
+	async function createSchedules(
+		owner: Awaited<ReturnType<typeof fixture>>,
+		entries: readonly { readonly label: string; readonly enabled?: boolean }[],
+	): Promise<void> {
+		for (const entry of entries) {
+			const created = await owner.mutation('/api/automations/schedules', {
+				agentId: 'tenant-http-agent',
+				label: entry.label,
+				inputTemplate: 'Run.',
+				cadence: 'every:10',
+				enabled: entry.enabled ?? true,
+			});
+			expect(created.status).toBe(201);
+		}
+	}
+
+	async function list(
+		owner: Awaited<ReturnType<typeof fixture>>,
+		path: string,
+		init: Parameters<Awaited<ReturnType<typeof fixture>>['call']>[1] = {},
+	): Promise<ListBody> {
+		const response = await owner.call(path, init);
+		expect(response.status).toBe(200);
+		return (await response.json()) as ListBody;
+	}
+
+	it('pages schedules by label with no overlap and no gap', async () => {
+		const owner = await fixture(principal(ALL_SCOPES));
+		await createSchedules(owner, [
+			{ label: 'beta digest' },
+			{ label: 'Alpha digest' },
+			{ label: 'gamma digest' },
+			{ label: 'Delta digest', enabled: false },
+			{ label: 'epsilon digest' },
+		]);
+		const first = await list(owner, '/api/automations/schedules?limit=2');
+		expect(first.items.map((entry) => entry.label)).toEqual([
+			'Alpha digest',
+			'beta digest',
+		]);
+		expect(first.page).toMatchObject({ limit: 2 });
+		expect(first.page.nextCursor).not.toBeNull();
+
+		const second = await list(
+			owner,
+			'/api/automations/schedules?limit=2&cursor=' + first.page.nextCursor,
+		);
+		expect(second.items.map((entry) => entry.label)).toEqual([
+			'Delta digest',
+			'epsilon digest',
+		]);
+		/* A full page may still be the last one; the cursor stops one page later. */
+		expect(second.page.nextCursor).not.toBeNull();
+		const third = await list(
+			owner,
+			'/api/automations/schedules?limit=2&cursor=' + second.page.nextCursor,
+		);
+		expect(third.items.map((entry) => entry.label)).toEqual(['gamma digest']);
+		expect(third.page.nextCursor).toBeNull();
+
+		const descending = await list(
+			owner,
+			'/api/automations/schedules?sort=label&direction=desc&limit=3',
+		);
+		expect(descending.items.map((entry) => entry.label)).toEqual([
+			'gamma digest',
+			'epsilon digest',
+			'Delta digest',
+		]);
+
+		const recent = await list(
+			owner,
+			'/api/automations/schedules?sort=updatedAt&direction=desc&limit=3',
+		);
+		const rest = await list(
+			owner,
+			'/api/automations/schedules?sort=updatedAt&direction=desc&limit=3&cursor=' +
+				recent.page.nextCursor,
+		);
+		const walked = [...recent.items, ...rest.items];
+		expect(new Set(walked.map((entry) => entry.id)).size).toBe(5);
+		for (let index = 1; index < walked.length; index += 1) {
+			expect(walked[index]!.updatedAt).toBeLessThanOrEqual(
+				walked[index - 1]!.updatedAt,
+			);
+		}
+	});
+
+	it('filters schedules on the server and binds the cursor to the filters', async () => {
+		const owner = await fixture(principal(ALL_SCOPES));
+		await createSchedules(owner, [
+			{ label: 'beta digest' },
+			{ label: 'Alpha digest' },
+			{ label: 'Delta digest', enabled: false },
+			{ label: 'Alpine report' },
+		]);
+		const enabled = await list(
+			owner,
+			'/api/automations/schedules?enabled=true&limit=2',
+		);
+		expect(enabled.items.map((entry) => entry.label)).toEqual([
+			'Alpha digest',
+			'Alpine report',
+		]);
+		const enabledRest = await list(
+			owner,
+			'/api/automations/schedules?enabled=true&limit=2&cursor=' +
+				enabled.page.nextCursor,
+		);
+		expect(enabledRest.items.map((entry) => entry.label)).toEqual([
+			'beta digest',
+		]);
+		const searched = await list(owner, '/api/automations/schedules?q=ALP');
+		expect(searched.items.map((entry) => entry.label)).toEqual([
+			'Alpha digest',
+			'Alpine report',
+		]);
+		expect(
+			(await list(owner, '/api/automations/schedules?q=%25')).items,
+		).toEqual([]);
+
+		const stale = await owner.call(
+			'/api/automations/schedules?limit=2&cursor=' + enabled.page.nextCursor,
+		);
+		expect([
+			stale.status,
+			((await stale.json()) as { error: { code: string } }).error.code,
+		]).toEqual([400, 'CURSOR_INVALID']);
+		const resorted = await owner.call(
+			'/api/automations/schedules?enabled=true&limit=2&sort=updatedAt&cursor=' +
+				enabled.page.nextCursor,
+		);
+		expect(resorted.status).toBe(400);
+	});
+
+	it('refuses a cursor it did not sign, a foreign tenant cursor and bad list input', async () => {
+		const owner = await fixture(principal(ALL_SCOPES));
+		await createSchedules(owner, [{ label: 'One' }, { label: 'Two' }]);
+		const first = await list(owner, '/api/automations/schedules?limit=1');
+		const cursor = first.page.nextCursor!;
+		const code = async (response: Response) => [
+			response.status,
+			((await response.json()) as { error: { code: string } }).error.code,
+		];
+
+		expect(
+			await code(
+				await owner.call('/api/automations/schedules?cursor=c1.abc.def'),
+			),
+		).toEqual([400, 'CURSOR_INVALID']);
+		const [version, body, signature] = cursor.split('.');
+		const tampered = `${version}.${body!.slice(0, -2)}AA.${signature}`;
+		expect(
+			await code(
+				await owner.call(
+					'/api/automations/schedules?limit=1&cursor=' + tampered,
+				),
+			),
+		).toEqual([400, 'CURSOR_INVALID']);
+		expect(
+			await code(
+				await owner.call(
+					'/api/automations/schedules?limit=1&cursor=' + cursor,
+					{
+						as: principal(ALL_SCOPES, 'tenant-other'),
+					},
+				),
+			),
+		).toEqual([400, 'CURSOR_INVALID']);
+
+		expect(
+			await code(await owner.call('/api/automations/schedules?sort=name')),
+		).toEqual([400, 'INVALID_INPUT']);
+		expect(
+			await code(await owner.call('/api/automations/schedules?direction=up')),
+		).toEqual([400, 'INVALID_INPUT']);
+		expect(
+			await code(await owner.call('/api/automations/schedules?limit=500')),
+		).toEqual([400, 'INVALID_INPUT']);
+		expect(
+			await code(await owner.call('/api/automations/schedules?enabled=maybe')),
+		).toEqual([400, 'INVALID_INPUT']);
+		expect(
+			await code(await owner.call('/api/automations/triggers?sort=name')),
+		).toEqual([400, 'INVALID_INPUT']);
+	});
+
+	it('pages and filters triggers the same way', async () => {
+		const owner = await fixture(principal(ALL_SCOPES));
+		for (const entry of [
+			{ label: 'beta hook', enabled: true },
+			{ label: 'Alpha hook', enabled: false },
+			{ label: 'gamma hook', enabled: true },
+		]) {
+			const created = await owner.mutation('/api/automations/triggers', {
+				agentId: 'tenant-http-agent',
+				...entry,
+			});
+			expect(created.status).toBe(201);
+		}
+		const first = await list(owner, '/api/automations/triggers?limit=2');
+		expect(first.items.map((entry) => entry.label)).toEqual([
+			'Alpha hook',
+			'beta hook',
+		]);
+		expect(first.page.nextCursor).not.toBeNull();
+		const second = await list(
+			owner,
+			'/api/automations/triggers?limit=2&cursor=' + first.page.nextCursor,
+		);
+		expect(second.items.map((entry) => entry.label)).toEqual(['gamma hook']);
+		expect(second.page.nextCursor).toBeNull();
+		expect(
+			(await list(owner, '/api/automations/triggers?enabled=true')).items.map(
+				(entry) => entry.label,
+			),
+		).toEqual(['beta hook', 'gamma hook']);
+		expect(
+			(await list(owner, '/api/automations/triggers?q=gam')).items.map(
+				(entry) => entry.label,
+			),
+		).toEqual(['gamma hook']);
+		const foreign = await owner.call(
+			'/api/automations/triggers?limit=2&cursor=' + first.page.nextCursor,
+			{ as: principal(ALL_SCOPES, 'tenant-other') },
+		);
+		expect(foreign.status).toBe(400);
 	});
 
 	it('lists and configures workflow targets only from trusted principal scopes', async () => {
@@ -328,7 +611,7 @@ describe('automations HTTP boundary', () => {
 			principal([...ALL_SCOPES, 'workflow.allowed']),
 		);
 		const options = (await (
-			await authorized.call('/api/automations/schedules')
+			await authorized.call('/api/automations/options')
 		).json()) as {
 			targets: readonly Record<string, unknown>[];
 		};

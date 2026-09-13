@@ -188,10 +188,55 @@ describe('automations migrations', () => {
 			['0003_automations_scheduler_role', 'partial'],
 			['0004_automations_trigger_routing_role', 'partial'],
 			['0005_secret_rotation_inventory', 'adopted'],
+			['0006_automations_list_sort_indexes', 'adopted'],
 		]);
 		await expect(
 			runDatabaseMigrations(database, 'automations.core', databaseMigrations),
 		).rejects.toThrow('0003_automations_scheduler_role');
+	});
+
+	it('creates the list sort indexes and adopts them only as a set', async () => {
+		const database = await migrator();
+		await migrateAutomationsDatabase(database);
+		const indexes = await database.transaction(
+			(transaction) =>
+				transaction.query<{ indexname: string; indexdef: string }>({
+					text: `SELECT indexname, indexdef FROM pg_indexes
+					 WHERE schemaname = current_schema()
+					   AND indexname LIKE 'automations_%_tenant_%'
+					 ORDER BY indexname`,
+				}),
+			{ access: 'read' },
+		);
+		const definitions = new Map(
+			indexes.rows.map((row) => [row.indexname, row.indexdef]),
+		);
+		for (const table of ['schedules', 'triggers']) {
+			expect(
+				definitions.get(`automations_${table}_tenant_label_key_idx`),
+			).toMatch(/\(tenant_id, lower\(label\), id\)/);
+			expect(
+				definitions.get(`automations_${table}_tenant_updated_idx`),
+			).toMatch(/\(tenant_id, updated_at, id\)/);
+		}
+
+		await database.transaction(
+			(transaction) =>
+				transaction.executeScript(`
+					DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = 'automations.core';
+					DROP INDEX automations_triggers_tenant_updated_idx;
+				`),
+			{ access: 'write' },
+		);
+		const status = await databaseMigrationStatus(
+			database,
+			'automations.core',
+			databaseMigrations,
+		);
+		expect(status.at(-1)).toMatchObject({
+			id: '0006_automations_list_sort_indexes',
+			state: 'partial',
+		});
 	});
 
 	it('reports a pending schema before anything is applied', async () => {

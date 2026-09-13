@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import {
 	databaseMigrationStatus,
+	runDatabaseMigrations,
 	type DatabaseProvider,
 } from '@flowdular/database';
 import { describe, expect, it } from 'vitest';
@@ -70,6 +71,60 @@ describe('workflows migrations', () => {
 			);
 		} finally {
 			await databases.dispose();
+		}
+	});
+
+	/* 0009 carries the two orders the definitions page is cut on. A schema that
+	   already holds the indexes is adopted, one without them applies the file. */
+	it('applies and adopts the 0009 definition list indexes', async () => {
+		const indexes = [
+			'workflow_definitions_tenant_lower_name_idx',
+			'workflow_definitions_tenant_updated_idx',
+		];
+		const fresh = createWorkflowsTestProvider();
+		try {
+			await withOwnerHandle(fresh, migrateWorkflowsDatabase);
+			for (const index of indexes) {
+				expect(
+					await withOwnerHandle(fresh, (database) =>
+						database.schema.hasIndex(index),
+					),
+					index,
+				).toBe(true);
+			}
+		} finally {
+			await fresh.dispose();
+		}
+
+		const adopted = createWorkflowsTestProvider();
+		try {
+			const earlier = databaseMigrations.slice(0, -1);
+			await withOwnerHandle(adopted, (database) =>
+				runDatabaseMigrations(database, 'workflows.core', earlier),
+			);
+			expect(await states(adopted)).toEqual([
+				...earlier.map(() => 'applied'),
+				'pending',
+			]);
+			await withOwnerHandle(adopted, (database) =>
+				database.transaction(
+					(transaction) =>
+						transaction.executeScript(
+							databaseMigrations.at(-1)!.sql.postgresql!,
+						),
+					{ access: 'write', tenantId: 'tenant-a' },
+				),
+			);
+			expect(await states(adopted)).toEqual([
+				...earlier.map(() => 'applied'),
+				'adopted',
+			]);
+			await withOwnerHandle(adopted, migrateWorkflowsDatabase);
+			expect(await states(adopted)).toEqual(
+				databaseMigrations.map(() => 'applied'),
+			);
+		} finally {
+			await adopted.dispose();
 		}
 	});
 

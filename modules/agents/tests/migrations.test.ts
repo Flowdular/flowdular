@@ -249,6 +249,50 @@ describe('agents migrations', () => {
 		).toBe(true);
 	});
 
+	/* The paged definitions read walks these indexes from its cursor. A schema
+	   that predates them must not be adopted as if the migration had run, or the
+	   read would scan the workspace's definitions on every page. */
+	it('creates the list indexes on a schema that predates them', async () => {
+		await apply();
+		await lease.database.execute({
+			text: 'DROP INDEX agent_definitions_tenant_name_key_idx',
+		});
+		await lease.database.execute({
+			text: 'DROP INDEX agent_definitions_tenant_updated_idx',
+		});
+		await lease.database.execute({
+			text: 'DROP INDEX agent_runs_tenant_queue_order_idx',
+		});
+		await lease.database.execute({
+			text: `DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = 'agents.core'`,
+		});
+
+		const states = await status();
+		expect(states.map((entry) => [entry.id, entry.state])).toContainEqual([
+			'0025_agent_list_indexes',
+			'pending',
+		]);
+		expect(
+			states
+				.filter((entry) => entry.id !== '0025_agent_list_indexes')
+				.every((entry) => entry.state === 'adopted'),
+		).toBe(true);
+
+		expect(
+			(await apply()).find((entry) => entry.id === '0025_agent_list_indexes')
+				?.action,
+		).toBe('applied');
+		expect(
+			(
+				await lease.database.query<{ present: boolean }>({
+					text: `SELECT to_regclass('agent_definitions_tenant_name_key_idx') IS NOT NULL
+					       AND to_regclass('agent_definitions_tenant_updated_idx') IS NOT NULL
+					       AND to_regclass('agent_runs_tenant_queue_order_idx') IS NOT NULL AS present`,
+				})
+			).rows[0]?.present,
+		).toBe(true);
+	});
+
 	it('reports a ledger entry that no longer matches its migration', async () => {
 		await apply();
 		const drifted = databaseMigrations[0]!.id;

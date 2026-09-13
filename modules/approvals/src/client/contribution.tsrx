@@ -30,6 +30,7 @@ export function createApprovalsClientContribution(
 					<ApprovalsView
 						csrfToken={options.csrfToken}
 						canManage={options.scopes.includes(APPROVALS_PERMISSIONS.manage)}
+						canDecide={options.scopes.includes(APPROVALS_PERMISSIONS.decide)}
 					/>,
 			},
 		],

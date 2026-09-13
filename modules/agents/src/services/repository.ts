@@ -4,8 +4,10 @@ import type {
 } from '@flowdular/harness';
 import type {
 	AgentAuditEvent,
-	AgentAuditPage,
+	AgentAuditListQuery,
 	AgentDefinition,
+	AgentListPage,
+	AgentListQuery,
 	AgentDefinitionRevision,
 	ModuleAgentBinding,
 	ModuleAgentDefinition,
@@ -13,6 +15,7 @@ import type {
 	AgentRun,
 	AgentRunDetail,
 	AgentRunExecution,
+	AgentRunListQuery,
 	AgentProcedure,
 	AgentUsageAgent,
 	AgentUsageBucket,
@@ -114,7 +117,13 @@ export interface AgentRepository {
 		expectedRevision: number,
 		audit: PendingAgentAuditEvent,
 	): Promise<ModuleAgentBinding>;
+	/* Every definition of the tenant, for the run queue capability and revision
+	   adoption, which need the whole catalog. Screens read `listAgentsPage`. */
 	listAgents(tenantId: string): Promise<readonly AgentDefinition[]>;
+	listAgentsPage(
+		tenantId: string,
+		query: AgentListQuery,
+	): Promise<AgentListPage>;
 	getAgent(tenantId: string, agentId: string): Promise<AgentDefinition | null>;
 	getAgentRevision(
 		tenantId: string,
@@ -154,7 +163,10 @@ export interface AgentRepository {
 		readonly assignments: number;
 		readonly activeDefinitions: number;
 	}>;
-	listRuns(tenantId: string, limit: number): Promise<readonly AgentRun[]>;
+	listRuns(
+		tenantId: string,
+		query: AgentRunListQuery,
+	): Promise<readonly AgentRun[]>;
 	getRun(tenantId: string, runId: string): Promise<AgentRunDetail | null>;
 	listRunEvents(
 		tenantId: string,
@@ -335,12 +347,11 @@ export interface AgentRepository {
 		afterSequence: number,
 		limit: number,
 	): Promise<readonly AgentAuditEvent[]>;
-	/* Keyset page over the tenant trail, newest first, cursor `occurredAt:sequence`. */
+	/* Keyset page over the tenant trail, newest first. */
 	pageAuditEvents(
 		tenantId: string,
-		cursor: { readonly occurredAt: number; readonly sequence: number } | null,
-		limit: number,
-	): Promise<AgentAuditPage>;
+		query: AgentAuditListQuery,
+	): Promise<readonly AgentAuditEvent[]>;
 	verifyAuditChain(tenantId: string): Promise<boolean>;
 	verifyAuditChainDetailed(tenantId: string): Promise<AuditChainVerification>;
 	usageByDay(

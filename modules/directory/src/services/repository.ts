@@ -1,9 +1,12 @@
 import type {
+	GroupListQuery,
+	ListPage,
 	ProvisioningEvent,
 	ProvisioningEventQuery,
 	ScimGroupMapping,
 	ScimToken,
 	ScimUserMapping,
+	TokenListQuery,
 } from '../domain/types.ts';
 
 /** A stored token with the secret material authentication compares against. */
@@ -67,7 +70,11 @@ export interface GroupMemberStep {
  * the transaction binds as the row-security context as well.
  */
 export interface DirectoryRepository {
-	listTokens(tenantId: string): Promise<readonly ScimToken[]>;
+	/** One screen page; the tokens of a workspace are never read whole. */
+	listTokenPage(
+		tenantId: string,
+		query: TokenListQuery,
+	): Promise<ListPage<ScimToken>>;
 	findTokenById(tenantId: string, id: string): Promise<ScimToken | null>;
 	findTokenByFingerprint(
 		tenantId: string,
@@ -112,11 +119,17 @@ export interface DirectoryRepository {
 		readonly lastSyncedAt: number;
 	}): Promise<void>;
 
+	/** The SCIM listing: offset paged with a total, as the protocol reads. */
 	listGroups(
 		tenantId: string,
 		filter: ScimGroupFilter,
 		page: ScimPageRequest,
 	): Promise<ScimSlice<ScimGroupMapping>>;
+	/** The screen listing: one keyset page over the same rows. */
+	listGroupPage(
+		tenantId: string,
+		query: GroupListQuery,
+	): Promise<ListPage<ScimGroupMapping>>;
 	findGroupById(tenantId: string, id: string): Promise<ScimGroupMapping | null>;
 	insertGroup(record: Omit<ScimGroupMapping, 'memberCount'>): Promise<void>;
 	updateGroup(input: {

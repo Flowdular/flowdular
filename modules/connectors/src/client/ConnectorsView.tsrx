@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'octane';
+import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
@@ -17,8 +17,9 @@ import {
 	toasts,
 	type TableAction,
 	type TableColumn,
+	type TableSort,
 } from '@flowdular/ui';
-import { activeLocale, t } from '@flowdular/client';
+import { t } from '@flowdular/client';
 import { useValue } from 'segment-state';
 import {
 	CONNECTOR_INSTANCE_STATUSES,
@@ -52,7 +53,17 @@ import {
 	instanceStatusTone,
 	timestampLabel,
 } from './presentation.ts';
-import { createConnectorsClientState } from './state.ts';
+import {
+	beginLoad,
+	createConnectorsClientState,
+	FIRST_PAGE,
+	isLatestLoad,
+	pageCursor,
+	searchPending,
+	sortRequest,
+	walkTo,
+	type PageWalk,
+} from './state.ts';
 
 export interface ConnectorsViewProps {
 	readonly csrfToken: string;
@@ -60,6 +71,19 @@ export interface ConnectorsViewProps {
 }
 
 const PAGE_SIZES = [10, 25, 50, 100];
+const NAME_ORDER: TableSort = { key: 'name', desc: false };
+const SEARCH_DEBOUNCE_MS = 300;
+
+/* What one listing asks the server for. It is read from the store when the
+   load starts, never from the render that scheduled it, so a debounce that
+   fires after a filter change asks for the filter the controls show. */
+interface InstanceListing {
+	readonly status: ConnectorInstanceStatus | '';
+	readonly definition: string;
+	readonly q: string;
+	readonly sorting: readonly TableSort[];
+	readonly pageSize: number;
+}
 
 function columns(): readonly TableColumn<ConnectorInstance>[] {
 	return [
@@ -74,21 +98,18 @@ function columns(): readonly TableColumn<ConnectorInstance>[] {
 			key: 'definition',
 			header: t('connectors.column.definition'),
 			width: '12%',
-			value: (instance) => instance.definitionKey,
 			cell: (instance) => <span class="ui-mono">{instance.definitionKey}</span>,
 		},
 		{
 			key: 'baseUrl',
 			header: t('connectors.column.baseUrl'),
 			width: '20%',
-			value: (instance) => instance.baseUrl,
 			cell: (instance) => <span class="ui-mono">{instance.baseUrl}</span>,
 		},
 		{
 			key: 'authKind',
 			header: t('connectors.column.authKind'),
 			width: '12%',
-			value: (instance) => instance.authKind,
 			cell: (instance) =>
 				<span>{t('connectors.authKind.' + instance.authKind)}</span>,
 		},
@@ -96,7 +117,6 @@ function columns(): readonly TableColumn<ConnectorInstance>[] {
 			key: 'status',
 			header: t('connectors.column.status'),
 			width: '10%',
-			value: (instance) => instance.status,
 			cell: (instance) =>
 				<Tag
 					tone={instanceStatusTone(instance.status)}
@@ -107,7 +127,6 @@ function columns(): readonly TableColumn<ConnectorInstance>[] {
 			key: 'allowWorkflows',
 			header: t('connectors.column.allowWorkflows'),
 			width: '9%',
-			value: (instance) => (instance.allowWorkflows ? 1 : 0),
 			cell: (instance) =>
 				<Tag tone={instance.allowWorkflows ? 'info' : 'neutral'}>{consentLabel(
 					instance.allowWorkflows,
@@ -117,7 +136,6 @@ function columns(): readonly TableColumn<ConnectorInstance>[] {
 			key: 'allowAgents',
 			header: t('connectors.column.allowAgents'),
 			width: '9%',
-			value: (instance) => (instance.allowAgents ? 1 : 0),
 			cell: (instance) =>
 				<Tag tone={instance.allowAgents ? 'info' : 'neutral'}>{consentLabel(
 					instance.allowAgents,
@@ -127,7 +145,6 @@ function columns(): readonly TableColumn<ConnectorInstance>[] {
 			key: 'lastCallAt',
 			header: t('connectors.column.lastCall'),
 			width: '10%',
-			value: (instance) => instance.lastCallAt ?? 0,
 			cell: (instance) => timestampLabel(instance.lastCallAt),
 		},
 	];
@@ -140,53 +157,72 @@ export function ConnectorsView(props: ConnectorsViewProps) @{
 	const [status, setStatus] = useValue(client.state.status);
 	const [error, setError] = useValue(client.state.error);
 	const [query, setQuery] = useValue(client.state.query);
+	const [appliedQuery] = useValue(client.state.appliedQuery);
 	const [statusFilter, setStatusFilter] = useValue(client.state.statusFilter);
 	const [definitionFilter, setDefinitionFilter] = useValue(
 		client.state.definitionFilter,
 	);
+	const [sorting, setSorting] = useValue(client.state.sorting);
+	const [pageSize, setPageSize] = useValue(client.state.pageSize);
+	const [walk] = useValue(client.state.walk);
+	const [nextCursor] = useValue(client.state.nextCursor);
+	const [pinned, setPinned] = useValue(client.state.pinned);
 	const [filtersOpen, setFiltersOpen] = useValue(client.state.filtersOpen);
 	const [editorOpen, setEditorOpen] = useValue(client.state.editorOpen);
 	const [selectedId, setSelectedId] = useValue(client.state.selectedId);
 	const [formSession, setFormSession] = useValue(client.state.formSession);
 	const [test, setTest] = useValue(client.state.test);
 	const [confirm, setConfirm] = useValue(client.state.confirm);
-	const [pageIndex, setPageIndex] = useState(0);
-	const [pageSize, setPageSize] = useState(25);
+	/* The row on screen wins; the record an action just returned stands in for
+   an instance the page on screen does not hold. */
 	const selected =
-		instances.find((instance) => instance.id === selectedId) ?? null;
+		instances.find((instance) => instance.id === selectedId) ??
+			(pinned !== null && pinned.id === selectedId ? pinned : null);
 	const formState = connectorFormState({
 		status,
 		selectedId,
 		instance: selected,
 	});
-	const locale = activeLocale();
-	const term = query.trim().toLocaleLowerCase(locale);
-	const visible = instances.filter(
-		(instance) =>
-			(statusFilter === '' || instance.status === statusFilter) &&
-				(definitionFilter === '' ||
-					instance.definitionKey === definitionFilter) &&
-				(term === '' ||
-					instance.name.toLocaleLowerCase(locale).includes(term) ||
-					instance.baseUrl.toLocaleLowerCase(locale).includes(term)),
-	);
 	const filtered =
-		term !== '' || statusFilter !== '' || definitionFilter !== '';
+		appliedQuery !== '' || statusFilter !== '' || definitionFilter !== '';
+	const listing = (): InstanceListing => ({
+		status: client.store.get(client.state.statusFilter),
+		definition: client.store.get(client.state.definitionFilter),
+		q: client.store.get(client.state.appliedQuery),
+		sorting: client.store.get(client.state.sorting),
+		pageSize: client.store.get(client.state.pageSize),
+	});
 
-	const refresh = async () => {
+	const load = async (
+		target: PageWalk,
+		request: InstanceListing = listing(),
+	) => {
+		const ticket = beginLoad(client.store, client.state.loads);
 		setStatus('loading');
 		setError('');
 		try {
-			const [loaded, kinds] = await Promise.all([
-				loadConnectorInstances(),
+			const [page, kinds] = await Promise.all([
+				loadConnectorInstances({
+					status: request.status,
+					definition: request.definition,
+					q: request.q,
+					...sortRequest(request.sorting, NAME_ORDER),
+					cursor: pageCursor(target),
+					limit: request.pageSize,
+				}),
 				loadConnectorDefinitions(),
 			]);
+			if (!isLatestLoad(client.store, client.state.loads, ticket)) return;
 			client.store.act((transaction) => {
-				transaction.set(client.state.instances, loaded);
+				transaction.set(client.state.instances, page.items);
 				transaction.set(client.state.definitions, kinds);
+				transaction.set(client.state.nextCursor, page.page.nextCursor);
+				transaction.set(client.state.walk, target);
+				transaction.set(client.state.appliedQuery, request.q);
 				transaction.set(client.state.status, 'idle');
 			}, 'connectors/loaded');
 		} catch (loadError) {
+			if (!isLatestLoad(client.store, client.state.loads, ticket)) return;
 			setError(connectorsErrorMessage(loadError, 'connectors.error.load'));
 			setStatus(
 				loadError instanceof ConnectorsApiError && loadError.status === 403
@@ -196,13 +232,41 @@ export function ConnectorsView(props: ConnectorsViewProps) @{
 		}
 	};
 
+	const refresh = () => load(client.store.get(client.state.walk));
+	/* A changed filter, sort or page size is a new listing from its first page. */
+	const restart = (change: Partial<InstanceListing>) => load(FIRST_PAGE, {
+		...listing(),
+		...change,
+	});
+	const turnTo = (index: number) => {
+		const current = client.store.get(client.state.walk);
+		const next = walkTo(
+			current,
+			index,
+			client.store.get(client.state.nextCursor),
+		);
+		if (next !== current) void load(next);
+	};
+
 	useEffect(() => {
 		void refresh();
 	}, []);
 
+	/* The term is the server's filter, so typing it starts a new listing. One
+   listing per pause in the typing, none while the rows already answer it. */
+	useEffect(() => {
+		if (!searchPending(query, appliedQuery)) return;
+		const timer = setTimeout(
+			() => void restart({ q: client.store.get(client.state.query).trim() }),
+			SEARCH_DEBOUNCE_MS,
+		);
+		return () => clearTimeout(timer);
+	}, [query]);
+
 	const openInstance = (id: string) => {
 		client.store.act((transaction) => {
 			transaction.set(client.state.selectedId, id);
+			transaction.set(client.state.pinned, null);
 			transaction.set(client.state.formSession, formSession + 1);
 			transaction.set(client.state.test, null);
 			transaction.set(client.state.error, '');
@@ -213,6 +277,7 @@ export function ConnectorsView(props: ConnectorsViewProps) @{
 	const closeEditor = () => {
 		client.store.act((transaction) => {
 			transaction.set(client.state.editorOpen, false);
+			transaction.set(client.state.pinned, null);
 			transaction.set(client.state.test, null);
 			transaction.set(client.state.confirm, null);
 			transaction.set(client.state.error, '');
@@ -224,7 +289,9 @@ export function ConnectorsView(props: ConnectorsViewProps) @{
 		setError('');
 		try {
 			if (selected) {
-				await updateConnectorInstance(selected.id, value, props.csrfToken);
+				setPinned(
+					await updateConnectorInstance(selected.id, value, props.csrfToken),
+				);
 				await refresh();
 				setEditorOpen(false);
 				toasts.success(t('connectors.notice.saved'));
@@ -233,6 +300,7 @@ export function ConnectorsView(props: ConnectorsViewProps) @{
 				await refresh();
 				client.store.act((transaction) => {
 					transaction.set(client.state.selectedId, created.id);
+					transaction.set(client.state.pinned, created);
 					transaction.set(client.state.formSession, formSession + 1);
 				}, 'connectors/created');
 				toasts.success(t('connectors.notice.created'));
@@ -247,14 +315,15 @@ export function ConnectorsView(props: ConnectorsViewProps) @{
 	/* A failure is reported where the reader started the action: beside the
    controls in the drawer, or under the header when the row raised it. */
 	const act = async (
-		run: () => Promise<unknown>,
+		run: () => Promise<ConnectorInstance | void>,
 		done: string,
 		reportTo: 'drawer' | 'screen',
 	) => {
 		setStatus('submitting');
 		setError('');
 		try {
-			await run();
+			const changed = await run();
+			if (changed) setPinned(changed);
 			await refresh();
 			setStatus('idle');
 			toasts.success(done);
@@ -393,6 +462,7 @@ export function ConnectorsView(props: ConnectorsViewProps) @{
 					onClick={() => {
 						client.store.act((transaction) => {
 							transaction.set(client.state.selectedId, '');
+							transaction.set(client.state.pinned, null);
 							transaction.set(client.state.formSession, formSession + 1);
 							transaction.set(client.state.test, null);
 							transaction.set(client.state.error, '');
@@ -427,15 +497,14 @@ export function ConnectorsView(props: ConnectorsViewProps) @{
 				} @else {
 					<TableCard
 						title={t('connectors.instances.tableTitle')}
-						count={t('connectors.instances.count', { count: visible.length })}
+						count={t('connectors.instances.count', {
+							count: instances.length,
+						})}
 						search={<SearchField
 							value={query}
 							placeholder={t('connectors.search.placeholder')}
 							label={t('connectors.search.label')}
-							onInput={(value) => {
-								setQuery(value);
-								setPageIndex(0);
-							}}
+							onInput={setQuery}
 						/>}
 						filters={<Filters
 							open={filtersOpen}
@@ -458,8 +527,9 @@ export function ConnectorsView(props: ConnectorsViewProps) @{
 									),
 								]}
 								onChange={(value) => {
-									setStatusFilter(value as ConnectorInstanceStatus | '');
-									setPageIndex(0);
+									const next = value as ConnectorInstanceStatus | '';
+									setStatusFilter(next);
+									void restart({ status: next });
 								}}
 							/>
 							<Select
@@ -477,37 +547,46 @@ export function ConnectorsView(props: ConnectorsViewProps) @{
 								]}
 								onChange={(value) => {
 									setDefinitionFilter(value);
-									setPageIndex(0);
+									void restart({ definition: value });
 								}}
 							/>
 						</Filters>}
 						caption={t('connectors.instances.caption')}
 						columns={columns()}
-						rows={visible}
+						rows={instances}
 						rowKey={(instance) => instance.id}
+						mode="server"
 						sorting
-						onSortingChange={() => setPageIndex(0)}
-						pagination={{ pageIndex, pageSize, onPageChange: setPageIndex }}
+						sortingState={sorting}
+						onSortingChange={(sorts) => {
+							const next =
+								sorts.length === 0 ? [NAME_ORDER] : sorts;
+							setSorting(next);
+							void restart({ sorting: next });
+						}}
+						pagination={{
+							pageIndex: walk.pageIndex,
+							pageSize,
+							onPageChange: turnTo,
+							hasMore: nextCursor !== null,
+						}}
 						after={<Pagination
-							pageIndex={pageIndex}
+							pageIndex={walk.pageIndex}
 							pageSize={pageSize}
-							totalRows={visible.length}
+							hasMore={nextCursor !== null}
 							pageSizes={PAGE_SIZES}
-							onPageChange={setPageIndex}
+							onPageChange={turnTo}
 							onPageSizeChange={(size) => {
 								setPageSize(size);
-								setPageIndex(0);
+								void restart({ pageSize: size });
 							}}
 							label={t('connectors.pagination.label')}
 							previousLabel={t('connectors.pagination.previous')}
 							nextLabel={t('connectors.pagination.next')}
 							pageSizeLabel={t('connectors.pagination.size')}
-							summary={(range) => t('connectors.pagination.summary', {
-								page: range.pageIndex + 1,
-								pages: range.pageCount,
-								from: range.from,
-								to: range.to,
-								total: range.totalRows,
+							summary={(page) => t('connectors.pagination.page', {
+								page: page.pageIndex + 1,
+								from: page.from,
 							})}
 						/>}
 						status={status === 'loading' && instances.length === 0

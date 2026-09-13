@@ -4,35 +4,15 @@ import type {
 	NotificationsInboxStatus,
 } from '../domain/types.ts';
 
-export interface InboxListing {
-	/** The rows the table renders. */
-	readonly visible: readonly NotificationsInbox[];
-	/** Something is held back, so an empty table is a narrowed set, not a first run. */
-	readonly filtered: boolean;
-	/** Filters the reader chose. The archived rule below is not one of them. */
-	readonly activeFilters: number;
-}
-
-/* The default inbox is everything the member has not archived: the server
-   filters one status at a time, so that last step happens here. It narrows the
-   set like any filter, so an inbox whose items are all archived reads as
-   narrowed instead of empty. */
-export function inboxListing(
-	items: readonly NotificationsInbox[],
+/**
+ * Filters the reader chose. The default inbox is everything the member has not
+ * archived, which the server applies on its own; it is not one of them.
+ */
+export function inboxActiveFilters(
 	statusFilter: NotificationsInboxStatus | '',
 	kindFilter: NotificationKind | '',
-): InboxListing {
-	const visible =
-		statusFilter === ''
-			? items.filter((item) => item.status !== 'archived')
-			: items;
-	const activeFilters =
-		(statusFilter === '' ? 0 : 1) + (kindFilter === '' ? 0 : 1);
-	return {
-		visible,
-		filtered: activeFilters > 0 || visible.length !== items.length,
-		activeFilters,
-	};
+): number {
+	return (statusFilter === '' ? 0 : 1) + (kindFilter === '' ? 0 : 1);
 }
 
 export type InboxRowAction = 'open' | 'archive' | 'mark-unread';

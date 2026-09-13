@@ -302,6 +302,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS notifications_deliveries_attempt_idx
   ON notifications_deliveries (tenant_id, channel, coalesce(subscription_id, recipient_account_id), kind, source_ref, sequence, attempt_number);
 `;
 
+/* Mirrors migrations/0013_notifications_list_pages.up.sql byte for byte. */
+export const NOTIFICATIONS_MIGRATION_013_LIST_PAGES = `-- The three list screens page by keyset over their sort column and the id, both
+-- in one direction, and the direction the reader asks for may be either. An
+-- index that mixes directions, such as the member status index on
+-- (created_at DESC, id), serves neither walk without a sort. Each index here
+-- carries the scope of its list, then the sort column, then the id, all
+-- ascending, so a page is a range read and the descending walk is the same
+-- index read backwards.
+CREATE INDEX IF NOT EXISTS notifications_inbox_member_page_idx
+  ON notifications_inbox (tenant_id, recipient_account_id, created_at, id);
+CREATE INDEX IF NOT EXISTS notifications_webhook_subscriptions_page_idx
+  ON notifications_webhook_subscriptions (tenant_id, lower(name), id);
+CREATE INDEX IF NOT EXISTS notifications_deliveries_page_idx
+  ON notifications_deliveries (tenant_id, scheduled_for, id);
+`;
+
 /* The three tables whose kind check 0009 and 0010 replace. */
 const KIND_CHECK_TABLES = [
 	'notifications_inbox',
@@ -539,5 +555,18 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 						).rows[0]?.present === true,
 				],
 			),
+	},
+	{
+		id: '0013_notifications_list_pages',
+		sql: { postgresql: NOTIFICATIONS_MIGRATION_013_LIST_PAGES },
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() => database.schema.hasIndex('notifications_inbox_member_page_idx'),
+				() =>
+					database.schema.hasIndex(
+						'notifications_webhook_subscriptions_page_idx',
+					),
+				() => database.schema.hasIndex('notifications_deliveries_page_idx'),
+			]),
 	},
 ];

@@ -53,7 +53,7 @@ describe('CONNECTORS-INSTANCE-CRUD', () => {
 		expect(created.credentialFingerprint).toHaveLength(32);
 		expect(JSON.stringify(created)).not.toContain('secret-value-0001');
 
-		const listed = await service().list(TENANT);
+		const listed = await service().list(TENANT, { limit: 200 });
 		expect(JSON.stringify(listed)).not.toContain('secret-value-0001');
 		expect(Object.keys(listed[0] ?? {})).not.toContain('credential');
 	});
@@ -101,7 +101,7 @@ describe('CONNECTORS-INSTANCE-CRUD', () => {
 
 		await service().disable(TENANT, ACTOR, created.id);
 		await service().remove(TENANT, ACTOR, created.id);
-		expect(await service().list(TENANT)).toEqual([]);
+		expect(await service().list(TENANT, { limit: 200 })).toEqual([]);
 	});
 
 	it('records one audit row per accepted transition', async () => {
@@ -182,7 +182,7 @@ describe('CONNECTORS-INSTANCE-CRUD', () => {
 				credentials: { header: 'x-api\u0000key', value: 'secret-value-0001' },
 			}),
 		).rejects.toMatchObject({ code: 'CREDENTIAL_INVALID' });
-		expect(await service().list(TENANT)).toEqual([]);
+		expect(await service().list(TENANT, { limit: 200 })).toEqual([]);
 	});
 
 	/* The generic definition names 443 and nothing else, so an instance cannot

@@ -17,10 +17,14 @@ import type {
 	WorkflowRunDetail,
 	WorkflowRunEventTypeV1,
 	WorkflowRunEventV1,
+	WorkflowAuditSort,
+	WorkflowDefinitionFilters,
+	WorkflowDefinitionSort,
 	WorkflowRunFilters,
-	WorkflowRunPage,
+	WorkflowRunSort,
 	WorkflowRunStatus,
 	WorkflowRunSummary,
+	WorkflowSortDirection,
 	WorkflowUsageRollupV1,
 } from '../domain/types.ts';
 
@@ -98,6 +102,31 @@ export interface WorkflowAuditPage {
 	readonly nextCursor: string | null;
 }
 
+/** Where a keyset page ends, with the sort key exactly as the database ordered it. */
+export interface WorkflowKeysetPosition {
+	readonly key: string | number;
+	readonly id: string | number;
+}
+
+export interface WorkflowKeysetPage<T> {
+	readonly items: readonly T[];
+	readonly last: WorkflowKeysetPosition | null;
+}
+
+/** One page of an interactive list, read after the row a cursor named. */
+export interface WorkflowKeysetRead<Sort extends string> {
+	readonly sort: Sort;
+	readonly direction: WorkflowSortDirection;
+	readonly limit: number;
+	readonly after: WorkflowKeysetPosition | null;
+}
+
+export type WorkflowDefinitionListRead = WorkflowDefinitionFilters &
+	WorkflowKeysetRead<WorkflowDefinitionSort>;
+export type WorkflowRunListRead = WorkflowRunFilters &
+	WorkflowKeysetRead<WorkflowRunSort>;
+export type WorkflowAuditListRead = WorkflowKeysetRead<WorkflowAuditSort>;
+
 /** Where a run export page resumes: newest queue time first, then run id. */
 export interface WorkflowRunExportCursor {
 	readonly queuedAt: number;
@@ -128,7 +157,10 @@ export interface ExportedWorkflowDefinition {
 }
 
 export interface WorkflowsRepository {
-	listDefinitions(tenantId: string): Promise<readonly WorkflowDefinition[]>;
+	listDefinitions(
+		tenantId: string,
+		read: WorkflowDefinitionListRead,
+	): Promise<WorkflowKeysetPage<WorkflowDefinition>>;
 	findDefinition(
 		tenantId: string,
 		workflowId: string,
@@ -185,8 +217,8 @@ export interface WorkflowsRepository {
 	getRun(tenantId: string, runId: string): Promise<WorkflowRunRecord | null>;
 	listRuns(
 		tenantId: string,
-		filters: WorkflowRunFilters,
-	): Promise<WorkflowRunPage>;
+		read: WorkflowRunListRead,
+	): Promise<WorkflowKeysetPage<WorkflowRunSummary>>;
 	runDetail(tenantId: string, runId: string): Promise<WorkflowRunDetail | null>;
 	claimNext(
 		workerId: string,
@@ -324,9 +356,8 @@ export interface WorkflowsRepository {
 	): Promise<readonly WorkflowEdgeTransfer[]>;
 	listAudit(
 		tenantId: string,
-		limit: number,
-		beforeSequence?: number,
-	): Promise<WorkflowAuditPage>;
+		read: WorkflowAuditListRead,
+	): Promise<WorkflowKeysetPage<WorkflowAuditEvent>>;
 	verifyAudit(tenantId: string): Promise<WorkflowAuditVerification>;
 	/* Keyset page of the workspace trail in chain order, oldest first. */
 	exportAuditEventsPage(

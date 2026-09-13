@@ -117,6 +117,12 @@ export interface ConnectorCall {
 	readonly occurredAt: number;
 }
 
+/** A call as the log screen lists it: the row plus the name of its instance. */
+export interface ConnectorCallListRow extends ConnectorCall {
+	/** Null once the instance was deleted; the call log outlives it. */
+	readonly instanceName: string | null;
+}
+
 export type ConnectorCredentials =
 	| { readonly kind: 'none' }
 	| {

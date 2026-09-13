@@ -6,19 +6,26 @@ export function memberColumns(
 	roleNames: ReadonlyMap<string, string>,
 ): readonly TableColumn<TenantMember>[] {
 	return [
+		/* The two keys the server sorts by are the two sortable columns, so a
+   header click names the sort key as it is. */
 		{
-			key: 'user',
+			key: 'displayName',
 			header: t('users.table.user'),
-			width: '32%',
-			cell: (user) => <span class="ui-cell">
-				<b>{user.displayName}</b>
-				<small>{user.email}</small>
-			</span>,
+			width: '22%',
+			value: (user) => user.displayName,
+			cell: (user) => <b>{user.displayName}</b>,
+		},
+		{
+			key: 'email',
+			header: t('users.table.email'),
+			width: '24%',
+			value: (user) => user.email,
+			cell: (user) => <span>{user.email}</span>,
 		},
 		{
 			key: 'role',
 			header: t('users.table.role'),
-			width: '18%',
+			width: '14%',
 			cell: (user) =>
 				<Tag tone={user.role === 'owner' ? 'ink' : 'neutral'}>
 					{roleNames.get(user.role) ?? user.role}

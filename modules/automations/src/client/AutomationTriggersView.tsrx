@@ -6,24 +6,35 @@ import {
 	Filters,
 	Icon,
 	PageHeader,
+	Pagination,
 	SearchField,
 	TableCard,
 	Tag,
 	type TableColumn,
+	type TableSort,
 } from '@flowdular/ui';
-import { activeLocale, t } from '@flowdular/client';
+import { t } from '@flowdular/client';
 import { useValue } from 'segment-state';
 import type { AutomationTrigger } from '../domain/types.ts';
 import {
 	createAutomationTrigger,
 	deleteAutomationTrigger,
+	loadAutomationTriggerOptions,
 	loadAutomationTriggers,
 	rotateAutomationTrigger,
 	updateAutomationTrigger,
 } from './api.ts';
 import type { AutomationTriggerFormValue } from './AutomationTriggerForm.tsrx';
 import { AutomationTriggerForm } from './AutomationTriggerForm.tsrx';
-import { createAutomationTriggerClientState } from './state.ts';
+import {
+	AUTOMATION_LIST_PAGE_SIZE,
+	FIRST_PAGE,
+	createAutomationTriggerClientState,
+	listRequest,
+	listSort,
+	movePage,
+	pageLoaded,
+} from './state.ts';
 import { timestampLabel } from './presentation.ts';
 
 export interface AutomationTriggersViewProps {
@@ -31,12 +42,16 @@ export interface AutomationTriggersViewProps {
 	readonly canManage: boolean;
 }
 
+/* Keystrokes and page clicks coalesce into one request. */
+const LIST_DEBOUNCE_MS = 200;
+
 function triggerColumns(): readonly TableColumn<AutomationTrigger>[] {
 	return [
 		{
-			key: 'trigger',
+			key: 'label',
 			header: t('automations.triggers.column.trigger'),
-			width: '30%',
+			width: '26%',
+			value: (trigger) => trigger.label,
 			cell: (trigger) => <span class="ui-cell">
 				<b>{trigger.label}</b>
 				<small class="ui-mono">{t('automations.triggers.secretRevision', {
@@ -47,7 +62,7 @@ function triggerColumns(): readonly TableColumn<AutomationTrigger>[] {
 		{
 			key: 'target',
 			header: t('automations.common.target'),
-			width: '20%',
+			width: '18%',
 			cell: (trigger) => <span class="ui-cell">
 				<span>{trigger.targetName}</span>
 				<small class="ui-cell__muted">
@@ -62,22 +77,29 @@ function triggerColumns(): readonly TableColumn<AutomationTrigger>[] {
 		{
 			key: 'last-fired',
 			header: t('automations.triggers.column.lastFired'),
-			width: '18%',
+			width: '14%',
 			cell: (trigger) => timestampLabel(trigger.lastFiredAt),
 		},
 		{
 			key: 'accepted',
 			header: t('automations.triggers.column.accepted'),
-			width: '10%',
+			width: '8%',
 			numeric: true,
 			cell: (trigger) => trigger.acceptedCount,
 		},
 		{
 			key: 'rejected',
 			header: t('automations.triggers.column.rejected'),
-			width: '10%',
+			width: '8%',
 			numeric: true,
 			cell: (trigger) => trigger.rejectedCount,
+		},
+		{
+			key: 'updatedAt',
+			header: t('automations.common.updated'),
+			width: '14%',
+			value: (trigger) => trigger.updatedAt,
+			cell: (trigger) => timestampLabel(trigger.updatedAt),
 		},
 		{
 			key: 'state',
@@ -95,51 +117,105 @@ function triggerColumns(): readonly TableColumn<AutomationTrigger>[] {
 
 export function AutomationTriggersView(props: AutomationTriggersViewProps) @{
 	const client = useMemo(() => createAutomationTriggerClientState(), []);
+	const requests = useMemo(() => ({ sequence: 0 }), []);
 	const [triggers] = useValue(client.state.triggers);
 	const [targets] = useValue(client.state.targets);
 	const [selectedId, setSelectedId] = useValue(client.state.selectedTriggerId);
 	const [status, setStatus] = useValue(client.state.status);
 	const [error, setError] = useValue(client.state.error);
-	const [query, setQuery] = useValue(client.state.query);
-	const [enabledOnly, setEnabledOnly] = useValue(client.state.enabledOnly);
+	const [query] = useValue(client.state.query);
+	const [enabledOnly] = useValue(client.state.enabledOnly);
+	const [sorting] = useValue(client.state.sorting);
+	const [paging, setPaging] = useValue(client.state.paging);
 	const [filtersOpen, setFiltersOpen] = useValue(client.state.filtersOpen);
 	const [editorOpen, setEditorOpen] = useValue(client.state.editorOpen);
 	const [secret, setSecret] = useValue(client.state.revealedSecret);
 	const selected =
 		triggers.find((trigger) => trigger.id === selectedId) ?? null;
-	const term = query.trim().toLocaleLowerCase(activeLocale());
-	const visible = triggers.filter(
-		(trigger) =>
-			(!enabledOnly || trigger.enabled) &&
-				(term === '' ||
-					trigger.label.toLocaleLowerCase(activeLocale()).includes(term) ||
-					trigger.targetName.toLocaleLowerCase(activeLocale()).includes(term)),
-	);
-	const filtered = term !== '' || enabledOnly;
+	const filtered = query.trim() !== '' || enabledOnly;
+	const order = listSort(sorting);
 
-	const refresh = async () => {
+	const loadPage = async () => {
+		const sequence = requests.sequence += 1;
 		setStatus('loading');
 		setError('');
 		try {
-			const result = await loadAutomationTriggers();
+			const result = await loadAutomationTriggers(
+				listRequest({ sorting, query, enabledOnly, paging }),
+			);
+			if (sequence !== requests.sequence) return;
 			client.store.act((transaction) => {
-				transaction.set(client.state.triggers, result.triggers);
-				transaction.set(client.state.targets, result.targets);
-			}, 'automation-triggers/loaded');
+				transaction.set(client.state.triggers, result.items);
+				transaction.set(
+					client.state.paging,
+					pageLoaded(paging, result.page.nextCursor),
+				);
+			}, 'automation-triggers/page');
 		} catch (loadError) {
+			if (sequence !== requests.sequence) return;
 			setError(
 				loadError instanceof Error
 					? loadError.message
 					: t('automations.triggers.error.load'),
 			);
 		} finally {
-			setStatus('idle');
+			if (sequence === requests.sequence) setStatus('idle');
 		}
 	};
 
+	const loadOptions = async () => {
+		try {
+			const result = await loadAutomationTriggerOptions();
+			client.store.act((transaction) => {
+				transaction.set(client.state.targets, result.targets);
+			}, 'automation-triggers/options');
+		} catch (loadError) {
+			setError(
+				loadError instanceof Error
+					? loadError.message
+					: t('automations.triggers.error.load'),
+			);
+		}
+	};
+
+	const refresh = async () => {
+		await Promise.all([loadOptions(), loadPage()]);
+	};
+
 	useEffect(() => {
-		void refresh();
+		void loadOptions();
 	}, []);
+
+	useEffect(() => {
+		const handle = setTimeout(() => void loadPage(), LIST_DEBOUNCE_MS);
+		return () => clearTimeout(handle);
+	}, [query, enabledOnly, order.sort, order.direction, paging.pageIndex]);
+
+	/* A narrower or reordered list starts from its first page. */
+	const restart = (
+		change: Parameters<typeof client.store.act>[0],
+		label: string,
+	) => {
+		client.store.act((transaction) => {
+			change(transaction);
+			transaction.set(client.state.paging, FIRST_PAGE);
+		}, label);
+	};
+	const changeQuery = (value: string) => restart(
+		(transaction) => transaction.set(client.state.query, value),
+		'automation-triggers/query',
+	);
+	const changeEnabledOnly = (value: boolean) => restart(
+		(transaction) => transaction.set(client.state.enabledOnly, value),
+		'automation-triggers/enabled-only',
+	);
+	const changeSorting = (value: readonly TableSort[]) => restart(
+		(transaction) => transaction.set(client.state.sorting, value),
+		'automation-triggers/sorting',
+	);
+	const changePage = (pageIndex: number) => setPaging(
+		movePage(paging, pageIndex),
+	);
 
 	const open = (triggerId: string) => {
 		setSecret('');
@@ -188,7 +264,7 @@ export function AutomationTriggersView(props: AutomationTriggersViewProps) @{
 				props.csrfToken,
 			);
 			setSecret(rotated.secret);
-			await refresh();
+			await loadPage();
 		} catch (rotateError) {
 			setError(
 				rotateError instanceof Error
@@ -245,14 +321,14 @@ export function AutomationTriggersView(props: AutomationTriggersViewProps) @{
 		<TableCard
 			title={t('automations.triggers.table.title')}
 			count={t('automations.triggers.table.count', {
-				enabled: triggers.filter((trigger) => trigger.enabled).length,
-				total: triggers.length,
+				count: triggers.length,
+				page: paging.pageIndex + 1,
 			})}
 			search={<SearchField
 				value={query}
 				placeholder={t('automations.triggers.search.placeholder')}
 				label={t('automations.triggers.search.label')}
-				onInput={setQuery}
+				onInput={changeQuery}
 			/>}
 			filters={<Filters
 				open={filtersOpen}
@@ -264,16 +340,26 @@ export function AutomationTriggersView(props: AutomationTriggersViewProps) @{
 					<input
 						type="checkbox"
 						checked={enabledOnly}
-						onChange={(event: Event) => setEnabledOnly(
+						onChange={(event: Event) => changeEnabledOnly(
 							(event.currentTarget as HTMLInputElement).checked,
 						)}
 					/>
 					<span>{t('automations.common.enabledOnly')}</span>
 				</label>
 			</Filters>}
+			mode="server"
 			columns={triggerColumns()}
-			rows={visible}
+			rows={triggers}
 			rowKey={(trigger) => trigger.id}
+			sorting
+			sortingState={sorting}
+			onSortingChange={changeSorting}
+			pagination={{
+				pageIndex: paging.pageIndex,
+				pageSize: AUTOMATION_LIST_PAGE_SIZE,
+				onPageChange: changePage,
+				hasMore: paging.nextCursor !== null,
+			}}
 			status={status === 'loading' && triggers.length === 0
 				? 'loading'
 				: 'idle'}
@@ -300,6 +386,19 @@ export function AutomationTriggersView(props: AutomationTriggersViewProps) @{
 						},
 					]
 				: undefined}
+			after={<Pagination
+				pageIndex={paging.pageIndex}
+				pageSize={AUTOMATION_LIST_PAGE_SIZE}
+				hasMore={paging.nextCursor !== null}
+				onPageChange={changePage}
+				label={t('automations.triggers.pagination.label')}
+				previousLabel={t('automations.common.pagination.previous')}
+				nextLabel={t('automations.common.pagination.next')}
+				summary={(page) => t('automations.common.pagination.summary', {
+					page: page.pageIndex + 1,
+					from: page.from,
+				})}
+			/>}
 			note={t('automations.triggers.note')}
 			noteIcon="shield"
 			caption={t('automations.triggers.table.caption')}

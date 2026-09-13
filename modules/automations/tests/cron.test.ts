@@ -27,6 +27,7 @@ import { nextCronSlot, parseCron } from '../src/domain/cron.ts';
 import { AutomationsServiceError } from '../src/services/automations-service.ts';
 import { createAutomationScheduleRunner } from '../src/services/schedule-runner.ts';
 import { AutomationScheduleService } from '../src/services/schedule-service.ts';
+import type { AutomationListQuery } from '../src/services/repository.ts';
 import {
 	openAutomationsTestDatabase,
 	type AutomationsTestDatabase,
@@ -111,6 +112,12 @@ function scheduleInput(cadence: string) {
 function at(iso: string): number {
 	return Date.parse(iso);
 }
+
+const FIRST_PAGE: AutomationListQuery = {
+	sort: 'label',
+	direction: 'asc',
+	limit: 50,
+};
 
 describe('cron cadence', () => {
 	it('parses steps, ranges, lists and three letter names', () => {
@@ -293,7 +300,7 @@ describe('cron schedules', () => {
 		await expect(
 			service.create('tenant-a', 'user-a', scheduleInput('cron:0 6 30 2 *')),
 		).rejects.toBeInstanceOf(AutomationsServiceError);
-		expect(await service.list('tenant-a')).toEqual([]);
+		expect((await service.list('tenant-a', FIRST_PAGE)).items).toEqual([]);
 	});
 
 	it('fires one cron slot and advances past the slots it missed', async () => {
@@ -330,7 +337,7 @@ describe('cron schedules', () => {
 			claimLost: 0,
 		});
 		expect(runs.size).toBe(1);
-		const [advanced] = await service.list('tenant-a');
+		const [advanced] = (await service.list('tenant-a', FIRST_PAGE)).items;
 		expect(advanced!.lastRunAt).toBe(now);
 		expect(advanced!.nextRunAt).toBe(at('2026-09-15T10:00:00.000Z'));
 	});
@@ -371,7 +378,7 @@ describe('cron schedules', () => {
 			claimLost: 0,
 		});
 		expect(runs.size).toBe(0);
-		const [disabled] = await service.list('tenant-a');
+		const [disabled] = (await service.list('tenant-a', FIRST_PAGE)).items;
 		expect(disabled!.enabled).toBe(false);
 		expect(disabled!.disabledReason).toMatch(/^INVALID_CADENCE/);
 	});
@@ -402,7 +409,7 @@ describe('cron schedules', () => {
 
 		zone = WARSAW;
 		expect(await service.retime('tenant-a')).toBe(1);
-		const schedules = await service.list('tenant-a');
+		const schedules = (await service.list('tenant-a', FIRST_PAGE)).items;
 		expect(schedules.find((entry) => entry.id === cron.id)!.nextRunAt).toBe(
 			at('2026-09-12T04:00:00.000Z'),
 		);

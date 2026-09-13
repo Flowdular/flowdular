@@ -24,13 +24,46 @@ async function harness(
 	return created;
 }
 
+interface TokenPage {
+	readonly items: Record<string, unknown>[];
+	readonly page: { readonly nextCursor: string | null };
+}
+
+async function tokenPage(
+	suite: DirectoryHarness,
+	session: Session,
+	query = '',
+): Promise<{ readonly status: number; readonly body: TokenPage }> {
+	const response = await suite.admin(
+		'/api/directory/tokens' + (query === '' ? '' : '?' + query),
+		'GET',
+		session,
+	);
+	return {
+		status: response.status,
+		body: (await response.json()) as TokenPage,
+	};
+}
+
 async function listTokens(
 	suite: DirectoryHarness,
 	session: Session,
 ): Promise<Record<string, unknown>[]> {
-	const response = await suite.admin('/api/directory/tokens', 'GET', session);
-	return ((await response.json()) as { tokens: Record<string, unknown>[] })
-		.tokens;
+	return (await tokenPage(suite, session)).body.items;
+}
+
+async function errorCode(
+	suite: DirectoryHarness,
+	session: Session,
+	query: string,
+): Promise<[number, string]> {
+	const response = await suite.admin(
+		'/api/directory/tokens?' + query,
+		'GET',
+		session,
+	);
+	const body = (await response.json()) as { error?: { code?: string } };
+	return [response.status, body.error?.code ?? ''];
 }
 
 async function provisioningEvents(
@@ -260,6 +293,133 @@ describe('DIRECTORY-TOKEN-CREATE', () => {
 			label: 'x',
 		});
 		expect(short.status).toBe(400);
+	});
+});
+
+describe('DIRECTORY-SCREEN-PAGING tokens', () => {
+	const LABELS = ['delta', 'Alpha', 'charlie', 'Bravo', 'echo'];
+
+	async function seeded(): Promise<[DirectoryHarness, Session]> {
+		const suite = await harness();
+		const owner = await suite.signUp('owner@example.com', 'workspace-a');
+		for (const label of LABELS) await issueToken(suite, owner, label);
+		return [suite, owner];
+	}
+
+	it('walks the labels in case-folded order over consecutive pages without overlap or gap', async () => {
+		const [suite, owner] = await seeded();
+		const first = await tokenPage(suite, owner, 'limit=2');
+		expect(first.status).toBe(200);
+		expect(first.body.items.map((token) => token.label)).toEqual([
+			'Alpha',
+			'Bravo',
+		]);
+		/* A full page answers a cursor even when it might be the last one. */
+		expect(first.body.page.nextCursor).not.toBeNull();
+
+		const second = await tokenPage(
+			suite,
+			owner,
+			'limit=2&cursor=' + encodeURIComponent(first.body.page.nextCursor!),
+		);
+		expect(second.body.items.map((token) => token.label)).toEqual([
+			'charlie',
+			'delta',
+		]);
+		const third = await tokenPage(
+			suite,
+			owner,
+			'limit=2&cursor=' + encodeURIComponent(second.body.page.nextCursor!),
+		);
+		expect(third.body.items.map((token) => token.label)).toEqual(['echo']);
+		expect(third.body.page.nextCursor).toBeNull();
+	});
+
+	it('sorts descending and narrows by status and label on the server', async () => {
+		const [suite, owner] = await seeded();
+		const descending = await tokenPage(suite, owner, 'direction=desc&limit=3');
+		expect(descending.body.items.map((token) => token.label)).toEqual([
+			'echo',
+			'delta',
+			'charlie',
+		]);
+		const rest = await tokenPage(
+			suite,
+			owner,
+			'direction=desc&limit=3&cursor=' +
+				encodeURIComponent(descending.body.page.nextCursor!),
+		);
+		expect(rest.body.items.map((token) => token.label)).toEqual([
+			'Bravo',
+			'Alpha',
+		]);
+
+		const revoked = (await listTokens(suite, owner)).find(
+			(token) => token.label === 'charlie',
+		)!;
+		await suite.admin('/api/directory/tokens/revoke', 'POST', owner, {
+			id: revoked.id,
+		});
+		expect(
+			(await tokenPage(suite, owner, 'status=revoked')).body.items.map(
+				(token) => token.label,
+			),
+		).toEqual(['charlie']);
+		expect(
+			(await tokenPage(suite, owner, 'status=active&q=A')).body.items.map(
+				(token) => token.label,
+			),
+		).toEqual(['Alpha', 'Bravo', 'delta']);
+		/* The wildcard characters of LIKE are searched for, not interpreted. */
+		expect((await tokenPage(suite, owner, 'q=%25')).body.items).toEqual([]);
+	});
+
+	it('refuses a cursor cut under another workspace, sort or filter, and a bad sort', async () => {
+		const [suite, owner] = await seeded();
+		const other = await suite.signUp('owner-b@example.com', 'workspace-b');
+		for (const label of LABELS) await issueToken(suite, other, label);
+		const page = await tokenPage(suite, owner, 'limit=2');
+		const cursor = encodeURIComponent(page.body.page.nextCursor!);
+
+		expect(await errorCode(suite, other, 'limit=2&cursor=' + cursor)).toEqual([
+			400,
+			'CURSOR_INVALID',
+		]);
+		expect(
+			await errorCode(suite, owner, 'limit=2&direction=desc&cursor=' + cursor),
+		).toEqual([400, 'CURSOR_INVALID']);
+		expect(
+			await errorCode(suite, owner, 'limit=2&status=active&cursor=' + cursor),
+		).toEqual([400, 'CURSOR_INVALID']);
+		expect(
+			await errorCode(suite, owner, 'limit=2&q=a&cursor=' + cursor),
+		).toEqual([400, 'CURSOR_INVALID']);
+		const tampered = cursor.slice(0, -4) + 'AAAA';
+		expect(await errorCode(suite, owner, 'limit=2&cursor=' + tampered)).toEqual(
+			[400, 'CURSOR_INVALID'],
+		);
+		/* The page size the cursor was cut at is not part of it: the next page
+		   may be wider or narrower. */
+		expect(
+			(await tokenPage(suite, owner, 'limit=5&cursor=' + cursor)).status,
+		).toBe(200);
+
+		expect(await errorCode(suite, owner, 'sort=createdAt')).toEqual([
+			400,
+			'INVALID_INPUT',
+		]);
+		expect(await errorCode(suite, owner, 'direction=up')).toEqual([
+			400,
+			'INVALID_INPUT',
+		]);
+		expect(await errorCode(suite, owner, 'limit=201')).toEqual([
+			400,
+			'INVALID_INPUT',
+		]);
+		expect(await errorCode(suite, owner, 'status=expired')).toEqual([
+			400,
+			'INVALID_INPUT',
+		]);
 	});
 });
 

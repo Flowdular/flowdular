@@ -124,6 +124,21 @@ CREATE INDEX IF NOT EXISTS approvals_decisions_decider_account_idx
   ON approvals_decisions (tenant_id, decider_account_id, id);
 `;
 
+/* Mirrors migrations/0004_approvals_inbox_keyset_indexes.up.sql byte for byte. */
+export const APPROVALS_MIGRATION_004_INBOX_KEYSET_INDEXES = `-- The inbox pages by keyset on (created_at, id) in one direction, under a
+-- status filter, a requester filter, or neither. The two indexes 0001 carries
+-- order created_at DESC with id ASC, so a page walked in either direction ends
+-- in a sort, and a workspace-wide page has no index at all. These three carry
+-- both keys ascending: a newest-first page is a backward scan of the same
+-- index, and a page continued from a cursor starts where the cursor names.
+CREATE INDEX IF NOT EXISTS approvals_requests_status_created_idx
+  ON approvals_requests (tenant_id, status, created_at, id);
+CREATE INDEX IF NOT EXISTS approvals_requests_requester_created_idx
+  ON approvals_requests (tenant_id, requester_account_id, created_at, id);
+CREATE INDEX IF NOT EXISTS approvals_requests_created_idx
+  ON approvals_requests (tenant_id, created_at, id);
+`;
+
 export const databaseMigrations: readonly DatabaseMigration[] = [
 	{
 		id: '0001_approvals_core',
@@ -191,6 +206,17 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 				() => database.schema.hasIndex('approvals_requests_export_idx'),
 				() =>
 					database.schema.hasIndex('approvals_decisions_decider_account_idx'),
+			]),
+	},
+	{
+		id: '0004_approvals_inbox_keyset_indexes',
+		sql: { postgresql: APPROVALS_MIGRATION_004_INBOX_KEYSET_INDEXES },
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() => database.schema.hasIndex('approvals_requests_status_created_idx'),
+				() =>
+					database.schema.hasIndex('approvals_requests_requester_created_idx'),
+				() => database.schema.hasIndex('approvals_requests_created_idx'),
 			]),
 	},
 ];

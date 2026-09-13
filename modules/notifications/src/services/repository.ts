@@ -18,13 +18,47 @@ export interface StoredWebhookSubscription extends WebhookSubscription {
 }
 
 export interface InboxFilters {
+	/** Absent means the open inbox: every item the member has not archived. */
 	readonly status?: NotificationsInboxStatus | undefined;
 	readonly kind?: NotificationKind | undefined;
+}
+
+export interface SubscriptionFilters {
+	readonly status?: WebhookSubscriptionStatus | undefined;
+	/** A substring of the name or the URL. */
+	readonly search?: string | undefined;
 }
 
 export interface DeliveryFilters {
 	readonly status?: DeliveryStatus | undefined;
 	readonly subscriptionId?: string | undefined;
+	/** A substring of the source reference or the source module. */
+	readonly search?: string | undefined;
+}
+
+export type PageDirection = 'asc' | 'desc';
+
+/** The sort value and the id of the row a page ends on. */
+export interface PageKey<Key extends string | number> {
+	readonly key: Key;
+	readonly id: string;
+}
+
+/**
+ * One keyset page of a list. Every list sorts on one column and the id, both
+ * in `direction`; `after` is the last row of the previous page, so the read is
+ * a range on the list's page index rather than an offset into it.
+ */
+export interface ListPage<Key extends string | number> {
+	readonly limit: number;
+	readonly direction: PageDirection;
+	readonly after: PageKey<Key> | null;
+}
+
+export interface PagedRows<Row, Key extends string | number> {
+	readonly rows: readonly Row[];
+	/** The key of the last row when the page is full, so a caller can go on; null on a short page. */
+	readonly next: PageKey<Key> | null;
 }
 
 export interface CompleteDeliveryInput {
@@ -87,12 +121,13 @@ export interface NotificationsRepository {
 	 */
 	publish(input: PublishEventInput): Promise<PublishEventResult>;
 
+	/** One page of the member's own inbox, by creation time and id. */
 	listInbox(
 		tenantId: string,
 		recipientAccountId: string,
 		filters: InboxFilters,
-		limit: number,
-	): Promise<readonly NotificationsInbox[]>;
+		page: ListPage<number>,
+	): Promise<PagedRows<NotificationsInbox, number>>;
 	countUnreadInbox(
 		tenantId: string,
 		recipientAccountId: string,
@@ -166,9 +201,16 @@ export interface NotificationsRepository {
 		record: MemberNotificationSettings,
 	): Promise<MemberNotificationSettings>;
 
+	/**
+	 * One page of the workspace's subscriptions by normalized name and id. The
+	 * key of a row is `lower(name)` as the database computes it, so a cursor
+	 * compares exactly the way the page index orders.
+	 */
 	listSubscriptions(
 		tenantId: string,
-	): Promise<readonly StoredWebhookSubscription[]>;
+		filters: SubscriptionFilters,
+		page: ListPage<string>,
+	): Promise<PagedRows<StoredWebhookSubscription, string>>;
 	getSubscription(
 		tenantId: string,
 		id: string,
@@ -221,11 +263,12 @@ export interface NotificationsRepository {
 		at: number,
 	): Promise<void>;
 
+	/** One page of the ledger by schedule time and id. */
 	listDeliveries(
 		tenantId: string,
 		filters: DeliveryFilters,
-		limit: number,
-	): Promise<readonly DeliveryAttempt[]>;
+		page: ListPage<number>,
+	): Promise<PagedRows<DeliveryAttempt, number>>;
 	getDelivery(tenantId: string, id: string): Promise<DeliveryAttempt | null>;
 	/** Null when an attempt with the same sequence and number already exists. */
 	appendDelivery(record: DeliveryAttempt): Promise<DeliveryAttempt | null>;

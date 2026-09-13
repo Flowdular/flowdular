@@ -72,11 +72,15 @@ describe('connectors.core module', () => {
 		await service.create('tenant-a', 'account-ada', input);
 		await service.create('tenant-b', 'account-bob', input);
 
-		expect((await service.list('tenant-a')).map((row) => row.tenantId)).toEqual(
-			['tenant-a'],
-		);
-		expect((await service.list('tenant-b')).map((row) => row.tenantId)).toEqual(
-			['tenant-b'],
-		);
+		expect(
+			(await service.list('tenant-a', { limit: 200 })).map(
+				(row) => row.tenantId,
+			),
+		).toEqual(['tenant-a']);
+		expect(
+			(await service.list('tenant-b', { limit: 200 })).map(
+				(row) => row.tenantId,
+			),
+		).toEqual(['tenant-b']);
 	});
 });

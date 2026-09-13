@@ -7,7 +7,9 @@ import {
 } from '../domain/capability.ts';
 import {
 	APPROVAL_STATUSES,
+	type ApprovalDecideOutcome,
 	type ApprovalDecision,
+	type ApprovalListPage,
 	type ApprovalMember,
 	type ApprovalRequest,
 	type ApprovalRequestDetail,
@@ -200,16 +202,7 @@ export class ApprovalsService {
 	): Promise<readonly ApprovalRequest[]> {
 		return this.#repository.list(
 			bounded(tenantId, 'tenantId', 1, 128),
-			{
-				status:
-					filter.status === undefined
-						? undefined
-						: oneOf(filter.status, 'status', APPROVAL_STATUSES),
-				subjectModule: filter.subjectModule,
-				subjectRef: filter.subjectRef,
-				requesterAccountId: filter.requesterAccountId,
-				decidableBy: filter.decidableBy,
-			},
+			this.#listFilters(filter),
 			boundedInteger(
 				filter.limit ?? APPROVALS_PAGE_LIMIT,
 				'limit',
@@ -217,6 +210,40 @@ export class ApprovalsService {
 				APPROVAL_LIMITS.listLimit,
 			),
 		);
+	}
+
+	/** One keyset page of the inbox; the endpoint validated the page itself. */
+	async listPage(
+		tenantId: string,
+		filter: Omit<ApprovalRequestFilter, 'limit'>,
+		page: ApprovalListPage,
+	): Promise<readonly ApprovalRequest[]> {
+		return this.#repository.listPage(
+			bounded(tenantId, 'tenantId', 1, 128),
+			this.#listFilters(filter),
+			{
+				...page,
+				limit: boundedInteger(
+					page.limit,
+					'limit',
+					1,
+					APPROVAL_LIMITS.listLimit,
+				),
+			},
+		);
+	}
+
+	#listFilters(filter: Omit<ApprovalRequestFilter, 'limit'>) {
+		return {
+			status:
+				filter.status === undefined
+					? undefined
+					: oneOf(filter.status, 'status', APPROVAL_STATUSES),
+			subjectModule: filter.subjectModule,
+			subjectRef: filter.subjectRef,
+			requesterAccountId: filter.requesterAccountId,
+			decidableBy: filter.decidableBy,
+		};
 	}
 
 	/**
@@ -331,6 +358,37 @@ export class ApprovalsService {
 			   approval or a rejection is the one they are waiting for. */
 			true,
 		);
+	}
+
+	/**
+	 * One decision per id through `decide`, so eligibility is re-checked and the
+	 * ledger row written per request. What the single path refuses is one id's
+	 * outcome rather than the whole call's; anything else is a failure and
+	 * stops the loop where it stands.
+	 */
+	async decideMany(
+		tenantId: string,
+		ids: readonly string[],
+		actorAccountId: string,
+		kind: 'approve' | 'reject',
+		comment: string | null,
+		options: { readonly manage: boolean } = { manage: false },
+	): Promise<readonly ApprovalDecideOutcome[]> {
+		const outcomes: ApprovalDecideOutcome[] = [];
+		for (const id of ids) {
+			try {
+				await this.decide(tenantId, id, actorAccountId, kind, comment, options);
+				outcomes.push({ id, outcome: 'decided' });
+			} catch (error) {
+				if (!(error instanceof ApprovalsServiceError)) throw error;
+				outcomes.push(
+					error.code === 'APPROVAL_NOT_FOUND'
+						? { id, outcome: 'not-found' }
+						: { id, outcome: 'refused', reason: error.code },
+				);
+			}
+		}
+		return outcomes;
 	}
 
 	/**

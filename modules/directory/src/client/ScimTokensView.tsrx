@@ -10,6 +10,7 @@ import {
 	FormField,
 	Icon,
 	PageHeader,
+	Pagination,
 	SearchField,
 	Select,
 	TableCard,
@@ -21,7 +22,12 @@ import {
 } from '@flowdular/ui';
 import { activeLocale, t } from '@flowdular/client';
 import { useValue } from 'segment-state';
-import { SCIM_TOKEN_STATUSES, type ScimToken } from '../domain/types.ts';
+import {
+	SCIM_TOKEN_STATUSES,
+	TOKEN_SORT_KEYS,
+	type ScimToken,
+	type TokenSortKey,
+} from '../domain/types.ts';
 import {
 	createScimToken,
 	directoryErrorMessage,
@@ -40,7 +46,19 @@ import {
 	tokenStatusLabel,
 	tokenStatusTone,
 } from './presentation.ts';
-import { createScimTokensClientState } from './state.ts';
+import {
+	createScimTokensClientState,
+	FIRST_PAGE,
+	hasNextPage,
+	PAGE_SIZE,
+	pageCursor,
+	pageLoaded,
+	sortingState,
+	sortOf,
+	turnTo,
+	type ListPaging,
+	type ListSort,
+} from './state.ts';
 
 export interface ScimTokensViewProps {
 	readonly csrfToken: string;
@@ -49,6 +67,14 @@ export interface ScimTokensViewProps {
 
 /** The server refuses an expiry that has passed or is more than a year out. */
 const MAX_TOKEN_LIFETIME_MS = 365 * 24 * 60 * 60 * 1_000;
+
+/** One listing per pause in the typing, not one per keystroke. */
+const SEARCH_DEBOUNCE_MS = 300;
+
+interface TokenFilters {
+	readonly query: string;
+	readonly status: ScimToken['status'] | '';
+}
 
 function columns(): readonly TableColumn<ScimToken>[] {
 	return [
@@ -63,7 +89,6 @@ function columns(): readonly TableColumn<ScimToken>[] {
 			key: 'status',
 			header: t('directory.tokens.column.status'),
 			width: '14%',
-			value: (token) => tokenDisplayStatus(token),
 			cell: (token) =>
 				<Tag
 					tone={tokenStatusTone(tokenDisplayStatus(token))}
@@ -74,21 +99,18 @@ function columns(): readonly TableColumn<ScimToken>[] {
 			key: 'tokenFingerprint',
 			header: t('directory.tokens.column.fingerprint'),
 			width: '24%',
-			value: (token) => token.tokenFingerprint,
 			cell: (token) => <span class="ui-mono">{token.tokenFingerprint}</span>,
 		},
 		{
 			key: 'lastUsedAt',
 			header: t('directory.tokens.column.lastUsed'),
 			width: '16%',
-			value: (token) => token.lastUsedAt ?? 0,
 			cell: (token) => timestampLabel(token.lastUsedAt),
 		},
 		{
 			key: 'expiresAt',
 			header: t('directory.tokens.column.expires'),
 			width: '16%',
-			value: (token) => token.expiresAt ?? 0,
 			cell: (token) => token.expiresAt === null
 				? t('directory.tokens.neverExpires')
 				: timestampLabel(token.expiresAt),
@@ -102,7 +124,10 @@ export function ScimTokensView(props: ScimTokensViewProps) @{
 	const [status, setStatus] = useValue(client.state.status);
 	const [error, setError] = useValue(client.state.error);
 	const [query, setQuery] = useValue(client.state.query);
+	const [appliedQuery] = useValue(client.state.appliedQuery);
 	const [statusFilter, setStatusFilter] = useValue(client.state.statusFilter);
+	const [sort] = useValue(client.state.sort);
+	const [paging] = useValue(client.state.paging);
 	const [filtersOpen, setFiltersOpen] = useValue(client.state.filtersOpen);
 	const [editorOpen] = useValue(client.state.editorOpen);
 	const [selectedId, setSelectedId] = useValue(client.state.selectedId);
@@ -111,24 +136,41 @@ export function ScimTokensView(props: ScimTokensViewProps) @{
 	const [confirm, setConfirm] = useValue(client.state.confirm);
 	const selected = tokens.find((token) => token.id === selectedId) ?? null;
 	const locale = activeLocale();
-	const term = query.trim().toLocaleLowerCase(locale);
-	const visible = tokens.filter(
-		(token) =>
-			(statusFilter === '' || token.status === statusFilter) &&
-				(term === '' || token.label.toLocaleLowerCase(locale).includes(term)),
-	);
-	const filtered = term !== '' || statusFilter !== '';
+	const term = query.trim();
+	const filtered = appliedQuery !== '' || statusFilter !== '';
 
-	const refresh = async () => {
+	/* The server sorts, narrows and cuts the page, so every argument travels
+   explicitly: a control change and the load it starts happen in one render,
+   where the state hook still reads the value before the change. */
+	const load = async (
+		filters: TokenFilters,
+		order: ListSort<TokenSortKey>,
+		target: ListPaging,
+	) => {
+		const ticket = client.loads.begin();
 		setStatus('loading');
 		setError('');
 		try {
-			const loaded = await loadScimTokens();
+			const page = await loadScimTokens({
+				q: filters.query,
+				status: filters.status,
+				sort: order.sort,
+				direction: order.direction,
+				cursor: pageCursor(target),
+				limit: PAGE_SIZE,
+			});
+			if (!client.loads.isLatest(ticket)) return;
 			client.store.act((transaction) => {
-				transaction.set(client.state.tokens, loaded);
+				transaction.set(client.state.tokens, page.items);
+				transaction.set(client.state.appliedQuery, filters.query);
+				transaction.set(
+					client.state.paging,
+					pageLoaded(target, page.page.nextCursor),
+				);
 				transaction.set(client.state.status, 'idle');
 			}, 'directory/tokens-loaded');
 		} catch (loadError) {
+			if (!client.loads.isLatest(ticket)) return;
 			setError(directoryErrorMessage(loadError, 'directory.tokens.error.load'));
 			setStatus(
 				loadError instanceof DirectoryApiError && loadError.status === 403
@@ -138,9 +180,45 @@ export function ScimTokensView(props: ScimTokensViewProps) @{
 		}
 	};
 
+	const refresh = () => load(
+		{ query: appliedQuery, status: statusFilter },
+		sort,
+		paging,
+	);
+
+	/* A changed filter or sort is a new listing: it starts from the first page. */
+	const restart = (filters: TokenFilters, order: ListSort<TokenSortKey>) => {
+		client.store.act((transaction) => {
+			transaction.set(client.state.sort, order);
+			transaction.set(client.state.paging, FIRST_PAGE);
+		}, 'directory/tokens-restart');
+		void load(filters, order, FIRST_PAGE);
+	};
+
+	const turn = (pageIndex: number) => {
+		const target = turnTo(paging, pageIndex);
+		if (target === paging) return;
+		void load({ query: appliedQuery, status: statusFilter }, sort, target);
+	};
+
 	useEffect(() => {
 		void refresh();
 	}, []);
+
+	/* The listing is read when the timer fires, not when it was set: a filter
+   or sort changed during the pause belongs to the load this starts. */
+	useEffect(() => {
+		if (term === appliedQuery) return;
+		const timer = setTimeout(() => {
+			const query = client.store.get(client.state.query).trim();
+			if (query === client.store.get(client.state.appliedQuery)) return;
+			restart(
+				{ query, status: client.store.get(client.state.statusFilter) },
+				client.store.get(client.state.sort),
+			);
+		}, SEARCH_DEBOUNCE_MS);
+		return () => clearTimeout(timer);
+	}, [term]);
 
 	const openNew = () => {
 		client.store.act((transaction) => {
@@ -305,7 +383,6 @@ export function ScimTokensView(props: ScimTokensViewProps) @{
 				}
 				<TableCard
 					title={t('directory.tokens.table.title')}
-					count={t('directory.tokens.table.count', { count: visible.length })}
 					search={<SearchField
 						value={query}
 						placeholder={t('directory.tokens.search.placeholder')}
@@ -331,16 +408,30 @@ export function ScimTokensView(props: ScimTokensViewProps) @{
 									}),
 								),
 							]}
-							onChange={(value) => setStatusFilter(
-								value as ScimToken['status'] | '',
-							)}
+							onChange={(value) => {
+								const next = value as ScimToken['status'] | '';
+								setStatusFilter(next);
+								restart({ query: appliedQuery, status: next }, sort);
+							}}
 						/>
 					</Filters>}
 					caption={t('directory.tokens.table.caption')}
 					columns={columns()}
-					rows={visible}
+					rows={tokens}
 					rowKey={(token) => token.id}
+					mode="server"
 					sorting
+					sortingState={sortingState(sort)}
+					onSortingChange={(sorts) => restart(
+						{ query: appliedQuery, status: statusFilter },
+						sortOf(sorts, TOKEN_SORT_KEYS, 'label'),
+					)}
+					pagination={{
+						pageIndex: paging.pageIndex,
+						pageSize: PAGE_SIZE,
+						hasMore: hasNextPage(paging),
+						onPageChange: turn,
+					}}
 					status={status === 'loading' && tokens.length === 0
 						? 'loading'
 						: 'idle'}
@@ -360,6 +451,19 @@ export function ScimTokensView(props: ScimTokensViewProps) @{
 					actions={rowActions}
 					actionsLabel={t('directory.common.actions')}
 					actionsWidth="220px"
+					after={<Pagination
+						pageIndex={paging.pageIndex}
+						pageSize={PAGE_SIZE}
+						hasMore={hasNextPage(paging)}
+						onPageChange={turn}
+						label={t('directory.tokens.pagination.label')}
+						previousLabel={t('directory.common.pagination.previous')}
+						nextLabel={t('directory.common.pagination.next')}
+						summary={(page) => t('directory.common.pagination.summary', {
+							page: page.pageIndex + 1,
+							from: page.from,
+						})}
+					/>}
 					noteIcon="shield"
 					note={t('directory.tokens.note')}
 				/>

@@ -88,6 +88,30 @@ export const ERASED_DECISION_COMMENT = '[erased]';
  */
 export const ERASED_ACCOUNT_PREFIX = 'erased:';
 
+/** Sort keys the inbox list accepts; each is backed by a keyset index. */
+export const APPROVAL_LIST_SORTS = ['createdAt'] as const;
+
+export type ApprovalListSort = (typeof APPROVAL_LIST_SORTS)[number];
+
+export const APPROVAL_LIST_DIRECTIONS = ['asc', 'desc'] as const;
+
+export type ApprovalListDirection = (typeof APPROVAL_LIST_DIRECTIONS)[number];
+
+/** One keyset page of the inbox list. `after` is the last row of the page before it. */
+export interface ApprovalListPage {
+	readonly limit: number;
+	readonly sort: ApprovalListSort;
+	readonly direction: ApprovalListDirection;
+	readonly after: { readonly createdAt: number; readonly id: string } | null;
+}
+
+/** What one bulk decision did with one id; a refusal names the code the single decision would answer with. */
+export interface ApprovalDecideOutcome {
+	readonly id: string;
+	readonly outcome: 'decided' | 'not-found' | 'refused';
+	readonly reason?: string;
+}
+
 /** A request with its ledger, as the drawer and the read endpoints return it. */
 export interface ApprovalRequestDetail {
 	readonly request: ApprovalRequest;

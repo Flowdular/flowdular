@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'octane';
+import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
@@ -17,8 +17,9 @@ import {
 	toasts,
 	type TableAction,
 	type TableColumn,
+	type TableSort,
 } from '@flowdular/ui';
-import { activeLocale, t } from '@flowdular/client';
+import { t } from '@flowdular/client';
 import { useValue } from 'segment-state';
 import {
 	SUBSCRIPTION_STATUSES,
@@ -42,7 +43,15 @@ import {
 	subscriptionStatusTone,
 	timestampLabel,
 } from './presentation.ts';
-import { createWebhooksClientState } from './state.ts';
+import {
+	createWebhooksClientState,
+	FIRST_PAGE,
+	pageCursor,
+	pageLoaded,
+	searchPending,
+	type CursorStack,
+	type SortDirection,
+} from './state.ts';
 import { WebhookForm, type WebhookFormValue } from './WebhookForm.tsrx';
 
 export interface WebhooksViewProps {
@@ -51,6 +60,17 @@ export interface WebhooksViewProps {
 }
 
 const PAGE_SIZES = [10, 25, 50, 100];
+const SEARCH_DEBOUNCE_MS = 300;
+
+/** One page request: the filters, the order, the page and the cursors that reach it. */
+interface WebhooksRequest {
+	readonly status: WebhookSubscriptionStatus | '';
+	readonly search: string;
+	readonly direction: SortDirection;
+	readonly pageIndex: number;
+	readonly pageSize: number;
+	readonly pages: CursorStack;
+}
 
 function columns(): readonly TableColumn<WebhookSubscription>[] {
 	return [
@@ -71,14 +91,12 @@ function columns(): readonly TableColumn<WebhookSubscription>[] {
 			key: 'url',
 			header: t('notifications.webhooks.column.url'),
 			width: '24%',
-			value: (subscription) => subscription.url,
 			cell: (subscription) => <span class="ui-mono">{subscription.url}</span>,
 		},
 		{
 			key: 'status',
 			header: t('notifications.webhooks.column.status'),
 			width: '10%',
-			value: (subscription) => subscription.status,
 			cell: (subscription) =>
 				<Tag
 					tone={subscriptionStatusTone(subscription.status)}
@@ -89,14 +107,12 @@ function columns(): readonly TableColumn<WebhookSubscription>[] {
 			key: 'lastDeliveryAt',
 			header: t('notifications.webhooks.column.lastDelivery'),
 			width: '14%',
-			value: (subscription) => subscription.lastDeliveryAt ?? 0,
 			cell: (subscription) => timestampLabel(subscription.lastDeliveryAt),
 		},
 		{
 			key: 'secretFingerprint',
 			header: t('notifications.webhooks.column.fingerprint'),
 			width: '16%',
-			value: (subscription) => subscription.secretFingerprint,
 			cell: (subscription) =>
 				<span class="ui-mono">{subscription.secretFingerprint}</span>,
 		},
@@ -105,44 +121,77 @@ function columns(): readonly TableColumn<WebhookSubscription>[] {
 
 export function WebhooksView(props: WebhooksViewProps) @{
 	const client = useMemo(() => createWebhooksClientState(), []);
+	/* Requests answer out of order; only the latest one may write the screen. */
+	const requests = useMemo(() => ({ sequence: 0 }), []);
 	const [subscriptions] = useValue(client.state.subscriptions);
 	const [status, setStatus] = useValue(client.state.status);
 	const [error, setError] = useValue(client.state.error);
 	const [query, setQuery] = useValue(client.state.query);
-	const [statusFilter, setStatusFilter] = useValue(client.state.statusFilter);
+	const [appliedQuery] = useValue(client.state.appliedQuery);
+	const [statusFilter] = useValue(client.state.statusFilter);
+	const [direction] = useValue(client.state.direction);
+	const [pageIndex] = useValue(client.state.pageIndex);
+	const [pageSize] = useValue(client.state.pageSize);
+	const [pages] = useValue(client.state.pages);
 	const [filtersOpen, setFiltersOpen] = useValue(client.state.filtersOpen);
 	const [editorOpen, setEditorOpen] = useValue(client.state.editorOpen);
 	const [selectedId, setSelectedId] = useValue(client.state.selectedId);
 	const [formSession, setFormSession] = useValue(client.state.formSession);
 	const [secret, setSecret] = useValue(client.state.revealedSecret);
 	const [confirm, setConfirm] = useValue(client.state.confirm);
-	const [pageIndex, setPageIndex] = useState(0);
-	const [pageSize, setPageSize] = useState(25);
 	const selected =
 		subscriptions.find(
 			(subscription) => subscription.id === selectedId,
 		) ?? null;
-	const locale = activeLocale();
-	const term = query.trim().toLocaleLowerCase(locale);
-	const visible = subscriptions.filter(
-		(subscription) =>
-			(statusFilter === '' || subscription.status === statusFilter) &&
-				(term === '' ||
-					subscription.name.toLocaleLowerCase(locale).includes(term) ||
-					subscription.url.toLocaleLowerCase(locale).includes(term)),
-	);
-	const filtered = term !== '' || statusFilter !== '';
+	const filtered = appliedQuery !== '' || statusFilter !== '';
+	const sorting: readonly TableSort[] = [
+		{ key: 'name', desc: direction === 'desc' },
+	];
+	const current: WebhooksRequest = {
+		status: statusFilter,
+		search: appliedQuery,
+		direction,
+		pageIndex,
+		pageSize,
+		pages,
+	};
 
-	const refresh = async () => {
-		setStatus('loading');
-		setError('');
+	/* The server sorts, narrows and cuts the page: every request names its
+   filters, its order, its page and the cursor that opens it, and the
+   response records the cursor of the page after it. */
+	const load = async (request: WebhooksRequest) => {
+		const cursor = pageCursor(request.pages, request.pageIndex);
+		if (cursor === null) return;
+		const sequence = requests.sequence += 1;
+		client.store.act((transaction) => {
+			transaction.set(client.state.statusFilter, request.status);
+			transaction.set(client.state.appliedQuery, request.search);
+			transaction.set(client.state.direction, request.direction);
+			transaction.set(client.state.pageIndex, request.pageIndex);
+			transaction.set(client.state.pageSize, request.pageSize);
+			transaction.set(client.state.pages, request.pages);
+			transaction.set(client.state.status, 'loading');
+			transaction.set(client.state.error, '');
+		}, 'notifications/webhooks-request');
 		try {
-			const loaded = await loadWebhooks();
+			const page = await loadWebhooks({
+				status: request.status,
+				search: request.search,
+				direction: request.direction,
+				limit: request.pageSize,
+				cursor,
+			});
+			if (sequence !== requests.sequence) return;
 			client.store.act((transaction) => {
-				transaction.set(client.state.subscriptions, loaded);
+				transaction.set(client.state.subscriptions, page.items);
+				transaction.set(
+					client.state.pages,
+					pageLoaded(request.pages, request.pageIndex, page.page.nextCursor),
+				);
 				transaction.set(client.state.status, 'idle');
 			}, 'notifications/webhooks-loaded');
 		} catch (loadError) {
+			if (sequence !== requests.sequence) return;
 			setError(
 				notificationsErrorMessage(
 					loadError,
@@ -157,9 +206,32 @@ export function WebhooksView(props: WebhooksViewProps) @{
 		}
 	};
 
+	/* The page on screen, read again: what a lifecycle action leaves behind. */
+	const refresh = () => load(current);
+
+	/* A filter, a term or an order starts a new listing from its first page. */
+	const restart = (change: Partial<WebhooksRequest>) => load({
+		...current,
+		...change,
+		pageIndex: 0,
+		pages: FIRST_PAGE,
+	});
+
 	useEffect(() => {
-		void refresh();
+		void load(current);
 	}, []);
+
+	/* The term is the server's filter, so typing it starts a new listing rather
+   than narrowing the page on screen. One listing per pause in the typing, and
+   none at all while the rows already answer this term. */
+	useEffect(() => {
+		if (!searchPending(query, appliedQuery)) return;
+		const timer = setTimeout(
+			() => void restart({ search: query.trim() }),
+			SEARCH_DEBOUNCE_MS,
+		);
+		return () => clearTimeout(timer);
+	}, [query]);
 
 	const openNew = () => {
 		client.store.act((transaction) => {
@@ -381,17 +453,18 @@ export function WebhooksView(props: WebhooksViewProps) @{
 				}
 				<TableCard
 					title={t('notifications.webhooks.table.title')}
-					count={t('notifications.webhooks.table.count', {
-						count: visible.length,
-					})}
+					count={pages.hasMore
+						? t('notifications.webhooks.table.countMore', {
+								count: subscriptions.length,
+							})
+						: t('notifications.webhooks.table.count', {
+								count: subscriptions.length,
+							})}
 					search={<SearchField
 						value={query}
 						placeholder={t('notifications.webhooks.search.placeholder')}
 						label={t('notifications.webhooks.search.label')}
-						onInput={(value) => {
-							setQuery(value);
-							setPageIndex(0);
-						}}
+						onInput={setQuery}
 					/>}
 					filters={<Filters
 						open={filtersOpen}
@@ -415,39 +488,47 @@ export function WebhooksView(props: WebhooksViewProps) @{
 									}),
 								),
 							]}
-							onChange={(value) => {
-								setStatusFilter(value as WebhookSubscriptionStatus | '');
-								setPageIndex(0);
-							}}
+							onChange={(value) => void restart({
+								status: value as WebhookSubscriptionStatus | '',
+							})}
 						/>
 					</Filters>}
 					caption={t('notifications.webhooks.table.caption')}
 					columns={columns()}
-					rows={visible}
+					rows={subscriptions}
 					rowKey={(subscription) => subscription.id}
+					mode="server"
 					sorting
-					onSortingChange={() => setPageIndex(0)}
-					pagination={{ pageIndex, pageSize, onPageChange: setPageIndex }}
+					sortingState={sorting}
+					onSortingChange={(sorts) => void restart({
+						direction: sorts[0]?.desc === true ? 'desc' : 'asc',
+					})}
+					pagination={{
+						pageIndex,
+						pageSize,
+						hasMore: pages.hasMore,
+						onPageChange: (index) => void load({
+							...current,
+							pageIndex: index,
+						}),
+					}}
 					after={<Pagination
 						pageIndex={pageIndex}
 						pageSize={pageSize}
-						totalRows={visible.length}
+						hasMore={pages.hasMore}
 						pageSizes={PAGE_SIZES}
-						onPageChange={setPageIndex}
-						onPageSizeChange={(size) => {
-							setPageSize(size);
-							setPageIndex(0);
-						}}
+						onPageChange={(index) => void load({
+							...current,
+							pageIndex: index,
+						})}
+						onPageSizeChange={(size) => void restart({ pageSize: size })}
 						label={t('notifications.pagination.label')}
 						previousLabel={t('notifications.pagination.previous')}
 						nextLabel={t('notifications.pagination.next')}
 						pageSizeLabel={t('notifications.pagination.size')}
-						summary={(range) => t('notifications.pagination.summary', {
-							page: range.pageIndex + 1,
-							pages: range.pageCount,
-							from: range.from,
-							to: range.to,
-							total: range.totalRows,
+						summary={(page) => t('notifications.pagination.keysetSummary', {
+							page: page.pageIndex + 1,
+							from: page.from,
 						})}
 					/>}
 					status={status === 'loading' && subscriptions.length === 0

@@ -41,7 +41,9 @@ export {
 	TENANT_MEMBER_LOOKUP_LIMIT,
 	TENANT_MEMBER_SEARCH_LIMIT,
 	TENANT_MEMBER_SEARCH_TERM_LENGTH,
+	TENANT_MEMBER_SORTS,
 } from '../services/auth-service.ts';
+export type { TenantMemberSortedInput } from '../services/auth-service.ts';
 export {
 	AUTH_PRINCIPAL_STATE_KEY,
 	AUTH_SESSION_STATE_KEY,

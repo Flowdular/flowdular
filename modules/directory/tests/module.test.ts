@@ -45,13 +45,13 @@ describe('directory.core', () => {
 
 		const firstList = (await (
 			await suite.admin('/api/directory/tokens', 'GET', first)
-		).json()) as { tokens: { label: string }[] };
+		).json()) as { items: { label: string }[] };
 		const secondList = (await (
 			await suite.admin('/api/directory/tokens', 'GET', second)
-		).json()) as { tokens: { label: string }[] };
+		).json()) as { items: { label: string }[] };
 
-		expect(firstList.tokens.map((token) => token.label)).toEqual(['Alpha']);
-		expect(secondList.tokens.map((token) => token.label)).toEqual(['Beta']);
+		expect(firstList.items.map((token) => token.label)).toEqual(['Alpha']);
+		expect(secondList.items.map((token) => token.label)).toEqual(['Beta']);
 	});
 
 	/* A group is unbounded in storage, so a listing has to bound what it embeds
@@ -248,6 +248,14 @@ describe('directory.core', () => {
 		).rejects.toThrow();
 
 		const repository = new DatabaseDirectoryRepository(lease.database);
-		expect(await repository.listTokens(second.tenantId)).toHaveLength(1);
+		expect(
+			(
+				await repository.listTokenPage(second.tenantId, {
+					sort: 'label',
+					direction: 'asc',
+					limit: 10,
+				})
+			).items,
+		).toHaveLength(1);
 	});
 });

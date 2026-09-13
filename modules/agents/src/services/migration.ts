@@ -809,6 +809,20 @@ CREATE POLICY agent_meter_refusals_tenant_policy ON agent_meter_refusals
   WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
 `;
 
+/* Mirrors migrations/0025_agent_list_indexes.up.sql byte for byte. */
+export const AGENTS_MIGRATION_0025 = `-- agents.definitions.list pages by lower(name) or updated_at, each followed by
+-- id, and agent_definitions_tenant_name_idx orders by the raw name, so neither
+-- paged read had an index carrying its order. agents.runs.list orders queued_at
+-- and id in one direction, while agent_runs_tenant_queued_idx carries queued_at
+-- descending beside an ascending id, so the planner sorted every page.
+CREATE INDEX IF NOT EXISTS agent_definitions_tenant_name_key_idx
+  ON agent_definitions (tenant_id, lower(name), id);
+CREATE INDEX IF NOT EXISTS agent_definitions_tenant_updated_idx
+  ON agent_definitions (tenant_id, updated_at, id);
+CREATE INDEX IF NOT EXISTS agent_runs_tenant_queue_order_idx
+  ON agent_runs (tenant_id, queued_at, id);
+`;
+
 export const databaseMigrations: readonly DatabaseMigration[] = [
 	{
 		id: '0001_agents_core',
@@ -1233,5 +1247,15 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 				'agent_meter_refusals_tenant_policy',
 				[],
 			),
+	},
+	{
+		id: '0025_agent_list_indexes',
+		sql: { postgresql: AGENTS_MIGRATION_0025 },
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() => database.schema.hasIndex('agent_definitions_tenant_name_key_idx'),
+				() => database.schema.hasIndex('agent_definitions_tenant_updated_idx'),
+				() => database.schema.hasIndex('agent_runs_tenant_queue_order_idx'),
+			]),
 	},
 ];

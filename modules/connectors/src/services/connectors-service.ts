@@ -6,9 +6,10 @@ import {
 import {
 	CONNECTOR_AUTH_KINDS,
 	CONNECTOR_CALL_OUTCOMES,
+	CONNECTOR_INSTANCE_STATUSES,
 	type ConnectorAuditEvent,
 	type ConnectorAuthKind,
-	type ConnectorCall,
+	type ConnectorCallListRow,
 	type ConnectorCredentials,
 	type ConnectorDefinition,
 	type ConnectorInstance,
@@ -31,6 +32,10 @@ import {
 import {
 	DuplicateConnectorNameError,
 	type ConnectorCallFilters,
+	type ConnectorExportCursor,
+	type ConnectorInstanceFilters,
+	type ConnectorInstanceKeyset,
+	type ConnectorListDirection,
 	type ConnectorsRepository,
 	type PendingConnectorAuditEvent,
 	type StoredConnectorInstance,
@@ -39,8 +44,35 @@ import { bounded, ConnectorsServiceError, oneOf } from './service-error.ts';
 
 export const MAX_ALLOWED_HOSTS = 32;
 export const MAX_HOST_CHARACTERS = 253;
-export const CALL_PAGE_LIMIT = 200;
+/** The default page of a list screen, and the ceiling it may ask for. */
+export const DEFAULT_PAGE_LIMIT = 50;
+export const LIST_PAGE_LIMIT = 200;
 export const AUDIT_PAGE_LIMIT = 50;
+export const MAX_SEARCH_CHARACTERS = 120;
+
+/* Each key names a column an index on (tenant_id, column, id) carries; a sort
+   key without one would page by a sequential scan. */
+export const INSTANCE_SORT_KEYS = ['name'] as const;
+export const CALL_SORT_KEYS = ['occurredAt'] as const;
+export const LIST_DIRECTIONS = ['asc', 'desc'] as const;
+export type ConnectorInstanceSort = (typeof INSTANCE_SORT_KEYS)[number];
+export type ConnectorCallSort = (typeof CALL_SORT_KEYS)[number];
+
+export interface ConnectorInstanceListQuery {
+	readonly filters?: ConnectorInstanceFilters | undefined;
+	readonly sort?: ConnectorInstanceSort | undefined;
+	readonly direction?: ConnectorListDirection | undefined;
+	readonly after?: ConnectorInstanceKeyset | null | undefined;
+	/** Required, so no caller mistakes a page for the whole set. */
+	readonly limit: number;
+}
+
+export interface ConnectorCallListQuery {
+	readonly sort?: ConnectorCallSort | undefined;
+	readonly direction?: ConnectorListDirection | undefined;
+	readonly after?: ConnectorExportCursor | null | undefined;
+	readonly limit: number;
+}
 
 const HOST_PATTERN =
 	/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
@@ -54,6 +86,22 @@ export interface ConnectorsServiceOptions {
 	/** Drops anything the call path cached for an instance that just changed. */
 	readonly invalidate?: (tenantId: string, instanceId: string) => void;
 	readonly now?: () => number;
+}
+
+function pageLimit(value: number): number {
+	if (!Number.isSafeInteger(value) || value < 1 || value > LIST_PAGE_LIMIT) {
+		throw new ConnectorsServiceError(
+			'INVALID_INPUT',
+			`limit must be an integer between 1 and ${LIST_PAGE_LIMIT}.`,
+		);
+	}
+	return value;
+}
+
+function searchTerm(value: string | undefined): string | undefined {
+	return value === undefined || value.trim() === ''
+		? undefined
+		: bounded(value, 'q', 1, MAX_SEARCH_CHARACTERS);
 }
 
 function egressFailure(error: unknown): never {
@@ -144,16 +192,47 @@ export class ConnectorsService {
 		return this.#options.definitions().list();
 	}
 
-	list(tenantId: string): Promise<readonly ConnectorInstance[]> {
+	list(
+		tenantId: string,
+		query: ConnectorInstanceListQuery,
+	): Promise<readonly ConnectorInstance[]> {
+		const filters = query.filters ?? {};
+		oneOf(query.sort ?? 'name', 'sort', INSTANCE_SORT_KEYS);
 		return this.#options.repository.listInstances(
 			bounded(tenantId, 'tenantId', 1, 128),
+			{
+				status: filters.status
+					? oneOf(filters.status, 'status', CONNECTOR_INSTANCE_STATUSES)
+					: undefined,
+				definitionKey: filters.definitionKey
+					? bounded(filters.definitionKey, 'definition', 1, 96)
+					: undefined,
+				search: searchTerm(filters.search),
+			},
+			{
+				direction: oneOf(
+					query.direction ?? 'asc',
+					'direction',
+					LIST_DIRECTIONS,
+				),
+				after:
+					query.after === undefined || query.after === null
+						? null
+						: {
+								name: bounded(query.after.name, 'cursor', 1, 120),
+								id: bounded(query.after.id, 'cursor', 1, 128),
+							},
+				limit: pageLimit(query.limit),
+			},
 		);
 	}
 
 	listCalls(
 		tenantId: string,
-		filters: ConnectorCallFilters = {},
-	): Promise<readonly ConnectorCall[]> {
+		filters: ConnectorCallFilters,
+		query: ConnectorCallListQuery,
+	): Promise<readonly ConnectorCallListRow[]> {
+		oneOf(query.sort ?? 'occurredAt', 'sort', CALL_SORT_KEYS);
 		return this.#options.repository.listCalls(
 			bounded(tenantId, 'tenantId', 1, 128),
 			{
@@ -163,8 +242,23 @@ export class ConnectorsService {
 				instanceId: filters.instanceId
 					? bounded(filters.instanceId, 'instanceId', 1, 128)
 					: undefined,
+				search: searchTerm(filters.search),
 			},
-			CALL_PAGE_LIMIT,
+			{
+				direction: oneOf(
+					query.direction ?? 'desc',
+					'direction',
+					LIST_DIRECTIONS,
+				),
+				after:
+					query.after === undefined || query.after === null
+						? null
+						: {
+								occurredAt: query.after.occurredAt,
+								id: bounded(query.after.id, 'cursor', 1, 128),
+							},
+				limit: pageLimit(query.limit),
+			},
 		);
 	}
 

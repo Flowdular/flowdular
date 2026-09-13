@@ -6,6 +6,7 @@ import {
 	type DatabaseTransaction,
 } from '@flowdular/database';
 import type { Actor, UserActor } from '@flowdular/kernel';
+import { keysetWhere } from '@flowdular/server';
 import type {
 	JsonValue,
 	WorkflowAuditEvent,
@@ -24,9 +25,9 @@ import type {
 	WorkflowRunDetail,
 	WorkflowRunEventTypeV1,
 	WorkflowRunEventV1,
-	WorkflowRunFilters,
-	WorkflowRunPage,
 	WorkflowRunStatus,
+	WorkflowRunSummary,
+	WorkflowSortDirection,
 	WorkflowUsageRollupV1,
 } from '../domain/types.ts';
 import { WORKFLOW_LIMITS } from '../domain/types.ts';
@@ -44,10 +45,13 @@ import type {
 	SettleAttemptWrite,
 	SettleEdgeWrite,
 	StartAttemptWrite,
-	WorkflowAuditPage,
+	WorkflowAuditListRead,
 	WorkflowDefinitionExportCursor,
+	WorkflowDefinitionListRead,
 	WorkflowDefinitionWrite,
+	WorkflowKeysetPage,
 	WorkflowRunExportCursor,
+	WorkflowRunListRead,
 	WorkflowRunRecord,
 	WorkflowsRepository,
 } from './repository.ts';
@@ -446,6 +450,37 @@ function jsonKind(column: string): string {
 	return `${column}::jsonb ->> 'kind'`;
 }
 
+/* A search term is matched as a substring, so the three characters LIKE reads
+   as syntax are escaped with PostgreSQL's default escape character. */
+function likePattern(term: string): string {
+	return '%' + term.replace(/[\\%_]/g, (character) => '\\' + character) + '%';
+}
+
+const ORDER: Readonly<Record<WorkflowSortDirection, 'ASC' | 'DESC'>> = {
+	asc: 'ASC',
+	desc: 'DESC',
+};
+
+/* The direction reaches the statement text, so anything but the two words the
+   type allows is refused before it is interpolated. */
+function orderDirection(direction: WorkflowSortDirection): 'ASC' | 'DESC' {
+	const order = ORDER[direction];
+	if (!order) throw new Error('A list direction is asc or desc.');
+	return order;
+}
+
+/** Numbered parameters for a statement assembled from optional predicates. */
+function binder() {
+	const parameters: Array<string | number> = [];
+	return {
+		parameters,
+		bind(value: string | number): string {
+			parameters.push(value);
+			return `$${parameters.length}`;
+		},
+	};
+}
+
 /**
  * The person behind a run, in the order migration 0008 backfilled the column:
  * the account a service actor was configured by, then the delegated
@@ -497,8 +532,6 @@ const SQL = Object.freeze({
 		 (id, tenant_id, run_id, kind, schema_id, payload_hash,
 		  original_byte_size, ciphertext, encryption_key_id, created_at)
 		 VALUES ($1, $2, $3, 'execution', $4, $5, $6, $7, $8, $9)`,
-	listDefinitions: `SELECT * FROM workflow_definitions WHERE tenant_id = $1
-		 ORDER BY lower(name), id`,
 	findDefinition: `SELECT * FROM workflow_definitions
 		 WHERE tenant_id = $1 AND id = $2`,
 	findDefinitionByKey: `SELECT * FROM workflow_definitions
@@ -689,14 +722,6 @@ const SQL = Object.freeze({
 		 target_node_id, target_port, state, reason, evidence_json, settled_at
 		 FROM workflow_edge_transfers WHERE tenant_id = $1 AND run_id = $2
 		 ORDER BY edge_id`,
-	listAudit: `SELECT sequence, actor_json, origin_json, action, subject_type,
-		 subject_id, metadata_json, occurred_at, previous_hash, event_hash
-		 FROM workflow_audit_events WHERE tenant_id = $1
-		 ORDER BY sequence DESC LIMIT $2`,
-	listAuditBefore: `SELECT sequence, actor_json, origin_json, action, subject_type,
-		 subject_id, metadata_json, occurred_at, previous_hash, event_hash
-		 FROM workflow_audit_events WHERE tenant_id = $1 AND sequence < $2
-		 ORDER BY sequence DESC LIMIT $3`,
 	auditChain: `SELECT sequence, actor_json, origin_json, action, subject_type,
 		 subject_id, metadata_json, occurred_at, previous_hash, event_hash
 		 FROM workflow_audit_events WHERE tenant_id = $1 ORDER BY sequence`,
@@ -1060,16 +1085,54 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 		]);
 	}
 
+	/* The name order is lower(name), which 0009 indexes as an expression. The
+	   keyset predicate compares plain columns, so the subquery names that
+	   expression once and the planner folds it back onto the index. */
 	async listDefinitions(
 		tenantId: string,
-	): Promise<readonly WorkflowDefinition[]> {
-		return this.#tx(tenantId, 'read', async (transaction) =>
-			(
-				await this.#query<DefinitionRow>(transaction, SQL.listDefinitions, [
-					tenantId,
-				])
-			).map(definitionFromRow),
+		read: WorkflowDefinitionListRead,
+	): Promise<WorkflowKeysetPage<WorkflowDefinition>> {
+		const { parameters, bind } = binder();
+		const clauses = [`tenant_id = ${bind(tenantId)}`];
+		if (read.status) clauses.push(`status = ${bind(read.status)}`);
+		if (read.search) {
+			const pattern = bind(likePattern(read.search));
+			clauses.push(`(name ILIKE ${pattern} OR workflow_key ILIKE ${pattern})`);
+		}
+		const sortColumn = read.sort === 'name' ? 'sort_name' : 'updated_at';
+		const order = orderDirection(read.direction);
+		let text = `SELECT * FROM (SELECT *, lower(name) AS sort_name
+		 FROM workflow_definitions WHERE ${clauses.join(' AND ')}) d`;
+		if (read.after) {
+			const keyset = keysetWhere(
+				[sortColumn, 'id'],
+				[read.after.key, read.after.id],
+				{ direction: read.direction, parameterOffset: parameters.length },
+			);
+			text += ` WHERE ${keyset.text}`;
+			parameters.push(...keyset.parameters);
+		}
+		text += ` ORDER BY ${sortColumn} ${order}, id ${order} LIMIT ${bind(read.limit)}`;
+		const rows = await this.#tx(tenantId, 'read', (transaction) =>
+			this.#query<DefinitionRow & { sort_name: string }>(
+				transaction,
+				text,
+				parameters,
+			),
 		);
+		const last = rows.at(-1);
+		return {
+			items: rows.map(definitionFromRow),
+			last: last
+				? {
+						key:
+							read.sort === 'name'
+								? last.sort_name
+								: integer(last.updated_at, 'updated_at'),
+						id: last.id,
+					}
+				: null,
+		};
 	}
 
 	async findDefinition(
@@ -1455,72 +1518,48 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 
 	async listRuns(
 		tenantId: string,
-		filters: WorkflowRunFilters,
-	): Promise<WorkflowRunPage> {
-		const limit = Math.min(
-			Math.max(1, Math.trunc(filters.limit ?? 50)),
-			WORKFLOW_LIMITS.maxInteractivePage,
-		);
-		const parameters: Array<string | number> = [];
-		const bind = (value: string | number) => {
-			parameters.push(value);
-			return `$${parameters.length}`;
-		};
+		read: WorkflowRunListRead,
+	): Promise<WorkflowKeysetPage<WorkflowRunSummary>> {
+		const { parameters, bind } = binder();
 		const clauses = [`tenant_id = ${bind(tenantId)}`];
-		if (filters.workflowId) {
-			clauses.push(`workflow_id = ${bind(filters.workflowId)}`);
+		if (read.workflowId) {
+			clauses.push(`workflow_id = ${bind(read.workflowId)}`);
 		}
-		if (filters.mode) clauses.push(`mode = ${bind(filters.mode)}`);
-		if (filters.status) clauses.push(`status = ${bind(filters.status)}`);
-		if (filters.actorKind) {
-			clauses.push(`${jsonKind('actor_json')} = ${bind(filters.actorKind)}`);
+		if (read.mode) clauses.push(`mode = ${bind(read.mode)}`);
+		if (read.status) clauses.push(`status = ${bind(read.status)}`);
+		if (read.actorKind) {
+			clauses.push(`${jsonKind('actor_json')} = ${bind(read.actorKind)}`);
 		}
-		if (filters.originKind) {
-			clauses.push(`${jsonKind('origin_json')} = ${bind(filters.originKind)}`);
+		if (read.originKind) {
+			clauses.push(`${jsonKind('origin_json')} = ${bind(read.originKind)}`);
 		}
-		let snapshot: { readonly queuedAt: number; readonly id: string } | null =
-			null;
-		if (filters.cursor) {
-			const [snapshotRaw, positionRaw, extra] = filters.cursor.split('|');
-			const parseBoundary = (raw: string | undefined) => {
-				const separator = raw?.indexOf(':') ?? -1;
-				const queuedAt = Number(raw?.slice(0, separator));
-				const id = raw?.slice(separator + 1) ?? '';
-				if (separator < 1 || !Number.isSafeInteger(queuedAt) || !id) {
-					throw new Error('WORKFLOW_CURSOR_INVALID');
-				}
-				return { queuedAt, id };
-			};
-			if (extra !== undefined) throw new Error('WORKFLOW_CURSOR_INVALID');
-			snapshot = parseBoundary(snapshotRaw);
-			const position = parseBoundary(positionRaw);
+		if (read.search) {
+			const pattern = bind(likePattern(read.search));
 			clauses.push(
-				`(queued_at < ${bind(snapshot.queuedAt)} OR (queued_at = ${bind(
-					snapshot.queuedAt,
-				)} AND id <= ${bind(snapshot.id)}))`,
-			);
-			clauses.push(
-				`(queued_at < ${bind(position.queuedAt)} OR (queued_at = ${bind(
-					position.queuedAt,
-				)} AND id < ${bind(position.id)}))`,
+				`(workflow_name ILIKE ${pattern} OR workflow_key ILIKE ${pattern}
+				 OR id ILIKE ${pattern} OR actor_json::jsonb ->> 'label' ILIKE ${pattern})`,
 			);
 		}
+		if (read.after) {
+			const keyset = keysetWhere(
+				['queued_at', 'id'],
+				[read.after.key, read.after.id],
+				{ direction: read.direction, parameterOffset: parameters.length },
+			);
+			clauses.push(keyset.text);
+			parameters.push(...keyset.parameters);
+		}
+		const order = orderDirection(read.direction);
 		const text = `SELECT * FROM workflow_runs WHERE ${clauses.join(' AND ')}
-		 ORDER BY queued_at DESC, id DESC LIMIT ${bind(limit + 1)}`;
+		 ORDER BY queued_at ${order}, id ${order} LIMIT ${bind(read.limit)}`;
 		const rows = await this.#tx(tenantId, 'read', (transaction) =>
 			this.#query<RunRow>(transaction, text, parameters),
 		);
-		const page = rows.slice(0, limit).map(runFromRow);
-		const first = page[0];
-		const last = page.at(-1);
-		const highWaterMark =
-			snapshot ?? (first ? { queuedAt: first.queuedAt, id: first.id } : null);
+		const items = rows.map(runFromRow);
+		const last = items.at(-1);
 		return {
-			runs: page,
-			nextCursor:
-				rows.length > limit && last && highWaterMark
-					? `${highWaterMark.queuedAt}:${highWaterMark.id}|${last.queuedAt}:${last.id}`
-					: null,
+			items,
+			last: last ? { key: last.queuedAt, id: last.id } : null,
 		};
 	}
 
@@ -2513,31 +2552,46 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 		);
 	}
 
+	/* The chain order is the sequence; the time order rides the index 0001 made
+	   for it, with the sequence as the tie breaker in both. */
 	async listAudit(
 		tenantId: string,
-		limit: number,
-		beforeSequence?: number,
-	): Promise<WorkflowAuditPage> {
-		const bounded = Math.min(Math.max(1, Math.trunc(limit)), 100);
+		read: WorkflowAuditListRead,
+	): Promise<WorkflowKeysetPage<WorkflowAuditEvent>> {
+		const { parameters, bind } = binder();
+		const clauses = [`tenant_id = ${bind(tenantId)}`];
+		const columns =
+			read.sort === 'sequence' ? ['sequence'] : ['occurred_at', 'sequence'];
+		if (read.after) {
+			const keyset = keysetWhere(
+				columns,
+				read.sort === 'sequence'
+					? [read.after.id]
+					: [read.after.key, read.after.id],
+				{ direction: read.direction, parameterOffset: parameters.length },
+			);
+			clauses.push(keyset.text);
+			parameters.push(...keyset.parameters);
+		}
+		const order = orderDirection(read.direction);
+		const text = `SELECT sequence, actor_json, origin_json, action, subject_type,
+		 subject_id, metadata_json, occurred_at, previous_hash, event_hash
+		 FROM workflow_audit_events WHERE ${clauses.join(' AND ')}
+		 ORDER BY ${columns.map((column) => `${column} ${order}`).join(', ')}
+		 LIMIT ${bind(read.limit)}`;
 		const rows = await this.#tx(tenantId, 'read', (transaction) =>
-			beforeSequence === undefined
-				? this.#query<AuditRow>(transaction, SQL.listAudit, [
-						tenantId,
-						bounded + 1,
-					])
-				: this.#query<AuditRow>(transaction, SQL.listAuditBefore, [
-						tenantId,
-						beforeSequence,
-						bounded + 1,
-					]),
+			this.#query<AuditRow>(transaction, text, parameters),
 		);
-		const events = rows.slice(0, bounded).map(auditFromRow);
+		const items = rows.map(auditFromRow);
+		const last = items.at(-1);
 		return {
-			events,
-			nextCursor:
-				rows.length > bounded && events.at(-1)
-					? String(events.at(-1)!.sequence)
-					: null,
+			items,
+			last: last
+				? {
+						key: read.sort === 'sequence' ? last.sequence : last.occurredAt,
+						id: last.sequence,
+					}
+				: null,
 		};
 	}
 

@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseHandle, DatabaseParameter } from '@flowdular/database';
 import { integer, runDatabaseMigrations } from '@flowdular/database';
+import { keysetWhere } from '@flowdular/server';
 import type {
 	ConnectorAuditAction,
 	ConnectorAuditEvent,
 	ConnectorCall,
+	ConnectorCallListRow,
 	ConnectorCaller,
 	ConnectorCallOutcome,
 	ConnectorAuthKind,
@@ -19,6 +21,9 @@ import {
 	type ConnectorCallKeyClaim,
 	type ConnectorCallKeyDecision,
 	type ConnectorExportCursor,
+	type ConnectorInstanceFilters,
+	type ConnectorInstanceKeyset,
+	type ConnectorPageRequest,
 	type ConnectorsRepository,
 	type PendingConnectorAuditEvent,
 	type StoredConnectorInstance,
@@ -61,6 +66,10 @@ interface CallRow {
 	occurred_at: number | bigint | string;
 }
 
+interface CallListRow extends CallRow {
+	instance_name: string | null;
+}
+
 interface CallKeyRow {
 	operation_id: string;
 	input_digest: string;
@@ -82,11 +91,6 @@ const INSTANCE_COLUMNS = `id, tenant_id, definition_key, name, base_url, auth_ki
 			 credential_key_id, credential_iv, credential_tag, credential_ciphertext,
 			 credential_fingerprint, allowed_hosts_json, allow_workflows, allow_agents,
 			 status, last_call_at, created_at, updated_at`;
-
-const LIST_INSTANCES = `SELECT ${INSTANCE_COLUMNS}
-			 FROM connectors_instances
-			 WHERE tenant_id = $1
-			 ORDER BY name_normalized, id`;
 
 const FIND_INSTANCE = `SELECT ${INSTANCE_COLUMNS}
 			 FROM connectors_instances
@@ -254,6 +258,36 @@ export function normalizedInstanceName(name: string): string {
 	return name.trim().toLocaleLowerCase('en-US');
 }
 
+/* A term is matched as text: `%` and `_` typed by a reader search for those
+   characters. The match runs after the tenant predicate, over that
+   workspace's rows alone. */
+function likePattern(term: string): string {
+	return '%' + term.replace(/[\\%_]/g, (character) => '\\' + character) + '%';
+}
+
+/* The page order and the keyset predicate are one decision: both columns run
+   in the direction the caller asked for, which the (tenant_id, sort column)
+   index carries either way. */
+function pageOrder(
+	columns: readonly [string, string],
+	page: ConnectorPageRequest<readonly [string | number, string]>,
+	parameters: DatabaseParameter[],
+	predicates: string[],
+): string {
+	if (page.after !== null) {
+		const keyset = keysetWhere(columns, page.after, {
+			direction: page.direction,
+			parameterOffset: parameters.length,
+		});
+		predicates.push(keyset.text);
+		parameters.push(...keyset.parameters);
+	}
+	parameters.push(page.limit);
+	const order = page.direction === 'desc' ? 'DESC' : 'ASC';
+	return `ORDER BY ${columns[0]} ${order}, ${columns[1]} ${order}
+			 LIMIT $${parameters.length}`;
+}
+
 function fromInstanceRow(row: InstanceRow): StoredConnectorInstance {
 	return {
 		id: row.id,
@@ -312,6 +346,10 @@ function fromCallRow(row: CallRow): ConnectorCall {
 	};
 }
 
+function fromCallListRow(row: CallListRow): ConnectorCallListRow {
+	return { ...fromCallRow(row), instanceName: row.instance_name };
+}
+
 function fromAuditRow(row: AuditRow): ConnectorAuditEvent {
 	const parsed: unknown = JSON.parse(row.metadata_json);
 	return {
@@ -344,12 +382,45 @@ function auditParameters(audit: PendingConnectorAuditEvent) {
 export class DatabaseConnectorsRepository implements ConnectorsRepository {
 	constructor(private readonly database: DatabaseHandle) {}
 
-	async listInstances(tenantId: string): Promise<readonly ConnectorInstance[]> {
+	async listInstances(
+		tenantId: string,
+		filters: ConnectorInstanceFilters,
+		page: ConnectorPageRequest<ConnectorInstanceKeyset>,
+	): Promise<readonly ConnectorInstance[]> {
+		const parameters: DatabaseParameter[] = [tenantId];
+		const predicates = ['tenant_id = $1'];
+		if (filters.status) {
+			parameters.push(filters.status);
+			predicates.push(`status = $${parameters.length}`);
+		}
+		if (filters.definitionKey) {
+			parameters.push(filters.definitionKey);
+			predicates.push(`definition_key = $${parameters.length}`);
+		}
+		if (filters.search) {
+			parameters.push(likePattern(filters.search));
+			predicates.push(
+				`(name ILIKE $${parameters.length} OR base_url ILIKE $${parameters.length})`,
+			);
+		}
+		const order = pageOrder(
+			['name_normalized', 'id'],
+			{
+				direction: page.direction,
+				after: page.after === null ? null : [page.after.name, page.after.id],
+				limit: page.limit,
+			},
+			parameters,
+			predicates,
+		);
 		const result = await this.database.transaction(
 			(transaction) =>
 				transaction.query<InstanceRow>({
-					text: LIST_INSTANCES,
-					parameters: [tenantId],
+					text: `SELECT ${INSTANCE_COLUMNS}
+					 FROM connectors_instances
+					 WHERE ${predicates.join(' AND ')}
+					 ${order}`,
+					parameters,
 				}),
 			{ access: 'read', tenantId },
 		);
@@ -756,8 +827,8 @@ export class DatabaseConnectorsRepository implements ConnectorsRepository {
 	async listCalls(
 		tenantId: string,
 		filters: ConnectorCallFilters,
-		limit: number,
-	): Promise<readonly ConnectorCall[]> {
+		page: ConnectorPageRequest<ConnectorExportCursor>,
+	): Promise<readonly ConnectorCallListRow[]> {
 		const parameters: DatabaseParameter[] = [tenantId];
 		const predicates = ['tenant_id = $1'];
 		if (filters.outcome) {
@@ -768,22 +839,38 @@ export class DatabaseConnectorsRepository implements ConnectorsRepository {
 			parameters.push(filters.instanceId);
 			predicates.push(`instance_id = $${parameters.length}`);
 		}
-		parameters.push(limit);
+		if (filters.search) {
+			parameters.push(likePattern(filters.search));
+			predicates.push(`operation ILIKE $${parameters.length}`);
+		}
+		const order = pageOrder(
+			['occurred_at', 'id'],
+			{
+				direction: page.direction,
+				after:
+					page.after === null ? null : [page.after.occurredAt, page.after.id],
+				limit: page.limit,
+			},
+			parameters,
+			predicates,
+		);
 		const result = await this.database.transaction(
 			(transaction) =>
-				transaction.query<CallRow>({
-					text: `SELECT id, tenant_id, instance_id, operation, caller, caller_ref,
-					        outcome, status, error_class, duration_ms, request_bytes,
-					        response_bytes, occurred_at
+				transaction.query<CallListRow>({
+					/* The name is read per row of the page, so the keyset predicate
+					   and the order stay on the bare call columns the index carries. */
+					text: `SELECT ${CALL_COLUMNS},
+					        (SELECT name FROM connectors_instances AS owner
+					         WHERE owner.tenant_id = connectors_calls.tenant_id
+					           AND owner.id = connectors_calls.instance_id) AS instance_name
 					 FROM connectors_calls
 					 WHERE ${predicates.join(' AND ')}
-					 ORDER BY occurred_at DESC, id DESC
-					 LIMIT $${parameters.length}`,
+					 ${order}`,
 					parameters,
 				}),
 			{ access: 'read', tenantId },
 		);
-		return result.rows.map(fromCallRow);
+		return result.rows.map(fromCallListRow);
 	}
 
 	async listAudit(

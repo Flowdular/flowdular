@@ -1330,6 +1330,41 @@ describe('auth migrations', () => {
 		expect(indexes.rows[0]?.indexdef).toContain('(tenant_id, account_id)');
 	});
 
+	/* The sorted member page orders by lower(display_name) or email_normalized
+	   with the account id behind it; both live on auth_accounts, which has no
+	   workspace column, so the indexes carry the sort pairs alone. */
+	it('indexes both sort pairs of the sorted member page and adopts them', async () => {
+		await apply();
+
+		const indexes = await lease.database.query<{
+			indexname: string;
+			indexdef: string;
+		}>({
+			text: `SELECT indexname, indexdef FROM pg_indexes
+			       WHERE schemaname = current_schema()
+			         AND tablename = 'auth_accounts'
+			         AND indexname LIKE '%_keyset_idx'
+			       ORDER BY indexname`,
+		});
+		expect(indexes.rows.map((row) => row.indexname)).toEqual([
+			'auth_accounts_display_name_keyset_idx',
+			'auth_accounts_email_keyset_idx',
+		]);
+		expect(indexes.rows[0]?.indexdef).toContain('lower(display_name), id');
+		expect(indexes.rows[1]?.indexdef).toContain('(email_normalized, id)');
+
+		await lease.database.execute({
+			text: `DELETE FROM ${DATABASE_MIGRATION_LEDGER}
+			       WHERE namespace = 'auth.core'
+			         AND id = '0033_auth_account_keyset_indexes'`,
+		});
+		expect(
+			(await status()).find(
+				(entry) => entry.id === '0033_auth_account_keyset_indexes',
+			)?.state,
+		).toBe('adopted');
+	});
+
 	/* The three export walks page by (tenant_id, id); without these the database
 	   sorts the workspace again for every page. */
 	it('indexes the keyset of every data class export walk', async () => {

@@ -87,7 +87,7 @@ describe('CONNECTORS-CONSENT', () => {
 		});
 		expect(server.requests.length).toBe(before + 1);
 
-		const log = await service.listCalls(TENANT);
+		const log = await service.listCalls(TENANT, {}, { limit: 200 });
 		expect(
 			log.map((call) => [call.caller, call.outcome, call.callerRef]),
 		).toEqual([
@@ -112,7 +112,7 @@ describe('CONNECTORS-CONSENT', () => {
 				confirmed: false,
 			}),
 		).rejects.toMatchObject({ code: 'CONSENT_NOT_CONFIRMED' });
-		expect((await service.list(TENANT))[0]).toMatchObject({
+		expect((await service.list(TENANT, { limit: 200 }))[0]).toMatchObject({
 			allowWorkflows: false,
 			allowAgents: false,
 		});

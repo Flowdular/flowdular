@@ -50,6 +50,10 @@ export interface ApprovalsRequests {
 	 */
 	open(input: OpenApprovalInput): Promise<ApprovalRequest>;
 	get(tenantId: string, id: string): Promise<ApprovalRequest | null>;
+	/**
+	 * The first `limit` matches, newest first; two requests opened at the same
+	 * millisecond come in descending id order.
+	 */
 	list(
 		tenantId: string,
 		filter: ApprovalRequestFilter,
@@ -84,6 +88,8 @@ export const APPROVAL_LIMITS = {
 	decisions: 16,
 	expiryDays: 90,
 	listLimit: 200,
+	/** Requests one bulk decision may name. */
+	decideMany: 100,
 	/** Pending callbacks one process holds before the oldest is dropped. */
 	callbacks: 4_096,
 } as const;

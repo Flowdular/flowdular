@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: documents.core
-specVersion: 0.1.6
+specVersion: 0.1.7
 status: approved
 name: Documents Core
 description: Lets a workspace attach files to its records through the platform storage port, owning only the document metadata and the reference to the record, with tenant-scoped keys, encrypted bytes, size and type limits, and a scan state, so a module attaches by reference and never holds bytes.
@@ -150,6 +150,13 @@ actions:
     risk: destructive
     idempotent: true
     description: Delete the object, then mark the row deleted.
+  - id: delete-many
+    entity: document
+    permission: documents.files.manage
+    kind: delete
+    risk: destructive
+    idempotent: true
+    description: Delete the documents the screen selected, between 1 and 100 unique ids, each through the single delete path, answering one outcome per id (deleted, not-found or refused) and never failing the whole call for a missing id.
 widgets: []
 settings:
   - key: quotaBytes
@@ -226,6 +233,10 @@ acceptanceScenarios:
     given: A principal holding documents.files.read.
     when: The screen asks for the upload limits.
     then: The platform object ceiling and the accepted content types are answered, an unauthenticated request is refused, and the uploader refuses a larger file before it sends one.
+  - id: DOCUMENTS-DELETE-MANY
+    given: A principal holding documents.files.manage selects several stored documents, and the request also names an id that does not exist and one that belongs to another workspace.
+    when: The principal deletes them in one call naming the selected ids.
+    then: A list of no ids, of more than 100, or one repeating an id is refused with INVALID_INPUT before any row is touched; otherwise each named row of the workspace is deleted through the single delete path, so its object is removed first and its row is kept as the deleted trail, the missing and the foreign id are answered not-found with nothing else deleted, the response carries one outcome per id in the order sent, and a call without the permission or the CSRF proof is refused first.
   - id: DOCUMENTS-DENY
     given: A principal is unauthenticated or lacks the required permission.
     when: The principal uploads, lists, requests a read URL or deletes.

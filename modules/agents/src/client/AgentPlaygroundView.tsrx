@@ -12,7 +12,7 @@ import type { AgentRunDetail } from '../domain/types.ts';
 import {
 	cancelAgentRun,
 	enqueueAgentRun,
-	loadAgents,
+	loadAllAgents,
 	loadAgentWorker,
 	observeAgentRun,
 } from './api.ts';
@@ -49,13 +49,13 @@ export function AgentPlaygroundView(props: AgentPlaygroundViewProps) @{
 
 	useEffect(() => {
 		setStatus('loading');
-		void loadAgents().then((result) => {
+		void loadAllAgents().then((result) => {
 			client.store.act((transaction) => {
-				transaction.set(client.state.agents, result.agents);
+				transaction.set(client.state.agents, result.items);
 				if (!selectedAgentId) {
 					transaction.set(
 						client.state.selectedAgentId,
-						result.agents.find((agent) => agent.status === 'active')?.id ?? '',
+						result.items.find((agent) => agent.status === 'active')?.id ?? '',
 					);
 				}
 			}, 'agents/playground-loaded');

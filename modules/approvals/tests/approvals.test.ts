@@ -71,6 +71,7 @@ function wrap(overrides: Partial<ApprovalsRepository>): ApprovalsRepository {
 		findPendingBySubject: base.findPendingBySubject.bind(base),
 		detail: base.detail.bind(base),
 		list: base.list.bind(base),
+		listPage: base.listPage.bind(base),
 		isSnapshotDecider: base.isSnapshotDecider.bind(base),
 		countDecidable: base.countDecidable.bind(base),
 		decide: base.decide.bind(base),

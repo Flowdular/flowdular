@@ -1,6 +1,7 @@
 import type {
 	ConnectorAuditEvent,
 	ConnectorCall,
+	ConnectorCallListRow,
 	ConnectorCallOutcome,
 	ConnectorInstance,
 	ConnectorInstanceStatus,
@@ -22,6 +23,30 @@ export interface StoredConnectorInstance extends ConnectorInstance {
 export interface ConnectorCallFilters {
 	readonly outcome?: ConnectorCallOutcome | undefined;
 	readonly instanceId?: string | undefined;
+	/** A term the operation must contain, case-insensitive. */
+	readonly search?: string | undefined;
+}
+
+export interface ConnectorInstanceFilters {
+	readonly status?: ConnectorInstanceStatus | undefined;
+	readonly definitionKey?: string | undefined;
+	/** A term the name or the base URL must contain, case-insensitive. */
+	readonly search?: string | undefined;
+}
+
+export type ConnectorListDirection = 'asc' | 'desc';
+
+/** The keyset the instance list orders by: the normalized name, then the id. */
+export interface ConnectorInstanceKeyset {
+	readonly name: string;
+	readonly id: string;
+}
+
+/** One keyset page of a list screen; `after` is the last row the caller saw. */
+export interface ConnectorPageRequest<Keyset> {
+	readonly direction: ConnectorListDirection;
+	readonly after: Keyset | null;
+	readonly limit: number;
 }
 
 /** Written in the same transaction as the change it describes. */
@@ -57,7 +82,11 @@ export interface ConnectorExportCursor {
 
 /** The database-agnostic business port. No driver type crosses it. */
 export interface ConnectorsRepository {
-	listInstances(tenantId: string): Promise<readonly ConnectorInstance[]>;
+	listInstances(
+		tenantId: string,
+		filters: ConnectorInstanceFilters,
+		page: ConnectorPageRequest<ConnectorInstanceKeyset>,
+	): Promise<readonly ConnectorInstance[]>;
 	findInstance(
 		tenantId: string,
 		id: string,
@@ -136,8 +165,8 @@ export interface ConnectorsRepository {
 	listCalls(
 		tenantId: string,
 		filters: ConnectorCallFilters,
-		limit: number,
-	): Promise<readonly ConnectorCall[]>;
+		page: ConnectorPageRequest<ConnectorExportCursor>,
+	): Promise<readonly ConnectorCallListRow[]>;
 	listAudit(
 		tenantId: string,
 		instanceId: string,

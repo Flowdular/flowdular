@@ -88,7 +88,11 @@ describe('connector call idempotency ledger', () => {
 		expect(second.body).toBeNull();
 		expect(server.requests.length).toBe(before + 1);
 		expect(
-			await instanceService(shared.repository, vault).listCalls(TENANT),
+			await instanceService(shared.repository, vault).listCalls(
+				TENANT,
+				{},
+				{ limit: 200 },
+			),
 		).toHaveLength(1);
 	});
 

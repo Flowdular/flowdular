@@ -1,5 +1,8 @@
 import { t } from '@flowdular/client/i18n';
 import type {
+	ApprovalDecideOutcome,
+	ApprovalListDirection,
+	ApprovalListSort,
 	ApprovalRequest,
 	ApprovalRequestView,
 	ApprovalStatus,
@@ -97,20 +100,37 @@ export type ApprovalsListScope = 'mine' | 'decidable' | 'all';
 export interface ApprovalsFilter {
 	readonly scope?: ApprovalsListScope;
 	readonly status?: ApprovalStatus | '';
+	readonly sort?: ApprovalListSort;
+	readonly direction?: ApprovalListDirection;
+	readonly limit?: number;
+	/** The cursor that opens this page; none for the first page. */
+	readonly cursor?: string | null;
+}
+
+export interface ApprovalsPage {
+	readonly items: readonly ApprovalRequest[];
+	/** Null once the last page is on screen. */
+	readonly nextCursor: string | null;
 }
 
 export async function loadRequests(
 	filter: ApprovalsFilter = {},
-): Promise<readonly ApprovalRequest[]> {
-	return (
-		await get<{ readonly requests: readonly ApprovalRequest[] }>(
-			'/api/approvals/requests' +
-				query({
-					scope: filter.scope ?? '',
-					status: filter.status ?? '',
-				}),
-		)
-	).requests;
+): Promise<ApprovalsPage> {
+	const page = await get<{
+		readonly items: readonly ApprovalRequest[];
+		readonly page: { readonly nextCursor: string | null };
+	}>(
+		'/api/approvals/requests' +
+			query({
+				scope: filter.scope ?? '',
+				status: filter.status ?? '',
+				sort: filter.sort ?? '',
+				direction: filter.direction ?? '',
+				limit: filter.limit === undefined ? '' : String(filter.limit),
+				cursor: filter.cursor ?? '',
+			}),
+	);
+	return { items: page.items, nextCursor: page.page.nextCursor };
 }
 
 export async function loadPendingCount(): Promise<number> {
@@ -152,6 +172,23 @@ export async function rejectRequest(
 	csrfToken: string,
 ): Promise<ApprovalRequestView> {
 	return decision('/api/approvals/requests/reject', id, comment, csrfToken);
+}
+
+export type BulkDecision = 'approve' | 'reject';
+
+export async function decideRequests(
+	ids: readonly string[],
+	decision: BulkDecision,
+	comment: string,
+	csrfToken: string,
+): Promise<readonly ApprovalDecideOutcome[]> {
+	return (
+		await post<{ readonly outcomes: readonly ApprovalDecideOutcome[] }>(
+			'/api/approvals/decide-many',
+			comment === '' ? { ids, decision } : { ids, decision, comment },
+			csrfToken,
+		)
+	).outcomes;
 }
 
 export async function cancelRequest(

@@ -1,0 +1,4 @@
+DROP INDEX IF EXISTS automations_triggers_tenant_updated_idx;
+DROP INDEX IF EXISTS automations_triggers_tenant_label_key_idx;
+DROP INDEX IF EXISTS automations_schedules_tenant_updated_idx;
+DROP INDEX IF EXISTS automations_schedules_tenant_label_key_idx;

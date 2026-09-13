@@ -184,6 +184,7 @@ const READ_PATHS = [['/api/documents', DOCUMENTS_PERMISSIONS.read]] as const;
 const MUTATION_PATHS = [
 	['/api/documents/read-url', DOCUMENTS_PERMISSIONS.read],
 	['/api/documents/delete', DOCUMENTS_PERMISSIONS.manage],
+	['/api/documents/delete-many', DOCUMENTS_PERMISSIONS.manage],
 ] as const;
 
 async function body<T>(response: Response): Promise<T> {
@@ -362,6 +363,102 @@ describe('documents HTTP boundary', () => {
 			(await body<{ items: unknown[] }>(await owner.call('/api/documents')))
 				.items,
 		).toEqual([]);
+	});
+});
+
+describe('documents bulk delete', () => {
+	async function upload(
+		owner: ReturnType<typeof fixture>,
+		filename: string,
+	): Promise<string> {
+		const created = await owner.upload(pdfBytes(), {
+			[UPLOAD_HEADERS.filename]: filename,
+		});
+		expect(created.status).toBe(201);
+		return (await body<{ document: { id: string } }>(created)).document.id;
+	}
+
+	const objectOf = (tenantId: string, objectId: string) =>
+		context.storage.port.stat({
+			tenantId,
+			moduleId: 'documents.core',
+			objectId,
+		});
+
+	it('DOCUMENTS-DELETE-MANY refuses an unbounded or repeated id list before any row is touched', async () => {
+		const owner = fixture(principal(ALL_SCOPES));
+		const kept = await upload(owner, 'kept.pdf');
+		for (const ids of [
+			[],
+			Array.from({ length: 101 }, (_, index) => 'document-' + index),
+			[kept, kept],
+			[kept, 42],
+			[kept, ''],
+			'not-a-list',
+		]) {
+			const refused = await owner.mutation('/api/documents/delete-many', {
+				ids,
+			});
+			expect([JSON.stringify(ids).slice(0, 40), refused.status]).toEqual([
+				JSON.stringify(ids).slice(0, 40),
+				400,
+			]);
+			expect(
+				(await body<{ error: { code: string } }>(refused)).error.code,
+			).toBe('INVALID_INPUT');
+		}
+		expect((await context.repository.find(TENANT, kept))?.status).toBe(
+			'stored',
+		);
+		expect(await objectOf(TENANT, kept)).not.toBeNull();
+	});
+
+	/* One id that is missing must not cost the others: each row goes through
+	   the single delete path and answers for itself. */
+	it('DOCUMENTS-DELETE-MANY answers one outcome per id and deletes only the rows of this workspace', async () => {
+		const owner = fixture(principal(ALL_SCOPES));
+		const neighbour = fixture(
+			principal(ALL_SCOPES, 'account-bob', 'tenant-other'),
+		);
+		const first = await upload(owner, 'first.pdf');
+		const second = await upload(owner, 'second.pdf');
+		const foreign = await upload(neighbour, 'foreign.pdf');
+
+		const response = await owner.mutation('/api/documents/delete-many', {
+			ids: [first, 'not-a-document', foreign, second],
+		});
+		expect(response.status).toBe(200);
+		expect((await body<{ outcomes: unknown[] }>(response)).outcomes).toEqual([
+			{ id: first, outcome: 'deleted' },
+			{ id: 'not-a-document', outcome: 'not-found' },
+			{ id: foreign, outcome: 'not-found' },
+			{ id: second, outcome: 'deleted' },
+		]);
+
+		/* Each deleted row keeps its own trail and has lost its own object. */
+		for (const id of [first, second]) {
+			expect([id, (await context.repository.find(TENANT, id))?.status]).toEqual(
+				[id, 'deleted'],
+			);
+			expect([id, await objectOf(TENANT, id)]).toEqual([id, null]);
+		}
+		expect(
+			(await context.repository.find('tenant-other', foreign))?.status,
+		).toBe('stored');
+		expect(await objectOf('tenant-other', foreign)).not.toBeNull();
+		expect(
+			(await body<{ items: unknown[] }>(await owner.call('/api/documents')))
+				.items,
+		).toEqual([]);
+
+		/* Idempotent like the single delete: a row already deleted answers
+		   deleted again and nothing else changes. */
+		const again = await owner.mutation('/api/documents/delete-many', {
+			ids: [first],
+		});
+		expect((await body<{ outcomes: unknown[] }>(again)).outcomes).toEqual([
+			{ id: first, outcome: 'deleted' },
+		]);
 	});
 });
 

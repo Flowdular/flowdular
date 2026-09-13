@@ -1,16 +1,21 @@
-import { useEffect, useMemo, useState } from 'octane';
+import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
 	ConfirmDialog,
 	Drawer,
 	EmptyState,
+	Filters,
 	Icon,
 	Kpi,
 	PageHeader,
 	Pagination,
 	SearchField,
+	Select,
 	TableCard,
+	ToastHost,
+	toasts,
+	type TableSort,
 } from '@flowdular/ui';
 import { activeLocale, t } from '@flowdular/client';
 import type { TenantMember } from '@flowdular/module-auth';
@@ -18,24 +23,38 @@ import { cell, createStore, useValue } from 'segment-state';
 import {
 	ApiError,
 	assignMemberRole,
+	assignRoleMany,
 	createTenantUser,
 	inviteTenantMember,
 	loadTenantUsers,
+	loadUsersContext,
 	removeMember,
 	renameMember,
 	resetMemberPassword,
 	revokeMemberSessions,
 	setMemberScopes,
 	setMembershipStatus,
+	setMembershipStatusMany,
 	startListExport,
 } from './api.ts';
 import { MEMBER_EXPORT_LIST_ID } from '../domain/lists.ts';
+import type { MemberBulkOutcome } from '../services/users-service.ts';
 import { memberColumns } from './member-columns.tsrx';
 import { MemberDrawer } from './MemberDrawer.tsrx';
 import {
+	bulkOutcomeCounts,
+	bulkTargets,
 	createUsersClientState,
+	DEFAULT_MEMBER_SORTING,
+	loadedListing,
+	memberSort,
 	membershipStatusMessage,
+	pageCursor,
 	replaceMember,
+	resetPageCursors,
+	searchPending,
+	type Listing,
+	type MemberStatusFilter,
 } from './state.ts';
 import { UserAccountForm } from './UserAccountForm.tsrx';
 import { InviteMemberForm } from './InviteMemberForm.tsrx';
@@ -48,17 +67,7 @@ export interface UsersViewProps {
 }
 
 const PAGE_SIZES = [10, 25, 50, 100];
-
-/* memberColumns renders the cells; the screen supplies the value each column
-   is ordered by, since the user column shows a name over an email. */
-const SORT_VALUES: Readonly<
-	Record<string, (user: TenantMember) => string | number>
-> = {
-	user: (user) => user.displayName,
-	role: (user) => user.role,
-	status: (user) => user.membershipStatus,
-	scopes: (user) => user.scopes.length,
-};
+const SEARCH_DEBOUNCE_MS = 300;
 
 function formValue(form: FormData, key: string): string {
 	const value = form.get(key);
@@ -71,16 +80,37 @@ function message(error: unknown, fallback: string): string {
 
 export function UsersView(props: UsersViewProps) @{
 	const usersState = useMemo(() => createUsersClientState(), []);
+	/* Answers arrive in any order; only the latest request may write the page. */
+	const requests = useMemo(() => ({ sequence: 0 }), []);
 	const [users] = useValue(usersState.state.users);
 	const [roles] = useValue(usersState.state.roles);
 	const [grantableScopes] = useValue(usersState.state.grantableScopes);
 	const [actor] = useValue(usersState.state.actor);
 	const [passwordMinLength] = useValue(usersState.state.passwordMinLength);
+	const [memberCount, setMemberCount] = useValue(usersState.state.memberCount);
 	const actorIsOwner = actor?.role === 'owner';
 	const [status, setStatus] = useValue(usersState.state.status);
 	const [error, setError] = useValue(usersState.state.error);
 	const [notice, setNotice] = useValue(usersState.state.notice);
 	const [query, setQuery] = useValue(usersState.state.query);
+	const [appliedQuery] = useValue(usersState.state.appliedQuery);
+	const [statusFilter, setStatusFilter] = useValue(
+		usersState.state.statusFilter,
+	);
+	const [sorting, setSorting] = useValue(usersState.state.sorting);
+	const [pageIndex] = useValue(usersState.state.pageIndex);
+	const [pageSize, setPageSize] = useValue(usersState.state.pageSize);
+	const [cursors] = useValue(usersState.state.cursors);
+	const [nextCursor] = useValue(usersState.state.nextCursor);
+	const [filtersOpen, setFiltersOpen] = useValue(usersState.state.filtersOpen);
+	const [selectedIds, setSelectedIds] = useValue(usersState.state.selectedIds);
+	const [confirmDeactivateMany, setConfirmDeactivateMany] = useValue(
+		usersState.state.confirmDeactivateMany,
+	);
+	const [roleDialogOpen, setRoleDialogOpen] = useValue(
+		usersState.state.roleDialogOpen,
+	);
+	const [bulkRole, setBulkRole] = useValue(usersState.state.bulkRole);
 	const [formOpen, setFormOpen] = useValue(usersState.state.formOpen);
 	const [formSession, setFormSession] = useValue(usersState.state.formSession);
 	const [inviteOpen, setInviteOpen] = useValue(usersState.state.inviteOpen);
@@ -95,61 +125,154 @@ export function UsersView(props: UsersViewProps) @{
 	);
 	const confirm = useMemo(() => createStore({ remove: cell(false) }), []);
 	const [removeOpen, setRemoveOpen] = useValue(confirm.state.remove);
-	const [pageIndex, setPageIndex] = useState(0);
-	const [pageSize, setPageSize] = useState(25);
 	const selected =
 		users.find((user) => user.accountId === selectedAccountId) ?? null;
 	const columns = memberColumns(
 		new Map(roles.map((role) => [role.key, role.name])),
-	).map((column) => {
-		const value = SORT_VALUES[column.key];
-		return value ? { ...column, value } : column;
+	);
+	const term = query.trim();
+	const hasMore = nextCursor !== null;
+	const targets = bulkTargets(users, selectedIds, actor?.accountId);
+	const assignableRoles = roles.filter(
+		(role) => role.key !== 'owner' || actorIsOwner,
+	);
+	const listing = (): Listing => ({
+		pageIndex,
+		pageSize,
+		sorting,
+		query: appliedQuery,
+		status: statusFilter,
+		cursors,
 	});
-	const owners = users.filter((user) => user.role === 'owner');
-	const locale = activeLocale();
-	const term = query.trim().toLocaleLowerCase(locale);
-	const visible =
-		term === ''
-			? users
-			: users.filter(
-					(user) =>
-						user.displayName.toLocaleLowerCase(locale).includes(term) ||
-							user.email.toLocaleLowerCase(locale).includes(term),
-				);
+	/* The search timer fires after later renders; it reads the listing those
+   renders left here rather than the one the keystroke saw. */
+	const latest = useMemo(() => ({ listing: listing() }), []);
+	latest.listing = listing();
+	/* A changed order, filter or page size is a new listing, whose cursors
+   name positions in the old one. */
+	const firstPage = (changes: Partial<Listing>): Listing => ({
+		...listing(),
+		...changes,
+		pageIndex: 0,
+		cursors: resetPageCursors(),
+	});
 
-	const refresh = async () => {
+	const failLoad = (loadError: unknown) => {
+		setError(message(loadError, t('users.error.load')));
+		setStatus(
+			loadError instanceof ApiError && loadError.status === 403
+				? 'denied'
+				: 'error',
+		);
+	};
+
+	/* The server sorts, narrows and cuts the page; the listing travels as an
+   argument because the click that changes it and the load it starts happen
+   in one render, where the state hooks still read the old values. */
+	const load = async (next: Listing) => {
+		const cursor = pageCursor(next.cursors, next.pageIndex);
+		if (cursor === undefined) return;
+		const sequence = requests.sequence + 1;
+		requests.sequence = sequence;
 		setStatus('loading');
 		setError('');
 		try {
-			const directory = await loadTenantUsers();
+			const { sort, direction } = memberSort(next.sorting);
+			const page = await loadTenantUsers({
+				sort,
+				direction,
+				limit: next.pageSize,
+				query: next.query,
+				status: next.status,
+				cursor,
+			});
+			if (sequence !== requests.sequence) return;
+			const loaded = loadedListing(next, page);
 			usersState.store.act((transaction) => {
-				transaction.set(usersState.state.users, directory.users);
-				transaction.set(usersState.state.roles, directory.roles);
-				transaction.set(
-					usersState.state.grantableScopes,
-					directory.grantableScopes,
-				);
-				transaction.set(usersState.state.actor, directory.actor);
-				transaction.set(
-					usersState.state.passwordMinLength,
-					directory.passwordMinLength,
-				);
-				transaction.set(usersState.state.exportStarted, false);
+				transaction.set(usersState.state.users, loaded.users);
+				transaction.set(usersState.state.appliedQuery, loaded.appliedQuery);
+				transaction.set(usersState.state.pageIndex, loaded.pageIndex);
+				transaction.set(usersState.state.cursors, loaded.cursors);
+				transaction.set(usersState.state.nextCursor, loaded.nextCursor);
+				transaction.set(usersState.state.selectedIds, loaded.selectedIds);
 				transaction.set(usersState.state.status, 'idle');
 			}, 'users/loaded');
 		} catch (loadError) {
-			setError(message(loadError, t('users.error.load')));
-			setStatus(
-				loadError instanceof ApiError && loadError.status === 403
-					? 'denied'
-					: 'error',
-			);
+			if (sequence === requests.sequence) failLoad(loadError);
 		}
+	};
+
+	const loadContext = async (): Promise<boolean> => {
+		try {
+			const context = await loadUsersContext();
+			usersState.store.act((transaction) => {
+				transaction.set(usersState.state.roles, context.roles);
+				transaction.set(
+					usersState.state.grantableScopes,
+					context.grantableScopes,
+				);
+				transaction.set(usersState.state.actor, context.actor);
+				transaction.set(
+					usersState.state.passwordMinLength,
+					context.passwordMinLength,
+				);
+				transaction.set(usersState.state.memberCount, context.memberCount);
+				transaction.set(usersState.state.exportStarted, false);
+			}, 'users/context-loaded');
+			return true;
+		} catch (contextError) {
+			failLoad(contextError);
+			return false;
+		}
+	};
+
+	const refresh = async () => {
+		setStatus('loading');
+		if (await loadContext()) await load(firstPage({}));
+	};
+
+	const openPage = (index: number) => {
+		if (index !== pageIndex) void load({ ...listing(), pageIndex: index });
+	};
+
+	const changeSorting = (sorts: readonly TableSort[]) => {
+		const next =
+			sorts.length === 0 ? DEFAULT_MEMBER_SORTING : sorts;
+		setSorting(next);
+		void load(firstPage({ sorting: next }));
+	};
+
+	const changeStatusFilter = (value: string) => {
+		const next: MemberStatusFilter =
+			value === 'active' || value === 'disabled' ? value : '';
+		setStatusFilter(next);
+		void load(firstPage({ status: next }));
+	};
+
+	const changePageSize = (size: number) => {
+		setPageSize(size);
+		void load(firstPage({ pageSize: size }));
 	};
 
 	useEffect(() => {
 		void refresh();
 	}, []);
+
+	/* The term is the server's filter, so typing it starts a new listing rather
+   than narrowing the page on screen: one listing per pause in the typing. */
+	useEffect(() => {
+		if (!searchPending(query, appliedQuery)) return;
+		const timer = setTimeout(
+			() => void load({
+				...latest.listing,
+				query: term,
+				pageIndex: 0,
+				cursors: resetPageCursors(),
+			}),
+			SEARCH_DEBOUNCE_MS,
+		);
+		return () => clearTimeout(timer);
+	}, [query]);
 
 	/* Every member action follows the same shape: mark busy, call, replace the
    row, report. Failures stay inside the drawer next to the control. */
@@ -185,23 +308,27 @@ export function UsersView(props: UsersViewProps) @{
 
 	/* The membership route answers with the new status only, so the row it
    belongs to is patched here rather than reloaded. */
-	const changeMembership = (
+	const changeMembership = async (
 		member: TenantMember,
 		next: 'active' | 'disabled',
-	) => mutate(
-		async () => ({
-			...member,
-			membershipStatus: (await setMembershipStatus(
-				member.accountId,
-				next,
-				props.csrfToken,
-			)).status,
-		}),
-		next === 'disabled'
-			? t('users.notice.membershipDisabled')
-			: t('users.notice.membershipEnabled'),
-		membershipStatusMessage,
-	);
+	) => {
+		await mutate(
+			async () => ({
+				...member,
+				membershipStatus: (await setMembershipStatus(
+					member.accountId,
+					next,
+					props.csrfToken,
+				)).status,
+			}),
+			next === 'disabled'
+				? t('users.notice.membershipDisabled')
+				: t('users.notice.membershipEnabled'),
+			membershipStatusMessage,
+		);
+		/* Under a status filter the row no longer belongs on this page. */
+		if (statusFilter !== '') await load(listing());
+	};
 
 	const submitCreate = async (event: SubmitEvent) => {
 		event.preventDefault();
@@ -219,17 +346,13 @@ export function UsersView(props: UsersViewProps) @{
 				},
 				props.csrfToken,
 			);
-			usersState.store.act(
-				(transaction) => transaction.set(
-					usersState.state.users,
-					replaceMember(users, user),
-				),
-				'users/created',
-			);
 			element.reset();
 			setFormSession((current) => current + 1);
 			setFormOpen(false);
-			setStatus('idle');
+			setMemberCount(memberCount + 1);
+			/* The new row belongs wherever the order puts it; the first page of
+   the listing shows it or the page it is on does. */
+			await load(firstPage({}));
 		} catch (createError) {
 			setError(message(createError, t('users.error.create')));
 			setStatus('idle');
@@ -277,6 +400,49 @@ export function UsersView(props: UsersViewProps) @{
 		}
 	};
 
+	/* Both bulk actions go the same way: the selected ids on screen, one
+   outcome per id, then the listing is read again and the counts are told.
+   A refused or missing id is a count, never a failure of the call. */
+	const applyMany = async (
+		run: (ids: readonly string[]) => Promise<readonly MemberBulkOutcome[]>,
+		done: string,
+		fallback: string,
+	) => {
+		const ids = targets;
+		if (ids.length === 0) return;
+		setStatus('submitting');
+		setError('');
+		setNotice('');
+		try {
+			const outcomes = await run(ids);
+			await load(listing());
+			toasts.success(t(done, bulkOutcomeCounts(outcomes)));
+		} catch (bulkError) {
+			setError(message(bulkError, t(fallback)));
+			setStatus('idle');
+		}
+	};
+
+	const deactivateMany = () => {
+		setConfirmDeactivateMany(false);
+		void applyMany(
+			(ids) => setMembershipStatusMany(ids, 'disabled', props.csrfToken),
+			'users.notice.deactivatedMany',
+			'users.error.deactivateMany',
+		);
+	};
+
+	const assignRoleToMany = () => {
+		const role = bulkRole || (assignableRoles[0]?.key ?? '');
+		setRoleDialogOpen(false);
+		if (role === '') return;
+		void applyMany(
+			(ids) => assignRoleMany(ids, role, props.csrfToken),
+			'users.notice.roleAssignedMany',
+			'users.error.roleMany',
+		);
+	};
+
 	const openMember = (accountId: string) => {
 		setError('');
 		setNotice('');
@@ -298,14 +464,9 @@ export function UsersView(props: UsersViewProps) @{
 		setError('');
 		try {
 			await removeMember(accountId, props.csrfToken);
-			usersState.store.act((transaction) => {
-				transaction.set(
-					usersState.state.users,
-					users.filter((user) => user.accountId !== accountId),
-				);
-				transaction.set(usersState.state.selectedAccountId, null);
-				transaction.set(usersState.state.status, 'idle');
-			}, 'users/removed');
+			setSelectedAccountId(null);
+			setMemberCount(memberCount - 1);
+			await load(listing());
 		} catch (removeError) {
 			setError(message(removeError, t('users.error.remove')));
 			setStatus('idle');
@@ -384,53 +545,64 @@ export function UsersView(props: UsersViewProps) @{
 				}
 				<TableCard
 					title={t('users.table.title')}
-					count={t('users.table.count', {
-						owners: owners.length,
-						accounts: users.length,
-					})}
+					count={t('users.table.count', { accounts: memberCount })}
 					search={<SearchField
 						value={query}
 						placeholder={t('users.search.placeholder')}
 						label={t('users.search.label')}
-						onInput={(value) => {
-							setQuery(value);
-							setPageIndex(0);
-						}}
+						onInput={setQuery}
 					/>}
+					filters={<Filters
+						open={filtersOpen}
+						onToggle={() => setFiltersOpen(!filtersOpen)}
+						activeCount={statusFilter === '' ? 0 : 1}
+						label={t('users.filter.label')}
+					>
+						<Select
+							id="users-status-filter"
+							label={t('users.filter.status')}
+							value={statusFilter}
+							options={[
+								{ value: '', label: t('users.filter.allStatuses') },
+								{ value: 'active', label: t('users.status.active') },
+								{ value: 'disabled', label: t('users.status.disabled') },
+							]}
+							onChange={changeStatusFilter}
+						/>
+					</Filters>}
 					caption={t('users.table.caption')}
+					mode="server"
 					columns={columns}
-					rows={visible}
+					rows={users}
 					rowKey={(user) => user.accountId}
 					sorting
-					onSortingChange={() => setPageIndex(0)}
-					pagination={{ pageIndex, pageSize, onPageChange: setPageIndex }}
+					sortingState={sorting}
+					onSortingChange={changeSorting}
+					pagination={{
+						pageIndex,
+						pageSize,
+						onPageChange: openPage,
+						hasMore,
+					}}
 					after={<Pagination
 						pageIndex={pageIndex}
 						pageSize={pageSize}
-						totalRows={visible.length}
+						hasMore={hasMore}
 						pageSizes={PAGE_SIZES}
-						onPageChange={setPageIndex}
-						onPageSizeChange={(size) => {
-							setPageSize(size);
-							setPageIndex(0);
-						}}
+						onPageChange={openPage}
+						onPageSizeChange={changePageSize}
 						label={t('users.pagination.label')}
 						previousLabel={t('users.pagination.previous')}
 						nextLabel={t('users.pagination.next')}
 						pageSizeLabel={t('users.pagination.size')}
-						summary={(range) => t('users.pagination.summary', {
-							page: range.pageIndex + 1,
-							pages: range.pageCount,
-							from: range.from,
-							to: range.to,
-							total: range.totalRows,
+						summary={(page) => t('users.pagination.summary', {
+							page: page.pageIndex + 1,
+							from: page.from,
 						})}
 					/>}
-					status={status === 'loading' && users.length === 0
-						? 'loading'
-						: 'idle'}
+					status={status === 'loading' ? 'loading' : 'idle'}
 					loadingLabel={t('users.table.loading')}
-					filtered={term !== ''}
+					filtered={appliedQuery !== '' || statusFilter !== ''}
 					empty={{
 						icon: 'users',
 						title: t('users.table.emptyTitle'),
@@ -441,6 +613,49 @@ export function UsersView(props: UsersViewProps) @{
 						title: t('users.table.emptyFilteredTitle'),
 						hint: t('users.table.emptyFilteredHint'),
 					}}
+					selection={props.canManage
+						? {
+								selectedKeys: selectedIds,
+								onSelectionChange: setSelectedIds,
+								label: t('users.selection.label'),
+								rowLabel: (user) => t('users.selection.rowLabel', {
+									name: user.displayName,
+								}),
+								selectable: (user) => user.accountId !== actor?.accountId,
+								clearLabel: t('users.selection.clear'),
+							}
+						: undefined}
+					bulkActions={props.canManage
+						? [
+								{
+									id: 'deactivate-selected',
+									label: t('users.action.deactivateSelected'),
+									icon: 'x',
+									tone: 'danger',
+									disabled: targets.length === 0 || status === 'submitting',
+									reason: targets.length === 0
+										? t('users.action.bulkRefused')
+										: undefined,
+									onSelect: () => setConfirmDeactivateMany(true),
+								},
+								{
+									id: 'assign-role-selected',
+									label: t('users.action.assignRoleSelected'),
+									icon: 'shield',
+									disabled: targets.length === 0 || status === 'submitting',
+									reason: targets.length === 0
+										? t('users.action.bulkRefused')
+										: undefined,
+									onSelect: () => {
+										setBulkRole(assignableRoles[0]?.key ?? '');
+										setRoleDialogOpen(true);
+									},
+								},
+							]
+						: undefined}
+					selectionSummary={(count) => t('users.selection.summary', {
+						count,
+					})}
 					actions={props.canManage
 						? (user) => [
 								{
@@ -550,6 +765,43 @@ export function UsersView(props: UsersViewProps) @{
 			}
 		</Drawer>
 		<ConfirmDialog
+			open={confirmDeactivateMany}
+			title={t('users.deactivateMany.title')}
+			confirmLabel={t('users.action.deactivateSelected')}
+			busy={status === 'submitting'}
+			onConfirm={deactivateMany}
+			onCancel={() => setConfirmDeactivateMany(false)}
+		>{t('users.deactivateMany.description', {
+			count: targets.length,
+		})}</ConfirmDialog>
+		<ConfirmDialog
+			open={roleDialogOpen}
+			title={t('users.roleMany.title')}
+			confirmLabel={t('users.action.assignRoleSelected')}
+			tone="primary"
+			busy={status === 'submitting'}
+			onConfirm={assignRoleToMany}
+			onCancel={() => setRoleDialogOpen(false)}
+		>
+			<p>{t('users.roleMany.description', { count: targets.length })}</p>
+			<Select
+				id="users-bulk-role"
+				label={t('users.form.role')}
+				value={bulkRole}
+				options={assignableRoles.map(
+					(role) => ({
+						value: role.key,
+						label: role.name,
+					}),
+				)}
+				onChange={setBulkRole}
+			/>
+		</ConfirmDialog>
+		<ToastHost
+			label={t('users.common.messages')}
+			closeLabel={t('users.action.close')}
+		/>
+		<ConfirmDialog
 			open={removeOpen}
 			title={t('users.remove.title')}
 			confirmLabel={t('users.member.remove')}
@@ -564,25 +816,19 @@ export function UsersView(props: UsersViewProps) @{
 
 export function UsersDashboardWidget() @{
 	const widgetState = useMemo(() => createUsersClientState(), []);
-	const [users] = useValue(widgetState.state.users);
+	const [memberCount, setMemberCount] = useValue(widgetState.state.memberCount);
 	const [status, setStatus] = useValue(widgetState.state.status);
 	useEffect(() => {
 		setStatus('loading');
-		void loadTenantUsers().then((directory) => {
-			widgetState.store.act(
-				(transaction) => transaction.set(
-					widgetState.state.users,
-					directory.users,
-				),
-				'users/widget-loaded',
-			);
-		}).catch(() => undefined).finally(() => setStatus('idle'));
+		void loadUsersContext().then(
+			(context) => setMemberCount(context.memberCount),
+		).catch(() => undefined).finally(() => setStatus('idle'));
 	}, []);
 	<Kpi
 		label={t('users.widget.label')}
 		value={status === 'loading'
 			? '…'
-			: new Intl.NumberFormat(activeLocale()).format(users.length)}
+			: new Intl.NumberFormat(activeLocale()).format(memberCount)}
 		note={t('users.widget.note')}
 		href="/users"
 		linkLabel={t('users.widget.link')}

@@ -340,9 +340,9 @@ describe('agents HTTP boundary', () => {
 		const owner = composition(principal(ALL_SCOPES));
 		const agentId = await activeAgentId(owner.mutation);
 		const listed = (await (await owner.call('/api/agents')).json()) as {
-			agents: { id: string; revision: number }[];
+			items: { id: string; revision: number }[];
 		};
-		const agent = listed.agents.find((item) => item.id === agentId)!;
+		const agent = listed.items.find((item) => item.id === agentId)!;
 		const archived = await owner.mutation('/api/agents/archive', {
 			id: agent.id,
 			expectedRevision: agent.revision,
@@ -430,7 +430,7 @@ describe('agents HTTP boundary', () => {
 		const response = await reader.call('/api/agent-audit?cursor=not-a-cursor');
 		expect(response.status).toBe(400);
 		expect(await response.json()).toMatchObject({
-			error: { code: 'INVALID_CURSOR' },
+			error: { code: 'CURSOR_INVALID' },
 		});
 	});
 
@@ -538,7 +538,7 @@ describe('agents HTTP boundary', () => {
 		const { composed, context, call } = composition(principal(ALL_SCOPES));
 		context.agentTools.register([readOnlyTool]);
 		composed.start();
-		const response = await call('/api/agents');
+		const response = await call('/api/agents/context');
 		expect(response.status).toBe(200);
 		expect(await response.json()).toMatchObject({
 			tools: ['parties.customer.read'],
@@ -555,14 +555,13 @@ describe('agents HTTP boundary', () => {
 		await waitFor(
 			async () =>
 				(
-					(await (await call('/api/agents')).json()) as {
+					(await (await call('/api/agents/context')).json()) as {
 						moduleAgents: readonly unknown[];
 					}
 				).moduleAgents.length === 1,
 		);
 
-		const before = (await (await call('/api/agents')).json()) as {
-			agents: unknown[];
+		const before = (await (await call('/api/agents/context')).json()) as {
 			moduleAgents: Array<{
 				id: string;
 				status: string;
@@ -570,7 +569,10 @@ describe('agents HTTP boundary', () => {
 				ownership: { kind: string; moduleId: string };
 			}>;
 		};
-		expect(before.agents).toEqual([]);
+		expect(
+			((await (await call('/api/agents')).json()) as { items: unknown[] })
+				.items,
+		).toEqual([]);
 		expect(before.moduleAgents).toMatchObject([
 			{
 				id: moduleAgent.id,
@@ -613,9 +615,10 @@ describe('agents HTTP boundary', () => {
 		});
 
 		const listRoute = composed.routes.find(
-			(route) => route.path === '/api/agents' && route.methods.includes('GET'),
+			(route) =>
+				route.path === '/api/agents/context' && route.methods.includes('GET'),
 		)!;
-		const otherRequest = new Request(ORIGIN + '/api/agents');
+		const otherRequest = new Request(ORIGIN + '/api/agents/context');
 		const otherTenant = await listRoute.handler({
 			request: otherRequest,
 			params: {},
@@ -646,7 +649,7 @@ describe('agents HTTP boundary', () => {
 		await waitFor(
 			async () =>
 				(
-					(await (await owner.call('/api/agents')).json()) as {
+					(await (await owner.call('/api/agents/context')).json()) as {
 						moduleAgents: readonly unknown[];
 					}
 				).moduleAgents.length === 1,
@@ -775,7 +778,9 @@ describe('procedure compatibility surface', () => {
 		};
 		expect(payload.skill).toEqual(payload.procedure);
 
-		const workspace = (await (await owner.call('/api/agents')).json()) as {
+		const workspace = (await (
+			await owner.call('/api/agents/context')
+		).json()) as {
 			procedures: readonly { id: string }[];
 			skills: readonly { id: string }[];
 		};
@@ -801,7 +806,9 @@ describe('procedure compatibility surface', () => {
 		});
 		expect(updated.status).toBe(200);
 
-		const workspace = (await (await owner.call('/api/agents')).json()) as {
+		const workspace = (await (
+			await owner.call('/api/agents/context')
+		).json()) as {
 			procedures: readonly { id: string; name: string }[];
 		};
 		expect(workspace.procedures).toHaveLength(1);
@@ -900,24 +907,369 @@ describe('procedure compatibility surface', () => {
 		);
 
 		const workspace = (await (await owner.call('/api/agents')).json()) as {
-			agents: readonly {
+			items: readonly {
 				procedureIds: readonly string[];
 				skillIds: readonly string[];
 			}[];
 		};
-		const listed = workspace.agents.find(
+		const listed = workspace.items.find(
 			(candidate) => candidate.procedureIds.length === 1,
 		)!;
 		expect(listed.skillIds).toEqual([procedure.id]);
 
 		const runs = (await (await owner.call('/api/agent-runs')).json()) as {
-			runs: readonly {
+			items: readonly {
 				procedureSnapshots: readonly unknown[];
 				skillSnapshots: readonly unknown[];
 			}[];
 		};
-		for (const run of runs.runs) {
+		for (const run of runs.items) {
 			expect(run.skillSnapshots).toEqual(run.procedureSnapshots);
 		}
+	});
+});
+
+interface Page<Item> {
+	readonly items: readonly Item[];
+	readonly page: { readonly nextCursor: string | null; readonly limit: number };
+}
+
+/* The signature is the last dot-separated part; a changed character there is
+   what a client editing its cursor looks like to the server. */
+function tampered(cursor: string): string {
+	const last = cursor.charAt(cursor.length - 1);
+	return cursor.slice(0, -1) + (last === 'A' ? 'B' : 'A');
+}
+
+async function pageOf<Item>(
+	call: ReturnType<typeof composition>['call'],
+	path: string,
+): Promise<Page<Item>> {
+	const response = await call(path);
+	expect(response.status).toBe(200);
+	return (await response.json()) as Page<Item>;
+}
+
+async function problem(
+	call: ReturnType<typeof composition>['call'],
+	path: string,
+): Promise<string> {
+	const response = await call(path);
+	expect(response.status).toBe(400);
+	return ((await response.json()) as { error: { code: string } }).error.code;
+}
+
+async function createAgents(
+	mutation: ReturnType<typeof composition>['mutation'],
+	names: readonly string[],
+): Promise<void> {
+	for (const name of names) {
+		const created = await mutation('/api/agents', {
+			key: name.toLowerCase() + '-agent',
+			name,
+			description: `Pages ${name}.`,
+			instructions: 'Answer briefly and factually.',
+			provider: 'local-simulation',
+			model: 'deterministic-v1',
+			allowedTools: [],
+			procedureIds: [],
+			maxSteps: 2,
+			timeoutMs: 5_000,
+			temperature: 0,
+			status: 'draft',
+		});
+		expect(created.status).toBe(201);
+	}
+}
+
+/* Runs the list route as another workspace, with the same query string. */
+async function asOtherTenant(
+	composed: ReturnType<typeof composition>['composed'],
+	path: string,
+): Promise<Response> {
+	const route = composed.routes.find(
+		(candidate) =>
+			candidate.path === path.split('?')[0] &&
+			candidate.methods.includes('GET'),
+	)!;
+	const request = new Request(ORIGIN + path);
+	return await route.handler({
+		request,
+		params: {},
+		url: new URL(request.url),
+		state: new Map([
+			[
+				AUTH_PRINCIPAL_STATE_KEY,
+				principal(ALL_SCOPES, 'account-b', 'tenant-other'),
+			],
+		]),
+	} as never);
+}
+
+describe('agents list pages', () => {
+	it('pages definitions by name with a cursor bound to the tenant, sort and search', async () => {
+		const { composed, call, mutation } = composition(principal(ALL_SCOPES));
+		await createAgents(mutation, ['beta', 'Alpha', 'gamma', 'Delta', 'eta']);
+
+		const first = await pageOf<{ id: string; name: string }>(
+			call,
+			'/api/agents?limit=2',
+		);
+		expect(first.items.map((item) => item.name)).toEqual(['Alpha', 'beta']);
+		expect(first.page).toMatchObject({ limit: 2 });
+		expect(first.page.nextCursor).toEqual(expect.any(String));
+		const second = await pageOf<{ id: string; name: string }>(
+			call,
+			`/api/agents?limit=2&cursor=${first.page.nextCursor}`,
+		);
+		expect(second.items.map((item) => item.name)).toEqual(['Delta', 'eta']);
+		const third = await pageOf<{ id: string; name: string }>(
+			call,
+			`/api/agents?limit=2&cursor=${second.page.nextCursor}`,
+		);
+		expect(third.items.map((item) => item.name)).toEqual(['gamma']);
+		expect(third.page.nextCursor).toBeNull();
+
+		const short = await pageOf<{ id: string }>(call, '/api/agents?limit=10');
+		expect(short.items).toHaveLength(5);
+		expect(short.page.nextCursor).toBeNull();
+		/* A full page that is also the last one still hands out a cursor; the
+		   page it opens is empty and closes the list. */
+		const exact = await pageOf<{ id: string }>(call, '/api/agents?limit=5');
+		expect(exact.page.nextCursor).toEqual(expect.any(String));
+		const past = await pageOf<{ id: string }>(
+			call,
+			`/api/agents?limit=5&cursor=${exact.page.nextCursor}`,
+		);
+		expect(past.items).toEqual([]);
+		expect(past.page.nextCursor).toBeNull();
+
+		const descending = await pageOf<{ name: string }>(
+			call,
+			'/api/agents?limit=2&sort=name&direction=desc',
+		);
+		expect(descending.items.map((item) => item.name)).toEqual(['gamma', 'eta']);
+		const searched = await pageOf<{ name: string }>(
+			call,
+			'/api/agents?limit=2&q=ta',
+		);
+		expect(searched.items.map((item) => item.name)).toEqual(['beta', 'Delta']);
+
+		const cursor = first.page.nextCursor!;
+		expect(
+			await problem(call, `/api/agents?limit=2&cursor=${tampered(cursor)}`),
+		).toBe('CURSOR_INVALID');
+		expect(
+			await problem(call, `/api/agents?limit=2&q=ta&cursor=${cursor}`),
+		).toBe('CURSOR_INVALID');
+		expect(
+			await problem(
+				call,
+				`/api/agents?limit=2&direction=desc&cursor=${cursor}`,
+			),
+		).toBe('CURSOR_INVALID');
+		expect(
+			await problem(
+				call,
+				`/api/agents?limit=2&sort=updatedAt&cursor=${cursor}`,
+			),
+		).toBe('CURSOR_INVALID');
+		const foreign = await asOtherTenant(
+			composed,
+			`/api/agents?limit=2&cursor=${cursor}`,
+		);
+		expect(foreign.status).toBe(400);
+		expect(await foreign.json()).toMatchObject({
+			error: { code: 'CURSOR_INVALID' },
+		});
+
+		expect(await problem(call, '/api/agents?sort=key')).toBe('INVALID_INPUT');
+		expect(await problem(call, '/api/agents?direction=up')).toBe(
+			'INVALID_INPUT',
+		);
+		expect(await problem(call, '/api/agents?limit=0')).toBe('INVALID_INPUT');
+		expect(await problem(call, '/api/agents?limit=201')).toBe('INVALID_INPUT');
+	});
+
+	it('serves the definitions context beside the page', async () => {
+		const { call } = composition(principal(ALL_SCOPES));
+		const context = (await (await call('/api/agents/context')).json()) as {
+			moduleAgents: unknown[];
+			providers: unknown[];
+			tools: unknown[];
+			procedures: unknown[];
+			skills: unknown[];
+		};
+		expect(context).toMatchObject({
+			moduleAgents: [],
+			providers: expect.any(Array),
+			tools: [],
+			procedures: [],
+			skills: [],
+		});
+		const reader = composition(principal(['agents.runs.read']));
+		expect((await reader.call('/api/agents/context')).status).toBe(403);
+	});
+
+	it('pages runs by queue time with the filters bound into the cursor', async () => {
+		const { composed, call, mutation } = composition(principal(ALL_SCOPES));
+		const agentId = await activeAgentId(mutation);
+		const queued: string[] = [];
+		for (let index = 0; index < 3; index += 1) {
+			const response = await mutation('/api/agent-runs', {
+				agentId,
+				input: `Run ${index}`,
+				toolGrants: [],
+			});
+			expect(response.status).toBe(202);
+			queued.push(((await response.json()) as { run: { id: string } }).run.id);
+		}
+		const newestFirst = [...queued].reverse();
+
+		const first = await pageOf<{ id: string }>(call, '/api/agent-runs?limit=2');
+		expect(first.items.map((run) => run.id)).toEqual(newestFirst.slice(0, 2));
+		const second = await pageOf<{ id: string }>(
+			call,
+			`/api/agent-runs?limit=2&cursor=${first.page.nextCursor}`,
+		);
+		expect(second.items.map((run) => run.id)).toEqual(newestFirst.slice(2));
+		expect(second.page.nextCursor).toBeNull();
+
+		const oldestFirst = await pageOf<{ id: string }>(
+			call,
+			'/api/agent-runs?limit=3&direction=asc',
+		);
+		expect(oldestFirst.items.map((run) => run.id)).toEqual(queued);
+		const byStatus = await pageOf<{ id: string }>(
+			call,
+			'/api/agent-runs?status=queued&agentId=' + agentId,
+		);
+		expect(byStatus.items).toHaveLength(3);
+		const none = await pageOf<{ id: string }>(
+			call,
+			'/api/agent-runs?status=succeeded',
+		);
+		expect(none.items).toEqual([]);
+		const searched = await pageOf<{ id: string }>(
+			call,
+			'/api/agent-runs?q=' + queued[1],
+		);
+		expect(searched.items.map((run) => run.id)).toEqual([queued[1]]);
+
+		const cursor = first.page.nextCursor!;
+		expect(
+			await problem(call, `/api/agent-runs?limit=2&cursor=${tampered(cursor)}`),
+		).toBe('CURSOR_INVALID');
+		expect(
+			await problem(
+				call,
+				`/api/agent-runs?limit=2&status=queued&cursor=${cursor}`,
+			),
+		).toBe('CURSOR_INVALID');
+		const foreign = await asOtherTenant(
+			composed,
+			`/api/agent-runs?limit=2&cursor=${cursor}`,
+		);
+		expect(foreign.status).toBe(400);
+		/* A cursor of another list of the same workspace names a different
+		   keyset; it is refused before its fields reach a statement. */
+		await createAgents(mutation, ['crosswise', 'sideways']);
+		const definitions = await pageOf<{ id: string }>(
+			call,
+			'/api/agents?limit=1',
+		);
+		expect(
+			await problem(
+				call,
+				`/api/agent-runs?limit=2&cursor=${definitions.page.nextCursor}`,
+			),
+		).toBe('CURSOR_INVALID');
+		expect(
+			await problem(call, `/api/agent-audit?limit=2&cursor=${cursor}`),
+		).toBe('CURSOR_INVALID');
+		expect(await problem(call, '/api/agent-runs?status=done')).toBe(
+			'INVALID_INPUT',
+		);
+		expect(await problem(call, '/api/agent-runs?sort=status')).toBe(
+			'INVALID_INPUT',
+		);
+		expect(await problem(call, '/api/agent-runs?trigger=cron')).toBe(
+			'INVALID_INPUT',
+		);
+	});
+
+	it('reads one run with its timeline through agents.runs.get', async () => {
+		const { call, mutation } = composition(principal(ALL_SCOPES));
+		const agentId = await activeAgentId(mutation);
+		const queued = (await (
+			await mutation('/api/agent-runs', {
+				agentId,
+				input: 'Read me back.',
+				toolGrants: [],
+			})
+		).json()) as { run: { id: string } };
+
+		const one = await call('/api/agent-runs/get?id=' + queued.run.id);
+		expect(one.status).toBe(200);
+		expect(await one.json()).toMatchObject({
+			run: { id: queued.run.id, timeline: expect.any(Array) },
+		});
+		expect(await problem(call, '/api/agent-runs/get')).toBe('INVALID_INPUT');
+		expect((await call('/api/agent-runs/get?id=missing')).status).toBe(404);
+		/* The list no longer doubles as the single read. */
+		const list = await pageOf<{ id: string }>(
+			call,
+			'/api/agent-runs?id=' + queued.run.id,
+		);
+		expect(list.items).toHaveLength(1);
+		const reader = composition(principal(['agents.definitions.read']));
+		expect(
+			(await reader.call('/api/agent-runs/get?id=' + queued.run.id)).status,
+		).toBe(403);
+	});
+
+	it('pages the audit trail on a signed cursor within its bounds', async () => {
+		const { composed, call, mutation } = composition(principal(ALL_SCOPES));
+		await createAgents(mutation, ['one', 'two', 'three']);
+		const trail = (await (await call('/api/agent-audit')).json()) as {
+			events: { id: string }[];
+			nextCursor: string | null;
+		};
+		expect(trail.events).toHaveLength(3);
+		expect(trail.nextCursor).toBeNull();
+
+		const first = (await (await call('/api/agent-audit?limit=2')).json()) as {
+			events: { id: string }[];
+			nextCursor: string | null;
+		};
+		expect(first.events.map((event) => event.id)).toEqual(
+			trail.events.slice(0, 2).map((event) => event.id),
+		);
+		expect(first.nextCursor).toEqual(expect.any(String));
+		const second = (await (
+			await call(`/api/agent-audit?limit=2&cursor=${first.nextCursor}`)
+		).json()) as { events: { id: string }[]; nextCursor: string | null };
+		expect(second.events.map((event) => event.id)).toEqual([
+			trail.events[2]!.id,
+		]);
+		expect(second.nextCursor).toBeNull();
+
+		expect(
+			await problem(
+				call,
+				`/api/agent-audit?limit=2&cursor=${tampered(first.nextCursor!)}`,
+			),
+		).toBe('CURSOR_INVALID');
+		const foreign = await asOtherTenant(
+			composed,
+			`/api/agent-audit?limit=2&cursor=${first.nextCursor}`,
+		);
+		expect(foreign.status).toBe(400);
+		expect(await problem(call, '/api/agent-audit?limit=101')).toBe(
+			'INVALID_INPUT',
+		);
+		expect(await problem(call, '/api/agent-audit?limit=0')).toBe(
+			'INVALID_INPUT',
+		);
 	});
 });

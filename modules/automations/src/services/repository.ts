@@ -46,8 +46,42 @@ export interface AutomationScheduleRouting {
 	readonly nextRunAt: number;
 }
 
+export type AutomationListSortKey = 'label' | 'updatedAt';
+
+export const AUTOMATION_LIST_SORT_KEYS: readonly AutomationListSortKey[] = [
+	'label',
+	'updatedAt',
+];
+
+/** The keyset of the last row of a page: the sort value, then the id. */
+export interface AutomationListCursor {
+	readonly value: string | number;
+	readonly id: string;
+}
+
+export interface AutomationListQuery {
+	readonly sort: AutomationListSortKey;
+	readonly direction: 'asc' | 'desc';
+	readonly enabled?: boolean | undefined;
+	/** Substring of the label or the target key. */
+	readonly search?: string | undefined;
+	readonly limit: number;
+	readonly after?: AutomationListCursor | null | undefined;
+}
+
+export interface AutomationListPage<Item> {
+	readonly items: readonly Item[];
+	/** The keyset to continue from; null once the page was short. */
+	readonly next: AutomationListCursor | null;
+}
+
 export interface AutomationsRepository {
+	/** Every schedule of one workspace; only `retime` walks a whole workspace. */
 	listSchedules(tenantId: string): Promise<readonly StoredAutomationSchedule[]>;
+	listSchedulesPage(
+		tenantId: string,
+		query: AutomationListQuery,
+	): Promise<AutomationListPage<StoredAutomationSchedule>>;
 	getSchedule(
 		tenantId: string,
 		scheduleId: string,
@@ -86,7 +120,10 @@ export interface AutomationsRepository {
 		reason: string,
 		now: number,
 	): Promise<boolean>;
-	listTriggers(tenantId: string): Promise<readonly StoredAutomationTrigger[]>;
+	listTriggersPage(
+		tenantId: string,
+		query: AutomationListQuery,
+	): Promise<AutomationListPage<StoredAutomationTrigger>>;
 	getTrigger(
 		tenantId: string,
 		triggerId: string,

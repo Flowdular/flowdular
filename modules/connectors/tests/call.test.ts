@@ -589,7 +589,7 @@ describe('CONNECTORS-TEST-CALL', () => {
 			callerRef: 'drawer',
 		});
 		const service = instanceService(shared.repository, vault);
-		const [logged] = await service.listCalls(TENANT);
+		const [logged] = await service.listCalls(TENANT, {}, { limit: 200 });
 		expect(logged).toMatchObject({
 			operation: 'post',
 			caller: 'test',
@@ -600,7 +600,7 @@ describe('CONNECTORS-TEST-CALL', () => {
 		});
 		expect(logged!.responseBytes).toBeGreaterThan(0);
 		expect(JSON.stringify(logged)).not.toContain('Acme');
-		const [stored] = await service.list(TENANT);
+		const [stored] = await service.list(TENANT, { limit: 200 });
 		expect(stored!.lastCallAt).not.toBeNull();
 	});
 });

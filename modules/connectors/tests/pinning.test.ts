@@ -165,7 +165,13 @@ describe('pinned egress', () => {
 		expect(server.requests.length).toBe(before);
 		/* The refusal is in the log with its class, like every other one. */
 		expect(
-			(await instanceService(shared.repository, vault).listCalls(TENANT))[0],
+			(
+				await instanceService(shared.repository, vault).listCalls(
+					TENANT,
+					{},
+					{ limit: 200 },
+				)
+			)[0],
 		).toMatchObject({ outcome: 'refused', errorClass: 'egress-refused' });
 	});
 });

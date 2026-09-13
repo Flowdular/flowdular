@@ -37,20 +37,68 @@ function mutation(path: string, body: unknown, csrfToken: string) {
 	});
 }
 
-export async function loadAutomationSchedules(): Promise<{
-	readonly schedules: readonly AutomationSchedule[];
+export type AutomationListSortKey = 'label' | 'updatedAt';
+
+export interface AutomationListRequest {
+	readonly sort: AutomationListSortKey;
+	readonly direction: 'asc' | 'desc';
+	readonly enabledOnly: boolean;
+	readonly query: string;
+	readonly limit: number;
+	/** The opaque cursor that opens this page; null for the first one. */
+	readonly cursor: string | null;
+}
+
+export interface AutomationListPage<Item> {
+	readonly items: readonly Item[];
+	readonly page: {
+		readonly nextCursor: string | null;
+		readonly limit: number;
+	};
+}
+
+function listUrl(path: string, request: AutomationListRequest): string {
+	const search = new URLSearchParams({
+		sort: request.sort,
+		direction: request.direction,
+		limit: String(request.limit),
+	});
+	if (request.enabledOnly) search.set('enabled', 'true');
+	if (request.query.trim() !== '') search.set('q', request.query.trim());
+	if (request.cursor) search.set('cursor', request.cursor);
+	return path + '?' + search.toString();
+}
+
+function read<T>(url: string): Promise<T> {
+	return fetch(url, {
+		headers: { accept: 'application/json' },
+		credentials: 'same-origin',
+	}).then((response) => payload<T>(response));
+}
+
+/** What the schedule and trigger forms offer: read once, not per page. */
+export async function loadAutomationOptions(): Promise<{
 	readonly agents: readonly AutomationAgent[];
 	readonly targets: readonly AutomationTargetOption[];
 	readonly variables: readonly VariableDefinition[];
 	/** Workspace zone the cron slots and the listed times are read in. */
 	readonly timeZone: string;
 }> {
-	return payload(
-		await fetch('/api/automations/schedules', {
-			headers: { accept: 'application/json' },
-			credentials: 'same-origin',
-		}),
-	);
+	return read('/api/automations/options');
+}
+
+/** The trigger form's targets, under the trigger read permission alone. */
+export async function loadAutomationTriggerOptions(): Promise<{
+	readonly agents: readonly AutomationAgent[];
+	readonly targets: readonly AutomationTargetOption[];
+}> {
+	return read('/api/automations/triggers/options');
+}
+
+export async function loadAutomationSchedules(
+	request: AutomationListRequest,
+): Promise<AutomationListPage<AutomationSchedule>> {
+	return read(listUrl('/api/automations/schedules', request));
 }
 
 export async function createAutomationSchedule(
@@ -95,17 +143,10 @@ export async function runAutomationSchedule(
 	).run;
 }
 
-export async function loadAutomationTriggers(): Promise<{
-	readonly triggers: readonly AutomationTrigger[];
-	readonly agents: readonly AutomationAgent[];
-	readonly targets: readonly AutomationTargetOption[];
-}> {
-	return payload(
-		await fetch('/api/automations/triggers', {
-			headers: { accept: 'application/json' },
-			credentials: 'same-origin',
-		}),
-	);
+export async function loadAutomationTriggers(
+	request: AutomationListRequest,
+): Promise<AutomationListPage<AutomationTrigger>> {
+	return read(listUrl('/api/automations/triggers', request));
 }
 
 export async function createAutomationTrigger(

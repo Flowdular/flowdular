@@ -3,6 +3,8 @@ import type {
 	CreateWebhookSubscriptionInput,
 	DeliveryAttempt,
 	DeliveryStatus,
+	InboxTransition,
+	InboxTransitionOutcome,
 	NotificationKind,
 	MemberNotificationSettings,
 	NotificationPreference,
@@ -99,20 +101,51 @@ function query(entries: Readonly<Record<string, string>>): string {
 	return text === '' ? '' : '?' + text;
 }
 
-export interface InboxFilter {
+/** One page of a list the server sorted, narrowed and cut. */
+export interface ListPage<Item> {
+	readonly items: readonly Item[];
+	readonly page: {
+		/** Null on the last page. */
+		readonly nextCursor: string | null;
+		readonly limit: number;
+	};
+}
+
+/** The most rows one list request may ask for; the server refuses more. */
+export const LIST_PAGE_MAX = 200;
+
+/** What every list request carries besides its own filters. */
+export interface PageRequest {
+	readonly limit?: number;
+	readonly direction?: 'asc' | 'desc';
+	/** The opaque cursor of the page, none for the first. */
+	readonly cursor?: string;
+}
+
+function pageQuery(request: PageRequest): Readonly<Record<string, string>> {
+	return {
+		limit: request.limit === undefined ? '' : String(request.limit),
+		direction: request.direction ?? '',
+		cursor: request.cursor ?? '',
+	};
+}
+
+export interface InboxFilter extends PageRequest {
 	readonly status?: NotificationsInboxStatus | '';
 	readonly kind?: NotificationKind | '';
 }
 
 export async function loadInbox(
 	filter: InboxFilter = {},
-): Promise<readonly NotificationsInbox[]> {
-	return (
-		await get<{ readonly inbox: readonly NotificationsInbox[] }>(
-			'/api/notifications/inbox' +
-				query({ status: filter.status ?? '', kind: filter.kind ?? '' }),
-		)
-	).inbox;
+): Promise<ListPage<NotificationsInbox>> {
+	return get<ListPage<NotificationsInbox>>(
+		'/api/notifications/inbox' +
+			query({
+				status: filter.status ?? '',
+				kind: filter.kind ?? '',
+				...pageQuery(filter),
+			}),
+	);
 }
 
 export async function loadUnreadCount(): Promise<number> {
@@ -154,6 +187,21 @@ export async function archiveInboxItem(
 	return inboxTransition('/api/notifications/inbox/archive', id, csrfToken);
 }
 
+/** One transition over many items; the server answers one outcome per id. */
+export async function transitionInboxItems(
+	ids: readonly string[],
+	transition: InboxTransition,
+	csrfToken: string,
+): Promise<readonly InboxTransitionOutcome[]> {
+	return (
+		await post<{ readonly outcomes: readonly InboxTransitionOutcome[] }>(
+			'/api/notifications/inbox/transition-many',
+			{ ids, transition },
+			csrfToken,
+		)
+	).outcomes;
+}
+
 export interface NotificationPreferences {
 	readonly kinds: readonly NotificationKind[];
 	readonly preferences: readonly NotificationPreference[];
@@ -192,12 +240,23 @@ export async function saveEmailDelivery(
 	).member;
 }
 
-export async function loadWebhooks(): Promise<readonly WebhookSubscription[]> {
-	return (
-		await get<{ readonly subscriptions: readonly WebhookSubscription[] }>(
-			'/api/notifications/webhooks',
-		)
-	).subscriptions;
+export interface WebhookFilter extends PageRequest {
+	readonly status?: WebhookSubscription['status'] | '';
+	/** A substring of the name or the URL. */
+	readonly search?: string;
+}
+
+export async function loadWebhooks(
+	filter: WebhookFilter = {},
+): Promise<ListPage<WebhookSubscription>> {
+	return get<ListPage<WebhookSubscription>>(
+		'/api/notifications/webhooks' +
+			query({
+				status: filter.status ?? '',
+				q: filter.search ?? '',
+				...pageQuery(filter),
+			}),
+	);
 }
 
 /** The response that carries the secret; it is never readable again. */
@@ -288,23 +347,25 @@ export async function deleteWebhook(
 	);
 }
 
-export interface DeliveryFilter {
+export interface DeliveryFilter extends PageRequest {
 	readonly status?: DeliveryStatus | '';
 	readonly subscriptionId?: string;
+	/** A substring of the source reference or the source module. */
+	readonly search?: string;
 }
 
 export async function loadDeliveries(
 	filter: DeliveryFilter = {},
-): Promise<readonly DeliveryAttempt[]> {
-	return (
-		await get<{ readonly deliveries: readonly DeliveryAttempt[] }>(
-			'/api/notifications/deliveries' +
-				query({
-					status: filter.status ?? '',
-					subscription: filter.subscriptionId ?? '',
-				}),
-		)
-	).deliveries;
+): Promise<ListPage<DeliveryAttempt>> {
+	return get<ListPage<DeliveryAttempt>>(
+		'/api/notifications/deliveries' +
+			query({
+				status: filter.status ?? '',
+				subscription: filter.subscriptionId ?? '',
+				q: filter.search ?? '',
+				...pageQuery(filter),
+			}),
+	);
 }
 
 export async function replayDelivery(

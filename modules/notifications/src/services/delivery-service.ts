@@ -26,6 +26,12 @@ import {
 	type ResolvedAddress,
 	type WebhookEgressPolicy,
 } from './egress.ts';
+import {
+	listPage,
+	timeKey,
+	type ListPageInput,
+	type ListResult,
+} from './paging.ts';
 import type {
 	DeliveryFilters,
 	NotificationsRepository,
@@ -59,7 +65,7 @@ export const DELIVERY_HOLD_MS = 60_000;
 export const DELIVERY_TICK_LIMIT = 50;
 export const RETENTION_BATCH_LIMIT = 500;
 export const RETENTION_TENANT_LIMIT = 100;
-export const DELIVERY_PAGE_LIMIT = 200;
+export const DELIVERY_SEARCH_MAX = 80;
 
 export interface TenantDeliverySettings {
 	readonly retryMaxAttempts: number;
@@ -354,8 +360,18 @@ export class DeliveryService {
 	async list(
 		tenantId: string,
 		filters: DeliveryFilters = {},
+		page: ListPageInput<number> = {},
 	): Promise<readonly DeliveryAttempt[]> {
-		return this.#options.repository.listDeliveries(
+		return (await this.listPage(tenantId, filters, page)).items;
+	}
+
+	/** One page of the ledger, latest schedule first unless asked otherwise. */
+	async listPage(
+		tenantId: string,
+		filters: DeliveryFilters = {},
+		page: ListPageInput<number> = {},
+	): Promise<ListResult<DeliveryAttempt, number>> {
+		const result = await this.#options.repository.listDeliveries(
 			bounded(tenantId, 'tenantId', 1, 128),
 			{
 				status: filters.status
@@ -364,9 +380,13 @@ export class DeliveryService {
 				subscriptionId: filters.subscriptionId
 					? bounded(filters.subscriptionId, 'subscriptionId', 1, 128)
 					: undefined,
+				search: filters.search
+					? bounded(filters.search, 'search', 1, DELIVERY_SEARCH_MAX)
+					: undefined,
 			},
-			DELIVERY_PAGE_LIMIT,
+			listPage(page, 'desc', timeKey),
 		);
+		return { items: result.rows, next: result.next };
 	}
 
 	/** Queues a fresh attempt run for a dead-lettered delivery. */

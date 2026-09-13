@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: directory.core
-specVersion: 0.1.7
+specVersion: 0.1.8
 status: approved
 name: Directory Core
 description: Lets an identity provider provision and deprovision workspace members and groups through SCIM 2.0, with a workspace-scoped bearer token, group to role mapping and deactivation that disables the membership without ever deleting the account.
@@ -341,6 +341,10 @@ acceptanceScenarios:
     given: A request without a token, with a token of another workspace, or with a member API token.
     when: Any SCIM endpoint is called.
     then: The request answers 401 with the SCIM error schema, nothing is written, and the refusal is audited without the token value.
+  - id: DIRECTORY-SCREEN-PAGING
+    given: A workspace with more SCIM tokens and groups than one screen page holds.
+    when: An owner walks the SCIM tokens screen sorted by label with the status filter and the label search, and the group mappings screen sorted by precedence or displayName with the name search.
+    then: Each screen list answers keyset pages of at most 200 rows (50 by default) in the requested direction, consecutive pages neither overlap nor leave a gap, a full page carries an opaque cursor and a short page none, the cursor is signed and bound to the workspace, the sort and the filters so one cut under another answers CURSOR_INVALID, an unknown sort key, direction or filter value answers INVALID_INPUT, and the SCIM listing keeps its own startIndex and count paging (DIRECTORY-FILTER).
   - id: DIRECTORY-TENANT-BOUNDARY
     given: Two workspaces with SCIM tokens, mappings and provisioning events.
     when: A runtime transaction bound to one workspace reads or writes any of them.

@@ -1,9 +1,10 @@
 import { t } from '@flowdular/client/i18n';
 import type {
-	ConnectorCall,
+	ConnectorCallListRow,
 	ConnectorCallOutcome,
 	ConnectorDefinition,
 	ConnectorInstance,
+	ConnectorInstanceStatus,
 } from '../domain/types.ts';
 import type { TestCallReport } from './state.ts';
 
@@ -96,29 +97,74 @@ export async function loadConnectorDefinitions(): Promise<
 	).definitions;
 }
 
-export async function loadConnectorInstances(): Promise<
-	readonly ConnectorInstance[]
-> {
-	return (
-		await get<{ readonly instances: readonly ConnectorInstance[] }>(
-			'/api/connectors/instances',
-		)
-	).instances;
+/** One keyset page; `nextCursor` is null on the last page. */
+export interface ListPage<T> {
+	readonly items: readonly T[];
+	readonly page: { readonly nextCursor: string | null };
 }
 
-export async function loadConnectorCalls(filters: {
-	readonly outcome?: ConnectorCallOutcome | '';
-	readonly instanceId?: string;
-}): Promise<readonly ConnectorCall[]> {
-	const query = new URLSearchParams();
-	if (filters.outcome) query.set('outcome', filters.outcome);
-	if (filters.instanceId) query.set('instanceId', filters.instanceId);
-	const suffix = query.toString();
-	return (
-		await get<{ readonly calls: readonly ConnectorCall[] }>(
-			'/api/connectors/calls' + (suffix === '' ? '' : '?' + suffix),
-		)
-	).calls;
+interface ListQuery {
+	readonly sort?: string | undefined;
+	readonly direction?: 'asc' | 'desc' | undefined;
+	readonly cursor?: string | null | undefined;
+	readonly limit?: number | undefined;
+}
+
+export interface ConnectorInstanceListQuery extends ListQuery {
+	readonly status?: ConnectorInstanceStatus | '' | undefined;
+	readonly definition?: string | undefined;
+	readonly q?: string | undefined;
+}
+
+export interface ConnectorCallListQuery extends ListQuery {
+	readonly outcome?: ConnectorCallOutcome | '' | undefined;
+	readonly instanceId?: string | undefined;
+	readonly q?: string | undefined;
+}
+
+function listPath(
+	path: string,
+	query: Readonly<Record<string, string | number | null | undefined>>,
+): string {
+	const search = new URLSearchParams();
+	for (const [key, value] of Object.entries(query)) {
+		if (value === undefined || value === null || value === '') continue;
+		search.set(key, String(value));
+	}
+	const suffix = search.toString();
+	return suffix === '' ? path : path + '?' + suffix;
+}
+
+export async function loadConnectorInstances(
+	query: ConnectorInstanceListQuery = {},
+): Promise<ListPage<ConnectorInstance>> {
+	return get<ListPage<ConnectorInstance>>(
+		listPath('/api/connectors/instances', {
+			status: query.status,
+			definition: query.definition,
+			q: query.q,
+			sort: query.sort,
+			direction: query.direction,
+			cursor: query.cursor,
+			limit: query.limit,
+		}),
+	);
+}
+
+export async function loadConnectorCalls(
+	query: ConnectorCallListQuery = {},
+): Promise<ListPage<ConnectorCallListRow>> {
+	return get<ListPage<ConnectorCallListRow>>(
+		listPath('/api/connectors/calls', {
+			outcome: query.outcome,
+			instanceId: query.instanceId,
+			q: query.q,
+			sort: query.sort,
+			direction: query.direction,
+			cursor: query.cursor,
+			limit: query.limit,
+		}),
+	);
 }
 
 export interface ConnectorFormValue {

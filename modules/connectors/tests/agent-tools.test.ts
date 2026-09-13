@@ -228,13 +228,15 @@ describe('connectors agent tool', () => {
 			bodyOmitted: false,
 		});
 		const service = instanceService(shared.repository, vault);
-		const [logged] = await service.listCalls(TENANT);
+		const [logged] = await service.listCalls(TENANT, {}, { limit: 200 });
 		expect(logged).toMatchObject({
 			caller: 'agent',
 			callerRef: 'run-0001',
 			instanceId: instance.id,
 		});
-		expect(await service.listCalls('tenant-other')).toEqual([]);
+		expect(await service.listCalls('tenant-other', {}, { limit: 200 })).toEqual(
+			[],
+		);
 	});
 
 	/* The gate is the admission; the service refuses again so a caller that
@@ -351,7 +353,9 @@ describe('CONNECTORS-TOOL-CALLER-KIND', () => {
 		)) as Record<string, unknown>;
 		expect(result).toMatchObject({ outcome: 'succeeded', status: 200 });
 		const service = instanceService(shared.repository, vault);
-		expect((await service.listCalls(TENANT))[0]).toMatchObject({
+		expect(
+			(await service.listCalls(TENANT, {}, { limit: 200 }))[0],
+		).toMatchObject({
 			caller: 'workflow',
 			instanceId: forWorkflows.id,
 		});

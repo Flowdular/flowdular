@@ -2,8 +2,10 @@ import {
 	defineEndpoint,
 	HttpProblem,
 	jsonResponse,
+	pageResponse,
 	problemResponse,
 	readJsonObject,
+	readPageQuery,
 	requiredInteger,
 	requiredString,
 } from '@flowdular/server';
@@ -17,10 +19,10 @@ import {
 import type {
 	JsonValue,
 	WorkflowExecutionOrigin,
-	WorkflowRunFilters,
 	WorkflowRunMode,
 	WorkflowRunStatus,
 	WorkflowSimulationFixture,
+	WorkflowSortDirection,
 } from '../domain/types.ts';
 import { WORKFLOW_LIMITS } from '../domain/types.ts';
 import { WORKFLOWS_PERMISSIONS } from '../acl/permissions.ts';
@@ -81,6 +83,65 @@ function optionalQuery(
 	if (value === null || value === '') return undefined;
 	if (value.length > 2_048 || (allowed && !allowed.includes(value))) {
 		throw new HttpProblem('INVALID_INPUT', `${key} is invalid.`, 400);
+	}
+	return value;
+}
+
+/** The default page of a list screen; the ceiling is the interactive bound. */
+const LIST_PAGE_LIMIT = 50;
+const SEARCH_LIMIT = 120;
+
+interface ListOrder<Sort extends string> {
+	readonly sort: Sort;
+	readonly direction: WorkflowSortDirection;
+}
+
+/* `sort` and `direction` are the list's own vocabulary; anything else is the
+   caller's mistake rather than a fallback to the default order. */
+function readOrder<Sort extends string>(
+	url: URL,
+	allowed: readonly Sort[],
+	fallback: ListOrder<Sort>,
+): ListOrder<Sort> {
+	const sort = url.searchParams.get('sort');
+	const direction = url.searchParams.get('direction');
+	if (sort !== null && sort !== '' && !allowed.includes(sort as Sort)) {
+		throw new HttpProblem(
+			'INVALID_INPUT',
+			`sort must be one of ${allowed.join(', ')}.`,
+			400,
+		);
+	}
+	if (
+		direction !== null &&
+		direction !== '' &&
+		direction !== 'asc' &&
+		direction !== 'desc'
+	) {
+		throw new HttpProblem(
+			'INVALID_INPUT',
+			'direction must be asc or desc.',
+			400,
+		);
+	}
+	return {
+		sort: sort ? (sort as Sort) : fallback.sort,
+		direction: direction
+			? (direction as WorkflowSortDirection)
+			: fallback.direction,
+	};
+}
+
+/** The screen's search box, trimmed; whitespace alone asks for nothing. */
+function searchQuery(url: URL): string | undefined {
+	const value = url.searchParams.get('q')?.trim();
+	if (!value) return undefined;
+	if (value.length > SEARCH_LIMIT) {
+		throw new HttpProblem(
+			'INVALID_INPUT',
+			`q must contain at most ${SEARCH_LIMIT} characters.`,
+			400,
+		);
 	}
 	return value;
 }
@@ -274,12 +335,36 @@ export function createWorkflowsRoutes(
 		methods: ['GET'],
 		access: { kind: 'permission', permission: WORKFLOWS_PERMISSIONS.read },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: async ({ octane }) =>
-			jsonResponse({
-				definitions: await (
+		handler: async ({ octane }) => {
+			try {
+				const url = new URL(octane.request.url);
+				const page = readPageQuery(url, {
+					maxLimit: WORKFLOW_LIMITS.maxInteractivePage,
+					defaultLimit: LIST_PAGE_LIMIT,
+				});
+				const status = optionalQuery(url, 'status', ['active', 'archived']);
+				const search = searchQuery(url);
+				const listed = await (
 					await runtime.service()
-				).list(principalFromContext(octane)!.tenantId),
-			}),
+				).listDefinitions(principalFromContext(octane)!.tenantId, {
+					...readOrder(url, ['name', 'updatedAt'], {
+						sort: 'name',
+						direction: 'asc',
+					}),
+					...(status ? { status: status as 'active' | 'archived' } : {}),
+					...(search ? { search } : {}),
+					limit: page.limit,
+					cursor: page.cursor,
+				});
+				return pageResponse({
+					items: listed.definitions,
+					limit: page.limit,
+					nextCursor: listed.nextCursor,
+				});
+			} catch (error) {
+				return failure(error);
+			}
+		},
 	});
 	const create = defineEndpoint({
 		id: 'workflows.definitions.create',
@@ -509,7 +594,10 @@ export function createWorkflowsRoutes(
 			try {
 				const principal = principalFromContext(octane)!;
 				const url = new URL(octane.request.url);
-				const rawLimit = optionalQuery(url, 'limit');
+				const page = readPageQuery(url, {
+					maxLimit: WORKFLOW_LIMITS.maxInteractivePage,
+					defaultLimit: LIST_PAGE_LIMIT,
+				});
 				const workflowId = optionalQuery(url, 'workflowId');
 				const mode = optionalQuery(url, 'mode', ['simulate', 'live']);
 				const status = optionalQuery(url, 'status', [
@@ -534,8 +622,14 @@ export function createWorkflowsRoutes(
 					'schedule',
 					'webhook',
 				]);
-				const cursor = optionalQuery(url, 'cursor');
-				const filters: WorkflowRunFilters = {
+				const search = searchQuery(url);
+				const listed = await (
+					await runtime.service()
+				).listRuns(principal.tenantId, {
+					...readOrder(url, ['queuedAt'], {
+						sort: 'queuedAt',
+						direction: 'desc',
+					}),
 					...(workflowId ? { workflowId } : {}),
 					...(mode ? { mode: mode as WorkflowRunMode } : {}),
 					...(status ? { status: status as WorkflowRunStatus } : {}),
@@ -545,12 +639,15 @@ export function createWorkflowsRoutes(
 					...(originKind
 						? { originKind: originKind as WorkflowExecutionOrigin['kind'] }
 						: {}),
-					...(rawLimit ? { limit: Number(rawLimit) } : {}),
-					...(cursor ? { cursor } : {}),
-				};
-				return jsonResponse(
-					await (await runtime.service()).listRuns(principal.tenantId, filters),
-				);
+					...(search ? { search } : {}),
+					limit: page.limit,
+					cursor: page.cursor,
+				});
+				return pageResponse({
+					items: listed.runs,
+					limit: page.limit,
+					nextCursor: listed.nextCursor,
+				});
 			} catch (error) {
 				return failure(error);
 			}
@@ -773,16 +870,25 @@ export function createWorkflowsRoutes(
 		handler: async ({ octane }) => {
 			try {
 				const url = new URL(octane.request.url);
-				const limit = Number(url.searchParams.get('limit') ?? '50');
-				return jsonResponse(
-					await (
-						await runtime.service()
-					).listAudit(
-						principalFromContext(octane)!.tenantId,
-						limit,
-						url.searchParams.get('cursor'),
-					),
-				);
+				const page = readPageQuery(url, {
+					maxLimit: WORKFLOW_LIMITS.maxInteractivePage,
+					defaultLimit: LIST_PAGE_LIMIT,
+				});
+				const listed = await (
+					await runtime.service()
+				).listAudit(principalFromContext(octane)!.tenantId, {
+					...readOrder(url, ['sequence', 'occurredAt'], {
+						sort: 'sequence',
+						direction: 'desc',
+					}),
+					limit: page.limit,
+					cursor: page.cursor,
+				});
+				return pageResponse({
+					items: listed.events,
+					limit: page.limit,
+					nextCursor: listed.nextCursor,
+				});
 			} catch (error) {
 				return failure(error);
 			}

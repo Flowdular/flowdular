@@ -23,7 +23,10 @@ import {
 	workflowPayloadKeyId,
 	type WorkflowPayloadCodec,
 } from '../src/services/payload-codec.ts';
-import { createWorkflowCursorCodec } from '../src/services/cursor-codec.ts';
+import {
+	readWorkflowCursor,
+	signWorkflowCursor,
+} from '../src/services/cursors.ts';
 import { rotateWorkflowPayloads } from '../src/services/payload-rotation.ts';
 import { workflowsRuntimeOptionsFromEnvironment } from '../src/server/runtime.ts';
 import {
@@ -510,24 +513,21 @@ describe('the workflows secrets-rotate command', () => {
 	});
 });
 
-describe('the cursor codec across a rotation', () => {
+describe('the cursor keys across a rotation', () => {
 	it('verifies a cursor signed with the previous key and signs with the current', () => {
-		const before = createWorkflowCursorCodec(KEY_A);
-		const cursor = before.encode('wfrc1', { after: 'run-1' });
-		const after = createWorkflowCursorCodec(KEY_B, [KEY_A]);
+		const before = { current: KEY_A, previous: [] };
+		const cursor = signWorkflowCursor({ after: 'run-1' }, before);
+		const after = { current: KEY_B, previous: [KEY_A] };
 
-		expect(after.decode('wfrc1', cursor)).toMatchObject({ after: 'run-1' });
+		expect(readWorkflowCursor(cursor, after)).toMatchObject({ after: 'run-1' });
 		expect(() =>
-			createWorkflowCursorCodec(KEY_B, [KEY_C]).decode('wfrc1', cursor),
-		).toThrowError('WORKFLOW_CURSOR_INVALID');
-		/* A cursor this codec issues carries the current key, so the retired key
-		   can be dropped once the outstanding pages are gone. */
+			readWorkflowCursor(cursor, { current: KEY_B, previous: [KEY_C] }),
+		).toThrowError(/cursor is not valid/);
+		/* A cursor issued now carries the current key, so the retired key can be
+		   dropped once the outstanding pages are gone. */
 		expect(() =>
-			createWorkflowCursorCodec(KEY_A).decode(
-				'wfrc1',
-				after.encode('wfrc1', { after: 'run-2' }),
-			),
-		).toThrowError('WORKFLOW_CURSOR_INVALID');
+			readWorkflowCursor(signWorkflowCursor({ after: 'run-2' }, after), before),
+		).toThrowError(/cursor is not valid/);
 	});
 });
 

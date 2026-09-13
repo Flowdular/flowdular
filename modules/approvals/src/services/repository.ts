@@ -1,5 +1,6 @@
 import type {
 	ApprovalDecision,
+	ApprovalListPage,
 	ApprovalRequest,
 	ApprovalRequestDetail,
 	ApprovalRouting,
@@ -75,10 +76,21 @@ export interface ApprovalsRepository {
 		subjectRef: string,
 	): Promise<ApprovalRequest | null>;
 	detail(tenantId: string, id: string): Promise<ApprovalRequestDetail | null>;
+	/**
+	 * The first `limit` matches, newest first, ties on createdAt broken by id
+	 * descending. It answers the `approvals.requests.v1` capability; the inbox
+	 * pages through `listPage`.
+	 */
 	list(
 		tenantId: string,
 		filters: ApprovalRequestFilters,
 		limit: number,
+	): Promise<readonly ApprovalRequest[]>;
+	/** One keyset page of the same order, in either direction. */
+	listPage(
+		tenantId: string,
+		filters: ApprovalRequestFilters,
+		page: ApprovalListPage,
 	): Promise<readonly ApprovalRequest[]>;
 	/** Whether the snapshot taken when the request opened names this account. */
 	isSnapshotDecider(

@@ -1,14 +1,22 @@
 import { randomUUID } from 'node:crypto';
 import {
 	NOTIFICATION_KINDS,
+	SUBSCRIPTION_STATUSES,
 	type NotificationKind,
 	type WebhookSubscription,
 	type WebhookSubscriptionSecret,
 } from '../domain/types.ts';
 import { WebhookEgressError, type WebhookEgressPolicy } from './egress.ts';
+import {
+	listPage,
+	textKey,
+	type ListPageInput,
+	type ListResult,
+} from './paging.ts';
 import type {
 	NotificationsRepository,
 	StoredWebhookSubscription,
+	SubscriptionFilters,
 } from './repository.ts';
 import {
 	generateWebhookSecret,
@@ -19,12 +27,14 @@ import {
 import {
 	bounded,
 	NotificationsServiceError,
+	oneOf,
 	singleLine,
 } from './service-error.ts';
 
 export const SUBSCRIPTION_NAME_MAX = 120;
 export const SUBSCRIPTION_URL_MAX = 2_048;
 export const SUBSCRIPTION_DESCRIPTION_MAX = 1_000;
+export const SUBSCRIPTION_SEARCH_MAX = 80;
 
 export interface WebhookSubscriptionInput {
 	readonly name: string;
@@ -78,12 +88,33 @@ export class WebhookSubscriptionService {
 		private readonly now: () => number = Date.now,
 	) {}
 
-	async list(tenantId: string): Promise<readonly WebhookSubscription[]> {
-		return (
-			await this.repository.listSubscriptions(
-				bounded(tenantId, 'tenantId', 1, 128),
-			)
-		).map(presentSubscription);
+	async list(
+		tenantId: string,
+		filters: SubscriptionFilters = {},
+		page: ListPageInput<string> = {},
+	): Promise<readonly WebhookSubscription[]> {
+		return (await this.listPage(tenantId, filters, page)).items;
+	}
+
+	/** One page by normalized name; the key of a page is the name as stored. */
+	async listPage(
+		tenantId: string,
+		filters: SubscriptionFilters = {},
+		page: ListPageInput<string> = {},
+	): Promise<ListResult<WebhookSubscription, string>> {
+		const result = await this.repository.listSubscriptions(
+			bounded(tenantId, 'tenantId', 1, 128),
+			{
+				status: filters.status
+					? oneOf(filters.status, 'status', SUBSCRIPTION_STATUSES)
+					: undefined,
+				search: filters.search
+					? bounded(filters.search, 'search', 1, SUBSCRIPTION_SEARCH_MAX)
+					: undefined,
+			},
+			listPage(page, 'asc', (value) => textKey(value, SUBSCRIPTION_NAME_MAX)),
+		);
+		return { items: result.rows.map(presentSubscription), next: result.next };
 	}
 
 	async get(tenantId: string, id: string): Promise<WebhookSubscription> {

@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: notifications.core
-specVersion: 0.2.6
+specVersion: 0.2.7
 status: approved
 name: Notifications Core
 description: Delivers what a person and a customer system need to hear about, as an in-app inbox per member and signed outbound webhooks per workspace with a delivery ledger, bounded retry and a dead letter an administrator can inspect and replay.
@@ -413,6 +413,13 @@ actions:
     risk: workspace-write
     idempotent: true
     description: Archive the member's own item; archived items leave the default inbox list.
+  - id: transition-many
+    entity: inbox
+    permission: notifications.inbox.manage
+    kind: update
+    risk: workspace-write
+    idempotent: true
+    description: Mark read or archive the items the inbox screen selected, between 1 and 100 unique ids, each through the single transition path scoped to the member, answering one outcome per id (updated, not-found, or refused for an archived item) and never failing the whole call for an item that is missing or another member's.
   - id: save-preference
     entity: preference
     permission: notifications.inbox.manage
@@ -636,7 +643,11 @@ acceptanceScenarios:
   - id: NOTIFICATIONS-INBOX-OWN
     given: Two members of one tenant each have inbox items.
     when: A member lists, marks or archives inbox items.
-    then: Only items addressed to that member's account are returned or changed, and an item id of the other member answers as not found.
+    then: Only items addressed to that member's account are returned or changed, and an item id of the other member answers as not found. The inbox screen lists at most 200 items per request (50 by default) sorted by createdAt in either direction, open items unless a status is chosen, and continues through an opaque cursor bound to the tenant, the member, the sort, the direction and the filters, which is refused when any of them differ.
+  - id: NOTIFICATIONS-INBOX-MANY
+    given: A member holding notifications.inbox.manage selects several of their own inbox items, and the request also names an id that does not exist, one addressed to another member of the same workspace, one that belongs to another tenant and one of their own items that is already archived.
+    when: The member marks them read or archives them in one call naming the selected ids.
+    then: A list of no ids, of more than 100, one repeating an id or an unknown transition is refused with INVALID_INPUT before any row is touched; otherwise each of the member's own open items changes through the single transition path, the missing, the other member's and the other tenant's id are answered not-found with those rows unchanged, the archived item is answered refused with INBOX_TRANSITION_INVALID for either change, the screen offers mark-read for unread rows and archive for open rows only, the response carries one outcome per id in the order sent, the unread count reflects the change, and a call without the permission or the CSRF proof is refused first.
   - id: NOTIFICATIONS-INBOX-PREFERENCE
     given: A member disabled the kind agent-run-completed.
     when: An event of that kind is published with that member as recipient.
@@ -689,6 +700,10 @@ acceptanceScenarios:
     given: Delivery attempts older than the tenant retention window exist.
     when: The poll loop runs.
     then: Those attempts are deleted in bounded batches and newer attempts and all inbox items remain.
+  - id: NOTIFICATIONS-LIST-PAGES
+    given: A workspace holds more subscriptions and delivery attempts than one page.
+    when: An administrator opens the webhooks or the deliveries screen and walks its pages.
+    then: The webhooks screen lists at most 200 subscriptions per request (50 by default) sorted by name in either direction with the status and search filters applied by the server, the deliveries screen lists at most 200 attempts per request (50 by default) sorted by scheduledFor in either direction with the status, subscription and search filters applied by the server, and each screen continues through an opaque cursor bound to the tenant, the sort, the direction and the filters, which is refused when any of them differ.
   - id: NOTIFICATIONS-DENY
     given: A principal is unauthenticated or lacks the required permission.
     when: The principal reads or mutates inbox items, subscriptions or deliveries.

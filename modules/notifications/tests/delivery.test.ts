@@ -673,7 +673,11 @@ describe('notifications delivery', () => {
 			await runner.tick();
 
 			expect(endpoint.received).toHaveLength(1);
-			const held = await deliveries.list(TENANT, { subscriptionId: paused.id });
+			const held = await deliveries.list(
+				TENANT,
+				{ subscriptionId: paused.id },
+				{ limit: 200 },
+			);
 			expect(held).toHaveLength(backlog);
 			/* NOTIFICATIONS-PAUSE still holds for every one of them: no attempt was
 			   counted, no outcome written, only the due time moved. */
