@@ -9,7 +9,10 @@ import {
 	serverTracer,
 	validateApplicationPath,
 } from '@flowdular/server';
-import { createDataClassRegistry } from '@flowdular/kernel';
+import {
+	createDataClassRegistry,
+	PLATFORM_SETTINGS_TENANT,
+} from '@flowdular/kernel';
 import { resolve } from 'node:path';
 import { defineConfig, RenderRoute, ServerRoute } from '@octanejs/vite-plugin';
 import {
@@ -277,6 +280,10 @@ async function createPlatformConfig() {
 			async () => {
 				await databases.check();
 			},
+			/* Platform-scoped settings are read by background work before any
+			   request could prime them; a workspace is primed by the
+			   authentication middleware. */
+			() => settings.prime(PLATFORM_SETTINGS_TENANT),
 			...moduleCompositions.flatMap((composition) =>
 				composition.prepare ? [composition.prepare] : [],
 			),

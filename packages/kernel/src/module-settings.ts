@@ -52,13 +52,15 @@ export interface ModuleSettingRecord {
 	readonly updatedAt: number;
 }
 
+/* Storage may be a database or a network, so every operation is asynchronous;
+   the runtime serves reads from a snapshot it primes per tenant. */
 export interface ModuleSettingsStore {
 	load(
 		tenantId: string,
 		moduleId: string,
-	): Readonly<Record<string, ModuleSettingValue>>;
-	save(record: ModuleSettingRecord): void;
-	clear(tenantId: string, moduleId: string, key: string): void;
+	): Promise<Readonly<Record<string, ModuleSettingValue>>>;
+	save(record: ModuleSettingRecord): Promise<void>;
+	clear(tenantId: string, moduleId: string, key: string): Promise<void>;
 }
 
 export interface ModuleSettingEntry {
@@ -97,27 +99,34 @@ export interface ModuleSettingChange {
 export interface ModuleSettingsRuntime {
 	declare(declaration: ModuleSettingsDeclaration): void;
 	declarations(): readonly ModuleSettingsDeclaration[];
-	/** Live read: the stored value, else the declared default. */
+	/**
+	 * Loads the stored values of every declared module for this tenant, and the
+	 * platform-scoped ones, into memory. Idempotent and memoised: a primed
+	 * tenant costs one lookup. `get` and `list` answer from that snapshot, so a
+	 * request path primes the tenant before it reads.
+	 */
+	prime(tenantId: string): Promise<void>;
+	/** The stored value, else the declared default; throws for an unprimed tenant. */
 	get<T extends ModuleSettingValue>(
 		tenantId: string,
 		moduleId: string,
 		key: string,
 	): T;
 	list(tenantId: string): readonly ModuleSettingEntry[];
-	/** Validates against the declaration; null clears the stored value. */
+	/** Validates against the declaration; null clears the stored value. Resolves once the store holds it and the snapshot is refreshed. */
 	set(
 		tenantId: string,
 		moduleId: string,
 		key: string,
 		value: ModuleSettingValue | null,
 		actor: string,
-	): void;
+	): Promise<void>;
 	onChange(listener: (change: ModuleSettingChange) => void): () => void;
 }
 
 export interface ModuleSettingsRuntimeOptions {
 	readonly now?: () => number;
-	/** Bound on cached (tenant, module) value sets; least recently read is evicted. */
+	/** Bound on tenants held in memory; the least recently primed is evicted, the platform tenant stays. */
 	readonly cacheLimit?: number;
 }
 
@@ -294,7 +303,17 @@ export function createModuleSettingsRuntime(
 	const now = options.now ?? Date.now;
 	const cacheLimit = options.cacheLimit ?? 512;
 	const declarations = new Map<string, ModuleSettingsDeclaration>();
-	const cache = new Map<string, Readonly<Record<string, ModuleSettingValue>>>();
+	/* Tenant, then module, to the values the store holds. Filled by prime and
+	   by set, never by a read: a read of a tenant that is not here fails. */
+	const snapshots = new Map<
+		string,
+		Map<string, Readonly<Record<string, ModuleSettingValue>>>
+	>();
+	const loads = new Map<string, Promise<void>>();
+	/* The declaration generation a tenant was primed at; a module declared
+	   later makes the next prime load what is missing. */
+	const primed = new Map<string, number>();
+	let generation = 0;
 	const listeners = new Set<ChangeListener>();
 
 	const definitionOf = (
@@ -336,24 +355,95 @@ export function createModuleSettingsRuntime(
 		return tenantId;
 	};
 
+	const tenantSnapshot = (
+		tenantId: string,
+	): Map<string, Readonly<Record<string, ModuleSettingValue>>> => {
+		let snapshot = snapshots.get(tenantId);
+		if (snapshot) return snapshot;
+		if (snapshots.size >= cacheLimit) {
+			for (const oldest of snapshots.keys()) {
+				if (oldest === PLATFORM_SETTINGS_TENANT) continue;
+				snapshots.delete(oldest);
+				primed.delete(oldest);
+				break;
+			}
+		}
+		snapshot = new Map();
+		snapshots.set(tenantId, snapshot);
+		return snapshot;
+	};
+
+	const loadModule = (tenantId: string, moduleId: string): Promise<void> => {
+		if (snapshots.get(tenantId)?.has(moduleId)) return Promise.resolve();
+		const loadKey = `${tenantId} ${moduleId}`;
+		const inflight = loads.get(loadKey);
+		if (inflight) return inflight;
+		const pending = store
+			.load(tenantId, moduleId)
+			.then((values) => {
+				tenantSnapshot(tenantId).set(moduleId, values);
+			})
+			.finally(() => loads.delete(loadKey));
+		loads.set(loadKey, pending);
+		return pending;
+	};
+
+	const scopesOf = (
+		declaration: ModuleSettingsDeclaration,
+	): { readonly tenant: boolean; readonly platform: boolean } => {
+		let tenant = false;
+		let platform = false;
+		for (const definition of Object.values(declaration.settings)) {
+			if (definition.scope === 'platform') platform = true;
+			else tenant = true;
+		}
+		return { tenant, platform };
+	};
+
+	const prime = async (tenantId: string): Promise<void> => {
+		const at = generation;
+		if (primed.get(tenantId) === at) {
+			const snapshot = snapshots.get(tenantId);
+			if (snapshot) {
+				snapshots.delete(tenantId);
+				snapshots.set(tenantId, snapshot);
+			}
+			return;
+		}
+		const pending: Promise<void>[] = [];
+		for (const declaration of declarations.values()) {
+			const scopes = scopesOf(declaration);
+			if (scopes.platform) {
+				pending.push(
+					loadModule(PLATFORM_SETTINGS_TENANT, declaration.moduleId),
+				);
+			}
+			if (scopes.tenant && tenantId !== PLATFORM_SETTINGS_TENANT) {
+				pending.push(loadModule(tenantId, declaration.moduleId));
+			}
+		}
+		await Promise.all(pending);
+		tenantSnapshot(tenantId);
+		primed.set(tenantId, at);
+	};
+
 	const stored = (
 		tenantId: string,
 		moduleId: string,
 	): Readonly<Record<string, ModuleSettingValue>> => {
-		const cacheKey = `${tenantId} ${moduleId}`;
-		const hit = cache.get(cacheKey);
-		if (hit) {
-			cache.delete(cacheKey);
-			cache.set(cacheKey, hit);
-			return hit;
+		const values = snapshots.get(tenantId)?.get(moduleId);
+		if (!values) {
+			throw new ModuleSettingsError(
+				'SETTINGS_NOT_PRIMED',
+				`Settings of ${moduleId} for ${
+					tenantId === PLATFORM_SETTINGS_TENANT
+						? 'the platform'
+						: `tenant ${tenantId}`
+				} are not loaded; await settings.prime(tenantId) before reading.`,
+				500,
+			);
 		}
-		const loaded = store.load(tenantId, moduleId);
-		if (cache.size >= cacheLimit) {
-			const oldest = cache.keys().next().value;
-			if (oldest !== undefined) cache.delete(oldest);
-		}
-		cache.set(cacheKey, loaded);
-		return loaded;
+		return values;
 	};
 
 	const resolve = (
@@ -388,10 +478,12 @@ export function createModuleSettingsRuntime(
 				);
 			}
 			declarations.set(declaration.moduleId, defineModuleSettings(declaration));
+			generation += 1;
 		},
 		declarations() {
 			return [...declarations.values()];
 		},
+		prime,
 		get(tenantId, moduleId, key) {
 			return resolve(tenantId, moduleId, key, definitionOf(moduleId, key))
 				.value as never;
@@ -417,7 +509,7 @@ export function createModuleSettingsRuntime(
 			}
 			return entries;
 		},
-		set(tenantId, moduleId, key, value, actor) {
+		async set(tenantId, moduleId, key, value, actor) {
 			const definition = definitionOf(moduleId, key);
 			const target = storageTenant(definition, moduleId, key, tenantId);
 			const next =
@@ -425,15 +517,16 @@ export function createModuleSettingsRuntime(
 					? definition.defaultValue
 					: assertSettingValue(moduleId, key, definition, value);
 			/* Read before the write, so the change carries the value that was
-			   replaced. The value after the write is known here, so the cache
-			   this write invalidates is never reloaded to report it. */
+			   replaced. The snapshot keeps serving the old values until the
+			   reload lands, so a concurrent read never finds a gap. */
+			await loadModule(target, moduleId);
 			const previous = definition.secret
 				? null
 				: resolve(tenantId, moduleId, key, definition).value;
 			if (value === null) {
-				store.clear(target, moduleId, key);
+				await store.clear(target, moduleId, key);
 			} else {
-				store.save({
+				await store.save({
 					tenantId: target,
 					moduleId,
 					key,
@@ -442,7 +535,7 @@ export function createModuleSettingsRuntime(
 					updatedAt: now(),
 				});
 			}
-			cache.delete(`${target} ${moduleId}`);
+			tenantSnapshot(target).set(moduleId, await store.load(target, moduleId));
 			const change: ModuleSettingChange = {
 				tenantId: target,
 				moduleId,

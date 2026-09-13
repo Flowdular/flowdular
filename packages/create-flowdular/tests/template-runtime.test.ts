@@ -31,14 +31,14 @@ const fixtures: Record<string, string> = {
 		export const authRuntimeOptionsFromEnvironment = () => ({ secureCookies: false });
 		export function createAuthRuntime(options) {
 			if (!options.databases) throw new Error('AUTH_DATABASE_PROVIDER_REQUIRED');
-			return { moduleSettings: { declare() {} }, middleware: { databases: options.databases }, async dispose() {} };
+			return { moduleSettings: { declare() {}, async prime() {} }, middleware: { databases: options.databases }, async dispose() {} };
 		}
 		export const createAuthRoutes = () => [];
 		export const createPlatformAgentRegistry = () => ({ seal() {} });
 		export const createPlatformCapabilityRegistry = () => ({});
 		export const createPlatformToolRegistry = () => ({});
 	 export const nodemailerSmtpTransport = () => ({ async send() {} });`,
-	'@flowdular/sdk/kernel': `export const createDataClassRegistry = () => ({ seal() {} });`,
+	'@flowdular/sdk/kernel': `export const createDataClassRegistry = () => ({ seal() {} }); export const PLATFORM_SETTINGS_TENANT = '';`,
 	'@flowdular/sdk/storage': `
 		export class StorageError extends Error {}
 		export const STORAGE_READ_ROUTE_PREFIX = '/api/storage/objects/';

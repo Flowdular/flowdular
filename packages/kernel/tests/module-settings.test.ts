@@ -18,7 +18,7 @@ function memoryStore(): ModuleSettingsStore & {
 	const store = {
 		rows,
 		loads: 0,
-		load(tenantId: string, moduleId: string) {
+		async load(tenantId: string, moduleId: string) {
 			store.loads += 1;
 			const values: Record<string, ModuleSettingRecord['value']> = {};
 			for (const row of rows.values()) {
@@ -28,12 +28,30 @@ function memoryStore(): ModuleSettingsStore & {
 			}
 			return values;
 		},
-		save(record: ModuleSettingRecord) {
+		async save(record: ModuleSettingRecord) {
 			rows.set(`${record.tenantId}|${record.moduleId}|${record.key}`, record);
 		},
-		clear(tenantId: string, moduleId: string, key: string) {
+		async clear(tenantId: string, moduleId: string, key: string) {
 			rows.delete(`${tenantId}|${moduleId}|${key}`);
 		},
+	};
+	return store;
+}
+
+/** A store whose every answer lands a tick later, as a database's would. */
+function slowStore(): ModuleSettingsStore & { loads: number } {
+	const memory = memoryStore();
+	const later = <T>(value: () => Promise<T>): Promise<T> =>
+		new Promise((resolve) => setTimeout(() => resolve(value()), 0));
+	const store = {
+		loads: 0,
+		load(tenantId: string, moduleId: string) {
+			store.loads += 1;
+			return later(() => memory.load(tenantId, moduleId));
+		},
+		save: (record: ModuleSettingRecord) => later(() => memory.save(record)),
+		clear: (tenantId: string, moduleId: string, key: string) =>
+			later(() => memory.clear(tenantId, moduleId, key)),
 	};
 	return store;
 }
@@ -106,47 +124,63 @@ const declaration = defineModuleSettings({
 });
 
 describe('module settings runtime', () => {
-	it('resolves declared defaults until a tenant stores a value', () => {
+	it('resolves declared defaults until a tenant stores a value', async () => {
 		const store = memoryStore();
 		const runtime = createModuleSettingsRuntime(store, { now: () => 5 });
 		runtime.declare(declaration);
+		await runtime.prime('tenant-a');
+		await runtime.prime('tenant-b');
 		expect(runtime.get('tenant-a', 'agents.core', 'workerConcurrency')).toBe(2);
-		runtime.set('tenant-a', 'agents.core', 'workerConcurrency', 8, 'owner');
+		await runtime.set(
+			'tenant-a',
+			'agents.core',
+			'workerConcurrency',
+			8,
+			'owner',
+		);
 		expect(runtime.get('tenant-a', 'agents.core', 'workerConcurrency')).toBe(8);
 		expect(runtime.get('tenant-b', 'agents.core', 'workerConcurrency')).toBe(2);
-		runtime.set('tenant-a', 'agents.core', 'workerConcurrency', null, 'owner');
+		await runtime.set(
+			'tenant-a',
+			'agents.core',
+			'workerConcurrency',
+			null,
+			'owner',
+		);
 		expect(runtime.get('tenant-a', 'agents.core', 'workerConcurrency')).toBe(2);
 	});
 
-	it('validates type, bounds, and enum membership', () => {
+	it('validates type, bounds, and enum membership', async () => {
 		const runtime = createModuleSettingsRuntime(memoryStore());
 		runtime.declare(declaration);
-		expect(() =>
+		await expect(
 			runtime.set('tenant-a', 'agents.core', 'workerConcurrency', 32, 'owner'),
-		).toThrow(/at most 16/);
-		expect(() =>
+		).rejects.toThrow(/at most 16/);
+		await expect(
 			runtime.set('tenant-a', 'agents.core', 'workerConcurrency', 'x', 'owner'),
-		).toThrow(/must be number/);
-		expect(() =>
+		).rejects.toThrow(/must be number/);
+		await expect(
 			runtime.set('tenant-a', 'agents.core', 'defaultModel', 'huge', 'owner'),
-		).toThrow(/one of/);
-		expect(() =>
+		).rejects.toThrow(/one of/);
+		await expect(
 			runtime.set('tenant-a', 'agents.core', 'missing', 1, 'owner'),
-		).toThrow(/Unknown setting/);
+		).rejects.toThrow(/Unknown setting/);
 		expect(() => runtime.get('tenant-a', 'other.core', 'key')).toThrow(
 			/declares no settings/,
 		);
 	});
 
-	it('shares platform-scoped values and keeps secrets out of listings', () => {
+	it('shares platform-scoped values and keeps secrets out of listings', async () => {
 		const runtime = createModuleSettingsRuntime(memoryStore());
 		runtime.declare(declaration);
-		runtime.set('tenant-a', 'agents.core', 'allowSignUp', false, 'owner');
+		await runtime.prime('tenant-a');
+		await runtime.prime('tenant-b');
+		await runtime.set('tenant-a', 'agents.core', 'allowSignUp', false, 'owner');
 		expect(runtime.get('tenant-b', 'agents.core', 'allowSignUp')).toBe(false);
 		expect(
 			runtime.get(PLATFORM_SETTINGS_TENANT, 'agents.core', 'allowSignUp'),
 		).toBe(false);
-		runtime.set('tenant-a', 'agents.core', 'apiKey', 'sk-live', 'owner');
+		await runtime.set('tenant-a', 'agents.core', 'apiKey', 'sk-live', 'owner');
 		const entries = runtime.list('tenant-a');
 		const secret = entries.find((entry) => entry.key === 'apiKey');
 		expect(secret).toMatchObject({ value: null, hasValue: true });
@@ -154,24 +188,121 @@ describe('module settings runtime', () => {
 		expect(runtime.get('tenant-a', 'agents.core', 'apiKey')).toBe('sk-live');
 	});
 
-	it('caches loads per tenant and module and invalidates on write', () => {
+	it('loads a tenant once per module and refreshes it on write', async () => {
 		const store = memoryStore();
 		const runtime = createModuleSettingsRuntime(store);
 		runtime.declare(declaration);
+		await runtime.prime('tenant-a');
+		await runtime.prime('tenant-a');
 		runtime.get('tenant-a', 'agents.core', 'workerConcurrency');
 		runtime.get('tenant-a', 'agents.core', 'defaultModel');
-		expect(store.loads).toBe(1);
-		runtime.set('tenant-a', 'agents.core', 'defaultModel', 'large', 'owner');
+		/* One tenant-scoped load and one platform-scoped load. */
+		expect(store.loads).toBe(2);
+		await runtime.set(
+			'tenant-a',
+			'agents.core',
+			'defaultModel',
+			'large',
+			'owner',
+		);
 		expect(runtime.get('tenant-a', 'agents.core', 'defaultModel')).toBe(
 			'large',
 		);
+		expect(store.loads).toBe(3);
+	});
+
+	/* The store may sit behind a database: a read answers only from a snapshot
+	   the caller primed, and never a default in place of a value still in
+	   flight. */
+	it('serves a slow store after prime and refuses a read before it', async () => {
+		const store = slowStore();
+		await store.save({
+			tenantId: 'tenant-a',
+			moduleId: 'agents.core',
+			key: 'workerConcurrency',
+			value: 8,
+			updatedBy: 'owner',
+			updatedAt: 1,
+		});
+		const runtime = createModuleSettingsRuntime(store);
+		runtime.declare(declaration);
+
+		expect(() =>
+			runtime.get('tenant-a', 'agents.core', 'workerConcurrency'),
+		).toThrow(
+			expect.objectContaining({ code: 'SETTINGS_NOT_PRIMED', status: 500 }),
+		);
+		expect(() => runtime.list('tenant-a')).toThrow(/prime/);
+
+		const priming = runtime.prime('tenant-a');
+		expect(() =>
+			runtime.get('tenant-a', 'agents.core', 'workerConcurrency'),
+		).toThrow(/not loaded/);
+		await Promise.all([priming, runtime.prime('tenant-a')]);
 		expect(store.loads).toBe(2);
+		expect(runtime.get('tenant-a', 'agents.core', 'workerConcurrency')).toBe(8);
+		expect(runtime.get('tenant-a', 'agents.core', 'allowSignUp')).toBe(true);
+		expect(() =>
+			runtime.get('tenant-b', 'agents.core', 'workerConcurrency'),
+		).toThrow(/tenant tenant-b/);
+
+		await runtime.set(
+			'tenant-a',
+			'agents.core',
+			'workerConcurrency',
+			3,
+			'owner',
+		);
+		expect(runtime.get('tenant-a', 'agents.core', 'workerConcurrency')).toBe(3);
+	});
+
+	it('retries a prime whose load failed', async () => {
+		const memory = memoryStore();
+		let failures = 1;
+		const store: ModuleSettingsStore = {
+			...memory,
+			load: (tenantId, moduleId) =>
+				failures-- > 0
+					? Promise.reject(new Error('database unavailable'))
+					: memory.load(tenantId, moduleId),
+		};
+		const runtime = createModuleSettingsRuntime(store);
+		runtime.declare(declaration);
+		await expect(runtime.prime('tenant-a')).rejects.toThrow(
+			'database unavailable',
+		);
+		await runtime.prime('tenant-a');
+		expect(runtime.get('tenant-a', 'agents.core', 'workerConcurrency')).toBe(2);
+	});
+
+	it('primes a module declared after the tenant was primed', async () => {
+		const runtime = createModuleSettingsRuntime(memoryStore());
+		runtime.declare(declaration);
+		await runtime.prime('tenant-a');
+		runtime.declare(
+			defineModuleSettings({
+				moduleId: 'later.core',
+				settings: {
+					limit: {
+						type: 'number',
+						defaultValue: 1,
+						visibility: 'private',
+						client: false,
+					},
+				},
+			}),
+		);
+		expect(() => runtime.get('tenant-a', 'later.core', 'limit')).toThrow(
+			/not loaded/,
+		);
+		await runtime.prime('tenant-a');
+		expect(runtime.get('tenant-a', 'later.core', 'limit')).toBe(1);
 	});
 
 	/* A pattern is one regular expression per declared setting, built where the
 	   declaration is checked. Reads sit on the request path, so none of them may
 	   build it again. */
-	it('compiles a declared pattern once, not on every read', () => {
+	it('compiles a declared pattern once, not on every read', async () => {
 		const runtime = createModuleSettingsRuntime(memoryStore());
 		const patterned = defineModuleSettings({
 			moduleId: 'patterned.core',
@@ -186,7 +317,13 @@ describe('module settings runtime', () => {
 			},
 		});
 		runtime.declare(patterned);
-		runtime.set('tenant-a', 'patterned.core', 'zone', 'Europe/Warsaw', 'owner');
+		await runtime.set(
+			'tenant-a',
+			'patterned.core',
+			'zone',
+			'Europe/Warsaw',
+			'owner',
+		);
 
 		const values: string[] = [];
 		const built = countRegExps(() => {
@@ -199,7 +336,7 @@ describe('module settings runtime', () => {
 		expect([...new Set(values)]).toEqual(['Europe/Warsaw']);
 	});
 
-	it('notifies listeners and isolates a throwing one', () => {
+	it('notifies listeners and isolates a throwing one', async () => {
 		const runtime = createModuleSettingsRuntime(memoryStore());
 		runtime.declare(declaration);
 		const seen: ModuleSettingChange[] = [];
@@ -208,10 +345,22 @@ describe('module settings runtime', () => {
 			throw new Error('boom');
 		});
 		const stop = runtime.onChange((change) => seen.push(change));
-		runtime.set('tenant-a', 'agents.core', 'defaultModel', 'large', 'owner');
-		runtime.set('tenant-a', 'agents.core', 'defaultModel', null, 'owner');
+		await runtime.set(
+			'tenant-a',
+			'agents.core',
+			'defaultModel',
+			'large',
+			'owner',
+		);
+		await runtime.set('tenant-a', 'agents.core', 'defaultModel', null, 'owner');
 		stop();
-		runtime.set('tenant-a', 'agents.core', 'defaultModel', 'small', 'owner');
+		await runtime.set(
+			'tenant-a',
+			'agents.core',
+			'defaultModel',
+			'small',
+			'owner',
+		);
 		expect(seen).toEqual([
 			{
 				tenantId: 'tenant-a',
@@ -236,30 +385,44 @@ describe('module settings runtime', () => {
 		error.mockRestore();
 	});
 
-	it('keeps a secret value out of the change a listener sees', () => {
+	it('keeps a secret value out of the change a listener sees', async () => {
 		const runtime = createModuleSettingsRuntime(memoryStore());
 		runtime.declare(declaration);
 		const seen: ModuleSettingChange[] = [];
 		runtime.onChange((change) => seen.push(change));
-		runtime.set('tenant-a', 'agents.core', 'apiKey', 'sk-live', 'owner');
+		await runtime.set('tenant-a', 'agents.core', 'apiKey', 'sk-live', 'owner');
 		expect(seen[0]).toMatchObject({ previous: null, next: null });
 		expect(JSON.stringify(seen)).not.toContain('sk-live');
 	});
 
-	it('reports a flag override and its reset with both values', () => {
+	it('reports a flag override and its reset with both values', async () => {
 		const runtime = createModuleSettingsRuntime(memoryStore());
 		runtime.declare(declaration);
 		const seen: ModuleSettingChange[] = [];
 		runtime.onChange((change) => seen.push(change));
+		await runtime.prime('tenant-a');
+		await runtime.prime('tenant-b');
 		expect(runtime.get('tenant-a', 'agents.core', 'streamingRuns')).toBe(false);
 
-		runtime.set('tenant-a', 'agents.core', 'streamingRuns', true, 'owner');
+		await runtime.set(
+			'tenant-a',
+			'agents.core',
+			'streamingRuns',
+			true,
+			'owner',
+		);
 		expect(runtime.get('tenant-a', 'agents.core', 'streamingRuns')).toBe(true);
 		/* A tenant override is that tenant's alone; the next workspace still
 		   reads the declared default. */
 		expect(runtime.get('tenant-b', 'agents.core', 'streamingRuns')).toBe(false);
 
-		runtime.set('tenant-a', 'agents.core', 'streamingRuns', null, 'owner');
+		await runtime.set(
+			'tenant-a',
+			'agents.core',
+			'streamingRuns',
+			null,
+			'owner',
+		);
 		expect(runtime.get('tenant-a', 'agents.core', 'streamingRuns')).toBe(false);
 		expect(seen).toEqual([
 			{
