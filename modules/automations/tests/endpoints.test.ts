@@ -528,7 +528,7 @@ describe('automations HTTP boundary', () => {
 			),
 		).toEqual([400, 'CURSOR_INVALID']);
 		const [version, body, signature] = cursor.split('.');
-		const tampered = `${version}.${body!.slice(0, -2)}AA.${signature}`;
+		const tampered = `${version}.${body![0] === 'A' ? 'B' : 'A'}${body!.slice(1)}.${signature}`;
 		expect(
 			await code(
 				await owner.call(

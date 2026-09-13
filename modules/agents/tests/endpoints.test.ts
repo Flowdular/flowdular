@@ -936,9 +936,16 @@ interface Page<Item> {
 
 /* The signature is the last dot-separated part; a changed character there is
    what a client editing its cursor looks like to the server. */
+/* The last base64url character can carry padding bits only, so the flip
+   lands on the first character of the signature, which always matters. */
 function tampered(cursor: string): string {
-	const last = cursor.charAt(cursor.length - 1);
-	return cursor.slice(0, -1) + (last === 'A' ? 'B' : 'A');
+	const [version, body, signature] = cursor.split('.') as [
+		string,
+		string,
+		string,
+	];
+	const flipped = (signature[0] === 'A' ? 'B' : 'A') + signature.slice(1);
+	return `${version}.${body}.${flipped}`;
 }
 
 async function pageOf<Item>(
