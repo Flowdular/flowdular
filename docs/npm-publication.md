@@ -1,7 +1,7 @@
 # npm publication
 
-Publish exactly four packages. The SDK and CLI are at `0.2.4`, the generator is at `0.2.6`;
-the independently versioned sandbox is at `0.2.9` and depends on SDK `0.2.4`. The root
+Publish exactly four packages. The SDK, the CLI, the generator and the sandbox are at
+`0.3.0`; the sandbox depends on SDK `0.3.0`. The root
 `package.json` carries the SDK version, and `packages/cli/tests/sdk.test.ts` fails when the
 CLI's `SDK_VERSION` constant drifts from `packages/sdk/package.json`.
 
