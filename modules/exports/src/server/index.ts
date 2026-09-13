@@ -37,7 +37,6 @@ export type {
 	ExportJobPage,
 	ExportJobQuery,
 	ExportRepository,
-	ExportSweepBatch,
 	ExportSweepInput,
 	SettleExportJobInput,
 } from '../services/repository.ts';

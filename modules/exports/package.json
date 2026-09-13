@@ -1,6 +1,6 @@
 {
 	"name": "@flowdular/module-exports",
-	"version": "0.2.2",
+	"version": "0.2.3",
 	"private": true,
 	"type": "module",
 	"exports": {
@@ -23,6 +23,7 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
+		"@flowdular/cli-protocol": "workspace:*",
 		"@flowdular/client": "workspace:*",
 		"@flowdular/contracts": "workspace:*",
 		"@flowdular/database": "workspace:*",

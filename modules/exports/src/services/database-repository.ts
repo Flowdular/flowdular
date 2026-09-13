@@ -17,7 +17,6 @@ import type {
 	ExportJobPage,
 	ExportJobQuery,
 	ExportRepository,
-	ExportSweepBatch,
 	ExportSweepInput,
 	SettleExportJobInput,
 } from './repository.ts';
@@ -67,13 +66,14 @@ const SQL = {
 	 WHERE tenant_id = $1 AND id = $2 AND status = 'running'
 	 RETURNING ${JOB_COLUMNS}`,
 
-	/* The batch is chosen once and its objects come back with it: deleting the
-	   files and then the rows from one chosen set means no pass can delete a
-	   file whose row a differently ordered second query kept. */
+	/* The batch is chosen once and locked: the files and then the rows go from
+	   one chosen set, and a rewrite of a file under the same row lock waits for
+	   the delete or is waited for by it. */
 	sweepBatch: `SELECT id, object_id FROM exports_jobs
 	 WHERE tenant_id = $1 AND started_at < $2
 	   AND status IN ('completed', 'failed')
-	 ORDER BY started_at, id LIMIT $3`,
+	 ORDER BY started_at, id LIMIT $3
+	 FOR UPDATE`,
 
 	exportPage: `SELECT ${JOB_COLUMNS} FROM exports_jobs
 	 WHERE tenant_id = $1 AND (started_at, id) > ($2, $3)
@@ -319,40 +319,38 @@ export class DatabaseExportRepository implements ExportRepository {
 		return row ? jobFromRow(row) : null;
 	}
 
-	async claimSweepBatch(
+	async sweepJobs(
 		tenantId: string,
 		input: ExportSweepInput,
-	): Promise<ExportSweepBatch> {
-		const result = await this.#handles.runtime.transaction(
-			(transaction) =>
-				transaction.query<{ id: string; object_id: string | null }>({
+		discard: (objectIds: readonly string[]) => Promise<void>,
+	): Promise<number> {
+		return this.#handles.runtime.transaction(
+			async (transaction) => {
+				const chosen = await transaction.query<{
+					id: string;
+					object_id: string | null;
+				}>({
 					text: SQL.sweepBatch,
 					parameters: [tenantId, input.settledBefore, input.limit],
-				}),
-			{ access: 'read', tenantId },
-		);
-		const ids: string[] = [];
-		const objectIds: string[] = [];
-		for (const row of result.rows) {
-			ids.push(row.id);
-			if (row.object_id !== null) objectIds.push(row.object_id);
-		}
-		return { ids, objectIds };
-	}
-
-	async deleteJobs(tenantId: string, ids: readonly string[]): Promise<number> {
-		if (ids.length === 0) return 0;
-		const parameters: (string | number)[] = [tenantId, ...ids];
-		const placeholders = ids.map((_id, index) => `$${index + 2}`).join(', ');
-		const result = await this.#handles.runtime.transaction(
-			(transaction) =>
-				transaction.execute({
+				});
+				if (chosen.rows.length === 0) return 0;
+				await discard(
+					chosen.rows.flatMap((row) =>
+						row.object_id === null ? [] : [row.object_id],
+					),
+				);
+				const ids = chosen.rows.map((row) => row.id);
+				const placeholders = ids
+					.map((_id, index) => `$${index + 2}`)
+					.join(', ');
+				const result = await transaction.execute({
 					text: `DELETE FROM exports_jobs WHERE tenant_id = $1 AND id IN (${placeholders})`,
-					parameters,
-				}),
+					parameters: [tenantId, ...ids],
+				});
+				return result.affectedRows;
+			},
 			{ access: 'write', tenantId },
 		);
-		return result.affectedRows;
 	}
 
 	async exportJobs(

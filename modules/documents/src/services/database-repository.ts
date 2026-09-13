@@ -69,6 +69,9 @@ const SQL = {
 	 WHERE tenant_id = $1 AND owner_module = $2 AND record_ref = $3 AND id = $4`,
 	create: `INSERT INTO documents_files (${COLUMNS})
 	 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+	lockStored: `SELECT id FROM documents_files
+	 WHERE tenant_id = $1 AND id = $2 AND status = 'stored'
+	 FOR UPDATE`,
 	markDeleted: `UPDATE documents_files SET status = 'deleted'
 	 WHERE tenant_id = $1 AND id = $2 AND status = 'stored'
 	 RETURNING ${COLUMNS}`,
@@ -226,16 +229,24 @@ export class DatabaseDocumentsRepository implements DocumentsRepository {
 	async markDeleted(
 		tenantId: string,
 		id: string,
+		discard: () => Promise<void>,
 	): Promise<DocumentsFile | null> {
 		const result = await this.database.transaction(
-			(transaction) =>
-				transaction.query<DocumentsFileRow>({
+			async (transaction) => {
+				const locked = await transaction.query<{ id: string }>({
+					text: SQL.lockStored,
+					parameters: [tenantId, id],
+				});
+				if (locked.rows.length === 0) return null;
+				await discard();
+				return transaction.query<DocumentsFileRow>({
 					text: SQL.markDeleted,
 					parameters: [tenantId, id],
-				}),
+				});
+			},
 			{ access: 'write', tenantId },
 		);
-		const row = result.rows[0];
+		const row = result?.rows[0];
 		return row ? fromRow(row) : null;
 	}
 

@@ -111,6 +111,28 @@ async function combined(
 	return 'partial';
 }
 
+/* Mirrors migrations/0003_connectors_rotation_inventory.up.sql byte for byte. */
+export const CONNECTORS_MIGRATION_003 = `-- The credential key rotation has to find the instances still sealed with a
+-- retired key before it knows whose they are, so the cross-tenant role may read
+-- the key id of every row that holds an envelope and nothing else: the nonce,
+-- the tag, the ciphertext and the fingerprint stay unreadable on this
+-- connection, and every row it re-seals is read again under the workspace that
+-- row named. PostgreSQL checks column privileges in WHERE too, so the key id is
+-- part of the grant.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
+    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  END IF;
+END
+$$;
+CREATE POLICY connectors_instances_background_policy ON connectors_instances
+  FOR SELECT TO coreloom_background
+  USING (credential_key_id IS NOT NULL);
+REVOKE SELECT ON connectors_instances FROM coreloom_background;
+GRANT SELECT (tenant_id, credential_key_id) ON connectors_instances TO coreloom_background;
+`;
+
 export const databaseMigrations: readonly DatabaseMigration[] = [
 	{
 		id: '0001_connectors_core',
@@ -162,5 +184,19 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 						database.schema.hasIndex('connectors_call_keys_tenant_claimed_idx'),
 				],
 			),
+	},
+	{
+		id: '0003_connectors_rotation_inventory',
+		sql: { postgresql: CONNECTORS_MIGRATION_003 },
+		/* A policy and a column grant leave no schema object behind, so the
+		   privilege itself is what proves this migration ran. */
+		inspectExisting: async (database) => {
+			const result = await database.query<{ granted: boolean }>({
+				text: `SELECT CASE WHEN to_regclass('connectors_instances') IS NOT NULL THEN
+				  has_column_privilege('coreloom_background', 'connectors_instances', 'credential_key_id', 'SELECT')
+				ELSE false END AS granted`,
+			});
+			return result.rows[0]?.granted === true ? 'complete' : 'absent';
+		},
 	},
 ];

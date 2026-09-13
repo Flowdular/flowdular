@@ -3,10 +3,10 @@
 	"schemaVersion": 1,
 	"id": "connectors.core",
 	"package": "@flowdular/module-connectors",
-	"version": "0.1.5",
+	"version": "0.1.6",
 	"platformApi": "^0.1.0",
 	"profile": "full",
-	"capabilities": ["api", "database", "client", "translations"],
+	"capabilities": ["api", "database", "client", "translations", "cli"],
 	"platform": {
 		"server": true,
 		"client": true
@@ -24,5 +24,9 @@
 	"tenancy": "required",
 	"locales": ["en", "pl"],
 	"stability": "experimental",
-	"provides": ["connectors.definitions.v1", "connectors.calls.v1"]
+	"provides": ["connectors.definitions.v1", "connectors.calls.v1"],
+	"cli": {
+		"catalog": "src/cli/commands.json",
+		"entry": "src/cli/index.ts"
+	}
 }

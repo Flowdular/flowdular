@@ -92,6 +92,8 @@ once the restored copy is staged. Being destructive, it needs
 `--apply --confirm restore-database` and, like `database reset`, runs only when
 `FD_ENV` or `NODE_ENV` is `development` or `test`.
 
+`database restore-production` is the same restore without the local gate: it runs only under an approval grant (`--grant <token> --tenant <id>`) bound to the exact flags, needs `--target` equal to the database the migrator DSN names, a separate migrator DSN, and either a health probe that finds the platform down (`--platform-url` or `FD_PORT`) or `--platform-stopped`; a key mismatch is refused unless the approved invocation carried `--allow-key-mismatch`. See docs/operations.md, "Restore in production".
+
 The full procedure, the key trap and the rotation status are in
 [operations.md](operations.md).
 
@@ -117,6 +119,9 @@ flowdular agents secrets-rotate [--apply]          # re-seal stored provider cre
 flowdular automations secrets-rotate [--apply]     # re-seal stored trigger secrets
 flowdular workflows secrets-rotate [--apply]       # re-seal stored run payloads
 flowdular notifications secrets-rotate [--apply]   # re-seal stored webhook signing secrets
+flowdular connectors secrets-rotate [--apply]      # re-seal stored connector credentials
+flowdular documents secrets-rotate [--apply]       # re-seal stored document objects with the storage key
+flowdular exports secrets-rotate [--apply]         # re-seal stored export files with the storage key
 
 flowdular sandbox access --tenant <tenant>         # grants and eligible members
 flowdular sandbox grant --email <email> --tenant <tenant> [--apply]

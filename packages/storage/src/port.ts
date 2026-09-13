@@ -24,6 +24,7 @@ import {
 import { createLocalObjectStore } from './local.ts';
 import { createS3ObjectStore } from './s3.ts';
 import { mintStorageReadToken, storageReadUrl } from './read-token.ts';
+import { createStorageResealer, type StorageResealPort } from './reseal.ts';
 import { unscannedStorageScanner, type StorageScanner } from './scanner.ts';
 import type { StorageConfig } from './config.ts';
 import type { ObjectStore } from './store.ts';
@@ -125,6 +126,9 @@ function objectStoreFor(
 	});
 }
 
+/** The port a deployment builds: the module contract plus the operator pass. */
+export interface ManagedStoragePort extends StoragePort, StorageResealPort {}
+
 /**
  * The one place the storage rules live: the tenant-first key layout, the size
  * limit, the content type allowlist with magic byte verification, the scanner
@@ -133,11 +137,12 @@ function objectStoreFor(
 export function createStoragePort(
 	config: StorageConfig,
 	options: StoragePortOptions,
-): StoragePort {
+): ManagedStoragePort {
 	const store = objectStoreFor(config, options);
 	const scanner = options.scanner ?? unscannedStorageScanner;
 	const clock = options.clock ?? (() => new Date());
 	const keyring = options.keyring;
+	const resealer = createStorageResealer(store, keyring);
 	let disposed = false;
 
 	const live = (): void => {
@@ -240,6 +245,12 @@ export function createStoragePort(
 			const key = storageObjectKey(input);
 			const prefix = await store.read(key, STORAGE_HEADER_PREFIX_BYTES);
 			return prefix ? readStoredObjectHeader(key, prefix) : null;
+		},
+
+		keyId: keyring.keyId,
+		reseal(objects, options) {
+			live();
+			return resealer.reseal(objects, options);
 		},
 
 		async dispose(): Promise<void> {

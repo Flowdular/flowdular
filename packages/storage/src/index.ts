@@ -31,7 +31,13 @@ export { createLocalObjectStore } from './local.ts';
 export { createS3ObjectStore } from './s3.ts';
 export type { S3ObjectStoreOptions } from './s3.ts';
 export { createStoragePort } from './port.ts';
-export type { StoragePortOptions } from './port.ts';
+export type { ManagedStoragePort, StoragePortOptions } from './port.ts';
+export type {
+	StorageResealCount,
+	StorageResealOptions,
+	StorageResealPort,
+	StorageResealReport,
+} from './reseal.ts';
 export {
 	mintStorageReadToken,
 	openStorageReadToken,

@@ -428,10 +428,11 @@ describe('EXPORTS-RETENTION', () => {
 		const declaration = exportsDataClass(
 			async () =>
 				repositoryWith(harness.repository, {
-					deleteJobs: async (tenantId, ids) => {
-						storedWhenRowsWent = await harness.storedKeys();
-						return harness.repository.deleteJobs(tenantId, ids);
-					},
+					sweepJobs: (tenantId, input, discard) =>
+						harness.repository.sweepJobs(tenantId, input, async (objectIds) => {
+							await discard(objectIds);
+							storedWhenRowsWent = await harness.storedKeys();
+						}),
 				}),
 			async () => harness.service,
 		);
