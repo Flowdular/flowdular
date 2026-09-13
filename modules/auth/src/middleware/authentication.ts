@@ -19,6 +19,8 @@ type ServiceResolver = () => Promise<AuthService>;
 export function createAuthenticationMiddleware(
 	service: ServiceResolver,
 	cookie: AuthCookieConfig,
+	/** Loads the principal's workspace settings before any route reads them. */
+	primeTenant?: (tenantId: string) => Promise<void>,
 ): Middleware {
 	return async (context, next) => {
 		const token = readCookie(context.request, cookie.name);
@@ -27,6 +29,7 @@ export function createAuthenticationMiddleware(
 		if (session) {
 			context.state.set(AUTH_PRINCIPAL_STATE_KEY, session.principal);
 			context.state.set(AUTH_SESSION_STATE_KEY, session);
+			await primeTenant?.(session.principal.tenantId);
 			return next();
 		}
 		const principal = await resolved.resolveApiToken(
@@ -35,6 +38,7 @@ export function createAuthenticationMiddleware(
 		if (principal) {
 			context.state.set(AUTH_PRINCIPAL_STATE_KEY, principal);
 			context.state.set(AUTH_TOKEN_PRINCIPAL_STATE_KEY, true);
+			await primeTenant?.(principal.tenantId);
 		}
 		return next();
 	};

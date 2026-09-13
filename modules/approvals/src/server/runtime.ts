@@ -36,9 +36,9 @@ export interface ApprovalsRuntimeOptions {
 		accountId: string,
 	) => Promise<ApprovalMember | null>;
 	/** Live tenant setting, read again for every request that needs it. */
-	readonly defaultExpiryDays: (tenantId: string) => number;
+	readonly defaultExpiryDays: (tenantId: string) => number | Promise<number>;
 	/** Live platform setting, read when the loop starts. */
-	readonly expiryIntervalMs: () => number;
+	readonly expiryIntervalMs: () => number | Promise<number>;
 	readonly notifications?: NotificationPublisherResolver;
 	readonly callbacks?: ApprovalCallbackRegistry;
 	readonly repository?: ApprovalsRepository;
@@ -63,6 +63,8 @@ export function createApprovalsRuntime(
 	let leases: readonly DatabaseAdapterLease[] = [];
 	let service: ApprovalsService | undefined;
 	let jobs: JobRunner | undefined;
+	let jobsPromise: Promise<JobRunner> | undefined;
+	let starting: Promise<void> | undefined;
 	let disposed = false;
 
 	const acquire = (purpose: DatabaseProviderRequest['purpose']) =>
@@ -129,28 +131,42 @@ export function createApprovalsRuntime(
 	   and its transition. The interval is the platform setting as it reads when
 	   the loop starts, so the runner is built there rather than while the
 	   platform composes, before the setting is declared. */
-	const runner = (): JobRunner =>
-		(jobs ??= createApprovalsExpiryRunner({
-			repository: repositoryInstance,
-			service: resolved,
-			intervalMs: options.expiryIntervalMs(),
-			...(options.now ? { now: options.now } : {}),
-		}));
+	const runner = (): Promise<JobRunner> =>
+		(jobsPromise ??= (async () =>
+			(jobs = createApprovalsExpiryRunner({
+				repository: repositoryInstance,
+				service: resolved,
+				intervalMs: await options.expiryIntervalMs(),
+				...(options.now ? { now: options.now } : {}),
+			})))());
 
 	return {
 		service: resolved,
 		repository: repositoryInstance,
 		start() {
 			if (disposed) return;
-			runner().start();
+			/* The interval is a settings read that may have to prime the platform
+			   tenant first, so the loop starts once that read settles. */
+			starting ??= runner().then(
+				(loop) => {
+					if (!disposed) loop.start();
+				},
+				(error: unknown) => {
+					jobsPromise = undefined;
+					starting = undefined;
+					console.warn('approvals.core: the expiry loop did not start.', error);
+				},
+			);
 		},
 		stop: () => jobs?.stop(),
 		async quiesce() {
+			await starting;
 			await jobs?.quiesce();
 		},
 		async dispose() {
 			if (disposed) return;
 			disposed = true;
+			await starting;
 			await jobs?.dispose();
 			/* An open still in flight would assign its leases after this read, so
 			   settle it first; a failed open must not surface as an unhandled

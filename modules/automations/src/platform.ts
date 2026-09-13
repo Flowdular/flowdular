@@ -63,6 +63,7 @@ export function createServerComposition(
 		schedulerPollMs: () =>
 			automationsSchedulerPollMs(context.settings, context.environment),
 		timeZone: (tenantId) => tenantTimeZone(context.settings, tenantId),
+		primeTenant: (tenantId) => context.settings.prime(tenantId),
 		variables: registerScheduleVariableSource(
 			platformVariableRegistry(context.capabilities),
 			runQueue,

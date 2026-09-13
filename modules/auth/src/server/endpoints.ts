@@ -665,10 +665,10 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 		/* The shell polls this route. The authentication middleware already
 		   resolved the session for this request, so reading it again would be a
 		   second round trip for the same answer. */
-		handler: (context) => {
+		handler: async (context) => {
 			const current = sessionFromContext(context);
 			return current
-				? response(sessionPayload(current, runtime))
+				? response(await sessionPayload(current, runtime))
 				: response(
 						{
 							error: { code: 'UNAUTHENTICATED', message: 'No active session.' },
@@ -702,7 +702,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 				const attempt = throttle(context, runtime, input.email);
 				const issued = await (await runtime.service()).signUp(input);
 				attempt.clear();
-				return response(sessionPayload(issued, runtime), 201, {
+				return response(await sessionPayload(issued, runtime), 201, {
 					'set-cookie': sessionCookie(issued.token, runtime.cookie),
 				});
 			} catch (error) {
@@ -741,7 +741,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 						expiresAt: issued.expiresAt,
 					});
 				}
-				return response(sessionPayload(issued, runtime), 200, {
+				return response(await sessionPayload(issued, runtime), 200, {
 					'set-cookie': sessionCookie(issued.token, runtime.cookie),
 				});
 			} catch (error) {
@@ -834,7 +834,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 					'set-cookie',
 					mfaChallengeCookie('', runtime.cookie.secure, 0),
 				);
-				return response(sessionPayload(issued, runtime), 200, headers);
+				return response(await sessionPayload(issued, runtime), 200, headers);
 			} catch (error) {
 				return responseWithCookies(
 					errorResponse(error),
@@ -1072,7 +1072,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 					);
 				}
 				const issued = await service.switchTenant(token, tenantId);
-				return response(sessionPayload(issued, runtime), 200, {
+				return response(await sessionPayload(issued, runtime), 200, {
 					'set-cookie': sessionCookie(issued.token, runtime.cookie),
 				});
 			} catch (error) {
@@ -1146,7 +1146,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 		},
 	});
 
-	return [
+	const routes = [
 		configuration,
 		oidcStart,
 		oidcCallback,
@@ -1176,4 +1176,16 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 		...createIdentityProviderRoutes(runtime),
 		...createMembershipRoutes(runtime),
 	];
+	/* The served chain resolves the service, and with it the platform settings
+	   these handlers read, before any route runs. A handler invoked on its own,
+	   as another module's test harness does, resolves it here so it answers
+	   exactly as a served one. */
+	for (const route of routes) {
+		const handler = route.handler;
+		route.handler = async (context) => {
+			await runtime.service();
+			return handler(context);
+		};
+	}
+	return routes;
 }

@@ -1,5 +1,6 @@
 import {
 	defineModuleSettings,
+	ModuleSettingsError,
 	PLATFORM_SETTINGS_TENANT,
 	type ModuleSettingsDeclaration,
 	type ModuleSettingsRuntime,
@@ -166,6 +167,8 @@ export function agentsModuleSettingsFromEnvironment(
 }
 
 export interface AgentSettingsReader {
+	/** Loads a workspace's settings; a tenant-scoped read needs it first. */
+	prime(tenantId: string): Promise<void>;
 	workerConcurrency(): number;
 	workerLeaseMs(): number;
 	providerReadinessTtlMs(): number;
@@ -185,8 +188,9 @@ function settingsSource(value: unknown): ModuleSettingsRuntime | null {
 		: null;
 }
 
-/* Reads are live and per call. Without a settings runtime, or when a read
-   fails, the environment decides exactly as before. */
+/* Reads are live and per call. Without a settings runtime, or when the
+   module's settings are not declared, the environment decides exactly as
+   before; a workspace nobody primed stays a loud caller defect. */
 export function agentSettings(context: {
 	readonly environment: NodeJS.ProcessEnv;
 	readonly settings?: unknown;
@@ -204,11 +208,18 @@ export function agentSettings(context: {
 			return typeof value === typeof fallbackValue
 				? (value as T)
 				: fallbackValue;
-		} catch {
+		} catch (error) {
+			if (
+				error instanceof ModuleSettingsError &&
+				error.code === 'SETTINGS_NOT_PRIMED'
+			) {
+				throw error;
+			}
 			return fallbackValue;
 		}
 	};
 	return {
+		prime: (tenantId) => source?.prime(tenantId) ?? Promise.resolve(),
 		workerConcurrency: () =>
 			read(
 				PLATFORM_SETTINGS_TENANT,

@@ -48,13 +48,20 @@ export function createServerComposition(
 					: 'preview',
 		environment: context.environment,
 		workspaceRoot: context.workspaceRoot,
-		deliverySettings: (tenantId) =>
-			notificationsDeliverySettings(context.settings, tenantId),
+		/* Read by the delivery worker outside any request, so the workspace is
+		   primed here rather than assumed. */
+		deliverySettings: async (tenantId) => {
+			await context.settings.prime(tenantId);
+			return notificationsDeliverySettings(context.settings, tenantId);
+		},
 		egressAllowlist: () => notificationsEgressAllowlist(context.settings),
 		pollIntervalMs: () => notificationsPollIntervalMs(context.settings),
 		members: tenantMembers(context),
 		mail: context.mail,
-		locale: (tenantId) => tenantMailLocale(context.settings, tenantId),
+		locale: async (tenantId) => {
+			await context.settings.prime(tenantId);
+			return tenantMailLocale(context.settings, tenantId);
+		},
 	});
 	/* Publishers resolve this and continue without notifying when it is absent,
 	   so it is registered before anything can start producing events. */

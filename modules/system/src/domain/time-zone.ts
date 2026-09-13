@@ -1,5 +1,8 @@
 import { TENANT_TIME_ZONE_SETTING } from '@flowdular/contracts';
-import type { ModuleSettingsRuntime } from '@flowdular/kernel';
+import {
+	ModuleSettingsError,
+	type ModuleSettingsRuntime,
+} from '@flowdular/kernel';
 
 /* This module declares the setting; the shared contract names it, so a reader
    in another module addresses the same id, key and fallback. */
@@ -87,9 +90,16 @@ export function tenantTimeZone(
 			SYSTEM_MODULE_ID,
 			TENANT_TIME_ZONE_KEY,
 		);
-	} catch {
-		/* system.core is not composed in this deployment. */
-		return DEFAULT_TIME_ZONE;
+	} catch (error) {
+		/* system.core is not composed in this deployment. A workspace that was
+		   not primed is the caller's defect and stays loud. */
+		if (
+			error instanceof ModuleSettingsError &&
+			error.code === 'SETTINGS_NOT_DECLARED'
+		) {
+			return DEFAULT_TIME_ZONE;
+		}
+		throw error;
 	}
 	return resolveTimeZone(stored) ?? DEFAULT_TIME_ZONE;
 }

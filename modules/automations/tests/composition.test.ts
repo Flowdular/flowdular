@@ -38,12 +38,13 @@ function memoryStore(): ModuleSettingsStore {
 	const keyOf = (tenantId: string, moduleId: string) =>
 		`${tenantId} ${moduleId}`;
 	return {
-		load: (tenantId, moduleId) => values.get(keyOf(tenantId, moduleId)) ?? {},
-		save: (record) => {
+		load: async (tenantId, moduleId) =>
+			values.get(keyOf(tenantId, moduleId)) ?? {},
+		save: async (record) => {
 			const key = keyOf(record.tenantId, record.moduleId);
 			values.set(key, { ...values.get(key), [record.key]: record.value });
 		},
-		clear: (tenantId, moduleId, key) => {
+		clear: async (tenantId, moduleId, key) => {
 			const stored = values.get(keyOf(tenantId, moduleId));
 			if (stored) delete stored[key];
 		},
@@ -110,7 +111,7 @@ describe('automations.core composition', () => {
 		const { context, settings } = platform();
 		const composition = createServerComposition(context);
 
-		settings.set(
+		await settings.set(
 			'tenant-a',
 			TENANT_TIME_ZONE_SETTING.moduleId,
 			TENANT_TIME_ZONE_SETTING.key,
@@ -119,14 +120,14 @@ describe('automations.core composition', () => {
 		);
 		expect(stub.retimed).toEqual(['tenant-a']);
 
-		settings.set(
+		await settings.set(
 			'tenant-b',
 			TENANT_TIME_ZONE_SETTING.moduleId,
 			TENANT_TIME_ZONE_SETTING.key,
 			'Asia/Tokyo',
 			'owner',
 		);
-		settings.set(
+		await settings.set(
 			'tenant-a',
 			TENANT_TIME_ZONE_SETTING.moduleId,
 			TENANT_TIME_ZONE_SETTING.key,
@@ -136,7 +137,7 @@ describe('automations.core composition', () => {
 		expect(stub.retimed).toEqual(['tenant-a', 'tenant-b', 'tenant-a']);
 
 		/* A neighbouring setting of the same module is not the zone. */
-		settings.set(
+		await settings.set(
 			'tenant-a',
 			TENANT_TIME_ZONE_SETTING.moduleId,
 			'locale',
@@ -148,7 +149,7 @@ describe('automations.core composition', () => {
 		/* Disposal detaches the listener, so a settings write after it re-times
 		   nothing through a runtime that is gone. */
 		await composition.dispose?.();
-		settings.set(
+		await settings.set(
 			'tenant-a',
 			TENANT_TIME_ZONE_SETTING.moduleId,
 			TENANT_TIME_ZONE_SETTING.key,

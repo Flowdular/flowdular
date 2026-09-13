@@ -1,5 +1,6 @@
 import {
 	defineModuleSettings,
+	ModuleSettingsError,
 	PLATFORM_SETTINGS_TENANT,
 	type ModuleSettingsRuntime,
 } from '@flowdular/kernel';
@@ -43,7 +44,9 @@ export const APPROVALS_MODULE_SETTINGS = defineModuleSettings({
 const DEFAULTS = APPROVALS_MODULE_SETTINGS.settings;
 
 /* A setting read must never take a running loop down, so every accessor falls
-   back to the declared default when the runtime has not registered it yet. */
+   back to the declared default when the runtime has not registered it yet. A
+   workspace nobody primed is a caller defect and stays loud: the accessors
+   below prime before they read. */
 function value(
 	settings: ModuleSettingsRuntime,
 	tenantId: string,
@@ -52,7 +55,13 @@ function value(
 ): number {
 	try {
 		return settings.get<number>(tenantId, APPROVALS_MODULE_ID, key);
-	} catch {
+	} catch (error) {
+		if (
+			error instanceof ModuleSettingsError &&
+			error.code === 'SETTINGS_NOT_PRIMED'
+		) {
+			throw error;
+		}
 		return fallback;
 	}
 }
@@ -72,4 +81,22 @@ export function approvalsExpiryIntervalMs(
 		60 *
 		1_000
 	);
+}
+
+/* The open capability and the expiry loop run in the background, where no
+   request middleware primed the workspace; prime is idempotent and memoised,
+   so a primed tenant costs one lookup. */
+export async function approvalsPrimedDefaultExpiryDays(
+	settings: ModuleSettingsRuntime,
+	tenantId: string,
+): Promise<number> {
+	await settings.prime(tenantId);
+	return approvalsDefaultExpiryDays(settings, tenantId);
+}
+
+export async function approvalsPrimedExpiryIntervalMs(
+	settings: ModuleSettingsRuntime,
+): Promise<number> {
+	await settings.prime(PLATFORM_SETTINGS_TENANT);
+	return approvalsExpiryIntervalMs(settings);
 }

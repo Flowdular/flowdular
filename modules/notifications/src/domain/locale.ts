@@ -1,5 +1,8 @@
 import { MAIL_LIMITS } from '@flowdular/server';
-import type { ModuleSettingsRuntime } from '@flowdular/kernel';
+import {
+	ModuleSettingsError,
+	type ModuleSettingsRuntime,
+} from '@flowdular/kernel';
 
 /* Declared and owned by auth.core as a shared tenant setting. This module reads
    it through the settings runtime, never through auth.core storage. */
@@ -27,7 +30,15 @@ export function tenantMailLocale(
 		stored = settings
 			.get<string>(tenantId, TENANT_LOCALE_MODULE_ID, TENANT_LOCALE_KEY)
 			.trim();
-	} catch {
+	} catch (error) {
+		/* Absent auth.core is a deployment shape; an unprimed workspace is a
+		   caller defect and stays loud. */
+		if (
+			error instanceof ModuleSettingsError &&
+			error.code === 'SETTINGS_NOT_PRIMED'
+		) {
+			throw error;
+		}
 		return DEFAULT_MAIL_LOCALE;
 	}
 	return stored.length <= MAIL_LIMITS.locale && LOCALE_PATTERN.test(stored)

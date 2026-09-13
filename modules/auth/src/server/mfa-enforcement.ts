@@ -136,17 +136,20 @@ export function guardMfaSettings(
 	return {
 		declare: (declaration) => settings.declare(declaration),
 		declarations: () => settings.declarations(),
+		prime: (tenantId) => settings.prime(tenantId),
 		get: (tenantId, moduleId, key) => settings.get(tenantId, moduleId, key),
 		list: (tenantId) => settings.list(tenantId),
 		set(tenantId, moduleId, key, value, actor) {
 			if (moduleId === 'auth.core' && key === 'requireMfa' && value === true) {
-				throw new ModuleSettingsError(
-					MFA_KEY_REQUIRED,
-					MFA_KEY_REQUIRED_MESSAGE,
-					409,
+				return Promise.reject(
+					new ModuleSettingsError(
+						MFA_KEY_REQUIRED,
+						MFA_KEY_REQUIRED_MESSAGE,
+						409,
+					),
 				);
 			}
-			settings.set(tenantId, moduleId, key, value, actor);
+			return settings.set(tenantId, moduleId, key, value, actor);
 		},
 		onChange: (listener) => settings.onChange(listener),
 	};

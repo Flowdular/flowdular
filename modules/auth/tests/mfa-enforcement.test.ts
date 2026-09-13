@@ -56,8 +56,18 @@ function gated(
 	) as Promise<Response>;
 }
 
-function requireMfa(auth: TestRuntime, tenantId: string, value: boolean): void {
-	auth.moduleSettings.set(tenantId, 'auth.core', 'requireMfa', value, 'test');
+function requireMfa(
+	auth: TestRuntime,
+	tenantId: string,
+	value: boolean,
+): Promise<void> {
+	return auth.moduleSettings.set(
+		tenantId,
+		'auth.core',
+		'requireMfa',
+		value,
+		'test',
+	);
 }
 
 /* A settings write exactly as the settings screen sends it: session cookie,
@@ -110,7 +120,7 @@ describe('tenant MFA enrolment enforcement', () => {
 	it('holds an unenrolled member at enrolment with a stable problem', async () => {
 		const auth = await fixture();
 		const owner = await signUpOwner(auth);
-		requireMfa(auth, owner.tenantId, true);
+		await requireMfa(auth, owner.tenantId, true);
 
 		const denied = await workspaceApi(auth, owner);
 
@@ -127,7 +137,7 @@ describe('tenant MFA enrolment enforcement', () => {
 	it('keeps the routes that complete enrolment reachable', async () => {
 		const auth = await fixture();
 		const owner = await signUpOwner(auth);
-		requireMfa(auth, owner.tenantId, true);
+		await requireMfa(auth, owner.tenantId, true);
 
 		const session = await call(
 			auth,
@@ -161,7 +171,7 @@ describe('tenant MFA enrolment enforcement', () => {
 	it('answers the workspace API again once a factor is confirmed', async () => {
 		const auth = await fixture();
 		const owner = await signUpOwner(auth);
-		requireMfa(auth, owner.tenantId, true);
+		await requireMfa(auth, owner.tenantId, true);
 		expect((await workspaceApi(auth, owner)).status).toBe(403);
 
 		await confirmFactor(auth, owner.accountId);
@@ -173,7 +183,7 @@ describe('tenant MFA enrolment enforcement', () => {
 		const auth = await fixture();
 		const held = await signUpOwner(auth, 'held@example.com', 'held-workspace');
 		const other = await signUpOwner(auth, 'free@example.com', 'free-workspace');
-		requireMfa(auth, held.tenantId, true);
+		await requireMfa(auth, held.tenantId, true);
 
 		expect((await workspaceApi(auth, held)).status).toBe(403);
 		expect((await workspaceApi(auth, other)).status).toBe(200);
@@ -194,7 +204,7 @@ describe('tenant MFA enrolment enforcement', () => {
 	it('keeps the settings read and the reversal reachable and holds every other write', async () => {
 		const auth = await fixture();
 		const owner = await signUpOwner(auth);
-		requireMfa(auth, owner.tenantId, true);
+		await requireMfa(auth, owner.tenantId, true);
 
 		const read = await gated(auth, '/api/settings', {
 			headers: { cookie: owner.cookie },
@@ -227,7 +237,7 @@ describe('tenant MFA enrolment enforcement', () => {
 	it('leaves the write body readable behind the gate and holds an unreadable one', async () => {
 		const auth = await fixture();
 		const owner = await signUpOwner(auth);
-		requireMfa(auth, owner.tenantId, true);
+		await requireMfa(auth, owner.tenantId, true);
 		const context = createContext(
 			new Request(`${ORIGIN}/api/settings/update`, {
 				method: 'POST',
@@ -264,7 +274,7 @@ describe('tenant MFA enrolment enforcement', () => {
 	it('answers an API token in a workspace that requires enrolment', async () => {
 		const auth = await fixture();
 		const owner = await signUpOwner(auth);
-		requireMfa(auth, owner.tenantId, true);
+		await requireMfa(auth, owner.tenantId, true);
 		const issued = await auth.authService.issueApiToken({
 			tenantId: owner.tenantId,
 			accountId: owner.accountId,
@@ -288,7 +298,7 @@ describe('tenant MFA enrolment enforcement', () => {
 	it('leaves an anonymous request to the endpoint it addressed', async () => {
 		const auth = await fixture();
 		const owner = await signUpOwner(auth);
-		requireMfa(auth, owner.tenantId, true);
+		await requireMfa(auth, owner.tenantId, true);
 
 		const anonymous = await call(
 			auth,
@@ -309,9 +319,10 @@ describe('requireMfa without a deployment MFA key', () => {
 		const auth = await keylessFixture();
 		const owner = await signUpOwner(auth);
 
-		expect(() => requireMfa(auth, owner.tenantId, true)).toThrow(
+		await expect(requireMfa(auth, owner.tenantId, true)).rejects.toThrow(
 			expect.objectContaining({ code: 'MFA_KEY_REQUIRED', status: 409 }),
 		);
+		await auth.moduleSettings.prime(owner.tenantId);
 		expect(
 			auth.moduleSettings.get<boolean>(
 				owner.tenantId,
@@ -326,8 +337,10 @@ describe('requireMfa without a deployment MFA key', () => {
 		const auth = await keylessFixture();
 		const owner = await signUpOwner(auth);
 
-		expect(() => requireMfa(auth, owner.tenantId, false)).not.toThrow();
-		expect(() =>
+		await expect(
+			requireMfa(auth, owner.tenantId, false),
+		).resolves.toBeUndefined();
+		await expect(
 			auth.moduleSettings.set(
 				owner.tenantId,
 				'auth.core',
@@ -335,8 +348,8 @@ describe('requireMfa without a deployment MFA key', () => {
 				null,
 				'test',
 			),
-		).not.toThrow();
-		expect(() =>
+		).resolves.toBeUndefined();
+		await expect(
 			auth.moduleSettings.set(
 				owner.tenantId,
 				'auth.core',
@@ -344,14 +357,16 @@ describe('requireMfa without a deployment MFA key', () => {
 				'pl',
 				'test',
 			),
-		).not.toThrow();
+		).resolves.toBeUndefined();
 	});
 
 	it('accepts the setting once a key is configured', async () => {
 		const auth = await fixture();
 		const owner = await signUpOwner(auth);
 
-		expect(() => requireMfa(auth, owner.tenantId, true)).not.toThrow();
+		await expect(
+			requireMfa(auth, owner.tenantId, true),
+		).resolves.toBeUndefined();
 		expect((await workspaceApi(auth, owner)).status).toBe(403);
 	});
 });
@@ -366,7 +381,7 @@ describe('mfaEnrolmentSatisfied', () => {
 		} as Parameters<typeof mfaEnrolmentSatisfied>[1];
 
 		expect(await mfaEnrolmentSatisfied(auth, principal)).toBe(true);
-		requireMfa(auth, owner.tenantId, true);
+		await requireMfa(auth, owner.tenantId, true);
 		expect(await mfaEnrolmentSatisfied(auth, principal)).toBe(false);
 		await confirmFactor(auth, owner.accountId);
 		expect(await mfaEnrolmentSatisfied(auth, principal)).toBe(true);

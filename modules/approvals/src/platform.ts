@@ -18,8 +18,8 @@ import {
 } from './services/notifications.ts';
 import {
 	APPROVALS_MODULE_SETTINGS,
-	approvalsDefaultExpiryDays,
-	approvalsExpiryIntervalMs,
+	approvalsPrimedDefaultExpiryDays,
+	approvalsPrimedExpiryIntervalMs,
 } from './settings.ts';
 
 interface AuthMemberRecord {
@@ -84,9 +84,11 @@ export function createServerComposition(
 					: 'preview',
 		members: tenantMembers(context),
 		member: tenantMember(context),
+		/* The open capability runs from the workflows worker and the loop from
+		   the job runner, where no request middleware primed the workspace. */
 		defaultExpiryDays: (tenantId) =>
-			approvalsDefaultExpiryDays(context.settings, tenantId),
-		expiryIntervalMs: () => approvalsExpiryIntervalMs(context.settings),
+			approvalsPrimedDefaultExpiryDays(context.settings, tenantId),
+		expiryIntervalMs: () => approvalsPrimedExpiryIntervalMs(context.settings),
 		/* notifications.core is optional. The lookup happens when an event is
 		   published, so a module composed after this one is found and an absent
 		   one is a no-op. */

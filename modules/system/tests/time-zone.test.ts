@@ -23,12 +23,13 @@ function memoryStore(): ModuleSettingsStore {
 	const keyOf = (tenantId: string, moduleId: string) =>
 		`${tenantId} ${moduleId}`;
 	return {
-		load: (tenantId, moduleId) => values.get(keyOf(tenantId, moduleId)) ?? {},
-		save: (record) => {
+		load: async (tenantId, moduleId) =>
+			values.get(keyOf(tenantId, moduleId)) ?? {},
+		save: async (record) => {
 			const key = keyOf(record.tenantId, record.moduleId);
 			values.set(key, { ...values.get(key), [record.key]: record.value });
 		},
-		clear: (tenantId, moduleId, key) => {
+		clear: async (tenantId, moduleId, key) => {
 			const stored = values.get(keyOf(tenantId, moduleId));
 			if (stored) delete stored[key];
 		},
@@ -126,10 +127,12 @@ describe('workspace time zone', () => {
 		).toBe(1);
 	});
 
-	it('reads UTC until a workspace sets its own zone', () => {
+	it('reads UTC until a workspace sets its own zone', async () => {
 		const settings = runtime();
+		await settings.prime('tenant-a');
+		await settings.prime('tenant-b');
 		expect(tenantTimeZone(settings, 'tenant-a')).toBe(DEFAULT_TIME_ZONE);
-		settings.set(
+		await settings.set(
 			'tenant-a',
 			SYSTEM_MODULE_ID,
 			TENANT_TIME_ZONE_KEY,
@@ -146,11 +149,20 @@ describe('workspace time zone', () => {
 		expect(tenantTimeZone(settings, 'tenant-a')).toBe(DEFAULT_TIME_ZONE);
 	});
 
+	/* A workspace nobody primed is a caller defect, and a scheduler that read
+	   UTC in its place would fire every slot in the wrong zone. */
+	it('fails loudly for a workspace that was not primed', () => {
+		const settings = runtime();
+		expect(() => tenantTimeZone(settings, 'tenant-a')).toThrow(
+			expect.objectContaining({ code: 'SETTINGS_NOT_PRIMED' }),
+		);
+	});
+
 	/* The declared pattern bounds the shape only, so a name no zone database
 	   knows can reach storage through a write that skipped the endpoint. */
-	it('falls back to UTC for a stored zone this runtime does not know', () => {
+	it('falls back to UTC for a stored zone this runtime does not know', async () => {
 		const settings = runtime();
-		settings.set(
+		await settings.set(
 			'tenant-a',
 			SYSTEM_MODULE_ID,
 			TENANT_TIME_ZONE_KEY,
@@ -179,9 +191,9 @@ describe('workspace time zone', () => {
 		);
 	});
 
-	it('refuses a stored value that does not match the declaration', () => {
+	it('refuses a stored value that does not match the declaration', async () => {
 		const settings = runtime();
-		expect(() =>
+		await expect(
 			settings.set(
 				'tenant-a',
 				SYSTEM_MODULE_ID,
@@ -189,7 +201,8 @@ describe('workspace time zone', () => {
 				'not a zone at all',
 				'account-1',
 			),
-		).toThrow(/unsupported format/);
+		).rejects.toThrow(/unsupported format/);
+		await settings.prime('tenant-a');
 		expect(tenantTimeZone(settings, 'tenant-a')).toBe(DEFAULT_TIME_ZONE);
 	});
 });

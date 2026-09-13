@@ -44,6 +44,8 @@ export interface AutomationsRuntimeOptions {
 	readonly schedulerPollMs?: number | (() => number);
 	/** Reads the workspace zone a cron slot is computed in, live per call. */
 	readonly timeZone?: (tenantId: string) => string;
+	/** Loads a workspace's settings before the scheduler reads its zone. */
+	readonly primeTenant?: (tenantId: string) => Promise<void>;
 	readonly repository?: AutomationsRepository;
 	readonly variables?: PlatformVariableRegistry;
 	readonly targets?: AutomationTargetRegistry;
@@ -155,6 +157,7 @@ export function createAutomationsRuntime(
 			options.variables,
 			targets,
 			options.timeZone,
+			options.primeTenant,
 		));
 	const triggerService = async () =>
 		(triggers ??= new AutomationTriggerService(

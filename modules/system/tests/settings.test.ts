@@ -450,6 +450,7 @@ describe('settings API', () => {
 		expect(
 			runtime.moduleSettings.get(owner.tenantId, 'demo.core', 'fastCheckout'),
 		).toBe(true);
+		await runtime.moduleSettings.prime(other.tenantId);
 		expect(
 			runtime.moduleSettings.get(other.tenantId, 'demo.core', 'fastCheckout'),
 		).toBe(false);

@@ -31,7 +31,12 @@ export function createServerComposition(
 				: context.environment.NODE_ENV === 'production'
 					? 'runtime'
 					: 'preview',
-		quotaBytes: (tenantId) => documentsQuotaBytes(context.settings, tenantId),
+		/* An upload may come from another module's worker, outside any request,
+		   so the workspace is primed here rather than assumed. */
+		quotaBytes: async (tenantId) => {
+			await context.settings.prime(tenantId);
+			return documentsQuotaBytes(context.settings, tenantId);
+		},
 		readUrlSeconds: () => documentsReadUrlSeconds(context.settings),
 	});
 	/* Registered while the platform composes, so a module that holds records can
