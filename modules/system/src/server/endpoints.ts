@@ -388,7 +388,7 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 						409,
 					);
 				}
-				options.settings.set(
+				await options.settings.set(
 					principal.tenantId,
 					moduleId,
 					key,

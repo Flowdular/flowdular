@@ -224,6 +224,10 @@ export class AutomationScheduleService {
 		   applies to the next slot rather than to the next deployment. */
 		private readonly timeZoneOf: (tenantId: string) => string = () =>
 			DEFAULT_TIME_ZONE,
+		/* Loads the workspace settings the zone is read from; the scheduler
+		   fires outside any request, so nothing else has primed them. */
+		private readonly primeTenant: (tenantId: string) => Promise<void> = () =>
+			Promise.resolve(),
 	) {
 		this.variables = variables ?? createScheduleVariableRegistry(this.runs);
 		this.targets = targets ?? createAutomationTargetRegistry();
@@ -599,6 +603,7 @@ export class AutomationScheduleService {
 		now: number,
 	): Promise<boolean> {
 		const slot = schedule.nextRunAt;
+		await this.primeTenant(schedule.tenantId);
 		/* Resolved before anything is dispatched: a cadence whose next slot cannot
 		   be computed disables the schedule instead of firing a slot it could
 		   never advance past. */

@@ -660,9 +660,8 @@ export interface AuthRepository {
 		accountId: string,
 		limit: number,
 	): Promise<number>;
-	/* The stored module settings of one tenant and module. The synchronous
-	   kernel ModuleSettingsStore is served from a snapshot over these three;
-	   see services/settings-store.ts. */
+	/* The stored module settings of one tenant and module; the kernel
+	   ModuleSettingsStore in services/settings-store.ts is built on these three. */
 	loadSettings(
 		tenantId: string,
 		moduleId: string,

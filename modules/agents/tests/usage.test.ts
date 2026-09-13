@@ -73,6 +73,7 @@ async function fixture(monthlyCostCapUsd = 0) {
 	});
 	workers.push(worker);
 	const usage = new AgentUsageService(repository, {
+		prime: async () => {},
 		monthlyCostCapUsd: () => monthlyCostCapUsd,
 		agentMonthlyCostCapUsd: () => 0,
 	} as never);

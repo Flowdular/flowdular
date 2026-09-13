@@ -127,10 +127,11 @@ export function actorOf(session: AuthSession): AuthActor {
 	};
 }
 
-export function sessionPayload(
+export async function sessionPayload(
 	session: AuthSession,
 	runtime: AuthRuntime,
-): Record<string, unknown> {
+): Promise<Record<string, unknown>> {
+	await runtime.moduleSettings.prime(session.principal.tenantId);
 	return {
 		principal: session.principal,
 		csrfToken: session.csrfToken,

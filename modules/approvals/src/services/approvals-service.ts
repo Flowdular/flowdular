@@ -57,8 +57,8 @@ export interface ApprovalsServiceOptions {
 		tenantId: string,
 		accountId: string,
 	) => Promise<ApprovalMember | null>;
-	/** Live tenant setting applied when a requirement names no expiry. */
-	readonly defaultExpiryDays: (tenantId: string) => number;
+	/** Live tenant setting applied when a requirement names no expiry; the caller primes the workspace first. */
+	readonly defaultExpiryDays: (tenantId: string) => number | Promise<number>;
 	readonly notifications?: NotificationPublisherResolver;
 	readonly callbacks?: ApprovalCallbackRegistry;
 	readonly now?: () => number;
@@ -105,7 +105,7 @@ export class ApprovalsService {
 		);
 		const requirement = normalizeRequirement(
 			input.requirement,
-			this.#defaultExpiryDays(tenantId),
+			await this.#defaultExpiryDays(tenantId),
 		);
 		const permission = bounded(
 			input.permission,

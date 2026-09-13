@@ -17,7 +17,10 @@ import {
 	type ModuleSpec,
 	type ValidationIssue,
 } from '@flowdular/contracts';
-import { reservedFieldReason } from './module-templates.ts';
+import {
+	OWNED_SCREEN_COLUMNS,
+	reservedFieldReason,
+} from './module-templates.ts';
 
 const ajv = new Ajv2020({ allErrors: true, strict: true });
 const validators = {
@@ -260,7 +263,7 @@ export function moduleSpecIssues(value: unknown): ValidationIssue[] {
 				continue;
 			}
 			names.forEach((name, nameIndex) => {
-				if (fields.has(name)) return;
+				if (fields.has(name) || OWNED_SCREEN_COLUMNS.has(name)) return;
 				issues.push(
 					specIssue(
 						'SPEC_FIELD_UNKNOWN',

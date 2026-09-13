@@ -47,10 +47,7 @@ import { createMailPortDelivery } from '../services/mail-port.ts';
 import { SmtpMailDelivery } from '../services/mail-smtp.ts';
 import type { AuthRepository } from '../services/repository.ts';
 import { createSessionSweepRunner } from '../services/session-sweep-runner.ts';
-import {
-	createAuthSettingsStore,
-	type AuthSettingsStore,
-} from '../services/settings-store.ts';
+import { createAuthSettingsStore } from '../services/settings-store.ts';
 import type { AuthCookieConfig } from '../api/cookies.ts';
 import {
 	createAuthModuleSettings,
@@ -502,9 +499,6 @@ function cookieName(options: AuthRuntimeOptions): string {
 }
 
 const EXPIRED_SESSION_SWEEP_MS = 15 * 60 * 1000;
-/* Bound on remembered per-workspace settings primes; least recently added is
-   evicted, and an evicted workspace is primed again on its next request. */
-const PRIMED_TENANT_LIMIT = 1024;
 
 const RUNTIME_REQUIREMENTS = {
 	dialectIds: [DATABASE_DIALECT_IDS.postgresql],
@@ -571,7 +565,7 @@ async function openAuthDatabase(
 
 export interface AuthModuleSettingsRuntime {
 	readonly settings: ModuleSettingsRuntime;
-	/** Resolves once every pending settings read and write has landed. */
+	/** Resolves at once: the runtime awaits every read and write itself. */
 	ready(): Promise<void>;
 	dispose(): Promise<void>;
 }
@@ -591,12 +585,11 @@ export function createModuleSettingsRuntime(options: {
 	const store = createAuthSettingsStore(async () => (await open()).repository);
 	return {
 		settings: createKernelSettingsRuntime(store),
-		ready: () => store.ready(),
+		ready: () => Promise.resolve(),
 		async dispose() {
 			const pending = opened;
 			opened = undefined;
 			if (!pending) return;
-			await store.ready().catch(() => undefined);
 			const database = await pending.catch(() => undefined);
 			for (const lease of database?.leases ?? []) await lease.release();
 		},
@@ -622,7 +615,7 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 	};
 	const repository = async (): Promise<AuthRepository> =>
 		(await open()).repository;
-	const store: AuthSettingsStore = createAuthSettingsStore(repository);
+	const store = createAuthSettingsStore(repository);
 	/* Declared while the platform composes, because the registry is sealed
 	   before any start hook runs. auth.core names itself rather than relying on
 	   a binding: the same runtime composes in processes that hand it an unbound
@@ -685,29 +678,10 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 			return read<number>('passwordMinLength');
 		},
 	};
-	/* A workspace snapshot is filled asynchronously, so the first read for a
-	   workspace would otherwise see the declared default in place of a stored
-	   value. Priming is awaited once per workspace and remembered; a failed
-	   prime drops out of the map so the next request retries instead of
-	   answering from an empty snapshot forever. Evicting an entry only costs a
-	   repeat prime over a snapshot the store already holds. */
-	const primed = new Map<string, Promise<void>>();
-	const primeTenant = (tenantId: string): Promise<void> => {
-		const existing = primed.get(tenantId);
-		if (existing) return existing;
-		const pending = store
-			.prime(tenantId, 'auth.core')
-			.catch((error: unknown) => {
-				primed.delete(tenantId);
-				throw error;
-			});
-		if (primed.size >= PRIMED_TENANT_LIMIT) {
-			const oldest = primed.keys().next().value;
-			if (oldest !== undefined) primed.delete(oldest);
-		}
-		primed.set(tenantId, pending);
-		return pending;
-	};
+	/* The kernel runtime primes once per workspace and remembers it, so a
+	   stored value is never answered by its declared default. */
+	const primeTenant = (tenantId: string): Promise<void> =>
+		moduleSettings.prime(tenantId);
 	const tenantSettings = async (
 		tenantId: string,
 	): Promise<AuthTenantSettings> => {
@@ -748,7 +722,7 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 		/* The settings this runtime reads on every request are platform scoped.
 		   Priming them here means a request never observes the declared default
 		   in place of a stored value. */
-		await store.prime(PLATFORM_SETTINGS_TENANT, 'auth.core');
+		await moduleSettings.prime(PLATFORM_SETTINGS_TENANT);
 		const authService = new AuthService(repository, {
 			policy,
 			/* Saving a workspace provider verifies its issuer the same way every
@@ -843,7 +817,13 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 				: options.contentSecurityPolicy,
 		reportOnly: options.contentSecurityPolicyReportOnly ?? !options.production,
 	});
-	const authentication = createAuthenticationMiddleware(service, cookie);
+	/* Every module reads its settings on the request path, so the workspace
+	   is primed here, once the principal is known and before any route runs. */
+	const authentication = createAuthenticationMiddleware(
+		service,
+		cookie,
+		primeTenant,
+	);
 	const mfaEnrolment = createMfaEnrolmentMiddleware({
 		tenantSettings,
 		service,
@@ -889,9 +869,6 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 			opened = undefined;
 			servicePromise = undefined;
 			if (!database) return;
-			/* A settings write accepted before disposal still has to land, and its
-			   lease has to outlive it. */
-			await store.ready().catch(() => undefined);
 			for (const lease of (await database).leases) await lease.release();
 		},
 		/* Enrolment runs inside authentication: it needs the resolved principal,

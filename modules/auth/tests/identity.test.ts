@@ -303,6 +303,9 @@ describe('Flowdular authentication identity', () => {
 			new Request('https://flowdular.example/api/auth/oidc/example/start'),
 			{ provider: 'example' },
 		);
+		/* The served chain resolves the service, and with it the platform
+		   settings, before any route runs; a direct handler call does the same. */
+		await runtime.service();
 
 		const response = await route.handler(context);
 

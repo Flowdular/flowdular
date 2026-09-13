@@ -22,7 +22,7 @@ export interface DocumentsRuntimeOptions {
 	/** Platform-owned object storage; the module never sees an adapter. */
 	readonly storage: StoragePort;
 	/** Live tenant quota in bytes, read again for every upload. */
-	readonly quotaBytes: (tenantId: string) => number;
+	readonly quotaBytes: (tenantId: string) => number | Promise<number>;
 	/** Live platform read URL lifetime in seconds. */
 	readonly readUrlSeconds: () => number;
 	/** Test seam: an already migrated repository, so no lease is taken. */

@@ -205,6 +205,9 @@ export function createScimRoutes(
 			await runtime.tokens()
 		).authenticate(tenantId, presented);
 		if (!token) throw refuse('rejected-credential');
+		/* A SCIM caller carries no principal, so the authentication middleware
+		   primed nothing for this workspace. */
+		await settings.prime(tenantId);
 		const url = new URL(octane.request.url);
 		return {
 			tenantId,

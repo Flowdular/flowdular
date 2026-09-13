@@ -141,14 +141,16 @@ export interface DeliveryServiceOptions {
 	readonly repository: NotificationsRepository;
 	readonly vault: SecretVault;
 	readonly policy: () => WebhookEgressPolicy;
-	readonly settings: (tenantId: string) => TenantDeliverySettings;
+	readonly settings: (
+		tenantId: string,
+	) => TenantDeliverySettings | Promise<TenantDeliverySettings>;
 	readonly members: (
 		tenantId: string,
 	) => Promise<readonly TenantMemberScopes[]>;
 	/** Platform-owned outbound mail; the e-mail channel sends through it. */
 	readonly mail: MailPort;
 	/** The language one workspace's messages say they are written in. */
-	readonly locale?: (tenantId: string) => string;
+	readonly locale?: (tenantId: string) => string | Promise<string>;
 	readonly now?: () => number;
 	readonly transport?: DeliveryTransport;
 	readonly connect?: WebhookConnectSeam | undefined;
@@ -345,7 +347,7 @@ export class DeliveryService {
 	readonly #options: DeliveryServiceOptions;
 	readonly #transport: DeliveryTransport;
 	readonly #now: () => number;
-	readonly #locale: (tenantId: string) => string;
+	readonly #locale: (tenantId: string) => string | Promise<string>;
 	/** Last tenant a retention pass reached; '' restarts the rotation. */
 	#retentionCursor = '';
 
@@ -477,7 +479,7 @@ export class DeliveryService {
 				: (tenants[tenants.length - 1] ?? '');
 		let removed = 0;
 		for (const tenantId of tenants) {
-			const { retentionDays } = this.#options.settings(tenantId);
+			const { retentionDays } = await this.#options.settings(tenantId);
 			removed += await this.#options.repository.deleteCompletedDeliveriesBefore(
 				tenantId,
 				now - retentionDays * 86_400_000,
@@ -591,7 +593,7 @@ export class DeliveryService {
 				notificationMailMessage(
 					item,
 					member.email,
-					this.#locale(attempt.tenantId),
+					await this.#locale(attempt.tenantId),
 				),
 			);
 			return { status: 'succeeded', responseStatus: null, errorClass: null };
@@ -656,9 +658,8 @@ export class DeliveryService {
 		now: number,
 		members: MemberLookup,
 	): Promise<void> {
-		const { retryMaxAttempts, retryMaxBackoffMinutes } = this.#options.settings(
-			attempt.tenantId,
-		);
+		const { retryMaxAttempts, retryMaxBackoffMinutes } =
+			await this.#options.settings(attempt.tenantId);
 		const exhausted = attempt.attemptNumber >= retryMaxAttempts;
 		const status =
 			outcome.status === 'succeeded'

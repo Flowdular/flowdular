@@ -408,6 +408,7 @@ export function createIsolatedPreviewRuntime(
 		const composition: PreviewComposition = {
 			...meta,
 			auth: null as never,
+			settings: null as never,
 			router: null as never,
 			routes: Array.from({ length: meta.routes }, () => null as never),
 			request: async (request) => {

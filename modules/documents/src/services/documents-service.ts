@@ -85,7 +85,7 @@ export interface DocumentsServiceOptions {
 	readonly repository: DocumentsRepository;
 	readonly storage: StoragePort;
 	/** Live tenant quota in bytes; read again for every upload. */
-	readonly quotaBytes: (tenantId: string) => number;
+	readonly quotaBytes: (tenantId: string) => number | Promise<number>;
 	/** Live platform read URL lifetime in seconds. */
 	readonly readUrlSeconds: () => number;
 	readonly now?: () => number;
@@ -112,7 +112,7 @@ export function documentAttachment(record: DocumentsFile): DocumentAttachment {
 export class DocumentsService {
 	private readonly repository: DocumentsRepository;
 	private readonly storage: StoragePort;
-	private readonly quotaBytes: (tenantId: string) => number;
+	private readonly quotaBytes: (tenantId: string) => number | Promise<number>;
 	private readonly readUrlSeconds: () => number;
 	private readonly now: () => number;
 	private readonly newId: () => string;
@@ -474,7 +474,7 @@ export class DocumentsService {
 	}
 
 	private async remainingBytes(tenantId: string): Promise<number> {
-		const quota = this.quotaBytes(tenantId);
+		const quota = await this.quotaBytes(tenantId);
 		return quota - (await this.repository.storedBytes(tenantId));
 	}
 

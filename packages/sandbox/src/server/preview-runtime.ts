@@ -7,6 +7,7 @@ import { createRouter, type Router } from '@octanejs/app-core';
 import {
 	createDataClassRegistry,
 	createModuleSettingsRuntime,
+	PLATFORM_SETTINGS_TENANT,
 	createPlatformAgentRegistry,
 	createPlatformCapabilityRegistry,
 	createPlatformToolRegistry,
@@ -72,6 +73,9 @@ export interface PreviewComposition {
 	readonly moduleId: string;
 	readonly modules: readonly PreviewModuleComposition[];
 	readonly auth: AuthRuntime;
+	/* The drafts' settings runtime; a request primes the principal's workspace
+	   on it once the authentication middleware resolved the principal. */
+	readonly settings: ModuleSettingsRuntime;
 	readonly credentials: PreviewCredentials;
 	readonly router: Router;
 	readonly routes: readonly ServerRoute[];
@@ -101,7 +105,7 @@ function memorySettings(): ModuleSettingsRuntime {
 	const keyOf = (tenantId: string, moduleId: string, key: string) =>
 		`${tenantId}\0${moduleId}\0${key}`;
 	return createModuleSettingsRuntime({
-		load: (tenantId, moduleId) => {
+		load: async (tenantId, moduleId) => {
 			const values: Record<string, ModuleSettingValue> = {};
 			for (const record of records.values()) {
 				if (record.tenantId === tenantId && record.moduleId === moduleId) {
@@ -110,10 +114,10 @@ function memorySettings(): ModuleSettingsRuntime {
 			}
 			return values;
 		},
-		save: (record) => {
+		save: async (record) => {
 			records.set(keyOf(record.tenantId, record.moduleId, record.key), record);
 		},
-		clear: (tenantId, moduleId, key) => {
+		clear: async (tenantId, moduleId, key) => {
 			records.delete(keyOf(tenantId, moduleId, key));
 		},
 	});
@@ -412,6 +416,7 @@ export function createInProcessPreviewRuntime(
 			}
 			agentDefinitions.seal();
 			dataClasses.seal();
+			await context.settings.prime(PLATFORM_SETTINGS_TENANT);
 
 			const account = await (
 				await auth.service()
@@ -444,6 +449,7 @@ export function createInProcessPreviewRuntime(
 				moduleId: session.moduleId,
 				modules,
 				auth,
+				settings: context.settings,
 				credentials,
 				routes: all,
 				router: createRouter([...all]),

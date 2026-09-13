@@ -47,7 +47,9 @@ export interface NotificationsRuntimeOptions {
 	readonly workspaceRoot?: string;
 	readonly secretVault?: SecretVault;
 	/** Live tenant settings for retry, backoff and retention. */
-	readonly deliverySettings: (tenantId: string) => TenantDeliverySettings;
+	readonly deliverySettings: (
+		tenantId: string,
+	) => TenantDeliverySettings | Promise<TenantDeliverySettings>;
 	/** Live platform allowlist, read again for every check. */
 	readonly egressAllowlist: () => string;
 	readonly pollIntervalMs: () => number;
@@ -58,7 +60,7 @@ export interface NotificationsRuntimeOptions {
 	/** The platform mail port the e-mail channel sends through. */
 	readonly mail: MailPort;
 	/** The language one workspace's messages say they are written in. */
-	readonly locale?: (tenantId: string) => string;
+	readonly locale?: (tenantId: string) => string | Promise<string>;
 	readonly repository?: NotificationsRepository;
 	/** Test seam for the address check; never reachable from configuration. */
 	readonly hostResolver?: HostAddressResolver;

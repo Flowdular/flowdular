@@ -54,6 +54,7 @@ export class AgentUsageService {
 		const to = usageDay(now);
 		const from = usageDay(now - (window - 1) * DAY_MS);
 		const monthFrom = firstDayOfMonth(now);
+		await this.settings?.prime(tenantId);
 		return {
 			from,
 			to,
@@ -87,6 +88,7 @@ export class AgentUsageService {
 		agentId: string,
 		now = this.now(),
 	): Promise<BudgetRefusal | null> {
+		await this.settings?.prime(tenantId);
 		const caps = this.caps(tenantId);
 		if (caps.monthlyCostMicroUsd === 0 && caps.agentMonthlyCostMicroUsd === 0) {
 			return null;

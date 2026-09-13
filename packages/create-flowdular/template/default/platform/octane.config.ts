@@ -8,7 +8,10 @@ import {
 	createMailPort,
 	mailConfigFromEnvironment,
 } from '@flowdular/sdk/server';
-import { createDataClassRegistry } from '@flowdular/sdk/kernel';
+import {
+	createDataClassRegistry,
+	PLATFORM_SETTINGS_TENANT,
+} from '@flowdular/sdk/kernel';
 import { resolve } from 'node:path';
 import { defineConfig, RenderRoute } from '@octanejs/vite-plugin';
 import {
@@ -138,6 +141,9 @@ dataClasses.seal();
    any module reads a row. */
 if (!building) {
 	await databases.check();
+	/* Platform-scoped settings are read by background work before any request
+	   could prime them; a workspace is primed by the authentication middleware. */
+	await settings.prime(PLATFORM_SETTINGS_TENANT);
 	for (const composition of moduleCompositions) await composition.prepare?.();
 	for (const composition of moduleCompositions) composition.start?.();
 }

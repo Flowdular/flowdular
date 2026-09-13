@@ -18,12 +18,13 @@ function memoryStore(): ModuleSettingsStore {
 	const keyOf = (tenantId: string, moduleId: string) =>
 		`${tenantId} ${moduleId}`;
 	return {
-		load: (tenantId, moduleId) => values.get(keyOf(tenantId, moduleId)) ?? {},
-		save: (record) => {
+		load: async (tenantId, moduleId) =>
+			values.get(keyOf(tenantId, moduleId)) ?? {},
+		save: async (record) => {
 			const key = keyOf(record.tenantId, record.moduleId);
 			values.set(key, { ...values.get(key), [record.key]: record.value });
 		},
-		clear: (tenantId, moduleId, key) => {
+		clear: async (tenantId, moduleId, key) => {
 			const stored = values.get(keyOf(tenantId, moduleId));
 			if (stored) delete stored[key];
 		},
@@ -56,7 +57,7 @@ function runtime() {
 const ZONES = Intl.supportedValuesOf('timeZone');
 
 /** How many times the run reached the runtime zone database. */
-function probeCount(run: () => void): number {
+async function probeCount(run: () => Promise<void>): Promise<number> {
 	const real = Intl.DateTimeFormat;
 	let probes = 0;
 	Intl.DateTimeFormat = new Proxy(real, {
@@ -66,7 +67,7 @@ function probeCount(run: () => void): number {
 		},
 	});
 	try {
-		run();
+		await run();
 	} finally {
 		Intl.DateTimeFormat = real;
 	}
@@ -86,9 +87,9 @@ describe('workspace time zone', () => {
 		]);
 	});
 
-	it('reads the zone the workspace stored', () => {
+	it('reads the zone the workspace stored', async () => {
 		const settings = runtime();
-		settings.set(
+		await settings.set(
 			'tenant-a',
 			TENANT_TIME_ZONE_MODULE_ID,
 			TENANT_TIME_ZONE_KEY,
@@ -100,12 +101,12 @@ describe('workspace time zone', () => {
 
 	/* Both fallbacks the scheduler depends on: the zone has to answer even where
 	   the owning module is absent, and where the stored name means nothing here. */
-	it('falls back to UTC without the owning module and for an unknown zone', () => {
+	it('falls back to UTC without the owning module and for an unknown zone', async () => {
 		const absent = createModuleSettingsRuntime(memoryStore());
 		expect(tenantTimeZone(absent, 'tenant-a')).toBe(DEFAULT_TIME_ZONE);
 
 		const settings = runtime();
-		settings.set(
+		await settings.set(
 			'tenant-a',
 			TENANT_TIME_ZONE_MODULE_ID,
 			TENANT_TIME_ZONE_KEY,
@@ -117,7 +118,16 @@ describe('workspace time zone', () => {
 
 	/* A workspace can store any spelling of its zone. They all name one zone, so
 	   they cost one probe and one entry. */
-	it('accepts every spelling of a zone from one cached entry', () => {
+	/* The scheduler fires outside any request, so it primes the workspace
+	   itself; a read before that is a defect, never a UTC fallback. */
+	it('fails loudly for a workspace that was not primed', () => {
+		const settings = runtime();
+		expect(() => tenantTimeZone(settings, 'tenant-a')).toThrow(
+			expect.objectContaining({ code: 'SETTINGS_NOT_PRIMED' }),
+		);
+	});
+
+	it('accepts every spelling of a zone from one cached entry', async () => {
 		const settings = runtime();
 		const spellings = [
 			'Europe/Warsaw',
@@ -127,9 +137,9 @@ describe('workspace time zone', () => {
 			'europe/WARSAW',
 			'eUrOpE/wArSaW',
 		];
-		const probes = probeCount(() => {
+		const probes = await probeCount(async () => {
 			for (const spelling of spellings) {
-				settings.set(
+				await settings.set(
 					'tenant-a',
 					TENANT_TIME_ZONE_MODULE_ID,
 					TENANT_TIME_ZONE_KEY,
@@ -144,11 +154,11 @@ describe('workspace time zone', () => {
 
 	/* The accepted names are a cache, not a directory of every zone the process
 	   was ever asked about. */
-	it('stops holding accepted zones once the cache is full', () => {
+	it('stops holding accepted zones once the cache is full', async () => {
 		const settings = runtime();
 		expect(ZONES.length).toBeGreaterThan(40);
-		const read = (zone: string) => {
-			settings.set(
+		const read = async (zone: string) => {
+			await settings.set(
 				'tenant-a',
 				TENANT_TIME_ZONE_MODULE_ID,
 				TENANT_TIME_ZONE_KEY,
@@ -158,7 +168,13 @@ describe('workspace time zone', () => {
 			return tenantTimeZone(settings, 'tenant-a');
 		};
 		const first = ZONES[0]!;
-		for (const zone of ZONES.slice(0, 40)) expect(read(zone), zone).toBe(zone);
-		expect(probeCount(() => read(first))).toBe(1);
+		for (const zone of ZONES.slice(0, 40)) {
+			expect(await read(zone), zone).toBe(zone);
+		}
+		expect(
+			await probeCount(async () => {
+				await read(first);
+			}),
+		).toBe(1);
 	});
 });

@@ -436,14 +436,14 @@ describe('settings audit', () => {
 				organizationSlug: 'example-operations',
 			});
 			const { accountId, tenantId } = issued.principal;
-			runtime.moduleSettings.set(
+			await runtime.moduleSettings.set(
 				tenantId,
 				'auth.core',
 				'sessionIdleMinutes',
 				45,
 				accountId,
 			);
-			runtime.moduleSettings.set(
+			await runtime.moduleSettings.set(
 				tenantId,
 				'auth.core',
 				'sessionIdleMinutes',
@@ -504,7 +504,7 @@ describe('settings audit', () => {
 				organizationName: 'English Workspace',
 				organizationSlug: 'english-workspace',
 			});
-			runtime.moduleSettings.set(
+			await runtime.moduleSettings.set(
 				polish.principal.tenantId,
 				'auth.core',
 				'defaultLocale',
@@ -565,7 +565,7 @@ describe('settings audit', () => {
 			vi.spyOn(service, 'recordSettingsUpdate').mockRejectedValue(
 				new Error(driverDetail),
 			);
-			runtime.moduleSettings.set(
+			await runtime.moduleSettings.set(
 				tenantId,
 				'auth.core',
 				'sessionIdleMinutes',

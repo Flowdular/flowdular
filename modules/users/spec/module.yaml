@@ -1,6 +1,6 @@
-schemaVersion: 1
+schemaVersion: 2
 id: users.core
-specVersion: 0.9.7
+specVersion: 0.9.8
 status: approved
 name: User Management Core
 description: Provides the tenant-scoped user directory and member administration (creation, display name, role assignment, per-member scopes, account status, password reset, session revocation, removal) through the public auth administration port.
@@ -45,7 +45,6 @@ invariants:
   - The member search provider registered with search.providers.v1 reads members only through the auth administration port, under the tenant of the searching principal and behind users.members.read; it holds no index and no copy of a membership. The predicate and the bound are pushed into the port, which answers at most the documented number of members whose display name or whose normalised address starts with the term. Because that rule is a prefix, the provider pushes the terms of the query in the order they were typed, one read each, stops at the first term that answers rows and makes at most three reads for one query, so a request never reads a workspace of unknown size and the same set is found whichever order the terms were typed in; every term and the ranking are then applied to the rows that came back, and a member no term of the first three opens is not found.
   - The members import target registered with import.ports.v1 as users.core.members accepts email (required), displayName (required) and role (optional, a role key of the workspace, defaulting to member), keys rows by the address folded the way auth.core stores one, trimmed, NFKC normalised and lower cased, so import.core refuses a repeat spelled in another case wherever in the file it stands, resolves that natural key per batch by asking the auth administration port about the addresses the batch names rather than by listing the workspace, and is behind users.members.manage; create-only creates an absent member and refuses an existing one with ALREADY_EXISTS, update-existing creates an absent member and applies the display name and then the role of an existing one, so the write that can only be refused for its own shape lands first and a role auth.core refuses afterwards leaves the row updated with the reason ROLE_UNCHANGED:<code> rather than denying a change that already happened, skip-existing leaves an existing member untouched; every write goes through the auth administration port with the principal that started the job, a refused row never fails another row, and a deployment without import.core still composes users.core.
   - The members list export registered with exports.lists.v1 as users.core.members declares the e-mail, display name, role, workspace status and joined-at columns, is behind users.members.read, and is walked by exports.core under the principal that started the job through the auth administration port, so a file can never carry a member of another workspace or a column the Members screen would not have shown. The walk is the administration port's own paged member listing, one bounded page per call, so an export of M members reads M rows rather than one roll per page. Its keyset is the account id and not the display name the unpaged roll is ordered by, so a member renamed while a long walk runs cannot cross a page boundary and be written twice or skipped, and a member removed mid-walk does not strand the cursor. The Members screen starts a job through exports.core's own start route and links to the Exports screen, and a deployment without exports.core still composes users.core and registers nothing.
-  - The Members screen offers two bulk actions behind users.members.manage, deactivate selected and assign role, each taking between 1 and 100 unique account ids the screen selected on the page and never the acting principal; the server applies them one id at a time through the single membership status path and the single role assignment path of the auth administration port, so every row keeps its own audit event and its own refusal (the acting principal, the last owner, an owner or the owner role touched by a non-owner), a missing or another workspace's id is answered not-found, and the response carries one outcome per id in the order sent (updated, not-found or refused with its code) rather than failing the call.
 permissions:
   - id: users.members.read
     description: Read memberships in the active tenant.
@@ -54,6 +53,244 @@ permissions:
 dataOwnership:
   - auth.core owns accounts, memberships, roles, scopes, credentials, and sessions.
   - users.core owns the administration use cases and UI but writes only through the public auth administration port.
+entities:
+  - id: member
+    name: Workspace member
+    description: One membership of the active workspace as the auth administration port answers it; auth.core owns the row and users.core reads and writes it only through the port, never through a table of its own.
+    fields:
+      - id: accountId
+        type: string
+        required: true
+        maxLength: 128
+        description: The auth.core account id; the record reference every member action names.
+      - id: email
+        type: string
+        required: true
+        unique: tenant
+        maxLength: 254
+        description: Shown read-only; auth.core owns the address and folds it for uniqueness.
+      - id: displayName
+        type: string
+        required: true
+        maxLength: 80
+      - id: role
+        type: string
+        required: true
+        maxLength: 32
+        description: A role key of the workspace, selected from the role catalog the context read answers.
+      - id: membershipStatus
+        type: enum
+        required: true
+        values:
+          - active
+          - disabled
+        description: This workspace's own status for the member; the single membership status path changes it.
+      - id: status
+        type: enum
+        required: true
+        values:
+          - active
+          - disabled
+        description: The account's platform-level status; shown read-only, changed by the deployment operator outside this module's screens.
+      - id: scopes
+        type: json
+        required: true
+        description: Array of scope identifiers granted to this membership; the list shows the count and the drawer edits the set.
+      - id: passwordChangeRequired
+        type: boolean
+        required: true
+        description: True after an administrator set a temporary password and until the member chose a new one.
+    states:
+      field: membershipStatus
+      values:
+        - active
+        - disabled
+      transitions:
+        - from: active
+          to: disabled
+          permission: users.members.manage
+        - from: disabled
+          to: active
+          permission: users.members.manage
+  - id: role
+    name: Workspace role
+    description: One role of the platform role catalog as auth.core's role routes answer it; users.core contributes the screen and owns nothing of the role.
+    fields:
+      - id: key
+        type: string
+        required: true
+        unique: tenant
+        maxLength: 32
+      - id: name
+        type: string
+        required: true
+        maxLength: 80
+      - id: scopes
+        type: json
+        required: true
+        description: Array of the effective permission scopes the role grants.
+      - id: builtin
+        type: boolean
+        required: true
+        description: True for Owner and Member, which are immutable.
+screens:
+  - id: members
+    kind: list
+    entity: member
+    title: Members
+    columns:
+      - displayName
+      - email
+      - role
+      - membershipStatus
+      - status
+      - passwordChangeRequired
+      - scopes
+    filters:
+      - displayName
+      - email
+      - membershipStatus
+    navigationGroup: Administration
+  - id: member
+    kind: record
+    entity: member
+    title: Member
+    columns:
+      - displayName
+      - email
+      - role
+      - scopes
+      - membershipStatus
+      - status
+    navigationGroup: Administration
+  - id: new-member
+    kind: form
+    entity: member
+    title: New account
+    columns:
+      - email
+      - displayName
+      - role
+    navigationGroup: Administration
+  - id: invite-member
+    kind: form
+    title: Invite member
+    navigationGroup: Administration
+  - id: roles
+    kind: list
+    entity: role
+    title: Roles
+    columns:
+      - key
+      - name
+      - scopes
+      - builtin
+    navigationGroup: Administration
+actions:
+  - id: list-members
+    entity: member
+    permission: users.members.read
+    kind: custom
+    risk: read
+    idempotent: true
+    description: Answer one page of the active workspace's members, sorted by display name or e-mail in either direction, narrowed by a name or address prefix and by membership status, cut by a signed keyset cursor bound to the workspace, the sort, the direction and the filters, with a page limit of at most 200.
+  - id: read-context
+    entity: member
+    permission: users.members.read
+    kind: custom
+    risk: read
+    idempotent: true
+    description: Answer what the Members screen needs beside the page, namely the workspace roles, the grantable scopes, the acting principal's account id and role, the shared password minimum length and the member count.
+  - id: create-member
+    entity: member
+    permission: users.members.manage
+    kind: create
+    risk: workspace-write
+    idempotent: false
+    description: Create the account and the tenant membership atomically with the role scope template from an e-mail, a display name, a role key and an explicit initial password that is never logged.
+  - id: rename-member
+    entity: member
+    permission: users.members.manage
+    kind: update
+    risk: workspace-write
+    idempotent: true
+    description: Change the display name of one member through the auth administration port.
+  - id: assign-role
+    entity: member
+    permission: users.members.manage
+    kind: update
+    risk: workspace-write
+    idempotent: true
+    description: Assign a role key of the workspace to one member through the single role assignment path; an owner or the owner role touched by a non-owner is refused.
+  - id: set-status
+    entity: member
+    permission: users.members.manage
+    kind: update
+    risk: workspace-write
+    idempotent: true
+    description: Set the account-level status of one member to active or disabled through the auth administration port; no workspace screen calls it, since the account block reaches every workspace the account belongs to.
+  - id: set-status-many
+    entity: member
+    permission: users.members.manage
+    kind: update
+    risk: workspace-write
+    idempotent: true
+    description: Deactivate selected, one of the two bulk actions the Members screen offers behind users.members.manage, taking between 1 and 100 unique account ids the screen selected on the page and never the acting principal; the server applies the status one id at a time through the single membership status path of the auth administration port, so every row keeps its own audit event and its own refusal (the acting principal, the last owner, an owner touched by a non-owner), a missing or another workspace's id is answered not-found, and the response carries one outcome per id in the order sent (updated, not-found or refused with its code) rather than failing the call.
+  - id: assign-role-many
+    entity: member
+    permission: users.members.manage
+    kind: update
+    risk: workspace-write
+    idempotent: true
+    description: Assign role, the second bulk action the Members screen offers behind users.members.manage, taking between 1 and 100 unique account ids the screen selected on the page and never the acting principal; the server applies the role one id at a time through the single role assignment path of the auth administration port, so every row keeps its own audit event and its own refusal (the acting principal, the last owner, an owner or the owner role touched by a non-owner), a missing or another workspace's id is answered not-found, and the response carries one outcome per id in the order sent (updated, not-found or refused with its code) rather than failing the call.
+  - id: remove-member
+    entity: member
+    permission: users.members.manage
+    kind: delete
+    risk: destructive
+    idempotent: true
+    description: Remove one membership from the workspace through the auth administration port; never the acting principal or the last active owner.
+  - id: reset-password
+    entity: member
+    permission: users.members.manage
+    kind: custom
+    risk: workspace-write
+    idempotent: false
+    description: Set a temporary password for one member; every earlier session is gone and the member must choose a new password before using the workspace.
+  - id: set-scopes
+    entity: member
+    permission: users.members.manage
+    kind: update
+    risk: workspace-write
+    idempotent: true
+    description: Replace the scopes of one membership with at most 256 scope identifiers; a non-owner cannot grant a scope it does not hold.
+widgets:
+  - id: access
+    slot: dashboard.metrics
+    entity: member
+    description: The member count of the workspace from the context read with a link to the Users screen; behind users.members.read.
+  - id: setup
+    slot: dashboard.main
+    entity: member
+    description: A setup step that links to the Users screen; behind users.members.manage.
+settings: []
+agentTools: []
+outOfScope:
+  - The account-level block is not offered by the Members screen; the drawer shows the account status read-only and workspace access changes through the membership status route.
+  - Role creation, editing and deletion happen through auth.core's role routes behind auth.roles.manage; users.core contributes the Roles screen only.
+decisions:
+  - id: D-USERS-ENTITIES
+    question: Does users.core own a table for the member or the role entity?
+    answer: No. Both entities describe records auth.core owns and answers through its public administration port and role routes; the module declares no database capability and no migration.
+    decidedBy: default
+  - id: D-USERS-BULK-ACTIONS
+    question: How are the two bulk actions of the Members screen declared?
+    answer: As the actions set-status-many and assign-role-many, each behind users.members.manage and each applied one id at a time through the single-row path, with the USERS-STATUS-MANY and USERS-ROLE-MANY scenarios as their evidence.
+    decidedBy: default
+  - id: D-USERS-JOINED-AT
+    question: Why does the member entity not declare the joined-at instant the export carries?
+    answer: The instant is auth.core's createdAt column, and createdAt is a field id every tenant table owns, so the specification cannot declare it; the export list still carries it as documented in the invariants.
+    decidedBy: default
 acceptanceScenarios:
   - id: USERS-LIST
     given: An authenticated principal has users.members.read in an active tenant.

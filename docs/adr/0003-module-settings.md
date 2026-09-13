@@ -13,7 +13,7 @@ The first setting is `auth.core.allowSignUp`. The server is authoritative and re
 
 ## Runtime (amendment, 2026-09-01)
 
-- `@flowdular/kernel` exports `ModuleSettingsRuntime` (`declare`, `get`, `list`, `set`, `onChange`) and `createModuleSettingsRuntime(store)`. Values live in `module_settings` in auth.db (`tenant_id`, `module_id`, `key`, `value_json`, `updated_at`, `updated_by`); `auth.core` provides the store and exposes the runtime as `authRuntime.moduleSettings`.
+- `@flowdular/kernel` exports `ModuleSettingsRuntime` (`declare`, `prime`, `get`, `list`, `set`, `onChange`) and `createModuleSettingsRuntime(store)`. Since RFC 0005 (2026-09-13) the store contract is asynchronous (`load`, `save` and `clear` return promises), `prime(tenantId)` loads a tenant's snapshot once, `get` and `list` read that snapshot synchronously and fail for an unprimed tenant, and `set` awaits the store. Values live in `module_settings` in auth.db (`tenant_id`, `module_id`, `key`, `value_json`, `updated_at`, `updated_by`); `auth.core` provides the store and exposes the runtime as `authRuntime.moduleSettings`.
 - A setting is tenant-scoped by default. `scope: 'platform'` stores one value for the whole deployment (tenant id `''`); auth uses it for knobs that apply before a tenant is known (sign-up, session policy, password length, sign-in providers).
 - Environment variables only supply the declared default. A stored value wins at read time; reads are live, never snapshotted at boot.
 - A module declares settings by returning `settings` from `createServerComposition`; the platform registers every declaration after composing, then calls each composition's `start()`.

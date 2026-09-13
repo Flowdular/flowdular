@@ -829,6 +829,7 @@ export class AgentService {
 		input: CreateAgentInput,
 	): Promise<AgentDefinition> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
+		await this.settings?.prime(trustedTenantId);
 		// Provider references are stored connection IDs, not tool identifiers.
 		const provider = bounded(
 			input.provider || (this.settings?.defaultProvider(trustedTenantId) ?? ''),

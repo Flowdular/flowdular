@@ -24,21 +24,19 @@ async function fixture(): Promise<AuthTestDatabase> {
 }
 
 function runtimeOver(database: AuthTestDatabase) {
-	const store = createAuthSettingsStore(() =>
-		Promise.resolve(database.repository),
+	const settings = createModuleSettingsRuntime(
+		createAuthSettingsStore(() => Promise.resolve(database.repository)),
 	);
-	const settings = createModuleSettingsRuntime(store);
 	settings.declare(createAuthModuleSettings({ allowSignUp: true }));
-	return { store, settings };
+	return settings;
 }
 
 describe('auth module settings store', () => {
 	it('stores a platform setting under a tenant a workspace cannot claim', async () => {
 		const database = await fixture();
-		const { store, settings } = runtimeOver(database);
+		const settings = runtimeOver(database);
 
-		settings.set('', 'auth.core', 'allowSignUp', false, 'account-a');
-		await store.ready();
+		await settings.set('', 'auth.core', 'allowSignUp', false, 'account-a');
 
 		const rows = await database.runtime.transaction(
 			(transaction) =>
@@ -56,41 +54,46 @@ describe('auth module settings store', () => {
 	it('serves a stored value to a runtime that started after it was written', async () => {
 		const database = await fixture();
 		const first = runtimeOver(database);
-		first.settings.set('', 'auth.core', 'allowSignUp', false, 'account-a');
-		await first.store.ready();
+		await first.set('', 'auth.core', 'allowSignUp', false, 'account-a');
 
 		const second = runtimeOver(database);
-		/* The snapshot is empty until the read lands, which is why anything that
-		   must not see the declared default primes it first. */
-		await second.store.prime('', 'auth.core');
+		/* Nothing is loaded until the caller primes, which is why a read before
+		   it fails rather than answering the declared default. */
+		expect(() => second.get('', 'auth.core', 'allowSignUp')).toThrow(
+			expect.objectContaining({ code: 'SETTINGS_NOT_PRIMED' }),
+		);
+		await second.prime('');
 
-		expect(second.settings.get('', 'auth.core', 'allowSignUp')).toBe(false);
+		expect(second.get('', 'auth.core', 'allowSignUp')).toBe(false);
 	});
 
-	it('applies a write before it reaches the database and clears it again', async () => {
+	it('writes a value to the database and clears it again', async () => {
 		const database = await fixture();
-		const { store, settings } = runtimeOver(database);
-		await store.prime('', 'auth.core');
+		const settings = runtimeOver(database);
+		await settings.prime('');
 
-		settings.set('', 'auth.core', 'allowSignUp', false, 'account-a');
+		await settings.set('', 'auth.core', 'allowSignUp', false, 'account-a');
 		expect(settings.get('', 'auth.core', 'allowSignUp')).toBe(false);
-		await store.ready();
 		expect(
 			await database.repository.loadSettings('', 'auth.core'),
 		).toMatchObject({ allowSignUp: false });
 
-		settings.set('', 'auth.core', 'allowSignUp', null, 'account-a');
-		await store.ready();
+		await settings.set('', 'auth.core', 'allowSignUp', null, 'account-a');
 		expect(await database.repository.loadSettings('', 'auth.core')).toEqual({});
 		expect(settings.get('', 'auth.core', 'allowSignUp')).toBe(true);
 	});
 
 	it('keeps a tenant setting inside its own workspace', async () => {
 		const database = await fixture();
-		const { store, settings } = runtimeOver(database);
+		const settings = runtimeOver(database);
 
-		settings.set('tenant-a', 'auth.core', 'defaultLocale', 'pl', 'account-a');
-		await store.ready();
+		await settings.set(
+			'tenant-a',
+			'auth.core',
+			'defaultLocale',
+			'pl',
+			'account-a',
+		);
 
 		expect(
 			await database.repository.loadSettings('tenant-a', 'auth.core'),
@@ -100,20 +103,19 @@ describe('auth module settings store', () => {
 		).toEqual({});
 	});
 
-	it('reports a failed write through ready() instead of losing it silently', async () => {
-		const database = await fixture();
-		const store = createAuthSettingsStore(() =>
-			Promise.reject(new Error('database unavailable')),
+	it('reports a failed write to the caller that made it', async () => {
+		const settings = createModuleSettingsRuntime(
+			createAuthSettingsStore(() =>
+				Promise.reject(new Error('database unavailable')),
+			),
 		);
-		const settings = createModuleSettingsRuntime(store);
 		settings.declare(createAuthModuleSettings({ allowSignUp: true }));
 
-		settings.set('', 'auth.core', 'allowSignUp', false, 'account-a');
-
-		await expect(store.ready()).rejects.toThrow('database unavailable');
-		/* The snapshot still carries the value, and the next call starts clean. */
-		expect(settings.get('', 'auth.core', 'allowSignUp')).toBe(false);
-		await expect(store.ready()).resolves.toBeUndefined();
-		expect(await database.repository.loadSettings('', 'auth.core')).toEqual({});
+		await expect(
+			settings.set('', 'auth.core', 'allowSignUp', false, 'account-a'),
+		).rejects.toThrow('database unavailable');
+		expect(() => settings.get('', 'auth.core', 'allowSignUp')).toThrow(
+			/not loaded/,
+		);
 	});
 });

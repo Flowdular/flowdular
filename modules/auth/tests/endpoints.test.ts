@@ -482,7 +482,7 @@ describe('workspace settings', () => {
 			tenant: { tenantId: owner.tenantId, name: 'Renamed Operations' },
 		});
 
-		auth.moduleSettings.set(
+		await auth.moduleSettings.set(
 			owner.tenantId,
 			'auth.core',
 			'defaultLocale',

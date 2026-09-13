@@ -1,5 +1,8 @@
 import { TENANT_TIME_ZONE_SETTING } from '@flowdular/contracts';
-import type { ModuleSettingsRuntime } from '@flowdular/kernel';
+import {
+	ModuleSettingsError,
+	type ModuleSettingsRuntime,
+} from '@flowdular/kernel';
 
 /* Declared and owned by system.core as a shared tenant setting. automations
    reads it through the settings runtime, never through system.core storage, and
@@ -43,8 +46,16 @@ export function tenantTimeZone(
 			TENANT_TIME_ZONE_MODULE_ID,
 			TENANT_TIME_ZONE_KEY,
 		);
-	} catch {
-		return DEFAULT_TIME_ZONE;
+	} catch (error) {
+		/* Absent system.core is a deployment shape; an unprimed workspace is a
+		   caller defect and stays loud. */
+		if (
+			error instanceof ModuleSettingsError &&
+			error.code === 'SETTINGS_NOT_DECLARED'
+		) {
+			return DEFAULT_TIME_ZONE;
+		}
+		throw error;
 	}
 	return isSupported(stored) ? stored : DEFAULT_TIME_ZONE;
 }

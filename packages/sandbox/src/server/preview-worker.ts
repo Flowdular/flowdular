@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { createRouter, type ServerRoute } from '@octanejs/app-core';
+import { principalFromContext } from '@flowdular/module-auth/server';
 import { createRemoteDatabaseProvider } from './preview-database-proxy.ts';
 import { createInProcessPreviewRuntime } from './preview-runtime.ts';
 import type { SandboxSession } from './sessions.ts';
@@ -89,9 +90,11 @@ async function previewRequest(request: Request): Promise<Response> {
 		url,
 		state: new Map(),
 	};
-	return composition.auth.middleware(context, async () =>
-		(match.route as ServerRoute).handler(context),
-	);
+	return composition.auth.middleware(context, async () => {
+		const principal = principalFromContext(context);
+		if (principal) await composition.settings.prime(principal.tenantId);
+		return (match.route as ServerRoute).handler(context);
+	});
 }
 
 const server = createServer(async (incoming, outgoing) => {

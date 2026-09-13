@@ -119,7 +119,7 @@ export async function testRuntime(
 			signInProviders: overrides.signInProviders ?? [],
 		}),
 	);
-	await store.prime('', 'auth.core');
+	await moduleSettings.prime('');
 	const cookie = {
 		name: 'coreloom_session_dev',
 		secure: false,
@@ -127,7 +127,7 @@ export async function testRuntime(
 	};
 	const service = () => Promise.resolve(authService);
 	const tenantSettings = async (tenantId: string) => {
-		await store.prime(tenantId, 'auth.core');
+		await moduleSettings.prime(tenantId);
 		return {
 			requireMfa: moduleSettings.get<boolean>(
 				tenantId,
@@ -138,7 +138,11 @@ export async function testRuntime(
 	};
 	/* The served chain resolves the principal and then holds an account that
 	   still owes enrolment, so a test request runs through both. */
-	const authentication = createAuthenticationMiddleware(service, cookie);
+	const authentication = createAuthenticationMiddleware(
+		service,
+		cookie,
+		(tenantId) => moduleSettings.prime(tenantId),
+	);
 	const enrolment = createMfaEnrolmentMiddleware({ tenantSettings, service });
 	return {
 		database,
@@ -185,7 +189,6 @@ export async function testRuntime(
 			return membership?.status === 'active' ? membership.scopes : [];
 		},
 		async dispose() {
-			await store.ready().catch(() => undefined);
 			await database.dispose();
 		},
 		middleware: (context, next) =>
