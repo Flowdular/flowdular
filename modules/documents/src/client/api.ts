@@ -1,6 +1,10 @@
 import { t } from '@flowdular/client/i18n';
 import type { DocumentAttachment } from '../domain/attachments.ts';
-import type { DocumentReadUrl, DocumentScan } from '../domain/types.ts';
+import type {
+	DocumentDeleteOutcome,
+	DocumentReadUrl,
+	DocumentScan,
+} from '../domain/types.ts';
 
 interface ErrorEnvelope {
 	readonly error?: {
@@ -188,4 +192,18 @@ export async function deleteDocument(
 			csrfToken,
 		)
 	).document;
+}
+
+/** One outcome per id, in the order the ids were sent. */
+export async function deleteDocuments(
+	ids: readonly string[],
+	csrfToken: string,
+): Promise<readonly DocumentDeleteOutcome[]> {
+	return (
+		await post<{ readonly outcomes: readonly DocumentDeleteOutcome[] }>(
+			'/api/documents/delete-many',
+			{ ids },
+			csrfToken,
+		)
+	).outcomes;
 }

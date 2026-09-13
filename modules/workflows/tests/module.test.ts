@@ -1,7 +1,6 @@
 import { createPlatformCapabilityRegistry, userActor } from '@flowdular/kernel';
 import { describe, expect, it } from 'vitest';
 import { moduleDefinition } from '../src/index.ts';
-import { createWorkflowCursorCodec } from '../src/services/cursor-codec.ts';
 import { WorkflowsService } from '../src/services/workflows-service.ts';
 import { openWorkflowsTestRepository } from './support/database.ts';
 import type { WorkflowGraphV1 } from '../src/domain/types.ts';
@@ -11,7 +10,7 @@ async function fixture() {
 	const database = await openWorkflowsTestRepository();
 	const service = new WorkflowsService(database.repository, {
 		capabilities: createPlatformCapabilityRegistry(),
-		cursorCodec: createWorkflowCursorCodec(Buffer.alloc(32, 7)),
+		cursorKeys: { current: Buffer.alloc(32, 7), previous: [] },
 	});
 	return { database, service };
 }
@@ -74,10 +73,14 @@ describe('workflows.core', () => {
 			actor,
 		);
 		expect(
-			(await service.list('tenant-a')).map((record) => record.name),
+			(await service.listDefinitions('tenant-a')).definitions.map(
+				(record) => record.name,
+			),
 		).toEqual(['Alpha']);
 		expect(
-			(await service.list('tenant-b')).map((record) => record.name),
+			(await service.listDefinitions('tenant-b')).definitions.map(
+				(record) => record.name,
+			),
 		).toEqual(['Beta']);
 		await database.dispose();
 	});

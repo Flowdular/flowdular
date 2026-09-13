@@ -60,7 +60,10 @@ import {
 	type AuthRepository,
 	type ExternalIdentityPage,
 	type TenantMember,
+	type TenantMemberKeyset,
 	type TenantMemberPage,
+	type TenantMemberSort,
+	type TenantMemberSortedPage,
 	type TenantSummary,
 } from './repository.ts';
 import type { AuthMailDelivery } from './mail-delivery.ts';
@@ -311,6 +314,25 @@ export const TENANT_MEMBER_SEARCH_LIMIT = 500;
 
 /** Members one paged `listTenantMembers` call may answer. */
 export const TENANT_MEMBER_PAGE_LIMIT = 500;
+
+/** Sort keys `listTenantMembersSorted` accepts. */
+export const TENANT_MEMBER_SORTS: readonly TenantMemberSort[] = [
+	'displayName',
+	'email',
+];
+
+/** Characters a sorted page's keyset value may carry; a display name or an address is shorter. */
+const TENANT_MEMBER_KEYSET_LENGTH = 512;
+
+export interface TenantMemberSortedInput {
+	readonly sort: TenantMemberSort;
+	readonly direction: 'asc' | 'desc';
+	readonly limit: number;
+	/** A prefix of the display name or the address, folded like a search term; empty narrows nothing. */
+	readonly query?: string | null;
+	readonly membershipStatus?: MembershipStatus | null;
+	readonly after?: TenantMemberKeyset | null;
+}
 
 /** Bindings one `listExternalIdentities` call may answer. */
 export const EXTERNAL_IDENTITY_PAGE_LIMIT = 500;
@@ -781,6 +803,87 @@ export class AuthService {
 			members: answered,
 			nextCursor: members.length > limit && last ? last.accountId : null,
 		};
+	}
+
+	/**
+	 * One page of the workspace's members in the order a screen shows them,
+	 * by display name or by address, ascending or descending, narrowed by a
+	 * prefix the way the search narrows and by membership status, all in SQL.
+	 * The page answers the keyset of its last member when it is full; the
+	 * caller carries that keyset back as `after` to continue. The paged walk
+	 * by account id stays for the callers that must not lose a member to a
+	 * rename mid-walk; this read is for a screen, which shows one page at a time.
+	 */
+	async listTenantMembersSorted(
+		tenantId: string,
+		input: TenantMemberSortedInput,
+	): Promise<TenantMemberSortedPage> {
+		if (!TENANT_MEMBER_SORTS.includes(input.sort)) {
+			throw new AuthServiceError(
+				'INVALID_INPUT',
+				`Sort must be one of ${TENANT_MEMBER_SORTS.join(', ')}.`,
+				400,
+			);
+		}
+		if (input.direction !== 'asc' && input.direction !== 'desc') {
+			throw new AuthServiceError(
+				'INVALID_INPUT',
+				'Direction must be asc or desc.',
+				400,
+			);
+		}
+		const status = input.membershipStatus ?? null;
+		if (status !== null && status !== 'active' && status !== 'disabled') {
+			throw new AuthServiceError(
+				'INVALID_INPUT',
+				'Membership status must be active or disabled.',
+				400,
+			);
+		}
+		const term = normalizeEmail(input.query ?? '');
+		if (term.length > TENANT_MEMBER_SEARCH_TERM_LENGTH) {
+			throw new AuthServiceError(
+				'INVALID_INPUT',
+				`Search term must contain at most ${TENANT_MEMBER_SEARCH_TERM_LENGTH} characters.`,
+				400,
+			);
+		}
+		const after = input.after ?? null;
+		if (
+			after !== null &&
+			(typeof after.sortValue !== 'string' ||
+				after.sortValue.length > TENANT_MEMBER_KEYSET_LENGTH)
+		) {
+			throw new AuthServiceError(
+				'INVALID_INPUT',
+				'The page keyset is not valid.',
+				400,
+			);
+		}
+		return this.#repository.listTenantMembersSorted(
+			this.#identifier(tenantId, 'tenantId'),
+			{
+				sort: input.sort,
+				direction: input.direction,
+				limit: this.#pageLimit(input.limit, TENANT_MEMBER_PAGE_LIMIT),
+				term: term.length === 0 ? null : escapeLikeTerm(term),
+				membershipStatus: status,
+				after:
+					after === null
+						? null
+						: {
+								sortValue: after.sortValue,
+								accountId: this.#identifier(after.accountId, 'accountId'),
+							},
+			},
+		);
+	}
+
+	/** How many members the workspace holds; the count is an index range, so a screen may show it. */
+	countTenantMembers(tenantId: string): Promise<number> {
+		return this.#repository.countTenantMembers(
+			this.#identifier(tenantId, 'tenantId'),
+		);
 	}
 
 	/**

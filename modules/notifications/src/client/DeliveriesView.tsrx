@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'octane';
+import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
@@ -16,8 +16,9 @@ import {
 	toasts,
 	type TableAction,
 	type TableColumn,
+	type TableSort,
 } from '@flowdular/ui';
-import { activeLocale, t } from '@flowdular/client';
+import { t } from '@flowdular/client';
 import { useValue } from 'segment-state';
 import {
 	DELIVERY_STATUSES,
@@ -25,6 +26,7 @@ import {
 	type DeliveryStatus,
 } from '../domain/types.ts';
 import {
+	LIST_PAGE_MAX,
 	loadDeliveries,
 	loadWebhooks,
 	NotificationsApiError,
@@ -39,7 +41,17 @@ import {
 	kindLabel,
 	timestampLabel,
 } from './presentation.ts';
-import { createDeliveriesClientState, subscriptionNames } from './state.ts';
+import {
+	createDeliveriesClientState,
+	FIRST_PAGE,
+	pageCursor,
+	pageLoaded,
+	searchPending,
+	subscriptionNames,
+	subscriptionOptions,
+	type CursorStack,
+	type SortDirection,
+} from './state.ts';
 
 export interface DeliveriesViewProps {
 	readonly csrfToken: string;
@@ -48,23 +60,23 @@ export interface DeliveriesViewProps {
 }
 
 const PAGE_SIZES = [10, 25, 50, 100];
+const SEARCH_DEBOUNCE_MS = 300;
+
+/** One page request: the filters, the order, the page and the cursors that reach it. */
+interface DeliveriesRequest {
+	readonly status: DeliveryStatus | '';
+	readonly subscriptionId: string;
+	readonly search: string;
+	readonly direction: SortDirection;
+	readonly pageIndex: number;
+	readonly pageSize: number;
+	readonly pages: CursorStack;
+}
 
 /* The ledger carries nine values per attempt, and nine columns beside the
    160 px action column leave none of them a readable share of a 1140 px row.
    The two timestamps share one cell and so do the two halves of the outcome,
    which buys every header and the longest status tag the width it needs. */
-/** What the subscription column sorts and searches on, for either channel. */
-function targetLabel(
-	delivery: DeliveryAttempt,
-	names: ReadonlyMap<string, string>,
-): string {
-	if (delivery.channel === 'email') {
-		return t('notifications.deliveries.channel.email');
-	}
-	const id = delivery.subscriptionId ?? '';
-	return names.get(id) ?? id;
-}
-
 function columns(
 	names: ReadonlyMap<string, string>,
 ): readonly TableColumn<DeliveryAttempt>[] {
@@ -73,7 +85,6 @@ function columns(
 			key: 'subscription',
 			header: t('notifications.deliveries.column.subscription'),
 			width: '14%',
-			value: (delivery) => targetLabel(delivery, names),
 			cell: (delivery) => {
 				/* An e-mail attempt is addressed to a member, not to a subscription,
    so the column names the channel rather than an empty cell. */
@@ -88,14 +99,12 @@ function columns(
 			key: 'kind',
 			header: t('notifications.deliveries.column.kind'),
 			width: '11%',
-			value: (delivery) => kindLabel(delivery.kind),
 			cell: (delivery) => kindLabel(delivery.kind),
 		},
 		{
 			key: 'sourceRef',
 			header: t('notifications.deliveries.column.sourceRef'),
 			width: '12%',
-			value: (delivery) => delivery.sourceRef,
 			cell: (delivery) => <span class="ui-cell">
 				<span
 					class="ui-mono notifications-truncate"
@@ -109,14 +118,12 @@ function columns(
 			header: t('notifications.deliveries.column.attempt'),
 			width: '10%',
 			numeric: true,
-			value: (delivery) => delivery.attemptNumber,
 			cell: (delivery) => delivery.attemptNumber,
 		},
 		{
 			key: 'status',
 			header: t('notifications.deliveries.column.status'),
 			width: '12%',
-			value: (delivery) => delivery.status,
 			cell: (delivery) =>
 				<Tag
 					tone={deliveryStatusTone(delivery.status)}
@@ -124,7 +131,7 @@ function columns(
 				>{deliveryStatusLabel(delivery.status)}</Tag>,
 		},
 		{
-			key: 'timing',
+			key: 'scheduledFor',
 			header: t('notifications.deliveries.column.timing'),
 			width: '15%',
 			value: (delivery) => delivery.scheduledFor,
@@ -139,7 +146,6 @@ function columns(
 			key: 'outcome',
 			header: t('notifications.deliveries.column.outcome'),
 			width: '11%',
-			value: (delivery) => delivery.responseStatus ?? 0,
 			cell: (delivery) => {
 				const failure = errorClassLabel(delivery.errorClass);
 				if (delivery.responseStatus === null) return failure;
@@ -156,59 +162,78 @@ function columns(
 
 export function DeliveriesView(props: DeliveriesViewProps) @{
 	const client = useMemo(() => createDeliveriesClientState(), []);
+	/* Requests answer out of order; only the latest one may write the screen. */
+	const requests = useMemo(() => ({ sequence: 0 }), []);
 	const [deliveries] = useValue(client.state.deliveries);
 	const [subscriptions] = useValue(client.state.subscriptions);
 	const [status, setStatus] = useValue(client.state.status);
 	const [error, setError] = useValue(client.state.error);
 	const [query, setQuery] = useValue(client.state.query);
-	const [statusFilter, setStatusFilter] = useValue(client.state.statusFilter);
-	const [subscriptionFilter, setSubscriptionFilter] = useValue(
-		client.state.subscriptionFilter,
-	);
+	const [appliedQuery] = useValue(client.state.appliedQuery);
+	const [statusFilter] = useValue(client.state.statusFilter);
+	const [subscriptionFilter] = useValue(client.state.subscriptionFilter);
+	const [direction] = useValue(client.state.direction);
+	const [pageIndex] = useValue(client.state.pageIndex);
+	const [pageSize] = useValue(client.state.pageSize);
+	const [pages] = useValue(client.state.pages);
 	const [filtersOpen, setFiltersOpen] = useValue(client.state.filtersOpen);
 	const [replayId, setReplayId] = useValue(client.state.replayId);
-	const [pageIndex, setPageIndex] = useState(0);
-	const [pageSize, setPageSize] = useState(25);
 	const names = subscriptionNames(subscriptions);
-	const locale = activeLocale();
-	const term = query.trim().toLocaleLowerCase(locale);
-	const visible =
-		term === ''
-			? deliveries
-			: deliveries.filter(
-					(delivery) =>
-						delivery.sourceRef.toLocaleLowerCase(locale).includes(term) ||
-							delivery.sourceModule.toLocaleLowerCase(locale).includes(term),
-				);
 	const filterCount =
 		(statusFilter === '' ? 0 : 1) + (subscriptionFilter === '' ? 0 : 1);
-	const filtered = filterCount > 0 || term !== '';
-	/* Every subscription the ledger names, so the filter still works when the
-   subscription list is not readable or a row outlived its subscription. */
-	const filterOptions = [
-		...new Set(deliveries.flatMap(
-			(delivery) => delivery.subscriptionId === null
-				? []
-				: [delivery.subscriptionId],
-		)),
-	].map((id) => ({ value: id, label: names.get(id) ?? id }));
+	const filtered = filterCount > 0 || appliedQuery !== '';
+	const filterOptions = subscriptionOptions(subscriptions, deliveries);
+	const sorting: readonly TableSort[] = [
+		{ key: 'scheduledFor', desc: direction === 'desc' },
+	];
+	const current: DeliveriesRequest = {
+		status: statusFilter,
+		subscriptionId: subscriptionFilter,
+		search: appliedQuery,
+		direction,
+		pageIndex,
+		pageSize,
+		pages,
+	};
 
-	const refresh = async (
-		nextStatus: DeliveryStatus | '',
-		nextSubscription: string,
-	) => {
-		setStatus('loading');
-		setError('');
+	/* The server sorts, narrows and cuts the page: every request names its
+   filters, its order, its page and the cursor that opens it, and the
+   response records the cursor of the page after it. */
+	const load = async (request: DeliveriesRequest) => {
+		const cursor = pageCursor(request.pages, request.pageIndex);
+		if (cursor === null) return;
+		const sequence = requests.sequence += 1;
+		client.store.act((transaction) => {
+			transaction.set(client.state.statusFilter, request.status);
+			transaction.set(client.state.subscriptionFilter, request.subscriptionId);
+			transaction.set(client.state.appliedQuery, request.search);
+			transaction.set(client.state.direction, request.direction);
+			transaction.set(client.state.pageIndex, request.pageIndex);
+			transaction.set(client.state.pageSize, request.pageSize);
+			transaction.set(client.state.pages, request.pages);
+			transaction.set(client.state.status, 'loading');
+			transaction.set(client.state.error, '');
+		}, 'notifications/deliveries-request');
 		try {
-			const loaded = await loadDeliveries({
-				status: nextStatus,
-				subscriptionId: nextSubscription,
+			const page = await loadDeliveries({
+				status: request.status,
+				subscriptionId: request.subscriptionId,
+				search: request.search,
+				direction: request.direction,
+				limit: request.pageSize,
+				cursor,
 			});
+			if (sequence !== requests.sequence) return;
 			client.store.act((transaction) => {
-				transaction.set(client.state.deliveries, loaded);
+				transaction.set(client.state.deliveries, page.items);
+				transaction.set(
+					client.state.pages,
+					pageLoaded(request.pages, request.pageIndex, page.page.nextCursor),
+				);
 				transaction.set(client.state.status, 'idle');
 			}, 'notifications/deliveries-loaded');
 		} catch (loadError) {
+			if (sequence !== requests.sequence) return;
 			setError(
 				notificationsErrorMessage(
 					loadError,
@@ -223,11 +248,22 @@ export function DeliveriesView(props: DeliveriesViewProps) @{
 		}
 	};
 
+	/* A filter, a term or an order starts a new listing from its first page. */
+	const restart = (change: Partial<DeliveriesRequest>) => load({
+		...current,
+		...change,
+		pageIndex: 0,
+		pages: FIRST_PAGE,
+	});
+
+	/* The names behind the subscription column and filter: the largest page
+   the list serves, which is every subscription of any workspace this screen
+   is built for. */
 	const loadSubscriptionNames = async () => {
 		try {
 			client.store.set(
 				client.state.subscriptions,
-				await loadWebhooks(),
+				(await loadWebhooks({ limit: LIST_PAGE_MAX })).items,
 				'notifications/deliveries-subscriptions',
 			);
 		} catch {
@@ -237,9 +273,21 @@ export function DeliveriesView(props: DeliveriesViewProps) @{
 	};
 
 	useEffect(() => {
-		void refresh('', '');
+		void load(current);
 		if (props.canReadWebhooks) void loadSubscriptionNames();
 	}, []);
+
+	/* The term is the server's filter, so typing it starts a new listing rather
+   than narrowing the page on screen. One listing per pause in the typing, and
+   none at all while the rows already answer this term. */
+	useEffect(() => {
+		if (!searchPending(query, appliedQuery)) return;
+		const timer = setTimeout(
+			() => void restart({ search: query.trim() }),
+			SEARCH_DEBOUNCE_MS,
+		);
+		return () => clearTimeout(timer);
+	}, [query]);
 
 	const replay = async () => {
 		const id = replayId;
@@ -249,7 +297,7 @@ export function DeliveriesView(props: DeliveriesViewProps) @{
 		setError('');
 		try {
 			await replayDelivery(id, props.csrfToken);
-			await refresh(statusFilter, subscriptionFilter);
+			await load(current);
 			toasts.success(t('notifications.deliveries.notice.replayed'));
 		} catch (replayError) {
 			setError(
@@ -283,7 +331,7 @@ export function DeliveriesView(props: DeliveriesViewProps) @{
 			<Button
 				size="sm"
 				disabled={status === 'denied'}
-				onClick={() => void refresh(statusFilter, subscriptionFilter)}
+				onClick={() => void load(current)}
 			>
 				<Icon name="refresh" size={14} />
 				{status === 'loading'
@@ -305,17 +353,18 @@ export function DeliveriesView(props: DeliveriesViewProps) @{
 				}
 				<TableCard
 					title={t('notifications.deliveries.table.title')}
-					count={t('notifications.deliveries.table.count', {
-						count: visible.length,
-					})}
+					count={pages.hasMore
+						? t('notifications.deliveries.table.countMore', {
+								count: deliveries.length,
+							})
+						: t('notifications.deliveries.table.count', {
+								count: deliveries.length,
+							})}
 					search={<SearchField
 						value={query}
 						placeholder={t('notifications.deliveries.search.placeholder')}
 						label={t('notifications.deliveries.search.label')}
-						onInput={(value) => {
-							setQuery(value);
-							setPageIndex(0);
-						}}
+						onInput={setQuery}
 					/>}
 					filters={<Filters
 						open={filtersOpen}
@@ -339,12 +388,9 @@ export function DeliveriesView(props: DeliveriesViewProps) @{
 									}),
 								),
 							]}
-							onChange={(value) => {
-								const next = value as DeliveryStatus | '';
-								setStatusFilter(next);
-								setPageIndex(0);
-								void refresh(next, subscriptionFilter);
-							}}
+							onChange={(value) => void restart({
+								status: value as DeliveryStatus | '',
+							})}
 						/>
 						<Select
 							id="notifications-deliveries-subscription"
@@ -357,40 +403,45 @@ export function DeliveriesView(props: DeliveriesViewProps) @{
 								},
 								...filterOptions,
 							]}
-							onChange={(value) => {
-								setSubscriptionFilter(value);
-								setPageIndex(0);
-								void refresh(statusFilter, value);
-							}}
+							onChange={(value) => void restart({ subscriptionId: value })}
 						/>
 					</Filters>}
 					caption={t('notifications.deliveries.table.caption')}
 					columns={columns(names)}
-					rows={visible}
+					rows={deliveries}
 					rowKey={(delivery) => delivery.id}
+					mode="server"
 					sorting
-					onSortingChange={() => setPageIndex(0)}
-					pagination={{ pageIndex, pageSize, onPageChange: setPageIndex }}
+					sortingState={sorting}
+					onSortingChange={(sorts) => void restart({
+						direction: sorts[0]?.desc === true ? 'desc' : 'asc',
+					})}
+					pagination={{
+						pageIndex,
+						pageSize,
+						hasMore: pages.hasMore,
+						onPageChange: (index) => void load({
+							...current,
+							pageIndex: index,
+						}),
+					}}
 					after={<Pagination
 						pageIndex={pageIndex}
 						pageSize={pageSize}
-						totalRows={visible.length}
+						hasMore={pages.hasMore}
 						pageSizes={PAGE_SIZES}
-						onPageChange={setPageIndex}
-						onPageSizeChange={(size) => {
-							setPageSize(size);
-							setPageIndex(0);
-						}}
+						onPageChange={(index) => void load({
+							...current,
+							pageIndex: index,
+						})}
+						onPageSizeChange={(size) => void restart({ pageSize: size })}
 						label={t('notifications.pagination.label')}
 						previousLabel={t('notifications.pagination.previous')}
 						nextLabel={t('notifications.pagination.next')}
 						pageSizeLabel={t('notifications.pagination.size')}
-						summary={(range) => t('notifications.pagination.summary', {
-							page: range.pageIndex + 1,
-							pages: range.pageCount,
-							from: range.from,
-							to: range.to,
-							total: range.totalRows,
+						summary={(page) => t('notifications.pagination.keysetSummary', {
+							page: page.pageIndex + 1,
+							from: page.from,
 						})}
 					/>}
 					status={status === 'loading' && deliveries.length === 0

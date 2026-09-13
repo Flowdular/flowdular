@@ -1,9 +1,14 @@
+import { randomBytes } from 'node:crypto';
 import {
+	decodeCursor,
 	defineEndpoint,
+	encodeCursor,
 	HttpProblem,
 	jsonResponse,
+	pageResponse,
 	problemResponse,
 	readJsonObject,
+	readPageQuery,
 	requiredString,
 } from '@flowdular/server';
 import type { AuthRuntime } from '@flowdular/module-auth/server';
@@ -17,11 +22,23 @@ import type { ConnectorCallResult } from '../domain/calls.ts';
 import {
 	CONNECTOR_AUTH_KINDS,
 	CONNECTOR_CALL_OUTCOMES,
+	CONNECTOR_INSTANCE_STATUSES,
 	type ConnectorAuthKind,
 	type ConnectorCallOutcome,
+	type ConnectorInstanceStatus,
 } from '../domain/types.ts';
 import type { ConnectorsRuntime } from '../server/runtime.ts';
-import { MAX_ALLOWED_HOSTS } from '../services/connectors-service.ts';
+import {
+	CALL_SORT_KEYS,
+	DEFAULT_PAGE_LIMIT,
+	INSTANCE_SORT_KEYS,
+	LIST_DIRECTIONS,
+	LIST_PAGE_LIMIT,
+	MAX_ALLOWED_HOSTS,
+	MAX_SEARCH_CHARACTERS,
+} from '../services/connectors-service.ts';
+import { normalizedInstanceName } from '../services/database-repository.ts';
+import type { ConnectorListDirection } from '../services/repository.ts';
 import { ConnectorsServiceError } from '../services/service-error.ts';
 
 function failure(error: unknown): Response {
@@ -77,6 +94,59 @@ function hostList(
 	});
 }
 
+function queryValue(url: URL, key: string, max: number): string | undefined {
+	const raw = url.searchParams.get(key);
+	if (raw === null || raw.trim() === '') return undefined;
+	if (raw.length > max) {
+		throw new HttpProblem('INVALID_INPUT', `${key} is too long.`, 400);
+	}
+	return raw;
+}
+
+function queryOneOf<T extends string>(
+	url: URL,
+	key: string,
+	allowed: readonly T[],
+	fallback: T,
+): T {
+	const raw = queryValue(url, key, 64);
+	if (raw === undefined) return fallback;
+	if (!(allowed as readonly string[]).includes(raw)) {
+		throw new HttpProblem(
+			'INVALID_INPUT',
+			`${key} must be one of: ${allowed.join(', ')}.`,
+			400,
+		);
+	}
+	return raw as T;
+}
+
+/**
+ * What a page cursor is bound to. A cursor names a position in one ordering of
+ * one filtered set of one workspace; under any other request it is refused
+ * rather than reinterpreted.
+ */
+interface ListScope {
+	readonly t: string;
+	readonly s: string;
+	readonly d: ConnectorListDirection;
+	readonly f: string;
+}
+
+function listScope(
+	tenantId: string,
+	sort: string,
+	direction: ConnectorListDirection,
+	filters: readonly (string | undefined)[],
+): ListScope {
+	return {
+		t: tenantId,
+		s: sort,
+		d: direction,
+		f: JSON.stringify(filters.map((entry) => entry ?? '')),
+	};
+}
+
 function requiredBoolean(value: Record<string, unknown>, key: string): boolean {
 	const nested = value[key];
 	if (typeof nested !== 'boolean') {
@@ -115,6 +185,34 @@ export function createConnectorsRoutes(
 	auth: AuthRuntime,
 	runtime: ConnectorsRuntime,
 ) {
+	/* Module-owned and never stored: a cursor is short-lived, so a restart
+	   invalidating one costs a client the first page, not correctness. */
+	const cursorSecret = randomBytes(32);
+	const openCursor = (
+		cursor: string | null,
+		scope: ListScope,
+	): Record<string, string | number> | null => {
+		if (cursor === null) return null;
+		const decoded = decodeCursor(cursor, cursorSecret);
+		if (
+			decoded.t !== scope.t ||
+			decoded.s !== scope.s ||
+			decoded.d !== scope.d ||
+			decoded.f !== scope.f
+		) {
+			throw new HttpProblem(
+				'CURSOR_INVALID',
+				'The page cursor belongs to another list.',
+				400,
+			);
+		}
+		return decoded;
+	};
+	const sealCursor = (
+		keyset: Record<string, string | number>,
+		scope: ListScope,
+	): string => encodeCursor({ ...scope, ...keyset }, cursorSecret);
+
 	const listDefinitions = defineEndpoint({
 		id: 'connectors.definitions.list',
 		path: '/api/connectors/definitions',
@@ -134,10 +232,61 @@ export function createConnectorsRoutes(
 		access: { kind: 'permission', permission: CONNECTORS_PERMISSIONS.read },
 		resolveIdentity: endpointIdentityFromContext,
 		handler: async ({ octane }) => {
-			const service = await runtime.service();
-			return jsonResponse({
-				instances: await service.list(principalFromContext(octane)!.tenantId),
-			});
+			try {
+				const url = new URL(octane.request.url);
+				const tenantId = principalFromContext(octane)!.tenantId;
+				const page = readPageQuery(url, {
+					maxLimit: LIST_PAGE_LIMIT,
+					defaultLimit: DEFAULT_PAGE_LIMIT,
+				});
+				const sort = queryOneOf(url, 'sort', INSTANCE_SORT_KEYS, 'name');
+				const direction = queryOneOf(url, 'direction', LIST_DIRECTIONS, 'asc');
+				const status = queryOneOf<ConnectorInstanceStatus | ''>(
+					url,
+					'status',
+					CONNECTOR_INSTANCE_STATUSES,
+					'',
+				);
+				const definitionKey = queryValue(url, 'definition', 96);
+				const search = queryValue(url, 'q', MAX_SEARCH_CHARACTERS);
+				const scope = listScope(tenantId, sort, direction, [
+					status,
+					definitionKey,
+					search,
+				]);
+				const cursor = openCursor(page.cursor, scope);
+				const service = await runtime.service();
+				const items = await service.list(tenantId, {
+					filters: {
+						status: status === '' ? undefined : status,
+						definitionKey,
+						search,
+					},
+					sort,
+					direction,
+					after:
+						cursor === null
+							? null
+							: { name: String(cursor.n), id: String(cursor.i) },
+					limit: page.limit,
+				});
+				const last = items.at(-1);
+				return pageResponse({
+					items,
+					limit: page.limit,
+					/* A full page may still be the last one; the client stops when
+					   the cursor stops, which costs one empty page at most. */
+					nextCursor:
+						last && items.length === page.limit
+							? sealCursor(
+									{ n: normalizedInstanceName(last.name), i: last.id },
+									scope,
+								)
+							: null,
+				});
+			} catch (error) {
+				return failure(error);
+			}
 		},
 	});
 
@@ -336,27 +485,53 @@ export function createConnectorsRoutes(
 		handler: async ({ octane }) => {
 			try {
 				const url = new URL(octane.request.url);
-				const outcome = url.searchParams.get('outcome');
-				const instanceId = url.searchParams.get('instanceId');
-				if (
-					outcome !== null &&
-					!(CONNECTOR_CALL_OUTCOMES as readonly string[]).includes(outcome)
-				) {
-					throw new HttpProblem(
-						'INVALID_INPUT',
-						'outcome must be a known call outcome.',
-						400,
-					);
-				}
+				const tenantId = principalFromContext(octane)!.tenantId;
+				const page = readPageQuery(url, {
+					maxLimit: LIST_PAGE_LIMIT,
+					defaultLimit: DEFAULT_PAGE_LIMIT,
+				});
+				const sort = queryOneOf(url, 'sort', CALL_SORT_KEYS, 'occurredAt');
+				const direction = queryOneOf(url, 'direction', LIST_DIRECTIONS, 'desc');
+				const outcome = queryOneOf<ConnectorCallOutcome | ''>(
+					url,
+					'outcome',
+					CONNECTOR_CALL_OUTCOMES,
+					'',
+				);
+				const instanceId = queryValue(url, 'instanceId', 128);
+				const search = queryValue(url, 'q', MAX_SEARCH_CHARACTERS);
+				const scope = listScope(tenantId, sort, direction, [
+					outcome,
+					instanceId,
+					search,
+				]);
+				const cursor = openCursor(page.cursor, scope);
 				const service = await runtime.service();
-				return jsonResponse({
-					calls: await service.listCalls(
-						principalFromContext(octane)!.tenantId,
-						{
-							outcome: (outcome as ConnectorCallOutcome | null) ?? undefined,
-							instanceId: instanceId ?? undefined,
-						},
-					),
+				const items = await service.listCalls(
+					tenantId,
+					{
+						outcome: outcome === '' ? undefined : outcome,
+						instanceId,
+						search,
+					},
+					{
+						sort,
+						direction,
+						after:
+							cursor === null
+								? null
+								: { occurredAt: Number(cursor.o), id: String(cursor.i) },
+						limit: page.limit,
+					},
+				);
+				const last = items.at(-1);
+				return pageResponse({
+					items,
+					limit: page.limit,
+					nextCursor:
+						last && items.length === page.limit
+							? sealCursor({ o: last.occurredAt, i: last.id }, scope)
+							: null,
 				});
 			} catch (error) {
 				return failure(error);

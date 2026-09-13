@@ -16,7 +16,6 @@ import {
 } from '../src/server/runtime.ts';
 import { safePayloadEvidence } from '../src/services/payload-codec.ts';
 import { createWorkflowPayloadCodec } from '../src/services/payload-codec.ts';
-import { createWorkflowCursorCodec } from '../src/services/cursor-codec.ts';
 import { WorkflowsService } from '../src/services/workflows-service.ts';
 import type { CreateWorkflowRunWrite } from '../src/services/repository.ts';
 import {
@@ -30,6 +29,13 @@ import {
 } from './support/database.ts';
 
 const actor = userActor({ accountId: 'owner-1', email: 'owner@example.com' });
+
+const AUDIT_PAGE = {
+	sort: 'sequence',
+	direction: 'desc',
+	limit: 100,
+	after: null,
+} as const;
 const permissions = [
 	WORKFLOWS_PERMISSIONS.read,
 	WORKFLOWS_PERMISSIONS.manage,
@@ -487,7 +493,7 @@ describe('workflow backend contracts', () => {
 		const repository = database.repository;
 		const service = new WorkflowsService(repository, {
 			capabilities: createPlatformCapabilityRegistry(),
-			cursorCodec: createWorkflowCursorCodec(Buffer.alloc(32, 32)),
+			cursorKeys: { current: Buffer.alloc(32, 32), previous: [] },
 		});
 		const definition = await service.create(
 			'tenant-a',
@@ -584,14 +590,74 @@ describe('workflow backend contracts', () => {
 				limit: 1,
 				cursor: first.nextCursor,
 			}),
-		).rejects.toThrow(/another tenant or filter/);
+		).rejects.toThrow(/cursor is not valid/);
 		await expect(
 			service.listRuns('tenant-a', {
-				limit: 2,
+				limit: 1,
+				status: 'succeeded',
 				cursor: first.nextCursor,
 			}),
-		).rejects.toThrow(/another tenant or filter/);
+		).rejects.toThrow(/cursor is not valid/);
+		await expect(
+			service.listRuns('tenant-a', {
+				limit: 1,
+				direction: 'asc',
+				cursor: first.nextCursor,
+			}),
+		).rejects.toThrow(/cursor is not valid/);
 		await runtime.dispose();
+	});
+
+	/* A keyset page walks the same order a single read would give, whichever
+	   key it is cut on; lower(name) is the order the index carries. */
+	it('pages definitions in the order one unbounded read would give', async () => {
+		const database = await openWorkflowsTestRepository();
+		const service = new WorkflowsService(database.repository, {
+			capabilities: createPlatformCapabilityRegistry(),
+			cursorKeys: { current: Buffer.alloc(32, 61), previous: [] },
+		});
+		for (const [key, name] of [
+			['delta-flow', 'delta'],
+			['alpha-flow', 'Alpha'],
+			['charlie-flow', 'charlie'],
+			['bravo-flow', 'Bravo'],
+			['echo-flow', 'Echo'],
+		] as const) {
+			await service.create('tenant-a', { key, name, description: '' }, actor);
+		}
+		for (const order of [
+			{ sort: 'name', direction: 'asc' },
+			{ sort: 'name', direction: 'desc' },
+			{ sort: 'updatedAt', direction: 'desc' },
+			{ sort: 'updatedAt', direction: 'asc' },
+		] as const) {
+			const whole = await service.listDefinitions('tenant-a', {
+				...order,
+				limit: 100,
+			});
+			expect(whole.nextCursor).toBeNull();
+			const walked: string[] = [];
+			let cursor: string | null = null;
+			for (let page = 0; page < 5; page += 1) {
+				const read = await service.listDefinitions('tenant-a', {
+					...order,
+					limit: 2,
+					cursor,
+				});
+				walked.push(...read.definitions.map((entry) => entry.id));
+				cursor = read.nextCursor;
+				if (!cursor) break;
+			}
+			expect(walked, `${order.sort} ${order.direction}`).toEqual(
+				whole.definitions.map((entry) => entry.id),
+			);
+		}
+		expect(
+			(
+				await service.listDefinitions('tenant-a', { sort: 'name', limit: 100 })
+			).definitions.map((entry) => entry.name),
+		).toEqual(['Alpha', 'Bravo', 'charlie', 'delta', 'Echo']);
+		await database.dispose();
 	});
 
 	it('requires referenced action permissions and pins the published revision', async () => {
@@ -701,7 +767,7 @@ describe('workflow backend contracts', () => {
 		const repository = database.repository;
 		const service = new WorkflowsService(repository, {
 			capabilities: createPlatformCapabilityRegistry(),
-			cursorCodec: createWorkflowCursorCodec(Buffer.alloc(32, 43)),
+			cursorKeys: { current: Buffer.alloc(32, 43), previous: [] },
 		});
 		const created = await service.create(
 			'tenant-a',
@@ -719,7 +785,8 @@ describe('workflow backend contracts', () => {
 			},
 			actor,
 		);
-		const auditBefore = (await repository.listAudit('tenant-a', 100)).events;
+		const auditBefore = (await repository.listAudit('tenant-a', AUDIT_PAGE))
+			.items;
 		await expect(
 			service.update(
 				'tenant-a',
@@ -733,7 +800,7 @@ describe('workflow backend contracts', () => {
 				actor,
 			),
 		).rejects.toThrow(/changed before this save/);
-		expect((await repository.listAudit('tenant-a', 100)).events).toEqual(
+		expect((await repository.listAudit('tenant-a', AUDIT_PAGE)).items).toEqual(
 			auditBefore,
 		);
 		await database.dispose();
@@ -746,7 +813,7 @@ describe('workflow backend contracts', () => {
 		const repository = database.repository;
 		const service = new WorkflowsService(repository, {
 			capabilities: createPlatformCapabilityRegistry(),
-			cursorCodec: createWorkflowCursorCodec(Buffer.alloc(32, 45)),
+			cursorKeys: { current: Buffer.alloc(32, 45), previous: [] },
 		});
 		const created = await service.create(
 			'tenant-a',
@@ -1698,7 +1765,7 @@ describe('workflow backend contracts', () => {
 		const repository = database.repository;
 		const service = new WorkflowsService(repository, {
 			capabilities: registry,
-			cursorCodec: createWorkflowCursorCodec(Buffer.alloc(32, 53)),
+			cursorKeys: { current: Buffer.alloc(32, 53), previous: [] },
 		});
 		const definition = await service.create(
 			'tenant-a',

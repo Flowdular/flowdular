@@ -17,7 +17,7 @@ import {
 	archiveAgentProcedure,
 	createAgentProcedure,
 	deleteAgentProcedure,
-	loadAgents,
+	loadAgentContext,
 	updateAgentProcedure,
 } from './api.ts';
 import { AgentProcedureForm } from './AgentProcedureForm.tsrx';
@@ -67,7 +67,7 @@ export function AgentProceduresView(props: AgentProceduresViewProps) @{
 		setStatus('loading');
 		setError('');
 		try {
-			const result = await loadAgents();
+			const result = await loadAgentContext();
 			client.store.act((transaction) => {
 				transaction.set(client.state.procedures, result.procedures);
 				transaction.set(client.state.tools, result.tools);

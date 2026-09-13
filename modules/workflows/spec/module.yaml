@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: workflows.core
-specVersion: 0.6.6
+specVersion: 0.6.7
 status: approved
 name: Agentic Workflows
 description: Builds, publishes, simulates, and executes durable tenant-scoped DAG workflows whose versioned nodes coordinate pinned agents, deterministic decisions, validated data, and registered module actions.
@@ -57,7 +57,7 @@ invariants:
   - Capability absence is detected through the platform registry returning null. A caller hides its optional workflow feature or refuses clearly before invocation; no absent module can return its own unavailable result.
   - automations.core remains a separate optional clock and ingress module. It may trigger workflows through an integration capability but workflows.core owns no schedules, webhook secrets, or polling clock.
   - A live run is bounded by graph size, payload size, node attempts, total duration, and lineage depth. Cross-workflow invocation and cycles between workflows are not supported in version one. The total duration bound counts the time the run could work; time asleep on a human approval is excluded from it and bounded by that request's own expiry instead, so a person's window is never a run's.
-  - Interactive history and audit pages use opaque versioned cursors bound to tenant, filters, sort order, and the first-page snapshot boundary. Malformed, foreign, or mismatched cursors are refused instead of being interpreted loosely.
+  - Interactive definition, history and audit lists are keyset pages of at most 100 rows over an indexed sort key (definitions by name or last update, runs by queued time, audit by sequence or time), read through opaque signed cursors bound to the tenant, the filters and the sort order. Malformed, foreign, or mismatched cursors are refused instead of being interpreted loosely.
   - Usage and cost use a versioned typed rollup with integer token counts, integer micro-USD amounts, pricing snapshot references, provisional or final state, and explicit unpriced child and action counts. Dry-run has no rollup and simulation uses not-applicable rollups.
   - Every state transition named as audit-required commits its run event, projection update, and hash-chained workflow audit event atomically. Edge data events remain ordered run evidence unless their transition also changes audited execution state.
   - Every request-time read and write runs on a tenant-scoped database handle. The worker claim poll and payload retention are the only cross-tenant reads, they run on a separate read-only role, and on PostgreSQL that role is granted only the columns that route the work under a policy of each table itself.
@@ -169,7 +169,7 @@ acceptanceScenarios:
   - id: WORKFLOW-HISTORY
     given: The tenant has workflow runs in queued, intermediate, refused, cancelled, failed, and succeeded states.
     when: An authorized reader filters and pages run history.
-    then: Results are tenant-scoped, ordered by queued time and run id descending, and paged with an opaque versioned cursor bound to tenant, filters, sort, and the first-page snapshot boundary, while malformed, foreign, or mismatched cursors are refused and payload absence never changes row positions.
+    then: Results are tenant-scoped, ordered by queued time and run id descending unless the reader asks for the ascending order, and paged at most 100 runs at a time with an opaque cursor bound to tenant, filters and sort, while malformed, foreign, or mismatched cursors are refused and payload absence never changes row positions.
   - id: WORKFLOW-NODE-HISTORY
     given: A run contains retries, branching, skipped nodes, child agents, and actions.
     when: An authorized reader opens the run.

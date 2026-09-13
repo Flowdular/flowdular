@@ -325,6 +325,63 @@ describe('notifications migrations', () => {
 		}
 	});
 
+	it('carries the page index of every list screen and reports a schema missing one as partial', async () => {
+		const database = await migrator();
+		await migrateNotificationsDatabase(database);
+		const indexes = await database.transaction(
+			(transaction) =>
+				transaction.query<{ indexname: string; indexdef: string }>({
+					text: `SELECT indexname, indexdef FROM pg_indexes
+					 WHERE indexname LIKE 'notifications_%_page_idx'
+					 ORDER BY indexname`,
+				}),
+			{ access: 'read' },
+		);
+		expect(indexes.rows.map((row) => row.indexname)).toEqual([
+			'notifications_deliveries_page_idx',
+			'notifications_inbox_member_page_idx',
+			'notifications_webhook_subscriptions_page_idx',
+		]);
+		/* The keyset orders both columns the same way, so the index does too. */
+		for (const row of indexes.rows) {
+			expect([row.indexname, row.indexdef]).toEqual([
+				row.indexname,
+				expect.not.stringContaining('DESC'),
+			]);
+		}
+		expect(
+			indexes.rows.find(
+				(row) =>
+					row.indexname === 'notifications_webhook_subscriptions_page_idx',
+			)?.indexdef,
+		).toContain('lower(name)');
+
+		await database.transaction(
+			(transaction) =>
+				transaction.execute({
+					text: `DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = $1`,
+					parameters: ['notifications.core'],
+				}),
+			{ access: 'write' },
+		);
+		await database.transaction(
+			(transaction) =>
+				transaction.execute({
+					text: 'DROP INDEX notifications_deliveries_page_idx',
+				}),
+			{ access: 'write' },
+		);
+		const status = await databaseMigrationStatus(
+			database,
+			'notifications.core',
+			databaseMigrations,
+		);
+		expect(status.at(-1)).toMatchObject({
+			id: '0013_notifications_list_pages',
+			state: 'partial',
+		});
+	});
+
 	it('adopts a schema that already carries the objects instead of reapplying them', async () => {
 		const database = await migrator();
 		await migrateNotificationsDatabase(database);

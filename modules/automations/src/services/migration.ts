@@ -174,6 +174,20 @@ export const AUTOMATIONS_MIGRATION_005_SECRET_ROTATION_INVENTORY = `-- The rotat
 GRANT SELECT (secret_key_id) ON automations_triggers TO coreloom_background;
 `;
 
+/* Mirrors migrations/0006_automations_list_sort_indexes.up.sql byte for byte. */
+export const AUTOMATIONS_MIGRATION_006_LIST_SORT_INDEXES = `-- The schedule and trigger lists page by keyset over the same order they show,
+-- lower(label) then id, or updated_at then id, so each order gets an index
+-- that starts with the tenant and ends with the id the keyset breaks ties on.
+CREATE INDEX IF NOT EXISTS automations_schedules_tenant_label_key_idx
+  ON automations_schedules (tenant_id, lower(label), id);
+CREATE INDEX IF NOT EXISTS automations_schedules_tenant_updated_idx
+  ON automations_schedules (tenant_id, updated_at, id);
+CREATE INDEX IF NOT EXISTS automations_triggers_tenant_label_key_idx
+  ON automations_triggers (tenant_id, lower(label), id);
+CREATE INDEX IF NOT EXISTS automations_triggers_tenant_updated_idx
+  ON automations_triggers (tenant_id, updated_at, id);
+`;
+
 /* Narrowed to this schema's relation through to_regclass and never deparsed:
    a deparse over the whole catalogue reaches relations another connection is
    dropping and fails with a cache lookup error instead of an answer. */
@@ -298,5 +312,22 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 			});
 			return result.rows[0]?.granted === true ? 'complete' : 'absent';
 		},
+	},
+	{
+		id: '0006_automations_list_sort_indexes',
+		sql: { postgresql: AUTOMATIONS_MIGRATION_006_LIST_SORT_INDEXES },
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() =>
+					database.schema.hasIndex(
+						'automations_schedules_tenant_label_key_idx',
+					),
+				() =>
+					database.schema.hasIndex('automations_schedules_tenant_updated_idx'),
+				() =>
+					database.schema.hasIndex('automations_triggers_tenant_label_key_idx'),
+				() =>
+					database.schema.hasIndex('automations_triggers_tenant_updated_idx'),
+			]),
 	},
 ];

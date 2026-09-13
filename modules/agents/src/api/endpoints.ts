@@ -1,9 +1,14 @@
+import { randomBytes } from 'node:crypto';
 import {
+	decodeCursor,
 	defineEndpoint,
+	encodeCursor,
 	HttpProblem,
 	jsonResponse,
+	pageResponse,
 	problemResponse,
 	readJsonObject,
+	readPageQuery,
 	requiredInteger,
 	requiredString,
 } from '@flowdular/server';
@@ -14,18 +19,20 @@ import {
 	principalFromContext,
 	sessionMutationDenial,
 } from '@flowdular/module-auth/server';
-import type { AgentExecutionEvent } from '@flowdular/harness';
+import type { AgentExecutionEvent, AgentRunTrigger } from '@flowdular/harness';
 import { userActor } from '@flowdular/kernel';
 import { AGENT_PERMISSIONS } from '../acl/permissions.ts';
 import type {
-	AgentDefinition,
+	AgentListSort,
 	AgentProcedure,
 	AgentProcedureSnapshot,
 	AgentProviderKind,
 	AgentProviderModelConfiguration,
 	AgentRunDetail,
+	AgentRunStatus,
 	AgentProcedureStatus,
 	AgentStatus,
+	ListDirection,
 	CreateAgentInput,
 	CreateAgentProviderInput,
 	CreateAgentProcedureInput,
@@ -38,6 +45,30 @@ import type {
 import { AgentServiceError } from '../services/agent-service.ts';
 import { AgentProviderServiceError } from '../services/provider-service.ts';
 import type { AgentRuntime } from '../server/runtime.ts';
+
+/** The default page of every list here, and the ceiling of the audit trail. */
+const LIST_PAGE_LIMIT = 50;
+const AUDIT_PAGE_LIMIT = 100;
+const SEARCH_LIMIT = 200;
+const AGENT_SORTS: readonly AgentListSort[] = ['name', 'updatedAt'];
+const AGENT_SORT_DIRECTIONS: Readonly<Record<AgentListSort, ListDirection>> = {
+	name: 'asc',
+	updatedAt: 'desc',
+};
+const RUN_SORTS = ['queuedAt'] as const;
+const RUN_STATUSES: readonly AgentRunStatus[] = [
+	'queued',
+	'running',
+	'succeeded',
+	'failed',
+	'cancelled',
+];
+const RUN_TRIGGERS: readonly AgentRunTrigger[] = [
+	'playground',
+	'workflow',
+	'service',
+	'schedule',
+];
 
 function failure(error: unknown): Response {
 	if (
@@ -196,6 +227,77 @@ function agentInput(value: Record<string, unknown>): CreateAgentInput {
 	};
 }
 
+function invalid(message: string): HttpProblem {
+	return new HttpProblem('INVALID_INPUT', message, 400);
+}
+
+function queryValue(url: URL, key: string, maximum: number): string | null {
+	const raw = url.searchParams.get(key);
+	if (raw === null) return null;
+	const value = raw.trim();
+	if (value === '') return null;
+	if (value.length > maximum) throw invalid(`${key} is too long.`);
+	return value;
+}
+
+function queryChoice<Choice extends string>(
+	url: URL,
+	key: string,
+	choices: readonly Choice[],
+): Choice | null {
+	const value = queryValue(url, key, 32);
+	if (value === null) return null;
+	const chosen = choices.find((choice) => choice === value);
+	if (chosen === undefined) {
+		throw invalid(`${key} must be one of ${choices.join(', ')}.`);
+	}
+	return chosen;
+}
+
+interface ListOrder<Sort extends string> {
+	readonly sort: Sort;
+	readonly direction: ListDirection;
+}
+
+function listOrder<Sort extends string>(
+	url: URL,
+	sorts: readonly Sort[],
+	defaults: Readonly<Record<Sort, ListDirection>>,
+): ListOrder<Sort> {
+	const sort = queryChoice(url, 'sort', sorts) ?? sorts[0]!;
+	const direction = queryChoice(url, 'direction', ['asc', 'desc'] as const);
+	return { sort, direction: direction ?? defaults[sort] };
+}
+
+type CursorScope = Readonly<Record<string, string | number>> & {
+	readonly list: 'definitions' | 'runs' | 'audit';
+};
+
+/* A cursor answers one request: the list, tenant, order and filters it was
+   signed with are compared to the request's, and its keyset fields must carry
+   the type the statement binds, so a cursor of another list of the same
+   workspace is refused rather than moved onto a result set it never described. */
+function boundCursor(
+	raw: string | null,
+	secret: Uint8Array,
+	scope: CursorScope,
+	keys: Readonly<Record<string, 'string' | 'number'>>,
+): Record<string, string | number> | null {
+	if (raw === null) return null;
+	const cursor = decodeCursor(raw, secret);
+	const refused = () =>
+		new HttpProblem('CURSOR_INVALID', 'The page cursor is not valid.', 400);
+	for (const [key, value] of Object.entries(scope)) {
+		if (cursor[key] !== value) throw refused();
+	}
+	for (const [key, type] of Object.entries(keys)) {
+		const value = cursor[key];
+		if (typeof value !== type) throw refused();
+		if (type === 'number' && !Number.isSafeInteger(value)) throw refused();
+	}
+	return cursor;
+}
+
 /* A tenant agent and a run carry the deprecated projection beside the canonical
    field, so a client on either contract reads the same configuration and the
    same retained evidence. */
@@ -332,6 +434,10 @@ async function runEventStream(
 }
 
 export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
+	/* Module-owned and never stored: a cursor names a position in one
+	   workspace's own list, so a restart invalidating one costs a client the
+	   first page. */
+	const cursorSecret = randomBytes(32);
 	const listAgents = defineEndpoint({
 		id: 'agents.definitions.list',
 		path: '/api/agents',
@@ -342,16 +448,83 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 		},
 		resolveIdentity: endpointIdentityFromContext,
 		handler: async ({ octane }) => {
+			try {
+				const principal = principalFromContext(octane)!;
+				const url = new URL(octane.request.url);
+				const page = readPageQuery(url, { defaultLimit: LIST_PAGE_LIMIT });
+				const order = listOrder(url, AGENT_SORTS, AGENT_SORT_DIRECTIONS);
+				const search = queryValue(url, 'q', SEARCH_LIMIT);
+				const scope = {
+					list: 'definitions' as const,
+					tenant: principal.tenantId,
+					sort: order.sort,
+					direction: order.direction,
+					q: search ?? '',
+				};
+				const cursor = boundCursor(page.cursor, cursorSecret, scope, {
+					key: order.sort === 'name' ? 'string' : 'number',
+					id: 'string',
+				});
+				const result = await (
+					await runtime.service()
+				).listAgentsPage(principal.tenantId, {
+					sort: order.sort,
+					direction: order.direction,
+					search,
+					limit: page.limit,
+					after:
+						cursor === null
+							? null
+							: {
+									sortValue:
+										order.sort === 'name'
+											? String(cursor.key)
+											: Number(cursor.key),
+									id: String(cursor.id),
+								},
+				});
+				return pageResponse({
+					items: result.agents.map((agent) =>
+						withDeprecatedProcedureFields<TenantAgentView>({
+							...agent,
+							ownership: { kind: 'tenant' },
+						}),
+					),
+					limit: page.limit,
+					nextCursor:
+						result.last && result.agents.length === page.limit
+							? encodeCursor(
+									{
+										...scope,
+										key:
+											order.sort === 'name'
+												? result.last.nameKey
+												: result.last.updatedAt,
+										id: result.last.id,
+									},
+									cursorSecret,
+								)
+							: null,
+				});
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+	/* What the definitions screen needs beside its page: the module catalog,
+	   the providers, the registered tools and the procedures. */
+	const agentContext = defineEndpoint({
+		id: 'agents.definitions.context',
+		path: '/api/agents/context',
+		methods: ['GET'],
+		access: {
+			kind: 'permission',
+			permission: AGENT_PERMISSIONS.definitionsRead,
+		},
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
 			const principal = principalFromContext(octane)!;
 			return jsonResponse({
-				agents: (
-					await (await runtime.service()).listAgents(principal.tenantId)
-				).map((agent: AgentDefinition) =>
-					withDeprecatedProcedureFields<TenantAgentView>({
-						...agent,
-						ownership: { kind: 'tenant' },
-					}),
-				),
 				moduleAgents: await (
 					await runtime.service()
 				).listModuleAgents(principal.tenantId),
@@ -711,18 +884,72 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 			try {
 				const principal = principalFromContext(octane)!;
 				const url = new URL(octane.request.url);
-				const runId = url.searchParams.get('id');
-				return runId
-					? jsonResponse({
-							run: await (
-								await runtime.service()
-							).getRunTimeline(principal.tenantId, runId),
-						})
-					: jsonResponse({
-							runs: (
-								await (await runtime.service()).listRuns(principal.tenantId)
-							).map(withDeprecatedRunFields),
-						});
+				const page = readPageQuery(url, { defaultLimit: LIST_PAGE_LIMIT });
+				const order = listOrder(url, RUN_SORTS, { queuedAt: 'desc' });
+				const filters = {
+					status: queryChoice(url, 'status', RUN_STATUSES),
+					agentId: queryValue(url, 'agentId', 128),
+					trigger: queryChoice(url, 'trigger', RUN_TRIGGERS),
+					search: queryValue(url, 'q', SEARCH_LIMIT),
+				};
+				const scope = {
+					list: 'runs' as const,
+					tenant: principal.tenantId,
+					sort: order.sort,
+					direction: order.direction,
+					status: filters.status ?? '',
+					agentId: filters.agentId ?? '',
+					trigger: filters.trigger ?? '',
+					q: filters.search ?? '',
+				};
+				const cursor = boundCursor(page.cursor, cursorSecret, scope, {
+					queuedAt: 'number',
+					id: 'string',
+				});
+				const runs = await (
+					await runtime.service()
+				).listRuns(principal.tenantId, {
+					...filters,
+					direction: order.direction,
+					limit: page.limit,
+					after:
+						cursor === null
+							? null
+							: { queuedAt: Number(cursor.queuedAt), id: String(cursor.id) },
+				});
+				const last = runs.at(-1);
+				return pageResponse({
+					items: runs.map(withDeprecatedRunFields),
+					limit: page.limit,
+					nextCursor:
+						last && runs.length === page.limit
+							? encodeCursor(
+									{ ...scope, queuedAt: last.queuedAt, id: last.id },
+									cursorSecret,
+								)
+							: null,
+				});
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+	const getRun = defineEndpoint({
+		id: 'agents.runs.get',
+		path: '/api/agent-runs/get',
+		methods: ['GET'],
+		access: { kind: 'permission', permission: AGENT_PERMISSIONS.runsRead },
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			try {
+				const principal = principalFromContext(octane)!;
+				const runId = queryValue(new URL(octane.request.url), 'id', 128);
+				if (runId === null) throw invalid('id is required.');
+				return jsonResponse({
+					run: await (
+						await runtime.service()
+					).getRunTimeline(principal.tenantId, runId),
+				});
 			} catch (error) {
 				return failure(error);
 			}
@@ -857,17 +1084,44 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 		handler: async ({ octane }) => {
 			try {
 				const principal = principalFromContext(octane)!;
-				const url = new URL(octane.request.url);
-				const limit = Number(url.searchParams.get('limit') ?? '50');
-				return jsonResponse(
-					await (
-						await runtime.service()
-					).pageAuditEvents(
-						principal.tenantId,
-						url.searchParams.get('cursor'),
-						limit,
-					),
-				);
+				const page = readPageQuery(new URL(octane.request.url), {
+					maxLimit: AUDIT_PAGE_LIMIT,
+					defaultLimit: LIST_PAGE_LIMIT,
+				});
+				const scope = { list: 'audit' as const, tenant: principal.tenantId };
+				const cursor = boundCursor(page.cursor, cursorSecret, scope, {
+					occurredAt: 'number',
+					sequence: 'number',
+				});
+				const events = await (
+					await runtime.service()
+				).pageAuditEvents(principal.tenantId, {
+					limit: page.limit,
+					after:
+						cursor === null
+							? null
+							: {
+									occurredAt: Number(cursor.occurredAt),
+									sequence: Number(cursor.sequence),
+								},
+				});
+				const last = events.at(-1);
+				/* The body keeps `events` and `nextCursor`: auth.core's audit screen
+				   reads this trail beside the platform one through that shape. */
+				return jsonResponse({
+					events,
+					nextCursor:
+						last && events.length === page.limit
+							? encodeCursor(
+									{
+										...scope,
+										occurredAt: last.occurredAt,
+										sequence: last.sequence,
+									},
+									cursorSecret,
+								)
+							: null,
+				});
 			} catch (error) {
 				return failure(error);
 			}
@@ -1062,6 +1316,7 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 	});
 	return [
 		listAgents.serverRoute,
+		agentContext.serverRoute,
 		updateModuleAgentBinding.serverRoute,
 		createAgent.serverRoute,
 		updateAgent.serverRoute,
@@ -1076,6 +1331,7 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 		archiveSkill.serverRoute,
 		deleteSkill.serverRoute,
 		listRuns.serverRoute,
+		getRun.serverRoute,
 		enqueueRun.serverRoute,
 		cancelRun.serverRoute,
 		workerStatus.serverRoute,
@@ -1093,6 +1349,7 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 
 export const endpoints = [
 	'agents.definitions.list',
+	'agents.definitions.context',
 	'agents.module-bindings.update',
 	'agents.definitions.create',
 	'agents.definitions.update',
@@ -1107,6 +1364,7 @@ export const endpoints = [
 	'agents.skills.archive',
 	'agents.skills.delete',
 	'agents.runs.list',
+	'agents.runs.get',
 	'agents.runs.enqueue',
 	'agents.runs.cancel',
 	'agents.runs.worker',

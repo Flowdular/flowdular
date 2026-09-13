@@ -6,12 +6,14 @@ import {
 	Filters,
 	Icon,
 	PageHeader,
+	Pagination,
 	SearchField,
 	TableCard,
 	Tag,
 	type TableColumn,
+	type TableSort,
 } from '@flowdular/ui';
-import { activeLocale, t } from '@flowdular/client';
+import { t } from '@flowdular/client';
 import { useValue } from 'segment-state';
 import type {
 	AutomationSchedule,
@@ -20,18 +22,30 @@ import type {
 import {
 	createAutomationSchedule,
 	deleteAutomationSchedule,
+	loadAutomationOptions,
 	loadAutomationSchedules,
 	runAutomationSchedule,
 	updateAutomationSchedule,
 } from './api.ts';
 import { AutomationScheduleForm } from './AutomationScheduleForm.tsrx';
-import { createAutomationScheduleClientState } from './state.ts';
+import {
+	AUTOMATION_LIST_PAGE_SIZE,
+	FIRST_PAGE,
+	createAutomationScheduleClientState,
+	listRequest,
+	listSort,
+	movePage,
+	pageLoaded,
+} from './state.ts';
 import { cadenceLabel, timestampLabel } from './presentation.ts';
 
 export interface AutomationSchedulesViewProps {
 	readonly csrfToken: string;
 	readonly canManage: boolean;
 }
+
+/* Keystrokes and page clicks coalesce into one request. */
+const LIST_DEBOUNCE_MS = 200;
 
 function ScheduleSummary(props: { readonly schedule: AutomationSchedule }) @{
 	<span class="ui-cell">
@@ -47,15 +61,16 @@ function scheduleColumns(
 ): readonly TableColumn<AutomationSchedule>[] {
 	return [
 		{
-			key: 'schedule',
+			key: 'label',
 			header: t('automations.schedules.column.schedule'),
-			width: '24%',
+			width: '22%',
+			value: (schedule) => schedule.label,
 			cell: (schedule) => <ScheduleSummary schedule={schedule} />,
 		},
 		{
 			key: 'target',
 			header: t('automations.common.target'),
-			width: '18%',
+			width: '16%',
 			cell: (schedule) => <span class="ui-cell">
 				<span>{schedule.targetName}</span>
 				<small class="ui-cell__muted">
@@ -70,27 +85,34 @@ function scheduleColumns(
 		{
 			key: 'cadence',
 			header: t('automations.schedules.column.cadence'),
-			width: '12%',
+			width: '10%',
 			cell: (schedule) => cadenceLabel(schedule.cadence),
 		},
 		{
 			key: 'last-run',
 			header: t('automations.schedules.column.lastRun'),
-			width: '16%',
+			width: '14%',
 			cell: (schedule) => timestampLabel(schedule.lastRunAt, timeZone),
 		},
 		{
 			key: 'next-run',
 			header: t('automations.schedules.column.nextRun'),
-			width: '16%',
+			width: '14%',
 			cell: (schedule) => schedule.enabled
 				? timestampLabel(schedule.nextRunAt, timeZone)
 				: t('automations.common.paused'),
 		},
 		{
+			key: 'updatedAt',
+			header: t('automations.common.updated'),
+			width: '12%',
+			value: (schedule) => schedule.updatedAt,
+			cell: (schedule) => timestampLabel(schedule.updatedAt, timeZone),
+		},
+		{
 			key: 'state',
 			header: t('automations.common.state'),
-			width: '14%',
+			width: '12%',
 			cell: (schedule) =>
 				<Tag tone={schedule.enabled ? 'success' : 'neutral'} dot>{t(
 					schedule.enabled
@@ -103,6 +125,7 @@ function scheduleColumns(
 
 export function AutomationSchedulesView(props: AutomationSchedulesViewProps) @{
 	const client = useMemo(() => createAutomationScheduleClientState(), []);
+	const requests = useMemo(() => ({ sequence: 0 }), []);
 	const [schedules] = useValue(client.state.schedules);
 	const [targets] = useValue(client.state.targets);
 	const [variables] = useValue(client.state.variables);
@@ -111,47 +134,100 @@ export function AutomationSchedulesView(props: AutomationSchedulesViewProps) @{
 	const [status, setStatus] = useValue(client.state.status);
 	const [error, setError] = useValue(client.state.error);
 	const [notice, setNotice] = useValue(client.state.notice);
-	const [query, setQuery] = useValue(client.state.query);
-	const [enabledOnly, setEnabledOnly] = useValue(client.state.enabledOnly);
+	const [query] = useValue(client.state.query);
+	const [enabledOnly] = useValue(client.state.enabledOnly);
+	const [sorting] = useValue(client.state.sorting);
+	const [paging, setPaging] = useValue(client.state.paging);
 	const [filtersOpen, setFiltersOpen] = useValue(client.state.filtersOpen);
 	const [editorOpen, setEditorOpen] = useValue(client.state.editorOpen);
 	const selected =
 		schedules.find((schedule) => schedule.id === selectedId) ?? null;
-	const term = query.trim().toLocaleLowerCase(activeLocale());
-	const visible = schedules.filter(
-		(schedule) =>
-			(!enabledOnly || schedule.enabled) &&
-				(term === '' ||
-					schedule.label.toLocaleLowerCase(activeLocale()).includes(term) ||
-					schedule.targetName.toLocaleLowerCase(activeLocale()).includes(term)),
-	);
-	const filtered = term !== '' || enabledOnly;
+	const filtered = query.trim() !== '' || enabledOnly;
+	const order = listSort(sorting);
 
-	const refresh = async () => {
+	const loadPage = async () => {
+		const sequence = requests.sequence += 1;
 		setStatus('loading');
 		setError('');
 		try {
-			const result = await loadAutomationSchedules();
+			const result = await loadAutomationSchedules(
+				listRequest({ sorting, query, enabledOnly, paging }),
+			);
+			if (sequence !== requests.sequence) return;
 			client.store.act((transaction) => {
-				transaction.set(client.state.schedules, result.schedules);
-				transaction.set(client.state.targets, result.targets);
-				transaction.set(client.state.variables, result.variables);
-				transaction.set(client.state.timeZone, result.timeZone);
-			}, 'automation-schedules/loaded');
+				transaction.set(client.state.schedules, result.items);
+				transaction.set(
+					client.state.paging,
+					pageLoaded(paging, result.page.nextCursor),
+				);
+			}, 'automation-schedules/page');
 		} catch (loadError) {
+			if (sequence !== requests.sequence) return;
 			setError(
 				loadError instanceof Error
 					? loadError.message
 					: t('automations.schedules.error.load'),
 			);
 		} finally {
-			setStatus('idle');
+			if (sequence === requests.sequence) setStatus('idle');
 		}
 	};
 
+	const loadOptions = async () => {
+		try {
+			const result = await loadAutomationOptions();
+			client.store.act((transaction) => {
+				transaction.set(client.state.targets, result.targets);
+				transaction.set(client.state.variables, result.variables);
+				transaction.set(client.state.timeZone, result.timeZone);
+			}, 'automation-schedules/options');
+		} catch (loadError) {
+			setError(
+				loadError instanceof Error
+					? loadError.message
+					: t('automations.schedules.error.load'),
+			);
+		}
+	};
+
+	const refresh = async () => {
+		await Promise.all([loadOptions(), loadPage()]);
+	};
+
 	useEffect(() => {
-		void refresh();
+		void loadOptions();
 	}, []);
+
+	useEffect(() => {
+		const handle = setTimeout(() => void loadPage(), LIST_DEBOUNCE_MS);
+		return () => clearTimeout(handle);
+	}, [query, enabledOnly, order.sort, order.direction, paging.pageIndex]);
+
+	/* A narrower or reordered list starts from its first page. */
+	const restart = (
+		change: Parameters<typeof client.store.act>[0],
+		label: string,
+	) => {
+		client.store.act((transaction) => {
+			change(transaction);
+			transaction.set(client.state.paging, FIRST_PAGE);
+		}, label);
+	};
+	const changeQuery = (value: string) => restart(
+		(transaction) => transaction.set(client.state.query, value),
+		'automation-schedules/query',
+	);
+	const changeEnabledOnly = (value: boolean) => restart(
+		(transaction) => transaction.set(client.state.enabledOnly, value),
+		'automation-schedules/enabled-only',
+	);
+	const changeSorting = (value: readonly TableSort[]) => restart(
+		(transaction) => transaction.set(client.state.sorting, value),
+		'automation-schedules/sorting',
+	);
+	const changePage = (pageIndex: number) => setPaging(
+		movePage(paging, pageIndex),
+	);
 
 	const open = (scheduleId: string) => {
 		setSelectedId(scheduleId);
@@ -214,7 +290,7 @@ export function AutomationSchedulesView(props: AutomationSchedulesViewProps) @{
 					label: schedule.label,
 				}),
 			);
-			await refresh();
+			await loadPage();
 		} catch (runError) {
 			setError(
 				runError instanceof Error
@@ -252,14 +328,14 @@ export function AutomationSchedulesView(props: AutomationSchedulesViewProps) @{
 		<TableCard
 			title={t('automations.schedules.table.title')}
 			count={t('automations.schedules.table.count', {
-				enabled: schedules.filter((schedule) => schedule.enabled).length,
-				total: schedules.length,
+				count: schedules.length,
+				page: paging.pageIndex + 1,
 			})}
 			search={<SearchField
 				value={query}
 				placeholder={t('automations.schedules.search.placeholder')}
 				label={t('automations.schedules.search.label')}
-				onInput={setQuery}
+				onInput={changeQuery}
 			/>}
 			filters={<Filters
 				open={filtersOpen}
@@ -271,16 +347,26 @@ export function AutomationSchedulesView(props: AutomationSchedulesViewProps) @{
 					<input
 						type="checkbox"
 						checked={enabledOnly}
-						onChange={(event: Event) => setEnabledOnly(
+						onChange={(event: Event) => changeEnabledOnly(
 							(event.currentTarget as HTMLInputElement).checked,
 						)}
 					/>
 					<span>{t('automations.common.enabledOnly')}</span>
 				</label>
 			</Filters>}
+			mode="server"
 			columns={scheduleColumns(timeZone)}
-			rows={visible}
+			rows={schedules}
 			rowKey={(schedule) => schedule.id}
+			sorting
+			sortingState={sorting}
+			onSortingChange={changeSorting}
+			pagination={{
+				pageIndex: paging.pageIndex,
+				pageSize: AUTOMATION_LIST_PAGE_SIZE,
+				onPageChange: changePage,
+				hasMore: paging.nextCursor !== null,
+			}}
 			status={status === 'loading' && schedules.length === 0
 				? 'loading'
 				: 'idle'}
@@ -314,6 +400,19 @@ export function AutomationSchedulesView(props: AutomationSchedulesViewProps) @{
 						},
 					]
 				: undefined}
+			after={<Pagination
+				pageIndex={paging.pageIndex}
+				pageSize={AUTOMATION_LIST_PAGE_SIZE}
+				hasMore={paging.nextCursor !== null}
+				onPageChange={changePage}
+				label={t('automations.schedules.pagination.label')}
+				previousLabel={t('automations.common.pagination.previous')}
+				nextLabel={t('automations.common.pagination.next')}
+				summary={(page) => t('automations.common.pagination.summary', {
+					page: page.pageIndex + 1,
+					from: page.from,
+				})}
+			/>}
 			note={t('automations.schedules.note') + ' ' +
 				t('automations.schedules.timeZoneNote', { zone: timeZone })}
 			noteIcon="shield"

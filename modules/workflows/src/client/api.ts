@@ -6,13 +6,15 @@ import type {
 	WorkflowCancellationResult,
 	WorkflowDefinition,
 	WorkflowDefinitionDetail,
+	WorkflowDefinitionListQuery,
 	WorkflowDryRunResponseV1,
 	WorkflowEnqueueRequest,
+	WorkflowListQuery,
 	WorkflowRunAccepted,
 	WorkflowRunDetail,
 	WorkflowRunEventV1,
-	WorkflowRunFilters,
-	WorkflowRunPage,
+	WorkflowRunListQuery,
+	WorkflowRunSummary,
 	WorkflowSimulationRequest,
 } from '../domain/types.ts';
 
@@ -68,18 +70,46 @@ async function post<T>(
 	);
 }
 
-export async function loadWorkflowDefinitions(): Promise<
-	readonly WorkflowDefinition[]
-> {
-	const response = await fetch('/api/workflows', {
+/** One page of a server-sorted list; `nextCursor` is null on the last page. */
+export interface WorkflowListPage<T> {
+	readonly items: readonly T[];
+	readonly page: {
+		readonly nextCursor: string | null;
+		readonly limit: number;
+	};
+}
+
+function listParams(
+	query: WorkflowListQuery<string>,
+	filters: Readonly<Record<string, string | undefined>>,
+): string {
+	const params = new URLSearchParams();
+	for (const [key, value] of Object.entries(filters)) {
+		if (value) params.set(key, value);
+	}
+	if (query.sort) params.set('sort', query.sort);
+	if (query.direction) params.set('direction', query.direction);
+	if (query.limit !== undefined) params.set('limit', String(query.limit));
+	if (query.cursor) params.set('cursor', query.cursor);
+	const text = params.toString();
+	return text ? `?${text}` : '';
+}
+
+async function loadPage<T>(path: string): Promise<WorkflowListPage<T>> {
+	const response = await fetch(path, {
 		headers: { accept: 'application/json' },
 		credentials: 'same-origin',
 	});
-	return (
-		await payload<{ readonly definitions: readonly WorkflowDefinition[] }>(
-			response,
-		)
-	).definitions;
+	return payload<WorkflowListPage<T>>(response);
+}
+
+export function loadWorkflowDefinitions(
+	query: WorkflowDefinitionListQuery = {},
+): Promise<WorkflowListPage<WorkflowDefinition>> {
+	return loadPage(
+		'/api/workflows' +
+			listParams(query, { status: query.status, q: query.search }),
+	);
 }
 
 export async function createWorkflowDefinition(
@@ -194,30 +224,20 @@ export async function loadWorkflowCatalog(): Promise<{
 	return { agents: agents.agents, actions: actions.actions };
 }
 
-function runQuery(filters: WorkflowRunFilters): string {
-	const query = new URLSearchParams();
-	if (filters.workflowId) query.set('workflowId', filters.workflowId);
-	if (filters.mode) query.set('mode', filters.mode);
-	if (filters.status) query.set('status', filters.status);
-	if (filters.actorKind) query.set('actorKind', filters.actorKind);
-	if (filters.originKind) query.set('originKind', filters.originKind);
-	if (filters.limit !== undefined) query.set('limit', String(filters.limit));
-	if (filters.cursor) query.set('cursor', filters.cursor);
-	return query.toString();
-}
-
-export async function loadWorkflowRuns(
-	filters: WorkflowRunFilters = {},
-): Promise<WorkflowRunPage> {
-	const query = runQuery(filters);
-	const response = await fetch(
-		`/api/workflow-runs${query ? `?${query}` : ''}`,
-		{
-			headers: { accept: 'application/json' },
-			credentials: 'same-origin',
-		},
+export function loadWorkflowRuns(
+	query: WorkflowRunListQuery = {},
+): Promise<WorkflowListPage<WorkflowRunSummary>> {
+	return loadPage(
+		'/api/workflow-runs' +
+			listParams(query, {
+				workflowId: query.workflowId,
+				mode: query.mode,
+				status: query.status,
+				actorKind: query.actorKind,
+				originKind: query.originKind,
+				q: query.search,
+			}),
 	);
-	return payload<WorkflowRunPage>(response);
 }
 
 export async function loadWorkflowRunDetail(

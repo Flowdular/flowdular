@@ -63,7 +63,7 @@ describe('CONNECTORS-EGRESS', () => {
 				service.create(TENANT, ACTOR, { ...BASE, baseUrl }),
 			).rejects.toMatchObject({ code: 'EGRESS_REFUSED' });
 		}
-		expect(await service.list(TENANT)).toEqual([]);
+		expect(await service.list(TENANT, { limit: 200 })).toEqual([]);
 	});
 
 	it('refuses a call whose host resolves into a blocked range, before any request leaves', async () => {
@@ -154,6 +154,8 @@ describe('CONNECTORS-EGRESS', () => {
 		});
 		const calls = await instanceService(shared.repository, vault).listCalls(
 			TENANT,
+			{},
+			{ limit: 200 },
 		);
 		expect(calls).toHaveLength(1);
 		expect(calls[0]).toMatchObject({

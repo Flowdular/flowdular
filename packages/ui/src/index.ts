@@ -62,11 +62,13 @@ export type { TagProps, TagTone } from './components/Tag.tsrx';
 export { Table } from './components/Table.tsrx';
 export type {
 	TableAction,
+	TableBulkAction,
 	TableColumn,
 	TableEmpty,
 	TableMode,
 	TablePagination,
 	TableProps,
+	TableSelection,
 	TableStatus,
 } from './components/Table.tsrx';
 export type { TableSort, TableSortChange } from './components/table-sorting.ts';

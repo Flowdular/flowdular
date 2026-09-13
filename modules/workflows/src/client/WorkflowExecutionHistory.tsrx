@@ -1,11 +1,12 @@
 import { t } from '@flowdular/client';
 import {
-	Button,
 	Filters,
+	Pagination,
 	SearchField,
 	TableCard,
 	Tag,
 	type TableColumn,
+	type TableSort,
 } from '@flowdular/ui';
 import type { WorkflowRunSummary } from '../domain/types.ts';
 import {
@@ -17,18 +18,24 @@ import {
 } from './presentation.ts';
 
 export interface WorkflowExecutionHistoryProps {
+	/** The page the server returned, already narrowed and ordered. */
 	readonly runs: readonly WorkflowRunSummary[];
 	readonly query: string;
+	readonly appliedQuery: string;
 	readonly statusFilter: string;
 	readonly filtersOpen: boolean;
 	readonly loading: boolean;
+	readonly sorting: readonly TableSort[];
+	readonly pageIndex: number;
+	readonly pageSize: number;
 	readonly hasMore: boolean;
 	readonly selectedRunId: string;
 	readonly onQuery: (value: string) => void;
 	readonly onStatusFilter: (value: string) => void;
 	readonly onToggleFilters: () => void;
+	readonly onSorting: (sorts: readonly TableSort[]) => void;
+	readonly onPage: (pageIndex: number) => void;
 	readonly onSelect: (run: WorkflowRunSummary) => void;
-	readonly onLoadMore: () => void;
 }
 
 function columns(): readonly TableColumn<WorkflowRunSummary>[] {
@@ -58,6 +65,7 @@ function columns(): readonly TableColumn<WorkflowRunSummary>[] {
 			key: 'queued',
 			header: t('workflows.history.column.queued'),
 			width: '18%',
+			value: (run) => run.queuedAt,
 			cell: (run) => dateTime(run.queuedAt),
 		},
 		{
@@ -96,29 +104,8 @@ function columns(): readonly TableColumn<WorkflowRunSummary>[] {
 export function WorkflowExecutionHistory(
 	props: WorkflowExecutionHistoryProps,
 ) @{
-	const term = props.query.trim().toLocaleLowerCase();
-	const visible = props.runs.filter(
-		(run) =>
-			(term === '' || run.workflowName.toLocaleLowerCase().includes(term) ||
-				run.workflowKey.toLocaleLowerCase().includes(term) ||
-				run.actor.label.toLocaleLowerCase().includes(term) ||
-				run.id.toLocaleLowerCase().includes(term)) &&
-				(props.statusFilter === '' || run.status === props.statusFilter),
-	);
-	const after =
-		props.hasMore
-			? <div class="workflow-history-more">
-					<Button disabled={props.loading} onClick={props.onLoadMore}>
-						{props.loading
-							? t('workflows.history.loadingMore')
-							: t('workflows.history.loadMore')}
-					</Button>
-				</div>
-			: null;
-
 	<TableCard
 		title={t('workflows.history.title')}
-		count={t('workflows.history.count', { count: props.runs.length })}
 		search={<SearchField
 			value={props.query}
 			placeholder={t('workflows.history.searchPlaceholder')}
@@ -147,11 +134,34 @@ export function WorkflowExecutionHistory(
 		</Filters>}
 		caption={t('workflows.history.caption')}
 		columns={columns()}
-		rows={visible}
+		rows={props.runs}
 		rowKey={(run) => run.id}
-		status={props.loading && props.runs.length === 0 ? 'loading' : 'idle'}
+		mode="server"
+		sorting
+		sortingState={props.sorting}
+		onSortingChange={props.onSorting}
+		pagination={{
+			pageIndex: props.pageIndex,
+			pageSize: props.pageSize,
+			onPageChange: props.onPage,
+			hasMore: props.hasMore,
+		}}
+		after={<Pagination
+			pageIndex={props.pageIndex}
+			pageSize={props.pageSize}
+			hasMore={props.hasMore}
+			onPageChange={props.onPage}
+			label={t('workflows.pagination.label')}
+			previousLabel={t('workflows.pagination.previous')}
+			nextLabel={t('workflows.pagination.next')}
+			summary={(page) => t('workflows.pagination.summary', {
+				page: page.pageIndex + 1,
+				from: page.from,
+			})}
+		/>}
+		status={props.loading ? 'loading' : 'idle'}
 		loadingLabel={t('workflows.history.loading')}
-		filtered={term !== '' || props.statusFilter !== ''}
+		filtered={props.appliedQuery !== '' || props.statusFilter !== ''}
 		empty={{
 			icon: 'activity',
 			title: t('workflows.history.emptyTitle'),
@@ -164,6 +174,5 @@ export function WorkflowExecutionHistory(
 		}}
 		onSelect={props.onSelect}
 		selectedKey={props.selectedRunId}
-		after={after}
 	/>
 }

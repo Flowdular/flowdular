@@ -23,6 +23,7 @@ import type { DocumentAttachment } from '../domain/attachments.ts';
 import { DOCUMENT_SCANS, type DocumentScan } from '../domain/types.ts';
 import {
 	deleteDocument,
+	deleteDocuments,
 	documentReadUrl,
 	documentsErrorMessage,
 	DocumentsApiError,
@@ -46,9 +47,12 @@ import {
 } from './presentation.ts';
 import {
 	createDocumentsClientState,
+	deletableIds,
+	deleteOutcomeCounts,
 	mergeDocumentPage,
 	mergeOwnerModules,
 	searchPending,
+	selectionAfterPage,
 } from './state.ts';
 
 export interface DocumentsViewProps {
@@ -137,11 +141,16 @@ export function DocumentsView(props: DocumentsViewProps) @{
 		client.state.confirmDeleteId,
 	);
 	const [appliedQuery] = useValue(client.state.appliedQuery);
+	const [selectedIds, setSelectedIds] = useValue(client.state.selectedIds);
+	const [confirmDeleteMany, setConfirmDeleteMany] = useValue(
+		client.state.confirmDeleteMany,
+	);
 	const [limits, setLimits] = useState<DocumentLimits | null>(null);
 	const term = query.trim();
 	const filtered = term !== '' || ownerFilter !== '' || scanFilter !== '';
 	const pendingDelete =
 		documents.find((record) => record.id === confirmDeleteId) ?? null;
+	const deletable = deletableIds(documents, selectedIds);
 
 	/* `append` continues the open listing; anything else starts a new one, so a
    changed filter can never mix two result sets. The filters travel as an
@@ -175,6 +184,10 @@ export function DocumentsView(props: DocumentsViewProps) @{
 					mergeOwnerModules(ownerModuleOptions, page.items),
 				);
 				transaction.set(client.state.nextCursor, page.page.nextCursor);
+				transaction.set(
+					client.state.selectedIds,
+					selectionAfterPage(selectedIds, append),
+				);
 				transaction.set(client.state.status, 'idle');
 			}, 'documents/loaded');
 		} catch (loadError) {
@@ -266,6 +279,26 @@ export function DocumentsView(props: DocumentsViewProps) @{
 			toasts.success(t('documents.notice.deleted', { name: record.filename }));
 		} catch (deleteError) {
 			setError(documentsErrorMessage(deleteError, 'documents.error.delete'));
+			setStatus('idle');
+		}
+	};
+
+	const removeMany = async () => {
+		const ids = deletable;
+		setConfirmDeleteMany(false);
+		if (ids.length === 0) return;
+		setStatus('submitting');
+		setError('');
+		try {
+			const outcomes = await deleteDocuments(ids, props.csrfToken);
+			await refresh();
+			toasts.success(
+				t('documents.notice.deletedMany', deleteOutcomeCounts(outcomes)),
+			);
+		} catch (deleteError) {
+			setError(
+				documentsErrorMessage(deleteError, 'documents.error.deleteMany'),
+			);
 			setStatus('idle');
 		}
 	};
@@ -427,6 +460,34 @@ export function DocumentsView(props: DocumentsViewProps) @{
 						title: t('documents.emptyFiltered.title'),
 						hint: t('documents.emptyFiltered.hint'),
 					})}
+					selection={props.canManage
+						? {
+								selectedKeys: selectedIds,
+								onSelectionChange: setSelectedIds,
+								label: t('documents.selection.label'),
+								rowLabel: (record) => t('documents.selection.rowLabel', {
+									name: record.filename,
+								}),
+								selectable: (record) => record.status === 'stored',
+								clearLabel: t('documents.selection.clear'),
+							}
+						: undefined}
+					bulkActions={[
+						{
+							id: 'delete-selected',
+							label: t('documents.action.deleteSelected'),
+							icon: 'x',
+							tone: 'danger',
+							disabled: deletable.length === 0 || status === 'submitting',
+							reason: deletable.length === 0
+								? t('documents.action.deleteSelectedRefused')
+								: undefined,
+							onSelect: () => setConfirmDeleteMany(true),
+						},
+					]}
+					selectionSummary={(count) => t('documents.selection.summary', {
+						count,
+					})}
 					actions={rowActions}
 					actionsLabel={t('documents.common.actions')}
 					actionsWidth="220px"
@@ -460,6 +521,16 @@ export function DocumentsView(props: DocumentsViewProps) @{
 			onCancel={() => setConfirmDeleteId(null)}
 		>{t('documents.delete.description', {
 			name: pendingDelete?.filename ?? '',
+		})}</ConfirmDialog>
+		<ConfirmDialog
+			open={confirmDeleteMany}
+			title={t('documents.deleteMany.title')}
+			confirmLabel={t('documents.action.deleteSelected')}
+			busy={status === 'submitting'}
+			onConfirm={() => void removeMany()}
+			onCancel={() => setConfirmDeleteMany(false)}
+		>{t('documents.deleteMany.description', {
+			count: deletable.length,
 		})}</ConfirmDialog>
 		<ToastHost
 			label={t('documents.common.messages')}

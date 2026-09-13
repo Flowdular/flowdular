@@ -7,10 +7,12 @@ import {
 	Filters,
 	Icon,
 	PageHeader,
+	Pagination,
 	SearchField,
 	TableCard,
 	Tag,
 	type TableColumn,
+	type TableSort,
 } from '@flowdular/ui';
 import { useValue } from 'segment-state';
 import type { AgentRun } from '../domain/types.ts';
@@ -28,12 +30,25 @@ import {
 	triggerLabel,
 } from './presentation.ts';
 import { RunTimeline } from './RunTimeline.tsrx';
-import { createAgentRunClientState } from './state.ts';
+import {
+	createAgentRunClientState,
+	FIRST_PAGE,
+	hasMorePages,
+	mergeAgentOptions,
+	moveToPage,
+	PAGE_SIZE,
+	pageCursor,
+	pageLoaded,
+	runDirection,
+} from './state.ts';
 
 export interface AgentRunsViewProps {
 	readonly csrfToken: string;
 	readonly canCancel: boolean;
 }
+
+const SEARCH_DEBOUNCE_MS = 250;
+const POLL_MS = 2_500;
 
 function date(value: number): string {
 	return new Intl.DateTimeFormat(activeLocale(), {
@@ -62,9 +77,10 @@ function columns(now: number): readonly TableColumn<AgentRun>[] {
 			cell: (run) => triggerLabel(run.trigger),
 		},
 		{
-			key: 'queued',
+			key: 'queuedAt',
 			header: t('agents.runs.column.queued'),
 			width: '25%',
+			value: (run) => run.queuedAt,
 			cell: (run) => date(run.queuedAt),
 		},
 		{
@@ -89,16 +105,57 @@ function columns(now: number): readonly TableColumn<AgentRun>[] {
 export function AgentRunsView(props: AgentRunsViewProps) @{
 	const client = useMemo(() => createAgentRunClientState(), []);
 	const [runs] = useValue(client.state.runs);
+	const [page] = useValue(client.state.page);
+	const [direction] = useValue(client.state.direction);
+	const [agentOptions] = useValue(client.state.agentOptions);
 	const [selectedRun, setSelectedRun] = useValue(client.state.selectedRun);
 	const [status, setStatus] = useValue(client.state.status);
 	const [error, setError] = useValue(client.state.error);
-	const [query, setQuery] = useValue(client.state.query);
-	const [statusFilter, setStatusFilter] = useValue(client.state.statusFilter);
-	const [agentFilter, setAgentFilter] = useValue(client.state.agentFilter);
-	const [triggerFilter, setTriggerFilter] = useValue(
-		client.state.triggerFilter,
-	);
+	const [query] = useValue(client.state.query);
+	const [statusFilter] = useValue(client.state.statusFilter);
+	const [agentFilter] = useValue(client.state.agentFilter);
+	const [triggerFilter] = useValue(client.state.triggerFilter);
 	const [filtersOpen, setFiltersOpen] = useValue(client.state.filtersOpen);
+	const term = query.trim();
+
+	/* Every filter, the sort and the page are request parameters; a change of
+   any but the page starts the list over from its first page. */
+	const narrow = (
+		key: | typeof client.state.query
+		| typeof client.state.statusFilter
+		| typeof client.state.agentFilter
+		| typeof client.state.triggerFilter,
+		value: string,
+	) => client.store.act((transaction) => {
+		transaction.set(key, value);
+		transaction.set(client.state.page, FIRST_PAGE);
+	}, 'agents/runs-narrowed');
+	const setQuery = (value: string) => narrow(client.state.query, value);
+	const setStatusFilter = (value: string) => narrow(
+		client.state.statusFilter,
+		value,
+	);
+	const setAgentFilter = (value: string) => narrow(
+		client.state.agentFilter,
+		value,
+	);
+	const setTriggerFilter = (value: string) => narrow(
+		client.state.triggerFilter,
+		value,
+	);
+	const setSorting = (sorts: readonly TableSort[]) => client.store.act((
+		transaction,
+	) => {
+		transaction.set(client.state.direction, runDirection(sorts));
+		transaction.set(client.state.page, FIRST_PAGE);
+	}, 'agents/runs-sorted');
+	const setPage = (pageIndex: number) => client.store.act(
+		(transaction) => transaction.set(
+			client.state.page,
+			moveToPage(page, pageIndex),
+		),
+		'agents/runs-page',
+	);
 
 	const open = async (run: AgentRun) => {
 		try {
@@ -129,34 +186,69 @@ export function AgentRunsView(props: AgentRunsViewProps) @{
 		}
 	};
 
-	const refresh = async () => {
-		setStatus('loading');
-		setError('');
+	/* A poll keeps the rows on screen while it reads; only a request the
+   reader asked for replaces them with the loading row. */
+	const loadPage = async (
+		isCurrent: () => boolean = () => true,
+		poll = false,
+	) => {
+		if (!poll) {
+			setStatus('loading');
+			setError('');
+		}
 		try {
-			const records = await loadAgentRuns();
-			client.store.act(
-				(transaction) => transaction.set(client.state.runs, records),
-				'agents/runs-loaded',
-			);
-			if (selectedRun) {
+			const result = await loadAgentRuns({
+				limit: PAGE_SIZE,
+				cursor: pageCursor(page),
+				direction,
+				status: statusFilter,
+				agentId: agentFilter,
+				trigger: triggerFilter,
+				q: term,
+			});
+			if (!isCurrent()) return;
+			client.store.act((transaction) => {
+				transaction.set(client.state.runs, result.items);
+				transaction.set(
+					client.state.page,
+					pageLoaded(page, result.page.nextCursor),
+				);
+				transaction.set(
+					client.state.agentOptions,
+					mergeAgentOptions(
+						client.store.get(client.state.agentOptions),
+						result.items,
+					),
+				);
+			}, 'agents/runs-loaded');
+			if (selectedRun && !poll) {
 				setSelectedRun(await loadAgentRun(selectedRun.id));
 			}
 		} catch (loadError) {
+			if (!isCurrent()) return;
 			setError(
 				loadError instanceof Error
 					? loadError.message
 					: t('agents.runs.error.load'),
 			);
 		} finally {
-			setStatus('idle');
+			if (isCurrent() && !poll) setStatus('idle');
 		}
 	};
 
 	useEffect(() => {
-		void refresh();
-		const timer = setInterval(() => void refresh(), 2_500);
-		return () => clearInterval(timer);
-	}, []);
+		let current = true;
+		const timer = setTimeout(
+			() => void loadPage(() => current),
+			term === '' ? 0 : SEARCH_DEBOUNCE_MS,
+		);
+		const poll = setInterval(() => void loadPage(() => current, true), POLL_MS);
+		return () => {
+			current = false;
+			clearTimeout(timer);
+			clearInterval(poll);
+		};
+	}, [term, statusFilter, agentFilter, triggerFilter, direction, page.pageIndex]);
 
 	useEffect(() => {
 		if (
@@ -173,20 +265,6 @@ export function AgentRunsView(props: AgentRunsViewProps) @{
 	}, [selectedRun?.id, selectedRun?.status]);
 
 	const now = Date.now();
-	const locale = activeLocale();
-	const term = query.trim().toLocaleLowerCase(locale);
-	const agentNames = [...new Set(runs.map((run) => run.agentName))].sort(
-		(a, b) => a.localeCompare(b),
-	);
-	const visible = runs.filter(
-		(run) =>
-			(term === '' || run.agentName.toLocaleLowerCase(locale).includes(term) ||
-				run.input.toLocaleLowerCase(locale).includes(term) ||
-				run.id.toLocaleLowerCase(locale).includes(term)) &&
-				(statusFilter === '' || run.status === statusFilter) &&
-				(agentFilter === '' || run.agentName === agentFilter) &&
-				(triggerFilter === '' || run.trigger === triggerFilter),
-	);
 	const activeFilters = [statusFilter, agentFilter, triggerFilter].filter(
 		Boolean,
 	).length;
@@ -197,7 +275,7 @@ export function AgentRunsView(props: AgentRunsViewProps) @{
 			title={t('agents.runs.title')}
 			description={t('agents.runs.description')}
 		>
-			<Button size="sm" onClick={() => void refresh()}>
+			<Button size="sm" onClick={() => void loadPage()}>
 				<Icon name="refresh" size={14} />
 				{status === 'loading'
 					? t('agents.common.refreshing')
@@ -246,8 +324,8 @@ export function AgentRunsView(props: AgentRunsViewProps) @{
 								onInput={(event) => setAgentFilter(event.currentTarget.value)}
 							>
 								<option value="">{t('agents.runs.filter.allAgents')}</option>
-								@for (const name of agentNames; key name) {
-									<option value={name}>{name}</option>
+								@for (const agent of agentOptions; key agent.id) {
+									<option value={agent.id}>{agent.name}</option>
 								}
 							</select>
 						</label>
@@ -267,11 +345,36 @@ export function AgentRunsView(props: AgentRunsViewProps) @{
 					</div>
 				</Filters>}
 				caption={t('agents.runs.table.caption')}
+				mode="server"
 				columns={columns(now)}
-				rows={visible}
+				rows={runs}
 				rowKey={(run) => run.id}
-				status={status === 'loading' && runs.length === 0 ? 'loading' : 'idle'}
+				status={status === 'loading' ? 'loading' : 'idle'}
 				loadingLabel={t('agents.runs.loading')}
+				sorting
+				sortingState={[
+					{ key: 'queuedAt', desc: direction === 'desc' },
+				]}
+				onSortingChange={setSorting}
+				pagination={{
+					pageIndex: page.pageIndex,
+					pageSize: PAGE_SIZE,
+					hasMore: hasMorePages(page),
+					onPageChange: setPage,
+				}}
+				after={<Pagination
+					pageIndex={page.pageIndex}
+					pageSize={PAGE_SIZE}
+					hasMore={hasMorePages(page)}
+					onPageChange={setPage}
+					label={t('agents.common.page.label')}
+					previousLabel={t('agents.common.page.previous')}
+					nextLabel={t('agents.common.page.next')}
+					summary={(keyset) => t('agents.common.page.summary', {
+						page: keyset.pageIndex + 1,
+						from: keyset.from,
+					})}
+				/>}
 				filtered={term !== '' || activeFilters > 0}
 				empty={{
 					icon: 'play',

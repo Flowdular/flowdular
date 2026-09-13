@@ -162,7 +162,11 @@ function fixture(session: AuthPrincipal | null) {
 	return { call, mutation, invoke, runtime };
 }
 
-async function seed(accountId = REQUESTER, subjectRef = 'product-4711') {
+async function seed(
+	accountId = REQUESTER,
+	subjectRef = 'product-4711',
+	tenantId = TENANT,
+) {
 	const runtime = createApprovalsRuntime({
 		databases: shared.databases,
 		repository: shared.repository,
@@ -173,7 +177,7 @@ async function seed(accountId = REQUESTER, subjectRef = 'product-4711') {
 		expiryIntervalMs: () => 60_000,
 	});
 	return (await runtime.service()).open({
-		tenantId: TENANT,
+		tenantId,
 		subjectModule: 'catalog.core',
 		subjectRef,
 		permission: 'catalog.products.manage',
@@ -192,6 +196,7 @@ const READ_PATHS = [
 const MUTATION_PATHS = [
 	['/api/approvals/requests/approve', APPROVALS_PERMISSIONS.decide],
 	['/api/approvals/requests/reject', APPROVALS_PERMISSIONS.decide],
+	['/api/approvals/decide-many', APPROVALS_PERMISSIONS.decide],
 	['/api/approvals/requests/cancel', APPROVALS_PERMISSIONS.read],
 ] as const;
 
@@ -220,7 +225,7 @@ describe('APPROVALS-DENY', () => {
 			const { call, mutation } = fixture(principal(scopes));
 			const response = READ_PATHS.some((entry) => entry[0] === path)
 				? await call(path)
-				: await mutation(path, { id: 'x' });
+				: await mutation(path, { id: 'x', ids: ['x'], decision: 'approve' });
 			expect([path, response.status]).toEqual([path, 403]);
 		}
 	});
@@ -248,7 +253,7 @@ describe('APPROVALS-DENY', () => {
 		const { call: managed } = fixture(principal(ALL_SCOPES));
 		const allowed = await managed('/api/approvals/requests?scope=all');
 		expect(allowed.status).toBe(200);
-		expect((await allowed.json()).requests).toHaveLength(1);
+		expect((await allowed.json()).items).toHaveLength(1);
 	});
 
 	it('APPROVALS-DENY hides a request from a member who neither asked nor may decide', async () => {
@@ -306,7 +311,7 @@ describe('approvals endpoints', () => {
 		const listed = await call('/api/approvals/requests');
 		expect(listed.status).toBe(200);
 		expect(
-			(await listed.json()).requests.map((entry: { id: string }) => entry.id),
+			(await listed.json()).items.map((entry: { id: string }) => entry.id),
 		).toEqual([request.id]);
 
 		const counted = await call('/api/approvals/pending-count');
@@ -358,5 +363,270 @@ describe('approvals endpoints', () => {
 		});
 		expect(response.status).toBe(403);
 		expect((await response.json()).error.code).toBe('APPROVAL_NOT_ELIGIBLE');
+	});
+});
+
+interface ListBody {
+	readonly items: readonly { readonly id: string }[];
+	readonly page: { readonly nextCursor: string | null; readonly limit: number };
+}
+
+async function listPage(
+	call: ReturnType<typeof fixture>['call'],
+	search: string,
+): Promise<ListBody> {
+	const response = await call('/api/approvals/requests' + search);
+	expect([search, response.status]).toEqual([search, 200]);
+	return (await response.json()) as ListBody;
+}
+
+async function refused(
+	call: ReturnType<typeof fixture>['call'],
+	search: string,
+	code: string,
+): Promise<void> {
+	const response = await call('/api/approvals/requests' + search);
+	expect([search, response.status]).toEqual([search, 400]);
+	expect([search, (await response.json()).error.code]).toEqual([search, code]);
+}
+
+describe('APPROVALS-INBOX-PAGE', () => {
+	it('APPROVALS-INBOX-PAGE walks consecutive pages with no overlap and no gap, in both directions', async () => {
+		for (const index of [1, 2, 3, 4, 5])
+			await seed(REQUESTER, `product-${index}`);
+		const { call } = fixture(principal(ALL_SCOPES));
+		const whole = (await listPage(call, '?limit=10')).items.map(
+			(entry) => entry.id,
+		);
+		expect(whole).toHaveLength(5);
+
+		const first = await listPage(call, '?limit=2');
+		expect(first.items).toHaveLength(2);
+		expect(first.page.nextCursor).not.toBeNull();
+		const second = await listPage(
+			call,
+			`?limit=2&cursor=${first.page.nextCursor}`,
+		);
+		expect(second.items).toHaveLength(2);
+		expect(second.page.nextCursor).not.toBeNull();
+		const third = await listPage(
+			call,
+			`?limit=2&cursor=${second.page.nextCursor}`,
+		);
+		expect(third.items).toHaveLength(1);
+		expect(third.page.nextCursor).toBeNull();
+		expect(
+			[...first.items, ...second.items, ...third.items].map(
+				(entry) => entry.id,
+			),
+		).toEqual(whole);
+
+		const ascending = await listPage(call, '?limit=3&direction=asc');
+		const ascendingRest = await listPage(
+			call,
+			`?limit=3&direction=asc&cursor=${ascending.page.nextCursor}`,
+		);
+		expect(
+			[...ascending.items, ...ascendingRest.items].map((entry) => entry.id),
+		).toEqual([...whole].reverse());
+	});
+
+	it('APPROVALS-INBOX-PAGE answers a cursor for a full page only, and none past the end', async () => {
+		await seed(REQUESTER, 'product-1');
+		await seed(REQUESTER, 'product-2');
+		const { call } = fixture(principal(ALL_SCOPES));
+		const full = await listPage(call, '?limit=2');
+		expect(full.items).toHaveLength(2);
+		expect(full.page.nextCursor).not.toBeNull();
+		const past = await listPage(
+			call,
+			`?limit=2&cursor=${full.page.nextCursor}`,
+		);
+		expect(past.items).toHaveLength(0);
+		expect(past.page.nextCursor).toBeNull();
+
+		const short = await listPage(call, '?limit=3');
+		expect(short.items).toHaveLength(2);
+		expect(short.page.nextCursor).toBeNull();
+	});
+
+	it('APPROVALS-INBOX-PAGE refuses a tampered, foreign-tenant or re-scoped cursor', async () => {
+		await seed(REQUESTER, 'product-1');
+		await seed(REQUESTER, 'product-2');
+		const { call } = fixture(principal(ALL_SCOPES));
+		const cursor = (await listPage(call, '?limit=1&status=pending')).page
+			.nextCursor!;
+		const [version, body, signature] = cursor.split('.');
+		const edited = `${version}.${body!.slice(0, -2)}AA.${signature}`;
+		await refused(
+			call,
+			`?limit=1&status=pending&cursor=${edited}`,
+			'CURSOR_INVALID',
+		);
+		await refused(call, '?cursor=c1.not.signed', 'CURSOR_INVALID');
+
+		const { call: foreign } = fixture(
+			principal(ALL_SCOPES, 'account-ada', 'tenant-other'),
+		);
+		await refused(
+			foreign,
+			`?limit=1&status=pending&cursor=${cursor}`,
+			'CURSOR_INVALID',
+		);
+
+		/* The same cursor under another filter, sort or scope names a page of a
+		   different list. */
+		await refused(call, `?limit=1&cursor=${cursor}`, 'CURSOR_INVALID');
+		await refused(
+			call,
+			`?limit=1&status=pending&direction=asc&cursor=${cursor}`,
+			'CURSOR_INVALID',
+		);
+		await refused(
+			call,
+			`?limit=1&status=pending&scope=mine&cursor=${cursor}`,
+			'CURSOR_INVALID',
+		);
+		const same = await listPage(
+			call,
+			`?limit=1&status=pending&cursor=${cursor}`,
+		);
+		expect(same.items).toHaveLength(1);
+	});
+
+	it('APPROVALS-INBOX-PAGE refuses an unknown sort, direction or limit', async () => {
+		const { call } = fixture(principal(ALL_SCOPES));
+		await refused(call, '?sort=title', 'INVALID_INPUT');
+		await refused(call, '?direction=down', 'INVALID_INPUT');
+		await refused(call, '?limit=0', 'INVALID_INPUT');
+		await refused(call, '?limit=201', 'INVALID_INPUT');
+		const bounded = await listPage(
+			call,
+			'?limit=200&sort=createdAt&direction=desc',
+		);
+		expect(bounded.page.limit).toBe(200);
+	});
+});
+
+describe('APPROVALS-DECIDE-MANY', () => {
+	it('APPROVALS-DECIDE-MANY refuses an unbounded, repeated or unknown decision before any row is touched', async () => {
+		const request = await seed();
+		const { mutation, invoke } = fixture(principal(ALL_SCOPES));
+		const refusals: { readonly ids?: unknown; readonly decision?: unknown }[] =
+			[
+				{ ids: [], decision: 'approve' },
+				{ ids: 'x', decision: 'approve' },
+				{
+					ids: Array.from({ length: 101 }, (_, index) => `r-${index}`),
+					decision: 'approve',
+				},
+				{ ids: [request.id, request.id], decision: 'approve' },
+				{ ids: [request.id], decision: 'cancel' },
+				{ ids: [request.id] },
+			];
+		for (const body of refusals) {
+			const response = await mutation('/api/approvals/decide-many', body);
+			expect([JSON.stringify(body).slice(0, 40), response.status]).toEqual([
+				JSON.stringify(body).slice(0, 40),
+				400,
+			]);
+			expect((await response.json()).error.code).toBe('INVALID_INPUT');
+		}
+		const untouched = await invoke(
+			'/api/approvals/requests/:id',
+			`/api/approvals/requests/${request.id}`,
+			{ params: { id: request.id } },
+		);
+		expect((await untouched.json()).request.status).toBe('pending');
+	});
+
+	it('APPROVALS-DECIDE-MANY refuses a call without the CSRF proof before it reads the body', async () => {
+		const request = await seed();
+		const { mutation } = fixture(principal(ALL_SCOPES));
+		const response = await mutation(
+			'/api/approvals/decide-many',
+			{ ids: [request.id], decision: 'approve' },
+			{ headers: { 'x-csrf-token': 'wrong' } },
+		);
+		expect(response.status).toBe(403);
+		expect((await response.json()).error.code).toBe('CSRF_REJECTED');
+	});
+
+	it('APPROVALS-DECIDE-MANY answers one outcome per id, records a decision per decided row and runs each callback', async () => {
+		const { mutation, invoke, runtime } = fixture(principal(ALL_SCOPES));
+		const resolved: string[] = [];
+		const service = await runtime.service();
+		const open = (subjectRef: string) =>
+			service.open({
+				tenantId: TENANT,
+				subjectModule: 'catalog.core',
+				subjectRef,
+				permission: 'catalog.products.manage',
+				action: 'publish',
+				title: `Publish ${subjectRef}`,
+				requesterAccountId: REQUESTER,
+				requirement: { roleKey: OWNER_ROLE },
+				onResolved: async (request) => {
+					resolved.push(request.id);
+				},
+			});
+		const first = await open('product-1');
+		const second = await open('product-2');
+		const done = await seed(REQUESTER, 'product-3');
+		const foreign = await seed(REQUESTER, 'product-4', 'tenant-other');
+		const earlier = await mutation('/api/approvals/requests/approve', {
+			id: done.id,
+		});
+		expect(earlier.status).toBe(200);
+
+		const response = await mutation('/api/approvals/decide-many', {
+			ids: [first.id, 'missing', foreign.id, done.id, second.id],
+			decision: 'reject',
+			comment: 'Not this quarter.',
+		});
+		expect(response.status).toBe(200);
+		expect((await response.json()).outcomes).toEqual([
+			{ id: first.id, outcome: 'decided' },
+			{ id: 'missing', outcome: 'not-found' },
+			{ id: foreign.id, outcome: 'not-found' },
+			{ id: done.id, outcome: 'refused', reason: 'APPROVAL_NOT_PENDING' },
+			{ id: second.id, outcome: 'decided' },
+		]);
+		expect(resolved.sort()).toEqual([first.id, second.id].sort());
+
+		for (const id of [first.id, second.id]) {
+			const detail = await invoke(
+				'/api/approvals/requests/:id',
+				`/api/approvals/requests/${id}`,
+				{ params: { id } },
+			);
+			const body = await detail.json();
+			expect([id, body.request.status]).toEqual([id, 'rejected']);
+			expect(body.decisions).toHaveLength(1);
+			expect(body.decisions[0]).toMatchObject({
+				deciderAccountId: 'account-ada',
+				decision: 'reject',
+				comment: 'Not this quarter.',
+			});
+		}
+		/* The foreign request was answered not-found and left as it was. */
+		expect(
+			(await (await runtime.service()).get('tenant-other', foreign.id))?.status,
+		).toBe('pending');
+	});
+
+	it('APPROVALS-DECIDE-MANY answers the requester and an ineligible member per id instead of failing the call', async () => {
+		const own = await seed(REQUESTER, 'product-1');
+		const other = await seed('account-bo', 'product-2');
+		const { mutation } = fixture(principal(ALL_SCOPES, REQUESTER));
+		const response = await mutation('/api/approvals/decide-many', {
+			ids: [own.id, other.id],
+			decision: 'approve',
+		});
+		expect(response.status).toBe(200);
+		expect((await response.json()).outcomes).toEqual([
+			{ id: own.id, outcome: 'refused', reason: 'APPROVAL_NOT_ELIGIBLE' },
+			{ id: other.id, outcome: 'decided' },
+		]);
 	});
 });

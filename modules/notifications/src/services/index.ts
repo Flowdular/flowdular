@@ -1,15 +1,18 @@
-export {
-	NotificationsService,
-	INBOX_PAGE_LIMIT,
-} from './notifications-service.ts';
+export { NotificationsService } from './notifications-service.ts';
+export { LIST_PAGE_DEFAULT, LIST_PAGE_LIMIT } from './paging.ts';
 export { NotificationsServiceError } from './service-error.ts';
 export type {
 	DeliveryFilters,
 	InboxFilters,
+	ListPage,
 	NotificationsRepository,
+	PagedRows,
+	PageDirection,
+	PageKey,
 	PublishEventInput,
 	PublishEventResult,
 	StoredWebhookSubscription,
+	SubscriptionFilters,
 } from './repository.ts';
 export {
 	DatabaseNotificationsRepository,

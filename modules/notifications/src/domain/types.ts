@@ -16,6 +16,19 @@ export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 export const INBOX_STATUSES = ['unread', 'read', 'archived'] as const;
 export type NotificationsInboxStatus = (typeof INBOX_STATUSES)[number];
 
+/** The changes a member may apply to many of their own items at once. */
+export const INBOX_TRANSITIONS = ['mark-read', 'archive'] as const;
+export type InboxTransition = (typeof INBOX_TRANSITIONS)[number];
+/** Most ids one bulk transition names. */
+export const INBOX_TRANSITION_MANY_LIMIT = 100;
+
+export interface InboxTransitionOutcome {
+	readonly id: string;
+	readonly outcome: 'updated' | 'not-found' | 'refused';
+	/** The stable code behind a refusal. */
+	readonly reason?: string;
+}
+
 export const SUBSCRIPTION_STATUSES = ['active', 'paused', 'disabled'] as const;
 export type WebhookSubscriptionStatus = (typeof SUBSCRIPTION_STATUSES)[number];
 

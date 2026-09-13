@@ -7,6 +7,7 @@ import {
 	Drawer,
 	Icon,
 	PageHeader,
+	type TableSort,
 } from '@flowdular/ui';
 import { useValue } from 'segment-state';
 import type {
@@ -18,7 +19,8 @@ import {
 	archiveAgent,
 	createAgent,
 	deleteAgent,
-	loadAgents,
+	loadAgentContext,
+	loadAgentsPage,
 	updateAgent,
 	updateModuleAgentBinding,
 } from './api.ts';
@@ -26,12 +28,24 @@ import { AgentDefinitionForm } from './AgentDefinitionForm.tsrx';
 import { AgentDefinitionList } from './AgentDefinitionList.tsrx';
 import { ModuleAgentBindingForm } from './ModuleAgentBindingForm.tsrx';
 import { ModuleAgentList } from './ModuleAgentList.tsrx';
-import { createAgentClientState } from './state.ts';
+import {
+	agentSorting,
+	createAgentClientState,
+	FIRST_PAGE,
+	moveToPage,
+	PAGE_SIZE,
+	pageCursor,
+	pageLoaded,
+} from './state.ts';
 
 export interface AgentsViewProps {
 	readonly csrfToken: string;
 	readonly canManage: boolean;
 }
+
+/* A search term waits for the reader to stop typing before it becomes a
+   request; a sort or page change is one deliberate action and goes at once. */
+const SEARCH_DEBOUNCE_MS = 250;
 
 export function AgentsView(props: AgentsViewProps) @{
 	const client = useMemo(() => createAgentClientState(), []);
@@ -48,7 +62,9 @@ export function AgentsView(props: AgentsViewProps) @{
 	);
 	const [status, setStatus] = useValue(client.state.status);
 	const [error, setError] = useValue(client.state.error);
-	const [query, setQuery] = useValue(client.state.query);
+	const [query] = useValue(client.state.query);
+	const [sorting] = useValue(client.state.sorting);
+	const [page] = useValue(client.state.page);
 	const [moduleQuery, setModuleQuery] = useValue(client.state.moduleQuery);
 	const [editorOpen, setEditorOpen] = useValue(client.state.editorOpen);
 	const [moduleEditorOpen, setModuleEditorOpen] = useValue(
@@ -60,22 +76,11 @@ export function AgentsView(props: AgentsViewProps) @{
 	const selected = agents.find((agent) => agent.id === selectedAgentId) ?? null;
 	const selectedModuleAgent =
 		moduleAgents.find((agent) => agent.id === selectedModuleAgentId) ?? null;
-	const active = agents.filter((agent) => agent.status === 'active');
 	const activeModuleAgents = moduleAgents.filter(
 		(agent) => agent.status === 'active',
 	);
-	const term = query.trim().toLocaleLowerCase(activeLocale());
-	const visible =
-		term === ''
-			? agents
-			: agents.filter(
-					(agent) =>
-						agent.name.toLocaleLowerCase(activeLocale()).includes(term) ||
-							agent.key.includes(term) ||
-							agent.description.toLocaleLowerCase(activeLocale()).includes(
-								term,
-							),
-				);
+	const term = query.trim();
+	const sort = sorting[0] ?? { key: 'name', desc: false };
 	const moduleTerm = moduleQuery.trim().toLocaleLowerCase(activeLocale());
 	const visibleModuleAgents =
 		moduleTerm === ''
@@ -90,28 +95,91 @@ export function AgentsView(props: AgentsViewProps) @{
 							),
 				);
 
-	const refresh = async () => {
+	const loadPage = async (isCurrent: () => boolean = () => true) => {
 		setStatus('loading');
 		setError('');
 		try {
-			const result = await loadAgents();
+			const result = await loadAgentsPage({
+				limit: PAGE_SIZE,
+				cursor: pageCursor(page),
+				sort: sort.key === 'updatedAt' ? 'updatedAt' : 'name',
+				direction: sort.desc ? 'desc' : 'asc',
+				q: term,
+			});
+			if (!isCurrent()) return;
 			client.store.act((transaction) => {
-				transaction.set(client.state.agents, result.agents);
-				transaction.set(client.state.moduleAgents, result.moduleAgents);
-				transaction.set(client.state.providers, result.providers);
-				transaction.set(client.state.tools, result.tools);
-				transaction.set(client.state.procedures, result.procedures);
-			}, 'agents/loaded');
+				transaction.set(client.state.agents, result.items);
+				transaction.set(
+					client.state.page,
+					pageLoaded(page, result.page.nextCursor),
+				);
+			}, 'agents/page-loaded');
 		} catch (loadError) {
+			if (!isCurrent()) return;
 			setError(
 				loadError instanceof Error
 					? loadError.message
 					: t('agents.definitions.error.load'),
 			);
 		} finally {
-			setStatus('idle');
+			if (isCurrent()) setStatus('idle');
 		}
 	};
+
+	const refresh = async () => {
+		setStatus('loading');
+		setError('');
+		try {
+			const result = await loadAgentContext();
+			client.store.act((transaction) => {
+				transaction.set(client.state.moduleAgents, result.moduleAgents);
+				transaction.set(client.state.providers, result.providers);
+				transaction.set(client.state.tools, result.tools);
+				transaction.set(client.state.procedures, result.procedures);
+			}, 'agents/context-loaded');
+		} catch (loadError) {
+			setError(
+				loadError instanceof Error
+					? loadError.message
+					: t('agents.definitions.error.load'),
+			);
+			setStatus('idle');
+			return;
+		}
+		await loadPage();
+	};
+
+	/* Every change of the search, the sort or the page is one request for the
+   page it names; the reset to page zero happens where the change is made. */
+	const setQuery = (value: string) => client.store.act((transaction) => {
+		transaction.set(client.state.query, value);
+		transaction.set(client.state.page, FIRST_PAGE);
+	}, 'agents/search');
+	const setSorting = (sorts: readonly TableSort[]) => client.store.act((
+		transaction,
+	) => {
+		transaction.set(client.state.sorting, agentSorting(sorts));
+		transaction.set(client.state.page, FIRST_PAGE);
+	}, 'agents/sort');
+	const setPage = (pageIndex: number) => client.store.act(
+		(transaction) => transaction.set(
+			client.state.page,
+			moveToPage(page, pageIndex),
+		),
+		'agents/page',
+	);
+
+	useEffect(() => {
+		let current = true;
+		const timer = setTimeout(
+			() => void loadPage(() => current),
+			term === '' ? 0 : SEARCH_DEBOUNCE_MS,
+		);
+		return () => {
+			current = false;
+			clearTimeout(timer);
+		};
+	}, [term, sort.key, sort.desc, page.pageIndex]);
 
 	const openModuleAgent = (agentId: string) => {
 		setSelectedModuleAgentId(agentId);
@@ -142,7 +210,20 @@ export function AgentsView(props: AgentsViewProps) @{
 	};
 
 	useEffect(() => {
-		void refresh();
+		void loadAgentContext().then(
+			(result) => client.store.act((transaction) => {
+				transaction.set(client.state.moduleAgents, result.moduleAgents);
+				transaction.set(client.state.providers, result.providers);
+				transaction.set(client.state.tools, result.tools);
+				transaction.set(client.state.procedures, result.procedures);
+			}, 'agents/context-loaded'),
+		).catch(
+			(loadError: unknown) => setError(
+				loadError instanceof Error
+					? loadError.message
+					: t('agents.definitions.error.load'),
+			),
+		);
 	}, []);
 
 	const open = (agentId: string) => {
@@ -159,15 +240,10 @@ export function AgentsView(props: AgentsViewProps) @{
 					? await updateAgent(selected.id, input, props.csrfToken)
 					: await createAgent(input, props.csrfToken);
 			client.store.act((transaction) => {
-				transaction.set(
-					client.state.agents,
-					[...agents.filter((agent) => agent.id !== saved.id), saved].sort(
-						(left, right) => left.name.localeCompare(right.name),
-					),
-				);
 				transaction.set(client.state.selectedAgentId, saved.id);
 				transaction.set(client.state.editorOpen, false);
 			}, 'agents/saved');
+			await loadPage();
 		} catch (saveError) {
 			setError(
 				saveError instanceof Error
@@ -205,12 +281,9 @@ export function AgentsView(props: AgentsViewProps) @{
 					props.csrfToken,
 				);
 				client.store.act((transaction) => {
-					transaction.set(
-						client.state.agents,
-						agents.filter((agent) => agent.id !== lifecycleTarget.id),
-					);
 					transaction.set(client.state.selectedAgentId, '');
 				}, 'agents/deleted');
+				await loadPage();
 			}
 			setLifecycleAction('');
 		} catch (lifecycleError) {
@@ -262,14 +335,17 @@ export function AgentsView(props: AgentsViewProps) @{
 			onConfigure={openModuleAgent}
 		/>
 		<AgentDefinitionList
-			agents={visible}
+			agents={agents}
 			status={status === 'loading' ? 'loading' : 'idle'}
 			providers={providers}
 			filtered={term !== ''}
 			canManage={props.canManage}
 			query={query}
-			activeCount={active.length}
+			sorting={sorting}
+			page={page}
 			onQuery={setQuery}
+			onSortingChange={setSorting}
+			onPageChange={setPage}
 			onSelect={open}
 			onArchive={(id) => beginLifecycle(id, 'archive')}
 			onDelete={(id) => beginLifecycle(id, 'delete')}

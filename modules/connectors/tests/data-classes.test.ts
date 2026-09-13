@@ -120,11 +120,15 @@ describe('connectors data classes', () => {
 		const vault = testVault();
 		const service = instanceService(shared.repository, vault);
 		expect(
-			(await service.listCalls('tenant-a')).map((call) => call.occurredAt),
+			(await service.listCalls('tenant-a', {}, { limit: 200 })).map(
+				(call) => call.occurredAt,
+			),
 		).toEqual([expect.any(Number)]);
 		/* The other workspace keeps the row that was equally old until it is
 		   swept under its own name, so the cutoff alone removes nothing. */
-		expect(await service.listCalls('tenant-b')).toHaveLength(1);
+		expect(
+			await service.listCalls('tenant-b', {}, { limit: 200 }),
+		).toHaveLength(1);
 		expect(
 			await declaration('calls').sweep!({
 				tenantId: 'tenant-b',
@@ -132,7 +136,7 @@ describe('connectors data classes', () => {
 				limit: 100,
 			}),
 		).toEqual({ removed: 1 });
-		expect(await service.listCalls('tenant-b')).toEqual([]);
+		expect(await service.listCalls('tenant-b', {}, { limit: 200 })).toEqual([]);
 	});
 
 	it('removes the idempotency keys claimed before the cutoff with the calls', async () => {

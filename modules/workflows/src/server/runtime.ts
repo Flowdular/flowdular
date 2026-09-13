@@ -16,7 +16,6 @@ import {
 	type ApprovalsRequests,
 	type WorkspaceRolesResolver,
 } from '../services/approvals.ts';
-import { createWorkflowCursorCodec } from '../services/cursor-codec.ts';
 import {
 	NOTIFICATIONS_PUBLISH_CAPABILITY,
 	type NotificationPublisher,
@@ -274,10 +273,10 @@ export function createWorkflowsRuntime(
 		if (!service) {
 			const serviceOptions: WorkflowsServiceOptions = {
 				capabilities,
-				cursorCodec: createWorkflowCursorCodec(
-					cursorKey,
-					options.previousCursorKeys ?? [],
-				),
+				cursorKeys: {
+					current: cursorKey,
+					previous: options.previousCursorKeys ?? [],
+				},
 				...(options.roles ? { roles: options.roles } : {}),
 				onRunQueued: () => worker?.kick(),
 			};

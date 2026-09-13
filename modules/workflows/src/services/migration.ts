@@ -443,6 +443,18 @@ CREATE INDEX IF NOT EXISTS workflow_runs_tenant_subject_account_idx
   ON workflow_runs (tenant_id, subject_account_id, id);
 `;
 
+/* Mirrors migrations/0009_workflows_definition_list_indexes.up.sql byte for byte. */
+export const WORKFLOWS_MIGRATION_009_DEFINITION_LIST_INDEXES = `-- The definitions screen pages by keyset over the order it shows, by name or by
+-- last update, each ending in the id. 0001 indexed (tenant_id, name, id), which
+-- serves neither an ORDER BY over lower(name) nor one over updated_at, so both
+-- orders walked the workspace's rows and sorted them. These two carry each
+-- order the way the page reads it.
+CREATE INDEX IF NOT EXISTS workflow_definitions_tenant_lower_name_idx
+  ON workflow_definitions (tenant_id, lower(name), id);
+CREATE INDEX IF NOT EXISTS workflow_definitions_tenant_updated_idx
+  ON workflow_definitions (tenant_id, updated_at, id);
+`;
+
 export const databaseMigrations: readonly DatabaseMigration[] = [
 	{
 		id: '0001_workflows_core',
@@ -585,6 +597,19 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 				() => database.schema.hasColumn('workflow_runs', 'subject_account_id'),
 				() =>
 					database.schema.hasIndex('workflow_runs_tenant_subject_account_idx'),
+			]),
+	},
+	{
+		id: '0009_workflows_definition_list_indexes',
+		sql: { postgresql: WORKFLOWS_MIGRATION_009_DEFINITION_LIST_INDEXES },
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() =>
+					database.schema.hasIndex(
+						'workflow_definitions_tenant_lower_name_idx',
+					),
+				() =>
+					database.schema.hasIndex('workflow_definitions_tenant_updated_idx'),
 			]),
 	},
 ];

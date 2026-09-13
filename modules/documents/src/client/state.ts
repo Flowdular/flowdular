@@ -1,6 +1,6 @@
 import { cell, createStore } from 'segment-state';
 import type { DocumentAttachment } from '../domain/attachments.ts';
-import type { DocumentScan } from '../domain/types.ts';
+import type { DocumentDeleteOutcome, DocumentScan } from '../domain/types.ts';
 
 /** `denied` is a 403 the shell could not hide; `error` is everything else. */
 export type ScreenStatus =
@@ -31,6 +31,10 @@ export function createDocumentsClientState() {
 		/* Null once the server stops handing one back: that is the last page. */
 		nextCursor: cell<string | null>(null),
 		confirmDeleteId: cell<string | null>(null),
+		/* Row ids checked in the table; the screen owns it, the table never
+		   clears it. */
+		selectedIds: cell<ReadonlySet<string>>(new Set()),
+		confirmDeleteMany: false,
 	});
 	return { store, state: store.state };
 }
@@ -70,4 +74,44 @@ export function mergeOwnerModules(
 	page: readonly DocumentAttachment[],
 ): readonly string[] {
 	return [...new Set([...seen, ...ownerModules(page)])].sort();
+}
+
+/**
+ * The selection once a page arrives. A new listing is a new set of rows, so
+ * nothing checked before it is still selected; an appended page keeps it.
+ */
+export function selectionAfterPage(
+	selected: ReadonlySet<string>,
+	append: boolean,
+): ReadonlySet<string> {
+	return append ? selected : new Set();
+}
+
+/** The selected rows a bulk delete may name: the stored ones on screen. */
+export function deletableIds(
+	documents: readonly DocumentAttachment[],
+	selected: ReadonlySet<string>,
+): readonly string[] {
+	return documents
+		.filter((record) => selected.has(record.id) && record.status === 'stored')
+		.map((record) => record.id);
+}
+
+/** How many ids each outcome covered, for the notice after a bulk delete. */
+export function deleteOutcomeCounts(
+	outcomes: readonly DocumentDeleteOutcome[],
+): {
+	readonly deleted: number;
+	readonly missing: number;
+	readonly refused: number;
+} {
+	let deleted = 0;
+	let missing = 0;
+	let refused = 0;
+	for (const entry of outcomes) {
+		if (entry.outcome === 'deleted') deleted += 1;
+		else if (entry.outcome === 'not-found') missing += 1;
+		else refused += 1;
+	}
+	return { deleted, missing, refused };
 }

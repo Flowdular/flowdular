@@ -15,6 +15,7 @@ import type {
 } from '../domain/attachments.ts';
 import {
 	DOCUMENT_LIMITS,
+	type DocumentDeleteOutcome,
 	type DocumentFilters,
 	type DocumentReadUrl,
 	type DocumentsFile,
@@ -394,6 +395,32 @@ export class DocumentsService {
 				status: 'deleted',
 			}
 		);
+	}
+
+	/**
+	 * `remove` per id, so every row keeps its own trail and object removal. An
+	 * id that is missing or refused answers its own outcome and the rest go on.
+	 */
+	async removeMany(
+		tenantId: string,
+		ids: readonly string[],
+	): Promise<readonly DocumentDeleteOutcome[]> {
+		const outcomes: DocumentDeleteOutcome[] = [];
+		for (const id of ids) {
+			try {
+				await this.remove(tenantId, id);
+				outcomes.push({ id, outcome: 'deleted' });
+			} catch (error) {
+				const failure = error instanceof StorageError ? refusal(error) : error;
+				if (!(failure instanceof DocumentsServiceError)) throw error;
+				outcomes.push(
+					failure.code === 'DOCUMENT_NOT_FOUND'
+						? { id, outcome: 'not-found' }
+						: { id, outcome: 'refused', reason: failure.code },
+				);
+			}
+		}
+		return outcomes;
 	}
 
 	/**

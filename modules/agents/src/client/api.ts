@@ -7,6 +7,7 @@ import {
 } from '../domain/run-timeline.ts';
 import type {
 	AgentDefinition,
+	AgentListSort,
 	AgentProviderConnection,
 	AgentRun,
 	AgentRunTimeline,
@@ -17,6 +18,7 @@ import type {
 	CreateAgentInput,
 	CreateAgentProcedureInput,
 	EnqueueAgentRunInput,
+	ListDirection,
 	ModuleAgentView,
 	TenantAgentView,
 	UpdateAgentProviderInput,
@@ -44,18 +46,81 @@ function mutationHeaders(csrfToken: string): HeadersInit {
 	};
 }
 
-export async function loadAgents(): Promise<{
-	readonly agents: readonly TenantAgentView[];
+export interface PageResult<Item> {
+	readonly items: readonly Item[];
+	readonly page: { readonly nextCursor: string | null; readonly limit: number };
+}
+
+function query(params: object): string {
+	const search = new URLSearchParams();
+	for (const [key, value] of Object.entries(params) as [string, unknown][]) {
+		if (value === undefined || value === null || value === '') continue;
+		search.set(key, String(value));
+	}
+	const text = search.toString();
+	return text === '' ? '' : '?' + text;
+}
+
+async function getJson<T>(path: string): Promise<T> {
+	const response = await fetch(path, {
+		headers: { accept: 'application/json' },
+		credentials: 'same-origin',
+	});
+	return payload(response);
+}
+
+/* A reader that needs a whole set (a select box, a count) walks the cursors
+   to the end. The walk stops at this many rows and reports the set as
+   incomplete, so a workspace of unusual size costs a bounded number of pages. */
+export const WHOLE_LIST_CAP = 1_000;
+const WHOLE_LIST_PAGE = 200;
+
+export interface WholeList<Item> {
+	readonly items: readonly Item[];
+	/** False when the walk hit WHOLE_LIST_CAP before the list ended. */
+	readonly complete: boolean;
+}
+
+async function collectPages<Item>(
+	load: (cursor: string | null) => Promise<PageResult<Item>>,
+): Promise<WholeList<Item>> {
+	const items: Item[] = [];
+	let cursor: string | null = null;
+	do {
+		const result: PageResult<Item> = await load(cursor);
+		items.push(...result.items);
+		cursor = result.page.nextCursor;
+	} while (cursor !== null && items.length < WHOLE_LIST_CAP);
+	return { items, complete: cursor === null };
+}
+
+export interface AgentListRequest {
+	readonly limit?: number;
+	readonly cursor?: string | null;
+	readonly sort?: AgentListSort;
+	readonly direction?: ListDirection;
+	readonly q?: string;
+}
+
+export function loadAgentsPage(
+	request: AgentListRequest = {},
+): Promise<PageResult<TenantAgentView>> {
+	return getJson('/api/agents' + query(request));
+}
+
+export function loadAllAgents(): Promise<WholeList<TenantAgentView>> {
+	return collectPages((cursor) =>
+		loadAgentsPage({ limit: WHOLE_LIST_PAGE, sort: 'name', cursor }),
+	);
+}
+
+export function loadAgentContext(): Promise<{
 	readonly moduleAgents: readonly ModuleAgentView[];
 	readonly providers: readonly AgentProviderConnection[];
 	readonly tools: readonly string[];
 	readonly procedures: readonly AgentProcedure[];
 }> {
-	const response = await fetch('/api/agents', {
-		headers: { accept: 'application/json' },
-		credentials: 'same-origin',
-	});
-	return payload(response);
+	return getJson('/api/agents/context');
 }
 
 export async function updateModuleAgentBinding(
@@ -258,23 +323,36 @@ export async function deleteAgentProcedure(
 	await payload<{ readonly deleted: true }>(response);
 }
 
-export async function loadAgentRuns(): Promise<readonly AgentRun[]> {
-	const response = await fetch('/api/agent-runs', {
-		headers: { accept: 'application/json' },
-		credentials: 'same-origin',
-	});
-	return (await payload<{ readonly runs: readonly AgentRun[] }>(response)).runs;
+export interface RunListRequest {
+	readonly limit?: number;
+	readonly cursor?: string | null;
+	readonly direction?: ListDirection;
+	readonly status?: string;
+	readonly agentId?: string;
+	readonly trigger?: string;
+	readonly q?: string;
+}
+
+export function loadAgentRuns(
+	request: RunListRequest = {},
+): Promise<PageResult<AgentRun>> {
+	return getJson('/api/agent-runs' + query(request));
+}
+
+export function loadAllAgentRuns(
+	filters: Pick<RunListRequest, 'status' | 'agentId' | 'trigger'>,
+): Promise<WholeList<AgentRun>> {
+	return collectPages((cursor) =>
+		loadAgentRuns({ ...filters, limit: WHOLE_LIST_PAGE, cursor }),
+	);
 }
 
 export async function loadAgentRun(runId: string): Promise<AgentRunTimeline> {
-	const response = await fetch(
-		`/api/agent-runs?id=${encodeURIComponent(runId)}`,
-		{
-			headers: { accept: 'application/json' },
-			credentials: 'same-origin',
-		},
-	);
-	return (await payload<{ readonly run: AgentRunTimeline }>(response)).run;
+	return (
+		await getJson<{ readonly run: AgentRunTimeline }>(
+			'/api/agent-runs/get' + query({ id: runId }),
+		)
+	).run;
 }
 
 export async function loadAgentWorker(): Promise<AgentWorkerStatus> {

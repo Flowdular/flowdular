@@ -11,9 +11,8 @@ export {
 } from './database-repository.ts';
 export {
 	DirectoryAdministrationService,
-	MAX_EVENT_PAGE,
 	translateAuthError,
-	type GroupMappingsView,
+	type GroupMappingContext,
 	type MapGroupInput,
 } from './directory-service.ts';
 export {
@@ -36,6 +35,7 @@ export type {
 export { bounded, DirectoryServiceError } from './service-error.ts';
 export {
 	hashScimToken,
+	MAX_LIST_PAGE,
 	ScimTokenService,
 	scimTokenFingerprint,
 	SCIM_TOKEN_PREFIX,

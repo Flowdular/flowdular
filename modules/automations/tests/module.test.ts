@@ -38,6 +38,10 @@ import {
 	triggerSignedPayload,
 } from '../src/services/trigger-service.ts';
 import { createAutomationTargetRegistry } from '../src/server/targets.ts';
+import type {
+	AutomationListCursor,
+	AutomationListPage,
+} from '../src/services/repository.ts';
 import {
 	openAutomationsTestDatabase,
 	type AutomationsTestDatabase,
@@ -246,11 +250,16 @@ describe('automations.core', () => {
 			enabled: true,
 		});
 
+		const page = { sort: 'label', direction: 'asc', limit: 50 } as const;
 		expect(
-			(await schedules.list('tenant-a')).map((entry) => entry.label),
+			(await schedules.list('tenant-a', page)).items.map(
+				(entry) => entry.label,
+			),
 		).toEqual(['Alpha schedule']);
 		expect(
-			(await schedules.list('tenant-b')).map((entry) => entry.label),
+			(await schedules.list('tenant-b', page)).items.map(
+				(entry) => entry.label,
+			),
 		).toEqual(['Beta schedule']);
 	});
 
@@ -936,5 +945,210 @@ describe('automations PostgreSQL boundary', () => {
 		/* A second worker holding the same poll result must lose: next_run_at has
 		   moved past the slot it claimed. */
 		await expect(repository.advanceSchedule(advance)).resolves.toBe(false);
+	});
+});
+
+describe('automations list pages', () => {
+	function scheduleRecord(
+		tenantId: string,
+		id: string,
+		label: string,
+		updatedAt: number,
+		enabled = true,
+	) {
+		return {
+			id,
+			tenantId,
+			targetKind: 'agent',
+			targetKey: `${tenantId}-agent`,
+			agentId: `${tenantId}-agent`,
+			label,
+			inputTemplate: 'Run.',
+			cadence: 'every:60',
+			enabled,
+			disabledReason: null,
+			nextRunAt: 10,
+			lastRunAt: null,
+			lastRunId: null,
+			lastError: null,
+			createdAt: 1,
+			updatedAt,
+			createdBy: 'account-a',
+			configuredBy: { kind: 'user', id: 'account-a', label: 'Owner' },
+			permissionSnapshot: ['agents.runs.create'],
+		} as const;
+	}
+
+	function triggerRecord(
+		tenantId: string,
+		id: string,
+		label: string,
+		updatedAt: number,
+		enabled = true,
+	) {
+		return {
+			id,
+			tenantId,
+			targetKind: 'agent',
+			targetKey: `${tenantId}-agent`,
+			agentId: `${tenantId}-agent`,
+			label,
+			secret: { keyId: 'k1', iv: 'iv', tag: 'tag', ciphertext: 'sealed' },
+			secretRevision: 1,
+			enabled,
+			createdAt: 1,
+			updatedAt,
+			createdBy: 'account-a',
+			lastFiredAt: null,
+			acceptedCount: 0,
+			rejectedCount: 0,
+			configuredBy: { kind: 'user', id: 'account-a', label: 'Owner' },
+			permissionSnapshot: ['agents.runs.create'],
+		} as const;
+	}
+
+	const LABELS = ['beta', 'Alpha', 'gamma', 'Delta', 'epsilon'] as const;
+
+	async function walk<Item extends { readonly id: string }>(
+		read: (
+			after: AutomationListCursor | null,
+		) => Promise<AutomationListPage<Item>>,
+	): Promise<readonly Item[]> {
+		const items: Item[] = [];
+		let after: AutomationListCursor | null = null;
+		for (let pages = 0; pages < 10; pages += 1) {
+			const page: AutomationListPage<Item> = await read(after);
+			items.push(...page.items);
+			after = page.next;
+			if (after === null) break;
+		}
+		return items;
+	}
+
+	it('walks schedules by keyset in the order of the whole list', async () => {
+		const { repository } = shared;
+		for (const [index, label] of LABELS.entries()) {
+			await repository.createSchedule(
+				scheduleRecord(
+					'tenant-a',
+					`s-${index}`,
+					label,
+					100 - index,
+					index !== 3,
+				),
+			);
+		}
+		await repository.createSchedule(
+			scheduleRecord('tenant-b', 's-b', 'Aardvark', 1),
+		);
+		const whole = (await repository.listSchedules('tenant-a')).map(
+			(row) => row.id,
+		);
+		expect(whole).toEqual(['s-1', 's-0', 's-3', 's-4', 's-2']);
+
+		const byLabel = { sort: 'label', direction: 'asc', limit: 2 } as const;
+		const first = await repository.listSchedulesPage('tenant-a', byLabel);
+		expect(first.items).toHaveLength(2);
+		expect(first.next).toEqual({ value: 'beta', id: 's-0' });
+		expect(
+			await walk((after) =>
+				repository.listSchedulesPage('tenant-a', { ...byLabel, after }),
+			),
+		).toEqual(await repository.listSchedules('tenant-a'));
+		expect(
+			(
+				await walk((after) =>
+					repository.listSchedulesPage('tenant-a', {
+						...byLabel,
+						direction: 'desc',
+						after,
+					}),
+				)
+			).map((row) => row.id),
+		).toEqual([...whole].reverse());
+		expect(
+			(
+				await walk((after) =>
+					repository.listSchedulesPage('tenant-a', {
+						sort: 'updatedAt',
+						direction: 'desc',
+						limit: 2,
+						after,
+					}),
+				)
+			).map((row) => row.id),
+		).toEqual(['s-0', 's-1', 's-2', 's-3', 's-4']);
+		expect(
+			(
+				await repository.listSchedulesPage('tenant-a', {
+					...byLabel,
+					limit: 10,
+					enabled: false,
+				})
+			).items.map((row) => row.id),
+		).toEqual(['s-3']);
+		expect(
+			(
+				await repository.listSchedulesPage('tenant-a', {
+					...byLabel,
+					limit: 10,
+					search: 'ELT',
+				})
+			).items.map((row) => row.id),
+		).toEqual(['s-3']);
+		expect(
+			(
+				await repository.listSchedulesPage('tenant-a', {
+					...byLabel,
+					limit: 10,
+					search: 'a_',
+				})
+			).items,
+		).toEqual([]);
+	});
+
+	it('walks triggers by keyset in the order one large page shows', async () => {
+		const { repository } = shared;
+		for (const [index, label] of LABELS.entries()) {
+			await repository.createTrigger(
+				triggerRecord(
+					'tenant-a',
+					`t-${index}`,
+					label,
+					100 - index,
+					index !== 1,
+				),
+			);
+		}
+		await repository.createTrigger(
+			triggerRecord('tenant-b', 't-b', 'Aardvark', 1),
+		);
+		const byLabel = { sort: 'label', direction: 'asc', limit: 2 } as const;
+		const whole = await repository.listTriggersPage('tenant-a', {
+			...byLabel,
+			limit: 200,
+		});
+		expect(whole.items.map((row) => row.id)).toEqual([
+			't-1',
+			't-0',
+			't-3',
+			't-4',
+			't-2',
+		]);
+		expect(whole.next).toBeNull();
+		expect(
+			await walk((after) =>
+				repository.listTriggersPage('tenant-a', { ...byLabel, after }),
+			),
+		).toEqual(whole.items);
+		expect(
+			(
+				await repository.listTriggersPage('tenant-a', {
+					...byLabel,
+					limit: 10,
+					enabled: true,
+				})
+			).items.map((row) => row.id),
+		).toEqual(['t-0', 't-3', 't-4', 't-2']);
 	});
 });

@@ -14,10 +14,13 @@ import {
 	uploadRefusal,
 } from '../src/client/presentation.ts';
 import {
+	deletableIds,
+	deleteOutcomeCounts,
 	mergeDocumentPage,
 	mergeOwnerModules,
 	ownerModules,
 	searchPending,
+	selectionAfterPage,
 } from '../src/client/state.ts';
 
 beforeAll(() => {
@@ -95,6 +98,46 @@ describe('documents list state', () => {
 		expect(searchPending('   ', '')).toBe(false);
 		/* Clearing the box is a request of its own: the unnarrowed listing. */
 		expect(searchPending('', 'invoice')).toBe(true);
+	});
+});
+
+describe('documents selection', () => {
+	/* A new listing is a new set of rows: a filter change or a refresh answers
+	   different rows under the same ids, so nothing stays checked. Loading
+	   more continues the listing the reader was checking rows in. */
+	it('resets the selection on a new listing and keeps it on an appended page', () => {
+		const selected = new Set(['a', 'b']);
+		expect(selectionAfterPage(selected, true)).toBe(selected);
+		expect([...selectionAfterPage(selected, false)]).toEqual([]);
+	});
+
+	it('offers the bulk delete only the stored rows that are selected', () => {
+		const documents = [
+			attachment('a'),
+			attachment('b', { status: 'deleted' }),
+			attachment('c', { scan: 'infected', status: 'deleted' }),
+			attachment('d'),
+		];
+		expect(deletableIds(documents, new Set(['a', 'b', 'c', 'gone']))).toEqual([
+			'a',
+		]);
+		expect(deletableIds(documents, new Set())).toEqual([]);
+	});
+
+	it('counts every outcome for the notice', () => {
+		expect(
+			deleteOutcomeCounts([
+				{ id: 'a', outcome: 'deleted' },
+				{ id: 'b', outcome: 'not-found' },
+				{ id: 'c', outcome: 'refused', reason: 'STORAGE_UNAVAILABLE' },
+				{ id: 'd', outcome: 'deleted' },
+			]),
+		).toEqual({ deleted: 2, missing: 1, refused: 1 });
+		expect(deleteOutcomeCounts([])).toEqual({
+			deleted: 0,
+			missing: 0,
+			refused: 0,
+		});
 	});
 });
 

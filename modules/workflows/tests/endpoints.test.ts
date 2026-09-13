@@ -17,7 +17,13 @@ import type { WorkflowGraphV1 } from '../src/domain/types.ts';
 import { WORKFLOW_LIMITS } from '../src/domain/types.ts';
 import type { WorkflowsRuntime } from '../src/server/runtime.ts';
 import { createWorkflowsTestRuntime } from './support/database.ts';
-import { openHttpHarness, type HttpHarness } from './support/harness.ts';
+import {
+	ALL_SCOPES,
+	openHttpHarness,
+	type HttpHarness,
+} from './support/harness.ts';
+
+const EMPTY_PAGE = { nextCursor: null, limit: 50 };
 
 function principal(
 	scopes: readonly string[],
@@ -291,7 +297,7 @@ describe('workflow HTTP boundary', () => {
 		const definitions = await (
 			await route(routes, '/api/workflows', 'GET')
 		).handler(context(new Request('https://erp.example/api/workflows'), other));
-		expect(await definitions.json()).toEqual({ definitions: [] });
+		expect(await definitions.json()).toEqual({ items: [], page: EMPTY_PAGE });
 		const foreignDefinition = await (
 			await route(routes, '/api/workflows/detail', 'GET')
 		).handler(
@@ -308,7 +314,7 @@ describe('workflow HTTP boundary', () => {
 		).handler(
 			context(new Request('https://erp.example/api/workflow-runs'), other),
 		);
-		expect(await runs.json()).toEqual({ runs: [], nextCursor: null });
+		expect(await runs.json()).toEqual({ items: [], page: EMPTY_PAGE });
 		const foreignRun = await (
 			await route(routes, '/api/workflow-runs/detail', 'GET')
 		).handler(
@@ -325,7 +331,7 @@ describe('workflow HTTP boundary', () => {
 		).handler(
 			context(new Request('https://erp.example/api/workflow-audit'), other),
 		);
-		expect(await audit.json()).toEqual({ events: [], nextCursor: null });
+		expect(await audit.json()).toEqual({ items: [], page: EMPTY_PAGE });
 		await runtime.dispose();
 	});
 
@@ -547,6 +553,101 @@ describe('workflow HTTP boundary', () => {
 		}
 	});
 
+	/* A resume id is bound to one run. An edited id, another run's id and a
+	   list cursor are three ways of naming a position the stream never issued,
+	   and each is refused before a stream opens. */
+	it('refuses a tampered, foreign-run or list cursor as Last-Event-ID', async () => {
+		const runtime = createWorkflowsTestRuntime({
+			payloadKey: Buffer.alloc(32, 56),
+			cursorKey: Buffer.alloc(32, 57),
+		});
+		try {
+			const service = await runtime.service();
+			const created = await service.create(
+				'tenant-a',
+				{ key: 'resume-bound', name: 'Resume bound', description: '' },
+				{ kind: 'user', id: 'account-a', label: 'Owner' },
+			);
+			await service.update(
+				'tenant-a',
+				{
+					workflowId: created.definition.id,
+					expectedRevision: 1,
+					name: 'Resume bound',
+					description: '',
+					graph,
+				},
+				{ kind: 'user', id: 'account-a', label: 'Owner' },
+			);
+			const runs = [];
+			for (const name of ['Ada', 'Grace']) {
+				runs.push(
+					await service.simulate(
+						{
+							workflowId: created.definition.id,
+							input: { name },
+							fixtures: [],
+						},
+						{
+							tenantId: 'tenant-a',
+							actor: { kind: 'user', id: 'account-a', label: 'Owner' },
+							origin: { kind: 'manual' },
+							permissionSnapshot: [WORKFLOWS_PERMISSIONS.runsExecute],
+						},
+					),
+				);
+			}
+			const [own, other] = runs as [(typeof runs)[0], (typeof runs)[0]];
+			const routes = createWorkflowsRoutes(
+				{ authorizeAgentToolAccess: () => [] } as unknown as AuthRuntime,
+				runtime,
+			);
+			const identity = principal([WORKFLOWS_PERMISSIONS.runsRead]);
+			const valid = service.eventCursor('tenant-a', own.run.id, 1);
+			const listCursor = (await service.listRuns('tenant-a', { limit: 1 }))
+				.nextCursor!;
+			for (const [label, header] of [
+				['tampered', valid.slice(0, -2) + (valid.endsWith('AA') ? 'BB' : 'AA')],
+				['foreign run', service.eventCursor('tenant-a', other.run.id, 1)],
+				['list cursor', listCursor],
+			] as const) {
+				const response = await (
+					await route(routes, '/api/workflow-runs/events', 'GET')
+				).handler(
+					context(
+						new Request(
+							`https://erp.example/api/workflow-runs/events?runId=${own.run.id}`,
+							{ headers: { 'last-event-id': header } },
+						),
+						identity,
+					),
+				);
+				expect(response.status, label).toBe(400);
+				expect(response.headers.get('content-type'), label).not.toContain(
+					'text/event-stream',
+				);
+				expect((await response.json()).error.code, label).toBe(
+					'WORKFLOW_EVENT_CURSOR_INVALID',
+				);
+			}
+			const resumed = await (
+				await route(routes, '/api/workflow-runs/events', 'GET')
+			).handler(
+				context(
+					new Request(
+						`https://erp.example/api/workflow-runs/events?runId=${own.run.id}`,
+						{ headers: { 'last-event-id': valid } },
+					),
+					identity,
+				),
+			);
+			expect(resumed.status).toBe(200);
+			expect(await resumed.text()).toContain('event: workflow.stream-complete');
+		} finally {
+			await runtime.dispose();
+		}
+	});
+
 	it('refuses invalid page limits and conflicting event cursors', async () => {
 		const runtime = createWorkflowsTestRuntime({
 			payloadKey: Buffer.alloc(32, 27),
@@ -651,9 +752,7 @@ describe('workflow write routes with a browser session', () => {
 			});
 			const listed = await harness.call('/api/workflows');
 			expect(
-				(await listed.json()).definitions.map(
-					(entry: { id: string }) => entry.id,
-				),
+				(await listed.json()).items.map((entry: { id: string }) => entry.id),
 			).toEqual([definition.id]);
 
 			const updated = await harness.mutation('/api/workflows/update', {
@@ -726,7 +825,7 @@ describe('workflow write routes with a browser session', () => {
 				(await harness.call(`/api/workflows/detail?id=${removed.id}`)).status,
 			).toBe(404);
 			expect(
-				(await (await harness.call('/api/workflows')).json()).definitions.map(
+				(await (await harness.call('/api/workflows')).json()).items.map(
 					(entry: { id: string }) => entry.id,
 				),
 			).toEqual([archived.id]);
@@ -775,7 +874,7 @@ describe('workflow write routes with a browser session', () => {
 			});
 			const listed = await harness.call('/api/workflow-runs?mode=live');
 			expect(
-				(await listed.json()).runs.map((entry: { id: string }) => entry.id),
+				(await listed.json()).items.map((entry: { id: string }) => entry.id),
 			).toEqual([accepted.runId]);
 
 			const cancelled = await harness.mutation('/api/workflow-runs/cancel', {
@@ -814,7 +913,7 @@ describe('workflow write routes with a browser session', () => {
 				`/api/workflow-runs?workflowId=${definition.id}&mode=live`,
 			);
 			expect(
-				(await afterRetry.json()).runs
+				(await afterRetry.json()).items
 					.map((entry: { id: string }) => entry.id)
 					.sort(),
 			).toEqual([accepted.runId, retry.runId].sort());
@@ -837,8 +936,252 @@ describe('workflow write routes with a browser session', () => {
 			expect(response.status).toBe(403);
 			expect((await response.json()).error.code).toBe('CSRF_REJECTED');
 			expect(
-				(await (await harness.call('/api/workflows')).json()).definitions,
+				(await (await harness.call('/api/workflows')).json()).items,
 			).toEqual([]);
+		} finally {
+			await harness.dispose();
+		}
+	});
+});
+
+interface ListRow {
+	readonly id: string;
+	readonly name?: string;
+	readonly sequence?: number;
+}
+
+interface ListPage {
+	readonly items: readonly ListRow[];
+	readonly page: { readonly nextCursor: string | null; readonly limit: number };
+}
+
+async function page(harness: HttpHarness, path: string): Promise<ListPage> {
+	const response = await harness.call(path);
+	expect(response.status, path).toBe(200);
+	return (await response.json()) as ListPage;
+}
+
+async function refused(harness: HttpHarness, path: string): Promise<string> {
+	const response = await harness.call(path);
+	expect(response.status, path).toBe(400);
+	return (await response.json()).error.code as string;
+}
+
+describe('workflow list pages', () => {
+	it('pages definitions by name with cursors bound to tenant, sort and filters', async () => {
+		const cursorKey = Buffer.alloc(32, 51);
+		const harness = openHttpHarness({
+			payloadKey: Buffer.alloc(32, 52),
+			cursorKey,
+		});
+		const foreign = openHttpHarness(
+			{ payloadKey: Buffer.alloc(32, 53), cursorKey },
+			principal(ALL_SCOPES, 'tenant-b'),
+		);
+		try {
+			for (const [key, name] of [
+				['charlie-flow', 'Charlie'],
+				['alpha-flow', 'alpha'],
+				['bravo-flow', 'Bravo'],
+			] as const) {
+				const created = await harness.mutation('/api/workflows', {
+					key,
+					name,
+					description: '',
+				});
+				expect(created.status).toBe(201);
+			}
+
+			const first = await page(harness, '/api/workflows?limit=2');
+			expect(first.items.map((entry) => entry.name)).toEqual([
+				'alpha',
+				'Bravo',
+			]);
+			expect(first.page).toMatchObject({ limit: 2 });
+			expect(first.page.nextCursor).not.toBeNull();
+			const second = await page(
+				harness,
+				`/api/workflows?limit=2&cursor=${first.page.nextCursor}`,
+			);
+			expect(second.items.map((entry) => entry.name)).toEqual(['Charlie']);
+			expect(second.page.nextCursor).toBeNull();
+
+			/* A full page hands back a cursor even when nothing follows; a short
+			   page never does. */
+			const exact = await page(harness, '/api/workflows?limit=3');
+			expect(exact.items).toHaveLength(3);
+			expect(exact.page.nextCursor).not.toBeNull();
+			expect(
+				(await page(harness, `/api/workflows?cursor=${exact.page.nextCursor}`))
+					.items,
+			).toEqual([]);
+			expect(
+				(await page(harness, '/api/workflows?limit=5')).page.nextCursor,
+			).toBeNull();
+
+			const descending = await page(
+				harness,
+				'/api/workflows?sort=name&direction=desc&limit=2',
+			);
+			expect(descending.items.map((entry) => entry.name)).toEqual([
+				'Charlie',
+				'Bravo',
+			]);
+			const newest = await page(
+				harness,
+				'/api/workflows?sort=updatedAt&direction=desc&limit=3',
+			);
+			const oldest = await page(
+				harness,
+				'/api/workflows?sort=updatedAt&direction=asc&limit=3',
+			);
+			expect(newest.items.map((entry) => entry.id)).toEqual(
+				[...oldest.items].reverse().map((entry) => entry.id),
+			);
+			expect(
+				(await page(harness, '/api/workflows?q=RAV')).items.map(
+					(entry) => entry.name,
+				),
+			).toEqual(['Bravo']);
+
+			const cursor = first.page.nextCursor!;
+			const tampered =
+				cursor.slice(0, -2) + (cursor.endsWith('AA') ? 'BB' : 'AA');
+			expect(
+				await refused(harness, `/api/workflows?limit=2&cursor=${tampered}`),
+			).toBe('CURSOR_INVALID');
+			expect(
+				await refused(foreign, `/api/workflows?limit=2&cursor=${cursor}`),
+			).toBe('CURSOR_INVALID');
+			expect(
+				await refused(
+					harness,
+					`/api/workflows?limit=2&status=archived&cursor=${cursor}`,
+				),
+			).toBe('CURSOR_INVALID');
+			expect(
+				await refused(
+					harness,
+					`/api/workflows?limit=2&sort=updatedAt&cursor=${cursor}`,
+				),
+			).toBe('CURSOR_INVALID');
+			expect(
+				await refused(
+					harness,
+					`/api/workflows?limit=2&direction=desc&cursor=${cursor}`,
+				),
+			).toBe('CURSOR_INVALID');
+			expect(await refused(harness, '/api/workflows?sort=key')).toBe(
+				'INVALID_INPUT',
+			);
+			expect(await refused(harness, '/api/workflows?direction=up')).toBe(
+				'INVALID_INPUT',
+			);
+			expect(await refused(harness, '/api/workflows?limit=101')).toBe(
+				'INVALID_INPUT',
+			);
+			expect(await refused(harness, '/api/workflows?status=draft')).toBe(
+				'INVALID_INPUT',
+			);
+		} finally {
+			await harness.dispose();
+			await foreign.dispose();
+		}
+	});
+
+	it('pages runs and audit events without overlap or gap', async () => {
+		const harness = openHttpHarness({
+			payloadKey: Buffer.alloc(32, 54),
+			cursorKey: Buffer.alloc(32, 55),
+		});
+		try {
+			const service = await harness.runtime.service();
+			const created = await service.create(
+				'tenant-a',
+				{ key: 'paged-runs', name: 'Paged runs', description: '' },
+				{ kind: 'user', id: 'account-a', label: 'Owner' },
+			);
+			await service.update(
+				'tenant-a',
+				{
+					workflowId: created.definition.id,
+					expectedRevision: 1,
+					name: 'Paged runs',
+					description: '',
+					graph,
+				},
+				{ kind: 'user', id: 'account-a', label: 'Owner' },
+			);
+			for (const name of ['Ada', 'Grace', 'Linus']) {
+				await service.simulate(
+					{ workflowId: created.definition.id, input: { name }, fixtures: [] },
+					{
+						tenantId: 'tenant-a',
+						actor: { kind: 'user', id: 'account-a', label: 'Owner' },
+						origin: { kind: 'manual' },
+						permissionSnapshot: [WORKFLOWS_PERMISSIONS.runsExecute],
+					},
+				);
+			}
+
+			const all = await page(harness, '/api/workflow-runs?limit=10');
+			expect(all.items).toHaveLength(3);
+			expect(all.page.nextCursor).toBeNull();
+			const first = await page(harness, '/api/workflow-runs?limit=2');
+			const second = await page(
+				harness,
+				`/api/workflow-runs?limit=2&cursor=${first.page.nextCursor}`,
+			);
+			expect(
+				[...first.items, ...second.items].map((entry) => entry.id),
+			).toEqual(all.items.map((entry) => entry.id));
+			expect(second.page.nextCursor).toBeNull();
+			expect(
+				(
+					await page(harness, '/api/workflow-runs?direction=asc&limit=10')
+				).items.map((entry) => entry.id),
+			).toEqual([...all.items].reverse().map((entry) => entry.id));
+			expect(
+				(await page(harness, '/api/workflow-runs?q=paged-RUNS')).items,
+			).toHaveLength(3);
+			expect(
+				(await page(harness, '/api/workflow-runs?q=nothing-here')).items,
+			).toEqual([]);
+			expect(
+				await refused(
+					harness,
+					`/api/workflow-runs?limit=2&mode=simulate&cursor=${first.page.nextCursor}`,
+				),
+			).toBe('CURSOR_INVALID');
+			expect(await refused(harness, '/api/workflow-runs?sort=status')).toBe(
+				'INVALID_INPUT',
+			);
+
+			const auditAll = (await page(harness, '/api/workflow-audit?limit=100'))
+				.items;
+			expect(auditAll.length).toBeGreaterThan(3);
+			const walked: number[] = [];
+			let cursor: string | null = null;
+			for (let index = 0; index < 20 && (index === 0 || cursor); index += 1) {
+				const read = await page(
+					harness,
+					`/api/workflow-audit?limit=2${cursor ? `&cursor=${cursor}` : ''}`,
+				);
+				walked.push(...read.items.map((entry) => entry.sequence!));
+				cursor = read.page.nextCursor;
+			}
+			expect(walked).toEqual(auditAll.map((entry) => entry.sequence));
+			expect(
+				(
+					await page(
+						harness,
+						'/api/workflow-audit?sort=occurredAt&direction=asc&limit=100',
+					)
+				).items.map((entry) => entry.sequence),
+			).toEqual([...auditAll].reverse().map((entry) => entry.sequence));
+			expect(
+				await refused(harness, '/api/workflow-audit?direction=newest'),
+			).toBe('INVALID_INPUT');
 		} finally {
 			await harness.dispose();
 		}

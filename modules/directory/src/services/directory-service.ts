@@ -5,6 +5,8 @@ import type {
 import type { AuthActor } from '@flowdular/module-auth';
 import { AuthServiceError } from '@flowdular/module-auth/server';
 import type {
+	GroupListQuery,
+	ListPage,
 	ProvisioningEvent,
 	ProvisioningEventQuery,
 	ScimGroupMapping,
@@ -13,9 +15,7 @@ import type { DirectoryAuthPort } from './auth-port.ts';
 import { DirectoryUniqueViolation } from './database-repository.ts';
 import type { DirectoryRepository } from './repository.ts';
 import { bounded, DirectoryServiceError } from './service-error.ts';
-
-/** Hard ceiling of one provisioning log page, whatever a caller asks for. */
-export const MAX_EVENT_PAGE = 200;
+import { MAX_LIST_PAGE } from './token-service.ts';
 
 /** Rows one export query holds, so a long history costs bounded memory. */
 export const EXPORT_PAGE = 500;
@@ -23,8 +23,8 @@ export const EXPORT_PAGE = 500;
 /** Rows one sweep call may remove, whatever limit the caller asks for. */
 export const MAX_SWEEP_BATCH = 100_000;
 
-export interface GroupMappingsView {
-	readonly groups: readonly ScimGroupMapping[];
+/** What the mapping form needs beside the rows: read once, not per page. */
+export interface GroupMappingContext {
 	/** The workspace roles a mapping may point at, for the screen's select. */
 	readonly roles: readonly string[];
 	readonly defaultRole: string;
@@ -48,19 +48,21 @@ export class DirectoryAdministrationService {
 		private readonly now: () => number = Date.now,
 	) {}
 
-	async listGroupMappings(
+	listGroupMappings(
+		tenantId: string,
+		query: GroupListQuery,
+	): Promise<ListPage<ScimGroupMapping>> {
+		return this.repository.listGroupPage(tenantId, {
+			...query,
+			limit: Math.min(Math.max(query.limit, 1), MAX_LIST_PAGE),
+		});
+	}
+
+	async groupMappingContext(
 		tenantId: string,
 		defaultRole: string,
-	): Promise<GroupMappingsView> {
-		const [groups, roles] = await Promise.all([
-			this.repository.listGroups(
-				tenantId,
-				{},
-				{ startIndex: 1, count: MAX_EVENT_PAGE },
-			),
-			this.auth.listRoleKeys(tenantId),
-		]);
-		return { groups: groups.records, roles, defaultRole };
+	): Promise<GroupMappingContext> {
+		return { roles: await this.auth.listRoleKeys(tenantId), defaultRole };
 	}
 
 	/**
@@ -127,7 +129,7 @@ export class DirectoryAdministrationService {
 	): Promise<readonly ProvisioningEvent[]> {
 		return this.repository.listEvents(tenantId, {
 			...query,
-			limit: Math.min(Math.max(query.limit, 1), MAX_EVENT_PAGE),
+			limit: Math.min(Math.max(query.limit, 1), MAX_LIST_PAGE),
 		});
 	}
 

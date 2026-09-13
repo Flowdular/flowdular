@@ -36,6 +36,8 @@ import {
 } from '../server/targets.ts';
 import { AutomationsServiceError } from './automations-service.ts';
 import type {
+	AutomationListPage,
+	AutomationListQuery,
 	AutomationScheduleRouting,
 	AutomationsRepository,
 	StoredAutomationSchedule,
@@ -239,12 +241,17 @@ export class AutomationScheduleService {
 			: DEFAULT_TIME_ZONE;
 	}
 
-	async list(tenantId: string): Promise<readonly AutomationSchedule[]> {
-		return Promise.all(
-			(await this.repository.listSchedules(tenantId)).map((record) =>
-				this.present(record),
+	async list(
+		tenantId: string,
+		query: AutomationListQuery,
+	): Promise<AutomationListPage<AutomationSchedule>> {
+		const page = await this.repository.listSchedulesPage(tenantId, query);
+		return {
+			items: await Promise.all(
+				page.items.map((record) => this.present(record)),
 			),
-		);
+			next: page.next,
+		};
 	}
 
 	async agents(tenantId: string) {

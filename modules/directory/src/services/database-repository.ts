@@ -6,11 +6,16 @@ import type {
 import { integer, runDatabaseMigrations } from '@flowdular/database';
 import { keysetWhere } from '@flowdular/server';
 import type {
+	GroupListQuery,
+	ListDirection,
+	ListPage,
+	ListPosition,
 	ProvisioningEvent,
 	ProvisioningEventQuery,
 	ScimGroupMapping,
 	ScimToken,
 	ScimUserMapping,
+	TokenListQuery,
 } from '../domain/types.ts';
 import { databaseMigrations } from './migration.ts';
 import type {
@@ -77,6 +82,12 @@ interface EventRow {
 
 interface CountRow {
 	total: number | bigint | string;
+}
+
+/** A screen page row carries the value it was ordered by beside its columns. */
+interface SortedRow {
+	id: string;
+	sort_key: string | number | bigint;
 }
 
 interface ResolvedRoleRow {
@@ -242,6 +253,35 @@ class Predicates {
 	}
 }
 
+/* The term is matched as a substring, so the three characters LIKE reads as
+   syntax are escaped with the backslash PostgreSQL takes as the default escape
+   character; `%` typed by a reader searches for a percent sign. */
+function likePattern(term: string): string {
+	return '%' + term.replace(/[\\%_]/g, (character) => '\\' + character) + '%';
+}
+
+/* A full page may still be the last one; the next page then answers empty. */
+function pageOf<Row extends SortedRow, Record>(
+	rows: readonly Row[],
+	limit: number,
+	record: (row: Row) => Record,
+): ListPage<Record> {
+	const last = rows.at(-1);
+	return {
+		items: rows.map(record),
+		next:
+			last && rows.length === limit
+				? {
+						key:
+							typeof last.sort_key === 'string'
+								? last.sort_key
+								: integer(last.sort_key, 'sort_key'),
+						id: last.id,
+					}
+				: null,
+	};
+}
+
 /** A repository over a platform-owned PostgreSQL handle. */
 export class DatabaseDirectoryRepository implements DirectoryRepository {
 	constructor(private readonly database: DatabaseHandle) {}
@@ -260,19 +300,69 @@ export class DatabaseDirectoryRepository implements DirectoryRepository {
 		return this.database.transaction(run, { access: 'write', tenantId });
 	}
 
-	async listTokens(tenantId: string): Promise<readonly ScimToken[]> {
+	/* The unique index (tenant_id, lower(label)) carries the order, so a page
+	   resumes through it whichever direction the screen asked for. */
+	async listTokenPage(
+		tenantId: string,
+		query: TokenListQuery,
+	): Promise<ListPage<ScimToken>> {
+		const predicates = new Predicates(tenantId);
+		if (query.status !== undefined) predicates.add('status = ?', query.status);
+		if (query.search !== undefined)
+			predicates.add('label ILIKE ?', likePattern(query.search));
+		const rows = await this.#page<TokenRow & SortedRow>(
+			tenantId,
+			'SELECT ' +
+				TOKEN_COLUMNS +
+				', lower(label) AS sort_key FROM directory_scim_tokens',
+			predicates,
+			query,
+		);
+		return pageOf(rows, query.limit, (row) => withoutSecret(tokenFromRow(row)));
+	}
+
+	/**
+	 * One keyset page ordered by `sort_key`, then `id`, both in `direction`.
+	 * The sort value is projected once in a derived table, so the keyset
+	 * predicate and the ORDER BY name one plain column while the planner still
+	 * sees the expression the index was built on.
+	 */
+	async #page<Row extends SortedRow>(
+		tenantId: string,
+		select: string,
+		predicates: Predicates,
+		query: {
+			readonly direction: ListDirection;
+			readonly limit: number;
+			readonly after?: ListPosition | undefined;
+		},
+	): Promise<readonly Row[]> {
+		let where = 'TRUE';
+		if (query.after) {
+			const keyset = keysetWhere(
+				['sort_key', 'id'],
+				[query.after.key, query.after.id],
+				{
+					direction: query.direction,
+					parameterOffset: predicates.parameters.length,
+				},
+			);
+			where = keyset.text;
+			predicates.parameters.push(...keyset.parameters);
+		}
+		const limit = predicates.next(query.limit);
+		const order = query.direction === 'desc' ? 'DESC' : 'ASC';
 		const result = await this.#read(tenantId, (transaction) =>
-			transaction.query<TokenRow>({
+			transaction.query<Row>({
 				text:
-					'SELECT ' +
-					TOKEN_COLUMNS +
-					` FROM directory_scim_tokens
-					 WHERE tenant_id = $1
-					 ORDER BY lower(label), id`,
-				parameters: [tenantId],
+					`SELECT * FROM (${select} WHERE ${predicates.where}) AS page WHERE ` +
+					where +
+					` ORDER BY sort_key ${order}, id ${order} LIMIT ` +
+					limit,
+				parameters: predicates.parameters,
 			}),
 		);
-		return result.rows.map((row) => withoutSecret(tokenFromRow(row)));
+		return result.rows;
 	}
 
 	async findTokenById(tenantId: string, id: string): Promise<ScimToken | null> {
@@ -562,6 +652,30 @@ export class DatabaseDirectoryRepository implements DirectoryRepository {
 				totalResults: integer(total.rows[0]?.total ?? 0, 'total'),
 			};
 		});
+	}
+
+	/* `precedence` pages through (tenant_id, precedence, id) and `displayName`
+	   through the unique (tenant_id, lower(display_name)); a tie on precedence
+	   is broken by id, which is what that index carries. */
+	async listGroupPage(
+		tenantId: string,
+		query: GroupListQuery,
+	): Promise<ListPage<ScimGroupMapping>> {
+		const predicates = new Predicates(tenantId, 'g.tenant_id');
+		if (query.search !== undefined)
+			predicates.add('g.display_name ILIKE ?', likePattern(query.search));
+		const rows = await this.#page<GroupRow & SortedRow>(
+			tenantId,
+			'SELECT ' +
+				GROUP_COLUMNS +
+				(query.sort === 'precedence'
+					? ', g.precedence AS sort_key'
+					: ', lower(g.display_name) AS sort_key') +
+				' FROM directory_scim_groups AS g',
+			predicates,
+			query,
+		);
+		return pageOf(rows, query.limit, groupFromRow);
 	}
 
 	findGroupById(

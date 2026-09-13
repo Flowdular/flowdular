@@ -110,6 +110,28 @@ function declaredBytes(request: Request): number | undefined {
 	return value;
 }
 
+/* One outcome answers one row, so an id is named once; the count and each id
+   are bounded like the single delete's. */
+function requiredIds(
+	value: Record<string, unknown>,
+	key: string,
+): readonly string[] {
+	const raw = value[key];
+	if (!Array.isArray(raw)) throw invalid(`${key} must be an array.`);
+	if (raw.length < 1 || raw.length > DOCUMENT_LIMITS.deleteMany) {
+		throw invalid(
+			`${key} must name between 1 and ${DOCUMENT_LIMITS.deleteMany} documents.`,
+		);
+	}
+	const ids = raw.map((entry) =>
+		requiredString({ id: entry }, 'id', { max: DOCUMENT_LIMITS.id }),
+	);
+	if (new Set(ids).size !== ids.length) {
+		throw invalid(`${key} must not repeat an id.`);
+	}
+	return ids;
+}
+
 function queryValue(
 	request: Request,
 	key: string,
@@ -336,12 +358,36 @@ export function createDocumentsRoutes(
 		},
 	});
 
+	const removeMany = defineEndpoint({
+		id: 'documents.files.delete-many',
+		path: '/api/documents/delete-many',
+		methods: ['POST'],
+		access: { kind: 'permission', permission: DOCUMENTS_PERMISSIONS.manage },
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			const denial = sessionMutationDenial(octane, auth);
+			if (denial) return denial;
+			try {
+				const value = await readJsonObject(octane.request);
+				const service = await runtime.service();
+				const outcomes = await service.removeMany(
+					principalFromContext(octane)!.tenantId,
+					requiredIds(value, 'ids'),
+				);
+				return jsonResponse({ outcomes });
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
 	return [
 		upload.serverRoute,
 		list.serverRoute,
 		limits.serverRoute,
 		readUrl.serverRoute,
 		remove.serverRoute,
+		removeMany.serverRoute,
 	] as const;
 }
 
@@ -351,4 +397,5 @@ export const endpoints = [
 	'documents.files.limits',
 	'documents.files.read-url',
 	'documents.files.delete',
+	'documents.files.delete-many',
 ] as const;

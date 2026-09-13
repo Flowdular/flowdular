@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseHandle, DatabaseTransaction } from '@flowdular/database';
 import { integer, runDatabaseMigrations } from '@flowdular/database';
 import { normalizeActor } from '@flowdular/kernel';
+import { keysetWhere } from '@flowdular/server';
 import type { UserActor } from '@flowdular/kernel';
 import type {
 	AutomationAuditEvent,
@@ -9,6 +10,9 @@ import type {
 } from '../domain/types.ts';
 import { databaseMigrations } from './migration.ts';
 import type {
+	AutomationListCursor,
+	AutomationListPage,
+	AutomationListQuery,
 	AutomationScheduleRouting,
 	AutomationsRepository,
 	AutomationTriggerRecord,
@@ -247,6 +251,76 @@ function markers(count: number): string {
 	);
 }
 
+/* The three characters LIKE reads as syntax are escaped with the backslash
+   PostgreSQL takes as the default escape character, so a `%` a reader types
+   searches for a percent sign. */
+function likePattern(term: string): string {
+	return '%' + term.replace(/[\\%_]/g, (character) => '\\' + character) + '%';
+}
+
+const LIST_SORT_COLUMNS = {
+	label: 'label_key',
+	updatedAt: 'updated_at',
+} as const;
+
+interface ListSortRow {
+	label_key: string;
+	updated_at: number | bigint | string;
+	id: string;
+}
+
+/* `label_key` is lower(label) aliased in a subselect, because a keyset column
+   must be a plain identifier. The planner pulls the subselect up, so the
+   expression index on (tenant_id, lower(label), id) still serves the order. */
+function listPageStatement(
+	table: 'automations_schedules' | 'automations_triggers',
+	tenantId: string,
+	query: AutomationListQuery,
+): { readonly text: string; readonly parameters: unknown[] } {
+	const column = LIST_SORT_COLUMNS[query.sort];
+	const parameters: unknown[] = [
+		tenantId,
+		query.enabled === undefined ? null : query.enabled ? 1 : 0,
+		query.search === undefined ? null : likePattern(query.search),
+	];
+	let keyset = '';
+	if (query.after) {
+		const predicate = keysetWhere(
+			[column, 'id'],
+			[query.after.value, query.after.id],
+			{ direction: query.direction, parameterOffset: parameters.length },
+		);
+		keyset = ` AND ${predicate.text}`;
+		parameters.push(...predicate.parameters);
+	}
+	parameters.push(query.limit);
+	const order = query.direction === 'desc' ? 'DESC' : 'ASC';
+	return {
+		text: `SELECT * FROM (SELECT s.*, lower(s.label) AS label_key FROM ${table} s) s
+		 WHERE tenant_id = $1
+		   AND ($2::integer IS NULL OR enabled = $2)
+		   AND ($3::text IS NULL OR label ILIKE $3 OR target_key ILIKE $3)${keyset}
+		 ORDER BY ${column} ${order}, id ${order}
+		 LIMIT $${parameters.length}`,
+		parameters,
+	};
+}
+
+function listCursor(
+	rows: readonly ListSortRow[],
+	query: AutomationListQuery,
+): AutomationListCursor | null {
+	const last = rows.at(-1);
+	if (!last || rows.length < query.limit) return null;
+	return {
+		value:
+			query.sort === 'label'
+				? last.label_key
+				: integer(last.updated_at, 'updated_at'),
+		id: last.id,
+	};
+}
+
 const SQL = {
 	listSchedules: `SELECT * FROM automations_schedules WHERE tenant_id = $1
 	 ORDER BY lower(label), id`,
@@ -280,8 +354,6 @@ const SQL = {
 	disableSchedule: `UPDATE automations_schedules SET enabled = 0,
 	 disabled_reason = $1, updated_at = $2
 	 WHERE tenant_id = $3 AND id = $4 AND enabled = 1`,
-	listTriggers: `SELECT * FROM automations_triggers WHERE tenant_id = $1
-	 ORDER BY lower(label), id`,
 	getTrigger: `SELECT * FROM automations_triggers
 	 WHERE tenant_id = $1 AND id = $2`,
 	/* Read through the cross-tenant background lease. It routes a webhook to a
@@ -348,6 +420,17 @@ export class DatabaseAutomationsRepository implements AutomationsRepository {
 			parameters: [tenantId],
 		});
 		return result.map(schedule);
+	}
+
+	async listSchedulesPage(
+		tenantId: string,
+		query: AutomationListQuery,
+	): Promise<AutomationListPage<StoredAutomationSchedule>> {
+		const rows = await this.#read<ScheduleRow & ListSortRow>(
+			tenantId,
+			listPageStatement('automations_schedules', tenantId, query),
+		);
+		return { items: rows.map(schedule), next: listCursor(rows, query) };
 	}
 
 	async getSchedule(
@@ -502,14 +585,15 @@ export class DatabaseAutomationsRepository implements AutomationsRepository {
 		return affected === 1;
 	}
 
-	async listTriggers(
+	async listTriggersPage(
 		tenantId: string,
-	): Promise<readonly StoredAutomationTrigger[]> {
-		const rows = await this.#read<TriggerRow>(tenantId, {
-			text: SQL.listTriggers,
-			parameters: [tenantId],
-		});
-		return rows.map(trigger);
+		query: AutomationListQuery,
+	): Promise<AutomationListPage<StoredAutomationTrigger>> {
+		const rows = await this.#read<TriggerRow & ListSortRow>(
+			tenantId,
+			listPageStatement('automations_triggers', tenantId, query),
+		);
+		return { items: rows.map(trigger), next: listCursor(rows, query) };
 	}
 
 	async getTrigger(

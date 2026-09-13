@@ -16,11 +16,11 @@ import {
 	resetMemberMfa,
 } from '@flowdular/module-auth/client';
 import { cell, createStore, useValue } from 'segment-state';
-import type { UserDirectory } from '../services/users-service.ts';
+import type { UsersContext } from '../services/users-service.ts';
 
 export interface MemberDrawerProps {
 	readonly member: TenantMember;
-	readonly roles: UserDirectory['roles'];
+	readonly roles: UsersContext['roles'];
 	readonly grantableScopes: readonly string[];
 	readonly isSelf: boolean;
 	readonly actorIsOwner: boolean;
@@ -258,7 +258,7 @@ function MemberIdentitySection(props: {
 
 function MemberRoleSection(props: {
 	readonly member: TenantMember;
-	readonly roles: UserDirectory['roles'];
+	readonly roles: UsersContext['roles'];
 	readonly canAssignOwner: boolean;
 	readonly disabled: boolean;
 	readonly onSubmit: (event: SubmitEvent) => void;

@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: agents.core
-specVersion: 0.12.7
+specVersion: 0.12.8
 status: approved
 name: Agentic Core
 description: Provides tenant-created and module-owned business agent definitions, tenant-scoped provider connections, reusable procedures, durable streamed execution, run history, and the public run queue used by optional automation modules.
@@ -118,7 +118,7 @@ acceptanceScenarios:
   - id: AGENTS-LIST
     given: Tenant-created business agents and enabled modules with module-owned business agents exist.
     when: An authorized principal lists agents.
-    then: The active tenant receives a deterministic catalog with an explicit tenant or module ownership discriminator and no definition from another tenant or disabled module.
+    then: The active tenant receives a deterministic catalog with an explicit tenant or module ownership discriminator and no definition from another tenant or disabled module. Tenant definitions arrive as pages of at most 200 rows, 50 by default, sorted by name or updatedAt in either direction with an optional search term, and each page ends in an opaque cursor bound to the tenant, the sort and the filters that a request with a different tenant, sort or filter cannot reuse; the module catalog, providers, tools and procedures are read separately.
   - id: AGENTS-MODULE-REGISTER
     given: An enabled module registers a valid defineAgent definition during composition.
     when: The platform finishes composing modules before starting workers.
@@ -151,6 +151,10 @@ acceptanceScenarios:
     given: An active agent and a principal with execution permission.
     when: A playground or platform run is requested.
     then: A queued run is durably persisted and a 202 response is returned before provider execution completes.
+  - id: AGENTS-RUNS-LIST
+    given: A tenant holds more runs than one page carries.
+    when: A principal with agents.runs.read lists runs.
+    then: Runs arrive newest first or oldest first by queuedAt in pages of at most 200 rows, 50 by default, narrowed by status, agent, trigger or a search term on the server, and each page ends in an opaque cursor bound to the tenant, the sort and the filters that another tenant, sort or filter cannot reuse; one run with its timeline is read by its id through a separate endpoint.
   - id: AGENTS-EXECUTE
     given: A queued run with valid server-side grants and bounded execution settings.
     when: The harness worker claims the run.
@@ -242,7 +246,7 @@ acceptanceScenarios:
   - id: AGENTS-AUDIT-READ
     given: A principal reads the agent audit trail over HTTP.
     when: The principal lacks agents.runs.read, or holds it and pages with a cursor.
-    then: The request is denied before any row is read without the scope, and with it only the active tenant's events are returned newest first with a stable occurred-at and sequence cursor and the chain fields.
+    then: The request is denied before any row is read without the scope, and with it only the active tenant's events are returned newest first with a stable occurred-at and sequence cursor and the chain fields. A page carries at most 100 events, 50 by default, and the cursor is opaque and bound to the tenant, so a cursor issued to another tenant or edited by a client is refused.
   - id: AGENTS-AUDIT-VERIFY
     given: A stored agent audit row is altered after it was written.
     when: A principal with agents.runs.read verifies the chain over HTTP, reusing the same walk as the audit-verify CLI.

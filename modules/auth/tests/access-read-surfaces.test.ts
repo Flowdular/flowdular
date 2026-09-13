@@ -1,6 +1,10 @@
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { AuthService } from '../src/services/auth-service.ts';
-import type { TenantMemberPage } from '../src/services/repository.ts';
+import type {
+	TenantMemberKeyset,
+	TenantMemberPage,
+	TenantMemberSort,
+} from '../src/services/repository.ts';
 import { fastHash } from './helpers.ts';
 import {
 	closeAuthTestDatabases,
@@ -393,5 +397,273 @@ describe('paged member listing', () => {
 			service.listTenantMembers(tenantId, { limit: 500 }),
 		).resolves.toMatchObject({ nextCursor: null });
 		expect(await service.listTenantMembers(tenantId)).toHaveLength(2);
+	});
+});
+
+describe('sorted member listing', () => {
+	/* Names whose case and whose address order disagree with each other, so a
+	   page sorted by one is provably not sorted by the other. */
+	const PEOPLE = [
+		['zoe@example.com', 'ada Lovelace'],
+		['bob@example.com', 'Ada Byron'],
+		['carla@example.com', 'carla'],
+		['dan@example.com', 'Émile'],
+		['eve@example.com', 'ada lovelace'],
+	] as const;
+
+	async function people() {
+		const context = await workspaces();
+		const owner = {
+			accountId: context.ownerAccountId,
+			tenantId: context.tenantId,
+			email: 'owner@example.com',
+			role: 'owner',
+			scopes: ['users.members.manage'],
+		};
+		for (const [email, displayName] of PEOPLE) {
+			await context.service.createTenantMember(
+				{
+					tenantId: context.tenantId,
+					email,
+					password: 'steady tangerine harbor',
+					displayName,
+					role: 'member',
+				},
+				owner,
+			);
+		}
+		return context;
+	}
+
+	async function walk(
+		service: AuthService,
+		tenantId: string,
+		input: {
+			sort: TenantMemberSort;
+			direction: 'asc' | 'desc';
+			limit: number;
+			query?: string;
+			membershipStatus?: 'active' | 'disabled';
+		},
+	): Promise<{ pages: number; ids: string[] }> {
+		const ids: string[] = [];
+		let after: TenantMemberKeyset | null = null;
+		let pages = 0;
+		for (;;) {
+			const page = await service.listTenantMembersSorted(tenantId, {
+				...input,
+				after,
+			});
+			pages += 1;
+			ids.push(...page.members.map((member) => member.accountId));
+			if (page.next === null) break;
+			after = page.next;
+			if (pages > 20) throw new Error('The walk did not end.');
+		}
+		return { pages, ids };
+	}
+
+	it('pages by display name in the order the unbounded roll answers, both ways', async () => {
+		const { service, tenantId } = await people();
+		const roll = (await service.listTenantMembers(tenantId)).map(
+			(member) => member.accountId,
+		);
+		expect(roll).toHaveLength(6);
+
+		const ascending = await walk(service, tenantId, {
+			sort: 'displayName',
+			direction: 'asc',
+			limit: 2,
+		});
+		expect(ascending.ids).toEqual(roll);
+		/* Six members in pages of two: the third page is full, so it still
+		   answers a keyset and the fourth page is empty and ends the walk. */
+		expect(ascending.pages).toBe(4);
+
+		const descending = await walk(service, tenantId, {
+			sort: 'displayName',
+			direction: 'desc',
+			limit: 4,
+		});
+		expect(descending.ids).toEqual([...roll].reverse());
+		expect(descending.pages).toBe(2);
+	});
+
+	it('pages by address on the folded address', async () => {
+		const { service, tenantId } = await people();
+		const roll = await service.listTenantMembers(tenantId);
+		const byEmail = [...roll]
+			.sort((left, right) => (left.email < right.email ? -1 : 1))
+			.map((member) => member.accountId);
+
+		const page = await service.listTenantMembersSorted(tenantId, {
+			sort: 'email',
+			direction: 'asc',
+			limit: 3,
+		});
+		expect(page.members.map((member) => member.accountId)).toEqual(
+			byEmail.slice(0, 3),
+		);
+		expect(page.next).toEqual({
+			sortValue: page.members[2]?.email,
+			accountId: page.members[2]?.accountId,
+		});
+		const rest = await service.listTenantMembersSorted(tenantId, {
+			sort: 'email',
+			direction: 'asc',
+			limit: 3,
+			after: page.next,
+		});
+		expect(rest.members.map((member) => member.accountId)).toEqual(
+			byEmail.slice(3),
+		);
+		/* A full last page still answers a keyset; the page after it is empty. */
+		expect(rest.next).not.toBeNull();
+		expect(
+			(
+				await service.listTenantMembersSorted(tenantId, {
+					sort: 'email',
+					direction: 'asc',
+					limit: 3,
+					after: rest.next,
+				})
+			).members,
+		).toEqual([]);
+	});
+
+	it('answers no keyset on a short page', async () => {
+		const { service, tenantId } = await people();
+		const page = await service.listTenantMembersSorted(tenantId, {
+			sort: 'displayName',
+			direction: 'asc',
+			limit: 100,
+		});
+		expect(page.members).toHaveLength(6);
+		expect(page.next).toBeNull();
+	});
+
+	it('narrows by a prefix of the name or the address and by membership status, in SQL', async () => {
+		const { service, tenantId, ownerAccountId } = await people();
+
+		const adas = await walk(service, tenantId, {
+			sort: 'displayName',
+			direction: 'asc',
+			limit: 1,
+			query: 'ADA ',
+		});
+		/* The term is folded like a search term, so the case and the trailing
+		   space narrow nothing, and the matched rows keep the roll's order. */
+		const roll = await service.listTenantMembers(tenantId);
+		const adaRows = roll.filter((member) =>
+			member.displayName.toLowerCase().startsWith('ada'),
+		);
+		expect(adaRows).toHaveLength(4);
+		expect(adas.ids).toEqual(adaRows.map((member) => member.accountId));
+		/* The address prefix reaches a member whose name does not carry it. */
+		const byAddress = await service.listTenantMembersSorted(tenantId, {
+			sort: 'displayName',
+			direction: 'asc',
+			limit: 10,
+			query: 'Zoe',
+		});
+		expect(byAddress.members.map((member) => member.email)).toEqual([
+			'zoe@example.com',
+		]);
+		/* A wildcard is a character; a term inside a name is not a prefix. */
+		expect(
+			(
+				await service.listTenantMembersSorted(tenantId, {
+					sort: 'displayName',
+					direction: 'asc',
+					limit: 10,
+					query: '%',
+				})
+			).members,
+		).toEqual([]);
+		expect(
+			(
+				await service.listTenantMembersSorted(tenantId, {
+					sort: 'displayName',
+					direction: 'asc',
+					limit: 10,
+					query: 'ovelace',
+				})
+			).members,
+		).toEqual([]);
+
+		const carla = roll.find((member) => member.email === 'carla@example.com')!;
+		await service.setMembershipStatus(
+			{
+				accountId: ownerAccountId,
+				tenantId,
+				email: 'owner@example.com',
+				role: 'owner',
+				scopes: ['users.members.manage'],
+			},
+			carla.accountId,
+			'disabled',
+		);
+		expect(
+			(
+				await service.listTenantMembersSorted(tenantId, {
+					sort: 'displayName',
+					direction: 'asc',
+					limit: 10,
+					membershipStatus: 'disabled',
+				})
+			).members.map((member) => member.accountId),
+		).toEqual([carla.accountId]);
+		expect(
+			(
+				await service.listTenantMembersSorted(tenantId, {
+					sort: 'displayName',
+					direction: 'asc',
+					limit: 10,
+					membershipStatus: 'active',
+				})
+			).members.map((member) => member.accountId),
+		).not.toContain(carla.accountId);
+	});
+
+	it('pages the workspace of the call and no other', async () => {
+		const { service, tenantId, otherTenantId, otherAccountId } = await people();
+		expect(
+			(
+				await service.listTenantMembersSorted(tenantId, {
+					sort: 'displayName',
+					direction: 'asc',
+					limit: 100,
+				})
+			).members.map((member) => member.accountId),
+		).not.toContain(otherAccountId);
+		expect(
+			(
+				await service.listTenantMembersSorted(otherTenantId, {
+					sort: 'email',
+					direction: 'desc',
+					limit: 100,
+				})
+			).members.map((member) => member.accountId),
+		).toEqual([otherAccountId]);
+		expect(await service.countTenantMembers(tenantId)).toBe(6);
+		expect(await service.countTenantMembers(otherTenantId)).toBe(1);
+	});
+
+	it('refuses a sort, a direction, a status, a term or a limit it does not know', async () => {
+		const { service, tenantId } = await people();
+		const base = { sort: 'displayName', direction: 'asc', limit: 10 } as const;
+		for (const input of [
+			{ ...base, sort: 'role' as TenantMemberSort },
+			{ ...base, direction: 'up' as 'asc' },
+			{ ...base, membershipStatus: 'gone' as 'active' },
+			{ ...base, query: 'a'.repeat(201) },
+			{ ...base, limit: 0 },
+			{ ...base, limit: 501 },
+			{ ...base, after: { sortValue: 'x'.repeat(513), accountId: 'a' } },
+		]) {
+			await expect(
+				service.listTenantMembersSorted(tenantId, input),
+			).rejects.toMatchObject({ code: 'INVALID_INPUT', status: 400 });
+		}
 	});
 });

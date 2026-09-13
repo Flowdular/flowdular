@@ -21,8 +21,13 @@ import {
 
 const ORIGIN = 'https://erp.example';
 const SESSION_TOKEN = 'session-token-0001';
+/* A second workspace's owner, signed in beside the first on the same routes. */
+const OTHER_TOKEN = 'session-token-0002';
+/* Another member of the first workspace: the inbox is theirs alone. */
+const MEMBER_TOKEN = 'session-token-0003';
 const CSRF_TOKEN = 'csrf-token-0001';
 const TENANT = 'tenant-http';
+const OTHER_TENANT = 'tenant-other';
 const ALL_SCOPES = Object.values(NOTIFICATIONS_PERMISSIONS);
 
 function principal(
@@ -103,6 +108,8 @@ function fixture(session: AuthPrincipal | null) {
 	});
 	const sessions = new Map<string, AuthPrincipal>();
 	if (session) sessions.set(SESSION_TOKEN, session);
+	sessions.set(OTHER_TOKEN, principal(ALL_SCOPES, 'account-eve', OTHER_TENANT));
+	sessions.set(MEMBER_TOKEN, principal(ALL_SCOPES, 'account-bo', TENANT));
 	const auth = authRuntime(sessions);
 	const routes = createNotificationsRoutes(auth, runtime);
 	const route = (path: string, method: string) => {
@@ -116,12 +123,19 @@ function fixture(session: AuthPrincipal | null) {
 	const invoke = async (
 		path: string,
 		requestPath: string,
-		init: RequestInit & { readonly authenticated?: boolean } = {},
+		init: RequestInit & {
+			readonly authenticated?: boolean;
+			readonly token?: string;
+		} = {},
 	) => {
-		const { authenticated = true, ...requestInit } = init;
+		const {
+			authenticated = true,
+			token = SESSION_TOKEN,
+			...requestInit
+		} = init;
 		const headers = new Headers(requestInit.headers);
-		if (authenticated && session) {
-			headers.set('cookie', `coreloom_session_dev=${SESSION_TOKEN}`);
+		if (authenticated && (session || token !== SESSION_TOKEN)) {
+			headers.set('cookie', `coreloom_session_dev=${token}`);
 		} else {
 			headers.delete('cookie');
 		}
@@ -171,6 +185,10 @@ const MUTATION_PATHS = [
 	['/api/notifications/inbox/mark-read', NOTIFICATIONS_PERMISSIONS.manage],
 	['/api/notifications/inbox/mark-unread', NOTIFICATIONS_PERMISSIONS.manage],
 	['/api/notifications/inbox/archive', NOTIFICATIONS_PERMISSIONS.manage],
+	[
+		'/api/notifications/inbox/transition-many',
+		NOTIFICATIONS_PERMISSIONS.manage,
+	],
 	['/api/notifications/preferences/save', NOTIFICATIONS_PERMISSIONS.manage],
 	['/api/notifications/preferences/email', NOTIFICATIONS_PERMISSIONS.manage],
 	['/api/notifications/webhooks', NOTIFICATIONS_PERMISSIONS.webhooksManage],
@@ -280,7 +298,10 @@ describe('notifications HTTP boundary', () => {
 		const owner = fixture(principal(ALL_SCOPES));
 		const inbox = await owner.call('/api/notifications/inbox?status=unread');
 		expect(inbox.status).toBe(200);
-		expect(await inbox.json()).toEqual({ inbox: [] });
+		expect(await inbox.json()).toEqual({
+			items: [],
+			page: { nextCursor: null, limit: 50 },
+		});
 
 		const unread = await owner.call('/api/notifications/inbox/unread-count');
 		expect(await unread.json()).toEqual({ unread: 0 });
@@ -428,7 +449,10 @@ describe('notifications HTTP boundary', () => {
 		});
 		expect(deleted.status).toBe(200);
 		const listed = await owner.call('/api/notifications/webhooks');
-		expect(await listed.json()).toEqual({ subscriptions: [] });
+		expect(await listed.json()).toEqual({
+			items: [],
+			page: { nextCursor: null, limit: 50 },
+		});
 	});
 
 	it('refuses a blocked webhook URL with a stable code', async () => {
@@ -457,5 +481,579 @@ describe('notifications HTTP boundary', () => {
 			{ id: 'any' },
 		);
 		expect(response.status).toBe(403);
+	});
+});
+
+interface Page<Item> {
+	readonly items: readonly Item[];
+	readonly page: { readonly nextCursor: string | null; readonly limit: number };
+}
+
+interface Problem {
+	readonly error: { readonly code: string };
+}
+
+/* A cursor's body is base64url; changing one character of it breaks the
+   signature rather than producing another valid page. */
+function tampered(cursor: string): string {
+	const [version, body, signature] = cursor.split('.') as [
+		string,
+		string,
+		string,
+	];
+	const flipped = (body[0] === 'A' ? 'B' : 'A') + body.slice(1);
+	return `${version}.${flipped}.${signature}`;
+}
+
+describe('notifications list pages', () => {
+	async function seedInbox(
+		owner: ReturnType<typeof fixture>,
+		count: number,
+		tenantId = TENANT,
+		recipient = 'account-ada',
+	) {
+		const publisher = await owner.runtime.publisher();
+		for (let index = 0; index < count; index += 1) {
+			await publisher.publish({
+				tenantId,
+				kind: 'agent-run-failed',
+				sourceModule: 'agents.core',
+				/* Publication is idempotent on the source reference, so each member's
+				   seed names its own. */
+				sourceRef: `${recipient}-run-${String(index).padStart(2, '0')}`,
+				title: `Run ${index} failed`,
+				recipients: [recipient],
+			});
+		}
+	}
+
+	async function page<Item>(
+		owner: ReturnType<typeof fixture>,
+		path: string,
+		token?: string,
+	): Promise<Page<Item>> {
+		const response = await owner.call(path, token ? { token } : {});
+		expect([path, response.status]).toEqual([path, 200]);
+		return (await response.json()) as Page<Item>;
+	}
+
+	async function refused(
+		owner: ReturnType<typeof fixture>,
+		path: string,
+		code: string,
+	) {
+		const response = await owner.call(path);
+		expect([path, response.status]).toEqual([path, 400]);
+		expect([path, ((await response.json()) as Problem).error.code]).toEqual([
+			path,
+			code,
+		]);
+	}
+
+	it('NOTIFICATIONS-INBOX-MANY refuses an unbounded, repeated or unknown bulk transition before any row changes', async () => {
+		const owner = fixture(principal(ALL_SCOPES));
+		await seedInbox(owner, 2);
+		const listed = await page<{ id: string }>(
+			owner,
+			'/api/notifications/inbox',
+		);
+		const [first, second] = listed.items.map((item) => item.id) as [
+			string,
+			string,
+		];
+		for (const body of [
+			{ ids: [], transition: 'mark-read' },
+			{ ids: 'x', transition: 'mark-read' },
+			{
+				ids: Array.from({ length: 101 }, (_, index) => `item-${index}`),
+				transition: 'mark-read',
+			},
+			{ ids: [first, first], transition: 'mark-read' },
+			{ ids: [first, second], transition: 'mark-unread' },
+			{ ids: [first, 7], transition: 'archive' },
+		]) {
+			const response = await owner.mutation(
+				'/api/notifications/inbox/transition-many',
+				body,
+			);
+			expect([body, response.status]).toEqual([body, 400]);
+			expect([body, ((await response.json()) as Problem).error.code]).toEqual([
+				body,
+				'INVALID_INPUT',
+			]);
+		}
+		expect(
+			(
+				await page<{ status: string }>(
+					owner,
+					'/api/notifications/inbox?status=unread',
+				)
+			).items,
+		).toHaveLength(2);
+	});
+
+	it('NOTIFICATIONS-INBOX-MANY answers one outcome per id and leaves the other member and the missing id alone', async () => {
+		const owner = fixture(principal(ALL_SCOPES));
+		await seedInbox(owner, 3);
+		await seedInbox(owner, 1, TENANT, 'account-bo');
+		await seedInbox(owner, 1, OTHER_TENANT, 'account-eve');
+		const own = (
+			await page<{ id: string }>(owner, '/api/notifications/inbox')
+		).items.map((item) => item.id);
+		const other = (
+			await page<{ id: string }>(
+				owner,
+				'/api/notifications/inbox',
+				MEMBER_TOKEN,
+			)
+		).items[0]!.id;
+		const foreign = (
+			await page<{ id: string }>(owner, '/api/notifications/inbox', OTHER_TOKEN)
+		).items[0]!.id;
+		const unread = async (token?: string) =>
+			(
+				(await (
+					await owner.call(
+						'/api/notifications/inbox/unread-count',
+						token ? { token } : {},
+					)
+				).json()) as { unread: number }
+			).unread;
+		expect([await unread(), await unread(MEMBER_TOKEN)]).toEqual([3, 1]);
+
+		const read = await owner.mutation(
+			'/api/notifications/inbox/transition-many',
+			{
+				ids: [own[0], 'missing', other, foreign, own[2]],
+				transition: 'mark-read',
+			},
+		);
+		expect(read.status).toBe(200);
+		expect(await read.json()).toEqual({
+			outcomes: [
+				{ id: own[0], outcome: 'updated' },
+				{ id: 'missing', outcome: 'not-found' },
+				{ id: other, outcome: 'not-found' },
+				{ id: foreign, outcome: 'not-found' },
+				{ id: own[2], outcome: 'updated' },
+			],
+		});
+		expect([
+			await unread(),
+			await unread(MEMBER_TOKEN),
+			await unread(OTHER_TOKEN),
+		]).toEqual([1, 1, 1]);
+		expect(
+			(
+				await page<{ id: string; status: string }>(
+					owner,
+					'/api/notifications/inbox',
+				)
+			).items.map((item) => [item.id, item.status]),
+		).toEqual([
+			[own[0], 'read'],
+			[own[1], 'unread'],
+			[own[2], 'read'],
+		]);
+
+		const archived = await owner.mutation(
+			'/api/notifications/inbox/transition-many',
+			{ ids: [own[1], own[0]], transition: 'archive' },
+		);
+		expect(await archived.json()).toEqual({
+			outcomes: [
+				{ id: own[1], outcome: 'updated' },
+				{ id: own[0], outcome: 'updated' },
+			],
+		});
+		expect([await unread(), await unread(MEMBER_TOKEN)]).toEqual([0, 1]);
+		expect(
+			(await page<{ id: string }>(owner, '/api/notifications/inbox')).items.map(
+				(item) => item.id,
+			),
+		).toEqual([own[2]]);
+		expect(
+			(
+				await page<{ status: string }>(
+					owner,
+					'/api/notifications/inbox',
+					MEMBER_TOKEN,
+				)
+			).items.map((item) => item.status),
+		).toEqual(['unread']);
+		expect(
+			(
+				await page<{ status: string }>(
+					owner,
+					'/api/notifications/inbox',
+					OTHER_TOKEN,
+				)
+			).items.map((item) => item.status),
+		).toEqual(['unread']);
+	});
+
+	it('NOTIFICATIONS-INBOX-MANY refuses either change on an archived item and leaves it archived', async () => {
+		const owner = fixture(principal(ALL_SCOPES));
+		await seedInbox(owner, 2);
+		const [kept, archived] = (
+			await page<{ id: string }>(owner, '/api/notifications/inbox')
+		).items.map((item) => item.id) as [string, string];
+		expect(
+			(
+				await owner.mutation('/api/notifications/inbox/archive', {
+					id: archived,
+				})
+			).status,
+		).toBe(200);
+
+		for (const transition of ['mark-read', 'archive']) {
+			const response = await owner.mutation(
+				'/api/notifications/inbox/transition-many',
+				{ ids: [archived], transition },
+			);
+			expect([transition, response.status]).toEqual([transition, 200]);
+			expect([transition, await response.json()]).toEqual([
+				transition,
+				{
+					outcomes: [
+						{
+							id: archived,
+							outcome: 'refused',
+							reason: 'INBOX_TRANSITION_INVALID',
+						},
+					],
+				},
+			]);
+		}
+		expect(
+			(
+				await page<{ id: string; status: string; readAt: string | null }>(
+					owner,
+					'/api/notifications/inbox?status=archived',
+				)
+			).items.map((item) => [item.id, item.status, item.readAt]),
+		).toEqual([[archived, 'archived', null]]);
+		expect(
+			(
+				await page<{ id: string; status: string }>(
+					owner,
+					'/api/notifications/inbox',
+				)
+			).items.map((item) => [item.id, item.status]),
+		).toEqual([[kept, 'unread']]);
+	});
+
+	it('walks the inbox through consecutive pages with no overlap and no gap', async () => {
+		const owner = fixture(principal(ALL_SCOPES));
+		await seedInbox(owner, 5);
+		const whole = await page<{ id: string }>(
+			owner,
+			'/api/notifications/inbox?limit=50',
+		);
+		expect(whole.items).toHaveLength(5);
+		expect(whole.page.nextCursor).toBeNull();
+
+		const walked: string[] = [];
+		let cursor: string | null = null;
+		let pages = 0;
+		do {
+			const current: Page<{ id: string }> = await page(
+				owner,
+				'/api/notifications/inbox?limit=2' +
+					(cursor === null ? '' : '&cursor=' + cursor),
+			);
+			pages += 1;
+			walked.push(...current.items.map((item) => item.id));
+			/* A full page carries a cursor; a short page is the last one. */
+			expect(current.page.nextCursor === null).toBe(current.items.length < 2);
+			cursor = current.page.nextCursor;
+		} while (cursor !== null);
+		expect(pages).toBe(3);
+		expect(walked).toEqual(whole.items.map((item) => item.id));
+	});
+
+	it('hands a cursor back on a full page even when nothing follows it', async () => {
+		const owner = fixture(principal(ALL_SCOPES));
+		await seedInbox(owner, 2);
+		const full = await page<{ id: string }>(
+			owner,
+			'/api/notifications/inbox?limit=2',
+		);
+		expect(full.page.nextCursor).not.toBeNull();
+		const beyond = await page<{ id: string }>(
+			owner,
+			'/api/notifications/inbox?limit=2&cursor=' + String(full.page.nextCursor),
+		);
+		expect(beyond).toEqual({ items: [], page: { nextCursor: null, limit: 2 } });
+	});
+
+	it('refuses a cursor it did not sign, one of another workspace and one edited by hand', async () => {
+		const owner = fixture(principal(ALL_SCOPES));
+		await seedInbox(owner, 2);
+		await seedInbox(owner, 2, OTHER_TENANT, 'account-eve');
+		const own = await page<{ id: string }>(
+			owner,
+			'/api/notifications/inbox?limit=1',
+		);
+		const foreign = await page<{ id: string }>(
+			owner,
+			'/api/notifications/inbox?limit=1',
+			OTHER_TOKEN,
+		);
+		const ownCursor = String(own.page.nextCursor);
+		await refused(
+			owner,
+			'/api/notifications/inbox?limit=1&cursor=c1.abc.def',
+			'CURSOR_INVALID',
+		);
+		await refused(
+			owner,
+			'/api/notifications/inbox?limit=1&cursor=' + tampered(ownCursor),
+			'CURSOR_INVALID',
+		);
+		await refused(
+			owner,
+			'/api/notifications/inbox?limit=1&cursor=' +
+				String(foreign.page.nextCursor),
+			'CURSOR_INVALID',
+		);
+		/* The same cursor is still good for the list it was made for. */
+		expect(
+			(
+				await page<{ id: string }>(
+					owner,
+					'/api/notifications/inbox?limit=1&cursor=' + ownCursor,
+				)
+			).items,
+		).toHaveLength(1);
+	});
+
+	it('refuses an inbox cursor of another member of the same workspace', async () => {
+		const owner = fixture(principal(ALL_SCOPES));
+		await seedInbox(owner, 2);
+		await seedInbox(owner, 2, TENANT, 'account-bo');
+		const member = await page<{ id: string }>(
+			owner,
+			'/api/notifications/inbox?limit=1',
+			MEMBER_TOKEN,
+		);
+		const cursor = String(member.page.nextCursor);
+		await refused(
+			owner,
+			'/api/notifications/inbox?limit=1&cursor=' + cursor,
+			'CURSOR_INVALID',
+		);
+		expect(
+			(
+				await page<{ id: string }>(
+					owner,
+					'/api/notifications/inbox?limit=1&cursor=' + cursor,
+					MEMBER_TOKEN,
+				)
+			).items,
+		).toHaveLength(1);
+	});
+
+	it('matches a search term literally, LIKE syntax included', async () => {
+		const owner = fixture(principal(ALL_SCOPES));
+		const seeded = ['100% ops', 'a_b', 'axb', 'back\\slash'];
+		/* The URL is searched too, so it must not spell the term another way. */
+		for (const [index, name] of seeded.entries()) {
+			const created = await owner.mutation('/api/notifications/webhooks', {
+				name,
+				url: `https://hooks.example/receiver-${index}`,
+				events: ['agent-run-failed'],
+			});
+			expect([name, created.status]).toEqual([name, 201]);
+		}
+		const names = async (term: string) =>
+			(
+				await page<{ name: string }>(
+					owner,
+					'/api/notifications/webhooks?q=' + encodeURIComponent(term),
+				)
+			).items.map((entry) => entry.name);
+		expect(await names('%')).toEqual(['100% ops']);
+		expect(await names('a_b')).toEqual(['a_b']);
+		expect(await names('\\')).toEqual(['back\\slash']);
+		expect(await names('_')).toEqual(['a_b']);
+	});
+
+	it('refuses a cursor once the filters, the sort or the direction change', async () => {
+		const owner = fixture(principal(ALL_SCOPES));
+		await seedInbox(owner, 3);
+		const first = await page<{ id: string }>(
+			owner,
+			'/api/notifications/inbox?limit=2',
+		);
+		const cursor = String(first.page.nextCursor);
+		for (const change of [
+			'status=unread',
+			'kind=agent-run-failed',
+			'direction=asc',
+		]) {
+			await refused(
+				owner,
+				`/api/notifications/inbox?limit=2&${change}&cursor=${cursor}`,
+				'CURSOR_INVALID',
+			);
+		}
+		/* Neither the page size nor the same sort spelled out changes the list. */
+		expect(
+			(
+				await page<{ id: string }>(
+					owner,
+					`/api/notifications/inbox?limit=5&sort=createdAt&direction=desc&cursor=${cursor}`,
+				)
+			).items,
+		).toHaveLength(1);
+	});
+
+	it('refuses an unknown sort key, direction or limit', async () => {
+		const owner = fixture(principal(ALL_SCOPES));
+		for (const path of [
+			'/api/notifications/inbox?sort=title',
+			'/api/notifications/inbox?direction=sideways',
+			'/api/notifications/inbox?limit=0',
+			'/api/notifications/inbox?limit=201',
+			'/api/notifications/webhooks?sort=url',
+			'/api/notifications/deliveries?sort=createdAt',
+		]) {
+			await refused(owner, path, 'INVALID_INPUT');
+		}
+	});
+
+	it('lists the open inbox by default and archived items only when asked', async () => {
+		const owner = fixture(principal(ALL_SCOPES));
+		await seedInbox(owner, 3);
+		const open = await page<{ id: string }>(owner, '/api/notifications/inbox');
+		const archived = await owner.mutation('/api/notifications/inbox/archive', {
+			id: open.items[1]!.id,
+		});
+		expect(archived.status).toBe(200);
+
+		expect(
+			(await page<{ id: string }>(owner, '/api/notifications/inbox')).items.map(
+				(item) => item.id,
+			),
+		).toEqual([open.items[0]!.id, open.items[2]!.id]);
+		expect(
+			(
+				await page<{ id: string }>(
+					owner,
+					'/api/notifications/inbox?status=archived',
+				)
+			).items.map((item) => item.id),
+		).toEqual([open.items[1]!.id]);
+		expect(
+			(
+				await page<{ id: string }>(
+					owner,
+					'/api/notifications/inbox?direction=asc',
+				)
+			).items.map((item) => item.id),
+		).toEqual([open.items[2]!.id, open.items[0]!.id]);
+	});
+
+	it('pages subscriptions by normalized name with the filters applied by the server', async () => {
+		const owner = fixture(principal(ALL_SCOPES));
+		for (const name of ['beta', 'Alpha', 'gamma', 'Delta']) {
+			const created = await owner.mutation('/api/notifications/webhooks', {
+				name,
+				url: `https://hooks.example/${name.toLowerCase()}`,
+				events: ['agent-run-failed'],
+			});
+			expect([name, created.status]).toEqual([name, 201]);
+		}
+		const names = (subscriptions: Page<{ name: string }>) =>
+			subscriptions.items.map((entry) => entry.name);
+
+		const first = await page<{ name: string }>(
+			owner,
+			'/api/notifications/webhooks?limit=3',
+		);
+		expect(names(first)).toEqual(['Alpha', 'beta', 'Delta']);
+		const second = await page<{ name: string }>(
+			owner,
+			'/api/notifications/webhooks?limit=3&cursor=' +
+				String(first.page.nextCursor),
+		);
+		expect(names(second)).toEqual(['gamma']);
+		expect(second.page.nextCursor).toBeNull();
+
+		expect(
+			names(await page(owner, '/api/notifications/webhooks?direction=desc')),
+		).toEqual(['gamma', 'Delta', 'beta', 'Alpha']);
+		expect(
+			names(await page(owner, '/api/notifications/webhooks?q=ELT')),
+		).toEqual(['Delta']);
+		expect(
+			names(await page(owner, '/api/notifications/webhooks?q=hooks.example')),
+		).toHaveLength(4);
+		expect(
+			names(await page(owner, '/api/notifications/webhooks?status=paused')),
+		).toEqual([]);
+		await refused(
+			owner,
+			'/api/notifications/webhooks?q=alpha&cursor=' +
+				String(first.page.nextCursor),
+			'CURSOR_INVALID',
+		);
+	});
+
+	it('pages the ledger by schedule with the subscription and search filters applied by the server', async () => {
+		const owner = fixture(principal(ALL_SCOPES));
+		const created = await owner.mutation('/api/notifications/webhooks', {
+			name: 'Ops receiver',
+			url: 'https://hooks.example/receiver',
+			events: ['agent-run-failed'],
+		});
+		const { subscription } = (await created.json()) as {
+			subscription: { id: string };
+		};
+		await seedInbox(owner, 3);
+
+		const whole = await page<{ id: string; sourceRef: string }>(
+			owner,
+			'/api/notifications/deliveries',
+		);
+		expect(whole.items).toHaveLength(3);
+		const walked: string[] = [];
+		let cursor: string | null = null;
+		do {
+			const current: Page<{ id: string }> = await page(
+				owner,
+				'/api/notifications/deliveries?limit=2' +
+					(cursor === null ? '' : '&cursor=' + cursor),
+			);
+			walked.push(...current.items.map((item) => item.id));
+			cursor = current.page.nextCursor;
+		} while (cursor !== null);
+		expect(walked).toEqual(whole.items.map((item) => item.id));
+
+		expect(
+			(
+				await page<{ id: string }>(
+					owner,
+					`/api/notifications/deliveries?subscription=${subscription.id}&status=pending`,
+				)
+			).items,
+		).toHaveLength(3);
+		expect(
+			(
+				await page<{ sourceRef: string }>(
+					owner,
+					'/api/notifications/deliveries?q=run-01',
+				)
+			).items.map((item) => item.sourceRef),
+		).toEqual(['account-ada-run-01']);
+		expect(
+			(
+				await page<{ id: string }>(
+					owner,
+					'/api/notifications/deliveries?subscription=missing',
+				)
+			).items,
+		).toEqual([]);
 	});
 });

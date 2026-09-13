@@ -19,8 +19,11 @@ import {
 } from '../domain/context-variables.ts';
 import { groupRunTimeline } from '../domain/run-timeline.ts';
 import type {
-	AgentAuditPage,
+	AgentAuditEvent,
+	AgentAuditListQuery,
 	AgentDefinition,
+	AgentListPage,
+	AgentListQuery,
 	AgentDefinitionRevision,
 	ModuleAgentBinding,
 	ModuleAgentDefinition,
@@ -28,6 +31,7 @@ import type {
 	AgentProviderConnection,
 	AgentRun,
 	AgentRunDetail,
+	AgentRunListQuery,
 	AgentRunTimeline,
 	AgentProcedure,
 	AgentProcedureSnapshot,
@@ -61,8 +65,9 @@ import type { AgentWorker } from './worker.ts';
 import { normalizeModuleAgentDefinitions } from '../server/define-agent.ts';
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 4_096;
-const DEFAULT_AUDIT_PAGE = 50;
-const MAX_AUDIT_PAGE = 100;
+/* One page of any list this service serves; an endpoint may bound lower. */
+const MAX_LIST_PAGE = 200;
+const DEFAULT_LIST_PAGE = 50;
 const TERMINAL_STATUSES: readonly AgentRun['status'][] = [
 	'succeeded',
 	'failed',
@@ -105,22 +110,6 @@ function outputContract(value: AgentOutputContract): AgentOutputContract {
 	return { kind: 'json-schema', name, schema: value.schema };
 }
 
-/* `occurredAt:sequence` of the last row of the previous page. Both halves are
-   non-negative integers; anything else is a client error, never a silent
-   first-page fallback. */
-function auditCursor(
-	raw: string | null,
-): { readonly occurredAt: number; readonly sequence: number } | null {
-	if (raw === null || raw === '') return null;
-	const match = /^(\d+):(\d+)$/.exec(raw);
-	const occurredAt = match ? Number(match[1]) : NaN;
-	const sequence = match ? Number(match[2]) : NaN;
-	if (!Number.isSafeInteger(occurredAt) || !Number.isSafeInteger(sequence)) {
-		throw new AgentServiceError('INVALID_CURSOR', 'cursor is malformed.', 400);
-	}
-	return { occurredAt, sequence };
-}
-
 export class AgentServiceError extends Error {
 	constructor(
 		readonly code: string,
@@ -130,6 +119,12 @@ export class AgentServiceError extends Error {
 		super(message);
 		this.name = 'AgentServiceError';
 	}
+}
+
+function pageLimit(limit: number): number {
+	return Number.isSafeInteger(limit)
+		? Math.min(Math.max(1, limit), MAX_LIST_PAGE)
+		: DEFAULT_LIST_PAGE;
 }
 
 function bounded(
@@ -617,18 +612,23 @@ export class AgentService {
 		);
 	}
 
+	async listAgentsPage(
+		tenantId: string,
+		query: AgentListQuery,
+	): Promise<AgentListPage> {
+		return await this.repository.listAgentsPage(
+			bounded(tenantId, 'tenantId', 1, 128),
+			{ ...query, limit: pageLimit(query.limit) },
+		);
+	}
+
 	async pageAuditEvents(
 		tenantId: string,
-		cursor: string | null,
-		limit: number,
-	): Promise<AgentAuditPage> {
-		const size = Number.isSafeInteger(limit)
-			? Math.min(Math.max(1, Math.trunc(limit)), MAX_AUDIT_PAGE)
-			: DEFAULT_AUDIT_PAGE;
+		query: AgentAuditListQuery,
+	): Promise<readonly AgentAuditEvent[]> {
 		return await this.repository.pageAuditEvents(
 			bounded(tenantId, 'tenantId', 1, 128),
-			auditCursor(cursor),
-			size,
+			{ ...query, limit: pageLimit(query.limit) },
 		);
 	}
 
@@ -1056,11 +1056,21 @@ export class AgentService {
 		});
 	}
 
-	async listRuns(tenantId: string, limit = 100): Promise<readonly AgentRun[]> {
-		const boundedLimit = Math.max(1, Math.min(250, Math.trunc(limit)));
+	async listRuns(
+		tenantId: string,
+		query: Partial<AgentRunListQuery> = {},
+	): Promise<readonly AgentRun[]> {
 		return await this.repository.listRuns(
 			bounded(tenantId, 'tenantId', 1, 128),
-			boundedLimit,
+			{
+				direction: query.direction ?? 'desc',
+				status: query.status ?? null,
+				agentId: query.agentId ?? null,
+				trigger: query.trigger ?? null,
+				search: query.search ?? null,
+				after: query.after ?? null,
+				limit: pageLimit(query.limit ?? 50),
+			},
 		);
 	}
 

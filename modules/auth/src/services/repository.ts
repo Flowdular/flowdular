@@ -209,6 +209,35 @@ export interface TenantMemberPage {
 	readonly nextCursor: string | null;
 }
 
+export type TenantMemberSort = 'displayName' | 'email';
+
+/**
+ * Where a sorted member page ends. `sortValue` is the sort column as the
+ * database compares it, lower(display_name) or email_normalized, so the next
+ * page continues on the database's own order rather than a JavaScript fold.
+ */
+export interface TenantMemberKeyset {
+	readonly sortValue: string;
+	readonly accountId: string;
+}
+
+export interface TenantMemberSortedRead {
+	readonly sort: TenantMemberSort;
+	readonly direction: 'asc' | 'desc';
+	readonly limit: number;
+	/** Folded and LIKE-escaped prefix of the display name or the address; null narrows nothing. */
+	readonly term: string | null;
+	readonly membershipStatus: MembershipStatus | null;
+	/** The keyset of the last member of the previous page; null starts the walk. */
+	readonly after: TenantMemberKeyset | null;
+}
+
+export interface TenantMemberSortedPage {
+	readonly members: readonly TenantMember[];
+	/** The keyset of the last member when the page is full; a shorter page ends the walk. */
+	readonly next: TenantMemberKeyset | null;
+}
+
 export interface TenantSummary {
 	readonly tenantId: string;
 	readonly name: string;
@@ -322,6 +351,18 @@ export interface AuthRepository {
 		afterAccountId: string,
 		limit: number,
 	): Promise<readonly TenantMember[]>;
+	/**
+	 * One page of the workspace's members ordered by display name or by
+	 * address, keyset on that column and the account id in the direction asked,
+	 * narrowed by a prefix and a membership status in SQL and cut to `limit`.
+	 * Migration 0033 indexes both sort pairs on auth_accounts.
+	 */
+	listTenantMembersSorted(
+		tenantId: string,
+		read: TenantMemberSortedRead,
+	): Promise<TenantMemberSortedPage>;
+	/** How many memberships the workspace holds, an index range over 0030. */
+	countTenantMembers(tenantId: string): Promise<number>;
 	/** One member, for a caller that needs a single account rather than the roll. */
 	findTenantMember(
 		tenantId: string,

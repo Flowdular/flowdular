@@ -1,9 +1,9 @@
 import { Alert, Button, FormField } from '@flowdular/ui';
 import { t } from '@flowdular/client';
-import type { UserDirectory } from '../services/users-service.ts';
+import type { UsersContext } from '../services/users-service.ts';
 
 export interface InviteMemberFormProps {
-	readonly roles: UserDirectory['roles'];
+	readonly roles: UsersContext['roles'];
 	readonly canAssignOwner: boolean;
 	readonly busy: boolean;
 	readonly error: string;

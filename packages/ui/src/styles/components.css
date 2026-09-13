@@ -1275,6 +1275,50 @@
 	display: inline-flex;
 }
 
+/* Row selection: the leading checkbox column and the bulk bar that sits
+   above the table only while something is selected. */
+.ui-table th.ui-table__select,
+.ui-table td.ui-table__select {
+	padding: 0 4px 0 16px;
+	text-align: left;
+}
+
+.ui-table .ui-table__select input {
+	display: block;
+	width: 16px;
+	height: 16px;
+	margin: 0;
+	accent-color: var(--primary);
+	cursor: pointer;
+}
+
+.ui-table .ui-table__select input:disabled {
+	cursor: not-allowed;
+}
+
+.ui-table__bulk {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px;
+	padding: 10px 16px;
+	background: var(--primary-tint);
+	border-bottom: 1px solid var(--line-2);
+}
+
+.ui-table__bulk-count {
+	flex: 1 1 auto;
+	min-width: 0;
+	font-size: var(--text-sm);
+	font-weight: 500;
+	font-variant-numeric: tabular-nums;
+	color: var(--ink-2);
+}
+
+.ui-table__bulk .ui-table-action-buttons {
+	justify-content: flex-start;
+}
+
 .ui-table__state {
 	display: inline-flex;
 	align-items: center;

@@ -2,17 +2,24 @@ import { randomUUID } from 'node:crypto';
 import {
 	DEFAULT_EMAIL_DELIVERY,
 	INBOX_STATUSES,
+	INBOX_TRANSITION_MANY_LIMIT,
+	INBOX_TRANSITIONS,
 	NOTIFICATION_KINDS,
+	type InboxTransition,
+	type InboxTransitionOutcome,
 	type MemberNotificationSettings,
 	type NotificationKind,
 	type NotificationPreference,
 	type NotificationsInbox,
 } from '../domain/types.ts';
+import {
+	listPage,
+	timeKey,
+	type ListPageInput,
+	type ListResult,
+} from './paging.ts';
 import type { InboxFilters, NotificationsRepository } from './repository.ts';
 import { bounded, NotificationsServiceError, oneOf } from './service-error.ts';
-
-/** Most items one inbox request returns; the screen pages what it is given. */
-export const INBOX_PAGE_LIMIT = 200;
 
 /**
  * The member-facing half of the module. Every method takes the tenant and the
@@ -28,8 +35,20 @@ export class NotificationsService {
 		tenantId: string,
 		recipientAccountId: string,
 		filters: InboxFilters = {},
+		page: ListPageInput<number> = {},
 	): Promise<readonly NotificationsInbox[]> {
-		return this.repository.listInbox(
+		return (await this.listPage(tenantId, recipientAccountId, filters, page))
+			.items;
+	}
+
+	/** One page of the member's inbox, newest first unless asked otherwise. */
+	async listPage(
+		tenantId: string,
+		recipientAccountId: string,
+		filters: InboxFilters = {},
+		page: ListPageInput<number> = {},
+	): Promise<ListResult<NotificationsInbox, number>> {
+		const result = await this.repository.listInbox(
 			bounded(tenantId, 'tenantId', 1, 128),
 			bounded(recipientAccountId, 'recipientAccountId', 1, 128),
 			{
@@ -40,8 +59,9 @@ export class NotificationsService {
 					? oneOf(filters.kind, 'kind', NOTIFICATION_KINDS)
 					: undefined,
 			},
-			INBOX_PAGE_LIMIT,
+			listPage(page, 'desc', timeKey),
 		);
+		return { items: result.rows, next: result.next };
 	}
 
 	async unreadCount(
@@ -108,6 +128,70 @@ export class NotificationsService {
 		);
 		if (!updated) throw notFound();
 		return updated;
+	}
+
+	/**
+	 * One transition over many of the member's own items, each through the
+	 * single path, so an item of another member or one that is gone answers
+	 * its own outcome and the rest go on. An archived item is refused for
+	 * either change: the screen offers mark-read on unread rows and archive
+	 * on open rows, and a bulk call gets no wider a path than a row does.
+	 * Outcomes keep the order sent.
+	 */
+	async transitionMany(
+		tenantId: string,
+		recipientAccountId: string,
+		ids: readonly string[],
+		transition: InboxTransition,
+		now = Date.now(),
+	): Promise<readonly InboxTransitionOutcome[]> {
+		const chosen = oneOf(transition, 'transition', INBOX_TRANSITIONS);
+		if (ids.length < 1 || ids.length > INBOX_TRANSITION_MANY_LIMIT) {
+			throw new NotificationsServiceError(
+				'INVALID_INPUT',
+				`ids must name between 1 and ${INBOX_TRANSITION_MANY_LIMIT} items.`,
+			);
+		}
+		if (new Set(ids).size !== ids.length) {
+			throw new NotificationsServiceError(
+				'INVALID_INPUT',
+				'ids must not repeat an id.',
+			);
+		}
+		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
+		const account = bounded(recipientAccountId, 'recipientAccountId', 1, 128);
+		const outcomes: InboxTransitionOutcome[] = [];
+		for (const id of ids) {
+			try {
+				const existing = await this.repository.getInboxItem(
+					trustedTenantId,
+					account,
+					bounded(id, 'itemId', 1, 128),
+				);
+				if (!existing) throw notFound();
+				if (existing.status === 'archived') {
+					throw new NotificationsServiceError(
+						'INBOX_TRANSITION_INVALID',
+						'An archived item is neither marked read nor archived again.',
+						409,
+					);
+				}
+				if (chosen === 'mark-read') {
+					await this.markRead(tenantId, recipientAccountId, id, now);
+				} else {
+					await this.archive(tenantId, recipientAccountId, id);
+				}
+				outcomes.push({ id, outcome: 'updated' });
+			} catch (error) {
+				if (!(error instanceof NotificationsServiceError)) throw error;
+				outcomes.push(
+					error.code === 'INBOX_ITEM_NOT_FOUND'
+						? { id, outcome: 'not-found' }
+						: { id, outcome: 'refused', reason: error.code },
+				);
+			}
+		}
+		return outcomes;
 	}
 
 	async listPreferences(

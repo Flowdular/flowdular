@@ -5,7 +5,7 @@ import {
 	type NotificationsInboxStatus,
 } from '../src/domain/types.ts';
 import {
-	inboxListing,
+	inboxActiveFilters,
 	inboxRowActions,
 	selectedInboxItem,
 } from '../src/client/inbox.ts';
@@ -29,61 +29,22 @@ function item(
 	};
 }
 
-describe('inbox listing', () => {
-	it('hides archived items while no status is chosen', () => {
-		const items = [item('a', 'unread'), item('b', 'archived')];
-		const listing = inboxListing(items, '', '');
-		expect(listing.visible.map((entry) => entry.id)).toEqual(['a']);
-	});
-
-	it('shows every loaded item once a status is chosen', () => {
-		const items = [item('a', 'unread'), item('b', 'archived')];
-		expect(inboxListing(items, 'archived', '').visible).toEqual(items);
-	});
-
-	/* The table picks its empty copy from `filtered`. An inbox whose items are
-	   all archived is narrowed by the default rule, not a first run, so the copy
-	   has to say that the filter is hiding them. */
-	it('reads an all-archived inbox as narrowed, not as a first run', () => {
-		const listing = inboxListing([item('b', 'archived')], '', '');
-		expect([
-			listing.visible.length,
-			listing.filtered,
-			listing.activeFilters,
-		]).toEqual([0, true, 0]);
-	});
-
-	it('reads an empty inbox as a first run', () => {
-		expect(inboxListing([], '', '')).toEqual({
-			visible: [],
-			filtered: false,
-			activeFilters: 0,
-		});
-	});
-
+describe('inbox filters', () => {
+	/* The open inbox is the server's default, not a filter the reader chose, so
+	   it never counts as narrowing the set. */
 	it('counts only the filters the reader chose', () => {
-		const items = [item('a', 'unread')];
-		expect(inboxListing(items, '', '').activeFilters).toBe(0);
-		expect(inboxListing(items, 'unread', '').activeFilters).toBe(1);
-		expect(inboxListing(items, '', 'agent-run-failed').activeFilters).toBe(1);
-		expect(
-			inboxListing(items, 'unread', 'agent-run-failed').activeFilters,
-		).toBe(2);
-	});
-
-	it('reports a kind filter that matches nothing as narrowed', () => {
-		expect(inboxListing([], '', 'agent-run-failed').filtered).toBe(true);
+		expect(inboxActiveFilters('', '')).toBe(0);
+		expect(inboxActiveFilters('unread', '')).toBe(1);
+		expect(inboxActiveFilters('', 'agent-run-failed')).toBe(1);
+		expect(inboxActiveFilters('unread', 'agent-run-failed')).toBe(2);
 	});
 });
 
 describe('inbox selection', () => {
-	/* Archiving the open record drops it out of the default list. The drawer
+	/* Archiving the open record changes it in place on the page; the drawer
 	   reads the loaded set, so it survives the change it just made. */
-	it('keeps resolving a record the default list no longer shows', () => {
+	it('keeps resolving a record the open inbox would no longer list', () => {
 		const items = [item('a', 'archived'), item('b', 'unread')];
-		expect(
-			inboxListing(items, '', '').visible.map((entry) => entry.id),
-		).toEqual(['b']);
 		expect(selectedInboxItem(items, 'a')?.id).toBe('a');
 	});
 

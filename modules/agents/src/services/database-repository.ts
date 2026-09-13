@@ -15,10 +15,13 @@ import type {
 	JsonValue,
 } from '@flowdular/harness';
 import { usageCostMicros } from '@flowdular/harness/catalog';
+import { keysetWhere } from '@flowdular/server';
 import type {
 	AgentAuditEvent,
-	AgentAuditPage,
+	AgentAuditListQuery,
 	AgentDefinition,
+	AgentListPage,
+	AgentListQuery,
 	AgentDefinitionRevision,
 	AgentActionInvocation,
 	AgentRevisionProcedure,
@@ -29,6 +32,7 @@ import type {
 	AgentRun,
 	AgentRunDetail,
 	AgentRunExecution,
+	AgentRunListQuery,
 	AgentUsageAgent,
 	AgentUsageBucket,
 	AgentUsageDay,
@@ -574,15 +578,75 @@ const RUN_FROM = `agent_runs LEFT JOIN agent_run_execution_limits
 	LEFT JOIN agent_run_contracts ON agent_run_contracts.run_id = agent_runs.id
 	JOIN agent_run_actors ON agent_run_actors.run_id = agent_runs.id
 	 AND agent_run_actors.tenant_id = agent_runs.tenant_id`;
-const AGENT_SELECT = `SELECT agent_definitions.*,
+const AGENT_COLUMNS = `agent_definitions.*,
  COALESCE(agent_definition_execution_limits.timeout_ms,
  agent_definitions.timeout_ms) AS timeout_ms,
  COALESCE(agent_definition_output_limits.max_output_tokens,
- ${DEFAULT_MAX_OUTPUT_TOKENS}) AS max_output_tokens
- FROM agent_definitions LEFT JOIN agent_definition_execution_limits
+ ${DEFAULT_MAX_OUTPUT_TOKENS}) AS max_output_tokens`;
+const AGENT_FROM = `agent_definitions LEFT JOIN agent_definition_execution_limits
  ON agent_definition_execution_limits.agent_id = agent_definitions.id
  LEFT JOIN agent_definition_output_limits
  ON agent_definition_output_limits.agent_id = agent_definitions.id`;
+const AGENT_SELECT = `SELECT ${AGENT_COLUMNS} FROM ${AGENT_FROM}`;
+
+/* The term is matched as a substring, so the three characters LIKE reads as
+   syntax are escaped with PostgreSQL's default backslash. */
+function likePattern(term: string): string {
+	return '%' + term.replace(/[\\%_]/g, (character) => '\\' + character) + '%';
+}
+
+/* The page order and the keyset predicate are one decision, so the planner
+   walks agent_definitions_tenant_name_key_idx or _tenant_updated_idx from the
+   cursor; tests/list-plan.test.ts reads the plan. A subquery names the collation key, since a keyset column must be a
+   plain identifier; PostgreSQL pulls it up and reads the expression index. */
+const AGENT_PAGE_FROM = `(SELECT ${AGENT_COLUMNS},
+ lower(agent_definitions.name) AS name_key
+ FROM ${AGENT_FROM}
+ WHERE agent_definitions.tenant_id = $1
+   AND ($2::text IS NULL OR agent_definitions.name ILIKE $2
+        OR agent_definitions.agent_key ILIKE $2
+        OR agent_definitions.description ILIKE $2)) AS agents`;
+
+export function agentPageStatement(query: AgentListQuery): string {
+	const column = query.sort === 'name' ? 'name_key' : 'updated_at';
+	const order = query.direction === 'asc' ? 'ASC' : 'DESC';
+	const keyset =
+		query.after === null
+			? ''
+			: ' WHERE ' +
+				keysetWhere([column, 'id'], ['', ''], {
+					direction: query.direction,
+					parameterOffset: 2,
+				}).text;
+	return `SELECT * FROM ${AGENT_PAGE_FROM}${keyset}
+ ORDER BY ${column} ${order}, id ${order} LIMIT $${query.after === null ? 3 : 5}`;
+}
+
+const RUN_LIST_FILTERS = `agent_runs.tenant_id = $1
+ AND ($2::text IS NULL OR status = $2)
+ AND ($3::text IS NULL OR agent_id = $3)
+ AND ($4::text IS NULL OR trigger = $4)
+ AND ($5::text IS NULL OR agent_name ILIKE $5 OR agent_runs.id = $6)`;
+
+export function runPageStatement(query: AgentRunListQuery): string {
+	const order = query.direction === 'asc' ? 'ASC' : 'DESC';
+	const keyset =
+		query.after === null
+			? ''
+			: ' AND ' +
+				keysetWhere(['queued_at', 'id'], ['', ''], {
+					direction: query.direction,
+					parameterOffset: 6,
+				}).text;
+	return `SELECT ${RUN_COLUMNS} FROM ${RUN_FROM} WHERE ${RUN_LIST_FILTERS}${keyset}
+ ORDER BY queued_at ${order}, agent_runs.id ${order} LIMIT $${query.after === null ? 7 : 9}`;
+}
+
+/* Newest first over the order agent_audit_v4_tenant_time_idx carries. */
+const AUDIT_PAGE_KEYSET = keysetWhere(['occurred_at', 'sequence'], ['', ''], {
+	direction: 'desc',
+	parameterOffset: 1,
+}).text;
 const AGENT_REVISION_SELECT = `SELECT agent_definition_revisions.*,
  agent_revision_ownership.module_id,
  agent_revision_ownership.module_definition_revision
@@ -634,7 +698,6 @@ export interface AgentsPersistenceStatements {
 	readonly updateProcedure: string;
 	readonly procedureUsage: string;
 	readonly deleteProcedure: string;
-	readonly listRuns: string;
 	readonly getRun: string;
 	readonly listRunEvents: string;
 	readonly findRunByIdempotencyKey: string;
@@ -847,8 +910,6 @@ export const AGENTS_SQL: AgentsPersistenceStatements = Object.freeze({
 				 WHERE agent_skill_assignments.tenant_id = $1
 				   AND agent_skill_assignments.skill_id = $2`,
 	deleteProcedure: `DELETE FROM agent_skills WHERE tenant_id = $1 AND id = $2`,
-	listRuns: `SELECT ${RUN_COLUMNS} FROM ${RUN_FROM} WHERE agent_runs.tenant_id = $1
-					 ORDER BY queued_at DESC, agent_runs.id DESC LIMIT $2`,
 	getRun: `SELECT ${RUN_COLUMNS} FROM ${RUN_FROM} WHERE agent_runs.tenant_id = $1 AND agent_runs.id = $2`,
 	listRunEvents: `SELECT sequence, event_type, message, metadata_json, occurred_at
 					 FROM agent_run_events WHERE tenant_id = $1 AND run_id = $2
@@ -1018,8 +1079,8 @@ export const AGENTS_SQL: AgentsPersistenceStatements = Object.freeze({
 					 WHERE tenant_id = $1 AND sequence > $2
 					 ORDER BY sequence LIMIT $3`,
 	pageAuditEvents1: `SELECT * FROM agent_audit_events_v4 WHERE tenant_id = $1
-							 AND (occurred_at < $2 OR (occurred_at = $3 AND sequence < $4))
-							 ORDER BY occurred_at DESC, sequence DESC LIMIT $5`,
+							 AND ${AUDIT_PAGE_KEYSET}
+							 ORDER BY occurred_at DESC, sequence DESC LIMIT $4`,
 	pageAuditEvents2: `SELECT * FROM agent_audit_events_v4 WHERE tenant_id = $1
 							 ORDER BY occurred_at DESC, sequence DESC LIMIT $2`,
 	verifyAuditChainDetailed: `SELECT * FROM agent_audit_events_v4 WHERE tenant_id = $1
@@ -1607,20 +1668,55 @@ export class DatabaseAgentRepository implements AgentRepository {
 			const rows = (await this.#query(transaction, AGENTS_SQL.listAgents, [
 				tenantId,
 			])) as unknown as AgentRow[];
-			const agents: AgentDefinition[] = [];
-			for (const row of rows) {
-				const agent = fromAgentRow(row);
-				agents.push({
-					...agent,
-					procedureIds: await this.#procedureIds(
-						transaction,
-						agent.tenantId,
-						agent.id,
-					),
-				});
-			}
-			return agents;
+			return await this.#withProcedureIds(transaction, rows);
 		});
+	}
+
+	async listAgentsPage(
+		tenantId: string,
+		query: AgentListQuery,
+	): Promise<AgentListPage> {
+		return this.#tx(tenantId, 'read', async (transaction) => {
+			const rows = (await this.#query(transaction, agentPageStatement(query), [
+				tenantId,
+				query.search === null ? null : likePattern(query.search),
+				...(query.after === null
+					? []
+					: [query.after.sortValue, query.after.id]),
+				query.limit,
+			])) as unknown as (AgentRow & { name_key: string })[];
+			const agents = await this.#withProcedureIds(transaction, rows);
+			const last = agents.at(-1);
+			return {
+				agents,
+				last: last
+					? {
+							nameKey: rows[rows.length - 1]!.name_key,
+							updatedAt: last.updatedAt,
+							id: last.id,
+						}
+					: null,
+			};
+		});
+	}
+
+	async #withProcedureIds(
+		transaction: DatabaseTransaction,
+		rows: readonly AgentRow[],
+	): Promise<readonly AgentDefinition[]> {
+		const agents: AgentDefinition[] = [];
+		for (const row of rows) {
+			const agent = fromAgentRow(row);
+			agents.push({
+				...agent,
+				procedureIds: await this.#procedureIds(
+					transaction,
+					agent.tenantId,
+					agent.id,
+				),
+			});
+		}
+		return agents;
 	}
 
 	providerUsage(
@@ -1955,12 +2051,18 @@ export class DatabaseAgentRepository implements AgentRepository {
 
 	async listRuns(
 		tenantId: string,
-		limit: number,
+		query: AgentRunListQuery,
 	): Promise<readonly AgentRun[]> {
 		return this.#tx(tenantId, 'read', async (transaction) => {
-			const rows = (await this.#query(transaction, AGENTS_SQL.listRuns, [
+			const rows = (await this.#query(transaction, runPageStatement(query), [
 				tenantId,
-				limit,
+				query.status,
+				query.agentId,
+				query.trigger,
+				query.search === null ? null : likePattern(query.search),
+				query.search,
+				...(query.after === null ? [] : [query.after.queuedAt, query.after.id]),
+				query.limit,
 			])) as unknown as RunRow[];
 			const runs: AgentRun[] = [];
 			for (const row of rows) {
@@ -2753,31 +2855,21 @@ export class DatabaseAgentRepository implements AgentRepository {
 
 	async pageAuditEvents(
 		tenantId: string,
-		cursor: { readonly occurredAt: number; readonly sequence: number } | null,
-		limit: number,
-	): Promise<AgentAuditPage> {
+		query: AgentAuditListQuery,
+	): Promise<readonly AgentAuditEvent[]> {
 		return this.#tx(tenantId, 'read', async (transaction) => {
-			const rows = (cursor
+			const rows = (query.after
 				? await this.#query(transaction, AGENTS_SQL.pageAuditEvents1, [
 						tenantId,
-						cursor.occurredAt,
-						cursor.occurredAt,
-						cursor.sequence,
-						limit + 1,
+						query.after.occurredAt,
+						query.after.sequence,
+						query.limit,
 					])
 				: await this.#query(transaction, AGENTS_SQL.pageAuditEvents2, [
 						tenantId,
-						limit + 1,
+						query.limit,
 					])) as unknown as AuditRow[];
-			const page = rows.slice(0, limit).map(fromAuditRow);
-			const last = page[page.length - 1];
-			return {
-				events: page,
-				nextCursor:
-					rows.length > limit && last
-						? `${last.occurredAt}:${last.sequence}`
-						: null,
-			};
+			return rows.map(fromAuditRow);
 		});
 	}
 

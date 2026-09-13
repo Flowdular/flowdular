@@ -227,19 +227,22 @@ describe('DIRECTORY-GROUP-ROLE', () => {
 		const listed = (await (
 			await suite.admin('/api/directory/groups', 'GET', owner)
 		).json()) as {
-			groups: {
+			items: {
 				displayName: string;
 				roleKey: string | null;
 				memberCount: number;
 			}[];
-			roles: string[];
-			defaultRole: string;
+			page: { nextCursor: string | null };
 		};
-		expect(listed.groups).toMatchObject([
+		expect(listed.items).toMatchObject([
 			{ displayName: 'Everyone', roleKey: null, memberCount: 1 },
 		]);
-		expect(listed.roles).toContain('member');
-		expect(listed.defaultRole).toBe('member');
+		expect(listed.page.nextCursor).toBeNull();
+		const context = (await (
+			await suite.admin('/api/directory/groups/context', 'GET', owner)
+		).json()) as { roles: string[]; defaultRole: string };
+		expect(context.roles).toContain('member');
+		expect(context.defaultRole).toBe('member');
 	});
 
 	it('applies a patch that names its attribute in the value instead of a path', async () => {
@@ -693,12 +696,139 @@ describe('DIRECTORY-LAST-OWNER', () => {
 
 		const listed = (await (
 			await suite.admin('/api/directory/groups', 'GET', owner)
-		).json()) as { groups: { displayName: string; roleKey: string | null }[] };
+		).json()) as { items: { displayName: string; roleKey: string | null }[] };
 		expect(
-			listed.groups.find((group) => group.displayName === 'Leads')?.roleKey,
+			listed.items.find((group) => group.displayName === 'Leads')?.roleKey,
 		).toBe('lead');
 		expect(await roleOf(suite, owner, 'ada@example.com')).toBe('lead');
 		expect(await roleOf(suite, owner, 'grace@example.com')).toBe('lead');
+	});
+});
+
+interface GroupPage {
+	readonly items: {
+		readonly displayName: string;
+		readonly precedence: number;
+	}[];
+	readonly page: { readonly nextCursor: string | null };
+}
+
+async function groupPage(
+	suite: DirectoryHarness,
+	session: Session,
+	query: string,
+): Promise<{
+	readonly status: number;
+	readonly body: GroupPage;
+	readonly code: string;
+}> {
+	const response = await suite.admin(
+		'/api/directory/groups?' + query,
+		'GET',
+		session,
+	);
+	const body = (await response.json()) as GroupPage & {
+		error?: { code?: string };
+	};
+	return { status: response.status, body, code: body.error?.code ?? '' };
+}
+
+describe('DIRECTORY-SCREEN-PAGING groups', () => {
+	/* Two groups share a precedence, so the id has to break the tie. */
+	const GROUPS: readonly [string, number][] = [
+		['Delta', 20],
+		['alpha', 10],
+		['Charlie', 20],
+		['bravo', 30],
+		['Echo', 5],
+	];
+
+	async function seeded(): Promise<[DirectoryHarness, Session]> {
+		const suite = await harness();
+		const owner = await suite.signUp('owner@example.com', 'workspace-a');
+		const token = await issueToken(suite, owner);
+		for (const [name, precedence] of GROUPS) {
+			const group = await createGroup(suite, owner, token.token, name);
+			expect((await map(suite, owner, group.id, null, precedence)).status).toBe(
+				200,
+			);
+		}
+		return [suite, owner];
+	}
+
+	it('pages by precedence then id and by display name without overlap or gap', async () => {
+		const [suite, owner] = await seeded();
+		const walked: string[] = [];
+		let cursor: string | null = null;
+		let pages = 0;
+		do {
+			const page = await groupPage(
+				suite,
+				owner,
+				'limit=2' +
+					(cursor === null ? '' : '&cursor=' + encodeURIComponent(cursor)),
+			);
+			expect(page.status).toBe(200);
+			walked.push(...page.body.items.map((group) => group.displayName));
+			cursor = page.body.page.nextCursor;
+			pages += 1;
+		} while (cursor !== null);
+		expect(pages).toBe(3);
+		expect(walked.slice(0, 2)).toEqual(['Echo', 'alpha']);
+		expect(new Set(walked.slice(2, 4))).toEqual(new Set(['Delta', 'Charlie']));
+		expect(walked[4]).toBe('bravo');
+
+		const byName = await groupPage(suite, owner, 'sort=displayName&limit=3');
+		expect(byName.body.items.map((group) => group.displayName)).toEqual([
+			'alpha',
+			'bravo',
+			'Charlie',
+		]);
+		const rest = await groupPage(
+			suite,
+			owner,
+			'sort=displayName&limit=3&cursor=' +
+				encodeURIComponent(byName.body.page.nextCursor!),
+		);
+		expect(rest.body.items.map((group) => group.displayName)).toEqual([
+			'Delta',
+			'Echo',
+		]);
+		expect(rest.body.page.nextCursor).toBeNull();
+
+		const searched = await groupPage(
+			suite,
+			owner,
+			'sort=displayName&direction=desc&q=A',
+		);
+		expect(searched.body.items.map((group) => group.displayName)).toEqual([
+			'Delta',
+			'Charlie',
+			'bravo',
+			'alpha',
+		]);
+	});
+
+	it('refuses a cursor from another sort, filter or workspace and an unknown sort key', async () => {
+		const [suite, owner] = await seeded();
+		const other = await suite.signUp('owner-b@example.com', 'workspace-b');
+		const page = await groupPage(suite, owner, 'limit=2');
+		const cursor = encodeURIComponent(page.body.page.nextCursor!);
+		expect(
+			(await groupPage(suite, owner, 'sort=displayName&cursor=' + cursor)).code,
+		).toBe('CURSOR_INVALID');
+		expect((await groupPage(suite, owner, 'q=a&cursor=' + cursor)).code).toBe(
+			'CURSOR_INVALID',
+		);
+		expect((await groupPage(suite, other, 'cursor=' + cursor)).code).toBe(
+			'CURSOR_INVALID',
+		);
+		expect(
+			(await groupPage(suite, owner, 'cursor=' + cursor.slice(0, -4) + 'AAAA'))
+				.code,
+		).toBe('CURSOR_INVALID');
+		const unknown = await groupPage(suite, owner, 'sort=memberCount');
+		expect([unknown.status, unknown.code]).toEqual([400, 'INVALID_INPUT']);
 	});
 });
 

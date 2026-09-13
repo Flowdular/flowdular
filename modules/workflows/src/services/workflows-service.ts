@@ -41,11 +41,15 @@ import type {
 	WorkflowRevision,
 	WorkflowRunAccepted,
 	WorkflowRunDetail,
+	WorkflowAuditListQuery,
+	WorkflowDefinitionListQuery,
+	WorkflowDefinitionPage,
 	WorkflowRunEventV1,
-	WorkflowRunFilters,
+	WorkflowRunListQuery,
 	WorkflowRunPage,
 	WorkflowRunSummary,
 	WorkflowSimulationRequest,
+	WorkflowSortDirection,
 	WorkflowUsageRollupV1,
 } from '../domain/types.ts';
 import { WORKFLOW_LIMITS } from '../domain/types.ts';
@@ -55,10 +59,17 @@ import {
 	type ApprovalsRequests,
 	type WorkspaceRolesResolver,
 } from './approvals.ts';
-import type { WorkflowCursorCodec } from './cursor-codec.ts';
+import {
+	readWorkflowCursor,
+	signWorkflowCursor,
+	type WorkflowCursorKeys,
+	type WorkflowCursorPayload,
+} from './cursors.ts';
 import { safePayloadEvidence } from './payload-codec.ts';
 import type {
 	WorkflowAuditPage,
+	WorkflowKeysetPage,
+	WorkflowKeysetPosition,
 	WorkflowRunRecord,
 	WorkflowsRepository,
 } from './repository.ts';
@@ -77,6 +88,69 @@ function pageLimit(
 		throw new WorkflowsServiceError(
 			'WORKFLOW_LIMIT_INVALID',
 			`${field} must be an integer between 1 and ${maximum}.`,
+		);
+	}
+	return value;
+}
+
+/**
+ * What a list cursor is bound to. A page is a position inside one ordered,
+ * narrowed set; a cursor presented with a different tenant, sort or filters
+ * would name a position in a set it was never read from, so it is refused.
+ */
+interface ListBinding<Sort extends string> {
+	readonly kind: 'definitions' | 'runs' | 'audit';
+	readonly tenantId: string;
+	readonly sort: Sort;
+	readonly direction: WorkflowSortDirection;
+	/** The filters in one canonical form, so equal filters compare equal. */
+	readonly filters: string;
+}
+
+function cursorInvalid(): WorkflowsServiceError {
+	return new WorkflowsServiceError(
+		'CURSOR_INVALID',
+		'The page cursor is not valid.',
+		400,
+	);
+}
+
+/** Only the filters that are set, in a fixed key order. */
+function canonicalFilters(
+	filters: Readonly<Record<string, string | undefined>>,
+): string {
+	const present: Record<string, string> = {};
+	for (const key of Object.keys(filters).sort()) {
+		const value = filters[key];
+		if (value !== undefined && value !== '') present[key] = value;
+	}
+	return JSON.stringify(present);
+}
+
+function direction(
+	value: WorkflowSortDirection | undefined,
+	fallback: WorkflowSortDirection,
+): WorkflowSortDirection {
+	if (value === undefined) return fallback;
+	if (value !== 'asc' && value !== 'desc') {
+		throw new WorkflowsServiceError(
+			'WORKFLOW_INPUT_INVALID',
+			'direction must be asc or desc.',
+		);
+	}
+	return value;
+}
+
+function sortKey<Sort extends string>(
+	value: Sort | undefined,
+	allowed: readonly Sort[],
+	fallback: Sort,
+): Sort {
+	if (value === undefined) return fallback;
+	if (!allowed.includes(value)) {
+		throw new WorkflowsServiceError(
+			'WORKFLOW_INPUT_INVALID',
+			`sort must be one of ${allowed.join(', ')}.`,
 		);
 	}
 	return value;
@@ -130,7 +204,7 @@ export class WorkflowsServiceError extends Error {
 
 export interface WorkflowsServiceOptions {
 	readonly capabilities: PlatformCapabilityRegistry;
-	readonly cursorCodec: WorkflowCursorCodec;
+	readonly cursorKeys: WorkflowCursorKeys;
 	/* Roles the workspace defines, for the human-approval requirement check at
 	   publish time. Absent means no role can be confirmed, which the compiler
 	   reports the same way it reports an unknown one. */
@@ -355,9 +429,88 @@ export class WorkflowsService {
 		};
 	}
 
-	async list(tenantId: string): Promise<readonly WorkflowDefinition[]> {
-		return await this.repository.listDefinitions(
-			bounded(tenantId, 'tenantId', 1, 128),
+	async listDefinitions(
+		tenantId: string,
+		query: WorkflowDefinitionListQuery = {},
+	): Promise<WorkflowDefinitionPage> {
+		const sort = sortKey(query.sort, ['name', 'updatedAt'], 'name');
+		const binding: ListBinding<typeof sort> = {
+			kind: 'definitions',
+			tenantId: bounded(tenantId, 'tenantId', 1, 128),
+			sort,
+			direction: direction(query.direction, 'asc'),
+			filters: canonicalFilters({
+				status: query.status,
+				search: query.search,
+			}),
+		};
+		const limit = pageLimit(
+			query.limit,
+			'limit',
+			WORKFLOW_LIMITS.maxInteractivePage,
+			50,
+		);
+		const page = await this.repository.listDefinitions(binding.tenantId, {
+			...(query.status ? { status: query.status } : {}),
+			...(query.search ? { search: query.search } : {}),
+			sort,
+			direction: binding.direction,
+			limit,
+			after: this.#listPosition(binding, query.cursor, sort === 'name'),
+		});
+		return {
+			definitions: page.items,
+			nextCursor: this.#nextListCursor(binding, page, limit),
+		};
+	}
+
+	/* The cursor a page issued names the row it ended on, inside the binding it
+	   was read under. Anything this service did not sign, or signed for another
+	   tenant, order or filter set, is one refusal. */
+	#listPosition<Sort extends string>(
+		binding: ListBinding<Sort>,
+		cursor: string | null | undefined,
+		textKey: boolean,
+	): WorkflowKeysetPosition | null {
+		if (!cursor) return null;
+		let payload: WorkflowCursorPayload;
+		try {
+			payload = readWorkflowCursor(cursor, this.options.cursorKeys);
+		} catch {
+			throw cursorInvalid();
+		}
+		if (
+			payload.kind !== binding.kind ||
+			payload.tenantId !== binding.tenantId ||
+			payload.sort !== binding.sort ||
+			payload.direction !== binding.direction ||
+			payload.filters !== binding.filters
+		) {
+			throw cursorInvalid();
+		}
+		const key = payload.key;
+		const id = payload.id;
+		if (
+			key === undefined ||
+			id === undefined ||
+			(typeof key === 'string') !== textKey
+		) {
+			throw cursorInvalid();
+		}
+		return { key, id };
+	}
+
+	/* A full page may still be the last one; the client stops when the cursor
+	   stops, which costs one empty page at most. */
+	#nextListCursor<Sort extends string, T>(
+		binding: ListBinding<Sort>,
+		page: WorkflowKeysetPage<T>,
+		limit: number,
+	): string | null {
+		if (!page.last || page.items.length < limit) return null;
+		return signWorkflowCursor(
+			{ ...binding, key: page.last.key, id: page.last.id },
+			this.options.cursorKeys,
 		);
 	}
 
@@ -1009,58 +1162,44 @@ export class WorkflowsService {
 
 	async listRuns(
 		tenantId: string,
-		filters: WorkflowRunFilters,
+		query: WorkflowRunListQuery = {},
 	): Promise<WorkflowRunPage> {
-		const normalizedTenant = bounded(tenantId, 'tenantId', 1, 128);
+		const sort = sortKey(query.sort, ['queuedAt'], 'queuedAt');
+		const binding: ListBinding<typeof sort> = {
+			kind: 'runs',
+			tenantId: bounded(tenantId, 'tenantId', 1, 128),
+			sort,
+			direction: direction(query.direction, 'desc'),
+			filters: canonicalFilters({
+				workflowId: query.workflowId,
+				mode: query.mode,
+				status: query.status,
+				actorKind: query.actorKind,
+				originKind: query.originKind,
+				search: query.search,
+			}),
+		};
 		const limit = pageLimit(
-			filters.limit,
+			query.limit,
 			'limit',
 			WORKFLOW_LIMITS.maxInteractivePage,
 			50,
 		);
-		const normalized = { ...filters, limit, cursor: null };
-		const filterDigest = jsonHash(normalized as unknown as JsonValue);
-		let rawCursor: string | null = null;
-		if (filters.cursor) {
-			try {
-				const decoded = this.options.cursorCodec.decode<{
-					readonly tenantId: string;
-					readonly filterDigest: string;
-					readonly raw: string;
-				}>('wfrc1', filters.cursor);
-				if (
-					decoded.tenantId !== normalizedTenant ||
-					decoded.filterDigest !== filterDigest
-				) {
-					throw new WorkflowsServiceError(
-						'WORKFLOW_CURSOR_MISMATCH',
-						'The run cursor belongs to another tenant or filter.',
-						409,
-					);
-				}
-				rawCursor = decoded.raw;
-			} catch (error) {
-				if (error instanceof WorkflowsServiceError) throw error;
-				throw new WorkflowsServiceError(
-					'WORKFLOW_CURSOR_INVALID',
-					'The run cursor is invalid.',
-				);
-			}
-		}
-		const page = await this.repository.listRuns(normalizedTenant, {
-			...filters,
+		const page = await this.repository.listRuns(binding.tenantId, {
+			...(query.workflowId ? { workflowId: query.workflowId } : {}),
+			...(query.mode ? { mode: query.mode } : {}),
+			...(query.status ? { status: query.status } : {}),
+			...(query.actorKind ? { actorKind: query.actorKind } : {}),
+			...(query.originKind ? { originKind: query.originKind } : {}),
+			...(query.search ? { search: query.search } : {}),
+			sort,
+			direction: binding.direction,
 			limit,
-			cursor: rawCursor,
+			after: this.#listPosition(binding, query.cursor, false),
 		});
 		return {
-			runs: page.runs,
-			nextCursor: page.nextCursor
-				? this.options.cursorCodec.encode('wfrc1', {
-						tenantId: normalizedTenant,
-						filterDigest,
-						raw: page.nextCursor,
-					})
-				: null,
+			runs: page.items,
+			nextCursor: this.#nextListCursor(binding, page, limit),
 		};
 	}
 
@@ -1134,34 +1273,36 @@ export class WorkflowsService {
 				'The event sequence is invalid.',
 			);
 		}
-		return this.options.cursorCodec.encode('wfre1', {
-			tenantId: bounded(tenantId, 'tenantId', 1, 128),
-			runId: bounded(runId, 'runId', 1, 128),
-			sequence,
-		});
+		return signWorkflowCursor(
+			{
+				kind: 'events',
+				tenantId: bounded(tenantId, 'tenantId', 1, 128),
+				runId: bounded(runId, 'runId', 1, 128),
+				sequence,
+			},
+			this.options.cursorKeys,
+		);
 	}
 
 	eventSequence(tenantId: string, runId: string, cursor: string): number {
 		try {
-			const decoded = this.options.cursorCodec.decode<{
-				readonly tenantId: string;
-				readonly runId: string;
-				readonly sequence: number;
-			}>('wfre1', cursor);
+			const decoded = readWorkflowCursor(cursor, this.options.cursorKeys);
+			const sequence = decoded.sequence;
 			if (
+				decoded.kind !== 'events' ||
 				decoded.tenantId !== bounded(tenantId, 'tenantId', 1, 128) ||
 				decoded.runId !== bounded(runId, 'runId', 1, 128) ||
-				!Number.isSafeInteger(decoded.sequence) ||
-				decoded.sequence < 0
+				typeof sequence !== 'number' ||
+				!Number.isSafeInteger(sequence) ||
+				sequence < 0
 			) {
 				throw new Error('cursor-binding');
 			}
-			return decoded.sequence;
+			return sequence;
 		} catch {
 			throw new WorkflowsServiceError(
 				'WORKFLOW_EVENT_CURSOR_INVALID',
 				'The event cursor is invalid for this workflow run.',
-				409,
 			);
 		}
 	}
@@ -1294,52 +1435,31 @@ export class WorkflowsService {
 
 	async listAudit(
 		tenantId: string,
-		limit: number,
-		cursor?: string | null,
+		query: WorkflowAuditListQuery = {},
 	): Promise<WorkflowAuditPage> {
-		const normalizedTenant = bounded(tenantId, 'tenantId', 1, 128);
-		const pageSize = pageLimit(
-			limit,
+		const sort = sortKey(query.sort, ['sequence', 'occurredAt'], 'sequence');
+		const binding: ListBinding<typeof sort> = {
+			kind: 'audit',
+			tenantId: bounded(tenantId, 'tenantId', 1, 128),
+			sort,
+			direction: direction(query.direction, 'desc'),
+			filters: canonicalFilters({}),
+		};
+		const limit = pageLimit(
+			query.limit,
 			'limit',
 			WORKFLOW_LIMITS.maxInteractivePage,
 			50,
 		);
-		let beforeSequence: number | undefined;
-		if (cursor) {
-			try {
-				const decoded = this.options.cursorCodec.decode<{
-					readonly tenantId: string;
-					readonly beforeSequence: number;
-				}>('wfac1', cursor);
-				if (decoded.tenantId !== normalizedTenant) {
-					throw new WorkflowsServiceError(
-						'WORKFLOW_CURSOR_MISMATCH',
-						'The audit cursor belongs to another tenant.',
-						409,
-					);
-				}
-				beforeSequence = decoded.beforeSequence;
-			} catch (error) {
-				if (error instanceof WorkflowsServiceError) throw error;
-				throw new WorkflowsServiceError(
-					'WORKFLOW_CURSOR_INVALID',
-					'The audit cursor is invalid.',
-				);
-			}
-		}
-		const page = await this.repository.listAudit(
-			normalizedTenant,
-			pageSize,
-			beforeSequence,
-		);
+		const page = await this.repository.listAudit(binding.tenantId, {
+			sort,
+			direction: binding.direction,
+			limit,
+			after: this.#listPosition(binding, query.cursor, false),
+		});
 		return {
-			events: page.events,
-			nextCursor: page.nextCursor
-				? this.options.cursorCodec.encode('wfac1', {
-						tenantId: normalizedTenant,
-						beforeSequence: Number(page.nextCursor),
-					})
-				: null,
+			events: page.items,
+			nextCursor: this.#nextListCursor(binding, page, limit),
 		};
 	}
 

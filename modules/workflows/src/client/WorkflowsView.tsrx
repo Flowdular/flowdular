@@ -1,4 +1,4 @@
-import { activeLocale, t } from '@flowdular/client';
+import { t } from '@flowdular/client';
 import {
 	Alert,
 	Button,
@@ -8,19 +8,23 @@ import {
 	Filters,
 	Icon,
 	PageHeader,
+	Pagination,
 	SearchField,
 	TableCard,
 	Tag,
 	type TableColumn,
+	type TableSort,
 } from '@flowdular/ui';
 import { useEffect, useMemo } from 'octane';
 import { useValue } from 'segment-state';
 import type {
 	CreateWorkflowDefinitionInput,
 	WorkflowDefinition,
+	WorkflowDefinitionSort,
 	WorkflowGraphV1,
 	WorkflowNodeV1,
 	WorkflowRunDetail,
+	WorkflowRunSort,
 	WorkflowRunSummary,
 	WorkflowRunStatus,
 	WorkflowSimulationFixture,
@@ -63,7 +67,16 @@ import {
 	addConnectedNode,
 	type ConnectedNodeRequest,
 } from './connected-node.ts';
-import { createWorkflowsClientState } from './state.ts';
+import {
+	createWorkflowsClientState,
+	FIRST_PAGE_REQUEST,
+	listOrder,
+	pageOpened,
+	pageRequest,
+	searchPending,
+	type ListOrder,
+	type PageRequest,
+} from './state.ts';
 import { WorkflowCreateForm } from './WorkflowCreateForm.tsrx';
 import { WorkflowEditor } from './WorkflowEditor.tsrx';
 import { WorkflowExecutionHistory } from './WorkflowExecutionHistory.tsrx';
@@ -86,6 +99,7 @@ function definitionColumns(): readonly TableColumn<WorkflowDefinition>[] {
 			key: 'workflow',
 			header: t('workflows.table.column.workflow'),
 			width: '42%',
+			value: (record) => record.name,
 			cell: (record) => <span class="ui-cell">
 				<b>{record.name}</b>
 				<small class="ui-mono">{record.key}</small>
@@ -113,6 +127,7 @@ function definitionColumns(): readonly TableColumn<WorkflowDefinition>[] {
 			key: 'updated',
 			header: t('workflows.table.column.updated'),
 			width: '18%',
+			value: (record) => record.updatedAt,
 			cell: (record) => dateTime(record.updatedAt),
 		},
 		{
@@ -134,10 +149,50 @@ const TERMINAL_RUN_STATUSES: readonly WorkflowRunStatus[] = [
 	'cancelled',
 ];
 
+/* Both lists are pages the server cut; a sortable column names the key it
+   sorts on and the rest of the order comes from the default. */
+const PAGE_SIZE = 50;
+const DEFINITION_SORTS: Readonly<Record<string, WorkflowDefinitionSort>> = {
+	workflow: 'name',
+	updated: 'updatedAt',
+};
+const DEFAULT_DEFINITION_ORDER: ListOrder<WorkflowDefinitionSort> = {
+	sort: 'name',
+	direction: 'asc',
+};
+const RUN_SORTS: Readonly<Record<string, WorkflowRunSort>> = {
+	queued: 'queuedAt',
+};
+const DEFAULT_RUN_ORDER: ListOrder<WorkflowRunSort> = {
+	sort: 'queuedAt',
+	direction: 'desc',
+};
+const SEARCH_DELAY_MS = 300;
+
+interface DefinitionListOptions {
+	readonly status?: string;
+	readonly sorts?: readonly TableSort[];
+}
+
+interface RunListOptions {
+	/** Null asks for every workflow's runs; undefined keeps the open one's. */
+	readonly workflowId?: string | null;
+	readonly status?: string;
+	readonly sorts?: readonly TableSort[];
+}
+
 export function WorkflowsView(props: WorkflowsViewProps) @{
 	const client = useMemo(() => createWorkflowsClientState(), []);
 	const [definitions] = useValue(client.state.definitions);
+	const [definitionSorts, setDefinitionSorts] = useValue(
+		client.state.definitionSorts,
+	);
+	const [definitionPages] = useValue(client.state.definitionPages);
+	const [appliedQuery] = useValue(client.state.appliedQuery);
 	const [runs] = useValue(client.state.runs);
+	const [runSorts, setRunSorts] = useValue(client.state.runSorts);
+	const [runPages] = useValue(client.state.runPages);
+	const [appliedRunQuery] = useValue(client.state.appliedRunQuery);
 	const [detail, setDetail] = useValue(client.state.detail);
 	const [graph, setGraph] = useValue(client.state.graph);
 	const [selectedNodeId, setSelectedNodeId] = useValue(
@@ -190,35 +245,94 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 		client.state.editorDescription,
 	);
 	const [editorMode, setEditorMode] = useValue(client.state.editorMode);
-	const runCursor = useMemo(() => ({ value: null as string | null }), []);
 	const editVersion = useMemo(() => ({ value: 0 }), []);
 	const failedSaveVersion = useMemo(() => ({ value: -1 }), []);
 	const createSession = useMemo(() => ({ value: 0 }), []);
+
+	const loadDefinitions = async (
+		request: PageRequest,
+		options: DefinitionListOptions = {},
+	) => {
+		const statusValue = options.status ?? statusFilter;
+		const search = query.trim();
+		const page = await loadWorkflowDefinitions({
+			...listOrder(
+				options.sorts ?? definitionSorts,
+				DEFINITION_SORTS,
+				DEFAULT_DEFINITION_ORDER,
+			),
+			...(statusValue
+				? { status: statusValue as WorkflowDefinition['status'] }
+				: {}),
+			...(search ? { search } : {}),
+			limit: PAGE_SIZE,
+			cursor: request.cursor,
+		});
+		client.store.act((transaction) => {
+			transaction.set(client.state.definitions, page.items);
+			transaction.set(
+				client.state.definitionPages,
+				pageOpened(definitionPages, request, page.page.nextCursor),
+			);
+			transaction.set(client.state.appliedQuery, search);
+		}, 'workflows/definitions-loaded');
+	};
+
+	const loadRuns = async (
+		request: PageRequest,
+		options: RunListOptions = {},
+	) => {
+		if (!props.canReadRuns) return;
+		const workflowId =
+			options.workflowId === undefined
+				? detail?.definition.id
+				: options.workflowId ?? undefined;
+		const statusValue = options.status ?? runStatusFilter;
+		const search = runQuery.trim();
+		const page = await loadWorkflowRuns({
+			...listOrder(options.sorts ?? runSorts, RUN_SORTS, DEFAULT_RUN_ORDER),
+			...(workflowId ? { workflowId } : {}),
+			...(statusValue ? { status: statusValue as WorkflowRunStatus } : {}),
+			...(search ? { search } : {}),
+			limit: PAGE_SIZE,
+			cursor: request.cursor,
+		});
+		client.store.act((transaction) => {
+			transaction.set(client.state.runs, page.items);
+			transaction.set(
+				client.state.runPages,
+				pageOpened(runPages, request, page.page.nextCursor),
+			);
+			transaction.set(client.state.appliedRunQuery, search);
+		}, 'workflows/runs-loaded');
+	};
+
+	/* One list request at a time on screen: it shows the loading row, and a
+   failure lands in the alert with the rows it had before. */
+	const listRequest = async (action: () => Promise<void>, fallback: string) => {
+		setStatus('loading');
+		setError('');
+		try {
+			await action();
+		} catch (listError) {
+			setError(listError instanceof Error ? listError.message : fallback);
+		} finally {
+			setStatus('idle');
+		}
+	};
 
 	const refresh = async () => {
 		if (!props.canRead) return;
 		setStatus('loading');
 		setError('');
 		try {
-			const [loadedDefinitions, runPage] = await Promise.all([
-				loadWorkflowDefinitions(),
-				props.canReadRuns
-					? loadWorkflowRuns({
-							limit: 50,
-							...(runStatusFilter
-								? { status: runStatusFilter as WorkflowRunStatus }
-								: {}),
-						})
-					: Promise.resolve({
-							runs: [],
-							nextCursor: null,
-						}),
+			await Promise.all([
+				loadDefinitions(
+					pageRequest(definitionPages, definitionPages.pageIndex) ??
+						FIRST_PAGE_REQUEST,
+				),
+				loadRuns(FIRST_PAGE_REQUEST, { workflowId: null }),
 			]);
-			client.store.act((transaction) => {
-				transaction.set(client.state.definitions, loadedDefinitions);
-				transaction.set(client.state.runs, runPage.runs);
-			}, 'workflows/loaded');
-			runCursor.value = runPage.nextCursor;
 		} catch (loadError) {
 			setError(
 				loadError instanceof Error
@@ -233,6 +347,42 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 	useEffect(() => {
 		void refresh();
 	}, [props.canRead]);
+
+	useEffect(() => {
+		if (!props.canRead || !searchPending(query, appliedQuery)) return;
+		const timer = setTimeout(
+			() => void listRequest(
+				() => loadDefinitions(FIRST_PAGE_REQUEST),
+				t('workflows.error.load'),
+			),
+			SEARCH_DELAY_MS,
+		);
+		return () => clearTimeout(timer);
+	}, [query, appliedQuery]);
+
+	useEffect(() => {
+		if (!props.canReadRuns || !searchPending(runQuery, appliedRunQuery)) return;
+		const timer = setTimeout(
+			() => void listRequest(
+				() => loadRuns(FIRST_PAGE_REQUEST),
+				t('workflows.error.run'),
+			),
+			SEARCH_DELAY_MS,
+		);
+		return () => clearTimeout(timer);
+	}, [runQuery, appliedRunQuery]);
+
+	const goToDefinitionPage = (pageIndex: number) => {
+		const request = pageRequest(definitionPages, pageIndex);
+		if (!request || request.pageIndex === definitionPages.pageIndex) return;
+		void listRequest(() => loadDefinitions(request), t('workflows.error.load'));
+	};
+
+	const goToRunPage = (pageIndex: number) => {
+		const request = pageRequest(runPages, pageIndex);
+		if (!request || request.pageIndex === runPages.pageIndex) return;
+		void listRequest(() => loadRuns(request), t('workflows.error.run'));
+	};
 
 	useEffect(() => {
 		if (!detail || !graph || !dirty || saving || !props.canManage) return;
@@ -282,18 +432,10 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 		setStatus('loading');
 		setError('');
 		try {
-			const [loaded, catalog, runPage] = await Promise.all([
+			const [loaded, catalog] = await Promise.all([
 				loadWorkflowDetail(definition.id),
 				loadWorkflowCatalog(),
-				props.canReadRuns
-					? loadWorkflowRuns({
-							workflowId: definition.id,
-							limit: 50,
-							...(runStatusFilter
-								? { status: runStatusFilter as WorkflowRunStatus }
-								: {}),
-						})
-					: Promise.resolve({ runs: [], nextCursor: null }),
+				loadRuns(FIRST_PAGE_REQUEST, { workflowId: definition.id }),
 			]);
 			const editableGraph =
 				props.canManage && loaded.definition.status !== 'archived'
@@ -309,7 +451,6 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 				);
 				transaction.set(client.state.agents, catalog.agents);
 				transaction.set(client.state.actions, catalog.actions);
-				transaction.set(client.state.runs, runPage.runs);
 				transaction.set(client.state.validation, null);
 				transaction.set(client.state.liveValidation, null);
 				transaction.set(client.state.selectedRun, null);
@@ -327,7 +468,6 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 			setFixturesText(
 				JSON.stringify(simulationFixtures(editableGraph), null, 2),
 			);
-			runCursor.value = runPage.nextCursor;
 		} catch (loadError) {
 			setError(
 				loadError instanceof Error
@@ -483,22 +623,10 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 		}
 	};
 
-	const refreshRuns = async (
-		workflowId?: string,
-		statusValue = runStatusFilter,
-	) => {
-		if (!props.canReadRuns) return;
-		const page = await loadWorkflowRuns({
-			...(workflowId ? { workflowId } : {}),
-			...(statusValue ? { status: statusValue as WorkflowRunStatus } : {}),
-			limit: 50,
-		});
-		client.store.act(
-			(transaction) => transaction.set(client.state.runs, page.runs),
-			'workflows/runs-refreshed',
-		);
-		runCursor.value = page.nextCursor;
-	};
+	/* A new run belongs on the first page, newest first. */
+	const refreshRuns = (workflowId?: string) => loadRuns(FIRST_PAGE_REQUEST, {
+		workflowId: workflowId ?? null,
+	});
 
 	const confirmLive = async () => {
 		if (!detail || !liveValidation?.valid) return;
@@ -655,37 +783,6 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 		}
 	};
 
-	const loadMoreRuns = async () => {
-		if (!runCursor.value) return;
-		setStatus('loading');
-		try {
-			const page = await loadWorkflowRuns({
-				...(detail ? { workflowId: detail.definition.id } : {}),
-				...(runStatusFilter
-					? { status: runStatusFilter as WorkflowRunStatus }
-					: {}),
-				limit: 50,
-				cursor: runCursor.value,
-			});
-			client.store.act(
-				(transaction) => transaction.set(client.state.runs, [
-					...runs,
-					...page.runs,
-				]),
-				'workflows/runs-paged',
-			);
-			runCursor.value = page.nextCursor;
-		} catch (pageError) {
-			setError(
-				pageError instanceof Error
-					? pageError.message
-					: t('workflows.error.run'),
-			);
-		} finally {
-			setStatus('idle');
-		}
-	};
-
 	const cancelRun = async () => {
 		if (!selectedRun || !runActions(selectedRun.run, {
 					execute: props.canExecute,
@@ -730,15 +827,6 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 		}
 	};
 
-	const locale = activeLocale();
-	const term = query.trim().toLocaleLowerCase(locale);
-	const visibleDefinitions = definitions.filter(
-		(definition) =>
-			(term === '' ||
-				definition.name.toLocaleLowerCase(locale).includes(term) ||
-				definition.key.toLocaleLowerCase(locale).includes(term)) &&
-				(statusFilter === '' || definition.status === statusFilter),
-	);
 	const displayedGraph = selectedRun?.graph ?? graph;
 	const selectedNode =
 		displayedGraph?.nodes.find((node) => node.id === selectedNodeId) ?? null;
@@ -749,19 +837,33 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 			? <WorkflowExecutionHistory
 					runs={runs}
 					query={runQuery}
+					appliedQuery={appliedRunQuery}
 					statusFilter={runStatusFilter}
 					filtersOpen={runFiltersOpen}
 					loading={status === 'loading'}
-					hasMore={runCursor.value !== null}
+					sorting={runSorts}
+					pageIndex={runPages.pageIndex}
+					pageSize={PAGE_SIZE}
+					hasMore={runPages.nextCursor !== null}
 					selectedRunId={selectedRun?.run.id ?? ''}
 					onQuery={setRunQuery}
 					onStatusFilter={(value) => {
 						setRunStatusFilter(value);
-						void refreshRuns(detail?.definition.id, value);
+						void listRequest(
+							() => loadRuns(FIRST_PAGE_REQUEST, { status: value }),
+							t('workflows.error.run'),
+						);
 					}}
 					onToggleFilters={() => setRunFiltersOpen(!runFiltersOpen)}
+					onSorting={(sorts) => {
+						setRunSorts(sorts);
+						void listRequest(
+							() => loadRuns(FIRST_PAGE_REQUEST, { sorts }),
+							t('workflows.error.run'),
+						);
+					}}
+					onPage={goToRunPage}
 					onSelect={(run) => void selectRun(run)}
-					onLoadMore={() => void loadMoreRuns()}
 				/>
 			: null;
 
@@ -900,7 +1002,6 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 				}
 				<TableCard
 					title={t('workflows.table.title')}
-					count={t('workflows.table.count', { count: definitions.length })}
 					search={<SearchField
 						value={query}
 						placeholder={t('workflows.table.searchPlaceholder')}
@@ -918,7 +1019,16 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 							<select
 								class="ui-select"
 								value={statusFilter}
-								onInput={(event) => setStatusFilter(event.currentTarget.value)}
+								onInput={(event) => {
+									const value = event.currentTarget.value;
+									setStatusFilter(value);
+									void listRequest(
+										() => loadDefinitions(FIRST_PAGE_REQUEST, {
+											status: value,
+										}),
+										t('workflows.error.load'),
+									);
+								}}
 							>
 								<option value="">{t('workflows.table.allStatuses')}</option>
 								<option value="active">{t('workflows.status.active')}</option>
@@ -930,13 +1040,40 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 					</Filters>}
 					caption={t('workflows.table.caption')}
 					columns={definitionColumns()}
-					rows={visibleDefinitions}
+					rows={definitions}
 					rowKey={(record) => record.id}
-					status={status === 'loading' && definitions.length === 0
-						? 'loading'
-						: 'idle'}
+					mode="server"
+					sorting
+					sortingState={definitionSorts}
+					onSortingChange={(sorts) => {
+						setDefinitionSorts(sorts);
+						void listRequest(
+							() => loadDefinitions(FIRST_PAGE_REQUEST, { sorts }),
+							t('workflows.error.load'),
+						);
+					}}
+					pagination={{
+						pageIndex: definitionPages.pageIndex,
+						pageSize: PAGE_SIZE,
+						onPageChange: goToDefinitionPage,
+						hasMore: definitionPages.nextCursor !== null,
+					}}
+					after={<Pagination
+						pageIndex={definitionPages.pageIndex}
+						pageSize={PAGE_SIZE}
+						hasMore={definitionPages.nextCursor !== null}
+						onPageChange={goToDefinitionPage}
+						label={t('workflows.pagination.label')}
+						previousLabel={t('workflows.pagination.previous')}
+						nextLabel={t('workflows.pagination.next')}
+						summary={(page) => t('workflows.pagination.summary', {
+							page: page.pageIndex + 1,
+							from: page.from,
+						})}
+					/>}
+					status={status === 'loading' ? 'loading' : 'idle'}
 					loadingLabel={t('workflows.table.loading')}
-					filtered={term !== '' || statusFilter !== ''}
+					filtered={appliedQuery !== '' || statusFilter !== ''}
 					empty={{
 						icon: 'modules',
 						title: t('workflows.table.emptyTitle'),

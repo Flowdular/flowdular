@@ -1,8 +1,14 @@
+import { randomBytes } from 'node:crypto';
 import {
+	decodeCursor,
 	defineEndpoint,
+	encodeCursor,
+	HttpProblem,
 	jsonResponse,
+	pageResponse,
 	problemResponse,
 	readJsonObject,
+	readPageQuery,
 	requiredString,
 } from '@flowdular/server';
 import type { AuthRuntime } from '@flowdular/module-auth/server';
@@ -17,6 +23,12 @@ import type { CreateAutomationScheduleInput } from '../domain/types.ts';
 import { scheduleVariablesForScopes } from '../domain/variables.ts';
 import type { AutomationsRuntime } from '../server/runtime.ts';
 import { AutomationsServiceError } from '../services/automations-service.ts';
+import {
+	AUTOMATION_LIST_SORT_KEYS,
+	type AutomationListCursor,
+	type AutomationListQuery,
+	type AutomationListSortKey,
+} from '../services/repository.ts';
 import {
 	MAX_TRIGGER_BODY_BYTES,
 	TRIGGER_SIGNATURE_HEADER,
@@ -98,6 +110,114 @@ function optionalTargetInput(value: Record<string, unknown>) {
 	return Object.keys(target).length === 0 ? undefined : target;
 }
 
+const LIST_PAGE_LIMIT = 50;
+const MAX_LIST_PAGE_LIMIT = 200;
+const MAX_LIST_SEARCH_LENGTH = 120;
+
+function invalid(message: string): HttpProblem {
+	return new HttpProblem('INVALID_INPUT', message, 400);
+}
+
+function invalidCursor(): HttpProblem {
+	return new HttpProblem(
+		'CURSOR_INVALID',
+		'The page cursor is not valid.',
+		400,
+	);
+}
+
+interface ListRequest {
+	readonly query: AutomationListQuery;
+	/* Travels inside the cursor, so a cursor answers only the request that
+	   minted it: the same workspace, order and filters. */
+	readonly scope: Record<string, string>;
+}
+
+function listRequest(
+	url: URL,
+	tenantId: string,
+	cursorSecret: Uint8Array,
+): ListRequest {
+	const page = readPageQuery(url, {
+		maxLimit: MAX_LIST_PAGE_LIMIT,
+		defaultLimit: LIST_PAGE_LIMIT,
+	});
+	const sort = url.searchParams.get('sort') ?? 'label';
+	if (!AUTOMATION_LIST_SORT_KEYS.includes(sort as AutomationListSortKey)) {
+		throw invalid(
+			`sort must be one of ${AUTOMATION_LIST_SORT_KEYS.join(', ')}.`,
+		);
+	}
+	const direction = url.searchParams.get('direction') ?? 'asc';
+	if (direction !== 'asc' && direction !== 'desc') {
+		throw invalid('direction must be asc or desc.');
+	}
+	const enabledValue = url.searchParams.get('enabled') ?? '';
+	if (
+		enabledValue !== '' &&
+		enabledValue !== 'true' &&
+		enabledValue !== 'false'
+	) {
+		throw invalid('enabled must be true or false.');
+	}
+	const search = (url.searchParams.get('q') ?? '').trim();
+	if (search.length > MAX_LIST_SEARCH_LENGTH) {
+		throw invalid(`q is at most ${MAX_LIST_SEARCH_LENGTH} characters.`);
+	}
+	const scope = {
+		tenant: tenantId,
+		sort,
+		direction,
+		enabled: enabledValue,
+		q: search,
+	};
+	let after: AutomationListCursor | null = null;
+	if (page.cursor) {
+		const cursor = decodeCursor(page.cursor, cursorSecret);
+		for (const [key, value] of Object.entries(scope)) {
+			if (cursor[key] !== value) throw invalidCursor();
+		}
+		if (
+			typeof cursor.id !== 'string' ||
+			typeof cursor.value !== (sort === 'label' ? 'string' : 'number')
+		) {
+			throw invalidCursor();
+		}
+		after = { value: cursor.value!, id: cursor.id };
+	}
+	return {
+		query: {
+			sort: sort as AutomationListSortKey,
+			direction,
+			...(enabledValue === '' ? {} : { enabled: enabledValue === 'true' }),
+			...(search === '' ? {} : { search }),
+			limit: page.limit,
+			after,
+		},
+		scope,
+	};
+}
+
+function listResponse<Item>(
+	page: {
+		readonly items: readonly Item[];
+		readonly next: AutomationListCursor | null;
+	},
+	request: ListRequest,
+	cursorSecret: Uint8Array,
+): Response {
+	return pageResponse({
+		items: page.items,
+		limit: request.query.limit,
+		nextCursor: page.next
+			? encodeCursor(
+					{ ...request.scope, value: page.next.value, id: page.next.id },
+					cursorSecret,
+				)
+			: null,
+	});
+}
+
 function triggerRejection(): Response {
 	return jsonResponse(
 		{
@@ -114,6 +234,55 @@ export function createAutomationsRoutes(
 	auth: AuthRuntime,
 	runtime: AutomationsRuntime,
 ) {
+	/* Module-owned and never stored: a cursor names a position in one
+	   workspace's own list, so a restart invalidating one costs a client the
+	   first page. */
+	const cursorSecret = randomBytes(32);
+	const options = defineEndpoint({
+		id: 'automations.options',
+		path: '/api/automations/options',
+		methods: ['GET'],
+		access: { kind: 'permission', permission: AUTOMATIONS_PERMISSIONS.read },
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			const principal = principalFromContext(octane)!;
+			const schedules = await runtime.scheduleService();
+			return jsonResponse({
+				timeZone: schedules.timeZone(principal.tenantId),
+				variables: scheduleVariablesForScopes(principal.scopes),
+				agents: await schedules.agents(principal.tenantId),
+				targets: await schedules.targetOptions(
+					principal.tenantId,
+					userActor(principal),
+					principal.scopes,
+				),
+			});
+		},
+	});
+	/* The trigger form's half of the options, so a principal holding only the
+	   trigger permissions still gets its targets. */
+	const triggerOptions = defineEndpoint({
+		id: 'automations.triggers.options',
+		path: '/api/automations/triggers/options',
+		methods: ['GET'],
+		access: {
+			kind: 'permission',
+			permission: AUTOMATIONS_PERMISSIONS.triggersRead,
+		},
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			const principal = principalFromContext(octane)!;
+			const schedules = await runtime.scheduleService();
+			return jsonResponse({
+				agents: await schedules.agents(principal.tenantId),
+				targets: await schedules.targetOptions(
+					principal.tenantId,
+					userActor(principal),
+					principal.scopes,
+				),
+			});
+		},
+	});
 	const listSchedules = defineEndpoint({
 		id: 'automations.schedules.list',
 		path: '/api/automations/schedules',
@@ -121,26 +290,23 @@ export function createAutomationsRoutes(
 		access: { kind: 'permission', permission: AUTOMATIONS_PERMISSIONS.read },
 		resolveIdentity: endpointIdentityFromContext,
 		handler: async ({ octane }) => {
-			const principal = principalFromContext(octane)!;
-			return jsonResponse({
-				schedules: await (
-					await runtime.scheduleService()
-				).list(principal.tenantId),
-				timeZone: (await runtime.scheduleService()).timeZone(
+			try {
+				const principal = principalFromContext(octane)!;
+				const request = listRequest(
+					new URL(octane.request.url),
 					principal.tenantId,
-				),
-				variables: scheduleVariablesForScopes(principal.scopes),
-				agents: await (
-					await runtime.scheduleService()
-				).agents(principal.tenantId),
-				targets: await (
-					await runtime.scheduleService()
-				).targetOptions(
-					principal.tenantId,
-					userActor(principal),
-					principal.scopes,
-				),
-			});
+					cursorSecret,
+				);
+				return listResponse(
+					await (
+						await runtime.scheduleService()
+					).list(principal.tenantId, request.query),
+					request,
+					cursorSecret,
+				);
+			} catch (error) {
+				return failure(error);
+			}
 		},
 	});
 	const createSchedule = defineEndpoint({
@@ -264,22 +430,23 @@ export function createAutomationsRoutes(
 		},
 		resolveIdentity: endpointIdentityFromContext,
 		handler: async ({ octane }) => {
-			const principal = principalFromContext(octane)!;
-			return jsonResponse({
-				triggers: await (
-					await runtime.triggerService()
-				).list(principal.tenantId),
-				agents: await (
-					await runtime.scheduleService()
-				).agents(principal.tenantId),
-				targets: await (
-					await runtime.scheduleService()
-				).targetOptions(
+			try {
+				const principal = principalFromContext(octane)!;
+				const request = listRequest(
+					new URL(octane.request.url),
 					principal.tenantId,
-					userActor(principal),
-					principal.scopes,
-				),
-			});
+					cursorSecret,
+				);
+				return listResponse(
+					await (
+						await runtime.triggerService()
+					).list(principal.tenantId, request.query),
+					request,
+					cursorSecret,
+				);
+			} catch (error) {
+				return failure(error);
+			}
 		},
 	});
 	const createTrigger = defineEndpoint({
@@ -452,11 +619,13 @@ export function createAutomationsRoutes(
 		},
 	});
 	return [
+		options.serverRoute,
 		listSchedules.serverRoute,
 		createSchedule.serverRoute,
 		updateSchedule.serverRoute,
 		deleteSchedule.serverRoute,
 		runSchedule.serverRoute,
+		triggerOptions.serverRoute,
 		listTriggers.serverRoute,
 		createTrigger.serverRoute,
 		updateTrigger.serverRoute,
@@ -468,11 +637,13 @@ export function createAutomationsRoutes(
 }
 
 export const endpoints = [
+	'automations.options',
 	'automations.schedules.list',
 	'automations.schedules.create',
 	'automations.schedules.update',
 	'automations.schedules.delete',
 	'automations.schedules.run',
+	'automations.triggers.options',
 	'automations.triggers.list',
 	'automations.triggers.create',
 	'automations.triggers.update',

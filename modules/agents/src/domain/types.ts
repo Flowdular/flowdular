@@ -466,10 +466,50 @@ export interface AgentAuditEvent {
 	readonly eventHash: string;
 }
 
-export interface AgentAuditPage {
-	readonly events: readonly AgentAuditEvent[];
-	/** `${occurredAt}:${sequence}` of the last event, or null when exhausted. */
-	readonly nextCursor: string | null;
+export type ListDirection = 'asc' | 'desc';
+
+export type AgentListSort = 'name' | 'updatedAt';
+
+/* One page of tenant definitions. `after` is the keyset of the last row of the
+   previous page: the collation key SQL computed for a name sort, so a cursor
+   never carries a JavaScript lowercase that PostgreSQL would order elsewhere. */
+export interface AgentListQuery {
+	readonly sort: AgentListSort;
+	readonly direction: ListDirection;
+	readonly search: string | null;
+	readonly limit: number;
+	readonly after: {
+		readonly sortValue: string | number;
+		readonly id: string;
+	} | null;
+}
+
+export interface AgentListPage {
+	readonly agents: readonly AgentDefinition[];
+	/** The keyset of the last row, from which the caller signs the next cursor. */
+	readonly last: {
+		readonly nameKey: string;
+		readonly updatedAt: number;
+		readonly id: string;
+	} | null;
+}
+
+export interface AgentRunListQuery {
+	readonly direction: ListDirection;
+	readonly status: AgentRunStatus | null;
+	readonly agentId: string | null;
+	readonly trigger: AgentRunTrigger | null;
+	readonly search: string | null;
+	readonly limit: number;
+	readonly after: { readonly queuedAt: number; readonly id: string } | null;
+}
+
+export interface AgentAuditListQuery {
+	readonly limit: number;
+	readonly after: {
+		readonly occurredAt: number;
+		readonly sequence: number;
+	} | null;
 }
 
 /* Reports whether the tenant hash chain reproduces, and the id of the first

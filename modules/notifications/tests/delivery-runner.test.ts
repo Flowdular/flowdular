@@ -112,11 +112,13 @@ describe('the delivery pass on the platform runner', () => {
 			title: 'Nightly reconciliation failed',
 			recipients: [],
 		});
-		const queued = await shared.repository.listDeliveries(
-			TENANT,
-			{ status: 'pending' },
-			10,
-		);
+		const queued = (
+			await shared.repository.listDeliveries(
+				TENANT,
+				{ status: 'pending' },
+				{ limit: 10, direction: 'desc', after: null },
+			)
+		).rows;
 		expect(queued).toHaveLength(2);
 		const raising = queued[0]!;
 		const { deliveries, runner } = harness(
@@ -158,11 +160,13 @@ describe('the delivery pass on the platform runner', () => {
 			title: 'Nightly reconciliation failed',
 			recipients: [],
 		});
-		const queued = await shared.repository.listDeliveries(
-			TENANT,
-			{ status: 'pending' },
-			10,
-		);
+		const queued = (
+			await shared.repository.listDeliveries(
+				TENANT,
+				{ status: 'pending' },
+				{ limit: 10, direction: 'desc', after: null },
+			)
+		).rows;
 		expect(queued).toHaveLength(2);
 		/* The row another process is already sending: the routing read still
 		   answers it, and the claim is what refuses it. */

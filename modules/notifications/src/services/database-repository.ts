@@ -6,6 +6,7 @@ import type {
 	DatabaseTransaction,
 } from '@flowdular/database';
 import { integer, runDatabaseMigrations } from '@flowdular/database';
+import { keysetWhere } from '@flowdular/server';
 import type {
 	DeliveryAttempt,
 	DeliveryChannel,
@@ -26,10 +27,13 @@ import type {
 	DeliveryFilters,
 	ExportCursor,
 	InboxFilters,
+	ListPage,
 	NotificationsRepository,
+	PagedRows,
 	PublishEventInput,
 	PublishEventResult,
 	StoredWebhookSubscription,
+	SubscriptionFilters,
 } from './repository.ts';
 import type { EncryptedSecret } from './secret-vault.ts';
 
@@ -126,6 +130,28 @@ const DELIVERY_COLUMNS = `id, tenant_id, channel, subscription_id,
 	 attempt_number, status, scheduled_for, completed_at, response_status,
 	 error_class, payload_digest, payload_bytes, occurred_at, created_at`;
 
+/* The three list screens page by keyset. Each list has one filter predicate
+   and one page index, and the page read is composed from them at call time so
+   the direction, the keyset and the limit stay one decision. */
+const INBOX_LIST = `tenant_id = $1 AND recipient_account_id = $2
+	   AND (($3::text IS NULL AND status <> 'archived') OR status = $3)
+	   AND ($4::text IS NULL OR kind = $4)`;
+
+/* The subscription page orders by lower(name), which keysetWhere cannot name
+   as a column, so the source names it once and the row carries it back as the
+   key the next page resumes from. */
+const SUBSCRIPTION_PAGE_SOURCE = `SELECT ${SUBSCRIPTION_COLUMNS}, name_key
+	 FROM (SELECT ${SUBSCRIPTION_COLUMNS}, lower(name) AS name_key
+	       FROM notifications_webhook_subscriptions) AS subscriptions`;
+const SUBSCRIPTION_LIST = `tenant_id = $1
+	   AND ($2::text IS NULL OR status = $2)
+	   AND ($3::text IS NULL OR name ILIKE $3 OR url ILIKE $3)`;
+
+const DELIVERY_LIST = `tenant_id = $1
+	   AND ($2::text IS NULL OR status = $2)
+	   AND ($3::text IS NULL OR subscription_id = $3)
+	   AND ($4::text IS NULL OR source_ref ILIKE $4 OR source_module ILIKE $4)`;
+
 /* Queries stay explicit. Values always travel in the adapter's parameter
    channel; nothing from a request is concatenated into SQL. */
 const SQL = {
@@ -141,12 +167,6 @@ const SQL = {
 	 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	 ON CONFLICT DO NOTHING
 	 RETURNING id`,
-	listInbox: `SELECT * FROM notifications_inbox
-	 WHERE tenant_id = $1 AND recipient_account_id = $2
-	   AND ($3::text IS NULL OR status = $3)
-	   AND ($4::text IS NULL OR kind = $4)
-	 ORDER BY created_at DESC, id
-	 LIMIT $5`,
 	countUnread: `SELECT count(*) AS total FROM notifications_inbox
 	 WHERE tenant_id = $1 AND recipient_account_id = $2 AND status = 'unread'`,
 	getInboxItem: `SELECT * FROM notifications_inbox
@@ -204,9 +224,6 @@ const SQL = {
 	 WHERE tenant_id = $1 AND status = 'active'
 	   AND events_json::jsonb @> to_jsonb($2::text)
 	 ORDER BY lower(name), id`,
-	listSubscriptions: `SELECT ${SUBSCRIPTION_COLUMNS}
-	 FROM notifications_webhook_subscriptions
-	 WHERE tenant_id = $1 ORDER BY lower(name), id`,
 	getSubscription: `SELECT ${SUBSCRIPTION_COLUMNS}
 	 FROM notifications_webhook_subscriptions
 	 WHERE tenant_id = $1 AND id = $2`,
@@ -240,12 +257,6 @@ const SQL = {
 	 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 	 ON CONFLICT DO NOTHING
 	 RETURNING id`,
-	listDeliveries: `SELECT * FROM notifications_deliveries
-	 WHERE tenant_id = $1
-	   AND ($2::text IS NULL OR status = $2)
-	   AND ($3::text IS NULL OR subscription_id = $3)
-	 ORDER BY scheduled_for DESC, id
-	 LIMIT $4`,
 	getDelivery: `SELECT * FROM notifications_deliveries
 	 WHERE tenant_id = $1 AND id = $2`,
 	/* One statement does the read back under the tenant, the due check and the
@@ -320,6 +331,68 @@ function optionalInteger(
 /* The driver returns a timestamp as a Date; the domain keeps ISO text. */
 function isoText(value: Date | string): string {
 	return value instanceof Date ? value.toISOString() : value;
+}
+
+/* The term is matched as a substring, so the three characters LIKE reads as
+   syntax are escaped with the backslash PostgreSQL takes as the default escape
+   character. The match runs after the tenant predicate, over that workspace's
+   rows alone. */
+function likePattern(term: string | undefined): string | null {
+	if (term === undefined) return null;
+	return '%' + term.replace(/[\\%_]/g, (character) => '\\' + character) + '%';
+}
+
+/**
+ * One page read. The keyset and the ORDER BY name the same two columns in the
+ * same direction, which is the one order the list's page index carries either
+ * way round; the column names are constants here, never request input.
+ */
+function pageStatement(
+	source: string,
+	filters: string,
+	parameters: readonly DatabaseParameter[],
+	columns: readonly [string, string],
+	page: ListPage<string | number>,
+): DatabaseStatement {
+	const keyset =
+		page.after === null
+			? null
+			: keysetWhere(columns, [page.after.key, page.after.id], {
+					direction: page.direction,
+					parameterOffset: parameters.length,
+				});
+	const bound = [...parameters, ...(keyset?.parameters ?? [])];
+	const order = page.direction === 'asc' ? 'ASC' : 'DESC';
+	return {
+		text: `${source}
+	 WHERE ${filters}${
+			keyset === null
+				? ''
+				: `
+	   AND ${keyset.text}`
+		}
+	 ORDER BY ${columns[0]} ${order}, ${columns[1]} ${order}
+	 LIMIT $${bound.length + 1}`,
+		parameters: [...bound, page.limit],
+	};
+}
+
+function paged<
+	Row extends { readonly id: string },
+	Key extends string | number,
+>(
+	rows: readonly Row[],
+	limit: number,
+	key: (row: Row) => Key,
+): PagedRows<Row, Key> {
+	const last = rows.at(-1);
+	return {
+		rows,
+		next:
+			last !== undefined && rows.length === limit
+				? { key: key(last), id: last.id }
+				: null,
+	};
 }
 
 function inboxFromRow(row: InboxRow): NotificationsInbox {
@@ -650,19 +723,24 @@ export class DatabaseNotificationsRepository
 		tenantId: string,
 		recipientAccountId: string,
 		filters: InboxFilters,
-		limit: number,
-	): Promise<readonly NotificationsInbox[]> {
-		const rows = await this.#read<InboxRow>(tenantId, {
-			text: SQL.listInbox,
-			parameters: [
-				tenantId,
-				recipientAccountId,
-				filters.status ?? null,
-				filters.kind ?? null,
-				limit,
-			],
-		});
-		return rows.map(inboxFromRow);
+		page: ListPage<number>,
+	): Promise<PagedRows<NotificationsInbox, number>> {
+		const rows = await this.#read<InboxRow>(
+			tenantId,
+			pageStatement(
+				'SELECT * FROM notifications_inbox',
+				INBOX_LIST,
+				[
+					tenantId,
+					recipientAccountId,
+					filters.status ?? null,
+					filters.kind ?? null,
+				],
+				['created_at', 'id'],
+				page,
+			),
+		);
+		return paged(rows.map(inboxFromRow), page.limit, (row) => row.createdAt);
 	}
 
 	async exportInboxPage(
@@ -857,12 +935,25 @@ export class DatabaseNotificationsRepository
 
 	async listSubscriptions(
 		tenantId: string,
-	): Promise<readonly StoredWebhookSubscription[]> {
-		const rows = await this.#read<SubscriptionRow>(tenantId, {
-			text: SQL.listSubscriptions,
-			parameters: [tenantId],
-		});
-		return rows.map(subscriptionFromRow);
+		filters: SubscriptionFilters,
+		page: ListPage<string>,
+	): Promise<PagedRows<StoredWebhookSubscription, string>> {
+		const rows = await this.#read<SubscriptionRow & { name_key: string }>(
+			tenantId,
+			pageStatement(
+				SUBSCRIPTION_PAGE_SOURCE,
+				SUBSCRIPTION_LIST,
+				[tenantId, filters.status ?? null, likePattern(filters.search)],
+				['name_key', 'id'],
+				page,
+			),
+		);
+		const keys = new Map(rows.map((row) => [row.id, row.name_key]));
+		return paged(
+			rows.map(subscriptionFromRow),
+			page.limit,
+			(row) => keys.get(row.id)!,
+		);
 	}
 
 	async getSubscription(
@@ -1036,18 +1127,28 @@ export class DatabaseNotificationsRepository
 	async listDeliveries(
 		tenantId: string,
 		filters: DeliveryFilters,
-		limit: number,
-	): Promise<readonly DeliveryAttempt[]> {
-		const rows = await this.#read<DeliveryRow>(tenantId, {
-			text: SQL.listDeliveries,
-			parameters: [
-				tenantId,
-				filters.status ?? null,
-				filters.subscriptionId ?? null,
-				limit,
-			],
-		});
-		return rows.map(deliveryFromRow);
+		page: ListPage<number>,
+	): Promise<PagedRows<DeliveryAttempt, number>> {
+		const rows = await this.#read<DeliveryRow>(
+			tenantId,
+			pageStatement(
+				'SELECT * FROM notifications_deliveries',
+				DELIVERY_LIST,
+				[
+					tenantId,
+					filters.status ?? null,
+					filters.subscriptionId ?? null,
+					likePattern(filters.search),
+				],
+				['scheduled_for', 'id'],
+				page,
+			),
+		);
+		return paged(
+			rows.map(deliveryFromRow),
+			page.limit,
+			(row) => row.scheduledFor,
+		);
 	}
 
 	async getDelivery(

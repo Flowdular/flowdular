@@ -12,6 +12,7 @@ import {
 	loadDeliveries,
 	loadInbox,
 	loadUnreadCount,
+	loadWebhooks,
 	markInboxRead,
 	NotificationsApiError,
 	notificationsErrorMessage,
@@ -52,17 +53,19 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
+const EMPTY_PAGE = { items: [], page: { nextCursor: null, limit: 50 } };
+
 describe('notifications inbox client', () => {
-	it('asks for the whole inbox when no filter is set', async () => {
-		const fetchMock = vi.fn(ok({ inbox: [] }));
+	it('asks for the first page of the open inbox when nothing is set', async () => {
+		const fetchMock = vi.fn(ok(EMPTY_PAGE));
 		vi.stubGlobal('fetch', fetchMock);
 
-		await expect(loadInbox()).resolves.toEqual([]);
+		await expect(loadInbox()).resolves.toEqual(EMPTY_PAGE);
 		expect(requestOf(fetchMock).path).toBe('/api/notifications/inbox');
 	});
 
-	it('carries only the filters the reader chose', async () => {
-		const fetchMock = vi.fn(ok({ inbox: [] }));
+	it('carries only the filters the reader chose, and the page it is on', async () => {
+		const fetchMock = vi.fn(ok(EMPTY_PAGE));
 		vi.stubGlobal('fetch', fetchMock);
 
 		await loadInbox({ status: 'unread', kind: '' });
@@ -70,9 +73,15 @@ describe('notifications inbox client', () => {
 			'/api/notifications/inbox?status=unread',
 		);
 
-		await loadInbox({ status: 'archived', kind: 'agent-run-failed' });
+		await loadInbox({
+			status: 'archived',
+			kind: 'agent-run-failed',
+			limit: 25,
+			direction: 'asc',
+			cursor: 'c1.abc.def',
+		});
 		expect(requestOf(fetchMock, 1).path).toBe(
-			'/api/notifications/inbox?status=archived&kind=agent-run-failed',
+			'/api/notifications/inbox?status=archived&kind=agent-run-failed&limit=25&direction=asc&cursor=c1.abc.def',
 		);
 	});
 
@@ -166,13 +175,27 @@ describe('notifications webhook client', () => {
 });
 
 describe('notifications delivery client', () => {
-	it('filters the ledger by status and subscription', async () => {
-		const fetchMock = vi.fn(ok({ deliveries: [] }));
+	it('filters the ledger by status, subscription and term on the server', async () => {
+		const fetchMock = vi.fn(ok(EMPTY_PAGE));
 		vi.stubGlobal('fetch', fetchMock);
 
-		await loadDeliveries({ status: 'dead-letter', subscriptionId: 'sub-1' });
+		await loadDeliveries({
+			status: 'dead-letter',
+			subscriptionId: 'sub-1',
+			search: 'run-1',
+		});
 		expect(requestOf(fetchMock).path).toBe(
-			'/api/notifications/deliveries?status=dead-letter&subscription=sub-1',
+			'/api/notifications/deliveries?status=dead-letter&subscription=sub-1&q=run-1',
+		);
+	});
+
+	it('pages the subscription list by name with its own filters', async () => {
+		const fetchMock = vi.fn(ok(EMPTY_PAGE));
+		vi.stubGlobal('fetch', fetchMock);
+
+		await loadWebhooks({ status: 'active', search: 'ops', limit: 200 });
+		expect(requestOf(fetchMock).path).toBe(
+			'/api/notifications/webhooks?status=active&q=ops&limit=200',
 		);
 	});
 

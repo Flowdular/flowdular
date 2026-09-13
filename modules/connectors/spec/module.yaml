@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: connectors.core
-specVersion: 0.1.4
+specVersion: 0.1.5
 status: approved
 name: Connectors Core
 description: Gives a workspace a governed way to call external systems through connector definitions a module or the platform ships, instances an owner configures with sealed credentials and a host allowlist, a test call, a call log without payloads, and an explicit per-instance consent that lets workflows and agents use the connector as an external action, with a generic HTTP JSON connector as the reference.
@@ -433,6 +433,14 @@ acceptanceScenarios:
     given: Two workspaces with calls, audit rows and instances, some older than the retention period.
     when: The platform sweeps and exports the connectors data classes for one workspace.
     then: Only that workspace's calls older than the cutoff are removed together with the idempotency keys claimed before it, the other workspace keeps its rows, and the export carries calls, audit rows and instances without any credential and without any request or response body.
+  - id: CONNECTORS-INSTANCES-PAGING
+    given: A workspace with more instances than one page holds, narrowed by a status, definition or search filter.
+    when: A reader opens the connectors screen and walks its pages forward and back.
+    then: Each page carries at most 200 instances (50 by default) in name order, ascending or descending, and the next page opens from an opaque cursor bound to the workspace, the sort and the filters, so a cursor from another workspace, another sort or other filters is refused with a stable error.
+  - id: CONNECTORS-CALLS-PAGING
+    given: A workspace with more logged calls than one page holds, narrowed by an instance, outcome or operation filter.
+    when: A reader opens the call log and walks its pages forward and back.
+    then: Each page carries at most 200 calls (50 by default) in occurredAt order, descending or ascending, and the next page opens from an opaque cursor bound to the workspace, the sort and the filters, so a cursor from another workspace, another sort or other filters is refused with a stable error.
   - id: CONNECTORS-TENANT-BOUNDARY
     given: Two workspaces with instances and calls.
     when: A runtime transaction bound to one workspace reads or writes any of them.

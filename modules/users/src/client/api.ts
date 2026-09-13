@@ -1,8 +1,9 @@
-import type { TenantMember } from '@flowdular/module-auth';
+import type { TenantMember, TenantMemberSort } from '@flowdular/module-auth';
 import { t } from '@flowdular/client/i18n';
 import type {
 	CreateUserInput,
-	UserDirectory,
+	MemberBulkOutcome,
+	UsersContext,
 } from '../services/users-service.ts';
 
 interface ErrorEnvelope {
@@ -61,12 +62,47 @@ export async function startListExport(
 	await post<unknown>('/api/exports/start', { list }, csrfToken);
 }
 
-export async function loadTenantUsers(): Promise<UserDirectory> {
-	const response = await fetch('/api/users', {
+export interface MemberListRequest {
+	readonly sort: TenantMemberSort;
+	readonly direction: 'asc' | 'desc';
+	readonly limit: number;
+	/** A prefix of the display name or the address; '' narrows nothing. */
+	readonly query: string;
+	readonly status: '' | 'active' | 'disabled';
+	/** The cursor that opens this page; null asks for the first one. */
+	readonly cursor: string | null;
+}
+
+export interface MemberListPage {
+	readonly items: readonly TenantMember[];
+	readonly page: { readonly nextCursor: string | null; readonly limit: number };
+}
+
+/** One server-sorted, server-narrowed, server-paged listing; the screen narrows nothing. */
+export async function loadTenantUsers(
+	request: MemberListRequest,
+): Promise<MemberListPage> {
+	const parameters = new URLSearchParams({
+		sort: request.sort,
+		direction: request.direction,
+		limit: String(request.limit),
+	});
+	if (request.query !== '') parameters.set('q', request.query);
+	if (request.status !== '') parameters.set('status', request.status);
+	if (request.cursor !== null) parameters.set('cursor', request.cursor);
+	const response = await fetch('/api/users?' + parameters.toString(), {
 		headers: { accept: 'application/json' },
 		credentials: 'same-origin',
 	});
-	return payload<UserDirectory>(response);
+	return payload<MemberListPage>(response);
+}
+
+export async function loadUsersContext(): Promise<UsersContext> {
+	const response = await fetch('/api/users/context', {
+		headers: { accept: 'application/json' },
+		credentials: 'same-origin',
+	});
+	return payload<UsersContext>(response);
 }
 
 export async function createTenantUser(
@@ -144,6 +180,37 @@ export async function setMembershipStatus(
 			csrfToken,
 		)
 	).membership;
+}
+
+type OutcomesResponse = { readonly outcomes: readonly MemberBulkOutcome[] };
+
+/* Workspace access for the selected rows, one outcome per id. */
+export async function setMembershipStatusMany(
+	accountIds: readonly string[],
+	status: 'active' | 'disabled',
+	csrfToken: string,
+): Promise<readonly MemberBulkOutcome[]> {
+	return (
+		await post<OutcomesResponse>(
+			'/api/users/status-many',
+			{ accountIds, status },
+			csrfToken,
+		)
+	).outcomes;
+}
+
+export async function assignRoleMany(
+	accountIds: readonly string[],
+	role: string,
+	csrfToken: string,
+): Promise<readonly MemberBulkOutcome[]> {
+	return (
+		await post<OutcomesResponse>(
+			'/api/users/role-many',
+			{ accountIds, role },
+			csrfToken,
+		)
+	).outcomes;
 }
 
 export async function removeMember(

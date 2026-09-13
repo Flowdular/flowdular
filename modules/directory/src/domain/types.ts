@@ -23,6 +23,53 @@ export interface IssuedScimToken {
 	readonly token: string;
 }
 
+export const LIST_DIRECTIONS = ['asc', 'desc'] as const;
+
+export type ListDirection = (typeof LIST_DIRECTIONS)[number];
+
+/**
+ * Where a screen page ends: the sort value of its last row, then the id. The
+ * sort value is the column as the database ordered it, so a case-folded label
+ * travels folded and a page resumes exactly where the previous one stopped.
+ */
+export interface ListPosition {
+	readonly key: string | number;
+	readonly id: string;
+}
+
+export interface ListPage<Record> {
+	readonly items: readonly Record[];
+	/** Null when the page was short: nothing follows it. */
+	readonly next: ListPosition | null;
+}
+
+export const TOKEN_SORT_KEYS = ['label'] as const;
+
+export type TokenSortKey = (typeof TOKEN_SORT_KEYS)[number];
+
+export interface TokenListQuery {
+	readonly status?: ScimTokenStatus | undefined;
+	/** A label substring, matched without case. */
+	readonly search?: string | undefined;
+	readonly sort: TokenSortKey;
+	readonly direction: ListDirection;
+	readonly limit: number;
+	readonly after?: ListPosition | undefined;
+}
+
+export const GROUP_SORT_KEYS = ['precedence', 'displayName'] as const;
+
+export type GroupSortKey = (typeof GROUP_SORT_KEYS)[number];
+
+export interface GroupListQuery {
+	/** A display name substring, matched without case. */
+	readonly search?: string | undefined;
+	readonly sort: GroupSortKey;
+	readonly direction: ListDirection;
+	readonly limit: number;
+	readonly after?: ListPosition | undefined;
+}
+
 export interface ScimUserMapping {
 	readonly id: string;
 	readonly tenantId: string;

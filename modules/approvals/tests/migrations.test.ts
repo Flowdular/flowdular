@@ -241,6 +241,61 @@ describe('approvals migrations', () => {
 		expect(adopted.every((result) => result.action === 'adopted')).toBe(true);
 	});
 
+	it('creates the inbox keyset indexes and refuses a schema carrying only some of them', async () => {
+		const database = await migrator();
+		const inboxIndexes = [
+			'approvals_requests_status_created_idx',
+			'approvals_requests_requester_created_idx',
+			'approvals_requests_created_idx',
+		];
+		const earlier = databaseMigrations.slice(0, -1);
+		await runDatabaseMigrations(database, 'approvals.core', earlier);
+		for (const index of inboxIndexes) {
+			expect([index, await database.schema.hasIndex(index)]).toEqual([
+				index,
+				false,
+			]);
+		}
+
+		/* One index created by hand is a partial 0004: the runner reports it
+		   and refuses to apply over it rather than patching the rest in. */
+		await database.execute({
+			text: `CREATE INDEX approvals_requests_created_idx
+			 ON approvals_requests (tenant_id, created_at, id)`,
+		});
+		const partial = await databaseMigrationStatus(
+			database,
+			'approvals.core',
+			databaseMigrations,
+		);
+		expect(partial.at(-1)).toMatchObject({
+			id: '0004_approvals_inbox_keyset_indexes',
+			state: 'partial',
+		});
+		await expect(
+			runDatabaseMigrations(database, 'approvals.core', databaseMigrations),
+		).rejects.toThrow(/partially present/);
+
+		await database.execute({
+			text: 'DROP INDEX approvals_requests_created_idx',
+		});
+		const applied = await runDatabaseMigrations(
+			database,
+			'approvals.core',
+			databaseMigrations,
+		);
+		expect(applied.at(-1)).toMatchObject({
+			id: '0004_approvals_inbox_keyset_indexes',
+			action: 'applied',
+		});
+		for (const index of inboxIndexes) {
+			expect([index, await database.schema.hasIndex(index)]).toEqual([
+				index,
+				true,
+			]);
+		}
+	});
+
 	it('reports a pending schema before anything is applied', async () => {
 		const database = await migrator();
 		const status = await databaseMigrationStatus(

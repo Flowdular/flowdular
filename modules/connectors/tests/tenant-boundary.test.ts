@@ -43,7 +43,7 @@ describe('CONNECTORS-TENANT-BOUNDARY', () => {
 		});
 		const service = instanceService(shared.repository, vault);
 
-		expect(await service.list('tenant-b')).toEqual([]);
+		expect(await service.list('tenant-b', { limit: 200 })).toEqual([]);
 		await expect(
 			service.disable('tenant-b', 'account-bob', foreign.id),
 		).rejects.toMatchObject({ code: 'INSTANCE_NOT_FOUND' });
@@ -59,9 +59,9 @@ describe('CONNECTORS-TENANT-BOUNDARY', () => {
 		).rejects.toMatchObject({ code: 'INSTANCE_NOT_FOUND' });
 
 		/* The row is still there for its own workspace. */
-		expect((await service.list('tenant-a')).map((row) => row.id)).toEqual([
-			foreign.id,
-		]);
+		expect(
+			(await service.list('tenant-a', { limit: 200 })).map((row) => row.id),
+		).toEqual([foreign.id]);
 	});
 
 	it('refuses a call bound to the wrong workspace before it reaches the network', async () => {
@@ -97,8 +97,10 @@ describe('CONNECTORS-TENANT-BOUNDARY', () => {
 			caller: 'test',
 		});
 		const service = instanceService(shared.repository, vault);
-		expect(await service.listCalls('tenant-a')).toHaveLength(1);
-		expect(await service.listCalls('tenant-b')).toEqual([]);
+		expect(
+			await service.listCalls('tenant-a', {}, { limit: 200 }),
+		).toHaveLength(1);
+		expect(await service.listCalls('tenant-b', {}, { limit: 200 })).toEqual([]);
 		expect(await service.listAudit('tenant-a', instance.id)).toHaveLength(1);
 		expect(await service.listAudit('tenant-b', instance.id)).toEqual([]);
 	});

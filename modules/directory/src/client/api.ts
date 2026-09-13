@@ -1,11 +1,15 @@
 import { t } from '@flowdular/client/i18n';
 import type {
+	GroupSortKey,
 	IssuedScimToken,
+	ListDirection,
 	ProvisioningEvent,
 	ProvisioningOperation,
 	ProvisioningOutcome,
 	ScimGroupMapping,
 	ScimToken,
+	ScimTokenStatus,
+	TokenSortKey,
 } from '../domain/types.ts';
 
 interface ErrorEnvelope {
@@ -86,12 +90,46 @@ async function post<T>(
 	);
 }
 
-export async function loadScimTokens(): Promise<readonly ScimToken[]> {
-	return (
-		await get<{ readonly tokens: readonly ScimToken[] }>(
-			'/api/directory/tokens',
-		)
-	).tokens;
+/** One page of a screen list; the cursor is opaque and the server's own. */
+export interface ListPagePayload<Record> {
+	readonly items: readonly Record[];
+	readonly page: { readonly nextCursor: string | null };
+}
+
+interface ListRequest<Key extends string> {
+	readonly q: string;
+	readonly sort: Key;
+	readonly direction: ListDirection;
+	readonly cursor: string | null;
+	readonly limit: number;
+}
+
+function listSearch(
+	request: ListRequest<string>,
+	extra: Readonly<Record<string, string>> = {},
+): string {
+	const parameters = new URLSearchParams();
+	if (request.q !== '') parameters.set('q', request.q);
+	for (const [key, value] of Object.entries(extra)) {
+		if (value !== '') parameters.set(key, value);
+	}
+	parameters.set('sort', request.sort);
+	parameters.set('direction', request.direction);
+	parameters.set('limit', String(request.limit));
+	if (request.cursor !== null) parameters.set('cursor', request.cursor);
+	return '?' + parameters.toString();
+}
+
+export interface TokenListRequest extends ListRequest<TokenSortKey> {
+	readonly status: ScimTokenStatus | '';
+}
+
+export function loadScimTokens(
+	request: TokenListRequest,
+): Promise<ListPagePayload<ScimToken>> {
+	return get<ListPagePayload<ScimToken>>(
+		'/api/directory/tokens' + listSearch(request, { status: request.status }),
+	);
 }
 
 export function createScimToken(
@@ -126,14 +164,24 @@ export async function revokeScimToken(
 	).token;
 }
 
-export interface GroupMappingsPayload {
-	readonly groups: readonly ScimGroupMapping[];
+export type GroupListRequest = ListRequest<GroupSortKey>;
+
+export function loadGroupMappings(
+	request: GroupListRequest,
+): Promise<ListPagePayload<ScimGroupMapping>> {
+	return get<ListPagePayload<ScimGroupMapping>>(
+		'/api/directory/groups' + listSearch(request),
+	);
+}
+
+export interface GroupMappingContextPayload {
 	readonly roles: readonly string[];
 	readonly defaultRole: string;
 }
 
-export function loadGroupMappings(): Promise<GroupMappingsPayload> {
-	return get<GroupMappingsPayload>('/api/directory/groups');
+/** What the mapping form needs beside the rows: read once, not per page. */
+export function loadGroupMappingContext(): Promise<GroupMappingContextPayload> {
+	return get<GroupMappingContextPayload>('/api/directory/groups/context');
 }
 
 export async function mapGroup(

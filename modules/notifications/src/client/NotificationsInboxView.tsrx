@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'octane';
+import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	ConfirmDialog,
 	Drawer,
 	EmptyState,
 	Filters,
@@ -11,6 +12,8 @@ import {
 	Select,
 	TableCard,
 	Tag,
+	ToastHost,
+	toasts,
 	type TableAction,
 	type TableColumn,
 } from '@flowdular/ui';
@@ -19,6 +22,7 @@ import { useValue } from 'segment-state';
 import {
 	INBOX_STATUSES,
 	NOTIFICATION_KINDS,
+	type InboxTransition,
 	type NotificationKind,
 	type NotificationsInbox,
 	type NotificationsInboxStatus,
@@ -30,10 +34,11 @@ import {
 	markInboxUnread,
 	NotificationsApiError,
 	notificationsErrorMessage,
+	transitionInboxItems,
 } from './api.ts';
 import { FactList } from './FactList.tsrx';
 import {
-	inboxListing,
+	inboxActiveFilters,
 	inboxRowActions,
 	selectedInboxItem,
 	type InboxRowAction,
@@ -44,7 +49,15 @@ import {
 	isoTimestampLabel,
 	kindLabel,
 } from './presentation.ts';
-import { createInboxClientState } from './state.ts';
+import {
+	createInboxClientState,
+	FIRST_PAGE,
+	pageCursor,
+	pageLoaded,
+	transitionableIds,
+	transitionOutcomeCounts,
+	type CursorStack,
+} from './state.ts';
 import { refreshUnreadCount } from './unread-count.ts';
 
 export interface NotificationsInboxViewProps {
@@ -53,6 +66,15 @@ export interface NotificationsInboxViewProps {
 }
 
 const PAGE_SIZES = [10, 25, 50, 100];
+
+/** One page request: the filters, the page and the cursors that reach it. */
+interface InboxRequest {
+	readonly status: NotificationsInboxStatus | '';
+	readonly kind: NotificationKind | '';
+	readonly pageIndex: number;
+	readonly pageSize: number;
+	readonly pages: CursorStack;
+}
 
 /* Two row actions, and the longer locale sets the width: the Polish read state
    label does not fit the 280 px the shared column defaults to. */
@@ -64,7 +86,6 @@ function columns(): readonly TableColumn<NotificationsInbox>[] {
 			key: 'status',
 			header: t('notifications.inbox.column.status'),
 			width: '14%',
-			value: (item) => item.status,
 			cell: (item) =>
 				<Tag tone={inboxStatusTone(item.status)} dot>{inboxStatusLabel(
 					item.status,
@@ -74,14 +95,12 @@ function columns(): readonly TableColumn<NotificationsInbox>[] {
 			key: 'kind',
 			header: t('notifications.inbox.column.kind'),
 			width: '12%',
-			value: (item) => kindLabel(item.kind),
 			cell: (item) => kindLabel(item.kind),
 		},
 		{
 			key: 'title',
 			header: t('notifications.inbox.column.title'),
 			width: '19%',
-			value: (item) => item.title,
 			cell: (item) => <span class="ui-cell">
 				<b>{item.title}</b>
 				<small class="ui-mono">{item.sourceRef}</small>
@@ -91,14 +110,12 @@ function columns(): readonly TableColumn<NotificationsInbox>[] {
 			key: 'sourceModule',
 			header: t('notifications.inbox.column.sourceModule'),
 			width: '14%',
-			value: (item) => item.sourceModule,
 			cell: (item) => <span class="ui-mono">{item.sourceModule}</span>,
 		},
 		{
 			key: 'readAt',
 			header: t('notifications.inbox.column.readAt'),
 			width: '13%',
-			value: (item) => item.readAt ?? '',
 			cell: (item) => isoTimestampLabel(item.readAt),
 		},
 	];
@@ -106,6 +123,8 @@ function columns(): readonly TableColumn<NotificationsInbox>[] {
 
 export function NotificationsInboxView(props: NotificationsInboxViewProps) @{
 	const client = useMemo(() => createInboxClientState(), []);
+	/* Requests answer out of order; only the latest one may write the screen. */
+	const requests = useMemo(() => ({ sequence: 0 }), []);
 	const [items] = useValue(client.state.items);
 	const [status, setStatus] = useValue(client.state.status);
 	const [error, setError] = useValue(client.state.error);
@@ -113,25 +132,70 @@ export function NotificationsInboxView(props: NotificationsInboxViewProps) @{
 	const [kindFilter] = useValue(client.state.kindFilter);
 	const [filtersOpen, setFiltersOpen] = useValue(client.state.filtersOpen);
 	const [selectedId, setSelectedId] = useValue(client.state.selectedId);
-	const [pageIndex, setPageIndex] = useState(0);
-	const [pageSize, setPageSize] = useState(25);
-	const listing = inboxListing(items, statusFilter, kindFilter);
-	const visible = listing.visible;
+	const [pageIndex] = useValue(client.state.pageIndex);
+	const [pageSize] = useValue(client.state.pageSize);
+	const [pages] = useValue(client.state.pages);
+	const [archivedHidden] = useValue(client.state.archivedHidden);
+	const [selectedIds, setSelectedIds] = useValue(client.state.selectedIds);
+	const [confirmArchiveMany, setConfirmArchiveMany] = useValue(
+		client.state.confirmArchiveMany,
+	);
+	const readable = transitionableIds(items, selectedIds, 'mark-read');
+	const archivable = transitionableIds(items, selectedIds, 'archive');
+	const activeFilters = inboxActiveFilters(statusFilter, kindFilter);
 	const selected = selectedInboxItem(items, selectedId);
+	const current: InboxRequest = {
+		status: statusFilter,
+		kind: kindFilter,
+		pageIndex,
+		pageSize,
+		pages,
+	};
 
-	const refresh = async (
-		nextStatus: NotificationsInboxStatus | '',
-		nextKind: NotificationKind | '',
-	) => {
-		setStatus('loading');
-		setError('');
+	/* The server sorts, narrows and cuts the page: every request names its
+   filters, its page and the cursor that opens it, and the response records
+   the cursor of the page after it. */
+	const load = async (request: InboxRequest) => {
+		const cursor = pageCursor(request.pages, request.pageIndex);
+		if (cursor === null) return;
+		const sequence = requests.sequence += 1;
+		client.store.act((transaction) => {
+			transaction.set(client.state.statusFilter, request.status);
+			transaction.set(client.state.kindFilter, request.kind);
+			transaction.set(client.state.pageIndex, request.pageIndex);
+			transaction.set(client.state.pageSize, request.pageSize);
+			transaction.set(client.state.pages, request.pages);
+			/* A new listing is a new set of rows: nothing checked before it stays. */
+			transaction.set(client.state.selectedIds, new Set());
+			transaction.set(client.state.status, 'loading');
+			transaction.set(client.state.error, '');
+		}, 'notifications/inbox-request');
 		try {
-			const loaded = await loadInbox({ status: nextStatus, kind: nextKind });
+			const page = await loadInbox({
+				status: request.status,
+				kind: request.kind,
+				limit: request.pageSize,
+				cursor,
+			});
+			/* An empty open inbox is a first run only when nothing is archived
+   either; that is one more bounded read, paid in the empty case alone. */
+			const hidden =
+				page.items.length === 0 && request.status === '' &&
+					request.kind === '' &&
+					request.pageIndex === 0 &&
+					(await loadInbox({ status: 'archived', limit: 1 })).items.length > 0;
+			if (sequence !== requests.sequence) return;
 			client.store.act((transaction) => {
-				transaction.set(client.state.items, loaded);
+				transaction.set(client.state.items, page.items);
+				transaction.set(client.state.archivedHidden, hidden);
+				transaction.set(
+					client.state.pages,
+					pageLoaded(request.pages, request.pageIndex, page.page.nextCursor),
+				);
 				transaction.set(client.state.status, 'idle');
 			}, 'notifications/inbox-loaded');
 		} catch (loadError) {
+			if (sequence !== requests.sequence) return;
 			setError(
 				notificationsErrorMessage(loadError, 'notifications.inbox.error.load'),
 			);
@@ -144,28 +208,16 @@ export function NotificationsInboxView(props: NotificationsInboxViewProps) @{
 	};
 
 	useEffect(() => {
-		void refresh('', '');
+		void load(current);
 		void refreshUnreadCount();
 	}, []);
 
-	/* A filter reloads the set, so the open record may not come back. The drawer
-   closes with the same change that replaces the rows behind it. */
-	const applyStatus = (next: NotificationsInboxStatus | '') => {
-		client.store.act((transaction) => {
-			transaction.set(client.state.statusFilter, next);
-			transaction.set(client.state.selectedId, null);
-		}, 'notifications/inbox-status-filter');
-		setPageIndex(0);
-		void refresh(next, kindFilter);
-	};
-
-	const applyKind = (next: NotificationKind | '') => {
-		client.store.act((transaction) => {
-			transaction.set(client.state.kindFilter, next);
-			transaction.set(client.state.selectedId, null);
-		}, 'notifications/inbox-kind-filter');
-		setPageIndex(0);
-		void refresh(statusFilter, next);
+	/* A filter starts a new listing from its first page, so the open record may
+   not come back. The drawer closes with the same change that replaces the
+   rows behind it. */
+	const restart = (change: Partial<InboxRequest>) => {
+		setSelectedId(null);
+		void load({ ...current, ...change, pageIndex: 0, pages: FIRST_PAGE });
 	};
 
 	/* Every row action replaces the one row it changed, so the list the member
@@ -188,6 +240,42 @@ export function NotificationsInboxView(props: NotificationsInboxViewProps) @{
 				notificationsErrorMessage(
 					mutationError,
 					'notifications.inbox.error.update',
+				),
+			);
+			setStatus('idle');
+		}
+	};
+
+	/* One change over every checked row, then the page and the badge read again:
+   the rows that left the open inbox are gone and the count follows them. */
+	const transitionMany = async (transition: InboxTransition) => {
+		const ids =
+			transition === 'mark-read' ? readable : archivable;
+		setConfirmArchiveMany(false);
+		if (ids.length === 0) return;
+		setStatus('submitting');
+		setError('');
+		try {
+			const outcomes = await transitionInboxItems(
+				ids,
+				transition,
+				props.csrfToken,
+			);
+			await load(current);
+			void refreshUnreadCount();
+			toasts.success(
+				t(
+					transition === 'archive'
+						? 'notifications.inbox.notice.archivedMany'
+						: 'notifications.inbox.notice.readMany',
+					transitionOutcomeCounts(outcomes),
+				),
+			);
+		} catch (transitionError) {
+			setError(
+				notificationsErrorMessage(
+					transitionError,
+					'notifications.inbox.error.updateMany',
 				),
 			);
 			setStatus('idle');
@@ -240,7 +328,7 @@ export function NotificationsInboxView(props: NotificationsInboxViewProps) @{
 			<Button
 				size="sm"
 				disabled={status === 'denied'}
-				onClick={() => void refresh(statusFilter, kindFilter)}
+				onClick={() => void load(current)}
 			>
 				<Icon name="refresh" size={14} />
 				{status === 'loading'
@@ -262,13 +350,15 @@ export function NotificationsInboxView(props: NotificationsInboxViewProps) @{
 				}
 				<TableCard
 					title={t('notifications.inbox.table.title')}
-					count={t('notifications.inbox.table.count', {
-						count: visible.length,
-					})}
+					count={pages.hasMore
+						? t('notifications.inbox.table.countMore', {
+								count: items.length,
+							})
+						: t('notifications.inbox.table.count', { count: items.length })}
 					filters={<Filters
 						open={filtersOpen}
 						onToggle={() => setFiltersOpen(!filtersOpen)}
-						activeCount={listing.activeFilters}
+						activeCount={activeFilters}
 						label={t('notifications.common.filters')}
 					>
 						<Select
@@ -287,9 +377,9 @@ export function NotificationsInboxView(props: NotificationsInboxViewProps) @{
 									}),
 								),
 							]}
-							onChange={(value) => applyStatus(
-								value as NotificationsInboxStatus | '',
-							)}
+							onChange={(value) => restart({
+								status: value as NotificationsInboxStatus | '',
+							})}
 						/>
 						<Select
 							id="notifications-inbox-kind"
@@ -307,43 +397,49 @@ export function NotificationsInboxView(props: NotificationsInboxViewProps) @{
 									}),
 								),
 							]}
-							onChange={(value) => applyKind(value as NotificationKind | '')}
+							onChange={(value) => restart({
+								kind: value as NotificationKind | '',
+							})}
 						/>
 					</Filters>}
 					caption={t('notifications.inbox.table.caption')}
 					columns={columns()}
-					rows={visible}
+					rows={items}
 					rowKey={(item) => item.id}
-					sorting
-					onSortingChange={() => setPageIndex(0)}
-					pagination={{ pageIndex, pageSize, onPageChange: setPageIndex }}
+					mode="server"
+					pagination={{
+						pageIndex,
+						pageSize,
+						hasMore: pages.hasMore,
+						onPageChange: (index) => void load({
+							...current,
+							pageIndex: index,
+						}),
+					}}
 					after={<Pagination
 						pageIndex={pageIndex}
 						pageSize={pageSize}
-						totalRows={visible.length}
+						hasMore={pages.hasMore}
 						pageSizes={PAGE_SIZES}
-						onPageChange={setPageIndex}
-						onPageSizeChange={(size) => {
-							setPageSize(size);
-							setPageIndex(0);
-						}}
+						onPageChange={(index) => void load({
+							...current,
+							pageIndex: index,
+						})}
+						onPageSizeChange={(size) => restart({ pageSize: size })}
 						label={t('notifications.pagination.label')}
 						previousLabel={t('notifications.pagination.previous')}
 						nextLabel={t('notifications.pagination.next')}
 						pageSizeLabel={t('notifications.pagination.size')}
-						summary={(range) => t('notifications.pagination.summary', {
-							page: range.pageIndex + 1,
-							pages: range.pageCount,
-							from: range.from,
-							to: range.to,
-							total: range.totalRows,
+						summary={(page) => t('notifications.pagination.keysetSummary', {
+							page: page.pageIndex + 1,
+							from: page.from,
 						})}
 					/>}
 					status={status === 'loading' && items.length === 0
 						? 'loading'
 						: 'idle'}
 					loadingLabel={t('notifications.inbox.table.loading')}
-					filtered={listing.filtered}
+					filtered={activeFilters > 0 || archivedHidden}
 					empty={{
 						icon: 'activity',
 						title: t('notifications.inbox.empty.title'),
@@ -356,6 +452,48 @@ export function NotificationsInboxView(props: NotificationsInboxViewProps) @{
 					}}
 					onSelect={(item) => setSelectedId(item.id)}
 					selectedKey={selectedId ?? undefined}
+					selection={props.canManage
+						? {
+								selectedKeys: selectedIds,
+								onSelectionChange: setSelectedIds,
+								label: t('notifications.inbox.selection.label'),
+								rowLabel: (item) => t(
+									'notifications.inbox.selection.rowLabel',
+									{
+										title: item.title,
+									},
+								),
+								clearLabel: t('notifications.inbox.selection.clear'),
+							}
+						: undefined}
+					bulkActions={[
+						{
+							id: 'mark-read-selected',
+							label: t('notifications.inbox.action.markReadSelected'),
+							icon: 'check',
+							disabled: readable.length === 0 || status === 'submitting',
+							reason: readable.length === 0
+								? t('notifications.inbox.action.markReadSelectedRefused')
+								: undefined,
+							onSelect: () => void transitionMany('mark-read'),
+						},
+						{
+							id: 'archive-selected',
+							label: t('notifications.inbox.action.archiveSelected'),
+							icon: 'download',
+							disabled: archivable.length === 0 || status === 'submitting',
+							reason: archivable.length === 0
+								? t('notifications.inbox.action.archiveSelectedRefused')
+								: undefined,
+							onSelect: () => setConfirmArchiveMany(true),
+						},
+					]}
+					selectionSummary={(count) => t(
+						'notifications.inbox.selection.summary',
+						{
+							count,
+						},
+					)}
 					actions={rowActions}
 					actionsLabel={t('notifications.common.actions')}
 					actionsWidth={INBOX_ACTIONS_WIDTH}
@@ -435,5 +573,20 @@ export function NotificationsInboxView(props: NotificationsInboxViewProps) @{
 				</div>
 			}
 		</Drawer>
+		<ConfirmDialog
+			open={confirmArchiveMany}
+			title={t('notifications.inbox.archiveMany.title')}
+			confirmLabel={t('notifications.inbox.action.archiveSelected')}
+			tone="primary"
+			busy={status === 'submitting'}
+			onConfirm={() => void transitionMany('archive')}
+			onCancel={() => setConfirmArchiveMany(false)}
+		>{t('notifications.inbox.archiveMany.description', {
+			count: archivable.length,
+		})}</ConfirmDialog>
+		<ToastHost
+			label={t('notifications.common.messages')}
+			closeLabel={t('notifications.common.close')}
+		/>
 	</div>
 }

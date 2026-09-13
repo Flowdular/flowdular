@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: automations.core
-specVersion: 0.6.5
+specVersion: 0.6.6
 status: approved
 name: Automations Core
 description: Runs agents or published workflows without a person present, on a schedule or from a signed webhook, as a module a workspace can leave uninstalled.
@@ -116,7 +116,7 @@ acceptanceScenarios:
   - id: AUTO-SCHEDULE-VARIABLES
     given: A schedule manager can read the variables offered by the schedule editor, including agent.name through the agents.run-queue public capability.
     when: The manager saves a template containing known variables and the schedule queues a run.
-    then: Unknown or forbidden variables are rejected, the stored schedule keeps the raw template, and the run receives one-pass resolved input from the active tenant only.
+    then: Unknown or forbidden variables are rejected, the stored schedule keeps the raw template, and the run receives one-pass resolved input from the active tenant only. The editor reads its variables, agents, targets and the workspace zone from one automations.options read apart from the schedule list, and the schedules screen reads that list in pages of at most 200 rows sorted by label or updatedAt with the enabled filter and label search applied on the server, through an opaque cursor bound to the tenant, the sort and the filters.
   - id: AUTO-POLL-NARROW
     given: Two workspaces each own an enabled schedule that is due.
     when: The scheduler polls for due work across tenants.
@@ -132,7 +132,7 @@ acceptanceScenarios:
   - id: AUTO-WORKFLOW-CONFIGURE
     given: A user can manage the schedule or trigger, read workflow definitions, execute workflow runs, and holds every permission required by a published workflow.
     when: The user selects that workflow as the automation target.
-    then: automations.core stores the workflow key, configuring user, trusted permission snapshot, and target input configuration without copying a workflow revision, graph, secret, or execution record.
+    then: automations.core stores the workflow key, configuring user, trusted permission snapshot, and target input configuration without copying a workflow revision, graph, secret, or execution record. The schedule and trigger forms take their target choices from the same automations.options read, and the triggers screen reads its list in pages of at most 200 rows sorted by label or updatedAt with the enabled filter and label search applied on the server, through an opaque cursor bound to the tenant, the sort and the filters.
   - id: AUTO-WORKFLOW-CONFIGURE-DENY
     given: A user lacks automation management, workflow read, workflow execution, or one permission required by the selected workflow.
     when: The user attempts to create or update a workflow schedule or trigger.

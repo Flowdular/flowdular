@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: approvals.core
-specVersion: 0.1.11
+specVersion: 0.1.12
 status: approved
 name: Approvals Core
 description: Turns a policy decision that needs a person into an approval request with named requirements, a decision record that is append-only, notifications to the people who can decide, and a workflow node that waits for the decision, so every module delegates who may decide instead of writing its own approval state machine.
@@ -194,6 +194,13 @@ actions:
     risk: workspace-write
     idempotent: false
     description: Record a rejection by an eligible member; the request becomes rejected.
+  - id: decide-many
+    entity: request
+    permission: approvals.requests.decide
+    kind: custom
+    risk: workspace-write
+    idempotent: false
+    description: Approve or reject the requests the inbox selected, between 1 and 100 unique ids, each through the single decision path so eligibility is checked and a decision row written per request, answering one outcome per id (decided, not-found or refused) and never failing the whole call for one refused id.
   - id: cancel
     entity: request
     permission: approvals.requests.manage
@@ -296,6 +303,14 @@ acceptanceScenarios:
     given: Two workspaces hold approval requests of several ages with their eligibility snapshots and decisions, some resolved and one still pending, a subject has opened requests of their own, decided one somebody else opened, and is named in the eligibility snapshot of a pending request somebody else opened, and the platform has sealed the data class registry.
     when: The platform sweeps, exports, counts and erases the declared class for one of them.
     then: Only that workspace's requests resolved before the cutoff leave with their eligibility and decision rows and the pending request stays however old it is; the export carries every request of that workspace with its decisions and their comments in bounded keyset pages, and reports no rows and no range for a workspace holding none; the erasure removes the resolved requests the subject opened, keeps every decision the subject made in somebody else's request with a redacted comment and a tombstoned account that stays distinct per row, and tombstones the subject's row in the pending request's snapshot while that request stays pending and decidable by the members whose rows it did not touch; a batch that filled its limit reports itself truncated, and the count answers the requests the subject opened in any state.
+  - id: APPROVALS-DECIDE-MANY
+    given: A member holding approvals.requests.decide selects several pending requests they are eligible for, and the call also names an id that does not exist, one of another workspace and one already resolved.
+    when: The member approves or rejects them in one call naming the selected ids with an optional comment.
+    then: A list of no ids, of more than 100, or one repeating an id, or a decision other than approve or reject, is refused with INVALID_INPUT before any row is touched; otherwise each named request of the workspace goes through the single decision path, so eligibility is re-checked, a decision row with the comment is recorded per decided request and each resolution runs its callback and notifies its requester as a single decision does, the missing and the foreign id are answered not-found and the resolved one refused with its stable code, the response carries one outcome per id in the order sent, and a call without the permission or the CSRF proof is refused first.
+  - id: APPROVALS-INBOX-PAGE
+    given: A workspace holds more requests than one page of the inbox carries.
+    when: A member pages through the inbox under a scope and a status filter.
+    then: A page carries at most 200 requests (50 unless the request asks for more), ordered by createdAt in the requested direction with the id as the tie-break, and a full page answers an opaque cursor bound to the workspace, the member, the sort and the filters, so a cursor used under another workspace, sort or filter is refused rather than reinterpreted.
   - id: APPROVALS-TENANT-BOUNDARY
     given: Two workspaces with requests and decisions.
     when: A runtime transaction bound to one workspace reads or writes any of them, or the expiry routing read runs.

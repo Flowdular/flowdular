@@ -21,10 +21,18 @@ import {
 } from '@flowdular/module-auth/server';
 import { DIRECTORY_PERMISSIONS } from '../acl/permissions.ts';
 import {
+	GROUP_SORT_KEYS,
+	LIST_DIRECTIONS,
 	PROVISIONING_OPERATIONS,
 	PROVISIONING_OUTCOMES,
+	SCIM_TOKEN_STATUSES,
+	TOKEN_SORT_KEYS,
+	type GroupSortKey,
+	type ListPosition,
 	type ProvisioningOperation,
 	type ProvisioningOutcome,
+	type ScimTokenStatus,
+	type TokenSortKey,
 } from '../domain/types.ts';
 import type { DirectoryRuntime } from '../server/runtime.ts';
 import { translateAuthError } from '../services/directory-service.ts';
@@ -32,9 +40,12 @@ import { DirectoryServiceError } from '../services/service-error.ts';
 import { directoryDefaultRole } from '../settings.ts';
 import type { ModuleSettingsRuntime } from '@flowdular/kernel';
 
-/** The provisioning log is the one list of this module that grows without end. */
-const EVENT_PAGE_LIMIT = 50;
-const EVENT_PAGE_MAX = 200;
+/** The default page of every list of this module, and the ceiling one may ask for. */
+const PAGE_LIMIT = 50;
+const PAGE_MAX = 200;
+
+/** A search term is a substring of the column it narrows, so it is bounded like it. */
+const SEARCH_MAX = 120;
 
 function failure(error: unknown): Response {
 	const translated = translateAuthError(error);
@@ -87,14 +98,56 @@ function queryOneOf<T extends string>(
 	return raw as T;
 }
 
+function querySearch(url: URL): string | undefined {
+	const raw = url.searchParams.get('q')?.trim() ?? '';
+	if (raw === '') return undefined;
+	if (raw.length > SEARCH_MAX) {
+		throw new HttpProblem(
+			'INVALID_INPUT',
+			`q must be at most ${SEARCH_MAX} characters.`,
+			400,
+		);
+	}
+	return raw;
+}
+
+function invalidCursor(): HttpProblem {
+	return new HttpProblem(
+		'CURSOR_INVALID',
+		'The page cursor is not valid.',
+		400,
+	);
+}
+
 export function createDirectoryRoutes(
 	auth: AuthRuntime,
 	runtime: DirectoryRuntime,
 	settings: ModuleSettingsRuntime,
 ) {
 	/* Module-owned and never stored: a cursor names a position in one workspace's
-	   own log, so a restart invalidating one costs a client the first page. */
+	   own list, so a restart invalidating one costs a client the first page. */
 	const cursorSecret = randomBytes(32);
+
+	/* A cursor is signed, so it is honest about where it was cut, and it names
+	   the workspace, the sort and the filters it was cut under. One that does
+	   not match the request would splice two result sets; it is refused. */
+	const listCursor = (
+		cursor: string | null,
+		binding: Readonly<Record<string, string>>,
+		keyType: 'string' | 'number',
+	): ListPosition | undefined => {
+		if (cursor === null) return undefined;
+		const value = decodeCursor(cursor, cursorSecret);
+		for (const [field, expected] of Object.entries(binding)) {
+			if (value[field] !== expected) throw invalidCursor();
+		}
+		const key = value.key;
+		const id = value.id;
+		if (key === undefined || typeof key !== keyType || typeof id !== 'string') {
+			throw invalidCursor();
+		}
+		return { key, id };
+	};
 
 	const mutation = (
 		id: string,
@@ -134,8 +187,45 @@ export function createDirectoryRoutes(
 		handler: async ({ octane }) => {
 			try {
 				const principal = principalFromContext(octane)!;
-				return jsonResponse({
-					tokens: await (await runtime.tokens()).list(principal.tenantId),
+				const url = new URL(octane.request.url);
+				const page = readPageQuery(url, {
+					maxLimit: PAGE_MAX,
+					defaultLimit: PAGE_LIMIT,
+				});
+				const sort =
+					queryOneOf<TokenSortKey>(url, 'sort', TOKEN_SORT_KEYS) ?? 'label';
+				const direction =
+					queryOneOf(url, 'direction', LIST_DIRECTIONS) ?? 'asc';
+				const status = queryOneOf<ScimTokenStatus>(
+					url,
+					'status',
+					SCIM_TOKEN_STATUSES,
+				);
+				const search = querySearch(url);
+				const binding = {
+					tenant: principal.tenantId,
+					sort,
+					direction,
+					status: status ?? '',
+					search: search ?? '',
+				};
+				const listed = await (
+					await runtime.tokens()
+				).list(principal.tenantId, {
+					status,
+					search,
+					sort,
+					direction,
+					limit: page.limit,
+					after: listCursor(page.cursor, binding, 'string'),
+				});
+				return pageResponse({
+					items: listed.items,
+					limit: page.limit,
+					nextCursor:
+						listed.next === null
+							? null
+							: encodeCursor({ ...binding, ...listed.next }, cursorSecret),
 				});
 			} catch (error) {
 				return failure(error);
@@ -203,10 +293,68 @@ export function createDirectoryRoutes(
 		handler: async ({ octane }) => {
 			try {
 				const principal = principalFromContext(octane)!;
+				const url = new URL(octane.request.url);
+				const page = readPageQuery(url, {
+					maxLimit: PAGE_MAX,
+					defaultLimit: PAGE_LIMIT,
+				});
+				const sort =
+					queryOneOf<GroupSortKey>(url, 'sort', GROUP_SORT_KEYS) ??
+					'precedence';
+				const direction =
+					queryOneOf(url, 'direction', LIST_DIRECTIONS) ?? 'asc';
+				const search = querySearch(url);
+				const binding = {
+					tenant: principal.tenantId,
+					sort,
+					direction,
+					search: search ?? '',
+				};
+				const listed = await (
+					await runtime.administration()
+				).listGroupMappings(principal.tenantId, {
+					search,
+					sort,
+					direction,
+					limit: page.limit,
+					after: listCursor(
+						page.cursor,
+						binding,
+						sort === 'precedence' ? 'number' : 'string',
+					),
+				});
+				return pageResponse({
+					items: listed.items,
+					limit: page.limit,
+					nextCursor:
+						listed.next === null
+							? null
+							: encodeCursor({ ...binding, ...listed.next }, cursorSecret),
+				});
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
+	/* What the mapping form needs beside the rows, read once per screen rather
+	   than fanned out to auth.core on every page. */
+	const groupContext = defineEndpoint({
+		id: 'directory.groups.context',
+		path: '/api/directory/groups/context',
+		methods: ['GET'],
+		access: {
+			kind: 'permission',
+			permission: DIRECTORY_PERMISSIONS.provisioningRead,
+		},
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			try {
+				const principal = principalFromContext(octane)!;
 				return jsonResponse(
 					await (
 						await runtime.administration()
-					).listGroupMappings(
+					).groupMappingContext(
 						principal.tenantId,
 						directoryDefaultRole(settings, principal.tenantId),
 					),
@@ -259,8 +407,8 @@ export function createDirectoryRoutes(
 				const principal = principalFromContext(octane)!;
 				const url = new URL(octane.request.url);
 				const page = readPageQuery(url, {
-					maxLimit: EVENT_PAGE_MAX,
-					defaultLimit: EVENT_PAGE_LIMIT,
+					maxLimit: PAGE_MAX,
+					defaultLimit: PAGE_LIMIT,
 				});
 				const cursor = page.cursor
 					? decodeCursor(page.cursor, cursorSecret)
@@ -312,6 +460,7 @@ export function createDirectoryRoutes(
 		rotateToken.serverRoute,
 		revokeToken.serverRoute,
 		listGroups.serverRoute,
+		groupContext.serverRoute,
 		mapGroup.serverRoute,
 		listEvents.serverRoute,
 	] as const;
@@ -323,6 +472,7 @@ export const endpoints = [
 	'directory.tokens.rotate',
 	'directory.tokens.revoke',
 	'directory.groups.list',
+	'directory.groups.context',
 	'directory.groups.map',
 	'directory.provisioning.list',
 ] as const;

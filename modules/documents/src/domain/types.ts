@@ -20,6 +20,8 @@ export const DOCUMENT_LIMITS = {
 	search: 200,
 	/** Rows one list answer may carry; the platform page ceiling. */
 	page: 200,
+	/** Ids one bulk delete may name. */
+	deleteMany: 100,
 } as const;
 
 export interface DocumentsFile {
@@ -62,6 +64,14 @@ export interface DocumentFilters {
 	readonly scan?: DocumentScan | undefined;
 	/** The screen's `q`: a substring of the filename or the description. */
 	readonly search?: string | undefined;
+}
+
+/** What one bulk delete answers for one id. */
+export interface DocumentDeleteOutcome {
+	readonly id: string;
+	readonly outcome: 'deleted' | 'not-found' | 'refused';
+	/** The stable code behind a refusal. */
+	readonly reason?: string;
 }
 
 export interface DocumentReadUrl {

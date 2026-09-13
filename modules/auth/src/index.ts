@@ -44,6 +44,9 @@ export type {
 	ExternalIdentityBinding,
 	ExternalIdentityPage,
 	TenantMember,
+	TenantMemberKeyset,
 	TenantMemberPage,
+	TenantMemberSort,
+	TenantMemberSortedPage,
 	TenantSummary,
 } from './services/repository.ts';

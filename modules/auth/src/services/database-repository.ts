@@ -12,6 +12,7 @@ import type {
 	ModuleSettingValue,
 	UserActor,
 } from '@flowdular/kernel';
+import { keysetWhere } from '@flowdular/server';
 import { BUILTIN_ROLES } from '../acl/scopes.ts';
 import type {
 	ApiTokenRecord,
@@ -52,6 +53,9 @@ import {
 	type SignInFailureRecord,
 	type TenantInvitationRecord,
 	type TenantMember,
+	type TenantMemberSort,
+	type TenantMemberSortedPage,
+	type TenantMemberSortedRead,
 	type TenantSummary,
 } from './repository.ts';
 import type { SealedMfaSecret } from './totp.ts';
@@ -131,6 +135,10 @@ interface TenantMemberRow {
 	password_change_required: number | bigint | string;
 	scopes: string | null;
 	created_at: number | bigint | string;
+}
+
+interface SortedTenantMemberRow extends TenantMemberRow {
+	sort_value: string;
 }
 
 interface IdentityProviderRow {
@@ -250,6 +258,60 @@ export const TENANT_MEMBER_SEARCH_SQL = `SELECT ${TENANT_MEMBER_COLUMNS}
               OR a.email_normalized LIKE $2 ESCAPE '\\')
        ORDER BY lower(a.display_name), a.id
        LIMIT $3`;
+
+const TENANT_MEMBER_SORT_COLUMNS: Readonly<Record<TenantMemberSort, string>> = {
+	displayName: 'lower(a.display_name)',
+	email: 'a.email_normalized',
+};
+
+/**
+ * The sorted member page statement, exported for the same plan assertion as
+ * the search. The sort column is projected once, so the keyset predicate names
+ * a plain identifier and the ORDER BY the same expression the index carries.
+ */
+export function tenantMemberSortedStatement(
+	tenantId: string,
+	read: TenantMemberSortedRead,
+): DatabaseStatement {
+	const parameters: DatabaseParameter[] = [tenantId];
+	const filters = ['m.tenant_id = $1'];
+	if (read.membershipStatus !== null) {
+		parameters.push(read.membershipStatus);
+		filters.push(`m.status = $${parameters.length}`);
+	}
+	if (read.term !== null) {
+		parameters.push(`${read.term}%`);
+		filters.push(
+			`(lower(a.display_name) LIKE $${parameters.length} ESCAPE '\\'
+	          OR a.email_normalized LIKE $${parameters.length} ESCAPE '\\')`,
+		);
+	}
+	let keyset = '';
+	if (read.after !== null) {
+		const predicate = keysetWhere(
+			['sort_value', 'account_id'],
+			[read.after.sortValue, read.after.accountId],
+			{ direction: read.direction, parameterOffset: parameters.length },
+		);
+		parameters.push(...predicate.parameters);
+		keyset = `WHERE ${predicate.text}`;
+	}
+	parameters.push(read.limit);
+	const order = read.direction === 'asc' ? 'ASC' : 'DESC';
+	return {
+		text: `SELECT * FROM (
+	         SELECT ${TENANT_MEMBER_COLUMNS},
+	                ${TENANT_MEMBER_SORT_COLUMNS[read.sort]} AS sort_value
+	         FROM auth_memberships m
+	         JOIN auth_accounts a ON a.id = m.account_id
+	         WHERE ${filters.join(' AND ')}
+	       ) members
+	       ${keyset}
+	       ORDER BY sort_value ${order}, account_id ${order}
+	       LIMIT $${parameters.length}`,
+		parameters,
+	};
+}
 
 /**
  * One PostgreSQL `text[]` literal. A bound parameter carries no array type, so
@@ -849,6 +911,32 @@ export class DatabaseAuthRepository implements AuthRepository {
 			parameters: [tenantId, afterAccountId, limit],
 		});
 		return rows.map(tenantMemberFrom);
+	}
+
+	async listTenantMembersSorted(
+		tenantId: string,
+		read: TenantMemberSortedRead,
+	): Promise<TenantMemberSortedPage> {
+		const rows = await this.#query<SortedTenantMemberRow>(
+			tenantId,
+			tenantMemberSortedStatement(tenantId, read),
+		);
+		const last = rows[rows.length - 1];
+		return {
+			members: rows.map(tenantMemberFrom),
+			next:
+				last && rows.length === read.limit
+					? { sortValue: last.sort_value, accountId: last.account_id }
+					: null,
+		};
+	}
+
+	async countTenantMembers(tenantId: string): Promise<number> {
+		const rows = await this.#query<CountRow>(tenantId, {
+			text: 'SELECT count(*) AS total FROM auth_memberships WHERE tenant_id = $1',
+			parameters: [tenantId],
+		});
+		return rows[0] ? integer(rows[0].total, 'total') : 0;
 	}
 
 	async findTenantMember(

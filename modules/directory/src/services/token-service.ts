@@ -4,10 +4,18 @@ import {
 	randomUUID,
 	timingSafeEqual,
 } from 'node:crypto';
-import type { IssuedScimToken, ScimToken } from '../domain/types.ts';
+import type {
+	IssuedScimToken,
+	ListPage,
+	ScimToken,
+	TokenListQuery,
+} from '../domain/types.ts';
 import { DirectoryUniqueViolation } from './database-repository.ts';
 import type { DirectoryRepository } from './repository.ts';
 import { bounded, DirectoryServiceError } from './service-error.ts';
+
+/** Hard ceiling of one screen page, whatever a caller asks for. */
+export const MAX_LIST_PAGE = 200;
 
 /** Distinct from the member API token prefix, so the two can never be confused. */
 export const SCIM_TOKEN_PREFIX = 'fdscim_';
@@ -41,8 +49,11 @@ export class ScimTokenService {
 		private readonly now: () => number = Date.now,
 	) {}
 
-	list(tenantId: string): Promise<readonly ScimToken[]> {
-		return this.repository.listTokens(tenantId);
+	list(tenantId: string, query: TokenListQuery): Promise<ListPage<ScimToken>> {
+		return this.repository.listTokenPage(tenantId, {
+			...query,
+			limit: Math.min(Math.max(query.limit, 1), MAX_LIST_PAGE),
+		});
 	}
 
 	async create(
