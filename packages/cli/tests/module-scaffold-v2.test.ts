@@ -275,7 +275,9 @@ describe('module scaffolding from a version 2 specification', () => {
 			expect(repository).toContain('expires_on: string | null;');
 			expect(repository).toContain('expires_on::text AS expires_on');
 			expect(repository).toContain('expiresOn: row.expires_on,');
-			expect(repository).toContain('quantity: whole(row.quantity),');
+			expect(repository).toContain(
+				"quantity: integer(row.quantity, 'quantity'),",
+			);
 			expect(repository).toContain('receivedAt: isoText(row.received_at),');
 			expect(repository).toContain('ORDER BY lower(sku), id');
 			/* A statement parameter is text, a number or null. */

@@ -245,6 +245,9 @@ const OWNED_COLUMNS: ReadonlySet<string> = new Set([
 	'createdAt',
 ]);
 
+/* Owned columns a screen may list without an entity field declaring them. */
+export const OWNED_SCREEN_COLUMNS: ReadonlySet<string> = new Set(['createdAt']);
+
 /* PostgreSQL reserved words that cannot name a column unquoted, compared
    against the snake-cased field id: a camelCase id such as "currentUser"
    becomes the multi-word reserved name current_user. Generated SQL quotes no
@@ -891,7 +894,7 @@ function createParameter(field: ScaffoldField): string {
 function rowRead(field: ScaffoldField): string {
 	const read =
 		field.type === 'integer'
-			? `whole(row.${field.column})`
+			? `integer(row.${field.column}, '${field.column}')`
 			: field.type === 'datetime'
 				? `isoText(row.${field.column})`
 				: `row.${field.column}`;
@@ -915,18 +918,6 @@ function databaseRepositoryFile(model: ScaffoldModel): string {
 		? `lower(${model.orderField.column}), id`
 		: 'id';
 	const helpers = [
-		fields.some((field) => field.type === 'integer')
-			? `
-/* A domain integer may be negative, so only the timestamp keeps that bound. */
-function whole(value: ${entity.type}Row['created_at']): number {
-	const normalized = Number(value);
-	if (!Number.isSafeInteger(normalized)) {
-		throw new Error('The ${names.suffix} database returned an invalid number.');
-	}
-	return normalized;
-}
-`
-			: '',
 		fields.some((field) => field.type === 'datetime')
 			? `
 /* The driver returns a timestamp as a Date; the domain keeps ISO text. */

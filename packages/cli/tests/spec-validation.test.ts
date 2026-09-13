@@ -199,6 +199,33 @@ describe('module specification validation', () => {
 		]);
 	});
 
+	it('accepts the owned createdAt column on a screen but not as an entity field', async () => {
+		const spec = draft();
+		(spec.screens as { columns: string[]; filters: string[] }[])[0]!.columns = [
+			'sku',
+			'createdAt',
+			'updatedAt',
+		];
+		(spec.screens as { columns: string[]; filters: string[] }[])[0]!.filters = [
+			'createdAt',
+		];
+		const result = await report(spec);
+		expect(result.valid).toBe(false);
+		expect(codes(result.issues)).toEqual(['error:SPEC_FIELD_UNKNOWN']);
+		expect(result.issues[0]?.path).toBe('/screens/0/columns/2');
+
+		const declared = draft();
+		(declared.entities as { fields: { id: string }[] }[])[0]!.fields.push({
+			id: 'createdAt',
+			type: 'datetime',
+			required: true,
+		} as { id: string });
+		const refused = await report(declared);
+		expect(refused.valid).toBe(false);
+		expect(codes(refused.issues)).toEqual(['error:SPEC_FIELD_RESERVED']);
+		expect(refused.issues[0]?.path).toBe('/entities/0/fields/4/id');
+	});
+
 	it('reports a reference that names no entity of this specification or a dependency', async () => {
 		const local = draft();
 		const fields = (

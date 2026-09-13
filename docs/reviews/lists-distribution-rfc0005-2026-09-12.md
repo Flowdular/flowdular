@@ -260,10 +260,47 @@ Final run on 2026-09-13 after the fix rounds:
 - The CI workflow's verify and container jobs get a 30 minute limit: the
   container job on main was cancelled at 15 minutes once the suite grew.
 
-### Follow-ups
+### Follow-ups, closed on 2026-09-13
 
-- The spec validator should accept owned columns (`createdAt`,
-  `updatedAt`) as screen columns so a list can name its sort column.
-- The users spec stays at schemaVersion 1 (no `actions` section); its bulk
-  actions are stated as an invariant.
-- The scaffold still emits a private `whole()` decoder.
+Branch `feat/rfc0005-followups`, after PR #3 merged:
+
+- The spec validator accepts the owned column `createdAt` as a screen column
+  or filter without an entity field (an entity field of that name stays
+  refused, an unknown column stays refused); the approvals inbox names its
+  `createdAt` sort column. `updatedAt` is not an owned column of the
+  scaffolded tables and stays out.
+- The users spec is schemaVersion 2 (entities, screens, actions including
+  the two bulk actions, widgets, outOfScope, decisions) with every
+  requirement carried over byte for byte; `createdAt` is recorded as not
+  describable (D-USERS-JOINED-AT).
+- The scaffold emits the shared `integer` decoder for integer fields; the
+  private `whole()` helper is gone.
+- Audit item #18: the module settings store contract is asynchronous
+  (`load`, `save`, `clear` return promises); `prime(tenantId)` loads a
+  tenant's snapshot once, `get` and `list` read it synchronously and fail
+  loudly for an unprimed tenant, `set` awaits the store. The authenticated
+  request path, the platform composition, the sandbox preview and every
+  background reader (automations scheduler, approvals open and expiry,
+  documents quota, directory SCIM, agents, notifications) prime first. A
+  kernel test proves a slow store. Platform API 0.1.6. The agent contract,
+  ADR 0003 and the capability card describe the primed read.
+
+Modules after the follow-ups: agents 0.12.9 `b67b8f52cb506e3f`, approvals
+0.1.13 `0a09e9f7c123608c`, auth 0.13.10 `5cec5ee6d7b91586`, automations
+0.6.7 `ad558c5ed47b71c8`, directory 0.1.9 `1bbdebc013360dfa`, documents
+0.1.8 `f7668e1e7bced8d5`, notifications 0.2.8 `862df1ff7af66ef3`, system
+0.7.3 `9125c00267c002d2`, users 0.9.8 `0ec4b49724d7cf16`.
+
+Gates for the follow-ups on 2026-09-13: typecheck, capability card, platform
+API 0.1.6, format, rules, reference, `spec validate`, `module validate`,
+`migration verify`: exit 0; `pnpm verify` 445 test files, 3858 tests passed,
+3 skipped; PostgreSQL 17 with the CI roles over thirteen suites green
+(approvals 91, automations 109, system 35 among them); `pnpm build`,
+`release:pack`, `release:smoke` with the coding agent binaries hidden: exit
+0, template composition unchanged.
+
+Still open, by decision rather than by omission: the npm publication of
+the 0.2.x packages and the official module lockfile regeneration that
+follows it; the audit items #11 (re-sealing for the storage and connectors
+keys), #12 (PITR and a production restore path), #13 (the signed approval
+verifier); H9, H10 and H11 of RFC 0004 on their triggers.
