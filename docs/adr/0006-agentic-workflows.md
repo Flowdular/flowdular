@@ -1046,18 +1046,18 @@ Run history is tenant-scoped and cursor-paginated. It supports filters for:
 - child agent id;
 - failure or refusal code.
 
-Interactive ordering is fixed to `(queuedAt DESC, runId DESC)`. The first page
-captures a high-water mark. Its opaque cursor has version `wfrc1` and is signed
-by the server over tenant id, a canonical filter digest, the fixed sort, the
-high-water mark, and the last `(queuedAt, runId)` pair. Later pages use the same
-snapshot boundary, so newly queued runs do not shift or duplicate existing
-rows. A cursor is valid only for the authenticated tenant and the exact filter
-set that created it. Malformed, modified, foreign-tenant, stale-version, or
-filter-mismatched cursors return `WORKFLOW_CURSOR_INVALID` or
-`WORKFLOW_CURSOR_MISMATCH` and no rows.
+Interactive ordering is a keyset over `(queuedAt, runId)` in one direction,
+descending by default. Since RFC 0005 the cursor is the platform's signed
+cursor (`encodeCursor` in `@flowdular/server`, keyed by
+`FD_WORKFLOWS_CURSOR_KEY` with the previous key still verifying) carrying the
+tenant id, the sort, the direction, a canonical filter digest and the last
+`(queuedAt, runId)` pair; the keyset order keeps forward pages stable without
+a snapshot boundary. A cursor is valid only for the authenticated tenant and
+the exact sort and filter set that created it. Malformed, modified,
+foreign-tenant or mismatched cursors return `CURSOR_INVALID` and no rows.
 
-Workflow audit pages use the same rule with `(sequence DESC)` and cursor version
-`wfac1`. Run detail is not cursor-paged because contract limits bound it to at
+Workflow audit pages use the same cursor over `(sequence)` or
+`(occurredAt, sequence)`. Run detail is not cursor-paged because contract limits bound it to at
 most 100 nodes, 500 immutable attempts, and 200 edge settlements. The event
 stream remains separately paged because it may contain 10,000 events.
 
@@ -1087,12 +1087,13 @@ and unrestricted request bodies are never history data.
 ### Event stream and resume
 
 Every run event has a run-local sequence and durable event id. SSE `id` is an
-opaque run-bound resume cursor `wfre1` signed over tenant, run, and sequence. It
-is not the database event id. The event data still includes `eventId`,
-`schemaVersion`, and `sequence`.
+opaque run-bound resume cursor, the shared signed cursor of `@flowdular/server`
+carrying kind `events` over tenant, run, and sequence, signed with the module
+cursor key. It is not the database event id. The event data still includes
+`eventId`, `schemaVersion`, and `sequence`.
 
-A client reconnects with either HTTP `Last-Event-ID: <wfre1 cursor>` or an
-integer `afterSequence`. If both are supplied they must name the same run and
+A client reconnects with either HTTP `Last-Event-ID: <signed events cursor>` or
+an integer `afterSequence`. If both are supplied they must name the same run and
 sequence or the server returns `WORKFLOW_EVENT_CURSOR_CONFLICT`. A cursor for a
 different tenant or run returns `WORKFLOW_EVENT_CURSOR_INVALID`. A sequence
 beyond the durable tail returns `WORKFLOW_EVENT_CURSOR_AHEAD`.
@@ -1232,7 +1233,7 @@ history cannot share a database transaction; the workflow atomically commits
 their stable correlation identifiers and each owner keeps its own audit
 boundary.
 
-Audit pagination uses tenant sequence descending and the `wfac1` cursor. Verify
+Audit pagination uses the tenant sequence and the shared signed cursor. Verify
 returns a typed result with `valid`, `checkedThroughSequence`, and, when broken,
 `firstBrokenSequence`, `expectedPreviousHash`, and `actualPreviousHash`. It never
 returns secret metadata.

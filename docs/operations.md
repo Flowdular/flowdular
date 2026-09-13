@@ -225,7 +225,7 @@ Sources: `modules/audit/src/services/{anchor-key,anchor-rotation}.ts`,
 `packages/kernel/src/keyring.ts`,
 `modules/agents/src/services/{credential-vault,credential-rotation}.ts`,
 `modules/automations/src/services/{secret-vault,secret-rotation}.ts`,
-`modules/workflows/src/services/{payload-codec,payload-rotation,cursor-codec}.ts`,
+`modules/workflows/src/services/{payload-codec,payload-rotation,cursors}.ts`,
 `modules/notifications/src/services/{secret-vault,secret-rotation}.ts`,
 `modules/auth/src/services/totp.ts`.
 
