@@ -1,12 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import {
+	issueApprovalGrant,
+	type ApprovalGrantKeyring,
+} from '@flowdular/kernel';
+import {
 	APPROVAL_LIMITS,
 	type ApprovalRequestFilter,
 	type ApprovalsRequests,
 	type OpenApprovalInput,
 } from '../domain/capability.ts';
 import {
+	APPROVAL_GRANT_TTL_MS,
+	decodeCapabilitySubjectRef,
+} from '../domain/grant.ts';
+import {
 	APPROVAL_STATUSES,
+	type ApprovalAuditEntry,
 	type ApprovalDecideOutcome,
 	type ApprovalDecision,
 	type ApprovalListPage,
@@ -61,6 +70,8 @@ export interface ApprovalsServiceOptions {
 	readonly defaultExpiryDays: (tenantId: string) => number | Promise<number>;
 	readonly notifications?: NotificationPublisherResolver;
 	readonly callbacks?: ApprovalCallbackRegistry;
+	/** Signs the grant an approved capability request yields; absent means none is issued. */
+	readonly grants?: ApprovalGrantKeyring | undefined;
 	readonly now?: () => number;
 }
 
@@ -71,6 +82,7 @@ export class ApprovalsService {
 	readonly #defaultExpiryDays: ApprovalsServiceOptions['defaultExpiryDays'];
 	readonly #notifications: NotificationPublisherResolver | undefined;
 	readonly #callbacks: ApprovalCallbackRegistry;
+	readonly #grants: ApprovalGrantKeyring | undefined;
 	readonly #now: () => number;
 
 	constructor(options: ApprovalsServiceOptions) {
@@ -80,6 +92,7 @@ export class ApprovalsService {
 		this.#defaultExpiryDays = options.defaultExpiryDays;
 		this.#notifications = options.notifications;
 		this.#callbacks = options.callbacks ?? createApprovalCallbackRegistry();
+		this.#grants = options.grants;
 		this.#now = options.now ?? Date.now;
 	}
 
@@ -184,6 +197,48 @@ export class ApprovalsService {
 			bounded(tenantId, 'tenantId', 1, 128),
 			bounded(id, 'id', 1, 128),
 		);
+	}
+
+	/**
+	 * The grant an approved capability request yields, derived from the row and
+	 * the current key on every read: the same claims sign to the same token
+	 * under the same key, and a rotated key signs a fresh one that verifies the
+	 * same. Nothing is issued for any other state, or once the window closed.
+	 */
+	grantFor(request: ApprovalRequest): string | undefined {
+		if (!this.#grants || request.status !== 'approved') return undefined;
+		if (request.resolvedAt === null) return undefined;
+		const subject = decodeCapabilitySubjectRef(request.subjectRef);
+		if (!subject) return undefined;
+		const expiresAt = request.resolvedAt + APPROVAL_GRANT_TTL_MS;
+		if (expiresAt <= this.#now()) return undefined;
+		return issueApprovalGrant(this.#grants, {
+			tenantId: request.tenantId,
+			capabilityId: subject.capabilityId,
+			inputDigest: subject.inputDigest,
+			requestId: request.id,
+			issuedAt: request.resolvedAt,
+			expiresAt,
+			nonce: request.id,
+		}).token;
+	}
+
+	/* The token reaches only the module that asked the question: a holder of
+	   the capability naming another module's request is answered null. */
+	async grant(
+		tenantId: string,
+		id: string,
+		subjectModule: string,
+	): Promise<string | null> {
+		const module = bounded(
+			subjectModule,
+			'subjectModule',
+			1,
+			APPROVAL_LIMITS.subjectModule,
+		);
+		const request = await this.get(tenantId, id);
+		if (!request || request.subjectModule !== module) return null;
+		return this.grantFor(request) ?? null;
 	}
 
 	async detail(
@@ -458,6 +513,8 @@ export class ApprovalsService {
 		return {
 			open: (input) => this.open(input),
 			get: (tenantId, id) => this.get(tenantId, id),
+			grant: (tenantId, id, subjectModule) =>
+				this.grant(tenantId, id, subjectModule),
 			list: (tenantId, filter) => this.list(tenantId, filter),
 			cancel: async (tenantId, id, actorAccountId) =>
 				(await this.cancel(tenantId, id, actorAccountId)).request,
@@ -474,6 +531,28 @@ export class ApprovalsService {
 			);
 		}
 		return request;
+	}
+
+	/* The moment a capability request is approved is the moment its grant can
+	   be read, so that is what the ledger records, under the deciding
+	   transaction, with what the grant will say and which key signs it. */
+	#grantIssued(resolved: ApprovalRequest): ApprovalAuditEntry | null {
+		if (!this.#grants || resolved.status !== 'approved') return null;
+		const subject = decodeCapabilitySubjectRef(resolved.subjectRef);
+		if (!subject || resolved.resolvedAt === null) return null;
+		return {
+			id: randomUUID(),
+			tenantId: resolved.tenantId,
+			requestId: resolved.id,
+			action: 'grant.issued',
+			metadata: {
+				capabilityId: subject.capabilityId,
+				inputDigest: subject.inputDigest,
+				keyId: this.#grants.keyId,
+				expiresAt: resolved.resolvedAt + APPROVAL_GRANT_TTL_MS,
+			},
+			occurredAt: resolved.resolvedAt,
+		};
 	}
 
 	/* Only a member who may read the request is told its state; every caller
@@ -512,6 +591,7 @@ export class ApprovalsService {
 			},
 			resolve,
 			resolvedAt: decidedAt,
+			audit: (resolved) => this.#grantIssued(resolved),
 		});
 		if (result.outcome === 'not-found') {
 			throw new ApprovalsServiceError(

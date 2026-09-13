@@ -41,15 +41,25 @@ describe('agent tool adapters', () => {
 		});
 	});
 
-	it('rejects unattended destructive CLI capabilities', () => {
-		expect(() =>
-			defineCliAgentTool({
-				id: 'auth.local.reset',
-				capability: { id: 'auth.greenfield.reset', risk: 'destructive' },
-				description: 'Reset local authentication data.',
-				requiredPermissions: [],
-				execute: async () => undefined,
-			}),
-		).toThrow('approval receipt');
+	/* The harness admits it only under an approval grant; building it is not
+	   the gate. */
+	it('builds a destructive CLI capability the harness gates per call', () => {
+		const tool = defineCliAgentTool({
+			id: 'auth.local.reset',
+			capability: {
+				id: 'auth.greenfield.reset',
+				risk: 'destructive',
+				localOnly: true,
+			},
+			description: 'Reset local authentication data.',
+			requiredPermissions: [],
+			risk: 'destructive',
+			execute: async () => undefined,
+		});
+		expect(tool).toMatchObject({
+			transport: 'cli',
+			risk: 'destructive',
+			localOnly: true,
+		});
 	});
 });

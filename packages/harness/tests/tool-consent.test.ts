@@ -1,5 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
-import { userActor } from '@flowdular/kernel';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+	approvalInputDigest,
+	createApprovalGrantKeyring,
+	issueApprovalGrant,
+	userActor,
+	type ApprovalGrantKeyring,
+} from '@flowdular/kernel';
 import {
 	AgentHarness,
 	type AgentExecutionRequest,
@@ -273,9 +279,57 @@ describe('consent gate identity', () => {
 	});
 });
 
+const KEY_A = Buffer.alloc(32, 0x61);
+const KEY_B = Buffer.alloc(32, 0x62);
+const INPUT = { instanceId: 'instance-1' };
+
+function externalTool(
+	execute = vi.fn(async () => ({ ok: true })),
+	consent?: AgentTool['consent'],
+): { readonly tool: AgentTool; readonly execute: typeof execute } {
+	const tool: AgentTool = {
+		id: 'connectors.call',
+		transport: 'api',
+		target: 'connectors.calls.agent',
+		description: 'An outbound call.',
+		requiredPermissions: [PERMISSION],
+		risk: 'external',
+		...(consent ? { consent } : {}),
+		execute,
+	};
+	return { tool, execute };
+}
+
+function grantFor(
+	keyring: ApprovalGrantKeyring,
+	overrides: { readonly input?: unknown; readonly expiresAt?: number } = {},
+): string {
+	const now = Date.now();
+	return issueApprovalGrant(keyring, {
+		tenantId: 'tenant-a',
+		capabilityId: 'connectors.call',
+		inputDigest: approvalInputDigest(overrides.input ?? INPUT),
+		requestId: 'request-1',
+		issuedAt: now - 1_000,
+		expiresAt: overrides.expiresAt ?? now + 60_000,
+		nonce: 'request-1',
+	}).token;
+}
+
+function gatedHarness(tool: AgentTool, provider: AgentProvider): AgentHarness {
+	return new AgentHarness({
+		providers: [provider],
+		tools: [tool],
+		authorizeToolAccess: () => [PERMISSION],
+		approvalGrants: createApprovalGrantKeyring({ current: KEY_A }),
+	});
+}
+
 describe('external risk ceiling', () => {
-	it('refuses to build an api tool that declares external risk', () => {
-		expect(() =>
+	/* Building is not the gate: the adapter hands the harness the risk and the
+	   harness admits the tool per run and per call. */
+	it('builds an api tool that declares external risk', () => {
+		expect(
 			defineApiAgentTool({
 				id: 'connectors.call',
 				endpointId: 'connectors.calls.agent',
@@ -283,25 +337,14 @@ describe('external risk ceiling', () => {
 				requiredPermissions: [PERMISSION],
 				risk: 'external',
 				execute: async () => ({}),
-			}),
-		).toThrow(/external risk/);
+			}).risk,
+		).toBe('external');
 	});
 
-	/* A hand-built tool object skips the adapter, so the harness refuses it at
-	   the admission point as well: it is never offered and never runs. */
-	it('never offers or runs a registered tool that declares external risk', async () => {
-		const execute = vi.fn(async () => ({ ok: true }));
-		const tool: AgentTool = {
-			id: 'connectors.call',
-			transport: 'api',
-			target: 'connectors.calls.agent',
-			description: 'An outbound call.',
-			requiredPermissions: [PERMISSION],
-			risk: 'external',
-			execute,
-		};
+	it('never offers or runs an external tool when the run carries no grant', async () => {
+		const { tool, execute } = externalTool();
 		const { provider, offered, failures } = caller();
-		const result = await harnessWith(tool, provider).execute(request());
+		const result = await gatedHarness(tool, provider).execute(request());
 
 		expect(offered).toEqual([]);
 		expect(failures).toEqual([{ code: 'TOOL_RISK_REFUSED' }]);
@@ -309,5 +352,261 @@ describe('external risk ceiling', () => {
 		expect(
 			result.events.find((event) => event.type === 'tool.denied')?.metadata,
 		).toMatchObject({ reason: 'TOOL_RISK_REFUSED' });
+	});
+
+	it('refuses an external tool without a configured key even with a grant', async () => {
+		const { tool, execute } = externalTool();
+		const { provider, offered, failures } = caller();
+		const harness = new AgentHarness({
+			providers: [provider],
+			tools: [tool],
+			authorizeToolAccess: () => [PERMISSION],
+		});
+		const token = grantFor(createApprovalGrantKeyring({ current: KEY_A }));
+		await harness.execute(request({ grants: [token] }));
+
+		expect(offered).toEqual([]);
+		expect(failures).toEqual([{ code: 'TOOL_RISK_REFUSED' }]);
+		expect(execute).not.toHaveBeenCalled();
+	});
+
+	it('refuses a grant signed under a foreign key or already expired', async () => {
+		for (const [token, reason] of [
+			[
+				grantFor(createApprovalGrantKeyring({ current: KEY_B })),
+				'APPROVAL_GRANT_INVALID',
+			],
+			[
+				grantFor(createApprovalGrantKeyring({ current: KEY_A }), {
+					expiresAt: Date.now() - 1,
+				}),
+				'APPROVAL_GRANT_EXPIRED',
+			],
+		] as const) {
+			const { tool, execute } = externalTool();
+			const { provider, offered, failures } = caller();
+			const result = await gatedHarness(tool, provider).execute(
+				request({ grants: [token] }),
+			);
+
+			expect(offered).toEqual([]);
+			expect(failures).toEqual([{ code: 'TOOL_RISK_REFUSED' }]);
+			expect(execute).not.toHaveBeenCalled();
+			expect(
+				result.events.find((event) => event.type === 'tool.denied')?.metadata,
+			).toMatchObject({ reason: 'TOOL_RISK_REFUSED', grant: reason });
+		}
+	});
+
+	it('records a mismatch when a token verifies for no tool of the run', async () => {
+		const { tool, execute } = externalTool();
+		const { provider, offered, failures } = caller();
+		const token = issueApprovalGrant(
+			createApprovalGrantKeyring({ current: KEY_A }),
+			{
+				tenantId: 'tenant-b',
+				capabilityId: 'connectors.call',
+				inputDigest: approvalInputDigest(INPUT),
+				requestId: 'request-1',
+				issuedAt: Date.now() - 1_000,
+				expiresAt: Date.now() + 60_000,
+				nonce: 'request-1',
+			},
+		).token;
+		const result = await gatedHarness(tool, provider).execute(
+			request({ grants: [token] }),
+		);
+
+		expect(offered).toEqual([]);
+		expect(failures).toEqual([{ code: 'TOOL_RISK_REFUSED' }]);
+		expect(execute).not.toHaveBeenCalled();
+		expect(
+			result.events.find((event) => event.type === 'tool.denied')?.metadata,
+		).toMatchObject({
+			reason: 'TOOL_RISK_REFUSED',
+			grant: 'APPROVAL_GRANT_MISMATCH',
+		});
+	});
+
+	it('admits one call per grant and refuses the repeat as consumed', async () => {
+		const { tool, execute } = externalTool();
+		const failures: { code: string }[] = [];
+		const provider: AgentProvider = {
+			id: 'calling-provider',
+			execute: async (context) => {
+				for (let attempt = 0; attempt < 2; attempt += 1) {
+					try {
+						await context.invokeTool('connectors.call', INPUT);
+					} catch (error) {
+						failures.push({ code: (error as { code: string }).code });
+					}
+				}
+				return {
+					output: 'done',
+					usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+					finishReason: 'stop',
+				};
+			},
+		};
+		const token = grantFor(createApprovalGrantKeyring({ current: KEY_A }));
+		const result = await gatedHarness(tool, provider).execute(
+			request({ grants: [token] }),
+		);
+
+		expect(execute).toHaveBeenCalledTimes(1);
+		expect(failures).toEqual([{ code: 'TOOL_RISK_REFUSED' }]);
+		expect(
+			result.events.find((event) => event.type === 'tool.denied')?.metadata,
+		).toMatchObject({
+			reason: 'TOOL_RISK_REFUSED',
+			grant: 'APPROVAL_GRANT_CONSUMED',
+		});
+	});
+
+	it('refuses a grant issued for another input', async () => {
+		const { tool, execute } = externalTool();
+		const { provider, offered, failures } = caller();
+		const token = grantFor(createApprovalGrantKeyring({ current: KEY_A }), {
+			input: { instanceId: 'instance-2' },
+		});
+		const result = await gatedHarness(tool, provider).execute(
+			request({ grants: [token] }),
+		);
+
+		expect(offered).toEqual(['connectors.call']);
+		expect(failures).toEqual([{ code: 'TOOL_RISK_REFUSED' }]);
+		expect(execute).not.toHaveBeenCalled();
+		expect(
+			result.events.find((event) => event.type === 'tool.denied')?.metadata,
+		).toMatchObject({
+			reason: 'TOOL_RISK_REFUSED',
+			grant: 'APPROVAL_GRANT_MISMATCH',
+		});
+	});
+
+	it('runs an external tool under a valid grant for this input', async () => {
+		const { tool, execute } = externalTool();
+		const { provider, offered, failures } = caller();
+		const token = grantFor(createApprovalGrantKeyring({ current: KEY_A }));
+		const result = await gatedHarness(tool, provider).execute(
+			request({ grants: [token] }),
+		);
+
+		expect(offered).toEqual(['connectors.call']);
+		expect(failures).toEqual([]);
+		expect(execute).toHaveBeenCalledTimes(1);
+		expect(
+			result.events
+				.map((event) => event.type)
+				.filter((type) => type.startsWith('tool.')),
+		).toEqual(['tool.started', 'tool.completed']);
+	});
+
+	it('runs under a grant issued before the key was rotated', async () => {
+		const { tool, execute } = externalTool();
+		const { provider, failures } = caller();
+		const token = grantFor(createApprovalGrantKeyring({ current: KEY_A }));
+		const harness = new AgentHarness({
+			providers: [provider],
+			tools: [tool],
+			authorizeToolAccess: () => [PERMISSION],
+			approvalGrants: createApprovalGrantKeyring({
+				current: KEY_B,
+				previous: [KEY_A],
+			}),
+		});
+		await harness.execute(request({ grants: [token] }));
+
+		expect(failures).toEqual([]);
+		expect(execute).toHaveBeenCalledTimes(1);
+	});
+
+	it('still asks the consent gate of a granted external tool', async () => {
+		const { tool, execute } = externalTool(undefined, {
+			id: 'connectors.instance-consent',
+			check: () => ({ granted: false, reason: 'CONNECTOR_CONSENT_MISSING' }),
+		});
+		const { provider, offered, failures } = caller();
+		const token = grantFor(createApprovalGrantKeyring({ current: KEY_A }));
+		const result = await gatedHarness(tool, provider).execute(
+			request({ grants: [token] }),
+		);
+
+		expect(offered).toEqual(['connectors.call']);
+		expect(failures).toEqual([{ code: 'CONNECTOR_CONSENT_MISSING' }]);
+		expect(execute).not.toHaveBeenCalled();
+		expect(
+			result.events.find((event) => event.type === 'tool.denied')?.metadata,
+		).toMatchObject({
+			consent: 'connectors.instance-consent',
+			reason: 'CONNECTOR_CONSENT_MISSING',
+		});
+	});
+
+	it('bounds the grants a run may carry', async () => {
+		const { tool } = externalTool();
+		const { provider } = caller();
+		await expect(
+			gatedHarness(tool, provider).execute(
+				request({ grants: Array.from({ length: 17 }, () => 'ag1.x.y.z') }),
+			),
+		).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+	});
+});
+
+describe('local-only ceiling', () => {
+	const environment = {
+		FD_ENV: process.env.FD_ENV,
+		NODE_ENV: process.env.NODE_ENV,
+	};
+
+	afterEach(() => {
+		for (const [key, value] of Object.entries(environment)) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+	});
+
+	function localTool(execute = vi.fn(async () => ({ ok: true }))) {
+		const tool: AgentTool = {
+			id: 'connectors.call',
+			transport: 'cli',
+			target: 'auth.greenfield.reset',
+			description: 'Reset local authentication data.',
+			requiredPermissions: [PERMISSION],
+			risk: 'destructive',
+			localOnly: true,
+			execute,
+		};
+		return { tool, execute };
+	}
+
+	it('runs a granted local-only destructive capability in development', async () => {
+		process.env.FD_ENV = 'development';
+		const { tool, execute } = localTool();
+		const { provider, offered, failures } = caller();
+		const token = grantFor(createApprovalGrantKeyring({ current: KEY_A }));
+		await gatedHarness(tool, provider).execute(request({ grants: [token] }));
+
+		expect(offered).toEqual(['connectors.call']);
+		expect(failures).toEqual([]);
+		expect(execute).toHaveBeenCalledTimes(1);
+	});
+
+	it('never offers or runs it outside development and test, grant or not', async () => {
+		process.env.FD_ENV = 'production';
+		const { tool, execute } = localTool();
+		const { provider, offered, failures } = caller();
+		const token = grantFor(createApprovalGrantKeyring({ current: KEY_A }));
+		const result = await gatedHarness(tool, provider).execute(
+			request({ grants: [token] }),
+		);
+
+		expect(offered).toEqual([]);
+		expect(failures).toEqual([{ code: 'TOOL_LOCAL_ONLY' }]);
+		expect(execute).not.toHaveBeenCalled();
+		expect(
+			result.events.find((event) => event.type === 'tool.denied')?.metadata,
+		).toMatchObject({ reason: 'TOOL_LOCAL_ONLY' });
 	});
 });

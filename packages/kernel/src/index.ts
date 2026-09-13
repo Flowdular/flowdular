@@ -63,6 +63,26 @@ export type {
 	ModuleCapabilityDeclaration,
 	PlatformCapabilityRegistry,
 } from './capability-registry.ts';
+export {
+	APPROVAL_GRANT_INPUT_DIGEST_LENGTH,
+	APPROVAL_GRANT_KEY_VARIABLE,
+	APPROVAL_GRANT_MAX_TOKEN_LENGTH,
+	APPROVAL_GRANT_PREVIOUS_KEY_VARIABLE,
+	approvalGrantKeyringFromEnvironment,
+	approvalInputDigest,
+	createApprovalGrantKeyring,
+	issueApprovalGrant,
+	verifyApprovalGrant,
+} from './approval-grant.ts';
+export type {
+	ApprovalGrantClaims,
+	ApprovalGrantExpectation,
+	ApprovalGrantInput,
+	ApprovalGrantKeyring,
+	ApprovalGrantReason,
+	ApprovalGrantVerification,
+	IssuedApprovalGrant,
+} from './approval-grant.ts';
 export { RegistryError } from './errors.ts';
 export {
 	createKeyring,

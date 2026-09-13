@@ -30,6 +30,7 @@ export const APPROVALS_TENANT_TABLES = [
 	'approvals_requests',
 	'approvals_eligible',
 	'approvals_decisions',
+	'approvals_audit',
 ] as const;
 
 const REQUIREMENTS = {

@@ -25,6 +25,7 @@ const environment = {
 	FD_DATABASE_PGLITE_DIRECTORY: join(stateDirectory, 'pglite'),
 	FD_AGENT_CREDENTIAL_KEY: buildSecret(),
 	FD_AGENT_RUN_GRANT_KEY: buildSecret(),
+	FD_APPROVAL_GRANT_KEY: buildSecret(),
 	FD_AUTOMATIONS_CREDENTIAL_KEY: buildSecret(),
 	FD_NOTIFICATIONS_SECRET_KEY: buildSecret(),
 	FD_WORKFLOWS_PAYLOAD_KEY: buildSecret(),

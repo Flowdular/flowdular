@@ -1,4 +1,5 @@
 import type {
+	ApprovalAuditEntry,
 	ApprovalDecision,
 	ApprovalListPage,
 	ApprovalRequest,
@@ -37,6 +38,8 @@ export interface DecideApprovalInput {
 		decisions: readonly ApprovalDecision[],
 	) => TerminalApprovalStatus | null;
 	readonly resolvedAt: number;
+	/** Written in the same transaction when the request resolves; null writes nothing. */
+	readonly audit?: (request: ApprovalRequest) => ApprovalAuditEntry | null;
 }
 
 export type DecideApprovalResult =
@@ -101,6 +104,11 @@ export interface ApprovalsRepository {
 	/** Pending requests this account is in the eligibility snapshot of. */
 	countDecidable(tenantId: string, accountId: string): Promise<number>;
 	decide(input: DecideApprovalInput): Promise<DecideApprovalResult>;
+	/** The issuance ledger of one request, oldest first. */
+	listAudit(
+		tenantId: string,
+		requestId: string,
+	): Promise<readonly ApprovalAuditEntry[]>;
 	/** Cross-tenant, routing columns only, on the read-only background lease. */
 	listDueExpiries(
 		now: number,

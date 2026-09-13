@@ -75,6 +75,7 @@ function wrap(overrides: Partial<ApprovalsRepository>): ApprovalsRepository {
 		isSnapshotDecider: base.isSnapshotDecider.bind(base),
 		countDecidable: base.countDecidable.bind(base),
 		decide: base.decide.bind(base),
+		listAudit: base.listAudit.bind(base),
 		listDueExpiries: base.listDueExpiries.bind(base),
 		exportRequestsPage: base.exportRequestsPage.bind(base),
 		deleteResolvedBefore: base.deleteResolvedBefore.bind(base),

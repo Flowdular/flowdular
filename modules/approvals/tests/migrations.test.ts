@@ -248,8 +248,15 @@ describe('approvals migrations', () => {
 			'approvals_requests_requester_created_idx',
 			'approvals_requests_created_idx',
 		];
-		const earlier = databaseMigrations.slice(0, -1);
-		await runDatabaseMigrations(database, 'approvals.core', earlier);
+		const inbox = databaseMigrations.findIndex(
+			(migration) => migration.id === '0004_approvals_inbox_keyset_indexes',
+		);
+		const through = databaseMigrations.slice(0, inbox + 1);
+		await runDatabaseMigrations(
+			database,
+			'approvals.core',
+			databaseMigrations.slice(0, inbox),
+		);
 		for (const index of inboxIndexes) {
 			expect([index, await database.schema.hasIndex(index)]).toEqual([
 				index,
@@ -266,14 +273,14 @@ describe('approvals migrations', () => {
 		const partial = await databaseMigrationStatus(
 			database,
 			'approvals.core',
-			databaseMigrations,
+			through,
 		);
 		expect(partial.at(-1)).toMatchObject({
 			id: '0004_approvals_inbox_keyset_indexes',
 			state: 'partial',
 		});
 		await expect(
-			runDatabaseMigrations(database, 'approvals.core', databaseMigrations),
+			runDatabaseMigrations(database, 'approvals.core', through),
 		).rejects.toThrow(/partially present/);
 
 		await database.execute({
@@ -282,7 +289,7 @@ describe('approvals migrations', () => {
 		const applied = await runDatabaseMigrations(
 			database,
 			'approvals.core',
-			databaseMigrations,
+			through,
 		);
 		expect(applied.at(-1)).toMatchObject({
 			id: '0004_approvals_inbox_keyset_indexes',

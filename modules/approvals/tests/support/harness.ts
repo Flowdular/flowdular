@@ -1,3 +1,4 @@
+import type { ApprovalGrantKeyring } from '@flowdular/kernel';
 import { ApprovalsService } from '../../src/services/approvals-service.ts';
 import { createApprovalCallbackRegistry } from '../../src/services/callbacks.ts';
 import type { NotificationPublishInput } from '../../src/services/notifications.ts';
@@ -27,6 +28,7 @@ export interface HarnessOptions {
 	readonly publishes?: NotificationPublishInput[];
 	/** Made to throw, to prove a publisher failure changes no decision. */
 	readonly publisherThrows?: boolean;
+	readonly grants?: ApprovalGrantKeyring;
 }
 
 export function createHarness(options: HarnessOptions) {
@@ -60,6 +62,7 @@ export function createHarness(options: HarnessOptions) {
 					}),
 				}
 			: {}),
+		...(options.grants ? { grants: options.grants } : {}),
 		...(options.now ? { now: options.now } : {}),
 	});
 	return { service, callbacks };

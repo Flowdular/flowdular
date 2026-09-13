@@ -30,6 +30,7 @@ export interface CliAgentToolDefinition extends AgentToolBase {
 	readonly capability: {
 		readonly id: string;
 		readonly risk: CapabilityRisk;
+		readonly localOnly?: boolean;
 	};
 }
 
@@ -40,14 +41,11 @@ function dottedIdentifier(value: string, field: string): string {
 	return value;
 }
 
+/* An external tool builds as any other; the harness offers and runs it only
+   under an approval grant naming the tool and the input. */
 export function defineApiAgentTool(
 	definition: ApiAgentToolDefinition,
 ): AgentTool {
-	if (definition.risk === 'external') {
-		throw new Error(
-			`Tool ${definition.id} declares external risk and cannot be registered as an unattended agent tool.`,
-		);
-	}
 	return Object.freeze({
 		id: dottedIdentifier(definition.id, 'Tool id'),
 		transport: 'api' as const,
@@ -80,17 +78,11 @@ export function defineApiAgentTool(
 	});
 }
 
+/* An external or destructive capability builds as any other; the harness runs
+   the tool only under an approval grant naming the tool and the input. */
 export function defineCliAgentTool(
 	definition: CliAgentToolDefinition,
 ): AgentTool {
-	if (
-		definition.capability.risk === 'external' ||
-		definition.capability.risk === 'destructive'
-	) {
-		throw new Error(
-			`CLI capability ${definition.capability.id} requires an approval receipt and cannot be registered as an unattended agent tool.`,
-		);
-	}
 	return Object.freeze({
 		id: dottedIdentifier(definition.id, 'Tool id'),
 		transport: 'cli' as const,
@@ -104,6 +96,7 @@ export function defineCliAgentTool(
 			? {}
 			: { outputSchema: definition.outputSchema }),
 		...(definition.risk === undefined ? {} : { risk: definition.risk }),
+		...(definition.capability.localOnly === true ? { localOnly: true } : {}),
 		...(definition.consent === undefined
 			? {}
 			: { consent: definition.consent }),

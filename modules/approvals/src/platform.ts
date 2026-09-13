@@ -1,3 +1,4 @@
+import { approvalGrantKeyringFromEnvironment } from '@flowdular/kernel';
 import type {
 	PlatformServerComposition,
 	PlatformServerContext,
@@ -96,6 +97,9 @@ export function createServerComposition(
 			context.capabilities.get<NotificationPublisher>(
 				NOTIFICATIONS_PUBLISH_CAPABILITY,
 			),
+		/* Without FD_APPROVAL_GRANT_KEY an approved capability request yields no
+		   grant, and the runner and the harness keep refusing the capability. */
+		grants: approvalGrantKeyringFromEnvironment(context.environment),
 	});
 	/* The runtime opens its database leases lazily, so the capability is a
 	   forwarder rather than a resolved object: registration must not force a
@@ -106,6 +110,10 @@ export function createServerComposition(
 			open: async (input) => (await runtime.service()).capability().open(input),
 			get: async (tenantId, id) =>
 				(await runtime.service()).capability().get(tenantId, id),
+			grant: async (tenantId, id, subjectModule) =>
+				(await runtime.service())
+					.capability()
+					.grant(tenantId, id, subjectModule),
 			list: async (tenantId, filter) =>
 				(await runtime.service()).capability().list(tenantId, filter),
 			cancel: async (tenantId, id, actorAccountId) =>

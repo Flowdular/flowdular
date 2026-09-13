@@ -76,6 +76,20 @@ export interface ApprovalDecision {
 	readonly decidedAt: number;
 }
 
+/** What the ledger records about a request beyond its decisions. */
+export const APPROVAL_AUDIT_ACTIONS = ['grant.issued'] as const;
+
+export type ApprovalAuditAction = (typeof APPROVAL_AUDIT_ACTIONS)[number];
+
+export interface ApprovalAuditEntry {
+	readonly id: string;
+	readonly tenantId: string;
+	readonly requestId: string;
+	readonly action: ApprovalAuditAction;
+	readonly metadata: Readonly<Record<string, string | number>>;
+	readonly occurredAt: number;
+}
+
 /** What an erasure writes over the comment of a decision it keeps. */
 export const ERASED_DECISION_COMMENT = '[erased]';
 
