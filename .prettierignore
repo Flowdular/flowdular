@@ -25,3 +25,6 @@ packages/create-flowdular/agent-template/
 
 # Declaration emit of the platform API surface, written by scripts/platform-api.mjs.
 packages/kernel/platform-api.snapshot.d.ts
+
+# Agent worktrees are separate checkouts, not sources of this one.
+.claude/worktrees/
