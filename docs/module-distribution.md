@@ -8,8 +8,8 @@ release artifacts. The landing is in [Flowdular/landing](https://github.com/Flow
 ```sh
 pnpm flowdular module search expenses
 pnpm flowdular module info expenses.core
-pnpm flowdular module install expenses.core@0.6.1
-pnpm flowdular module install expenses.core@0.6.1 --apply
+pnpm flowdular module install expenses.core@0.7.1
+pnpm flowdular module install expenses.core@0.7.1 --apply
 pnpm flowdular module enable expenses.core --apply
 pnpm flowdular module validate --locked
 ```
