@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: users.core
-specVersion: 0.10.0
+specVersion: 0.11.0
 status: approved
 name: User Management Core
 description: Provides the tenant-scoped user directory and member administration (creation, display name, role assignment, per-member scopes, account status, password reset, session revocation, removal) through the public auth administration port.
@@ -56,7 +56,7 @@ dataOwnership:
 entities:
   - id: member
     name: Workspace member
-    description: One membership of the active workspace as the auth administration port answers it; auth.core owns the row and users.core reads and writes it only through the port, never through a table of its own.
+    description: One membership of the active workspace as the auth administration port answers it; auth.core owns the row and users.core reads and writes it only through the port, never through a table of its own. The joined-at instant the Members screen and the export show is the createdAt of the membership row, which auth.core owns and answers with every member.
     fields:
       - id: accountId
         type: string
@@ -146,6 +146,7 @@ screens:
       - status
       - passwordChangeRequired
       - scopes
+      - createdAt
     filters:
       - displayName
       - email
@@ -286,10 +287,6 @@ decisions:
   - id: D-USERS-BULK-ACTIONS
     question: How are the two bulk actions of the Members screen declared?
     answer: As the actions set-status-many and assign-role-many, each behind users.members.manage and each applied one id at a time through the single-row path, with the USERS-STATUS-MANY and USERS-ROLE-MANY scenarios as their evidence.
-    decidedBy: default
-  - id: D-USERS-JOINED-AT
-    question: Why does the member entity not declare the joined-at instant the export carries?
-    answer: The instant is auth.core's createdAt column, and createdAt is a field id every tenant table owns, so the specification cannot declare it; the export list still carries it as documented in the invariants.
     decidedBy: default
 acceptanceScenarios:
   - id: USERS-LIST

@@ -41,6 +41,7 @@
 	"table.role": "Rola",
 	"table.status": "Dostęp do przestrzeni",
 	"table.scopes": "Zakresy",
+	"table.joined": "Dołączył(a)",
 	"table.actions": "Akcje użytkownika",
 	"table.loading": "Wczytywanie kont…",
 	"table.emptyTitle": "Brak kont",

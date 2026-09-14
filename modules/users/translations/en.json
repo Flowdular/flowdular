@@ -41,6 +41,7 @@
 	"table.role": "Role",
 	"table.status": "Workspace access",
 	"table.scopes": "Scopes",
+	"table.joined": "Joined",
 	"table.actions": "User actions",
 	"table.loading": "Loading workspace accounts…",
 	"table.emptyTitle": "No accounts yet",
