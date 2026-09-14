@@ -46,6 +46,7 @@ export function createUsersClientState() {
 		actor: cell<UsersContext['actor'] | null>(null),
 		passwordMinLength: 12,
 		memberCount: 0,
+		ownerCount: 0,
 		query: '',
 		/** The term the rows on screen answer; typing moves `query` ahead of it. */
 		appliedQuery: '',
@@ -190,6 +191,21 @@ export function replaceMember(
 	return users.map((user) =>
 		user.accountId === member.accountId ? member : user,
 	);
+}
+
+/**
+ * The owner count after one row changed on screen: the count is read whole
+ * from the server, so a role change moves it by the difference between the row
+ * the page held and the row the server answered.
+ */
+export function ownerCountAfter(
+	ownerCount: number,
+	previous: TenantMember | undefined,
+	next: TenantMember,
+): number {
+	const before = previous?.role === 'owner' ? 1 : 0;
+	const after = next.role === 'owner' ? 1 : 0;
+	return ownerCount - before + after;
 }
 
 /* The membership route answers with stable codes; each one gets the sentence

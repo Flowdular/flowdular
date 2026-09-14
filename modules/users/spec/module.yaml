@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: users.core
-specVersion: 0.9.8
+specVersion: 0.10.0
 status: approved
 name: User Management Core
 description: Provides the tenant-scoped user directory and member administration (creation, display name, role assignment, per-member scopes, account status, password reset, session revocation, removal) through the public auth administration port.
@@ -200,7 +200,7 @@ actions:
     kind: custom
     risk: read
     idempotent: true
-    description: Answer what the Members screen needs beside the page, namely the workspace roles, the grantable scopes, the acting principal's account id and role, the shared password minimum length and the member count.
+    description: Answer what the Members screen needs beside the page, namely the workspace roles, the grantable scopes, the acting principal's account id and role, the shared password minimum length, the member count and the owner count, both counted in the database.
   - id: create-member
     entity: member
     permission: users.members.manage
@@ -295,7 +295,7 @@ acceptanceScenarios:
   - id: USERS-LIST
     given: An authenticated principal has users.members.read in an active tenant.
     when: The principal requests the user directory.
-    then: Only memberships from the active tenant are returned without credential or session material, one page at a time, and the roles, grantable scopes, acting principal and member count the screen needs come from the separate context read.
+    then: Only memberships from the active tenant are returned without credential or session material, one page at a time, and the roles, grantable scopes, acting principal, member count and owner count the screen needs come from the separate context read.
   - id: USERS-PAGE
     given: A workspace holding more members than one page carries, and another workspace with members of its own.
     when: A screen lists the members with a page limit of at most 200, follows the cursor it receives to the end sorted by display name or by e-mail in either direction, narrows by a name or address prefix and by membership status, and presents a cursor this server did not sign, one of the other workspace, or one issued for another sort or filter.

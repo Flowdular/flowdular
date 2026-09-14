@@ -209,12 +209,14 @@ describe('users.core', () => {
 			actor: { accountId: string; role: string };
 			passwordMinLength: number;
 			memberCount: number;
+			ownerCount: number;
 		};
 		expect(screen.roles.map((role) => role.key)).toEqual(['owner', 'member']);
 		expect(screen.grantableScopes).toContain('auth.roles.manage');
 		expect(screen.actor).toEqual({ accountId: owner.accountId, role: 'owner' });
 		expect(screen.passwordMinLength).toBe(12);
 		expect(screen.memberCount).toBe(1);
+		expect(screen.ownerCount).toBe(1);
 		expect((await callUsers(auth, '/api/users', 'GET', null)).status).toBe(401);
 		expect(
 			(await callUsers(auth, '/api/users/context', 'GET', null)).status,

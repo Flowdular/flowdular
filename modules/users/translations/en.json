@@ -35,7 +35,7 @@
 	"denied.members": "Reading the user directory needs the users.members.read scope.",
 	"table.title": "Members",
 	"table.caption": "Workspace users",
-	"table.count": "{accounts} accounts",
+	"table.count": "{accounts} accounts, {owners} owners",
 	"table.user": "User",
 	"table.email": "Email",
 	"table.role": "Role",

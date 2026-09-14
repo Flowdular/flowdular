@@ -5,6 +5,7 @@ import {
 	DEFAULT_MEMBER_SORTING,
 	loadedListing,
 	memberSort,
+	ownerCountAfter,
 	pageCursor,
 	rememberNextCursor,
 	replaceMember,
@@ -147,5 +148,22 @@ describe('replaceMember', () => {
 		const patched = replaceMember(page, member('a', 'Adam'));
 		expect(patched.map((user) => user.displayName)).toEqual(['Bea', 'Adam']);
 		expect(replaceMember(page, member('z', 'Zed'))).toEqual(page);
+	});
+});
+
+describe('ownerCountAfter', () => {
+	it('moves the owner count by the role change of the patched row alone', () => {
+		const ada = member('a', 'Ada');
+		const owner = { ...ada, role: 'owner' };
+		expect(ownerCountAfter(1, ada, owner)).toBe(2);
+		expect(ownerCountAfter(2, owner, ada)).toBe(1);
+		expect(ownerCountAfter(1, owner, { ...owner, displayName: 'Adam' })).toBe(
+			1,
+		);
+		expect(
+			ownerCountAfter(1, ada, { ...ada, membershipStatus: 'disabled' }),
+		).toBe(1);
+		/* A row the page does not hold counts as no owner before the change. */
+		expect(ownerCountAfter(1, undefined, owner)).toBe(2);
 	});
 });

@@ -35,7 +35,7 @@
 	"denied.members": "Odczyt katalogu użytkowników wymaga uprawnienia users.members.read.",
 	"table.title": "Członkowie",
 	"table.caption": "Użytkownicy przestrzeni roboczej",
-	"table.count": "Konta: {accounts}",
+	"table.count": "Konta: {accounts}, właściciele: {owners}",
 	"table.user": "Użytkownik",
 	"table.email": "E-mail",
 	"table.role": "Rola",

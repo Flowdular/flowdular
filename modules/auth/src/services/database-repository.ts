@@ -939,6 +939,15 @@ export class DatabaseAuthRepository implements AuthRepository {
 		return rows[0] ? integer(rows[0].total, 'total') : 0;
 	}
 
+	async countTenantOwners(tenantId: string): Promise<number> {
+		const rows = await this.#query<CountRow>(tenantId, {
+			text: `SELECT count(*) AS total FROM auth_memberships
+			       WHERE tenant_id = $1 AND role = 'owner'`,
+			parameters: [tenantId],
+		});
+		return rows[0] ? integer(rows[0].total, 'total') : 0;
+	}
+
 	async findTenantMember(
 		tenantId: string,
 		accountId: string,
