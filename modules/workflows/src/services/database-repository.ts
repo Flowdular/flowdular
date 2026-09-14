@@ -3,6 +3,7 @@ import {
 	integer,
 	runDatabaseMigrations,
 	type DatabaseHandle,
+	type DatabaseIsolationLevel,
 	type DatabaseTransaction,
 } from '@flowdular/database';
 import type { Actor, UserActor } from '@flowdular/kernel';
@@ -868,9 +869,14 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 		tenantId: string,
 		access: 'read' | 'write',
 		body: (transaction: DatabaseTransaction) => Promise<T>,
+		isolation?: DatabaseIsolationLevel,
 	): Promise<T> {
 		await this.readyPromise;
-		return this.handles.runtime.transaction(body, { access, tenantId });
+		return this.handles.runtime.transaction(body, {
+			access,
+			tenantId,
+			...(isolation ? { isolation } : {}),
+		});
 	}
 
 	async #query<Row extends object>(
@@ -1567,21 +1573,34 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 		tenantId: string,
 		runId: string,
 	): Promise<WorkflowRunDetail | null> {
-		const row = await this.#tx(
+		/* A worker commits a node transition together with its events, so the
+		   rebuild only agrees with the rows when every read here shares one
+		   snapshot. Read committed would take a new one per statement. */
+		const snapshot = await this.#tx(
 			tenantId,
 			'read',
-			async (transaction) =>
-				(
+			async (transaction) => {
+				const row = (
 					await this.#query<RunRow>(transaction, SQL.getRun, [tenantId, runId])
-				)[0],
+				)[0];
+				if (!row) return null;
+				return {
+					row,
+					events: await this.#eventsIn(
+						transaction,
+						tenantId,
+						runId,
+						0,
+						WORKFLOW_LIMITS.maxRunEvents,
+					),
+					nodes: await this.#nodeStatesIn(transaction, tenantId, runId),
+					edges: await this.#edgeTransfersIn(transaction, tenantId, runId),
+				};
+			},
+			'repeatable-read',
 		);
-		if (!row) return null;
-		const events = await this.readEvents(
-			tenantId,
-			runId,
-			0,
-			WORKFLOW_LIMITS.maxRunEvents,
-		);
+		if (!snapshot) return null;
+		const { row, events, nodes, edges } = snapshot;
 		const projection = projectWorkflowRunEvents(events);
 		if (projection.status !== row.status) {
 			throw new WorkflowEventProjectionError(
@@ -1589,7 +1608,6 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 				`Workflow run projection is ${row.status} but its event stream rebuilds as ${projection.status}.`,
 			);
 		}
-		const nodes = await this.readNodeStates(tenantId, runId);
 		for (const [nodeId, status] of Object.entries(projection.nodeStatuses)) {
 			if (nodes.find((node) => node.nodeId === nodeId)?.status !== status) {
 				throw new WorkflowEventProjectionError(
@@ -1612,7 +1630,6 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 				);
 			}
 		}
-		const edges = await this.readEdgeTransfers(tenantId, runId);
 		for (const [edgeId, state] of Object.entries(projection.edgeStates)) {
 			if (edges.find((edge) => edge.edgeId === edgeId)?.state !== state) {
 				throw new WorkflowEventProjectionError(
@@ -1826,19 +1843,26 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 		afterSequence: number,
 		limit: number,
 	): Promise<readonly WorkflowRunEventV1[]> {
-		return this.#tx(tenantId, 'read', async (transaction) =>
-			(
-				await this.#query<EventRow>(transaction, SQL.readEvents, [
-					tenantId,
-					runId,
-					Math.max(0, Math.trunc(afterSequence)),
-					Math.min(
-						Math.max(1, Math.trunc(limit)),
-						WORKFLOW_LIMITS.maxRunEvents,
-					),
-				])
-			).map(eventFromRow),
+		return this.#tx(tenantId, 'read', (transaction) =>
+			this.#eventsIn(transaction, tenantId, runId, afterSequence, limit),
 		);
+	}
+
+	async #eventsIn(
+		transaction: DatabaseTransaction,
+		tenantId: string,
+		runId: string,
+		afterSequence: number,
+		limit: number,
+	): Promise<readonly WorkflowRunEventV1[]> {
+		return (
+			await this.#query<EventRow>(transaction, SQL.readEvents, [
+				tenantId,
+				runId,
+				Math.max(0, Math.trunc(afterSequence)),
+				Math.min(Math.max(1, Math.trunc(limit)), WORKFLOW_LIMITS.maxRunEvents),
+			])
+		).map(eventFromRow);
 	}
 
 	async startAttempt(
@@ -2516,40 +2540,56 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 		tenantId: string,
 		runId: string,
 	): Promise<readonly WorkflowNodeExecution[]> {
-		return this.#tx(tenantId, 'read', async (transaction) => {
-			const states = await this.#query<NodeStateRow>(
-				transaction,
-				SQL.readNodeStates,
-				[tenantId, runId],
-			);
-			const attempts = await this.#query<AttemptRow>(
-				transaction,
-				SQL.readAttempts,
-				[tenantId, runId],
-			);
-			return states.map((state) =>
-				nodeExecutionFromRow(
-					state,
-					attempts
-						.filter((attempt) => attempt.node_id === state.node_id)
-						.map(attemptFromRow),
-				),
-			);
-		});
+		return this.#tx(tenantId, 'read', (transaction) =>
+			this.#nodeStatesIn(transaction, tenantId, runId),
+		);
+	}
+
+	async #nodeStatesIn(
+		transaction: DatabaseTransaction,
+		tenantId: string,
+		runId: string,
+	): Promise<readonly WorkflowNodeExecution[]> {
+		const states = await this.#query<NodeStateRow>(
+			transaction,
+			SQL.readNodeStates,
+			[tenantId, runId],
+		);
+		const attempts = await this.#query<AttemptRow>(
+			transaction,
+			SQL.readAttempts,
+			[tenantId, runId],
+		);
+		return states.map((state) =>
+			nodeExecutionFromRow(
+				state,
+				attempts
+					.filter((attempt) => attempt.node_id === state.node_id)
+					.map(attemptFromRow),
+			),
+		);
 	}
 
 	async readEdgeTransfers(
 		tenantId: string,
 		runId: string,
 	): Promise<readonly WorkflowEdgeTransfer[]> {
-		return this.#tx(tenantId, 'read', async (transaction) =>
-			(
-				await this.#query<EdgeRow>(transaction, SQL.readEdgeTransfers, [
-					tenantId,
-					runId,
-				])
-			).map(edgeFromRow),
+		return this.#tx(tenantId, 'read', (transaction) =>
+			this.#edgeTransfersIn(transaction, tenantId, runId),
 		);
+	}
+
+	async #edgeTransfersIn(
+		transaction: DatabaseTransaction,
+		tenantId: string,
+		runId: string,
+	): Promise<readonly WorkflowEdgeTransfer[]> {
+		return (
+			await this.#query<EdgeRow>(transaction, SQL.readEdgeTransfers, [
+				tenantId,
+				runId,
+			])
+		).map(edgeFromRow);
 	}
 
 	/* The chain order is the sequence; the time order rides the index 0001 made
