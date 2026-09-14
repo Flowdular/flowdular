@@ -316,7 +316,13 @@ describe('WORKFLOWS-HUMAN-APPROVAL', () => {
 		const runtime = trackedRuntime(registry(approvals.capability));
 		const { service, runId } = await startRun(runtime, 'approve-resume');
 
+		/* The request is opened before the run row moves to waiting-approval, so
+		   the status is awaited rather than read right after the open. */
 		await waitFor(async () => approvals.opened.length > 0);
+		await waitFor(
+			async () =>
+				(await service.getRun(tenantId, runId))?.status === 'waiting-approval',
+		);
 		const paused = (await service.getRun(tenantId, runId))!;
 		expect(paused.status).toBe('waiting-approval');
 		expect(approvals.opened[0]).toMatchObject({
