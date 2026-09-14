@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/flowdular-readme-hero.png" alt="Flowdular. Your business. Your building blocks. Woven hash logo connected to business modules." width="100%" />
+<img src="docs/assets/flowdular-readme-hero.webp" alt="Flowdular. Your business. Your building blocks. Woven hash logo connected to business modules." width="100%" />
 
 ### Build your business platform. Put agents to work.
 
@@ -31,7 +31,7 @@ versioned source code, migrations and tests.
 
 ## What is included
 
-![Modules, agents and workflows: modular building blocks, an agent connected to tools, and a branching workflow.](docs/assets/flowdular-readme-modules.png)
+![Modules, agents and workflows: modular building blocks, an agent connected to tools, and a branching workflow.](docs/assets/flowdular-readme-modules.webp)
 
 | Area              | Capabilities                                                                                                               |
 | ----------------- | -------------------------------------------------------------------------------------------------------------------------- |
