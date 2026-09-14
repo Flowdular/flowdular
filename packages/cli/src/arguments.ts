@@ -41,3 +41,9 @@ export function stringFlag(
 	const value = arguments_.flags.get(name);
 	return typeof value === 'string' ? value : undefined;
 }
+
+/** `--grant <token>`: the signed approval grant an external or destructive capability runs under. */
+export function grantFlag(arguments_: ParsedArguments): string | undefined {
+	const value = stringFlag(arguments_, 'grant');
+	return value === undefined || value.length === 0 ? undefined : value;
+}

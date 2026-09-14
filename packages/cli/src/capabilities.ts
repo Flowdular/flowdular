@@ -137,6 +137,16 @@ export const capabilities: readonly CapabilityDescriptor[] = [
 		confirmation: 'restore-database',
 	},
 	{
+		id: 'database.restore.production',
+		version: 1,
+		summary:
+			'Replace a deployed database with the contents of a backup directory under a verified approval grant.',
+		risk: 'destructive',
+		requiresApprovedSpec: false,
+		supportsDryRun: true,
+		confirmation: 'restore-database',
+	},
+	{
 		id: 'migration.scaffold',
 		version: 1,
 		summary: 'Scaffold the up and down scripts of one module migration.',

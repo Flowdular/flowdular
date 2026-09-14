@@ -1,0 +1,17 @@
+{
+	"protocolVersion": 1,
+	"moduleId": "documents.core",
+	"commands": [
+		{
+			"path": ["documents", "secrets-rotate"],
+			"capability": {
+				"id": "documents.storage.rotate",
+				"version": 1,
+				"summary": "Re-seal stored document objects with the current storage encryption key.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		}
+	]
+}

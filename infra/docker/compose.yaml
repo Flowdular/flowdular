@@ -5,6 +5,7 @@ services:
     volumes:
       - ./postgres/tls-init.sh:/tls-init.sh:ro
       - flowdular-postgres-tls:/tls
+      - flowdular-postgres-wal:/var/lib/postgresql/wal-archive
     restart: 'no'
 
   postgres:
@@ -26,8 +27,21 @@ services:
       - ssl_cert_file=/tls/server.crt
       - -c
       - ssl_key_file=/tls/server.key
+      # Point-in-time recovery: every completed WAL segment is copied into the
+      # archive volume, and a quiet database still ships one every five
+      # minutes. See infra/README.md, "Backups and PITR", for the limits of a
+      # plain cp archive and for the base backup this needs.
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_timeout=300
+      - -c
+      - 'archive_command=test ! -f /var/lib/postgresql/wal-archive/%f && cp %p /var/lib/postgresql/wal-archive/%f'
     volumes:
       - flowdular-postgres:/var/lib/postgresql/data
+      - flowdular-postgres-wal:/var/lib/postgresql/wal-archive
       - flowdular-postgres-tls:/tls:ro
       - ./postgres/10-roles.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro
     healthcheck:
@@ -122,6 +136,8 @@ services:
 
 volumes:
   flowdular-postgres:
+  # WAL segments and base backups for point-in-time recovery (infra/docker/pitr.sh).
+  flowdular-postgres-wal:
   flowdular-postgres-tls:
   # Only the local adapter writes here; a production run uses the S3 bucket.
   flowdular-storage:

@@ -341,6 +341,9 @@ importers:
 
   modules/connectors:
     dependencies:
+      '@flowdular/cli-protocol':
+        specifier: workspace:*
+        version: link:../../packages/cli-protocol
       '@flowdular/client':
         specifier: workspace:*
         version: link:../../packages/client
@@ -439,6 +442,9 @@ importers:
 
   modules/documents:
     dependencies:
+      '@flowdular/cli-protocol':
+        specifier: workspace:*
+        version: link:../../packages/cli-protocol
       '@flowdular/client':
         specifier: workspace:*
         version: link:../../packages/client
@@ -488,6 +494,9 @@ importers:
 
   modules/exports:
     dependencies:
+      '@flowdular/cli-protocol':
+        specifier: workspace:*
+        version: link:../../packages/cli-protocol
       '@flowdular/client':
         specifier: workspace:*
         version: link:../../packages/client

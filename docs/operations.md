@@ -135,11 +135,58 @@ is in place, so a failed copy leaves the running database untouched.
 
 `database restore` is a destructive capability, gated exactly like
 `database reset`: the runner refuses it with `LOCAL_ONLY_CAPABILITY` unless
-`FD_ENV` or `NODE_ENV` is `development` or `test`. Production restores therefore
-run `pg_restore --clean --if-exists` by hand with the migrator credentials, and
-the dry run on a staging copy of the same backup is what proves the archive and
-the keys are good. Lifting that restriction waits on the signed approval
-verifier listed under `planned` in `.ai/policies/capabilities.yaml`.
+`FD_ENV` or `NODE_ENV` is `development` or `test`. The dry run on a staging
+copy of the same backup is what proves the archive and the keys are good.
+
+### Restore in production
+
+```bash
+flowdular database restore-production --input <dir> --target flowdular --grant <token> --tenant <id>            # plan
+flowdular database restore-production --input <dir> --target flowdular --grant <token> --tenant <id> \
+  --platform-url https://erp.example.com --apply --confirm restore-database
+```
+
+`database.restore.production` is the same restore without the local gate. It
+runs only under an approval grant from an approved `approvals.core` request,
+verified against `FD_APPROVAL_GRANT_KEY`, the tenant, the capability and the
+exact flags: the request has to name `--input`, `--target`, `--apply` and any
+override (an approval names the applied run, and a dry run is a different
+invocation), and a token issued for another invocation is refused with
+`APPROVAL_GRANT_MISMATCH`. Open the request with `approvals.requests.v1` and a
+`subjectRef` of `capability:<id>:<sha256 of the invocation input>`, read the
+approved request back through `grant(tenantId, id, subjectModule)` for the
+token, and pass it as `--grant <token> --tenant <id>`. `--target` must repeat
+the database the migrator DSN names (`RESTORE_TARGET_MISMATCH` otherwise),
+`FD_DATABASE_MIGRATOR_URL` must be set and distinct from `FD_DATABASE_URL`
+(`MIGRATOR_ROLE_REQUIRED`), and a key divergence is a refusal
+(`BACKUP_KEY_MISMATCH`) unless `--allow-key-mismatch` was part of the approved
+invocation. With `--apply` the command probes `<--platform-url>/api/health`,
+or `http://127.0.0.1:$FD_PORT/api/health`, and refuses with
+`PLATFORM_RUNNING` while anything answers; when no endpoint is named or the
+probe times out it refuses with `PLATFORM_STATE_UNKNOWN` unless
+`--platform-stopped` attests the platform is down. Grants are HMAC-SHA256
+under `FD_APPROVAL_GRANT_KEY` (rotate with `FD_APPROVAL_GRANT_KEY_PREVIOUS`)
+and expire one hour after the approving decision; the runner records no use,
+so a grant replays until it expires and the approval window should stay short.
+`database reset` and `database restore` keep their local-only gate.
+
+### Point-in-time recovery
+
+A dump restores one moment; the compose stack also archives WAL so any moment
+after a base backup can be recovered. See `infra/README.md`, "Backups and
+PITR": `infra/docker/pitr.sh base-backup` after every rollout,
+`pitr.sh restore --base <stamp> --target-time '<ts>' --confirm replace-cluster`
+to recover, and the limits of the plain-copy archive. In Kubernetes the
+managed provider owns PITR; the dump remains the portable copy.
+
+### Rehearsal
+
+Quarterly, on a scratch host: restore the newest dump into an empty database
+with `database restore-production --platform-stopped`, read the key
+comparison, start the app, check `migration verify` and `/api/ready`, then run
+`pitr.sh restore` from the newest base backup to a time between two dumps and
+confirm a row written after the dump is present. Record the date and the
+elapsed time.
 
 ## Key rotation
 
@@ -151,15 +198,15 @@ this section.
 Every module reads one current key plus an optional comma-separated list of
 retired keys (up to eight):
 
-| Key                             | Protects                   | Retired keys                             | Re-sealing the stored rows                              |
-| ------------------------------- | -------------------------- | ---------------------------------------- | ------------------------------------------------------- |
-| `FD_AGENT_CREDENTIAL_KEY`       | Agent provider credentials | `FD_AGENT_CREDENTIAL_KEY_PREVIOUS`       | `pnpm flowdular agents secrets-rotate [--apply]`        |
-| `FD_AUTOMATIONS_CREDENTIAL_KEY` | Automation trigger secrets | `FD_AUTOMATIONS_CREDENTIAL_KEY_PREVIOUS` | `pnpm flowdular automations secrets-rotate [--apply]`   |
-| `FD_WORKFLOWS_PAYLOAD_KEY`      | Workflow run payloads      | `FD_WORKFLOWS_PAYLOAD_KEY_PREVIOUS`      | `pnpm flowdular workflows secrets-rotate [--apply]`     |
-| `FD_STORAGE_ENCRYPTION_KEY`     | Stored objects             | `FD_STORAGE_ENCRYPTION_KEY_PREVIOUS`     | No re-sealing pass yet; see the storage note below      |
-| `FD_NOTIFICATIONS_SECRET_KEY`   | Webhook signing secrets    | `FD_NOTIFICATIONS_SECRET_KEY_PREVIOUS`   | `pnpm flowdular notifications secrets-rotate [--apply]` |
-| `FD_CONNECTORS_SECRET_KEY`      | Connector credentials      | `FD_CONNECTORS_SECRET_KEY_PREVIOUS`      | No re-sealing pass yet; the ring reads the previous key |
-| `FD_AUDIT_ANCHOR_KEY`           | Audit chain anchors (HMAC) | `FD_AUDIT_ANCHOR_KEY_PREVIOUS`           | `pnpm flowdular audit secrets-rotate [--apply]`         |
+| Key                             | Protects                   | Retired keys                             | Re-sealing the stored rows                                                                                                            |
+| ------------------------------- | -------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `FD_AGENT_CREDENTIAL_KEY`       | Agent provider credentials | `FD_AGENT_CREDENTIAL_KEY_PREVIOUS`       | `pnpm flowdular agents secrets-rotate [--apply]`                                                                                      |
+| `FD_AUTOMATIONS_CREDENTIAL_KEY` | Automation trigger secrets | `FD_AUTOMATIONS_CREDENTIAL_KEY_PREVIOUS` | `pnpm flowdular automations secrets-rotate [--apply]`                                                                                 |
+| `FD_WORKFLOWS_PAYLOAD_KEY`      | Workflow run payloads      | `FD_WORKFLOWS_PAYLOAD_KEY_PREVIOUS`      | `pnpm flowdular workflows secrets-rotate [--apply]`                                                                                   |
+| `FD_STORAGE_ENCRYPTION_KEY`     | Stored objects             | `FD_STORAGE_ENCRYPTION_KEY_PREVIOUS`     | `pnpm flowdular documents secrets-rotate [--apply]` and `pnpm flowdular exports secrets-rotate [--apply]`; see the storage note below |
+| `FD_NOTIFICATIONS_SECRET_KEY`   | Webhook signing secrets    | `FD_NOTIFICATIONS_SECRET_KEY_PREVIOUS`   | `pnpm flowdular notifications secrets-rotate [--apply]`                                                                               |
+| `FD_CONNECTORS_SECRET_KEY`      | Connector credentials      | `FD_CONNECTORS_SECRET_KEY_PREVIOUS`      | `pnpm flowdular connectors secrets-rotate [--apply]`                                                                                  |
+| `FD_AUDIT_ANCHOR_KEY`           | Audit chain anchors (HMAC) | `FD_AUDIT_ANCHOR_KEY_PREVIOUS`           | `pnpm flowdular audit secrets-rotate [--apply]`                                                                                       |
 
 These commands run the same re-sealing pass over their own table, so the
 procedure is the same for each. The credential key is the worked example;
@@ -227,6 +274,10 @@ Sources: `modules/audit/src/services/{anchor-key,anchor-rotation}.ts`,
 `modules/automations/src/services/{secret-vault,secret-rotation}.ts`,
 `modules/workflows/src/services/{payload-codec,payload-rotation,cursors}.ts`,
 `modules/notifications/src/services/{secret-vault,secret-rotation}.ts`,
+`modules/connectors/src/services/{credential-vault,credential-rotation}.ts`,
+`packages/storage/src/reseal.ts`,
+`modules/documents/src/services/storage-rotation.ts`,
+`modules/exports/src/services/storage-rotation.ts`,
 `modules/auth/src/services/totp.ts`.
 
 ## Storage
@@ -243,12 +294,42 @@ no longer holds leaves dangling references, and the reverse leaves orphans.
   `.flowdular/data/storage`; stop the application before copying it.
 
 Every object is sealed with AES-256-GCM under `FD_STORAGE_ENCRYPTION_KEY`, and
-the key id is stored with the object, so a rotation runs like the four above:
-put the retired key in `FD_STORAGE_ENCRYPTION_KEY_PREVIOUS`, deploy, and every
-object written earlier still opens while new ones use the current key. There is
-no re-sealing pass yet, so keep the retired key in the ring until every object
-written under it has been rewritten or deleted. Dropping it makes those objects
-unreadable, exactly as a lost database key makes a credential unreadable.
+the key id is stored with the object, so the rotation follows the six steps
+above with two commands instead of one, because the object store has no
+listing and the rows that name the objects belong to two modules:
+
+1. Generate the new key: `openssl rand -base64 32`.
+2. Set `FD_STORAGE_ENCRYPTION_KEY=<new>` and
+   `FD_STORAGE_ENCRYPTION_KEY_PREVIOUS=<old>` in the secret store.
+3. Deploy. Every new object is sealed with the new key and every stored one
+   still opens under the old one.
+4. Dry run both passes and read the counts per key id:
+   `pnpm flowdular documents secrets-rotate --json` walks the stored document
+   rows, `pnpm flowdular exports secrets-rotate --json` the completed export
+   jobs. `stale` is the number of objects still sealed with a retired key;
+   `unknown` names objects under a key neither variable holds, and the pass
+   leaves those alone.
+5. Run both again with `--apply`. Each object is re-sealed in place: the frame
+   is opened under the key it names, which authenticates its header, and the
+   same content type, size, checksum, scan verdict and creation time are
+   written back under the current key. Nothing else changes, not the object
+   key and not the row. A frame that fails authentication is counted under
+   `refused` and left as it is; restore it from the object store backup.
+6. Repeat the dry runs until both report `stale: 0`, then remove
+   `FD_STORAGE_ENCRYPTION_KEY_PREVIOUS` and deploy again.
+
+The application may stay up: the pass locks a row while it rewrites the
+object, and both delete paths (a document removal and the export retention
+sweep) lock the row before they remove the object and then the row, so a delete
+that lands mid-pass waits for the rewrite and removes the re-sealed object
+rather than racing it. A frame that fails to parse is counted under `refused`
+like one that fails authentication. Do not snapshot the object store and the database apart while a
+pass runs: a bucket snapshot taken mid-pass holds objects under both keys, and
+restoring it beside a database from another moment leaves rows that name
+objects a ring without the retired key cannot open. Take both after the pass,
+or both before it. Dropping the retired key while `stale` is above zero makes
+those objects unreadable, exactly as a lost database key makes a credential
+unreadable.
 
 ## Logs
 

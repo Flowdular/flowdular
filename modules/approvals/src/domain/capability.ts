@@ -51,6 +51,18 @@ export interface ApprovalsRequests {
 	open(input: OpenApprovalInput): Promise<ApprovalRequest>;
 	get(tenantId: string, id: string): Promise<ApprovalRequest | null>;
 	/**
+	 * The signed token an approved request yields while its window is open:
+	 * what the CLI runner takes as `--grant` and the harness as `grants`. Only
+	 * a request whose `subjectRef` encodes a capability and an input digest
+	 * (`encodeCapabilitySubjectRef`) yields one, and only to the module that
+	 * opened it: `subjectModule` has to match the request's. Null otherwise.
+	 */
+	grant(
+		tenantId: string,
+		id: string,
+		subjectModule: string,
+	): Promise<string | null>;
+	/**
 	 * The first `limit` matches, newest first; two requests opened at the same
 	 * millisecond come in descending id order.
 	 */

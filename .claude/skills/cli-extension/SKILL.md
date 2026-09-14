@@ -85,7 +85,7 @@ export default cliExtension;
 
 ## 4. What the runner does with the descriptor (`packages/cli/src/runner.ts`, `runExtensionCommand`)
 
-- `risk: 'external'`: refused with `APPROVAL_VERIFIER_REQUIRED`. `risk: 'destructive'` without `localOnly`: the same.
+- `risk: 'external'`, or `'destructive'` without `localOnly`: refused with `APPROVAL_VERIFIER_REQUIRED` unless `--grant <token> --tenant <id>` carries a verified approval grant for this capability and invocation digest (`APPROVAL_GRANT_INVALID`, `APPROVAL_GRANT_EXPIRED`, `APPROVAL_GRANT_MISMATCH` otherwise).
 - `localOnly: true`: refused with `LOCAL_ONLY_CAPABILITY` unless `FD_ENV` or `NODE_ENV` is `development` or `test` (unset counts as development).
 - `requiresApprovedSpec: true`: needs `--spec <path>` to a schema-valid spec with `status: approved`, otherwise `APPROVED_SPEC_REQUIRED`, `SPEC_VALIDATION_FAILED` or `SPEC_NOT_APPROVED`.
 - `destructive` with `--apply`: needs `--confirm <confirmation>` (`CONFIRMATION_REQUIRED`).

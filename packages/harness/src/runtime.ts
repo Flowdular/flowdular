@@ -1,6 +1,16 @@
 import { createHash } from 'node:crypto';
 import { AgentHarnessError } from './errors.ts';
-import { normalizeActor, type Actor, type UserActor } from '@flowdular/kernel';
+import {
+	APPROVAL_GRANT_MAX_TOKEN_LENGTH,
+	approvalGrantKeyringFromEnvironment,
+	approvalInputDigest,
+	normalizeActor,
+	verifyApprovalGrant,
+	type Actor,
+	type ApprovalGrantKeyring,
+	type ApprovalGrantReason,
+	type UserActor,
+} from '@flowdular/kernel';
 import {
 	boundToolOutput,
 	toolTimeoutMs,
@@ -49,9 +59,15 @@ export interface AgentExecutionRequest {
 	readonly definition: AgentExecutionDefinition;
 	readonly permissionSnapshot: readonly string[];
 	readonly toolGrants: readonly string[];
+	/* Signed approval grants (`issueApprovalGrant`) for the external or
+	   destructive tools this run may call, each bound to one tool id and one
+	   input digest. Absent means no such tool is offered. */
+	readonly grants?: readonly string[];
 	/* Absent keeps the v1 text behavior. */
 	readonly outputContract?: AgentOutputContract;
 }
+
+export const MAX_APPROVAL_GRANTS = 16;
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue =
@@ -153,6 +169,10 @@ export interface AgentTool {
 	readonly contractVersion?: number;
 	readonly outputSchema?: Readonly<Record<string, unknown>>;
 	readonly risk?: 'read' | 'workspace-write' | 'external' | 'destructive';
+	/* A CLI capability the runner admits in development and test only. The
+	   harness reads FD_ENV or NODE_ENV the way the runner does and refuses it
+	   elsewhere, grant or not. */
+	readonly localOnly?: boolean;
 	/* Run-time admission on top of the permission snapshot. A tool declaring one
 	   is offered to the model as usual and refused per call when the gate says so. */
 	readonly consent?: AgentToolConsent;
@@ -285,6 +305,23 @@ function assertExecutionRequest(request: AgentExecutionRequest): void {
 		);
 	}
 	boundedText(request.input, 'input', 1, 100_000);
+	if (request.grants !== undefined) {
+		if (
+			!Array.isArray(request.grants) ||
+			request.grants.length > MAX_APPROVAL_GRANTS ||
+			request.grants.some(
+				(grant) =>
+					typeof grant !== 'string' ||
+					grant.length < 1 ||
+					grant.length > APPROVAL_GRANT_MAX_TOKEN_LENGTH,
+			)
+		) {
+			throw new AgentHarnessError(
+				'INVALID_INPUT',
+				`grants must be at most ${MAX_APPROVAL_GRANTS} tokens of at most ${APPROVAL_GRANT_MAX_TOKEN_LENGTH} characters.`,
+			);
+		}
+	}
 	boundedText(request.definition.name, 'definition.name', 2, 120);
 	boundedText(request.definition.instructions, 'instructions', 8, 40_000);
 	providerReference(request.definition.provider);
@@ -387,13 +424,75 @@ function toolFailure(error: unknown): { code: string; message: string } {
 }
 
 /**
- * `external` is the ceiling no unattended caller crosses: the CLI runner
- * refuses it, `defineCliAgentTool` and `defineApiAgentTool` refuse to build it,
- * and a hand-built tool object is refused here as well, before the model is
- * ever told the tool exists.
+ * `external` is the ceiling no unattended caller crosses on its own: the CLI
+ * runner, `defineCliAgentTool` for a destructive capability, and a hand-built
+ * tool object here all run only under a signed approval grant naming the tool
+ * and the input, before the model is ever told the tool exists.
  */
-function admissibleRisk(tool: AgentTool): boolean {
-	return tool.risk !== 'external';
+function requiresApprovalGrant(tool: AgentTool): boolean {
+	return (
+		tool.risk === 'external' ||
+		(tool.risk === 'destructive' && tool.transport === 'cli')
+	);
+}
+
+type GrantRefusal = ApprovalGrantReason | 'APPROVAL_GRANT_CONSUMED';
+
+interface RunApprovalGrants {
+	/** Tokens that verify for this tenant, by the tool id they name. */
+	readonly byTool: ReadonlyMap<string, readonly string[]>;
+	/** Why the first refused token was refused, per tool, for the denial event. */
+	readonly refusals: ReadonlyMap<string, GrantRefusal>;
+}
+
+/* The same reading the CLI runner applies to a localOnly capability. */
+function localOnlyRefused(tool: AgentTool): boolean {
+	const environment =
+		process.env.FD_ENV ?? process.env.NODE_ENV ?? 'development';
+	return (
+		tool.localOnly === true &&
+		environment !== 'development' &&
+		environment !== 'test'
+	);
+}
+
+/* Signature, key and tenant are settled once per run; the input digest is
+   settled per call, because the model chooses the input. A token that is
+   invalid or expired is so for every tool, and is recorded against each. */
+function runApprovalGrants(
+	keyring: ApprovalGrantKeyring | undefined,
+	request: AgentExecutionRequest,
+	tools: ReadonlyMap<string, AgentTool>,
+): RunApprovalGrants {
+	const byTool = new Map<string, string[]>();
+	const refusals = new Map<string, GrantRefusal>();
+	if (!keyring) return { byTool, refusals };
+	const gated = [...tools.values()].filter(requiresApprovalGrant);
+	for (const token of request.grants ?? []) {
+		let reason: ApprovalGrantReason = 'APPROVAL_GRANT_MISMATCH';
+		let matched = false;
+		for (const tool of gated) {
+			const verified = verifyApprovalGrant(keyring, token, {
+				tenantId: request.tenantId,
+				capabilityId: tool.id,
+			});
+			if (verified.ok) {
+				byTool.set(tool.id, [...(byTool.get(tool.id) ?? []), token]);
+				matched = true;
+				break;
+			}
+			reason = verified.reason;
+			if (reason !== 'APPROVAL_GRANT_MISMATCH') break;
+		}
+		/* A token that verifies for no tool is refused for every gated tool: it
+		   was signed for another tenant or capability, or not by this platform. */
+		if (!matched) {
+			for (const other of gated) {
+				if (!refusals.has(other.id)) refusals.set(other.id, reason);
+			}
+		}
+	}
+	return { byTool, refusals };
 }
 
 /* A refusal code comes from module code, so it is bounded to the shape an
@@ -466,12 +565,16 @@ export class AgentHarness {
 	readonly #tools: ReadonlyMap<string, AgentTool>;
 	readonly #authorizeToolAccess: AgentToolAccessAuthorizer;
 	readonly #tracer: AgentTracer | undefined;
+	readonly #approvalGrants: ApprovalGrantKeyring | undefined;
 
 	constructor(options: {
 		readonly providers: readonly AgentProvider[];
 		readonly tools?: readonly AgentTool[];
 		readonly authorizeToolAccess?: AgentToolAccessAuthorizer;
 		readonly tracer?: AgentTracer;
+		/* Verifies the approval grants a run carries. Absent reads
+		   FD_APPROVAL_GRANT_KEY; without either, no external tool ever runs. */
+		readonly approvalGrants?: ApprovalGrantKeyring;
 	}) {
 		const providers = new Map<string, AgentProvider>();
 		for (const provider of options.providers) {
@@ -506,6 +609,8 @@ export class AgentHarness {
 		   permanent credential. */
 		this.#authorizeToolAccess = options.authorizeToolAccess ?? (() => []);
 		this.#tracer = options.tracer;
+		this.#approvalGrants =
+			options.approvalGrants ?? approvalGrantKeyringFromEnvironment();
 	}
 
 	providers(): readonly string[] {
@@ -624,9 +729,17 @@ export class AgentHarness {
 			);
 		};
 		const initialPermissions = await livePermissions();
+		const grantKeyring = this.#approvalGrants;
+		const approvals = runApprovalGrants(grantKeyring, request, this.#tools);
+		const admissible = (tool: AgentTool): boolean =>
+			!localOnlyRefused(tool) &&
+			(!requiresApprovalGrant(tool) || approvals.byTool.has(tool.id));
+		/* One call per grant: a request approved once admits one invocation of
+		   the tool it names, however many times the model asks. */
+		const consumedGrants = new Set<string>();
 		const availableTools = [...this.#tools.values()]
 			.filter((tool) => snapshotGrants.has(tool.id))
-			.filter(admissibleRisk)
+			.filter(admissible)
 			.filter((tool) =>
 				tool.requiredPermissions.every((permission) =>
 					initialPermissions.has(permission),
@@ -670,14 +783,26 @@ export class AgentHarness {
 		): Promise<unknown> => {
 			const ordinal = ++toolCallOrdinal;
 			const tool = this.#tools.get(id);
-			if (tool && !admissibleRisk(tool)) {
+			if (tool && localOnlyRefused(tool)) {
+				emit('tool.denied', `Tool ${id} was denied.`, {
+					tool: id,
+					reason: 'TOOL_LOCAL_ONLY',
+				});
+				throw new AgentHarnessError(
+					'TOOL_LOCAL_ONLY',
+					`Tool ${id} is a local-only capability and cannot run in this environment.`,
+				);
+			}
+			if (tool && !admissible(tool)) {
+				const refusal = approvals.refusals.get(id);
 				emit('tool.denied', `Tool ${id} was denied.`, {
 					tool: id,
 					reason: 'TOOL_RISK_REFUSED',
+					...(refusal ? { grant: refusal } : {}),
 				});
 				throw new AgentHarnessError(
 					'TOOL_RISK_REFUSED',
-					`Tool ${id} declares external risk and cannot run unattended.`,
+					`Tool ${id} declares ${tool.risk} risk and runs only under an approval grant.`,
 				);
 			}
 			if (!tool || !grantedIds.has(id)) {
@@ -747,6 +872,40 @@ export class AgentHarness {
 					reason: failure.code,
 				});
 				throw error;
+			}
+			if (requiresApprovalGrant(tool)) {
+				const expected = {
+					tenantId: request.tenantId,
+					capabilityId: id,
+					inputDigest: approvalInputDigest(input),
+				};
+				let refusal: GrantRefusal = 'APPROVAL_GRANT_MISMATCH';
+				const admitted =
+					grantKeyring !== undefined &&
+					(approvals.byTool.get(id) ?? []).some((token) => {
+						const verified = verifyApprovalGrant(grantKeyring, token, expected);
+						if (!verified.ok) {
+							refusal = verified.reason;
+							return false;
+						}
+						if (consumedGrants.has(verified.claims.requestId)) {
+							refusal = 'APPROVAL_GRANT_CONSUMED';
+							return false;
+						}
+						consumedGrants.add(verified.claims.requestId);
+						return true;
+					});
+				if (!admitted) {
+					emit('tool.denied', `Tool ${id} was denied.`, {
+						tool: id,
+						reason: 'TOOL_RISK_REFUSED',
+						grant: refusal,
+					});
+					throw new AgentHarnessError(
+						'TOOL_RISK_REFUSED',
+						`Tool ${id} has no approval grant for this input.`,
+					);
+				}
 			}
 			if (tool.consent) {
 				/* Foreign code: a throw is a refusal, never a crash. The run deadline

@@ -7,6 +7,10 @@ set -euo pipefail
 certificate=/tls/server.crt
 key=/tls/server.key
 
+# The WAL archive volume is created by Docker as root; archive_command runs as
+# postgres (uid 999) and must be able to write into it from the first segment.
+install -d -o 999 -g 999 -m 700 /var/lib/postgresql/wal-archive
+
 if [ -s "$certificate" ] && [ -s "$key" ]; then
 	echo "PostgreSQL TLS material is already present."
 	exit 0

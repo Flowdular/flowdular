@@ -30,6 +30,13 @@ export type {
 	ApprovalsRequests,
 	OpenApprovalInput,
 } from './domain/capability.ts';
+export {
+	APPROVAL_GRANT_CAPABILITY_ID_LENGTH,
+	APPROVAL_GRANT_TTL_MS,
+	decodeCapabilitySubjectRef,
+	encodeCapabilitySubjectRef,
+} from './domain/grant.ts';
+export type { CapabilitySubject } from './domain/grant.ts';
 
 export {
 	APPROVAL_DECISIONS,
@@ -38,6 +45,8 @@ export {
 	isTerminalApprovalStatus,
 } from './domain/types.ts';
 export type {
+	ApprovalAuditAction,
+	ApprovalAuditEntry,
 	ApprovalDecision,
 	ApprovalDecisionKind,
 	ApprovalMember,

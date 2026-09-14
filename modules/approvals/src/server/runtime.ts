@@ -7,6 +7,7 @@ import {
 	DATABASE_CAPABILITY_IDS,
 	DATABASE_DIALECT_IDS,
 } from '@flowdular/database';
+import type { ApprovalGrantKeyring } from '@flowdular/kernel';
 import type { JobRunner } from '@flowdular/server';
 import type { ApprovalMember } from '../domain/types.ts';
 import {
@@ -42,6 +43,8 @@ export interface ApprovalsRuntimeOptions {
 	readonly notifications?: NotificationPublisherResolver;
 	readonly callbacks?: ApprovalCallbackRegistry;
 	readonly repository?: ApprovalsRepository;
+	/** Signs the grant an approved capability request yields; absent means none. */
+	readonly grants?: ApprovalGrantKeyring | undefined;
 	readonly now?: () => number;
 }
 
@@ -122,6 +125,7 @@ export function createApprovalsRuntime(
 			...(options.notifications
 				? { notifications: options.notifications }
 				: {}),
+			...(options.grants ? { grants: options.grants } : {}),
 			...(options.now ? { now: options.now } : {}),
 		}));
 

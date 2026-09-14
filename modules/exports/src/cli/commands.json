@@ -1,0 +1,17 @@
+{
+	"protocolVersion": 1,
+	"moduleId": "exports.core",
+	"commands": [
+		{
+			"path": ["exports", "secrets-rotate"],
+			"capability": {
+				"id": "exports.storage.rotate",
+				"version": 1,
+				"summary": "Re-seal stored export files with the current storage encryption key.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		}
+	]
+}

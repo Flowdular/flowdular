@@ -299,8 +299,9 @@ API 0.1.6, format, rules, reference, `spec validate`, `module validate`,
 `release:pack`, `release:smoke` with the coding agent binaries hidden: exit
 0, template composition unchanged.
 
-Still open, by decision rather than by omission: the npm publication of
-the 0.2.x packages and the official module lockfile regeneration that
-follows it; the audit items #11 (re-sealing for the storage and connectors
-keys), #12 (PITR and a production restore path), #13 (the signed approval
-verifier); H9, H10 and H11 of RFC 0004 on their triggers.
+The audit items #11, #12 and #13 were delivered on 2026-09-14 under the
+owner's delegation, see `docs/reviews/audit-operations-2026-09-14.md`. Still
+open by decision: the npm publication of the 0.3.0 packages (the 0.2.x
+versions on npm predate these waves) and the official module lockfile
+regeneration that follows it; H9, H10 and H11 of RFC 0004 on their
+triggers; enabling modules from the administration UI.

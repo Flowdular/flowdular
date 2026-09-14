@@ -8,6 +8,8 @@ import type {
 import { integer, runDatabaseMigrations } from '@flowdular/database';
 import { keysetWhere } from '@flowdular/server';
 import type {
+	ApprovalAuditAction,
+	ApprovalAuditEntry,
 	ApprovalDecision,
 	ApprovalDecisionKind,
 	ApprovalListPage,
@@ -53,6 +55,15 @@ interface RequestRow {
 	expires_at: number | bigint | string;
 	resolved_at: number | bigint | string | null;
 	created_at: number | bigint | string;
+}
+
+interface AuditRow {
+	id: string;
+	tenant_id: string;
+	request_id: string;
+	action: ApprovalAuditAction;
+	metadata_json: string;
+	occurred_at: number | bigint | string;
 }
 
 interface DecisionRow {
@@ -125,6 +136,13 @@ const SQL = {
 	resolveRequest: `UPDATE approvals_requests
 	 SET status = $1, resolved_at = $2
 	 WHERE tenant_id = $3 AND id = $4 AND status = 'pending'`,
+	insertAudit: `INSERT INTO approvals_audit
+	 (id, tenant_id, request_id, action, metadata_json, occurred_at)
+	 VALUES ($1, $2, $3, $4, $5, $6)`,
+	listAudit: `SELECT id, tenant_id, request_id, action, metadata_json, occurred_at
+	 FROM approvals_audit
+	 WHERE tenant_id = $1 AND request_id = $2
+	 ORDER BY occurred_at, id`,
 	/* The one cross-tenant read. It returns routing columns only; the request
 	   is read again under the tenant the routing row named before it expires. */
 	dueExpiries: `SELECT tenant_id, id, expires_at, status FROM approvals_requests
@@ -155,6 +173,8 @@ const SQL = {
 	deleteEligibleOf: `DELETE FROM approvals_eligible
 	 WHERE tenant_id = $1 AND request_id = ANY($2::text[])`,
 	deleteDecisionsOf: `DELETE FROM approvals_decisions
+	 WHERE tenant_id = $1 AND request_id = ANY($2::text[])`,
+	deleteAuditOf: `DELETE FROM approvals_audit
 	 WHERE tenant_id = $1 AND request_id = ANY($2::text[])`,
 	deleteRequests: `DELETE FROM approvals_requests
 	 WHERE tenant_id = $1 AND id = ANY($2::text[])`,
@@ -263,6 +283,17 @@ function requestFrom(row: RequestRow): ApprovalRequest {
 		expiresAt: integer(row.expires_at, 'expiresAt'),
 		resolvedAt: optionalInteger(row.resolved_at, 'resolvedAt'),
 		createdAt: integer(row.created_at, 'createdAt'),
+	};
+}
+
+function auditFrom(row: AuditRow): ApprovalAuditEntry {
+	return {
+		id: row.id,
+		tenantId: row.tenant_id,
+		requestId: row.request_id,
+		action: row.action,
+		metadata: JSON.parse(row.metadata_json) as ApprovalAuditEntry['metadata'],
+		occurredAt: integer(row.occurred_at, 'occurredAt'),
 	};
 }
 
@@ -530,19 +561,43 @@ export class DatabaseApprovalsRepository implements ApprovalsRepository {
 					input.tenantId,
 					input.requestId,
 				]);
+				const resolved = {
+					...request,
+					status: terminal,
+					resolvedAt: input.resolvedAt,
+				};
+				const audit = input.audit?.(resolved);
+				if (audit) {
+					await this.#exec(transaction, SQL.insertAudit, [
+						audit.id,
+						input.tenantId,
+						input.requestId,
+						audit.action,
+						JSON.stringify(audit.metadata),
+						audit.occurredAt,
+					]);
+				}
 				return {
 					outcome: 'recorded',
-					request: {
-						...request,
-						status: terminal,
-						resolvedAt: input.resolvedAt,
-					},
+					request: resolved,
 					decisions,
 					resolved: true,
 				} as const;
 			},
 			{ access: 'write', tenantId: input.tenantId },
 		);
+	}
+
+	async listAudit(
+		tenantId: string,
+		requestId: string,
+	): Promise<readonly ApprovalAuditEntry[]> {
+		return (
+			await this.#read<AuditRow>(tenantId, {
+				text: SQL.listAudit,
+				parameters: [tenantId, requestId],
+			})
+		).map(auditFrom);
 	}
 
 	async listDueExpiries(
@@ -655,7 +710,11 @@ export class DatabaseApprovalsRepository implements ApprovalsRepository {
 	): Promise<number> {
 		if (rows.length === 0) return 0;
 		const ids = rows.map((row) => row.id);
-		for (const statement of [SQL.deleteEligibleOf, SQL.deleteDecisionsOf]) {
+		for (const statement of [
+			SQL.deleteEligibleOf,
+			SQL.deleteDecisionsOf,
+			SQL.deleteAuditOf,
+		]) {
 			await this.#exec(transaction, statement, [tenantId, ids]);
 		}
 		await this.#exec(transaction, SQL.deleteRequests, [tenantId, ids]);

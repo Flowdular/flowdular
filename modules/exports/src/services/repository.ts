@@ -50,12 +50,6 @@ export interface ExportSweepInput {
 	readonly limit: number;
 }
 
-export interface ExportSweepBatch {
-	readonly ids: readonly string[];
-	/** The objects those jobs hold, for the caller to delete before the rows. */
-	readonly objectIds: readonly string[];
-}
-
 /**
  * The business port: async, database-agnostic, and unaware of SQL. Every method
  * is tenant-scoped except `listPendingJobs`, which crosses workspaces on the
@@ -83,12 +77,17 @@ export interface ExportRepository {
 		input: SettleExportJobInput,
 	): Promise<ExportJob | null>;
 	/** The batch one retention pass removes, chosen once, oldest first. */
-	claimSweepBatch(
+	/**
+	 * Locks one batch of settled jobs, hands their object ids to `discard`
+	 * while the rows are held, then deletes the rows; answers how many went.
+	 * The lock orders the sweep against a pass that rewrites a file under the
+	 * same lock, so neither can leave a file the other does not see.
+	 */
+	sweepJobs(
 		tenantId: string,
 		input: ExportSweepInput,
-	): Promise<ExportSweepBatch>;
-	/** Removes the jobs of a chosen batch; answers how many rows went. */
-	deleteJobs(tenantId: string, ids: readonly string[]): Promise<number>;
+		discard: (objectIds: readonly string[]) => Promise<void>,
+	): Promise<number>;
 	/** The whole workspace, oldest first, for the data class export. */
 	exportJobs(
 		tenantId: string,

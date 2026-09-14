@@ -52,6 +52,27 @@ CREATE INDEX IF NOT EXISTS documents_files_page_idx
   ON documents_files (tenant_id, created_at DESC, id DESC);
 `;
 
+/* Mirrors migrations/0003_documents_rotation_inventory.up.sql byte for byte. */
+export const DOCUMENTS_MIGRATION_003 = `-- The storage key rotation has to find the workspaces that still hold objects
+-- before it knows which objects those are, so the cross-tenant role may count
+-- stored rows by workspace and nothing else: the storage key, the record and
+-- the file name stay invisible to it, and every object it names is read again
+-- under the workspace that row named. PostgreSQL checks column privileges in
+-- WHERE too, so \`status\` is part of the grant.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
+    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  END IF;
+END
+$$;
+CREATE POLICY documents_files_background_policy ON documents_files
+  FOR SELECT TO coreloom_background
+  USING (status = 'stored');
+REVOKE SELECT ON documents_files FROM coreloom_background;
+GRANT SELECT (tenant_id, status) ON documents_files TO coreloom_background;
+`;
+
 export const databaseMigrations: readonly DatabaseMigration[] = [
 	{
 		id: '0001_documents_core',
@@ -78,5 +99,19 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 			migrationObjectState([
 				() => database.schema.hasIndex('documents_files_page_idx'),
 			]),
+	},
+	{
+		id: '0003_documents_rotation_inventory',
+		sql: { postgresql: DOCUMENTS_MIGRATION_003 },
+		/* A policy and a column grant leave no schema object behind, so the
+		   privilege itself is what proves this migration ran. */
+		inspectExisting: async (database) => {
+			const result = await database.query<{ granted: boolean }>({
+				text: `SELECT CASE WHEN to_regclass('documents_files') IS NOT NULL THEN
+				  has_column_privilege('coreloom_background', 'documents_files', 'status', 'SELECT')
+				ELSE false END AS granted`,
+			});
+			return result.rows[0]?.granted === true ? 'complete' : 'absent';
+		},
 	},
 ];

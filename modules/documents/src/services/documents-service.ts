@@ -381,19 +381,20 @@ export class DocumentsService {
 		};
 	}
 
-	/** The object first, the row after, so no row ever outlives its bytes. */
+	/**
+	 * The object first, the row after, so no row ever outlives its bytes; both
+	 * under the row lock, so a rewrite of the object cannot slip in between.
+	 */
 	async remove(tenantId: string, id: string): Promise<DocumentsFile> {
 		const tenant = this.tenant(tenantId);
 		const record = await this.require(tenant, id);
 		if (record.status === 'deleted') return record;
-		await this.storage.delete(this.referenceOf(record));
 		/* A null means another request deleted the row between the read and the
-		   update; the object is gone either way, so the answer is the same. */
+		   lock; the object is gone either way, so the answer is the same. */
 		return (
-			(await this.repository.markDeleted(tenant, id)) ?? {
-				...record,
-				status: 'deleted',
-			}
+			(await this.repository.markDeleted(tenant, id, () =>
+				this.storage.delete(this.referenceOf(record)).then(() => undefined),
+			)) ?? { ...record, status: 'deleted' }
 		);
 	}
 
@@ -469,8 +470,11 @@ export class DocumentsService {
 			bounded(id, 'id', 1, DOCUMENT_LIMITS.id),
 		);
 		if (!record || record.status === 'deleted') return false;
-		await this.storage.delete(this.referenceOf(record));
-		return (await this.repository.markDeleted(tenant, id)) !== null;
+		return (
+			(await this.repository.markDeleted(tenant, id, () =>
+				this.storage.delete(this.referenceOf(record)).then(() => undefined),
+			)) !== null
+		);
 	}
 
 	private async remainingBytes(tenantId: string): Promise<number> {

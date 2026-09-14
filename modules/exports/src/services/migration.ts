@@ -57,6 +57,18 @@ REVOKE SELECT ON exports_jobs FROM coreloom_background;
 GRANT SELECT (tenant_id, id, status, started_at) ON exports_jobs TO coreloom_background;
 `;
 
+/* Mirrors migrations/0003_exports_rotation_inventory.up.sql byte for byte. */
+export const EXPORTS_MIGRATION_003_ROTATION_INVENTORY = `-- The storage key rotation has to find the workspaces that still hold export
+-- files before it knows which files those are. The routing policy shows the
+-- background role only waiting and running jobs; this one adds the completed
+-- jobs under the same four routing columns, so the object id, the list, the
+-- requester and every count stay invisible to it, and every file it names is
+-- read again under the workspace that row named.
+CREATE POLICY exports_jobs_rotation_policy ON exports_jobs
+  FOR SELECT TO coreloom_background
+  USING (status = 'completed');
+`;
+
 export const databaseMigrations: readonly DatabaseMigration[] = [
 	{
 		id: '0001_exports_core',
@@ -84,6 +96,21 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 				ELSE false END AS granted`,
 			});
 			return result.rows[0]?.granted ? 'complete' : 'absent';
+		},
+	},
+	{
+		id: '0003_exports_rotation_inventory',
+		sql: { postgresql: EXPORTS_MIGRATION_003_ROTATION_INVENTORY },
+		/* A policy leaves no schema object behind, so its catalogue row is what
+		   proves this migration ran. */
+		inspectExisting: async (database) => {
+			const result = await database.query<{ present: boolean }>({
+				text: `SELECT EXISTS (
+				  SELECT 1 FROM pg_policies
+				  WHERE tablename = 'exports_jobs' AND policyname = 'exports_jobs_rotation_policy'
+				) AS present`,
+			});
+			return result.rows[0]?.present === true ? 'complete' : 'absent';
 		},
 	},
 ];

@@ -84,6 +84,12 @@ core:
     confirmation: restore-database
     supportsDryRun: true
     effect: 'replaces the configured database with the backup in <dir> (pg_restore --clean --if-exists, or a staged replacement of the embedded data directory); refuses BACKUP_ADAPTER_MISMATCH across adapters and warns BACKUP_KEY_MISMATCH when the running environment holds keys the backup was not taken with'
+  database.restore.production:
+    command: pnpm flowdular database restore-production --input <dir> --target <database> --grant <token> --tenant <id> [--allow-key-mismatch] [--platform-url <origin>|--platform-stopped] --apply --confirm restore-database
+    risk: destructive
+    confirmation: restore-database
+    supportsDryRun: true
+    effect: 'the same restore without localOnly, so it runs in any environment but only under a verified approval grant (see approvals.destructive-not-local; the grant binds --input, --target and every other capability flag); --target must repeat the database of the migrator DSN (the embedded data directory for pglite) or RESTORE_TARGET_MISMATCH; MIGRATOR_ROLE_REQUIRED when FD_DATABASE_MIGRATOR_URL is absent or equals FD_DATABASE_URL; a key divergence is a BACKUP_KEY_MISMATCH refusal unless --allow-key-mismatch is part of the approved invocation; with --apply, PLATFORM_RUNNING while <origin>/api/health (from --platform-url, else http://127.0.0.1:$FD_PORT) answers, and PLATFORM_STATE_UNKNOWN when no endpoint is named or the probe times out unless --platform-stopped attests the platform is down'
   workspace.state.migrate:
     command: pnpm flowdular setup migrate-state [--apply --confirm migrate-legacy-state]
     risk: destructive
@@ -146,6 +152,24 @@ modules:
       risk: process
       supportsDryRun: true
       note: re-seals stored trigger secrets with the current encryption key; batches of 200 rows in one tenant-scoped transaction each, idempotent, and never prints a secret
+  documents.core:
+    documents.storage.rotate:
+      command: pnpm flowdular documents secrets-rotate [--apply]
+      risk: process
+      supportsDryRun: true
+      note: re-seals stored document objects in place with the current storage encryption key; batches of 200 rows in one tenant-scoped transaction each, idempotent, leaves an object under an unknown key or one that fails authentication as it is, and never prints object content
+  exports.core:
+    exports.storage.rotate:
+      command: pnpm flowdular exports secrets-rotate [--apply]
+      risk: process
+      supportsDryRun: true
+      note: re-seals stored export files in place with the current storage encryption key; batches of 200 rows in one tenant-scoped transaction each, idempotent, leaves a file under an unknown key or one that fails authentication as it is, and never prints file content
+  connectors.core:
+    connectors.secrets.rotate:
+      command: pnpm flowdular connectors secrets-rotate [--apply]
+      risk: process
+      supportsDryRun: true
+      note: re-seals stored connector credentials with the current encryption key and recomputes their fingerprints under it; batches of 200 rows in one tenant-scoped transaction each, idempotent, leaves a row under an unknown key as it is, and never prints a credential
   notifications.core:
     notifications.secrets.rotate:
       command: pnpm flowdular notifications secrets-rotate [--apply]
@@ -240,13 +264,17 @@ modules:
 
 # packages/cli/src/runner.ts, runExtensionCommand, in evaluation order.
 approvals:
-  external: refused with APPROVAL_VERIFIER_REQUIRED (no signed approval verifier exists)
-  destructive-not-local: refused with APPROVAL_VERIFIER_REQUIRED
+  external: the same grant check as destructive-not-local; APPROVAL_VERIFIER_REQUIRED without a token or key
+  destructive-not-local: needs --grant <token> --tenant <id>, an approval grant verified under FD_APPROVAL_GRANT_KEY against the tenant, the capability id and the invocation digest (positional arguments plus every flag except --root, --json, --confirm, --grant and --tenant, so --apply is bound and an approval names the applied run, never a dry run); APPROVAL_VERIFIER_REQUIRED without a token or key, APPROVAL_GRANT_INVALID, APPROVAL_GRANT_EXPIRED or APPROVAL_GRANT_MISMATCH otherwise; the runner records no use, so a grant replays until it expires
   localOnly: refused with LOCAL_ONLY_CAPABILITY unless FD_ENV or NODE_ENV is development or test (unset counts as development)
   requiresApprovedSpec: needs --spec <path>; APPROVED_SPEC_REQUIRED, SPEC_VALIDATION_FAILED or SPEC_NOT_APPROVED otherwise
   destructive-apply: --apply needs --confirm <descriptor.confirmation>; CONFIRMATION_REQUIRED otherwise
   non-read-without-dry-run: EXPLICIT_APPLY_REQUIRED without --apply
   dry-run: non-read with supportsDryRun and no --apply runs with apply=false and warns "Dry run only. No writes were authorized."
+
+harnessGate:
+  localOnlyTools: CLI tools whose capability is localOnly are refused by the harness with TOOL_LOCAL_ONLY outside development and test, grant or not
+  grantedTools: external tools and non-local destructive CLI tools are offered only when the run carries a grant verified for the tool id and the input digest; one tool call per grant (APPROVAL_GRANT_CONSUMED afterwards); the consent gate still applies
 
 moduleExtensions:
   discovery: module.json cli.catalog (src/cli/commands.json), schema-validated without executing code
@@ -259,6 +287,5 @@ moduleExtensions:
 planned:
   - migration.plan (served by "migration apply" without --apply, which is a read-only dry run)
   - migration.apply.remote
-  - destructive.execute (signed approval receipts)
   - redaction of *_TOKEN, *_SECRET, *_PASSWORD, DATABASE_URL in a shared logger (only packages/ai-provider/src/errors.ts redactSecrets exists)
   - persisted CLI audit (CommandEnvelope carries a random auditId and evidence per invocation; nothing stores it)

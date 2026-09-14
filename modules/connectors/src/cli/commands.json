@@ -1,0 +1,17 @@
+{
+	"protocolVersion": 1,
+	"moduleId": "connectors.core",
+	"commands": [
+		{
+			"path": ["connectors", "secrets-rotate"],
+			"capability": {
+				"id": "connectors.secrets.rotate",
+				"version": 1,
+				"summary": "Re-seal stored connector credentials with the current encryption key.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		}
+	]
+}

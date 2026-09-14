@@ -121,30 +121,30 @@ function describe(key: string, header: FrameHeader): StoredObject {
 	};
 }
 
-export function encodeStoredObject(
+interface FrameDraft {
+	readonly contentType: string;
+	readonly bytes: number;
+	readonly checksum: string;
+	readonly scan: StorageScanVerdict;
+	readonly createdAt: string;
+}
+
+function sealFrame(
 	keyring: Keyring,
 	key: string,
 	plaintext: Uint8Array,
-	metadata: {
-		readonly contentType: string;
-		readonly scan: StorageScanVerdict;
-		readonly createdAt: Date;
-	},
+	draft: FrameDraft,
 ): { readonly frame: Uint8Array; readonly object: StoredObject } {
-	const draft = {
+	const unsealed = {
 		v: 1,
 		keyId: keyring.keyId,
 		iv: '',
 		tag: '',
-		contentType: metadata.contentType,
-		bytes: plaintext.byteLength,
-		checksum: storageChecksum(plaintext),
-		scan: metadata.scan,
-		createdAt: metadata.createdAt.toISOString(),
-	} satisfies FrameHeader;
-	const sealed = keyring.seal(plaintext, additionalData(key, draft));
-	const header: FrameHeader = {
 		...draft,
+	} satisfies FrameHeader;
+	const sealed = keyring.seal(plaintext, additionalData(key, unsealed));
+	const header: FrameHeader = {
+		...unsealed,
 		keyId: sealed.keyId,
 		iv: sealed.iv.toString('base64'),
 		tag: sealed.tag.toString('base64'),
@@ -162,6 +162,43 @@ export function encodeStoredObject(
 	};
 }
 
+export function encodeStoredObject(
+	keyring: Keyring,
+	key: string,
+	plaintext: Uint8Array,
+	metadata: {
+		readonly contentType: string;
+		readonly scan: StorageScanVerdict;
+		readonly createdAt: Date;
+	},
+): { readonly frame: Uint8Array; readonly object: StoredObject } {
+	return sealFrame(keyring, key, plaintext, {
+		contentType: metadata.contentType,
+		bytes: plaintext.byteLength,
+		checksum: storageChecksum(plaintext),
+		scan: metadata.scan,
+		createdAt: metadata.createdAt.toISOString(),
+	});
+}
+
+function openFrame(
+	keyring: Keyring,
+	key: string,
+	frame: Uint8Array,
+): { readonly header: FrameHeader; readonly plaintext: Buffer } {
+	const { header, ciphertextOffset } = parseHeader(frame);
+	const plaintext = keyring.open(
+		{
+			keyId: header.keyId,
+			iv: Buffer.from(header.iv, 'base64'),
+			tag: Buffer.from(header.tag, 'base64'),
+			ciphertext: frame.subarray(ciphertextOffset),
+		},
+		additionalData(key, header),
+	);
+	return { header, plaintext };
+}
+
 /** Metadata only. The bytes are authenticated by `openStoredObject`, not here. */
 export function readStoredObjectHeader(
 	key: string,
@@ -175,15 +212,27 @@ export function openStoredObject(
 	key: string,
 	frame: Uint8Array,
 ): { readonly object: StoredObject; readonly plaintext: Buffer } {
-	const { header, ciphertextOffset } = parseHeader(frame);
-	const plaintext = keyring.open(
-		{
-			keyId: header.keyId,
-			iv: Buffer.from(header.iv, 'base64'),
-			tag: Buffer.from(header.tag, 'base64'),
-			ciphertext: frame.subarray(ciphertextOffset),
-		},
-		additionalData(key, header),
-	);
+	const { header, plaintext } = openFrame(keyring, key, frame);
 	return { object: describe(key, header), plaintext };
+}
+
+/**
+ * The same object under the current key. The frame is opened under the key it
+ * names, which authenticates the header, and the header's own fields become the
+ * additional data of the new frame, so nothing about the object changes but
+ * the key, the nonce, the tag and the ciphertext.
+ */
+export function resealStoredObject(
+	keyring: Keyring,
+	key: string,
+	frame: Uint8Array,
+): { readonly frame: Uint8Array; readonly object: StoredObject } {
+	const { header, plaintext } = openFrame(keyring, key, frame);
+	return sealFrame(keyring, key, plaintext, {
+		contentType: header.contentType,
+		bytes: header.bytes,
+		checksum: header.checksum,
+		scan: header.scan,
+		createdAt: header.createdAt,
+	});
 }

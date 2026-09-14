@@ -48,6 +48,8 @@ export function credentialContext(
 export interface CredentialVault {
 	/** Key id every new envelope is written with; stored rows may carry older ones. */
 	readonly keyId: string;
+	/** Whether the current key or a retired one in the ring carries this id. */
+	knows(keyId: string): boolean;
 	seal(secret: string, context: string): SealedCredential;
 	open(envelope: SealedCredential, context: string): string;
 	/**
@@ -93,6 +95,10 @@ export class AesGcmCredentialVault implements CredentialVault {
 
 	get keyId(): string {
 		return this.#keyring.keyId;
+	}
+
+	knows(keyId: string): boolean {
+		return this.#keyring.knows(keyId);
 	}
 
 	fingerprint(secret: string, context: string): string {

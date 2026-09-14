@@ -33,19 +33,22 @@ export function exportsDataClass(
 		exportable: true,
 		sweep: async ({ tenantId, cutoff, limit }) => {
 			const open = await repository();
-			const batch = await open.claimSweepBatch(tenantId, {
-				settledBefore: cutoff.getTime(),
-				/* The platform's number is the caller's; this is the module's own
-				   bound on one pass. */
-				limit: Math.min(Math.max(Math.trunc(limit), 1), EXPORT_SWEEP_JOBS),
-			});
-			if (batch.ids.length === 0) return { removed: 0 };
-			/* The file goes before the row it belongs to. An interrupted pass then
-			   leaves a row naming a file that is gone, which the next pass removes
-			   and a read answers as gone; the other order would leave a file
-			   nothing references and no pass could ever find. */
-			await (await service()).discardObjects(tenantId, batch.objectIds);
-			return { removed: await open.deleteJobs(tenantId, batch.ids) };
+			/* The file goes before the row it belongs to, under the row lock. An
+			   interrupted pass then leaves a row naming a file that is gone, which
+			   the next pass removes and a read answers as gone; the other order
+			   would leave a file nothing references and no pass could ever find. */
+			const removed = await open.sweepJobs(
+				tenantId,
+				{
+					settledBefore: cutoff.getTime(),
+					/* The platform's number is the caller's; this is the module's own
+					   bound on one pass. */
+					limit: Math.min(Math.max(Math.trunc(limit), 1), EXPORT_SWEEP_JOBS),
+				},
+				async (objectIds) =>
+					(await service()).discardObjects(tenantId, objectIds),
+			);
+			return { removed };
 		},
 		/* Metadata only. The requester snapshot is bookkeeping for a background
 		   stage, and the exported files are the lists' own data, already covered

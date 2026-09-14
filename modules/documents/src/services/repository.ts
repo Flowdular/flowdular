@@ -41,8 +41,18 @@ export interface DocumentsRepository {
 		id: string,
 	): Promise<DocumentsFile | null>;
 	create(record: DocumentsFile): Promise<DocumentsFile>;
-	/** The updated row, or null when it was already deleted or never existed. */
-	markDeleted(tenantId: string, id: string): Promise<DocumentsFile | null>;
+	/**
+	 * Locks the stored row, runs `discard` while it is held, then marks the row
+	 * deleted. Null when it was already deleted or never existed, in which case
+	 * `discard` does not run. The lock orders the delete against a pass that
+	 * rewrites the object under the same lock, so neither can leave an object
+	 * the other does not see.
+	 */
+	markDeleted(
+		tenantId: string,
+		id: string,
+		discard: () => Promise<void>,
+	): Promise<DocumentsFile | null>;
 	/** Bytes the workspace still stores; the quota is measured against it. */
 	storedBytes(tenantId: string): Promise<number>;
 }

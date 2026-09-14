@@ -3,10 +3,10 @@
 	"schemaVersion": 1,
 	"id": "documents.core",
 	"package": "@flowdular/module-documents",
-	"version": "0.1.8",
+	"version": "0.1.9",
 	"platformApi": "^0.1.0",
 	"profile": "full",
-	"capabilities": ["api", "database", "client", "translations"],
+	"capabilities": ["api", "database", "client", "translations", "cli"],
 	"platform": {
 		"server": true,
 		"client": true
@@ -24,5 +24,9 @@
 	"provides": ["documents.attachments.v1"],
 	"tenancy": "required",
 	"locales": ["en", "pl"],
-	"stability": "experimental"
+	"stability": "experimental",
+	"cli": {
+		"catalog": "src/cli/commands.json",
+		"entry": "src/cli/index.ts"
+	}
 }

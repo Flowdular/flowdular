@@ -56,6 +56,8 @@ export interface ExportTestHarness {
 	readonly background: DatabaseHandle;
 	readonly lists: ExportListRegistry;
 	readonly storage: StoragePort;
+	/** The local object store behind `storage`, for a port under another ring. */
+	readonly storageDirectory: string;
 	readonly service: ExportService;
 	readonly runner: JobRunner;
 	/** Object keys the store holds, workspace prefix first. */
@@ -156,6 +158,7 @@ export async function openExportHarness(
 			background: background.database,
 			lists,
 			storage,
+			storageDirectory: directory,
 			service,
 			runner,
 			async storedKeys() {
@@ -234,8 +237,8 @@ export function repositoryWith(
 		heartbeatJob: (tenantId, id, at, claimedAt) =>
 			base.heartbeatJob(tenantId, id, at, claimedAt),
 		settleJob: (tenantId, id, input) => base.settleJob(tenantId, id, input),
-		claimSweepBatch: (tenantId, input) => base.claimSweepBatch(tenantId, input),
-		deleteJobs: (tenantId, ids) => base.deleteJobs(tenantId, ids),
+		sweepJobs: (tenantId, input, discard) =>
+			base.sweepJobs(tenantId, input, discard),
 		exportJobs: (tenantId, sink) => base.exportJobs(tenantId, sink),
 		...overrides,
 	};
