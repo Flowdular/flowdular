@@ -10,6 +10,8 @@ import {
 } from './contracts.ts';
 
 export const DATABASE_MIGRATION_LEDGER = '_coreloom_migrations_v2';
+/** The advisory lock every module migration takes before its own. */
+export const DATABASE_MIGRATION_LEDGER_LOCK = 'coreloom.migrations';
 
 /* Line endings and surrounding blank space are editor noise; everything else,
    including whitespace inside the SQL, is part of the checksum. Changing this
@@ -377,6 +379,11 @@ export async function runDatabaseMigrations(
 
 	return database.transaction(
 		async (transaction) => {
+			/* Every module shares the ledger table, and this transaction is
+			   serializable, so two modules migrating at the same boot collide on
+			   it with a serialization failure. The ledger lock serialises boots
+			   across modules; the namespace lock keeps the per-module contract. */
+			await transaction.acquireMigrationLock(DATABASE_MIGRATION_LEDGER_LOCK);
 			await transaction.acquireMigrationLock(namespace);
 			await transaction.executeScript(
 				database.capabilities.sql.migrationLedgerDdl(DATABASE_MIGRATION_LEDGER),
