@@ -164,7 +164,7 @@ describe('platform composition generator', () => {
 	it('binds the metrics of each module and hands every module the same tracer', () => {
 		const source = generateServerComposition(modules);
 		expect(source).toContain(
-			"import { createModuleMetrics } from '@flowdular/server';",
+			"import { bindModuleCompositions, createModuleMetrics } from '@flowdular/server';",
 		);
 		expect(source).toContain("metrics: createModuleMetrics('users.core'),");
 		expect(source).toContain("metrics: createModuleMetrics('billing.core'),");
@@ -172,7 +172,7 @@ describe('platform composition generator', () => {
 		   module through the context the call spreads. */
 		expect(source).toContain('...context,');
 		expect(generateServerComposition(modules, true)).toContain(
-			"import { createModuleMetrics } from '@flowdular/sdk/server';",
+			"import { bindModuleCompositions, createModuleMetrics } from '@flowdular/sdk/server';",
 		);
 	});
 

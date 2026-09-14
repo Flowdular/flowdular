@@ -37,7 +37,7 @@ describe('active module filtering', () => {
 	});
 
 	it('reads the active ids from system.core and answers null for anything else', async () => {
-		const fetchMock = vi.fn(async (input: string) =>
+		const fetchMock = vi.fn(async (input: string, _init?: RequestInit) =>
 			input === '/api/system/modules/active'
 				? Response.json({ modules: ['reports.core'] })
 				: Response.json({}, { status: 404 }),

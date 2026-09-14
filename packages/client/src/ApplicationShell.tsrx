@@ -243,7 +243,8 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 	useEffect(() => {
 		const controller = new AbortController();
 		setActivationTenant(null);
-		void props.loadActiveModules ?? loadActiveModules({
+		const resolveActiveModules = props.loadActiveModules ?? loadActiveModules;
+		void resolveActiveModules({
 			accountId: props.identity.accountId,
 			tenantId: props.identity.tenantId,
 			signal: controller.signal,
