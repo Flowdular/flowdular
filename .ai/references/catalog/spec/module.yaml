@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: catalog.core
-specVersion: 0.7.1
+specVersion: 0.7.2
 status: approved
 name: Product Catalog Core
 description: Provides tenant-scoped products and services with stable SKUs, units, prices, currencies, and lifecycle state.
