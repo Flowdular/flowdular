@@ -117,6 +117,7 @@ describe('platform composition generator', () => {
 			},
 		]);
 		expect(source).toContain("}), moduleId: 'users.core' }");
+		expect(source).toContain('return bindModuleCompositions([');
 		expect(source).toContain(
 			'export const moduleWebMounts: readonly WebMount[] =',
 		);

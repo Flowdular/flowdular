@@ -4,7 +4,7 @@
    removed or changed. The surface is pinned by
    packages/kernel/platform-api.snapshot.d.ts; `pnpm platform-api:check` fails
    when the surface changes without a bump here. */
-export const PLATFORM_API_VERSION = '0.1.8';
+export const PLATFORM_API_VERSION = '0.1.9';
 
 /* The workspace time zone: one tenant setting, declared by the module named
    here and read by any module that shows or schedules a local time. The id, the
@@ -14,6 +14,16 @@ export const TENANT_TIME_ZONE_SETTING = {
 	key: 'timeZone',
 	defaultValue: 'UTC',
 } as const;
+
+/* Modules every workspace needs to sign in, hold members and show the shell.
+   They are composed like any other module but never deactivated per workspace,
+   and the endpoint gate never asks about them. */
+export const REQUIRED_MODULE_IDS = [
+	'system.core',
+	'auth.core',
+	'users.core',
+	'profile.core',
+] as const;
 
 export type ModuleCapability =
 	| 'api'

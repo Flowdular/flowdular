@@ -1,5 +1,6 @@
 import type { ModuleClientContribution } from '../contributions.ts';
 import type { ShellView } from '../state.ts';
+import type { ActiveModulesLoader } from './modules.ts';
 
 export interface ShellTenant {
 	readonly tenantId: string;
@@ -22,6 +23,8 @@ export interface ApplicationShellProps {
 	initialView?: ShellView;
 	contributions?: readonly ModuleClientContribution[];
 	identity: ShellIdentity;
+	/** Reads the active module ids of the workspace; defaults to system.core's endpoint. */
+	loadActiveModules?: ActiveModulesLoader;
 	onSignOut: () => void | Promise<void>;
 	onSwitchTenant: (tenantId: string) => void | Promise<void>;
 }

@@ -158,15 +158,15 @@ export function generateServerComposition(
 	return (
 		GENERATED_HEADER +
 		typeImport +
-		`import { createModuleMetrics } from '${serverPackage}';\n` +
+		`import { bindModuleCompositions, createModuleMetrics } from '${serverPackage}';\n` +
 		imports +
 		'\n\n' +
 		'export function composeModuleServer(\n' +
 		'\tcontext: PlatformServerContext,\n' +
 		'): readonly PlatformServerComposition[] {\n' +
-		'\treturn [\n' +
+		'\treturn bindModuleCompositions([\n' +
 		calls +
-		'\n\t];\n' +
+		'\n\t]);\n' +
 		'}\n' +
 		'\nexport const moduleWebMounts: readonly WebMount[] = ' +
 		JSON.stringify(mounts) +

@@ -898,6 +898,9 @@ importers:
       '@flowdular/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@flowdular/database':
+        specifier: workspace:*
+        version: link:../../packages/database
       '@flowdular/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel
@@ -923,9 +926,6 @@ importers:
         specifier: 2.9.0
         version: 2.9.0
     devDependencies:
-      '@flowdular/database':
-        specifier: workspace:*
-        version: link:../../packages/database
       '@flowdular/database-testing':
         specifier: workspace:*
         version: link:../../packages/database-testing
@@ -1153,6 +1153,9 @@ importers:
 
   packages/client:
     dependencies:
+      '@flowdular/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@flowdular/ui':
         specifier: workspace:*
         version: link:../ui

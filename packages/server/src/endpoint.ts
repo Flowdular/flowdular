@@ -1,6 +1,7 @@
 import { ServerRoute, type Context } from '@octanejs/app-core';
 import { serverLogger } from './log.ts';
 import { serverMetrics } from './metrics.ts';
+import { MODULE_INACTIVE, routeActiveForTenant } from './module-activation.ts';
 import {
 	formatTraceParent,
 	runWithTrace,
@@ -11,6 +12,8 @@ import { serverTracer, type Span } from './trace/tracer.ts';
 export interface EndpointIdentity {
 	readonly subjectId: string;
 	readonly permissions: ReadonlySet<string>;
+	/** The workspace the identity acts in; the module activation gate reads it. */
+	readonly tenantId?: string;
 }
 
 export interface EndpointExecutionContext {
@@ -131,6 +134,19 @@ export function defineEndpoint(
 						traceparent,
 					);
 				}
+				if (
+					identity.tenantId !== undefined &&
+					!(await routeActiveForTenant(serverRoute, identity.tenantId))
+				) {
+					status = 403;
+					return problem(
+						403,
+						MODULE_INACTIVE,
+						'This module is inactive in the workspace.',
+						requestId,
+						traceparent,
+					);
+				}
 			}
 
 			const response = await definition.handler({
@@ -171,7 +187,7 @@ export function defineEndpoint(
 		}
 	};
 
-	const serverRoute = new ServerRoute({
+	const serverRoute: ServerRoute = new ServerRoute({
 		path: definition.path,
 		methods: definition.methods.map((method) => method.toUpperCase()),
 		handler: (context) => {

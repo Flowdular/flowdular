@@ -70,7 +70,11 @@ export function endpointIdentityFromContext(
 ): EndpointIdentity | null {
 	const principal = principalFromContext(context);
 	return principal
-		? { subjectId: principal.accountId, permissions: new Set(principal.scopes) }
+		? {
+				subjectId: principal.accountId,
+				tenantId: principal.tenantId,
+				permissions: new Set(principal.scopes),
+			}
 		: null;
 }
 

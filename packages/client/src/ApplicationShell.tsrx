@@ -14,6 +14,10 @@ import { widgetsForSlot } from './shell/ContributionOutlets.tsrx';
 import { registerModuleTranslations, useTranslation } from './i18n/runtime.ts';
 import { MobileHeader } from './shell/MobileHeader.tsrx';
 import {
+	contributionsForActiveModules,
+	loadActiveModules,
+} from './shell/modules.ts';
+import {
 	coreNavigation,
 	navigationForIdentity,
 	navigationGroupLabel,
@@ -44,10 +48,6 @@ export function ApplicationShell(props: ApplicationShellProps) @{
    locale is side-effect free for subscribers. */
 	registerModuleTranslations(props.contributions ?? []);
 	const { t } = useTranslation();
-	const registry = useMemo(
-		() => createClientContributionRegistry(props.contributions ?? []),
-		[props.contributions],
-	);
 	const shell = useMemo(() => createShellState(props.initialView), [
 		props.initialView,
 	]);
@@ -60,11 +60,27 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 					? null
 					: props.identity.tenantId,
 			),
+			/* The workspace whose active modules are known, and which they are;
+   null ids show every module, so a failed read never empties the shell. */
+			activationTenantId: cell<string | null>(null),
+			activeModules: cell<readonly string[] | null>(null),
 		}),
 		[],
 	);
 	const [initializedTenant, setInitializedTenant] = useValue(
 		initialization.state.tenantId,
+	);
+	const [activationTenant, setActivationTenant] = useValue(
+		initialization.state.activationTenantId,
+	);
+	const [activeModules, setActiveModules] = useValue(
+		initialization.state.activeModules,
+	);
+	const registry = useMemo(
+		() => createClientContributionRegistry(
+			contributionsForActiveModules(props.contributions ?? [], activeModules),
+		),
+		[props.contributions, activeModules],
 	);
 	const [activeView, setActiveView] = useValue(shell.state.activeView);
 	const [commandOpen, setCommandOpen] = useValue(shell.state.commandOpen);
@@ -80,7 +96,9 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 	const [query, setQuery] = useValue(shell.state.query);
 	const [tenantBusy, setTenantBusy] = useValue(shell.state.tenantBusy);
 	const [tenantError, setTenantError] = useValue(shell.state.tenantError);
-	const workspaceInitialized = initializedTenant === props.identity.tenantId;
+	const workspaceInitialized =
+		initializedTenant === props.identity.tenantId &&
+			activationTenant === props.identity.tenantId;
 	const grantedScopes = new Set(props.identity.scopes);
 	const visibleNavigation = navigationForIdentity(
 		[...coreNavigation(t), ...registry.navigation],
@@ -219,6 +237,28 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 				}
 			});
 		}
+		return () => controller.abort();
+	}, [props.identity.accountId, props.identity.tenantId]);
+
+	useEffect(() => {
+		const controller = new AbortController();
+		setActivationTenant(null);
+		void props.loadActiveModules ?? loadActiveModules({
+			accountId: props.identity.accountId,
+			tenantId: props.identity.tenantId,
+			signal: controller.signal,
+		}).then(
+			(ids) => {
+				if (controller.signal.aborted) return;
+				setActiveModules(ids);
+				setActivationTenant(props.identity.tenantId);
+			},
+			() => {
+				if (controller.signal.aborted) return;
+				setActiveModules(null);
+				setActivationTenant(props.identity.tenantId);
+			},
+		);
 		return () => controller.abort();
 	}, [props.identity.accountId, props.identity.tenantId]);
 

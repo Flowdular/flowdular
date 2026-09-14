@@ -26,6 +26,11 @@ export type {
 } from './contributions.ts';
 export { openCommandPalette } from './shell/command.ts';
 export {
+	contributionsForActiveModules,
+	loadActiveModules,
+} from './shell/modules.ts';
+export type { ActiveModulesLoader } from './shell/modules.ts';
+export {
 	COMMAND_SEARCH_DEBOUNCE_MS,
 	COMMAND_SEARCH_MINIMUM,
 } from './shell/command-search.ts';
