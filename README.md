@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/flowdular-readme-hero.png" alt="Flowdular. Your business. Your building blocks. Woven hash logo connected to business modules." width="100%" />
+<img src="docs/assets/flowdular-readme-hero.webp" alt="Flowdular. Your business. Your building blocks. Woven hash logo connected to business modules." width="100%" />
 
 ### Describe a business process. Approve the spec. Ship the module.
 

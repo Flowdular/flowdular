@@ -1,4 +1,4 @@
-[![Flowdular: Build your business platform](https://cdn.jsdelivr.net/npm/@flowdular/sdk@latest/assets/flowdular-banner.png)](https://flowdular.com)
+[![Flowdular: Build your business platform](https://cdn.jsdelivr.net/npm/@flowdular/sdk@latest/assets/flowdular-banner.webp)](https://flowdular.com)
 
 # Flowdular SDK
 
