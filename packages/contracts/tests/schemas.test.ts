@@ -88,6 +88,7 @@ describe('contract schemas', () => {
 			'baseBranch',
 			'branchPrefix',
 			'forkOwner',
+			'labels',
 			'mode',
 			'provider',
 			'remote',

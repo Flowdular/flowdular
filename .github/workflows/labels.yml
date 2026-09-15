@@ -1,0 +1,46 @@
+name: labels
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Area labels from the paths the diff touches
+        uses: actions/labeler@v5
+        with:
+          configuration-path: .github/labeler.yml
+          sync-labels: true
+      - name: Type label from the title or the branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ github.event.pull_request.title }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -eu
+          type=""
+          case "$TITLE" in
+            feat:*|feat\(*) type=feat ;;
+            fix:*|fix\(*) type=fix ;;
+            docs:*|docs\(*) type=docs ;;
+            chore:*|chore\(*) type=chore ;;
+            release:*|Release*) type=release ;;
+          esac
+          case "$BRANCH" in
+            feat/*) type=${type:-feat} ;;
+            fix/*) type=${type:-fix} ;;
+            docs/*) type=${type:-docs} ;;
+            release/*) type=${type:-release} ;;
+            chore/*|core/*) type=${type:-chore} ;;
+            sandbox/*) gh pr edit "$NUMBER" --add-label sandbox-delivery ;;
+          esac
+          if [ -n "$type" ]; then
+            gh pr edit "$NUMBER" --add-label "$type"
+          fi

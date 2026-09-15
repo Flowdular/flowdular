@@ -657,11 +657,13 @@ function pullRequestBody(input: {
 		.filter((part) => part !== '')
 		.join(' ');
 	const lines = [
+		'## Problem',
+		'',
+		sentences(input.session.brief, 3, 600) || 'See the session brief.',
+		'',
+		'## Solution',
+		'',
 		summary,
-		'',
-		`Session ${input.session.id}.`,
-		'',
-		'## Specification',
 		'',
 		...input.specs.flatMap((spec) => {
 			const before = spec.base?.specVersion ?? 'new';
@@ -681,7 +683,7 @@ function pullRequestBody(input: {
 				'',
 			];
 		}),
-		'## Gates',
+		'## Verification',
 		'',
 		'| Gate | Module | Result |',
 		'| --- | --- | --- |',
@@ -689,7 +691,19 @@ function pullRequestBody(input: {
 			(gate) => `| ${gate.id} | ${gate.module ?? ''} | ${gate.status} |`,
 		),
 		'',
-		`Verification: ${testGates.length} module test gate(s) passed. The platform typecheck passed in the delivery worktree.`,
+		`${testGates.length} module test gate(s) passed. The platform typecheck passed in the delivery worktree. Not run here: the production build and a browser look.`,
+		'',
+		'## Follow-ups',
+		'',
+		...input.modules.map(
+			(module) =>
+				`- Post-merge: \`pnpm flowdular auth sync-scopes --module ${module.id} --apply\` against the deployment database.`,
+		),
+		...(input.requireReviewer && input.owners.length > 1
+			? [
+					`- Cross-owner change (${input.owners.join(', ')}): .ai/policies/path-ownership.yaml asks for a reviewer from each owner.`,
+				]
+			: []),
 		'',
 	];
 	const groups: readonly [string, readonly string[]][] = [
@@ -697,13 +711,6 @@ function pullRequestBody(input: {
 		['Modified', input.changes.modified],
 		['Removed', input.changes.removed],
 	];
-	lines.push('## Files', '');
-	for (const [label, files] of groups) {
-		if (files.length === 0) continue;
-		lines.push(`${label} (${files.length}):`);
-		lines.push(...files.map((file) => `- ${file}`));
-		lines.push('');
-	}
 	lines.push('## Risks', '');
 	const migrations = [...input.changes.added, ...input.changes.modified].filter(
 		(file) => /\/migrations\//.test(file),
@@ -728,17 +735,14 @@ function pullRequestBody(input: {
 				]),
 		'',
 	);
-	for (const module of input.modules) {
-		lines.push(
-			`Post-merge: \`pnpm flowdular auth sync-scopes --module ${module.id} --apply\` against the deployment database.`,
-		);
+	lines.push('## Files', '');
+	for (const [label, files] of groups) {
+		if (files.length === 0) continue;
+		lines.push(`${label} (${files.length}):`);
+		lines.push(...files.map((file) => `- ${file}`));
+		lines.push('');
 	}
-	if (input.requireReviewer && input.owners.length > 1) {
-		lines.push(
-			'',
-			`Cross-owner change (${input.owners.join(', ')}): .ai/policies/path-ownership.yaml asks for a reviewer from each owner.`,
-		);
-	}
+	lines.push(`Session ${input.session.id}.`);
 	return `${lines.join('\n')}\n`;
 }
 
@@ -910,6 +914,30 @@ async function openPullRequest(
 		output: created.output,
 		detail: url ?? '',
 	});
+	if (url !== null && git.labels.length > 0) {
+		/* Labels are a courtesy of the repository, not a gate: a label the
+		   repository lacks leaves the pull request open and unlabelled. */
+		const labelled = await run(
+			'gh',
+			[
+				'pr',
+				'edit',
+				url,
+				...repositoryArgs,
+				'--add-label',
+				git.labels.join(','),
+			],
+			worktree,
+		);
+		recorder.record('labels', {
+			ok: labelled.code === 0,
+			output:
+				labelled.code === 0
+					? `Labelled ${git.labels.join(', ')}.`
+					: `Labels ${git.labels.join(', ')} were not added: ${labelled.output.trim()}`,
+			detail: git.labels.join(','),
+		});
+	}
 	return url;
 }
 
@@ -1093,6 +1121,7 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 					owners,
 					requireReviewer: ownership.requireReviewer,
 					reviewers: config.git.reviewers,
+					labels: config.git.labels,
 					guardrails: evaluateGuardrails({
 						offending: [],
 						changedFiles,

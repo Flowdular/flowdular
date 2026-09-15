@@ -58,6 +58,14 @@ Do not load the whole skill catalog into the task context.
     `auto-review`. Implement from the approved spec and its touch list; do not
     scan `modules/` or `packages/`. First lookup is `.ai/platform-capabilities.md`.
     What the spec lacks is a spec defect to report, never a guess.
+14. Delivery: a branch `feat|fix|core|docs|chore|release/<scope>-<topic>` off
+    `main`, one logical change per commit with an imperative subject, generated
+    files in the commit of the command that made them. A pull request body has,
+    in this order, Problem, Solution, Verification, Follow-ups, Risks: a few
+    sentences or a short list each, nothing that restates the diff. Labels: one
+    type (`feat`, `fix`, `docs`, `chore`, `release`) plus the areas touched
+    (`core`, `module`, `sandbox`, `ci`, `docs`); `sandbox-delivery` marks an
+    eject. Merge only with every check green.
 
 Detailed recipes: `docs/agent-contract.md` (lookup only).
 Reference module: `.ai/references/catalog`; visual contract: `docs/design-system.md`.
