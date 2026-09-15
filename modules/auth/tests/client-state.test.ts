@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	createAuthClientState,
 	authPathForScreen,
 	authScreenFromUrl,
 	canonicalAuthLocation,
@@ -51,5 +52,14 @@ describe('authentication routes', () => {
 		expect(isAuthRouteUrl('/sign-up')).toBe(true);
 		expect(isAuthRouteUrl('/app/acme/overview')).toBe(false);
 		expect(isAuthRouteUrl('/')).toBe(false);
+	});
+});
+
+describe('AUTH-SIGNIN-WORKSPACE-ROUTING sign-in screen state', () => {
+	it('hides the workspace field until single sign-on is chosen', () => {
+		const auth = createAuthClientState();
+		expect(auth.store.get(auth.state.signInSsoOpen)).toBe(false);
+		expect(auth.store.get(auth.state.signInWorkspaceFromUrl)).toBe(false);
+		expect(auth.store.get(auth.state.signInWorkspace)).toBe('');
 	});
 });
