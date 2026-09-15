@@ -1,8 +1,12 @@
 # RFC 0006: Research, documents and case work as reusable building blocks
 
-- Status: proposed on 2026-09-15, revised the same day on the owner's
-  direction (no case module; data adapters and session input instead);
-  waiting for the decision on the order and the open questions below
+- Status: accepted by the owner on 2026-09-16 with the defaults proposed
+  below (model-native search as the default adapter, evidence as sha256 and
+  excerpt with full text opt-in, recorded adapters only inside a sandbox
+  session, decision tables later, the PDF renderer decided at J3); wave 1 is
+  J1 with the spec schema sections and J5, then J4 with the adapter skill,
+  then J2, then J3; delivery is recorded in
+  `docs/reviews/research-rfc0006-2026-09-16.md`
 - Date: 2026-09-15
 - Follows: RFC 0005 (lists, distribution and debt, delivered 2026-09-13 and
   2026-09-15), RFC 0004 (platform services)
@@ -261,7 +265,16 @@ instances of the same image.
 4. **J2.** Reading what members uploaded is needed by every case type.
 5. **J3.** The document at the end, with the renderer decision made.
 
-## Open questions for the owner
+## Decisions recorded on 2026-09-16
+
+- The RFC is accepted with the defaults named in the status line; the owner
+  said "no to jedziemy" after the analysis of what the sandbox still lacks.
+- Wave 1 runs as three streams in parallel: `research.core` with the harness
+  native tool seam (J1), the spec schema sections `research`, `adapters` and
+  `templates` with the skills that use them, and the sandbox sample data and
+  recorded adapters (J5).
+
+## Open questions for the owner, as they stood before the decisions
 
 1. **Default adapter.** Model-native search sends the query to the model
    provider. Acceptable as the default, or should a workspace opt in and the
