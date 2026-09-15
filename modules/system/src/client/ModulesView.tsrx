@@ -201,6 +201,7 @@ export function ModulesView(props: ModulesViewProps) @{
 						}}
 						onSelect={(module) => setSelectedModuleId(module.id)}
 						actionsLabel={t('system.table.actions')}
+						actionsWidth="236px"
 						actions={(module) => [
 							{
 								id: 'open',
