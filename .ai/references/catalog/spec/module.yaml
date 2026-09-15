@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: catalog.core
-specVersion: 0.8.0
+specVersion: 0.8.1
 status: approved
 name: Product Catalog Core
 description: Provides tenant-scoped products and services with stable SKUs, units, prices, currencies, and lifecycle state.
@@ -12,7 +12,7 @@ capabilities:
   - translations
 dependencies:
   - id: system.core
-    range: ^0.7.0
+    range: ^0.8.0
   - id: auth.core
     range: ^0.13.0
   - id: exports.core
