@@ -43,6 +43,7 @@
 	"table.platform": "Platforma",
 	"table.permissions": "Uprawnienia",
 	"table.dependents": "Zależne",
+	"table.dependentsMore": "{first} i jeszcze {count}",
 	"table.status": "Status",
 	"table.loading": "Wczytywanie modułów…",
 	"table.emptyTitle": "Nie znaleziono modułów",

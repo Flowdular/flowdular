@@ -16,6 +16,7 @@ export const accessNavigation: readonly NavigationContribution[] = [
 		id: 'access.navigation.review',
 		viewId: ACCESS_VIEWS.review,
 		group: 'Administration',
+		section: 'people',
 		get label() {
 			return t('access.navigation.review');
 		},
@@ -30,6 +31,7 @@ export const accessNavigation: readonly NavigationContribution[] = [
 		id: 'access.navigation.activity',
 		viewId: ACCESS_VIEWS.activity,
 		group: 'Administration',
+		section: 'people',
 		get label() {
 			return t('access.navigation.activity');
 		},
@@ -44,6 +46,7 @@ export const accessNavigation: readonly NavigationContribution[] = [
 		id: 'access.navigation.attestations',
 		viewId: ACCESS_VIEWS.attestations,
 		group: 'Administration',
+		section: 'people',
 		get label() {
 			return t('access.navigation.attestations');
 		},

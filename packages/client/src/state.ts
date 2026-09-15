@@ -55,7 +55,9 @@ export function createShellState(initialView: ShellView = 'overview') {
 		commandOpen: false,
 		navigationOpen: false,
 		sidebarCollapsed: false,
-		collapsedNavigationGroups: cell<readonly string[]>([]),
+		/* Administration starts folded: it is the longest group and the one a
+		   member opens least; the group holding the active view always shows. */
+		collapsedNavigationGroups: cell<readonly string[]>(['Administration']),
 		query: '',
 		tenantBusy: false,
 		tenantError: '',

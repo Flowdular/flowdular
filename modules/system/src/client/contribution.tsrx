@@ -21,6 +21,7 @@ export function createSystemClientContribution(
 				id: 'system.navigation.modules',
 				viewId: 'modules',
 				group: 'Administration',
+				section: 'platform',
 				get label() {
 					return t('system.navigation.modules');
 				},
