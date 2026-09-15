@@ -32,7 +32,7 @@ export function moduleColumns(): readonly TableColumn<ModuleCatalogEntry>[] {
 		{
 			key: 'module',
 			header: t('system.table.module'),
-			width: '23%',
+			width: '22%',
 			cell: (module) => <span class="ui-cell">
 				<b>{module.name}</b>
 				<small class="ui-mono">{module.id}</small>
@@ -41,7 +41,7 @@ export function moduleColumns(): readonly TableColumn<ModuleCatalogEntry>[] {
 		{
 			key: 'version',
 			header: t('system.table.version'),
-			width: '13%',
+			width: '11%',
 			cell: (module) => <span class="ui-cell">
 				<span class="ui-mono">{module.version || t('system.value.na')}</span>
 				{module.specVersion
@@ -54,16 +54,18 @@ export function moduleColumns(): readonly TableColumn<ModuleCatalogEntry>[] {
 		{
 			key: 'platform',
 			header: t('system.table.platform'),
-			width: '20%',
-			cell: (module) => <span class="ui-cell">
+			width: '19%',
+			cell: (module) => <span class="ui-cell ui-cell--nowrap">
 				<span>{surfaces(module)}</span>
-				<small>{module.capabilities.join(', ')}</small>
+				<small title={module.capabilities.join(', ')}>{module.capabilities.join(
+					', ',
+				)}</small>
 			</span>,
 		},
 		{
 			key: 'permissions',
 			header: t('system.table.permissions'),
-			width: '10%',
+			width: '9%',
 			numeric: true,
 			cell: (module) => new Intl.NumberFormat(activeLocale()).format(
 				module.permissions.length,
@@ -72,8 +74,8 @@ export function moduleColumns(): readonly TableColumn<ModuleCatalogEntry>[] {
 		{
 			key: 'dependents',
 			header: t('system.table.dependents'),
-			width: '14%',
-			cell: (module) => <span class="ui-cell">
+			width: '13%',
+			cell: (module) => <span class="ui-cell ui-cell--nowrap">
 				<span>{new Intl.NumberFormat(activeLocale()).format(
 					module.dependents.length,
 				)}</span>
@@ -88,7 +90,7 @@ export function moduleColumns(): readonly TableColumn<ModuleCatalogEntry>[] {
 		{
 			key: 'status',
 			header: t('system.table.status'),
-			width: '14%',
+			width: '10%',
 			cell: (module) =>
 				<Tag tone={activationTone(module)} dot>{activationLabel(module)}</Tag>,
 		},

@@ -1451,6 +1451,13 @@
 	color: var(--ink-3);
 }
 
+/* A cell whose lines must stay single: the full text goes in the title. */
+.ui-cell--nowrap > * {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 .ui-mono {
 	font-family: var(--font-mono);
 	font-size: var(--text-sm);
