@@ -74,6 +74,36 @@ export function selectedNavigationGroup(
 	return present[0] ?? null;
 }
 
+/* One glyph per Administration section, for the entry the sidebar shows. */
+export const NAVIGATION_SECTION_ICONS: Readonly<
+	Record<NavigationSection, string>
+> = {
+	people: 'users',
+	identity: 'key',
+	compliance: 'shield',
+	integrations: 'plug',
+	platform: 'settings',
+};
+
+/** The section of the item that owns the view, or null for an unsectioned view. */
+export function sectionOfView(
+	items: readonly NavigationContribution[],
+	viewId: string,
+): NavigationSection | null {
+	return items.find((item) => item.viewId === viewId)?.section ?? null;
+}
+
+/** The items of one section inside one group, in their own order. */
+export function sectionItems(
+	items: readonly NavigationContribution[],
+	group: NavigationGroup,
+	section: NavigationSection,
+): readonly NavigationContribution[] {
+	return items.filter(
+		(item) => item.group === group && item.section === section,
+	);
+}
+
 export const NAVIGATION_SECTIONS: readonly NavigationSection[] = [
 	'people',
 	'identity',

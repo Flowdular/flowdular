@@ -90,8 +90,9 @@
 	--text-display: 36px;
 
 	/* dimensions */
-	--sidebar-w: 300px;
-	--rail-w: 64px;
+	--sidebar-w: 260px;
+	--rail-w: 60px;
+	--context-w: 220px;
 	--topbar-h: 52px;
 	--content-max: 1440px;
 	--content-pad: 28px;
