@@ -1,7 +1,8 @@
 # RFC 0006: Research, documents and case work as reusable building blocks
 
-- Status: proposed on 2026-09-15, waiting for the owner's decision on the
-  order and the open questions below
+- Status: proposed on 2026-09-15, revised the same day on the owner's
+  direction (no case module; data adapters and session input instead);
+  waiting for the decision on the order and the open questions below
 - Date: 2026-09-15
 - Follows: RFC 0005 (lists, distribution and debt, delivered 2026-09-13 and
   2026-09-15), RFC 0004 (platform services)
@@ -25,7 +26,8 @@ egress policy and per-instance consent, signed approval grants for
 destructive or external tool calls, a hash-chained audit trail, data classes
 with retention and legal holds, metering with budgets, row-level security on
 every tenant table. What it lacks is five building blocks, none specific to
-insurance. This document reads the tree as it stands on the date above and
+insurance, and the owner's direction is explicit: build the capability to
+build such solutions, never the solution itself. This document reads the tree as it stands on the date above and
 proposes them as generic ERP blocks, each with the verticals it serves.
 
 The verdicts follow RFC 0002 to 0005: **module** (its own tables,
@@ -66,10 +68,10 @@ repository and the registry) or **documentation**.
   own tables; `reports.core` composes rollups. Both are internal to the
   workspace.
 - Sandbox: sessions have no network and no git; the preview composes agents
-  and workflows on an ephemeral database with the local simulation provider;
-  the pinned reference module (`.ai/references/catalog`) is a CRUD module
-  with history, an agent tool and a list export. There is no reference for
-  a module whose center is an agent working a case.
+  and workflows on an ephemeral database with the local simulation provider.
+  A session cannot take a sample of the data the module will really see,
+  and a specialist has no place to record the fixtures its tests need
+  beyond hand-written literals.
 
 ## Gaps
 
@@ -161,46 +163,88 @@ reopens H10 and adds DOCX.
 - Serves: the risk report and the offer, a monthly fraud summary, a price
   analysis memo, a supplier qualification letter.
 
-### J4. A reference module for case work
+### J4. Data adapters: import from and export to other systems
 
-Verdict: distribution and documentation.
+Verdict: module (`adapters.core`, optional) on top of `import.core`,
+`exports.core` and `connectors.core`, plus one skill.
 
-- An official module `casework.core`: a **case** with a subject (a record of
-  another module or free text), a status, evidence attached through J1,
-  documents through J2, **findings** as structured output from an agent
-  (a declared JSON schema per case type), **calculations** as a versioned
-  table of inputs and results computed by a module action, never by the
-  model, and a **report** rendered through J3. Case types are data: a name,
-  the findings schema, the calculation the type uses, the template.
-- The same module is pinned as a second reference under `.ai/references`,
-  beside the catalog, so a sandbox session that builds "underwriting",
-  "valuation" or "investigation" copies a working shape: agent reads,
-  evidence cited, numbers computed, document rendered, approval before the
-  result leaves.
-- The `business-agent-design` and `agent-tool-design` skills gain the
-  recipe: which tool for which step, where consent and grants sit, how to
-  keep the model out of arithmetic.
+The owner's direction is capability, not solutions: the platform must make
+it cheap to pull data out of the systems a business already runs (an
+accounting package, a CRM, a bank statement feed, a listing portal) and to
+push results back, without a module per source.
 
-### J5. Fixtures for the sandbox preview
+- **Source adapters.** A module or a session registers an adapter through
+  `adapters.sources.v1`: `{ key, label, connector, operation, schedule?,
+map(row) -> { port, values } }`, where `connector` is a `connectors.core`
+  instance the owner consented to and `port` is an `import.ports.v1` port
+  another module already owns. A run pulls a bounded page through the
+  connector, maps rows, writes them through the port under the same modes
+  (`create-only`, `update-existing`, `skip-existing`) with the port's
+  natural key, and records per-row outcomes, so a re-run is idempotent.
+  Schedules use `automations.core`; a run is a job on the job runner.
+- **Sink adapters.** `adapters.sinks.v1`: a registered list export
+  (`exports.lists.v1`) or a query a module declares, pushed through a
+  connector operation in bounded batches with a cursor persisted per run, so
+  an interrupted push resumes where it stopped.
+- **Mappings as data.** Field mappings and transforms (rename, constant,
+  format, lookup against a module's records) are stored per adapter and
+  editable in Administration, with a dry run that shows the first rows and
+  their outcomes before anything is written. Secrets stay in the connector.
+- **Skill.** `integration-adapter` in `.ai/skills`: how to add an adapter for
+  a named service from its API documentation, which connector operation and
+  port to declare, how to write the mapping and the recorded fixture for the
+  tests, what the consent and audit rows must show. This is what an agent in
+  the sandbox uses when a brief says "pull customers from X".
+- Serves: every vertical; the same block feeds a fraud screen with bank
+  lines, a valuation with listing feeds, an underwriting case with a broker's
+  export.
+
+### J5. Real input and fixtures in the sandbox
 
 Verdict: sandbox platform.
 
-- The recorded adapters of J1 and a recorded connector: a session workspace
-  carries fixture files (queries and pages, connector operations and
-  answers), the preview composes `research.core` and `connectors.core` on
-  them, and a gate refuses a session that declares a live adapter. The
-  simulation provider already answers agent turns offline; this makes the
-  whole case flow demonstrable in the preview without a network.
-- The generator copies a fixture set with `casework.core` when a spec
-  declares research, so a new session starts with a working example.
+- **Input the person supplies.** A session accepts pasted or uploaded sample
+  data (CSV, JSON, a page saved from another system) as a session attachment
+  the specialists read and build against: the spec names the entities from
+  it, the module's tests and fixtures derive from it, the preview seeds its
+  ephemeral database with it. The data never leaves the session workspace
+  and is deleted with it.
+- **Fixtures the agent writes.** While working, a specialist records the
+  fixtures its tests and the preview need: search results and pages for J1,
+  connector answers for J4, documents for J2, so the module ships with a
+  recorded adapter set and the preview shows the whole flow without a
+  network. A gate refuses a session whose module declares a live adapter.
+- The generator copies a fixture set when a spec declares research or an
+  adapter, so a new session starts from a working example rather than an
+  empty stub.
+
+## Durability of the work these blocks create
+
+Every long step above (a research run, an extraction, a render, an adapter
+pull) is a job, and a job in this platform is a row in the owning module's
+table, not a message in a queue. The job runner (`packages/server/src/jobs`)
+claims a row with a lease, renews it on a heartbeat while the work runs,
+aborts the work with the stable code `CLAIM_LOST` when the fence says
+another process took the claim, backs off after a failing pass and isolates
+one failing item from the rest of the pass. A process that dies mid-render
+leaves a claimed row whose lease lapses; the next pass on any instance
+reclaims it after `staleAfterMs` and performs it again. The output side is
+therefore written idempotently: a render stores the document under a key
+derived from the job id and marks the row done in the same transaction, a
+pull writes rows through a port keyed by the natural key, a research run
+appends evidence under its run id. An external queue adds nothing here: the
+database already gives durability, ordering per tenant and exactly the
+recovery the audit trail can explain. What a queue would give, fan-out
+across many workers, is the job runner's `batchLimit` per instance and more
+instances of the same image.
 
 ## What this is not
 
 - Not a scraper for sites that forbid it: `robots.txt`, the allowlist and
   the denylist are enforced, and a page is fetched once per TTL.
-- Not a rules engine: a calculation is a module action with versioned
-  tables. A shared decision-table block is a possible J6 once two modules
-  need the same thing.
+- Not a solution for one vertical: no case module ships with this RFC. A
+  calculation is a module action with versioned tables; a shared
+  decision-table block is a possible J6 once two modules need the same thing.
 - Not a vector search: evidence is stored with hashes and excerpts;
   embeddings and semantic retrieval are a later RFC when a case type needs
   them.
@@ -210,11 +254,12 @@ Verdict: sandbox platform.
 1. **J1 with the model-native adapter and the evidence store.** The
    smallest step that makes research citeable; the harness seam and the
    recorded adapter land with it.
-2. **J5 alongside J1.** Without fixtures the sandbox cannot show the flow.
-3. **J2.** Reading what members uploaded is needed by every case type.
-4. **J3.** The document at the end, with the renderer decision made.
-5. **J4.** Once J1 to J3 exist; the official module and the second reference
-   are one delivery.
+2. **J5 alongside J1.** Pasted input and recorded fixtures make the sandbox
+   able to show the flow.
+3. **J4, data adapters and the skill.** Sources first, sinks second; the
+   first adapter is the recorded one the tests use.
+4. **J2.** Reading what members uploaded is needed by every case type.
+5. **J3.** The document at the end, with the renderer decision made.
 
 ## Open questions for the owner
 
@@ -227,8 +272,9 @@ Verdict: sandbox platform.
 3. **Evidence bodies.** Store the full page text as a document (complete
    audit, more storage, more personal data under retention) or only the
    hash and a 4 KB excerpt (lighter, weaker replay)?
-4. **J4 shape.** An official module in the registry, a reference only, or
-   both as proposed?
+4. **Adapter authoring.** May a sandbox session register a live adapter for
+   a named service, or only a recorded one, with the live connector instance
+   created by an owner after delivery (the proposal)?
 5. **Fraud scoring.** Finance operations will want scores from rules over
    many records. Is a decision-table block (J6) wanted in this wave, or does
    the first fraud module carry its own rules?
