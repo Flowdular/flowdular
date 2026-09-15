@@ -1,4 +1,5 @@
 import { applicationPath } from './routing.ts';
+import type { NavigationGroup } from './contributions.ts';
 import { cell, createStore } from 'segment-state';
 
 export type ShellView = string;
@@ -57,7 +58,11 @@ export function createShellState(initialView: ShellView = 'overview') {
 		sidebarCollapsed: false,
 		/* Administration starts folded: it is the longest group and the one a
 		   member opens least; the group holding the active view always shows. */
-		collapsedNavigationGroups: cell<readonly string[]>(['Administration']),
+		collapsedNavigationGroups: cell<readonly string[]>([]),
+		/* The group whose items the navigation panel shows. Null follows the
+		   group of the active view; a rail click pins another one until the
+		   next navigation. */
+		navigationGroupSelected: cell<NavigationGroup | null>(null),
 		query: '',
 		tenantBusy: false,
 		tenantError: '',

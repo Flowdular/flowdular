@@ -9,79 +9,60 @@ import {
 	navigationGroupLabel,
 	navigationSectionLabel,
 	navigationSections,
-	NAVIGATION_GROUPS,
 	viewHref,
 } from './navigation.ts';
 import type { NavigateToView } from './types.ts';
 
 export interface PrimaryNavigationProps {
 	items: readonly NavigationContribution[];
+	group: NavigationGroup | null;
 	activeView: ShellView;
 	workspaceSlug: string | null;
-	collapsedGroups: readonly string[];
 	onNavigate: NavigateToView;
-	onToggleGroup: (group: NavigationGroup) => void;
 }
 
+/* The panel beside the rail: the items of one group, an Administration group
+   as labelled sections, every other group as one list. */
 export function PrimaryNavigation(props: PrimaryNavigationProps) @{
+	const items = props.items.filter((item) => item.group === props.group);
 	<nav class="primary-nav" aria-label={t('shell.nav.label')}>
-		@for (const group of NAVIGATION_GROUPS; key group) {
-			@if (props.items.some((item) => item.group === group)) {
-				<section
-					class={[
-						'nav-group',
-						props.collapsedGroups.includes(group) && 'nav-group--collapsed',
-					]}
-				>
-					<button
-						class="nav-group__toggle"
-						type="button"
-						aria-expanded={!props.collapsedGroups.includes(group)}
-						onClick={() => props.onToggleGroup(group)}
-					>
-						<span>{navigationGroupLabel(t, group)}</span>
-						<span class="nav-group__chevron">
-							<Icon name="chevron-down" size={12} strokeWidth={2} />
-						</span>
-					</button>
-					<div
-						class="nav-group__content"
-						aria-hidden={props.collapsedGroups.includes(group)}
-					>
-						<div class="nav-group__items">
-							@for (const block of navigationSections(
-								props.items.filter((item) => item.group === group),
-							); key block.section ?? 'rest') {
-								<>
-									@if (block.section !== null) {
-										<span class="nav-section__label">{navigationSectionLabel(
-											t,
-											block.section,
-										)}</span>
-									}
-									@for (const item of block.items; key item.id) {
-										<a
-											class={[
-												'nav-item',
-												props.activeView === item.viewId && 'nav-item--active',
-											]}
-											href={viewHref(item.viewId, props.workspaceSlug)}
-											title={item.description}
-											onClick={(event) => {
-												event.preventDefault();
-												props.onNavigate(item.viewId);
-											}}
-										>
-											<Icon name={item.glyph} size={18} />
-											<span class="nav-item__label">{item.label}</span>
-										</a>
-									}
-								</>
+		@if (props.group !== null) {
+			<>
+				<div class="nav-panel__title">{navigationGroupLabel(
+					t,
+					props.group,
+				)}</div>
+				<div class="nav-group__items">
+					@for (const block of navigationSections(items); key block.section ??
+						'rest') {
+						<>
+							@if (block.section !== null) {
+								<span class="nav-section__label">{navigationSectionLabel(
+									t,
+									block.section,
+								)}</span>
 							}
-						</div>
-					</div>
-				</section>
-			}
+							@for (const item of block.items; key item.id) {
+								<a
+									class={[
+										'nav-item',
+										props.activeView === item.viewId && 'nav-item--active',
+									]}
+									href={viewHref(item.viewId, props.workspaceSlug)}
+									title={item.description}
+									onClick={(event) => {
+										event.preventDefault();
+										props.onNavigate(item.viewId);
+									}}
+								>
+									<Icon name={item.glyph} size={18} />
+									<span class="nav-item__label">{item.label}</span>
+								</a>
+							}
+						</>
+					}
+				</div>
+			</>
 		}
 	</nav>
 }
