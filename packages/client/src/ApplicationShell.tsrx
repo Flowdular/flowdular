@@ -43,6 +43,7 @@ import './shell/shell.css';
 export type { ApplicationShellProps } from './shell/types.ts';
 
 const SIDEBAR_STORAGE_KEY = 'flowdular.sidebar';
+const CONTEXT_RAIL_STORAGE_KEY = 'flowdular.context-rail';
 
 export function ApplicationShell(props: ApplicationShellProps) @{
 	/* Register synchronously on every render. `useMemo` state may survive a Vite
@@ -92,6 +93,9 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 	);
 	const [sidebarCollapsed, setSidebarCollapsed] = useValue(
 		shell.state.sidebarCollapsed,
+	);
+	const [contextRailCollapsed, setContextRailCollapsed] = useValue(
+		shell.state.contextRailCollapsed,
 	);
 	const [collapsedNavigationGroups, setCollapsedNavigationGroups] = useValue(
 		shell.state.collapsedNavigationGroups,
@@ -224,6 +228,21 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 		});
 	};
 
+	const toggleContextRail = () => {
+		setContextRailCollapsed((current) => {
+			const next = !current;
+			try {
+				localStorage.setItem(
+					CONTEXT_RAIL_STORAGE_KEY,
+					next ? 'collapsed' : 'open',
+				);
+			} catch {
+				// Storage can be unavailable; the preference is a convenience only.
+			}
+			return next;
+		});
+	};
+
 	useEffect(() => {
 		const controller = new AbortController();
 		const initializers = (props.contributions ?? []).flatMap(
@@ -280,10 +299,13 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 			if (localStorage.getItem(SIDEBAR_STORAGE_KEY) === 'rail') {
 				setSidebarCollapsed(true);
 			}
+			if (localStorage.getItem(CONTEXT_RAIL_STORAGE_KEY) === 'collapsed') {
+				setContextRailCollapsed(true);
+			}
 		} catch {
 			// Ignore unavailable storage.
 		}
-	}, [setSidebarCollapsed]);
+	}, [setSidebarCollapsed, setContextRailCollapsed]);
 
 	/* Keep the address bar canonical (/{workspaceSlug}/{view}) and honor
    bookmarks that point at another workspace the account can access. */
@@ -407,6 +429,8 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 				'app-shell',
 				sidebarCollapsed && 'app-shell--rail',
 				contextItems.length > 0 && 'app-shell--context',
+				contextItems.length > 0 && contextRailCollapsed &&
+					'app-shell--context-collapsed',
 			]}
 		>
 			<Seo title={activeLabel} description={activeDescription} />
@@ -434,6 +458,8 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 				<ContextRail
 					section={activeSection}
 					items={contextItems}
+					collapsed={contextRailCollapsed}
+					onToggle={toggleContextRail}
 					activeView={effectiveView}
 					workspaceSlug={activeWorkspaceSlug}
 					onNavigate={navigate}

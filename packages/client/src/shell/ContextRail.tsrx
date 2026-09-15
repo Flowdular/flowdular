@@ -13,19 +13,43 @@ export interface ContextRailProps {
 	items: readonly NavigationContribution[];
 	activeView: ShellView;
 	workspaceSlug: string | null;
+	collapsed: boolean;
 	onNavigate: NavigateToView;
+	onToggle: () => void;
 }
 
 /* The second column beside the sidebar: the screens of the section the open
    view belongs to. It exists only while a sectioned view is open, and the
    workspace makes room for it. */
 export function ContextRail(props: ContextRailProps) @{
-	<nav class="context-rail" aria-label={t('shell.nav.context')}>
-		<div class="context-rail__title">{navigationSectionLabel(
-			t,
-			props.section,
-		)}</div>
-		<div class="context-rail__items">
+	<nav
+		class={['context-rail', props.collapsed && 'context-rail--collapsed']}
+		aria-label={t('shell.nav.context')}
+	>
+		<div class="context-rail__head">
+			<div class="context-rail__title">{navigationSectionLabel(
+				t,
+				props.section,
+			)}</div>
+			<button
+				class="context-rail__toggle ui-btn ui-btn--ghost ui-btn--icon"
+				type="button"
+				aria-expanded={!props.collapsed}
+				aria-label={t(
+					props.collapsed ? 'shell.nav.context.show' : 'shell.nav.context.hide',
+				)}
+				title={t(
+					props.collapsed ? 'shell.nav.context.show' : 'shell.nav.context.hide',
+				)}
+				onClick={props.onToggle}
+			>
+				<Icon
+					name={props.collapsed ? 'chevron-right' : 'chevron-left'}
+					size={16}
+				/>
+			</button>
+		</div>
+		<div class="context-rail__items" aria-hidden={props.collapsed}>
 			@for (const item of props.items; key item.id) {
 				<a
 					class={[

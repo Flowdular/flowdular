@@ -45,6 +45,8 @@
 	"nav.section.integrations": "Integrations",
 	"nav.section.people": "People and access",
 	"nav.section.platform": "Platform",
+	"nav.context.hide": "Hide section navigation",
+	"nav.context.show": "Show section navigation",
 	"nav.context": "Section navigation",
 	"nav.label": "Platform navigation",
 	"nav.toggle": "Toggle navigation",

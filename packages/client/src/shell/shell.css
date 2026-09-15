@@ -268,8 +268,20 @@
 	transition: left var(--t-base) var(--ease);
 }
 
+.context-rail__head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 6px;
+	min-height: 32px;
+	padding-bottom: 6px;
+}
+
 .context-rail__title {
-	padding: 4px 10px 10px;
+	padding: 4px 10px 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 	font-size: 11px;
 	font-weight: 600;
 	letter-spacing: 0.08em;
@@ -292,6 +304,30 @@
 
 .app-shell--rail.app-shell--context .workspace {
 	margin-left: calc(var(--rail-w) + var(--context-w));
+}
+
+/* Folded: a strip with the handle, the workspace takes the rest. */
+.context-rail--collapsed {
+	width: var(--context-strip-w);
+	padding-inline: 4px;
+	overflow: hidden;
+}
+
+.context-rail--collapsed .context-rail__head {
+	justify-content: center;
+}
+
+.context-rail--collapsed .context-rail__title,
+.context-rail--collapsed .context-rail__items {
+	display: none;
+}
+
+.app-shell--context-collapsed .workspace {
+	margin-left: calc(var(--sidebar-w) + var(--context-strip-w));
+}
+
+.app-shell--rail.app-shell--context-collapsed .workspace {
+	margin-left: calc(var(--rail-w) + var(--context-strip-w));
 }
 
 /* The nested list under a section entry serves the phone drawer only; on a
@@ -738,7 +774,8 @@
 		display: none;
 	}
 
-	.app-shell--context .workspace {
+	.app-shell--context .workspace,
+	.app-shell--context-collapsed .workspace {
 		margin-left: 0;
 	}
 
