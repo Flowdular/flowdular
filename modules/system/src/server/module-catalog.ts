@@ -16,6 +16,11 @@ export interface ModuleCatalogEntry {
 	readonly platform: { readonly server: boolean; readonly client: boolean };
 	readonly enabled: boolean;
 	readonly directory: string;
+	/** Declared module dependencies, by id. */
+	readonly dependencies: readonly string[];
+	readonly provides: readonly string[];
+	/** Capability ids the module requires, optional requirements excluded. */
+	readonly requires: readonly string[];
 }
 
 interface Manifest {
@@ -23,6 +28,9 @@ interface Manifest {
 	version?: unknown;
 	capabilities?: unknown;
 	platform?: { server?: unknown; client?: unknown };
+	dependencies?: { id?: unknown }[];
+	provides?: unknown;
+	requires?: { id?: unknown; optional?: unknown }[];
 }
 
 interface Spec {
@@ -111,6 +119,17 @@ export function readModuleCatalog(
 			},
 			enabled: enabled.has(manifest.id),
 			directory,
+			dependencies: strings(
+				(Array.isArray(manifest.dependencies) ? manifest.dependencies : []).map(
+					(dependency) => dependency?.id,
+				),
+			),
+			provides: strings(manifest.provides),
+			requires: strings(
+				(Array.isArray(manifest.requires) ? manifest.requires : [])
+					.filter((requirement) => requirement?.optional !== true)
+					.map((requirement) => requirement?.id),
+			),
 		});
 	}
 	return entries;

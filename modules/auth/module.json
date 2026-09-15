@@ -12,7 +12,7 @@
 	"dependencies": [
 		{
 			"id": "system.core",
-			"range": "^0.7.0"
+			"range": "^0.8.0"
 		}
 	],
 	"tenancy": "required",

@@ -11,7 +11,7 @@ capabilities:
   - translations
 dependencies:
   - id: system.core
-    range: ^0.7.0
+    range: ^0.8.0
   - id: auth.core
     range: ^0.13.0
   - id: search.core

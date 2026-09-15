@@ -5,7 +5,7 @@ import type {
 	PlatformServerContext,
 } from '@flowdular/module-auth/server';
 import type { WebMount } from '@flowdular/server';
-import { createModuleMetrics } from '@flowdular/server';
+import { bindModuleCompositions, createModuleMetrics } from '@flowdular/server';
 import { createServerComposition as system_core } from '@flowdular/module-system/platform';
 import { createServerComposition as access_core } from '@flowdular/module-access/platform';
 import { createServerComposition as reports_core } from '@flowdular/module-reports/platform';
@@ -29,14 +29,14 @@ import { createServerComposition as users_core } from '@flowdular/module-users/p
 export function composeModuleServer(
 	context: PlatformServerContext,
 ): readonly PlatformServerComposition[] {
-	return [
+	return bindModuleCompositions([
 		{
 			...system_core({
 				...context,
 				agentDefinitions: context.agentDefinitions.forModule('system.core'),
 				dataClasses: context.dataClasses.forModule('system.core'),
 				capabilities: context.capabilities.forModule('system.core', {
-					provides: [],
+					provides: ['system.modules.v1'],
 					requires: [],
 				}),
 				metrics: createModuleMetrics('system.core'),
@@ -302,7 +302,7 @@ export function composeModuleServer(
 			}),
 			moduleId: 'users.core',
 		},
-	];
+	]);
 }
 
 export const moduleWebMounts: readonly WebMount[] = [] as const;

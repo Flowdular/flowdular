@@ -147,6 +147,19 @@ A running `pnpm dev` picks the change up live: the octane plugin reloads server
 routes when the generated composition changes and the client hot-reloads, so no
 rebuild is needed. `pnpm dev` and `pnpm build` run the sync automatically.
 
+### Per-workspace activation
+
+Enabling composes a module into the application; whether a given workspace
+uses it is an owner's decision made in Administration, Modules. Every composed
+module is active until an owner deactivates it there, and the change applies to
+that workspace alone: its endpoints answer 403 `MODULE_INACTIVE`, and the shell
+hides the module's navigation, views, widgets and command search. `system.core`,
+`auth.core`, `users.core` and `profile.core` cannot be deactivated, and neither
+can a module another active module depends on; the refusal names the
+dependents. Each change is audited. The state lives in `system.core` and is
+published to other modules as the `system.modules.v1` capability; see
+`.ai/platform-capabilities.md`.
+
 ## Versions, ranges and capabilities
 
 A module carries one version in three places: `module.json` `version`,

@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { SYSTEM_PERMISSIONS } from '../src/acl/permissions.ts';
 import { systemModule } from '../src/index.ts';
 import { createSystemRoutes } from '../src/server/endpoints.ts';
+import { memoryActivationRuntime } from './support/activation.ts';
 
 function systemRoutes(workspaceRoot: string) {
 	const auth = createAuthRuntime({
@@ -22,6 +23,9 @@ function systemRoutes(workspaceRoot: string) {
 		workspaceRoot,
 		auth,
 		settings: auth.moduleSettings,
+		activation: memoryActivationRuntime([
+			{ id: 'system.core', version: '0.1.1', dependencies: [] },
+		]),
 	});
 }
 
@@ -106,11 +110,15 @@ describe('system.core', () => {
 		expect(system).toMatchObject({
 			name: 'System Core',
 			enabled: true,
+			active: true,
+			optional: false,
+			dependents: [],
 			platform: { server: true },
 		});
 		expect(system.permissions).toHaveLength(1);
 		expect(body.modules[0]).toMatchObject({
 			enabled: false,
+			active: false,
 			name: 'draft.core',
 		});
 		expect(body.commands.enable).toContain('module enable');
