@@ -20,6 +20,7 @@ jobs:
       - name: Type label from the title or the branch
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TITLE: ${{ github.event.pull_request.title }}
           BRANCH: ${{ github.event.pull_request.head.ref }}
           NUMBER: ${{ github.event.pull_request.number }}
