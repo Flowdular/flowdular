@@ -1571,6 +1571,15 @@ export declare const projectSchema: {
                                     };
                                     uniqueItems: boolean;
                                 };
+                                labels: {
+                                    type: string;
+                                    maxItems: number;
+                                    items: {
+                                        type: string;
+                                        pattern: string;
+                                    };
+                                    uniqueItems: boolean;
+                                };
                             };
                         };
                         maxChangedFiles: {

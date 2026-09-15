@@ -68,6 +68,8 @@ export interface GitDeliveryPlan {
 	readonly owners: readonly string[];
 	readonly requireReviewer: boolean;
 	readonly reviewers: readonly string[];
+	/** Added after the pull request is created; a missing label is reported, never fatal. */
+	readonly labels: readonly string[];
 	readonly guardrails: DeliveryGuardrails;
 	readonly provider: DeliveryProvider;
 	readonly providerNote: string;

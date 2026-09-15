@@ -1,0 +1,20 @@
+core:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'packages/**'
+          - 'platform/**'
+module:
+  - changed-files:
+      - any-glob-to-any-file: 'modules/**'
+sandbox:
+  - changed-files:
+      - any-glob-to-any-file: 'packages/sandbox/**'
+ci:
+  - changed-files:
+      - any-glob-to-any-file: '.github/**'
+docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'docs/**'
+          - '.ai/**'
+          - '**/*.md'

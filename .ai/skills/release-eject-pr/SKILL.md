@@ -38,7 +38,7 @@ The pull request is the unit of a delivery: one session, one branch, one PR, eve
 - In the worktree: the copy and the removals, `pnpm install --offline` (fallback `--prefer-offline`), `pnpm flowdular module enable <id> --apply` for each new module with the worktree as `--dir`, the platform typecheck.
 - Guardrails before the commit: `git status --porcelain` in the worktree may list only `modules/<dir>/**` of the session's modules and `pnpm-lock.yaml`. A delivery with a new module may also change `flowdular.json`, `platform/package.json` and `platform/src/generated/**`. The count stays within `sandbox.delivery.maxChangedFiles` or, unset, the `.ai/policies/task-budgets.yaml` figure for the session kind (`new-module` 30, `edit-module` 12, default 18); new packages within `maxNewDependencies` (0). Owners come from `.ai/policies/path-ownership.yaml`; with `crossOwnerChanges.requireReviewer` a cross-owner change asks for a reviewer from each owner in the body. A violation lists the offending paths and stops before anything is committed; the branch is deleted.
 - Commit `sandbox: add|update <module id>` (author from git config) with the session id and the gate summary, `git push -u --force-with-lease <remote> <branch>`, `gh pr create --base <baseBranch> --head <branch> --title "Add|Update <module id>" --body-file <tmp>` (`--reviewer` from `git.reviewers`). A second delivery of the same session updates the branch and keeps the open PR.
-- PR body, plain: two or three sentences from the brief and the last review handoff, `Session <id>.`, the gate table (gate, module, result), the file list grouped as added, modified, removed, `Post-merge: pnpm flowdular auth sync-scopes --module <id> --apply` per module, the reviewer note. No attribution footers, no dashes.
+- PR body in the repository template (section 4b): Problem from the brief, Solution from the change and the last review handoff with a spec diff per module, Verification as the gate table, Follow-ups with `Post-merge: pnpm flowdular auth sync-scopes --module <id> --apply` per module and the cross-owner reviewer note, Risks from the guardrails, then the file list grouped as added, modified, removed, and `Session <id>.` No attribution footers, no dashes. Labels from `git.labels` (default `sandbox-delivery`) are added after creation and never fail a delivery.
 - `sync-scopes` does not run in the worktree: it is a runtime action against the deployment database, so it stays the post-merge step. Deploy, run it with `FD_AUTH_DATABASE` pointing at that database, verify the navigation entry appears for an owner.
 - Configuration in `flowdular.json`, all optional and validated by `packages/contracts/schemas/project.schema.json`: `sandbox.delivery { default: 'workspace' | 'git-pr', targets: ['workspace', 'git-pr'], git: { remote: 'origin', baseBranch: 'main', branchPrefix: 'sandbox', provider: 'github' | 'none', mode: 'auto' | 'direct' | 'fork', forkOwner: null, reviewers: [] }, maxChangedFiles }`. Read at request time. `auto` never creates a fork: it uses direct delivery only after GitHub confirms push access and otherwise asks the operator to choose `direct` or `fork`. Only an explicit `fork` choice authorizes fork creation.
 - The screen: "Into this workspace" / "As a pull request", offered only when both are usable here; an unusable target says why. The git plan shows branch, base, changed files against the budget, new packages, owners touched and the guardrail verdict; done shows the PR or compare link. `.flowdular/sandbox/sessions/<id>/delivery.json` keeps the branch and the URL.
@@ -57,40 +57,37 @@ pnpm audit --prod --audit-level high           # what CI runs (.github/workflows
 
 Branch names: `feat/<module>-<topic>`, `fix/<module>-<topic>`, `core/<package>-<topic>`. Commit one logical change per commit; generated files travel with the command that produced them.
 
-## 4. PR conventions (repository rules)
+## 4. Branches, commits and pull requests (repository rules)
 
-- Short body: what changed and why in a few sentences, gotchas, one line on verification (`pnpm verify passes; pnpm build passes`). No file tables, no design essays, no restating the diff.
-- No AI attribution: no AI `Co-Authored-By` line and no `Generated with` footer.
-- No em or en dashes anywhere in commits, PR titles or bodies.
-- Generated files and `modules.enabled` change only through the CLI, and the PR says which command produced them.
-- Changes to `packages/**` name the consumers that were migrated (`core-extend`).
+- Branch off `main`: `feat/<scope>-<topic>`, `fix/<scope>-<topic>`, `core/<package>-<topic>`, `docs/<topic>`, `chore/<topic>`, `release/<version>`; the sandbox uses `<branchPrefix>/<module-dir>-<session>`. Never work on `main` or in the operator's checkout; a worktree per branch.
+- One logical change per commit, imperative subject under 72 characters, a body that says why. Generated files travel with the commit of the command that produced them, and the PR names that command.
+- The body follows the template below in that order. Each section is a few sentences or a short list; an empty section says "None." rather than disappearing. No file tables, no design essays, no restating the diff.
+- Labels: exactly one type label (`feat`, `fix`, `docs`, `chore`, `release`) and every area the diff touches (`core` for `packages/**` and `platform/**`, `module` for `modules/**`, `sandbox` for `packages/sandbox/**`, `ci` for `.github/**`, `docs` for `docs/**` and `.ai/**`). `breaking` when a public contract changes, `needs-decision` when a question in the body blocks the merge, `sandbox-delivery` on an eject. `.github/labeler.yml` adds the area labels from paths; the author adds the type.
+- No AI attribution: no AI `Co-Authored-By` line and no `Generated with` footer. No em or en dashes anywhere in commits, PR titles or bodies.
+- Changes to `packages/**` name the consumers that were migrated (`core-extend`). Merge only when every check is green, including the ones that register late.
 
 ## 4b. Pull request body template
 
 ```text
-Adds inventory.core: tenant-scoped stock locations with read and manage scopes,
-a list and create endpoint, a Locations screen with a drawer form, and a
-dashboard KPI. Covers INVENTORY-LIST, INVENTORY-CREATE, INVENTORY-DENY,
-INVENTORY-ISOLATION.
+## Problem
+What is wrong or missing, for whom, and how it shows. One paragraph.
 
-Generated by the CLI in this PR: flowdular.json and platform/package.json
-(pnpm flowdular module enable inventory.core --apply), platform/src/generated/*
-(module sync), pnpm-lock.yaml (pnpm install).
+## Solution
+What changed and why this shape. Name the spec scenarios covered and the
+commands that produced generated files.
 
-Gates: spec-schema, module-schema, dependencies, typecheck, tests (7), format
-all passed in the sandbox eject; pnpm verify and pnpm build pass locally.
+## Verification
+What ran and the result: `pnpm verify` (tests), `pnpm build`, a PostgreSQL
+run, a browser look. Name what was not run.
 
-Post-merge: pnpm flowdular auth sync-scopes --module inventory.core --apply against
-the deployment database.
+## Follow-ups
+Post-merge steps (sync-scopes, publish, index pin) and work deliberately left
+out, each with its trigger. "None." when there is nothing.
+
+## Risks
+Migrations, removed files, changed contracts, cross-owner paths, anything a
+reviewer should weigh. "None found." when there is nothing.
 ```
-
-## 4c. Pre-flight checklist
-
-- `git status` shows only `modules/<dir>/**` plus the CLI-generated files named above.
-- `module.json` `version`, `spec/module.yaml` `specVersion` and `package.json` `version` are equal.
-- `spec/module.yaml` is `approved`; the PR does not change its status.
-- No `console.log` left in module code; no secrets or tokens in tests.
-- The PR title is under 70 characters and names the module (`inventory.core: stock locations`).
 
 ## 5. Container and tags
 
