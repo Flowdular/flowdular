@@ -13,6 +13,7 @@ import {
 	CatalogServiceError,
 } from '../src/services/catalog-service.ts';
 import {
+	allItems,
 	closeCatalogTestDatabases,
 	createCatalogTestDatabase,
 	type CatalogTestDatabase,
@@ -161,7 +162,7 @@ describe('catalog.core', () => {
 			},
 			TEST_ACTOR,
 		);
-		expect(await service.list('tenant-b')).toEqual([]);
+		expect(await allItems(service, 'tenant-b')).toEqual([]);
 	});
 
 	it('keeps lifecycle revisions append-only and tenant-scoped', async () => {

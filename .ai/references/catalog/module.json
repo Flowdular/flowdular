@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "catalog.core",
 	"package": "@flowdular/module-catalog",
-	"version": "0.7.2",
+	"version": "0.8.0",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations"],
 	"platform": {
@@ -18,6 +18,16 @@
 		{
 			"id": "auth.core",
 			"range": "^0.13.0"
+		},
+		{
+			"id": "exports.core",
+			"range": "^0.2.0"
+		}
+	],
+	"requires": [
+		{
+			"id": "exports.lists.v1",
+			"optional": true
 		}
 	],
 	"tenancy": "required",

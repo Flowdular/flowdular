@@ -54,7 +54,7 @@ describe the work  ->  approve the spec  ->  build behind gates  ->  preview  ->
 ```bash
 pnpm flowdular module new sales.orders --spec modules/sales-orders/spec/module.yaml --apply
 pnpm flowdular module enable sales.orders --apply
-pnpm flowdular module install expenses.core@0.7.1 --apply
+pnpm flowdular module install expenses.core@0.8.0 --apply
 ```
 
 [Modules](docs/modules.md) explains the lifecycle; [Sandbox](docs/sandbox.md) the chat-based path; [`.ai/references/catalog`](.ai/references/catalog) is the pinned reference module.

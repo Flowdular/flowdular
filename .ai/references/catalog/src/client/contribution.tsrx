@@ -13,6 +13,10 @@ export interface CatalogClientContributionOptions {
 	readonly scopes: readonly string[];
 }
 
+/* exports.core's own permission; the screen shows the export button only to a
+   principal that may start a job there. */
+const EXPORTS_MANAGE = 'exports.lists.manage';
+
 export function createCatalogClientContribution(
 	options: CatalogClientContributionOptions,
 ): ModuleClientContribution {
@@ -45,6 +49,7 @@ export function createCatalogClientContribution(
 					<CatalogView
 						csrfToken={options.csrfToken}
 						canManage={options.scopes.includes(CATALOG_PERMISSIONS.manage)}
+						canExport={options.scopes.includes(EXPORTS_MANAGE)}
 					/>,
 			},
 		],
