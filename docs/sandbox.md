@@ -81,7 +81,9 @@ request time (`delivery/configuration.ts`): `targets`, `default`,
 `maxChangedFiles` and `git` with `remote`
 (`origin`), `repository` (`owner/name`, derived from the remote when null),
 `baseBranch` (`main`), `branchPrefix` (`sandbox`), `provider` (`github` or
-`none`), `mode` (`auto`, `direct` or `fork`), `forkOwner` and `reviewers`.
+`none`), `mode` (`auto`, `direct` or `fork`), `forkOwner`, `reviewers` and
+`labels` (added to the pull request after creation, default
+`sandbox-delivery`; a label the repository lacks never fails a delivery).
 
 Operator settings live in the sandbox configuration
 (`.flowdular/sandbox/config.json`, `GitHubDeliveryConfiguration` in

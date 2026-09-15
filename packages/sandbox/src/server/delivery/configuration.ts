@@ -14,6 +14,8 @@ export interface GitDeliveryConfiguration {
 	readonly mode: GitPushMode;
 	readonly forkOwner: string | null;
 	readonly reviewers: readonly string[];
+	/** Added to the pull request after creation; a missing label never fails a delivery. */
+	readonly labels: readonly string[];
 }
 
 /* The sandbox.delivery block of flowdular.json. Every field is optional there;
@@ -38,6 +40,7 @@ export const DEFAULT_DELIVERY_CONFIGURATION: DeliveryConfiguration = {
 		mode: 'auto',
 		forkOwner: null,
 		reviewers: [],
+		labels: ['sandbox-delivery'],
 	},
 	maxChangedFiles: null,
 };
@@ -52,6 +55,8 @@ const EJECT_TARGETS: readonly EjectTarget[] = [
 const GIT_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 const MAX_GIT_NAME_LENGTH = 120;
 const MAX_GITHUB_REVIEWERS = 20;
+const MAX_LABELS = 10;
+const GITHUB_LABEL = /^[A-Za-z0-9][A-Za-z0-9 ._:-]{0,49}$/;
 const GITHUB_REPOSITORY =
 	/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 const GITHUB_ACCOUNT = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
@@ -141,6 +146,16 @@ export function resolveDeliveryConfiguration(
 	) {
 		throw invalid('git.reviewers must list account names.');
 	}
+	const labels = git.labels ?? defaults.git.labels;
+	if (
+		!Array.isArray(labels) ||
+		labels.length > MAX_LABELS ||
+		!labels.every(
+			(label) => typeof label === 'string' && GITHUB_LABEL.test(label),
+		)
+	) {
+		throw invalid('git.labels must list GitHub label names.');
+	}
 	const maxChangedFiles = block.maxChangedFiles ?? null;
 	if (
 		maxChangedFiles !== null &&
@@ -168,6 +183,7 @@ export function resolveDeliveryConfiguration(
 			mode,
 			forkOwner: forkOwner as string | null,
 			reviewers: reviewers as readonly string[],
+			labels: [...new Set(labels as readonly string[])],
 		},
 		maxChangedFiles: maxChangedFiles as number | null,
 	};

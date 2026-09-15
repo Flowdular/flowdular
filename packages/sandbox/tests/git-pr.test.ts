@@ -190,6 +190,7 @@ async function fixture(ignoreFlowdular = true): Promise<Fixture> {
 			'    if [ -f "$GH_STUB_FORK_MARKER" ]; then printf "%s\\t%s\\n" "$3" "${GH_STUB_FORK_PARENT:-example/octane}"; exit 0; fi',
 			'    exit 1 ;;',
 			'  "repo fork") touch "$GH_STUB_FORK_MARKER"; echo "forked"; exit 0 ;;',
+			'  "pr edit") exit 0 ;;',
 			'  "pr list")',
 			`    if [ -f "$GH_STUB_MARKER" ]; then echo "${PULL_REQUEST_URL}"; exit 0; fi`,
 			'    echo "no pull requests found" >&2; exit 1 ;;',
@@ -1051,6 +1052,16 @@ describe('git-pr delivery', () => {
 		expect(body).toContain(
 			'Post-merge: `pnpm flowdular auth sync-scopes --module inventory.core --apply`',
 		);
+		const headings = [
+			'## Problem',
+			'## Solution',
+			'## Verification',
+			'## Follow-ups',
+			'## Risks',
+			'## Files',
+		].map((heading) => body.indexOf(heading));
+		expect(headings.every((index) => index >= 0)).toBe(true);
+		expect(headings).toEqual([...headings].sort((left, right) => left - right));
 		expect(body).toContain(`Session ${session.id}.`);
 		expect(body).toContain(
 			'Cross-owner change (module:inventory, module:profile, platform-composition)',
@@ -1060,6 +1071,7 @@ describe('git-pr delivery', () => {
 			expect(text).not.toMatch(/[\u2013\u2014]/);
 		}
 		const ghLog = await readFile(fx.ghLog, 'utf8');
+		expect(ghLog).toContain('--add-label sandbox-delivery');
 		expect(ghLog).toContain(
 			`pr create --base main --head ${branch} --title Add inventory.core and update profile.core --body-file`,
 		);
@@ -1183,6 +1195,7 @@ describe('delivery configuration and policies', () => {
 				mode: 'auto',
 				forkOwner: null,
 				reviewers: ['octocat'],
+				labels: ['sandbox-delivery'],
 			},
 			maxChangedFiles: 25,
 		});
