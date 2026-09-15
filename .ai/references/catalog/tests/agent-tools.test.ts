@@ -15,6 +15,7 @@ import {
 import { CATALOG_PERMISSIONS } from '../src/acl/permissions.ts';
 import { registerCatalogVariableSource } from '../src/domain/variables.ts';
 import {
+	allItems,
 	catalogTestProvider,
 	closeCatalogTestDatabases,
 } from './support/database.ts';
@@ -161,10 +162,10 @@ describe('catalog agent tools', () => {
 		)) as CatalogItem;
 		expect(created.tenantId).toBe('tenant-a');
 		await expect(
-			(await runtime.service()).list('tenant-a'),
+			allItems(await runtime.service(), 'tenant-a'),
 		).resolves.toHaveLength(1);
 		await expect(
-			(await runtime.service()).list('tenant-b'),
+			allItems(await runtime.service(), 'tenant-b'),
 		).resolves.toHaveLength(0);
 	});
 
@@ -200,9 +201,9 @@ describe('catalog agent tools', () => {
 				})
 			).entries[0]?.actor,
 		).toEqual(actor);
-		await expect((await runtime.service()).list('tenant-b')).resolves.toEqual(
-			[],
-		);
+		await expect(
+			allItems(await runtime.service(), 'tenant-b'),
+		).resolves.toEqual([]);
 	});
 
 	it('reuses the service validation so a tool cannot persist a bad currency', async () => {

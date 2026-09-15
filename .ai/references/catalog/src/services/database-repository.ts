@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type {
 	DatabaseHandle,
+	DatabaseParameter,
+	DatabaseStatement,
 	DatabaseTransaction,
 } from '@flowdular/sdk/database';
 import {
@@ -18,10 +20,12 @@ import {
 	type TrackedFields,
 	type UserActor,
 } from '@flowdular/sdk/kernel';
-import type { CatalogItem } from '../domain/types.ts';
+import type { CatalogItem, CatalogListSort } from '../domain/types.ts';
 import { databaseMigrations } from './migration.ts';
 import {
 	DuplicateSkuError,
+	type CatalogListPage,
+	type CatalogListRead,
 	type CatalogRepository,
 	type ExportCursor,
 } from './repository.ts';
@@ -36,12 +40,24 @@ import {
 const HISTORY_TABLE = 'catalog_items_history_v2';
 
 const COLUMNS = `id, tenant_id, sku, name, kind, unit, base_price_minor,
-	currency, status, created_at`;
+	currency, status, created_at, updated_at`;
 
 /* Queries stay explicit. Catalog data never passes through a SQL rewriter, and
    values always use the adapter's parameter channel. */
-const LIST = `SELECT ${COLUMNS} FROM catalog_items
-			 WHERE tenant_id = $1 ORDER BY sku_normalized, id`;
+
+/* The expression each list order sorts by, and the type the cursor value is
+   cast back to. Every expression is the second column of an index after
+   tenant_id, so a page is one index range scan. */
+const LIST_SORTS: Readonly<
+	Record<
+		CatalogListSort,
+		{ readonly expression: string; readonly cast: string }
+	>
+> = {
+	name: { expression: 'lower(name)', cast: 'text' },
+	sku: { expression: 'sku_normalized', cast: 'text' },
+	updatedAt: { expression: 'updated_at', cast: 'bigint' },
+};
 
 const LIST_FOR_EXPORT = `SELECT ${COLUMNS} FROM catalog_items
 			 WHERE tenant_id = $1
@@ -59,15 +75,16 @@ const FIND = `SELECT ${COLUMNS} FROM catalog_items WHERE tenant_id = $1 AND id =
 
 const INSERT = `INSERT INTO catalog_items
 			 (id, tenant_id, sku, sku_normalized, name, kind, unit,
-			  base_price_minor, currency, status, created_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`;
+			  base_price_minor, currency, status, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`;
 
 const UPDATE = `UPDATE catalog_items
-			 SET name = $1, kind = $2, unit = $3, base_price_minor = $4, currency = $5
-			 WHERE tenant_id = $6 AND id = $7 RETURNING ${COLUMNS}`;
+			 SET name = $1, kind = $2, unit = $3, base_price_minor = $4, currency = $5,
+			     updated_at = $6
+			 WHERE tenant_id = $7 AND id = $8 RETURNING ${COLUMNS}`;
 
-const SET_STATUS = `UPDATE catalog_items SET status = $1 WHERE tenant_id = $2 AND id = $3
-			 RETURNING ${COLUMNS}`;
+const SET_STATUS = `UPDATE catalog_items SET status = $1, updated_at = $2
+			 WHERE tenant_id = $3 AND id = $4 RETURNING ${COLUMNS}`;
 
 const DELETE = 'DELETE FROM catalog_items WHERE tenant_id = $1 AND id = $2';
 
@@ -91,6 +108,11 @@ interface CatalogItemRow {
 	currency: string;
 	status: CatalogItem['status'];
 	created_at: number | bigint | string;
+	updated_at: number | bigint | string;
+}
+
+interface CatalogListRow extends CatalogItemRow {
+	sort_value: string | number | bigint;
 }
 
 interface HistoryRow {
@@ -149,6 +171,61 @@ function fromRow(row: CatalogItemRow): CatalogItem {
 		currency: row.currency,
 		status: row.status,
 		createdAt: integer(row.created_at, 'timestamp'),
+		updatedAt: integer(row.updated_at, 'timestamp'),
+	};
+}
+
+/* The term is matched as a substring, so the three characters LIKE reads as
+   syntax are escaped; the statement declares a backslash as ESCAPE. */
+function likePattern(term: string): string {
+	return '%' + term.replace(/[\\%_]/g, (character) => '\\' + character) + '%';
+}
+
+/**
+ * One list page: the tenant predicate and the filters narrow, the keyset
+ * predicate over (sort expression, id) opens the page after the cursor, and
+ * ORDER BY names the same expression, so the read is one index range in one
+ * direction. The sort value is projected so the next cursor carries exactly
+ * what the database compared, never a JavaScript re-computation of it.
+ */
+export function listStatement(
+	tenantId: string,
+	read: CatalogListRead,
+): DatabaseStatement {
+	const parameters: DatabaseParameter[] = [tenantId];
+	const filters = ['tenant_id = $1'];
+	if (read.kind !== null) {
+		parameters.push(read.kind);
+		filters.push(`kind = $${parameters.length}`);
+	}
+	if (read.status !== null) {
+		parameters.push(read.status);
+		filters.push(`status = $${parameters.length}`);
+	}
+	if (read.term !== null) {
+		parameters.push(likePattern(read.term));
+		filters.push(
+			`(lower(name) LIKE $${parameters.length} ESCAPE '\\'
+	          OR sku_normalized LIKE $${parameters.length} ESCAPE '\\')`,
+		);
+	}
+	const sort = LIST_SORTS[read.sort];
+	if (read.after !== null) {
+		parameters.push(read.after.sortValue, read.after.id);
+		filters.push(
+			`(${sort.expression}, id) ${read.direction === 'asc' ? '>' : '<'}
+	          ($${parameters.length - 1}::${sort.cast}, $${parameters.length}::text)`,
+		);
+	}
+	parameters.push(read.limit);
+	const order = read.direction === 'asc' ? 'ASC' : 'DESC';
+	return {
+		text: `SELECT ${COLUMNS}, ${sort.expression} AS sort_value
+	       FROM catalog_items
+	       WHERE ${filters.join(' AND ')}
+	       ORDER BY ${sort.expression} ${order}, id ${order}
+	       LIMIT $${parameters.length}`,
+		parameters,
 	};
 }
 
@@ -209,17 +286,24 @@ export class DatabaseCatalogRepository implements CatalogRepository {
 		private readonly readyPromise: Promise<void> = Promise.resolve(),
 	) {}
 
-	async list(tenantId: string): Promise<readonly CatalogItem[]> {
+	async listPage(
+		tenantId: string,
+		read: CatalogListRead,
+	): Promise<CatalogListPage> {
 		await this.readyPromise;
 		const result = await this.database.transaction(
 			(transaction) =>
-				transaction.query<CatalogItemRow>({
-					text: LIST,
-					parameters: [tenantId],
-				}),
+				transaction.query<CatalogListRow>(listStatement(tenantId, read)),
 			{ access: 'read', tenantId },
 		);
-		return result.rows.map(fromRow);
+		const last = result.rows.at(-1);
+		return {
+			items: result.rows.map(fromRow),
+			next:
+				last && result.rows.length === read.limit
+					? { sortValue: String(last.sort_value), id: last.id }
+					: null,
+		};
 	}
 
 	async listItemsForExport(
@@ -355,6 +439,7 @@ export class DatabaseCatalogRepository implements CatalogRepository {
 						item.unit,
 						item.basePriceMinor,
 						item.currency,
+						Date.now(),
 						item.tenantId,
 						item.id,
 					],
@@ -390,9 +475,10 @@ export class DatabaseCatalogRepository implements CatalogRepository {
 			async (transaction) => {
 				const before = await this.#find(transaction, tenantId, id);
 				if (!before) return null;
+				if (before.status === status) return before;
 				const result = await transaction.query<CatalogItemRow>({
 					text: SET_STATUS,
-					parameters: [status, tenantId, id],
+					parameters: [status, Date.now(), tenantId, id],
 				});
 				const row = result.rows[0];
 				if (!row) return null;
@@ -486,6 +572,7 @@ export class DatabaseCatalogRepository implements CatalogRepository {
 				item.currency,
 				item.status,
 				item.createdAt,
+				item.updatedAt,
 			],
 		});
 		await appendRecordHistory(transaction, HISTORY_TABLE, {

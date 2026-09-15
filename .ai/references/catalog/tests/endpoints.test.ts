@@ -317,4 +317,273 @@ describe('catalog lifecycle and history endpoints', () => {
 			(await (await runtime.service()).get('tenant-a', item.id))?.status,
 		).toBe('active');
 	});
+
+	it('rejects a bulk lifecycle mutation without a valid CSRF token', async () => {
+		const actor = principal([CATALOG_PERMISSIONS.manage]);
+		const runtime = catalogRuntime(await catalogTestProvider());
+		const item = await (
+			await runtime.service()
+		).create('tenant-a', seedInput('A-1'), OWNER);
+		const response = await route(
+			createCatalogRoutes(authRuntime(actor), runtime),
+			'/api/catalog/items/archive-many',
+			'POST',
+		).handler(
+			context(
+				mutation('/api/catalog/items/archive-many', { ids: [item.id] }, 'bad'),
+				actor,
+			),
+		);
+		expect(response.status).toBe(403);
+		expect(
+			(await (await runtime.service()).get('tenant-a', item.id))?.status,
+		).toBe('active');
+	});
+
+	it('bounds the ids of a bulk lifecycle mutation', async () => {
+		const actor = principal([CATALOG_PERMISSIONS.manage]);
+		const routes = createCatalogRoutes(
+			authRuntime(actor),
+			catalogRuntime(await catalogTestProvider()),
+		);
+		for (const body of [
+			{},
+			{ ids: [] },
+			{ ids: Array.from({ length: 101 }, (_, index) => `id-${index}`) },
+			{ ids: ['same', 'same'] },
+			{ ids: [''] },
+			{ ids: ['x'.repeat(129)] },
+		]) {
+			for (const path of [
+				'/api/catalog/items/archive-many',
+				'/api/catalog/items/restore-many',
+			]) {
+				const response = await route(routes, path, 'POST').handler(
+					context(mutation(path, body), actor),
+				);
+				expect(response.status, `${path} ${JSON.stringify(body)}`).toBe(400);
+				expect(await response.json()).toMatchObject({
+					error: { code: 'INVALID_INPUT' },
+				});
+			}
+		}
+	});
+
+	it('answers one outcome per id and one history row per accepted transition', async () => {
+		const actor = principal([
+			CATALOG_PERMISSIONS.read,
+			CATALOG_PERMISSIONS.manage,
+		]);
+		const runtime = catalogRuntime(await catalogTestProvider());
+		const service = await runtime.service();
+		const first = await service.create('tenant-a', seedInput('A-1'), OWNER);
+		const second = await service.create('tenant-a', seedInput('A-2'), OWNER);
+		const foreign = await service.create('tenant-b', seedInput('B-1'), OWNER);
+		const routes = createCatalogRoutes(authRuntime(actor), runtime);
+
+		const archived = await route(
+			routes,
+			'/api/catalog/items/archive-many',
+			'POST',
+		).handler(
+			context(
+				mutation('/api/catalog/items/archive-many', {
+					ids: [first.id, 'missing', foreign.id, second.id],
+				}),
+				actor,
+			),
+		);
+		expect(archived.status).toBe(200);
+		expect(await archived.json()).toEqual({
+			outcomes: [
+				{ id: first.id, outcome: 'updated' },
+				{ id: 'missing', outcome: 'not-found' },
+				{ id: foreign.id, outcome: 'not-found' },
+				{ id: second.id, outcome: 'updated' },
+			],
+		});
+		expect((await service.get('tenant-b', foreign.id))?.status).toBe('active');
+
+		const restored = await route(
+			routes,
+			'/api/catalog/items/restore-many',
+			'POST',
+		).handler(
+			context(
+				mutation('/api/catalog/items/restore-many', { ids: [first.id] }),
+				actor,
+			),
+		);
+		expect(await restored.json()).toEqual({
+			outcomes: [{ id: first.id, outcome: 'updated' }],
+		});
+
+		for (const [id, actions] of [
+			[first.id, ['restored', 'archived', 'created']],
+			[second.id, ['archived', 'created']],
+		] as const) {
+			const history = await service.history('tenant-a', {
+				recordId: id,
+				limit: 10,
+				cursor: null,
+			});
+			expect(history.entries.map((entry) => entry.action)).toEqual(actions);
+			expect(history.entries[0]?.actor).toEqual({
+				kind: 'user',
+				id: 'account-a',
+				label: 'Owner',
+			});
+		}
+	});
+});
+
+function seedInput(sku: string) {
+	return {
+		sku,
+		name: 'Item ' + sku,
+		kind: 'product' as const,
+		unit: 'each',
+		basePriceMinor: 100,
+		currency: 'EUR',
+	};
+}
+
+const OWNER = { kind: 'user', id: 'account-a', label: 'Owner' } as const;
+
+function listRequest(query: Record<string, string>): Request {
+	return new Request(
+		'https://erp.example/api/catalog/items?' +
+			new URLSearchParams(query).toString(),
+	);
+}
+
+/* Flips the first character of one dot-separated segment of a signed cursor. */
+function tamper(cursor: string, segment: number): string {
+	const parts = cursor.split('.');
+	const target = parts[segment]!;
+	const first = target[0] === 'A' ? 'B' : 'A';
+	parts[segment] = first + target.slice(1);
+	return parts.join('.');
+}
+
+interface ListBody {
+	readonly items: readonly { readonly id: string; readonly sku: string }[];
+	readonly page: { readonly nextCursor: string | null; readonly limit: number };
+}
+
+describe('catalog items list endpoint', () => {
+	async function listing(count: number) {
+		const actor = principal([CATALOG_PERMISSIONS.read]);
+		const runtime = catalogRuntime(await catalogTestProvider());
+		const service = await runtime.service();
+		for (let index = 0; index < count; index += 1) {
+			await service.create(
+				'tenant-a',
+				seedInput(`SKU-${String(index).padStart(3, '0')}`),
+				OWNER,
+			);
+		}
+		await service.create('tenant-b', seedInput('OTHER-1'), OWNER);
+		const list = route(
+			createCatalogRoutes(authRuntime(actor), runtime),
+			'/api/catalog/items',
+			'GET',
+		);
+		const read = async (
+			query: Record<string, string>,
+			as = actor,
+		): Promise<{ status: number; body: ListBody }> => {
+			const response = await list.handler(context(listRequest(query), as));
+			return {
+				status: response.status,
+				body: (await response.json()) as ListBody,
+			};
+		};
+		return { read, runtime };
+	}
+
+	it('answers consecutive pages without overlap or gap, a cursor only on a full page', async () => {
+		const { read } = await listing(5);
+		const first = await read({ limit: '2', sort: 'sku' });
+		expect(first.status).toBe(200);
+		expect(first.body.items.map((item) => item.sku)).toEqual([
+			'SKU-000',
+			'SKU-001',
+		]);
+		expect(first.body.page).toEqual({
+			nextCursor: expect.any(String),
+			limit: 2,
+		});
+		const second = await read({
+			limit: '2',
+			sort: 'sku',
+			cursor: first.body.page.nextCursor!,
+		});
+		expect(second.body.items.map((item) => item.sku)).toEqual([
+			'SKU-002',
+			'SKU-003',
+		]);
+		const third = await read({
+			limit: '2',
+			sort: 'sku',
+			cursor: second.body.page.nextCursor!,
+		});
+		expect(third.body.items.map((item) => item.sku)).toEqual(['SKU-004']);
+		expect(third.body.page.nextCursor).toBeNull();
+
+		const whole = await read({});
+		expect(whole.body.items).toHaveLength(5);
+		expect(whole.body.page).toEqual({ nextCursor: null, limit: 50 });
+	});
+
+	it('refuses a tampered, foreign, refiltered or re-sorted cursor and an unknown sort', async () => {
+		const { read } = await listing(3);
+		const query = { limit: '2', sort: 'name', direction: 'asc', q: 'sku' };
+		const cursor = (await read(query)).body.page.nextCursor!;
+		expect((await read({ ...query, cursor })).status).toBe(200);
+
+		const refused = async (
+			changes: Record<string, string>,
+			as?: AuthPrincipal,
+		) => {
+			const result = await read({ ...query, ...changes }, as);
+			expect(result.status, JSON.stringify(changes)).toBe(400);
+			return (result.body as unknown as { error: { code: string } }).error.code;
+		};
+		for (const segment of [0, 1, 2]) {
+			expect(await refused({ cursor: tamper(cursor, segment) })).toBe(
+				'CURSOR_INVALID',
+			);
+		}
+		expect(
+			await refused(
+				{ cursor },
+				principal([CATALOG_PERMISSIONS.read], 'tenant-b'),
+			),
+		).toBe('CURSOR_INVALID');
+		expect(await refused({ cursor, q: 'other' })).toBe('CURSOR_INVALID');
+		expect(await refused({ cursor, kind: 'product' })).toBe('CURSOR_INVALID');
+		expect(await refused({ cursor, sort: 'sku' })).toBe('CURSOR_INVALID');
+		expect(await refused({ cursor, direction: 'desc' })).toBe('CURSOR_INVALID');
+		expect(await refused({ cursor: 'not-a-cursor' })).toBe('CURSOR_INVALID');
+		expect(await refused({ sort: 'price' })).toBe('INVALID_INPUT');
+		expect(await refused({ direction: 'up' })).toBe('INVALID_INPUT');
+		expect(await refused({ status: 'gone' })).toBe('INVALID_INPUT');
+		expect(await refused({ limit: '201' })).toBe('INVALID_INPUT');
+	});
+
+	it('pushes the filters into the read and never crosses the tenant', async () => {
+		const { read, runtime } = await listing(2);
+		const service = await runtime.service();
+		const [archived] = (await read({ sort: 'sku' })).body.items;
+		await service.archive('tenant-a', archived!.id, OWNER);
+		expect(
+			(await read({ status: 'archived' })).body.items.map((item) => item.sku),
+		).toEqual(['SKU-000']);
+		expect(
+			(await read({ status: 'active' })).body.items.map((item) => item.sku),
+		).toEqual(['SKU-001']);
+		expect((await read({ kind: 'service' })).body.items).toEqual([]);
+		expect((await read({ q: 'other' })).body.items).toEqual([]);
+	});
 });

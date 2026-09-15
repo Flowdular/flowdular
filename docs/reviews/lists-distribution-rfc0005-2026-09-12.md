@@ -305,3 +305,32 @@ open by decision: the npm publication of the 0.3.0 packages (the 0.2.x
 versions on npm predate these waves) and the official module lockfile
 regeneration that follows it; H9, H10 and H11 of RFC 0004 on their
 triggers; enabling modules from the administration UI.
+
+## Official modules on the list contract (delivered 2026-09-15)
+
+Decision (owner, 2026-09-14, item 5): the official modules get server lists,
+list export and bulk actions. Delivered in `Flowdular/official-modules` pull
+requests #4 (branch `feat/lists-export-bulk`) and #5 (public index pin).
+
+- catalog.core 0.8.0: `GET /api/catalog/items` on a signed keyset cursor
+  (sort name, sku, updatedAt; filters kind, status, q), export
+  `catalog.core.items`, `archive-many` and `restore-many`; migration 0005 adds
+  `updated_at` with a backfill and the name and updated indexes.
+- expenses.core 0.8.0: claims list on the cursor with the approver join,
+  export `expenses.core.claims`, `approve-many`, `reject-many` and
+  `submit-many`; migration 0004 adds the sort indexes.
+- parties.core 0.10.0: records list on the cursor, export
+  `parties.core.records`, `archive-many` and `restore-many`; migration 0006
+  adds `updated_at` and the list order indexes.
+- Every module declares `requires: exports.lists.v1 optional`, so a deployment
+  without `exports.core` still composes; screens use `Table mode="server"`
+  with selection and a confirm dialog before a destructive bulk action.
+- Minor bumps because the service `list` signatures changed; the consumer
+  test in the official repository moved to the paged parties list.
+
+Found by the official PostgreSQL job and fixed before merge: the `updated_at`
+backfills matched no row under forced row-level security (the migrator holds
+no tenant setting; PGlite runs as a superuser and hides it). Both migrations
+lift the force flag around the backfill, the auth 0031 pattern, and were
+verified on a PostgreSQL 17 cluster with the CI roles before the releases were
+packed. The core reference catalog moved to 0.8.0 in the same step.

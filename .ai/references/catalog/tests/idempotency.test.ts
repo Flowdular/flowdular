@@ -11,6 +11,7 @@ import {
 	type CatalogRuntime,
 } from '../src/server/runtime.ts';
 import {
+	allItems,
 	catalogTestProvider,
 	closeCatalogTestDatabases,
 } from './support/database.ts';
@@ -117,7 +118,7 @@ describe('catalog target idempotency', () => {
 		)) as CatalogItem;
 		expect(replay).toEqual(first);
 		await expect(
-			(await recoveredRuntime.service()).list('tenant-a'),
+			allItems(await recoveredRuntime.service(), 'tenant-a'),
 		).resolves.toEqual([first]);
 		expect(
 			(
@@ -155,7 +156,7 @@ describe('catalog target idempotency', () => {
 		)) as CatalogItem;
 		expect(tenantB.tenantId).toBe('tenant-b');
 		await expect(
-			(await recoveredRuntime.service()).list('tenant-b'),
+			allItems(await recoveredRuntime.service(), 'tenant-b'),
 		).resolves.toHaveLength(1);
 	});
 
@@ -170,16 +171,16 @@ describe('catalog target idempotency', () => {
 		const actor = { kind: 'user', id: 'owner-1', label: 'Owner' } as const;
 		await (await runtime.service()).archive('tenant-a', created.id, actor);
 		await (await runtime.service()).delete('tenant-a', created.id, actor);
-		await expect((await runtime.service()).list('tenant-a')).resolves.toEqual(
-			[],
-		);
+		await expect(
+			allItems(await runtime.service(), 'tenant-a'),
+		).resolves.toEqual([]);
 
 		expect(
 			await create.execute(input, context('catalog-delete-key-1')),
 		).toEqual(created);
-		await expect((await runtime.service()).list('tenant-a')).resolves.toEqual(
-			[],
-		);
+		await expect(
+			allItems(await runtime.service(), 'tenant-a'),
+		).resolves.toEqual([]);
 		expect(
 			(
 				await (
@@ -234,9 +235,9 @@ describe('catalog target idempotency', () => {
 					context('catalog-rollback-key-1'),
 				),
 			).rejects.toThrow(/forced_ledger_failure/);
-			await expect((await runtime.service()).list('tenant-a')).resolves.toEqual(
-				[],
-			);
+			await expect(
+				allItems(await runtime.service(), 'tenant-a'),
+			).resolves.toEqual([]);
 			expect(await rowCounts(databases)).toEqual({
 				items: 0,
 				history: 0,
@@ -284,9 +285,9 @@ describe('catalog target idempotency', () => {
 				context('catalog-corrupt-key-1'),
 			),
 		).rejects.toMatchObject({ code: 'CATALOG_IDEMPOTENCY_LEDGER_CORRUPT' });
-		await expect((await recovered.service()).list('tenant-a')).resolves.toEqual(
-			[],
-		);
+		await expect(
+			allItems(await recovered.service(), 'tenant-a'),
+		).resolves.toEqual([]);
 		expect(
 			await catalogAgentTools(recovered)[1]!.execute(
 				input,
