@@ -21,11 +21,12 @@ import {
 	coreNavigation,
 	navigationForIdentity,
 	navigationGroupLabel,
-	railGroups,
-	selectedNavigationGroup,
+	sectionItems,
+	sectionOfView,
 	viewHref,
 	workspaceHitRoute,
 } from './shell/navigation.ts';
+import { ContextRail } from './shell/ContextRail.tsrx';
 import { Sidebar } from './shell/Sidebar.tsrx';
 import { Topbar } from './shell/Topbar.tsrx';
 import type { ApplicationShellProps } from './shell/types.ts';
@@ -33,6 +34,7 @@ import { WorkspaceContent } from './shell/WorkspaceContent.tsrx';
 import {
 	createShellState,
 	shellLocationFromUrl,
+	toggleNavigationGroup,
 	type ShellView,
 } from './state.ts';
 import '@flowdular/ui';
@@ -91,8 +93,8 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 	const [sidebarCollapsed, setSidebarCollapsed] = useValue(
 		shell.state.sidebarCollapsed,
 	);
-	const [navigationGroupSelected, setNavigationGroupSelected] = useValue(
-		shell.state.navigationGroupSelected,
+	const [collapsedNavigationGroups, setCollapsedNavigationGroups] = useValue(
+		shell.state.collapsedNavigationGroups,
 	);
 	const [query, setQuery] = useValue(shell.state.query);
 	const [tenantBusy, setTenantBusy] = useValue(shell.state.tenantBusy);
@@ -126,7 +128,11 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 		visibleNavigation.find(
 			(item) => item.viewId === effectiveView,
 		)?.group ?? null;
-	const presentNavigationGroups = railGroups(visibleNavigation);
+	const activeSection = sectionOfView(visibleNavigation, effectiveView);
+	const contextItems =
+		activeNavigationGroup !== null && activeSection !== null
+			? sectionItems(visibleNavigation, activeNavigationGroup, activeSection)
+			: [];
 	const activeDefinition =
 		visibleNavigation.find((item) => item.viewId === effectiveView) ??
 			visibleNavigation[0];
@@ -166,7 +172,6 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 	const navigate = (viewId: ShellView) => {
 		history.pushState(null, '', viewHref(viewId, activeWorkspaceSlug));
 		setActiveView(viewId);
-		setNavigationGroupSelected(null);
 		setNavigationOpen(false);
 		setCommandOpen(false);
 	};
@@ -201,9 +206,10 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 		).finally(() => setTenantBusy(false));
 	};
 
-	const selectGroup = (group: NavigationGroup) => {
-		setNavigationGroupSelected(group);
-		if (sidebarCollapsed) toggleSidebar();
+	const toggleGroup = (group: NavigationGroup) => {
+		setCollapsedNavigationGroups(
+			(current) => toggleNavigationGroup(current, group),
+		);
 	};
 
 	const toggleSidebar = () => {
@@ -396,7 +402,13 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 			</section>
 		</div>
 	} @else {
-		<div class={['app-shell', sidebarCollapsed && 'app-shell--rail']}>
+		<div
+			class={[
+				'app-shell',
+				sidebarCollapsed && 'app-shell--rail',
+				contextItems.length > 0 && 'app-shell--context',
+			]}
+		>
 			<Seo title={activeLabel} description={activeDescription} />
 			<MobileHeader onToggle={() => setNavigationOpen((open) => !open)} />
 			<Sidebar
@@ -406,21 +418,27 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 				items={visibleNavigation}
 				activeView={effectiveView}
 				workspaceSlug={activeWorkspaceSlug}
-				groups={presentNavigationGroups}
-				selectedGroup={selectedNavigationGroup(
-					navigationGroupSelected,
-					activeNavigationGroup,
-					presentNavigationGroups,
+				collapsedGroups={collapsedNavigationGroups.filter(
+					(group) => group !== activeNavigationGroup,
 				)}
-				activeGroup={activeNavigationGroup}
+				activeSection={activeSection}
 				tenantBusy={tenantBusy}
 				tenantError={tenantError}
 				onClose={() => setNavigationOpen(false)}
 				onToggleCollapsed={toggleSidebar}
 				onNavigate={navigate}
-				onSelectGroup={selectGroup}
+				onToggleGroup={toggleGroup}
 				onSelectTenant={switchTenant}
 			/>
+			@if (activeSection !== null && contextItems.length > 0) {
+				<ContextRail
+					section={activeSection}
+					items={contextItems}
+					activeView={effectiveView}
+					workspaceSlug={activeWorkspaceSlug}
+					onNavigate={navigate}
+				/>
+			}
 			<main class="workspace">
 				{/* Module screens load their records once, on mount. Keying the
     workspace by tenant remounts them after a switch, so a screen can

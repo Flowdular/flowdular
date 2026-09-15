@@ -27,19 +27,28 @@ Retention sweeps, Exports, Legal holds); Integrations (Webhooks, Deliveries,
 Connectors, Connector calls); Platform (Settings, Modules, Usage, Limits,
 Reports).
 
-## Second pass: a rail of groups and a panel of items
+## Second pass: a context rail beside the sidebar
 
-The owner found labelled blocks inside one long list unconvincing and asked
-for a second rail. The sidebar is now two columns: a 64 px rail with one
-button per group that has items (glyph and a short label, `NavigationRail`)
-and a panel with the items of the selected group (`PrimaryNavigation`, the
-Administration sections as headings). The selected group is the one a
-person clicked until the next navigation, else the group of the active
-view, else the first (`selectedNavigationGroup`, tested in
-`packages/client/tests/state.test.ts`). Collapsing the sidebar hides the
-panel and keeps the rail; a rail click reopens it. On a phone the whole
-sidebar slides in as before. `toggleNavigationGroup` stays exported for the
-platform API surface and is no longer used. Platform API 0.1.11.
+The owner tried two alternatives on screen. A rail of groups with a panel
+of items (PR #26) moved the whole navigation behind an extra click and was
+turned around the same day: the sidebar stays as it was, and the extra
+column is contextual. A sectioned group (Administration) now shows one
+entry per section in the sidebar (People and access, Identity and tokens,
+Audit and data, Integrations, Platform), each opening its first screen.
+While a sectioned view is open, a context rail (`ContextRail`, 220 px)
+sits between the sidebar and the workspace with that section's screens,
+and the workspace margin makes room for it; any other view has no rail. On
+a phone the rail is hidden and the same screens nest under the section
+entry in the drawer. Helpers `sectionOfView` and `sectionItems` are tested
+in `packages/client/tests/state.test.ts`. The rail helpers of PR #26 stay
+exported for the platform API surface and are unused. Platform API 0.1.13.
+
+## The dashboard chart painted past its card
+
+The Modules chart (Chart.js on a canvas) could keep a width measured while
+the sidebar transition was still running and paint past the card edge. The
+canvas box now clips (`overflow: hidden`, `min-width: 0`) and the canvas is
+capped at its box width, so a late resize can only shrink it into place.
 
 ## The dashboard metrics row had holes
 

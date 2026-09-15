@@ -1599,6 +1599,14 @@
 .ui-chart__canvas {
 	position: relative;
 	width: 100%;
+	min-width: 0;
+	/* Chart.js sizes the canvas from this box; a canvas drawn while a layout
+	   transition was still running must never paint past the card. */
+	overflow: hidden;
+}
+
+.ui-chart__canvas > canvas {
+	max-width: 100%;
 }
 
 .ui-empty__icon {

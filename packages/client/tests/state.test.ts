@@ -4,6 +4,8 @@ import {
 	coreNavigation,
 	navigationForIdentity,
 	railGroups,
+	sectionItems,
+	sectionOfView,
 	selectedNavigationGroup,
 	viewHref,
 } from '../src/shell/navigation.ts';
@@ -164,5 +166,42 @@ describe('navigation rail', () => {
 			'Workspace',
 		);
 		expect(selectedNavigationGroup(null, null, [])).toBeNull();
+	});
+});
+
+describe('context rail', () => {
+	const item = (
+		group: NavigationContribution['group'],
+		id: string,
+		section?: NavigationContribution['section'],
+	): NavigationContribution => ({
+		id,
+		viewId: id,
+		group,
+		label: id,
+		glyph: 'settings',
+		description: '',
+		scope: 'x',
+		order: 0,
+		...(section === undefined ? {} : { section }),
+	});
+	const items = [
+		item('Workspace', 'dashboard'),
+		item('Administration', 'users', 'people'),
+		item('Administration', 'roles', 'people'),
+		item('Administration', 'audit', 'compliance'),
+	];
+
+	it('names the section of a sectioned view and nothing for the rest', () => {
+		expect(sectionOfView(items, 'roles')).toBe('people');
+		expect(sectionOfView(items, 'dashboard')).toBeNull();
+		expect(sectionOfView(items, 'missing')).toBeNull();
+	});
+
+	it('lists the items of one section inside one group', () => {
+		expect(
+			sectionItems(items, 'Administration', 'people').map((entry) => entry.id),
+		).toEqual(['users', 'roles']);
+		expect(sectionItems(items, 'Workspace', 'people')).toEqual([]);
 	});
 });
