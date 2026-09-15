@@ -15,6 +15,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { createSystemRoutes } from '../src/server/endpoints.ts';
 import type { SettingsEntryPayload } from '../src/server/endpoints.ts';
 import { SYSTEM_MODULE_SETTINGS } from '../src/settings.ts';
+import { memoryActivationRuntime } from './support/activation.ts';
 
 const ORIGIN = 'https://erp.example';
 
@@ -199,6 +200,7 @@ describe('settings API', () => {
 			workspaceRoot: runtime.workspaceRoot!,
 			auth: runtime,
 			settings: runtime.moduleSettings,
+			activation: memoryActivationRuntime(),
 		});
 	});
 

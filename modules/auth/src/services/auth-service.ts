@@ -385,6 +385,8 @@ export const AUDIT_ACTIONS = Object.freeze({
 	roleDeleted: 'auth.role.deleted',
 	settingsUpdated: 'settings.updated',
 	settingsFlagChanged: 'settings.flag.changed',
+	moduleActivated: 'system.module.activated',
+	moduleDeactivated: 'system.module.deactivated',
 });
 
 export const AUDIT_ACTION_LIST = Object.freeze(Object.values(AUDIT_ACTIONS));
@@ -882,6 +884,13 @@ export class AuthService {
 	/** How many members the workspace holds; the count is an index range, so a screen may show it. */
 	countTenantMembers(tenantId: string): Promise<number> {
 		return this.#repository.countTenantMembers(
+			this.#identifier(tenantId, 'tenantId'),
+		);
+	}
+
+	/** How many members hold the owner role, counted the same way for the same screen. */
+	countTenantOwners(tenantId: string): Promise<number> {
+		return this.#repository.countTenantOwners(
 			this.#identifier(tenantId, 'tenantId'),
 		);
 	}
@@ -2909,6 +2918,23 @@ export class AuthService {
 						next: change.next,
 					}
 				: { cleared: change.cleared },
+		);
+	}
+
+	/** The one audit row a committed per-workspace module activation change owes. */
+	async recordModuleActivation(
+		actor: AuthActor,
+		change: { readonly moduleId: string; readonly active: boolean },
+	): Promise<void> {
+		await this.#audit(
+			actor.tenantId,
+			this.#actorOf(actor),
+			change.active
+				? AUDIT_ACTIONS.moduleActivated
+				: AUDIT_ACTIONS.moduleDeactivated,
+			'module',
+			change.moduleId,
+			{ active: change.active },
 		);
 	}
 

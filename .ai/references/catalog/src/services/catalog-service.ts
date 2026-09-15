@@ -7,14 +7,22 @@ import {
 	type HistoryPage,
 	type HistoryRequest,
 } from '@flowdular/sdk/kernel';
-import type {
-	CatalogItem,
-	CatalogItemKind,
-	CreateCatalogItemInput,
-	UpdateCatalogItemInput,
+import {
+	CATALOG_BULK_LIMIT,
+	CATALOG_LIST_SORTS,
+	CATALOG_SEARCH_LENGTH,
+	type CatalogBulkOutcome,
+	type CatalogItem,
+	type CatalogItemKind,
+	type CatalogItemStatus,
+	type CatalogListSort,
+	type CreateCatalogItemInput,
+	type UpdateCatalogItemInput,
 } from '../domain/types.ts';
 import {
 	DuplicateSkuError,
+	type CatalogListPage,
+	type CatalogPageKeyset,
 	type CatalogRepository,
 	type ExportCursor,
 } from './repository.ts';
@@ -30,6 +38,32 @@ export interface CatalogIdempotencyRequest {
 
 /** Rows one export read carries; the whole tenant is walked page by page. */
 export const EXPORT_PAGE = 200;
+
+/** The default page of the items list, and the most a read may ask for. */
+export const LIST_PAGE_LIMIT = 50;
+export const LIST_PAGE_MAX_LIMIT = 200;
+
+/** One list page as a caller asks for it, before the service validates it. */
+export interface CatalogListInput {
+	readonly sort: CatalogListSort;
+	readonly direction: 'asc' | 'desc';
+	readonly kind: CatalogItemKind | null;
+	readonly status: CatalogItemStatus | null;
+	/** A substring of the name or the SKU; '' narrows nothing. */
+	readonly search: string;
+	readonly limit: number;
+	readonly after: CatalogPageKeyset | null;
+}
+
+export const FIRST_LIST_PAGE: CatalogListInput = {
+	sort: 'name',
+	direction: 'asc',
+	kind: null,
+	status: null,
+	search: '',
+	limit: LIST_PAGE_MAX_LIMIT,
+	after: null,
+};
 
 export class CatalogServiceError extends Error {
 	constructor(
@@ -68,6 +102,16 @@ function itemKind(value: CatalogItemKind): CatalogItemKind {
 	return value;
 }
 
+function itemStatus(value: CatalogItemStatus): CatalogItemStatus {
+	if (value !== 'active' && value !== 'archived') {
+		throw new CatalogServiceError(
+			'INVALID_INPUT',
+			'status must be active or archived.',
+		);
+	}
+	return value;
+}
+
 function trustedActor(actor: Actor): Actor {
 	const normalized = normalizeActor(actor);
 	if (!normalized) {
@@ -82,8 +126,52 @@ function trustedActor(actor: Actor): Actor {
 export class CatalogService {
 	constructor(private readonly repository: CatalogRepository) {}
 
-	async list(tenantId: string): Promise<readonly CatalogItem[]> {
-		return await this.repository.list(bounded(tenantId, 'tenantId', 1, 128));
+	/** One server-ordered, server-narrowed page; the only listing the module answers. */
+	async listPage(
+		tenantId: string,
+		input: CatalogListInput,
+	): Promise<CatalogListPage> {
+		if (!(CATALOG_LIST_SORTS as readonly string[]).includes(input.sort)) {
+			throw new CatalogServiceError(
+				'INVALID_INPUT',
+				`sort must be one of ${CATALOG_LIST_SORTS.join(', ')}.`,
+			);
+		}
+		if (input.direction !== 'asc' && input.direction !== 'desc') {
+			throw new CatalogServiceError(
+				'INVALID_INPUT',
+				'direction must be asc or desc.',
+			);
+		}
+		if (
+			!Number.isSafeInteger(input.limit) ||
+			input.limit < 1 ||
+			input.limit > LIST_PAGE_MAX_LIMIT
+		) {
+			throw new CatalogServiceError(
+				'INVALID_INPUT',
+				`limit must be an integer between 1 and ${LIST_PAGE_MAX_LIMIT}.`,
+			);
+		}
+		const search = bounded(input.search, 'search', 0, CATALOG_SEARCH_LENGTH);
+		return await this.repository.listPage(
+			bounded(tenantId, 'tenantId', 1, 128),
+			{
+				sort: input.sort,
+				direction: input.direction,
+				kind: input.kind === null ? null : itemKind(input.kind),
+				status: input.status === null ? null : itemStatus(input.status),
+				term: search === '' ? null : search.toLocaleLowerCase('en-US'),
+				limit: input.limit,
+				after:
+					input.after === null
+						? null
+						: {
+								sortValue: bounded(input.after.sortValue, 'cursor', 0, 512),
+								id: bounded(input.after.id, 'cursor', 1, 128),
+							},
+			},
+		);
 	}
 
 	async get(tenantId: string, id: string): Promise<CatalogItem | null> {
@@ -160,6 +248,7 @@ export class CatalogService {
 				'currency must be a three-letter ISO code.',
 			);
 		}
+		const now = Date.now();
 		return {
 			id: randomUUID(),
 			tenantId: bounded(tenantId, 'tenantId', 1, 128),
@@ -170,7 +259,8 @@ export class CatalogService {
 			basePriceMinor: input.basePriceMinor,
 			currency,
 			status: 'active',
-			createdAt: Date.now(),
+			createdAt: now,
+			updatedAt: now,
 		};
 	}
 
@@ -244,6 +334,51 @@ export class CatalogService {
 		actor: Actor,
 	): Promise<CatalogItem> {
 		return await this.changeStatus(tenantId, id, 'active', actor);
+	}
+
+	archiveMany(
+		tenantId: string,
+		ids: readonly string[],
+		actor: Actor,
+	): Promise<readonly CatalogBulkOutcome[]> {
+		return this.each(ids, (id) => this.archive(tenantId, id, actor));
+	}
+
+	restoreMany(
+		tenantId: string,
+		ids: readonly string[],
+		actor: Actor,
+	): Promise<readonly CatalogBulkOutcome[]> {
+		return this.each(ids, (id) => this.restore(tenantId, id, actor));
+	}
+
+	/* One outcome per id through the single-row path, so every accepted
+	   transition keeps its own history row and a refused id fails no other. */
+	private async each(
+		ids: readonly string[],
+		write: (id: string) => Promise<unknown>,
+	): Promise<readonly CatalogBulkOutcome[]> {
+		if (ids.length < 1 || ids.length > CATALOG_BULK_LIMIT) {
+			throw new CatalogServiceError(
+				'INVALID_INPUT',
+				`ids must name between 1 and ${CATALOG_BULK_LIMIT} items.`,
+			);
+		}
+		const outcomes: CatalogBulkOutcome[] = [];
+		for (const id of ids) {
+			try {
+				await write(id);
+				outcomes.push({ id, outcome: 'updated' });
+			} catch (error) {
+				if (!(error instanceof CatalogServiceError)) throw error;
+				outcomes.push(
+					error.code === 'CATALOG_ITEM_NOT_FOUND'
+						? { id, outcome: 'not-found' }
+						: { id, outcome: 'refused', reason: error.code },
+				);
+			}
+		}
+		return outcomes;
 	}
 
 	async delete(tenantId: string, id: string, actor: Actor): Promise<void> {

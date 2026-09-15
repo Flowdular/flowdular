@@ -49,6 +49,7 @@ import {
 	loadedListing,
 	memberSort,
 	membershipStatusMessage,
+	ownerCountAfter,
 	pageCursor,
 	replaceMember,
 	resetPageCursors,
@@ -88,6 +89,7 @@ export function UsersView(props: UsersViewProps) @{
 	const [actor] = useValue(usersState.state.actor);
 	const [passwordMinLength] = useValue(usersState.state.passwordMinLength);
 	const [memberCount, setMemberCount] = useValue(usersState.state.memberCount);
+	const [ownerCount, setOwnerCount] = useValue(usersState.state.ownerCount);
 	const actorIsOwner = actor?.role === 'owner';
 	const [status, setStatus] = useValue(usersState.state.status);
 	const [error, setError] = useValue(usersState.state.error);
@@ -217,6 +219,7 @@ export function UsersView(props: UsersViewProps) @{
 					context.passwordMinLength,
 				);
 				transaction.set(usersState.state.memberCount, context.memberCount);
+				transaction.set(usersState.state.ownerCount, context.ownerCount);
 				transaction.set(usersState.state.exportStarted, false);
 			}, 'users/context-loaded');
 			return true;
@@ -290,13 +293,17 @@ export function UsersView(props: UsersViewProps) @{
 		try {
 			const member = await run();
 			if (member) {
-				usersState.store.act(
-					(transaction) => transaction.set(
-						usersState.state.users,
-						replaceMember(users, member),
-					),
-					'users/member-updated',
-				);
+				usersState.store.act((transaction) => {
+					transaction.set(usersState.state.users, replaceMember(users, member));
+					transaction.set(
+						usersState.state.ownerCount,
+						ownerCountAfter(
+							ownerCount,
+							users.find((user) => user.accountId === member.accountId),
+							member,
+						),
+					);
+				}, 'users/member-updated');
 			}
 			setNotice(done);
 			setStatus('idle');
@@ -350,6 +357,7 @@ export function UsersView(props: UsersViewProps) @{
 			setFormSession((current) => current + 1);
 			setFormOpen(false);
 			setMemberCount(memberCount + 1);
+			if (user.role === 'owner') setOwnerCount(ownerCount + 1);
 			/* The new row belongs wherever the order puts it; the first page of
    the listing shows it or the page it is on does. */
 			await load(firstPage({}));
@@ -436,11 +444,13 @@ export function UsersView(props: UsersViewProps) @{
 		const role = bulkRole || (assignableRoles[0]?.key ?? '');
 		setRoleDialogOpen(false);
 		if (role === '') return;
-		void applyMany(
-			(ids) => assignRoleMany(ids, role, props.csrfToken),
-			'users.notice.roleAssignedMany',
-			'users.error.roleMany',
-		);
+		/* A role handed to several rows moves the owner count by an amount only
+   the server knows, so the context is read again with the page. */
+		void applyMany(async (ids) => {
+			const outcomes = await assignRoleMany(ids, role, props.csrfToken);
+			await loadContext();
+			return outcomes;
+		}, 'users.notice.roleAssignedMany', 'users.error.roleMany');
 	};
 
 	const openMember = (accountId: string) => {
@@ -466,6 +476,7 @@ export function UsersView(props: UsersViewProps) @{
 			await removeMember(accountId, props.csrfToken);
 			setSelectedAccountId(null);
 			setMemberCount(memberCount - 1);
+			if (selected.role === 'owner') setOwnerCount(ownerCount - 1);
 			await load(listing());
 		} catch (removeError) {
 			setError(message(removeError, t('users.error.remove')));
@@ -545,7 +556,10 @@ export function UsersView(props: UsersViewProps) @{
 				}
 				<TableCard
 					title={t('users.table.title')}
-					count={t('users.table.count', { accounts: memberCount })}
+					count={t('users.table.count', {
+						accounts: memberCount,
+						owners: ownerCount,
+					})}
 					search={<SearchField
 						value={query}
 						placeholder={t('users.search.placeholder')}

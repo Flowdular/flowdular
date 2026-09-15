@@ -1,12 +1,13 @@
 schemaVersion: 2
 id: system.core
-specVersion: 0.7.3
+specVersion: 0.8.0
 status: approved
 name: System Core
 description: Provides the application shell, platform health, module discovery, and the administration surface for module settings.
 profile: full
 capabilities:
   - api
+  - database
   - client
   - translations
 dependencies: []
@@ -26,6 +27,10 @@ invariants:
   - Module settings are declared by their owning module, stored per tenant by auth.core, and changed only through the settings administration API served by system.core, with an audit record.
   - system.core declares the workspace time zone as a shared tenant setting, system.core.timeZone, defaulting to UTC. Only a name the runtime zone database resolves is stored, in its canonical IANA spelling, and any module that declares a dependency on system.core reads it live through the settings runtime; a value this deployment cannot resolve reads back as UTC instead of failing the reader.
   - A feature flag is a module setting declared with kind flag, which is a non-secret boolean with a declared default, a label, a description, and tenant scope, the only scope a flag may take. It is stored, read, validated and overridden exactly like any other setting, so a module reads it on the request path through the settings runtime at no cost beyond the settings read itself; system.core adds no flag store, no flag endpoint and no second write path.
+  - The composed module set is CLI-owned and baked at build; a module cannot be added to a running application from the UI. system.core owns per-workspace activation of the modules the application already composes, stored in the tenant table system_module_activations under forced row-level security. A composed module without a row is active.
+  - system.core, auth.core, users.core and profile.core are required and always active. A module that another active module declares as a dependency, through a declared module dependency or a required public capability, cannot be deactivated; the refusal names the active dependents. A module cannot be activated while one of its dependencies is inactive.
+  - Every activation change appends one audit event, system.module.activated or system.module.deactivated, to the auth.core trail with the module id and the actor. Repeating the current state changes nothing and writes no event.
+  - Activation is enforced in three places from one per-workspace snapshot published as the public capability system.modules.v1 and memoised for at most thirty seconds per tenant, refreshed at once by a change made through this instance. defineEndpoint answers 403 MODULE_INACTIVE for an endpoint of an inactive module in the principal's workspace, required modules exempt; the application shell hides the navigation, views, widgets and command palette entries of inactive modules; the endpoint gate never reads a tenant id from the request.
 permissions:
   - id: system.workspace.access
     description: Open the authenticated ERP workspace.
@@ -44,6 +49,28 @@ dataOwnership:
   - Feature modules own their navigation metadata and screen implementations.
   - Module settings values are stored by auth.core on behalf of the declaring module; system.core owns the settings API, the per-module settings section of the Modules drawer, the Flags screen, and the settings permissions.
   - A feature flag is owned by the module that declares it; system.core only lists and edits it, and auth.core records the change.
+  - system.core owns the per-workspace module activation rows and the system.modules.v1 capability; the composed module set stays owned by the CLI and flowdular.json.
+entities:
+  - id: module-activation
+    name: Module activation
+    description: The last activation decision an owner made for one composed module in one workspace.
+    fields:
+      - id: moduleId
+        type: string
+        required: true
+        unique: tenant
+        maxLength: 128
+      - id: active
+        type: boolean
+        required: true
+      - id: changedBy
+        type: string
+        required: true
+        maxLength: 64
+        description: Account id of the owner who made the change.
+      - id: changedAt
+        type: datetime
+        required: true
 acceptanceScenarios:
   - id: SYSTEM-MULTI-VIEW-MODULE
     given: An enabled module contributes multiple valid navigation entries and matching views.
@@ -117,15 +144,85 @@ acceptanceScenarios:
     given: Enabled modules declare feature flags and a principal with system.settings.read opens the Flags screen in Administration > Modules.
     when: The principal reads the flags and a principal with system.settings.manage turns one on for this workspace, then resets it.
     then: Every declared flag is listed grouped by its owning module with its current value and a link to the audit trail; the override applies to that workspace alone and takes effect on the next settings read; a reset restores the declared default; each change appends one settings.flag.changed audit event carrying the module, the key, the previous and next values and the actor; and a principal without system.settings.manage is refused with 401 or 403 and changes nothing.
+  - id: SYSTEM-MODULE-ACTIVATE
+    given: An owner with system.settings.manage opens Administration > Modules, where every composed module is listed with its version, activation state and dependents and is active by default.
+    when: The owner deactivates an optional module, confirms the dialog, and later activates it again.
+    then: The module is inactive for that workspace alone and active again after the second change; each change is stored with the actor and appends one system.module.deactivated or system.module.activated audit event; a member without system.settings.manage sees the row action refused with a reason, and a request without a browser session, without the scope or without a CSRF token is refused with 401 or 403 and changes nothing.
+  - id: SYSTEM-MODULE-DEACTIVATE-REFUSED-DEPENDENCY
+    given: An active module that another active module depends on, or a required module.
+    when: An owner attempts to deactivate it.
+    then: The server refuses with 409 MODULE_HAS_ACTIVE_DEPENDENTS naming the active dependents, or 409 MODULE_REQUIRED, the screen shows the reason, nothing is stored and no audit event is written; once the dependents are inactive the deactivation is accepted, and activating a module whose dependency is inactive is refused with 409 MODULE_DEPENDENCY_INACTIVE.
+  - id: SYSTEM-MODULE-INACTIVE-ENDPOINT
+    given: A module an owner deactivated for the workspace.
+    when: A principal of that workspace calls any endpoint the module defines, or a principal of another workspace calls the same endpoint.
+    then: The first request is refused with 403 MODULE_INACTIVE after the permission check, the second is served, and an endpoint of system.core, auth.core, users.core or profile.core is never gated.
+  - id: SYSTEM-MODULE-INACTIVE-NAVIGATION
+    given: A module an owner deactivated for the workspace.
+    when: A member of that workspace opens the application shell.
+    then: The shell reads the active module ids through GET /api/system/modules/active, hides the module's navigation entries, views, workspace widgets and command palette search, returns a bookmark of one of its views to the dashboard, and shows every module when the read fails.
 screens:
   - id: flags
     kind: list
     title: Flags
     navigationGroup: Administration
+  - id: modules
+    kind: list
+    entity: module-activation
+    title: Modules
+    navigationGroup: Administration
+    columns:
+      - moduleId
+      - active
 actions:
+  - id: activate-module
+    entity: module-activation
+    permission: system.settings.manage
+    kind: update
+    risk: workspace-write
+    idempotent: true
+    description: Activate a composed optional module for this workspace after its dependencies are active.
+  - id: deactivate-module
+    entity: module-activation
+    permission: system.settings.manage
+    kind: update
+    risk: workspace-write
+    idempotent: true
+    description: Deactivate a composed optional module for this workspace unless a required module or an active dependent needs it.
   - id: set-flag
     permission: system.settings.manage
     kind: update
     risk: workspace-write
     idempotent: true
     description: Turn a declared feature flag on or off for this workspace, or clear the override so the module default applies again.
+decisions:
+  - id: D-MODULE-ACTIVATION-SCOPE
+    question: What can the administration UI change about modules?
+    answer: Per-workspace activation of the modules the application already composes; adding or removing a module stays a CLI operation because the composition is baked at build.
+    decidedBy: user
+  - id: D-MODULE-ACTIVATION-REQUIRED
+    question: Which modules can never be deactivated?
+    answer: system.core, auth.core, users.core and profile.core, and any module another active module depends on through a declared module dependency or a required public capability; the refusal names the active dependents.
+    decidedBy: user
+  - id: D-MODULE-ACTIVATION-DEFAULT
+    question: What is the state of a module nobody has touched?
+    answer: Active; the table holds only decisions an owner made, and a row is written for the module being changed, never for the whole set.
+    decidedBy: default
+  - id: D-MODULE-ACTIVATION-SNAPSHOT
+    question: How often is the activation read?
+    answer: Once per tenant into a memoised snapshot held for thirty seconds and at most 1024 tenants per process, invalidated at once by a change through the same instance; another instance sees the change within the snapshot lifetime.
+    decidedBy: default
+  - id: D-MODULE-ACTIVATION-AUDIT
+    question: Where is a change recorded?
+    answer: One system.module.activated or system.module.deactivated event in the auth.core audit trail, carrying the module id, the resulting state and the actor; a no-op repeat writes nothing.
+    decidedBy: default
+  - id: D-MODULE-ACTIVATION-SHELL
+    question: How does the shell learn which modules are active?
+    answer: From GET /api/system/modules/active, served to every member holding system.workspace.access, read once per workspace before the shell renders; a failed read shows every module because the server gate still refuses an inactive module's API.
+    decidedBy: default
+  - id: D-MODULE-ACTIVATION-AGENT-TOOLS
+    question: Are the agent tools of an inactive module withheld?
+    answer: Not yet. The harness tool registry has no per-tenant module hook and a tool carries no module id, so this is a documented follow-up; a tool of an inactive module that calls the module's service still runs.
+    decidedBy: default
+outOfScope:
+  - Adding or removing a module from a running application through the UI; the composition is CLI-owned and baked at build.
+  - Withholding the agent tools of an inactive module from a workspace, which needs a per-tenant hook in the harness tool registry.

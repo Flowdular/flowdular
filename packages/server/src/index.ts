@@ -202,3 +202,13 @@ export type {
 	ModuleServerContext,
 	ModuleServerComposition,
 } from './composition.ts';
+export {
+	bindModuleCompositions,
+	bindModuleRoutes,
+	installModuleActivationGate,
+	isRequiredModule,
+	MODULE_INACTIVE,
+	moduleOfRoute,
+	routeActiveForTenant,
+} from './module-activation.ts';
+export type { ModuleActivationGate } from './module-activation.ts';

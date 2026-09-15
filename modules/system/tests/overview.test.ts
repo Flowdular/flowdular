@@ -7,6 +7,7 @@ import { createAuthRuntime } from '@flowdular/module-auth/server';
 import { describe, expect, it } from 'vitest';
 import { SYSTEM_PERMISSIONS } from '../src/acl/permissions.ts';
 import { createSystemRoutes } from '../src/server/endpoints.ts';
+import { memoryActivationRuntime } from './support/activation.ts';
 
 function harness(workspaceRoot: string) {
 	const auth = createAuthRuntime({
@@ -17,11 +18,12 @@ function harness(workspaceRoot: string) {
 		emailConfirmation: false,
 		signInProviders: [],
 	});
-	const [, overview] = createSystemRoutes({
+	const overview = createSystemRoutes({
 		workspaceRoot,
 		auth,
 		settings: auth.moduleSettings,
-	});
+		activation: memoryActivationRuntime(),
+	}).find((route) => route.path === '/api/system/overview')!;
 	return { auth, overview };
 }
 

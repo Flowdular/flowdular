@@ -1,5 +1,8 @@
 import type { DatabaseMigration } from '@flowdular/sdk/database';
-import { postgresTenantTableState } from '@flowdular/sdk/database';
+import {
+	migrationObjectState,
+	postgresTenantTableState,
+} from '@flowdular/sdk/database';
 
 /* Every constant mirrors its migrations/<id>.up.sql file byte for byte;
    tests/migrations.test.ts fails on drift. */
@@ -108,6 +111,19 @@ CREATE POLICY catalog_idempotency_ledger_tenant_policy ON catalog_idempotency_le
   WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
 `;
 
+export const CATALOG_MIGRATION_005_LIST_INDEXES = `ALTER TABLE catalog_items ADD COLUMN IF NOT EXISTS updated_at BIGINT NOT NULL DEFAULT 0;
+-- The backfill runs as the migrator, which forced row security keeps out of
+-- every row without a tenant setting; lift the flag for the statement only.
+ALTER TABLE catalog_items NO FORCE ROW LEVEL SECURITY;
+UPDATE catalog_items SET updated_at = created_at WHERE updated_at = 0;
+ALTER TABLE catalog_items FORCE ROW LEVEL SECURITY;
+ALTER TABLE catalog_items ALTER COLUMN updated_at DROP DEFAULT;
+CREATE INDEX IF NOT EXISTS catalog_items_tenant_name_idx
+  ON catalog_items (tenant_id, lower(name), id);
+CREATE INDEX IF NOT EXISTS catalog_items_tenant_updated_idx
+  ON catalog_items (tenant_id, updated_at, id);
+`;
+
 export const databaseMigrations: readonly DatabaseMigration[] = [
 	{
 		id: '0001_catalog_core',
@@ -167,5 +183,15 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 						),
 				],
 			),
+	},
+	{
+		id: '0005_catalog_list_indexes',
+		sql: { postgresql: CATALOG_MIGRATION_005_LIST_INDEXES },
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() => database.schema.hasColumn('catalog_items', 'updated_at'),
+				() => database.schema.hasIndex('catalog_items_tenant_name_idx'),
+				() => database.schema.hasIndex('catalog_items_tenant_updated_idx'),
+			]),
 	},
 ];

@@ -4,6 +4,20 @@ import {
 	DatabaseCatalogRepository,
 	migrateCatalogDatabase,
 } from '../../src/services/database-repository.ts';
+import {
+	FIRST_LIST_PAGE,
+	type CatalogService,
+} from '../../src/services/catalog-service.ts';
+import type { CatalogItem } from '../../src/domain/types.ts';
+
+/** The first page at the ceiling in SKU order: every item of a small test tenant. */
+export async function allItems(
+	service: CatalogService,
+	tenantId: string,
+): Promise<readonly CatalogItem[]> {
+	return (await service.listPage(tenantId, { ...FIRST_LIST_PAGE, sort: 'sku' }))
+		.items;
+}
 
 const TENANT_TABLES = [
 	'catalog_items',

@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: users.core
-specVersion: 0.9.8
+specVersion: 0.11.0
 status: approved
 name: User Management Core
 description: Provides the tenant-scoped user directory and member administration (creation, display name, role assignment, per-member scopes, account status, password reset, session revocation, removal) through the public auth administration port.
@@ -11,7 +11,7 @@ capabilities:
   - translations
 dependencies:
   - id: system.core
-    range: ^0.7.0
+    range: ^0.8.0
   - id: auth.core
     range: ^0.13.0
   - id: search.core
@@ -56,7 +56,7 @@ dataOwnership:
 entities:
   - id: member
     name: Workspace member
-    description: One membership of the active workspace as the auth administration port answers it; auth.core owns the row and users.core reads and writes it only through the port, never through a table of its own.
+    description: One membership of the active workspace as the auth administration port answers it; auth.core owns the row and users.core reads and writes it only through the port, never through a table of its own. The joined-at instant the Members screen and the export show is the createdAt of the membership row, which auth.core owns and answers with every member.
     fields:
       - id: accountId
         type: string
@@ -146,6 +146,7 @@ screens:
       - status
       - passwordChangeRequired
       - scopes
+      - createdAt
     filters:
       - displayName
       - email
@@ -200,7 +201,7 @@ actions:
     kind: custom
     risk: read
     idempotent: true
-    description: Answer what the Members screen needs beside the page, namely the workspace roles, the grantable scopes, the acting principal's account id and role, the shared password minimum length and the member count.
+    description: Answer what the Members screen needs beside the page, namely the workspace roles, the grantable scopes, the acting principal's account id and role, the shared password minimum length, the member count and the owner count, both counted in the database.
   - id: create-member
     entity: member
     permission: users.members.manage
@@ -287,15 +288,11 @@ decisions:
     question: How are the two bulk actions of the Members screen declared?
     answer: As the actions set-status-many and assign-role-many, each behind users.members.manage and each applied one id at a time through the single-row path, with the USERS-STATUS-MANY and USERS-ROLE-MANY scenarios as their evidence.
     decidedBy: default
-  - id: D-USERS-JOINED-AT
-    question: Why does the member entity not declare the joined-at instant the export carries?
-    answer: The instant is auth.core's createdAt column, and createdAt is a field id every tenant table owns, so the specification cannot declare it; the export list still carries it as documented in the invariants.
-    decidedBy: default
 acceptanceScenarios:
   - id: USERS-LIST
     given: An authenticated principal has users.members.read in an active tenant.
     when: The principal requests the user directory.
-    then: Only memberships from the active tenant are returned without credential or session material, one page at a time, and the roles, grantable scopes, acting principal and member count the screen needs come from the separate context read.
+    then: Only memberships from the active tenant are returned without credential or session material, one page at a time, and the roles, grantable scopes, acting principal, member count and owner count the screen needs come from the separate context read.
   - id: USERS-PAGE
     given: A workspace holding more members than one page carries, and another workspace with members of its own.
     when: A screen lists the members with a page limit of at most 200, follows the cursor it receives to the end sorted by display name or by e-mail in either direction, narrows by a name or address prefix and by membership status, and presents a cursor this server did not sign, one of the other workspace, or one issued for another sort or filter.

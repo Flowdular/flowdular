@@ -87,6 +87,7 @@ describe('catalog migrations', () => {
 	it('declares forced PostgreSQL row security for every tenant table', () => {
 		for (const migration of databaseMigrations) {
 			const sql = migration.sql.postgresql ?? '';
+			if (!sql.includes('CREATE TABLE')) continue;
 			expect(sql).toContain('ENABLE ROW LEVEL SECURITY');
 			expect(sql).toContain('FORCE ROW LEVEL SECURITY');
 			expect(sql).toContain("current_setting('coreloom.tenant_id', true)");
@@ -110,9 +111,9 @@ describe('catalog migrations', () => {
 				transaction.execute({
 					text: `INSERT INTO catalog_items
 				 (id, tenant_id, sku, sku_normalized, name, kind, unit,
-				  base_price_minor, currency, status, created_at)
+				  base_price_minor, currency, status, created_at, updated_at)
 				 VALUES ('item-1', 'tenant-a', 'SKU-1', 'sku-1', 'Bolt', 'product',
-				         'pcs', 500, 'EUR', 'active', 1)`,
+				         'pcs', 500, 'EUR', 'active', 1, 1)`,
 				}),
 			{ tenantId: 'tenant-a', access: 'write' },
 		);
@@ -137,6 +138,61 @@ describe('catalog migrations', () => {
 				)
 			).rows,
 		).toEqual([{ sku: 'SKU-1' }]);
+	});
+
+	it('adds the update time and the list indexes, and refuses a half-applied schema', async () => {
+		await apply();
+		const schema = lease.database.schema;
+		expect(await schema.hasColumn('catalog_items', 'updated_at')).toBe(true);
+		expect(await schema.hasIndex('catalog_items_tenant_name_idx')).toBe(true);
+		expect(await schema.hasIndex('catalog_items_tenant_updated_idx')).toBe(
+			true,
+		);
+
+		await lease.database.execute({
+			text: 'DROP INDEX catalog_items_tenant_name_idx',
+		});
+		await lease.database.execute({
+			text: `DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = 'catalog.core'`,
+		});
+		expect((await status()).at(-1)).toMatchObject({
+			id: '0005_catalog_list_indexes',
+			state: 'partial',
+		});
+	});
+
+	it('backfills the update time of rows that predate it', async () => {
+		await runDatabaseMigrations(
+			lease.database,
+			'catalog.core',
+			databaseMigrations.slice(0, 4),
+		);
+		await lease.database.transaction(
+			(transaction) =>
+				transaction.execute({
+					text: `INSERT INTO catalog_items
+				 (id, tenant_id, sku, sku_normalized, name, kind, unit,
+				  base_price_minor, currency, status, created_at)
+				 VALUES ('item-1', 'tenant-a', 'SKU-1', 'sku-1', 'Bolt', 'product',
+				         'pcs', 500, 'EUR', 'active', 1234)`,
+				}),
+			{ tenantId: 'tenant-a', access: 'write' },
+		);
+		expect((await apply()).at(-1)).toMatchObject({
+			id: '0005_catalog_list_indexes',
+			action: 'applied',
+		});
+		expect(
+			(
+				await lease.database.transaction(
+					(transaction) =>
+						transaction.query<{ updated_at: string | number }>({
+							text: 'SELECT updated_at FROM catalog_items',
+						}),
+					{ tenantId: 'tenant-a', access: 'read' },
+				)
+			).rows.map((row) => Number(row.updated_at)),
+		).toEqual([1234]);
 	});
 
 	it('runs clean on a second migration pass', async () => {

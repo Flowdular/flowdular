@@ -8,7 +8,10 @@ import { agentActor, type Actor } from '@flowdular/sdk/kernel';
 import { CATALOG_PERMISSIONS } from '../acl/permissions.ts';
 import type { CatalogItemKind } from '../domain/types.ts';
 import type { CatalogRuntime } from '../server/runtime.ts';
-import { CatalogServiceError } from '../services/catalog-service.ts';
+import {
+	CatalogServiceError,
+	FIRST_LIST_PAGE,
+} from '../services/catalog-service.ts';
 
 const MAX_TOOL_ROWS = 200;
 const CREATE_OPERATION = 'catalog.item.create@1';
@@ -39,6 +42,7 @@ const CATALOG_ITEM_OUTPUT_SCHEMA = {
 		currency: { type: 'string' },
 		status: { type: 'string', enum: ['active', 'archived'] },
 		createdAt: { type: 'integer' },
+		updatedAt: { type: 'integer' },
 	},
 } as const;
 
@@ -91,15 +95,20 @@ export function catalogAgentTools(
 				const query = normalized(
 					(input as Record<string, unknown> | null)?.query,
 				);
-				return (await (await runtime.service()).list(context.tenantId))
-					.filter(
-						(item) =>
-							query === '' ||
-							item.id.toLocaleLowerCase('en-US') === query ||
-							item.sku.toLocaleLowerCase('en-US').includes(query) ||
-							item.name.toLocaleLowerCase('en-US').includes(query),
-					)
-					.slice(0, MAX_TOOL_ROWS);
+				const service = await runtime.service();
+				/* An exact id answers one row before any search, so the variable
+				   resolver that binds an item id never reads a page. */
+				const exact =
+					query === '' ? null : await service.get(context.tenantId, query);
+				if (exact) return [exact];
+				return (
+					await service.listPage(context.tenantId, {
+						...FIRST_LIST_PAGE,
+						sort: 'sku',
+						search: query,
+						limit: MAX_TOOL_ROWS,
+					})
+				).items;
 			},
 		}),
 		defineApiAgentTool({
