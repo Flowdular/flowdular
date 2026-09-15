@@ -1,9 +1,8 @@
-import {
-	createCipheriv,
-	createDecipheriv,
-	createHash,
-	randomBytes,
-} from 'node:crypto';
+/* Namespace import on purpose: this file is reachable from the kernel barrel,
+   which client code loads in development, and a named import from a Node
+   built-in throws at module evaluation in the browser. Nothing here runs
+   there; the access happens only inside the functions. */
+import * as nodeCrypto from 'node:crypto';
 
 export const KEYRING_KEY_BYTES = 32;
 export const KEYRING_IV_BYTES = 12;
@@ -68,7 +67,7 @@ export interface KeyringOptions {
  * stored row, so it is fixed.
  */
 export function keyFingerprint(key: Uint8Array): string {
-	return createHash('sha256').update(key).digest('hex').slice(0, 16);
+	return nodeCrypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
 }
 
 function assertKeyLength(key: Uint8Array, position: string): void {
@@ -121,7 +120,11 @@ export function createKeyring(options: KeyringOptions): Keyring {
 		envelope: StoredEnvelope,
 		aad: Uint8Array | undefined,
 	): Buffer => {
-		const decipher = createDecipheriv('aes-256-gcm', key, envelope.iv);
+		const decipher = nodeCrypto.createDecipheriv(
+			'aes-256-gcm',
+			key,
+			envelope.iv,
+		);
 		if (aad) decipher.setAAD(aad);
 		decipher.setAuthTag(envelope.tag);
 		return Buffer.concat([
@@ -135,8 +138,8 @@ export function createKeyring(options: KeyringOptions): Keyring {
 		previousKeyIds,
 		knows: (keyId) => keys.has(keyId),
 		seal(plaintext, aad) {
-			const iv = randomBytes(KEYRING_IV_BYTES);
-			const cipher = createCipheriv('aes-256-gcm', current, iv);
+			const iv = nodeCrypto.randomBytes(KEYRING_IV_BYTES);
+			const cipher = nodeCrypto.createCipheriv('aes-256-gcm', current, iv);
 			if (aad !== undefined) cipher.setAAD(bytes(aad));
 			const ciphertext = Buffer.concat([
 				cipher.update(bytes(plaintext)),

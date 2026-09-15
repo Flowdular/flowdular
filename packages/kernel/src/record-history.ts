@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import * as nodeCrypto from 'node:crypto';
 import type { Actor, ActorKind } from './actor.ts';
 
 export type HistoryValue = string | number | boolean | null;

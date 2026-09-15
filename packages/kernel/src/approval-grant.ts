@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import * as nodeCrypto from 'node:crypto';
 import {
 	KEYRING_KEY_BYTES,
 	KEYRING_MAX_PREVIOUS_KEYS,
@@ -150,7 +150,10 @@ function canonical(value: unknown): string {
  * whatever order either built the object in.
  */
 export function approvalInputDigest(input: unknown): string {
-	return createHash('sha256').update(canonical(input), 'utf8').digest('hex');
+	return nodeCrypto
+		.createHash('sha256')
+		.update(canonical(input), 'utf8')
+		.digest('hex');
 }
 
 function claimString(
@@ -212,7 +215,7 @@ function readClaims(value: unknown): ApprovalGrantClaims | undefined {
 }
 
 function signature(key: Buffer, signed: string): Buffer {
-	return createHmac('sha256', key).update(signed, 'utf8').digest();
+	return nodeCrypto.createHmac('sha256', key).update(signed, 'utf8').digest();
 }
 
 export function issueApprovalGrant(
@@ -274,7 +277,7 @@ export function verifyApprovalGrant(
 	const suppliedSignature = Buffer.from(supplied, 'base64url');
 	if (
 		suppliedSignature.byteLength !== expectedSignature.byteLength ||
-		!timingSafeEqual(suppliedSignature, expectedSignature)
+		!nodeCrypto.timingSafeEqual(suppliedSignature, expectedSignature)
 	) {
 		return invalid('The approval grant signature does not verify.');
 	}
