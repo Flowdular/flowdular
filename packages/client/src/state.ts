@@ -56,6 +56,8 @@ export function createShellState(initialView: ShellView = 'overview') {
 		commandOpen: false,
 		navigationOpen: false,
 		sidebarCollapsed: false,
+		/* The context rail folds to a strip; the workspace takes the room. */
+		contextRailCollapsed: false,
 		/* Administration starts folded: it is the longest group and the one a
 		   member opens least; the group holding the active view always shows. */
 		collapsedNavigationGroups: cell<readonly string[]>([]),
