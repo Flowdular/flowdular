@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import type { NavigationContribution } from '../src/contributions.ts';
 import {
 	coreNavigation,
 	navigationForIdentity,
+	railGroups,
+	selectedNavigationGroup,
 	viewHref,
 } from '../src/shell/navigation.ts';
 import { workspaceViewHref } from '../src/routing.ts';
@@ -124,5 +127,42 @@ describe('shell navigation groups', () => {
 		expect(
 			ownerItems.filter((item) => item.group === 'Development'),
 		).toHaveLength(1);
+	});
+});
+
+describe('navigation rail', () => {
+	it('lists the groups that have items, in the fixed order', () => {
+		const item = (group: NavigationContribution['group'], id: string) => ({
+			id,
+			viewId: id,
+			group,
+			label: id,
+			glyph: 'settings',
+			description: '',
+			scope: 'x',
+			order: 0,
+		});
+		expect(
+			railGroups([
+				item('Administration', 'modules'),
+				item('Workspace', 'dashboard'),
+				item('Agents', 'agents'),
+			]),
+		).toEqual(['Workspace', 'Agents', 'Administration']);
+		expect(railGroups([])).toEqual([]);
+	});
+
+	it('shows the pinned group, else the active one, else the first', () => {
+		const present = ['Workspace', 'Agents', 'Administration'] as const;
+		expect(selectedNavigationGroup('Agents', 'Workspace', present)).toBe(
+			'Agents',
+		);
+		expect(selectedNavigationGroup(null, 'Administration', present)).toBe(
+			'Administration',
+		);
+		expect(selectedNavigationGroup('Development', null, present)).toBe(
+			'Workspace',
+		);
+		expect(selectedNavigationGroup(null, null, [])).toBeNull();
 	});
 });

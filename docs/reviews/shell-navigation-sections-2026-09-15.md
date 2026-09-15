@@ -27,6 +27,20 @@ Retention sweeps, Exports, Legal holds); Integrations (Webhooks, Deliveries,
 Connectors, Connector calls); Platform (Settings, Modules, Usage, Limits,
 Reports).
 
+## Second pass: a rail of groups and a panel of items
+
+The owner found labelled blocks inside one long list unconvincing and asked
+for a second rail. The sidebar is now two columns: a 64 px rail with one
+button per group that has items (glyph and a short label, `NavigationRail`)
+and a panel with the items of the selected group (`PrimaryNavigation`, the
+Administration sections as headings). The selected group is the one a
+person clicked until the next navigation, else the group of the active
+view, else the first (`selectedNavigationGroup`, tested in
+`packages/client/tests/state.test.ts`). Collapsing the sidebar hides the
+panel and keeps the rail; a rail click reopens it. On a phone the whole
+sidebar slides in as before. `toggleNavigationGroup` stays exported for the
+platform API surface and is no longer used. Platform API 0.1.11.
+
 ## The dashboard metrics row had holes
 
 A metrics widget renders zero or several `Kpi` tiles (approvals hides at

@@ -33,6 +33,47 @@ export const NAVIGATION_GROUPS: readonly NavigationGroup[] = [
 	'Development',
 ];
 
+/* One glyph per group on the rail; the label under it is the short form. */
+export const NAVIGATION_GROUP_ICONS: Readonly<Record<NavigationGroup, string>> =
+	{
+		Workspace: 'dashboard',
+		Operations: 'catalog',
+		Agents: 'bot',
+		Automations: 'refresh',
+		Administration: 'settings',
+		Development: 'flask',
+	};
+
+export function navigationRailLabel(
+	t: Translate,
+	group: NavigationGroup,
+): string {
+	return t('shell.nav.rail.' + group.toLowerCase());
+}
+
+/** The groups the rail shows: those with at least one item, in the fixed order. */
+export function railGroups(
+	items: readonly NavigationContribution[],
+): readonly NavigationGroup[] {
+	return NAVIGATION_GROUPS.filter((group) =>
+		items.some((item) => item.group === group),
+	);
+}
+
+/**
+ * The group the panel shows: the pinned one while it still has items, else
+ * the group of the active view, else the first group on the rail.
+ */
+export function selectedNavigationGroup(
+	pinned: NavigationGroup | null,
+	active: NavigationGroup | null,
+	present: readonly NavigationGroup[],
+): NavigationGroup | null {
+	if (pinned !== null && present.includes(pinned)) return pinned;
+	if (active !== null && present.includes(active)) return active;
+	return present[0] ?? null;
+}
+
 export const NAVIGATION_SECTIONS: readonly NavigationSection[] = [
 	'people',
 	'identity',

@@ -21,6 +21,8 @@ import {
 	coreNavigation,
 	navigationForIdentity,
 	navigationGroupLabel,
+	railGroups,
+	selectedNavigationGroup,
 	viewHref,
 	workspaceHitRoute,
 } from './shell/navigation.ts';
@@ -31,7 +33,6 @@ import { WorkspaceContent } from './shell/WorkspaceContent.tsrx';
 import {
 	createShellState,
 	shellLocationFromUrl,
-	toggleNavigationGroup,
 	type ShellView,
 } from './state.ts';
 import '@flowdular/ui';
@@ -90,8 +91,8 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 	const [sidebarCollapsed, setSidebarCollapsed] = useValue(
 		shell.state.sidebarCollapsed,
 	);
-	const [collapsedNavigationGroups, setCollapsedNavigationGroups] = useValue(
-		shell.state.collapsedNavigationGroups,
+	const [navigationGroupSelected, setNavigationGroupSelected] = useValue(
+		shell.state.navigationGroupSelected,
 	);
 	const [query, setQuery] = useValue(shell.state.query);
 	const [tenantBusy, setTenantBusy] = useValue(shell.state.tenantBusy);
@@ -125,6 +126,7 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 		visibleNavigation.find(
 			(item) => item.viewId === effectiveView,
 		)?.group ?? null;
+	const presentNavigationGroups = railGroups(visibleNavigation);
 	const activeDefinition =
 		visibleNavigation.find((item) => item.viewId === effectiveView) ??
 			visibleNavigation[0];
@@ -164,6 +166,7 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 	const navigate = (viewId: ShellView) => {
 		history.pushState(null, '', viewHref(viewId, activeWorkspaceSlug));
 		setActiveView(viewId);
+		setNavigationGroupSelected(null);
 		setNavigationOpen(false);
 		setCommandOpen(false);
 	};
@@ -198,10 +201,9 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 		).finally(() => setTenantBusy(false));
 	};
 
-	const toggleGroup = (group: NavigationGroup) => {
-		setCollapsedNavigationGroups(
-			(current) => toggleNavigationGroup(current, group),
-		);
+	const selectGroup = (group: NavigationGroup) => {
+		setNavigationGroupSelected(group);
+		if (sidebarCollapsed) toggleSidebar();
 	};
 
 	const toggleSidebar = () => {
@@ -404,15 +406,19 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 				items={visibleNavigation}
 				activeView={effectiveView}
 				workspaceSlug={activeWorkspaceSlug}
-				collapsedGroups={collapsedNavigationGroups.filter(
-					(group) => group !== activeNavigationGroup,
+				groups={presentNavigationGroups}
+				selectedGroup={selectedNavigationGroup(
+					navigationGroupSelected,
+					activeNavigationGroup,
+					presentNavigationGroups,
 				)}
+				activeGroup={activeNavigationGroup}
 				tenantBusy={tenantBusy}
 				tenantError={tenantError}
 				onClose={() => setNavigationOpen(false)}
 				onToggleCollapsed={toggleSidebar}
 				onNavigate={navigate}
-				onToggleGroup={toggleGroup}
+				onSelectGroup={selectGroup}
 				onSelectTenant={switchTenant}
 			/>
 			<main class="workspace">
