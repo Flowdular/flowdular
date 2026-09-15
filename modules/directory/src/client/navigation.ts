@@ -16,6 +16,7 @@ export const directoryNavigation: readonly NavigationContribution[] = [
 		id: 'directory.navigation.tokens',
 		viewId: DIRECTORY_VIEWS.tokens,
 		group: 'Administration',
+		section: 'identity',
 		get label() {
 			return t('directory.navigation.tokens');
 		},
@@ -30,6 +31,7 @@ export const directoryNavigation: readonly NavigationContribution[] = [
 		id: 'directory.navigation.groups',
 		viewId: DIRECTORY_VIEWS.groups,
 		group: 'Administration',
+		section: 'identity',
 		get label() {
 			return t('directory.navigation.groups');
 		},
@@ -44,6 +46,7 @@ export const directoryNavigation: readonly NavigationContribution[] = [
 		id: 'directory.navigation.log',
 		viewId: DIRECTORY_VIEWS.log,
 		group: 'Administration',
+		section: 'identity',
 		get label() {
 			return t('directory.navigation.log');
 		},

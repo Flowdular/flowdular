@@ -1,6 +1,7 @@
 import { Tag, type TableColumn } from '@flowdular/ui';
 import { activeLocale, t } from '@flowdular/client';
 import type { ModuleCatalogEntry } from './api.ts';
+import { dependentsSummary } from './module-dependents.ts';
 
 export function activationTone(
 	module: ModuleCatalogEntry,
@@ -77,7 +78,10 @@ export function moduleColumns(): readonly TableColumn<ModuleCatalogEntry>[] {
 					module.dependents.length,
 				)}</span>
 				{module.dependents.length > 0
-					? <small class="ui-mono">{module.dependents.join(', ')}</small>
+					? <small
+							class="ui-mono"
+							title={module.dependents.join(', ')}
+						>{dependentsSummary(module.dependents, t, activeLocale())}</small>
 					: null}
 			</span>,
 		},

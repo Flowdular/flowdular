@@ -43,6 +43,7 @@
 	"table.platform": "Platform",
 	"table.permissions": "Permissions",
 	"table.dependents": "Dependents",
+	"table.dependentsMore": "{first} and {count} more",
 	"table.status": "Status",
 	"table.loading": "Loading modules…",
 	"table.emptyTitle": "No modules found",

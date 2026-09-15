@@ -17,6 +17,15 @@ export type NavigationGroup =
 	| 'Administration'
 	| 'Development';
 
+/* A section inside the Administration group: the sidebar renders a small
+   label above each one so twenty screens read as five short lists. */
+export type NavigationSection =
+	| 'people'
+	| 'identity'
+	| 'compliance'
+	| 'integrations'
+	| 'platform';
+
 export interface ModuleClientContext {
 	readonly csrfToken: string;
 	readonly scopes: readonly string[];
@@ -40,6 +49,8 @@ export interface NavigationContribution {
 	readonly id: string;
 	readonly viewId: string;
 	readonly group: NavigationGroup;
+	/** Meaningful in the Administration group; an item without one lists last. */
+	readonly section?: NavigationSection;
 	readonly label: string;
 	readonly glyph: string;
 	readonly description: string;

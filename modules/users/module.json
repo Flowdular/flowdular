@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "users.core",
 	"package": "@flowdular/module-users",
-	"version": "0.11.0",
+	"version": "0.11.1",
 	"profile": "full",
 	"capabilities": ["api", "client", "translations"],
 	"platform": {

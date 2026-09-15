@@ -149,6 +149,19 @@
 	overflow: hidden;
 }
 
+.nav-section__label {
+	padding: 10px 10px 2px;
+	font-size: 10.5px;
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--ink-4, var(--ink-3));
+}
+
+.nav-section__label:first-child {
+	padding-top: 2px;
+}
+
 .nav-item {
 	display: flex;
 	align-items: center;
@@ -444,6 +457,12 @@
 
 .module-slot--metrics {
 	grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+/* A metrics widget renders zero or several tiles; each tile is a cell of its
+   own and a widget with nothing to say leaves no hole. */
+.module-slot--metrics .module-slot__item {
+	display: contents;
 }
 
 .module-slot--main,

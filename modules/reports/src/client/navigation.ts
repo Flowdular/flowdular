@@ -14,6 +14,7 @@ export const reportsNavigation: readonly NavigationContribution[] = [
 		id: 'reports.navigation',
 		viewId: REPORTS_VIEWS.reports,
 		group: 'Administration',
+		section: 'platform',
 		get label() {
 			return t('reports.navigation.label');
 		},

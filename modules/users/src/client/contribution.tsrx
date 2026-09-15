@@ -33,6 +33,7 @@ export function createUsersClientContribution(
 				id: 'users.navigation',
 				viewId: 'users',
 				group: 'Administration',
+				section: 'people',
 				get label() {
 					return t('users.navigation.users');
 				},
@@ -47,6 +48,7 @@ export function createUsersClientContribution(
 				id: 'users.roles.navigation',
 				viewId: 'roles',
 				group: 'Administration',
+				section: 'people',
 				get label() {
 					return t('users.navigation.roles');
 				},
