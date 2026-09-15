@@ -649,6 +649,31 @@ describe('sorted member listing', () => {
 		expect(await service.countTenantMembers(otherTenantId)).toBe(1);
 	});
 
+	it('counts the owners of the workspace of the call and no other', async () => {
+		const { service, tenantId, otherTenantId, ownerAccountId } = await people();
+		expect(await service.countTenantOwners(tenantId)).toBe(1);
+		expect(await service.countTenantOwners(otherTenantId)).toBe(1);
+		const owner = {
+			accountId: ownerAccountId,
+			tenantId,
+			email: 'owner@example.com',
+			role: 'owner',
+			scopes: ['users.members.manage'],
+		};
+		const page = await service.listTenantMembersSorted(tenantId, {
+			sort: 'displayName',
+			direction: 'asc',
+			limit: 10,
+			membershipStatus: 'active',
+		});
+		const promoted = page.members.find((member) => member.role === 'member')!;
+		await service.assignMemberRole(owner, promoted.accountId, 'owner');
+		await service.setMembershipStatus(owner, promoted.accountId, 'disabled');
+		expect(await service.countTenantOwners(tenantId)).toBe(2);
+		expect(await service.countTenantMembers(tenantId)).toBe(6);
+		expect(await service.countTenantOwners(otherTenantId)).toBe(1);
+	});
+
 	it('refuses a sort, a direction, a status, a term or a limit it does not know', async () => {
 		const { service, tenantId } = await people();
 		const base = { sort: 'displayName', direction: 'asc', limit: 10 } as const;

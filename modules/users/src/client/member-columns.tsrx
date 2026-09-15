@@ -11,14 +11,14 @@ export function memberColumns(
 		{
 			key: 'displayName',
 			header: t('users.table.user'),
-			width: '22%',
+			width: '20%',
 			value: (user) => user.displayName,
 			cell: (user) => <b>{user.displayName}</b>,
 		},
 		{
 			key: 'email',
 			header: t('users.table.email'),
-			width: '24%',
+			width: '22%',
 			value: (user) => user.email,
 			cell: (user) => <span>{user.email}</span>,
 		},
@@ -34,7 +34,7 @@ export function memberColumns(
 		{
 			key: 'status',
 			header: t('users.table.status'),
-			width: '28%',
+			width: '22%',
 			cell: (user) => <span class="ui-table__state">
 				<Tag
 					tone={user.membershipStatus === 'active' ? 'success' : 'neutral'}
@@ -55,11 +55,20 @@ export function memberColumns(
 		{
 			key: 'scopes',
 			header: t('users.table.scopes'),
-			width: '12%',
+			width: '10%',
 			numeric: true,
 			cell: (user) => new Intl.NumberFormat(activeLocale()).format(
 				user.scopes.length,
 			),
+		},
+		/* No `value`: the server's sorted read has no keyset over created_at. */
+		{
+			key: 'createdAt',
+			header: t('users.table.joined'),
+			width: '12%',
+			cell: (user) => new Intl.DateTimeFormat(activeLocale(), {
+				dateStyle: 'medium',
+			}).format(user.createdAt),
 		},
 	];
 }

@@ -54,6 +54,8 @@ export interface UsersContext {
 	readonly passwordMinLength: number;
 	/** Every membership of the workspace, counted in the database. */
 	readonly memberCount: number;
+	/** The memberships holding the owner role, counted the same way. */
+	readonly ownerCount: number;
 }
 
 function actor(principal: AuthPrincipal): AuthActor {
@@ -105,6 +107,7 @@ export class UsersService {
 			actor: { accountId: principal.accountId, role: principal.role },
 			passwordMinLength: this.#auth.settings.passwordMinLength,
 			memberCount: await service.countTenantMembers(principal.tenantId),
+			ownerCount: await service.countTenantOwners(principal.tenantId),
 		};
 	}
 

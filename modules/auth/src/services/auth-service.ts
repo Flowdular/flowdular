@@ -886,6 +886,13 @@ export class AuthService {
 		);
 	}
 
+	/** How many members hold the owner role, counted the same way for the same screen. */
+	countTenantOwners(tenantId: string): Promise<number> {
+		return this.#repository.countTenantOwners(
+			this.#identifier(tenantId, 'tenantId'),
+		);
+	}
+
 	/**
 	 * The identity bindings this workspace's own providers assert about its
 	 * members, one bounded page per call. A binding names the account, the

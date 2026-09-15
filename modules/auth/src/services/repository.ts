@@ -363,6 +363,8 @@ export interface AuthRepository {
 	): Promise<TenantMemberSortedPage>;
 	/** How many memberships the workspace holds, an index range over 0030. */
 	countTenantMembers(tenantId: string): Promise<number>;
+	/** How many of those memberships hold the owner role, whatever their status. */
+	countTenantOwners(tenantId: string): Promise<number>;
 	/** One member, for a caller that needs a single account rather than the roll. */
 	findTenantMember(
 		tenantId: string,
