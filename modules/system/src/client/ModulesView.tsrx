@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	ConfirmDialog,
 	Drawer,
 	EmptyState,
 	Icon,
@@ -14,11 +15,21 @@ import {
 } from '@flowdular/ui';
 import { activeLocale, t } from '@flowdular/client';
 import { useValue } from 'segment-state';
-import { ApiError, loadModuleCatalog, type ModuleCatalogEntry } from './api.ts';
+import {
+	ApiError,
+	loadModuleCatalog,
+	setModuleActivation,
+	type ModuleCatalogEntry,
+} from './api.ts';
 import { FlagsPanel } from './FlagsPanel.tsrx';
-import { moduleColumns, surfaces } from './module-columns.tsrx';
+import {
+	activationLabel,
+	activationTone,
+	moduleColumns,
+	surfaces,
+} from './module-columns.tsrx';
 import { ModuleSettingsSection } from './ModuleSettingsSection.tsrx';
-import { createModulesClientState } from './state.ts';
+import { activationRefusal, createModulesClientState } from './state.ts';
 
 const TABS_ID = 'system-modules';
 
@@ -38,6 +49,11 @@ export function ModulesView(props: ModulesViewProps) @{
 		client.state.selectedModuleId,
 	);
 	const [tab, setTab] = useValue(client.state.tab);
+	const [pending, setPending] = useValue(client.state.pending);
+	const [busyModuleId, setBusyModuleId] = useValue(client.state.busyModuleId);
+	const [activationError, setActivationError] = useValue(
+		client.state.activationError,
+	);
 	const selected =
 		modules.find((module) => module.id === selectedModuleId) ?? null;
 	const term = query.trim().toLocaleLowerCase(activeLocale());
@@ -50,6 +66,9 @@ export function ModulesView(props: ModulesViewProps) @{
 							module.name.toLocaleLowerCase(activeLocale()).includes(term),
 				);
 	const enabled = modules.filter((module) => module.enabled);
+	const active = enabled.filter((module) => module.active);
+	const pendingModule =
+		modules.find((module) => module.id === pending?.moduleId) ?? null;
 
 	const refresh = async () => {
 		setStatus('loading');
@@ -75,6 +94,33 @@ export function ModulesView(props: ModulesViewProps) @{
 	useEffect(() => {
 		void refresh();
 	}, []);
+
+	/* The server is the authority on dependencies: a refusal it answers is
+   shown with the modules it named, and the catalog is read again so the
+   table never shows a state the workspace no longer has. */
+	const confirmActivation = async () => {
+		if (!pending) return;
+		setBusyModuleId(pending.moduleId);
+		setActivationError('');
+		try {
+			await setModuleActivation(
+				pending.moduleId,
+				pending.active,
+				props.csrfToken,
+			);
+			setPending(null);
+			await refresh();
+		} catch (changeError) {
+			setPending(null);
+			setActivationError(
+				changeError instanceof Error
+					? changeError.message
+					: t('system.error.activation'),
+			);
+		} finally {
+			setBusyModuleId(null);
+		}
+	};
 
 	<div class="ui-view">
 		<PageHeader
@@ -118,9 +164,13 @@ export function ModulesView(props: ModulesViewProps) @{
 					@if (status === 'error') {
 						<Alert>{error}</Alert>
 					}
+					@if (activationError !== '') {
+						<Alert>{activationError}</Alert>
+					}
 					<TableCard
 						title={t('system.table.title')}
 						count={t('system.table.count', {
+							active: active.length,
 							enabled: enabled.length,
 							total: modules.length,
 						})}
@@ -158,6 +208,23 @@ export function ModulesView(props: ModulesViewProps) @{
 								icon: 'external',
 								onSelect: () => setSelectedModuleId(module.id),
 							},
+							{
+								id: 'activation',
+								label: module.enabled && module.active
+									? t('system.action.deactivate')
+									: t('system.action.activate'),
+								icon: module.enabled && module.active ? 'x' : 'play',
+								tone: module.enabled && module.active ? 'danger' : 'default',
+								disabled: busyModuleId !== null ||
+									activationRefusal(module, props.canManageSettings, t) !==
+										null,
+								reason: activationRefusal(module, props.canManageSettings, t) ??
+									undefined,
+								onSelect: () => setPending({
+									moduleId: module.id,
+									active: !module.active,
+								}),
+							},
 						]}
 						noteIcon="code"
 						note={<>
@@ -173,6 +240,28 @@ export function ModulesView(props: ModulesViewProps) @{
 				</>
 			}
 		</div>
+		<ConfirmDialog
+			open={pending !== null}
+			title={pending?.active
+				? t('system.activation.confirmActivateTitle', {
+						module: pendingModule?.name ?? pending.moduleId,
+					})
+				: t('system.activation.confirmDeactivateTitle', {
+						module: pendingModule?.name ?? pending?.moduleId ?? '',
+					})}
+			confirmLabel={pending?.active
+				? t('system.action.activate')
+				: t('system.action.deactivate')}
+			cancelLabel={t('system.action.cancel')}
+			tone={pending?.active ? 'primary' : 'danger'}
+			busy={busyModuleId !== null}
+			onConfirm={() => void confirmActivation()}
+			onCancel={() => setPending(null)}
+		>
+			{pending?.active
+				? t('system.activation.confirmActivate')
+				: t('system.activation.confirmDeactivate')}
+		</ConfirmDialog>
 		<Drawer
 			open={tab === 'catalog' && selected !== null}
 			title={selected?.name ?? t('system.drawer.module')}
@@ -224,11 +313,9 @@ function ModuleDetail(props: {
 					</span>
 					<span class="ui-cell">
 						<small>{t('system.table.status')}</small>
-						<Tag tone={props.module.enabled ? 'success' : 'neutral'} dot>
-							{props.module.enabled
-								? t('system.status.enabled')
-								: t('system.status.available')}
-						</Tag>
+						<Tag tone={activationTone(props.module)} dot>{activationLabel(
+							props.module,
+						)}</Tag>
 					</span>
 				</div>
 				<span class="ui-cell">
@@ -240,6 +327,12 @@ function ModuleDetail(props: {
 				<span class="ui-cell">
 					<small>{t('system.detail.directory')}</small>
 					<span class="ui-mono">{props.module.directory}</span>
+				</span>
+				<span class="ui-cell">
+					<small>{t('system.table.dependents')}</small>
+					<span class="ui-mono">
+						{props.module.dependents.join(', ') || t('system.value.none')}
+					</span>
 				</span>
 			</div>
 			<div class="ui-form__section">

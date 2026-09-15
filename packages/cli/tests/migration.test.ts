@@ -130,6 +130,7 @@ describe('migration status', () => {
 			'profile.core',
 			'sandbox.core',
 			'search.core',
+			'system.core',
 			'workflows.core',
 		]);
 		expect(result.data.unmanaged).toEqual([]);

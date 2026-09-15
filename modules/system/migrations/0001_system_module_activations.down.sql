@@ -1,0 +1,2 @@
+DROP POLICY IF EXISTS system_module_activations_tenant_policy ON system_module_activations;
+DROP TABLE IF EXISTS system_module_activations;

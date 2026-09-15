@@ -26,12 +26,57 @@ import {
 	SYSTEM_MODULE_ID,
 	TENANT_TIME_ZONE_KEY,
 } from '../domain/time-zone.ts';
-import { readModuleCatalog } from './module-catalog.ts';
+import type { ModuleActivationEntry } from '../domain/modules.ts';
+import { ModuleActivationError } from '../services/module-activation-service.ts';
+import {
+	readModuleCatalog,
+	type ModuleCatalogEntry,
+} from './module-catalog.ts';
+import type { SystemRuntime } from './runtime.ts';
 
 export interface SystemRouteOptions {
 	readonly workspaceRoot: string;
 	readonly auth: AuthRuntime;
 	readonly settings: ModuleSettingsRuntime;
+	/** Per-workspace activation of the composed modules. */
+	readonly activation: SystemRuntime;
+}
+
+/** A catalog row with its activation in the asking principal's workspace. */
+export interface ModuleCatalogPayload extends ModuleCatalogEntry {
+	readonly active: boolean;
+	readonly optional: boolean;
+	readonly dependents: readonly string[];
+}
+
+/* A module the workspace holds but the application does not compose has no
+   activation to speak of: it is listed as available and never active. */
+function catalogPayload(
+	entry: ModuleCatalogEntry,
+	activation: ModuleActivationEntry | undefined,
+): ModuleCatalogPayload {
+	return {
+		...entry,
+		active: activation?.active ?? false,
+		optional: activation?.optional ?? true,
+		dependents: activation?.dependents ?? [],
+	};
+}
+
+function activationProblem(error: unknown): Response {
+	if (error instanceof ModuleActivationError) {
+		return jsonResponse(
+			{
+				error: {
+					code: error.code,
+					message: error.message,
+					modules: error.modules,
+				},
+			},
+			error.status,
+		);
+	}
+	return problemResponse(error, 'The module activation request failed.');
 }
 
 const MAIL_TRANSPORT_REQUIRED =
@@ -236,8 +281,9 @@ async function readActivity(
 	return keys.map((date) => ({ date, count: counts.get(date) ?? 0 }));
 }
 
-/* Metadata only: manifests and specifications from the workspace. Enabling or
-   disabling a module stays a CLI operation with its own approval trail. */
+/* Manifests and specifications from the workspace, with the per-workspace
+   activation of the composed ones. Enabling or disabling a module stays a CLI
+   operation with its own approval trail. */
 export function createSystemRoutes(options: SystemRouteOptions) {
 	const modules = defineEndpoint({
 		id: 'system.modules.list',
@@ -245,10 +291,18 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 		methods: ['GET'],
 		access: { kind: 'permission', permission: SYSTEM_PERMISSIONS.modulesRead },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: () => {
+		handler: async ({ octane }) => {
 			try {
+				const principal = principalFromContext(octane)!;
+				const activations = new Map(
+					(
+						await (await options.activation.service()).list(principal.tenantId)
+					).map((entry) => [entry.id, entry]),
+				);
 				return jsonResponse({
-					modules: readModuleCatalog(options.workspaceRoot),
+					modules: readModuleCatalog(options.workspaceRoot).map((entry) =>
+						catalogPayload(entry, activations.get(entry.id)),
+					),
 					commands: {
 						enable: 'pnpm flowdular module enable <id> --apply',
 						disable: 'pnpm flowdular module disable <id> --apply',
@@ -262,6 +316,66 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 			}
 		},
 	});
+
+	const activeModules = defineEndpoint({
+		id: 'system.modules.active',
+		path: '/api/system/modules/active',
+		methods: ['GET'],
+		access: {
+			kind: 'permission',
+			permission: SYSTEM_PERMISSIONS.workspaceAccess,
+		},
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			try {
+				const principal = principalFromContext(octane)!;
+				const service = await options.activation.service();
+				return jsonResponse({
+					modules: await service.activeIds(principal.tenantId),
+				});
+			} catch (error) {
+				return activationProblem(error);
+			}
+		},
+	});
+
+	const activation = (id: string, path: string, active: boolean) =>
+		defineEndpoint({
+			id,
+			path,
+			methods: ['POST'],
+			access: {
+				kind: 'permission',
+				permission: SYSTEM_PERMISSIONS.settingsManage,
+			},
+			resolveIdentity: endpointIdentityFromContext,
+			handler: async ({ octane }) => {
+				const denial = sessionMutationDenial(octane, options.auth);
+				if (denial) return denial;
+				try {
+					const principal = principalFromContext(octane)!;
+					const body = await readJsonObject(octane.request);
+					const moduleId = requiredString(body, 'moduleId', { max: 128 });
+					const service = await options.activation.service();
+					const entry = active
+						? await service.activate(principal, moduleId)
+						: await service.deactivate(principal, moduleId);
+					return jsonResponse({ module: entry });
+				} catch (error) {
+					return activationProblem(error);
+				}
+			},
+		});
+	const activateModule = activation(
+		'system.modules.activate',
+		'/api/system/modules/activate',
+		true,
+	);
+	const deactivateModule = activation(
+		'system.modules.deactivate',
+		'/api/system/modules/deactivate',
+		false,
+	);
 
 	/* Module names come from the workspace specs; the catalog is read once per
 	   composition, which in development is once per reload. */
@@ -409,6 +523,9 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 
 	return [
 		modules.serverRoute,
+		activeModules.serverRoute,
+		activateModule.serverRoute,
+		deactivateModule.serverRoute,
 		overview.serverRoute,
 		settingsList.serverRoute,
 		settingsUpdate.serverRoute,
@@ -417,6 +534,9 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 
 export const endpoints = [
 	'system.modules.list',
+	'system.modules.active',
+	'system.modules.activate',
+	'system.modules.deactivate',
 	'system.overview.read',
 	'system.settings.list',
 	'system.settings.update',

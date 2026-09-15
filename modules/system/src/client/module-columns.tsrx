@@ -2,6 +2,22 @@ import { Tag, type TableColumn } from '@flowdular/ui';
 import { activeLocale, t } from '@flowdular/client';
 import type { ModuleCatalogEntry } from './api.ts';
 
+export function activationTone(
+	module: ModuleCatalogEntry,
+): 'success' | 'warning' | 'ink' | 'neutral' {
+	if (!module.enabled) return 'neutral';
+	if (!module.optional) return 'ink';
+	return module.active ? 'success' : 'warning';
+}
+
+export function activationLabel(module: ModuleCatalogEntry): string {
+	if (!module.enabled) return t('system.status.available');
+	if (!module.optional) return t('system.status.required');
+	return module.active
+		? t('system.status.active')
+		: t('system.status.inactive');
+}
+
 export function surfaces(module: ModuleCatalogEntry): string {
 	const parts = [
 		module.platform.server && 'server',
@@ -37,7 +53,7 @@ export function moduleColumns(): readonly TableColumn<ModuleCatalogEntry>[] {
 		{
 			key: 'platform',
 			header: t('system.table.platform'),
-			width: '30%',
+			width: '20%',
 			cell: (module) => <span class="ui-cell">
 				<span>{surfaces(module)}</span>
 				<small>{module.capabilities.join(', ')}</small>
@@ -53,14 +69,24 @@ export function moduleColumns(): readonly TableColumn<ModuleCatalogEntry>[] {
 			),
 		},
 		{
+			key: 'dependents',
+			header: t('system.table.dependents'),
+			width: '14%',
+			cell: (module) => <span class="ui-cell">
+				<span>{new Intl.NumberFormat(activeLocale()).format(
+					module.dependents.length,
+				)}</span>
+				{module.dependents.length > 0
+					? <small class="ui-mono">{module.dependents.join(', ')}</small>
+					: null}
+			</span>,
+		},
+		{
 			key: 'status',
 			header: t('system.table.status'),
 			width: '14%',
-			cell: (module) => <Tag tone={module.enabled ? 'success' : 'neutral'} dot>
-				{module.enabled
-					? t('system.status.enabled')
-					: t('system.status.available')}
-			</Tag>,
+			cell: (module) =>
+				<Tag tone={activationTone(module)} dot>{activationLabel(module)}</Tag>,
 		},
 	];
 }

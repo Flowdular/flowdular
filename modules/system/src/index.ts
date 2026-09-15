@@ -21,3 +21,16 @@ export {
 	TENANT_TIME_ZONE_KEY,
 	tenantTimeZone,
 } from './domain/time-zone.ts';
+export {
+	activeModuleIds,
+	composedModules,
+	dependentsOf,
+	isRequiredModule,
+	SYSTEM_MODULES_CAPABILITY,
+} from './domain/modules.ts';
+export type {
+	ComposedModule,
+	ManifestDependencies,
+	ModuleActivationChange,
+	ModuleActivationEntry,
+} from './domain/modules.ts';

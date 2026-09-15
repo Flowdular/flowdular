@@ -3,14 +3,15 @@
 	"schemaVersion": 1,
 	"id": "system.core",
 	"package": "@flowdular/module-system",
-	"version": "0.7.3",
+	"version": "0.8.0",
 	"profile": "full",
-	"capabilities": ["api", "client", "translations"],
+	"capabilities": ["api", "database", "client", "translations"],
 	"platform": {
 		"server": true,
 		"client": true
 	},
 	"dependencies": [],
+	"provides": ["system.modules.v1"],
 	"tenancy": "required",
 	"locales": ["en", "pl"],
 	"stability": "experimental",
