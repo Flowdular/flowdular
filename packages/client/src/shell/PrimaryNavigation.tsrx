@@ -7,6 +7,8 @@ import type { ShellView } from '../state.ts';
 import { t } from '../i18n/runtime.ts';
 import {
 	navigationGroupLabel,
+	navigationSectionLabel,
+	navigationSections,
 	NAVIGATION_GROUPS,
 	viewHref,
 } from './navigation.ts';
@@ -47,24 +49,34 @@ export function PrimaryNavigation(props: PrimaryNavigationProps) @{
 						aria-hidden={props.collapsedGroups.includes(group)}
 					>
 						<div class="nav-group__items">
-							@for (const item of props.items.filter(
-								(item) => item.group === group,
-							); key item.id) {
-								<a
-									class={[
-										'nav-item',
-										props.activeView === item.viewId && 'nav-item--active',
-									]}
-									href={viewHref(item.viewId, props.workspaceSlug)}
-									title={item.description}
-									onClick={(event) => {
-										event.preventDefault();
-										props.onNavigate(item.viewId);
-									}}
-								>
-									<Icon name={item.glyph} size={18} />
-									<span class="nav-item__label">{item.label}</span>
-								</a>
+							@for (const block of navigationSections(
+								props.items.filter((item) => item.group === group),
+							); key block.section ?? 'rest') {
+								<>
+									@if (block.section !== null) {
+										<span class="nav-section__label">{navigationSectionLabel(
+											t,
+											block.section,
+										)}</span>
+									}
+									@for (const item of block.items; key item.id) {
+										<a
+											class={[
+												'nav-item',
+												props.activeView === item.viewId && 'nav-item--active',
+											]}
+											href={viewHref(item.viewId, props.workspaceSlug)}
+											title={item.description}
+											onClick={(event) => {
+												event.preventDefault();
+												props.onNavigate(item.viewId);
+											}}
+										>
+											<Icon name={item.glyph} size={18} />
+											<span class="nav-item__label">{item.label}</span>
+										</a>
+									}
+								</>
 							}
 						</div>
 					</div>

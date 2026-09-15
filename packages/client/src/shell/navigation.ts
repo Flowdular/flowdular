@@ -2,6 +2,7 @@ import { applicationPath } from '../routing.ts';
 import type {
 	NavigationContribution,
 	NavigationGroup,
+	NavigationSection,
 } from '../contributions.ts';
 import type { Translate } from '../i18n/translations.ts';
 import type { ShellView } from '../state.ts';
@@ -31,6 +32,46 @@ export const NAVIGATION_GROUPS: readonly NavigationGroup[] = [
 	'Administration',
 	'Development',
 ];
+
+export const NAVIGATION_SECTIONS: readonly NavigationSection[] = [
+	'people',
+	'identity',
+	'compliance',
+	'integrations',
+	'platform',
+];
+
+export function navigationSectionLabel(
+	t: Translate,
+	section: NavigationSection,
+): string {
+	return t('shell.nav.section.' + section);
+}
+
+/**
+ * The items of one group in the order the sidebar shows them: sections in
+ * NAVIGATION_SECTIONS order, each keeping the items' own order, then the
+ * items without a section under no label. A group where nothing declares a
+ * section answers one unlabelled block.
+ */
+export function navigationSections(
+	items: readonly NavigationContribution[],
+): readonly {
+	readonly section: NavigationSection | null;
+	readonly items: readonly NavigationContribution[];
+}[] {
+	const blocks: {
+		readonly section: NavigationSection | null;
+		readonly items: readonly NavigationContribution[];
+	}[] = [];
+	for (const section of NAVIGATION_SECTIONS) {
+		const inSection = items.filter((item) => item.section === section);
+		if (inSection.length > 0) blocks.push({ section, items: inSection });
+	}
+	const rest = items.filter((item) => item.section === undefined);
+	if (rest.length > 0) blocks.push({ section: null, items: rest });
+	return blocks;
+}
 
 /* The group name is an identifier in the contribution and a label on screen;
    only the label is translated. */

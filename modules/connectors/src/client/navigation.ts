@@ -15,6 +15,7 @@ export const connectorsNavigation: readonly NavigationContribution[] = [
 		id: 'connectors.navigation.instances',
 		viewId: CONNECTORS_VIEWS.instances,
 		group: 'Administration',
+		section: 'integrations',
 		get label() {
 			return t('connectors.navigation.instances');
 		},
@@ -29,6 +30,7 @@ export const connectorsNavigation: readonly NavigationContribution[] = [
 		id: 'connectors.navigation.calls',
 		viewId: CONNECTORS_VIEWS.calls,
 		group: 'Administration',
+		section: 'integrations',
 		get label() {
 			return t('connectors.navigation.calls');
 		},

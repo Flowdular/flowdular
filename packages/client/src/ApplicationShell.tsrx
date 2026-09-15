@@ -121,6 +121,10 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 	const effectiveView = reachableViews.has(activeView)
 		? activeView
 		: 'overview';
+	const activeNavigationGroup =
+		visibleNavigation.find(
+			(item) => item.viewId === effectiveView,
+		)?.group ?? null;
 	const activeDefinition =
 		visibleNavigation.find((item) => item.viewId === effectiveView) ??
 			visibleNavigation[0];
@@ -400,7 +404,9 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 				items={visibleNavigation}
 				activeView={effectiveView}
 				workspaceSlug={activeWorkspaceSlug}
-				collapsedGroups={collapsedNavigationGroups}
+				collapsedGroups={collapsedNavigationGroups.filter(
+					(group) => group !== activeNavigationGroup,
+				)}
 				tenantBusy={tenantBusy}
 				tenantError={tenantError}
 				onClose={() => setNavigationOpen(false)}

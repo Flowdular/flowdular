@@ -15,6 +15,7 @@ export const meteringNavigation: readonly NavigationContribution[] = [
 		id: 'metering.navigation.usage',
 		viewId: METERING_VIEWS.usage,
 		group: 'Administration',
+		section: 'platform',
 		get label() {
 			return t('metering.navigation.usage');
 		},
@@ -29,6 +30,7 @@ export const meteringNavigation: readonly NavigationContribution[] = [
 		id: 'metering.navigation.limits',
 		viewId: METERING_VIEWS.limits,
 		group: 'Administration',
+		section: 'platform',
 		get label() {
 			return t('metering.navigation.limits');
 		},

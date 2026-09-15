@@ -35,6 +35,7 @@ export const notificationsNavigation: readonly NavigationContribution[] = [
 		id: 'notifications.navigation.webhooks',
 		viewId: NOTIFICATIONS_VIEWS.webhooks,
 		group: 'Administration',
+		section: 'integrations',
 		get label() {
 			return t('notifications.navigation.webhooks');
 		},
@@ -49,6 +50,7 @@ export const notificationsNavigation: readonly NavigationContribution[] = [
 		id: 'notifications.navigation.deliveries',
 		viewId: NOTIFICATIONS_VIEWS.deliveries,
 		group: 'Administration',
+		section: 'integrations',
 		get label() {
 			return t('notifications.navigation.deliveries');
 		},

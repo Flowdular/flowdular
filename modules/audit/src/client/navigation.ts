@@ -17,6 +17,7 @@ export const auditNavigation: readonly NavigationContribution[] = [
 		id: 'audit.navigation.data-classes',
 		viewId: AUDIT_VIEWS.dataClasses,
 		group: 'Administration',
+		section: 'compliance',
 		get label() {
 			return t('audit.navigation.dataClasses');
 		},
@@ -31,6 +32,7 @@ export const auditNavigation: readonly NavigationContribution[] = [
 		id: 'audit.navigation.sweeps',
 		viewId: AUDIT_VIEWS.sweeps,
 		group: 'Administration',
+		section: 'compliance',
 		get label() {
 			return t('audit.navigation.sweeps');
 		},
@@ -45,6 +47,7 @@ export const auditNavigation: readonly NavigationContribution[] = [
 		id: 'audit.navigation.exports',
 		viewId: AUDIT_VIEWS.exports,
 		group: 'Administration',
+		section: 'compliance',
 		get label() {
 			return t('audit.navigation.exports');
 		},
@@ -59,6 +62,7 @@ export const auditNavigation: readonly NavigationContribution[] = [
 		id: 'audit.navigation.holds',
 		viewId: AUDIT_VIEWS.holds,
 		group: 'Administration',
+		section: 'compliance',
 		get label() {
 			return t('audit.navigation.holds');
 		},

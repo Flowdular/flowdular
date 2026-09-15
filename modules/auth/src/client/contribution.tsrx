@@ -39,6 +39,7 @@ export function createAuthClientContribution(
 				id: 'auth.navigation.api-tokens',
 				viewId: 'api-tokens',
 				group: 'Administration',
+				section: 'identity',
 				get label() {
 					return t('auth.navigation.tokens');
 				},
@@ -53,6 +54,7 @@ export function createAuthClientContribution(
 				id: 'auth.navigation.providers',
 				viewId: 'identity-providers',
 				group: 'Administration',
+				section: 'identity',
 				get label() {
 					return t('auth.navigation.providers');
 				},
@@ -67,6 +69,7 @@ export function createAuthClientContribution(
 				id: 'auth.navigation.audit',
 				viewId: 'audit',
 				group: 'Administration',
+				section: 'compliance',
 				get label() {
 					return t('auth.navigation.audit');
 				},
@@ -81,6 +84,7 @@ export function createAuthClientContribution(
 				id: 'auth.navigation.settings',
 				viewId: 'settings',
 				group: 'Administration',
+				section: 'platform',
 				get label() {
 					return t('auth.navigation.settings');
 				},

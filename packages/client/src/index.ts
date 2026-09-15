@@ -21,6 +21,7 @@ export type {
 	ModuleClientContribution,
 	NavigationContribution,
 	NavigationGroup,
+	NavigationSection,
 	WidgetContribution,
 	WorkspaceSlot,
 } from './contributions.ts';
