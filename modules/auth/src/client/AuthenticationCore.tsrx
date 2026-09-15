@@ -93,6 +93,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 	);
 	const [signInWorkspaceName] = useValue(props.auth.state.signInWorkspaceName);
 	const [workspaceFixed] = useValue(props.auth.state.signInWorkspaceFromUrl);
+	const [ssoOpen, setSsoOpen] = useValue(props.auth.state.signInSsoOpen);
 	const [emailConfirmation] = useValue(props.auth.state.emailConfirmation);
 	const [confirmationEmail] = useValue(props.auth.state.confirmationEmail);
 	const [passwordMinLength] = useValue(props.auth.state.passwordMinLength);
@@ -467,7 +468,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 							</p>
 						</header>
 						<form style="display:grid;gap:14px" onSubmit={submit}>
-							@if (!workspaceFixed) {
+							@if (!workspaceFixed && ssoOpen) {
 								<FormField
 									label={t('auth.signin.workspace.label')}
 									help={t('auth.signin.workspace.help')}
@@ -532,6 +533,16 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 							type="button"
 							onClick={() => changeScreen('forgot-password')}
 						>{t('auth.security.passwordReset.forgot')}</button>
+						@if (!workspaceFixed && !ssoOpen) {
+							<div class="auth-providers">
+								<span class="auth-providers__divider">{t(
+									'auth.signin.orProvider',
+								)}</span>
+								<Button block onClick={() => setSsoOpen(true)}>{t(
+									'auth.signin.sso.action',
+								)}</Button>
+							</div>
+						}
 						@if (providerOptions.length > 0) {
 							<div class="auth-providers">
 								<span class="auth-providers__divider">{t(

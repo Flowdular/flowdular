@@ -108,6 +108,9 @@ export function createAuthClientState(initialScreen: AuthScreen = 'sign-in') {
 		signInWorkspace: '',
 		signInWorkspaceName: '',
 		signInWorkspaceFromUrl: false,
+		/* The workspace field stays hidden until the person asks for single
+		   sign-on; a password sign-in needs no workspace. */
+		signInSsoOpen: false,
 		providerOptions: cell<readonly SignInProviderOption[]>([]),
 		signUpStep: cell<SignUpStep>(1),
 		workspaceName: '',
