@@ -40,7 +40,7 @@ export function composeModuleServer(
 				agentDefinitions: context.agentDefinitions.forModule('system.core'),
 				dataClasses: context.dataClasses.forModule('system.core'),
 				capabilities: context.capabilities.forModule('system.core', {
-					provides: [],
+					provides: ['system.modules.v1'],
 					requires: [],
 				}),
 				metrics: createModuleMetrics('system.core'),
