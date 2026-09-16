@@ -35,9 +35,10 @@ shared primitives, tokens, and the rules for using them.
    Numbers in tables and KPIs are tabular (`.num`, `ui-kpi__value`).
 7. Layout containment is owned by the primitives, not by the screen. Children
    of `ui-view`, `ui-two-col`, `ui-grid-2`, and `ui-kpi-grid` are shrinkable
-   tracks, long words wrap, and the workspace never scrolls horizontally. Wide
-   content scrolls inside its own container (`ui-table-wrap`), so one long
-   value can never push the page sideways.
+   tracks, long words wrap (inside a table they end in an ellipsis instead),
+   and the workspace never scrolls horizontally. Wide content scrolls inside
+   its own container (`ui-table-wrap`), so one long value can never push the
+   page sideways.
 8. `Kpi` is a stat tile. Its value is a number or a short state word; addresses,
    identifiers, and paths belong in `note` or a `ui-mono` line.
 9. A screen never splits its width between records and a form. Records own the
@@ -143,13 +144,9 @@ stays open exactly while another page follows, and `summary(page)` reads a
 `keysetPage` with the page index, size and first row but no page count, because
 nobody counted the set.
 
-Every column declares a semantic CSS `width`. Give the primary record and its
-description the largest share, medium shares to dates and identifiers, and the
-smallest share to counts and lifecycle state. In a table with row actions, data
-columns normally add up to about 90 percent; the shared 160 px action column
-uses the rest. In a read-only table, data columns add up to 100 percent. The
-table keeps these widths in loading, empty and populated states and scrolls
-horizontally below its minimum readable width.
+Every column declares a `width` and a cell from the typed cells, and a table
+narrower than its columns hides the least important ones before it scrolls.
+The rules are in the Tables section below.
 
 The drawer holds one `ui-drawer__form`: fields scroll inside
 `ui-drawer__body`, and the primary action stays pinned in `ui-drawer__foot`.
@@ -170,6 +167,75 @@ settings are edited in its Drawer under Administration > Modules, as
 `SettingRow`s inside the drawer's Settings `ui-form__section`; a module
 without settings shows a one-line empty state there.
 
+## Tables
+
+A table reads at any width: a cell never breaks a word, a narrow card hides
+the columns that matter least and lists them under the row, and the table
+scrolls only when even its essential columns do not fit.
+
+**Cells.** A column's `cell` returns one of the typed cells, so every table
+truncates, titles and aligns the same way. Inside `ui-table` text wraps only at
+spaces; a value without one (an email, an id, an action code, a timestamp)
+stays whole and ends in an ellipsis with the full value as its title.
+
+| Cell         | Use                                                                                                                                                                                                                                                                                                                                                        |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CellText`   | One line of text: `value`, `strong` for the record's name, `mono` for a code or a path, `wrap` for prose (a description, a message, a list) that wraps at spaces up to two lines, `title` when the hover should say more than the value                                                                                                                    |
+| `CellStack`  | A primary line over a secondary one (a name over its id, a type over its identifier, a state over its note): `primary`, `secondary`, `primaryMono`, `secondaryMono`; a line may be another cell                                                                                                                                                            |
+| `CellTime`   | A timestamp: `value` as an ISO string, a `YYYY-MM-DD` day or epoch milliseconds, `kind` datetime (default) or date, `timeZone` for a value read in a zone of its own (a schedule's). Compact (`16 Sep, 19:39`, the year only when it is not this year), the hour cycle of the locale, a `<time datetime>` with the full timestamp and seconds as its title |
+| `CellCode`   | An identifier in monospace: `value`, `max` (16) past which it keeps its head and tail (`4783b5b2…40d8`), `copy` (true) for the copy button that shows on row hover and focus                                                                                                                                                                               |
+| `CellTag`    | A state or a value with meaning: `label`, `tone`, `dot`, `mono`; the label ends in an ellipsis instead of being cut                                                                                                                                                                                                                                        |
+| `CellNumber` | A count or an amount: `value`, `options` for `Intl.NumberFormat`; the column declares `numeric` for the right alignment                                                                                                                                                                                                                                    |
+| `CellMuted`  | The placeholder for a missing value: "None", "Never"                                                                                                                                                                                                                                                                                                       |
+
+**Widths.** `width` stays required. Give a bounded column a px width: a time
+170 px, a status or a tag 120 to 140 px, a number 100 to 140 px, an id or a
+version 120 to 200 px. Give `auto` to the one column that takes the rest,
+usually the record's identity or its description. Percentages still work and
+count as flexible columns.
+
+**Priority.** `TableColumn.priority` is 1 (default), 2 or 3:
+
+- 1: the identity, the state and the main value. Always visible. The first
+  column is always 1.
+- 2: secondary ids, counts and timestamps.
+- 3: details and descriptions.
+
+The table wrapper is a size container, and the table computes from the declared
+widths where each priority stops fitting: px columns as declared, 200 px per
+flexible column, the selection and action columns, and 28 px for the expand
+button once something hides, rounded up to a 40 px step between 480 and 1600
+px (`table-steps.css`). Priority 3 hides below the width all columns need,
+priority 2 below the width priorities 1 and 2 need. The table scrolls only
+below its minimum, counted from priority 1 alone at 120 px per flexible column,
+plus the selection column, the folded action column and the expand button. No
+script measures the page; the container queries decide.
+
+**Row expansion.** While any column is hidden, every row starts with an expand
+button (`aria-expanded`). An expanded row lists exactly the columns hidden at
+that width as label and value pairs, rendered by the same cells, so nothing is
+lost and nothing is cut. Widening the card brings the columns back and empties
+the list.
+
+**Row actions.** Up to two actions are compact buttons. Two actions fold into
+one More button when the card is narrower than three times the action column
+or than the narrowest table beside it; more than two actions always sit in the
+More menu, and the column then keeps the width of that one button. The menu
+opens over the page, arrows, Home and End move between items, Enter or Space
+runs one, and Escape or Tab closes it and returns focus to the button. A refused
+action stays in the menu, announced as unavailable, with its `reason`.
+
+**Clickable rows.** A table with `onSelect` makes its first cell a button, so
+Tab reaches the row and Enter or Space opens it. That column holds text, never
+a control; a `CellCode` there leaves out its copy button.
+
+**Headers** stay one line and end in an ellipsis with the label as their title.
+
+**Copy and locale.** The expand, collapse, More, copy and copied labels and the
+locale for `CellTime` and `CellNumber` come from `TableLocaleContext`, which the
+shell provides from its own `shell.table.*` bundle. A screen passes none of
+them; outside the shell the English defaults and the host locale apply.
+
 ## Components
 
 | Component          | Use                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
@@ -179,6 +245,7 @@ without settings shows a one-line empty state there.
 | `VariableTextarea` | Multiline template field: `value`, `onInput`, `variables` (scope-filtered `VariableDefinition[]`), `sampleValues`, `label`, `name`; a `braces` menu inserts `{{ key }}` and tokens highlight as pills (error pill when unknown). Presentational, never fetches                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `VariableInput`    | Single-line variant of `VariableTextarea` with the same props                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `VariableSelect`   | Native select that stores either a literal option value or one allowed `{{ key }}` token. Takes scope-filtered `variables`, `sampleValues`, literal `options`, `value`, `onInput`, `name`, `label`, and native required/disabled state. It preserves keyboard, validation, accessibility, and `FormData` semantics and never fetches or resolves data                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `CellText`         | One of the typed table cells (`CellText`, `CellStack`, `CellTime`, `CellCode`, `CellTag`, `CellNumber`, `CellMuted`); see Tables                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `Tag`              | Status and metadata: `tone` neutral, success, warning, danger, info, ink; `dot` adds a state dot; `mono`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `Kpi`              | Stat tile: `label`, `value`, `unit`, `badge`, `note`, `href`, `linkLabel`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `Chart`            | Token-driven Chart.js wrapper on a client-only canvas: `type` area, bar, line; `data`, `series` (`key`, `label`, `token`), `xKey`, `height`, `title`, `xTickFormatter`; series colors come from `--chart-1..5`; shows an EmptyState for empty or all-zero data                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
@@ -310,7 +377,7 @@ Icon names (`packages/ui/src/icons/Icon.tsrx`): `dashboard`, `parties`, `catalog
 `flask`, `activity`, `plug`, `search`, `chevron-down`, `chevron-left`,
 `chevron-right`, `chevrons-up-down`, `sort`, `calendar`,
 `plus`, `panel-left`, `check`, `filter`, `download`, `more`, `external`,
-`alert`, `x`, `sign-out`, `refresh`, `help`, `info`, `key`, `settings`, `braces`. An unknown name renders
+`alert`, `x`, `sign-out`, `refresh`, `help`, `info`, `key`, `settings`, `braces`, `copy`. An unknown name renders
 `modules` without a warning; a new icon is one 24x24 stroke path added there.
 
 ## Classes
@@ -361,6 +428,15 @@ Rendered by components, not written by hand: `ui-page-head*`, `ui-search`,
 `__head`, `__month`, `__step`, `__grid`, `__day` (+`--outside`, `--between`,
 `--on`)), `ui-fileupload` (+`__control`, `__input`, `__clear`),
 `ui-table-action` (the wrapper carrying a refused action's title),
+`ui-table__lead` with `ui-table__toggle` and `ui-table__open` (the first cell's
+expand and open buttons), `ui-table__p2` and `ui-table__p3` (a hideable column),
+`ui-table--p2-*`, `ui-table--p3-*` and `ui-table--fold-*` (the width steps),
+`ui-table__details` (+`-list`), `ui-table__detail` (+`--p2`, `--p3`),
+`ui-table-more` (+`--always`), `ui-table-menu` (+`__scrim`, `__label`),
+`ui-cell-text` (+`--strong`, `--mono`, `--wrap`), `ui-cell-stack`
+(+`__primary`, `__secondary`, `__line--mono`), `ui-cell-time`, `ui-cell-code`
+(+`__value`, `__copy`, `__copy--done`), `ui-cell-number`, `ui-cell-muted`,
+`ui-tag__label`,
 `ui-tabs` (+`__tab`, `__tab--on`),
 `ui-sortable` (+`__item`, `__item--lifted`, `__item--dragging`,
 `__item--drop-before`, `__item--drop-after`, `__handle`, `__body`),

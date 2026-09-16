@@ -8,7 +8,6 @@
 	"common.refreshing": "Refreshing…",
 	"common.filters": "Filters",
 	"common.accessDenied": "Access denied",
-	"common.notYet": "Not yet",
 	"kind.cumulative": "Cumulative",
 	"kind.gauge": "Gauge",
 	"usage.title": "Usage",

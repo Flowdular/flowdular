@@ -2,13 +2,15 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	CellTag,
+	CellText,
+	CellTime,
 	EmptyState,
 	Filters,
 	Icon,
 	PageHeader,
 	Select,
 	TableCard,
-	Tag,
 	type TableColumn,
 } from '@flowdular/ui';
 import { t } from '@flowdular/client';
@@ -31,49 +33,56 @@ import {
 	outcomeTone,
 	reasonLabel,
 	tableEmpty,
-	timestampLabel,
 } from './presentation.ts';
 import { createProvisioningLogClientState } from './state.ts';
 
+/* When, what, on whom and how it ended stay on screen; the refusal reason
+   hides first and is listed in the expanded row. */
 function columns(): readonly TableColumn<ProvisioningEvent>[] {
 	return [
 		{
 			key: 'occurredAt',
 			header: t('directory.log.column.time'),
-			width: '20%',
+			width: '170px',
 			value: (event) => event.occurredAt,
-			cell: (event) => timestampLabel(event.occurredAt),
+			cell: (event) => <CellTime value={event.occurredAt} />,
 		},
 		{
 			key: 'operation',
 			header: t('directory.log.column.operation'),
-			width: '20%',
+			width: '160px',
 			value: (event) => event.operation,
-			cell: (event) => operationLabel(event.operation),
+			cell: (event) => <CellText value={operationLabel(event.operation)} />,
 		},
 		{
 			key: 'subject',
 			header: t('directory.log.column.subject'),
-			width: '26%',
+			width: 'auto',
 			value: (event) => event.subject,
-			cell: (event) => <span class="ui-mono">{event.subject}</span>,
+			cell: (event) => <CellText value={event.subject} mono />,
 		},
 		{
 			key: 'outcome',
 			header: t('directory.log.column.outcome'),
-			width: '16%',
+			width: '130px',
 			value: (event) => event.outcome,
 			cell: (event) =>
-				<Tag tone={outcomeTone(event.outcome)} dot>{outcomeLabel(
-					event.outcome,
-				)}</Tag>,
+				<CellTag
+					tone={outcomeTone(event.outcome)}
+					dot
+					label={outcomeLabel(event.outcome)}
+				/>,
 		},
 		{
 			key: 'reason',
 			header: t('directory.log.column.reason'),
-			width: '18%',
+			width: '200px',
+			priority: 3,
 			value: (event) => event.reason ?? '',
-			cell: (event) => reasonLabel(event.reason),
+			cell: (event) => {
+				const reason = reasonLabel(event.reason);
+				return reason === '' ? null : <CellText value={reason} />;
+			},
 		},
 	];
 }

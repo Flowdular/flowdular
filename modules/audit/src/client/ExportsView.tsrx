@@ -2,6 +2,13 @@ import { useEffect, useMemo, useState } from 'octane';
 import {
 	Alert,
 	Button,
+	CellCode,
+	CellMuted,
+	CellNumber,
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
 	EmptyState,
 	Filters,
 	Icon,
@@ -10,7 +17,6 @@ import {
 	SearchField,
 	Select,
 	TableCard,
-	Tag,
 	type TableColumn,
 } from '@flowdular/ui';
 import { activeLocale, t } from '@flowdular/client';
@@ -21,12 +27,7 @@ import {
 	type ExportStatus,
 } from '../domain/types.ts';
 import { AuditApiError, auditErrorMessage, loadExports } from './api.ts';
-import {
-	digestLabel,
-	exportStatusLabel,
-	exportStatusTone,
-	timestampLabel,
-} from './presentation.ts';
+import { exportStatusLabel, exportStatusTone } from './presentation.ts';
 import { createExportsClientState } from './state.ts';
 
 export interface ExportsViewProps {
@@ -40,53 +41,63 @@ function columns(): readonly TableColumn<AuditExportRun>[] {
 		{
 			key: 'startedAt',
 			header: t('audit.exports.column.startedAt'),
-			width: '20%',
+			width: '170px',
 			value: (run) => run.startedAt,
-			cell: (run) => <span class="ui-cell">
-				<b>{timestampLabel(run.startedAt)}</b>
-				<small class="ui-cell__muted">{timestampLabel(run.completedAt)}</small>
-			</span>,
+			cell: (run) =>
+				<CellStack
+					primary={<CellTime value={run.startedAt} />}
+					secondary={run.completedAt === null
+						? <CellMuted>{t('audit.common.never')}</CellMuted>
+						: <CellTime value={run.completedAt} />}
+				/>,
 		},
 		{
 			key: 'status',
 			header: t('audit.exports.column.status'),
-			width: '14%',
+			width: '130px',
 			value: (run) => run.status,
 			cell: (run) =>
-				<Tag tone={exportStatusTone(run.status)} dot>{exportStatusLabel(
-					run.status,
-				)}</Tag>,
+				<CellTag
+					tone={exportStatusTone(run.status)}
+					dot
+					label={exportStatusLabel(run.status)}
+				/>,
 		},
 		{
 			key: 'classes',
 			header: t('audit.exports.column.classes'),
-			width: '10%',
+			width: '100px',
 			numeric: true,
+			priority: 2,
 			value: (run) => run.classes,
-			cell: (run) => run.classes,
+			cell: (run) => <CellNumber value={run.classes} />,
 		},
 		{
 			key: 'rows',
 			header: t('audit.exports.column.rows'),
-			width: '12%',
+			width: '110px',
 			numeric: true,
+			priority: 2,
 			value: (run) => run.rows,
-			cell: (run) => run.rows,
+			cell: (run) => <CellNumber value={run.rows} />,
 		},
 		{
 			key: 'archiveDigest',
 			header: t('audit.exports.column.archiveDigest'),
-			width: '22%',
+			width: '180px',
+			priority: 3,
 			value: (run) => run.archiveDigest ?? '',
-			cell: (run) =>
-				<span class="ui-mono">{digestLabel(run.archiveDigest)}</span>,
+			cell: (run) => run.archiveDigest === null
+				? <CellMuted>{t('audit.common.none')}</CellMuted>
+				: <CellCode value={run.archiveDigest} />,
 		},
 		{
 			key: 'requestedBy',
 			header: t('audit.exports.column.requestedBy'),
-			width: '18%',
+			width: 'auto',
+			priority: 2,
 			value: (run) => run.requestedBy,
-			cell: (run) => run.requestedBy,
+			cell: (run) => <CellText value={run.requestedBy} />,
 		},
 	];
 }

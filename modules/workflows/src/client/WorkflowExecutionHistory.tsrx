@@ -1,17 +1,20 @@
 import { t } from '@flowdular/client';
 import {
+	CellMuted,
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
 	Filters,
 	Pagination,
 	SearchField,
 	TableCard,
-	Tag,
 	type TableColumn,
 	type TableSort,
 } from '@flowdular/ui';
 import type { WorkflowRunSummary } from '../domain/types.ts';
 import {
 	costLabel,
-	dateTime,
 	duration,
 	RUN_STATUSES,
 	workflowStatusTone,
@@ -43,60 +46,73 @@ function columns(): readonly TableColumn<WorkflowRunSummary>[] {
 		{
 			key: 'workflow',
 			header: t('workflows.history.column.workflow'),
-			width: '24%',
-			cell: (run) => <span class="ui-cell">
-				<b>{run.workflowName}</b>
-				<small class="ui-mono">
-					{run.workflowKey + ' · r' +
+			width: 'auto',
+			cell: (run) =>
+				<CellStack
+					primary={run.workflowName}
+					secondary={run.workflowKey + ' · r' +
 						(run.workflowRevision ?? t('workflows.history.draft'))}
-				</small>
-			</span>,
+					secondaryMono
+				/>,
 		},
 		{
 			key: 'origin',
 			header: t('workflows.history.column.origin'),
-			width: '16%',
-			cell: (run) => <span class="ui-cell">
-				<b>{run.actor.label}</b>
-				<small>{t('workflows.origin.' + run.origin.kind)}</small>
-			</span>,
+			width: '180px',
+			priority: 3,
+			cell: (run) =>
+				<CellStack
+					primary={run.actor.label}
+					secondary={t('workflows.origin.' + run.origin.kind)}
+				/>,
 		},
 		{
 			key: 'queued',
 			header: t('workflows.history.column.queued'),
-			width: '18%',
+			width: '170px',
+			priority: 2,
 			value: (run) => run.queuedAt,
-			cell: (run) => dateTime(run.queuedAt),
+			cell: (run) => <CellTime value={run.queuedAt} />,
 		},
 		{
 			key: 'progress',
 			header: t('workflows.history.column.progress'),
-			width: '12%',
+			width: '110px',
 			numeric: true,
-			cell: (run) => `${run.completedNodes}/${run.totalNodes}`,
+			priority: 2,
+			cell: (run) =>
+				<CellText value={`${run.completedNodes}/${run.totalNodes}`} />,
 		},
 		{
 			key: 'duration',
 			header: t('workflows.history.column.duration'),
-			width: '12%',
+			width: '110px',
 			numeric: true,
-			cell: (run) => duration(run.durationMs),
+			priority: 3,
+			cell: (run) => run.durationMs === null
+				? <CellMuted>{t('workflows.common.notAvailable')}</CellMuted>
+				: <CellText value={duration(run.durationMs)} />,
 		},
 		{
 			key: 'cost',
 			header: t('workflows.history.column.cost'),
-			width: '10%',
+			width: '120px',
 			numeric: true,
-			cell: (run) => costLabel(run.cost),
+			priority: 3,
+			cell: (run) => run.cost.state === 'not-applicable'
+				? <CellMuted>{costLabel(run.cost)}</CellMuted>
+				: <CellText value={costLabel(run.cost)} />,
 		},
 		{
 			key: 'status',
 			header: t('workflows.history.column.status'),
-			width: '8%',
+			width: '160px',
 			cell: (run) =>
-				<Tag tone={workflowStatusTone(run.status)} dot>{t(
-					'workflows.runStatus.' + run.status,
-				)}</Tag>,
+				<CellTag
+					tone={workflowStatusTone(run.status)}
+					dot
+					label={t('workflows.runStatus.' + run.status)}
+				/>,
 		},
 	];
 }

@@ -10,8 +10,12 @@ import {
 	PageHeader,
 	Pagination,
 	SearchField,
+	CellMuted,
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
 	TableCard,
-	Tag,
 	type TableColumn,
 	type TableSort,
 } from '@flowdular/ui';
@@ -60,7 +64,6 @@ import {
 	workflowOverlay,
 	type WorkflowNodeType,
 } from './canvas-model.ts';
-import { dateTime } from './presentation.ts';
 import { runActions } from './run-actions.ts';
 import { repairCanvasIdentifiers } from './draft-repair.ts';
 import {
@@ -98,46 +101,59 @@ function definitionColumns(): readonly TableColumn<WorkflowDefinition>[] {
 		{
 			key: 'workflow',
 			header: t('workflows.table.column.workflow'),
-			width: '42%',
+			width: 'auto',
 			value: (record) => record.name,
-			cell: (record) => <span class="ui-cell">
-				<b>{record.name}</b>
-				<small class="ui-mono">{record.key}</small>
-			</span>,
+			cell: (record) =>
+				<CellStack
+					primary={record.name}
+					secondary={record.key}
+					secondaryMono
+				/>,
 		},
 		{
 			key: 'draft',
 			header: t('workflows.table.column.draft'),
-			width: '14%',
+			width: '110px',
 			numeric: true,
-			cell: (record) => t('workflows.table.revision', {
-				revision: record.currentDraftRevision,
-			}),
+			priority: 2,
+			cell: (record) => <CellText
+				value={t('workflows.table.revision', {
+					revision: record.currentDraftRevision,
+				})}
+			/>,
 		},
 		{
 			key: 'published',
 			header: t('workflows.table.column.published'),
-			width: '14%',
+			width: '130px',
 			numeric: true,
+			priority: 2,
 			cell: (record) => record.publishedRevision === null
-				? t('workflows.table.notPublished')
-				: t('workflows.table.revision', { revision: record.publishedRevision }),
+				? <CellMuted>{t('workflows.table.notPublished')}</CellMuted>
+				: <CellText
+						value={t('workflows.table.revision', {
+							revision: record.publishedRevision,
+						})}
+					/>,
 		},
 		{
 			key: 'updated',
 			header: t('workflows.table.column.updated'),
-			width: '18%',
+			width: '170px',
+			priority: 2,
 			value: (record) => record.updatedAt,
-			cell: (record) => dateTime(record.updatedAt),
+			cell: (record) => <CellTime value={record.updatedAt} />,
 		},
 		{
 			key: 'status',
 			header: t('workflows.table.column.status'),
-			width: '12%',
+			width: '130px',
 			cell: (record) =>
-				<Tag tone={record.status === 'active' ? 'success' : 'neutral'} dot>{t(
-					'workflows.status.' + record.status,
-				)}</Tag>,
+				<CellTag
+					tone={record.status === 'active' ? 'success' : 'neutral'}
+					dot
+					label={t('workflows.status.' + record.status)}
+				/>,
 		},
 	];
 }

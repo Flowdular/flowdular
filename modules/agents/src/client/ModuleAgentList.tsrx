@@ -1,5 +1,12 @@
 import { t } from '@flowdular/client';
-import { SearchField, TableCard, Tag, type TableColumn } from '@flowdular/ui';
+import {
+	CellStack,
+	CellTag,
+	CellText,
+	SearchField,
+	TableCard,
+	type TableColumn,
+} from '@flowdular/ui';
 import type {
 	AgentProviderConnection,
 	ModuleAgentView,
@@ -29,45 +36,50 @@ function columns(
 		{
 			key: 'agent',
 			header: t('agents.moduleAgents.column.agent'),
-			width: '24%',
-			cell: (agent) => <span class="ui-cell">
-				<b>{agent.name}</b>
-				<small class="ui-mono">
-					{agent.key + ' · d' + agent.ownership.definitionRevision}
-				</small>
-			</span>,
+			width: 'auto',
+			cell: (agent) =>
+				<CellStack
+					primary={agent.name}
+					secondary={agent.key + ' · d' + agent.ownership.definitionRevision}
+					secondaryMono
+				/>,
 		},
 		{
 			key: 'module',
 			header: t('agents.moduleAgents.column.module'),
-			width: '18%',
-			cell: (agent) => <span class="ui-mono">{agent.ownership.moduleId}</span>,
+			width: '180px',
+			priority: 2,
+			cell: (agent) => <CellText value={agent.ownership.moduleId} mono />,
 		},
 		{
 			key: 'purpose',
 			header: t('agents.moduleAgents.column.purpose'),
-			width: '24%',
-			cell: (agent) => <span class="ui-cell__muted">{agent.description}</span>,
+			width: 'auto',
+			priority: 3,
+			cell: (agent) => <CellText value={agent.description} wrap />,
 		},
 		{
 			key: 'model',
 			header: t('agents.moduleAgents.column.model'),
-			width: '18%',
-			cell: (agent) => <span class="ui-cell">
-				<b class="ui-mono">
-					{agent.model ?? t('agents.moduleAgents.notConfigured')}
-				</b>
-				<small>{providerName(agent.provider)}</small>
-			</span>,
+			width: '200px',
+			priority: 2,
+			cell: (agent) =>
+				<CellStack
+					primary={agent.model ?? t('agents.moduleAgents.notConfigured')}
+					primaryMono={agent.model !== null}
+					secondary={providerName(agent.provider)}
+				/>,
 		},
 		{
 			key: 'status',
 			header: t('agents.moduleAgents.column.status'),
-			width: '16%',
+			width: '130px',
 			cell: (agent) =>
-				<Tag tone={stateTone(agent.status)} dot>{t(
-					'agents.status.' + agent.status,
-				)}</Tag>,
+				<CellTag
+					tone={stateTone(agent.status)}
+					dot
+					label={t('agents.status.' + agent.status)}
+				/>,
 		},
 	];
 }

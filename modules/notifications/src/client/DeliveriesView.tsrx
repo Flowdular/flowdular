@@ -2,6 +2,12 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	CellCode,
+	CellNumber,
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
 	ConfirmDialog,
 	EmptyState,
 	Filters,
@@ -11,7 +17,6 @@ import {
 	SearchField,
 	Select,
 	TableCard,
-	Tag,
 	ToastHost,
 	toasts,
 	type TableAction,
@@ -39,7 +44,6 @@ import {
 	deliveryStatusTone,
 	errorClassLabel,
 	kindLabel,
-	timestampLabel,
 } from './presentation.ts';
 import {
 	createDeliveriesClientState,
@@ -84,77 +88,86 @@ function columns(
 		{
 			key: 'subscription',
 			header: t('notifications.deliveries.column.subscription'),
-			width: '14%',
+			width: 'auto',
 			cell: (delivery) => {
 				/* An e-mail attempt is addressed to a member, not to a subscription,
    so the column names the channel rather than an empty cell. */
 				if (delivery.channel === 'email') {
-					return t('notifications.deliveries.channel.email');
+					return <CellText
+						value={t('notifications.deliveries.channel.email')}
+					/>;
 				}
 				const id = delivery.subscriptionId ?? '';
-				return names.get(id) ?? <span class="ui-mono">{id}</span>;
+				const name = names.get(id);
+				return name === undefined
+					? <CellCode value={id} />
+					: <CellText value={name} />;
 			},
 		},
 		{
 			key: 'kind',
 			header: t('notifications.deliveries.column.kind'),
-			width: '11%',
-			cell: (delivery) => kindLabel(delivery.kind),
+			width: '150px',
+			priority: 2,
+			cell: (delivery) => <CellText value={kindLabel(delivery.kind)} />,
 		},
 		{
 			key: 'sourceRef',
 			header: t('notifications.deliveries.column.sourceRef'),
-			width: '12%',
-			cell: (delivery) => <span class="ui-cell">
-				<span
-					class="ui-mono notifications-truncate"
-					title={delivery.sourceRef}
-				>{delivery.sourceRef}</span>
-				<small class="ui-cell__muted">{delivery.sourceModule}</small>
-			</span>,
+			width: '180px',
+			priority: 3,
+			cell: (delivery) =>
+				<CellStack
+					primary={<CellCode value={delivery.sourceRef} />}
+					secondary={delivery.sourceModule}
+				/>,
 		},
 		{
 			key: 'attemptNumber',
 			header: t('notifications.deliveries.column.attempt'),
-			width: '10%',
+			width: '100px',
 			numeric: true,
-			cell: (delivery) => delivery.attemptNumber,
+			priority: 2,
+			cell: (delivery) => <CellNumber value={delivery.attemptNumber} />,
 		},
 		{
 			key: 'status',
 			header: t('notifications.deliveries.column.status'),
-			width: '12%',
+			width: '130px',
 			cell: (delivery) =>
-				<Tag
+				<CellTag
 					tone={deliveryStatusTone(delivery.status)}
 					dot
-				>{deliveryStatusLabel(delivery.status)}</Tag>,
+					label={deliveryStatusLabel(delivery.status)}
+				/>,
 		},
 		{
 			key: 'scheduledFor',
 			header: t('notifications.deliveries.column.timing'),
-			width: '15%',
+			width: '190px',
+			priority: 2,
 			value: (delivery) => delivery.scheduledFor,
-			cell: (delivery) => <span class="ui-cell">
-				<b>{timestampLabel(delivery.scheduledFor)}</b>
-				<small class="ui-cell__muted">{deliveryCompletedLabel(
-					delivery.completedAt,
-				)}</small>
-			</span>,
+			cell: (delivery) =>
+				<CellStack
+					primary={<CellTime value={delivery.scheduledFor} />}
+					secondary={deliveryCompletedLabel(delivery.completedAt)}
+				/>,
 		},
 		{
 			key: 'outcome',
 			header: t('notifications.deliveries.column.outcome'),
-			width: '11%',
+			width: '160px',
+			priority: 3,
 			cell: (delivery) => {
 				const failure = errorClassLabel(delivery.errorClass);
-				if (delivery.responseStatus === null) return failure;
-				return <span class="ui-cell">
-					<b>{delivery.responseStatus}</b>
-					{failure === ''
-						? ''
-						: <small class="ui-cell__muted">{failure}</small>}
-				</span>;
+				if (delivery.responseStatus === null) {
+					return failure === '' ? null : <CellText value={failure} />;
+				}
+				return <CellStack
+					primary={String(delivery.responseStatus)}
+					primaryMono
+					secondary={failure}
+				/>;
 			},
 		},
 	];

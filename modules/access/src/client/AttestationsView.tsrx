@@ -2,6 +2,11 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	CellMuted,
+	CellNumber,
+	CellStack,
+	CellText,
+	CellTime,
 	EmptyState,
 	Icon,
 	PageHeader,
@@ -12,72 +17,76 @@ import { t } from '@flowdular/client';
 import { useValue } from 'segment-state';
 import type { AccessAttestation } from '../domain/types.ts';
 import { AccessApiError, accessErrorMessage, loadAttestations } from './api.ts';
-import {
-	dateLabel,
-	numberLabel,
-	screenSurface,
-	timestampLabel,
-} from './presentation.ts';
+import { dateLabel, numberLabel, screenSurface } from './presentation.ts';
 import { createAttestationsClientState } from './state.ts';
 
 export interface AttestationsViewProps {
 	readonly csrfToken: string;
 }
 
+/* The period and who attested it stay on screen; the counts hide next and the
+   note first. */
 function columns(): readonly TableColumn<AccessAttestation>[] {
 	return [
 		{
 			key: 'period',
 			header: t('access.attestations.column.period'),
-			width: '24%',
+			width: '220px',
 			value: (row) => row.periodFrom,
-			cell: (row) => <span class="ui-cell">
-				<b>{dateLabel(row.periodFrom) + ' - ' + dateLabel(row.periodTo)}</b>
-				<small>{timestampLabel(row.createdAt)}</small>
-			</span>,
+			cell: (row) =>
+				<CellStack
+					primary={dateLabel(row.periodFrom) + ' - ' + dateLabel(row.periodTo)}
+					secondary={<CellTime value={row.createdAt} />}
+				/>,
 		},
 		{
 			key: 'reviewer',
 			header: t('access.attestations.column.reviewer'),
-			width: '22%',
+			width: '220px',
 			value: (row) => row.reviewerLabel,
-			cell: (row) => row.reviewerLabel,
+			cell: (row) => <CellText value={row.reviewerLabel} />,
 		},
 		{
 			key: 'members',
 			header: t('access.attestations.column.members'),
-			width: '12%',
+			width: '130px',
 			numeric: true,
+			priority: 2,
 			value: (row) => row.memberCount,
-			cell: (row) => t('access.attestations.membersValue', {
-				total: numberLabel(row.memberCount),
-				active: numberLabel(row.activeMemberCount),
-			}),
+			cell: (row) => <CellText
+				value={t('access.attestations.membersValue', {
+					total: numberLabel(row.memberCount),
+					active: numberLabel(row.activeMemberCount),
+				})}
+			/>,
 		},
 		{
 			key: 'extraScopes',
 			header: t('access.attestations.column.extraScopes'),
-			width: '12%',
+			width: '130px',
 			numeric: true,
+			priority: 2,
 			value: (row) => row.extraScopeCount,
-			cell: (row) => numberLabel(row.extraScopeCount),
+			cell: (row) => <CellNumber value={row.extraScopeCount} />,
 		},
 		{
 			key: 'tokens',
 			header: t('access.attestations.column.tokens'),
-			width: '10%',
+			width: '100px',
 			numeric: true,
+			priority: 2,
 			value: (row) => row.tokenCount,
-			cell: (row) => numberLabel(row.tokenCount),
+			cell: (row) => <CellNumber value={row.tokenCount} />,
 		},
 		{
 			key: 'note',
 			header: t('access.attestations.column.note'),
-			width: '20%',
+			width: 'auto',
+			priority: 3,
 			value: (row) => row.note ?? '',
 			cell: (row) => row.note === null
-				? <small>{t('access.attestations.noNote')}</small>
-				: row.note,
+				? <CellMuted>{t('access.attestations.noNote')}</CellMuted>
+				: <CellText value={row.note} wrap />,
 		},
 	];
 }

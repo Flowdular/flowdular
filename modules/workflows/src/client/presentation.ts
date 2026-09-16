@@ -27,14 +27,6 @@ export function workflowStatusTone(status: WorkflowRunStatus): TagTone {
 	return 'neutral';
 }
 
-export function dateTime(value: number | null): string {
-	if (value === null) return t('workflows.common.notAvailable');
-	return new Intl.DateTimeFormat(activeLocale(), {
-		dateStyle: 'medium',
-		timeStyle: 'short',
-	}).format(value);
-}
-
 export function duration(value: number | null): string {
 	if (value === null) return t('workflows.common.notAvailable');
 	if (value < 1_000) return t('workflows.duration.milliseconds', { value });

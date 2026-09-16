@@ -2,6 +2,11 @@ import { useEffect, useMemo, useState } from 'octane';
 import {
 	Alert,
 	Button,
+	CellMuted,
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
 	Drawer,
 	EmptyState,
 	Filters,
@@ -12,7 +17,6 @@ import {
 	SearchField,
 	Select,
 	TableCard,
-	Tag,
 	ToastHost,
 	toasts,
 	type TableAction,
@@ -36,7 +40,6 @@ import {
 	booleanLabel,
 	defaultRetentionLabel,
 	retentionLabel,
-	timestampLabel,
 } from './presentation.ts';
 import { createDataClassesClientState } from './state.ts';
 
@@ -52,50 +55,59 @@ function columns(): readonly TableColumn<AuditDataClass>[] {
 		{
 			key: 'classId',
 			header: t('audit.dataClasses.column.classId'),
-			width: '22%',
+			width: 'auto',
 			value: (record) => record.classId,
-			cell: (record) => <span class="ui-cell">
-				<b>{record.label}</b>
-				<small class="ui-cell__muted ui-mono">{record.classId}</small>
-			</span>,
+			cell: (record) =>
+				<CellStack
+					primary={record.label}
+					secondary={record.classId}
+					secondaryMono
+				/>,
 		},
 		{
 			key: 'moduleId',
 			header: t('audit.dataClasses.column.moduleId'),
-			width: '14%',
+			width: '160px',
+			priority: 3,
 			value: (record) => record.moduleId,
-			cell: (record) => <span class="ui-mono">{record.moduleId}</span>,
+			cell: (record) => <CellText value={record.moduleId} mono />,
 		},
 		{
 			key: 'retentionDays',
 			header: t('audit.dataClasses.column.retention'),
-			width: '16%',
+			width: '170px',
 			value: (record) => record.effectiveRetentionDays ?? -1,
-			cell: (record) => retentionLabel(record),
+			cell: (record) => <CellText value={retentionLabel(record)} />,
 		},
 		{
 			key: 'defaultRetentionDays',
 			header: t('audit.dataClasses.column.defaultRetention'),
-			width: '14%',
+			width: '150px',
+			priority: 3,
 			value: (record) => record.defaultRetentionDays ?? -1,
-			cell: (record) => defaultRetentionLabel(record),
+			cell: (record) => <CellText value={defaultRetentionLabel(record)} />,
 		},
 		{
 			key: 'exportable',
 			header: t('audit.dataClasses.column.exportable'),
-			width: '12%',
+			width: '110px',
+			priority: 3,
 			value: (record) => booleanLabel(record.exportable),
 			cell: (record) =>
-				<Tag tone={record.exportable ? 'success' : 'neutral'}>{booleanLabel(
-					record.exportable,
-				)}</Tag>,
+				<CellTag
+					tone={record.exportable ? 'success' : 'neutral'}
+					label={booleanLabel(record.exportable)}
+				/>,
 		},
 		{
 			key: 'lastSweptAt',
 			header: t('audit.dataClasses.column.lastSweptAt'),
-			width: '16%',
+			width: '170px',
+			priority: 2,
 			value: (record) => record.lastSweptAt ?? 0,
-			cell: (record) => timestampLabel(record.lastSweptAt),
+			cell: (record) => record.lastSweptAt === null
+				? <CellMuted>{t('audit.common.never')}</CellMuted>
+				: <CellTime value={record.lastSweptAt} />,
 		},
 	];
 }

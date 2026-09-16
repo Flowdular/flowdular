@@ -2,6 +2,9 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	CellNumber,
+	CellStack,
+	CellTag,
 	Drawer,
 	EmptyState,
 	FormField,
@@ -11,7 +14,6 @@ import {
 	SearchField,
 	Select,
 	TableCard,
-	Tag,
 	ToastHost,
 	toasts,
 	type TableAction,
@@ -63,39 +65,42 @@ function columns(
 		{
 			key: 'displayName',
 			header: t('directory.groups.column.name'),
-			width: '34%',
+			width: 'auto',
 			value: (group) => group.displayName,
-			cell: (group) => <span class="ui-cell">
-				<b>{group.displayName}</b>
-				{group.externalId
-					? <small class="ui-cell__muted ui-mono">{group.externalId}</small>
-					: null}
-			</span>,
+			cell: (group) =>
+				<CellStack
+					primary={group.displayName}
+					secondary={group.externalId ?? undefined}
+					secondaryMono
+				/>,
 		},
 		{
 			key: 'roleKey',
 			header: t('directory.groups.column.role'),
-			width: '24%',
+			width: '200px',
 			cell: (group) => group.roleKey === null
-				? <Tag tone="neutral">{t('directory.groups.unmapped', {
-						role: defaultRole,
-					})}</Tag>
-				: <Tag tone="info" mono>{group.roleKey}</Tag>,
+				? <CellTag
+						tone="neutral"
+						label={t('directory.groups.unmapped', { role: defaultRole })}
+					/>
+				: <CellTag tone="info" mono label={group.roleKey} />,
 		},
 		{
 			key: 'precedence',
 			header: t('directory.groups.column.precedence'),
-			width: '18%',
+			width: '120px',
 			numeric: true,
+			priority: 2,
 			value: (group) => group.precedence,
-			cell: (group) => String(group.precedence),
+			cell: (group) => <CellNumber value={group.precedence} />,
 		},
 		{
 			key: 'memberCount',
 			header: t('directory.groups.column.members'),
-			width: '18%',
+			width: '120px',
 			numeric: true,
-			cell: (group) => String(group.memberCount),
+			priority: 2,
+			cell: (group) => <CellNumber value={group.memberCount} />,
 		},
 	];
 }

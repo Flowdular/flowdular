@@ -2,13 +2,16 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
 	DateRangeField,
 	EmptyState,
 	Icon,
 	PageHeader,
 	TableCard,
 	Tabs,
-	Tag,
 	dateRangeReversed,
 	type TableColumn,
 } from '@flowdular/ui';
@@ -20,7 +23,6 @@ import {
 	categoryLabel,
 	isoDaysBefore,
 	screenSurface,
-	timestampLabel,
 	todayIso,
 } from './presentation.ts';
 import { createActivityClientState } from './state.ts';
@@ -41,51 +43,57 @@ const CATEGORY_TONES: Readonly<
 	security: 'warning',
 };
 
+/* When, what kind, what and who stay on screen; the category hides next and
+   the subject with its detail first. */
 function columns(): readonly TableColumn<AccessChange>[] {
 	return [
 		{
 			key: 'occurredAt',
 			header: t('access.activity.column.time'),
-			width: '18%',
+			width: '170px',
 			value: (row) => row.occurredAt,
-			cell: (row) => timestampLabel(row.occurredAt),
+			cell: (row) => <CellTime value={row.occurredAt} />,
 		},
 		{
 			key: 'category',
 			header: t('access.activity.column.category'),
-			width: '14%',
+			width: '130px',
+			priority: 2,
 			value: (row) => row.category,
 			cell: (row) =>
-				<Tag tone={CATEGORY_TONES[row.category] ?? 'neutral'}>{categoryLabel(
-					row.category,
-				)}</Tag>,
+				<CellTag
+					tone={CATEGORY_TONES[row.category] ?? 'neutral'}
+					label={categoryLabel(row.category)}
+				/>,
 		},
 		{
 			key: 'action',
 			header: t('access.activity.column.action'),
-			width: '22%',
+			width: '220px',
 			value: (row) => row.action,
-			cell: (row) => <span class="ui-mono">{row.action}</span>,
+			cell: (row) => <CellText value={row.action} mono />,
 		},
 		{
 			key: 'actor',
 			header: t('access.activity.column.actor'),
-			width: '20%',
+			width: 'auto',
 			value: (row) => row.actor,
-			cell: (row) => <span class="ui-cell">
-				<b>{row.actor}</b>
-				<small>{row.actorKind}</small>
-			</span>,
+			cell: (row) =>
+				<CellStack primary={row.actor} secondary={row.actorKind} />,
 		},
 		{
 			key: 'subject',
 			header: t('access.activity.column.subject'),
-			width: '26%',
+			width: '240px',
+			priority: 3,
 			value: (row) => row.subjectType + ' ' + row.subjectId,
-			cell: (row) => <span class="ui-cell">
-				<b class="ui-mono">{row.subjectType + ' ' + row.subjectId}</b>
-				{row.detail ? <small class="ui-mono">{row.detail}</small> : null}
-			</span>,
+			cell: (row) =>
+				<CellStack
+					primary={row.subjectType + ' ' + row.subjectId}
+					primaryMono
+					secondary={row.detail ?? undefined}
+					secondaryMono
+				/>,
 		},
 	];
 }

@@ -1,7 +1,15 @@
 import { t } from '@flowdular/client';
-import { SearchField, TableCard, Tag, type TableColumn } from '@flowdular/ui';
+import {
+	CellNumber,
+	CellStack,
+	CellTag,
+	CellText,
+	SearchField,
+	TableCard,
+	type TableColumn,
+} from '@flowdular/ui';
 import type { AgentProcedure } from '../domain/types.ts';
-import { countLabel, stateTone } from './presentation.ts';
+import { stateTone } from './presentation.ts';
 
 export interface AgentProcedureListProps {
 	readonly procedures: readonly AgentProcedure[];
@@ -20,36 +28,40 @@ function columns(): readonly TableColumn<AgentProcedure>[] {
 		{
 			key: 'procedure',
 			header: t('agents.procedures.column.procedure'),
-			width: '26%',
-			cell: (procedure) => <span class="ui-cell">
-				<b>{procedure.name}</b>
-				<small class="ui-mono">
-					{procedure.key + ' · r' + procedure.revision}
-				</small>
-			</span>,
+			width: 'auto',
+			cell: (procedure) =>
+				<CellStack
+					primary={procedure.name}
+					secondary={procedure.key + ' · r' + procedure.revision}
+					secondaryMono
+				/>,
 		},
 		{
 			key: 'purpose',
 			header: t('agents.procedures.column.purpose'),
-			width: '35%',
-			cell: (procedure) =>
-				<span class="ui-cell__muted">{procedure.description}</span>,
+			width: 'auto',
+			priority: 3,
+			cell: (procedure) => <CellText value={procedure.description} wrap />,
 		},
 		{
 			key: 'tools',
 			header: t('agents.procedures.column.tools'),
-			width: '12%',
+			width: '100px',
 			numeric: true,
-			cell: (procedure) => countLabel(procedure.requiredTools.length),
+			priority: 2,
+			cell: (procedure) =>
+				<CellNumber value={procedure.requiredTools.length} />,
 		},
 		{
 			key: 'status',
 			header: t('agents.procedures.column.status'),
-			width: '17%',
+			width: '130px',
 			cell: (procedure) =>
-				<Tag tone={stateTone(procedure.status)} dot>{t(
-					'agents.status.' + procedure.status,
-				)}</Tag>,
+				<CellTag
+					tone={stateTone(procedure.status)}
+					dot
+					label={t('agents.status.' + procedure.status)}
+				/>,
 		},
 	];
 }

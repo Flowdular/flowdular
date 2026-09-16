@@ -1,4 +1,10 @@
-import { Table, Tag, type TableColumn } from '@flowdular/ui';
+import {
+	CellStack,
+	CellTag,
+	CellText,
+	Table,
+	type TableColumn,
+} from '@flowdular/ui';
 import { t } from '@flowdular/client';
 import type { SandboxAccessGrant } from '../domain/types.ts';
 import {
@@ -23,33 +29,36 @@ function columns(now: number): readonly TableColumn<SandboxAccessGrant>[] {
 		{
 			key: 'account',
 			header: t('sandbox.access.account'),
-			width: '26%',
-			cell: (grant) => <span class="ui-cell">
-				<b>{grant.displayName}</b>
-				<small class="ui-mono">{grant.email}</small>
-			</span>,
+			width: 'auto',
+			cell: (grant) =>
+				<CellStack
+					primary={grant.displayName}
+					secondary={grant.email}
+					secondaryMono
+				/>,
 		},
 		{
 			key: 'capabilities',
 			header: t('sandbox.access.capabilities'),
-			width: '36%',
-			cell: (grant) =>
-				<span class="ui-cell__muted">{capabilities(grant)}</span>,
+			width: 'auto',
+			priority: 3,
+			cell: (grant) => <CellText value={capabilities(grant)} wrap />,
 		},
 		{
 			key: 'status',
 			header: t('sandbox.access.status'),
-			width: '28%',
-			cell: (grant) => <span class="ui-table__state">
-				<Tag tone={grantTone(grantState(grant, now))} dot>{t(
-					'sandbox.grantState.' + grantState(grant, now),
-				)}</Tag>
-				<small>
-					{grant.expiresAt === null
+			width: '200px',
+			cell: (grant) =>
+				<CellStack
+					primary={<CellTag
+						tone={grantTone(grantState(grant, now))}
+						dot
+						label={t('sandbox.grantState.' + grantState(grant, now))}
+					/>}
+					secondary={grant.expiresAt === null
 						? t('sandbox.access.noExpiry')
 						: t('sandbox.access.until', { date: timestamp(grant.expiresAt) })}
-				</small>
-			</span>,
+				/>,
 		},
 	];
 }

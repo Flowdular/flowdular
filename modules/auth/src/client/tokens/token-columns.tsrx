@@ -1,5 +1,11 @@
 import { activeLocale, t } from '@flowdular/client';
-import { Tag, type TableColumn } from '@flowdular/ui';
+import {
+	CellMuted,
+	CellStack,
+	CellTag,
+	CellTime,
+	type TableColumn,
+} from '@flowdular/ui';
 import type { ApiTokenRecord } from '../../domain/types.ts';
 import { tokenState } from './state.ts';
 
@@ -32,33 +38,39 @@ export function apiTokenColumns(
 		{
 			key: 'token',
 			header: t('auth.tokens.column.token'),
-			width: '38%',
-			cell: (token) => <span class="ui-cell">
-				<b>{token.label}</b>
-				<small class="ui-mono">{identity(token)}</small>
-			</span>,
+			width: 'auto',
+			cell: (token) =>
+				<CellStack
+					primary={token.label}
+					secondary={identity(token)}
+					secondaryMono
+				/>,
 		},
 		{
 			key: 'status',
 			header: t('auth.tokens.column.status'),
-			width: '30%',
-			cell: (token) => <span class="ui-table__state">
-				<Tag tone={tone(tokenState(token, now))} dot>{t(
-					'auth.tokens.status.' + tokenState(token, now),
-				)}</Tag>
-				<small>
-					{token.expiresAt === null
+			width: '240px',
+			cell: (token) =>
+				<CellStack
+					primary={<CellTag
+						tone={tone(tokenState(token, now))}
+						dot
+						label={t('auth.tokens.status.' + tokenState(token, now))}
+					/>}
+					secondary={token.expiresAt === null
 						? t('auth.tokens.form.noExpiry')
 						: t('auth.tokens.until', { date: stamp(token.expiresAt) })}
-				</small>
-			</span>,
+				/>,
 		},
 		{
 			key: 'lastUsed',
 			header: t('auth.tokens.column.lastUsed'),
-			width: '22%',
+			width: '170px',
 			numeric: true,
-			cell: (token) => stamp(token.lastUsedAt),
+			priority: 2,
+			cell: (token) => token.lastUsedAt === null
+				? <CellMuted>{t('auth.common.never')}</CellMuted>
+				: <CellTime value={token.lastUsedAt} />,
 		},
 	];
 }

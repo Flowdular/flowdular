@@ -1,7 +1,13 @@
-import { Table, Tag, type TableColumn } from '@flowdular/ui';
+import {
+	CellStack,
+	CellTag,
+	CellTime,
+	Table,
+	type TableColumn,
+} from '@flowdular/ui';
 import { t } from '@flowdular/client';
 import type { SandboxSessionRecord } from '../domain/types.ts';
-import { sessionTone, timestamp } from './presentation.ts';
+import { sessionTone } from './presentation.ts';
 
 export interface SandboxSessionListProps {
 	readonly sessions: readonly SandboxSessionRecord[];
@@ -16,27 +22,32 @@ function columns(): readonly TableColumn<SandboxSessionRecord>[] {
 		{
 			key: 'session',
 			header: t('sandbox.sessions.session'),
-			width: '50%',
-			cell: (session) => <span class="ui-cell">
-				<b>{session.title}</b>
-				<small class="ui-mono">{origin(session)}</small>
-			</span>,
+			width: 'auto',
+			cell: (session) =>
+				<CellStack
+					primary={session.title}
+					secondary={origin(session)}
+					secondaryMono
+				/>,
 		},
 		{
 			key: 'state',
 			header: t('sandbox.sessions.state'),
-			width: '20%',
+			width: '160px',
 			cell: (session) =>
-				<Tag tone={sessionTone(session.state)} dot>{t(
-					'sandbox.sessionState.' + session.state,
-				)}</Tag>,
+				<CellTag
+					tone={sessionTone(session.state)}
+					dot
+					label={t('sandbox.sessionState.' + session.state)}
+				/>,
 		},
 		{
 			key: 'updated',
 			header: t('sandbox.sessions.updated'),
-			width: '30%',
+			width: '170px',
 			numeric: true,
-			cell: (session) => timestamp(session.updatedAt),
+			priority: 2,
+			cell: (session) => <CellTime value={session.updatedAt} />,
 		},
 	];
 }
