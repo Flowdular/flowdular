@@ -20,7 +20,7 @@ sections:
     recorded: required in a sandbox session, whose spec-schema gate refuses a live adapter with SANDBOX_LIVE_ADAPTER_REFUSED
   templates:
     inputEntity: the case entity
-    outOfScope: rendering waits for the platform renderer while PDF generation is on the card's gap list
+    render: the module registers the body through documents.templates.v1 and renders it for the case record
 actions:
   compute: one custom action per computed figure, idempotent, naming the rule version it applies
 acceptanceScenarios:

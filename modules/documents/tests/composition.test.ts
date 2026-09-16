@@ -55,9 +55,19 @@ describe('documents composition', () => {
 		expect(composed.registered).toEqual([
 			'documents.attachments.v1',
 			'documents.text.v1',
+			'documents.templates.v1',
 		]);
-		expect(composed.tools).toEqual(['documents.read-text']);
-		expect(composed.classes).toEqual(['documents', 'text']);
+		expect(composed.tools).toEqual([
+			'documents.read-text',
+			'documents.render',
+			'documents.render-status',
+		]);
+		expect(composed.classes).toEqual([
+			'documents',
+			'text',
+			'templates',
+			'renders',
+		]);
 		expect(
 			composition.routes
 				.map((route) => route.path)

@@ -1,6 +1,6 @@
 {
 	"name": "@flowdular/module-documents",
-	"version": "0.2.1",
+	"version": "0.3.0",
 	"private": true,
 	"type": "module",
 	"exports": {
@@ -39,7 +39,9 @@
 		"@flowdular/storage": "workspace:*",
 		"@flowdular/ui": "workspace:*",
 		"@types/sax": "1.2.7",
+		"docx": "9.5.1",
 		"octane": "0.1.51",
+		"pdfmake": "0.3.11",
 		"sax": "1.6.1",
 		"segment-state": "0.2.1",
 		"unpdf": "1.8.1"

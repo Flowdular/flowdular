@@ -46,6 +46,41 @@ export type {
 } from './domain/text.ts';
 
 export {
+	DEFAULT_TEMPLATE_MARGINS,
+	DOCUMENT_RENDER_STATUSES,
+	DOCUMENT_TEMPLATE_FORMATS,
+	DOCUMENT_TEMPLATE_LIMITS,
+	DOCUMENT_TEMPLATE_LOCALES,
+	DOCUMENT_TEMPLATE_ORIGINS,
+	DOCUMENT_TEMPLATE_PAGE_SIZES,
+	DOCUMENTS_TEMPLATES_CAPABILITY,
+} from './domain/templates.ts';
+export type {
+	DocumentRenderAnswer,
+	DocumentRenderPrincipal,
+	DocumentRenderRequest,
+	DocumentRenderStatus,
+	DocumentTemplateDefinition,
+	DocumentTemplateFormat,
+	DocumentTemplateLayout,
+	DocumentTemplateLocale,
+	DocumentTemplateMargins,
+	DocumentTemplateOrigin,
+	DocumentTemplatePageSize,
+	DocumentTemplates,
+	TemplateIssue,
+} from './domain/templates.ts';
+export { templateInputSchemaFromFields } from './domain/template-schema.ts';
+export type {
+	TemplateArraySchema,
+	TemplateEntityField,
+	TemplateInputIssue,
+	TemplateInputSchema,
+	TemplateObjectSchema,
+	TemplateScalarSchema,
+} from './domain/template-schema.ts';
+
+export {
 	DOCUMENT_LIMITS,
 	DOCUMENT_SCANS,
 	DOCUMENT_STATUSES,

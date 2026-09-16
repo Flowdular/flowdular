@@ -1,9 +1,9 @@
 schemaVersion: 2
 id: documents.core
-specVersion: 0.2.1
+specVersion: 0.3.0
 status: approved
 name: Documents Core
-description: Lets a workspace attach files to its records through the platform storage port, owning only the document metadata and the reference to the record, with tenant-scoped keys, encrypted bytes, size and type limits, and a scan state, so a module attaches by reference and never holds bytes, and reads the text out of a stored document or of bytes a module hands over, so agents, workflows and members can read what was uploaded.
+description: Lets a workspace attach files to its records through the platform storage port, owning only the document metadata and the reference to the record, with tenant-scoped keys, encrypted bytes, size and type limits, and a scan state, so a module attaches by reference and never holds bytes, and reads the text out of a stored document or of bytes a module hands over, so agents, workflows and members can read what was uploaded, and renders PDF and DOCX documents from versioned templates a module ships and a workspace may edit, stored as attachments of the record they describe.
 profile: full
 capabilities:
   - api
@@ -19,6 +19,7 @@ dependencies:
 provides:
   - documents.attachments.v1
   - documents.text.v1
+  - documents.templates.v1
 requires:
   - id: connectors.egress.v1
     optional: true
@@ -48,15 +49,33 @@ invariants:
   - POST /api/documents/text answers the text of one document of the workspace by id with the optional page range and whether OCR is available, behind documents.files.read; POST /api/documents/text/retry puts a document whose text is unscanned back to pending while OCR is available and refuses anything else with DOCUMENT_TEXT_NOT_RETRYABLE and status 409, behind documents.files.manage. Both pass the session CSRF check before they read a bounded body, answer DOCUMENT_NOT_FOUND with 404 for an id outside the workspace, and answer DOCUMENT_INFECTED or DOCUMENT_DELETED with 409 for a document that has no bytes to read.
   - The agent tool documents.read-text takes ownerModule, recordRef, documentId and an optional page range, takes the workspace from the run, answers through extract with the text cut to 20000 UTF-8 bytes at a character boundary and truncated set when it was cut, and refuses a reference extract answers null for with DOCUMENT_NOT_FOUND, which the harness reports as a failed tool call carrying that refusal's message. It is declared with risk read and requires documents.files.read, so a run whose principal lacks it never sees the tool.
   - The Documents screen opens a document's details from its row, with a Details tab and a Text tab. The Text tab states loading, pending (read again every few seconds while the drawer stays open), failed, denied, a status tag with the page count and the reason, the text page by page ten pages at a time with previous and next, an empty text, and for unscanned text a Retry action shown only while OCR is available to a principal holding documents.files.manage.
+  - A template body is Markdown restricted to headings 1 to 3, paragraphs with bold, italic, inline code and links (printed as the link text followed by the URL in parentheses), bulleted and numbered lists with one nesting level, block quotes, a horizontal rule, the page break line ---pagebreak---, and GFM pipe tables, plus HTML comments on lines of their own, which are dropped. The body is parsed into blocks and inline nodes first and placeholders are substituted into text nodes afterwards, so a value is always printed as literal text and never read as Markdown. Raw HTML, images, footnotes, reference link definitions, fenced and indented code blocks, setext headings, headings of level 4 or deeper, a second list nesting level, a nested block quote, a table row with more cells than its delimiter row and a table whose header and delimiter rows differ are refused at validation, each with a stable code and the 1-based line it was found on.
+  - Placeholders are {{ path }} with an optional formatter from a fixed allowlist, money with a currency argument (the value in minor units and the ISO 4217 code as a path or a quoted literal), number with an optional count of 0 to 6 decimals, date, datetime, upper and yesno; date and datetime format in the workspace time zone from system.core.timeZone and the template's locale, a YYYY-MM-DD date without shifting it. A path names own properties of the input only, searched from the innermost each item outwards; this and @index (from 0) and @number (from 1) name the current item. Blocks are {{#each path}} ... {{/each}} and {{#if path}} ... {{else}} ... {{/if}} on lines of their own; inside a table body the enclosed rows repeat or are kept, elsewhere the enclosed blocks, and adjacent lists an each produces merge into one list. A value that is an object or an array, an amount that is not an integer, an unknown currency or a date that does not parse refuses the render with TEMPLATE_VALUE_INVALID; there are no other helpers and nothing is called.
+  - Bounds. A body holds at most 65536 characters and 8 nested blocks; a title, header or footer at most 200 characters on one line; a render repeats at most 2000 rows or blocks across all each blocks (TEMPLATE_ROWS_EXCEEDED), prints at most 1000000 characters (TEMPLATE_OUTPUT_TOO_LARGE) and a PDF at most 200 pages (TEMPLATE_PAGES_EXCEEDED). Inline styles nest at most 8 deep and every opener finds its closer through indexes computed once per paragraph, so parsing a body costs n log n at worst. An input is at most 256 KiB of JSON, a string at most 10000 characters and an array at most 2000 items.
+  - A template declares its input schema as a JSON Schema subset, an object at the root with properties of type object, string (maxLength, enum), number, integer, boolean or array of an object or a scalar, required lists, and title and description annotations, at most 4 levels deep and 64 properties per object; anything else is refused at registration with TEMPLATE_SCHEMA_INVALID. Validation checks every placeholder, each and if path against the schema (TEMPLATE_FIELD_UNKNOWN, TEMPLATE_FIELD_TYPE for an each over a non-array or a formatter over the wrong type), and a render validates the input against the schema first, refusing it with TEMPLATE_INPUT_INVALID and up to 20 issues naming the path.
+  - A layout names the page size A4 or Letter, margins from 5 to 60 millimetres, an optional one-line header and footer with placeholders plus {{page}} and {{pages}}, and a title with placeholders that becomes the document title and the stored file name.
+  - Rendering runs server side behind a renderer interface keyed by format, so another renderer can be added without changing templates. PDF is rendered by pdfmake 0.3.11 over pdfkit with the Roboto family (Apache-2.0, Latin Extended coverage) embedded from pdfmake's own virtual file system, with remote and local resource access refused; tables break across pages repeating their header row and every page carries its header and footer. DOCX is written by docx 9.5.1 with the same blocks, a repeated table header row, page numbers as Word fields and Roboto named as the font. Neither library reaches the client bundle.
+  - The public capability documents.templates.v1 offers register(moduleId, templates) while the platform composes, where a template is { key, title, format, body, inputSchema, locale, layout } with a key inside the module's namespace, a format pdf or docx and a locale en or pl, validated at once and refused with TEMPLATE_REGISTRATION_INVALID, at most 256 templates, sealed when documents.core starts; render({ tenantId, principal, ownerModule, recordRef, templateKey, input, format }) answering { jobId, status, documentId, errorCode, templateKey, version }; and status(tenantId, jobId). render requires the principal to hold documents.files.manage and the caller to have checked its own permission on the record.
+  - Every workspace uses a module's default until it renders or edits the template; then the default is kept as version 1 of document_template_versions and document_templates names the current version. Saving a body and layout validates them against the module's input schema, locale and format, is refused with TEMPLATE_VERSION_CONFLICT (409) when the expected version is not the current one and with TEMPLATE_UNCHANGED when nothing changed, and appends an immutable version. Reverting to the module default appends a version copying the default, restoring an earlier version appends a version copying its body and layout, and a workspace whose current version came from the module default or a revert follows a changed default with a new version on its next render, while an edited template stays as edited. A rendered document records the template key, the version and the sha256 of the canonical input JSON in document_renders.
+  - document_templates, document_template_versions, document_renders and document_render_keys carry tenant_id, enable and force row-level security with USING and WITH CHECK policies bound to the transaction-local tenant id, and the background role may read only the id, tenant, status, creation and claim time of queued and running renders. Versions are the data class documents.core.templates, kept and exportable; renders are documents.core.renders, swept 90 days after they were created once settled and exportable without the input.
+  - A render is a document_renders row idempotent by tenant, template key, version, owner module, record reference, format and input digest; a second render of the same tuple answers the same row, a caller key such as the harness key of a tool call is bound in document_render_keys to the render it first reached with the digest of its request, so a retry answers that render even after the template gained a version and a key reused for another request is refused with TEMPLATE_RENDER_KEY_REUSED (409), a failed row is queued again, and a succeeded row whose document was deleted is queued again under the next generation. The input is kept on the row until the render settles and is cleared then. A render of at most 50 repeated rows and 16 KiB of input is claimed and performed within the call; any other is claimed by the job runner documents.core.render through the background routing read with a heartbeat, a five minute stale takeover, the stable CLAIM_LOST abort and three attempts before TEMPLATE_RENDER_FAILED. The bytes are stored through the storage port under documents.core with an object id derived from the render id and its generation, and the documents_files row of the owning record is inserted in the transaction that marks the render succeeded while the claim still holds, so a process that dies mid render repeats it under the same object id without a second document. The workspace storage quota applies (QUOTA_EXCEEDED). A render that fails while holding its claim removes any object an earlier attempt stored under its object id, and an inline render whose caller stops waiting hands its claim back at once.
+  - GET /api/documents/templates lists every registered template with the workspace's current version, and GET /api/documents/templates/detail, GET /api/documents/templates/versions (keyset paged, newest first) and GET /api/documents/templates/version read one template, its history and one version, all behind documents.templates.read. POST /api/documents/templates/preview renders a draft body and layout with a sample input to the bytes of the chosen format and stores nothing, behind documents.templates.read; a process renders at most two previews at a time and refuses a third with TEMPLATE_PREVIEW_BUSY (429). POST /api/documents/templates/save and /api/documents/templates/revert are behind documents.templates.manage. Every POST passes the session CSRF check first and reads a bounded body; an unknown key answers TEMPLATE_NOT_FOUND with 404 and a template that fails validation TEMPLATE_INVALID with 422 and its line-numbered errors.
+  - The agent tool documents.render takes templateKey, ownerModule, recordRef, input and an optional format, takes the workspace and the requesting account from the run, is declared with risk workspace-write, idempotency required and target-ledger protection, and requires documents.templates.read and documents.files.manage. Its ledger is the harness key bound in document_render_keys plus the render tuple, so a retried call answers the same job and document. The agent tool documents.render-status takes a jobId, is declared with risk read and requires documents.templates.read, and answers the same shape or TEMPLATE_RENDER_NOT_FOUND.
+  - The Templates screen in Administration, section platform, lists module, key, title, format, version and updated time with typed cells in the loading, empty, error, populated and denied states. A row opens the editor drawer with the body in a monospace text area with line numbers, the layout fields, the input schema read-only, a sample input JSON editor, validation errors with their line numbers, Preview rendering the draft to a PDF shown in the browser's own viewer from an object URL or a DOCX download, Save as a new version, and the version history with a diff against the previous version, Restore and Revert to the module default; editing controls show only to a principal holding documents.templates.manage.
 permissions:
   - id: documents.files.read
     description: List documents of the active workspace and obtain read URLs for them.
   - id: documents.files.manage
     description: Upload, replace and delete documents in the active workspace.
+  - id: documents.templates.read
+    description: List document templates and their versions and preview a template on sample input.
+  - id: documents.templates.manage
+    description: Save a new template version, restore an earlier one or revert to the module default.
 dataOwnership:
   - documents.core owns document metadata, the storage key, the checksum, the scan state and the attachment reference.
   - The platform storage port owns the bytes and their encryption; the owning module owns the record a document is attached to and decides through its own permissions who may see the record.
   - documents.core owns the text read out of a stored document, which lives and goes with that document; the text read from bytes a module hands over is returned and never kept.
+  - The module that registers a template owns its default body, layout, input schema, locale and format; documents.core owns each workspace's versions of it and the render rows; the rendered document is an attachment of the owning record like any upload.
 entities:
   - id: document
     name: Document
@@ -162,6 +181,172 @@ entities:
       - id: extractedAt
         type: datetime
         required: false
+  - id: document-template
+    name: Document template
+    description: The current version of one registered template in a workspace that rendered or edited it.
+    fields:
+      - id: key
+        type: string
+        required: true
+        unique: tenant
+        maxLength: 128
+      - id: ownerModule
+        type: string
+        required: true
+        maxLength: 64
+      - id: currentVersion
+        type: integer
+        required: true
+      - id: updatedBy
+        type: string
+        required: true
+        maxLength: 128
+      - id: updatedAt
+        type: datetime
+        required: true
+  - id: document-template-version
+    name: Document template version
+    description: One immutable version of a template in a workspace.
+    fields:
+      - id: template
+        type: reference
+        required: true
+        reference: document-template
+      - id: version
+        type: integer
+        required: true
+      - id: origin
+        type: enum
+        required: true
+        values:
+          - module
+          - edit
+          - revert
+      - id: body
+        type: text
+        required: true
+        maxLength: 65536
+      - id: layout
+        type: json
+        required: true
+      - id: inputSchema
+        type: json
+        required: true
+      - id: locale
+        type: enum
+        required: true
+        values:
+          - en
+          - pl
+      - id: format
+        type: enum
+        required: true
+        values:
+          - pdf
+          - docx
+      - id: contentSha256
+        type: string
+        required: true
+        maxLength: 64
+      - id: createdBy
+        type: string
+        required: true
+        maxLength: 128
+  - id: document-render
+    name: Document render
+    description: One render of a template version for a record, the job that produces its document.
+    fields:
+      - id: templateKey
+        type: string
+        required: true
+        maxLength: 128
+      - id: version
+        type: integer
+        required: true
+      - id: ownerModule
+        type: string
+        required: true
+        maxLength: 64
+      - id: recordRef
+        type: string
+        required: true
+        maxLength: 200
+      - id: inputDigest
+        type: string
+        required: true
+        maxLength: 64
+      - id: format
+        type: enum
+        required: true
+        values:
+          - pdf
+          - docx
+      - id: status
+        type: enum
+        required: true
+        values:
+          - queued
+          - running
+          - succeeded
+          - failed
+      - id: document
+        type: reference
+        required: false
+        reference: document
+      - id: errorCode
+        type: string
+        required: false
+        maxLength: 64
+      - id: generation
+        type: integer
+        required: true
+      - id: attempts
+        type: integer
+        required: true
+      - id: requestedBy
+        type: string
+        required: true
+        maxLength: 128
+      - id: finishedAt
+        type: datetime
+        required: false
+    states:
+      field: status
+      values:
+        - queued
+        - running
+        - succeeded
+        - failed
+      transitions:
+        - from: queued
+          to: running
+        - from: running
+          to: succeeded
+        - from: running
+          to: failed
+        - from: running
+          to: queued
+        - from: failed
+          to: queued
+        - from: succeeded
+          to: queued
+  - id: document-render-key
+    name: Document render key
+    description: A caller's idempotency key and the render it first reached.
+    fields:
+      - id: idempotencyKey
+        type: string
+        required: true
+        unique: tenant
+        maxLength: 128
+      - id: requestSha256
+        type: string
+        required: true
+        maxLength: 64
+      - id: render
+        type: reference
+        required: true
+        reference: document-render
 screens:
   - id: documents
     kind: list
@@ -185,6 +370,20 @@ screens:
     kind: record
     entity: document-text
     title: Document details
+  - id: document-templates
+    kind: list
+    entity: document-template
+    title: Templates
+    columns:
+      - ownerModule
+      - key
+      - currentVersion
+      - updatedAt
+    navigationGroup: Administration
+  - id: document-template-editor
+    kind: form
+    entity: document-template-version
+    title: Template editor
 actions:
   - id: upload
     entity: document
@@ -235,6 +434,41 @@ actions:
     risk: workspace-write
     idempotent: true
     description: Put a document whose text is unscanned back on the job runner while OCR is available.
+  - id: read-templates
+    entity: document-template
+    permission: documents.templates.read
+    kind: custom
+    risk: read
+    idempotent: true
+    description: List the registered templates with the workspace's current version, and read one template, its version history and one version.
+  - id: preview-template
+    entity: document-template-version
+    permission: documents.templates.read
+    kind: custom
+    risk: read
+    idempotent: true
+    description: Render a draft body and layout with a sample input to PDF or DOCX bytes without storing anything.
+  - id: save-template
+    entity: document-template-version
+    permission: documents.templates.manage
+    kind: create
+    risk: workspace-write
+    idempotent: false
+    description: Validate a body and layout against the template's input schema and append them as a new version, refused when the expected version is not the current one.
+  - id: revert-template
+    entity: document-template-version
+    permission: documents.templates.manage
+    kind: create
+    risk: workspace-write
+    idempotent: false
+    description: Append a version copying the module default, or the body and layout of an earlier version.
+  - id: render
+    entity: document-render
+    permission: documents.files.manage
+    kind: create
+    risk: workspace-write
+    idempotent: true
+    description: Render a template version with an input for a record and store the document as its attachment, idempotent by the render tuple.
 widgets: []
 settings:
   - key: quotaBytes
@@ -252,8 +486,19 @@ agentTools:
     permission: documents.files.read
     description: Read the text of one document of a record by its owner module, record reference and id, optionally a page range, cut to 20000 UTF-8 bytes with truncated set.
     risk: read
+  - id: documents.render
+    permission: documents.files.manage
+    description: Render a registered template with an input for a record and store the PDF or DOCX as its attachment, answering the job, its status and the document id; a repeated call with the same template version, record, format and input answers the same render.
+    risk: workspace-write
+  - id: documents.render-status
+    permission: documents.templates.read
+    description: Read the status of a document render by its job id, with the document id once it succeeded or the error code once it failed.
+    risk: read
 outOfScope:
-  - Previews, thumbnails and in-browser rendering are not offered; a document is downloaded.
+  - Previews, thumbnails and in-browser rendering of stored documents are not offered; a document is downloaded. Only a template draft is previewed in the browser's own PDF viewer.
+  - A template a workspace writes from scratch is not offered; a workspace edits the body and layout of templates modules register, and the input schema, locale and format stay the module's.
+  - Images, HTML, footnotes, code blocks and fonts other than the embedded Roboto family are not rendered, and a Chromium renderer is not shipped; the renderer interface is where one would be added.
+  - A DOCX has no page bound, because Word lays out the pages; its rows and printed characters are bounded instead.
   - An OCR engine is not shipped. A deployment points FD_DOCUMENTS_OCR_URL at its own service; without it a scanned PDF or an image answers unscanned.
   - Headers, footers, footnotes, comments and speaker notes of Office documents, and number formats of a spreadsheet, are not read; the body, the slides and the cell values are.
   - Pages past the first 200 of a document are not read, and a page range past them answers no text with truncated set.
@@ -306,6 +551,34 @@ decisions:
   - id: D-DOCUMENTS-TEXT-RETRY
     question: Who may send a document to OCR again?
     answer: A principal holding documents.files.manage, because a retry spends the deployment's OCR service; a reader holding documents.files.read sees the status and the reason.
+    decidedBy: default
+  - id: D-DOCUMENTS-TEMPLATES-RENDERER
+    question: Which renderer produces PDF and DOCX?
+    answer: A pure JavaScript renderer inside the platform process, chosen by the coordinator on the owner's instruction to build J3 (no Chromium sidecar). pdfmake 0.3.11 (MIT, maintained, tables with repeated header rows, dynamic headers and footers with page counts, embedded TrueType fonts) over pdfkit, with the Roboto family it ships, and docx 9.5.1 (MIT), the last release whose dependencies do not pull a second major of the Node type definitions into the workspace.
+    decidedBy: default
+  - id: D-DOCUMENTS-TEMPLATES-INLINE
+    question: Which renders run within the call?
+    answer: A render whose input is at most 16 KiB and whose each blocks repeat at most 50 rows or blocks in total, both measured on the input before anything renders; every other render answers queued and runs on the job runner.
+    decidedBy: default
+  - id: D-DOCUMENTS-TEMPLATES-IDEMPOTENCY
+    question: What makes a render repeatable without a second document?
+    answer: The tuple of workspace, template key, version, owner module, record reference, format and input digest is unique on document_renders, which the capability and every caller share; a caller key, the harness key of a tool call, is bound to the render it first reached in document_render_keys with its request digest, so a retry does not render a newer version; the stored object id is derived from the render id and its generation.
+    decidedBy: default
+  - id: D-DOCUMENTS-TEMPLATES-DEFAULT
+    question: Does a workspace see a module's changed default?
+    answer: Yes while its current version came from the default or from a revert to it; an edit or a restore pins the workspace's version until someone reverts.
+    decidedBy: default
+  - id: D-DOCUMENTS-TEMPLATES-LANGUAGE
+    question: Which details of the template language does the contract leave open?
+    answer: HTML comments on lines of their own are dropped, because the scaffold writes one; @index counts from 0 as in Handlebars and @number from 1 for printed row numbers; a path is searched from the innermost each item outwards, so an item row can read a top-level currency.
+    decidedBy: default
+  - id: D-DOCUMENTS-TEMPLATES-AUTHORITY
+    question: What does rendering require?
+    answer: The capability requires documents.files.manage on the principal and leaves the record permission to the calling module; the agent tool requires documents.templates.read and documents.files.manage, because its input comes from the run rather than from the record and attaching is workspace-wide under documents.files.manage (D-DOCUMENTS-ATTACH-AUTHORITY). Preview requires documents.templates.read and stores nothing.
+    decidedBy: default
+  - id: D-DOCUMENTS-TEMPLATES-SCREEN
+    question: Where does the Templates screen live?
+    answer: Administration, section platform, beside the other workspace configuration screens.
     decidedBy: default
 acceptanceScenarios:
   - id: DOCUMENTS-UPLOAD
@@ -392,3 +665,51 @@ acceptanceScenarios:
     given: Two workspaces holding text rows, one of them for the same document id.
     when: A runtime transaction bound to one workspace reads or writes documents_text, and the background role reads the table.
     then: Only that workspace's rows are visible or writable, a row carrying the other workspace is rejected by the forced policy, and the background role reads the routing columns of pending rows and nothing else.
+  - id: DOCUMENTS-TEMPLATE-LANGUAGE
+    given: A body with headings, a paragraph with bold, italic, code and a link, lists with one nested level, a quote, a rule, a page break, a table whose body repeats a row per item, an if with an else, and every formatter, and an input whose strings carry Markdown and placeholder syntax.
+    when: The body is validated and evaluated.
+    then: Every block and inline style is produced, each item gives one row with this, @index and @number, the if picks its branch, money, number, date, datetime, upper and yesno format in the template locale and the workspace zone, and the Markdown and braces in the input are printed as literal text.
+  - id: DOCUMENTS-TEMPLATE-REFUSALS
+    given: Bodies holding HTML, an image, a footnote, a reference definition, a fenced and an indented code block, a level 4 heading, a second list level, an unbalanced each, a block tag inside a paragraph, an unknown formatter, a malformed placeholder, a table with too many cells, a path outside the input schema, and inputs past the row, character and size bounds.
+    when: Each is validated or rendered.
+    then: Each is refused with its stable code and the line it was found on, the bounds refuse the render with TEMPLATE_ROWS_EXCEEDED, TEMPLATE_OUTPUT_TOO_LARGE or TEMPLATE_PAGES_EXCEEDED, and hostile bodies of unmatched brackets, underscores, backticks and long space runs at the size bound parse within a second.
+  - id: DOCUMENTS-TEMPLATE-INPUT
+    given: A template input schema and inputs missing a required field, with a wrong type, past a maxLength, outside an enum and with an array item of the wrong shape, and a schema using a keyword outside the subset.
+    when: The inputs are validated and the schema is registered.
+    then: Each input is refused with TEMPLATE_INPUT_INVALID naming the path of every issue, a valid input passes, and the schema is refused with TEMPLATE_SCHEMA_INVALID.
+  - id: DOCUMENTS-TEMPLATE-PDF
+    given: A template with a header, a footer with page and pages, Polish text and a table of enough items to break across pages.
+    when: It is rendered to PDF and read back through documents.text.v1.
+    then: The text and the Polish characters read back, the table rows continue on the next page after the repeated header row, and every page carries its number and the page count.
+  - id: DOCUMENTS-TEMPLATE-DOCX
+    given: The same template rendered to DOCX.
+    when: It is read back through documents.text.v1.
+    then: The headings, paragraphs, list items, every table row with the header row first and the Polish characters read back, and the package declares the header row as repeating and the page number fields.
+  - id: DOCUMENTS-RENDER-JOB
+    given: A module template, a small input and a large one, and a runner that claims a render, stores its object and dies before it settles.
+    when: Both are rendered, the stale claim is taken over by a second runner, and the first runner's late settle arrives.
+    then: The small render answers succeeded with its document within the call, the large one answers queued and the runner settles it, the takeover settles the crashed render with exactly one document and one object under the render's object id, the late settle changes nothing, a runner whose heartbeat reports the claim lost aborts without settling, an inline render whose caller aborts is handed back at once, a render failing after three attempts removes the object an earlier attempt stored, a repeated render answers the same job and document, and a render whose document was deleted is rendered again under a new id.
+  - id: DOCUMENTS-TEMPLATE-VERSIONS
+    given: A module template in a workspace.
+    when: A manager saves an edit, saves again with a stale expected version, restores the first version, reverts to the default, and the module default then changes before the next render, once while the workspace follows the default and once after an edit.
+    then: The edit appends version 2 after the default kept as version 1, the stale save is refused with TEMPLATE_VERSION_CONFLICT, the restore and the revert append versions, a render records the version it used, the following workspace renders the changed default as a new version and the edited one keeps its edit.
+  - id: DOCUMENTS-TEMPLATE-REGISTRATION
+    given: A module registering templates while the platform composes.
+    when: It registers a key outside its namespace, a duplicate key, an invalid body, schema, locale or layout, and a valid template, and registers again after documents.core started.
+    then: Each invalid template is refused with TEMPLATE_REGISTRATION_INVALID naming the reason, the valid one is listed, and the late registration is refused.
+  - id: DOCUMENTS-TEMPLATE-ENDPOINTS
+    given: A reader holding documents.templates.read, a manager holding documents.templates.manage, an unauthenticated caller and a request without a CSRF proof.
+    when: They list, read, preview, save and revert templates.
+    then: The reader lists, reads and receives preview bytes of the chosen format and is refused save and revert with 403, the manager saves and reverts, the unauthenticated caller is refused with 401, the request without a CSRF proof is refused first, an unknown key answers TEMPLATE_NOT_FOUND, an invalid draft answers TEMPLATE_INVALID with line-numbered errors, and a third concurrent preview answers TEMPLATE_PREVIEW_BUSY.
+  - id: DOCUMENTS-TEMPLATE-TENANT
+    given: Two workspaces holding template versions and renders.
+    when: A runtime transaction bound to one workspace reads or writes the three tables, and the background role reads document_renders.
+    then: Only that workspace's rows are visible or writable, a row carrying the other workspace is rejected by the forced policy, and the background role reads the routing columns of queued and running renders and nothing else.
+  - id: DOCUMENTS-RENDER-TOOL
+    given: An agent run whose principal holds documents.templates.read and documents.files.manage with documents.render granted, and a run whose principal lacks documents.files.manage.
+    when: The first run calls the tool twice with the same input and once with another, and the second run calls it.
+    then: The two identical calls answer the same job and document, the other input answers a new document, a call retried under its harness key after the template gained a version answers the first job while a new key renders the new version, a key reused with another input is refused with TEMPLATE_RENDER_KEY_REUSED, documents.render-status answers the job, and the second run is denied by the harness before the tool runs.
+  - id: DOCUMENTS-TEMPLATES-SCREEN
+    given: A member holding documents.templates.read and an owner holding documents.templates.manage.
+    when: They open Administration, Templates and a template's editor.
+    then: The list shows module, key, title, format, version and updated time in typed cells, the member sees the editor read-only with Preview, the owner sees Save, Restore and Revert, a draft with an error shows the line number, and a preview opens the PDF in the browser's viewer or downloads the DOCX, in English and Polish.

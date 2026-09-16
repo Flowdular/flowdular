@@ -215,6 +215,44 @@ describe('recorded adapters in a session spec', () => {
 		}
 	});
 
+	it('composes documents.core ahead of a draft that declares templates', async () => {
+		const support = await mkdtemp(join(tmpdir(), 'flowdular-support-'));
+		for (const [directory, manifest] of [
+			['system', { id: 'system.core' }],
+			[
+				'documents',
+				{
+					id: 'documents.core',
+					dependencies: [{ id: 'system.core' }, { id: 'auth.core' }],
+				},
+			],
+		] as const) {
+			await mkdir(join(support, directory), { recursive: true });
+			await writeFile(
+				join(support, directory, 'module.json'),
+				JSON.stringify(manifest),
+			);
+		}
+		const templated = await sessionWithSpec(
+			`${SPEC}templates:\n  - id: offer\n    title: Offer\n    inputEntity: case\n    format: pdf\n    body: templates/offer.md\n`,
+		);
+		expect(
+			(
+				await resolvePreviewModules(templated.root, templated.session, support)
+			).map((module) => [module.id, module.support]),
+		).toEqual([
+			['system.core', true],
+			['documents.core', true],
+			['underwriting.core', false],
+		]);
+		const empty = await sessionWithSpec(`${SPEC}templates: []\n`);
+		expect(
+			(await resolvePreviewModules(empty.root, empty.session, support)).map(
+				(module) => module.id,
+			),
+		).toEqual(['underwriting.core']);
+	});
+
 	it('holds the recorded research settings in the preview for every workspace', async () => {
 		const settings = memorySettings(
 			recordedAdapterSettings({

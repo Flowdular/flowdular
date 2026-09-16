@@ -16,6 +16,12 @@ import {
 	DocumentsService,
 	type DocumentsServiceOptions,
 } from '../../src/services/documents-service.ts';
+import { DatabaseTemplatesRepository } from '../../src/services/templates-repository.ts';
+import {
+	DocumentTemplatesService,
+	type DocumentTemplateRegistry,
+	type DocumentTemplatesServiceOptions,
+} from '../../src/services/templates-service.ts';
 import {
 	DocumentTextService,
 	type DocumentTextServiceOptions,
@@ -29,11 +35,16 @@ import {
 export const DOCUMENTS_TENANT_TABLES = [
 	'documents_files',
 	'documents_text',
+	'document_templates',
+	'document_template_versions',
+	'document_renders',
+	'document_render_keys',
 ] as const;
 
 export interface DocumentsTestContext {
 	readonly databases: DatabaseProvider;
 	readonly repository: DatabaseDocumentsRepository;
+	readonly templates: DatabaseTemplatesRepository;
 	/** Tenant-scoped handle, for assertions the repository does not expose. */
 	readonly runtime: DatabaseHandle;
 	/** The cross-tenant role the text runner routes with. */
@@ -48,6 +59,16 @@ export interface DocumentsTestContext {
 			>
 		>,
 	): DocumentsService;
+	/** A templates service over the same repositories and port. */
+	templatesService(
+		registry: DocumentTemplateRegistry,
+		options?: Partial<
+			Omit<
+				DocumentTemplatesServiceOptions,
+				'registry' | 'repository' | 'documents' | 'storage'
+			>
+		>,
+	): DocumentTemplatesService;
 	/** A text service over the same repository and port. */
 	textService(
 		options?: Partial<
@@ -111,9 +132,14 @@ export async function openDocumentsTestContext(
 			runtime.database,
 			background.database,
 		);
+		const templates = new DatabaseTemplatesRepository(
+			runtime.database,
+			background.database,
+		);
 		return {
 			databases,
 			repository,
+			templates,
 			runtime: runtime.database,
 			background: background.database,
 			storage,
@@ -123,6 +149,20 @@ export async function openDocumentsTestContext(
 					storage: storage.port,
 					quotaBytes: options.quotaBytes ?? (() => 10 * 1024 * 1024),
 					readUrlSeconds: options.readUrlSeconds ?? (() => 300),
+					...(options.now ? { now: options.now } : {}),
+					...(options.newId ? { newId: options.newId } : {}),
+				});
+			},
+			templatesService(registry, options = {}) {
+				return new DocumentTemplatesService({
+					registry,
+					repository: templates,
+					documents: repository,
+					storage: storage.port,
+					quotaBytes: options.quotaBytes ?? (() => 10 * 1024 * 1024),
+					timeZone: options.timeZone ?? (() => 'Europe/Warsaw'),
+					wake: options.wake ?? (() => undefined),
+					...(options.renderers ? { renderers: options.renderers } : {}),
 					...(options.now ? { now: options.now } : {}),
 					...(options.newId ? { newId: options.newId } : {}),
 				});

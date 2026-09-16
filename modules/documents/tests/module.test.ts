@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { moduleDefinition } from '../src/index.ts';
 import { DOCUMENTS_ATTACHMENTS_CAPABILITY } from '../src/domain/attachments.ts';
+import { DOCUMENTS_TEMPLATES_CAPABILITY } from '../src/domain/templates.ts';
 import { DOCUMENTS_TEXT_CAPABILITY } from '../src/domain/text.ts';
 import {
 	openDocumentsTestContext,
@@ -28,6 +29,7 @@ describe('documents.core', () => {
 		expect(moduleDefinition.manifest.provides).toEqual([
 			DOCUMENTS_ATTACHMENTS_CAPABILITY,
 			DOCUMENTS_TEXT_CAPABILITY,
+			DOCUMENTS_TEMPLATES_CAPABILITY,
 		]);
 	});
 
