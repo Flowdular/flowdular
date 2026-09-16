@@ -33,6 +33,13 @@ export type {
 	ConnectorCallResult,
 	ConnectorJsonValue,
 } from './domain/calls.ts';
+export { CONNECTORS_EGRESS_CAPABILITY } from './domain/egress.ts';
+export type {
+	ConnectorEgressCapability,
+	ConnectorEgressCheck,
+	ConnectorEgressLookup,
+	ConnectorEgressRefusal,
+} from './domain/egress.ts';
 export {
 	HTTP_JSON_DEFINITION,
 	HTTP_JSON_DEFINITION_KEY,

@@ -21,6 +21,7 @@ import { AgentHarnessError } from './errors.ts';
 import { withSystemPreamble } from './preamble.ts';
 import {
 	DEFAULT_MAX_OUTPUT_TOKENS,
+	NATIVE_TOOL_UNSUPPORTED,
 	type AgentProvider,
 	type AgentProviderContext,
 	type AgentProviderResult,
@@ -91,6 +92,14 @@ export function createVercelAiSdkProvider(
 		capabilities: { structuredOutput: true },
 		async execute(context): Promise<AgentProviderResult> {
 			try {
+				/* The pass-through to a provider's own web search is not wired yet, so
+				   a granted native tool is reported rather than silently dropped. */
+				for (const native of context.nativeTools ?? []) {
+					await context.reportNative({
+						id: native.id,
+						code: NATIVE_TOOL_UNSUPPORTED,
+					});
+				}
 				const { tools, ids } = toolsFor(context);
 				const outputContract = context.request.outputContract ?? {
 					kind: 'text' as const,

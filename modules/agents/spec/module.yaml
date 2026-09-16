@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: agents.core
-specVersion: 0.12.9
+specVersion: 0.12.10
 status: approved
 name: Agentic Core
 description: Provides tenant-created and module-owned business agent definitions, tenant-scoped provider connections, reusable procedures, durable streamed execution, run history, and the public run queue used by optional automation modules.
@@ -47,6 +47,7 @@ invariants:
   - Run grants are stored only as hashes and safe identifiers. A replay, expired grant, wrong audience, invalid signature, or grant presented after lease loss is rejected before provider resolution.
   - A single claimed execution can remain detached for up to 24 hours while the worker renews its lease. Provider calls and tools must still use narrower operation timeouts and idempotency controls where side effects are possible.
   - Agent instructions never grant authority. Model execution can reach platform behavior only through registered agent tools and never receives the platform capability registry directly.
+  - A native tool a module registers with agentTools.registerNative is a tool the model provider executes itself, such as a web search. agents.core reads the native tools when the harness is built, lists them with the other tool ids so a definition allows and a run grants them by exact id, and the harness offers one to the provider only for a run whose grants and permission snapshot cover it and whose consent gate admits it when the run starts. The citations the provider reports are recorded on the run as a tool.native event and handed to the owning module.
   - Agent instructions are a variable template. The stored definition keeps the raw double-brace template; every run snapshot carries the instructions resolved against the run context (tenant name, principal, UTC date) before the harness executes. A variable is offered and resolved only when the principal holds the scope declared by its source.
   - Arbitrary source code, shell commands, raw secrets, and runtime-downloaded client code cannot be stored as agent configuration.
   - Provider, model, instruction revision, limits, input, output, usage, and execution events are captured with every run.
@@ -299,6 +300,10 @@ acceptanceScenarios:
     given: Two workspaces hold agent runs of several ages with their steps, one run still queued, a provider connection with a sealed credential, and the platform has sealed the data class registry.
     when: The platform sweeps, exports and erases the declared classes for one of them.
     then: The sweep removes only that workspace's settled runs strictly older than the cutoff and at most the batch it was given, taking their steps with them while the queued run stays; the export streams that workspace's runs and its audit trail through the sink in keyset pages with the oldest and newest record time, answers no rows and no range for a workspace that holds none, and carries no provider credential; the audit class declares no sweep; and erasing a subject removes the runs that account requested in that workspace alone, reporting a full batch as truncated.
+  - id: AGENTS-NATIVE-TOOL
+    given: A module registered a native web search tool and an agent definition allows it by id.
+    when: A run whose grants and permission snapshot cover the tool executes on the local simulation provider without a fixtures file.
+    then: The definition is accepted, the run succeeds, and the run events carry one tool.native event naming the tool and the reason NATIVE_TOOL_UNSUPPORTED.
   - id: AGENTS-METER-COUNT
     given: A workspace runs an agent and metering.core is composed, as every deployment of agents.core must compose it.
     when: The platform composes and the run settles.

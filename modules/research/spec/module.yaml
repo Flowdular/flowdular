@@ -1,0 +1,441 @@
+schemaVersion: 2
+id: research.core
+specVersion: 0.1.0
+status: approved
+name: Research
+description: Gives agents, workflows and members a governed web search and page reader behind one adapter a workspace selects, and keeps every result kept and every page read as citeable evidence that other modules attach to their own records.
+profile: full
+capabilities:
+  - api
+  - database
+  - client
+  - translations
+dependencies:
+  - id: system.core
+    range: ^0.8.0
+  - id: auth.core
+    range: ^0.13.0
+provides:
+  - research.search.v1
+  - research.fetch.v1
+  - research.evidence.v1
+requires:
+  - id: connectors.calls.v1
+    optional: true
+  - id: connectors.egress.v1
+    optional: true
+  - id: metering.meters.v1
+    optional: true
+  - id: documents.attachments.v1
+    optional: true
+  - id: exports.lists.v1
+    optional: true
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - The tenant comes from the authenticated principal or the trusted run context. No request body, tool input or capability caller selects another workspace, and every statement runs inside a tenant-scoped transaction on the module's own lease with bound parameters.
+  - research_evidence, research_evidence_links, research_pages, research_queries and research_run_counters carry tenant_id, enable and force row-level security with USING and WITH CHECK policies bound to transaction-local coreloom.tenant_id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
+  - A workspace selects exactly one adapter in the setting research.core.adapter. model-native is the default and is reached only by a provider inside an agent run through the native tool research.web-search; connector calls the connectors.core instance named by research.core.connectorInstanceId with operation search and input q and limit, and maps the answer through the declared result mapping; recorded answers from the research-fixtures.json file named by research.core.recordedFixturesPath, an absolute path or one relative to the workspace root, and reads pages from the same file.
+  - A search outside an agent run with the model-native adapter answers RESEARCH_ADAPTER_UNAVAILABLE with status 409 before any budget is reserved. Inside a run the search answers the citations the native tool already reported for the same query in that run, and answers RESEARCH_ADAPTER_UNAVAILABLE when there are none.
+  - Every search reserves one query unit in research_queries inside a transaction that locks the workspace budget, so the monthly count in UTC never passes research.core.monthlyQueryBudget; a search past it, or one metering.meters.v1 refuses for the meter research.core.queries, answers RESEARCH_BUDGET_EXCEEDED with status 429 before the adapter is called. A reservation whose adapter call failed is released. A counted search is reported to the meter with the query id as its source reference when metering.core is composed.
+  - The domain rules come from research.core.allowDomains and research.core.denyDomains, comma separated host names that match the host itself and every subdomain. A deny rule wins over an allow rule, and a non-empty allow list admits only the hosts it names. Search results outside the rules are dropped before they are counted or kept, and a fetch of such a URL answers RESEARCH_DOMAIN_DENIED with status 403 before anything leaves the process.
+  - A fetch reaches the network only through connectors.egress.v1. Without that capability a live fetch answers RESEARCH_EGRESS_UNAVAILABLE with status 409, and a URL the policy refuses answers RESEARCH_EGRESS_REFUSED with status 403 and the policy reason. The connection dials only the addresses the policy verified, on https and port 443.
+  - A fetch honours robots.txt for the user agent FlowdularResearch and the wildcard group, cached per host for one hour in process, and one decision spends a bounded number of pattern comparisons, refusing the path once a hostile file exhausts them. A robots.txt answering a 4xx status admits every path; one that cannot be read refuses the fetch with RESEARCH_ROBOTS_UNAVAILABLE and status 502 and is not cached; a disallowed path answers RESEARCH_ROBOTS_DISALLOWED with status 403.
+  - A fetch follows at most one redirect, applying the domain rules, robots.txt and the egress policy to the target again, and a second redirect answers RESEARCH_REDIRECT_REFUSED. A body past research.core.fetchMaxBytes stops the read and answers RESEARCH_FETCH_TOO_LARGE with status 413, a fetch past research.core.fetchTimeoutMs, the resolution of its host included, answers RESEARCH_FETCH_TIMEOUT with status 504, and a status outside 200 to 299 answers RESEARCH_FETCH_FAILED with status 502.
+  - HTML and XHTML become readable text through the module's own extractor, which keeps the title, prefers the article or main element, drops scripts, styles, navigation, headers, footers, forms and comments, and decodes entities; plain text is kept as it is. A PDF answers RESEARCH_CONTENT_UNSUPPORTED with status 415 until documents text extraction exists, and so does every other content type.
+  - A fetched page is cached in research_pages by URL with its sha256 and title for 24 hours, and a fetch inside that window reads the cache instead of the network. A page reached through a redirect is not cached, so the domain rules apply to its host again on the next fetch.
+  - An agent or workflow run fetches at most 64 pages. The count lives in research_run_counters, is taken before the fetch in the same statement that checks it, and a fetch past it answers RESEARCH_RUN_LIMIT with status 429.
+  - Every result a search keeps and every page a fetch reads becomes one research_evidence row with the URL, the title, an excerpt of at most 4096 bytes, the content sha256, the retrieval time, the run id when a run asked and the account that asked. The full text is stored only while research.core.storeFullText is on. Result evidence is linked to the query that produced it under the owner module research.core.
+  - A module attaches evidence to its own record through research.evidence.v1 with attach, list and get. attach refuses an evidence id outside the workspace with RESEARCH_EVIDENCE_NOT_FOUND before any link is written, links at most 64 ids per call, is idempotent per owner module, record reference and evidence id, and refuses the owner module research.core, which is reserved for query links. The member route attaches only under an owner module in whose namespace the principal holds a scope and refuses any other with RESEARCH_ATTACH_FORBIDDEN and status 403, because the capability trusts the module that calls it while a member could otherwise plant a citation on records of a module they cannot reach.
+  - The agent tools research.search and research.fetch and the native tool research.web-search require research.run, are declared with risk workspace-write and pass the harness consent gate research.consent, which admits them only while research.core.allowAgents is on and refuses with TOOL_NOT_CONSENTED otherwise. The native tool is also withheld when the adapter is not model-native or the budget is spent, receives the workspace domain lists as its configuration, and the citations a provider reports become query and evidence rows of the run.
+  - Every mutation route passes the session CSRF and origin check before it reads its body, and every body is bounded before any read or write.
+  - research.core declares three data classes while it composes. research.core.evidence is exportable with a 180 day default retention, swept with its links, and erased by removing the account from the rows it asked for. research.core.queries is exportable with a 90 day default retention, swept with the run counters of the same age, and erased by removing the account reference of member queries. research.core.pages is a cache, not exportable, kept one day, and erased by clearing the workspace cache.
+  - The evidence list is registered with exports.lists.v1 as research.core.evidence behind research.evidence.read, walks the same keyset the list endpoint answers, and neutralises a title or an excerpt that a spreadsheet would read as a formula. A deployment without exports.core composes the same and registers nothing.
+permissions:
+  - id: research.evidence.read
+    description: Read the evidence, the queries and the evidence records of the active workspace.
+  - id: research.run
+    description: Search and fetch through the workspace adapter and attach evidence to a record, as a member or through an agent run.
+  - id: research.settings.manage
+    description: Change the research settings of the active workspace. Held by owners and never a member scope; reserved for a research settings screen, while the settings are changed today in Administration, Modules behind system.settings.manage.
+dataOwnership:
+  - research.core owns research_evidence, research_evidence_links, research_pages, research_queries and research_run_counters and nothing else.
+  - The records evidence is attached to stay owned by the module that attached it. research.core stores the owner module id and the record reference that module chose and never reads the record.
+  - Connector instances, their credentials and their call log stay owned by connectors.core, and meters and limits stay owned by metering.core. research.core reaches both through their public capabilities only.
+entities:
+  - id: evidence
+    name: Evidence
+    description: One search result kept or one page read, as it was retrieved.
+    fields:
+      - id: url
+        type: string
+        required: true
+        maxLength: 2048
+      - id: title
+        type: string
+        required: true
+        maxLength: 300
+      - id: excerpt
+        type: text
+        required: true
+        maxLength: 4096
+        description: At most 4096 bytes of the snippet or the page text.
+      - id: contentSha256
+        type: string
+        required: true
+        maxLength: 64
+      - id: retrievedAt
+        type: datetime
+        required: true
+      - id: runId
+        type: string
+        maxLength: 128
+      - id: documentId
+        type: string
+        maxLength: 128
+        description: Reserved for the stored full text as a document once documents.core offers a way to create one.
+      - id: createdBy
+        type: string
+        maxLength: 128
+      - id: fullText
+        type: text
+        description: The whole page text, written only while research.core.storeFullText is on.
+  - id: evidence-link
+    name: Evidence link
+    description: One evidence id attached to one record of an owner module.
+    fields:
+      - id: evidence
+        type: reference
+        required: true
+        reference: evidence
+      - id: ownerModule
+        type: string
+        required: true
+        maxLength: 64
+      - id: recordRef
+        type: string
+        required: true
+        maxLength: 200
+  - id: page
+    name: Cached page
+    description: The text of one fetched URL, kept 24 hours so a repeat fetch reads no network.
+    fields:
+      - id: url
+        type: string
+        required: true
+        unique: tenant
+        maxLength: 2048
+      - id: title
+        type: string
+        required: true
+        maxLength: 300
+      - id: contentSha256
+        type: string
+        required: true
+        maxLength: 64
+      - id: text
+        type: text
+        required: true
+      - id: fetchedAt
+        type: datetime
+        required: true
+      - id: expiresAt
+        type: datetime
+        required: true
+  - id: query
+    name: Query
+    description: One search as it was counted against the budget.
+    fields:
+      - id: query
+        type: string
+        required: true
+        maxLength: 400
+      - id: adapter
+        type: enum
+        required: true
+        values:
+          - model-native
+          - connector
+          - recorded
+      - id: caller
+        type: enum
+        required: true
+        values:
+          - agent
+          - workflow
+          - member
+      - id: callerRef
+        type: string
+        maxLength: 200
+      - id: resultCount
+        type: integer
+        required: true
+      - id: costUnits
+        type: integer
+        required: true
+  - id: run-counter
+    name: Run counter
+    description: The fetches and queries one run has made, checked against the per-run limit.
+    fields:
+      - id: runId
+        type: string
+        required: true
+        unique: tenant
+        maxLength: 128
+      - id: fetches
+        type: integer
+        required: true
+      - id: queries
+        type: integer
+        required: true
+      - id: updatedAt
+        type: datetime
+        required: true
+screens:
+  - id: research
+    kind: list
+    entity: evidence
+    title: Research
+    columns:
+      - retrievedAt
+      - title
+      - url
+      - runId
+      - contentSha256
+    navigationGroup: Administration
+  - id: queries
+    kind: list
+    entity: query
+    title: Queries
+    columns:
+      - createdAt
+      - query
+      - adapter
+      - caller
+      - resultCount
+      - costUnits
+    navigationGroup: Administration
+  - id: evidence
+    kind: record
+    entity: evidence
+    title: Evidence
+    columns:
+      - title
+      - url
+      - retrievedAt
+      - contentSha256
+      - runId
+      - documentId
+      - excerpt
+    navigationGroup: Administration
+actions:
+  - id: search
+    entity: query
+    permission: research.run
+    kind: custom
+    risk: workspace-write
+    idempotent: false
+    description: Search through the workspace adapter, count the query against the budget and keep every admitted result as evidence.
+  - id: fetch
+    entity: evidence
+    permission: research.run
+    kind: custom
+    risk: workspace-write
+    idempotent: false
+    description: Read one public page under the egress policy, robots.txt, the domain rules and the size and time caps, and keep it as evidence.
+  - id: attach
+    entity: evidence-link
+    permission: research.run
+    kind: custom
+    risk: workspace-write
+    idempotent: true
+    description: Attach evidence ids of the workspace to a record of an owner module.
+widgets: []
+settings:
+  - key: adapter
+    type: enum
+    scope: tenant
+    default: model-native
+    values:
+      - model-native
+      - connector
+      - recorded
+    description: Which adapter answers a search.
+  - key: connectorInstanceId
+    type: string
+    scope: tenant
+    default: ''
+    description: The connectors.core instance the connector adapter calls.
+  - key: recordedFixturesPath
+    type: string
+    scope: tenant
+    default: ''
+    description: The absolute path, or a path relative to the workspace root, of the research-fixtures.json file the recorded adapter reads.
+  - key: allowDomains
+    type: string
+    scope: tenant
+    default: ''
+    description: Comma separated host names a search result or a fetch may reach; empty admits every host the deny list leaves.
+  - key: denyDomains
+    type: string
+    scope: tenant
+    default: ''
+    description: Comma separated host names no search result or fetch may reach.
+  - key: monthlyQueryBudget
+    type: integer
+    scope: tenant
+    default: 500
+    description: Searches a workspace may make in one UTC calendar month; 0 to 1000000.
+  - key: storeFullText
+    type: boolean
+    scope: tenant
+    default: false
+    description: Whether evidence keeps the whole page text beside the excerpt.
+  - key: fetchMaxBytes
+    type: integer
+    scope: tenant
+    default: 2000000
+    description: Bytes of one page read before the fetch is refused; 1024 to 2000000.
+  - key: fetchTimeoutMs
+    type: integer
+    scope: tenant
+    default: 20000
+    description: Milliseconds one fetch may take; 1000 to 20000.
+  - key: allowAgents
+    type: boolean
+    scope: tenant
+    default: false
+    description: Whether agent runs may use the research tools.
+agentTools:
+  - id: research.search
+    permission: research.run
+    description: Search through the workspace adapter and answer the kept results with their evidence ids, behind the research.consent gate.
+    risk: workspace-write
+  - id: research.fetch
+    permission: research.run
+    description: Read one public page as text and answer its evidence id, sha256 and whether the text was cut, behind the research.consent gate.
+    risk: workspace-write
+acceptanceScenarios:
+  - id: RESEARCH-SEARCH-RECORDED
+    given: A workspace on the recorded adapter with a fixtures file that answers a query with three results, one of them on a denied domain.
+    when: A member holding research.run searches that query.
+    then: The answer carries the two admitted results with their evidence ids and the adapter recorded, one query row counts one unit with a result count of two, and two evidence rows carry the member as the account that asked and are linked to the query.
+  - id: RESEARCH-RECORDED-PATH
+    given: A recorded fixtures setting naming an absolute path to research-fixtures.json, a relative path to one under the workspace root, and a path to a file with another name.
+    when: A member searches under each setting.
+    then: Both research-fixtures.json paths answer from the file, and the other name answers RESEARCH_FIXTURES_UNAVAILABLE without reading it.
+  - id: RESEARCH-FETCH-RECORDED
+    given: A workspace on the recorded adapter whose fixtures file holds a page.
+    when: A member fetches that URL and a URL the file does not hold.
+    then: The recorded page becomes evidence with its sha256 and an excerpt of at most 4096 bytes, and the missing URL answers RESEARCH_PAGE_NOT_RECORDED without any network access.
+  - id: RESEARCH-MODEL-NATIVE
+    given: A workspace on the default model-native adapter.
+    when: A member searches, an agent run reports native citations for a query through the harness, and the run then searches the same query and another one.
+    then: The member search answers RESEARCH_ADAPTER_UNAVAILABLE with 409 and reserves nothing, the native report becomes one query row and evidence rows carrying the run id, the same query answers those evidence ids without counting again, and the other query answers RESEARCH_ADAPTER_UNAVAILABLE.
+  - id: RESEARCH-CONNECTOR
+    given: A workspace on the connector adapter naming an instance, and a connector capability that answers a result list.
+    when: A member searches.
+    then: The capability is called with the instance, operation search, input q and limit and caller test, the answer is mapped to results, and a refused connector call answers RESEARCH_CONNECTOR_FAILED and releases the reserved unit.
+  - id: RESEARCH-BUDGET
+    given: A workspace whose monthly query budget is two, and a metering capability that refuses the meter.
+    when: Three searches run in the month, and one more runs while metering refuses.
+    then: The first two are counted, the third answers RESEARCH_BUDGET_EXCEEDED with 429 before the adapter is called, and the metering refusal answers the same code with nothing reserved.
+  - id: RESEARCH-DOMAINS
+    given: A workspace whose allow list names example.org and whose deny list names blocked.example.org.
+    when: Pages on example.org, on a subdomain of it, on blocked.example.org and on another host are fetched.
+    then: The first two are read, and the denied subdomain and the other host answer RESEARCH_DOMAIN_DENIED before the egress policy is asked.
+  - id: RESEARCH-ROBOTS
+    given: A host whose robots.txt disallows a path for every agent, and a host whose robots.txt cannot be read.
+    when: A page under the disallowed path, a page beside it and a page on the unreadable host are fetched, and the first host is fetched again within the hour.
+    then: The disallowed path answers RESEARCH_ROBOTS_DISALLOWED, the other page is read, the unreadable host is refused, and robots.txt of the first host is read once.
+  - id: RESEARCH-FETCH-LIMITS
+    given: Pages that answer a body past the size cap, stall past the time cap, redirect twice, answer a PDF, answer a server error, or are refused by the egress policy, and single redirects to a denied host, to a path robots.txt disallows and to a host the egress policy refuses.
+    when: Each page is fetched.
+    then: They answer RESEARCH_FETCH_TOO_LARGE, RESEARCH_FETCH_TIMEOUT, RESEARCH_REDIRECT_REFUSED, RESEARCH_CONTENT_UNSUPPORTED, RESEARCH_FETCH_FAILED and RESEARCH_EGRESS_REFUSED, the redirects answer RESEARCH_DOMAIN_DENIED, RESEARCH_ROBOTS_DISALLOWED and RESEARCH_EGRESS_REFUSED, no evidence row is written for any of them, a single redirect to an admitted page is followed and its page is not cached, and a URL longer than its bound once encoded answers RESEARCH_URL_INVALID.
+  - id: RESEARCH-FETCH-HTML
+    given: An HTML page with a title, navigation, a script, an article and entities, served over TLS to an address the egress policy verified.
+    when: The page is fetched twice within 24 hours with storeFullText on.
+    then: The text holds the title and the article without the navigation or the script, entities are decoded, the evidence keeps the full text, and the second fetch reads the cache without a request.
+  - id: RESEARCH-RUN-LIMIT
+    given: An agent run that has already fetched 64 pages.
+    when: The run fetches one more.
+    then: The fetch answers RESEARCH_RUN_LIMIT with 429 before any network access, and another run is not affected.
+  - id: RESEARCH-EVIDENCE-ATTACH
+    given: Evidence in two workspaces.
+    when: A module attaches its own evidence to a record twice, attaches a foreign evidence id, attaches under research.core, lists the record and gets one entry.
+    then: The links are written once, the foreign id answers RESEARCH_EVIDENCE_NOT_FOUND with no link written, research.core is refused, the list answers the attached entries newest first, and get answers null for the foreign id.
+  - id: RESEARCH-AGENT-CONSENT
+    given: An agent run holding research.run and the research tools in its grants.
+    when: The run calls research.search while allowAgents is off, then while it is on.
+    then: The first call is denied by the research.consent gate with TOOL_NOT_CONSENTED before any query is counted, and the second answers results whose evidence rows carry the run id.
+  - id: RESEARCH-LISTS
+    given: A workspace with more evidence and queries than one page holds.
+    when: A reader holding research.evidence.read walks the evidence and query lists and opens one evidence record.
+    then: Each page is newest first with a signed cursor only while rows remain, a tampered cursor answers CURSOR_INVALID, the record answers the evidence with its links, and the member attach route refuses an owner module in whose namespace the member holds no scope with RESEARCH_ATTACH_FORBIDDEN.
+  - id: RESEARCH-EXPORT
+    given: exports.core composed its list registry.
+    when: research.core composes and the evidence export is walked page by page.
+    then: research.core.evidence is registered behind research.evidence.read and the walk writes every evidence row of the workspace once with a formula-like title neutralised.
+  - id: RESEARCH-DENY
+    given: A request without a session, or with a session lacking the route permission.
+    when: It reaches any research.core route.
+    then: The server answers 401 without an identity and 403 without the permission, before any read or write, and a reader holding only research.evidence.read is refused a search.
+  - id: RESEARCH-CSRF
+    given: A principal holding research.run with a valid session.
+    when: A search, a fetch or an attach arrives without the CSRF proof.
+    then: The server refuses it before reading the body or counting anything.
+  - id: RESEARCH-TENANT-BOUNDARY
+    given: Two workspaces with evidence, links, pages, queries and run counters.
+    when: A runtime transaction bound to one workspace reads or writes any of those tables.
+    then: Only that workspace's rows are visible, and the forced row-level security policy rejects a row carrying the other workspace's identifier.
+  - id: RESEARCH-RETENTION
+    given: Evidence, queries, pages and run counters older and newer than each class period, some asked for by a member.
+    when: The platform sweeps, exports and erases the research data classes for one workspace and that member.
+    then: Only rows past the cutoff are removed with their links and counters, the export carries evidence and queries and names pages as excluded, and the erasure removes the member from evidence and queries while leaving the rows.
+outOfScope:
+  - Reading a PDF. A PDF answers RESEARCH_CONTENT_UNSUPPORTED until documents text extraction (RFC 0006 J2) exists.
+  - Storing the full page text as a document. documents.attachments.v1 offers no create call, so the full text is a column of the evidence row while storeFullText is on and documentId stays empty.
+  - The provider pass-through of the native web search. The harness offers the native tool and records what a provider reports, and the real providers report the tool as unsupported until the ai-provider stream wires Anthropic and OpenAI web search.
+  - A search form on the Research screen. Members search through the API and agents through the tools; the screen reads evidence and queries.
+  - A per-connector result mapping stored as data. The connector adapter maps the declared default shape only.
+  - Filling nativeFixturesPath on a platform run. The harness reads it and the local simulation answers from it, and agents.core does not set it yet, so a composed platform on the local simulation reports the native tool as unsupported until a caller such as the sandbox preview names the file.
+  - A per-member fetch quota. Searches count against the monthly budget and runs are held to 64 fetches, while a member's own fetches are bounded by the size, time and robots rules only.
+decisions:
+  - id: D-RESEARCH-PERMISSIONS
+    question: Who reads evidence, runs research and changes the research settings?
+    answer: Owners hold research.evidence.read, research.run and research.settings.manage, and the settings permission stays with owners; members hold research.evidence.read and research.run, so a member searches within the workspace adapter and budget and an agent run the member starts carries the same permission.
+    decidedBy: default
+  - id: D-RESEARCH-TOOL-RISK
+    question: How are the research tools declared when the harness runs external risk only under a per-call approval grant?
+    answer: As workspace-write with the consent gate research.consent, the connectors.call precedent, so the ceiling is raised by the workspace setting allowAgents rather than by a declaration, and a spec agent tool may only be read or workspace-write.
+    decidedBy: default
+  - id: D-RESEARCH-NATIVE-SEARCH
+    question: How does the model-native adapter answer a search when the provider runs the search itself?
+    answer: The provider runs it through the native tool research.web-search and reports its citations, which research.core records as a query and evidence of the run. The search capability inside that run answers the evidence of the same query, and outside a run it answers RESEARCH_ADAPTER_UNAVAILABLE.
+    decidedBy: default
+  - id: D-RESEARCH-METER-KEY
+    question: Which meter counts research queries?
+    answer: research.core.queries, because metering.core composes a meter key from the declaring module id and a key without dots. The budget itself is research.core.monthlyQueryBudget, enforced by research.core, and an operator limit on the meter refuses as well.
+    decidedBy: default
+  - id: D-RESEARCH-MEMBER-CONNECTOR
+    question: Which caller kind does a member search send to connectors.core?
+    answer: test, the kind connectors.core admits without the workflow or agent consent flags, because the owner naming the instance in research.core.connectorInstanceId is the consent. Agent and workflow searches send their own kinds and stay behind those flags.
+    decidedBy: default
+  - id: D-RESEARCH-EVIDENCE-DEFAULTS
+    question: What does evidence keep?
+    answer: The sha256 and an excerpt of at most 4096 bytes, with the full text only while storeFullText is on, as the owner decided on 2026-09-16.
+    decidedBy: user
+  - id: D-RESEARCH-SCREENS
+    question: How are the three screens presented?
+    answer: research and queries are the Evidence and Queries tabs of one Research view in Administration, section compliance. evidence is a drawer over that view, opened by id from the view research-evidence with the query parameter id, which is the link another module builds.
+    decidedBy: default
+  - id: D-RESEARCH-RECORDED-PATH
+    question: Where may the recorded fixtures file live?
+    answer: At an absolute path, which is what the sandbox preview pins, or at a path relative to the workspace root, and always a file named research-fixtures.json of at most one megabyte, so a workspace setting cannot point the adapter at any other file of the server.
+    decidedBy: default
+  - id: D-RESEARCH-ROBOTS-UNREADABLE
+    question: What does a fetch do when robots.txt cannot be read?
+    answer: It refuses the fetch, and the refusal is not cached, so the next fetch asks again. A robots.txt that answers a 4xx status admits every path.
+    decidedBy: default

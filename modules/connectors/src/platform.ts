@@ -6,11 +6,16 @@ import { connectorsAgentTools } from './agent/tools.ts';
 import { connectorsDataClasses } from './services/data-classes.ts';
 import { CONNECTORS_CALLS_CAPABILITY } from './domain/calls.ts';
 import { CONNECTORS_DEFINITIONS_CAPABILITY } from './domain/definitions.ts';
+import {
+	CONNECTORS_EGRESS_CAPABILITY,
+	type ConnectorEgressCapability,
+} from './domain/egress.ts';
 import type { ConnectorCallCapability } from './domain/calls.ts';
 import {
 	createConnectorsRoutes,
 	createConnectorsRuntime,
 } from './server/index.ts';
+import { createConnectorEgressCapability } from './services/egress.ts';
 import { connectorCallLimits, CONNECTORS_MODULE_SETTINGS } from './settings.ts';
 
 export function createServerComposition(
@@ -41,6 +46,10 @@ export function createServerComposition(
 			consented: async (tenantId, instanceId, caller) =>
 				(await runtime.calls()).consented(tenantId, instanceId, caller),
 		},
+	);
+	context.capabilities.register<ConnectorEgressCapability>(
+		CONNECTORS_EGRESS_CAPABILITY,
+		createConnectorEgressCapability(),
 	);
 	context.agentTools.register(connectorsAgentTools(runtime));
 	/* The sweep and the export run here, on this module's own lease and under

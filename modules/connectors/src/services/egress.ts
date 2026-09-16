@@ -1,5 +1,6 @@
-import { lookup } from 'node:dns/promises';
+import { lookup, Resolver } from 'node:dns/promises';
 import { isIP } from 'node:net';
+import type { ConnectorEgressCapability } from '../domain/egress.ts';
 
 /*
  * The address classification below, blockedIpv4, blockedAddress and
@@ -256,6 +257,69 @@ export function createConnectorEgressPolicy(
 				);
 			}
 			return addresses;
+		},
+	};
+}
+
+/**
+ * Resolution through c-ares with a bounded timeout. getaddrinfo runs on the
+ * libuv threadpool, so a name whose nameserver drops packets would hold
+ * threads that password hashing and file reads of every workspace also need;
+ * the capability serves callers members and agents can aim at any host.
+ */
+export function boundedHostResolver(timeoutMs = 2_500): HostAddressResolver {
+	const resolver = new Resolver({ timeout: timeoutMs, tries: 2 });
+	return async (hostname) => {
+		const [v4, v6] = await Promise.allSettled([
+			resolver.resolve4(hostname),
+			resolver.resolve6(hostname),
+		]);
+		const addresses = [
+			...(v4.status === 'fulfilled' ? v4.value : []),
+			...(v6.status === 'fulfilled' ? v6.value : []),
+		];
+		if (addresses.length === 0) {
+			throw new Error(`Host ${hostname} could not be resolved.`);
+		}
+		return addresses.map((address) => ({ address }));
+	};
+}
+
+/**
+ * The policy as a public capability. There is no allowlist: the caller names
+ * one public URL, and its own domain rules apply on top of this one.
+ */
+export function createConnectorEgressCapability(
+	resolve: HostAddressResolver = boundedHostResolver(),
+): ConnectorEgressCapability {
+	const policy = createConnectorEgressPolicy({ resolve });
+	return {
+		async check(value) {
+			try {
+				const url = policy.assertUrl(value);
+				if (url.port !== '' && url.port !== '443') {
+					return { ok: false, reason: 'CONNECTOR_PORT_REFUSED' };
+				}
+				const hostname = normalizeHost(url.hostname);
+				const addresses = await policy.assertResolvable(hostname);
+				return {
+					ok: true,
+					url: url.toString(),
+					addresses: addresses.map((entry) => entry.address),
+					lookup: pinnedLookup(hostname, addresses),
+				};
+			} catch (error) {
+				if (error instanceof ConnectorEgressError) {
+					return {
+						ok: false,
+						reason:
+							error.code === 'CONNECTOR_HOST_NOT_ALLOWLISTED'
+								? 'CONNECTOR_URL_BLOCKED'
+								: error.code,
+					};
+				}
+				throw error;
+			}
 		},
 	};
 }
