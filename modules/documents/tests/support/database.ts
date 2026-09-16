@@ -7,7 +7,7 @@ import {
 	DATABASE_CAPABILITY_IDS,
 	DATABASE_DIALECT_IDS,
 } from '@flowdular/database';
-import { createPgliteTestProvider } from '@flowdular/database-testing';
+import { createTestDatabaseProvider } from '@flowdular/database-testing';
 import {
 	DatabaseDocumentsRepository,
 	migrateDocumentsDatabase,
@@ -17,18 +17,27 @@ import {
 	type DocumentsServiceOptions,
 } from '../../src/services/documents-service.ts';
 import {
+	DocumentTextService,
+	type DocumentTextServiceOptions,
+} from '../../src/services/text-service.ts';
+import {
 	openTestStorage,
 	type TestStorage,
 	type TestStorageOptions,
 } from './storage.ts';
 
-export const DOCUMENTS_TENANT_TABLES = ['documents_files'] as const;
+export const DOCUMENTS_TENANT_TABLES = [
+	'documents_files',
+	'documents_text',
+] as const;
 
 export interface DocumentsTestContext {
 	readonly databases: DatabaseProvider;
 	readonly repository: DatabaseDocumentsRepository;
 	/** Tenant-scoped handle, for assertions the repository does not expose. */
 	readonly runtime: DatabaseHandle;
+	/** The cross-tenant role the text runner routes with. */
+	readonly background: DatabaseHandle;
 	readonly storage: TestStorage;
 	/** A service over the same repository and port, with the seams a case needs. */
 	service(
@@ -39,6 +48,12 @@ export interface DocumentsTestContext {
 			>
 		>,
 	): DocumentsService;
+	/** A text service over the same repository and port. */
+	textService(
+		options?: Partial<
+			Omit<DocumentTextServiceOptions, 'repository' | 'storage'>
+		>,
+	): DocumentTextService;
 	reset(): Promise<void>;
 	dispose(): Promise<void>;
 }
@@ -53,15 +68,16 @@ const REQUIREMENTS = {
 } as const;
 
 /**
- * An embedded PostgreSQL with the real runtime role and forced row-level
- * security, plus the real storage port over a temporary directory. Starting the
- * engine costs seconds, so open one per file and `reset()` between cases.
+ * An embedded PostgreSQL, or the cluster FD_TEST_DATABASE_ADAPTER names, with
+ * the real runtime role and forced row-level security, plus the real storage
+ * port over a temporary directory. Starting the engine costs seconds, so open
+ * one per file and `reset()` between cases.
  */
 export async function openDocumentsTestContext(
 	storageOptions: TestStorageOptions = {},
 ): Promise<DocumentsTestContext> {
 	const storage = await openTestStorage(storageOptions);
-	const databases: DatabaseProvider = createPgliteTestProvider();
+	const databases: DatabaseProvider = createTestDatabaseProvider();
 	const leases: DatabaseAdapterLease[] = [];
 	try {
 		/* The owner lease outlives the migration: only a role above row-level
@@ -86,11 +102,20 @@ export async function openDocumentsTestContext(
 			requirements: REQUIREMENTS,
 		});
 		leases.push(runtime);
-		const repository = new DatabaseDocumentsRepository(runtime.database);
+		const background = await databases.acquire({
+			namespace: 'documents.core',
+			purpose: 'background',
+		});
+		leases.push(background);
+		const repository = new DatabaseDocumentsRepository(
+			runtime.database,
+			background.database,
+		);
 		return {
 			databases,
 			repository,
 			runtime: runtime.database,
+			background: background.database,
 			storage,
 			service(options = {}) {
 				return new DocumentsService({
@@ -100,6 +125,16 @@ export async function openDocumentsTestContext(
 					readUrlSeconds: options.readUrlSeconds ?? (() => 300),
 					...(options.now ? { now: options.now } : {}),
 					...(options.newId ? { newId: options.newId } : {}),
+				});
+			},
+			textService(options = {}) {
+				return new DocumentTextService({
+					repository,
+					storage: storage.port,
+					ocr: options.ocr ?? null,
+					wake: options.wake ?? (() => undefined),
+					...(options.now ? { now: options.now } : {}),
+					...(options.limits ? { limits: options.limits } : {}),
 				});
 			},
 			async reset() {

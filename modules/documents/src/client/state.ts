@@ -35,6 +35,8 @@ export function createDocumentsClientState() {
 		   clears it. */
 		selectedIds: cell<ReadonlySet<string>>(new Set()),
 		confirmDeleteMany: false,
+		/* The document whose details drawer is open. */
+		detailsId: cell<string | null>(null),
 	});
 	return { store, state: store.state };
 }

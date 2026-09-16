@@ -22,6 +22,7 @@ import type {
 	ConnectorCalls,
 	ConnectorEgress,
 	ConnectorInstances,
+	DocumentsText,
 	MeterRegistry,
 } from '../services/capabilities.ts';
 import {
@@ -49,6 +50,7 @@ export interface ResearchRuntimeOptions {
 	readonly instances?: () => ConnectorInstances | undefined;
 	readonly egress?: () => ConnectorEgress | undefined;
 	readonly meters?: () => MeterRegistry | undefined;
+	readonly documentsText?: () => DocumentsText | undefined;
 	/** Writes one research setting as the owner; absent where no settings runtime exists. */
 	readonly writeSetting?: ResearchSettingWriter;
 	readonly chain?: ChainRuntime;
@@ -88,6 +90,7 @@ export function createResearchRuntime(
 			},
 			egress: options.egress ?? (() => undefined),
 			meters: options.meters ?? (() => undefined),
+			documentsText: options.documentsText,
 			transport: options.transport ?? httpsPageTransport(),
 			...(options.robots ? { robots: options.robots } : {}),
 			...(options.now ? { now: options.now } : {}),

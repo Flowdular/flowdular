@@ -2,16 +2,31 @@ import type {
 	PlatformServerComposition,
 	PlatformServerContext,
 } from '@flowdular/module-auth/server';
+import { documentsAgentTools } from './agent/tools.ts';
 import {
 	DOCUMENTS_ATTACHMENTS_CAPABILITY,
 	type DocumentAttachments,
 } from './domain/attachments.ts';
 import {
+	DOCUMENTS_TEXT_CAPABILITY,
+	type DocumentTextExtraction,
+} from './domain/text.ts';
+import {
 	createDocumentsRoutes,
 	createDocumentsRuntime,
 } from './server/index.ts';
 import { createDocumentAttachments } from './services/attachments.ts';
-import { documentsDataClass } from './services/data-classes.ts';
+import {
+	documentsDataClass,
+	documentTextDataClass,
+} from './services/data-classes.ts';
+import {
+	CONNECTORS_EGRESS_CAPABILITY,
+	createDocumentOcr,
+	documentOcrConfig,
+	type ConnectorEgress,
+} from './services/text/ocr.ts';
+import { createDocumentTextExtraction } from './services/text-service.ts';
 import {
 	documentsMaxObjectBytes,
 	documentsQuotaBytes,
@@ -22,6 +37,14 @@ import {
 export function createServerComposition(
 	context: PlatformServerContext,
 ): PlatformServerComposition {
+	/* connectors.core is an optional requirement and is not ordered first, so
+	   the egress policy is resolved on every OCR call rather than here. */
+	const ocr = createDocumentOcr({
+		config: documentOcrConfig(context.environment),
+		egress: () =>
+			context.capabilities.get<ConnectorEgress>(CONNECTORS_EGRESS_CAPABILITY) ??
+			undefined,
+	});
 	const runtime = createDocumentsRuntime({
 		databases: context.databases,
 		storage: context.storage,
@@ -38,6 +61,7 @@ export function createServerComposition(
 			return documentsQuotaBytes(context.settings, tenantId);
 		},
 		readUrlSeconds: () => documentsReadUrlSeconds(context.settings),
+		ocr,
 	});
 	/* Registered while the platform composes, so a module that holds records can
 	   resolve it in its own composition before any request runs. */
@@ -45,9 +69,17 @@ export function createServerComposition(
 		DOCUMENTS_ATTACHMENTS_CAPABILITY,
 		createDocumentAttachments(() => runtime.service()),
 	);
+	context.capabilities.register<DocumentTextExtraction>(
+		DOCUMENTS_TEXT_CAPABILITY,
+		createDocumentTextExtraction(() => runtime.textService()),
+	);
+	context.agentTools.register(documentsAgentTools(runtime));
 	/* The catalogue is sealed before start hooks run, so what this module holds
 	   is declared here rather than on the first request. */
-	context.dataClasses.declare([documentsDataClass(() => runtime.service())]);
+	context.dataClasses.declare([
+		documentsDataClass(() => runtime.service()),
+		documentTextDataClass(),
+	]);
 	return {
 		routes: createDocumentsRoutes(context.auth, runtime, {
 			maxObjectBytes: documentsMaxObjectBytes(
@@ -56,6 +88,8 @@ export function createServerComposition(
 			),
 		}),
 		settings: DOCUMENTS_MODULE_SETTINGS,
+		start: () => runtime.start(),
+		stop: () => runtime.quiesce(),
 		dispose: () => runtime.dispose(),
 	};
 }

@@ -29,6 +29,7 @@ import {
 	documentAttachment,
 	DocumentsServiceError,
 } from '../services/documents-service.ts';
+import { documentTextRange } from '../services/text-service.ts';
 
 /**
  * The upload carries the file as the whole body, so everything about it travels
@@ -381,6 +382,57 @@ export function createDocumentsRoutes(
 		},
 	});
 
+	/* A read that may start the extraction it answers, so it carries the CSRF
+	   proof like any other request that can write. */
+	const text = defineEndpoint({
+		id: 'documents.files.text',
+		path: '/api/documents/text',
+		methods: ['POST'],
+		access: { kind: 'permission', permission: DOCUMENTS_PERMISSIONS.read },
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			const denial = sessionMutationDenial(octane, auth);
+			if (denial) return denial;
+			try {
+				const value = await readJsonObject(octane.request);
+				const service = await runtime.textService();
+				return jsonResponse(
+					await service.read(
+						principalFromContext(octane)!.tenantId,
+						requiredString(value, 'id', { max: DOCUMENT_LIMITS.id }),
+						documentTextRange(value.pages),
+					),
+				);
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
+	const retryText = defineEndpoint({
+		id: 'documents.files.text-retry',
+		path: '/api/documents/text/retry',
+		methods: ['POST'],
+		access: { kind: 'permission', permission: DOCUMENTS_PERMISSIONS.manage },
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			const denial = sessionMutationDenial(octane, auth);
+			if (denial) return denial;
+			try {
+				const value = await readJsonObject(octane.request);
+				const service = await runtime.textService();
+				return jsonResponse(
+					await service.retry(
+						principalFromContext(octane)!.tenantId,
+						requiredString(value, 'id', { max: DOCUMENT_LIMITS.id }),
+					),
+				);
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
 	return [
 		upload.serverRoute,
 		list.serverRoute,
@@ -388,6 +440,8 @@ export function createDocumentsRoutes(
 		readUrl.serverRoute,
 		remove.serverRoute,
 		removeMany.serverRoute,
+		text.serverRoute,
+		retryText.serverRoute,
 	] as const;
 }
 
@@ -398,4 +452,6 @@ export const endpoints = [
 	'documents.files.read-url',
 	'documents.files.delete',
 	'documents.files.delete-many',
+	'documents.files.text',
+	'documents.files.text-retry',
 ] as const;

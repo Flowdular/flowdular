@@ -645,6 +645,35 @@ alike, sends `content-disposition: attachment` with
 `cache-control: private, no-store`, and is limited to 600 reads a minute per
 caller.
 
+## Documents (`documents.core`)
+
+| Variable                 | Default | Purpose                                                      |
+| ------------------------ | ------- | ------------------------------------------------------------ |
+| `FD_DOCUMENTS_OCR_URL`   | unset   | https URL of the OCR service a scan or an image is sent to   |
+| `FD_DOCUMENTS_OCR_TOKEN` | unset   | Bearer token sent to that service, printable ASCII, 4096 max |
+
+Reading text out of a stored document needs no configuration: a PDF text layer,
+DOCX, XLSX, PPTX, CSV and plain text are read in process, at most 200 pages and
+2 MiB of text per document, and the text is kept in `documents_text` until the
+document is deleted. A PDF without a text layer and an image need OCR, which is
+a deployment seam: without `FD_DOCUMENTS_OCR_URL` such a document answers
+`unscanned`.
+
+With the URL set, the document bytes are posted to it (by the text runner for a
+stored document, within the call for bytes a module hands over) with the
+document's content type, `accept: application/json` and
+`authorization: Bearer <FD_DOCUMENTS_OCR_TOKEN>` when a token is set. The answer
+is JSON, either `{ "pages": ["page one", "page two"] }` or `{ "text": "..." }`
+with pages separated by a form feed, at most 8 MiB, within 60 seconds; a
+redirect, another status or another shape leaves the document `unscanned` with
+the reason `DOCUMENT_OCR_FAILED`, and a manager can retry it from the Text tab.
+The call follows the connectors egress rules through `connectors.egress.v1`:
+the host is resolved and checked for public addresses on every call and the
+connection is pinned to those addresses, so OCR needs `connectors.core` in the
+composition. The module refuses to boot when the URL is not an https URL on
+port 443 to a public host name without credentials, or when the token is not
+printable ASCII. Neither the token nor the document bytes are logged.
+
 ## Sandbox
 
 | Variable               | Default           | Purpose                                      |
