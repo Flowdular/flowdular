@@ -7,7 +7,7 @@ import {
 	type DatabaseHandle,
 	type DatabaseProvider,
 } from '@flowdular/database';
-import { createPgliteTestProvider } from '@flowdular/database-testing';
+import { createTestDatabaseProvider } from '@flowdular/database-testing';
 import { databaseMigrations } from '../src/services/migration.ts';
 import { migrateDocumentsDatabase } from '../src/services/database-repository.ts';
 import { DOCUMENTS_TENANT_TABLES } from './support/database.ts';
@@ -23,7 +23,7 @@ afterEach(async () => {
 });
 
 async function migrator(): Promise<DatabaseHandle> {
-	const provider = createPgliteTestProvider();
+	const provider = createTestDatabaseProvider();
 	providers.push(provider);
 	const lease = await provider.acquire({
 		namespace: 'documents.core',
@@ -180,6 +180,65 @@ describe('documents migrations', () => {
 			databaseMigrations,
 		);
 		expect(adopted.every((result) => result.action === 'adopted')).toBe(true);
+	});
+
+	it('DOCUMENTS-TEXT-TENANT creates the text indexes and grants the background role the routing columns alone', async () => {
+		const database = await migrator();
+		await migrateDocumentsDatabase(database);
+		const indexes = await database.transaction(
+			(transaction) =>
+				transaction.query<{ indexname: string }>({
+					text: `SELECT indexname FROM pg_indexes
+					 WHERE schemaname = current_schema() AND tablename = 'documents_text'
+					 ORDER BY indexname`,
+				}),
+			{ access: 'read' },
+		);
+		expect(indexes.rows.map((row) => row.indexname)).toEqual([
+			'documents_text_checksum_idx',
+			'documents_text_pending_idx',
+			'documents_text_pkey',
+		]);
+		const grants = await database.transaction(
+			(transaction) =>
+				transaction.query<{ column_name: string; granted: boolean }>({
+					text: `SELECT column_name,
+					        has_column_privilege('coreloom_background', 'documents_text', column_name, 'SELECT') AS granted
+					 FROM information_schema.columns
+					 WHERE table_schema = current_schema() AND table_name = 'documents_text'
+					 ORDER BY column_name`,
+				}),
+			{ access: 'read' },
+		);
+		expect(
+			grants.rows.filter((row) => row.granted).map((row) => row.column_name),
+		).toEqual(['document_id', 'requested_at', 'status', 'tenant_id']);
+	});
+
+	it('reports a text table without its background grant as partial', async () => {
+		const database = await migrator();
+		await migrateDocumentsDatabase(database);
+		await database.transaction(
+			async (transaction) => {
+				await transaction.execute({
+					text: `DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = $1 AND id = $2`,
+					parameters: ['documents.core', '0004_documents_text'],
+				});
+				await transaction.execute({
+					text: 'REVOKE SELECT (tenant_id, document_id, status, requested_at) ON documents_text FROM coreloom_background',
+				});
+			},
+			{ access: 'write' },
+		);
+		const status = await databaseMigrationStatus(
+			database,
+			'documents.core',
+			databaseMigrations,
+		);
+		expect(status.at(-1)).toMatchObject({
+			id: '0004_documents_text',
+			state: 'partial',
+		});
 	});
 
 	it('reports a pending schema before anything is applied', async () => {

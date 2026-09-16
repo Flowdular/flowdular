@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { moduleDefinition } from '../src/index.ts';
 import { DOCUMENTS_ATTACHMENTS_CAPABILITY } from '../src/domain/attachments.ts';
+import { DOCUMENTS_TEXT_CAPABILITY } from '../src/domain/text.ts';
 import {
 	openDocumentsTestContext,
 	type DocumentsTestContext,
@@ -22,10 +23,11 @@ afterEach(async () => {
 });
 
 describe('documents.core', () => {
-	it('exports its validated identity and the capability it provides', () => {
+	it('exports its validated identity and the capabilities it provides', () => {
 		expect(moduleDefinition.manifest.id).toBe('documents.core');
 		expect(moduleDefinition.manifest.provides).toEqual([
 			DOCUMENTS_ATTACHMENTS_CAPABILITY,
+			DOCUMENTS_TEXT_CAPABILITY,
 		]);
 	});
 

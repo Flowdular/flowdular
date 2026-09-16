@@ -32,6 +32,7 @@ import {
 	uploadDocument,
 	type DocumentLimits,
 } from './api.ts';
+import { DocumentDetailsDrawer } from './DocumentDetailsDrawer.tsrx';
 import { DownloadBlocked, runDownload } from './download.ts';
 import {
 	DocumentUploader,
@@ -145,11 +146,14 @@ export function DocumentsView(props: DocumentsViewProps) @{
 	const [confirmDeleteMany, setConfirmDeleteMany] = useValue(
 		client.state.confirmDeleteMany,
 	);
+	const [detailsId, setDetailsId] = useValue(client.state.detailsId);
 	const [limits, setLimits] = useState<DocumentLimits | null>(null);
 	const term = query.trim();
 	const filtered = term !== '' || ownerFilter !== '' || scanFilter !== '';
 	const pendingDelete =
 		documents.find((record) => record.id === confirmDeleteId) ?? null;
+	const detailsDocument =
+		documents.find((record) => record.id === detailsId) ?? null;
 	const deletable = deletableIds(documents, selectedIds);
 
 	/* `append` continues the open listing; anything else starts a new one, so a
@@ -306,6 +310,16 @@ export function DocumentsView(props: DocumentsViewProps) @{
 	const rowActions = (record: DocumentAttachment): readonly TableAction[] => {
 		const copy = downloadAction(record);
 		return [
+			...(record.status === 'stored' && record.scan !== 'infected'
+				? [
+						{
+							id: 'details',
+							label: t('documents.action.details'),
+							icon: 'file-text',
+							onSelect: () => setDetailsId(record.id),
+						},
+					]
+				: []),
 			{
 				id: 'download',
 				label: copy.label,
@@ -490,7 +504,7 @@ export function DocumentsView(props: DocumentsViewProps) @{
 					})}
 					actions={rowActions}
 					actionsLabel={t('documents.common.actions')}
-					actionsWidth="220px"
+					actionsWidth="300px"
 					noteIcon="shield"
 					note={t('documents.table.note')}
 				/>
@@ -532,6 +546,12 @@ export function DocumentsView(props: DocumentsViewProps) @{
 		>{t('documents.deleteMany.description', {
 			count: deletable.length,
 		})}</ConfirmDialog>
+		<DocumentDetailsDrawer
+			document={detailsDocument}
+			csrfToken={props.csrfToken}
+			canManage={props.canManage}
+			onClose={() => setDetailsId(null)}
+		/>
 		<ToastHost
 			label={t('documents.common.messages')}
 			closeLabel={t('documents.common.close')}

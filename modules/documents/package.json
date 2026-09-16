@@ -1,6 +1,6 @@
 {
 	"name": "@flowdular/module-documents",
-	"version": "0.1.9",
+	"version": "0.2.0",
 	"private": true,
 	"type": "module",
 	"exports": {
@@ -32,18 +32,22 @@
 		"@flowdular/client": "workspace:*",
 		"@flowdular/contracts": "workspace:*",
 		"@flowdular/database": "workspace:*",
+		"@flowdular/harness": "workspace:*",
 		"@flowdular/kernel": "workspace:*",
 		"@flowdular/module-auth": "workspace:*",
 		"@flowdular/server": "workspace:*",
 		"@flowdular/storage": "workspace:*",
 		"@flowdular/ui": "workspace:*",
 		"octane": "0.1.51",
-		"segment-state": "0.2.1"
+		"sax": "1.6.1",
+		"segment-state": "0.2.1",
+		"unpdf": "1.8.1"
 	},
 	"devDependencies": {
 		"@flowdular/database-testing": "workspace:*",
 		"@tsrx/typescript-plugin": "0.3.120",
 		"@types/node": "24.13.3",
+		"@types/sax": "1.2.7",
 		"typescript": "5.9.3",
 		"vitest": "4.1.11"
 	}

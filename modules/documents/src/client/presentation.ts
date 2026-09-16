@@ -1,6 +1,11 @@
 import type { TableEmpty, TagTone } from '@flowdular/ui';
 import { activeLocale, t } from '@flowdular/client/i18n';
 import type { DocumentAttachment } from '../domain/attachments.ts';
+import {
+	DOCUMENT_TEXT_PAGE_BREAK,
+	type DocumentText,
+	type DocumentTextStatus,
+} from '../domain/text.ts';
 import type { DocumentScan } from '../domain/types.ts';
 import type { ScreenStatus } from './state.ts';
 
@@ -107,4 +112,39 @@ export function tableEmpty(
 		title: t('documents.loadFailed.title'),
 		hint: t('documents.loadFailed.hint'),
 	};
+}
+
+export function textStatusLabel(status: DocumentTextStatus): string {
+	return t('documents.text.status.' + status);
+}
+
+export function textStatusTone(status: DocumentTextStatus): TagTone {
+	if (status === 'ok') return 'success';
+	if (status === 'pending') return 'info';
+	return status === 'unsupported' ? 'neutral' : 'warning';
+}
+
+/** The sentence behind a reason code, or the code itself when none is known. */
+export function textReasonLabel(reason: string): string {
+	const key = 'documents.text.reason.' + reason;
+	const label = t(key);
+	return label === key ? reason : label;
+}
+
+/** The answered pages with their numbers, for one section each. */
+export function textPageList(
+	text: DocumentText,
+): readonly { readonly number: number; readonly text: string }[] {
+	if (text.status !== 'ok' || text.to < text.from) return [];
+	return text.text
+		.split(DOCUMENT_TEXT_PAGE_BREAK)
+		.map((page, index) => ({ number: text.from + index, text: page }));
+}
+
+/** Retry sends unscanned text to OCR, so it is offered only when OCR could read it. */
+export function textRetryable(
+	text: { readonly status: DocumentTextStatus; readonly ocrAvailable: boolean },
+	canManage: boolean,
+): boolean {
+	return canManage && text.ocrAvailable && text.status === 'unscanned';
 }

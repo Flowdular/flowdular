@@ -4,8 +4,9 @@
  * dependency. Each mirrors the owner's own declaration and must not drift:
  * connectors.calls.v1, connectors.definitions.v1, connectors.instances.v1 and
  * connectors.egress.v1 (modules/connectors/src/domain),
- * metering.meters.v1 (modules/metering/src/domain/meters.ts) and
- * exports.lists.v1 (modules/exports/src/domain/lists.ts).
+ * metering.meters.v1 (modules/metering/src/domain/meters.ts),
+ * exports.lists.v1 (modules/exports/src/domain/lists.ts) and
+ * documents.text.v1 (modules/documents/src/domain/text.ts).
  */
 import type { DefinedListExport } from '@flowdular/server';
 
@@ -15,6 +16,7 @@ export const CONNECTORS_INSTANCES_CAPABILITY = 'connectors.instances.v1';
 export const CONNECTORS_EGRESS_CAPABILITY = 'connectors.egress.v1';
 export const METERING_METERS_CAPABILITY = 'metering.meters.v1';
 export const EXPORT_LISTS_CAPABILITY = 'exports.lists.v1';
+export const DOCUMENTS_TEXT_CAPABILITY = 'documents.text.v1';
 
 export interface ConnectorCalls {
 	call(request: {
@@ -156,4 +158,22 @@ export interface MeterRegistry {
 
 export interface ExportListRegistry {
 	register(moduleId: string, exports: readonly DefinedListExport[]): void;
+}
+
+/** The part of documents.text.v1 a fetch uses: text out of bytes it holds. */
+export interface DocumentsText {
+	extractBytes(input: {
+		readonly contentType: string;
+		readonly bytes: Uint8Array;
+		readonly signal?: AbortSignal | undefined;
+	}): Promise<{
+		readonly status:
+			| 'ok'
+			| 'unscanned'
+			| 'unsupported'
+			| 'too-large'
+			| 'pending';
+		readonly reason: string | null;
+		readonly text: string;
+	}>;
 }

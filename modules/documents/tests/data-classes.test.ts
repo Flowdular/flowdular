@@ -1,6 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createDataClassRegistry } from '@flowdular/kernel';
-import { documentsDataClass } from '../src/services/data-classes.ts';
+import {
+	documentsDataClass,
+	documentTextDataClass,
+} from '../src/services/data-classes.ts';
 import type { DocumentsService } from '../src/services/documents-service.ts';
 import {
 	openDocumentsTestContext,
@@ -60,6 +63,26 @@ describe('documents data class', () => {
 		expect(entry?.classes[0]?.defaultRetentionDays).toBeNull();
 		expect(entry?.classes[0]?.sweep).toBeUndefined();
 		expect(entry?.classes[0]?.exportable).toBe(true);
+	});
+
+	it('declares the document text beside the documents, kept and excluded from the export', () => {
+		const registry = createDataClassRegistry();
+		registry.declare('documents.core', [
+			declaration(),
+			documentTextDataClass(),
+		]);
+		registry.seal();
+
+		const [, text] =
+			registry.list().find((module) => module.moduleId === 'documents.core')
+				?.classes ?? [];
+		expect(text).toMatchObject({
+			key: 'text',
+			defaultRetentionDays: null,
+			exportable: false,
+			excludedReason: expect.stringMatching(/documents class exports/),
+		});
+		expect(text?.sweep).toBeUndefined();
 	});
 
 	it('exports the rows of one workspace, the deleted trail included', async () => {

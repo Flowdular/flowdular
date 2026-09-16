@@ -11,7 +11,15 @@ import {
 	documentsNavigation,
 	DOCUMENTS_VIEW,
 } from '../src/client/navigation.ts';
-import { byteLabel, scanLabel } from '../src/client/presentation.ts';
+import {
+	byteLabel,
+	scanLabel,
+	textPageList,
+	textReasonLabel,
+	textRetryable,
+	textStatusLabel,
+} from '../src/client/presentation.ts';
+import type { DocumentText } from '../src/domain/text.ts';
 import { ownerModules } from '../src/client/state.ts';
 
 const LOCALES = ['en', 'pl'];
@@ -109,5 +117,56 @@ describe('documents client contribution', () => {
 			(ownerModule) => ({ ...DOCUMENT, ownerModule }),
 		);
 		expect(ownerModules(documents)).toEqual(['directory.core', 'users.core']);
+	});
+
+	it('shows the text page by page with numbers from the first page answered', () => {
+		const text: DocumentText = {
+			status: 'ok',
+			reason: null,
+			text: 'Terms\fSignatures',
+			pages: 3,
+			from: 2,
+			to: 3,
+			truncated: false,
+			contentSha256: '0'.repeat(64),
+		};
+		expect(textPageList(text)).toEqual([
+			{ number: 2, text: 'Terms' },
+			{ number: 3, text: 'Signatures' },
+		]);
+		expect(textPageList({ ...text, text: '', to: 1 })).toEqual([]);
+		expect(textPageList({ ...text, status: 'pending' })).toEqual([]);
+	});
+
+	it('offers Retry only to a manager for unscanned text while OCR is available', () => {
+		const unscanned = { status: 'unscanned' as const, ocrAvailable: true };
+		expect(textRetryable(unscanned, true)).toBe(true);
+		expect(textRetryable(unscanned, false)).toBe(false);
+		expect(textRetryable({ ...unscanned, ocrAvailable: false }, true)).toBe(
+			false,
+		);
+		expect(textRetryable({ ...unscanned, status: 'ok' }, true)).toBe(false);
+	});
+
+	it('names every text status and reason without falling back to the raw key', () => {
+		for (const locale of LOCALES) {
+			setActiveLocale(locale);
+			for (const status of [
+				'ok',
+				'pending',
+				'unscanned',
+				'unsupported',
+				'too-large',
+			] as const) {
+				expect([
+					locale,
+					textStatusLabel(status).includes('documents.'),
+				]).toEqual([locale, false]);
+			}
+			expect(textReasonLabel('DOCUMENT_OCR_UNCONFIGURED')).not.toBe(
+				'DOCUMENT_OCR_UNCONFIGURED',
+			);
+			expect(textReasonLabel('SOMETHING_NEW')).toBe('SOMETHING_NEW');
+		}
 	});
 });

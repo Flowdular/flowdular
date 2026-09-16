@@ -185,6 +185,8 @@ const MUTATION_PATHS = [
 	['/api/documents/read-url', DOCUMENTS_PERMISSIONS.read],
 	['/api/documents/delete', DOCUMENTS_PERMISSIONS.manage],
 	['/api/documents/delete-many', DOCUMENTS_PERMISSIONS.manage],
+	['/api/documents/text', DOCUMENTS_PERMISSIONS.read],
+	['/api/documents/text/retry', DOCUMENTS_PERMISSIONS.manage],
 ] as const;
 
 async function body<T>(response: Response): Promise<T> {
@@ -639,5 +641,53 @@ describe('upload headers', () => {
 			(await body<{ document: { filename: string } }>(accepted)).document
 				.filename,
 		).toBe('zaświadczenie.pdf');
+	});
+});
+
+describe('documents text routes', () => {
+	it('DOCUMENTS-TEXT-ENDPOINTS answers the text to a reader and refuses the retry by permission and state', async () => {
+		const owner = fixture(principal(ALL_SCOPES));
+		const stored = await body<{ document: { id: string } }>(
+			await owner.upload(pdfBytes('no text operators here')),
+		);
+		const id = stored.document.id;
+		const reader = fixture(principal([DOCUMENTS_PERMISSIONS.read]));
+
+		const read = await reader.mutation('/api/documents/text', {
+			id,
+			pages: { from: 1, to: 5 },
+		});
+		expect(read.status).toBe(200);
+		expect(await body<Record<string, unknown>>(read)).toMatchObject({
+			status: 'unsupported',
+			reason: 'DOCUMENT_TEXT_UNREADABLE',
+			from: 1,
+			to: 0,
+			ocrAvailable: false,
+		});
+		expect(
+			(await reader.mutation('/api/documents/text/retry', { id })).status,
+		).toBe(403);
+
+		const retry = await owner.mutation('/api/documents/text/retry', { id });
+		expect(retry.status).toBe(409);
+		expect((await body<{ error: { code: string } }>(retry)).error.code).toBe(
+			'DOCUMENT_TEXT_NOT_RETRYABLE',
+		);
+
+		const reversed = await reader.mutation('/api/documents/text', {
+			id,
+			pages: { from: 3, to: 1 },
+		});
+		expect(reversed.status).toBe(400);
+
+		const foreign = fixture(
+			principal(ALL_SCOPES, 'account-eve', 'tenant-other'),
+		);
+		const missing = await foreign.mutation('/api/documents/text', { id });
+		expect(missing.status).toBe(404);
+		expect((await body<{ error: { code: string } }>(missing)).error.code).toBe(
+			'DOCUMENT_NOT_FOUND',
+		);
 	});
 });
