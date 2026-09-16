@@ -226,7 +226,12 @@ export type AgentNativeReport =
 			readonly query?: string;
 			readonly results: readonly AgentNativeResult[];
 	  }
-	| { readonly id: string; readonly code: typeof NATIVE_TOOL_UNSUPPORTED };
+	| {
+			readonly id: string;
+			readonly code: typeof NATIVE_TOOL_UNSUPPORTED;
+			/** Why, as a code such as PROVIDER_WEB_SEARCH_DISABLED. */
+			readonly detail?: string;
+	  };
 
 /**
  * A tool the model provider executes on its own side, such as a web search.
@@ -1082,9 +1087,11 @@ export class AgentHarness {
 				);
 			}
 			if ('code' in report) {
+				const detail = String(report.detail ?? '');
 				emit('tool.native', `Native tool ${id} is not supported here.`, {
 					tool: id,
 					reason: NATIVE_TOOL_UNSUPPORTED,
+					...(/^[A-Z][A-Z0-9_]{2,63}$/.test(detail) ? { detail } : {}),
 				});
 				return;
 			}

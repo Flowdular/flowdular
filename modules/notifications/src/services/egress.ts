@@ -18,6 +18,15 @@ export class WebhookEgressError extends Error {
 	}
 }
 
+/* ---------------------------------------------------------------------------
+ * Address block. blockedIpv4, ipv6Bytes and blockedAddress are byte-for-byte
+ * identical in the three modules that refuse private network destinations:
+ * connectors.core (connector calls and the egress capability),
+ * notifications.core (webhook delivery) and agents.core (OpenAI-compatible
+ * provider hosts). Change all three or none, and keep the address-block test
+ * cases of each module the same.
+ * ------------------------------------------------------------------------- */
+
 function blockedIpv4(value: string): boolean {
 	const parts = value.split('.').map(Number);
 	if (
@@ -114,6 +123,8 @@ export function blockedAddress(value: string): boolean {
 		bytes[0] === 0xff
 	);
 }
+
+/* ------------------------ end of the address block ----------------------- */
 
 export function webhookHostAllowlist(
 	value: string | undefined,

@@ -5,9 +5,12 @@ import {
 	probeLanguageModel,
 	resolveLanguageModel,
 	temperatureSetting,
+	webSearchPassThrough,
+	webSearchReporter,
 	type AiProviderConfiguration,
 	type AiProviderKind,
 	type ProviderReadinessResult,
+	type WebSearchPassThrough,
 } from '@flowdular/ai-provider';
 import {
 	jsonSchema,
@@ -15,12 +18,15 @@ import {
 	stepCountIs,
 	streamText,
 	tool,
+	wrapLanguageModel,
+	type LanguageModelMiddleware,
 	type ToolSet,
 } from 'ai';
 import { AgentHarnessError } from './errors.ts';
 import { withSystemPreamble } from './preamble.ts';
 import {
 	DEFAULT_MAX_OUTPUT_TOKENS,
+	NATIVE_TOOL_LIMITS,
 	NATIVE_TOOL_UNSUPPORTED,
 	type AgentProvider,
 	type AgentProviderContext,
@@ -58,7 +64,7 @@ function finishReason(value: string): AgentProviderResult['finishReason'] {
 
 function toolsFor(context: AgentProviderContext): {
 	readonly tools: ToolSet;
-	readonly ids: ReadonlyMap<string, string>;
+	readonly ids: Map<string, string>;
 } {
 	const tools: ToolSet = {};
 	const ids = new Map<string, string>();
@@ -83,6 +89,66 @@ function toolsFor(context: AgentProviderContext): {
 	return { tools, ids };
 }
 
+interface NativeWebSearch {
+	readonly middleware: LanguageModelMiddleware;
+	readonly providerOptions: WebSearchPassThrough['providerOptions'];
+}
+
+/* A request carries at most one web search of the provider's own. Every other
+   native tool, and each one a provider kind cannot pass on, is reported as
+   unsupported, which the run records without failing. */
+async function nativeWebSearch(
+	configuration: VercelAiProviderConfiguration,
+	context: AgentProviderContext,
+	tools: ToolSet,
+	ids: Map<string, string>,
+): Promise<NativeWebSearch | null> {
+	let passed: NativeWebSearch | null = null;
+	for (const native of context.nativeTools ?? []) {
+		const passThrough: WebSearchPassThrough | null =
+			native.kind === 'web-search' && passed === null
+				? webSearchPassThrough(configuration.kind, native.config)
+				: null;
+		if (!passThrough) {
+			await context.reportNative({
+				id: native.id,
+				code: NATIVE_TOOL_UNSUPPORTED,
+			});
+			continue;
+		}
+		const name = native.id.replace(/[^a-zA-Z0-9_]/g, '_');
+		if (ids.has(name)) {
+			throw new AiProviderError(
+				'TOOL_NAME_COLLISION',
+				'Two granted tools resolve to the same provider-safe name.',
+			);
+		}
+		ids.set(name, native.id);
+		tools[name] = passThrough.tool;
+		passed = {
+			middleware: webSearchReporter({
+				kind: configuration.kind,
+				toolName: name,
+				maxReports: NATIVE_TOOL_LIMITS.reportsPerRun,
+				report: (report) =>
+					context.reportNative({
+						id: native.id,
+						...(report.query === null ? {} : { query: report.query }),
+						results: report.results,
+					}),
+				unsupported: (detail) =>
+					context.reportNative({
+						id: native.id,
+						code: NATIVE_TOOL_UNSUPPORTED,
+						detail,
+					}),
+			}),
+			providerOptions: passThrough.providerOptions,
+		};
+	}
+	return passed;
+}
+
 export function createVercelAiSdkProvider(
 	configuration: VercelAiProviderConfiguration,
 ): AgentProvider {
@@ -92,15 +158,14 @@ export function createVercelAiSdkProvider(
 		capabilities: { structuredOutput: true },
 		async execute(context): Promise<AgentProviderResult> {
 			try {
-				/* The pass-through to a provider's own web search is not wired yet, so
-				   a granted native tool is reported rather than silently dropped. */
-				for (const native of context.nativeTools ?? []) {
-					await context.reportNative({
-						id: native.id,
-						code: NATIVE_TOOL_UNSUPPORTED,
-					});
-				}
 				const { tools, ids } = toolsFor(context);
+				const webSearch = await nativeWebSearch(
+					configuration,
+					context,
+					tools,
+					ids,
+				);
+				const model = resolveLanguageModel(configuration);
 				const outputContract = context.request.outputContract ?? {
 					kind: 'text' as const,
 				};
@@ -112,7 +177,12 @@ export function createVercelAiSdkProvider(
 							})
 						: Output.text();
 				const result = streamText({
-					model: resolveLanguageModel(configuration),
+					model: webSearch
+						? wrapLanguageModel({ model, middleware: webSearch.middleware })
+						: model,
+					...(webSearch?.providerOptions
+						? { providerOptions: webSearch.providerOptions }
+						: {}),
 					instructions: withSystemPreamble(
 						context.request,
 						context.availableTools.map((available) => available.id),
@@ -185,6 +255,9 @@ export function createVercelAiSdkProvider(
 					finishReason: completedReason,
 				};
 			} catch (error) {
+				/* A native report the harness refused, such as one after the actor
+				   lost the tool's permission, keeps the harness's own code. */
+				if (error instanceof AgentHarnessError) throw error;
 				const failure = classifyProviderFailure(error);
 				/* The run keeps the stable code. The provider's own reason is
 				   redacted of credentials and stays in the server log, which is the
