@@ -25,10 +25,29 @@ jobs:
           cache: true
           install: false
       - run: pnpm install --frozen-lockfile
-      - run: node --test scripts/tests/platform-release.test.mjs
-      - run: pnpm verify
+      - run: node --test scripts/tests/platform-release.test.mjs scripts/tests/test-shards.test.mjs
+      # The suites run in the test job below, split into balanced shards.
+      - run: pnpm verify:static
       - run: pnpm build
       - run: pnpm audit --prod --audit-level high
+
+  test:
+    name: test (${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/setup@v2
+        with:
+          runtime: node@24
+          cache: true
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/test-shards.mjs --shard ${{ matrix.shard }}/3
 
   postgres:
     runs-on: ubuntu-latest
