@@ -39,7 +39,8 @@ spec instead of scanning the repository. Every section is optional and a
   `agentTools[]`: `id`, `permission`, `description`, `risk`.
 - `outOfScope[]` records what is deliberately not built; `decisions[]` records
   each interview question, its answer and whether a user or a default decided.
-- `research`: `adapter` (`model-native`, `connector` or `recorded`),
+- `research`: `adapter` (`model-native`, `searxng`, `firecrawl`, `connector`
+  or `recorded`),
   `allowDomains`, `denyDomains`, `monthlyQueryBudget`, and `evidenceOwner`, the
   entity whose records evidence attaches to through `research.core`.
 - `adapters[]`: `id` (prefixed with the module id), `direction` (`source` or

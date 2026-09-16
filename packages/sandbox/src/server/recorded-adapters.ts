@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import type { ModuleSettingValue } from '@flowdular/kernel';
 import { parse as parseYaml } from 'yaml';
 import { readSpecText } from './spec.ts';
 import { SandboxSetupError } from './workspace-root.ts';
@@ -6,7 +7,12 @@ import { SandboxSetupError } from './workspace-root.ts';
 export const RESEARCH_MODULE_ID = 'research.core';
 export const RESEARCH_FIXTURES_FILE = 'research-fixtures.json';
 export const LIVE_ADAPTER_REFUSED = 'SANDBOX_LIVE_ADAPTER_REFUSED';
-const LIVE_RESEARCH_ADAPTERS = new Set(['model-native', 'connector']);
+const LIVE_RESEARCH_ADAPTERS = new Set([
+	'model-native',
+	'searxng',
+	'firecrawl',
+	'connector',
+]);
 
 export interface DraftModuleLocation {
 	readonly directory: string;
@@ -105,14 +111,20 @@ export function assertRecordedAdapters(adapters: SessionAdapters): void {
 	if (refusal) throw new SandboxSetupError(LIVE_ADAPTER_REFUSED, refusal);
 }
 
-/* Setting values the preview holds fixed for every workspace, keyed by module. */
+/* Setting values the preview holds fixed for every workspace, keyed by module.
+   The adapter chain is held at the recorded adapter alone and switched on, and
+   a chain holding recorded reads pages from the same fixtures before it looks
+   at the fetch order, which stays at the default so Firecrawl is never added. */
 export function recordedAdapterSettings(
 	adapters: SessionAdapters,
-): Readonly<Record<string, Readonly<Record<string, string>>>> {
+): Readonly<Record<string, Readonly<Record<string, ModuleSettingValue>>>> {
 	return adapters.research
 		? {
 				[RESEARCH_MODULE_ID]: {
 					adapter: 'recorded',
+					searchOrder: 'recorded',
+					recordedEnabled: true,
+					fetchOrder: 'direct',
 					recordedFixturesPath: adapters.research.fixturesPath,
 				},
 			}

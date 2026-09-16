@@ -193,7 +193,12 @@ export interface ModuleSpecDecision {
 }
 
 export interface ModuleSpecResearch {
-	readonly adapter: 'model-native' | 'connector' | 'recorded';
+	readonly adapter:
+		| 'model-native'
+		| 'searxng'
+		| 'firecrawl'
+		| 'connector'
+		| 'recorded';
 	readonly allowDomains?: readonly string[];
 	readonly denyDomains?: readonly string[];
 	readonly monthlyQueryBudget?: number;

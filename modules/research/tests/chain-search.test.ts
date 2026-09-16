@@ -151,6 +151,42 @@ describe('research search chain', () => {
 		expect(stub.requests).toHaveLength(1);
 	});
 
+	it('keeps page reads on the recorded fixtures under the chain settings the sandbox preview pins', async () => {
+		const pages = await writeFixtures({
+			queries: {},
+			pages: {
+				'https://pinned.example.org/page': { title: 'Pinned', text: 'Offline' },
+			},
+		});
+		try {
+			const service = researchService({
+				repository: shared.repository,
+				settings: testSettings({
+					adapter: 'recorded',
+					searchOrder: ['recorded'],
+					fetchOrder: ['direct'],
+					recordedFixturesPath: pages.path,
+					limits: { recorded: { enabled: true } },
+				}),
+			});
+			const page = await service.fetch({
+				tenantId: TENANT,
+				url: 'https://pinned.example.org/page',
+				caller: 'member',
+			});
+			expect(page).toMatchObject({ title: 'Pinned', text: 'Offline' });
+			await expect(
+				service.fetch({
+					tenantId: TENANT,
+					url: 'https://pinned.example.org/other',
+					caller: 'member',
+				}),
+			).rejects.toMatchObject({ code: 'RESEARCH_PAGE_NOT_RECORDED' });
+		} finally {
+			await pages.dispose();
+		}
+	});
+
 	it('RESEARCH-BUDGET-ONCE counts one unit for a query two retries and a fallback answered', async () => {
 		const stub = stubConnectors();
 		await configure(stub, TENANT, 'searxng');
@@ -270,9 +306,13 @@ describe('research search chain', () => {
 
 		await tool.record!(
 			{
-				code: 'NATIVE_TOOL_UNSUPPORTED',
-				detail: 'PROVIDER_WEB_SEARCH_DISABLED',
-			} as never,
+				query: null,
+				results: [],
+				unsupported: {
+					code: 'NATIVE_TOOL_UNSUPPORTED',
+					detail: 'PROVIDER_WEB_SEARCH_DISABLED',
+				},
+			},
 			context,
 		);
 

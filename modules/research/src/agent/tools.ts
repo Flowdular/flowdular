@@ -176,13 +176,9 @@ export function researchNativeTool(runtime: ResearchRuntime): AgentNativeTool {
 				blockedDomains: [...settings.denyDomains],
 			};
 		},
-		/* An unsupported report carries a code instead of results; the harness
-		   type names only results, so the code is read defensively. */
 		record: async (report, context) => {
 			const service = await runtime.service();
-			if (
-				(report as { readonly code?: unknown }).code === NATIVE_TOOL_UNSUPPORTED
-			) {
+			if (report.unsupported?.code === NATIVE_TOOL_UNSUPPORTED) {
 				await service.recordNativeUnsupported(context.tenantId);
 				return;
 			}

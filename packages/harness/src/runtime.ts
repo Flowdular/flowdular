@@ -254,12 +254,19 @@ export interface AgentNativeTool {
 	):
 		| Readonly<Record<string, unknown>>
 		| Promise<Readonly<Record<string, unknown>>>;
-	/* Receives the bounded citations of one provider report. A throw is recorded
-	   as a failure event and never fails the run. */
+	/* Receives the bounded citations of one provider report, or, with
+	   `unsupported` set and no results, the provider saying it could not pass
+	   the tool on. A throw is recorded as a failure event and never fails the
+	   run. */
 	record?(
 		report: {
 			readonly query: string | null;
 			readonly results: readonly AgentNativeResult[];
+			readonly unsupported?: {
+				readonly code: typeof NATIVE_TOOL_UNSUPPORTED;
+				/** A code such as PROVIDER_WEB_SEARCH_DISABLED, or null. */
+				readonly detail: string | null;
+			};
 		},
 		context: AgentToolContext,
 	): Promise<void>;
@@ -1086,14 +1093,16 @@ export class AgentHarness {
 					`Native tool ${id} may report at most ${NATIVE_TOOL_LIMITS.reportsPerRun} times in one run.`,
 				);
 			}
-			if ('code' in report) {
-				const detail = String(report.detail ?? '');
+			const unsupported = 'code' in report;
+			const detail = unsupported ? String(report.detail ?? '') : '';
+			const namedDetail = /^[A-Z][A-Z0-9_]{2,63}$/.test(detail) ? detail : null;
+			if (unsupported) {
 				emit('tool.native', `Native tool ${id} is not supported here.`, {
 					tool: id,
 					reason: NATIVE_TOOL_UNSUPPORTED,
-					...(/^[A-Z][A-Z0-9_]{2,63}$/.test(detail) ? { detail } : {}),
+					...(namedDetail === null ? {} : { detail: namedDetail }),
 				});
-				return;
+				if (!offered.tool.record) return;
 			}
 			let permissions: Set<string>;
 			try {
@@ -1103,6 +1112,9 @@ export class AgentHarness {
 					tool: id,
 					reason: toolFailure(error).code,
 				});
+				/* An unsupported report often arrives before the first model call;
+				   it never fails the run, so a refusal only withholds the record. */
+				if (unsupported) return;
 				throw error;
 			}
 			if (
@@ -1114,10 +1126,32 @@ export class AgentHarness {
 					tool: id,
 					reason: 'TOOL_AUTHORIZATION_REVOKED',
 				});
+				if (unsupported) return;
 				throw new AgentHarnessError(
 					'TOOL_AUTHORIZATION_REVOKED',
 					`The initiating actor no longer has permission for tool ${id}.`,
 				);
+			}
+			if (unsupported) {
+				try {
+					await offered.tool.record!(
+						{
+							query: null,
+							results: [],
+							unsupported: {
+								code: NATIVE_TOOL_UNSUPPORTED,
+								detail: namedDetail,
+							},
+						},
+						nativeContext(permissions),
+					);
+				} catch (error) {
+					emit('tool.failed', `Tool ${id} failed.`, {
+						tool: id,
+						reason: toolFailure(error).code,
+					});
+				}
+				return;
 			}
 			const bounded = boundNativeResults(report.results);
 			emit(

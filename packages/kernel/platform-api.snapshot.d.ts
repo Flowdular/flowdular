@@ -437,7 +437,7 @@ export interface ModuleSpecDecision {
     readonly decidedBy: 'user' | 'default';
 }
 export interface ModuleSpecResearch {
-    readonly adapter: 'model-native' | 'connector' | 'recorded';
+    readonly adapter: 'model-native' | 'searxng' | 'firecrawl' | 'connector' | 'recorded';
     readonly allowDomains?: readonly string[];
     readonly denyDomains?: readonly string[];
     readonly monthlyQueryBudget?: number;
@@ -2671,6 +2671,10 @@ export interface AgentNativeTool {
     record?(report: {
         readonly query: string | null;
         readonly results: readonly AgentNativeResult[];
+        readonly unsupported?: {
+            readonly code: typeof NATIVE_TOOL_UNSUPPORTED;
+            readonly detail: string | null;
+        };
     }, context: AgentToolContext): Promise<void>;
 }
 export interface AgentProviderNativeTool {

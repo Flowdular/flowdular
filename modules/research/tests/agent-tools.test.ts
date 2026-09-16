@@ -170,6 +170,73 @@ describe('research agent tools', () => {
 		await research.dispose();
 	});
 
+	it('RESEARCH-NATIVE-UNSUPPORTED marks model-native unsupported from the report the harness forwards, and the run search moves on', async () => {
+		const research = runtime();
+		const harness = new AgentHarness({
+			providers: [],
+			tools: researchAgentTools(research),
+			nativeTools: [researchNativeTool(research)],
+			authorizeToolAccess: () => [PERMISSION],
+		});
+		const cited: unknown[] = [];
+		const provider = scripted(async (context) => {
+			await context.reportNative({
+				id: RESEARCH_NATIVE_TOOL_ID,
+				code: 'NATIVE_TOOL_UNSUPPORTED',
+				detail: 'PROVIDER_WEB_SEARCH_DISABLED',
+			});
+			cited.push(
+				await context.invokeTool('research.search', {
+					query: 'acme insurance',
+				}),
+			);
+		});
+		settings = testSettings({
+			adapter: 'model-native',
+			searchOrder: ['model-native', 'recorded'],
+			recordedFixturesPath: fixtures.path,
+			allowAgents: true,
+			limits: {
+				'model-native': { enabled: true },
+				recorded: { enabled: true },
+			},
+		});
+
+		const run = await harness.execute(
+			request([RESEARCH_NATIVE_TOOL_ID, 'research.search']),
+			{ provider },
+		);
+
+		expect(run.output).toBe('done');
+		expect(await shared.repository.adapterHealth(TENANT)).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					adapter: 'model-native',
+					consecutiveFailures: 1,
+					lastErrorCode: 'NATIVE_TOOL_UNSUPPORTED',
+				}),
+			]),
+		);
+		expect(cited).toEqual([
+			expect.objectContaining({
+				adapter: 'recorded',
+				attempts: [
+					expect.objectContaining({
+						adapter: 'model-native',
+						outcome: 'permanent',
+						errorCode: 'NATIVE_TOOL_UNSUPPORTED',
+					}),
+					expect.objectContaining({ adapter: 'recorded', outcome: 'ok' }),
+				],
+			}),
+		]);
+		expect((await research.admin.overview(TENANT)).search[0]).toMatchObject({
+			key: 'model-native',
+			status: 'unsupported',
+		});
+		await research.dispose();
+	});
+
 	it('RESEARCH-MODEL-NATIVE records the citations a provider reports and lets the run cite them', async () => {
 		const research = runtime();
 		const harness = new AgentHarness({

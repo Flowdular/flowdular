@@ -550,6 +550,23 @@ describe('research, adapters and templates', () => {
 		});
 	});
 
+	it('accepts every research adapter the chain offers and refuses an unknown one', async () => {
+		for (const adapter of [
+			'model-native',
+			'searxng',
+			'firecrawl',
+			'connector',
+			'recorded',
+		]) {
+			const spec = withSections();
+			spec.research.adapter = adapter;
+			expect([adapter, (await report(spec)).valid]).toEqual([adapter, true]);
+		}
+		const unknown = withSections();
+		unknown.research.adapter = 'bing';
+		expect((await report(unknown)).valid).toBe(false);
+	});
+
 	it('rejects the three sections in a version 1 specification', async () => {
 		const { research, adapters, templates } = withSections();
 		const result = await report({ ...version1, research, adapters, templates });
