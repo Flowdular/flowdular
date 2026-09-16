@@ -12,7 +12,9 @@ export type AuthScreen =
 	| 'forgot-password'
 	| 'reset-password'
 	| 'accept-invitation'
-	| 'mfa-challenge';
+	| 'mfa-challenge'
+	| 'sso';
+export type SsoLookup = 'idle' | 'checking' | 'resolved' | 'unknown';
 export type SignUpStep = 1 | 2 | 3;
 
 export interface WorkspaceSlugCheck {
@@ -27,6 +29,7 @@ const AUTH_PATHS: Readonly<Record<AuthScreen, string>> = {
 	'reset-password': '/auth/reset-password',
 	'accept-invitation': '/auth/accept-invitation',
 	'mfa-challenge': '/auth/mfa',
+	sso: '/auth/sso',
 };
 
 const AUTH_ROUTE_PATHS = new Set([
@@ -80,6 +83,7 @@ export function authScreenFromUrl(value: string): AuthScreen {
 	)
 		return 'accept-invitation';
 	if (url.pathname === '/auth/mfa') return 'mfa-challenge';
+	if (url.pathname === '/auth/sso') return 'sso';
 	if (url.searchParams.get('mfa') === 'oidc') return 'mfa-challenge';
 	return 'sign-in';
 }
@@ -108,9 +112,9 @@ export function createAuthClientState(initialScreen: AuthScreen = 'sign-in') {
 		signInWorkspace: '',
 		signInWorkspaceName: '',
 		signInWorkspaceFromUrl: false,
-		/* The workspace field stays hidden until the person asks for single
-		   sign-on; a password sign-in needs no workspace. */
-		signInSsoOpen: false,
+		/* Single sign-on has its own screen: the workspace id first, then that
+		   workspace's providers; a password sign-in needs no workspace. */
+		ssoLookup: cell<SsoLookup>('idle'),
 		providerOptions: cell<readonly SignInProviderOption[]>([]),
 		signUpStep: cell<SignUpStep>(1),
 		workspaceName: '',

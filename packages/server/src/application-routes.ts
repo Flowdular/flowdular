@@ -43,6 +43,7 @@ export function createApplicationRoutes(options: {
 		'/auth/reset-password',
 		'/auth/accept-invitation',
 		'/auth/mfa',
+		'/auth/sso',
 		'/sign-in',
 		'/sign-up',
 		'/forgot-password',
