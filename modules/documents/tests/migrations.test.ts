@@ -235,10 +235,83 @@ describe('documents migrations', () => {
 			'documents.core',
 			databaseMigrations,
 		);
-		expect(status.at(-1)).toMatchObject({
+		expect(
+			status.find((entry) => entry.id === '0004_documents_text'),
+		).toMatchObject({
 			id: '0004_documents_text',
 			state: 'partial',
 		});
+	});
+
+	it('DOCUMENTS-TEMPLATE-TENANT creates the render indexes and grants the background role the routing columns alone', async () => {
+		const database = await migrator();
+		await migrateDocumentsDatabase(database);
+		const indexes = await database.transaction(
+			(transaction) =>
+				transaction.query<{ indexname: string }>({
+					text: `SELECT indexname FROM pg_indexes
+					 WHERE schemaname = current_schema()
+					   AND tablename IN ('document_renders', 'document_render_keys', 'document_templates', 'document_template_versions')
+					 ORDER BY indexname`,
+				}),
+			{ access: 'read' },
+		);
+		expect(indexes.rows.map((row) => row.indexname)).toEqual([
+			'document_render_keys_pkey',
+			'document_render_keys_render_idx',
+			'document_renders_pending_idx',
+			'document_renders_pkey',
+			'document_renders_settled_idx',
+			'document_renders_tuple_idx',
+			'document_template_versions_pkey',
+			'document_templates_pkey',
+		]);
+		const grants = await database.transaction(
+			(transaction) =>
+				transaction.query<{ table_name: string; column_name: string }>({
+					text: `SELECT table_name, column_name
+					 FROM information_schema.columns
+					 WHERE table_schema = current_schema()
+					   AND table_name IN ('document_renders', 'document_render_keys', 'document_templates', 'document_template_versions')
+					   AND has_column_privilege('coreloom_background', table_name, column_name, 'SELECT')
+					 ORDER BY table_name, column_name`,
+				}),
+			{ access: 'read' },
+		);
+		expect(
+			grants.rows.map((row) => `${row.table_name}.${row.column_name}`),
+		).toEqual([
+			'document_renders.claimed_at',
+			'document_renders.created_at',
+			'document_renders.id',
+			'document_renders.status',
+			'document_renders.tenant_id',
+		]);
+	});
+
+	it('reports a render table without its background grant as partial', async () => {
+		const database = await migrator();
+		await migrateDocumentsDatabase(database);
+		await database.transaction(
+			async (transaction) => {
+				await transaction.execute({
+					text: `DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = $1 AND id = $2`,
+					parameters: ['documents.core', '0005_documents_templates'],
+				});
+				await transaction.execute({
+					text: 'REVOKE SELECT (id, tenant_id, status, created_at, claimed_at) ON document_renders FROM coreloom_background',
+				});
+			},
+			{ access: 'write' },
+		);
+		const status = await databaseMigrationStatus(
+			database,
+			'documents.core',
+			databaseMigrations,
+		);
+		expect(
+			status.find((entry) => entry.id === '0005_documents_templates'),
+		).toMatchObject({ state: 'partial' });
 	});
 
 	it('reports a pending schema before anything is applied', async () => {

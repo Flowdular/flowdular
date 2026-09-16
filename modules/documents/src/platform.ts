@@ -17,9 +17,16 @@ import {
 } from './server/index.ts';
 import { createDocumentAttachments } from './services/attachments.ts';
 import {
+	DOCUMENTS_TEMPLATES_CAPABILITY,
+	type DocumentTemplates,
+} from './domain/templates.ts';
+import {
+	documentRendersDataClass,
 	documentsDataClass,
+	documentTemplatesDataClass,
 	documentTextDataClass,
 } from './services/data-classes.ts';
+import { createDocumentTemplates } from './services/templates-capability.ts';
 import {
 	CONNECTORS_EGRESS_CAPABILITY,
 	createDocumentOcr,
@@ -32,6 +39,7 @@ import {
 	documentsQuotaBytes,
 	documentsReadUrlSeconds,
 	DOCUMENTS_MODULE_SETTINGS,
+	workspaceTimeZone,
 } from './settings.ts';
 
 export function createServerComposition(
@@ -62,6 +70,10 @@ export function createServerComposition(
 		},
 		readUrlSeconds: () => documentsReadUrlSeconds(context.settings),
 		ocr,
+		timeZone: async (tenantId) => {
+			await context.settings.prime(tenantId);
+			return workspaceTimeZone(context.settings, tenantId);
+		},
 	});
 	/* Registered while the platform composes, so a module that holds records can
 	   resolve it in its own composition before any request runs. */
@@ -73,12 +85,20 @@ export function createServerComposition(
 		DOCUMENTS_TEXT_CAPABILITY,
 		createDocumentTextExtraction(() => runtime.textService()),
 	);
+	context.capabilities.register<DocumentTemplates>(
+		DOCUMENTS_TEMPLATES_CAPABILITY,
+		createDocumentTemplates(runtime.templates, () =>
+			runtime.templatesService(),
+		),
+	);
 	context.agentTools.register(documentsAgentTools(runtime));
 	/* The catalogue is sealed before start hooks run, so what this module holds
 	   is declared here rather than on the first request. */
 	context.dataClasses.declare([
 		documentsDataClass(() => runtime.service()),
 		documentTextDataClass(),
+		documentTemplatesDataClass(() => runtime.templatesRepository()),
+		documentRendersDataClass(() => runtime.templatesRepository()),
 	]);
 	return {
 		routes: createDocumentsRoutes(context.auth, runtime, {

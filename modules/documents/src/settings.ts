@@ -95,6 +95,20 @@ export function documentsMaxObjectBytes(
 	}
 }
 
+/** The shared system.core zone rendered dates are shown in; UTC when it cannot be read. */
+export function workspaceTimeZone(
+	settings: ModuleSettingsRuntime,
+	tenantId: string,
+): string {
+	try {
+		const zone = settings.get<string>(tenantId, 'system.core', 'timeZone');
+		new Intl.DateTimeFormat('en', { timeZone: zone });
+		return zone;
+	} catch {
+		return 'UTC';
+	}
+}
+
 export function documentsReadUrlSeconds(
 	settings: ModuleSettingsRuntime,
 ): number {

@@ -81,6 +81,8 @@ export const BUNDLED_MODULE_SCOPES = {
 	researchSettingsManage: 'research.settings.manage',
 	adaptersRunsRead: 'adapters.runs.read',
 	adaptersRunsManage: 'adapters.runs.manage',
+	documentsTemplatesRead: 'documents.templates.read',
+	documentsTemplatesManage: 'documents.templates.manage',
 } as const;
 
 export const OWNER_SCOPES = Object.freeze([
@@ -112,6 +114,7 @@ export const MEMBER_SCOPES = Object.freeze([
 	BUNDLED_MODULE_SCOPES.profileSelfManage,
 	BUNDLED_MODULE_SCOPES.researchEvidenceRead,
 	BUNDLED_MODULE_SCOPES.researchRun,
+	BUNDLED_MODULE_SCOPES.documentsTemplatesRead,
 ]);
 
 /* Built-in roles; every tenant gets a row per entry in auth_roles. */

@@ -30,6 +30,10 @@ import {
 	DocumentsServiceError,
 } from '../services/documents-service.ts';
 import { documentTextRange } from '../services/text-service.ts';
+import {
+	createTemplateRoutes,
+	templateEndpoints,
+} from './template-endpoints.ts';
 
 /**
  * The upload carries the file as the whole body, so everything about it travels
@@ -442,6 +446,7 @@ export function createDocumentsRoutes(
 		removeMany.serverRoute,
 		text.serverRoute,
 		retryText.serverRoute,
+		...createTemplateRoutes(auth, runtime),
 	] as const;
 }
 
@@ -454,4 +459,5 @@ export const endpoints = [
 	'documents.files.delete-many',
 	'documents.files.text',
 	'documents.files.text-retry',
+	...templateEndpoints,
 ] as const;

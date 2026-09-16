@@ -9,6 +9,7 @@ import { DOCUMENTS_PERMISSIONS } from '../src/acl/permissions.ts';
 import type { DocumentAttachment } from '../src/domain/attachments.ts';
 import {
 	documentsNavigation,
+	DOCUMENT_TEMPLATES_VIEW,
 	DOCUMENTS_VIEW,
 } from '../src/client/navigation.ts';
 import {
@@ -69,6 +70,24 @@ describe('documents client contribution', () => {
 				'Workspace',
 				DOCUMENTS_PERMISSIONS.read,
 			],
+			[
+				'documents.navigation.templates',
+				DOCUMENT_TEMPLATES_VIEW,
+				'Administration',
+				DOCUMENTS_PERMISSIONS.templatesRead,
+			],
+		]);
+	});
+
+	it('DOCUMENTS-TEMPLATES-SCREEN puts Templates in the platform section of Administration behind the templates read permission', () => {
+		const entry = documentsNavigation.find(
+			(candidate) => candidate.viewId === DOCUMENT_TEMPLATES_VIEW,
+		);
+		expect([entry?.group, entry?.section, entry?.scope, entry?.glyph]).toEqual([
+			'Administration',
+			'platform',
+			DOCUMENTS_PERMISSIONS.templatesRead,
+			'file-text',
 		]);
 	});
 

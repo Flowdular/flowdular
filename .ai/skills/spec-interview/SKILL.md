@@ -45,7 +45,7 @@ One pass, in this order. For each row, write the default from the card into the 
 | Agent tools            | None. A tool is a later phase and `risk` may only be `read` or `workspace-write`            | `agentTools[]`                           |
 | Outside sources        | None. A named public source is `research`, with the entity its findings attach to           | `research`                               |
 | Other systems          | None. A named system is one `source` adapter per record kind, run on demand                 | `adapters[]`                             |
-| Documents              | None. A named document is one `templates[]` entry on the record it describes                | `templates[]`, `outOfScope[]`            |
+| Documents              | None. A named document is one `templates[]` entry on the record it describes                | `templates[]`                            |
 | Reports                | None. There is no export, no PDF and no search; a report is a screen or it is out of scope  | `outOfScope[]`                           |
 | Out of scope           | Every item from the card's gap list the request touched, each with its business decision    | `outOfScope[]`, `decisions[]`            |
 
@@ -83,7 +83,7 @@ Ask these only when the brief names one; each answer is a decision like any othe
 
 - **An outside source** ("check the company in the registry", "compare listing prices"): which sources are trusted (`allowDomains`) or refused (`denyDomains`), which record the findings belong to (`evidenceOwner`, an entity of this spec), and whether the monthly budget differs from the default of 500 queries. Propose `adapter: model-native` outside the sandbox; in a sandbox session write `adapter: recorded`, because the preview refuses a live adapter, and record the adapter the owner will choose after delivery as a decision. Every finding an agent keeps cites its evidence, so write a scenario where a finding without evidence is refused.
 - **Another system** ("pull customers from X", "push invoices to Y"): the system and the operation its documentation names, the direction, which entity the rows become (a source writes through this module's import port `<module id>.<key>`), the field mapping (`rename`, `constant`, `format`, `lookup`), and whether it runs on demand or on a five-field cron. Consent and credentials are the owner's connector instance after delivery, never a spec value. In a sandbox session every adapter names `recorded: adapters/<name>.recorded.json`; the `spec-schema` gate refuses one without it with `SANDBOX_LIVE_ADAPTER_REFUSED`.
-- **A document** ("a risk report", "an offer letter"): its title, the record it describes (`inputEntity`), `pdf` or `docx`, and the sections the body needs. PDF generation is on the card's gap list, so add an `outOfScope[]` entry that rendering waits for the platform renderer and write no scenario that depends on the rendered file.
+- **A document** ("a risk report", "an offer letter"): its title, the record it describes (`inputEntity`), `pdf` or `docx`, and the sections the body needs. The module renders it through `documents.templates.v1` and stores it as an attachment of that record, so write a scenario where a render without the module's permission on the record is refused.
 
 A number the case needs (a score, a premium, a price per square metre) is an `actions[]` entry the module computes, never a value an agent writes.
 

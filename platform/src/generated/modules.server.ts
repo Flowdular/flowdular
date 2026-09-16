@@ -226,7 +226,11 @@ export function composeModuleServer(
 				agentDefinitions: context.agentDefinitions.forModule('documents.core'),
 				dataClasses: context.dataClasses.forModule('documents.core'),
 				capabilities: context.capabilities.forModule('documents.core', {
-					provides: ['documents.attachments.v1', 'documents.text.v1'],
+					provides: [
+						'documents.attachments.v1',
+						'documents.text.v1',
+						'documents.templates.v1',
+					],
 					requires: [{ id: 'connectors.egress.v1', optional: true }],
 				}),
 				metrics: createModuleMetrics('documents.core'),

@@ -2,12 +2,14 @@ import { sandboxDirectory } from './config.ts';
 import { readFile, realpath } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 import {
 	RESEARCH_MODULE_ID,
 	assertRecordedAdapters,
 	readSessionAdapters,
 } from './recorded-adapters.ts';
 import type { SandboxSession } from './sessions.ts';
+import { readSpecText } from './spec.ts';
 
 export interface PreviewModuleSource {
 	readonly id: string;
@@ -21,6 +23,29 @@ export const PREVIEW_SUPPORT_ROOT = resolve(
 	'../../../../modules',
 );
 const IDENTIFIER = /^[a-z][a-z0-9-]*\.core$/;
+export const DOCUMENTS_MODULE_ID = 'documents.core';
+
+/* A draft whose spec declares templates previews them through documents.core
+   and the same renderer a deployment runs; nothing extra is seeded for it. The
+   spec-schema gate stays the authority on the section's shape. */
+async function declaresTemplates(
+	modules: Iterable<{ readonly directory: string }>,
+	draftRoot: string,
+): Promise<boolean> {
+	for (const module of modules) {
+		const text = await readSpecText(join(draftRoot, module.directory));
+		if (text === null) continue;
+		try {
+			const spec = parseYaml(text) as { templates?: unknown } | null;
+			if (Array.isArray(spec?.templates) && spec.templates.length > 0) {
+				return true;
+			}
+		} catch {
+			continue;
+		}
+	}
+	return false;
+}
 
 async function manifest(
 	path: string,
@@ -93,6 +118,9 @@ export async function resolvePreviewModules(
 	);
 	assertRecordedAdapters(adapters);
 	if (adapters.research) await visit(RESEARCH_MODULE_ID);
+	if (await declaresTemplates(drafts.values(), draftRoot)) {
+		await visit(DOCUMENTS_MODULE_ID);
+	}
 	for (const module of session.modules) await visit(module.id);
 	return ordered;
 }

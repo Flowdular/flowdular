@@ -44,3 +44,107 @@
 	font-size: var(--text-sm);
 	color: var(--ink-2);
 }
+
+/* Template editor: a line-numbered monospace body. A promotion candidate for
+   @flowdular/ui once a second screen edits code. */
+.documents-code {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	min-width: 0;
+	overflow: hidden;
+	border: 1px solid var(--line);
+	border-radius: var(--r);
+}
+
+.documents-code--error {
+	border-color: var(--danger);
+}
+
+.documents-code__gutter {
+	display: flex;
+	flex-direction: column;
+	max-height: 420px;
+	padding: 8px 8px 8px 10px;
+	overflow: hidden;
+	font-family: var(--font-mono);
+	font-size: var(--text-sm);
+	line-height: 1.55;
+	text-align: right;
+	color: var(--ink-4);
+	background: var(--surface-2);
+	border-right: 1px solid var(--line-2);
+	user-select: none;
+}
+
+.documents-code__number--flagged {
+	font-weight: 600;
+	color: var(--danger);
+}
+
+.documents-code .documents-code__input {
+	height: 420px;
+	max-height: 420px;
+	font-family: var(--font-mono);
+	font-size: var(--text-sm);
+	line-height: 1.55;
+	white-space: pre;
+	border: 0;
+	border-radius: 0;
+	resize: none;
+}
+
+.documents-issues {
+	display: grid;
+	gap: 4px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.documents-templates__loading {
+	padding: 20px;
+}
+
+.documents-diff {
+	display: grid;
+	gap: 6px;
+	min-width: 0;
+}
+
+.documents-diff__body {
+	display: grid;
+	max-height: 320px;
+	margin: 0;
+	padding: 6px 0;
+	overflow: auto;
+	font-family: var(--font-mono);
+	font-size: var(--text-sm);
+	line-height: 1.55;
+	color: var(--ink-2);
+	background: var(--surface-2);
+	border: 1px solid var(--line-2);
+	border-radius: var(--r);
+}
+
+.documents-diff__line {
+	display: block;
+	padding: 0 10px;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.documents-diff__line--added {
+	color: var(--success);
+	background: var(--success-bg);
+}
+
+.documents-diff__line--removed {
+	color: var(--danger);
+	background: var(--danger-bg);
+}
+
+.documents-diff__mark {
+	display: inline-block;
+	width: 1.5ch;
+	user-select: none;
+}

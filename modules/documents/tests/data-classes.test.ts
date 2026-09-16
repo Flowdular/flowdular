@@ -1,7 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createDataClassRegistry } from '@flowdular/kernel';
 import {
+	documentRendersDataClass,
 	documentsDataClass,
+	documentTemplatesDataClass,
 	documentTextDataClass,
 } from '../src/services/data-classes.ts';
 import type { DocumentsService } from '../src/services/documents-service.ts';
@@ -10,6 +12,7 @@ import {
 	type DocumentsTestContext,
 } from './support/database.ts';
 import { pdfBytes } from './support/files.ts';
+import { OFFER_KEY, offerInput, offerRegistry } from './support/templates.ts';
 
 const ACCOUNT = 'account-ada';
 
@@ -20,7 +23,7 @@ let documents: DocumentsService;
 let clock = 1_760_000_000_000;
 
 beforeAll(async () => {
-	context = await openDocumentsTestContext();
+	context = await openDocumentsTestContext({ maxObjectBytes: 4 * 1024 * 1024 });
 	documents = context.service({ now: () => (clock += 1_000) });
 });
 
@@ -120,5 +123,84 @@ describe('documents data class', () => {
 		});
 		expect(rows).toEqual([]);
 		expect(summary).toEqual({ rows: 0, from: null, to: null });
+	});
+});
+
+describe('template data classes', () => {
+	it('keeps template versions and sweeps settled renders after 90 days, exporting neither input nor secrets', async () => {
+		const templates = documentTemplatesDataClass(() =>
+			Promise.resolve(context.templates),
+		);
+		const renders = documentRendersDataClass(() =>
+			Promise.resolve(context.templates),
+		);
+		const registry = createDataClassRegistry();
+		registry.declare('documents.core', [templates, renders]);
+		registry.seal();
+		expect([
+			templates.defaultRetentionDays,
+			templates.sweep,
+			renders.defaultRetentionDays,
+		]).toEqual([null, undefined, 90]);
+
+		const service = context.templatesService(offerRegistry(), {
+			now: () => (clock += 1_000),
+		});
+		await service.save('tenant-a', ACCOUNT, {
+			key: OFFER_KEY,
+			body: 'Zmieniona {{ customer }}',
+			layout: {},
+			expectedVersion: 0,
+		});
+		const rendered = await service.render({
+			tenantId: 'tenant-a',
+			principal: { accountId: ACCOUNT, scopes: ['documents.files.manage'] },
+			ownerModule: 'orders.core',
+			recordRef: 'order-1',
+			templateKey: OFFER_KEY,
+			input: offerInput(1),
+		});
+		const versionRows: Record<string, unknown>[] = [];
+		expect(
+			(
+				await templates.export!({
+					tenantId: 'tenant-a',
+					sink: { write: async (row) => void versionRows.push(row) },
+				})
+			).rows,
+		).toBe(2);
+		expect(
+			versionRows.map((row) => [row.templateKey, row.version, row.origin]),
+		).toEqual([
+			[OFFER_KEY, 1, 'module'],
+			[OFFER_KEY, 2, 'edit'],
+		]);
+		const renderRows: Record<string, unknown>[] = [];
+		await renders.export!({
+			tenantId: 'tenant-a',
+			sink: { write: async (row) => void renderRows.push(row) },
+		});
+		expect(renderRows).toEqual([
+			expect.objectContaining({ id: rendered.jobId, status: 'succeeded' }),
+		]);
+		expect(renderRows[0]).not.toHaveProperty('input');
+
+		expect(
+			await renders.sweep!({
+				tenantId: 'tenant-b',
+				cutoff: new Date(clock + 1),
+				limit: 10,
+			}),
+		).toEqual({ removed: 0 });
+		expect(
+			await renders.sweep!({
+				tenantId: 'tenant-a',
+				cutoff: new Date(clock + 1),
+				limit: 10,
+			}),
+		).toEqual({ removed: 1 });
+		expect(
+			await context.templates.findRender('tenant-a', rendered.jobId),
+		).toBeNull();
 	});
 });

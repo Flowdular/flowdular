@@ -6,7 +6,10 @@
   session, decision tables later, the PDF renderer decided at J3); wave 1 is
   J1 with the spec schema sections and J5, then J4 with the adapter skill,
   then J2, then J3; delivery is recorded in
-  `docs/reviews/research-rfc0006-2026-09-16.md`
+  `docs/reviews/research-rfc0006-2026-09-16.md`; J3 (documents from templates,
+  a pure JavaScript PDF renderer and DOCX, chosen by the coordinator) was
+  delivered on 2026-09-16 and is recorded in
+  `docs/reviews/templates-rfc0006-2026-09-16.md`
 - Date: 2026-09-15
 - Follows: RFC 0005 (lists, distribution and debt, delivered 2026-09-13 and
   2026-09-15), RFC 0004 (platform services)
