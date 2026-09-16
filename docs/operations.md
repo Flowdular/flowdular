@@ -356,6 +356,8 @@ variable falls back to the default and logs one warning about it.
 ## Production checklist
 
 - `pnpm verify` and `pnpm build` pass on the commit being shipped.
+  The container image only builds; it does not run the tests again, so a tag
+  must point at a commit whose CI verify passed.
 - `FD_ENV=production`, `FD_DATABASE_ADAPTER=postgresql`, separate
   `FD_DATABASE_URL` and `FD_DATABASE_MIGRATOR_URL` roles, neither `SUPERUSER`
   nor `BYPASSRLS` on the runtime role.
