@@ -33,6 +33,7 @@ describe('connectors.core module', () => {
 		expect(manifest.provides).toEqual([
 			'connectors.definitions.v1',
 			'connectors.calls.v1',
+			'connectors.egress.v1',
 		]);
 	});
 

@@ -1,0 +1,43 @@
+/* Research module: composites specific to this module. Primitives come from
+   @flowdular/ui and are not restyled here. */
+
+.research-facts {
+	display: grid;
+	grid-template-columns: minmax(9rem, auto) 1fr;
+	gap: 8px 16px;
+	margin: 0;
+}
+
+.research-facts dt {
+	font-size: var(--text-sm);
+	color: var(--ink-3);
+}
+
+.research-facts dd {
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+
+.research-excerpt__text {
+	margin: 0;
+	max-height: 20rem;
+	overflow: auto;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	font-size: var(--text-sm);
+	color: var(--ink-2);
+}
+
+.research-links {
+	display: grid;
+	gap: 4px;
+	padding: 0;
+	margin: 0;
+	list-style: none;
+}
+
+.research-links li {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}

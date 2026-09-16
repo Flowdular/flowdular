@@ -31,6 +31,7 @@
 		"@flowdular/module-notifications": "workspace:*",
 		"@flowdular/module-profile": "workspace:*",
 		"@flowdular/module-reports": "workspace:*",
+		"@flowdular/module-research": "workspace:*",
 		"@flowdular/module-sandbox": "workspace:*",
 		"@flowdular/module-search": "workspace:*",
 		"@flowdular/module-system": "workspace:*",

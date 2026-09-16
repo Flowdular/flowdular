@@ -3,7 +3,7 @@ import type {
 	PlatformServerContext,
 } from '@flowdular/module-auth/server';
 import type { ModuleSettingsDeclaration } from '@flowdular/kernel';
-import type { AgentTool } from '@flowdular/harness';
+import type { AgentNativeTool, AgentTool } from '@flowdular/harness';
 import {
 	REPORTS_PROVIDERS_CAPABILITY,
 	type ReportProviderRegistry,
@@ -40,6 +40,7 @@ import {
    field is read structurally until the composition contract carries it. */
 interface AgentToolRegistry {
 	list(): readonly AgentTool[];
+	listNative?(): readonly AgentNativeTool[];
 }
 
 function toolsFromContext(
@@ -47,6 +48,16 @@ function toolsFromContext(
 ): readonly AgentTool[] {
 	return (
 		(context as { agentTools?: AgentToolRegistry }).agentTools?.list() ?? []
+	);
+}
+
+function nativeToolsFromContext(
+	context: PlatformServerContext,
+): readonly AgentNativeTool[] {
+	return (
+		(
+			context as { agentTools?: AgentToolRegistry }
+		).agentTools?.listNative?.() ?? []
 	);
 }
 
@@ -75,6 +86,7 @@ export function createServerComposition(
 		),
 		databases: context.databases,
 		tools: () => toolsFromContext(context),
+		nativeTools: () => nativeToolsFromContext(context),
 		moduleAgents: () =>
 			context.agentDefinitions.list() as readonly ModuleAgentDefinition[],
 		authorizeToolAccess: ({ tenantId, actor }) =>

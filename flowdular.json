@@ -26,6 +26,7 @@
 			"import.core",
 			"notifications.core",
 			"profile.core",
+			"research.core",
 			"sandbox.core",
 			"search.core",
 			"users.core"

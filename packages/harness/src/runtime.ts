@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { readFile, stat } from 'node:fs/promises';
+import { basename, isAbsolute } from 'node:path';
 import { AgentHarnessError } from './errors.ts';
 import {
 	APPROVAL_GRANT_MAX_TOKEN_LENGTH,
@@ -65,6 +67,9 @@ export interface AgentExecutionRequest {
 	readonly grants?: readonly string[];
 	/* Absent keeps the v1 text behavior. */
 	readonly outputContract?: AgentOutputContract;
+	/* An absolute path to a research-fixtures.json the local simulation answers
+	   a granted native web search from. Set by the platform, never by input. */
+	readonly nativeFixturesPath?: string;
 }
 
 export const MAX_APPROVAL_GRANTS = 16;
@@ -93,6 +98,7 @@ export interface AgentExecutionEvent {
 		| 'tool.completed'
 		| 'tool.failed'
 		| 'tool.denied'
+		| 'tool.native'
 		| 'provider.completed'
 		| 'run.completed';
 	readonly timestamp: number;
@@ -187,6 +193,79 @@ export interface AgentTool {
 	execute(input: unknown, context: AgentToolContext): Promise<unknown>;
 }
 
+export const AGENT_NATIVE_TOOL_KINDS = ['web-search'] as const;
+export type AgentNativeToolKind = (typeof AGENT_NATIVE_TOOL_KINDS)[number];
+
+/** The stable reason a provider reports for a native tool it cannot pass on. */
+export const NATIVE_TOOL_UNSUPPORTED = 'NATIVE_TOOL_UNSUPPORTED';
+
+export const NATIVE_TOOL_LIMITS = {
+	resultsPerReport: 32,
+	reportsPerRun: 16,
+	url: 2_048,
+	title: 300,
+	snippet: 1_000,
+	source: 200,
+	publishedAt: 64,
+	query: 400,
+	configCharacters: 8_192,
+} as const;
+
+/** One citation a provider-executed search returned. */
+export interface AgentNativeResult {
+	readonly url: string;
+	readonly title: string;
+	readonly snippet: string;
+	readonly publishedAt?: string;
+	readonly source: string;
+}
+
+export type AgentNativeReport =
+	| {
+			readonly id: string;
+			readonly query?: string;
+			readonly results: readonly AgentNativeResult[];
+	  }
+	| { readonly id: string; readonly code: typeof NATIVE_TOOL_UNSUPPORTED };
+
+/**
+ * A tool the model provider executes on its own side, such as a web search.
+ * The harness never runs it: it decides whether the run is offered the tool,
+ * hands the provider its configuration, and passes the citations the provider
+ * reports to `record` after bounding them.
+ */
+export interface AgentNativeTool {
+	readonly id: string;
+	readonly kind: AgentNativeToolKind;
+	readonly config: Readonly<Record<string, unknown>>;
+	readonly requiredPermissions: readonly string[];
+	/* Asked once, when the run starts, because the provider runs the tool
+	   without asking the harness again. Input is always undefined. */
+	readonly consent?: AgentToolConsent;
+	/* Per-run configuration merged over `config`, for example a workspace's
+	   domain lists. A throw withholds the tool from the run. */
+	resolveConfig?(
+		context: AgentToolContext,
+	):
+		| Readonly<Record<string, unknown>>
+		| Promise<Readonly<Record<string, unknown>>>;
+	/* Receives the bounded citations of one provider report. A throw is recorded
+	   as a failure event and never fails the run. */
+	record?(
+		report: {
+			readonly query: string | null;
+			readonly results: readonly AgentNativeResult[];
+		},
+		context: AgentToolContext,
+	): Promise<void>;
+}
+
+export interface AgentProviderNativeTool {
+	readonly id: string;
+	readonly kind: AgentNativeToolKind;
+	readonly config: Readonly<Record<string, unknown>>;
+}
+
 export interface AgentProviderContext {
 	readonly request: AgentExecutionRequest;
 	readonly signal: AbortSignal;
@@ -197,11 +276,19 @@ export interface AgentProviderContext {
 		readonly description: string;
 		readonly inputSchema: Readonly<Record<string, unknown>>;
 	}[];
+	/** Provider-executed tools this run was granted and admitted to. */
+	readonly nativeTools: readonly AgentProviderNativeTool[];
 	invokeTool(
 		id: string,
 		input: unknown,
 		invocation?: { readonly providerCallId?: string },
 	): Promise<unknown>;
+	/**
+	 * Reports what a native tool returned, or that this provider cannot pass it
+	 * on. Recorded on the run as a `tool.native` event; a report for a tool the
+	 * run was not offered is denied.
+	 */
+	reportNative(report: AgentNativeReport): Promise<void>;
 	emit(
 		type: AgentExecutionEvent['type'],
 		message: string,
@@ -305,6 +392,18 @@ function assertExecutionRequest(request: AgentExecutionRequest): void {
 		);
 	}
 	boundedText(request.input, 'input', 1, 100_000);
+	if (
+		request.nativeFixturesPath !== undefined &&
+		(typeof request.nativeFixturesPath !== 'string' ||
+			request.nativeFixturesPath.length > 1_024 ||
+			!isAbsolute(request.nativeFixturesPath) ||
+			basename(request.nativeFixturesPath) !== 'research-fixtures.json')
+	) {
+		throw new AgentHarnessError(
+			'INVALID_INPUT',
+			'nativeFixturesPath must be an absolute path to a research-fixtures.json file.',
+		);
+	}
 	if (request.grants !== undefined) {
 		if (
 			!Array.isArray(request.grants) ||
@@ -495,6 +594,74 @@ function runApprovalGrants(
 	return { byTool, refusals };
 }
 
+function nativeText(value: unknown, maximum: number): string | null {
+	if (typeof value !== 'string') return null;
+	const normalized = value.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim();
+	return normalized.slice(0, maximum);
+}
+
+/* Provider output is foreign data: an entry without a usable http(s) URL is
+   dropped, and every text field is cut to its bound rather than refused, so
+   one long title never costs the run its other citations. */
+function boundNativeResults(results: unknown): {
+	readonly results: readonly AgentNativeResult[];
+	readonly dropped: number;
+} {
+	const entries = Array.isArray(results) ? results : [];
+	const accepted: AgentNativeResult[] = [];
+	for (const entry of entries) {
+		if (accepted.length >= NATIVE_TOOL_LIMITS.resultsPerReport) break;
+		const value = (entry ?? {}) as Record<string, unknown>;
+		const url = typeof value.url === 'string' ? value.url.trim() : '';
+		let parsed: URL | null = null;
+		try {
+			parsed = url.length <= NATIVE_TOOL_LIMITS.url ? new URL(url) : null;
+		} catch {
+			parsed = null;
+		}
+		if (
+			!parsed ||
+			(parsed.protocol !== 'https:' && parsed.protocol !== 'http:') ||
+			parsed.toString().length > NATIVE_TOOL_LIMITS.url
+		) {
+			continue;
+		}
+		const publishedAt = nativeText(
+			value.publishedAt,
+			NATIVE_TOOL_LIMITS.publishedAt,
+		);
+		accepted.push({
+			url: parsed.toString(),
+			title: nativeText(value.title, NATIVE_TOOL_LIMITS.title) ?? '',
+			snippet: nativeText(value.snippet, NATIVE_TOOL_LIMITS.snippet) ?? '',
+			source:
+				nativeText(value.source, NATIVE_TOOL_LIMITS.source) ?? parsed.hostname,
+			...(publishedAt ? { publishedAt } : {}),
+		});
+	}
+	return { results: accepted, dropped: entries.length - accepted.length };
+}
+
+function nativeConfig(
+	value: unknown,
+	field: string,
+): Readonly<Record<string, unknown>> {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		throw new AgentHarnessError(
+			'INVALID_NATIVE_TOOL',
+			`${field} must be a JSON object.`,
+		);
+	}
+	validateJsonValue(value, 'INVALID_NATIVE_TOOL', field);
+	if (JSON.stringify(value).length > NATIVE_TOOL_LIMITS.configCharacters) {
+		throw new AgentHarnessError(
+			'INVALID_NATIVE_TOOL',
+			`${field} exceeds ${NATIVE_TOOL_LIMITS.configCharacters} characters.`,
+		);
+	}
+	return value as Readonly<Record<string, unknown>>;
+}
+
 /* A refusal code comes from module code, so it is bounded to the shape an
    event metadata field may carry before it is recorded. */
 function consentReason(reason: string | undefined): string {
@@ -563,6 +730,7 @@ function endSpan(
 export class AgentHarness {
 	readonly #providers: ReadonlyMap<string, AgentProvider>;
 	readonly #tools: ReadonlyMap<string, AgentTool>;
+	readonly #nativeTools: ReadonlyMap<string, AgentNativeTool>;
 	readonly #authorizeToolAccess: AgentToolAccessAuthorizer;
 	readonly #tracer: AgentTracer | undefined;
 	readonly #approvalGrants: ApprovalGrantKeyring | undefined;
@@ -570,6 +738,7 @@ export class AgentHarness {
 	constructor(options: {
 		readonly providers: readonly AgentProvider[];
 		readonly tools?: readonly AgentTool[];
+		readonly nativeTools?: readonly AgentNativeTool[];
 		readonly authorizeToolAccess?: AgentToolAccessAuthorizer;
 		readonly tracer?: AgentTracer;
 		/* Verifies the approval grants a run carries. Absent reads
@@ -602,8 +771,29 @@ export class AgentHarness {
 			toolTimeoutMs(tool.timeoutMs);
 			tools.set(id, tool);
 		}
+		/* One id space: a grant names a tool or a native tool, never both. */
+		const nativeTools = new Map<string, AgentNativeTool>();
+		for (const tool of options.nativeTools ?? []) {
+			const id = identifier(tool.id, 'nativeTool.id');
+			if (tools.has(id) || nativeTools.has(id)) {
+				throw new AgentHarnessError(
+					'DUPLICATE_TOOL',
+					`Tool ${id} is already registered.`,
+				);
+			}
+			if (!AGENT_NATIVE_TOOL_KINDS.includes(tool.kind)) {
+				throw new AgentHarnessError(
+					'INVALID_NATIVE_TOOL',
+					`Native tool ${id} declares an unknown kind.`,
+				);
+			}
+			if (tool.consent) identifier(tool.consent.id, 'nativeTool.consent.id');
+			nativeConfig(tool.config, `Native tool ${id} config`);
+			nativeTools.set(id, tool);
+		}
 		this.#providers = providers;
 		this.#tools = tools;
+		this.#nativeTools = nativeTools;
 		/* No callback means no live authority. This keeps standalone runtimes and
 		   service actors fail-closed instead of treating a stored snapshot as a
 		   permanent credential. */
@@ -621,8 +811,14 @@ export class AgentHarness {
 		return this.#providers.get(id)?.capabilities?.structuredOutput === true;
 	}
 
+	/* Native tool ids are listed with the rest: an agent definition allows and a
+	   run grants them by the same exact id. */
 	tools(): readonly string[] {
-		return [...this.#tools.keys()].sort();
+		return [...this.#tools.keys(), ...this.#nativeTools.keys()].sort();
+	}
+
+	nativeTools(): readonly string[] {
+		return [...this.#nativeTools.keys()].sort();
 	}
 
 	/* This is the single access calculation used both when a durable run is
@@ -637,7 +833,7 @@ export class AgentHarness {
 		const allowed = new Set(allowedTools);
 		const requested = new Set(requestedToolGrants);
 		const permissions = new Set(permissionSnapshot);
-		return [...this.#tools.values()]
+		return [...this.#tools.values(), ...this.#nativeTools.values()]
 			.filter((tool) => allowed.has(tool.id) && requested.has(tool.id))
 			.filter((tool) =>
 				tool.requiredPermissions.every((permission) =>
@@ -773,6 +969,175 @@ export class AgentHarness {
 			model: request.definition.model,
 		});
 		const grantedIds = new Set(availableTools.map((tool) => tool.id));
+		const nativeContext = (
+			permissions: ReadonlySet<string>,
+		): AgentToolContext => ({
+			runId: request.runId,
+			tenantId: request.tenantId,
+			requestedBy: request.requestedBy,
+			agentId: request.definition.id,
+			agentName: request.definition.name,
+			invocation: 'agent-run',
+			actor: {
+				kind: 'agent',
+				id: request.definition.id,
+				label: request.definition.name,
+				runId: request.runId,
+			},
+			...(authorizationSubject?.kind === 'user'
+				? { authorizationSubject }
+				: {}),
+			permissions,
+			signal: controller.signal,
+		});
+		const offeredNative = new Map<
+			string,
+			{
+				readonly tool: AgentNativeTool;
+				readonly config: Readonly<Record<string, unknown>>;
+			}
+		>();
+		/* Settled once, before the provider starts: the provider runs a native
+		   tool on its own side and never comes back to ask. */
+		const offerNativeTools = async (): Promise<void> => {
+			const candidates = [...this.#nativeTools.values()]
+				.filter((tool) => snapshotGrants.has(tool.id))
+				.filter((tool) =>
+					tool.requiredPermissions.every((permission) =>
+						initialPermissions.has(permission),
+					),
+				)
+				.sort((left, right) => left.id.localeCompare(right.id));
+			for (const tool of candidates) {
+				const context = nativeContext(initialPermissions);
+				if (tool.consent) {
+					let decision: AgentToolConsentDecision;
+					try {
+						decision = await tool.consent.check(undefined, context);
+					} catch {
+						decision = { granted: false, reason: 'TOOL_CONSENT_UNAVAILABLE' };
+					}
+					if (!decision.granted) {
+						emit('tool.denied', `Tool ${tool.id} was denied.`, {
+							tool: tool.id,
+							consent: tool.consent.id,
+							reason: consentReason(decision.reason),
+						});
+						continue;
+					}
+				}
+				let config = tool.config;
+				if (tool.resolveConfig) {
+					try {
+						config = {
+							...tool.config,
+							...nativeConfig(
+								await tool.resolveConfig(context),
+								`Native tool ${tool.id} config`,
+							),
+						};
+					} catch {
+						emit('tool.denied', `Tool ${tool.id} was denied.`, {
+							tool: tool.id,
+							reason: 'NATIVE_CONFIG_UNAVAILABLE',
+						});
+						continue;
+					}
+				}
+				offeredNative.set(tool.id, { tool, config });
+			}
+		};
+		const nativeReports = new Map<string, number>();
+		const reportNative = async (report: AgentNativeReport): Promise<void> => {
+			/* A report after the run settled or was aborted would write evidence
+			   for a run that no longer accepts events. */
+			if (!acceptingEvents || controller.signal.aborted) {
+				throw new AgentHarnessError(
+					'EXECUTION_ABORTED',
+					'The run no longer accepts native tool reports.',
+				);
+			}
+			const id = String(report?.id ?? '').slice(0, 128);
+			const offered = offeredNative.get(id);
+			if (!offered) {
+				emit('tool.denied', `Tool ${id || 'unknown'} was denied.`, {
+					tool: id || 'unknown',
+					reason: 'TOOL_NOT_GRANTED',
+				});
+				throw new AgentHarnessError(
+					'TOOL_NOT_GRANTED',
+					`Native tool ${id || 'unknown'} was not granted for this run.`,
+				);
+			}
+			const reports = (nativeReports.get(id) ?? 0) + 1;
+			nativeReports.set(id, reports);
+			if (reports > NATIVE_TOOL_LIMITS.reportsPerRun) {
+				emit('tool.denied', `Tool ${id} was denied.`, {
+					tool: id,
+					reason: 'NATIVE_REPORT_LIMIT',
+				});
+				throw new AgentHarnessError(
+					'NATIVE_REPORT_LIMIT',
+					`Native tool ${id} may report at most ${NATIVE_TOOL_LIMITS.reportsPerRun} times in one run.`,
+				);
+			}
+			if ('code' in report) {
+				emit('tool.native', `Native tool ${id} is not supported here.`, {
+					tool: id,
+					reason: NATIVE_TOOL_UNSUPPORTED,
+				});
+				return;
+			}
+			let permissions: Set<string>;
+			try {
+				permissions = await livePermissions();
+			} catch (error) {
+				emit('tool.denied', `Tool ${id} was denied.`, {
+					tool: id,
+					reason: toolFailure(error).code,
+				});
+				throw error;
+			}
+			if (
+				offered.tool.requiredPermissions.some(
+					(permission) => !permissions.has(permission),
+				)
+			) {
+				emit('tool.denied', `Tool ${id} was denied.`, {
+					tool: id,
+					reason: 'TOOL_AUTHORIZATION_REVOKED',
+				});
+				throw new AgentHarnessError(
+					'TOOL_AUTHORIZATION_REVOKED',
+					`The initiating actor no longer has permission for tool ${id}.`,
+				);
+			}
+			const bounded = boundNativeResults(report.results);
+			emit(
+				'tool.native',
+				`Native tool ${id} reported ${bounded.results.length} results.`,
+				{
+					tool: id,
+					results: bounded.results.length,
+					...(bounded.dropped > 0 ? { dropped: bounded.dropped } : {}),
+				},
+			);
+			if (!offered.tool.record) return;
+			try {
+				await offered.tool.record(
+					{
+						query: nativeText(report.query, NATIVE_TOOL_LIMITS.query) || null,
+						results: bounded.results,
+					},
+					nativeContext(permissions),
+				);
+			} catch (error) {
+				emit('tool.failed', `Tool ${id} failed.`, {
+					tool: id,
+					reason: toolFailure(error).code,
+				});
+			}
+		};
 		const tracer = this.#tracer;
 		let providerSpan: AgentTraceSpan | undefined;
 		let toolCallOrdinal = 0;
@@ -1096,6 +1461,9 @@ export class AgentHarness {
 					controller.abort('timeout');
 				}, request.definition.timeoutMs);
 			});
+			if (this.#nativeTools.size > 0) {
+				await Promise.race([offerNativeTools(), timeout, providerAborted]);
+			}
 			providerSpan = startSpan(tracer, `provider ${provider.id}`, {
 				kind: 'client',
 				attributes: {
@@ -1120,7 +1488,13 @@ export class AgentHarness {
 							additionalProperties: false,
 						},
 					})),
+					nativeTools: [...offeredNative.entries()].map(([id, offered]) => ({
+						id,
+						kind: offered.tool.kind,
+						config: offered.config,
+					})),
 					invokeTool: tracedInvokeTool,
+					reportNative,
 					emit,
 				}),
 				timeout,
@@ -1174,6 +1548,37 @@ export class AgentHarness {
 	}
 }
 
+const MAX_NATIVE_FIXTURES_BYTES = 1_048_576;
+
+/* The recorded answer of a native web search: the entries the fixtures file
+   holds under the run input, exactly as written. A query it does not name
+   answers no results rather than a guess. */
+async function simulatedWebSearch(
+	path: string,
+	query: string,
+): Promise<readonly AgentNativeResult[]> {
+	let fixtures: unknown;
+	try {
+		if ((await stat(path)).size > MAX_NATIVE_FIXTURES_BYTES) {
+			throw new Error('too large');
+		}
+		fixtures = JSON.parse(await readFile(path, 'utf8'));
+	} catch {
+		throw new AgentHarnessError(
+			'NATIVE_FIXTURES_UNAVAILABLE',
+			'The native tool fixtures could not be read.',
+		);
+	}
+	const queries = (fixtures as { queries?: unknown } | null)?.queries;
+	if (!queries || typeof queries !== 'object' || Array.isArray(queries)) {
+		return [];
+	}
+	const answer = Object.hasOwn(queries, query)
+		? (queries as Record<string, unknown>)[query]
+		: undefined;
+	return Array.isArray(answer) ? (answer as AgentNativeResult[]) : [];
+}
+
 export class LocalSimulationProvider implements AgentProvider {
 	readonly id = 'local-simulation';
 
@@ -1186,11 +1591,26 @@ export class LocalSimulationProvider implements AgentProvider {
 			);
 		}
 		const input = context.request.input.trim();
+		const native: string[] = [];
+		for (const tool of context.nativeTools ?? []) {
+			const path = context.request.nativeFixturesPath;
+			if (tool.kind !== 'web-search' || path === undefined) {
+				await context.reportNative({
+					id: tool.id,
+					code: NATIVE_TOOL_UNSUPPORTED,
+				});
+				continue;
+			}
+			const results = await simulatedWebSearch(path, input);
+			await context.reportNative({ id: tool.id, query: input, results });
+			native.push(`Native tool ${tool.id}: ${results.length} results.`);
+		}
 		const output = [
 			'Local simulation completed.',
 			`Agent: ${context.request.definition.name}`,
 			`Trigger: ${context.request.trigger}`,
 			`Input: ${input}`,
+			...native,
 			'No external model or network was called.',
 		].join('\n');
 		for (const chunk of output.match(/.{1,160}/gs) ?? []) {

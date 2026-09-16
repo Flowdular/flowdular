@@ -202,7 +202,7 @@ Declare `settings: defineModuleSettings({...})` (from `@flowdular/kernel`) by re
 
 When the spec declares `research`, agents gather outside facts through `research.core`, and a module's own tools record what the agent concluded. Two rules decide the design.
 
-**Evidence ids travel with findings.** `research.search` and `research.fetch` belong to `research.core` (`risk: 'external'`, `idempotency: 'none'`, behind the harness consent gate `research.consent`, which refuses with `TOOL_NOT_CONSENTED` until an owner turns on `research.core.allowAgents`). Every result the run keeps and every page it reads becomes an evidence row carrying the run id, and `research.fetch` answers its `evidenceId`. A module never registers a tool that opens a URL. The module tool that stores a finding on the `evidenceOwner` record takes the ids in its input:
+**Evidence ids travel with findings.** `research.search` and `research.fetch` belong to `research.core` (`risk: 'workspace-write'` like `connectors.call`, because `external` asks for a signed grant on every call; `idempotency: 'none'`, behind the harness consent gate `research.consent`, which refuses with `TOOL_NOT_CONSENTED` until an owner turns on `research.core.allowAgents`). Every result the run keeps and every page it reads becomes an evidence row carrying the run id, and `research.fetch` answers its `evidenceId`. A module never registers a tool that opens a URL. The module tool that stores a finding on the `evidenceOwner` record takes the ids in its input:
 
 ```ts
 inputSchema: {

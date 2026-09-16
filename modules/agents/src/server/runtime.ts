@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
 	AgentHarness,
 	LocalSimulationProvider,
+	type AgentNativeTool,
 	type AgentProvider,
 	type AgentTool,
 	type AgentToolAccessAuthorizer,
@@ -62,6 +63,8 @@ export interface AgentRuntimeOptions {
 	/* A function is evaluated when the harness is first built, so tools that
 	   other modules register after this runtime was created are included. */
 	readonly tools?: readonly AgentTool[] | (() => readonly AgentTool[]);
+	/* Provider-executed tools, read at the same moment as `tools`. */
+	readonly nativeTools?: () => readonly AgentNativeTool[];
 	/* Read at start after the platform seals the composition registry. */
 	readonly moduleAgents?:
 		| readonly ModuleAgentDefinition[]
@@ -321,6 +324,7 @@ export function createAgentRuntime(
 			const harness = new AgentHarness({
 				providers: options.providers ?? [new LocalSimulationProvider()],
 				tools,
+				nativeTools: options.nativeTools?.() ?? [],
 				tracer: options.tracer ?? serverTracer(),
 				...(options.authorizeToolAccess
 					? { authorizeToolAccess: options.authorizeToolAccess }
