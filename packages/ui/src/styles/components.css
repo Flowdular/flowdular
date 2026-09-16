@@ -1779,6 +1779,11 @@
 	color: var(--ink-2);
 }
 
+.ui-cell-text--muted {
+	font-size: var(--text-sm);
+	color: var(--ink-3);
+}
+
 /* Prose wraps at spaces and stops at two lines. */
 .ui-cell-text--wrap {
 	display: -webkit-box;

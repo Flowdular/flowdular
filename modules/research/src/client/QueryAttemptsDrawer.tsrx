@@ -1,4 +1,13 @@
-import { Alert, Drawer, Table, Tag, type TableColumn } from '@flowdular/ui';
+import {
+	Alert,
+	CellNumber,
+	CellStack,
+	CellTag,
+	CellTime,
+	Drawer,
+	Table,
+	type TableColumn,
+} from '@flowdular/ui';
 import { t } from '@flowdular/client';
 import type { ResearchAttemptRow, ResearchQueryRow } from './api.ts';
 import {
@@ -7,7 +16,6 @@ import {
 	attemptOutcomeTone,
 	durationLabel,
 	errorCodeLabel,
-	timestampLabel,
 } from './presentation.ts';
 
 export interface QueryAttemptsDrawerProps {
@@ -23,50 +31,59 @@ function columns(): readonly TableColumn<ResearchAttemptRow>[] {
 		{
 			key: 'adapter',
 			header: t('research.attempts.column.adapter'),
-			width: '24%',
+			width: 'auto',
 			value: (row) => row.adapter,
-			cell: (row) => <span class="ui-cell">
-				<b>{adapterLabel(row.adapter)}</b>
-				<small class="ui-cell__muted">{timestampLabel(row.createdAt)}</small>
-			</span>,
+			cell: (row) =>
+				<CellStack
+					primary={adapterLabel(row.adapter)}
+					secondary={<CellTime value={row.createdAt} />}
+				/>,
 		},
 		{
 			key: 'attempt',
 			header: t('research.attempts.column.attempt'),
-			width: '12%',
+			width: '100px',
 			numeric: true,
+			priority: 3,
 			value: (row) => row.attempt,
-			cell: (row) => row.attempt === 0 ? '' : String(row.attempt),
+			cell: (row) => row.attempt === 0
+				? null
+				: <CellNumber value={row.attempt} />,
 		},
 		{
 			key: 'outcome',
 			header: t('research.attempts.column.outcome'),
-			width: '22%',
+			width: '130px',
 			value: (row) => row.outcome,
 			cell: (row) =>
-				<Tag tone={attemptOutcomeTone(row.outcome)} dot>{attemptOutcomeLabel(
-					row.outcome,
-				)}</Tag>,
+				<CellTag
+					tone={attemptOutcomeTone(row.outcome)}
+					dot
+					label={attemptOutcomeLabel(row.outcome)}
+				/>,
 		},
 		{
 			key: 'errorCode',
 			header: t('research.attempts.column.error'),
-			width: '28%',
+			width: '220px',
+			priority: 2,
 			value: (row) => row.errorCode ?? '',
 			cell: (row) => row.errorCode === null
-				? ''
-				: <span class="ui-cell">
-						<b>{errorCodeLabel(row.errorCode)}</b>
-						<small class="ui-mono">{row.errorCode}</small>
-					</span>,
+				? null
+				: <CellStack
+						primary={errorCodeLabel(row.errorCode)}
+						secondary={row.errorCode}
+						secondaryMono
+					/>,
 		},
 		{
 			key: 'durationMs',
 			header: t('research.attempts.column.duration'),
-			width: '14%',
+			width: '110px',
 			numeric: true,
+			priority: 3,
 			value: (row) => row.durationMs,
-			cell: (row) => durationLabel(row.durationMs),
+			cell: (row) => <CellNumber value={durationLabel(row.durationMs)} />,
 		},
 	];
 }

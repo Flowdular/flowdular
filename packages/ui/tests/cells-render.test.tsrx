@@ -40,6 +40,21 @@ describe('CellText', () => {
 		).not.toBeNull();
 		mounted.unmount();
 	});
+
+	it('mutes a description without dropping its title', async () => {
+		const mounted = await mount(
+			<CellText value="Reads invoices from the ledger" muted wrap />,
+		);
+		const cell = mounted.container.querySelector(
+			'.ui-cell-text',
+		) as HTMLElement;
+		expect(cell.classList.contains('ui-cell-text--muted')).toBe(true);
+		expect(cell.classList.contains('ui-cell-text--wrap')).toBe(true);
+		expect(cell.getAttribute('title')).toBe('Reads invoices from the ledger');
+		await mounted.render(<CellText value="Ledger" />);
+		expect(mounted.container.querySelector('.ui-cell-text--muted')).toBeNull();
+		mounted.unmount();
+	});
 });
 
 describe('CellStack', () => {
@@ -211,6 +226,37 @@ describe('CellTag, CellNumber and CellMuted', () => {
 		expect(text(mounted.container.querySelector('.ui-cell-muted'))).toBe(
 			'None',
 		);
+		mounted.unmount();
+	});
+
+	it('shows a number that arrives formatted as it came', async () => {
+		const mounted = await mount(
+			<TableLocaleContext.Provider
+				value={{ ...DEFAULT_TABLE_LOCALE, locale: 'pl' }}
+			>
+				<CellNumber value="<$0.01" options={{ style: 'percent' }} />
+				<CellNumber value="12345" />
+			</TableLocaleContext.Provider>,
+		);
+		const numbers = mounted.container.querySelectorAll('.ui-cell-number');
+		expect(text(numbers[0] as HTMLElement)).toBe('<$0.01');
+		expect(text(numbers[1] as HTMLElement)).toBe('12345');
+		mounted.unmount();
+	});
+
+	it('titles a placeholder only when asked', async () => {
+		const mounted = await mount(
+			<CellMuted title="The run was cancelled before it read a page">
+				None
+			</CellMuted>,
+		);
+		expect(
+			mounted.container.querySelector('.ui-cell-muted')?.getAttribute('title'),
+		).toBe('The run was cancelled before it read a page');
+		await mounted.render(<CellMuted>None</CellMuted>);
+		expect(
+			mounted.container.querySelector('.ui-cell-muted')?.getAttribute('title'),
+		).toBeNull();
 		mounted.unmount();
 	});
 });

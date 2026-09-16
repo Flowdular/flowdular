@@ -20,6 +20,7 @@
 	"column.instance": "Instancja konektora",
 	"column.schedule": "Harmonogram",
 	"column.lastRun": "Ostatni przebieg",
+	"column.lastRunRows": "Wiersze ostatniego przebiegu",
 	"direction.source": "Źródło",
 	"direction.sink": "Ujście",
 	"target.unavailable": "Niezarejestrowany w tym wdrożeniu",

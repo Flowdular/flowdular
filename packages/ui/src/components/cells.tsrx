@@ -24,6 +24,8 @@ export interface CellTextProps {
 	readonly value: string;
 	readonly strong?: boolean | undefined;
 	readonly mono?: boolean | undefined;
+	/** The smaller, quieter ink of a secondary line, for a description beside the record's name. */
+	readonly muted?: boolean | undefined;
 	/** Prose (a description, a message, a list): wraps at spaces, two lines at most. */
 	readonly wrap?: boolean | undefined;
 	/** The hover reading when it says more than the value, e.g. the whole list a summary stands for. */
@@ -37,6 +39,7 @@ export function CellText(props: CellTextProps) @{
 			'ui-cell-text',
 			props.strong && 'ui-cell-text--strong',
 			props.mono && 'ui-cell-text--mono',
+			props.muted && 'ui-cell-text--muted',
 			props.wrap && 'ui-cell-text--wrap',
 		]}
 		title={props.title ?? props.value}
@@ -192,25 +195,28 @@ export function CellTag(props: CellTagProps) @{
 }
 
 export interface CellNumberProps {
-	readonly value: number | bigint;
+	/** A string arrives already formatted ("1.2K", "<$0.01", "3/5") and is shown as it came. */
+	readonly value: number | bigint | string;
 	readonly options?: Intl.NumberFormatOptions | undefined;
 }
 
 /** A number in the reader's locale with tabular figures; the column declares `numeric`. */
 export function CellNumber(props: CellNumberProps) @{
 	const table = useContext(TableLocaleContext);
-	<span class="ui-cell-number">{cellNumber(
-		props.value,
-		table.locale,
-		props.options,
-	)}</span>
+	<span class="ui-cell-number">
+		{typeof props.value === 'string'
+			? props.value
+			: cellNumber(props.value, table.locale, props.options)}
+	</span>
 }
 
 export interface CellMutedProps {
 	readonly children?: OctaneNode;
+	/** The hover reading, e.g. why the value is missing. */
+	readonly title?: string | undefined;
 }
 
 /** The placeholder for a missing value: "None", "Never". */
 export function CellMuted(props: CellMutedProps) @{
-	<span class="ui-cell-muted">{props.children}</span>
+	<span class="ui-cell-muted" title={props.title}>{props.children}</span>
 }

@@ -2,6 +2,12 @@ import { useEffect, useMemo, useState } from 'octane';
 import {
 	Alert,
 	Button,
+	CellCode,
+	CellNumber,
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
 	ConfirmDialog,
 	Drawer,
 	EmptyState,
@@ -11,7 +17,6 @@ import {
 	SearchField,
 	Select,
 	TableCard,
-	Tag,
 	ToastHost,
 	toasts,
 	type TableAction,
@@ -44,7 +49,6 @@ import {
 	scanLabel,
 	scanTone,
 	tableEmpty,
-	timestampLabel,
 } from './presentation.ts';
 import {
 	createDocumentsClientState,
@@ -69,56 +73,66 @@ function columns(): readonly TableColumn<DocumentAttachment>[] {
 		{
 			key: 'filename',
 			header: t('documents.column.filename'),
-			width: '26%',
+			width: 'auto',
 			value: (record) => record.filename,
-			cell: (record) => <span class="ui-cell">
-				<b>{record.filename}</b>
-				<small class="ui-cell__muted">{timestampLabel(record.createdAt)}</small>
-			</span>,
+			cell: (record) =>
+				<CellStack
+					primary={record.filename}
+					secondary={<CellTime value={record.createdAt} />}
+				/>,
 		},
 		{
 			key: 'ownerModule',
 			header: t('documents.column.ownerModule'),
-			width: '14%',
+			width: '160px',
+			priority: 2,
 			value: (record) => record.ownerModule,
-			cell: (record) => <span class="ui-mono">{record.ownerModule}</span>,
+			cell: (record) => <CellText value={record.ownerModule} mono />,
 		},
 		{
 			key: 'recordRef',
 			header: t('documents.column.recordRef'),
-			width: '16%',
+			width: '180px',
+			priority: 2,
 			value: (record) => record.recordRef,
-			cell: (record) => <span class="ui-mono">{record.recordRef}</span>,
+			cell: (record) => <CellCode value={record.recordRef} />,
 		},
 		{
 			key: 'contentType',
 			header: t('documents.column.contentType'),
-			width: '14%',
+			width: '160px',
+			priority: 3,
 			value: (record) => record.contentType,
-			cell: (record) => <span class="ui-mono">{record.contentType}</span>,
+			cell: (record) => <CellText value={record.contentType} mono />,
 		},
 		{
 			key: 'bytes',
 			header: t('documents.column.bytes'),
-			width: '10%',
+			width: '100px',
 			numeric: true,
+			priority: 3,
 			value: (record) => record.bytes,
-			cell: (record) => byteLabel(record.bytes),
+			cell: (record) => <CellNumber value={byteLabel(record.bytes)} />,
 		},
 		{
 			key: 'scan',
 			header: t('documents.column.scan'),
-			width: '10%',
+			width: '130px',
 			value: (record) => record.scan,
 			cell: (record) =>
-				<Tag tone={scanTone(record.scan)} dot>{scanLabel(record.scan)}</Tag>,
+				<CellTag
+					tone={scanTone(record.scan)}
+					dot
+					label={scanLabel(record.scan)}
+				/>,
 		},
 		{
 			key: 'uploaderAccountId',
 			header: t('documents.column.uploader'),
-			width: '10%',
+			width: '170px',
+			priority: 3,
 			value: (record) => record.uploaderAccountId,
-			cell: (record) => <span class="ui-mono">{record.uploaderAccountId}</span>,
+			cell: (record) => <CellCode value={record.uploaderAccountId} />,
 		},
 	];
 }
