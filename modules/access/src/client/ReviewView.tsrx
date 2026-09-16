@@ -2,6 +2,13 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	CellCode,
+	CellMuted,
+	CellNumber,
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
 	DateField,
 	Drawer,
 	EmptyState,
@@ -12,7 +19,6 @@ import {
 	SearchField,
 	TableCard,
 	Tabs,
-	Tag,
 	type TableColumn,
 } from '@flowdular/ui';
 import { activeLocale, t } from '@flowdular/client';
@@ -36,7 +42,6 @@ import {
 	numberLabel,
 	screenSurface,
 	statusLabel,
-	timestampLabel,
 	todayIso,
 } from './presentation.ts';
 import { createReviewClientState, type ReviewTab } from './state.ts';
@@ -47,52 +52,55 @@ export interface ReviewViewProps {
 	readonly canAttest: boolean;
 }
 
+/* Who holds what: the member, the role and the status stay on screen, the
+   scopes beyond the role hide next and the plain scope count first. */
 function memberColumns(): readonly TableColumn<AccessReviewMember>[] {
 	return [
 		{
 			key: 'member',
 			header: t('access.review.column.member'),
-			width: '26%',
+			width: 'auto',
 			value: (row) => row.displayName + ' ' + row.email,
-			cell: (row) => <span class="ui-cell">
-				<b>{row.displayName}</b>
-				<small>{row.email}</small>
-			</span>,
+			cell: (row) =>
+				<CellStack primary={row.displayName} secondary={row.email} />,
 		},
 		{
 			key: 'role',
 			header: t('access.review.column.role'),
-			width: '16%',
+			width: '140px',
 			value: (row) => row.role,
-			cell: (row) => <span class="ui-mono">{row.role}</span>,
+			cell: (row) => <CellText value={row.role} mono />,
 		},
 		{
 			key: 'status',
 			header: t('access.review.column.status'),
-			width: '16%',
+			width: '130px',
 			value: (row) => row.membershipStatus,
 			cell: (row) =>
-				<Tag
+				<CellTag
 					tone={memberTone(row.accountStatus, row.membershipStatus)}
 					dot
-				>{statusLabel(row.membershipStatus)}</Tag>,
+					label={statusLabel(row.membershipStatus)}
+				/>,
 		},
 		{
 			key: 'scopes',
 			header: t('access.review.column.scopes'),
-			width: '12%',
+			width: '100px',
 			numeric: true,
+			priority: 3,
 			value: (row) => row.scopeCount,
-			cell: (row) => numberLabel(row.scopeCount),
+			cell: (row) => <CellNumber value={row.scopeCount} />,
 		},
 		{
 			key: 'extra',
 			header: t('access.review.column.extraScopes'),
-			width: '30%',
+			width: '260px',
+			priority: 2,
 			value: (row) => row.extraScopes.join(' '),
 			cell: (row) => row.extraScopes.length === 0
-				? <small>{t('access.review.noExtraScopes')}</small>
-				: <span class="ui-mono">{row.extraScopes.join(', ')}</span>,
+				? <CellMuted>{t('access.review.noExtraScopes')}</CellMuted>
+				: <CellText value={row.extraScopes.join(', ')} mono wrap />,
 		},
 	];
 }
@@ -102,37 +110,41 @@ function roleColumns(): readonly TableColumn<AccessReviewRole>[] {
 		{
 			key: 'role',
 			header: t('access.review.column.roleName'),
-			width: '28%',
+			width: '220px',
 			value: (row) => row.name,
-			cell: (row) => <span class="ui-cell">
-				<b>{row.name}</b>
-				<small class="ui-mono">{row.key}</small>
-			</span>,
+			cell: (row) =>
+				<CellStack primary={row.name} secondary={row.key} secondaryMono />,
 		},
 		{
 			key: 'kind',
 			header: t('access.review.column.roleKind'),
-			width: '16%',
+			width: '120px',
+			priority: 2,
 			value: (row) => String(row.builtin),
 			cell: (row) =>
-				<Tag tone={row.builtin ? 'neutral' : 'info'}>{t(
-					row.builtin ? 'access.review.builtin' : 'access.review.custom',
-				)}</Tag>,
+				<CellTag
+					tone={row.builtin ? 'neutral' : 'info'}
+					label={t(
+						row.builtin ? 'access.review.builtin' : 'access.review.custom',
+					)}
+				/>,
 		},
 		{
 			key: 'holders',
 			header: t('access.review.column.holders'),
-			width: '14%',
+			width: '110px',
 			numeric: true,
+			priority: 2,
 			value: (row) => row.holders,
-			cell: (row) => numberLabel(row.holders),
+			cell: (row) => <CellNumber value={row.holders} />,
 		},
 		{
 			key: 'scopes',
 			header: t('access.review.column.roleScopes'),
-			width: '42%',
+			width: 'auto',
+			priority: 3,
 			value: (row) => row.scopes.join(' '),
-			cell: (row) => <span class="ui-mono">{row.scopes.join(', ')}</span>,
+			cell: (row) => <CellText value={row.scopes.join(', ')} mono wrap />,
 		},
 	];
 }
@@ -142,43 +154,47 @@ function tokenColumns(): readonly TableColumn<AccessReviewToken>[] {
 		{
 			key: 'label',
 			header: t('access.review.column.tokenLabel'),
-			width: '24%',
+			width: 'auto',
 			value: (row) => row.label,
-			cell: (row) => <span class="ui-cell">
-				<b>{row.label}</b>
-				<small class="ui-mono">{row.prefix}</small>
-			</span>,
+			cell: (row) =>
+				<CellStack primary={row.label} secondary={row.prefix} secondaryMono />,
 		},
 		{
 			key: 'holder',
 			header: t('access.review.column.tokenHolder'),
-			width: '22%',
+			width: '220px',
 			value: (row) => row.accountLabel ?? row.accountId,
-			cell: (row) =>
-				row.accountLabel ?? <span class="ui-mono">{row.accountId}</span>,
+			cell: (row) => row.accountLabel === null
+				? <CellCode value={row.accountId} />
+				: <CellText value={row.accountLabel} />,
 		},
 		{
 			key: 'scopes',
 			header: t('access.review.column.tokenScopes'),
-			width: '30%',
+			width: '260px',
+			priority: 3,
 			value: (row) => row.scopes.join(' '),
-			cell: (row) => <span class="ui-mono">{row.scopes.join(', ')}</span>,
+			cell: (row) => <CellText value={row.scopes.join(', ')} mono wrap />,
 		},
 		{
 			key: 'expires',
 			header: t('access.review.column.expires'),
-			width: '12%',
+			width: '170px',
+			priority: 2,
 			value: (row) => row.expiresAt ?? 0,
 			cell: (row) => row.expiresAt === null
-				? <small>{t('access.review.noExpiry')}</small>
-				: timestampLabel(row.expiresAt),
+				? <CellMuted>{t('access.review.noExpiry')}</CellMuted>
+				: <CellTime value={row.expiresAt} />,
 		},
 		{
 			key: 'lastUsed',
 			header: t('access.review.column.lastUsed'),
-			width: '12%',
+			width: '170px',
+			priority: 2,
 			value: (row) => row.lastUsedAt ?? 0,
-			cell: (row) => timestampLabel(row.lastUsedAt),
+			cell: (row) => row.lastUsedAt === null
+				? <CellMuted>{t('access.common.never')}</CellMuted>
+				: <CellTime value={row.lastUsedAt} />,
 		},
 	];
 }
@@ -188,42 +204,48 @@ function providerColumns(): readonly TableColumn<AccessReviewProvider>[] {
 		{
 			key: 'provider',
 			header: t('access.review.column.provider'),
-			width: '26%',
+			width: 'auto',
 			value: (row) => row.label,
-			cell: (row) => <span class="ui-cell">
-				<b>{row.label}</b>
-				<small class="ui-mono">{row.key}</small>
-			</span>,
+			cell: (row) =>
+				<CellStack primary={row.label} secondary={row.key} secondaryMono />,
 		},
 		{
 			key: 'issuer',
 			header: t('access.review.column.issuer'),
-			width: '30%',
+			width: '260px',
+			priority: 2,
 			value: (row) => row.issuer,
-			cell: (row) => <span class="ui-mono">{row.issuer}</span>,
+			cell: (row) => <CellText value={row.issuer} mono />,
 		},
 		{
 			key: 'status',
 			header: t('access.review.column.status'),
-			width: '14%',
+			width: '130px',
 			value: (row) => row.status,
 			cell: (row) =>
-				<Tag
+				<CellTag
 					tone={row.status === 'active' ? 'success' : 'neutral'}
 					dot
-				>{statusLabel(row.status)}</Tag>,
+					label={statusLabel(row.status)}
+				/>,
 		},
 		{
 			key: 'joining',
 			header: t('access.review.column.joining'),
-			width: '30%',
+			width: '260px',
+			priority: 3,
 			value: (row) => row.jitRole,
-			cell: (row) => row.jitEnabled ? t('access.review.jitOn', {
-						role: row.jitRole,
-						domains: row.allowedDomains.length === 0
-							? t('access.review.anyDomain')
-							: row.allowedDomains.join(', '),
-					}) : t('access.review.jitOff'),
+			cell: (row) => <CellText
+				value={row.jitEnabled
+					? t('access.review.jitOn', {
+							role: row.jitRole,
+							domains: row.allowedDomains.length === 0
+								? t('access.review.anyDomain')
+								: row.allowedDomains.join(', '),
+						})
+					: t('access.review.jitOff')}
+				wrap
+			/>,
 		},
 	];
 }

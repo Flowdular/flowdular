@@ -1,9 +1,12 @@
 import { t } from '@flowdular/client';
 import {
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
 	Pagination,
 	SearchField,
 	TableCard,
-	Tag,
 	type TableColumn,
 	type TableSort,
 } from '@flowdular/ui';
@@ -11,7 +14,7 @@ import type {
 	AgentDefinition,
 	AgentProviderConnection,
 } from '../domain/types.ts';
-import { stateTone, timestampLabel } from './presentation.ts';
+import { stateTone } from './presentation.ts';
 import { hasMorePages, PAGE_SIZE, type CursorStack } from './state.ts';
 
 export interface AgentDefinitionListProps {
@@ -43,43 +46,52 @@ function columns(
 		{
 			key: 'name',
 			header: t('agents.definitions.column.agent'),
-			width: '22%',
+			width: 'auto',
 			value: (agent) => agent.name,
-			cell: (agent) => <span class="ui-cell">
-				<b>{agent.name}</b>
-				<small class="ui-mono">{agent.key + ' · r' + agent.revision}</small>
-			</span>,
+			cell: (agent) =>
+				<CellStack
+					primary={agent.name}
+					secondary={agent.key + ' · r' + agent.revision}
+					secondaryMono
+				/>,
 		},
 		{
 			key: 'purpose',
 			header: t('agents.definitions.column.purpose'),
-			width: '26%',
-			cell: (agent) => <span class="ui-cell__muted">{agent.description}</span>,
+			width: 'auto',
+			priority: 3,
+			cell: (agent) => <CellText value={agent.description} wrap />,
 		},
 		{
 			key: 'model',
 			header: t('agents.definitions.column.model'),
-			width: '20%',
-			cell: (agent) => <span class="ui-cell">
-				<b class="ui-mono">{agent.model}</b>
-				<small>{providerName(agent.provider)}</small>
-			</span>,
+			width: '200px',
+			priority: 2,
+			cell: (agent) =>
+				<CellStack
+					primary={agent.model}
+					primaryMono
+					secondary={providerName(agent.provider)}
+				/>,
 		},
 		{
 			key: 'updatedAt',
 			header: t('agents.definitions.column.updated'),
-			width: '18%',
+			width: '170px',
+			priority: 2,
 			value: (agent) => agent.updatedAt,
-			cell: (agent) => timestampLabel(agent.updatedAt),
+			cell: (agent) => <CellTime value={agent.updatedAt} />,
 		},
 		{
 			key: 'status',
 			header: t('agents.definitions.column.status'),
-			width: '14%',
+			width: '130px',
 			cell: (agent) =>
-				<Tag tone={stateTone(agent.status)} dot>{t(
-					'agents.status.' + agent.status,
-				)}</Tag>,
+				<CellTag
+					tone={stateTone(agent.status)}
+					dot
+					label={t('agents.status.' + agent.status)}
+				/>,
 		},
 	];
 }

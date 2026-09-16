@@ -2,6 +2,11 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	CellCode,
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
 	ConfirmDialog,
 	EmptyState,
 	Filters,
@@ -10,7 +15,6 @@ import {
 	Pagination,
 	Select,
 	TableCard,
-	Tag,
 	ToastHost,
 	toasts,
 	type TableColumn,
@@ -37,7 +41,7 @@ import {
 	type BulkDecision,
 } from './api.ts';
 import { ApprovalRequestDrawer } from './ApprovalRequestDrawer.tsrx';
-import { statusLabel, statusTone, timestampLabel } from './presentation.ts';
+import { statusLabel, statusTone } from './presentation.ts';
 import { refreshPendingCount } from './pending-count.ts';
 import {
 	approvalsListing,
@@ -68,53 +72,62 @@ const PAGE_SIZES = [10, 25, 50, 100];
 function columns(): readonly TableColumn<ApprovalRequest>[] {
 	return [
 		{
-			key: 'status',
-			header: t('approvals.column.status'),
-			width: '12%',
-			cell: (item) =>
-				<Tag tone={statusTone(item.status)} dot>{statusLabel(
-					item.status,
-				)}</Tag>,
-		},
-		{
 			key: 'title',
 			header: t('approvals.column.title'),
-			width: '22%',
-			cell: (item) => <span class="ui-cell">
-				<b>{item.title}</b>
-				<small class="ui-mono">{item.subjectRef}</small>
-			</span>,
+			width: 'auto',
+			cell: (item) =>
+				<CellStack
+					primary={item.title}
+					secondary={item.subjectRef}
+					secondaryMono
+				/>,
+		},
+		{
+			key: 'status',
+			header: t('approvals.column.status'),
+			width: '130px',
+			cell: (item) =>
+				<CellTag
+					tone={statusTone(item.status)}
+					dot
+					label={statusLabel(item.status)}
+				/>,
 		},
 		{
 			key: 'subjectModule',
 			header: t('approvals.column.subjectModule'),
-			width: '14%',
-			cell: (item) => <span class="ui-mono">{item.subjectModule}</span>,
+			width: '160px',
+			priority: 2,
+			cell: (item) => <CellText value={item.subjectModule} mono />,
 		},
 		{
 			key: 'action',
 			header: t('approvals.column.action'),
-			width: '14%',
-			cell: (item) => <span class="ui-mono">{item.action}</span>,
+			width: '180px',
+			priority: 2,
+			cell: (item) => <CellText value={item.action} mono />,
 		},
 		{
 			key: 'requester',
 			header: t('approvals.column.requester'),
-			width: '14%',
-			cell: (item) => <span class="ui-mono">{item.requesterAccountId}</span>,
+			width: '160px',
+			priority: 3,
+			cell: (item) => <CellCode value={item.requesterAccountId} />,
 		},
 		{
 			key: 'createdAt',
 			header: t('approvals.column.createdAt'),
-			width: '14%',
+			width: '170px',
+			priority: 2,
 			value: (item) => item.createdAt,
-			cell: (item) => timestampLabel(item.createdAt),
+			cell: (item) => <CellTime value={item.createdAt} />,
 		},
 		{
 			key: 'expiresAt',
 			header: t('approvals.column.expiresAt'),
-			width: '14%',
-			cell: (item) => timestampLabel(item.expiresAt),
+			width: '170px',
+			priority: 3,
+			cell: (item) => <CellTime value={item.expiresAt} />,
 		},
 	];
 }

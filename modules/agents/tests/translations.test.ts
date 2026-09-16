@@ -13,7 +13,6 @@ import {
 	cadenceLabel,
 	RUN_STATUSES,
 	RUN_TRIGGERS,
-	timestampLabel,
 	type ModelReadinessState,
 } from '../src/client/presentation.ts';
 import { AGENT_CONTEXT_VARIABLES } from '../src/domain/context-variables.ts';
@@ -93,7 +92,7 @@ describe('agents translations', () => {
 		setActiveLocale('en');
 	});
 
-	it('covers each dynamic cadence key and formats timestamps in the active locale', async () => {
+	it('covers each dynamic cadence key in the active locale', async () => {
 		setActiveLocale('pl');
 		for (const status of RUN_STATUSES) {
 			expect(t('agents.runStatus.' + status)).not.toMatch(/^agents\./);
@@ -107,7 +106,6 @@ describe('agents translations', () => {
 		expect(cadenceLabel(60)).toBe('Co godzinę');
 		expect(cadenceLabel(180)).toBe('Co 3 godz.');
 		expect(cadenceLabel(90)).toBe('Co 1 godz. 30 min');
-		expect(timestampLabel(0)).not.toContain('Jan');
 		setActiveLocale('en');
 	});
 

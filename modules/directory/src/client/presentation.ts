@@ -1,5 +1,5 @@
 import type { TableEmpty, TagTone } from '@flowdular/ui';
-import { activeLocale, t } from '@flowdular/client/i18n';
+import { t } from '@flowdular/client/i18n';
 import type {
 	ProvisioningOperation,
 	ProvisioningOutcome,
@@ -7,19 +7,6 @@ import type {
 	ScimTokenStatus,
 } from '../domain/types.ts';
 import type { ScreenStatus } from './state.ts';
-
-function formatted(value: number): string {
-	return new Intl.DateTimeFormat(activeLocale(), {
-		dateStyle: 'medium',
-		timeStyle: 'short',
-	}).format(value);
-}
-
-/** Epoch milliseconds as the reader's local date and time. */
-export function timestampLabel(value: number | null): string {
-	if (value === null) return t('directory.common.never');
-	return formatted(value);
-}
 
 /** What a row says a token is, which an expiry can differ from its status on. */
 export type TokenDisplayStatus = ScimTokenStatus | 'expired';

@@ -2,7 +2,15 @@ import { useEffect, useMemo, useState } from 'octane';
 import { ModelSettingsModal } from './client/ModelSettingsModal.tsrx';
 import type { ConfigurationPatch } from './client/api.ts';
 import { Head, Seo } from '@octanejs/seo';
-import { Alert, BrandMark, Button, Icon, Tag } from '@flowdular/ui';
+import {
+	Alert,
+	BrandMark,
+	Button,
+	Icon,
+	Tag,
+	TableLocaleContext,
+	type TableLocale,
+} from '@flowdular/ui';
 import { useValue } from 'segment-state';
 import type { RenderRouteProps } from '@octanejs/vite-plugin';
 import type {
@@ -92,7 +100,18 @@ function startingPoint(
 }
 
 export function App(props?: RenderRouteProps) @{
-	const { t } = useTranslation();
+	const { locale, t } = useTranslation();
+	const tableLocale = useMemo<TableLocale>(
+		() => ({
+			locale,
+			expand: t('shell.table.expand'),
+			collapse: t('shell.table.collapse'),
+			moreActions: t('shell.table.moreActions'),
+			copy: t('shell.table.copy'),
+			copied: t('shell.table.copied'),
+		}),
+		[locale],
+	);
 	const sandbox = useMemo(() => createSandboxClientState(), []);
 	const [state] = useValue(sandbox.state.state);
 	const [view] = useValue(sandbox.state.view);
@@ -826,60 +845,62 @@ export function App(props?: RenderRouteProps) @{
 
 					@if (!activeSessionId || !view) {
 						<div class="sandbox__scroll">
-							<SessionPicker
-								onDeliverySettings={() => {
-									setError('');
-									setGitHubSettingsOpen(true);
-								}}
-								dashboard={state.dashboard}
-								onRefresh={() => void refreshState().catch(
-									(error) => setError(
-										message(error, t('sandbox.app.error.state')),
-									),
-								)}
-								onReject={(id) => void sessionAction(
-									id,
-									() => rejectSandboxSession(id),
-									t('sandbox.dashboard.rejectError'),
-								)}
-								sessions={state.sessions}
-								running={state.running}
-								roles={state.roles}
-								drivers={state.drivers}
-								driver={driver || state.configuration.driver}
-								busy={busy}
-								openMenu={sessionMenu}
-								confirmDelete={confirmDelete}
-								showArchived={showArchived}
-								onDriver={setDriver}
-								onOpen={(id) => void openSession(id)}
-								onCreate={(brief, chosen, attachments) => void startSession(
-									brief,
-									chosen,
-									attachments,
-								)}
-								onMenu={(id) => {
-									setSessionMenu(id);
-									setConfirmDelete('');
-								}}
-								onShowArchived={setShowArchived}
-								onArchive={(id) => void sessionAction(
-									id,
-									() => archiveSandboxSession(id),
-									t('sandbox.app.error.archiveSession'),
-								)}
-								onRestore={(id) => void sessionAction(
-									id,
-									() => restoreSandboxSession(id),
-									t('sandbox.app.error.restoreSession'),
-								)}
-								onConfirmDelete={setConfirmDelete}
-								onDelete={(id) => void sessionAction(
-									id,
-									() => deleteSandboxSession(id),
-									t('sandbox.app.error.deleteSession'),
-								)}
-							/>
+							<TableLocaleContext.Provider value={tableLocale}>
+								<SessionPicker
+									onDeliverySettings={() => {
+										setError('');
+										setGitHubSettingsOpen(true);
+									}}
+									dashboard={state.dashboard}
+									onRefresh={() => void refreshState().catch(
+										(error) => setError(
+											message(error, t('sandbox.app.error.state')),
+										),
+									)}
+									onReject={(id) => void sessionAction(
+										id,
+										() => rejectSandboxSession(id),
+										t('sandbox.dashboard.rejectError'),
+									)}
+									sessions={state.sessions}
+									running={state.running}
+									roles={state.roles}
+									drivers={state.drivers}
+									driver={driver || state.configuration.driver}
+									busy={busy}
+									openMenu={sessionMenu}
+									confirmDelete={confirmDelete}
+									showArchived={showArchived}
+									onDriver={setDriver}
+									onOpen={(id) => void openSession(id)}
+									onCreate={(brief, chosen, attachments) => void startSession(
+										brief,
+										chosen,
+										attachments,
+									)}
+									onMenu={(id) => {
+										setSessionMenu(id);
+										setConfirmDelete('');
+									}}
+									onShowArchived={setShowArchived}
+									onArchive={(id) => void sessionAction(
+										id,
+										() => archiveSandboxSession(id),
+										t('sandbox.app.error.archiveSession'),
+									)}
+									onRestore={(id) => void sessionAction(
+										id,
+										() => restoreSandboxSession(id),
+										t('sandbox.app.error.restoreSession'),
+									)}
+									onConfirmDelete={setConfirmDelete}
+									onDelete={(id) => void sessionAction(
+										id,
+										() => deleteSandboxSession(id),
+										t('sandbox.app.error.deleteSession'),
+									)}
+								/>
+							</TableLocaleContext.Provider>
 						</div>
 					} @else {
 						<>

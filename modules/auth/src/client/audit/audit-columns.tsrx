@@ -1,46 +1,60 @@
 import { t } from '@flowdular/client';
-import { Tag, type TableColumn } from '@flowdular/ui';
+import {
+	CellCode,
+	CellMuted,
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
+	type TableColumn,
+} from '@flowdular/ui';
 import type { AuditRow } from './api.ts';
-import { auditDetails, auditStamp, auditTone } from './audit-row.ts';
+import { auditDetails, auditTone } from './audit-row.ts';
 
+/* Who did what and when stays on screen at any width; the subject hides next
+   and the metadata first, both still listed in the expanded row. */
 export function auditColumns(): readonly TableColumn<AuditRow>[] {
 	return [
 		{
 			key: 'time',
 			header: t('auth.audit.column.time'),
-			width: '18%',
-			cell: (row) => <span class="ui-mono">{auditStamp(row.occurredAt)}</span>,
+			width: '170px',
+			cell: (row) => <CellTime value={row.occurredAt} />,
 		},
 		{
 			key: 'actor',
 			header: t('auth.audit.column.actor'),
-			width: '16%',
-			cell: (row) => row.actor,
+			width: 'auto',
+			cell: (row) => <CellText value={row.actor} />,
 		},
 		{
 			key: 'action',
 			header: t('auth.audit.column.action'),
-			width: '18%',
-			cell: (row) => <Tag tone={auditTone(row.action)} mono>{row.action}</Tag>,
+			width: '220px',
+			cell: (row) =>
+				<CellTag tone={auditTone(row.action)} mono label={row.action} />,
 		},
 		{
 			key: 'subject',
 			header: t('auth.audit.column.subject'),
-			width: '22%',
-			cell: (row) => <span class="ui-cell">
-				<span>{row.subjectType}</span>
-				<small class="ui-mono">{row.subjectId}</small>
-			</span>,
+			width: '200px',
+			priority: 2,
+			cell: (row) =>
+				<CellStack
+					primary={row.subjectType}
+					secondary={<CellCode value={row.subjectId} />}
+				/>,
 		},
 		{
 			key: 'details',
 			header: t('auth.audit.column.details'),
-			width: '26%',
+			width: 'auto',
+			priority: 3,
 			cell: (row) => {
 				const text = auditDetails(row);
 				return text
-					? <small>{text}</small>
-					: <span class="ui-cell__muted">{t('auth.common.none')}</span>;
+					? <CellText value={text} wrap />
+					: <CellMuted>{t('auth.common.none')}</CellMuted>;
 			},
 		},
 	];

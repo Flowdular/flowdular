@@ -2,6 +2,11 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	CellMuted,
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
 	Drawer,
 	Filters,
 	Icon,
@@ -9,7 +14,6 @@ import {
 	Pagination,
 	SearchField,
 	TableCard,
-	Tag,
 	type TableColumn,
 	type TableSort,
 } from '@flowdular/ui';
@@ -37,7 +41,7 @@ import {
 	movePage,
 	pageLoaded,
 } from './state.ts';
-import { cadenceLabel, timestampLabel } from './presentation.ts';
+import { cadenceLabel } from './presentation.ts';
 
 export interface AutomationSchedulesViewProps {
 	readonly csrfToken: string;
@@ -47,15 +51,8 @@ export interface AutomationSchedulesViewProps {
 /* Keystrokes and page clicks coalesce into one request. */
 const LIST_DEBOUNCE_MS = 200;
 
-function ScheduleSummary(props: { readonly schedule: AutomationSchedule }) @{
-	<span class="ui-cell">
-		<b>{props.schedule.label}</b>
-		@if (props.schedule.lastError) {
-			<small class="ui-cell__muted">{props.schedule.lastError}</small>
-		}
-	</span>
-}
-
+/* Times read in the workspace time zone. The schedule, its state and its next
+   run stay on screen; the target and cadence hide next, the history first. */
 function scheduleColumns(
 	timeZone: string,
 ): readonly TableColumn<AutomationSchedule>[] {
@@ -63,62 +60,75 @@ function scheduleColumns(
 		{
 			key: 'label',
 			header: t('automations.schedules.column.schedule'),
-			width: '22%',
+			width: 'auto',
 			value: (schedule) => schedule.label,
-			cell: (schedule) => <ScheduleSummary schedule={schedule} />,
+			cell: (schedule) =>
+				<CellStack
+					primary={schedule.label}
+					secondary={schedule.lastError ?? undefined}
+				/>,
 		},
 		{
 			key: 'target',
 			header: t('automations.common.target'),
-			width: '16%',
-			cell: (schedule) => <span class="ui-cell">
-				<span>{schedule.targetName}</span>
-				<small class="ui-cell__muted">
-					{schedule.targetAvailable
-						? t('automations.targetKind.' + schedule.targetKind)
-						: t('automations.common.targetUnavailable', {
-								kind: t('automations.targetKind.' + schedule.targetKind),
-							})}
-				</small>
-			</span>,
+			width: '180px',
+			priority: 2,
+			cell: (schedule) => <CellStack
+				primary={schedule.targetName}
+				secondary={schedule.targetAvailable
+					? t('automations.targetKind.' + schedule.targetKind)
+					: t('automations.common.targetUnavailable', {
+							kind: t('automations.targetKind.' + schedule.targetKind),
+						})}
+			/>,
 		},
 		{
 			key: 'cadence',
 			header: t('automations.schedules.column.cadence'),
-			width: '10%',
-			cell: (schedule) => cadenceLabel(schedule.cadence),
+			width: '140px',
+			priority: 2,
+			cell: (schedule) => <CellText value={cadenceLabel(schedule.cadence)} />,
 		},
 		{
 			key: 'last-run',
 			header: t('automations.schedules.column.lastRun'),
-			width: '14%',
-			cell: (schedule) => timestampLabel(schedule.lastRunAt, timeZone),
+			width: '170px',
+			priority: 3,
+			cell: (schedule) => schedule.lastRunAt === null
+				? <CellMuted>{t('automations.common.notYet')}</CellMuted>
+				: <CellTime value={schedule.lastRunAt} timeZone={timeZone} />,
 		},
 		{
 			key: 'next-run',
 			header: t('automations.schedules.column.nextRun'),
-			width: '14%',
+			width: '170px',
 			cell: (schedule) => schedule.enabled
-				? timestampLabel(schedule.nextRunAt, timeZone)
-				: t('automations.common.paused'),
+				? <CellTime value={schedule.nextRunAt} timeZone={timeZone} />
+				: <CellMuted>{t('automations.common.paused')}</CellMuted>,
 		},
 		{
 			key: 'updatedAt',
 			header: t('automations.common.updated'),
-			width: '12%',
+			width: '170px',
+			priority: 3,
 			value: (schedule) => schedule.updatedAt,
-			cell: (schedule) => timestampLabel(schedule.updatedAt, timeZone),
+			cell: (schedule) =>
+				<CellTime value={schedule.updatedAt} timeZone={timeZone} />,
 		},
 		{
 			key: 'state',
 			header: t('automations.common.state'),
-			width: '12%',
+			width: '120px',
 			cell: (schedule) =>
-				<Tag tone={schedule.enabled ? 'success' : 'neutral'} dot>{t(
-					schedule.enabled
-						? 'automations.common.enabled'
-						: 'automations.common.disabled',
-				)}</Tag>,
+				<CellTag
+					tone={schedule.enabled ? 'success' : 'neutral'}
+					dot
+					label={t(
+						schedule.enabled
+							? 'automations.common.enabled'
+							: 'automations.common.disabled',
+					)}
+				/>,
 		},
 	];
 }

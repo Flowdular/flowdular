@@ -2,18 +2,6 @@ import type { TagTone } from '@flowdular/ui';
 import { activeLocale, t } from '@flowdular/client/i18n';
 import type { ExportJobStatus } from '../domain/types.ts';
 
-/** Epoch milliseconds as the reader's local date and time. */
-export function timestampLabel(value: number): string {
-	return new Intl.DateTimeFormat(activeLocale(), {
-		dateStyle: 'medium',
-		timeStyle: 'short',
-	}).format(value);
-}
-
-export function countLabel(value: number): string {
-	return new Intl.NumberFormat(activeLocale()).format(value);
-}
-
 const BYTE_UNITS = ['B', 'kB', 'MB', 'GB'] as const;
 
 /** Decimal units, the way a file manager shows a download. */

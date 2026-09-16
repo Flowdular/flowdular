@@ -1,8 +1,13 @@
 import { useEffect, useMemo } from 'octane';
-import { activeLocale, t } from '@flowdular/client';
+import { t } from '@flowdular/client';
 import {
 	Alert,
 	Button,
+	CellMuted,
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
 	EmptyState,
 	Filters,
 	Icon,
@@ -10,7 +15,6 @@ import {
 	Pagination,
 	SearchField,
 	TableCard,
-	Tag,
 	type TableColumn,
 	type TableSort,
 } from '@flowdular/ui';
@@ -50,54 +54,57 @@ export interface AgentRunsViewProps {
 const SEARCH_DEBOUNCE_MS = 250;
 const POLL_MS = 2_500;
 
-function date(value: number): string {
-	return new Intl.DateTimeFormat(activeLocale(), {
-		dateStyle: 'medium',
-		timeStyle: 'short',
-	}).format(value);
-}
-
 function columns(now: number): readonly TableColumn<AgentRun>[] {
 	return [
 		{
 			key: 'agent',
 			header: t('agents.runs.column.agent'),
-			width: '25%',
-			cell: (run) => <span class="ui-cell">
-				<b>{run.agentName}</b>
-				<small class="ui-mono">{t('agents.runs.revision', {
+			width: 'auto',
+			cell: (run) => <CellStack
+				primary={run.agentName}
+				secondary={t('agents.runs.revision', {
 					revision: run.agentRevision,
-				})}</small>
-			</span>,
+				})}
+				secondaryMono
+			/>,
 		},
 		{
 			key: 'trigger',
 			header: t('agents.runs.column.trigger'),
-			width: '15%',
-			cell: (run) => triggerLabel(run.trigger),
+			width: '120px',
+			priority: 3,
+			cell: (run) => <CellText value={triggerLabel(run.trigger)} />,
 		},
 		{
 			key: 'queuedAt',
 			header: t('agents.runs.column.queued'),
-			width: '25%',
+			width: '170px',
 			value: (run) => run.queuedAt,
-			cell: (run) => date(run.queuedAt),
+			cell: (run) => <CellTime value={run.queuedAt} />,
 		},
 		{
 			key: 'duration',
 			header: t('agents.runs.column.duration'),
-			width: '15%',
+			width: '120px',
 			numeric: true,
-			cell: (run) => durationLabel(run, now) || '—',
+			priority: 2,
+			cell: (run) => {
+				const duration = durationLabel(run, now);
+				return duration
+					? <CellText value={duration} />
+					: <CellMuted>{t('agents.usage.none')}</CellMuted>;
+			},
 		},
 		{
 			key: 'status',
 			header: t('agents.runs.column.status'),
-			width: '20%',
+			width: '130px',
 			cell: (run) =>
-				<Tag tone={stateTone(run.status)} dot>{t(
-					'agents.runStatus.' + run.status,
-				)}</Tag>,
+				<CellTag
+					tone={stateTone(run.status)}
+					dot
+					label={t('agents.runStatus.' + run.status)}
+				/>,
 		},
 	];
 }

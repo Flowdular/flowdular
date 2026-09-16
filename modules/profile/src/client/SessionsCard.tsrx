@@ -2,12 +2,14 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	CellStack,
+	CellTag,
+	CellTime,
 	Icon,
 	TableCard,
-	Tag,
 	type TableColumn,
 } from '@flowdular/ui';
-import { activeLocale, t } from '@flowdular/client';
+import { t } from '@flowdular/client';
 import { cell, createStore, useValue } from 'segment-state';
 import {
 	loadOwnSessions,
@@ -19,39 +21,36 @@ export interface SessionsCardProps {
 	readonly csrfToken: string;
 }
 
-function stamp(value: number): string {
-	return new Intl.DateTimeFormat(activeLocale(), {
-		dateStyle: 'medium',
-		timeStyle: 'short',
-	}).format(new Date(value));
-}
-
 function columns(): readonly TableColumn<OwnSession>[] {
 	return [
 		{
 			key: 'workspace',
 			header: t('profile.sessions.workspace'),
-			width: '36%',
-			cell: (session) => <span class="ui-table__state">
-				<span>{session.tenantName}</span>
-				{session.current
-					? <Tag tone="success" dot>{t('profile.sessions.thisDevice')}</Tag>
-					: null}
-			</span>,
+			width: 'auto',
+			cell: (session) =>
+				<CellStack
+					primary={session.tenantName}
+					secondary={session.current
+						? <CellTag
+								tone="success"
+								dot
+								label={t('profile.sessions.thisDevice')}
+							/>
+						: undefined}
+				/>,
 		},
 		{
 			key: 'lastSeen',
 			header: t('profile.sessions.lastSeen'),
-			width: '27%',
-			cell: (session) =>
-				<span class="ui-mono">{stamp(session.lastSeenAt)}</span>,
+			width: '170px',
+			cell: (session) => <CellTime value={session.lastSeenAt} />,
 		},
 		{
 			key: 'expires',
 			header: t('profile.sessions.expires'),
-			width: '27%',
-			cell: (session) =>
-				<span class="ui-mono">{stamp(session.expiresAt)}</span>,
+			width: '170px',
+			priority: 2,
+			cell: (session) => <CellTime value={session.expiresAt} />,
 		},
 	];
 }
