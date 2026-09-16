@@ -14,8 +14,11 @@ allowedPaths:
   - 'tests/**'
   - 'preview/**'
   - 'src/preview.ts'
+  - 'src/research.ts'
+  - 'src/adapters/**'
   - 'research-fixtures.json'
   - 'adapters/**'
+  - 'templates/**'
   - 'module.json'
   - 'package.json'
 gates:

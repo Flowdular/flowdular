@@ -38,6 +38,9 @@ describe('contract schemas', () => {
 			'agentTools',
 			'outOfScope',
 			'decisions',
+			'research',
+			'adapters',
+			'templates',
 		];
 		for (const key of version2Keys) {
 			expect(Object.keys(moduleSpecSchema.properties)).toContain(key);
@@ -53,6 +56,34 @@ describe('contract schemas', () => {
 			version2Keys.map(() => false),
 		);
 		expect(moduleSpecSchema.required).not.toContain('entities');
+	});
+
+	it('keeps research, adapters and templates optional and their paths inside the module', () => {
+		for (const key of ['research', 'adapters', 'templates'])
+			expect(moduleSpecSchema.required).not.toContain(key);
+		/* A sandbox session enforces recorded fixtures in its own gate. */
+		expect(moduleSpecSchema.$defs.adapter.required).not.toContain('recorded');
+		const { research, adapter, adapterMapping, template } =
+			moduleSpecSchema.$defs;
+		expect(research.properties.adapter.enum).toEqual([
+			'model-native',
+			'connector',
+			'recorded',
+		]);
+		expect(adapter.properties.direction.enum).toEqual(['source', 'sink']);
+		expect(adapterMapping.properties.transform.enum).toEqual([
+			'rename',
+			'constant',
+			'format',
+			'lookup',
+		]);
+		expect(template.properties.format.enum).toEqual(['pdf', 'docx']);
+		const recorded = new RegExp(adapter.properties.recorded.pattern);
+		expect(recorded.test('adapters/crm-customers.recorded.json')).toBe(true);
+		expect(recorded.test('adapters/../../secrets.recorded.json')).toBe(false);
+		const body = new RegExp(template.properties.body.pattern);
+		expect(body.test('templates/risk-report.md')).toBe(true);
+		expect(body.test('templates/../README.md')).toBe(false);
 	});
 
 	it('keeps enum and lifecycle values safe as stored values and SQL literals', () => {

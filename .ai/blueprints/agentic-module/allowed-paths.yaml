@@ -1,0 +1,14 @@
+schemaVersion: 1
+write:
+  - modules/{module}/**
+deny:
+  - platform/**
+  - packages/**
+  - infra/**
+  - .github/**
+  - docs/**
+  - specs/**
+  - .ai/**
+  - flowdular.json
+  - pnpm-workspace.yaml
+  - modules/!({module})/**

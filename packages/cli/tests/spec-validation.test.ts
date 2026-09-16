@@ -474,3 +474,219 @@ describe('module specification validation', () => {
 		]);
 	});
 });
+
+interface AdapterDraft {
+	[key: string]: unknown;
+	id: string;
+	direction: string;
+	port: string;
+	schedule?: string | null;
+	recorded?: string;
+	mapping: Record<string, unknown>[];
+}
+
+/* Research, adapters and templates on top of the complete version 2 model. */
+function withSections(): Record<string, unknown> & {
+	research: Record<string, unknown>;
+	adapters: AdapterDraft[];
+	templates: Record<string, unknown>[];
+} {
+	return {
+		...draft(),
+		research: {
+			adapter: 'model-native',
+			allowDomains: ['example.com'],
+			denyDomains: ['tracker.example.net'],
+			monthlyQueryBudget: 500,
+			evidenceOwner: 'records',
+		},
+		adapters: [
+			{
+				id: 'inventory.core.erp-stock',
+				direction: 'source',
+				connector: 'http-json',
+				operation: 'list-stock',
+				port: 'inventory.core.records',
+				schedule: '*/15 6-18 * * mon-fri',
+				mapping: [
+					{ from: 'item_code', to: 'sku', transform: 'rename', value: null },
+					{ to: 'status', transform: 'constant', value: 'active' },
+					{
+						from: 'qty',
+						to: 'quantity',
+						transform: 'format',
+						value: 'integer',
+					},
+				],
+				recorded: 'adapters/erp-stock.recorded.json',
+			},
+			{
+				id: 'inventory.core.erp-levels',
+				direction: 'sink',
+				connector: 'http-json',
+				operation: 'push-levels',
+				port: 'inventory.core.records',
+				schedule: null,
+				mapping: [{ from: 'sku', to: 'code', transform: 'rename' }],
+			},
+		],
+		templates: [
+			{
+				id: 'stock-report',
+				title: 'Stock report',
+				inputEntity: 'records',
+				format: 'pdf',
+				body: 'templates/stock-report.md',
+			},
+		],
+	};
+}
+
+describe('research, adapters and templates', () => {
+	it('accepts the three sections in a version 2 specification', async () => {
+		expect(await report(withSections())).toMatchObject({
+			valid: true,
+			issues: [],
+		});
+	});
+
+	it('rejects the three sections in a version 1 specification', async () => {
+		const { research, adapters, templates } = withSections();
+		const result = await report({ ...version1, research, adapters, templates });
+		expect(result.valid).toBe(false);
+		expect(
+			result.issues
+				.filter((issue) => issue.code === 'SCHEMA_FALSE_SCHEMA')
+				.map((issue) => issue.path)
+				.sort(),
+		).toEqual(['/adapters', '/research', '/templates']);
+	});
+
+	it('refuses shapes the schema bounds', async () => {
+		const spec = withSections();
+		spec.research.adapter = 'scraper';
+		spec.research.allowDomains = ['https://example.com'];
+		spec.adapters[0]!.recorded = '../secrets.json';
+		spec.adapters[1]!.schedule = '0 6 * *';
+		spec.templates[0]!.body = '../report.md';
+		const result = await report(spec);
+		expect(result.valid).toBe(false);
+		const paths = result.issues.map((issue) => issue.path);
+		for (const path of [
+			'/research/adapter',
+			'/research/allowDomains/0',
+			'/adapters/0/recorded',
+			'/adapters/1/schedule',
+			'/templates/0/body',
+		])
+			expect(paths).toContain(path);
+	});
+
+	it('reports an evidence owner and a template input that name no entity', async () => {
+		const spec = withSections();
+		spec.research.evidenceOwner = 'companies';
+		spec.templates[0]!.inputEntity = 'orders';
+		const result = await report(spec);
+		expect(result.valid).toBe(false);
+		expect(codes(result.issues)).toEqual([
+			'error:SPEC_ENTITY_UNKNOWN',
+			'error:SPEC_ENTITY_UNKNOWN',
+		]);
+		expect(result.issues.map((issue) => issue.path)).toEqual([
+			'/research/evidenceOwner',
+			'/templates/0/inputEntity',
+		]);
+	});
+
+	it('reports an adapter id outside the module namespace and duplicate ids', async () => {
+		const spec = withSections();
+		spec.adapters[1]!.id = 'inventory.core.erp-stock';
+		spec.templates.push({ ...spec.templates[0]!, format: 'docx' });
+		const duplicates = await report(spec);
+		expect(codes(duplicates.issues)).toEqual([
+			'error:SPEC_DUPLICATE_ID',
+			'error:SPEC_DUPLICATE_ID',
+		]);
+		expect(duplicates.issues.map((issue) => issue.path)).toEqual([
+			'/adapters/1/id',
+			'/templates/1/id',
+		]);
+
+		const foreign = withSections();
+		/* A prefix of the module id is not its namespace. */
+		foreign.adapters[0]!.id = 'inventory.corelike.erp-stock';
+		const result = await report(foreign);
+		expect(codes(result.issues)).toEqual(['error:SPEC_ADAPTER_ID_NAMESPACE']);
+		expect(result.issues[0]?.path).toBe('/adapters/0/id');
+	});
+
+	it('resolves a source port against this module and its dependencies only', async () => {
+		const dependency = withSections();
+		dependency.adapters[0]!.port = 'auth.core.members';
+		expect(await report(dependency)).toMatchObject({ valid: true, issues: [] });
+
+		const unknown = withSections();
+		unknown.adapters[0]!.port = 'billing.core.invoices';
+		const result = await report(unknown);
+		expect(result.valid).toBe(false);
+		expect(codes(result.issues)).toEqual(['error:SPEC_ADAPTER_PORT_UNKNOWN']);
+		expect(result.issues[0]?.path).toBe('/adapters/0/port');
+	});
+
+	it('accepts only a five-field cron automations.core would schedule', async () => {
+		for (const schedule of [
+			'0 6 * * *',
+			'*/15 9-17/4 * * mon-fri',
+			'0 0 1,15 jan-jun 0',
+			'30 23 31 dec 7',
+		]) {
+			const spec = withSections();
+			spec.adapters[0]!.schedule = schedule;
+			expect([schedule, codes((await report(spec)).issues)]).toEqual([
+				schedule,
+				[],
+			]);
+		}
+		for (const [schedule, reason] of [
+			['60 * * * *', 'minute must be between 0 and 59'],
+			['* 24 * * *', 'hour must be between 0 and 23'],
+			['* * 0 * *', 'day of month must be between 1 and 31'],
+			['* * * foo *', 'month must be between 1 and 12'],
+			['* * * * 8', 'day of week must be between 0 and 7'],
+			['5/10 * * * *', 'minute needs a range or * before a step'],
+			['*/0 * * * *', 'minute has an unsupported step'],
+			['30-10 * * * *', 'minute range runs backwards'],
+			['1-2-3 * * * *', 'minute has an unsupported range'],
+		] as const) {
+			const spec = withSections();
+			spec.adapters[0]!.schedule = schedule;
+			const result = await report(spec);
+			expect(result.valid, schedule).toBe(false);
+			expect(codes(result.issues)).toEqual([
+				'error:SPEC_ADAPTER_SCHEDULE_INVALID',
+			]);
+			expect(result.issues[0]?.path).toBe('/adapters/0/schedule');
+			expect(result.issues[0]?.message).toContain(reason);
+		}
+	});
+
+	it('requires a source field unless constant and a value unless rename', async () => {
+		const spec = withSections();
+		const mapping = spec.adapters[0]!.mapping;
+		delete mapping[0]!.from;
+		mapping[1]!.value = null;
+		delete mapping[2]!.value;
+		const result = await report(spec);
+		expect(result.valid).toBe(false);
+		expect(codes(result.issues)).toEqual([
+			'error:SPEC_ADAPTER_MAPPING_INVALID',
+			'error:SPEC_ADAPTER_MAPPING_INVALID',
+			'error:SPEC_ADAPTER_MAPPING_INVALID',
+		]);
+		expect(result.issues.map((issue) => issue.path)).toEqual([
+			'/adapters/0/mapping/0/from',
+			'/adapters/0/mapping/1/value',
+			'/adapters/0/mapping/2/value',
+		]);
+	});
+});

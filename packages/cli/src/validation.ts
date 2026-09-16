@@ -92,6 +92,61 @@ function duplicateIssues<T>(
 	return issues;
 }
 
+const MONTH_NAMES = 'jan feb mar apr may jun jul aug sep oct nov dec'.split(
+	' ',
+);
+const WEEKDAY_NAMES = 'sun mon tue wed thu fri sat'.split(' ');
+const CRON_FIELDS = [
+	{ name: 'minute', min: 0, max: 59 },
+	{ name: 'hour', min: 0, max: 23 },
+	{ name: 'day of month', min: 1, max: 31 },
+	{ name: 'month', min: 1, max: 12, names: MONTH_NAMES },
+	{ name: 'day of week', min: 0, max: 7, names: WEEKDAY_NAMES },
+] as const;
+
+/* Mirrors the `cron:` cadence grammar of modules/automations/src/domain/cron.ts,
+   so a declared schedule is never refused once it is saved as a schedule.
+   Answers what is wrong, or undefined. */
+function cronIssue(expression: string): string | undefined {
+	const fields = expression.split(' ');
+	if (fields.length !== 5) return 'it needs five fields';
+	for (const [index, field] of fields.entries()) {
+		const spec = CRON_FIELDS[index]!;
+		const names: readonly string[] = 'names' in spec ? spec.names : [];
+		const value = (raw: string): number | undefined => {
+			const named = names.indexOf(raw);
+			if (named >= 0) return named + spec.min;
+			const number = /^\d{1,2}$/.test(raw) ? Number(raw) : Number.NaN;
+			return number >= spec.min && number <= spec.max ? number : undefined;
+		};
+		const items = field.split(',');
+		if (items.length > 32) return `${spec.name} lists too many values`;
+		for (const item of items) {
+			const [base = '', step, extra] = item.split('/');
+			if (extra !== undefined || base === '')
+				return `${spec.name} has an unsupported value`;
+			if (
+				step !== undefined &&
+				(!/^\d{1,2}$/.test(step) ||
+					Number(step) < 1 ||
+					Number(step) > spec.max - spec.min + 1)
+			)
+				return `${spec.name} has an unsupported step`;
+			if (base === '*') continue;
+			const bounds = base.split('-');
+			if (bounds.length > 2) return `${spec.name} has an unsupported range`;
+			const from = value(bounds[0]!);
+			const to = bounds.length === 2 ? value(bounds[1]!) : from;
+			if (from === undefined || to === undefined)
+				return `${spec.name} must be between ${spec.min} and ${spec.max}`;
+			if (bounds.length === 1 && step !== undefined)
+				return `${spec.name} needs a range or * before a step`;
+			if (to < from) return `${spec.name} range runs backwards`;
+		}
+	}
+	return undefined;
+}
+
 /* Cross-document checks the JSON schema cannot express. A version 1 document
    carries none of the referenced sections, so it is never inspected. */
 export function moduleSpecIssues(value: unknown): ValidationIssue[] {
@@ -120,6 +175,8 @@ export function moduleSpecIssues(value: unknown): ValidationIssue[] {
 		...duplicateIssues(spec.settings, 'key', 'settings'),
 		...duplicateIssues(spec.agentTools, 'id', 'agentTools'),
 		...duplicateIssues(spec.decisions, 'id', 'decisions'),
+		...duplicateIssues(spec.adapters, 'id', 'adapters'),
+		...duplicateIssues(spec.templates, 'id', 'templates'),
 	];
 
 	if (capabilities.has('database') && entities.length === 0) {
@@ -231,12 +288,13 @@ export function moduleSpecIssues(value: unknown): ValidationIssue[] {
 	const entityIssue = (
 		entity: string | undefined,
 		path: string,
+		key = 'entity',
 	): ValidationIssue | undefined => {
 		if (entity === undefined || fieldsByEntity.has(entity)) return undefined;
 		return specIssue(
 			'SPEC_ENTITY_UNKNOWN',
 			`"${entity}" is not an entity of this specification.`,
-			`${path}/entity`,
+			`${path}/${key}`,
 		);
 	};
 
@@ -304,6 +362,79 @@ export function moduleSpecIssues(value: unknown): ValidationIssue[] {
 				`/settings/${index}/values`,
 			),
 		);
+	});
+
+	const evidenceOwner = entityIssue(
+		spec.research?.evidenceOwner,
+		'/research',
+		'evidenceOwner',
+	);
+	if (evidenceOwner) issues.push(evidenceOwner);
+
+	(spec.templates ?? []).forEach((template, index) => {
+		const unknownEntity = entityIssue(
+			template.inputEntity,
+			`/templates/${index}`,
+			'inputEntity',
+		);
+		if (unknownEntity) issues.push(unknownEntity);
+	});
+
+	(spec.adapters ?? []).forEach((adapter, index) => {
+		const path = `/adapters/${index}`;
+		if (!adapter.id.startsWith(`${spec.id}.`)) {
+			issues.push(
+				specIssue(
+					'SPEC_ADAPTER_ID_NAMESPACE',
+					`Adapter "${adapter.id}" must start with the module id "${spec.id}.".`,
+					`${path}/id`,
+				),
+			);
+		}
+		/* An import port id is "<moduleId>.<key>", and a port is registered by
+		   the module that owns the records, so it must be this module or one it
+		   declares as a dependency. */
+		if (
+			adapter.direction === 'source' &&
+			![...modules].some((owner) => adapter.port.startsWith(`${owner}.`))
+		) {
+			issues.push(
+				specIssue(
+					'SPEC_ADAPTER_PORT_UNKNOWN',
+					`Source adapter "${adapter.id}" writes through port "${adapter.port}", which belongs neither to this module nor to a declared dependency.`,
+					`${path}/port`,
+				),
+			);
+		}
+		const schedule =
+			typeof adapter.schedule === 'string'
+				? cronIssue(adapter.schedule)
+				: undefined;
+		if (schedule) {
+			issues.push(
+				specIssue(
+					'SPEC_ADAPTER_SCHEDULE_INVALID',
+					`Schedule of adapter "${adapter.id}" is not a five-field cron: ${schedule}.`,
+					`${path}/schedule`,
+				),
+			);
+		}
+		adapter.mapping.forEach((entry, entryIndex) => {
+			const missing =
+				entry.transform !== 'constant' && entry.from === undefined
+					? 'from'
+					: entry.transform !== 'rename' && typeof entry.value !== 'string'
+						? 'value'
+						: undefined;
+			if (!missing) return;
+			issues.push(
+				specIssue(
+					'SPEC_ADAPTER_MAPPING_INVALID',
+					`A ${entry.transform} mapping of adapter "${adapter.id}" needs "${missing}".`,
+					`${path}/mapping/${entryIndex}/${missing}`,
+				),
+			);
+		});
 	});
 
 	/* The scaffold builds the workspace view from a screen the client renders

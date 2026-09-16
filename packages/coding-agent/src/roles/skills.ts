@@ -34,6 +34,7 @@ export const ROLE_SKILLS: Readonly<Record<string, readonly string[]>> = {
 		'test-hardening',
 		'auth-security-review',
 		'cli-extension',
+		'integration-adapter',
 		'perf-audit',
 	],
 	'frontend-engineer': [
