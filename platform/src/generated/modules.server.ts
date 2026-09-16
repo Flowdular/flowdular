@@ -22,6 +22,7 @@ import { createServerComposition as exports_core } from '@flowdular/module-expor
 import { createServerComposition as import_core } from '@flowdular/module-import/platform';
 import { createServerComposition as notifications_core } from '@flowdular/module-notifications/platform';
 import { createServerComposition as profile_core } from '@flowdular/module-profile/platform';
+import { createServerComposition as research_core } from '@flowdular/module-research/platform';
 import { createServerComposition as sandbox_core } from '@flowdular/module-sandbox/platform';
 import { createServerComposition as search_core } from '@flowdular/module-search/platform';
 import { createServerComposition as users_core } from '@flowdular/module-users/platform';
@@ -173,7 +174,11 @@ export function composeModuleServer(
 				agentDefinitions: context.agentDefinitions.forModule('connectors.core'),
 				dataClasses: context.dataClasses.forModule('connectors.core'),
 				capabilities: context.capabilities.forModule('connectors.core', {
-					provides: ['connectors.definitions.v1', 'connectors.calls.v1'],
+					provides: [
+						'connectors.definitions.v1',
+						'connectors.calls.v1',
+						'connectors.egress.v1',
+					],
 					requires: [],
 				}),
 				metrics: createModuleMetrics('connectors.core'),
@@ -258,6 +263,29 @@ export function composeModuleServer(
 				metrics: createModuleMetrics('profile.core'),
 			}),
 			moduleId: 'profile.core',
+		},
+		{
+			...research_core({
+				...context,
+				agentDefinitions: context.agentDefinitions.forModule('research.core'),
+				dataClasses: context.dataClasses.forModule('research.core'),
+				capabilities: context.capabilities.forModule('research.core', {
+					provides: [
+						'research.search.v1',
+						'research.fetch.v1',
+						'research.evidence.v1',
+					],
+					requires: [
+						{ id: 'connectors.calls.v1', optional: true },
+						{ id: 'connectors.egress.v1', optional: true },
+						{ id: 'metering.meters.v1', optional: true },
+						{ id: 'documents.attachments.v1', optional: true },
+						{ id: 'exports.lists.v1', optional: true },
+					],
+				}),
+				metrics: createModuleMetrics('research.core'),
+			}),
+			moduleId: 'research.core',
 		},
 		{
 			...sandbox_core({

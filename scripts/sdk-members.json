@@ -130,5 +130,9 @@
 	"@flowdular/module-exports": {
 		"directory": "modules/exports",
 		"export": "modules/exports"
+	},
+	"@flowdular/module-research": {
+		"directory": "modules/research",
+		"export": "modules/research"
 	}
 }

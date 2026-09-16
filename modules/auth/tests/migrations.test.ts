@@ -608,6 +608,9 @@ describe('auth migrations', () => {
 			{ account_id: 'account-ada', scope: 'metering.usage.read' },
 			{ account_id: 'account-ada', scope: 'profile.self.manage' },
 			{ account_id: 'account-ada', scope: 'reports.workspace.read' },
+			{ account_id: 'account-ada', scope: 'research.evidence.read' },
+			{ account_id: 'account-ada', scope: 'research.run' },
+			{ account_id: 'account-ada', scope: 'research.settings.manage' },
 			{ account_id: 'account-ada', scope: 'search.records.read' },
 			{ account_id: 'account-ada', scope: 'workflows.definitions.manage' },
 			{ account_id: 'account-ada', scope: 'workflows.definitions.publish' },
@@ -624,6 +627,8 @@ describe('auth migrations', () => {
 			{ account_id: 'account-bo', scope: 'notifications.inbox.read' },
 			{ account_id: 'account-bo', scope: 'notifications.webhooks.read' },
 			{ account_id: 'account-bo', scope: 'profile.self.manage' },
+			{ account_id: 'account-bo', scope: 'research.evidence.read' },
+			{ account_id: 'account-bo', scope: 'research.run' },
 			{ account_id: 'account-bo', scope: 'search.records.read' },
 		]);
 		const roles = new Map(
@@ -670,6 +675,9 @@ describe('auth migrations', () => {
 			'exports.lists.manage',
 			'access.review.read',
 			'access.review.manage',
+			'research.evidence.read',
+			'research.run',
+			'research.settings.manage',
 		]);
 		expect(roles.get('member')).toEqual([
 			'auth.profile.read',
@@ -680,6 +688,8 @@ describe('auth migrations', () => {
 			'approvals.requests.read',
 			'approvals.requests.decide',
 			'profile.self.manage',
+			'research.evidence.read',
+			'research.run',
 		]);
 		/* A role the workspace wrote itself is not a default and stays as it is. */
 		expect(roles.get('auditor')).toEqual(['auth.audit.read']);
@@ -708,6 +718,8 @@ describe('auth migrations', () => {
 			{ account_id: 'account-ada', scope: 'notifications.inbox.read' },
 			{ account_id: 'account-ada', scope: 'notifications.webhooks.read' },
 			{ account_id: 'account-ada', scope: 'profile.self.manage' },
+			{ account_id: 'account-ada', scope: 'research.evidence.read' },
+			{ account_id: 'account-ada', scope: 'research.run' },
 			{ account_id: 'account-ada', scope: 'search.records.read' },
 		]);
 	});
@@ -818,6 +830,9 @@ describe('auth migrations', () => {
 			{ account_id: 'account-ada', scope: 'metering.usage.read' },
 			{ account_id: 'account-ada', scope: 'profile.self.manage' },
 			{ account_id: 'account-ada', scope: 'reports.workspace.read' },
+			{ account_id: 'account-ada', scope: 'research.evidence.read' },
+			{ account_id: 'account-ada', scope: 'research.run' },
+			{ account_id: 'account-ada', scope: 'research.settings.manage' },
 			{ account_id: 'account-ada', scope: 'search.records.read' },
 			{ account_id: 'account-ada', scope: 'workflows.definitions.manage' },
 			{ account_id: 'account-ada', scope: 'workflows.definitions.publish' },
@@ -834,6 +849,8 @@ describe('auth migrations', () => {
 			{ account_id: 'account-bo', scope: 'notifications.inbox.read' },
 			{ account_id: 'account-bo', scope: 'notifications.webhooks.read' },
 			{ account_id: 'account-bo', scope: 'profile.self.manage' },
+			{ account_id: 'account-bo', scope: 'research.evidence.read' },
+			{ account_id: 'account-bo', scope: 'research.run' },
 			{ account_id: 'account-bo', scope: 'search.records.read' },
 		]);
 		const roles = new Map(
@@ -848,6 +865,8 @@ describe('auth migrations', () => {
 			'approvals.requests.read',
 			'approvals.requests.decide',
 			'profile.self.manage',
+			'research.evidence.read',
+			'research.run',
 		]);
 		expect(roles.get('owner')).toEqual([
 			'auth.profile.read',
@@ -871,6 +890,9 @@ describe('auth migrations', () => {
 			'exports.lists.manage',
 			'access.review.read',
 			'access.review.manage',
+			'research.evidence.read',
+			'research.run',
+			'research.settings.manage',
 		]);
 		/* A role the workspace wrote itself is not a default and stays as it is. */
 		expect(roles.get('auditor')).toEqual(['approvals.requests.read']);
@@ -1136,6 +1158,9 @@ describe('auth migrations', () => {
 			'exports.lists.manage',
 			'access.review.read',
 			'access.review.manage',
+			'research.evidence.read',
+			'research.run',
+			'research.settings.manage',
 		]);
 		/* The member role row takes the one member default and none of the ten
 		   the workflow and automation modules keep with owners. */
@@ -1282,6 +1307,9 @@ describe('auth migrations', () => {
 			'exports.lists.manage',
 			'access.review.read',
 			'access.review.manage',
+			'research.evidence.read',
+			'research.run',
+			'research.settings.manage',
 		]);
 		expect(
 			roles
@@ -1309,6 +1337,100 @@ describe('auth migrations', () => {
 		/* Her membership there is a member one, and none of the five is a member
 		   default, so it receives nothing. */
 		expect(other).toEqual([]);
+	});
+
+	/* research.core keeps research.settings.manage with owners and makes reading
+	   evidence and running research member defaults, so 0034 grants both
+	   memberships and both built-in role rows, each its own list. */
+	it('AUTH-RESEARCH-SCOPES grants the research scopes to owners and members, in the memberships and the built-in role rows', async () => {
+		const granted = databaseMigrations.findIndex(
+			(migration) => migration.id === '0034_research_scopes',
+		);
+		expect(granted).toBeGreaterThan(0);
+		await runDatabaseMigrations(
+			lease.database,
+			'auth.core',
+			databaseMigrations.slice(0, granted),
+		);
+		await lease.database.transaction(
+			async (transaction) => {
+				await transaction.execute({
+					text: `INSERT INTO auth_tenants (id, name, slug, created_at)
+					       VALUES ('tenant-a', 'Contoso', 'tenant-a', 1)`,
+				});
+				await transaction.execute({
+					text: `INSERT INTO auth_accounts
+					       (id, email, email_normalized, password_hash, display_name, status, created_at)
+					       VALUES ('account-ada', 'ada@example.com', 'ada@example.com', 'hash', 'Ada', 'active', 1),
+					              ('account-bo', 'bo@example.com', 'bo@example.com', 'hash', 'Bo', 'active', 1)`,
+				});
+				await transaction.execute({
+					text: `INSERT INTO auth_memberships (account_id, tenant_id, role, created_at)
+					       VALUES ('account-ada', 'tenant-a', 'owner', 1),
+					              ('account-bo', 'tenant-a', 'member', 1)`,
+				});
+				await transaction.execute({
+					text: `INSERT INTO auth_membership_scopes (account_id, tenant_id, scope)
+					       VALUES ('account-ada', 'tenant-a', 'research.run')`,
+				});
+				await transaction.execute({
+					text: `INSERT INTO auth_roles
+					       (id, tenant_id, key, name, description, scopes_json, builtin, created_at, updated_at)
+					       VALUES ('tenant-a:owner', 'tenant-a', 'owner', 'Owner', 'Full access',
+					               '["auth.profile.read","research.run"]', 1, 1, 1),
+					              ('tenant-a:member', 'tenant-a', 'member', 'Member', 'Standard access',
+					               '["auth.profile.read"]', 1, 1, 1),
+					              ('tenant-a:analyst', 'tenant-a', 'analyst', 'Analyst', 'Custom',
+					               '["auth.profile.read"]', 0, 1, 1)`,
+				});
+			},
+			{ tenantId: 'tenant-a', access: 'write' },
+		);
+
+		await apply();
+
+		const seeded = await lease.database.transaction(
+			async (transaction) => ({
+				scopes: (
+					await transaction.query<{ account_id: string; scope: string }>({
+						text: `SELECT account_id, scope FROM auth_membership_scopes
+						       WHERE tenant_id = 'tenant-a' AND scope LIKE 'research.%'
+						       ORDER BY account_id, scope`,
+					})
+				).rows,
+				roles: (
+					await transaction.query<{ key: string; scopes_json: string }>({
+						text: 'SELECT key, scopes_json FROM auth_roles ORDER BY key',
+					})
+				).rows,
+			}),
+			{ tenantId: 'tenant-a', access: 'read' },
+		);
+		expect(seeded.scopes).toEqual([
+			{ account_id: 'account-ada', scope: 'research.evidence.read' },
+			{ account_id: 'account-ada', scope: 'research.run' },
+			{ account_id: 'account-ada', scope: 'research.settings.manage' },
+			{ account_id: 'account-bo', scope: 'research.evidence.read' },
+			{ account_id: 'account-bo', scope: 'research.run' },
+		]);
+		const roles = new Map(
+			seeded.roles.map((row) => [
+				row.key,
+				JSON.parse(row.scopes_json) as string[],
+			]),
+		);
+		expect(roles.get('owner')).toEqual([
+			'auth.profile.read',
+			'research.run',
+			'research.evidence.read',
+			'research.settings.manage',
+		]);
+		expect(roles.get('member')).toEqual([
+			'auth.profile.read',
+			'research.evidence.read',
+			'research.run',
+		]);
+		expect(roles.get('analyst')).toEqual(['auth.profile.read']);
 	});
 
 	/* The paged member read walks (tenant_id, account_id), which the primary key

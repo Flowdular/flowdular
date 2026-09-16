@@ -79,7 +79,7 @@ Research (a `research` section):
 
 1. `spec/module.yaml`: the section, `research.search.v1`, `research.fetch.v1` or `research.evidence.v1` under `requires`, `research.core` under `dependencies`, a scenario where a finding without evidence is refused; `specVersion` bump.
 2. `src/research.ts`: the declaration, in the shape `module new` writes (`RESEARCH_CAPABILITIES` and `<CONSTANT>_RESEARCH ... as const satisfies ModuleSpecResearch`), and `research-fixtures.json` with the queries and pages the scenarios need.
-3. The service that stores a finding on the `evidenceOwner` record: an `evidenceIds` input, each id checked with `get(tenantId, id)` on `research.evidence.v1`, `attach(tenantId, '<module id>', recordId, evidenceIds)` before the finding commits; the record screen lists `list(...)` and links `workspaceViewHref('research-evidence', { id })`.
+3. The service that stores a finding on the `evidenceOwner` record: an `evidenceIds` input, each id checked with `get(tenantId, id)` on `research.evidence.v1`, `attach(tenantId, '<module id>', recordId, evidenceIds)` before the finding commits; the record screen lists `list(...)` and links `workspaceViewHref('research-evidence') + '?id=' + id`.
 4. `module.json` `requires` and `dependencies`, `package.json` `@flowdular/module-research`.
 5. Tests on faked capabilities: a finding without evidence and an evidence id of another tenant are refused.
 

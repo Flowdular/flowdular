@@ -128,6 +128,7 @@ describe('migration status', () => {
 			'metering.core',
 			'notifications.core',
 			'profile.core',
+			'research.core',
 			'sandbox.core',
 			'search.core',
 			'system.core',

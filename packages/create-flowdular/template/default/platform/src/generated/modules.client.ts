@@ -23,6 +23,7 @@ import { createClientContribution as exports_core } from '@flowdular/sdk/modules
 import { createClientContribution as import_core } from '@flowdular/sdk/modules/import/client';
 import { createClientContribution as notifications_core } from '@flowdular/sdk/modules/notifications/client';
 import { createClientContribution as profile_core } from '@flowdular/sdk/modules/profile/client';
+import { createClientContribution as research_core } from '@flowdular/sdk/modules/research/client';
 import { createClientContribution as sandbox_core } from '@flowdular/sdk/modules/sandbox/client';
 import { createClientContribution as search_core } from '@flowdular/sdk/modules/search/client';
 import { createClientContribution as users_core } from '@flowdular/sdk/modules/users/client';
@@ -49,6 +50,7 @@ export function createModuleClientContributions(
 		import_core(context),
 		notifications_core(context),
 		profile_core(context),
+		research_core(context),
 		sandbox_core(context),
 		search_core(context),
 		users_core(context),

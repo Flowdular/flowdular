@@ -1,12 +1,15 @@
 export { assertTaskPacket, validateTaskPacket } from './task-packet.ts';
 export type { TaskPacket, TaskPacketIssue } from './task-packet.ts';
 export {
+	AGENT_NATIVE_TOOL_KINDS,
 	AgentHarness,
 	AgentHarnessError,
 	DEFAULT_MAX_OUTPUT_TOKENS,
 	LocalSimulationProvider,
 	MAX_MAX_OUTPUT_TOKENS,
 	MIN_MAX_OUTPUT_TOKENS,
+	NATIVE_TOOL_LIMITS,
+	NATIVE_TOOL_UNSUPPORTED,
 } from './runtime.ts';
 export {
 	boundToolOutput,
@@ -24,8 +27,13 @@ export type {
 	AgentExecutionEvent,
 	AgentExecutionRequest,
 	AgentExecutionResult,
+	AgentNativeReport,
+	AgentNativeResult,
+	AgentNativeTool,
+	AgentNativeToolKind,
 	AgentProvider,
 	AgentProviderContext,
+	AgentProviderNativeTool,
 	AgentProviderResult,
 	AgentOutputContract,
 	AgentRunTrigger,
