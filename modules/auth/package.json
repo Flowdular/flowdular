@@ -1,6 +1,6 @@
 {
 	"name": "@flowdular/module-auth",
-	"version": "0.13.16",
+	"version": "0.13.17",
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
