@@ -96,7 +96,7 @@ export function assertProviderConfiguration(
 
 export function resolveLanguageModel(
 	configuration: AiProviderConfiguration,
-): LanguageModel {
+): Exclude<LanguageModel, string> {
 	assertProviderConfiguration(configuration);
 	const model = configuration.model.trim();
 	const apiKey = configuration.credential.trim();

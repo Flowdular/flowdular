@@ -2659,6 +2659,7 @@ export type AgentNativeReport = {
 } | {
     readonly id: string;
     readonly code: typeof NATIVE_TOOL_UNSUPPORTED;
+    readonly detail?: string;
 };
 export interface AgentNativeTool {
     readonly id: string;

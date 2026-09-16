@@ -31,3 +31,16 @@ export type {
 	AiUsage,
 	ProviderReadinessResult,
 } from './model.ts';
+export {
+	WEB_SEARCH_DISABLED,
+	WEB_SEARCH_LIMITS,
+	webSearchPassThrough,
+	webSearchRefusal,
+	webSearchReporter,
+} from './web-search.ts';
+export type {
+	WebSearchPassThrough,
+	WebSearchReport,
+	WebSearchReporterOptions,
+	WebSearchResult,
+} from './web-search.ts';

@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: agents.core
-specVersion: 0.12.10
+specVersion: 0.12.11
 status: approved
 name: Agentic Core
 description: Provides tenant-created and module-owned business agent definitions, tenant-scoped provider connections, reusable procedures, durable streamed execution, run history, and the public run queue used by optional automation modules.
@@ -196,6 +196,10 @@ acceptanceScenarios:
     given: An OpenAI-compatible connection targets a non-HTTPS, private, loopback, link-local, or non-allowlisted hostname.
     when: Configuration or a readiness probe is attempted.
     then: The operation is denied before any outbound request or credential use.
+  - id: AGENTS-PROVIDER-ADDRESS-BLOCK
+    given: An allowlisted OpenAI-compatible hostname resolves to a loopback, private, link-local, multicast, reserved, benchmarking or documentation address, written as IPv4, as IPv6, or as IPv4 carried inside IPv6 (mapped, compatible, NAT64 or 6to4).
+    when: Configuration, a readiness probe or a run resolves the provider host.
+    then: The host is refused with PROVIDER_HOST_RESOLVES_PRIVATE before any request or credential use, by the same address block connectors.core and notifications.core apply.
   - id: AGENTS-PROVIDER-ACTIVATION
     given: An agent references an unknown, disabled, stale, or unhealthy provider model.
     when: Activation or enqueue is requested.

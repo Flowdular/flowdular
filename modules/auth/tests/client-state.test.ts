@@ -19,6 +19,8 @@ describe('authentication routes', () => {
 		);
 		expect(authScreenFromUrl('/auth/mfa?mfa=oidc')).toBe('mfa-challenge');
 		expect(authScreenFromUrl('/auth/login')).toBe('sign-in');
+		expect(authScreenFromUrl('/auth/sso')).toBe('sso');
+		expect(authPathForScreen('sso')).toBe('/auth/sso');
 		expect(authScreenFromUrl('/')).toBe('sign-in');
 	});
 
@@ -56,9 +58,9 @@ describe('authentication routes', () => {
 });
 
 describe('AUTH-SIGNIN-WORKSPACE-ROUTING sign-in screen state', () => {
-	it('hides the workspace field until single sign-on is chosen', () => {
+	it('starts the single sign-on lookup idle, with no workspace typed', () => {
 		const auth = createAuthClientState();
-		expect(auth.store.get(auth.state.signInSsoOpen)).toBe(false);
+		expect(auth.store.get(auth.state.ssoLookup)).toBe('idle');
 		expect(auth.store.get(auth.state.signInWorkspaceFromUrl)).toBe(false);
 		expect(auth.store.get(auth.state.signInWorkspace)).toBe('');
 	});
