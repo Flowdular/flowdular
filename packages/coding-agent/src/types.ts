@@ -54,6 +54,16 @@ export interface CodingAgentMessage {
 	readonly text: string;
 }
 
+/* A read-only tool the orchestrator lends one turn. Drivers with a tool channel
+   offer it to the model; the local CLI drivers have none and ignore it, so the
+   orchestrator also leaves its answer under reference/. */
+export interface CodingAgentTool {
+	readonly name: string;
+	readonly description: string;
+	readonly inputSchema: Readonly<Record<string, unknown>>;
+	execute(input: Readonly<Record<string, unknown>>): Promise<string>;
+}
+
 export interface CodingAgentTurnRequest {
 	/* The only directory the driver may read from or write to. */
 	readonly workspacePath: string;
@@ -69,6 +79,7 @@ export interface CodingAgentTurnRequest {
 	   and resume by identifier; the BYOK driver replays it. */
 	readonly history?: readonly CodingAgentMessage[] | undefined;
 	readonly model?: string | null;
+	readonly tools?: readonly CodingAgentTool[] | undefined;
 	readonly signal?: AbortSignal | undefined;
 	readonly timeoutMs?: number | undefined;
 }

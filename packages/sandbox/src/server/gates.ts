@@ -4,6 +4,10 @@ import { join } from 'node:path';
 import { inspectAutoReview } from './auto-review.ts';
 import { checkDeclaredDependencies } from './dependencies.ts';
 import {
+	liveAdapterRefusal,
+	readSessionAdapters,
+} from './recorded-adapters.ts';
+import {
 	modulePathOf,
 	type SandboxSession,
 	type SessionModule,
@@ -45,6 +49,8 @@ interface GateDefinition {
 		readonly passed: boolean;
 		readonly output: string;
 	}>;
+	/* A sandbox rule checked beside the command; a refusal fails the gate. */
+	refuse?(context: GateContext): Promise<string | null>;
 }
 
 interface GateContext {
@@ -92,6 +98,17 @@ const GATE_DEFINITIONS: readonly GateDefinition[] = [
 			],
 			cwd: context.workspaceRoot,
 		}),
+		refuse: async (context) =>
+			liveAdapterRefusal(
+				(
+					await readSessionAdapters(
+						context.session.modules.map((module) => ({
+							directory: module.directory,
+							path: modulePathOf(context.paths, module.directory),
+						})),
+					)
+				).live,
+			),
 	},
 	{
 		id: 'module-schema',
@@ -372,15 +389,24 @@ export async function runGates(
 			/* A stopped turn runs no further gates. The one already spawned is
 			   killed through the same signal. */
 			if (input.signal?.aborted) return results;
+			const context: GateContext = {
+				workspaceRoot: input.workspaceRoot,
+				paths: input.paths,
+				session: input.session,
+				module,
+				modulePath: modulePathOf(input.paths, module.directory),
+				signal: input.signal,
+			};
+			const result = await runGate(definition, context);
+			const refusal = await definition.refuse?.(context);
 			results.push(
-				await runGate(definition, {
-					workspaceRoot: input.workspaceRoot,
-					paths: input.paths,
-					session: input.session,
-					module,
-					modulePath: modulePathOf(input.paths, module.directory),
-					signal: input.signal,
-				}),
+				refusal
+					? {
+							...result,
+							status: 'failed',
+							output: [refusal, result.output].filter(Boolean).join('\n\n'),
+						}
+					: result,
 			);
 		}
 	}

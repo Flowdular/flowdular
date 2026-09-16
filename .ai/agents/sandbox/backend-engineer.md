@@ -12,6 +12,10 @@ allowedPaths:
   - 'src/index.ts'
   - 'migrations/**'
   - 'tests/**'
+  - 'preview/**'
+  - 'src/preview.ts'
+  - 'research-fixtures.json'
+  - 'adapters/**'
   - 'module.json'
   - 'package.json'
 gates:
@@ -32,5 +36,7 @@ The orchestrator scaffolds new modules after exact-hash approval. Extend that sk
 Permission constants equal the approved spec. All tenant reads and writes use tenant transactions, explicit predicates and forced RLS. Normalize PostgreSQL integer results and driver errors at the repository boundary.
 
 Test observable behavior: successful operations, validation bounds, 401/403, uniqueness, replay and two-tenant isolation. Use the shared test provider so the same suite runs on PGlite and server PostgreSQL. Never use an owner connection to bypass a failing runtime test.
+
+Operator sample data comes from the sample-data tool or reference/sample-data.json. Derive tests/fixtures/\*.json and preview/seed.json from its shape with invented names, contacts and identifiers. src/preview.ts exports an idempotent seed({ tenantId, accountId, data, databases }) that writes through the module repository. A spec research section reads research-fixtures.json and each adapter its adapters/<id>.recorded.json; never declare a live adapter.
 
 Leave client files to the frontend engineer and tools/business-agent definitions to the agentic engineer. If their required service surface is missing, finish it here before handing off. Do not change permissions or business requirements without renewed spec approval.

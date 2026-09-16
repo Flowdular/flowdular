@@ -315,4 +315,71 @@ export function createServerComposition(context) {
 		expect(await readFile(probe, 'utf8')).toBe('preview-state');
 		runtime.dispose();
 	}, 30_000);
+
+	it('seeds the preview database from preview/seed.json once per seed content', async () => {
+		const { root, session, modulePath } = await previewSession(
+			"export const generation = 'first';\nexport function createServerComposition() { return { routes: [] }; }\n",
+		);
+		const probe = join(
+			sessionPaths(await realpath(root), session.id, session.moduleSuffix).data,
+			'seed-probe.jsonl',
+		);
+		const writeSeed = (rooms: readonly string[]) =>
+			writeFile(
+				join(modulePath, 'preview', 'seed.json'),
+				JSON.stringify({ probe, rooms }),
+			);
+		await mkdir(join(modulePath, 'preview'), { recursive: true });
+		await writeSeed(['Atlas', 'Borealis']);
+		await writeFile(
+			join(modulePath, 'src', 'preview.ts'),
+			`import { appendFileSync } from 'node:fs';
+export async function seed(context) {
+  const lease = await context.databases.acquire({ namespace: 'preview-seed', purpose: 'migration' });
+  try {
+    await lease.database.executeScript('CREATE TABLE IF NOT EXISTS preview_seed_rooms (tenant_id text NOT NULL, name text NOT NULL, PRIMARY KEY (tenant_id, name))');
+    for (const name of context.data.rooms) {
+      await lease.database.execute({ text: 'INSERT INTO preview_seed_rooms (tenant_id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING', parameters: [context.tenantId, name] });
+    }
+    const counted = await lease.database.query({ text: 'SELECT count(*)::int AS rooms FROM preview_seed_rooms WHERE tenant_id = $1', parameters: [context.tenantId] });
+    appendFileSync(context.data.probe, JSON.stringify({ tenant: typeof context.tenantId, account: typeof context.accountId, rooms: counted.rows[0].rooms }) + '\\n');
+  } finally {
+    await lease.release();
+  }
+}
+`,
+		);
+		const lines = async () =>
+			(await readFile(probe, 'utf8'))
+				.split('\n')
+				.filter(Boolean)
+				.map((line) => JSON.parse(line) as unknown);
+		const runtime = createIsolatedPreviewRuntime(root, {
+			requestTimeoutMs: 30_000,
+		});
+		try {
+			expect((await runtime.compose(session)).error).toBeNull();
+			expect(await lines()).toEqual([
+				{ tenant: 'string', account: 'string', rooms: 2 },
+			]);
+
+			const platform = join(modulePath, 'src', 'platform.ts');
+			await writeFile(
+				platform,
+				"export const generation = 'second';\nexport function createServerComposition() { return { routes: [] }; }\n",
+			);
+			expect((await runtime.compose(session)).error).toBeNull();
+			expect(await lines()).toHaveLength(1);
+
+			await writeSeed(['Atlas', 'Borealis', 'Cassiopeia']);
+			expect((await runtime.compose(session)).error).toBeNull();
+			expect((await lines()).at(-1)).toEqual({
+				tenant: 'string',
+				account: 'string',
+				rooms: 3,
+			});
+		} finally {
+			runtime.dispose();
+		}
+	}, 90_000);
 });
