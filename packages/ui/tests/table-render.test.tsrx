@@ -2,6 +2,7 @@ import { useState } from 'octane';
 import { describe, expect, it, vi } from 'vitest';
 import {
 	Table,
+	tableMinWidth,
 	type TableBulkAction,
 	type TableColumn,
 } from '../src/components/Table.tsrx';
@@ -864,4 +865,49 @@ describe('Table selection', () => {
 		);
 		mounted.unmount();
 	});
+});
+
+describe('Table minimum width', () => {
+	it('keeps px columns whole and leaves room for each flexible column', () => {
+		expect(tableMinWidth(['50%', '25%', '25%'])).toBe(640);
+		expect(
+			tableMinWidth([
+				'auto',
+				'120px',
+				'200px',
+				'140px',
+				'170px',
+				'130px',
+				'236px',
+			]),
+		).toBe(1116);
+		expect(tableMinWidth(['44px', '30%', ' 300px ', undefined])).toBe(640);
+		expect(tableMinWidth(['400px', '400px', '10%'])).toBe(920);
+	});
+
+	it(
+		'sets the minimum on the table and titles each header with its label',
+		async () => {
+			const mounted = await mount(
+				<Table
+					columns={COLUMNS}
+					rows={AUDITORS}
+					rowKey={(row) => row.id}
+					actions={() => []}
+					actionsLabel="Actions"
+					actionsWidth="480px"
+					empty={EMPTY}
+					caption="People"
+				/>,
+			);
+			const table = mounted.container.querySelector(
+				'table',
+			) as HTMLTableElement;
+			expect(table.getAttribute('style')).toContain('min-width: 840px');
+			expect(headerCells(mounted.container)[0]?.getAttribute('title')).toBe(
+				'Name',
+			);
+			mounted.unmount();
+		},
+	);
 });
