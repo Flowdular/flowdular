@@ -2,11 +2,16 @@ import { useEffect, useState } from 'octane';
 import {
 	Alert,
 	Button,
+	CellCode,
+	CellMuted,
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
 	EmptyState,
 	Icon,
 	PageHeader,
 	TableCard,
-	Tag,
 	ToastHost,
 	toasts,
 	type TableAction,
@@ -22,12 +27,7 @@ import {
 } from './api.ts';
 import { AdapterBindingDrawer } from './AdapterBindingDrawer.tsrx';
 import { AdapterRunsDrawer } from './AdapterRunsDrawer.tsrx';
-import {
-	countLabel,
-	statusLabel,
-	statusTone,
-	timestampLabel,
-} from './presentation.ts';
+import { countLabel, statusLabel, statusTone } from './presentation.ts';
 
 export interface DataAdaptersViewProps {
 	readonly csrfToken: string;
@@ -47,89 +47,102 @@ function columns(): readonly TableColumn<AdapterListItem>[] {
 		{
 			key: 'adapter',
 			header: t('adapters.column.adapter'),
-			width: '24%',
+			width: 'auto',
 			value: (adapter) => adapter.label,
-			cell: (adapter) => <span class="ui-cell">
-				<b>{adapter.label}</b>
-				<small class="ui-cell__muted ui-mono">{adapter.moduleId}</small>
-			</span>,
+			cell: (adapter) =>
+				<CellStack
+					primary={adapter.label}
+					secondary={adapter.moduleId}
+					secondaryMono
+				/>,
 		},
 		{
 			key: 'direction',
 			header: t('adapters.column.direction'),
-			width: '10%',
+			width: '120px',
+			priority: 2,
 			value: (adapter) => adapter.direction,
 			cell: (adapter) =>
-				<Tag tone={adapter.direction === 'source' ? 'info' : 'ink'}>{t(
-					'adapters.direction.' + adapter.direction,
-				)}</Tag>,
+				<CellTag
+					tone={adapter.direction === 'source' ? 'info' : 'ink'}
+					label={t('adapters.direction.' + adapter.direction)}
+				/>,
 		},
 		{
 			key: 'target',
 			header: t('adapters.column.target'),
-			width: '18%',
+			width: '200px',
+			priority: 2,
 			value: (adapter) => adapter.port,
-			cell: (adapter) => <span class="ui-cell">
-				<span class="ui-mono">{adapter.port}</span>
-				<small class="ui-cell__muted">
-					{adapter.target.available
+			cell: (adapter) =>
+				<CellStack
+					primary={adapter.port}
+					primaryMono
+					secondary={adapter.target.available
 						? adapter.target.label ?? ''
 						: t('adapters.target.unavailable')}
-				</small>
-			</span>,
+				/>,
 		},
 		{
 			key: 'instance',
 			header: t('adapters.column.instance'),
-			width: '14%',
+			width: '170px',
+			priority: 3,
 			value: (adapter) => adapter.binding?.instanceId ?? '',
 			cell: (adapter) => adapter.binding?.instanceId
-				? <span class="ui-mono">{adapter.binding.instanceId}</span>
+				? <CellCode value={adapter.binding.instanceId} />
 				: adapter.recorded
-					? <Tag tone="warning">{t('adapters.instance.recorded')}</Tag>
-					: <span class="ui-cell__muted">{t('adapters.instance.none')}</span>,
+					? <CellTag tone="warning" label={t('adapters.instance.recorded')} />
+					: <CellMuted>{t('adapters.instance.none')}</CellMuted>,
 		},
 		{
 			key: 'schedule',
 			header: t('adapters.column.schedule'),
-			width: '14%',
+			width: '160px',
+			priority: 2,
 			value: (adapter) => scheduleOf(adapter) ?? '',
-			cell: (adapter) => <span class="ui-cell">
-				<span class="ui-mono">
-					{scheduleOf(adapter) ?? t('adapters.schedule.onDemand')}
-				</span>
-				<small class="ui-cell__muted">
-					{adapter.binding?.enabled
+			cell: (adapter) =>
+				<CellStack
+					primary={scheduleOf(adapter) ?? t('adapters.schedule.onDemand')}
+					primaryMono
+					secondary={adapter.binding?.enabled
 						? t('adapters.common.enabled')
 						: t('adapters.common.disabled')}
-				</small>
-			</span>,
+				/>,
 		},
 		{
 			key: 'lastRun',
 			header: t('adapters.column.lastRun'),
-			width: '20%',
+			width: '170px',
 			value: (adapter) => adapter.lastRun?.queuedAt ?? 0,
 			cell: (adapter) => adapter.lastRun
-				? <span class="ui-cell">
-						<span>
-							<Tag tone={statusTone(adapter.lastRun.status)} dot>{statusLabel(
-								adapter.lastRun.status,
-							)}</Tag>
-						</span>
-						<small class="ui-cell__muted">
-							{t('adapters.lastRun.counts', {
-								read: countLabel(adapter.lastRun.rowsRead),
-								written: countLabel(
-									adapter.lastRun.rowsCreated + adapter.lastRun.rowsUpdated,
-								),
-								failed: countLabel(adapter.lastRun.rowsFailed),
-							})}
-							{' · '}
-							{timestampLabel(adapter.lastRun.queuedAt)}
-						</small>
-					</span>
-				: <span class="ui-cell__muted">{t('adapters.lastRun.never')}</span>,
+				? <CellStack
+						primary={<CellTag
+							tone={statusTone(adapter.lastRun.status)}
+							dot
+							label={statusLabel(adapter.lastRun.status)}
+						/>}
+						secondary={<CellTime value={adapter.lastRun.queuedAt} />}
+					/>
+				: <CellMuted>{t('adapters.lastRun.never')}</CellMuted>,
+		},
+		{
+			key: 'lastRunRows',
+			header: t('adapters.column.lastRunRows'),
+			width: '220px',
+			priority: 3,
+			cell: (adapter) => adapter.lastRun
+				? <CellText
+						value={t('adapters.lastRun.counts', {
+							read: countLabel(adapter.lastRun.rowsRead),
+							written: countLabel(
+								adapter.lastRun.rowsCreated + adapter.lastRun.rowsUpdated,
+							),
+							failed: countLabel(adapter.lastRun.rowsFailed),
+						})}
+						wrap
+					/>
+				: null,
 		},
 	];
 }

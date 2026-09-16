@@ -39,7 +39,6 @@ export {
 	errorCodeLabel,
 	numberLabel,
 	screenSurface,
-	shortDigest,
 	timestampLabel,
 } from './presentation.ts';
 

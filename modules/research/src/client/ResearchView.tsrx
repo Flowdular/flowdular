@@ -2,12 +2,17 @@ import { useEffect, useMemo, useRef } from 'octane';
 import {
 	Alert,
 	Button,
+	CellCode,
+	CellNumber,
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
 	EmptyState,
 	Icon,
 	PageHeader,
 	TableCard,
 	Tabs,
-	Tag,
 	type TableColumn,
 } from '@flowdular/ui';
 import { t } from '@flowdular/client';
@@ -25,14 +30,7 @@ import {
 } from './api.ts';
 import { EvidenceDrawer } from './EvidenceDrawer.tsrx';
 import { QueryAttemptsDrawer } from './QueryAttemptsDrawer.tsrx';
-import {
-	adapterLabel,
-	callerLabel,
-	numberLabel,
-	screenSurface,
-	shortDigest,
-	timestampLabel,
-} from './presentation.ts';
+import { adapterLabel, callerLabel, screenSurface } from './presentation.ts';
 import { createResearchClientState, type ResearchTab } from './state.ts';
 
 export interface ResearchViewProps {
@@ -47,38 +45,42 @@ export interface ResearchViewProps {
 function evidenceColumns(): readonly TableColumn<ResearchEvidenceRow>[] {
 	return [
 		{
-			key: 'retrievedAt',
-			header: t('research.evidence.column.retrievedAt'),
-			width: '18%',
-			value: (row) => row.retrievedAt,
-			cell: (row) => timestampLabel(row.retrievedAt),
-		},
-		{
 			key: 'title',
 			header: t('research.evidence.column.title'),
-			width: '46%',
+			width: 'auto',
 			value: (row) => row.title,
-			cell: (row) => <span class="ui-cell">
-				<b>{row.title || t('research.evidence.untitled')}</b>
-				<small class="ui-mono">{row.url}</small>
-			</span>,
+			cell: (row) =>
+				<CellStack
+					primary={row.title || t('research.evidence.untitled')}
+					secondary={row.url}
+					secondaryMono
+				/>,
+		},
+		{
+			key: 'retrievedAt',
+			header: t('research.evidence.column.retrievedAt'),
+			width: '170px',
+			priority: 2,
+			value: (row) => row.retrievedAt,
+			cell: (row) => <CellTime value={row.retrievedAt} />,
 		},
 		{
 			key: 'runId',
 			header: t('research.evidence.column.runId'),
-			width: '18%',
+			width: '170px',
+			priority: 2,
 			value: (row) => row.runId ?? '',
 			cell: (row) => row.runId === null
-				? <Tag>{t('research.evidence.member')}</Tag>
-				: <span class="ui-mono">{row.runId}</span>,
+				? <CellTag label={t('research.evidence.member')} />
+				: <CellCode value={row.runId} />,
 		},
 		{
 			key: 'contentSha256',
 			header: t('research.evidence.column.contentSha256'),
-			width: '18%',
+			width: '170px',
+			priority: 3,
 			value: (row) => row.contentSha256,
-			cell: (row) =>
-				<span class="ui-mono">{shortDigest(row.contentSha256)}</span>,
+			cell: (row) => <CellCode value={row.contentSha256} />,
 		},
 	];
 }
@@ -86,48 +88,51 @@ function evidenceColumns(): readonly TableColumn<ResearchEvidenceRow>[] {
 function queryColumns(): readonly TableColumn<ResearchQueryRow>[] {
 	return [
 		{
-			key: 'createdAt',
-			header: t('research.queries.column.createdAt'),
-			width: '18%',
-			value: (row) => row.createdAt,
-			cell: (row) => timestampLabel(row.createdAt),
-		},
-		{
 			key: 'query',
 			header: t('research.queries.column.query'),
-			width: '34%',
+			width: 'auto',
 			value: (row) => row.query,
-			cell: (row) => row.query,
+			cell: (row) => <CellText value={row.query} />,
+		},
+		{
+			key: 'createdAt',
+			header: t('research.queries.column.createdAt'),
+			width: '170px',
+			priority: 2,
+			value: (row) => row.createdAt,
+			cell: (row) => <CellTime value={row.createdAt} />,
 		},
 		{
 			key: 'adapter',
 			header: t('research.queries.column.adapter'),
-			width: '14%',
+			width: '140px',
 			value: (row) => row.adapter,
-			cell: (row) => <Tag>{adapterLabel(row.adapter)}</Tag>,
+			cell: (row) => <CellTag label={adapterLabel(row.adapter)} />,
 		},
 		{
 			key: 'caller',
 			header: t('research.queries.column.caller'),
-			width: '12%',
+			width: '120px',
+			priority: 3,
 			value: (row) => row.caller,
-			cell: (row) => callerLabel(row.caller),
+			cell: (row) => <CellText value={callerLabel(row.caller)} />,
 		},
 		{
 			key: 'resultCount',
 			header: t('research.queries.column.resultCount'),
-			width: '11%',
+			width: '100px',
 			numeric: true,
 			value: (row) => row.resultCount,
-			cell: (row) => numberLabel(row.resultCount),
+			cell: (row) => <CellNumber value={row.resultCount} />,
 		},
 		{
 			key: 'costUnits',
 			header: t('research.queries.column.costUnits'),
-			width: '11%',
+			width: '100px',
 			numeric: true,
+			priority: 2,
 			value: (row) => row.costUnits,
-			cell: (row) => numberLabel(row.costUnits),
+			cell: (row) => <CellNumber value={row.costUnits} />,
 		},
 	];
 }

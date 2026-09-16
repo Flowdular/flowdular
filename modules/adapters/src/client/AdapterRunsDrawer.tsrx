@@ -2,10 +2,15 @@ import { useEffect, useState } from 'octane';
 import {
 	Alert,
 	Button,
+	CellCode,
+	CellNumber,
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
 	Drawer,
 	EmptyState,
 	Table,
-	Tag,
 	type TableAction,
 	type TableColumn,
 } from '@flowdular/ui';
@@ -21,7 +26,6 @@ import {
 } from './api.ts';
 import {
 	codeLabel,
-	countLabel,
 	outcomeLabel,
 	outcomeTone,
 	statusLabel,
@@ -44,68 +48,76 @@ function runColumns(
 		{
 			key: 'queuedAt',
 			header: t('adapters.runs.column.queuedAt'),
-			width: '20%',
-			cell: (run) => <span class="ui-cell">
-				<span>{timestampLabel(run.queuedAt)}</span>
-				<small class="ui-cell__muted">{t(
-					'adapters.trigger.' + run.trigger,
-				)}</small>
-			</span>,
+			width: '170px',
+			cell: (run) =>
+				<CellStack
+					primary={<CellTime value={run.queuedAt} />}
+					secondary={t('adapters.trigger.' + run.trigger)}
+				/>,
 		},
 		{
 			key: 'status',
 			header: t('adapters.runs.column.status'),
-			width: '16%',
-			cell: (run) => <span class="ui-cell">
-				<span>
-					<Tag tone={statusTone(run.status)} dot>{statusLabel(run.status)}</Tag>
-				</span>
-				<small class="ui-cell__muted">{codeLabel(run.errorCode)}</small>
-			</span>,
+			width: 'auto',
+			cell: (run) =>
+				<CellStack
+					primary={<CellTag
+						tone={statusTone(run.status)}
+						dot
+						label={statusLabel(run.status)}
+					/>}
+					secondary={codeLabel(run.errorCode)}
+				/>,
 		},
 		{
 			key: 'pages',
 			header: t('adapters.runs.column.pages'),
-			width: '8%',
+			width: '100px',
 			numeric: true,
-			cell: (run) => countLabel(run.pages),
+			priority: 3,
+			cell: (run) => <CellNumber value={run.pages} />,
 		},
 		{
 			key: 'read',
 			header: t('adapters.runs.column.read'),
-			width: '9%',
+			width: '100px',
 			numeric: true,
-			cell: (run) => countLabel(run.rowsRead),
+			priority: 2,
+			cell: (run) => <CellNumber value={run.rowsRead} />,
 		},
 		{
 			key: 'created',
 			header: direction === 'sink'
 				? t('adapters.runs.column.pushed')
 				: t('adapters.runs.column.created'),
-			width: '10%',
+			width: '100px',
 			numeric: true,
-			cell: (run) => countLabel(run.rowsCreated),
+			priority: 2,
+			cell: (run) => <CellNumber value={run.rowsCreated} />,
 		},
 		{
 			key: 'updated',
 			header: t('adapters.runs.column.updated'),
-			width: '9%',
+			width: '100px',
 			numeric: true,
-			cell: (run) => countLabel(run.rowsUpdated),
+			priority: 3,
+			cell: (run) => <CellNumber value={run.rowsUpdated} />,
 		},
 		{
 			key: 'skipped',
 			header: t('adapters.runs.column.skipped'),
-			width: '9%',
+			width: '100px',
 			numeric: true,
-			cell: (run) => countLabel(run.rowsSkipped),
+			priority: 3,
+			cell: (run) => <CellNumber value={run.rowsSkipped} />,
 		},
 		{
 			key: 'failed',
 			header: t('adapters.runs.column.failed'),
-			width: '9%',
+			width: '100px',
 			numeric: true,
-			cell: (run) => countLabel(run.rowsFailed),
+			priority: 2,
+			cell: (run) => <CellNumber value={run.rowsFailed} />,
 		},
 	];
 }
@@ -115,36 +127,44 @@ function rowColumns(): readonly TableColumn<AdapterRunRow>[] {
 		{
 			key: 'rowIndex',
 			header: t('adapters.rows.column.index'),
-			width: '10%',
+			width: '96px',
 			numeric: true,
-			cell: (row) => <span class="num">{row.rowIndex}</span>,
+			cell: (row) => <CellNumber value={row.rowIndex} />,
 		},
 		{
 			key: 'naturalKey',
 			header: t('adapters.rows.column.naturalKey'),
-			width: '25%',
-			cell: (row) => <span class="ui-mono">{row.naturalKey ?? ''}</span>,
+			width: '170px',
+			priority: 2,
+			cell: (row) => row.naturalKey
+				? <CellCode value={row.naturalKey} />
+				: null,
 		},
 		{
 			key: 'outcome',
 			header: t('adapters.rows.column.outcome'),
-			width: '20%',
+			width: '130px',
 			cell: (row) =>
-				<Tag tone={outcomeTone(row.outcome)} dot>{outcomeLabel(
-					row.outcome,
-				)}</Tag>,
+				<CellTag
+					tone={outcomeTone(row.outcome)}
+					dot
+					label={outcomeLabel(row.outcome)}
+				/>,
 		},
 		{
 			key: 'code',
 			header: t('adapters.rows.column.code'),
-			width: '30%',
-			cell: (row) => codeLabel(row.errorCode),
+			width: 'auto',
+			cell: (row) => row.errorCode
+				? <CellText value={codeLabel(row.errorCode)} wrap />
+				: null,
 		},
 		{
 			key: 'message',
 			header: t('adapters.rows.column.message'),
-			width: '15%',
-			cell: (row) => <span class="ui-mono">{row.message ?? ''}</span>,
+			width: '150px',
+			priority: 2,
+			cell: (row) => row.message ? <CellText value={row.message} mono /> : null,
 		},
 	];
 }

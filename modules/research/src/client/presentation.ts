@@ -24,11 +24,6 @@ export function timestampLabel(value: number): string {
 	}).format(value);
 }
 
-/** The first twelve hex digits, enough to tell two digests apart on screen. */
-export function shortDigest(value: string): string {
-	return value.slice(0, 12);
-}
-
 export function adapterLabel(adapter: string): string {
 	const key = 'research.adapter.' + adapter;
 	const translated = t(key);

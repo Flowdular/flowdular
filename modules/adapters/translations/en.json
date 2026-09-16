@@ -20,6 +20,7 @@
 	"column.instance": "Connector instance",
 	"column.schedule": "Schedule",
 	"column.lastRun": "Last run",
+	"column.lastRunRows": "Last run rows",
 	"direction.source": "Source",
 	"direction.sink": "Sink",
 	"target.unavailable": "Not registered in this deployment",

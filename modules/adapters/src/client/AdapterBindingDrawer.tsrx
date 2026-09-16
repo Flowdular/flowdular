@@ -2,6 +2,10 @@ import { useEffect, useState } from 'octane';
 import {
 	Alert,
 	Button,
+	CellNumber,
+	CellStack,
+	CellTag,
+	CellText,
 	Drawer,
 	EmptyState,
 	FormField,
@@ -9,7 +13,6 @@ import {
 	Select,
 	Switch,
 	Table,
-	Tag,
 	type TableColumn,
 } from '@flowdular/ui';
 import { t } from '@flowdular/client/i18n';
@@ -44,34 +47,37 @@ function previewColumns(): readonly TableColumn<DryRunRow>[] {
 		{
 			key: 'index',
 			header: t('adapters.rows.column.index'),
-			width: '10%',
+			width: '96px',
 			numeric: true,
-			cell: (row) => <span class="num">{row.index}</span>,
+			cell: (row) => <CellNumber value={row.index} />,
 		},
 		{
 			key: 'values',
 			header: t('adapters.dryRun.column.values'),
-			width: '55%',
+			width: 'auto',
 			cell: (row) =>
-				<span class="ui-mono">{Object.entries(row.values).map(
-					([field, value]) => `${field}: ${value}`,
-				).join(' · ')}</span>,
+				<CellText
+					value={Object.entries(row.values).map(
+						([field, value]) => `${field}: ${value}`,
+					).join(' · ')}
+					mono
+					wrap
+				/>,
 		},
 		{
 			key: 'outcome',
 			header: t('adapters.rows.column.outcome'),
-			width: '35%',
-			cell: (row) => <span class="ui-cell">
-				<span>
-					<Tag tone={outcomeTone(row.outcome)} dot>{outcomeLabel(
-						row.outcome,
-					)}</Tag>
-				</span>
-				<small class="ui-cell__muted">
-					{row.code === null ? '' : codeLabel(row.code)}
-					{row.field ? ` (${row.field})` : ''}
-				</small>
-			</span>,
+			width: '240px',
+			cell: (row) =>
+				<CellStack
+					primary={<CellTag
+						tone={outcomeTone(row.outcome)}
+						dot
+						label={outcomeLabel(row.outcome)}
+					/>}
+					secondary={(codeLabel(row.code) +
+						(row.field ? ` (${row.field})` : '')).trim()}
+				/>,
 		},
 	];
 }

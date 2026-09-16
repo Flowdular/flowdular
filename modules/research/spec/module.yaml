@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: research.core
-specVersion: 0.2.1
+specVersion: 0.2.2
 status: approved
 name: Research
 description: Gives agents, workflows and members a governed web search and page reader behind an ordered chain of adapters a workspace owner configures, with retries, fallback and a circuit breaker so research keeps answering when one provider fails, and keeps every result kept and every page read as citeable evidence that other modules attach to their own records.
