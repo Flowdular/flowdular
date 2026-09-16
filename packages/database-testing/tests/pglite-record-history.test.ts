@@ -4,7 +4,7 @@ import {
 	appendRecordHistory,
 	PostgresDatabaseAdapter,
 	queryRecordHistory,
-} from '../src/index.ts';
+} from '@flowdular/database';
 
 const HISTORY_DDL = `CREATE TABLE IF NOT EXISTS demo_history (
   id TEXT PRIMARY KEY,

@@ -7,7 +7,7 @@ import {
 	databaseMigrationStatus,
 	runDatabaseMigrations,
 	type DatabaseMigration,
-} from '../src/index.ts';
+} from '@flowdular/database';
 
 const CREATE_NOTES: DatabaseMigration = {
 	id: '0001_notes_core',
