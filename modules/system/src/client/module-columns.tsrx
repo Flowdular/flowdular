@@ -32,7 +32,7 @@ export function moduleColumns(): readonly TableColumn<ModuleCatalogEntry>[] {
 		{
 			key: 'module',
 			header: t('system.table.module'),
-			width: '22%',
+			width: 'auto',
 			cell: (module) => <span class="ui-cell">
 				<b>{module.name}</b>
 				<small class="ui-mono">{module.id}</small>
@@ -41,10 +41,10 @@ export function moduleColumns(): readonly TableColumn<ModuleCatalogEntry>[] {
 		{
 			key: 'version',
 			header: t('system.table.version'),
-			width: '11%',
+			width: '120px',
 			cell: (module) => <span class="ui-cell">
 				<span class="ui-mono">{module.version || t('system.value.na')}</span>
-				{module.specVersion
+				{module.specVersion && module.specVersion !== module.version
 					? <small>{t('system.table.specVersion', {
 							version: module.specVersion,
 						})}</small>
@@ -54,7 +54,7 @@ export function moduleColumns(): readonly TableColumn<ModuleCatalogEntry>[] {
 		{
 			key: 'platform',
 			header: t('system.table.platform'),
-			width: '19%',
+			width: '200px',
 			cell: (module) => <span class="ui-cell ui-cell--nowrap">
 				<span>{surfaces(module)}</span>
 				<small title={module.capabilities.join(', ')}>{module.capabilities.join(
@@ -65,7 +65,7 @@ export function moduleColumns(): readonly TableColumn<ModuleCatalogEntry>[] {
 		{
 			key: 'permissions',
 			header: t('system.table.permissions'),
-			width: '9%',
+			width: '140px',
 			numeric: true,
 			cell: (module) => new Intl.NumberFormat(activeLocale()).format(
 				module.permissions.length,
@@ -74,7 +74,7 @@ export function moduleColumns(): readonly TableColumn<ModuleCatalogEntry>[] {
 		{
 			key: 'dependents',
 			header: t('system.table.dependents'),
-			width: '13%',
+			width: '170px',
 			cell: (module) => <span class="ui-cell ui-cell--nowrap">
 				<span>{new Intl.NumberFormat(activeLocale()).format(
 					module.dependents.length,
@@ -90,7 +90,7 @@ export function moduleColumns(): readonly TableColumn<ModuleCatalogEntry>[] {
 		{
 			key: 'status',
 			header: t('system.table.status'),
-			width: '10%',
+			width: '130px',
 			cell: (module) =>
 				<Tag tone={activationTone(module)} dot>{activationLabel(module)}</Tag>,
 		},

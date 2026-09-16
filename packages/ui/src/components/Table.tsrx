@@ -143,6 +143,7 @@ export interface TableProps<Row extends RowData> {
 interface FlowdularColumnMeta {
 	readonly numeric?: boolean;
 	readonly width?: string;
+	readonly title?: string;
 	readonly actions?: boolean;
 	readonly actionsLabel?: string;
 }
@@ -166,6 +167,23 @@ const FEATURES = tableFeatures({
 });
 
 const SELECT_WIDTH = '44px';
+const TABLE_MIN_WIDTH = 640;
+const FLEXIBLE_COLUMN_MIN = 120;
+
+/**
+ * The narrowest the table may get before its wrapper scrolls: every px width
+ * as declared, and room for each percentage or auto column. Below it a fixed
+ * layout would squeeze the flexible columns under the px ones, so headers
+ * collide and the sticky actions column covers the cells beside it.
+ */
+export function tableMinWidth(widths: readonly (string | undefined)[]): number {
+	let total = 0;
+	for (const width of widths) {
+		const px = /^(\d+(?:\.\d+)?)px$/.exec(width?.trim() ?? '');
+		total += px ? Number(px[1]) : FLEXIBLE_COLUMN_MIN;
+	}
+	return Math.max(TABLE_MIN_WIDTH, Math.ceil(total));
+}
 
 function defaultSelectionSummary(count: number): string {
 	return count + ' selected';
@@ -290,6 +308,7 @@ function tanstackColumns<Row extends RowData>(
 		const meta = {
 			numeric: column.numeric ?? false,
 			width: column.width,
+			title: column.header,
 		};
 		const value = column.value;
 		if (!value) return {
@@ -565,7 +584,18 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 			</div>
 		}
 		<div class="ui-table-wrap">
-			<table class="ui-table" aria-label={props.caption ?? ''}>
+			<table
+				class="ui-table"
+				aria-label={props.caption ?? ''}
+				style={'min-width: ' +
+					String(
+						tableMinWidth([
+							...(selection ? [SELECT_WIDTH] : []),
+							...leafColumns.map((column) => column.meta?.width),
+						]),
+					) +
+					'px;'}
+			>
 				<colgroup>
 					@if (selection) {
 						<col
@@ -601,6 +631,7 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 										header.meta?.actions && 'ui-table__actions',
 									]}
 									style={widthStyle(header.meta?.width)}
+									title={header.meta?.actions ? undefined : header.meta?.title}
 									aria-label={header.meta?.actions
 										? header.meta.actionsLabel ?? ''
 										: ''}
