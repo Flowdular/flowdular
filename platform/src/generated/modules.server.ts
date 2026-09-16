@@ -178,6 +178,7 @@ export function composeModuleServer(
 						'connectors.definitions.v1',
 						'connectors.calls.v1',
 						'connectors.egress.v1',
+						'connectors.instances.v1',
 					],
 					requires: [],
 				}),
@@ -277,6 +278,8 @@ export function composeModuleServer(
 					],
 					requires: [
 						{ id: 'connectors.calls.v1', optional: true },
+						{ id: 'connectors.definitions.v1', optional: true },
+						{ id: 'connectors.instances.v1', optional: true },
 						{ id: 'connectors.egress.v1', optional: true },
 						{ id: 'metering.meters.v1', optional: true },
 						{ id: 'documents.attachments.v1', optional: true },

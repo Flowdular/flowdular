@@ -2,6 +2,8 @@ import type {
 	PlatformServerComposition,
 	PlatformServerContext,
 } from '@flowdular/module-auth/server';
+import { FIRECRAWL_DEFINITION } from './adapters/firecrawl.ts';
+import { SEARXNG_DEFINITION } from './adapters/searxng.ts';
 import { researchAgentTools, researchNativeTool } from './agent/tools.ts';
 import {
 	RESEARCH_EVIDENCE_CAPABILITY,
@@ -15,11 +17,15 @@ import { RESEARCH_MODULE_ID } from './domain/types.ts';
 import { createResearchRoutes, createResearchRuntime } from './server/index.ts';
 import {
 	CONNECTORS_CALLS_CAPABILITY,
+	CONNECTORS_DEFINITIONS_CAPABILITY,
 	CONNECTORS_EGRESS_CAPABILITY,
+	CONNECTORS_INSTANCES_CAPABILITY,
 	EXPORT_LISTS_CAPABILITY,
 	METERING_METERS_CAPABILITY,
 	type ConnectorCalls,
+	type ConnectorDefinitions,
 	type ConnectorEgress,
+	type ConnectorInstances,
 	type ExportListRegistry,
 	type MeterRegistry,
 } from './services/capabilities.ts';
@@ -46,6 +52,11 @@ export function createServerComposition(
 		calls: () =>
 			capabilities.get<ConnectorCalls>(CONNECTORS_CALLS_CAPABILITY) ??
 			undefined,
+		instances: () =>
+			capabilities.get<ConnectorInstances>(CONNECTORS_INSTANCES_CAPABILITY) ??
+			undefined,
+		writeSetting: (tenantId, key, value, actor) =>
+			context.settings.set(tenantId, RESEARCH_MODULE_ID, key, value, actor),
 		egress: () =>
 			capabilities.get<ConnectorEgress>(CONNECTORS_EGRESS_CAPABILITY) ??
 			undefined,
@@ -56,7 +67,19 @@ export function createServerComposition(
 	capabilities.register<ResearchSearch>(RESEARCH_SEARCH_CAPABILITY, {
 		search: async (input) => {
 			const answer = await (await service()).search(input);
-			return { results: answer.results, adapter: answer.adapter };
+			return {
+				results: answer.results,
+				adapter: answer.adapter,
+				attempts: answer.attempts.map(
+					({ adapter, attempt, outcome, errorCode, durationMs }) => ({
+						adapter,
+						attempt,
+						outcome,
+						errorCode,
+						durationMs,
+					}),
+				),
+			};
 		},
 	});
 	capabilities.register<ResearchFetch>(RESEARCH_FETCH_CAPABILITY, {
@@ -79,7 +102,16 @@ export function createServerComposition(
 	   both attempts answer nothing and the module works the same. */
 	let metersDeclared = false;
 	let listsRegistered = false;
+	let definitionsRegistered = false;
 	const registerOptional = (): void => {
+		const definitions = capabilities.get<ConnectorDefinitions>(
+			CONNECTORS_DEFINITIONS_CAPABILITY,
+		);
+		if (!definitionsRegistered && definitions) {
+			definitionsRegistered = true;
+			definitions.register(SEARXNG_DEFINITION);
+			definitions.register(FIRECRAWL_DEFINITION);
+		}
 		const registry = meters();
 		if (!metersDeclared && registry) {
 			metersDeclared = true;
@@ -99,10 +131,31 @@ export function createServerComposition(
 		}
 	};
 	registerOptional();
+	/* allowAgents also changes in Administration, Modules, so the consent of the
+	   module-owned instances follows every change, not only this module's route. */
+	const stopConsentSync = context.settings.onChange((change) => {
+		if (
+			change.moduleId !== RESEARCH_MODULE_ID ||
+			change.key !== 'allowAgents'
+		) {
+			return;
+		}
+		void runtime.admin
+			.syncConsent(change.tenantId, change.actor.accountId)
+			.catch((error: unknown) => {
+				console.error(
+					'[research.core] the connector consent did not follow allowAgents',
+					(error as { code?: unknown } | null)?.code ?? 'unknown',
+				);
+			});
+	});
 	return {
 		routes: createResearchRoutes(context.auth, runtime),
 		settings: RESEARCH_MODULE_SETTINGS,
 		start: () => registerOptional(),
-		dispose: () => runtime.dispose(),
+		dispose: () => {
+			stopConsentSync();
+			return runtime.dispose();
+		},
 	};
 }

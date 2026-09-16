@@ -1,5 +1,14 @@
 export { createResearchRoutes, endpoints } from '../api/endpoints.ts';
 export {
+	FIRECRAWL_DEFINITION,
+	FIRECRAWL_DEFINITION_KEY,
+} from '../adapters/firecrawl.ts';
+export {
+	SEARXNG_DEFINITION,
+	SEARXNG_DEFINITION_KEY,
+} from '../adapters/searxng.ts';
+export { ResearchAdapterAdmin } from '../services/adapter-admin.ts';
+export {
 	RESEARCH_CONSENT_ID,
 	RESEARCH_NATIVE_TOOL_ID,
 	researchAgentTools,

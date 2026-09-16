@@ -1,7 +1,9 @@
+import { NATIVE_TOOL_UNSUPPORTED } from '@flowdular/harness/runtime';
 import type {
 	DataClassExportSink,
 	DataClassExportSummary,
 } from '@flowdular/kernel';
+import type { FirecrawlAdapter } from '../adapters/firecrawl.ts';
 import type { RecordedAdapter } from '../adapters/recorded.ts';
 import type { ResearchAdapter } from '../adapters/types.ts';
 import {
@@ -16,11 +18,14 @@ import {
 	type ResearchSearchInput,
 } from '../domain/capability.ts';
 import {
+	RESEARCH_CHAIN_LIMITS,
 	RESEARCH_LIMITS,
 	RESEARCH_MODULE_ID,
 	RESEARCH_QUERIES_METER,
 	RESEARCH_ROBOTS_TOKEN,
+	type ResearchAdapterHealth,
 	type ResearchAdapterKey,
+	type ResearchAttemptRecord,
 	type ResearchEvidenceDetail,
 	type ResearchEvidenceRecord,
 	type ResearchListPage,
@@ -33,6 +38,16 @@ import type {
 	EgressCheck,
 	MeterRegistry,
 } from './capabilities.ts';
+import {
+	runChain,
+	searchChainKeys,
+	SYSTEM_CHAIN_RUNTIME,
+	type ChainAttempt,
+	type ChainHealth,
+	type ChainPolicy,
+	type ChainRuntime,
+	type ChainStep,
+} from './adapter-chain.ts';
 import { domainAdmitted, siteAdmits } from './domains.ts';
 import { htmlToText } from './html-text.ts';
 import type { PageResponse, PageTransport } from './page-transport.ts';
@@ -123,6 +138,22 @@ export interface ResearchSearchAnswer {
 	readonly adapter: ResearchAdapterKey;
 	/** Null for a model-native read back, which counts nothing. */
 	readonly queryId: string | null;
+	readonly attempts: readonly ChainAttempt[];
+}
+
+export interface ResearchSearchOptions {
+	/** Runs this one adapter alone and asks it even while its circuit is open. */
+	readonly only?: ResearchAdapterKey;
+	/** Receives every attempt, also when the search fails. */
+	readonly attempts?: ChainAttempt[];
+}
+
+export type ResearchAttemptView = Omit<ResearchAttemptRecord, 'tenantId'>;
+
+interface ReadPage {
+	readonly title: string;
+	readonly text: string;
+	readonly redirected: boolean;
 }
 
 export interface ResearchEvidenceView extends EvidenceEntry {
@@ -137,6 +168,8 @@ export interface ResearchServiceOptions {
 	readonly settings: (tenantId: string) => Promise<ResearchSettings>;
 	readonly adapters: {
 		readonly modelNative: ResearchAdapter;
+		readonly searxng: ResearchAdapter;
+		readonly firecrawl: FirecrawlAdapter;
 		readonly connector: ResearchAdapter;
 		readonly recorded: RecordedAdapter;
 	};
@@ -145,6 +178,8 @@ export interface ResearchServiceOptions {
 	readonly transport: PageTransport;
 	readonly robots?: RobotsCache;
 	readonly now?: () => number;
+	/** Timers and the jitter share of retry delays; tests supply their own. */
+	readonly chain?: ChainRuntime;
 }
 
 export class ResearchService {
@@ -153,6 +188,7 @@ export class ResearchService {
 	readonly #robots: RobotsCache;
 	readonly #now: () => number;
 	readonly #id: () => string;
+	readonly #chain: ChainRuntime;
 
 	constructor(options: ResearchServiceOptions) {
 		this.#options = options;
@@ -162,6 +198,7 @@ export class ResearchService {
 			new RobotsCache(RESEARCH_LIMITS.robotsHosts, RESEARCH_LIMITS.robotsTtlMs);
 		this.#now = options.now ?? Date.now;
 		this.#id = createIdGenerator(this.#now);
+		this.#chain = options.chain ?? { ...SYSTEM_CHAIN_RUNTIME, now: this.#now };
 	}
 
 	settings(tenantId: string): Promise<ResearchSettings> {
@@ -171,6 +208,7 @@ export class ResearchService {
 	async search(
 		input: ResearchSearchInput,
 		actor: string | null = null,
+		options: ResearchSearchOptions = {},
 	): Promise<ResearchSearchAnswer> {
 		const tenantId = line(input.tenantId, 'tenantId', 1, 128);
 		const query = line(input.query, 'query', 1, RESEARCH_LIMITS.query);
@@ -194,7 +232,6 @@ export class ResearchService {
 				: this.#host(input.site, 'site');
 		const { caller, callerRef, runId } = this.#caller(input);
 		const settings = await this.#options.settings(tenantId);
-		const adapter = this.#adapter(settings.adapter);
 		const request = {
 			tenantId,
 			query,
@@ -204,44 +241,109 @@ export class ResearchService {
 			caller,
 			callerRef,
 			settings,
-			signal: input.signal,
 		};
-		if (adapter.key === 'model-native') {
-			const results = await adapter.search(request);
-			return { results, adapter: adapter.key, queryId: null };
-		}
 		const createdAt = this.#now();
-		await this.#assertMeter(tenantId);
+		const keep = (results: readonly ResearchResult[]) =>
+			this.#keep(results, settings, site, freshness, limit, createdAt);
 		const id = this.#id();
-		const reserved = await this.#repository.reserveQuery(
-			{
+		const attempts = options.attempts ?? [];
+		let reserved = false;
+		const release = async () => {
+			if (reserved) await this.#repository.releaseQuery(tenantId, id);
+			reserved = false;
+		};
+		const keys =
+			options.only === undefined ? searchChainKeys(settings) : [options.only];
+		let adapter: ResearchAdapterKey;
+		let raw: readonly ResearchResult[];
+		try {
+			const answer = await runChain<readonly ResearchResult[]>({
+				steps: keys.map((key): ChainStep<readonly ResearchResult[]> => {
+					const chosen = this.#adapter(key);
+					return {
+						key,
+						maxAttempts: settings.limits[key].maxAttempts,
+						timeoutMs: settings.limits[key].timeoutMs,
+						breaker: true,
+						run: (signal) => chosen.search({ ...request, signal }),
+						/* A read back answers evidence already kept, not results to filter. */
+						empty: (results) =>
+							(key === 'model-native' ? results : keep(results)).length === 0,
+					};
+				}),
+				policy: this.#policy(settings, options.only !== undefined),
+				health: this.#health(tenantId, settings),
+				attempts,
+				signal: input.signal,
+				runtime: this.#chain,
+				/* One unit per answered query: reserved before the first attempt of
+				   an adapter that counts, whatever the chain tries after it. */
+				beforeAttempt: async (step) => {
+					if (reserved || step.key === 'model-native') return;
+					await this.#assertMeter(tenantId);
+					reserved = await this.#repository.reserveQuery(
+						{
+							tenantId,
+							id,
+							query,
+							adapter: step.key as ResearchAdapterKey,
+							caller,
+							callerRef,
+							resultCount: 0,
+							costUnits: 1,
+							createdAt,
+						},
+						runId,
+						{
+							limit: settings.monthlyQueryBudget,
+							since: monthStart(createdAt),
+						},
+					);
+					if (!reserved) throw this.#budgetExceeded();
+				},
+			});
+			adapter = answer.adapter as ResearchAdapterKey;
+			raw = answer.result;
+		} catch (error) {
+			await release();
+			await this.#saveAttemptsQuietly(tenantId, id, 'search', attempts);
+			throw error;
+		}
+		if (adapter === 'model-native') {
+			await release();
+			/* A read back creates no query row; its attempts join the native
+			   query the run reported, where the Queries tab finds them. */
+			const nativeId =
+				callerRef === null
+					? null
+					: await this.#repository.nativeQueryId(tenantId, callerRef, query);
+			await this.#saveAttemptsQuietly(
 				tenantId,
-				id,
-				query,
-				adapter: adapter.key,
-				caller,
-				callerRef,
-				resultCount: 0,
-				costUnits: 1,
-				createdAt,
-			},
-			runId,
-			{ limit: settings.monthlyQueryBudget, since: monthStart(createdAt) },
-		);
-		if (!reserved) throw this.#budgetExceeded();
+				nativeId ?? id,
+				'search',
+				attempts,
+			);
+			return { results: raw, adapter, queryId: null, attempts };
+		}
 		let kept: readonly ResearchResult[];
 		let evidence: readonly ResearchEvidenceRecord[];
 		/* Until the results commit, the unit is only reserved: any failure gives
-		   it back, whether the adapter, the mapping or the write refused. */
+		   it back, whether the mapping or the write refused. */
 		try {
-			const raw = await adapter.search(request);
-			kept = this.#keep(raw, settings, site, freshness, limit, createdAt);
+			kept = keep(raw);
 			evidence = kept.map((result) =>
 				this.#resultEvidence(tenantId, result, createdAt, runId, actor),
 			);
-			await this.#repository.completeQuery(tenantId, id, evidence);
+			await this.#repository.completeQuery(
+				tenantId,
+				id,
+				evidence,
+				adapter,
+				this.#attemptRecords(tenantId, id, 'search', attempts),
+			);
 		} catch (error) {
-			await this.#repository.releaseQuery(tenantId, id);
+			await release();
+			await this.#saveAttemptsQuietly(tenantId, id, 'search', attempts);
 			throw error;
 		}
 		await this.#recordMeter(tenantId, id, createdAt);
@@ -250,8 +352,9 @@ export class ResearchService {
 				...result,
 				evidenceId: evidence[index]!.id,
 			})),
-			adapter: adapter.key,
+			adapter,
 			queryId: id,
+			attempts,
 		};
 	}
 
@@ -307,6 +410,29 @@ export class ResearchService {
 			),
 		);
 		await this.#recordMeter(tenant, id, createdAt);
+		await this.#repository.recordAdapterSuccess(
+			tenant,
+			'model-native',
+			createdAt,
+		);
+	}
+
+	/**
+	 * A provider that cannot pass the native web search on reported so. The
+	 * model-native adapter shows as unsupported and its read backs step aside
+	 * until a native report with results arrives again.
+	 */
+	async recordNativeUnsupported(tenantId: string): Promise<void> {
+		const tenant = line(tenantId, 'tenantId', 1, 128);
+		const settings = await this.#options.settings(tenant);
+		await this.#repository.recordAdapterFailure(
+			tenant,
+			'model-native',
+			NATIVE_TOOL_UNSUPPORTED,
+			this.#now(),
+			settings.circuitFailureThreshold,
+			settings.circuitCooldownMs,
+		);
 	}
 
 	/** Whether agent runs may use the research tools in this workspace now. */
@@ -322,7 +448,7 @@ export class ResearchService {
 		if (!settings.allowAgents) {
 			return { granted: false, reason: 'TOOL_NOT_CONSENTED' };
 		}
-		if (settings.adapter !== 'model-native') {
+		if (!searchChainKeys(settings).includes('model-native')) {
 			return { granted: false, reason: 'RESEARCH_ADAPTER_UNAVAILABLE' };
 		}
 		const used = await this.#repository.monthUsage(
@@ -340,7 +466,7 @@ export class ResearchService {
 	): Promise<ResearchFetchResult> {
 		const tenantId = line(input.tenantId, 'tenantId', 1, 128);
 		const url = this.#pageUrl(input.url);
-		const { runId } = this.#caller(input);
+		const { callerRef, runId } = this.#caller(input);
 		const settings = await this.#options.settings(tenantId);
 		this.#assertDomain(url, settings);
 		if (
@@ -359,9 +485,12 @@ export class ResearchService {
 			);
 		}
 		const key = url.toString();
+		const evidenceId = this.#id();
+		const attempts: ChainAttempt[] = [];
 		let title: string;
 		let text: string;
-		if (settings.adapter === 'recorded') {
+		/* A chain with the recorded adapter never reaches the network for a page. */
+		if (searchChainKeys(settings).includes('recorded')) {
 			const recorded = await this.#options.adapters.recorded.page(
 				settings,
 				key,
@@ -385,7 +514,31 @@ export class ResearchService {
 				title = cached.title;
 				text = cached.text;
 			} else {
-				const downloaded = await this.#download(url, settings, input.signal);
+				let downloaded: ReadPage;
+				try {
+					downloaded = (
+						await runChain<ReadPage>({
+							steps: settings.fetchOrder.map((adapter) =>
+								adapter === 'direct'
+									? this.#directStep(url, settings)
+									: this.#firecrawlStep(url, settings, input, callerRef),
+							),
+							policy: this.#policy(settings, false),
+							health: this.#health(tenantId, settings),
+							attempts,
+							signal: input.signal,
+							runtime: this.#chain,
+						})
+					).result;
+				} catch (error) {
+					await this.#saveAttemptsQuietly(
+						tenantId,
+						evidenceId,
+						'fetch',
+						attempts,
+					);
+					throw error;
+				}
 				title = printable(downloaded.title).slice(0, RESEARCH_LIMITS.title);
 				text = withoutNul(downloaded.text);
 				/* The cache is keyed by the address asked for, so a page another
@@ -407,7 +560,7 @@ export class ResearchService {
 		const retrievedAt = this.#now();
 		const record: ResearchEvidenceRecord = {
 			tenantId,
-			id: this.#id(),
+			id: evidenceId,
 			url: key,
 			title: printable(title).slice(0, RESEARCH_LIMITS.title),
 			excerpt: utf8Prefix(text, RESEARCH_LIMITS.excerptBytes),
@@ -419,6 +572,10 @@ export class ResearchService {
 			fullText: settings.storeFullText ? text : null,
 		};
 		await this.#repository.insertEvidence(record);
+		await this.#repository.insertAttempts(
+			tenantId,
+			this.#attemptRecords(tenantId, evidenceId, 'fetch', attempts),
+		);
 		return {
 			evidenceId: record.id,
 			title: record.title,
@@ -685,6 +842,211 @@ export class ResearchService {
 		return this.#repository.countPages(tenantId);
 	}
 
+	adapterHealth(tenantId: string): Promise<readonly ResearchAdapterHealth[]> {
+		return this.#repository.adapterHealth(line(tenantId, 'tenantId', 1, 128));
+	}
+
+	async listAttempts(
+		tenantId: string,
+		queryId: string,
+	): Promise<readonly ResearchAttemptView[]> {
+		if (
+			typeof queryId !== 'string' ||
+			queryId.length === 0 ||
+			queryId.length > 64
+		) {
+			return [];
+		}
+		const rows = await this.#repository.listAttempts(
+			line(tenantId, 'tenantId', 1, 128),
+			queryId,
+			RESEARCH_CHAIN_LIMITS.attemptsListed,
+		);
+		return rows.map(({ tenantId: _tenant, ...attempt }) => attempt);
+	}
+
+	async sweepAttempts(tenantId: string, cutoff: Date, limit: number) {
+		return {
+			removed: await this.#repository.sweepAttempts(
+				tenantId,
+				cutoff.getTime(),
+				limit,
+			),
+		};
+	}
+
+	async exportAttempts(
+		tenantId: string,
+		sink: DataClassExportSink,
+	): Promise<DataClassExportSummary> {
+		return this.#exportWalk(
+			(after) => this.#repository.exportAttempts(tenantId, after, EXPORT_PAGE),
+			(record) => record.createdAt,
+			(record) => ({
+				id: record.id,
+				queryId: record.queryId,
+				kind: record.kind,
+				adapter: record.adapter,
+				attempt: record.attempt,
+				outcome: record.outcome,
+				errorCode: record.errorCode,
+				durationMs: record.durationMs,
+				createdAt: new Date(record.createdAt).toISOString(),
+			}),
+			sink,
+		);
+	}
+
+	async eraseAttempts(tenantId: string, accountId: string, limit: number) {
+		const removed = await this.#repository.eraseAttempts(
+			tenantId,
+			accountId,
+			limit,
+		);
+		return { removed, truncated: removed >= limit };
+	}
+
+	countAttempts(tenantId: string, accountId: string): Promise<number> {
+		return this.#repository.countAttemptsOf(tenantId, accountId);
+	}
+
+	#policy(settings: ResearchSettings, ignoreCircuit: boolean): ChainPolicy {
+		return {
+			fallback: settings.fallback,
+			fallbackOnEmpty: settings.fallbackOnEmpty,
+			retryBackoffMs: settings.retryBackoffMs,
+			circuitFailureThreshold: settings.circuitFailureThreshold,
+			circuitCooldownMs: settings.circuitCooldownMs,
+			ignoreCircuit,
+		};
+	}
+
+	#health(tenantId: string, settings: ResearchSettings): ChainHealth {
+		const repository = this.#repository;
+		return {
+			read: () => repository.adapterHealth(tenantId),
+			claimProbe: (adapter, now, until) =>
+				repository.claimAdapterProbe(tenantId, adapter, now, until),
+			succeeded: (adapter, now) =>
+				repository.recordAdapterSuccess(tenantId, adapter, now),
+			releaseProbe: (adapter, claimedUntil, previous) =>
+				repository.releaseAdapterProbe(
+					tenantId,
+					adapter,
+					claimedUntil,
+					previous,
+				),
+			failed: (adapter, code, now) =>
+				repository.recordAdapterFailure(
+					tenantId,
+					adapter,
+					code,
+					now,
+					settings.circuitFailureThreshold,
+					settings.circuitCooldownMs,
+				),
+		};
+	}
+
+	#attemptRecords(
+		tenantId: string,
+		queryId: string,
+		kind: 'search' | 'fetch',
+		attempts: readonly ChainAttempt[],
+	): readonly ResearchAttemptRecord[] {
+		return attempts.map((attempt) => ({
+			tenantId,
+			id: this.#id(),
+			queryId,
+			kind,
+			...attempt,
+		}));
+	}
+
+	/* A chain that answered nothing already has its own failure to report; a
+	   diagnostic write that fails with it must not replace that answer. */
+	async #saveAttemptsQuietly(
+		tenantId: string,
+		queryId: string,
+		kind: 'search' | 'fetch',
+		attempts: readonly ChainAttempt[],
+	): Promise<void> {
+		try {
+			await this.#repository.insertAttempts(
+				tenantId,
+				this.#attemptRecords(tenantId, queryId, kind, attempts),
+			);
+		} catch {
+			/* The failure the caller receives is the one that matters. */
+		}
+	}
+
+	#directStep(url: URL, settings: ResearchSettings): ChainStep<ReadPage> {
+		return {
+			key: 'direct',
+			maxAttempts: settings.limits.direct.maxAttempts,
+			/* The reader's own deadline answers RESEARCH_FETCH_TIMEOUT first. */
+			timeoutMs: settings.fetchTimeoutMs + 1_000,
+			breaker: false,
+			run: (signal) => this.#download(url, settings, signal),
+			empty: (page) => page.text.trim() === '',
+		};
+	}
+
+	#firecrawlStep(
+		url: URL,
+		settings: ResearchSettings,
+		input: ResearchFetchInput,
+		callerRef: string | null,
+	): ChainStep<ReadPage> {
+		const limits = settings.limits.firecrawl;
+		return {
+			key: 'firecrawl',
+			maxAttempts: limits.maxAttempts,
+			timeoutMs: limits.timeoutMs,
+			breaker: true,
+			empty: (page) => page.text.trim() === '',
+			run: async (signal) => {
+				const egress = this.#options.egress();
+				if (!egress) throw this.#egressUnavailable();
+				await this.#assertRobots(egress, url, signal, signal);
+				const page = await this.#options.adapters.firecrawl.page({
+					tenantId: input.tenantId,
+					url: url.toString(),
+					caller: oneOf(input.caller, 'caller', RESEARCH_CALLERS),
+					callerRef,
+					allowAgents: settings.allowAgents,
+					timeoutMs: limits.timeoutMs,
+					signal,
+				});
+				if (page.contentType.toLowerCase().includes('pdf')) {
+					throw this.#unsupported(page.contentType);
+				}
+				let reached: URL;
+				try {
+					reached = new URL(page.url);
+				} catch {
+					reached = new URL(url);
+				}
+				reached.hash = '';
+				this.#assertDomain(reached, settings);
+				/* Firecrawl followed a redirect: the page it read answers to the
+				   robots.txt of the address it ended on too. */
+				if (reached.toString() !== url.toString()) {
+					await this.#assertRobots(egress, reached, signal, signal);
+				}
+				if (Buffer.byteLength(page.text, 'utf8') > settings.fetchMaxBytes) {
+					throw this.#tooLarge(settings.fetchMaxBytes);
+				}
+				return {
+					title: page.title || url.hostname + url.pathname,
+					text: page.text,
+					redirected: reached.toString() !== url.toString(),
+				};
+			},
+		};
+	}
+
 	async #exportWalk<T extends { readonly id: string }>(
 		page: (after: ResearchPosition | null) => Promise<readonly T[]>,
 		at: (record: T) => number,
@@ -808,11 +1170,18 @@ export class ResearchService {
 
 	#adapter(key: ResearchAdapterKey): ResearchAdapter {
 		const adapters = this.#options.adapters;
-		return key === 'connector'
-			? adapters.connector
-			: key === 'recorded'
-				? adapters.recorded
-				: adapters.modelNative;
+		switch (key) {
+			case 'searxng':
+				return adapters.searxng;
+			case 'firecrawl':
+				return adapters.firecrawl;
+			case 'connector':
+				return adapters.connector;
+			case 'recorded':
+				return adapters.recorded;
+			default:
+				return adapters.modelNative;
+		}
 	}
 
 	#budgetExceeded(): ResearchServiceError {
@@ -928,22 +1297,12 @@ export class ResearchService {
 	async #download(
 		url: URL,
 		settings: ResearchSettings,
-		signal: AbortSignal | undefined,
-	): Promise<{
-		readonly title: string;
-		readonly text: string;
-		readonly redirected: boolean;
-	}> {
+		signal: AbortSignal,
+	): Promise<ReadPage> {
 		const egress = this.#options.egress();
-		if (!egress) {
-			throw new ResearchServiceError(
-				'RESEARCH_EGRESS_UNAVAILABLE',
-				'connectors.core is not composed, so no page can be fetched.',
-				409,
-			);
-		}
+		if (!egress) throw this.#egressUnavailable();
 		const deadline = AbortSignal.timeout(settings.fetchTimeoutMs);
-		const combined = signal ? AbortSignal.any([deadline, signal]) : deadline;
+		const combined = AbortSignal.any([deadline, signal]);
 		let target = url;
 		for (let hop = 0; ; hop += 1) {
 			await this.#assertRobots(egress, target, combined, deadline);
@@ -982,22 +1341,23 @@ export class ResearchService {
 				target = next;
 				continue;
 			}
-			if (response.exceeded) {
-				throw new ResearchServiceError(
-					'RESEARCH_FETCH_TOO_LARGE',
-					`The page is larger than ${settings.fetchMaxBytes} bytes.`,
-					413,
-				);
-			}
+			if (response.exceeded) throw this.#tooLarge(settings.fetchMaxBytes);
 			if (response.status < 200 || response.status > 299) {
-				throw this.#fetchFailed(`The page answered ${response.status}.`);
+				throw this.#fetchFailed(
+					`The page answered ${response.status}.`,
+					response.status >= 500,
+				);
 			}
 			return { ...this.#extract(response, target), redirected: hop > 0 };
 		}
 	}
 
-	#fetchFailed(message: string): ResearchServiceError {
-		return new ResearchServiceError('RESEARCH_FETCH_FAILED', message, 502);
+	/* A page failure belongs to the page, never to the adapter's health. */
+	#fetchFailed(message: string, retryable = false): ResearchServiceError {
+		return new ResearchServiceError('RESEARCH_FETCH_FAILED', message, 502, {
+			retryable,
+			health: false,
+		});
 	}
 
 	#timeout(): ResearchServiceError {
@@ -1005,6 +1365,31 @@ export class ResearchService {
 			'RESEARCH_FETCH_TIMEOUT',
 			'The page did not answer in time.',
 			504,
+			{ retryable: true, health: false },
+		);
+	}
+
+	#tooLarge(maxBytes: number): ResearchServiceError {
+		return new ResearchServiceError(
+			'RESEARCH_FETCH_TOO_LARGE',
+			`The page is larger than ${maxBytes} bytes.`,
+			413,
+		);
+	}
+
+	#egressUnavailable(): ResearchServiceError {
+		return new ResearchServiceError(
+			'RESEARCH_EGRESS_UNAVAILABLE',
+			'connectors.core is not composed, so no page can be fetched.',
+			409,
+		);
+	}
+
+	#unsupported(mediaType: string): ResearchServiceError {
+		return new ResearchServiceError(
+			'RESEARCH_CONTENT_UNSUPPORTED',
+			`Content of type ${mediaType || 'unknown'} cannot be read as text.`,
+			415,
 		);
 	}
 
@@ -1063,7 +1448,7 @@ export class ResearchService {
 			});
 		} catch {
 			if (deadline.aborted) throw this.#timeout();
-			throw this.#fetchFailed('The page could not be reached.');
+			throw this.#fetchFailed('The page could not be reached.', true);
 		}
 	}
 
@@ -1163,12 +1548,7 @@ export class ResearchService {
 	): { readonly title: string; readonly text: string } {
 		const [type = '', ...parameters] = response.contentType.split(';');
 		const mediaType = type.trim().toLowerCase();
-		const unsupported = () =>
-			new ResearchServiceError(
-				'RESEARCH_CONTENT_UNSUPPORTED',
-				`Content of type ${mediaType || 'unknown'} cannot be read as text.`,
-				415,
-			);
+		const unsupported = () => this.#unsupported(mediaType);
 		if (
 			mediaType === 'application/pdf' ||
 			response.body.subarray(0, 5).toString('latin1') === '%PDF-'

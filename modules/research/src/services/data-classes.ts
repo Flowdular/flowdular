@@ -38,6 +38,34 @@ export function researchDataClasses(
 				),
 		},
 		{
+			key: 'attempts',
+			label: 'Research adapter attempts',
+			defaultRetentionDays: 30,
+			exportable: true,
+			sweep: async (input) =>
+				(await service()).sweepAttempts(
+					input.tenantId,
+					input.cutoff,
+					input.limit,
+				),
+			export: async (input) =>
+				(await service()).exportAttempts(input.tenantId, input.sink),
+			/* An attempt names no account. Declared ahead of the queries, so the
+			   attempts of the member's own queries go while the query row still
+			   says whose they were. */
+			erase: async (input) =>
+				(await service()).eraseAttempts(
+					input.tenantId,
+					input.subject.accountId,
+					input.limit,
+				),
+			count: async (input) =>
+				(await service()).countAttempts(
+					input.tenantId,
+					input.subject.accountId,
+				),
+		},
+		{
 			key: 'queries',
 			label: 'Research queries',
 			defaultRetentionDays: 90,

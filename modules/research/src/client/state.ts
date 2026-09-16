@@ -1,11 +1,15 @@
 import { cell, createStore } from 'segment-state';
 import type { ResearchEvidenceDetail } from '../domain/types.ts';
-import type { ResearchEvidenceRow, ResearchQueryRow } from './api.ts';
+import type {
+	ResearchAttemptRow,
+	ResearchEvidenceRow,
+	ResearchQueryRow,
+} from './api.ts';
 
 /** `denied` is a 403 the shell could not hide; `error` is everything else. */
 export type ScreenStatus = 'idle' | 'loading' | 'denied' | 'error';
 
-export type ResearchTab = 'evidence' | 'queries';
+export type ResearchTab = 'evidence' | 'queries' | 'adapters';
 
 export function createResearchClientState(initialTab: ResearchTab) {
 	const store = createStore({
@@ -22,6 +26,11 @@ export function createResearchClientState(initialTab: ResearchTab) {
 		detail: cell<ResearchEvidenceDetail | null>(null),
 		detailStatus: cell<'idle' | 'loading' | 'error'>('idle'),
 		detailError: '',
+		attemptsQuery: cell<ResearchQueryRow | null>(null),
+		attempts: cell<readonly ResearchAttemptRow[]>([]),
+		attemptsStatus: cell<'idle' | 'loading' | 'error'>('idle'),
+		attemptsError: '',
+		adaptersReload: 0,
 	});
 	return { store, state: store.state };
 }

@@ -1,5 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
+	MAX_RETRY_AFTER_MS,
+	retryAfterMs,
+} from '../src/services/call-service.ts';
+import {
 	openConnectorsTestDatabase,
 	type ConnectorsTestDatabase,
 } from './support/database.ts';
@@ -31,6 +35,21 @@ beforeAll(async () => {
 		}
 		if (request.url.startsWith('/missing')) {
 			return { status: 404, body: '{"error":"absent"}' };
+		}
+		if (request.url.startsWith('/limited')) {
+			return { status: 429, body: '{}', headers: { 'retry-after': '7' } };
+		}
+		if (request.url.startsWith('/unavailable')) {
+			return {
+				status: 503,
+				body: '{}',
+				headers: {
+					'retry-after': new Date(Date.now() + 120_000).toUTCString(),
+				},
+			};
+		}
+		if (request.url.startsWith('/failing')) {
+			return { status: 500, body: '{}', headers: { 'retry-after': '7' } };
 		}
 		if (request.url.startsWith('/broken')) {
 			return { status: 503, body: '{"error":"down"}' };
@@ -602,5 +621,54 @@ describe('CONNECTORS-TEST-CALL', () => {
 		expect(JSON.stringify(logged)).not.toContain('Acme');
 		const [stored] = await service.list(TENANT, { limit: 200 });
 		expect(stored!.lastCallAt).not.toBeNull();
+	});
+});
+
+describe('CONNECTORS-RETRY-AFTER', () => {
+	it('reports the wait a 429 or a 503 asked for and nothing for another status', async () => {
+		const { instance, calls } = await fixture({
+			tenantId: TENANT,
+			baseUrl: base(),
+		});
+		const answer = (path: string) =>
+			calls.call({
+				tenantId: TENANT,
+				instanceId: instance.id,
+				operation: 'get',
+				input: { path },
+				caller: 'test',
+			});
+
+		const limited = await answer('/limited');
+		const unavailable = await answer('/unavailable');
+		const failing = await answer('/failing');
+		const plain = await answer('/things');
+
+		expect(limited).toMatchObject({ status: 429, retryAfterMs: 7_000 });
+		expect(unavailable.status).toBe(503);
+		expect(unavailable.retryAfterMs).toBeGreaterThan(100_000);
+		expect(unavailable.retryAfterMs).toBeLessThanOrEqual(120_000);
+		expect(failing).toMatchObject({ status: 500, retryAfterMs: null });
+		expect(plain).toMatchObject({ status: 200, retryAfterMs: null });
+		const logged = await instanceService(
+			shared.repository,
+			testVault(),
+		).listCalls(TENANT, {}, { limit: 200 });
+		expect(logged).toHaveLength(4);
+		expect(JSON.stringify(logged)).not.toMatch(/retry/i);
+	});
+
+	it('reads delta-seconds and HTTP dates, never negative and at most one day', () => {
+		const now = Date.parse('2026-09-16T12:00:00Z');
+		expect(retryAfterMs(429, '0', now)).toBe(0);
+		expect(retryAfterMs(503, 'Wed, 16 Sep 2026 12:00:30 GMT', now)).toBe(
+			30_000,
+		);
+		expect(retryAfterMs(429, 'Wed, 21 Oct 2015 07:28:00 GMT', now)).toBe(0);
+		expect(retryAfterMs(429, '999999', now)).toBe(MAX_RETRY_AFTER_MS);
+		expect(retryAfterMs(429, '5.5', now)).toBeNull();
+		expect(retryAfterMs(429, 'soon', now)).toBeNull();
+		expect(retryAfterMs(429, null, now)).toBeNull();
+		expect(retryAfterMs(502, '7', now)).toBeNull();
 	});
 });

@@ -37,6 +37,9 @@ function failure(error: unknown): Response {
 
 type ListKind = 'evidence' | 'queries';
 
+/* A chain order, an adapter configuration with its credential, or a test query. */
+const SETTINGS_BODY_BYTES = 8_192;
+
 export function createResearchRoutes(
 	auth: AuthRuntime,
 	runtime: ResearchRuntime,
@@ -292,6 +295,107 @@ export function createResearchRoutes(
 		},
 	});
 
+	const queryAttempts = defineEndpoint({
+		id: 'research.queries.attempts',
+		path: '/api/research/queries/:id/attempts',
+		methods: ['GET'],
+		access: { kind: 'permission', permission: RESEARCH_PERMISSIONS.read },
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			try {
+				return jsonResponse({
+					attempts: await (
+						await runtime.service()
+					).listAttempts(
+						principalFromContext(octane)!.tenantId,
+						octane.params.id ?? '',
+					),
+				});
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
+	const adapters = defineEndpoint({
+		id: 'research.adapters.list',
+		path: '/api/research/adapters',
+		methods: ['GET'],
+		access: { kind: 'permission', permission: RESEARCH_PERMISSIONS.settings },
+		resolveIdentity: endpointIdentityFromContext,
+		handler: async ({ octane }) => {
+			try {
+				return jsonResponse({
+					adapters: await runtime.admin.overview(
+						principalFromContext(octane)!.tenantId,
+					),
+				});
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
+	/* The three owner mutations share one shape: session proof first, a bounded
+	   body, the tenant and the actor from the principal. */
+	const ownerMutation = (
+		id: string,
+		path: string,
+		run: (
+			tenantId: string,
+			actor: string,
+			body: Record<string, unknown>,
+		) => Promise<unknown>,
+	) =>
+		defineEndpoint({
+			id,
+			path,
+			methods: ['POST'],
+			access: {
+				kind: 'permission',
+				permission: RESEARCH_PERMISSIONS.settings,
+			},
+			resolveIdentity: endpointIdentityFromContext,
+			handler: async ({ octane }) => {
+				const denial = sessionMutationDenial(octane, auth);
+				if (denial) return denial;
+				try {
+					const body = await readJsonObject(
+						octane.request,
+						SETTINGS_BODY_BYTES,
+					);
+					const principal = principalFromContext(octane)!;
+					return jsonResponse(
+						await run(principal.tenantId, principal.accountId, body),
+					);
+				} catch (error) {
+					return failure(error);
+				}
+			},
+		});
+
+	const updateSettings = ownerMutation(
+		'research.settings.update',
+		'/api/research/settings',
+		async (tenantId, actor, body) => ({
+			adapters: await runtime.admin.updateSettings(tenantId, actor, body),
+		}),
+	);
+	const configureAdapter = ownerMutation(
+		'research.adapters.configure',
+		'/api/research/adapters/configure',
+		async (tenantId, actor, body) => ({
+			adapters: await runtime.admin.configure(tenantId, actor, body),
+		}),
+	);
+	const testAdapter = ownerMutation(
+		'research.adapters.test',
+		'/api/research/adapters/test',
+		async (tenantId, actor, body) => ({
+			test: await runtime.admin.test(tenantId, actor, body),
+		}),
+	);
+
 	return [
 		listEvidence.serverRoute,
 		attach.serverRoute,
@@ -299,6 +403,11 @@ export function createResearchRoutes(
 		listQueries.serverRoute,
 		search.serverRoute,
 		fetchPage.serverRoute,
+		queryAttempts.serverRoute,
+		adapters.serverRoute,
+		updateSettings.serverRoute,
+		configureAdapter.serverRoute,
+		testAdapter.serverRoute,
 	] as const;
 }
 
@@ -309,4 +418,9 @@ export const endpoints = [
 	'research.queries.list',
 	'research.search.run',
 	'research.fetch.run',
+	'research.queries.attempts',
+	'research.adapters.list',
+	'research.settings.update',
+	'research.adapters.configure',
+	'research.adapters.test',
 ] as const;

@@ -30,6 +30,20 @@ export function createModelNativeAdapter(
 				input.query,
 			);
 			if (evidence === null) {
+				const health = await repository.adapterHealth(input.tenantId);
+				const unsupported = health.some(
+					(row) =>
+						row.adapter === 'model-native' &&
+						row.lastErrorCode === 'NATIVE_TOOL_UNSUPPORTED' &&
+						row.consecutiveFailures > 0,
+				);
+				if (unsupported) {
+					throw new ResearchServiceError(
+						'NATIVE_TOOL_UNSUPPORTED',
+						'The model provider does not pass the native web search on.',
+						409,
+					);
+				}
 				throw unavailable(
 					'No native web search for this query was reported in this run.',
 				);

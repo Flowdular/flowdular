@@ -1,9 +1,10 @@
 import { defineApiAgentTool } from '@flowdular/harness/tool-adapters';
-import type {
-	AgentNativeTool,
-	AgentTool,
-	AgentToolConsent,
-	AgentToolContext,
+import {
+	NATIVE_TOOL_UNSUPPORTED,
+	type AgentNativeTool,
+	type AgentTool,
+	type AgentToolConsent,
+	type AgentToolContext,
 } from '@flowdular/harness/runtime';
 import { RESEARCH_PERMISSIONS } from '../acl/permissions.ts';
 import type { ResearchFreshness } from '../domain/capability.ts';
@@ -88,7 +89,19 @@ export function researchAgentTools(
 					},
 					context.requestedBy,
 				);
-				return { adapter: answer.adapter, results: answer.results };
+				return {
+					adapter: answer.adapter,
+					results: answer.results,
+					attempts: answer.attempts.map(
+						({ adapter, attempt, outcome, errorCode, durationMs }) => ({
+							adapter,
+							attempt,
+							outcome,
+							errorCode,
+							durationMs,
+						}),
+					),
+				};
 			},
 		}),
 		defineApiAgentTool({
@@ -163,13 +176,23 @@ export function researchNativeTool(runtime: ResearchRuntime): AgentNativeTool {
 				blockedDomains: [...settings.denyDomains],
 			};
 		},
-		record: async (report, context) =>
-			(await runtime.service()).recordNative(
+		/* An unsupported report carries a code instead of results; the harness
+		   type names only results, so the code is read defensively. */
+		record: async (report, context) => {
+			const service = await runtime.service();
+			if (
+				(report as { readonly code?: unknown }).code === NATIVE_TOOL_UNSUPPORTED
+			) {
+				await service.recordNativeUnsupported(context.tenantId);
+				return;
+			}
+			await service.recordNative(
 				context.tenantId,
 				context.runId,
 				context.requestedBy,
 				report.query,
 				report.results,
-			),
+			);
+		},
 	};
 }

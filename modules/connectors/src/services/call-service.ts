@@ -61,6 +61,8 @@ export const MAX_TOKEN_LIFETIME_MS = 60 * 60 * 1_000;
  * between the claim and the call log would block that key forever.
  */
 export const CALL_KEY_CLAIM_MS = 5 * 60_000;
+/** The longest wait a Retry-After header is reported with. */
+export const MAX_RETRY_AFTER_MS = 86_400_000;
 
 export interface ConnectorCallLimits {
 	readonly timeoutMs: number;
@@ -264,6 +266,7 @@ export function prepareRequest(
 
 interface HttpExchange {
 	readonly status: number;
+	readonly retryAfter: string | null;
 	readonly text: string;
 	readonly bytes: number;
 	readonly exceeded: boolean;
@@ -296,6 +299,30 @@ async function readBounded(
 		bytes,
 		exceeded: false,
 	};
+}
+
+function headerText(value: string | string[] | undefined): string | null {
+	const text = Array.isArray(value) ? value[0] : value;
+	return text === undefined ? null : text;
+}
+
+/** Delta-seconds or an HTTP date, only on the two statuses that define a wait. */
+export function retryAfterMs(
+	status: number,
+	header: string | null,
+	now: number,
+): number | null {
+	if ((status !== 429 && status !== 503) || header === null) return null;
+	const value = header.trim();
+	let delay: number;
+	if (/^\d+$/.test(value)) {
+		delay = Number(value) * 1_000;
+	} else if (/^[A-Za-z]{3}/.test(value) && Number.isFinite(Date.parse(value))) {
+		delay = Date.parse(value) - now;
+	} else {
+		return null;
+	}
+	return Math.min(Math.max(delay, 0), MAX_RETRY_AFTER_MS);
 }
 
 /** Reads as an abort so the transport classifier records a timeout, not a reset. */
@@ -354,7 +381,12 @@ function sendPinned(
 		if (init.onWritten) request.on('finish', init.onWritten);
 		request.on('response', (response) => {
 			void readBounded(response, init.cap).then(
-				(payload) => resolve({ status: response.statusCode ?? 0, ...payload }),
+				(payload) =>
+					resolve({
+						status: response.statusCode ?? 0,
+						retryAfter: headerText(response.headers['retry-after']),
+						...payload,
+					}),
 				fail,
 			);
 		});
@@ -551,6 +583,7 @@ export class ConnectorCallService implements ConnectorCallCapability {
 				responseBytes: outcome.responseBytes,
 				body: outcome.body,
 				bodyPreview: outcome.bodyPreview,
+				retryAfterMs: outcome.retryAfterMs,
 			});
 		} catch (error) {
 			/* A ledger decision is the caller's answer, not the outcome of a call:
@@ -578,6 +611,7 @@ export class ConnectorCallService implements ConnectorCallCapability {
 				responseBytes: 0,
 				body: null,
 				bodyPreview: '',
+				retryAfterMs: null,
 			});
 		}
 	}
@@ -642,6 +676,7 @@ export class ConnectorCallService implements ConnectorCallCapability {
 			body: null,
 			bodyPreview: '',
 			replayed: true,
+			retryAfterMs: null,
 		};
 	}
 
@@ -813,6 +848,7 @@ export class ConnectorCallService implements ConnectorCallCapability {
 		readonly responseBytes: number;
 		readonly body: ConnectorJsonValue | null;
 		readonly bodyPreview: string;
+		readonly retryAfterMs: number | null;
 	}> {
 		const limits = this.#options.limits();
 		const signals = [AbortSignal.timeout(limits.timeoutMs)];
@@ -850,6 +886,7 @@ export class ConnectorCallService implements ConnectorCallCapability {
 				responseBytes: payload.bytes,
 				body: null,
 				bodyPreview: '',
+				retryAfterMs: null,
 			};
 		}
 		const status = payload.status;
@@ -868,6 +905,7 @@ export class ConnectorCallService implements ConnectorCallCapability {
 			responseBytes: payload.bytes,
 			body: jsonBody(payload.text),
 			bodyPreview: payload.text.slice(0, CALL_BODY_PREVIEW_BYTES),
+			retryAfterMs: retryAfterMs(status, payload.retryAfter, this.#now()),
 		};
 	}
 
@@ -876,9 +914,10 @@ export class ConnectorCallService implements ConnectorCallCapability {
 		result: Omit<ConnectorCall, 'id' | 'occurredAt'> & {
 			readonly body: ConnectorJsonValue | null;
 			readonly bodyPreview: string;
+			readonly retryAfterMs: number | null;
 		},
 	): Promise<ConnectorCallResult> {
-		const { body, bodyPreview, ...call } = result;
+		const { body, bodyPreview, retryAfterMs, ...call } = result;
 		const record: ConnectorCall = {
 			...call,
 			id: randomUUID(),
@@ -898,6 +937,7 @@ export class ConnectorCallService implements ConnectorCallCapability {
 			body,
 			bodyPreview,
 			replayed: false,
+			retryAfterMs,
 		};
 	}
 }

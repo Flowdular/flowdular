@@ -3,8 +3,8 @@
 	"schemaVersion": 1,
 	"id": "research.core",
 	"package": "@flowdular/module-research",
-	"version": "0.1.0",
-	"platformApi": "^0.1.16",
+	"version": "0.2.0",
+	"platformApi": "^0.1.18",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations"],
 	"platform": {
@@ -29,6 +29,14 @@
 	"requires": [
 		{
 			"id": "connectors.calls.v1",
+			"optional": true
+		},
+		{
+			"id": "connectors.definitions.v1",
+			"optional": true
+		},
+		{
+			"id": "connectors.instances.v1",
 			"optional": true
 		},
 		{

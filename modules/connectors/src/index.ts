@@ -40,6 +40,13 @@ export type {
 	ConnectorEgressLookup,
 	ConnectorEgressRefusal,
 } from './domain/egress.ts';
+export { CONNECTORS_INSTANCES_CAPABILITY } from './domain/instances.ts';
+export type {
+	ConnectorInstancesCapability,
+	ConnectorModuleCredentials,
+	ConnectorModuleInstance,
+	ConnectorModuleInstanceInput,
+} from './domain/instances.ts';
 export {
 	HTTP_JSON_DEFINITION,
 	HTTP_JSON_DEFINITION_KEY,

@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: connectors.core
-specVersion: 0.1.8
+specVersion: 0.1.9
 status: approved
 name: Connectors Core
 description: Gives a workspace a governed way to call external systems through connector definitions a module or the platform ships, instances an owner configures with sealed credentials and a host allowlist, a test call, a call log without payloads, and an explicit per-instance consent that lets workflows and agents use the connector as an external action, with a generic HTTP JSON connector as the reference.
@@ -38,6 +38,8 @@ invariants:
   - The agent tool has no server route. The harness runs it in this process, and a route under connectors.instances.read that made the credentialed call and returned the parsed body would give every member the connector itself. The run identity comes from the trusted tool context and never from a request header.
   - connectors.core declares three data classes to the platform catalogue. Calls carry a 400 day default retention, a sweep and an export; audit rows and instances are kept until a person deletes them and are exportable, with instances exported without anything of the credential but its fingerprint. The call sweep removes the idempotency keys claimed before the same cutoff, so no key is left naming a call that is gone.
   - connectors.core publishes its egress policy as the public capability connectors.egress.v1 for a module that opens one public URL of its own. check(url) accepts https on port 443 to a host name that is neither an address literal nor a local name and resolves to public addresses only, resolves on every call through a DNS client bounded to a few seconds that holds no shared worker thread, and answers the verified addresses with a lookup that answers those addresses alone, so a connection pinned to it cannot reach a later private answer; a refusal names its stable code and nothing is cached.
+  - connectors.core publishes connectors.instances.v1 for a module that keeps one instance of its own connector per workspace. upsertModuleInstance takes the workspace, the calling module id, a module key, the definition key, the base URL, optional credentials, the host allowlist, both consent flags and the actor; the instance at that module key has one identifier derived from the workspace, the module and the key, so the same key always names the same instance and two workspaces never share one. A definition registered by another module, or a module key whose instance already carries another definition, is refused with DEFINITION_FOREIGN before anything is written. The base URL, the port, the host allowlist and the credentials pass the same validation as an owner's save, credentials are sealed under the module keyring and never returned, and absent credentials keep the sealed credential and its authentication kind. The consent flags take the values given, a disabled instance stays disabled, and every change writes the audit rows the owner routes write. describeModuleInstance answers the instance of that module key without any credential, only whether one is held, or null.
+  - A call answered with status 429 or 503 reports the Retry-After header as retryAfterMs, from delta-seconds or an HTTP date read against the service clock, never negative and at most one day; every other answer, refusal, failure and replay reports null, and the call log stores nothing new.
 permissions:
   - id: connectors.instances.read
     description: Read connector definitions, instances without credentials and the call log of the active workspace.
@@ -350,6 +352,10 @@ outOfScope:
   - Inbound calls from external systems are the automations webhook triggers, not connectors.
   - Rate limiting per external system beyond the platform timeout and size caps is the definition's concern later.
 decisions:
+  - id: D-CONNECTORS-MODULE-INSTANCE-ID
+    question: How does a module find the instance it configured without a column of its own?
+    answer: The instance identifier is a digest of the workspace, the module id and the module key shaped as a UUID, so the instance table needs no migration, an owner route can never mint the same identifier, and identifiers stay unique across workspaces although the column is a global primary key. The instance keeps an ordinary name, the definition label followed by the module id, so the owner sees and governs it on the Connectors screen like any other.
+    decidedBy: default
   - id: D-CONNECTORS-SCOPE
     question: What is the first version?
     answer: The definition contract and registry, owner-configured instances with sealed credentials and host allowlists, test calls, a call log without payloads, workflow actions and agent tools behind per-instance consent, and the generic HTTP JSON connector as the reference.
@@ -451,3 +457,11 @@ acceptanceScenarios:
     given: Two workspaces with instances and calls.
     when: A runtime transaction bound to one workspace reads or writes any of them.
     then: Only that workspace's rows are visible or mutable and a row carrying another tenant identifier is rejected by the forced policy.
+  - id: CONNECTORS-MODULE-INSTANCE
+    given: A module that registered its own definition, a definition another module registered, and two workspaces.
+    when: The module upserts its instance with an api-key credential and agent consent, upserts it again without credentials, then with a bearer credential, describes it from both workspaces, disables it as the owner and upserts once more, and tries an instance of the foreign definition.
+    then: One instance exists per workspace and module key, the answers never carry a credential and only say one is held, the fingerprint stays without credentials and changes with them, the consent flags follow the input with an audit row per change, the other workspace describes nothing, the disabled instance stays disabled, and the foreign definition is refused with DEFINITION_FOREIGN and nothing written.
+  - id: CONNECTORS-RETRY-AFTER
+    given: An external system that answers 429 with Retry-After in seconds, 503 with Retry-After as an HTTP date, and 500 with a Retry-After header.
+    when: A call reaches each answer.
+    then: The 429 and 503 results report retryAfterMs from the header, the 500 result reports null, and no call log row carries the header.

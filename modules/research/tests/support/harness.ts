@@ -11,6 +11,7 @@ import type { ResearchSettings } from '../../src/domain/types.ts';
 import {
 	createResearchRuntime,
 	type ResearchRuntime,
+	type ResearchRuntimeOptions,
 } from '../../src/server/runtime.ts';
 
 export const ORIGIN = 'https://erp.example';
@@ -86,6 +87,7 @@ function match(pattern: string, path: string): Record<string, string> | null {
  */
 export async function openHarness(
 	settings: () => ResearchSettings,
+	runtime: Partial<Omit<ResearchRuntimeOptions, 'databases' | 'purpose'>> = {},
 ): Promise<Harness> {
 	const databases = createTestDatabaseProvider();
 	const auth = createAuthRuntime({
@@ -105,6 +107,7 @@ export async function openHarness(
 		purpose: 'test',
 		workspaceRoot: process.cwd(),
 		settings: async () => settings(),
+		...runtime,
 	});
 	const authRoutes = createAuthRoutes(auth);
 	const researchRoutes = createResearchRoutes(auth, research);

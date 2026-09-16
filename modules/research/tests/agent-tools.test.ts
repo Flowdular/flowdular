@@ -241,6 +241,13 @@ describe('research agent tools', () => {
 			{
 				adapter: 'model-native',
 				results: [expect.objectContaining({ evidenceId: evidence[0]!.id })],
+				attempts: [
+					expect.objectContaining({
+						adapter: 'model-native',
+						attempt: 1,
+						outcome: 'ok',
+					}),
+				],
 			},
 		]);
 

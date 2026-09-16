@@ -1,8 +1,12 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
 	definitionAllowedPorts,
 	type ConnectorDefinitionRegistry,
 } from '../domain/definitions.ts';
+import type {
+	ConnectorModuleInstance,
+	ConnectorModuleInstanceInput,
+} from '../domain/instances.ts';
 import {
 	CONNECTOR_AUTH_KINDS,
 	CONNECTOR_CALL_OUTCOMES,
@@ -72,6 +76,59 @@ export interface ConnectorCallListQuery {
 	readonly direction?: ConnectorListDirection | undefined;
 	readonly after?: ConnectorExportCursor | null | undefined;
 	readonly limit: number;
+}
+
+const MODULE_INSTANCE_KEY = /^[a-z][a-z0-9-]{0,63}$/;
+
+/* A digest of the workspace, the module and the key in UUID form (version 8),
+   so one module key names one instance per workspace and no owner route, which
+   mints random version 4 identifiers, can ever produce it. */
+export function moduleInstanceId(
+	tenantId: string,
+	moduleId: string,
+	key: string,
+): string {
+	const hex = createHash('sha256')
+		.update(
+			`connectors-module-instance\u0000${tenantId}\u0000${moduleId}\u0000${key}`,
+		)
+		.digest('hex');
+	const variant = ((parseInt(hex[16]!, 16) & 0x3) | 0x8).toString(16);
+	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+function textInput(
+	value: unknown,
+	field: string,
+	minimum: number,
+	maximum: number,
+): string {
+	if (typeof value !== 'string') {
+		throw new ConnectorsServiceError('INVALID_INPUT', `${field} must be text.`);
+	}
+	return bounded(value, field, minimum, maximum);
+}
+
+function moduleInstanceOf(
+	instance: ConnectorInstance,
+	moduleId: string,
+	key: string,
+): ConnectorModuleInstance {
+	return {
+		id: instance.id,
+		moduleId,
+		key,
+		definition: instance.definitionKey,
+		name: instance.name,
+		baseUrl: instance.baseUrl,
+		authKind: instance.authKind,
+		hasCredentials: instance.credentialFingerprint !== null,
+		allowedHosts: instance.allowedHosts,
+		allowAgents: instance.allowAgents,
+		allowWorkflows: instance.allowWorkflows,
+		status: instance.status,
+		updatedAt: instance.updatedAt,
+	};
 }
 
 const HOST_PATTERN =
@@ -461,6 +518,187 @@ export class ConnectorsService {
 		);
 		if (!removed) throw this.#missing();
 		this.#options.invalidate?.(tenant, existing.id);
+	}
+
+	/**
+	 * Creates or updates the one instance a module keeps under a key, through
+	 * the same validation, sealing and audit as the owner routes. The consent
+	 * flags take the values given and a disabled instance stays disabled.
+	 */
+	async upsertModuleInstance(
+		input: ConnectorModuleInstanceInput,
+	): Promise<ConnectorModuleInstance> {
+		const tenant = textInput(input.tenantId, 'tenantId', 1, 128);
+		const moduleId = textInput(input.moduleId, 'moduleId', 1, 64);
+		const key = textInput(input.key, 'key', 1, 64);
+		if (!MODULE_INSTANCE_KEY.test(key)) {
+			throw new ConnectorsServiceError(
+				'INVALID_INPUT',
+				'key must be a lowercase identifier of at most 64 characters.',
+			);
+		}
+		const actor = textInput(input.actor, 'actor', 1, 128);
+		const definition = this.#definition(
+			textInput(input.definition, 'definition', 1, 96),
+		);
+		if (definition.moduleId !== moduleId) throw this.#foreign(definition.key);
+		const id = moduleInstanceId(tenant, moduleId, key);
+		const existing = await this.#options.repository.findInstance(tenant, id);
+		if (existing && existing.definitionKey !== definition.key) {
+			throw this.#foreign(existing.definitionKey);
+		}
+		const url = this.#assertBaseUrl(
+			definition,
+			textInput(input.baseUrl, 'baseUrl', 1, 2_048),
+		);
+		if (!Array.isArray(input.allowedHosts)) {
+			throw new ConnectorsServiceError(
+				'INVALID_INPUT',
+				'allowedHosts must be a list of host names.',
+			);
+		}
+		const allowedHosts = allowedHostList(
+			input.allowedHosts.map((entry, index) =>
+				textInput(entry, `allowedHosts[${index}]`, 1, MAX_HOST_CHARACTERS),
+			),
+			normalizeHost(url.hostname),
+		);
+		const supplied = input.credentials;
+		const authKind =
+			supplied === undefined
+				? (existing?.authKind ?? 'none')
+				: oneOf(
+						typeof supplied?.kind === 'string' ? supplied.kind : '',
+						'credentials.kind',
+						CONNECTOR_AUTH_KINDS,
+					);
+		if (
+			(supplied !== undefined || !existing) &&
+			!definition.authKinds.includes(authKind)
+		) {
+			throw new ConnectorsServiceError(
+				'AUTH_KIND_UNSUPPORTED',
+				`Definition ${definition.key} does not support ${authKind}.`,
+			);
+		}
+		const sealed =
+			supplied === undefined
+				? null
+				: this.#seal(
+						tenant,
+						id,
+						this.#credentials(authKind, supplied, {
+							allowedHosts,
+							definition,
+						}),
+					);
+		const allowWorkflows = input.allowWorkflows === true;
+		const allowAgents = input.allowAgents === true;
+		const timestamp = this.#now();
+		if (!existing) {
+			await this.#write(() =>
+				this.#options.repository.createInstance(
+					{
+						id,
+						tenantId: tenant,
+						definitionKey: definition.key,
+						name: `${definition.label} (${moduleId})`.slice(0, 120).trim(),
+						baseUrl: url.href,
+						authKind,
+						credentialFingerprint: sealed?.fingerprint ?? null,
+						allowedHosts,
+						allowWorkflows: false,
+						allowAgents: false,
+						status: 'active',
+						lastCallAt: null,
+						createdAt: timestamp,
+						updatedAt: timestamp,
+						credential: sealed?.envelope ?? null,
+					},
+					this.#audit(tenant, actor, 'instance.created', id, timestamp, {
+						definitionKey: definition.key,
+						authKind,
+						moduleId,
+					}),
+				),
+			);
+		} else {
+			await this.#write(() =>
+				this.#options.repository.updateInstance(
+					{
+						...existing,
+						baseUrl: url.href,
+						authKind,
+						allowedHosts,
+						updatedAt: timestamp,
+						credentialFingerprint:
+							sealed === null
+								? existing.credentialFingerprint
+								: sealed.fingerprint,
+						credential: sealed === null ? existing.credential : sealed.envelope,
+					},
+					this.#audit(tenant, actor, 'instance.updated', id, timestamp, {
+						credentialChanged: sealed !== null,
+						moduleId,
+					}),
+				),
+			);
+			this.#options.invalidate?.(tenant, id);
+		}
+		const flagsBefore = existing ?? {
+			allowWorkflows: false,
+			allowAgents: false,
+		};
+		if (
+			flagsBefore.allowWorkflows !== allowWorkflows ||
+			flagsBefore.allowAgents !== allowAgents
+		) {
+			const consentedAt = this.#now();
+			await this.#options.repository.setConsent(
+				tenant,
+				id,
+				{ allowWorkflows, allowAgents, updatedAt: consentedAt },
+				this.#audit(
+					tenant,
+					actor,
+					'instance.consent-changed',
+					id,
+					consentedAt,
+					{
+						allowWorkflows,
+						allowAgents,
+						moduleId,
+					},
+				),
+			);
+			this.#options.invalidate?.(tenant, id);
+		}
+		const stored = await this.#options.repository.findInstance(tenant, id);
+		if (!stored) throw this.#missing();
+		return moduleInstanceOf(stored, moduleId, key);
+	}
+
+	async describeModuleInstance(input: {
+		readonly tenantId: string;
+		readonly moduleId: string;
+		readonly key: string;
+	}): Promise<ConnectorModuleInstance | null> {
+		const tenant = textInput(input.tenantId, 'tenantId', 1, 128);
+		const moduleId = textInput(input.moduleId, 'moduleId', 1, 64);
+		const key = textInput(input.key, 'key', 1, 64);
+		const found = await this.#options.repository.findInstance(
+			tenant,
+			moduleInstanceId(tenant, moduleId, key),
+		);
+		return found ? moduleInstanceOf(found, moduleId, key) : null;
+	}
+
+	#foreign(definitionKey: string): ConnectorsServiceError {
+		return new ConnectorsServiceError(
+			'DEFINITION_FOREIGN',
+			`Definition ${definitionKey} does not belong to the calling module.`,
+			403,
+		);
 	}
 
 	async #status(

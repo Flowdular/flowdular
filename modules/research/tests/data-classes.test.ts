@@ -51,7 +51,7 @@ function byKey(classes: readonly DataClassDeclaration[], key: string) {
 }
 
 describe('research data classes', () => {
-	it('RESEARCH-RETENTION declares evidence, queries and pages with their periods', () => {
+	it('RESEARCH-RETENTION declares evidence, attempts, queries and pages with their periods', () => {
 		const classes = researchDataClasses(async () =>
 			researchService({ repository: shared.repository }),
 		);
@@ -65,6 +65,7 @@ describe('research data classes', () => {
 			]),
 		).toEqual([
 			['evidence', 180, true, 'function', 'function'],
+			['attempts', 30, true, 'function', 'function'],
 			['queries', 90, true, 'function', 'function'],
 			['pages', 1, false, 'function', 'function'],
 		]);
@@ -111,6 +112,14 @@ describe('research data classes', () => {
 		const evidence = byKey(classes, 'evidence');
 		const queries = byKey(classes, 'queries');
 		const pages = byKey(classes, 'pages');
+		const attempts = byKey(classes, 'attempts');
+		expect(
+			await attempts.sweep!({
+				tenantId: TENANT,
+				cutoff: new Date(NOW - 30 * DAY),
+				limit: 100,
+			}),
+		).toEqual({ removed: 1 });
 		expect(
 			await evidence.sweep!({
 				tenantId: TENANT,
@@ -153,10 +162,29 @@ describe('research data classes', () => {
 				(row) => Object.keys(row).includes('contentSha256') || 'query' in row,
 			),
 		).toEqual([true, true, true]);
+		const attemptRows: Record<string, unknown>[] = [];
+		expect(
+			(
+				await attempts.export!({
+					tenantId: TENANT,
+					sink: { write: async (row) => void attemptRows.push(row) },
+				})
+			).rows,
+		).toBe(1);
+		expect(attemptRows[0]).toMatchObject({
+			kind: 'search',
+			adapter: 'recorded',
+			outcome: 'ok',
+		});
 
 		const subject = { accountId: 'account-ada' };
 		expect(await evidence.count!({ tenantId: TENANT, subject })).toBe(2);
 		expect(await queries.count!({ tenantId: TENANT, subject })).toBe(1);
+		expect(await attempts.count!({ tenantId: TENANT, subject })).toBe(1);
+		expect(
+			await attempts.erase!({ tenantId: TENANT, subject, limit: 100 }),
+		).toEqual({ removed: 1, truncated: false });
+		expect(await attempts.count!({ tenantId: TENANT, subject })).toBe(0);
 		expect(
 			await evidence.erase!({ tenantId: TENANT, subject, limit: 100 }),
 		).toEqual({

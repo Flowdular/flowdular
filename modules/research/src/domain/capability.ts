@@ -35,10 +35,27 @@ export interface ResearchSearchInput {
 	readonly signal?: AbortSignal;
 }
 
+/** One try of one adapter, as the chain made it. */
+export interface ResearchSearchAttempt {
+	readonly adapter: string;
+	/** 0 for an adapter the circuit breaker skipped. */
+	readonly attempt: number;
+	readonly outcome:
+		| 'ok'
+		| 'empty'
+		| 'retryable'
+		| 'permanent'
+		| 'skipped-circuit';
+	readonly errorCode: string | null;
+	readonly durationMs: number;
+}
+
 export interface ResearchSearch {
 	search(input: ResearchSearchInput): Promise<{
 		readonly results: readonly ResearchResult[];
+		/** The adapter that produced the answer. */
 		readonly adapter: string;
+		readonly attempts: readonly ResearchSearchAttempt[];
 	}>;
 }
 

@@ -54,6 +54,11 @@ export interface ConnectorCallResult {
 	 * `bodyPreview` are empty rather than the original answer.
 	 */
 	readonly replayed: boolean;
+	/**
+	 * The wait a 429 or 503 answer asked for in its Retry-After header, at most
+	 * one day. Null for every other answer, refusal, failure and replay.
+	 */
+	readonly retryAfterMs: number | null;
 }
 
 export interface ConnectorCallCapability {
