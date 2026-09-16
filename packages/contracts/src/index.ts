@@ -4,7 +4,7 @@
    removed or changed. The surface is pinned by
    packages/kernel/platform-api.snapshot.d.ts; `pnpm platform-api:check` fails
    when the surface changes without a bump here. */
-export const PLATFORM_API_VERSION = '0.1.14';
+export const PLATFORM_API_VERSION = '0.1.15';
 
 /* The workspace time zone: one tenant setting, declared by the module named
    here and read by any module that shows or schedules a local time. The id, the
@@ -192,6 +192,43 @@ export interface ModuleSpecDecision {
 	readonly decidedBy: 'user' | 'default';
 }
 
+export interface ModuleSpecResearch {
+	readonly adapter: 'model-native' | 'connector' | 'recorded';
+	readonly allowDomains?: readonly string[];
+	readonly denyDomains?: readonly string[];
+	readonly monthlyQueryBudget?: number;
+	readonly evidenceOwner: string;
+}
+
+export interface ModuleSpecAdapterMapping {
+	readonly from?: string;
+	readonly to: string;
+	readonly transform: 'rename' | 'constant' | 'format' | 'lookup';
+	readonly value?: string | null;
+}
+
+export interface ModuleSpecAdapter {
+	readonly id: string;
+	readonly direction: 'source' | 'sink';
+	readonly connector: string;
+	readonly operation: string;
+	/* An import port id for a source, a list export id for a sink. */
+	readonly port: string;
+	/* Five-field cron; absent or null runs on demand only. */
+	readonly schedule?: string | null;
+	readonly mapping: readonly ModuleSpecAdapterMapping[];
+	/* Fixture relative to the module; a sandbox session refuses an adapter without one. */
+	readonly recorded?: string;
+}
+
+export interface ModuleSpecTemplate {
+	readonly id: string;
+	readonly title: string;
+	readonly inputEntity: string;
+	readonly format: 'pdf' | 'docx';
+	readonly body: string;
+}
+
 export interface ModuleSpec {
 	readonly schemaVersion: 1 | 2;
 	readonly id: string;
@@ -233,6 +270,9 @@ export interface ModuleSpec {
 	readonly agentTools?: readonly ModuleSpecAgentTool[];
 	readonly outOfScope?: readonly string[];
 	readonly decisions?: readonly ModuleSpecDecision[];
+	readonly research?: ModuleSpecResearch;
+	readonly adapters?: readonly ModuleSpecAdapter[];
+	readonly templates?: readonly ModuleSpecTemplate[];
 }
 
 /** A specification that carries the version 2 domain model. */

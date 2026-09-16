@@ -22,7 +22,7 @@ Sandbox facts for an edit session (`packages/sandbox/src/server/sessions.ts`): t
 
 ## 2. Classify the change and use its touch list
 
-Change classes: endpoint, table, column, screen, widget, permission, setting, cross-module read, agent tool, business agent, fix.
+Change classes: endpoint, table, column, screen, widget, permission, setting, cross-module read, agent tool, business agent, research, adapter, template, fix.
 
 New endpoint:
 
@@ -68,9 +68,21 @@ Agent tool: use `agent-tool-design` as a separate phase; add the approved scenar
 
 Business agent: use `business-agent-design` as a separate phase; add the approved behavior and refusal scenarios, declare the `agents.core` module and package dependencies, define it in `src/agent/agents.ts`, and register it with `context.agentDefinitions.register(...)`. A code definition owns behavior and a maximum exact tool allowlist. Provider, model, active state, and the reduced enabled tools remain tenant binding data.
 
+Research (a `research` section):
+
+1. `spec/module.yaml`: the section, `research.search.v1`, `research.fetch.v1` or `research.evidence.v1` under `requires`, `research.core` under `dependencies`, a scenario where a finding without evidence is refused; `specVersion` bump.
+2. `src/research.ts`: the declaration, in the shape `module new` writes (`RESEARCH_CAPABILITIES` and `<CONSTANT>_RESEARCH ... as const satisfies ModuleSpecResearch`), and `research-fixtures.json` with the queries and pages the scenarios need.
+3. The service that stores a finding on the `evidenceOwner` record: an `evidenceIds` input, each id checked with `get(tenantId, id)` on `research.evidence.v1`, `attach(tenantId, '<module id>', recordId, evidenceIds)` before the finding commits; the record screen lists `list(...)` and links `workspaceViewHref('research-evidence', { id })`.
+4. `module.json` `requires` and `dependencies`, `package.json` `@flowdular/module-research`.
+5. Tests on faked capabilities: a finding without evidence and an evidence id of another tenant are refused.
+
+Adapter (an `adapters[]` entry): `spec/module.yaml` with the entry (and `recorded` in a sandbox session) and a `specVersion` bump; `src/adapters/<name>.ts` in the shape `module new` writes; then the connector definition, the port or list export, the run table migration, the job runner in `src/platform.ts`, the tenant setting holding the instance id, `adapters/<name>.recorded.json` and the tests as a separate `integration-adapter` phase.
+
+Template (a `templates[]` entry): `spec/module.yaml` with the entry and an `outOfScope[]` entry while PDF generation is on the card's gap list, `specVersion` bump; `templates/<name>.md` reading only fields of `inputEntity`; `templates` in `package.json` `files`. No render call until the card lists document rendering.
+
 ## 3. Versions and spec
 
-Bump `spec/module.yaml` `specVersion`, `module.json` `version` and `package.json` `version` together with `pnpm flowdular module version bump <id> <patch|minor|major> --apply` (patch for a fix, minor for a new endpoint, screen or column); it also retargets every dependent `^` range that stops matching. A new `context.capabilities.register` id goes under `provides` in `module.json`; a new `context.capabilities.get` id goes under `requires`. Add an acceptance scenario for every new behaviour and an invariant for every new rule; the scenario id matches `^[A-Z][A-Z0-9-]+$`. In the sandbox the business manager leaves the changed spec in `draft` or `in-review`; only the operator approval route records the approved hash and permits implementation.
+Bump `spec/module.yaml` `specVersion`, `module.json` `version` and `package.json` `version` together with `pnpm flowdular module version bump <id> <patch|minor|major> --apply` (patch for a fix, minor for a new endpoint, screen, column, adapter, template or research section); it also retargets every dependent `^` range that stops matching. A new `context.capabilities.register` id goes under `provides` in `module.json`; a new `context.capabilities.get` id goes under `requires`. Add an acceptance scenario for every new behaviour and an invariant for every new rule; the scenario id matches `^[A-Z][A-Z0-9-]+$`. In the sandbox the business manager leaves the changed spec in `draft` or `in-review`; only the operator approval route records the approved hash and permits implementation.
 
 ## 4. Gates
 

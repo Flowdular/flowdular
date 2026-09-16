@@ -1,0 +1,28 @@
+schemaVersion: 1
+# In addition to the new-module file set; the scaffold writes the first three
+# kinds from the spec sections.
+conditional:
+  research:
+    whenSpecSection: research
+    required:
+      - src/research.ts
+      - research-fixtures.json
+      - the evidence attach in the service that stores a finding
+      - tests for a finding without evidence and for another tenant's evidence
+  adapters:
+    whenSpecSection: adapters
+    required:
+      - src/adapters/<name>.ts for every adapter
+      - the recorded fixture, adapters/<name>.recorded.json unless the entry names another path
+      - tests replaying the recorded fixture
+  templates:
+    whenSpecSection: templates
+    required:
+      - templates/<name>.md for every template body
+      - templates in package.json files
+  agent:
+    whenSpecSection: agentTools
+    required:
+      - src/agent/tools.ts with evidenceIds on every tool that stores a finding
+      - src/agent/agents.ts
+      - tests/agent-tools.test.ts

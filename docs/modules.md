@@ -39,6 +39,17 @@ spec instead of scanning the repository. Every section is optional and a
   `agentTools[]`: `id`, `permission`, `description`, `risk`.
 - `outOfScope[]` records what is deliberately not built; `decisions[]` records
   each interview question, its answer and whether a user or a default decided.
+- `research`: `adapter` (`model-native`, `connector` or `recorded`),
+  `allowDomains`, `denyDomains`, `monthlyQueryBudget`, and `evidenceOwner`, the
+  entity whose records evidence attaches to through `research.core`.
+- `adapters[]`: `id` (prefixed with the module id), `direction` (`source` or
+  `sink`), `connector` and `operation` (a `connectors.core` definition and
+  operation key), `port` (an import port id for a source, a list export id for a
+  sink), `schedule` (a five-field cron or `null`), `mapping[]` (`from`, `to`,
+  `transform` of `rename`, `constant`, `format` or `lookup`, `value`) and
+  `recorded` (`adapters/<name>.recorded.json`).
+- `templates[]`: `id`, `title`, `inputEntity`, `format` (`pdf` or `docx`) and
+  `body` (`templates/<name>.md`).
 
 Validation is more than the schema: an action permission must exist in
 `permissions`, every `entity` must name an entity, screen `columns` and
@@ -52,6 +63,19 @@ at least one entity (`SPEC_ACTION_PERMISSION_UNKNOWN`, `SPEC_ENTITY_UNKNOWN`,
 `SPEC_REFERENCE_UNKNOWN`, `SPEC_ENUM_VALUES_REQUIRED`, `SPEC_ENTITY_REQUIRED`,
 `SPEC_DUPLICATE_ID`). A client without a list screen, or a stored entity with no
 tenant-unique field, is a warning.
+
+The three optional sections have checks of their own. `research.evidenceOwner`
+and `templates[].inputEntity` must name an entity (`SPEC_ENTITY_UNKNOWN`). An
+adapter id must start with the module id (`SPEC_ADAPTER_ID_NAMESPACE`); a source
+adapter's `port` must belong to this module or a declared dependency
+(`SPEC_ADAPTER_PORT_UNKNOWN`); `schedule` must be a cron `automations.core`
+accepts: minute, hour, day of month, month and day of week, each `*`, a number,
+a three letter month or weekday name, a list, a range or a step
+(`SPEC_ADAPTER_SCHEDULE_INVALID`); and a mapping needs `from` unless it is a
+`constant` and `value` unless it is a `rename` (`SPEC_ADAPTER_MAPPING_INVALID`).
+`recorded` stays optional here; a sandbox session refuses a live adapter in its
+own `spec-schema` gate (`SANDBOX_LIVE_ADAPTER_REFUSED`, see
+[sandbox.md](sandbox.md)).
 
 ### 2. Scaffold
 
@@ -81,6 +105,15 @@ mapping, the create endpoint's input validation (required fields only; the
 lifecycle field is set by the service), and the columns of the first `list`
 screen become the table view. Further entities are the implementing agent's
 work.
+
+The optional sections scaffold declarations and fixtures, nothing that runs:
+`src/research.ts` and `research-fixtures.json` (one example query and page in
+the shape the recorded research adapter reads) for `research`; per adapter one
+`src/adapters/<name>.ts` (the id without the module id, dots turned into
+hyphens) and one recorded fixture stub at the declared `recorded` path, else
+`adapters/<name>.recorded.json`; and one `templates/<name>.md` per template
+body, with `templates` added to the package `files`. Implementing them follows the `module-new` and `integration-adapter`
+skills.
 
 Files are written through the workspace Prettier, so the format gate passes
 without a rewrite. A directory that already holds `spec/module.yaml` or

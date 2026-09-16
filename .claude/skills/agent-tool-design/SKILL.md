@@ -193,6 +193,31 @@ nothing.
 
 Declare `settings: defineModuleSettings({...})` (from `@flowdular/kernel`) by returning it from the composition, keep a reference to `PlatformServerContext.settings` in the tool factory, and read it per call as `settings.get<number>(context.tenantId, '<module>.core', 'key')` at request time, never at boot. Declared settings render in the module's drawer under Administration, Modules automatically.
 
+## 6. Research and evidence
+
+When the spec declares `research`, agents gather outside facts through `research.core`, and a module's own tools record what the agent concluded. Two rules decide the design.
+
+**Evidence ids travel with findings.** `research.search` and `research.fetch` belong to `research.core` (`risk: 'external'`, `idempotency: 'none'`, behind the harness consent gate `research.consent`, which refuses with `TOOL_NOT_CONSENTED` until an owner turns on `research.core.allowAgents`). Every result the run keeps and every page it reads becomes an evidence row carrying the run id, and `research.fetch` answers its `evidenceId`. A module never registers a tool that opens a URL. The module tool that stores a finding on the `evidenceOwner` record takes the ids in its input:
+
+```ts
+inputSchema: {
+	type: 'object',
+	additionalProperties: false,
+	required: ['recordId', 'finding', 'evidenceIds'],
+	properties: {
+		recordId: { type: 'string' },
+		finding: { type: 'string' },
+		evidenceIds: { type: 'array', items: { type: 'string' } },
+	},
+},
+```
+
+The service it calls bounds the list (at least one id, at most a small fixed number), resolves each id with `get(tenantId, id)` on `research.evidence.v1` so an id of another tenant or an invented one refuses the whole call, calls `attach(tenantId, '<module id>', recordId, evidenceIds)`, and only then commits the finding, so a failed attach never leaves a finding without its sources. The tool output echoes the ids, and an agent's `outputSchema` carries them beside each finding, so a reviewer, an approval and a later document can all reach the source.
+
+**The model never computes.** A score, a premium, a total or a price per square metre is a module action or tool that runs deterministic code over stored inputs and a versioned rule or table, and answers the value with that version. The agent passes references (record ids, evidence ids, the inputs it read) and never a figure of its own; a tool never stores a number the model supplied as the result, and an `outputSchema` field for a computed value is filled from the action's answer, not from generation.
+
+Tests for this section: a finding without evidence and a finding citing another tenant's evidence are refused before any write; the computation answers the same value for the same inputs and names its rule version; a run without research consent sees `TOOL_NOT_CONSENTED` and writes nothing.
+
 ## Pitfalls
 
 - A tool id equal to an endpoint id is a convention, not a requirement; keep them parallel for traceability. A read-by-id tool with no dedicated endpoint reuses the read endpoint id under the same permission.
