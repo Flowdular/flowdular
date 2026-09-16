@@ -93,4 +93,11 @@ authentication. It skips already-published identical tarballs and stops if a
 version exists with different bytes. No npm publication is performed by packing,
 smoke testing or the default publication preview.
 
+The `SDK consumer smoke` workflow (`.github/workflows/sdk-release.yml`, job
+`consumer`) runs the pack and the smoke on every pull request and push to main
+that touches `packages`, `modules` or `scripts`. It never publishes: its token
+can only read the repository, and the packed tarballs are kept as an Actions
+artifact only after a merge to main. `pnpm verify` is not repeated there, the
+CI workflow owns it.
+
 The SDK is assembled from private internal workspaces. Import UI from `@flowdular/sdk/ui` and styles from `@flowdular/sdk/ui/styles`; use `@flowdular/sdk/server`, `client`, `contracts` or `modules/<name>` for other surfaces. There is no root SDK barrel, so browser imports do not load server entrypoints. See [npm publication](npm-publication.md).
