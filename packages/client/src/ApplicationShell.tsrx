@@ -37,7 +37,7 @@ import {
 	toggleNavigationGroup,
 	type ShellView,
 } from './state.ts';
-import '@flowdular/ui';
+import { TableLocaleContext, type TableLocale } from '@flowdular/ui';
 import './shell/shell.css';
 
 export type { ApplicationShellProps } from './shell/types.ts';
@@ -51,7 +51,18 @@ export function ApplicationShell(props: ApplicationShellProps) @{
    cache without exposing raw module keys after HMR. Rebuilding with the same
    locale is side-effect free for subscribers. */
 	registerModuleTranslations(props.contributions ?? []);
-	const { t } = useTranslation();
+	const { locale, t } = useTranslation();
+	const tableLocale = useMemo<TableLocale>(
+		() => ({
+			locale,
+			expand: t('shell.table.expand'),
+			collapse: t('shell.table.collapse'),
+			moreActions: t('shell.table.moreActions'),
+			copy: t('shell.table.copy'),
+			copied: t('shell.table.copied'),
+		}),
+		[locale],
+	);
 	const shell = useMemo(() => createShellState(props.initialView), [
 		props.initialView,
 	]);
@@ -481,14 +492,16 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 					onNavigate={navigate}
 					onSignOut={() => void props.onSignOut()}
 				/>
-				<WorkspaceContent
-					key={props.identity.tenantId}
-					activeView={effectiveView}
-					extensionView={activeExtensionView}
-					widgets={visibleWidgets}
-					tenantName={activeTenantName}
-					displayName={props.identity.displayName}
-				/>
+				<TableLocaleContext.Provider value={tableLocale}>
+					<WorkspaceContent
+						key={props.identity.tenantId}
+						activeView={effectiveView}
+						extensionView={activeExtensionView}
+						widgets={visibleWidgets}
+						tenantName={activeTenantName}
+						displayName={props.identity.displayName}
+					/>
+				</TableLocaleContext.Provider>
 			</main>
 			@if (navigationOpen) {
 				<button

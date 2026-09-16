@@ -2,6 +2,9 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	CellNumber,
+	CellText,
+	CellTime,
 	EmptyState,
 	Icon,
 	PageHeader,
@@ -18,7 +21,7 @@ import {
 	MeteringApiError,
 	meteringErrorMessage,
 } from './api.ts';
-import { numberLabel, screenSurface, timestampLabel } from './presentation.ts';
+import { screenSurface } from './presentation.ts';
 import { createLimitsClientState } from './state.ts';
 
 export interface LimitsViewProps {
@@ -32,34 +35,36 @@ function columns(
 		{
 			key: 'meter',
 			header: t('metering.limits.column.meter'),
-			width: '34%',
-			cell: (limit) => <span class="ui-mono">{limit.meter}</span>,
+			width: 'auto',
+			cell: (limit) => <CellText value={limit.meter} mono />,
 		},
 		{
 			key: 'monthlyLimit',
 			header: t('metering.limits.column.monthlyLimit'),
-			width: '20%',
+			width: '140px',
 			numeric: true,
-			cell: (limit) => numberLabel(limit.monthlyLimit),
+			cell: (limit) => <CellNumber value={limit.monthlyLimit} />,
 		},
 		{
 			key: 'used',
 			header: t('metering.limits.column.used'),
-			width: '16%',
+			width: '130px',
 			numeric: true,
-			cell: (limit) => numberLabel(used.get(limit.meter) ?? 0),
+			cell: (limit) => <CellNumber value={used.get(limit.meter) ?? 0} />,
 		},
 		{
 			key: 'setBy',
 			header: t('metering.limits.column.setBy'),
-			width: '16%',
-			cell: (limit) => limit.setBy,
+			width: '180px',
+			priority: 3,
+			cell: (limit) => <CellText value={limit.setBy} />,
 		},
 		{
 			key: 'updatedAt',
 			header: t('metering.limits.column.updatedAt'),
-			width: '14%',
-			cell: (limit) => timestampLabel(limit.updatedAt),
+			width: '170px',
+			priority: 2,
+			cell: (limit) => <CellTime value={limit.updatedAt} />,
 		},
 	];
 }

@@ -2,6 +2,10 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	CellMuted,
+	CellTag,
+	CellText,
+	CellTime,
 	ConfirmDialog,
 	Drawer,
 	EmptyState,
@@ -12,7 +16,6 @@ import {
 	SearchField,
 	Select,
 	TableCard,
-	Tag,
 	ToastHost,
 	toasts,
 	type TableAction,
@@ -51,7 +54,6 @@ import {
 	consentLabel,
 	instanceStatusLabel,
 	instanceStatusTone,
-	timestampLabel,
 } from './presentation.ts';
 import {
 	beginLoad,
@@ -85,67 +87,81 @@ interface InstanceListing {
 	readonly pageSize: number;
 }
 
+/* The connector and its status stay on screen; the definition, the consents
+   and the last call hide next, the address and the authentication first. */
 function columns(): readonly TableColumn<ConnectorInstance>[] {
 	return [
 		{
 			key: 'name',
 			header: t('connectors.column.name'),
-			width: '18%',
+			width: 'auto',
 			value: (instance) => instance.name,
-			cell: (instance) => <b>{instance.name}</b>,
+			cell: (instance) => <CellText value={instance.name} strong />,
 		},
 		{
 			key: 'definition',
 			header: t('connectors.column.definition'),
-			width: '12%',
-			cell: (instance) => <span class="ui-mono">{instance.definitionKey}</span>,
+			width: '160px',
+			priority: 2,
+			cell: (instance) => <CellText value={instance.definitionKey} mono />,
 		},
 		{
 			key: 'baseUrl',
 			header: t('connectors.column.baseUrl'),
-			width: '20%',
-			cell: (instance) => <span class="ui-mono">{instance.baseUrl}</span>,
+			width: '220px',
+			priority: 3,
+			cell: (instance) => <CellText value={instance.baseUrl} mono />,
 		},
 		{
 			key: 'authKind',
 			header: t('connectors.column.authKind'),
-			width: '12%',
+			width: '140px',
+			priority: 3,
 			cell: (instance) =>
-				<span>{t('connectors.authKind.' + instance.authKind)}</span>,
+				<CellText value={t('connectors.authKind.' + instance.authKind)} />,
 		},
 		{
 			key: 'status',
 			header: t('connectors.column.status'),
-			width: '10%',
+			width: '120px',
 			cell: (instance) =>
-				<Tag
+				<CellTag
 					tone={instanceStatusTone(instance.status)}
 					dot
-				>{instanceStatusLabel(instance.status)}</Tag>,
+					label={instanceStatusLabel(instance.status)}
+				/>,
 		},
 		{
 			key: 'allowWorkflows',
 			header: t('connectors.column.allowWorkflows'),
-			width: '9%',
+			width: '120px',
+			priority: 2,
 			cell: (instance) =>
-				<Tag tone={instance.allowWorkflows ? 'info' : 'neutral'}>{consentLabel(
-					instance.allowWorkflows,
-				)}</Tag>,
+				<CellTag
+					tone={instance.allowWorkflows ? 'info' : 'neutral'}
+					label={consentLabel(instance.allowWorkflows)}
+				/>,
 		},
 		{
 			key: 'allowAgents',
 			header: t('connectors.column.allowAgents'),
-			width: '9%',
+			width: '120px',
+			priority: 2,
 			cell: (instance) =>
-				<Tag tone={instance.allowAgents ? 'info' : 'neutral'}>{consentLabel(
-					instance.allowAgents,
-				)}</Tag>,
+				<CellTag
+					tone={instance.allowAgents ? 'info' : 'neutral'}
+					label={consentLabel(instance.allowAgents)}
+				/>,
 		},
 		{
 			key: 'lastCallAt',
 			header: t('connectors.column.lastCall'),
-			width: '10%',
-			cell: (instance) => timestampLabel(instance.lastCallAt),
+			width: '170px',
+			priority: 2,
+			cell: (instance) => instance.lastCallAt === null ||
+			instance.lastCallAt === 0
+				? <CellMuted>{t('connectors.common.never')}</CellMuted>
+				: <CellTime value={instance.lastCallAt} />,
 		},
 	];
 }

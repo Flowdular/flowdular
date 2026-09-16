@@ -59,6 +59,25 @@ export type {
 } from './components/SettingRow.tsrx';
 export { Tag } from './components/Tag.tsrx';
 export type { TagProps, TagTone } from './components/Tag.tsrx';
+export {
+	CellCode,
+	CellMuted,
+	CellNumber,
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
+} from './components/cells.tsrx';
+export type {
+	CellCodeProps,
+	CellMutedProps,
+	CellNumberProps,
+	CellStackProps,
+	CellTagProps,
+	CellTextProps,
+	CellTimeProps,
+} from './components/cells.tsrx';
+export type { CellTimeKind } from './components/cell-format.ts';
 export { Table } from './components/Table.tsrx';
 export type {
 	TableAction,
@@ -72,6 +91,12 @@ export type {
 	TableStatus,
 } from './components/Table.tsrx';
 export type { TableSort, TableSortChange } from './components/table-sorting.ts';
+export type { TablePriority } from './components/table-layout.ts';
+export {
+	DEFAULT_TABLE_LOCALE,
+	TableLocaleContext,
+} from './components/table-locale.ts';
+export type { TableLocale } from './components/table-locale.ts';
 export { TableCard } from './components/TableCard.tsrx';
 export type { TableCardProps } from './components/TableCard.tsrx';
 export { Pagination } from './components/Pagination.tsrx';

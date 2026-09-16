@@ -1,4 +1,11 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'octane';
+import {
+	useContext,
+	useEffect,
+	useId,
+	useMemo,
+	useRef,
+	useState,
+} from 'octane';
 import type { OctaneNode } from 'octane';
 import {
 	columnFilteringFeature,
@@ -17,9 +24,18 @@ import {
 	type RowSelectionState,
 } from '@octanejs/tanstack-table';
 import { Icon } from '../icons/Icon.tsrx';
+import { ActionMenu } from './ActionMenu.tsrx';
 import { Button } from './Button.tsrx';
 import { EmptyState } from './EmptyState.tsrx';
 import { pageRange } from './pagination.ts';
+import {
+	actionsFold,
+	SELECT_WIDTH,
+	tableLayout,
+	type TableActionsFold,
+	type TablePriority,
+} from './table-layout.ts';
+import { CellControlsContext, TableLocaleContext } from './table-locale.ts';
 import {
 	compareCellValues,
 	sortingSignature,
@@ -37,8 +53,10 @@ export interface TableColumn<Row extends RowData> {
 	readonly header: string;
 	/** Tabular figures, right aligned: the th and td carry `num`. */
 	readonly numeric?: boolean | undefined;
-	/** Required CSS width, e.g. '120px' or '20%', to prevent layout drift. */
+	/** Required CSS width: px for a bounded column (time, status, number, tag), 'auto' for the one column that takes the rest. */
 	readonly width: string;
+	/** 1 (default) always shows; 2 hides in a narrow table; 3 hides first. The first column is always 1. A hidden column is listed in the row's expanded details. */
+	readonly priority?: TablePriority | undefined;
 	/** Comparable, searchable value behind the cell: it makes the column sortable and scanned by `globalFilter`. */
 	readonly value?: ((row: Row) => string | number | null) | undefined;
 	readonly cell: (row: Row) => OctaneNode;
@@ -122,11 +140,11 @@ export interface TableProps<Row extends RowData> {
 	readonly globalFilter?: string | undefined;
 	/** Slices rows to one page. Pair it with a `Pagination` in the card's `after`. */
 	readonly pagination?: TablePagination | undefined;
-	/** Actions rendered as compact buttons in the trailing column. */
+	/** Actions in the trailing column: up to two as compact buttons that fold into a More menu in a narrow table, more than two always in the menu. */
 	readonly actions?: ((row: Row) => readonly TableAction[]) | undefined;
 	/** Accessible name for the otherwise visually empty action-column header. */
 	readonly actionsLabel?: string | undefined;
-	/** Stable width for the action column. Increase it when rows have two actions. */
+	/** Stable width for the action column while its buttons show. Increase it when rows have two actions. */
 	readonly actionsWidth?: string | undefined;
 	readonly onSelect?: ((row: Row) => void) | undefined;
 	readonly selectedKey?: string | undefined;
@@ -144,6 +162,9 @@ interface FlowdularColumnMeta {
 	readonly numeric?: boolean;
 	readonly width?: string;
 	readonly title?: string;
+	readonly priority?: TablePriority;
+	/** The first column, which holds the expand and open buttons. */
+	readonly lead?: boolean;
 	readonly actions?: boolean;
 	readonly actionsLabel?: string;
 }
@@ -166,24 +187,8 @@ const FEATURES = tableFeatures({
 	columnMeta: {} as FlowdularColumnMeta,
 });
 
-const SELECT_WIDTH = '44px';
-const TABLE_MIN_WIDTH = 640;
-const FLEXIBLE_COLUMN_MIN = 120;
-
-/**
- * The narrowest the table may get before its wrapper scrolls: every px width
- * as declared, and room for each percentage or auto column. Below it a fixed
- * layout would squeeze the flexible columns under the px ones, so headers
- * collide and the sticky actions column covers the cells beside it.
- */
-export function tableMinWidth(widths: readonly (string | undefined)[]): number {
-	let total = 0;
-	for (const width of widths) {
-		const px = /^(\d+(?:\.\d+)?)px$/.exec(width?.trim() ?? '');
-		total += px ? Number(px[1]) : FLEXIBLE_COLUMN_MIN;
-	}
-	return Math.max(TABLE_MIN_WIDTH, Math.ceil(total));
-}
+const SELECT_COLUMN_WIDTH = SELECT_WIDTH + 'px';
+const ACTIONS_COLUMN_WIDTH = 'width: var(--ui-table-actions-fold, var(--ui-table-actions-width));';
 
 function defaultSelectionSummary(count: number): string {
 	return count + ' selected';
@@ -281,6 +286,78 @@ function ActionButtons(props: { readonly actions: readonly TableAction[] }) @{
 	}
 }
 
+function RowActions(props: {
+	readonly actions: readonly TableAction[];
+	readonly fold: TableActionsFold;
+	readonly label: string;
+}) @{
+	@if (props.fold === 'always') {
+		<ActionMenu
+			actions={props.actions}
+			label={props.label}
+			triggerClass="ui-table-more--always"
+		/>
+	} @else if (props.fold === 'narrow') {
+		<>
+			<ActionButtons actions={props.actions} />
+			<ActionMenu actions={props.actions} label={props.label} />
+		</>
+	} @else {
+		<ActionButtons actions={props.actions} />
+	}
+}
+
+/* The first cell of a row: the expand button while a narrow table hides a
+   column, and the open button that makes a clickable row reachable from the
+   keyboard. A table with neither renders the cell as it is. */
+function LeadCell(props: {
+	readonly content: OctaneNode;
+	readonly collapsible: boolean;
+	readonly expanded: boolean;
+	readonly detailsId: string;
+	readonly onToggle: () => void;
+	readonly clickable: boolean;
+	readonly expandLabel: string;
+	readonly collapseLabel: string;
+}) @{
+	const label = props.expanded ? props.collapseLabel : props.expandLabel;
+	@if (!props.collapsible && !props.clickable) {
+		<>
+			{props.content}
+		</>
+	} @else {
+		<span class="ui-table__lead">
+			@if (props.collapsible) {
+				<button
+					class="ui-table__toggle"
+					type="button"
+					aria-expanded={props.expanded}
+					aria-controls={props.expanded ? props.detailsId : undefined}
+					aria-label={label}
+					title={label}
+					onClick={(event: MouseEvent) => {
+						event.stopPropagation();
+						props.onToggle();
+					}}
+				>
+					<Icon name="chevron-right" size={16} />
+				</button>
+			}
+			@if (props.clickable) {
+				<CellControlsContext.Provider value={false}>
+					<button class="ui-table__open" type="button">{props.content}</button>
+				</CellControlsContext.Provider>
+			} @else {
+				<span class="ui-table__lead-body">{props.content}</span>
+			}
+		</span>
+	}
+}
+
+function priorityClass(priority: TablePriority | undefined): string | false {
+	return priority !== undefined && priority > 1 && 'ui-table__p' + priority;
+}
+
 function SortIndicator(props: { readonly direction: 'asc' | 'desc' | false }) @{
 	<span
 		class={[
@@ -304,11 +381,14 @@ function tanstackColumns<Row extends RowData>(
 ): readonly ColumnDef<typeof FEATURES, Row>[] {
 	const definitions: ColumnDef<typeof FEATURES, Row>[] = columns.map((
 		column,
+		index,
 	) => {
 		const meta = {
 			numeric: column.numeric ?? false,
 			width: column.width,
 			title: column.header,
+			priority: index === 0 ? 1 : column.priority ?? 1,
+			lead: index === 0,
 		};
 		const value = column.value;
 		if (!value) return {
@@ -330,11 +410,11 @@ function tanstackColumns<Row extends RowData>(
 		};
 	});
 	if (actions) {
+		/* The cell is rendered by the table, which knows how every row folds. */
 		definitions.push({
 			id: '__actions',
 			header: '',
-			cell: (context) =>
-				<ActionButtons actions={actions(context.row.original)} />,
+			cell: () => null,
 			meta: {
 				actions: true,
 				actionsLabel,
@@ -540,8 +620,20 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 			}),
 		}),
 	);
+	const copy = useContext(TableLocaleContext);
+	const detailsBase = useId();
+	const [expandedKeys, setExpandedKeys] = useState<ReadonlySet<string>>(
+		new Set(),
+	);
+	const toggleExpanded = (key: string) => {
+		const next = new Set(expandedKeys);
+		if (next.has(key)) next.delete(key);
+		else next.add(key);
+		setExpandedKeys(next);
+	};
+	const rowActions = props.actions;
 	const renderedRows = windowRows.map(
-		(row) => ({
+		(row, index) => ({
 			key: row.id,
 			selected: props.selectedKey === row.id,
 			clickable: props.onSelect !== undefined,
@@ -550,6 +642,10 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 			checked: row.getIsSelected(),
 			checkLabel: selection?.rowLabel(row.original) ?? '',
 			onCheck: (checked: boolean) => change([row.id], checked),
+			actions: rowActions ? rowActions(row.original) : [],
+			expanded: expandedKeys.has(row.id),
+			detailsId: detailsBase + '-details-' + index,
+			original: row.original,
 			cells: row.getAllCells().map(
 				(cell) => ({
 					key: cell.id,
@@ -558,6 +654,48 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 				}),
 			),
 		}),
+	);
+	/* How the actions fold follows the most actions any row on screen offers.
+   A table between two loads keeps the fold it had, so a refresh or a filter
+   down to nothing does not move the columns. */
+	const foldRef = useRef<TableActionsFold>('never');
+	if (renderedRows.length > 0) foldRef.current = actionsFold(
+		Math.max(...renderedRows.map((row) => row.actions.length)),
+	);
+	const fold = rowActions ? foldRef.current : 'never';
+	const layout = tableLayout({
+		columns: props.columns.map(
+			(column, index) => ({
+				width: column.width,
+				priority: index === 0 ? 1 : column.priority ?? 1,
+			}),
+		),
+		selection: selection !== undefined,
+		actionsWidth: rowActions ? props.actionsWidth ?? '160px' : undefined,
+		fold,
+	});
+	/* One entry per table row, so every loop step renders exactly one <tr>: an
+   expanded row is followed by its details. */
+	const entries = renderedRows.flatMap(
+		(row) => layout.collapsible && row.expanded
+			? [
+					{ key: 'row:' + row.key, row, details: false },
+					{ key: 'details:' + row.key, row, details: true },
+				]
+			: [
+					{ key: 'row:' + row.key, row, details: false },
+				],
+	);
+	/* The details cell spans only columns that never hide: a span over a hidden
+   column would make the table grow a column that is not there. Its list is as
+   wide as the wrapper instead. */
+	const detailsSpan =
+		(selection === undefined ? 0 : 1) + (rowActions ? 1 : 0) +
+		props.columns.filter(
+			(column, index) => index === 0 || (column.priority ?? 1) === 1,
+		).length;
+	const detailColumns = props.columns.filter(
+		(column, index) => index > 0 && (column.priority ?? 1) > 1,
 	);
 	const leafColumns = table.getAllLeafColumns().map(
 		(column) => ({
@@ -585,28 +723,30 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 		}
 		<div class="ui-table-wrap">
 			<table
-				class="ui-table"
+				class={['ui-table', ...layout.classes]}
 				aria-label={props.caption ?? ''}
-				style={'min-width: ' +
-					String(
-						tableMinWidth([
-							...(selection ? [SELECT_WIDTH] : []),
-							...leafColumns.map((column) => column.meta?.width),
-						]),
-					) +
-					'px;'}
+				style={'min-width: ' + String(layout.minWidth) + 'px;' +
+					(rowActions
+						? ' --ui-table-actions-width: ' + String(layout.actionsWidth) +
+							'px;'
+						: '')}
 			>
 				<colgroup>
 					@if (selection) {
 						<col
 							class="ui-table__select-column"
-							style={widthStyle(SELECT_WIDTH)}
+							style={widthStyle(SELECT_COLUMN_WIDTH)}
 						/>
 					}
 					@for (const column of leafColumns; key column.key) {
 						<col
-							class={column.meta?.actions && 'ui-table__actions-column'}
-							style={widthStyle(column.meta?.width)}
+							class={[
+								column.meta?.actions && 'ui-table__actions-column',
+								priorityClass(column.meta?.priority),
+							]}
+							style={column.meta?.actions
+								? ACTIONS_COLUMN_WIDTH
+								: widthStyle(column.meta?.width)}
 						/>
 					}
 				</colgroup>
@@ -614,7 +754,10 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 					@for (const group of headerGroups; key group.key) {
 						<tr>
 							@if (selection) {
-								<th class="ui-table__select" style={widthStyle(SELECT_WIDTH)}>
+								<th
+									class="ui-table__select"
+									style={widthStyle(SELECT_COLUMN_WIDTH)}
+								>
 									<SelectAll
 										label={selection.label}
 										checked={allChecked}
@@ -629,8 +772,11 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 									class={[
 										header.meta?.numeric && 'num',
 										header.meta?.actions && 'ui-table__actions',
+										priorityClass(header.meta?.priority),
 									]}
-									style={widthStyle(header.meta?.width)}
+									style={header.meta?.actions
+										? ''
+										: widthStyle(header.meta?.width)}
 									title={header.meta?.actions ? undefined : header.meta?.title}
 									aria-label={header.meta?.actions
 										? header.meta.actionsLabel ?? ''
@@ -670,42 +816,88 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 							</td>
 						</tr>
 					} @else {
-						@for (const row of renderedRows; key row.key) {
-							<tr
-								class={rowClass(row.clickable, row.selected)}
-								aria-selected={selection === undefined
-									? undefined
-									: row.checked
-										? 'true'
-										: 'false'}
-								onClick={row.onClick}
-							>
-								@if (selection) {
-									<td class="ui-table__select" onClick={stopClick}>
-										@if (row.selectable) {
-											<input
-												type="checkbox"
-												aria-label={row.checkLabel}
-												checked={row.checked}
-												onChange={(event: Event) => row.onCheck(
-													(event.currentTarget as HTMLInputElement).checked,
-												)}
-												onKeyDown={enterToggles(
-													() => row.onCheck(!row.checked),
-												)}
-											/>
-										}
+						@for (const entry of entries; key entry.key) {
+							@if (entry.details) {
+								<tr class="ui-table__details" id={entry.row.detailsId}>
+									<td colspan={detailsSpan}>
+										<dl class="ui-table__details-list">
+											@for (const column of detailColumns; key column.key) {
+												<div
+													class={[
+														'ui-table__detail',
+														'ui-table__detail--p' + String(column.priority),
+													]}
+												>
+													<dt>{column.header}</dt>
+													<dd class={column.numeric && 'num'}>{column.cell(
+														entry.row.original,
+													)}</dd>
+												</div>
+											}
+										</dl>
 									</td>
-								}
-								@for (const cell of row.cells; key cell.key) {
-									<td
-										class={[
-											cell.meta?.numeric && 'num',
-											cell.meta?.actions && 'ui-table__actions',
-										]}
-									>{cell.content}</td>
-								}
-							</tr>
+								</tr>
+							} @else {
+								<tr
+									class={rowClass(entry.row.clickable, entry.row.selected)}
+									aria-selected={selection === undefined
+										? undefined
+										: entry.row.checked
+											? 'true'
+											: 'false'}
+									onClick={entry.row.onClick}
+								>
+									@if (selection) {
+										<td class="ui-table__select" onClick={stopClick}>
+											@if (entry.row.selectable) {
+												<input
+													type="checkbox"
+													aria-label={entry.row.checkLabel}
+													checked={entry.row.checked}
+													onChange={(event: Event) => entry.row.onCheck(
+														(event.currentTarget as HTMLInputElement).checked,
+													)}
+													onKeyDown={enterToggles(
+														() => entry.row.onCheck(!entry.row.checked),
+													)}
+												/>
+											}
+										</td>
+									}
+									@for (const cell of entry.row.cells; key cell.key) {
+										<td
+											class={[
+												cell.meta?.numeric && 'num',
+												cell.meta?.actions && 'ui-table__actions',
+												priorityClass(cell.meta?.priority),
+											]}
+										>
+											@if (cell.meta?.actions) {
+												<RowActions
+													actions={entry.row.actions}
+													fold={fold}
+													label={copy.moreActions}
+												/>
+											} @else if (cell.meta?.lead) {
+												<LeadCell
+													content={cell.content}
+													collapsible={layout.collapsible}
+													expanded={entry.row.expanded}
+													detailsId={entry.row.detailsId}
+													onToggle={() => toggleExpanded(entry.row.key)}
+													clickable={entry.row.clickable}
+													expandLabel={copy.expand}
+													collapseLabel={copy.collapse}
+												/>
+											} @else {
+												<>
+													{cell.content}
+												</>
+											}
+										</td>
+									}
+								</tr>
+							};
 						}
 					}
 				</tbody>

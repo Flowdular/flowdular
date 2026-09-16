@@ -64,10 +64,6 @@ export function booleanLabel(value: boolean): string {
 	return value ? t('audit.common.yes') : t('audit.common.no');
 }
 
-export function digestLabel(digest: string | null): string {
-	return digest === null ? t('audit.common.none') : digest.slice(0, 16);
-}
-
 export function holdStatusLabel(status: HoldStatus): string {
 	return t(`audit.holds.status.${status}`);
 }

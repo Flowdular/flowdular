@@ -23,6 +23,7 @@ export const ICON_PATHS: Readonly<Record<string, string>> = {
 	plus: 'M12 5v14M5 12h14',
 	'panel-left': 'M3 5h18v14H3zM9 5v14',
 	check: 'm5 12 5 5L20 7',
+	copy: 'M9 9h11v11H9V9ZM5 15H4V4h11v1',
 	globe: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20',
 	filter: 'M3 5h18l-7 8v6l-4 2v-8z',
 	download: 'M12 3v12m0 0 4-4m-4 4-4-4M4 17v3h16v-3',

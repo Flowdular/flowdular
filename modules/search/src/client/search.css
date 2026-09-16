@@ -39,7 +39,7 @@
 	text-decoration: none;
 }
 
-.search-hit:hover b {
+.search-hit:hover {
 	color: var(--primary);
 }
 

@@ -1262,8 +1262,11 @@
 }
 
 /* Data table */
+/* The wrapper is the size container the column priorities and the action
+   fold answer to (table-steps.css), so a table reads its card, not the window. */
 .ui-table-wrap {
 	overflow-x: auto;
+	container-type: inline-size;
 }
 
 .ui-table {
@@ -1297,7 +1300,156 @@
 	height: var(--row-h);
 	padding: 12px 16px;
 	vertical-align: middle;
+	overflow: hidden;
+	text-overflow: ellipsis;
 	border-bottom: 1px solid var(--line-2);
+}
+
+/* Inside a table, text wraps only at spaces. A value without one (an email, an
+   id, an action code) stays whole and ends in an ellipsis instead. */
+.ui-table :is(th, td),
+.ui-table :is(th, td) * {
+	overflow-wrap: normal;
+}
+
+/* Column priorities. The step classes in table-steps.css set these below the
+   width a priority no longer fits, and the details of an expanded row show
+   exactly the columns hidden at that width. */
+.ui-table col.ui-table__p2 {
+	display: var(--ui-table-p2, table-column);
+}
+
+.ui-table col.ui-table__p3 {
+	display: var(--ui-table-p3, table-column);
+}
+
+.ui-table :is(th, td).ui-table__p2 {
+	display: var(--ui-table-p2, table-cell);
+}
+
+.ui-table :is(th, td).ui-table__p3 {
+	display: var(--ui-table-p3, table-cell);
+}
+
+.ui-table__lead {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+}
+
+.ui-table__toggle {
+	display: var(--ui-table-p2-detail, var(--ui-table-p3-detail, none));
+	flex: none;
+	place-items: center;
+	width: 24px;
+	height: 24px;
+	margin-left: -6px;
+	padding: 0;
+	color: var(--ink-3);
+	background: none;
+	border: 0;
+	border-radius: var(--r-sm);
+}
+
+.ui-table__toggle:hover {
+	color: var(--ink);
+	background: var(--line-2);
+}
+
+.ui-table__toggle .ui-icon {
+	transition: transform var(--t-fast) var(--ease);
+}
+
+.ui-table__toggle[aria-expanded='true'] .ui-icon {
+	transform: rotate(90deg);
+}
+
+.ui-table__lead-body,
+.ui-table__open {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* The keyboard way into a clickable row: the first cell is its button. */
+.ui-table__open {
+	display: block;
+	margin: 0;
+	padding: 0;
+	font: inherit;
+	color: inherit;
+	text-align: inherit;
+	background: none;
+	border: 0;
+	border-radius: var(--r-sm);
+}
+
+/* The details cell spans only the columns that never hide, so its list takes
+   the wrapper's width and lies over the row's bottom line, reading as part of
+   the row it expands. */
+.ui-table tbody tr.ui-table__details > td {
+	height: auto;
+	padding: 0;
+	overflow: visible;
+	border-bottom: 0;
+}
+
+.ui-table tbody tr.ui-table__details:hover > td {
+	background: none;
+}
+
+.ui-table__details-list {
+	position: relative;
+	z-index: 1;
+	display: var(--ui-table-p2-detail, var(--ui-table-p3-detail, none));
+	gap: 6px;
+	width: 100cqi;
+	margin: -1px 0 0;
+	padding: 2px 16px 14px 44px;
+	background: var(--surface);
+	border-bottom: 1px solid var(--line-2);
+}
+
+.ui-table tr:last-child .ui-table__details-list {
+	border-bottom: 0;
+}
+
+.ui-table__detail {
+	display: none;
+	grid-template-columns: minmax(96px, 160px) minmax(0, 1fr);
+	align-items: baseline;
+	gap: 12px;
+}
+
+.ui-table__detail--p2 {
+	display: var(--ui-table-p2-detail, none);
+}
+
+.ui-table__detail--p3 {
+	display: var(--ui-table-p3-detail, none);
+}
+
+.ui-table__detail dt {
+	overflow: hidden;
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-overflow: ellipsis;
+	text-transform: uppercase;
+	white-space: nowrap;
+	color: var(--ink-3);
+}
+
+.ui-table__detail dd {
+	min-width: 0;
+	margin: 0;
+	overflow: hidden;
+}
+
+.ui-table .ui-table__detail dd.num {
+	text-align: left;
 }
 
 .ui-table tr:last-child td {
@@ -1358,7 +1510,7 @@
 }
 
 .ui-table-action-buttons {
-	display: inline-flex;
+	display: var(--ui-table-buttons, inline-flex);
 	align-items: center;
 	justify-content: flex-end;
 	gap: 6px;
@@ -1368,6 +1520,50 @@
    events of its own, so the tooltip has to hang on something around it. */
 .ui-table-action {
 	display: inline-flex;
+}
+
+/* The More button: shown below the fold width of a two-action table, and
+   always when a row has more than two actions. */
+.ui-table-more {
+	display: var(--ui-table-more, none);
+}
+
+.ui-table-more.ui-table-more--always {
+	display: inline-flex;
+}
+
+.ui-table-menu__scrim {
+	position: fixed;
+	inset: 0;
+	z-index: 64;
+}
+
+/* Above a Drawer, below a dialog: a table inside a drawer opens it too. */
+.ui-table-menu {
+	position: fixed;
+	z-index: 65;
+	min-width: 180px;
+	max-width: min(320px, calc(100vw - 16px));
+}
+
+.ui-table-menu .ui-menu__item:focus {
+	background: var(--surface-2);
+}
+
+.ui-table-menu .ui-menu__item[aria-disabled='true'] {
+	cursor: not-allowed;
+	opacity: 0.5;
+}
+
+.ui-table-menu .ui-menu__item[aria-disabled='true']:hover {
+	background: transparent;
+}
+
+.ui-table-menu__label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 /* Row selection: the leading checkbox column and the bulk bar that sits
@@ -1551,6 +1747,123 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+/* Typed cells (CellText, CellStack, CellTime, CellCode, CellTag, CellNumber,
+   CellMuted): every line is one line that ends in an ellipsis. */
+.ui-cell-text,
+.ui-cell-time,
+.ui-cell-number,
+.ui-cell-muted,
+.ui-cell-stack__primary,
+.ui-cell-stack__secondary {
+	display: block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ui-cell-text--strong,
+.ui-cell-stack__primary {
+	font-weight: 500;
+}
+
+.ui-cell-text--mono,
+.ui-cell-stack__line--mono,
+.ui-cell-code__value {
+	font-family: var(--font-mono);
+	font-size: var(--text-sm);
+}
+
+.ui-cell-text--mono {
+	color: var(--ink-2);
+}
+
+/* Prose wraps at spaces and stops at two lines. */
+.ui-cell-text--wrap {
+	display: -webkit-box;
+	white-space: normal;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	line-clamp: 2;
+}
+
+.ui-cell-stack {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 1px;
+	min-width: 0;
+}
+
+.ui-cell-stack__secondary {
+	font-size: var(--text-sm);
+	color: var(--ink-3);
+}
+
+.ui-cell-time,
+.ui-cell-number {
+	font-variant-numeric: tabular-nums;
+}
+
+.ui-cell-muted {
+	font-size: var(--text-sm);
+	color: var(--ink-3);
+}
+
+.ui-cell-code {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+}
+
+.ui-cell-code__value {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--ink-2);
+}
+
+.ui-cell-code__copy {
+	display: inline-grid;
+	flex: none;
+	place-items: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	color: var(--ink-3);
+	background: none;
+	border: 0;
+	border-radius: var(--r-sm);
+	opacity: 0;
+}
+
+.ui-cell-code__copy:hover {
+	color: var(--ink);
+	background: var(--line-2);
+}
+
+.ui-table tbody tr:hover .ui-cell-code__copy,
+.ui-cell-code:focus-within .ui-cell-code__copy,
+.ui-cell-code__copy--done {
+	opacity: 1;
+}
+
+.ui-cell-code__copy--done {
+	color: var(--success);
+}
+
+@media (hover: none) {
+	.ui-cell-code__copy {
+		opacity: 1;
+	}
+}
+
+.ui-tag__label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 .ui-mono {

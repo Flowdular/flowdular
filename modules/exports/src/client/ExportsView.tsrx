@@ -3,11 +3,14 @@ import { t } from '@flowdular/client/i18n';
 import {
 	Alert,
 	Button,
+	CellNumber,
+	CellTag,
+	CellText,
+	CellTime,
 	EmptyState,
 	Icon,
 	PageHeader,
 	Select,
-	Tag,
 	TableCard,
 	type TableColumn,
 } from '@flowdular/ui';
@@ -27,11 +30,9 @@ import {
 } from './api.ts';
 import {
 	byteLabel,
-	countLabel,
 	failureLabel,
 	statusLabel,
 	statusTone,
-	timestampLabel,
 } from './presentation.ts';
 import {
 	createExportsClientState,
@@ -144,49 +145,57 @@ export function ExportsView(props: ExportsViewProps) @{
 
 	const start = startState(listsStatus, lists);
 
+	/* The list, the job state and the file stay on screen; the row count and
+   start time hide next, the size first. */
 	const columns = (): readonly TableColumn<ExportJobView>[] => [
 		{
 			key: 'listId',
 			header: t('exports.table.column.listId'),
-			width: '30%',
+			width: 'auto',
 			value: (job) => job.listId,
-			cell: (job) => <b>{job.listId}</b>,
+			cell: (job) => <CellText value={job.listId} strong />,
 		},
 		{
 			key: 'status',
 			header: t('exports.table.column.status'),
-			width: '16%',
+			width: '130px',
 			value: (job) => statusLabel(job.status),
 			cell: (job) =>
-				<Tag tone={statusTone(job.status)}>{statusLabel(job.status)}</Tag>,
+				<CellTag
+					tone={statusTone(job.status)}
+					label={statusLabel(job.status)}
+				/>,
 		},
 		{
 			key: 'rowCount',
 			header: t('exports.table.column.rowCount'),
-			width: '12%',
+			width: '110px',
 			numeric: true,
+			priority: 2,
 			value: (job) => job.rowCount,
-			cell: (job) => countLabel(job.rowCount),
+			cell: (job) => <CellNumber value={job.rowCount} />,
 		},
 		{
 			key: 'byteCount',
 			header: t('exports.table.column.byteCount'),
-			width: '12%',
+			width: '110px',
 			numeric: true,
+			priority: 3,
 			value: (job) => job.byteCount,
-			cell: (job) => byteLabel(job.byteCount),
+			cell: (job) => <CellText value={byteLabel(job.byteCount)} />,
 		},
 		{
 			key: 'startedAt',
 			header: t('exports.table.column.startedAt'),
-			width: '18%',
+			width: '170px',
+			priority: 2,
 			value: (job) => job.startedAt,
-			cell: (job) => timestampLabel(job.startedAt),
+			cell: (job) => <CellTime value={job.startedAt} />,
 		},
 		{
 			key: 'file',
 			header: t('exports.table.column.file'),
-			width: '12%',
+			width: '150px',
 			cell: (job) => job.downloadable
 				? <Button
 						size="sm"
@@ -196,7 +205,9 @@ export function ExportsView(props: ExportsViewProps) @{
 						<Icon name="download" size={14} />
 						{t('exports.action.open')}
 					</Button>
-				: <span class="ui-cell__muted">{failureLabel(job.failureCode)}</span>,
+				: job.failureCode
+					? <CellText value={failureLabel(job.failureCode)} wrap />
+					: null,
 		},
 	];
 

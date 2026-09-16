@@ -9,8 +9,10 @@ import {
 	PageHeader,
 	SearchField,
 	Select,
+	CellStack,
+	CellTag,
+	CellText,
 	TableCard,
-	Tag,
 	type TableColumn,
 } from '@flowdular/ui';
 import { useValue } from 'segment-state';
@@ -48,23 +50,29 @@ function columns(
 		{
 			key: 'title',
 			header: t('search.table.column.record'),
-			width: '58%',
+			width: 'auto',
 			value: (hit) => hit.title,
 			cell: (hit) => <a
 				class="search-hit"
 				href={workspaceRouteHref(hit.route, pathname, applicationPath())}
 				onClick={onOpen}
 			>
-				<b>{hit.title}</b>
-				<small class="ui-cell__muted">{hit.snippet}</small>
+				<CellStack
+					primary={hit.title}
+					secondary={hit.snippet
+						? <CellText value={hit.snippet} wrap />
+						: undefined}
+				/>
 			</a>,
 		},
 		{
 			key: 'provider',
 			header: t('search.table.column.provider'),
-			width: '42%',
+			width: '180px',
+			priority: 2,
 			value: (hit) => labels.get(hit.provider) ?? hit.provider,
-			cell: (hit) => <Tag>{labels.get(hit.provider) ?? hit.provider}</Tag>,
+			cell: (hit) =>
+				<CellTag label={labels.get(hit.provider) ?? hit.provider} />,
 		},
 	];
 }

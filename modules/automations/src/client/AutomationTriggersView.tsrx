@@ -2,6 +2,11 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	CellMuted,
+	CellNumber,
+	CellStack,
+	CellTag,
+	CellTime,
 	Drawer,
 	Filters,
 	Icon,
@@ -9,7 +14,6 @@ import {
 	Pagination,
 	SearchField,
 	TableCard,
-	Tag,
 	type TableColumn,
 	type TableSort,
 } from '@flowdular/ui';
@@ -35,7 +39,6 @@ import {
 	movePage,
 	pageLoaded,
 } from './state.ts';
-import { timestampLabel } from './presentation.ts';
 
 export interface AutomationTriggersViewProps {
 	readonly csrfToken: string;
@@ -45,72 +48,84 @@ export interface AutomationTriggersViewProps {
 /* Keystrokes and page clicks coalesce into one request. */
 const LIST_DEBOUNCE_MS = 200;
 
+/* The trigger and its state stay on screen; the target, the last call and
+   the counts hide next, the update time first. */
 function triggerColumns(): readonly TableColumn<AutomationTrigger>[] {
 	return [
 		{
 			key: 'label',
 			header: t('automations.triggers.column.trigger'),
-			width: '26%',
+			width: 'auto',
 			value: (trigger) => trigger.label,
-			cell: (trigger) => <span class="ui-cell">
-				<b>{trigger.label}</b>
-				<small class="ui-mono">{t('automations.triggers.secretRevision', {
+			cell: (trigger) => <CellStack
+				primary={trigger.label}
+				secondary={t('automations.triggers.secretRevision', {
 					revision: trigger.secretRevision,
-				})}</small>
-			</span>,
+				})}
+				secondaryMono
+			/>,
 		},
 		{
 			key: 'target',
 			header: t('automations.common.target'),
-			width: '18%',
-			cell: (trigger) => <span class="ui-cell">
-				<span>{trigger.targetName}</span>
-				<small class="ui-cell__muted">
-					{trigger.targetAvailable
-						? t('automations.targetKind.' + trigger.targetKind)
-						: t('automations.common.targetUnavailable', {
-								kind: t('automations.targetKind.' + trigger.targetKind),
-							})}
-				</small>
-			</span>,
+			width: '180px',
+			priority: 2,
+			cell: (trigger) => <CellStack
+				primary={trigger.targetName}
+				secondary={trigger.targetAvailable
+					? t('automations.targetKind.' + trigger.targetKind)
+					: t('automations.common.targetUnavailable', {
+							kind: t('automations.targetKind.' + trigger.targetKind),
+						})}
+			/>,
 		},
 		{
 			key: 'last-fired',
 			header: t('automations.triggers.column.lastFired'),
-			width: '14%',
-			cell: (trigger) => timestampLabel(trigger.lastFiredAt),
+			width: '170px',
+			priority: 2,
+			cell: (trigger) => trigger.lastFiredAt === null
+				? <CellMuted>{t('automations.common.notYet')}</CellMuted>
+				: <CellTime value={trigger.lastFiredAt} />,
 		},
 		{
 			key: 'accepted',
 			header: t('automations.triggers.column.accepted'),
-			width: '8%',
+			width: '110px',
 			numeric: true,
-			cell: (trigger) => trigger.acceptedCount,
+			priority: 2,
+			cell: (trigger) => <CellNumber value={trigger.acceptedCount} />,
 		},
 		{
 			key: 'rejected',
 			header: t('automations.triggers.column.rejected'),
-			width: '8%',
+			width: '110px',
 			numeric: true,
-			cell: (trigger) => trigger.rejectedCount,
+			priority: 2,
+			cell: (trigger) => <CellNumber value={trigger.rejectedCount} />,
 		},
 		{
 			key: 'updatedAt',
 			header: t('automations.common.updated'),
-			width: '14%',
+			width: '170px',
+			priority: 3,
 			value: (trigger) => trigger.updatedAt,
-			cell: (trigger) => timestampLabel(trigger.updatedAt),
+			cell: (trigger) => <CellTime value={trigger.updatedAt} />,
 		},
 		{
 			key: 'state',
 			header: t('automations.common.state'),
-			width: '12%',
+			width: '120px',
 			cell: (trigger) =>
-				<Tag tone={trigger.enabled ? 'success' : 'neutral'} dot>{t(
-					trigger.enabled
-						? 'automations.common.enabled'
-						: 'automations.common.disabled',
-				)}</Tag>,
+				<CellTag
+					tone={trigger.enabled ? 'success' : 'neutral'}
+					dot
+					label={t(
+						trigger.enabled
+							? 'automations.common.enabled'
+							: 'automations.common.disabled',
+					)}
+				/>,
 		},
 	];
 }

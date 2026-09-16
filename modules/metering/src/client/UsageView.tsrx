@@ -2,6 +2,8 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	CellTag,
+	CellText,
 	EmptyState,
 	Filters,
 	Icon,
@@ -9,7 +11,6 @@ import {
 	SearchField,
 	Select,
 	TableCard,
-	Tag,
 	type TableColumn,
 } from '@flowdular/ui';
 import { activeLocale, t } from '@flowdular/client';
@@ -34,36 +35,41 @@ function columns(warningPercent: number): readonly TableColumn<MeterUsage>[] {
 		{
 			key: 'key',
 			header: t('metering.usage.column.key'),
-			width: '28%',
-			cell: (entry) => <span class="ui-mono">{entry.meter.key}</span>,
+			width: 'auto',
+			cell: (entry) => <CellText value={entry.meter.key} mono />,
 		},
 		{
 			key: 'label',
 			header: t('metering.usage.column.label'),
-			width: '24%',
-			cell: (entry) => entry.meter.label,
+			width: '200px',
+			priority: 2,
+			cell: (entry) => <CellText value={entry.meter.label} />,
 		},
 		{
 			key: 'unit',
 			header: t('metering.usage.column.unit'),
-			width: '12%',
-			cell: (entry) => entry.meter.unit,
+			width: '110px',
+			priority: 3,
+			cell: (entry) => <CellText value={entry.meter.unit} />,
 		},
 		{
 			key: 'kind',
 			header: t('metering.usage.column.kind'),
-			width: '12%',
-			cell: (entry) => kindLabel(entry.meter.kind),
+			width: '120px',
+			priority: 3,
+			cell: (entry) => <CellText value={kindLabel(entry.meter.kind)} />,
 		},
 		{
 			key: 'used',
 			header: t('metering.usage.column.used'),
-			width: '24%',
+			width: '200px',
 			numeric: true,
 			cell: (entry) =>
-				<Tag tone={usageTone(entry, warningPercent)} dot>{usageLabel(
-					entry,
-				)}</Tag>,
+				<CellTag
+					tone={usageTone(entry, warningPercent)}
+					dot
+					label={usageLabel(entry)}
+				/>,
 		},
 	];
 }

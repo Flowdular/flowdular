@@ -14,8 +14,6 @@
 		"@flowdular/kernel": "workspace:*"
 	},
 	"devDependencies": {
-		"@flowdular/database-pglite": "workspace:*",
-		"@flowdular/database-testing": "workspace:*",
 		"@types/node": "24.13.3",
 		"typescript": "5.9.3",
 		"vitest": "4.1.11"

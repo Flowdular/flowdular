@@ -1,5 +1,5 @@
 import type { TagTone } from '@flowdular/ui';
-import { activeLocale, t } from '@flowdular/client/i18n';
+import { t } from '@flowdular/client/i18n';
 import {
 	cadenceKind,
 	cadenceMinutes,
@@ -37,18 +37,6 @@ function intervalLabel(minutes: number): string {
 		hours: Math.floor(minutes / 60),
 		minutes: minutes % 60,
 	});
-}
-
-export function timestampLabel(
-	value: number | null,
-	timeZone?: string,
-): string {
-	if (value === null) return t('automations.common.notYet');
-	return new Intl.DateTimeFormat(activeLocale(), {
-		dateStyle: 'medium',
-		timeStyle: 'short',
-		...(timeZone ? { timeZone } : {}),
-	}).format(value);
 }
 
 export function automationTone(enabled: boolean): TagTone {

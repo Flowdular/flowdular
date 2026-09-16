@@ -3,13 +3,6 @@ import type { AuditRow } from './api.ts';
 
 export type AuditTone = 'danger' | 'warning' | 'neutral' | 'info';
 
-export function auditStamp(value: number): string {
-	return new Intl.DateTimeFormat(activeLocale(), {
-		dateStyle: 'medium',
-		timeStyle: 'short',
-	}).format(value);
-}
-
 export function auditTone(action: string): AuditTone {
 	if (action.includes('failed') || action.includes('locked')) return 'danger';
 	if (action.includes('removed') || action.includes('deleted'))

@@ -2,6 +2,11 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	CellMuted,
+	CellNumber,
+	CellTag,
+	CellText,
+	CellTime,
 	EmptyState,
 	Filters,
 	Icon,
@@ -10,7 +15,6 @@ import {
 	SearchField,
 	Select,
 	TableCard,
-	Tag,
 	type TableColumn,
 	type TableSort,
 } from '@flowdular/ui';
@@ -26,12 +30,7 @@ import {
 	connectorsErrorMessage,
 	loadConnectorCalls,
 } from './api.ts';
-import {
-	durationLabel,
-	outcomeLabel,
-	outcomeTone,
-	timestampLabel,
-} from './presentation.ts';
+import { durationLabel, outcomeLabel, outcomeTone } from './presentation.ts';
 import {
 	beginLoad,
 	createConnectorCallsClientState,
@@ -61,68 +60,76 @@ interface CallListing {
 	readonly pageSize: number;
 }
 
+/* When, which connector, what it did and how it ended stay on screen; the
+   caller, the HTTP status and the duration hide next, the error class first. */
 function columns(): readonly TableColumn<ConnectorCallListRow>[] {
 	return [
 		{
 			key: 'occurredAt',
 			header: t('connectors.calls.column.occurredAt'),
-			width: '16%',
+			width: '170px',
 			value: (call) => call.occurredAt,
-			cell: (call) => timestampLabel(call.occurredAt),
+			cell: (call) => <CellTime value={call.occurredAt} />,
 		},
 		{
 			key: 'instance',
 			header: t('connectors.calls.column.instance'),
-			width: '18%',
-			cell: (call) =>
-				<span>
-					{call.instanceName ?? t('connectors.calls.deletedInstance')}
-				</span>,
+			width: 'auto',
+			cell: (call) => call.instanceName === null
+				? <CellMuted>{t('connectors.calls.deletedInstance')}</CellMuted>
+				: <CellText value={call.instanceName} />,
 		},
 		{
 			key: 'operation',
 			header: t('connectors.calls.column.operation'),
-			width: '12%',
-			cell: (call) => <span class="ui-mono">{call.operation}</span>,
+			width: '160px',
+			cell: (call) => <CellText value={call.operation} mono />,
 		},
 		{
 			key: 'caller',
 			header: t('connectors.calls.column.caller'),
-			width: '10%',
-			cell: (call) => <span>{t('connectors.caller.' + call.caller)}</span>,
+			width: '120px',
+			priority: 2,
+			cell: (call) =>
+				<CellText value={t('connectors.caller.' + call.caller)} />,
 		},
 		{
 			key: 'outcome',
 			header: t('connectors.calls.column.outcome'),
-			width: '12%',
+			width: '130px',
 			cell: (call) =>
-				<Tag tone={outcomeTone(call.outcome)} dot>{outcomeLabel(
-					call.outcome,
-				)}</Tag>,
+				<CellTag
+					tone={outcomeTone(call.outcome)}
+					dot
+					label={outcomeLabel(call.outcome)}
+				/>,
 		},
 		{
 			key: 'status',
 			header: t('connectors.calls.column.status'),
-			width: '8%',
+			width: '100px',
 			numeric: true,
-			cell: (call) =>
-				<span class="num">{call.status ?? t('connectors.common.none')}</span>,
+			priority: 2,
+			cell: (call) => call.status === null
+				? <CellMuted>{t('connectors.common.none')}</CellMuted>
+				: <CellNumber value={call.status} options={{ useGrouping: false }} />,
 		},
 		{
 			key: 'errorClass',
 			header: t('connectors.calls.column.errorClass'),
-			width: '14%',
-			cell: (call) =>
-				<span class="ui-mono">
-					{call.errorClass ?? t('connectors.common.none')}
-				</span>,
+			width: '160px',
+			priority: 3,
+			cell: (call) => call.errorClass === null
+				? <CellMuted>{t('connectors.common.none')}</CellMuted>
+				: <CellText value={call.errorClass} mono />,
 		},
 		{
 			key: 'durationMs',
 			header: t('connectors.calls.column.duration'),
-			width: '10%',
+			width: '110px',
 			numeric: true,
-			cell: (call) => <span class="num">{durationLabel(call.durationMs)}</span>,
+			priority: 2,
+			cell: (call) => <CellText value={durationLabel(call.durationMs)} />,
 		},
 	];
 }

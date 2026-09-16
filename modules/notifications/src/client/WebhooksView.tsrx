@@ -2,6 +2,12 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	CellCode,
+	CellMuted,
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
 	ConfirmDialog,
 	Drawer,
 	EmptyState,
@@ -12,7 +18,6 @@ import {
 	SearchField,
 	Select,
 	TableCard,
-	Tag,
 	ToastHost,
 	toasts,
 	type TableAction,
@@ -41,7 +46,6 @@ import {
 import {
 	subscriptionStatusLabel,
 	subscriptionStatusTone,
-	timestampLabel,
 } from './presentation.ts';
 import {
 	createWebhooksClientState,
@@ -77,44 +81,49 @@ function columns(): readonly TableColumn<WebhookSubscription>[] {
 		{
 			key: 'name',
 			header: t('notifications.webhooks.column.name'),
-			width: '24%',
+			width: 'auto',
 			value: (subscription) => subscription.name,
-			cell: (subscription) => <span class="ui-cell">
-				<b>{subscription.name}</b>
-				<small class="ui-cell__muted">{t(
-					'notifications.webhooks.table.events',
-					{ count: subscription.events.length },
-				)}</small>
-			</span>,
+			cell: (subscription) => <CellStack
+				primary={subscription.name}
+				secondary={t('notifications.webhooks.table.events', {
+					count: subscription.events.length,
+				})}
+			/>,
 		},
 		{
 			key: 'url',
 			header: t('notifications.webhooks.column.url'),
-			width: '24%',
-			cell: (subscription) => <span class="ui-mono">{subscription.url}</span>,
+			width: '240px',
+			priority: 2,
+			cell: (subscription) => <CellText value={subscription.url} mono />,
 		},
 		{
 			key: 'status',
 			header: t('notifications.webhooks.column.status'),
-			width: '10%',
+			width: '120px',
 			cell: (subscription) =>
-				<Tag
+				<CellTag
 					tone={subscriptionStatusTone(subscription.status)}
 					dot
-				>{subscriptionStatusLabel(subscription.status)}</Tag>,
+					label={subscriptionStatusLabel(subscription.status)}
+				/>,
 		},
 		{
 			key: 'lastDeliveryAt',
 			header: t('notifications.webhooks.column.lastDelivery'),
-			width: '14%',
-			cell: (subscription) => timestampLabel(subscription.lastDeliveryAt),
+			width: '170px',
+			priority: 2,
+			cell: (subscription) => subscription.lastDeliveryAt === null
+				? <CellMuted>{t('notifications.common.notYet')}</CellMuted>
+				: <CellTime value={subscription.lastDeliveryAt} />,
 		},
 		{
 			key: 'secretFingerprint',
 			header: t('notifications.webhooks.column.fingerprint'),
-			width: '16%',
+			width: '170px',
+			priority: 3,
 			cell: (subscription) =>
-				<span class="ui-mono">{subscription.secretFingerprint}</span>,
+				<CellCode value={subscription.secretFingerprint} />,
 		},
 	];
 }

@@ -13,7 +13,6 @@ import {
 	reasonLabel,
 	rotateAction,
 	tableEmpty,
-	timestampLabel,
 	tokenDisplayStatus,
 	tokenStatusLabel,
 	tokenStatusTone,
@@ -40,11 +39,6 @@ describe('directory presentation', () => {
 		expect(outcomeTone('refused')).toBe('danger');
 		expect(tokenStatusTone('active')).toBe('success');
 		expect(tokenStatusTone('revoked')).toBe('neutral');
-	});
-
-	it('reads a token that has never been used as never', () => {
-		expect(timestampLabel(null)).toBe('Never');
-		expect(timestampLabel(Date.UTC(2026, 0, 2, 10, 30))).not.toBe('Never');
 	});
 
 	/* A reason code this build does not know still has to reach the reader

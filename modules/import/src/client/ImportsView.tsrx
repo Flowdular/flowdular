@@ -2,6 +2,11 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	CellNumber,
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
 	ConfirmDialog,
 	Drawer,
 	EmptyState,
@@ -10,7 +15,6 @@ import {
 	PageHeader,
 	Select,
 	TableCard,
-	Tag,
 	ToastHost,
 	toasts,
 	type TableAction,
@@ -35,13 +39,7 @@ import {
 } from './api.ts';
 import { ImportJobDrawer } from './ImportJobDrawer.tsrx';
 import { NewImportForm, type NewImportValue } from './NewImportForm.tsrx';
-import {
-	countLabel,
-	modeLabel,
-	statusLabel,
-	statusTone,
-	timestampLabel,
-} from './presentation.ts';
+import { modeLabel, statusLabel, statusTone } from './presentation.ts';
 import { createImportClientState, jobTargets } from './state.ts';
 
 export interface ImportsViewProps {
@@ -54,70 +52,81 @@ function columns(): readonly TableColumn<ImportJobView>[] {
 		{
 			key: 'target',
 			header: t('import.column.target'),
-			width: '22%',
+			width: 'auto',
 			value: (record) => record.target,
-			cell: (record) => <span class="ui-cell">
-				<b class="ui-mono">{record.target}</b>
-				<small class="ui-cell__muted">{timestampLabel(record.startedAt)}</small>
-			</span>,
+			cell: (record) =>
+				<CellStack
+					primary={record.target}
+					primaryMono
+					secondary={<CellTime value={record.startedAt} />}
+				/>,
 		},
 		{
 			key: 'status',
 			header: t('import.column.status'),
-			width: '14%',
+			width: '130px',
 			value: (record) => record.status,
 			cell: (record) =>
-				<Tag tone={statusTone(record.status)} dot>{statusLabel(
-					record.status,
-				)}</Tag>,
+				<CellTag
+					tone={statusTone(record.status)}
+					dot
+					label={statusLabel(record.status)}
+				/>,
 		},
 		{
 			key: 'mode',
 			header: t('import.column.mode'),
-			width: '14%',
+			width: '130px',
+			priority: 3,
 			value: (record) => record.mode,
-			cell: (record) => modeLabel(record.mode),
+			cell: (record) => <CellText value={modeLabel(record.mode)} />,
 		},
 		{
 			key: 'dryRun',
 			header: t('import.column.dryRun'),
-			width: '10%',
+			width: '100px',
+			priority: 3,
 			value: (record) => (record.dryRun ? 1 : 0),
-			cell: (record) => record.dryRun
-				? t('import.common.yes')
-				: t('import.common.no'),
+			cell: (record) =>
+				<CellText
+					value={record.dryRun ? t('import.common.yes') : t('import.common.no')}
+				/>,
 		},
 		{
 			key: 'totalRows',
 			header: t('import.column.totalRows'),
-			width: '10%',
+			width: '100px',
 			numeric: true,
+			priority: 2,
 			value: (record) => record.totalRows,
-			cell: (record) => countLabel(record.totalRows),
+			cell: (record) => <CellNumber value={record.totalRows} />,
 		},
 		{
 			key: 'validRows',
 			header: t('import.column.validRows'),
-			width: '10%',
+			width: '100px',
 			numeric: true,
+			priority: 3,
 			value: (record) => record.validRows,
-			cell: (record) => countLabel(record.validRows),
+			cell: (record) => <CellNumber value={record.validRows} />,
 		},
 		{
 			key: 'writtenRows',
 			header: t('import.column.writtenRows'),
-			width: '10%',
+			width: '100px',
 			numeric: true,
+			priority: 2,
 			value: (record) => record.writtenRows,
-			cell: (record) => countLabel(record.writtenRows),
+			cell: (record) => <CellNumber value={record.writtenRows} />,
 		},
 		{
 			key: 'failedRows',
 			header: t('import.column.failedRows'),
-			width: '10%',
+			width: '100px',
 			numeric: true,
+			priority: 2,
 			value: (record) => record.failedRows,
-			cell: (record) => countLabel(record.failedRows),
+			cell: (record) => <CellNumber value={record.failedRows} />,
 		},
 	];
 }

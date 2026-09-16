@@ -1304,12 +1304,6 @@ importers:
         specifier: workspace:*
         version: link:../kernel
     devDependencies:
-      '@flowdular/database-pglite':
-        specifier: workspace:*
-        version: link:../database-pglite
-      '@flowdular/database-testing':
-        specifier: workspace:*
-        version: link:../database-testing
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -1329,9 +1323,6 @@ importers:
         specifier: workspace:*
         version: link:../database
     devDependencies:
-      '@flowdular/database-testing':
-        specifier: workspace:*
-        version: link:../database-testing
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
