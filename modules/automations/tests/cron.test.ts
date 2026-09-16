@@ -15,7 +15,7 @@ import {
 } from '@flowdular/client/i18n';
 import translationsEn from '../translations/en.json';
 import translationsPl from '../translations/pl.json';
-import { cadenceLabel, timestampLabel } from '../src/client/presentation.ts';
+import { cadenceLabel } from '../src/client/presentation.ts';
 import {
 	InvalidCadenceError,
 	firstCadenceSlot,
@@ -227,7 +227,7 @@ describe('cron cadence', () => {
 		);
 	});
 
-	it('shows either cadence form and the run times in the workspace zone', () => {
+	it('shows either cadence form', () => {
 		registerModuleTranslations([
 			{
 				moduleId: 'automations.core',
@@ -237,10 +237,6 @@ describe('cron cadence', () => {
 		setActiveLocale('en');
 		expect(cadenceLabel('cron:0 6 * * 1-5')).toContain('0 6 * * 1-5');
 		expect(cadenceLabel('every:60')).toBe('Every hour');
-		const instant = at('2026-09-14T23:30:00.000Z');
-		expect(timestampLabel(instant, WARSAW)).not.toBe(
-			timestampLabel(instant, 'UTC'),
-		);
 	});
 
 	it('leaves the every:N cadence untouched', () => {

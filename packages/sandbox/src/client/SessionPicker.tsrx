@@ -10,6 +10,10 @@ import {
 	Kpi,
 	PageHeader,
 	SearchField,
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
 	TableCard,
 	Tag,
 	type TableColumn,
@@ -80,56 +84,56 @@ function columns(): readonly TableColumn<DashboardRow>[] {
 		{
 			key: 'work',
 			header: t('sandbox.dashboard.work'),
-			width: '32%',
-			cell: (row) => <span class="ui-cell">
-				<b>{row.session.title}</b>
-				<small>
-					{t(
+			width: 'auto',
+			cell: (row) => <CellStack
+				primary={row.session.title}
+				secondary={[
+					t(
 						row.session.kind === 'new-module'
 							? 'sandbox.sessions.kind.new'
 							: 'sandbox.sessions.kind.change',
-					)}
-					·
-					{t('sandbox.dashboard.modules', {
+					),
+					t('sandbox.dashboard.modules', {
 						count: row.session.modules.length,
-					})}
-				</small>
-				{row.personal
-					? null
-					: <small>{t('sandbox.dashboard.legacyRow')}</small>}
-			</span>,
+					}),
+					...(row.personal ? [] : [t('sandbox.dashboard.legacyRow')]),
+				].join(' · ')}
+			/>,
 		},
 		{
 			key: 'status',
 			header: t('sandbox.dashboard.status'),
-			width: '20%',
+			width: '160px',
 			cell: (row) =>
-				<Tag tone={tone(row.status)} dot>{t(
-					'sandbox.dashboard.status.' + row.status,
-				)}</Tag>,
+				<CellTag
+					tone={tone(row.status)}
+					dot
+					label={t('sandbox.dashboard.status.' + row.status)}
+				/>,
 		},
 		{
 			key: 'tokens',
 			header: t('sandbox.dashboard.table.tokens'),
-			width: '13%',
+			width: '120px',
 			numeric: true,
-			cell: (row) => formatTokens(row.usage, activeLocale()),
+			priority: 2,
+			cell: (row) =>
+				<CellText value={formatTokens(row.usage, activeLocale())} />,
 		},
 		{
 			key: 'cost',
 			header: t('sandbox.dashboard.table.cost'),
-			width: '13%',
+			width: '120px',
 			numeric: true,
-			cell: (row) => formatCost(row.usage, activeLocale()),
+			priority: 2,
+			cell: (row) => <CellText value={formatCost(row.usage, activeLocale())} />,
 		},
 		{
 			key: 'updated',
 			header: t('sandbox.dashboard.table.updated'),
-			width: '12%',
-			cell: (row) => new Intl.DateTimeFormat(activeLocale(), {
-				day: 'numeric',
-				month: 'short',
-			}).format(row.session.updatedAt),
+			width: '120px',
+			priority: 2,
+			cell: (row) => <CellTime value={row.session.updatedAt} kind="date" />,
 		},
 	];
 }
@@ -381,25 +385,34 @@ export function SessionPicker(props: SessionPickerProps) @{
 								{
 									key: 'phase',
 									header: t('sandbox.dashboard.phase'),
-									width: '50%',
-									cell: (phase) => t('sandbox.dashboard.role.' + phase.role) ===
-									'sandbox.dashboard.role.' + phase.role
-										? t('sandbox.dashboard.role.unknown')
-										: t('sandbox.dashboard.role.' + phase.role),
+									width: 'auto',
+									cell: (phase) =>
+										<CellText
+											value={t('sandbox.dashboard.role.' + phase.role) ===
+											'sandbox.dashboard.role.' + phase.role
+												? t('sandbox.dashboard.role.unknown')
+												: t('sandbox.dashboard.role.' + phase.role)}
+										/>,
 								},
 								{
 									key: 'tokens',
 									header: t('sandbox.dashboard.table.tokens'),
-									width: '25%',
+									width: '140px',
 									numeric: true,
-									cell: (phase) => formatTokens(phase.usage, activeLocale()),
+									cell: (phase) =>
+										<CellText
+											value={formatTokens(phase.usage, activeLocale())}
+										/>,
 								},
 								{
 									key: 'cost',
 									header: t('sandbox.dashboard.table.cost'),
-									width: '25%',
+									width: '140px',
 									numeric: true,
-									cell: (phase) => formatCost(phase.usage, activeLocale()),
+									cell: (phase) =>
+										<CellText
+											value={formatCost(phase.usage, activeLocale())}
+										/>,
 								},
 							]}
 							empty={{

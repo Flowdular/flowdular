@@ -64,14 +64,6 @@ export function cadenceLabel(minutes: number): string {
 	});
 }
 
-export function timestampLabel(value: number | null): string {
-	if (value === null) return '—';
-	return new Intl.DateTimeFormat(activeLocale(), {
-		dateStyle: 'medium',
-		timeStyle: 'short',
-	}).format(value);
-}
-
 export function dayLabel(value: string): string {
 	return new Intl.DateTimeFormat(activeLocale(), {
 		dateStyle: 'medium',

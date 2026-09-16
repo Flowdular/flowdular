@@ -3,6 +3,7 @@ import translationsEn from '../../translations/en.json';
 import translationsPl from '../../translations/pl.json';
 import { DOCUMENTS_PERMISSIONS } from '../acl/permissions.ts';
 import { DocumentsView } from './DocumentsView.tsrx';
+import './documents.css';
 import { documentsNavigation, DOCUMENTS_VIEW } from './navigation.ts';
 
 export interface DocumentsClientContributionOptions {

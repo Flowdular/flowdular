@@ -23,3 +23,23 @@ export function documentsDataClass(
 			(await service()).exportTo(tenantId, sink),
 	};
 }
+
+/** The class id is `documents.core.text`. */
+export const DOCUMENT_TEXT_DATA_CLASS_KEY = 'text';
+
+/**
+ * The text read out of stored documents. A row lives exactly as long as its
+ * document, which deletes it in the same transaction, so the class carries no
+ * retention and no sweep, and it stays out of the export because the documents
+ * class already names the objects the text was read from.
+ */
+export function documentTextDataClass(): DataClassDeclaration {
+	return {
+		key: DOCUMENT_TEXT_DATA_CLASS_KEY,
+		label: 'Document text',
+		defaultRetentionDays: null,
+		exportable: false,
+		excludedReason:
+			'Text read out of the stored documents, which the documents class exports.',
+	};
+}

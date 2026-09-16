@@ -20,12 +20,14 @@ import {
 	CONNECTORS_DEFINITIONS_CAPABILITY,
 	CONNECTORS_EGRESS_CAPABILITY,
 	CONNECTORS_INSTANCES_CAPABILITY,
+	DOCUMENTS_TEXT_CAPABILITY,
 	EXPORT_LISTS_CAPABILITY,
 	METERING_METERS_CAPABILITY,
 	type ConnectorCalls,
 	type ConnectorDefinitions,
 	type ConnectorEgress,
 	type ConnectorInstances,
+	type DocumentsText,
 	type ExportListRegistry,
 	type MeterRegistry,
 } from './services/capabilities.ts';
@@ -61,6 +63,8 @@ export function createServerComposition(
 			capabilities.get<ConnectorEgress>(CONNECTORS_EGRESS_CAPABILITY) ??
 			undefined,
 		meters,
+		documentsText: () =>
+			capabilities.get<DocumentsText>(DOCUMENTS_TEXT_CAPABILITY) ?? undefined,
 	});
 	const service = () => runtime.service();
 

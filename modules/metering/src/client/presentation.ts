@@ -19,15 +19,6 @@ export function numberLabel(value: number): string {
 	return new Intl.NumberFormat(activeLocale()).format(value);
 }
 
-/** Epoch milliseconds as the reader's local date and time. */
-export function timestampLabel(value: number | null): string {
-	if (value === null) return t('metering.common.notYet');
-	return new Intl.DateTimeFormat(activeLocale(), {
-		dateStyle: 'medium',
-		timeStyle: 'short',
-	}).format(value);
-}
-
 export function kindLabel(kind: MeterKind): string {
 	return t('metering.kind.' + kind);
 }

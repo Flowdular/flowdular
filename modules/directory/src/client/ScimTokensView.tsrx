@@ -2,6 +2,11 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	CellCode,
+	CellMuted,
+	CellTag,
+	CellText,
+	CellTime,
 	ConfirmDialog,
 	DatePicker,
 	Drawer,
@@ -14,7 +19,6 @@ import {
 	SearchField,
 	Select,
 	TableCard,
-	Tag,
 	ToastHost,
 	toasts,
 	type TableAction,
@@ -41,7 +45,6 @@ import {
 	expiryToTimestamp,
 	rotateAction,
 	tableEmpty,
-	timestampLabel,
 	tokenDisplayStatus,
 	tokenStatusLabel,
 	tokenStatusTone,
@@ -76,44 +79,52 @@ interface TokenFilters {
 	readonly status: ScimToken['status'] | '';
 }
 
+/* The token and whether it still works stay on screen; the fingerprint, the
+   last use and the expiry hide next and are listed in the expanded row. */
 function columns(): readonly TableColumn<ScimToken>[] {
 	return [
 		{
 			key: 'label',
 			header: t('directory.tokens.column.label'),
-			width: '30%',
+			width: 'auto',
 			value: (token) => token.label,
-			cell: (token) => <b>{token.label}</b>,
+			cell: (token) => <CellText value={token.label} strong />,
 		},
 		{
 			key: 'status',
 			header: t('directory.tokens.column.status'),
-			width: '14%',
+			width: '120px',
 			cell: (token) =>
-				<Tag
+				<CellTag
 					tone={tokenStatusTone(tokenDisplayStatus(token))}
 					dot
-				>{tokenStatusLabel(tokenDisplayStatus(token))}</Tag>,
+					label={tokenStatusLabel(tokenDisplayStatus(token))}
+				/>,
 		},
 		{
 			key: 'tokenFingerprint',
 			header: t('directory.tokens.column.fingerprint'),
-			width: '24%',
-			cell: (token) => <span class="ui-mono">{token.tokenFingerprint}</span>,
+			width: '200px',
+			priority: 2,
+			cell: (token) => <CellCode value={token.tokenFingerprint} />,
 		},
 		{
 			key: 'lastUsedAt',
 			header: t('directory.tokens.column.lastUsed'),
-			width: '16%',
-			cell: (token) => timestampLabel(token.lastUsedAt),
+			width: '170px',
+			priority: 2,
+			cell: (token) => token.lastUsedAt === null
+				? <CellMuted>{t('directory.common.never')}</CellMuted>
+				: <CellTime value={token.lastUsedAt} />,
 		},
 		{
 			key: 'expiresAt',
 			header: t('directory.tokens.column.expires'),
-			width: '16%',
+			width: '170px',
+			priority: 2,
 			cell: (token) => token.expiresAt === null
-				? t('directory.tokens.neverExpires')
-				: timestampLabel(token.expiresAt),
+				? <CellMuted>{t('directory.tokens.neverExpires')}</CellMuted>
+				: <CellTime value={token.expiresAt} />,
 		},
 	];
 }

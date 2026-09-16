@@ -35,6 +35,7 @@ import {
 } from '../domain/types.ts';
 import type {
 	ConnectorEgress,
+	DocumentsText,
 	EgressCheck,
 	MeterRegistry,
 } from './capabilities.ts';
@@ -175,6 +176,8 @@ export interface ResearchServiceOptions {
 	};
 	readonly egress: () => ConnectorEgress | undefined;
 	readonly meters: () => MeterRegistry | undefined;
+	/** documents.text.v1 when documents.core is composed; a PDF is read through it. */
+	readonly documentsText?: (() => DocumentsText | undefined) | undefined;
 	readonly transport: PageTransport;
 	readonly robots?: RobotsCache;
 	readonly now?: () => number;
@@ -1348,7 +1351,10 @@ export class ResearchService {
 					response.status >= 500,
 				);
 			}
-			return { ...this.#extract(response, target), redirected: hop > 0 };
+			return {
+				...(await this.#extract(response, target, combined, deadline)),
+				redirected: hop > 0,
+			};
 		}
 	}
 
@@ -1542,10 +1548,12 @@ export class ResearchService {
 		throw unreadable();
 	}
 
-	#extract(
+	async #extract(
 		response: PageResponse,
 		target: URL,
-	): { readonly title: string; readonly text: string } {
+		signal: AbortSignal,
+		deadline: AbortSignal,
+	): Promise<{ readonly title: string; readonly text: string }> {
 		const [type = '', ...parameters] = response.contentType.split(';');
 		const mediaType = type.trim().toLowerCase();
 		const unsupported = () => this.#unsupported(mediaType);
@@ -1553,7 +1561,27 @@ export class ResearchService {
 			mediaType === 'application/pdf' ||
 			response.body.subarray(0, 5).toString('latin1') === '%PDF-'
 		) {
-			throw unsupported();
+			const documents = this.#options.documentsText?.();
+			if (!documents) throw unsupported();
+			let read: Awaited<ReturnType<typeof documents.extractBytes>>;
+			try {
+				read = await documents.extractBytes({
+					contentType: 'application/pdf',
+					bytes: response.body,
+					signal,
+				});
+			} catch (error) {
+				/* Reading the text is part of the fetch, so it answers the fetch's
+				   own deadline and cancellation. */
+				if (deadline.aborted) throw this.#timeout();
+				if (signal.aborted) throw this.#fetchFailed('The fetch was cancelled.');
+				throw error;
+			}
+			if (read.status !== 'ok') throw unsupported();
+			return {
+				title: target.hostname + target.pathname,
+				text: read.text.split('\f').join('\n\n').trim(),
+			};
 		}
 		const charset = parameters
 			.map((parameter) => parameter.trim())

@@ -2,6 +2,10 @@ import { useEffect, useMemo, useState } from 'octane';
 import {
 	Alert,
 	Button,
+	CellNumber,
+	CellTag,
+	CellText,
+	CellTime,
 	EmptyState,
 	Filters,
 	Icon,
@@ -10,7 +14,6 @@ import {
 	SearchField,
 	Select,
 	TableCard,
-	Tag,
 	type TableColumn,
 } from '@flowdular/ui';
 import { activeLocale, t } from '@flowdular/client';
@@ -25,7 +28,6 @@ import {
 	reasonLabel,
 	sweepStatusLabel,
 	sweepStatusTone,
-	timestampLabel,
 } from './presentation.ts';
 import { createSweepsClientState } from './state.ts';
 
@@ -40,48 +42,55 @@ function columns(): readonly TableColumn<AuditSweepRun>[] {
 		{
 			key: 'occurredAt',
 			header: t('audit.sweeps.column.occurredAt'),
-			width: '18%',
+			width: '170px',
 			value: (run) => run.occurredAt,
-			cell: (run) => timestampLabel(run.occurredAt),
+			cell: (run) => <CellTime value={run.occurredAt} />,
 		},
 		{
 			key: 'dataClass',
 			header: t('audit.sweeps.column.dataClass'),
-			width: '24%',
+			width: 'auto',
 			value: (run) => run.classId,
-			cell: (run) => <span class="ui-mono">{run.classId}</span>,
+			cell: (run) => <CellText value={run.classId} mono />,
 		},
 		{
 			key: 'cutoff',
 			header: t('audit.sweeps.column.cutoff'),
-			width: '18%',
+			width: '170px',
+			priority: 2,
 			value: (run) => run.cutoff,
-			cell: (run) => timestampLabel(run.cutoff),
+			cell: (run) => <CellTime value={run.cutoff} />,
 		},
 		{
 			key: 'removed',
 			header: t('audit.sweeps.column.removed'),
-			width: '10%',
+			width: '110px',
 			numeric: true,
+			priority: 2,
 			value: (run) => run.removed,
-			cell: (run) => run.removed,
+			cell: (run) => <CellNumber value={run.removed} />,
 		},
 		{
 			key: 'status',
 			header: t('audit.sweeps.column.status'),
-			width: '14%',
+			width: '130px',
 			value: (run) => run.status,
 			cell: (run) =>
-				<Tag tone={sweepStatusTone(run.status)} dot>{sweepStatusLabel(
-					run.status,
-				)}</Tag>,
+				<CellTag
+					tone={sweepStatusTone(run.status)}
+					dot
+					label={sweepStatusLabel(run.status)}
+				/>,
 		},
 		{
 			key: 'reason',
 			header: t('audit.sweeps.column.reason'),
-			width: '16%',
+			width: '200px',
+			priority: 3,
 			value: (run) => run.reason ?? '',
-			cell: (run) => reasonLabel(run.reason),
+			cell: (run) => run.reason === null
+				? null
+				: <CellText value={reasonLabel(run.reason)} wrap />,
 		},
 	];
 }

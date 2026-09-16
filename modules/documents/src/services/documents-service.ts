@@ -37,7 +37,7 @@ export class DocumentsServiceError extends Error {
 	}
 }
 
-function bounded(
+export function bounded(
 	value: string,
 	field: string,
 	min: number,

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import translationsEn from '../translations/en.json';
 import translationsPl from '../translations/pl.json';
+import {
+	DOCUMENT_TEXT_REASONS,
+	DOCUMENT_TEXT_STATUSES,
+} from '../src/domain/text.ts';
 import { DOCUMENT_SCANS } from '../src/domain/types.ts';
 import { DOCUMENTS_MODULE_SETTINGS } from '../src/settings.ts';
 
@@ -17,6 +21,7 @@ const ERROR_CODES = [
 	'DOCUMENT_NOT_FOUND',
 	'DOCUMENT_DELETED',
 	'STORAGE_UNAVAILABLE',
+	'DOCUMENT_TEXT_NOT_RETRYABLE',
 ] as const;
 
 describe('documents translations', () => {
@@ -41,6 +46,23 @@ describe('documents translations', () => {
 		for (const bundle of BUNDLES) {
 			for (const scan of DOCUMENT_SCANS) {
 				expect([scan, `scan.${scan}` in bundle]).toEqual([scan, true]);
+			}
+		}
+	});
+
+	it('names every text status and reason in both locales', () => {
+		for (const bundle of BUNDLES) {
+			for (const status of DOCUMENT_TEXT_STATUSES) {
+				expect([status, `text.status.${status}` in bundle]).toEqual([
+					status,
+					true,
+				]);
+			}
+			for (const reason of DOCUMENT_TEXT_REASONS) {
+				expect([reason, `text.reason.${reason}` in bundle]).toEqual([
+					reason,
+					true,
+				]);
 			}
 		}
 	});

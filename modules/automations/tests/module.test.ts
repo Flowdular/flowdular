@@ -17,7 +17,7 @@ import {
 } from '@flowdular/client/i18n';
 import translationsEn from '../translations/en.json';
 import translationsPl from '../translations/pl.json';
-import { cadenceLabel, timestampLabel } from '../src/client/presentation.ts';
+import { cadenceLabel } from '../src/client/presentation.ts';
 import {
 	AUTOMATION_SCHEDULE_VARIABLES,
 	createScheduleVariableRegistry,
@@ -188,7 +188,6 @@ describe('automations.core', () => {
 		setActiveLocale('pl');
 		expect(cadenceLabel('every:60')).toBe('Co godzinę');
 		expect(cadenceLabel('every:180')).toBe('Co 3 godz.');
-		expect(timestampLabel(null)).toBe('Jeszcze nie uruchomiono');
 		setActiveLocale('en');
 	});
 

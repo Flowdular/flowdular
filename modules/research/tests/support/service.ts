@@ -17,6 +17,7 @@ import type {
 	ConnectorCalls,
 	ConnectorEgress,
 	ConnectorInstances,
+	DocumentsText,
 	EgressLookup,
 	MeterRegistry,
 } from '../../src/services/capabilities.ts';
@@ -201,6 +202,7 @@ export interface ServiceSetup {
 	readonly chain?: ChainRuntime;
 	readonly egress?: ConnectorEgress;
 	readonly meters?: MeterRegistry;
+	readonly documentsText?: DocumentsText;
 	readonly transport?: PageTransport;
 	readonly workspaceRoot?: string;
 	readonly now?: () => number;
@@ -227,6 +229,7 @@ export function researchService(setup: ServiceSetup): ResearchService {
 		},
 		egress: () => setup.egress,
 		meters: () => setup.meters,
+		documentsText: () => setup.documentsText,
 		transport:
 			setup.transport ??
 			(async () => {

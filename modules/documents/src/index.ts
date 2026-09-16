@@ -28,6 +28,22 @@ export type {
 	DocumentAttachmentBody,
 	DocumentAttachments,
 } from './domain/attachments.ts';
+export {
+	DOCUMENT_TEXT_LIMITS,
+	DOCUMENT_TEXT_PAGE_BREAK,
+	DOCUMENT_TEXT_REASONS,
+	DOCUMENT_TEXT_STATUSES,
+	DOCUMENTS_TEXT_CAPABILITY,
+} from './domain/text.ts';
+export type {
+	DocumentText,
+	DocumentTextBytesInput,
+	DocumentTextExtraction,
+	DocumentTextOptions,
+	DocumentTextPageRange,
+	DocumentTextReason,
+	DocumentTextStatus,
+} from './domain/text.ts';
 
 export {
 	DOCUMENT_LIMITS,

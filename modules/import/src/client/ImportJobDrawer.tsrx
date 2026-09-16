@@ -1,6 +1,10 @@
 import {
 	Alert,
 	Button,
+	CellCode,
+	CellNumber,
+	CellTag,
+	CellText,
 	EmptyState,
 	Kpi,
 	Table,
@@ -38,41 +42,51 @@ function columns(): readonly TableColumn<ImportJobRow>[] {
 		{
 			key: 'rowNumber',
 			header: t('import.rows.column.row'),
-			width: '12%',
+			width: '96px',
 			numeric: true,
 			value: (record) => record.rowNumber,
-			cell: (record) => <span class="num">{record.rowNumber}</span>,
+			cell: (record) => <CellNumber value={record.rowNumber} />,
 		},
 		{
 			key: 'outcome',
 			header: t('import.rows.column.outcome'),
-			width: '20%',
+			width: '130px',
 			value: (record) => record.outcome,
 			cell: (record) =>
-				<Tag tone={outcomeTone(record.outcome)} dot>{outcomeLabel(
-					record.outcome,
-				)}</Tag>,
+				<CellTag
+					tone={outcomeTone(record.outcome)}
+					dot
+					label={outcomeLabel(record.outcome)}
+				/>,
 		},
 		{
 			key: 'field',
 			header: t('import.rows.column.field'),
-			width: '20%',
+			width: '150px',
+			priority: 2,
 			value: (record) => record.field ?? '',
-			cell: (record) => <span class="ui-mono">{record.field ?? ''}</span>,
+			cell: (record) => record.field
+				? <CellText value={record.field} mono />
+				: null,
 		},
 		{
 			key: 'reason',
 			header: t('import.rows.column.reason'),
-			width: '28%',
+			width: 'auto',
 			value: (record) => record.reason ?? '',
-			cell: (record) => reasonLabel(record.reason),
+			cell: (record) => record.reason
+				? <CellText value={reasonLabel(record.reason)} wrap />
+				: null,
 		},
 		{
 			key: 'recordRef',
 			header: t('import.rows.column.recordRef'),
-			width: '20%',
+			width: '170px',
+			priority: 2,
 			value: (record) => record.recordRef ?? '',
-			cell: (record) => <span class="ui-mono">{record.recordRef ?? ''}</span>,
+			cell: (record) => record.recordRef
+				? <CellCode value={record.recordRef} />
+				: null,
 		},
 	];
 }

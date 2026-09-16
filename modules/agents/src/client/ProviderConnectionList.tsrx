@@ -1,5 +1,12 @@
-import { activeLocale, t } from '@flowdular/client';
-import { SearchField, TableCard, Tag, type TableColumn } from '@flowdular/ui';
+import { t } from '@flowdular/client';
+import {
+	CellStack,
+	CellTag,
+	CellTime,
+	SearchField,
+	TableCard,
+	type TableColumn,
+} from '@flowdular/ui';
 import type { AgentProviderConnection } from '../domain/types.ts';
 import { modelReadinessState } from './presentation.ts';
 
@@ -60,34 +67,33 @@ function connectionDetail(provider: AgentProviderConnection): string {
 function ProviderIdentity(props: {
 	readonly provider: AgentProviderConnection;
 }) @{
-	<span class="ui-cell">
-		<b>{props.provider.name}</b>
-		<small class="ui-mono">{props.provider.key}</small>
-	</span>
+	<CellStack
+		primary={props.provider.name}
+		secondary={props.provider.key}
+		secondaryMono
+	/>
 }
 
 function ProviderType(props: { readonly provider: AgentProviderConnection }) @{
-	<span class="ui-cell">
-		<span>{providerKind(props.provider)}</span>
-		<small class="ui-cell__muted">{connectionDetail(props.provider)}</small>
-	</span>
+	<CellStack
+		primary={providerKind(props.provider)}
+		secondary={connectionDetail(props.provider)}
+	/>
 }
 
 function ProviderModels(props: {
 	readonly provider: AgentProviderConnection;
 }) @{
 	const enabled = props.provider.models.filter((model) => model.enabled);
-	<span class="ui-cell">
-		<span>{t('agents.providers.models.count', {
+	<CellStack
+		primary={t('agents.providers.models.count', {
 			enabled: enabled.length,
 			total: props.provider.models.length,
-		})}</span>
-		<small class="ui-cell__muted">
-			{enabled.length > 0
-				? enabled.map((model) => model.label).join(', ')
-				: t('agents.providers.models.none')}
-		</small>
-	</span>
+		})}
+		secondary={enabled.length > 0
+			? enabled.map((model) => model.label).join(', ')
+			: t('agents.providers.models.none')}
+	/>
 }
 
 function ProviderReadiness(props: {
@@ -96,36 +102,32 @@ function ProviderReadiness(props: {
 }) @{
 	const enabled = props.provider.models.filter((model) => model.enabled).length;
 	const state = statusKey(props.provider, props.ttlMs);
-	<span class="ui-table__state">
-		<Tag tone={statusTone(props.provider, props.ttlMs)} dot>{t(
-			'agents.providers.status.' + state,
-		)}</Tag>
-		<small>
-			{enabled === 0
-				? t('agents.providers.models.unavailable')
-				: t('agents.providers.models.proven', {
-						ready: readyModels(props.provider, props.ttlMs),
-						total: enabled,
-					})}
-		</small>
-	</span>
+	<CellStack
+		primary={<CellTag
+			tone={statusTone(props.provider, props.ttlMs)}
+			dot
+			label={t('agents.providers.status.' + state)}
+		/>}
+		secondary={enabled === 0
+			? t('agents.providers.models.unavailable')
+			: t('agents.providers.models.proven', {
+					ready: readyModels(props.provider, props.ttlMs),
+					total: enabled,
+				})}
+	/>
 }
 
 function ProviderUpdated(props: {
 	readonly provider: AgentProviderConnection;
 }) @{
-	<span class="ui-cell">
-		<span>
-			{props.provider.kind === 'local-simulation'
-				? t('agents.providers.builtIn')
-				: new Intl.DateTimeFormat(activeLocale(), {
-						dateStyle: 'medium',
-					}).format(props.provider.updatedAt)}
-		</span>
-		<small class="ui-cell__muted">{t('agents.providers.credentialRevision', {
+	<CellStack
+		primary={props.provider.kind === 'local-simulation'
+			? t('agents.providers.builtIn')
+			: <CellTime value={props.provider.updatedAt} kind="date" />}
+		secondary={t('agents.providers.credentialRevision', {
 			revision: props.provider.credentialRevision,
-		})}</small>
-	</span>
+		})}
+	/>
 }
 
 function providerColumns(
@@ -135,32 +137,35 @@ function providerColumns(
 		{
 			key: 'connection',
 			header: t('agents.providers.column.connection'),
-			width: '18%',
+			width: 'auto',
 			cell: (provider) => <ProviderIdentity provider={provider} />,
 		},
 		{
 			key: 'type',
 			header: t('agents.providers.column.type'),
-			width: '17%',
+			width: '180px',
+			priority: 3,
 			cell: (provider) => <ProviderType provider={provider} />,
 		},
 		{
 			key: 'models',
 			header: t('agents.providers.column.models'),
-			width: '19%',
+			width: '200px',
+			priority: 2,
 			cell: (provider) => <ProviderModels provider={provider} />,
 		},
 		{
 			key: 'readiness',
 			header: t('agents.providers.column.readiness'),
-			width: '21%',
+			width: '200px',
 			cell: (provider) =>
 				<ProviderReadiness provider={provider} ttlMs={readinessTtlMs} />,
 		},
 		{
 			key: 'updated',
 			header: t('agents.providers.column.updated'),
-			width: '15%',
+			width: '160px',
+			priority: 2,
 			cell: (provider) => <ProviderUpdated provider={provider} />,
 		},
 	];

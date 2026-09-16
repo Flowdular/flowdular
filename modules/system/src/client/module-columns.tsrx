@@ -1,4 +1,10 @@
-import { Tag, type TableColumn } from '@flowdular/ui';
+import {
+	CellNumber,
+	CellStack,
+	CellTag,
+	CellText,
+	type TableColumn,
+} from '@flowdular/ui';
 import { activeLocale, t } from '@flowdular/client';
 import type { ModuleCatalogEntry } from './api.ts';
 import { dependentsSummary } from './module-dependents.ts';
@@ -27,72 +33,78 @@ export function surfaces(module: ModuleCatalogEntry): string {
 	return parts.length > 0 ? parts.join(' + ') : t('system.value.none');
 }
 
+/* The module and whether it runs stay on screen at any width. Version and
+   dependents hide next, the platform surfaces and the permission count first;
+   an expanded row lists whatever the width hides. */
 export function moduleColumns(): readonly TableColumn<ModuleCatalogEntry>[] {
 	return [
 		{
 			key: 'module',
 			header: t('system.table.module'),
 			width: 'auto',
-			cell: (module) => <span class="ui-cell">
-				<b>{module.name}</b>
-				<small class="ui-mono">{module.id}</small>
-			</span>,
+			cell: (module) =>
+				<CellStack primary={module.name} secondary={module.id} secondaryMono />,
 		},
 		{
 			key: 'version',
 			header: t('system.table.version'),
 			width: '120px',
-			cell: (module) => <span class="ui-cell">
-				<span class="ui-mono">{module.version || t('system.value.na')}</span>
-				{module.specVersion && module.specVersion !== module.version
-					? <small>{t('system.table.specVersion', {
-							version: module.specVersion,
-						})}</small>
-					: null}
-			</span>,
+			priority: 2,
+			cell: (module) =>
+				<CellStack
+					primary={module.version || t('system.value.na')}
+					primaryMono
+					secondary={module.specVersion && module.specVersion !== module.version
+						? t('system.table.specVersion', { version: module.specVersion })
+						: undefined}
+				/>,
 		},
 		{
 			key: 'platform',
 			header: t('system.table.platform'),
 			width: '200px',
-			cell: (module) => <span class="ui-cell ui-cell--nowrap">
-				<span>{surfaces(module)}</span>
-				<small title={module.capabilities.join(', ')}>{module.capabilities.join(
-					', ',
-				)}</small>
-			</span>,
+			priority: 3,
+			cell: (module) =>
+				<CellStack
+					primary={surfaces(module)}
+					secondary={module.capabilities.join(', ')}
+				/>,
 		},
 		{
 			key: 'permissions',
 			header: t('system.table.permissions'),
 			width: '140px',
 			numeric: true,
-			cell: (module) => new Intl.NumberFormat(activeLocale()).format(
-				module.permissions.length,
-			),
+			priority: 3,
+			cell: (module) => <CellNumber value={module.permissions.length} />,
 		},
 		{
 			key: 'dependents',
 			header: t('system.table.dependents'),
 			width: '170px',
-			cell: (module) => <span class="ui-cell ui-cell--nowrap">
-				<span>{new Intl.NumberFormat(activeLocale()).format(
-					module.dependents.length,
-				)}</span>
-				{module.dependents.length > 0
-					? <small
-							class="ui-mono"
-							title={module.dependents.join(', ')}
-						>{dependentsSummary(module.dependents, t, activeLocale())}</small>
-					: null}
-			</span>,
+			priority: 2,
+			cell: (module) =>
+				<CellStack
+					primary={<CellNumber value={module.dependents.length} />}
+					secondary={module.dependents.length > 0
+						? <CellText
+								value={dependentsSummary(module.dependents, t, activeLocale())}
+								title={module.dependents.join(', ')}
+								mono
+							/>
+						: undefined}
+				/>,
 		},
 		{
 			key: 'status',
 			header: t('system.table.status'),
 			width: '130px',
 			cell: (module) =>
-				<Tag tone={activationTone(module)} dot>{activationLabel(module)}</Tag>,
+				<CellTag
+					tone={activationTone(module)}
+					dot
+					label={activationLabel(module)}
+				/>,
 		},
 	];
 }

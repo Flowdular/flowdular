@@ -1,3 +1,3 @@
-import { definePgliteTestConfig } from '@flowdular/database-testing/vitest';
+import { defineConfig } from 'vitest/config';
 
-export default definePgliteTestConfig();
+export default defineConfig({});

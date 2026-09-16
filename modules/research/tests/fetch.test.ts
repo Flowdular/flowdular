@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import type { DocumentsText } from '../src/services/capabilities.ts';
 import {
 	openResearchTestDatabase,
 	type ResearchTestDatabase,
@@ -374,5 +375,128 @@ describe('research fetch', () => {
 		expect(network.requests).toEqual([]);
 		const evidence = await shared.repository.listEvidence(TENANT, 100, null);
 		expect(evidence).toHaveLength(65);
+	});
+
+	it('RESEARCH-FETCH-PDF reads a PDF through documents.text.v1 and keeps the old refusal without it', async () => {
+		const network = fakeTransport({
+			'https://reports.example/annual.pdf': {
+				contentType: 'application/pdf',
+				body: Buffer.from('%PDF-1.7 with a text layer', 'latin1'),
+			},
+			'https://reports.example/scan': {
+				contentType: 'application/octet-stream',
+				body: Buffer.from('%PDF-1.7 scanned', 'latin1'),
+			},
+			'https://reports.example/other.pdf': {
+				contentType: 'application/pdf',
+				body: Buffer.from('%PDF-1.7 with a text layer', 'latin1'),
+			},
+		});
+		const handed: {
+			readonly contentType: string;
+			readonly bytes: string;
+			readonly signal: boolean;
+		}[] = [];
+		const documentsText: DocumentsText = {
+			async extractBytes(input) {
+				const bytes = Buffer.from(input.bytes).toString('latin1');
+				handed.push({
+					contentType: input.contentType,
+					bytes,
+					signal: input.signal instanceof AbortSignal,
+				});
+				return bytes.includes('scanned')
+					? {
+							status: 'unscanned',
+							reason: 'DOCUMENT_OCR_UNCONFIGURED',
+							text: '',
+						}
+					: {
+							status: 'ok',
+							reason: null,
+							text: 'Annual report\fSecond page',
+						};
+			},
+		};
+		const settings = testSettings({ adapter: 'model-native' });
+		const composed = researchService({
+			repository: shared.repository,
+			settings,
+			egress: fakeEgress(),
+			transport: network.transport,
+			documentsText,
+		});
+
+		const page = await composed.fetch({
+			tenantId: TENANT,
+			url: 'https://reports.example/annual.pdf',
+			caller: 'member',
+		});
+		expect(page).toMatchObject({
+			title: 'reports.example/annual.pdf',
+			text: 'Annual report\n\nSecond page',
+		});
+		expect(handed).toEqual([
+			{
+				contentType: 'application/pdf',
+				bytes: '%PDF-1.7 with a text layer',
+				signal: true,
+			},
+		]);
+		await expect(
+			composed.fetch({
+				tenantId: TENANT,
+				url: 'https://reports.example/scan',
+				caller: 'member',
+			}),
+		).rejects.toMatchObject({
+			code: 'RESEARCH_CONTENT_UNSUPPORTED',
+			status: 415,
+		});
+		expect(
+			(await shared.repository.listEvidence(TENANT, 10, null)).map(
+				(entry) => entry.url,
+			),
+		).toEqual(['https://reports.example/annual.pdf']);
+
+		const alone = researchService({
+			repository: shared.repository,
+			settings,
+			egress: fakeEgress(),
+			transport: network.transport,
+		});
+		await expect(
+			alone.fetch({
+				tenantId: TENANT,
+				url: 'https://reports.example/other.pdf',
+				caller: 'member',
+			}),
+		).rejects.toMatchObject({
+			code: 'RESEARCH_CONTENT_UNSUPPORTED',
+			status: 415,
+		});
+		expect(handed).toHaveLength(2);
+
+		const stalled = researchService({
+			repository: shared.repository,
+			settings: testSettings({ adapter: 'model-native', fetchTimeoutMs: 50 }),
+			egress: fakeEgress(),
+			transport: network.transport,
+			documentsText: {
+				extractBytes: (input) =>
+					new Promise((_, reject) => {
+						input.signal?.addEventListener('abort', () =>
+							reject(new Error('aborted')),
+						);
+					}),
+			},
+		});
+		await expect(
+			stalled.fetch({
+				tenantId: TENANT,
+				url: 'https://reports.example/other.pdf',
+				caller: 'member',
+			}),
+		).rejects.toMatchObject({ code: 'RESEARCH_FETCH_TIMEOUT', status: 504 });
 	});
 });

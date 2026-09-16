@@ -226,8 +226,8 @@ export function composeModuleServer(
 				agentDefinitions: context.agentDefinitions.forModule('documents.core'),
 				dataClasses: context.dataClasses.forModule('documents.core'),
 				capabilities: context.capabilities.forModule('documents.core', {
-					provides: ['documents.attachments.v1'],
-					requires: [],
+					provides: ['documents.attachments.v1', 'documents.text.v1'],
+					requires: [{ id: 'connectors.egress.v1', optional: true }],
 				}),
 				metrics: createModuleMetrics('documents.core'),
 			}),
@@ -304,6 +304,7 @@ export function composeModuleServer(
 						{ id: 'connectors.egress.v1', optional: true },
 						{ id: 'metering.meters.v1', optional: true },
 						{ id: 'documents.attachments.v1', optional: true },
+						{ id: 'documents.text.v1', optional: true },
 						{ id: 'exports.lists.v1', optional: true },
 					],
 				}),

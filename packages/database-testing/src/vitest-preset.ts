@@ -7,6 +7,7 @@ import { defineConfig, type ViteUserConfig } from 'vitest/config';
  * when the whole workspace runs at once, which is well past the 5s vitest
  * default. Every consumer extends this instead of restating the numbers, so a
  * suite cannot silently miss the raised timeout and fail only in a full run.
+ * @flowdular/database-pglite restates them, because this package depends on it.
  */
 export function definePgliteTestConfig(
 	overrides: ViteUserConfig = {},

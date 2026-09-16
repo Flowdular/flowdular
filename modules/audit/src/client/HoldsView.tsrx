@@ -2,6 +2,12 @@ import { useEffect, useMemo, useState } from 'octane';
 import {
 	Alert,
 	Button,
+	CellCode,
+	CellMuted,
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
 	DateField,
 	Drawer,
 	EmptyState,
@@ -13,7 +19,6 @@ import {
 	SearchField,
 	Select,
 	TableCard,
-	Tag,
 	ToastHost,
 	toasts,
 	type TableAction,
@@ -41,7 +46,6 @@ import {
 	holdScopeLabel,
 	holdStatusLabel,
 	holdStatusTone,
-	timestampLabel,
 } from './presentation.ts';
 import { createHoldsClientState } from './state.ts';
 
@@ -53,66 +57,77 @@ export interface HoldsViewProps {
 const PAGE_SIZES = [10, 25, 50, 100];
 const REASON_LIMIT = 400;
 
+/* What a hold covers and whether it still holds stay on screen; when and whom
+   it narrows to hide next, the reason and who placed it first. */
 function columns(): readonly TableColumn<AuditLegalHold>[] {
 	return [
 		{
-			key: 'placedAt',
-			header: t('audit.holds.column.placedAt'),
-			width: '14%',
-			value: (hold) => hold.placedAt,
-			cell: (hold) => timestampLabel(hold.placedAt),
-		},
-		{
 			key: 'scopeKind',
 			header: t('audit.holds.column.scope'),
-			width: '18%',
+			width: 'auto',
 			value: (hold) => hold.scopeKind,
-			cell: (hold) => <span class="ui-cell">
-				<b>{holdScopeLabel(hold.scopeKind)}</b>
-				<small class="ui-cell__muted ui-mono">{holdRangeDetail(hold)}</small>
-			</span>,
-		},
-		{
-			key: 'accountId',
-			header: t('audit.holds.column.accountId'),
-			width: '14%',
-			value: (hold) => hold.accountId ?? '',
-			cell: (hold) => hold.accountId === null
-				? <span class="ui-cell__muted">{t('audit.common.none')}</span>
-				: <span class="ui-mono">{hold.accountId}</span>,
-		},
-		{
-			key: 'classId',
-			header: t('audit.holds.column.classId'),
-			width: '16%',
-			value: (hold) => hold.classId ?? '',
-			cell: (hold) => hold.classId === null
-				? <span class="ui-cell__muted">{t('audit.common.none')}</span>
-				: <span class="ui-mono">{hold.classId}</span>,
-		},
-		{
-			key: 'reason',
-			header: t('audit.holds.column.reason'),
-			width: '18%',
-			value: (hold) => hold.reason,
-			cell: (hold) => hold.reason,
-		},
-		{
-			key: 'placedBy',
-			header: t('audit.holds.column.placedBy'),
-			width: '12%',
-			value: (hold) => hold.placedBy,
-			cell: (hold) => <span class="ui-mono">{hold.placedBy}</span>,
+			cell: (hold) =>
+				<CellStack
+					primary={holdScopeLabel(hold.scopeKind)}
+					secondary={holdRangeDetail(hold)}
+					secondaryMono
+				/>,
 		},
 		{
 			key: 'status',
 			header: t('audit.holds.column.status'),
-			width: '12%',
+			width: '120px',
 			value: (hold) => hold.status,
 			cell: (hold) =>
-				<Tag tone={holdStatusTone(hold.status)} dot>{holdStatusLabel(
-					hold.status,
-				)}</Tag>,
+				<CellTag
+					tone={holdStatusTone(hold.status)}
+					dot
+					label={holdStatusLabel(hold.status)}
+				/>,
+		},
+		{
+			key: 'placedAt',
+			header: t('audit.holds.column.placedAt'),
+			width: '170px',
+			priority: 2,
+			value: (hold) => hold.placedAt,
+			cell: (hold) => <CellTime value={hold.placedAt} />,
+		},
+		{
+			key: 'accountId',
+			header: t('audit.holds.column.accountId'),
+			width: '160px',
+			priority: 2,
+			value: (hold) => hold.accountId ?? '',
+			cell: (hold) => hold.accountId === null
+				? <CellMuted>{t('audit.common.none')}</CellMuted>
+				: <CellCode value={hold.accountId} />,
+		},
+		{
+			key: 'classId',
+			header: t('audit.holds.column.classId'),
+			width: '180px',
+			priority: 2,
+			value: (hold) => hold.classId ?? '',
+			cell: (hold) => hold.classId === null
+				? <CellMuted>{t('audit.common.none')}</CellMuted>
+				: <CellText value={hold.classId} mono />,
+		},
+		{
+			key: 'reason',
+			header: t('audit.holds.column.reason'),
+			width: '240px',
+			priority: 3,
+			value: (hold) => hold.reason,
+			cell: (hold) => <CellText value={hold.reason} wrap />,
+		},
+		{
+			key: 'placedBy',
+			header: t('audit.holds.column.placedBy'),
+			width: '160px',
+			priority: 3,
+			value: (hold) => hold.placedBy,
+			cell: (hold) => <CellText value={hold.placedBy} mono />,
 		},
 	];
 }

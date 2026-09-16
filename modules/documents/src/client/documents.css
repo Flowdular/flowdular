@@ -1,0 +1,46 @@
+/* Documents module: composites specific to this module. Primitives come from
+   @flowdular/ui and are not restyled here. */
+
+.documents-details__panel {
+	display: grid;
+	gap: 12px;
+	min-width: 0;
+}
+
+.documents-facts {
+	display: grid;
+	grid-template-columns: minmax(9rem, auto) 1fr;
+	gap: 8px 16px;
+	margin: 0;
+}
+
+.documents-facts dt {
+	font-size: var(--text-sm);
+	color: var(--ink-3);
+}
+
+.documents-facts dd {
+	margin: 0;
+	overflow-wrap: anywhere;
+}
+
+.documents-text__summary {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 12px;
+}
+
+.documents-text__page {
+	display: grid;
+	gap: 4px;
+	min-width: 0;
+}
+
+.documents-text__body {
+	margin: 0;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	font-size: var(--text-sm);
+	color: var(--ink-2);
+}

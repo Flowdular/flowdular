@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: research.core
-specVersion: 0.2.0
+specVersion: 0.2.1
 status: approved
 name: Research
 description: Gives agents, workflows and members a governed web search and page reader behind an ordered chain of adapters a workspace owner configures, with retries, fallback and a circuit breaker so research keeps answering when one provider fails, and keeps every result kept and every page read as citeable evidence that other modules attach to their own records.
@@ -32,6 +32,8 @@ requires:
     optional: true
   - id: documents.attachments.v1
     optional: true
+  - id: documents.text.v1
+    optional: true
   - id: exports.lists.v1
     optional: true
 tenancy: required
@@ -61,7 +63,7 @@ invariants:
   - A fetch reaches the network only through connectors.egress.v1. Without that capability a live fetch answers RESEARCH_EGRESS_UNAVAILABLE with status 409, and a URL the policy refuses answers RESEARCH_EGRESS_REFUSED with status 403 and the policy reason. The connection dials only the addresses the policy verified, on https and port 443.
   - A fetch honours robots.txt for the user agent FlowdularResearch and the wildcard group, cached per host for one hour in process, and one decision spends a bounded number of pattern comparisons, refusing the path once a hostile file exhausts them. A robots.txt answering a 4xx status admits every path; one that cannot be read refuses the fetch with RESEARCH_ROBOTS_UNAVAILABLE and status 502 and is not cached; a disallowed path answers RESEARCH_ROBOTS_DISALLOWED with status 403.
   - A fetch follows at most one redirect, applying the domain rules, robots.txt and the egress policy to the target again, and a second redirect answers RESEARCH_REDIRECT_REFUSED. A body past research.core.fetchMaxBytes stops the read and answers RESEARCH_FETCH_TOO_LARGE with status 413, a fetch past research.core.fetchTimeoutMs, the resolution of its host included, answers RESEARCH_FETCH_TIMEOUT with status 504, and a status outside 200 to 299 answers RESEARCH_FETCH_FAILED with status 502.
-  - HTML and XHTML become readable text through the module's own extractor, which keeps the title, prefers the article or main element, drops scripts, styles, navigation, headers, footers, forms and comments, and decodes entities; plain text is kept as it is. A PDF answers RESEARCH_CONTENT_UNSUPPORTED with status 415 until documents text extraction exists, and so does every other content type.
+  - HTML and XHTML become readable text through the module's own extractor, which keeps the title, prefers the article or main element, drops scripts, styles, navigation, headers, footers, forms and comments, and decodes entities; plain text is kept as it is. A PDF the direct reader downloaded, named by its content type or its %PDF- signature, is handed as bytes to documents.text.v1 extractBytes with the fetch signal when documents.core is composed. An ok answer becomes the page text with its pages separated by a blank line and the URL host and path as the title, and any other answer is RESEARCH_CONTENT_UNSUPPORTED with status 415. Without documents.text.v1 a PDF answers RESEARCH_CONTENT_UNSUPPORTED with status 415, and so does every other content type.
   - A fetched page is cached in research_pages by URL with its sha256 and title for 24 hours, and a fetch inside that window reads the cache instead of the network. A page reached through a redirect is not cached, so the domain rules apply to its host again on the next fetch.
   - An agent or workflow run fetches at most 64 pages. The count lives in research_run_counters, is taken before the fetch in the same statement that checks it, and a fetch past it answers RESEARCH_RUN_LIMIT with status 429.
   - Every result a search keeps and every page a fetch reads becomes one research_evidence row with the URL, the title, an excerpt of at most 4096 bytes, the content sha256, the retrieval time, the run id when a run asked and the account that asked. The full text is stored only while research.core.storeFullText is on. Result evidence is linked to the query that produced it under the owner module research.core.
@@ -604,6 +606,10 @@ acceptanceScenarios:
     given: Pages that answer a body past the size cap, stall past the time cap, redirect twice, answer a PDF, answer a server error, or are refused by the egress policy, and single redirects to a denied host, to a path robots.txt disallows and to a host the egress policy refuses.
     when: Each page is fetched.
     then: They answer RESEARCH_FETCH_TOO_LARGE, RESEARCH_FETCH_TIMEOUT, RESEARCH_REDIRECT_REFUSED, RESEARCH_CONTENT_UNSUPPORTED, RESEARCH_FETCH_FAILED and RESEARCH_EGRESS_REFUSED, the redirects answer RESEARCH_DOMAIN_DENIED, RESEARCH_ROBOTS_DISALLOWED and RESEARCH_EGRESS_REFUSED, no evidence row is written for any of them, a single redirect to an admitted page is followed and its page is not cached, and a URL longer than its bound once encoded answers RESEARCH_URL_INVALID.
+  - id: RESEARCH-FETCH-PDF
+    given: A page that answers a PDF with a text layer, and one that answers a PDF without text, on a platform where documents.text.v1 is composed, and the same text PDF on a platform without it.
+    when: A member fetches each.
+    then: The text PDF is handed to extractBytes as bytes with its content type and becomes evidence with its pages separated by a blank line, the PDF without text answers RESEARCH_CONTENT_UNSUPPORTED with status 415 and no evidence, and without the capability the text PDF answers RESEARCH_CONTENT_UNSUPPORTED as before.
   - id: RESEARCH-FETCH-HTML
     given: An HTML page with a title, navigation, a script, an article and entities, served over TLS to an address the egress policy verified.
     when: The page is fetched twice within 24 hours with storeFullText on.
@@ -693,7 +699,7 @@ acceptanceScenarios:
     when: A runtime transaction bound to one workspace reads or writes them, and the adapters of each workspace are read.
     then: Only that workspace's rows are visible, a row carrying the other workspace is rejected by the forced policy, and one workspace's open circuit never skips an adapter of the other.
 outOfScope:
-  - Reading a PDF. A PDF answers RESEARCH_CONTENT_UNSUPPORTED until documents text extraction (RFC 0006 J2) exists.
+  - Reading a PDF through Firecrawl or without documents.core. Only the direct reader hands PDF bytes to documents.text.v1; Firecrawl answers text rather than bytes, so a PDF it reports is refused, and a platform without documents.core answers every PDF RESEARCH_CONTENT_UNSUPPORTED.
   - Storing the full page text as a document. documents.attachments.v1 offers no create call, so the full text is a column of the evidence row while storeFullText is on and documentId stays empty.
   - The provider pass-through of the native web search. The harness offers the native tool and records what a provider reports, and the real providers report the tool as unsupported until the ai-provider stream wires Anthropic and OpenAI web search.
   - Pinning the chain in the sandbox preview. The preview holds research.core.adapter at recorded; a draft that also set searchOrder would need the preview to hold that setting as well.

@@ -2,6 +2,11 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	CellMuted,
+	CellStack,
+	CellTag,
+	CellText,
+	CellTime,
 	ConfirmDialog,
 	Drawer,
 	EmptyState,
@@ -83,40 +88,49 @@ const INBOX_ACTIONS_WIDTH = '320px';
 function columns(): readonly TableColumn<NotificationsInbox>[] {
 	return [
 		{
+			key: 'title',
+			header: t('notifications.inbox.column.title'),
+			width: 'auto',
+			cell: (item) =>
+				<CellStack
+					primary={item.title}
+					secondary={item.sourceRef}
+					secondaryMono
+				/>,
+		},
+		{
 			key: 'status',
 			header: t('notifications.inbox.column.status'),
-			width: '14%',
+			width: '120px',
 			cell: (item) =>
-				<Tag tone={inboxStatusTone(item.status)} dot>{inboxStatusLabel(
-					item.status,
-				)}</Tag>,
+				<CellTag
+					tone={inboxStatusTone(item.status)}
+					dot
+					label={inboxStatusLabel(item.status)}
+				/>,
 		},
 		{
 			key: 'kind',
 			header: t('notifications.inbox.column.kind'),
-			width: '12%',
-			cell: (item) => kindLabel(item.kind),
-		},
-		{
-			key: 'title',
-			header: t('notifications.inbox.column.title'),
-			width: '19%',
-			cell: (item) => <span class="ui-cell">
-				<b>{item.title}</b>
-				<small class="ui-mono">{item.sourceRef}</small>
-			</span>,
+			width: '150px',
+			priority: 2,
+			cell: (item) => <CellText value={kindLabel(item.kind)} />,
 		},
 		{
 			key: 'sourceModule',
 			header: t('notifications.inbox.column.sourceModule'),
-			width: '14%',
-			cell: (item) => <span class="ui-mono">{item.sourceModule}</span>,
+			width: '160px',
+			priority: 3,
+			cell: (item) => <CellText value={item.sourceModule} mono />,
 		},
 		{
 			key: 'readAt',
 			header: t('notifications.inbox.column.readAt'),
-			width: '13%',
-			cell: (item) => isoTimestampLabel(item.readAt),
+			width: '170px',
+			priority: 2,
+			cell: (item) => item.readAt === null || item.readAt === ''
+				? <CellMuted>{t('notifications.common.notYet')}</CellMuted>
+				: <CellTime value={item.readAt} />,
 		},
 	];
 }

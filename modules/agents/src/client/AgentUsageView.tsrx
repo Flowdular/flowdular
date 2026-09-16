@@ -3,12 +3,15 @@ import { t } from '@flowdular/client';
 import {
 	Alert,
 	Button,
+	CellNumber,
+	CellTag,
+	CellText,
+	CellTime,
 	EmptyState,
 	Icon,
 	Kpi,
 	PageHeader,
 	TableCard,
-	Tag,
 	type TableColumn,
 } from '@flowdular/ui';
 import { useValue } from 'segment-state';
@@ -22,48 +25,51 @@ function agentColumns(): readonly TableColumn<AgentUsageAgent>[] {
 		{
 			key: 'agent',
 			header: t('agents.runs.column.agent'),
-			width: '30%',
-			cell: (row) => <span class="ui-cell">
-				<b>{row.agentName}</b>
-			</span>,
+			width: 'auto',
+			cell: (row) => <CellText value={row.agentName} strong />,
 		},
 		{
 			key: 'runs',
 			header: t('agents.usage.column.runs'),
-			width: '12%',
+			width: '100px',
 			numeric: true,
-			cell: (row) => countLabel(row.runs),
+			priority: 2,
+			cell: (row) => <CellNumber value={row.runs} />,
 		},
 		{
 			key: 'input',
 			header: t('agents.usage.column.input'),
-			width: '14%',
+			width: '110px',
 			numeric: true,
-			cell: (row) => tokenLabel(row.inputTokens),
+			priority: 3,
+			cell: (row) => <CellText value={tokenLabel(row.inputTokens)} />,
 		},
 		{
 			key: 'output',
 			header: t('agents.usage.column.output'),
-			width: '14%',
+			width: '110px',
 			numeric: true,
-			cell: (row) => tokenLabel(row.outputTokens),
+			priority: 3,
+			cell: (row) => <CellText value={tokenLabel(row.outputTokens)} />,
 		},
 		{
 			key: 'cost',
 			header: t('agents.usage.column.cost'),
-			width: '14%',
+			width: '120px',
 			numeric: true,
-			cell: (row) => costLabel(row.costMicroUsd),
+			cell: (row) => <CellText value={costLabel(row.costMicroUsd)} />,
 		},
 		{
 			key: 'pricing',
 			header: t('agents.usage.column.pricing'),
-			width: '16%',
+			width: '160px',
 			cell: (row) => row.unpricedRuns > 0
-				? <Tag tone="warning" dot>{t('agents.usage.unpriced', {
-						count: row.unpricedRuns,
-					})}</Tag>
-				: <Tag tone="success" dot>{t('agents.usage.priced')}</Tag>,
+				? <CellTag
+						tone="warning"
+						dot
+						label={t('agents.usage.unpriced', { count: row.unpricedRuns })}
+					/>
+				: <CellTag tone="success" dot label={t('agents.usage.priced')} />,
 		},
 	];
 }
@@ -73,36 +79,39 @@ function dayColumns(): readonly TableColumn<AgentUsageDay>[] {
 		{
 			key: 'day',
 			header: t('agents.usage.column.day'),
-			width: '28%',
-			cell: (row) => <span class="ui-mono">{dayLabel(row.day)}</span>,
+			width: 'auto',
+			cell: (row) => <CellTime value={row.day} kind="date" />,
 		},
 		{
 			key: 'runs',
 			header: t('agents.usage.column.runs'),
-			width: '18%',
+			width: '100px',
 			numeric: true,
-			cell: (row) => countLabel(row.runs),
+			priority: 2,
+			cell: (row) => <CellNumber value={row.runs} />,
 		},
 		{
 			key: 'input',
 			header: t('agents.usage.column.input'),
-			width: '18%',
+			width: '110px',
 			numeric: true,
-			cell: (row) => tokenLabel(row.inputTokens),
+			priority: 3,
+			cell: (row) => <CellText value={tokenLabel(row.inputTokens)} />,
 		},
 		{
 			key: 'output',
 			header: t('agents.usage.column.output'),
-			width: '18%',
+			width: '110px',
 			numeric: true,
-			cell: (row) => tokenLabel(row.outputTokens),
+			priority: 3,
+			cell: (row) => <CellText value={tokenLabel(row.outputTokens)} />,
 		},
 		{
 			key: 'cost',
 			header: t('agents.usage.column.cost'),
-			width: '18%',
+			width: '120px',
 			numeric: true,
-			cell: (row) => costLabel(row.costMicroUsd),
+			cell: (row) => <CellText value={costLabel(row.costMicroUsd)} />,
 		},
 	];
 }

@@ -22,7 +22,7 @@
 		},
 		{
 			"id": "documents.core",
-			"range": "^0.1.2"
+			"range": "^0.2.0"
 		}
 	],
 	"provides": ["import.ports.v1", "import.write.v1"],

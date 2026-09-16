@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "documents.core",
 	"package": "@flowdular/module-documents",
-	"version": "0.1.9",
+	"version": "0.2.0",
 	"platformApi": "^0.1.0",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations", "cli"],
@@ -21,7 +21,13 @@
 			"range": "^0.13.0"
 		}
 	],
-	"provides": ["documents.attachments.v1"],
+	"provides": ["documents.attachments.v1", "documents.text.v1"],
+	"requires": [
+		{
+			"id": "connectors.egress.v1",
+			"optional": true
+		}
+	],
 	"tenancy": "required",
 	"locales": ["en", "pl"],
 	"stability": "experimental",

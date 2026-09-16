@@ -1,9 +1,9 @@
 schemaVersion: 2
 id: documents.core
-specVersion: 0.1.9
+specVersion: 0.2.0
 status: approved
 name: Documents Core
-description: Lets a workspace attach files to its records through the platform storage port, owning only the document metadata and the reference to the record, with tenant-scoped keys, encrypted bytes, size and type limits, and a scan state, so a module attaches by reference and never holds bytes.
+description: Lets a workspace attach files to its records through the platform storage port, owning only the document metadata and the reference to the record, with tenant-scoped keys, encrypted bytes, size and type limits, and a scan state, so a module attaches by reference and never holds bytes, and reads the text out of a stored document or of bytes a module hands over, so agents, workflows and members can read what was uploaded.
 profile: full
 capabilities:
   - api
@@ -16,6 +16,12 @@ dependencies:
     range: ^0.8.0
   - id: auth.core
     range: ^0.13.0
+provides:
+  - documents.attachments.v1
+  - documents.text.v1
+requires:
+  - id: connectors.egress.v1
+    optional: true
 tenancy: required
 locales:
   - en
@@ -32,6 +38,16 @@ invariants:
   - Upload metadata travels in headers, which carry ASCII only, so a value holding a code point above 0x7F is refused and a client percent-encodes it; a name is stored as it was sent or not at all.
   - The object ceiling and the accepted content types are served to the screen, which states them and refuses a file past the ceiling before it sends one. The storage port stays the authority on both and refuses again on the bytes it receives.
   - Documents are a data class declared through the platform data class registry, exportable as metadata rows that name the storage key while the bytes stay in the object store until the export sink gains an attachment channel, and swept only by explicit deletion, never by retention.
+  - The public capability documents.text.v1 offers extract(tenantId, ownerModule, recordRef, id, { pages }) for a stored document of the caller's reference pair and extractBytes({ contentType, bytes, pages, signal }) for bytes that are not stored. extract answers null for every reference open answers null for (unknown, another pair or workspace, deleted, infected). Both answer status ok, unscanned, unsupported, too-large or pending (extract only), a reason code for every status but ok and pending, the page count, the first and last page the text covers, whether the text was cut, and the hex sha256 of the bytes read. The text of the pages answered is joined with a form feed between pages, and a page never carries a form feed of its own.
+  - Formats and pages. A PDF is read from its text layer, one page per PDF page; a PPTX gives one page per slide in presentation order; a DOCX, a CSV and a plain text file are cut into pages of at most 10000 characters ending at a line break where one falls inside the page; an XLSX gives one block per sheet in workbook order, the sheet name on its first line and each row as tab separated cell values, a new sheet always starting a new page and a long sheet cut like a DOCX. Shared strings, inline strings, booleans, errors and the cached value of a formula are read; number formats are not applied. application/msword and application/vnd.ms-excel answer unsupported with DOCUMENT_TEXT_FORMAT, and bytes that do not carry the structure of their declared type, a malformed file or a file without its main part answer unsupported with DOCUMENT_TEXT_UNREADABLE, a password protected PDF with DOCUMENT_TEXT_ENCRYPTED.
+  - Bounds. At most 200 pages and 2 MiB of UTF-8 text are read and kept; a document with more pages, or more text, is answered up to the bound with truncated true. Input over 25 MiB answers too-large with DOCUMENT_TEXT_TOO_LARGE before a parser sees it. A page range names whole pages from 1, from not past to, and answers only the pages kept, so never more than 200; it is truncated when it reaches the last page kept of a document that was cut, and a range past the last page kept answers no text. A range with a page below 1, a non-integer or from past to is refused with INVALID_INPUT.
+  - Nothing executes document content. The PDF reader is pdf.js as bundled by unpdf, with font face loading, system fonts, WebAssembly, XFA, workers, range and stream loading and every fetch switched off, and without eval in the bundled build; no annotation, script, form or embedded file is read. An OOXML package is read by the module's own ZIP reader over the central directory, accepting only stored and deflate entries without encryption and without ZIP64, at most 4096 entries, and counting the bytes actually inflated rather than the sizes the archive declares, stopping every part of a document once 32 MiB have been inflated. Its parts are read by a strict SAX XML parser that never reads a document type definition, resolves no external or internal entity and decodes only the five predefined entities and character references.
+  - The OCR seam. A deployment may set FD_DOCUMENTS_OCR_URL, an https URL on port 443 to a public host name without credentials, refused at boot otherwise, and FD_DOCUMENTS_OCR_TOKEN, sent as a bearer token. A PDF without a text layer on any page read, and a PNG, JPEG, GIF or WebP image, is posted there as its bytes with its content type, only after connectors.egress.v1 verified the host resolves to public addresses on that call, over a connection pinned to those addresses, with no redirect followed, a 60 second timeout and at most 8 MiB of answer. The answer is JSON with pages, a list of page texts, or text, pages separated by a form feed, and becomes the extracted text under the same bounds. Without the URL, or without connectors.egress.v1, such a document answers unscanned with DOCUMENT_OCR_UNCONFIGURED; a refused host, a failed call or an answer of the wrong shape answers unscanned with DOCUMENT_OCR_FAILED; the token and the document bytes are never logged.
+  - The text of a stored document is kept in documents_text, one row per workspace and document with the content sha256, the status, the reason, the text, the page count, whether it was cut, the attempts and the extraction time. The table carries tenant_id, enables and forces row-level security with USING and WITH CHECK policies bound to the transaction-local tenant id, and the background role may read only the tenant, the document id, the status and the request time of pending rows. A second read of the same document reads the row and extracts nothing; a document without a row whose content sha256 matches a finished row of the same workspace copies that row instead of extracting. The row is deleted in the transaction that marks its document deleted, and it is the data class documents.core.text, kept as long as its document, never swept by retention and excluded from the workspace export because the documents class exports the rows the text was read from.
+  - A stored document larger than 2 MiB, and one that needs OCR while OCR is configured, is extracted on the job runner. extract then answers pending and inserts a pending row, and the runner claims pending rows through the background role's routing read, holds each claim with a heartbeat, takes over a claim older than five minutes, gives up after three attempts with unsupported and DOCUMENT_TEXT_FAILED, settles only while it still holds the claim, and removes the row of a document deleted meanwhile. A smaller document without OCR is extracted within the call. extractBytes always extracts within the call, OCR included, and stops when the caller's signal aborts.
+  - POST /api/documents/text answers the text of one document of the workspace by id with the optional page range and whether OCR is available, behind documents.files.read; POST /api/documents/text/retry puts a document whose text is unscanned back to pending while OCR is available and refuses anything else with DOCUMENT_TEXT_NOT_RETRYABLE and status 409, behind documents.files.manage. Both pass the session CSRF check before they read a bounded body, answer DOCUMENT_NOT_FOUND with 404 for an id outside the workspace, and answer DOCUMENT_INFECTED or DOCUMENT_DELETED with 409 for a document that has no bytes to read.
+  - The agent tool documents.read-text takes ownerModule, recordRef, documentId and an optional page range, takes the workspace from the run, answers through extract with the text cut to 20000 UTF-8 bytes at a character boundary and truncated set when it was cut, and refuses a reference extract answers null for with DOCUMENT_NOT_FOUND, which the harness reports as a failed tool call carrying that refusal's message. It is declared with risk read and requires documents.files.read, so a run whose principal lacks it never sees the tool.
+  - The Documents screen opens a document's details from its row, with a Details tab and a Text tab. The Text tab states loading, pending (read again every few seconds while the drawer stays open), failed, denied, a status tag with the page count and the reason, the text page by page ten pages at a time with previous and next, an empty text, and for unscanned text a Retry action shown only while OCR is available to a principal holding documents.files.manage.
 permissions:
   - id: documents.files.read
     description: List documents of the active workspace and obtain read URLs for them.
@@ -40,6 +56,7 @@ permissions:
 dataOwnership:
   - documents.core owns document metadata, the storage key, the checksum, the scan state and the attachment reference.
   - The platform storage port owns the bytes and their encryption; the owning module owns the record a document is attached to and decides through its own permissions who may see the record.
+  - documents.core owns the text read out of a stored document, which lives and goes with that document; the text read from bytes a module hands over is returned and never kept.
 entities:
   - id: document
     name: Document
@@ -103,6 +120,48 @@ entities:
         - from: stored
           to: deleted
           permission: documents.files.manage
+  - id: document-text
+    name: Document text
+    description: The text read out of one stored document, kept while the document is.
+    fields:
+      - id: document
+        type: reference
+        required: true
+        unique: tenant
+        reference: document
+      - id: contentSha256
+        type: string
+        required: true
+        maxLength: 64
+      - id: status
+        type: enum
+        required: true
+        values:
+          - pending
+          - ok
+          - unscanned
+          - unsupported
+          - too-large
+      - id: reason
+        type: string
+        required: false
+        maxLength: 64
+      - id: text
+        type: text
+        required: true
+        description: The pages read, separated by a form feed, at most 2 MiB of UTF-8.
+      - id: pages
+        type: integer
+        required: true
+      - id: truncated
+        type: boolean
+        required: true
+      - id: attempts
+        type: integer
+        required: true
+      - id: extractedAt
+        type: datetime
+        required: false
 screens:
   - id: documents
     kind: list
@@ -122,6 +181,10 @@ screens:
       - filename
       - description
     navigationGroup: Workspace
+  - id: document-details
+    kind: record
+    entity: document-text
+    title: Document details
 actions:
   - id: upload
     entity: document
@@ -158,6 +221,20 @@ actions:
     risk: destructive
     idempotent: true
     description: Delete the documents the screen selected, between 1 and 100 unique ids, each through the single delete path, answering one outcome per id (deleted, not-found or refused) and never failing the whole call for a missing id.
+  - id: read-text
+    entity: document-text
+    permission: documents.files.read
+    kind: custom
+    risk: read
+    idempotent: true
+    description: Answer the text of one document with an optional page range, extracting it first when no row holds it, and whether OCR is available.
+  - id: retry-text
+    entity: document-text
+    permission: documents.files.manage
+    kind: custom
+    risk: workspace-write
+    idempotent: true
+    description: Put a document whose text is unscanned back on the job runner while OCR is available.
 widgets: []
 settings:
   - key: quotaBytes
@@ -170,9 +247,18 @@ settings:
     scope: platform
     default: 300
     description: Lifetime of a read URL; 30 to 3600.
-agentTools: []
+agentTools:
+  - id: documents.read-text
+    permission: documents.files.read
+    description: Read the text of one document of a record by its owner module, record reference and id, optionally a page range, cut to 20000 UTF-8 bytes with truncated set.
+    risk: read
 outOfScope:
   - Previews, thumbnails and in-browser rendering are not offered; a document is downloaded.
+  - An OCR engine is not shipped. A deployment points FD_DOCUMENTS_OCR_URL at its own service; without it a scanned PDF or an image answers unscanned.
+  - Headers, footers, footnotes, comments and speaker notes of Office documents, and number formats of a spreadsheet, are not read; the body, the slides and the cell values are.
+  - Pages past the first 200 of a document are not read, and a page range past them answers no text with truncated set.
+  - The legacy binary Word and Excel formats are stored but their text is not read.
+  - Parsing in a separate worker thread with its own memory limit. Extraction runs in the platform process under the input, page, text and inflation bounds, because the production server is one bundle without a worker entry.
   - Versioning of a document is not offered; replacing is an upload plus a delete by the owning module.
   - A shared FileUpload component does not exist yet; the Documents screen builds its uploader locally and flags it as a promotion candidate.
   - Malware scanning runs only when the deployment configures a scanner for the storage port; otherwise documents are labelled unscanned.
@@ -200,6 +286,26 @@ decisions:
   - id: D-DOCUMENTS-ATTACH-AUTHORITY
     question: Who may attach a file to another module's record?
     answer: Attaching is workspace-wide under documents.files.manage. documents.core holds no per-module attach predicate and does not ask the owning module whether the reference it was given is a record at all, so any member who may upload may name any owner module and record reference. An owning module narrows on read alone, through the capability, where its own record permission decides who sees an attachment. A per-module attach predicate stays out of scope until a module needs to refuse a reference at upload time.
+    decidedBy: default
+  - id: D-DOCUMENTS-TEXT-PARSERS
+    question: Which parsers read the text, and what may they execute?
+    answer: unpdf 1.8.1 (MIT, pdf.js 6.1.200 bundled for servers without eval) for the PDF text layer, and for OOXML the module's own ZIP central directory reader over node:zlib with the inflated bytes counted as they are read, plus sax 1.6.1 (BlueOak-1.0.0, no dependencies) in strict mode for the XML parts. No office suite, no DTD, no entity resolution, no macro, script or embedded object is read.
+    decidedBy: default
+  - id: D-DOCUMENTS-TEXT-PAGES
+    question: What is a page of a format that has none?
+    answer: A block of at most 10000 characters ending at a line break where one falls inside it, for DOCX, CSV, plain text and each XLSX sheet, so an agent can walk a long document by page range as it walks a PDF.
+    decidedBy: default
+  - id: D-DOCUMENTS-TEXT-JOB
+    question: Which documents extract on the job runner?
+    answer: A stored document over 2 MiB and one that needs OCR while OCR is configured, answering pending until the runner settles it; everything else within the call, and bytes that are not stored always within the call.
+    decidedBy: default
+  - id: D-DOCUMENTS-TEXT-OCR-EGRESS
+    question: Which address rules does the OCR call follow?
+    answer: Those of connectors.core through connectors.egress.v1, checked on every call with the connection pinned to the verified addresses, so documents.core keeps no copy of the address block and a deployment without connectors.core has no OCR.
+    decidedBy: default
+  - id: D-DOCUMENTS-TEXT-RETRY
+    question: Who may send a document to OCR again?
+    answer: A principal holding documents.files.manage, because a retry spends the deployment's OCR service; a reader holding documents.files.read sees the status and the reason.
     decidedBy: default
 acceptanceScenarios:
   - id: DOCUMENTS-UPLOAD
@@ -246,3 +352,43 @@ acceptanceScenarios:
     given: Two workspaces with documents.
     when: A runtime transaction bound to one workspace reads or writes rows, or a read URL of one workspace is presented for the other's object.
     then: Only that workspace's rows are visible or mutable, the storage key prefix keeps the objects apart, and the foreign URL answers not found.
+  - id: DOCUMENTS-TEXT-FORMATS
+    given: A PDF of two pages, a DOCX, an XLSX of two sheets with shared, inline, boolean and formula cells, a PPTX of two slides, a CSV and a plain text file, each stored for a record, and a legacy Word file and bytes that do not match their declared type.
+    when: The owning module extracts each through documents.text.v1.
+    then: Each answers ok with its pages in order (the PDF pages, the slides, one block per sheet with the sheet name and tab separated rows, the flow pages of the rest), the page count and the sha256 of the stored bytes, the legacy file answers unsupported with DOCUMENT_TEXT_FORMAT and the mismatched bytes unsupported with DOCUMENT_TEXT_UNREADABLE.
+  - id: DOCUMENTS-TEXT-PAGES
+    given: A document of several pages.
+    when: A caller asks for a page range inside it, one past its last page, one reaching past the last page kept of a document cut at the page bound, and one with from past to.
+    then: The range answers only those pages joined by a form feed with the first and last page named, the range past the end answers no text, the range past the kept pages answers the kept pages with truncated set, and the reversed range is refused with INVALID_INPUT.
+  - id: DOCUMENTS-TEXT-BOUNDS
+    given: Bytes over 25 MiB, a text past 2 MiB, a document of more than 200 pages, and an OOXML part that inflates past the inflation bound.
+    when: Each is extracted.
+    then: The large input answers too-large before a parser runs, the long text and the long document answer the text up to the bound with truncated set, and the inflated part stops at the bound with truncated set without inflating the rest.
+  - id: DOCUMENTS-TEXT-SAFETY
+    given: A DOCX whose document part declares an internal entity and references it, a password protected PDF, and an archive whose entries are encrypted or use another compression method.
+    when: Each is extracted.
+    then: No entity is expanded and the part answers unsupported with DOCUMENT_TEXT_UNREADABLE, the PDF answers unsupported with DOCUMENT_TEXT_ENCRYPTED, and the archive answers unsupported with DOCUMENT_TEXT_UNREADABLE.
+  - id: DOCUMENTS-TEXT-OCR
+    given: A PDF without a text layer and a PNG, a deployment without an OCR URL, and then an OCR stub server behind a verified egress check.
+    when: Both are extracted without OCR, a manager retries them once OCR is configured, and the runner runs, and one retry reaches a stub that answers a server error.
+    then: Without OCR both answer unscanned with DOCUMENT_OCR_UNCONFIGURED and no retry is admitted, with OCR the retry answers pending, the stub receives the bytes with the content type and the bearer token, and the text it answers is stored as ok, while the failing stub leaves the document unscanned with DOCUMENT_OCR_FAILED.
+  - id: DOCUMENTS-TEXT-CACHE
+    given: A document whose text was extracted, and a second document of the workspace with the same bytes.
+    when: Both are read again, and the first document is deleted.
+    then: The second read of the first document parses nothing, the second document copies the finished row by its sha256 without parsing, and the delete removes the first document's row in the transaction that marks the document deleted while the copy stays.
+  - id: DOCUMENTS-TEXT-PENDING
+    given: A stored document over 2 MiB.
+    when: The owning module extracts it, a runner claims it and dies, a second runner takes the stale claim, and a document is deleted while its row is pending.
+    then: extract answers pending, the second runner settles the row as ok and extract answers the text, the first runner's late settle changes nothing, a row that failed three attempts answers unsupported with DOCUMENT_TEXT_FAILED, and the deleted document's row is removed.
+  - id: DOCUMENTS-TEXT-TOOL
+    given: An agent run whose principal holds documents.files.read with documents.read-text granted, and a run whose principal lacks it.
+    when: Both call the tool for a record's document with a page range.
+    then: The first answers the range with the text cut to 20000 UTF-8 bytes and truncated set when cut, a reference to another module's record is refused as not found, and the second is denied by the harness before the tool runs.
+  - id: DOCUMENTS-TEXT-ENDPOINTS
+    given: A principal holding documents.files.read, one holding documents.files.manage, an unauthenticated caller and a request without a CSRF proof.
+    when: They read a document's text and retry it.
+    then: The reader receives the text and whether OCR is available and is refused the retry with 403, the manager may retry an unscanned document while OCR is available and receives DOCUMENT_TEXT_NOT_RETRYABLE otherwise, the unauthenticated caller is refused with 401, the request without the CSRF proof is refused first, and a foreign id answers DOCUMENT_NOT_FOUND.
+  - id: DOCUMENTS-TEXT-TENANT
+    given: Two workspaces holding text rows, one of them for the same document id.
+    when: A runtime transaction bound to one workspace reads or writes documents_text, and the background role reads the table.
+    then: Only that workspace's rows are visible or writable, a row carrying the other workspace is rejected by the forced policy, and the background role reads the routing columns of pending rows and nothing else.

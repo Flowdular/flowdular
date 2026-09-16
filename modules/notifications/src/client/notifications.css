@@ -31,15 +31,6 @@
 	border-radius: 999px;
 }
 
-/* A ledger reference is one token with nowhere to break, so it would push the
-   row sideways. The cell keeps its budget and the full value stays readable in
-   the title. */
-.notifications-truncate {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
 .notifications-facts {
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));

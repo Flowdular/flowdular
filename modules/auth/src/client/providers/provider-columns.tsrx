@@ -1,5 +1,11 @@
 import { t } from '@flowdular/client';
-import { Tag, type TableColumn } from '@flowdular/ui';
+import {
+	CellCode,
+	CellMuted,
+	CellStack,
+	CellTag,
+	type TableColumn,
+} from '@flowdular/ui';
 import type { IdentityProviderSummary } from '../../domain/types.ts';
 
 export function identityProviderColumns(): readonly TableColumn<
@@ -9,52 +15,56 @@ export function identityProviderColumns(): readonly TableColumn<
 		{
 			key: 'provider',
 			header: t('auth.providers.column.provider'),
-			width: '34%',
+			width: 'auto',
 			value: (provider) => provider.label,
-			cell: (provider) => <span class="ui-cell">
-				<b>{provider.label}</b>
-				<small class="ui-mono">{provider.key}</small>
-			</span>,
+			cell: (provider) =>
+				<CellStack
+					primary={provider.label}
+					secondary={provider.key}
+					secondaryMono
+				/>,
 		},
 		{
 			key: 'issuer',
 			header: t('auth.providers.column.issuer'),
-			width: '30%',
+			width: '240px',
+			priority: 2,
 			value: (provider) => provider.issuer,
-			cell: (provider) => <span class="ui-cell">
-				<small class="ui-mono">{provider.issuer}</small>
-				<small>
-					{provider.scope === 'platform'
+			cell: (provider) =>
+				<CellStack
+					primary={provider.issuer}
+					primaryMono
+					secondary={provider.scope === 'platform'
 						? t('auth.providers.scope.platform')
 						: t('auth.providers.scope.tenant')}
-				</small>
-			</span>,
+				/>,
 		},
 		{
 			key: 'status',
 			header: t('auth.providers.column.status'),
-			width: '20%',
+			width: '160px',
 			value: (provider) => provider.status,
-			cell: (provider) => <span class="ui-table__state">
-				<Tag tone={provider.status === 'active' ? 'success' : 'neutral'} dot>{t(
-					'auth.providers.status.' + provider.status,
-				)}</Tag>
-				<small>
-					{provider.jitEnabled
+			cell: (provider) =>
+				<CellStack
+					primary={<CellTag
+						tone={provider.status === 'active' ? 'success' : 'neutral'}
+						dot
+						label={t('auth.providers.status.' + provider.status)}
+					/>}
+					secondary={provider.jitEnabled
 						? t('auth.providers.jit.on')
 						: t('auth.providers.jit.off')}
-				</small>
-			</span>,
+				/>,
 		},
 		{
 			key: 'fingerprint',
 			header: t('auth.providers.column.fingerprint'),
-			width: '16%',
+			width: '180px',
+			priority: 3,
 			value: (provider) => provider.secretFingerprint,
-			cell: (provider) =>
-				<small class="ui-mono">
-					{provider.secretFingerprint || t('auth.common.none')}
-				</small>,
+			cell: (provider) => provider.secretFingerprint
+				? <CellCode value={provider.secretFingerprint} />
+				: <CellMuted>{t('auth.common.none')}</CellMuted>,
 		},
 	];
 }

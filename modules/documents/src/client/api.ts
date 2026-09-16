@@ -1,5 +1,6 @@
 import { t } from '@flowdular/client/i18n';
 import type { DocumentAttachment } from '../domain/attachments.ts';
+import type { DocumentText, DocumentTextPageRange } from '../domain/text.ts';
 import type {
 	DocumentDeleteOutcome,
 	DocumentReadUrl,
@@ -206,4 +207,33 @@ export async function deleteDocuments(
 			csrfToken,
 		)
 	).outcomes;
+}
+
+/** A document's text with whether OCR could read it again. */
+export interface DocumentTextAnswer extends DocumentText {
+	readonly ocrAvailable: boolean;
+}
+
+/** The text of one document; the first read of a document may start its extraction. */
+export async function loadDocumentText(
+	id: string,
+	pages: DocumentTextPageRange,
+	csrfToken: string,
+): Promise<DocumentTextAnswer> {
+	return post<DocumentTextAnswer>(
+		'/api/documents/text',
+		{ id, pages },
+		csrfToken,
+	);
+}
+
+export async function retryDocumentText(
+	id: string,
+	csrfToken: string,
+): Promise<DocumentTextAnswer> {
+	return post<DocumentTextAnswer>(
+		'/api/documents/text/retry',
+		{ id },
+		csrfToken,
+	);
 }
