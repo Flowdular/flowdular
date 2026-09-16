@@ -65,6 +65,75 @@ so a workspace can change them.
 When the work is done, eject it into `modules/` and enable it, or open a pull
 request with the gate evidence attached.
 
+## Sample data and recorded adapters
+
+A session can carry a sample of the data the module will really see: attach a
+CSV, JSON or plain text file (`.csv`, `.json`, `.txt`) to the brief or the
+composer, within the attachment limits (5 MB per file, 10 per session). The file
+stays in the session directory, is never sent to the connected application, and
+is deleted with the session.
+
+Every turn reads the sample through the read-only sandbox tool `sample-data`.
+Without input it lists each sample file with its columns, row count and a
+parsed preview of the first 20 rows; `{ "name": "customers.csv" }` previews one
+file. CSV is parsed with quoted fields and a detected `,`, `;` or tab delimiter,
+JSON from a top-level array or the first array inside an object, text as lines.
+A value is cut at 200 characters and a row at 40 columns; one preview stays
+under 32 KB and the listing under 64 KB, listing a file that does not fit
+without its rows. The BYOK driver offers the tool to the model. The local
+`claude` and `codex` drivers have no tool channel, so the same listing is
+written to `reference/sample-data.json` for the turn.
+
+The backend engineer derives the module's fixtures from the sample:
+`tests/fixtures/*.json` for the tests and `preview/seed.json` for the preview. It
+keeps the shape and replaces real names, contacts and identifiers with invented
+values, because fixtures ship with the module. The role may write `preview/**`,
+`src/preview.ts`, `research-fixtures.json` and `adapters/**`.
+
+### Seeding the preview
+
+When a draft module has both `preview/seed.json` (at most 1 MB) and
+`src/preview.ts` exporting `seed`, the preview calls it once the generation has
+started:
+
+```ts
+export async function seed(context: {
+	readonly tenantId: string; // the preview workspace
+	readonly accountId: string; // the preview account
+	readonly data: unknown; // parsed preview/seed.json
+	readonly databases: DatabaseProvider; // the preview's own provider
+}): Promise<void>;
+```
+
+`seed()` writes through the module's own repository, as the server composition
+does. The sandbox keeps a hash of both files in the session data directory and
+calls `seed()` again only when one of them changes, so it must be idempotent
+(upsert by the natural key). A failure is reported as the preview error of that
+module and never stops the preview. The preview does not seed through an
+`import.ports.v1` port: only `import.core` can read its port registry (the
+public capability registers ports), a port write needs a full principal and a
+job, and most drafts do not compose `import.core`.
+
+### Recorded adapters
+
+A draft spec with a `research` section previews through `research.core`. The
+preview composes it from the platform modules ahead of the drafts and holds
+`research.core.adapter` at `recorded` and `research.core.recordedFixturesPath`
+at the absolute path of the module's `research-fixtures.json` for every
+workspace; changing either answers `409 SANDBOX_LIVE_ADAPTER_REFUSED`. When
+several drafts declare research, the first one in session order supplies the
+path. An entry of the spec's `adapters` section reads the fixture its `recorded`
+field names, by convention `adapters/<id>.recorded.json`.
+
+A session declares only recorded adapters; an owner connects a live search or
+connector instance after delivery. When a draft spec sets `research.adapter` to
+`model-native` or `connector`, or lists an adapter without `recorded`, the
+`spec-schema` gate fails with `SANDBOX_LIVE_ADAPTER_REFUSED` and names the file
+and field, so the turn goes back to its specialist and delivery stops. The
+preview refuses to compose such a session with the same code before a worker
+starts. A `research` section without `adapter` is previewed on the recorded
+fixtures.
+
 ## Deliver as a pull request
 
 The eject route (`POST /sandbox/api/sessions/:id/eject`) takes `target:

@@ -26,6 +26,7 @@ import {
 	type CodingAgentAvailability,
 	type CodingAgentDriver,
 	type CodingAgentEvent,
+	type CodingAgentTool,
 	type CodingAgentTurnRequest,
 	type FileChangeKind,
 } from '../types.ts';
@@ -84,6 +85,7 @@ export function createByokDriver(
 		workspacePath: string,
 		allowedPaths: readonly string[],
 		emit: (event: CodingAgentEvent) => void,
+		lent: readonly CodingAgentTool[] = [],
 	): ToolSet {
 		let nextCall = 0;
 		const record = (
@@ -128,7 +130,7 @@ export function createByokDriver(
 			}
 		};
 
-		return {
+		const files: ToolSet = {
 			list_files: tool({
 				description:
 					'List the files of the session workspace, relative to its root.',
@@ -233,6 +235,18 @@ export function createByokDriver(
 					}),
 			}),
 		};
+		for (const entry of lent) {
+			if (entry.name in files) continue;
+			files[entry.name] = tool({
+				description: entry.description,
+				inputSchema: jsonSchema<Record<string, unknown>>(entry.inputSchema),
+				execute: (input) =>
+					record(entry.name, JSON.stringify(input).slice(0, 200), () =>
+						entry.execute(input),
+					),
+			});
+		}
+		return files;
 	}
 
 	return {
@@ -299,6 +313,7 @@ export function createByokDriver(
 						   supplies an explicit allowlist for its selected specialist. */
 						request.allowedPaths ?? [],
 						emit,
+						request.tools,
 					),
 				});
 
