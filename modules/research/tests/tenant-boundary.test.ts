@@ -61,10 +61,32 @@ async function seed(tenantId: string): Promise<void> {
 		expiresAt: 10,
 	});
 	await repository.takeRunFetch(tenantId, 'run-shared', 64, 1);
+	await repository.insertAttempts(tenantId, [
+		{
+			tenantId,
+			id: `attempt-${tenantId}`,
+			queryId: `query-${tenantId}`,
+			kind: 'search',
+			adapter: 'searxng',
+			attempt: 1,
+			outcome: 'permanent',
+			errorCode: 'RESEARCH_ADAPTER_UNAUTHORIZED',
+			durationMs: 3,
+			createdAt: 1,
+		},
+	]);
+	await repository.recordAdapterFailure(
+		tenantId,
+		'searxng',
+		'RESEARCH_ADAPTER_UNAUTHORIZED',
+		1,
+		tenantId === 'tenant-a' ? 1 : 5,
+		1_000,
+	);
 }
 
 describe('research tenant boundary', () => {
-	it('RESEARCH-TENANT-BOUNDARY shows each workspace only its own rows and rejects a foreign tenant id', async () => {
+	it('RESEARCH-TENANT-BOUNDARY RESEARCH-ADAPTER-TENANT shows each workspace only its own rows and rejects a foreign tenant id', async () => {
 		await seed('tenant-a');
 		await seed('tenant-b');
 
@@ -74,6 +96,8 @@ describe('research tenant boundary', () => {
 			'research_pages',
 			'research_queries',
 			'research_run_counters',
+			'research_attempts',
+			'research_adapter_health',
 		]) {
 			const visible = await shared.runtime.transaction(
 				(transaction) =>
@@ -100,6 +124,35 @@ describe('research tenant boundary', () => {
 			await shared.repository.findEvidence('tenant-a', 'evidence-tenant-b'),
 		).toBeNull();
 		expect(await shared.repository.monthUsage('tenant-a', 0)).toBe(1);
+		expect(
+			(await shared.repository.listAttempts('tenant-a', 'query-tenant-b', 10))
+				.length,
+		).toBe(0);
+		/* The same adapter's circuit is open in one workspace and closed in the other. */
+		expect(await shared.repository.adapterHealth('tenant-a')).toEqual([
+			expect.objectContaining({ adapter: 'searxng', openUntil: 1_001 }),
+		]);
+		expect(await shared.repository.adapterHealth('tenant-b')).toEqual([
+			expect.objectContaining({ adapter: 'searxng', openUntil: null }),
+		]);
+		expect(
+			await shared.repository.claimAdapterProbe(
+				'tenant-b',
+				'searxng',
+				5_000,
+				9_000,
+			),
+		).toBe(false);
+		await expect(
+			shared.runtime.transaction(
+				(transaction) =>
+					transaction.execute({
+						text: `INSERT INTO research_adapter_health (tenant_id, adapter, consecutive_failures)
+						 VALUES ('tenant-b', 'firecrawl', 0)`,
+					}),
+				{ access: 'write', tenantId: 'tenant-a' },
+			),
+		).rejects.toThrow();
 
 		await expect(
 			shared.runtime.transaction(

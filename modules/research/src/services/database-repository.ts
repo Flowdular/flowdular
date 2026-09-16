@@ -8,7 +8,11 @@ import { keysetWhere } from '@flowdular/server';
 import {
 	RESEARCH_MODULE_ID,
 	RESEARCH_QUERY_LINK_PREFIX,
+	type ResearchAdapterHealth,
 	type ResearchAdapterKey,
+	type ResearchAttemptOutcome,
+	type ResearchAttemptRecord,
+	type ResearchChainAdapterKey,
 	type ResearchEvidenceLink,
 	type ResearchEvidenceRecord,
 	type ResearchPage,
@@ -47,6 +51,27 @@ interface QueryRow {
 	created_at: Whole;
 }
 
+interface AttemptRow {
+	tenant_id: string;
+	id: string;
+	query_id: string;
+	kind: 'search' | 'fetch';
+	adapter: ResearchChainAdapterKey;
+	attempt: Whole;
+	outcome: ResearchAttemptOutcome;
+	error_code: string | null;
+	duration_ms: Whole;
+	created_at: Whole;
+}
+
+interface HealthRow {
+	adapter: ResearchChainAdapterKey;
+	consecutive_failures: Whole;
+	open_until: Whole | null;
+	last_error_code: string | null;
+	last_success_at: Whole | null;
+}
+
 interface PageRow {
 	url: string;
 	title: string;
@@ -63,6 +88,18 @@ const JOINED_EVIDENCE = EVIDENCE.split(',')
 	.join(', ');
 const QUERY = `tenant_id, id, query, adapter, caller, caller_ref, result_count,
 	 cost_units, created_at`;
+
+const ATTEMPT = `tenant_id, id, query_id, kind, adapter, attempt, outcome,
+	 error_code, duration_ms, created_at`;
+const ATTEMPT_EXPORT_AFTER = keysetWhere(['created_at', 'id'], ['', ''], {
+	direction: 'asc',
+	parameterOffset: 1,
+}).text;
+/* The attempts of a member's own queries; a released query leaves none to find. */
+const MEMBER_ATTEMPTS = `SELECT attempt.id FROM research_attempts AS attempt
+	 JOIN research_queries AS query
+	   ON query.tenant_id = attempt.tenant_id AND query.id = attempt.query_id
+	 WHERE attempt.tenant_id = $1 AND query.caller = 'member' AND query.caller_ref = $2`;
 
 const EVIDENCE_AFTER = keysetWhere(['retrieved_at', 'id'], ['', ''], {
 	direction: 'desc',
@@ -92,8 +129,46 @@ const SQL = {
 	 ON CONFLICT (tenant_id, run_id) DO UPDATE
 	 SET queries = research_run_counters.queries + 1, updated_at = EXCLUDED.updated_at`,
 	releaseQuery: `DELETE FROM research_queries WHERE tenant_id = $1 AND id = $2`,
-	completeQuery: `UPDATE research_queries SET result_count = $3
+	completeQuery: `UPDATE research_queries SET result_count = $3, adapter = COALESCE($4, adapter)
 	 WHERE tenant_id = $1 AND id = $2`,
+	adapterHealth: `SELECT adapter, consecutive_failures, open_until, last_error_code, last_success_at
+	 FROM research_adapter_health WHERE tenant_id = $1`,
+	claimAdapterProbe: `UPDATE research_adapter_health SET open_until = $4
+	 WHERE tenant_id = $1 AND adapter = $2 AND open_until IS NOT NULL AND open_until <= $3
+	 RETURNING adapter`,
+	releaseAdapterProbe: `UPDATE research_adapter_health SET open_until = $4
+	 WHERE tenant_id = $1 AND adapter = $2 AND open_until = $3`,
+	adapterSuccess: `INSERT INTO research_adapter_health
+	   (tenant_id, adapter, consecutive_failures, open_until, last_error_code, last_success_at)
+	 VALUES ($1, $2, 0, NULL, NULL, $3)
+	 ON CONFLICT (tenant_id, adapter) DO UPDATE
+	 SET consecutive_failures = 0, open_until = NULL, last_success_at = EXCLUDED.last_success_at`,
+	adapterFailure: `INSERT INTO research_adapter_health
+	   (tenant_id, adapter, consecutive_failures, open_until, last_error_code, last_success_at)
+	 VALUES ($1, $2, 1, CASE WHEN 1 >= $5::bigint THEN $4::bigint + $6::bigint END, $3, NULL)
+	 ON CONFLICT (tenant_id, adapter) DO UPDATE
+	 SET consecutive_failures = LEAST(research_adapter_health.consecutive_failures + 1, 1000000),
+	     open_until = CASE
+	       WHEN research_adapter_health.consecutive_failures + 1 >= $5::bigint THEN $4::bigint + $6::bigint
+	       ELSE research_adapter_health.open_until
+	     END,
+	     last_error_code = EXCLUDED.last_error_code`,
+	insertAttempt: `INSERT INTO research_attempts (${ATTEMPT})
+	 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+	listAttempts: `SELECT ${ATTEMPT} FROM research_attempts
+	 WHERE tenant_id = $1 AND query_id = $2
+	 ORDER BY created_at, id LIMIT $3`,
+	sweepAttempts: `DELETE FROM research_attempts WHERE tenant_id = $1 AND id IN (
+	   SELECT id FROM research_attempts WHERE tenant_id = $1 AND created_at < $2
+	   ORDER BY created_at LIMIT $3)`,
+	exportAttempts: `SELECT ${ATTEMPT} FROM research_attempts WHERE tenant_id = $1
+	 ORDER BY created_at, id LIMIT $2`,
+	exportAttemptsAfter: `SELECT ${ATTEMPT} FROM research_attempts
+	 WHERE tenant_id = $1 AND ${ATTEMPT_EXPORT_AFTER}
+	 ORDER BY created_at, id LIMIT $4`,
+	eraseAttempts: `DELETE FROM research_attempts WHERE tenant_id = $1 AND id IN (
+	   ${MEMBER_ATTEMPTS} LIMIT $3)`,
+	countAttemptsOf: `SELECT COUNT(*) AS found FROM (${MEMBER_ATTEMPTS}) AS member_attempts`,
 	insertEvidence: `INSERT INTO research_evidence (${EVIDENCE})
 	 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 	insertLinks: `INSERT INTO research_evidence_links (tenant_id, evidence_id, owner_module, record_ref)
@@ -220,6 +295,35 @@ function queryOf(row: QueryRow): ResearchQueryRecord {
 	};
 }
 
+function attemptOf(row: AttemptRow): ResearchAttemptRecord {
+	return {
+		tenantId: row.tenant_id,
+		id: row.id,
+		queryId: row.query_id,
+		kind: row.kind,
+		adapter: row.adapter,
+		attempt: whole(row.attempt, 'attempt'),
+		outcome: row.outcome,
+		errorCode: row.error_code,
+		durationMs: whole(row.duration_ms, 'duration'),
+		createdAt: whole(row.created_at, 'attempt time'),
+	};
+}
+
+function healthOf(row: HealthRow): ResearchAdapterHealth {
+	return {
+		adapter: row.adapter,
+		consecutiveFailures: whole(row.consecutive_failures, 'failure count'),
+		openUntil:
+			row.open_until === null ? null : whole(row.open_until, 'open time'),
+		lastErrorCode: row.last_error_code,
+		lastSuccessAt:
+			row.last_success_at === null
+				? null
+				: whole(row.last_success_at, 'success time'),
+	};
+}
+
 function evidenceParameters(
 	record: ResearchEvidenceRecord,
 ): DatabaseParameter[] {
@@ -326,12 +430,15 @@ export class DatabaseResearchRepository implements ResearchRepository {
 		tenantId: string,
 		id: string,
 		evidence: readonly ResearchEvidenceRecord[],
+		adapter?: ResearchAdapterKey,
+		attempts: readonly ResearchAttemptRecord[] = [],
 	): Promise<void> {
 		await this.#write(tenantId, async (transaction) => {
 			await transaction.execute({
 				text: SQL.completeQuery,
-				parameters: [tenantId, id, evidence.length],
+				parameters: [tenantId, id, evidence.length, adapter ?? null],
 			});
+			await this.#insertAttempts(transaction, attempts);
 			for (const record of evidence) {
 				await transaction.execute({
 					text: SQL.insertEvidence,
@@ -691,6 +798,187 @@ export class DatabaseResearchRepository implements ResearchRepository {
 
 	countPages(tenantId: string): Promise<number> {
 		return this.#count(tenantId, SQL.countPages, [tenantId]);
+	}
+
+	async adapterHealth(
+		tenantId: string,
+	): Promise<readonly ResearchAdapterHealth[]> {
+		const result = await this.#read(tenantId, (transaction) =>
+			transaction.query<HealthRow>({
+				text: SQL.adapterHealth,
+				parameters: [tenantId],
+			}),
+		);
+		return result.rows.map(healthOf);
+	}
+
+	async claimAdapterProbe(
+		tenantId: string,
+		adapter: ResearchChainAdapterKey,
+		now: number,
+		until: number,
+	): Promise<boolean> {
+		const result = await this.#write(tenantId, (transaction) =>
+			transaction.query<{ adapter: string }>({
+				text: SQL.claimAdapterProbe,
+				parameters: [tenantId, adapter, now, until],
+			}),
+		);
+		return result.rows.length === 1;
+	}
+
+	async releaseAdapterProbe(
+		tenantId: string,
+		adapter: ResearchChainAdapterKey,
+		claimedUntil: number,
+		previous: number,
+	): Promise<void> {
+		await this.#write(tenantId, (transaction) =>
+			transaction.execute({
+				text: SQL.releaseAdapterProbe,
+				parameters: [tenantId, adapter, claimedUntil, previous],
+			}),
+		);
+	}
+
+	async nativeQueryId(
+		tenantId: string,
+		runId: string,
+		query: string,
+	): Promise<string | null> {
+		const found = await this.#read(tenantId, (transaction) =>
+			transaction.query<{ id: string }>({
+				text: SQL.nativeQuery,
+				parameters: [tenantId, runId, query],
+			}),
+		);
+		return found.rows[0]?.id ?? null;
+	}
+
+	async recordAdapterSuccess(
+		tenantId: string,
+		adapter: ResearchChainAdapterKey,
+		now: number,
+	): Promise<void> {
+		await this.#write(tenantId, (transaction) =>
+			transaction.execute({
+				text: SQL.adapterSuccess,
+				parameters: [tenantId, adapter, now],
+			}),
+		);
+	}
+
+	async recordAdapterFailure(
+		tenantId: string,
+		adapter: ResearchChainAdapterKey,
+		code: string,
+		now: number,
+		threshold: number,
+		cooldownMs: number,
+	): Promise<void> {
+		await this.#write(tenantId, (transaction) =>
+			transaction.execute({
+				text: SQL.adapterFailure,
+				parameters: [tenantId, adapter, code, now, threshold, cooldownMs],
+			}),
+		);
+	}
+
+	async insertAttempts(
+		tenantId: string,
+		attempts: readonly ResearchAttemptRecord[],
+	): Promise<void> {
+		if (attempts.length === 0) return;
+		await this.#write(tenantId, (transaction) =>
+			this.#insertAttempts(transaction, attempts),
+		);
+	}
+
+	async #insertAttempts(
+		transaction: DatabaseTransaction,
+		attempts: readonly ResearchAttemptRecord[],
+	): Promise<void> {
+		for (const attempt of attempts) {
+			await transaction.execute({
+				text: SQL.insertAttempt,
+				parameters: [
+					attempt.tenantId,
+					attempt.id,
+					attempt.queryId,
+					attempt.kind,
+					attempt.adapter,
+					attempt.attempt,
+					attempt.outcome,
+					attempt.errorCode,
+					attempt.durationMs,
+					attempt.createdAt,
+				],
+			});
+		}
+	}
+
+	async listAttempts(
+		tenantId: string,
+		queryId: string,
+		limit: number,
+	): Promise<readonly ResearchAttemptRecord[]> {
+		const result = await this.#read(tenantId, (transaction) =>
+			transaction.query<AttemptRow>({
+				text: SQL.listAttempts,
+				parameters: [tenantId, queryId, limit],
+			}),
+		);
+		return result.rows.map(attemptOf);
+	}
+
+	async sweepAttempts(
+		tenantId: string,
+		cutoff: number,
+		limit: number,
+	): Promise<number> {
+		const result = await this.#write(tenantId, (transaction) =>
+			transaction.execute({
+				text: SQL.sweepAttempts,
+				parameters: [tenantId, cutoff, limit],
+			}),
+		);
+		return result.affectedRows;
+	}
+
+	async exportAttempts(
+		tenantId: string,
+		after: ResearchPosition | null,
+		limit: number,
+	): Promise<readonly ResearchAttemptRecord[]> {
+		const result = await this.#read(tenantId, (transaction) =>
+			transaction.query<AttemptRow>(
+				after === null
+					? { text: SQL.exportAttempts, parameters: [tenantId, limit] }
+					: {
+							text: SQL.exportAttemptsAfter,
+							parameters: [tenantId, after.at, after.id, limit],
+						},
+			),
+		);
+		return result.rows.map(attemptOf);
+	}
+
+	async eraseAttempts(
+		tenantId: string,
+		accountId: string,
+		limit: number,
+	): Promise<number> {
+		const result = await this.#write(tenantId, (transaction) =>
+			transaction.execute({
+				text: SQL.eraseAttempts,
+				parameters: [tenantId, accountId, limit],
+			}),
+		);
+		return result.affectedRows;
+	}
+
+	countAttemptsOf(tenantId: string, accountId: string): Promise<number> {
+		return this.#count(tenantId, SQL.countAttemptsOf, [tenantId, accountId]);
 	}
 }
 

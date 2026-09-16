@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'octane';
+import { useEffect, useMemo, useRef } from 'octane';
 import {
 	Alert,
 	Button,
@@ -12,16 +12,19 @@ import {
 } from '@flowdular/ui';
 import { t } from '@flowdular/client';
 import { useValue } from 'segment-state';
+import { AdaptersPanel } from './AdaptersPanel.tsrx';
 import {
 	loadEvidence,
 	loadEvidenceDetail,
 	loadQueries,
+	loadQueryAttempts,
 	ResearchApiError,
 	researchErrorMessage,
 	type ResearchEvidenceRow,
 	type ResearchQueryRow,
 } from './api.ts';
 import { EvidenceDrawer } from './EvidenceDrawer.tsrx';
+import { QueryAttemptsDrawer } from './QueryAttemptsDrawer.tsrx';
 import {
 	adapterLabel,
 	callerLabel,
@@ -36,6 +39,9 @@ export interface ResearchViewProps {
 	readonly initialTab: ResearchTab;
 	/** Evidence opened in the drawer as the screen loads, from the address. */
 	readonly evidenceId: string | null;
+	readonly csrfToken?: string | undefined;
+	/** Holds research.settings.manage: the Search adapters tab is offered. */
+	readonly canManage?: boolean | undefined;
 }
 
 function evidenceColumns(): readonly TableColumn<ResearchEvidenceRow>[] {
@@ -141,6 +147,20 @@ export function ResearchView(props: ResearchViewProps) @{
 	const [detail, setDetail] = useValue(client.state.detail);
 	const [detailStatus, setDetailStatus] = useValue(client.state.detailStatus);
 	const [detailError, setDetailError] = useValue(client.state.detailError);
+	const [attemptsQuery, setAttemptsQuery] = useValue(
+		client.state.attemptsQuery,
+	);
+	const [attempts] = useValue(client.state.attempts);
+	const [attemptsStatus, setAttemptsStatus] = useValue(
+		client.state.attemptsStatus,
+	);
+	const [attemptsError, setAttemptsError] = useValue(
+		client.state.attemptsError,
+	);
+	const [adaptersReload, setAdaptersReload] = useValue(
+		client.state.adaptersReload,
+	);
+	const canManage = props.canManage === true;
 	const surface = screenSurface(status);
 
 	const failed = (loadError: unknown, fallbackKey: string) => {
@@ -209,20 +229,52 @@ export function ResearchView(props: ResearchViewProps) @{
 		}
 	};
 
-	const refresh = () => void ((tab === 'evidence'
-		? loadEvidencePage(null)
-		: loadQueryPage(null)));
+	const attemptsRequest = useRef(0);
+	const openAttempts = async (row: ResearchQueryRow) => {
+		const request = ++attemptsRequest.current;
+		setAttemptsQuery(row);
+		setAttemptsError('');
+		setAttemptsStatus('loading');
+		try {
+			const loaded = await loadQueryAttempts(row.id);
+			/* A slower answer for a query the reader already left is dropped. */
+			if (request !== attemptsRequest.current) return;
+			client.store.act((transaction) => {
+				transaction.set(client.state.attempts, loaded);
+				transaction.set(client.state.attemptsStatus, 'idle');
+			}, 'research/attempts-opened');
+		} catch (loadError) {
+			if (request !== attemptsRequest.current) return;
+			setAttemptsError(
+				researchErrorMessage(loadError, 'research.attempts.error.load'),
+			);
+			setAttemptsStatus('error');
+		}
+	};
+
+	const refresh = () => {
+		if (tab === 'adapters') {
+			setAdaptersReload(adaptersReload + 1);
+			return;
+		}
+		void ((tab === 'evidence' ? loadEvidencePage(null) : loadQueryPage(null)));
+	};
 
 	const switchTab = (next: string) => {
 		const chosen: ResearchTab =
-			next === 'queries' ? 'queries' : 'evidence';
+			next === 'queries'
+				? 'queries'
+				: next === 'adapters' && canManage
+					? 'adapters'
+					: 'evidence';
 		setTab(chosen);
 		if (chosen === 'queries' && !queriesLoaded) void loadQueryPage(null);
 		if (chosen === 'evidence' && !evidenceLoaded) void loadEvidencePage(null);
 	};
 
 	useEffect(() => {
-		refresh();
+		if (tab === 'adapters' && !canManage) setTab('evidence');
+		if (tab !== 'adapters') refresh();
 		if (props.evidenceId !== null) void openEvidence(props.evidenceId);
 	}, []);
 
@@ -232,7 +284,11 @@ export function ResearchView(props: ResearchViewProps) @{
 			title={t('research.title')}
 			description={t('research.description')}
 		>
-			<Button size="sm" disabled={status === 'denied'} onClick={refresh}>
+			<Button
+				size="sm"
+				disabled={status === 'denied' && tab !== 'adapters'}
+				onClick={refresh}
+			>
 				<Icon name="refresh" size={14} />
 				{status === 'loading'
 					? t('research.common.refreshing')
@@ -252,13 +308,27 @@ export function ResearchView(props: ResearchViewProps) @{
 					items={[
 						{ id: 'evidence', label: t('research.tab.evidence') },
 						{ id: 'queries', label: t('research.tab.queries') },
+						...(canManage
+							? [
+									{ id: 'adapters', label: t('research.tab.adapters') },
+								]
+							: []),
 					]}
 					active={tab}
 					onChange={switchTab}
 					label={t('research.tabsLabel')}
 				/>
-				<div id={'research-panel-' + tab} role="tabpanel">
-					@if (surface === 'error') {
+				<div
+					id={'research-panel-' + tab}
+					role="tabpanel"
+					aria-labelledby={'research-tab-' + tab}
+				>
+					@if (tab === 'adapters') {
+						<AdaptersPanel
+							csrfToken={props.csrfToken ?? ''}
+							reloadKey={adaptersReload}
+						/>
+					} @else if (surface === 'error') {
 						<Alert>{error}</Alert>
 					} @else if (tab === 'evidence') {
 						<TableCard
@@ -299,6 +369,8 @@ export function ResearchView(props: ResearchViewProps) @{
 							columns={queryColumns()}
 							rows={queries}
 							rowKey={(row) => row.id}
+							onSelect={(row) => void openAttempts(row)}
+							selectedKey={attemptsQuery?.id}
 							status={status === 'loading' && !queriesLoaded
 								? 'loading'
 								: 'idle'}
@@ -324,6 +396,13 @@ export function ResearchView(props: ResearchViewProps) @{
 				</div>
 			</>
 		}
+		<QueryAttemptsDrawer
+			query={attemptsQuery}
+			attempts={attempts}
+			status={attemptsStatus}
+			error={attemptsError}
+			onClose={() => setAttemptsQuery(null)}
+		/>
 		<EvidenceDrawer
 			open={selectedId !== null}
 			detail={detail}

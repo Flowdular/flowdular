@@ -9,6 +9,7 @@ import { memorySettings } from '../src/server/preview-runtime.ts';
 import { createIsolatedPreviewRuntime } from '../src/server/preview-worker-manager.ts';
 import {
 	LIVE_ADAPTER_REFUSED,
+	liveAdapterRefusal,
 	readSessionAdapters,
 	recordedAdapterSettings,
 } from '../src/server/recorded-adapters.ts';
@@ -73,6 +74,9 @@ describe('recorded adapters in a session spec', () => {
 		expect(recordedAdapterSettings(adapters)).toEqual({
 			'research.core': {
 				adapter: 'recorded',
+				searchOrder: 'recorded',
+				recordedEnabled: true,
+				fetchOrder: 'direct',
 				recordedFixturesPath: join(
 					recorded.paths.modulePath,
 					'research-fixtures.json',
@@ -80,17 +84,27 @@ describe('recorded adapters in a session spec', () => {
 			},
 		});
 
-		for (const adapter of ['model-native', 'connector']) {
+		for (const adapter of [
+			'model-native',
+			'searxng',
+			'firecrawl',
+			'connector',
+		]) {
 			const live = await sessionWithSpec(researchSpec(adapter));
-			expect(
-				(
-					await readSessionAdapters([
-						{ directory: 'underwriting', path: live.paths.modulePath },
-					])
-				).live,
-			).toEqual([
+			const declared = (
+				await readSessionAdapters([
+					{ directory: 'underwriting', path: live.paths.modulePath },
+				])
+			).live;
+			expect(declared).toEqual([
 				{ module: 'underwriting', field: 'research.adapter', value: adapter },
 			]);
+			expect(liveAdapterRefusal(declared)).toContain(
+				`${LIVE_ADAPTER_REFUSED}: a sandbox session may declare only recorded adapters.`,
+			);
+			expect(liveAdapterRefusal(declared)).toContain(
+				`- modules/underwriting/spec/module.yaml research.adapter: ${adapter}`,
+			);
 		}
 
 		const unrecorded = await sessionWithSpec(adapterSpec(null));
@@ -177,6 +191,12 @@ describe('recorded adapters in a session spec', () => {
 			),
 		).toEqual(['underwriting.core']);
 
+		for (const adapter of ['searxng', 'firecrawl']) {
+			const paid = await sessionWithSpec(researchSpec(adapter));
+			await expect(
+				resolvePreviewModules(paid.root, paid.session, support),
+			).rejects.toMatchObject({ code: LIVE_ADAPTER_REFUSED });
+		}
 		const live = await sessionWithSpec(researchSpec('connector'));
 		await expect(
 			resolvePreviewModules(live.root, live.session, support),
@@ -196,13 +216,15 @@ describe('recorded adapters in a session spec', () => {
 	});
 
 	it('holds the recorded research settings in the preview for every workspace', async () => {
-		const settings = memorySettings({
-			'research.core': {
-				adapter: 'recorded',
-				recordedFixturesPath:
-					'/session/modules/underwriting/research-fixtures.json',
-			},
-		});
+		const settings = memorySettings(
+			recordedAdapterSettings({
+				research: {
+					module: 'underwriting',
+					fixturesPath: '/session/modules/underwriting/research-fixtures.json',
+				},
+				live: [],
+			}),
+		);
 		settings.declare({
 			moduleId: 'research.core',
 			settings: {
@@ -216,6 +238,24 @@ describe('recorded adapters in a session spec', () => {
 				recordedFixturesPath: {
 					type: 'string',
 					defaultValue: '',
+					visibility: 'private',
+					client: false,
+				},
+				searchOrder: {
+					type: 'string',
+					defaultValue: '',
+					visibility: 'private',
+					client: false,
+				},
+				fetchOrder: {
+					type: 'string',
+					defaultValue: 'direct',
+					visibility: 'private',
+					client: false,
+				},
+				recordedEnabled: {
+					type: 'boolean',
+					defaultValue: false,
 					visibility: 'private',
 					client: false,
 				},
@@ -239,6 +279,33 @@ describe('recorded adapters in a session spec', () => {
 		await expect(
 			settings.set('tenant-a', 'research.core', 'adapter', 'connector', 'a'),
 		).rejects.toMatchObject({ code: LIVE_ADAPTER_REFUSED, status: 409 });
+		expect(settings.get('tenant-a', 'research.core', 'searchOrder')).toBe(
+			'recorded',
+		);
+		expect(settings.get('tenant-a', 'research.core', 'recordedEnabled')).toBe(
+			true,
+		);
+		expect(settings.get('tenant-a', 'research.core', 'fetchOrder')).toBe(
+			'direct',
+		);
+		for (const [key, value] of [
+			['searchOrder', 'searxng,recorded'],
+			['searchOrder', 'firecrawl'],
+			['searchOrder', 'recorded,model-native'],
+			['recordedEnabled', false],
+			['fetchOrder', 'firecrawl'],
+			['fetchOrder', 'direct,firecrawl'],
+		] as const) {
+			await expect(
+				settings.set('tenant-a', 'research.core', key, value, 'a'),
+			).rejects.toMatchObject({ code: LIVE_ADAPTER_REFUSED, status: 409 });
+		}
+		expect(settings.get('tenant-a', 'research.core', 'searchOrder')).toBe(
+			'recorded',
+		);
+		expect(settings.get('tenant-a', 'research.core', 'fetchOrder')).toBe(
+			'direct',
+		);
 		await settings.set('tenant-a', 'research.core', 'adapter', null, 'a');
 		expect(settings.get('tenant-a', 'research.core', 'adapter')).toBe(
 			'recorded',

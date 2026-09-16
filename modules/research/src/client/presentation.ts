@@ -40,3 +40,52 @@ export function callerLabel(caller: string): string {
 	const translated = t(key);
 	return translated === key ? caller : translated;
 }
+
+export function adapterStatusTone(
+	status: string,
+): 'success' | 'warning' | 'danger' | 'neutral' {
+	if (status === 'ready') return 'success';
+	if (status === 'circuit-open') return 'danger';
+	return status === 'unsupported' ? 'warning' : 'neutral';
+}
+
+export function adapterStatusLabel(
+	status: string,
+	openUntil: number | null,
+): string {
+	if (status === 'circuit-open' && openUntil !== null) {
+		return t('research.adapters.status.circuit-open', {
+			time: timestampLabel(openUntil),
+		});
+	}
+	const key = 'research.adapters.status.' + status;
+	const translated = t(key);
+	return translated === key ? status : translated;
+}
+
+/** A stored error code in the reader's words, or the code itself. */
+export function errorCodeLabel(code: string): string {
+	const key = 'research.error.code.' + code;
+	const translated = t(key);
+	return translated === key ? code : translated;
+}
+
+export function attemptOutcomeLabel(outcome: string): string {
+	const key = 'research.attempts.outcome.' + outcome;
+	const translated = t(key);
+	return translated === key ? outcome : translated;
+}
+
+export function attemptOutcomeTone(
+	outcome: string,
+): 'success' | 'warning' | 'danger' | 'neutral' {
+	if (outcome === 'ok') return 'success';
+	if (outcome === 'retryable' || outcome === 'empty') return 'warning';
+	return outcome === 'permanent' ? 'danger' : 'neutral';
+}
+
+export function durationLabel(milliseconds: number): string {
+	return t('research.common.milliseconds', {
+		value: numberLabel(milliseconds),
+	});
+}

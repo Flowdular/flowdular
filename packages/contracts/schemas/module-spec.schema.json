@@ -417,7 +417,15 @@
 			"additionalProperties": false,
 			"required": ["adapter", "evidenceOwner"],
 			"properties": {
-				"adapter": { "enum": ["model-native", "connector", "recorded"] },
+				"adapter": {
+					"enum": [
+						"model-native",
+						"searxng",
+						"firecrawl",
+						"connector",
+						"recorded"
+					]
+				},
 				"allowDomains": {
 					"type": "array",
 					"items": { "$ref": "#/$defs/domain" },

@@ -99,7 +99,7 @@ A number the case needs (a score, a premium, a price per square metre) is an `ac
 - `agentTools[]`: `{ id, permission, description, risk: read|workspace-write }`.
 - `outOfScope[]`: plain sentences, each naming the gap and the decision taken instead.
 - `decisions[]`: `{ id, question, answer, decidedBy: user|default }`; ids match `^[A-Z][A-Z0-9-]+$`, for example `D-UNIQUE-SKU`.
-- `research`: `{ adapter: model-native|connector|recorded, allowDomains?, denyDomains?, monthlyQueryBudget?, evidenceOwner }`; domains are lower-case host names and `evidenceOwner` names an entity.
+- `research`: `{ adapter: model-native|searxng|firecrawl|connector|recorded, allowDomains?, denyDomains?, monthlyQueryBudget?, evidenceOwner }`; domains are lower-case host names and `evidenceOwner` names an entity.
 - `adapters[]`: `{ id, direction: source|sink, connector, operation, port, schedule?, mapping[], recorded? }`. `id` starts with the module id (`sales.core.crm-customers`); `connector` and `operation` are connector definition and operation keys (`^[a-z][a-z0-9-]*$`); a source `port` is an import port of this module or a declared dependency; `schedule` is a five-field cron or `null`; a mapping entry is `{ from?, to, transform: rename|constant|format|lookup, value? }` where only `constant` omits `from` and only `rename` omits `value`; `recorded` is `adapters/<name>.recorded.json` and required in a sandbox session.
 - `templates[]`: `{ id, title, inputEntity, format: pdf|docx, body }`; `inputEntity` names an entity and `body` is `templates/<name>.md`.
 

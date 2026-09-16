@@ -34,6 +34,7 @@ describe('connectors.core module', () => {
 			'connectors.definitions.v1',
 			'connectors.calls.v1',
 			'connectors.egress.v1',
+			'connectors.instances.v1',
 		]);
 	});
 

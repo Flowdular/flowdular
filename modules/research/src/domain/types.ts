@@ -10,10 +10,58 @@ export const RESEARCH_MODULE_ID = 'research.core';
 
 export const RESEARCH_ADAPTERS = [
 	'model-native',
+	'searxng',
+	'firecrawl',
 	'connector',
 	'recorded',
 ] as const;
 export type ResearchAdapterKey = (typeof RESEARCH_ADAPTERS)[number];
+
+export const RESEARCH_FETCH_ADAPTERS = ['direct', 'firecrawl'] as const;
+export type ResearchFetchAdapterKey = (typeof RESEARCH_FETCH_ADAPTERS)[number];
+
+export const RESEARCH_FALLBACK_MODES = ['next-adapter', 'fail'] as const;
+export type ResearchFallbackMode = (typeof RESEARCH_FALLBACK_MODES)[number];
+
+export const RESEARCH_ATTEMPT_OUTCOMES = [
+	'ok',
+	'empty',
+	'retryable',
+	'permanent',
+	'skipped-circuit',
+] as const;
+export type ResearchAttemptOutcome = (typeof RESEARCH_ATTEMPT_OUTCOMES)[number];
+
+export type ResearchChainAdapterKey =
+	| ResearchAdapterKey
+	| ResearchFetchAdapterKey;
+
+export const RESEARCH_CHAIN_LIMITS = {
+	maxAttemptsMin: 1,
+	maxAttemptsMax: 5,
+	maxAttemptsDefault: 2,
+	timeoutMinMs: 1_000,
+	timeoutMaxMs: 60_000,
+	timeoutDefaultMs: 15_000,
+	backoffMaxMs: 5_000,
+	backoffDefaultMs: 500,
+	/** Every retry delay, Retry-After included, stops here. */
+	backoffCapMs: 5_000,
+	thresholdMin: 1,
+	thresholdMax: 100,
+	thresholdDefault: 5,
+	cooldownMinMs: 1_000,
+	cooldownMaxMs: 86_400_000,
+	cooldownDefaultMs: 300_000,
+	attemptsListed: 64,
+} as const;
+
+/** The per adapter limits of one chain step. */
+export interface ResearchAdapterLimits {
+	readonly enabled: boolean;
+	readonly maxAttempts: number;
+	readonly timeoutMs: number;
+}
 
 export const RESEARCH_LIMITS = {
 	query: 400,
@@ -115,8 +163,42 @@ export interface ResearchFixtures {
 	>;
 }
 
+export interface ResearchAttemptRecord {
+	readonly tenantId: string;
+	readonly id: string;
+	readonly queryId: string;
+	readonly kind: 'search' | 'fetch';
+	readonly adapter: ResearchChainAdapterKey;
+	/** 0 for an adapter the circuit breaker skipped. */
+	readonly attempt: number;
+	readonly outcome: ResearchAttemptOutcome;
+	readonly errorCode: string | null;
+	readonly durationMs: number;
+	readonly createdAt: number;
+}
+
+export interface ResearchAdapterHealth {
+	readonly adapter: ResearchChainAdapterKey;
+	readonly consecutiveFailures: number;
+	readonly openUntil: number | null;
+	readonly lastErrorCode: string | null;
+	readonly lastSuccessAt: number | null;
+}
+
 export interface ResearchSettings {
 	readonly adapter: ResearchAdapterKey;
+	/** Parsed searchOrder; empty keeps the single adapter setting. */
+	readonly searchOrder: readonly ResearchAdapterKey[];
+	/** Parsed fetchOrder, never empty. */
+	readonly fetchOrder: readonly ResearchFetchAdapterKey[];
+	readonly fallback: ResearchFallbackMode;
+	readonly fallbackOnEmpty: boolean;
+	readonly retryBackoffMs: number;
+	readonly circuitFailureThreshold: number;
+	readonly circuitCooldownMs: number;
+	readonly limits: Readonly<
+		Record<ResearchChainAdapterKey, ResearchAdapterLimits>
+	>;
 	readonly connectorInstanceId: string;
 	readonly recordedFixturesPath: string;
 	readonly allowDomains: readonly string[];
@@ -126,4 +208,61 @@ export interface ResearchSettings {
 	readonly fetchMaxBytes: number;
 	readonly fetchTimeoutMs: number;
 	readonly allowAgents: boolean;
+}
+
+export type ResearchAdapterStatus =
+	| 'ready'
+	| 'not-configured'
+	| 'circuit-open'
+	| 'unsupported';
+
+/** What the Search adapters tab shows of one adapter; never a credential. */
+export interface ResearchAdapterView {
+	readonly key: ResearchChainAdapterKey;
+	readonly enabled: boolean;
+	readonly maxAttempts: number;
+	readonly timeoutMs: number;
+	readonly status: ResearchAdapterStatus;
+	readonly openUntil: number | null;
+	readonly consecutiveFailures: number;
+	readonly lastErrorCode: string | null;
+	readonly lastSuccessAt: number | null;
+	readonly configuration: {
+		readonly baseUrl: string | null;
+		readonly authKind: string | null;
+		readonly hasCredentials: boolean;
+		readonly instanceStatus: 'active' | 'disabled' | null;
+		readonly connectorInstanceId: string | null;
+		readonly recordedFixturesPath: string | null;
+	};
+}
+
+export interface ResearchReliability {
+	readonly fallback: ResearchFallbackMode;
+	readonly fallbackOnEmpty: boolean;
+	readonly retryBackoffMs: number;
+	readonly circuitFailureThreshold: number;
+	readonly circuitCooldownMs: number;
+}
+
+export interface ResearchAdaptersOverview {
+	/** Every search adapter in the order the tab lists it. */
+	readonly search: readonly ResearchAdapterView[];
+	readonly fetch: readonly ResearchAdapterView[];
+	/** True while searchOrder is empty and the single adapter setting decides. */
+	readonly legacy: boolean;
+	readonly reliability: ResearchReliability;
+}
+
+export interface ResearchAdapterTestResult {
+	readonly adapter: ResearchAdapterKey;
+	readonly outcome: 'ok' | 'empty' | 'failed';
+	readonly resultCount: number;
+	readonly durationMs: number;
+	readonly errorCode: string | null;
+	readonly message: string | null;
+	readonly attempts: readonly Omit<
+		ResearchAttemptRecord,
+		'tenantId' | 'id' | 'queryId' | 'kind'
+	>[];
 }

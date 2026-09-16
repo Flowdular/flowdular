@@ -12,6 +12,10 @@ import {
 } from './domain/egress.ts';
 import type { ConnectorCallCapability } from './domain/calls.ts';
 import {
+	CONNECTORS_INSTANCES_CAPABILITY,
+	type ConnectorInstancesCapability,
+} from './domain/instances.ts';
+import {
 	createConnectorsRoutes,
 	createConnectorsRuntime,
 } from './server/index.ts';
@@ -50,6 +54,15 @@ export function createServerComposition(
 	context.capabilities.register<ConnectorEgressCapability>(
 		CONNECTORS_EGRESS_CAPABILITY,
 		createConnectorEgressCapability(),
+	);
+	context.capabilities.register<ConnectorInstancesCapability>(
+		CONNECTORS_INSTANCES_CAPABILITY,
+		{
+			upsertModuleInstance: async (input) =>
+				(await runtime.service()).upsertModuleInstance(input),
+			describeModuleInstance: async (input) =>
+				(await runtime.service()).describeModuleInstance(input),
+		},
 	);
 	context.agentTools.register(connectorsAgentTools(runtime));
 	/* The sweep and the export run here, on this module's own lease and under

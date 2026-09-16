@@ -67,6 +67,8 @@ describe('contract schemas', () => {
 			moduleSpecSchema.$defs;
 		expect(research.properties.adapter.enum).toEqual([
 			'model-native',
+			'searxng',
+			'firecrawl',
 			'connector',
 			'recorded',
 		]);

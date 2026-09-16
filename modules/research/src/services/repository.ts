@@ -1,4 +1,8 @@
 import type {
+	ResearchAdapterHealth,
+	ResearchAdapterKey,
+	ResearchAttemptRecord,
+	ResearchChainAdapterKey,
 	ResearchEvidenceLink,
 	ResearchEvidenceRecord,
 	ResearchPage,
@@ -29,11 +33,17 @@ export interface ResearchRepository {
 		budget: QueryBudget | null,
 	): Promise<boolean>;
 	releaseQuery(tenantId: string, id: string): Promise<void>;
-	/** Sets the result count and writes the evidence linked to the query, in one transaction. */
+	/**
+	 * Sets the result count and the answering adapter when given, and writes
+	 * the evidence linked to the query and the chain's attempts, in one
+	 * transaction.
+	 */
 	completeQuery(
 		tenantId: string,
 		id: string,
 		evidence: readonly ResearchEvidenceRecord[],
+		adapter?: ResearchAdapterKey,
+		attempts?: readonly ResearchAttemptRecord[],
 	): Promise<void>;
 	monthUsage(tenantId: string, since: number): Promise<number>;
 	/** The evidence of the newest model-native query of this run and text, or null without one. */
@@ -122,6 +132,69 @@ export interface ResearchRepository {
 	): Promise<number>;
 	countQueriesOf(tenantId: string, accountId: string): Promise<number>;
 	sweepPages(tenantId: string, cutoff: number, limit: number): Promise<number>;
+	adapterHealth(tenantId: string): Promise<readonly ResearchAdapterHealth[]>;
+	/** Moves an elapsed open time to `until` in one statement; false when another query took the probe. */
+	claimAdapterProbe(
+		tenantId: string,
+		adapter: ResearchChainAdapterKey,
+		now: number,
+		until: number,
+	): Promise<boolean>;
+	/** Restores `previous` when the open time is still the probe's `claimedUntil`. */
+	releaseAdapterProbe(
+		tenantId: string,
+		adapter: ResearchChainAdapterKey,
+		claimedUntil: number,
+		previous: number,
+	): Promise<void>;
+	/** The newest model-native query of this run and text, or null. */
+	nativeQueryId(
+		tenantId: string,
+		runId: string,
+		query: string,
+	): Promise<string | null>;
+	/** Closes the circuit, resets the count and records the success time. */
+	recordAdapterSuccess(
+		tenantId: string,
+		adapter: ResearchChainAdapterKey,
+		now: number,
+	): Promise<void>;
+	/** Counts one failed query, opening the circuit until `now + cooldownMs` at the threshold. */
+	recordAdapterFailure(
+		tenantId: string,
+		adapter: ResearchChainAdapterKey,
+		code: string,
+		now: number,
+		threshold: number,
+		cooldownMs: number,
+	): Promise<void>;
+	insertAttempts(
+		tenantId: string,
+		attempts: readonly ResearchAttemptRecord[],
+	): Promise<void>;
+	/** The attempts of one search or fetch in the order they were made. */
+	listAttempts(
+		tenantId: string,
+		queryId: string,
+		limit: number,
+	): Promise<readonly ResearchAttemptRecord[]>;
+	sweepAttempts(
+		tenantId: string,
+		cutoff: number,
+		limit: number,
+	): Promise<number>;
+	exportAttempts(
+		tenantId: string,
+		after: ResearchPosition | null,
+		limit: number,
+	): Promise<readonly ResearchAttemptRecord[]>;
+	/** Removes the attempts of the member's own queries. */
+	eraseAttempts(
+		tenantId: string,
+		accountId: string,
+		limit: number,
+	): Promise<number>;
+	countAttemptsOf(tenantId: string, accountId: string): Promise<number>;
 	clearPages(tenantId: string, limit: number): Promise<number>;
 	countPages(tenantId: string): Promise<number>;
 }

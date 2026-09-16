@@ -41,3 +41,57 @@
 	flex-wrap: wrap;
 	gap: 8px;
 }
+
+.research-adapters {
+	display: grid;
+	gap: 16px;
+	min-width: 0;
+}
+
+.research-adapter {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px;
+	min-width: 0;
+}
+
+.research-adapter > .ui-cell {
+	flex: 1 1 14rem;
+	min-width: 0;
+}
+
+.research-adapter__credential {
+	display: flex;
+	align-items: flex-end;
+	padding-bottom: 8px;
+}
+
+.research-test {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 12px;
+	font-size: var(--text-sm);
+}
+
+.research-test > .ui-help,
+.research-test > .research-attempts {
+	flex-basis: 100%;
+	margin: 0;
+}
+
+.research-attempts {
+	display: grid;
+	gap: 4px;
+	padding: 0;
+	margin: 0;
+	list-style: none;
+}
+
+.research-attempts li {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}

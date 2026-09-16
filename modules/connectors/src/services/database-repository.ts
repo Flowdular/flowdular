@@ -108,7 +108,7 @@ const UPDATE_INSTANCE = `UPDATE connectors_instances
 			 SET name = $3, name_normalized = $4, base_url = $5,
 			     credential_key_id = $6, credential_iv = $7, credential_tag = $8,
 			     credential_ciphertext = $9, credential_fingerprint = $10,
-			     allowed_hosts_json = $11, updated_at = $12
+			     allowed_hosts_json = $11, updated_at = $12, auth_kind = $13
 			 WHERE tenant_id = $1 AND id = $2`;
 
 const SET_CONSENT = `UPDATE connectors_instances
@@ -510,6 +510,7 @@ export class DatabaseConnectorsRepository implements ConnectorsRepository {
 							record.credentialFingerprint,
 							JSON.stringify(record.allowedHosts),
 							record.updatedAt,
+							record.authKind,
 						],
 					});
 					await transaction.execute({

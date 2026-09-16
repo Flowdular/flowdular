@@ -104,6 +104,12 @@ export type { FiltersProps } from './components/Filters.tsrx';
 export { Tabs } from './components/Tabs.tsrx';
 export type { TabsProps } from './components/Tabs.tsrx';
 export type { TabItem } from './components/tabs.ts';
+export { SortableList } from './components/SortableList.tsrx';
+export type {
+	SortableAnnouncement,
+	SortableListItem,
+	SortableListProps,
+} from './components/SortableList.tsrx';
 export { ToastHost } from './components/ToastHost.tsrx';
 export type { ToastHostProps } from './components/ToastHost.tsrx';
 export { createToastStore, toasts } from './components/toast-store.ts';

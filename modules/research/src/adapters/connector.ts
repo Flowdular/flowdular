@@ -2,6 +2,7 @@ import type { ResearchResult } from '../domain/capability.ts';
 import type { ConnectorCalls } from '../services/capabilities.ts';
 import { boundResults } from '../services/results.ts';
 import { ResearchServiceError } from '../services/service-error.ts';
+import { connectorCaller, connectorCallFailure } from './connector-failure.ts';
 import type { ResearchAdapter } from './types.ts';
 
 /**
@@ -79,16 +80,12 @@ export function createConnectorAdapter(
 				instanceId,
 				operation: 'search',
 				input: { q: input.query, limit: input.limit },
-				caller: input.caller === 'member' ? 'test' : input.caller,
+				caller: connectorCaller(input.caller),
 				...(input.callerRef === null ? {} : { callerRef: input.callerRef }),
 				...(input.signal ? { signal: input.signal } : {}),
 			});
 			if (result.outcome !== 'succeeded') {
-				throw new ResearchServiceError(
-					'RESEARCH_CONNECTOR_FAILED',
-					`The search connector call ${result.outcome}: ${result.errorClass ?? 'unknown'}.`,
-					502,
-				);
+				throw connectorCallFailure(result, 'search connector');
 			}
 			return mapConnectorResults(result.body);
 		},

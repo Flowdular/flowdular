@@ -53,6 +53,10 @@ function request(
 interface Recorded {
 	readonly query: string | null;
 	readonly results: readonly AgentNativeResult[];
+	readonly unsupported?: {
+		readonly code: string;
+		readonly detail: string | null;
+	};
 	readonly context: AgentToolContext;
 }
 
@@ -332,7 +336,95 @@ describe('native tools', () => {
 			['tool.native', { tool: NATIVE_ID, results: 0 }],
 			['tool.failed', { tool: NATIVE_ID, reason: 'TOOL_EXECUTION_FAILED' }],
 			['tool.native', { tool: NATIVE_ID, reason: NATIVE_TOOL_UNSUPPORTED }],
+			['tool.failed', { tool: NATIVE_ID, reason: 'TOOL_EXECUTION_FAILED' }],
 		]);
+	});
+
+	it('hands an unsupported report with its detail to the record hook, the path results take', async () => {
+		const recorded: Recorded[] = [];
+		let permissions = [PERMISSION];
+		const harness = new AgentHarness({
+			providers: [],
+			nativeTools: [nativeTool(recorded)],
+			authorizeToolAccess: () => permissions,
+		});
+		const result = await harness.execute(request(), {
+			provider: reporting(async (context) => {
+				await context.reportNative({
+					id: NATIVE_ID,
+					code: NATIVE_TOOL_UNSUPPORTED,
+					detail: 'PROVIDER_WEB_SEARCH_DISABLED',
+				});
+				await context.reportNative({
+					id: NATIVE_ID,
+					code: NATIVE_TOOL_UNSUPPORTED,
+					detail: 'not a code',
+				});
+			}),
+		});
+
+		expect(result.output).toBe('done');
+		expect(
+			recorded.map(({ query, results, unsupported, context }) => [
+				query,
+				results,
+				unsupported,
+				context.runId,
+				context.tenantId,
+			]),
+		).toEqual([
+			[
+				null,
+				[],
+				{
+					code: NATIVE_TOOL_UNSUPPORTED,
+					detail: 'PROVIDER_WEB_SEARCH_DISABLED',
+				},
+				'run-native',
+				'tenant-a',
+			],
+			[
+				null,
+				[],
+				{ code: NATIVE_TOOL_UNSUPPORTED, detail: null },
+				'run-native',
+				'tenant-a',
+			],
+		]);
+		expect(
+			result.events
+				.filter((event) => event.type === 'tool.native')
+				.map((event) => event.metadata),
+		).toEqual([
+			{
+				tool: NATIVE_ID,
+				reason: NATIVE_TOOL_UNSUPPORTED,
+				detail: 'PROVIDER_WEB_SEARCH_DISABLED',
+			},
+			{ tool: NATIVE_ID, reason: NATIVE_TOOL_UNSUPPORTED },
+		]);
+
+		/* A revoked permission withholds the record and never fails the run. */
+		const withheld: Recorded[] = [];
+		const revoking = new AgentHarness({
+			providers: [],
+			nativeTools: [nativeTool(withheld)],
+			authorizeToolAccess: () => permissions,
+		});
+		const revoked = await revoking.execute(request(), {
+			provider: reporting(async (context) => {
+				permissions = [];
+				await context.reportNative({
+					id: NATIVE_ID,
+					code: NATIVE_TOOL_UNSUPPORTED,
+				});
+			}),
+		});
+		expect(revoked.output).toBe('done');
+		expect(withheld).toEqual([]);
+		expect(
+			revoked.events.find((event) => event.type === 'tool.denied')?.metadata,
+		).toEqual({ tool: NATIVE_ID, reason: 'TOOL_AUTHORIZATION_REVOKED' });
 	});
 
 	it('answers a native web search from the fixtures file the request names in the local simulation', async () => {

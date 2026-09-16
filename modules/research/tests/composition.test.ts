@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
 	createModuleSettingsRuntime,
 	type ModuleSettingsStore,
@@ -17,9 +17,16 @@ import {
 	openResearchTestDatabase,
 	type ResearchTestDatabase,
 } from './support/database.ts';
+import { stubConnectors } from './support/connectors.ts';
 import { researchService } from './support/service.ts';
 
-function context(present: ReadonlySet<string>) {
+function context(
+	present: ReadonlySet<string>,
+	overrides: {
+		readonly settings?: unknown;
+		readonly capabilities?: Readonly<Record<string, unknown>>;
+	} = {},
+) {
 	const registered = new Map<string, unknown>();
 	const declaredMeters: unknown[] = [];
 	const lists: { moduleId: string; exports: readonly DefinedListExport[] }[] =
@@ -31,7 +38,7 @@ function context(present: ReadonlySet<string>) {
 		environment: { NODE_ENV: 'test' },
 		workspaceRoot: process.cwd(),
 		auth: { service: async () => ({}) },
-		settings: {},
+		settings: overrides.settings ?? { onChange: () => () => undefined },
 		databases: {
 			acquire: () => Promise.reject(new Error('No database in this case.')),
 			dispose: () => Promise.resolve(),
@@ -49,6 +56,7 @@ function context(present: ReadonlySet<string>) {
 				registered.set(id, capability),
 			get: (id: string) => {
 				if (!present.has(id)) return null;
+				if (overrides.capabilities?.[id]) return overrides.capabilities[id];
 				if (id === 'metering.meters.v1') {
 					return {
 						declare: (_: string, meters: unknown) =>
@@ -103,6 +111,7 @@ describe('research.core composition', () => {
 		]);
 		expect(platform.classes).toEqual([
 			'research.core.evidence',
+			'research.core.attempts',
 			'research.core.queries',
 			'research.core.pages',
 		]);
@@ -114,6 +123,11 @@ describe('research.core composition', () => {
 			'/api/research/queries',
 			'/api/research/search',
 			'/api/research/fetch',
+			'/api/research/queries/:id/attempts',
+			'/api/research/adapters',
+			'/api/research/settings',
+			'/api/research/adapters/configure',
+			'/api/research/adapters/test',
 		]);
 		composition.start?.();
 		expect(platform.declaredMeters).toEqual([]);
@@ -193,6 +207,80 @@ describe('research.core composition', () => {
 		for (let index = 0; index < 5; index += 1) {
 			expect(text.split(`https://a.example.org/${index}`)).toHaveLength(2);
 		}
+	});
+
+	it('RESEARCH-ADAPTER-CONFIGURATION registers both connector definitions and moves the instance consent when allowAgents changes anywhere', async () => {
+		const stub = stubConnectors();
+		const values = new Map<string, Record<string, string | number | boolean>>();
+		const settings = createModuleSettingsRuntime({
+			load: async (tenantId, moduleId) => ({
+				...values.get(`${tenantId}/${moduleId}`),
+			}),
+			save: async (record) => {
+				const key = `${record.tenantId}/${record.moduleId}`;
+				values.set(key, { ...values.get(key), [record.key]: record.value });
+			},
+			clear: async () => undefined,
+		});
+		settings.declare(RESEARCH_MODULE_SETTINGS);
+		await settings.prime('tenant-consent');
+		await stub.instances.upsertModuleInstance({
+			tenantId: 'tenant-consent',
+			moduleId: 'research.core',
+			key: 'searxng',
+			definition: 'research-searxng',
+			baseUrl: 'https://search.example.org',
+			allowedHosts: ['search.example.org'],
+			allowAgents: false,
+			allowWorkflows: false,
+			actor: 'owner',
+		});
+		const platform = context(
+			new Set(['connectors.definitions.v1', 'connectors.instances.v1']),
+			{
+				settings,
+				capabilities: {
+					'connectors.definitions.v1': stub.definitions,
+					'connectors.instances.v1': stub.instances,
+				},
+			},
+		);
+		const composition = createServerComposition(platform.context);
+		composition.start?.();
+		expect(stub.definitions.get('research-searxng')?.moduleId).toBe(
+			'research.core',
+		);
+		expect(stub.definitions.get('research-firecrawl')?.moduleId).toBe(
+			'research.core',
+		);
+
+		await settings.set(
+			'tenant-consent',
+			'research.core',
+			'allowAgents',
+			true,
+			'owner-account',
+		);
+		await vi.waitFor(() =>
+			expect(stub.upserts.at(-1)).toMatchObject({
+				key: 'searxng',
+				allowAgents: true,
+				allowWorkflows: true,
+				actor: 'owner-account',
+			}),
+		);
+		expect(stub.upserts).toHaveLength(2);
+
+		await composition.dispose?.();
+		await settings.set(
+			'tenant-consent',
+			'research.core',
+			'allowAgents',
+			false,
+			'owner-account',
+		);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(stub.upserts).toHaveLength(2);
 	});
 
 	it('reads the workspace settings live and parses the domain lists', async () => {

@@ -2,12 +2,21 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createConnectorAdapter } from '../../src/adapters/connector.ts';
+import { createFirecrawlAdapter } from '../../src/adapters/firecrawl.ts';
 import { createModelNativeAdapter } from '../../src/adapters/model-native.ts';
 import { createRecordedAdapter } from '../../src/adapters/recorded.ts';
-import type { ResearchSettings } from '../../src/domain/types.ts';
+import { createSearxngAdapter } from '../../src/adapters/searxng.ts';
+import {
+	RESEARCH_ADAPTERS,
+	type ResearchAdapterLimits,
+	type ResearchChainAdapterKey,
+	type ResearchSettings,
+} from '../../src/domain/types.ts';
+import type { ChainRuntime } from '../../src/services/adapter-chain.ts';
 import type {
 	ConnectorCalls,
 	ConnectorEgress,
+	ConnectorInstances,
 	EgressLookup,
 	MeterRegistry,
 } from '../../src/services/capabilities.ts';
@@ -21,11 +30,41 @@ import { ResearchService } from '../../src/services/research-service.ts';
 
 export const PUBLIC_ADDRESS = '93.184.216.34';
 
+export type TestSettingsOverrides = Partial<
+	Omit<ResearchSettings, 'limits'>
+> & {
+	readonly limits?: Partial<
+		Record<ResearchChainAdapterKey, Partial<ResearchAdapterLimits>>
+	>;
+};
+
+/** The declared defaults, recorded as the single adapter, with any override. */
 export function testSettings(
-	overrides: Partial<ResearchSettings> = {},
+	overrides: TestSettingsOverrides = {},
 ): ResearchSettings {
+	const { limits: limitOverrides = {}, ...rest } = overrides;
+	const fetchOrder = rest.fetchOrder ?? ['direct'];
+	const limits = {} as Record<ResearchChainAdapterKey, ResearchAdapterLimits>;
+	for (const key of [...RESEARCH_ADAPTERS, 'direct'] as const) {
+		limits[key] = {
+			enabled:
+				key === 'direct'
+					? fetchOrder.includes('direct')
+					: key === 'model-native',
+			maxAttempts: 2,
+			timeoutMs: key === 'direct' ? (rest.fetchTimeoutMs ?? 20_000) : 15_000,
+			...limitOverrides[key],
+		};
+	}
 	return {
 		adapter: 'recorded',
+		searchOrder: [],
+		fetchOrder,
+		fallback: 'next-adapter',
+		fallbackOnEmpty: true,
+		retryBackoffMs: 500,
+		circuitFailureThreshold: 5,
+		circuitCooldownMs: 300_000,
 		connectorInstanceId: '',
 		recordedFixturesPath: '',
 		allowDomains: [],
@@ -35,9 +74,21 @@ export function testSettings(
 		fetchMaxBytes: 2_000_000,
 		fetchTimeoutMs: 20_000,
 		allowAgents: false,
-		...overrides,
+		...rest,
+		limits,
 	};
 }
+
+/**
+ * Real timers with no jitter wait, so a retry in a database case costs nothing
+ * unless the case sets a Retry-After; the chain unit tests fake the timers.
+ */
+export const INSTANT_CHAIN: ChainRuntime = {
+	now: Date.now,
+	random: () => 0,
+	setTimer: (callback, ms) => setTimeout(callback, ms),
+	clearTimer: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+};
 
 /** A lookup that answers one address for one host name, as a pinned policy does. */
 export function pinned(hostname: string, address: string): EgressLookup {
@@ -146,6 +197,8 @@ export interface ServiceSetup {
 	readonly repository: ResearchRepository;
 	readonly settings?: ResearchSettings | (() => ResearchSettings);
 	readonly calls?: ConnectorCalls;
+	readonly instances?: ConnectorInstances;
+	readonly chain?: ChainRuntime;
 	readonly egress?: ConnectorEgress;
 	readonly meters?: MeterRegistry;
 	readonly transport?: PageTransport;
@@ -161,6 +214,14 @@ export function researchService(setup: ServiceSetup): ResearchService {
 			typeof settings === 'function' ? settings() : settings,
 		adapters: {
 			modelNative: createModelNativeAdapter(setup.repository),
+			searxng: createSearxngAdapter({
+				calls: () => setup.calls,
+				instances: () => setup.instances,
+			}),
+			firecrawl: createFirecrawlAdapter({
+				calls: () => setup.calls,
+				instances: () => setup.instances,
+			}),
 			connector: createConnectorAdapter(() => setup.calls),
 			recorded: createRecordedAdapter(setup.workspaceRoot ?? tmpdir()),
 		},
@@ -172,6 +233,10 @@ export function researchService(setup: ServiceSetup): ResearchService {
 				throw new Error('The network is not reachable in this case.');
 			}),
 		...(setup.now ? { now: setup.now } : {}),
+		chain: setup.chain ?? {
+			...INSTANT_CHAIN,
+			now: setup.now ?? Date.now,
+		},
 	});
 }
 

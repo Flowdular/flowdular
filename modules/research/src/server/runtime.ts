@@ -8,12 +8,20 @@ import {
 	DATABASE_DIALECT_IDS,
 } from '@flowdular/database';
 import { createConnectorAdapter } from '../adapters/connector.ts';
+import { createFirecrawlAdapter } from '../adapters/firecrawl.ts';
 import { createModelNativeAdapter } from '../adapters/model-native.ts';
 import { createRecordedAdapter } from '../adapters/recorded.ts';
+import { createSearxngAdapter } from '../adapters/searxng.ts';
 import { RESEARCH_MODULE_ID, type ResearchSettings } from '../domain/types.ts';
+import {
+	ResearchAdapterAdmin,
+	type ResearchSettingWriter,
+} from '../services/adapter-admin.ts';
+import type { ChainRuntime } from '../services/adapter-chain.ts';
 import type {
 	ConnectorCalls,
 	ConnectorEgress,
+	ConnectorInstances,
 	MeterRegistry,
 } from '../services/capabilities.ts';
 import {
@@ -38,8 +46,12 @@ export interface ResearchRuntimeOptions {
 	/* Resolved at the point of use, so an optional provider composed after this
 	   module is found and an absent one answers its stable refusal. */
 	readonly calls?: () => ConnectorCalls | undefined;
+	readonly instances?: () => ConnectorInstances | undefined;
 	readonly egress?: () => ConnectorEgress | undefined;
 	readonly meters?: () => MeterRegistry | undefined;
+	/** Writes one research setting as the owner; absent where no settings runtime exists. */
+	readonly writeSetting?: ResearchSettingWriter;
+	readonly chain?: ChainRuntime;
 	/** Test seam for the socket; a deployment uses the pinned https transport. */
 	readonly transport?: PageTransport;
 	readonly robots?: RobotsCache;
@@ -50,6 +62,7 @@ export interface ResearchRuntimeOptions {
 
 export interface ResearchRuntime {
 	service(): Promise<ResearchService>;
+	readonly admin: ResearchAdapterAdmin;
 	dispose(): Promise<void>;
 }
 
@@ -60,13 +73,17 @@ export function createResearchRuntime(
 	let runtimeLeasePromise: Promise<DatabaseAdapterLease> | undefined;
 	let servicePromise: Promise<ResearchService> | undefined;
 
+	const calls = options.calls ?? (() => undefined);
+	const instances = options.instances ?? (() => undefined);
 	const build = (repository: ResearchRepository): ResearchService =>
 		new ResearchService({
 			repository,
 			settings: options.settings,
 			adapters: {
 				modelNative: createModelNativeAdapter(repository),
-				connector: createConnectorAdapter(options.calls ?? (() => undefined)),
+				searxng: createSearxngAdapter({ calls, instances }),
+				firecrawl: createFirecrawlAdapter({ calls, instances }),
+				connector: createConnectorAdapter(calls),
 				recorded: createRecordedAdapter(options.workspaceRoot),
 			},
 			egress: options.egress ?? (() => undefined),
@@ -74,6 +91,7 @@ export function createResearchRuntime(
 			transport: options.transport ?? httpsPageTransport(),
 			...(options.robots ? { robots: options.robots } : {}),
 			...(options.now ? { now: options.now } : {}),
+			...(options.chain ? { chain: options.chain } : {}),
 		});
 
 	/* Schema work runs on the migrator role and that lease is released before
@@ -112,14 +130,25 @@ export function createResearchRuntime(
 		return build(new DatabaseResearchRepository(lease.database));
 	};
 
+	const service = (): Promise<ResearchService> => {
+		if (disposed) {
+			return Promise.reject(new Error('Research runtime is disposed.'));
+		}
+		servicePromise ??= initialize();
+		return servicePromise;
+	};
+
 	return {
-		service: () => {
-			if (disposed) {
-				return Promise.reject(new Error('Research runtime is disposed.'));
-			}
-			servicePromise ??= initialize();
-			return servicePromise;
-		},
+		service,
+		admin: new ResearchAdapterAdmin({
+			service,
+			settings: options.settings,
+			writeSetting: options.writeSetting,
+			instances,
+			calls,
+			egress: options.egress ?? (() => undefined),
+			...(options.now ? { now: options.now } : {}),
+		}),
 		async dispose() {
 			if (disposed) return;
 			disposed = true;

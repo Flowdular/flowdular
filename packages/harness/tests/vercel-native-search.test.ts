@@ -70,6 +70,10 @@ async function execute(
 	const recorded: {
 		readonly query: string | null;
 		readonly results: readonly AgentNativeResult[];
+		readonly unsupported?: {
+			readonly code: string;
+			readonly detail: string | null;
+		};
 	}[] = [];
 	const events: AgentExecutionEvent[] = [];
 	const provider = createVercelAiSdkProvider({
@@ -496,7 +500,16 @@ describe('Vercel AI SDK native web search', () => {
 			expect(JSON.stringify(captured[0]!.body)).toContain('web_search');
 			expect(JSON.stringify(captured[1]!.body)).not.toContain('web_search');
 			expect(captured[1]!.body).not.toHaveProperty('max_tool_calls');
-			expect(recorded).toEqual([]);
+			expect(recorded).toEqual([
+				{
+					query: null,
+					results: [],
+					unsupported: {
+						code: NATIVE_TOOL_UNSUPPORTED,
+						detail: 'PROVIDER_WEB_SEARCH_DISABLED',
+					},
+				},
+			]);
 			expect(native).toEqual([
 				{
 					tool: NATIVE_ID,
@@ -624,7 +637,13 @@ describe('Vercel AI SDK native web search', () => {
 			expect(native).toEqual([
 				{ tool: NATIVE_ID, reason: NATIVE_TOOL_UNSUPPORTED },
 			]);
-			expect(recorded).toEqual([]);
+			expect(recorded).toEqual([
+				{
+					query: null,
+					results: [],
+					unsupported: { code: NATIVE_TOOL_UNSUPPORTED, detail: null },
+				},
+			]);
 			expect(JSON.stringify(captured[0]!.body)).not.toContain('web_search');
 		},
 	);

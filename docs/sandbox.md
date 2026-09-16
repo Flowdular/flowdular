@@ -118,21 +118,25 @@ job, and most drafts do not compose `import.core`.
 
 A draft spec with a `research` section previews through `research.core`. The
 preview composes it from the platform modules ahead of the drafts and holds
-`research.core.adapter` at `recorded` and `research.core.recordedFixturesPath`
-at the absolute path of the module's `research-fixtures.json` for every
-workspace; changing either answers `409 SANDBOX_LIVE_ADAPTER_REFUSED`. When
-several drafts declare research, the first one in session order supplies the
-path. An entry of the spec's `adapters` section reads the fixture its `recorded`
-field names, by convention `adapters/<id>.recorded.json`.
+`research.core.adapter` at `recorded`, the adapter chain at the recorded adapter
+alone (`searchOrder` at `recorded` with `recordedEnabled` on, `fetchOrder` at
+`direct`) and `research.core.recordedFixturesPath` at the absolute path of the
+module's `research-fixtures.json` for every workspace. A chain holding the
+recorded adapter reads pages from the same file before it looks at the fetch
+order, so nothing reaches the network. Changing any of them answers
+`409 SANDBOX_LIVE_ADAPTER_REFUSED`. When several drafts declare research, the
+first one in session order supplies the path. An entry of the spec's `adapters`
+section reads the fixture its `recorded` field names, by convention
+`adapters/<id>.recorded.json`.
 
 A session declares only recorded adapters; an owner connects a live search or
 connector instance after delivery. When a draft spec sets `research.adapter` to
-`model-native` or `connector`, or lists an adapter without `recorded`, the
-`spec-schema` gate fails with `SANDBOX_LIVE_ADAPTER_REFUSED` and names the file
-and field, so the turn goes back to its specialist and delivery stops. The
-preview refuses to compose such a session with the same code before a worker
-starts. A `research` section without `adapter` is previewed on the recorded
-fixtures.
+`model-native`, `searxng`, `firecrawl` or `connector`, or lists an adapter
+without `recorded`, the `spec-schema` gate fails with
+`SANDBOX_LIVE_ADAPTER_REFUSED` and names the file and field, so the turn goes
+back to its specialist and delivery stops. The preview refuses to compose such a
+session with the same code before a worker starts. A `research` section without
+`adapter` is previewed on the recorded fixtures.
 
 ## Deliver as a pull request
 
