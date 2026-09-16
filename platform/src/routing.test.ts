@@ -16,6 +16,7 @@ describe('platform surface routing', () => {
 		'/auth/reset-password?token=opaque',
 		'/auth/accept-invitation?token=opaque',
 		'/auth/mfa?mfa=oidc',
+		'/auth/sso',
 		'/sign-in',
 		'/sign-up',
 	])('recognizes %s as a public authentication route', (url) => {

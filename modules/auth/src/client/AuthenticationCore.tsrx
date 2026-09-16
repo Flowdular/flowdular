@@ -93,7 +93,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 	);
 	const [signInWorkspaceName] = useValue(props.auth.state.signInWorkspaceName);
 	const [workspaceFixed] = useValue(props.auth.state.signInWorkspaceFromUrl);
-	const [ssoOpen, setSsoOpen] = useValue(props.auth.state.signInSsoOpen);
+	const [ssoLookup, setSsoLookup] = useValue(props.auth.state.ssoLookup);
 	const [emailConfirmation] = useValue(props.auth.state.emailConfirmation);
 	const [confirmationEmail] = useValue(props.auth.state.confirmationEmail);
 	const [passwordMinLength] = useValue(props.auth.state.passwordMinLength);
@@ -114,6 +114,21 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 			transaction.set(props.auth.state.signUpStep, 1);
 		}, 'auth/screen');
 		history.pushState(null, '', authPathForScreen(screen));
+	};
+
+	/* The workspace id resolves on the server; an unknown id answers no
+   workspace, and the screen says so instead of offering buttons. */
+	const lookUpSso = async (event: SubmitEvent) => {
+		event.preventDefault();
+		const workspace = signInWorkspace.trim();
+		if (workspace === '') return;
+		setSsoLookup('checking');
+		await loadAuthConfiguration(props.auth, workspace);
+		setSsoLookup(
+			props.auth.store.get(props.auth.state.signInWorkspaceName) !== ''
+				? 'resolved'
+				: 'unknown',
+		);
 	};
 
 	const submitWorkspaceStep = async (event: SubmitEvent) => {
@@ -196,7 +211,9 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 						? t('auth.security.invitation.title')
 						: props.screen === 'mfa-challenge'
 							? t('auth.security.mfa.challengeTitle')
-							: t('auth.signin.seo.title');
+							: props.screen === 'sso'
+								? t('auth.sso.title')
+								: t('auth.signin.seo.title');
 	const seoDescription =
 		props.screen === 'sign-up'
 			? t('auth.signup.seo.description')
@@ -208,7 +225,9 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 						? t('auth.security.invitation.description')
 						: props.screen === 'mfa-challenge'
 							? t('auth.security.mfa.challengeDescription')
-							: t('auth.signin.seo.description');
+							: props.screen === 'sso'
+								? t('auth.sso.description')
+								: t('auth.signin.seo.description');
 
 	<main class="auth-page">
 		<Seo title={seoTitle} description={seoDescription} />
@@ -257,6 +276,82 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 						passwordMinLength={passwordMinLength}
 						onScreen={changeScreen}
 					/>
+				} @else if (props.screen === 'sso') {
+					<>
+						<header>
+							<span class="auth-kicker">{t('auth.sso.kicker')}</span>
+							<h2>{t('auth.sso.title')}</h2>
+							<p class="auth-card__sub">
+								{ssoLookup === 'resolved' && signInWorkspaceName
+									? t('auth.signin.workspace.entering', {
+											workspace: signInWorkspaceName,
+										})
+									: t('auth.sso.description')}
+							</p>
+						</header>
+						<form style="display:grid;gap:14px" onSubmit={lookUpSso}>
+							<FormField
+								label={t('auth.signin.workspace.label')}
+								help={t('auth.signin.workspace.help')}
+								required
+							>
+								<input
+									class="ui-input"
+									name="workspace"
+									type="text"
+									autocomplete="organization"
+									spellcheck={false}
+									maxlength={64}
+									required
+									value={signInWorkspace}
+									onInput={(event) => {
+										setSignInWorkspace(event.currentTarget.value.toLowerCase());
+										setSsoLookup('idle');
+									}}
+								/>
+							</FormField>
+							@if (ssoLookup === 'unknown') {
+								<Alert>{t('auth.sso.unknown')}</Alert>
+							}
+							<Button
+								variant="primary"
+								size="lg"
+								type="submit"
+								block
+								disabled={ssoLookup === 'checking' ||
+									signInWorkspace.trim() === ''}
+							>
+								{ssoLookup === 'checking'
+									? t('auth.common.wait')
+									: t('auth.sso.continue')}
+							</Button>
+						</form>
+						@if (ssoLookup === 'resolved') {
+							@if (providerOptions.length > 0) {
+								<div class="auth-providers">
+									@for (const provider of providerOptions; key provider.scope +
+										':' +
+										provider.key) {
+										<a
+											class="ui-btn ui-btn--secondary ui-btn--block"
+											href={provider.startPath}
+										>
+											{provider.scope === 'platform'
+												? providerLabel(provider.key)
+												: provider.label}
+										</a>
+									}
+								</div>
+							} @else {
+								<Alert tone="info">{t('auth.sso.none')}</Alert>
+							}
+						}
+						<button
+							class="auth-text-action"
+							type="button"
+							onClick={() => changeScreen('sign-in')}
+						>{t('auth.sso.back')}</button>
+					</>
 				} @else if (props.screen === 'sign-up') {
 					<>
 						<header>
@@ -468,29 +563,6 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 							</p>
 						</header>
 						<form style="display:grid;gap:14px" onSubmit={submit}>
-							@if (!workspaceFixed && ssoOpen) {
-								<FormField
-									label={t('auth.signin.workspace.label')}
-									help={t('auth.signin.workspace.help')}
-								>
-									<input
-										class="ui-input"
-										name="workspace"
-										type="text"
-										autocomplete="organization"
-										spellcheck={false}
-										maxlength={64}
-										value={signInWorkspace}
-										onInput={(event) => setSignInWorkspace(
-											event.currentTarget.value.toLowerCase(),
-										)}
-										onChange={() => void loadAuthConfiguration(
-											props.auth,
-											signInWorkspace.trim(),
-										)}
-									/>
-								</FormField>
-							}
 							<FormField label={t('auth.email')} required>
 								<input
 									class="ui-input"
@@ -533,12 +605,12 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 							type="button"
 							onClick={() => changeScreen('forgot-password')}
 						>{t('auth.security.passwordReset.forgot')}</button>
-						@if (!workspaceFixed && !ssoOpen) {
+						@if (!workspaceFixed) {
 							<div class="auth-providers">
 								<span class="auth-providers__divider">{t(
 									'auth.signin.orProvider',
 								)}</span>
-								<Button block onClick={() => setSsoOpen(true)}>{t(
+								<Button block onClick={() => changeScreen('sso')}>{t(
 									'auth.signin.sso.action',
 								)}</Button>
 							</div>
