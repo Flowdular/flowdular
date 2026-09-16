@@ -184,11 +184,16 @@ pnpm typecheck      # every workspace package
 pnpm test           # every workspace package
 pnpm validate       # spec, blueprint and module validation
 pnpm format:check   # Prettier
-pnpm verify         # typecheck + test + validate + format:check
+pnpm verify         # verify:static, then test
+pnpm verify:static  # rules, reference, capabilities, platform API, typecheck, validate, format
 ```
 
-`pnpm verify` is the gate CI runs and the gate a pull request is expected to
-pass.
+`pnpm verify` is the gate a pull request is expected to pass. CI runs the same
+gate split for speed: `verify:static` in one job and the test suites in three
+parallel shards (`node scripts/test-shards.mjs --shard <n>/3`), balanced by the
+per-package seconds in `scripts/test-weights.json`. A new package without a
+weight counts as 30 seconds; refresh the file from a CI run when the shards
+drift apart.
 
 ## Official module distribution
 
