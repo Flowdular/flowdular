@@ -316,6 +316,103 @@ export function createServerComposition(context) {
 		runtime.dispose();
 	}, 30_000);
 
+	it('composes research.core on the recorded adapter and answers a search from the draft fixtures', async () => {
+		/* The draft route reads the settings the preview pinned for research.core
+		   in the signed-in workspace. */
+		const { root, session, modulePath } = await previewSession(`
+export function createServerComposition(context) {
+  return {
+    routes: [{
+      type: 'server',
+      path: '/api/preview/research-settings',
+      methods: ['GET'],
+      before: [],
+      after: [],
+      handler: ({ state }) => {
+        const { tenantId } = state.get('flowdular.auth.principal');
+        const read = (key) => context.settings.get(tenantId, 'research.core', key);
+        return Response.json({ adapter: read('adapter'), recordedFixturesPath: read('recordedFixturesPath') });
+      },
+    }],
+  };
+}
+`);
+		await mkdir(join(modulePath, 'spec'), { recursive: true });
+		await writeFile(
+			join(modulePath, 'spec', 'module.yaml'),
+			'schemaVersion: 2\nid: preview.core\nspecVersion: 0.1.0\nstatus: draft\nname: Preview\nresearch:\n  adapter: recorded\n  evidenceOwner: case\n',
+		);
+		const result = {
+			url: 'https://acme.example/about',
+			title: 'About Acme',
+			snippet: 'Acme insures cargo ships.',
+			source: 'acme.example',
+		};
+		await writeFile(
+			join(modulePath, 'research-fixtures.json'),
+			JSON.stringify({ queries: { 'acme insurance': [result] }, pages: {} }),
+		);
+		const runtime = createIsolatedPreviewRuntime(root, {
+			requestTimeoutMs: 30_000,
+		});
+		try {
+			const composition = await runtime.compose(session);
+			expect(composition.error).toBeNull();
+			expect(
+				composition.modules.map((module) => [module.id, module.support]),
+			).toEqual([
+				['system.core', true],
+				['research.core', true],
+				['preview.core', false],
+			]);
+			const origin = 'http://sandbox.test';
+			const signIn = await composition.request(
+				new Request(`${origin}/api/auth/sign-in`, {
+					method: 'POST',
+					headers: { origin, 'content-type': 'application/json' },
+					body: JSON.stringify(composition.credentials),
+				}),
+			);
+			expect(signIn.status).toBe(200);
+			const cookie = signIn.headers.getSetCookie()[0]!.split(';')[0]!;
+			const { csrfToken } = (await signIn.json()) as { csrfToken: string };
+
+			const settings = await composition.request(
+				new Request(`${origin}/api/preview/research-settings`, {
+					headers: { cookie },
+				}),
+			);
+			expect(await settings.json()).toEqual({
+				adapter: 'recorded',
+				recordedFixturesPath: join(
+					sessionPaths(await realpath(root), session.id, session.moduleSuffix)
+						.modulePath,
+					'research-fixtures.json',
+				),
+			});
+
+			const search = await composition.request(
+				new Request(`${origin}/api/research/search`, {
+					method: 'POST',
+					headers: {
+						origin,
+						cookie,
+						'x-csrf-token': csrfToken,
+						'content-type': 'application/json',
+					},
+					body: JSON.stringify({ query: 'acme insurance' }),
+				}),
+			);
+			expect(search.status).toBe(200);
+			expect(await search.json()).toMatchObject({
+				adapter: 'recorded',
+				results: [{ ...result, evidenceId: expect.any(String) }],
+			});
+		} finally {
+			runtime.dispose();
+		}
+	}, 90_000);
+
 	it('seeds the preview database from preview/seed.json once per seed content', async () => {
 		const { root, session, modulePath } = await previewSession(
 			"export const generation = 'first';\nexport function createServerComposition() { return { routes: [] }; }\n",
