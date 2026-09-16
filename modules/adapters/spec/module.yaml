@@ -1,0 +1,420 @@
+schemaVersion: 2
+id: adapters.core
+specVersion: 0.1.0
+status: approved
+name: Data adapters
+description: Runs the source and sink adapters other modules declare in their specifications, pulling pages from another system through a consented connectors.core instance into an import port and pushing the pages of a list export back out, on the shared job runner with stored cursors, retries, resume, schedules, mappings stored as data, a dry run and a recorded mode for tests and the sandbox.
+profile: full
+capabilities:
+  - api
+  - database
+  - client
+  - translations
+dependencies:
+  - id: system.core
+    range: ^0.8.0
+  - id: auth.core
+    range: ^0.13.0
+provides:
+  - adapters.sources.v1
+  - adapters.sinks.v1
+requires:
+  - id: connectors.calls.v1
+    optional: true
+  - id: connectors.instances.v1
+    optional: true
+  - id: import.ports.v1
+    optional: true
+  - id: import.write.v1
+    optional: true
+  - id: exports.lists.v1
+    optional: true
+  - id: metering.meters.v1
+    optional: true
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - The tenant comes from the authenticated principal, or for a run from the run row the principal created. No request body selects another workspace, and every statement runs inside a tenant-scoped transaction on the module's own lease with bound parameters.
+  - adapter_bindings, adapter_runs, adapter_run_rows and adapter_audit_events carry tenant_id, enable and force row-level security with USING and WITH CHECK policies bound to transaction-local coreloom.tenant_id, and the runtime role holds neither SUPERUSER nor BYPASSRLS. The background role reads the routing columns of queued and running runs and of enabled bindings with a schedule and nothing else.
+  - A module registers the adapters its specification declares while the platform composes, sources through adapters.sources.v1 and sinks through adapters.sinks.v1, with register(moduleId, adapters). Each entry carries id, direction, label, connector, operation, port, schedule, mapping, and optionally recorded, input, items, paging, mode and batchSize. An id outside the registering module's namespace, a direction that does not match the capability, a duplicate id, a sink port outside the registering module's namespace, a malformed cron, mapping, paging or recorded fixture is refused where it is registered with ADAPTER_REGISTRATION_INVALID, and the registry is sealed when adapters.core starts, after which register throws ADAPTER_REGISTRY_SEALED.
+  - A source run pages through the connector operation. Every call starts from the registered input; paging kind cursor writes the stored cursor at the param path and reads the next cursor from the next path of the answer, paging kind page writes the page number from start (1 by default) and stops on a page without records, and no paging reads one page. The records of a page are the array at the items path of the answer, the answer itself when items is empty; an answer without such an array fails the run with ADAPTER_RESPONSE_INVALID, and a page of more than 1000 records with ADAPTER_PAGE_TOO_LARGE.
+  - Each record is mapped by the binding's mapping, else the registered mapping, and written through import.write.v1 to the port with the registered mode (update-existing by default) in batches no larger than the batch size import.core describes. Every record ends as one adapter_run_rows row with its index in the run, the natural key the port declares, the outcome created, updated, skipped, invalid or failed, the error code and a message of at most 200 characters; a record the mapping refuses is invalid and never reaches the port.
+  - A sink run walks the registered list export through exports.lists.v1 under the principal of the run, page by page, maps each row from the list columns, and pushes the mapped rows through the connector operation in batches of batchSize (50 by default, at most 200) placed at the items path of the registered input. The stored cursor of a sink is its position in the walk, because a list signs its cursors with a secret of its own process; a reclaimed or resumed sink reads the list from its start again and skips the rows before that position. Each push carries an idempotency key derived from the run the walk began in, the position of the batch's first row and a slot, so a reclaimed or resumed run replays a push the service already accepted from the connectors ledger instead of sending it again, and a slot bound to a refusal or to another input is spent. Every row ends as pushed or invalid.
+  - After every page the outcomes, the counts, the page count and the next cursor are written in one transaction fenced by the run's claim, so a run whose claim changed hands or that was cancelled records nothing more. The counts are rows read, created, updated, skipped and failed, where a sink counts a pushed row as created.
+  - A run is a row of adapter_runs claimed by the shared job runner with a lease renewed on a heartbeat. A process that dies leaves the lease to lapse, and the next pass on any process reclaims the run and continues from the stored cursor, or settles it at once when its last page had already committed; a stage whose renewal fails stops with CLAIM_LOST and records nothing. A repeated run writes through the port's natural key, so a second run over the same records updates or skips them.
+  - Each page is tried at most three times. A retry waits a full jitter delay from 500 milliseconds doubled per retry and capped at 5000 milliseconds, and after a 429 or a 503 the Retry-After the service sent, capped the same way. A connector timeout, a network or DNS failure, a 5xx, a 408, a 429 and a call still in flight under its key are retryable; everything else is permanent. A page that fails stops the run as failed with its error code and its cursor kept.
+  - Resume is offered for the most recent run of an adapter when it failed or was cancelled with a stored cursor, and creates a new run with the trigger resume that starts from that cursor. A run of more than 1000 pages stops as failed with ADAPTER_PAGES_EXCEEDED and its cursor kept, so a resume continues it.
+  - Only one run of an adapter is queued or running at a time, enforced by a partial unique index; a start while one is active answers ADAPTER_RUN_ACTIVE with status 409. Cancel moves a queued or running run to cancelled, and a running stage stops at its next page.
+  - Every call goes through connectors.calls.v1 on the connector instance the owner bound to the adapter with the caller kind workflow, and a run and a dry run ask consented for that caller before the first call, failing with ADAPTER_CONSENT_MISSING without calling when it is refused, so binding an instance id never reaches around its consent. The call log of connectors.core carries the run id as the caller reference.
+  - Recorded mode applies when the adapter is bound to no instance, the registration carries a recorded fixture and the platform does not run with NODE_ENV production. A call answers the body of the first recorded call whose input equals the call input, else of the first whose input is contained in it, and answers ADAPTER_RECORDED_CALL_MISSING otherwise. In production an unbound adapter answers ADAPTER_NOT_BOUND.
+  - A run acts as the account that started it, or for a scheduled run the account that last saved the binding, resolved live through auth.core when the run is performed. An account that is no longer an active member answers ADAPTER_PRINCIPAL_UNAVAILABLE and one that no longer holds adapters.runs.manage answers ADAPTER_PRINCIPAL_FORBIDDEN. The port's own permission is checked by import.write.v1 and the list's own permission by this module on the same principal, answering ADAPTER_LIST_FORBIDDEN.
+  - A binding stores per workspace and adapter the connector instance id, whether the adapter is enabled, the mapping override, the schedule override (null for the registered schedule, empty for on demand only, or a five-field cron) and the next scheduled time. A disabled adapter refuses a start and a resume with ADAPTER_DISABLED and is never scheduled; a dry run and a cancel still work.
+  - A schedule runs on its cron in the workspace zone of system.core.timeZone. A second job runner claims a due binding by moving its next time forward in one compare and swap statement, then enqueues a run with the trigger schedule, or, when a run of the adapter is already queued or running, appends the audit event schedule-skipped and enqueues nothing. Missed slots are skipped, never replayed.
+  - A stored mapping has 1 to 64 rules of to, transform, from and value, and a lookup rule carries a table of at most 500 source values. For a source every to must be a field of the port and every required field must be written by some rule; for a sink every from must be a column of the list. rename copies the value at the from path, constant writes value, format parses from with one of trim, lower, upper, integer, decimal, boolean, iso-date or date:<layout> over YYYY, MM and DD, and lookup replaces the value through the rule's table. A value that is not text, a number or a boolean, that is longer than 2000 characters, that does not parse or that the table does not hold refuses the record with MAPPING_VALUE_INVALID, MAPPING_FORMAT_INVALID or MAPPING_LOOKUP_UNMATCHED. A mapping that breaks a rule is refused on save and on a dry run with MAPPING_INVALID.
+  - A dry run needs the port's permission for a source and the list's permission for a sink. It reads the first page of a source through the bound instance or the recorded fixture, or the first page of a sink's list, maps at most 20 rows with the mapping in the request or the stored one, runs import.write.v1 validate for a source, and answers the mapped values and the verdict of each row. It writes no run, no row and no record.
+  - Saving a binding, enabling or disabling it, starting, resuming and cancelling a run and a skipped schedule append one adapter_audit_events row with the adapter, the run where there is one, the actor and bounded metadata. No credential, connector answer body or record value is ever written to an audit row, a run row or a log line.
+  - Every page a run commits reports the rows it wrote (created and updated for a source, pushed for a sink) to the meter adapters.core.rows through metering.meters.v1 with the run and page as its source reference, when metering.core is composed.
+  - The routes GET /api/adapters, GET /api/adapters/runs, GET /api/adapters/runs/:id and GET /api/adapters/runs/:id/rows require adapters.runs.read; POST /api/adapters/bind, POST /api/adapters/dry-run, POST /api/adapters/runs/start, POST /api/adapters/runs/resume and POST /api/adapters/runs/cancel require adapters.runs.manage, pass the session CSRF and origin check before they read the body, and bound every body before any read or write. The run and row lists page with a signed keyset cursor.
+  - adapters.core declares four data classes. adapters.core.runs is exportable with a 90 day default retention, swept with the rows of each run removed; adapters.core.run-rows is exportable with a 30 day default retention; adapters.core.bindings and adapters.core.audit are exportable and kept. Erasure removes the account from the runs it started, the bindings it saved and the audit events it acted in and keeps the rows.
+  - The run list is registered with exports.lists.v1 as adapters.core.runs behind adapters.runs.read. A deployment without exports.core composes the same and registers nothing.
+permissions:
+  - id: adapters.runs.read
+    description: Read the adapters of the workspace with their bindings, their runs and the outcome of every row a run handled.
+  - id: adapters.runs.manage
+    description: Bind an adapter to a connector instance, edit its mapping and schedule, enable it, run a dry run, and start, resume or cancel a run. Held by owners and never a member scope.
+dataOwnership:
+  - adapters.core owns adapter_bindings, adapter_runs, adapter_run_rows and adapter_audit_events and nothing else.
+  - The records a source run writes stay owned by the module whose import port wrote them, and the list a sink run pushes stays owned by the module that registered it. adapters.core reaches both through import.write.v1 and exports.lists.v1 only.
+  - Connector instances, their credentials, their consent and their call log stay owned by connectors.core, and meters stay owned by metering.core.
+entities:
+  - id: binding
+    name: Binding
+    description: How one workspace runs one registered adapter.
+    fields:
+      - id: adapterId
+        type: string
+        required: true
+        unique: tenant
+        maxLength: 96
+      - id: instanceId
+        type: string
+        maxLength: 128
+      - id: enabled
+        type: boolean
+        required: true
+      - id: mapping
+        type: json
+        description: The mapping override, at most 32 KB; null uses the registered mapping.
+      - id: schedule
+        type: string
+        maxLength: 100
+        description: Null for the registered schedule, empty for on demand only, or a five-field cron.
+      - id: nextRunAt
+        type: datetime
+      - id: updatedBy
+        type: string
+        maxLength: 128
+      - id: updatedAt
+        type: datetime
+        required: true
+  - id: run
+    name: Run
+    description: One pull or push of one adapter.
+    fields:
+      - id: adapterId
+        type: string
+        required: true
+        maxLength: 96
+      - id: direction
+        type: enum
+        required: true
+        values:
+          - source
+          - sink
+      - id: status
+        type: enum
+        required: true
+        values:
+          - queued
+          - running
+          - succeeded
+          - failed
+          - cancelled
+      - id: trigger
+        type: enum
+        required: true
+        values:
+          - manual
+          - schedule
+          - resume
+      - id: resumedFrom
+        type: string
+        maxLength: 64
+      - id: cursor
+        type: string
+        maxLength: 2048
+      - id: pages
+        type: integer
+        required: true
+      - id: rowsRead
+        type: integer
+        required: true
+      - id: rowsCreated
+        type: integer
+        required: true
+      - id: rowsUpdated
+        type: integer
+        required: true
+      - id: rowsSkipped
+        type: integer
+        required: true
+      - id: rowsFailed
+        type: integer
+        required: true
+      - id: errorCode
+        type: string
+        maxLength: 64
+      - id: claimedBy
+        type: string
+        maxLength: 64
+      - id: leaseUntil
+        type: datetime
+      - id: queuedAt
+        type: datetime
+        required: true
+      - id: startedAt
+        type: datetime
+      - id: finishedAt
+        type: datetime
+      - id: startedBy
+        type: string
+        maxLength: 128
+  - id: run-row
+    name: Run row
+    description: The outcome of one record a run handled.
+    fields:
+      - id: runId
+        type: reference
+        required: true
+        reference: run
+      - id: rowIndex
+        type: integer
+        required: true
+      - id: naturalKey
+        type: string
+        maxLength: 200
+      - id: outcome
+        type: enum
+        required: true
+        values:
+          - created
+          - updated
+          - skipped
+          - invalid
+          - failed
+          - pushed
+      - id: errorCode
+        type: string
+        maxLength: 64
+      - id: message
+        type: string
+        maxLength: 200
+  - id: audit-event
+    name: Audit event
+    description: One administrative change or run decision of one adapter.
+    fields:
+      - id: adapterId
+        type: string
+        required: true
+        maxLength: 96
+      - id: runId
+        type: string
+        maxLength: 64
+      - id: action
+        type: enum
+        required: true
+        values:
+          - binding-saved
+          - binding-enabled
+          - binding-disabled
+          - run-started
+          - run-resumed
+          - run-cancelled
+          - schedule-skipped
+      - id: actorId
+        type: string
+        maxLength: 128
+      - id: metadata
+        type: json
+      - id: occurredAt
+        type: datetime
+        required: true
+screens:
+  - id: data-adapters
+    kind: list
+    entity: binding
+    title: Data adapters
+    columns:
+      - adapterId
+      - instanceId
+      - enabled
+      - schedule
+      - nextRunAt
+    navigationGroup: Administration
+  - id: adapter-binding
+    kind: form
+    entity: binding
+    title: Adapter
+    columns:
+      - instanceId
+      - enabled
+      - schedule
+      - mapping
+    navigationGroup: Administration
+  - id: adapter-runs
+    kind: list
+    entity: run
+    title: Runs
+    columns:
+      - queuedAt
+      - trigger
+      - status
+      - pages
+      - rowsRead
+      - rowsCreated
+      - rowsUpdated
+      - rowsSkipped
+      - rowsFailed
+      - errorCode
+    navigationGroup: Administration
+  - id: adapter-run-rows
+    kind: list
+    entity: run-row
+    title: Run rows
+    columns:
+      - rowIndex
+      - naturalKey
+      - outcome
+      - errorCode
+      - message
+    navigationGroup: Administration
+actions:
+  - id: bind
+    entity: binding
+    permission: adapters.runs.manage
+    kind: update
+    risk: workspace-write
+    idempotent: true
+    description: Save the connector instance, the enabled switch, the mapping override and the schedule override of one adapter.
+  - id: dry-run
+    entity: run
+    permission: adapters.runs.manage
+    kind: custom
+    risk: read
+    idempotent: true
+    description: Read the first page, map it and validate it without writing anything.
+  - id: start
+    entity: run
+    permission: adapters.runs.manage
+    kind: create
+    risk: workspace-write
+    idempotent: false
+    description: Queue a manual run of one enabled adapter.
+  - id: resume
+    entity: run
+    permission: adapters.runs.manage
+    kind: create
+    risk: workspace-write
+    idempotent: false
+    description: Queue a run that continues the most recent failed or cancelled run from its stored cursor.
+  - id: cancel
+    entity: run
+    permission: adapters.runs.manage
+    kind: update
+    risk: workspace-write
+    idempotent: true
+    description: Cancel a queued or running run.
+widgets: []
+acceptanceScenarios:
+  - id: ADAPTERS-REGISTRATION
+    given: A registry open while the platform composes.
+    when: A module registers a source and a sink, an adapter outside its namespace, a sink through the sources capability, a sink port of another module, a duplicate id, a malformed cron and a recorded fixture of another adapter, and registers again after start.
+    then: The first two are listed with the registering module, every other registration is refused with ADAPTER_REGISTRATION_INVALID, and the registration after start throws ADAPTER_REGISTRY_SEALED.
+  - id: ADAPTERS-SOURCE-RECORDED
+    given: An enabled source adapter without an instance whose recorded fixture answers two cursor pages, with one record the mapping refuses.
+    when: An owner starts a run, the runner performs it, and the owner starts a second run.
+    then: The first run succeeds after two pages with the records created through the port and the refused record invalid, the cursor and counts are stored, and the second run updates the same records by their natural key instead of creating them again.
+  - id: ADAPTERS-RESUME-CRASH
+    given: A source run whose process stops after the first page committed.
+    when: The lease lapses and a second runner claims the run.
+    then: The second runner continues from the stored cursor and the run succeeds with every record written once and the first page not read again.
+  - id: ADAPTERS-RETRY
+    given: A bound source adapter whose connector answers a 503 with a Retry-After and then the page, and one whose second page keeps answering 500.
+    when: Both run.
+    then: The first waits the Retry-After before its retry and succeeds, and the second stops as failed with ADAPTER_CALL_FAILED after three attempts with the first page's cursor kept, and a resume continues from that cursor to success.
+  - id: ADAPTERS-SINK
+    given: A sink adapter over a list export of three pages and a bound connector instance that consents to workflows.
+    when: An owner starts a run and a reclaimed run repeats the last page.
+    then: Every page is pushed through the operation with the mapped rows at the items path, the caller workflow and an idempotency key, the rows are recorded pushed, and the repeated push reuses its key.
+  - id: ADAPTERS-CONSENT
+    given: A source adapter bound to an instance that does not consent to workflows.
+    when: A run is performed.
+    then: No call is made and the run fails with ADAPTER_CONSENT_MISSING.
+  - id: ADAPTERS-SCHEDULE
+    given: An enabled adapter with a schedule due now, and a second one due while a run of it is still queued.
+    when: The schedule runner passes.
+    then: The first gets a queued run with the trigger schedule and its next time moves to the following slot, and the second gets no run, a schedule-skipped audit event and a moved next time.
+  - id: ADAPTERS-DRY-RUN
+    given: A source adapter with a recorded fixture and a mapping in the request that renames a field.
+    when: An owner asks for a dry run.
+    then: The answer carries the mapped values and the verdict of each row of the first page, and no run, run row or record is written.
+  - id: ADAPTERS-MAPPING
+    given: The rename, constant, format and lookup rules.
+    when: Records are mapped, and mappings naming an unknown port field, leaving a required field unwritten or carrying an unknown format are saved.
+    then: Each rule writes or refuses as stated, and each broken mapping answers MAPPING_INVALID.
+  - id: ADAPTERS-DENY
+    given: A request without a session, or with a session lacking the route permission.
+    when: It reaches any adapters.core route.
+    then: The server answers 401 without an identity and 403 without the permission before any read or write, and a reader holding only adapters.runs.read is refused a start.
+  - id: ADAPTERS-CSRF
+    given: An owner with a valid session.
+    when: A bind, a dry run, a start, a resume or a cancel arrives without the CSRF proof.
+    then: The server refuses it before reading the body and writes nothing.
+  - id: ADAPTERS-TENANT-BOUNDARY
+    given: Two workspaces with bindings, runs, run rows and audit events.
+    when: A runtime transaction bound to one workspace reads or writes those tables, and each workspace lists its runs.
+    then: Only that workspace's rows are visible, the forced policy rejects a row carrying the other workspace, and a run id of the other workspace answers ADAPTER_RUN_NOT_FOUND.
+  - id: ADAPTERS-MIGRATIONS
+    given: A fresh database and one that already carries the schema without its ledger rows.
+    when: The migrations run.
+    then: The fresh one applies every migration once with forced row-level security on every table, and the other adopts them.
+  - id: ADAPTERS-RETENTION
+    given: Runs, run rows, bindings and audit events older and newer than each class period, some by a member.
+    when: The platform sweeps, exports and erases the adapters data classes for one workspace and that member.
+    then: Only runs and rows past their cutoff are removed, the export carries every class, and the erasure removes the member from runs, bindings and audit events while leaving the rows.
+outOfScope:
+  - A lookup against the target module's records. The import port contract has no lookup, so a lookup rule resolves through the table stored with the rule until a port offers one.
+  - An adapter caller kind in connectors.core. A run calls as workflow and needs the instance's allowWorkflows consent, as the contract default names.
+  - A cron job registered with automations.core. automations.core exposes schedules only as workspace rows an owner creates, so adapters.core keeps next_run_at on the binding and claims it with its own runner.
+  - A sink over a query a module declares. A sink pushes the pages of a list export the registering module owns.
+  - Listing the audit events on the screen. They are kept and exported through the data class.
+  - Composing adapters.core in the sandbox preview for a draft that declares adapters.
+decisions:
+  - id: D-ADAPTERS-PERMISSIONS
+    question: Who reads and runs adapters?
+    answer: Owners hold adapters.runs.read and adapters.runs.manage and neither is a member scope, because an adapter writes records of other modules and reaches other systems.
+    decidedBy: default
+  - id: D-ADAPTERS-CALLER
+    question: Which connectors caller kind does a run use?
+    answer: workflow, with no change to connectors.core, so the instance's allowWorkflows consent governs every call an adapter makes, the owner's dry run included, because the binding accepts any instance id and a test caller would reach around that consent.
+    decidedBy: default
+  - id: D-ADAPTERS-SCHEDULER
+    question: How does a schedule fire?
+    answer: With next_run_at on the binding claimed by a job runner of this module, because automations.core offers no capability through which a module registers a cron job of its own.
+    decidedBy: default
+  - id: D-ADAPTERS-PRINCIPAL
+    question: Whose grants does a run act under?
+    answer: The account that started it, or for a schedule the account that last saved the binding, resolved live through auth.core when the run is performed, so a revoked grant stops the next run.
+    decidedBy: default
+  - id: D-ADAPTERS-RECORDED
+    question: When does an adapter answer from its recorded fixture?
+    answer: Only while it is bound to no instance and the platform is not running in production, so a workspace can never import fixture data into its real records by accident.
+    decidedBy: default
+  - id: D-ADAPTERS-REGISTRATION-FIELDS
+    question: How does a registration say how to call and page an operation?
+    answer: With input, the operation input every call starts from; items, the path of the records in a source answer or of the batch in a sink input; paging, cursor with param and next or page with param and start; mode for a source and batchSize for a sink. The spec adapters section carries none of them, so the module that registers the adapter supplies them.
+    decidedBy: default
+  - id: D-ADAPTERS-AUDIT-TABLE
+    question: Where are the audit events kept?
+    answer: In adapter_audit_events, owned by this module, as connectors.core keeps its own trail, because the platform offers no shared audit append capability.
+    decidedBy: default
+  - id: D-ADAPTERS-SINK-COUNTS
+    question: What do the counts of a sink run mean?
+    answer: rowsRead counts the list rows read, rowsCreated the rows pushed, rowsFailed the rows the mapping refused or a failed push carried; updated and skipped stay zero.
+    decidedBy: default
+  - id: D-ADAPTERS-METER
+    question: What does the meter count?
+    answer: adapters.core.rows counts the rows a run wrote, created and updated records for a source and pushed rows for a sink, once per committed page.
+    decidedBy: default

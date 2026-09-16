@@ -8,6 +8,7 @@ import type { WebMount } from '@flowdular/server';
 import { bindModuleCompositions, createModuleMetrics } from '@flowdular/server';
 import { createServerComposition as system_core } from '@flowdular/module-system/platform';
 import { createServerComposition as access_core } from '@flowdular/module-access/platform';
+import { createServerComposition as adapters_core } from '@flowdular/module-adapters/platform';
 import { createServerComposition as reports_core } from '@flowdular/module-reports/platform';
 import { createServerComposition as metering_core } from '@flowdular/module-metering/platform';
 import { createServerComposition as agents_core } from '@flowdular/module-agents/platform';
@@ -56,6 +57,26 @@ export function composeModuleServer(
 				metrics: createModuleMetrics('access.core'),
 			}),
 			moduleId: 'access.core',
+		},
+		{
+			...adapters_core({
+				...context,
+				agentDefinitions: context.agentDefinitions.forModule('adapters.core'),
+				dataClasses: context.dataClasses.forModule('adapters.core'),
+				capabilities: context.capabilities.forModule('adapters.core', {
+					provides: ['adapters.sources.v1', 'adapters.sinks.v1'],
+					requires: [
+						{ id: 'connectors.calls.v1', optional: true },
+						{ id: 'connectors.instances.v1', optional: true },
+						{ id: 'import.ports.v1', optional: true },
+						{ id: 'import.write.v1', optional: true },
+						{ id: 'exports.lists.v1', optional: true },
+						{ id: 'metering.meters.v1', optional: true },
+					],
+				}),
+				metrics: createModuleMetrics('adapters.core'),
+			}),
+			moduleId: 'adapters.core',
 		},
 		{
 			...reports_core({
@@ -231,7 +252,7 @@ export function composeModuleServer(
 				agentDefinitions: context.agentDefinitions.forModule('import.core'),
 				dataClasses: context.dataClasses.forModule('import.core'),
 				capabilities: context.capabilities.forModule('import.core', {
-					provides: ['import.ports.v1'],
+					provides: ['import.ports.v1', 'import.write.v1'],
 					requires: [{ id: 'documents.attachments.v1' }],
 				}),
 				metrics: createModuleMetrics('import.core'),

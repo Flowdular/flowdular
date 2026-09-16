@@ -17,6 +17,7 @@
 		"@flowdular/database-pglite": "workspace:*",
 		"@flowdular/kernel": "workspace:*",
 		"@flowdular/module-access": "workspace:*",
+		"@flowdular/module-adapters": "workspace:*",
 		"@flowdular/module-agents": "workspace:*",
 		"@flowdular/module-approvals": "workspace:*",
 		"@flowdular/module-audit": "workspace:*",

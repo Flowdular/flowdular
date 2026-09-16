@@ -2,10 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { defineListExport } from '@flowdular/server';
 import { moduleDefinition } from '../src/index.ts';
 import { EXPORTS_PERMISSIONS } from '../src/acl/permissions.ts';
-import { EXPORT_LISTS_CAPABILITY } from '../src/domain/lists.ts';
+import {
+	EXPORT_LISTS_CAPABILITY,
+	type ExportLists,
+} from '../src/domain/lists.ts';
 import { createExportListRegistry } from '../src/services/list-registry.ts';
 import { endpoints } from '../src/api/endpoints.ts';
-import { storageObjectCeiling } from '../src/platform.ts';
+import {
+	createServerComposition,
+	storageObjectCeiling,
+} from '../src/platform.ts';
 import { DEFAULT_STORAGE_MAX_OBJECT_BYTES } from '@flowdular/storage';
 
 function declaration(id: string) {
@@ -81,6 +87,28 @@ describe('the list catalogue', () => {
 		} catch (error) {
 			expect(error).toMatchObject({ code: 'EXPORT_LISTS_SEALED', status: 500 });
 		}
+	});
+});
+
+describe('EXPORTS-LIST-FIND the public capability', () => {
+	it('answers a registered declaration by id and null for any other', async () => {
+		const registered = new Map<string, unknown>();
+		const composition = createServerComposition({
+			environment: { NODE_ENV: 'test' },
+			workspaceRoot: process.cwd(),
+			settings: {},
+			dataClasses: { declare: () => undefined },
+			capabilities: {
+				register: (id: string, value: unknown) => registered.set(id, value),
+				get: () => null,
+			},
+		} as never);
+		await composition.dispose?.();
+		const lists = registered.get(EXPORT_LISTS_CAPABILITY) as ExportLists;
+		const members = declaration('users.core.members');
+		lists.register('users.core', [members]);
+		expect(lists.find('users.core.members')).toBe(members);
+		expect(lists.find('users.core.absent')).toBeNull();
 	});
 });
 

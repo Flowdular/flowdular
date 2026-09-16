@@ -57,53 +57,65 @@ Declare `connectors.definitions.v1` and `connectors.calls.v1` under `requires` (
 
 ## 3. The port
 
-- **Source.** The rows land through an import port (`modules/import/src/domain/ports.ts`), the same `validate` then `write` contract `import.core` drives: `fields`, a `naturalKey` that makes a repeated pull idempotent, per-row outcomes `created`, `updated`, `skipped` or `failed` under `create-only`, `update-existing` or `skip-existing`. The spec's `port` is `<module id>.<key>`. A port of this module is registered through `import.ports.v1` (`modules/users/src/services/member-import.ts` is the reference) and the adapter calls the same port object directly, so both paths share one set of invariants. A port of a dependency has no public write path yet; report that instead of reaching into the other module.
-- **Sink.** The spec's `port` is a list export id of this module (`defineListExport`, `packages/server/src/export/`, reference `modules/users/src/services/member-export.ts`). The adapter walks the declaration's own `page(principal, cursor, limit)` and pushes each page as one call.
+- **Source.** The rows land through an import port (`modules/import/src/domain/ports.ts`): `fields`, a `naturalKey` that makes a repeated pull idempotent, per-row outcomes under `create-only`, `update-existing` or `skip-existing`. The spec's `port` is `<module id>.<key>` of this module or a declared dependency. `adapters.core` writes through `import.write.v1` (`modules/import/src/domain/write.ts`), which checks the port's permission on the run's principal and calls the port's own `validate` and `write`; the module never calls its port for an adapter itself.
+- **Sink.** The spec's `port` is a list export id of this module (`defineListExport`, `packages/server/src/export/`, reference `modules/users/src/services/member-export.ts`). `adapters.core` finds it through `exports.lists.v1` and walks its `page` under the run's principal, which must hold the list's permission.
 
-## 4. The mapping
+## 4. The registration and the mapping
 
-Keep the declaration the scaffold wrote and add one pure function beside it, `mapErpVendorsRow(row)`, that applies the spec's `mapping` in order and answers `{ values }` or a refusal:
+Register the adapter while the module composes, sources through `adapters.sources.v1` and sinks through `adapters.sinks.v1` (`modules/adapters/src/domain/registry.ts`), and add both with `optional: true` under `requires`, calling again from `start` when the capability was not there yet (the `exports.lists.v1` pattern in `.ai/references/catalog/src/platform.ts`):
 
-- `rename`: copy the service field `from` to the port field `to`.
-- `constant`: write `value` to `to`.
-- `format`: parse `from` with the named format in `value` (a date layout, a decimal separator) and refuse the row with a stable reason when it does not parse.
-- `lookup`: resolve `from` against this module's own records through its service, keyed as `value` says; an unmatched lookup refuses the row. Never read another module's tables.
+```ts
+import fixture from '../adapters/erp-vendors.recorded.json' with { type: 'json' };
 
-Values reach an import port as text, and a field the mapping does not name stays absent, never empty.
+sources.register('vendors.core', [
+	{
+		...ERP_VENDORS_ADAPTER, // the scaffolded declaration: id, direction, connector, operation, port, schedule, mapping
+		label: 'ERP vendors',
+		recorded: fixture, // the parsed fixture, not its path
+		input: { path: '/api/v2/vendors', query: { limit: 100 } }, // every call starts from this
+		items: 'data', // the record array in the answer; '' is the answer itself
+		paging: { kind: 'cursor', param: 'query.cursor', next: 'meta.next_cursor' }, // or { kind: 'page', param: 'query.page', start: 1 }
+		mode: 'update-existing',
+	},
+]);
+```
+
+A sink names `items` as the input path a batch goes to (`body.records`) and `batchSize` (1 to 200, default 50) instead of `paging` and `mode`. The id must start with the module id, a sink port must be this module's own list, and a malformed cron, mapping, path, paging or fixture throws `ADAPTER_REGISTRATION_INVALID` at boot.
+
+The mapping is data: the spec's rules as registered, or the override an owner saves on the Data adapters screen. `from` is a dotted path into the service record (a list column key for a sink), `to` a port field id (a dotted path of the pushed record for a sink):
+
+- `rename`: copy the value; a missing or null value leaves the field absent.
+- `constant`: write `value`.
+- `format`: parse with `value` set to `trim`, `lower`, `upper`, `integer`, `decimal`, `boolean`, `iso-date` or `date:<layout>` over `YYYY`, `MM` and `DD`; a value that does not parse refuses the row with `MAPPING_FORMAT_INVALID`.
+- `lookup`: replace the value through the rule's `table`, which the owner fills on the screen; an unmatched value refuses the row with `MAPPING_LOOKUP_UNMATCHED`. The import port contract has no lookup of its own, so a lookup against the target's records is not available.
+
+A value that is not text, a number or a boolean, or is longer than 2000 characters, refuses the row with `MAPPING_VALUE_INVALID`.
 
 ## 5. The run
 
-A pull or a push is a job, not a request: persist a run row in the module's own table, then let a `createJobRunner` loop (`packages/server/src/jobs/`) claim it with a lease. The perform step:
-
-1. `consented(tenantId, instanceId, caller)` on `connectors.calls.v1`. The instance id is a tenant setting of this module the owner fills in; the caller is `workflow` for a scheduled or workflow-started run and `agent` only inside an agent run. Without consent the run ends as refused and nothing is called.
-2. `call({ tenantId, instanceId, operation, input, caller, callerRef: runId, idempotencyKey })` with a bounded page size, the key derived from the run id and the page cursor so a reclaimed run never repeats a push.
-3. Map the page, `validate`, `write` in batches, record the per-row outcomes and the next cursor on the run row in one tenant transaction, then take the next page. An interrupted run resumes from the stored cursor.
-
-A `schedule` in the spec is the cadence `cron:<schedule>` the owner gives an `automations.core` schedule after delivery; the schedule starts the workflow or module action that enqueues the run. The module never keeps a timer of its own.
+`adapters.core` runs the adapter; the module keeps no run table, job or timer. An owner binds a `connectors.core` instance of the declared definition, checks the mapping with a dry run and enables the adapter. A run is a row claimed by the shared job runner: every call goes through `connectors.calls.v1` with caller `workflow` and `callerRef` set to the run id after `consented` admitted it, each page is tried three times with full jitter and `Retry-After`, the outcomes and the next cursor commit once per page, a process that dies is taken over from the stored cursor, and a failed page keeps its cursor for Resume. A sink stores its row position, re-walks the list to it after a restart (so the list's order must be stable) and pushes under an idempotency key per run chain, row position and slot. A `schedule` runs on its cron in the workspace zone through `adapters.core` itself.
 
 ## 6. The recorded fixture
 
-`recorded` names `adapters/<name>.recorded.json`: the answers of the connector operation the tests and the sandbox preview replay instead of calling `connectors.calls.v1`. `module new` writes it as `{ adapter, operation, calls: [{ input, body }] }` with one empty call; each call pairs an operation `input` with the `body` the connector answers. Write it from the documentation's example responses or the session's sample data, trimmed to a few rows that exercise every mapping rule, including one row each rule refuses. It never holds a credential, a live tenant's data or a response recorded from a production system. In a sandbox session it is the only way the adapter runs.
+`recorded` names `adapters/<name>.recorded.json`: `{ adapter, operation, calls: [{ input, body }] }`, where `adapter` and `operation` equal the registration's. A call answers the `body` of the first recorded call whose `input` equals the call input, else of the first whose `input` is contained in it (every key it names, at every depth, with the same value), and `ADAPTER_RECORDED_CALL_MISSING` otherwise. Record one call per page with the exact input the paging produces (`{ path, query: { limit } }`, then `{ path, query: { limit, cursor } }`), and a sink push by the keys that matter (`{ path: '/import' }`). The fixture answers only while the adapter is bound to no instance and the platform is not in production. Write it from the documentation's example responses or the session's sample data, trimmed to a few rows that exercise every mapping rule, including one row each rule refuses. It never holds a credential, a live tenant's data or a response recorded from a production system. In a sandbox session it is the only way the adapter runs.
 
 ## 7. What the records must show
 
-- Consent: a run without the instance's consent for its caller kind ends refused, and `connectors.core` logs the call with outcome `refused` and error class `consent-missing`.
-- Calls: one `connectors.core` call log row per call with the instance, the operation, the caller, `callerRef` set to the run id, the outcome, the status, the error class, the duration and the byte counts; never a body.
-- Rows: the run row with its adapter id, start and end, the cursor and the counts, and one outcome per source row with its reason, so a person can answer which record came from where.
+- Consent: a run without the instance's `allowWorkflows` fails with `ADAPTER_CONSENT_MISSING` and calls nothing.
+- Calls: one `connectors.core` call log row per call with the instance, the operation, the caller `workflow`, `callerRef` set to the run id, the outcome, the status, the error class, the duration and the byte counts; never a body.
+- Rows: `adapter_runs` with the adapter, the trigger, the cursor and the counts, and one `adapter_run_rows` outcome per record with its natural key and reason, so a person can answer which record came from where.
 
 ## 8. Tests
 
-Against the recorded fixture and a fake `ConnectorCallCapability`, never the network:
+Against the recorded fixture, never the network:
 
-- the mapping, rule by rule, including each refusal;
-- a repeated pull writes nothing new (natural key) and a reclaimed run resumes from the stored cursor;
-- a run without consent calls nothing and records the refusal;
-- tenant isolation of runs and outcomes;
-- a sink push sends each page once under the idempotency key.
+- the registration composes (`adapters.sources.v1` or `adapters.sinks.v1` accepts it with the fixture);
+- the fixture answers every page the paging asks for, and every mapping rule writes or refuses a row as intended (a dry run through `POST /api/adapters/dry-run` shows it);
+- the port refuses what the module refuses, so a repeated pull updates or skips by the natural key.
 
 ## Pitfalls
 
-- `risk: 'external'` is refused by the runner and the harness; an adapter is a module action or job that calls a consented connector, never an external action of its own.
+- `risk: 'external'` is refused by the runner and the harness; an adapter is a registration `adapters.core` runs through a consented connector, never an external action of its own.
 - The egress policy refuses redirects and private addresses; a documentation example on `http://` or a local host will not run.
-- An unbounded page size or an unbounded loop over pages is a defect: cap both and persist progress per page.
+- A page answers at most 1000 records and a run reads at most 1000 pages (`ADAPTER_PAGE_TOO_LARGE`, `ADAPTER_PAGES_EXCEEDED`); set the page size in `input` well below that.
 - A connector `outputSchema` of `{ type: 'object' }` checks nothing; the mapping function is where a changed response is refused.

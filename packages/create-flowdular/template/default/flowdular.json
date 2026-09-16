@@ -12,6 +12,7 @@
 			"system.core",
 			"auth.core",
 			"access.core",
+			"adapters.core",
 			"reports.core",
 			"metering.core",
 			"agents.core",

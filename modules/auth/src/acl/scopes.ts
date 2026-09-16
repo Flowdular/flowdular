@@ -79,6 +79,8 @@ export const BUNDLED_MODULE_SCOPES = {
 	researchEvidenceRead: 'research.evidence.read',
 	researchRun: 'research.run',
 	researchSettingsManage: 'research.settings.manage',
+	adaptersRunsRead: 'adapters.runs.read',
+	adaptersRunsManage: 'adapters.runs.manage',
 } as const;
 
 export const OWNER_SCOPES = Object.freeze([

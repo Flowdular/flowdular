@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: exports.core
-specVersion: 0.2.4
+specVersion: 0.2.5
 status: approved
 name: Exports Core
 description: Exports any list endpoint that already pages with the platform keyset helpers as one CSV file, through an export job that streams the list's own pages under the requester's grants, writes an RFC 4180 file with a UTF-8 byte order mark to the storage port, bounds the result by rows and by bytes, and answers a short-lived signed read URL; the list itself stays with the module that owns it and registers a declaration through the public capability exports.lists.v1.
@@ -22,7 +22,7 @@ locales:
   - pl
 invariants:
   - Persistence runs on the shared asynchronous database contract with explicit PostgreSQL SQL; the job table enables and forces row-level security with USING and WITH CHECK policies bound to the transaction-local tenant id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
-  - An exportable list is a declaration a module registers through the public capability exports.lists.v1 while the platform composes, built with defineListExport from the server package, carrying a dotted id prefixed by the registering module id, a label, the permission the list endpoint itself requires, 1 to 64 columns of key, header and value, and the same page(principal, cursor, limit) the list endpoint already implements. Registration is sealed before the first request, so the catalogue a job was started against cannot change under it, and a declaration naming a module other than the one registering it is refused where it is declared.
+  - An exportable list is a declaration a module registers through the public capability exports.lists.v1 while the platform composes, built with defineListExport from the server package, carrying a dotted id prefixed by the registering module id, a label, the permission the list endpoint itself requires, 1 to 64 columns of key, header and value, and the same page(principal, cursor, limit) the list endpoint already implements. Registration is sealed before the first request, so the catalogue a job was started against cannot change under it, and a declaration naming a module other than the one registering it is refused where it is declared. The same capability answers find(id), the registered declaration or null, so another module (adapters.core pushing a list to another system) pages a list through the one page function exports.core itself walks, applying the list's permission to the principal it pages under.
   - exports.core reads no other module's database. Every row it writes into a file came back from that module's own page call, under the same cursor contract, the same ordering and the same tenant predicate the list endpoint applies, so an export can never carry a row the endpoint would not have returned.
   - Starting an export needs exports.lists.manage and the declared permission of the list being exported, both checked on the live principal before a job row exists, so an export never widens what a member may read. What the background stage carries is a snapshot of the requester taken at start, bounded to 8 KB by the job row and refused at start with REQUESTER_TOO_LARGE when it would not fit; it carries the decision forward and never makes one, is left out of every API response and out of the data class export, and names the job's own workspace rather than any other membership the requester holds.
   - The Exports screen is where an export is started. It reads the catalogue of registered lists behind exports.lists.read, which answers each list's id, label and registering module and whether the asking principal holds the permission that list declares, and never the permission id itself. The start control is rendered only for a reader holding exports.lists.manage and offers only the lists that reader may export, because a list they may not export could only be refused; both permissions are decided again on the live principal when the start is served, so the catalogue and the control are presentation and never the authorization.
@@ -228,3 +228,7 @@ acceptanceScenarios:
     given: Two workspaces with export jobs.
     when: A runtime transaction bound to one workspace reads or writes them, or the job routing read runs.
     then: Only that workspace's rows are visible or mutable, the routing read sees routing columns alone on the background role, and a row carrying another tenant identifier is rejected by the forced policy.
+  - id: EXPORTS-LIST-FIND
+    given: exports.core composed and a module registered the list users.core.members.
+    when: Another module asks exports.lists.v1 for that list and for an id nobody registered.
+    then: The first answers the registered declaration itself and the second answers null.

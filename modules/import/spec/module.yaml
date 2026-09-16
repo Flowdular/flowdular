@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: import.core
-specVersion: 0.1.9
+specVersion: 0.1.10
 status: approved
 name: Import Core
 description: Brings records into a workspace from a CSV file in bulk, through an import job with a per-row outcome, staged validation that reports every failure before anything is written, an explicit dry run, saved column mappings, and an import port each owning module implements so its own invariants and idempotency rules apply to every row.
@@ -37,6 +37,7 @@ invariants:
   - A column mapping names the CSV header for each port field and is saved per workspace and target as a template for the next import; one header feeds at most one field, so a mapping naming one column twice is refused with MAPPING_COLUMN_REUSED before it is saved or started, a mapping whose serialized form would not fit the 8 KB the job row and the saved template each bound is refused with MAPPING_TOO_LARGE for the same reason, and a mapped header the file's header row does not carry fails the job with MAPPING_COLUMN_MISSING whether that field is required or not, rather than importing the file as if the column had been left out on purpose.
   - One retention pass chooses its batch of settled jobs once, oldest by started_at then id, and removes those jobs together with their row outcomes, so no outcome outlives the job it belongs to; the pass is bounded by the module's own limit on jobs whatever limit the platform asks for.
   - A job left validated by a requester who never continued it is cancelled by the retention pass after 7 days, a constant rather than a setting, so an abandoned job settles and falls under the same retention as every other job instead of waiting it out as work in flight.
+  - A module that already holds rows writes them through the public capability import.write.v1 without a CSV or a job. describe(moduleId, portKey) answers the port's target, label, permission, fields, natural key and the platform batch size, or null. validate and write take the tenant, the live principal, the module id, the port key and at most one batch of rows whose numbers are the caller's own; a principal of another workspace answers PRINCIPAL_TENANT_MISMATCH and one without the port's permission TARGET_FORBIDDEN before any port code runs, and a batch over the bound answers BATCH_TOO_LARGE. Each row is checked against the declared fields (FIELD_UNKNOWN, FIELD_REQUIRED, FIELD_TYPE) and a natural key repeated within the call (NATURAL_KEY_DUPLICATE), the rest goes through the port's validate, and write hands the valid rows to the port's write under the mode, answering one outcome per row in the order given, each one of created, updated, skipped, invalid or failed, with PORT_SILENT for a row the port said nothing about and PORT_FAILED for a batch whose port call threw. The write keeps no record of its own; the caller records the outcomes, and its source reference is carried on the trace span.
   - Every stable code this module constructs carries a sentence in each declared locale, read out of the source rather than kept by hand, so a code added without copy fails the gate; a row reason or a job failure code with no sentence of its own reads the one the refusal carrying that code has, and only a code a port invented reaches a reader bare.
   - The data class export carries every record the module holds for a workspace, the jobs, their row outcomes and the saved mappings, each walked by its own ascending key so no page is unbounded and each naming which of the three it is.
 permissions:
@@ -292,6 +293,10 @@ decisions:
     question: How does a job run?
     answer: A poll loop processes jobs in bounded batches per port call; the starting request returns at once, and the poll interval is a fixed 2 seconds rather than a setting.
     decidedBy: default
+  - id: D-IMPORT-WRITE-CAPABILITY
+    question: How does a module that already holds rows write them through a port?
+    answer: Through import.write.v1 with describe, validate and write, for data adapters (RFC 0006 J4). It applies the port contract of a CSV job to one caller batch and records nothing, because the caller owns the run and its outcomes.
+    decidedBy: default
 acceptanceScenarios:
   - id: IMPORT-START-VALIDATE
     given: A stored CSV with a header row and five rows, one missing a required field, and the users.core members port registered.
@@ -333,3 +338,7 @@ acceptanceScenarios:
     given: Two workspaces with jobs, outcomes and mappings.
     when: A runtime transaction bound to one workspace reads or writes any of them, or the job routing read runs.
     then: Only that workspace's rows are visible or mutable, the routing read sees routing columns alone on the background role, and a row carrying another tenant identifier is rejected by the forced policy.
+  - id: IMPORT-WRITE-CAPABILITY
+    given: The users.core members port and a principal holding its manage permission.
+    when: A module writes seven rows through import.write.v1, among them a missing required field, a malformed address, an unknown field, a repeated natural key, a row the port refuses and a row the port says nothing about, then writes the first row again with update-existing, and a principal without the permission or of another workspace writes.
+    then: The answer carries one outcome per row in the order given, created for the first, invalid with FIELD_REQUIRED, FIELD_TYPE, FIELD_UNKNOWN, NATURAL_KEY_DUPLICATE and the port's reason, failed with PORT_SILENT, the repeat is updated, and the other principals are refused with TARGET_FORBIDDEN and PRINCIPAL_TENANT_MISMATCH before the port is called.

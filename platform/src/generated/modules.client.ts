@@ -8,6 +8,7 @@ import type {
 import { createClientContribution as system_core } from '@flowdular/module-system/client';
 import { createClientContribution as auth_core } from '@flowdular/module-auth/client';
 import { createClientContribution as access_core } from '@flowdular/module-access/client';
+import { createClientContribution as adapters_core } from '@flowdular/module-adapters/client';
 import { createClientContribution as reports_core } from '@flowdular/module-reports/client';
 import { createClientContribution as metering_core } from '@flowdular/module-metering/client';
 import { createClientContribution as agents_core } from '@flowdular/module-agents/client';
@@ -34,6 +35,7 @@ export function createModuleClientContributions(
 		system_core(context),
 		auth_core(context),
 		access_core(context),
+		adapters_core(context),
 		reports_core(context),
 		metering_core(context),
 		agents_core(context),

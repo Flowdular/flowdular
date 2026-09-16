@@ -19,7 +19,7 @@ export interface RegisteredExportList {
 	readonly definition: DefinedListExport;
 }
 
-export interface ExportListRegistry extends ExportLists {
+export interface ExportListRegistry extends Omit<ExportLists, 'find'> {
 	/** Closes registration. Every later `register` throws. */
 	seal(): void;
 	find(id: string): RegisteredExportList | null;
