@@ -9,7 +9,7 @@ import {
 	runDatabaseMigrations,
 	type DatabaseProvider,
 	type DatabaseRequirements,
-} from '../src/index.ts';
+} from '@flowdular/database';
 
 const providers: readonly [string, () => DatabaseProvider][] = [
 	[

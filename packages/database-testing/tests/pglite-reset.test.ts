@@ -8,7 +8,7 @@ import {
 	type DatabaseMigration,
 	type PostgresDriverClient,
 	type PostgresDriverPool,
-} from '../src/index.ts';
+} from '@flowdular/database';
 
 const migrations: readonly DatabaseMigration[] = [
 	{
