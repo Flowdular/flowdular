@@ -19,6 +19,8 @@ export {
 	IMPORT_POLL_INTERVAL_MS,
 } from '../services/import-runner.ts';
 export type { ImportRunnerOptions } from '../services/import-runner.ts';
+export { createImportWrite } from '../services/import-write.ts';
+export type { ImportWriteOptions } from '../services/import-write.ts';
 export {
 	createImportPortRegistry,
 	ImportPortError,

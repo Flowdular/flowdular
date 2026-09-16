@@ -39,6 +39,7 @@ export function createServerComposition(
 	   declare its export in its own composition. */
 	context.capabilities.register<ExportLists>(EXPORT_LISTS_CAPABILITY, {
 		register: (moduleId, exports) => runtime.lists.register(moduleId, exports),
+		find: (id) => runtime.lists.find(id)?.definition ?? null,
 	});
 	/* The catalogue is sealed before start hooks run, so what this module holds
 	   is declared here rather than on the first request. */

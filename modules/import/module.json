@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "import.core",
 	"package": "@flowdular/module-import",
-	"version": "0.1.8",
+	"version": "0.1.9",
 	"platformApi": "^0.1.0",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations"],
@@ -25,7 +25,7 @@
 			"range": "^0.1.2"
 		}
 	],
-	"provides": ["import.ports.v1"],
+	"provides": ["import.ports.v1", "import.write.v1"],
 	"requires": [
 		{
 			"id": "documents.attachments.v1"

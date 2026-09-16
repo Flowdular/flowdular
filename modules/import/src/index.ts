@@ -40,6 +40,15 @@ export type {
 	ImportWriteInput,
 	ImportWriteOutcome,
 } from './domain/ports.ts';
+export { IMPORT_WRITE_CAPABILITY } from './domain/write.ts';
+export type {
+	ImportWrite,
+	ImportWriteRequest,
+	ImportWriteResult,
+	ImportWriteRowsInput,
+	ImportWriteTarget,
+	ImportWriteVerdict,
+} from './domain/write.ts';
 
 export {
 	IMPORT_CSV_CONTENT_TYPE,

@@ -115,6 +115,7 @@ describe('migration status', () => {
 		});
 		expect(result.data.modules.map((module) => module.moduleId)).toEqual([
 			'access.core',
+			'adapters.core',
 			'agents.core',
 			'approvals.core',
 			'audit.core',

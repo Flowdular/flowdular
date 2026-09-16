@@ -92,7 +92,7 @@ const INTEGER = /^-?\d{1,15}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}([T ][\d:.+\-Z]{1,24})?$/;
 const BOOLEAN = new Set(['true', 'false', 'yes', 'no', '1', '0']);
 
-function shapeOf(value: string, type: ImportFieldType): boolean {
+export function shapeOf(value: string, type: ImportFieldType): boolean {
 	switch (type) {
 		case 'integer':
 			return INTEGER.test(value) && Number.isSafeInteger(Number(value));
@@ -146,7 +146,10 @@ function principalOf(job: ImportJob): AuthPrincipal {
 
 /* The comparison a port that folds nothing gets: the key fields exactly as the
    file carries them, length prefixed so two fields cannot run into one another. */
-function exactKey(key: readonly string[], values: ImportRow['values']): string {
+export function exactKey(
+	key: readonly string[],
+	values: ImportRow['values'],
+): string {
 	let composed = '';
 	for (const field of key) {
 		const value = values[field] ?? '';

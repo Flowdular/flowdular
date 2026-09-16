@@ -7,8 +7,10 @@ import {
 	type DocumentAttachments,
 } from '@flowdular/module-documents';
 import { IMPORT_PORTS_CAPABILITY, type ImportPorts } from './domain/ports.ts';
+import { IMPORT_WRITE_CAPABILITY, type ImportWrite } from './domain/write.ts';
 import { createImportRoutes, createImportRuntime } from './server/index.ts';
 import { importDataClass } from './services/data-classes.ts';
+import { createImportWrite } from './services/import-write.ts';
 import {
 	importBatchSize,
 	importMaxRows,
@@ -41,6 +43,14 @@ export function createServerComposition(
 	context.capabilities.register<ImportPorts>(IMPORT_PORTS_CAPABILITY, {
 		register: (moduleId, ports) => runtime.ports.register(moduleId, ports),
 	});
+	context.capabilities.register<ImportWrite>(
+		IMPORT_WRITE_CAPABILITY,
+		createImportWrite({
+			ports: runtime.ports,
+			batchSize: () => importBatchSize(context.settings),
+			tracer: context.tracer,
+		}),
+	);
 	/* The catalogue is sealed before start hooks run, so what this module holds
 	   is declared here rather than on the first request. */
 	context.dataClasses.declare([importDataClass(() => runtime.repository())]);

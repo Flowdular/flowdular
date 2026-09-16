@@ -18,6 +18,12 @@ export interface ExportLists {
 	 * Open while the platform composes and sealed before the first request.
 	 */
 	register(moduleId: string, exports: readonly DefinedListExport[]): void;
+	/**
+	 * One registered list by id, or null. A caller that pages it applies the
+	 * list's own permission to the principal it pages under, as exports.core
+	 * does before a job exists.
+	 */
+	find(id: string): DefinedListExport | null;
 }
 
 export const EXPORT_LIST_LIMITS = {

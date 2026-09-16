@@ -584,6 +584,8 @@ describe('auth migrations', () => {
 			/* 0024, 0025, 0027 and 0029 run in the same pass and grant their scopes too, and 0031 repeats every backfill since 0019 with the memberships readable, so the owner ends with every owner default and the member with every member default declared by those migrations. */
 			{ account_id: 'account-ada', scope: 'access.review.manage' },
 			{ account_id: 'account-ada', scope: 'access.review.read' },
+			{ account_id: 'account-ada', scope: 'adapters.runs.manage' },
+			{ account_id: 'account-ada', scope: 'adapters.runs.read' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.decide' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.manage' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.read' },
@@ -678,6 +680,8 @@ describe('auth migrations', () => {
 			'research.evidence.read',
 			'research.run',
 			'research.settings.manage',
+			'adapters.runs.read',
+			'adapters.runs.manage',
 		]);
 		expect(roles.get('member')).toEqual([
 			'auth.profile.read',
@@ -804,6 +808,8 @@ describe('auth migrations', () => {
 			/* 0025, 0027 and 0029 run in the same pass and grant their scopes too, and 0031 repeats every backfill since 0019 with the memberships readable, so both memberships end with every default declared by those migrations. */
 			{ account_id: 'account-ada', scope: 'access.review.manage' },
 			{ account_id: 'account-ada', scope: 'access.review.read' },
+			{ account_id: 'account-ada', scope: 'adapters.runs.manage' },
+			{ account_id: 'account-ada', scope: 'adapters.runs.read' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.decide' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.manage' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.read' },
@@ -893,6 +899,8 @@ describe('auth migrations', () => {
 			'research.evidence.read',
 			'research.run',
 			'research.settings.manage',
+			'adapters.runs.read',
+			'adapters.runs.manage',
 		]);
 		/* A role the workspace wrote itself is not a default and stays as it is. */
 		expect(roles.get('auditor')).toEqual(['approvals.requests.read']);
@@ -1161,6 +1169,8 @@ describe('auth migrations', () => {
 			'research.evidence.read',
 			'research.run',
 			'research.settings.manage',
+			'adapters.runs.read',
+			'adapters.runs.manage',
 		]);
 		/* The member role row takes the one member default and none of the ten
 		   the workflow and automation modules keep with owners. */
@@ -1310,6 +1320,8 @@ describe('auth migrations', () => {
 			'research.evidence.read',
 			'research.run',
 			'research.settings.manage',
+			'adapters.runs.read',
+			'adapters.runs.manage',
 		]);
 		expect(
 			roles
@@ -1424,6 +1436,8 @@ describe('auth migrations', () => {
 			'research.run',
 			'research.evidence.read',
 			'research.settings.manage',
+			'adapters.runs.read',
+			'adapters.runs.manage',
 		]);
 		expect(roles.get('member')).toEqual([
 			'auth.profile.read',
@@ -1431,6 +1445,91 @@ describe('auth migrations', () => {
 			'research.run',
 		]);
 		expect(roles.get('analyst')).toEqual(['auth.profile.read']);
+	});
+
+	/* adapters.core keeps both of its permissions with owners, so 0035 grants
+	   the owner memberships and the built-in owner role row and nothing else. */
+	it('AUTH-ADAPTERS-SCOPES grants the adapters scopes to owners alone, in the memberships and the built-in role rows', async () => {
+		const granted = databaseMigrations.findIndex(
+			(migration) => migration.id === '0035_adapters_scopes',
+		);
+		expect(granted).toBeGreaterThan(0);
+		await runDatabaseMigrations(
+			lease.database,
+			'auth.core',
+			databaseMigrations.slice(0, granted),
+		);
+		await lease.database.transaction(
+			async (transaction) => {
+				await transaction.execute({
+					text: `INSERT INTO auth_tenants (id, name, slug, created_at)
+					       VALUES ('tenant-a', 'Contoso', 'tenant-a', 1)`,
+				});
+				await transaction.execute({
+					text: `INSERT INTO auth_accounts
+					       (id, email, email_normalized, password_hash, display_name, status, created_at)
+					       VALUES ('account-ada', 'ada@example.com', 'ada@example.com', 'hash', 'Ada', 'active', 1),
+					              ('account-bo', 'bo@example.com', 'bo@example.com', 'hash', 'Bo', 'active', 1)`,
+				});
+				await transaction.execute({
+					text: `INSERT INTO auth_memberships (account_id, tenant_id, role, created_at)
+					       VALUES ('account-ada', 'tenant-a', 'owner', 1),
+					              ('account-bo', 'tenant-a', 'member', 1)`,
+				});
+				await transaction.execute({
+					text: `INSERT INTO auth_membership_scopes (account_id, tenant_id, scope)
+					       VALUES ('account-ada', 'tenant-a', 'adapters.runs.read')`,
+				});
+				await transaction.execute({
+					text: `INSERT INTO auth_roles
+					       (id, tenant_id, key, name, description, scopes_json, builtin, created_at, updated_at)
+					       VALUES ('tenant-a:owner', 'tenant-a', 'owner', 'Owner', 'Full access',
+					               '["auth.profile.read","adapters.runs.read"]', 1, 1, 1),
+					              ('tenant-a:member', 'tenant-a', 'member', 'Member', 'Standard access',
+					               '["auth.profile.read"]', 1, 1, 1),
+					              ('tenant-a:integrator', 'tenant-a', 'integrator', 'Integrator', 'Custom',
+					               '["auth.profile.read"]', 0, 1, 1)`,
+				});
+			},
+			{ tenantId: 'tenant-a', access: 'write' },
+		);
+
+		await apply();
+
+		const seeded = await lease.database.transaction(
+			async (transaction) => ({
+				scopes: (
+					await transaction.query<{ account_id: string; scope: string }>({
+						text: `SELECT account_id, scope FROM auth_membership_scopes
+						       WHERE tenant_id = 'tenant-a' AND scope LIKE 'adapters.%'
+						       ORDER BY account_id, scope`,
+					})
+				).rows,
+				roles: (
+					await transaction.query<{ key: string; scopes_json: string }>({
+						text: 'SELECT key, scopes_json FROM auth_roles ORDER BY key',
+					})
+				).rows,
+			}),
+			{ tenantId: 'tenant-a', access: 'read' },
+		);
+		expect(seeded.scopes).toEqual([
+			{ account_id: 'account-ada', scope: 'adapters.runs.manage' },
+			{ account_id: 'account-ada', scope: 'adapters.runs.read' },
+		]);
+		const roles = new Map(
+			seeded.roles.map((row) => [
+				row.key,
+				JSON.parse(row.scopes_json) as string[],
+			]),
+		);
+		expect(roles.get('owner')).toEqual([
+			'auth.profile.read',
+			'adapters.runs.read',
+			'adapters.runs.manage',
+		]);
+		expect(roles.get('member')).toEqual(['auth.profile.read']);
+		expect(roles.get('integrator')).toEqual(['auth.profile.read']);
 	});
 
 	/* The paged member read walks (tenant_id, account_id), which the primary key
