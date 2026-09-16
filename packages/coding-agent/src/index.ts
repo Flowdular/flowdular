@@ -6,6 +6,7 @@ export {
 	type CodingAgentDriverKind,
 	type CodingAgentEvent,
 	type CodingAgentMessage,
+	type CodingAgentTool,
 	type CodingAgentTurnRequest,
 	type FileChangeKind,
 	type SandboxRuntimeMode,

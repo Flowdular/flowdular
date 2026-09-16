@@ -1,0 +1,33 @@
+schemaVersion: 1
+# Every key below exists in packages/contracts/schemas/module-spec.schema.json.
+specSchemaVersion: 2
+status:
+  allowed:
+    - approved
+requiredKeys:
+  - entities
+  - actions
+  - agentTools
+  - acceptanceScenarios
+  - outOfScope
+  - decisions
+sections:
+  research:
+    evidenceOwner: the case entity, the record findings attach to
+    adapter: recorded in a sandbox session; the adapter the owner picks after delivery is a decision
+  adapters:
+    port: a source writes through an import port of this module, <module id>.<key>
+    recorded: required in a sandbox session, whose spec-schema gate refuses a live adapter with SANDBOX_LIVE_ADAPTER_REFUSED
+  templates:
+    inputEntity: the case entity
+    outOfScope: rendering waits for the platform renderer while PDF generation is on the card's gap list
+actions:
+  compute: one custom action per computed figure, idempotent, naming the rule version it applies
+acceptanceScenarios:
+  mustInclude:
+    - a finding without evidence is refused before any write
+    - a finding citing evidence of another tenant is refused
+    - the computed figure is the same for the same inputs and names its rule version
+    - an agent run without research consent is refused with TOOL_NOT_CONSENTED
+    - nothing leaves the workspace before the approval is granted
+    - tenant isolation

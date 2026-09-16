@@ -1,0 +1,24 @@
+schemaVersion: 1
+# The gates of new-module, unchanged; nothing executes this file.
+gates:
+  - id: spec-schema
+    command: pnpm flowdular spec validate --all --json
+    required: true
+  - id: module-schema
+    command: pnpm flowdular module validate --json
+    required: true
+  - id: dependencies
+    command: 'grep the imports under src/** and compare with package.json dependencies (no CLI command yet)'
+    required: true
+  - id: typecheck
+    command: pnpm --filter @flowdular/module-{module} typecheck
+    required: true
+  - id: tests
+    command: pnpm --filter @flowdular/module-{module} test
+    required: true
+  - id: format
+    command: pnpm format:check
+    required: true
+  - id: auto-review
+    command: run the auto-review skill as a separate read-only phase over the finished change
+    required: true

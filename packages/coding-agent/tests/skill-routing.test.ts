@@ -102,6 +102,29 @@ describe('sandbox skill routing', () => {
 		);
 	});
 
+	it('gives the backend engineer the adapter skill only when the operator names it', () => {
+		const context = {
+			role: 'backend-engineer',
+			sessionKind: 'new-module' as const,
+			blueprint: 'new-module@1.0.0',
+			task: 'Pull vendors from the ERP.',
+			available: ['module-new', 'integration-adapter'],
+			specApproved: true,
+		};
+		/* The module skill carries the adapter recipe, so the default stays. */
+		expect(selectTaskSkill(context)).toBe('module-new');
+		expect(
+			selectTaskSkill({ ...context, task: 'Use $integration-adapter.' }),
+		).toBe('integration-adapter');
+		expect(
+			selectTaskSkill({
+				...context,
+				role: 'business-manager',
+				task: 'Use $integration-adapter.',
+			}),
+		).toBe('module-new');
+	});
+
 	it('interviews a new module and implements an approved one', () => {
 		const context = {
 			role: 'business-manager',

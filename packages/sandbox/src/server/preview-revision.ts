@@ -39,6 +39,7 @@ export async function previewRevision(
 		await file(join(source.path, 'package.json'), 'package.json');
 		await directory(join(source.path, 'src'), 'src');
 		await directory(join(source.path, 'migrations'), 'migrations');
+		await directory(join(source.path, 'preview'), 'preview');
 	}
 	return hash.digest('hex');
 }

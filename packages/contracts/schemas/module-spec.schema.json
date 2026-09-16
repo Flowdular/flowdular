@@ -169,6 +169,17 @@
 			"type": "array",
 			"items": { "$ref": "#/$defs/decision" },
 			"uniqueItems": true
+		},
+		"research": { "$ref": "#/$defs/research" },
+		"adapters": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/adapter" },
+			"uniqueItems": true
+		},
+		"templates": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/template" },
+			"uniqueItems": true
 		}
 	},
 	"allOf": [
@@ -186,7 +197,10 @@
 					"settings": false,
 					"agentTools": false,
 					"outOfScope": false,
-					"decisions": false
+					"decisions": false,
+					"research": false,
+					"adapters": false,
+					"templates": false
 				}
 			}
 		}
@@ -391,6 +405,105 @@
 				"question": { "type": "string", "minLength": 1 },
 				"answer": { "type": "string", "minLength": 1 },
 				"decidedBy": { "enum": ["user", "default"] }
+			}
+		},
+		"domain": {
+			"type": "string",
+			"maxLength": 253,
+			"pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$"
+		},
+		"research": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["adapter", "evidenceOwner"],
+			"properties": {
+				"adapter": { "enum": ["model-native", "connector", "recorded"] },
+				"allowDomains": {
+					"type": "array",
+					"items": { "$ref": "#/$defs/domain" },
+					"uniqueItems": true
+				},
+				"denyDomains": {
+					"type": "array",
+					"items": { "$ref": "#/$defs/domain" },
+					"uniqueItems": true
+				},
+				"monthlyQueryBudget": { "type": "integer", "minimum": 1 },
+				"evidenceOwner": { "$ref": "#/$defs/entityId" }
+			}
+		},
+		"adapter": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"id",
+				"direction",
+				"connector",
+				"operation",
+				"port",
+				"mapping"
+			],
+			"properties": {
+				"id": {
+					"type": "string",
+					"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+				},
+				"direction": { "enum": ["source", "sink"] },
+				"connector": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,95}$" },
+				"operation": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+				"port": {
+					"type": "string",
+					"maxLength": 96,
+					"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+				},
+				"schedule": {
+					"anyOf": [
+						{ "type": "null" },
+						{
+							"type": "string",
+							"maxLength": 100,
+							"pattern": "^[0-9a-z*,/-]+( [0-9a-z*,/-]+){4}$"
+						}
+					]
+				},
+				"mapping": {
+					"type": "array",
+					"minItems": 1,
+					"items": { "$ref": "#/$defs/adapterMapping" },
+					"uniqueItems": true
+				},
+				"recorded": {
+					"type": "string",
+					"pattern": "^adapters/[a-z0-9][a-z0-9-]*\\.recorded\\.json$"
+				}
+			}
+		},
+		"adapterMapping": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["to", "transform"],
+			"properties": {
+				"from": { "type": "string", "minLength": 1 },
+				"to": { "type": "string", "minLength": 1 },
+				"transform": { "enum": ["rename", "constant", "format", "lookup"] },
+				"value": {
+					"anyOf": [{ "type": "null" }, { "type": "string", "minLength": 1 }]
+				}
+			}
+		},
+		"template": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["id", "title", "inputEntity", "format", "body"],
+			"properties": {
+				"id": { "$ref": "#/$defs/entityId" },
+				"title": { "type": "string", "minLength": 1 },
+				"inputEntity": { "$ref": "#/$defs/entityId" },
+				"format": { "enum": ["pdf", "docx"] },
+				"body": {
+					"type": "string",
+					"pattern": "^templates/[a-z][a-z0-9-]*\\.md$"
+				}
 			}
 		}
 	}

@@ -1,8 +1,11 @@
 import type {
 	ModuleSpec,
+	ModuleSpecAdapter,
 	ModuleSpecEntity,
 	ModuleSpecField,
 	ModuleSpecFieldType,
+	ModuleSpecResearch,
+	ModuleSpecTemplate,
 } from '@flowdular/contracts';
 import { PLATFORM_API_VERSION } from '@flowdular/contracts';
 
@@ -579,6 +582,7 @@ function packageJson(model: ScaffoldModel): string {
 			'migrations',
 			'translations',
 			'spec',
+			...(spec.templates?.length ? ['templates'] : []),
 			'README.md',
 		],
 		scripts: {
@@ -1931,6 +1935,90 @@ export default defineCliExtension({
 `;
 }
 
+function tsLiteral(value: unknown, depth: number): string {
+	if (typeof value === 'string') return stringLiteral(value);
+	if (value === null || typeof value !== 'object') return String(value);
+	const list = Array.isArray(value);
+	const entries = list
+		? value.map((item) => tsLiteral(item, depth + 1))
+		: Object.entries(value).map(
+				([key, item]) => `${key}: ${tsLiteral(item, depth + 1)}`,
+			);
+	if (entries.length === 0) return list ? '[]' : '{}';
+	const indent = '\t'.repeat(depth + 1);
+	return `${list ? '[' : '{'}\n${entries
+		.map((entry) => `${indent}${entry},\n`)
+		.join('')}${'\t'.repeat(depth)}${list ? ']' : '}'}`;
+}
+
+function researchFile(
+	model: ScaffoldModel,
+	research: ModuleSpecResearch,
+): string {
+	return `import type { ModuleSpecResearch } from '@flowdular/contracts';
+
+export const RESEARCH_CAPABILITIES = {
+	search: 'research.search.v1',
+	fetch: 'research.fetch.v1',
+	evidence: 'research.evidence.v1',
+} as const;
+
+export const ${model.names.constant}_RESEARCH = ${tsLiteral(research, 0)} as const satisfies ModuleSpecResearch;
+`;
+}
+
+/* One example query and page in the shape research.core's recorded adapter
+   reads, on the first allowed domain so the example passes the allowlist. */
+function researchFixtures(research: ModuleSpecResearch): string {
+	const host = research.allowDomains?.[0] ?? 'example.com';
+	const url = `https://${host}/example`;
+	return json({
+		queries: {
+			example: [
+				{
+					url,
+					title: 'Example result',
+					snippet: 'Replace with a recorded search result.',
+					source: host,
+				},
+			],
+		},
+		pages: {
+			[url]: {
+				title: 'Example result',
+				text: 'Replace with the text of the recorded page.',
+			},
+		},
+	});
+}
+
+function recordedFixture(adapter: ModuleSpecAdapter): string {
+	return json({
+		adapter: adapter.id,
+		operation: adapter.operation,
+		calls: [{ input: {}, body: {} }],
+	});
+}
+
+function adapterFile(name: string, adapter: ModuleSpecAdapter): string {
+	const constant = name.replace(/-/g, '_').toUpperCase();
+	return `import type { ModuleSpecAdapter } from '@flowdular/contracts';
+
+export const ${constant}_ADAPTER = ${tsLiteral(adapter, 0)} as const satisfies ModuleSpecAdapter;
+`;
+}
+
+function templateBody(spec: ModuleSpec, template: ModuleSpecTemplate): string {
+	const fields = (spec.entities ?? [])
+		.find((entity) => entity.id === template.inputEntity)
+		?.fields.map((field) => field.id)
+		.join(', ');
+	return `# ${template.title}
+
+<!-- Rendered as ${template.format} from one ${template.inputEntity} record. Fields: ${fields}. -->
+`;
+}
+
 /* Polish copy for the shape a version 1 specification scaffolds. A field
    derived from an entity keeps a humanized identifier until its author
    translates it. */
@@ -2092,6 +2180,31 @@ export function planScaffold(
 	if (hasCli) {
 		files.set('src/cli/commands.json', cliCatalog(model));
 		files.set('src/cli/index.ts', cliEntry(model));
+	}
+	if (spec.research) {
+		files.set('src/research.ts', researchFile(model, spec.research));
+		files.set('research-fixtures.json', researchFixtures(spec.research));
+	}
+	for (const adapter of spec.adapters ?? []) {
+		const name = adapter.id.slice(spec.id.length + 1).replace(/\./g, '-');
+		const paths = [
+			`src/adapters/${name}.ts`,
+			adapter.recorded ?? `adapters/${name}.recorded.json`,
+		];
+		for (const path of paths) {
+			if (files.has(path)) {
+				throw new Error(
+					`Adapter "${adapter.id}" and another adapter both map to ${path}.`,
+				);
+			}
+		}
+		files.set(paths[0]!, adapterFile(name, adapter));
+		files.set(paths[1]!, recordedFixture(adapter));
+	}
+	for (const template of spec.templates ?? []) {
+		if (!files.has(template.body)) {
+			files.set(template.body, templateBody(spec, template));
+		}
 	}
 	files.set('tests/module.test.ts', testFile(model));
 	for (const locale of new Set(['en', ...spec.locales])) {

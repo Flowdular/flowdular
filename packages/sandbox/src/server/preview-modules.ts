@@ -2,6 +2,11 @@ import { sandboxDirectory } from './config.ts';
 import { readFile, realpath } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+	RESEARCH_MODULE_ID,
+	assertRecordedAdapters,
+	readSessionAdapters,
+} from './recorded-adapters.ts';
 import type { SandboxSession } from './sessions.ts';
 
 export interface PreviewModuleSource {
@@ -78,6 +83,16 @@ export async function resolvePreviewModules(
 		visited.add(id);
 		ordered.push({ id, directory, path, support: !draft });
 	};
+	/* A session whose spec declares research previews it through research.core on
+	   recorded fixtures, and never composes one that names a live adapter. */
+	const adapters = await readSessionAdapters(
+		session.modules.map((module) => ({
+			directory: module.directory,
+			path: join(draftRoot, module.directory),
+		})),
+	);
+	assertRecordedAdapters(adapters);
+	if (adapters.research) await visit(RESEARCH_MODULE_ID);
 	for (const module of session.modules) await visit(module.id);
 	return ordered;
 }

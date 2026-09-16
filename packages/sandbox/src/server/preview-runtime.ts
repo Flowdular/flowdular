@@ -11,6 +11,7 @@ import {
 	createPlatformAgentRegistry,
 	createPlatformCapabilityRegistry,
 	createPlatformToolRegistry,
+	ModuleSettingsError,
 	type ModuleSettingRecord,
 	type ModuleSettingValue,
 	type ModuleSettingsRuntime,
@@ -47,6 +48,12 @@ import {
 	type PreviewModuleSource,
 } from './preview-modules.ts';
 import { previewRevision } from './preview-revision.ts';
+import { seedPreviewDrafts } from './preview-seed.ts';
+import {
+	LIVE_ADAPTER_REFUSED,
+	readSessionAdapters,
+	recordedAdapterSettings,
+} from './recorded-adapters.ts';
 
 export const PREVIEW_COOKIE = 'coreloom_preview';
 const PREVIEW_TENANT = 'Preview workspace';
@@ -99,8 +106,12 @@ interface DraftModule {
 
 /* Preview settings live in memory for the life of the composition: a draft
    reads and writes them like the platform would, and nothing outlives the
-   session. */
-function memorySettings(): ModuleSettingsRuntime {
+   session. Pinned values hold for every workspace and cannot be changed. */
+export function memorySettings(
+	pinned: Readonly<
+		Record<string, Readonly<Record<string, ModuleSettingValue>>>
+	> = {},
+): ModuleSettingsRuntime {
 	const records = new Map<string, ModuleSettingRecord>();
 	const keyOf = (tenantId: string, moduleId: string, key: string) =>
 		`${tenantId}\0${moduleId}\0${key}`;
@@ -112,9 +123,17 @@ function memorySettings(): ModuleSettingsRuntime {
 					values[record.key] = record.value;
 				}
 			}
-			return values;
+			return { ...values, ...pinned[moduleId] };
 		},
 		save: async (record) => {
+			const fixed = pinned[record.moduleId]?.[record.key];
+			if (fixed !== undefined && fixed !== record.value) {
+				throw new ModuleSettingsError(
+					LIVE_ADAPTER_REFUSED,
+					`The sandbox preview holds ${record.moduleId}.${record.key} at its recorded value.`,
+					409,
+				);
+			}
 			records.set(keyOf(record.tenantId, record.moduleId, record.key), record);
 		},
 		clear: async (tenantId, moduleId, key) => {
@@ -346,6 +365,9 @@ export function createInProcessPreviewRuntime(
 			const revision = await previewRevision(sources);
 			const current = compositions.get(session.id);
 			if (current && current.revision === revision) return current;
+			const adapters = await readSessionAdapters(
+				sources.filter((source) => !source.support),
+			);
 
 			const { auth, credentials } = current
 				? { auth: current.auth, credentials: current.credentials }
@@ -370,7 +392,7 @@ export function createInProcessPreviewRuntime(
 			const context: Omit<PlatformServerContext, 'workspaceRoot'> = {
 				environment: process.env,
 				auth,
-				settings: memorySettings(),
+				settings: memorySettings(recordedAdapterSettings(adapters)),
 				agentTools: createPlatformToolRegistry() as PlatformToolRegistry,
 				agentDefinitions,
 				capabilities: createPlatformCapabilityRegistry(),
@@ -441,6 +463,21 @@ export function createInProcessPreviewRuntime(
 			} catch (error) {
 				if (!current) auth.dispose();
 				throw error;
+			}
+			const tenant = account?.tenants[0];
+			if (account && tenant) {
+				errors.push(
+					...(await seedPreviewDrafts({
+						modules: sources,
+						revision,
+						dataPath: paths.data,
+						context: {
+							tenantId: tenant.tenantId,
+							accountId: account.accountId,
+							databases,
+						},
+					})),
+				);
 			}
 			const all = [...routes, ...createAuthRoutes(auth)];
 			const composition: PreviewComposition = {

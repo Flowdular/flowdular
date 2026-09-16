@@ -1,0 +1,68 @@
+schemaVersion: 1
+steps:
+  - id: spec
+    role: business-manager
+    action: Interview the brief with spec-interview, including outside sources, other systems and documents; write research, adapters and templates with recorded fixtures in a sandbox session; stop for approval.
+    inputs: [brief]
+    outputs: [spec/module.yaml]
+    gates: [spec-schema]
+  - id: approve
+    role: operator
+    action: Approve the exact specification. No agent does this.
+    inputs: [spec/module.yaml]
+    outputs: [spec/module.yaml]
+  - id: scaffold
+    role: orchestrator
+    action: pnpm flowdular module new <id> --spec modules/<dir>/spec/module.yaml --apply, which also writes src/research.ts, research-fixtures.json, src/adapters/<name>.ts, adapters/<name>.recorded.json and templates/<name>.md.
+    inputs: [spec/module.yaml]
+    outputs:
+      [
+        src/research.ts,
+        research-fixtures.json,
+        src/adapters/*.ts,
+        adapters/*.recorded.json,
+        templates/*.md,
+      ]
+  - id: server
+    role: backend-engineer
+    action: The case entity, the compute actions with their rule version, and the service that stores findings with evidence ids, per module-new.
+    inputs: [spec/module.yaml]
+    outputs:
+      [
+        src/services/*.ts,
+        src/api/endpoints.ts,
+        migrations/*.sql,
+        tests/*.test.ts,
+      ]
+    gates: [module-schema, dependencies, typecheck, tests, format]
+  - id: adapters
+    role: backend-engineer
+    action: Every adapters[] entry per integration-adapter, on its recorded fixture.
+    inputs: [spec/module.yaml, src/adapters/*.ts]
+    outputs: [src/adapters/*.ts, adapters/*.recorded.json, tests/*.test.ts]
+    gates: [dependencies, typecheck, tests, format]
+  - id: agent-surface
+    role: agentic-engineer
+    action: Tools that store findings with evidence ids and call the compute actions, and the business agent that lists research.search and research.fetch, per agent-tool-design and business-agent-design.
+    inputs: [spec/module.yaml, src/api/endpoints.ts]
+    outputs:
+      [src/agent/tools.ts, src/agent/agents.ts, tests/agent-tools.test.ts]
+    gates: [spec-schema, module-schema, dependencies, typecheck, tests]
+  - id: workflow
+    role: agentic-engineer
+    action: The case workflow ending in a human-approval node before anything leaves the workspace, per workflow-development.
+    inputs: [src/agent/agents.ts]
+    outputs: [tests/*.test.ts]
+    gates: [typecheck, tests]
+  - id: client
+    role: frontend-engineer
+    action: The case record screen with its evidence list and the five states, per ux-design.
+    inputs: [src/api/endpoints.ts]
+    outputs: [src/client/*.tsrx, src/client/*.ts, translations/*.json]
+    gates: [dependencies, typecheck, tests, format]
+  - id: review
+    role: reviewer
+    action: auto-review against the spec, with the evidence, computation and approval scenarios checked first.
+    inputs: [diff, gate evidence]
+    outputs: [review report]
+    gates: [auto-review]

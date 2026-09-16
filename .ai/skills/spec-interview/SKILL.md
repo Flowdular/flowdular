@@ -43,6 +43,9 @@ One pass, in this order. For each row, write the default from the card into the 
 | Widgets                | None. A count belongs on `dashboard.metrics` only when the request asks for it              | `widgets[]`                              |
 | Settings               | None. A number the business may change later is `scope: tenant` with a stated default       | `settings[]`                             |
 | Agent tools            | None. A tool is a later phase and `risk` may only be `read` or `workspace-write`            | `agentTools[]`                           |
+| Outside sources        | None. A named public source is `research`, with the entity its findings attach to           | `research`                               |
+| Other systems          | None. A named system is one `source` adapter per record kind, run on demand                 | `adapters[]`                             |
+| Documents              | None. A named document is one `templates[]` entry on the record it describes                | `templates[]`, `outOfScope[]`            |
 | Reports                | None. There is no export, no PDF and no search; a report is a screen or it is out of scope  | `outOfScope[]`                           |
 | Out of scope           | Every item from the card's gap list the request touched, each with its business decision    | `outOfScope[]`, `decisions[]`            |
 
@@ -74,6 +77,16 @@ The sandbox renders it as a form and the answers return in the next turn as a `D
 
 When the answers come back, copy each one into `decisions[]` with `decidedBy: user` and the answer text, and update whatever the answer changed.
 
+### Outside sources, other systems and documents
+
+Ask these only when the brief names one; each answer is a decision like any other.
+
+- **An outside source** ("check the company in the registry", "compare listing prices"): which sources are trusted (`allowDomains`) or refused (`denyDomains`), which record the findings belong to (`evidenceOwner`, an entity of this spec), and whether the monthly budget differs from the default of 500 queries. Propose `adapter: model-native` outside the sandbox; in a sandbox session write `adapter: recorded`, because the preview refuses a live adapter, and record the adapter the owner will choose after delivery as a decision. Every finding an agent keeps cites its evidence, so write a scenario where a finding without evidence is refused.
+- **Another system** ("pull customers from X", "push invoices to Y"): the system and the operation its documentation names, the direction, which entity the rows become (a source writes through this module's import port `<module id>.<key>`), the field mapping (`rename`, `constant`, `format`, `lookup`), and whether it runs on demand or on a five-field cron. Consent and credentials are the owner's connector instance after delivery, never a spec value. In a sandbox session every adapter names `recorded: adapters/<name>.recorded.json`; the `spec-schema` gate refuses one without it with `SANDBOX_LIVE_ADAPTER_REFUSED`.
+- **A document** ("a risk report", "an offer letter"): its title, the record it describes (`inputEntity`), `pdf` or `docx`, and the sections the body needs. PDF generation is on the card's gap list, so add an `outOfScope[]` entry that rendering waits for the platform renderer and write no scenario that depends on the rendered file.
+
+A number the case needs (a score, a premium, a price per square metre) is an `actions[]` entry the module computes, never a value an agent writes.
+
 ## 4. Write the specification
 
 `modules/<dir>/spec/module.yaml`, `schemaVersion: 2`, `status: draft`. Keep the v1 keys (`id`, `specVersion`, `name`, `description`, `profile`, `capabilities`, `dependencies`, `tenancy`, `locales`, `invariants`, `permissions`, `dataOwnership`, `acceptanceScenarios`) and add the v2 arrays:
@@ -86,6 +99,9 @@ When the answers come back, copy each one into `decisions[]` with `decidedBy: us
 - `agentTools[]`: `{ id, permission, description, risk: read|workspace-write }`.
 - `outOfScope[]`: plain sentences, each naming the gap and the decision taken instead.
 - `decisions[]`: `{ id, question, answer, decidedBy: user|default }`; ids match `^[A-Z][A-Z0-9-]+$`, for example `D-UNIQUE-SKU`.
+- `research`: `{ adapter: model-native|connector|recorded, allowDomains?, denyDomains?, monthlyQueryBudget?, evidenceOwner }`; domains are lower-case host names and `evidenceOwner` names an entity.
+- `adapters[]`: `{ id, direction: source|sink, connector, operation, port, schedule?, mapping[], recorded? }`. `id` starts with the module id (`sales.core.crm-customers`); `connector` and `operation` are connector definition and operation keys (`^[a-z][a-z0-9-]*$`); a source `port` is an import port of this module or a declared dependency; `schedule` is a five-field cron or `null`; a mapping entry is `{ from?, to, transform: rename|constant|format|lookup, value? }` where only `constant` omits `from` and only `rename` omits `value`; `recorded` is `adapters/<name>.recorded.json` and required in a sandbox session.
+- `templates[]`: `{ id, title, inputEntity, format: pdf|docx, body }`; `inputEntity` names an entity and `body` is `templates/<name>.md`.
 
 Put the primary entity's read and manage permissions first: the scaffold builds that entity and later permissions become constants only. Every `acceptanceScenarios[]` entry stays observable (given, when, then) and covers success, denial and the cross-tenant case, because each one becomes at least one test. The schema rejects unknown keys.
 

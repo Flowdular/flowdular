@@ -56,6 +56,11 @@ import type { PlatformClient } from './platform-client.ts';
 import { readQuestions } from './questions.ts';
 import { listSkills, writeAgentPointer } from './reference.ts';
 import {
+	materializeSampleData,
+	sampleDataInstruction,
+	sampleDataTool,
+} from './sample-data.ts';
+import {
 	appendChatEntry,
 	basePathOf,
 	findSessionModule,
@@ -594,6 +599,11 @@ export async function* runTurn(
 		paths.workspace,
 	);
 	const attachmentNote = attachmentInstruction(session.attachments);
+	const hasSampleData = await materializeSampleData(
+		paths.workspace,
+		session.attachments,
+	);
+	const sampleDataNote = sampleDataInstruction(session.attachments);
 
 	yield await appendChatEntry(context.workspaceRoot, session, {
 		kind: 'user',
@@ -767,10 +777,15 @@ export async function* runTurn(
 			allowedPaths: turnAllowedPaths,
 			role: roleId,
 			systemInstruction: instruction,
-			prompt: attachmentNote ? `${attachmentNote}\n\n${message}` : message,
+			prompt: [attachmentNote, sampleDataNote, message]
+				.filter(Boolean)
+				.join('\n\n'),
 			resumeId,
 			history: [{ role: 'user', text: session.brief }, ...history.slice(0, -1)],
 			model: session.model,
+			...(hasSampleData
+				? { tools: [sampleDataTool(paths.workspace, session.attachments)] }
+				: {}),
 			signal: input.signal,
 		})) {
 			const recorded = await appendChatEntry(context.workspaceRoot, session, {

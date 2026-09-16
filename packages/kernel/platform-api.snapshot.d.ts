@@ -436,6 +436,36 @@ export interface ModuleSpecDecision {
     readonly answer: string;
     readonly decidedBy: 'user' | 'default';
 }
+export interface ModuleSpecResearch {
+    readonly adapter: 'model-native' | 'connector' | 'recorded';
+    readonly allowDomains?: readonly string[];
+    readonly denyDomains?: readonly string[];
+    readonly monthlyQueryBudget?: number;
+    readonly evidenceOwner: string;
+}
+export interface ModuleSpecAdapterMapping {
+    readonly from?: string;
+    readonly to: string;
+    readonly transform: 'rename' | 'constant' | 'format' | 'lookup';
+    readonly value?: string | null;
+}
+export interface ModuleSpecAdapter {
+    readonly id: string;
+    readonly direction: 'source' | 'sink';
+    readonly connector: string;
+    readonly operation: string;
+    readonly port: string;
+    readonly schedule?: string | null;
+    readonly mapping: readonly ModuleSpecAdapterMapping[];
+    readonly recorded?: string;
+}
+export interface ModuleSpecTemplate {
+    readonly id: string;
+    readonly title: string;
+    readonly inputEntity: string;
+    readonly format: 'pdf' | 'docx';
+    readonly body: string;
+}
 export interface ModuleSpec {
     readonly schemaVersion: 1 | 2;
     readonly id: string;
@@ -470,6 +500,9 @@ export interface ModuleSpec {
     readonly agentTools?: readonly ModuleSpecAgentTool[];
     readonly outOfScope?: readonly string[];
     readonly decisions?: readonly ModuleSpecDecision[];
+    readonly research?: ModuleSpecResearch;
+    readonly adapters?: readonly ModuleSpecAdapter[];
+    readonly templates?: readonly ModuleSpecTemplate[];
 }
 export type ModuleSpecV2 = ModuleSpec & {
     readonly schemaVersion: 2;
@@ -1105,6 +1138,23 @@ export declare const moduleSpecSchema: {
             };
             uniqueItems: boolean;
         };
+        research: {
+            $ref: string;
+        };
+        adapters: {
+            type: string;
+            items: {
+                $ref: string;
+            };
+            uniqueItems: boolean;
+        };
+        templates: {
+            type: string;
+            items: {
+                $ref: string;
+            };
+            uniqueItems: boolean;
+        };
     };
     allOf: {
         if: {
@@ -1125,6 +1175,9 @@ export declare const moduleSpecSchema: {
                 agentTools: boolean;
                 outOfScope: boolean;
                 decisions: boolean;
+                research: boolean;
+                adapters: boolean;
+                templates: boolean;
             };
         };
     }[];
@@ -1410,6 +1463,143 @@ export declare const moduleSpecSchema: {
                 };
                 decidedBy: {
                     enum: string[];
+                };
+            };
+        };
+        domain: {
+            type: string;
+            maxLength: number;
+            pattern: string;
+        };
+        research: {
+            type: string;
+            additionalProperties: boolean;
+            required: string[];
+            properties: {
+                adapter: {
+                    enum: string[];
+                };
+                allowDomains: {
+                    type: string;
+                    items: {
+                        $ref: string;
+                    };
+                    uniqueItems: boolean;
+                };
+                denyDomains: {
+                    type: string;
+                    items: {
+                        $ref: string;
+                    };
+                    uniqueItems: boolean;
+                };
+                monthlyQueryBudget: {
+                    type: string;
+                    minimum: number;
+                };
+                evidenceOwner: {
+                    $ref: string;
+                };
+            };
+        };
+        adapter: {
+            type: string;
+            additionalProperties: boolean;
+            required: string[];
+            properties: {
+                id: {
+                    type: string;
+                    pattern: string;
+                };
+                direction: {
+                    enum: string[];
+                };
+                connector: {
+                    type: string;
+                    pattern: string;
+                };
+                operation: {
+                    type: string;
+                    pattern: string;
+                };
+                port: {
+                    type: string;
+                    maxLength: number;
+                    pattern: string;
+                };
+                schedule: {
+                    anyOf: ({
+                        type: string;
+                        maxLength?: never;
+                        pattern?: never;
+                    } | {
+                        type: string;
+                        maxLength: number;
+                        pattern: string;
+                    })[];
+                };
+                mapping: {
+                    type: string;
+                    minItems: number;
+                    items: {
+                        $ref: string;
+                    };
+                    uniqueItems: boolean;
+                };
+                recorded: {
+                    type: string;
+                    pattern: string;
+                };
+            };
+        };
+        adapterMapping: {
+            type: string;
+            additionalProperties: boolean;
+            required: string[];
+            properties: {
+                from: {
+                    type: string;
+                    minLength: number;
+                };
+                to: {
+                    type: string;
+                    minLength: number;
+                };
+                transform: {
+                    enum: string[];
+                };
+                value: {
+                    anyOf: ({
+                        type: string;
+                        minLength?: never;
+                    } | {
+                        type: string;
+                        minLength: number;
+                    })[];
+                };
+            };
+        };
+        template: {
+            type: string;
+            additionalProperties: boolean;
+            required: string[];
+            properties: {
+                id: {
+                    $ref: string;
+                };
+                title: {
+                    type: string;
+                    minLength: number;
+                };
+                inputEntity: {
+                    $ref: string;
+                };
+                format: {
+                    enum: string[];
+                };
+                body: {
+                    type: string;
+                    pattern: string;
                 };
             };
         };
