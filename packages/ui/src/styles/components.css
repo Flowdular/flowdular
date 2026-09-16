@@ -1193,6 +1193,10 @@
 	text-align: left;
 	text-transform: uppercase;
 	white-space: nowrap;
+	/* A header narrower than its label ends in an ellipsis and keeps the full
+	   label as its title, instead of running into the next column. */
+	overflow: hidden;
+	text-overflow: ellipsis;
 	color: var(--ink-3);
 	background: var(--surface-2);
 	border-bottom: 1px solid var(--line-2);
