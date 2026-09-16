@@ -472,6 +472,9 @@ importers:
       '@flowdular/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      '@types/sax':
+        specifier: 1.2.7
+        version: 1.2.7
       octane:
         specifier: 0.1.51
         version: 0.1.51(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
@@ -494,9 +497,6 @@ importers:
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
-      '@types/sax':
-        specifier: 1.2.7
-        version: 1.2.7
       typescript:
         specifier: 5.9.3
         version: 5.9.3

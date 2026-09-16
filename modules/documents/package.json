@@ -38,6 +38,7 @@
 		"@flowdular/server": "workspace:*",
 		"@flowdular/storage": "workspace:*",
 		"@flowdular/ui": "workspace:*",
+		"@types/sax": "1.2.7",
 		"octane": "0.1.51",
 		"sax": "1.6.1",
 		"segment-state": "0.2.1",
@@ -47,7 +48,6 @@
 		"@flowdular/database-testing": "workspace:*",
 		"@tsrx/typescript-plugin": "0.3.120",
 		"@types/node": "24.13.3",
-		"@types/sax": "1.2.7",
 		"typescript": "5.9.3",
 		"vitest": "4.1.11"
 	}
