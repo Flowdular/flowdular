@@ -203,7 +203,7 @@ export function AgentPlaygroundView(props: AgentPlaygroundViewProps) @{
 								setSubmissionKey('');
 							}}
 							placeholder={t('agents.playground.form.inputPlaceholder')}
-							maxlength={100_000}
+							maxLength={100_000}
 							required
 						></textarea>
 					</FormField>

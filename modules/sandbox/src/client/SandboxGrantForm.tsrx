@@ -109,7 +109,7 @@ export function SandboxGrantForm(props: SandboxGrantFormProps) @{
 						/>
 					</FormField>
 					<FormField label={t('sandbox.form.note')}>
-						<input class="ui-input" name="note" maxlength={280} />
+						<input class="ui-input" name="note" maxLength={280} />
 					</FormField>
 				</div>
 				@if (props.error) {

@@ -25,8 +25,8 @@ export function InviteMemberForm(props: InviteMemberFormProps) @{
 						class="ui-input"
 						name="email"
 						type="email"
-						autocomplete="email"
-						maxlength={254}
+						autoComplete="email"
+						maxLength={254}
 						required
 					/>
 				</FormField>
@@ -34,13 +34,10 @@ export function InviteMemberForm(props: InviteMemberFormProps) @{
 					label={t('users.form.role')}
 					help={props.canAssignOwner ? undefined : t('users.form.ownerOnly')}
 				>
-					<select class="ui-select" name="role">
+					<select class="ui-select" name="role" defaultValue="member">
 						@for (const role of props.roles; key role.id) {
 							@if (role.key !== 'owner' || props.canAssignOwner) {
-								<option
-									value={role.key}
-									selected={role.key === 'member'}
-								>{roleName(role)}</option>
+								<option value={role.key}>{roleName(role)}</option>
 							}
 						}
 					</select>

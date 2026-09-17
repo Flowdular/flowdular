@@ -103,7 +103,7 @@ export function ApprovalRequestDrawer(props: ApprovalRequestDrawerProps) @{
 							<textarea
 								class="ui-textarea"
 								rows={3}
-								maxlength={2000}
+								maxLength={2000}
 								value={props.comment}
 								disabled={props.busy}
 								onInput={(event: Event) => props.onComment(

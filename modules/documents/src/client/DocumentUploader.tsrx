@@ -92,7 +92,7 @@ export function DocumentUploader(props: DocumentUploaderProps) @{
 						<input
 							class="ui-input ui-mono"
 							name="ownerModule"
-							maxlength={DOCUMENT_LIMITS.ownerModule}
+							maxLength={DOCUMENT_LIMITS.ownerModule}
 							placeholder={t('documents.upload.form.ownerModulePlaceholder')}
 							disabled={props.busy}
 							required
@@ -106,7 +106,7 @@ export function DocumentUploader(props: DocumentUploaderProps) @{
 						<input
 							class="ui-input ui-mono"
 							name="recordRef"
-							maxlength={DOCUMENT_LIMITS.recordRef}
+							maxLength={DOCUMENT_LIMITS.recordRef}
 							placeholder={t('documents.upload.form.recordRefPlaceholder')}
 							disabled={props.busy}
 							required
@@ -121,7 +121,7 @@ export function DocumentUploader(props: DocumentUploaderProps) @{
 						class="ui-textarea"
 						name="description"
 						rows={3}
-						maxlength={DOCUMENT_LIMITS.description}
+						maxLength={DOCUMENT_LIMITS.description}
 						disabled={props.busy}
 					></textarea>
 				</FormField>

@@ -211,10 +211,10 @@ export function SecurityView(props: SecurityViewProps) @{
 											<input
 												class="ui-input ui-mono"
 												name="code"
-												inputmode="numeric"
-												autocomplete="one-time-code"
+												inputMode="numeric"
+												autoComplete="one-time-code"
 												pattern="[0-9]{6}"
-												maxlength={6}
+												maxLength={6}
 												required
 											/>
 										</FormField>

@@ -558,7 +558,7 @@ export function ApprovalsView(props: ApprovalsViewProps) @{
 				<textarea
 					class="ui-textarea"
 					rows={3}
-					maxlength={2000}
+					maxLength={2000}
 					value={bulkComment}
 					disabled={status === 'submitting'}
 					onInput={(event: Event) => setBulkComment(

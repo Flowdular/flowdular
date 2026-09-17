@@ -271,7 +271,7 @@ export function AdapterBindingDrawer(props: AdapterBindingDrawerProps) @{
 								<input
 									class="ui-input ui-mono"
 									value={cron}
-									maxlength={100}
+									maxLength={100}
 									placeholder="0 6 * * 1-5"
 									disabled={saving}
 									onInput={(event) => setCron(event.currentTarget.value)}
@@ -318,7 +318,7 @@ export function AdapterBindingDrawer(props: AdapterBindingDrawerProps) @{
 											<input
 												class="ui-input ui-mono"
 												value={entry.to}
-												maxlength={200}
+												maxLength={200}
 												disabled={saving}
 												onInput={(event) => update(entry.key, {
 													to: event.currentTarget.value,
@@ -364,7 +364,7 @@ export function AdapterBindingDrawer(props: AdapterBindingDrawerProps) @{
 												<input
 													class="ui-input ui-mono"
 													value={entry.from}
-													maxlength={200}
+													maxLength={200}
 													disabled={saving}
 													onInput={(event) => update(entry.key, {
 														from: event.currentTarget.value,
@@ -383,7 +383,7 @@ export function AdapterBindingDrawer(props: AdapterBindingDrawerProps) @{
 											<input
 												class="ui-input ui-mono"
 												value={entry.value}
-												maxlength={2000}
+												maxLength={2000}
 												disabled={saving}
 												onInput={(event) => update(entry.key, {
 													value: event.currentTarget.value,

@@ -97,7 +97,7 @@ export function SpecEditor(props: SpecEditorProps) @{
 		<textarea
 			class="ui-textarea spec-editor__text"
 			aria-label={t('sandbox.workbench.specification')}
-			spellcheck={false}
+			spellCheck={false}
 			disabled={!loaded || saving}
 			value={text}
 			onInput={(event) => {

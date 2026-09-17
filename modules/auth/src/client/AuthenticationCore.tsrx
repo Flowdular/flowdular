@@ -295,9 +295,9 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 									class="ui-input"
 									name="workspace"
 									type="text"
-									autocomplete="organization"
-									spellcheck={false}
-									maxlength={64}
+									autoComplete="organization"
+									spellCheck={false}
+									maxLength={64}
 									required
 									value={signInWorkspace}
 									onInput={(event) => {
@@ -407,7 +407,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 										class="ui-input"
 										name="organizationName"
 										type="text"
-										autocomplete="organization"
+										autoComplete="organization"
 										value={workspaceName}
 										onInput={(event) => {
 											const name = event.currentTarget.value;
@@ -418,7 +418,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 											setSlugCheck({ status: 'idle', message: '' });
 										}}
 										minlength={2}
-										maxlength={120}
+										maxLength={120}
 										required
 									/>
 								</FormField>
@@ -435,8 +435,8 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 										]}
 										name="organizationSlug"
 										type="text"
-										autocomplete="off"
-										spellcheck={false}
+										autoComplete="off"
+										spellCheck={false}
 										value={workspaceSlug}
 										onInput={(event) => {
 											setWorkspaceSlugEdited(true);
@@ -444,7 +444,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 											setSlugCheck({ status: 'idle', message: '' });
 										}}
 										minlength={3}
-										maxlength={48}
+										maxLength={48}
 										required
 									/>
 								</FormField>
@@ -478,9 +478,9 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 										class="ui-input"
 										name="displayName"
 										type="text"
-										autocomplete="name"
+										autoComplete="name"
 										minlength={2}
-										maxlength={80}
+										maxLength={80}
 										required
 									/>
 								</FormField>
@@ -489,8 +489,8 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 										class="ui-input"
 										name="email"
 										type="email"
-										autocomplete="username"
-										maxlength={254}
+										autoComplete="username"
+										maxLength={254}
 										required
 									/>
 								</FormField>
@@ -503,7 +503,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 										class="ui-input"
 										name="password"
 										type="password"
-										autocomplete="new-password"
+										autoComplete="new-password"
 										minlength={12}
 										required
 									/>
@@ -564,8 +564,8 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 									class="ui-input"
 									name="email"
 									type="email"
-									autocomplete="username"
-									maxlength={254}
+									autoComplete="username"
+									maxLength={254}
 									required
 								/>
 							</FormField>
@@ -574,7 +574,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 									class="ui-input"
 									name="password"
 									type="password"
-									autocomplete="current-password"
+									autoComplete="current-password"
 									required
 								/>
 							</FormField>

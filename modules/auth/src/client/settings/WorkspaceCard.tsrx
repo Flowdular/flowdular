@@ -42,7 +42,7 @@ export function WorkspaceCard(props: WorkspaceCardProps) @{
 				aria-label={t('auth.settings.workspace.name')}
 				value={name}
 				minlength={2}
-				maxlength={120}
+				maxLength={120}
 				disabled={!props.canManage || props.busy}
 				onInput={(event) => setName(
 					(event.currentTarget as HTMLInputElement).value,

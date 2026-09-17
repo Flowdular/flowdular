@@ -37,8 +37,8 @@ export function DisplayNameCard(props: DisplayNameCardProps) @{
 						event.currentTarget.value,
 					)}
 					minlength={2}
-					maxlength={120}
-					autocomplete="name"
+					maxLength={120}
+					autoComplete="name"
 					required
 				/>
 			</FormField>

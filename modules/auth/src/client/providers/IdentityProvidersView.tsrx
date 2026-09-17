@@ -306,8 +306,8 @@ export function IdentityProvidersView(props: IdentityProvidersViewProps) @{
 										class="ui-input"
 										name="clientSecret"
 										type="password"
-										autocomplete="off"
-										maxlength={1024}
+										autoComplete="off"
+										maxLength={1024}
 										required
 									/>
 								</FormField>

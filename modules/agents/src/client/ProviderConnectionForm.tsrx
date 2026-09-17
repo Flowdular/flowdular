@@ -100,7 +100,7 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 							name="name"
 							defaultValue={props.provider?.name ?? ''}
 							minlength={2}
-							maxlength={120}
+							maxLength={120}
 							required
 						/>
 					</FormField>
@@ -118,7 +118,7 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 							disabled={Boolean(props.provider)}
 							placeholder="primary-openai"
 							minlength={3}
-							maxlength={64}
+							maxLength={64}
 							required={!props.provider}
 						/>
 					</FormField>
@@ -150,7 +150,7 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 							class="ui-input"
 							name="resourceName"
 							defaultValue={props.provider?.resourceName ?? ''}
-							maxlength={120}
+							maxLength={120}
 							required
 						/>
 					</FormField>
@@ -163,7 +163,7 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 							type="url"
 							defaultValue={props.provider?.baseURL ?? ''}
 							placeholder="https://models.example.com/v1"
-							maxlength={2048}
+							maxLength={2048}
 							required
 						/>
 					</FormField>
@@ -181,12 +181,12 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 						class="ui-input"
 						name="credential"
 						type="password"
-						autocomplete="new-password"
+						autoComplete="new-password"
 						placeholder={props.provider
 							? '••••••••'
 							: t('agents.providers.form.credentialPlaceholder')}
 						minlength={8}
-						maxlength={16_384}
+						maxLength={16_384}
 						required={!props.provider}
 					/>
 				</FormField>

@@ -338,7 +338,7 @@ export function WorkflowEditor(props: WorkflowEditorProps) @{
 							class="ui-input"
 							value={props.name}
 							disabled={!props.canManage || inspectingRun}
-							maxlength={160}
+							maxLength={160}
 							onInput={(event) => props.onName(event.currentTarget.value)}
 						/>
 					</label>
@@ -348,7 +348,7 @@ export function WorkflowEditor(props: WorkflowEditorProps) @{
 							class="ui-input"
 							value={props.description}
 							disabled={!props.canManage || inspectingRun}
-							maxlength={500}
+							maxLength={500}
 							onInput={(event) => props.onDescription(
 								event.currentTarget.value,
 							)}

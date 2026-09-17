@@ -40,7 +40,7 @@ export function PasswordCard(props: PasswordCardProps) @{
 					class="ui-input"
 					name="currentPassword"
 					type="password"
-					autocomplete="current-password"
+					autoComplete="current-password"
 					required
 				/>
 			</FormField>
@@ -49,7 +49,7 @@ export function PasswordCard(props: PasswordCardProps) @{
 					class="ui-input"
 					name="newPassword"
 					type="password"
-					autocomplete="new-password"
+					autoComplete="new-password"
 					required
 				/>
 			</FormField>
@@ -58,7 +58,7 @@ export function PasswordCard(props: PasswordCardProps) @{
 					class="ui-input"
 					name="confirmation"
 					type="password"
-					autocomplete="new-password"
+					autoComplete="new-password"
 					required
 				/>
 			</FormField>

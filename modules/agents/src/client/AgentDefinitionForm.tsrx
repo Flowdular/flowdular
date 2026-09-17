@@ -143,7 +143,7 @@ export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
 							name="name"
 							defaultValue={props.agent?.name ?? ''}
 							minlength={2}
-							maxlength={120}
+							maxLength={120}
 							required
 						/>
 					</FormField>
@@ -154,7 +154,7 @@ export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
 							defaultValue={props.agent?.key ?? ''}
 							placeholder="customer-care"
 							minlength={3}
-							maxlength={64}
+							maxLength={64}
 							required
 						/>
 					</FormField>
@@ -164,7 +164,7 @@ export function AgentDefinitionForm(props: AgentDefinitionFormProps) @{
 						class="ui-input"
 						name="description"
 						defaultValue={props.agent?.description ?? ''}
-						maxlength={500}
+						maxLength={500}
 						required
 					/>
 				</FormField>

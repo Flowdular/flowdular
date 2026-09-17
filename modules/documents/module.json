@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "documents.core",
 	"package": "@flowdular/module-documents",
-	"version": "0.3.2",
+	"version": "0.3.3",
 	"platformApi": "^0.1.0",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations", "cli"],

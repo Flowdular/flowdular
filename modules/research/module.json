@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "research.core",
 	"package": "@flowdular/module-research",
-	"version": "0.2.4",
+	"version": "0.2.5",
 	"platformApi": "^0.1.18",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations"],

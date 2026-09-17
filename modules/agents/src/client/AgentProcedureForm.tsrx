@@ -81,7 +81,7 @@ export function AgentProcedureForm(props: AgentProcedureFormProps) @{
 							name="name"
 							defaultValue={props.procedure?.name ?? ''}
 							minlength={2}
-							maxlength={120}
+							maxLength={120}
 							autoFocus
 							required
 						/>
@@ -97,10 +97,10 @@ export function AgentProcedureForm(props: AgentProcedureFormProps) @{
 							class="ui-input ui-mono"
 							name="key"
 							defaultValue={props.procedure?.key ?? ''}
-							readonly={Boolean(props.procedure)}
+							readOnly={Boolean(props.procedure)}
 							placeholder="invoice-triage"
 							minlength={3}
-							maxlength={64}
+							maxLength={64}
 							required
 						/>
 					</FormField>
@@ -111,7 +111,7 @@ export function AgentProcedureForm(props: AgentProcedureFormProps) @{
 						name="description"
 						defaultValue={props.procedure?.description ?? ''}
 						placeholder={t('agents.procedures.form.descriptionPlaceholder')}
-						maxlength={500}
+						maxLength={500}
 						required
 					/>
 				</FormField>
@@ -126,7 +126,7 @@ export function AgentProcedureForm(props: AgentProcedureFormProps) @{
 						defaultValue={props.procedure?.instructions ?? ''}
 						placeholder={t('agents.procedures.form.instructionsPlaceholder')}
 						minlength={8}
-						maxlength={8_000}
+						maxLength={8_000}
 						required
 					></textarea>
 				</FormField>

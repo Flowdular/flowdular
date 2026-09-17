@@ -122,7 +122,7 @@ export function WebhookForm(props: WebhookFormProps) @{
 							defaultValue={subscription?.name ?? ''}
 							placeholder={t('notifications.webhooks.form.namePlaceholder')}
 							minlength={2}
-							maxlength={120}
+							maxLength={120}
 							disabled={!editable}
 							required
 						/>
@@ -139,7 +139,7 @@ export function WebhookForm(props: WebhookFormProps) @{
 						type="url"
 						defaultValue={subscription?.url ?? ''}
 						placeholder={t('notifications.webhooks.form.urlPlaceholder')}
-						maxlength={2048}
+						maxLength={2048}
 						disabled={!editable}
 						required
 					/>
@@ -176,7 +176,7 @@ export function WebhookForm(props: WebhookFormProps) @{
 						class="ui-textarea"
 						name="description"
 						rows={3}
-						maxlength={1000}
+						maxLength={1000}
 						disabled={!editable}
 						defaultValue={subscription?.description ?? ''}
 						placeholder={t(

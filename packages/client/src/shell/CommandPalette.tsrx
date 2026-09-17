@@ -175,7 +175,7 @@ export function CommandPalette(props: CommandPaletteProps) @{
 					aria-expanded={options.length > 0}
 					aria-controls={OPTIONS_ID}
 					aria-autocomplete="list"
-					autocomplete="off"
+					autoComplete="off"
 					aria-activedescendant={options.length > 0
 						? paletteOptionId(activeIndex)
 						: undefined}
