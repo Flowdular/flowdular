@@ -573,7 +573,7 @@ export function ReviewView(props: ReviewViewProps) @{
 								class="ui-textarea"
 								name="note"
 								rows={4}
-								maxlength={ACCESS_LIMITS.note}
+								maxLength={ACCESS_LIMITS.note}
 								value={attestNote}
 								onInput={(event) => setAttestNote(event.currentTarget.value)}
 							/>

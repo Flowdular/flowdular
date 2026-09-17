@@ -216,7 +216,7 @@ export function NewImportForm(props: NewImportFormProps) @{
 										class="ui-input ui-mono"
 										name={'column-' + field.id}
 										value={columns[field.id] ?? ''}
-										maxlength={200}
+										maxLength={200}
 										onInput={(event) => setColumn(
 											field.id,
 											event.currentTarget.value,

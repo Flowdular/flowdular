@@ -85,7 +85,7 @@ export function GitHubSettingsModal(props: GitHubSettingsModalProps) @{
 									name="githubRepository"
 									defaultValue={github.repository ?? ''}
 									placeholder={t('sandbox.github.repository.placeholder')}
-									maxlength={200}
+									maxLength={200}
 								/>
 							</FormField>
 							<FormField
@@ -112,7 +112,7 @@ export function GitHubSettingsModal(props: GitHubSettingsModalProps) @{
 									class="ui-input ui-mono"
 									name="githubReviewers"
 									defaultValue={github.reviewers.join(', ')}
-									maxlength={1000}
+									maxLength={1000}
 								/>
 							</FormField>
 							<details>
@@ -129,7 +129,7 @@ export function GitHubSettingsModal(props: GitHubSettingsModalProps) @{
 												class="ui-input ui-mono"
 												name="githubRemote"
 												defaultValue={github.remote}
-												maxlength={120}
+												maxLength={120}
 											/>
 										</FormField>
 										<FormField
@@ -140,7 +140,7 @@ export function GitHubSettingsModal(props: GitHubSettingsModalProps) @{
 												class="ui-input ui-mono"
 												name="githubBaseBranch"
 												defaultValue={github.baseBranch}
-												maxlength={120}
+												maxLength={120}
 											/>
 										</FormField>
 									</div>
@@ -150,7 +150,7 @@ export function GitHubSettingsModal(props: GitHubSettingsModalProps) @{
 												class="ui-input ui-mono"
 												name="githubBranchPrefix"
 												defaultValue={github.branchPrefix}
-												maxlength={120}
+												maxLength={120}
 											/>
 										</FormField>
 										<FormField
@@ -161,7 +161,7 @@ export function GitHubSettingsModal(props: GitHubSettingsModalProps) @{
 												class="ui-input ui-mono"
 												name="githubForkOwner"
 												defaultValue={github.forkOwner ?? ''}
-												maxlength={120}
+												maxLength={120}
 											/>
 										</FormField>
 									</div>
@@ -186,9 +186,9 @@ export function GitHubSettingsModal(props: GitHubSettingsModalProps) @{
 								class="ui-input ui-mono"
 								name="githubToken"
 								type="password"
-								autocomplete="new-password"
+								autoComplete="new-password"
 								placeholder={t('sandbox.github.token.placeholder')}
-								maxlength={16384}
+								maxLength={16384}
 							/>
 						</FormField>
 						@if (github.tokenFingerprint) {

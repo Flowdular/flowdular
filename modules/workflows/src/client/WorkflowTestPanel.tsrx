@@ -48,7 +48,7 @@ export function WorkflowTestPanel(props: WorkflowTestPanelProps) @{
 						class="ui-textarea ui-mono"
 						value={props.inputText}
 						onInput={(event) => props.onInput(event.currentTarget.value)}
-						spellcheck="false"
+						spellCheck="false"
 					/>
 				</FormField>
 			</details>

@@ -293,7 +293,7 @@ export function AuditView(props: AuditViewProps) @{
 							aria-label={t('auth.audit.filter.actor')}
 							placeholder={t('auth.audit.filter.actorPlaceholder')}
 							value={actor}
-							maxlength={254}
+							maxLength={254}
 							onInput={(event) => setActor(
 								(event.currentTarget as HTMLInputElement).value,
 							)}

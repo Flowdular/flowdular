@@ -628,7 +628,7 @@ export function WorkflowCanvas(props: WorkflowCanvasProps) @{
 			style={`background-position: ${view.x}px ${view.y}px; background-size: ${
 				24 * view.zoom
 			}px ${24 * view.zoom}px;`}
-			tabindex={0}
+			tabIndex={0}
 			aria-label={t('workflows.canvas.navigation')}
 			onPointerDown={begin}
 			onPointerMove={move}
@@ -701,7 +701,7 @@ export function WorkflowCanvas(props: WorkflowCanvasProps) @{
 							]}
 							d={entry.path}
 							role="button"
-							tabindex={0}
+							tabIndex={0}
 							aria-label={t('workflows.canvas.editConnection', {
 								source: entry.edge.source.nodeId,
 								target: entry.edge.target.nodeId,

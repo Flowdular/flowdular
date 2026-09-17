@@ -107,7 +107,7 @@ export function WorkflowInputForm(props: {
 					<input
 						class="ui-input"
 						type="text"
-						inputmode={field.schema.type === 'number' ||
+						inputMode={field.schema.type === 'number' ||
 						field.schema.type === 'integer'
 							? 'decimal'
 							: 'text'}

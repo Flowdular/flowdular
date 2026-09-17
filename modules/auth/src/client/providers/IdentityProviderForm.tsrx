@@ -67,7 +67,7 @@ export function IdentityProviderForm(props: IdentityProviderFormProps) @{
 							class="ui-input"
 							name="key"
 							minlength={2}
-							maxlength={64}
+							maxLength={64}
 							pattern="[a-z][a-z0-9-]*"
 							autoFocus
 							required
@@ -78,7 +78,7 @@ export function IdentityProviderForm(props: IdentityProviderFormProps) @{
 					<input
 						class="ui-input"
 						name="label"
-						maxlength={120}
+						maxLength={120}
 						value={provider?.label ?? ''}
 						required
 					/>
@@ -92,7 +92,7 @@ export function IdentityProviderForm(props: IdentityProviderFormProps) @{
 						class="ui-input"
 						name="issuer"
 						type="url"
-						maxlength={2048}
+						maxLength={2048}
 						value={provider?.issuer ?? ''}
 						required
 					/>
@@ -101,7 +101,7 @@ export function IdentityProviderForm(props: IdentityProviderFormProps) @{
 					<input
 						class="ui-input"
 						name="clientId"
-						maxlength={256}
+						maxLength={256}
 						value={provider?.clientId ?? ''}
 						required
 					/>
@@ -117,8 +117,8 @@ export function IdentityProviderForm(props: IdentityProviderFormProps) @{
 						class="ui-input"
 						name="clientSecret"
 						type="password"
-						autocomplete="off"
-						maxlength={1024}
+						autoComplete="off"
+						maxLength={1024}
 						required={!provider}
 					/>
 				</FormField>
@@ -129,7 +129,7 @@ export function IdentityProviderForm(props: IdentityProviderFormProps) @{
 					<input
 						class="ui-input"
 						name="scopes"
-						maxlength={512}
+						maxLength={512}
 						value={(provider?.scopes ?? ['openid', 'email']).join(', ')}
 					/>
 				</FormField>
@@ -152,7 +152,7 @@ export function IdentityProviderForm(props: IdentityProviderFormProps) @{
 							<input
 								class="ui-input"
 								value={allowedDomains}
-								maxlength={512}
+								maxLength={512}
 								onInput={(event) => setAllowedDomains(
 									event.currentTarget.value,
 								)}
@@ -166,7 +166,7 @@ export function IdentityProviderForm(props: IdentityProviderFormProps) @{
 							<input
 								class="ui-input"
 								name="jitRole"
-								maxlength={64}
+								maxLength={64}
 								value={provider?.jitRole || 'member'}
 							/>
 						</FormField>

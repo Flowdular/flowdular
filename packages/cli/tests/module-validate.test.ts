@@ -250,6 +250,24 @@ describe('module layout validation', () => {
 		}
 	});
 
+	it('requires Octane DOM property spelling on host elements', async () => {
+		const view = (attribute: string) =>
+			`export function View() @{ <input class="ui-input" ${attribute}={props.limit} /> }`;
+		const { root, dispose } = await moduleRoot({
+			...complete,
+			'src/client/index.tsrx': view('maxlength'),
+		});
+		try {
+			const issues = await moduleLayoutIssues(root, manifest);
+			expect(codes(issues)).toEqual(['error:DOM_PROPERTY_CASING']);
+			expect(issues[0]?.message).toContain('line 1 maxlength as maxLength');
+			await writeFile(join(root, 'src/client/index.tsrx'), view('maxLength'));
+			expect(codes(await moduleLayoutIssues(root, manifest))).toEqual([]);
+		} finally {
+			await dispose();
+		}
+	});
+
 	it('requires a translated label on Filters', async () => {
 		const view = (attributes: string) =>
 			[

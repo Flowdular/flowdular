@@ -126,7 +126,7 @@ export function WorkflowInputSchemaEditor(props: {
 						class="ui-input ui-mono"
 						name="name"
 						required
-						maxlength={64}
+						maxLength={64}
 						pattern="[a-zA-Z][a-zA-Z0-9_]*"
 						value={values.name ?? selected?.name ?? ''}
 					/>
@@ -135,7 +135,7 @@ export function WorkflowInputSchemaEditor(props: {
 					<input
 						class="ui-input"
 						name="title"
-						maxlength={120}
+						maxLength={120}
 						value={values.title ?? String(selected?.schema.title ?? '')}
 					/>
 				</FormField>
@@ -154,7 +154,7 @@ export function WorkflowInputSchemaEditor(props: {
 					<input
 						class="ui-input"
 						name="description"
-						maxlength={500}
+						maxLength={500}
 						value={values.description ??
 							String(selected?.schema.description ?? '')}
 					/>

@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: access.core
-specVersion: 0.1.4
+specVersion: 0.1.5
 status: approved
 name: Access Review
 description: Point-in-time access review, an audit-trail diff between two dates, an administrative activity report over privileged actions, and a recorded attestation that someone reviewed them.

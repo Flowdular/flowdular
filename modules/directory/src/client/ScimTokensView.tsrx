@@ -525,7 +525,7 @@ export function ScimTokensView(props: ScimTokensViewProps) @{
 									class="ui-input"
 									name="label"
 									minlength={2}
-									maxlength={120}
+									maxLength={120}
 									autoFocus
 									required
 								/>

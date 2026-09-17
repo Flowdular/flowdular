@@ -36,7 +36,7 @@
 	"table.title": "Katalog modułów",
 	"table.caption": "Moduły",
 	"table.actions": "Akcje modułu",
-	"table.count": "{active} aktywnych · {enabled} włączonych · {total} w przestrzeni",
+	"table.count": "aktywne: {active} · włączone: {enabled} · w przestrzeni: {total}",
 	"table.module": "Moduł",
 	"table.version": "Wersja",
 	"table.specVersion": "spec {version}",

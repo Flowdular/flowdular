@@ -22,7 +22,7 @@ export function UserAccountForm(props: UserAccountFormProps) @{
 						class="ui-input"
 						name="displayName"
 						minlength={2}
-						maxlength={80}
+						maxLength={80}
 						autoFocus
 						required
 					/>
@@ -32,7 +32,7 @@ export function UserAccountForm(props: UserAccountFormProps) @{
 						class="ui-input"
 						name="email"
 						type="email"
-						maxlength={254}
+						maxLength={254}
 						required
 					/>
 				</FormField>
@@ -48,7 +48,7 @@ export function UserAccountForm(props: UserAccountFormProps) @{
 						name="password"
 						type="password"
 						minlength={props.passwordMinLength}
-						autocomplete="new-password"
+						autoComplete="new-password"
 						required
 					/>
 				</FormField>
@@ -56,13 +56,10 @@ export function UserAccountForm(props: UserAccountFormProps) @{
 					label={t('users.form.role')}
 					help={props.canAssignOwner ? undefined : t('users.form.ownerOnly')}
 				>
-					<select class="ui-select" name="role">
+					<select class="ui-select" name="role" defaultValue="member">
 						@for (const role of props.roles; key role.id) {
 							@if (role.key !== 'owner' || props.canAssignOwner) {
-								<option
-									value={role.key}
-									selected={role.key === 'member'}
-								>{roleName(role)}</option>
+								<option value={role.key}>{roleName(role)}</option>
 							}
 						}
 					</select>

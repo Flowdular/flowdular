@@ -131,7 +131,7 @@ export function AutomationScheduleForm(props: AutomationScheduleFormProps) @{
 							defaultValue={props.schedule?.label ?? ''}
 							placeholder={t('automations.schedules.form.labelPlaceholder')}
 							minlength={2}
-							maxlength={120}
+							maxLength={120}
 							required
 						/>
 					</FormField>
@@ -171,7 +171,7 @@ export function AutomationScheduleForm(props: AutomationScheduleFormProps) @{
 									? cronExpression(props.schedule.cadence)
 									: '0 6 * * 1-5'}
 								placeholder="0 6 * * 1-5"
-								maxlength={MAX_CRON_LENGTH}
+								maxLength={MAX_CRON_LENGTH}
 								required
 							/>
 						</FormField>

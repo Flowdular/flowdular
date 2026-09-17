@@ -209,7 +209,7 @@ export function WorkflowMappingEditor(props: {
 							class="ui-textarea ui-mono"
 							name="literal"
 							required
-							maxlength={16384}
+							maxLength={16384}
 							rows={3}
 							value={values.literal ??
 								(binding?.kind === 'literal'
@@ -223,7 +223,7 @@ export function WorkflowMappingEditor(props: {
 							<textarea
 								class="ui-textarea"
 								name="template"
-								maxlength={8192}
+								maxLength={8192}
 								rows={3}
 								value={values.template ??
 									(binding?.kind === 'template'
@@ -238,7 +238,7 @@ export function WorkflowMappingEditor(props: {
 							<textarea
 								class="ui-textarea ui-mono"
 								name="variables"
-								maxlength={16384}
+								maxLength={16384}
 								rows={5}
 								value={values.variables ??
 									JSON.stringify(

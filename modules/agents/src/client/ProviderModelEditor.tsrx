@@ -209,7 +209,7 @@ export function ProviderModelEditor(props: ProviderModelEditorProps) @{
 						list={knownModels.length > 0 ? listId : undefined}
 						placeholder={knownModels[0] ?? 'model-id'}
 						aria-label={t('agents.providers.models.identifier')}
-						maxlength={120}
+						maxLength={120}
 						onInput={(event) => setId(draft.uid, event.currentTarget.value)}
 					/>
 					<input
@@ -217,7 +217,7 @@ export function ProviderModelEditor(props: ProviderModelEditorProps) @{
 						value={draft.label}
 						placeholder={t('agents.providers.models.labelPlaceholder')}
 						aria-label={t('agents.providers.models.label')}
-						maxlength={120}
+						maxLength={120}
 						onInput={(event) => patch(draft.uid, {
 							label: event.currentTarget.value,
 						})}
