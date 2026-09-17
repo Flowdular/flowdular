@@ -194,7 +194,7 @@ export function ActionMenu(props: ActionMenuProps) @{
 										]}
 										type="button"
 										role="menuitem"
-										tabindex={-1}
+										tabIndex={-1}
 										aria-disabled={entry.action.disabled === true
 											? 'true'
 											: undefined}

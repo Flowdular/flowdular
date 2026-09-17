@@ -2,6 +2,7 @@ import {
 	useContext,
 	useEffect,
 	useId,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -29,7 +30,9 @@ import { Button } from './Button.tsrx';
 import { EmptyState } from './EmptyState.tsrx';
 import { pageRange } from './pagination.ts';
 import {
+	ACTIONS_WIDTH,
 	actionsFold,
+	columnPx,
 	SELECT_WIDTH,
 	tableLayout,
 	type TableActionsFold,
@@ -55,7 +58,7 @@ export interface TableColumn<Row extends RowData> {
 	readonly numeric?: boolean | undefined;
 	/** Required CSS width: px for a bounded column (time, status, number, tag), 'auto' for the one column that takes the rest. */
 	readonly width: string;
-	/** 1 (default) always shows; 2 hides in a narrow table; 3 hides first. The first column is always 1. A hidden column is listed in the row's expanded details. */
+	/** 1 (default) always shows; 2 hides in a narrow table; 3 hides first. Within a priority the last declared column hides first, one column at a time. The first column is always 1. A hidden column is listed in the row's expanded details. */
 	readonly priority?: TablePriority | undefined;
 	/** Comparable, searchable value behind the cell: it makes the column sortable and scanned by `globalFilter`. */
 	readonly value?: ((row: Row) => string | number | null) | undefined;
@@ -144,7 +147,7 @@ export interface TableProps<Row extends RowData> {
 	readonly actions?: ((row: Row) => readonly TableAction[]) | undefined;
 	/** Accessible name for the otherwise visually empty action-column header. */
 	readonly actionsLabel?: string | undefined;
-	/** Stable width for the action column while its buttons show. Increase it when rows have two actions. */
+	/** Minimum width for the action column while its buttons show. The column grows to its widest buttons once they render, so a longer translation is never cut. */
 	readonly actionsWidth?: string | undefined;
 	readonly onSelect?: ((row: Row) => void) | undefined;
 	readonly selectedKey?: string | undefined;
@@ -162,7 +165,6 @@ interface FlowdularColumnMeta {
 	readonly numeric?: boolean;
 	readonly width?: string;
 	readonly title?: string;
-	readonly priority?: TablePriority;
 	/** The first column, which holds the expand and open buttons. */
 	readonly lead?: boolean;
 	readonly actions?: boolean;
@@ -319,6 +321,7 @@ function LeadCell(props: {
 	readonly clickable: boolean;
 	readonly expandLabel: string;
 	readonly collapseLabel: string;
+	readonly revealClass: string | false;
 }) @{
 	const label = props.expanded ? props.collapseLabel : props.expandLabel;
 	@if (!props.collapsible && !props.clickable) {
@@ -329,7 +332,7 @@ function LeadCell(props: {
 		<span class="ui-table__lead">
 			@if (props.collapsible) {
 				<button
-					class="ui-table__toggle"
+					class={['ui-table__toggle', props.revealClass]}
 					type="button"
 					aria-expanded={props.expanded}
 					aria-controls={props.expanded ? props.detailsId : undefined}
@@ -354,8 +357,11 @@ function LeadCell(props: {
 	}
 }
 
-function priorityClass(priority: TablePriority | undefined): string | false {
-	return priority !== undefined && priority > 1 && 'ui-table__p' + priority;
+function stepClass(
+	kind: 'hide' | 'reveal',
+	step: number | undefined,
+): string | false {
+	return step !== undefined && 'ui-table__' + kind + '-' + step;
 }
 
 function SortIndicator(props: { readonly direction: 'asc' | 'desc' | false }) @{
@@ -387,7 +393,6 @@ function tanstackColumns<Row extends RowData>(
 			numeric: column.numeric ?? false,
 			width: column.width,
 			title: column.header,
-			priority: index === 0 ? 1 : column.priority ?? 1,
 			lead: index === 0,
 		};
 		const value = column.value;
@@ -562,7 +567,6 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 			: pagedRows;
 	const narrowed = props.filtered === true || (props.globalFilter ?? '') !== '';
 	const empty = narrowed && props.emptyFiltered || props.empty;
-	const span = columns.length + (selection === undefined ? 0 : 1);
 	const change = (keys: readonly string[], checked: boolean) => {
 		if (!selection) return;
 		const next = new Set(selection.selectedKeys);
@@ -608,6 +612,7 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 					canSort ? header.column.getIsSorted() : false;
 				return {
 					key: header.id,
+					column: header.column.id,
 					content: header.isPlaceholder
 						? null
 						: flexRender(header.column.columnDef.header, header.getContext()),
@@ -649,6 +654,7 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 			cells: row.getAllCells().map(
 				(cell) => ({
 					key: cell.id,
+					column: cell.column.id,
 					content: flexRender(cell.column.columnDef.cell, cell.getContext()),
 					meta: cell.column.columnDef.meta as FlowdularColumnMeta | undefined,
 				}),
@@ -663,6 +669,30 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 		Math.max(...renderedRows.map((row) => row.actions.length)),
 	);
 	const fold = rowActions ? foldRef.current : 'never';
+	/* The widest row of buttons measured so far, padding included. It only grows,
+   so folding the buttons away never shrinks the column back under them. */
+	const tableRef = useRef<HTMLTableElement | null>(null);
+	const [measuredActions, setMeasuredActions] = useState(0);
+	useLayoutEffect(() => {
+		const node = tableRef.current;
+		if (!node || !rowActions) return;
+		let widest = 0;
+		for (const group of node.querySelectorAll<HTMLElement>(
+			'td.ui-table__actions .ui-table-action-buttons',
+		)) {
+			if (group.offsetWidth === 0) continue;
+			const cell = getComputedStyle(group.parentElement as HTMLElement);
+			widest = Math.max(
+				widest,
+				group.offsetWidth + (parseFloat(cell.paddingLeft) || 0) +
+					(parseFloat(cell.paddingRight) || 0),
+			);
+		}
+		if (Math.ceil(widest) > measuredActions) setMeasuredActions(
+			Math.ceil(widest),
+		);
+	});
+	const declaredActions = columnPx(props.actionsWidth, ACTIONS_WIDTH);
 	const layout = tableLayout({
 		columns: props.columns.map(
 			(column, index) => ({
@@ -671,9 +701,15 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 			}),
 		),
 		selection: selection !== undefined,
-		actionsWidth: rowActions ? props.actionsWidth ?? '160px' : undefined,
+		actionsWidth: rowActions
+			? Math.max(declaredActions, measuredActions) + 'px'
+			: undefined,
 		fold,
 	});
+	const hideSteps = new Map(props.columns.map(
+		(column, index) => [column.key, layout.hideSteps[index]],
+	));
+	const revealClass = stepClass('reveal', layout.revealStep);
 	/* One entry per table row, so every loop step renders exactly one <tr>: an
    expanded row is followed by its details. */
 	const entries = renderedRows.flatMap(
@@ -686,17 +722,15 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 					{ key: 'row:' + row.key, row, details: false },
 				],
 	);
-	/* The details cell spans only columns that never hide: a span over a hidden
-   column would make the table grow a column that is not there. Its list is as
-   wide as the wrapper instead. */
+	/* The details, loading and empty cells span only columns that never hide: a
+   span over a hidden column would make the table grow a column that is not
+   there. Their content is as wide as the wrapper instead. */
 	const detailsSpan =
 		(selection === undefined ? 0 : 1) + (rowActions ? 1 : 0) +
-		props.columns.filter(
-			(column, index) => index === 0 || (column.priority ?? 1) === 1,
-		).length;
-	const detailColumns = props.columns.filter(
-		(column, index) => index > 0 && (column.priority ?? 1) > 1,
-	);
+		layout.hideSteps.filter((step) => step === undefined).length;
+	const detailColumns = props.columns.map(
+		(column, index) => ({ column, step: layout.hideSteps[index] }),
+	).filter((entry) => entry.step !== undefined);
 	const leafColumns = table.getAllLeafColumns().map(
 		(column) => ({
 			key: column.id,
@@ -723,6 +757,7 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 		}
 		<div class="ui-table-wrap">
 			<table
+				ref={tableRef}
 				class={['ui-table', ...layout.classes]}
 				aria-label={props.caption ?? ''}
 				style={'min-width: ' + String(layout.minWidth) + 'px;' +
@@ -742,7 +777,7 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 						<col
 							class={[
 								column.meta?.actions && 'ui-table__actions-column',
-								priorityClass(column.meta?.priority),
+								stepClass('hide', hideSteps.get(column.key)),
 							]}
 							style={column.meta?.actions
 								? ACTIONS_COLUMN_WIDTH
@@ -772,7 +807,7 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 									class={[
 										header.meta?.numeric && 'num',
 										header.meta?.actions && 'ui-table__actions',
-										priorityClass(header.meta?.priority),
+										stepClass('hide', hideSteps.get(header.column)),
 									]}
 									style={header.meta?.actions
 										? ''
@@ -801,18 +836,22 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 				<tbody>
 					@if (props.status === 'loading') {
 						<tr class="ui-table__placeholder">
-							<td class="ui-table__empty" colspan={span}>
-								{props.loadingLabel ?? 'Loading…'}
+							<td colspan={detailsSpan}>
+								<div class="ui-table__placeholder-body ui-table__empty">
+									{props.loadingLabel ?? 'Loading…'}
+								</div>
 							</td>
 						</tr>
 					} @else if (renderedRows.length === 0) {
 						<tr class="ui-table__placeholder">
-							<td colspan={span}>
-								<EmptyState
-									icon={empty.icon}
-									title={empty.title}
-									code={empty.code ?? ''}
-								>{empty.hint}</EmptyState>
+							<td colspan={detailsSpan}>
+								<div class="ui-table__placeholder-body">
+									<EmptyState
+										icon={empty.icon}
+										title={empty.title}
+										code={empty.code ?? ''}
+									>{empty.hint}</EmptyState>
+								</div>
 							</td>
 						</tr>
 					} @else {
@@ -820,18 +859,18 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 							@if (entry.details) {
 								<tr class="ui-table__details" id={entry.row.detailsId}>
 									<td colspan={detailsSpan}>
-										<dl class="ui-table__details-list">
-											@for (const column of detailColumns; key column.key) {
+										<dl class={['ui-table__details-list', revealClass]}>
+											@for (const detail of detailColumns; key detail.column.key) {
 												<div
 													class={[
 														'ui-table__detail',
-														'ui-table__detail--p' + String(column.priority),
+														stepClass('reveal', detail.step),
 													]}
 												>
-													<dt>{column.header}</dt>
-													<dd class={column.numeric && 'num'}>{column.cell(
-														entry.row.original,
-													)}</dd>
+													<dt>{detail.column.header}</dt>
+													<dd
+														class={detail.column.numeric && 'num'}
+													>{detail.column.cell(entry.row.original)}</dd>
 												</div>
 											}
 										</dl>
@@ -869,7 +908,7 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 											class={[
 												cell.meta?.numeric && 'num',
 												cell.meta?.actions && 'ui-table__actions',
-												priorityClass(cell.meta?.priority),
+												stepClass('hide', hideSteps.get(cell.column)),
 											]}
 										>
 											@if (cell.meta?.actions) {
@@ -888,6 +927,7 @@ export function Table<Row extends RowData>(props: TableProps<Row>) @{
 													clickable={entry.row.clickable}
 													expandLabel={copy.expand}
 													collapseLabel={copy.collapse}
+													revealClass={revealClass}
 												/>
 											} @else {
 												<>
