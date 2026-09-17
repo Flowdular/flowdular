@@ -124,7 +124,7 @@ export function AutomationTriggerForm(props: AutomationTriggerFormProps) @{
 							defaultValue={props.trigger?.label ?? ''}
 							placeholder={t('automations.triggers.form.labelPlaceholder')}
 							minlength={2}
-							maxlength={120}
+							maxLength={120}
 							required
 						/>
 					</FormField>

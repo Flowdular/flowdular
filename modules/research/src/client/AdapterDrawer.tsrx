@@ -185,7 +185,7 @@ export function AdapterDrawer(props: AdapterDrawerProps) @{
 									class="ui-input ui-mono"
 									type="url"
 									value={baseUrl}
-									maxlength={2048}
+									maxLength={2048}
 									placeholder={key === 'firecrawl'
 										? 'https://api.firecrawl.dev'
 										: 'https://search.example.org'}
@@ -225,9 +225,9 @@ export function AdapterDrawer(props: AdapterDrawerProps) @{
 									<input
 										class="ui-input ui-mono"
 										type="password"
-										autocomplete="off"
+										autoComplete="off"
 										value={token}
-										maxlength={4000}
+										maxLength={4000}
 										disabled={saving}
 										onInput={(event) => setToken(event.currentTarget.value)}
 									/>
@@ -241,9 +241,9 @@ export function AdapterDrawer(props: AdapterDrawerProps) @{
 									>
 										<input
 											class="ui-input"
-											autocomplete="off"
+											autoComplete="off"
 											value={username}
-											maxlength={256}
+											maxLength={256}
 											disabled={saving}
 											onInput={(event) => setUsername(
 												event.currentTarget.value,
@@ -257,9 +257,9 @@ export function AdapterDrawer(props: AdapterDrawerProps) @{
 										<input
 											class="ui-input"
 											type="password"
-											autocomplete="off"
+											autoComplete="off"
 											value={password}
-											maxlength={1024}
+											maxLength={1024}
 											disabled={saving}
 											onInput={(event) => setPassword(
 												event.currentTarget.value,
@@ -278,7 +278,7 @@ export function AdapterDrawer(props: AdapterDrawerProps) @{
 							<input
 								class="ui-input ui-mono"
 								value={instanceId}
-								maxlength={128}
+								maxLength={128}
 								disabled={saving}
 								onInput={(event) => setInstanceId(event.currentTarget.value)}
 							/>
@@ -292,7 +292,7 @@ export function AdapterDrawer(props: AdapterDrawerProps) @{
 							<input
 								class="ui-input ui-mono"
 								value={fixturesPath}
-								maxlength={1024}
+								maxLength={1024}
 								disabled={saving}
 								onInput={(event) => setFixturesPath(event.currentTarget.value)}
 							/>
@@ -345,7 +345,7 @@ export function AdapterDrawer(props: AdapterDrawerProps) @{
 									aria-label={t('research.adapters.test.query')}
 									placeholder={t('research.adapters.test.query')}
 									value={query}
-									maxlength={400}
+									maxLength={400}
 									disabled={testing}
 									onInput={(event) => setQuery(event.currentTarget.value)}
 								/>

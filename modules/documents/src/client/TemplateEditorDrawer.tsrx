@@ -516,7 +516,7 @@ export function TemplateEditorDrawer(props: TemplateEditorDrawerProps) @{
 										<input
 											class="ui-input"
 											value={layout.title}
-											maxlength={DOCUMENT_TEMPLATE_LIMITS.lineCharacters}
+											maxLength={DOCUMENT_TEMPLATE_LIMITS.lineCharacters}
 											disabled={readOnly}
 											onInput={(event) => editLayout({
 												title: event.currentTarget.value,
@@ -537,7 +537,7 @@ export function TemplateEditorDrawer(props: TemplateEditorDrawerProps) @{
 											<input
 												class="ui-input num"
 												type="number"
-												inputmode="numeric"
+												inputMode="numeric"
 												min={DOCUMENT_TEMPLATE_LIMITS.marginMinMm}
 												max={DOCUMENT_TEMPLATE_LIMITS.marginMaxMm}
 												value={layout[side]}
@@ -557,7 +557,7 @@ export function TemplateEditorDrawer(props: TemplateEditorDrawerProps) @{
 										<input
 											class="ui-input"
 											value={layout.header}
-											maxlength={DOCUMENT_TEMPLATE_LIMITS.lineCharacters}
+											maxLength={DOCUMENT_TEMPLATE_LIMITS.lineCharacters}
 											disabled={readOnly}
 											onInput={(event) => editLayout({
 												header: event.currentTarget.value,
@@ -571,7 +571,7 @@ export function TemplateEditorDrawer(props: TemplateEditorDrawerProps) @{
 										<input
 											class="ui-input"
 											value={layout.footer}
-											maxlength={DOCUMENT_TEMPLATE_LIMITS.lineCharacters}
+											maxLength={DOCUMENT_TEMPLATE_LIMITS.lineCharacters}
 											disabled={readOnly}
 											onInput={(event) => editLayout({
 												footer: event.currentTarget.value,
@@ -601,8 +601,8 @@ export function TemplateEditorDrawer(props: TemplateEditorDrawerProps) @{
 										class="ui-textarea ui-mono"
 										rows={8}
 										value={sample}
-										spellcheck={false}
-										maxlength={DOCUMENT_TEMPLATE_LIMITS.inputBytes}
+										spellCheck={false}
+										maxLength={DOCUMENT_TEMPLATE_LIMITS.inputBytes}
 										disabled={busy !== ''}
 										onInput={(event) => setSample(event.currentTarget.value)}
 									></textarea>

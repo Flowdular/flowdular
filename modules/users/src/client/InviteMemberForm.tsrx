@@ -25,8 +25,8 @@ export function InviteMemberForm(props: InviteMemberFormProps) @{
 						class="ui-input"
 						name="email"
 						type="email"
-						autocomplete="email"
-						maxlength={254}
+						autoComplete="email"
+						maxLength={254}
 						required
 					/>
 				</FormField>

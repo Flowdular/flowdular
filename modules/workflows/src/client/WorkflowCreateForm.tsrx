@@ -52,7 +52,7 @@ export function WorkflowCreateForm(props: WorkflowCreateFormProps) @{
 						}}
 						disabled={props.busy}
 						minlength={2}
-						maxlength={160}
+						maxLength={160}
 						autoFocus
 						required
 					/>
@@ -73,7 +73,7 @@ export function WorkflowCreateForm(props: WorkflowCreateFormProps) @{
 						title={t('workflows.create.keyHelp')}
 						minlength={3}
 						disabled={props.busy}
-						maxlength={120}
+						maxLength={120}
 						required
 					/>
 				</FormField>
@@ -86,7 +86,7 @@ export function WorkflowCreateForm(props: WorkflowCreateFormProps) @{
 						value={description}
 						disabled={props.busy}
 						onInput={(event) => setDescription(event.currentTarget.value)}
-						maxlength={500}
+						maxLength={500}
 					/>
 				</FormField>
 				@if (props.error) {

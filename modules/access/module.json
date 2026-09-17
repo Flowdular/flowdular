@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "access.core",
 	"package": "@flowdular/module-access",
-	"version": "0.1.4",
+	"version": "0.1.5",
 	"platformApi": "^0.1.2",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations"],

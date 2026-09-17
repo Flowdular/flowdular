@@ -72,8 +72,8 @@ export function ForgotPasswordForm(props: PublicFlowProps) @{
 					class="ui-input"
 					name="email"
 					type="email"
-					autocomplete="email"
-					maxlength={254}
+					autoComplete="email"
+					maxLength={254}
 					required
 				/>
 			</FormField>
@@ -162,9 +162,9 @@ export function ResetPasswordForm(props: PublicFlowProps) @{
 						class="ui-input"
 						name="password"
 						type="password"
-						autocomplete="new-password"
+						autoComplete="new-password"
 						minlength={props.passwordMinLength}
-						maxlength={1024}
+						maxLength={1024}
 						required
 					/>
 				</FormField>
@@ -176,9 +176,9 @@ export function ResetPasswordForm(props: PublicFlowProps) @{
 						class="ui-input"
 						name="passwordConfirmation"
 						type="password"
-						autocomplete="new-password"
+						autoComplete="new-password"
 						minlength={props.passwordMinLength}
-						maxlength={1024}
+						maxLength={1024}
 						required
 					/>
 				</FormField>
@@ -256,9 +256,9 @@ export function InvitationAcceptanceForm(props: PublicFlowProps) @{
 					<input
 						class="ui-input"
 						name="displayName"
-						autocomplete="name"
+						autoComplete="name"
 						minlength={2}
-						maxlength={80}
+						maxLength={80}
 						required
 					/>
 				</FormField>
@@ -271,9 +271,9 @@ export function InvitationAcceptanceForm(props: PublicFlowProps) @{
 						class="ui-input"
 						name="password"
 						type="password"
-						autocomplete="new-password"
+						autoComplete="new-password"
 						minlength={props.passwordMinLength}
-						maxlength={1024}
+						maxLength={1024}
 						required
 					/>
 				</FormField>
@@ -324,8 +324,8 @@ export function MfaChallengeForm(props: PublicFlowProps) @{
 					<input
 						class="ui-input ui-mono"
 						name="recoveryCode"
-						autocomplete="one-time-code"
-						maxlength={32}
+						autoComplete="one-time-code"
+						maxLength={32}
 						required
 					/>
 				</FormField>
@@ -334,10 +334,10 @@ export function MfaChallengeForm(props: PublicFlowProps) @{
 					<input
 						class="ui-input ui-mono"
 						name="code"
-						inputmode="numeric"
-						autocomplete="one-time-code"
+						inputMode="numeric"
+						autoComplete="one-time-code"
 						pattern="[0-9]{6}"
-						maxlength={6}
+						maxLength={6}
 						required
 					/>
 				</FormField>

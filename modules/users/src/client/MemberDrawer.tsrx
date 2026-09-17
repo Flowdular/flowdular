@@ -240,7 +240,7 @@ function MemberIdentitySection(props: {
 				class="ui-input"
 				name="displayName"
 				minlength={2}
-				maxlength={80}
+				maxLength={80}
 				value={props.member.displayName}
 				disabled={props.disabled}
 				required
@@ -375,7 +375,7 @@ function MemberSecuritySection(props: {
 					type="password"
 					aria-label={t('users.member.temporaryPassword')}
 					minlength={props.passwordMinLength}
-					autocomplete="new-password"
+					autoComplete="new-password"
 					disabled={props.disabled}
 					required
 				/>

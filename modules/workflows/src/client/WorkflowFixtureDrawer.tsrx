@@ -169,7 +169,7 @@ export function WorkflowFixtureDrawer(props: {
 							<textarea
 								class="ui-textarea ui-mono"
 								value={JSON.stringify(entry.fixture.output ?? {}, null, 2)}
-								spellcheck="false"
+								spellCheck="false"
 								onInput={(event) => {
 									if (!graph) return;
 									try {

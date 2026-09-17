@@ -217,7 +217,7 @@ export function ConnectorForm(props: ConnectorFormProps) @{
 							name="name"
 							defaultValue={instance?.name ?? ''}
 							placeholder={t('connectors.form.namePlaceholder')}
-							maxlength={120}
+							maxLength={120}
 							disabled={!editable}
 							required
 						/>
@@ -233,7 +233,7 @@ export function ConnectorForm(props: ConnectorFormProps) @{
 							type="url"
 							defaultValue={instance?.baseUrl ?? ''}
 							placeholder={t('connectors.form.baseUrlPlaceholder')}
-							maxlength={2048}
+							maxLength={2048}
 							disabled={!editable}
 							required
 						/>
@@ -247,7 +247,7 @@ export function ConnectorForm(props: ConnectorFormProps) @{
 							name="allowedHosts"
 							defaultValue={(instance?.allowedHosts ?? []).join(', ')}
 							placeholder={t('connectors.form.allowedHostsPlaceholder')}
-							maxlength={2048}
+							maxLength={2048}
 							disabled={!editable}
 						/>
 					</FormField>
@@ -300,8 +300,8 @@ export function ConnectorForm(props: ConnectorFormProps) @{
 										class="ui-input ui-mono"
 										name={'credential-' + field.key}
 										type={field.secret ? 'password' : 'text'}
-										autocomplete="off"
-										maxlength={4096}
+										autoComplete="off"
+										maxLength={4096}
 										disabled={!editable}
 									/>
 								</FormField>
@@ -337,7 +337,7 @@ export function ConnectorForm(props: ConnectorFormProps) @{
 								<input
 									class="ui-input ui-mono"
 									value={testPath}
-									maxlength={1024}
+									maxLength={1024}
 									disabled={!editable}
 									aria-label={t('connectors.form.testPath')}
 									onInput={(event: Event) => setTestPath(

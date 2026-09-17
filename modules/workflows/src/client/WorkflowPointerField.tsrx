@@ -78,7 +78,7 @@ export function WorkflowPointerField(props: {
 				name={props.name}
 				class="ui-input ui-mono"
 				value={props.value}
-				maxlength={1024}
+				maxLength={1024}
 				role="combobox"
 				aria-autocomplete="list"
 				aria-expanded={open}
@@ -87,8 +87,8 @@ export function WorkflowPointerField(props: {
 					? id + '-option-' + active
 					: undefined}
 				aria-describedby={id + '-help'}
-				autocomplete="off"
-				spellcheck={false}
+				autoComplete="off"
+				spellCheck={false}
 				onInput={(event) => {
 					props.onInput(event.currentTarget.value);
 					setBrowse(false);
@@ -132,7 +132,7 @@ export function WorkflowPointerField(props: {
 							id={id + '-option-' + entry.index}
 							role="option"
 							aria-selected={entry.index === active}
-							tabindex={-1}
+							tabIndex={-1}
 							onMouseDown={(event: MouseEvent) => event.preventDefault()}
 							onMouseEnter={() => setActive(entry.index)}
 							onClick={() => pick(entry)}

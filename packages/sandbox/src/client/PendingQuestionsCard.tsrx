@@ -140,7 +140,7 @@ export function PendingQuestionsCard(props: PendingQuestionsCardProps) @{
 									<input
 										class="ui-input"
 										type="text"
-										maxlength={MAX_ANSWER_LENGTH}
+										maxLength={MAX_ANSWER_LENGTH}
 										aria-label={t('sandbox.questions.freeText')}
 										placeholder={t('sandbox.questions.freeTextPlaceholder')}
 										value={draft.typed[question.id] ?? ''}

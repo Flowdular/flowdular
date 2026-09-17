@@ -43,8 +43,8 @@ export function TemplateBodyField(props: TemplateBodyFieldProps) @{
 				value={props.value}
 				rows={18}
 				wrap="off"
-				spellcheck={false}
-				maxlength={props.maxLength}
+				spellCheck={false}
+				maxLength={props.maxLength}
 				disabled={props.disabled}
 				aria-invalid={props.invalid}
 				aria-describedby={props.describedBy}

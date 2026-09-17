@@ -69,7 +69,7 @@ function ApprovalRequirementEditor(props: {
 			<input
 				class="ui-input"
 				value={requirement.roleKey ?? ''}
-				maxlength={64}
+				maxLength={64}
 				disabled={!props.editable}
 				onInput={(event) => {
 					const value = event.currentTarget.value.trim();
@@ -85,7 +85,7 @@ function ApprovalRequirementEditor(props: {
 			<input
 				class="ui-input"
 				value={requirement.scope ?? ''}
-				maxlength={96}
+				maxLength={96}
 				disabled={!props.editable}
 				onInput={(event) => {
 					const value = event.currentTarget.value.trim();
@@ -142,7 +142,7 @@ function ApprovalRequirementEditor(props: {
 			<input
 				class="ui-input"
 				value={props.node.prompt ?? ''}
-				maxlength={200}
+				maxLength={200}
 				disabled={!props.editable}
 				onInput={(event) => {
 					const value = event.currentTarget.value;
@@ -452,7 +452,7 @@ export function WorkflowInspector(props: WorkflowInspectorProps) @{
 						class="ui-input"
 						value={props.node.label}
 						disabled={!props.editable}
-						maxlength={120}
+						maxLength={120}
 						onInput={(event) => props.onReplaceNode(
 							{
 								...props.node!,

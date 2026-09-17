@@ -99,7 +99,7 @@ export function ModuleSettingRow(props: ModuleSettingRowProps) @{
 					class="ui-input"
 					type="password"
 					aria-label={copy.label}
-					autocomplete="off"
+					autoComplete="off"
 					placeholder={definition.hasValue
 						? '••••••••'
 						: translate('system.settings.notSet')}

@@ -71,7 +71,7 @@ export function ModelSettingsModal(props: {
 							class="ui-input"
 							name="model"
 							required
-							maxlength={160}
+							maxLength={160}
 							defaultValue={saved?.model ?? ''}
 						/>
 					</FormField>
@@ -85,8 +85,8 @@ export function ModelSettingsModal(props: {
 							class="ui-input"
 							name="credential"
 							type="password"
-							autocomplete="new-password"
-							maxlength={16384}
+							autoComplete="new-password"
+							maxLength={16384}
 						/>
 					</FormField>
 					<FormField label={t('sandbox.models.url')}>
@@ -95,7 +95,7 @@ export function ModelSettingsModal(props: {
 							name="baseURL"
 							type="url"
 							required={kind === 'openai-compatible'}
-							maxlength={2048}
+							maxLength={2048}
 							defaultValue={saved?.baseURL ?? ''}
 						/>
 					</FormField>
@@ -105,7 +105,7 @@ export function ModelSettingsModal(props: {
 								class="ui-input"
 								name="resourceName"
 								required
-								maxlength={160}
+								maxLength={160}
 								defaultValue={saved?.resourceName ?? ''}
 							/>
 						</FormField>
