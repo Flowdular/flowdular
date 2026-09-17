@@ -5,6 +5,7 @@ import {
 	actionsFold,
 	FLEXIBLE_MIN,
 	FLEXIBLE_READING,
+	hideOrder,
 	SELECT_WIDTH,
 	TABLE_STEP,
 	TABLE_STEP_MAX,
@@ -13,7 +14,6 @@ import {
 	tableStep,
 	TOGGLE_WIDTH,
 	type TableLayoutColumn,
-	type TablePriority,
 } from '../src/components/table-layout.ts';
 import { tableStepsCss } from '../src/components/table-steps.ts';
 
@@ -31,20 +31,21 @@ function px(column: TableLayoutColumn, flexible: number): number {
 
 function width(
 	columns: readonly TableLayoutColumn[],
-	most: TablePriority,
+	indexes: readonly number[],
 	flexible: number,
 ): number {
-	return columns
-		.filter((column) => column.priority <= most)
-		.reduce((total, column) => total + px(column, flexible), 0);
+	return indexes.reduce(
+		(total, index) => total + px(columns[index]!, flexible),
+		0,
+	);
 }
 
 const MODULES: readonly TableLayoutColumn[] = [
 	{ width: 'auto', priority: 1 },
-	{ width: '96px', priority: 2 },
+	{ width: '120px', priority: 2 },
 	{ width: '200px', priority: 3 },
-	{ width: '120px', priority: 3 },
-	{ width: '150px', priority: 2 },
+	{ width: '140px', priority: 3 },
+	{ width: '170px', priority: 2 },
 	{ width: '130px', priority: 1 },
 ];
 
@@ -73,8 +74,9 @@ describe('table steps', () => {
 			step += TABLE_STEP
 		) {
 			expect(file).toContain(`@container (width < ${step}px)`);
-			for (const kind of ['p3', 'p2', 'fold'])
-				expect(file).toContain(`.ui-table--${kind}-${step} {`);
+			expect(file).toContain(`.ui-table .ui-table__hide-${step} {`);
+			expect(file).toContain(`.ui-table .ui-table__reveal-${step} {`);
+			expect(file).toContain(`.ui-table--fold-${step} {`);
 		}
 	});
 });
@@ -92,11 +94,13 @@ describe('tableLayout', () => {
 			fold: 'never',
 		});
 		expect(layout.classes).toEqual([]);
+		expect(layout.hideSteps).toEqual([undefined, undefined, undefined]);
+		expect(layout.revealStep).toBeUndefined();
 		expect(layout.collapsible).toBe(false);
 		expect(layout.minWidth).toBe(3 * FLEXIBLE_MIN);
 	});
 
-	it('counts only priority 1, the selection and the folded actions in the minimum', () => {
+	it('counts only the columns that never hide, the selection and the folded actions in the minimum', () => {
 		const layout = tableLayout({
 			columns: MODULES,
 			selection: true,
@@ -110,30 +114,59 @@ describe('tableLayout', () => {
 		expect(layout.actionsWidth).toBe(236);
 	});
 
-	it('hides each priority before the columns beside it stop fitting', () => {
+	it('hides priority 3 before 2 and the last declared first', () => {
+		expect(hideOrder(MODULES)).toEqual([3, 2, 4, 1]);
+		expect(
+			hideOrder([
+				{ width: 'auto', priority: 3 },
+				{ width: '80px', priority: 1 },
+			]),
+		).toEqual([]);
+	});
+
+	it('hides one column at a time, each once the columns beside it stop fitting', () => {
 		const layout = tableLayout({
 			columns: MODULES,
 			selection: false,
 			actionsWidth: '236px',
 			fold: 'narrow',
 		});
-		const p3 = stepOf(layout.classes, 'p3') ?? 0;
-		const p2 = stepOf(layout.classes, 'p2') ?? 0;
+		const order = hideOrder(MODULES);
+		let visible = [0, 1, 2, 3, 4, 5];
+		order.forEach((index, position) => {
+			const needed =
+				width(MODULES, visible, FLEXIBLE_READING) +
+				236 +
+				(position === 0 ? 0 : TOGGLE_WIDTH);
+			const step = layout.hideSteps[index] ?? 0;
+			expect(step).toBeGreaterThanOrEqual(needed);
+			expect(step - TABLE_STEP).toBeLessThan(needed);
+			visible = visible.filter((kept) => kept !== index);
+		});
+		const steps = order.map((index) => layout.hideSteps[index] ?? 0);
+		expect([...steps].sort((a, b) => b - a)).toEqual(steps);
+		expect(new Set(steps).size).toBe(steps.length);
+		expect(layout.revealStep).toBe(steps[0]);
+		expect(layout.hideSteps[0]).toBeUndefined();
+		expect(layout.hideSteps[5]).toBeUndefined();
 		const fold = stepOf(layout.classes, 'fold') ?? 0;
-		expect(p3).toBeGreaterThanOrEqual(
-			width(MODULES, 3, FLEXIBLE_READING) + 236,
-		);
-		expect(p3 - TABLE_STEP).toBeLessThan(
-			width(MODULES, 3, FLEXIBLE_READING) + 236,
-		);
-		expect(p2).toBeGreaterThanOrEqual(
-			width(MODULES, 2, FLEXIBLE_READING) + 236 + TOGGLE_WIDTH,
-		);
-		expect(p2).toBeLessThan(p3);
 		expect(fold).toBeGreaterThanOrEqual(3 * 236);
 		expect(fold).toBeGreaterThanOrEqual(
-			width(MODULES, 1, FLEXIBLE_MIN) + TOGGLE_WIDTH + 236,
+			FLEXIBLE_MIN + 130 + TOGGLE_WIDTH + 236,
 		);
+	});
+
+	it('keeps Version in a 904 pixel Modules card, where hiding a whole priority dropped it', () => {
+		const layout = tableLayout({
+			columns: MODULES,
+			selection: false,
+			actionsWidth: '236px',
+			fold: 'narrow',
+		});
+		const shown = MODULES.map((_, index) => index).filter(
+			(index) => (layout.hideSteps[index] ?? 0) <= 904,
+		);
+		expect(shown).toEqual([0, 1, 5]);
 	});
 
 	it('gives a table that always folds the narrow action column everywhere', () => {
@@ -148,10 +181,10 @@ describe('tableLayout', () => {
 		});
 		expect(layout.actionsWidth).toBe(ACTIONS_FOLDED_WIDTH);
 		expect(stepOf(layout.classes, 'fold')).toBeUndefined();
-		expect(stepOf(layout.classes, 'p3')).toBe(
+		expect(layout.hideSteps).toEqual([
+			undefined,
 			tableStep(FLEXIBLE_READING + 160 + ACTIONS_FOLDED_WIDTH),
-		);
-		expect(stepOf(layout.classes, 'p2')).toBeUndefined();
+		]);
 	});
 
 	it('folds only when a row has two actions or more', () => {

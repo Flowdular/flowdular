@@ -207,8 +207,8 @@ export function VariableField(props: VariableFieldCoreProps) @{
 					required={props.required}
 					disabled={props.disabled}
 					minlength={props.minLength}
-					maxlength={props.maxLength}
-					spellcheck={false}
+					maxLength={props.maxLength}
+					spellCheck={false}
 					onInput={handleInput}
 					onKeyDown={handleKeyDown}
 					onScroll={syncScroll}
@@ -226,8 +226,8 @@ export function VariableField(props: VariableFieldCoreProps) @{
 					required={props.required}
 					disabled={props.disabled}
 					minlength={props.minLength}
-					maxlength={props.maxLength}
-					spellcheck={false}
+					maxLength={props.maxLength}
+					spellCheck={false}
 					onInput={handleInput}
 					onKeyDown={handleKeyDown}
 					onScroll={syncScroll}

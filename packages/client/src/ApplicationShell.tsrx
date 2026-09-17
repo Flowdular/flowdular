@@ -1,5 +1,5 @@
 import { Seo } from '@octanejs/seo';
-import { useEffect, useMemo } from 'octane';
+import { useEffect, useMemo, useState } from 'octane';
 import { cell, createStore, useValue } from 'segment-state';
 import {
 	createClientContributionRegistry,
@@ -27,6 +27,12 @@ import {
 	workspaceHitRoute,
 } from './shell/navigation.ts';
 import { ContextRail } from './shell/ContextRail.tsrx';
+import {
+	SHELL_COMPACT_QUERY,
+	SHELL_NARROW_QUERY,
+	shellFold,
+} from './shell/layout.ts';
+import { useMediaQuery } from './shell/use-media-query.ts';
 import { Sidebar } from './shell/Sidebar.tsrx';
 import { Topbar } from './shell/Topbar.tsrx';
 import type { ApplicationShellProps } from './shell/types.ts';
@@ -108,6 +114,18 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 	const [contextRailCollapsed, setContextRailCollapsed] = useValue(
 		shell.state.contextRailCollapsed,
 	);
+	const narrow = useMediaQuery(SHELL_NARROW_QUERY);
+	const compact = useMediaQuery(SHELL_COMPACT_QUERY);
+	const [sidebarPeek, setSidebarPeek] = useState(false);
+	const [contextPeek, setContextPeek] = useState(false);
+	const fold = shellFold({
+		narrow,
+		compact,
+		sidebarCollapsed,
+		contextRailCollapsed,
+		sidebarPeek,
+		contextPeek,
+	});
 	const [collapsedNavigationGroups, setCollapsedNavigationGroups] = useValue(
 		shell.state.collapsedNavigationGroups,
 	);
@@ -189,6 +207,8 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 		setActiveView(viewId);
 		setNavigationOpen(false);
 		setCommandOpen(false);
+		setSidebarPeek(false);
+		setContextPeek(false);
 	};
 
 	/* A hit's route is workspace-relative and comes from a module, so anything
@@ -228,6 +248,11 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 	};
 
 	const toggleSidebar = () => {
+		if (narrow) {
+			setSidebarPeek((current) => !current);
+			setContextPeek(false);
+			return;
+		}
 		setSidebarCollapsed((current) => {
 			const next = !current;
 			try {
@@ -240,6 +265,11 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 	};
 
 	const toggleContextRail = () => {
+		if (compact) {
+			setContextPeek((current) => !current);
+			setSidebarPeek(false);
+			return;
+		}
 		setContextRailCollapsed((current) => {
 			const next = !current;
 			try {
@@ -438,17 +468,20 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 		<div
 			class={[
 				'app-shell',
-				sidebarCollapsed && 'app-shell--rail',
+				fold.railed && 'app-shell--rail',
+				fold.sidebarOverlay && 'app-shell--peek',
 				contextItems.length > 0 && 'app-shell--context',
-				contextItems.length > 0 && contextRailCollapsed &&
+				contextItems.length > 0 && fold.contextFolded &&
 					'app-shell--context-collapsed',
+				contextItems.length > 0 && fold.contextOverlay &&
+					'app-shell--context-peek',
 			]}
 		>
 			<Seo title={activeLabel} description={activeDescription} />
 			<MobileHeader onToggle={() => setNavigationOpen((open) => !open)} />
 			<Sidebar
 				open={navigationOpen}
-				collapsed={sidebarCollapsed}
+				collapsed={fold.railed}
 				identity={props.identity}
 				items={visibleNavigation}
 				activeView={effectiveView}
@@ -469,7 +502,7 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 				<ContextRail
 					section={activeSection}
 					items={contextItems}
-					collapsed={contextRailCollapsed}
+					collapsed={fold.contextFolded}
 					onToggle={toggleContextRail}
 					activeView={effectiveView}
 					workspaceSlug={activeWorkspaceSlug}
@@ -509,6 +542,17 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 					type="button"
 					aria-label={t('shell.nav.close')}
 					onClick={() => setNavigationOpen(false)}
+				></button>
+			}
+			@if (fold.sidebarOverlay || fold.contextOverlay) {
+				<button
+					class="scrim scrim--peek"
+					type="button"
+					aria-label={t('shell.nav.close')}
+					onClick={() => {
+						setSidebarPeek(false);
+						setContextPeek(false);
+					}}
 				></button>
 			}
 			@if (commandOpen) {

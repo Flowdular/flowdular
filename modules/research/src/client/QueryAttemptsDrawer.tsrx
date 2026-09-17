@@ -98,22 +98,24 @@ export function QueryAttemptsDrawer(props: QueryAttemptsDrawerProps) @{
 		onClose={props.onClose}
 	>
 		<div class="ui-drawer__body">
-			@if (props.status === 'error') {
-				<Alert>{props.error}</Alert>
-			} @else {
-				<Table
-					columns={columns()}
-					rows={props.attempts}
-					rowKey={(row) => row.id}
-					status={props.status === 'loading' ? 'loading' : 'idle'}
-					loadingLabel={t('research.common.loading')}
-					empty={{
-						icon: 'activity',
-						title: t('research.attempts.emptyTitle'),
-						hint: t('research.attempts.emptyHint'),
-					}}
-				/>
-			}
+			<div class="ui-form">
+				@if (props.status === 'error') {
+					<Alert>{props.error}</Alert>
+				} @else {
+					<Table
+						columns={columns()}
+						rows={props.attempts}
+						rowKey={(row) => row.id}
+						status={props.status === 'loading' ? 'loading' : 'idle'}
+						loadingLabel={t('research.common.loading')}
+						empty={{
+							icon: 'activity',
+							title: t('research.attempts.emptyTitle'),
+							hint: t('research.attempts.emptyHint'),
+						}}
+					/>
+				}
+			</div>
 		</div>
 	</Drawer>
 }

@@ -195,285 +195,290 @@ export function AdapterBindingDrawer(props: AdapterBindingDrawerProps) @{
 	>
 		<form class="ui-drawer__form" onSubmit={submit}>
 			<div class="ui-drawer__body">
-				@if (adapter && !adapter.target.available) {
-					<Alert tone="warning">{t('adapters.target.unavailableHint')}</Alert>
-				}
-				<div class="ui-form__row">
-					<Select
-						id="adapters-instance"
-						label={t('adapters.form.instance')}
-						value={instanceId}
-						disabled={saving}
-						options={[
-							{
-								value: '',
-								label: adapter?.recorded
-									? t('adapters.instance.recorded')
-									: t('adapters.instance.none'),
-							},
-							...instances.map(
-								(instance) => ({
-									value: instance.id,
-									label: instance.name,
-								}),
-							),
-							...(instanceId !== '' &&
-							!instances.some((instance) => instance.id === instanceId)
-								? [
-										{ value: instanceId, label: instanceId },
-									]
-								: []),
-						]}
-						help={t('adapters.form.instanceHelp', {
-							connector: adapter?.connector ?? '',
-						})}
-						onChange={setInstanceId}
-					/>
-					<FormField label={t('adapters.form.enabled')}>
-						<Switch
-							checked={enabled}
-							label={t('adapters.form.enabled')}
+				<div class="ui-form">
+					@if (adapter && !adapter.target.available) {
+						<Alert tone="warning">{t('adapters.target.unavailableHint')}</Alert>
+					}
+					<div class="ui-form__row">
+						<Select
+							id="adapters-instance"
+							label={t('adapters.form.instance')}
+							value={instanceId}
 							disabled={saving}
-							onChange={setEnabled}
+							options={[
+								{
+									value: '',
+									label: adapter?.recorded
+										? t('adapters.instance.recorded')
+										: t('adapters.instance.none'),
+								},
+								...instances.map(
+									(instance) => ({
+										value: instance.id,
+										label: instance.name,
+									}),
+								),
+								...(instanceId !== '' &&
+								!instances.some((instance) => instance.id === instanceId)
+									? [
+											{ value: instanceId, label: instanceId },
+										]
+									: []),
+							]}
+							help={t('adapters.form.instanceHelp', {
+								connector: adapter?.connector ?? '',
+							})}
+							onChange={setInstanceId}
 						/>
-					</FormField>
-				</div>
-				@if (selected && !selected.allowWorkflows) {
-					<Alert tone="warning">{t('adapters.form.consentHint')}</Alert>
-				}
-				<div class="ui-form__row">
-					<Select
-						id="adapters-schedule"
-						label={t('adapters.form.schedule')}
-						value={scheduleMode}
-						disabled={saving}
-						options={[
-							{
-								value: 'declared',
-								label: adapter?.schedule
-									? t('adapters.schedule.declared', { cron: adapter.schedule })
-									: t('adapters.schedule.declaredNone'),
-							},
-							{ value: 'none', label: t('adapters.schedule.onDemand') },
-							{ value: 'custom', label: t('adapters.schedule.custom') },
-						]}
-						onChange={(value) => setScheduleMode(value as ScheduleMode)}
-					/>
-					@if (scheduleMode === 'custom') {
-						<FormField
-							label={t('adapters.form.cron')}
-							help={t('adapters.form.cronHelp')}
-							required
-						>
-							<input
-								class="ui-input ui-mono"
-								value={cron}
-								maxlength={100}
-								placeholder="0 6 * * 1-5"
+						<FormField label={t('adapters.form.enabled')}>
+							<Switch
+								checked={enabled}
+								label={t('adapters.form.enabled')}
 								disabled={saving}
-								onInput={(event) => setCron(event.currentTarget.value)}
+								onChange={setEnabled}
 							/>
 						</FormField>
-					}
-				</div>
-				<section class="ui-form__section">
-					<div class="ui-form__section-head">
-						<b>{t('adapters.mapping.title')}</b>
-						<small>
-							{adapter?.direction === 'sink'
-								? t('adapters.mapping.sinkHint')
-								: t('adapters.mapping.sourceHint')}
-						</small>
 					</div>
-					@if (drafts.length === 0) {
-						<EmptyState icon="braces" title={t('adapters.mapping.empty')} />
+					@if (selected && !selected.allowWorkflows) {
+						<Alert tone="warning">{t('adapters.form.consentHint')}</Alert>
 					}
-					@for (const entry of drafts; key entry.key) {
-						<>
-							<div class="ui-form__row">
-								@if (fields.length > 0) {
-									<Select
-										id={'adapters-to-' + entry.key}
-										label={t('adapters.mapping.to')}
-										value={entry.to}
-										disabled={saving}
-										options={[
-											{ value: '', label: t('adapters.mapping.choose') },
-											...fields.map(
-												(field) => ({
-													value: field.id,
-													label: field.required
-														? `${field.label} *`
-														: field.label,
-												}),
-											),
-										]}
-										onChange={(value) => update(entry.key, { to: value })}
-									/>
-								} @else {
-									<FormField label={t('adapters.mapping.to')}>
-										<input
-											class="ui-input ui-mono"
-											value={entry.to}
-											maxlength={200}
-											disabled={saving}
-											onInput={(event) => update(entry.key, {
-												to: event.currentTarget.value,
-											})}
-										/>
-									</FormField>
-								}
-								<Select
-									id={'adapters-transform-' + entry.key}
-									label={t('adapters.mapping.transform')}
-									value={entry.transform}
+					<div class="ui-form__row">
+						<Select
+							id="adapters-schedule"
+							label={t('adapters.form.schedule')}
+							value={scheduleMode}
+							disabled={saving}
+							options={[
+								{
+									value: 'declared',
+									label: adapter?.schedule
+										? t('adapters.schedule.declared', {
+												cron: adapter.schedule,
+											})
+										: t('adapters.schedule.declaredNone'),
+								},
+								{ value: 'none', label: t('adapters.schedule.onDemand') },
+								{ value: 'custom', label: t('adapters.schedule.custom') },
+							]}
+							onChange={(value) => setScheduleMode(value as ScheduleMode)}
+						/>
+						@if (scheduleMode === 'custom') {
+							<FormField
+								label={t('adapters.form.cron')}
+								help={t('adapters.form.cronHelp')}
+								required
+							>
+								<input
+									class="ui-input ui-mono"
+									value={cron}
+									maxlength={100}
+									placeholder="0 6 * * 1-5"
 									disabled={saving}
-									options={ADAPTER_TRANSFORMS.map(
-										(transform) => ({
-											value: transform,
-											label: t('adapters.transform.' + transform),
-										}),
-									)}
-									onChange={(value) => update(entry.key, {
-										transform: value as AdapterTransform,
-									})}
+									onInput={(event) => setCron(event.currentTarget.value)}
 								/>
-								@if (entry.transform !== 'constant') {
-									@if (columns.length > 0) {
+							</FormField>
+						}
+					</div>
+					<section class="ui-form__section">
+						<div class="ui-form__section-head">
+							<b>{t('adapters.mapping.title')}</b>
+							<small>
+								{adapter?.direction === 'sink'
+									? t('adapters.mapping.sinkHint')
+									: t('adapters.mapping.sourceHint')}
+							</small>
+						</div>
+						@if (drafts.length === 0) {
+							<EmptyState icon="braces" title={t('adapters.mapping.empty')} />
+						}
+						@for (const entry of drafts; key entry.key) {
+							<>
+								<div class="ui-form__row">
+									@if (fields.length > 0) {
 										<Select
-											id={'adapters-from-' + entry.key}
-											label={t('adapters.mapping.from')}
-											value={entry.from}
+											id={'adapters-to-' + entry.key}
+											label={t('adapters.mapping.to')}
+											value={entry.to}
 											disabled={saving}
 											options={[
 												{ value: '', label: t('adapters.mapping.choose') },
-												...columns.map(
-													(column) => ({
-														value: column.key,
-														label: column.header,
+												...fields.map(
+													(field) => ({
+														value: field.id,
+														label: field.required
+															? `${field.label} *`
+															: field.label,
 													}),
 												),
 											]}
-											onChange={(value) => update(entry.key, { from: value })}
+											onChange={(value) => update(entry.key, { to: value })}
 										/>
 									} @else {
-										<FormField label={t('adapters.mapping.from')}>
+										<FormField label={t('adapters.mapping.to')}>
 											<input
 												class="ui-input ui-mono"
-												value={entry.from}
+												value={entry.to}
 												maxlength={200}
 												disabled={saving}
 												onInput={(event) => update(entry.key, {
-													from: event.currentTarget.value,
+													to: event.currentTarget.value,
 												})}
 											/>
 										</FormField>
 									}
-								}
-								@if (entry.transform !== 'rename') {
-									<FormField
-										label={t('adapters.mapping.value.' + entry.transform)}
-										help={entry.transform === 'format'
-											? t('adapters.mapping.formatHelp')
-											: undefined}
+									<Select
+										id={'adapters-transform-' + entry.key}
+										label={t('adapters.mapping.transform')}
+										value={entry.transform}
+										disabled={saving}
+										options={ADAPTER_TRANSFORMS.map(
+											(transform) => ({
+												value: transform,
+												label: t('adapters.transform.' + transform),
+											}),
+										)}
+										onChange={(value) => update(entry.key, {
+											transform: value as AdapterTransform,
+										})}
+									/>
+									@if (entry.transform !== 'constant') {
+										@if (columns.length > 0) {
+											<Select
+												id={'adapters-from-' + entry.key}
+												label={t('adapters.mapping.from')}
+												value={entry.from}
+												disabled={saving}
+												options={[
+													{ value: '', label: t('adapters.mapping.choose') },
+													...columns.map(
+														(column) => ({
+															value: column.key,
+															label: column.header,
+														}),
+													),
+												]}
+												onChange={(value) => update(entry.key, { from: value })}
+											/>
+										} @else {
+											<FormField label={t('adapters.mapping.from')}>
+												<input
+													class="ui-input ui-mono"
+													value={entry.from}
+													maxlength={200}
+													disabled={saving}
+													onInput={(event) => update(entry.key, {
+														from: event.currentTarget.value,
+													})}
+												/>
+											</FormField>
+										}
+									}
+									@if (entry.transform !== 'rename') {
+										<FormField
+											label={t('adapters.mapping.value.' + entry.transform)}
+											help={entry.transform === 'format'
+												? t('adapters.mapping.formatHelp')
+												: undefined}
+										>
+											<input
+												class="ui-input ui-mono"
+												value={entry.value}
+												maxlength={2000}
+												disabled={saving}
+												onInput={(event) => update(entry.key, {
+													value: event.currentTarget.value,
+												})}
+											/>
+										</FormField>
+									}
+									<Button
+										size="sm"
+										variant="ghost"
+										disabled={saving}
+										onClick={() => setDrafts(
+											drafts.filter((other) => other.key !== entry.key),
+										)}
 									>
-										<input
-											class="ui-input ui-mono"
-											value={entry.value}
-											maxlength={2000}
+										<Icon name="x" size={14} />
+										{t('adapters.mapping.remove')}
+									</Button>
+								</div>
+								@if (entry.transform === 'lookup') {
+									<FormField
+										label={t('adapters.mapping.table')}
+										help={t('adapters.mapping.tableHelp')}
+									>
+										<textarea
+											class="ui-textarea ui-mono"
+											value={entry.table}
+											rows={4}
 											disabled={saving}
 											onInput={(event) => update(entry.key, {
-												value: event.currentTarget.value,
+												table: event.currentTarget.value,
 											})}
-										/>
+										></textarea>
 									</FormField>
 								}
-								<Button
-									size="sm"
-									variant="ghost"
-									disabled={saving}
-									onClick={() => setDrafts(
-										drafts.filter((other) => other.key !== entry.key),
-									)}
-								>
-									<Icon name="x" size={14} />
-									{t('adapters.mapping.remove')}
-								</Button>
-							</div>
-							@if (entry.transform === 'lookup') {
-								<FormField
-									label={t('adapters.mapping.table')}
-									help={t('adapters.mapping.tableHelp')}
-								>
-									<textarea
-										class="ui-textarea ui-mono"
-										value={entry.table}
-										rows={4}
-										disabled={saving}
-										onInput={(event) => update(entry.key, {
-											table: event.currentTarget.value,
-										})}
-									></textarea>
-								</FormField>
-							}
-						</>
+							</>
+						}
+						<div class="ui-form__actions">
+							<Button
+								size="sm"
+								disabled={saving}
+								onClick={() => setDrafts([...drafts, draftOf(null)])}
+							>
+								<Icon name="plus" size={14} />
+								{t('adapters.mapping.add')}
+							</Button>
+							<Button
+								size="sm"
+								variant="ghost"
+								disabled={saving || !adapter}
+								onClick={() =>
+									adapter && setDrafts(adapter.mapping.map(draftOf))}
+							>{t('adapters.mapping.reset')}</Button>
+						</div>
+					</section>
+					<section class="ui-form__section">
+						<div class="ui-form__section-head">
+							<b>{t('adapters.dryRun.title')}</b>
+							<small>{t('adapters.dryRun.description')}</small>
+						</div>
+						<div class="ui-form__actions">
+							<Button
+								size="sm"
+								disabled={previewing || saving}
+								onClick={() => void runPreview()}
+							>
+								{previewing
+									? t('adapters.dryRun.running')
+									: t('adapters.dryRun.run')}
+							</Button>
+						</div>
+						@if (previewError !== '') {
+							<Alert>{previewError}</Alert>
+						}
+						@if (preview) {
+							<Table
+								caption={t('adapters.dryRun.caption', {
+									read: preview.read,
+									shown: preview.rows.length,
+								})}
+								columns={previewColumns()}
+								rows={preview.rows}
+								rowKey={(row) => String(row.index)}
+								empty={{
+									icon: 'search',
+									title: t('adapters.dryRun.empty.title'),
+									hint: t('adapters.dryRun.empty.hint'),
+								}}
+							/>
+						}
+					</section>
+					@if (error !== '') {
+						<Alert>{error}</Alert>
 					}
-					<div class="ui-form__actions">
-						<Button
-							size="sm"
-							disabled={saving}
-							onClick={() => setDrafts([...drafts, draftOf(null)])}
-						>
-							<Icon name="plus" size={14} />
-							{t('adapters.mapping.add')}
-						</Button>
-						<Button
-							size="sm"
-							variant="ghost"
-							disabled={saving || !adapter}
-							onClick={() => adapter && setDrafts(adapter.mapping.map(draftOf))}
-						>{t('adapters.mapping.reset')}</Button>
-					</div>
-				</section>
-				<section class="ui-form__section">
-					<div class="ui-form__section-head">
-						<b>{t('adapters.dryRun.title')}</b>
-						<small>{t('adapters.dryRun.description')}</small>
-					</div>
-					<div class="ui-form__actions">
-						<Button
-							size="sm"
-							disabled={previewing || saving}
-							onClick={() => void runPreview()}
-						>
-							{previewing
-								? t('adapters.dryRun.running')
-								: t('adapters.dryRun.run')}
-						</Button>
-					</div>
-					@if (previewError !== '') {
-						<Alert>{previewError}</Alert>
-					}
-					@if (preview) {
-						<Table
-							caption={t('adapters.dryRun.caption', {
-								read: preview.read,
-								shown: preview.rows.length,
-							})}
-							columns={previewColumns()}
-							rows={preview.rows}
-							rowKey={(row) => String(row.index)}
-							empty={{
-								icon: 'search',
-								title: t('adapters.dryRun.empty.title'),
-								hint: t('adapters.dryRun.empty.hint'),
-							}}
-						/>
-					}
-				</section>
-				@if (error !== '') {
-					<Alert>{error}</Alert>
-				}
+				</div>
 			</div>
 			<div class="ui-drawer__foot">
 				<Button onClick={props.onClose}>{t('adapters.common.close')}</Button>

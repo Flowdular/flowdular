@@ -47,7 +47,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) @{
 					role="alertdialog"
 					aria-modal="true"
 					aria-label={props.title}
-					tabindex={-1}
+					tabIndex={-1}
 					ref={panelRef}
 					onClick={(event: MouseEvent) => event.stopPropagation()}
 				>

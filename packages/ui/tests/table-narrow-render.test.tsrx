@@ -85,28 +85,21 @@ describe('Table column priority', () => {
 			/>,
 		);
 		const table = mounted.container.querySelector('table') as HTMLTableElement;
+		expect(table.className).toBe('ui-table');
+		/* The first column is the row's identity and never hides. Details, the
+   last declared priority 3 column, hides first, at the width of every
+   column; Subject hides next, beside the expand button. */
+		const hidden = ['', '', 'ui-table__hide-600', 'ui-table__hide-760'];
+		expect(classesOf(mounted.container, 'col')).toEqual(hidden);
+		expect(classesOf(mounted.container, 'thead th')).toEqual(hidden);
+		expect(classesOf(mounted.container, 'tbody tr:first-child td')).toEqual(
+			hidden,
+		);
 		expect(
-			[...table.classList].filter((name) => name.startsWith('ui-table--')),
-		).toEqual(['ui-table--p3-760', 'ui-table--p2-600']);
-		/* The first column is the row's identity and never hides. */
-		expect(classesOf(mounted.container, 'col')).toEqual([
-			'',
-			'',
-			'ui-table__p2',
-			'ui-table__p3',
-		]);
-		expect(classesOf(mounted.container, 'thead th')).toEqual([
-			'',
-			'',
-			'ui-table__p2',
-			'ui-table__p3',
-		]);
-		expect(classesOf(mounted.container, 'tbody tr:first-child td')).toEqual([
-			'',
-			'',
-			'ui-table__p2',
-			'ui-table__p3',
-		]);
+			mounted.container.querySelector(
+				'tbody tr:first-child .ui-table__toggle',
+			)?.className,
+		).toBe('ui-table__toggle ui-table__reveal-760');
 		mounted.unmount();
 	});
 
@@ -148,16 +141,21 @@ describe('Table column priority', () => {
 		expect(details.querySelector('td')?.getAttribute('colspan')).toBe('2');
 		const entries = [...details.querySelectorAll('.ui-table__detail')].map(
 			(entry) => ({
-				priority: entry.classList.contains('ui-table__detail--p3') ? 3 : 2,
+				reveal: entry.className,
 				label: text(entry.querySelector('dt')),
 				value: text(entry.querySelector('dd')),
 				title: entry.querySelector('dd .ui-cell-text')?.getAttribute('title'),
 			}),
 		);
 		expect(entries).toEqual([
-			{ priority: 2, label: 'Subject', value: 'account', title: 'account' },
 			{
-				priority: 3,
+				reveal: 'ui-table__detail ui-table__reveal-600',
+				label: 'Subject',
+				value: 'account',
+				title: 'account',
+			},
+			{
+				reveal: 'ui-table__detail ui-table__reveal-760',
 				label: 'Details',
 				value: 'ip: 127.0.0.1',
 				title: 'ip: 127.0.0.1',
@@ -185,6 +183,46 @@ describe('Table column priority', () => {
 		);
 		mounted.unmount();
 	});
+	it(
+		'spans the loading and empty rows over the columns that never hide',
+		async () => {
+			const mounted = await mount(
+				<Table
+					columns={COLUMNS}
+					rows={[]}
+					rowKey={(row) => row.id}
+					empty={EMPTY}
+				/>,
+			);
+			/* Actor and Action never hide; a span over Subject and Details would grow
+   columns the header does not cover once they hide. */
+			const empty = mounted.container.querySelector(
+				'tr.ui-table__placeholder td',
+			) as HTMLElement;
+			expect(empty.getAttribute('colspan')).toBe('2');
+			expect(
+				text(empty.querySelector('.ui-table__placeholder-body')),
+			).toContain('No events');
+			await mounted.render(
+				<Table
+					columns={COLUMNS}
+					rows={[]}
+					rowKey={(row) => row.id}
+					status="loading"
+					loadingLabel="Loading events"
+					empty={EMPTY}
+				/>,
+			);
+			const loading = mounted.container.querySelector(
+				'tr.ui-table__placeholder td',
+			) as HTMLElement;
+			expect(loading.getAttribute('colspan')).toBe('2');
+			expect(text(loading.querySelector('.ui-table__placeholder-body'))).toBe(
+				'Loading events',
+			);
+			mounted.unmount();
+		},
+	);
 });
 
 describe('Table clickable rows', () => {
@@ -270,6 +308,53 @@ describe('Table row actions', () => {
 			mounted.unmount();
 		},
 	);
+
+	it('grows the action column to its widest buttons', async () => {
+		const offsetWidth = Object.getOwnPropertyDescriptor(
+			HTMLElement.prototype,
+			'offsetWidth',
+		);
+		Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+			configurable: true,
+			get(this: HTMLElement) {
+				return this.classList.contains('ui-table-action-buttons') ? 310 : 0;
+			},
+		});
+		try {
+			const mounted = await mount(
+				<Table
+					columns={COLUMNS}
+					rows={EVENTS}
+					rowKey={(row) => row.id}
+					actions={actionsOf(2, [])}
+					actionsLabel="Actions"
+					actionsWidth="236px"
+					empty={EMPTY}
+				/>,
+			);
+			const table = mounted.container.querySelector(
+				'table',
+			) as HTMLTableElement;
+			const cell = getComputedStyle(
+				table.querySelector('td.ui-table__actions') as HTMLElement,
+			);
+			const padding =
+				(parseFloat(cell.paddingLeft) || 0) +
+				(parseFloat(cell.paddingRight) || 0);
+			/* A longer translation measures wider than the declared width. */
+			expect(table.getAttribute('style')).toContain(
+				'--ui-table-actions-width: ' + String(310 + padding) + 'px',
+			);
+			expect(table.classList.contains('ui-table--fold-960')).toBe(true);
+			mounted.unmount();
+		} finally {
+			if (offsetWidth) Object.defineProperty(
+				HTMLElement.prototype,
+				'offsetWidth',
+				offsetWidth,
+			);
+		}
+	});
 
 	it(
 		'folds more than two actions into a menu that runs one and closes',

@@ -4524,12 +4524,15 @@ export interface TableLayoutInput {
 }
 export interface TableLayout {
     readonly classes: readonly string[];
+    readonly hideSteps: readonly (number | undefined)[];
+    readonly revealStep: number | undefined;
     readonly minWidth: number;
     readonly collapsible: boolean;
     readonly actionsWidth: number;
 }
 export declare function columnPx(width: string | undefined, flexible: number): number;
 export declare function tableStep(width: number): number;
+export declare function hideOrder(columns: readonly TableLayoutColumn[]): number[];
 export declare function tableLayout(input: TableLayoutInput): TableLayout;
 export declare function actionsFold(most: number): TableActionsFold;
 
