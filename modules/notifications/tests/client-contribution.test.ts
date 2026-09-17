@@ -206,7 +206,7 @@ describe('notifications client copy', () => {
 				/* A trailing dot is a prefix the screen completes at run time; the
 				   closed sets below cover those. */
 				if (key.endsWith('.')) continue;
-				expect(t(key), `${locale}: ${key}`).not.toBe(key);
+				expect(t(key, { count: 1 }), `${locale}: ${key}`).not.toBe(key);
 			}
 		}
 	});

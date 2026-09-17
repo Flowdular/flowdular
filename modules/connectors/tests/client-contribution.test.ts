@@ -110,7 +110,7 @@ describe('connectors client contribution', () => {
 				/* A trailing dot is a prefix the screen completes at run time; the
 				   closed sets are covered by the translations suite. */
 				if (key.endsWith('.')) continue;
-				expect(t(key), `${locale}: ${key}`).not.toBe(key);
+				expect(t(key, { count: 1 }), `${locale}: ${key}`).not.toBe(key);
 			}
 		}
 		setActiveLocale('en');

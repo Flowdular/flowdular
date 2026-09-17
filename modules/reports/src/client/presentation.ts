@@ -51,6 +51,14 @@ export function resolvedLabel(
 	return translated === key ? label : translated;
 }
 
+/** A tile's unit in the reader's locale, agreeing with the tile's value. */
+export function resolvedUnit(translate: Translate, tile: ReportTile): string {
+	const fallback = tile.unit ?? '';
+	if (tile.unitKey === undefined || tile.unitKey === '') return fallback;
+	const translated = translate(tile.unitKey, { count: tile.value });
+	return translated === tile.unitKey ? fallback : translated;
+}
+
 /**
  * What one report card says under its name: the period the provider answered
  * for when it named one, and otherwise the range the request asked for.

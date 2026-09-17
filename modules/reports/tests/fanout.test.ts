@@ -423,6 +423,8 @@ describe('REPORTS-LABELS', () => {
 										label: 'Runs',
 										tileLabelKey: 'agents.report.runs.tile.runs',
 										value: 3,
+										unit: 'runs',
+										unitKey: 'agents.report.runs.unit.runs',
 									},
 								],
 								series: [
@@ -448,6 +450,9 @@ describe('REPORTS-LABELS', () => {
 		expect(page.reports[0]!.labelKey).toBe('agents.report.runs.label');
 		expect(page.reports[0]!.tiles[0]!.tileLabelKey).toBe(
 			'agents.report.runs.tile.runs',
+		);
+		expect(page.reports[0]!.tiles[0]!.unitKey).toBe(
+			'agents.report.runs.unit.runs',
 		);
 		expect(page.reports[0]!.series[0]!.seriesLabelKey).toBe(
 			'agents.report.runs.series.runs',

@@ -85,6 +85,10 @@ entities:
       - id: unit
         type: string
         maxLength: 32
+      - id: unitKey
+        type: string
+        maxLength: 96
+        description: Plural family key into the provider module's own translation bundle, asked with the tile value as the count and rendered instead of unit when the reader's locale carries it.
       - id: delta
         type: decimal
         description: Change against the provider's own comparison period, when the provider states one.

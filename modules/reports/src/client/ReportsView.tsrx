@@ -20,6 +20,7 @@ import {
 	rangeTooWide,
 	reportCaption,
 	resolvedLabel,
+	resolvedUnit,
 	screenSurface,
 } from './presentation.ts';
 import { createReportsClientState } from './state.ts';
@@ -191,7 +192,7 @@ export function ReportsView(_props: ReportsViewProps) @{
 														tile.tileLabelKey,
 													)}
 													value={numberLabel(locale, tile.value)}
-													unit={tile.unit ?? ''}
+													unit={resolvedUnit(t, tile)}
 													note={tile.delta === undefined
 														? ''
 														: t('reports.tile.delta', {

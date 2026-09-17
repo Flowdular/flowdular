@@ -69,6 +69,7 @@ function readTile(value: ReportTile, provider: string): ReportTile {
 		tileLabelKey?: string;
 		value: number;
 		unit?: string;
+		unitKey?: string;
 		delta?: number;
 	} = {
 		key: bounded(value?.key, 'tile key', 1, REPORT_PROVIDER_LIMITS.key),
@@ -89,6 +90,14 @@ function readTile(value: ReportTile, provider: string): ReportTile {
 			'tile unit',
 			0,
 			REPORT_PROVIDER_LIMITS.unit,
+		);
+	}
+	if (value.unitKey !== undefined && value.unitKey !== null) {
+		tile.unitKey = bounded(
+			value.unitKey,
+			'tile unit key',
+			1,
+			REPORT_PROVIDER_LIMITS.key,
 		);
 	}
 	if (value.delta !== undefined && value.delta !== null) {
