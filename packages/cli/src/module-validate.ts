@@ -20,6 +20,7 @@ import {
 	validators,
 	type FileValidation,
 } from './validation.ts';
+import { domPropertyMisspellings } from './dom-properties.ts';
 import { findModuleFiles } from './module-files.ts';
 import type { Workspace } from './workspace.ts';
 
@@ -396,6 +397,20 @@ async function userInterfaceIssues(
 				issue(
 					'TANSTACK_TABLE_DIRECT_IMPORT',
 					'Modules use the shared Table contract from @flowdular/ui; TanStack configuration belongs to the UI package.',
+					path,
+				),
+			);
+		}
+		const misspelled = domPropertyMisspellings(source);
+		if (misspelled.length > 0) {
+			issues.push(
+				issue(
+					'DOM_PROPERTY_CASING',
+					'Host elements use Octane\'s DOM property spelling: ' +
+						misspelled
+							.map((found) => `line ${found.line} ${found.name} as ${found.expected}`)
+							.join(', ') +
+						'.',
 					path,
 				),
 			);
