@@ -2,6 +2,9 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	CellStack,
+	CellText,
+	CellTime,
 	Drawer,
 	FormField,
 	Icon,
@@ -31,20 +34,18 @@ function columns(): readonly TableColumn<Note>[] {
 		{
 			key: 'note',
 			header: t('example.table.column.note'),
-			width: '70%',
-			cell: (note) => <span class="ui-cell">
-				<b>{note.title}</b>
-				<span class="ui-cell__muted">{note.body}</span>
-			</span>,
+			width: 'auto',
+			cell: (note) =>
+				<CellStack
+					primary={note.title}
+					secondary={<CellText value={note.body} muted />}
+				/>,
 		},
 		{
 			key: 'created',
 			header: t('example.table.column.created'),
-			width: '30%',
-			cell: (note) => new Intl.DateTimeFormat(activeLocale(), {
-				dateStyle: 'medium',
-				timeStyle: 'short',
-			}).format(new Date(note.createdAt)),
+			width: '170px',
+			cell: (note) => <CellTime value={note.createdAt} />,
 		},
 	];
 }

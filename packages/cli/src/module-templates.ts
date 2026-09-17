@@ -1563,42 +1563,105 @@ export function create${names.pascal}ClientState() {
 
 /* The identity column keeps the width the rest do not need, so a table stays
    readable as columns are added. */
-function columnWidth(index: number, count: number): string {
-	if (count < 2) return '100%';
-	const rest = Math.max(1, Math.floor(35 / (count - 1)));
-	return index === 0 ? `${Math.max(1, 100 - rest * (count - 1))}%` : `${rest}%`;
+interface ScaffoldCell {
+	readonly component: string;
+	readonly markup: string;
+	readonly width: string;
+	readonly priority: 1 | 2 | 3;
+	readonly numeric: boolean;
 }
 
-function cellValue(field: ScaffoldField, namespace: string): string {
+/* One typed cell per field type, with the widths and priorities the design
+   system gives that kind of value; the first column is the record's identity
+   and takes the rest of the row. */
+function scaffoldCell(
+	field: ScaffoldField,
+	namespace: string,
+	index: number,
+): ScaffoldCell {
 	const access = `record.${field.id}`;
-	if (field.type === 'enum') {
-		const label = `t('${namespace}.${field.id}.' + ${access})`;
-		return field.required ? label : `${access} === null ? '' : ${label}`;
+	const identity = index === 0;
+	const priority = identity || field.state ? 1 : 2;
+	const cell = (
+		component: string,
+		props: string,
+		width: string,
+		fieldPriority: 1 | 2 | 3 = priority,
+		numeric = false,
+	): ScaffoldCell => ({
+		component,
+		markup: `<${component} ${props} />`,
+		width: identity ? 'auto' : width,
+		priority: identity ? 1 : fieldPriority,
+		numeric,
+	});
+	switch (field.type) {
+		case 'enum':
+			return cell(
+				'CellTag',
+				`label={t('${namespace}.${field.id}.' + ${access})}` +
+					(field.state ? ' dot' : ''),
+				'140px',
+			);
+		case 'integer':
+		case 'decimal':
+			return cell('CellNumber', `value={${access}}`, '120px', priority, true);
+		case 'boolean':
+			return cell('CellText', `value={String(${access})}`, '100px');
+		case 'date':
+			return cell('CellTime', `value={${access}} kind="date"`, '140px');
+		case 'datetime':
+			return cell('CellTime', `value={${access}}`, '170px');
+		case 'reference':
+			return cell('CellCode', `value={${access}}`, '160px', 3);
+		case 'json':
+			return cell(
+				'CellText',
+				`value={JSON.stringify(${access})} mono`,
+				'200px',
+				3,
+			);
+		case 'text':
+			return cell('CellText', `value={${access}} wrap muted`, '240px', 3);
+		default:
+			return cell(
+				'CellText',
+				`value={${access}}` + (identity ? ' strong' : ''),
+				'200px',
+			);
 	}
-	if (field.type === 'json') return `JSON.stringify(${access})`;
-	if (field.type === 'integer' || field.type === 'boolean') {
-		return field.required
-			? `String(${access})`
-			: `${access} === null ? '' : String(${access})`;
-	}
-	return field.required ? access : `${access} ?? ''`;
+}
+
+function scaffoldCells(model: ScaffoldModel): readonly ScaffoldCell[] {
+	return model.columns.map((field, index) =>
+		scaffoldCell(field, model.names.namespace, index),
+	);
+}
+
+/* The cell components a list screen imports: every typed cell its columns use,
+   and CellMuted when an optional value can be missing. */
+function cellImports(model: ScaffoldModel): readonly string[] {
+	const names = new Set(scaffoldCells(model).map((cell) => cell.component));
+	if (model.columns.some((field) => !field.required)) names.add('CellMuted');
+	return [...names].sort();
 }
 
 function tableColumns(model: ScaffoldModel): string {
 	const { columns, names } = model;
+	const cells = scaffoldCells(model);
 	return columns
 		.map((field, index) => {
-			const value = cellValue(field, names.namespace);
-			const cell = index === 0 ? `<b>{${value}}</b>` : value;
-			const numeric =
-				field.type === 'integer' || field.type === 'decimal'
-					? '\t\t\tnumeric: true,\n'
-					: '';
+			const cell = cells[index]!;
+			const markup = field.required
+				? cell.markup
+				: `record.${field.id} === null
+				? <CellMuted>{t('${names.namespace}.value.none')}</CellMuted>
+				: ${cell.markup}`;
 			return `\t\t{
 			key: '${field.id}',
 			header: t('${names.namespace}.table.column.${field.id}'),
-			width: '${columnWidth(index, columns.length)}',
-${numeric}			cell: (record) => ${cell},
+			width: '${cell.width}',
+${cell.priority > 1 ? `\t\t\tpriority: ${cell.priority},\n` : ''}${cell.numeric ? '\t\t\tnumeric: true,\n' : ''}			cell: (record) => ${markup},
 		},\n`;
 		})
 		.join('');
@@ -1634,7 +1697,9 @@ import { t } from '@flowdular/client';
 import {
 	Alert,
 	Button,
-	Icon,
+${cellImports(model)
+	.map((name) => `\t${name},\n`)
+	.join('')}	Icon,
 	PageHeader,
 	TableCard,
 	type TableColumn,
@@ -2082,6 +2147,7 @@ function translation(
 ): string {
 	const columns = columnLabels(model, locale);
 	const values = valueLabels(model, locale);
+	const optional = model.columns.some((field) => !field.required);
 	if (locale === 'pl') {
 		return json({
 			'module.name': `Moduł ${name}`,
@@ -2102,6 +2168,7 @@ function translation(
 			'table.emptyTitle': 'Brak rekordów',
 			'table.emptyHint': 'Utworzone rekordy pojawią się w tym miejscu.',
 			...values,
+			...(optional ? { 'value.none': 'Brak' } : {}),
 			'error.load': 'Nie udało się wczytać rekordów.',
 			'error.request': 'Operacja na rekordach nie powiodła się.',
 		});
@@ -2127,6 +2194,7 @@ function translation(
 		'table.emptyTitle': 'No records yet',
 		'table.emptyHint': 'Records created in this workspace appear here.',
 		...values,
+		...(optional ? { 'value.none': 'None' } : {}),
 		'error.load': 'Could not load records.',
 		'error.request': 'The records operation failed.',
 	});
