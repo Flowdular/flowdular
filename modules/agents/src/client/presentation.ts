@@ -48,15 +48,11 @@ export function cadenceLabel(minutes: number): string {
 	}
 	if (minutes % 1_440 === 0) {
 		const days = minutes / 1_440;
-		return t(days === 1 ? 'agents.cadence.day' : 'agents.cadence.days', {
-			count: days,
-		});
+		return t('agents.cadence.days', { count: days });
 	}
 	if (minutes % 60 === 0) {
 		const hours = minutes / 60;
-		return t(hours === 1 ? 'agents.cadence.hour' : 'agents.cadence.hours', {
-			count: hours,
-		});
+		return t('agents.cadence.hours', { count: hours });
 	}
 	return t('agents.cadence.hoursMinutes', {
 		hours: Math.floor(minutes / 60),

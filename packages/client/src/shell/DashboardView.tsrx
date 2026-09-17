@@ -32,12 +32,9 @@ export function DashboardView(props: DashboardViewProps) @{
 			<div class="ui-card__head">
 				<span class="ui-card__title">
 					{t('shell.dashboard.steps.title')}
-					<small>{t(
-						mainWidgets.length === 1
-							? 'shell.dashboard.steps.count.one'
-							: 'shell.dashboard.steps.count.other',
-						{ count: mainWidgets.length },
-					)}</small>
+					<small>{t('shell.dashboard.steps.count', {
+						count: mainWidgets.length,
+					})}</small>
 				</span>
 			</div>
 			<div class="ui-card__body">

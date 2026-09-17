@@ -40,12 +40,10 @@ export function OrganizationSwitcher(props: OrganizationSwitcherProps) @{
 			<Avatar name={activeTenantName} square />
 			<span class="org-switcher__copy">
 				<b>{activeTenantName}</b>
-				<small>{t(
-					props.identity.tenants.length === 1
-						? 'shell.org.summary.one'
-						: 'shell.org.summary.other',
-					{ role: activeTenantRole, count: props.identity.tenants.length },
-				)}</small>
+				<small>{t('shell.org.summary', {
+					role: activeTenantRole,
+					count: props.identity.tenants.length,
+				})}</small>
 			</span>
 			<Icon name="chevrons-up-down" size={16} />
 		</button>

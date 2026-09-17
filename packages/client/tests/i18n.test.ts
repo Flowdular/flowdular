@@ -136,7 +136,18 @@ describe('plural selection', () => {
 		expect(count(2)).toBe('2 dokumenty');
 		expect(count(5)).toBe('5 dokumentów');
 		expect(count(22)).toBe('22 dokumenty');
-		expect(count(1.5)).toBe('1.5 dokumentu');
+		expect(count(1.5)).toBe('1,5 dokumentu');
+	});
+
+	it('writes the count in the active locale number format', () => {
+		const english = createTranslationCatalog(PLURALS, 'en', FALLBACK_LOCALE);
+		const polish = createTranslationCatalog(PLURALS, 'pl', FALLBACK_LOCALE);
+		expect(
+			translateFrom(english, 'documents.table.count', { count: 12_345 }),
+		).toBe('12,345 documents');
+		expect(translateFrom(polish, 'documents.rows.count', { count: 12_345 })).toBe(
+			'12\u00a0345 rows',
+		);
 	});
 
 	it('falls back to the fallback locale family, then to the base key', () => {

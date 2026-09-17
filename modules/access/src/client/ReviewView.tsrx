@@ -359,7 +359,7 @@ export function ReviewView(props: ReviewViewProps) @{
 	const note =
 		capped
 			? t('access.review.cappedNote', {
-					count: numberLabel(
+					count:
 						tab === 'members'
 							? ACCESS_LIMITS.members
 							: tab === 'roles'
@@ -367,7 +367,6 @@ export function ReviewView(props: ReviewViewProps) @{
 								: tab === 'tokens'
 									? ACCESS_LIMITS.tokens
 									: ACCESS_LIMITS.providers,
-					),
 				})
 			: t('access.review.note');
 

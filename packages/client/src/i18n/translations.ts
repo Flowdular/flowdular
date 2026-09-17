@@ -74,6 +74,7 @@ export function createTranslationCatalog(
 }
 
 const pluralRules = new Map<string, Intl.PluralRules>();
+const countFormats = new Map<string, Intl.NumberFormat>();
 
 function pluralTemplate(
 	strings: ReadonlyMap<string, string>,
@@ -93,12 +94,22 @@ function pluralTemplate(
 	);
 }
 
+function formattedCount(locale: string, count: number): string {
+	let format = countFormats.get(locale);
+	if (format === undefined) {
+		format = new Intl.NumberFormat(locale);
+		countFormats.set(locale, format);
+	}
+	return format.format(count);
+}
+
 /**
  * Resolve a fully qualified key (`catalog.list.title`) through the fallback
  * chain: the active locale, then the fallback locale, then the key itself so a
  * missing string shows up on screen instead of rendering blank. A numeric
  * `count` first asks each locale for its plural family member, so a locale's
- * own family wins over the fallback's.
+ * own family wins over the fallback's, and is written in the active locale's
+ * number format.
  */
 export function translateFrom(
 	catalog: TranslationCatalog,
@@ -106,10 +117,18 @@ export function translateFrom(
 	params?: TranslationParams,
 ): string {
 	const count = params?.count;
+	if (typeof count !== 'number') {
+		return interpolate(
+			catalog.active.get(key) ?? catalog.fallback.get(key) ?? key,
+			params,
+		);
+	}
 	const template =
-		typeof count === 'number'
-			? (pluralTemplate(catalog.active, catalog.locale, key, count) ??
-				pluralTemplate(catalog.fallback, catalog.fallbackLocale, key, count))
-			: (catalog.active.get(key) ?? catalog.fallback.get(key));
-	return interpolate(template ?? key, params);
+		pluralTemplate(catalog.active, catalog.locale, key, count) ??
+		pluralTemplate(catalog.fallback, catalog.fallbackLocale, key, count) ??
+		key;
+	return interpolate(template, {
+		...params,
+		count: formattedCount(catalog.locale, count),
+	});
 }

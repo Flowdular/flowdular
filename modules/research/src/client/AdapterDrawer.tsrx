@@ -19,7 +19,6 @@ import {
 	attemptOutcomeTone,
 	durationLabel,
 	errorCodeLabel,
-	numberLabel,
 } from './presentation.ts';
 
 export interface AdapterDrawerProps {
@@ -370,7 +369,7 @@ export function AdapterDrawer(props: AdapterDrawerProps) @{
 								>{t('research.adapters.test.outcome.' + result.outcome)}</Tag>
 								<span class="num">{durationLabel(result.durationMs)}</span>
 								<span>{t('research.adapters.test.results', {
-									count: numberLabel(result.resultCount),
+									count: result.resultCount,
 								})}</span>
 								@if (result.errorCode !== null) {
 									<p class="ui-help ui-help--error">{errorCodeLabel(

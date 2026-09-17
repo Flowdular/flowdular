@@ -95,8 +95,9 @@ describe('auth translations', () => {
 		for (const status of ['active', 'expired', 'revoked']) {
 			expect(t('auth.tokens.status.' + status)).not.toMatch(/^auth\./);
 		}
-		expect(t('auth.tokens.scope.one')).toBe('1 zakres');
-		expect(t('auth.tokens.scope.other', { count: 2 })).toBe('Zakresy: 2');
+		expect(t('auth.tokens.scope', { count: 1 })).toBe('1 zakres');
+		expect(t('auth.tokens.scope', { count: 2 })).toBe('2 zakresy');
+		expect(t('auth.tokens.scope', { count: 5 })).toBe('5 zakresów');
 		for (const source of ['platform', 'agents', 'sandbox']) {
 			expect(t('auth.audit.source.' + source)).not.toMatch(/^auth\./);
 		}

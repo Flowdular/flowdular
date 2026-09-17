@@ -44,8 +44,9 @@ const SPEC_FIELD_LABELS = [
 	'scenario',
 ] as const;
 
+/* A plural family resolves only with a count, which is how its call site asks. */
 function expectTranslated(key: string): void {
-	expect(t(key), key).not.toBe(key);
+	expect(t(key, { count: 1 }), key).not.toBe(key);
 }
 
 function sourceFiles(directory: string): readonly string[] {
@@ -116,9 +117,6 @@ describe('sandbox translations', () => {
 			}
 			for (const target of ['target.workspace', 'target.gitPr']) {
 				expectTranslated('sandbox.eject.' + target);
-			}
-			for (const count of ['one', 'other']) {
-				expectTranslated('sandbox.eject.deliveredVerb.' + count);
 			}
 		}
 		setActiveLocale('en');
