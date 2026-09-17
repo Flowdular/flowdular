@@ -118,7 +118,7 @@ export function OverviewCharts() @{
 							<p class="dash-chart__note">{t(
 								'shell.overview.activity.loading',
 							)}</p>
-						} @else if (activeDays <= 1) {
+						} @else if (activeDays === 0) {
 							<EmptyState
 								icon="activity"
 								title={t('shell.overview.activity.empty.title')}

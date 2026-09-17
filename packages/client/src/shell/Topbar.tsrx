@@ -27,7 +27,12 @@ export function Topbar(props: TopbarProps) @{
 			<i aria-hidden="true">/</i>
 			<b>{props.activeLabel}</b>
 		</div>
-		<button class="topbar__search" type="button" onClick={props.onOpenCommand}>
+		<button
+			class="topbar__search"
+			type="button"
+			aria-label={t('shell.topbar.search')}
+			onClick={props.onOpenCommand}
+		>
 			<Icon name="search" size={16} />
 			<span>{t('shell.topbar.search')}</span>
 			<span class="ui-kbd">⌘K</span>
