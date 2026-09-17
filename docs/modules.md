@@ -153,7 +153,10 @@ pnpm --filter @flowdular/module-<dir> test
 `module validate` checks more than the schema: `platform.server` requires
 `src/platform.ts` and a `./platform` export, `platform.client` requires
 `src/client/index.ts` and a `./client` export, and every declared locale needs a
-`translations/<locale>.json` with the same key set as the others (an error).
+`translations/<locale>.json` with the same key set as the others (an error). A
+plural family such as `count.one`/`count.other` in `en` and
+`count.one`/`count.few`/`count.many`/`count.other` in `pl` counts as one key,
+and each locale must carry the categories its plural rules select.
 `module.json` version drift against `specVersion`, or a locale missing from
 `flowdular.json`, is reported as a warning.
 
