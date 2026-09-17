@@ -83,7 +83,7 @@
 	"settings.emptyValue": "Puste",
 	"settings.mailTransportRequired": "Potwierdzanie adresu e-mail wymaga skonfigurowanej usługi wysyłki wiadomości.",
 	"settings.mfaKeyRequired": "Wymagane uwierzytelnianie dwuskładnikowe potrzebuje klucza szyfrującego MFA skonfigurowanego we wdrożeniu.",
-	"settings.timeZone.label": "Strefa czasowa obszaru roboczego",
+	"settings.timeZone.label": "Strefa czasowa przestrzeni roboczej",
 	"settings.timeZone.description": "Nazwa strefy IANA, na przykład Europe/Warsaw. Moduły, które pokazują lub planują czas lokalny, odczytują tę wartość; domyślnie UTC.",
 	"activation.notComposed": "Ten moduł nie jest włączony w aplikacji; najpierw włącz go przez CLI.",
 	"activation.deniedManage": "Zmiana aktywacji modułu wymaga zakresu system.settings.manage.",

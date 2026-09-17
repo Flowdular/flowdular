@@ -294,6 +294,7 @@
 	"runs.search.placeholder": "Search by agent name or run id",
 	"runs.search.label": "Search agent runs",
 	"runs.filter.status": "Status",
+	"runs.filter.label": "Filters",
 	"runs.filter.allStatuses": "All statuses",
 	"runs.filter.agent": "Agent",
 	"runs.filter.allAgents": "All agents",
@@ -411,6 +412,10 @@
 	"report.runs.label": "Agent runs",
 	"report.runs.tile.runs": "Runs",
 	"report.runs.tile.tokens": "Tokens",
+	"report.runs.unit.runs.one": "run",
+	"report.runs.unit.runs.other": "runs",
+	"report.runs.unit.tokens.one": "token",
+	"report.runs.unit.tokens.other": "tokens",
 	"report.runs.series.runsPerDay": "Runs per day",
 	"report.runs.series.tokensPerDay": "Tokens per day"
 }

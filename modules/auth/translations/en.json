@@ -96,6 +96,7 @@
 	"audit.search.placeholder": "Search actor, action, or subject",
 	"audit.search.label": "Search audit events",
 	"audit.filter.action": "Action",
+	"audit.filter.label": "Filters",
 	"audit.filter.allActions": "All actions",
 	"audit.filter.actor": "Actor",
 	"audit.filter.actorPlaceholder": "Email or actor id",

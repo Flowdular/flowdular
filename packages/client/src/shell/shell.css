@@ -390,10 +390,7 @@
 .org-switcher__copy small {
 	font-size: var(--text-xs);
 	color: var(--ink-3);
-	text-transform: capitalize;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+	overflow-wrap: anywhere;
 }
 
 .org-switcher__menu {

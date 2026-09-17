@@ -22,6 +22,7 @@ import {
 	updateRole,
 	type RoleDraft,
 } from './roles-api.ts';
+import { roleDescription, roleName } from './role-label.ts';
 
 export interface RolesViewProps {
 	readonly csrfToken: string;
@@ -257,8 +258,8 @@ function RoleCard(props: {
 	<section class="ui-card">
 		<div class="ui-card__head">
 			<span class="ui-card__title">
-				{props.role.name}
-				<small>{props.role.description || props.role.key}</small>
+				{roleName(props.role)}
+				<small>{roleDescription(props.role) || props.role.key}</small>
 			</span>
 			<span class="ui-card__actions">
 				<Tag>{t('users.roles.scopeCount', {

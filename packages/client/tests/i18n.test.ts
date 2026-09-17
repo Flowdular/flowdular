@@ -219,6 +219,18 @@ describe('shell bundle', () => {
 		expect(pluralFamilyIssues(shellPl, 'pl')).toEqual([]);
 	});
 
+	it('names the built-in role and counts workspaces in the switcher line', () => {
+		registerModuleTranslations([]);
+		setActiveLocale('pl');
+		const summary = (count: number) =>
+			t('shell.org.summary', { role: t('shell.org.role.owner'), count });
+		expect(summary(1)).toBe('Właściciel · 1 przestrzeń robocza');
+		expect(summary(2)).toBe('Właściciel · 2 przestrzenie robocze');
+		expect(summary(5)).toBe('Właściciel · 5 przestrzeni roboczych');
+		setActiveLocale('en');
+		expect(summary(2)).toBe('Owner · 2 workspaces');
+	});
+
 	it('translates every dynamic navigation group in every locale', () => {
 		registerModuleTranslations([]);
 		for (const locale of ['en', 'pl']) {

@@ -185,7 +185,7 @@
 	"inspector.failRun": "Zakończ wykonanie błędem",
 	"inspector.schema": "Schemat walidacji",
 	"inspector.approvalRole": "Rola decydująca",
-	"inspector.approvalRoleHelp": "Rola w obszarze roboczym. Jej członkowie mogą decydować; rola musi istnieć przy publikacji przepływu.",
+	"inspector.approvalRoleHelp": "Rola w przestrzeni roboczej. Jej członkowie mogą decydować; rola musi istnieć przy publikacji przepływu.",
 	"inspector.approvalScope": "Uprawnienie decydujące",
 	"inspector.approvalScopeHelp": "Opcjonalne. Członkowie muszą dodatkowo mieć to uprawnienie.",
 	"inspector.approvalDecisions": "Wymagane akceptacje",

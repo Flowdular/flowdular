@@ -17,6 +17,7 @@ import {
 } from '@flowdular/module-auth/client';
 import { cell, createStore, useValue } from 'segment-state';
 import type { UsersContext } from '../services/users-service.ts';
+import { roleName } from './role-label.ts';
 
 export interface MemberDrawerProps {
 	readonly member: TenantMember;
@@ -282,7 +283,7 @@ function MemberRoleSection(props: {
 						<option
 							value={role.key}
 							selected={role.key === props.member.role}
-						>{role.name}</option>
+						>{roleName(role)}</option>
 					}
 				}
 			</select>

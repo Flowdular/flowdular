@@ -52,6 +52,8 @@
 	"nav.toggle": "Toggle navigation",
 	"org.available": "Available workspaces",
 	"org.close": "Close workspace selector",
+	"org.role.member": "Member",
+	"org.role.owner": "Owner",
 	"org.summary.one": "{role} · {count} workspace",
 	"org.summary.other": "{role} · {count} workspaces",
 	"org.switch": "Switch workspace",

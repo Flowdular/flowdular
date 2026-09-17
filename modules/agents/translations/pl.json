@@ -298,6 +298,7 @@
 	"runs.search.placeholder": "Szukaj po nazwie agenta lub identyfikatorze uruchomienia",
 	"runs.search.label": "Szukaj uruchomień agentów",
 	"runs.filter.status": "Status",
+	"runs.filter.label": "Filtry",
 	"runs.filter.allStatuses": "Wszystkie statusy",
 	"runs.filter.agent": "Agent",
 	"runs.filter.allAgents": "Wszyscy agenci",
@@ -421,6 +422,14 @@
 	"report.runs.label": "Uruchomienia agentów",
 	"report.runs.tile.runs": "Uruchomienia",
 	"report.runs.tile.tokens": "Tokeny",
+	"report.runs.unit.runs.one": "uruchomienie",
+	"report.runs.unit.runs.few": "uruchomienia",
+	"report.runs.unit.runs.many": "uruchomień",
+	"report.runs.unit.runs.other": "uruchomienia",
+	"report.runs.unit.tokens.one": "token",
+	"report.runs.unit.tokens.few": "tokeny",
+	"report.runs.unit.tokens.many": "tokenów",
+	"report.runs.unit.tokens.other": "tokena",
 	"report.runs.series.runsPerDay": "Uruchomienia dziennie",
 	"report.runs.series.tokensPerDay": "Tokeny dziennie"
 }
