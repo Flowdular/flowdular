@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: adapters.core
-specVersion: 0.1.4
+specVersion: 0.1.5
 status: approved
 name: Data adapters
 description: Runs the source and sink adapters other modules declare in their specifications, pulling pages from another system through a consented connectors.core instance into an import port and pushing the pages of a list export back out, on the shared job runner with stored cursors, retries, resume, schedules, mappings stored as data, a dry run and a recorded mode for tests and the sandbox.

@@ -19,6 +19,8 @@ import type { MeterUsage } from '../domain/types.ts';
 import { loadMeters, MeteringApiError, meteringErrorMessage } from './api.ts';
 import {
 	kindLabel,
+	meterLabel,
+	meterUnit,
 	numberLabel,
 	screenSurface,
 	usageLabel,
@@ -43,14 +45,14 @@ function columns(warningPercent: number): readonly TableColumn<MeterUsage>[] {
 			header: t('metering.usage.column.label'),
 			width: '200px',
 			priority: 2,
-			cell: (entry) => <CellText value={entry.meter.label} />,
+			cell: (entry) => <CellText value={meterLabel(entry)} />,
 		},
 		{
 			key: 'unit',
 			header: t('metering.usage.column.unit'),
 			width: '110px',
 			priority: 3,
-			cell: (entry) => <CellText value={entry.meter.unit} />,
+			cell: (entry) => <CellText value={meterUnit(entry)} />,
 		},
 		{
 			key: 'kind',

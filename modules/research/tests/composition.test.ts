@@ -143,7 +143,9 @@ describe('research.core composition', () => {
 				{
 					key: 'queries',
 					label: 'Research queries',
+					labelKey: 'research.meter.queries',
 					unit: 'queries',
+					unitKey: 'research.meter.queries.unit',
 					kind: 'cumulative',
 				},
 			],

@@ -15,6 +15,10 @@ export interface MeterDeclaration {
 	readonly key: string;
 	readonly label: string;
 	readonly unit: string;
+	/** Translation key for `label`, owned by the declaring module. The reader falls back to `label` when it does not resolve. */
+	readonly labelKey?: string;
+	/** Translation key for `unit`, read with the usage as `count`, so it can carry plural forms. */
+	readonly unitKey?: string;
 	readonly kind: MeterKind;
 }
 
@@ -85,6 +89,8 @@ export const METER_LIMITS = {
 	key: 96,
 	label: 120,
 	unit: 32,
+	/** A fully qualified translation key, e.g. `agents.report.runs.unit.runs`. */
+	translationKey: 160,
 	sourceRef: 200,
 	tenantId: 128,
 	metersPerModule: 64,

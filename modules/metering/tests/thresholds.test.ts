@@ -9,6 +9,7 @@ import {
 	clock,
 	createHarness,
 	recordingPublisher,
+	RUN_TOKENS,
 	RUN_TOKENS_KEY,
 } from './support/harness.ts';
 
@@ -214,5 +215,41 @@ describe('METERING-THRESHOLDS', () => {
 
 		const usage = await service.usage(TENANT);
 		expect(usage.map((entry) => entry.used)).toEqual([100]);
+	});
+
+	/* The row carries the text the module stored; the keys come from the live
+	   registry, so a workspace reads a meter in its own language and a meter
+	   nobody declares any more still reads. */
+	it('carries the declaring module translation keys with the usage', async () => {
+		const time = clock(Date.UTC(2026, 8, 17));
+		const { service } = createHarness({
+			repository: shared.repository,
+			now: time.now,
+			meters: [
+				{
+					...RUN_TOKENS,
+					labelKey: 'agents.meter.runTokens',
+					unitKey: 'agents.report.runs.unit.tokens',
+				},
+			],
+		});
+
+		await report(service, 5, 'run-keys');
+
+		expect(await service.usage(TENANT)).toMatchObject([
+			{
+				labelKey: 'agents.meter.runTokens',
+				unitKey: 'agents.report.runs.unit.tokens',
+			},
+		]);
+
+		/* The same workspace read through a registry that declares no keys. */
+		const plain = createHarness({
+			repository: shared.repository,
+			now: time.now,
+		});
+		const [entry] = await plain.service.usage(TENANT);
+		expect(entry).not.toHaveProperty('labelKey');
+		expect(entry).not.toHaveProperty('unitKey');
 	});
 });

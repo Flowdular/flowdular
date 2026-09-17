@@ -120,6 +120,8 @@ export interface MeterRegistry {
 			readonly key: string;
 			readonly label: string;
 			readonly unit: string;
+			readonly labelKey?: string;
+			readonly unitKey?: string;
 			readonly kind: 'cumulative' | 'gauge';
 		}[],
 	): void;

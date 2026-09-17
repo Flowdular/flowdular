@@ -127,7 +127,9 @@ export function createServerComposition(
 				{
 					key: 'rows',
 					label: 'Data adapter rows written',
+					labelKey: 'adapters.meter.rows',
 					unit: 'rows',
+					unitKey: 'adapters.meter.rows.unit',
 					kind: 'cumulative',
 				},
 			]);

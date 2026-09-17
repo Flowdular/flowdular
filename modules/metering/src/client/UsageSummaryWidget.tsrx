@@ -4,7 +4,13 @@ import { activeLocale, t, workspaceViewHref } from '@flowdular/client';
 import { useValue } from 'segment-state';
 import { loadMeters } from './api.ts';
 import { METERING_VIEWS } from './navigation.ts';
-import { numberLabel, usageLabel, usageShare } from './presentation.ts';
+import {
+	meterLabel,
+	meterUnit,
+	numberLabel,
+	usageLabel,
+	usageShare,
+} from './presentation.ts';
 import { createUsageClientState } from './state.ts';
 
 /** Tiles the dashboard shows; the busiest meters of the month come first. */
@@ -44,9 +50,9 @@ export function UsageSummaryWidget() @{
 
 	@for (const entry of busiest; key entry.meter.key) {
 		<Kpi
-			label={entry.meter.label}
+			label={meterLabel(entry)}
 			value={new Intl.NumberFormat(locale).format(entry.used)}
-			unit={entry.meter.unit}
+			unit={meterUnit(entry)}
 			note={entry.limit === null
 				? t('metering.widget.unlimited')
 				: t('metering.widget.share', {

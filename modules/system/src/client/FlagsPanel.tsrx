@@ -80,10 +80,10 @@ export function FlagsPanel(props: FlagsPanelProps) @{
 			<div class="ui-card__head">
 				<span class="ui-card__title">
 					{t('system.flags.title')}
-					<small>{t('system.flags.count', {
-						count: flagCount(groups),
-						modules: groups.length,
-					})}</small>
+					<small>
+						{t('system.flags.count', { count: flagCount(groups) }) + ' · ' +
+							t('system.flags.countModules', { count: groups.length })}
+					</small>
 				</span>
 			</div>
 			@if (!props.canManage) {

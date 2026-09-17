@@ -420,6 +420,8 @@
 	"settings.agentMonthlyCostCapUsd.label": "Miesięczny budżet jednego agenta (USD)",
 	"settings.agentMonthlyCostCapUsd.description": "Obowiązuje osobno dla każdego agenta, niezależnie od budżetu przestrzeni roboczej. Zero wyłącza limit.",
 	"report.runs.label": "Uruchomienia agentów",
+	"meter.runs": "Uruchomienia agentów",
+	"meter.runTokens": "Tokeny uruchomień agentów",
 	"report.runs.tile.runs": "Uruchomienia",
 	"report.runs.tile.tokens": "Tokeny",
 	"report.runs.unit.runs.one": "uruchomienie",
