@@ -117,7 +117,7 @@ function columns(): readonly TableColumn<DocumentAttachment>[] {
 		{
 			key: 'scan',
 			header: t('documents.column.scan'),
-			width: '130px',
+			width: '150px',
 			value: (record) => record.scan,
 			cell: (record) =>
 				<CellTag
