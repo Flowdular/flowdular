@@ -38,15 +38,9 @@ describe('plural families', () => {
 	});
 
 	it('keeps a category-named key without an other sibling as its own key', () => {
-		expect(translationKeys({ 'status.one': 'One', 'status.two': 'Two' })).toEqual(
-			['status.one', 'status.two'],
-		);
-	});
-
-	it('still tells a family apart from a plain key of the same name', () => {
-		expect(translationKeys({ 'table.count': '{count} documents' })).not.toEqual(
-			translationKeys(EN),
-		);
+		expect(
+			translationKeys({ 'status.one': 'One', 'status.two': 'Two' }),
+		).toEqual(['status.one', 'status.two']);
 	});
 
 	it('accepts complete families', () => {

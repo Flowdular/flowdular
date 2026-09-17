@@ -135,8 +135,8 @@ function newPackagesOf(plan: EjectPlanView): readonly string[] {
 /* What landed, named: one module by its id, several by their ids. */
 function delivered(summary: EjectSummary): string {
 	return `${summary.modules.join(', ')} ${t('sandbox.eject.deliveredVerb', {
-		count: summary.modules.length,
-	})}`;
+			count: summary.modules.length,
+		})}`;
 }
 
 function deliveredAt(at: number): string {

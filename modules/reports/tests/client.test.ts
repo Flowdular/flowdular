@@ -213,15 +213,15 @@ describe('REPORTS-LABELS unit', () => {
 	});
 
 	it('agrees the unit with the tile value in the reader locale', () => {
-		expect(resolvedUnit(translate, tile(1, 'agents.report.runs.unit.runs'))).toBe(
-			'uruchomienie',
-		);
-		expect(resolvedUnit(translate, tile(3, 'agents.report.runs.unit.runs'))).toBe(
-			'uruchomienia',
-		);
-		expect(resolvedUnit(translate, tile(0, 'agents.report.runs.unit.runs'))).toBe(
-			'uruchomień',
-		);
+		expect(
+			resolvedUnit(translate, tile(1, 'agents.report.runs.unit.runs')),
+		).toBe('uruchomienie');
+		expect(
+			resolvedUnit(translate, tile(3, 'agents.report.runs.unit.runs')),
+		).toBe('uruchomienia');
+		expect(
+			resolvedUnit(translate, tile(0, 'agents.report.runs.unit.runs')),
+		).toBe('uruchomień');
 	});
 
 	it('falls back to the literal unit without a key or a bundle entry', () => {

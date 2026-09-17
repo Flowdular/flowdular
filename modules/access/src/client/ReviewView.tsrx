@@ -359,14 +359,13 @@ export function ReviewView(props: ReviewViewProps) @{
 	const note =
 		capped
 			? t('access.review.cappedNote', {
-					count:
-						tab === 'members'
-							? ACCESS_LIMITS.members
-							: tab === 'roles'
-								? ACCESS_LIMITS.roles
-								: tab === 'tokens'
-									? ACCESS_LIMITS.tokens
-									: ACCESS_LIMITS.providers,
+					count: tab === 'members'
+						? ACCESS_LIMITS.members
+						: tab === 'roles'
+							? ACCESS_LIMITS.roles
+							: tab === 'tokens'
+								? ACCESS_LIMITS.tokens
+								: ACCESS_LIMITS.providers,
 				})
 			: t('access.review.note');
 

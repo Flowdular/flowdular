@@ -145,9 +145,9 @@ describe('plural selection', () => {
 		expect(
 			translateFrom(english, 'documents.table.count', { count: 12_345 }),
 		).toBe('12,345 documents');
-		expect(translateFrom(polish, 'documents.rows.count', { count: 12_345 })).toBe(
-			'12\u00a0345 rows',
-		);
+		expect(
+			translateFrom(polish, 'documents.rows.count', { count: 12_345 }),
+		).toBe('12\u00a0345 rows');
 	});
 
 	it('falls back to the fallback locale family, then to the base key', () => {
@@ -168,7 +168,10 @@ describe('plural selection', () => {
 			[
 				{
 					namespace: 'documents',
-					bundles: { en: {}, pl: { 'table.count.other': 'Dokumenty: {count}' } },
+					bundles: {
+						en: {},
+						pl: { 'table.count.other': 'Dokumenty: {count}' },
+					},
 				},
 			],
 			'pl',
@@ -184,9 +187,9 @@ describe('plural selection', () => {
 		expect(
 			translateFrom(catalog, 'documents.table.count', { count: '1' }),
 		).toBe('documents.table.count');
-		expect(translateFrom(catalog, 'documents.plain.count', { count: '1' })).toBe(
-			'1 kept',
-		);
+		expect(
+			translateFrom(catalog, 'documents.plain.count', { count: '1' }),
+		).toBe('1 kept');
 	});
 });
 

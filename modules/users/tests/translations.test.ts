@@ -26,23 +26,31 @@ describe('users translations', () => {
 		]);
 		setActiveLocale('pl');
 		for (const role of BUILTIN_ROLES) {
-			const stored = { ...role, builtin: true };
+			const stored = {
+				...role,
+				scopes: [...role.scopes],
+				id: role.key,
+				tenantId: 'tenant',
+				builtin: true,
+				createdAt: 0,
+				updatedAt: 0,
+			};
 			expect(roleName(stored), role.key).not.toBe(role.name);
 			expect(roleDescription(stored), role.key).not.toBe(role.description);
 		}
+		expect(roleName({ builtin: true, key: 'owner', name: 'Owner' })).toBe(
+			'Właściciel',
+		);
 		expect(
-			roleName({ builtin: true, key: 'owner', name: 'Owner', description: '' }),
-		).toBe('Właściciel');
-		expect(
-			roleName({ builtin: false, key: 'owner-deputy', name: 'Zastępca', description: '' }),
+			roleName({ builtin: false, key: 'owner-deputy', name: 'Zastępca' }),
 		).toBe('Zastępca');
 		expect(t('users.pagination.summary', { page: 2, from: 26 })).toBe(
 			'Strona 2 · członkowie od 26',
 		);
 		setActiveLocale('en');
-		expect(
-			roleName({ builtin: true, key: 'member', name: 'Member', description: '' }),
-		).toBe('Member');
+		expect(roleName({ builtin: true, key: 'member', name: 'Member' })).toBe(
+			'Member',
+		);
 	});
 
 	it('resolves every member status in the active locale', () => {

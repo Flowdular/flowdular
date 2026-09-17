@@ -73,8 +73,9 @@ export function pluralFamilyIssues(
 		families.set(member.base, categories);
 	}
 	const required = requiredPluralCategories(locale);
-	const known: readonly string[] = new Intl.PluralRules(locale).resolvedOptions()
-		.pluralCategories;
+	const known: readonly string[] = new Intl.PluralRules(
+		locale,
+	).resolvedOptions().pluralCategories;
 	const issues: string[] = [];
 	for (const base of [...families.keys()].sort()) {
 		const categories = families.get(base)!;

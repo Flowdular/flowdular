@@ -25,8 +25,7 @@ function stamp(value: number | null): string {
 
 function identity(token: ApiTokenRecord): string {
 	const count = token.scopes.length;
-	return token.prefix + '… · ' +
-		t('auth.tokens.scope', { count });
+	return token.prefix + '… · ' + t('auth.tokens.scope', { count });
 }
 
 export function apiTokenColumns(

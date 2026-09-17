@@ -1,7 +1,7 @@
 import { t } from '@flowdular/client/i18n';
 import type { TenantRole } from '@flowdular/module-auth';
 
-type NamedRole = Pick<TenantRole, 'builtin' | 'key' | 'name' | 'description'>;
+type NamedRole = Pick<TenantRole, 'builtin' | 'key' | 'name'>;
 
 function builtinCopy(role: NamedRole, family: string, stored: string): string {
 	if (!role.builtin) return stored;
@@ -16,6 +16,6 @@ export function roleName(role: NamedRole): string {
 	return builtinCopy(role, 'builtinName', role.name);
 }
 
-export function roleDescription(role: NamedRole): string {
+export function roleDescription(role: TenantRole): string {
 	return builtinCopy(role, 'builtinDescription', role.description);
 }
