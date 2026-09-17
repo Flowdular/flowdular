@@ -27,7 +27,7 @@ describe('session labels', () => {
 		expect(roleLabel('backend-engineer')).toBe('Reguły biznesowe i dane');
 		expect(gateLabel('tests')).toBe('Testy działania');
 		expect(deliveryStepLabel(step)).toBe('Przenoszenie modułu do platformy');
-		expect(deliveryStepDetail(step)).toBe('2 plików');
+		expect(deliveryStepDetail(step)).toBe('2 pliki');
 		setActiveLocale('en');
 		expect(deliveryStepLabel(step)).toBe('Copy the module into the workspace');
 		expect(deliveryStepDetail(step)).toBe('2 files');

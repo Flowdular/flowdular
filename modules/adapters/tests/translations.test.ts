@@ -96,8 +96,9 @@ describe('adapters translations', () => {
 		);
 		/* A key ending in a dot is a family completed at run time; the case
 		   above names every member of each. */
+		const known = translationKeys(translationsEn);
 		for (const key of new Set(used.filter((entry) => !entry.endsWith('.')))) {
-			expect([key, key in translationsEn]).toEqual([key, true]);
+			expect([key, known.includes(key)]).toEqual([key, true]);
 		}
 	});
 });

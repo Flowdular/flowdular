@@ -179,7 +179,7 @@ describe('agents translations', () => {
 				/* A trailing dot is a prefix the client concatenates at run time; the
 				   dynamic cases above already cover those. */
 				if (key.endsWith('.')) continue;
-				expect(t(key), `${locale}: ${key}`).not.toBe(key);
+				expect(t(key, { count: 1 }), `${locale}: ${key}`).not.toBe(key);
 			}
 		}
 	});
