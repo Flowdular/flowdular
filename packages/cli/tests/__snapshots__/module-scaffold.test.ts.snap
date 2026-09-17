@@ -101,6 +101,8 @@ import { t } from '@flowdular/client';
 import {
 	Alert,
 	Button,
+	CellTag,
+	CellText,
 	Icon,
 	PageHeader,
 	TableCard,
@@ -120,14 +122,15 @@ function columns(): readonly TableColumn<InventoryRecord>[] {
 		{
 			key: 'name',
 			header: t('inventory.table.column.name'),
-			width: '65%',
-			cell: (record) => <b>{record.name}</b>,
+			width: 'auto',
+			cell: (record) => <CellText value={record.name} strong />,
 		},
 		{
 			key: 'status',
 			header: t('inventory.table.column.status'),
-			width: '35%',
-			cell: (record) => t('inventory.status.' + record.status),
+			width: '140px',
+			cell: (record) =>
+				<CellTag label={t('inventory.status.' + record.status)} dot />,
 		},
 	];
 }

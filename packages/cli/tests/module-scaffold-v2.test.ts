@@ -304,9 +304,11 @@ describe('module scaffolding from a version 2 specification', () => {
 			expect(view).toContain("key: 'sku'");
 			expect(view).toContain("header: t('inventory.table.column.quantity')");
 			expect(view).toContain('numeric: true');
+			expect(view).toContain('<CellNumber value={record.quantity} />');
 			expect(view).toContain(
-				"cell: (record) => t('inventory.status.' + record.status)",
+				"<CellTag label={t('inventory.status.' + record.status)} dot />",
 			);
+			expect(view).toMatch(/import \{\n\tAlert,\n\tButton,\n\tCell/);
 			expect(view).not.toContain('record.note');
 
 			const en = JSON.parse(
