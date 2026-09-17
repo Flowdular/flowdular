@@ -32,7 +32,7 @@ describe('search translations', () => {
 	   for every locale, so an orphan key is removed rather than carried. */
 	it('ships no key the module never reaches', () => {
 		const source = moduleSource();
-		for (const key of Object.keys(translationsEn)) {
+		for (const key of translationKeys(translationsEn)) {
 			/* Built from the server's stable code at the point of failure. */
 			if (key.startsWith('error.code.')) continue;
 			/* Read by the platform module list, not by this module. */
