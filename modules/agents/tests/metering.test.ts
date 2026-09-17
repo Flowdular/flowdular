@@ -188,13 +188,17 @@ describe('agents.core metering', () => {
 					{
 						key: 'run-tokens',
 						label: 'Agent run tokens',
+						labelKey: 'agents.meter.runTokens',
 						unit: 'tokens',
+						unitKey: 'agents.report.runs.unit.tokens',
 						kind: 'cumulative',
 					},
 					{
 						key: 'runs',
 						label: 'Agent runs',
+						labelKey: 'agents.meter.runs',
 						unit: 'runs',
+						unitKey: 'agents.report.runs.unit.runs',
 						kind: 'cumulative',
 					},
 				],

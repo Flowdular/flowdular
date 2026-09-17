@@ -410,6 +410,8 @@
 	"settings.agentMonthlyCostCapUsd.label": "Monthly budget per agent (USD)",
 	"settings.agentMonthlyCostCapUsd.description": "Applied to every agent on its own, in addition to the workspace budget. Zero means no cap.",
 	"report.runs.label": "Agent runs",
+	"meter.runs": "Agent runs",
+	"meter.runTokens": "Agent run tokens",
 	"report.runs.tile.runs": "Runs",
 	"report.runs.tile.tokens": "Tokens",
 	"report.runs.unit.runs.one": "run",

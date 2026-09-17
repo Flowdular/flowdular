@@ -63,6 +63,9 @@ export interface MeterThresholdNotice {
 /** One row of the usage screen and of the dashboard widget. */
 export interface MeterUsage {
 	readonly meter: Meter;
+	/** Translation keys of the declaring module, absent once it stops declaring the meter. */
+	readonly labelKey?: string;
+	readonly unitKey?: string;
 	/** UTC `YYYY-MM` the usage below was summed over. */
 	readonly month: string;
 	readonly used: number;

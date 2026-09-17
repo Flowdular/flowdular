@@ -189,15 +189,31 @@ export class MeteringService {
 	}
 
 	/** Every meter this workspace recorded, with this month's usage and limit. */
-	usage(
+	async usage(
 		tenantId: string,
 		options?: MeteringReadOptions,
 	): Promise<readonly MeterUsage[]> {
-		return this.#repository.listMeterUsage(
+		const usage = await this.#repository.listMeterUsage(
 			bounded(tenantId, 'tenantId', 1, METER_LIMITS.tenantId),
 			utcMonth(this.#now()),
 			options,
 		);
+		/* The label and unit are stored as the module wrote them; its translation
+		   keys live in the registry, so a workspace reads them in its own
+		   language while a meter nobody declares any more keeps its text. */
+		return usage.map((entry) => {
+			const declared = this.#registry.resolve(entry.meter.key);
+			if (!declared) return entry;
+			return {
+				...entry,
+				...(declared.labelKey === undefined
+					? {}
+					: { labelKey: declared.labelKey }),
+				...(declared.unitKey === undefined
+					? {}
+					: { unitKey: declared.unitKey }),
+			};
+		});
 	}
 
 	/**

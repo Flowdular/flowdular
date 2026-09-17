@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { MeterUsage } from '../src/domain/types.ts';
 import {
+	meterLabel,
+	meterUnit,
 	screenSurface,
 	usageShare,
 	usageTone,
@@ -78,5 +80,22 @@ describe('METERING-ZERO-LIMIT', () => {
 		expect(usageTone(usage(40, 100), WARNING_PERCENT)).toBe('success');
 		expect(usageTone(usage(80, 100), WARNING_PERCENT)).toBe('warning');
 		expect(usageTone(usage(100, 100), WARNING_PERCENT)).toBe('danger');
+	});
+});
+
+describe('meter label and unit', () => {
+	/* The module stores English text with the fact; its translation keys come
+	   from the registry, so a key that resolves wins and anything else falls
+	   back to what was stored. */
+	it('prefers a declared key and falls back to the stored text', () => {
+		const entry = usage(3, null);
+		expect(meterLabel(entry)).toBe('Run tokens');
+		expect(meterUnit(entry)).toBe('tokens');
+		expect(meterLabel({ ...entry, labelKey: 'agents.meter.runTokens' })).toBe(
+			'Run tokens',
+		);
+		expect(meterUnit({ ...entry, unitKey: 'agents.meter.missing.unit' })).toBe(
+			'tokens',
+		);
 	});
 });

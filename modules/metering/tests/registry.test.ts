@@ -33,6 +33,33 @@ describe('METERING-DECLARE-RECORD declaration rules', () => {
 		expect(meters.sealed).toBe(true);
 	});
 
+	it('keeps declared translation keys and refuses a malformed one', () => {
+		const meters = registry();
+		meters.declare('agents.core', [
+			{
+				...RUN_TOKENS,
+				labelKey: 'agents.meter.runTokens',
+				unitKey: 'agents.report.runs.unit.tokens',
+			},
+		]);
+
+		expect(meters.resolve('agents.core.run-tokens')).toMatchObject({
+			labelKey: 'agents.meter.runTokens',
+			unitKey: 'agents.report.runs.unit.tokens',
+		});
+		/* A meter without keys carries none, so the reader shows its plain text. */
+		const plain = registry();
+		plain.declare('agents.core', [RUN_TOKENS]);
+		expect(plain.resolve('agents.core.run-tokens')).not.toHaveProperty(
+			'labelKey',
+		);
+		expect(() =>
+			registry().declare('agents.core', [
+				{ ...RUN_TOKENS, unitKey: 'Not A Key' },
+			]),
+		).toThrow(/unitKey/);
+	});
+
 	it('refuses a second declaration by the same module', () => {
 		const meters = registry();
 		meters.declare('agents.core', [RUN_TOKENS]);

@@ -6,6 +6,8 @@
    never reaches metering.core's own code or tables. It is the contract
    metering.core owns (modules/metering/src/domain/meters.ts) and must not
    drift from it. */
+import { AGENT_RUNS_REPORT_LABEL_KEYS } from './reports.ts';
+
 export const METERING_METERS_CAPABILITY = 'metering.meters.v1';
 
 /** The stable code this module records when `check` refuses a run. */
@@ -17,6 +19,9 @@ export interface MeterDeclaration {
 	readonly key: string;
 	readonly label: string;
 	readonly unit: string;
+	/** Translation keys the usage screen prefers over the plain text above. */
+	readonly labelKey?: string;
+	readonly unitKey?: string;
 	readonly kind: MeterKind;
 }
 
@@ -85,10 +90,19 @@ export const AGENT_METER_DECLARATIONS: readonly MeterDeclaration[] = [
 	{
 		key: 'run-tokens',
 		label: 'Agent run tokens',
+		labelKey: 'agents.meter.runTokens',
 		unit: 'tokens',
+		unitKey: AGENT_RUNS_REPORT_LABEL_KEYS.tokensUnit,
 		kind: 'cumulative',
 	},
-	{ key: 'runs', label: 'Agent runs', unit: 'runs', kind: 'cumulative' },
+	{
+		key: 'runs',
+		label: 'Agent runs',
+		labelKey: 'agents.meter.runs',
+		unit: 'runs',
+		unitKey: AGENT_RUNS_REPORT_LABEL_KEYS.runsUnit,
+		kind: 'cumulative',
+	},
 ];
 
 /**

@@ -123,7 +123,9 @@ export function createServerComposition(
 				{
 					key: 'queries',
 					label: 'Research queries',
+					labelKey: 'research.meter.queries',
 					unit: 'queries',
+					unitKey: 'research.meter.queries.unit',
 					kind: 'cumulative',
 				},
 			]);

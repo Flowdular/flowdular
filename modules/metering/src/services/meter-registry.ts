@@ -4,6 +4,7 @@ import { MeteringServiceError } from './service-error.ts';
 
 const MODULE_ID = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/;
 const METER_KEY = /^[a-z][a-z0-9-]*$/;
+const TRANSLATION_KEY = /^[a-z][a-z0-9-]*(\.[a-zA-Z0-9-]+)+$/;
 
 function refuse(message: string): never {
 	throw new MeteringServiceError('METER_DECLARATION_INVALID', message, 500);
@@ -16,6 +17,9 @@ export interface DeclaredMeter {
 	readonly key: string;
 	readonly label: string;
 	readonly unit: string;
+	/** Translation keys the reader prefers over the plain text above. */
+	readonly labelKey?: string;
+	readonly unitKey?: string;
 	readonly kind: MeterKind;
 }
 
@@ -140,6 +144,26 @@ function validated(
 		key: fullKey,
 		label: label.trim(),
 		unit: unit.trim(),
+		...translationKey(fullKey, 'labelKey', declaration.labelKey),
+		...translationKey(fullKey, 'unitKey', declaration.unitKey),
 		kind: declaration.kind,
 	};
+}
+
+/* A declared translation key, or nothing at all: the reader shows the plain
+   label and unit whenever a key is absent or no longer resolves. */
+function translationKey(
+	fullKey: string,
+	field: 'labelKey' | 'unitKey',
+	value: string | undefined,
+): { labelKey?: string; unitKey?: string } {
+	if (value === undefined) return {};
+	if (
+		typeof value !== 'string' ||
+		value.length > METER_LIMITS.translationKey ||
+		!TRANSLATION_KEY.test(value)
+	) {
+		refuse(`${fullKey} declared "${String(value)}" as its ${field}.`);
+	}
+	return { [field]: value };
 }

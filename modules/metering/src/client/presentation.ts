@@ -52,3 +52,21 @@ export function usageTone(entry: MeterUsage, warningPercent: number): TagTone {
 	if (share >= 100) return 'danger';
 	return share >= warningPercent ? 'warning' : 'success';
 }
+
+/* A declared translation key wins over the text the module stored, and a key
+   that no longer resolves falls back to it, so a meter of a module nobody
+   composes any more still reads. */
+function translated(key: string | undefined, fallback: string, count?: number) {
+	if (key === undefined || key === '') return fallback;
+	const reading = count === undefined ? t(key) : t(key, { count });
+	return reading === key ? fallback : reading;
+}
+
+export function meterLabel(entry: MeterUsage): string {
+	return translated(entry.labelKey, entry.meter.label);
+}
+
+/** The unit read with this month's usage, so a locale with plural forms picks one. */
+export function meterUnit(entry: MeterUsage): string {
+	return translated(entry.unitKey, entry.meter.unit, entry.used);
+}
