@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { translationKeys } from '@flowdular/contracts';
 import translationsEn from '../translations/en.json';
 import translationsPl from '../translations/pl.json';
 import { IMPORT_FIELD_TYPES, IMPORT_MODES } from '../src/domain/ports.ts';
@@ -64,8 +65,8 @@ describe('import translations', () => {
 	});
 
 	it('ships matching English and Polish keys', () => {
-		expect(Object.keys(translationsPl).sort()).toEqual(
-			Object.keys(translationsEn).sort(),
+		expect(translationKeys(translationsPl)).toEqual(
+			translationKeys(translationsEn),
 		);
 	});
 

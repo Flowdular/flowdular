@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { translationKeys } from '@flowdular/contracts';
 import {
 	registerModuleTranslations,
 	setActiveLocale,
@@ -49,8 +50,8 @@ describe('auth translations', () => {
 	});
 
 	it('ships matching English and Polish keys', () => {
-		expect(Object.keys(translationsPl).sort()).toEqual(
-			Object.keys(translationsEn).sort(),
+		expect(translationKeys(translationsPl)).toEqual(
+			translationKeys(translationsEn),
 		);
 	});
 

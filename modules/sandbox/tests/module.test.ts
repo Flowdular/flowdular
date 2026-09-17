@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { translationKeys } from '@flowdular/contracts';
 import {
 	registerModuleTranslations,
 	setActiveLocale,
@@ -13,8 +14,8 @@ import translationsPl from '../translations/pl.json';
 
 describe('sandbox.core', () => {
 	it('ships complete dynamic state and capability translations', async () => {
-		expect(Object.keys(translationsPl).sort()).toEqual(
-			Object.keys(translationsEn).sort(),
+		expect(translationKeys(translationsPl)).toEqual(
+			translationKeys(translationsEn),
 		);
 		registerModuleTranslations([
 			{

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { translationKeys } from '@flowdular/contracts';
 import translationsEn from '../translations/en.json';
 import translationsPl from '../translations/pl.json';
 import {
@@ -9,8 +10,8 @@ import { RESEARCH_MODULE_SETTINGS } from '../src/settings.ts';
 
 describe('research translations', () => {
 	it('ships matching English and Polish keys with no empty value', () => {
-		expect(Object.keys(translationsPl).sort()).toEqual(
-			Object.keys(translationsEn).sort(),
+		expect(translationKeys(translationsPl)).toEqual(
+			translationKeys(translationsEn),
 		);
 		for (const bundle of [translationsEn, translationsPl]) {
 			for (const [key, value] of Object.entries(bundle)) {

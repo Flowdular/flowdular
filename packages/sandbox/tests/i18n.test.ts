@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { translationKeys } from '@flowdular/contracts';
 import { readdirSync, readFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -85,7 +86,7 @@ describe('sandbox translations', () => {
 	});
 
 	it('ships matching English and Polish bundles', () => {
-		expect(Object.keys(pl).sort()).toEqual(Object.keys(en).sort());
+		expect(translationKeys(pl)).toEqual(translationKeys(en));
 	});
 
 	it('contains every statically referenced standalone key', () => {

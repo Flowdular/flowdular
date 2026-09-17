@@ -33,7 +33,10 @@
 	"table.caption": "Wyniki wyszukiwania",
 	"table.column.provider": "Dostawca",
 	"table.column.record": "Rekord",
-	"table.count": "wyniki: {count}",
+	"table.count.one": "{count} wynik",
+	"table.count.few": "{count} wyniki",
+	"table.count.many": "{count} wyników",
+	"table.count.other": "{count} wyniku",
 	"table.emptyHint": "Wpisz co najmniej dwa znaki, aby wyszukać rekordy.",
 	"table.emptyTitle": "Nic jeszcze nie wyszukano",
 	"table.loading": "Szukanie rekordów…",
@@ -41,5 +44,8 @@
 	"table.noMatchTitle": "Brak pasujących rekordów",
 	"table.note": "Każdy dostawca przeszukuje własne rekordy w zakresie deklarowanego uprawnienia.",
 	"table.title": "Rekordy",
-	"table.tooShort": "Wpisz co najmniej {count} znaki, aby wyszukać rekordy."
+	"table.tooShort.one": "Wpisz co najmniej {count} znak, aby wyszukać rekordy.",
+	"table.tooShort.few": "Wpisz co najmniej {count} znaki, aby wyszukać rekordy.",
+	"table.tooShort.many": "Wpisz co najmniej {count} znaków, aby wyszukać rekordy.",
+	"table.tooShort.other": "Wpisz co najmniej {count} znaku, aby wyszukać rekordy."
 }

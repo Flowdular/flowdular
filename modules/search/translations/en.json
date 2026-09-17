@@ -33,7 +33,8 @@
 	"table.caption": "Search hits",
 	"table.column.provider": "Provider",
 	"table.column.record": "Record",
-	"table.count": "{count} hits",
+	"table.count.one": "{count} hit",
+	"table.count.other": "{count} hits",
 	"table.emptyHint": "Type at least two characters to search records.",
 	"table.emptyTitle": "Nothing searched yet",
 	"table.loading": "Searching records…",
@@ -41,5 +42,6 @@
 	"table.noMatchTitle": "No records match",
 	"table.note": "Each provider searches its own records under the permission it declares.",
 	"table.title": "Records",
-	"table.tooShort": "Type at least {count} characters to search records."
+	"table.tooShort.one": "Type at least {count} character to search records.",
+	"table.tooShort.other": "Type at least {count} characters to search records."
 }
