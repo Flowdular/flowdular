@@ -1,6 +1,7 @@
 import { Alert, Button, FormField } from '@flowdular/ui';
 import { t } from '@flowdular/client';
 import type { UsersContext } from '../services/users-service.ts';
+import { roleName } from './role-label.ts';
 
 export interface UserAccountFormProps {
 	readonly roles: UsersContext['roles'];
@@ -61,7 +62,7 @@ export function UserAccountForm(props: UserAccountFormProps) @{
 								<option
 									value={role.key}
 									selected={role.key === 'member'}
-								>{role.name}</option>
+								>{roleName(role)}</option>
 							}
 						}
 					</select>

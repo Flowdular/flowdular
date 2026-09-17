@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { translationKeys } from '@flowdular/contracts';
 import translationsEn from '../translations/en.json';
 import translationsPl from '../translations/pl.json';
 import { adaptersNavigation } from '../src/client/navigation.ts';
@@ -46,8 +47,8 @@ describe('adapters translations', () => {
 	});
 
 	it('ships matching English and Polish keys with no empty value', () => {
-		expect(Object.keys(translationsPl).sort()).toEqual(
-			Object.keys(translationsEn).sort(),
+		expect(translationKeys(translationsPl)).toEqual(
+			translationKeys(translationsEn),
 		);
 		for (const bundle of BUNDLES) {
 			for (const [key, value] of Object.entries(bundle)) {
@@ -95,8 +96,9 @@ describe('adapters translations', () => {
 		);
 		/* A key ending in a dot is a family completed at run time; the case
 		   above names every member of each. */
+		const known = translationKeys(translationsEn);
 		for (const key of new Set(used.filter((entry) => !entry.endsWith('.')))) {
-			expect([key, key in translationsEn]).toEqual([key, true]);
+			expect([key, known.includes(key)]).toEqual([key, true]);
 		}
 	});
 });

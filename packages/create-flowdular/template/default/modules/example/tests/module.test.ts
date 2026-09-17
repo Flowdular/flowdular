@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { translationKeys } from '@flowdular/sdk/contracts';
 import manifest from '../module.json' with { type: 'json' };
 import translationsEn from '../translations/en.json' with { type: 'json' };
 import translationsPl from '../translations/pl.json' with { type: 'json' };
@@ -28,8 +29,8 @@ describe('example.core manifest', () => {
 
 describe('example.core translations', () => {
 	it('ships the same key set in every declared locale', () => {
-		expect(Object.keys(translationsPl).sort()).toEqual(
-			Object.keys(translationsEn).sort(),
+		expect(translationKeys(translationsPl)).toEqual(
+			translationKeys(translationsEn),
 		);
 		expect(manifest.locales).toEqual(['en', 'pl']);
 	});

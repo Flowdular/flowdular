@@ -21,17 +21,11 @@ function intervalLabel(minutes: number): string {
 	}
 	if (minutes % 1_440 === 0) {
 		const days = minutes / 1_440;
-		return t(
-			days === 1 ? 'automations.cadence.day' : 'automations.cadence.days',
-			{ count: days },
-		);
+		return t('automations.cadence.days', { count: days });
 	}
 	if (minutes % 60 === 0) {
 		const hours = minutes / 60;
-		return t(
-			hours === 1 ? 'automations.cadence.hour' : 'automations.cadence.hours',
-			{ count: hours },
-		);
+		return t('automations.cadence.hours', { count: hours });
 	}
 	return t('automations.cadence.hoursMinutes', {
 		hours: Math.floor(minutes / 60),

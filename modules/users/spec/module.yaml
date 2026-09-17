@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: users.core
-specVersion: 0.11.2
+specVersion: 0.11.3
 status: approved
 name: User Management Core
 description: Provides the tenant-scoped user directory and member administration (creation, display name, role assignment, per-member scopes, account status, password reset, session revocation, removal) through the public auth administration port.

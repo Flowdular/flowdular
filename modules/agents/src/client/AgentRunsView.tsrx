@@ -306,6 +306,7 @@ export function AgentRunsView(props: AgentRunsViewProps) @{
 					open={filtersOpen}
 					onToggle={() => setFiltersOpen(!filtersOpen)}
 					activeCount={activeFilters}
+					label={t('agents.runs.filter.label')}
 				>
 					<div class="run-filters">
 						<label>

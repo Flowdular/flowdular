@@ -50,6 +50,8 @@ export interface ReportTile {
 	readonly tileLabelKey?: ReportLabelKey;
 	readonly value: number;
 	readonly unit?: string;
+	/** A plural family in the provider's bundle, asked with the value as `count`; `unit` is its fallback. */
+	readonly unitKey?: ReportLabelKey;
 	/** Change against the provider's own comparison period, when it states one. */
 	readonly delta?: number;
 }

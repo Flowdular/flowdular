@@ -1,4 +1,4 @@
-import { activeLocale, t } from '@flowdular/client/i18n';
+import { t } from '@flowdular/client/i18n';
 import type { AuditRow } from './api.ts';
 
 export type AuditTone = 'danger' | 'warning' | 'neutral' | 'info';
@@ -19,11 +19,7 @@ export function auditDetails(row: AuditRow): string {
 			([key, value]) =>
 				`${key}: ${
 					Array.isArray(value)
-						? t('auth.audit.items', {
-								count: new Intl.NumberFormat(activeLocale()).format(
-									value.length,
-								),
-							})
+						? t('auth.audit.items', { count: value.length })
 						: String(value)
 				}`,
 		)

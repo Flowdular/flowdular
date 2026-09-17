@@ -256,7 +256,7 @@ describe('notifications error mapping', () => {
 		setActiveLocale('pl');
 		expect(
 			notificationsErrorMessage(conflict, 'notifications.error.request'),
-		).toBe('Inna subskrypcja w tym obszarze roboczym używa już tej nazwy.');
+		).toBe('Inna subskrypcja w tej przestrzeni roboczej używa już tej nazwy.');
 	});
 
 	it('keeps the server sentence for a code this module does not know', () => {

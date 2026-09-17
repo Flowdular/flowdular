@@ -19,6 +19,8 @@ export const AGENT_RUNS_REPORT_LABEL_KEYS = {
 	provider: 'agents.report.runs.label',
 	runs: 'agents.report.runs.tile.runs',
 	tokens: 'agents.report.runs.tile.tokens',
+	runsUnit: 'agents.report.runs.unit.runs',
+	tokensUnit: 'agents.report.runs.unit.tokens',
 	runsPerDay: 'agents.report.runs.series.runsPerDay',
 	tokensPerDay: 'agents.report.runs.series.tokensPerDay',
 } as const;
@@ -51,6 +53,7 @@ export function runsAnswer(
 				tileLabelKey: AGENT_RUNS_REPORT_LABEL_KEYS.runs,
 				value: runs,
 				unit: 'runs',
+				unitKey: AGENT_RUNS_REPORT_LABEL_KEYS.runsUnit,
 			},
 			{
 				key: 'tokens',
@@ -58,6 +61,7 @@ export function runsAnswer(
 				tileLabelKey: AGENT_RUNS_REPORT_LABEL_KEYS.tokens,
 				value: tokens,
 				unit: 'tokens',
+				unitKey: AGENT_RUNS_REPORT_LABEL_KEYS.tokensUnit,
 			},
 		],
 		series: [

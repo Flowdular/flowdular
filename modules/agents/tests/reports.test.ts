@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { translationKeys } from '@flowdular/contracts';
 import { AgentHarness, type AgentProvider } from '@flowdular/harness';
 import type { PlatformServerContext } from '@flowdular/module-auth/server';
 import {
@@ -286,6 +287,7 @@ describe('AGENTS-REPORT-RUNS', () => {
 				tileLabelKey: AGENT_RUNS_REPORT_LABEL_KEYS.runs,
 				value: 2,
 				unit: 'runs',
+				unitKey: AGENT_RUNS_REPORT_LABEL_KEYS.runsUnit,
 			},
 			{
 				key: 'tokens',
@@ -293,6 +295,7 @@ describe('AGENTS-REPORT-RUNS', () => {
 				tileLabelKey: AGENT_RUNS_REPORT_LABEL_KEYS.tokens,
 				value: 28,
 				unit: 'tokens',
+				unitKey: AGENT_RUNS_REPORT_LABEL_KEYS.tokensUnit,
 			},
 		]);
 		expect(answer.series?.map((entry) => entry.key)).toEqual([
@@ -325,6 +328,7 @@ describe('AGENTS-REPORT-RUNS', () => {
 				tileLabelKey: AGENT_RUNS_REPORT_LABEL_KEYS.runs,
 				value: 0,
 				unit: 'runs',
+				unitKey: AGENT_RUNS_REPORT_LABEL_KEYS.runsUnit,
 			},
 			{
 				key: 'tokens',
@@ -332,6 +336,7 @@ describe('AGENTS-REPORT-RUNS', () => {
 				tileLabelKey: AGENT_RUNS_REPORT_LABEL_KEYS.tokens,
 				value: 0,
 				unit: 'tokens',
+				unitKey: AGENT_RUNS_REPORT_LABEL_KEYS.tokensUnit,
 			},
 		]);
 	});
@@ -404,6 +409,10 @@ describe('AGENTS-REPORT-RUNS', () => {
 			AGENT_RUNS_REPORT_LABEL_KEYS.runs,
 			AGENT_RUNS_REPORT_LABEL_KEYS.tokens,
 		]);
+		expect(answer.tiles.map((tile) => tile.unitKey)).toEqual([
+			AGENT_RUNS_REPORT_LABEL_KEYS.runsUnit,
+			AGENT_RUNS_REPORT_LABEL_KEYS.tokensUnit,
+		]);
 		expect(answer.series?.map((entry) => entry.seriesLabelKey)).toEqual([
 			AGENT_RUNS_REPORT_LABEL_KEYS.runsPerDay,
 			AGENT_RUNS_REPORT_LABEL_KEYS.tokensPerDay,
@@ -417,7 +426,10 @@ describe('AGENTS-REPORT-RUNS', () => {
 		for (const qualified of Object.values(AGENT_RUNS_REPORT_LABEL_KEYS)) {
 			const key = qualified.slice('agents.'.length);
 			for (const bundle of [translationsEn, translationsPl]) {
-				expect([key, key in bundle]).toEqual([key, true]);
+				expect([key, translationKeys(bundle).includes(key)]).toEqual([
+					key,
+					true,
+				]);
 			}
 		}
 	});

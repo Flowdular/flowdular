@@ -7,6 +7,7 @@ import {
 	it,
 	vi,
 } from 'vitest';
+import { translationKeys } from '@flowdular/contracts';
 import type { DatabaseProvider } from '@flowdular/database';
 import type { AgentRunQueue } from '@flowdular/module-agents/server';
 import type { JobRunner } from '@flowdular/server';
@@ -217,8 +218,8 @@ describe('automations.core', () => {
 	});
 
 	it('ships the same translation keys in English and Polish', async () => {
-		expect(Object.keys(translationsPl).sort()).toEqual(
-			Object.keys(translationsEn).sort(),
+		expect(translationKeys(translationsPl)).toEqual(
+			translationKeys(translationsEn),
 		);
 	});
 

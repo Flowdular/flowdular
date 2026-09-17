@@ -1,16 +1,55 @@
 import { describe, expect, it } from 'vitest';
+import { translationKeys } from '@flowdular/contracts';
 import {
 	registerModuleTranslations,
 	setActiveLocale,
 	t,
 } from '@flowdular/client/i18n';
+import { BUILTIN_ROLES } from '@flowdular/module-auth';
 import translationsEn from '../translations/en.json';
 import translationsPl from '../translations/pl.json';
+import { roleDescription, roleName } from '../src/client/role-label.ts';
 
 describe('users translations', () => {
 	it('ships matching English and Polish keys', () => {
-		expect(Object.keys(translationsPl).sort()).toEqual(
-			Object.keys(translationsEn).sort(),
+		expect(translationKeys(translationsPl)).toEqual(
+			translationKeys(translationsEn),
+		);
+	});
+
+	it('names built-in roles in the reader locale and keeps custom role names', () => {
+		registerModuleTranslations([
+			{
+				moduleId: 'users.core',
+				translations: { en: translationsEn, pl: translationsPl },
+			},
+		]);
+		setActiveLocale('pl');
+		for (const role of BUILTIN_ROLES) {
+			const stored = {
+				...role,
+				scopes: [...role.scopes],
+				id: role.key,
+				tenantId: 'tenant',
+				builtin: true,
+				createdAt: 0,
+				updatedAt: 0,
+			};
+			expect(roleName(stored), role.key).not.toBe(role.name);
+			expect(roleDescription(stored), role.key).not.toBe(role.description);
+		}
+		expect(roleName({ builtin: true, key: 'owner', name: 'Owner' })).toBe(
+			'Właściciel',
+		);
+		expect(
+			roleName({ builtin: false, key: 'owner-deputy', name: 'Zastępca' }),
+		).toBe('Zastępca');
+		expect(t('users.pagination.summary', { page: 2, from: 26 })).toBe(
+			'Strona 2 · członkowie od 26',
+		);
+		setActiveLocale('en');
+		expect(roleName({ builtin: true, key: 'member', name: 'Member' })).toBe(
+			'Member',
 		);
 	});
 

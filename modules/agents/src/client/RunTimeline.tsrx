@@ -138,7 +138,7 @@ export function RunTimeline(props: RunTimelineProps) @{
 			<header class="run-trail__head">
 				<span>{t('agents.timeline.trail')}</span>
 				<small>{t('agents.timeline.entries', {
-					count: countLabel(props.run.timeline.length),
+					count: props.run.timeline.length,
 				})}</small>
 			</header>
 			@if (props.run.timeline.length === 0) {
@@ -157,7 +157,7 @@ export function RunTimeline(props: RunTimelineProps) @{
 							<pre class="run-answer__text">{entry.text}</pre>
 							@if (entry.omittedCharacters > 0) {
 								<p class="run-answer__more">{t('agents.timeline.omitted', {
-									count: countLabel(entry.omittedCharacters),
+									count: entry.omittedCharacters,
 								})}</p>
 							}
 						</article>

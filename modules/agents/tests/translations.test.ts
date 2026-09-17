@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { translationKeys } from '@flowdular/contracts';
 import {
 	registerModuleTranslations,
 	setActiveLocale,
@@ -64,8 +65,8 @@ describe('agents translations', () => {
 	});
 
 	it('ships the same keys in English and Polish', async () => {
-		expect(Object.keys(translationsPl).sort()).toEqual(
-			Object.keys(translationsEn).sort(),
+		expect(translationKeys(translationsPl)).toEqual(
+			translationKeys(translationsEn),
 		);
 	});
 
@@ -178,7 +179,7 @@ describe('agents translations', () => {
 				/* A trailing dot is a prefix the client concatenates at run time; the
 				   dynamic cases above already cover those. */
 				if (key.endsWith('.')) continue;
-				expect(t(key), `${locale}: ${key}`).not.toBe(key);
+				expect(t(key, { count: 1 }), `${locale}: ${key}`).not.toBe(key);
 			}
 		}
 	});

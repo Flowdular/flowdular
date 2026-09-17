@@ -4,6 +4,7 @@ import {
 	t,
 } from '@flowdular/client/i18n';
 import { afterEach, describe, expect, it } from 'vitest';
+import { translationKeys } from '@flowdular/contracts';
 import type { WorkflowNodeExecution } from '../src/domain/types.ts';
 import translationsEn from '../translations/en.json';
 import translationsPl from '../translations/pl.json';
@@ -203,8 +204,8 @@ describe('workflow canvas model', () => {
 
 describe('workflow client translations', () => {
 	it('ships every workflow key in English and Polish without raw-key fallbacks', () => {
-		expect(Object.keys(translationsPl).sort()).toEqual(
-			Object.keys(translationsEn).sort(),
+		expect(translationKeys(translationsPl)).toEqual(
+			translationKeys(translationsEn),
 		);
 		registerModuleTranslations([
 			{

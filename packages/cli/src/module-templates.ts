@@ -7,7 +7,10 @@ import type {
 	ModuleSpecResearch,
 	ModuleSpecTemplate,
 } from '@flowdular/contracts';
-import { PLATFORM_API_VERSION } from '@flowdular/contracts';
+import {
+	PLATFORM_API_VERSION,
+	requiredPluralCategories,
+} from '@flowdular/contracts';
 
 export interface ScaffoldNames {
 	readonly id: string;
@@ -2090,7 +2093,10 @@ function translation(
 			'action.refresh': 'Odśwież',
 			'table.title': 'Rekordy',
 			'table.caption': `Rekordy modułu ${name}`,
-			'table.count': 'Liczba rekordów: {count}',
+			'table.count.one': '{count} rekord',
+			'table.count.few': '{count} rekordy',
+			'table.count.many': '{count} rekordów',
+			'table.count.other': '{count} rekordu',
 			...columns,
 			'table.loading': 'Wczytywanie rekordów…',
 			'table.emptyTitle': 'Brak rekordów',
@@ -2110,7 +2116,12 @@ function translation(
 		'action.refresh': 'Refresh',
 		'table.title': 'Records',
 		'table.caption': `${name} records`,
-		'table.count': '{count} records',
+		...Object.fromEntries(
+			requiredPluralCategories(locale).map((category) => [
+				`table.count.${category}`,
+				category === 'one' ? '{count} record' : '{count} records',
+			]),
+		),
 		...columns,
 		'table.loading': 'Loading records…',
 		'table.emptyTitle': 'No records yet',

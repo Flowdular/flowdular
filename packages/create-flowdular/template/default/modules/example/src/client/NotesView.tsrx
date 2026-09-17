@@ -152,12 +152,7 @@ export function NotesView(props: NotesViewProps) @{
 		}
 		<TableCard
 			title={t('example.table.title')}
-			count={t(
-				notes.length === 1
-					? 'example.table.count.one'
-					: 'example.table.count.other',
-				{ count: notes.length },
-			)}
+			count={t('example.table.count', { count: notes.length })}
 			search={<SearchField
 				value={query}
 				placeholder={t('example.table.search.placeholder')}

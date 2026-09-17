@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { translationKeys } from '@flowdular/contracts';
 import {
 	buildDashboard,
 	emptyUsage,
@@ -302,7 +303,7 @@ describe('business dashboard', () => {
 				'utf8',
 			),
 		) as Record<string, string>;
-		expect(Object.keys(pl).sort()).toEqual(Object.keys(en).sort());
+		expect(translationKeys(pl)).toEqual(translationKeys(en));
 		for (const key of Object.keys(en).filter((key) =>
 			key.startsWith('dashboard.'),
 		))

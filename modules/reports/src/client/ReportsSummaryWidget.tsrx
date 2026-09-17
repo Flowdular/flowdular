@@ -4,7 +4,12 @@ import { activeLocale, t, workspaceViewHref } from '@flowdular/client';
 import { useValue } from 'segment-state';
 import { loadReport } from './api.ts';
 import { REPORTS_VIEWS } from './navigation.ts';
-import { largestTiles, numberLabel, resolvedLabel } from './presentation.ts';
+import {
+	largestTiles,
+	numberLabel,
+	resolvedLabel,
+	resolvedUnit,
+} from './presentation.ts';
 import { createReportsWidgetState } from './state.ts';
 
 /** Tiles the dashboard shows; the largest of the whole report come first. */
@@ -43,7 +48,7 @@ export function ReportsSummaryWidget() @{
 		<Kpi
 			label={resolvedLabel(t, entry.tile.label, entry.tile.tileLabelKey)}
 			value={numberLabel(locale, entry.tile.value)}
-			unit={entry.tile.unit ?? ''}
+			unit={resolvedUnit(t, entry.tile)}
 			note={resolvedLabel(t, entry.report.label, entry.report.labelKey)}
 			href={reportsHref}
 			linkLabel={t('reports.widget.link')}

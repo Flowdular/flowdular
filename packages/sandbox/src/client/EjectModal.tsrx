@@ -134,10 +134,9 @@ function newPackagesOf(plan: EjectPlanView): readonly string[] {
 
 /* What landed, named: one module by its id, several by their ids. */
 function delivered(summary: EjectSummary): string {
-	return `${summary.modules.join(', ')} ${t(
-		'sandbox.eject.deliveredVerb.' +
-			(summary.modules.length === 1 ? 'one' : 'other'),
-	)}`;
+	return `${summary.modules.join(', ')} ${t('sandbox.eject.deliveredVerb', {
+			count: summary.modules.length,
+		})}`;
 }
 
 function deliveredAt(at: number): string {
@@ -174,11 +173,10 @@ export function EjectModal(props: EjectModalProps) @{
 					}
 					{phase === 'done'
 						? t('sandbox.eject.delivered')
-						: props.plan.modules.length === 1
-							? t('sandbox.eject.title.one', { module: props.plan.moduleId })
-							: t('sandbox.eject.title.other', {
-									count: props.plan.modules.length,
-								})}
+						: t('sandbox.eject.title', {
+								module: props.plan.moduleId,
+								count: props.plan.modules.length,
+							})}
 				</span>
 				<span class="sandbox__spacer"></span>
 				<Tag mono>

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { translationKeys } from '@flowdular/contracts';
 import { readdirSync, readFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,8 +44,9 @@ const SPEC_FIELD_LABELS = [
 	'scenario',
 ] as const;
 
+/* A plural family resolves only with a count, which is how its call site asks. */
 function expectTranslated(key: string): void {
-	expect(t(key), key).not.toBe(key);
+	expect(t(key, { count: 1 }), key).not.toBe(key);
 }
 
 function sourceFiles(directory: string): readonly string[] {
@@ -85,7 +87,7 @@ describe('sandbox translations', () => {
 	});
 
 	it('ships matching English and Polish bundles', () => {
-		expect(Object.keys(pl).sort()).toEqual(Object.keys(en).sort());
+		expect(translationKeys(pl)).toEqual(translationKeys(en));
 	});
 
 	it('contains every statically referenced standalone key', () => {
@@ -115,9 +117,6 @@ describe('sandbox translations', () => {
 			}
 			for (const target of ['target.workspace', 'target.gitPr']) {
 				expectTranslated('sandbox.eject.' + target);
-			}
-			for (const count of ['one', 'other']) {
-				expectTranslated('sandbox.eject.deliveredVerb.' + count);
 			}
 		}
 		setActiveLocale('en');

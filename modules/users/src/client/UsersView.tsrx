@@ -59,6 +59,7 @@ import {
 } from './state.ts';
 import { UserAccountForm } from './UserAccountForm.tsrx';
 import { InviteMemberForm } from './InviteMemberForm.tsrx';
+import { roleName } from './role-label.ts';
 
 export interface UsersViewProps {
 	readonly csrfToken: string;
@@ -130,7 +131,7 @@ export function UsersView(props: UsersViewProps) @{
 	const selected =
 		users.find((user) => user.accountId === selectedAccountId) ?? null;
 	const columns = memberColumns(
-		new Map(roles.map((role) => [role.key, role.name])),
+		new Map(roles.map((role) => [role.key, roleName(role)])),
 	);
 	const term = query.trim();
 	const hasMore = nextCursor !== null;
@@ -805,7 +806,7 @@ export function UsersView(props: UsersViewProps) @{
 				options={assignableRoles.map(
 					(role) => ({
 						value: role.key,
-						label: role.name,
+						label: roleName(role),
 					}),
 				)}
 				onChange={setBulkRole}

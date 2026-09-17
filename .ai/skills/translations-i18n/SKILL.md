@@ -21,6 +21,7 @@ Flowdular loads translations at runtime. The shell owns locale selection and the
 - A module contribution imports `translations/en.json` and every declared locale, then returns `translations: { en, pl }` with its `moduleId`.
 - Use fully qualified keys with `t()`, for example `t('catalog.items.title')`. In `.tsrx`, import from `@flowdular/client`. In plain `.ts` helpers, import from `@flowdular/client/i18n` so tests do not pull the TSRX shell entry.
 - Navigation and account-menu labels use getters. Contributions are created before their bundles are registered, so eager `label: t(...)` can paint a raw key.
+- A count is a plural family: `items.count.one` and `items.count.other` in `en`, `items.count.one`, `.few`, `.many` and `.other` in `pl`, read as `t('catalog.items.count', { count })` with a number. The runtime picks the member `Intl.PluralRules` selects, falls back to `.other` and then the plain key, and writes `{count}` in the active locale's number format; never choose `.one` or `.other` in code.
 - Locale-sensitive dates, numbers and currency use `activeLocale()` with `Intl.DateTimeFormat` or `Intl.NumberFormat`.
 - The personal locale selector lives in Profile and applies immediately. The tenant default remains an Administration setting and is the fallback when the browser has no personal choice.
 
@@ -68,7 +69,7 @@ pnpm --filter @flowdular/module-<dir> test
 pnpm format:check
 ```
 
-`module validate` rejects a missing locale file, mismatched locale key sets, and a static `t('module.key')` whose module bundle does not contain the key. A dynamic key cannot be proven statically, so test its complete value set.
+`module validate` rejects a missing locale file, mismatched locale key sets (a plural family counts as its base key), a plural family missing a category its locale selects for whole numbers (`TRANSLATION_PLURAL_INCOMPLETE`), and a static `t('module.key')` whose module bundle does not contain the key. Tests compare locales with `translationKeys(bundle)` from `@flowdular/contracts`. A dynamic key cannot be proven statically, so test its complete value set.
 
 When a raw key appears in the UI, check in this order:
 

@@ -216,6 +216,6 @@ One command (`packages/cli/src/runner.ts`, `module enable`): adds the id to `flo
 - Module enabled but no navigation: scopes not granted, or `platform.client` missing.
 - Routes 404: `platform.server` missing, no `./platform` export, or `src/platform.ts` absent; `pnpm flowdular module validate` names it (`PLATFORM_*`).
 - `Kpi` typecheck error: `value` must be a string.
-- Register every `translations/*.json` bundle in the client contribution, put all user-facing copy there with matching key sets, and resolve it with `t()` as described by `translations-i18n`.
+- Register every `translations/*.json` bundle in the client contribution, put all user-facing copy there with matching key sets, and resolve it with `t()` as described by `translations-i18n`. A string with a count is a plural family (`<key>.one`, `.other`, plus `.few` and `.many` in `pl`) read as `t(key, { count })`.
 - Every relative import needs its `.ts` or `.tsrx` extension.
 - `module.json` `version`, `spec` `specVersion` and `package.json` `version` are one number.

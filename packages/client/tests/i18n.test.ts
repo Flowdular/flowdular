@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { pluralFamilyIssues, translationKeys } from '@flowdular/contracts';
 import { FALLBACK_LOCALE, resolveLocale } from '../src/i18n/locale.ts';
 import {
 	createTranslationCatalog,
@@ -91,6 +92,107 @@ describe('translation catalog', () => {
 	});
 });
 
+describe('plural selection', () => {
+	const PLURALS: readonly TranslationSource[] = [
+		{
+			namespace: 'documents',
+			bundles: {
+				en: {
+					'table.count.one': '{count} document',
+					'table.count.other': '{count} documents',
+					'rows.count.one': '{count} row',
+					'rows.count.other': '{count} rows',
+					'plain.count': '{count} kept',
+				},
+				pl: {
+					'table.count.one': '{count} dokument',
+					'table.count.few': '{count} dokumenty',
+					'table.count.many': '{count} dokumentów',
+					'table.count.other': '{count} dokumentu',
+					'plain.count': 'Zapisano: {count}',
+				},
+			},
+		},
+	];
+
+	it('picks the English one and other forms', () => {
+		const catalog = createTranslationCatalog(PLURALS, 'en', FALLBACK_LOCALE);
+		expect(translateFrom(catalog, 'documents.table.count', { count: 1 })).toBe(
+			'1 document',
+		);
+		expect(translateFrom(catalog, 'documents.table.count', { count: 0 })).toBe(
+			'0 documents',
+		);
+		expect(translateFrom(catalog, 'documents.table.count', { count: 5 })).toBe(
+			'5 documents',
+		);
+	});
+
+	it('picks the Polish one, few, many and other forms', () => {
+		const catalog = createTranslationCatalog(PLURALS, 'pl', FALLBACK_LOCALE);
+		const count = (value: number) =>
+			translateFrom(catalog, 'documents.table.count', { count: value });
+		expect(count(1)).toBe('1 dokument');
+		expect(count(2)).toBe('2 dokumenty');
+		expect(count(5)).toBe('5 dokumentów');
+		expect(count(22)).toBe('22 dokumenty');
+		expect(count(1.5)).toBe('1,5 dokumentu');
+	});
+
+	it('writes the count in the active locale number format', () => {
+		const english = createTranslationCatalog(PLURALS, 'en', FALLBACK_LOCALE);
+		const polish = createTranslationCatalog(PLURALS, 'pl', FALLBACK_LOCALE);
+		expect(
+			translateFrom(english, 'documents.table.count', { count: 12_345 }),
+		).toBe('12,345 documents');
+		expect(
+			translateFrom(polish, 'documents.rows.count', { count: 12_345 }),
+		).toBe('12\u00a0345 rows');
+	});
+
+	it('falls back to the fallback locale family, then to the base key', () => {
+		const catalog = createTranslationCatalog(PLURALS, 'pl', FALLBACK_LOCALE);
+		expect(translateFrom(catalog, 'documents.rows.count', { count: 5 })).toBe(
+			'5 rows',
+		);
+		expect(translateFrom(catalog, 'documents.plain.count', { count: 5 })).toBe(
+			'Zapisano: 5',
+		);
+		expect(translateFrom(catalog, 'documents.missing', { count: 1 })).toBe(
+			'documents.missing',
+		);
+	});
+
+	it('uses other when the locale has no member for the selected category', () => {
+		const catalog = createTranslationCatalog(
+			[
+				{
+					namespace: 'documents',
+					bundles: {
+						en: {},
+						pl: { 'table.count.other': 'Dokumenty: {count}' },
+					},
+				},
+			],
+			'pl',
+			FALLBACK_LOCALE,
+		);
+		expect(translateFrom(catalog, 'documents.table.count', { count: 5 })).toBe(
+			'Dokumenty: 5',
+		);
+	});
+
+	it('keeps a non-numeric count on the plain key', () => {
+		const catalog = createTranslationCatalog(PLURALS, 'en', FALLBACK_LOCALE);
+		expect(
+			translateFrom(catalog, 'documents.table.count', { count: '1' }),
+		).toBe('documents.table.count');
+		expect(
+			translateFrom(catalog, 'documents.plain.count', { count: '1' }),
+		).toBe('1 kept');
+	});
+});
+
 describe('locale resolution', () => {
 	const supported = ['en', 'pl'];
 
@@ -115,7 +217,21 @@ describe('locale resolution', () => {
 
 describe('shell bundle', () => {
 	it('ships identical key sets for every locale', () => {
-		expect(Object.keys(shellPl).sort()).toEqual(Object.keys(shellEn).sort());
+		expect(translationKeys(shellPl)).toEqual(translationKeys(shellEn));
+		expect(pluralFamilyIssues(shellEn, 'en')).toEqual([]);
+		expect(pluralFamilyIssues(shellPl, 'pl')).toEqual([]);
+	});
+
+	it('names the built-in role and counts workspaces in the switcher line', () => {
+		registerModuleTranslations([]);
+		setActiveLocale('pl');
+		const summary = (count: number) =>
+			t('shell.org.summary', { role: t('shell.org.role.owner'), count });
+		expect(summary(1)).toBe('Właściciel · 1 przestrzeń robocza');
+		expect(summary(2)).toBe('Właściciel · 2 przestrzenie robocze');
+		expect(summary(5)).toBe('Właściciel · 5 przestrzeni roboczych');
+		setActiveLocale('en');
+		expect(summary(2)).toBe('Owner · 2 workspaces');
 	});
 
 	it('translates every dynamic navigation group in every locale', () => {

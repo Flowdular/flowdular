@@ -78,7 +78,10 @@
 	"adapters.test.outcome.failed": "Nieudane",
 	"adapters.test.outcome.ok": "Odpowiedział",
 	"adapters.test.query": "Zapytanie testowe",
-	"adapters.test.results": "Wyniki: {count}",
+	"adapters.test.results.one": "{count} wynik",
+	"adapters.test.results.few": "{count} wyniki",
+	"adapters.test.results.many": "{count} wyników",
+	"adapters.test.results.other": "{count} wyniku",
 	"adapters.test.run": "Uruchom test",
 	"adapters.test.running": "Testowanie",
 	"adapters.test.title": "Test",
@@ -160,7 +163,7 @@
 	"evidence.title": "Dowód",
 	"evidence.untitled": "Bez tytułu",
 	"evidence.url": "URL",
-	"navigation.research": "Research",
+	"navigation.research": "Źródła",
 	"navigation.researchDescription": "Dowody, które agenci i członkowie zachowali z sieci, oraz wyszukiwania, które je znalazły",
 	"queries.caption": "Zapytania, od najnowszych",
 	"queries.column.adapter": "Adapter",
@@ -245,5 +248,5 @@
 	"tab.evidence": "Dowody",
 	"tab.queries": "Zapytania",
 	"tabsLabel": "Listy modułu Research",
-	"title": "Research"
+	"title": "Źródła"
 }

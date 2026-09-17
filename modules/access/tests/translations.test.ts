@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { translationKeys } from '@flowdular/contracts';
 import translationsEn from '../translations/en.json';
 import translationsPl from '../translations/pl.json';
 import { accessNavigation } from '../src/client/navigation.ts';
@@ -6,8 +7,8 @@ import { ACTION_CATEGORIES } from '../src/services/changes.ts';
 
 describe('access translations', () => {
 	it('ships matching English and Polish keys', () => {
-		expect(Object.keys(translationsPl).sort()).toEqual(
-			Object.keys(translationsEn).sort(),
+		expect(translationKeys(translationsPl)).toEqual(
+			translationKeys(translationsEn),
 		);
 	});
 

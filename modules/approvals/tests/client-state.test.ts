@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { translationKeys } from '@flowdular/contracts';
 import type { ApprovalRequest } from '../src/domain/types.ts';
 import {
 	approvalsListing,
@@ -71,8 +72,9 @@ describe('approvals inbox screen state', () => {
 
 	it('ships the error state copy in every locale', () => {
 		for (const bundle of [translationsEn, translationsPl]) {
+			const keys = translationKeys(bundle);
 			for (const key of ['inbox.error.title', 'inbox.error.hint']) {
-				expect([key, key in bundle]).toEqual([key, true]);
+				expect([key, keys.includes(key)]).toEqual([key, true]);
 			}
 		}
 	});
@@ -146,6 +148,7 @@ describe('APPROVALS-DECIDE-MANY selection', () => {
 
 	it('ships the bulk decision copy in every locale', () => {
 		for (const bundle of [translationsEn, translationsPl]) {
+			const keys = translationKeys(bundle);
 			for (const key of [
 				'selection.label',
 				'action.approveSelected',
@@ -154,7 +157,7 @@ describe('APPROVALS-DECIDE-MANY selection', () => {
 				'notice.decidedMany',
 				'error.decideMany',
 			]) {
-				expect([key, key in bundle]).toEqual([key, true]);
+				expect([key, keys.includes(key)]).toEqual([key, true]);
 			}
 		}
 	});

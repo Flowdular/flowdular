@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { translationKeys } from '@flowdular/contracts';
 import translationsEn from '../translations/en.json';
 import translationsPl from '../translations/pl.json';
 import {
@@ -16,8 +17,8 @@ const BUNDLES = [
 
 describe('connectors translations', () => {
 	it('ships matching English and Polish keys', () => {
-		expect(Object.keys(translationsPl).sort()).toEqual(
-			Object.keys(translationsEn).sort(),
+		expect(translationKeys(translationsPl)).toEqual(
+			translationKeys(translationsEn),
 		);
 	});
 

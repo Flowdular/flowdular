@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { translationKeys } from '@flowdular/contracts';
 import translationsEn from '../translations/en.json';
 import translationsPl from '../translations/pl.json';
 import { SEARCH_MODULE_SETTINGS } from '../src/settings.ts';
@@ -22,8 +23,8 @@ function moduleSource(): string {
 
 describe('search translations', () => {
 	it('ships matching English and Polish keys', () => {
-		expect(Object.keys(translationsPl).sort()).toEqual(
-			Object.keys(translationsEn).sort(),
+		expect(translationKeys(translationsPl)).toEqual(
+			translationKeys(translationsEn),
 		);
 	});
 
@@ -31,7 +32,7 @@ describe('search translations', () => {
 	   for every locale, so an orphan key is removed rather than carried. */
 	it('ships no key the module never reaches', () => {
 		const source = moduleSource();
-		for (const key of Object.keys(translationsEn)) {
+		for (const key of translationKeys(translationsEn)) {
 			/* Built from the server's stable code at the point of failure. */
 			if (key.startsWith('error.code.')) continue;
 			/* Read by the platform module list, not by this module. */

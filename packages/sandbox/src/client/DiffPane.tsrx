@@ -76,13 +76,9 @@ export function DiffPane(props: DiffPaneProps) @{
 						@if (groups.length > 1) {
 							<header class="diff__module">
 								<span class="ui-mono">{'modules/' + group.module}</span>
-								<span class="ui-help">
-									{group.diffs.length === 1
-										? t('sandbox.diff.file.one')
-										: t('sandbox.diff.file.other', {
-												count: group.diffs.length,
-											})}
-								</span>
+								<span class="ui-help">{t('sandbox.diff.file', {
+									count: group.diffs.length,
+								})}</span>
 							</header>
 						}
 						@for (const diff of group.diffs; key fileKey(diff)) {

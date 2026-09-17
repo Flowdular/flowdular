@@ -12,6 +12,14 @@ export interface OrganizationSwitcherProps {
 	onSelect: (tenantId: string) => void;
 }
 
+/* The shell names the built-in roles in the reader's locale; any other role
+   key is shown as it was created. */
+function roleLabel(role: string): string {
+	const key = 'shell.org.role.' + role;
+	const label = t(key);
+	return label === key ? role : label;
+}
+
 export function OrganizationSwitcher(props: OrganizationSwitcherProps) @{
 	const dropdown = useMemo(() => createStore({ open: cell(false) }), []);
 	const [open, setOpen] = useValue(dropdown.state.open);
@@ -40,12 +48,10 @@ export function OrganizationSwitcher(props: OrganizationSwitcherProps) @{
 			<Avatar name={activeTenantName} square />
 			<span class="org-switcher__copy">
 				<b>{activeTenantName}</b>
-				<small>{t(
-					props.identity.tenants.length === 1
-						? 'shell.org.summary.one'
-						: 'shell.org.summary.other',
-					{ role: activeTenantRole, count: props.identity.tenants.length },
-				)}</small>
+				<small>{t('shell.org.summary', {
+					role: roleLabel(activeTenantRole),
+					count: props.identity.tenants.length,
+				})}</small>
 			</span>
 			<Icon name="chevrons-up-down" size={16} />
 		</button>
@@ -83,7 +89,7 @@ export function OrganizationSwitcher(props: OrganizationSwitcherProps) @{
 							<Avatar name={tenant.name} square />
 							<span class="ui-cell">
 								<b>{tenant.name}</b>
-								<small>{tenant.role}</small>
+								<small>{roleLabel(tenant.role)}</small>
 							</span>
 							@if (tenant.tenantId === props.identity.tenantId) {
 								<Icon name="check" size={16} />

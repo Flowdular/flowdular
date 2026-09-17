@@ -6,10 +6,12 @@ import {
 	success,
 	type CommandEnvelope,
 } from '@flowdular/cli-protocol';
-import type {
-	ModuleManifest,
-	RegisteredModule,
-	ValidationIssue,
+import {
+	pluralFamilyIssues,
+	translationKeys,
+	type ModuleManifest,
+	type RegisteredModule,
+	type ValidationIssue,
 } from '@flowdular/contracts';
 import { createModuleRegistry, PLATFORM_API_VERSION } from '@flowdular/kernel';
 import {
@@ -254,6 +256,7 @@ async function translationIssues(
 	}
 	if (!manifest.capabilities.includes('translations')) return issues;
 	const keySets = new Map<string, readonly string[]>();
+	const referenceBundleKeys = new Set<string>();
 	for (const locale of manifest.locales) {
 		const path = `translations/${locale}.json`;
 		if (!(await exists(join(moduleRoot, path)))) {
@@ -271,7 +274,21 @@ async function translationIssues(
 			if (!bundle || typeof bundle !== 'object' || Array.isArray(bundle)) {
 				throw new Error('Expected a JSON object.');
 			}
-			keySets.set(locale, Object.keys(bundle).sort());
+			const strings = bundle as Record<string, string>;
+			keySets.set(locale, translationKeys(strings));
+			if (keySets.size === 1) {
+				for (const key of Object.keys(strings)) referenceBundleKeys.add(key);
+			}
+			const plurals = pluralFamilyIssues(strings, locale);
+			if (plurals.length > 0) {
+				issues.push(
+					issue(
+						'TRANSLATION_PLURAL_INCOMPLETE',
+						`${path} plural families do not match the ${locale} plural rules: ${plurals.join('; ')}.`,
+						path,
+					),
+				);
+			}
 		} catch (error) {
 			issues.push(
 				issue(
@@ -305,7 +322,7 @@ async function translationIssues(
 	   key otherwise survives typecheck and paints the raw key in the UI. Dynamic
 	   families such as `status.` are still covered by locale key parity and the
 	   module's presentation tests. */
-	const referenceKeys = new Set(reference[1]);
+	const referenceKeys = new Set([...reference[1], ...referenceBundleKeys]);
 	const files = await clientSourceFiles(moduleRoot);
 	if (files.length > 0) {
 		const namespace = manifest.id.split('.')[0] ?? manifest.id;
@@ -338,6 +355,24 @@ async function translationIssues(
 	return issues;
 }
 
+/* The attributes of each `<Filters` tag, read up to the `>` outside any `{}` so
+   an arrow function inside a prop does not end the tag early. */
+function filtersTags(source: string): readonly string[] {
+	const tags: string[] = [];
+	for (const match of source.matchAll(/<Filters\b/g)) {
+		let depth = 0;
+		let end = match.index + match[0].length;
+		for (; end < source.length; end += 1) {
+			const character = source[end];
+			if (character === '{') depth += 1;
+			else if (character === '}') depth -= 1;
+			else if (character === '>' && depth === 0) break;
+		}
+		tags.push(source.slice(match.index, end));
+	}
+	return tags;
+}
+
 async function userInterfaceIssues(
 	moduleRoot: string,
 ): Promise<ValidationIssue[]> {
@@ -361,6 +396,15 @@ async function userInterfaceIssues(
 				issue(
 					'TANSTACK_TABLE_DIRECT_IMPORT',
 					'Modules use the shared Table contract from @flowdular/ui; TanStack configuration belongs to the UI package.',
+					path,
+				),
+			);
+		}
+		if (filtersTags(source).some((tag) => !/\slabel=/.test(tag))) {
+			issues.push(
+				issue(
+					'FILTERS_LABEL_MISSING',
+					'Filters from @flowdular/ui needs a translated label; without one it shows the English word "Filters" in every locale.',
 					path,
 				),
 			);

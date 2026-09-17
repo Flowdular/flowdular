@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import {
+	createTranslationCatalog,
+	FALLBACK_LOCALE,
+	translateFrom,
+} from '@flowdular/client/i18n';
 import { REPORT_LIMITS, type WorkspaceReport } from '../src/domain/types.ts';
 import {
 	largestTiles,
 	rangeTooWide,
 	reportCaption,
 	resolvedLabel,
+	resolvedUnit,
 	screenSurface,
 } from '../src/client/presentation.ts';
 import {
@@ -169,6 +175,60 @@ describe('REPORTS-LABELS screen', () => {
 			'Agent runs',
 		);
 		expect(resolvedLabel(translate, 'Agent runs', '')).toBe('Agent runs');
+	});
+});
+
+describe('REPORTS-LABELS unit', () => {
+	const catalog = createTranslationCatalog(
+		[
+			{
+				namespace: 'agents',
+				bundles: {
+					en: {
+						'report.runs.unit.runs.one': 'run',
+						'report.runs.unit.runs.other': 'runs',
+					},
+					pl: {
+						'report.runs.unit.runs.one': 'uruchomienie',
+						'report.runs.unit.runs.few': 'uruchomienia',
+						'report.runs.unit.runs.many': 'uruchomień',
+						'report.runs.unit.runs.other': 'uruchomienia',
+					},
+				},
+			},
+		],
+		'pl',
+		FALLBACK_LOCALE,
+	);
+	const translate = (
+		key: string,
+		params?: Readonly<Record<string, string | number>>,
+	) => translateFrom(catalog, key, params);
+	const tile = (value: number, unitKey?: string) => ({
+		key: 'runs',
+		label: 'Runs',
+		value,
+		unit: 'runs',
+		...(unitKey === undefined ? {} : { unitKey }),
+	});
+
+	it('agrees the unit with the tile value in the reader locale', () => {
+		expect(
+			resolvedUnit(translate, tile(1, 'agents.report.runs.unit.runs')),
+		).toBe('uruchomienie');
+		expect(
+			resolvedUnit(translate, tile(3, 'agents.report.runs.unit.runs')),
+		).toBe('uruchomienia');
+		expect(
+			resolvedUnit(translate, tile(0, 'agents.report.runs.unit.runs')),
+		).toBe('uruchomień');
+	});
+
+	it('falls back to the literal unit without a key or a bundle entry', () => {
+		expect(resolvedUnit(translate, tile(3))).toBe('runs');
+		expect(resolvedUnit(translate, tile(3, 'agents.report.runs.unit.x'))).toBe(
+			'runs',
+		);
 	});
 });
 

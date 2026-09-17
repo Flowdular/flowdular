@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { translationKeys } from '@flowdular/contracts';
 import {
 	registerModuleTranslations,
 	setActiveLocale,
@@ -176,8 +177,8 @@ describe('notifications client contribution', () => {
 
 describe('notifications client copy', () => {
 	it('ships the same keys in both locales', () => {
-		expect(Object.keys(translationsPl).sort()).toEqual(
-			Object.keys(translationsEn).sort(),
+		expect(translationKeys(translationsPl)).toEqual(
+			translationKeys(translationsEn),
 		);
 	});
 
@@ -205,7 +206,7 @@ describe('notifications client copy', () => {
 				/* A trailing dot is a prefix the screen completes at run time; the
 				   closed sets below cover those. */
 				if (key.endsWith('.')) continue;
-				expect(t(key), `${locale}: ${key}`).not.toBe(key);
+				expect(t(key, { count: 1 }), `${locale}: ${key}`).not.toBe(key);
 			}
 		}
 	});

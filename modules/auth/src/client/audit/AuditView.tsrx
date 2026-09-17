@@ -271,6 +271,7 @@ export function AuditView(props: AuditViewProps) @{
 						open={filtersOpen}
 						onToggle={() => setFiltersOpen(!filtersOpen)}
 						activeCount={filtersActive}
+						label={t('auth.audit.filter.label')}
 					>
 						<label class="ui-label">{t('auth.audit.filter.action')}</label>
 						<select

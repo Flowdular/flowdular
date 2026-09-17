@@ -9,6 +9,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { translationKeys } from '@flowdular/contracts';
 import { describe, expect, it } from 'vitest';
 import { loadWorkspaceFormatter } from '../src/format.ts';
 import { scaffoldModule } from '../src/module-scaffold.ts';
@@ -318,7 +319,9 @@ describe('module scaffolding from a version 2 specification', () => {
 			expect(en['table.column.quantity']).toBe('Quantity');
 			expect(en['status.archived']).toBe('Archived');
 			/* Every locale keeps the same key set or module validate fails. */
-			expect(Object.keys(pl)).toEqual(Object.keys(en));
+			expect(translationKeys(pl)).toEqual(translationKeys(en));
+			expect(en['table.count.one']).toBe('{count} record');
+			expect(pl['table.count.few']).toBe('{count} rekordy');
 
 			const test = await read(ws.root, 'tests/module.test.ts');
 			expect(test).toContain("unitPrice: '10.00'");
