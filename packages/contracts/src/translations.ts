@@ -36,6 +36,10 @@ export function requiredPluralCategories(
 	return PLURAL_CATEGORIES.filter((category) => selected.has(category));
 }
 
+/* `other` alone is not a family: an enum whose values include "other"
+   (`expenses.category.other` beside `expenses.category.travel`) would otherwise
+   read as a plural family missing its forms. A family carries `other` and at
+   least one category a count can select instead. */
 function pluralMember(
 	bundle: TranslationBundleKeys,
 	key: string,
@@ -45,7 +49,11 @@ function pluralMember(
 	const category = key.slice(dot + 1);
 	if (!(PLURAL_CATEGORIES as readonly string[]).includes(category)) return null;
 	const base = key.slice(0, dot);
-	return Object.hasOwn(bundle, base + '.other') ? { base, category } : null;
+	if (!Object.hasOwn(bundle, base + '.other')) return null;
+	const inflected = PLURAL_CATEGORIES.some(
+		(other) => other !== 'other' && Object.hasOwn(bundle, base + '.' + other),
+	);
+	return inflected ? { base, category } : null;
 }
 
 /** A bundle's keys, sorted, with each plural family folded into its base key so locales with different plural rules compare equal. */
