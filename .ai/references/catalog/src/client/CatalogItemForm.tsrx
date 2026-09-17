@@ -48,7 +48,7 @@ export function CatalogItemForm(props: CatalogItemFormProps) @{
 							value={name}
 							onInput={(event) => setName(event.currentTarget.value)}
 							minlength={2}
-							maxlength={160}
+							maxLength={160}
 							autoFocus
 							required
 						/>
@@ -60,7 +60,7 @@ export function CatalogItemForm(props: CatalogItemFormProps) @{
 							value={sku}
 							onInput={(event) => setSku(event.currentTarget.value)}
 							disabled={props.item !== null}
-							maxlength={64}
+							maxLength={64}
 							required
 						/>
 					</FormField>
@@ -85,7 +85,7 @@ export function CatalogItemForm(props: CatalogItemFormProps) @{
 							name="unit"
 							value={unit}
 							onInput={(event) => setUnit(event.currentTarget.value)}
-							maxlength={24}
+							maxLength={24}
 							required
 						/>
 					</FormField>
@@ -114,7 +114,7 @@ export function CatalogItemForm(props: CatalogItemFormProps) @{
 							value={currency}
 							onInput={(event) => setCurrency(event.currentTarget.value)}
 							minlength={3}
-							maxlength={3}
+							maxLength={3}
 							required
 						/>
 					</FormField>

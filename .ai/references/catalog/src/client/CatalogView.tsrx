@@ -2,6 +2,11 @@ import { useEffect, useMemo } from 'octane';
 import {
 	Alert,
 	Button,
+	CellCode,
+	CellNumber,
+	CellStack,
+	CellTag,
+	CellTime,
 	ConfirmDialog,
 	Drawer,
 	EmptyState,
@@ -13,7 +18,6 @@ import {
 	SearchField,
 	Select,
 	TableCard,
-	Tag,
 	ToastHost,
 	toasts,
 	type TableColumn,
@@ -91,63 +95,60 @@ function price(minor: number, currency: string): string {
 	}
 }
 
-function updatedAt(value: number): string {
-	return new Intl.DateTimeFormat(activeLocale(), {
-		dateStyle: 'medium',
-		timeStyle: 'short',
-	}).format(new Date(value));
-}
-
 function columns(): readonly TableColumn<CatalogItem>[] {
 	return [
 		{
 			key: 'name',
 			header: t('catalog.table.column.name'),
-			width: '28%',
+			width: 'auto',
 			value: (item) => item.name,
-			cell: (item) => <span class="ui-cell">
-				<b>{item.name}</b>
-				<small>{item.unit}</small>
-			</span>,
+			cell: (item) => <CellStack primary={item.name} secondary={item.unit} />,
 		},
 		{
 			key: 'sku',
 			header: t('catalog.table.column.sku'),
-			width: '16%',
+			width: '160px',
+			priority: 2,
 			value: (item) => item.sku,
-			cell: (item) => <span class="ui-mono">{item.sku}</span>,
+			cell: (item) => <CellCode value={item.sku} />,
 		},
 		{
 			key: 'kind',
 			header: t('catalog.table.column.kind'),
-			width: '12%',
+			width: '130px',
+			priority: 2,
 			cell: (item) =>
-				<Tag tone={item.kind === 'product' ? 'info' : 'neutral'}>{t(
-					'catalog.kind.' + item.kind,
-				)}</Tag>,
+				<CellTag
+					tone={item.kind === 'product' ? 'info' : 'neutral'}
+					label={t('catalog.kind.' + item.kind)}
+				/>,
 		},
 		{
 			key: 'price',
 			header: t('catalog.table.column.price'),
-			width: '14%',
+			width: '140px',
 			numeric: true,
-			cell: (item) => price(item.basePriceMinor, item.currency),
+			cell: (item) =>
+				<CellNumber value={price(item.basePriceMinor, item.currency)} />,
 		},
 		{
 			key: 'updatedAt',
 			header: t('catalog.table.column.updated'),
-			width: '18%',
+			width: '170px',
+			priority: 2,
 			value: (item) => item.updatedAt,
-			cell: (item) => updatedAt(item.updatedAt),
+			cell: (item) => <CellTime value={item.updatedAt} />,
 		},
 		{
 			key: 'status',
 			header: t('catalog.table.column.status'),
-			width: '12%',
+			width: '130px',
 			cell: (item) =>
-				<Tag tone={item.status === 'active' ? 'success' : 'neutral'} dot>{t(
-					'catalog.status.' + item.status,
-				)}</Tag>,
+				<CellTag
+					tone={item.status === 'active' ? 'success' : 'neutral'}
+					dot
+					label={t('catalog.status.' + item.status)}
+				/>,
 		},
 	];
 }

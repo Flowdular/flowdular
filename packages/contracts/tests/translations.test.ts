@@ -48,6 +48,22 @@ describe('plural families', () => {
 		expect(pluralFamilyIssues(PL, 'pl')).toEqual([]);
 	});
 
+	it('leaves an enum whose values include other alone', () => {
+		const enums = {
+			'category.other': 'Other',
+			'category.travel': 'Travel',
+			'category.meals': 'Meals',
+		};
+		expect(pluralFamilyIssues(enums, 'en')).toEqual([]);
+		expect(pluralFamilyIssues(enums, 'pl')).toEqual([]);
+		/* Each value stays its own key, so the locales still compare value by value. */
+		expect(translationKeys(enums)).toEqual([
+			'category.meals',
+			'category.other',
+			'category.travel',
+		]);
+	});
+
 	it('reports a Polish family that copies the English forms', () => {
 		expect(pluralFamilyIssues(EN, 'pl')).toEqual([
 			'table.count lacks table.count.few, table.count.many for pl',
