@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import type { Workspace } from './workspace.ts';
 import { resolveExistingInside } from './workspace.ts';
 
-export const SDK_VERSION = '0.3.2';
+export const SDK_VERSION = '0.4.0';
 const LIBRARIES = new Set([
 	'ai-provider',
 	'cli-protocol',
