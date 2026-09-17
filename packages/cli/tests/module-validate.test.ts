@@ -250,6 +250,30 @@ describe('module layout validation', () => {
 		}
 	});
 
+	it('requires a translated label on Filters', async () => {
+		const view = (attributes: string) =>
+			[
+				"import { Filters } from '@flowdular/ui';",
+				`export function View() @{ <Filters open={false} onToggle={() => setOpen(true)}${attributes}></Filters> }`,
+			].join('\n');
+		const { root, dispose } = await moduleRoot({
+			...complete,
+			'src/client/index.tsrx': view(''),
+		});
+		try {
+			expect(codes(await moduleLayoutIssues(root, manifest))).toEqual([
+				'error:FILTERS_LABEL_MISSING',
+			]);
+			await writeFile(
+				join(root, 'src/client/index.tsrx'),
+				view(" label={t('billing.a')}"),
+			);
+			expect(codes(await moduleLayoutIssues(root, manifest))).toEqual([]);
+		} finally {
+			await dispose();
+		}
+	});
+
 	it('accepts the shared Table component', async () => {
 		const { root, dispose } = await moduleRoot({
 			...complete,
