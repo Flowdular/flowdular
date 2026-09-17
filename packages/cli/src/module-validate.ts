@@ -406,9 +406,12 @@ async function userInterfaceIssues(
 			issues.push(
 				issue(
 					'DOM_PROPERTY_CASING',
-					'Host elements use Octane\'s DOM property spelling: ' +
+					"Host elements use Octane's DOM property spelling: " +
 						misspelled
-							.map((found) => `line ${found.line} ${found.name} as ${found.expected}`)
+							.map(
+								(found) =>
+									`line ${found.line} ${found.name} as ${found.expected}`,
+							)
 							.join(', ') +
 						'.',
 					path,

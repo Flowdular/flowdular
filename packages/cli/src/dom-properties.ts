@@ -108,7 +108,9 @@ export function domPropertyMisspellings(
 ): readonly DomPropertyMisspelling[] {
 	const found: DomPropertyMisspelling[] = [];
 	for (const tag of hostTagAttributes(source)) {
-		for (const attribute of tag.text.matchAll(/(?<=\s)([A-Za-z][A-Za-z-]*)=/g)) {
+		for (const attribute of tag.text.matchAll(
+			/(?<=\s)([A-Za-z][A-Za-z-]*)=/g,
+		)) {
 			const name = attribute[1]!;
 			const expected = SPELLINGS.get(name.toLowerCase());
 			if (expected === undefined || expected === name) continue;

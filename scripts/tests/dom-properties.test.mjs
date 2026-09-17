@@ -11,7 +11,9 @@ test('the checked spellings follow the Octane version the UI package uses', () =
 		octane + '/dist/host-property-diagnostics.js',
 		'utf8',
 	);
-	const list = /KNOWN_CAMELCASE_PROPERTIES = [^[]*\[([^\]]*)\]/.exec(diagnostics);
+	const list = /KNOWN_CAMELCASE_PROPERTIES = [^[]*\[([^\]]*)\]/.exec(
+		diagnostics,
+	);
 	assert.ok(list, 'Octane no longer declares KNOWN_CAMELCASE_PROPERTIES');
 	/* Not attributes a screen writes in lowercase: React-style escape hatches and
 	   className, which Flowdular screens spell as class. */
