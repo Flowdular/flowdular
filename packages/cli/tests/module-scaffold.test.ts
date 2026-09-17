@@ -139,7 +139,14 @@ describe('module scaffolding', () => {
 			expect(client).toContain('csrfToken: context.csrfToken');
 			const view = await read(ws.root, 'src/client/InventoryView.tsrx');
 			expect(view).toContain('TableCard');
-			expect(view).toContain("width: '65%'");
+			/* The identity takes the rest of the row as a typed cell; the lifecycle
+			   state is a tag that never hides. */
+			expect(view).toContain("width: 'auto'");
+			expect(view).toContain('<CellText value={record.name} strong />');
+			expect(view).toContain(
+				"<CellTag label={t('inventory.status.' + record.status)} dot />",
+			);
+			expect(view).not.toContain('%');
 			expect(view).toContain("t('inventory.table.title')");
 			expect(view).not.toContain('<table');
 			const contribution = await read(ws.root, 'src/client/contribution.tsrx');
