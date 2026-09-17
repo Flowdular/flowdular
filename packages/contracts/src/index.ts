@@ -365,6 +365,14 @@ export type {
 	VariableSource,
 } from './variables.ts';
 
+export {
+	PLURAL_CATEGORIES,
+	pluralFamilyIssues,
+	requiredPluralCategories,
+	translationKeys,
+} from './translations.ts';
+export type { TranslationBundleKeys } from './translations.ts';
+
 export type {
 	ModuleReviewEvidence,
 	ModuleSourceFile,

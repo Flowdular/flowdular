@@ -1,4 +1,4 @@
-/** One locale's copy for one namespace: flat keys, no nesting, no plural rules. */
+/** One locale's copy for one namespace: flat keys, no nesting; `<key>.one`, `<key>.other` and the other plural categories form a plural family. */
 export type TranslationBundle = Readonly<Record<string, string>>;
 
 /** Every locale a namespace ships, keyed by locale code (`en`, `pl`). */
@@ -73,16 +73,43 @@ export function createTranslationCatalog(
 	};
 }
 
+const pluralRules = new Map<string, Intl.PluralRules>();
+
+function pluralTemplate(
+	strings: ReadonlyMap<string, string>,
+	locale: string,
+	key: string,
+	count: number,
+): string | undefined {
+	let rules = pluralRules.get(locale);
+	if (rules === undefined) {
+		rules = new Intl.PluralRules(locale);
+		pluralRules.set(locale, rules);
+	}
+	return (
+		strings.get(key + '.' + rules.select(count)) ??
+		strings.get(key + '.other') ??
+		strings.get(key)
+	);
+}
+
 /**
  * Resolve a fully qualified key (`catalog.list.title`) through the fallback
  * chain: the active locale, then the fallback locale, then the key itself so a
- * missing string shows up on screen instead of rendering blank.
+ * missing string shows up on screen instead of rendering blank. A numeric
+ * `count` first asks each locale for its plural family member, so a locale's
+ * own family wins over the fallback's.
  */
 export function translateFrom(
 	catalog: TranslationCatalog,
 	key: string,
 	params?: TranslationParams,
 ): string {
-	const template = catalog.active.get(key) ?? catalog.fallback.get(key) ?? key;
-	return interpolate(template, params);
+	const count = params?.count;
+	const template =
+		typeof count === 'number'
+			? (pluralTemplate(catalog.active, catalog.locale, key, count) ??
+				pluralTemplate(catalog.fallback, catalog.fallbackLocale, key, count))
+			: (catalog.active.get(key) ?? catalog.fallback.get(key));
+	return interpolate(template ?? key, params);
 }
