@@ -295,75 +295,78 @@ export function AdapterRunsDrawer(props: AdapterRunsDrawerProps) @{
 		onClose={props.onClose}
 	>
 		<div class="ui-drawer__body">
-			@if (error !== '') {
-				<Alert>{error}</Alert>
-			}
-			<div class="ui-form__actions">
-				<Button size="sm" disabled={loading} onClick={() => void refresh()}>
-					{loading
-						? t('adapters.common.refreshing')
-						: t('adapters.common.refresh')}
-				</Button>
-			</div>
-			<Table
-				caption={t('adapters.runs.caption')}
-				columns={runColumns(adapter?.direction ?? 'source')}
-				rows={runs}
-				rowKey={(run) => run.id}
-				status={loading && runs.length === 0 ? 'loading' : 'idle'}
-				loadingLabel={t('adapters.runs.loading')}
-				empty={{
-					icon: 'activity',
-					title: t('adapters.runs.empty.title'),
-					hint: t('adapters.runs.empty.hint'),
-				}}
-				actions={actions}
-				actionsLabel={t('adapters.common.actions')}
-				actionsWidth="220px"
-			/>
-			@if (cursor !== null) {
+			<div class="ui-form">
+				@if (error !== '') {
+					<Alert>{error}</Alert>
+				}
 				<div class="ui-form__actions">
-					<Button size="sm" disabled={loading} onClick={() => void more()}>{t(
-						'adapters.common.loadMore',
-					)}</Button>
+					<Button size="sm" disabled={loading} onClick={() => void refresh()}>
+						{loading
+							? t('adapters.common.refreshing')
+							: t('adapters.common.refresh')}
+					</Button>
 				</div>
-			}
-			@if (openRun) {
-				<section class="ui-form__section">
-					<div class="ui-form__section-head">
-						<b>{t('adapters.rows.title')}</b>
-						<small>{timestampLabel(openRun.queuedAt)}</small>
+				<Table
+					caption={t('adapters.runs.caption')}
+					columns={runColumns(adapter?.direction ?? 'source')}
+					rows={runs}
+					rowKey={(run) => run.id}
+					status={loading && runs.length === 0 ? 'loading' : 'idle'}
+					loadingLabel={t('adapters.runs.loading')}
+					empty={{
+						icon: 'activity',
+						title: t('adapters.runs.empty.title'),
+						hint: t('adapters.runs.empty.hint'),
+					}}
+					actions={actions}
+					actionsLabel={t('adapters.common.actions')}
+					actionsWidth="220px"
+				/>
+				@if (cursor !== null) {
+					<div class="ui-form__actions">
+						<Button size="sm" disabled={loading} onClick={() => void more()}>{t(
+							'adapters.common.loadMore',
+						)}</Button>
 					</div>
-					@if (rows.length === 0 && !rowsLoading) {
-						<EmptyState icon="check" title={t('adapters.rows.empty.title')}>{t(
-							'adapters.rows.empty.hint',
-						)}</EmptyState>
-					} @else {
-						<Table
-							caption={t('adapters.rows.caption')}
-							columns={rowColumns()}
-							rows={rows}
-							rowKey={(row) => String(row.rowIndex)}
-							status={rowsLoading && rows.length === 0 ? 'loading' : 'idle'}
-							loadingLabel={t('adapters.rows.loading')}
-							empty={{
-								icon: 'check',
-								title: t('adapters.rows.empty.title'),
-								hint: t('adapters.rows.empty.hint'),
-							}}
-						/>
-					}
-					@if (rowsCursor !== null) {
-						<div class="ui-form__actions">
-							<Button
-								size="sm"
-								disabled={rowsLoading}
-								onClick={() => void openRows(openRun, rowsCursor)}
-							>{t('adapters.common.loadMore')}</Button>
+				}
+				@if (openRun) {
+					<section class="ui-form__section">
+						<div class="ui-form__section-head">
+							<b>{t('adapters.rows.title')}</b>
+							<small>{timestampLabel(openRun.queuedAt)}</small>
 						</div>
-					}
-				</section>
-			}
+						@if (rows.length === 0 && !rowsLoading) {
+							<EmptyState
+								icon="check"
+								title={t('adapters.rows.empty.title')}
+							>{t('adapters.rows.empty.hint')}</EmptyState>
+						} @else {
+							<Table
+								caption={t('adapters.rows.caption')}
+								columns={rowColumns()}
+								rows={rows}
+								rowKey={(row) => String(row.rowIndex)}
+								status={rowsLoading && rows.length === 0 ? 'loading' : 'idle'}
+								loadingLabel={t('adapters.rows.loading')}
+								empty={{
+									icon: 'check',
+									title: t('adapters.rows.empty.title'),
+									hint: t('adapters.rows.empty.hint'),
+								}}
+							/>
+						}
+						@if (rowsCursor !== null) {
+							<div class="ui-form__actions">
+								<Button
+									size="sm"
+									disabled={rowsLoading}
+									onClick={() => void openRows(openRun, rowsCursor)}
+								>{t('adapters.common.loadMore')}</Button>
+							</div>
+						}
+					</section>
+				}
+			</div>
 		</div>
 	</Drawer>
 }

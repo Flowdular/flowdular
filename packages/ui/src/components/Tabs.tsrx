@@ -44,7 +44,7 @@ export function Tabs(props: TabsProps) @{
 				id={props.id + '-tab-' + item.id}
 				aria-controls={props.id + '-panel-' + item.id}
 				aria-selected={item.id === selected}
-				tabindex={item.id === selected ? 0 : -1}
+				tabIndex={item.id === selected ? 0 : -1}
 				disabled={item.disabled ?? false}
 				onClick={() => props.onChange(item.id)}
 			>{item.label}</button>

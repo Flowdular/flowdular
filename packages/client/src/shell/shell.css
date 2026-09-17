@@ -330,6 +330,48 @@
 	margin-left: calc(var(--rail-w) + var(--context-strip-w));
 }
 
+/* Narrow windows (shell/layout.ts): the sidebar and the context rail open over
+   the workspace, which keeps the margin of the folded rail and strip. */
+.app-shell--peek .workspace {
+	margin-left: var(--rail-w);
+}
+
+.app-shell--peek.app-shell--context .workspace {
+	margin-left: calc(var(--rail-w) + var(--context-w));
+}
+
+.app-shell--peek.app-shell--context-collapsed .workspace,
+.app-shell--rail.app-shell--context-peek .workspace,
+.app-shell--peek.app-shell--context-peek .workspace {
+	margin-left: calc(var(--rail-w) + var(--context-strip-w));
+}
+
+.app-shell--peek .context-rail {
+	left: var(--rail-w);
+}
+
+.app-shell--peek .sidebar,
+.app-shell--context-peek .context-rail {
+	box-shadow: var(--shadow-lg);
+}
+
+.app-shell--context-peek .context-rail {
+	z-index: 25;
+}
+
+.scrim.scrim--peek {
+	position: fixed;
+	inset: 0;
+	z-index: 19;
+	display: block;
+	background: transparent;
+	border: 0;
+}
+
+.app-shell--peek .scrim.scrim--peek {
+	z-index: 29;
+}
+
 /* The nested list under a section entry serves the phone drawer only; on a
    desktop the context rail shows the same screens. */
 .nav-nested {
@@ -433,6 +475,7 @@
 	position: sticky;
 	top: 0;
 	z-index: 20;
+	container-type: inline-size;
 	display: flex;
 	height: var(--topbar-h);
 	align-items: center;
@@ -457,7 +500,16 @@
 	color: var(--line);
 }
 
+/* The group gives way long before the current page does. */
+.topbar__crumb span {
+	flex-shrink: 100;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
 .topbar__crumb b {
+	min-width: 0;
 	font-weight: 500;
 	color: var(--ink);
 	overflow: hidden;
@@ -487,6 +539,20 @@
 .topbar__search span:first-of-type {
 	flex: 1;
 	text-align: left;
+}
+
+/* A narrow topbar keeps the page name and shrinks the search to its icon. */
+@container (width < 560px) {
+	.topbar__search {
+		width: 34px;
+		flex: none;
+		justify-content: center;
+		padding: 0;
+	}
+
+	.topbar__search span {
+		display: none;
+	}
 }
 
 /* User menu */

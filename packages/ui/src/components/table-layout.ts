@@ -34,8 +34,12 @@ export interface TableLayoutInput {
 }
 
 export interface TableLayout {
-	/** Step classes on the table: `ui-table--p3-<px>`, `ui-table--p2-<px>`, `ui-table--fold-<px>`. */
+	/** Fold step class on the table: `ui-table--fold-<px>`. */
 	readonly classes: readonly string[];
+	/** Per column, the container step below which it hides (`ui-table__hide-<px>`), or undefined when it never hides. */
+	readonly hideSteps: readonly (number | undefined)[];
+	/** The step below which some column is hidden, so the expand button and the details list show; undefined when nothing hides. */
+	readonly revealStep: number | undefined;
 	/** The width below which even the priority 1 columns no longer fit and the wrapper scrolls. */
 	readonly minWidth: number;
 	/** Some column can hide, so rows carry the expand button. */
@@ -55,29 +59,26 @@ export function tableStep(width: number): number {
 	return Math.min(TABLE_STEP_MAX, Math.max(TABLE_STEP_MIN, step));
 }
 
-function sum(
-	columns: readonly TableLayoutColumn[],
-	most: TablePriority,
-	flexible: number,
-): number {
-	let total = 0;
-	for (const column of columns)
-		if (column.priority <= most) total += columnPx(column.width, flexible);
-	return total;
+/** Indexes of the columns that can hide, in the order they hide: priority 3 before 2, the last declared first. The first column never hides. */
+export function hideOrder(columns: readonly TableLayoutColumn[]): number[] {
+	return columns
+		.map((column, index) => ({ index, priority: column.priority }))
+		.filter((column) => column.index > 0 && column.priority > 1)
+		.sort((a, b) => b.priority - a.priority || b.index - a.index)
+		.map((column) => column.index);
 }
 
 /**
- * Where each priority hides and where the actions fold, from the declared
- * widths alone. A priority hides once the container is narrower than the
- * columns that would stay beside it at a reading width, so the table hides
- * before it scrolls; it scrolls only below `minWidth`, when the priority 1
- * columns at their narrowest no longer fit.
+ * Where each column hides and where the actions fold, from the declared widths
+ * alone. Columns hide one at a time: a column hides once the container is
+ * narrower than it and every column still beside it at a reading width, so the
+ * table hides before it scrolls; it scrolls only below `minWidth`, when the
+ * columns that never hide no longer fit at their narrowest.
  */
 export function tableLayout(input: TableLayoutInput): TableLayout {
 	const columns = input.columns;
-	const hasP2 = columns.some((column) => column.priority === 2);
-	const hasP3 = columns.some((column) => column.priority === 3);
-	const collapsible = hasP2 || hasP3;
+	const order = hideOrder(columns);
+	const collapsible = order.length > 0;
 	const select = input.selection ? SELECT_WIDTH : 0;
 	const toggle = collapsible ? TOGGLE_WIDTH : 0;
 	const hasActions = input.actionsWidth !== undefined;
@@ -87,24 +88,36 @@ export function tableLayout(input: TableLayoutInput): TableLayout {
 		: input.fold === 'always'
 			? ACTIONS_FOLDED_WIDTH
 			: actions;
+	const hideSteps: (number | undefined)[] = columns.map(() => undefined);
+	let visible = select + open;
+	for (const column of columns)
+		visible += columnPx(column.width, FLEXIBLE_READING);
+	let previous = Number.POSITIVE_INFINITY;
+	order.forEach((index, position) => {
+		/* The expand button appears with the first hidden column, so every later
+		   step counts it. Steps never rise, so a wider container hides no more. */
+		const step = Math.min(
+			previous,
+			tableStep(visible + (position === 0 ? 0 : toggle)),
+		);
+		hideSteps[index] = step;
+		previous = step;
+		visible -= columnPx(columns[index]!.width, FLEXIBLE_READING);
+	});
+	let narrowest = select + toggle;
+	columns.forEach((column, index) => {
+		if (hideSteps[index] === undefined)
+			narrowest += columnPx(column.width, FLEXIBLE_MIN);
+	});
 	const classes: string[] = [];
-	if (hasP3)
-		classes.push(
-			'ui-table--p3-' +
-				tableStep(sum(columns, 3, FLEXIBLE_READING) + select + open),
-		);
-	if (hasP2)
-		classes.push(
-			'ui-table--p2-' +
-				tableStep(sum(columns, 2, FLEXIBLE_READING) + select + open + toggle),
-		);
-	const narrowest = sum(columns, 1, FLEXIBLE_MIN) + select + toggle;
 	if (hasActions && input.fold === 'narrow')
 		classes.push(
 			'ui-table--fold-' + tableStep(Math.max(3 * actions, narrowest + actions)),
 		);
 	return {
 		classes,
+		hideSteps,
+		revealStep: collapsible ? hideSteps[order[0]!] : undefined,
 		minWidth: Math.ceil(
 			narrowest +
 				(!hasActions

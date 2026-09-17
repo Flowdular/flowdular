@@ -1229,8 +1229,9 @@
 	min-width: 0;
 }
 
+/* Wide enough to read a placeholder; below it the card head wraps instead. */
 .ui-card__filters .ui-search {
-	min-width: 0;
+	min-width: 200px;
 	width: min(280px, 100%);
 }
 
@@ -1312,25 +1313,6 @@
 	overflow-wrap: normal;
 }
 
-/* Column priorities. The step classes in table-steps.css set these below the
-   width a priority no longer fits, and the details of an expanded row show
-   exactly the columns hidden at that width. */
-.ui-table col.ui-table__p2 {
-	display: var(--ui-table-p2, table-column);
-}
-
-.ui-table col.ui-table__p3 {
-	display: var(--ui-table-p3, table-column);
-}
-
-.ui-table :is(th, td).ui-table__p2 {
-	display: var(--ui-table-p2, table-cell);
-}
-
-.ui-table :is(th, td).ui-table__p3 {
-	display: var(--ui-table-p3, table-cell);
-}
-
 .ui-table__lead {
 	display: flex;
 	align-items: center;
@@ -1338,8 +1320,11 @@
 	min-width: 0;
 }
 
+/* Hidden until the table is narrow enough to hide a column: the step classes in
+   table-steps.css hide each column and reveal the button, the details list and
+   exactly the details of the columns hidden at that width. */
 .ui-table__toggle {
-	display: var(--ui-table-p2-detail, var(--ui-table-p3-detail, none));
+	display: none;
 	flex: none;
 	place-items: center;
 	width: 24px;
@@ -1403,7 +1388,7 @@
 .ui-table__details-list {
 	position: relative;
 	z-index: 1;
-	display: var(--ui-table-p2-detail, var(--ui-table-p3-detail, none));
+	display: none;
 	gap: 6px;
 	width: 100cqi;
 	margin: -1px 0 0;
@@ -1421,14 +1406,6 @@
 	grid-template-columns: minmax(96px, 160px) minmax(0, 1fr);
 	align-items: baseline;
 	gap: 12px;
-}
-
-.ui-table__detail--p2 {
-	display: var(--ui-table-p2-detail, none);
-}
-
-.ui-table__detail--p3 {
-	display: var(--ui-table-p3-detail, none);
 }
 
 .ui-table__detail dt {
@@ -1637,10 +1614,11 @@
 
 .ui-table tbody tr.ui-table__placeholder > td {
 	padding: 0;
+	overflow: visible;
 }
 
-.ui-table tbody tr.ui-table__placeholder > td.ui-table__empty {
-	padding: 40px 16px;
+.ui-table__placeholder-body {
+	width: 100cqi;
 }
 
 /* Sortable header. The button fills the cell so the whole header is the

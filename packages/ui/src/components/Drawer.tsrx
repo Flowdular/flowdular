@@ -52,7 +52,7 @@ export function Drawer(props: DrawerProps) @{
 					role="dialog"
 					aria-modal="true"
 					aria-label={props.title}
-					tabindex={-1}
+					tabIndex={-1}
 					ref={panelRef}
 					onClick={(event: MouseEvent) => event.stopPropagation()}
 				>

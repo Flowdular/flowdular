@@ -418,7 +418,7 @@ export function DatePicker(props: DatePickerProps) @{
 					id={props.id + '-calendar'}
 					role="dialog"
 					aria-label={props.label}
-					tabindex={-1}
+					tabIndex={-1}
 					style={placement === null
 						? 'visibility: hidden;'
 						: `top: ${placement.top}px; left: ${placement.left}px;`}
@@ -496,7 +496,7 @@ export function DatePicker(props: DatePickerProps) @{
 													]}
 													type="button"
 													data-day={day.iso}
-													tabindex={day.iso === cursor ? 0 : -1}
+													tabIndex={day.iso === cursor ? 0 : -1}
 													disabled={day.disabled}
 													aria-label={dayLabel(day.iso, locale)}
 													aria-current={day.iso === today ? 'date' : undefined}

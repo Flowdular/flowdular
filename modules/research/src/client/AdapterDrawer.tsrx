@@ -169,237 +169,243 @@ export function AdapterDrawer(props: AdapterDrawerProps) @{
 	>
 		<form class="ui-drawer__form" onSubmit={submit}>
 			<div class="ui-drawer__body">
-				@if (jsonDisabled) {
-					<Alert tone="warning">{t(
-						'research.adapters.jsonDisabledHint',
-					)}</Alert>
-				}
-				@if (remote) {
-					<>
-						<FormField
-							label={t('research.adapters.drawer.baseUrl')}
-							required={key === 'searxng'}
-							help={t('research.adapters.drawer.baseUrlHelp.' + key)}
-						>
-							<input
-								class="ui-input ui-mono"
-								type="url"
-								value={baseUrl}
-								maxlength={2048}
-								placeholder={key === 'firecrawl'
-									? 'https://api.firecrawl.dev'
-									: 'https://search.example.org'}
-								disabled={saving}
-								onInput={(event) => setBaseUrl(event.currentTarget.value)}
-							/>
-						</FormField>
-						<div class="ui-form__row">
-							<Select
-								id="research-adapter-credential"
-								label={t('research.adapters.drawer.credential')}
-								options={credentialOptions}
-								value={credential}
-								disabled={saving}
-								onChange={(value) => setCredential(value as CredentialChoice)}
-							/>
-							<span class="research-adapter__credential">
-								<Tag
-									tone={view?.configuration.hasCredentials
-										? 'success'
-										: 'neutral'}
-									dot
-								>
-									{view?.configuration.hasCredentials
-										? t('research.adapters.drawer.credentialSet')
-										: t('research.adapters.drawer.credentialUnset')}
-								</Tag>
-							</span>
-						</div>
-						@if (credential === 'bearer') {
+				<div class="ui-form">
+					@if (jsonDisabled) {
+						<Alert tone="warning">{t(
+							'research.adapters.jsonDisabledHint',
+						)}</Alert>
+					}
+					@if (remote) {
+						<>
 							<FormField
-								label={key === 'firecrawl'
-									? t('research.adapters.drawer.apiKey')
-									: t('research.adapters.drawer.token')}
-								required
+								label={t('research.adapters.drawer.baseUrl')}
+								required={key === 'searxng'}
+								help={t('research.adapters.drawer.baseUrlHelp.' + key)}
 							>
 								<input
 									class="ui-input ui-mono"
-									type="password"
-									autocomplete="off"
-									value={token}
-									maxlength={4000}
+									type="url"
+									value={baseUrl}
+									maxlength={2048}
+									placeholder={key === 'firecrawl'
+										? 'https://api.firecrawl.dev'
+										: 'https://search.example.org'}
 									disabled={saving}
-									onInput={(event) => setToken(event.currentTarget.value)}
+									onInput={(event) => setBaseUrl(event.currentTarget.value)}
 								/>
 							</FormField>
-						}
-						@if (credential === 'basic') {
 							<div class="ui-form__row">
+								<Select
+									id="research-adapter-credential"
+									label={t('research.adapters.drawer.credential')}
+									options={credentialOptions}
+									value={credential}
+									disabled={saving}
+									onChange={(value) => setCredential(value as CredentialChoice)}
+								/>
+								<span class="research-adapter__credential">
+									<Tag
+										tone={view?.configuration.hasCredentials
+											? 'success'
+											: 'neutral'}
+										dot
+									>
+										{view?.configuration.hasCredentials
+											? t('research.adapters.drawer.credentialSet')
+											: t('research.adapters.drawer.credentialUnset')}
+									</Tag>
+								</span>
+							</div>
+							@if (credential === 'bearer') {
 								<FormField
-									label={t('research.adapters.drawer.username')}
+									label={key === 'firecrawl'
+										? t('research.adapters.drawer.apiKey')
+										: t('research.adapters.drawer.token')}
 									required
 								>
 									<input
-										class="ui-input"
-										autocomplete="off"
-										value={username}
-										maxlength={256}
-										disabled={saving}
-										onInput={(event) => setUsername(event.currentTarget.value)}
-									/>
-								</FormField>
-								<FormField
-									label={t('research.adapters.drawer.password')}
-									required
-								>
-									<input
-										class="ui-input"
+										class="ui-input ui-mono"
 										type="password"
 										autocomplete="off"
-										value={password}
-										maxlength={1024}
+										value={token}
+										maxlength={4000}
 										disabled={saving}
-										onInput={(event) => setPassword(event.currentTarget.value)}
+										onInput={(event) => setToken(event.currentTarget.value)}
 									/>
 								</FormField>
-							</div>
-						}
-					</>
-				}
-				@if (key === 'connector') {
-					<FormField
-						label={t('research.settings.connectorInstanceId.label')}
-						help={t('research.settings.connectorInstanceId.description')}
-					>
-						<input
-							class="ui-input ui-mono"
-							value={instanceId}
-							maxlength={128}
-							disabled={saving}
-							onInput={(event) => setInstanceId(event.currentTarget.value)}
-						/>
-					</FormField>
-				}
-				@if (key === 'recorded') {
-					<FormField
-						label={t('research.settings.recordedFixturesPath.label')}
-						help={t('research.settings.recordedFixturesPath.description')}
-					>
-						<input
-							class="ui-input ui-mono"
-							value={fixturesPath}
-							maxlength={1024}
-							disabled={saving}
-							onInput={(event) => setFixturesPath(event.currentTarget.value)}
-						/>
-					</FormField>
-				}
-				<div class="ui-form__row">
-					<FormField
-						label={t('research.adapters.drawer.maxAttempts')}
-						help={t('research.adapters.drawer.maxAttemptsHelp')}
-					>
-						<input
-							class="ui-input"
-							type="number"
-							min="1"
-							max="5"
-							value={maxAttempts}
-							disabled={saving}
-							onInput={(event) => setMaxAttempts(event.currentTarget.value)}
-						/>
-					</FormField>
-					<FormField
-						label={t('research.adapters.drawer.timeout')}
-						help={key === 'direct'
-							? t('research.settings.fetchTimeoutMs.description')
-							: t('research.adapters.drawer.timeoutHelp')}
-					>
-						<input
-							class="ui-input"
-							type="number"
-							min="1000"
-							max={key === 'direct' ? '20000' : '60000'}
-							value={timeoutMs}
-							disabled={saving}
-							onInput={(event) => setTimeoutMs(event.currentTarget.value)}
-						/>
-					</FormField>
-				</div>
-				@if (error !== '') {
-					<Alert>{error}</Alert>
-				}
-				@if (key !== 'direct') {
-					<section class="ui-form__section">
-						<div class="ui-form__section-head">
-							<b>{t('research.adapters.test.title')}</b>
-							<small>{t('research.adapters.test.description')}</small>
-						</div>
-						<div class="ui-control-row">
+							}
+							@if (credential === 'basic') {
+								<div class="ui-form__row">
+									<FormField
+										label={t('research.adapters.drawer.username')}
+										required
+									>
+										<input
+											class="ui-input"
+											autocomplete="off"
+											value={username}
+											maxlength={256}
+											disabled={saving}
+											onInput={(event) => setUsername(
+												event.currentTarget.value,
+											)}
+										/>
+									</FormField>
+									<FormField
+										label={t('research.adapters.drawer.password')}
+										required
+									>
+										<input
+											class="ui-input"
+											type="password"
+											autocomplete="off"
+											value={password}
+											maxlength={1024}
+											disabled={saving}
+											onInput={(event) => setPassword(
+												event.currentTarget.value,
+											)}
+										/>
+									</FormField>
+								</div>
+							}
+						</>
+					}
+					@if (key === 'connector') {
+						<FormField
+							label={t('research.settings.connectorInstanceId.label')}
+							help={t('research.settings.connectorInstanceId.description')}
+						>
+							<input
+								class="ui-input ui-mono"
+								value={instanceId}
+								maxlength={128}
+								disabled={saving}
+								onInput={(event) => setInstanceId(event.currentTarget.value)}
+							/>
+						</FormField>
+					}
+					@if (key === 'recorded') {
+						<FormField
+							label={t('research.settings.recordedFixturesPath.label')}
+							help={t('research.settings.recordedFixturesPath.description')}
+						>
+							<input
+								class="ui-input ui-mono"
+								value={fixturesPath}
+								maxlength={1024}
+								disabled={saving}
+								onInput={(event) => setFixturesPath(event.currentTarget.value)}
+							/>
+						</FormField>
+					}
+					<div class="ui-form__row">
+						<FormField
+							label={t('research.adapters.drawer.maxAttempts')}
+							help={t('research.adapters.drawer.maxAttemptsHelp')}
+						>
 							<input
 								class="ui-input"
-								aria-label={t('research.adapters.test.query')}
-								placeholder={t('research.adapters.test.query')}
-								value={query}
-								maxlength={400}
-								disabled={testing}
-								onInput={(event) => setQuery(event.currentTarget.value)}
+								type="number"
+								min="1"
+								max="5"
+								value={maxAttempts}
+								disabled={saving}
+								onInput={(event) => setMaxAttempts(event.currentTarget.value)}
 							/>
-							<Button
-								size="sm"
-								disabled={testing || query.trim() === ''}
-								onClick={() => void runTest()}
-							>
-								{testing
-									? t('research.adapters.test.running')
-									: t('research.adapters.test.run')}
-							</Button>
-						</div>
-						@if (testError !== '') {
-							<Alert>{testError}</Alert>
-						}
-						@if (result) {
-							<div class="research-test" role="status">
-								<Tag
-									tone={result.outcome === 'ok'
-										? 'success'
-										: result.outcome === 'empty'
-											? 'warning'
-											: 'danger'}
-									dot
-								>{t('research.adapters.test.outcome.' + result.outcome)}</Tag>
-								<span class="num">{durationLabel(result.durationMs)}</span>
-								<span>{t('research.adapters.test.results', {
-									count: numberLabel(result.resultCount),
-								})}</span>
-								@if (result.errorCode !== null) {
-									<p class="ui-help ui-help--error">{errorCodeLabel(
-										result.errorCode,
-									)}</p>
-								}
-								<ul class="research-attempts">
-									@for (const attempt of result.attempts; key attempt.adapter +
-										':' +
-										attempt.attempt +
-										':' +
-										attempt.createdAt) {
-										<li>
-											<Tag
-												tone={attemptOutcomeTone(attempt.outcome)}
-											>{attemptOutcomeLabel(attempt.outcome)}</Tag>
-											<span class="num">{durationLabel(
-												attempt.durationMs,
-											)}</span>
-											@if (attempt.errorCode !== null) {
-												<span class="ui-mono">{attempt.errorCode}</span>
-											}
-										</li>
-									}
-								</ul>
+						</FormField>
+						<FormField
+							label={t('research.adapters.drawer.timeout')}
+							help={key === 'direct'
+								? t('research.settings.fetchTimeoutMs.description')
+								: t('research.adapters.drawer.timeoutHelp')}
+						>
+							<input
+								class="ui-input"
+								type="number"
+								min="1000"
+								max={key === 'direct' ? '20000' : '60000'}
+								value={timeoutMs}
+								disabled={saving}
+								onInput={(event) => setTimeoutMs(event.currentTarget.value)}
+							/>
+						</FormField>
+					</div>
+					@if (error !== '') {
+						<Alert>{error}</Alert>
+					}
+					@if (key !== 'direct') {
+						<section class="ui-form__section">
+							<div class="ui-form__section-head">
+								<b>{t('research.adapters.test.title')}</b>
+								<small>{t('research.adapters.test.description')}</small>
 							</div>
-						}
-					</section>
-				}
+							<div class="ui-control-row">
+								<input
+									class="ui-input"
+									aria-label={t('research.adapters.test.query')}
+									placeholder={t('research.adapters.test.query')}
+									value={query}
+									maxlength={400}
+									disabled={testing}
+									onInput={(event) => setQuery(event.currentTarget.value)}
+								/>
+								<Button
+									size="sm"
+									disabled={testing || query.trim() === ''}
+									onClick={() => void runTest()}
+								>
+									{testing
+										? t('research.adapters.test.running')
+										: t('research.adapters.test.run')}
+								</Button>
+							</div>
+							@if (testError !== '') {
+								<Alert>{testError}</Alert>
+							}
+							@if (result) {
+								<div class="research-test" role="status">
+									<Tag
+										tone={result.outcome === 'ok'
+											? 'success'
+											: result.outcome === 'empty'
+												? 'warning'
+												: 'danger'}
+										dot
+									>{t('research.adapters.test.outcome.' + result.outcome)}</Tag>
+									<span class="num">{durationLabel(result.durationMs)}</span>
+									<span>{t('research.adapters.test.results', {
+										count: numberLabel(result.resultCount),
+									})}</span>
+									@if (result.errorCode !== null) {
+										<p class="ui-help ui-help--error">{errorCodeLabel(
+											result.errorCode,
+										)}</p>
+									}
+									<ul class="research-attempts">
+										@for (const attempt of result.attempts; key attempt.adapter +
+											':' +
+											attempt.attempt +
+											':' +
+											attempt.createdAt) {
+											<li>
+												<Tag
+													tone={attemptOutcomeTone(attempt.outcome)}
+												>{attemptOutcomeLabel(attempt.outcome)}</Tag>
+												<span class="num">{durationLabel(
+													attempt.durationMs,
+												)}</span>
+												@if (attempt.errorCode !== null) {
+													<span class="ui-mono">{attempt.errorCode}</span>
+												}
+											</li>
+										}
+									</ul>
+								</div>
+							}
+						</section>
+					}
+				</div>
 			</div>
 			<div class="ui-drawer__foot">
 				<Button onClick={props.onClose}>{t('research.common.close')}</Button>

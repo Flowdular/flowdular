@@ -290,11 +290,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 							</p>
 						</header>
 						<form style="display:grid;gap:14px" onSubmit={lookUpSso}>
-							<FormField
-								label={t('auth.signin.workspace.label')}
-								help={t('auth.signin.workspace.help')}
-								required
-							>
+							<FormField label={t('auth.signin.workspace.label')} required>
 								<input
 									class="ui-input"
 									name="workspace"
@@ -310,9 +306,6 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 									}}
 								/>
 							</FormField>
-							@if (ssoLookup === 'unknown') {
-								<Alert>{t('auth.sso.unknown')}</Alert>
-							}
 							<Button
 								variant="primary"
 								size="lg"
@@ -326,6 +319,9 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 									: t('auth.sso.continue')}
 							</Button>
 						</form>
+						@if (ssoLookup === 'unknown') {
+							<Alert>{t('auth.sso.unknown')}</Alert>
+						}
 						@if (ssoLookup === 'resolved') {
 							@if (providerOptions.length > 0) {
 								<div class="auth-providers">
