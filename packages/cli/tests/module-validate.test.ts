@@ -181,6 +181,29 @@ describe('module layout validation', () => {
 		}
 	});
 
+	it('accepts plural families that differ per locale and rejects incomplete ones', async () => {
+		const { root, dispose } = await moduleRoot({
+			...complete,
+			'translations/en.json':
+				'{"module.name":"Billing","a":"1","count.one":"{count} invoice","count.other":"{count} invoices"}',
+			'translations/pl.json':
+				'{"module.name":"Rozliczenia","a":"1","count.one":"{count} faktura","count.few":"{count} faktury","count.many":"{count} faktur","count.other":"{count} faktury"}',
+			'src/client/index.ts': "t('billing.count', { count: 2 });\n",
+		});
+		try {
+			expect(codes(await moduleLayoutIssues(root, manifest))).toEqual([]);
+			await writeFile(
+				join(root, 'translations/pl.json'),
+				'{"module.name":"Rozliczenia","a":"1","count.one":"{count} faktura","count.other":"{count} faktur"}',
+			);
+			const issues = await moduleLayoutIssues(root, manifest);
+			expect(codes(issues)).toEqual(['error:TRANSLATION_PLURAL_INCOMPLETE']);
+			expect(issues[0]?.message).toContain('count.few, count.many');
+		} finally {
+			await dispose();
+		}
+	});
+
 	it('errors when a declared locale has no translation file', async () => {
 		const { root, dispose } = await moduleRoot(complete);
 		await rm(join(root, 'translations/pl.json'));

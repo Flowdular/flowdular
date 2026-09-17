@@ -6,10 +6,12 @@ import {
 	success,
 	type CommandEnvelope,
 } from '@flowdular/cli-protocol';
-import type {
-	ModuleManifest,
-	RegisteredModule,
-	ValidationIssue,
+import {
+	pluralFamilyIssues,
+	translationKeys,
+	type ModuleManifest,
+	type RegisteredModule,
+	type ValidationIssue,
 } from '@flowdular/contracts';
 import { createModuleRegistry, PLATFORM_API_VERSION } from '@flowdular/kernel';
 import {
@@ -254,6 +256,7 @@ async function translationIssues(
 	}
 	if (!manifest.capabilities.includes('translations')) return issues;
 	const keySets = new Map<string, readonly string[]>();
+	const referenceBundleKeys = new Set<string>();
 	for (const locale of manifest.locales) {
 		const path = `translations/${locale}.json`;
 		if (!(await exists(join(moduleRoot, path)))) {
@@ -271,7 +274,21 @@ async function translationIssues(
 			if (!bundle || typeof bundle !== 'object' || Array.isArray(bundle)) {
 				throw new Error('Expected a JSON object.');
 			}
-			keySets.set(locale, Object.keys(bundle).sort());
+			const strings = bundle as Record<string, string>;
+			keySets.set(locale, translationKeys(strings));
+			if (keySets.size === 1) {
+				for (const key of Object.keys(strings)) referenceBundleKeys.add(key);
+			}
+			const plurals = pluralFamilyIssues(strings, locale);
+			if (plurals.length > 0) {
+				issues.push(
+					issue(
+						'TRANSLATION_PLURAL_INCOMPLETE',
+						`${path} plural families do not match the ${locale} plural rules: ${plurals.join('; ')}.`,
+						path,
+					),
+				);
+			}
 		} catch (error) {
 			issues.push(
 				issue(
@@ -305,7 +322,7 @@ async function translationIssues(
 	   key otherwise survives typecheck and paints the raw key in the UI. Dynamic
 	   families such as `status.` are still covered by locale key parity and the
 	   module's presentation tests. */
-	const referenceKeys = new Set(reference[1]);
+	const referenceKeys = new Set([...reference[1], ...referenceBundleKeys]);
 	const files = await clientSourceFiles(moduleRoot);
 	if (files.length > 0) {
 		const namespace = manifest.id.split('.')[0] ?? manifest.id;
