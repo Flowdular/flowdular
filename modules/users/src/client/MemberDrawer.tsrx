@@ -274,16 +274,18 @@ function MemberRoleSection(props: {
 			<small>{t('users.member.roleDescription')}</small>
 		</div>
 		<FormField label={t('users.form.role')}>
-			<select class="ui-select" name="role" disabled={props.disabled}>
+			<select
+				class="ui-select"
+				name="role"
+				defaultValue={props.member.role}
+				disabled={props.disabled}
+			>
 				@for (const role of props.roles; key role.id) {
 					@if (
 						role.key !== 'owner' || props.canAssignOwner ||
 							props.member.role === 'owner'
 					) {
-						<option
-							value={role.key}
-							selected={role.key === props.member.role}
-						>{roleName(role)}</option>
+						<option value={role.key}>{roleName(role)}</option>
 					}
 				}
 			</select>
