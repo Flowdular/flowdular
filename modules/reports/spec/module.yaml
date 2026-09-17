@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: reports.core
-specVersion: 0.1.3
+specVersion: 0.1.4
 status: approved
 name: Reports Core
 description: Composes one workspace report out of the rollups other modules already hold, by asking every module that registered a report provider for its own tiles and series over a date range under the reader's permissions, and rendering them on one screen and one dashboard widget; reports.core holds no rows, no index and no copy of another module's data.
