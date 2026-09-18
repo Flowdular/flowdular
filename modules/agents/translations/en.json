@@ -422,6 +422,8 @@
 	"report.runs.unit.tokens.other": "tokens",
 	"report.runs.series.runsPerDay": "Runs per day",
 	"report.runs.series.tokensPerDay": "Tokens per day",
+	"assistant.turns.one": "{count} turn",
+	"assistant.turns.other": "{count} turns",
 	"assistant.title": "Assistant",
 	"assistant.name": "Assistant",
 	"assistant.close": "Close the assistant",
