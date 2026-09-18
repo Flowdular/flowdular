@@ -364,16 +364,19 @@ describe('workspace assistant', () => {
 			(await fix.assistant.listThreads(owner, { limit: 10, after: null }))
 				.threads,
 		).toEqual([]);
+		/* Each attempt is started only when it is awaited: a promise made up front
+		   would reject while the case is still on the one before it. */
 		for (const attempt of [
-			fix.assistant.readThread(owner, started.thread.id),
-			fix.assistant.continueThread(owner, {
-				threadId: started.thread.id,
-				message: 'Let me in.',
-			}),
-			fix.assistant.renameThread(owner, started.thread.id, 'Mine now'),
-			fix.assistant.deleteThread(owner, started.thread.id),
+			() => fix.assistant.readThread(owner, started.thread.id),
+			() =>
+				fix.assistant.continueThread(owner, {
+					threadId: started.thread.id,
+					message: 'Let me in.',
+				}),
+			() => fix.assistant.renameThread(owner, started.thread.id, 'Mine now'),
+			() => fix.assistant.deleteThread(owner, started.thread.id),
 		]) {
-			await expect(attempt).rejects.toMatchObject({
+			await expect(attempt()).rejects.toMatchObject({
 				code: 'ASSISTANT_THREAD_NOT_FOUND',
 				status: 404,
 			});
@@ -417,17 +420,18 @@ describe('workspace assistant', () => {
 			lockedReason: 'disabled',
 		});
 		for (const attempt of [
-			fix.assistant.listThreads(asking, { limit: 10, after: null }),
-			fix.assistant.readThread(asking, started.thread.id),
-			fix.assistant.startThread(asking, { message: 'Again.' }),
-			fix.assistant.continueThread(asking, {
-				threadId: started.thread.id,
-				message: 'Again.',
-			}),
-			fix.assistant.renameThread(asking, started.thread.id, 'Renamed'),
-			fix.assistant.deleteThread(asking, started.thread.id),
+			() => fix.assistant.listThreads(asking, { limit: 10, after: null }),
+			() => fix.assistant.readThread(asking, started.thread.id),
+			() => fix.assistant.startThread(asking, { message: 'Again.' }),
+			() =>
+				fix.assistant.continueThread(asking, {
+					threadId: started.thread.id,
+					message: 'Again.',
+				}),
+			() => fix.assistant.renameThread(asking, started.thread.id, 'Renamed'),
+			() => fix.assistant.deleteThread(asking, started.thread.id),
 		]) {
-			await expect(attempt).rejects.toMatchObject({
+			await expect(attempt()).rejects.toMatchObject({
 				code: 'ASSISTANT_DISABLED',
 				status: 409,
 			});
