@@ -1,5 +1,27 @@
 export { defineEndpoint } from './endpoint.ts';
 export {
+	createEndpointCatalog,
+	serverEndpointCatalog,
+	validateEndpointDocumentation,
+} from './endpoint-catalog.ts';
+export type {
+	CatalogedEndpoint,
+	EndpointAccess,
+	EndpointBodyDocumentation,
+	EndpointCatalog,
+	EndpointDocumentation,
+	EndpointParameterDocumentation,
+	EndpointResponseDocumentation,
+} from './endpoint-catalog.ts';
+export { createCorsMiddleware } from './cors.ts';
+export type { CorsOptions } from './cors.ts';
+export { buildOpenApiDocument, createOpenApiRoutes } from './openapi.ts';
+export type {
+	OpenApiDocument,
+	OpenApiDocumentOptions,
+	OpenApiRoutesOptions,
+} from './openapi.ts';
+export {
 	createApplicationRoutes,
 	validateApplicationPath,
 } from './application-routes.ts';

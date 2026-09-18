@@ -1,4 +1,9 @@
 import { ServerRoute, type Context } from '@octanejs/app-core';
+import {
+	serverEndpointCatalog,
+	validateEndpointDocumentation,
+	type EndpointDocumentation,
+} from './endpoint-catalog.ts';
 import { serverLogger } from './log.ts';
 import { serverMetrics } from './metrics.ts';
 import { MODULE_INACTIVE, routeActiveForTenant } from './module-activation.ts';
@@ -37,6 +42,12 @@ interface EndpointBase {
 	readonly path: string;
 	readonly methods: readonly string[];
 	readonly handler: EndpointHandler;
+	/**
+	 * What the generated API document says about this operation. Optional: an
+	 * endpoint that declares none is still described by its address, its
+	 * methods and the permission it demands.
+	 */
+	readonly documentation?: EndpointDocumentation;
 }
 
 interface PublicEndpoint extends EndpointBase {
@@ -205,6 +216,17 @@ export function defineEndpoint(
 			});
 			return runWithTrace(span.context, () => serve(context, requestId, span));
 		},
+	});
+
+	serverEndpointCatalog().record({
+		id: definition.id,
+		path: definition.path,
+		methods: serverRoute.methods,
+		access: definition.access,
+		documentation: definition.documentation
+			? validateEndpointDocumentation(definition.id, definition.documentation)
+			: null,
+		route: serverRoute,
 	});
 
 	return Object.freeze({

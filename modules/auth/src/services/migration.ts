@@ -1349,6 +1349,37 @@ WHERE builtin = 1 AND key IN ('owner', 'member');
 ALTER TABLE auth_roles FORCE ROW LEVEL SECURITY;
 `;
 
+/* Mirrors migrations/0038_api_token_writes_and_origins.up.sql byte for byte. */
+export const AUTH_MIGRATION_038_API_TOKEN_WRITES_AND_ORIGINS = `-- An API token is a machine credential, and until now it could only read: a
+-- session-guarded mutation refused it outright. A headless caller needs to
+-- write too, so the permission to do so becomes a property of the token the
+-- owner issues rather than a property of every token at once. allow_writes is
+-- 0 unless the owner asked for it, so every token already issued stays
+-- read-only.
+--
+-- allowed_origins_json lists the browser origins that may present the token.
+-- An empty list means no browser origin may: the token is for a server-side
+-- caller, which sends no Origin header.
+ALTER TABLE auth_api_tokens ADD COLUMN IF NOT EXISTS allow_writes INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE auth_api_tokens ADD COLUMN IF NOT EXISTS allowed_origins_json TEXT NOT NULL DEFAULT '[]';
+-- The cross-origin preflight carries no credential, so the deployment answers
+-- it from the origins its live tokens declare. That read runs on the routing
+-- role, which holds a column grant rather than a table grant; it learns which
+-- origins are registered somewhere in the deployment and no workspace data.
+GRANT SELECT (allowed_origins_json, expires_at) ON auth_api_tokens TO coreloom_background;
+CREATE INDEX IF NOT EXISTS auth_api_tokens_live_origins_idx
+  ON auth_api_tokens (revoked_at, expires_at);
+`;
+
+/* Mirrors migrations/0039_api_token_rate_limit.up.sql byte for byte. */
+export const AUTH_MIGRATION_039_API_TOKEN_RATE_LIMIT = `-- A token was admitted at whatever rate it asked for, so one runaway
+-- integration could take a workspace's API to itself. Each token now carries
+-- the requests per minute it may spend; 0 means the token takes the
+-- deployment default from the auth.core setting, which an owner changes in
+-- Administration without a restart.
+ALTER TABLE auth_api_tokens ADD COLUMN IF NOT EXISTS rate_limit_per_minute INTEGER NOT NULL DEFAULT 0;
+`;
+
 export const databaseMigrations: readonly DatabaseMigration[] = [
 	{
 		id: '0001_auth_core',
@@ -1647,5 +1678,25 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 	{
 		id: '0037_assistant_scopes',
 		sql: { postgresql: AUTH_MIGRATION_037_ASSISTANT_SCOPES },
+	},
+	{
+		id: '0038_api_token_writes_and_origins',
+		sql: { postgresql: AUTH_MIGRATION_038_API_TOKEN_WRITES_AND_ORIGINS },
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() => database.schema.hasColumn('auth_api_tokens', 'allow_writes'),
+				() =>
+					database.schema.hasColumn('auth_api_tokens', 'allowed_origins_json'),
+				() => database.schema.hasIndex('auth_api_tokens_live_origins_idx'),
+			]),
+	},
+	{
+		id: '0039_api_token_rate_limit',
+		sql: { postgresql: AUTH_MIGRATION_039_API_TOKEN_RATE_LIMIT },
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() =>
+					database.schema.hasColumn('auth_api_tokens', 'rate_limit_per_minute'),
+			]),
 	},
 ];

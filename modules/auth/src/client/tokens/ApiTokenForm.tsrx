@@ -1,6 +1,6 @@
 import { useMemo } from 'octane';
 import { t } from '@flowdular/client';
-import { Button, CheckGrid, FormField } from '@flowdular/ui';
+import { Button, CheckGrid, FormField, Switch } from '@flowdular/ui';
 import type { CheckGroup, CheckOption } from '@flowdular/ui';
 import { cell, createStore, useValue } from 'segment-state';
 import type { CreateApiTokenRequest } from './api.ts';
@@ -12,10 +12,19 @@ export interface ApiTokenFormProps {
 	readonly onSubmit: (input: CreateApiTokenRequest) => void;
 }
 
-/* A sandbox connection reads platform data and proves sandbox authority. It
-   never needs a write scope: session-guarded mutations reject API tokens. */
+/* A sandbox connection reads platform data and proves sandbox authority, so
+   the preset stays on read scopes even though a token may now be issued with
+   permission to write. */
 function sandboxPreset(scope: string): boolean {
 	return scope.startsWith('sandbox.') || scope.endsWith('.read');
+}
+
+/* One origin per line, the way the token stores them. The server is what
+   decides whether each entry is a usable origin. */
+function originList(value: string): readonly string[] {
+	return value.split('\n').map((entry) => entry.trim()).filter(
+		(entry) => entry.length > 0,
+	);
 }
 
 function scopeGroups(scopes: readonly string[]): readonly CheckGroup[] {
@@ -32,6 +41,13 @@ function scopeGroups(scopes: readonly string[]): readonly CheckGroup[] {
 	return [...groups].map(([label, options]) => ({ label, options }));
 }
 
+/* 0 and anything unusable mean the deployment default; the server is what
+   bounds the value. */
+function requestsPerMinute(value: string): number {
+	const parsed = Number(value);
+	return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+}
+
 function expiryTimestamp(days: string): number | null {
 	const value = Number(days);
 	if (!Number.isFinite(value) || value <= 0) return null;
@@ -45,11 +61,19 @@ export function ApiTokenForm(props: ApiTokenFormProps) @{
 				props.availableScopes.filter(sandboxPreset),
 			),
 			expiryDays: '0',
+			allowWrites: false,
+			allowedOrigins: '',
+			rateLimit: '0',
 		}),
 		[],
 	);
 	const [scopes, setScopes] = useValue(formState.state.scopes);
 	const [expiryDays, setExpiryDays] = useValue(formState.state.expiryDays);
+	const [allowWrites, setAllowWrites] = useValue(formState.state.allowWrites);
+	const [allowedOrigins, setAllowedOrigins] = useValue(
+		formState.state.allowedOrigins,
+	);
+	const [rateLimit, setRateLimit] = useValue(formState.state.rateLimit);
 	const groups = scopeGroups(props.availableScopes);
 
 	const submit = (event: SubmitEvent) => {
@@ -59,6 +83,9 @@ export function ApiTokenForm(props: ApiTokenFormProps) @{
 		props.onSubmit({
 			label: typeof label === 'string' ? label : '',
 			scopes,
+			allowWrites,
+			allowedOrigins: originList(allowedOrigins),
+			rateLimitPerMinute: requestsPerMinute(rateLimit),
 			expiresAt: expiryTimestamp(expiryDays),
 		});
 	};
@@ -101,6 +128,43 @@ export function ApiTokenForm(props: ApiTokenFormProps) @{
 							count: 365,
 						})}</option>
 					</select>
+				</FormField>
+				<FormField
+					label={t('auth.tokens.form.writes')}
+					help={t('auth.tokens.form.writesHelp')}
+				>
+					<Switch
+						checked={allowWrites}
+						label={t('auth.tokens.form.writes')}
+						onChange={setAllowWrites}
+					/>
+				</FormField>
+				<FormField
+					label={t('auth.tokens.form.rateLimit')}
+					help={t('auth.tokens.form.rateLimitHelp')}
+				>
+					<input
+						class="ui-input"
+						type="number"
+						min={0}
+						max={100000}
+						step={1}
+						value={rateLimit}
+						onInput={(event) => setRateLimit(event.currentTarget.value)}
+					/>
+				</FormField>
+				<FormField
+					label={t('auth.tokens.form.origins')}
+					help={t('auth.tokens.form.originsHelp')}
+				>
+					<textarea
+						class="ui-textarea"
+						rows={3}
+						spellCheck={false}
+						placeholder={t('auth.tokens.form.originsPlaceholder')}
+						value={allowedOrigins}
+						onInput={(event) => setAllowedOrigins(event.currentTarget.value)}
+					/>
 				</FormField>
 				<div class="ui-field">
 					<span class="ui-label">

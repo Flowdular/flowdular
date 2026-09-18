@@ -11,7 +11,40 @@ import {
 	stringField,
 } from './http.ts';
 import type { AuthRuntime } from './runtime.ts';
-import { sessionMutationDenial } from './session-security.ts';
+import { browserSessionMutationDenial } from './session-security.ts';
+
+/* Bounded here the way the scope list is; the service is what decides whether
+   each entry is a usable origin. */
+function originList(body: Record<string, unknown>): readonly string[] {
+	const value = body.allowedOrigins;
+	if (value === undefined || value === null) return [];
+	if (
+		!Array.isArray(value) ||
+		value.length > 16 ||
+		value.some((entry) => typeof entry !== 'string' || entry.length > 256)
+	) {
+		throw new AuthServiceError(
+			'INVALID_ORIGINS',
+			'allowedOrigins must be an array of origins.',
+			400,
+		);
+	}
+	return value as readonly string[];
+}
+
+/* Bounded to an integer here; the service decides the ceiling. */
+function rateLimit(body: Record<string, unknown>): number {
+	const value = body.rateLimitPerMinute;
+	if (value === undefined || value === null) return 0;
+	if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
+		throw new AuthServiceError(
+			'INVALID_RATE_LIMIT',
+			'rateLimitPerMinute must be an integer.',
+			400,
+		);
+	}
+	return value;
+}
 
 function expiry(body: Record<string, unknown>): number | null {
 	const value = body.expiresAt;
@@ -54,7 +87,7 @@ export function createApiTokenRoutes(
 		path: '/api/auth/api-tokens',
 		methods: ['POST'],
 		handler: async (context) => {
-			const denial = sessionMutationDenial(context, runtime);
+			const denial = browserSessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
 				const session = requireSession(context);
@@ -67,6 +100,9 @@ export function createApiTokenRoutes(
 					accountId: session.principal.accountId,
 					label: stringField(body, 'label'),
 					scopes: scopeList(body),
+					allowWrites: body.allowWrites === true,
+					allowedOrigins: originList(body),
+					rateLimitPerMinute: rateLimit(body),
 					expiresAt: expiry(body),
 					createdBy: session.principal.accountId,
 				});
@@ -81,7 +117,7 @@ export function createApiTokenRoutes(
 		path: '/api/auth/api-tokens/revoke',
 		methods: ['POST'],
 		handler: async (context) => {
-			const denial = sessionMutationDenial(context, runtime);
+			const denial = browserSessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
 				const session = requireSession(context);

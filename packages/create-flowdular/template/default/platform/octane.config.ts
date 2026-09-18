@@ -1,8 +1,10 @@
 import {
 	assertRouteConflicts,
+	createCorsMiddleware,
 	createModuleMetrics,
 	createModuleWebRoutes,
 	createApplicationRoutes,
+	createOpenApiRoutes,
 	serverTracer,
 	validateApplicationPath,
 	createMailPort,
@@ -17,6 +19,7 @@ import { defineConfig, RenderRoute } from '@octanejs/vite-plugin';
 import {
 	authRuntimeOptionsFromEnvironment,
 	createAuthRoutes,
+	endpointIdentityFromContext,
 	isTokenPrincipal,
 	mfaEnrolmentSatisfied,
 	principalFromContext,
@@ -175,7 +178,15 @@ if (building) {
 }
 
 export default defineConfig({
-	middlewares: [authRuntime.middleware],
+	middlewares: [
+		/* Ahead of the authentication: a cross-origin preflight carries no
+		   credential and has to be answered before anything asks for one. The
+		   origins come from the API tokens this workspace issued. */
+		createCorsMiddleware({
+			allowOrigin: (origin) => authRuntime.apiOriginAllowed(origin),
+		}),
+		authRuntime.middleware,
+	],
 	router: {
 		routes: checkedRoutes([
 			...createApplicationRoutes({
@@ -186,6 +197,12 @@ export default defineConfig({
 			healthEndpoint.serverRoute,
 			createReadinessEndpoint(databases).serverRoute,
 			...createMetricsRoutes({ environment: process.env }),
+			/* Describes every operation the presented credential may call, built
+			   from the endpoints this application composed. */
+			...createOpenApiRoutes({
+				resolveIdentity: endpointIdentityFromContext,
+				publicBaseUrl: authRuntime.publicBaseUrl,
+			}),
 			...createStorageRoutes({
 				storage,
 				keyring: storageKeyring,

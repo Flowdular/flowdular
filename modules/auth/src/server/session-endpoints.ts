@@ -11,7 +11,7 @@ import {
 	response,
 } from './http.ts';
 import type { AuthRuntime } from './runtime.ts';
-import { sessionMutationDenial } from './session-security.ts';
+import { browserSessionMutationDenial } from './session-security.ts';
 
 export function createSessionRoutes(
 	runtime: AuthRuntime,
@@ -45,7 +45,7 @@ export function createSessionRoutes(
 		path: '/api/auth/sessions/revoke',
 		methods: ['POST'],
 		handler: async (context) => {
-			const denial = sessionMutationDenial(context, runtime);
+			const denial = browserSessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
 				const session = requireSession(context);

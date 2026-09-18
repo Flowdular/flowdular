@@ -20,10 +20,13 @@ try {
 } catch (error) {
 	if (
 		error.code !== 'MODULE_NOT_FOUND' &&
-		error.code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED'
+		error.code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED' &&
+		error.code !== 'ERR_ACCESS_DENIED'
 	)
 		throw error;
-	// The authoring workspace uses ordinary, linked source packages.
+	// The authoring workspace uses ordinary, linked source packages. A denial
+	// means the walk left the roots this worker may read, which answers the
+	// same question: there is no consumer SDK to transform.
 }
 // The host resolves the consumer's SDK before applying worker permissions. This
 // avoids granting the worker access to platform/package.json or following its

@@ -12,7 +12,7 @@ import {
 	stringField,
 } from './http.ts';
 import type { AuthRuntime, OidcProvider } from './runtime.ts';
-import { sessionMutationDenial } from './session-security.ts';
+import { browserSessionMutationDenial } from './session-security.ts';
 
 const LABEL = '[auth.core] identity provider request failed';
 
@@ -115,7 +115,7 @@ export function createIdentityProviderRoutes(
 		path: '/api/auth/providers',
 		methods: ['POST'],
 		handler: async (context) => {
-			const denial = sessionMutationDenial(context, runtime);
+			const denial = browserSessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
 				const session = requireSession(context);
@@ -142,7 +142,7 @@ export function createIdentityProviderRoutes(
 		path: '/api/auth/providers/update',
 		methods: ['POST'],
 		handler: async (context) => {
-			const denial = sessionMutationDenial(context, runtime);
+			const denial = browserSessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
 				const session = requireSession(context);
@@ -168,7 +168,7 @@ export function createIdentityProviderRoutes(
 			path,
 			methods: ['POST'],
 			handler: async (context) => {
-				const denial = sessionMutationDenial(context, runtime);
+				const denial = browserSessionMutationDenial(context, runtime);
 				if (denial) return denial;
 				try {
 					const session = requireSession(context);
@@ -193,7 +193,7 @@ export function createIdentityProviderRoutes(
 		path: '/api/auth/providers/rotate-secret',
 		methods: ['POST'],
 		handler: async (context) => {
-			const denial = sessionMutationDenial(context, runtime);
+			const denial = browserSessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
 				const session = requireSession(context);
@@ -218,7 +218,7 @@ export function createIdentityProviderRoutes(
 		path: '/api/auth/providers/delete',
 		methods: ['POST'],
 		handler: async (context) => {
-			const denial = sessionMutationDenial(context, runtime);
+			const denial = browserSessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
 				const session = requireSession(context);

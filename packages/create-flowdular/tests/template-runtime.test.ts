@@ -23,15 +23,16 @@ const fixtures: Record<string, string> = {
 		export const defineConfig = value => value;
 		export class RenderRoute { constructor(options) { Object.assign(this, options); } }
 	`,
-	'@flowdular/sdk/server': `export const validateApplicationPath = value => value; export const assertRouteConflicts = () => {}; export const createModuleWebRoutes = () => []; export const createApplicationRoutes = () => []; export const defineEndpoint = definition => ({ ...definition, serverRoute: { path: definition.path, methods: definition.methods, handler: definition.handler } }); export const jsonResponse = (body, status) => Response.json(body, { status }); export const serverMetrics = () => ({ setBuildVersion() {}, expose: () => 'flowdular_build_info 1\\n' }); export const createModuleMetrics = () => ({ counter() {}, histogram() {} }); export const serverTracer = () => ({ sampleRatio: 1, startSpan: () => ({ context: {}, setAttribute() {}, end() {} }), drain: () => [], stats: () => ({ buffered: 0, dropped: 0, recorded: 0 }), onSpanRecorded: () => () => {} }); export const traceConfigFromEnvironment = () => ({ exporter: 'none', url: null, headers: {}, sampleRatio: 1 }); export const createOtlpSpanExporter = () => ({ async flush() {}, stats: () => ({ exported: 0, dropped: 0, failures: 0, retries: 0 }), async dispose() {} }); export const errorSinkConfigFromEnvironment = () => ({ kind: 'none', url: null, token: null }); export const serverErrorSink = () => ({ async flush() {} }); export const createMailPort = () => ({ adapter: 'none', configured: false, async send() {}, outbox: [] }); export const mailConfigFromEnvironment = () => ({ adapter: 'none', deprecated: [] });`,
+	'@flowdular/sdk/server': `export const validateApplicationPath = value => value; export const assertRouteConflicts = () => {}; export const createModuleWebRoutes = () => []; export const createApplicationRoutes = () => []; export const defineEndpoint = definition => ({ ...definition, serverRoute: { path: definition.path, methods: definition.methods, handler: definition.handler } }); export const jsonResponse = (body, status) => Response.json(body, { status }); export const serverMetrics = () => ({ setBuildVersion() {}, expose: () => 'flowdular_build_info 1\\n' }); export const createModuleMetrics = () => ({ counter() {}, histogram() {} }); export const serverTracer = () => ({ sampleRatio: 1, startSpan: () => ({ context: {}, setAttribute() {}, end() {} }), drain: () => [], stats: () => ({ buffered: 0, dropped: 0, recorded: 0 }), onSpanRecorded: () => () => {} }); export const traceConfigFromEnvironment = () => ({ exporter: 'none', url: null, headers: {}, sampleRatio: 1 }); export const createOtlpSpanExporter = () => ({ async flush() {}, stats: () => ({ exported: 0, dropped: 0, failures: 0, retries: 0 }), async dispose() {} }); export const errorSinkConfigFromEnvironment = () => ({ kind: 'none', url: null, token: null }); export const serverErrorSink = () => ({ async flush() {} }); export const createMailPort = () => ({ adapter: 'none', configured: false, async send() {}, outbox: [] }); export const mailConfigFromEnvironment = () => ({ adapter: 'none', deprecated: [] }); export const createCorsMiddleware = () => (context, next) => next(); export const createOpenApiRoutes = () => [{ path: '/api/openapi.json', methods: ['GET'], handler: () => new Response(null) }];`,
 	'@flowdular/sdk/modules/auth/server': `
         export const principalFromContext = () => null;
 		export const isTokenPrincipal = () => false;
 		export const mfaEnrolmentSatisfied = async () => true;
 		export const authRuntimeOptionsFromEnvironment = () => ({ secureCookies: false });
+		export const endpointIdentityFromContext = () => null;
 		export function createAuthRuntime(options) {
 			if (!options.databases) throw new Error('AUTH_DATABASE_PROVIDER_REQUIRED');
-			return { moduleSettings: { declare() {}, async prime() {} }, middleware: { databases: options.databases }, async dispose() {} };
+			return { moduleSettings: { declare() {}, async prime() {} }, middleware: { databases: options.databases }, publicBaseUrl: null, apiOriginAllowed: async () => false, async dispose() {} };
 		}
 		export const createAuthRoutes = () => [];
 		export const createPlatformAgentRegistry = () => ({ seal() {} });
@@ -132,13 +133,18 @@ it('boots a generated platform with one shared database provider', async () => {
 	try {
 		const config = await boot(platform.directory);
 
-		expect(config.middlewares).toHaveLength(1);
-		expect(config.middlewares[0]!.databases.checked).toBe(true);
-		/* The container and orchestrator probes in infra/ poll these two paths. */
+		/* Cross-origin admission runs ahead of authentication, because a
+		   preflight carries no credential; the authentication middleware is the
+		   one that holds the shared provider. */
+		expect(config.middlewares).toHaveLength(2);
+		expect(config.middlewares[1]!.databases.checked).toBe(true);
+		/* The container and orchestrator probes in infra/ poll the first two, and
+		   an integration reads the third to learn what the application serves. */
 		expect(config.router.routes.map((route) => route.path)).toEqual(
 			expect.arrayContaining([
 				'/api/health',
 				'/api/ready',
+				'/api/openapi.json',
 				'/api/storage/objects/:token',
 			]),
 		);

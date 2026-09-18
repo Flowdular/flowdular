@@ -1,6 +1,6 @@
 import { createContext } from '@octanejs/app-core';
 import { describe, expect, it } from 'vitest';
-import { createReadinessEndpoint, healthEndpoint } from './health.ts';
+import { createHealthEndpoint, createReadinessEndpoint } from './health.ts';
 
 describe('health endpoint', () => {
 	it('reports the architecture version', async () => {
@@ -8,7 +8,7 @@ describe('health endpoint', () => {
 			new Request('http://localhost/api/health'),
 			{},
 		);
-		const response = await healthEndpoint.serverRoute.handler(context);
+		const response = await createHealthEndpoint().serverRoute.handler(context);
 		expect(response.status).toBe(200);
 		expect(await response.json()).toMatchObject({
 			status: 'ok',

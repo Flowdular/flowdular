@@ -156,11 +156,11 @@ export async function testRuntime(
 	};
 	/* The served chain resolves the principal and then holds an account that
 	   still owes enrolment, so a test request runs through both. */
-	const authentication = createAuthenticationMiddleware(
-		service,
-		cookie,
-		(tenantId) => moduleSettings.prime(tenantId),
-	);
+	const authentication = createAuthenticationMiddleware(service, cookie, {
+		primeTenant: (tenantId) => moduleSettings.prime(tenantId),
+		defaultRateLimit: () =>
+			moduleSettings.get<number>('', 'auth.core', 'apiTokenRateLimit'),
+	});
 	const enrolment = createMfaEnrolmentMiddleware({ tenantSettings, service });
 	return {
 		database,
@@ -185,6 +185,9 @@ export async function testRuntime(
 			get passwordMinLength() {
 				return policy.passwordMinLength;
 			},
+			get apiTokenRateLimit() {
+				return moduleSettings.get<number>('', 'auth.core', 'apiTokenRateLimit');
+			},
 		},
 		moduleSettings,
 		oidcVerifier,
@@ -204,6 +207,7 @@ export async function testRuntime(
 		providerHosts: overrides.providerHosts ?? [],
 		publicBaseUrl: overrides.publicBaseUrl ?? null,
 		service,
+		apiOriginAllowed: (origin: string) => authService.apiOriginAllowed(origin),
 		async authorizeAgentToolAccess(tenantId, actor) {
 			if (actor.kind !== 'user') return [];
 			const membership = await repository.findAccountMembership(
