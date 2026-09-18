@@ -1,4 +1,5 @@
 export const AGENT_PERMISSIONS = {
+	assistantUse: 'agents.assistant.use',
 	definitionsRead: 'agents.definitions.read',
 	definitionsManage: 'agents.definitions.manage',
 	runsRead: 'agents.runs.read',

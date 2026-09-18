@@ -47,9 +47,18 @@ function temperature(value: number): number {
 	return value;
 }
 
-function toolList(values: readonly string[]): readonly string[] {
-	if (values.length > 32) {
-		throw new Error('A module-owned agent can allow at most 32 tools.');
+/* A declared list is typed by a module author, so 32 is the ceiling the spec
+   states. A registry list is the deployment's own catalog, which no author
+   types and which grows with the composed module set. */
+const DECLARED_TOOL_LIMIT = 32;
+const REGISTRY_TOOL_LIMIT = 256;
+
+function toolList(
+	values: readonly string[],
+	maximum: number,
+): readonly string[] {
+	if (values.length > maximum) {
+		throw new Error(`A module-owned agent can allow at most ${maximum} tools.`);
 	}
 	const tools = values.map((value) => value.trim());
 	for (const tool of tools) {
@@ -113,6 +122,10 @@ export function defineAgent(
 		moduleId,
 		definitionRevision,
 	});
+	const allowlistSource = input.allowlistSource ?? 'declared';
+	if (allowlistSource !== 'declared' && allowlistSource !== 'registry') {
+		throw new Error('allowlistSource must be declared or registry.');
+	}
 	return Object.freeze({
 		id,
 		moduleId,
@@ -121,7 +134,13 @@ export function defineAgent(
 		name: bounded(input.name, 'name', 2, 120),
 		description: bounded(input.description, 'description', 2, 500),
 		instructions: bounded(input.instructions, 'instructions', 8, 40_000),
-		allowedTools: toolList(input.allowedTools),
+		allowedTools: toolList(
+			input.allowedTools,
+			allowlistSource === 'registry'
+				? REGISTRY_TOOL_LIMIT
+				: DECLARED_TOOL_LIMIT,
+		),
+		allowlistSource,
 		limits,
 		ownership,
 	});
@@ -149,6 +168,11 @@ export function normalizeModuleAgentDefinitions(
 	});
 }
 
+/* A registry allowlist stands in for its tools at the position the tool list
+   occupies, so the deployment's composed module set is not read as this
+   module's source drifting, while every declared definition keeps the hash it
+   was stored under. The marker is a string and a declared list is an array, so
+   the two can never collide. */
 export function moduleAgentDefinitionHash(
 	definition: ModuleAgentDefinition,
 ): string {
@@ -162,7 +186,9 @@ export function moduleAgentDefinitionHash(
 				definition.name,
 				definition.description,
 				definition.instructions,
-				definition.allowedTools,
+				definition.allowlistSource === 'registry'
+					? 'registry'
+					: definition.allowedTools,
 				definition.limits,
 			]),
 		)

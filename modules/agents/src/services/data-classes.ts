@@ -3,8 +3,16 @@ import type {
 	DataClassExportSummary,
 } from '@flowdular/kernel';
 import type { AgentExecutionEvent } from '@flowdular/harness';
-import type { AgentRun } from '../domain/types.ts';
-import type { AgentRunExportCursor, AgentRepository } from './repository.ts';
+import type {
+	AgentRun,
+	AssistantThread,
+	AssistantTurn,
+} from '../domain/types.ts';
+import type {
+	AgentRunExportCursor,
+	AgentRepository,
+	AssistantThreadExportCursor,
+} from './repository.ts';
 
 /** Rows one keyset page carries. Bounded so a walk never loads a whole table. */
 export const EXPORT_PAGE = 500;
@@ -117,6 +125,42 @@ export function agentsDataClasses(
 			},
 		},
 		{
+			key: 'assistant-threads',
+			label: 'Assistant conversations',
+			/* A conversation is the member's own record of what they asked, not
+			   history of a run, so no sweep takes it: the member deletes their own
+			   thread and an erasure takes the threads of the account whose runs it
+			   removes. */
+			defaultRetentionDays: null,
+			exportable: true,
+			erase: async ({ tenantId, subject, limit }) => {
+				const removed = await (
+					await repository()
+				).deleteAssistantThreadsOf(tenantId, subject.accountId, limit);
+				return removed === limit ? { removed, truncated: true } : { removed };
+			},
+			export: async ({ tenantId, sink }): Promise<DataClassExportSummary> => {
+				let after: AssistantThreadExportCursor | null = null;
+				let rows = 0;
+				let from: Date | null = null;
+				let to: Date | null = null;
+				for (;;) {
+					const page = await (
+						await repository()
+					).exportAssistantThreadsPage(tenantId, after, pageSize);
+					for (const { thread, turns } of page) {
+						const at = new Date(thread.createdAt);
+						if (!from || at < from) from = at;
+						if (!to || at > to) to = at;
+						after = { updatedAt: thread.updatedAt, id: thread.id };
+						rows += 1;
+						await sink.write(threadRow(thread, turns));
+					}
+					if (page.length < pageSize) return { rows, from, to };
+				}
+			},
+		},
+		{
 			key: 'provider-credentials',
 			label: 'Provider connections',
 			defaultRetentionDays: null,
@@ -125,6 +169,33 @@ export function agentsDataClasses(
 				'A provider connection holds an encrypted provider credential; the workspace reads its safe metadata on the providers screen instead.',
 		},
 	];
+}
+
+/** One conversation as the archive carries it, questions and answers included. */
+function threadRow(
+	thread: AssistantThread,
+	turns: readonly AssistantTurn[],
+): Record<string, unknown> {
+	return {
+		id: thread.id,
+		tenantId: thread.tenantId,
+		accountId: thread.accountId,
+		title: thread.title,
+		turnCount: thread.turnCount,
+		createdAt: new Date(thread.createdAt).toISOString(),
+		updatedAt: new Date(thread.updatedAt).toISOString(),
+		turns: turns.map((turn) => ({
+			id: turn.id,
+			sequence: turn.sequence,
+			question: turn.question,
+			answer: turn.answer,
+			runId: turn.runId,
+			status: turn.status,
+			failureCode: turn.failureCode,
+			createdAt: new Date(turn.createdAt).toISOString(),
+			updatedAt: new Date(turn.updatedAt).toISOString(),
+		})),
+	};
 }
 
 /**

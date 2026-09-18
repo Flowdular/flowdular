@@ -49,6 +49,9 @@ import type { AgentRuntime } from '../server/runtime.ts';
 /** The default page of every list here, and the ceiling of the audit trail. */
 const LIST_PAGE_LIMIT = 50;
 const AUDIT_PAGE_LIMIT = 100;
+/* A member's own conversations, so the page is small on purpose. */
+const ASSISTANT_PAGE_LIMIT = 100;
+const ASSISTANT_PAGE_DEFAULT = 25;
 const SEARCH_LIMIT = 200;
 const AGENT_SORTS: readonly AgentListSort[] = ['name', 'updatedAt'];
 const AGENT_SORT_DIRECTIONS: Readonly<Record<AgentListSort, ListDirection>> = {
@@ -270,8 +273,13 @@ function listOrder<Sort extends string>(
 }
 
 type CursorScope = Readonly<Record<string, string | number>> & {
-	readonly list: 'definitions' | 'runs' | 'audit';
+	readonly list: 'definitions' | 'runs' | 'audit' | 'assistant-threads';
 };
+
+/** The authenticated principal, as `principalFromContext` resolves it. */
+type AuthenticatedPrincipal = NonNullable<
+	ReturnType<typeof principalFromContext>
+>;
 
 /* A cursor answers one request: the list, tenant, order and filters it was
    signed with are compared to the request's, and its keyset fields must carry
@@ -1314,7 +1322,209 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 			}
 		},
 	});
+	/* The signed-in member, as the assistant service takes them. Nothing here is
+	   read from the request: the tenant, the account and the scopes all come
+	   from the authenticated principal. */
+	const assistantMember = (principal: AuthenticatedPrincipal) => ({
+		tenantId: principal.tenantId,
+		accountId: principal.accountId,
+		displayName: principal.displayName,
+		email: principal.email,
+		tenantName:
+			principal.tenants.find((tenant) => tenant.tenantId === principal.tenantId)
+				?.name ?? principal.tenantId,
+		scopes: principal.scopes,
+	});
+	const assistantEndpoint = (
+		id: string,
+		path: string,
+		methods: readonly ('GET' | 'POST')[],
+		handler: (arguments_: EndpointExecutionContext) => Promise<Response>,
+	) =>
+		defineEndpoint({
+			id,
+			path,
+			methods: [...methods],
+			access: {
+				kind: 'permission',
+				permission: AGENT_PERMISSIONS.assistantUse,
+			},
+			resolveIdentity: endpointIdentityFromContext,
+			handler,
+		});
+	const assistantMutation = (
+		id: string,
+		path: string,
+		body: (
+			value: Record<string, unknown>,
+			member: ReturnType<typeof assistantMember>,
+		) => Promise<Response>,
+		limit = 16 * 1_024,
+	) =>
+		assistantEndpoint(id, path, ['POST'], async ({ octane }) => {
+			const denial = sessionMutationDenial(octane, auth);
+			if (denial) return denial;
+			try {
+				const value = await readJsonObject(octane.request, limit);
+				return await body(
+					value,
+					assistantMember(principalFromContext(octane)!),
+				);
+			} catch (error) {
+				return failure(error);
+			}
+		});
+	const listAssistantThreads = assistantEndpoint(
+		'agents.assistant.threads.list',
+		'/api/assistant/threads',
+		['GET'],
+		async ({ octane }) => {
+			try {
+				const member = assistantMember(principalFromContext(octane)!);
+				const url = new URL(octane.request.url);
+				const page = readPageQuery(url, {
+					maxLimit: ASSISTANT_PAGE_LIMIT,
+					defaultLimit: ASSISTANT_PAGE_DEFAULT,
+				});
+				const scope = {
+					list: 'assistant-threads' as const,
+					tenant: member.tenantId,
+					/* The account is part of what the cursor was signed for, so a
+					   position in one member's own list can never be replayed against
+					   another member's. */
+					account: member.accountId,
+				};
+				const cursor = boundCursor(page.cursor, cursorSecret, scope, {
+					updatedAt: 'number',
+					id: 'string',
+				});
+				const result = await (
+					await runtime.assistantService()
+				).listThreads(member, {
+					limit: page.limit,
+					after:
+						cursor === null
+							? null
+							: { updatedAt: Number(cursor.updatedAt), id: String(cursor.id) },
+				});
+				return pageResponse({
+					items: result.threads,
+					limit: page.limit,
+					nextCursor:
+						result.last && result.threads.length === page.limit
+							? encodeCursor({ ...scope, ...result.last }, cursorSecret)
+							: null,
+				});
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	);
+	const readAssistantThread = assistantEndpoint(
+		'agents.assistant.threads.get',
+		'/api/assistant/threads/get',
+		['GET'],
+		async ({ octane }) => {
+			try {
+				const threadId = queryValue(new URL(octane.request.url), 'id', 128);
+				if (threadId === null) throw invalid('id is required.');
+				return jsonResponse(
+					await (
+						await runtime.assistantService()
+					).readThread(
+						assistantMember(principalFromContext(octane)!),
+						threadId,
+					),
+				);
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	);
+	const assistantReadiness = assistantEndpoint(
+		'agents.assistant.readiness',
+		'/api/assistant/readiness',
+		['GET'],
+		async ({ octane }) => {
+			try {
+				/* Answers even with the flag off: this is the read the header uses to
+				   choose between a conversation and the locked state, and a refusal
+				   here would leave it nothing to render. Every other assistant route
+				   refuses with ASSISTANT_DISABLED. */
+				return jsonResponse(
+					await (
+						await runtime.assistantService()
+					).readiness(assistantMember(principalFromContext(octane)!)),
+				);
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	);
+	const startAssistantThread = assistantMutation(
+		'agents.assistant.threads.start',
+		'/api/assistant/threads',
+		async (value, member) => {
+			const title = optionalString(value, 'title', 120);
+			return jsonResponse(
+				await (
+					await runtime.assistantService()
+				).startThread(member, {
+					message: requiredString(value, 'message', { min: 1, max: 8_000 }),
+					...(title ? { title } : {}),
+				}),
+				202,
+			);
+		},
+	);
+	const continueAssistantThread = assistantMutation(
+		'agents.assistant.threads.continue',
+		'/api/assistant/threads/continue',
+		async (value, member) =>
+			jsonResponse(
+				await (
+					await runtime.assistantService()
+				).continueThread(member, {
+					threadId: requiredString(value, 'threadId', { max: 128 }),
+					message: requiredString(value, 'message', { min: 1, max: 8_000 }),
+				}),
+				202,
+			),
+	);
+	const renameAssistantThread = assistantMutation(
+		'agents.assistant.threads.rename',
+		'/api/assistant/threads/rename',
+		async (value, member) =>
+			jsonResponse({
+				thread: await (
+					await runtime.assistantService()
+				).renameThread(
+					member,
+					requiredString(value, 'id', { max: 128 }),
+					requiredString(value, 'title', { min: 1, max: 120 }),
+				),
+			}),
+		8 * 1_024,
+	);
+	const deleteAssistantThread = assistantMutation(
+		'agents.assistant.threads.delete',
+		'/api/assistant/threads/delete',
+		async (value, member) => {
+			await (
+				await runtime.assistantService()
+			).deleteThread(member, requiredString(value, 'id', { max: 128 }));
+			return jsonResponse({ deleted: true });
+		},
+		8 * 1_024,
+	);
 	return [
+		listAssistantThreads.serverRoute,
+		readAssistantThread.serverRoute,
+		assistantReadiness.serverRoute,
+		startAssistantThread.serverRoute,
+		continueAssistantThread.serverRoute,
+		renameAssistantThread.serverRoute,
+		deleteAssistantThread.serverRoute,
 		listAgents.serverRoute,
 		agentContext.serverRoute,
 		updateModuleAgentBinding.serverRoute,
@@ -1348,6 +1558,13 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 }
 
 export const endpoints = [
+	'agents.assistant.threads.list',
+	'agents.assistant.threads.get',
+	'agents.assistant.readiness',
+	'agents.assistant.threads.start',
+	'agents.assistant.threads.continue',
+	'agents.assistant.threads.rename',
+	'agents.assistant.threads.delete',
 	'agents.definitions.list',
 	'agents.definitions.context',
 	'agents.module-bindings.update',

@@ -28,6 +28,15 @@ export interface ModuleAgentExecutionLimits {
 	readonly maxOutputTokens: number;
 }
 
+/**
+ * Where the maximum tool allowlist comes from. `declared` is the module's own
+ * source and is content-stable, so drift at one definition revision fails boot.
+ * `registry` is the deployment's registered tool catalog, which changes with
+ * the composed module set rather than with this module's source, so it is not
+ * part of the definition's executable content.
+ */
+export type ModuleAgentAllowlistSource = 'declared' | 'registry';
+
 export interface ModuleAgentDefinitionInput {
 	readonly moduleId: string;
 	readonly key: string;
@@ -36,12 +45,14 @@ export interface ModuleAgentDefinitionInput {
 	readonly description: string;
 	readonly instructions: string;
 	readonly allowedTools: readonly string[];
+	readonly allowlistSource?: ModuleAgentAllowlistSource;
 	readonly limits: ModuleAgentExecutionLimits;
 }
 
 export interface ModuleAgentDefinition
 	extends Readonly<ModuleAgentDefinitionInput> {
 	readonly id: string;
+	readonly allowlistSource: ModuleAgentAllowlistSource;
 	readonly ownership: {
 		readonly kind: 'module';
 		readonly moduleId: string;
@@ -458,12 +469,87 @@ export interface AgentAuditEvent {
 		| 'agent-skill'
 		| 'agent-schedule'
 		| 'agent-trigger'
-		| 'agent-action';
+		| 'agent-action'
+		| 'assistant-thread';
 	readonly subjectId: string;
 	readonly metadata: Readonly<Record<string, string | number | boolean>>;
 	readonly occurredAt: number;
 	readonly previousHash: string | null;
 	readonly eventHash: string;
+}
+
+/**
+ * A conversation with the workspace assistant. It belongs to one workspace and
+ * to the member who started it; no owner-level permission opens its text.
+ */
+export interface AssistantThread {
+	readonly id: string;
+	readonly tenantId: string;
+	readonly accountId: string;
+	readonly title: string;
+	readonly turnCount: number;
+	readonly createdAt: number;
+	readonly updatedAt: number;
+}
+
+export type AssistantTurnStatus = 'pending' | 'answered' | 'failed';
+
+/**
+ * One question and the answer it received. Both are the turn's own text beside
+ * the run id, so the thread still reads once run retention has swept the run.
+ */
+export interface AssistantTurn {
+	readonly id: string;
+	readonly threadId: string;
+	readonly tenantId: string;
+	readonly accountId: string;
+	readonly sequence: number;
+	readonly question: string;
+	readonly answer: string | null;
+	readonly runId: string | null;
+	readonly status: AssistantTurnStatus;
+	readonly failureCode: string | null;
+	readonly createdAt: number;
+	readonly updatedAt: number;
+}
+
+export interface AssistantConversation {
+	readonly thread: AssistantThread;
+	readonly turns: readonly AssistantTurn[];
+}
+
+export interface AssistantThreadListQuery {
+	readonly limit: number;
+	readonly after: { readonly updatedAt: number; readonly id: string } | null;
+}
+
+/** What one turn's run reported once it reached a terminal state. */
+export interface AssistantTurnOutcome {
+	readonly answer: string | null;
+	readonly status: Exclude<AssistantTurnStatus, 'pending'>;
+	readonly failureCode: string | null;
+	readonly settledAt: number;
+}
+
+/**
+ * What the header entry needs to choose between a conversation and the locked
+ * state, and where to send a member who must configure what is missing.
+ */
+export interface AssistantReadiness {
+	readonly enabled: boolean;
+	readonly permitted: boolean;
+	readonly providerReady: boolean;
+	readonly bindingConfigured: boolean;
+	readonly ready: boolean;
+	readonly agentId: string;
+	/** The screen that carries the missing configuration, or null when ready. */
+	readonly configureHref: string | null;
+	readonly lockedReason:
+		| 'disabled'
+		| 'forbidden'
+		| 'provider-missing'
+		| 'binding-missing'
+		| null;
 }
 
 export type ListDirection = 'asc' | 'desc';

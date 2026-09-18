@@ -145,6 +145,25 @@ function waitFor(
 	});
 }
 
+interface ModuleAgentCatalogEntry {
+	id: string;
+	status: string;
+	revision: number | null;
+	ownership: { kind: string; moduleId: string };
+}
+
+/* agents.core registers the workspace assistant itself, so the catalog always
+   carries more than the agent a case registered. */
+async function moduleAgents(
+	call: ReturnType<typeof composition>['call'],
+): Promise<ModuleAgentCatalogEntry[]> {
+	return (
+		(await (await call('/api/agents/context')).json()) as {
+			moduleAgents: ModuleAgentCatalogEntry[];
+		}
+	).moduleAgents;
+}
+
 function sessionState(principal: AuthPrincipal) {
 	return { principal, csrfToken: CSRF_TOKEN, expiresAt: 0 };
 }
@@ -552,35 +571,21 @@ describe('agents HTTP boundary', () => {
 		context.agentTools.register([readOnlyTool]);
 		context.agentDefinitions.register([moduleAgent]);
 		composed.start();
-		await waitFor(
-			async () =>
-				(
-					(await (await call('/api/agents/context')).json()) as {
-						moduleAgents: readonly unknown[];
-					}
-				).moduleAgents.length === 1,
+		await waitFor(async () =>
+			(await moduleAgents(call)).some((agent) => agent.id === moduleAgent.id),
 		);
 
-		const before = (await (await call('/api/agents/context')).json()) as {
-			moduleAgents: Array<{
-				id: string;
-				status: string;
-				revision: number | null;
-				ownership: { kind: string; moduleId: string };
-			}>;
-		};
+		const before = await moduleAgents(call);
 		expect(
 			((await (await call('/api/agents')).json()) as { items: unknown[] })
 				.items,
 		).toEqual([]);
-		expect(before.moduleAgents).toMatchObject([
-			{
-				id: moduleAgent.id,
-				status: 'unconfigured',
-				revision: null,
-				ownership: { kind: 'module', moduleId: 'parties.core' },
-			},
-		]);
+		expect(before.find((agent) => agent.id === moduleAgent.id)).toMatchObject({
+			id: moduleAgent.id,
+			status: 'unconfigured',
+			revision: null,
+			ownership: { kind: 'module', moduleId: 'parties.core' },
+		});
 
 		const configured = await mutation('/api/agents/module-bindings/update', {
 			agentId: moduleAgent.id,
@@ -630,14 +635,15 @@ describe('agents HTTP boundary', () => {
 				],
 			]),
 		} as never);
-		expect(await otherTenant.json()).toMatchObject({
-			moduleAgents: [
-				{
-					id: moduleAgent.id,
-					status: 'unconfigured',
-					revision: null,
-				},
-			],
+		const otherCatalog = (await otherTenant.json()) as {
+			moduleAgents: ModuleAgentCatalogEntry[];
+		};
+		expect(
+			otherCatalog.moduleAgents.find((agent) => agent.id === moduleAgent.id),
+		).toMatchObject({
+			id: moduleAgent.id,
+			status: 'unconfigured',
+			revision: null,
 		});
 	});
 
@@ -646,13 +652,10 @@ describe('agents HTTP boundary', () => {
 		owner.context.agentTools.register([readOnlyTool]);
 		owner.context.agentDefinitions.register([moduleAgent]);
 		owner.composed.start();
-		await waitFor(
-			async () =>
-				(
-					(await (await owner.call('/api/agents/context')).json()) as {
-						moduleAgents: readonly unknown[];
-					}
-				).moduleAgents.length === 1,
+		await waitFor(async () =>
+			(await moduleAgents(owner.call)).some(
+				(agent) => agent.id === moduleAgent.id,
+			),
 		);
 		const bindingBody = {
 			agentId: moduleAgent.id,

@@ -14,6 +14,19 @@ export const AGENTS_MODULE_ID = 'agents.core';
 export const AGENTS_MODULE_SETTINGS = defineModuleSettings({
 	moduleId: AGENTS_MODULE_ID,
 	settings: {
+		assistantEnabled: {
+			type: 'boolean',
+			kind: 'flag',
+			defaultValue: true,
+			visibility: 'private',
+			client: false,
+			scope: 'tenant',
+			labelKey: 'agents.settings.assistantEnabled.label',
+			label: 'Workspace assistant',
+			descriptionKey: 'agents.settings.assistantEnabled.description',
+			description:
+				'Let members talk to the workspace assistant from the header. While it is off no entry point is offered and the assistant API refuses; conversations already stored stay readable to their own members once it is on again.',
+		},
 		workerConcurrency: {
 			type: 'number',
 			defaultValue: 2,
@@ -173,6 +186,8 @@ export interface AgentSettingsReader {
 	workerLeaseMs(): number;
 	providerReadinessTtlMs(): number;
 	providerHostAllowlist(): ReadonlySet<string>;
+	/** Read on every assistant request, never cached at boot. */
+	assistantEnabled(tenantId: string): boolean;
 	defaultMaxOutputTokens(tenantId: string): number;
 	defaultProvider(tenantId: string): string;
 	defaultModel(tenantId: string): string;
@@ -244,6 +259,7 @@ export function agentSettings(context: {
 						),
 					)
 				: fallback.providerHostAllowlist,
+		assistantEnabled: (tenantId) => read(tenantId, 'assistantEnabled', true),
 		defaultMaxOutputTokens: (tenantId) =>
 			read(tenantId, 'defaultMaxOutputTokens', 4_096),
 		defaultProvider: (tenantId) => read(tenantId, 'defaultProvider', ''),

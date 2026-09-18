@@ -208,7 +208,7 @@ async function runIds(tenantId: string): Promise<readonly string[]> {
 }
 
 describe('agents.core data classes', () => {
-	it('declares runs, the audit trail and provider credentials with their retention', () => {
+	it('declares runs, the audit trail, assistant conversations and provider credentials with their retention', () => {
 		const registry = createDataClassRegistry();
 		registry.declare(
 			'agents.core',
@@ -230,6 +230,9 @@ describe('agents.core data classes', () => {
 		).toEqual([
 			['agents.core.runs', RUN_RETENTION_DAYS, true, true, true],
 			['agents.core.audit-events', null, true, false, false],
+			/* Kept by no sweep, exportable, and taken by the erasure that removes
+			   the member's runs. */
+			['agents.core.assistant-threads', null, true, false, true],
 			['agents.core.provider-credentials', null, false, false, false],
 		]);
 		expect(declared('provider-credentials').excludedReason).toContain(

@@ -25,6 +25,11 @@ import type {
 	AgentDefinitionRevision,
 	AgentActionInvocation,
 	AgentRevisionProcedure,
+	AssistantConversation,
+	AssistantThread,
+	AssistantThreadListQuery,
+	AssistantTurn,
+	AssistantTurnOutcome,
 	ModuleAgentBinding,
 	ModuleAgentDefinition,
 	AgentProcedure,
@@ -49,6 +54,7 @@ import {
 	type AgentReadOptions,
 	type AgentRepository,
 	type AgentRunExportCursor,
+	type AssistantThreadExportCursor,
 	type ExportedAgentRun,
 	type PendingAgentAuditEvent,
 	type RecoverableRun,
@@ -527,6 +533,60 @@ function fromAuditRow(row: AuditRow): AgentAuditEvent {
 	};
 }
 
+interface AssistantThreadRow {
+	id: string;
+	tenant_id: string;
+	account_id: string;
+	title: string;
+	turn_count: number | string;
+	created_at: number | string;
+	updated_at: number | string;
+}
+
+interface AssistantTurnRow {
+	id: string;
+	thread_id: string;
+	tenant_id: string;
+	account_id: string;
+	sequence: number | string;
+	question: string;
+	answer: string | null;
+	run_id: string | null;
+	status: AssistantTurn['status'];
+	failure_code: string | null;
+	created_at: number | string;
+	updated_at: number | string;
+}
+
+function fromAssistantThreadRow(row: AssistantThreadRow): AssistantThread {
+	return {
+		id: row.id,
+		tenantId: row.tenant_id,
+		accountId: row.account_id,
+		title: row.title,
+		turnCount: integer(row.turn_count, 'turn_count'),
+		createdAt: integer(row.created_at, 'created_at'),
+		updatedAt: integer(row.updated_at, 'updated_at'),
+	};
+}
+
+function fromAssistantTurnRow(row: AssistantTurnRow): AssistantTurn {
+	return {
+		id: row.id,
+		threadId: row.thread_id,
+		tenantId: row.tenant_id,
+		accountId: row.account_id,
+		sequence: integer(row.sequence, 'sequence'),
+		question: row.question,
+		answer: row.answer,
+		runId: row.run_id,
+		status: row.status,
+		failureCode: row.failure_code,
+		createdAt: integer(row.created_at, 'created_at'),
+		updatedAt: integer(row.updated_at, 'updated_at'),
+	};
+}
+
 function auditHash(value: {
 	tenantId: string;
 	sequence: number;
@@ -647,6 +707,11 @@ const AUDIT_PAGE_KEYSET = keysetWhere(['occurred_at', 'sequence'], ['', ''], {
 	direction: 'desc',
 	parameterOffset: 1,
 }).text;
+/* Newest first over the order assistant_threads_member_idx carries. */
+const ASSISTANT_THREAD_KEYSET = keysetWhere(['updated_at', 'id'], ['', ''], {
+	direction: 'desc',
+	parameterOffset: 2,
+}).text;
 const AGENT_REVISION_SELECT = `SELECT agent_definition_revisions.*,
  agent_revision_ownership.module_id,
  agent_revision_ownership.module_definition_revision
@@ -736,6 +801,20 @@ export interface AgentsPersistenceStatements {
 	readonly exportRunEvents: string;
 	readonly deleteSettledRunsBefore: string;
 	readonly deleteRunsRequestedBy: string;
+	readonly createAssistantThread: string;
+	readonly insertAssistantTurn: string;
+	readonly nextAssistantTurnSequence: string;
+	readonly touchAssistantThread: string;
+	readonly listAssistantThreads1: string;
+	readonly listAssistantThreads2: string;
+	readonly getAssistantThread: string;
+	readonly listAssistantTurns: string;
+	readonly settleAssistantTurn: string;
+	readonly renameAssistantThread: string;
+	readonly deleteAssistantThread: string;
+	readonly exportAssistantThreadsPage1: string;
+	readonly exportAssistantThreadsPage2: string;
+	readonly deleteAssistantThreadsOf: string;
 	readonly appendAuditEvent1: string;
 	readonly appendAuditEvent2: string;
 	readonly pruneMeterRefusals: string;
@@ -1073,6 +1152,45 @@ export const AGENTS_SQL: AgentsPersistenceStatements = Object.freeze({
 					 VALUES ($1, $2, $3, $4)
 					 ON CONFLICT (tenant_id, meter, period) DO NOTHING
 					 RETURNING tenant_id`,
+	createAssistantThread: `INSERT INTO assistant_threads
+					 (id, tenant_id, account_id, title, turn_count, created_at, updated_at)
+					 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+	insertAssistantTurn: `INSERT INTO assistant_turns
+					 (id, thread_id, tenant_id, account_id, sequence, question, answer,
+					  run_id, status, failure_code, created_at, updated_at)
+					 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+	/* The thread row is taken for update first, so two turns of one thread can
+	   never be handed the same sequence. */
+	nextAssistantTurnSequence: `SELECT turn_count FROM assistant_threads
+					 WHERE tenant_id = $1 AND account_id = $2 AND id = $3 FOR UPDATE`,
+	touchAssistantThread: `UPDATE assistant_threads
+					 SET turn_count = turn_count + 1, updated_at = $4
+					 WHERE tenant_id = $1 AND account_id = $2 AND id = $3`,
+	listAssistantThreads1: `SELECT * FROM assistant_threads
+					 WHERE tenant_id = $1 AND account_id = $2 AND ${ASSISTANT_THREAD_KEYSET}
+					 ORDER BY updated_at DESC, id DESC LIMIT $5`,
+	listAssistantThreads2: `SELECT * FROM assistant_threads
+					 WHERE tenant_id = $1 AND account_id = $2
+					 ORDER BY updated_at DESC, id DESC LIMIT $3`,
+	getAssistantThread: `SELECT * FROM assistant_threads
+					 WHERE tenant_id = $1 AND account_id = $2 AND id = $3`,
+	listAssistantTurns: `SELECT * FROM assistant_turns
+					 WHERE tenant_id = $1 AND thread_id = $2 ORDER BY sequence`,
+	settleAssistantTurn: `UPDATE assistant_turns
+					 SET answer = $3, status = $4, failure_code = $5, updated_at = $6
+					 WHERE tenant_id = $1 AND id = $2 AND status = 'pending'`,
+	renameAssistantThread: `UPDATE assistant_threads SET title = $4, updated_at = $5
+					 WHERE tenant_id = $1 AND account_id = $2 AND id = $3`,
+	deleteAssistantThread: `DELETE FROM assistant_threads
+					 WHERE tenant_id = $1 AND account_id = $2 AND id = $3`,
+	exportAssistantThreadsPage1: `SELECT * FROM assistant_threads
+					 WHERE tenant_id = $1 AND (updated_at, id) < ($2, $3)
+					 ORDER BY updated_at DESC, id DESC LIMIT $4`,
+	exportAssistantThreadsPage2: `SELECT * FROM assistant_threads
+					 WHERE tenant_id = $1 ORDER BY updated_at DESC, id DESC LIMIT $2`,
+	deleteAssistantThreadsOf: `DELETE FROM assistant_threads WHERE id IN (
+					 SELECT id FROM assistant_threads
+					 WHERE tenant_id = $1 AND account_id = $2 ORDER BY id LIMIT $3)`,
 	listAuditEvents: `SELECT * FROM agent_audit_events_v4 WHERE tenant_id = $1
 					 ORDER BY sequence DESC LIMIT $2`,
 	exportAuditEventsPage: `SELECT * FROM agent_audit_events_v4
@@ -2813,6 +2931,254 @@ export class DatabaseAgentRepository implements AgentRepository {
 	): Promise<AgentAuditEvent> {
 		return this.#tx(event.tenantId, 'write', (transaction) =>
 			this.#appendAuditEvent(transaction, event),
+		);
+	}
+
+	async #assistantTurns(
+		transaction: DatabaseTransaction,
+		tenantId: string,
+		threadId: string,
+	): Promise<readonly AssistantTurn[]> {
+		return (
+			(await this.#query(transaction, AGENTS_SQL.listAssistantTurns, [
+				tenantId,
+				threadId,
+			])) as unknown as AssistantTurnRow[]
+		).map(fromAssistantTurnRow);
+	}
+
+	async createAssistantThread(
+		thread: AssistantThread,
+		turn: AssistantTurn,
+		audit: PendingAgentAuditEvent,
+	): Promise<AssistantConversation> {
+		return this.#tx(thread.tenantId, 'write', async (transaction) => {
+			await this.#exec(transaction, AGENTS_SQL.createAssistantThread, [
+				thread.id,
+				thread.tenantId,
+				thread.accountId,
+				thread.title,
+				thread.turnCount,
+				thread.createdAt,
+				thread.updatedAt,
+			]);
+			await this.#exec(transaction, AGENTS_SQL.insertAssistantTurn, [
+				turn.id,
+				turn.threadId,
+				turn.tenantId,
+				turn.accountId,
+				turn.sequence,
+				turn.question,
+				turn.answer,
+				turn.runId,
+				turn.status,
+				turn.failureCode,
+				turn.createdAt,
+				turn.updatedAt,
+			]);
+			await this.#appendAuditEvent(transaction, audit);
+			return { thread, turns: [turn] };
+		});
+	}
+
+	async appendAssistantTurn(
+		turn: Omit<AssistantTurn, 'sequence'>,
+		audit: PendingAgentAuditEvent,
+	): Promise<AssistantConversation | null> {
+		return this.#tx(turn.tenantId, 'write', async (transaction) => {
+			const held = (
+				await this.#query(transaction, AGENTS_SQL.nextAssistantTurnSequence, [
+					turn.tenantId,
+					turn.accountId,
+					turn.threadId,
+				])
+			)[0] as unknown as { turn_count: number | string } | undefined;
+			if (!held) return null;
+			const sequence = integer(held.turn_count, 'turn_count') + 1;
+			await this.#exec(transaction, AGENTS_SQL.insertAssistantTurn, [
+				turn.id,
+				turn.threadId,
+				turn.tenantId,
+				turn.accountId,
+				sequence,
+				turn.question,
+				turn.answer,
+				turn.runId,
+				turn.status,
+				turn.failureCode,
+				turn.createdAt,
+				turn.updatedAt,
+			]);
+			await this.#exec(transaction, AGENTS_SQL.touchAssistantThread, [
+				turn.tenantId,
+				turn.accountId,
+				turn.threadId,
+				turn.updatedAt,
+			]);
+			await this.#appendAuditEvent(transaction, audit);
+			const thread = (
+				await this.#query(transaction, AGENTS_SQL.getAssistantThread, [
+					turn.tenantId,
+					turn.accountId,
+					turn.threadId,
+				])
+			)[0] as unknown as AssistantThreadRow;
+			return {
+				thread: fromAssistantThreadRow(thread),
+				turns: await this.#assistantTurns(
+					transaction,
+					turn.tenantId,
+					turn.threadId,
+				),
+			};
+		});
+	}
+
+	async listAssistantThreads(
+		tenantId: string,
+		accountId: string,
+		query: AssistantThreadListQuery,
+	): Promise<readonly AssistantThread[]> {
+		return this.#tx(tenantId, 'read', async (transaction) => {
+			const rows = (query.after
+				? await this.#query(transaction, AGENTS_SQL.listAssistantThreads1, [
+						tenantId,
+						accountId,
+						query.after.updatedAt,
+						query.after.id,
+						query.limit,
+					])
+				: await this.#query(transaction, AGENTS_SQL.listAssistantThreads2, [
+						tenantId,
+						accountId,
+						query.limit,
+					])) as unknown as AssistantThreadRow[];
+			return rows.map(fromAssistantThreadRow);
+		});
+	}
+
+	async readAssistantThread(
+		tenantId: string,
+		accountId: string,
+		threadId: string,
+	): Promise<AssistantConversation | null> {
+		return this.#tx(tenantId, 'read', async (transaction) => {
+			const row = (
+				await this.#query(transaction, AGENTS_SQL.getAssistantThread, [
+					tenantId,
+					accountId,
+					threadId,
+				])
+			)[0] as unknown as AssistantThreadRow | undefined;
+			if (!row) return null;
+			return {
+				thread: fromAssistantThreadRow(row),
+				turns: await this.#assistantTurns(transaction, tenantId, threadId),
+			};
+		});
+	}
+
+	async settleAssistantTurn(
+		tenantId: string,
+		turnId: string,
+		outcome: AssistantTurnOutcome,
+	): Promise<void> {
+		await this.#tx(tenantId, 'write', (transaction) =>
+			this.#exec(transaction, AGENTS_SQL.settleAssistantTurn, [
+				tenantId,
+				turnId,
+				outcome.answer,
+				outcome.status,
+				outcome.failureCode,
+				outcome.settledAt,
+			]),
+		);
+	}
+
+	async renameAssistantThread(
+		tenantId: string,
+		accountId: string,
+		threadId: string,
+		title: string,
+		updatedAt: number,
+		audit: PendingAgentAuditEvent,
+	): Promise<AssistantThread | null> {
+		return this.#tx(tenantId, 'write', async (transaction) => {
+			const changed = await this.#exec(
+				transaction,
+				AGENTS_SQL.renameAssistantThread,
+				[tenantId, accountId, threadId, title, updatedAt],
+			);
+			if (changed === 0) return null;
+			await this.#appendAuditEvent(transaction, audit);
+			const row = (
+				await this.#query(transaction, AGENTS_SQL.getAssistantThread, [
+					tenantId,
+					accountId,
+					threadId,
+				])
+			)[0] as unknown as AssistantThreadRow;
+			return fromAssistantThreadRow(row);
+		});
+	}
+
+	async deleteAssistantThread(
+		tenantId: string,
+		accountId: string,
+		threadId: string,
+		audit: PendingAgentAuditEvent,
+	): Promise<boolean> {
+		return this.#tx(tenantId, 'write', async (transaction) => {
+			const removed = await this.#exec(
+				transaction,
+				AGENTS_SQL.deleteAssistantThread,
+				[tenantId, accountId, threadId],
+			);
+			if (removed === 0) return false;
+			await this.#appendAuditEvent(transaction, audit);
+			return true;
+		});
+	}
+
+	async exportAssistantThreadsPage(
+		tenantId: string,
+		after: AssistantThreadExportCursor | null,
+		limit: number,
+	): Promise<readonly AssistantConversation[]> {
+		return this.#tx(tenantId, 'read', async (transaction) => {
+			const rows = (after
+				? await this.#query(
+						transaction,
+						AGENTS_SQL.exportAssistantThreadsPage1,
+						[tenantId, after.updatedAt, after.id, limit],
+					)
+				: await this.#query(
+						transaction,
+						AGENTS_SQL.exportAssistantThreadsPage2,
+						[tenantId, limit],
+					)) as unknown as AssistantThreadRow[];
+			const conversations: AssistantConversation[] = [];
+			for (const row of rows) {
+				conversations.push({
+					thread: fromAssistantThreadRow(row),
+					turns: await this.#assistantTurns(transaction, tenantId, row.id),
+				});
+			}
+			return conversations;
+		});
+	}
+
+	async deleteAssistantThreadsOf(
+		tenantId: string,
+		accountId: string,
+		limit: number,
+	): Promise<number> {
+		return this.#tx(tenantId, 'write', (transaction) =>
+			this.#exec(transaction, AGENTS_SQL.deleteAssistantThreadsOf, [
+				tenantId,
+				accountId,
+				limit,
+			]),
 		);
 	}
 

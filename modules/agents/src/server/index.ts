@@ -42,6 +42,20 @@ export type {
 export { defineModuleAgentTools } from './tools.ts';
 export type { ModuleAgentTools } from './tools.ts';
 export { defineAgent } from './define-agent.ts';
+export {
+	ASSISTANT_AGENT_ID,
+	ASSISTANT_AGENT_KEY,
+	ASSISTANT_DEFINITION_REVISION,
+	assistantAgentDefinition,
+} from '../agent/assistant.ts';
+export { AssistantService } from '../services/assistant-service.ts';
+export type {
+	AssistantMember,
+	AssistantProviderReadiness,
+	AssistantThreadPage,
+	ContinueThreadInput,
+	StartThreadInput,
+} from '../services/assistant-service.ts';
 export type {
 	AgentOwnership,
 	TenantAgentView,

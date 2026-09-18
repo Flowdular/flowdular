@@ -479,6 +479,27 @@ export class AgentService {
 		return views;
 	}
 
+	/* One module-owned agent as the binding leaves it, for a caller that needs
+	   the availability of a single agent rather than the whole catalog. */
+	async getModuleAgent(
+		tenantId: string,
+		agentId: string,
+	): Promise<ModuleAgentView | null> {
+		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
+		const definition = this.#moduleAgents.get(
+			bounded(agentId, 'agentId', 1, 128),
+		);
+		if (!definition) return null;
+		return await this.#moduleAgentView(
+			trustedTenantId,
+			definition,
+			await this.repository.getModuleAgentBinding(
+				trustedTenantId,
+				definition.id,
+			),
+		);
+	}
+
 	async configureModuleAgent(
 		tenantId: string,
 		actorId: string,
