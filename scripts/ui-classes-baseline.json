@@ -1,0 +1,31 @@
+{
+	"modules/agents/src/client/AssistantPanel.tsrx": ["assistant-layer"],
+	"modules/agents/src/client/RunTimeline.tsrx": ["run-entry--tool"],
+	"modules/approvals/src/client/ApprovalRequestDrawer.tsrx": [
+		"approvals-ledger"
+	],
+	"modules/documents/src/client/TemplateBodyField.tsrx": [
+		"documents-code__number"
+	],
+	"modules/research/src/client/EvidenceDrawer.tsrx": ["research-excerpt"],
+	"modules/search/src/client/SearchView.tsrx": ["search-recent"],
+	"packages/client/src/shell/ContextRail.tsrx": ["context-rail__toggle"],
+	"packages/client/src/shell/MobileHeader.tsrx": ["mobile-header__brand"],
+	"packages/client/src/shell/PrimaryNavigation.tsrx": ["nav-item--nested"],
+	"packages/client/src/shell/Sidebar.tsrx": [
+		"sidebar--open",
+		"sidebar__collapse"
+	],
+	"packages/sandbox/src/client/ChatPane.tsrx": ["chat__handoff--continue"],
+	"packages/sandbox/src/client/EjectModal.tsrx": ["eject__summary"],
+	"packages/sandbox/src/client/TurnActivity.tsrx": ["chat__activity-age"],
+	"packages/sandbox/src/client/WorkspaceMenu.tsrx": [
+		"workspace-menu__language"
+	],
+	"packages/ui/src/components/ActionMenu.tsrx": ["ui-table-menu-layer"],
+	"packages/ui/src/components/FileUpload.tsrx": ["ui-fileupload"],
+	"packages/ui/src/components/Table.tsrx": [
+		"ui-table__actions-column",
+		"ui-table__select-column"
+	]
+}

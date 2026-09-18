@@ -98,7 +98,27 @@ Layout `ui-view`, `ui-two-col` (+`--wide-aside`), `ui-grid-2`, `ui-kpi-grid`, `u
 
 User-facing copy lives in every declared `translations/*.json` bundle and is read with fully qualified `t()` keys. Eyebrow names the domain, title names the records, and description is one sentence. Table headers say what the value is. Buttons start with a verb. Loading text ends with `…`. Drawer footer states the constraint the user cannot see. Write natural copy in each locale, with no exclamation marks or database jargon.
 
-## 7. Inspect the rendered screen
+## 7. Design the screen as a preview first
+
+A design is a file, not a description: `modules/<dir>/design/<screen>.html`, beside the spec. It is markup only, dressed by the platform's own stylesheets, so it shows what the screen will look like before a component exists and long before the application boots. An implementation phase reads it the way it reads the spec.
+
+```bash
+pnpm ui:preview modules/<dir>/design/<screen>.html --scaffold   # the record recipe in all five states
+pnpm ui:preview modules/<dir>/design/<screen>.html              # renders it, prints a file:// address
+pnpm ui:preview modules/<dir>/design/<screen>.html --shot .flowdular/ui-preview/<screen>.png
+```
+
+Rules that keep a preview honest:
+
+- Markup only. No `<style>`, no CSS rule, no `<html>` or `<body>`; the command refuses a fragment that carries one. Every visual decision comes from `packages/ui`, which is what stops a preview from becoming a second source of truth.
+- One `<section class="ui-view" data-state="...">` per state: `populated`, `loading`, `empty`, `error`, `denied`. The command labels each one, so a single page answers for all five.
+- Real content. The longest realistic name, a real identifier, the copy the screen will actually carry. A preview of `Lorem ipsum` proves nothing about overflow or alignment.
+- Only classes a stylesheet declares. `pnpm ui-classes:check` fails on a class nothing defines, in a preview and in a `.tsrx` alike, which is the one mistake that compiles, passes its tests and renders unstyled. A class a module needs and the design system lacks is declared in the module's own CSS, as rule 4 says.
+- `--shot` writes a PNG, which is how an agent with no browser looks at its own work.
+
+Hand off the path, not a description. An implementation phase opens the preview, mirrors its structure with the components in section 4, and keeps the copy.
+
+## 8. Inspect the rendered screen
 
 A screen is not finished until it has been looked at. Typecheck and tests say nothing about overflow, alignment, a duplicate label or a column that collapses.
 
@@ -122,6 +142,7 @@ Check the drawer form in the same pass: one label per field, fields top-aligned,
 
 ## Pitfalls
 
+- A preview that renders unstyled is a class nothing declares, not a broken harness; run `pnpm ui-classes:check`.
 - `Kpi value={items.length}` does not typecheck; use `String(items.length)`.
 - A `Tag` for a lifecycle state uses `success` for active and `neutral` for archived, with `dot`.
 - An `Icon` inside `Button size="sm"` is 14, not 18.
