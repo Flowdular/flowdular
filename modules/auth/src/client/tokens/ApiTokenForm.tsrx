@@ -41,6 +41,13 @@ function scopeGroups(scopes: readonly string[]): readonly CheckGroup[] {
 	return [...groups].map(([label, options]) => ({ label, options }));
 }
 
+/* 0 and anything unusable mean the deployment default; the server is what
+   bounds the value. */
+function requestsPerMinute(value: string): number {
+	const parsed = Number(value);
+	return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+}
+
 function expiryTimestamp(days: string): number | null {
 	const value = Number(days);
 	if (!Number.isFinite(value) || value <= 0) return null;
@@ -56,6 +63,7 @@ export function ApiTokenForm(props: ApiTokenFormProps) @{
 			expiryDays: '0',
 			allowWrites: false,
 			allowedOrigins: '',
+			rateLimit: '0',
 		}),
 		[],
 	);
@@ -65,6 +73,7 @@ export function ApiTokenForm(props: ApiTokenFormProps) @{
 	const [allowedOrigins, setAllowedOrigins] = useValue(
 		formState.state.allowedOrigins,
 	);
+	const [rateLimit, setRateLimit] = useValue(formState.state.rateLimit);
 	const groups = scopeGroups(props.availableScopes);
 
 	const submit = (event: SubmitEvent) => {
@@ -76,6 +85,7 @@ export function ApiTokenForm(props: ApiTokenFormProps) @{
 			scopes,
 			allowWrites,
 			allowedOrigins: originList(allowedOrigins),
+			rateLimitPerMinute: requestsPerMinute(rateLimit),
 			expiresAt: expiryTimestamp(expiryDays),
 		});
 	};
@@ -127,6 +137,20 @@ export function ApiTokenForm(props: ApiTokenFormProps) @{
 						checked={allowWrites}
 						label={t('auth.tokens.form.writes')}
 						onChange={setAllowWrites}
+					/>
+				</FormField>
+				<FormField
+					label={t('auth.tokens.form.rateLimit')}
+					help={t('auth.tokens.form.rateLimitHelp')}
+				>
+					<input
+						class="ui-input"
+						type="number"
+						min={0}
+						max={100000}
+						step={1}
+						value={rateLimit}
+						onInput={(event) => setRateLimit(event.currentTarget.value)}
 					/>
 				</FormField>
 				<FormField

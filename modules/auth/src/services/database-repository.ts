@@ -94,6 +94,7 @@ interface ApiTokenRow {
 	scopes_json: string;
 	allow_writes: number | string;
 	allowed_origins_json: string;
+	rate_limit_per_minute: number | bigint | string;
 	created_by: string;
 	created_at: number | bigint | string;
 	expires_at: number | bigint | string | null;
@@ -364,6 +365,10 @@ function fromApiTokenRow(row: ApiTokenRow): ApiTokenRecord {
 		scopes: JSON.parse(row.scopes_json) as readonly string[],
 		allowWrites: Number(row.allow_writes) === 1,
 		allowedOrigins: JSON.parse(row.allowed_origins_json) as readonly string[],
+		rateLimitPerMinute: integer(
+			row.rate_limit_per_minute,
+			'rate_limit_per_minute',
+		),
 		createdBy: row.created_by,
 		createdAt: integer(row.created_at, 'created_at'),
 		expiresAt: optionalInteger(row.expires_at, 'expires_at'),
@@ -1222,9 +1227,9 @@ export class DatabaseAuthRepository implements AuthRepository {
 				const result = await transaction.query<ApiTokenRow>({
 					text: `INSERT INTO auth_api_tokens
 				       (id, tenant_id, account_id, label, prefix, token_hash, scopes_json,
-				        allow_writes, allowed_origins_json,
+				        allow_writes, allowed_origins_json, rate_limit_per_minute,
 				        created_by, created_at, expires_at, last_used_at, revoked_at, revoked_by)
-				       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULL, NULL, NULL)
+				       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULL, NULL, NULL)
 				       RETURNING *`,
 					parameters: [
 						record.id,
@@ -1236,6 +1241,7 @@ export class DatabaseAuthRepository implements AuthRepository {
 						JSON.stringify(record.scopes),
 						record.allowWrites ? 1 : 0,
 						JSON.stringify(record.allowedOrigins),
+						record.rateLimitPerMinute,
 						record.createdBy,
 						record.createdAt,
 						record.expiresAt,

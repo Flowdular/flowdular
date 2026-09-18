@@ -728,6 +728,9 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 		get passwordMinLength() {
 			return read<number>('passwordMinLength');
 		},
+		get apiTokenRateLimit() {
+			return read<number>('apiTokenRateLimit');
+		},
 	};
 	/* The kernel runtime primes once per workspace and remembers it, so a
 	   stored value is never answered by its declared default. */
@@ -870,11 +873,13 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 	});
 	/* Every module reads its settings on the request path, so the workspace
 	   is primed here, once the principal is known and before any route runs. */
-	const authentication = createAuthenticationMiddleware(
-		service,
-		cookie,
+	const authentication = createAuthenticationMiddleware(service, cookie, {
 		primeTenant,
-	);
+		/* Read per request, so an owner raising or removing the ceiling in
+		   Administration is obeyed without a restart. */
+		defaultRateLimit: () => settings.apiTokenRateLimit,
+		...(options.metrics ? { metrics: options.metrics } : {}),
+	});
 	const mfaEnrolment = createMfaEnrolmentMiddleware({
 		tenantSettings,
 		service,

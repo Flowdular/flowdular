@@ -110,6 +110,8 @@ export interface ApiTokenRecord {
 	 * token is for a server-side caller, which sends no Origin header.
 	 */
 	readonly allowedOrigins: readonly string[];
+	/** Requests per minute; 0 takes the deployment default. */
+	readonly rateLimitPerMinute: number;
 	readonly createdBy: string;
 	readonly createdAt: number;
 	readonly expiresAt: number | null;
@@ -131,6 +133,7 @@ export interface CreateApiTokenInput {
 	readonly scopes: readonly string[];
 	readonly allowWrites?: boolean;
 	readonly allowedOrigins?: readonly string[];
+	readonly rateLimitPerMinute?: number;
 	readonly expiresAt: number | null;
 	readonly createdBy: string;
 }
@@ -143,6 +146,10 @@ export interface ApiTokenIdentity {
 	readonly principal: AuthPrincipal;
 	readonly allowWrites: boolean;
 	readonly allowedOrigins: readonly string[];
+	/** The token's own ceiling; 0 leaves the deployment default in charge. */
+	readonly rateLimitPerMinute: number;
+	/** Identifies the window this credential spends, never the secret itself. */
+	readonly tokenId: string;
 }
 
 export interface TenantRole {

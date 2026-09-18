@@ -401,5 +401,12 @@
 	"mail.email-confirmation.subject": "Potwierdź swój adres e-mail",
 	"mail.email-confirmation.intro": "Potwierdź ten adres, aby dokończyć zakładanie konta. Otwórz poniższy link, aby zakończyć potwierdzanie.",
 	"mail.email-confirmation.action": "Potwierdź adres",
-	"mail.closing": "Link wygasa i można go użyć tylko raz. Jeśli nie spodziewałeś się tej wiadomości, możesz ją zignorować."
+	"mail.closing": "Link wygasa i można go użyć tylko raz. Jeśli nie spodziewałeś się tej wiadomości, możesz ją zignorować.",
+	"moduleSettings.apiTokenRateLimit.label": "Zapytania na minutę dla tokenu API",
+	"moduleSettings.apiTokenRateLimit.description": "Dotyczy każdego tokenu API bez własnego limitu. 0 zdejmuje pułap. Liczone per token w każdym procesie; odrzucenia są na /api/metrics.",
+	"tokens.form.rateLimit": "Zapytania na minutę",
+	"tokens.form.rateLimitHelp": "Zostaw 0, aby użyć domyślnej wartości wdrożenia. Token, który wyczerpie minutę, dostaje 429 z retry-after, a każda odpowiedź niesie, ile mu zostało.",
+	"tokens.rate.default": "domyślna wdrożenia",
+	"tokens.rate.perMinute": "{count}/min",
+	"tokens.column.rate": "Tempo"
 }

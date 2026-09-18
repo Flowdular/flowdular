@@ -133,6 +133,7 @@ async function seedWorkspace(
 			scopes: ['auth.profile.read'],
 			allowWrites: false,
 			allowedOrigins: [],
+			rateLimitPerMinute: 0,
 			createdBy: owner.accountId,
 			createdAt: NOW - 600 * DAY_MS,
 			expiresAt,

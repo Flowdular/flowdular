@@ -293,6 +293,9 @@ const API_TOKEN_PATTERN = /^clat_[A-Za-z0-9_-]{43}$/;
 const MAX_API_TOKEN_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000;
 const API_TOKEN_TOUCH_INTERVAL_MS = 60_000;
 const MAX_API_TOKEN_ORIGINS = 8;
+/* A ceiling on the ceiling: a limit this high is no limit, and the value has
+   to stay an integer a counter can compare against. */
+const MAX_API_TOKEN_RATE_LIMIT = 100_000;
 const API_TOKEN_ORIGIN = /^https?:\/\/[a-z0-9.-]+(:\d{1,5})?$/i;
 /* The preflight read is one query for the whole deployment. It is memoised for
    this long and dropped at once when a token is issued or revoked through this
@@ -3143,6 +3146,18 @@ export class AuthService {
 		}
 		const allowWrites = raw.allowWrites === true;
 		const allowedOrigins = apiTokenOrigins(raw.allowedOrigins ?? []);
+		const rateLimitPerMinute = raw.rateLimitPerMinute ?? 0;
+		if (
+			!Number.isInteger(rateLimitPerMinute) ||
+			rateLimitPerMinute < 0 ||
+			rateLimitPerMinute > MAX_API_TOKEN_RATE_LIMIT
+		) {
+			throw new AuthServiceError(
+				'INVALID_RATE_LIMIT',
+				`rateLimitPerMinute must be an integer between 0 and ${MAX_API_TOKEN_RATE_LIMIT}.`,
+				400,
+			);
+		}
 		const token = `${API_TOKEN_PREFIX}${randomBytes(32).toString('base64url')}`;
 		const record = await this.#repository.createApiToken({
 			id: randomUUID(),
@@ -3154,6 +3169,7 @@ export class AuthService {
 			scopes,
 			allowWrites,
 			allowedOrigins,
+			rateLimitPerMinute,
 			createdBy,
 			createdAt,
 			expiresAt: raw.expiresAt,
@@ -3165,7 +3181,7 @@ export class AuthService {
 			AUDIT_ACTIONS.tokenIssued,
 			'api-token',
 			record.id,
-			{ label, scopes, allowWrites, allowedOrigins },
+			{ label, scopes, allowWrites, allowedOrigins, rateLimitPerMinute },
 		);
 		return { record, token };
 	}
@@ -3271,6 +3287,8 @@ export class AuthService {
 			},
 			allowWrites: record.allowWrites,
 			allowedOrigins: record.allowedOrigins,
+			rateLimitPerMinute: record.rateLimitPerMinute,
+			tokenId: record.id,
 		};
 	}
 

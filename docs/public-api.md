@@ -12,14 +12,15 @@ workspace it was issued in and carries at most the permissions of the account
 that issued it; the two are intersected again at every request, so revoking a
 scope or disabling the membership narrows the token immediately.
 
-Four decisions are made when it is issued:
+Five decisions are made when it is issued:
 
-| Field           | What it does                                                                                                            |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Scopes          | The permissions the token may use. Pick the smallest set that works.                                                    |
-| Expiration      | Optional, at most one year.                                                                                             |
-| Allow writes    | Off by default. Without it the token can only read.                                                                     |
-| Browser origins | Empty for a server-side caller. Naming origins is what lets a browser use the token, and refuses it from anywhere else. |
+| Field               | What it does                                                                                                            |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Scopes              | The permissions the token may use. Pick the smallest set that works.                                                    |
+| Expiration          | Optional, at most one year.                                                                                             |
+| Allow writes        | Off by default. Without it the token can only read.                                                                     |
+| Browser origins     | Empty for a server-side caller. Naming origins is what lets a browser use the token, and refuses it from anywhere else. |
+| Requests per minute | 0 takes the deployment default. The token is answered 429 once it spends its minute.                                    |
 
 The secret is shown once. Store it in a secret manager, never in source code.
 
@@ -74,8 +75,34 @@ Weigh that before shipping a token to a browser: whatever the page holds, its
 visitors hold. For a public website, the safer shape is a server-side fetch
 with a read-only token that names no origin, and your own cache in front.
 
+## Watching what a token spends
+
+Every answer to a token that has a ceiling carries its budget:
+
+```text
+x-ratelimit-limit: 600
+x-ratelimit-remaining: 597
+x-ratelimit-reset: 43
+```
+
+`x-ratelimit-reset` is the whole seconds left in the current minute. The
+request that goes over is answered 429 `TOKEN_RATE_LIMITED` with `retry-after`
+set to the same number, so a client backs off without guessing.
+
+The ceiling comes from the token, or from the deployment default in
+Administration, Settings (`auth.core.apiTokenRateLimit`, 600 by default, 0
+removes it). Changing it is live; no restart.
+
+The window is a fixed minute per token inside each process, capped at 4096
+tracked credentials. Behind several processes each admits up to the ceiling,
+so treat it as a guard against a runaway integration, not as an accounting
+record. What a token actually asks for, refused requests included, is on
+`/api/metrics` when the deployment exposes them: `flowdular_module_auth_core_api_token_requests_total` and
+`flowdular_module_auth_core_api_token_rate_limited_total`.
+
 ## What is not covered
 
-- No per-token rate limit yet. Bound the traffic in front of the deployment.
 - No versioned address space: an operation lives at the path its module gives
   it, and a module changes that path with its own version.
+- No durable per-token usage history; the counters above are what a deployment
+  keeps.

@@ -15,6 +15,7 @@ export interface CreateApiTokenRequest {
 	readonly scopes: readonly string[];
 	readonly allowWrites: boolean;
 	readonly allowedOrigins: readonly string[];
+	readonly rateLimitPerMinute: number;
 	readonly expiresAt: number | null;
 }
 

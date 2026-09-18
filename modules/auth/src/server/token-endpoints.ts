@@ -32,6 +32,20 @@ function originList(body: Record<string, unknown>): readonly string[] {
 	return value as readonly string[];
 }
 
+/* Bounded to an integer here; the service decides the ceiling. */
+function rateLimit(body: Record<string, unknown>): number {
+	const value = body.rateLimitPerMinute;
+	if (value === undefined || value === null) return 0;
+	if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
+		throw new AuthServiceError(
+			'INVALID_RATE_LIMIT',
+			'rateLimitPerMinute must be an integer.',
+			400,
+		);
+	}
+	return value;
+}
+
 function expiry(body: Record<string, unknown>): number | null {
 	const value = body.expiresAt;
 	if (value === undefined || value === null) return null;
@@ -88,6 +102,7 @@ export function createApiTokenRoutes(
 					scopes: scopeList(body),
 					allowWrites: body.allowWrites === true,
 					allowedOrigins: originList(body),
+					rateLimitPerMinute: rateLimit(body),
 					expiresAt: expiry(body),
 					createdBy: session.principal.accountId,
 				});

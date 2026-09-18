@@ -1371,6 +1371,15 @@ CREATE INDEX IF NOT EXISTS auth_api_tokens_live_origins_idx
   ON auth_api_tokens (revoked_at, expires_at);
 `;
 
+/* Mirrors migrations/0039_api_token_rate_limit.up.sql byte for byte. */
+export const AUTH_MIGRATION_039_API_TOKEN_RATE_LIMIT = `-- A token was admitted at whatever rate it asked for, so one runaway
+-- integration could take a workspace's API to itself. Each token now carries
+-- the requests per minute it may spend; 0 means the token takes the
+-- deployment default from the auth.core setting, which an owner changes in
+-- Administration without a restart.
+ALTER TABLE auth_api_tokens ADD COLUMN IF NOT EXISTS rate_limit_per_minute INTEGER NOT NULL DEFAULT 0;
+`;
+
 export const databaseMigrations: readonly DatabaseMigration[] = [
 	{
 		id: '0001_auth_core',
@@ -1679,6 +1688,15 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 				() =>
 					database.schema.hasColumn('auth_api_tokens', 'allowed_origins_json'),
 				() => database.schema.hasIndex('auth_api_tokens_live_origins_idx'),
+			]),
+	},
+	{
+		id: '0039_api_token_rate_limit',
+		sql: { postgresql: AUTH_MIGRATION_039_API_TOKEN_RATE_LIMIT },
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() =>
+					database.schema.hasColumn('auth_api_tokens', 'rate_limit_per_minute'),
 			]),
 	},
 ];

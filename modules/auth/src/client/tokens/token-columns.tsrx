@@ -3,6 +3,7 @@ import {
 	CellMuted,
 	CellStack,
 	CellTag,
+	CellText,
 	CellTime,
 	type TableColumn,
 } from '@flowdular/ui';
@@ -77,6 +78,19 @@ export function apiTokenColumns(
 					? t('auth.tokens.origins.none')
 					: t('auth.tokens.origins.count', {
 							count: token.allowedOrigins.length,
+						})}
+			/>,
+		},
+		{
+			key: 'rate',
+			header: t('auth.tokens.column.rate'),
+			width: '140px',
+			priority: 3,
+			cell: (token) => <CellText
+				value={token.rateLimitPerMinute === 0
+					? t('auth.tokens.rate.default')
+					: t('auth.tokens.rate.perMinute', {
+							count: token.rateLimitPerMinute,
 						})}
 			/>,
 		},

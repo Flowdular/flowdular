@@ -16,6 +16,10 @@ export type MailTransportSetting = (typeof MAIL_TRANSPORT_OPTIONS)[number];
 export const DEFAULT_SESSION_TTL_HOURS = 12;
 export const DEFAULT_SESSION_IDLE_MINUTES = 120;
 export const DEFAULT_PASSWORD_MIN_LENGTH = 12;
+/* Requests per minute an API token may spend when it declares no ceiling of
+   its own. High enough that an ordinary integration never notices, low enough
+   that a loop cannot take the workspace's API to itself. */
+export const DEFAULT_API_TOKEN_RATE_LIMIT = 600;
 
 export interface AuthSettingDefaults {
 	readonly allowSignUp?: boolean;
@@ -23,6 +27,7 @@ export interface AuthSettingDefaults {
 	readonly sessionTtlHours?: number;
 	readonly sessionIdleMinutes?: number;
 	readonly passwordMinLength?: number;
+	readonly apiTokenRateLimit?: number;
 	readonly signInProviders?: readonly string[];
 	/** Locales offered as a tenant default; from flowdular.json when known. */
 	readonly locales?: readonly string[];
@@ -101,6 +106,21 @@ export function createAuthModuleSettings(
 					'Applies to sign-up, member creation, and password changes.',
 				min: 8,
 				max: 128,
+			},
+			apiTokenRateLimit: {
+				type: 'number',
+				defaultValue:
+					defaults.apiTokenRateLimit ?? DEFAULT_API_TOKEN_RATE_LIMIT,
+				visibility: 'private',
+				client: false,
+				scope: 'platform',
+				labelKey: 'auth.moduleSettings.apiTokenRateLimit.label',
+				label: 'API token requests per minute',
+				descriptionKey: 'auth.moduleSettings.apiTokenRateLimit.description',
+				description:
+					'Applies to every API token that names no rate of its own. 0 removes the ceiling. Counted per token in each process; the refusals are on /api/metrics.',
+				min: 0,
+				max: 100000,
 			},
 			signInProviders: {
 				type: 'string',
@@ -219,6 +239,8 @@ export interface AuthSettings {
 	readonly sessionTtlMs: number;
 	readonly sessionIdleMs: number;
 	readonly passwordMinLength: number;
+	/** Requests per minute for a token that names no rate of its own. */
+	readonly apiTokenRateLimit: number;
 }
 
 /** The auth.core settings a single workspace decides for itself. */
