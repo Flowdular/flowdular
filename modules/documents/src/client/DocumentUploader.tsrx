@@ -75,6 +75,7 @@ export function DocumentUploader(props: DocumentUploaderProps) @{
 						name: file.name,
 						size: byteLabel(file.size),
 					})}
+					chooseLabel={t('documents.upload.form.choose')}
 					clearLabel={t('documents.upload.form.clear')}
 					refusal={(reason, file) => reason === 'size'
 						? uploadRefusal(file.size, maxObjectBytes)

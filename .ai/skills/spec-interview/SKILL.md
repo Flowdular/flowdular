@@ -29,25 +29,26 @@ For an edit, also read the module's current `spec/module.yaml` and write the sma
 
 One pass, in this order. For each row, write the default from the card into the spec and record it as a `decisions[]` entry with `decidedBy: default`. Ask only where the answer is a business fact that no default can supply.
 
-| Decision               | Default to propose                                                                          | Lands in                                 |
-| ---------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| Actors                 | Owner manages, member reads                                                                 | `permissions`, `invariants`              |
-| Entities and fields    | One primary entity; `name` required, `maxLength` 120; no field the request did not name     | `entities[]`                             |
-| Uniqueness             | The human-facing code is `unique: tenant`; everything else `none`                           | `entities[].fields[].unique`             |
-| States and transitions | `active` and `archived`, every transition behind the manage permission                      | `entities[].states`                      |
-| Who sees what          | Both permissions in the same navigation entry; the manage action hidden without the scope   | `permissions`, `screens[]`, `invariants` |
-| What is denied         | Unauthenticated 401, missing permission 403, cross-tenant read returns nothing              | `acceptanceScenarios`                    |
-| Failure behaviour      | A duplicate returns a stable conflict and changes nothing; bounds return 400                | `invariants`, `acceptanceScenarios`      |
-| Cross-module reads     | None. A read of another module goes through its public capability and a declared dependency | `dependencies`, `dataOwnership`          |
-| Screens                | One `list` screen with the entity's identifying columns                                     | `screens[]`                              |
-| Widgets                | None. A count belongs on `dashboard.metrics` only when the request asks for it              | `widgets[]`                              |
-| Settings               | None. A number the business may change later is `scope: tenant` with a stated default       | `settings[]`                             |
-| Agent tools            | None. A tool is a later phase and `risk` may only be `read` or `workspace-write`            | `agentTools[]`                           |
-| Outside sources        | None. A named public source is `research`, with the entity its findings attach to           | `research`                               |
-| Other systems          | None. A named system is one `source` adapter per record kind, run on demand                 | `adapters[]`                             |
-| Documents              | None. A named document is one `templates[]` entry on the record it describes                | `templates[]`                            |
-| Reports                | None. There is no export, no PDF and no search; a report is a screen or it is out of scope  | `outOfScope[]`                           |
-| Out of scope           | Every item from the card's gap list the request touched, each with its business decision    | `outOfScope[]`, `decisions[]`            |
+| Decision               | Default to propose                                                                                                                                                                                  | Lands in                                 |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| Actors                 | Owner manages, member reads                                                                                                                                                                         | `permissions`, `invariants`              |
+| Entities and fields    | One primary entity; `name` required, `maxLength` 120; no field the request did not name                                                                                                             | `entities[]`                             |
+| Uniqueness             | The human-facing code is `unique: tenant`; everything else `none`                                                                                                                                   | `entities[].fields[].unique`             |
+| States and transitions | `active` and `archived`, every transition behind the manage permission                                                                                                                              | `entities[].states`                      |
+| Who sees what          | Both permissions in the same navigation entry; the manage action hidden without the scope                                                                                                           | `permissions`, `screens[]`, `invariants` |
+| What is denied         | Unauthenticated 401, missing permission 403, cross-tenant read returns nothing                                                                                                                      | `acceptanceScenarios`                    |
+| Failure behaviour      | A duplicate returns a stable conflict and changes nothing; bounds return 400                                                                                                                        | `invariants`, `acceptanceScenarios`      |
+| Cross-module reads     | None. A read of another module goes through its public capability and a declared dependency                                                                                                         | `dependencies`, `dataOwnership`          |
+| Screens                | One `list` screen with the entity's identifying columns                                                                                                                                             | `screens[]`                              |
+| Widgets                | None. A count belongs on `dashboard.metrics` only when the request asks for it                                                                                                                      | `widgets[]`                              |
+| Settings               | None. A number the business may change later is `scope: tenant` with a stated default                                                                                                               | `settings[]`                             |
+| Feature flags          | Ask for one whenever a change alters behaviour a workspace already relies on, or is hard to undo: `kind: flag`, boolean, `scope: tenant`, a stated default, and the behaviour named in an invariant | `settings[]`                             |
+| Agent tools            | None. A tool is a later phase and `risk` may only be `read` or `workspace-write`                                                                                                                    | `agentTools[]`                           |
+| Outside sources        | None. A named public source is `research`, with the entity its findings attach to                                                                                                                   | `research`                               |
+| Other systems          | None. A named system is one `source` adapter per record kind, run on demand                                                                                                                         | `adapters[]`                             |
+| Documents              | None. A named document is one `templates[]` entry on the record it describes                                                                                                                        | `templates[]`                            |
+| Reports                | None. There is no export, no PDF and no search; a report is a screen or it is out of scope                                                                                                          | `outOfScope[]`                           |
+| Out of scope           | Every item from the card's gap list the request touched, each with its business decision                                                                                                            | `outOfScope[]`, `decisions[]`            |
 
 A default you propose is still a decision: it goes into `decisions[]` so the operator can see and overturn it, and so the next agent never re-derives it.
 
@@ -95,7 +96,7 @@ A number the case needs (a score, a premium, a price per square metre) is an `ac
 - `screens[]`: `{ id, kind: list|record|form|dashboard, entity?, title?, columns?, filters?, navigationGroup? }`. `navigationGroup` is one of the six values on the card.
 - `actions[]`: `{ id, entity?, permission, kind: create|update|delete|custom, risk, idempotent, description }`. `risk: external` is refused by the platform, so an action may not declare it.
 - `widgets[]`: `{ id, slot, entity?, description }`; `slot` is one of the four workspace slots.
-- `settings[]`: `{ key, type: string|integer|boolean|enum, scope: tenant|platform, default?, values?, description }`.
+- `settings[]`: `{ key, type: string|integer|boolean|enum, scope: tenant|platform, kind?: setting|flag, default?, values?, description }`. A `flag` is boolean, `scope: tenant` and carries a default; owners switch it per workspace on the Flags tab of Administration, Modules, and every change is audited. Ask whether the new behaviour ships behind one: a change to something a workspace already does, an outward-facing action, a costly or slow path, or anything a business would want to turn off without a deployment. Say what the module does with the flag off, as an invariant.
 - `agentTools[]`: `{ id, permission, description, risk: read|workspace-write }`.
 - `outOfScope[]`: plain sentences, each naming the gap and the decision taken instead.
 - `decisions[]`: `{ id, question, answer, decidedBy: user|default }`; ids match `^[A-Z][A-Z0-9-]+$`, for example `D-UNIQUE-SKU`.

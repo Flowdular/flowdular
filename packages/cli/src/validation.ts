@@ -354,14 +354,46 @@ export function moduleSpecIssues(value: unknown): ValidationIssue[] {
 	});
 
 	(spec.settings ?? []).forEach((setting, index) => {
-		if (setting.type !== 'enum' || (setting.values ?? []).length > 0) return;
-		issues.push(
-			specIssue(
-				'SPEC_ENUM_VALUES_REQUIRED',
-				`Enum setting "${setting.key}" declares no values.`,
-				`/settings/${index}/values`,
-			),
-		);
+		if (setting.type === 'enum' && (setting.values ?? []).length === 0) {
+			issues.push(
+				specIssue(
+					'SPEC_ENUM_VALUES_REQUIRED',
+					`Enum setting "${setting.key}" declares no values.`,
+					`/settings/${index}/values`,
+				),
+			);
+		}
+		if (setting.kind !== 'flag') return;
+		/* A flag is on or off for one workspace, so the runtime accepts nothing
+		   else: `defineModuleSettings` refuses another type or scope, and a flag
+		   without a default has no state to fall back to. */
+		if (setting.type !== 'boolean') {
+			issues.push(
+				specIssue(
+					'SPEC_FLAG_TYPE_INVALID',
+					`Feature flag "${setting.key}" is ${setting.type}; a flag is boolean.`,
+					`/settings/${index}/type`,
+				),
+			);
+		}
+		if (setting.scope !== 'tenant') {
+			issues.push(
+				specIssue(
+					'SPEC_FLAG_SCOPE_INVALID',
+					`Feature flag "${setting.key}" is ${setting.scope} scoped; a flag is set per workspace.`,
+					`/settings/${index}/scope`,
+				),
+			);
+		}
+		if (setting.default === undefined) {
+			issues.push(
+				specIssue(
+					'SPEC_FLAG_DEFAULT_REQUIRED',
+					`Feature flag "${setting.key}" declares no default; say whether it starts on or off.`,
+					`/settings/${index}/default`,
+				),
+			);
+		}
 	});
 
 	const evidenceOwner = entityIssue(

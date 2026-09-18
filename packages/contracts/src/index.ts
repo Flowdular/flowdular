@@ -4,7 +4,7 @@
    removed or changed. The surface is pinned by
    packages/kernel/platform-api.snapshot.d.ts; `pnpm platform-api:check` fails
    when the surface changes without a bump here. */
-export const PLATFORM_API_VERSION = '0.1.22';
+export const PLATFORM_API_VERSION = '0.1.23';
 
 /* The workspace time zone: one tenant setting, declared by the module named
    here and read by any module that shows or schedules a local time. The id, the
@@ -173,6 +173,8 @@ export interface ModuleSpecSetting {
 	readonly key: string;
 	readonly type: 'string' | 'integer' | 'boolean' | 'enum';
 	readonly scope: 'tenant' | 'platform';
+	/** 'flag' turns a behaviour on or off per workspace and shows on the Flags tab: boolean, tenant scope, a stated default. */
+	readonly kind?: 'setting' | 'flag';
 	readonly default?: string | number | boolean;
 	readonly values?: readonly string[];
 	readonly description: string;
