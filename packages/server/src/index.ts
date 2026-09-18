@@ -15,8 +15,12 @@ export type {
 } from './endpoint-catalog.ts';
 export { createCorsMiddleware } from './cors.ts';
 export type { CorsOptions } from './cors.ts';
-export { buildOpenApiDocument } from './openapi.ts';
-export type { OpenApiDocument, OpenApiDocumentOptions } from './openapi.ts';
+export { buildOpenApiDocument, createOpenApiRoutes } from './openapi.ts';
+export type {
+	OpenApiDocument,
+	OpenApiDocumentOptions,
+	OpenApiRoutesOptions,
+} from './openapi.ts';
 export {
 	createApplicationRoutes,
 	validateApplicationPath,

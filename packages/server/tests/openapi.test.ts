@@ -88,6 +88,7 @@ describe('buildOpenApiDocument', () => {
 		expect(operation['x-flowdular-permission']).toBe('catalog.items.read');
 		expect(operation.security).toEqual([{ apiToken: [] }]);
 		expect(operation.responses).toHaveProperty('401');
+		expect(operation.responses).toHaveProperty('429');
 		expect(document.servers).toEqual([{ url: 'https://erp.example.com' }]);
 	});
 

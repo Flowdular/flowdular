@@ -5,6 +5,7 @@ import {
 	createModuleMetrics,
 	createModuleWebRoutes,
 	createApplicationRoutes,
+	createOpenApiRoutes,
 	mailConfigFromEnvironment,
 	serverEndpointCatalog,
 	serverLogger,
@@ -50,8 +51,7 @@ import {
 	createPlatformRuntimeLifecycle,
 	prepareAndActivatePlatformRuntimeLifecycle,
 } from './src/server/lifecycle.ts';
-import { createMetricsRoutes } from './src/server/metrics.ts';
-import { createOpenApiRoutes } from './src/server/openapi.ts';
+import { createMetricsRoutes, platformVersion } from './src/server/metrics.ts';
 import { createPlatformObservability } from './src/server/tracing.ts';
 import {
 	createStorageKeyring,
@@ -252,6 +252,7 @@ async function createPlatformConfig() {
 					...createOpenApiRoutes({
 						resolveIdentity: endpointIdentityFromContext,
 						publicBaseUrl: authRuntime.publicBaseUrl,
+						version: platformVersion(),
 					}),
 					...createStorageRoutes({
 						storage,
