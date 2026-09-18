@@ -1,10 +1,12 @@
 import {
 	assertRouteConflicts,
+	createCorsMiddleware,
 	createMailPort,
 	createModuleMetrics,
 	createModuleWebRoutes,
 	createApplicationRoutes,
 	mailConfigFromEnvironment,
+	serverEndpointCatalog,
 	serverLogger,
 	serverTracer,
 	validateApplicationPath,
@@ -17,6 +19,7 @@ import { resolve } from 'node:path';
 import { defineConfig, RenderRoute, ServerRoute } from '@octanejs/vite-plugin';
 import {
 	createAuthRoutes,
+	endpointIdentityFromContext,
 	isTokenPrincipal,
 	mfaEnrolmentSatisfied,
 	principalFromContext,
@@ -39,8 +42,8 @@ import {
 	platformDatabaseConfigured,
 } from './src/server/database.ts';
 import {
+	createHealthEndpoint,
 	createReadinessEndpoint,
-	healthEndpoint,
 } from './src/server/health.ts';
 import {
 	activatePlatformRuntimeLifecycle,
@@ -48,6 +51,7 @@ import {
 	prepareAndActivatePlatformRuntimeLifecycle,
 } from './src/server/lifecycle.ts';
 import { createMetricsRoutes } from './src/server/metrics.ts';
+import { createOpenApiRoutes } from './src/server/openapi.ts';
 import { createPlatformObservability } from './src/server/tracing.ts';
 import {
 	createStorageKeyring,
@@ -108,7 +112,7 @@ function createFirstRunConfig() {
 		workspaceRoot,
 	});
 	return defineConfig({
-		router: { routes: [healthEndpoint.serverRoute, ...setup.routes] },
+		router: { routes: [createHealthEndpoint().serverRoute, ...setup.routes] },
 	});
 }
 
@@ -119,6 +123,9 @@ async function createPlatformConfig() {
 		);
 	}
 	loadPlatformEnvironmentFile(workspaceRoot);
+	/* Every endpoint records itself as it is defined, so the API document
+	   describes this generation and not the one it replaced. */
+	serverEndpointCatalog().beginGeneration();
 	const configuredApplicationPath = validateApplicationPath(
 		process.env.FD_APPLICATION_PATH ?? applicationBasePath,
 	);
@@ -222,7 +229,16 @@ async function createPlatformConfig() {
 		   reads the catalogue. */
 		dataClasses.seal();
 		const config = defineConfig({
-			middlewares: [lifecycle.middleware, authRuntime.middleware],
+			middlewares: [
+				/* Ahead of the lifecycle and the authentication: a cross-origin
+				   preflight carries no credential and has to be answered before
+				   anything asks for one. */
+				createCorsMiddleware({
+					allowOrigin: (origin) => authRuntime.apiOriginAllowed(origin),
+				}),
+				lifecycle.middleware,
+				authRuntime.middleware,
+			],
 			router: {
 				routes: checkedRoutes([
 					...createApplicationRoutes({
@@ -230,9 +246,13 @@ async function createPlatformConfig() {
 						entry: SHELL,
 						publicRoot: moduleWebMounts.some((site) => site.path === '/'),
 					}),
-					healthEndpoint.serverRoute,
+					createHealthEndpoint().serverRoute,
 					readinessEndpoint.serverRoute,
 					...createMetricsRoutes({ environment: process.env }),
+					...createOpenApiRoutes({
+						resolveIdentity: endpointIdentityFromContext,
+						publicBaseUrl: authRuntime.publicBaseUrl,
+					}),
 					...createStorageRoutes({
 						storage,
 						keyring: storageKeyring,
