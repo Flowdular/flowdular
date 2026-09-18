@@ -291,8 +291,14 @@ async function createPlatformConfig() {
 		for (const composition of moduleCompositions) composition.start?.();
 		return config;
 	} catch (error) {
+		/* The boot failure is the one a reader needs; a cleanup failure after it
+		   is a consequence, so it is logged under its own message. */
+		serverLogger().error('platform boot failed', {
+			module: 'platform',
+			err: error,
+		});
 		void lifecycle.retire().catch((disposeError: unknown) => {
-			serverLogger().error('failed platform boot cleanup failed', {
+			serverLogger().error('platform boot cleanup failed', {
 				module: 'platform',
 				err: disposeError,
 			});

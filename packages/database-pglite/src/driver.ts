@@ -5,7 +5,8 @@ import type {
 	PostgresDriverResult,
 } from '@flowdular/database';
 import { PGlite } from '@electric-sql/pglite';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 export interface PgliteDriverPoolOptions {
 	/** Omit for an in-memory database. A path keeps the data across restarts. */
@@ -27,6 +28,85 @@ export interface PgliteCluster {
 }
 
 const ROLE = /^[a-z_][a-z0-9_]{0,62}$/;
+
+/* One embedded database serves one process. Two processes on the same directory
+   corrupt it, and a directory left unreadable by a killed process stops the next
+   boot with a message from inside the WebAssembly build that names neither the
+   directory nor a way out. These two errors do both. */
+const LOCK_FILE = 'flowdular.lock';
+
+export class LocalDatabaseLockedError extends Error {
+	readonly code = 'LOCAL_DATABASE_LOCKED';
+	constructor(
+		readonly directory: string,
+		readonly pid: number,
+	) {
+		super(
+			`The local database in ${directory} is already open in process ${pid}. Stop that Flowdular first, or point this one at another directory with FD_DATABASE_PGLITE_DIRECTORY.`,
+		);
+		this.name = 'LocalDatabaseLockedError';
+	}
+}
+
+export class LocalDatabaseUnreadableError extends Error {
+	readonly code = 'LOCAL_DATABASE_UNREADABLE';
+	constructor(
+		readonly directory: string,
+		cause: unknown,
+	) {
+		super(
+			`The local database in ${directory} could not be opened. A process killed mid write leaves it this way. Restore a backup of that directory, recreate the workspace with "pnpm flowdular setup quick --apply --confirm reset-local-auth", or point somewhere else with FD_DATABASE_PGLITE_DIRECTORY.`,
+			{ cause },
+		);
+		this.name = 'LocalDatabaseUnreadableError';
+	}
+}
+
+function running(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		/* Someone else's process: it exists, so the lock still holds. */
+		return (error as NodeJS.ErrnoException).code === 'EPERM';
+	}
+}
+
+/* The lock names the process holding the directory. A lock left by a process
+   that is gone is stale and replaced, so an unclean exit never needs a manual
+   cleanup. */
+async function claimDirectory(directory: string): Promise<void> {
+	const path = join(directory, LOCK_FILE);
+	let held: string | undefined;
+	try {
+		held = await readFile(path, 'utf8');
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+	}
+	const pid = Number(held?.split('\n')[0]);
+	if (Number.isInteger(pid) && pid > 0 && pid !== process.pid && running(pid)) {
+		throw new LocalDatabaseLockedError(directory, pid);
+	}
+	await writeFile(path, `${process.pid}\n${new Date().toISOString()}\n`, {
+		mode: 0o600,
+	});
+}
+
+/* Disposal must not fail over a lock: a directory that was never usable has
+   nothing to release, and a lock another process now owns is not ours to
+   remove. */
+async function releaseDirectory(directory: string): Promise<void> {
+	const path = join(directory, LOCK_FILE);
+	try {
+		const held = await readFile(path, 'utf8');
+		if (Number(held.split('\n')[0]) !== process.pid) return;
+		await rm(path, { force: true });
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EACCES') return;
+		throw error;
+	}
+}
 
 /* node-postgres returns int8 as a string so a value beyond Number.MAX_SAFE_INTEGER
    survives the trip, and every repository normalizes on the way in. PGlite parses
@@ -87,21 +167,31 @@ export function createPgliteCluster(
 			const instance = await databasePromise.catch(() => undefined);
 			databasePromise = undefined;
 			await instance?.close();
+			if (options.dataDirectory) await releaseDirectory(options.dataDirectory);
 		})();
 		return closePromise;
 	};
 
 	const database = async (): Promise<PGlite> => {
 		databasePromise ??= (async () => {
-			if (options.dataDirectory) {
-				await mkdir(options.dataDirectory, { recursive: true, mode: 0o700 });
+			const directory = options.dataDirectory;
+			if (directory) {
+				await mkdir(directory, { recursive: true, mode: 0o700 });
+				await claimDirectory(directory);
 			}
-			const created = options.dataDirectory
-				? await PGlite.create({
-						dataDir: options.dataDirectory,
-						parsers: SERVER_PARSERS,
-					})
-				: await PGlite.create({ parsers: SERVER_PARSERS });
+			let created: PGlite;
+			try {
+				created = directory
+					? await PGlite.create({
+							dataDir: directory,
+							parsers: SERVER_PARSERS,
+						})
+					: await PGlite.create({ parsers: SERVER_PARSERS });
+			} catch (error) {
+				if (!directory) throw error;
+				await releaseDirectory(directory);
+				throw new LocalDatabaseUnreadableError(directory, error);
+			}
 			try {
 				if (options.bootstrap) await created.exec(options.bootstrap);
 			} catch (error) {
