@@ -168,7 +168,7 @@ async function seedRun(
 }
 
 function declared(
-	key: 'runs' | 'audit-events' | 'provider-credentials',
+	key: 'runs' | 'audit-events' | 'assistant-threads' | 'provider-credentials',
 	pageSize?: number,
 ) {
 	const registry = createDataClassRegistry();
@@ -187,7 +187,7 @@ function declared(
 }
 
 async function exported(
-	key: 'runs' | 'audit-events',
+	key: 'runs' | 'audit-events' | 'assistant-threads',
 	tenantId: string,
 	pageSize?: number,
 ): Promise<readonly Record<string, unknown>[]> {
@@ -238,6 +238,79 @@ describe('agents.core data classes', () => {
 		expect(declared('provider-credentials').excludedReason).toContain(
 			'encrypted provider credential',
 		);
+	});
+
+	it('exports and erases assistant conversations one workspace and one account at a time', async () => {
+		for (const [tenantId, accountId, title] of [
+			[TENANT, ADA, 'Ada asked'],
+			[TENANT, BO, 'Bo asked'],
+			[OTHER, ADA, 'Another workspace'],
+		] as const) {
+			await database.repository.createAssistantThread(
+				{
+					id: `thread-${tenantId}-${accountId}`,
+					tenantId,
+					accountId,
+					title,
+					turnCount: 1,
+					createdAt: SEPTEMBER,
+					updatedAt: SEPTEMBER,
+				},
+				{
+					id: `turn-${tenantId}-${accountId}`,
+					threadId: `thread-${tenantId}-${accountId}`,
+					tenantId,
+					accountId,
+					sequence: 1,
+					question: 'What changed?',
+					answer: 'Two orders shipped.',
+					runId: 'run-already-swept',
+					status: 'answered',
+					failureCode: null,
+					createdAt: SEPTEMBER,
+					updatedAt: SEPTEMBER,
+				},
+				{
+					tenantId,
+					actorId: accountId,
+					action: 'assistant.thread-started',
+					subjectType: 'assistant-thread',
+					subjectId: `thread-${tenantId}-${accountId}`,
+					metadata: {},
+					occurredAt: SEPTEMBER,
+				},
+			);
+		}
+
+		/* Newest first, and the id breaks a tie the same way the keyset walk does. */
+		const rows = await exported('assistant-threads', TENANT);
+		expect(rows.map((row) => row['title'])).toEqual(['Bo asked', 'Ada asked']);
+		expect(rows[0]!['turns']).toMatchObject([
+			{ question: 'What changed?', answer: 'Two orders shipped.', sequence: 1 },
+		]);
+
+		expect(
+			await declared('assistant-threads').erase!({
+				tenantId: TENANT,
+				subject: { accountId: ADA },
+				limit: 10,
+			}),
+		).toEqual({ removed: 1 });
+		expect(
+			(await exported('assistant-threads', TENANT)).map((row) => row['title']),
+		).toEqual(['Bo asked']);
+		expect(
+			(await exported('assistant-threads', OTHER)).map((row) => row['title']),
+		).toEqual(['Another workspace']);
+		/* A full batch may have left more behind, so the caller is told to come
+		   back rather than believing the subject cleared. */
+		expect(
+			await declared('assistant-threads').erase!({
+				tenantId: OTHER,
+				subject: { accountId: ADA },
+				limit: 1,
+			}),
+		).toEqual({ removed: 1, truncated: true });
 	});
 
 	it('sweeps settled runs older than the cutoff in one workspace only', async () => {
