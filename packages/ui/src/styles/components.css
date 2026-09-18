@@ -2530,6 +2530,34 @@
 /* Settings rows: title and one-line help on the left, the control cluster
    (control, its Save, a state tag) on one line at the right, both vertically
    centered so a switch row and an input row read the same. */
+/* Settings grouped inside a card, by the module that declares them. The head
+   sits on the same inset as the rows under it, so the module name and its
+   settings share one left edge. */
+.ui-setting-group__head {
+	display: grid;
+	gap: 2px;
+	padding: 14px 20px 10px;
+	border-top: 1px solid var(--line-2);
+}
+
+.ui-setting-group:first-of-type .ui-setting-group__head {
+	border-top: 0;
+}
+
+.ui-setting-group__head b {
+	font-size: var(--text-xs);
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--ink-3);
+}
+
+.ui-setting-group__head small {
+	font-size: var(--text-sm);
+	line-height: 1.45;
+	color: var(--ink-3);
+}
+
 .ui-setting {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) minmax(0, 360px);
