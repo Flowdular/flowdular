@@ -407,7 +407,8 @@ Icon names (`packages/ui/src/icons/Icon.tsrx`): `dashboard`, `parties`, `catalog
 - Drawer: `ui-drawer__form` (scrolling body plus pinned footer),
   `ui-drawer__body`, `ui-drawer__foot`
 - Settings rows inside a `ui-card` or a drawer `ui-form__section`, rendered
-  by `SettingRow`: `ui-setting`
+  by `SettingRow`: `ui-setting`, grouped in a card by `ui-setting-group` with
+  `ui-setting-group__head` (the group's name on the rows' own inset)
   (+`__text` for title, scope tag, and help, `__control` for the one-line
   control cluster, `__status` (+`--error`) for the inline result)
 - Buttons: `ui-btn` with `--primary`, `--secondary`, `--ghost`, `--danger`,

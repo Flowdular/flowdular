@@ -93,8 +93,8 @@ export function FlagsPanel(props: FlagsPanelProps) @{
 				</p>
 			}
 			@for (const group of groups; key group.moduleId) {
-				<div class="ui-form__section">
-					<div class="ui-form__section-head">
+				<div class="ui-setting-group">
+					<div class="ui-setting-group__head">
 						<b>{group.name}</b>
 						<small class="ui-mono">{group.moduleId}</small>
 					</div>
