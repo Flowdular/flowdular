@@ -165,6 +165,12 @@ describe('AUTH-MAIL-SETTINGS-REFUSED', () => {
 			);
 			expect(message).not.toContain(PASSWORD);
 			expect(message).toContain('auth.core.mailSmtpUrl');
+			/* A stray percent would otherwise only fail when the relay opens. */
+			expect(
+				await refusal(
+					store(runtime, 'mailSmtpUrl', 'smtps://user:pass%@relay.example'),
+				),
+			).toBe('auth.core.mailSmtpUrl credentials must be percent-encoded.');
 		} finally {
 			await runtime.dispose();
 		}

@@ -254,6 +254,17 @@ function assertRelayUrl(value: string): void {
 	if (!parsed.hostname) {
 		throw refuse('INVALID_SETTING_VALUE', `${FIELDS.url} must name a host.`);
 	}
+	try {
+		decodeURIComponent(parsed.username);
+		decodeURIComponent(parsed.password);
+	} catch {
+		/* A stray percent only fails when the adapter opens the relay, which is
+		   the next invitation rather than this Save. */
+		throw refuse(
+			'INVALID_SETTING_VALUE',
+			`${FIELDS.url} credentials must be percent-encoded.`,
+		);
+	}
 }
 
 function assertSenderAddress(value: string): void {
