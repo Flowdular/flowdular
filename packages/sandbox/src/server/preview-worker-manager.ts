@@ -184,9 +184,14 @@ function startWorker(
 		readable.add(sdkRoot);
 		addDependencies(sdkRoot);
 	} catch (error) {
+		/* A workspace nested inside another checkout resolves past the roots the
+		   host may read, and Node answers that with a denial rather than a miss;
+		   both mean this deployment has no consumer SDK to grant. */
+		const code = (error as NodeJS.ErrnoException).code;
 		if (
-			(error as NodeJS.ErrnoException).code !== 'MODULE_NOT_FOUND' &&
-			(error as NodeJS.ErrnoException).code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED'
+			code !== 'MODULE_NOT_FOUND' &&
+			code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED' &&
+			code !== 'ERR_ACCESS_DENIED'
 		)
 			throw error;
 	}
