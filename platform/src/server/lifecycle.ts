@@ -65,10 +65,17 @@ export function createPlatformRuntimeLifecycle(): PlatformRuntimeLifecycle {
 				}
 			}
 			if (failures.length > 0) {
+				/* A logger reads the message, not the errors array, so each cause
+				   is named there rather than left for a debugger. */
 				rejectDisposal?.(
 					new AggregateError(
 						failures,
-						'Platform runtime teardown did not release every resource.',
+						'Platform runtime teardown did not release every resource: ' +
+							failures
+								.map((failure) =>
+									failure instanceof Error ? failure.message : String(failure),
+								)
+								.join('; '),
 					),
 				);
 			} else {

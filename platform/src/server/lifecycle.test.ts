@@ -83,7 +83,9 @@ describe('platform runtime lifecycle', () => {
 		});
 
 		await expect(lifecycle.retire()).rejects.toThrow(
-			'Platform runtime teardown did not release every resource.',
+			/* The message carries each cause, so a logger that prints one line still
+		   says what failed. */
+			'Platform runtime teardown did not release every resource: broken cleanup',
 		);
 		expect(last).toHaveBeenCalledOnce();
 	});
