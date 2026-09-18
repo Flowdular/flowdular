@@ -14,6 +14,9 @@ import type {
 	AgentProcedure,
 	AgentUsageSummary,
 	AgentWorkerStatus,
+	AssistantConversation,
+	AssistantReadiness,
+	AssistantThread,
 	CreateAgentProviderInput,
 	CreateAgentInput,
 	CreateAgentProcedureInput,
@@ -448,4 +451,74 @@ export async function enqueueAgentRun(
 		body: JSON.stringify(input),
 	});
 	return (await payload<{ readonly run: AgentRun }>(response)).run;
+}
+
+export function loadAssistantReadiness(): Promise<AssistantReadiness> {
+	return getJson('/api/assistant/readiness');
+}
+
+export function loadAssistantThreads(
+	limit: number,
+): Promise<PageResult<AssistantThread>> {
+	return getJson('/api/assistant/threads' + query({ limit }));
+}
+
+export function loadAssistantThread(
+	id: string,
+): Promise<AssistantConversation> {
+	return getJson('/api/assistant/threads/get' + query({ id }));
+}
+
+async function assistantPost<T>(
+	path: string,
+	body: object,
+	csrfToken: string,
+): Promise<T> {
+	const response = await fetch(path, {
+		method: 'POST',
+		headers: mutationHeaders(csrfToken),
+		credentials: 'same-origin',
+		body: JSON.stringify(body),
+	});
+	return payload<T>(response);
+}
+
+export function startAssistantThread(
+	message: string,
+	csrfToken: string,
+): Promise<AssistantConversation> {
+	return assistantPost('/api/assistant/threads', { message }, csrfToken);
+}
+
+export function continueAssistantThread(
+	threadId: string,
+	message: string,
+	csrfToken: string,
+): Promise<AssistantConversation> {
+	return assistantPost(
+		'/api/assistant/threads/continue',
+		{ threadId, message },
+		csrfToken,
+	);
+}
+
+export async function renameAssistantThread(
+	id: string,
+	title: string,
+	csrfToken: string,
+): Promise<AssistantThread> {
+	return (
+		await assistantPost<{ readonly thread: AssistantThread }>(
+			'/api/assistant/threads/rename',
+			{ id, title },
+			csrfToken,
+		)
+	).thread;
+}
+
+export async function deleteAssistantThread(
+	id: string,
+	csrfToken: string,
+): Promise<void> {
+	await assistantPost('/api/assistant/threads/delete', { id }, csrfToken);
 }

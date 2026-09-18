@@ -2,6 +2,8 @@ import { t, type ModuleClientContribution } from '@flowdular/client';
 import { AGENT_PERMISSIONS } from '../acl/permissions.ts';
 import translationsEn from '../../translations/en.json';
 import translationsPl from '../../translations/pl.json';
+import { AssistantLauncher } from './AssistantLauncher.tsrx';
+import { ASSISTANT_TOPBAR_WIDGET } from './assistant-state.ts';
 import { AgentProvidersView } from './AgentProvidersView.tsrx';
 import { AgentDashboardWidget } from './AgentDashboardWidget.tsrx';
 import { AgentPlaygroundView } from './AgentPlaygroundView.tsrx';
@@ -10,6 +12,7 @@ import { AgentProceduresView } from './AgentProceduresView.tsrx';
 import { AgentsView } from './AgentsView.tsrx';
 import { AgentUsageView } from './AgentUsageView.tsrx';
 import './agents.css';
+import './assistant.css';
 
 export interface AgentClientContributionOptions {
 	readonly csrfToken: string;
@@ -169,6 +172,10 @@ export function createAgentClientContribution(
 			},
 		],
 		widgets: [
+			{
+				...ASSISTANT_TOPBAR_WIDGET,
+				render: () => <AssistantLauncher csrfToken={options.csrfToken} />,
+			},
 			{
 				id: 'agents.dashboard.queue',
 				slot: 'dashboard.aside',
