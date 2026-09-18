@@ -1178,7 +1178,7 @@ export const AGENTS_SQL: AgentsPersistenceStatements = Object.freeze({
 					 WHERE tenant_id = $1 AND thread_id = $2 ORDER BY sequence`,
 	settleAssistantTurn: `UPDATE assistant_turns
 					 SET answer = $3, status = $4, failure_code = $5, updated_at = $6
-					 WHERE tenant_id = $1 AND id = $2 AND status = 'pending'`,
+					 WHERE tenant_id = $1 AND run_id = $2 AND status = 'pending'`,
 	renameAssistantThread: `UPDATE assistant_threads SET title = $4, updated_at = $5
 					 WHERE tenant_id = $1 AND account_id = $2 AND id = $3`,
 	deleteAssistantThread: `DELETE FROM assistant_threads
@@ -3080,13 +3080,13 @@ export class DatabaseAgentRepository implements AgentRepository {
 
 	async settleAssistantTurn(
 		tenantId: string,
-		turnId: string,
+		runId: string,
 		outcome: AssistantTurnOutcome,
 	): Promise<void> {
 		await this.#tx(tenantId, 'write', (transaction) =>
 			this.#exec(transaction, AGENTS_SQL.settleAssistantTurn, [
 				tenantId,
-				turnId,
+				runId,
 				outcome.answer,
 				outcome.status,
 				outcome.failureCode,

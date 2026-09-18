@@ -406,7 +406,7 @@ export class AssistantService {
 								failureCode: run.failureCode ?? run.status.toUpperCase(),
 								settledAt: at,
 							};
-			await this.repository.settleAssistantTurn(tenantId, turn.id, outcome);
+			await this.repository.settleAssistantTurn(tenantId, turn.runId, outcome);
 			settled.push({ ...turn, ...outcome, updatedAt: at });
 		}
 		return settled;

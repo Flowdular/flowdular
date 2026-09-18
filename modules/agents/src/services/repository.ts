@@ -371,11 +371,13 @@ export interface AgentRepository {
 		accountId: string,
 		threadId: string,
 	): Promise<AssistantConversation | null>;
-	/* Writes what a settled run reported onto the turn that asked for it. The
-	   turn keeps that text from then on, so the run may be swept. */
+	/* Writes what a settled run reported onto the turn that asked for it, found
+	   by the run. The turn keeps that text from then on, so the run may be
+	   swept. Only a pending turn is written, so a repeated terminal step and a
+	   later read change nothing. */
 	settleAssistantTurn(
 		tenantId: string,
-		turnId: string,
+		runId: string,
 		outcome: AssistantTurnOutcome,
 	): Promise<void>;
 	renameAssistantThread(

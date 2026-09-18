@@ -468,8 +468,17 @@ describe('workspace assistant', () => {
 		const started = await fix.assistant.startThread(asking, {
 			message: 'Answer me once.',
 		});
-		const settled = await answered(fix, asking, started.thread.id, 1);
-		const answer = settled.turns[0]!.answer!;
+		/* The worker writes the answer onto the turn when it settles the run, so
+		   a member who never reopened the thread still has it. */
+		const stored = async () =>
+			(await fix.repository.readAssistantThread(
+				TENANT,
+				'member-a',
+				started.thread.id,
+			))!.turns[0]!;
+		await fix.worker.start();
+		await waitFor(async () => (await stored()).status === 'answered');
+		const answer = (await stored()).answer!;
 		expect(answer).toContain('answered:');
 
 		expect(
