@@ -255,6 +255,9 @@ export class AssistantService {
 				: bounded(input.title, 'title', 1, TITLE_MAX);
 		const at = this.now();
 		const threadId = randomUUID();
+		/* The run is queued before the thread exists, so a refused enqueue leaves
+		   no conversation behind: a budget, a meter or an unusable provider is
+		   what a member sees, not an empty thread they have to clean up. */
 		const runId = await this.#queueTurn(member, [], question);
 		const thread: AssistantThread = {
 			id: threadId,

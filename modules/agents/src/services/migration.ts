@@ -865,6 +865,10 @@ CREATE TABLE IF NOT EXISTS assistant_turns (
 );
 CREATE INDEX IF NOT EXISTS assistant_turns_thread_idx
   ON assistant_turns (tenant_id, thread_id, sequence);
+-- The worker writes a settled run onto its turn by the run, once per turn, so
+-- without this the write scans every turn the workspace holds.
+CREATE INDEX IF NOT EXISTS assistant_turns_run_idx
+  ON assistant_turns (tenant_id, run_id);
 ALTER TABLE assistant_turns ENABLE ROW LEVEL SECURITY;
 ALTER TABLE assistant_turns FORCE ROW LEVEL SECURITY;
 CREATE POLICY assistant_turns_tenant_policy ON assistant_turns
