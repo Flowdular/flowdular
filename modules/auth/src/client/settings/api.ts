@@ -94,6 +94,46 @@ export async function updateDefaultLocale(
 	return localeOf(body.setting ?? undefined);
 }
 
+export interface MailStatus {
+	readonly source: 'settings' | 'environment';
+	readonly transport: string;
+	readonly configured: boolean;
+	readonly from: string;
+}
+
+/* The relay itself is never served: the screen states which source and which
+   transport are in effect, and the address messages are sent from. */
+export async function loadMailStatus(): Promise<MailStatus | null> {
+	const response = await fetch('/api/auth/mail', {
+		headers: { accept: 'application/json' },
+		credentials: 'same-origin',
+	});
+	if (response.status === 403) return null;
+	return (
+		await payload<{ readonly mail: MailStatus }>(
+			response,
+			t('auth.settings.error.load'),
+		)
+	).mail;
+}
+
+export async function sendTestMail(csrfToken: string): Promise<MailStatus> {
+	const response = await fetch('/api/auth/mail/test', {
+		method: 'POST',
+		headers: {
+			'content-type': 'application/json',
+			'x-csrf-token': csrfToken,
+		},
+		credentials: 'same-origin',
+	});
+	return (
+		await payload<{ readonly mail: MailStatus }>(
+			response,
+			t('auth.settings.error.mailTest'),
+		)
+	).mail;
+}
+
 export async function renameWorkspace(
 	name: string,
 	csrfToken: string,

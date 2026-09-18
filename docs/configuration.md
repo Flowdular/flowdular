@@ -583,6 +583,23 @@ deployment on the old names keeps working and the server logs one
 replacement. The platform name wins when both are set, and every refusal names
 the variable the deployment actually set.
 
+The relay is also five platform-scoped `auth.core` settings, edited under
+Administration, Modules: `mailTransport` (`environment`, `none` or `smtp`),
+`mailSmtpUrl` (secret, write only), `mailFrom`, `mailRequireTls` and
+`mailRejectUnauthorized`. `mailTransport` decides which source wins. It is
+`environment` by default, and while it stays there the `FD_MAIL_*`
+configuration above is in effect exactly as described, deprecation warnings
+included; storing `none` or `smtp` overrides the environment for every sender of
+the installation. `development` is reachable only through the environment and is
+never settable from the UI. A stored relay is resolved when a message is sent,
+so a change carries the next message without a restart, and the built transport
+is cached by a digest of the effective configuration. Storing `smtp` without a
+relay URL or without a sender is refused, as is a URL that is not `smtp://` or
+`smtps://` and a sender the sender rule rejects; the refusal names the setting
+and never carries its value. Administration, Settings states which source and
+which transport are in effect and sends a test message to the signed-in
+address.
+
 `none` refuses every message with `MAIL_NOT_CONFIGURED` and sends nothing.
 `development` keeps the last 100 messages in memory for a local run and a test
 and is refused at boot in production, where it would be silent data loss.

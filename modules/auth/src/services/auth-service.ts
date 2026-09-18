@@ -66,7 +66,10 @@ import {
 	type TenantMemberSortedPage,
 	type TenantSummary,
 } from './repository.ts';
-import type { AuthMailDelivery } from './mail-delivery.ts';
+import {
+	mailDeliveryConfigured,
+	type AuthMailDelivery,
+} from './mail-delivery.ts';
 import {
 	createMfaSecretVault,
 	createTotpSecret,
@@ -383,6 +386,7 @@ export const AUDIT_ACTIONS = Object.freeze({
 	roleCreated: 'auth.role.created',
 	roleUpdated: 'auth.role.updated',
 	roleDeleted: 'auth.role.deleted',
+	mailTested: 'auth.mail.tested',
 	settingsUpdated: 'settings.updated',
 	settingsFlagChanged: 'settings.flag.changed',
 	moduleActivated: 'system.module.activated',
@@ -1845,7 +1849,7 @@ export class AuthService {
 		if (normalized.length > 254) return;
 		const account = await this.#repository.findAccountByEmail(normalized);
 		if (!account) return;
-		if (!this.#mailDelivery) {
+		if (!mailDeliveryConfigured(this.#mailDelivery)) {
 			/* The client still gets the non-enumerating success, so the deployment
 			   log is the only place this dead end is visible. The address stays out
 			   of it. */
@@ -1954,7 +1958,7 @@ export class AuthService {
 		}
 		/* Owner elevation through invitations follows the same rule as member creation. */
 		await this.#roleForAssignment(actor, validateRoleKey(roleKey));
-		if (!this.#mailDelivery) {
+		if (!mailDeliveryConfigured(this.#mailDelivery)) {
 			throw new AuthServiceError(
 				'MAIL_NOT_CONFIGURED',
 				'Email delivery is not configured for this deployment.',
@@ -2918,6 +2922,29 @@ export class AuthService {
 						next: change.next,
 					}
 				: { cleared: change.cleared },
+		);
+	}
+
+	/**
+	 * The row an operator's test message owes, sent or refused. It names which
+	 * source and which transport answered and never the relay address, the
+	 * credentials or the recipient.
+	 */
+	async recordMailTest(
+		actor: AuthActor,
+		result: {
+			readonly source: string;
+			readonly transport: string;
+			readonly outcome: string;
+		},
+	): Promise<void> {
+		await this.#audit(
+			actor.tenantId,
+			this.#actorOf(actor),
+			AUDIT_ACTIONS.mailTested,
+			'setting',
+			'auth.core.mailTransport',
+			result,
 		);
 	}
 

@@ -6,6 +6,13 @@ import {
 export const PROVIDER_LIST_PATTERN =
 	'|[a-z][a-z0-9-]{1,30}(,[a-z][a-z0-9-]{1,30})*';
 
+/* The stored transport an operator may choose. `environment` keeps the
+   deployment's FD_MAIL_* configuration, which is also the only way to reach the
+   in-memory development adapter. */
+export const MAIL_TRANSPORT_OPTIONS = ['environment', 'none', 'smtp'] as const;
+
+export type MailTransportSetting = (typeof MAIL_TRANSPORT_OPTIONS)[number];
+
 export const DEFAULT_SESSION_TTL_HOURS = 12;
 export const DEFAULT_SESSION_IDLE_MINUTES = 120;
 export const DEFAULT_PASSWORD_MIN_LENGTH = 12;
@@ -120,6 +127,70 @@ export function createAuthModuleSettings(
 				descriptionKey: 'auth.moduleSettings.requireMfa.description',
 				description:
 					'Members of this workspace must enrol an authenticator before any workspace API or page answers them. API tokens are exempt, and the deployment needs an MFA encryption key.',
+			},
+			mailTransport: {
+				type: 'string',
+				defaultValue: 'environment',
+				visibility: 'private',
+				client: false,
+				scope: 'platform',
+				labelKey: 'auth.moduleSettings.mailTransport.label',
+				label: 'Mail transport',
+				descriptionKey: 'auth.moduleSettings.mailTransport.description',
+				description:
+					'Relay this installation sends through. environment keeps the deployment FD_MAIL_* configuration, including the in-memory development adapter, which is never settable here.',
+				enum: MAIL_TRANSPORT_OPTIONS,
+			},
+			mailSmtpUrl: {
+				type: 'string',
+				defaultValue: '',
+				visibility: 'private',
+				client: false,
+				secret: true,
+				scope: 'platform',
+				labelKey: 'auth.moduleSettings.mailSmtpUrl.label',
+				label: 'Relay URL',
+				descriptionKey: 'auth.moduleSettings.mailSmtpUrl.description',
+				description:
+					'smtp:// or smtps:// relay URL with its credentials percent-encoded. Write only: it is never read back.',
+				max: 512,
+			},
+			mailFrom: {
+				type: 'string',
+				defaultValue: '',
+				visibility: 'private',
+				client: false,
+				scope: 'platform',
+				labelKey: 'auth.moduleSettings.mailFrom.label',
+				label: 'Sender address',
+				descriptionKey: 'auth.moduleSettings.mailFrom.description',
+				description:
+					'Sender every message carries, as Name <address> or address.',
+				max: 448,
+			},
+			mailRequireTls: {
+				type: 'boolean',
+				defaultValue: true,
+				visibility: 'private',
+				client: false,
+				scope: 'platform',
+				labelKey: 'auth.moduleSettings.mailRequireTls.label',
+				label: 'Require STARTTLS',
+				descriptionKey: 'auth.moduleSettings.mailRequireTls.description',
+				description:
+					'Refuse a cleartext smtp:// session the relay does not upgrade. Ignored by smtps://.',
+			},
+			mailRejectUnauthorized: {
+				type: 'boolean',
+				defaultValue: true,
+				visibility: 'private',
+				client: false,
+				scope: 'platform',
+				labelKey: 'auth.moduleSettings.mailRejectUnauthorized.label',
+				label: 'Verify relay certificate',
+				descriptionKey:
+					'auth.moduleSettings.mailRejectUnauthorized.description',
+				description: 'Refuse a relay certificate that does not verify.',
 			},
 			defaultLocale: {
 				type: 'string',

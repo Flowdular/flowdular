@@ -5,10 +5,14 @@ import { cell, createStore, useValue } from 'segment-state';
 import {
 	ApiError,
 	loadDefaultLocale,
+	loadMailStatus,
 	renameWorkspace,
+	sendTestMail,
 	updateDefaultLocale,
 	type LocaleSetting,
+	type MailStatus,
 } from './api.ts';
+import { MailCard } from './MailCard.tsrx';
 import { PreferencesCard } from './PreferencesCard.tsrx';
 import { WorkspaceCard } from './WorkspaceCard.tsrx';
 
@@ -37,11 +41,13 @@ function createSettingsState() {
 	const store = createStore({
 		workspace: cell<WorkspaceIdentity | null>(null),
 		locale: cell<LocaleSetting | null>(null),
+		mail: cell<MailStatus | null>(null),
 		status: cell<SettingsStatus>('loading'),
 		error: '',
 		busyKey: cell<string | null>(null),
 		workspaceResult: cell<RowResult | null>(null),
 		localeResult: cell<RowResult | null>(null),
+		mailResult: cell<RowResult | null>(null),
 	});
 	return { store, state: store.state };
 }
@@ -80,18 +86,22 @@ export function SettingsView(props: SettingsViewProps) @{
 	const [busyKey, setBusyKey] = useValue(client.state.busyKey);
 	const [workspaceResult] = useValue(client.state.workspaceResult);
 	const [localeResult] = useValue(client.state.localeResult);
+	const [mail] = useValue(client.state.mail);
+	const [mailResult] = useValue(client.state.mailResult);
 
 	const refresh = async () => {
 		setStatus('loading');
 		setError('');
 		try {
-			const [loadedLocale, identity] = await Promise.all([
+			const [loadedLocale, identity, mailStatus] = await Promise.all([
 				loadDefaultLocale(),
 				loadWorkspace(),
+				loadMailStatus(),
 			]);
 			client.store.act((transaction) => {
 				transaction.set(client.state.locale, loadedLocale);
 				transaction.set(client.state.workspace, identity);
+				transaction.set(client.state.mail, mailStatus);
 				transaction.set(client.state.status, 'idle');
 			}, 'settings/loaded');
 		} catch (loadError) {
@@ -128,6 +138,29 @@ export function SettingsView(props: SettingsViewProps) @{
 				});
 				transaction.set(client.state.busyKey, null);
 			}, 'settings/locale-save-failed');
+		}
+	};
+
+	const testMail = async () => {
+		setBusyKey('mail');
+		try {
+			const status = await sendTestMail(props.csrfToken);
+			client.store.act((transaction) => {
+				transaction.set(client.state.mail, status);
+				transaction.set(client.state.mailResult, {
+					ok: true,
+					message: t('auth.settings.mail.test.sent'),
+				});
+				transaction.set(client.state.busyKey, null);
+			}, 'settings/mail-tested');
+		} catch (testError) {
+			client.store.act((transaction) => {
+				transaction.set(client.state.mailResult, {
+					ok: false,
+					message: message(testError, t('auth.settings.error.mailTest')),
+				});
+				transaction.set(client.state.busyKey, null);
+			}, 'settings/mail-test-failed');
 		}
 	};
 
@@ -195,6 +228,15 @@ export function SettingsView(props: SettingsViewProps) @{
 						busy={busyKey === 'workspace'}
 						result={workspaceResult}
 						onRename={(name) => void rename(name)}
+					/>
+				}
+				@if (mail) {
+					<MailCard
+						mail={mail}
+						canManage={props.canManage}
+						busy={busyKey === 'mail'}
+						result={mailResult}
+						onTest={() => void testMail()}
 					/>
 				}
 				@if (locale) {

@@ -26,6 +26,7 @@ import type { TenantProviderSignIn } from '../services/auth-service.ts';
 import type { TenantSummary } from '../services/repository.ts';
 import { normalizeEmail } from '../services/validation.ts';
 import { createAuditRoutes } from './audit-endpoints.ts';
+import { createMailRoutes } from './mail-endpoints.ts';
 import { createMembershipRoutes } from './membership-endpoints.ts';
 import { createIdentityProviderRoutes } from './provider-endpoints.ts';
 import {
@@ -1175,6 +1176,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 		...createSessionRoutes(runtime),
 		...createIdentityProviderRoutes(runtime),
 		...createMembershipRoutes(runtime),
+		...createMailRoutes(runtime),
 	];
 	/* The served chain resolves the service, and with it the platform settings
 	   these handlers read, before any route runs. A handler invoked on its own,

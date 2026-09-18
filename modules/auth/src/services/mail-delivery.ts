@@ -14,6 +14,19 @@ export interface AuthMailMessage {
 export interface AuthMailDelivery {
 	/** `locale` is the workspace default the wording is rendered in. */
 	send(message: AuthMailMessage, locale: string): Promise<void>;
+	/**
+	 * False while nothing can carry a message. A settings-backed delivery
+	 * answers it per read, because an operator configures a relay without a
+	 * restart; a delivery that omits it can always send.
+	 */
+	readonly configured?: boolean;
+}
+
+/** Whether a sender may mint a token that only a delivered message redeems. */
+export function mailDeliveryConfigured(
+	delivery: AuthMailDelivery | undefined,
+): delivery is AuthMailDelivery {
+	return delivery !== undefined && delivery.configured !== false;
 }
 
 export class DevelopmentMailDelivery implements AuthMailDelivery {
