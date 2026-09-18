@@ -8,6 +8,7 @@
 - [CLI](cli.md): every command, the dry-run and capability conventions.
 - [Configuration](configuration.md): environment variables and their defaults.
 - [CLI extensions](cli-extensions.md): how a module contributes its own commands.
+- [The API of a deployment](public-api.md): API tokens, the OpenAPI description, calling it from a browser.
 - [Database adapters](database-adapters.md): the SQL boundary module repositories build on.
 
 ## Building on it

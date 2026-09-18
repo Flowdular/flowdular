@@ -31,6 +31,7 @@ invariants:
   - system.core, auth.core, users.core and profile.core are required and always active. A module that another active module declares as a dependency, through a declared module dependency or a required public capability, cannot be deactivated; the refusal names the active dependents. A module cannot be activated while one of its dependencies is inactive.
   - Every activation change appends one audit event, system.module.activated or system.module.deactivated, to the auth.core trail with the module id and the actor. Repeating the current state changes nothing and writes no event.
   - Activation is enforced in three places from one per-workspace snapshot published as the public capability system.modules.v1 and memoised for at most thirty seconds per tenant, refreshed at once by a change made through this instance. defineEndpoint answers 403 MODULE_INACTIVE for an endpoint of an inactive module in the principal's workspace, required modules exempt; the application shell hides the navigation, views, widgets and command palette entries of inactive modules; the endpoint gate never reads a tenant id from the request.
+  - The API screen reads the platform's own OpenAPI document and lists the operations it describes. The document is built per caller from the endpoints the running composition defined, so a module a sandbox session wrote is described as soon as it is enabled, and an operation the caller has no permission for, or of a module inactive in its workspace, is not listed. The screen reads, registers no endpoint of its own and is behind system.modules.read.
 permissions:
   - id: system.workspace.access
     description: Open the authenticated ERP workspace.
@@ -161,6 +162,10 @@ acceptanceScenarios:
     when: A member of that workspace opens the application shell.
     then: The shell reads the active module ids through GET /api/system/modules/active, hides the module's navigation entries, views, workspace widgets and command palette search, returns a bookmark of one of its views to the dashboard, and shows every module when the read fails.
 screens:
+  - id: api
+    kind: list
+    title: API
+    navigationGroup: Administration
   - id: flags
     kind: list
     title: Flags

@@ -2,6 +2,7 @@ import { t, type ModuleClientContribution } from '@flowdular/client';
 import { SYSTEM_PERMISSIONS } from '../acl/permissions.ts';
 import translationsEn from '../../translations/en.json';
 import translationsPl from '../../translations/pl.json';
+import { ApiDocsView } from './ApiDocsView.tsrx';
 import { ModulesView } from './ModulesView.tsrx';
 
 export interface SystemClientContributionOptions {
@@ -32,6 +33,21 @@ export function createSystemClientContribution(
 				scope: SYSTEM_PERMISSIONS.modulesRead,
 				order: 60,
 			},
+			{
+				id: 'system.navigation.api',
+				viewId: 'api',
+				group: 'Administration',
+				section: 'platform',
+				get label() {
+					return t('system.navigation.api');
+				},
+				glyph: 'code',
+				get description() {
+					return t('system.navigation.apiDescription');
+				},
+				scope: SYSTEM_PERMISSIONS.modulesRead,
+				order: 61,
+			},
 		],
 		views: [
 			{
@@ -44,6 +60,7 @@ export function createSystemClientContribution(
 						)}
 					/>,
 			},
+			{ id: 'api', render: () => <ApiDocsView /> },
 		],
 	};
 }
