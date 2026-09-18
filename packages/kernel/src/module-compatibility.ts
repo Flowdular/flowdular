@@ -1,4 +1,10 @@
-import { inc, satisfies, valid, validRange, rcompare } from 'semver';
+import {
+	compareVersions,
+	isValidRange,
+	nextVersion,
+	parseVersion,
+	rangeSatisfies,
+} from './version-range.ts';
 import {
 	PLATFORM_API_VERSION,
 	type ModuleManifest,
@@ -13,7 +19,7 @@ export function incrementModuleVersion(
 	version: string,
 	level: ModuleVersionLevel,
 ): string {
-	const next = valid(version) === null ? null : inc(version, level);
+	const next = nextVersion(version, level);
 	if (!next)
 		throw new RegistryError(
 			'MODULE_VERSION_INVALID',
@@ -40,29 +46,29 @@ export function satisfiesModuleVersion(
 	version: string,
 	range: string,
 ): boolean {
-	return (
-		valid(version) !== null &&
-		validRange(range) !== null &&
-		satisfies(version, range)
-	);
+	return rangeSatisfies(version, range);
 }
 
+/** Newest first, the order a catalog lists releases in. */
 export function compareModuleVersions(left: string, right: string): number {
-	return rcompare(left, right);
+	const first = parseVersion(left);
+	const second = parseVersion(right);
+	if (!first || !second) return 0;
+	return compareVersions(second, first);
 }
 
 export function assertModuleCompatibility(
 	manifest: ModuleManifest,
 	platformVersion: string | null = PLATFORM_API_VERSION,
 ): void {
-	if (!valid(manifest.version))
+	if (parseVersion(manifest.version) === null)
 		throw new RegistryError(
 			'MODULE_VERSION_INVALID',
 			`Invalid version for ${manifest.id}: ${manifest.version}`,
 		);
 	if (
 		manifest.platformApi !== undefined &&
-		(!validRange(manifest.platformApi) ||
+		(!isValidRange(manifest.platformApi) ||
 			(platformVersion !== null &&
 				!satisfiesModuleVersion(platformVersion, manifest.platformApi)))
 	) {
@@ -73,7 +79,7 @@ export function assertModuleCompatibility(
 	}
 	const ids = new Set<string>();
 	for (const dependency of manifest.dependencies) {
-		if (!dependency.range.trim() || !validRange(dependency.range))
+		if (!dependency.range.trim() || !isValidRange(dependency.range))
 			throw new RegistryError(
 				'MODULE_RANGE_INVALID',
 				`${manifest.id} declares an invalid range for ${dependency.id}: ${dependency.range}`,

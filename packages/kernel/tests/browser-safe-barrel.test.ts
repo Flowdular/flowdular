@@ -8,6 +8,8 @@ import { describe, expect, it } from 'vitest';
    at module evaluation; a namespace import throws only when a function is
    called. This walks the graph behind index.ts and refuses the named form. */
 const root = resolve(import.meta.dirname, '../src');
+/** Packages the barrel may pull into a browser: ES modules, no Node built-ins. */
+const BROWSER_SAFE_PACKAGES: readonly string[] = ['@flowdular/contracts'];
 const importPattern = /import\s+([^'";]+?)\s+from\s+'([^']+)';/g;
 
 function walk(file: string, seen: Set<string>): void {
@@ -25,6 +27,19 @@ function walk(file: string, seen: Set<string>): void {
 				`${file.slice(root.length + 1)} imports ${specifier} by name; use a namespace import and touch it only inside functions`,
 			).toBe(true);
 		}
+		/* A package the browser graph reaches is served as it is published. A
+		   CommonJS one (semver was) stops a generated application at bootstrap,
+		   so the barrel depends on browser-safe packages only. */
+		if (
+			!specifier!.startsWith('.') &&
+			!specifier!.startsWith('node:') &&
+			!clause!.startsWith('type ')
+		) {
+			expect(
+				BROWSER_SAFE_PACKAGES,
+				`${file.slice(root.length + 1)} imports ${specifier}; keep it out of the barrel or add it to BROWSER_SAFE_PACKAGES once it ships browser-loadable ES modules`,
+			).toContain(specifier);
+		}
 	}
 	for (const match of source.matchAll(
 		/export\s+\{[^}]*\}\s+from\s+'(\.[^']+)';/g,
@@ -34,7 +49,7 @@ function walk(file: string, seen: Set<string>): void {
 }
 
 describe('kernel barrel', () => {
-	it('loads in a browser: no named import from a Node built-in behind index.ts', () => {
+	it('loads in a browser: no Node built-in by name, no package a browser cannot load', () => {
 		const seen = new Set<string>();
 		walk(resolve(root, 'index.ts'), seen);
 		expect(seen.size).toBeGreaterThan(10);
