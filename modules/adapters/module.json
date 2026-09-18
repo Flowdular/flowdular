@@ -18,7 +18,7 @@
 		},
 		{
 			"id": "auth.core",
-			"range": "^0.13.0"
+			"range": "^0.14.0"
 		}
 	],
 	"provides": ["adapters.sources.v1", "adapters.sinks.v1"],
