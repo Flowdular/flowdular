@@ -418,6 +418,41 @@ describe('module specification validation', () => {
 		expect(result.issues[0]?.path).toBe('/settings/0/values');
 	});
 
+	it('holds a feature flag to boolean, tenant scope and a stated default', async () => {
+		const spec = draft();
+		const settings = (spec.settings as Record<string, unknown>[])[0]!;
+		settings.kind = 'flag';
+		settings.type = 'string';
+		settings.scope = 'platform';
+		delete settings.default;
+		const result = await report(spec);
+		expect(result.valid).toBe(false);
+		/* `codes` sorts; the issues themselves keep the order they were found in. */
+		expect(codes(result.issues)).toEqual([
+			'error:SPEC_FLAG_DEFAULT_REQUIRED',
+			'error:SPEC_FLAG_SCOPE_INVALID',
+			'error:SPEC_FLAG_TYPE_INVALID',
+		]);
+		expect(result.issues.map((issue) => issue.path)).toEqual([
+			'/settings/0/type',
+			'/settings/0/scope',
+			'/settings/0/default',
+		]);
+	});
+
+	it('accepts a flag a workspace can switch', async () => {
+		const spec = draft();
+		const settings = (spec.settings as Record<string, unknown>[])[0]!;
+		settings.kind = 'flag';
+		settings.type = 'boolean';
+		settings.scope = 'tenant';
+		settings.default = false;
+		delete settings.values;
+		const result = await report(spec);
+		expect(codes(result.issues)).toEqual([]);
+		expect(result.valid).toBe(true);
+	});
+
 	it('reports duplicate ids inside a section and inside an entity', async () => {
 		const spec = draft();
 		const screens = spec.screens as Record<string, unknown>[];

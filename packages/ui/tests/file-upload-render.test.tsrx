@@ -41,6 +41,7 @@ function upload(
 		error={extra.error ?? ''}
 		autoFocus={extra.autoFocus ?? false}
 		hint="PDF or PNG, up to 25 KB."
+		chooseLabel="Choose a file"
 		clearLabel="Remove"
 		required
 		refusal={(reason) => REFUSALS[reason]}
@@ -51,6 +52,12 @@ function upload(
 
 function control(container: HTMLElement): HTMLInputElement {
 	return container.querySelector('input[type="file"]') as HTMLInputElement;
+}
+
+/* The reader sees the label, never the browser's own button: a hidden native
+   input keeps the keyboard and the form, and the words come from the screen. */
+function chooser(container: HTMLElement): HTMLLabelElement {
+	return container.querySelector('.ui-fileupload__choose') as HTMLLabelElement;
 }
 
 /* A file input's list is read-only to a page, so the pick a reader makes is
@@ -78,6 +85,26 @@ describe('FileUpload', () => {
 		mounted.unmount();
 	});
 
+	it(
+		'shows the screen own button and the chosen name, never the browser button',
+		async () => {
+			const mounted = await mount(upload(null, () => {}));
+			const label = chooser(mounted.container);
+			expect(label.textContent?.trim()).toBe('Choose a file');
+			/* The label opens the picker, so it points at the input it hides. */
+			expect(label.getAttribute('for')).toBe('document-file');
+			expect(
+				mounted.container.querySelector('.ui-fileupload__name'),
+			).toBeNull();
+
+			await mounted.render(upload(CONTRACT, () => {}));
+			expect(
+				text(mounted.container.querySelector('.ui-fileupload__name')),
+			).toBe('contract.pdf');
+			mounted.unmount();
+		},
+	);
+
 	it('reports an accepted file and reads it back', async () => {
 		const onChange = vi.fn();
 		const mounted = await mount(upload(null, onChange));
@@ -104,7 +131,7 @@ describe('FileUpload', () => {
 		expect(text(message)).toBe(REFUSALS.size);
 		expect(message?.getAttribute('role')).toBe('alert');
 		expect(input.getAttribute('aria-invalid')).toBe('true');
-		expect(input.classList.contains('ui-input--error')).toBe(true);
+		expect(input.classList.contains('ui-fileupload__input--error')).toBe(true);
 		/* The native list is emptied too, or choosing the same file again would
 	   raise no event and the reader would see nothing happen. */
 		expect(input.value).toBe('');

@@ -1,10 +1,13 @@
 import { useMemo } from 'octane';
-import { Alert, Button, FormField, Switch } from '@flowdular/ui';
+import { Alert, Button, FileUpload, FormField, Switch } from '@flowdular/ui';
 import { t } from '@flowdular/client/i18n';
 import { cell, createStore, useValue } from 'segment-state';
 import { parseCsv } from '../domain/csv.ts';
 import { IMPORT_MODES, type ImportMode } from '../domain/ports.ts';
 import { IMPORT_MAX_CSV_BYTES } from '../domain/types.ts';
+
+/** What the port reads: a CSV file, by suffix or by content type. */
+const CSV_ACCEPT = ['.csv', 'text/csv'] as const;
 import type { ImportTargetView } from '../services/import-service.ts';
 import { modeLabel } from './presentation.ts';
 
@@ -161,22 +164,25 @@ export function NewImportForm(props: NewImportFormProps) @{
 					</FormField>
 				</div>
 				<div class="ui-form__row">
-					<FormField
+					<FileUpload
+						id="import-file"
+						name="file"
 						label={t('import.form.file')}
-						help={t('import.form.fileHelp')}
+						accept={CSV_ACCEPT}
+						maxBytes={IMPORT_MAX_CSV_BYTES}
+						value={file}
+						onChange={(chosen) => void chooseFile(chosen)}
+						chooseLabel={t('import.form.choose')}
+						hint={t('import.form.fileHelp')}
+						chosen={(chosen) => t('import.form.chosen', {
+							name: chosen.name,
+						})}
+						clearLabel={t('import.form.clear')}
+						refusal={(reason) => reason === 'size'
+							? t('import.form.error.tooLarge')
+							: t('import.form.error.notCsv')}
 						required
-					>
-						<input
-							class="ui-input"
-							type="file"
-							name="file"
-							accept=".csv,text/csv"
-							onChange={(event) => void chooseFile(
-								event.currentTarget.files?.[0] ?? null,
-							)}
-							required
-						/>
-					</FormField>
+					/>
 				</div>
 				@if (selected && file) {
 					<div class="ui-form__section">

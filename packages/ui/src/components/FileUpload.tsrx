@@ -16,6 +16,8 @@ export interface FileUploadProps {
 	readonly refusal: (reason: FileRefusalReason, file: File) => string;
 	/** The reading for the chosen file, e.g. 'contract.pdf, 2.1 MB'. */
 	readonly chosen: (file: File) => string;
+	/** The button that opens the file picker, e.g. "Choose a file". */
+	readonly chooseLabel: string;
 	readonly clearLabel: string;
 	/** What may be uploaded, shown while nothing is chosen. */
 	readonly hint?: string | undefined;
@@ -113,12 +115,16 @@ export function FileUpload(props: FileUploadProps) @{
 				<em aria-hidden="true">{' *'}</em>
 			}
 		</label>
+		{/* The native control is kept for the keyboard, the form and the picker,
+   and hidden from sight: the browser draws its own button and its own words
+   for it, in the browser's language, which reads as a foreign control on a
+   translated screen and is cut when the field is narrow. The label beside it
+   is what a reader sees and clicks. */}
 		<div class="ui-fileupload__control">
 			<input
 				class={[
-					'ui-input',
 					'ui-fileupload__input',
-					invalid && 'ui-input--error',
+					invalid && 'ui-fileupload__input--error',
 				]}
 				type="file"
 				id={props.id}
@@ -136,6 +142,19 @@ export function FileUpload(props: FileUploadProps) @{
 				ref={inputRef}
 				onChange={choose}
 			/>
+			<label
+				class={[
+					'ui-fileupload__choose',
+					'ui-btn',
+					'ui-btn--secondary',
+					(props.disabled === true || props.busy === true) &&
+						'ui-fileupload__choose--disabled',
+				]}
+				for={props.id}
+			>{props.chooseLabel}</label>
+			@if (props.value && props.busy !== true) {
+				<span class="ui-fileupload__name">{props.value.name}</span>
+			}
 			@if (props.value && props.busy !== true) {
 				<button
 					class="ui-fileupload__clear"

@@ -17,8 +17,12 @@
 		"locales"
 	],
 	"properties": {
-		"$schema": { "type": "string" },
-		"schemaVersion": { "enum": [1, 2] },
+		"$schema": {
+			"type": "string"
+		},
+		"schemaVersion": {
+			"enum": [1, 2]
+		},
 		"id": {
 			"type": "string",
 			"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
@@ -30,9 +34,17 @@
 		"status": {
 			"enum": ["draft", "in-review", "approved", "implemented", "deprecated"]
 		},
-		"name": { "type": "string", "minLength": 1 },
-		"description": { "type": "string", "minLength": 1 },
-		"profile": { "enum": ["full", "headless", "ui", "integration"] },
+		"name": {
+			"type": "string",
+			"minLength": 1
+		},
+		"description": {
+			"type": "string",
+			"minLength": 1
+		},
+		"profile": {
+			"enum": ["full", "headless", "ui", "integration"]
+		},
 		"capabilities": {
 			"type": "array",
 			"items": {
@@ -54,8 +66,12 @@
 				"additionalProperties": false,
 				"required": ["id", "range"],
 				"properties": {
-					"id": { "type": "string" },
-					"range": { "type": "string" }
+					"id": {
+						"type": "string"
+					},
+					"range": {
+						"type": "string"
+					}
 				}
 			}
 		},
@@ -78,20 +94,29 @@
 						"type": "string",
 						"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
 					},
-					"optional": { "type": "boolean" }
+					"optional": {
+						"type": "boolean"
+					}
 				}
 			}
 		},
-		"tenancy": { "enum": ["required", "optional", "none"] },
+		"tenancy": {
+			"enum": ["required", "optional", "none"]
+		},
 		"locales": {
 			"type": "array",
 			"minItems": 1,
-			"items": { "type": "string" },
+			"items": {
+				"type": "string"
+			},
 			"uniqueItems": true
 		},
 		"invariants": {
 			"type": "array",
-			"items": { "type": "string", "minLength": 1 },
+			"items": {
+				"type": "string",
+				"minLength": 1
+			},
 			"uniqueItems": true
 		},
 		"permissions": {
@@ -105,14 +130,20 @@
 						"type": "string",
 						"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
 					},
-					"description": { "type": "string", "minLength": 1 }
+					"description": {
+						"type": "string",
+						"minLength": 1
+					}
 				}
 			},
 			"uniqueItems": true
 		},
 		"dataOwnership": {
 			"type": "array",
-			"items": { "type": "string", "minLength": 1 },
+			"items": {
+				"type": "string",
+				"minLength": 1
+			},
 			"uniqueItems": true
 		},
 		"acceptanceScenarios": {
@@ -122,63 +153,98 @@
 				"additionalProperties": false,
 				"required": ["id", "given", "when", "then"],
 				"properties": {
-					"id": { "type": "string", "pattern": "^[A-Z][A-Z0-9-]+$" },
-					"given": { "type": "string", "minLength": 1 },
-					"when": { "type": "string", "minLength": 1 },
-					"then": { "type": "string", "minLength": 1 }
+					"id": {
+						"type": "string",
+						"pattern": "^[A-Z][A-Z0-9-]+$"
+					},
+					"given": {
+						"type": "string",
+						"minLength": 1
+					},
+					"when": {
+						"type": "string",
+						"minLength": 1
+					},
+					"then": {
+						"type": "string",
+						"minLength": 1
+					}
 				}
 			},
 			"uniqueItems": true
 		},
 		"entities": {
 			"type": "array",
-			"items": { "$ref": "#/$defs/entity" },
+			"items": {
+				"$ref": "#/$defs/entity"
+			},
 			"uniqueItems": true
 		},
 		"screens": {
 			"type": "array",
-			"items": { "$ref": "#/$defs/screen" },
+			"items": {
+				"$ref": "#/$defs/screen"
+			},
 			"uniqueItems": true
 		},
 		"actions": {
 			"type": "array",
-			"items": { "$ref": "#/$defs/action" },
+			"items": {
+				"$ref": "#/$defs/action"
+			},
 			"uniqueItems": true
 		},
 		"widgets": {
 			"type": "array",
-			"items": { "$ref": "#/$defs/widget" },
+			"items": {
+				"$ref": "#/$defs/widget"
+			},
 			"uniqueItems": true
 		},
 		"settings": {
 			"type": "array",
-			"items": { "$ref": "#/$defs/setting" },
+			"items": {
+				"$ref": "#/$defs/setting"
+			},
 			"uniqueItems": true
 		},
 		"agentTools": {
 			"type": "array",
-			"items": { "$ref": "#/$defs/agentTool" },
+			"items": {
+				"$ref": "#/$defs/agentTool"
+			},
 			"uniqueItems": true
 		},
 		"outOfScope": {
 			"type": "array",
-			"items": { "type": "string", "minLength": 1 },
+			"items": {
+				"type": "string",
+				"minLength": 1
+			},
 			"uniqueItems": true
 		},
 		"decisions": {
 			"type": "array",
-			"items": { "$ref": "#/$defs/decision" },
+			"items": {
+				"$ref": "#/$defs/decision"
+			},
 			"uniqueItems": true
 		},
-		"research": { "$ref": "#/$defs/research" },
+		"research": {
+			"$ref": "#/$defs/research"
+		},
 		"adapters": {
 			"type": "array",
-			"items": { "$ref": "#/$defs/adapter" },
+			"items": {
+				"$ref": "#/$defs/adapter"
+			},
 			"uniqueItems": true
 		},
 		"templates": {
 			"type": "array",
-			"items": { "$ref": "#/$defs/template" },
+			"items": {
+				"$ref": "#/$defs/template"
+			},
 			"uniqueItems": true
 		}
 	},
@@ -186,7 +252,11 @@
 		{
 			"if": {
 				"required": ["schemaVersion"],
-				"properties": { "schemaVersion": { "const": 1 } }
+				"properties": {
+					"schemaVersion": {
+						"const": 1
+					}
+				}
 			},
 			"then": {
 				"properties": {
@@ -206,21 +276,40 @@
 		}
 	],
 	"$defs": {
-		"entityId": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
-		"fieldId": { "type": "string", "pattern": "^[a-z][a-zA-Z0-9]*$" },
-		"enumValue": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+		"entityId": {
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9-]*$"
+		},
+		"fieldId": {
+			"type": "string",
+			"pattern": "^[a-z][a-zA-Z0-9]*$"
+		},
+		"enumValue": {
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9_-]*$"
+		},
 		"entity": {
 			"type": "object",
 			"additionalProperties": false,
 			"required": ["id", "name", "fields"],
 			"properties": {
-				"id": { "$ref": "#/$defs/entityId" },
-				"name": { "type": "string", "minLength": 1 },
-				"description": { "type": "string", "minLength": 1 },
+				"id": {
+					"$ref": "#/$defs/entityId"
+				},
+				"name": {
+					"type": "string",
+					"minLength": 1
+				},
+				"description": {
+					"type": "string",
+					"minLength": 1
+				},
 				"fields": {
 					"type": "array",
 					"minItems": 1,
-					"items": { "$ref": "#/$defs/field" },
+					"items": {
+						"$ref": "#/$defs/field"
+					},
 					"uniqueItems": true
 				},
 				"states": {
@@ -228,11 +317,15 @@
 					"additionalProperties": false,
 					"required": ["field", "values"],
 					"properties": {
-						"field": { "$ref": "#/$defs/fieldId" },
+						"field": {
+							"$ref": "#/$defs/fieldId"
+						},
 						"values": {
 							"type": "array",
 							"minItems": 1,
-							"items": { "$ref": "#/$defs/enumValue" },
+							"items": {
+								"$ref": "#/$defs/enumValue"
+							},
 							"uniqueItems": true
 						},
 						"transitions": {
@@ -242,9 +335,18 @@
 								"additionalProperties": false,
 								"required": ["from", "to"],
 								"properties": {
-									"from": { "type": "string", "minLength": 1 },
-									"to": { "type": "string", "minLength": 1 },
-									"permission": { "type": "string", "minLength": 1 }
+									"from": {
+										"type": "string",
+										"minLength": 1
+									},
+									"to": {
+										"type": "string",
+										"minLength": 1
+									},
+									"permission": {
+										"type": "string",
+										"minLength": 1
+									}
 								}
 							},
 							"uniqueItems": true
@@ -258,7 +360,9 @@
 			"additionalProperties": false,
 			"required": ["id", "type"],
 			"properties": {
-				"id": { "$ref": "#/$defs/fieldId" },
+				"id": {
+					"$ref": "#/$defs/fieldId"
+				},
 				"type": {
 					"enum": [
 						"string",
@@ -273,20 +377,32 @@
 						"json"
 					]
 				},
-				"required": { "type": "boolean" },
-				"unique": { "enum": ["tenant", "none"] },
-				"maxLength": { "type": "integer", "minimum": 1 },
+				"required": {
+					"type": "boolean"
+				},
+				"unique": {
+					"enum": ["tenant", "none"]
+				},
+				"maxLength": {
+					"type": "integer",
+					"minimum": 1
+				},
 				"values": {
 					"type": "array",
 					"minItems": 1,
-					"items": { "$ref": "#/$defs/enumValue" },
+					"items": {
+						"$ref": "#/$defs/enumValue"
+					},
 					"uniqueItems": true
 				},
 				"reference": {
 					"type": "string",
 					"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$"
 				},
-				"description": { "type": "string", "minLength": 1 }
+				"description": {
+					"type": "string",
+					"minLength": 1
+				}
 			}
 		},
 		"screen": {
@@ -294,21 +410,37 @@
 			"additionalProperties": false,
 			"required": ["id", "kind"],
 			"properties": {
-				"id": { "$ref": "#/$defs/entityId" },
-				"kind": { "enum": ["list", "record", "form", "dashboard"] },
-				"entity": { "$ref": "#/$defs/entityId" },
-				"title": { "type": "string", "minLength": 1 },
+				"id": {
+					"$ref": "#/$defs/entityId"
+				},
+				"kind": {
+					"enum": ["list", "record", "form", "dashboard"]
+				},
+				"entity": {
+					"$ref": "#/$defs/entityId"
+				},
+				"title": {
+					"type": "string",
+					"minLength": 1
+				},
 				"columns": {
 					"type": "array",
-					"items": { "$ref": "#/$defs/fieldId" },
+					"items": {
+						"$ref": "#/$defs/fieldId"
+					},
 					"uniqueItems": true
 				},
 				"filters": {
 					"type": "array",
-					"items": { "$ref": "#/$defs/fieldId" },
+					"items": {
+						"$ref": "#/$defs/fieldId"
+					},
 					"uniqueItems": true
 				},
-				"navigationGroup": { "type": "string", "minLength": 1 }
+				"navigationGroup": {
+					"type": "string",
+					"minLength": 1
+				}
 			}
 		},
 		"action": {
@@ -323,18 +455,29 @@
 				"description"
 			],
 			"properties": {
-				"id": { "$ref": "#/$defs/entityId" },
-				"entity": { "$ref": "#/$defs/entityId" },
+				"id": {
+					"$ref": "#/$defs/entityId"
+				},
+				"entity": {
+					"$ref": "#/$defs/entityId"
+				},
 				"permission": {
 					"type": "string",
 					"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
 				},
-				"kind": { "enum": ["create", "update", "delete", "custom"] },
+				"kind": {
+					"enum": ["create", "update", "delete", "custom"]
+				},
 				"risk": {
 					"enum": ["read", "workspace-write", "external", "destructive"]
 				},
-				"idempotent": { "type": "boolean" },
-				"description": { "type": "string", "minLength": 1 }
+				"idempotent": {
+					"type": "boolean"
+				},
+				"description": {
+					"type": "string",
+					"minLength": 1
+				}
 			}
 		},
 		"widget": {
@@ -342,7 +485,9 @@
 			"additionalProperties": false,
 			"required": ["id", "slot", "description"],
 			"properties": {
-				"id": { "$ref": "#/$defs/entityId" },
+				"id": {
+					"$ref": "#/$defs/entityId"
+				},
 				"slot": {
 					"enum": [
 						"dashboard.metrics",
@@ -351,8 +496,13 @@
 						"topbar.actions"
 					]
 				},
-				"entity": { "$ref": "#/$defs/entityId" },
-				"description": { "type": "string", "minLength": 1 }
+				"entity": {
+					"$ref": "#/$defs/entityId"
+				},
+				"description": {
+					"type": "string",
+					"minLength": 1
+				}
 			}
 		},
 		"setting": {
@@ -360,23 +510,44 @@
 			"additionalProperties": false,
 			"required": ["key", "type", "scope", "description"],
 			"properties": {
-				"key": { "$ref": "#/$defs/fieldId" },
-				"type": { "enum": ["string", "integer", "boolean", "enum"] },
-				"scope": { "enum": ["tenant", "platform"] },
+				"key": {
+					"$ref": "#/$defs/fieldId"
+				},
+				"type": {
+					"enum": ["string", "integer", "boolean", "enum"]
+				},
+				"scope": {
+					"enum": ["tenant", "platform"]
+				},
+				"kind": {
+					"enum": ["setting", "flag"]
+				},
 				"default": {
 					"oneOf": [
-						{ "type": "string" },
-						{ "type": "integer" },
-						{ "type": "boolean" }
+						{
+							"type": "string"
+						},
+						{
+							"type": "integer"
+						},
+						{
+							"type": "boolean"
+						}
 					]
 				},
 				"values": {
 					"type": "array",
 					"minItems": 1,
-					"items": { "type": "string", "minLength": 1 },
+					"items": {
+						"type": "string",
+						"minLength": 1
+					},
 					"uniqueItems": true
 				},
-				"description": { "type": "string", "minLength": 1 }
+				"description": {
+					"type": "string",
+					"minLength": 1
+				}
 			}
 		},
 		"agentTool": {
@@ -392,8 +563,13 @@
 					"type": "string",
 					"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
 				},
-				"description": { "type": "string", "minLength": 1 },
-				"risk": { "enum": ["read", "workspace-write"] }
+				"description": {
+					"type": "string",
+					"minLength": 1
+				},
+				"risk": {
+					"enum": ["read", "workspace-write"]
+				}
 			}
 		},
 		"decision": {
@@ -401,10 +577,21 @@
 			"additionalProperties": false,
 			"required": ["id", "question", "answer", "decidedBy"],
 			"properties": {
-				"id": { "type": "string", "pattern": "^[A-Z][A-Z0-9-]+$" },
-				"question": { "type": "string", "minLength": 1 },
-				"answer": { "type": "string", "minLength": 1 },
-				"decidedBy": { "enum": ["user", "default"] }
+				"id": {
+					"type": "string",
+					"pattern": "^[A-Z][A-Z0-9-]+$"
+				},
+				"question": {
+					"type": "string",
+					"minLength": 1
+				},
+				"answer": {
+					"type": "string",
+					"minLength": 1
+				},
+				"decidedBy": {
+					"enum": ["user", "default"]
+				}
 			}
 		},
 		"domain": {
@@ -428,16 +615,25 @@
 				},
 				"allowDomains": {
 					"type": "array",
-					"items": { "$ref": "#/$defs/domain" },
+					"items": {
+						"$ref": "#/$defs/domain"
+					},
 					"uniqueItems": true
 				},
 				"denyDomains": {
 					"type": "array",
-					"items": { "$ref": "#/$defs/domain" },
+					"items": {
+						"$ref": "#/$defs/domain"
+					},
 					"uniqueItems": true
 				},
-				"monthlyQueryBudget": { "type": "integer", "minimum": 1 },
-				"evidenceOwner": { "$ref": "#/$defs/entityId" }
+				"monthlyQueryBudget": {
+					"type": "integer",
+					"minimum": 1
+				},
+				"evidenceOwner": {
+					"$ref": "#/$defs/entityId"
+				}
 			}
 		},
 		"adapter": {
@@ -456,9 +652,17 @@
 					"type": "string",
 					"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
 				},
-				"direction": { "enum": ["source", "sink"] },
-				"connector": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,95}$" },
-				"operation": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" },
+				"direction": {
+					"enum": ["source", "sink"]
+				},
+				"connector": {
+					"type": "string",
+					"pattern": "^[a-z][a-z0-9-]{0,95}$"
+				},
+				"operation": {
+					"type": "string",
+					"pattern": "^[a-z][a-z0-9-]{0,63}$"
+				},
 				"port": {
 					"type": "string",
 					"maxLength": 96,
@@ -466,7 +670,9 @@
 				},
 				"schedule": {
 					"anyOf": [
-						{ "type": "null" },
+						{
+							"type": "null"
+						},
 						{
 							"type": "string",
 							"maxLength": 100,
@@ -477,7 +683,9 @@
 				"mapping": {
 					"type": "array",
 					"minItems": 1,
-					"items": { "$ref": "#/$defs/adapterMapping" },
+					"items": {
+						"$ref": "#/$defs/adapterMapping"
+					},
 					"uniqueItems": true
 				},
 				"recorded": {
@@ -491,11 +699,27 @@
 			"additionalProperties": false,
 			"required": ["to", "transform"],
 			"properties": {
-				"from": { "type": "string", "minLength": 1 },
-				"to": { "type": "string", "minLength": 1 },
-				"transform": { "enum": ["rename", "constant", "format", "lookup"] },
+				"from": {
+					"type": "string",
+					"minLength": 1
+				},
+				"to": {
+					"type": "string",
+					"minLength": 1
+				},
+				"transform": {
+					"enum": ["rename", "constant", "format", "lookup"]
+				},
 				"value": {
-					"anyOf": [{ "type": "null" }, { "type": "string", "minLength": 1 }]
+					"anyOf": [
+						{
+							"type": "null"
+						},
+						{
+							"type": "string",
+							"minLength": 1
+						}
+					]
 				}
 			}
 		},
@@ -504,10 +728,19 @@
 			"additionalProperties": false,
 			"required": ["id", "title", "inputEntity", "format", "body"],
 			"properties": {
-				"id": { "$ref": "#/$defs/entityId" },
-				"title": { "type": "string", "minLength": 1 },
-				"inputEntity": { "$ref": "#/$defs/entityId" },
-				"format": { "enum": ["pdf", "docx"] },
+				"id": {
+					"$ref": "#/$defs/entityId"
+				},
+				"title": {
+					"type": "string",
+					"minLength": 1
+				},
+				"inputEntity": {
+					"$ref": "#/$defs/entityId"
+				},
+				"format": {
+					"enum": ["pdf", "docx"]
+				},
 				"body": {
 					"type": "string",
 					"pattern": "^templates/[a-z][a-z0-9-]*\\.md$"

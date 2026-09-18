@@ -222,6 +222,7 @@ export const RESEARCH_MODULE_SETTINGS = defineModuleSettings({
 		}),
 		allowAgents: setting('allowAgents', {
 			type: 'boolean',
+			kind: 'flag',
 			defaultValue: false,
 			label: 'Allow agents',
 			description:
