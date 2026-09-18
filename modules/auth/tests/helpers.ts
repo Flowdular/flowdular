@@ -1,5 +1,6 @@
 import { createContext } from '@octanejs/app-core';
 import type { DatabaseProvider } from '@flowdular/database';
+import type { MailPort, SmtpTransportFactory } from '@flowdular/server';
 import { createModuleSettingsRuntime } from '@flowdular/kernel';
 import { createAuthenticationMiddleware } from '../src/middleware/authentication.ts';
 import { createAuthRoutes } from '../src/server/endpoints.ts';
@@ -16,6 +17,10 @@ import type { DatabaseAuthRepository } from '../src/services/database-repository
 import { createAuthSettingsStore } from '../src/services/settings-store.ts';
 import { createAuthModuleSettings } from '../src/settings.ts';
 import type { AuthMailDelivery } from '../src/services/mail-delivery.ts';
+import {
+	createEffectiveMailPort,
+	guardMailSettings,
+} from '../src/services/mail-settings.ts';
 import {
 	createAuthTestDatabase,
 	type AuthTestDatabase,
@@ -61,6 +66,10 @@ export async function testRuntime(
 		trustProxy: boolean;
 		mailTransport: boolean;
 		mailDelivery: AuthMailDelivery;
+		/** The deployment port the effective mail port falls back to. */
+		mail: MailPort;
+		/** Opens the relay a stored mail configuration names. */
+		createSmtpTransport: SmtpTransportFactory;
 		mfaEncryptionKey: string;
 		mfaPreviousEncryptionKeys: readonly string[];
 		signInProviders: readonly string[];
@@ -109,9 +118,11 @@ export async function testRuntime(
 	const store = createAuthSettingsStore(() => Promise.resolve(repository));
 	/* Guarded exactly as createAuthRuntime guards it, so a case that turns a
 	   setting on meets the same refusals a served request does. */
-	const moduleSettings = guardMfaSettings(
-		createModuleSettingsRuntime(store, { now: () => clock.now }),
-		overrides.mfaEncryptionKey !== undefined,
+	const moduleSettings = guardMailSettings(
+		guardMfaSettings(
+			createModuleSettingsRuntime(store, { now: () => clock.now }),
+			overrides.mfaEncryptionKey !== undefined,
+		),
 	);
 	moduleSettings.declare(
 		createAuthModuleSettings({
@@ -120,6 +131,13 @@ export async function testRuntime(
 		}),
 	);
 	await moduleSettings.prime('');
+	const mail = createEffectiveMailPort({
+		settings: moduleSettings,
+		...(overrides.mail ? { environment: overrides.mail } : {}),
+		...(overrides.createSmtpTransport
+			? { createSmtpTransport: overrides.createSmtpTransport }
+			: {}),
+	});
 	const cookie = {
 		name: 'coreloom_session_dev',
 		secure: false,
@@ -172,8 +190,14 @@ export async function testRuntime(
 		oidcVerifier,
 		tenantSettings,
 		trustProxy: overrides.trustProxy ?? false,
-		mailTransport:
-			overrides.mailTransport ?? overrides.mailDelivery !== undefined,
+		mail,
+		get mailTransport() {
+			const summary = mail.summary();
+			return summary.source === 'settings'
+				? summary.configured
+				: (overrides.mailTransport ??
+						(overrides.mailDelivery !== undefined || summary.configured));
+		},
 		mfaKeyConfigured: overrides.mfaEncryptionKey !== undefined,
 		workspaceRoot: null,
 		oidcProviders: overrides.oidcProviders ?? [],

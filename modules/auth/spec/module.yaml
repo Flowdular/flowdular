@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: auth.core
-specVersion: 0.13.21
+specVersion: 0.14.0
 status: approved
 name: Authentication Core
 description: Provides tenant-aware accounts, password authentication, sessions, scopes, tenant roles, API tokens for machine clients, the module settings store, the auth audit trail, security headers, authentication screens, and server authorization middleware.
@@ -75,6 +75,10 @@ invariants:
   - External email delivery is an injected deployment adapter. The local in-memory adapter is development-only and never exposes tokens over HTTP or logs.
   - Every auth.core message is worded in the default locale of the workspace it concerns, read from that workspace's auth.core.defaultLocale setting when the message is sent, and declares that locale; a locale the module ships no bundle for is rendered as English and declares en.
   - The mail transport is chosen by deployment configuration, either none, the in-memory development adapter outside production, or an SMTP relay. A misconfigured transport refuses the boot by naming the variable, and the relay URL and its credentials never reach a response, a log line, or an audit row.
+  - The mail relay is read at GET /api/auth/mail behind system.settings.read and tested at POST /api/auth/mail/test behind system.settings.manage, the platform settings permissions system.core declares, the way the workspace rename route is guarded. The test route takes no input, sends to the signed-in address alone, refuses an API token and a request without a CSRF token, is rate limited per owner, and appends one audit row naming the source, the transport and the outcome and nothing else.
+  - The mail relay of an installation is five platform-scoped auth.core settings. A stored mailTransport of none or smtp decides every sender of the installation; while it is environment, which is the default, the deployment's FD_MAIL_* configuration decides exactly as it did before the settings existed, deprecation warnings included. The development adapter is reachable only that way and is never settable from the UI.
+  - The effective mail configuration is resolved when a message is sent, not at boot, so a relay stored a minute ago carries the next message without a restart. The built transport is cached by a sha256 digest of the effective configuration, so an unchanged relay is opened once and a changed setting replaces it at the next message.
+  - A mail setting that could not send is refused before it is stored. That covers a relay URL which does not parse as smtp:// or smtps:// with a host, a sender the platform sender rule rejects, and the smtp transport with no stored URL or no stored sender, whichever way the configuration would end up incomplete. Every refusal names the setting and carries none of its value.
   - Authentication and administration events are appended to an auth audit trail that is readable per tenant and never contains credentials or raw tokens.
   - Every request-time read and write runs on a tenant-scoped database handle, under forced row-level security bound to the transaction tenant.
   - A lookup that arrives with a key and no workspace, such as a session cookie, a bearer token, an invitation link or an email address, resolves the owning tenant on a read-only cross-tenant handle that is granted only the routing columns, and the work that follows runs under the tenant that lookup named.
@@ -298,7 +302,36 @@ actions:
     idempotent: true
     description: Delete a disabled provider and its bindings in this workspace; members keep their accounts and can sign in by password or another provider.
 widgets: []
-settings: []
+settings:
+  - key: mailTransport
+    type: enum
+    scope: platform
+    default: environment
+    values:
+      - environment
+      - none
+      - smtp
+    description: The relay this installation sends through. environment keeps the deployment FD_MAIL_* configuration and is the only way to reach the in-memory development adapter.
+  - key: mailSmtpUrl
+    type: string
+    scope: platform
+    default: ''
+    description: smtp:// or smtps:// relay URL with percent-encoded credentials, at most 512 characters. Secret; written only and never read back, logged or audited with its value.
+  - key: mailFrom
+    type: string
+    scope: platform
+    default: ''
+    description: Sender every message carries, as an address or Name <address>, at most 448 characters and checked by the platform sender rule.
+  - key: mailRequireTls
+    type: boolean
+    scope: platform
+    default: true
+    description: Refuse a cleartext smtp:// session the relay does not upgrade with STARTTLS; ignored by smtps://.
+  - key: mailRejectUnauthorized
+    type: boolean
+    scope: platform
+    default: true
+    description: Refuse a relay certificate that does not verify.
 agentTools: []
 outOfScope:
   - SCIM 2.0 users and groups provisioning is a separate module, directory.core, specified after this delivery lands, because per-membership status has to exist first.
@@ -352,6 +385,18 @@ decisions:
     answer: A tenant-unique key; the callback path carries the workspace and the key, and the signed state cookie binds both.
     decidedBy: default
 acceptanceScenarios:
+  - id: AUTH-MAIL-TEST-MESSAGE
+    given: An installation whose effective mail transport is an SMTP relay, and an owner signed in with the settings management permission.
+    when: The owner presses the test message button on the auth settings screen, and presses it repeatedly past the rate limit; a member without the permission, a request without a CSRF token and an API token call the same route.
+    then: One message goes to the owner's own address through the effective transport and the screen states sent or the transport's own refusal, a further press is refused with RATE_LIMITED, the member is refused 403, the missing CSRF token 403 and the API token 403, and the audit row names the source, the transport and the outcome without the relay address, its credentials or the recipient.
+  - id: AUTH-MAIL-SETTINGS-PRECEDENCE
+    given: A deployment whose FD_MAIL_* variables name an SMTP relay.
+    when: An owner stores mailTransport none, then smtp with a relay URL and a sender, then changes the relay URL, then clears the stored transport back to environment.
+    then: The stored transport decides each time and none turns mail off for every sender, the changed URL is used by the next message without a restart while an unchanged one reuses the transport already opened, and clearing the transport puts the deployment's environment configuration back in effect.
+  - id: AUTH-MAIL-SETTINGS-REFUSED
+    given: An installation with no stored mail configuration.
+    when: An owner stores mailTransport smtp before a relay URL or a sender, stores a relay URL that is neither smtp:// nor smtps://, stores a sender that is not an address, and clears the relay URL of a live smtp transport.
+    then: Every write is refused with a message naming the setting and carrying none of its value, nothing is stored, and the next invitation still goes through whatever was in effect before.
   - id: AUTH-MEMBER-NO-PASSWORD
     given: An owner of a workspace creating a member through the administration port without a credential.
     when: Someone tries to sign that member in with a password, the member completes the public reset flow, and the member tries to change their own password before it is set.

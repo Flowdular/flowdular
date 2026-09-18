@@ -202,7 +202,10 @@ async function createPlatformConfig() {
 			dataClasses,
 			databases,
 			storage,
-			mail,
+			/* The relay auth.core resolves per message from its stored settings,
+			   falling back to the environment port above, so every module of the
+			   installation sends through the same one. */
+			mail: authRuntime.mail,
 			/* Rebound to the composing module by the generated composition; this
 			   binding is what a series the platform itself records would carry. */
 			metrics: createModuleMetrics('platform'),

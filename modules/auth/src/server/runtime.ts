@@ -41,9 +41,15 @@ import {
 } from '../services/database-repository.ts';
 import {
 	DevelopmentMailDelivery,
+	mailDeliveryConfigured,
 	type AuthMailDelivery,
 } from '../services/mail-delivery.ts';
 import { createMailPortDelivery } from '../services/mail-port.ts';
+import {
+	createEffectiveMailPort,
+	guardMailSettings,
+	type EffectiveMailPort,
+} from '../services/mail-settings.ts';
 import { SmtpMailDelivery } from '../services/mail-smtp.ts';
 import type { AuthRepository } from '../services/repository.ts';
 import { createSessionSweepRunner } from '../services/session-sweep-runner.ts';
@@ -154,6 +160,12 @@ export interface AuthRuntime {
 	readonly oidcVerifier: OidcVerifier;
 	readonly trustProxy: boolean;
 	readonly mailTransport: boolean;
+	/**
+	 * The installation's outbound mail, resolved per message from the stored
+	 * auth.core mail settings and falling back to the composed environment port.
+	 * The platform hands this to every module, so one relay serves them all.
+	 */
+	readonly mail: EffectiveMailPort;
 	/** True once a deployment MFA key is composed; gates requireMfa. */
 	readonly mfaKeyConfigured: boolean;
 	readonly workspaceRoot: string | null;
@@ -621,19 +633,15 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 	   a binding: the same runtime composes in processes that hand it an unbound
 	   registry. */
 	options.dataClasses?.declare('auth.core', authDataClasses(repository));
-	const mailDelivery = options.mail?.configured
-		? createMailPortDelivery(options.mail)
-		: options.mailDelivery;
-	/* A composed delivery is a transport whatever the flag says; the flag alone
-	   still answers for a caller that composes none. */
-	const mailTransport =
-		mailDelivery !== undefined || (options.mailTransport ?? false);
 	const mfaKeyConfigured = options.mfaEncryptionKey !== undefined;
 	/* The settings runtime auth hands to the platform is where a workspace turns
-	   requireMfa on, so it is where a keyless deployment has to be refused. */
-	const moduleSettings = guardMfaSettings(
-		options.settings ?? createKernelSettingsRuntime(store),
-		mfaKeyConfigured,
+	   requireMfa on, so it is where a keyless deployment has to be refused, and
+	   where a relay that could not send is refused before it is stored. */
+	const moduleSettings = guardMailSettings(
+		guardMfaSettings(
+			options.settings ?? createKernelSettingsRuntime(store),
+			mfaKeyConfigured,
+		),
 	);
 	moduleSettings.declare(
 		createAuthModuleSettings({
@@ -656,6 +664,41 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 			...(options.locales ? { locales: options.locales } : {}),
 		}),
 	);
+	/* Resolved per message rather than at boot: an operator who stores a relay
+	   sends through it without a restart. The environment port stays the answer
+	   while the settings name no transport. */
+	const mail = createEffectiveMailPort({
+		settings: moduleSettings,
+		...(options.mail ? { environment: options.mail } : {}),
+	});
+	/* A composition that hands a delivery but no port, the sandbox preview and
+	   the module tests, keeps that delivery while nothing is stored. */
+	const composedDelivery = options.mail ? undefined : options.mailDelivery;
+	const portDelivery = createMailPortDelivery(mail);
+	const mailConfigured = (): boolean => {
+		const summary = mail.summary();
+		/* A stored transport is the whole answer, `none` included: an operator who
+		   turned mail off must not keep it on through the environment. */
+		if (summary.source === 'settings') return summary.configured;
+		return (
+			mailDeliveryConfigured(composedDelivery) ||
+			summary.configured ||
+			(options.mailTransport ?? false)
+		);
+	};
+	const mailDelivery: AuthMailDelivery = {
+		get configured() {
+			return mailConfigured();
+		},
+		async send(message, locale) {
+			await moduleSettings.prime(PLATFORM_SETTINGS_TENANT);
+			if (composedDelivery && mail.summary().source === 'environment') {
+				await composedDelivery.send(message, locale);
+				return;
+			}
+			await portDelivery.send(message, locale);
+		},
+	};
 	const read = <T extends string | number | boolean>(key: string): T =>
 		moduleSettings.get<T>(PLATFORM_SETTINGS_TENANT, 'auth.core', key);
 	const settings: AuthSettings = {
@@ -663,7 +706,7 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 			return read<boolean>('allowSignUp');
 		},
 		get emailConfirmation() {
-			return mailTransport && read<boolean>('emailConfirmation');
+			return mailConfigured() && read<boolean>('emailConfirmation');
 		},
 		get signInProviders() {
 			return parseProviderList(read<string>('signInProviders'));
@@ -736,7 +779,7 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 			...(options.mfaPreviousEncryptionKeys
 				? { mfaPreviousEncryptionKeys: options.mfaPreviousEncryptionKeys }
 				: {}),
-			...(mailDelivery ? { mailDelivery } : {}),
+			mailDelivery,
 			mailLocale,
 			...(options.publicBaseUrl
 				? { publicBaseUrl: options.publicBaseUrl }
@@ -835,7 +878,10 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 		oidcVerifier,
 		tenantSettings,
 		trustProxy: options.trustProxy ?? false,
-		mailTransport,
+		get mailTransport() {
+			return mailConfigured();
+		},
+		mail,
 		mfaKeyConfigured,
 		workspaceRoot: options.workspaceRoot ?? null,
 		oidcProviders: options.oidcProviders ?? [],
