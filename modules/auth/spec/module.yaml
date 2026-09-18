@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: auth.core
-specVersion: 0.14.0
+specVersion: 0.14.1
 status: approved
 name: Authentication Core
 description: Provides tenant-aware accounts, password authentication, sessions, scopes, tenant roles, API tokens for machine clients, the module settings store, the auth audit trail, security headers, authentication screens, and server authorization middleware.
@@ -43,6 +43,7 @@ invariants:
   - The built-in owner role carries research.evidence.read, research.run and research.settings.manage, and the built-in member role carries research.evidence.read and research.run, because a member reads the evidence a workspace keeps and searches within the workspace adapter and budget while the research settings stay with owners. Migration 0034 grants those defaults to the owner and member memberships and the built-in role rows of every workspace that already exists, lifting forced row-level security on the source and the target for the migrator.
   - The built-in owner role carries adapters.runs.read and adapters.runs.manage and the built-in member role carries neither, because a data adapter writes records of other modules and reaches other systems. Migration 0035 grants both to the owner memberships and the built-in owner role row of every workspace that already exists, lifting forced row-level security on the source and the target for the migrator.
   - The built-in owner role carries documents.templates.read and documents.templates.manage and the built-in member role carries documents.templates.read, because a member reads the workspace's document templates while editing and reverting them stays with owners. Migration 0036 grants those defaults to the owner and member memberships and the built-in role rows of every workspace that already exists, lifting forced row-level security on the source and the target for the migrator.
+  - The built-in owner role and the built-in member role both carry agents.assistant.use, because the workspace assistant acts as the member who asked and never above them, and a member without the permission sees no entry point at all rather than a locked one. Migration 0037 grants it to the owner and member memberships and the built-in role rows of every workspace that already exists, lifting forced row-level security on the source and the target for the migrator.
   - auth.core declares the workspace data it keeps by age as data classes, when the platform hands it the registry. auth.core.sessions is kept for 30 days, auth.core.api-tokens and auth.core.audit-events for 400 days. Each is exportable and swept in bounded batches inside its own tenant transaction; a sweep removes only a session that already expired and a credential already revoked or expired, and no export carries a session token hash, a CSRF token or an API token hash. Memberships, membership scopes, roles, identity providers and module settings are configuration rather than swept classes.
   - An API token is a tenant-scoped machine credential bound to one membership. Only its hash is stored, the raw value is returned exactly once at creation, and it is never recoverable afterwards.
   - API token authority is the intersection of its recorded scopes with the live membership scopes at every request. Revoking a scope or disabling the membership takes effect immediately without touching the token.
@@ -429,6 +430,10 @@ acceptanceScenarios:
     given: A workspace created before documents.core declared its two template permissions, with an owner holding one of them, a member and a role the workspace wrote itself.
     when: The migration ledger is applied.
     then: The owner membership and the built-in owner role row carry documents.templates.read and documents.templates.manage without a duplicate of the one held, the member membership and the built-in member role row carry documents.templates.read and not the manage permission, and the workspace's own role is untouched.
+  - id: AUTH-ASSISTANT-SCOPES
+    given: A workspace created before agents.core declared agents.assistant.use, with an owner, a member and a role the workspace wrote itself.
+    when: The migration ledger is applied.
+    then: The owner membership, the member membership and both built-in role rows carry agents.assistant.use without a duplicate of one already held, and the workspace's own role is untouched.
   - id: AUTH-ERASE-SUBJECT
     given: Two workspaces holding sessions and API tokens of the same subject, and a second subject in the first workspace.
     when: The erasure of the first subject runs in the first workspace, once with a batch smaller than the rows it holds and again until it is done.

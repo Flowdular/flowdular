@@ -586,6 +586,7 @@ describe('auth migrations', () => {
 			{ account_id: 'account-ada', scope: 'access.review.read' },
 			{ account_id: 'account-ada', scope: 'adapters.runs.manage' },
 			{ account_id: 'account-ada', scope: 'adapters.runs.read' },
+			{ account_id: 'account-ada', scope: 'agents.assistant.use' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.decide' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.manage' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.read' },
@@ -622,6 +623,7 @@ describe('auth migrations', () => {
 			{ account_id: 'account-ada', scope: 'workflows.runs.cancel' },
 			{ account_id: 'account-ada', scope: 'workflows.runs.execute' },
 			{ account_id: 'account-ada', scope: 'workflows.runs.read' },
+			{ account_id: 'account-bo', scope: 'agents.assistant.use' },
 			{ account_id: 'account-bo', scope: 'approvals.requests.decide' },
 			{ account_id: 'account-bo', scope: 'approvals.requests.read' },
 			{ account_id: 'account-bo', scope: 'connectors.instances.read' },
@@ -687,6 +689,7 @@ describe('auth migrations', () => {
 			'adapters.runs.manage',
 			'documents.templates.read',
 			'documents.templates.manage',
+			'agents.assistant.use',
 		]);
 		expect(roles.get('member')).toEqual([
 			'auth.profile.read',
@@ -700,6 +703,7 @@ describe('auth migrations', () => {
 			'research.evidence.read',
 			'research.run',
 			'documents.templates.read',
+			'agents.assistant.use',
 		]);
 		/* A role the workspace wrote itself is not a default and stays as it is. */
 		expect(roles.get('auditor')).toEqual(['auth.audit.read']);
@@ -718,6 +722,7 @@ describe('auth migrations', () => {
 		/* Her membership there is a member one, so it receives the member defaults
 		   of that pass and none of the owner ones. */
 		expect(other).toEqual([
+			{ account_id: 'account-ada', scope: 'agents.assistant.use' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.decide' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.read' },
 			{ account_id: 'account-ada', scope: 'connectors.instances.read' },
@@ -817,6 +822,7 @@ describe('auth migrations', () => {
 			{ account_id: 'account-ada', scope: 'access.review.read' },
 			{ account_id: 'account-ada', scope: 'adapters.runs.manage' },
 			{ account_id: 'account-ada', scope: 'adapters.runs.read' },
+			{ account_id: 'account-ada', scope: 'agents.assistant.use' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.decide' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.manage' },
 			{ account_id: 'account-ada', scope: 'approvals.requests.read' },
@@ -855,6 +861,7 @@ describe('auth migrations', () => {
 			{ account_id: 'account-ada', scope: 'workflows.runs.cancel' },
 			{ account_id: 'account-ada', scope: 'workflows.runs.execute' },
 			{ account_id: 'account-ada', scope: 'workflows.runs.read' },
+			{ account_id: 'account-bo', scope: 'agents.assistant.use' },
 			{ account_id: 'account-bo', scope: 'approvals.requests.decide' },
 			{ account_id: 'account-bo', scope: 'approvals.requests.read' },
 			{ account_id: 'account-bo', scope: 'connectors.instances.read' },
@@ -884,6 +891,7 @@ describe('auth migrations', () => {
 			'research.evidence.read',
 			'research.run',
 			'documents.templates.read',
+			'agents.assistant.use',
 		]);
 		expect(roles.get('owner')).toEqual([
 			'auth.profile.read',
@@ -914,6 +922,7 @@ describe('auth migrations', () => {
 			'adapters.runs.manage',
 			'documents.templates.read',
 			'documents.templates.manage',
+			'agents.assistant.use',
 		]);
 		/* A role the workspace wrote itself is not a default and stays as it is. */
 		expect(roles.get('auditor')).toEqual(['approvals.requests.read']);
@@ -1186,6 +1195,7 @@ describe('auth migrations', () => {
 			'adapters.runs.manage',
 			'documents.templates.read',
 			'documents.templates.manage',
+			'agents.assistant.use',
 		]);
 		/* The member role row takes the one member default and none of the ten
 		   the workflow and automation modules keep with owners. */
@@ -1339,6 +1349,7 @@ describe('auth migrations', () => {
 			'adapters.runs.manage',
 			'documents.templates.read',
 			'documents.templates.manage',
+			'agents.assistant.use',
 		]);
 		expect(
 			roles
@@ -1457,12 +1468,14 @@ describe('auth migrations', () => {
 			'adapters.runs.manage',
 			'documents.templates.read',
 			'documents.templates.manage',
+			'agents.assistant.use',
 		]);
 		expect(roles.get('member')).toEqual([
 			'auth.profile.read',
 			'research.evidence.read',
 			'research.run',
 			'documents.templates.read',
+			'agents.assistant.use',
 		]);
 		expect(roles.get('analyst')).toEqual(['auth.profile.read']);
 	});
@@ -1549,10 +1562,12 @@ describe('auth migrations', () => {
 			'adapters.runs.manage',
 			'documents.templates.read',
 			'documents.templates.manage',
+			'agents.assistant.use',
 		]);
 		expect(roles.get('member')).toEqual([
 			'auth.profile.read',
 			'documents.templates.read',
+			'agents.assistant.use',
 		]);
 		expect(roles.get('integrator')).toEqual(['auth.profile.read']);
 	});
@@ -1638,12 +1653,101 @@ describe('auth migrations', () => {
 			'auth.profile.read',
 			'documents.templates.read',
 			'documents.templates.manage',
+			'agents.assistant.use',
 		]);
 		expect(roles.get('member')).toEqual([
 			'auth.profile.read',
 			'documents.templates.read',
+			'agents.assistant.use',
 		]);
 		expect(roles.get('editor')).toEqual(['auth.profile.read']);
+	});
+
+	/* The workspace assistant acts as the member who asked, so 0037 grants its
+	   one permission to owners and members alike. */
+	it('AUTH-ASSISTANT-SCOPES grants the assistant scope to owners and members, in the memberships and the built-in role rows', async () => {
+		const granted = databaseMigrations.findIndex(
+			(migration) => migration.id === '0037_assistant_scopes',
+		);
+		expect(granted).toBeGreaterThan(0);
+		await runDatabaseMigrations(
+			lease.database,
+			'auth.core',
+			databaseMigrations.slice(0, granted),
+		);
+		await lease.database.transaction(
+			async (transaction) => {
+				await transaction.execute({
+					text: `INSERT INTO auth_tenants (id, name, slug, created_at)
+					       VALUES ('tenant-a', 'Contoso', 'tenant-a', 1)`,
+				});
+				await transaction.execute({
+					text: `INSERT INTO auth_accounts
+					       (id, email, email_normalized, password_hash, display_name, status, created_at)
+					       VALUES ('account-ada', 'ada@example.com', 'ada@example.com', 'hash', 'Ada', 'active', 1),
+					              ('account-bo', 'bo@example.com', 'bo@example.com', 'hash', 'Bo', 'active', 1)`,
+				});
+				await transaction.execute({
+					text: `INSERT INTO auth_memberships (account_id, tenant_id, role, created_at)
+					       VALUES ('account-ada', 'tenant-a', 'owner', 1),
+					              ('account-bo', 'tenant-a', 'member', 1)`,
+				});
+				await transaction.execute({
+					text: `INSERT INTO auth_membership_scopes (account_id, tenant_id, scope)
+					       VALUES ('account-ada', 'tenant-a', 'agents.assistant.use')`,
+				});
+				await transaction.execute({
+					text: `INSERT INTO auth_roles
+					       (id, tenant_id, key, name, description, scopes_json, builtin, created_at, updated_at)
+					       VALUES ('tenant-a:owner', 'tenant-a', 'owner', 'Owner', 'Full access',
+					               '["auth.profile.read","agents.assistant.use"]', 1, 1, 1),
+					              ('tenant-a:member', 'tenant-a', 'member', 'Member', 'Standard access',
+					               '["auth.profile.read"]', 1, 1, 1),
+					              ('tenant-a:editor', 'tenant-a', 'editor', 'Editor', 'Custom',
+					               '["auth.profile.read"]', 0, 1, 1)`,
+				});
+			},
+			{ tenantId: 'tenant-a', access: 'write' },
+		);
+
+		await apply();
+
+		const seeded = await lease.database.transaction(
+			async (transaction) => ({
+				scopes: (
+					await transaction.query<{ account_id: string; scope: string }>({
+						text: `SELECT account_id, scope FROM auth_membership_scopes
+						       WHERE tenant_id = 'tenant-a' AND scope = 'agents.assistant.use'
+						       ORDER BY account_id`,
+					})
+				).rows,
+				roles: (
+					await transaction.query<{ key: string; scopes_json: string }>({
+						text: 'SELECT key, scopes_json FROM auth_roles ORDER BY key',
+					})
+				).rows,
+			}),
+			{ tenantId: 'tenant-a', access: 'read' },
+		);
+		expect(seeded.scopes).toEqual([
+			{ account_id: 'account-ada', scope: 'agents.assistant.use' },
+			{ account_id: 'account-bo', scope: 'agents.assistant.use' },
+		]);
+		const assistantRoles = new Map(
+			seeded.roles.map((row) => [
+				row.key,
+				JSON.parse(row.scopes_json) as string[],
+			]),
+		);
+		expect(assistantRoles.get('owner')).toEqual([
+			'auth.profile.read',
+			'agents.assistant.use',
+		]);
+		expect(assistantRoles.get('member')).toEqual([
+			'auth.profile.read',
+			'agents.assistant.use',
+		]);
+		expect(assistantRoles.get('editor')).toEqual(['auth.profile.read']);
 	});
 
 	/* The paged member read walks (tenant_id, account_id), which the primary key
