@@ -125,14 +125,27 @@ function storedMailPort(
 	createTransport: SmtpTransportFactory,
 ): MailPort {
 	if (configuration.transport === 'none') return STORED_NONE;
-	const adapter = createSmtpMailAdapter({
-		url: configuration.url,
-		from: configuration.from,
-		rejectUnauthorized: configuration.rejectUnauthorized,
-		requireTLS: configuration.requireTLS,
-		createTransport,
-		variables: { url: FIELDS.url, from: FIELDS.from },
-	});
+	let adapter: ReturnType<typeof createSmtpMailAdapter>;
+	try {
+		adapter = createSmtpMailAdapter({
+			url: configuration.url,
+			from: configuration.from,
+			rejectUnauthorized: configuration.rejectUnauthorized,
+			requireTLS: configuration.requireTLS,
+			createTransport,
+			variables: { url: FIELDS.url, from: FIELDS.from },
+		});
+	} catch (error) {
+		/* A stored configuration the adapter cannot open is this installation
+		   having no usable transport, not a per-message failure. The refusals it
+		   throws name the setting and never carry its value, so they travel; a
+		   sender sees one code either way. */
+		return unconfigured(
+			error instanceof Error
+				? error.message
+				: 'The stored mail configuration is unusable.',
+		);
+	}
 	return {
 		adapter: 'smtp',
 		configured: true,

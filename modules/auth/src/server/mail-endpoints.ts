@@ -75,15 +75,14 @@ export function createMailRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 				try {
 					await runtime.mail.send({ to, subject: SUBJECT, text: BODY });
 				} catch (error) {
-					/* A MailError carries the port's own words, which never include
-					   the relay banner, the host or the credentials. Anything else is
-					   a configuration refusal naming a setting, never its value. */
-					const code =
-						error instanceof MailError ? error.code : 'MAIL_DELIVERY_FAILED';
+					/* Only the port's own words travel. They never include the relay
+					   banner, the host or the credentials, and the port turns an
+					   unusable stored configuration into one of them too. Anything
+					   else is unexpected and says nothing about the relay. */
+					const mailError = error instanceof MailError ? error : null;
+					const code = mailError?.code ?? 'MAIL_DELIVERY_FAILED';
 					const message =
-						error instanceof MailError || error instanceof Error
-							? error.message
-							: 'The mail transport refused the message.';
+						mailError?.message ?? 'The mail transport refused the message.';
 					await service.recordMailTest(actorOf(session), {
 						source: summary.source,
 						transport: summary.transport,
