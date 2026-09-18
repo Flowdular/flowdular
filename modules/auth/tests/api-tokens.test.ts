@@ -196,3 +196,104 @@ describe('self-service password change', () => {
 		).rejects.toThrow(/must differ/);
 	});
 });
+
+describe('API token write permission and origin binding', () => {
+	it('issues a read-only token with no origin unless the owner asked', async () => {
+		const { service, principal } = await ownerService();
+		const issued = await service.issueApiToken({
+			tenantId: principal.tenantId,
+			accountId: principal.accountId,
+			label: 'Blog reader',
+			scopes: ['users.members.read'],
+			expiresAt: null,
+			createdBy: principal.accountId,
+		});
+		expect(issued.record.allowWrites).toBe(false);
+		expect(issued.record.allowedOrigins).toEqual([]);
+		const identity = await service.resolveApiTokenIdentity(issued.token);
+		expect(identity?.allowWrites).toBe(false);
+	});
+
+	it('carries the write permission and the origins the owner named', async () => {
+		const { service, principal } = await ownerService();
+		const issued = await service.issueApiToken({
+			tenantId: principal.tenantId,
+			accountId: principal.accountId,
+			label: 'Blog writer',
+			scopes: ['users.members.read'],
+			allowWrites: true,
+			allowedOrigins: ['https://Blog.example.com/', 'https://blog.example.com'],
+			expiresAt: null,
+			createdBy: principal.accountId,
+		});
+		expect(issued.record.allowWrites).toBe(true);
+		expect(issued.record.allowedOrigins).toEqual(['https://blog.example.com']);
+		const identity = await service.resolveApiTokenIdentity(issued.token);
+		expect(identity?.allowWrites).toBe(true);
+		expect(identity?.allowedOrigins).toEqual(['https://blog.example.com']);
+	});
+
+	it('refuses an origin that is not a scheme, a host and an optional port', async () => {
+		const { service, principal } = await ownerService();
+		await expect(
+			service.issueApiToken({
+				tenantId: principal.tenantId,
+				accountId: principal.accountId,
+				label: 'Bad origin',
+				scopes: ['users.members.read'],
+				allowedOrigins: ['https://blog.example.com/posts'],
+				expiresAt: null,
+				createdBy: principal.accountId,
+			}),
+		).rejects.toThrow(/must be a scheme, a host and an optional port/);
+	});
+
+	it('answers a preflight from live tokens and forgets a revoked one', async () => {
+		let now = 1_000;
+		const { service, principal } = await ownerService(() => now);
+		const issued = await service.issueApiToken({
+			tenantId: principal.tenantId,
+			accountId: principal.accountId,
+			label: 'Blog',
+			scopes: ['users.members.read'],
+			allowedOrigins: ['https://blog.example.com'],
+			expiresAt: null,
+			createdBy: principal.accountId,
+		});
+		expect(await service.apiOriginAllowed('https://blog.example.com')).toBe(
+			true,
+		);
+		expect(await service.apiOriginAllowed('https://attacker.example.com')).toBe(
+			false,
+		);
+		await service.revokeApiToken(
+			principal.tenantId,
+			issued.record.id,
+			principal.accountId,
+		);
+		expect(await service.apiOriginAllowed('https://blog.example.com')).toBe(
+			false,
+		);
+	});
+
+	it('forgets the origin of a token once it expires', async () => {
+		let now = 1_000;
+		const { service, principal } = await ownerService(() => now);
+		await service.issueApiToken({
+			tenantId: principal.tenantId,
+			accountId: principal.accountId,
+			label: 'Short lived',
+			scopes: ['users.members.read'],
+			allowedOrigins: ['https://blog.example.com'],
+			expiresAt: now + 60_000,
+			createdBy: principal.accountId,
+		});
+		expect(await service.apiOriginAllowed('https://blog.example.com')).toBe(
+			true,
+		);
+		now += 60_001 + 30_000;
+		expect(await service.apiOriginAllowed('https://blog.example.com')).toBe(
+			false,
+		);
+	});
+});

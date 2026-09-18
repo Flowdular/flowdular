@@ -12,7 +12,7 @@ import {
 	stringField,
 } from './http.ts';
 import type { AuthRuntime } from './runtime.ts';
-import { sessionMutationDenial } from './session-security.ts';
+import { browserSessionMutationDenial } from './session-security.ts';
 
 export function createRoleRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 	const list = new ServerRoute({
@@ -39,7 +39,7 @@ export function createRoleRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 		path: '/api/auth/roles',
 		methods: ['POST'],
 		handler: async (context) => {
-			const denial = sessionMutationDenial(context, runtime);
+			const denial = browserSessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
 				const session = requireSession(context);
@@ -70,7 +70,7 @@ export function createRoleRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 		path: '/api/auth/roles/update',
 		methods: ['POST'],
 		handler: async (context) => {
-			const denial = sessionMutationDenial(context, runtime);
+			const denial = browserSessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
 				const session = requireSession(context);
@@ -100,7 +100,7 @@ export function createRoleRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 		path: '/api/auth/roles/delete',
 		methods: ['POST'],
 		handler: async (context) => {
-			const denial = sessionMutationDenial(context, runtime);
+			const denial = browserSessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
 				const session = requireSession(context);

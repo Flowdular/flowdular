@@ -183,6 +183,8 @@ export interface CreateApiTokenRecord {
 	readonly prefix: string;
 	readonly tokenHash: string;
 	readonly scopes: readonly string[];
+	readonly allowWrites: boolean;
+	readonly allowedOrigins: readonly string[];
 	readonly createdBy: string;
 	readonly createdAt: number;
 	readonly expiresAt: number | null;
@@ -410,6 +412,13 @@ export interface AuthRepository {
 	createApiToken(record: CreateApiTokenRecord): Promise<ApiTokenRecord>;
 	listApiTokens(tenantId: string): Promise<readonly ApiTokenRecord[]>;
 	findApiTokenByHash(tokenHash: string): Promise<ApiTokenRecord | null>;
+	/**
+	 * The browser origins every live token of the deployment declares. A
+	 * cross-origin preflight carries no credential, so it is answered from this
+	 * set and never from one token; the token's own list is enforced on the
+	 * request that presents it.
+	 */
+	listApiTokenOrigins(now: number): Promise<readonly string[]>;
 	/* The tenant comes from the record the lookup already returned, so touching
 	   a token costs no second cross-tenant read. */
 	touchApiToken(tenantId: string, id: string, usedAt: number): Promise<void>;

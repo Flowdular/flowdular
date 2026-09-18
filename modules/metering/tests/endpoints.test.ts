@@ -54,7 +54,7 @@ function authRuntime(
 				? { principal: found, csrfToken: CSRF_TOKEN, expiresAt: 0 }
 				: null;
 		},
-		resolveApiToken: async () => null,
+		resolveApiTokenIdentity: async () => null,
 		listTenantMembers: async () => [],
 	} as unknown as Awaited<ReturnType<AuthRuntime['service']>>;
 	return {

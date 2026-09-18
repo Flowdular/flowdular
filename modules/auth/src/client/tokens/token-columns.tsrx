@@ -60,6 +60,27 @@ export function apiTokenColumns(
 				/>,
 		},
 		{
+			key: 'access',
+			header: t('auth.tokens.column.access'),
+			width: '180px',
+			priority: 2,
+			cell: (token) => <CellStack
+				primary={<CellTag
+					tone={token.allowWrites ? 'warning' : 'neutral'}
+					label={t(
+						token.allowWrites
+							? 'auth.tokens.writes.allowed'
+							: 'auth.tokens.writes.readOnly',
+					)}
+				/>}
+				secondary={token.allowedOrigins.length === 0
+					? t('auth.tokens.origins.none')
+					: t('auth.tokens.origins.count', {
+							count: token.allowedOrigins.length,
+						})}
+			/>,
+		},
+		{
 			key: 'lastUsed',
 			header: t('auth.tokens.column.lastUsed'),
 			width: '170px',

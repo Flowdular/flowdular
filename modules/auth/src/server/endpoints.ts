@@ -42,7 +42,7 @@ import { oidcFailure, readOidcJson, OIDC_REQUEST_TIMEOUT_MS } from './oidc.ts';
 import { assertProviderHostAllowed } from './provider-host.ts';
 import { createRoleRoutes } from './roles-endpoints.ts';
 import type { AuthRuntime, OidcProvider } from './runtime.ts';
-import { sessionMutationDenial } from './session-security.ts';
+import { browserSessionMutationDenial } from './session-security.ts';
 import { createSessionRoutes } from './session-endpoints.ts';
 import { createApiTokenRoutes } from './token-endpoints.ts';
 
@@ -866,7 +866,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 		path: '/api/auth/mfa/enroll',
 		methods: ['POST'],
 		handler: async (context) => {
-			const denial = sessionMutationDenial(context, runtime);
+			const denial = browserSessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
 				const session = requireSession(context);
@@ -890,7 +890,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 		path: '/api/auth/mfa/confirm',
 		methods: ['POST'],
 		handler: async (context) => {
-			const denial = sessionMutationDenial(context, runtime);
+			const denial = browserSessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
 				const session = requireSession(context);
@@ -919,7 +919,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 		path: '/api/auth/mfa/reset',
 		methods: ['POST'],
 		handler: async (context) => {
-			const denial = sessionMutationDenial(context, runtime);
+			const denial = browserSessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
 				const session = requireSession(context);
@@ -947,7 +947,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 		path: '/api/auth/invitations',
 		methods: ['POST'],
 		handler: async (context) => {
-			const denial = sessionMutationDenial(context, runtime);
+			const denial = browserSessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
 				const session = requireSession(context);
@@ -1130,7 +1130,7 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 		path: '/api/auth/workspace',
 		methods: ['POST'],
 		handler: async (context) => {
-			const denial = sessionMutationDenial(context, runtime);
+			const denial = browserSessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
 				const session = requireSession(context);

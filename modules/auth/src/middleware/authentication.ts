@@ -6,8 +6,11 @@ import type { AuthService } from '../services/auth-service.ts';
 
 export const AUTH_PRINCIPAL_STATE_KEY = 'flowdular.auth.principal';
 /* Set when the principal came from an API token instead of a browser session.
-   Session-guarded mutations stay closed to machine credentials. */
+   A machine credential carries no CSRF proof, so a mutation it attempts is
+   admitted by the token's own write permission instead. */
 export const AUTH_TOKEN_PRINCIPAL_STATE_KEY = 'flowdular.auth.token-principal';
+/* Set with it: whether the workspace issued the token with writes allowed. */
+export const AUTH_TOKEN_WRITES_STATE_KEY = 'flowdular.auth.token-writes';
 /* The whole browser session, set only when a cookie resolved one. Reading the
    session is a database round trip, and the CSRF check, the session guard and
    auth's own routes all need it, so the middleware resolves it once and
@@ -32,13 +35,25 @@ export function createAuthenticationMiddleware(
 			await primeTenant?.(session.principal.tenantId);
 			return next();
 		}
-		const principal = await resolved.resolveApiToken(
+		const identity = await resolved.resolveApiTokenIdentity(
 			bearerToken(context.request.headers.get('authorization')),
 		);
-		if (principal) {
-			context.state.set(AUTH_PRINCIPAL_STATE_KEY, principal);
+		if (identity) {
+			/* A token bound to browser origins is refused from anywhere else, so
+			   a credential lifted from one site cannot be replayed from another.
+			   A server-side caller sends no Origin header and is unaffected. */
+			const origin = crossOrigin(context);
+			if (origin && !identity.allowedOrigins.includes(origin)) {
+				return denial(
+					403,
+					'TOKEN_ORIGIN_DENIED',
+					'This API token may not be presented from this origin.',
+				);
+			}
+			context.state.set(AUTH_PRINCIPAL_STATE_KEY, identity.principal);
 			context.state.set(AUTH_TOKEN_PRINCIPAL_STATE_KEY, true);
-			await primeTenant?.(principal.tenantId);
+			context.state.set(AUTH_TOKEN_WRITES_STATE_KEY, identity.allowWrites);
+			await primeTenant?.(identity.principal.tenantId);
 		}
 		return next();
 	};
@@ -50,8 +65,19 @@ function bearerToken(header: string | null): string | null {
 	return scheme?.toLowerCase() === 'bearer' && value ? value.trim() : null;
 }
 
+/** The request's origin when it differs from the address it was sent to. */
+function crossOrigin(context: Context): string | null {
+	const origin = context.request.headers.get('origin')?.toLowerCase() ?? null;
+	return origin && origin !== context.url.origin.toLowerCase() ? origin : null;
+}
+
 export function isTokenPrincipal(context: Context): boolean {
 	return context.state.get(AUTH_TOKEN_PRINCIPAL_STATE_KEY) === true;
+}
+
+/** Whether the API token this request carries was issued with writes allowed. */
+export function tokenWritesAllowed(context: Context): boolean {
+	return context.state.get(AUTH_TOKEN_WRITES_STATE_KEY) === true;
 }
 
 /** The browser session the middleware resolved, or null for any other caller. */

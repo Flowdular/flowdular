@@ -131,6 +131,8 @@ async function seedWorkspace(
 			prefix: `fdp_${name}`,
 			tokenHash: `${label}-${name}-hash`,
 			scopes: ['auth.profile.read'],
+			allowWrites: false,
+			allowedOrigins: [],
 			createdBy: owner.accountId,
 			createdAt: NOW - 600 * DAY_MS,
 			expiresAt,

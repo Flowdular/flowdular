@@ -11,7 +11,7 @@ import {
 	stringField,
 } from './http.ts';
 import type { AuthRuntime } from './runtime.ts';
-import { sessionMutationDenial } from './session-security.ts';
+import { browserSessionMutationDenial } from './session-security.ts';
 
 /**
  * The administration port users.core calls to disable or re-enable a member of
@@ -25,7 +25,7 @@ export function createMembershipRoutes(
 		path: '/api/auth/memberships/status',
 		methods: ['POST'],
 		handler: async (context) => {
-			const denial = sessionMutationDenial(context, runtime);
+			const denial = browserSessionMutationDenial(context, runtime);
 			if (denial) return denial;
 			try {
 				const session = requireSession(context);

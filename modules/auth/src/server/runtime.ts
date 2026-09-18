@@ -188,6 +188,14 @@ export interface AuthRuntime {
 	 * never observes the declared default in place of a stored value.
 	 */
 	tenantSettings(tenantId: string): Promise<AuthTenantSettings>;
+	/**
+	 * Whether a browser at this origin may read a cross-origin API response.
+	 * The platform's CORS layer asks it on a preflight, which carries no
+	 * credential, so it answers from the origins the deployment's live API
+	 * tokens declare; the presented token's own list is enforced again by the
+	 * authentication middleware.
+	 */
+	apiOriginAllowed(origin: string): Promise<boolean>;
 	/* Re-read at the point of use. A stored run snapshot is only a ceiling and
 	   never substitutes for the actor's current membership. */
 	authorizeAgentToolAccess(
@@ -889,6 +897,9 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 		publicBaseUrl: options.publicBaseUrl ?? null,
 		applicationPath: validateApplicationPath(options.applicationPath ?? '/app'),
 		service,
+		async apiOriginAllowed(origin) {
+			return (await service()).apiOriginAllowed(origin);
+		},
 		async authorizeAgentToolAccess(tenantId, actor) {
 			const identity = normalizeActor(actor);
 			if (!identity || identity.kind !== 'user') return [];

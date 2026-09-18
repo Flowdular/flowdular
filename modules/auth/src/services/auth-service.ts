@@ -9,6 +9,7 @@ import {
 import type { ErrorSink, ModuleMetrics } from '@flowdular/server';
 import { AUTH_SCOPES, MEMBER_SCOPES, OWNER_SCOPES } from '../acl/scopes.ts';
 import type {
+	ApiTokenIdentity,
 	ApiTokenRecord,
 	AuditQuery,
 	AuthActor,
@@ -291,6 +292,12 @@ export const API_TOKEN_PREFIX = 'clat_';
 const API_TOKEN_PATTERN = /^clat_[A-Za-z0-9_-]{43}$/;
 const MAX_API_TOKEN_LIFETIME_MS = 365 * 24 * 60 * 60 * 1000;
 const API_TOKEN_TOUCH_INTERVAL_MS = 60_000;
+const MAX_API_TOKEN_ORIGINS = 8;
+const API_TOKEN_ORIGIN = /^https?:\/\/[a-z0-9.-]+(:\d{1,5})?$/i;
+/* The preflight read is one query for the whole deployment. It is memoised for
+   this long and dropped at once when a token is issued or revoked through this
+   instance, so another process's change is visible within the interval. */
+const API_TOKEN_ORIGIN_CACHE_MS = 30_000;
 const SESSION_TOUCH_INTERVAL_MS = 60_000;
 const SCOPE_PATTERN = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/;
 const LOCK_THRESHOLD = 5;
@@ -445,6 +452,34 @@ function member(account: AccountCredential, createdAt: number): TenantMember {
 	};
 }
 
+/**
+ * The browser origins a token may be presented from, as stored. An origin is a
+ * scheme, a host and an optional port, lower-cased so the header comparison is
+ * exact; a path, a query or a credential in the value is a caller defect.
+ */
+export function apiTokenOrigins(values: readonly string[]): readonly string[] {
+	if (values.length > MAX_API_TOKEN_ORIGINS) {
+		throw new AuthServiceError(
+			'INVALID_ORIGINS',
+			`A token may name at most ${MAX_API_TOKEN_ORIGINS} origins.`,
+			400,
+		);
+	}
+	const origins = new Set<string>();
+	for (const value of values) {
+		const origin = value.trim().toLowerCase().replace(/\/$/, '');
+		if (!API_TOKEN_ORIGIN.test(origin)) {
+			throw new AuthServiceError(
+				'INVALID_ORIGINS',
+				`Origin ${value} must be a scheme, a host and an optional port.`,
+				400,
+			);
+		}
+		origins.add(origin);
+	}
+	return [...origins].sort();
+}
+
 export class AuthService {
 	readonly #repository: AuthRepository;
 	readonly #policy: () => AuthPolicy;
@@ -462,6 +497,10 @@ export class AuthService {
 	readonly #publicBaseUrl: string;
 	readonly #metrics: ModuleMetrics | undefined;
 	readonly #errorSink: ErrorSink | undefined;
+	#apiOrigins: {
+		readonly origins: ReadonlySet<string>;
+		readonly readAt: number;
+	} | null = null;
 
 	constructor(repository: AuthRepository, options: AuthServiceOptions = {}) {
 		this.#repository = repository;
@@ -3102,6 +3141,8 @@ export class AuthService {
 				);
 			}
 		}
+		const allowWrites = raw.allowWrites === true;
+		const allowedOrigins = apiTokenOrigins(raw.allowedOrigins ?? []);
 		const token = `${API_TOKEN_PREFIX}${randomBytes(32).toString('base64url')}`;
 		const record = await this.#repository.createApiToken({
 			id: randomUUID(),
@@ -3111,17 +3152,20 @@ export class AuthService {
 			prefix: token.slice(0, API_TOKEN_PREFIX.length + 6),
 			tokenHash: hashSessionToken(token),
 			scopes,
+			allowWrites,
+			allowedOrigins,
 			createdBy,
 			createdAt,
 			expiresAt: raw.expiresAt,
 		});
+		this.#apiOrigins = null;
 		await this.#audit(
 			tenantId,
 			{ kind: 'user', id: createdBy, label: membership.email },
 			AUDIT_ACTIONS.tokenIssued,
 			'api-token',
 			record.id,
-			{ label, scopes },
+			{ label, scopes, allowWrites, allowedOrigins },
 		);
 		return { record, token };
 	}
@@ -3150,6 +3194,7 @@ export class AuthService {
 				404,
 			);
 		}
+		this.#apiOrigins = null;
 		await this.#audit(
 			record.tenantId,
 			{ kind: 'user', id: revokedBy, label: revokedBy },
@@ -3161,7 +3206,33 @@ export class AuthService {
 		return record;
 	}
 
+	/**
+	 * Whether a browser at this origin may read a cross-origin API response.
+	 * The preflight carries no credential, so the answer is the union of what
+	 * the deployment's live tokens declare; which token may actually act from
+	 * there is decided again when the request presents one.
+	 */
+	async apiOriginAllowed(origin: string): Promise<boolean> {
+		const now = this.#now();
+		let cached = this.#apiOrigins;
+		if (!cached || now - cached.readAt > API_TOKEN_ORIGIN_CACHE_MS) {
+			cached = {
+				origins: new Set(await this.#repository.listApiTokenOrigins(now)),
+				readAt: now,
+			};
+			this.#apiOrigins = cached;
+		}
+		return cached.origins.has(origin.toLowerCase());
+	}
+
 	async resolveApiToken(raw: string | null): Promise<AuthPrincipal | null> {
+		return (await this.resolveApiTokenIdentity(raw))?.principal ?? null;
+	}
+
+	/** The principal a bearer token acts as, with the bounds of the token itself. */
+	async resolveApiTokenIdentity(
+		raw: string | null,
+	): Promise<ApiTokenIdentity | null> {
 		if (!raw || !API_TOKEN_PATTERN.test(raw)) return null;
 		const record = await this.#repository.findApiTokenByHash(
 			hashSessionToken(raw),
@@ -3189,13 +3260,17 @@ export class AuthService {
 			await this.#repository.touchApiToken(record.tenantId, record.id, now);
 		}
 		return {
-			accountId: membership.accountId,
-			tenantId: membership.tenantId,
-			email: membership.email,
-			displayName: membership.displayName,
-			role: membership.role,
-			scopes,
-			tenants: await this.#repository.listTenantAccess(membership.accountId),
+			principal: {
+				accountId: membership.accountId,
+				tenantId: membership.tenantId,
+				email: membership.email,
+				displayName: membership.displayName,
+				role: membership.role,
+				scopes,
+				tenants: await this.#repository.listTenantAccess(membership.accountId),
+			},
+			allowWrites: record.allowWrites,
+			allowedOrigins: record.allowedOrigins,
 		};
 	}
 

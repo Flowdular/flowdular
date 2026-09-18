@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: auth.core
-specVersion: 0.14.1
+specVersion: 0.14.2
 status: approved
 name: Authentication Core
 description: Provides tenant-aware accounts, password authentication, sessions, scopes, tenant roles, API tokens for machine clients, the module settings store, the auth audit trail, security headers, authentication screens, and server authorization middleware.
@@ -47,8 +47,9 @@ invariants:
   - auth.core declares the workspace data it keeps by age as data classes, when the platform hands it the registry. auth.core.sessions is kept for 30 days, auth.core.api-tokens and auth.core.audit-events for 400 days. Each is exportable and swept in bounded batches inside its own tenant transaction; a sweep removes only a session that already expired and a credential already revoked or expired, and no export carries a session token hash, a CSRF token or an API token hash. Memberships, membership scopes, roles, identity providers and module settings are configuration rather than swept classes.
   - An API token is a tenant-scoped machine credential bound to one membership. Only its hash is stored, the raw value is returned exactly once at creation, and it is never recoverable afterwards.
   - API token authority is the intersection of its recorded scopes with the live membership scopes at every request. Revoking a scope or disabling the membership takes effect immediately without touching the token.
-  - An API token can never pass a session-guarded mutation. Requests carrying a token instead of a browser session are denied before the handler runs.
-  - Issuing, listing, and revoking API tokens require a browser session with the token management scope. A machine credential cannot mint or revoke another credential.
+  - An API token passes a module mutation only when it was issued with writes allowed; a token issued without them is refused before the handler runs. The same-origin and CSRF checks a browser session must pass are defences against a browser being made to act for its user, so a bearer credential is bound instead by its scopes, by that write permission and by the origins it may be presented from. Writes default to off, so a token issued before the permission existed stays read-only.
+  - An API token may declare the browser origins it can be presented from. A token that declares none is refused from every browser origin and is usable only by a server-side caller, which sends no Origin header; a token that declares some is refused from every other origin. The cross-origin preflight carries no credential, so the deployment answers it from the union of the origins its live tokens declare, read on the routing handle, and never grants credentials on a cross-origin response.
+  - Issuing, listing, and revoking API tokens require a browser session with the token management scope. A machine credential cannot mint or revoke another credential, and cannot pass any auth.core mutation, so credentials, sessions, memberships, roles and identity providers stay behind a browser session whatever a token was issued with.
   - A revoked or expired API token authenticates nothing, and token lifetime is bounded to one year.
   - Sign-in attempts are throttled per submitted address and per trusted client address, and repeated failures lock the address for a fixed period with a stable error that never reveals whether an account exists.
   - Sign-up and sign-in errors never confirm that an email address is registered.

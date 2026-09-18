@@ -92,6 +92,8 @@ interface ApiTokenRow {
 	prefix: string;
 	token_hash: string;
 	scopes_json: string;
+	allow_writes: number | string;
+	allowed_origins_json: string;
 	created_by: string;
 	created_at: number | bigint | string;
 	expires_at: number | bigint | string | null;
@@ -360,6 +362,8 @@ function fromApiTokenRow(row: ApiTokenRow): ApiTokenRecord {
 		label: row.label,
 		prefix: row.prefix,
 		scopes: JSON.parse(row.scopes_json) as readonly string[],
+		allowWrites: Number(row.allow_writes) === 1,
+		allowedOrigins: JSON.parse(row.allowed_origins_json) as readonly string[],
 		createdBy: row.created_by,
 		createdAt: integer(row.created_at, 'created_at'),
 		expiresAt: optionalInteger(row.expires_at, 'expires_at'),
@@ -1218,8 +1222,9 @@ export class DatabaseAuthRepository implements AuthRepository {
 				const result = await transaction.query<ApiTokenRow>({
 					text: `INSERT INTO auth_api_tokens
 				       (id, tenant_id, account_id, label, prefix, token_hash, scopes_json,
+				        allow_writes, allowed_origins_json,
 				        created_by, created_at, expires_at, last_used_at, revoked_at, revoked_by)
-				       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL, NULL, NULL)
+				       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULL, NULL, NULL)
 				       RETURNING *`,
 					parameters: [
 						record.id,
@@ -1229,6 +1234,8 @@ export class DatabaseAuthRepository implements AuthRepository {
 						record.prefix,
 						record.tokenHash,
 						JSON.stringify(record.scopes),
+						record.allowWrites ? 1 : 0,
+						JSON.stringify(record.allowedOrigins),
 						record.createdBy,
 						record.createdAt,
 						record.expiresAt,
@@ -1252,6 +1259,26 @@ export class DatabaseAuthRepository implements AuthRepository {
 	/* A bearer token names no workspace. The routing read hands back the tenant
 	   that owns it, and the record itself is read under that tenant. A revoked
 	   token routes nowhere, which is the same answer an unknown token gets. */
+	/* One read for the whole deployment, on the routing role, which holds a
+	   column grant rather than a table grant: it answers which origins are
+	   registered and nothing about the workspace that registered one. */
+	async listApiTokenOrigins(now: number): Promise<readonly string[]> {
+		const rows = await this.#route<{ allowed_origins_json: string }>({
+			text: `SELECT allowed_origins_json FROM auth_api_tokens
+			       WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > $1)`,
+			parameters: [now],
+		});
+		const origins = new Set<string>();
+		for (const row of rows) {
+			for (const origin of JSON.parse(
+				row.allowed_origins_json,
+			) as readonly string[]) {
+				origins.add(origin);
+			}
+		}
+		return [...origins];
+	}
+
 	async findApiTokenByHash(tokenHash: string): Promise<ApiTokenRecord | null> {
 		const routed = await this.#route<RoutedTenantRow>({
 			text: `SELECT tenant_id FROM auth_api_tokens

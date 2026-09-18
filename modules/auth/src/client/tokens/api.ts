@@ -13,6 +13,8 @@ export interface ApiTokenSnapshot {
 export interface CreateApiTokenRequest {
 	readonly label: string;
 	readonly scopes: readonly string[];
+	readonly allowWrites: boolean;
+	readonly allowedOrigins: readonly string[];
 	readonly expiresAt: number | null;
 }
 

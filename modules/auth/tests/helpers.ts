@@ -204,6 +204,7 @@ export async function testRuntime(
 		providerHosts: overrides.providerHosts ?? [],
 		publicBaseUrl: overrides.publicBaseUrl ?? null,
 		service,
+		apiOriginAllowed: (origin: string) => authService.apiOriginAllowed(origin),
 		async authorizeAgentToolAccess(tenantId, actor) {
 			if (actor.kind !== 'user') return [];
 			const membership = await repository.findAccountMembership(

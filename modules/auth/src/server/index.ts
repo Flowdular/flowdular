@@ -15,7 +15,10 @@ export type {
 	AuthRuntimeEnvironmentOptions,
 	AuthRuntimeOptions,
 } from './runtime.ts';
-export { sessionMutationDenial } from './session-security.ts';
+export {
+	browserSessionMutationDenial,
+	sessionMutationDenial,
+} from './session-security.ts';
 export {
 	createMfaEnrolmentMiddleware,
 	guardMfaSettings,
