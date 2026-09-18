@@ -8,6 +8,7 @@ import {
 	REPORTS_PROVIDERS_CAPABILITY,
 	type ReportProviderRegistry,
 } from '@flowdular/module-reports';
+import { assistantAgentDefinition } from './agent/assistant.ts';
 import type { ModuleAgentDefinition } from './domain/types.ts';
 import {
 	AGENT_ACTION_EXECUTION_CAPABILITY,
@@ -87,8 +88,15 @@ export function createServerComposition(
 		databases: context.databases,
 		tools: () => toolsFromContext(context),
 		nativeTools: () => nativeToolsFromContext(context),
-		moduleAgents: () =>
-			context.agentDefinitions.list() as readonly ModuleAgentDefinition[],
+		/* Read when the platform starts, after every module has composed, so the
+		   assistant's ceiling is the whole registry rather than whatever had
+		   registered by the time this module composed. */
+		moduleAgents: () => [
+			...(context.agentDefinitions.list() as readonly ModuleAgentDefinition[]),
+			assistantAgentDefinition(
+				toolsFromContext(context).map((tool) => tool.id),
+			),
+		],
 		authorizeToolAccess: ({ tenantId, actor }) =>
 			context.auth.authorizeAgentToolAccess(tenantId, actor),
 		settings: agentSettings(context),

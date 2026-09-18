@@ -708,6 +708,22 @@ export class AgentProviderService {
 		this.assertUsableConnection(stored.connection, modelId);
 	}
 
+	/* Whether the workspace holds a connection an agent could bind to at all:
+	   enabled, with an enabled model this service would admit. The bundled local
+	   simulation is admitted without a probe here exactly as assertUsable
+	   admits it, so the two can never disagree about what is bindable. */
+	async hasUsableModel(tenantId: string): Promise<boolean> {
+		return (await this.list(bounded(tenantId, 'tenantId', 1, 128))).some(
+			(connection) =>
+				connection.enabled &&
+				connection.models.some(
+					(model) =>
+						model.enabled &&
+						(connection.kind === 'local-simulation' || this.proven(model)),
+				),
+		);
+	}
+
 	async supportsStructuredOutput(
 		tenantId: string,
 		providerId: string,

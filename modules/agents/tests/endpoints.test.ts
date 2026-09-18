@@ -24,6 +24,7 @@ import {
 	createServerComposition,
 	type AgentServerComposition,
 } from '../src/platform.ts';
+import { ASSISTANT_AGENT_ID } from '../src/agent/assistant.ts';
 import { defineAgent } from '../src/server/define-agent.ts';
 import {
 	openAgentsTestDatabase,
@@ -145,11 +146,33 @@ function waitFor(
 	});
 }
 
+interface ModuleAgentCatalogEntry {
+	id: string;
+	status: string;
+	revision: number | null;
+	ownership: { kind: string; moduleId: string };
+}
+
+/* agents.core registers the workspace assistant itself, so the catalog always
+   carries more than the agent a case registered. */
+async function moduleAgents(
+	call: ReturnType<typeof composition>['call'],
+): Promise<ModuleAgentCatalogEntry[]> {
+	return (
+		(await (await call('/api/agents/context')).json()) as {
+			moduleAgents: ModuleAgentCatalogEntry[];
+		}
+	).moduleAgents;
+}
+
 function sessionState(principal: AuthPrincipal) {
 	return { principal, csrfToken: CSRF_TOKEN, expiresAt: 0 };
 }
 
-function composition(session: AuthPrincipal | null) {
+function composition(
+	session: AuthPrincipal | null,
+	settingValues?: Record<string, unknown>,
+) {
 	const registered: AgentTool[] = [];
 	const context = {
 		environment: {
@@ -159,6 +182,17 @@ function composition(session: AuthPrincipal | null) {
 		workspaceRoot: process.cwd(),
 		databases: database.databases,
 		auth: authRuntime(session),
+		/* Absent leaves every declared default in force, which is what a
+		   deployment without an override looks like. */
+		...(settingValues
+			? {
+					settings: {
+						prime: async () => {},
+						get: (_tenantId: string, _moduleId: string, key: string) =>
+							settingValues[key],
+					},
+				}
+			: {}),
 		agentTools: {
 			register: (tools: readonly AgentTool[]) => registered.push(...tools),
 			list: () => registered,
@@ -552,35 +586,21 @@ describe('agents HTTP boundary', () => {
 		context.agentTools.register([readOnlyTool]);
 		context.agentDefinitions.register([moduleAgent]);
 		composed.start();
-		await waitFor(
-			async () =>
-				(
-					(await (await call('/api/agents/context')).json()) as {
-						moduleAgents: readonly unknown[];
-					}
-				).moduleAgents.length === 1,
+		await waitFor(async () =>
+			(await moduleAgents(call)).some((agent) => agent.id === moduleAgent.id),
 		);
 
-		const before = (await (await call('/api/agents/context')).json()) as {
-			moduleAgents: Array<{
-				id: string;
-				status: string;
-				revision: number | null;
-				ownership: { kind: string; moduleId: string };
-			}>;
-		};
+		const before = await moduleAgents(call);
 		expect(
 			((await (await call('/api/agents')).json()) as { items: unknown[] })
 				.items,
 		).toEqual([]);
-		expect(before.moduleAgents).toMatchObject([
-			{
-				id: moduleAgent.id,
-				status: 'unconfigured',
-				revision: null,
-				ownership: { kind: 'module', moduleId: 'parties.core' },
-			},
-		]);
+		expect(before.find((agent) => agent.id === moduleAgent.id)).toMatchObject({
+			id: moduleAgent.id,
+			status: 'unconfigured',
+			revision: null,
+			ownership: { kind: 'module', moduleId: 'parties.core' },
+		});
 
 		const configured = await mutation('/api/agents/module-bindings/update', {
 			agentId: moduleAgent.id,
@@ -630,14 +650,15 @@ describe('agents HTTP boundary', () => {
 				],
 			]),
 		} as never);
-		expect(await otherTenant.json()).toMatchObject({
-			moduleAgents: [
-				{
-					id: moduleAgent.id,
-					status: 'unconfigured',
-					revision: null,
-				},
-			],
+		const otherCatalog = (await otherTenant.json()) as {
+			moduleAgents: ModuleAgentCatalogEntry[];
+		};
+		expect(
+			otherCatalog.moduleAgents.find((agent) => agent.id === moduleAgent.id),
+		).toMatchObject({
+			id: moduleAgent.id,
+			status: 'unconfigured',
+			revision: null,
 		});
 	});
 
@@ -646,13 +667,10 @@ describe('agents HTTP boundary', () => {
 		owner.context.agentTools.register([readOnlyTool]);
 		owner.context.agentDefinitions.register([moduleAgent]);
 		owner.composed.start();
-		await waitFor(
-			async () =>
-				(
-					(await (await owner.call('/api/agents/context')).json()) as {
-						moduleAgents: readonly unknown[];
-					}
-				).moduleAgents.length === 1,
+		await waitFor(async () =>
+			(await moduleAgents(owner.call)).some(
+				(agent) => agent.id === moduleAgent.id,
+			),
 		);
 		const bindingBody = {
 			agentId: moduleAgent.id,
@@ -1278,5 +1296,218 @@ describe('agents list pages', () => {
 		expect(await problem(call, '/api/agent-audit?limit=0')).toBe(
 			'INVALID_INPUT',
 		);
+	});
+});
+
+describe('workspace assistant HTTP boundary', () => {
+	const ASSISTANT_SCOPES = ['agents.assistant.use', ...ALL_SCOPES];
+
+	async function configuredAssistant(
+		opened: ReturnType<typeof composition>,
+	): Promise<void> {
+		opened.context.agentTools.register([readOnlyTool]);
+		opened.composed.start();
+		await waitFor(async () =>
+			(await moduleAgents(opened.call)).some(
+				(agent) => agent.id === ASSISTANT_AGENT_ID,
+			),
+		);
+		/* Before the binding the workspace can reach a provider but has nothing
+		   bound, so the lock names the binding rather than the connections. */
+		expect(
+			await (await opened.call('/api/assistant/readiness')).json(),
+		).toMatchObject({
+			providerReady: true,
+			bindingConfigured: false,
+			lockedReason: 'binding-missing',
+			configureHref: '/agents',
+		});
+		const bound = await opened.mutation('/api/agents/module-bindings/update', {
+			agentId: ASSISTANT_AGENT_ID,
+			provider: 'local-simulation',
+			model: 'deterministic-v1',
+			enabledTools: [readOnlyTool.id],
+			status: 'active',
+			expectedRevision: 0,
+		});
+		expect(bound.status).toBe(200);
+	}
+
+	it('ASSISTANT-DENY: refuses an unauthenticated or under-scoped caller before any read', async () => {
+		const anonymous = composition(null);
+		expect(
+			(await anonymous.call('/api/assistant/threads', { authenticated: false }))
+				.status,
+		).toBe(401);
+		expect(
+			(
+				await anonymous.call('/api/assistant/threads', {
+					method: 'POST',
+					authenticated: false,
+				})
+			).status,
+		).toBe(401);
+
+		const reader = composition(principal(ALL_SCOPES));
+		for (const path of [
+			'/api/assistant/threads',
+			'/api/assistant/threads/get?id=x',
+			'/api/assistant/readiness',
+		]) {
+			const denied = await reader.call(path);
+			expect(denied.status).toBe(403);
+			expect(await denied.json()).toMatchObject({
+				error: { code: 'FORBIDDEN' },
+			});
+		}
+		expect(
+			(await reader.mutation('/api/assistant/threads', { message: 'Hi.' }))
+				.status,
+		).toBe(403);
+	});
+
+	it('ASSISTANT-TURN: starts and continues a conversation over the authenticated boundary', async () => {
+		const opened = composition(principal(ASSISTANT_SCOPES));
+		await configuredAssistant(opened);
+
+		const readiness = (await (
+			await opened.call('/api/assistant/readiness')
+		).json()) as { ready: boolean; lockedReason: string | null };
+		expect(readiness).toMatchObject({ ready: true, lockedReason: null });
+
+		const started = await opened.mutation('/api/assistant/threads', {
+			message: 'What changed this week?',
+		});
+		expect(started.status).toBe(202);
+		const conversation = (await started.json()) as {
+			thread: { id: string; title: string; turnCount: number };
+			turns: { sequence: number; runId: string | null }[];
+		};
+		expect(conversation.thread.title).toBe('What changed this week?');
+		expect(conversation.turns[0]!.runId).not.toBeNull();
+
+		const continued = await opened.mutation('/api/assistant/threads/continue', {
+			threadId: conversation.thread.id,
+			message: 'And last week?',
+		});
+		expect(continued.status).toBe(202);
+
+		const listed = (await (
+			await opened.call('/api/assistant/threads')
+		).json()) as { items: { id: string; turnCount: number }[] };
+		expect(listed.items).toMatchObject([
+			{ id: conversation.thread.id, turnCount: 2 },
+		]);
+
+		const renamed = await opened.mutation('/api/assistant/threads/rename', {
+			id: conversation.thread.id,
+			title: 'This week',
+		});
+		expect(renamed.status).toBe(200);
+		expect(await renamed.json()).toMatchObject({
+			thread: { title: 'This week' },
+		});
+
+		const read = (await (
+			await opened.call(
+				`/api/assistant/threads/get?id=${conversation.thread.id}`,
+			)
+		).json()) as { turns: { question: string }[] };
+		expect(read.turns.map((turn) => turn.question)).toEqual([
+			'What changed this week?',
+			'And last week?',
+		]);
+
+		const deleted = await opened.mutation('/api/assistant/threads/delete', {
+			id: conversation.thread.id,
+		});
+		expect(deleted.status).toBe(200);
+		expect(
+			(
+				await opened.call(
+					`/api/assistant/threads/get?id=${conversation.thread.id}`,
+				)
+			).status,
+		).toBe(404);
+	});
+
+	it('refuses an assistant mutation without the session CSRF token', async () => {
+		const opened = composition(principal(ASSISTANT_SCOPES));
+		const missingCsrf = await opened.call('/api/assistant/threads', {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				origin: ORIGIN,
+				cookie: `coreloom_session_dev=${SESSION_TOKEN}`,
+			},
+			body: JSON.stringify({ message: 'No token.' }),
+		});
+		expect(missingCsrf.status).toBe(403);
+		expect(await missingCsrf.json()).toMatchObject({
+			error: { code: 'CSRF_REJECTED' },
+		});
+	});
+
+	it('ASSISTANT-DISABLED: answers readiness and refuses every conversation route while the flag is off', async () => {
+		const opened = composition(principal(ASSISTANT_SCOPES), {
+			assistantEnabled: false,
+		});
+		const readiness = await opened.call('/api/assistant/readiness');
+		expect(readiness.status).toBe(200);
+		expect(await readiness.json()).toMatchObject({
+			enabled: false,
+			ready: false,
+			lockedReason: 'disabled',
+		});
+
+		const listed = await opened.call('/api/assistant/threads');
+		expect(listed.status).toBe(409);
+		expect(await listed.json()).toMatchObject({
+			error: { code: 'ASSISTANT_DISABLED' },
+		});
+		const started = await opened.mutation('/api/assistant/threads', {
+			message: 'Let me in.',
+		});
+		expect(started.status).toBe(409);
+		expect(await started.json()).toMatchObject({
+			error: { code: 'ASSISTANT_DISABLED' },
+		});
+	});
+
+	it('refuses a thread cursor issued to another member', async () => {
+		const first = composition(principal(ASSISTANT_SCOPES, 'account-a'));
+		await configuredAssistant(first);
+		for (const message of ['One.', 'Two.']) {
+			expect(
+				(await first.mutation('/api/assistant/threads', { message })).status,
+			).toBe(202);
+		}
+		const page = (await (
+			await first.call('/api/assistant/threads?limit=1')
+		).json()) as { page: { nextCursor: string | null } };
+		expect(page.page.nextCursor).not.toBeNull();
+
+		const listRoute = first.composed.routes.find(
+			(route) =>
+				route.path === '/api/assistant/threads' &&
+				route.methods.includes('GET'),
+		)!;
+		const request = new Request(
+			`${ORIGIN}/api/assistant/threads?limit=1&cursor=${encodeURIComponent(
+				page.page.nextCursor!,
+			)}`,
+		);
+		const other = await listRoute.handler({
+			request,
+			params: {},
+			url: new URL(request.url),
+			state: new Map([
+				[AUTH_PRINCIPAL_STATE_KEY, principal(ASSISTANT_SCOPES, 'account-b')],
+			]),
+		} as never);
+		expect(other.status).toBe(400);
+		expect(await other.json()).toMatchObject({
+			error: { code: 'CURSOR_INVALID' },
+		});
 	});
 });

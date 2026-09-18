@@ -1,9 +1,9 @@
 schemaVersion: 1
 id: agents.core
-specVersion: 0.12.15
+specVersion: 0.13.1
 status: approved
 name: Agentic Core
-description: Provides tenant-created and module-owned business agent definitions, tenant-scoped provider connections, reusable procedures, durable streamed execution, run history, and the public run queue used by optional automation modules.
+description: Provides tenant-created and module-owned business agent definitions, tenant-scoped provider connections, reusable procedures, durable streamed execution, run history, the public run queue used by optional automation modules, and the workspace assistant a member talks to from the header through those same runs and tools.
 profile: full
 capabilities:
   - api
@@ -38,6 +38,7 @@ invariants:
   - Module-owned instructions, names, maximum tool allowlists, and execution limits are read-only module source. A tenant administrator may bind an available provider and model, pause the binding, and reduce its enabled tool set, but cannot broaden the module allowlist or edit the module behavior in the Agents UI.
   - An unconfigured module-owned agent is visible as unconfigured but cannot be activated, published in a workflow, or executed until its tenant binding names a usable provider and model.
   - A module definition revision is content-stable. Reusing one revision with different executable content or moving backwards fails platform boot. A higher definition revision creates a new immutable tenant executable revision for every existing binding without changing retained revisions.
+  - A module-owned definition may declare that its maximum tool allowlist is the platform tool registry rather than its own source. Such an allowlist follows the composed module set instead of the module's code, so it is outside the executable content a definition revision pins, and a deployment that composes another module neither drifts nor downgrades the definition, while the instructions, limits and identity of that definition stay content-stable like every other. The workspace assistant is the only agent agents.core declares this way, and a tenant binding still reduces it.
   - Tenant-created and module-owned executable revisions share one exact-revision contract. A provider, model, module definition revision, instructions, limits, and effective maximum tools are retained before the revision can be used by a workflow.
   - Agent execution is durable and fire-and-forget. The enqueue request persists a queued run before returning and never waits for provider completion.
   - Queued and interrupted runs are recovered after runtime restart without executing one run concurrently more than once inside a process.
@@ -85,7 +86,16 @@ invariants:
   - agents.core depends on metering.core and requires the public metering.meters.v1 capability, so the module registry composes metering.core first and refuses a composition that leaves it out or that provides no meter registry. The meters agents.core.run-tokens and agents.core.runs are declared once while agents.core composes; every later use resolves the registry through the capability at the point of use rather than holding the one composition found. A settled run is counted once, keyed by the run id, so a repeated terminal step reports the same fact instead of a second one, and a run that reported no tokens counts the run alone. Counting is advisory and runs after the terminal row commits, so a metering failure never changes a settled run.
   - Before a run is created the module asks metering.meters.v1 about both meters a run costs, on every enqueue path. agents.core.runs is asked for one run first and agents.core.run-tokens for the tokens the run may read and write, so a workspace that has spent either allowance is refused. A refused verdict fails the run start with METER_LIMIT_EXCEEDED naming that meter and creates no run. An allowed or warning verdict starts the run unchanged, and the settled fact replaces the estimate.
   - A refused meter is recorded in this module's own hash-chained trail once per workspace, meter and calendar month, with the meter, the estimate, the month's usage and the limit. The claim that a refusal was already recorded is a row of agents.core's own tenant table, and taking it removes the rows of earlier months, so the workspace holds one row per meter however long it keeps being refused. Every attempt still asks metering.core, so a workspace is refused on what its month holds now and never on a remembered verdict, and the first refusal after the month turns is recorded again.
+  - The workspace assistant is a conversation of ordinary runs. Each turn queues a run of the module-owned assistant agent with the turns before it as context, so the tools, limits, provider brokering, costs, metering, notifications and the execution trail are the ones this module already owns and there is no second execution path.
+  - The assistant acts as the member who asked, never above them. Every tool call is authorized against that member's own permissions through the owning module's service and ACL, a tool that declares an approval requirement still needs its signed grant, and no run of the assistant may hold a scope the member lacks.
+  - Every action the assistant takes is recorded with both identities, the member as the actor and the assistant agent as the agent acting on their behalf. A reader of the trail can tell a member's own click from the same action taken through the assistant.
+  - A conversation belongs to the member who started it. Only that member reads, continues, renames or deletes it, and their own history of conversations is theirs to browse; no owner-level permission opens the text of a conversation. Accountability lives in the run history and the audit trail, which owners already read.
+  - The assistant is enabled by default and a workspace may switch it off with the tenant flag assistantEnabled. A member without agents.assistant.use sees no entry point rather than a locked one, because the lock states that configuration is missing, not that access is refused.
+  - Until the assistant agent has a tenant binding naming a usable provider and model, the header entry reads as locked and leads to the configuration that is missing, the provider connections when none is usable and the assistant binding otherwise. No run is queued from a locked entry.
+  - A conversation is a durable thread with its whole history. Each turn keeps the question and the answer as its own text beside the run identifier, so a thread still reads once run retention has swept the runs behind it. Threads are a data class of agents.core that no retention sweep removes; a member deletes their own thread, and an erasure that removes a member's runs removes their threads with them.
 permissions:
+  - id: agents.assistant.use
+    description: Talk to the workspace assistant and read one's own conversations in the active tenant.
   - id: agents.definitions.read
     description: Read agent definitions in the active tenant.
   - id: agents.definitions.manage
@@ -105,6 +115,7 @@ permissions:
   - id: agents.skills.manage
     description: Create and version reusable agent procedures in the active tenant. The skill-named identifier is retained for authorization compatibility.
 dataOwnership:
+  - agents.core owns assistant conversations and their turns, each bound to the tenant and to the member who started it, and the link from a turn to the run that answered it.
   - Business modules own the current module-supplied definition and semantic revision of each module-owned business agent they register.
   - agents.core owns tenant-created agent identity and configuration, tenant bindings for module-owned agents, provider and model selection, reduced tool grants, executable revisions, and lifecycle status.
   - agents.core owns durable run state, input and output snapshots, usage, timing, failure data, and append-only execution events.
@@ -336,3 +347,23 @@ acceptanceScenarios:
     given: A workspace with runs settled on several days inside the requested range and runs settled outside it.
     when: The reports.core provider agents.runs is read.
     then: It answers the runs and token totals of the range as tiles and runs and tokens per day as two series read from the existing rollup, counting only the days inside the range and writing nothing. It names itself, its tiles and its lines with keys of this module's bundle, and it passes the reader's time budget into its own tenant transaction so an expired budget cancels the statement instead of leaving it running.
+  - id: ASSISTANT-LOCKED
+    given: A workspace where the assistant agent has no binding naming a usable provider and model.
+    when: A member with agents.assistant.use opens the workspace.
+    then: The header entry reads as locked and opens the configuration that is missing, the provider connections when none is usable and the assistant binding otherwise. No conversation is created and no run is queued.
+  - id: ASSISTANT-TURN
+    given: A configured assistant and a member with agents.assistant.use.
+    when: The member asks the assistant to do something their permissions allow.
+    then: A run of the assistant agent is queued as that member with the earlier turns as context, the tools run under their permissions, the answer lands in the conversation, and the run appears in the run history with its cost and its events like any other run.
+  - id: ASSISTANT-TOOL-DENIED
+    given: A member whose permissions do not cover a tool the assistant would use.
+    when: The assistant attempts that tool inside a turn.
+    then: The owning module refuses it, nothing is written, the assistant states the refusal in the conversation, and the trail records the refusal with the member as the actor and the assistant as the agent acting on their behalf.
+  - id: ASSISTANT-PRIVATE
+    given: A conversation started by one member.
+    when: Another member, including an owner of the workspace, reads conversations.
+    then: They receive only their own, and a direct request for the other conversation is refused. The run history and the audit trail still show that the run happened and what it did.
+  - id: ASSISTANT-DISABLED
+    given: A workspace that switched the assistantEnabled flag off.
+    when: A member opens the workspace or calls the assistant API directly.
+    then: No entry point is rendered and the API refuses with a stable code, while conversations already stored stay readable to their own members once the flag is on again.

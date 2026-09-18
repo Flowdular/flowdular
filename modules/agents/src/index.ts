@@ -58,6 +58,12 @@ export { AgentService, AgentServiceError } from './services/agent-service.ts';
 export type {
 	AgentDefinition,
 	AgentRun,
+	AssistantConversation,
+	AssistantReadiness,
+	AssistantThread,
+	AssistantThreadListQuery,
+	AssistantTurn,
+	AssistantTurnStatus,
 	AgentRunDetail,
 	AgentStatus,
 	AgentUsageSummary,

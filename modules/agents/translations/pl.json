@@ -403,6 +403,8 @@
 	"widget.link": "Otwórz uruchomienia agentów",
 	"settings.workerConcurrency.label": "Równoległe uruchomienia procesu",
 	"settings.workerConcurrency.description": "Liczba uruchomień obsługiwanych jednocześnie przez jeden proces. Zmiana obowiązuje przy kolejnym pobraniu z kolejki.",
+	"settings.assistantEnabled.label": "Asystent obszaru roboczego",
+	"settings.assistantEnabled.description": "Pozwól członkom rozmawiać z asystentem obszaru roboczego z paska nagłówka. Gdy jest wyłączony, wejście nie jest pokazywane, a API asystenta odmawia; zapisane rozmowy pozostają czytelne dla ich autorów po ponownym włączeniu.",
 	"settings.workerLeaseMs.label": "Czas dzierżawy procesu (ms)",
 	"settings.workerLeaseMs.description": "Czas, przez który pobrane uruchomienie należy do procesu, zanim inny proces będzie mógł je przejąć. Zmiana dotyczy nowych pobrań.",
 	"settings.providerReadinessTtlMs.label": "Ważność testu gotowości modelu (ms)",

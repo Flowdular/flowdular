@@ -9,6 +9,11 @@ import type {
 	AgentListPage,
 	AgentListQuery,
 	AgentDefinitionRevision,
+	AssistantConversation,
+	AssistantThread,
+	AssistantThreadListQuery,
+	AssistantTurn,
+	AssistantTurnOutcome,
 	ModuleAgentBinding,
 	ModuleAgentDefinition,
 	AgentActionInvocation,
@@ -75,6 +80,12 @@ export interface CompletedRunCost {
 /** Where a run export page resumes: newest queue time first, then run id. */
 export interface AgentRunExportCursor {
 	readonly queuedAt: number;
+	readonly id: string;
+}
+
+/** Where a thread export page resumes: newest update first, then thread id. */
+export interface AssistantThreadExportCursor {
+	readonly updatedAt: number;
 	readonly id: string;
 }
 
@@ -336,6 +347,66 @@ export interface AgentRepository {
 		period: string,
 		at: number,
 	): Promise<boolean>;
+	/* Every assistant statement below carries the tenant and the account that
+	   owns the thread, so another member's thread is simply not there rather
+	   than read and then refused. */
+	createAssistantThread(
+		thread: AssistantThread,
+		turn: AssistantTurn,
+		audit: PendingAgentAuditEvent,
+	): Promise<AssistantConversation>;
+	/* Appends the next turn of the member's own thread and answers the thread as
+	   it stands after it, or null when the thread is not theirs. */
+	appendAssistantTurn(
+		turn: Omit<AssistantTurn, 'sequence'>,
+		audit: PendingAgentAuditEvent,
+	): Promise<AssistantConversation | null>;
+	listAssistantThreads(
+		tenantId: string,
+		accountId: string,
+		query: AssistantThreadListQuery,
+	): Promise<readonly AssistantThread[]>;
+	readAssistantThread(
+		tenantId: string,
+		accountId: string,
+		threadId: string,
+	): Promise<AssistantConversation | null>;
+	/* Writes what a settled run reported onto the turn that asked for it, found
+	   by the run. The turn keeps that text from then on, so the run may be
+	   swept. Only a pending turn is written, so a repeated terminal step and a
+	   later read change nothing. */
+	settleAssistantTurn(
+		tenantId: string,
+		runId: string,
+		outcome: AssistantTurnOutcome,
+	): Promise<void>;
+	renameAssistantThread(
+		tenantId: string,
+		accountId: string,
+		threadId: string,
+		title: string,
+		updatedAt: number,
+		audit: PendingAgentAuditEvent,
+	): Promise<AssistantThread | null>;
+	deleteAssistantThread(
+		tenantId: string,
+		accountId: string,
+		threadId: string,
+		audit: PendingAgentAuditEvent,
+	): Promise<boolean>;
+	/* Keyset page of the thread export, newest first, with the turns of every
+	   thread on the page. */
+	exportAssistantThreadsPage(
+		tenantId: string,
+		after: AssistantThreadExportCursor | null,
+		limit: number,
+	): Promise<readonly AssistantConversation[]>;
+	/* Removes at most `limit` threads one account started, taking their turns. */
+	deleteAssistantThreadsOf(
+		tenantId: string,
+		accountId: string,
+		limit: number,
+	): Promise<number>;
 	appendAuditEvent(event: PendingAgentAuditEvent): Promise<AgentAuditEvent>;
 	listAuditEvents(
 		tenantId: string,

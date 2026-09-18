@@ -12,6 +12,7 @@ describe('agents.core module settings', () => {
 		expect(AGENTS_MODULE_SETTINGS.moduleId).toBe('agents.core');
 		expect(Object.keys(AGENTS_MODULE_SETTINGS.settings).sort()).toEqual([
 			'agentMonthlyCostCapUsd',
+			'assistantEnabled',
 			'defaultMaxOutputTokens',
 			'defaultModel',
 			'defaultProvider',

@@ -12,6 +12,7 @@ import type {
 	ModuleAgentDefinition,
 } from '../domain/types.ts';
 import { AgentService } from '../services/agent-service.ts';
+import { AssistantService } from '../services/assistant-service.ts';
 import {
 	credentialVaultFromEnvironment,
 	type CredentialVault,
@@ -110,6 +111,7 @@ export interface AgentRuntime {
 	   here, so declaring a class at composition opens no connection. */
 	repository(): Promise<AgentRepository>;
 	providerService(): Promise<AgentProviderService>;
+	assistantService(): Promise<AssistantService>;
 	usageService(): Promise<AgentUsageService>;
 	workerStatus(): Promise<AgentWorkerStatus>;
 	revisionExecution(): AgentRevisionExecutionCapability;
@@ -225,6 +227,7 @@ export function createAgentRuntime(
 	let service: AgentService | undefined;
 	let worker: AgentWorker | undefined;
 	let providers: AgentProviderService | undefined;
+	let assistant: AssistantService | undefined;
 	let usage: AgentUsageService | undefined;
 	let repository: AgentRepository | undefined;
 	let providerRepository: ProviderRepository | undefined;
@@ -387,6 +390,12 @@ export function createAgentRuntime(
 				usageService,
 				options.meters,
 			);
+			assistant = new AssistantService(
+				repository,
+				service,
+				providerService,
+				settings,
+			);
 			actionRuntime = createAgentActionExecutionRuntime(repository, tools, {
 				leaseMs: options.workerLeaseMs,
 				...(options.tracer ? { tracer: options.tracer } : {}),
@@ -445,6 +454,10 @@ export function createAgentRuntime(
 			await resolved();
 			return providers!;
 		},
+		assistantService: async () => {
+			await resolved();
+			return assistant!;
+		},
 		usageService: async () => {
 			await resolved();
 			return usage!;
@@ -475,6 +488,7 @@ export function createAgentRuntime(
 			worker = undefined;
 			actionRuntime = undefined;
 			providers = undefined;
+			assistant = undefined;
 			usage = undefined;
 			service = undefined;
 			providerRepository = undefined;

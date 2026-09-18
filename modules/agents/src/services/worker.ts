@@ -1,8 +1,10 @@
 import type { AgentHarness, AgentProvider } from '@flowdular/harness';
+import { ASSISTANT_AGENT_ID } from '../agent/assistant.ts';
 import type {
 	AgentRun,
 	AgentRunExecution,
 	AgentWorkerStatus,
+	AssistantTurnOutcome,
 } from '../domain/types.ts';
 import type { AgentRepository, RecoverableRun } from './repository.ts';
 import {
@@ -400,6 +402,12 @@ export class AgentWorker {
 					occurredAt: result.completedAt,
 				},
 			);
+			await this.#settleAssistantTurn(execution.run, {
+				answer: result.output,
+				status: 'answered',
+				failureCode: null,
+				settledAt: result.completedAt,
+			});
 			await this.#reportMeters(execution.run, result.usage.totalTokens);
 			await this.#recordRunSuccess(
 				execution,
@@ -464,6 +472,12 @@ export class AgentWorker {
 				);
 				return;
 			}
+			await this.#settleAssistantTurn(execution.run, {
+				answer: null,
+				status: 'failed',
+				failureCode: failed.code,
+				settledAt: completedAt,
+			});
 			await this.#reportMeters(execution.run, 0);
 			await this.#publishOutcome(execution.run, 'agent-run-failed', {
 				title: `Agent ${execution.run.agentName} failed`,
@@ -473,6 +487,28 @@ export class AgentWorker {
 			clearInterval(renewal);
 			await eventWrites.catch(() => undefined);
 			await eventClassification;
+		}
+	}
+
+	/* Called after the terminal row is committed and outside its transaction.
+	   An assistant turn keeps the answer as its own text, so the conversation
+	   still reads once run retention has swept the run behind it. Only a pending
+	   turn is written, so a terminal step that runs twice changes nothing, and a
+	   run of any other agent writes nothing at all. */
+	async #settleAssistantTurn(
+		run: AgentRun,
+		outcome: AssistantTurnOutcome,
+	): Promise<void> {
+		if (run.agentId !== ASSISTANT_AGENT_ID) return;
+		try {
+			await this.repository.settleAssistantTurn(run.tenantId, run.id, outcome);
+		} catch (error) {
+			/* The run is settled either way; the next read of the thread copies the
+			   answer across instead. */
+			console.error(
+				`[agents] run ${run.id} could not be written onto its assistant turn:`,
+				error instanceof Error ? error.message : error,
+			);
 		}
 	}
 
