@@ -35,3 +35,55 @@ it('preserves split UTF-8 bytes after inserting hydration data across streamed h
 	expect(html).toContain('"url":"/blog"');
 	expect(html).not.toContain('�');
 });
+
+function page(): Response {
+	return new Response(
+		'<html><head><title>Post</title></head><body>One</body></html>',
+		{
+			headers: { 'content-type': 'text/html' },
+		},
+	);
+}
+
+it('serves a built page with nothing between its markup and its stylesheets', async () => {
+	const html = await webHtmlResponse(
+		page(),
+		'/post/one',
+		{ title: 'One' },
+		undefined,
+		false,
+	).text();
+	expect(html).not.toContain('flowdular-web-pending');
+	expect(html).toContain('flowdular-web-data');
+});
+
+it('holds a development page behind its background until a stylesheet lands', async () => {
+	const html = await webHtmlResponse(
+		page(),
+		'/post/one',
+		{ title: 'One' },
+		undefined,
+		true,
+	).text();
+	/* The cover hides the one unstyled frame the module graph would paint, and
+	   removes itself on the first stylesheet Vite injects. */
+	expect(html).toContain('<style id="flowdular-web-pending"');
+	expect(html).toContain('body{visibility:hidden}');
+	expect(html).toContain('data-vite-dev-id');
+	expect(html).toContain('MutationObserver');
+});
+
+it('carries the content security nonce on everything it injects', async () => {
+	const html = await webHtmlResponse(
+		page(),
+		'/post/one',
+		{ title: 'One' },
+		'abc123',
+		true,
+	).text();
+	const injected = (html.match(/<(?:style|script)[^>]*>/g) ?? []).filter(
+		(tag) => !tag.includes('<title'),
+	);
+	expect(injected.length).toBeGreaterThanOrEqual(4);
+	for (const tag of injected) expect(tag).toContain('nonce="abc123"');
+});

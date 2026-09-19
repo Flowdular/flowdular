@@ -231,6 +231,11 @@ export function createModuleWebRoutes(options: {
 	readonly modules: readonly WebModuleComposition[];
 	readonly mounts: readonly WebMount[];
 	readonly applicationPath?: string;
+	/**
+	 * True while the deployment serves through the development module graph,
+	 * where a page's stylesheets arrive after its markup.
+	 */
+	readonly development?: boolean;
 	readonly resolveIdentity: (
 		context: Context,
 	) => WebIdentity | null | Promise<WebIdentity | null>;
@@ -357,6 +362,7 @@ export function createModuleWebRoutes(options: {
 							context.url.pathname + context.url.search,
 							JSON.parse(json),
 							context.state.get('octane.nonce') as string | undefined,
+							options.development ?? false,
 						);
 					} catch {
 						console.error(
