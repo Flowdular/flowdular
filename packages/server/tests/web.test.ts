@@ -250,3 +250,139 @@ describe('module web surfaces', () => {
 		).not.toThrow();
 	});
 });
+
+it('refuses a mount naming a surface its module does not declare', () => {
+	const module = {
+		moduleId: 'blog.core',
+		web: [
+			defineWebSurface({
+				id: 'site',
+				pages: [
+					{
+						id: 'index',
+						path: '/',
+						entry: ['Page', '@app/module-blog/web'] as const,
+						access: { kind: 'public' } as const,
+						load: () => ({}),
+					},
+				],
+			}),
+		],
+	};
+	/* A typo in operator configuration used to answer 404 for the life of the
+	   deployment; the composition names it instead. */
+	expect(() =>
+		createModuleWebRoutes({
+			modules: [module],
+			mounts: [
+				{
+					id: 'blog',
+					moduleId: 'blog.core',
+					surfaceId: 'sit',
+					path: '/',
+					tenantId: 'tenant-1',
+				},
+			],
+			resolveIdentity: () => null,
+		}),
+	).toThrow(/names surface sit, which blog.core does not declare/);
+	expect(() =>
+		createModuleWebRoutes({
+			modules: [module],
+			mounts: [
+				{
+					id: 'blog',
+					moduleId: 'blog.core',
+					surfaceId: 'site',
+					path: '/',
+					tenantId: 'tenant-1',
+				},
+			],
+			resolveIdentity: () => null,
+		}),
+	).not.toThrow();
+});
+
+it('keeps answering 404 for a mount of a module this deployment does not compose', () => {
+	/* Disabling or removing a module must not let its address fall through to a
+	   workspace route, which is why this one stays a refusal at the address
+	   rather than a refusal to boot. */
+	expect(() =>
+		createModuleWebRoutes({
+			modules: [],
+			mounts: [
+				{
+					id: 'blog',
+					moduleId: 'blog.core',
+					surfaceId: 'site',
+					path: '/blog',
+					tenantId: 'tenant-1',
+				},
+			],
+			resolveIdentity: () => null,
+		}),
+	).not.toThrow();
+});
+
+describe('an address a reader or a crawler expects', () => {
+	const page = (path: string) => ({
+		id: 'feed',
+		path,
+		entry: ['Page', '@app/module-blog/web'] as const,
+		access: { kind: 'public' } as const,
+		load: () => ({}),
+	});
+
+	it('lets a page answer at a name carrying a suffix', () => {
+		for (const path of [
+			'/rss.xml',
+			'/sitemap.xml',
+			'/robots.txt',
+			'/feeds/posts.atom',
+		]) {
+			expect(() =>
+				defineWebSurface({ id: 'site', pages: [page(path)] }),
+			).not.toThrow();
+		}
+	});
+
+	it('keeps a traversal or a bare dot out of an address', () => {
+		for (const path of [
+			'/..',
+			'/../secrets',
+			'/.',
+			'/posts/..',
+			'/posts.',
+			'/.hidden',
+		]) {
+			expect(() =>
+				defineWebSurface({ id: 'site', pages: [page(path)] }),
+			).toThrow(/invalid page/);
+		}
+	});
+
+	it('mounts a site at an address carrying a suffix, and refuses a traversal', () => {
+		expect(() =>
+			validateWebMounts([
+				{
+					id: 'blog',
+					moduleId: 'blog.core',
+					surfaceId: 'site',
+					path: '/feeds/posts.atom',
+					tenantId: 'tenant-1',
+				},
+			]),
+		).not.toThrow();
+		expect(() =>
+			validateWebMounts([
+				{
+					id: 'blog',
+					moduleId: 'blog.core',
+					surfaceId: 'site',
+					path: '/../etc',
+					tenantId: 'tenant-1',
+				},
+			]),
+		).toThrow(/invalid mount/);
+	});
+});

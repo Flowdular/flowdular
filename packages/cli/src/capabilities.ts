@@ -2,6 +2,30 @@ import type { CapabilityDescriptor } from '@flowdular/cli-protocol';
 
 export const capabilities: readonly CapabilityDescriptor[] = [
 	{
+		id: 'web.list',
+		version: 1,
+		summary: 'List the addresses this workspace serves module pages at.',
+		risk: 'read',
+		requiresApprovedSpec: false,
+		supportsDryRun: false,
+	},
+	{
+		id: 'web.mount',
+		version: 1,
+		summary: "Serve a module's public pages at an address in one workspace.",
+		risk: 'workspace-write',
+		requiresApprovedSpec: false,
+		supportsDryRun: true,
+	},
+	{
+		id: 'web.unmount',
+		version: 1,
+		summary: 'Stop serving a module site at its address.',
+		risk: 'workspace-write',
+		requiresApprovedSpec: false,
+		supportsDryRun: true,
+	},
+	{
 		id: 'module.search',
 		version: 1,
 		summary: 'Search official module releases.',

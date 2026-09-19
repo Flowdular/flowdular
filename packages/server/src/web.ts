@@ -8,6 +8,11 @@ import {
 } from '@octanejs/app-core';
 import { webHtmlResponse } from './web-html.ts';
 
+import {
+	RESERVED_WEB_SEGMENTS,
+	WEB_MOUNT_PATH,
+	WEB_PAGE_PATH,
+} from '@flowdular/contracts';
 import type {
 	WebMount,
 	WebIdentity,
@@ -29,20 +34,7 @@ export type {
 
 const DATA_STATE = 'flowdular.web.data';
 const DATA_ACCEPT = 'application/vnd.flowdular.page+json';
-const RESERVED = new Set([
-	'setup',
-	'health',
-	'ready',
-	'assets',
-	'app',
-	'api',
-	'auth',
-	'sign-in',
-	'sign-up',
-	'forgot-password',
-	'reset-password',
-	'accept-invitation',
-]);
+const RESERVED = new Set(RESERVED_WEB_SEGMENTS);
 const ID = /^[a-z][a-z0-9-]*$/;
 const MODULE_ID = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/;
 
@@ -72,7 +64,7 @@ export function validateWebMounts(input: unknown): readonly WebMount[] {
 				/[\u0000-\u001f]/.test(value.tenantId) ||
 				typeof value.path !== 'string' ||
 				value.path.length > 256 ||
-				!/^(?:\/|\/[a-z0-9-]+(?:\/[a-z0-9-]+)*)$/.test(value.path) ||
+				!WEB_MOUNT_PATH.test(value.path) ||
 				RESERVED.has(value.path.split('/')[1]!) ||
 				(value.enabled !== undefined && typeof value.enabled !== 'boolean')
 			)
@@ -150,7 +142,7 @@ export function defineWebSurface(surface: ModuleWebSurface): ModuleWebSurface {
 			!ID.test(page.id) ||
 			typeof page.path !== 'string' ||
 			page.path.length > 256 ||
-			!/^(?:\/|(?:\/(?:[a-z0-9-]+|:[a-z][a-zA-Z0-9]*))+)$/.test(page.path) ||
+			!WEB_PAGE_PATH.test(page.path) ||
 			!Array.isArray(page.entry) ||
 			page.entry.length !== 2 ||
 			!/^[A-Za-z_$][\w$]*$/.test(page.entry[0]) ||
@@ -252,7 +244,13 @@ export function createModuleWebRoutes(options: {
 	const within = (path: string, prefix: string) =>
 		path === prefix || path.startsWith(prefix + '/');
 	const surfaces = new Map<string, ModuleWebSurface>();
+	/* Which modules this deployment composed at all. A mount naming one of them
+	   and a surface it does not declare is a typo in operator configuration, and
+	   the answer is the composition refusing rather than the address quietly
+	   answering 404 for the life of the deployment. */
+	const composed = new Set<string>();
 	for (const module of options.modules) {
+		if (module.moduleId) composed.add(module.moduleId);
 		for (const surface of module.web ?? []) {
 			if (!module.moduleId || !MODULE_ID.test(module.moduleId))
 				invalid('surface has no generated module owner.');
@@ -268,6 +266,10 @@ export function createModuleWebRoutes(options: {
 			invalid('mount overlaps application routes.');
 		const base = site.path === '/' ? '' : site.path;
 		const surface = surfaces.get(`${site.moduleId}/${site.surfaceId}`);
+		if (site.enabled && !surface && composed.has(site.moduleId))
+			invalid(
+				`mount ${site.id} names surface ${site.surfaceId}, which ${site.moduleId} does not declare.`,
+			);
 		// A removed or disabled module must not fall through to a workspace route.
 		if (site.enabled && surface) {
 			for (const page of surface.pages) {

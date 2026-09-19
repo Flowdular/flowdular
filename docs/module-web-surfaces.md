@@ -63,7 +63,27 @@ runtime and the module's existing bundles when localization is needed.
 
 ## Operator configuration
 
-Add the optional `web` section in the installation's `flowdular.json`:
+One command writes the mount and regenerates the composition:
+
+```bash
+pnpm flowdular web mount example.core public --path /blog --tenant <tenant id>          # preview
+pnpm flowdular web mount example.core public --path /blog --tenant <tenant id> --apply
+pnpm flowdular web list
+pnpm flowdular web unmount acme-public --apply
+```
+
+It refuses before it writes what the platform would refuse at boot: a module
+this workspace has not enabled, a reserved address, the configured backoffice
+path, an address overlapping a site already mounted, and a mount naming no
+workspace. The mount id defaults to the module's first segment; `--id` names it
+when one module serves several addresses, and mounting the same id again moves
+that site rather than adding a second one.
+
+The tenant is the workspace whose pages are served, so it exists before the
+mount does: run `flowdular setup` first and use the id it reports.
+
+The same section can be written by hand in the installation's
+`flowdular.json`:
 
 ```json
 {
@@ -82,7 +102,8 @@ Add the optional `web` section in the installation's `flowdular.json`:
 }
 ```
 
-Run `pnpm flowdular module sync --apply`, then rebuild/redeploy production or
+A hand-written section needs `pnpm flowdular module sync --apply` afterwards;
+the `web` commands run it themselves. Then rebuild or redeploy production, or
 restart development. Configuration is generated into the server composition;
 changing it requires regeneration. It is not read from a process-local settings
 cache or an anonymous query parameter. Verify the tenant ID before publishing.
@@ -91,7 +112,14 @@ paths. `/records/:slug` above becomes `/blog/records/:slug`.
 
 The root `/` can host a public storefront, alongside more specific mounts such as
 `/blog`. Reserved platform prefixes such as `/app`, `/auth`, `/api`, `/setup` and
-the configured backoffice path cannot be claimed by modules. Other overlapping
+the configured backoffice path cannot be claimed by modules; the list is
+`RESERVED_WEB_SEGMENTS` in `@flowdular/contracts`, which the composition and the
+CLI both read. A segment may carry dots inside it, so a page answers at
+`/rss.xml`, `/sitemap.xml` or `/robots.txt` as a reader or a crawler expects;
+each dot separates two non-empty groups, which keeps `..`, a leading dot and a
+trailing dot out of every address. A mount naming a surface its module does not declare stops the
+composition with that sentence, rather than answering 404 at the address for the
+life of the deployment. Other overlapping
 mounts and equivalent route patterns are rejected. Custom paths such as `/blog`, `/portal` and `/forms/contact` work without a
 tenant ID in the URL. `/sites/` is an optional convention for multiple sites;
 unknown sites under that prefix return 404. A disabled binding

@@ -15,6 +15,12 @@ import {
 } from './module-install.ts';
 import { ModuleDistributionError } from './module-artifact.ts';
 import { findModuleFiles } from './module-files.ts';
+import {
+	currentMounts,
+	planMount,
+	planUnmount,
+	writeMounts,
+} from './web-mounts.ts';
 import { readFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { parse as parseYaml } from 'yaml';
@@ -274,7 +280,7 @@ export async function runCommand(
 		if (!group || group === 'help' || arguments_.flags.has('help')) {
 			return success({
 				usage:
-					'flowdular [--root <workspace>] [--json] <doctor|capability|spec|blueprint|module|migration|database|setup> [action] [options]',
+					'flowdular [--root <workspace>] [--json] <doctor|capability|spec|blueprint|module|web|migration|database|setup> [action] [options]',
 				commands: [
 					'doctor',
 					'capability list|describe <id>|run <id>',
@@ -282,6 +288,7 @@ export async function runCommand(
 					'blueprint list|validate --all',
 					'module search [query]|info <id>|install <id[@version]> [--apply]|update <id[@version]> [--apply]|recover [--apply] [--registry <local-index>] ',
 					'module list|validate [--locked]|sync [--apply]|enable <id> [--apply]|disable <id> [--apply]|new <id> --spec <path> [--apply]',
+					'web list|mount <module id> <surface id> --path <path> --tenant <id> [--id <mount id>] [--apply]|unmount <mount id> [--apply]',
 					'migration status [--module <id>]|apply --module <id> [--apply]|verify|new <name> --module <id> [--apply]',
 					'database reset [--module <id>] [--apply --confirm reset-database]',
 					'database backup --output <dir> [--apply]',
@@ -587,6 +594,65 @@ export async function runCommand(
 				'USAGE_ERROR',
 				'Use migration status, migration apply --module <id>, migration verify, or migration new <name> --module <id>.',
 			);
+		}
+
+		if (group === 'web') {
+			if (action === 'list') {
+				const mounts = currentMounts(workspace);
+				return success({ mounts });
+			}
+			if (action === 'mount') {
+				const surfaceId = arguments_.positionals[2];
+				if (!target || !surfaceId)
+					throw new Error(
+						'Name the module and the surface: flowdular web mount <module id> <surface id> --path <path> --tenant <id>',
+					);
+				const report = planMount(workspace, {
+					moduleId: target,
+					surfaceId,
+					path: stringFlag(arguments_, 'path') ?? '/',
+					tenantId: stringFlag(arguments_, 'tenant') ?? '',
+					...(stringFlag(arguments_, 'id')
+						? { id: stringFlag(arguments_, 'id')! }
+						: {}),
+				});
+				const apply = arguments_.flags.has('apply');
+				if (apply) await writeMounts(workspace, report.mounts);
+				return success(
+					{ ...report, applied: apply },
+					{
+						evidence: [relative(process.cwd(), workspace.configPath)],
+						warnings: apply
+							? [
+									'Restart the application to serve the new address; a running development server reloads on its own.',
+								]
+							: [
+									'Dry run only. Pass --apply to write the mount and regenerate the composition.',
+								],
+					},
+				);
+			}
+			if (action === 'unmount') {
+				if (!target)
+					throw new Error(
+						'Name the mount id: flowdular web unmount <mount id>',
+					);
+				const report = planUnmount(workspace, target);
+				const apply = arguments_.flags.has('apply');
+				if (apply) await writeMounts(workspace, report.mounts);
+				return success(
+					{ ...report, applied: apply },
+					{
+						evidence: [relative(process.cwd(), workspace.configPath)],
+						warnings: apply
+							? []
+							: [
+									'Dry run only. Pass --apply to remove the mount and regenerate the composition.',
+								],
+					},
+				);
+			}
+			throw new Error('Unknown web action. Use list, mount or unmount.');
 		}
 
 		if (group === 'module' && (action === 'search' || action === 'info')) {

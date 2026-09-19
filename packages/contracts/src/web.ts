@@ -1,3 +1,40 @@
+/**
+ * Address segments the application itself answers on. A mount may not take one,
+ * or a public page would shadow the shell, the API or a sign-in screen. The
+ * server enforces it when it composes routes and the CLI refuses a mount that
+ * names one, so both read the same list.
+ */
+export const RESERVED_WEB_SEGMENTS: readonly string[] = Object.freeze([
+	'setup',
+	'health',
+	'ready',
+	'assets',
+	'app',
+	'api',
+	'auth',
+	'sign-in',
+	'sign-up',
+	'forgot-password',
+	'reset-password',
+	'accept-invitation',
+]);
+
+/*
+ * A segment is lower-case, and may carry dots inside it so a page can answer at
+ * a name a reader or a crawler expects: rss.xml, sitemap.xml, robots.txt. Each
+ * dot separates two non-empty groups, which is what keeps "..", a leading dot
+ * and a trailing dot out of an address.
+ */
+const SEGMENT = '[a-z0-9-]+(?:\\.[a-z0-9-]+)*';
+
+/** A mount address: the site root, or segments under it. */
+export const WEB_MOUNT_PATH = new RegExp(`^(?:/|/${SEGMENT}(?:/${SEGMENT})*)$`);
+
+/** A page address inside a surface, where a segment may also be a parameter. */
+export const WEB_PAGE_PATH = new RegExp(
+	`^(?:/|(?:/(?:${SEGMENT}|:[a-z][a-zA-Z0-9]*))+)$`,
+);
+
 /** Addresses are operator configuration, never module-supplied tenant authority. */
 export interface WebMount {
 	readonly id: string;

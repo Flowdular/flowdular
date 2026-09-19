@@ -33,6 +33,9 @@ flowdular module version <id>                      # version, platformApi range,
 flowdular module version bump <id> <level> [--apply] # patch|minor|major across module.json, package.json, specVersion and dependent ranges
 flowdular module new <id> --spec <path> [--apply]  # scaffold from an approved spec
 flowdular module enable|disable <id> [--apply]     # composition and scope grants
+flowdular web list                                 # the addresses this workspace serves module pages at
+flowdular web mount <module id> <surface id> --path <path> --tenant <id> [--id <mount id>] [--apply]
+flowdular web unmount <mount id> [--apply]         # stop serving that site
 flowdular migration status [--module <id>]         # migration ledger
 flowdular migration apply --module <id> [--apply]
 flowdular migration verify                         # checksum drift, row security, file and constant parity

@@ -15,7 +15,7 @@ import type { Workspace } from './workspace.ts';
 
 /* flowdular.json is a workspace file the format gate checks, so write it through
    the workspace Prettier instead of a raw stringify that leaves it unformatted. */
-async function writeProjectConfig(
+export async function writeProjectConfig(
 	workspace: Workspace,
 	config: Record<string, unknown>,
 ): Promise<void> {
@@ -335,7 +335,7 @@ function moduleOrder(
 	return ordered;
 }
 
-function enabledModules(workspace: Workspace): readonly string[] {
+export function enabledModules(workspace: Workspace): readonly string[] {
 	return (
 		(workspace.config.modules as { enabled?: string[] } | undefined)?.enabled ??
 		[]
