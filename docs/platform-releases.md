@@ -7,7 +7,11 @@ It does not publish npm packages or container images.
 ## Prepare a version
 
 Commit the intended stable `X.Y.Z` version before running the workflow. The root
-`package.json` and SDK must have that version. Other public packages may retain
+`package.json` and SDK must have that version. `pnpm release-versions:check`,
+part of `pnpm verify`, lists every other place that carries it, the scaffold's
+SDK pin included: a generated application installs that pin, so leaving it
+behind ships a template whose composition imports exports the SDK it pulls does
+not have. Other public packages may retain
 their own committed stable versions; each tarball must match its manifest. The public
 package set comes from `scripts/sdk-packages.json`, including the standalone
 sandbox when present. Version bumps are not performed by the release action.
