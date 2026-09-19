@@ -17,6 +17,7 @@ const LIBRARIES = new Set([
 	'harness',
 	'kernel',
 	'server',
+	'storage',
 	'ui',
 ]);
 const CORE_MODULES = new Set([
