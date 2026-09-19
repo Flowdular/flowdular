@@ -106,6 +106,7 @@ A design is a file, not a description: `modules/<dir>/design/<screen>.html`, bes
 pnpm ui:preview modules/<dir>/design/<screen>.html --scaffold   # the record recipe in all five states
 pnpm ui:preview modules/<dir>/design/<screen>.html              # renders it, prints a file:// address
 pnpm ui:preview modules/<dir>/design/<screen>.html --shot .flowdular/ui-preview/<screen>.png
+pnpm ui:preview modules/<dir>/design/<screen>.html --open           # shows it to the person asking
 ```
 
 Rules that keep a preview honest:
@@ -114,7 +115,7 @@ Rules that keep a preview honest:
 - One `<section class="ui-view" data-state="...">` per state: `populated`, `loading`, `empty`, `error`, `denied`. The command labels each one, so a single page answers for all five.
 - Real content. The longest realistic name, a real identifier, the copy the screen will actually carry. A preview of `Lorem ipsum` proves nothing about overflow or alignment.
 - Only classes a stylesheet declares. `pnpm ui-classes:check` fails on a class nothing defines, in a preview and in a `.tsrx` alike, which is the one mistake that compiles, passes its tests and renders unstyled. A class a module needs and the design system lacks is declared in the module's own CSS, as rule 4 says.
-- `--shot` writes a PNG, which is how an agent with no browser looks at its own work.
+- `--shot` writes a PNG, which is how an agent with no browser looks at its own work. `--open` opens the preview in the person's browser, which is how a design is shown for approval; a correction loop renders without it rather than throwing a window at whoever is at the keyboard.
 
 Hand off the path, not a description. An implementation phase opens the preview, mirrors its structure with the components in section 4, and keeps the copy.
 
