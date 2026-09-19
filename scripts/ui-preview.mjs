@@ -5,11 +5,12 @@
 // Everything visual comes from packages/ui, which is what keeps a preview from
 // becoming a second source of truth about how the platform looks.
 //
-// Run: node scripts/ui-preview.mjs <fragment.html> [--shot <file.png>]
+// Run: node scripts/ui-preview.mjs <fragment.html> [--shot <file.png>] [--open]
 //      node scripts/ui-preview.mjs --scaffold <fragment.html>
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
+import { parsePreviewArguments } from '../packages/cli/src/ui-preview-args.ts';
 
 const root = new URL('..', import.meta.url).pathname;
 const OUTPUT = join(root, '.flowdular', 'ui-preview');
@@ -130,23 +131,15 @@ const SCAFFOLD = `<!-- One screen, every state it can be in. Markup only: every 
 
 function usage(message) {
 	console.error(
-		`${message}\nRun: node scripts/ui-preview.mjs <fragment.html> [--shot <file.png>]\n     node scripts/ui-preview.mjs --scaffold <fragment.html>`,
+		`${message}\nRun: node scripts/ui-preview.mjs <fragment.html> [--shot <file.png>] [--open]\n     node scripts/ui-preview.mjs --scaffold <fragment.html>`,
 	);
 	process.exit(1);
 }
 
 const argv = process.argv.slice(2);
-const scaffold = argv.includes('--scaffold');
-const shotIndex = argv.indexOf('--shot');
-const shot = shotIndex === -1 ? null : argv[shotIndex + 1];
-const target = argv.find(
-	(value, index) =>
-		!value.startsWith('--') &&
-		index !== shotIndex + 1 &&
-		(!scaffold || argv[argv.indexOf('--scaffold') + 1] === value),
-);
-if (!target) usage('Name the fragment to render.');
-if (shotIndex !== -1 && !shot) usage('--shot needs a file to write.');
+const invocation = parsePreviewArguments(argv);
+if (invocation.refusal) usage(invocation.refusal);
+const { fragment: target, scaffold, shot, open: openInBrowser } = invocation;
 const fragmentPath = isAbsolute(target)
 	? target
 	: resolve(process.cwd(), target);
@@ -224,6 +217,25 @@ const rendered = join(
 );
 await writeFile(rendered, page);
 console.log(`Rendered file://${rendered}`);
+
+if (openInBrowser) {
+	const [command, ...leading] =
+		process.platform === 'darwin'
+			? ['open']
+			: process.platform === 'win32'
+				? ['cmd', '/c', 'start', '']
+				: ['xdg-open'];
+	const opener = spawn(command, [...leading, rendered], { stdio: 'ignore' });
+	const opened = await new Promise((settle) => {
+		opener.once('error', () => settle(false));
+		opener.once('close', (code) => settle(code === 0));
+	});
+	console.log(
+		opened
+			? 'Opened it in the default browser.'
+			: `Could not open a browser here; the address above is the whole answer.`,
+	);
+}
 
 if (shot) {
 	const destination = isAbsolute(shot) ? shot : resolve(process.cwd(), shot);

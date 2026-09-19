@@ -32,6 +32,12 @@ const actor = {
 const PERMISSION = 'connectors.instances.read';
 /** The smallest lease the runtime accepts, so the poll interval is 1000 ms. */
 const LEASE_MS = 1_000;
+/* The renewal case needs room the shortest lease does not give it. A lease of
+   1s beats every 333ms (the runner divides by three), so one refused beat
+   leaves the next one at the edge of the window and a busy machine pushes it
+   past. At 3s the beats are a second apart and the case measures the behaviour
+   it names rather than the punctuality of a timer. */
+const RENEWAL_LEASE_MS = 3_000;
 
 const authorizeRead = (_request: AgentToolAuthorizationRequest) => [PERMISSION];
 
@@ -110,10 +116,11 @@ function trackedRuntime(
 	tool: AgentTool,
 	workerId: string,
 	repository: AgentRepository = database.repository,
+	leaseMs: number = LEASE_MS,
 ): AgentActionRuntime {
 	const runtime = createAgentActionExecutionRuntime(repository, [tool], {
 		workerId,
-		leaseMs: LEASE_MS,
+		leaseMs,
 		authorizeToolAccess: authorizeRead,
 	});
 	runtimes.push(runtime);
@@ -222,6 +229,7 @@ describe('the action loop', () => {
 			}),
 			'action-worker:heartbeat',
 			repository,
+			RENEWAL_LEASE_MS,
 		);
 		runtime.start();
 		await runtime.capability.start(
@@ -230,16 +238,16 @@ describe('the action loop', () => {
 		);
 
 		await waitFor(() => claimedAt > 0);
-		await new Promise((resolve) => setTimeout(resolve, LEASE_MS + 100));
+		await new Promise((resolve) => setTimeout(resolve, RENEWAL_LEASE_MS + 100));
 		release();
 
-		const expiresAt = claimedAt + LEASE_MS;
+		const expiresAt = claimedAt + RENEWAL_LEASE_MS;
 		/* Two beats fit in the lease, so the refused one is not the only chance the
 		   claim had to be renewed before it lapsed. */
 		expect(
 			attempts.filter((at) => at < expiresAt).length,
 		).toBeGreaterThanOrEqual(2);
-		expect(succeeded[0]).toBeLessThan(expiresAt - LEASE_MS / 10);
+		expect(succeeded[0]).toBeLessThan(expiresAt - RENEWAL_LEASE_MS / 10);
 	});
 
 	it('hands a claim back to the queue when the stop landed while it was taken', async () => {
