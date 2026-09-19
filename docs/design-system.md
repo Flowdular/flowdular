@@ -17,6 +17,12 @@ shared primitives, tokens, and the rules for using them.
 - Modules: compose screens from `@flowdular/ui`. Module CSS may only add
   module-specific composites built on the tokens (example:
   `modules/agents/src/client/agents.css`).
+- `modules/<dir>/design/*.html`: a screen as markup, rendered with the
+  stylesheets above by `pnpm ui:preview <path>` (`--scaffold` writes the record
+  recipe in all five states, `--shot <file.png>` captures it). It is where a
+  screen is designed and agreed before it is a component, and it carries no CSS
+  of its own, so it cannot drift from the platform. `pnpm ui-classes:check`
+  refuses a class no stylesheet declares, there and in every `.tsrx`.
 - `platform/public`: `favicon.svg`, `og.png` (1200x630 Open Graph image).
 - Brand mark geometry is generated: `node packages/ui/scripts/gen-mark.mjs`
   rewrites `packages/ui/src/brand/mark.ts` from the weave parameters.
