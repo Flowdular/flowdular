@@ -4,7 +4,7 @@
    removed or changed. The surface is pinned by
    packages/kernel/platform-api.snapshot.d.ts; `pnpm platform-api:check` fails
    when the surface changes without a bump here. */
-export const PLATFORM_API_VERSION = '0.1.24';
+export const PLATFORM_API_VERSION = '0.1.26';
 
 /* The workspace time zone: one tenant setting, declared by the module named
    here and read by any module that shows or schedules a local time. The id, the
@@ -386,6 +386,8 @@ export type {
 } from './module-distribution.ts';
 
 export { moduleCatalogSchema, moduleArtifactSchema } from './schemas.ts';
+
+export { RESERVED_WEB_SEGMENTS, WEB_MOUNT_PATH, WEB_PAGE_PATH } from './web.ts';
 
 export type {
 	WebMount,

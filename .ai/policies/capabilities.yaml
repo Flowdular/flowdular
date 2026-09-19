@@ -104,6 +104,7 @@ commandsWithoutDescriptor:
   - pnpm flowdular capability list|describe <id>|run <id>
   - pnpm flowdular blueprint list
   - pnpm flowdular module list
+  - pnpm flowdular web list
   - pnpm flowdular module sync [--apply]
   - pnpm flowdular module enable <id> [--apply] (with --apply also runs auth.scopes.sync; result field scopes, failure code MODULE_SCOPES_SYNC_FAILED)
   - pnpm flowdular module disable <id> [--apply]

@@ -265,6 +265,12 @@ async function createPlatformConfig() {
 						modules: moduleCompositions,
 						mounts: moduleWebMounts,
 						applicationPath: configuredApplicationPath,
+						/* A build composes with NODE_ENV forced to development, so the
+						   flag asks for both: only a development server serves a page
+						   whose stylesheets arrive after its markup. */
+						development:
+							process.env.NODE_ENV !== 'production' &&
+							process.env.FD_INTERNAL_BUILD !== 'true',
 						resolveIdentity: async (context) => {
 							const principal = principalFromContext(context);
 							if (!principal) return null;
