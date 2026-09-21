@@ -1,4 +1,4 @@
-import { flowdularStateDirectory } from '@flowdular/kernel/runtime-config';
+import { localStateRoots } from '@flowdular/kernel/runtime-config';
 import { constants } from 'node:fs';
 import {
 	chmod,
@@ -48,6 +48,8 @@ interface StateMigrationPlan {
 	readonly missing: readonly string[];
 	readonly unsupported: readonly string[];
 	readonly blockers: readonly string[];
+	/** A second state root the runtime refuses to start with. */
+	readonly legacyRoot: string | null;
 }
 
 function isMissing(error: unknown): boolean {
@@ -75,7 +77,11 @@ async function migrationPlan(
 	workspace: Workspace,
 ): Promise<StateMigrationPlan> {
 	const sourceDirectory = join(workspace.root, LEGACY_DATA_DIRECTORY);
-	const stateDirectory = flowdularStateDirectory(workspace.root);
+	/* A workspace carrying both roots is exactly the one that needs this copy,
+	   so the destination is the current root rather than the runtime's refusal
+	   to choose. The split itself is reported, never resolved here. */
+	const roots = localStateRoots(workspace.root);
+	const stateDirectory = roots.current;
 	const destinationDirectory = join(stateDirectory, 'data');
 	const destinationLabel = relativePath(workspace, destinationDirectory);
 	const blockers: string[] = [];
@@ -108,6 +114,7 @@ async function migrationPlan(
 			missing: [...STATE_FILES],
 			unsupported,
 			blockers,
+			legacyRoot: roots.split ? roots.legacy : null,
 		};
 	}
 	for (const name of (await readdir(sourceDirectory)).sort()) {
@@ -138,6 +145,7 @@ async function migrationPlan(
 		missing,
 		unsupported,
 		blockers,
+		legacyRoot: roots.split ? roots.legacy : null,
 	};
 }
 
@@ -210,6 +218,7 @@ function data(plan: StateMigrationPlan, applied: boolean) {
 		applied,
 		ready: plan.blockers.length === 0,
 		source: LEGACY_DATA_DIRECTORY,
+		splitStateRoot: plan.legacyRoot !== null,
 		destination: relative(
 			dirname(dirname(plan.destinationDirectory)),
 			plan.destinationDirectory,
@@ -223,10 +232,17 @@ function data(plan: StateMigrationPlan, applied: boolean) {
 }
 
 function unsupportedWarnings(plan: StateMigrationPlan): string[] {
-	return plan.unsupported.map(
-		(name) =>
-			`${LEGACY_DATA_DIRECTORY}/${name} is a SQLite database and cannot be migrated to the PostgreSQL or PGlite adapter; it was left in place. Start a fresh workspace on the current adapter; its data does not carry over.`,
-	);
+	return [
+		...plan.unsupported.map(
+			(name) =>
+				`${LEGACY_DATA_DIRECTORY}/${name} is a SQLite database and cannot be migrated to the PostgreSQL or PGlite adapter; it was left in place. Start a fresh workspace on the current adapter; its data does not carry over.`,
+		),
+		...(plan.legacyRoot
+			? [
+					`This workspace has both a .flowdular and a .coreloom state directory, so the application refuses to start. The copy targets .flowdular; keep the root holding the state you want and remove the other one.`,
+				]
+			: []),
+	];
 }
 
 export async function migrateLegacyState(
