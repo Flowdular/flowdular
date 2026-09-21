@@ -16,8 +16,10 @@ import {
 	type ModelReadinessState,
 } from './presentation.ts';
 
+/* The model editor edits language models. A decision connection answers typed
+   questions and configures no model list, so its kind never reaches here. */
 export type EditableProviderKind =
-	Exclude<AgentProviderKind, 'local-simulation'>;
+	Exclude<AgentProviderKind, 'local-simulation' | 'typesafe'>;
 
 export interface ProviderModelDraft {
 	readonly uid: string;

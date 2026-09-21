@@ -423,6 +423,7 @@ export class AgentService {
 			resourceName: null,
 			baseURL: null,
 			models: [],
+			allowWorkflows: false,
 			credentialConfigured: false,
 			credentialRevision: 0,
 			readiness: {

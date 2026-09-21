@@ -84,11 +84,13 @@ spec approval or production access.
 
 ## Maintain the agent guidance
 
-Edit `.ai/rules` and `.ai/skills`, then run `pnpm rules:generate` and
-`pnpm rules:check`. Codex reads `AGENTS.md` and `.agents/skills`; Claude Code reads
-`CLAUDE.md` and `.claude/skills`. Keep generated copies synchronized. `.ai/agents`
-contains reusable role instructions; `.ai/blueprints` and `.ai/policies` are
-project-local inputs referenced by `flowdular.json`.
+Edit `.ai/rules`, `.ai/skills` and `.ai/subagents`, then run `pnpm rules:generate`
+and `pnpm rules:check`. Codex reads `AGENTS.md`, `.agents/skills` and
+`.codex/agents`; Claude Code reads `CLAUDE.md`, `.claude/skills` and
+`.claude/agents`. Keep generated copies synchronized. `.ai/agents` contains
+reusable role instructions, and `.ai/subagents` exposes the root roles as
+delegable subagents; `.ai/blueprints` and `.ai/policies` are project-local inputs
+referenced by `flowdular.json`.
 
 Split a skill when it contains independent procedures with different owning
 files, write scopes or verification commands. Keep shared requirements in the

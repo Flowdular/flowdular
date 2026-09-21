@@ -1,6 +1,8 @@
 import type { DatabaseHandle, DatabaseTransaction } from '@flowdular/database';
 import { integer } from '@flowdular/database';
+import type { AiProviderKind } from '@flowdular/harness/catalog';
 import { modelSupportsTemperature } from '@flowdular/harness/catalog';
+import { isDecisionProviderKind } from '../domain/types.ts';
 import type {
 	AgentModelReadiness,
 	AgentProviderConnection,
@@ -28,6 +30,7 @@ interface ProviderRow {
 	resource_name: string | null;
 	base_url: string | null;
 	models_json: string;
+	allow_workflows: number;
 	credential_key_id: string;
 	credential_iv: string;
 	credential_tag: string;
@@ -78,8 +81,12 @@ function models(
 		throw new Error('Stored provider models are invalid.');
 	return (parsed as AgentProviderModelConfiguration[]).map((model) => ({
 		...model,
+		/* A decision kind has no language model, so the catalog rule about a
+		   temperature does not apply to it. */
 		supportsTemperature:
-			model.supportsTemperature ?? modelSupportsTemperature(kind, model.id),
+			model.supportsTemperature ??
+			(isDecisionProviderKind(kind) ||
+				modelSupportsTemperature(kind as AiProviderKind, model.id)),
 		readiness: readiness.get(model.id) ?? UNPROVEN,
 	}));
 }
@@ -131,6 +138,7 @@ function fromRow(
 			resourceName: row.resource_name,
 			baseURL: row.base_url,
 			models: models(row.models_json, row.kind, readiness),
+			allowWorkflows: row.allow_workflows === 1,
 			credentialConfigured: true,
 			credentialRevision: row.credential_revision,
 			revision: row.revision,
@@ -219,17 +227,18 @@ export const PROVIDERS_SQL: ProvidersPersistenceStatements = Object.freeze({
 			 WHERE tenant_id = $1 AND provider_id = $2`,
 	create: `INSERT INTO agent_provider_connections
 				 (id, tenant_id, provider_key, name, kind, enabled, resource_name,
-				  base_url, models_json, credential_key_id, credential_iv,
-				  credential_tag, credential_ciphertext, credential_revision,
-				  readiness_status, readiness_model, readiness_latency_ms,
-				  readiness_error_code, readiness_checked_at, revision, created_by,
-				  created_at, updated_by, updated_at)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`,
+				  base_url, models_json, allow_workflows, credential_key_id,
+				  credential_iv, credential_tag, credential_ciphertext,
+				  credential_revision, readiness_status, readiness_model,
+				  readiness_latency_ms, readiness_error_code, readiness_checked_at,
+				  revision, created_by, created_at, updated_by, updated_at)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)`,
 	update: `UPDATE agent_provider_connections SET name = $1, enabled = $2,
 				 resource_name = $3, base_url = $4, models_json = $5,
-				 credential_key_id = $6, credential_iv = $7, credential_tag = $8,
-				 credential_ciphertext = $9, credential_revision = $10, revision = $11,
-				 updated_by = $12, updated_at = $13 WHERE tenant_id = $14 AND id = $15`,
+				 allow_workflows = $6, credential_key_id = $7, credential_iv = $8,
+				 credential_tag = $9, credential_ciphertext = $10,
+				 credential_revision = $11, revision = $12, updated_by = $13,
+				 updated_at = $14 WHERE tenant_id = $15 AND id = $16`,
 	delete: `DELETE FROM agent_provider_connections WHERE tenant_id = $1 AND id = $2`,
 	recordReadiness1: `SELECT id FROM agent_provider_connections WHERE tenant_id = $1 AND id = $2`,
 	recordReadiness2: `UPDATE agent_provider_connections SET readiness_status = $1,
@@ -391,6 +400,7 @@ export class DatabaseProviderRepository implements ProviderRepository {
 					item.resourceName,
 					item.baseURL,
 					JSON.stringify(modelConfiguration(item.models)),
+					item.allowWorkflows ? 1 : 0,
 					value.credential.keyId,
 					value.credential.iv,
 					value.credential.tag,
@@ -433,6 +443,7 @@ export class DatabaseProviderRepository implements ProviderRepository {
 				item.resourceName,
 				item.baseURL,
 				JSON.stringify(modelConfiguration(item.models)),
+				item.allowWorkflows ? 1 : 0,
 				value.credential.keyId,
 				value.credential.iv,
 				value.credential.tag,

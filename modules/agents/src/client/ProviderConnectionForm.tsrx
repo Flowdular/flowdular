@@ -19,6 +19,21 @@ import {
 
 type MutableProviderKind = Exclude<AgentProviderKind, 'local-simulation'>;
 
+/* The model editor edits language models. A decision connection carries one
+   model identifier and none of their capability flags, so it has its own
+   field and its own consent switch instead. */
+type LanguageProviderKind = Exclude<MutableProviderKind, 'typesafe'>;
+
+function isDecisionKind(kind: MutableProviderKind): kind is 'typesafe' {
+	return kind === 'typesafe';
+}
+
+/* The local simulation is not a stored connection, so the form opens on the
+   default kind rather than refusing to render. */
+function mutableKind(kind: AgentProviderKind | undefined): MutableProviderKind {
+	return kind === undefined || kind === 'local-simulation' ? 'openai' : kind;
+}
+
 export interface ProviderConnectionFormProps {
 	readonly provider: AgentProviderConnection | null;
 	readonly busy: boolean;
@@ -39,11 +54,7 @@ function stringValue(form: FormData, key: string): string {
 export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 	const formState = useMemo(
 		() => createStore({
-			kind: cell<MutableProviderKind>(
-				props.provider?.kind === 'local-simulation'
-					? 'openai'
-					: props.provider?.kind ?? 'openai',
-			),
+			kind: cell<MutableProviderKind>(mutableKind(props.provider?.kind)),
 			models: cell<readonly ProviderModelDraft[]>(
 				modelDrafts(props.provider?.models ?? []),
 			),
@@ -65,7 +76,22 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 		const resourceName = stringValue(form, 'resourceName');
 		const baseURL = stringValue(form, 'baseURL');
 		const credential = stringValue(form, 'credential');
-		const drafted = draftedModels(models);
+		/* A decision connection carries one model identifier and none of the
+   language-model capability flags. */
+		const decisionModel = stringValue(form, 'decisionModel');
+		const drafted =
+			isDecisionKind(kind)
+				? [
+						{
+							id: decisionModel,
+							label: decisionModel,
+							enabled: true,
+							supportsTools: false,
+							supportsStreaming: false,
+							supportsWebSearch: false,
+						},
+					]
+				: draftedModels(models);
 		if (props.provider) {
 			await props.onSubmit({
 				id: props.provider.id,
@@ -73,6 +99,9 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 				name: stringValue(form, 'name'),
 				enabled: form.get('enabled') === 'on',
 				models: drafted,
+				...(isDecisionKind(kind)
+					? { allowWorkflows: form.get('allowWorkflows') === 'on' }
+					: {}),
 				...(credential ? { credential } : {}),
 				...(resourceName ? { resourceName } : {}),
 				...(baseURL ? { baseURL } : {}),
@@ -142,6 +171,9 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 						<option value="openai-compatible">{t(
 							'agents.providers.kind.openai-compatible',
 						)}</option>
+						<option value="typesafe">{t(
+							'agents.providers.kind.typesafe',
+						)}</option>
 					</select>
 				</FormField>
 				@if (kind === 'azure') {
@@ -190,31 +222,50 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 						required={!props.provider}
 					/>
 				</FormField>
-				<div class="ui-field">
-					<span class="ui-label">
-						{t('agents.providers.form.models')}
-						<em aria-hidden="true">{' *'}</em>
-					</span>
-					<ProviderModelEditor
-						kind={kind}
-						drafts={models}
-						saved={props.provider?.models ?? []}
-						readinessTtlMs={props.readinessTtlMs}
-						testing={props.testingModel}
-						onTest={props.provider
-							? (modelId) => void props.onTest(props.provider!.id, modelId)
-							: null}
-						onChange={setModels}
-					/>
-					@if (modelError) {
-						<span class="ui-help ui-help--error">{modelError}</span>
-					} @else {
-						<span class="ui-help">{t('agents.providers.form.modelsAvailable', {
-							enabled: models.filter((model) => model.enabled).length,
-							total: models.length,
-						})}</span>
-					}
-				</div>
+				@if (isDecisionKind(kind)) {
+					<FormField
+						label={t('agents.providers.form.decisionModel')}
+						help={t('agents.providers.form.decisionModelHelp')}
+						required
+					>
+						<input
+							class="ui-input ui-mono"
+							name="decisionModel"
+							defaultValue={props.provider?.models[0]?.id ?? 'jev-latest'}
+							maxLength={160}
+							required
+						/>
+					</FormField>
+				} @else {
+					<div class="ui-field">
+						<span class="ui-label">
+							{t('agents.providers.form.models')}
+							<em aria-hidden="true">{' *'}</em>
+						</span>
+						<ProviderModelEditor
+							kind={kind as LanguageProviderKind}
+							drafts={models}
+							saved={props.provider?.models ?? []}
+							readinessTtlMs={props.readinessTtlMs}
+							testing={props.testingModel}
+							onTest={props.provider
+								? (modelId) => void props.onTest(props.provider!.id, modelId)
+								: null}
+							onChange={setModels}
+						/>
+						@if (modelError) {
+							<span class="ui-help ui-help--error">{modelError}</span>
+						} @else {
+							<span class="ui-help">{t(
+								'agents.providers.form.modelsAvailable',
+								{
+									enabled: models.filter((model) => model.enabled).length,
+									total: models.length,
+								},
+							)}</span>
+						}
+					</div>
+				}
 				@if (props.provider) {
 					<>
 						<div class="ui-field">
@@ -237,6 +288,21 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 								)}</span>
 							}
 						</div>
+						@if (isDecisionKind(kind)) {
+							<div class="ui-field">
+								<label class="ui-checkbox">
+									<input
+										type="checkbox"
+										name="allowWorkflows"
+										defaultChecked={props.provider.allowWorkflows}
+									/>
+									<span>{t('agents.providers.form.consent')}</span>
+								</label>
+								<span class="ui-help">{t(
+									'agents.providers.form.consentHelp',
+								)}</span>
+							</div>
+						}
 					</>
 				}
 			</div>

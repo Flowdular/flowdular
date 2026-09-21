@@ -236,6 +236,9 @@ export async function simulateWorkflow(
 				case 'agent':
 				case 'action':
 				case 'agent-decision':
+				/* A rehearsal asks no provider and counts no meter, so a typed
+				   decision comes from the fixture exactly as an agent does. */
+				case 'typed-decision':
 					if (!fixture) throw new Error('WORKFLOW_FIXTURE_MISSING');
 					if (fixture.failureCode) {
 						status = 'failed';
@@ -245,7 +248,9 @@ export async function simulateWorkflow(
 					} else {
 						outcomePort =
 							fixture.outcomePort ??
-							(node.type === 'agent-decision' ? 'pass' : 'success');
+							(node.type === 'agent-decision' || node.type === 'typed-decision'
+								? 'pass'
+								: 'success');
 						output = fixture.output ?? null;
 					}
 					break;

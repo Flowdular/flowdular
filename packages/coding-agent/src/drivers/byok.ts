@@ -39,6 +39,9 @@ import {
 
 export interface ByokDriverOptions {
 	readonly configuration: AiProviderConfiguration;
+	/* Where the credential came from, when it was not configured by hand. The
+	   probe names it so an operator can tell which key is answering. */
+	readonly credentialOrigin?: string;
 	readonly maxSteps?: number;
 	readonly maxOutputTokens?: number;
 	readonly maxFileBytes?: number;
@@ -266,10 +269,13 @@ export function createByokDriver(
 				};
 			}
 			const readiness = await probeLanguageModel(options.configuration);
+			const origin = options.credentialOrigin
+				? ` using ${options.credentialOrigin}`
+				: '';
 			return {
 				available: readiness.healthy,
 				detail: readiness.healthy
-					? `${options.configuration.kind} responded in ${readiness.latencyMs} ms.`
+					? `${options.configuration.kind} responded in ${readiness.latencyMs} ms${origin}.`
 					: (readiness.errorCode ?? 'The provider probe failed.'),
 				version: options.configuration.model,
 			};

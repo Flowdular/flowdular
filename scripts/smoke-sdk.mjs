@@ -85,6 +85,8 @@ for (const path of [
 	'.ai/references/catalog/module.json',
 	'.agents/skills/module-new/SKILL.md',
 	'.claude/skills/auto-review/SKILL.md',
+	'.claude/agents/reviewer.md',
+	'.codex/agents/reviewer.toml',
 	'AGENTS.md',
 	'CLAUDE.md',
 	'rulesync.jsonc',

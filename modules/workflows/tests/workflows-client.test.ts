@@ -159,6 +159,22 @@ describe('workflow canvas model', () => {
 		]);
 	});
 
+	/* A simulated run answers a typed decision from its fixture and calls no
+	   provider, so the editor has to offer one for it. */
+	it('builds a fixture for a typed-decision node', () => {
+		const input = graphWith('input');
+		const decision = addWorkflowNode(input.graph, 'typed-decision', 'decision');
+
+		expect(simulationFixtures(decision.graph)).toEqual([
+			{
+				nodeId: decision.nodeId,
+				outcomePort: 'pass',
+				output: {},
+				simulatedDurationMs: 500,
+			},
+		]);
+	});
+
 	it('projects persisted execution evidence without driving execution', () => {
 		const execution: WorkflowNodeExecution = {
 			nodeId: 'agent.1',

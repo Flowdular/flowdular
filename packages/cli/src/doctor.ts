@@ -1,3 +1,4 @@
+import { localStateRoots } from '@flowdular/kernel/runtime-config';
 import { agentResource, findBlueprintFiles } from './agent-resources.ts';
 import { sdkModules } from './sdk.ts';
 import { access, readFile } from 'node:fs/promises';
@@ -67,6 +68,18 @@ export async function runDoctor(
 			evidence: path,
 		});
 	}
+
+	/* A split state root stops the application at startup, so it has to be a
+	   check an operator can read rather than the first raw throw of the day. */
+	const roots = localStateRoots(workspace.root);
+	checks.push({
+		id: 'state.root',
+		status: roots.split ? 'fail' : 'pass',
+		message: roots.split
+			? 'Both .flowdular and .coreloom state directories exist. Keep the one holding the state you want, remove the other, and run "flowdular setup migrate-state" if a .octane-erp directory is also present.'
+			: `Local state root: ${relative(workspace.root, roots.legacy ?? roots.current)}`,
+		evidence: relative(workspace.root, roots.legacy ?? roots.current),
+	});
 
 	const packageJson = JSON.parse(
 		await readFile(join(workspace.root, 'package.json'), 'utf8'),

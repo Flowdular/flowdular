@@ -9,7 +9,7 @@
 	},
 	"scripts": {
 		"dev": "node --env-file-if-exists=.env platform/scripts/dev.mjs",
-		"sandbox": "npx @flowdular/sandbox",
+		"sandbox": "flowdular-sandbox",
 		"typecheck": "pnpm -r --if-present typecheck",
 		"test": "pnpm -r --if-present test",
 		"format": "prettier --write .",
@@ -23,6 +23,7 @@
 		"build": "flowdular module sync --apply && pnpm --filter @app/platform build"
 	},
 	"devDependencies": {
+		"@flowdular/sandbox": "0.4.3",
 		"@tsrx/prettier-plugin": "0.3.120",
 		"prettier": "3.6.2",
 		"flowdular": "0.4.3",

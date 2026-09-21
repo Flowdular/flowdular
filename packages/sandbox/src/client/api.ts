@@ -6,7 +6,10 @@ import type { SandboxDashboard } from '../server/dashboard.ts';
 import type { EjectTarget, GitDeliveryPlan } from '../server/delivery/types.ts';
 import type { FileDiff } from '../server/diff.ts';
 import type { GateResult } from '../server/gates.ts';
-import type { SandboxConnection } from '../server/runtime.ts';
+import type {
+	AiEnvironmentSummary,
+	SandboxConnection,
+} from '../server/runtime.ts';
 import type {
 	ChatEntry,
 	HandoffPlan,
@@ -50,6 +53,8 @@ export interface DriverSummary {
 export interface SandboxState {
 	readonly dashboard?: SandboxDashboard;
 	readonly configuration: SafeSandboxConfiguration;
+	/* The provider the workspace supplies by itself, when there is one. */
+	readonly aiEnvironment: AiEnvironmentSummary | null;
 	readonly connection: SandboxConnection;
 	readonly drivers: readonly DriverSummary[];
 	readonly roles: readonly RoleSummary[];
@@ -146,6 +151,7 @@ export async function loadSandboxState(): Promise<SandboxState> {
 				driverModel: null,
 				previewData: 'fixtures',
 				byok: null,
+				decisions: null,
 				github: {
 					enabled: true,
 					overridesProject: false,
@@ -167,6 +173,7 @@ export async function loadSandboxState(): Promise<SandboxState> {
 					message: value.error?.message ?? 'Sign in to this sandbox.',
 				},
 			},
+			aiEnvironment: null,
 			drivers: [],
 			roles: [],
 			sessions: [],
@@ -249,6 +256,12 @@ export interface ConfigurationPatch {
 	readonly byokCredential?: string;
 	readonly byokBaseUrl?: string;
 	readonly byokResourceName?: string;
+	readonly decisionsEnabled?: boolean;
+	readonly decisionsKind?: string;
+	readonly decisionsModel?: string;
+	readonly decisionsCredential?: string;
+	readonly decisionsClearCredential?: boolean;
+	readonly decisionsRemove?: boolean;
 	readonly githubEnabled?: boolean;
 	readonly githubOverridesProject?: boolean;
 	readonly githubRemote?: string;
@@ -264,6 +277,7 @@ export interface ConfigurationPatch {
 
 export function saveConfiguration(patch: ConfigurationPatch): Promise<{
 	readonly configuration: SafeSandboxConfiguration;
+	readonly aiEnvironment: AiEnvironmentSummary | null;
 	readonly connection: SandboxConnection;
 }> {
 	return post('/sandbox/api/config', patch);
@@ -288,7 +302,7 @@ export interface WorkPlanView {
 	readonly title: string;
 	readonly firstRole: string;
 	readonly rationale: string;
-	readonly classifiedBy: 'agent' | 'rules';
+	readonly classifiedBy: 'agent' | 'rules' | 'decision';
 }
 
 export function createSandboxSession(

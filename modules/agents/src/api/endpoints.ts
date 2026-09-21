@@ -1229,6 +1229,11 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 					name: requiredString(value, 'name', { min: 2, max: 120 }),
 					enabled: requiredBoolean(value, 'enabled'),
 					models: providerModels(value),
+					/* Consent is sent only when the owner meant to change it; an
+					   absent field keeps what the workspace already decided. */
+					...(typeof value.allowWorkflows === 'boolean'
+						? { allowWorkflows: value.allowWorkflows }
+						: {}),
 					...(credential ? { credential } : {}),
 					...(resourceName ? { resourceName } : {}),
 					...(baseURL ? { baseURL } : {}),

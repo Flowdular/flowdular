@@ -54,6 +54,11 @@ export const RELEASE_VERSION_SITES: readonly VersionSite[] = Object.freeze([
 		pattern: /"flowdular":\s*"(\d[^"]*)"/,
 	},
 	{
+		path: 'packages/create-flowdular/template/default/package.json',
+		what: 'the sandbox pin a generated application installs',
+		pattern: /"@flowdular\/sandbox":\s*"(\d[^"]*)"/,
+	},
+	{
 		path: 'packages/create-flowdular/template/default/platform/package.json',
 		what: 'the SDK pin a generated platform installs',
 		pattern: /"@flowdular\/sdk":\s*"(\d[^"]*)"/,

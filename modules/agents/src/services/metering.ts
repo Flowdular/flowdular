@@ -80,6 +80,7 @@ export function meterPeriod(at: number): string {
 export const AGENT_METERS = {
 	runTokens: 'agents.core.run-tokens',
 	runs: 'agents.core.runs',
+	decisions: 'agents.core.decisions',
 } as const;
 
 /**
@@ -101,6 +102,14 @@ export const AGENT_METER_DECLARATIONS: readonly MeterDeclaration[] = [
 		labelKey: 'agents.meter.runs',
 		unit: 'runs',
 		unitKey: AGENT_RUNS_REPORT_LABEL_KEYS.runsUnit,
+		kind: 'cumulative',
+	},
+	{
+		key: 'decisions',
+		label: 'Typed decisions',
+		labelKey: 'agents.meter.decisions',
+		unit: 'decisions',
+		unitKey: 'agents.meter.decisionsUnit',
 		kind: 'cumulative',
 	},
 ];

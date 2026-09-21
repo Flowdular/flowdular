@@ -9,6 +9,14 @@ import {
 	type CodingAgentDriver,
 	type CodingAgentRegistry,
 } from '@flowdular/coding-agent';
+import type { AiProviderKind } from '@flowdular/ai-provider';
+import {
+	AI_CREDENTIAL_VARIABLES,
+	aiCredentialFor,
+	environmentProvider,
+	readAiCredentials,
+} from './ai-environment.ts';
+import { buildDecisionAsk, type DecisionAsk } from './decisions-runtime.ts';
 import {
 	loadSandboxConfiguration,
 	openSecret,
@@ -44,6 +52,12 @@ export interface SandboxRuntime {
 	connection(): SandboxConnection;
 	refresh(): Promise<SandboxConnection>;
 	update(patch: Partial<SandboxConfiguration>): Promise<SandboxConnection>;
+	/* The provider the workspace itself supplies, so setup asks for a key only
+	   when there is none to adopt. Never carries the credential. */
+	aiEnvironment(): AiEnvironmentSummary | null;
+	/* Null unless the operator turned typed decisions on and a credential is
+	   available; every caller has a deterministic path without one. */
+	decisions(): DecisionAsk | null;
 	/* Self-hosted sandboxes keep one browser session per operator token. A
 	   loopback sandbox uses the configured connection directly. */
 	openBrowserSession(token: string): Promise<BrowserSession>;
@@ -51,24 +65,40 @@ export interface SandboxRuntime {
 	closeBrowserSession(id: string): void;
 }
 
+/** What the workspace offers by itself, named for the setup screen. */
+export interface AiEnvironmentSummary {
+	readonly kind: AiProviderKind;
+	readonly model: string;
+	readonly variable: string;
+}
+
+interface DriverSet {
+	readonly drivers: readonly CodingAgentDriver[];
+	readonly environment: AiEnvironmentSummary | null;
+}
+
 async function buildDrivers(
 	workspaceRoot: string,
 	configuration: SandboxConfiguration,
-): Promise<readonly CodingAgentDriver[]> {
+): Promise<DriverSet> {
 	const drivers: CodingAgentDriver[] = [
 		createClaudeCodeDriver({ defaultModel: configuration.driverModel }),
 		createCodexDriver({ defaultModel: configuration.driverModel }),
 	];
+	const credentials = await readAiCredentials(workspaceRoot);
 	if (configuration.byok) {
-		const credential = configuration.byok.credential
-			? await openSecret(workspaceRoot, configuration.byok.credential)
-			: '';
+		const sealed = configuration.byok.credential;
+		const fromEnvironment = sealed
+			? ''
+			: aiCredentialFor(credentials, configuration.byok.kind);
 		drivers.push(
 			createByokDriver({
 				configuration: {
 					kind: configuration.byok.kind,
 					model: configuration.byok.model,
-					credential,
+					credential: sealed
+						? await openSecret(workspaceRoot, sealed)
+						: fromEnvironment,
 					...(configuration.byok.resourceName
 						? { resourceName: configuration.byok.resourceName }
 						: {}),
@@ -76,10 +106,49 @@ async function buildDrivers(
 						? { baseURL: configuration.byok.baseURL }
 						: {}),
 				},
+				...(sealed || !fromEnvironment
+					? {}
+					: {
+							credentialOrigin:
+								AI_CREDENTIAL_VARIABLES[configuration.byok.kind] ?? '',
+						}),
 			}),
 		);
+		const variable = AI_CREDENTIAL_VARIABLES[configuration.byok.kind];
+		return {
+			drivers,
+			environment:
+				!sealed && fromEnvironment && variable
+					? {
+							kind: configuration.byok.kind,
+							model: configuration.byok.model,
+							variable,
+						}
+					: null,
+		};
 	}
-	return drivers;
+	/* Nothing configured, but the workspace exports a key: offer that provider
+	   instead of making the operator retype what the environment already has. */
+	const offered = environmentProvider(credentials);
+	if (!offered) return { drivers, environment: null };
+	drivers.push(
+		createByokDriver({
+			configuration: {
+				kind: offered.kind,
+				model: offered.model,
+				credential: offered.credential,
+			},
+			credentialOrigin: offered.variable,
+		}),
+	);
+	return {
+		drivers,
+		environment: {
+			kind: offered.kind,
+			model: offered.model,
+			variable: offered.variable,
+		},
+	};
 }
 
 export async function createSandboxRuntime(
@@ -87,9 +156,11 @@ export async function createSandboxRuntime(
 ): Promise<SandboxRuntime> {
 	let configuration = await loadSandboxConfiguration(workspaceRoot);
 	let roles = await loadAgentRoles(workspaceRoot);
+	let built = await buildDrivers(workspaceRoot, configuration);
+	let decisions = await buildDecisionAsk(workspaceRoot, configuration);
 	let registry = createCodingAgentRegistry({
 		mode: configuration.mode,
-		drivers: await buildDrivers(workspaceRoot, configuration),
+		drivers: built.drivers,
 	});
 	let platform: PlatformClient | null = null;
 	let connection: SandboxConnection = {
@@ -101,9 +172,11 @@ export async function createSandboxRuntime(
 
 	const rebuild = async (): Promise<SandboxConnection> => {
 		roles = await loadAgentRoles(workspaceRoot);
+		built = await buildDrivers(workspaceRoot, configuration);
+		decisions = await buildDecisionAsk(workspaceRoot, configuration);
 		registry = createCodingAgentRegistry({
 			mode: configuration.mode,
-			drivers: await buildDrivers(workspaceRoot, configuration),
+			drivers: built.drivers,
 		});
 		if (!configuration.platformToken) {
 			platform = null;
@@ -150,6 +223,8 @@ export async function createSandboxRuntime(
 		roles: () => roles,
 		platform: () => platform,
 		connection: () => connection,
+		aiEnvironment: () => built.environment,
+		decisions: () => decisions,
 		refresh: rebuild,
 		update: async (patch) => {
 			configuration = await saveSandboxConfiguration(workspaceRoot, {

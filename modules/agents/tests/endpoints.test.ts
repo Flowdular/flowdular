@@ -355,6 +355,24 @@ describe('agents HTTP boundary', () => {
 		});
 	});
 
+	/* AGENTS-DECISION-DENY: reading a decision connection is the same guarded
+	   route as any other provider read, so a caller without a session or
+	   without the scope never reaches one. */
+	it('denies reading a decision connection without a session or the scope', async () => {
+		const anonymous = composition(null);
+		const unauthenticated = await anonymous.call('/api/agent-providers', {
+			authenticated: false,
+		});
+		expect(unauthenticated.status).toBe(401);
+
+		const reader = composition(principal(['agents.definitions.read']));
+		const forbidden = await reader.call('/api/agent-providers');
+		expect(forbidden.status).toBe(403);
+		expect(await forbidden.json()).toMatchObject({
+			error: { code: 'FORBIDDEN' },
+		});
+	});
+
 	it('guards agent lifecycle mutations with scope, CSRF, and tenant boundaries', async () => {
 		const anonymous = composition(null);
 		expect(

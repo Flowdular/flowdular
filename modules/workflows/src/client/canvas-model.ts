@@ -13,6 +13,7 @@ export const WORKFLOW_NODE_TYPES = [
 	'input',
 	'agent',
 	'agent-decision',
+	'typed-decision',
 	'gate',
 	'validator',
 	'action',
@@ -154,6 +155,30 @@ function nodeTemplate(
 				toolGrants: [],
 				passSchemaId: DATA_SCHEMA,
 				failSchemaId: DATA_SCHEMA,
+			};
+		case 'typed-decision':
+			return {
+				id,
+				label,
+				type,
+				inputPorts: [input],
+				outputPorts: [
+					{ name: 'pass', schemaId: DATA_SCHEMA },
+					{ name: 'fail', schemaId: DATA_SCHEMA },
+					failure,
+				],
+				decidingQuestion: 'decision',
+				questions: [
+					{
+						key: 'decision',
+						kind: 'choice',
+						instruction: '',
+						answers: ['yes', 'no'],
+					},
+				],
+				passAnswer: 'yes',
+				confidenceThreshold: 0.7,
+				statePaths: [],
 			};
 		case 'gate':
 			return {
@@ -448,10 +473,17 @@ export function simulationFixtures(
 	durationMs = 500,
 ): readonly WorkflowSimulationFixture[] {
 	return graph.nodes
-		.filter((node) => ['agent', 'agent-decision', 'action'].includes(node.type))
+		.filter((node) =>
+			['agent', 'agent-decision', 'typed-decision', 'action'].includes(
+				node.type,
+			),
+		)
 		.map((node) => ({
 			nodeId: node.id,
-			outcomePort: node.type === 'agent-decision' ? 'pass' : 'success',
+			outcomePort:
+				node.type === 'agent-decision' || node.type === 'typed-decision'
+					? 'pass'
+					: 'success',
 			output: {} as JsonValue,
 			simulatedDurationMs: durationMs,
 		}));

@@ -96,7 +96,11 @@ describe('scaffold', () => {
 		expect(result.directory).toBe(join(cwd, 'my-app'));
 		const manifest = JSON.parse(
 			await readFile(join(result.directory, 'package.json'), 'utf8'),
-		) as { name: string; scripts: Record<string, string> };
+		) as {
+			name: string;
+			scripts: Record<string, string>;
+			devDependencies: Record<string, string>;
+		};
 		expect(manifest.name).toBe('my-app');
 		const project = JSON.parse(
 			await readFile(join(result.directory, 'flowdular.json'), 'utf8'),
@@ -152,6 +156,9 @@ describe('scaffold', () => {
 			'.ai/references/catalog/module.json',
 			'.agents/skills/module-new/SKILL.md',
 			'.claude/skills/auto-review/SKILL.md',
+			'.ai/subagents/reviewer.md',
+			'.claude/agents/reviewer.md',
+			'.codex/agents/reviewer.toml',
 			'AGENTS.md',
 			'CLAUDE.md',
 			'rulesync.jsonc',
@@ -192,7 +199,10 @@ describe('scaffold', () => {
 		]) {
 			expect(await exists(join(result.directory, path)), path).toBe(true);
 		}
-		expect(manifest.scripts.sandbox).toContain('@flowdular/sandbox');
+		/* The chat builder is installed with the application, so the command runs
+		   the local binary instead of downloading a package on first use. */
+		expect(manifest.scripts.sandbox).toBe('flowdular-sandbox');
+		expect(manifest.devDependencies['@flowdular/sandbox']).toBeTypeOf('string');
 		expect(manifest.scripts.verify).toContain('spec validate --all');
 	});
 
@@ -245,6 +255,8 @@ describe('scaffold', () => {
 			'FD_AUTH_MAIL_TRANSPORT',
 			'FD_AUTH_SMTP_URL',
 			'FD_AUTH_MAIL_FROM',
+			/* Read by a self-hosted sandbox, never by the application itself. */
+			'ANTHROPIC_API_KEY',
 		]) {
 			expect(example, key).toContain(`\n${key}=`);
 		}

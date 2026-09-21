@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: workflows.core
-specVersion: 0.6.11
+specVersion: 0.7.0
 status: approved
 name: Agentic Workflows
 description: Builds, publishes, simulates, and executes durable tenant-scoped DAG workflows whose versioned nodes coordinate pinned agents, deterministic decisions, validated data, and registered module actions.
@@ -18,7 +18,18 @@ dependencies:
   - id: auth.core
     range: ^0.14.0
   - id: agents.core
-    range: ^0.13.0
+    range: ^0.14.0
+provides:
+  - workflows.execution.v1
+requires:
+  - id: agents.run-execution.v2
+  - id: agents.actions.v1
+  - id: agents.decisions.v1
+    optional: true
+  - id: notifications.publish.v1
+    optional: true
+  - id: approvals.requests.v1
+    optional: true
 tenancy: required
 locales:
   - en
@@ -32,8 +43,15 @@ invariants:
   - A workflow definition grants no authority. Live execution intersects the immutable node plan with the initiating actor's trusted permission snapshot and every referenced agent or action permission.
   - Manual and module-originated runs retain the real user or agent actor. Schedule and webhook runs retain a service actor with the configuring user snapshot, while trigger kind and identifier remain separate execution-origin fields.
   - Graph configuration contains declarative typed literal, path, and template mappings only. Arbitrary JavaScript, expressions with side effects, source code, shell commands, dynamic imports, and runtime-downloaded code are forbidden.
-  - Input, output, agent-decision, gate, validator, action, human-approval, merge, and terminal output nodes communicate only through declared, schema-bound ports and immutable JSON envelopes.
+  - Input, output, agent-decision, typed-decision, gate, validator, action, human-approval, merge, and terminal output nodes communicate only through declared, schema-bound ports and immutable JSON envelopes.
   - An agent-decision node must return a schema-valid pass or fail decision with bounded structured data. Free-form text never decides a branch.
+  - A typed-decision node asks agents.decisions.v1 a bounded set of typed questions about its input and routes on the answer. The published revision pins the questions, the declarative mapping from the node input to the question state, the answer that means pass, and the confidence threshold between 0 and 1. It carries the same pass and fail ports as an agent-decision node.
+  - A typed-decision node is not an agent node. It pins no agent revision, grants no tool, invokes no action and can reach nothing but the decision capability, so judgment that needs a tool stays an agent-decision node.
+  - An answer whose confidence is below the pinned threshold is a technically successful attempt that takes the fail port, with the answer, its confidence and the threshold recorded on the attempt. What happens next belongs to the graph, which may route that port to a human-approval node.
+  - A question set that is never answered is not a fail port. An absent agents.core, a workspace flag that is off, a missing or unconsented decision connection, a refused meter and a provider failure each fail the node attempt with its own stable code, under the rule that a port is the outcome of a successful attempt and never an error by itself.
+  - Publication validates a typed-decision node against the capability bounds, which are the question count, the declared answers per question, the state mapping, a pass answer that is one of the declared answers of its question, and a threshold inside 0 to 1. A graph that breaks one of them is refused with a stable code instead of failing at run time.
+  - A simulated run answers a typed-decision node from its supplied fixtures, calls no provider, meters nothing and marks its usage and cost explicitly not applicable, exactly as it does for an agent node.
+  - The run event of a typed-decision attempt carries the chosen answer, its confidence, the threshold and the connection that answered. The question state follows the ordinary payload rules, so a preview is redacted, bounded and never a raw record.
   - Deterministic gate nodes use a versioned allowlisted logic language. Agentic judgment is represented by an explicit agent-decision node, never hidden inside a gate.
   - A validator node emits pass only for data that satisfies its pinned schema and emits bounded structured validation errors on fail.
   - A human-approval node declares its requirement in the published graph and is validated against the workspace roles at publish time; an unknown role or an absent approvals.core refuses publication with a stable code. At run time the node opens one request through approvals.requests.v1 keyed by the run and node, takes the run out of the claim queue until the request resolves or its bounded recheck falls due, resumes on approval, and fails the run with a stable code on rejection, expiry or cancellation. Whenever the run stops waiting for a pending request, whether the run is cancelled, the request's deadline passes, or the run's duration bound is reached, the request is withdrawn rather than left asking people to decide something nobody is waiting for. A simulated run approves without asking anybody. The prompt the node asks and its label are bounded at validation and publication by the limits approvals.core accepts for a request title, so a question that module would refuse fails the publish rather than the run that reaches the node.
@@ -86,6 +104,30 @@ dataOwnership:
   - automations.core owns schedules, webhook definitions, trigger secrets, and ingress audit. A triggered workflow stores only the service actor, configuring user snapshot, origin kind, and source reference.
   - notifications.core owns inbox items, deliveries, and read state. workflows.core owns the run it reports and hands over only the run id, the outcome kind, a bounded English title and step summary, and the accountable member; it never writes or reads notification records and never receives them back.
 acceptanceScenarios:
+  - id: WORKFLOWS-TYPED-DECISION-PASS
+    given: A published graph with a typed-decision node whose pass answer is declared and whose threshold is pinned, in a workspace that turned typed decisions on and consented its decision connection.
+    when: A live run reaches the node and the provider answers the pass answer above the threshold.
+    then: The run takes the pass port, and the attempt event carries the answer, its confidence, the threshold and the connection that answered, without the question state.
+  - id: WORKFLOWS-TYPED-DECISION-LOW
+    given: The same graph and workspace.
+    when: The provider answers below the pinned threshold.
+    then: The attempt succeeds technically and takes the fail port with the recorded reason, the run continues wherever the graph routes that port, and nothing is retried as a failure.
+  - id: WORKFLOWS-TYPED-DECISION-UNAVAILABLE
+    given: A published graph with a typed-decision node, in a workspace that has switched typed decisions off, has no consented decision connection, or has spent its decision allowance.
+    when: A live run reaches the node.
+    then: The node attempt fails with the stable code of that cause and never takes the fail port, so a run that could not ask is never mistaken for one that asked and was told no.
+  - id: WORKFLOWS-TYPED-DECISION-PUBLISH
+    given: A draft graph whose typed-decision node names a pass answer no question declares, carries a threshold outside 0 to 1, exceeds the capability's question bounds, or runs where agents.core is absent.
+    when: Publication is requested.
+    then: Each is refused with a stable code naming the node, and no revision is published.
+  - id: WORKFLOWS-TYPED-DECISION-NO-TOOLS
+    given: A draft graph whose typed-decision node names an agent revision or grants a tool.
+    when: The graph is validated or published.
+    then: It is refused, because a typed-decision node reaches nothing but the decision capability.
+  - id: WORKFLOWS-TYPED-DECISION-SIMULATE
+    given: A published graph with a typed-decision node and a fixture for it.
+    when: The workflow is simulated.
+    then: The node answers from the fixture, no provider is called, no meter is counted, and the simulated attempt reports its usage and cost as not applicable.
   - id: WORKFLOW-CREATE
     given: A principal with workflow definition management permission supplies a valid name and empty draft graph.
     when: The workflow is created.

@@ -3,13 +3,18 @@ import {
 	createVercelAiSdkProvider,
 	probeVercelAiSdkProvider,
 	type AgentProvider,
+	type ProviderReadinessResult,
 	type VercelAiProviderConfiguration,
 } from '@flowdular/harness';
+import { probeDecisionProvider } from '@flowdular/harness/decisions';
+import type { AiProviderKind } from '@flowdular/harness/catalog';
 import { modelSupportsTemperature } from '@flowdular/harness/catalog';
+import { isDecisionProviderKind } from '../domain/types.ts';
 import type {
 	AgentModelReadiness,
 	AgentProviderConnection,
 	AgentProviderKind,
+	DecisionProviderKind,
 	AgentProviderModel,
 	AgentProviderModelConfiguration,
 	CreateAgentProviderInput,
@@ -48,6 +53,8 @@ export interface AgentProviderServiceOptions {
 	readonly hostAllowlist: ReadonlySet<string> | (() => ReadonlySet<string>);
 	readonly readinessTtlMs: number | (() => number);
 	readonly readinessTimeoutMs: number;
+	/* Injected by tests; production probes the decision provider itself. */
+	readonly probeDecisions?: typeof probeDecisionProvider;
 	readonly readinessCooldownMs?: number;
 	readonly now?: () => number;
 	readonly probe?: typeof probeVercelAiSdkProvider;
@@ -99,9 +106,14 @@ function providerKind(
 	value: string,
 ): Exclude<AgentProviderKind, 'local-simulation'> {
 	if (
-		!['vercel', 'azure', 'openai', 'openai-compatible', 'anthropic'].includes(
-			value,
-		)
+		![
+			'vercel',
+			'azure',
+			'openai',
+			'openai-compatible',
+			'anthropic',
+			'typesafe',
+		].includes(value)
 	) {
 		throw new AgentProviderServiceError(
 			'INVALID_PROVIDER_KIND',
@@ -118,6 +130,20 @@ function optionalBounded(
 ): string | null {
 	if (value === undefined || value.trim() === '') return null;
 	return bounded(value, field, 1, maximum);
+}
+
+/* A decision connection answers typed questions. It streams no text and calls
+   no tool, so it is never an agent's model. */
+function assertNotDecisionProvider(
+	kind: AgentProviderKind,
+): asserts kind is Exclude<AgentProviderKind, DecisionProviderKind> {
+	if (isDecisionProviderKind(kind)) {
+		throw new AgentProviderServiceError(
+			'DECISION_PROVIDER_NOT_A_MODEL',
+			'This provider answers typed decisions and cannot run an agent.',
+			409,
+		);
+	}
 }
 
 const UNPROVEN: AgentModelReadiness = {
@@ -162,7 +188,9 @@ function providerModels(
 			supportsWebSearch: Boolean(item.supportsWebSearch),
 			supportsTemperature:
 				item.supportsTemperature ??
-				(kind === 'local-simulation' || modelSupportsTemperature(kind, id)),
+				(kind === 'local-simulation' ||
+					isDecisionProviderKind(kind) ||
+					modelSupportsTemperature(kind as AiProviderKind, id)),
 		};
 	});
 }
@@ -208,6 +236,7 @@ function localConnection(tenantId: string): AgentProviderConnection {
 		enabled: true,
 		resourceName: null,
 		baseURL: null,
+		allowWorkflows: false,
 		models: [
 			{
 				id: LOCAL_MODEL_ID,
@@ -362,6 +391,9 @@ export class AgentProviderService {
 			),
 			baseURL,
 			models: withReadiness(providerModels(kind, input.models), [], false),
+			/* Consent is its own act: a connection is created without it however
+			   the request was shaped. */
+			allowWorkflows: false,
 			credentialConfigured: true,
 			credentialRevision: 1,
 			revision: 1,
@@ -467,6 +499,10 @@ export class AgentProviderService {
 			name: bounded(input.name, 'name', 2, 120),
 			enabled: Boolean(input.enabled),
 			...nextConfiguration,
+			allowWorkflows:
+				input.allowWorkflows === undefined
+					? stored.connection.allowWorkflows
+					: Boolean(input.allowWorkflows),
 			models,
 			credentialRevision:
 				stored.connection.credentialRevision + (credentialChanged ? 1 : 0),
@@ -609,6 +645,25 @@ export class AgentProviderService {
 		return await this.#probeModel(trustedTenantId, stored, model, actor);
 	}
 
+	async #probeDecisions(
+		stored: StoredProviderConnection,
+		model: string,
+	): Promise<ProviderReadinessResult> {
+		const connection = stored.connection;
+		return (this.options.probeDecisions ?? probeDecisionProvider)(
+			{
+				kind: 'typesafe',
+				model,
+				credential: this.credentials.decrypt(
+					stored.credential,
+					credentialContext(connection),
+				),
+				...(connection.baseURL ? { baseURL: connection.baseURL } : {}),
+			},
+			this.options.readinessTimeoutMs,
+		);
+	}
+
 	#probeKey(tenantId: string, providerId: string, modelId: string): string {
 		return `${tenantId}:${providerId}:${modelId}`;
 	}
@@ -632,11 +687,15 @@ export class AgentProviderService {
 			this.#probeKey(trustedTenantId, id, model.id),
 			this.#now(),
 		);
-		const configuration = await this.configuration(stored, model.id);
-		const result = await this.#probe(
-			configuration,
-			this.options.readinessTimeoutMs,
-		);
+		/* A decision connection is probed the same way, with one bounded typed
+		   question instead of one bounded completion. Both answer the same safe
+		   health, latency and error classification. */
+		const result = isDecisionProviderKind(stored.connection.kind)
+			? await this.#probeDecisions(stored, model.id)
+			: await this.#probe(
+					await this.configuration(stored, model.id),
+					this.options.readinessTimeoutMs,
+				);
 		/* The stored code is stable and coarse. The provider's own reason is
 		   redacted of credentials and stays in the server log, which is the only
 		   place a failed probe can be diagnosed. */
@@ -704,6 +763,9 @@ export class AgentProviderService {
 				404,
 			);
 		}
+		/* A decision connection has no language model, so naming one is the
+		   wrong connection rather than a model that is not enabled. */
+		assertNotDecisionProvider(stored.connection.kind);
 		this.model(stored.connection, modelId, true);
 		this.assertUsableConnection(stored.connection, modelId);
 	}
@@ -766,6 +828,7 @@ export class AgentProviderService {
 				404,
 			);
 		}
+		assertNotDecisionProvider(stored.connection.kind);
 		const model = this.model(stored.connection, modelId, true);
 		if (!stored.connection.enabled) {
 			throw new AgentProviderServiceError(
@@ -861,6 +924,9 @@ export class AgentProviderService {
 				404,
 			);
 		}
+		/* A decision connection has no language model, so naming one is the
+		   wrong connection rather than a model that is not enabled. */
+		assertNotDecisionProvider(stored.connection.kind);
 		this.model(stored.connection, modelId, true);
 		this.assertUsableConnection(stored.connection, modelId);
 		return createVercelAiSdkProvider(await this.configuration(stored, modelId));
@@ -936,6 +1002,7 @@ export class AgentProviderService {
 				'Local simulation does not use a stored provider connection.',
 			);
 		}
+		assertNotDecisionProvider(connection.kind);
 		const credential = this.credentials.decrypt(
 			stored.credential,
 			credentialContext(connection),

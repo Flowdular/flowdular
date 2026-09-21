@@ -10,6 +10,7 @@ import type {
 	WorkflowNodeV1,
 	WorkflowPayloadEvidenceV1,
 	WorkflowRunStatus,
+	WorkflowTypedDecisionNodeV1,
 	WorkflowUsageRollupV1,
 } from '../domain/types.ts';
 import {
@@ -17,6 +18,11 @@ import {
 	WORKFLOW_LIMITS,
 } from '../domain/types.ts';
 import type { ApprovalRequest, ApprovalsResolver } from './approvals.ts';
+import {
+	typedDecisionQuestions,
+	typedDecisionState,
+	type DecisionsResolver,
+} from './decisions.ts';
 import {
 	applyWorkflowMappings,
 	evaluateGate,
@@ -42,6 +48,10 @@ export interface WorkflowWorkerOptions {
 	/* Resolved when a human-approval node runs. Absent, or resolving to null,
 	   means approvals.core is not composed and such a node refuses. */
 	readonly approvals?: ApprovalsResolver;
+	/* Resolved when a typed-decision node runs. Absent, or resolving to null,
+	   means agents.core offers no decision capability and such a node fails
+	   its attempt rather than taking a port it never earned. */
+	readonly decisions?: DecisionsResolver;
 	readonly now?: () => number;
 }
 
@@ -154,6 +164,7 @@ export class WorkflowWorker {
 	readonly #pollMs: number;
 	readonly #notifications: NotificationPublisherResolver | undefined;
 	readonly #approvals: ApprovalsResolver | undefined;
+	readonly #decisions: DecisionsResolver | undefined;
 	readonly #now: () => number;
 	#poll: ReturnType<typeof setInterval> | undefined;
 	#scheduled = false;
@@ -175,6 +186,7 @@ export class WorkflowWorker {
 		this.#pollMs = Math.max(250, options.pollMs ?? 1_000);
 		this.#notifications = options.notifications;
 		this.#approvals = options.approvals;
+		this.#decisions = options.decisions;
 		this.#now = options.now ?? Date.now;
 	}
 
@@ -942,6 +954,95 @@ export class WorkflowWorker {
 		}
 	}
 
+	/* A typed decision is one bounded request to agents.core. An answer at or
+	   above the pinned threshold takes the pass port when it is the pinned pass
+	   answer and the fail port otherwise; an answer below it takes the fail
+	   port with the reason. A question that was never answered is an attempt
+	   failure, because a port is the outcome of a successful attempt. */
+	async #executeTypedDecision(
+		run: WorkflowRunRecord,
+		node: WorkflowTypedDecisionNodeV1,
+		input: JsonValue,
+	): Promise<{
+		readonly status: 'succeeded' | 'failed' | 'refused';
+		readonly outcomePort: string;
+		readonly output: JsonValue;
+		readonly code?: string;
+		readonly retryable?: boolean;
+	}> {
+		const decisions = this.#decisions?.();
+		if (!decisions) {
+			return {
+				status: 'refused',
+				outcomePort: '',
+				output: { code: 'WORKFLOW_DECISION_CAPABILITY_UNAVAILABLE' },
+				code: 'WORKFLOW_DECISION_CAPABILITY_UNAVAILABLE',
+			};
+		}
+		const state = typedDecisionState(node, input);
+		if (!state) {
+			return {
+				status: 'refused',
+				outcomePort: '',
+				output: { code: 'WORKFLOW_DECISION_STATE_EMPTY' },
+				code: 'WORKFLOW_DECISION_STATE_EMPTY',
+			};
+		}
+		let result;
+		try {
+			result = await decisions.ask({
+				tenantId: run.tenantId,
+				caller: { moduleId: 'workflows.core', ref: `${run.id}:${node.id}` },
+				state,
+				questions: typedDecisionQuestions(node),
+			});
+		} catch (error) {
+			const code =
+				error && typeof error === 'object' && 'code' in error
+					? String((error as { code: unknown }).code)
+					: 'WORKFLOW_DECISION_FAILED';
+			return {
+				status: 'failed',
+				outcomePort: '',
+				output: { code },
+				code,
+				/* A rate limit or an unreachable provider is worth another
+				   attempt; a workspace that has not turned decisions on is not. */
+				retryable:
+					code === 'PROVIDER_RATE_LIMITED' ||
+					code === 'PROVIDER_UNAVAILABLE' ||
+					code === 'PROVIDER_TIMEOUT',
+			};
+		}
+		const answer = result.answers[node.decidingQuestion];
+		if (!answer || answer.type === 'noul') {
+			/* A yes-no carries no confidence, so it cannot clear a threshold and
+			   is never the deciding question of a published node. */
+			return {
+				status: 'failed',
+				outcomePort: '',
+				output: { code: 'WORKFLOW_DECISION_ANSWER_INVALID' },
+				code: 'WORKFLOW_DECISION_ANSWER_INVALID',
+			};
+		}
+		const value =
+			answer.type === 'choice' ? answer.choice : String(answer.score);
+		const confident = answer.confidence >= node.confidenceThreshold;
+		return {
+			status: 'succeeded',
+			outcomePort: confident && value === node.passAnswer ? 'pass' : 'fail',
+			output: {
+				answer: value,
+				confidence: answer.confidence,
+				threshold: node.confidenceThreshold,
+				/* Which of the workspace's providers answered, never its key
+				   material and never the question state. */
+				connection: result.connection.key,
+				...(confident ? {} : { reason: 'WORKFLOW_DECISION_BELOW_THRESHOLD' }),
+			},
+		};
+	}
+
 	async #executeNode(
 		run: WorkflowRunRecord,
 		node: WorkflowNodeV1,
@@ -973,6 +1074,8 @@ export class WorkflowWorker {
 					outcomePort: evaluateGate(node.expression, input) ? 'pass' : 'fail',
 					output: input,
 				};
+			case 'typed-decision':
+				return await this.#executeTypedDecision(run, node, input);
 			case 'validator': {
 				const errors = validateJsonSchema(
 					input,

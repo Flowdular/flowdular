@@ -19,6 +19,7 @@ import {
 	safeConfiguration,
 	sealSecret,
 } from './config.ts';
+import { decisionSettings } from './decision-settings.ts';
 import {
 	DeliveryError,
 	assertEjectTarget,
@@ -836,6 +837,7 @@ export function createSandboxRoutes(
 			const visible = sessions.filter((session) => session.state !== 'deleted');
 			return json({
 				configuration: safeConfiguration(configuration),
+				aiEnvironment: runtime.aiEnvironment(),
 				connection:
 					configuration.mode === 'self-hosted'
 						? {
@@ -886,9 +888,11 @@ export function createSandboxRoutes(
 				const githubToken = optionalText(value, 'githubToken', 16_384);
 				const configuration = runtime.configuration();
 				if (value.disconnect === true) {
+					const disconnected = await runtime.update({ platformToken: null });
 					return json({
 						configuration: safeConfiguration(runtime.configuration()),
-						connection: await runtime.update({ platformToken: null }),
+						aiEnvironment: runtime.aiEnvironment(),
+						connection: disconnected,
 					});
 				}
 				const platformUrl =
@@ -1051,6 +1055,7 @@ export function createSandboxRoutes(
 				});
 				return json({
 					configuration: safeConfiguration(runtime.configuration()),
+					aiEnvironment: runtime.aiEnvironment(),
 					connection,
 				});
 			} catch (error) {
@@ -1114,6 +1119,7 @@ export function createSandboxRoutes(
 					);
 				const planningEvents: Omit<ChatEntry, 'sequence' | 'at'>[] = [];
 				const plan = await planWork({
+					...(runtime.decisions() ? { decide: runtime.decisions()! } : {}),
 					onEvent: (event) => {
 						if (
 							event.type === 'turn.started' ||
@@ -1155,7 +1161,7 @@ export function createSandboxRoutes(
 						.map((module) => `${module.id} (modules/${module.directory})`)
 						.join(
 							', ',
-						)}, classified by the ${plan.classifiedBy === 'agent' ? 'planner' : 'workspace rules'}. ${plan.rationale} Say so in your first message if this is the wrong module.`,
+						)}, classified by the ${plan.classifiedBy === 'agent' ? 'planner' : plan.classifiedBy === 'decision' ? 'decision model' : 'workspace rules'}. ${plan.rationale} Say so in your first message if this is the wrong module.`,
 				});
 
 				for (const entry of planningEvents)

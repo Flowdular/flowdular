@@ -64,6 +64,8 @@ async function setup() {
 		workspaceRoot: root,
 		configuration: () => ({ ...DEFAULT_CONFIGURATION, mode: 'loopback' }),
 		connection: () => ({ connected: true, authority: null }),
+		aiEnvironment: () => null,
+		decisions: () => null,
 		platform: () => null,
 		registry: () => ({}),
 		roles: () => [],

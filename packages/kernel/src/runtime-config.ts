@@ -24,8 +24,24 @@ export function flowdularEnvironment(
 	return result;
 }
 
-/** Keep a pre-rename database, vault and sandbox in the same physical root. */
-export function flowdularStateDirectory(workspaceRoot: string): string {
+export interface LocalStateRoots {
+	/** Where state belongs now, whether or not it exists yet. */
+	readonly current: string;
+	/** The pre-rename root, when this workspace still has one. */
+	readonly legacy: string | null;
+	/** True while both exist: no single root can be chosen for the runtime. */
+	readonly split: boolean;
+}
+
+export const SPLIT_LOCAL_STATE_MESSAGE =
+	'Both .flowdular and .coreloom state directories exist. Stop the application and choose one complete state directory before restarting.';
+
+/**
+ * Both candidate roots, without choosing between them. Operator tooling that
+ * has to report or repair a split workspace reads this; everything that serves
+ * a request takes the single root from `flowdularStateDirectory`.
+ */
+export function localStateRoots(workspaceRoot: string): LocalStateRoots {
 	const current = resolve(workspaceRoot, '.flowdular');
 	const legacy = resolve(workspaceRoot, '.coreloom');
 	const exists = (path: string): boolean => {
@@ -42,10 +58,16 @@ export function flowdularStateDirectory(workspaceRoot: string): string {
 	};
 	const hasCurrent = exists(current);
 	const hasLegacy = exists(legacy);
-	if (hasCurrent && hasLegacy) {
-		throw new Error(
-			'Both .flowdular and .coreloom state directories exist. Stop the application and choose one complete state directory before restarting.',
-		);
-	}
-	return hasLegacy ? legacy : current;
+	return {
+		current,
+		legacy: hasLegacy ? legacy : null,
+		split: hasCurrent && hasLegacy,
+	};
+}
+
+/** Keep a pre-rename database, vault and sandbox in the same physical root. */
+export function flowdularStateDirectory(workspaceRoot: string): string {
+	const roots = localStateRoots(workspaceRoot);
+	if (roots.split) throw new Error(SPLIT_LOCAL_STATE_MESSAGE);
+	return roots.legacy ?? roots.current;
 }

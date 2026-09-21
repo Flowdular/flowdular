@@ -6,4 +6,6 @@ AGENTS.md
 CLAUDE.md
 .agents/skills/
 .claude/skills/
+.claude/agents/
+.codex/agents/
 .ai/references/

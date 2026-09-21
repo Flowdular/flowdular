@@ -9,6 +9,8 @@ import type {
 	WorkflowHumanApprovalNodeV1,
 	WorkflowNodeFailurePolicyV1,
 	WorkflowNodeV1,
+	WorkflowTypedDecisionNodeV1,
+	WorkflowTypedDecisionQuestionV1,
 } from '../domain/types.ts';
 import { WORKFLOW_LIMITS } from '../domain/types.ts';
 import type {
@@ -52,6 +54,202 @@ function boundedInteger(
 /* The whole requirement is pinned into the published graph, so this is where a
    role that does not exist becomes a publish error rather than a run that
    pauses on nobody. */
+/* Everything a published typed-decision node pins. The deciding question is
+   the one whose answer routes the branch; the rest are asked in the same
+   request and recorded with it. */
+function TypedDecisionEditor(props: {
+	readonly node: WorkflowTypedDecisionNodeV1;
+	readonly editable: boolean;
+	readonly onChange: (node: WorkflowNodeV1) => void;
+}) @{
+	const node = props.node;
+	const deciding = node.questions.find(
+		(question) => question.key === node.decidingQuestion,
+	);
+	const replaceQuestion = (
+		index: number,
+		next: Partial<WorkflowTypedDecisionQuestionV1>,
+	) => {
+		const questions = node.questions.map(
+			(question, at) => at === index ? { ...question, ...next } : question,
+		);
+		props.onChange({ ...node, questions });
+	};
+
+	<div class="ui-form__section">
+		<div class="ui-form__section-head">
+			<b>{t('workflows.inspector.decisionTitle')}</b>
+			<small>{t('workflows.inspector.decisionHelp')}</small>
+		</div>
+		@for (const [index, question] of node.questions.entries(); key question.key) {
+			<div class="ui-form__section">
+				<div class="ui-form__row">
+					<FormField label={t('workflows.inspector.decisionKey')}>
+						<input
+							class="ui-input ui-mono"
+							value={question.key}
+							maxLength={64}
+							disabled={!props.editable}
+							onInput={(event) => {
+								const key = event.currentTarget.value.trim();
+								const questions = node.questions.map(
+									(entry, at) => at === index ? { ...entry, key } : entry,
+								);
+								props.onChange({
+									...node,
+									questions,
+									...(node.decidingQuestion === question.key
+										? { decidingQuestion: key }
+										: {}),
+								});
+							}}
+						/>
+					</FormField>
+					<FormField label={t('workflows.inspector.decisionKind')}>
+						<select
+							class="ui-select"
+							value={question.kind}
+							disabled={!props.editable}
+							onInput={(event) => replaceQuestion(index, {
+								kind: event.currentTarget.value as WorkflowTypedDecisionQuestionV1['kind'],
+							})}
+						>
+							<option value="choice">{t(
+								'workflows.inspector.decisionKind.choice',
+							)}</option>
+							<option value="score">{t(
+								'workflows.inspector.decisionKind.score',
+							)}</option>
+							<option value="noul">{t(
+								'workflows.inspector.decisionKind.noul',
+							)}</option>
+						</select>
+					</FormField>
+				</div>
+				<FormField label={t('workflows.inspector.decisionInstruction')}>
+					<input
+						class="ui-input"
+						value={question.instruction}
+						maxLength={2000}
+						disabled={!props.editable}
+						onInput={(event) => replaceQuestion(index, {
+							instruction: event.currentTarget.value,
+						})}
+					/>
+				</FormField>
+				@if (question.kind !== 'noul') {
+					<FormField
+						label={t('workflows.inspector.decisionAnswers')}
+						help={t('workflows.inspector.decisionAnswersHelp')}
+					>
+						<input
+							class="ui-input"
+							value={(question.answers ?? []).join(', ')}
+							maxLength={2000}
+							disabled={!props.editable}
+							onInput={(event) => replaceQuestion(index, {
+								answers: event.currentTarget.value.split(',').map(
+									(answer) => answer.trim(),
+								).filter((answer) => answer !== ''),
+							})}
+						/>
+					</FormField>
+				}
+			</div>
+		}
+		<div class="ui-form__actions">
+			<Button
+				disabled={!props.editable || node.questions.length >= 8}
+				onClick={() => props.onChange({
+					...node,
+					questions: [
+						...node.questions,
+						{
+							key: `question${node.questions.length + 1}`,
+							kind: 'choice',
+							instruction: '',
+							answers: ['yes', 'no'],
+						},
+					],
+				})}
+			>{t('workflows.inspector.decisionAddQuestion')}</Button>
+		</div>
+		<FormField
+			label={t('workflows.inspector.decisionDeciding')}
+			help={t('workflows.inspector.decisionDecidingHelp')}
+		>
+			<select
+				class="ui-select"
+				value={node.decidingQuestion}
+				disabled={!props.editable}
+				onInput={(event) => props.onChange({
+					...node,
+					decidingQuestion: event.currentTarget.value,
+				})}
+			>
+				@for (const question of node.questions; key question.key) {
+					<option value={question.key}>{question.key}</option>
+				}
+			</select>
+		</FormField>
+		<div class="ui-form__row">
+			<FormField
+				label={t('workflows.inspector.decisionPass')}
+				help={t('workflows.inspector.decisionPassHelp')}
+			>
+				<select
+					class="ui-select"
+					value={node.passAnswer}
+					disabled={!props.editable || !deciding || deciding.kind === 'noul'}
+					onInput={(event) => props.onChange({
+						...node,
+						passAnswer: event.currentTarget.value,
+					})}
+				>
+					@for (const answer of deciding?.answers ?? []; key answer) {
+						<option value={answer}>{answer}</option>
+					}
+				</select>
+			</FormField>
+			<FormField
+				label={t('workflows.inspector.decisionThreshold')}
+				help={t('workflows.inspector.decisionThresholdHelp')}
+			>
+				<input
+					class="ui-input"
+					type="number"
+					min={0}
+					max={1}
+					step={0.05}
+					value={String(node.confidenceThreshold)}
+					disabled={!props.editable}
+					onInput={(event) => props.onChange({
+						...node,
+						confidenceThreshold: Number(event.currentTarget.value),
+					})}
+				/>
+			</FormField>
+		</div>
+		<FormField
+			label={t('workflows.inspector.decisionState')}
+			help={t('workflows.inspector.decisionStateHelp')}
+		>
+			<input
+				class="ui-input ui-mono"
+				value={node.statePaths.join(', ')}
+				maxLength={2000}
+				disabled={!props.editable}
+				onInput={(event) => props.onChange({
+					...node,
+					statePaths: event.currentTarget.value.split(',').map(
+						(path) => path.trim(),
+					).filter((path) => path !== ''),
+				})}
+			/>
+		</FormField>
+	</div>
+}
+
 function ApprovalRequirementEditor(props: {
 	readonly node: WorkflowHumanApprovalNodeV1;
 	readonly editable: boolean;
@@ -467,6 +665,13 @@ export function WorkflowInspector(props: WorkflowInspectorProps) @{
 					<AgentReferenceEditor
 						node={props.node}
 						agents={props.agents}
+						editable={props.editable}
+						onChange={props.onReplaceNode}
+					/>
+				}
+				@if (props.node.type === 'typed-decision') {
+					<TypedDecisionEditor
+						node={props.node}
 						editable={props.editable}
 						onChange={props.onReplaceNode}
 					/>

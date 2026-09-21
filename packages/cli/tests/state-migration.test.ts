@@ -139,6 +139,27 @@ describe('local state identity migration', () => {
 		).resolves.toBe('legacy');
 	});
 
+	/* The dual-root workspace is the one that needs the copy most, and the
+	   runtime refuses to choose a root for it. */
+	it('copies into the current root while a pre-rename root is still there', async () => {
+		await legacy('agent-credential.key', 'secret');
+		await mkdir(join(workspace, '.coreloom'), { recursive: true });
+		await mkdir(join(workspace, '.flowdular'), { recursive: true });
+
+		const result = await run('--apply', '--confirm', 'migrate-legacy-state');
+
+		expect(result.ok).toBe(true);
+		expect(result.data).toMatchObject({
+			applied: true,
+			destination: '.flowdular/data',
+			splitStateRoot: true,
+		});
+		expect(result.warnings.join(' ')).toContain('.coreloom');
+		await expect(
+			readFile(join(workspace, '.flowdular/data/agent-credential.key'), 'utf8'),
+		).resolves.toBe('secret');
+	});
+
 	it('refuses a linked legacy directory', async () => {
 		const outside = await mkdtemp(join(tmpdir(), 'flowdular-state-source-'));
 		try {

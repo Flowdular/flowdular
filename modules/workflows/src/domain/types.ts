@@ -135,6 +135,42 @@ export interface WorkflowAgentDecisionNodeV1 extends WorkflowNodeBaseV1 {
 	readonly failSchemaId: string;
 }
 
+/* What a published typed-decision node may pin, checked at publication so a
+   graph that breaks a bound is refused before a run reaches it. */
+export const TYPED_DECISION_LIMITS = Object.freeze({
+	questions: 8,
+	answers: 32,
+	instructionLength: 2_000,
+	answerLength: 200,
+	stateLength: 16_000,
+});
+
+/* One typed question the published revision pins, with the answer set it may
+   come back with. The node state is built from the node input by the same
+   declarative mappings every other node uses. */
+export interface WorkflowTypedDecisionQuestionV1 {
+	readonly key: string;
+	readonly kind: 'choice' | 'noul' | 'score';
+	readonly instruction: string;
+	/* Choices for a choice question, ordered rubric levels for a score, and
+	   absent for a yes-no. */
+	readonly answers?: readonly string[];
+}
+
+export interface WorkflowTypedDecisionNodeV1 extends WorkflowNodeBaseV1 {
+	readonly type: 'typed-decision';
+	/* The question whose answer decides the branch. Others are asked in the
+	   same request and recorded, never routed on. */
+	readonly decidingQuestion: string;
+	readonly questions: readonly WorkflowTypedDecisionQuestionV1[];
+	/* The answer of the deciding question that means pass. */
+	readonly passAnswer: string;
+	/* Below it the node takes the fail port. Pinned with the revision. */
+	readonly confidenceThreshold: number;
+	/* Paths of the node input that become the question state, in order. */
+	readonly statePaths: readonly string[];
+}
+
 export interface WorkflowGateNodeV1 extends WorkflowNodeBaseV1 {
 	readonly type: 'gate';
 	readonly logicVersion: 1;
@@ -186,6 +222,7 @@ export type WorkflowNodeV1 =
 	| WorkflowInputNodeV1
 	| WorkflowAgentNodeV1
 	| WorkflowAgentDecisionNodeV1
+	| WorkflowTypedDecisionNodeV1
 	| WorkflowGateNodeV1
 	| WorkflowValidatorNodeV1
 	| WorkflowActionNodeV1

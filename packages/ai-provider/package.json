@@ -5,7 +5,8 @@
 	"exports": {
 		".": "./src/index.ts",
 		"./catalog": "./src/catalog.ts",
-		"./pricing": "./src/pricing.ts"
+		"./pricing": "./src/pricing.ts",
+		"./decisions": "./src/decisions.ts"
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit -p tsconfig.json",

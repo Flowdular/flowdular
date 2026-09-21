@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { TYPED_DECISION_LIMITS } from './types.ts';
 import type {
 	JsonSchemaV1,
 	JsonValue,
@@ -11,10 +12,12 @@ import type {
 	WorkflowReferenceSummaryV1,
 	WorkflowTargetMappingV1,
 	WorkflowValidationIssueV1,
+	WorkflowTypedDecisionNodeV1,
 } from './types.ts';
 import { APPROVAL_LIMITS, WORKFLOW_LIMITS } from './types.ts';
 
 const IDENTIFIER = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/;
+const QUESTION_KEY = /^[a-z][a-z0-9_]{0,63}$/;
 const PORT = /^[a-z][a-z0-9-]*$/;
 const FORBIDDEN_CONFIGURATION_KEYS = new Set([
 	'eval',
@@ -135,6 +138,125 @@ export function parseWorkflowGraph(value: unknown): WorkflowGraphV1 {
 	return structuredClone(value) as unknown as WorkflowGraphV1;
 }
 
+/* Everything a published typed-decision node promises a run: a question set
+   inside the capability bounds, a deciding question that can carry a
+   confidence, a pass answer that question declares, and a threshold. A graph
+   that breaks one of them is refused here rather than at the node. */
+function typedDecisionIssues(
+	node: WorkflowTypedDecisionNodeV1,
+): readonly WorkflowValidationIssueV1[] {
+	const issues: WorkflowValidationIssueV1[] = [];
+	const at = (message: string, path: string): void => {
+		issues.push(
+			issue('WORKFLOW_DECISION_NODE_INVALID', message, {
+				kind: 'node',
+				nodeId: node.id,
+				path,
+			}),
+		);
+	};
+	const questions = Array.isArray(node.questions) ? node.questions : [];
+	if (
+		questions.length < 1 ||
+		questions.length > TYPED_DECISION_LIMITS.questions
+	) {
+		at(
+			`Node "${node.id}" must ask between 1 and ${TYPED_DECISION_LIMITS.questions} questions.`,
+			'/questions',
+		);
+	}
+	const keys = new Set<string>();
+	for (const question of questions) {
+		/* The key the capability accepts, which is a plain name rather than the
+		   dotted identifier a node or a tool carries. */
+		if (!QUESTION_KEY.test(question.key ?? '') || keys.has(question.key)) {
+			at(`Node "${node.id}" repeats or misnames a question.`, '/questions');
+			continue;
+		}
+		keys.add(question.key);
+		if (
+			typeof question.instruction !== 'string' ||
+			question.instruction.trim().length === 0 ||
+			question.instruction.length > TYPED_DECISION_LIMITS.instructionLength
+		) {
+			at(`Question "${question.key}" has no usable instruction.`, '/questions');
+		}
+		if (question.kind === 'choice' || question.kind === 'score') {
+			const answers: readonly string[] = question.answers ?? [];
+			if (
+				answers.length < 2 ||
+				answers.length > TYPED_DECISION_LIMITS.answers
+			) {
+				at(
+					`Question "${question.key}" must declare between 2 and ${TYPED_DECISION_LIMITS.answers} answers.`,
+					'/questions',
+				);
+			}
+			if (
+				answers.some(
+					(answer) =>
+						typeof answer !== 'string' ||
+						answer.length === 0 ||
+						answer.length > TYPED_DECISION_LIMITS.answerLength,
+				)
+			) {
+				at(
+					`Question "${question.key}" declares an unusable answer.`,
+					'/questions',
+				);
+			}
+		}
+	}
+	const deciding = questions.find(
+		(question) => question.key === node.decidingQuestion,
+	);
+	if (!deciding) {
+		at(
+			`Node "${node.id}" decides on a question it does not ask.`,
+			'/decidingQuestion',
+		);
+	} else if (deciding.kind === 'noul') {
+		/* A yes-no answer carries no confidence, so it can never clear the
+		   threshold the node pins. */
+		at(
+			`Question "${deciding.key}" answers yes or no and cannot carry a confidence.`,
+			'/decidingQuestion',
+		);
+	} else if (!(deciding.answers ?? []).includes(node.passAnswer)) {
+		at(
+			`Node "${node.id}" passes on an answer question "${deciding.key}" never declares.`,
+			'/passAnswer',
+		);
+	}
+	if (
+		typeof node.confidenceThreshold !== 'number' ||
+		!Number.isFinite(node.confidenceThreshold) ||
+		node.confidenceThreshold < 0 ||
+		node.confidenceThreshold > 1
+	) {
+		at(
+			`Node "${node.id}" must pin a confidence threshold between 0 and 1.`,
+			'/confidenceThreshold',
+		);
+	}
+	const paths = Array.isArray(node.statePaths) ? node.statePaths : [];
+	if (paths.length < 1 || paths.length > 32) {
+		at(
+			`Node "${node.id}" must name between 1 and 32 input paths to ask about.`,
+			'/statePaths',
+		);
+	}
+	if (
+		paths.some(
+			(path) =>
+				typeof path !== 'string' || !/^[a-zA-Z0-9_.-]{1,200}$/.test(path),
+		)
+	) {
+		at(`Node "${node.id}" names an unusable input path.`, '/statePaths');
+	}
+	return issues;
+}
+
 const EXPECTED_PORTS: Record<
 	WorkflowNodeV1['type'],
 	{ readonly inputs: readonly string[]; readonly outputs: readonly string[] }
@@ -142,6 +264,10 @@ const EXPECTED_PORTS: Record<
 	input: { inputs: [], outputs: ['data'] },
 	agent: { inputs: ['input'], outputs: ['success', 'failure'] },
 	'agent-decision': {
+		inputs: ['input'],
+		outputs: ['pass', 'fail', 'failure'],
+	},
+	'typed-decision': {
 		inputs: ['input'],
 		outputs: ['pass', 'fail', 'failure'],
 	},
@@ -740,6 +866,9 @@ export function compileWorkflowGraph(
 				version: String(node.agent.revision),
 				available,
 			});
+		}
+		if (node.type === 'typed-decision') {
+			issues.push(...typedDecisionIssues(node));
 		}
 		if (node.type === 'human-approval') {
 			issues.push(...approvalIssues(node, catalog));

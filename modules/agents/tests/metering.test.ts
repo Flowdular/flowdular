@@ -201,6 +201,14 @@ describe('agents.core metering', () => {
 						unitKey: 'agents.report.runs.unit.runs',
 						kind: 'cumulative',
 					},
+					{
+						key: 'decisions',
+						label: 'Typed decisions',
+						labelKey: 'agents.meter.decisions',
+						unit: 'decisions',
+						unitKey: 'agents.meter.decisionsUnit',
+						kind: 'cumulative',
+					},
 				],
 			},
 		]);

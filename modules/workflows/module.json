@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "workflows.core",
 	"package": "@flowdular/module-workflows",
-	"version": "0.6.11",
+	"version": "0.7.0",
 	"profile": "full",
 	"capabilities": [
 		"api",
@@ -28,7 +28,7 @@
 		},
 		{
 			"id": "agents.core",
-			"range": "^0.13.0"
+			"range": "^0.14.0"
 		}
 	],
 	"provides": ["workflows.execution.v1"],
@@ -45,6 +45,10 @@
 		},
 		{
 			"id": "approvals.requests.v1",
+			"optional": true
+		},
+		{
+			"id": "agents.decisions.v1",
 			"optional": true
 		}
 	],

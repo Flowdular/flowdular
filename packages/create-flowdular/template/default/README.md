@@ -33,11 +33,13 @@ install. Data lives under `.flowdular/data`.
 ## Work with coding agents
 
 `AGENTS.md` and `CLAUDE.md` introduce the application contract. `.ai` contains the
-editable rules, skills, role prompts, policies, blueprints and reference module.
-Codex and Claude Code discover generated skills in `.agents/skills` and
-`.claude/skills`. Supporting guides are in `docs`.
+editable rules, skills, role prompts, subagents, policies, blueprints and
+reference module. Codex and Claude Code discover generated skills in
+`.agents/skills` and `.claude/skills`, and the spec author, module executor and
+reviewer as subagents in `.codex/agents` and `.claude/agents`. Supporting guides
+are in `docs`.
 
-After editing `.ai/rules` or `.ai/skills`, run `pnpm rules:generate`.
+After editing `.ai/rules`, `.ai/skills` or `.ai/subagents`, run `pnpm rules:generate`.
 `pnpm rules:check` detects drift and also runs as part of `pnpm verify`.
 Extend local modules using the published `@flowdular/sdk` imports. Installed
 SDK source is reference material and must not be edited in `node_modules`.

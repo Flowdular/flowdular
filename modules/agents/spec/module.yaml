@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: agents.core
-specVersion: 0.13.1
+specVersion: 0.14.0
 status: approved
 name: Agentic Core
 description: Provides tenant-created and module-owned business agent definitions, tenant-scoped provider connections, reusable procedures, durable streamed execution, run history, the public run queue used by optional automation modules, and the workspace assistant a member talks to from the header through those same runs and tools.
@@ -21,6 +21,11 @@ dependencies:
     range: ^0.1.0
   - id: reports.core
     range: ^0.1.0
+provides:
+  - agents.run-queue
+  - agents.run-execution.v2
+  - agents.actions.v1
+  - agents.decisions.v1
 requires:
   - id: notifications.publish.v1
     optional: true
@@ -93,6 +98,14 @@ invariants:
   - The assistant is enabled by default and a workspace may switch it off with the tenant flag assistantEnabled. A member without agents.assistant.use sees no entry point rather than a locked one, because the lock states that configuration is missing, not that access is refused.
   - Until the assistant agent has a tenant binding naming a usable provider and model, the header entry reads as locked and leads to the configuration that is missing, the provider connections when none is usable and the assistant binding otherwise. No run is queued from a locked entry.
   - A conversation is a durable thread with its whole history. Each turn keeps the question and the answer as its own text beside the run identifier, so a thread still reads once run retention has swept the runs behind it. Threads are a data class of agents.core that no retention sweep removes; a member deletes their own thread, and an erasure that removes a member's runs removes their threads with them.
+  - A decision provider is a provider connection whose kind answers typed questions instead of generating text. It is created, sealed, rotated, probed, listed and audited exactly like a language-model connection, under the same permissions and the same host and address rules, and its credential never reaches a client response, a log, an audit record or a run snapshot.
+  - A decision provider is never an agent's model. An agent definition, a tenant binding, a playground run or a workflow agent node that names one is refused with a stable code, because a decision model streams no text and calls no tool.
+  - The public capability agents.decisions.v1 answers one bounded set of typed questions about one state for one workspace. A question is a choice among declared answers, a score along a declared rubric, or a yes-no, and an answer carries the value, its probabilities and, for a choice or a score, a confidence. agents.core resolves the workspace's enabled decision connection, unseals its credential just in time for that call, and retains neither the credential nor the answers.
+  - Typed decisions are off until a workspace turns them on. The tenant flag typedDecisionsEnabled is off by default and decides whether agents.decisions.v1 answers at all; while it is off the capability reports itself unavailable and every caller follows its own deterministic path instead.
+  - A decision connection carries its own allowWorkflows consent, off by default and set by an owner beside the credential. The flag admits the feature and the consent admits the caller kind, so record data reaches a decision provider only after two deliberate acts of that workspace. A call without both is refused before the provider is resolved.
+  - Asking a decision is metered. agents.core.decisions is declared with the other meters while agents.core composes, asked before the call for the number of questions it carries, and counted once after the answer against the call identifier. A refused verdict answers METER_LIMIT_EXCEEDED and makes no provider call; an allowed or warning verdict proceeds unchanged.
+  - agents.core stores no decision. The caller keeps the state it sent and the answers it received, and this module's trail records only that a workspace asked, which caller asked, how many questions it carried, which connection answered and what it cost. The state, the questions and the answers never enter the trail, an audit record or a log.
+  - A decision request is bounded before it leaves, by a fixed maximum of questions per call, of declared answers per question and of characters of state, and anything past one of them is refused with a stable code rather than sent. A bound the provider itself applies is never the only bound.
 permissions:
   - id: agents.assistant.use
     description: Talk to the workspace assistant and read one's own conversations in the active tenant.
@@ -115,6 +128,7 @@ permissions:
   - id: agents.skills.manage
     description: Create and version reusable agent procedures in the active tenant. The skill-named identifier is retained for authorization compatibility.
 dataOwnership:
+  - agents.core owns decision connection metadata, its sealed credential, its consent switch and the per-call accounting of what a workspace asked. The calling module owns the state it sent and the answers it received; agents.core keeps neither.
   - agents.core owns assistant conversations and their turns, each bound to the tenant and to the member who started it, and the link from a turn to the run that answered it.
   - Business modules own the current module-supplied definition and semantic revision of each module-owned business agent they register.
   - agents.core owns tenant-created agent identity and configuration, tenant bindings for module-owned agents, provider and model selection, reduced tool grants, executable revisions, and lifecycle status.
@@ -347,6 +361,34 @@ acceptanceScenarios:
     given: A workspace with runs settled on several days inside the requested range and runs settled outside it.
     when: The reports.core provider agents.runs is read.
     then: It answers the runs and token totals of the range as tiles and runs and tokens per day as two series read from the existing rollup, counting only the days inside the range and writing nothing. It names itself, its tiles and its lines with keys of this module's bundle, and it passes the reader's time budget into its own tenant transaction so an expired budget cancels the statement instead of leaving it running.
+  - id: AGENTS-DECISION-PROVIDER
+    given: An owner with provider management permission and a decision provider kind.
+    when: The connection is created, its credential rotated and a readiness probe requested.
+    then: Tenant metadata and a sealed credential are persisted, the response exposes only credential presence and revision, and the probe records safe health, latency and error classification from one bounded typed question without returning a provider body.
+  - id: AGENTS-DECISION-NOT-A-MODEL
+    given: A workspace with a decision provider connection.
+    when: A principal names it as an agent's provider and model, binds a module-owned agent to it, or publishes a workflow agent node against it.
+    then: Each is refused with a stable code before any run is created, because a decision model neither streams text nor calls a tool.
+  - id: AGENTS-DECISION-FLAG-OFF
+    given: A workspace with a healthy consented decision connection and typedDecisionsEnabled off.
+    when: A module resolves agents.decisions.v1 and asks a question set.
+    then: The capability reports itself unavailable with a stable code, no provider call is made, nothing is metered, and the caller continues on its own deterministic path.
+  - id: AGENTS-DECISION-CONSENT
+    given: A workspace with typedDecisionsEnabled on and a decision connection whose allowWorkflows consent is off.
+    when: A workflow asks a question set.
+    then: The call is refused with a stable code before the credential is unsealed and before any outbound request, and the refusal names consent rather than the provider.
+  - id: AGENTS-DECISION-METER
+    given: A workspace that has spent its monthly allowance of agents.core.decisions.
+    when: A further question set is asked, and afterwards one is asked inside the allowance.
+    then: The first is refused with METER_LIMIT_EXCEEDED before any provider call and counts nothing; the second is answered and counted once against its call identifier, so a retry of the same call counts no second fact.
+  - id: AGENTS-DECISION-DENY
+    given: A caller that is unauthenticated, lacks the required scope, or names another workspace.
+    when: It asks a question set or reads a decision connection.
+    then: The request is denied before the connection is resolved, no credential is unsealed and no cross-workspace metadata is exposed.
+  - id: AGENTS-DECISION-TRAIL
+    given: A workspace that asked a question set carrying customer text and received answers.
+    when: A principal with agents.runs.read reads the audit trail and verifies its chain.
+    then: The trail carries one event naming the caller, the connection, the number of questions and the cost, the chain verifies, and neither the state, the questions nor the answers appear anywhere in it.
   - id: ASSISTANT-LOCKED
     given: A workspace where the assistant agent has no binding naming a usable provider and model.
     when: A member with agents.assistant.use opens the workspace.

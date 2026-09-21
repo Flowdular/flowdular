@@ -6,6 +6,11 @@ export {
 } from './runtime.ts';
 export type { AgentRuntime, AgentRuntimeOptions } from './runtime.ts';
 export {
+	AGENT_DECISIONS_CAPABILITY,
+	createAgentDecisions,
+} from './decisions.ts';
+export type { AgentDecisionAsk, AgentDecisions } from './decisions.ts';
+export {
 	AGENT_RUN_QUEUE_CAPABILITY,
 	createAgentRunQueue,
 } from './run-queue.ts';

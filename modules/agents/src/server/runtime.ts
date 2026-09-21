@@ -23,6 +23,7 @@ import {
 	type ProviderRepository,
 } from '../services/provider-repository.ts';
 import { AgentProviderBroker } from '../services/provider-broker.ts';
+import { AgentDecisionService } from '../services/decision-service.ts';
 import { AgentProviderService } from '../services/provider-service.ts';
 import {
 	runGrantAuthorityFromEnvironment,
@@ -106,6 +107,7 @@ export interface AgentRuntimeOptions {
 
 export interface AgentRuntime {
 	service(): Promise<AgentService>;
+	decisionService(): Promise<AgentDecisionService>;
 	/* The store the declared data classes sweep, export and erase through. It
 	   opens the runtime's own leases on first use, like every other accessor
 	   here, so declaring a class at composition opens no connection. */
@@ -231,6 +233,7 @@ export function createAgentRuntime(
 	let usage: AgentUsageService | undefined;
 	let repository: AgentRepository | undefined;
 	let providerRepository: ProviderRepository | undefined;
+	let decisions: AgentDecisionService | undefined;
 	let leases: readonly DatabaseAdapterLease[] = [];
 	let servicePromise: Promise<AgentService> | undefined;
 	let actionRuntime: AgentActionRuntime | undefined;
@@ -348,6 +351,17 @@ export function createAgentRuntime(
 				},
 			);
 			providers = providerService;
+			decisions = new AgentDecisionService(
+				providerRepository,
+				vault,
+				repository,
+				{
+					typedDecisionsEnabled: (tenantId) =>
+						settings?.typedDecisionsEnabled(tenantId) ?? false,
+					...(settings ? { primeSettings: settings.prime } : {}),
+					...(options.meters ? { meters: options.meters } : {}),
+				},
+			);
 			const runGrantAuthority =
 				options.runGrantAuthority ??
 				runGrantAuthorityFromEnvironment(
@@ -453,6 +467,10 @@ export function createAgentRuntime(
 		providerService: async () => {
 			await resolved();
 			return providers!;
+		},
+		decisionService: async () => {
+			await resolved();
+			return decisions!;
 		},
 		assistantService: async () => {
 			await resolved();
