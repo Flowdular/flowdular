@@ -44,6 +44,14 @@
 	white-space: nowrap;
 }
 
+/* A logo the deployment points at is any shape and any size; the box is the
+   mark's, and the image is fitted into it rather than allowed to set the
+   height of the sidebar head. */
+.shell-brand__logo {
+	flex: none;
+	object-fit: contain;
+}
+
 .sidebar__close {
 	display: none;
 }

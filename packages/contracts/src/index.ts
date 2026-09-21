@@ -4,7 +4,7 @@
    removed or changed. The surface is pinned by
    packages/kernel/platform-api.snapshot.d.ts; `pnpm platform-api:check` fails
    when the surface changes without a bump here. */
-export const PLATFORM_API_VERSION = '0.1.26';
+export const PLATFORM_API_VERSION = '0.1.27';
 
 /* The workspace time zone: one tenant setting, declared by the module named
    here and read by any module that shows or schedules a local time. The id, the
@@ -388,6 +388,30 @@ export type {
 export { moduleCatalogSchema, moduleArtifactSchema } from './schemas.ts';
 
 export { RESERVED_WEB_SEGMENTS, WEB_MOUNT_PATH, WEB_PAGE_PATH } from './web.ts';
+
+export {
+	applicationBrandingFrom,
+	brandingImageOrigins,
+	brandingTitleSuffix,
+	isBrandingValue,
+	BRANDING_ASSET_URL_PATTERN,
+	BRANDING_COLOR_PATTERN,
+	BRANDING_DATA_ELEMENT_ID,
+	BRANDING_DESCRIPTION_MAX,
+	BRANDING_DESCRIPTION_PATTERN,
+	BRANDING_NAME_MAX,
+	BRANDING_NAME_PATTERN,
+	BRANDING_MODULE_ID,
+	BRANDING_NAME_PROPERTY,
+	BRANDING_OPTIONAL_ASSET_URL_PATTERN,
+	BRANDING_SETTING_KEYS,
+	BRANDING_STATE_KEY,
+	BRANDING_TITLE_MAX,
+	BRANDING_TITLE_PATTERN,
+	BRANDING_URL_MAX,
+	DEFAULT_APPLICATION_BRANDING,
+} from './branding.ts';
+export type { ApplicationBranding } from './branding.ts';
 
 export type {
 	WebMount,

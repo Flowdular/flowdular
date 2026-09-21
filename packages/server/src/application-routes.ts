@@ -1,3 +1,8 @@
+import { BRANDING_STATE_KEY } from '@flowdular/contracts';
+import {
+	brandingHeadInsert,
+	currentApplicationBranding,
+} from './application-branding.ts';
 import { injectHtmlHead } from './web-html.ts';
 import {
 	RenderRoute,
@@ -62,11 +67,17 @@ export function createApplicationRoutes(options: {
 				before: [
 					async (context, next) => {
 						context.state.set('flowdular.application.path', base);
+						/* Resolved before the render, so the server render and the
+						   browser read the same values and the head never carries two
+						   answers. */
+						const branding = currentApplicationBranding();
+						context.state.set(BRANDING_STATE_KEY, branding);
 						const response = await next();
 						response.headers.set('cache-control', 'no-store');
 						return injectHtmlHead(
 							response,
-							`<script id="flowdular-application-data" type="application/json">${JSON.stringify(base)}</script>`,
+							`<script id="flowdular-application-data" type="application/json">${JSON.stringify(base)}</script>` +
+								brandingHeadInsert(branding),
 						);
 					},
 				],

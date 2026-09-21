@@ -3,7 +3,9 @@ import { SYSTEM_PERMISSIONS } from '../acl/permissions.ts';
 import translationsEn from '../../translations/en.json';
 import translationsPl from '../../translations/pl.json';
 import { ApiDocsView } from './ApiDocsView.tsrx';
+import { BrandingView } from './BrandingView.tsrx';
 import { ModulesView } from './ModulesView.tsrx';
+import './branding.css';
 
 export interface SystemClientContributionOptions {
 	readonly csrfToken: string;
@@ -34,6 +36,21 @@ export function createSystemClientContribution(
 				order: 60,
 			},
 			{
+				id: 'system.navigation.branding',
+				viewId: 'branding',
+				group: 'Administration',
+				section: 'platform',
+				get label() {
+					return t('system.navigation.branding');
+				},
+				glyph: 'sparkle',
+				get description() {
+					return t('system.navigation.brandingDescription');
+				},
+				scope: SYSTEM_PERMISSIONS.settingsRead,
+				order: 62,
+			},
+			{
 				id: 'system.navigation.api',
 				viewId: 'api',
 				group: 'Administration',
@@ -61,6 +78,14 @@ export function createSystemClientContribution(
 					/>,
 			},
 			{ id: 'api', render: () => <ApiDocsView /> },
+			{
+				id: 'branding',
+				render: () =>
+					<BrandingView
+						csrfToken={options.csrfToken}
+						canManage={scopes.includes(SYSTEM_PERMISSIONS.settingsManage)}
+					/>,
+			},
 		],
 	};
 }

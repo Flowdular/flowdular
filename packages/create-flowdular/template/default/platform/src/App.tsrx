@@ -2,6 +2,10 @@ import { configureApplicationFromPage } from '@flowdular/sdk/client/routing';
 import {
 	ApplicationShell,
 	activeLocale,
+	applicationBranding,
+	brandingTitleSuffix,
+	configureBrandingFromPage,
+	DEFAULT_APPLICATION_BRANDING,
 	shellLocationFromUrl,
 	t,
 } from '@flowdular/sdk/client';
@@ -10,7 +14,7 @@ import {
 	authScreenFromUrl,
 } from '@flowdular/sdk/modules/auth/client';
 import type { AuthPrincipal } from '@flowdular/sdk/modules/auth';
-import { Head } from '@octanejs/seo';
+import { Head, Link, Meta, Seo } from '@octanejs/seo';
 import type { RenderRouteProps } from '@octanejs/vite-plugin';
 import {
 	createModuleClientContributions,
@@ -64,9 +68,29 @@ function AuthenticatedApp(props: AuthenticatedAppProps) @{
 
 export function App(props?: RenderRouteProps) @{
 	configureApplicationFromPage(props, applicationBasePath);
+	configureBrandingFromPage(props);
+	const branding = applicationBranding();
 	const initialUrl =
 		props?.url ?? (typeof window === 'undefined' ? '/' : window.location.href);
 	<Head>
+		<Seo
+			title={t('shell.workspace.title')}
+			titleTemplate={'%s · ' + brandingTitleSuffix(branding)}
+			description={branding.description || t('shell.seo.description')}
+			robots={{ index: false, follow: false, noarchive: true }}
+			openGraph={{ type: 'website', siteName: branding.appName }}
+		/>
+		<Link rel="icon" href={branding.faviconUrl} />
+		<Meta name="theme-color" content={branding.themeColor} />
+		{/* A new application ships no preview image of its own, so the link
+    preview is declared only once an operator points the setting at one. */}
+		@if (branding.ogImageUrl !== DEFAULT_APPLICATION_BRANDING.ogImageUrl) {
+			<>
+				<Meta property="og:image" content={branding.ogImageUrl} />
+				<Meta name="twitter:card" content="summary_large_image" />
+				<Meta name="twitter:image" content={branding.ogImageUrl} />
+			</>
+		}
 		<AuthenticationCore
 			initialScreen={authScreenFromUrl(initialUrl)}
 			renderAuthenticated={(principal, controls) =>

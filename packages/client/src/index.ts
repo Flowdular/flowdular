@@ -4,6 +4,18 @@ export {
 	configureApplicationRouting,
 	workspaceViewHref,
 } from './routing.ts';
+export {
+	applicationBranding,
+	configureApplicationBranding,
+	configureBrandingFromPage,
+} from './branding.ts';
+/* The application entry renders the head from these; re-exported here so it
+   reads the branding through the package it already composes the shell from. */
+export {
+	brandingTitleSuffix,
+	DEFAULT_APPLICATION_BRANDING,
+} from '@flowdular/contracts';
+export type { ApplicationBranding } from '@flowdular/contracts';
 export { loadWebPage, webPageData } from './web.ts';
 export {
 	createClientContributionRegistry,

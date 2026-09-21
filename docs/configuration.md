@@ -18,6 +18,22 @@ deployments must set the secret keys.
 | `FD_METRICS`         | `false`                           | Expose `GET /api/metrics`; see [operations.md](operations.md)              |
 | `FD_METRICS_TOKEN`   | none                              | Bearer token a metrics scrape must present                                 |
 
+## Branding
+
+The name, the document title, the description, the link preview image, the
+browser icon, the theme colour and the logo are not environment variables: they
+are `system.core` settings an owner with `system.settings.manage` changes under
+Administration, Branding, and every change is audited. One value serves the
+whole deployment, so the sign-in screen and a shared link carry it too, and a
+setting nobody changed renders the product's own.
+
+An address is stored only as a path on this deployment (`/brand/logo.svg`) or an
+https URL; `javascript:`, `data:` and protocol-relative values are refused when
+they are written. Every https branding image origin is added to `img-src` of the
+policy this deployment serves, including an `FD_CSP` of your own, so the browser
+loads it; an `FD_CSP` without an `img-src` directive is left alone and then has
+to name the origin itself.
+
 ## Observability
 
 Spans are always recorded into a bounded in-process buffer and the logger always

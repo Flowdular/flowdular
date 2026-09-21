@@ -2,7 +2,11 @@ import { applicationPath } from '@flowdular/client/routing';
 import { useEffect, useMemo, type OctaneNode } from 'octane';
 import { Seo } from '@octanejs/seo';
 import { Alert, BrandMark, Button, FormField, Icon } from '@flowdular/ui';
-import { restorePersistedLocale, useTranslation } from '@flowdular/client';
+import {
+	applicationBranding,
+	restorePersistedLocale,
+	useTranslation,
+} from '@flowdular/client';
 import { useValue } from 'segment-state';
 import type { AuthPrincipal } from '../domain/types.ts';
 import {
@@ -200,6 +204,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 			: slugCheck.status === 'available'
 				? t('auth.signup.slug.available')
 				: t('auth.signup.slug.help');
+	const branding = applicationBranding();
 	const seoTitle =
 		props.screen === 'sign-up'
 			? t('auth.signup.seo.title')
@@ -237,8 +242,18 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 				<BrandMark size={380} signature tone="inverse" />
 			</span>
 			<a class="auth-brand" href="/" aria-label={t('auth.brand.label')}>
-				<BrandMark size={24} signature tone="inverse" />
-				Flowdular
+				@if (branding.logoUrl) {
+					<img
+						class="auth-brand__logo"
+						src={branding.logoUrl}
+						alt=""
+						width={24}
+						height={24}
+					/>
+				} @else {
+					<BrandMark size={24} signature tone="inverse" />
+				}
+				{branding.appName}
 			</a>
 			<div class="auth-story__copy">
 				<span class="auth-kicker">{t('auth.story.kicker')}</span>
