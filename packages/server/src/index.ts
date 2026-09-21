@@ -25,6 +25,12 @@ export {
 	createApplicationRoutes,
 	validateApplicationPath,
 } from './application-routes.ts';
+export {
+	brandingHeadInsert,
+	currentApplicationBranding,
+	installApplicationBranding,
+} from './application-branding.ts';
+export type { ApplicationBrandingProvider } from './application-branding.ts';
 export { trackResponseBody } from './response-lifetime.ts';
 export {
 	assertRouteConflicts,
@@ -173,6 +179,7 @@ export type {
 } from './pagination.ts';
 export {
 	createSecurityHeadersMiddleware,
+	withBrandingImageSources,
 	DEVELOPMENT_CONTENT_SECURITY_POLICY,
 	PRODUCTION_CONTENT_SECURITY_POLICY,
 	securityHeaders,

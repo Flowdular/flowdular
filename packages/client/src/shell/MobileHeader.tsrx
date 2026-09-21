@@ -1,5 +1,7 @@
+import { applicationBranding } from '../branding.ts';
 import { applicationPath } from '../routing.ts';
-import { BrandMark, Icon } from '@flowdular/ui';
+import { ShellMark } from './BrandMark.tsrx';
+import { Icon } from '@flowdular/ui';
 import { t } from '../i18n/runtime.ts';
 
 export function MobileHeader(props: { onToggle: () => void }) @{
@@ -9,8 +11,8 @@ export function MobileHeader(props: { onToggle: () => void }) @{
 			href={applicationPath()}
 			aria-label={t('shell.brand.home')}
 		>
-			<BrandMark size={22} />
-			Flowdular
+			<ShellMark size={22} />
+			{applicationBranding().appName}
 		</a>
 		<button
 			class="ui-btn ui-btn--secondary ui-btn--icon"

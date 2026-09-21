@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: auth.core
-specVersion: 0.14.3
+specVersion: 0.14.4
 status: approved
 name: Authentication Core
 description: Provides tenant-aware accounts, password authentication, sessions, scopes, tenant roles, API tokens for machine clients, the module settings store, the auth audit trail, security headers, authentication screens, and server authorization middleware.
@@ -13,7 +13,7 @@ capabilities:
   - cli
 dependencies:
   - id: system.core
-    range: ^0.8.0
+    range: ^0.9.0
 tenancy: required
 locales:
   - en

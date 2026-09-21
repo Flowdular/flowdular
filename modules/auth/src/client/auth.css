@@ -46,6 +46,12 @@
 	text-decoration: none;
 }
 
+/* A logo the deployment points at is any shape; the box is the mark's. */
+.auth-brand__logo {
+	flex: none;
+	object-fit: contain;
+}
+
 .auth-kicker {
 	font-size: var(--text-xs);
 	font-weight: 600;

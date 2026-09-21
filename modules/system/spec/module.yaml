@@ -1,9 +1,9 @@
 schemaVersion: 2
 id: system.core
-specVersion: 0.8.8
+specVersion: 0.9.0
 status: approved
 name: System Core
-description: Provides the application shell, platform health, module discovery, and the administration surface for module settings.
+description: Provides the application shell, platform health, module discovery, the deployment's own branding, and the administration surface for module settings.
 profile: full
 capabilities:
   - api
@@ -32,6 +32,9 @@ invariants:
   - Every activation change appends one audit event, system.module.activated or system.module.deactivated, to the auth.core trail with the module id and the actor. Repeating the current state changes nothing and writes no event.
   - Activation is enforced in three places from one per-workspace snapshot published as the public capability system.modules.v1 and memoised for at most thirty seconds per tenant, refreshed at once by a change made through this instance. defineEndpoint answers 403 MODULE_INACTIVE for an endpoint of an inactive module in the principal's workspace, required modules exempt; the application shell hides the navigation, views, widgets and command palette entries of inactive modules; the endpoint gate never reads a tenant id from the request.
   - The API screen reads the platform's own OpenAPI document and lists the operations it describes. The document is built per caller from the endpoints the running composition defined, so a module a sandbox session wrote is described as soon as it is enabled, and an operation the caller has no permission for, or of a module inactive in its workspace, is not listed. The screen reads, registers no endpoint of its own and is behind system.modules.read.
+  - system.core declares the branding of the deployment as the platform-scoped settings system.core.appName, documentTitle, description, ogImageUrl, faviconUrl, themeColor and logoUrl, each with the product's own value as its default. They carry one identity for the whole installation, so the sign-in screen, the shell and a shared link read the same value and a workspace cannot change them; only a principal with system.settings.manage can, through the settings administration API, with an audit record.
+  - The application document carries its branding from the server, where the route resolves the stored values once per request, hands them to the server render and emits them as one JSON data block the browser adopts on hydration, so the head, the sidebar wordmark and the boot splash never disagree and the client makes no second request to learn them. A deployment that stored nothing renders the product defaults, and an empty appName, documentTitle, description or logoUrl means the default, never an empty document title or a broken image.
+  - A branding value that reaches the document head or an image source is stored only as a same-origin absolute path or an https URL, and themeColor only as a six-digit hex colour. A value that fails its declared pattern is refused when it is written, and every value is escaped where it is rendered, so a stored setting can never introduce markup or a script into the document.
 permissions:
   - id: system.workspace.access
     description: Open the authenticated ERP workspace.
@@ -161,7 +164,35 @@ acceptanceScenarios:
     given: A module an owner deactivated for the workspace.
     when: A member of that workspace opens the application shell.
     then: The shell reads the active module ids through GET /api/system/modules/active, hides the module's navigation entries, views, workspace widgets and command palette search, returns a bookmark of one of its views to the dashboard, and shows every module when the read fails.
+  - id: SYSTEM-BRANDING-READ
+    given: A principal with system.settings.read opens Administration > Branding.
+    when: The screen loads.
+    then: Every branding setting is listed with its current value, a value nobody changed shows the product default, the screen states that it applies to every workspace, and every control is disabled without system.settings.manage.
+  - id: SYSTEM-BRANDING-MANAGE
+    given: A principal with system.settings.manage changes the name, the document title, the description, the preview image, the icon, the theme colour or the logo.
+    when: The change is submitted and the application document is requested again.
+    then: The value is stored for the deployment, one settings audit event records the module, the key, the previous and the next value and the actor, and the next document carries it in its title, its description, its social metadata, its icon, its theme colour, its sidebar wordmark and its boot splash, for every workspace and for the sign-in screen alike.
+  - id: SYSTEM-BRANDING-CLEAR
+    given: A branding setting an owner changed earlier.
+    when: The owner clears it.
+    then: The stored value is removed and the product default is rendered again, with one audit event for the change.
+  - id: SYSTEM-BRANDING-VALIDATE
+    given: A principal with system.settings.manage submits a name longer than its bound, a URL that is neither a same-origin absolute path nor an https URL, such as a javascript or data address or a protocol-relative one, or a theme colour that is not six hex digits.
+    when: The update is processed.
+    then: The server refuses it with 400, the stored value is unchanged, and no document ever renders the refused value.
+  - id: SYSTEM-BRANDING-ANONYMOUS
+    given: A deployment whose branding was changed.
+    when: An anonymous visitor loads the sign-in document, or a crawler reads it for a link preview.
+    then: The server-rendered head already carries the changed title, description, preview image, icon and theme colour, without a session, without a tenant and without a second request.
+  - id: SYSTEM-BRANDING-DENY
+    given: A principal without system.settings.manage, or a mutation carrying an API token instead of a browser session.
+    when: The principal changes a branding setting.
+    then: The server returns 401 or 403, nothing is stored and no audit event is written.
 screens:
+  - id: branding
+    kind: form
+    title: Branding
+    navigationGroup: Administration
   - id: api
     kind: list
     title: API
@@ -193,13 +224,79 @@ actions:
     risk: workspace-write
     idempotent: true
     description: Deactivate a composed optional module for this workspace unless a required module or an active dependent needs it.
+  - id: set-branding
+    permission: system.settings.manage
+    kind: update
+    risk: workspace-write
+    idempotent: true
+    description: Change one branding setting of the deployment, or clear it so the product default applies again.
   - id: set-flag
     permission: system.settings.manage
     kind: update
     risk: workspace-write
     idempotent: true
     description: Turn a declared feature flag on or off for this workspace, or clear the override so the module default applies again.
+settings:
+  - key: appName
+    type: string
+    scope: platform
+    default: Flowdular
+    description: Name of the backoffice. Shown in the sidebar, the mobile header and the boot splash, used as the site name of a shared link, and as the suffix of the browser tab title unless documentTitle overrides it. 1 to 64 characters.
+  - key: documentTitle
+    type: string
+    scope: platform
+    default: ''
+    description: Overrides appName in the browser tab title only, for a deployment whose tab should read differently from its navigation. Empty means appName. At most 120 characters.
+  - key: description
+    type: string
+    scope: platform
+    default: ''
+    description: Meta description and social description of the application document. Empty means the shell's own translated description. At most 200 characters.
+  - key: ogImageUrl
+    type: string
+    scope: platform
+    default: /og.png
+    description: Preview image of a shared link. A same-origin absolute path or an https URL.
+  - key: faviconUrl
+    type: string
+    scope: platform
+    default: /favicon.svg
+    description: Icon of the browser tab. A same-origin absolute path or an https URL.
+  - key: themeColor
+    type: string
+    scope: platform
+    default: '#141B2E'
+    description: Colour a mobile browser paints its chrome with, as a six-digit hex value.
+  - key: logoUrl
+    type: string
+    scope: platform
+    default: ''
+    description: Image shown instead of the built-in mark in the sidebar and the mobile header. Empty means the built-in mark. A same-origin absolute path or an https URL.
 decisions:
+  - id: D-BRANDING-SCOPE
+    question: Is the branding one identity for the deployment or one per workspace?
+    answer: One for the deployment, stored as platform-scoped settings, because the sign-in screen and a shared link are rendered before any workspace is known.
+    decidedBy: user
+  - id: D-BRANDING-FIELDS
+    question: What is configurable?
+    answer: The name and the document title, the description and the preview image, the icon and the theme colour, and a logo image.
+    decidedBy: user
+  - id: D-BRANDING-SURFACE
+    question: Where is the branding edited?
+    answer: Its own Branding screen in Administration, which writes through the existing settings administration API rather than a second write path.
+    decidedBy: user
+  - id: D-BRANDING-LOGO-UPLOAD
+    question: Can an owner upload a logo file?
+    answer: No. A logo is the address of an image the deployment already serves; an upload would need a storage bucket, a public read path and a content-type gate of its own.
+    decidedBy: default
+  - id: D-BRANDING-DELIVERY
+    question: How does the branding reach the document?
+    answer: The application route resolves it once per request and emits it as page state for the server render and as one JSON data block for hydration, the way the application path already travels; the client never fetches it.
+    decidedBy: default
+  - id: D-BRANDING-URL-SAFETY
+    question: Which addresses may be stored?
+    answer: A same-origin absolute path or an https URL, refusing javascript, data and protocol-relative addresses in the declared pattern, so the refusal happens at the write and not at the render.
+    decidedBy: default
   - id: D-MODULE-ACTIVATION-SCOPE
     question: What can the administration UI change about modules?
     answer: Per-workspace activation of the modules the application already composes; adding or removing a module stays a CLI operation because the composition is baked at build.
@@ -229,5 +326,8 @@ decisions:
     answer: Not yet. The harness tool registry has no per-tenant module hook and a tool carries no module id, so this is a documented follow-up; a tool of an inactive module that calls the module's service still runs.
     decidedBy: default
 outOfScope:
+  - Uploading a logo or a preview image through the screen; the settings hold the address of an image the deployment already serves.
+  - Branding a single workspace differently from the deployment, which would leave the sign-in screen and a shared link without an answer.
+  - Restyling the product beyond these values, so colour themes, fonts, custom CSS and the branding of the e-mails auth.core sends stay out.
   - Adding or removing a module from a running application through the UI; the composition is CLI-owned and baked at build.
   - Withholding the agent tools of an inactive module from a workspace, which needs a per-tenant hook in the harness tool registry.

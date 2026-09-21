@@ -12,6 +12,8 @@ export type {
 	OverviewModulePoint,
 	SystemOverviewPayload,
 } from './overview-api.ts';
+export { BrandingView } from './BrandingView.tsrx';
+export { brandingOf, brandingSettings } from './branding.ts';
 export { ModulesView } from './ModulesView.tsrx';
 export { ModuleSettingsSection } from './ModuleSettingsSection.tsrx';
 export { FlagsPanel } from './FlagsPanel.tsrx';

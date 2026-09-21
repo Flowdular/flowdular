@@ -3,8 +3,6 @@
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<meta name="theme-color" content="#141B2E" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 		<style id="flowdular-critical-splash">
 			html,
 			body,
@@ -33,6 +31,9 @@
 					sans-serif;
 				letter-spacing: 0.14em;
 				text-transform: uppercase;
+			}
+			.flowdular-splash__brand::after {
+				content: var(--flowdular-brand, 'Flowdular');
 			}
 			.flowdular-splash__stage {
 				min-width: 190px;
@@ -100,7 +101,7 @@
 						<circle cx="20.6" cy="16.1" r="1.7" />
 					</g>
 				</svg>
-				<span>Flowdular</span>
+				<span class="flowdular-splash__brand"></span>
 				<small id="flowdular-splash-stage" class="flowdular-splash__stage"
 					>Starting workspace</small
 				>

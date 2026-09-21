@@ -1,0 +1,56 @@
+/* The Branding preview: what the stored values look like where they are read,
+   built from the shell's own proportions so the card is a sample of the real
+   chrome rather than a second design. */
+
+.branding-preview {
+	display: grid;
+	gap: 14px;
+	padding: 16px;
+	background: var(--surface-2);
+	border: 1px solid var(--line-2);
+	border-radius: var(--r-md);
+}
+
+.branding-preview__brand {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	font-size: 15px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	color: var(--ink);
+}
+
+.branding-preview__logo {
+	flex: none;
+	object-fit: contain;
+}
+
+.branding-preview__row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	font-size: var(--text-sm);
+	color: var(--ink-3);
+}
+
+.branding-preview__swatch {
+	display: inline-block;
+	width: 18px;
+	height: 18px;
+	border: 1px solid var(--line);
+	border-radius: var(--r-sm);
+}
+
+.branding-preview__image {
+	display: block;
+	width: 100%;
+	max-width: 320px;
+	aspect-ratio: 1.91;
+	object-fit: cover;
+	background: var(--surface);
+	border: 1px solid var(--line-2);
+	border-radius: var(--r-sm);
+}

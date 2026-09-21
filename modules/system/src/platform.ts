@@ -2,7 +2,11 @@ import type {
 	PlatformServerComposition,
 	PlatformServerContext,
 } from '@flowdular/module-auth/server';
-import { installModuleActivationGate } from '@flowdular/server';
+import {
+	installApplicationBranding,
+	installModuleActivationGate,
+} from '@flowdular/server';
+import { brandingFromSettings } from './domain/branding.ts';
 import {
 	composedModules,
 	SYSTEM_MODULES_CAPABILITY,
@@ -44,10 +48,15 @@ export function createServerComposition(
 	};
 	context.capabilities.register(SYSTEM_MODULES_CAPABILITY, capability);
 	installModuleActivationGate(capability);
+	/* The application document asks for this once per request; the settings
+	   runtime answers from the snapshot it primed at boot, so the read costs
+	   no lookup and an owner's change is live. */
+	installApplicationBranding(() => brandingFromSettings(context.settings));
 	return {
 		routes: createSystemRoutes({ ...context, activation: runtime }),
 		settings: SYSTEM_MODULE_SETTINGS,
 		dispose: async () => {
+			installApplicationBranding(null);
 			installModuleActivationGate(null);
 			await runtime.dispose();
 		},

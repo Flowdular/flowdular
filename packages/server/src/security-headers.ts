@@ -1,4 +1,6 @@
+import { brandingImageOrigins } from '@flowdular/contracts';
 import type { Middleware } from '@octanejs/app-core';
+import { currentApplicationBranding } from './application-branding.ts';
 
 export interface SecurityHeadersOptions {
 	/** Only meaningful behind TLS; pairs with secure session cookies. */
@@ -92,6 +94,44 @@ function withHeaders(
 	return target;
 }
 
+/* A branding icon or logo this deployment serves from another origin is an
+   image the page itself loads, so the policy has to name that origin or the
+   browser blocks it with nothing in the document to explain why. Only img-src
+   is widened, only with the origins actually stored, and an operator's own
+   FD_CSP is widened the same way rather than replaced. The result is memoised
+   per policy and origin set, because every HTML response passes through here. */
+let imageSources: {
+	readonly policy: string;
+	readonly origins: string;
+	readonly result: string;
+} | null = null;
+
+export function withBrandingImageSources(policy: string): string {
+	const origins = brandingImageOrigins(currentApplicationBranding());
+	const key = origins.join(' ');
+	if (key === '') return policy;
+	if (imageSources?.policy === policy && imageSources.origins === key) {
+		return imageSources.result;
+	}
+	const directives = policy.split(';');
+	const index = directives.findIndex(
+		(directive) => directive.trim().split(/\s+/)[0] === 'img-src',
+	);
+	let result = policy;
+	if (index !== -1) {
+		const directive = directives[index]!;
+		const present = new Set(directive.trim().split(/\s+/));
+		const missing = origins.filter((origin) => !present.has(origin));
+		if (missing.length > 0) {
+			const widened = [...directives];
+			widened[index] = directive.replace(/\s+$/, '') + ' ' + missing.join(' ');
+			result = widened.join(';');
+		}
+	}
+	imageSources = { policy, origins: key, result };
+	return result;
+}
+
 /* A route that sets its own header wins; the middleware only fills gaps. */
 export function createSecurityHeadersMiddleware(
 	options: SecurityHeadersOptions,
@@ -99,8 +139,11 @@ export function createSecurityHeadersMiddleware(
 	return async (_context, next) => {
 		const nonce = cspNonce();
 		const placeholder = options.noncePlaceholder ?? CSP_NONCE_PLACEHOLDER;
+		const configured = options.contentSecurityPolicy;
 		const policy =
-			options.contentSecurityPolicy?.replaceAll(placeholder, nonce) ?? null;
+			configured === null || configured === undefined
+				? null
+				: withBrandingImageSources(configured).replaceAll(placeholder, nonce);
 		let response = await next();
 		/* The placeholder only exists in the platform shell. Avoid reading API or
 		   streamed responses, and preserve their body untouched. */
