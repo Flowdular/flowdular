@@ -50,12 +50,15 @@ The generator installs dependencies and initializes Git by default. Local develo
 
 ## Ready for coding agents
 
-Every app includes `.ai` rules, skills, role prompts, blueprints, policies and
-reference examples, plus `AGENTS.md`, `CLAUDE.md`, `.agents/skills` and
-`.claude/skills`. These files are bundled with the generator and are available
-with `--no-install`. Personal agent settings and credentials are never copied.
+Every app includes `.ai` rules, skills, role prompts, subagents, blueprints,
+policies and reference examples, plus `AGENTS.md`, `CLAUDE.md`, `.agents/skills`,
+`.claude/skills` and the spec author, module executor and reviewer as subagents in
+`.claude/agents` and `.codex/agents`. The chat-first sandbox is installed with the
+app, so `pnpm sandbox` starts it without a download. These files are bundled with
+the generator and are available with `--no-install`. Personal agent settings and
+credentials are never copied.
 
-Edit `.ai/rules` or `.ai/skills`, then run `pnpm rules:generate`. `pnpm verify`
+Edit `.ai/rules`, `.ai/skills` or `.ai/subagents`, then run `pnpm rules:generate`. `pnpm verify`
 checks that the generated instructions are in sync. The instructions explain
 where to find the installed SDK and how to extend the application's modules.
 

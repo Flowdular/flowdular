@@ -61,6 +61,14 @@ describe('renderEnvironmentFile', () => {
 		expect(contents.endsWith('\n')).toBe(true);
 	});
 
+	/* The sandbox reads it from the workspace .env, so the placeholder is the
+	   only thing an operator has to fill in before chatting. */
+	it('carries the sandbox model key as an empty placeholder', () => {
+		expect(renderEnvironmentFile(generateSecrets())).toContain(
+			'\nANTHROPIC_API_KEY=\n',
+		);
+	});
+
 	it('ships no connection string a local run would have to edit', () => {
 		expect(renderEnvironmentFile(generateSecrets())).not.toContain(
 			'FD_DATABASE_URL=',

@@ -3,7 +3,7 @@
 	"inputRoots": [".ai"],
 	"outputRoots": ["."],
 	"targets": ["codexcli", "claudecode"],
-	"features": ["rules", "skills"],
+	"features": ["rules", "skills", "subagents"],
 	"delete": true,
 	"verbose": false,
 	"silent": false,

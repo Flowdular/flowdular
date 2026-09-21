@@ -20,6 +20,7 @@ for (const path of [
 	'.ai/policies',
 	'.ai/rules',
 	'.ai/skills',
+	'.ai/subagents',
 	'.ai/references',
 	'docs/agent-contract.md',
 	'docs/adr',
@@ -106,8 +107,9 @@ made in the Flowdular repository and released before this application uses it.
 The skills and examples use @flowdular/sdk subpath imports. For pnpm --filter,
 read the actual module package name from its package.json. Use pnpm verify and
 pnpm build for this application. Root .ai files are editable project guidance;
-run pnpm rules:generate after changing rules or skills, then pnpm rules:check.
-AGENTS.md, CLAUDE.md, .agents/skills and .claude/skills are generated copies.
+run pnpm rules:generate after changing rules, skills or subagents, then pnpm
+rules:check. AGENTS.md, CLAUDE.md, .agents/skills, .claude/skills, .claude/agents
+and .codex/agents are generated copies.
 `,
 );
 const generated = spawnSync(

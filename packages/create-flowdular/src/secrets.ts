@@ -42,5 +42,14 @@ export function renderEnvironmentFile(secrets: GeneratedSecrets): string {
 		'# 32 byte keys, generated once for this app; MFA uses base64url.',
 		...SECRET_KEYS.map((key) => `${key}=${secrets[key]}`),
 		'',
+		'# Model key for the chat-first sandbox (pnpm sandbox). Paste one here and',
+		'# the sandbox offers that model on the next start, with no further setup.',
+		'# OPENAI_API_KEY, AZURE_API_KEY and AI_GATEWAY_API_KEY are read the same',
+		'# way, with the model chosen in the sandbox model settings. A variable',
+		"# exported in the shell wins over this file. The application's own agents",
+		'# keep their credentials in the workspace vault instead: open',
+		'# Administration, AI providers.',
+		'ANTHROPIC_API_KEY=',
+		'',
 	].join('\n');
 }

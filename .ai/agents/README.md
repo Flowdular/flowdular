@@ -17,7 +17,7 @@ The five roles and who takes the first turn: `business-manager` for both a new m
 
 ## Root roles run at the repository root
 
-`module-executor.md`, `reviewer.md`, `spec-author.md` describe the same jobs for an agent working in a checkout with a shell (Claude Code, Codex, a person). No code loads them; `.ai/blueprints/*/blueprint.json` names them in `agentRoles` and `requiredReviewers`. Their `allowedPaths` are relative to the repository root and they run the gates themselves with the commands listed in each blueprint's `gates.yaml`.
+`module-executor.md`, `reviewer.md`, `spec-author.md` describe the same jobs for an agent working in a checkout with a shell (Claude Code, Codex, a person). No code loads them; `.ai/blueprints/*/blueprint.json` names them in `agentRoles` and `requiredReviewers`, and `.ai/subagents/<id>.md` exposes each one as a delegable subagent that points back here (RuleSync writes `.claude/agents` and `.codex/agents`). Their `allowedPaths` are relative to the repository root and they run the gates themselves with the commands listed in each blueprint's `gates.yaml`.
 
 ## Adding or changing a role
 
