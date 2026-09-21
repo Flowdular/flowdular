@@ -21,11 +21,11 @@
 		},
 		{
 			"id": "agents.core",
-			"range": "^0.13.0"
+			"range": "^0.14.0"
 		},
 		{
 			"id": "workflows.core",
-			"range": "^0.6.0"
+			"range": "^0.7.0"
 		}
 	],
 	"provides": ["automations.targets.v1", "automations.execution.v1"],

@@ -17,6 +17,10 @@ import {
 	type WorkspaceRolesResolver,
 } from '../services/approvals.ts';
 import {
+	AGENT_DECISIONS_CAPABILITY,
+	type AgentDecisions,
+} from '../services/decisions.ts';
+import {
 	NOTIFICATIONS_PUBLISH_CAPABILITY,
 	type NotificationPublisher,
 } from '../services/notifications.ts';
@@ -298,6 +302,12 @@ export function createWorkflowsRuntime(
 				   a stable code when it is absent; every other node is unaffected. */
 				approvals: () =>
 					capabilities.get<ApprovalsRequests>(APPROVALS_REQUESTS_CAPABILITY),
+				/* The typed-decision capability is optional in the same way: a
+				   deployment without it, or a workspace that never turned typed
+				   decisions on, fails that node's attempt and leaves every other
+				   node untouched. */
+				decisions: () =>
+					capabilities.get<AgentDecisions>(AGENT_DECISIONS_CAPABILITY),
 			},
 		);
 		if (started) worker.start();

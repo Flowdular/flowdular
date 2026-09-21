@@ -30,6 +30,7 @@ const PROVIDER_KINDS: Readonly<Record<AgentProviderKind, true>> = {
 	openai: true,
 	'openai-compatible': true,
 	anthropic: true,
+	typesafe: true,
 };
 
 const DEFINITION_STATES: Readonly<

@@ -113,7 +113,25 @@ export type AgentProviderKind =
 	| 'azure'
 	| 'openai'
 	| 'openai-compatible'
-	| 'anthropic';
+	| 'anthropic'
+	| 'typesafe';
+
+/* Kinds that answer typed questions instead of generating text. Such a
+   connection is stored and sealed like any other and is never an agent's
+   model: it streams nothing and calls no tool. */
+export type DecisionProviderKind = 'typesafe';
+
+export const DECISION_PROVIDER_KINDS: readonly DecisionProviderKind[] = [
+	'typesafe',
+];
+
+/* A predicate, so a caller that refused a decision kind is left holding the
+   language-model kinds the provider contracts accept. */
+export function isDecisionProviderKind(
+	kind: AgentProviderKind,
+): kind is DecisionProviderKind {
+	return (DECISION_PROVIDER_KINDS as readonly string[]).includes(kind);
+}
 
 /* What a model is allowed to do. Sent by clients, stored as configuration. */
 export interface AgentProviderModelConfiguration {
@@ -152,6 +170,9 @@ export interface AgentProviderConnection {
 	readonly resourceName: string | null;
 	readonly baseURL: string | null;
 	readonly models: readonly AgentProviderModel[];
+	/* Consent for the caller kind, set by an owner beside the credential. A
+	   language-model connection carries it too and ignores it. */
+	readonly allowWorkflows: boolean;
 	readonly credentialConfigured: boolean;
 	readonly credentialRevision: number;
 	readonly revision: number;
@@ -169,6 +190,7 @@ export interface CreateAgentProviderInput {
 	readonly resourceName?: string;
 	readonly baseURL?: string;
 	readonly models: readonly AgentProviderModelConfiguration[];
+	readonly allowWorkflows?: boolean;
 }
 
 export interface UpdateAgentProviderInput {
@@ -180,6 +202,7 @@ export interface UpdateAgentProviderInput {
 	readonly resourceName?: string;
 	readonly baseURL?: string;
 	readonly models: readonly AgentProviderModelConfiguration[];
+	readonly allowWorkflows?: boolean;
 }
 
 export interface AgentDefinition {

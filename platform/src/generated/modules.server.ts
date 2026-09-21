@@ -117,6 +117,7 @@ export function composeModuleServer(
 						'agents.run-queue',
 						'agents.run-execution.v2',
 						'agents.actions.v1',
+						'agents.decisions.v1',
 					],
 					requires: [
 						{ id: 'notifications.publish.v1', optional: true },
@@ -166,6 +167,7 @@ export function composeModuleServer(
 						{ id: 'agents.actions.v1' },
 						{ id: 'notifications.publish.v1', optional: true },
 						{ id: 'approvals.requests.v1', optional: true },
+						{ id: 'agents.decisions.v1', optional: true },
 					],
 				}),
 				metrics: createModuleMetrics('workflows.core'),

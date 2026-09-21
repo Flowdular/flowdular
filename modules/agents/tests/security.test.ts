@@ -448,6 +448,7 @@ describe('runtime handle tenant enforcement', () => {
 				enabled: false,
 				resourceName: null,
 				baseURL: null,
+				allowWorkflows: false,
 				models: [
 					{
 						id: 'gpt-4o-mini',

@@ -19,6 +19,7 @@ describe('agents.core module settings', () => {
 			'monthlyCostCapUsd',
 			'providerHostAllowlist',
 			'providerReadinessTtlMs',
+			'typedDecisionsEnabled',
 			'workerConcurrency',
 			'workerLeaseMs',
 		]);

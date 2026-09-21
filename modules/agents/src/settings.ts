@@ -27,6 +27,19 @@ export const AGENTS_MODULE_SETTINGS = defineModuleSettings({
 			description:
 				'Let members talk to the workspace assistant from the header. While it is off no entry point is offered and the assistant API refuses; conversations already stored stay readable to their own members once it is on again.',
 		},
+		typedDecisionsEnabled: {
+			type: 'boolean',
+			kind: 'flag',
+			defaultValue: false,
+			visibility: 'private',
+			client: false,
+			scope: 'tenant',
+			labelKey: 'agents.settings.typedDecisionsEnabled.label',
+			label: 'Typed decisions',
+			descriptionKey: 'agents.settings.typedDecisionsEnabled.description',
+			description:
+				'Let this workspace ask a decision provider typed questions. While it is off nothing asks one and every caller follows its own deterministic path. A connection also needs its own workflow consent before record data reaches it.',
+		},
 		workerConcurrency: {
 			type: 'number',
 			defaultValue: 2,
@@ -188,6 +201,8 @@ export interface AgentSettingsReader {
 	providerHostAllowlist(): ReadonlySet<string>;
 	/** Read on every assistant request, never cached at boot. */
 	assistantEnabled(tenantId: string): boolean;
+	/** Read before every decision, never cached at boot. */
+	typedDecisionsEnabled(tenantId: string): boolean;
 	defaultMaxOutputTokens(tenantId: string): number;
 	defaultProvider(tenantId: string): string;
 	defaultModel(tenantId: string): string;
@@ -260,6 +275,8 @@ export function agentSettings(context: {
 					)
 				: fallback.providerHostAllowlist,
 		assistantEnabled: (tenantId) => read(tenantId, 'assistantEnabled', true),
+		typedDecisionsEnabled: (tenantId) =>
+			read(tenantId, 'typedDecisionsEnabled', false),
 		defaultMaxOutputTokens: (tenantId) =>
 			read(tenantId, 'defaultMaxOutputTokens', 4_096),
 		defaultProvider: (tenantId) => read(tenantId, 'defaultProvider', ''),
