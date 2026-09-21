@@ -32,6 +32,25 @@ export type {
 	ProviderReadinessResult,
 } from './model.ts';
 export {
+	askDecisions,
+	assertDecisionConfiguration,
+	DECISION_LIMITS,
+	DECISION_PROVIDER_CATALOG,
+	DECISION_PROVIDER_KINDS,
+	probeDecisionProvider,
+} from './decisions.ts';
+export type {
+	ChoiceAnswer,
+	DecisionAnswer,
+	DecisionProviderConfiguration,
+	DecisionProviderKind,
+	DecisionQuestion,
+	DecisionResult,
+	DecisionUsage,
+	NoulAnswer,
+	ScoreAnswer,
+} from './decisions.ts';
+export {
 	WEB_SEARCH_DISABLED,
 	WEB_SEARCH_LIMITS,
 	webSearchPassThrough,
