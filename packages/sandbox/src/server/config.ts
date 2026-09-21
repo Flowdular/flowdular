@@ -12,7 +12,10 @@ import { constants } from 'node:fs';
 import { chmod, lstat, mkdir, open } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { SandboxRuntimeMode } from '@flowdular/coding-agent';
-import type { AiProviderKind } from '@flowdular/ai-provider';
+import type {
+	AiProviderKind,
+	DecisionProviderKind,
+} from '@flowdular/ai-provider';
 import { SandboxSetupError } from './workspace-root.ts';
 
 export const SANDBOX_DIRECTORY = '.flowdular/sandbox';
@@ -42,6 +45,15 @@ export interface ByokProviderConfiguration {
 	readonly model: string;
 	readonly resourceName?: string;
 	readonly baseURL?: string;
+	readonly credential: SealedSecret | null;
+}
+
+/* Typed decisions are off until an operator turns them on: they send session
+   text to a provider the coding agent does not use. */
+export interface DecisionConfiguration {
+	readonly enabled: boolean;
+	readonly kind: DecisionProviderKind;
+	readonly model: string;
 	readonly credential: SealedSecret | null;
 }
 
@@ -77,6 +89,7 @@ export interface SandboxConfiguration {
 	readonly driverModel: string | null;
 	readonly previewData: PreviewDataMode;
 	readonly byok: ByokProviderConfiguration | null;
+	readonly decisions: DecisionConfiguration | null;
 	/* Token for the pull-request provider of the git-pr delivery, handed to gh
 	   as GH_TOKEN when the operator's own gh login is not usable. */
 	readonly gitProviderToken: SealedSecret | null;
@@ -104,6 +117,7 @@ export const DEFAULT_CONFIGURATION: SandboxConfiguration = {
 	driverModel: null,
 	previewData: 'fixtures',
 	byok: null,
+	decisions: null,
 	gitProviderToken: null,
 	github: DEFAULT_GITHUB_CONFIGURATION,
 };
@@ -429,6 +443,12 @@ export interface SafeSandboxConfiguration {
 		readonly baseURL?: string;
 		readonly resourceName?: string;
 	} | null;
+	readonly decisions: {
+		readonly enabled: boolean;
+		readonly kind: DecisionProviderKind;
+		readonly model: string;
+		readonly credentialFingerprint: string | null;
+	} | null;
 	readonly github: GitHubDeliveryConfiguration & {
 		readonly tokenFingerprint: string | null;
 	};
@@ -457,6 +477,16 @@ export function safeConfiguration(
 					model: configuration.byok.model,
 					credentialFingerprint: secretFingerprint(
 						configuration.byok.credential,
+					),
+				}
+			: null,
+		decisions: configuration.decisions
+			? {
+					enabled: configuration.decisions.enabled,
+					kind: configuration.decisions.kind,
+					model: configuration.decisions.model,
+					credentialFingerprint: secretFingerprint(
+						configuration.decisions.credential,
 					),
 				}
 			: null,

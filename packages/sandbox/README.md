@@ -78,7 +78,8 @@ platform database.
 1. In the application, open Administration, API tokens, and issue a token with
    `sandbox.access.use` plus the read scopes the preview should see. Add
    `sandbox.preview.data` for live data and `sandbox.modules.eject` for eject.
-2. Paste the token and the application address into the sandbox connect screen.
+2. Paste the token and the application address into the sandbox connect screen,
+   with a model provider and key when the workspace carries none.
 
 The token is encrypted at rest with a key in `.flowdular/sandbox/secret.key` and
 is never returned to the browser. The application may run anywhere: the sandbox
@@ -145,6 +146,44 @@ Keys are encrypted in local sandbox configuration and never returned to the
 browser. An empty key field preserves the existing key only when the provider
 and destination are unchanged. The settings also let you clear the key or
 remove BYOK entirely.
+
+A workspace that already carries a key needs none of this. `ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, `AZURE_API_KEY` and `AI_GATEWAY_API_KEY` are read from the
+process environment and, failing that, from the workspace `.env`; an exported
+variable wins over the file. With nothing configured in the settings, an
+Anthropic key alone offers BYOK on the catalog's default model, and the agent
+probe names the variable that answered. A key saved in the settings always wins
+over the environment, and the environment credential is never written to the
+sandbox configuration.
+
+## Typed decisions
+
+The planner classifies every brief before a specialist takes a turn: which
+module the request changes, whether it spans several, and who starts. That is a
+coding-agent turn today, with the workspace rules as the fallback. A decision
+provider can answer it instead, as typed questions with a confidence rather than
+generated text.
+
+It is off until an operator turns it on, through `POST /sandbox/api/config`:
+
+```json
+{ "decisionsEnabled": true, "decisionsCredential": "<key>" }
+```
+
+The credential is encrypted in local sandbox configuration exactly like a model
+key; without one, `TYPESAFE_API_KEY` from the environment or the workspace
+`.env` is used. `decisionsModel` defaults to `jev-latest`, `decisionsRemove`
+deletes the provider, and `decisionsEnabled: false` keeps it configured while
+nothing calls it. Configuring a model or a key never turns it on by itself:
+only `decisionsEnabled: true` does.
+
+The decision only replaces the classification. It never names a new module,
+never writes code and never runs a tool: those stay with the coding agent. The
+planner acts on a module answer at 0.70 confidence or better and on a role
+answer at 0.60, hands a brief that spans modules back to the planner turn, and
+falls back to the workspace rules whenever the provider is unavailable, slow or
+below those thresholds. The session transcript records which of the three
+classified the work.
 
 Provider conversations are scoped to the current specialist, module, task skill,
 write permissions, approved specification and model. A handoff that changes

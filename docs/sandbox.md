@@ -38,9 +38,11 @@ pnpm flowdular sandbox access --tenant operations-demo
 ```
 
 3. Paste the token and the application address into the sandbox connect screen.
+   The same screen asks for a model provider and key, unless the workspace
+   already carries one, in which case it names the variable it adopted.
 
-The token is encrypted at rest under `.flowdular/sandbox/secret.key` and is never
-returned to the browser. The application may run anywhere: locally on
+The token and the model key are encrypted at rest under
+`.flowdular/sandbox/secret.key` and are never returned to the browser. The application may run anywhere: locally on
 `http://127.0.0.1:4310` or a deployment.
 
 ## Modes
@@ -53,6 +55,25 @@ returned to the browser. The application may run anywhere: locally on
 A non-loopback `--host` forces `self-hosted`. A sandbox that cannot prove it is
 loopback never offers a local binary, because a local binary carries the
 operator's own login.
+
+The bring-your-own-key driver takes its credential from the sandbox model
+settings, or, when none is saved there, from `ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, `AZURE_API_KEY` or `AI_GATEWAY_API_KEY` in the environment or
+the workspace `.env`. A scaffolded application ships the first of those as an
+empty placeholder, so pasting a key is the whole setup.
+
+## Typed decisions
+
+The brief classification the planner performs (which module, spans several,
+which specialist starts) can be answered by a decision provider instead of a
+coding-agent turn. It is off by default, turned on per sandbox with
+`decisionsEnabled` through `POST /sandbox/api/config`, and takes its credential
+from the sandbox configuration or `TYPESAFE_API_KEY` in the environment or the
+workspace `.env`. Answers below their confidence thresholds, a brief that spans
+modules, and any provider failure all fall back to the workspace rules and the
+planner turn. Implementation writing stays with the coding agent: a decision
+provider generates no text and drives no tools. See
+[`packages/sandbox/README.md`](../packages/sandbox/README.md) for the settings.
 
 ## How a session works
 

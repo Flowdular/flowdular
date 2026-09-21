@@ -691,6 +691,11 @@ export function App(props?: RenderRouteProps) @{
 	const connect = async (input: {
 		platformUrl: string;
 		platformToken: string;
+		byokKind?: string;
+		byokModel?: string;
+		byokCredential?: string;
+		driver?: string;
+		driverModel?: string | null;
 	}) => {
 		setBusy(true);
 		setError('');

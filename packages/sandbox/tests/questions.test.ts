@@ -639,6 +639,8 @@ function fakeRuntime(root: string, driver: CodingAgentDriver): SandboxRuntime {
 		roles: () => DEFAULT_AGENT_ROLES,
 		platform: () => null,
 		connection: () => connection,
+		aiEnvironment: () => null,
+		decisions: () => null,
 		refresh: async () => connection,
 		update: async () => connection,
 		openBrowserSession: async () => {

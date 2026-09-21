@@ -123,6 +123,8 @@ function fakeRuntime(
 		roles: () => DEFAULT_AGENT_ROLES,
 		platform: () => null,
 		connection: () => ({ connected: true, authority, error: null }),
+		aiEnvironment: () => null,
+		decisions: () => null,
 		refresh: async () => ({ connected: true, authority, error: null }),
 		update: async () => ({ connected: true, authority, error: null }),
 		openBrowserSession: async (token) => {

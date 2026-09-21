@@ -7,6 +7,12 @@ import type {
 	CodingAgentEvent,
 	HandoffDeclaration,
 } from '@flowdular/coding-agent';
+import {
+	DECISION_LIMITS,
+	type ChoiceAnswer,
+	type DecisionResult,
+} from '@flowdular/ai-provider';
+import type { DecisionAsk } from './decisions-runtime.ts';
 import type { GateResult } from './gates.ts';
 import { gateRepairOwner } from './gate-repair.ts';
 import { SandboxSetupError } from './workspace-root.ts';
@@ -35,7 +41,7 @@ export interface WorkPlan {
 	readonly modules: readonly SessionModule[];
 	readonly firstRole: string;
 	readonly rationale: string;
-	readonly classifiedBy: 'agent' | 'rules';
+	readonly classifiedBy: 'agent' | 'rules' | 'decision';
 }
 
 /* Who owns spec/module.yaml, for a new module and for a change alike. */
@@ -317,6 +323,10 @@ export function parsePlan(
 
 export interface PlanRequest {
 	readonly onEvent?: (event: CodingAgentEvent) => void;
+	/* A typed-decision provider, when the operator configured one. It answers
+	   the classification without a coding-agent turn; below its thresholds the
+	   planner turn still runs. */
+	readonly decide?: DecisionAsk;
 	readonly brief: string;
 	readonly driver: string;
 	readonly registry: CodingAgentRegistry;
@@ -329,8 +339,122 @@ export interface PlanRequest {
    nothing, and answers with one JSON object naming the target modules and the
    specialist who starts. Its failure is never fatal, because the rules already
    produced a usable plan. */
+/* Acting on a choice changes which module a session opens on, which the
+   operator sees and can correct in the first message, so the bar is the
+   vendor's middle tier rather than its high one. A brief that spans modules is
+   handed back to the planner turn, which can name several. */
+const DECISION_MODULE_CONFIDENCE = 0.7;
+const DECISION_ROLE_CONFIDENCE = 0.6;
+const DECISION_MULTI_MODULE = 0.5;
+const NO_EXISTING_MODULE = 'none_of_these';
+
+function choiceAnswer(
+	result: DecisionResult,
+	name: string,
+): ChoiceAnswer | null {
+	const answer = result.answers[name];
+	return answer?.type === 'choice' ? answer : null;
+}
+
+/**
+ * The classification as typed questions: which existing module the request
+ * changes, whether it spans more than one, and who should take the first turn.
+ * Returns null whenever the answers do not clear their thresholds, so the
+ * caller falls back to the planner turn it would have run anyway.
+ */
+async function planByDecisions(
+	request: PlanRequest,
+	fallback: WorkPlan,
+): Promise<WorkPlan | null> {
+	const decide = request.decide;
+	if (!decide) return null;
+	/* One option per module plus the escape hatch. A workspace with more
+	   modules than that would be asked about a subset, and a confident answer
+	   about the wrong subset is worse than no answer, so it asks nothing. */
+	const candidates = request.modules;
+	if (
+		candidates.length === 0 ||
+		candidates.length > DECISION_LIMITS.options - 1
+	)
+		return null;
+	const state = [
+		`Request: ${request.brief}`,
+		'',
+		'Existing modules:',
+		...candidates.map(
+			(module) => `- ${module.id} (modules/${module.directory})`,
+		),
+		'',
+		'Specialists:',
+		...request.roles.map((role) => `- ${role.id}: ${role.purpose}`),
+	].join('\n');
+	let result: DecisionResult;
+	try {
+		result = await decide({
+			state,
+			questions: {
+				module: {
+					type: 'choice',
+					instruction: `Which existing module does this request change? Answer ${NO_EXISTING_MODULE} when the request describes something none of them covers.`,
+					options: [
+						...candidates.map((module) => module.id),
+						NO_EXISTING_MODULE,
+					],
+				},
+				spans_modules: {
+					type: 'noul',
+					instruction:
+						'Does this request change more than one of the existing modules?',
+				},
+				role: {
+					type: 'choice',
+					instruction:
+						'Which specialist should take the first turn on this request?',
+					options: request.roles.map((role) => role.id),
+				},
+			},
+		});
+	} catch {
+		/* A decision provider that is down or rate limited is never fatal. */
+		return null;
+	}
+	const spans = result.answers.spans_modules;
+	if (spans?.type === 'noul' && spans.noul >= DECISION_MULTI_MODULE)
+		return null;
+	const module = choiceAnswer(result, 'module');
+	if (!module || module.confidence < DECISION_MODULE_CONFIDENCE) return null;
+	const role = choiceAnswer(result, 'role');
+	const firstRole =
+		role &&
+		role.confidence >= DECISION_ROLE_CONFIDENCE &&
+		request.roles.some((known) => known.id === role.choice)
+			? role.choice
+			: fallback.firstRole;
+	if (module.choice === NO_EXISTING_MODULE) {
+		/* The modules are the ones the rules chose, so the transcript keeps
+		   crediting the rules; only the first role comes from the decision. */
+		return { ...fallback, firstRole };
+	}
+	const named = candidates.find((known) => known.id === module.choice);
+	if (!named) return null;
+	const chosen: SessionModule = {
+		id: named.id,
+		directory: named.directory,
+		kind: 'edit',
+	};
+	return planFor(
+		[chosen],
+		request.brief,
+		firstRole,
+		`${rationaleFor([chosen])} Confidence ${module.confidence.toFixed(2)}.`,
+		'decision',
+	);
+}
+
 export async function planWork(request: PlanRequest): Promise<WorkPlan> {
 	const fallback = classifyByRules(request.brief, request.modules);
+	const decided = await planByDecisions(request, fallback);
+	if (decided) return decided;
 	let driver;
 	try {
 		driver = await request.registry.resolve(request.driver);
