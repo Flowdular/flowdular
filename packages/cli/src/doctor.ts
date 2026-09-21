@@ -95,6 +95,34 @@ export async function runDoctor(
 			.join(', '),
 	});
 
+	/* An application scaffolded before the branding release renders none of it,
+	   and one upgraded halfway keeps the static icon and theme colour that now
+	   compete with the rendered ones, which is a head with two answers. Both
+	   are warnings: the application serves either way, and the fix is in files
+	   the operator owns. */
+	const entryPath = join(workspace.root, 'platform/src/App.tsrx');
+	if (await exists(entryPath)) {
+		const entry = await readFile(entryPath, 'utf8');
+		const pagePath = join(workspace.root, 'platform/index.html');
+		const page = (await exists(pagePath))
+			? await readFile(pagePath, 'utf8')
+			: '';
+		const renders = entry.includes('configureBrandingFromPage');
+		const staticHead = /<meta[^>]+name="theme-color"|<link[^>]+rel="icon"/.test(
+			page,
+		);
+		checks.push({
+			id: 'platform.branding',
+			status: renders && !staticHead ? 'pass' : 'warn',
+			message: !renders
+				? 'The application entry does not render the deployment branding. Add configureBrandingFromPage(props) and the head tags the scaffold template carries, so the name, title, icon and link preview follow the settings.'
+				: staticHead
+					? 'platform/index.html declares its own icon or theme colour while the entry renders them too, so the head carries two answers. Remove the static tags.'
+					: 'The application entry renders the deployment branding.',
+			evidence: 'platform/src/App.tsrx',
+		});
+	}
+
 	/* Drift is a warning, not a failure: "pnpm dev" and "pnpm build" run the
 	   sync themselves, and the build smoke-tests doctor before that sync. */
 	try {

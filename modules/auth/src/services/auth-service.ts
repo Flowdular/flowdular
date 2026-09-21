@@ -6,6 +6,7 @@ import {
 	type ModuleSettingChange,
 	type UserActor,
 } from '@flowdular/kernel';
+import { DEFAULT_APPLICATION_BRANDING } from '@flowdular/contracts';
 import type { ErrorSink, ModuleMetrics } from '@flowdular/server';
 import { AUTH_SCOPES, MEMBER_SCOPES, OWNER_SCOPES } from '../acl/scopes.ts';
 import type {
@@ -2422,9 +2423,11 @@ export class AuthService {
 		}));
 	}
 
+	/** The label an authenticator lists the account under; the route passes the
+	 * deployment's own name. */
 	async enrollTotp(
 		accountId: string,
-		issuer = 'Flowdular',
+		issuer = DEFAULT_APPLICATION_BRANDING.appName,
 	): Promise<{
 		readonly secret: string;
 		readonly otpauthUrl: string;

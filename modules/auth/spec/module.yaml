@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: auth.core
-specVersion: 0.14.4
+specVersion: 0.14.5
 status: approved
 name: Authentication Core
 description: Provides tenant-aware accounts, password authentication, sessions, scopes, tenant roles, API tokens for machine clients, the module settings store, the auth audit trail, security headers, authentication screens, and server authorization middleware.
@@ -68,6 +68,7 @@ invariants:
   - Every operator provisioning command appends an audit row whose actor identifies the operator shell that ran it.
   - An audit row records its actor as one of the kernel kinds user, agent or service. An operator command and an identity provider are service actors, an account id is stored for a user only, an agent row names its run, and a service row stores the user who configured it, or null when that user is not stored, as an identity provider's is not.
   - TOTP secrets are encrypted with a deployment-provided AES-256 key; a successful password check creates a short-lived, single-use MFA challenge rather than a session.
+  - The label an authenticator lists an enrolled account under is the deployment's own name, the branding system.core declares, resolved by the enrolment route and never taken from the request, so a caller cannot name the workspace a member sees and a deployment that renamed itself enrols under its new name. A deployment that stored no name enrols under the product name.
   - Every stored TOTP secret records the id of the key that sealed it, and a factor sealed before that id existed stays readable. Retired keys listed in FD_AUTH_MFA_KEY_PREVIOUS open stored factors and seal nothing, and the operator rotation re-seals the stale rows in bounded batches without clobbering a factor re-enrolled while it runs.
   - A workspace whose auth.core.requireMfa setting is on answers no workspace API and no module web page to a member without a confirmed second factor; a web page resolves no identity for that member and answers 401. Only the platform health and readiness probes, the public sign-in configuration, the account routes that complete enrolment, change the password, switch workspace, or sign out, the settings read, and the settings write whose body targets auth.core.requireMfa stay open; every other settings write is held like any other workspace API. The refusal is the stable MFA_ENROLMENT_REQUIRED problem, and the setting binds the workspace it is stored for and no other.
   - An API token is exempt from the enrolment requirement, because a service account cannot enrol and its authority is already the intersection of its recorded scopes with the live membership. Browser sessions stay gated.
@@ -553,7 +554,7 @@ acceptanceScenarios:
   - id: AUTH-MFA-ENROLL
     given: An authenticated account and a configured MFA encryption key.
     when: The account enrolls a TOTP authenticator and confirms a valid rotating code.
-    then: The secret stays encrypted at rest, recovery codes are returned only during enrollment, and future sign-in requires a TOTP or unused recovery code.
+    then: The secret stays encrypted at rest, the authenticator lists the account under the deployment's own name rather than one the request named, recovery codes are returned only during enrollment, and future sign-in requires a TOTP or unused recovery code.
   - id: AUTH-MFA-REQUIRED
     given: A workspace whose auth.core.requireMfa setting is on and a member of it without a confirmed second factor.
     when: The member calls a workspace API, then the routes that complete enrolment, and finally the same workspace API after confirming a factor.
