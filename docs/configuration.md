@@ -32,7 +32,18 @@ https URL; `javascript:`, `data:` and protocol-relative values are refused when
 they are written. Every https branding image origin is added to `img-src` of the
 policy this deployment serves, including an `FD_CSP` of your own, so the browser
 loads it; an `FD_CSP` without an `img-src` directive is left alone and then has
-to name the origin itself.
+to name the origin itself. The label an authenticator lists an enrolled account
+under is the same name, decided by the server, so a member who enrols after a
+rename sees the new one.
+
+An application scaffolded before this release owns its own `platform/src/App.tsrx`
+and `platform/index.html`, so its head does not follow the settings until it
+adopts two changes the template now carries: `configureBrandingFromPage(props)`
+plus the `Seo`, `Link` and `Meta` block in the entry, and the removal of the
+static `<link rel="icon">` and `<meta name="theme-color">` from the page, which
+would otherwise compete with the rendered ones. `pnpm flowdular doctor` reports
+both as the `platform.branding` check. The navigation, the mobile header and the
+sign-in screen follow the settings without any change.
 
 ## Observability
 

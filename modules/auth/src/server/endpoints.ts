@@ -5,7 +5,7 @@ import {
 	timingSafeEqual,
 } from 'node:crypto';
 import { ServerRoute, type Context } from '@octanejs/app-core';
-import { readJsonObject } from '@flowdular/server';
+import { currentApplicationBranding, readJsonObject } from '@flowdular/server';
 import { BUNDLED_MODULE_SCOPES, PLATFORM_SCOPES } from '../acl/scopes.ts';
 import type {
 	SignInInput,
@@ -870,15 +870,17 @@ export function createAuthRoutes(runtime: AuthRuntime): readonly ServerRoute[] {
 			if (denial) return denial;
 			try {
 				const session = requireSession(context);
-				const body = await readJsonObject(context.request);
-				const issuer =
-					typeof body.issuer === 'string' && body.issuer.length <= 64
-						? body.issuer
-						: 'Flowdular';
+				/* The label an authenticator lists this account under is the
+				   deployment's own name, resolved here rather than taken from the
+				   request: a caller does not get to name the workspace it enrolled
+				   against, and a rebranded deployment enrols under its own name. */
 				return response(
 					await (
 						await runtime.service()
-					).enrollTotp(session.principal.accountId, issuer),
+					).enrollTotp(
+						session.principal.accountId,
+						currentApplicationBranding().appName,
+					),
 				);
 			} catch (error) {
 				return errorResponse(error);

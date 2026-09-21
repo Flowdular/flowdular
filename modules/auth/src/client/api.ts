@@ -387,11 +387,7 @@ export async function loadMfaStatus(): Promise<MfaStatusPayload> {
 export async function enrollMfa(
 	csrfToken: string,
 ): Promise<MfaEnrollmentPayload> {
-	return sessionMutation(
-		'/api/auth/mfa/enroll',
-		{ issuer: 'Flowdular' },
-		csrfToken,
-	);
+	return sessionMutation('/api/auth/mfa/enroll', {}, csrfToken);
 }
 
 export async function confirmMfa(
