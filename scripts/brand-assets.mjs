@@ -124,6 +124,14 @@ const avatar = page(
 	`<div class="card" style="justify-content:center">${mark(900)}</div>`,
 );
 
+/* The GitHub organisation picture: a square PNG with a soft top light, the
+   mark at three fifths of the width so the circle crop keeps every bar. */
+const avatarPng = page(
+	512,
+	512,
+	`<div class="card" style="justify-content:center;background:radial-gradient(90% 70% at 50% 0%, #1b2542 0%, ${NAVY} 70%)">${mark(320)}</div>`,
+);
+
 const jobs = [
 	{ html: og, format: 'png', file: 'platform/public/og.png' },
 	{ html: og, format: 'png', file: 'packages/sandbox/public/og.png' },
@@ -141,6 +149,11 @@ const jobs = [
 		html: avatar,
 		format: 'webp',
 		file: 'docs/assets/flowdular-github-avatar.webp',
+	},
+	{
+		html: avatarPng,
+		format: 'png',
+		file: 'docs/assets/flowdular-github-avatar-512.png',
 	},
 ];
 
