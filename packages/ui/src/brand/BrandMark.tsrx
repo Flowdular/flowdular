@@ -5,7 +5,7 @@ export type BrandMarkTone = 'brand' | 'current' | 'inverse';
 export interface BrandMarkProps {
 	/** Rendered size in px. Never below 16. */
 	size?: number;
-	/** Copper weft. Reserved for large brand moments: splash, sign-in. */
+	/** Kept for callers that set it; the accent bar is copper in every tone but current. */
 	signature?: boolean;
 	tone?: BrandMarkTone;
 }
@@ -16,9 +16,8 @@ function warpFill(tone: BrandMarkTone): string {
 	return 'var(--brand)';
 }
 
-function weftFill(tone: BrandMarkTone, signature: boolean): string {
+function weftFill(tone: BrandMarkTone): string {
 	if (tone === 'current') return 'currentColor';
-	if (!signature) return warpFill(tone);
 	return tone === 'inverse' ? 'var(--copper-300)' : 'var(--brand-weft)';
 }
 
@@ -26,7 +25,7 @@ export function BrandMark(props: BrandMarkProps) @{
 	const size = props.size ?? 24;
 	const tone = props.tone ?? 'brand';
 	const warp = warpFill(tone);
-	const weft = weftFill(tone, props.signature ?? false);
+	const weft = weftFill(tone);
 	<svg
 		viewBox={MARK_VIEWBOX}
 		width={size}
