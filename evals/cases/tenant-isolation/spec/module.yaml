@@ -1,0 +1,57 @@
+schemaVersion: 2
+id: eval.ledger
+specVersion: 0.1.0
+status: approved
+name: Eval Ledger
+description: A small tenant ledger of postings, used as a fixed evaluation case for row-level security, tenant predicates and the isolation test the platform requires.
+profile: full
+capabilities:
+  - api
+  - client
+  - translations
+dependencies:
+  - id: system.core
+    range: ^0.9.0
+  - id: auth.core
+    range: ^0.14.0
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - The postings table enforces row-level security with both a USING and a WITH CHECK predicate, and the policy is forced so the owning role cannot escape it.
+  - Every query runs inside a transaction bound to the tenant of the authenticated principal.
+  - A posting amount is stored in minor units as an integer, never as a floating point value.
+permissions:
+  - id: ledger.postings.read
+    description: Read the ledger postings of the active workspace.
+  - id: ledger.postings.write
+    description: Append a posting to the ledger of the active workspace.
+dataOwnership:
+  - eval.ledger owns the postings table and nothing else.
+entities:
+  - id: posting
+    name: Posting
+    description: One amount posted to the workspace ledger.
+    fields:
+      - id: reference
+        type: string
+        required: true
+        unique: tenant
+        maxLength: 64
+      - id: amountMinor
+        type: integer
+        required: true
+      - id: currency
+        type: string
+        required: true
+        maxLength: 3
+acceptanceScenarios:
+  - id: AS-ROWS-STAY-IN-TENANT
+    given: A posting exists in workspace A and a reader is authenticated in workspace B
+    when: The reader lists postings under a role holding neither SUPERUSER nor BYPASSRLS
+    then: No row of workspace A is returned
+  - id: AS-WRITE-CHECK-REFUSES
+    given: A principal authenticated in workspace B
+    when: A posting is written naming workspace A as its tenant
+    then: The WITH CHECK predicate refuses the write rather than storing the row

@@ -1,0 +1,67 @@
+schemaVersion: 2
+id: eval.catalog
+specVersion: 0.1.0
+status: approved
+name: Eval Catalog
+description: A minimal catalogue of parts a workspace sells, with one tenant-scoped table, a list screen and a create action, used as a fixed evaluation case for the implementation skills.
+profile: full
+capabilities:
+  - api
+  - client
+  - translations
+dependencies:
+  - id: system.core
+    range: ^0.9.0
+  - id: auth.core
+    range: ^0.14.0
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - Every row belongs to exactly one tenant, and the tenant comes from the authenticated principal rather than from request input.
+  - A part code is unique within a tenant and never across tenants.
+  - The list screen renders the loading, empty, error, populated and denied states.
+permissions:
+  - id: catalog.parts.read
+    description: Read the parts of the active workspace.
+  - id: catalog.parts.manage
+    description: Create and change the parts of the active workspace.
+dataOwnership:
+  - eval.catalog owns the parts table and nothing else.
+entities:
+  - id: part
+    name: Part
+    description: One sellable part in the workspace catalogue.
+    fields:
+      - id: code
+        type: string
+        required: true
+        unique: tenant
+        maxLength: 32
+      - id: name
+        type: string
+        required: true
+        maxLength: 120
+      - id: active
+        type: boolean
+        required: true
+screens:
+  - id: parts
+    kind: list
+    entity: part
+    title: Parts
+    navigationGroup: Catalogue
+acceptanceScenarios:
+  - id: AS-READ-OWN-WORKSPACE
+    given: A reader holds catalog.parts.read in workspace A and parts exist in workspace A and workspace B
+    when: They open the Parts screen
+    then: They see only the parts of workspace A
+  - id: AS-CREATE-NEEDS-MANAGE
+    given: A member holds catalog.parts.read but not catalog.parts.manage
+    when: They post a new part
+    then: The endpoint refuses the request and no row is written
+  - id: AS-CODE-UNIQUE-PER-TENANT
+    given: A part with code P-1 exists in workspace A
+    when: A part with code P-1 is created in workspace A and again in workspace B
+    then: The workspace A attempt is refused and the workspace B attempt succeeds

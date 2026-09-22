@@ -1,0 +1,25 @@
+{
+	"id": "tenant-isolation",
+	"title": "Forced row-level security with USING and WITH CHECK",
+	"moduleId": "eval.ledger",
+	"directory": "ledger",
+	"kind": "new-module",
+	"blueprint": "new-module",
+	"role": "backend-engineer",
+	"brief": "Build the eval.ledger module exactly as its approved specification describes, including the migration that forces row-level security and the isolation test that proves it.",
+	"maxTurns": 8,
+	"gates": ["format", "module-schema", "typecheck", "test"],
+	"checks": [
+		"module-manifest",
+		"permissions-declared",
+		"tenant-not-from-request",
+		"rls-forced",
+		"migrations-mirrored",
+		"no-sql-interpolation"
+	],
+	"approval": {
+		"specHash": null,
+		"approvedBy": null,
+		"approvedAt": null
+	}
+}

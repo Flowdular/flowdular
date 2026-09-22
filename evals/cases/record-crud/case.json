@@ -1,0 +1,27 @@
+{
+	"id": "record-crud",
+	"title": "One tenant table, one list screen, one create action",
+	"moduleId": "eval.catalog",
+	"directory": "catalog",
+	"kind": "new-module",
+	"blueprint": "new-module",
+	"role": "agentic-engineer",
+	"brief": "Build the eval.catalog module exactly as its approved specification describes: the parts table, the list screen with its five states, the create action behind catalog.parts.manage, and the tests that prove tenant isolation.",
+	"maxTurns": 8,
+	"gates": ["format", "module-schema", "typecheck", "test"],
+	"checks": [
+		"module-manifest",
+		"permissions-declared",
+		"endpoints-declare-permission",
+		"tenant-not-from-request",
+		"rls-forced",
+		"migrations-mirrored",
+		"locales-complete",
+		"no-sql-interpolation"
+	],
+	"approval": {
+		"specHash": null,
+		"approvedBy": null,
+		"approvedAt": null
+	}
+}
