@@ -25,7 +25,7 @@ jobs:
           cache: true
           install: false
       - run: pnpm install --frozen-lockfile
-      - run: node --test scripts/tests/platform-release.test.mjs scripts/tests/test-shards.test.mjs scripts/tests/dom-properties.test.mjs scripts/tests/ui-classes.test.mjs scripts/tests/ui-preview-args.test.mjs scripts/tests/release-versions.test.mjs
+      - run: node --test scripts/tests/platform-release.test.mjs scripts/tests/test-shards.test.mjs scripts/tests/dom-properties.test.mjs scripts/tests/ui-classes.test.mjs scripts/tests/ui-preview-args.test.mjs scripts/tests/release-versions.test.mjs scripts/tests/render-doc.test.mjs
       # The suites run in the test job below, split into balanced shards.
       - run: pnpm verify:static
       - run: pnpm build

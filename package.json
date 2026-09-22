@@ -34,6 +34,9 @@
 		"ui-classes:check": "node scripts/ui-classes.mjs --check",
 		"release-versions:check": "node scripts/release-versions.mjs --check",
 		"ui:preview": "node scripts/ui-preview.mjs",
+		"docs:render": "node scripts/render-doc.mjs --all",
+		"eval": "node scripts/eval.mjs",
+		"eval:approve": "node scripts/eval.mjs --approve",
 		"platform-api:update": "node scripts/platform-api.mjs --update",
 		"release:publish": "node scripts/publish-sdk.mjs"
 	},

@@ -1,0 +1,37 @@
+<!doctype html>
+<!-- flowdular:note The page skeleton for docs/handbook. Slots are filled by
+     scripts/render-doc.mjs, and the style slot below becomes the inlined fonts,
+     the packages/ui tokens and docs/templates/document.css, so a rendered file
+     carries its own styling and survives being emailed. Change structure here,
+     appearance in document.css, and content in the markdown. This note is
+     stripped from the rendered document. -->
+<html lang="{{lang}}">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>{{title}}</title>
+		<meta name="description" content="{{description}}" />
+		<!-- flowdular:style -->
+	</head>
+	<body>
+		<article class="doc">
+			<header class="doc-cover">
+				<div class="doc-cover__top">
+					<div class="doc-cover__logo">{{logo}}</div>
+					{{classification}}
+				</div>
+				<div class="doc-brandbar">
+					<span class="doc-brandbar__weave"></span>
+					<span class="doc-brandbar__weft"></span>
+				</div>
+				{{eyebrow}}
+				<h1 class="doc-cover__title">{{title}}</h1>
+				{{subtitle}}
+				<div class="doc-meta">{{meta}}</div>
+			</header>
+			{{toc}}
+			<main class="doc-body">{{content}}</main>
+			<footer class="doc-foot">{{footer}}</footer>
+		</article>
+	</body>
+</html>

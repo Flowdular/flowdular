@@ -1,0 +1,65 @@
+schemaVersion: 2
+id: eval.tickets
+specVersion: 0.1.0
+status: approved
+name: Eval Tickets
+description: A support ticket list split across two permissions, where reading a ticket and resolving it are separate rights, used as a fixed evaluation case for permission discipline.
+profile: full
+capabilities:
+  - api
+  - client
+  - translations
+dependencies:
+  - id: system.core
+    range: ^0.9.0
+  - id: auth.core
+    range: ^0.14.0
+tenancy: required
+locales:
+  - en
+  - pl
+invariants:
+  - Reading a ticket and resolving a ticket are separate permissions, and no endpoint accepts both as interchangeable.
+  - Every endpoint names exactly one permission; there is no endpoint a signed-in member reaches without one.
+  - A resolution records who resolved the ticket, taken from the authenticated principal.
+permissions:
+  - id: tickets.read
+    description: Read the tickets of the active workspace.
+  - id: tickets.resolve
+    description: Resolve a ticket in the active workspace.
+dataOwnership:
+  - eval.tickets owns the tickets table and nothing else.
+entities:
+  - id: ticket
+    name: Ticket
+    description: One support request raised inside the workspace.
+    fields:
+      - id: subject
+        type: string
+        required: true
+        maxLength: 160
+      - id: resolved
+        type: boolean
+        required: true
+      - id: resolvedBy
+        type: string
+        maxLength: 64
+screens:
+  - id: tickets
+    kind: list
+    entity: ticket
+    title: Tickets
+    navigationGroup: Support
+acceptanceScenarios:
+  - id: AS-READ-CANNOT-RESOLVE
+    given: A member holds tickets.read and not tickets.resolve
+    when: They open the list and attempt to resolve a ticket
+    then: The list renders and the resolve endpoint refuses the request
+  - id: AS-RESOLVE-RECORDS-IDENTITY
+    given: A member holds tickets.resolve
+    when: They resolve an open ticket
+    then: The ticket is marked resolved and resolvedBy carries their identity from the principal
+  - id: AS-NO-PERMISSION-DENIED
+    given: A member holds neither tickets.read nor tickets.resolve
+    when: They reach the screen and the endpoints
+    then: Both answer denied and no ticket data is returned
