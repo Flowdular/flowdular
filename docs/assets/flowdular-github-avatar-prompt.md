@@ -1,3 +1,5 @@
+> Superseded on 2026-09-22: the mark is now three right-aligned bars with a copper bottom bar, and the raster assets are rendered by `node scripts/brand-assets.mjs` instead of an image model. Kept for the record.
+
 # GitHub organization avatar
 
 Built-in imagegen, edit mode. Reference: `flowdular-readme-hero.png`.

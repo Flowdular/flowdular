@@ -81,7 +81,7 @@ Read-only master-detail (runs, playground) keeps `ui-two-col` (+ `--wide-aside`)
 - `Alert`: `tone` danger (default), warning, info.
 - `Avatar`: `name`, `square` (organizations), `large`.
 - `Icon`: `name`, `size` (18 default, 16 in controls, 14 in `Button size="sm"`), `strokeWidth`.
-- `BrandMark`: `size`, `signature`, `tone`; brand moments only.
+- `BrandMark`: `size`, `tone`; three bars with a copper accent bar, brand moments only.
 
 Icon keys (`ICON_PATHS`, `packages/ui/src/icons/Icon.tsrx`): `dashboard`, `parties`, `catalog`, `user`, `users`, `shield`, `code`, `modules`, `file-text`, `play`, `bot`, `flask`, `activity`, `plug`, `search`, `chevron-down`, `chevron-left`, `chevron-right`, `chevrons-up-down`, `sort`, `calendar`, `plus`, `panel-left`, `check`, `filter`, `download`, `more`, `external`, `alert`, `x`, `sign-out`, `refresh`, `help`, `info`, `key`, `settings`, `braces`, `copy`. An unknown name renders `modules` silently, so check the list.
 

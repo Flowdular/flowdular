@@ -1,3 +1,5 @@
+> Superseded on 2026-09-22: the mark is now three right-aligned bars with a copper bottom bar, and the raster assets are rendered by `node scripts/brand-assets.mjs` instead of an image model. Kept for the record.
+
 # README hero artwork
 
 Created with built-in imagegen in edit mode using the earlier README banner as the brand reference. Saved as `docs/assets/flowdular-readme-hero.png` and displayed at the top of README.md. The previous banner is retained as an alternative. Visually checked the wordmark, headline, woven # and composition.

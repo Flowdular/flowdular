@@ -1,3 +1,5 @@
+> Superseded on 2026-09-22: the mark is now three right-aligned bars with a copper bottom bar, and the raster assets are rendered by `node scripts/brand-assets.mjs` instead of an image model. Kept for the record.
+
 # README artwork
 
 Created with the built-in image generation tool using the approved Flowdular OG as a style and brand reference. Both selected outputs were visually inspected.
