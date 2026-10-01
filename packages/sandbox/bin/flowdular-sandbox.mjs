@@ -324,6 +324,7 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 	   left the dashboard unavailable for as long as the application takes to boot,
 	   and blocked every caller of the state endpoint behind it. The connection is
 	   a background concern; the workspace is not. */
+	let platform = null;
 	let bringUpPlatform = async () => {};
 	try {
 		await resolveWorkspace(options, theme);
