@@ -117,7 +117,12 @@ try {
 	}
 	assert.ok(response?.ok, logs);
 	const state = await response.json();
-	assert.equal(state.connection.connected, false);
+	/* The launcher now starts the application and prepares its own credential, so
+	   a consumer who unpacked this and ran it reaches a connected sandbox rather
+	   than a token screen. This was `connected === false` before that change. */
+	assert.equal(state.connection.connected, true, logs);
+	assert.equal(state.connection.authority.authority.granted, true, logs);
+	assert.equal(state.connection.authority.principal.role, 'owner', logs);
 	const page = await fetch(`http://127.0.0.1:${port}/`);
 	assert.equal(page.status, 200, logs);
 	assert.match(await page.text(), /Flowdular/);

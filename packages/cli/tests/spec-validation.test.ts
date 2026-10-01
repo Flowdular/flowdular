@@ -120,6 +120,14 @@ async function report(spec: unknown) {
 	return validateModuleSpec(path);
 }
 
+/* For the cases where the authoring style itself is the defect, so the text has
+   to reach the validator exactly as an agent wrote it. */
+async function reportText(text: string) {
+	const path = join(root, `module-${counter++}.yaml`);
+	await writeFile(path, text);
+	return validateModuleSpec(path);
+}
+
 function codes(issues: readonly { code: string; severity: string }[]) {
 	return issues.map((issue) => `${issue.severity}:${issue.code}`).sort();
 }
@@ -145,6 +153,67 @@ describe('module specification validation', () => {
 
 	it('accepts a complete version 2 domain model', async () => {
 		expect(await report(version2)).toMatchObject({ valid: true, issues: [] });
+	});
+
+	/* A real session wrote a specification where a value wrapped onto the next
+	   line inside a flow mapping, so YAML read the continuation as further keys.
+	   "must NOT have additional properties" gave the agent nothing to act on and
+	   two repair turns failed the same way. */
+	it('names the offending key and the cause when a value wrapped in a flow mapping', async () => {
+		const wrapped = `schemaVersion: 2
+id: inventory.core
+specVersion: 0.1.0
+status: approved
+name: Inventory Core
+description: Tracks stock.
+profile: full
+capabilities:
+  - api
+  - database
+dependencies: []
+tenancy: required
+locales:
+  - en
+permissions:
+  - id: inventory.records.manage
+    description: Manage records.
+entities:
+  - id: records
+    name: Record
+    fields:
+      - id: sku
+        type: string
+actions:
+  - {
+      id: create-record,
+      entity: records,
+      permission: inventory.records.manage,
+      kind: create,
+      risk: workspace-write,
+      idempotent: false,
+      description: Create a record from reference,
+        subject,
+        description and priority.,
+    }
+`;
+		const result = await reportText(wrapped);
+		expect(result.valid).toBe(false);
+		const offenders = result.issues.filter(
+			(issue) => issue.code === 'SCHEMA_ADDITIONALPROPERTIES',
+		);
+		expect(offenders.length).toBeGreaterThan(0);
+		/* The key is named, so a repair turn can remove or fold it. */
+		expect(offenders.some((issue) => issue.path?.endsWith('/subject'))).toBe(
+			true,
+		);
+		/* And a key that reads as prose is reported as the wrapped value it is,
+		   with the authoring fix rather than a restatement of the failure. */
+		const explained = offenders.find((issue) =>
+			issue.message.includes('description and priority.'),
+		);
+		expect(explained).toBeDefined();
+		expect(explained!.message).toContain('wrapped onto the next line');
+		expect(explained!.message).toContain('block style');
 	});
 
 	it('reports an action permission the specification does not declare', async () => {

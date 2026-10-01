@@ -42,16 +42,64 @@ export interface FileValidation {
 	readonly issues: readonly ValidationIssue[];
 }
 
+/* The keys an entry may carry, read from the schema so the message can list
+   them. An agent that is told "must NOT have additional properties" and nothing
+   else has no way to converge: it guesses, retries the same shape, and burns a
+   repair turn. Naming the property and the keys that are allowed turns the
+   refusal into an instruction. */
+function allowedKeysAt(schemaPath: string): readonly string[] {
+	const pointer = schemaPath
+		.replace(/^#\/?/, '')
+		.split('/')
+		.filter((segment) => segment.length > 0)
+		.map((segment) => segment.replace(/~1/g, '/').replace(/~0/g, '~'));
+	/* The path names the failing keyword itself, which is a boolean here, so the
+	   entry that carries the allowed keys is its parent. */
+	let node: unknown = moduleSpecSchema;
+	for (const segment of pointer.slice(0, -1)) {
+		if (typeof node !== 'object' || node === null) return [];
+		node = (node as Record<string, unknown>)[segment];
+	}
+	const properties = (
+		node as { properties?: Record<string, unknown> } | undefined
+	)?.properties;
+	return properties ? Object.keys(properties).sort() : [];
+}
+
+/* A key that reads as a sentence is not a key anybody meant to write. It is a
+   value that wrapped onto the next line, which YAML only does outside a flow
+   collection: `- { id: x, description: some long` followed by an indented
+   `continuation }` parses the continuation as further keys. */
+function looksLikeWrappedValue(name: string): boolean {
+	return /\s/.test(name) || /[,.]/.test(name) || name.length > 40;
+}
+
 function issuesFrom(
 	errors: ErrorObject[] | null | undefined,
 ): ValidationIssue[] {
-	return (errors ?? []).map((error) => ({
-		/* Ajv reports a rejected branch as the keyword "false schema". */
-		code: `SCHEMA_${error.keyword.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`,
-		message: error.message ?? 'Schema validation failed.',
-		path: error.instancePath || '/',
-		severity: 'error' as const,
-	}));
+	return (errors ?? []).map((error) => {
+		const extra = (error.params as { additionalProperty?: string } | undefined)
+			?.additionalProperty;
+		if (error.keyword === 'additionalProperties' && extra !== undefined) {
+			const allowed = allowedKeysAt(error.schemaPath);
+			const wrapped = looksLikeWrappedValue(extra);
+			return {
+				code: `SCHEMA_${error.keyword.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`,
+				message: wrapped
+					? `"${extra}" was read as a property name, which means a value wrapped onto the next line. YAML only folds a multi-line value outside a flow collection, so \`- { ... }\` turns the continuation into more keys. Write this entry in block style with one key per line, or keep the whole value on one line: ${allowed.join(', ')}.`
+					: `Unknown property "${extra}". Allowed here: ${allowed.join(', ')}.`,
+				path: `${error.instancePath || '/'}/${extra}`,
+				severity: 'error' as const,
+			};
+		}
+		return {
+			/* Ajv reports a rejected branch as the keyword "false schema". */
+			code: `SCHEMA_${error.keyword.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`,
+			message: error.message ?? 'Schema validation failed.',
+			path: error.instancePath || '/',
+			severity: 'error' as const,
+		};
+	});
 }
 
 function specIssue(
