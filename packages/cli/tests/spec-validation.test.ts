@@ -159,6 +159,20 @@ describe('module specification validation', () => {
 		expect(result.issues[0]?.path).toBe('/actions/0/permission');
 	});
 
+	/* The schema permits `external` and both runtimes refuse it, so without this
+	   check the failure surfaces at delivery instead of at authoring. */
+	it('refuses an action that declares an external risk', async () => {
+		const spec = draft();
+		(spec.actions as { risk: string }[])[0]!.risk = 'external';
+		const result = await report(spec);
+		expect(result.valid).toBe(false);
+		expect(codes(result.issues)).toEqual([
+			'error:SPEC_ACTION_RISK_UNSUPPORTED',
+		]);
+		expect(result.issues[0]?.path).toBe('/actions/0/risk');
+		expect(result.issues[0]?.message).toContain('connector definition');
+	});
+
 	it('reports unknown entities on screens, actions and widgets', async () => {
 		const spec = draft();
 		(spec.screens as { entity: string }[])[0]!.entity = 'orders';

@@ -101,6 +101,11 @@ const TURN_TIMEOUT_MS = 20 * 60 * 1000;
 /* How many handed-off turns may run without the operator saying anything. The
    chain always stops on a failure, on a question, and on this count. */
 const CHAIN_LIMIT = 4;
+/* Consecutive gate-repair turns allowed inside one chain. A failing gate used
+   to hand off forever, bounded only by the per-turn timeout, so a module that
+   cannot satisfy a gate could spend an unbounded amount of the operator's
+   budget. Mirrors `maxRepairLoops` in .ai/policies/task-budgets.yaml. */
+const MAX_REPAIR_LOOPS = 2;
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 /* Paths the preview bridge never forwards: the platform's own authentication
    and the sandbox's own records are not preview data. */
@@ -722,6 +727,7 @@ export function createSandboxRoutes(
 					driver?: string;
 				} | null = input;
 				let depth = 0;
+				let repairs = 0;
 				while (next && !controller.signal.aborted) {
 					const iterator = runTurn(turnContext(platform), {
 						sessionId,
@@ -736,7 +742,19 @@ export function createSandboxRoutes(
 					const outcome: TurnOutcome = step.value;
 					publish(channel, 'completed', outcome);
 					next = null;
+					if (outcome.handoff.kind === 'continue')
+						repairs = outcome.handoff.repair ? repairs + 1 : 0;
 					if (
+						repairs > MAX_REPAIR_LOOPS &&
+						outcome.handoff.kind === 'continue'
+					) {
+						/* Hand back to the operator with the reason on the transcript
+						   rather than starting another turn that costs tokens. */
+						publish(channel, 'entry', {
+							kind: 'system',
+							text: `Stopped after ${repairs} consecutive gate-repair turns. Read the gate output and change the request, or fix the module by hand.`,
+						});
+					} else if (
 						outcome.handoff.kind === 'continue' &&
 						outcome.session.autoContinue &&
 						depth + 1 < CHAIN_LIMIT &&

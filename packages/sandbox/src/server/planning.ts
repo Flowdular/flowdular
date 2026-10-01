@@ -677,6 +677,7 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 		reason: string,
 		prompt = '',
 		module = context.module,
+		options: { readonly repair?: boolean } = {},
 	): HandoffPlan => ({
 		kind,
 		role,
@@ -684,6 +685,7 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 		reason,
 		prompt,
 		module,
+		...(options.repair ? { repair: true } : {}),
 	});
 
 	if (context.failed) {
@@ -721,6 +723,7 @@ export function planHandoff(context: HandoffContext): HandoffPlan {
 				failedGate.output.slice(0, GATE_PROMPT_OUTPUT),
 			].join('\n\n'),
 			owner?.module ?? failedGate.module ?? context.module,
+			{ repair: true },
 		);
 	}
 

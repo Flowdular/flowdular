@@ -49,6 +49,9 @@ export interface HandoffPlan {
 	readonly roleName: string;
 	readonly reason: string;
 	readonly prompt: string;
+	/* Set when this turn exists only to fix a failed gate. The chain counts
+	   these so a module that cannot satisfy a gate cannot spin forever. */
+	readonly repair?: boolean;
 	/* The draft module directory the next turn works in. Absent on handoffs
 	   written before a session could target one module of several. */
 	readonly module?: string;

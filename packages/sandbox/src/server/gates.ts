@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
-import { access } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { inspectAutoReview } from './auto-review.ts';
 import { checkDeclaredDependencies } from './dependencies.ts';
+import { checkModuleRules } from './module-rules.ts';
 import {
 	liveAdapterRefusal,
 	readSessionAdapters,
@@ -18,6 +19,7 @@ export type GateId =
 	| 'spec-schema'
 	| 'module-schema'
 	| 'dependencies'
+	| 'module-rules'
 	| 'typecheck'
 	| 'tests'
 	| 'format'
@@ -148,6 +150,26 @@ const GATE_DEFINITIONS: readonly GateDefinition[] = [
 						? `${report.imported.length} imported packages, all declared.`
 						: `Undeclared packages: ${report.missing.join(', ')}. Add them to package.json dependencies; the session installs what package.json declares and nothing else, and the ejected module would fail without them.`,
 			};
+		},
+	},
+	{
+		id: 'module-rules',
+		summary:
+			'The module satisfies the deterministic rules: declared permissions, a permission on every endpoint, tenant identity from the principal, forced row-level security, mirrored migrations, complete locales and no interpolated statement.',
+		scope: 'module',
+		command: () => null,
+		inspect: async (context) => {
+			const specPath = join(context.modulePath, 'spec', 'module.yaml');
+			let spec = '';
+			try {
+				spec = await readFile(specPath, 'utf8');
+			} catch {
+				return {
+					passed: false,
+					output: `${specPath} could not be read, so the module cannot be measured against its specification.`,
+				};
+			}
+			return checkModuleRules({ modulePath: context.modulePath, spec });
 		},
 	},
 	{

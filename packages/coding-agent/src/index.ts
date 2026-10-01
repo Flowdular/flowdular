@@ -52,6 +52,11 @@ export {
 	renderDefaultsModule,
 } from './roles/sync.ts';
 export {
+	agentEnvironment,
+	probeEnvironment,
+	withheldEnvironmentKeys,
+} from './environment.ts';
+export {
 	parseJsonLine,
 	probeCommand,
 	resolveInsideWorkspace,

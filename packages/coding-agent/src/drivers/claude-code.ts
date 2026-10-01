@@ -14,6 +14,7 @@ import {
 	spawnLineStream,
 	workspaceRelative,
 } from '../workspace.ts';
+import { agentEnvironment } from '../environment.ts';
 
 export interface ClaudeCodeDriverOptions {
 	readonly command?: string;
@@ -173,6 +174,7 @@ export function createClaudeCodeDriver(
 			cwd: request.workspacePath,
 			signal: request.signal,
 			timeoutMs: request.timeoutMs ?? options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+			env: agentEnvironment('claude-code'),
 		});
 
 		let started = false;

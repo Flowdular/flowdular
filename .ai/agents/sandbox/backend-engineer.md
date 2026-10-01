@@ -24,6 +24,7 @@ allowedPaths:
 gates:
   - module-schema
   - dependencies
+  - module-rules
   - typecheck
   - tests
   - format

@@ -8,6 +8,7 @@ allowedPaths:
   - 'package.json'
 gates:
   - dependencies
+  - module-rules
   - typecheck
   - tests
   - format

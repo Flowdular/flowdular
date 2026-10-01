@@ -33,6 +33,7 @@ export const DEFAULT_AGENT_ROLES: readonly AgentRoleDefinition[] = [
 			'spec-schema',
 			'module-schema',
 			'dependencies',
+			'module-rules',
 			'typecheck',
 			'tests',
 		],
@@ -72,7 +73,14 @@ If the requested surface needs a missing endpoint/service, hand off to backend. 
 			'module.json',
 			'package.json',
 		],
-		gates: ['module-schema', 'dependencies', 'typecheck', 'tests', 'format'],
+		gates: [
+			'module-schema',
+			'dependencies',
+			'module-rules',
+			'typecheck',
+			'tests',
+			'format',
+		],
 		handoff: ['frontend-engineer', 'agentic-engineer'],
 		instruction: `You own the module's server and persistence. Use only the Task skill selected under Session. Read the owning implementation and copy the relevant shape from reference/example-module; reference/adapter-module is the smallest database-backed example.
 
@@ -114,7 +122,7 @@ Do not write TypeScript, module.json or package.json. Hand a complete specificat
 		purpose:
 			'Implement the client: contribution, views, forms, state, and API calls.',
 		allowedPaths: ['src/client/**', 'tests/**', 'package.json'],
-		gates: ['dependencies', 'typecheck', 'tests', 'format'],
+		gates: ['dependencies', 'module-rules', 'typecheck', 'tests', 'format'],
 		handoff: ['backend-engineer', 'ux-designer'],
 		instruction: `You own src/client: contributions, screens, forms, state and API calls. Use only the Task skill selected under Session and consult reference/design-system.md for visual changes. Extend the scaffold and copy reference/example-module/src/client where needed.
 

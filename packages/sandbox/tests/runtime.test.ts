@@ -1153,6 +1153,29 @@ describe('handoff planning', () => {
 		expect(plan.prompt).toContain('vitest run');
 	});
 
+	/* The chain counts these so a gate that cannot be satisfied stops costing
+	   turns instead of handing off until the timeout. */
+	it('marks a gate-repair handoff as a repair turn', () => {
+		const plan = planHandoff({
+			...base,
+			gates: [
+				{
+					id: 'tests' as const,
+					module: 'profile',
+					status: 'failed' as const,
+					command: 'vitest run',
+					output: 'FAIL',
+					durationMs: 1,
+				},
+			],
+		});
+		expect(plan.repair).toBe(true);
+	});
+
+	it('does not mark an ordinary handoff as a repair turn', () => {
+		expect(planHandoff({ ...base }).repair).toBeUndefined();
+	});
+
 	it.each([
 		[
 			'module-schema',

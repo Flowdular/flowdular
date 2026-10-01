@@ -13,6 +13,7 @@ import {
 	spawnLineStream,
 	workspaceRelative,
 } from '../workspace.ts';
+import { agentEnvironment } from '../environment.ts';
 
 export interface CodexDriverOptions {
 	readonly command?: string;
@@ -175,6 +176,7 @@ export function createCodexDriver(
 			cwd: request.workspacePath,
 			signal: request.signal,
 			timeoutMs: request.timeoutMs ?? options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+			env: agentEnvironment('codex'),
 		});
 
 		let currentResumeId = resumeId;

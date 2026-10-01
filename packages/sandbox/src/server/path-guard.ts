@@ -14,9 +14,27 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 /* This is a post-turn containment boundary, not an instruction for the model.
    The agent receives a complete workspace so it can read its contracts, but it
-   may only leave changes in the one module and paths owned by its role. */
-const IGNORED_DIRECTORIES = new Set(['node_modules', '.git', 'dist', '.turbo']);
+   may only leave changes in the one module and paths owned by its role.
+
+   `node_modules` and friends used to be skipped outright, which made a write
+   into `modules/<dir>/node_modules/pkg/file.js` invisible and unrestored. A
+   pnpm dependency tree is a symlink farm into the shared store, so that write
+   is an escape route rather than a cosmetic one. These directories are now
+   detected with a structural fingerprint (no per-file hashing, so a large
+   install stays affordable) and their contents are restorable. */
+const PROTECTED_DIRECTORIES = new Set([
+	'node_modules',
+	'.git',
+	'dist',
+	'.turbo',
+]);
 const QUARANTINE_DIRECTORY = 'path-violations';
+/* A dependency tree can hold tens of thousands of entries. Past these bounds
+   the guard stops trusting its own picture and fails the turn closed rather
+   than reporting a clean result it cannot substantiate. */
+const PROTECTED_SCAN_LIMIT = 20_000;
+const PROTECTED_BACKUP_BYTES = 1_048_576;
+const PROTECTED_BACKUP_TOTAL_BYTES = 32_000_000;
 
 type NodeKind = 'directory' | 'file' | 'symlink';
 
@@ -25,6 +43,8 @@ interface TreeNode {
 	readonly kind: NodeKind;
 	readonly digest?: string;
 	readonly target?: string;
+	/* A protected directory is watched but never descended into by snapshot(). */
+	readonly protected?: boolean;
 }
 
 export interface PathViolation {
@@ -79,6 +99,139 @@ async function digest(path: string): Promise<string> {
 		.digest('hex');
 }
 
+interface ProtectedTree {
+	/* relpath -> "kind:size:mtimeMs" for every entry, order-independent. */
+	readonly fingerprint: ReadonlyMap<string, string>;
+	/* Entries whose bytes were kept so a change can be reverted. */
+	readonly backup: ReadonlyMap<string, Buffer>;
+	readonly truncated: boolean;
+	/* True when the scan hit its bound and the result cannot be trusted. */
+	readonly overBudget: boolean;
+}
+
+async function discoverProtected(
+	root: string,
+	directory: string,
+	found: string[],
+	budget: { count: number; overBudget: boolean },
+): Promise<void> {
+	let entries;
+	try {
+		entries = await readdir(directory, { withFileTypes: true });
+	} catch {
+		return;
+	}
+	for (const entry of entries) {
+		if (budget.overBudget || !entry.isDirectory()) continue;
+		const fullPath = join(directory, entry.name);
+		if (PROTECTED_DIRECTORIES.has(entry.name)) {
+			found.push(fullPath);
+			continue;
+		}
+		budget.count += 1;
+		if (budget.count > PROTECTED_SCAN_LIMIT) {
+			budget.overBudget = true;
+			return;
+		}
+		await discoverProtected(root, fullPath, found, budget);
+	}
+}
+
+async function fingerprintProtected(
+	root: string,
+	directory: string,
+	state: {
+		fingerprint: Map<string, string>;
+		backup: Map<string, Buffer>;
+		bytes: number;
+		count: number;
+		truncated: boolean;
+		overBudget: boolean;
+	},
+): Promise<void> {
+	let entries;
+	try {
+		entries = await readdir(directory, { withFileTypes: true });
+	} catch {
+		return;
+	}
+	for (const entry of entries) {
+		if (state.overBudget) return;
+		const fullPath = join(directory, entry.name);
+		const path = relative(root, fullPath);
+		let info;
+		try {
+			info = await lstat(fullPath);
+		} catch {
+			continue;
+		}
+		state.count += 1;
+		if (state.count > PROTECTED_SCAN_LIMIT) {
+			state.overBudget = true;
+			return;
+		}
+		if (info.isSymbolicLink()) {
+			state.fingerprint.set(path, `link:${await readlink(fullPath)}`);
+			continue;
+		}
+		if (info.isDirectory()) {
+			state.fingerprint.set(path, `dir`);
+			await fingerprintProtected(root, fullPath, state);
+			continue;
+		}
+		if (!info.isFile()) continue;
+		if (state.truncated) {
+			/* Past the backup bound the bytes are not held, so size and mtime are
+			   the only cheap signals left. A same-size rewrite is reported by the
+			   truncated flag below rather than silently accepted. */
+			state.fingerprint.set(path, `file:${info.size}:${info.mtimeMs}`);
+			continue;
+		}
+		if (info.size > PROTECTED_BACKUP_BYTES) {
+			state.truncated = true;
+			state.fingerprint.set(path, `file:${info.size}:${info.mtimeMs}`);
+			continue;
+		}
+		if (state.bytes + info.size > PROTECTED_BACKUP_TOTAL_BYTES) {
+			state.truncated = true;
+			state.fingerprint.set(path, `file:${info.size}:${info.mtimeMs}`);
+			continue;
+		}
+		try {
+			const bytes = await readFile(fullPath);
+			state.fingerprint.set(
+				path,
+				`file:${createHash('sha256').update(bytes).digest('hex')}`,
+			);
+			state.backup.set(path, bytes);
+			state.bytes += bytes.length;
+		} catch {
+			state.truncated = true;
+			state.fingerprint.set(path, `file:${info.size}:${info.mtimeMs}`);
+		}
+	}
+}
+
+/* Only dependency, VCS and build trees are fingerprinted. Source outside them
+   is already covered by the hashed snapshot, and walking all of it twice would
+   double the cost of every turn. */
+async function protectedSnapshot(root: string): Promise<ProtectedTree> {
+	const discovered: string[] = [];
+	const discovery = { count: 0, overBudget: false };
+	await discoverProtected(root, root, discovered, discovery);
+	const state = {
+		fingerprint: new Map<string, string>(),
+		backup: new Map<string, Buffer>(),
+		bytes: 0,
+		count: 0,
+		truncated: false,
+		overBudget: discovery.overBudget,
+	};
+	for (const directory of discovered)
+		await fingerprintProtected(root, directory, state);
+	return { ...state, fingerprint: state.fingerprint, backup: state.backup };
+}
+
 async function snapshot(
 	root: string,
 	directory = root,
@@ -91,7 +244,15 @@ async function snapshot(
 		return nodes;
 	}
 	for (const entry of entries) {
-		if (entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name)) continue;
+		if (entry.isDirectory() && PROTECTED_DIRECTORIES.has(entry.name)) {
+			/* Stop at any depth. Descending into a pnpm tree would hash every
+			   file twice per turn, and the separate fingerprint pass already
+			   covers the contents. */
+			const protectedPath = join(directory, entry.name);
+			const path = relativePath(root, protectedPath);
+			nodes.set(path, { path, kind: 'directory', protected: true });
+			continue;
+		}
 		const fullPath = join(directory, entry.name);
 		const path = relativePath(root, fullPath);
 		const info = await lstat(fullPath);
@@ -202,6 +363,7 @@ export async function guardAgentPaths(input: {
 }): Promise<PathGuard> {
 	const workspace = resolve(input.workspace);
 	const baseline = await snapshot(workspace);
+	const baselineProtected = await protectedSnapshot(workspace);
 	const staging = join(
 		input.sessionRoot,
 		QUARANTINE_DIRECTORY,
@@ -240,6 +402,16 @@ export async function guardAgentPaths(input: {
 					});
 				}
 			}
+
+			/* Compare the protected trees separately: snapshot() stops at their
+			   boundary, so a change inside one is invisible to the loop above. */
+			const currentProtected = await protectedSnapshot(workspace);
+			const protectedViolations = protectedViolationsBetween(
+				baselineProtected,
+				currentProtected,
+			);
+			violations.push(...protectedViolations);
+
 			if (violations.length === 0) {
 				/* The baseline is an enforcement aid, not session history. Retaining a
 				   full copy on every successful turn leaks disk and duplicates any
@@ -269,14 +441,67 @@ export async function guardAgentPaths(input: {
 				)
 				.sort((left, right) => left.path.length - right.path.length);
 			for (const node of restore) await restoreNode(workspace, backup, node);
+			/* Put protected bytes back before discarding the evidence copy, so a
+			   tampered dependency does not survive the turn that flagged it. */
+			for (const [path, bytes] of baselineProtected.backup) {
+				const stillChanged =
+					currentProtected.fingerprint.get(path) !==
+					baselineProtected.fingerprint.get(path);
+				if (!stillChanged) continue;
+				await mkdir(dirname(join(workspace, path)), { recursive: true });
+				await writeFile(join(workspace, path), bytes);
+			}
 			await rm(backup, { recursive: true, force: true });
+			/* The copied offenders are restored into the workspace above, so keeping
+			   a second copy under the quarantine only multiplied every file the turn
+			   touched. The evidence list is the record that matters. */
+			await rm(join(staging, 'files'), { recursive: true, force: true });
 			await mkdir(staging, { recursive: true, mode: 0o700 });
 			await writeFile(
 				join(staging, 'evidence.json'),
-				`${JSON.stringify({ allowedPaths: input.allowedPaths, violations }, null, '\t')}\n`,
+				`${JSON.stringify(
+					{ allowedPaths: input.allowedPaths, violations },
+					null,
+					'\t',
+				)}\n`,
 				{ encoding: 'utf8', mode: 0o600 },
 			);
 			return { violations, quarantine: staging };
 		},
 	};
+}
+
+/* Anything that differs inside a protected tree is a violation: no role
+   allowlist ever grants those paths, so a difference can only come from the
+   model rather than from a gate or a formatter. When the scan outran its bound
+   the guard says so instead of reporting a clean turn. */
+function protectedViolationsBetween(
+	before: ProtectedTree,
+	after: ProtectedTree,
+): PathViolation[] {
+	if (before.overBudget || after.overBudget) {
+		return [
+			{
+				path: '.',
+				change: 'modified',
+				reason:
+					'The protected-path scan exceeded its bound, so the turn cannot be verified. Remove the oversized tree and retry.',
+			},
+		];
+	}
+	const violations: PathViolation[] = [];
+	for (const path of new Set([
+		...before.fingerprint.keys(),
+		...after.fingerprint.keys(),
+	])) {
+		if (before.fingerprint.get(path) === after.fingerprint.get(path)) continue;
+		const existed = before.fingerprint.has(path);
+		violations.push({
+			path,
+			change: existed ? 'modified' : 'created',
+			reason:
+				'The coding agent may not write into a dependency, VCS or build directory.',
+		});
+	}
+	return violations;
 }

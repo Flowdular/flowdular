@@ -35,6 +35,7 @@ const PULL_REQUEST_URL = 'https://github.com/example/octane/pull/7';
 const MODULE_GATES = new Set([
 	'auto-review',
 	'dependencies',
+	'module-rules',
 	'typecheck',
 	'tests',
 	'format',

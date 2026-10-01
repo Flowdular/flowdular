@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { lstat, realpath } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { probeEnvironment } from './environment.ts';
 import { CodingAgentError } from './types.ts';
 
 /* Every path a driver touches is resolved against the session workspace and
@@ -162,11 +163,16 @@ export interface SpawnJsonOptions {
 
 /* Drivers stream newline-delimited JSON from a child process. The process is
    killed on abort or timeout, and stderr is captured with a hard cap so a
-   failing binary cannot exhaust memory. */
+   failing binary cannot exhaust memory.
+
+   An omitted env is an empty environment, not the operator's: inheriting
+   process.env handed every driver the platform token and DATABASE_URL. Callers
+   that genuinely need the ambient PATH for a version probe pass the explicit
+   allowlist instead. */
 export function spawnLineStream(options: SpawnJsonOptions): ProcessLineStream {
 	const child = spawn(options.command, [...options.args], {
 		cwd: options.cwd,
-		env: options.env ?? process.env,
+		env: options.env ?? {},
 		stdio: ['ignore', 'pipe', 'pipe'],
 	});
 	const stderrLimit = options.stderrLimit ?? 8_192;
@@ -262,6 +268,7 @@ export async function probeCommand(
 			args,
 			cwd: process.cwd(),
 			timeoutMs: 10_000,
+			env: probeEnvironment(),
 		});
 		let first = '';
 		for await (const line of stream.lines) {

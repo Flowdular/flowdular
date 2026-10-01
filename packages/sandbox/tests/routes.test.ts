@@ -834,7 +834,7 @@ describe('detached turns', () => {
 		expect(updated.state).not.toBe('editing');
 	}, 15_000);
 
-	it('chains handoffs on the server up to the limit and streams every turn', async () => {
+	it('stops a repair chain after the repair limit and streams every turn', async () => {
 		const root = await workspace();
 		let turns = 0;
 		const driver = fakeDriver({ handoff: 'HANDOFF: frontend-engineer - next' });
@@ -894,12 +894,21 @@ describe('detached turns', () => {
 			},
 		);
 		const events = await readSse(response);
+		/* This fixture changes a file every turn, so every handoff is a gate
+		   repair. The chain stops at the repair limit rather than running to the
+		   turn limit, which is what keeps a module that cannot satisfy a gate
+		   from spending the operator's budget. */
 		expect(events.filter((entry) => entry.event === 'completed')).toHaveLength(
-			4,
+			3,
 		);
+		expect(
+			events.some((entry) =>
+				String(entry.data?.text ?? '').includes('consecutive gate-repair'),
+			),
+		).toBe(true);
 		expect(events.at(-1)?.event).toBe('ended');
-		expect(turns).toBe(4);
-		expect((await readSession(root, session.id)).chainDepth).toBe(3);
+		expect(turns).toBe(3);
+		expect((await readSession(root, session.id)).chainDepth).toBe(2);
 	});
 
 	it('refuses to delete a running session unless told to stop it', async () => {

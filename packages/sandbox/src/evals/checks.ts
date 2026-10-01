@@ -33,6 +33,36 @@ export interface CheckOutcome {
 	readonly detail: string;
 }
 
+/* A headless or integration-only module has no endpoint and no table by
+   design, and a module that declares no locale ships no bundle. Scoring those
+   as failures would teach a reader to ignore the check, so each one applies
+   only when the specification says the capability exists. Declaring an entity
+   counts as declaring storage even when the `database` capability was omitted,
+   which is the common authoring slip. */
+function specCapabilities(spec: string): ReadonlySet<string> {
+	const start = spec.search(/^capabilities:\s*$/m);
+	if (start === -1) return new Set();
+	const rest = spec.slice(start);
+	const block = rest.slice(rest.indexOf('\n')).split(/^\S/m)[0] ?? '';
+	return new Set([...block.matchAll(/^\s*-\s+(\S+)\s*$/gm)].map((m) => m[1]!));
+}
+
+function appliesTo(context: CheckContext, capability: string): boolean {
+	const capabilities = specCapabilities(context.spec);
+	return (
+		capabilities.has(capability) ||
+		(capability === 'database' && /^entities:\s*$/m.test(context.spec))
+	);
+}
+
+function notApplicable(id: CheckId, reason: string): CheckOutcome {
+	return {
+		id,
+		passed: true,
+		detail: `Not applicable: ${reason}`,
+	};
+}
+
 function sourceFiles(context: CheckContext): [string, string][] {
 	return [...context.files].filter(
 		([path]) =>
@@ -108,6 +138,11 @@ function permissionsDeclared(context: CheckContext): CheckOutcome {
 }
 
 function endpointsDeclarePermission(context: CheckContext): CheckOutcome {
+	if (!appliesTo(context, 'api'))
+		return notApplicable(
+			'endpoints-declare-permission',
+			'the specification declares no api capability.',
+		);
 	const offenders: string[] = [];
 	let endpoints = 0;
 	for (const [path, source] of sourceFiles(context)) {
@@ -157,6 +192,11 @@ function tenantNotFromRequest(context: CheckContext): CheckOutcome {
 }
 
 function rlsForced(context: CheckContext): CheckOutcome {
+	if (!appliesTo(context, 'database'))
+		return notApplicable(
+			'rls-forced',
+			'the specification declares no database capability and no entity.',
+		);
 	const migrations = [...context.files].filter(
 		([path]) => path.includes('migrations/') && path.endsWith('.sql'),
 	);
@@ -186,6 +226,11 @@ function rlsForced(context: CheckContext): CheckOutcome {
 }
 
 function migrationsMirrored(context: CheckContext): CheckOutcome {
+	if (!appliesTo(context, 'database'))
+		return notApplicable(
+			'migrations-mirrored',
+			'the specification declares no database capability and no entity.',
+		);
 	const migrations = [...context.files].filter(
 		([path]) => path.includes('migrations/') && path.endsWith('.sql'),
 	);
@@ -222,6 +267,11 @@ function migrationsMirrored(context: CheckContext): CheckOutcome {
 }
 
 function localesComplete(context: CheckContext): CheckOutcome {
+	if (!appliesTo(context, 'translations'))
+		return notApplicable(
+			'locales-complete',
+			'the specification declares no translations capability.',
+		);
 	const locales = [
 		...(
 			context.spec.match(/^locales:\n((?:\s+-\s+\S+\n)+)/m)?.[1] ?? ''

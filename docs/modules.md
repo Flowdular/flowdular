@@ -65,6 +65,12 @@ at least one entity (`SPEC_ACTION_PERMISSION_UNKNOWN`, `SPEC_ENTITY_UNKNOWN`,
 `SPEC_DUPLICATE_ID`). A client without a list screen, or a stored entity with no
 tenant-unique field, is a warning.
 
+An action may not declare `risk: external`. A module never calls another system
+directly: the harness and the CLI runner both refuse an external action, so the
+specification catches it here instead of at delivery
+(`SPEC_ACTION_RISK_UNSUPPORTED`). Model the effect as a connector definition plus
+an adapter, or lower the risk.
+
 The three optional sections have checks of their own. `research.evidenceOwner`
 and `templates[].inputEntity` must name an entity (`SPEC_ENTITY_UNKNOWN`). An
 adapter id must start with the module id (`SPEC_ADAPTER_ID_NAMESPACE`); a source

@@ -12,7 +12,7 @@ const suiteRoot = fileURLToPath(new URL('../../../evals', import.meta.url));
 
 function context(
 	files: Record<string, string>,
-	spec = 'id: eval.catalog\n',
+	spec = 'id: eval.catalog\ncapabilities:\n  - api\n  - database\n  - translations\n',
 ): CheckContext {
 	return { files: new Map(Object.entries(files)), spec };
 }
@@ -107,6 +107,34 @@ describe('the approval gate', () => {
 });
 
 describe('checks', () => {
+	/* A headless module has no endpoint and no table by design. Failing it for
+	   that would make the gate noise an author learns to ignore. */
+	it('abstains on a capability the specification never declares', () => {
+		const headless = 'id: eval.sync\ncapabilities:\n  - integration\n';
+		const endpoint = runChecks(
+			['endpoints-declare-permission'],
+			context({}, headless),
+		);
+		expect(endpoint[0]!.passed).toBe(true);
+		expect(endpoint[0]!.detail).toContain('Not applicable');
+		const rls = runChecks(
+			['rls-forced', 'migrations-mirrored'],
+			context({}, headless),
+		);
+		for (const outcome of rls) {
+			expect(outcome.passed).toBe(true);
+			expect(outcome.detail).toContain('Not applicable');
+		}
+	});
+
+	it('treats a declared entity as declaring storage', () => {
+		const spec =
+			'id: eval.catalog\ncapabilities:\n  - api\nentities:\n  - id: parts\n    fields:\n      - id: sku\n        type: string\n';
+		const rls = runChecks(['rls-forced'], context({}, spec));
+		expect(rls[0]!.passed).toBe(false);
+		expect(rls[0]!.detail).toContain('no migration');
+	});
+
 	it('fails an endpoint that names no permission and passes one that does', () => {
 		const bad = runChecks(
 			['endpoints-declare-permission'],
@@ -227,7 +255,8 @@ describe('checks', () => {
 	});
 
 	it('requires a bundle per locale with the same keys', () => {
-		const spec = 'locales:\n  - en\n  - pl\n';
+		const spec =
+			'id: eval.catalog\ncapabilities:\n  - translations\nlocales:\n  - en\n  - pl\n';
 		const absent = runChecks(
 			['locales-complete'],
 			context(

@@ -346,6 +346,19 @@ export function moduleSpecIssues(value: unknown): ValidationIssue[] {
 				),
 			);
 		}
+		/* A module may not call another system directly. The harness and the CLI
+		   runner both refuse `external`, so a specification that declares it
+		   validates cleanly today and only fails at delivery. External effects
+		   belong to a connector definition and an adapter. */
+		if (action.risk === 'external') {
+			issues.push(
+				specIssue(
+					'SPEC_ACTION_RISK_UNSUPPORTED',
+					`Action "${action.id}" declares risk "external", which the platform refuses. Model the call as a connector definition plus an adapter, or lower the risk.`,
+					`${path}/risk`,
+				),
+			);
+		}
 	});
 
 	(spec.widgets ?? []).forEach((widget, index) => {
