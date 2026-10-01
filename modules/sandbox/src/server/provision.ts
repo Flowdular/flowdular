@@ -64,7 +64,10 @@ export interface ProvisionGrant {
 export const INBOX_FILENAME = 'sandbox-credential.json';
 const WORKSPACE_NAME = 'Sandbox';
 const WORKSPACE_SLUG = 'sandbox';
-const OWNER_EMAIL = 'sandbox-operator@localhost';
+/* RFC 2606 reserves example.com for documentation, so this address cannot
+   reach a real mail system even if a deployment relays mail. The domain has to
+   carry a dot: auth rejects an address without one. */
+const OWNER_EMAIL = 'sandbox-operator@example.com';
 const OWNER_DISPLAY_NAME = 'Sandbox operator';
 const TOKEN_LABEL = 'Sandbox launcher';
 const OPERATOR = 'platform:boot';
