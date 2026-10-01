@@ -173,6 +173,11 @@ export async function createSandboxRuntime(
 	const browserSessions = new Map<string, BrowserSession>();
 
 	const rebuild = async (): Promise<SandboxConnection> => {
+		/* Re-read from disk. The launcher prepares the credential after this
+		   runtime is already serving, so a refresh that trusted the value it
+		   cached at startup could never see it and the dashboard stayed
+		   disconnected until a restart. */
+		configuration = await loadSandboxConfiguration(workspaceRoot);
 		roles = await loadAgentRoles(workspaceRoot);
 		built = await buildDrivers(workspaceRoot, configuration);
 		decisions = await buildDecisionAsk(workspaceRoot, configuration);
