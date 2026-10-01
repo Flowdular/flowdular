@@ -1,6 +1,13 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { flowdularStateDirectory } from '@flowdular/kernel/runtime-config';
+import {
+	loadSandboxConfiguration,
+	saveSandboxConfiguration,
+	sealSecret,
+} from './config.ts';
 
 export class ProvisionError extends Error {
 	constructor(
@@ -92,11 +99,6 @@ function run(
    secret. The token is written to a 0600 file inside the sandbox state
    directory, read once, sealed, and the file is removed: it never reaches a
    terminal, a log or a transcript. */
-import {
-	loadSandboxConfiguration,
-	saveSandboxConfiguration,
-	sealSecret,
-} from './config.ts';
 
 export async function provisionLocalAccess(
 	options: ProvisionOptions,
@@ -174,16 +176,17 @@ async function readCredential(path: string): Promise<ProvisionedCredential> {
 	};
 }
 
-/* The embedded database is single-process: while the platform holds it, a CLI
-   command cannot open it to provision anything. That fixes the order the
-   launcher has to use. The credential is prepared while the database is free,
-   sealed into the sandbox configuration, and only then is the platform started.
-   This function therefore refuses to run once a platform is serving, rather
-   than failing with a message about a locked database. */
-export async function ensurePlatformAccess(options: {
+/* The embedded database is single-process, so a second process cannot open it
+   while the platform is serving. Provisioning therefore happens inside the
+   platform's own boot, where it already holds the database and its leases, and
+   leaves a sealed-nothing 0600 file for this launcher to pick up.
+
+   The launcher therefore runs after the platform, reads the file once, seals the
+   token into its own configuration and deletes the file. Nothing is printed and
+   no HTTP surface for a machine is added. */
+export async function collectProvisionedCredential(options: {
 	readonly workspaceRoot: string;
 	readonly platformUrl: string;
-	readonly credentialsPath: string;
 	readonly log?: (line: string) => void;
 }): Promise<boolean> {
 	const configuration = await loadSandboxConfiguration(options.workspaceRoot);
@@ -195,17 +198,27 @@ export async function ensurePlatformAccess(options: {
 			version: 1,
 		});
 	}
-	const credential = await provisionLocalAccess({
-		workspaceRoot: options.workspaceRoot,
-		credentialsPath: options.credentialsPath,
-		...(options.log ? { log: options.log } : {}),
-	});
+	const path = join(
+		flowdularStateDirectory(options.workspaceRoot),
+		'sandbox',
+		'sandbox-credential.json',
+	);
+	let credential: ProvisionedCredential;
+	try {
+		credential = await readCredential(path);
+	} catch {
+		return false;
+	}
+	await rm(path, { force: true });
 	await saveSandboxConfiguration(options.workspaceRoot, {
 		...configuration,
 		platformUrl: options.platformUrl,
 		platformToken: await sealSecret(options.workspaceRoot, credential.token),
 		version: 1,
 	});
+	options.log?.(
+		`connected to the application as ${credential.email} with ${credential.capabilities.length} scope(s)`,
+	);
 	return true;
 }
 

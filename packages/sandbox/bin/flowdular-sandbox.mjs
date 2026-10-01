@@ -16,7 +16,7 @@ import {
 	platformReachable,
 	startPlatformProcess,
 } from '../src/server/platform-process.ts';
-import { ensurePlatformAccess } from '../src/server/provision-local.ts';
+import { collectProvisionedCredential } from '../src/server/provision-local.ts';
 import process from 'node:process';
 import { realpathSync } from 'node:fs';
 import { access } from 'node:fs/promises';
@@ -267,32 +267,22 @@ async function resolveWorkspace(options, theme) {
 }
 
 /* Order matters and the embedded database decides it. PGlite is single-process,
-   so while the application is serving, nothing else can open the database to
-   prepare a credential. The launcher therefore provisions first, seals the
-   result into the sandbox configuration, and only then starts the application.
-   That ordering is what removes the pasted token from the business flow. */
-async function ensureAccess(options) {
-	if (options.mode !== 'loopback') return;
-	const url = `http://127.0.0.1:${options.platformPort}`;
+   so nothing else can open the database while the application serves. The
+   application therefore provisions the credential during its own boot, and this
+   launcher collects it afterwards. That is what removes the pasted token from
+   the business flow without adding a machine-callable endpoint. */
+async function collectAccess(options, platformUrl) {
 	try {
-		const prepared = await ensurePlatformAccess({
+		await collectProvisionedCredential({
 			workspaceRoot: options.workspace,
-			platformUrl: url,
-			credentialsPath: join(
-				options.workspace,
-				'.flowdular',
-				'sandbox',
-				'provisioned-credential.json',
-			),
+			platformUrl,
 			log: (line) => console.log(`  ${line}`),
 		});
-		if (prepared) console.log('  prepared sandbox access to the application');
 	} catch (error) {
-		/* Not fatal: an operator who already has a credential, or a deployment
-		   that is not local, reaches the same place without this step. The
-		   dashboard names what is missing when it is not. */
 		console.log(
-			`  skipped preparing access: ${error instanceof Error ? error.message.split('\n')[0] : error}`,
+			`  could not read the prepared credential: ${
+				error instanceof Error ? error.message.split('\n')[0] : error
+			}`,
 		);
 	}
 }
@@ -324,8 +314,8 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 	let platform = null;
 	try {
 		await resolveWorkspace(options, theme);
-		await ensureAccess(options);
 		platform = await startPlatform(options);
+		await collectAccess(options, `http://127.0.0.1:${options.platformPort}`);
 	} catch (error) {
 		restoreEarly();
 		if (error instanceof BootstrapError) console.error(`\n${error.message}\n`);
@@ -336,6 +326,10 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 	process.env.FD_SANDBOX_WORKSPACE = options.workspace;
 	process.env.FD_SANDBOX_MODE = options.mode;
 	process.env.FD_SANDBOX_PORT = String(options.port);
+	/* The application reads this to decide whether to prepare a credential at
+	   boot. It is set only when this launcher owns the application, so a platform
+	   someone else started is never asked to create an account. */
+	process.env.FD_SANDBOX_PROVISION = platform ? 'true' : 'false';
 
 	const startedAt = performance.now();
 	const restoreConsole = installOctaneConsoleBridge(options.verbose, useColor);
