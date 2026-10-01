@@ -7,6 +7,7 @@ import {
 	DATABASE_DIALECT_IDS,
 	runDatabaseMigrations,
 	type DatabaseAdapterLease,
+	acquireLeases,
 } from '@flowdular/database';
 import { databaseMigrations } from '../services/migration.ts';
 import { rotateWebhookSecrets } from '../services/secret-rotation.ts';
@@ -45,36 +46,56 @@ async function open(context: CliExtensionContext): Promise<OpenDatabase> {
 		dialectIds: [DATABASE_DIALECT_IDS.postgresql],
 		capabilities: [DATABASE_CAPABILITY_IDS.TRANSACTIONS],
 	};
-	const migration = await databases.acquire({
-		namespace: 'notifications.core',
-		purpose: 'migration',
-		requirements,
-	});
-	const state = await runDatabaseMigrations(
-		migration.database,
-		'notifications.core',
-		databaseMigrations,
-		{ dryRun: !context.apply },
-	);
-	if (!context.apply && state.some((entry) => entry.action === 'applied')) {
-		await migration.release();
-		throw new Error(
-			'notifications.core has no schema in this deployment yet. Start the platform, or run the command with --apply, to create it.',
-		);
-	}
-	const runtime = await databases.acquire({
-		namespace: 'notifications.core',
-		purpose: 'runtime',
-		requirements,
-	});
-	/* The inventory counts rows across the whole deployment, which only the
-	   cross-tenant read-only role may do. */
-	const background = await databases.acquire({
-		namespace: 'notifications.core',
-		purpose: 'background',
-		requirements,
-	});
-	return { leases: [migration, runtime, background], runtime, background };
+	const [migration, runtime, background] = await acquireLeases(databases, [
+		{
+			request: {
+				namespace: 'notifications.core',
+				purpose: 'migration',
+				requirements,
+			},
+			/* A read or a dry run verifies the ledger and stops there, so this
+			   command can never be what creates the tables in a deployment. The
+			   refusal belongs on the migration lease, and throwing from here gives
+			   every lease this call already took back. */
+			prepare: async (lease) => {
+				const state = await runDatabaseMigrations(
+					lease.database,
+					'notifications.core',
+					databaseMigrations,
+					{ dryRun: !context.apply },
+				);
+				if (
+					!context.apply &&
+					state.some((entry) => entry.action === 'applied')
+				) {
+					throw new Error(
+						'notifications.core has no schema in this deployment yet. Start the platform, or run the command with --apply, to create it.',
+					);
+				}
+			},
+		},
+		{
+			request: {
+				namespace: 'notifications.core',
+				purpose: 'runtime',
+				requirements,
+			},
+		},
+		/* The inventory counts rows across the whole deployment, which only the
+		   cross-tenant read-only role may do. */
+		{
+			request: {
+				namespace: 'notifications.core',
+				purpose: 'background',
+				requirements,
+			},
+		},
+	]);
+	return {
+		leases: [migration!, runtime!, background!],
+		runtime: runtime!,
+		background: background!,
+	};
 }
 
 /* The provider belongs to the runner; only the leases this command took are

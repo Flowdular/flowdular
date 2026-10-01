@@ -6,6 +6,7 @@ import {
 	DATABASE_CAPABILITY_IDS,
 	DATABASE_DIALECT_IDS,
 	type DatabaseAdapterLease,
+	acquireLeases,
 } from '@flowdular/database';
 import { migrateConnectorsDatabase } from '../services/database-repository.ts';
 import { rotateConnectorCredentials } from '../services/credential-rotation.ts';
@@ -42,25 +43,39 @@ async function open(context: CliExtensionContext): Promise<OpenDatabase> {
 		dialectIds: [DATABASE_DIALECT_IDS.postgresql],
 		capabilities: [DATABASE_CAPABILITY_IDS.TRANSACTIONS],
 	};
-	const migration = await databases.acquire({
-		namespace: 'connectors.core',
-		purpose: 'migration',
-		requirements,
-	});
-	await migrateConnectorsDatabase(migration.database);
-	const runtime = await databases.acquire({
-		namespace: 'connectors.core',
-		purpose: 'runtime',
-		requirements,
-	});
-	/* The inventory counts rows across the whole deployment, which only the
-	   cross-tenant read-only role may do. */
-	const background = await databases.acquire({
-		namespace: 'connectors.core',
-		purpose: 'background',
-		requirements,
-	});
-	return { leases: [migration, runtime, background], runtime, background };
+	const [migration, runtime, background] = await acquireLeases(databases, [
+		{
+			request: {
+				namespace: 'connectors.core',
+				purpose: 'migration',
+				requirements,
+			},
+			prepare: async (lease) => {
+				await migrateConnectorsDatabase(lease.database);
+			},
+		},
+		{
+			request: {
+				namespace: 'connectors.core',
+				purpose: 'runtime',
+				requirements,
+			},
+		},
+		/* The inventory counts rows across the whole deployment, which only the
+		   cross-tenant read-only role may do. */
+		{
+			request: {
+				namespace: 'connectors.core',
+				purpose: 'background',
+				requirements,
+			},
+		},
+	]);
+	return {
+		leases: [migration!, runtime!, background!],
+		runtime: runtime!,
+		background: background!,
+	};
 }
 
 /* The provider belongs to the runner; only the leases this command took are

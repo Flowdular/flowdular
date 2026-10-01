@@ -6,6 +6,7 @@ import {
 	DATABASE_CAPABILITY_IDS,
 	DATABASE_DIALECT_IDS,
 	type DatabaseAdapterLease,
+	acquireLeases,
 } from '@flowdular/database';
 import {
 	createStorageKeyring,
@@ -49,25 +50,39 @@ async function open(context: CliExtensionContext): Promise<OpenDatabase> {
 		dialectIds: [DATABASE_DIALECT_IDS.postgresql],
 		capabilities: [DATABASE_CAPABILITY_IDS.TRANSACTIONS],
 	};
-	const migration = await databases.acquire({
-		namespace: 'exports.core',
-		purpose: 'migration',
-		requirements,
-	});
-	await migrateExportsDatabase(migration.database);
-	const runtime = await databases.acquire({
-		namespace: 'exports.core',
-		purpose: 'runtime',
-		requirements,
-	});
-	/* The inventory lists workspaces across the whole deployment, which only
-	   the cross-tenant read-only role may do. */
-	const background = await databases.acquire({
-		namespace: 'exports.core',
-		purpose: 'background',
-		requirements,
-	});
-	return { leases: [migration, runtime, background], runtime, background };
+	const [migration, runtime, background] = await acquireLeases(databases, [
+		{
+			request: {
+				namespace: 'exports.core',
+				purpose: 'migration',
+				requirements,
+			},
+			prepare: async (lease) => {
+				await migrateExportsDatabase(lease.database);
+			},
+		},
+		{
+			request: {
+				namespace: 'exports.core',
+				purpose: 'runtime',
+				requirements,
+			},
+		},
+		/* The inventory lists workspaces across the whole deployment, which only
+		   the cross-tenant read-only role may do. */
+		{
+			request: {
+				namespace: 'exports.core',
+				purpose: 'background',
+				requirements,
+			},
+		},
+	]);
+	return {
+		leases: [migration!, runtime!, background!],
+		runtime: runtime!,
+		background: background!,
+	};
 }
 
 /* The provider belongs to the runner; only the leases this command took are

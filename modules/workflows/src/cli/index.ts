@@ -6,6 +6,7 @@ import {
 	DATABASE_CAPABILITY_IDS,
 	DATABASE_DIALECT_IDS,
 	type DatabaseAdapterLease,
+	acquireLeases,
 } from '@flowdular/database';
 import { workflowPayloadCodecFromEnvironment } from '../server/runtime.ts';
 import { migrateWorkflowsDatabase } from '../services/database-repository.ts';
@@ -41,25 +42,39 @@ async function open(context: CliExtensionContext): Promise<OpenDatabase> {
 		dialectIds: [DATABASE_DIALECT_IDS.postgresql],
 		capabilities: [DATABASE_CAPABILITY_IDS.TRANSACTIONS],
 	};
-	const migration = await databases.acquire({
-		namespace: 'workflows.core',
-		purpose: 'migration',
-		requirements,
-	});
-	await migrateWorkflowsDatabase(migration.database);
-	const runtime = await databases.acquire({
-		namespace: 'workflows.core',
-		purpose: 'runtime',
-		requirements,
-	});
-	/* The inventory counts payloads across the whole deployment, which only the
-	   cross-tenant read-only role may do. */
-	const background = await databases.acquire({
-		namespace: 'workflows.core',
-		purpose: 'background',
-		requirements,
-	});
-	return { leases: [migration, runtime, background], runtime, background };
+	const [migration, runtime, background] = await acquireLeases(databases, [
+		{
+			request: {
+				namespace: 'workflows.core',
+				purpose: 'migration',
+				requirements,
+			},
+			prepare: async (lease) => {
+				await migrateWorkflowsDatabase(lease.database);
+			},
+		},
+		{
+			request: {
+				namespace: 'workflows.core',
+				purpose: 'runtime',
+				requirements,
+			},
+		},
+		/* The inventory counts payloads across the whole deployment, which only the
+		   cross-tenant read-only role may do. */
+		{
+			request: {
+				namespace: 'workflows.core',
+				purpose: 'background',
+				requirements,
+			},
+		},
+	]);
+	return {
+		leases: [migration!, runtime!, background!],
+		runtime: runtime!,
+		background: background!,
+	};
 }
 
 /* The provider belongs to the runner; only the leases this command took are

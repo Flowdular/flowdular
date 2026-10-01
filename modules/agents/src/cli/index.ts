@@ -6,6 +6,7 @@ import {
 	DATABASE_CAPABILITY_IDS,
 	DATABASE_DIALECT_IDS,
 	type DatabaseAdapterLease,
+	acquireLeases,
 } from '@flowdular/database';
 import { AI_PROVIDER_KINDS } from '@flowdular/harness/catalog';
 import { agentRuntimeOptionsFromEnvironment } from '../server/runtime.ts';
@@ -67,25 +68,39 @@ async function open(context: CliExtensionContext): Promise<OpenDatabase> {
 		dialectIds: [DATABASE_DIALECT_IDS.postgresql],
 		capabilities: [DATABASE_CAPABILITY_IDS.TRANSACTIONS],
 	};
-	const migration = await databases.acquire({
-		namespace: 'agents.core',
-		purpose: 'migration',
-		requirements,
-	});
-	await migrateAgentsDatabase(migration.database);
-	const runtime = await databases.acquire({
-		namespace: 'agents.core',
-		purpose: 'runtime',
-		requirements,
-	});
-	/* The status command counts across the whole deployment, which only the
-	   narrow read-only role may do. */
-	const background = await databases.acquire({
-		namespace: 'agents.core',
-		purpose: 'background',
-		requirements,
-	});
-	return { leases: [migration, runtime, background], runtime, background };
+	const [migration, runtime, background] = await acquireLeases(databases, [
+		{
+			request: {
+				namespace: 'agents.core',
+				purpose: 'migration',
+				requirements,
+			},
+			prepare: async (lease) => {
+				await migrateAgentsDatabase(lease.database);
+			},
+		},
+		{
+			request: {
+				namespace: 'agents.core',
+				purpose: 'runtime',
+				requirements,
+			},
+		},
+		/* The status command counts across the whole deployment, which only the
+		   narrow read-only role may do. */
+		{
+			request: {
+				namespace: 'agents.core',
+				purpose: 'background',
+				requirements,
+			},
+		},
+	]);
+	return {
+		leases: [migration!, runtime!, background!],
+		runtime: runtime!,
+		background: background!,
+	};
 }
 
 /* The provider belongs to the runner; only the leases this command took are

@@ -86,6 +86,7 @@ export type {
 export { appendRecordHistory, queryRecordHistory } from './record-history.ts';
 export { integer } from './decoders.ts';
 export { databaseResetPlan, resetDatabase } from './reset.ts';
+export { acquireLeases, type DatabaseLeaseStep } from './leases.ts';
 export type {
 	DatabaseResetAuthorization,
 	DatabaseResetResult,
