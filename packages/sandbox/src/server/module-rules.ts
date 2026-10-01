@@ -1,19 +1,18 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { runChecks, type CheckId } from '../evals/checks.ts';
+import {
+	CONFORMANCE_CHECKS,
+	runChecks,
+	type CheckId,
+} from '../evals/checks.ts';
 
 /* The deterministic rules that used to exist only inside the evaluation suite.
    They were written, reviewed and cheap, and ran nowhere on the delivery path,
-   which left the exact defects they describe reachable at eject. */
-const SOURCE = /\.(ts|tsrx|mts|cts|sql|json|yaml|yml|md)$/;
-const IGNORED_DIRECTORIES = new Set([
-	'node_modules',
-	'dist',
-	'.turbo',
-	'.git',
-	'coverage',
-]);
+   which left the exact defects they describe reachable at eject.
 
+   The second group is conformance. A specification is called a contract only if
+   something checks the build against it, and until now nothing did: the gates
+   measured types and tests, never the promises the operator approved. */
 const CHECKS: readonly CheckId[] = [
 	'permissions-declared',
 	'endpoints-declare-permission',
@@ -22,10 +21,19 @@ const CHECKS: readonly CheckId[] = [
 	'migrations-mirrored',
 	'locales-complete',
 	'no-sql-interpolation',
+	...CONFORMANCE_CHECKS,
 ];
 
 const MAX_FILES = 4_000;
 const MAX_FILE_BYTES = 2_000_000;
+const SOURCE = /\.(ts|tsrx|mts|cts|sql|json|yaml|yml|md)$/;
+const IGNORED_DIRECTORIES = new Set([
+	'node_modules',
+	'dist',
+	'.turbo',
+	'.git',
+	'coverage',
+]);
 
 export interface ModuleRulesReport {
 	readonly passed: boolean;

@@ -167,6 +167,12 @@ describe('module rules gate', () => {
 				.replace('  - database\n', '')
 				.replace('  - translations\n', ''),
 		);
+		/* The declared permission still has to reach the module: the
+		   specification is not itself evidence that it was built. */
+		await writeFile(
+			join(modulePath, 'src', 'permissions.ts'),
+			"export const read = 'claims.records.read';",
+		);
 		const report = await runGateFor(modulePath);
 		expect(report.output).toContain('Not applicable');
 		expect(report.passed).toBe(true);

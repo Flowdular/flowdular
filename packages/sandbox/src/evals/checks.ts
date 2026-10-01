@@ -16,6 +16,12 @@ export const CHECK_IDS = [
 	'migrations-mirrored',
 	'locales-complete',
 	'no-sql-interpolation',
+	'entities-are-built',
+	'actions-have-endpoints',
+	'transitions-guarded',
+	'screens-have-views',
+	'agent-tools-registered',
+	'settings-declared',
 ] as const;
 
 export type CheckId = (typeof CHECK_IDS)[number];
@@ -36,9 +42,9 @@ export interface CheckOutcome {
 /* A headless or integration-only module has no endpoint and no table by
    design, and a module that declares no locale ships no bundle. Scoring those
    as failures would teach a reader to ignore the check, so each one applies
-   only when the specification says the capability exists. Declaring an entity
-   counts as declaring storage even when the `database` capability was omitted,
-   which is the common authoring slip. */
+   only when the specification declares the capability. `users.core` and
+   `reports.core` declare entities while owning no table of their own, so a
+   declared entity is not treated as a declared database. */
 function specCapabilities(spec: string): ReadonlySet<string> {
 	const start = spec.search(/^capabilities:\s*$/m);
 	if (start === -1) return new Set();
@@ -48,11 +54,7 @@ function specCapabilities(spec: string): ReadonlySet<string> {
 }
 
 function appliesTo(context: CheckContext, capability: string): boolean {
-	const capabilities = specCapabilities(context.spec);
-	return (
-		capabilities.has(capability) ||
-		(capability === 'database' && /^entities:\s*$/m.test(context.spec))
-	);
+	return specCapabilities(context.spec).has(capability);
 }
 
 function notApplicable(id: CheckId, reason: string): CheckOutcome {
@@ -81,6 +83,31 @@ function specList(spec: string, section: string): string[] {
 	return [...block.matchAll(/^\s*-\s+id:\s*(\S+)\s*$/gm)].map(
 		(match) => match[1]!,
 	);
+}
+
+/* Conformance reads the shape of the specification itself rather than a list
+   of ids, because these checks are about a promise the operator approved: this
+   entity, this action, this transition, this screen, this tool. A section runs
+   from its own key to the next line that is not indented under it. */
+function specSection(spec: string, section: string): string {
+	const start = spec.search(new RegExp(`^${section}:\\s*$`, 'm'));
+	if (start === -1) return '';
+	const rest = spec.slice(start);
+	const firstBreak = rest.indexOf('\n');
+	if (firstBreak === -1) return rest;
+	const end = rest.slice(firstBreak).search(/^\S/m);
+	return end === -1 ? rest : rest.slice(0, firstBreak + end + 1);
+}
+
+/* Only the direct children of a section count. An entity list holds `- id:`
+   entries whose bodies carry their own `- id:` fields, and reading the whole
+   block would report every field as a missing entity. */
+function specEntries(spec: string, section: string): string[] {
+	const block = specSection(spec, section);
+	const indent = /^(\s*)-/m.exec(block)?.[1]?.length;
+	if (indent === undefined) return [];
+	const pattern = new RegExp(`^\\s{${indent}}-\\s+id:\\s*(\\S+)\\s*$`, 'gm');
+	return [...block.matchAll(pattern)].map((match) => match[1]!).filter(Boolean);
 }
 
 /* The object literal that follows a call, matched by brace depth so a nested
@@ -350,6 +377,197 @@ function noSqlInterpolation(context: CheckContext): CheckOutcome {
 	};
 }
 
+/* Conformance: what the operator approved against what was built. The checks
+   below are the reason a specification can be called a contract rather than a
+   prompt. Each fails only on positive evidence that a promised part of the
+   domain is absent from the module, and abstains when the specification makes no
+   such promise. */
+
+/* An identifier is spelled kebab-case in a specification, camelCase in a
+   source file and snake_case in a database. Accepting only the specification's
+   spelling would fail a module that named things correctly. */
+function mentions(source: string, id: string): boolean {
+	if (source.includes(id)) return true;
+	const camel = id.replace(/-([a-z0-9])/g, (_, character: string) =>
+		character.toUpperCase(),
+	);
+	const snake = id.replace(/-/g, '_');
+	const pascal = camel.charAt(0).toUpperCase() + camel.slice(1);
+	return (
+		source.includes(camel) || source.includes(snake) || source.includes(pascal)
+	);
+}
+
+/* An entity is a promise the operator read and approved. The cheapest way to
+   forget one is to scaffold the first entity and never come back for the rest,
+   which is exactly what the scaffold used to do.
+
+   This deliberately does not try to match a table name to an entity id. The
+   shipped modules own no consistent relation between the two:
+   notifications.core calls `member-preference` a `notifications_preferences`
+   table and search.core declares a `provider` entity it keeps in code. What can
+   be checked without false alarms is whether the entity exists at all. */
+function entitiesAreBuilt(context: CheckContext): CheckOutcome {
+	const entities = specEntries(context.spec, 'entities');
+	if (entities.length === 0)
+		return notApplicable(
+			'entities-are-built',
+			'the specification declares no entity.',
+		);
+	const source = [...context.files.values()].join('\n');
+	const missing = entities.filter((entity) => !mentions(source, entity));
+	return {
+		id: 'entities-are-built',
+		passed: missing.length === 0,
+		detail:
+			missing.length === 0
+				? `All ${entities.length} specified entities are built: ${entities.join(', ')}.`
+				: `The specification declares ${entities.length} entities and the module never mentions ${missing.join(', ')}. Build each declared entity, not only the first.`,
+	};
+}
+
+/* An action is an operation someone can perform. The module has to name it, or
+   the permission the operator approved is granted and never exercised. */
+function actionsHaveEndpoints(context: CheckContext): CheckOutcome {
+	const actions = specEntries(context.spec, 'actions');
+	if (actions.length === 0)
+		return notApplicable(
+			'actions-have-endpoints',
+			'the specification declares no action.',
+		);
+	const source = [...context.files.values()].join('\n');
+	const missing = actions.filter((action) => !mentions(source, action));
+	return {
+		id: 'actions-have-endpoints',
+		passed: missing.length === 0,
+		detail:
+			missing.length === 0
+				? `All ${actions.length} specified actions appear in the module.`
+				: `The module never names the action ${missing.join(', ')}.`,
+	};
+}
+
+/* A declared lifecycle is a promise about the states a record may hold. The
+   reliably checkable part is that the vocabulary exists at all: if a state the
+   operator read never appears in the module, the lifecycle was not built.
+
+   Whether each transition is *guarded* is deliberately not asserted here. A
+   static read cannot tell a service method from a helper, and the four shipped
+   modules with lifecycles (audit, documents, import, users) each enforce theirs
+   differently, so a rule that named one shape would fail the platform's own
+   code. A gate that cries wolf on production modules is worse than none. */
+function transitionsGuarded(context: CheckContext): CheckOutcome {
+	const froms = [
+		...specSection(context.spec, 'entities').matchAll(
+			/^\s*-\s+from:\s*(\S+)\s*$/gm,
+		),
+	].map((match) => match[1]!);
+	if (froms.length === 0)
+		return notApplicable(
+			'transitions-guarded',
+			'the specification declares no lifecycle transition.',
+		);
+	const source = [...context.files.values()].join('\n');
+	const unknown = froms.filter((from) => !mentions(source, from));
+	const states = [
+		...new Set(
+			[
+				...specSection(context.spec, 'entities').matchAll(
+					/^\s*values:\s*\[([^\]]*)\]/gm,
+				),
+			].flatMap((match) =>
+				(match[1] ?? '')
+					.split(',')
+					.map((value) => value.trim())
+					.filter(Boolean),
+			),
+		),
+	];
+	const unbuilt = states.filter((state) => !mentions(source, state));
+	if (unbuilt.length > 0)
+		return {
+			id: 'transitions-guarded',
+			passed: false,
+			detail: `The specification declares the lifecycle ${states.join(' -> ')} and the module never mentions ${unbuilt.join(', ')}. Build every declared state, not only the first.`,
+		};
+	return {
+		id: 'transitions-guarded',
+		passed: true,
+		detail: `The module implements all ${states.length} declared lifecycle state(s) over ${froms.length} transition(s).`,
+	};
+}
+
+/* A screen is what a person looks at. A declared screen with no view is a
+   capability the operator was told exists and cannot reach. */
+function screensHaveViews(context: CheckContext): CheckOutcome {
+	const screens = specEntries(context.spec, 'screens');
+	if (screens.length === 0)
+		return notApplicable(
+			'screens-have-views',
+			'the specification declares no screen.',
+		);
+	const views = [...context.files.keys()].filter(
+		(path) => path.endsWith('.tsrx') && path.includes('client'),
+	);
+	const source = [...context.files.values()].join('\n');
+	if (views.length === 0)
+		return {
+			id: 'screens-have-views',
+			passed: false,
+			detail: `The specification declares ${screens.length} screen(s) (${screens.join(', ')}) and the module ships no client view.`,
+		};
+	const missing = screens.filter((screen) => !mentions(source, screen));
+	return {
+		id: 'screens-have-views',
+		passed: missing.length === 0,
+		detail:
+			missing.length === 0
+				? `The module has a client view for every specified screen.`
+				: `No client view mentions ${missing.join(', ')}.`,
+	};
+}
+
+function agentToolsRegistered(context: CheckContext): CheckOutcome {
+	const tools = specEntries(context.spec, 'agentTools');
+	if (tools.length === 0)
+		return notApplicable(
+			'agent-tools-registered',
+			'the specification declares no agent tool.',
+		);
+	const source = [...context.files.values()].join('\n');
+	const missing = tools.filter((tool) => !mentions(source, tool));
+	return {
+		id: 'agent-tools-registered',
+		passed: missing.length === 0,
+		detail:
+			missing.length === 0
+				? `All ${tools.length} specified agent tools appear in the module.`
+				: `The module never registers ${missing.join(', ')}.`,
+	};
+}
+
+function settingsDeclared(context: CheckContext): CheckOutcome {
+	const section = specSection(context.spec, 'settings');
+	const keys = [...section.matchAll(/^\s*-\s+key:\s*(\S+)\s*$/gm)].map(
+		(match) => match[1]!,
+	);
+	if (keys.length === 0)
+		return notApplicable(
+			'settings-declared',
+			'the specification declares no setting.',
+		);
+	const source = [...context.files.values()].join('\n');
+	const missing = keys.filter((key) => !mentions(source, key));
+	return {
+		id: 'settings-declared',
+		passed: missing.length === 0,
+		detail:
+			missing.length === 0
+				? `All ${keys.length} specified settings appear in the module.`
+				: `The module never declares ${missing.join(', ')}.`,
+	};
+}
+
 const CHECKS: Record<CheckId, (context: CheckContext) => CheckOutcome> = {
 	'module-manifest': moduleManifest,
 	'permissions-declared': permissionsDeclared,
@@ -359,11 +577,58 @@ const CHECKS: Record<CheckId, (context: CheckContext) => CheckOutcome> = {
 	'migrations-mirrored': migrationsMirrored,
 	'locales-complete': localesComplete,
 	'no-sql-interpolation': noSqlInterpolation,
+	'entities-are-built': entitiesAreBuilt,
+	'actions-have-endpoints': actionsHaveEndpoints,
+	'transitions-guarded': transitionsGuarded,
+	'screens-have-views': screensHaveViews,
+	'agent-tools-registered': agentToolsRegistered,
+	'settings-declared': settingsDeclared,
 };
+
+/* The specification is not part of the module. Reading spec/module.yaml into the
+   same map as the sources made every declared id "appear in the module" by
+   being in the contract that asked for it, which silently voided the
+   conformance checks that look for a name in the source. */
+function withoutSpecification(files: ReadonlyMap<string, string>) {
+	const filtered = new Map<string, string>();
+	for (const [path, text] of files) {
+		if (path === 'spec/module.yaml' || path.endsWith('/spec/module.yaml'))
+			continue;
+		filtered.set(path, text);
+	}
+	return filtered;
+}
+
+/* Conformance needs the specification and the code to share identifiers, and
+   today they only partly do. Three checks are safe as hard gates because their
+   ids are code identifiers: an agent tool's id is its registry key, a setting's
+   key is its settings key, and a lifecycle value is a value in a union type.
+   The rest compare a kebab-case specification id against whatever the
+   implementer chose to call the thing, and the shipped modules show how far
+   apart those can be: connectors.core calls its `audit-entry` entity a
+   `connectors_audit` table, users.core names no symbol `new-member`, and
+   auth.core routes no endpoint called `update-provider`. Those stay scored by
+   the evaluation suite, where a miss is information, and out of the delivery
+   gate, where a miss would fail a correct module. */
+export const CONFORMANCE_CHECKS = [
+	'transitions-guarded',
+	'agent-tools-registered',
+	'settings-declared',
+] as const;
+
+export const PROVISIONAL_CHECKS = [
+	'entities-are-built',
+	'actions-have-endpoints',
+	'screens-have-views',
+] as const;
 
 export function runChecks(
 	ids: readonly CheckId[],
 	context: CheckContext,
 ): readonly CheckOutcome[] {
-	return ids.map((id) => CHECKS[id](context));
+	const measured: CheckContext = {
+		files: withoutSpecification(context.files),
+		spec: context.spec,
+	};
+	return ids.map((id) => CHECKS[id](measured));
 }
