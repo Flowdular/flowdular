@@ -12,6 +12,10 @@ import {
 	workspaceTarget,
 } from '../src/server/bootstrap.ts';
 import { probeCommand } from '@flowdular/coding-agent';
+import {
+	platformReachable,
+	startPlatformProcess,
+} from '../src/server/platform-process.ts';
 import process from 'node:process';
 import { realpathSync } from 'node:fs';
 import { access } from 'node:fs/promises';
@@ -53,6 +57,8 @@ export function parseSandboxArguments(argv = []) {
 		ref: undefined,
 		repository: DEFAULT_REPOSITORY,
 		bootstrap: 'auto',
+		platform: 'auto',
+		platformPort: 4310,
 		verbose: process.env.FD_SANDBOX_VERBOSE === 'true',
 		help: false,
 	};
@@ -87,6 +93,19 @@ export function parseSandboxArguments(argv = []) {
 		const port = take('port');
 		if (port !== undefined) {
 			options.port = Number(port);
+			continue;
+		}
+		if (argument === '--no-platform') {
+			options.platform = 'never';
+			continue;
+		}
+		if (argument === '--platform') {
+			options.platform = 'always';
+			continue;
+		}
+		const platformPort = take('platform-port');
+		if (platformPort !== undefined) {
+			options.platformPort = Number(platformPort);
 			continue;
 		}
 		if (argument === '--no-bootstrap') {
@@ -154,6 +173,9 @@ Options:
   --no-bootstrap      Fail instead of creating a workspace when none is found
   --ref <tag>         Version tag or commit to bootstrap (default: this package version)
   --repository <url>  Repository to bootstrap from (default: Flowdular/flowdular)
+  --platform          Start the application as well (default when none is serving)
+  --no-platform       Never start the application; connect to a running one
+  --platform-port <n> Port for the application this launcher starts (default: 4310)
   --host <host>       Bind address (default: 127.0.0.1)
   --port <port>       HTTP port (default: 4320)
   --mode <mode>       loopback or self-hosted (default: loopback)
@@ -235,16 +257,28 @@ async function resolveWorkspace(options, theme) {
 			log: (line) => console.log(`  ${line}`),
 		});
 		for (const step of result.steps) console.log(`  ok ${step}`);
-		console.log(
-			`\nStart the platform in a second terminal: cd ${result.root} && pnpm dev\n`,
-		);
 		options.workspace = result.root;
-		return;
 	}
 	if (options.bootstrap === 'always' && (await exists(options.workspace)))
 		throw new Error(
 			`--bootstrap was given but ${options.workspace} is already a workspace.`,
 		);
+}
+
+/* One command is the whole setup. The sandbox is a client of a running
+   application, so a business user used to need a second terminal before they
+   could describe anything. An application already serving is left alone. */
+async function startPlatform(options) {
+	if (options.platform === 'never') return null;
+	const url = `http://127.0.0.1:${options.platformPort}`;
+	if (options.platform !== 'always' && (await platformReachable(url)))
+		return null;
+	return await startPlatformProcess({
+		workspaceRoot: options.workspace,
+		port: options.platformPort,
+		quiet: true,
+		log: (line) => console.log(`  ${line}`),
+	});
 }
 
 export async function startSandbox(argv = process.argv.slice(2)) {
@@ -255,8 +289,10 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 		printHelp(theme);
 		return null;
 	}
+	let platform = null;
 	try {
 		await resolveWorkspace(options, theme);
+		platform = await startPlatform(options);
 	} catch (error) {
 		restoreEarly();
 		if (error instanceof BootstrapError) console.error(`\n${error.message}\n`);
@@ -283,6 +319,7 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 		await server.listen();
 	} catch (error) {
 		restoreConsole();
+		if (platform) await platform.stop();
 		throw error;
 	}
 
@@ -336,6 +373,10 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 	const close = async () => {
 		console.log(`\n${formatDevEvent('process', 'Sandbox stopped.', useColor)}`);
 		await server.close();
+		/* The application this launcher started belongs to this process. Leaving
+		   it running would hold a port and a database handle after the operator
+		   believed everything had stopped. */
+		if (platform) await platform.stop();
 		restoreConsole();
 		process.exit(0);
 	};

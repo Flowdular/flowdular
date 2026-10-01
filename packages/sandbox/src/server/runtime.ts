@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { join } from 'node:path';
 import {
 	createByokDriver,
 	createClaudeCodeDriver,
@@ -24,6 +25,8 @@ import {
 	type SandboxConfiguration,
 } from './config.ts';
 import { PlatformClient, type PlatformAuthority } from './platform-client.ts';
+import { sandboxDirectory, sealSecret, type SealedSecret } from './config.ts';
+import { provisionLocalAccess } from './provision-local.ts';
 import { SandboxSetupError } from './workspace-root.ts';
 
 export interface SandboxConnection {
@@ -151,6 +154,27 @@ async function buildDrivers(
 	};
 }
 
+/* Provisioning runs on first connect and on every reload until it succeeds, so
+   it must never throw into the runtime's own error path: a platform that is not
+   running yet is the normal state, and the operator sees that as an instruction
+   rather than as a crash. Returns null when the deployment is not a local one. */
+async function provisionQuietly(
+	workspaceRoot: string,
+): Promise<SealedSecret | null> {
+	try {
+		const credential = await provisionLocalAccess({
+			workspaceRoot,
+			credentialsPath: join(
+				sandboxDirectory(workspaceRoot),
+				'provisioned-credential.json',
+			),
+		});
+		return await sealSecret(workspaceRoot, credential.token);
+	} catch {
+		return null;
+	}
+}
+
 export async function createSandboxRuntime(
 	workspaceRoot: string,
 ): Promise<SandboxRuntime> {
@@ -180,13 +204,53 @@ export async function createSandboxRuntime(
 		});
 		if (!configuration.platformToken) {
 			platform = null;
+			/* A local deployment is the case a business user is actually in, and
+			   it needs no credential from them. Ask the platform's own CLI for one
+			   and seal it like any other secret, rather than showing a token screen
+			   as the first thing a new operator sees. A remote deployment has no
+			   such CLI to ask, so the instruction stays. */
+			if (configuration.mode === 'loopback') {
+				const provisioned = await provisionQuietly(workspaceRoot);
+				if (provisioned) {
+					configuration = await saveSandboxConfiguration(workspaceRoot, {
+						...configuration,
+						platformToken: provisioned,
+						version: 1,
+					});
+					platform = new PlatformClient({
+						platformUrl: configuration.platformUrl,
+						token: await openSecret(workspaceRoot, provisioned),
+					});
+					try {
+						connection = {
+							connected: true,
+							authority: await platform.authority(),
+							error: null,
+						};
+					} catch (error) {
+						platform = null;
+						connection = {
+							connected: false,
+							authority: null,
+							error:
+								error instanceof SandboxSetupError
+									? { code: error.code, message: error.message }
+									: {
+											code: 'PLATFORM_UNREACHABLE',
+											message: `The sandbox could not reach ${configuration.platformUrl}. Start the platform with pnpm dev, then reload.`,
+										},
+						};
+					}
+					return connection;
+				}
+			}
 			connection = {
 				connected: false,
 				authority: null,
 				error: {
 					code: 'PLATFORM_TOKEN_MISSING',
 					message:
-						'Paste an API token from the Flowdular application to connect this sandbox.',
+						'This sandbox has no platform credential yet. On a local deployment it prepares one itself; a remote deployment needs an API token with sandbox.access.use.',
 				},
 			};
 			return connection;

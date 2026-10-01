@@ -25,6 +25,17 @@
 			}
 		},
 		{
+			"path": ["sandbox", "provision"],
+			"capability": {
+				"id": "sandbox.access.provision",
+				"version": 1,
+				"summary": "Create the sandbox workspace and operator account, grant sandbox access and issue a sandbox-scoped API token, so a business user does not perform these steps by hand.",
+				"risk": "process",
+				"requiresApprovedSpec": false,
+				"supportsDryRun": true
+			}
+		},
+		{
 			"path": ["sandbox", "revoke"],
 			"capability": {
 				"id": "sandbox.access.revoke",

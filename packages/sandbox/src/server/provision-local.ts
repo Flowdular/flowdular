@@ -1,0 +1,178 @@
+import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
+export class ProvisionError extends Error {
+	constructor(
+		readonly code: string,
+		message: string,
+	) {
+		super(message);
+		this.name = 'ProvisionError';
+	}
+}
+
+export interface ProvisionedCredential {
+	readonly platformTenantId: string;
+	readonly email: string;
+	readonly token: string;
+	readonly capabilities: readonly string[];
+}
+
+export interface ProvisionOptions {
+	readonly workspaceRoot: string;
+	/* Where the CLI writes the credential. Kept inside the sandbox state
+	   directory so the launcher owns its lifetime and its permissions. */
+	readonly credentialsPath: string;
+	readonly log?: (line: string) => void;
+	readonly signal?: AbortSignal;
+}
+
+const OUTPUT_LIMIT = 8_000;
+/* Matches the delivery runner: the CLI needs the deployment environment to
+   reach the database, and it must not inherit an agent's environment. */
+function commandEnvironment(source: NodeJS.ProcessEnv = process.env) {
+	const env: NodeJS.ProcessEnv = {};
+	for (const name of [
+		'HOME',
+		'LANG',
+		'LC_ALL',
+		'PATH',
+		'SHELL',
+		'TMPDIR',
+		'USER',
+	])
+		env[name] = source[name];
+	for (const name of Object.keys(source)) {
+		if (/^(?:DATABASE_URL|FD_|PG[A-Z]*|NODE_|POSTGRES)/.test(name))
+			env[name] = source[name];
+	}
+	env.FORCE_COLOR = '0';
+	return env;
+}
+
+function run(
+	command: string,
+	args: readonly string[],
+	cwd: string,
+	options: {
+		readonly env: NodeJS.ProcessEnv;
+		readonly signal: AbortSignal | undefined;
+	},
+): Promise<{ readonly code: number | null; readonly output: string }> {
+	return new Promise((resolvePromise) => {
+		const child = spawn(command, [...args], {
+			cwd,
+			env: options.env,
+			stdio: ['ignore', 'pipe', 'pipe'],
+			signal: options.signal,
+		});
+		let output = '';
+		const append = (chunk: string) => {
+			output = (output + chunk).slice(-OUTPUT_LIMIT);
+		};
+		child.stdout.setEncoding('utf8');
+		child.stderr.setEncoding('utf8');
+		child.stdout.on('data', append);
+		child.stderr.on('data', append);
+		child.on('error', (error) =>
+			resolvePromise({ code: null, output: error.message }),
+		);
+		child.on('close', (code) => resolvePromise({ code, output }));
+	});
+}
+
+/* A business user arriving at an empty workspace used to have to open the
+   application, sign in, create an API token with three scopes, paste it into
+   the sandbox and grant itself sandbox access. That is five steps of setup
+   before describing a first idea, and none of them is a business decision.
+
+   The platform's own CLI already performs each of them from the host, so the
+   launcher does the same and stores the result where it stores every other
+   secret. The token is written to a 0600 file inside the sandbox state
+   directory, read once, sealed, and the file is removed: it never reaches a
+   terminal, a log or a transcript. */
+export async function provisionLocalAccess(
+	options: ProvisionOptions,
+): Promise<ProvisionedCredential> {
+	const log = options.log ?? (() => undefined);
+	const password = randomBytes(24).toString('base64url');
+	const result = await run(
+		'pnpm',
+		[
+			'--dir',
+			options.workspaceRoot,
+			'--silent',
+			'flowdular',
+			'sandbox',
+			'provision',
+			'--credentials-file',
+			options.credentialsPath,
+			'--password-env',
+			'FLOWDULAR_SANDBOX_OWNER_PASSWORD',
+			'--apply',
+			'--json',
+		],
+		options.workspaceRoot,
+		{
+			env: {
+				...commandEnvironment(),
+				FLOWDULAR_SANDBOX_OWNER_PASSWORD: password,
+			},
+			signal: options.signal,
+		},
+	);
+
+	let credential: ProvisionedCredential | null = null;
+	try {
+		credential = await readCredential(options.credentialsPath);
+	} catch {
+		credential = null;
+	}
+	/* The file is removed whatever happened: a failed provision must not leave a
+	   live credential lying in the state directory. */
+	await rm(options.credentialsPath, { force: true });
+
+	if (credential) {
+		log(
+			`connected to ${credential.email} with ${credential.capabilities.length} scope(s)`,
+		);
+		return credential;
+	}
+	if (result.code === 1 && /already exists/i.test(result.output)) {
+		throw new ProvisionError(
+			'PROVISION_TOKEN_EXISTS',
+			'A sandbox token already exists for this workspace. Reuse it, or revoke it with `pnpm flowdular sandbox access` before provisioning again.',
+		);
+	}
+	throw new ProvisionError(
+		'PROVISION_FAILED',
+		[
+			'The sandbox could not prepare its own access to the platform.',
+			result.output.trim().slice(-2_000) ||
+				'`pnpm flowdular sandbox provision --apply` produced no output.',
+		].join('\n'),
+	);
+}
+
+async function readCredential(path: string): Promise<ProvisionedCredential> {
+	const raw = await readFile(path, 'utf8');
+	const value = JSON.parse(raw) as Partial<ProvisionedCredential>;
+	if (typeof value.token !== 'string' || value.token.length < 8)
+		throw new Error('The credential file carried no token.');
+	return {
+		platformTenantId: String(value.platformTenantId ?? ''),
+		email: String(value.email ?? ''),
+		token: value.token,
+		capabilities: Array.isArray(value.capabilities) ? value.capabilities : [],
+	};
+}
+
+/* Exposed for the test that proves the file is removed on a failed run. */
+export async function writeCredentialForTest(
+	path: string,
+	credential: ProvisionedCredential,
+): Promise<void> {
+	await writeFile(path, JSON.stringify(credential), { mode: 0o600 });
+}

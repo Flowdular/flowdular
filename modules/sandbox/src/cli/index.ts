@@ -9,6 +9,7 @@ import {
 	type AuthRuntime,
 } from '@flowdular/module-auth/server';
 import { SANDBOX_GRANT_CAPABILITIES } from '../acl/permissions.ts';
+import { provisionSandbox } from './provision.ts';
 import type { SandboxGrantCapability } from '../domain/types.ts';
 import {
 	createSandboxRuntime,
@@ -251,6 +252,26 @@ export const cliExtension = defineCliExtension({
 						},
 						evidence: ['modules/sandbox/spec/module.yaml'],
 					};
+				} finally {
+					await resolved.dispose();
+				}
+			},
+		},
+		{
+			path: ['sandbox', 'provision'],
+			capability: {
+				id: 'sandbox.access.provision',
+				version: 1,
+				summary:
+					'Create the sandbox workspace and operator account, grant sandbox access and issue a sandbox-scoped API token, so a business user does not perform these steps by hand.',
+				risk: 'process',
+				requiresApprovedSpec: false,
+				supportsDryRun: true,
+			},
+			execute: async (context) => {
+				const resolved = await runtimes(context);
+				try {
+					return await provisionSandbox(context, resolved);
 				} finally {
 					await resolved.dispose();
 				}
