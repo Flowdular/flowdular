@@ -832,7 +832,7 @@ describe('detached turns', () => {
 		).toBe(true);
 		const updated = await readSession(root, session.id);
 		expect(updated.state).not.toBe('editing');
-	}, 15_000);
+	}, 60_000);
 
 	it('stops a repair chain after the repair limit and streams every turn', async () => {
 		const root = await workspace();

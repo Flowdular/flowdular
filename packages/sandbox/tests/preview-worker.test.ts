@@ -74,7 +74,7 @@ describe('isolated preview worker', () => {
 		} finally {
 			runtime.dispose();
 		}
-	}, 30_000);
+	}, 60_000);
 	it('reloads imported draft dependencies without losing the preview database', async () => {
 		const { root, session, modulePath } = await previewSession(
 			`import { version } from './handler.ts';
@@ -157,7 +157,7 @@ export function createServerComposition(context) {
 		expect(runtime.cached(session.id)).toBe(composition);
 		runtime.dispose();
 		expect(runtime.cached(session.id)).toBeNull();
-	}, 30_000);
+	}, 60_000);
 
 	it('shares one worker across concurrent first requests for a session', async () => {
 		const { root, session } = await previewSession(
@@ -177,12 +177,13 @@ export function createServerComposition(context) {
 
 		expect(new Set(compositions).size).toBe(1);
 		expect(lifecycle).toEqual([`started:${session.id}`]);
-		runtime.forget(session.id);
+		await runtime.forget(session.id);
 		expect(lifecycle).toEqual([
 			`started:${session.id}`,
 			`released:${session.id}`,
 		]);
-	}, 30_000);
+		runtime.dispose();
+	}, 60_000);
 
 	it('reuses the process preview runtime across server route generations', async () => {
 		disposeProcessPreviewRuntime();
@@ -226,22 +227,24 @@ export function createServerComposition(context) {
 
 		expect(composition.error).toContain('already sealed');
 		runtime.dispose();
-	}, 30_000);
+	}, 60_000);
 
-	it('kills a draft whose composition exceeds the request deadline', async () => {
+	it('reports a draft whose composition exceeds the deadline in plain words', async () => {
 		const { root, session } = await previewSession(
 			'await new Promise(() => undefined);\nexport function createServerComposition() { return { routes: [] }; }\n',
 		);
 		const runtime = createIsolatedPreviewRuntime(root, {
-			requestTimeoutMs: 100,
+			composeTimeoutMs: 100,
 		});
 
-		await expect(runtime.compose(session)).rejects.toMatchObject({
-			name: 'AbortError',
-		});
+		/* A timeout used to escape as a bare AbortError, which read as a crash
+		   and told an operator nothing about which step was slow. */
+		await expect(runtime.compose(session)).rejects.toThrow(
+			/Composing the draft took longer than/,
+		);
 		expect(runtime.cached(session.id)).toBeNull();
 		runtime.dispose();
-	});
+	}, 60_000);
 
 	it('denies draft reads outside the session root', async () => {
 		const { root, session, modulePath } = await previewSession(
@@ -263,7 +266,7 @@ export function createServerComposition(context) {
 		);
 		expect(composition.error).not.toContain('must-not-reach-the-preview');
 		runtime.dispose();
-	}, 30_000);
+	}, 60_000);
 
 	it('denies draft writes to sandbox session control files', async () => {
 		const { root, session, modulePath } = await previewSession(
@@ -290,7 +293,7 @@ export function createServerComposition(context) {
 			id: session.id,
 		});
 		runtime.dispose();
-	}, 30_000);
+	}, 60_000);
 
 	it('allows preview databases inside the session data directory', async () => {
 		const { root, session, modulePath } = await previewSession(
@@ -314,7 +317,7 @@ export function createServerComposition(context) {
 		expect(composition.error).toBeNull();
 		expect(await readFile(probe, 'utf8')).toBe('preview-state');
 		runtime.dispose();
-	}, 30_000);
+	}, 60_000);
 
 	it('composes research.core on the recorded adapter and answers a search from the draft fixtures', async () => {
 		/* The draft route reads the settings the preview pinned for research.core

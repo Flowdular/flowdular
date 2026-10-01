@@ -18,10 +18,17 @@ import { sendPreviewDatabaseReply } from './preview-ipc.ts';
 
 const START_TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 15_000;
+/* The first compose is a cold start, not a request: it boots an embedded
+   PostgreSQL, loads the draft and runs its start hooks. On a loaded machine the
+   interactive budget of fifteen seconds was not enough, and the caller saw an
+   AbortError instead of a draft that was merely slow. */
+const COMPOSE_TIMEOUT_MS = 90_000;
 
 export interface IsolatedPreviewOptions {
 	readonly startTimeoutMs?: number;
 	readonly requestTimeoutMs?: number;
+	/* Overridable so a test can exercise the timeout path without waiting. */
+	readonly composeTimeoutMs?: number;
 	/* Diagnostics must not retain the child. Tests use this to prove that
 	   concurrent first requests share one worker. */
 	readonly onWorkerLifecycle?: (
@@ -69,14 +76,30 @@ interface PreviewKeys {
 	readonly FD_AGENT_RUN_GRANT_KEY: string;
 }
 
+/* Distinguishes "this call ran out of time" from "the session was forgotten".
+   Without it a timeout escapes as a bare AbortError, which tells an operator
+   nothing and reads as a crash rather than a slow machine. */
 function timeoutSignal(timeoutMs: number): {
 	readonly signal: AbortSignal;
 	readonly clear: () => void;
+	readonly timedOut: () => boolean;
 } {
 	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	let expired = false;
+	const timer = setTimeout(() => {
+		expired = true;
+		controller.abort();
+	}, timeoutMs);
 	timer.unref();
-	return { signal: controller.signal, clear: () => clearTimeout(timer) };
+	return {
+		signal: controller.signal,
+		clear: () => clearTimeout(timer),
+		timedOut: () => expired,
+	};
+}
+
+function isAbortError(error: unknown): boolean {
+	return error instanceof Error && error.name === 'AbortError';
 }
 
 /* The worker answers on its own loopback port, so a browser request crossing
@@ -104,6 +127,8 @@ async function requestWorker(
 	path: string,
 	request: Request,
 	timeoutMs: number,
+	/* Named so a timeout says which step was slow. */
+	label = 'The isolated preview worker',
 ): Promise<Response> {
 	const timeout = timeoutSignal(timeoutMs);
 	try {
@@ -119,6 +144,15 @@ async function requestWorker(
 			...(body ? { body } : {}),
 			signal: timeout.signal,
 		});
+	} catch (error) {
+		if (timeout.timedOut() && isAbortError(error))
+			throw new Error(
+				`${label} took longer than ${Math.round(
+					timeoutMs / 1000,
+				)}s to answer. Reload the preview to try again on a less loaded machine.`,
+				{ cause: error },
+			);
+		throw error;
 	} finally {
 		timeout.clear();
 	}
@@ -309,6 +343,7 @@ export function createIsolatedPreviewRuntime(
 ): PreviewRuntime {
 	const startTimeoutMs = options.startTimeoutMs ?? START_TIMEOUT_MS;
 	const requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
+	const composeTimeoutMs = options.composeTimeoutMs ?? COMPOSE_TIMEOUT_MS;
 	const workers = new Map<string, WorkerSlot>();
 	const cached = new Map<string, PreviewComposition>();
 	const composing = new Map<
@@ -390,7 +425,8 @@ export function createIsolatedPreviewRuntime(
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify(session),
 				}),
-				requestTimeoutMs,
+				composeTimeoutMs,
+				'Composing the draft',
 			);
 		} catch (error) {
 			release(session.id, slot);
