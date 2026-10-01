@@ -6,7 +6,9 @@ import {
 	createCipheriv,
 	createDecipheriv,
 	createHash,
+	createHmac,
 	randomBytes,
+	timingSafeEqual,
 } from 'node:crypto';
 import { constants } from 'node:fs';
 import { chmod, lstat, mkdir, open } from 'node:fs/promises';
@@ -350,6 +352,38 @@ export function secretFingerprint(sealed: SealedSecret | null): string | null {
 	return sealed
 		? createHash('sha256').update(sealed.ciphertext).digest('hex').slice(0, 8)
 		: null;
+}
+
+/* The session record is the authority on which specification the operator
+   approved: a module may not be implemented, and a module may not be ejected,
+   until its recorded specHash matches the text on disk. That hash used to be a
+   plain field in a plain JSON file, so any process able to write the file could
+   record any hash and call itself approved. The tag below is keyed by the same
+   local key that protects the stored credentials, and a record whose tag does
+   not verify is refused rather than read, which turns the approval into
+   something a model cannot manufacture from inside the workspace. */
+const RECORD_CONTEXT = 'flowdular.sandbox.session-record.v1';
+
+export async function sealSessionRecord(
+	workspaceRoot: string,
+	record: string,
+): Promise<string> {
+	const key = await localKey(workspaceRoot);
+	return createHmac('sha256', key)
+		.update(`${RECORD_CONTEXT}\n${record}`)
+		.digest('base64url');
+}
+
+export async function verifySessionRecord(
+	workspaceRoot: string,
+	record: string,
+	tag: string | undefined,
+): Promise<boolean> {
+	if (typeof tag !== 'string' || tag.length === 0) return false;
+	const expected = await sealSessionRecord(workspaceRoot, record);
+	const a = Buffer.from(expected);
+	const b = Buffer.from(tag);
+	return a.byteLength === b.byteLength && timingSafeEqual(a, b);
 }
 
 export function assertPlatformUrl(value: string): string {

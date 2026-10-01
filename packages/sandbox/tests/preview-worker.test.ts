@@ -286,7 +286,7 @@ export function createServerComposition(context) {
 		expect(composition.error).toContain(
 			'Access to this API has been restricted',
 		);
-		expect(JSON.parse(await readFile(record, 'utf8'))).toMatchObject({
+		expect(JSON.parse(await readFile(record, 'utf8')).session).toMatchObject({
 			id: session.id,
 		});
 		runtime.dispose();

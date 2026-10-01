@@ -10,11 +10,16 @@ import {
 	realpath,
 	rename,
 	rm,
+	stat,
 	writeFile,
 } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import type { CodingAgentEvent } from '@flowdular/coding-agent';
-import { sandboxDirectory } from './config.ts';
+import {
+	sandboxDirectory,
+	sealSessionRecord,
+	verifySessionRecord,
+} from './config.ts';
 import type { PendingQuestions } from './questions.ts';
 import { materializeModuleGraph, materializeReference } from './reference.ts';
 import { hashSpec } from './spec.ts';
@@ -159,6 +164,59 @@ export interface ChatEntry {
 	/* Attachments included with this turn, echoed onto the user entry so the
 	   transcript records exactly what the agent was shown. */
 	readonly attachments?: readonly SessionAttachment[];
+}
+
+/* The transcript is append-only and read back in full by the dashboard, so it
+   is where a pasted key or a credential inside a provider error would sit
+   forever. Everything written passes here first; the value seen in the UI is
+   the value stored. */
+const TRANSCRIPT_REDACTIONS: readonly [RegExp, string][] = [
+	[/\b(?:sk|rk|pk|api)[-_][A-Za-z0-9_-]{6,}/gi, '[redacted]'],
+	[/\bBearer\s+[A-Za-z0-9._-]{8,}/gi, 'Bearer [redacted]'],
+	[/\bgithub_pat_[A-Za-z0-9_]{8,}/gi, '[redacted]'],
+	[/\bgh[pousr]_[A-Za-z0-9_]{8,}/gi, '[redacted]'],
+	[/\bAWS_[A-Z0-9_]*KEY\b\s*[=:]\s*\S+/g, '[redacted]'],
+	[
+		/\b(?:password|secret|token|api[_-]?key)\b\s*[=:]\s*["']?[^\s"',}]{8,}/gi,
+		'[redacted]',
+	],
+	[/postgres(?:ql)?:\/\/[^:\s/]+:[^@\s]+@/gi, 'postgres://[redacted]@'],
+	[/https:\/\/[^\s/@]+:[^\s/@]+@/gi, 'https://[redacted]@'],
+];
+
+/* A single turn is bounded so one pathological gate output cannot fill the
+   disk, and the file is rotated once it grows past the cap so a session that
+   runs for days cannot grow without limit. */
+const ENTRY_TEXT_LIMIT = 120_000;
+const CHAT_LOG_LIMIT_BYTES = 32 * 1024 * 1024;
+
+function redactText(value: string): string {
+	let safe = value;
+	for (const [pattern, replacement] of TRANSCRIPT_REDACTIONS)
+		safe = safe.replace(pattern, replacement);
+	return safe.length > ENTRY_TEXT_LIMIT
+		? `${safe.slice(0, ENTRY_TEXT_LIMIT)}\n[truncated at ${ENTRY_TEXT_LIMIT} characters]`
+		: safe;
+}
+
+function redactEntry(entry: ChatEntry): ChatEntry {
+	return {
+		...entry,
+		...(entry.text === undefined ? {} : { text: redactText(entry.text) }),
+	};
+}
+
+async function rotateChatLogIfLarge(path: string): Promise<void> {
+	const info = await stat(path).catch(() => null);
+	if (!info || info.size < CHAT_LOG_LIMIT_BYTES) return;
+	/* Keep the tail: the operator reads the newest turns, and the head of a
+	   long session is what a rotated copy would have to protect. */
+	const raw = await readFile(path, 'utf8');
+	const lines = raw.split('\n').filter(Boolean);
+	await writeFile(path, `${lines.slice(-2_000).join('\n')}\n`, {
+		encoding: 'utf8',
+		mode: 0o600,
+	});
 }
 
 export interface SessionPaths {
@@ -522,17 +580,36 @@ export async function addSessionModule(
 }
 
 /* The record is replaced by rename, so a reader racing a running turn never
-   sees a half-written file. */
+   sees a half-written file.
+
+   The file is wrapped in a keyed envelope. The tag is what makes the recorded
+   specHash trustworthy: without it, any process able to write this file could
+   record the hash of a specification nobody approved, and every downstream
+   approval check would then agree with itself. */
 export async function writeSession(
 	workspaceRoot: string,
 	session: SandboxSession,
 ): Promise<SandboxSession> {
 	const paths = sessionPaths(workspaceRoot, session.id, session.moduleSuffix);
-	await mkdir(paths.root, { recursive: true });
+	await mkdir(paths.root, { recursive: true, mode: 0o700 });
+	const body = JSON.stringify(session, null, '\t');
 	const staging = `${paths.record}.${process.pid}.${randomUUID().slice(0, 8)}`;
-	await writeFile(staging, `${JSON.stringify(session, null, '\t')}\n`, 'utf8');
+	await writeFile(
+		staging,
+		`${JSON.stringify(
+			{ seal: await sealSessionRecord(workspaceRoot, body), session },
+			null,
+			'\t',
+		)}\n`,
+		{ encoding: 'utf8', mode: 0o600 },
+	);
 	await rename(staging, paths.record);
 	return session;
+}
+
+interface StoredSessionRecord {
+	readonly seal?: unknown;
+	readonly session?: unknown;
 }
 
 export async function readSession(
@@ -541,21 +618,39 @@ export async function readSession(
 ): Promise<SandboxSession> {
 	const root = sessionRoot(workspaceRoot, assertSessionId(sessionId));
 	try {
-		const record = JSON.parse(
+		const stored = JSON.parse(
 			await readFile(join(root, 'session.json'), 'utf8'),
+		) as SandboxSession & StoredSessionRecord;
+		/* Records written before the envelope existed, and any record whose
+		   bytes were changed outside this process, arrive here unsealed. The
+		   session still opens so its transcript can be read, but its approval is
+		   dropped: the operator approves again, which seals the record. */
+		const body =
+			stored.session && typeof stored.session === 'object'
+				? JSON.stringify(stored.session, null, '\t')
+				: null;
+		const sealed =
+			body !== null &&
+			(await verifySessionRecord(workspaceRoot, body, stored.seal as string));
+		const record = (
+			body !== null ? stored.session : (stored as unknown)
 		) as SandboxSession;
 		/* Sessions written before a field existed stay readable, so an older
 		   session opens instead of disappearing from the list. */
+		const modules = record.modules ?? [
+			{
+				id: record.moduleId,
+				directory: record.moduleSuffix,
+				kind:
+					record.kind === 'edit-module' ? ('edit' as const) : ('new' as const),
+			},
+		];
 		return {
 			...record,
 			brief: record.brief ?? '',
-			modules: record.modules ?? [
-				{
-					id: record.moduleId,
-					directory: record.moduleSuffix,
-					kind: record.kind === 'edit-module' ? 'edit' : 'new',
-				},
-			],
+			modules: sealed
+				? modules
+				: modules.map(({ specHash: _discarded, ...module }) => module),
 			autoContinue: record.autoContinue !== false,
 			chainDepth: record.chainDepth ?? 0,
 			attachments: record.attachments ?? [],
@@ -837,7 +932,11 @@ export async function appendChatEntry(
 		at: Date.now(),
 	};
 	lastSequence.set(session.id, record.sequence);
-	await appendFile(paths.chatLog, `${JSON.stringify(record)}\n`, 'utf8');
+	await rotateChatLogIfLarge(paths.chatLog);
+	await appendFile(paths.chatLog, `${JSON.stringify(redactEntry(record))}\n`, {
+		encoding: 'utf8',
+		mode: 0o600,
+	});
 	return record;
 }
 

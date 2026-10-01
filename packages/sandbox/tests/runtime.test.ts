@@ -431,6 +431,71 @@ describe('sandbox sessions', () => {
 		).toEqual(['second']);
 		expect((await readSession(root, session.id)).moduleId).toBe('profile.core');
 	});
+
+	/* The transcript is read back in full by the dashboard and kept for the
+	   life of the session, so a pasted key would otherwise sit there forever. */
+	it('redacts credentials before the transcript stores them', async () => {
+		const root = await workspace();
+		const session = await createSession({
+			workspaceRoot: root,
+			kind: 'new-module',
+			moduleId: 'profile.core',
+			title: 'User profile',
+			brief: 'A screen where a user changes their display name.',
+			blueprint: 'new-module@1.0.0',
+			role: 'business-manager',
+			driver: 'codex',
+			install: false,
+		});
+		const leaked = [
+			'export const key = "sk-abcdef0123456789";',
+			'curl -H "Authorization: Bearer abcdef0123456789"',
+			'token: ghp_abcdefghijklmnop',
+			'postgres://app:hunter2@db.internal:5432/app',
+			'api_key = "AKIAIOSFODNN7EXAMPLE"',
+		].join('\n');
+		await appendChatEntry(root, session, {
+			kind: 'user',
+			role: 'business-manager',
+			text: leaked,
+		});
+		const stored = await readFile(
+			join(sessionPaths(root, session.id, session.moduleSuffix).chatLog),
+			'utf8',
+		);
+		expect(stored).not.toContain('sk-abcdef0123456789');
+		expect(stored).not.toContain('abcdef0123456789');
+		expect(stored).not.toContain('ghp_abcdefghijklmnop');
+		expect(stored).not.toContain('hunter2');
+		expect(stored).not.toContain('AKIAIOSFODNN7EXAMPLE');
+		expect(stored).toContain('[redacted]');
+		/* The redaction is on the way in, so what the operator reads is what
+		   was kept. */
+		expect((await readChat(root, session))[0]!.text).not.toContain('hunter2');
+	});
+
+	it('bounds one transcript entry so a gate output cannot fill the disk', async () => {
+		const root = await workspace();
+		const session = await createSession({
+			workspaceRoot: root,
+			kind: 'new-module',
+			moduleId: 'profile.core',
+			title: 'User profile',
+			brief: 'A screen where a user changes their display name.',
+			blueprint: 'new-module@1.0.0',
+			role: 'business-manager',
+			driver: 'codex',
+			install: false,
+		});
+		await appendChatEntry(root, session, {
+			kind: 'event',
+			role: 'business-manager',
+			text: 'x'.repeat(500_000),
+		});
+		const entry = (await readChat(root, session))[0]!;
+		expect(entry.text!.length).toBeLessThan(200_000);
+		expect(entry.text).toContain('truncated at 120000 characters');
+	});
 });
 
 describe('session identifiers', () => {
@@ -1404,6 +1469,55 @@ describe('specification approval', () => {
 		).toBe(
 			'schemaVersion: 1\nid: profile.core\nstatus: approved\nname: Profile\n',
 		);
+	});
+
+	/* Approval used to be a plain hash field in a plain JSON file, so any
+	   process able to write that file could record any hash and every
+	   downstream check would agree with itself. */
+	it('drops the approval when the record is written outside the sandbox', async () => {
+		const root = await workspace();
+		const session = await createSession({
+			workspaceRoot: root,
+			kind: 'new-module',
+			moduleId: 'profile.core',
+			title: 'User profile',
+			brief: 'A screen where a user changes their display name.',
+			blueprint: 'new-module@1.0.0',
+			role: 'business-manager',
+			driver: 'codex',
+			install: false,
+		});
+		const paths = sessionPaths(root, session.id, session.moduleSuffix);
+		await mkdir(join(paths.modulePath, 'spec'), { recursive: true });
+		const spec =
+			'schemaVersion: 1\nid: profile.core\nstatus: draft\nname: Profile\n';
+		await writeFile(
+			join(paths.modulePath, 'spec', 'module.yaml'),
+			spec,
+			'utf8',
+		);
+		await approveSpecification(root, session);
+		expect((await readSession(root, session.id)).modules[0]!.specHash).toBe(
+			hashSpec(
+				await readFile(join(paths.modulePath, 'spec', 'module.yaml'), 'utf8'),
+			),
+		);
+
+		const stored = JSON.parse(
+			await readFile(join(paths.root, 'session.json'), 'utf8'),
+		) as { seal: string; session: { modules: { specHash?: string }[] } };
+		expect(stored.seal).toBeTruthy();
+		/* Same shape, one character of the hash changed: the tag no longer
+		   verifies, so the approval must not survive the edit. */
+		stored.session.modules[0]!.specHash = hashSpec(spec).replace(/^./, 'f');
+		expect(stored.session.modules[0]!.specHash).not.toBe(hashSpec(spec));
+		await writeFile(
+			join(paths.root, 'session.json'),
+			`${JSON.stringify(stored, null, '\t')}\n`,
+		);
+		expect(
+			(await readSession(root, session.id)).modules[0]!.specHash,
+		).toBeUndefined();
 	});
 
 	it('refuses a session that has no specification yet', async () => {

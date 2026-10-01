@@ -903,7 +903,9 @@ describe('detached turns', () => {
 		);
 		expect(
 			events.some((entry) =>
-				String(entry.data?.text ?? '').includes('consecutive gate-repair'),
+				String((entry.data as { text?: unknown } | null)?.text ?? '').includes(
+					'consecutive gate-repair',
+				),
 			),
 		).toBe(true);
 		expect(events.at(-1)?.event).toBe('ended');
