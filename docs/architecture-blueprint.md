@@ -617,7 +617,7 @@ The first release may use an in-memory process for local events. The outbox cont
 - The database carries one ledger, `_coreloom_migrations_v2`, keyed by module namespace and migration id so every module can share it.
 - The checksum is `sha256:<hex>` of the SQL with CRLF normalized to LF and the text trimmed. An applied migration is immutable: a mismatch throws before any statement runs, so it blocks startup for that module.
 - A migration whose objects already exist is **adopted**, meaning the ledger records it and the statements never run. This is what lets a database that predates the ledger keep its rows. The module states the proof itself in `inspectExisting`, which returns `complete`, `absent` or `partial`; `postgresTenantTableState` is the standard check for a tenant table, its policy and its forced row-level security.
-- A migration whose objects are only half present is refused (`PARTIAL_OBJECTS`) rather than guessed at.
+- A migration whose objects are only half present is refused (`PARTIAL_MIGRATION`) rather than guessed at.
 - Every outstanding migration of a module applies with its ledger rows inside one connection-bound transaction, so a failure leaves neither.
 - Migrations are ordered per module by file number, and the runner holds an advisory lock for that namespace, so two runtimes starting at once do not race.
 - Destructive changes require a separate plan, backup evidence, or an expand-and-contract strategy.

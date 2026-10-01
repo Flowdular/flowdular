@@ -74,7 +74,7 @@ Report each finding as: severity (`blocker`, `should-fix`, `taste`), claim, `fil
 ```text
 blocker  Tenant id read from body   modules/inventory/src/api/endpoints.ts:41
          A member of tenant A posts { tenantId: "B" } and creates a location in B.
-         AGENTS.md 6. Fix: principalFromContext(octane)!.tenantId; drop the field.
+         AGENTS.md 4. Fix: principalFromContext(octane)!.tenantId; drop the field.
 ```
 
 ## 8. Known platform gaps to keep in mind (not module defects)
