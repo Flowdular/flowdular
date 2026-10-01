@@ -825,6 +825,17 @@ export async function* runTurn(
 	}
 
 	const pathResult = await pathGuard.verify();
+	if (pathResult.toolOwned.length > 0) {
+		/* Reported so the churn is visible, not fatal: the sandbox runs the same
+		   install itself and these files are regenerated outside the agent's
+		   control. A command that relinked pnpm is not a containment breach. */
+		yield await appendChatEntry(context.workspaceRoot, session, {
+			kind: 'system',
+			role: roleId,
+			module: active.directory,
+			text: `A command in this turn touched ${pathResult.toolOwned.length} toolchain file(s) and the sandbox put them back: ${pathResult.toolOwned.join(', ')}.`,
+		});
+	}
 	if (pathResult.violations.length > 0) {
 		failed = true;
 		const evidence = pathResult.violations

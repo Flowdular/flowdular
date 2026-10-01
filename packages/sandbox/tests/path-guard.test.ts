@@ -149,6 +149,76 @@ describe('agent path guard', () => {
 
 	/* The copied offenders used to survive under path-violations/<id>/files, so
 	   every flagged turn duplicated the tree it had just restored. */
+	/* A real session wrote a complete specification and lost the whole turn
+	   because pnpm restamped its lockfile on the way past. The toolchain owns
+	   these files and the sandbox regenerates them itself. */
+	it('restores toolchain churn without failing the turn', async () => {
+		const root = await workspace();
+		await mkdir(join(root, 'node_modules'), { recursive: true });
+		await writeFile(join(root, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n");
+		await writeFile(
+			join(root, 'node_modules', '.package-map.json'),
+			'{"before":true}\n',
+		);
+		const guard = await guardAgentPaths({
+			workspace: root,
+			sessionRoot: join(root, '..', 'path-guard-session-tool'),
+			allowedPaths: ['modules/catalog/src/**'],
+		});
+		/* Exactly what pnpm does when the agent runs any command. */
+		await writeFile(
+			join(root, 'pnpm-lock.yaml'),
+			"lockfileVersion: '9.0'\nrestamped: true\n",
+		);
+		await writeFile(
+			join(root, 'node_modules', '.package-map.json'),
+			'{"after":true}\n',
+		);
+		await writeFile(
+			join(root, 'node_modules', '.pnpm-workspace-state-v1.json'),
+			'{"restamped":true}\n',
+		);
+		const result = await guard.verify();
+		expect(result.violations).toEqual([]);
+		expect(result.quarantine).toBeNull();
+		expect([...result.toolOwned].sort()).toEqual([
+			'node_modules/.package-map.json',
+			'node_modules/.pnpm-workspace-state-v1.json',
+			'pnpm-lock.yaml',
+		]);
+		/* Undone, so the next turn starts from the same lockfile. */
+		expect(await readFile(join(root, 'pnpm-lock.yaml'), 'utf8')).toBe(
+			"lockfileVersion: '9.0'\n",
+		);
+		expect(
+			await readFile(join(root, 'node_modules', '.package-map.json'), 'utf8'),
+		).toBe('{"before":true}\n');
+	});
+
+	/* The distinction is authorship, not location: replacing an installed package
+	   would make this session's own gates report on code they never checked. */
+	it('still fails a change to the contents of an installed package', async () => {
+		const root = await workspace();
+		await mkdir(join(root, 'node_modules', 'dep'), { recursive: true });
+		await writeFile(join(root, 'node_modules', 'dep', 'index.js'), 'real\n');
+		const guard = await guardAgentPaths({
+			workspace: root,
+			sessionRoot: join(root, '..', 'path-guard-session-dep'),
+			allowedPaths: ['modules/catalog/src/**'],
+		});
+		await writeFile(join(root, 'node_modules', 'dep', 'index.js'), 'swapped\n');
+		const result = await guard.verify();
+		expect(result.violations).toEqual([
+			expect.objectContaining({
+				path: 'node_modules/dep/index.js',
+				change: 'modified',
+			}),
+		]);
+		expect(
+			await readFile(join(root, 'node_modules', 'dep', 'index.js'), 'utf8'),
+		).toBe('real\n');
+	});
+
 	it('does not retain the quarantined file copies', async () => {
 		const root = await workspace();
 		const guard = await guardAgentPaths({

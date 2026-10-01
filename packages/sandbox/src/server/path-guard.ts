@@ -28,6 +28,32 @@ const PROTECTED_DIRECTORIES = new Set([
 	'dist',
 	'.turbo',
 ]);
+
+/* The toolchain owns these, and a command the agent legitimately runs rewrites
+   them on its way past: pnpm relinks and restamps its workspace state on almost
+   any invocation, including the read-only ones a skill tells an agent to run.
+   The sandbox runs the same install itself, so these files are regenerated
+   outside the agent's control and carry nothing it authored.
+
+   Treating that churn as a containment breach failed the whole turn and threw
+   away the work: one real session wrote a complete specification and lost it
+   because pnpm restamped a lockfile afterwards. Restoring them and reporting is
+   the honest outcome, and nothing is delivered from any of them.
+
+   The distinction is authorship, not location. A change to the *contents* of an
+   installed package is still a violation: swapping a compiler out would make
+   this session's own gates report on code they never checked. */
+const TOOL_OWNED = [
+	/^pnpm-lock\.yaml$/,
+	/^node_modules\/\.modules\.yaml$/,
+	/^node_modules\/\.package-map\.json$/,
+	/^node_modules\/\.pnpm-workspace-state-v1\.json$/,
+	/^node_modules\/\.pnpm\/lock\.yaml$/,
+];
+
+function isToolOwned(path: string): boolean {
+	return TOOL_OWNED.some((pattern) => pattern.test(path));
+}
 const QUARANTINE_DIRECTORY = 'path-violations';
 /* A dependency tree can hold tens of thousands of entries. Past these bounds
    the guard stops trusting its own picture and fails the turn closed rather
@@ -55,6 +81,9 @@ export interface PathViolation {
 
 export interface PathGuardResult {
 	readonly violations: readonly PathViolation[];
+	/* Changes the toolchain made on the agent's behalf, restored and reported
+	   without failing the turn. */
+	readonly toolOwned: readonly string[];
 	readonly quarantine: string | null;
 }
 
@@ -335,6 +364,36 @@ async function restoreNode(
 	await symlink(node.target!, target);
 }
 
+/* Puts back every baseline file whose bytes no longer match. Used for the
+   tool-owned churn that must be undone without failing the turn. */
+async function revert(
+	root: string,
+	baseline: ReadonlyMap<string, TreeNode>,
+	backup: string,
+	/* Files inside a protected directory never reach the hashed snapshot, so the
+	   protected pass holds the bytes for those. */
+	protectedBaseline: ProtectedTree,
+): Promise<void> {
+	const current = await snapshot(root);
+	for (const [path, node] of baseline) {
+		const now = current.get(path);
+		if (!now || now.kind !== 'file') continue;
+		const info = await lstat(join(root, path)).catch(() => null);
+		if (!info?.isFile()) continue;
+		if ((await digest(join(root, path))) === node.digest) continue;
+		await mkdir(dirname(join(root, path)), { recursive: true });
+		await copyFile(join(backup, path), join(root, path));
+	}
+	for (const [path, bytes] of protectedBaseline.backup) {
+		if (!isToolOwned(path)) continue;
+		const info = await lstat(join(root, path)).catch(() => null);
+		if (!info?.isFile()) continue;
+		if (Buffer.compare(await readFile(join(root, path)), bytes) === 0) continue;
+		await mkdir(dirname(join(root, path)), { recursive: true });
+		await writeFile(join(root, path), bytes);
+	}
+}
+
 async function quarantineCurrent(
 	root: string,
 	directory: string,
@@ -377,6 +436,7 @@ export async function guardAgentPaths(input: {
 			const current = await snapshot(workspace);
 			const paths = new Set([...baseline.keys(), ...current.keys()]);
 			const violations: PathViolation[] = [];
+			const toolOwned: string[] = [];
 			for (const path of [...paths].sort()) {
 				const before = baseline.get(path);
 				const after = current.get(path);
@@ -395,6 +455,10 @@ export async function guardAgentPaths(input: {
 					continue;
 				}
 				if (!allowed(path, input.allowedPaths)) {
+					if (isToolOwned(path)) {
+						toolOwned.push(path);
+						continue;
+					}
 					violations.push({
 						path,
 						change,
@@ -410,14 +474,23 @@ export async function guardAgentPaths(input: {
 				baselineProtected,
 				currentProtected,
 			);
-			violations.push(...protectedViolations);
+			for (const violation of protectedViolations) {
+				if (isToolOwned(violation.path)) {
+					toolOwned.push(violation.path);
+					continue;
+				}
+				violations.push(violation);
+			}
 
 			if (violations.length === 0) {
+				/* Tool-owned churn was still reverted, so the restore runs before
+				   the early return. */
+				await revert(workspace, baseline, backup, baselineProtected);
 				/* The baseline is an enforcement aid, not session history. Retaining a
 				   full copy on every successful turn leaks disk and duplicates any
 				   sensitive attachment the role was allowed to read. */
 				await rm(staging, { recursive: true, force: true });
-				return { violations, quarantine: null };
+				return { violations, toolOwned, quarantine: null };
 			}
 
 			for (const violation of violations)
@@ -466,7 +539,7 @@ export async function guardAgentPaths(input: {
 				)}\n`,
 				{ encoding: 'utf8', mode: 0o600 },
 			);
-			return { violations, quarantine: staging };
+			return { violations, toolOwned, quarantine: staging };
 		},
 	};
 }
