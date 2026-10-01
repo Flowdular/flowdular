@@ -320,16 +320,22 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 		printHelp(theme);
 		return null;
 	}
-	let platform = null;
+	/* Deferred until the server is listening. Waiting for the application first
+	   left the dashboard unavailable for as long as the application takes to boot,
+	   and blocked every caller of the state endpoint behind it. The connection is
+	   a background concern; the workspace is not. */
+	let bringUpPlatform = async () => {};
 	try {
 		await resolveWorkspace(options, theme);
+		const ownsPlatform = await willStartPlatform(options);
 		/* Set before the child is spawned: the application reads it to decide
 		   whether to prepare a credential at boot, and a child inherits the
 		   environment as it exists at spawn, not as it ends up. */
-		const ownsPlatform = await willStartPlatform(options);
 		process.env.FD_SANDBOX_PROVISION = ownsPlatform ? 'true' : 'false';
-		platform = await startPlatform(options);
-		await collectAccess(options, `http://127.0.0.1:${options.platformPort}`);
+		bringUpPlatform = async () => {
+			platform = await startPlatform(options);
+			await collectAccess(options, `http://127.0.0.1:${options.platformPort}`);
+		};
 	} catch (error) {
 		restoreEarly();
 		if (error instanceof BootstrapError) console.error(`\n${error.message}\n`);
@@ -354,6 +360,17 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 			server: { host: options.host, port: options.port, strictPort: true },
 		});
 		await server.listen();
+		/* The dashboard is answering now; the application is brought up behind it
+		   and the connection settles on its own. */
+		void bringUpPlatform().catch((error) => {
+			console.log(
+				`  the application did not start: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
+			if (platform) void platform.stop();
+			platform = null;
+		});
 	} catch (error) {
 		restoreConsole();
 		if (platform) await platform.stop();
