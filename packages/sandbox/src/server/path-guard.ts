@@ -44,6 +44,10 @@ const PROTECTED_DIRECTORIES = new Set([
    installed package is still a violation: swapping a compiler out would make
    this session's own gates report on code they never checked. */
 const TOOL_OWNED = [
+	/* The directory itself, when pnpm creates one the session did not have yet.
+	   Its contents are fingerprinted separately, so a package the model wrote
+	   here is still a violation. */
+	/^(?:node_modules|\.git|dist|\.turbo)$/,
 	/^pnpm-lock\.yaml$/,
 	/^node_modules\/\.modules\.yaml$/,
 	/^node_modules\/\.package-map\.json$/,
@@ -474,12 +478,16 @@ export async function guardAgentPaths(input: {
 				baselineProtected,
 				currentProtected,
 			);
-			for (const violation of protectedViolations) {
-				if (isToolOwned(violation.path)) {
+			for (const { directory, ...violation } of protectedViolations) {
+				if (directory || isToolOwned(violation.path)) {
 					toolOwned.push(violation.path);
 					continue;
 				}
-				violations.push(violation);
+				violations.push({
+					path: violation.path,
+					change: violation.change,
+					reason: violation.reason,
+				});
 			}
 
 			if (violations.length === 0) {
@@ -548,10 +556,17 @@ export async function guardAgentPaths(input: {
    allowlist ever grants those paths, so a difference can only come from the
    model rather than from a gate or a formatter. When the scan outran its bound
    the guard says so instead of reporting a clean turn. */
+interface ProtectedChange extends PathViolation {
+	/* pnpm relinking creates directories; it does not author package file
+	   contents. A directory entry therefore carries nothing the model wrote,
+	   whatever it is nested under. */
+	readonly directory: boolean;
+}
+
 function protectedViolationsBetween(
 	before: ProtectedTree,
 	after: ProtectedTree,
-): PathViolation[] {
+): ProtectedChange[] {
 	if (before.overBudget || after.overBudget) {
 		return [
 			{
@@ -559,14 +574,16 @@ function protectedViolationsBetween(
 				change: 'modified',
 				reason:
 					'The protected-path scan exceeded its bound, so the turn cannot be verified. Remove the oversized tree and retry.',
+				directory: false,
 			},
 		];
 	}
-	const violations: PathViolation[] = [];
+	const violations: ProtectedChange[] = [];
 	for (const path of new Set([
 		...before.fingerprint.keys(),
 		...after.fingerprint.keys(),
 	])) {
+		const now = after.fingerprint.get(path) ?? '';
 		if (before.fingerprint.get(path) === after.fingerprint.get(path)) continue;
 		const existed = before.fingerprint.has(path);
 		violations.push({
@@ -574,6 +591,7 @@ function protectedViolationsBetween(
 			change: existed ? 'modified' : 'created',
 			reason:
 				'The coding agent may not write into a dependency, VCS or build directory.',
+			directory: now.startsWith('dir'),
 		});
 	}
 	return violations;

@@ -195,6 +195,30 @@ describe('agent path guard', () => {
 		).toBe('{"before":true}\n');
 	});
 
+	/* The same rule one level up: pnpm creating the dependency directory mid-turn
+	   is not the model writing outside its role. */
+	it('does not fail a turn because pnpm created node_modules', async () => {
+		const root = await workspace();
+		const guard = await guardAgentPaths({
+			workspace: root,
+			sessionRoot: join(root, '..', 'path-guard-session-newdeps'),
+			allowedPaths: ['modules/catalog/src/**'],
+		});
+		await mkdir(join(root, 'node_modules', '.pnpm'), { recursive: true });
+		await writeFile(
+			join(root, 'node_modules', '.modules.yaml'),
+			'hoistPattern: []\n',
+		);
+		await writeFile(
+			join(root, 'node_modules', '.package-map.json'),
+			'{"after":true}\n',
+		);
+		const result = await guard.verify();
+		expect(result.violations).toEqual([]);
+		expect(result.quarantine).toBeNull();
+		expect(result.toolOwned).toContain('node_modules');
+	});
+
 	/* The distinction is authorship, not location: replacing an installed package
 	   would make this session's own gates report on code they never checked. */
 	it('still fails a change to the contents of an installed package', async () => {
