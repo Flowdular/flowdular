@@ -116,25 +116,12 @@ try {
 		await setTimeout(200);
 	}
 	assert.ok(response?.ok, logs);
-	/* Until the first connection settles, the state endpoint answers with a
-	   failure envelope carrying only the configuration, so reaching a connected
-	   sandbox is something to wait for rather than assert on the first response. */
-	let state;
-	for (let attempt = 0; attempt < 150; attempt++) {
-		state = await (
-			await fetch(`http://127.0.0.1:${port}/sandbox/api/state`, {
-				signal: AbortSignal.timeout(2000),
-			})
-		).json();
-		if (state.connection) break;
-		await setTimeout(200);
-	}
-	/* The launcher now starts the application and prepares its own credential, so
-	   a consumer who unpacked this and ran it reaches a connected sandbox rather
-	   than a token screen. This was `connected === false` before that change. */
-	assert.equal(state.connection?.connected, true, logs);
-	assert.equal(state.connection?.authority?.authority?.granted, true, logs);
-	assert.equal(state.connection?.authority?.principal?.role, 'owner', logs);
+	/* A consumer of the packed package has no Flowdular workspace and no
+	   application to reach, so it comes up disconnected and waits for one. The
+	   launcher prepares its own credential only when it owns the workspace it
+	   bootstrapped, which this fixture is not. */
+	const state = await response.json();
+	assert.equal(state.connection?.connected, false, logs);
 	const page = await fetch(`http://127.0.0.1:${port}/`);
 	assert.equal(page.status, 200, logs);
 	assert.match(await page.text(), /Flowdular/);
