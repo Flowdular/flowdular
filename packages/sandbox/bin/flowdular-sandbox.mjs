@@ -271,6 +271,15 @@ async function resolveWorkspace(options, theme) {
    application therefore provisions the credential during its own boot, and this
    launcher collects it afterwards. That is what removes the pasted token from
    the business flow without adding a machine-callable endpoint. */
+/* Whether this launcher is about to own the application decides if the
+   application should prepare a credential. Asking separately keeps the decision
+   in one place instead of inferring it from a result. */
+async function willStartPlatform(options) {
+	if (options.platform === 'never') return false;
+	if (options.platform === 'always') return true;
+	return !(await platformReachable(`http://127.0.0.1:${options.platformPort}`));
+}
+
 async function collectAccess(options, platformUrl) {
 	try {
 		await collectProvisionedCredential({
@@ -314,6 +323,11 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 	let platform = null;
 	try {
 		await resolveWorkspace(options, theme);
+		/* Set before the child is spawned: the application reads it to decide
+		   whether to prepare a credential at boot, and a child inherits the
+		   environment as it exists at spawn, not as it ends up. */
+		const ownsPlatform = await willStartPlatform(options);
+		process.env.FD_SANDBOX_PROVISION = ownsPlatform ? 'true' : 'false';
 		platform = await startPlatform(options);
 		await collectAccess(options, `http://127.0.0.1:${options.platformPort}`);
 	} catch (error) {
@@ -326,10 +340,6 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 	process.env.FD_SANDBOX_WORKSPACE = options.workspace;
 	process.env.FD_SANDBOX_MODE = options.mode;
 	process.env.FD_SANDBOX_PORT = String(options.port);
-	/* The application reads this to decide whether to prepare a credential at
-	   boot. It is set only when this launcher owns the application, so a platform
-	   someone else started is never asked to create an account. */
-	process.env.FD_SANDBOX_PROVISION = platform ? 'true' : 'false';
 
 	const startedAt = performance.now();
 	const restoreConsole = installOctaneConsoleBridge(options.verbose, useColor);
