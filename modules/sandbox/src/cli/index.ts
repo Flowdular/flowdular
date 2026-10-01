@@ -67,14 +67,36 @@ async function runtimes(
 	});
 	try {
 		/* The provider belongs to the runner; only the lease this runtime took is
-		   released here. */
+		   released here.
+
+		   The auth runtime takes a lease of its own the first time its service is
+		   used, and releasing only the sandbox lease left that one outstanding.
+		   The runner disposes the provider by waiting for every lease to come
+		   back, so a command that failed part way through waited forever instead of
+		   reporting why: the process ended on an unsettled top-level await with no
+		   message at all. Both leases are released here, and the wait for the
+		   sandbox lease is bounded so a leaked lease can never hang the CLI again. */
+		const service = await sandbox.service(auth);
+		let disposed = false;
 		return {
 			auth,
-			service: await sandbox.service(auth),
-			dispose: sandbox.dispose,
+			service,
+			async dispose() {
+				if (disposed) return;
+				disposed = true;
+				try {
+					await sandbox.dispose();
+				} finally {
+					await auth.dispose();
+				}
+			},
 		};
 	} catch (error) {
-		await sandbox.dispose();
+		try {
+			await sandbox.dispose();
+		} finally {
+			await auth.dispose();
+		}
 		throw error;
 	}
 }

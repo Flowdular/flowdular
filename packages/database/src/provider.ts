@@ -108,6 +108,9 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
 const DEFAULT_IDLE_TIMEOUT_MS = 30_000;
 const DEFAULT_QUERY_TIMEOUT_MS = 20_000;
 const DEFAULT_STATEMENT_TIMEOUT_MS = 15_000;
+/* A shutdown that outlasts its slowest query is a leaked lease, not a slow one.
+   Past this bound the pool closes and names the holders. */
+const LEASE_DRAIN_TIMEOUT_MS = 30_000;
 const DEFAULT_LOCK_TIMEOUT_MS = 5_000;
 const DEFAULT_POOL_MAX = 10;
 const DEFAULT_POOL_MIN = 0;
@@ -458,6 +461,7 @@ export function createDatabaseProvider(
 	let state: ProviderState = 'ready';
 	let leases = 0;
 	let resolveDrained: (() => void) | undefined;
+	const leaseNames = new Set<string>();
 	let disposePromise: Promise<void> | undefined;
 	const adapters = new Map<string, DatabaseAdapter>();
 	if (config.adapter === 'postgresql' && !factories.postgresPool) {
@@ -574,6 +578,8 @@ export function createDatabaseProvider(
 			const database = databaseFor(request);
 			assertDatabaseRequirements(database, request.requirements);
 			leases += 1;
+			const leaseName = `${request.namespace}:${request.purpose}`;
+			leaseNames.add(leaseName);
 			let released = false;
 			return {
 				database,
@@ -581,6 +587,7 @@ export function createDatabaseProvider(
 					if (released) return;
 					released = true;
 					leases -= 1;
+					leaseNames.delete(leaseName);
 					if (leases === 0) resolveDrained?.();
 				},
 			};
@@ -614,9 +621,29 @@ export function createDatabaseProvider(
 			state = 'disposing';
 			disposePromise = (async () => {
 				if (leases > 0) {
-					await new Promise<void>((resolveDrain) => {
-						resolveDrained = resolveDrain;
-					});
+					/* Disposal waits for every lease, because closing a pool under an
+					   open query is worse than a slow shutdown. A lease that is never
+					   released must not become an indefinite wait, though: a CLI
+					   command that leaked one used to end on an unsettled top-level
+					   await with no message, which is indistinguishable from a hang.
+					   After the bound the leases are abandoned and named, so the
+					   operator is told which component to look at. */
+					await Promise.race([
+						new Promise<void>((resolveDrain) => {
+							resolveDrained = resolveDrain;
+						}),
+						new Promise<void>((resolveAfter) => {
+							const timer = setTimeout(() => {
+								resolveAfter();
+								console.error(
+									`The database provider is closing with ${leases} lease(s) still held (${[
+										...leaseNames,
+									].join(', ')}). Closing anyway.`,
+								);
+							}, LEASE_DRAIN_TIMEOUT_MS);
+							timer.unref?.();
+						}),
+					]);
 				}
 				const results = await Promise.allSettled(
 					[...adapters.values()].map((adapter) => adapter.dispose()),

@@ -13,6 +13,51 @@ afterAll(() => {
 	rmSync(scratch, { recursive: true, force: true });
 });
 
+/* Disposal waits for every lease before closing a pool, because closing under an
+   open query is worse than a slow shutdown. A lease that is never released must
+   not turn that wait into silence: a CLI command that leaked one ended on an
+   unsettled top-level await with no message, which reads as a hang. */
+describe('lease drain on dispose', () => {
+	it('closes and names the holders when a lease is never released', async () => {
+		const error = vi
+			.spyOn(console, 'error')
+			.mockImplementation(() => undefined);
+		try {
+			const provider = createDatabaseProvider(
+				databaseProviderConfigFromEnvironment(productionEnvironment(), scratch),
+				{
+					postgresPool: () => ({
+						async connect() {
+							return {
+								async query() {
+									return { rows: [], rowCount: 0 };
+								},
+								release() {},
+							};
+						},
+						async end() {},
+					}),
+				},
+			);
+			const lease = await provider.acquire({
+				namespace: 'leaky.core',
+				purpose: 'runtime',
+				requirements: { dialectIds: ['postgresql' as never] },
+			});
+			expect(lease.database).toBeDefined();
+			/* Deliberately not released. */
+			const started = Date.now();
+			await provider.dispose();
+			expect(Date.now() - started).toBeLessThan(45_000);
+			const reported = error.mock.calls.flat().join(' ');
+			expect(reported).toContain('lease(s) still held');
+			expect(reported).toContain('leaky.core:runtime');
+		} finally {
+			error.mockRestore();
+		}
+	}, 60_000);
+});
+
 function certificateFile(name: string, contents: string): string {
 	const path = join(scratch, name);
 	writeFileSync(path, contents);

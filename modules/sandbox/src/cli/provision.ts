@@ -29,7 +29,8 @@ import type { SandboxService } from '../services/sandbox-service.ts';
 
 const DEFAULT_WORKSPACE_NAME = 'Sandbox';
 const DEFAULT_WORKSPACE_SLUG = 'sandbox';
-const DEFAULT_OWNER_EMAIL = 'sandbox-operator@localhost';
+/* The domain has to carry a dot: auth rejects an address without one. */
+const DEFAULT_OWNER_EMAIL = 'sandbox-operator@example.com';
 const DEFAULT_OWNER_DISPLAY_NAME = 'Sandbox operator';
 const DEFAULT_TOKEN_LABEL = 'Sandbox launcher';
 const MAX_LABEL = 80;
