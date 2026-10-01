@@ -1,8 +1,21 @@
 #!/usr/bin/env node
 import './register-types.mjs';
 import { watchSandboxReloads } from '../src/server/reload-log.ts';
+import {
+	DEFAULT_REPOSITORY,
+	BootstrapError,
+	assertBootstrapPrerequisites,
+	assertRefIsPinned,
+	assertTargetIsSafe,
+	bootstrapWorkspace,
+	directoryEntries,
+	workspaceTarget,
+} from '../src/server/bootstrap.ts';
+import { probeCommand } from '@flowdular/coding-agent';
 import process from 'node:process';
 import { realpathSync } from 'node:fs';
+import { access } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
@@ -17,12 +30,29 @@ import {
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
+/* Bootstrap defaults to the tag this package was published from, so the
+   repository a business user clones is the one this build was tested against. */
+const { version: sandboxVersion } = await readJson(
+	new URL('../package.json', import.meta.url),
+);
+
+/* The console bridge is installed later; before that a failure just prints. */
+function restoreEarly() {}
+
+async function readJson(url) {
+	return JSON.parse(await readFile(url, 'utf8'));
+}
+
 export function parseSandboxArguments(argv = []) {
 	const options = {
 		host: '127.0.0.1',
 		port: 4320,
 		mode: 'loopback',
 		workspace: process.cwd(),
+		workspaceArgument: undefined,
+		ref: undefined,
+		repository: DEFAULT_REPOSITORY,
+		bootstrap: 'auto',
 		verbose: process.env.FD_SANDBOX_VERBOSE === 'true',
 		help: false,
 	};
@@ -59,8 +89,27 @@ export function parseSandboxArguments(argv = []) {
 			options.port = Number(port);
 			continue;
 		}
+		if (argument === '--no-bootstrap') {
+			options.bootstrap = 'never';
+			continue;
+		}
+		if (argument === '--bootstrap') {
+			options.bootstrap = 'always';
+			continue;
+		}
+		const ref = take('ref');
+		if (ref !== undefined) {
+			options.ref = ref;
+			continue;
+		}
+		const repository = take('repository');
+		if (repository !== undefined) {
+			options.repository = repository;
+			continue;
+		}
 		const workspace = take('workspace');
 		if (workspace !== undefined) {
+			options.workspaceArgument = workspace;
 			options.workspace = resolve(workspace);
 			continue;
 		}
@@ -99,7 +148,12 @@ function printHelp() {
 Usage: npx @flowdular/sandbox [options]
 
 Options:
-  --workspace <path>  Flowdular workspace to use (default: current directory)
+  --workspace <path>  Flowdular workspace to use, or a new one to create here
+                      (default: the nearest workspace, else ./flowdular)
+  --bootstrap         Create a workspace even when one was found
+  --no-bootstrap      Fail instead of creating a workspace when none is found
+  --ref <tag>         Version tag or commit to bootstrap (default: this package version)
+  --repository <url>  Repository to bootstrap from (default: Flowdular/flowdular)
   --host <host>       Bind address (default: 127.0.0.1)
   --port <port>       HTTP port (default: 4320)
   --mode <mode>       loopback or self-hosted (default: loopback)
@@ -153,12 +207,61 @@ async function sandboxStatus(server, workspace) {
 	}
 }
 
+/* A business user arrives with an empty directory, so the sandbox either runs
+   against the workspace it finds or creates one first. Refusing silently is not
+   an option: the whole promise is that describing an idea needs no checkout. */
+async function resolveWorkspace(options, theme) {
+	const exists = async (path) => {
+		try {
+			await access(path);
+			return true;
+		} catch {
+			return false;
+		}
+	};
+	if (options.bootstrap !== 'never' && !(await exists(options.workspace))) {
+		const ref = options.ref ?? `v${sandboxVersion}`;
+		assertRefIsPinned(ref);
+		const target = workspaceTarget(options.workspaceArgument, 'flowdular');
+		await assertBootstrapPrerequisites(
+			async (command) => (await probeCommand(command)).available,
+		);
+		await assertTargetIsSafe(target, exists, directoryEntries);
+		console.log(`\nNo Flowdular workspace found. Creating one in ${target}`);
+		const result = await bootstrapWorkspace({
+			target,
+			ref,
+			repository: options.repository,
+			log: (line) => console.log(`  ${line}`),
+		});
+		for (const step of result.steps) console.log(`  ok ${step}`);
+		console.log(
+			`\nStart the platform in a second terminal: cd ${result.root} && pnpm dev\n`,
+		);
+		options.workspace = result.root;
+		return;
+	}
+	if (options.bootstrap === 'always' && (await exists(options.workspace)))
+		throw new Error(
+			`--bootstrap was given but ${options.workspace} is already a workspace.`,
+		);
+}
+
 export async function startSandbox(argv = process.argv.slice(2)) {
 	const options = parseSandboxArguments(argv);
 	const useColor = shouldUseColor();
 	const theme = createTheme(useColor);
 	if (options.help) {
 		printHelp(theme);
+		return null;
+	}
+	try {
+		await resolveWorkspace(options, theme);
+	} catch (error) {
+		restoreEarly();
+		if (error instanceof BootstrapError) console.error(`\n${error.message}\n`);
+		else console.error(`\n${error instanceof Error ? error.message : error}\n`);
+		process.exitCode = 1;
 		return null;
 	}
 	process.env.FD_SANDBOX_WORKSPACE = options.workspace;

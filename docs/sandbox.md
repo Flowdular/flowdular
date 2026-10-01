@@ -12,12 +12,43 @@ Full documentation lives with the package:
 
 ```bash
 pnpm sandbox            # from this repository
-npx @flowdular/sandbox   # from any Flowdular workspace
+npx @flowdular/sandbox   # from any Flowdular workspace, or from an empty one
 ```
 
 The launcher walks up to `flowdular.json` to find the workspace and opens
 `http://127.0.0.1:4320`. `--port`, `--workspace`, `--host` and `--mode` override
 the defaults.
+
+## Start with nothing installed
+
+There is no checkout step. Run the launcher in an empty directory and it creates
+a workspace for you:
+
+```bash
+mkdir acme-erp && cd acme-erp
+npx @flowdular/sandbox
+```
+
+That clones the OSS repository at the tag matching the published package
+version, installs dependencies from the committed lockfile, verifies
+`flowdular.json`, and starts the sandbox on it. The workspace lands in
+`./flowdular` unless `--workspace <path>` names another directory.
+
+The ref is always pinned: a version tag or a full commit, never a branch, so
+running the command twice produces the same platform both times. `--ref` picks a
+different one. `--no-bootstrap` refuses to create anything and fails instead,
+which is what a script wants. Cloning into a directory that already holds
+unrelated files is refused by name rather than merged into, and `git` and `pnpm`
+are checked before anything is written rather than after a half-finished clone.
+
+The sandbox and the application are two processes. Once the workspace exists,
+start the application in a second terminal:
+
+```bash
+cd flowdular && pnpm dev     # http://127.0.0.1:4310
+```
+
+Then connect the two as described below.
 
 ## Connect it to a running application
 
