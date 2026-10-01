@@ -209,6 +209,7 @@ try {
 		'--platform=node',
 		'--format=esm',
 		'--external:vite',
+		'--external:yaml',
 		'--external:./register-types.mjs',
 		'--outfile=' + join(sandboxRoot, 'bin/flowdular-sandbox.mjs'),
 	]);

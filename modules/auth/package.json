@@ -25,7 +25,7 @@
 		"@flowdular/ui": "workspace:*",
 		"@octanejs/app-core": "0.0.47",
 		"@octanejs/seo": "0.0.38",
-		"nodemailer": "10.0.3",
+		"nodemailer": "10.0.6",
 		"octane": "0.1.51",
 		"pg": "8.23.0",
 		"segment-state": "0.2.1",
