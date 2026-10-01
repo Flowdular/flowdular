@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { flowdularStateDirectory } from '@flowdular/kernel/runtime-config';
 import { SANDBOX_GRANT_CAPABILITIES } from '../acl/permissions.ts';
@@ -73,6 +73,15 @@ const TOKEN_LABEL = 'Sandbox launcher';
 const OPERATOR = 'platform:boot';
 const CREDENTIAL_MODE = 0o600;
 
+async function exists(path: string): Promise<boolean> {
+	try {
+		await access(path);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 export function inboxPath(workspaceRoot: string): string {
 	return join(
 		flowdularStateDirectory(workspaceRoot),
@@ -99,6 +108,14 @@ export async function provisionSandboxCredential(
 	options: ProvisionInboxOptions,
 ): Promise<string | null> {
 	const log = options.log ?? (() => undefined);
+	/* The platform's configuration is resolved once per generation, and a reload
+	   resolves it again. Without this, a second generation mints a second token
+	   after the launcher already consumed the first, leaving a live credential on
+	   disk that nobody will read. One credential per workspace is the contract. */
+	if (await exists(inboxPath(options.workspaceRoot))) {
+		log('a sandbox credential is already waiting to be collected');
+		return inboxPath(options.workspaceRoot);
+	}
 	const auth = await options.auth.service();
 	const account = await auth.findAccountAccess(OWNER_EMAIL);
 	let tenantId: string | null = null;
