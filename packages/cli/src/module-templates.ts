@@ -594,7 +594,8 @@ function manifest(model: ScaffoldModel): string {
 }
 
 function packageJson(model: ScaffoldModel): string {
-	const { spec, names, hasApi, hasClient, hasDatabase, hasCli } = model;
+	const { spec, names, hasApi, hasClient, hasDatabase, hasCli, lifecycle } =
+		model;
 	return json({
 		name: names.packageName,
 		version: spec.specVersion,
@@ -632,6 +633,10 @@ function packageJson(model: ScaffoldModel): string {
 			...(hasCli ? { '@flowdular/cli-protocol': 'workspace:*' } : {}),
 			...(hasClient ? { '@flowdular/client': 'workspace:*' } : {}),
 			'@flowdular/contracts': 'workspace:*',
+			/* The generated lifecycle guard imports the lifecycle engine. Without
+			   this the module typechecks and then fails the dependencies gate on
+			   the file the scaffold itself emitted. */
+			...(lifecycle ? { '@flowdular/kernel': 'workspace:*' } : {}),
 			...(hasDatabase ? { '@flowdular/database': 'workspace:*' } : {}),
 			...(hasApi
 				? {

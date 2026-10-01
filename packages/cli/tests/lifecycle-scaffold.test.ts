@@ -154,6 +154,30 @@ describe('the lifecycle the scaffold generates', () => {
 		expect(without.files.has('src/domain/status-lifecycle.ts')).toBe(false);
 	});
 
+	/* The lifecycle guard imports the kernel. A package.json that does not declare
+	   it produces a module that typechecks and then fails the dependencies gate on
+	   the file the scaffold emitted, which is exactly what a real build hit. */
+	it('declares the kernel the emitted guard imports', async () => {
+		const withGuard = await generate(SPEC);
+		const manifest = JSON.parse(withGuard.files.get('package.json')!) as {
+			dependencies: Record<string, string>;
+		};
+		expect(withGuard.files.get('src/domain/status-lifecycle.ts')).toContain(
+			"from '@flowdular/kernel'",
+		);
+		expect(manifest.dependencies['@flowdular/kernel']).toBe('workspace:*');
+
+		const vocabularyOnly = SPEC.replace(
+			/      transitions:\n(        - from:.*\n|          to:.*\n|          permission:.*\n)+/,
+			'',
+		);
+		const without = await generate(vocabularyOnly);
+		const bare = JSON.parse(without.files.get('package.json')!) as {
+			dependencies: Record<string, string>;
+		};
+		expect(bare.dependencies['@flowdular/kernel']).toBeUndefined();
+	});
+
 	it('names the field and the states the specification declared', async () => {
 		const { load } = await generate(SPEC);
 		const lifecycle = (await load()).claimsLifecycle;
