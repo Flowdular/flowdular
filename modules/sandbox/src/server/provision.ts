@@ -62,6 +62,12 @@ export interface ProvisionGrant {
 }
 
 export const INBOX_FILENAME = 'sandbox-credential.json';
+/* The launcher deletes the inbox once it has sealed the token, so the inbox
+   cannot also be the record that provisioning happened. Without a marker the
+   platform's second configuration generation would mint a second token after the
+   launcher had already consumed the first, leaving a live credential on disk
+   that nobody reads and that a later run would seal instead of replacing. */
+const MARKER_FILENAME = 'provisioned.marker';
 const WORKSPACE_NAME = 'Sandbox';
 const WORKSPACE_SLUG = 'sandbox';
 /* RFC 2606 reserves example.com for documentation, so this address cannot
@@ -82,12 +88,16 @@ async function exists(path: string): Promise<boolean> {
 	}
 }
 
+function sandboxDirectory(workspaceRoot: string): string {
+	return join(flowdularStateDirectory(workspaceRoot), 'sandbox');
+}
+
 export function inboxPath(workspaceRoot: string): string {
-	return join(
-		flowdularStateDirectory(workspaceRoot),
-		'sandbox',
-		INBOX_FILENAME,
-	);
+	return join(sandboxDirectory(workspaceRoot), INBOX_FILENAME);
+}
+
+function markerPath(workspaceRoot: string): string {
+	return join(sandboxDirectory(workspaceRoot), MARKER_FILENAME);
 }
 
 /* Why this lives here rather than in a command.
@@ -108,12 +118,15 @@ export async function provisionSandboxCredential(
 	options: ProvisionInboxOptions,
 ): Promise<string | null> {
 	const log = options.log ?? (() => undefined);
-	/* The platform's configuration is resolved once per generation, and a reload
-	   resolves it again. Without this, a second generation mints a second token
-	   after the launcher already consumed the first, leaving a live credential on
-	   disk that nobody will read. One credential per workspace is the contract. */
+	/* One credential per workspace, for the life of the deployment. The marker is
+	   written after the token and never removed by the launcher, so a reload
+	   resolves the configuration again without minting a second one. */
+	if (await exists(markerPath(options.workspaceRoot))) return null;
 	if (await exists(inboxPath(options.workspaceRoot))) {
-		log('a sandbox credential is already waiting to be collected');
+		await writeFile(markerPath(options.workspaceRoot), 'collected\n', {
+			encoding: 'utf8',
+			mode: CREDENTIAL_MODE,
+		});
 		return inboxPath(options.workspaceRoot);
 	}
 	const auth = await options.auth.service();
@@ -200,6 +213,10 @@ export async function provisionSandboxCredential(
 
 	const target = inboxPath(options.workspaceRoot);
 	await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+	await writeFile(markerPath(options.workspaceRoot), 'provisioned\n', {
+		encoding: 'utf8',
+		mode: CREDENTIAL_MODE,
+	});
 	await writeFile(
 		target,
 		`${JSON.stringify(
