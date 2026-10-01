@@ -15,14 +15,13 @@ pnpm sandbox            # from this repository
 npx @flowdular/sandbox   # from any Flowdular workspace, or from an empty one
 ```
 
-The launcher walks up to `flowdular.json` to find the workspace and opens
-`http://127.0.0.1:4320`. `--port`, `--workspace`, `--host` and `--mode` override
-the defaults.
+One command is the whole setup. In an empty directory it creates a workspace,
+starts the application, prepares the sandbox credential and serves the dashboard
+on `http://127.0.0.1:4320`.
 
 ## Start with nothing installed
 
-There is no checkout step. Run the launcher in an empty directory and it creates
-a workspace for you:
+There is no checkout step.
 
 ```bash
 mkdir acme-erp && cd acme-erp
@@ -31,8 +30,9 @@ npx @flowdular/sandbox
 
 That clones the OSS repository at the tag matching the published package
 version, installs dependencies from the committed lockfile, verifies
-`flowdular.json`, and starts the sandbox on it. The workspace lands in
-`./flowdular` unless `--workspace <path>` names another directory.
+`flowdular.json`, and starts the application and the sandbox together. The
+workspace lands in `./flowdular` unless `--workspace <path>` names another
+directory.
 
 The ref is always pinned: a version tag or a full commit, never a branch, so
 running the command twice produces the same platform both times. `--ref` picks a
@@ -41,14 +41,42 @@ which is what a script wants. Cloning into a directory that already holds
 unrelated files is refused by name rather than merged into, and `git` and `pnpm`
 are checked before anything is written rather than after a half-finished clone.
 
-The sandbox and the application are two processes. Once the workspace exists,
-start the application in a second terminal:
+An application already serving on the platform port is left alone, and no
+credential is prepared for it. `--platform` and `--platform-port` say otherwise
+explicitly; `--no-platform` never starts one.
+
+## The credential is prepared, not pasted
+
+A business user used to sign in to the application, create an API token with
+three scopes, paste it into the sandbox and grant that account sandbox access
+before describing anything. None of those is a business decision, so the
+application does them during its own boot when the launcher asks, and the
+launcher collects the result.
+
+- It runs only when the launcher started the application, so an application
+  someone else owns is never asked to create an account.
+- It reuses an existing workspace and account rather than replacing them, and
+  mints exactly one token for the life of the deployment.
+- The token carries the four sandbox scopes and nothing else.
+- It is written to a `0600` file that the launcher seals into its own
+  configuration and deletes. It is never printed, so it reaches no terminal, log
+  or transcript.
+- Token management over HTTP is unchanged: `POST /api/auth/api-tokens` still
+  refuses a machine credential, and no route was added for this.
+
+The account is `sandbox-operator@example.com` in a `sandbox` workspace, with a
+password nobody has. It exists to hold the grant.
+
+**A failed provision never stops the application.** It is a convenience for a
+local operator, and an application that will not serve because a sandbox account
+could not be created is worse than one that serves and reports the problem.
+
+For a remote deployment, or a sandbox started some other way, the dashboard says
+what is missing. One command fixes it:
 
 ```bash
-cd flowdular && pnpm dev     # http://127.0.0.1:4310
+pnpm flowdular sandbox provision --apply
 ```
-
-Then connect the two as described below.
 
 ## Connect it to a running application
 
