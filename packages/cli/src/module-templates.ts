@@ -55,6 +55,16 @@ interface ScaffoldField {
 	readonly state: boolean;
 }
 
+interface ScaffoldLifecycle {
+	readonly field: string;
+	readonly values: readonly string[];
+	readonly transitions: readonly {
+		readonly from: string;
+		readonly to: string;
+		readonly permission?: string;
+	}[];
+}
+
 interface ScaffoldModel {
 	readonly spec: ModuleSpec;
 	readonly names: ScaffoldNames;
@@ -70,6 +80,10 @@ interface ScaffoldModel {
 	readonly readPermission: ScaffoldPermission | undefined;
 	readonly listPermission: ScaffoldPermission | undefined;
 	readonly createPermission: ScaffoldPermission | undefined;
+	/* The lifecycle the specification declared for the entity, when it declared
+	   one. A states block with transitions is a promise about how a record moves,
+	   and the scaffold has to emit the guard that keeps it. */
+	readonly lifecycle: ScaffoldLifecycle | undefined;
 	readonly hasApi: boolean;
 	readonly hasClient: boolean;
 	readonly hasDatabase: boolean;
@@ -500,11 +514,31 @@ function buildModel(spec: ModuleSpec): ScaffoldModel {
 		(permission) => permission.primary && permission.action === 'read',
 	);
 	const { fields, columns } = buildFields(spec, plural);
+	/* A states block only becomes a guard when it says how the record moves. A
+	   list of values with no transitions is a vocabulary, not a lifecycle, and
+	   inventing moves for it would promise something the operator never read. */
+	const declaredEntity = scaffoldEntity(spec, plural);
+	const transitions = declaredEntity?.states?.transitions ?? [];
+	const lifecycle: ScaffoldLifecycle | undefined =
+		declaredEntity?.states && transitions.length > 0
+			? {
+					field: declaredEntity.states.field,
+					values: [...declaredEntity.states.values],
+					transitions: transitions.map((transition) => ({
+						from: transition.from,
+						to: transition.to,
+						...(transition.permission === undefined
+							? {}
+							: { permission: transition.permission }),
+					})),
+				}
+			: undefined;
 	return {
 		spec,
 		names,
 		entity,
 		fields,
+		lifecycle,
 		inputFields: fields.filter((field) => field.required && !field.state),
 		orderField: fields.find(isSortable),
 		columns,
@@ -1032,6 +1066,114 @@ export class Memory${names.pascal}Repository implements ${names.pascal}Repositor
 	}
 }
 `;
+}
+
+/* The lifecycle the specification declared, emitted as a guard a module routes
+   every status write through. A states block without transitions is a
+   vocabulary, so nothing is emitted for it. */
+function lifecycleFile(model: ScaffoldModel): string {
+	const { names, lifecycle } = model;
+	if (!lifecycle) return '';
+	const field = lifecycle.field;
+	const stateType = pascalCase(field);
+	/* A declared permission is named by id in the specification, but the module
+	   owns it as a constant. Emitting the constant keeps the guard and the ACL the
+	   same value, and makes a renamed scope a type error rather than a silent
+	   refusal. */
+	const constantFor = (id: string): string | undefined => {
+		const permission = model.permissions.find(
+			(candidate) => candidate.id === id,
+		);
+		return permission
+			? `${names.constant}_PERMISSIONS.${permission.key}`
+			: undefined;
+	};
+	const transitions = lifecycle.transitions
+		.map((transition) => {
+			const constant =
+				transition.permission === undefined
+					? undefined
+					: constantFor(transition.permission);
+			return `	{
+		from: '${transition.from}',
+		to: '${transition.to}',${
+			constant === undefined
+				? ''
+				: `
+		permission: ${constant},`
+		}
+	},`;
+		})
+		.join('\n');
+	return `import { lifecycleFromSpec } from '@flowdular/kernel';
+import type { Lifecycle } from '@flowdular/kernel';
+import { ${names.constant}_PERMISSIONS } from '../acl/permissions.ts';
+
+export type ${stateType} = ${lifecycle.values
+		.map((value) => `'${value}'`)
+		.join(' | ')};
+
+/* Declared once, from the specification the operator approved. A status column
+   is writable by any update, so this is the only thing that makes the lifecycle
+   real: every write to ${field} has to come through
+   ${names.camel}Lifecycle.authorize. */
+export const ${names.camel}Lifecycle: Lifecycle<${stateType}> =
+	lifecycleFromSpec({
+		id: '${model.spec.id}.${lifecycle.field}',
+		field: '${field}',
+		values: [${lifecycle.values.map((value) => `'${value}'`).join(', ')}],
+		transitions: [
+${transitions}
+		],
+	}) as Lifecycle<${stateType}>;
+
+/** The state a new record starts in. */
+export const initial${stateType}: ${stateType} = ${names.camel}Lifecycle.initial;
+
+/**
+ * Guard a status write. Returns the state to store, or a refusal that names the
+ * move that was refused and the scope it needed, so the caller can turn it into
+ * a problem response instead of letting an undeclared state through.
+ */
+export function authorize${stateType}(
+	principal: { readonly permissions: ReadonlySet<string> },
+	from: ${stateType},
+	to: ${stateType},
+): { readonly allowed: true; readonly state: ${stateType} } | {
+	readonly allowed: false;
+	readonly code: 'STATE_UNKNOWN' | 'TRANSITION_NOT_ALLOWED' | 'PERMISSION_REQUIRED';
+	readonly message: string;
+	readonly permission?: string;
+} {
+	const decision = ${names.camel}Lifecycle.authorize(principal, from, to);
+	if (decision.allowed) return { allowed: true, state: to };
+	return {
+		allowed: false,
+		code: decision.reason ?? 'TRANSITION_NOT_ALLOWED',
+		message: decision.message ?? 'That move is not allowed.',
+		...(decision.permission === undefined
+			? {}
+			: { permission: decision.permission }),
+	};
+}
+
+/** The moves a screen may offer from a state, with the scope each one needs. */
+export function ${names.camel}TransitionsFrom(state: ${stateType}) {
+	return ${names.camel}Lifecycle.movesFrom(state).map((transition) => ({
+		to: transition.to as ${stateType},
+		permission: transition.permission,
+	}));
+}
+
+/** True when nothing further can happen without a new transition. */
+export function isTerminal${stateType}(state: ${stateType}): boolean {
+	return ${names.camel}Lifecycle.isTerminal(state);
+}
+`;
+}
+
+function lifecycleFieldName(lifecycle: ScaffoldLifecycle): string {
+	return snakeCase(lifecycle.field);
 }
 
 function servicesIndex(model: ScaffoldModel): string {
@@ -2221,6 +2363,12 @@ export function planScaffold(
 		['src/services/index.ts', servicesIndex(model)],
 		['src/client/index.ts', clientIndex(model)],
 	]);
+	if (model.lifecycle) {
+		files.set(
+			`src/domain/${lifecycleFieldName(model.lifecycle)}-lifecycle.ts`,
+			lifecycleFile(model),
+		);
+	}
 	if (hasDatabase) {
 		files.set('src/services/migration.ts', migrationFile(model));
 		files.set(

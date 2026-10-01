@@ -119,6 +119,19 @@ export type {
 	TrackedFields,
 } from './record-history.ts';
 export {
+	defineLifecycle,
+	lifecycleFromSpec,
+	MAX_STATES,
+	MAX_TRANSITIONS,
+} from './lifecycle.ts';
+export type {
+	Lifecycle,
+	LifecycleDecision,
+	LifecycleDefinition,
+	LifecycleDenialReason,
+	LifecycleTransition,
+} from './lifecycle.ts';
+export {
 	capabilityProviders,
 	createModuleRegistry,
 } from './module-registry.ts';
