@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 
 export class ProvisionError extends Error {
 	constructor(
@@ -93,6 +92,12 @@ function run(
    secret. The token is written to a 0600 file inside the sandbox state
    directory, read once, sealed, and the file is removed: it never reaches a
    terminal, a log or a transcript. */
+import {
+	loadSandboxConfiguration,
+	saveSandboxConfiguration,
+	sealSecret,
+} from './config.ts';
+
 export async function provisionLocalAccess(
 	options: ProvisionOptions,
 ): Promise<ProvisionedCredential> {
@@ -167,6 +172,41 @@ async function readCredential(path: string): Promise<ProvisionedCredential> {
 		token: value.token,
 		capabilities: Array.isArray(value.capabilities) ? value.capabilities : [],
 	};
+}
+
+/* The embedded database is single-process: while the platform holds it, a CLI
+   command cannot open it to provision anything. That fixes the order the
+   launcher has to use. The credential is prepared while the database is free,
+   sealed into the sandbox configuration, and only then is the platform started.
+   This function therefore refuses to run once a platform is serving, rather
+   than failing with a message about a locked database. */
+export async function ensurePlatformAccess(options: {
+	readonly workspaceRoot: string;
+	readonly platformUrl: string;
+	readonly credentialsPath: string;
+	readonly log?: (line: string) => void;
+}): Promise<boolean> {
+	const configuration = await loadSandboxConfiguration(options.workspaceRoot);
+	if (configuration.platformToken !== null) return false;
+	if (configuration.platformUrl !== options.platformUrl) {
+		await saveSandboxConfiguration(options.workspaceRoot, {
+			...configuration,
+			platformUrl: options.platformUrl,
+			version: 1,
+		});
+	}
+	const credential = await provisionLocalAccess({
+		workspaceRoot: options.workspaceRoot,
+		credentialsPath: options.credentialsPath,
+		...(options.log ? { log: options.log } : {}),
+	});
+	await saveSandboxConfiguration(options.workspaceRoot, {
+		...configuration,
+		platformUrl: options.platformUrl,
+		platformToken: await sealSecret(options.workspaceRoot, credential.token),
+		version: 1,
+	});
+	return true;
 }
 
 /* Exposed for the test that proves the file is removed on a failed run. */

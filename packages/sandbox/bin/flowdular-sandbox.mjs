@@ -16,11 +16,12 @@ import {
 	platformReachable,
 	startPlatformProcess,
 } from '../src/server/platform-process.ts';
+import { ensurePlatformAccess } from '../src/server/provision-local.ts';
 import process from 'node:process';
 import { realpathSync } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { readFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import {
@@ -265,6 +266,37 @@ async function resolveWorkspace(options, theme) {
 		);
 }
 
+/* Order matters and the embedded database decides it. PGlite is single-process,
+   so while the application is serving, nothing else can open the database to
+   prepare a credential. The launcher therefore provisions first, seals the
+   result into the sandbox configuration, and only then starts the application.
+   That ordering is what removes the pasted token from the business flow. */
+async function ensureAccess(options) {
+	if (options.mode !== 'loopback') return;
+	const url = `http://127.0.0.1:${options.platformPort}`;
+	try {
+		const prepared = await ensurePlatformAccess({
+			workspaceRoot: options.workspace,
+			platformUrl: url,
+			credentialsPath: join(
+				options.workspace,
+				'.flowdular',
+				'sandbox',
+				'provisioned-credential.json',
+			),
+			log: (line) => console.log(`  ${line}`),
+		});
+		if (prepared) console.log('  prepared sandbox access to the application');
+	} catch (error) {
+		/* Not fatal: an operator who already has a credential, or a deployment
+		   that is not local, reaches the same place without this step. The
+		   dashboard names what is missing when it is not. */
+		console.log(
+			`  skipped preparing access: ${error instanceof Error ? error.message.split('\n')[0] : error}`,
+		);
+	}
+}
+
 /* One command is the whole setup. The sandbox is a client of a running
    application, so a business user used to need a second terminal before they
    could describe anything. An application already serving is left alone. */
@@ -292,6 +324,7 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 	let platform = null;
 	try {
 		await resolveWorkspace(options, theme);
+		await ensureAccess(options);
 		platform = await startPlatform(options);
 	} catch (error) {
 		restoreEarly();
