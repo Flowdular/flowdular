@@ -66,7 +66,7 @@ export interface SetupRoutesOptions {
 	readonly tokenFile: string | null;
 	readonly secureCookies: boolean;
 	/** Supplied by tests; production exits after the completed page requests restart. */
-	readonly restartApplication?: () => void;
+	readonly restartApplication?: (exitCode: number) => void;
 }
 
 interface ConnectionState {
@@ -102,6 +102,18 @@ function flowState(session: SetupSession | null): FlowState | null {
 	return kind === 'database' || kind === 'review' || kind === 'done'
 		? (pending as FlowState)
 		: null;
+}
+
+function canAutoRestart(
+	options: SetupRoutesOptions,
+	state: DoneState,
+): boolean {
+	return (
+		options.environment.FD_SETUP_AUTO_RESTART === 'true' &&
+		(options.databasePreconfigured ||
+			state.environment?.status === 'written' ||
+			state.environment?.status === 'unchanged')
+	);
 }
 
 function emptyView(options: SetupRoutesOptions): SetupPageView {
@@ -142,6 +154,7 @@ function page(
 		status,
 		headers: {
 			'content-type': 'text/html; charset=utf-8',
+			'x-flowdular-setup': 'first-run',
 			'cache-control': 'no-store',
 			'x-content-type-options': 'nosniff',
 			'referrer-policy': 'no-referrer',
@@ -326,6 +339,7 @@ export function createSetupRoutes(
 		page({
 			...base,
 			step: 'Sign in',
+			autoRestart: canAutoRestart(options, state),
 			csrfToken: session.csrfToken,
 			seed: state.seed,
 			values: { applicationPath: state.applicationPath },
@@ -633,15 +647,13 @@ export function createSetupRoutes(
 		}
 		const state = flowState(session);
 		if (state?.kind === 'done') {
-			if (
-				step === 'restart' &&
-				options.databasePreconfigured &&
-				options.environment.FD_SETUP_AUTO_RESTART === 'true'
-			) {
+			if (step === 'restart' && canAutoRestart(options, state)) {
 				if (!restartScheduled) {
 					restartScheduled = true;
-					if (options.restartApplication) options.restartApplication();
-					else setTimeout(() => process.exit(0), 250).unref();
+					const exitCode =
+						options.environment.FD_SETUP_RESTART_EXIT_CODE === '75' ? 75 : 0;
+					if (options.restartApplication) options.restartApplication(exitCode);
+					else setTimeout(() => process.exit(exitCode), 250).unref();
 				}
 				return new Response(null, {
 					status: 204,

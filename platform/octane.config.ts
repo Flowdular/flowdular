@@ -16,7 +16,6 @@ import {
 	createDataClassRegistry,
 	PLATFORM_SETTINGS_TENANT,
 } from '@flowdular/kernel';
-import { resolve } from 'node:path';
 import { defineConfig, RenderRoute, ServerRoute } from '@octanejs/vite-plugin';
 import {
 	createAuthRoutes,
@@ -64,6 +63,7 @@ import {
 	configuredDatabaseNeedsFirstRun,
 	createFirstRunSetup,
 } from './src/server/setup/index.ts';
+import { findWorkspaceRoot } from './src/server/workspace-root.ts';
 
 function checkedRoutes<T extends Parameters<typeof assertRouteConflicts>[0]>(
 	routes: T,
@@ -99,7 +99,7 @@ const API_NOT_FOUND_ROUTES = [
 	}),
 ] as const;
 
-const workspaceRoot = resolve(import.meta.dirname, '..');
+const workspaceRoot = findWorkspaceRoot(import.meta.dirname);
 
 /* The installer and the application are alternatives. A configured database
    with no workspace still needs the first owner, but a failed database check

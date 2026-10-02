@@ -56,6 +56,33 @@ it('keeps generated first-run setup in sync with the platform implementation', a
 	}
 });
 
+it('keeps generated workspace-root resolution in sync with the platform', async () => {
+	const platform = await readFile(
+		new URL('../../../platform/src/server/workspace-root.ts', import.meta.url),
+		'utf8',
+	);
+	const template = await readFile(
+		new URL(
+			'../template/default/platform/src/server/workspace-root.ts',
+			import.meta.url,
+		),
+		'utf8',
+	);
+	expect(template).toBe(platform);
+});
+
+it('ships the same isolated, clean production build script in generated projects', async () => {
+	const platform = await readFile(
+		new URL('../../../platform/scripts/build.mjs', import.meta.url),
+		'utf8',
+	);
+	const template = await readFile(
+		new URL('../template/default/platform/scripts/build.mjs', import.meta.url),
+		'utf8',
+	);
+	expect(template).toBe(platform);
+});
+
 it('keeps generated Docker boot files in sync with the platform stack', async () => {
 	for (const file of dockerFiles) {
 		const platform = await readFile(

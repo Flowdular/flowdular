@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: sandbox.core
-specVersion: 0.4.4
-status: approved
+specVersion: 0.4.5
+status: in-review
 name: Sandbox Access
 description: Owns sandbox access grants, sandbox session records, and the audit evidence that lets an authorized account open the Flowdular sandbox, preview a draft module against live platform data, and eject an accepted module into the workspace.
 profile: full
@@ -26,7 +26,8 @@ invariants:
   - PostgreSQL grant, session, and audit tables enable and force row-level security with USING and WITH CHECK policies bound to transaction-local coreloom.tenant_id, and the runtime role holds neither SUPERUSER nor BYPASSRLS. Migrations use a separate lease.
   - Every access grant, session record, and audit event is owned by exactly one tenant, and every repository query receives the trusted tenant identifier.
   - The sandbox is a separate application. It never receives platform authority implicitly; it must resolve an authenticated account, the sandbox.access.use scope on the selected membership, and an active grant before it opens a session.
-  - A grant is created only by an authorized owner through the platform API or through the sandbox CLI capability. Both paths write the same record and the same audit evidence.
+  - A grant is created by an authorized owner through the platform API, by the sandbox CLI capability, or by local launcher boot for an active owner of the only workspace. Every path writes the same record and audit evidence.
+  - Local launcher boot never creates a workspace or account. It targets an existing single workspace only when an active owner holds sandbox.access.use; installations with zero or multiple workspaces require first-run setup or explicit workspace selection.
   - A grant is revocable and may carry an expiry. A revoked or expired grant denies sandbox sign-in and every sandbox capability check without further lookup.
   - Grant capabilities are a subset of the sandbox scopes held by the granted membership. A grant can narrow authority and can never widen it beyond the account's platform scopes.
   - Sandbox sessions are metadata only. Draft source code, chat transcripts, and provider credentials are owned by the sandbox application and never enter this module's database or API responses.
@@ -61,6 +62,18 @@ acceptanceScenarios:
     given: A local operator running the sandbox CLI capability with an explicit apply flag.
     when: The operator grants sandbox access to an existing account of a tenant.
     then: The same grant record and audit event are written and the command returns the resulting capabilities as machine-readable evidence.
+  - id: SANDBOX-LOCAL-CREDENTIAL-SINGLE
+    given: A local sandbox launcher starts a platform with exactly one existing workspace and an active owner holding sandbox.access.use.
+    when: The platform prepares a launcher credential at boot.
+    then: It grants only sandbox capabilities held by that owner and writes one private credential for that workspace without creating an account or workspace.
+  - id: SANDBOX-LOCAL-CREDENTIAL-AMBIGUOUS
+    given: A local sandbox launcher starts a platform with zero or multiple workspaces, or without an active permitted owner.
+    when: The platform considers automatic credential preparation.
+    then: It refuses to choose an account or workspace, writes no credential, and directs the operator to finish setup or select and connect a workspace explicitly.
+  - id: SANDBOX-LOCAL-CREDENTIAL-IDEMPOTENT
+    given: The platform already prepared or published a launcher credential for this workspace.
+    when: Its configuration is evaluated again.
+    then: No second token or grant is minted, and a complete private inbox can still be collected.
   - id: SANDBOX-GRANT-DRY-RUN
     given: A local operator running the sandbox grant capability without an apply flag.
     when: The command executes.

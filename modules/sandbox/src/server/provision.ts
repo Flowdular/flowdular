@@ -16,22 +16,24 @@ export interface ProvisionInboxOptions {
    whole auth service surface to hand a credential to the sandbox launcher. */
 export interface ProvisionAuth {
 	service(): Promise<{
-		findAccountAccess(email: string): Promise<{
-			accountId: string;
-			tenants: readonly { readonly tenantId: string; readonly slug: string }[];
-		} | null>;
+		listTenants(): Promise<readonly { readonly tenantId: string }[]>;
+		listTenantMembers(
+			tenantId: string,
+			page: { readonly cursor?: string | null; readonly limit: number },
+		): Promise<{
+			readonly members: readonly {
+				readonly accountId: string;
+				readonly email: string;
+				readonly role: string;
+				readonly status: 'active' | 'disabled';
+				readonly membershipStatus: 'active' | 'disabled';
+			}[];
+			readonly nextCursor: string | null;
+		}>;
 		listMembershipScopes(
 			accountId: string,
 			tenantId: string,
 		): Promise<readonly string[]>;
-		provisionWorkspace(input: {
-			name: string;
-			slug: string;
-			ownerEmail: string;
-			ownerDisplayName: string;
-			operator: string;
-			password?: string;
-		}): Promise<unknown>;
 		issueApiToken(input: {
 			tenantId: string;
 			accountId: string;
@@ -68,16 +70,11 @@ export const INBOX_FILENAME = 'sandbox-credential.json';
    launcher had already consumed the first, leaving a live credential on disk
    that nobody reads and that a later run would seal instead of replacing. */
 const MARKER_FILENAME = 'provisioned.marker';
-const WORKSPACE_NAME = 'Sandbox';
-const WORKSPACE_SLUG = 'sandbox';
-/* RFC 2606 reserves example.com for documentation, so this address cannot
-   reach a real mail system even if a deployment relays mail. The domain has to
-   carry a dot: auth rejects an address without one. */
-const OWNER_EMAIL = 'sandbox-operator@example.com';
-const OWNER_DISPLAY_NAME = 'Sandbox operator';
 const TOKEN_LABEL = 'Sandbox launcher';
 const OPERATOR = 'platform:boot';
 const CREDENTIAL_MODE = 0o600;
+const OWNER_PAGE_SIZE = 100;
+const MAX_OWNER_PAGES = 1_000;
 
 async function exists(path: string): Promise<boolean> {
 	try {
@@ -128,10 +125,9 @@ async function publishInbox(target: string, contents: string): Promise<void> {
    the one place the credential can be created without a second writer and
    without a new HTTP surface for a machine to call.
 
-   What it does not do: create an account in a deployment that did not ask for
-   one. It runs only for a local adapter, only when the sandbox launcher has
-   asked for it, and it reuses an existing account and workspace rather than
-   replacing them. */
+   It runs only when the sandbox launcher asks for it. A single existing
+   workspace has an unambiguous target; multiple workspaces require the
+   operator to connect a scoped token for the one they choose. */
 export async function provisionSandboxCredential(
 	options: ProvisionInboxOptions,
 ): Promise<string | null> {
@@ -148,54 +144,61 @@ export async function provisionSandboxCredential(
 		return inboxPath(options.workspaceRoot);
 	}
 	const auth = await options.auth.service();
-	const account = await auth.findAccountAccess(OWNER_EMAIL);
-	let tenantId: string | null = null;
-	let accountId: string | null = null;
-
-	if (account) {
-		const tenant = account.tenants.find(
-			(candidate) => candidate.slug === WORKSPACE_SLUG,
-		);
-		if (tenant) {
-			tenantId = tenant.tenantId;
-			accountId = account.accountId;
-		}
-	}
-	if (tenantId === null || accountId === null) {
-		/* A password the operator never sees and never has to store. The account
-		   exists to hold the sandbox grant, and the grant is what the token
-		   carries, so a human sign-in through it is not a supported path. */
-		await auth.provisionWorkspace({
-			name: WORKSPACE_NAME,
-			slug: WORKSPACE_SLUG,
-			ownerEmail: OWNER_EMAIL,
-			ownerDisplayName: OWNER_DISPLAY_NAME,
-			operator: OPERATOR,
-			password: randomBytes(32).toString('base64url'),
-		});
-		const created = await auth.findAccountAccess(OWNER_EMAIL);
-		const tenant = created?.tenants.find(
-			(candidate) => candidate.slug === WORKSPACE_SLUG,
-		);
-		if (!created || !tenant) {
-			throw new Error(
-				`The sandbox workspace was created but ${OWNER_EMAIL} does not resolve to it.`,
-			);
-		}
-		accountId = created.accountId;
-		tenantId = tenant.tenantId;
-		log(`created the sandbox workspace ${WORKSPACE_SLUG}`);
-	}
-
-	const held = new Set(await auth.listMembershipScopes(accountId, tenantId));
-	const capabilities = SANDBOX_GRANT_CAPABILITIES.filter((capability) =>
-		held.has(capability),
-	);
-	if (capabilities.length === 0) {
+	const tenants = await auth.listTenants();
+	if (tenants.length === 0) {
 		throw new Error(
-			`${OWNER_EMAIL} holds no sandbox scope, so no sandbox credential can be issued. Run \`pnpm flowdular auth sync-scopes --apply\` and reload.`,
+			'Complete the platform first-run setup before connecting the sandbox.',
 		);
 	}
+	if (tenants.length !== 1) {
+		throw new Error(
+			'This platform has multiple workspaces. Choose one in the sandbox Connect screen and provide a sandbox-scoped token for it.',
+		);
+	}
+	const tenantId = tenants[0]!.tenantId;
+	let cursor: string | null = null;
+	let owner: {
+		readonly accountId: string;
+		readonly email: string;
+		readonly capabilities: readonly string[];
+	} | null = null;
+	for (let pageNumber = 0; pageNumber < MAX_OWNER_PAGES; pageNumber++) {
+		const page = await auth.listTenantMembers(tenantId, {
+			cursor,
+			limit: OWNER_PAGE_SIZE,
+		});
+		for (const member of page.members) {
+			if (
+				member.role !== 'owner' ||
+				member.status !== 'active' ||
+				member.membershipStatus !== 'active'
+			)
+				continue;
+			const held = new Set(
+				await auth.listMembershipScopes(member.accountId, tenantId),
+			);
+			const capabilities = SANDBOX_GRANT_CAPABILITIES.filter((capability) =>
+				held.has(capability),
+			);
+			if (!capabilities.includes('sandbox.access.use')) continue;
+			owner = {
+				accountId: member.accountId,
+				email: member.email,
+				capabilities,
+			};
+			break;
+		}
+		if (owner || page.nextCursor === null) break;
+		if (page.nextCursor === cursor)
+			throw new Error('The owner membership page did not advance.');
+		cursor = page.nextCursor;
+	}
+	if (!owner) {
+		throw new Error(
+			'This workspace has no active owner with sandbox.access.use. Grant that scope to an owner before connecting the sandbox.',
+		);
+	}
+	const { accountId, email, capabilities } = owner;
 
 	const grants = await options.listGrants(tenantId);
 	const existing = grants.find(
@@ -236,7 +239,7 @@ export async function provisionSandboxCredential(
 			{
 				version: 1,
 				platformTenantId: tenantId,
-				email: OWNER_EMAIL,
+				email,
 				token: issued.token,
 				capabilities,
 			},

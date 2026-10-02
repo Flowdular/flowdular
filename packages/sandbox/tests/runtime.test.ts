@@ -53,6 +53,7 @@ import {
 } from '../src/server/sessions.ts';
 import { collectDiffs } from '../src/server/turns.ts';
 import { hashSpec } from '../src/server/spec.ts';
+import { createSandboxRuntime } from '../src/server/runtime.ts';
 
 async function workspace(): Promise<string> {
 	const root = await mkdtemp(join(tmpdir(), 'flowdular-sandbox-'));
@@ -75,6 +76,16 @@ const PASSED_GATE = {
 };
 
 describe('sandbox configuration', () => {
+	it('explains workspace selection when automatic platform access is unavailable', async () => {
+		const runtime = await createSandboxRuntime(await workspace());
+		expect(runtime.connection().error).toMatchObject({
+			code: 'PLATFORM_TOKEN_MISSING',
+		});
+		expect(runtime.connection().error?.message).toContain(
+			'For multiple workspaces, choose one',
+		);
+	});
+
 	it('keeps secrets encrypted at rest and out of the browser payload', async () => {
 		const root = await workspace();
 		const sealed = await sealSecret(root, 'clat_secret-value');

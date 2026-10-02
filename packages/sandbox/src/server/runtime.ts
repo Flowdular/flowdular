@@ -198,7 +198,7 @@ export async function createSandboxRuntime(
 				error: {
 					code: 'PLATFORM_TOKEN_MISSING',
 					message:
-						'This sandbox has no platform credential. Start it with `npx @flowdular/sandbox`, which prepares one before it starts the application, or run `pnpm flowdular sandbox provision --apply` while the application is stopped.',
+						'This sandbox has no platform credential. Finish the application setup first. For a single workspace, `npx @flowdular/sandbox` prepares access after the application starts. For multiple workspaces, choose one and connect its sandbox-scoped token here.',
 				},
 			};
 			return connection;

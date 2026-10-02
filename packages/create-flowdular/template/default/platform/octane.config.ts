@@ -14,7 +14,6 @@ import {
 	createDataClassRegistry,
 	PLATFORM_SETTINGS_TENANT,
 } from '@flowdular/sdk/kernel';
-import { resolve } from 'node:path';
 import { defineConfig, RenderRoute } from '@octanejs/vite-plugin';
 import {
 	authRuntimeOptionsFromEnvironment,
@@ -57,6 +56,7 @@ import {
 	configuredDatabaseNeedsFirstRun,
 	createFirstRunSetup,
 } from './src/server/setup/index.ts';
+import { findWorkspaceRoot } from './src/server/workspace-root.ts';
 
 function checkedRoutes<T extends Parameters<typeof assertRouteConflicts>[0]>(
 	routes: T,
@@ -66,7 +66,7 @@ function checkedRoutes<T extends Parameters<typeof assertRouteConflicts>[0]>(
 }
 
 const SHELL = ['App', '/src/App.tsrx'] as const;
-const workspaceRoot = resolve(import.meta.dirname, '..');
+const workspaceRoot = findWorkspaceRoot(import.meta.dirname);
 const building = process.env.FD_INTERNAL_BUILD === 'true';
 
 function firstRunConfig(databasePreconfigured = false) {

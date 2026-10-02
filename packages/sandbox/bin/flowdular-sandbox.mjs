@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import './register-types.mjs';
 import process from 'node:process';
+import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
+import { lstat } from 'node:fs/promises';
 import { readFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /* The TypeScript loader must be installed before Node loads source modules.
@@ -15,6 +17,7 @@ const [
 	{ probeCommand },
 	{ findRunningPlatformUrl, startPlatformProcess },
 	{ collectProvisionedCredential },
+	{ flowdularStateDirectory },
 	{ createServer },
 	{
 		createOctaneLogger,
@@ -31,6 +34,7 @@ const [
 	import('@flowdular/coding-agent'),
 	import('../src/server/platform-process.ts'),
 	import('../src/server/provision-local.ts'),
+	import('@flowdular/kernel/runtime-config'),
 	import('vite'),
 	import('@flowdular/dev-console'),
 ]);
@@ -337,7 +341,7 @@ async function collectAccess(options, platformUrl) {
 /* One command is the whole setup. The sandbox is a client of a running
    application, so a business user used to need a second terminal before they
    could describe anything. An application already serving is left alone. */
-async function startPlatform(options, signal) {
+async function startPlatform(options, signal, onReady) {
 	if (options.platform === 'never') return null;
 	return await startPlatformProcess({
 		workspaceRoot: options.workspace,
@@ -345,7 +349,38 @@ async function startPlatform(options, signal) {
 		signal,
 		quiet: true,
 		log: (line) => console.log(`  ${line}`),
+		onReady,
 	});
+}
+
+async function announceSetupAccess(workspaceRoot, url, announcedTokenDigests) {
+	const path = join(flowdularStateDirectory(workspaceRoot), 'setup-token');
+	const setupUrl = new URL('/setup', url).toString();
+	try {
+		const info = await lstat(path);
+		if (
+			!info.isFile() ||
+			info.isSymbolicLink() ||
+			(info.mode & 0o077) !== 0 ||
+			info.size > 256
+		)
+			throw new Error('Setup token file is not private.');
+		const token = (await readFile(path, 'utf8')).trim();
+		if (!/^[A-Za-z0-9_-]{32,128}$/.test(token))
+			throw new Error('Setup token file is invalid.');
+		const digest = createHash('sha256').update(token).digest('hex');
+		if (announcedTokenDigests.has(digest)) return;
+		announcedTokenDigests.add(digest);
+		/* This is a one-time operator instruction in the terminal. The token is
+		   never put in the sandbox HTTP state, logs or browser response. */
+		process.stdout.write(
+			`  Open setup: ${setupUrl}\n  Setup token: ${token}\n`,
+		);
+	} catch {
+		process.stdout.write(
+			`  Open setup: ${setupUrl}\n  Setup token is unavailable here. Stop the sandbox and run \`pnpm dev\` in ${workspaceRoot} to read it in that terminal.\n`,
+		);
+	}
 }
 
 export async function startSandbox(argv = process.argv.slice(2)) {
@@ -365,6 +400,7 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 	const platformStartController = new AbortController();
 	let startup = Promise.resolve();
 	let closing = false;
+	const announcedTokenDigests = new Set();
 	try {
 		await resolveWorkspace(options);
 		const ownsPlatform = await willStartPlatform(options);
@@ -373,11 +409,24 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 		   environment as it exists at spawn, not as it ends up. */
 		process.env.FD_SANDBOX_PROVISION = ownsPlatform ? 'true' : 'false';
 		bringUpPlatform = async () => {
-			platform = await startPlatform(options, platformStartController.signal);
-			if (!platformStartController.signal.aborted)
+			platform = await startPlatform(
+				options,
+				platformStartController.signal,
+				async ({ url, setup }) => {
+					if (platformStartController.signal.aborted) return;
+					await collectAccess(options, url);
+					if (setup)
+						await announceSetupAccess(
+							options.workspace,
+							url,
+							announcedTokenDigests,
+						);
+				},
+			);
+			if (!platform && !platformStartController.signal.aborted)
 				await collectAccess(
 					options,
-					platform?.url ?? `http://127.0.0.1:${options.platformPort}`,
+					`http://127.0.0.1:${options.platformPort}`,
 				);
 		};
 	} catch (error) {

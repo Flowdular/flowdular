@@ -371,7 +371,8 @@ async function main() {
 		signal: AbortSignal.timeout(5000),
 	});
 	const setupPage =
-		setupResponse.ok && (await setupResponse.text()).includes('setup-page');
+		setupResponse.ok &&
+		setupResponse.headers.get('x-flowdular-setup') === 'first-run';
 	const url = `${publicOrigin}${setupPage ? '/setup' : appPath}`;
 	console.log(`Flowdular is ready: ${url}`);
 	if (setupPage) {

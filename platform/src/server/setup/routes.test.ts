@@ -82,7 +82,7 @@ function harness(
 	setupOptions: {
 		readonly databasePreconfigured?: boolean;
 		readonly environment?: NodeJS.ProcessEnv;
-		readonly restartApplication?: () => void;
+		readonly restartApplication?: (exitCode: number) => void;
 	} = {},
 ) {
 	const enabled = enabledDatabaseModules(root);
@@ -298,7 +298,9 @@ describe('first-run routes', () => {
 		expect(unlocked.headers.get('set-cookie')).toContain('HttpOnly');
 		expect(unlocked.headers.get('set-cookie')).toContain('SameSite=Strict');
 
-		const html = await (await app.call('/setup')).text();
+		const page = await app.call('/setup');
+		expect(page.headers.get('x-flowdular-setup')).toBe('first-run');
+		const html = await page.text();
 		expect(html).toContain('Connect PostgreSQL');
 		expect(html).toContain('Embedded PostgreSQL');
 		expect(html).toContain('PostgreSQL server');
@@ -310,10 +312,12 @@ describe('first-run routes', () => {
 			const root = workspace();
 			const data = join(root, 'preconfigured-data');
 			let restarts = 0;
+			let restartExitCode: number | null = null;
 			const app = harness(root, undefined, [], {
 				databasePreconfigured: true,
-				restartApplication: () => {
+				restartApplication: (exitCode) => {
 					restarts++;
+					restartExitCode = exitCode;
 				},
 				environment: {
 					NODE_ENV: 'development',
@@ -361,6 +365,7 @@ describe('first-run routes', () => {
 			});
 			expect(restart.status).toBe(204);
 			expect(restarts).toBe(1);
+			expect(restartExitCode).toBe(0);
 			const repeat = await app.call('/setup', {
 				step: 'restart',
 				setupCsrf: csrf,
@@ -373,6 +378,117 @@ describe('first-run routes', () => {
 			});
 			expect(forged.status).toBe(403);
 			expect(restarts).toBe(1);
+		},
+		SLOW,
+	);
+
+	it(
+		'restarts a standalone setup only after its connection settings are durable',
+		async () => {
+			const root = workspace();
+			let restarts = 0;
+			let restartExitCode: number | null = null;
+			const app = harness(root, undefined, [], {
+				environment: {
+					NODE_ENV: 'development',
+					FD_SETUP_AUTO_RESTART: 'true',
+					FD_SETUP_RESTART_EXIT_CODE: '75',
+				},
+				restartApplication: (exitCode) => {
+					restarts++;
+					restartExitCode = exitCode;
+				},
+			});
+			await app.call('/setup', { step: 'unlock', token: TOKEN });
+			const csrf = await csrfOf(await app.call('/setup'));
+			await app.call('/setup', {
+				step: 'configure',
+				setupCsrf: csrf,
+				adapter: PGLITE_ADAPTER_ID,
+				[`field:${PGLITE_ADAPTER_ID}:data-directory`]: join(root, 'data'),
+			});
+			await app.call('/setup', {
+				step: 'workspace',
+				setupCsrf: csrf,
+				...OWNER,
+			});
+			const done = await app.call('/setup', {
+				step: 'apply',
+				setupCsrf: csrf,
+			});
+			const html = await done.text();
+			expect(html).toContain("step:'restart'");
+			expect(restarts).toBe(0);
+			expect(readFileSync(join(root, '.env'), 'utf8')).toContain(
+				'FD_DATABASE_ADAPTER=pglite',
+			);
+			expect(
+				(
+					await app.call('/setup', {
+						step: 'restart',
+						setupCsrf: csrf,
+					})
+				).status,
+			).toBe(204);
+			expect(restarts).toBe(1);
+			expect(restartExitCode).toBe(75);
+			expect(
+				(
+					await app.call('/setup', {
+						step: 'restart',
+						setupCsrf: csrf,
+					})
+				).status,
+			).toBe(204);
+			expect(restarts).toBe(1);
+		},
+		SLOW,
+	);
+
+	it(
+		'keeps a standalone setup running when its environment cannot be saved',
+		async () => {
+			const root = workspace();
+			mkdirSync(join(root, '.env'));
+			let restarts = 0;
+			const app = harness(root, undefined, [], {
+				environment: {
+					NODE_ENV: 'development',
+					FD_SETUP_AUTO_RESTART: 'true',
+				},
+				restartApplication: () => {
+					restarts++;
+				},
+			});
+			await app.call('/setup', { step: 'unlock', token: TOKEN });
+			const csrf = await csrfOf(await app.call('/setup'));
+			await app.call('/setup', {
+				step: 'configure',
+				setupCsrf: csrf,
+				adapter: PGLITE_ADAPTER_ID,
+				[`field:${PGLITE_ADAPTER_ID}:data-directory`]: join(root, 'data'),
+			});
+			await app.call('/setup', {
+				step: 'workspace',
+				setupCsrf: csrf,
+				...OWNER,
+			});
+			const done = await app.call('/setup', {
+				step: 'apply',
+				setupCsrf: csrf,
+			});
+			const html = await done.text();
+			expect(html).toContain('Save the connection settings');
+			expect(html).not.toContain("step:'restart'");
+			expect(
+				(
+					await app.call('/setup', {
+						step: 'restart',
+						setupCsrf: csrf,
+					})
+				).status,
+			).toBe(200);
+			expect(restarts).toBe(0);
 		},
 		SLOW,
 	);

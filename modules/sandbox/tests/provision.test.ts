@@ -33,10 +33,8 @@ async function root(): Promise<string> {
 	return path;
 }
 
-/* A business user must not have to sign in, mint a token and grant access before
-   describing a first idea. This is the credential that removes those steps, and
-   it is created inside the application boot because the embedded database cannot
-   be opened by a second process. */
+/* The platform creates the owner in first-run setup. Its own boot can issue
+	   the sandbox credential without a second writer opening embedded PostgreSQL. */
 describe('sandbox credential provisioning', () => {
 	function auth(overrides: Partial<Record<string, unknown>> = {}): {
 		auth: ProvisionAuth;
@@ -45,21 +43,26 @@ describe('sandbox credential provisioning', () => {
 	} {
 		const issued: string[] = [];
 		const granted: string[] = [];
-		let account: unknown = null;
 		const service = {
-			async findAccountAccess() {
-				return account as never;
+			async listTenants() {
+				return [{ tenantId: 'tenant-1' }];
+			},
+			async listTenantMembers() {
+				return {
+					members: [
+						{
+							accountId: 'account-1',
+							email: 'ada@example.test',
+							role: 'owner',
+							status: 'active',
+							membershipStatus: 'active',
+						},
+					],
+					nextCursor: null,
+				};
 			},
 			async listMembershipScopes() {
 				return SANDBOX_GRANT_CAPABILITIES as unknown as string[];
-			},
-			async provisionWorkspace(input: { ownerEmail: string }) {
-				account = {
-					accountId: 'account-1',
-					tenants: [{ tenantId: 'tenant-1', slug: 'sandbox' }],
-					email: input.ownerEmail,
-				};
-				return {};
 			},
 			async issueApiToken() {
 				issued.push('token');
@@ -74,7 +77,7 @@ describe('sandbox credential provisioning', () => {
 		};
 	}
 
-	it('creates the workspace, grants access and writes one sealed-nothing file', async () => {
+	it('SANDBOX-LOCAL-CREDENTIAL-SINGLE binds the owner of the only workspace and writes one private credential file', async () => {
 		const workspace = await root();
 		const harness = auth();
 		const path = await provisionSandboxCredential({
@@ -95,19 +98,30 @@ describe('sandbox credential provisioning', () => {
 			token: string;
 			capabilities: readonly string[];
 			platformTenantId: string;
+			email: string;
 		};
 		expect(written.token).toBe('fd_test_credential');
 		expect(written.platformTenantId).toBe('tenant-1');
+		expect(written.email).toBe('ada@example.test');
 		expect(written.capabilities).toEqual(SANDBOX_GRANT_CAPABILITIES);
 		expect(harness.granted).toEqual(['account-1']);
 	});
 
-	it('reuses an existing account and grant instead of replacing them', async () => {
+	it('reuses an existing owner grant instead of replacing it', async () => {
 		const workspace = await root();
 		const harness = auth({
-			findAccountAccess: async () => ({
-				accountId: 'account-9',
-				tenants: [{ tenantId: 'tenant-9', slug: 'sandbox' }],
+			listTenants: async () => [{ tenantId: 'tenant-9' }],
+			listTenantMembers: async () => ({
+				members: [
+					{
+						accountId: 'account-9',
+						email: 'owner@example.test',
+						role: 'owner',
+						status: 'active',
+						membershipStatus: 'active',
+					},
+				],
+				nextCursor: null,
 			}),
 		});
 		let grantsAsked = 0;
@@ -127,9 +141,135 @@ describe('sandbox credential provisioning', () => {
 		expect(written.platformTenantId).toBe('tenant-9');
 	});
 
+	it('SANDBOX-LOCAL-CREDENTIAL-AMBIGUOUS refuses an ambiguous target without minting a token or creating a workspace', async () => {
+		const workspace = await root();
+		const harness = auth({
+			listTenants: async () => [
+				{ tenantId: 'tenant-1' },
+				{ tenantId: 'tenant-2' },
+			],
+			listTenantMembers: async () => {
+				throw new Error('Must not choose an owner.');
+			},
+		});
+		await expect(
+			provisionSandboxCredential({
+				workspaceRoot: workspace,
+				auth: harness.auth,
+				listGrants: async () => [],
+				grant: async () => {
+					throw new Error('Must not grant.');
+				},
+			}),
+		).rejects.toThrow(/multiple workspaces/);
+		expect(harness.issued).toEqual([]);
+		await expect(readFile(inboxPath(workspace))).rejects.toMatchObject({
+			code: 'ENOENT',
+		});
+	});
+
+	it('refuses a platform with no workspace until first-run setup finishes', async () => {
+		const workspace = await root();
+		const harness = auth({ listTenants: async () => [] });
+		await expect(
+			provisionSandboxCredential({
+				workspaceRoot: workspace,
+				auth: harness.auth,
+				listGrants: async () => [],
+				grant: async () => {
+					throw new Error('Must not grant.');
+				},
+			}),
+		).rejects.toThrow(/first-run setup/);
+		expect(harness.issued).toEqual([]);
+	});
+
+	it('refuses a workspace without an active permitted owner', async () => {
+		const workspace = await root();
+		const harness = auth({
+			listTenantMembers: async () => ({
+				members: [
+					{
+						accountId: 'account-1',
+						email: 'ada@example.test',
+						role: 'owner',
+						status: 'disabled',
+						membershipStatus: 'active',
+					},
+				],
+				nextCursor: null,
+			}),
+		});
+		await expect(
+			provisionSandboxCredential({
+				workspaceRoot: workspace,
+				auth: harness.auth,
+				listGrants: async () => [],
+				grant: async () => {
+					throw new Error('Must not grant.');
+				},
+			}),
+		).rejects.toThrow(/no active owner with sandbox.access.use/);
+		expect(harness.issued).toEqual([]);
+	});
+
+	it('walks bounded member pages until a permitted owner is found', async () => {
+		const workspace = await root();
+		const cursors: (string | null | undefined)[] = [];
+		const harness = auth({
+			listTenantMembers: async (
+				_tenantId: string,
+				page: { cursor?: string | null; limit: number },
+			) => {
+				cursors.push(page.cursor);
+				expect(page.limit).toBe(100);
+				return page.cursor === null
+					? {
+							members: [
+								{
+									accountId: 'member-1',
+									email: 'member@example.test',
+									role: 'member',
+									status: 'active',
+									membershipStatus: 'active',
+								},
+							],
+							nextCursor: 'member-1',
+						}
+					: {
+							members: [
+								{
+									accountId: 'owner-2',
+									email: 'owner@example.test',
+									role: 'owner',
+									status: 'active',
+									membershipStatus: 'active',
+								},
+							],
+							nextCursor: null,
+						};
+			},
+		});
+		await provisionSandboxCredential({
+			workspaceRoot: workspace,
+			auth: harness.auth,
+			listGrants: async () => [],
+			grant: async (input) => {
+				harness.granted.push(input.accountId);
+				return {
+					id: 'grant-1',
+					capabilities: input.capabilities,
+					grantedAt: 1,
+				};
+			},
+		});
+		expect(cursors).toEqual([null, 'member-1']);
+		expect(harness.granted).toEqual(['owner-2']);
+	});
+
 	/* The platform resolves its configuration once per generation. Minting twice
 	   leaves a live credential on disk that the launcher will never read. */
-	it('mints once, however many times the configuration is resolved', async () => {
+	it('SANDBOX-LOCAL-CREDENTIAL-IDEMPOTENT mints once, however many times the configuration is resolved', async () => {
 		const workspace = await root();
 		const harness = auth();
 		const input = {
@@ -216,7 +356,7 @@ describe('sandbox credential provisioning', () => {
 				listGrants: async () => [],
 				grant: async () => ({ id: 'g', capabilities: [], grantedAt: 1 }),
 			}),
-		).rejects.toThrow(/no sandbox scope/);
+		).rejects.toThrow(/no active owner with sandbox.access.use/);
 	});
 
 	it('names the file the launcher reads', () => {
