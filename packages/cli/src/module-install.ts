@@ -21,12 +21,6 @@ import {
 	safeSourcePath,
 	validateModuleArtifact,
 } from './module-artifact.ts';
-import {
-	loadModuleCatalog,
-	readRelease,
-	resolveModuleReleases,
-	type CatalogSource,
-} from './module-catalog.ts';
 import { findModuleFiles, moduleRoots } from './module-files.ts';
 import { moduleLayoutIssues } from './module-validate.ts';
 import {
@@ -296,22 +290,19 @@ export async function recoverModuleInstall(
 	await rm(transaction, { recursive: true });
 	return { recovered: true, pending: false };
 }
-export interface ModuleInstallOptions {
+export interface PlannedModuleInstallOptions {
 	readonly target: string;
-	readonly registry?: string;
 	readonly apply: boolean;
-	readonly update?: boolean;
-	readonly fetcher?: typeof fetch;
-	readonly prepared?: {
-		readonly source: CatalogSource;
+	readonly update: boolean;
+	readonly prepared: {
 		readonly releases: readonly ModuleRelease[];
-		readonly artifacts?: ReadonlyMap<string, Buffer>;
+		readonly artifacts: ReadonlyMap<string, Buffer>;
 	};
-	readonly expectedLockSha256?: string | null;
+	readonly expectedLockSha256: string | null;
 }
-export async function installModule(
+export async function installPlannedModule(
 	workspace: Workspace,
-	options: ModuleInstallOptions,
+	options: PlannedModuleInstallOptions,
 ): Promise<{
 	applied: boolean;
 	modules: readonly InstalledModule[];
@@ -324,22 +315,13 @@ export async function installModule(
 		'MODULE_INSTALL_BUSY',
 		'A module installation is active or interrupted. Use module recover after its process exits.',
 	);
-	distributionAssert(
-		options.prepared || options.registry,
-		'MODULE_SOURCE_REQUIRED',
-		'Choose a configured module source or pass --registry.',
-	);
-	const source =
-		options.prepared?.source ??
-		(await loadModuleCatalog(options.registry!, options.fetcher));
 	const snapshot = await readLock(workspace);
-	if (options.expectedLockSha256 !== undefined)
-		distributionAssert(
-			(snapshot.raw === null ? null : hashBytes(snapshot.raw)) ===
-				options.expectedLockSha256,
-			'MODULE_PLAN_STALE',
-			'Module lock changed since this plan was created. Create a new plan.',
-		);
+	distributionAssert(
+		(snapshot.raw === null ? null : hashBytes(snapshot.raw)) ===
+			options.expectedLockSha256,
+		'MODULE_PLAN_STALE',
+		'Module lock changed since this plan was created. Create a new plan.',
+	);
 	const manifests: ModuleManifest[] = [];
 	for (const root of moduleRoots(workspace)) await safeParents(workspace, root);
 	const files = await findModuleFiles(workspace);
@@ -363,9 +345,7 @@ export async function installModule(
 	const retained = options.update
 		? manifests.filter((manifest) => manifest.id !== id)
 		: manifests;
-	const releases =
-		options.prepared?.releases ??
-		resolveModuleReleases(source.catalog, options.target, retained);
+	const releases = options.prepared.releases;
 	if (options.update) {
 		const next = releases.find((release) => release.manifest.id === id);
 		distributionAssert(
@@ -394,9 +374,12 @@ export async function installModule(
 	}[] = [];
 	let totalBytes = 0;
 	for (const release of releases) {
-		const bytes =
-			options.prepared?.artifacts?.get(release.manifest.id) ??
-			(await readRelease(source, release, options.fetcher));
+		const bytes = options.prepared.artifacts.get(release.manifest.id);
+		distributionAssert(
+			bytes,
+			'MODULE_PLAN_CHANGED',
+			`The pinned source is missing ${release.manifest.id}. Create a new plan.`,
+		);
 		totalBytes += bytes.length;
 		distributionAssert(
 			totalBytes <= 96 * 1024 * 1024,

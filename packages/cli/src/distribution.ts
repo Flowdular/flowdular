@@ -7,5 +7,5 @@ export {
 	validateModuleArtifact,
 } from './module-artifact.ts';
 export { loadModuleCatalog, resolveModuleReleases } from './module-catalog.ts';
-export { installModule, validateInstalledModules } from './module-install.ts';
+export { validateInstalledModules } from './module-install.ts';
 export { enableModule, syncPlatformModules } from './module-sync.ts';

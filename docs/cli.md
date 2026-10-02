@@ -198,6 +198,6 @@ per-package seconds in `scripts/test-weights.json`. A new package without a
 weight counts as 30 seconds; refresh the file from a CI run when the shards
 drift apart.
 
-## Official module distribution
+## Module Studio distribution
 
-`module source`, `module search`, `module info`, `module plan`, `module apply`, `module recover`, and `module validate --locked` manage reviewed external source. See [Module Studio](module-distribution.md) for flags, trust, activation and recovery. The older `module install` and `module update` commands remain for explicit registries during migration.
+`module source`, `module search`, `module info`, `module plan`, `module apply`, `module recover`, and `module validate --locked` manage reviewed external source. See [Module Studio](module-distribution.md) for flags, trust, activation and recovery.

@@ -31,16 +31,6 @@ core:
   module.info:
     command: pnpm flowdular module info <id>
     risk: read
-  module.install:
-    command: pnpm flowdular module install <id[@version]> [--apply]
-    risk: workspace-write
-    supportsDryRun: true
-    note: host-only source installation; no scripts, activation, permissions or database changes
-  module.update:
-    command: pnpm flowdular module update <id[@version]> [--apply]
-    risk: workspace-write
-    supportsDryRun: true
-    note: rejects local edits, changed historical migrations and downgrades
   module.recover:
     command: pnpm flowdular module recover [--apply]
     risk: workspace-write

@@ -69,10 +69,13 @@ Plan writes use the same atomic pattern and a `module-plans.lock` directory.
 After a crash, confirm the writer has stopped and remove a stale plan lock
 before retrying; no partial plan is published.
 
-`module install` and `module update` remain compatibility commands for an
-explicit `--registry <local-or-https-index>` during migration. They do not
-select an implicit publisher and do not save a Module Studio plan. New
-automation should use `module source`, `module plan` and `module apply`.
+Scripts that called `module install` or `module update` with `--registry` must
+add that catalog as a named source, save a plan, and apply its ID. An existing
+`flowdular.modules.lock.json` remains the installed-source record, so an
+already managed module can use `module plan <id> --update --apply` for its next
+release. No direct registry installation path remains.
+Automation that imported `installModule` from `flowdular/distribution` must use
+the host CLI plan and apply commands; that direct install export was removed.
 
 The old `official-modules` Sandbox delivery target was removed. Change
 `sandbox.delivery.targets` to `workspace` or `git-pr`; `git-pr` points to the

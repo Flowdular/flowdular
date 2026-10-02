@@ -13,7 +13,7 @@ const members = JSON.parse(
 ) as Record<string, { directory: string; export: string }>;
 
 /* Modules the SDK carries but a scaffolded module reaches as its own installed
-   package, through "flowdular module install". A specifier for one of these
+   package, through a Flowdular module plan. A specifier for one of these
    stays as it is written. */
 const INSTALLED_SEPARATELY = new Set([
 	'access',

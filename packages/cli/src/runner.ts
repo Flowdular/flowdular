@@ -7,9 +7,7 @@ import {
 	satisfiesModuleVersion,
 	verifyApprovalGrant,
 } from '@flowdular/kernel';
-import { loadModuleCatalog } from './module-catalog.ts';
 import {
-	installModule,
 	validateInstalledModules,
 	recoverModuleInstall,
 } from './module-install.ts';
@@ -320,6 +318,11 @@ export async function runCommand(
 				],
 			});
 		}
+		if (group === 'module' && arguments_.flags.has('registry'))
+			return failure(
+				'USAGE_ERROR',
+				'Use module source add, then module plan and module apply.',
+			);
 
 		if (group === 'setup' && action === 'quick') {
 			const greenfield = extensionCommands.find(
@@ -789,19 +792,16 @@ export async function runCommand(
 				stringFlag(arguments_, 'source') ??
 				(sources.length === 1 ? sources[0]!.name : undefined);
 			const named = sources.find((item) => item.name === sourceName);
-			const registry = stringFlag(arguments_, 'registry');
-			if (!registry && !named)
+			if (!named)
 				return failure(
 					'MODULE_SOURCE_REQUIRED',
 					'Choose a configured source with --source <name>.',
 				);
-			const catalog = registry
-				? (await loadModuleCatalog(registry)).catalog
-				: await withModuleSource(
-						workspace,
-						named!.source,
-						async (source) => source.catalog,
-					);
+			const catalog = await withModuleSource(
+				workspace,
+				named.source,
+				async (source) => source.catalog,
+			);
 			const compatibleOnly = arguments_.flags.has('compatible');
 			const releases = catalog.releases
 				.map((release) => ({
@@ -820,30 +820,9 @@ export async function runCommand(
 			if (action === 'info' && !releases.length)
 				return failure(
 					'MODULE_NOT_FOUND',
-					`No module ${target ?? ''} in ${sourceName ?? registry}.`,
+					`No module ${target ?? ''} in ${sourceName}.`,
 				);
 			return success({ platformApi: PLATFORM_API_VERSION, releases });
-		}
-		if (group === 'module' && (action === 'install' || action === 'update')) {
-			if (!target)
-				return failure(
-					'USAGE_ERROR',
-					`Use module ${action} <id[@version]> [--apply].`,
-				);
-			const registry = stringFlag(arguments_, 'registry');
-			const report = await installModule(workspace, {
-				target,
-				apply: arguments_.flags.has('apply'),
-				update: action === 'update',
-				...(registry ? { registry } : {}),
-			});
-			return success(report, {
-				warnings: report.activationRequired
-					? [
-							'Source installation does not activate modules. Review the source, then use module enable <id> --apply to link packages and enable the module.',
-						]
-					: [],
-			});
 		}
 		if (group === 'module' && action === 'recover')
 			return success(

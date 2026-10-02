@@ -1,4 +1,11 @@
-import { access, cp, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import {
+	access,
+	cp,
+	mkdtemp,
+	readFile,
+	readdir,
+	writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -164,20 +171,44 @@ if (application.status !== 0)
 	throw new Error('Initialized application startup failed.');
 run(['flowdular', 'module', 'validate', '--json']);
 if (process.argv[3]) {
-	const registry = resolve(process.argv[3]);
-	const catalog = JSON.parse(await readFile(registry, 'utf8'));
+	const catalogPath = resolve(process.argv[3]);
+	const catalog = JSON.parse(await readFile(catalogPath, 'utf8'));
+	run([
+		'flowdular',
+		'module',
+		'source',
+		'add',
+		'smoke',
+		catalogPath,
+		'--apply',
+	]);
 	for (const id of [
 		...new Set(catalog.releases.map((release) => release.manifest.id)),
 	]) {
-		run([
-			'flowdular',
-			'module',
-			'install',
-			id,
-			'--registry',
-			registry,
-			'--apply',
-		]);
+		let installed = false;
+		try {
+			const lock = JSON.parse(
+				await readFile(join(consumer, 'flowdular.modules.lock.json'), 'utf8'),
+			);
+			installed = lock.modules.some((entry) => entry.id === id);
+		} catch (error) {
+			if (error.code !== 'ENOENT') throw error;
+		}
+		if (!installed) {
+			run(['flowdular', 'module', 'plan', id, '--source', 'smoke', '--apply']);
+			const planFiles = await readdir(join(consumer, 'module-plans'));
+			const plans = await Promise.all(
+				planFiles.map(async (file) =>
+					JSON.parse(
+						await readFile(join(consumer, 'module-plans', file), 'utf8'),
+					),
+				),
+			);
+			const matches = plans.filter((plan) => plan.target === id);
+			if (matches.length !== 1)
+				throw new Error(`Expected one saved plan for ${id}.`);
+			run(['flowdular', 'module', 'apply', matches[0].id, '--apply']);
+		}
 		// Use the same source-composition API as module enable. Scope grants need
 		// an operator/tenant and are exercised separately by the auth CLI tests.
 		const code = `import {enableModule} from 'flowdular/distribution'; import {readFile} from 'node:fs/promises'; const root=process.cwd(); const configPath=root+'/flowdular.json'; const config=JSON.parse(await readFile(configPath,'utf8')); await enableModule({root,configPath,config},${JSON.stringify(id)},true);`;

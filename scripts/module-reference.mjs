@@ -48,11 +48,20 @@ if (process.argv.includes('--check')) {
 		!process.argv.includes('--apply') ||
 		!process.argv.includes('--artifact') ||
 		!process.argv.includes('--sha256') ||
-		!process.argv.includes('--source-commit')
+		!process.argv.includes('--source-commit') ||
+		!process.argv.includes('--repository')
 	)
 		throw new Error(
-			'Use --artifact <file> --sha256 <digest> --source-commit <commit> --apply, or --check.',
+			'Use --artifact <file> --sha256 <digest> --source-commit <commit> --repository <source> --apply, or --check.',
 		);
+	const repository = flag('--repository');
+	if (
+		!repository ||
+		repository.startsWith('--') ||
+		repository.length > 2048 ||
+		/[\r\n]/.test(repository)
+	)
+		throw new Error('Reference repository must be a nonempty, bounded source.');
 	const bytes = await readFile(flag('--artifact'));
 	if (
 		hash(bytes) !== flag('--sha256') ||
@@ -91,7 +100,7 @@ if (process.argv.includes('--check')) {
 			{
 				id: artifact.manifest.id,
 				version: artifact.manifest.version,
-				repository: 'Flowdular/official-modules',
+				repository,
 				sourceCommit: flag('--source-commit'),
 				artifactSha256: hash(bytes),
 				files: Object.fromEntries(

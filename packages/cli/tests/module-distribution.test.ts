@@ -11,7 +11,8 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import type {
 	ModuleArtifact,
@@ -33,7 +34,6 @@ import {
 	resolveModuleReleases,
 } from '../src/module-catalog.ts';
 import {
-	installModule,
 	validateInstalledModules,
 	recoverModuleInstall,
 } from '../src/module-install.ts';
@@ -45,7 +45,32 @@ import {
 	createModulePlan,
 	readModulePlan,
 } from '../src/module-plans.ts';
-import { addModuleSource } from '../src/module-sources.ts';
+import { addModuleSource, readModuleSources } from '../src/module-sources.ts';
+
+it('rejects a missing reference repository before reading an artifact', () => {
+	const script = fileURLToPath(
+		new URL('../../../scripts/module-reference.mjs', import.meta.url),
+	);
+	const result = spawnSync(
+		process.execPath,
+		[
+			script,
+			'--artifact',
+			'missing-artifact.json',
+			'--sha256',
+			'0'.repeat(64),
+			'--source-commit',
+			'a'.repeat(40),
+			'--repository',
+			'--apply',
+		],
+		{ encoding: 'utf8' },
+	);
+	expect(result.status).not.toBe(0);
+	expect(result.stderr).toContain(
+		'Reference repository must be a nonempty, bounded source',
+	);
+});
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -142,6 +167,38 @@ async function fixture() {
 		);
 	}
 	return { root, source, workspace, registry, release, catalog };
+}
+
+async function planLocalRelease(
+	f: Awaited<ReturnType<typeof fixture>>,
+	target = 'sample.core',
+	update = false,
+) {
+	if (
+		!(await readModuleSources(f.workspace)).some(
+			(entry) => entry.name === 'local',
+		)
+	)
+		await addModuleSource(
+			f.workspace,
+			{ name: 'local', source: { kind: 'catalog', location: f.registry } },
+			true,
+		);
+	return createModulePlan(f.workspace, {
+		target,
+		sourceName: 'local',
+		update,
+		save: true,
+	});
+}
+
+async function applyLocalRelease(
+	f: Awaited<ReturnType<typeof fixture>>,
+	target = 'sample.core',
+	update = false,
+) {
+	const plan = await planLocalRelease(f, target, update);
+	return applyModulePlan(f.workspace, plan.id, true);
 }
 
 describe('module distribution', () => {
@@ -499,24 +556,17 @@ describe('module distribution', () => {
 			(await validateInstalledModules(f.workspace)).modules[0]?.sha256,
 		).toBe(record.sha256);
 	});
-	it('previews without writes, installs into configured roots, locks and retries without activation', async () => {
+	it('previews without writes, installs into configured roots, and refuses a stale retry', async () => {
 		const f = await fixture();
 		const { record } = await f.release();
 		await f.catalog([record]);
-		const preview = await installModule(f.workspace, {
-			target: 'sample.core',
-			registry: f.registry,
-			apply: false,
-		});
+		const plan = await planLocalRelease(f);
+		const preview = await applyModulePlan(f.workspace, plan.id, false);
 		expect(preview.applied).toBe(false);
 		await expect(
 			access(join(f.workspace.root, 'extensions')),
 		).rejects.toThrow();
-		const result = await installModule(f.workspace, {
-			target: 'sample.core',
-			registry: f.registry,
-			apply: true,
-		});
+		const result = await applyModulePlan(f.workspace, plan.id, true);
 		expect(result.modules[0]?.directory).toBe('extensions/sample');
 		expect(await readFile(f.workspace.configPath, 'utf8')).toBe(
 			JSON.stringify(f.workspace.config),
@@ -524,33 +574,61 @@ describe('module distribution', () => {
 		expect((await validateInstalledModules(f.workspace)).modules).toHaveLength(
 			1,
 		);
-		expect(
-			(
-				await installModule(f.workspace, {
-					target: 'sample.core',
-					registry: f.registry,
-					apply: true,
-				})
-			).modules,
-		).toEqual([]);
+		await expect(
+			applyModulePlan(f.workspace, plan.id, true),
+		).rejects.toMatchObject({
+			code: 'MODULE_PLAN_STALE',
+		});
 	});
-	it('routes CLI installation and locked validation', async () => {
+	it('routes CLI plans, refuses removed install commands, and validates the lock', async () => {
 		const f = await fixture();
 		const { record } = await f.release();
 		await f.catalog([record]);
-		const result = await runCommand(
+		for (const command of ['install', 'update']) {
+			const removed = await runCommand(
+				parseArguments([
+					'--root',
+					f.workspace.root,
+					'module',
+					command,
+					'sample.core',
+					'--apply',
+				]),
+			);
+			expect(removed.ok).toBe(false);
+			expect(removed.error?.code).toBe('USAGE_ERROR');
+		}
+		const listed = await runCommand(
+			parseArguments(['--root', f.workspace.root, 'capability', 'list']),
+		);
+		const capabilities = (
+			listed.data as { capabilities: readonly { id: string }[] }
+		).capabilities.map((entry) => entry.id);
+		expect(capabilities).not.toContain('module.install');
+		expect(capabilities).not.toContain('module.update');
+		const oldRegistry = await runCommand(
 			parseArguments([
 				'--root',
 				f.workspace.root,
 				'module',
-				'install',
-				'sample.core',
+				'search',
 				'--registry',
 				f.registry,
+			]),
+		);
+		expect(oldRegistry.error?.code).toBe('USAGE_ERROR');
+		const plan = await planLocalRelease(f);
+		const applied = await runCommand(
+			parseArguments([
+				'--root',
+				f.workspace.root,
+				'module',
+				'apply',
+				plan.id,
 				'--apply',
 			]),
 		);
-		expect(result.ok).toBe(true);
+		expect(applied.ok).toBe(true);
 		const validated = await runCommand(
 			parseArguments([
 				'--root',
@@ -566,25 +644,17 @@ describe('module distribution', () => {
 		const f = await fixture();
 		const { record } = await f.release();
 		await f.catalog([{ ...record, sha256: '0'.repeat(64) }]);
-		await expect(
-			installModule(f.workspace, {
-				target: 'sample.core',
-				registry: f.registry,
-				apply: true,
-			}),
-		).rejects.toMatchObject({ code: 'MODULE_ARTIFACT_DIGEST' });
+		await expect(applyLocalRelease(f)).rejects.toMatchObject({
+			code: 'MODULE_ARTIFACT_DIGEST',
+		});
 		const bad = await f.release(manifest(), (artifact) => ({
 			...artifact,
 			review: { ...artifact.review, sourceSha256: '0'.repeat(64) },
 		}));
 		await f.catalog([bad.record]);
-		await expect(
-			installModule(f.workspace, {
-				target: 'sample.core',
-				registry: f.registry,
-				apply: true,
-			}),
-		).rejects.toMatchObject({ code: 'MODULE_REVIEW_INVALID' });
+		await expect(applyLocalRelease(f)).rejects.toMatchObject({
+			code: 'MODULE_REVIEW_INVALID',
+		});
 		await expect(
 			access(join(f.workspace.root, 'extensions')),
 		).rejects.toThrow();
@@ -599,36 +669,23 @@ describe('module distribution', () => {
 			],
 		}));
 		await f.catalog([bad.record]);
-		await expect(
-			installModule(f.workspace, {
-				target: 'sample.core',
-				registry: f.registry,
-				apply: true,
-			}),
-		).rejects.toMatchObject({ code: 'MODULE_ARTIFACT_PATH' });
+		await expect(applyLocalRelease(f)).rejects.toMatchObject({
+			code: 'MODULE_ARTIFACT_PATH',
+		});
 	});
 	it('rejects a symlinked destination root', async () => {
 		const f = await fixture();
 		const { record } = await f.release();
 		await f.catalog([record]);
 		await symlink(f.source, join(f.workspace.root, 'extensions'));
-		await expect(
-			installModule(f.workspace, {
-				target: 'sample.core',
-				registry: f.registry,
-				apply: true,
-			}),
-		).rejects.toMatchObject({ code: 'MODULE_DESTINATION_LINK' });
+		await expect(applyLocalRelease(f)).rejects.toThrow(/link/);
+		await expect(access(join(f.source, 'sample'))).rejects.toThrow();
 	});
 	it('preserves local edits and extra files on update', async () => {
 		const f = await fixture();
 		const first = await f.release();
 		await f.catalog([first.record]);
-		await installModule(f.workspace, {
-			target: 'sample.core',
-			registry: f.registry,
-			apply: true,
-		});
+		await applyLocalRelease(f);
 		await writeFile(
 			join(f.workspace.root, 'extensions/sample/README.md'),
 			'Local work',
@@ -636,12 +693,7 @@ describe('module distribution', () => {
 		const next = await f.release(manifest('sample.core', '1.1.0'));
 		await f.catalog([first.record, next.record]);
 		await expect(
-			installModule(f.workspace, {
-				target: 'sample.core',
-				registry: f.registry,
-				apply: true,
-				update: true,
-			}),
+			applyLocalRelease(f, 'sample.core', true),
 		).rejects.toMatchObject({ code: 'MODULE_LOCAL_CHANGES' });
 		expect(
 			await readFile(
@@ -654,40 +706,22 @@ describe('module distribution', () => {
 		const f = await fixture();
 		const first = await f.release();
 		await f.catalog([first.record]);
-		await installModule(f.workspace, {
-			target: 'sample.core',
-			registry: f.registry,
-			apply: true,
-		});
+		await applyLocalRelease(f);
 		const next = await f.release(manifest('sample.core', '1.1.0'));
 		await f.catalog([first.record, next.record]);
-		await installModule(f.workspace, {
-			target: 'sample.core',
-			registry: f.registry,
-			apply: true,
-			update: true,
-		});
+		await applyLocalRelease(f, 'sample.core', true);
 		expect(
 			(await validateInstalledModules(f.workspace)).modules[0]?.version,
 		).toBe('1.1.0');
 		await expect(
-			installModule(f.workspace, {
-				target: 'sample.core@1.0.0',
-				registry: f.registry,
-				apply: true,
-				update: true,
-			}),
+			applyLocalRelease(f, 'sample.core@1.0.0', true),
 		).rejects.toMatchObject({ code: 'MODULE_DOWNGRADE_FORBIDDEN' });
 	});
 	it('does not discard an existing module when update layout validation fails', async () => {
 		const f = await fixture();
 		const first = await f.release();
 		await f.catalog([first.record]);
-		await installModule(f.workspace, {
-			target: 'sample.core',
-			registry: f.registry,
-			apply: true,
-		});
+		await applyLocalRelease(f);
 		const nextManifest = {
 			...manifest('sample.core', '1.1.0'),
 			platform: { server: true },
@@ -695,12 +729,7 @@ describe('module distribution', () => {
 		const next = await f.release(nextManifest);
 		await f.catalog([first.record, next.record]);
 		await expect(
-			installModule(f.workspace, {
-				target: 'sample.core',
-				registry: f.registry,
-				apply: true,
-				update: true,
-			}),
+			applyLocalRelease(f, 'sample.core', true),
 		).rejects.toMatchObject({ code: 'MODULE_LAYOUT_INVALID' });
 		expect(
 			(await validateInstalledModules(f.workspace)).modules[0]?.version,
@@ -837,11 +866,7 @@ it('recovers an interrupted install and refuses recovery while its owner is aliv
 	const f = await fixture();
 	const { record } = await f.release();
 	await f.catalog([record]);
-	await installModule(f.workspace, {
-		target: 'sample.core',
-		registry: f.registry,
-		apply: true,
-	});
+	await applyLocalRelease(f);
 	const raw = await readFile(
 		join(f.workspace.root, 'flowdular.modules.lock.json'),
 		'utf8',
@@ -888,22 +913,13 @@ it('preserves installed migrations when an upstream update changes their bytes',
 	await writeFile(join(f.source, 'migrations/0001_init.up.sql'), 'SELECT 1;');
 	const first = await f.release();
 	await f.catalog([first.record]);
-	await installModule(f.workspace, {
-		target: 'sample.core',
-		registry: f.registry,
-		apply: true,
-	});
+	await applyLocalRelease(f);
 	await writeFile(join(f.source, 'migrations/0001_init.up.sql'), 'SELECT 2;');
 	const next = await f.release(manifest('sample.core', '1.1.0'));
 	await f.catalog([first.record, next.record]);
-	await expect(
-		installModule(f.workspace, {
-			target: 'sample.core',
-			registry: f.registry,
-			apply: true,
-			update: true,
-		}),
-	).rejects.toMatchObject({ code: 'MODULE_MIGRATION_CHANGED' });
+	await expect(applyLocalRelease(f, 'sample.core', true)).rejects.toMatchObject(
+		{ code: 'MODULE_MIGRATION_CHANGED' },
+	);
 	expect(
 		await readFile(
 			join(f.workspace.root, 'extensions/sample/migrations/0001_init.up.sql'),

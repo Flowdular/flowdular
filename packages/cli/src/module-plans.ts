@@ -28,7 +28,10 @@ import {
 	type CatalogSource,
 } from './module-catalog.ts';
 import { findModuleFiles } from './module-files.ts';
-import { installModule, validateInstalledModules } from './module-install.ts';
+import {
+	installPlannedModule,
+	validateInstalledModules,
+} from './module-install.ts';
 import { readModuleSources, withModuleSource } from './module-sources.ts';
 import type { Workspace } from './workspace.ts';
 
@@ -427,12 +430,11 @@ export async function applyModulePlan(
 			'MODULE_PLAN_CHANGED',
 			'The plan impact differs from the pinned source. Create a new plan.',
 		);
-		const report = await installModule(workspace, {
+		const report = await installPlannedModule(workspace, {
 			target: plan.target,
 			apply,
 			update: plan.update,
 			prepared: {
-				source,
 				releases: plan.releases,
 				artifacts: inspected.artifacts,
 			},

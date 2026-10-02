@@ -66,24 +66,6 @@ export const capabilities: readonly CapabilityDescriptor[] = [
 		supportsDryRun: false,
 	},
 	{
-		id: 'module.install',
-		version: 1,
-		summary:
-			'Install reviewed module source without activation or database changes.',
-		risk: 'workspace-write',
-		requiresApprovedSpec: false,
-		supportsDryRun: true,
-	},
-	{
-		id: 'module.update',
-		version: 1,
-		summary:
-			'Update an installed module while preserving local edits and migrations.',
-		risk: 'workspace-write',
-		requiresApprovedSpec: false,
-		supportsDryRun: true,
-	},
-	{
 		id: 'module.recover',
 		version: 1,
 		summary: 'Recover an interrupted module source installation.',
