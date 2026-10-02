@@ -60,7 +60,7 @@ These are examples of applications to build on Flowdular. Their industry-specifi
 | Finance and procurement | Expense review or supplier qualification            | Approval requests, audit history, workflows and connectors        |
 | Research and case teams | Gather evidence, review a case and produce a report | Web research, document text, agents and PDF/DOCX templates        |
 
-[Official Modules](https://github.com/Flowdular/official-modules) provides optional business modules for parties (customers and suppliers), catalog and expenses. Install those you need or build your own.
+Module Studio connects an application to a catalog, a pinned Git repository or local releases. It shows an exact change plan before installation, and Sandbox helps build your own module from an approved specification. See [module distribution](docs/module-distribution.md).
 
 ## From a request to a working module
 

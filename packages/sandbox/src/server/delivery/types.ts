@@ -6,9 +6,9 @@ import type { CommandRunner } from './steps.ts';
 /* Where a delivery lands. The request names the target; the sandbox resolves
    it to the implementation below. 'workspace' writes into this working tree;
    'git-pr' commits the same change on a branch and opens a pull request. */
-export type EjectTarget = 'workspace' | 'git-pr' | 'official-modules';
+export type EjectTarget = 'workspace' | 'git-pr';
 
-export type DeliveryTargetId = 'local' | 'git-pr' | 'official-modules';
+export type DeliveryTargetId = 'local' | 'git-pr';
 
 export interface DeliveryModulePlan {
 	readonly id: string;

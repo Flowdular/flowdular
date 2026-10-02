@@ -1,8 +1,9 @@
 import { cell, createStore } from 'segment-state';
 import type { ModuleCatalogEntry } from './api.ts';
+import type { ModuleStudioState } from '../server/module-studio.ts';
 
 export type ModulesStatus = 'loading' | 'idle' | 'denied' | 'error';
-export type ModulesTab = 'catalog' | 'flags';
+export type ModulesTab = 'catalog' | 'studio' | 'flags';
 
 /** The activation change waiting for the owner's confirmation. */
 export interface PendingActivation {
@@ -13,6 +14,13 @@ export interface PendingActivation {
 export function createModulesClientState() {
 	const store = createStore({
 		modules: cell<readonly ModuleCatalogEntry[]>([]),
+		studio: cell<ModuleStudioState>({
+			sources: [],
+			plans: [],
+			installed: [],
+			issues: [],
+		}),
+		sandboxAvailable: cell(false),
 		commands: cell<Readonly<Record<string, string>>>({}),
 		status: cell<ModulesStatus>('loading'),
 		error: '',

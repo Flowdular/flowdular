@@ -1,7 +1,7 @@
 schemaVersion: 2
 id: system.core
-specVersion: 0.9.0
-status: approved
+specVersion: 0.9.1
+status: draft
 name: System Core
 description: Provides the application shell, platform health, module discovery, the deployment's own branding, and the administration surface for module settings.
 profile: full
@@ -24,6 +24,7 @@ invariants:
   - The application shell owns compact navigation density and exposes module entries without allowing modules to alter shell layout.
   - Document metadata is rendered during SSR, adopted during hydration, and updated from the active authorized navigation entry.
   - The module catalog exposed to administrators is read from workspace manifests and specifications; it never loads module code and never changes the enabled set.
+  - The Modules screen reads host-authored module sources, pinned change plans and install hashes without changing the deployed application's source or enabled set. Applying a plan remains a host CLI operation followed by a build and restart.
   - Module settings are declared by their owning module, stored per tenant by auth.core, and changed only through the settings administration API served by system.core, with an audit record.
   - system.core declares the workspace time zone as a shared tenant setting, system.core.timeZone, defaulting to UTC. Only a name the runtime zone database resolves is stored, in its canonical IANA spelling, and any module that declares a dependency on system.core reads it live through the settings runtime; a value this deployment cannot resolve reads back as UTC instead of failing the reader.
   - A feature flag is a module setting declared with kind flag, which is a non-secret boolean with a declared default, a label, a description, and tenant scope, the only scope a flag may take. It is stored, read, validated and overridden exactly like any other setting, so a module reads it on the request path through the settings runtime at no cost beyond the settings read itself; system.core adds no flag store, no flag endpoint and no second write path.
@@ -112,6 +113,10 @@ acceptanceScenarios:
     given: An owner with system.modules.read opens Administration > Modules.
     when: The module catalog is requested.
     then: Every module in the workspace is listed with its id, name, version, permissions, platform surfaces, and enabled state, together with the CLI commands that change the enabled set.
+  - id: SYSTEM-MODULE-STUDIO-READ
+    given: A platform checkout has a named source, a pinned module change plan and a matching installed module lock.
+    when: An owner with system.modules.read opens the Module Studio tab of Administration > Modules.
+    then: The read returns the named source, exact plan and artifact hashes, dependency, permission and migration impact, and installed hash alongside the existing module state; it offers a Sandbox link when sandbox.core is active even if that module comes from the SDK; the deployed application does not install source files.
   - id: SYSTEM-MODULES-DENY
     given: A principal without system.modules.read.
     when: The principal requests the module catalog.

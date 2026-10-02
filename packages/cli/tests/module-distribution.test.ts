@@ -3,12 +3,15 @@ import {
 	mkdir,
 	writeFile,
 	readFile,
+	rename,
+	readdir,
 	rm,
 	access,
 	symlink,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import type {
 	ModuleArtifact,
@@ -26,6 +29,7 @@ import {
 } from '../src/module-artifact.ts';
 import {
 	loadModuleCatalog,
+	readRelease,
 	resolveModuleReleases,
 } from '../src/module-catalog.ts';
 import {
@@ -36,6 +40,12 @@ import {
 import { runCommand } from '../src/runner.ts';
 import { parseArguments } from '../src/arguments.ts';
 import type { Workspace } from '../src/workspace.ts';
+import {
+	applyModulePlan,
+	createModulePlan,
+	readModulePlan,
+} from '../src/module-plans.ts';
+import { addModuleSource } from '../src/module-sources.ts';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -79,6 +89,7 @@ async function fixture() {
 	async function release(
 		m = manifest(),
 		alter?: (artifact: ModuleArtifact) => unknown,
+		specStatus: 'draft' | 'approved' = 'approved',
 	) {
 		await writeFile(join(source, 'module.json'), JSON.stringify(m));
 		await writeFile(
@@ -91,7 +102,7 @@ async function fixture() {
 				schemaVersion: 1,
 				id: m.id,
 				specVersion: m.version,
-				status: 'draft',
+				status: specStatus,
 				name: 'Sample',
 				description: 'A sample module for installation tests.',
 				profile: m.profile,
@@ -134,6 +145,360 @@ async function fixture() {
 }
 
 describe('module distribution', () => {
+	it('saves one pinned plan and installs exactly that plan', async () => {
+		const f = await fixture();
+		const { record } = await f.release();
+		await f.catalog([record]);
+		const sourceAdded = await runCommand(
+			parseArguments([
+				'--root',
+				f.workspace.root,
+				'module',
+				'source',
+				'add',
+				'local',
+				f.registry,
+				'--apply',
+			]),
+		);
+		expect(sourceAdded.ok).toBe(true);
+		const planned = await runCommand(
+			parseArguments([
+				'--root',
+				f.workspace.root,
+				'module',
+				'plan',
+				'sample.core',
+				'--source',
+				'local',
+				'--apply',
+			]),
+		);
+		expect(planned.ok).toBe(true);
+		const plan = (
+			planned.data as { plan: import('@flowdular/contracts').ModuleChangePlan }
+		).plan;
+		expect(plan.changes.map((change) => [change.id, change.action])).toEqual([
+			['sample.core', 'install'],
+		]);
+		expect(plan.releases[0]?.sha256).toBe(record.sha256);
+		expect((await readModulePlan(f.workspace, plan.id)).id).toBe(plan.id);
+		expect((await applyModulePlan(f.workspace, plan.id, false)).applied).toBe(
+			false,
+		);
+		const applied = await runCommand(
+			parseArguments([
+				'--root',
+				f.workspace.root,
+				'module',
+				'apply',
+				plan.id,
+				'--apply',
+			]),
+		);
+		expect(applied.ok).toBe(true);
+		expect(
+			(await validateInstalledModules(f.workspace)).modules[0]?.sha256,
+		).toBe(record.sha256);
+	});
+	it('refuses a stale or edited plan before installing source', async () => {
+		const f = await fixture();
+		const { record } = await f.release();
+		await f.catalog([record]);
+		await addModuleSource(
+			f.workspace,
+			{ name: 'local', source: { kind: 'catalog', location: f.registry } },
+			true,
+		);
+		const plan = await createModulePlan(f.workspace, {
+			target: 'sample.core',
+			sourceName: 'local',
+			update: false,
+			save: true,
+		});
+		const path = join(f.workspace.root, 'module-plans', `${plan.id}.json`);
+		await writeFile(path, JSON.stringify({ ...plan, target: 'other.core' }));
+		await expect(readModulePlan(f.workspace, plan.id)).rejects.toMatchObject({
+			code: 'MODULE_PLAN_INVALID',
+		});
+		await writeFile(path, JSON.stringify(plan));
+		await writeFile(
+			join(f.workspace.root, 'flowdular.modules.lock.json'),
+			JSON.stringify({ schemaVersion: 1, modules: [] }),
+		);
+		await expect(
+			applyModulePlan(f.workspace, plan.id, true),
+		).rejects.toMatchObject({ code: 'MODULE_PLAN_STALE' });
+		await expect(
+			access(join(f.workspace.root, 'extensions')),
+		).rejects.toThrow();
+	});
+	it('refuses a plan directory linked outside the workspace', async () => {
+		const f = await fixture();
+		const { record } = await f.release();
+		await f.catalog([record]);
+		await addModuleSource(
+			f.workspace,
+			{ name: 'local', source: { kind: 'catalog', location: f.registry } },
+			true,
+		);
+		const plan = await createModulePlan(f.workspace, {
+			target: 'sample.core',
+			sourceName: 'local',
+			update: false,
+			save: true,
+		});
+		const directory = join(f.workspace.root, 'module-plans');
+		await rename(directory, join(f.root, 'outside-plans'));
+		await symlink(join(f.root, 'outside-plans'), directory);
+		await expect(readModulePlan(f.workspace, plan.id)).rejects.toMatchObject({
+			code: 'MODULE_PLAN_INVALID',
+		});
+	});
+	it('refuses a plan whose permission impact was rewritten with a new id', async () => {
+		const f = await fixture();
+		const { record } = await f.release();
+		await f.catalog([record]);
+		await addModuleSource(
+			f.workspace,
+			{ name: 'local', source: { kind: 'catalog', location: f.registry } },
+			true,
+		);
+		const plan = await createModulePlan(f.workspace, {
+			target: 'sample.core',
+			sourceName: 'local',
+			update: false,
+			save: true,
+		});
+		const edited = {
+			...plan,
+			changes: [{ ...plan.changes[0]!, permissions: ['sample.admin'] }],
+		};
+		const { id: _oldId, createdAt: _createdAt, ...content } = edited;
+		const id = hashBytes(JSON.stringify(content));
+		await writeFile(
+			join(f.workspace.root, 'module-plans', `${id}.json`),
+			JSON.stringify({ ...edited, id }),
+		);
+		await expect(applyModulePlan(f.workspace, id, true)).rejects.toMatchObject({
+			code: 'MODULE_PLAN_CHANGED',
+		});
+		await expect(
+			access(join(f.workspace.root, 'extensions')),
+		).rejects.toThrow();
+	});
+	it('refuses a self-hashed plan with no releases or mismatched visible impact', async () => {
+		const f = await fixture();
+		const { record } = await f.release();
+		await f.catalog([record]);
+		await addModuleSource(
+			f.workspace,
+			{ name: 'local', source: { kind: 'catalog', location: f.registry } },
+			true,
+		);
+		const plan = await createModulePlan(f.workspace, {
+			target: 'sample.core',
+			sourceName: 'local',
+			update: false,
+			save: true,
+		});
+		for (const edited of [
+			{ ...plan, releases: [], changes: [] },
+			{
+				...plan,
+				changes: [{ ...plan.changes[0]!, sha256: '0'.repeat(64) }],
+			},
+		]) {
+			const { id: _id, createdAt, ...content } = edited;
+			const id = hashBytes(JSON.stringify(content));
+			await writeFile(
+				join(f.workspace.root, 'module-plans', `${id}.json`),
+				JSON.stringify({ ...content, id, createdAt }),
+			);
+			await expect(readModulePlan(f.workspace, id)).rejects.toMatchObject({
+				code: 'MODULE_PLAN_INVALID',
+			});
+		}
+	});
+	it('rejects draft module specifications in a new plan', async () => {
+		const f = await fixture();
+		const { record } = await f.release(manifest(), undefined, 'draft');
+		await f.catalog([record]);
+		await addModuleSource(
+			f.workspace,
+			{ name: 'local', source: { kind: 'catalog', location: f.registry } },
+			true,
+		);
+		await expect(
+			createModulePlan(f.workspace, {
+				target: 'sample.core',
+				sourceName: 'local',
+				update: false,
+				save: true,
+			}),
+		).rejects.toMatchObject({ code: 'MODULE_SPEC_NOT_APPROVED' });
+	});
+	it('does not lose a source update while another host command owns the lock', async () => {
+		const f = await fixture();
+		await mkdir(join(f.workspace.root, 'flowdular.module-sources.json.lock'));
+		await expect(
+			addModuleSource(
+				f.workspace,
+				{
+					name: 'local',
+					source: { kind: 'catalog', location: f.registry },
+				},
+				true,
+			),
+		).rejects.toMatchObject({ code: 'MODULE_SOURCE_BUSY' });
+		await expect(
+			access(join(f.workspace.root, 'flowdular.module-sources.json')),
+		).rejects.toThrow();
+	});
+	it('rejects a Git catalog path that the Module Studio reader cannot show', async () => {
+		const f = await fixture();
+		await expect(
+			addModuleSource(
+				f.workspace,
+				{
+					name: 'git',
+					source: {
+						kind: 'git',
+						location: f.root,
+						commit: 'a'.repeat(40),
+						catalogPath: `${'a'.repeat(240)}.json`,
+					},
+				},
+				true,
+			),
+		).rejects.toMatchObject({ code: 'MODULE_SOURCE_INVALID' });
+	});
+	it('publishes a plan only after owning its write lock', async () => {
+		const f = await fixture();
+		const { record } = await f.release();
+		await f.catalog([record]);
+		await addModuleSource(
+			f.workspace,
+			{ name: 'local', source: { kind: 'catalog', location: f.registry } },
+			true,
+		);
+		const lock = join(f.workspace.root, 'module-plans.lock');
+		await mkdir(lock);
+		await expect(
+			createModulePlan(f.workspace, {
+				target: 'sample.core',
+				sourceName: 'local',
+				update: false,
+				save: true,
+			}),
+		).rejects.toMatchObject({ code: 'MODULE_PLAN_BUSY' });
+		await expect(
+			access(join(f.workspace.root, 'module-plans')),
+		).rejects.toThrow();
+		await rm(lock, { recursive: true });
+		const plan = await createModulePlan(f.workspace, {
+			target: 'sample.core',
+			sourceName: 'local',
+			update: false,
+			save: true,
+		});
+		expect(await readdir(join(f.workspace.root, 'module-plans'))).toEqual([
+			`${plan.id}.json`,
+		]);
+		expect((await readModulePlan(f.workspace, plan.id)).id).toBe(plan.id);
+	});
+	it('refuses to publish plans beyond the UI read budget', async () => {
+		const f = await fixture();
+		const { record } = await f.release();
+		await f.catalog([record]);
+		await addModuleSource(
+			f.workspace,
+			{ name: 'local', source: { kind: 'catalog', location: f.registry } },
+			true,
+		);
+		const plan = await createModulePlan(f.workspace, {
+			target: 'sample.core',
+			sourceName: 'local',
+			update: false,
+			save: false,
+		});
+		const directory = join(f.workspace.root, 'module-plans');
+		await mkdir(directory);
+		const { id: _id, createdAt, ...base } = plan;
+		for (let index = 0; index < 3; index++) {
+			const content = { ...base, note: 'x'.repeat(3 * 1024 * 1024) + index };
+			const id = hashBytes(JSON.stringify(content));
+			await writeFile(
+				join(directory, `${id}.json`),
+				JSON.stringify({ ...content, id, createdAt }),
+			);
+			if (index === 0)
+				expect((await readModulePlan(f.workspace, id)).id).toBe(id);
+		}
+		await expect(
+			createModulePlan(f.workspace, {
+				target: 'sample.core',
+				sourceName: 'local',
+				update: false,
+				save: true,
+			}),
+		).rejects.toMatchObject({ code: 'MODULE_PLAN_LIMIT' });
+		expect(await readdir(directory)).toHaveLength(3);
+	});
+	it('uses the pinned Git commit after the source branch advances', async () => {
+		const f = await fixture();
+		const { record } = await f.release();
+		const repository = join(f.root, 'git-source');
+		await mkdir(join(repository, 'registry'), { recursive: true });
+		await writeFile(
+			join(repository, 'registry/index.json'),
+			JSON.stringify({ schemaVersion: 1, releases: [record] }),
+		);
+		await writeFile(
+			join(repository, 'registry', record.artifact),
+			await readFile(join(f.root, record.artifact)),
+		);
+		const git = (...args: string[]) =>
+			execFileSync('git', ['-C', repository, ...args], {
+				encoding: 'utf8',
+			}).trim();
+		git('init', '-q');
+		git('config', 'user.email', 'test@example.test');
+		git('config', 'user.name', 'Test');
+		git('add', '.');
+		git('commit', '-qm', 'first');
+		const commit = git('rev-parse', 'HEAD');
+		await addModuleSource(
+			f.workspace,
+			{
+				name: 'git',
+				source: {
+					kind: 'git',
+					location: repository,
+					commit,
+					catalogPath: 'registry/index.json',
+				},
+			},
+			true,
+		);
+		const plan = await createModulePlan(f.workspace, {
+			target: 'sample.core',
+			sourceName: 'git',
+			update: false,
+			save: true,
+		});
+		await writeFile(
+			join(repository, 'registry/index.json'),
+			JSON.stringify({ schemaVersion: 1, releases: [] }),
+		);
+		git('add', '.');
+		git('commit', '-qm', 'second');
+		const applied = await applyModulePlan(f.workspace, plan.id, true);
+		expect(applied.applied).toBe(true);
+		expect(
+			(await validateInstalledModules(f.workspace)).modules[0]?.sha256,
+		).toBe(record.sha256);
+	});
 	it('previews without writes, installs into configured roots, locks and retries without activation', async () => {
 		const f = await fixture();
 		const { record } = await f.release();
@@ -448,9 +813,22 @@ describe('module distribution', () => {
 		).toThrow(/No compatible dependency closure/);
 	});
 
-	it('rejects nonofficial remote catalogs', async () => {
+	it('rejects unpinned or cross-origin HTTPS artifacts', async () => {
+		const f = await fixture();
+		const { record } = await f.release();
+		await f.catalog([record]);
+		const source = await loadModuleCatalog(f.registry);
 		await expect(
-			loadModuleCatalog('https://example.com/catalog.json'),
+			loadModuleCatalog('http://example.com/catalog.json'),
+		).rejects.toMatchObject({ code: 'MODULE_SOURCE_UNTRUSTED' });
+		await expect(
+			readRelease(
+				{ ...source, location: 'https://modules.example/index.json' },
+				{
+					...record,
+					artifact: `https://other.example/${record.sourceCommit}/artifact.json`,
+				},
+			),
 		).rejects.toMatchObject({ code: 'MODULE_SOURCE_UNTRUSTED' });
 	});
 });

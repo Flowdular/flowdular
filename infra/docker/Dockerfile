@@ -15,6 +15,9 @@ RUN pnpm fetch
 COPY . .
 RUN pnpm install --frozen-lockfile --offline
 RUN pnpm build
+RUN mkdir -p module-plans \
+	&& if [ ! -f flowdular.modules.lock.json ]; then printf '{"schemaVersion":1,"modules":[]}\n' > flowdular.modules.lock.json; fi \
+	&& if [ ! -f flowdular.module-sources.json ]; then printf '{"schemaVersion":1,"sources":[]}\n' > flowdular.module-sources.json; fi
 
 FROM node:24-bookworm-slim AS runtime
 
@@ -32,6 +35,11 @@ RUN groupadd --system --gid 1001 octane \
 COPY --from=builder --chown=octane:octane /workspace/platform/dist ./platform/dist
 COPY --from=builder --chown=octane:octane /workspace/platform/package.json ./platform/package.json
 COPY --chown=octane:octane infra/docker/app-entrypoint.mjs infra/docker/database-urls.mjs ./infra/docker/
+COPY --from=builder --chown=octane:octane /workspace/flowdular.json ./flowdular.json
+COPY --from=builder --chown=octane:octane /workspace/flowdular.modules.lock.json ./flowdular.modules.lock.json
+COPY --from=builder --chown=octane:octane /workspace/flowdular.module-sources.json ./flowdular.module-sources.json
+COPY --from=builder --chown=octane:octane /workspace/module-plans ./module-plans
+COPY --from=builder --chown=octane:octane /workspace/modules ./modules
 
 USER octane
 EXPOSE 3000

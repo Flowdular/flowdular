@@ -12,7 +12,7 @@ CLI's `SDK_VERSION` constant drifts from `packages/sdk/package.json`.
 | `create-flowdular`   | Generator invoked by `npm create flowdular@latest my-app`                                    |
 | `@flowdular/sandbox` | Independent coding application, launched with `npx @flowdular/sandbox`, depending on the SDK |
 
-`@flowdular/sdk/ui` and `@flowdular/sdk/ui/styles` are SDK exports, not separate npm packages. The internal workspace packages are private and are assembled into the SDK during release. Business modules such as expenses, parties and catalog are installed as source from `Flowdular/official-modules`.
+`@flowdular/sdk/ui` and `@flowdular/sdk/ui/styles` are SDK exports, not separate npm packages. The internal workspace packages are private and are assembled into the SDK during release. Business modules are installed as reviewed source through a configured Module Studio source and plan.
 
 The `Platform release` workflow publishes these four packages to npm after a
 non-draft GitHub Release succeeds. Configure each package's npm trusted
@@ -48,6 +48,4 @@ internal workspace dependencies remain development-only. The platform's
 both tarballs, reject a sandbox bundled in the SDK, and start the standalone
 launcher and HTTP application outside the monorepo.
 
-After npm publication, install official-modules without local overrides, commit its portable pnpm lockfile and use an explicit `pnpm install --frozen-lockfile` step in both CI jobs. Run a fresh scaffold against npm. Local tarball tests prove package contents and integration, but do not prove npm availability before publication.
-
-The official-modules repository is currently private. Anonymous catalog downloads require it to become public; keeping it private requires an authenticated distribution path. Repository visibility is unchanged by the npm release scripts.
+After npm publication, test a fresh scaffold against npm and install a reviewed module from a configured source with a saved plan. Commit its source configuration, plan, install lock and portable pnpm lockfile, then use `pnpm install --frozen-lockfile` in CI. Local tarball tests prove package contents and integration, but do not prove npm availability before publication.

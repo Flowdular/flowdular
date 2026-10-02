@@ -14,6 +14,19 @@ import {
 	recoverModuleInstall,
 } from './module-install.ts';
 import { ModuleDistributionError } from './module-artifact.ts';
+import {
+	applyModulePlan,
+	createModulePlan,
+	listModulePlans,
+	readModulePlan,
+	removeModulePlan,
+} from './module-plans.ts';
+import {
+	addModuleSource,
+	readModuleSources,
+	removeModuleSource,
+	withModuleSource,
+} from './module-sources.ts';
 import { findModuleFiles } from './module-files.ts';
 import {
 	currentMounts,
@@ -286,7 +299,9 @@ export async function runCommand(
 					'capability list|describe <id>|run <id>',
 					'spec validate [--all]',
 					'blueprint list|validate --all',
-					'module search [query]|info <id>|install <id[@version]> [--apply]|update <id[@version]> [--apply]|recover [--apply] [--registry <local-index>] ',
+					'module source list|add <name> <catalog>|remove <name> [--apply]; add accepts --git-commit <sha> [--catalog-path <path>]',
+					'module search [query]|info <id> [--source <name>]; module plan <id[@version]> --source <name> [--update] [--apply]; module apply <plan-id> [--apply]',
+					'module plan list|show <plan-id>|remove <plan-id> [--apply]; module recover [--apply]',
 					'module list|validate [--locked]|sync [--apply]|enable <id> [--apply]|disable <id> [--apply]|new <id> --spec <path> [--apply]',
 					'web list|mount <module id> <surface id> --path <path> --tenant <id> [--id <mount id>] [--apply]|unmount <mount id> [--apply]',
 					'migration status [--module <id>]|apply --module <id> [--apply]|verify|new <name> --module <id> [--apply]',
@@ -655,13 +670,138 @@ export async function runCommand(
 			throw new Error('Unknown web action. Use list, mount or unmount.');
 		}
 
-		if (group === 'module' && (action === 'search' || action === 'info')) {
-			const source = stringFlag(arguments_, 'source');
-			if (source && source !== 'official')
-				return failure('USAGE_ERROR', 'Only --source official is supported.');
-			const { catalog } = await loadModuleCatalog(
-				stringFlag(arguments_, 'registry'),
+		if (group === 'module' && action === 'source') {
+			const operation = target;
+			const name = arguments_.positionals[3];
+			if (operation === 'list')
+				return success({ sources: await readModuleSources(workspace) });
+			if (operation === 'add' && name) {
+				const location = arguments_.positionals[4];
+				if (!location)
+					return failure(
+						'USAGE_ERROR',
+						'Use module source add <name> <catalog path or URL> [--apply].',
+					);
+				const commit = stringFlag(arguments_, 'git-commit');
+				const report = await addModuleSource(
+					workspace,
+					{
+						name,
+						source: commit
+							? {
+									kind: 'git',
+									location,
+									commit,
+									catalogPath:
+										stringFlag(arguments_, 'catalog-path') ??
+										'registry/index.json',
+								}
+							: { kind: 'catalog', location },
+					},
+					arguments_.flags.has('apply'),
+				);
+				return success(report, {
+					warnings: report.applied
+						? []
+						: ['Dry run only. Pass --apply to save this source.'],
+				});
+			}
+			if (operation === 'remove' && name) {
+				const report = await removeModuleSource(
+					workspace,
+					name,
+					arguments_.flags.has('apply'),
+				);
+				return success(report, {
+					warnings: report.applied
+						? []
+						: ['Dry run only. Pass --apply to remove this source.'],
+				});
+			}
+			return failure(
+				'USAGE_ERROR',
+				'Use module source list, add <name> <location>, or remove <name>.',
 			);
+		}
+		if (group === 'module' && action === 'plan') {
+			if (target === 'list')
+				return success({ plans: await listModulePlans(workspace) });
+			if (target === 'show' && arguments_.positionals[3])
+				return success({
+					plan: await readModulePlan(workspace, arguments_.positionals[3]),
+				});
+			if (target === 'remove' && arguments_.positionals[3])
+				return success(
+					await removeModulePlan(
+						workspace,
+						arguments_.positionals[3],
+						arguments_.flags.has('apply'),
+					),
+				);
+			if (!target)
+				return failure(
+					'USAGE_ERROR',
+					'Use module plan <id[@version]> --source <name> [--apply].',
+				);
+			const sources = await readModuleSources(workspace);
+			const sourceName =
+				stringFlag(arguments_, 'source') ??
+				(sources.length === 1 ? sources[0]!.name : undefined);
+			if (!sourceName)
+				return failure(
+					'MODULE_SOURCE_REQUIRED',
+					'Choose a configured source with --source <name>.',
+				);
+			const plan = await createModulePlan(workspace, {
+				target,
+				sourceName,
+				update: arguments_.flags.has('update'),
+				save: arguments_.flags.has('apply'),
+			});
+			return success(
+				{ plan, saved: arguments_.flags.has('apply') },
+				{
+					warnings: arguments_.flags.has('apply')
+						? []
+						: ['Dry run only. Pass --apply to save this plan for host review.'],
+				},
+			);
+		}
+		if (group === 'module' && action === 'apply') {
+			if (!target)
+				return failure('USAGE_ERROR', 'Use module apply <plan-id> [--apply].');
+			const report = await applyModulePlan(
+				workspace,
+				target,
+				arguments_.flags.has('apply'),
+			);
+			return success(report, {
+				warnings: report.applied
+					? [
+							'Source installed. Run module enable <id> --apply on the host, rebuild, and restart to activate it.',
+						]
+					: ['Dry run only. Pass --apply to install the exact pinned release.'],
+			});
+		}
+		if (group === 'module' && (action === 'search' || action === 'info')) {
+			const sources = await readModuleSources(workspace);
+			const sourceName =
+				stringFlag(arguments_, 'source') ??
+				(sources.length === 1 ? sources[0]!.name : undefined);
+			const named = sources.find((item) => item.name === sourceName);
+			const registry = stringFlag(arguments_, 'registry');
+			if (!registry && !named)
+				return failure(
+					'MODULE_SOURCE_REQUIRED',
+					'Choose a configured source with --source <name>.',
+				);
+			const catalog = registry
+				? (await loadModuleCatalog(registry)).catalog
+				: await withModuleSource(
+						workspace,
+						named!.source,
+						async (source) => source.catalog,
+					);
 			const compatibleOnly = arguments_.flags.has('compatible');
 			const releases = catalog.releases
 				.map((release) => ({
@@ -680,7 +820,7 @@ export async function runCommand(
 			if (action === 'info' && !releases.length)
 				return failure(
 					'MODULE_NOT_FOUND',
-					`No official module ${target ?? ''}.`,
+					`No module ${target ?? ''} in ${sourceName ?? registry}.`,
 				);
 			return success({ platformApi: PLATFORM_API_VERSION, releases });
 		}

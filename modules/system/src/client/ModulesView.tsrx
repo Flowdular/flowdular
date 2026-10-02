@@ -22,6 +22,7 @@ import {
 	type ModuleCatalogEntry,
 } from './api.ts';
 import { FlagsPanel } from './FlagsPanel.tsrx';
+import { ModuleStudioView } from './ModuleStudioView.tsrx';
 import {
 	activationLabel,
 	activationTone,
@@ -41,6 +42,8 @@ export interface ModulesViewProps {
 export function ModulesView(props: ModulesViewProps) @{
 	const client = useMemo(() => createModulesClientState(), []);
 	const [modules] = useValue(client.state.modules);
+	const [studio] = useValue(client.state.studio);
+	const [sandboxAvailable] = useValue(client.state.sandboxAvailable);
 	const [commands] = useValue(client.state.commands);
 	const [status, setStatus] = useValue(client.state.status);
 	const [error, setError] = useValue(client.state.error);
@@ -77,6 +80,11 @@ export function ModulesView(props: ModulesViewProps) @{
 			const catalog = await loadModuleCatalog();
 			client.store.act((transaction) => {
 				transaction.set(client.state.modules, catalog.modules);
+				transaction.set(client.state.studio, catalog.studio);
+				transaction.set(
+					client.state.sandboxAvailable,
+					catalog.sandboxAvailable,
+				);
 				transaction.set(client.state.commands, catalog.commands);
 				transaction.set(client.state.status, 'idle');
 			}, 'system/modules-loaded');
@@ -137,11 +145,14 @@ export function ModulesView(props: ModulesViewProps) @{
 			id={TABS_ID}
 			items={[
 				{ id: 'catalog', label: t('system.tab.catalog') },
+				{ id: 'studio', label: t('system.tab.studio') },
 				{ id: 'flags', label: t('system.tab.flags') },
 			]}
 			active={tab}
 			label={t('system.tab.label')}
-			onChange={(next) => setTab(next === 'flags' ? 'flags' : 'catalog')}
+			onChange={(next) => setTab(
+				next === 'flags' || next === 'studio' ? next : 'catalog',
+			)}
 		/>
 		<div
 			id={TABS_ID + '-panel-' + tab}
@@ -159,6 +170,24 @@ export function ModulesView(props: ModulesViewProps) @{
 						'system.denied.hint',
 					)}</EmptyState>
 				</section>
+			} @else if (tab === 'studio') {
+				<>
+					@if (status === 'error') {
+						<Alert>{error}</Alert>
+					}
+					@if (status === 'loading' && studio.plans.length === 0) {
+						<section class="ui-card">
+							<EmptyState icon="refresh" title={t('system.studio.loading')} />
+						</section>
+					} @else {
+						<ModuleStudioView
+							studio={studio}
+							modules={modules}
+							sandboxAvailable={sandboxAvailable}
+							commands={commands}
+						/>
+					}
+				</>
 			} @else {
 				<>
 					@if (status === 'error') {

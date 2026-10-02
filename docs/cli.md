@@ -200,4 +200,4 @@ drift apart.
 
 ## Official module distribution
 
-`module search`, `module info`, `module install`, `module update`, `module recover`, and `module validate --locked` manage reviewed external source. See [the distribution contract](module-distribution.md) for flags, trust, activation and recovery.
+`module source`, `module search`, `module info`, `module plan`, `module apply`, `module recover`, and `module validate --locked` manage reviewed external source. See [Module Studio](module-distribution.md) for flags, trust, activation and recovery. The older `module install` and `module update` commands remain for explicit registries during migration.
