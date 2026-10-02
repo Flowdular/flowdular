@@ -1,14 +1,12 @@
 import { sandboxDirectory } from './config.ts';
 import { readFile, realpath } from 'node:fs/promises';
-import { dirname, join, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join, sep } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import {
 	RESEARCH_MODULE_ID,
 	assertRecordedAdapters,
 	readSessionAdapters,
 } from './recorded-adapters.ts';
-import type { SandboxSession } from './sessions.ts';
 import { readSpecText } from './spec.ts';
 
 export interface PreviewModuleSource {
@@ -18,12 +16,80 @@ export interface PreviewModuleSource {
 	readonly support: boolean;
 }
 
-export const PREVIEW_SUPPORT_ROOT = resolve(
-	dirname(fileURLToPath(import.meta.url)),
-	'../../../../modules',
-);
+export interface PreviewSessionSource {
+	readonly id: string;
+	readonly modules: readonly {
+		readonly id: string;
+		readonly directory: string;
+	}[];
+}
+
 const IDENTIFIER = /^[a-z][a-z0-9-]*\.core$/;
 export const DOCUMENTS_MODULE_ID = 'documents.core';
+
+/* A generated application keeps its own modules in modules/ and the platform
+   core modules in @flowdular/sdk. The isolated worker receives the SDK root
+   from its parent before its file-read ceiling is applied. */
+export async function previewSdkRoot(
+	workspaceRoot: string,
+): Promise<string | null> {
+	const workerRoot =
+		process.env.FD_INTERNAL_SANDBOX_PREVIEW_WORKER === '1'
+			? process.env.FD_INTERNAL_SANDBOX_SDK_ROOT
+			: undefined;
+	const candidates = workerRoot
+		? [workerRoot]
+		: [
+				join(workspaceRoot, 'platform/node_modules/@flowdular/sdk'),
+				join(workspaceRoot, 'node_modules/@flowdular/sdk'),
+			];
+	for (const candidate of candidates) {
+		let root: string;
+		try {
+			root = await realpath(candidate);
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (code === 'ENOENT' || code === 'ERR_ACCESS_DENIED') continue;
+			throw error;
+		}
+		const metadata = JSON.parse(
+			await readFile(join(root, 'package.json'), 'utf8'),
+		) as {
+			name?: unknown;
+		};
+		if (metadata.name !== '@flowdular/sdk')
+			throw new Error('PREVIEW_SDK_INVALID');
+		return root;
+	}
+	return null;
+}
+
+async function supportPath(
+	directory: string,
+	roots: readonly string[],
+): Promise<string | null> {
+	for (const rootPath of roots) {
+		const root = await realpath(rootPath).catch(
+			(error: NodeJS.ErrnoException) => {
+				if (error.code === 'ENOENT') return null;
+				throw error;
+			},
+		);
+		if (!root) continue;
+		const path = join(rootPath, directory);
+		const physical = await realpath(path).catch(
+			(error: NodeJS.ErrnoException) => {
+				if (error.code === 'ENOENT') return null;
+				throw error;
+			},
+		);
+		if (!physical) continue;
+		if (!physical.startsWith(root + sep))
+			throw new Error('PREVIEW_DEPENDENCY_UNAVAILABLE: ' + directory);
+		return path;
+	}
+	return null;
+}
 
 /* A draft whose spec declares templates previews them through documents.core
    and the same renderer a deployment runs; nothing extra is seeded for it. The
@@ -64,8 +130,8 @@ async function manifest(
  * included in delivery. Only explicitly declared dependencies are composed. */
 export async function resolvePreviewModules(
 	workspaceRoot: string,
-	session: SandboxSession,
-	supportRoot = PREVIEW_SUPPORT_ROOT,
+	session: PreviewSessionSource,
+	supportRoot?: string,
 ): Promise<readonly PreviewModuleSource[]> {
 	const draftRoot = join(
 		sandboxDirectory(workspaceRoot),
@@ -74,6 +140,13 @@ export async function resolvePreviewModules(
 		'workspace/modules',
 	);
 	const drafts = new Map(session.modules.map((module) => [module.id, module]));
+	const sdkRoot = supportRoot ? null : await previewSdkRoot(workspaceRoot);
+	const supportRoots = supportRoot
+		? [supportRoot]
+		: [
+				join(workspaceRoot, 'modules'),
+				...(sdkRoot ? [join(sdkRoot, 'modules')] : []),
+			];
 	const visiting = new Set<string>();
 	const visited = new Set<string>();
 	const ordered: PreviewModuleSource[] = [];
@@ -92,13 +165,8 @@ export async function resolvePreviewModules(
 			throw new Error('PREVIEW_MODULE_DIRECTORY_INVALID');
 		const path = draft
 			? join(draftRoot, directory)
-			: join(supportRoot, directory);
-		if (!draft) {
-			const physical = await realpath(path).catch(() => null);
-			const root = await realpath(supportRoot);
-			if (!physical?.startsWith(root + sep))
-				throw new Error('PREVIEW_DEPENDENCY_UNAVAILABLE: ' + id);
-		}
+			: await supportPath(directory, supportRoots);
+		if (!path) throw new Error('PREVIEW_DEPENDENCY_UNAVAILABLE: ' + id);
 		const definition = await manifest(path, Boolean(draft));
 		if (definition.id && definition.id !== id)
 			throw new Error('PREVIEW_DEPENDENCY_ID_MISMATCH: ' + id);

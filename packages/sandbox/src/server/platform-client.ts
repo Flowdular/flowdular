@@ -13,6 +13,8 @@ export interface PlatformPrincipal {
 
 export interface PlatformAuthority {
 	readonly principal: PlatformPrincipal;
+	/** Older platforms omit this; publication treats absence as denied. */
+	readonly writeAllowed?: boolean;
 	readonly authority:
 		| {
 				readonly granted: true;

@@ -1,6 +1,13 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+	mkdir,
+	mkdtemp,
+	readFile,
+	readdir,
+	rm,
+	writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
 	INBOX_FILENAME,
@@ -141,6 +148,60 @@ describe('sandbox credential provisioning', () => {
 		await rm(inboxPath(workspace));
 		await provisionSandboxCredential(input);
 		expect(harness.issued).toEqual(['token']);
+	});
+
+	it('retries after the credential inbox cannot be written', async () => {
+		const workspace = await root();
+		const target = inboxPath(workspace);
+		const marker = join(dirname(target), 'provisioned.marker');
+		let issueCount = 0;
+		const harness = auth({
+			issueApiToken: async () => {
+				issueCount += 1;
+				if (issueCount === 1) await mkdir(target, { recursive: true });
+				return { token: `fd_test_credential_${issueCount}` };
+			},
+		});
+		const input = {
+			workspaceRoot: workspace,
+			auth: harness.auth,
+			listGrants: async () => [],
+			grant: async () => ({ id: 'g', capabilities: [], grantedAt: 1 }),
+		};
+		await expect(provisionSandboxCredential(input)).rejects.toThrow();
+		await expect(readFile(marker, 'utf8')).rejects.toMatchObject({
+			code: 'ENOENT',
+		});
+		expect(
+			(await readdir(dirname(target))).filter((name) => name.endsWith('.tmp')),
+		).toEqual([]);
+		await rm(target, { recursive: true });
+
+		expect(await provisionSandboxCredential(input)).toBe(target);
+		const written = JSON.parse(await readFile(target, 'utf8')) as {
+			token: string;
+		};
+		expect(written.token).toBe('fd_test_credential_2');
+		expect(issueCount).toBe(2);
+		expect(await readFile(marker, 'utf8')).toBe('provisioned\n');
+	});
+
+	it('recognizes a complete inbox left before its marker was recorded', async () => {
+		const workspace = await root();
+		const harness = auth();
+		const input = {
+			workspaceRoot: workspace,
+			auth: harness.auth,
+			listGrants: async () => [],
+			grant: async () => ({ id: 'g', capabilities: [], grantedAt: 1 }),
+		};
+		await provisionSandboxCredential(input);
+		const marker = join(dirname(inboxPath(workspace)), 'provisioned.marker');
+		await rm(marker);
+
+		expect(await provisionSandboxCredential(input)).toBe(inboxPath(workspace));
+		expect(harness.issued).toEqual(['token']);
+		expect(await readFile(marker, 'utf8')).toBe('collected\n');
 	});
 
 	it('refuses rather than issuing a token with no sandbox scope', async () => {

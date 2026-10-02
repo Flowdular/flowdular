@@ -1,6 +1,6 @@
 {
 	"name": "@flowdular/sandbox",
-	"version": "0.5.0",
+	"version": "0.5.1",
 	"description": "The Flowdular sandbox: chat a change, build it behind the gates, preview it in the real application, deliver it as code.",
 	"license": "MIT",
 	"homepage": "https://github.com/flowdular/flowdular/tree/main/packages/sandbox#readme",
@@ -66,6 +66,7 @@
 		"@flowdular/server": "workspace:*",
 		"@flowdular/storage": "workspace:*",
 		"@flowdular/ui": "workspace:*",
+		"create-flowdular": "workspace:0.5.1",
 		"@octanejs/seo": "0.0.38",
 		"@octanejs/vite-plugin": "0.1.51",
 		"octane": "0.1.51",

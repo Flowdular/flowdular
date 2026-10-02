@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { access, mkdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { flowdularStateDirectory } from '@flowdular/kernel/runtime-config';
 import { SANDBOX_GRANT_CAPABILITIES } from '../acl/permissions.ts';
@@ -100,6 +100,24 @@ function markerPath(workspaceRoot: string): string {
 	return join(sandboxDirectory(workspaceRoot), MARKER_FILENAME);
 }
 
+async function publishInbox(target: string, contents: string): Promise<void> {
+	/* A completed inbox must appear at its final path all at once. If writing
+	   fails or the process exits before rename, the marker remains absent and a
+	   later boot can issue a fresh credential. */
+	const temporary = `${target}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
+	try {
+		await writeFile(temporary, contents, {
+			encoding: 'utf8',
+			mode: CREDENTIAL_MODE,
+			flag: 'wx',
+		});
+		await rename(temporary, target);
+	} catch (error) {
+		await rm(temporary, { force: true }).catch(() => undefined);
+		throw error;
+	}
+}
+
 /* Why this lives here rather than in a command.
 
    The embedded database is single-process, so a second process cannot open it
@@ -184,8 +202,7 @@ export async function provisionSandboxCredential(
 		(grant) =>
 			typeof grant === 'object' &&
 			grant !== null &&
-			(account as { accountId: string }).accountId ===
-				(grant as { accountId?: string }).accountId,
+			accountId === (grant as { accountId?: string }).accountId,
 	);
 	if (!existing) {
 		await options.grant({
@@ -213,11 +230,7 @@ export async function provisionSandboxCredential(
 
 	const target = inboxPath(options.workspaceRoot);
 	await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-	await writeFile(markerPath(options.workspaceRoot), 'provisioned\n', {
-		encoding: 'utf8',
-		mode: CREDENTIAL_MODE,
-	});
-	await writeFile(
+	await publishInbox(
 		target,
 		`${JSON.stringify(
 			{
@@ -230,8 +243,11 @@ export async function provisionSandboxCredential(
 			null,
 			'\t',
 		)}\n`,
-		{ encoding: 'utf8', mode: CREDENTIAL_MODE },
 	);
+	await writeFile(markerPath(options.workspaceRoot), 'provisioned\n', {
+		encoding: 'utf8',
+		mode: CREDENTIAL_MODE,
+	});
 	log('issued a sandbox-scoped API token');
 	return target;
 }

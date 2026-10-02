@@ -21,7 +21,7 @@ export interface CodexDriverOptions {
 	readonly timeoutMs?: number;
 }
 
-const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_TIMEOUT_MS = 20 * 60 * 1000;
 
 interface CodexItem {
 	readonly id?: string;

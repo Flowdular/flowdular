@@ -1,12 +1,12 @@
 {
 	"name": "create-flowdular",
-	"version": "0.5.0",
+	"version": "0.5.1",
 	"type": "module",
 	"description": "Scaffold a Flowdular application: the platform, one example module and the secrets a fresh install needs.",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/flowdular/flowdular.git",
+		"url": "git+https://github.com/Flowdular/flowdular.git",
 		"directory": "packages/create-flowdular"
 	},
 	"homepage": "https://flowdular.com",

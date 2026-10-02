@@ -733,6 +733,31 @@ describe('delivery', () => {
 		await expect(stat(join(root, 'modules/profile'))).rejects.toThrow();
 	});
 
+	it('rechecks eject authority after gates and before copying files', async () => {
+		const { root, session } = await sessionWithModule('new-module');
+		const target = createLocalDeliveryTarget();
+		const { calls, commands } = recording();
+		const context = contextFor(root, session, commands);
+		const plan = await target.plan(context);
+		let checks = 0;
+		await expect(
+			target.apply(
+				{
+					...context,
+					assertCanEject: async () => {
+						checks += 1;
+						throw new Error('eject grant revoked');
+					},
+				},
+				plan,
+				() => undefined,
+			),
+		).rejects.toThrow('eject grant revoked');
+		expect(checks).toBe(1);
+		expect(calls).toEqual([]);
+		await expect(stat(join(root, 'modules/profile'))).rejects.toThrow();
+	});
+
 	it('copies, removes, enables, and verifies in order when everything passes', async () => {
 		const { root, session } = await sessionWithModule('edit-module');
 		const target = createLocalDeliveryTarget();

@@ -180,6 +180,32 @@ describe('official module contribution', () => {
 		).rejects.toThrow();
 		expect(fx.calls).toHaveLength(0);
 	});
+	it('rechecks eject authority before publishing the registry branch', async () => {
+		const fx = await fixture();
+		const plan = await target.plan(fx.context);
+		let checks = 0;
+		await expect(
+			target.apply(
+				{
+					...fx.context,
+					assertCanEject: async () => {
+						checks += 1;
+						if (checks === 2) throw new Error('eject grant revoked');
+					},
+				},
+				plan,
+				() => {},
+			),
+		).rejects.toThrow('eject grant revoked');
+		expect(checks).toBe(2);
+		expect(
+			fx.calls.some(
+				(call) =>
+					(call.command === 'git' && call.args[0] === 'push') ||
+					(call.command === 'gh' && call.args[0] === 'pr'),
+			),
+		).toBe(false);
+	});
 	it.each([
 		{ collision: true },
 		{ failVerify: true },

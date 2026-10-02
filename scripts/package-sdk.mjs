@@ -164,6 +164,15 @@ try {
 	// The coding application is an independent SDK consumer, not an SDK member.
 	const sandboxRoot = join(staging, 'sandbox');
 	const sandbox = await json(join(root, 'packages/sandbox/package.json'));
+	if (sandbox.version !== generator.version)
+		throw new Error('Sandbox and create-flowdular versions must match.');
+	if (
+		sandbox.dependencies['create-flowdular'] !==
+		`workspace:${generator.version}`
+	)
+		throw new Error(
+			'Sandbox must depend on its exact workspace generator version.',
+		);
 	await copyMember(join(root, 'packages/sandbox'), sandboxRoot, sandbox);
 	// Only the sandbox consumes coding-agent. Keep its drivers with the app.
 	const codingAgent = await json(
@@ -182,7 +191,12 @@ try {
 	const sandboxDependencies = {};
 	for (const dependencies of [codingAgent.dependencies, sandbox.dependencies]) {
 		for (const [name, version] of Object.entries(dependencies)) {
-			if (members[name] || name === '@flowdular/coding-agent') continue;
+			if (
+				members[name] ||
+				name === '@flowdular/coding-agent' ||
+				name === 'create-flowdular'
+			)
+				continue;
 			if (name.startsWith('@flowdular/') || version.startsWith('workspace:'))
 				throw new Error(`Unbundled sandbox dependency: ${name}`);
 			if (sandboxDependencies[name] && sandboxDependencies[name] !== version)
@@ -192,27 +206,16 @@ try {
 	}
 	sandbox.dependencies = sandboxDependencies;
 	sandbox.dependencies['@flowdular/sdk'] = sdk.version;
+	sandbox.dependencies['create-flowdular'] = generator.version;
 	sandbox.publishConfig = { access: 'public' };
 	delete sandbox.private;
 	delete sandbox.devDependencies;
 	delete sandbox.scripts;
 	await save(join(sandboxRoot, 'package.json'), sandbox);
 	await cp(join(root, 'LICENSE'), join(sandboxRoot, 'LICENSE'));
-	// The executable must run in plain Node before Vite can transform SDK source.
-	run('pnpm', [
-		'--filter',
-		'@flowdular/cli',
-		'exec',
-		'esbuild',
-		'../sandbox/bin/flowdular-sandbox.mjs',
-		'--bundle',
-		'--platform=node',
-		'--format=esm',
-		'--external:vite',
-		'--external:yaml',
-		'--external:./register-types.mjs',
-		'--outfile=' + join(sandboxRoot, 'bin/flowdular-sandbox.mjs'),
-	]);
+	// The launcher registers the TypeScript loader before dynamically importing
+	// app and SDK source. Keep the rewritten executable directly: bundling the
+	// coding agent pulls CommonJS requires into ESM and breaks plain Node.
 	const records = [];
 	for (const directory of [sdkRoot, cliRoot, generatorRoot, sandboxRoot]) {
 		const pkg = await json(join(directory, 'package.json'));

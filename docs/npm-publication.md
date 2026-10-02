@@ -1,7 +1,7 @@
 # npm publication
 
 Publish exactly four packages. The SDK, the CLI, the generator and the sandbox are at
-`0.5.0`; the sandbox depends on SDK `0.5.0`. The root
+`0.5.1`; the sandbox depends on SDK `0.5.1`. The root
 `package.json` carries the SDK version, and `packages/cli/tests/sdk.test.ts` fails when the
 CLI's `SDK_VERSION` constant drifts from `packages/sdk/package.json`.
 
@@ -14,7 +14,15 @@ CLI's `SDK_VERSION` constant drifts from `packages/sdk/package.json`.
 
 `@flowdular/sdk/ui` and `@flowdular/sdk/ui/styles` are SDK exports, not separate npm packages. The internal workspace packages are private and are assembled into the SDK during release. Business modules such as expenses, parties and catalog are installed as source from `Flowdular/official-modules`.
 
-From the core repository:
+The `Platform release` workflow publishes these four packages to npm after a
+non-draft GitHub Release succeeds. Configure each package's npm trusted
+publisher for repository `Flowdular/flowdular` and workflow filename
+`platform-release.yml`. Select **Allow npm publish**, not stage-only access,
+for all four packages before running a release. The workflow uses GitHub OIDC
+and needs no npm token.
+See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).
+
+For a local package check or manual recovery, run from the core repository:
 
 ```sh
 pnpm release:pack
@@ -22,13 +30,15 @@ pnpm release:smoke
 pnpm release:publish
 ```
 
-`release-artifacts/sdk/sdk.json` lists only these four tarballs, their versions and SHA-256 digests. The publication command previews and verifies this exact set. After authenticating npm with permission to publish the names above, publish the verified artifacts:
+`release-artifacts/sdk/sdk.json` lists only these four tarballs, their versions and SHA-256 digests. The publication command previews and verifies this exact set. If the automated npm job failed, download and verify the signed GitHub Release assets, authenticate npm with permission to publish the names above, then copy the downloaded `sdk.json` and four `.tgz` files into `release-artifacts/sdk`. Do not rebuild the tarballs during recovery. Publish those exact assets:
 
 ```sh
+mkdir -p release-artifacts/sdk
+cp /path/to/verified-release/sdk.json /path/to/verified-release/*.tgz release-artifacts/sdk/
 pnpm release:publish --apply
 ```
 
-Publish SDK first, then CLI, generator and sandbox. The script uses that order, skips an identical already-published version and refuses to overwrite different bytes. Nothing is published by packing, smoke testing or previewing. Do not publish the obsolete individual workspace tarballs from earlier local packaging experiments.
+Publish SDK first, then CLI, generator and sandbox. The script uses that order, skips an identical already-published version and refuses to overwrite different bytes. Packing, smoke testing and previewing publish nothing. Do not publish the obsolete individual workspace tarballs from earlier local packaging experiments.
 
 The SDK contains no coding sandbox application, coding-agent drivers, launcher or `sdk/sandbox` export.
 The standalone sandbox imports SDK surfaces and declares an exact compatible SDK

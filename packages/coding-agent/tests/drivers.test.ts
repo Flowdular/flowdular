@@ -387,6 +387,47 @@ else console.log(JSON.stringify({type:'result',subtype:'success',session_id:'res
 });
 
 describe('codex driver', () => {
+	it.each([
+		['default', undefined, undefined, 20 * 60 * 1000],
+		['driver override', 25 * 60 * 1000, undefined, 25 * 60 * 1000],
+		['request override', 25 * 60 * 1000, 15 * 60 * 1000, 15 * 60 * 1000],
+	] as const)(
+		'uses the %s turn budget',
+		async (_label, driverTimeout, requestTimeout, expected) => {
+			const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-codex-'));
+			const command = await replayBinary([
+				{ type: 'thread.started', thread_id: 'thread-timeout' },
+				{ type: 'turn.started' },
+				{ type: 'turn.completed', usage: {} },
+			]);
+			const timeout = vi.spyOn(global, 'setTimeout');
+			try {
+				const driver = createCodexDriver({
+					command,
+					...(driverTimeout === undefined ? {} : { timeoutMs: driverTimeout }),
+				});
+				const events: CodingAgentEvent[] = [];
+				for await (const event of driver.run({
+					workspacePath,
+					role: 'backend-engineer',
+					systemInstruction: 'contract',
+					prompt: 'go',
+					...(requestTimeout === undefined
+						? {}
+						: { timeoutMs: requestTimeout }),
+				})) {
+					events.push(event);
+				}
+				expect(events.at(-1)).toMatchObject({ finishReason: 'stop' });
+				expect(timeout.mock.calls.map((call) => call[1])).toContain(expected);
+			} finally {
+				timeout.mockRestore();
+				await rm(workspacePath, { recursive: true, force: true });
+				await rm(join(command, '..'), { recursive: true, force: true });
+			}
+		},
+	);
+
 	it('maps the exec JSONL stream to sandbox events', async () => {
 		const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-codex-'));
 		const command = await replayBinary([

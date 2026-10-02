@@ -115,6 +115,9 @@ export interface DeliveryContext {
 	readonly session: SandboxSession;
 	/* Capabilities of the acting principal, never of the stored connection. */
 	readonly capabilities: readonly string[];
+	/* The HTTP boundary supplies a live platform check before delivery writes
+	   or publishes. Direct, trusted callers may omit it. */
+	readonly assertCanEject?: () => Promise<void>;
 	readonly platformUrl: string;
 	readonly build?: boolean;
 	/* The sandbox.delivery block of flowdular.json; defaults when absent. */

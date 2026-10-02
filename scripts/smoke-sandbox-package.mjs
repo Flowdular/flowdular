@@ -19,6 +19,11 @@ const metadata = JSON.parse(
 );
 assert.equal(metadata.name, '@flowdular/sandbox');
 assert.equal(typeof metadata.dependencies['@flowdular/sdk'], 'string');
+assert.equal(
+	metadata.dependencies['create-flowdular'],
+	metadata.version,
+	'Packed sandbox must carry the matching generator as a runtime dependency',
+);
 assert.deepEqual(
 	Object.keys(metadata.dependencies).filter((name) =>
 		name.startsWith('@flowdular/'),
@@ -27,12 +32,86 @@ assert.deepEqual(
 );
 assert.ok(!JSON.stringify(metadata).includes('workspace:'));
 const entry = join(packageRoot, metadata.bin['flowdular-sandbox']);
+
+// Exercise the packed generator through the sandbox's real resolver. The SDK
+// smoke above installs the generated app from packed artifacts; here pnpm is
+// stubbed so creation also runs from an otherwise empty directory offline.
+const freshParent = await mkdtemp(join(tmpdir(), 'sandbox-new-app-'));
+try {
+	const target = join(freshParent, 'flowdular');
+	const bootstrap = spawnSync(
+		process.execPath,
+		[
+			'--import',
+			join(packageRoot, 'bin/register-types.mjs'),
+			'--input-type=module',
+			'-e',
+			`
+import assert from 'node:assert/strict';
+import {spawnSync} from 'node:child_process';
+import {bootstrapApplication} from ${JSON.stringify(pathToFileURL(join(packageRoot, 'src/server/bootstrap.ts')).href)};
+const result = await bootstrapApplication({target: ${JSON.stringify(target)}, version: ${JSON.stringify(metadata.version)}}, {
+  execute: async (command, args, cwd, env) => {
+    if (command === 'pnpm') return {code: 0, output: ''};
+    const child = spawnSync(command, args, {cwd, env: env ?? process.env, encoding: 'utf8'});
+    return {code: child.status, output: child.stdout + child.stderr};
+  },
+});
+assert.equal(result.root, ${JSON.stringify(target)});
+`,
+		],
+		{ cwd: freshParent, encoding: 'utf8', timeout: 30000 },
+	);
+	assert.equal(bootstrap.status, 0, bootstrap.stdout + bootstrap.stderr);
+	const generated = JSON.parse(await readFile(join(target, 'flowdular.json')));
+	assert.equal(generated.schemaVersion, 1);
+	const gitAuthor = spawnSync('git', ['log', '-1', '--format=%an <%ae>'], {
+		cwd: target,
+		encoding: 'utf8',
+	});
+	assert.equal(gitAuthor.status, 0, gitAuthor.stderr);
+	assert.equal(
+		gitAuthor.stdout.trim(),
+		'Flowdular Starter <starter@flowdular.local>',
+	);
+	const committedSecrets = spawnSync('git', ['ls-files', '.env'], {
+		cwd: target,
+		encoding: 'utf8',
+	});
+	assert.equal(
+		committedSecrets.stdout.trim(),
+		'',
+		'Local secrets must not be committed',
+	);
+	console.log(
+		'Packed sandbox creates a standalone app and initial local commit.',
+	);
+} finally {
+	await rm(freshParent, { recursive: true, force: true });
+}
+
 const help = spawnSync(process.execPath, [entry, '--help'], {
 	cwd: consumer,
 	encoding: 'utf8',
 });
 assert.equal(help.status, 0, help.stderr);
 assert.match(help.stdout, /--workspace/);
+assert.match(help.stdout, /--connect <git-url>/);
+const unsafeConnect = spawnSync(
+	process.execPath,
+	[
+		entry,
+		'--connect=https://user:secret@example.test/platform.git',
+		'--no-platform',
+	],
+	{ cwd: runner, encoding: 'utf8', timeout: 10000 },
+);
+assert.notEqual(unsafeConnect.status, 0);
+assert.doesNotMatch(
+	unsafeConnect.stdout + unsafeConnect.stderr,
+	/secret/,
+	'The launcher must reject a credential in a Git URL without printing it',
+);
 // npm-exec invokes a symlink in node_modules/.bin, not the physical entry file.
 const binDirectory = await mkdtemp(join(tmpdir(), 'sandbox-bin-'));
 try {

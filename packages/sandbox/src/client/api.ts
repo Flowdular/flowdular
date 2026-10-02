@@ -7,6 +7,11 @@ import type { EjectTarget, GitDeliveryPlan } from '../server/delivery/types.ts';
 import type { FileDiff } from '../server/diff.ts';
 import type { GateResult } from '../server/gates.ts';
 import type {
+	RepositorySetupMode,
+	RepositorySetupOutcome,
+	RepositorySetupPlan,
+} from '../server/repository-setup.ts';
+import type {
 	AiEnvironmentSummary,
 	SandboxConnection,
 } from '../server/runtime.ts';
@@ -19,6 +24,11 @@ import type {
 import type { ModuleSpecReview } from '../server/spec.ts';
 
 export type { ModuleSpecReview, SessionAttachment };
+export type {
+	RepositorySetupMode,
+	RepositorySetupOutcome,
+	RepositorySetupPlan,
+};
 
 export interface WorkspaceModuleSummary {
 	readonly id: string;
@@ -283,6 +293,37 @@ export function saveConfiguration(patch: ConfigurationPatch): Promise<{
 	return post('/sandbox/api/config', patch);
 }
 
+export function planApplicationRepository(
+	mode: RepositorySetupMode,
+	repository: string,
+): Promise<{
+	readonly plan: RepositorySetupPlan;
+	readonly token: string;
+}> {
+	return post('/sandbox/api/repository/plan', { mode, repository });
+}
+
+export function applyApplicationRepository(token: string): Promise<{
+	readonly outcome: RepositorySetupOutcome;
+	readonly configuration: SafeSandboxConfiguration;
+}> {
+	return post('/sandbox/api/repository/apply', { token });
+}
+
+export function loadPendingApplicationRepository(): Promise<{
+	readonly pending: RepositorySetupPlan | null;
+}> {
+	return request('/sandbox/api/repository/pending', {
+		headers: { accept: 'application/json' },
+	});
+}
+
+export function cancelPendingApplicationRepository(
+	repository: string,
+): Promise<{ readonly cancelled: true }> {
+	return post('/sandbox/api/repository/cancel', { repository });
+}
+
 /* Self-hosted sign-in: the token opens a browser session cookie. */
 export function connectBrowser(input: {
 	readonly token: string;
@@ -311,6 +352,8 @@ export function createSandboxSession(
 ): Promise<{
 	readonly session: SandboxSession;
 	readonly plan: WorkPlanView;
+	readonly ready: boolean;
+	readonly installError: string | null;
 }> {
 	return post('/sandbox/api/sessions', {
 		brief,

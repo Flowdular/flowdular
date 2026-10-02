@@ -3,11 +3,13 @@ import {
 	mkdtemp,
 	readFile,
 	realpath,
+	symlink,
 	utimes,
 	writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { createIsolatedPreviewRuntime } from '../src/server/preview-worker-manager.ts';
 import {
@@ -15,6 +17,15 @@ import {
 	processPreviewRuntime,
 } from '../src/server/preview-runtime.ts';
 import { createSession, sessionPaths } from '../src/server/sessions.ts';
+
+const SOURCE_MODULES = resolve(
+	dirname(fileURLToPath(import.meta.url)),
+	'../../../modules',
+);
+
+async function linkSupportModules(workspaceRoot: string): Promise<void> {
+	await symlink(SOURCE_MODULES, join(workspaceRoot, 'modules'), 'dir');
+}
 
 async function previewSession(platformSource: string) {
 	const root = await mkdtemp(join(tmpdir(), 'flowdular-preview-worker-'));
@@ -110,10 +121,98 @@ export function createServerComposition(context) {
 			runtime.dispose();
 		}
 	}, 60_000);
+	it('composes support code from the selected external workspace', async () => {
+		const { root, session, modulePath } = await previewSession(
+			'export function createServerComposition() { return { routes: [] }; }\n',
+		);
+		const supportPath = join(root, 'modules', 'helper');
+		await mkdir(join(supportPath, 'src'), { recursive: true });
+		await writeFile(
+			join(modulePath, 'module.json'),
+			JSON.stringify({
+				id: 'preview.core',
+				dependencies: [{ id: 'helper.core' }],
+			}),
+		);
+		await writeFile(
+			join(supportPath, 'module.json'),
+			JSON.stringify({ id: 'helper.core' }),
+		);
+		await writeFile(
+			join(supportPath, 'src/platform.ts'),
+			'export function createServerComposition() { return { routes: [] }; }\n',
+		);
+		await writeFile(
+			join(supportPath, 'src/index.ts'),
+			'export const permissions: readonly string[] = [];\n',
+		);
+		const runtime = createIsolatedPreviewRuntime(root);
+		try {
+			const composition = await runtime.compose(session);
+			expect(composition.error).toBeNull();
+			expect(
+				composition.modules.map((module) => [module.id, module.support]),
+			).toEqual([
+				['helper.core', true],
+				['preview.core', false],
+			]);
+		} finally {
+			runtime.dispose();
+		}
+	}, 60_000);
+	it('composes a core module from the generated app SDK', async () => {
+		const { root, session, modulePath } = await previewSession(
+			'export function createServerComposition() { return { routes: [] }; }\n',
+		);
+		await writeFile(
+			join(modulePath, 'module.json'),
+			JSON.stringify({
+				id: 'preview.core',
+				dependencies: [{ id: 'system.core' }],
+			}),
+		);
+		const sdkRoot = join(root, 'platform/node_modules/@flowdular/sdk');
+		const supportPath = join(sdkRoot, 'modules/system');
+		await mkdir(join(supportPath, 'src'), { recursive: true });
+		await writeFile(join(root, 'platform/package.json'), '{}');
+		await writeFile(
+			join(sdkRoot, 'package.json'),
+			JSON.stringify({
+				name: '@flowdular/sdk',
+				exports: { './package.json': './package.json' },
+			}),
+		);
+		await writeFile(
+			join(supportPath, 'module.json'),
+			JSON.stringify({ id: 'system.core' }),
+		);
+		await writeFile(
+			join(supportPath, 'src/platform.ts'),
+			'export function createServerComposition() { return { routes: [] }; }\n',
+		);
+		await writeFile(
+			join(supportPath, 'src/index.ts'),
+			'export const permissions: readonly string[] = [];\n',
+		);
+		const runtime = createIsolatedPreviewRuntime(root);
+		try {
+			const composition = await runtime.compose(session);
+			expect(composition.error).toBeNull();
+			expect(
+				composition.modules.map((module) => [module.id, module.support]),
+			).toEqual([
+				['system.core', true],
+				['preview.core', false],
+			]);
+		} finally {
+			runtime.dispose();
+		}
+	}, 60_000);
 	it('composes declared agent and workflow dependencies inside the session', async () => {
 		const { root, session, modulePath } = await previewSession(
 			'export function createServerComposition() { return { routes: [] }; }\n',
 		);
+		await linkSupportModules(root);
 		await writeFile(
 			join(modulePath, 'module.json'),
 			JSON.stringify({
@@ -340,6 +439,7 @@ export function createServerComposition(context) {
   };
 }
 `);
+		await linkSupportModules(root);
 		await mkdir(join(modulePath, 'spec'), { recursive: true });
 		await writeFile(
 			join(modulePath, 'spec', 'module.yaml'),

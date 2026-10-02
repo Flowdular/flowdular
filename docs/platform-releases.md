@@ -2,7 +2,8 @@
 
 Run **Actions > Platform release > Run workflow** on **main**. This manual action
 creates a GitHub Release with signed artifacts and a complete Git changelog.
-It does not publish npm packages or container images.
+For a published, non-draft release, the final job publishes the same verified
+SDK, CLI, generator and sandbox tarballs to npm. Container images remain separate.
 
 ## Prepare a version
 
@@ -11,10 +12,9 @@ Commit the intended stable `X.Y.Z` version before running the workflow. The root
 part of `pnpm verify`, lists every other place that carries it, the scaffold's
 SDK pin included: a generated application installs that pin, so leaving it
 behind ships a template whose composition imports exports the SDK it pulls does
-not have. Other public packages may retain
-their own committed stable versions; each tarball must match its manifest. The public
-package set comes from `scripts/sdk-packages.json`, including the standalone
-sandbox when present. Version bumps are not performed by the release action.
+not have. All four public packages must carry the same committed stable version;
+`release-versions:check` enforces it. The public package set comes from
+`scripts/sdk-packages.json`. Version bumps are not performed by the release action.
 
 Enter the version without `v`. Leave `previous_tag` empty to select the newest
 older stable tag reachable from the selected commit. For the first release, all
@@ -43,9 +43,20 @@ The release contains:
 - `SHA256SUMS` and its `SHA256SUMS.sigstore.json` signature bundle.
 
 The build job has read access. A separate signing job obtains a short-lived GitHub
-OIDC identity. Only the final publication job has repository write access; it
+OIDC identity. Only the GitHub publication job has repository write access; it
 installs no project dependencies and verifies the signature and artifact hashes
 again before creating a tag.
+
+The npm job runs only after the GitHub Release is published. It downloads the
+signed artifacts, verifies their signature and hashes again, and publishes the
+four tarballs in dependency order. Each package must list this repository's
+`platform-release.yml` as an npm trusted publisher, with **Allow npm publish**
+selected. Enter `platform-release.yml` as the workflow filename in npm, not its
+full repository path. The job uses npm's GitHub OIDC identity, not a long-lived
+npm token. Configure trusted publishing for all four packages before the next
+release; a missing trust relationship leaves the
+GitHub Release intact and fails the npm job. Rerun that failed job after fixing
+the npm configuration. Drafts and dry runs do not publish to npm.
 
 ## What is signed
 
@@ -79,5 +90,6 @@ Concurrent runs for the same version are serialized; the later run fails once th
 tag exists.
 
 Publishing with `GITHUB_TOKEN` does not trigger other tag-based workflows. Run the
-container workflow separately when a container release is needed. npm publication
-also remains a separate maintainer action.
+container workflow separately when a container release is needed. If the npm job
+fails, `pnpm release:publish --apply` remains a manual recovery path for the
+signed tarballs; never rebuild or move an existing published tag.

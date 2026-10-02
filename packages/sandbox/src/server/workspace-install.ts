@@ -1,9 +1,16 @@
-import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { access, cp, readFile, readdir, writeFile } from 'node:fs/promises';
+import {
+	access,
+	cp,
+	readFile,
+	readdir,
+	realpath,
+	writeFile,
+} from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import type { SessionModule } from './sessions.ts';
+import { runBoundedProcess } from './process-command.ts';
 import { parseDocument } from 'yaml';
 
 export interface InstallResult {
@@ -35,6 +42,34 @@ async function packageName(directory: string): Promise<string | null> {
 	} catch {
 		return null;
 	}
+}
+
+async function installedCli(
+	workspaceRoot: string,
+): Promise<{ name: string; version: string; root: string } | null> {
+	for (const directory of [
+		join(workspaceRoot, 'node_modules/flowdular'),
+		join(workspaceRoot, 'platform/node_modules/flowdular'),
+		join(workspaceRoot, 'packages/cli'),
+	]) {
+		try {
+			const root = await realpath(directory);
+			const manifest = JSON.parse(
+				await readFile(join(root, 'package.json'), 'utf8'),
+			) as { name?: unknown; version?: unknown; bin?: { flowdular?: unknown } };
+			if (
+				(manifest.name === 'flowdular' || manifest.name === '@flowdular/cli') &&
+				typeof manifest.version === 'string' &&
+				typeof manifest.bin?.flowdular === 'string' &&
+				(await exists(join(root, manifest.bin.flowdular)))
+			) {
+				return { name: manifest.name, version: manifest.version, root };
+			}
+		} catch {
+			/* This workspace may not have installed or built its CLI yet. */
+		}
+	}
+	return null;
 }
 
 /* A session workspace is a pnpm workspace of its own: the draft modules are its
@@ -93,6 +128,11 @@ export async function materializeSessionWorkspace(options: {
 		)
 			throw error;
 	}
+	// Give a fresh session the same CLI binary as its host application. The
+	// generated app installs it as flowdular; the source workspace owns the
+	// equivalent @flowdular/cli package. Linking avoids registry access.
+	const cli = await installedCli(options.workspaceRoot);
+	if (cli) overrides[cli.name] = `link:${cli.root}`;
 	let host: Record<string, unknown> = {};
 	try {
 		host = JSON.parse(
@@ -106,9 +146,10 @@ export async function materializeSessionWorkspace(options: {
 		`${JSON.stringify(
 			{
 				name: 'flowdular-session',
-				...(sdkVersion
-					? { dependencies: { '@flowdular/sdk': sdkVersion } }
-					: {}),
+				dependencies: {
+					...(sdkVersion ? { '@flowdular/sdk': sdkVersion } : {}),
+					...(cli ? { [cli.name]: cli.version } : {}),
+				},
 				private: true,
 				type: 'module',
 				...(typeof host.packageManager === 'string'
@@ -172,38 +213,30 @@ async function dependencySignature(
 	return hash.digest('hex');
 }
 
-function runPnpm(
+export async function runPnpm(
 	cwd: string,
 	args: readonly string[],
+	options: {
+		readonly timeoutMs?: number;
+		readonly environment?: NodeJS.ProcessEnv;
+	} = {},
 ): Promise<{ code: number | null; output: string }> {
-	return new Promise((resolvePromise) => {
-		const child = spawn('pnpm', [...args], {
-			cwd,
-			env: { ...process.env, FORCE_COLOR: '0' },
-			stdio: ['ignore', 'pipe', 'pipe'],
-		});
-		let output = '';
-		const append = (chunk: string) => {
-			output = (output + chunk).slice(-OUTPUT_LIMIT);
-		};
-		child.stdout.setEncoding('utf8');
-		child.stderr.setEncoding('utf8');
-		child.stdout.on('data', append);
-		child.stderr.on('data', append);
-		const timer = setTimeout(() => {
-			append('\nThe install exceeded its time budget and was stopped.');
-			child.kill('SIGKILL');
-		}, INSTALL_TIMEOUT_MS);
-		timer.unref();
-		child.on('error', (error) => {
-			clearTimeout(timer);
-			resolvePromise({ code: null, output: `${output}\n${error.message}` });
-		});
-		child.on('close', (code) => {
-			clearTimeout(timer);
-			resolvePromise({ code, output });
-		});
+	const result = await runBoundedProcess('pnpm', args, {
+		cwd,
+		env: {
+			...process.env,
+			...options.environment,
+			FORCE_COLOR: '0',
+		},
+		timeoutMs: options.timeoutMs ?? INSTALL_TIMEOUT_MS,
+		outputLimit: OUTPUT_LIMIT,
 	});
+	return {
+		code: result.code,
+		output: result.timedOut
+			? `${result.output}\nThe install exceeded its time budget and was stopped.`.trim()
+			: result.output,
+	};
 }
 
 /* Installs the session workspace when a draft module's package.json changed
@@ -215,6 +248,8 @@ export async function ensureSessionDependencies(options: {
 	readonly sessionWorkspace: string;
 	readonly modules: readonly SessionModule[];
 	readonly force?: boolean;
+	/* A process boundary for deterministic retry tests. */
+	readonly runCommand?: typeof runPnpm;
 }): Promise<InstallResult> {
 	const startedAt = Date.now();
 	const signature = await dependencySignature(
@@ -231,13 +266,14 @@ export async function ensureSessionDependencies(options: {
 	}
 	/* The seeded lockfile describes the host projects, so a frozen install would
 	   refuse it; the session always re-resolves its own importers. */
-	let result = await runPnpm(options.sessionWorkspace, [
+	const runCommand = options.runCommand ?? runPnpm;
+	let result = await runCommand(options.sessionWorkspace, [
 		'install',
 		'--offline',
 		'--no-frozen-lockfile',
 	]);
 	if (result.code !== 0) {
-		result = await runPnpm(options.sessionWorkspace, [
+		result = await runCommand(options.sessionWorkspace, [
 			'install',
 			'--prefer-offline',
 			'--no-frozen-lockfile',

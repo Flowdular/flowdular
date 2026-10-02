@@ -1,4 +1,5 @@
 import { byokSettings } from './byok-settings.ts';
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { ServerRoute, type Context } from '@octanejs/app-core';
@@ -28,6 +29,7 @@ import {
 	resolveDeliveryTarget,
 	spawnCommand,
 	writeDeliveryRecord,
+	type CommandRunner,
 	type DeliveryContext,
 	type EjectTarget,
 } from './delivery/index.ts';
@@ -84,8 +86,19 @@ import type { BrowserSession, SandboxRuntime } from './runtime.ts';
 import { PlatformClient } from './platform-client.ts';
 import { SandboxSetupError } from './workspace-root.ts';
 import { canReadSession } from './session-owner.ts';
+import {
+	applyRepositorySetup,
+	cancelPendingRepositorySetup,
+	finishRepositorySetup,
+	planRepositorySetup,
+	readPendingRepositorySetup,
+	type RepositorySetupMode,
+	type RepositorySetupOutcome,
+	type RepositorySetupPlan,
+} from './repository-setup.ts';
 import { buildDashboard } from './dashboard.ts';
 import type { SessionOwner, ChatEntry } from './sessions.ts';
+import type { InstallResult } from './workspace-install.ts';
 import {
 	processTurnChannels,
 	waitForTurn,
@@ -97,7 +110,9 @@ const SANDBOX_COOKIE = 'coreloom_sandbox';
 /* Every sandbox mutation carries this header. A cross-site form post cannot
    set it, so together with the origin check it is the CSRF boundary. */
 export const SANDBOX_REQUEST_HEADER = 'x-flowdular-sandbox';
-const TURN_TIMEOUT_MS = 20 * 60 * 1000;
+/* The chain budget leaves room for a full 20-minute Codex turn plus the
+   host-owned installation, gates and cleanup around it. */
+const TURN_TIMEOUT_MS = 30 * 60 * 1000;
 /* How many handed-off turns may run without the operator saying anything. The
    chain always stops on a failure, on a question, and on this count. */
 const CHAIN_LIMIT = 4;
@@ -115,6 +130,11 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
 	SANDBOX_SIGN_IN_REQUIRED: 401,
 	SANDBOX_NOT_CONNECTED: 401,
 	PLATFORM_TOKEN_MISSING: 401,
+	PLATFORM_TOKEN_REJECTED: 401,
+	PLATFORM_UNREACHABLE: 503,
+	SANDBOX_MODULE_MISSING: 404,
+	SANDBOX_SCOPE_MISSING: 403,
+	SANDBOX_ACCESS_DENIED: 403,
 	SANDBOX_HOST_REJECTED: 403,
 	SANDBOX_CROSS_SITE: 403,
 	SANDBOX_HEADER_REQUIRED: 403,
@@ -122,6 +142,7 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
 	REQUEST_TOO_LARGE: 413,
 	INVALID_JSON: 400,
 	EJECT_SCOPE_MISSING: 403,
+	TOKEN_MUTATION_DENIED: 403,
 	SESSION_NOT_FOUND: 404,
 	ATTACHMENT_NOT_FOUND: 404,
 	INVALID_ATTACHMENT_ID: 400,
@@ -144,6 +165,24 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
 	EJECT_SPEC_VERSION_UNCHANGED: 409,
 	EJECT_SPEC_SCENARIOS_UNCHANGED: 409,
 	EJECT_MIGRATION_IMMUTABLE: 409,
+	REPO_SETUP_PLAN_MISSING: 409,
+	REPO_SETUP_PLAN_STALE: 409,
+	REPO_SETUP_BUSY: 409,
+	REPO_SETUP_PENDING_OTHER: 409,
+	REPO_SETUP_PENDING_CHANGED: 409,
+	REPO_SETUP_PENDING_INVALID: 409,
+	REPO_SETUP_REMOTE_NOT_EMPTY: 409,
+	REPO_SETUP_REMOTE_UNAVAILABLE: 503,
+	REPO_SETUP_REMOTE_OCCUPIED: 409,
+	REPO_SETUP_CHECKOUT_DIRTY: 409,
+	REPO_SETUP_ALREADY_EXISTS: 409,
+	REPO_SETUP_CREATE_UNVERIFIED: 503,
+	REPO_SETUP_PUSH_UNVERIFIED: 503,
+	REPO_SETUP_CONFIG_FAILED: 500,
+	REPO_SETUP_FINALIZE_FAILED: 500,
+	REPO_SETUP_CANCEL_UNSAFE: 409,
+	REPO_SETUP_GITHUB_AUTH_REQUIRED: 403,
+	REPO_SETUP_CANCEL_FAILED: 500,
 };
 
 /* The specification is a document the operator reviews, not a file the browser
@@ -159,6 +198,12 @@ export interface SandboxRouteOptions {
 	/* The port the launcher bound. A loopback request must name it in its Host
 	   header, so a page on another local port cannot drive this sandbox. */
 	readonly port?: number;
+	/* Injected only for deterministic repository setup tests. */
+	readonly repositoryCommands?: CommandRunner;
+	/* Replaces pnpm only at the process boundary in route tests. */
+	readonly installDependencies?: (
+		session: SandboxSession,
+	) => Promise<InstallResult>;
 }
 
 function json(
@@ -406,6 +451,37 @@ interface AuthorizeOptions {
 	   cannot demand a connection. */
 	readonly allowDisconnected?: boolean;
 	readonly mutation?: boolean;
+	/* Preview routes may mutate their draft database without the sandbox's
+	   custom header, but still need the token's live write permission. */
+	readonly writeAuthority?: boolean;
+}
+
+async function assertSelfHostedWriteAuthority(
+	runtime: SandboxRuntime,
+	browser: BrowserSession,
+): Promise<void> {
+	const current = await new PlatformClient({
+		platformUrl: runtime.configuration().platformUrl,
+		token: browser.token,
+	}).authority();
+	const cached = browser.authority.principal;
+	if (
+		current.principal.accountId !== cached.accountId ||
+		current.principal.tenantId !== cached.tenantId ||
+		!current.authority.granted ||
+		!current.authority.capabilities.includes('sandbox.access.use')
+	) {
+		throw new SandboxSetupError(
+			'SANDBOX_ACCESS_DENIED',
+			'The connected account no longer has an active sandbox grant.',
+		);
+	}
+	if (current.writeAllowed !== true) {
+		throw new SandboxSetupError(
+			'TOKEN_MUTATION_DENIED',
+			'This API token does not allow writes to the Flowdular application.',
+		);
+	}
 }
 
 /* Loopback binds to the local interface and uses the configured connection.
@@ -417,6 +493,7 @@ async function authorize(
 	policy: AuthorizeOptions = {},
 ): Promise<void> {
 	if (policy.mutation) assertSameOrigin(context.request);
+	let browser: BrowserSession | null = null;
 	if (runtime.configuration().mode === 'loopback') {
 		assertLoopbackHost(context.request, options.port);
 		if (!policy.allowDisconnected && !runtime.connection().connected) {
@@ -426,11 +503,14 @@ async function authorize(
 					'The sandbox is not connected to a Flowdular application yet.',
 			);
 		}
-	} else if (!browserSession(runtime, context)) {
-		throw new SandboxSetupError(
-			'SANDBOX_SIGN_IN_REQUIRED',
-			'Connect this browser with an API token issued by the Flowdular application.',
-		);
+	} else {
+		browser = browserSession(runtime, context);
+		if (!browser) {
+			throw new SandboxSetupError(
+				'SANDBOX_SIGN_IN_REQUIRED',
+				'Connect this browser with an API token issued by the Flowdular application.',
+			);
+		}
 	}
 	const id = context.url.pathname.startsWith('/sandbox/api/sessions/')
 		? sessionIdParam(context)
@@ -452,6 +532,9 @@ async function authorize(
 				'This session is not available to this account.',
 			);
 		}
+	}
+	if (browser && (policy.mutation || policy.writeAuthority)) {
+		await assertSelfHostedWriteAuthority(runtime, browser);
 	}
 }
 
@@ -496,6 +579,48 @@ function actingCapabilities(
 			? runtime.connection().authority
 			: browserSession(runtime, context)?.authority;
 	return authority?.authority.granted ? authority.authority.capabilities : [];
+}
+
+/* A stored connection is for display and session ownership. Delivery can
+   change the workspace or publish to GitHub, so its grant and token must be
+   checked against the platform again before those effects. */
+async function currentEjectCapabilities(
+	runtime: SandboxRuntime,
+	context: Context,
+): Promise<readonly string[]> {
+	const owner = actingOwner(runtime, context);
+	const platform = actingPlatform(runtime, context);
+	if (!owner || !platform) {
+		throw new SandboxSetupError(
+			'SANDBOX_NOT_CONNECTED',
+			'The sandbox must be connected before delivering a module.',
+		);
+	}
+	const current = await platform.authority();
+	if (
+		current.principal.accountId !== owner.accountId ||
+		current.principal.tenantId !== owner.tenantId ||
+		!current.authority.granted ||
+		!current.authority.capabilities.includes('sandbox.access.use')
+	) {
+		throw new SandboxSetupError(
+			'SANDBOX_ACCESS_DENIED',
+			'The connected account no longer has an active sandbox grant.',
+		);
+	}
+	if (!current.authority.capabilities.includes('sandbox.modules.eject')) {
+		throw new SandboxSetupError(
+			'EJECT_SCOPE_MISSING',
+			'The sandbox grant does not include sandbox.modules.eject.',
+		);
+	}
+	if (current.writeAllowed !== true) {
+		throw new SandboxSetupError(
+			'TOKEN_MUTATION_DENIED',
+			'This API token does not allow writes to the Flowdular application.',
+		);
+	}
+	return current.authority.capabilities;
 }
 
 function sessionCookie(id: string, secure: boolean): string {
@@ -657,6 +782,38 @@ export function createSandboxRoutes(
 ): readonly ServerRoute[] {
 	const running = processTurnChannels(runtime.workspaceRoot);
 	const secureCookies = runtime.configuration().mode !== 'loopback';
+	const repositoryPlans = new Map<
+		string,
+		{
+			readonly actor: string;
+			readonly plan: RepositorySetupPlan;
+			readonly expiresAt: number;
+			applying: boolean;
+			outcome: RepositorySetupOutcome | null;
+		}
+	>();
+	const repositoryActor = async (context: Context): Promise<string> => {
+		const owner = actingOwner(runtime, context);
+		if (!owner) {
+			throw new SandboxSetupError(
+				'REPO_SETUP_OPERATOR_REQUIRED',
+				'Connect the sandbox to an account before setting up its repository.',
+			);
+		}
+		await currentEjectCapabilities(runtime, context);
+		return `${owner.platformUrl}\0${owner.tenantId}\0${owner.accountId}`;
+	};
+	const repositoryDependencies = async () => ({
+		...(options.repositoryCommands
+			? { commands: options.repositoryCommands }
+			: {}),
+		providerToken: runtime.configuration().gitProviderToken
+			? await openSecret(
+					runtime.workspaceRoot,
+					runtime.configuration().gitProviderToken!,
+				)
+			: null,
+	});
 
 	const turnContext = (platform = runtime.platform()): TurnContext => ({
 		workspaceRoot: runtime.workspaceRoot,
@@ -664,6 +821,9 @@ export function createSandboxRoutes(
 		registry: runtime.registry(),
 		roles: runtime.roles(),
 		platform,
+		...(options.installDependencies
+			? { installDependencies: options.installDependencies }
+			: {}),
 	});
 
 	const publish = (channel: TurnChannel, event: string, payload: unknown) => {
@@ -831,7 +991,7 @@ export function createSandboxRoutes(
 		path: '/sandbox/api/state',
 		methods: ['GET'],
 		handler: async (context) => {
-			const configuration = runtime.configuration();
+			let configuration = runtime.configuration();
 			try {
 				await authorize(runtime, context, options, { allowDisconnected: true });
 			} catch (error) {
@@ -846,7 +1006,10 @@ export function createSandboxRoutes(
 			}
 			/* A platform that was down when the sandbox started must not stay
 			   unreachable forever: the state poll retries the connection. */
-			if (!runtime.connection().connected) await runtime.refresh();
+			if (!runtime.connection().connected) {
+				await runtime.refresh();
+				configuration = runtime.configuration();
+			}
 			const owner = actingOwner(runtime, context);
 			const sessions = (await listSessions(runtime.workspaceRoot, true)).filter(
 				(session) =>
@@ -1082,6 +1245,208 @@ export function createSandboxRoutes(
 		},
 	});
 
+	/* Repository setup is a separate operator action. The first request only
+	   inspects the checkout and GitHub destination; the second needs the short
+	   lived receipt for that exact plan and repeats its checks before pushing. */
+	const repositoryPlan = new ServerRoute({
+		path: '/sandbox/api/repository/plan',
+		methods: ['POST'],
+		handler: async (context) => {
+			try {
+				await authorize(runtime, context, options, { mutation: true });
+				const actor = await repositoryActor(context);
+				const value = await body(context.request, 4_096);
+				const plan = await planRepositorySetup(
+					runtime.workspaceRoot,
+					{
+						mode: text(value, 'mode', 10) as RepositorySetupMode,
+						repository: text(value, 'repository', 160),
+					},
+					await repositoryDependencies(),
+				);
+				const now = Date.now();
+				for (const [id, pending] of repositoryPlans) {
+					if (!pending.applying && pending.expiresAt <= now)
+						repositoryPlans.delete(id);
+				}
+				if (repositoryPlans.size >= 64) {
+					const oldest = [...repositoryPlans].find(
+						([, pending]) => !pending.applying,
+					)?.[0];
+					if (!oldest) {
+						throw new SandboxSetupError(
+							'REPO_SETUP_BUSY',
+							'Repository setup is busy. Try again after the current operations finish.',
+						);
+					}
+					repositoryPlans.delete(oldest);
+				}
+				const token = randomUUID();
+				repositoryPlans.set(token, {
+					actor,
+					plan,
+					expiresAt: now + 10 * 60 * 1_000,
+					applying: false,
+					outcome: null,
+				});
+				return json({ plan, token });
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
+	const repositoryApply = new ServerRoute({
+		path: '/sandbox/api/repository/apply',
+		methods: ['POST'],
+		handler: async (context) => {
+			try {
+				await authorize(runtime, context, options, { mutation: true });
+				const actor = await repositoryActor(context);
+				const value = await body(context.request, 1_024);
+				const token = text(value, 'token', 100);
+				const pending = repositoryPlans.get(token);
+				if (
+					!pending ||
+					pending.actor !== actor ||
+					pending.expiresAt <= Date.now()
+				) {
+					throw new SandboxSetupError(
+						'REPO_SETUP_PLAN_MISSING',
+						'This repository plan expired or belongs to another account. Review a fresh plan before publishing.',
+					);
+				}
+				if (pending.applying) {
+					throw new SandboxSetupError(
+						'REPO_SETUP_BUSY',
+						'This repository setup is already running.',
+					);
+				}
+				pending.applying = true;
+				try {
+					/* A saved outcome is not proof that the remote still holds the
+					   approved HEAD. The journal makes this repeat read-only after push. */
+					pending.outcome = await applyRepositorySetup(
+						runtime.workspaceRoot,
+						pending.plan,
+						{
+							...(await repositoryDependencies()),
+							assertCanPublish: async () => {
+								if ((await repositoryActor(context)) !== actor) {
+									throw new SandboxSetupError(
+										'EJECT_SCOPE_MISSING',
+										'Repository setup needs the current operator grant.',
+									);
+								}
+							},
+							finalize: async (outcome) => {
+								pending.outcome = outcome;
+								const github = runtime.configuration().github;
+								try {
+									await runtime.update({
+										github: {
+											...github,
+											enabled: true,
+											overridesProject: true,
+											remote: outcome.remote,
+											repository: outcome.repository,
+											baseBranch: outcome.branch,
+											mode: 'direct',
+										},
+									});
+								} catch {
+									throw new SandboxSetupError(
+										'REPO_SETUP_CONFIG_FAILED',
+										'The initial push succeeded, but local GitHub delivery settings could not be saved. Retry this step; the commit will not be pushed again.',
+									);
+								}
+								try {
+									await finishRepositorySetup(
+										runtime.workspaceRoot,
+										pending.plan,
+									);
+								} catch {
+									throw new SandboxSetupError(
+										'REPO_SETUP_FINALIZE_FAILED',
+										'The repository and local settings are ready, but the pending setup record could not be cleared. Retry this step.',
+									);
+								}
+							},
+						},
+					);
+					repositoryPlans.delete(token);
+					return json({
+						outcome: pending.outcome,
+						configuration: safeConfiguration(runtime.configuration()),
+					});
+				} catch (error) {
+					throw error;
+				} finally {
+					pending.applying = false;
+				}
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
+	const repositoryPending = new ServerRoute({
+		path: '/sandbox/api/repository/pending',
+		methods: ['GET'],
+		handler: async (context) => {
+			try {
+				await authorize(runtime, context, options);
+				await repositoryActor(context);
+				return json({
+					pending: await readPendingRepositorySetup(runtime.workspaceRoot),
+				});
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
+	const repositoryCancel = new ServerRoute({
+		path: '/sandbox/api/repository/cancel',
+		methods: ['POST'],
+		handler: async (context) => {
+			try {
+				await authorize(runtime, context, options, { mutation: true });
+				await repositoryActor(context);
+				const value = await body(context.request, 1_024);
+				const pending = await readPendingRepositorySetup(runtime.workspaceRoot);
+				const receipts = [...repositoryPlans].filter(
+					([, entry]) => entry.plan.fingerprint === pending?.fingerprint,
+				);
+				if (receipts.some(([, entry]) => entry.applying)) {
+					throw new SandboxSetupError(
+						'REPO_SETUP_BUSY',
+						'This repository setup is already running.',
+					);
+				}
+				for (const [, entry] of receipts) entry.applying = true;
+				try {
+					await cancelPendingRepositorySetup(
+						runtime.workspaceRoot,
+						text(value, 'repository', 160),
+						{
+							...(await repositoryDependencies()),
+							assertCanPublish: async () => {
+								await repositoryActor(context);
+							},
+						},
+					);
+					for (const [id] of receipts) repositoryPlans.delete(id);
+				} finally {
+					for (const [, entry] of receipts) entry.applying = false;
+				}
+				return json({ cancelled: true });
+			} catch (error) {
+				return failure(error);
+			}
+		},
+	});
+
 	/* Sign-in for a self-hosted browser. The application address may be set
 	   here only while the sandbox has no token yet, so a fresh deployment can
 	   be pointed at its application once and never redirected afterwards. */
@@ -1169,6 +1534,24 @@ export function createSandboxRoutes(
 					model: configuration.driverModel,
 					...(plan.sourceModule ? { sourceModule: plan.sourceModule } : {}),
 				});
+				const install = await (
+					options.installDependencies ??
+					((target) =>
+						installSessionDependencies(runtime.workspaceRoot, target))
+				)(session);
+				const installError = install.ok
+					? null
+					: 'The session dependencies could not be installed. Read the session transcript, fix the dependency setup, and retry the turn.';
+				if (installError) {
+					await appendChatEntry(runtime.workspaceRoot, session, {
+						kind: 'system',
+						role: plan.firstRole,
+						text: installError,
+					});
+					await updateSession(runtime.workspaceRoot, session.id, {
+						state: 'blocked',
+					});
+				}
 
 				/* The classification is the first thing the operator sees, so a
 				   wrong guess can be corrected in the first message. */
@@ -1206,6 +1589,8 @@ export function createSandboxRoutes(
 					{
 						session: await readSession(runtime.workspaceRoot, session.id),
 						plan,
+						ready: install.ok,
+						installError,
 					},
 					201,
 				);
@@ -1285,7 +1670,7 @@ export function createSandboxRoutes(
 					module: known.directory,
 					text: `Added ${known.id} (modules/${known.directory}) to this session. Its working copy and its pristine base are in the session workspace.${
 						install.ran && !install.ok
-							? `\n\nThe session workspace could not install the declared dependencies:\n${install.output}`
+							? '\n\nThe session workspace could not install the declared dependencies. Check the package setup and retry.'
 							: ''
 					}`,
 				});
@@ -2008,7 +2393,10 @@ export function createSandboxRoutes(
 				const deliveryContext: DeliveryContext = {
 					workspaceRoot: runtime.workspaceRoot,
 					session,
-					capabilities: actingCapabilities(runtime, context),
+					capabilities: await currentEjectCapabilities(runtime, context),
+					assertCanEject: async () => {
+						await currentEjectCapabilities(runtime, context);
+					},
 					platformUrl: configuration.platformUrl,
 					build: value.build === true,
 					delivery,
@@ -2213,16 +2601,15 @@ export function createSandboxRoutes(
 		methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
 		handler: async (context) => {
 			try {
-				await authorize(runtime, context, options);
 				/* A draft module's own fetch carries no sandbox header, so the
 				   preview mutation boundary is the browser origin checked here.
 				   The worker hop below runs on its own loopback origin. */
-				if (
-					context.request.method !== 'GET' &&
-					context.request.method !== 'HEAD'
-				) {
-					assertBrowserOrigin(context.request);
-				}
+				const changing =
+					context.request.method !== 'GET' && context.request.method !== 'HEAD';
+				if (changing) assertBrowserOrigin(context.request);
+				await authorize(runtime, context, options, {
+					writeAuthority: changing,
+				});
 			} catch (error) {
 				return failure(error);
 			}
@@ -2312,6 +2699,10 @@ export function createSandboxRoutes(
 	return [
 		state,
 		configure,
+		repositoryPlan,
+		repositoryApply,
+		repositoryPending,
+		repositoryCancel,
 		connect,
 		createSandboxSession,
 		readSandboxSession,

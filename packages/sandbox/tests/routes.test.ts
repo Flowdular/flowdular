@@ -1,7 +1,15 @@
-import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import {
+	mkdir,
+	mkdtemp,
+	readFile,
+	realpath,
+	rm,
+	stat,
+	writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createRouter } from '@octanejs/app-core';
 import {
 	DEFAULT_AGENT_ROLES,
@@ -13,6 +21,10 @@ import {
 import { DEFAULT_CONFIGURATION } from '../src/server/config.ts';
 import type { PreviewRuntime } from '../src/server/preview-runtime.ts';
 import { createSandboxRoutes } from '../src/server/routes.ts';
+import {
+	PlatformClient,
+	type PlatformAuthority,
+} from '../src/server/platform-client.ts';
 import type { SandboxRuntime } from '../src/server/runtime.ts';
 import {
 	createSession,
@@ -23,6 +35,7 @@ import {
 } from '../src/server/sessions.ts';
 import { hashSpec } from '../src/server/spec.ts';
 import { settledSession } from './settle.ts';
+import type { InstallResult } from '../src/server/workspace-install.ts';
 
 async function workspace(): Promise<string> {
 	const root = await mkdtemp(join(tmpdir(), 'flowdular-routes-'));
@@ -151,8 +164,24 @@ const preview: PreviewRuntime = {
 	dispose: () => undefined,
 };
 
-function api(runtime: SandboxRuntime, port = 4320) {
-	const routes = createSandboxRoutes(runtime, preview, { port });
+function api(
+	runtime: SandboxRuntime,
+	port = 4320,
+	options: {
+		readonly realInstall?: boolean;
+		readonly installDependencies?: () => Promise<InstallResult>;
+	} = {},
+) {
+	const routes = createSandboxRoutes(runtime, preview, {
+		port,
+		...(options.realInstall
+			? {}
+			: {
+					installDependencies:
+						options.installDependencies ??
+						(async () => ({ ran: false, ok: true, durationMs: 0, output: '' })),
+				}),
+	});
 	const router = createRouter([...routes]);
 	return async (
 		method: string,
@@ -220,6 +249,190 @@ async function readSse(
 }
 
 describe('sandbox route security', () => {
+	it('installs the standalone SDK before the first agent turn', async () => {
+		const root = await workspace();
+		try {
+			const sdk = join(root, 'platform/node_modules/@flowdular/sdk');
+			await mkdir(sdk, { recursive: true });
+			await writeFile(
+				join(sdk, 'package.json'),
+				JSON.stringify({ name: '@flowdular/sdk', version: '0.5.1' }),
+			);
+			await writeFile(
+				join(sdk, 'modules.json'),
+				JSON.stringify({ schemaVersion: 1, modules: [] }),
+			);
+			const driver = fakeDriver({ handoff: 'HANDOFF: none - done' });
+			const call = api(fakeRuntime(root, driver), 4320, {
+				realInstall: true,
+			});
+			const response = await call('POST', '/sandbox/api/sessions', {
+				body: { brief: 'Build a finance module for tracking expenses.' },
+			});
+			expect(response.status).toBe(201);
+			const created = (await response.json()) as {
+				ready: boolean;
+				installError: string | null;
+				session: { id: string; moduleSuffix: string };
+			};
+			expect(created).toMatchObject({ ready: true, installError: null });
+			const paths = sessionPaths(
+				root,
+				created.session.id,
+				created.session.moduleSuffix,
+			);
+			expect(
+				await realpath(join(paths.workspace, 'node_modules/@flowdular/sdk')),
+			).toBe(await realpath(sdk));
+			await readSse(
+				await call('POST', `/sandbox/api/sessions/${created.session.id}/turn`, {
+					body: {
+						message: 'Prepare the finance specification.',
+						role: 'business-manager',
+					},
+				}),
+			);
+			const chat = await readChat(
+				root,
+				await readSession(root, created.session.id),
+			);
+			expect(
+				chat.some(
+					(entry) =>
+						entry.event?.type === 'error' &&
+						entry.event.code === 'ALLOWED_PATHS_VIOLATION',
+				),
+			).toBe(false);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it('keeps a failed initial install visible and retries before running the agent', async () => {
+		const root = await workspace();
+		try {
+			let installs = 0;
+			let runs = 0;
+			const driver = fakeDriver({ handoff: 'HANDOFF: none - done' });
+			const run = driver.run.bind(driver);
+			driver.run = async function* (request) {
+				runs += 1;
+				yield* run(request);
+			};
+			const call = api(fakeRuntime(root, driver), 4320, {
+				installDependencies: async () => {
+					installs += 1;
+					return installs < 3
+						? {
+								ran: true,
+								ok: false,
+								durationMs: 1,
+								output: 'offline package unavailable',
+							}
+						: { ran: true, ok: true, durationMs: 1, output: '' };
+				},
+			});
+			const response = await call('POST', '/sandbox/api/sessions', {
+				body: { brief: 'Build a finance module for tracking expenses.' },
+			});
+			expect(response.status).toBe(201);
+			const created = (await response.json()) as {
+				ready: boolean;
+				installError: string | null;
+				session: { id: string; state: string };
+			};
+			expect(created.ready).toBe(false);
+			expect(created.installError).toContain(
+				'dependencies could not be installed',
+			);
+			expect(created.session.state).toBe('blocked');
+			const plannerRuns = runs;
+			const createdChat = await readChat(
+				root,
+				await readSession(root, created.session.id),
+			);
+			expect(
+				createdChat.some((entry) =>
+					entry.text?.includes('dependencies could not be installed'),
+				),
+			).toBe(true);
+			expect(JSON.stringify(createdChat)).not.toContain(
+				'offline package unavailable',
+			);
+			const turn = async () =>
+				readSse(
+					await call(
+						'POST',
+						`/sandbox/api/sessions/${created.session.id}/turn`,
+						{
+							body: { message: 'Continue', role: 'business-manager' },
+						},
+					),
+				);
+			const settled = () =>
+				settledSession(async () => {
+					const view = (await (
+						await call('GET', `/sandbox/api/sessions/${created.session.id}`)
+					).json()) as { running: boolean };
+					return view.running;
+				});
+			await turn();
+			await settled();
+			expect(runs).toBe(plannerRuns);
+			expect((await readSession(root, created.session.id)).state).toBe(
+				'blocked',
+			);
+			await turn();
+			await settled();
+			expect(runs).toBe(plannerRuns + 1);
+			expect(installs).toBe(3);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it('returns configuration loaded while reconnecting to a newly started platform', async () => {
+		const root = await workspace();
+		const base = fakeRuntime(
+			root,
+			fakeDriver({ handoff: 'HANDOFF: none - done' }),
+		);
+		let configuration = base.configuration();
+		let ready = false;
+		const connection = () =>
+			ready
+				? base.connection()
+				: {
+						connected: false as const,
+						authority: null,
+						error: {
+							code: 'PLATFORM_TOKEN_MISSING',
+							message: 'The local platform is still starting.',
+						},
+					};
+		const runtime: SandboxRuntime = {
+			...base,
+			configuration: () => configuration,
+			connection,
+			refresh: async () => {
+				configuration = {
+					...configuration,
+					platformUrl: 'http://127.0.0.1:4311',
+				};
+				ready = true;
+				return connection();
+			},
+		};
+		const response = await api(runtime)('GET', '/sandbox/api/state');
+		const state = (await response.json()) as {
+			configuration: { platformUrl: string };
+			connection: { connected: boolean };
+		};
+		expect(response.status).toBe(200);
+		expect(state.connection.connected).toBe(true);
+		expect(state.configuration.platformUrl).toBe('http://127.0.0.1:4311');
+	});
+
 	it('isolates dashboard, transcript, actions and preview by account, tenant and platform', async () => {
 		const root = await workspace();
 		const runtime = fakeRuntime(
@@ -602,6 +815,183 @@ describe('sandbox route security', () => {
 		expect(signedIn.status).toBe(200);
 	});
 
+	it('checks current token write authority before self-hosted configuration and delivery', async () => {
+		const root = await workspace();
+		const runtime = fakeRuntime(
+			root,
+			fakeDriver({ handoff: 'HANDOFF: none - done' }),
+			'self-hosted',
+		);
+		const cached = runtime.connection().authority!;
+		let current: PlatformAuthority = { ...cached, writeAllowed: true };
+		const platformFetch = vi
+			.spyOn(globalThis, 'fetch')
+			.mockImplementation(async () => Response.json(current));
+		try {
+			const browser = await runtime.openBrowserSession('clat_test');
+			const headers = { cookie: `coreloom_sandbox=${browser.id}` };
+			const patches: unknown[] = [];
+			runtime.update = async (patch) => {
+				patches.push(patch);
+				return runtime.connection();
+			};
+			const call = api(runtime);
+			const allowed = await call('POST', '/sandbox/api/config', {
+				headers,
+				body: { driver: 'fake' },
+			});
+			expect(allowed.status).toBe(200);
+			expect(patches).toHaveLength(1);
+
+			const session = await sessionFor(root);
+			await updateSession(root, session.id, {
+				owner: {
+					platformUrl: runtime.configuration().platformUrl,
+					accountId: cached.principal.accountId,
+					tenantId: cached.principal.tenantId,
+				},
+			});
+			const before = await readSession(root, session.id);
+			current = { ...cached, writeAllowed: false };
+			for (const [path, body] of [
+				['/sandbox/api/config', { driver: 'fake' }],
+				[`/sandbox/api/sessions/${session.id}/eject`, { apply: false }],
+			] as const) {
+				const denied = await call('POST', path, { headers, body });
+				expect(denied.status, path).toBe(403);
+				expect(
+					((await denied.json()) as { error: { code: string } }).error.code,
+				).toBe('TOKEN_MUTATION_DENIED');
+			}
+			const previewDenied = await call('POST', '/api/booking/items', {
+				headers,
+				body: { name: 'blocked' },
+			});
+			expect(previewDenied.status).toBe(403);
+			expect(
+				((await previewDenied.json()) as { error: { code: string } }).error
+					.code,
+			).toBe('TOKEN_MUTATION_DENIED');
+			expect(patches).toHaveLength(1);
+			expect(await readSession(root, session.id)).toMatchObject({
+				state: before.state,
+				ejectedAt: before.ejectedAt,
+			});
+
+			current = cached;
+			const missing = await call('POST', '/sandbox/api/config', {
+				headers,
+				body: { driver: 'fake' },
+			});
+			expect(missing.status).toBe(403);
+			expect(
+				((await missing.json()) as { error: { code: string } }).error.code,
+			).toBe('TOKEN_MUTATION_DENIED');
+			current = {
+				...cached,
+				writeAllowed: true,
+				authority: { granted: false, reason: 'revoked' },
+			};
+			const revoked = await call('POST', '/sandbox/api/config', {
+				headers,
+				body: { driver: 'fake' },
+			});
+			expect(revoked.status).toBe(403);
+			expect(patches).toHaveLength(1);
+			current = {
+				...cached,
+				writeAllowed: true,
+				principal: { ...cached.principal, accountId: 'other' },
+			};
+			const switched = await call('POST', '/sandbox/api/config', {
+				headers,
+				body: { driver: 'fake' },
+			});
+			expect(switched.status).toBe(403);
+			expect(patches).toHaveLength(1);
+			expect(platformFetch).toHaveBeenCalledTimes(7);
+		} finally {
+			platformFetch.mockRestore();
+		}
+	});
+
+	it.each(['loopback', 'self-hosted'] as const)(
+		'refuses eject in %s after only the eject grant is revoked',
+		async (mode) => {
+			const root = await workspace();
+			const runtime = fakeRuntime(
+				root,
+				fakeDriver({ handoff: 'HANDOFF: none - done' }),
+				mode,
+			);
+			const cached = runtime.connection().authority!;
+			let current: PlatformAuthority = { ...cached, writeAllowed: true };
+			const live = vi.fn(async () => Response.json(current));
+			const fetchSpy =
+				mode === 'self-hosted'
+					? vi.spyOn(globalThis, 'fetch').mockImplementation(live)
+					: null;
+			if (mode === 'loopback') {
+				runtime.platform = () =>
+					new PlatformClient({
+						platformUrl: runtime.configuration().platformUrl,
+						token: 'test',
+						fetch: live,
+					});
+			}
+			try {
+				const browser =
+					mode === 'self-hosted'
+						? await runtime.openBrowserSession('clat_test')
+						: null;
+				const headers = browser
+					? { cookie: `coreloom_sandbox=${browser.id}` }
+					: {};
+				const session = await sessionFor(root);
+				if (mode === 'self-hosted') {
+					await updateSession(root, session.id, {
+						owner: {
+							platformUrl: runtime.configuration().platformUrl,
+							accountId: cached.principal.accountId,
+							tenantId: cached.principal.tenantId,
+						},
+					});
+				}
+				const before = await readSession(root, session.id);
+				current = {
+					...cached,
+					writeAllowed: true,
+					authority: {
+						granted: true,
+						grantId: 'g',
+						capabilities: ['sandbox.access.use'],
+						expiresAt: null,
+					},
+				};
+				const call = api(runtime);
+				for (const apply of [false, true]) {
+					const denied = await call(
+						'POST',
+						`/sandbox/api/sessions/${session.id}/eject`,
+						{ headers, body: { apply } },
+					);
+					expect(denied.status).toBe(403);
+					expect(
+						((await denied.json()) as { error: { code: string } }).error.code,
+					).toBe('EJECT_SCOPE_MISSING');
+				}
+				expect(live).toHaveBeenCalled();
+				expect(await readSession(root, session.id)).toMatchObject({
+					state: before.state,
+					ejectedAt: before.ejectedAt,
+				});
+			} finally {
+				fetchSpy?.mockRestore();
+				await rm(root, { recursive: true, force: true });
+			}
+		},
+	);
+
 	it('does not expose host paths in the session view', async () => {
 		const root = await workspace();
 		const call = api(
@@ -620,9 +1010,32 @@ describe('detached turns', () => {
 	it('blocks automatic continuation when the agent exceeds its time limit', async () => {
 		const root = await workspace();
 		const driver = fakeDriver({ handoff: 'HANDOFF: none - done' });
+		const regularRun = driver.run.bind(driver);
 		let attempts = 0;
-		driver.run = async function* () {
+		const resumeRequests: (string | null | undefined)[] = [];
+		driver.run = async function* (request) {
 			attempts++;
+			resumeRequests.push(request.resumeId);
+			if (attempts > 1) {
+				/* Codex can report a locked old writer and complete on a fresh
+				   thread. That notice must not fail the recovered turn. */
+				yield {
+					type: 'error',
+					code: 'DRIVER_THREAD_LOCKED',
+					message: 'Continuing on a new thread.',
+				} as const;
+				for await (const event of regularRun(request))
+					yield event.type === 'turn.started' || event.type === 'turn.completed'
+						? { ...event, resumeId: 'new-thread' }
+						: event;
+				return;
+			}
+			yield {
+				type: 'turn.started',
+				driver: 'fake',
+				role: request.role,
+				resumeId: 'timed-out-thread',
+			} as const;
 			yield { type: 'activity', phase: 'thinking' };
 			throw new CodingAgentError(
 				'DRIVER_TIMEOUT',
@@ -652,6 +1065,22 @@ describe('detached turns', () => {
 			await call('GET', `/sandbox/api/sessions/${session.id}`)
 		).json()) as { running: boolean };
 		expect(view.running).toBe(false);
+		expect(
+			Object.values((await readSession(root, session.id)).resumeIds),
+		).toContain('timed-out-thread');
+		await readSse(
+			await call('POST', `/sandbox/api/sessions/${session.id}/turn`, {
+				body: {
+					role: 'business-manager',
+					message: 'Finish the draft',
+					driver: 'fake',
+				},
+			}),
+		);
+		expect(resumeRequests[1]).toBe('timed-out-thread');
+		const recovered = await readSession(root, session.id);
+		expect(recovered.state).not.toBe('failed');
+		expect(Object.values(recovered.resumeIds)).toContain('new-thread');
 	});
 
 	it('resumes only the same role and scope, never a previous specialist conversation', async () => {

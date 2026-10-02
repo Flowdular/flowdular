@@ -13,20 +13,10 @@ import {
 	principalFromContext,
 	sessionMutationDenial,
 } from '@flowdular/module-auth/server';
-import type { Context } from '@octanejs/app-core';
 import { SANDBOX_PERMISSIONS } from '../acl/permissions.ts';
 import type { SandboxSessionState } from '../domain/types.ts';
 import { SandboxServiceError } from '../services/sandbox-service-error.ts';
 import type { SandboxRuntime } from '../server/runtime.ts';
-
-/* A browser session is guarded by CSRF. An API token is never sent
-   automatically by a browser, so it carries no CSRF risk and is checked by its
-   scopes alone. */
-function mutationDenial(context: Context, auth: AuthRuntime): Response | null {
-	return isTokenPrincipal(context)
-		? null
-		: sessionMutationDenial(context, auth);
-}
 
 function failure(error: unknown): Response {
 	if (error instanceof SandboxServiceError) {
@@ -300,6 +290,9 @@ export function createSandboxRoutes(
 				authority: await (
 					await runtime.service(auth)
 				).authorize(principal.tenantId, principal.accountId, principal.scopes),
+				writeAllowed: isTokenPrincipal(octane)
+					? sessionMutationDenial(octane, auth) === null
+					: true,
 				sandbox: { url: runtime.options.sandboxUrl },
 			});
 		},
@@ -312,7 +305,7 @@ export function createSandboxRoutes(
 		access: { kind: 'permission', permission: SANDBOX_PERMISSIONS.use },
 		resolveIdentity: endpointIdentityFromContext,
 		handler: async ({ octane }) => {
-			const denial = mutationDenial(octane, auth);
+			const denial = sessionMutationDenial(octane, auth);
 			if (denial) return denial;
 			try {
 				const principal = principalFromContext(octane)!;
@@ -355,7 +348,7 @@ export function createSandboxRoutes(
 		access: { kind: 'permission', permission: SANDBOX_PERMISSIONS.use },
 		resolveIdentity: endpointIdentityFromContext,
 		handler: async ({ octane }) => {
-			const denial = mutationDenial(octane, auth);
+			const denial = sessionMutationDenial(octane, auth);
 			if (denial) return denial;
 			try {
 				const principal = principalFromContext(octane)!;
@@ -387,7 +380,7 @@ export function createSandboxRoutes(
 		access: { kind: 'permission', permission: SANDBOX_PERMISSIONS.eject },
 		resolveIdentity: endpointIdentityFromContext,
 		handler: async ({ octane }) => {
-			const denial = mutationDenial(octane, auth);
+			const denial = sessionMutationDenial(octane, auth);
 			if (denial) return denial;
 			try {
 				const principal = principalFromContext(octane)!;
