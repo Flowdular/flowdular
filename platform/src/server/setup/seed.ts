@@ -3,25 +3,24 @@ import {
 	authRuntimeOptionsFromEnvironment,
 	createAuthRuntime,
 } from '@flowdular/module-auth/server';
-import {
-	GREENFIELD_ACCOUNTS,
-	GREENFIELD_TENANTS,
-	GREENFIELD_TENANT_SLUGS,
-} from '@flowdular/module-auth/greenfield';
-
-/* The demo accounts are defined once, by auth.core, so the product never ships
-   two sets that drift apart. This seeds them into a database that has just
-   been migrated; unlike "flowdular auth greenfield" it resets nothing and stops
-   when it finds a workspace that already exists. */
+/* First-run provisioning uses the same audited auth service as the operator
+   CLI. The operator chooses the first owner; no demo credentials are shipped. */
 
 export const FIRST_RUN_OPERATOR = 'setup:first-run';
 
 export interface SeededAccount {
 	readonly email: string;
-	readonly password: string;
 	readonly displayName: string;
 	readonly role: string;
 	readonly scopes: readonly string[];
+}
+
+export interface FirstRunOwner {
+	readonly workspaceName: string;
+	readonly workspaceSlug: string;
+	readonly ownerEmail: string;
+	readonly ownerName: string;
+	readonly ownerPassword: string;
 }
 
 export interface FirstRunSeed {
@@ -40,14 +39,15 @@ export class SetupSeedError extends Error {
 }
 
 /**
- * Migrates auth.core, then creates the demo workspace, its owner, and one
- * reduced-scope member. Both accounts go through AuthService, so they hold the
- * scopes their role defines and every row the provisioning path audits.
+ * Migrates auth.core, then creates the chosen workspace and its owner. The
+ * database must still have no workspace, so a stale session cannot re-provision
+ * an existing installation.
  */
 export async function seedFirstRun(
 	databases: DatabaseProvider,
 	environment: NodeJS.ProcessEnv,
 	workspaceRoot: string,
+	owner: FirstRunOwner,
 ): Promise<FirstRunSeed> {
 	const runtime = createAuthRuntime({
 		...authRuntimeOptionsFromEnvironment(environment, workspaceRoot),
@@ -65,29 +65,13 @@ export async function seedFirstRun(
 			);
 		}
 		const provisioned = await service.provisionWorkspace({
-			name: GREENFIELD_TENANTS.operations,
-			slug: GREENFIELD_TENANT_SLUGS.operations,
-			ownerEmail: GREENFIELD_ACCOUNTS.admin.email,
-			ownerDisplayName: GREENFIELD_ACCOUNTS.admin.displayName,
-			password: GREENFIELD_ACCOUNTS.admin.password,
+			name: owner.workspaceName,
+			slug: owner.workspaceSlug,
+			ownerEmail: owner.ownerEmail,
+			ownerDisplayName: owner.ownerName,
+			password: owner.ownerPassword,
 			operator: FIRST_RUN_OPERATOR,
 		});
-		const member = await service.createTenantMember(
-			{
-				tenantId: provisioned.workspace.tenantId,
-				email: GREENFIELD_ACCOUNTS.user.email,
-				displayName: GREENFIELD_ACCOUNTS.user.displayName,
-				password: GREENFIELD_ACCOUNTS.user.password,
-				role: 'member',
-			},
-			{
-				accountId: provisioned.owner.accountId,
-				tenantId: provisioned.workspace.tenantId,
-				email: provisioned.owner.email,
-				role: provisioned.owner.role,
-				scopes: provisioned.owner.scopes,
-			},
-		);
 		return {
 			workspace: {
 				name: provisioned.workspace.name,
@@ -96,17 +80,9 @@ export async function seedFirstRun(
 			accounts: [
 				{
 					email: provisioned.owner.email,
-					password: GREENFIELD_ACCOUNTS.admin.password,
 					displayName: provisioned.owner.displayName,
 					role: provisioned.owner.role,
 					scopes: provisioned.owner.scopes,
-				},
-				{
-					email: member.email,
-					password: GREENFIELD_ACCOUNTS.user.password,
-					displayName: member.displayName,
-					role: member.role,
-					scopes: member.scopes,
 				},
 			],
 		};

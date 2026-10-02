@@ -13,7 +13,7 @@ import type { FirstRunSeed } from './seed.ts';
    uses, taken from packages/ui/src/styles/tokens.css, and namespaces every
    class as setup-* so it can never restyle a ui-* primitive. */
 
-const STEPS = ['Unlock', 'Database', 'Review', 'Sign in'] as const;
+const STEPS = ['Unlock', 'Database', 'Workspace', 'Review', 'Sign in'] as const;
 export type SetupStepName = (typeof STEPS)[number];
 
 export interface ModuleCompatibility {
@@ -25,6 +25,8 @@ export interface ModuleCompatibility {
 export interface SetupPageView {
 	readonly step: SetupStepName;
 	readonly csrfToken: string | null;
+	readonly databasePreconfigured: boolean;
+	readonly autoRestart: boolean;
 	readonly error: string | null;
 	readonly notice: string | null;
 	readonly adapters: readonly DatabaseAdapterPublicDescriptor[];
@@ -103,6 +105,7 @@ body{font-family:var(--font-sans);font-size:var(--text-base);color:var(--ink);ba
 .setup-field{display:grid;gap:5px}
 .setup-label{font-size:var(--text-sm);font-weight:500;color:var(--ink-2)}
 .setup-input,.setup-select{width:100%;height:var(--control-h);padding:0 10px;font:inherit;font-size:var(--text-md);color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
+.setup-input[readonly]{color:var(--ink-2);background:var(--surface-2)}
 .setup-input:focus-visible,.setup-select:focus-visible,.setup-btn:focus-visible,.setup-choice:focus-within{outline:2px solid var(--focus);outline-offset:1px}
 .setup-input--error{border-color:var(--danger)}
 .setup-help{font-size:var(--text-sm);line-height:1.5;color:var(--ink-3)}
@@ -125,11 +128,11 @@ body{font-family:var(--font-sans);font-size:var(--text-base);color:var(--ink);ba
 .setup-choice span{display:block;margin-top:3px;font-size:var(--text-sm);line-height:1.5;color:var(--ink-3)}
 .setup-list{display:grid;gap:6px;margin:0;padding:0;list-style:none}
 .setup-list li{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:7px 10px;font-size:var(--text-md);background:var(--surface-2);border:1px solid var(--line-2);border-radius:var(--r-sm)}
+.setup-list li>*{min-width:0;overflow-wrap:anywhere}
 .setup-list code{font-family:var(--font-mono);font-size:var(--text-sm)}
 .setup-state{font-size:var(--text-sm);font-weight:500}
 .setup-state--ok{color:var(--success)}
 .setup-state--bad{color:var(--danger)}
-.setup-block{margin:0;padding:12px 14px;overflow-x:auto;font-family:var(--font-mono);font-size:var(--text-sm);line-height:1.7;color:var(--ink);background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r);white-space:pre;-webkit-user-select:all;user-select:all}
 .setup-credentials{display:grid;gap:8px;margin:0;padding:0}
 .setup-credentials div{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:baseline;padding:10px 12px;background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r)}
 .setup-credentials code{font-family:var(--font-mono);font-size:var(--text-md);overflow-wrap:anywhere;-webkit-user-select:all;user-select:all}
@@ -186,13 +189,19 @@ if(reduced.matches){draw(false);}else{frame=requestAnimationFrame(tick);}}).obse
 
 const MARK = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/><path d="M6 3v18M12 3v18M18 3v18" stroke="#c9722d" stroke-width="1.75" stroke-linecap="round" opacity=".85"/></svg>`;
 
-function steps(current: SetupStepName): string {
+function steps(current: SetupStepName, databasePreconfigured: boolean): string {
 	const index = STEPS.indexOf(current);
 	const items = STEPS.map((name, position) => {
-		const state =
-			position === index ? 'is-active' : position < index ? 'is-done' : '';
-		const marker = position < index ? '&#10003;' : `0${position + 1}`.slice(-2);
-		return `<li class="${state}"><i aria-hidden="true">${marker}</i>${escapeHtml(name)}</li>`;
+		const done =
+			position < index || (databasePreconfigured && name === 'Database');
+		const state = position === index ? 'is-active' : done ? 'is-done' : '';
+		const marker =
+			done && position !== index ? '&#10003;' : `0${position + 1}`.slice(-2);
+		const label =
+			databasePreconfigured && name === 'Database'
+				? 'Database, configured by deployment'
+				: name;
+		return `<li class="${state}"${position === index ? ' aria-current="step"' : ''} aria-label="${escapeHtml(label)}"><i aria-hidden="true">${marker}</i>${escapeHtml(name)}</li>`;
 	});
 	return `<ol class="setup-steps" aria-label="Setup progress">${items.join('')}</ol>`;
 }
@@ -249,7 +258,7 @@ function unlockStep(view: SetupPageView): string {
 			? ` and written to <code>${escapeHtml(view.tokenFile)}</code>`
 			: ''
 	}. Paste it here to continue.</p></header>
-${steps(view.step)}${alerts(view)}
+${steps(view.step, view.databasePreconfigured)}${alerts(view)}
 <form class="setup-form" method="post" action="/setup"><input type="hidden" name="step" value="unlock">
 <div class="setup-field"><label class="setup-label" for="setup-token">Setup token</label>
 <input class="setup-input" id="setup-token" name="token" type="password" autocomplete="off" spellcheck="false" maxlength="256" required autofocus aria-describedby="setup-token-help">
@@ -275,21 +284,65 @@ function configureStep(view: SetupPageView): string {
 			return `<fieldset class="setup-form setup-fieldset" data-adapter="${escapeHtml(adapter.adapterId)}"><legend class="setup-label setup-legend">${escapeHtml(adapter.label)}</legend>${inner || '<p class="setup-help">Nothing to configure.</p>'}</fieldset>`;
 		})
 		.join('');
-	return `<header><span class="setup-kicker">Step 2 of 4</span><h2>Choose a database</h2>
-<p class="setup-card__sub">Flowdular stores everything in one PostgreSQL database. Nothing is written until you confirm the review on the next step.</p></header>
-${steps(view.step)}${alerts(view)}
+	return `<header><span class="setup-kicker">Database</span><h2>Connect PostgreSQL</h2>
+<p class="setup-card__sub">Choose a PostgreSQL connection. Flowdular tests it before running migrations or creating a workspace.</p></header>
+${steps(view.step, view.databasePreconfigured)}${alerts(view)}
 <form class="setup-form" method="post" action="/setup">${csrf(view)}<input type="hidden" name="step" value="configure">
 <div class="setup-choices">${choices}</div>${fieldsets}
-<label class="setup-label" for="application-path">Backoffice address</label>
-<input class="setup-input" id="application-path" name="applicationPath" value="${escapeHtml(view.values.applicationPath ?? '/app')}" maxlength="64" required aria-describedby="application-path-help${view.fieldErrors.applicationPath ? ' application-path-error' : ''}"${view.fieldErrors.applicationPath ? ' aria-invalid="true"' : ''}>
-<p class="setup-help" id="application-path-help">Use /app or choose another path, such as /backoffice. Public modules can use the homepage separately. Takes effect after restart.</p>
-${view.fieldErrors.applicationPath ? `<p role="alert" id="application-path-error">${escapeHtml(view.fieldErrors.applicationPath)}</p>` : ''}
 <button class="setup-btn setup-btn--primary setup-btn--block" type="submit">Test connection</button></form>`;
+}
+
+function workspaceField(
+	view: SetupPageView,
+	name: string,
+	label: string,
+	options: {
+		readonly type?: 'text' | 'email' | 'password';
+		readonly autocomplete?: string;
+		readonly hint: string;
+		readonly maxlength: number;
+		readonly spellcheck?: boolean;
+		readonly readonly?: boolean;
+	},
+): string {
+	const id = `setup-${name}`;
+	const error = view.fieldErrors[name];
+	const type = options.type ?? 'text';
+	const value = type === 'password' ? '' : (view.values[name] ?? '');
+	return `<div class="setup-field"><label class="setup-label" for="${id}">${escapeHtml(label)}</label>
+<input class="setup-input${error ? ' setup-input--error' : ''}" id="${id}" name="${name}" type="${type}"${type === 'password' ? '' : ` value="${escapeHtml(value)}"`}${options.autocomplete ? ` autocomplete="${escapeHtml(options.autocomplete)}"` : ''}${options.spellcheck === false ? ' spellcheck="false"' : ''}${options.readonly ? ' readonly' : ''} maxlength="${options.maxlength}" required aria-describedby="${id}-help"${error ? ' aria-invalid="true"' : ''}>
+<p class="setup-help${error ? ' setup-help--error' : ''}" id="${id}-help"${error ? ' role="alert"' : ''}>${escapeHtml(error ?? options.hint)}</p></div>`;
+}
+
+function workspaceStep(view: SetupPageView): string {
+	const back = view.databasePreconfigured
+		? ''
+		: '<button class="setup-btn" type="submit" name="step" value="back" formnovalidate>Back</button>';
+	const nextClass = view.databasePreconfigured
+		? 'setup-btn setup-btn--primary setup-btn--block'
+		: 'setup-btn setup-btn--primary';
+	return `<header><span class="setup-kicker">Workspace</span><h2>Create your workspace</h2>
+<p class="setup-card__sub">Set up the first workspace and the owner account you will use to sign in.</p></header>
+${steps(view.step, view.databasePreconfigured)}${alerts(view)}
+${view.databasePreconfigured ? '<p class="setup-alert setup-alert--success">PostgreSQL is already configured for this deployment.</p>' : ''}
+<form class="setup-form" method="post" action="/setup">${csrf(view)}
+${workspaceField(view, 'workspaceName', 'Workspace name', { hint: 'The name shown to people in this workspace.', maxlength: 120 })}
+${workspaceField(view, 'workspaceSlug', 'Workspace address', { hint: '3 to 48 lowercase letters, numbers, or single hyphens.', maxlength: 48, spellcheck: false })}
+<div class="setup-row">
+${workspaceField(view, 'ownerName', 'Your name', { hint: 'Shown on your owner account.', maxlength: 80, autocomplete: 'name' })}
+${workspaceField(view, 'ownerEmail', 'Your email', { type: 'email', hint: 'Used to sign in.', maxlength: 254, autocomplete: 'email', spellcheck: false })}
+</div>
+${workspaceField(view, 'ownerPassword', 'Your password', { type: 'password', hint: 'Use at least 8 characters, or more if this deployment requires it. Your password will not be shown again.', maxlength: 512, autocomplete: 'new-password' })}
+${workspaceField(view, 'ownerPasswordConfirm', 'Confirm your password', { type: 'password', hint: 'Re-enter the password for the owner account.', maxlength: 512, autocomplete: 'new-password' })}
+${workspaceField(view, 'applicationPath', 'Backoffice address', { hint: view.databasePreconfigured ? 'This address is set by the deployment. Change its configuration and restart to choose another.' : 'Use /app or another path, such as /backoffice. Takes effect after restart.', maxlength: 64, spellcheck: false, readonly: view.databasePreconfigured })}
+<div class="setup-foot">${back}<button class="${nextClass}" type="submit" name="step" value="workspace">Review setup</button></div></form>`;
 }
 
 function reviewStep(view: SetupPageView): string {
 	const blocked = view.modules.filter((module) => module.issues.length > 0);
 	const probe = view.probe;
+	const databaseReady =
+		probe?.status === 'ready' || (view.databasePreconfigured && probe === null);
 	const modules = view.modules
 		.map(
 			(module) =>
@@ -302,19 +355,26 @@ function reviewStep(view: SetupPageView): string {
 				}</span></li>`,
 		)
 		.join('');
-	return `<header><span class="setup-kicker">Step 3 of 4</span><h2>Review</h2>
+	return `<header><span class="setup-kicker">Review</span><h2>Review setup</h2>
 <p class="setup-card__sub">${
 		blocked.length > 0
 			? 'This database cannot serve every enabled module, so it is not activated.'
-			: 'Applying runs every module migration, creates the demo workspace with its accounts, and stores the connection settings.'
+			: 'Applying creates your workspace and owner account. Enabled modules finish preparing when the app restarts.'
 	}</p></header>
-${steps(view.step)}${alerts(view)}
+${steps(view.step, view.databasePreconfigured)}${alerts(view)}
 ${
 	probe?.status === 'ready'
 		? `<p class="setup-alert setup-alert--success">Connected in ${probe.latencyMs} ms as the runtime role, which holds neither SUPERUSER nor BYPASSRLS.</p>`
-		: `<p class="setup-alert" role="alert">${escapeHtml(probe?.message ?? 'The connection could not be tested.')}</p>`
+		: view.databasePreconfigured && probe === null
+			? '<p class="setup-alert setup-alert--success">PostgreSQL is configured by this deployment.</p>'
+			: `<p class="setup-alert" role="alert">${escapeHtml(probe?.message ?? 'The connection could not be tested.')}</p>`
 }
-<p>Backoffice address: <code>${escapeHtml(view.values.applicationPath ?? '/app')}</code></p>
+<div><p class="setup-label setup-sublabel">Your workspace</p><ul class="setup-list">
+<li><span>Name</span><strong>${escapeHtml(view.values.workspaceName ?? '')}</strong></li>
+<li><span>Address</span><code>${escapeHtml(view.values.workspaceSlug ?? '')}</code></li>
+<li><span>Owner</span><span>${escapeHtml(view.values.ownerName ?? '')} &lt;${escapeHtml(view.values.ownerEmail ?? '')}&gt;</span></li>
+<li><span>Backoffice</span><code>${escapeHtml(view.values.applicationPath ?? '/app')}</code></li>
+</ul></div>
 <div><p class="setup-label setup-sublabel">Enabled modules that own tables</p><ul class="setup-list">${modules || '<li><span class="setup-help">No enabled module owns database tables.</span></li>'}</ul>${
 		view.modulesApproximated
 			? '<p class="setup-note setup-note--gap">This build ships without the module manifests, so every enabled module is checked against the strictest requirements any of them can ask for.</p>'
@@ -323,22 +383,28 @@ ${
 <form class="setup-form" method="post" action="/setup">${csrf(view)}
 <div class="setup-foot"><button class="setup-btn" type="submit" name="step" value="back">Back</button>
 ${
-	blocked.length === 0 && probe?.status === 'ready'
-		? '<button class="setup-btn setup-btn--primary" type="submit" name="step" value="apply">Migrate and create the workspace</button>'
+	blocked.length === 0 && databaseReady
+		? '<button class="setup-btn setup-btn--primary" type="submit" name="step" value="apply">Migrate and create workspace</button>'
 		: ''
 }</div></form>`;
 }
 
 function environmentSection(result: EnvironmentWriteResult): string {
-	const block = `<pre class="setup-block">${escapeHtml(result.block)}</pre>`;
+	const keys = [...result.block.matchAll(/(?:^|\n)(FD_[A-Z0-9_]+)(?:=|$)/g)]
+		.map((match) => match[1])
+		.filter((key): key is string => Boolean(key));
+	const keyNames =
+		keys.length > 0
+			? escapeHtml(keys.join(', '))
+			: 'the database connection keys';
 	if (result.status === 'read-only') {
-		return `<p class="setup-alert setup-alert--warning">This deployment's filesystem is read only, so it cannot store the connection settings itself. Add the block below to the environment of this service in your orchestrator, then restart it. Until you do, a restart returns to this screen.</p>${block}`;
+		return `<p class="setup-alert setup-alert--warning">This deployment's filesystem is read only. Set ${keyNames} in this service's environment using the connection values you entered, then restart. Without those settings, a restart returns to setup.</p>`;
 	}
 	if (result.status === 'failed') {
-		return `<p class="setup-alert" role="alert">The connection settings could not be stored in <code>${escapeHtml(result.path)}</code>. Add the block below to this deployment's environment yourself, then restart it.</p>${block}`;
+		return `<p class="setup-alert" role="alert">The connection settings could not be stored in <code>${escapeHtml(result.path)}</code>. Set ${keyNames} in this service's environment using the connection values you entered, then restart.</p>`;
 	}
 	if (result.status === 'unchanged') {
-		return `<p class="setup-alert setup-alert--info">Every one of these keys was already set in <code>${escapeHtml(result.path)}</code>, so nothing was replaced.</p>${block}`;
+		return `<p class="setup-alert setup-alert--info">The required connection settings were already present in <code>${escapeHtml(result.path)}</code>. Nothing was replaced.</p>`;
 	}
 	return `<p class="setup-note">Stored in <code>${escapeHtml(result.path)}</code>, readable only by this user${
 		result.kept.length > 0
@@ -349,30 +415,41 @@ function environmentSection(result: EnvironmentWriteResult): string {
 
 function doneStep(view: SetupPageView): string {
 	const seed = view.seed;
-	const accounts = (seed?.accounts ?? [])
-		.map(
-			(account) =>
-				`<div><b>${escapeHtml(account.displayName)} &middot; ${escapeHtml(account.role)}</b><code>${escapeHtml(account.email)}</code><code>${escapeHtml(account.password)}</code></div>`,
-		)
-		.join('');
-	return `<header><span class="setup-kicker">Step 4 of 4</span><h2>Flowdular is ready</h2>
-<p class="setup-card__sub">The database is migrated and the workspace ${escapeHtml(seed?.workspace.name ?? '')} exists. Restart this deployment to leave setup and open the sign-in screen.</p></header>
-${steps(view.step)}${alerts(view)}
-<div><p class="setup-label setup-sublabel">Sign in with</p><div class="setup-credentials">${accounts}</div>
-<p class="setup-note setup-note--gap">These are the product's demo accounts. You can change their passwords or disable them under Administration, Users.</p></div>
+	const owner = seed?.accounts[0];
+	const needsEnvironment =
+		view.environment?.status === 'read-only' ||
+		view.environment?.status === 'failed';
+	const nextStep = needsEnvironment
+		? 'Save the connection settings in this deployment, then restart it to sign in.'
+		: view.autoRestart
+			? 'The app is restarting. Wait a moment, then sign in. If it does not restart, restart the deployment.'
+			: 'Restart this deployment to leave setup and open the sign-in screen.';
+	return `<header><span class="setup-kicker">Sign in</span><h2>Flowdular is ready</h2>
+<p class="setup-card__sub">The workspace ${escapeHtml(seed?.workspace.name ?? '')} is ready. ${nextStep}</p></header>
+${steps(view.step, view.databasePreconfigured)}${alerts(view)}
+<div><p class="setup-label setup-sublabel">Sign in as the workspace owner</p><div class="setup-credentials"><div><b>Owner account</b><code>${escapeHtml(owner?.email ?? view.values.ownerEmail ?? '')}</code></div></div>
+<p class="setup-note setup-note--gap">After signing in, you can connect an AI model in Providers. This is optional and can be done later.</p></div>
 ${view.environment ? environmentSection(view.environment) : ''}
 <a class="setup-btn setup-btn--primary setup-btn--block" href="${escapeHtml(view.values.applicationPath ?? '/app')}">Go to sign in</a>`;
 }
 
 export function renderSetupPage(view: SetupPageView, nonce: string): string {
+	/* This script runs only after the entire completion page has loaded. The
+	   restart request is separate from the response that created the owner. */
+	const restartScript =
+		view.step === 'Sign in' && view.autoRestart && view.csrfToken
+			? `<script nonce="${nonce}">fetch('/setup',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({step:'restart',setupCsrf:'${view.csrfToken}'}),keepalive:true}).catch(()=>{});</script>`
+			: '';
 	const body =
 		view.step === 'Unlock'
 			? unlockStep(view)
 			: view.step === 'Database'
 				? configureStep(view)
-				: view.step === 'Review'
-					? reviewStep(view)
-					: doneStep(view);
+				: view.step === 'Workspace'
+					? workspaceStep(view)
+					: view.step === 'Review'
+						? reviewStep(view)
+						: doneStep(view);
 	return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -384,8 +461,8 @@ export function renderSetupPage(view: SetupPageView, nonce: string): string {
 <canvas class="setup-backdrop" id="setup-backdrop" aria-hidden="true"></canvas>
 <span class="setup-brand">${MARK}Flowdular</span>
 <div class="setup-story__copy"><span class="setup-kicker">Installation</span>
-<h1>One database, then the workspace is yours.</h1>
-<p>Flowdular keeps accounts, workspaces, permissions, and every module's records in one PostgreSQL database. Point it at one here and it migrates itself, creates the first workspace, and hands you the accounts to sign in with.</p></div>
+<h1>Set up your workspace and make it yours.</h1>
+<p>Flowdular will check the database, prepare your modules, and create your first workspace. If this deployment already provides PostgreSQL, you can start with your workspace details.</p></div>
 <footer><span>Agentic foundation platform</span><span>Setup</span></footer></section>
 <section class="setup-panel"><div class="setup-card">${body}</div></section>
 </main>
@@ -396,5 +473,6 @@ function sync(){for(var i=0;i<f.length;i++){var s=document.querySelector('fields
 if(s)s.hidden=!f[i].checked;}}
 for(var i=0;i<f.length;i++)f[i].addEventListener('change',sync);sync();})();
 </script>
+${restartScript}
 </body></html>`;
 }

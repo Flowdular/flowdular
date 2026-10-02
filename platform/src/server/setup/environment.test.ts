@@ -5,6 +5,7 @@ import {
 	readFileSync,
 	rmSync,
 	statSync,
+	symlinkSync,
 	writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -75,6 +76,48 @@ describe('first-run environment file', () => {
 		expect(contents).toContain('postgresql://kept:kept@kept/kept');
 		expect(contents).not.toContain('postgresql://new:new@new/new');
 	});
+
+	it('refuses to replace a linked environment file', () => {
+		const root = workspace();
+		const target = join(root, 'existing');
+		writeFileSync(target, 'FD_DATABASE_URL=postgresql://existing/flowdular\n');
+		symlinkSync(target, join(root, '.env'));
+
+		const result = writeEnvironmentFile(root, {
+			FD_DATABASE_ADAPTER: 'postgresql',
+		});
+
+		expect(result.status).toBe('failed');
+		expect(result.added).toEqual([]);
+		expect(readFileSync(target, 'utf8')).toBe(
+			'FD_DATABASE_URL=postgresql://existing/flowdular\n',
+		);
+		expect(readFileSync(join(root, '.env'), 'utf8')).toBe(
+			'FD_DATABASE_URL=postgresql://existing/flowdular\n',
+		);
+	});
+
+	it.runIf(unprivileged)(
+		'refuses an unreadable environment file without replacing its values',
+		() => {
+			const root = workspace();
+			const path = join(root, '.env');
+			writeFileSync(path, 'FD_DATABASE_URL=postgresql://existing/flowdular\n');
+			chmodSync(path, 0o000);
+			try {
+				const result = writeEnvironmentFile(root, {
+					FD_DATABASE_ADAPTER: 'postgresql',
+				});
+				expect(result.status).toBe('read-only');
+				expect(result.added).toEqual([]);
+			} finally {
+				chmodSync(path, 0o600);
+			}
+			expect(readFileSync(path, 'utf8')).toBe(
+				'FD_DATABASE_URL=postgresql://existing/flowdular\n',
+			);
+		},
+	);
 
 	it('reports nothing to do when every key is already set', () => {
 		const root = workspace();

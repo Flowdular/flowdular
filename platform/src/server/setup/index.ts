@@ -1,5 +1,13 @@
 import process from 'node:process';
 import type { ServerRoute } from '@octanejs/app-core';
+import {
+	authRuntimeOptionsFromEnvironment,
+	createAuthRuntime,
+} from '@flowdular/module-auth/server';
+import {
+	createPlatformDatabaseProvider,
+	databaseProviderConfigFromEnvironment,
+} from '../database.ts';
 import { createSetupAccess } from './access.ts';
 import { createSetupAdapters } from './adapters.ts';
 import { enabledDatabaseModules } from './modules.ts';
@@ -19,9 +27,37 @@ export interface FirstRunSetup {
 export interface FirstRunSetupOptions {
 	readonly environment: NodeJS.ProcessEnv;
 	readonly workspaceRoot: string;
+	readonly databasePreconfigured?: boolean;
 	readonly applicationPath?: string;
 	readonly webMountPaths?: readonly string[];
 	readonly log?: (message: string) => void;
+}
+
+/** A reachable, empty configured database still needs its first owner.
+ * Auth's normal migration path is used before the read, and an outage throws
+ * rather than accidentally opening setup against an existing installation.
+ */
+export async function configuredDatabaseNeedsFirstRun(
+	environment: NodeJS.ProcessEnv,
+	workspaceRoot: string,
+): Promise<boolean> {
+	const databases = createPlatformDatabaseProvider(
+		databaseProviderConfigFromEnvironment(environment, workspaceRoot),
+	);
+	try {
+		await databases.check();
+		const auth = createAuthRuntime({
+			...authRuntimeOptionsFromEnvironment(environment, workspaceRoot),
+			databases,
+		});
+		try {
+			return !(await (await auth.service()).hasAnyTenant());
+		} finally {
+			await auth.dispose();
+		}
+	} finally {
+		await databases.dispose();
+	}
 }
 
 type ProcessWithSetup = NodeJS.Process & {
@@ -62,6 +98,7 @@ export function createFirstRunSetup(
 		tokenFile: issued.file,
 		routes: createSetupRoutes({
 			environment: options.environment,
+			databasePreconfigured: options.databasePreconfigured ?? false,
 			defaultApplicationPath: options.applicationPath ?? '/app',
 			webMountPaths: options.webMountPaths ?? [],
 			workspaceRoot: options.workspaceRoot,
@@ -70,7 +107,10 @@ export function createFirstRunSetup(
 			modules: enabled.modules,
 			modulesApproximated: enabled.approximated,
 			tokenFile: issued.file,
-			secureCookies: production,
+			secureCookies:
+				options.environment.FD_AUTH_SECURE_COOKIE === 'false'
+					? false
+					: production,
 		}),
 	};
 	owner[FIRST_RUN_SYMBOL] = setup;

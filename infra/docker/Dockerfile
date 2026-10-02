@@ -31,6 +31,7 @@ RUN groupadd --system --gid 1001 octane \
 # only node:* built-ins, so no node_modules (and no devDependencies) ship.
 COPY --from=builder --chown=octane:octane /workspace/platform/dist ./platform/dist
 COPY --from=builder --chown=octane:octane /workspace/platform/package.json ./platform/package.json
+COPY --chown=octane:octane infra/docker/app-entrypoint.mjs infra/docker/database-urls.mjs ./infra/docker/
 
 USER octane
 EXPOSE 3000
@@ -39,4 +40,4 @@ VOLUME ["/data"]
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
 	CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
-CMD ["node", "platform/dist/server/entry.js"]
+CMD ["node", "--import", "./infra/docker/app-entrypoint.mjs", "platform/dist/server/entry.js"]

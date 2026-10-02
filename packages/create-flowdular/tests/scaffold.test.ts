@@ -8,6 +8,8 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { parseEnv } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import { scaffold, ScaffoldError } from '../src/scaffold.ts';
 import { SECRET_KEYS } from '../src/secrets.ts';
@@ -170,6 +172,9 @@ describe('scaffold', () => {
 			'platform/octane.config.ts',
 			'platform/src/App.tsrx',
 			'platform/src/server/database.ts',
+			'platform/src/server/setup/index.ts',
+			'platform/src/server/setup/page.ts',
+			'platform/src/server/setup/routes.ts',
 			'platform/src/generated/modules.server.ts',
 			'platform/src/generated/modules.client.ts',
 			'modules/example/module.json',
@@ -187,6 +192,10 @@ describe('scaffold', () => {
 			'infra/README.md',
 			'infra/docker/Dockerfile',
 			'infra/docker/compose.yaml',
+			'infra/docker/.env.example',
+			'infra/docker/start.mjs',
+			'infra/docker/app-entrypoint.mjs',
+			'infra/docker/database-urls.mjs',
 			'infra/docker/postgres/10-roles.sh',
 			'infra/docker/postgres/tls-init.sh',
 			'infra/kubernetes/kustomization.yaml',
@@ -346,6 +355,40 @@ describe('scaffold', () => {
 		for (const [index, value] of firstKeys.entries()) {
 			expect(secondKeys[index]).not.toBe(value);
 		}
+	});
+
+	it('ships a Docker launcher that persists its generated secrets across starts', async () => {
+		const cwd = await workspace();
+		const environment = Object.fromEntries(
+			Object.entries(process.env).filter(([key]) => !key.startsWith('FD_')),
+		);
+		const result = await scaffold({
+			cwd,
+			target: 'my-app',
+			template: 'default',
+			force: false,
+		});
+		const launch = () =>
+			execFileSync(
+				process.execPath,
+				[
+					'--input-type=module',
+					'-e',
+					"import { ensureEnvironmentFile } from './infra/docker/start.mjs'; ensureEnvironmentFile();",
+				],
+				{ cwd: result.directory, env: { ...environment, FD_PORT: '4123' } },
+			);
+		launch();
+		const path = join(result.directory, 'infra/docker/.env');
+		const first = await readFile(path, 'utf8');
+		const values = parseEnv(first);
+		expect(values.FD_AUTH_SECURE_COOKIE).toBe('false');
+		expect(values.FD_DATABASE_RUNTIME_PASSWORD).toMatch(/^[a-f0-9]{64}$/);
+		expect(values.FD_STORAGE_ENCRYPTION_KEY).toBeTruthy();
+		if (process.platform !== 'win32')
+			expect((await stat(path)).mode & 0o777).toBe(0o600);
+		launch();
+		expect(await readFile(path, 'utf8')).toBe(first);
 	});
 
 	it('resolves every relative link its guidance and documentation carry', async () => {

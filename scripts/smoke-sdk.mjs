@@ -109,7 +109,7 @@ run(['install']);
 const firstRun = spawnSync(
 	process.execPath,
 	[join(root, 'scripts/smoke-application-first-run.mjs'), consumer],
-	{ stdio: 'inherit', timeout: 90000 },
+	{ stdio: 'inherit', timeout: 240000 },
 );
 if (firstRun.status !== 0)
 	throw new Error('Fresh application sandbox provisioning failed.');
@@ -192,6 +192,13 @@ if (process.argv[3]) {
 }
 run(['verify']);
 run(['build']);
+const bundledFirstRun = spawnSync(
+	process.execPath,
+	[join(root, 'scripts/smoke-built-first-run-root.mjs'), consumer],
+	{ stdio: 'inherit', timeout: 45_000 },
+);
+if (bundledFirstRun.status !== 0)
+	throw new Error('Bundled first-run workspace root check failed.');
 const boundaries = spawnSync(
 	process.execPath,
 	[join(root, 'scripts/smoke-sdk-boundaries.mjs'), consumer],

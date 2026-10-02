@@ -15,10 +15,10 @@ services:
         condition: service_completed_successfully
     environment:
       POSTGRES_DB: flowdular
-      POSTGRES_PASSWORD: ${FD_POSTGRES_SUPERUSER_PASSWORD:?Set FD_POSTGRES_SUPERUSER_PASSWORD in infra/docker/.env (openssl rand -base64 32)}
-      FD_DATABASE_MIGRATOR_PASSWORD: ${FD_DATABASE_MIGRATOR_PASSWORD:?Set FD_DATABASE_MIGRATOR_PASSWORD in infra/docker/.env (openssl rand -base64 32)}
-      FD_DATABASE_RUNTIME_PASSWORD: ${FD_DATABASE_RUNTIME_PASSWORD:?Set FD_DATABASE_RUNTIME_PASSWORD in infra/docker/.env (openssl rand -base64 32)}
-      FD_DATABASE_BACKGROUND_PASSWORD: ${FD_DATABASE_BACKGROUND_PASSWORD:?Set FD_DATABASE_BACKGROUND_PASSWORD in infra/docker/.env (openssl rand -base64 32)}
+      POSTGRES_PASSWORD: ${FD_POSTGRES_SUPERUSER_PASSWORD:?Run node infra/docker/start.mjs or set FD_POSTGRES_SUPERUSER_PASSWORD}
+      FD_DATABASE_MIGRATOR_PASSWORD: ${FD_DATABASE_MIGRATOR_PASSWORD:?Run node infra/docker/start.mjs or set FD_DATABASE_MIGRATOR_PASSWORD}
+      FD_DATABASE_RUNTIME_PASSWORD: ${FD_DATABASE_RUNTIME_PASSWORD:?Run node infra/docker/start.mjs or set FD_DATABASE_RUNTIME_PASSWORD}
+      FD_DATABASE_BACKGROUND_PASSWORD: ${FD_DATABASE_BACKGROUND_PASSWORD:?Run node infra/docker/start.mjs or set FD_DATABASE_BACKGROUND_PASSWORD}
     command:
       - postgres
       - -c
@@ -54,6 +54,44 @@ services:
       - no-new-privileges:true
     restart: unless-stopped
 
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${FD_MINIO_ROOT_USER:-flowdularlocal}
+      MINIO_ROOT_PASSWORD: ${FD_MINIO_ROOT_PASSWORD:?Run node infra/docker/start.mjs or set FD_MINIO_ROOT_PASSWORD}
+    volumes:
+      - flowdular-objects:/data
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    entrypoint: /bin/sh
+    command:
+      - -ec
+      - |
+        for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+          if mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; then
+            mc mb --ignore-existing "local/$$FD_STORAGE_S3_BUCKET"
+            exit 0
+          fi
+          sleep 2
+        done
+        echo 'MinIO did not become ready within 60 seconds.' >&2
+        exit 1
+    depends_on:
+      minio:
+        condition: service_started
+    environment:
+      MINIO_ROOT_USER: ${FD_MINIO_ROOT_USER:-flowdularlocal}
+      MINIO_ROOT_PASSWORD: ${FD_MINIO_ROOT_PASSWORD:?Run node infra/docker/start.mjs or set FD_MINIO_ROOT_PASSWORD}
+      FD_STORAGE_S3_BUCKET: ${FD_STORAGE_S3_BUCKET:-flowdular}
+    security_opt:
+      - no-new-privileges:true
+    restart: 'no'
+
   app:
     build:
       context: ../..
@@ -62,23 +100,35 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     environment:
       NODE_ENV: production
       PORT: 3000
       # Every module reads and writes through the platform provider; the
       # deployment has one database and no per-module files.
       FD_DATABASE_ADAPTER: postgresql
-      FD_DATABASE_URL: postgresql://coreloom_runtime:${FD_DATABASE_RUNTIME_PASSWORD}@postgres:5432/flowdular
-      FD_DATABASE_MIGRATOR_URL: postgresql://coreloom_migrator:${FD_DATABASE_MIGRATOR_PASSWORD}@postgres:5432/flowdular
+      # The image entrypoint encodes these passwords before making PostgreSQL
+      # URLs. Older deployments may have generated base64 values containing /.
+      FD_DATABASE_RUNTIME_PASSWORD: ${FD_DATABASE_RUNTIME_PASSWORD:?Run node infra/docker/start.mjs or set FD_DATABASE_RUNTIME_PASSWORD}
+      FD_DATABASE_MIGRATOR_PASSWORD: ${FD_DATABASE_MIGRATOR_PASSWORD:?Run node infra/docker/start.mjs or set FD_DATABASE_MIGRATOR_PASSWORD}
       # Cross-tenant reads (the scheduler poll) run as this role. It carries no
       # blanket grant: a migration hands it named columns under its own policy.
-      FD_DATABASE_BACKGROUND_URL: postgresql://coreloom_background:${FD_DATABASE_BACKGROUND_PASSWORD}@postgres:5432/flowdular
+      FD_DATABASE_BACKGROUND_PASSWORD: ${FD_DATABASE_BACKGROUND_PASSWORD:?Run node infra/docker/start.mjs or set FD_DATABASE_BACKGROUND_PASSWORD}
+      FD_DATABASE_URL: ${FD_DATABASE_URL:-}
+      FD_DATABASE_MIGRATOR_URL: ${FD_DATABASE_MIGRATOR_URL:-}
+      FD_DATABASE_BACKGROUND_URL: ${FD_DATABASE_BACKGROUND_URL:-}
       FD_DATABASE_TLS: verify-full
       FD_DATABASE_TLS_CA_FILE: /tls/server.crt
+      FD_AUTH_PUBLIC_ORIGIN: ${FD_AUTH_PUBLIC_ORIGIN:-http://localhost:${FD_PORT:-3000}}
+      FD_APPLICATION_PATH: ${FD_APPLICATION_PATH:-/app}
+      FD_SETUP_AUTO_RESTART: 'true'
       FD_AUTH_ALLOW_SIGN_UP: 'false'
       # TLS terminates in front of this container. Only a plain-HTTP run on a
       # workstation may set FD_AUTH_SECURE_COOKIE=false in .env.
       FD_AUTH_SECURE_COOKIE: ${FD_AUTH_SECURE_COOKIE:-true}
+      FD_AUTH_MFA_KEY: ${FD_AUTH_MFA_KEY:?Run node infra/docker/start.mjs or set FD_AUTH_MFA_KEY}
+      FD_AUTH_MFA_KEY_PREVIOUS: ${FD_AUTH_MFA_KEY_PREVIOUS:-}
       # Outgoing mail. none refuses invitations and delivers no password reset
       # message; smtp requires the URL and the sender below.
       FD_AUTH_MAIL_TRANSPORT: ${FD_AUTH_MAIL_TRANSPORT:-none}
@@ -87,17 +137,27 @@ services:
       FD_METRICS_TOKEN: ${FD_METRICS_TOKEN:-}
       FD_AUTH_SMTP_URL: ${FD_AUTH_SMTP_URL:-}
       FD_AUTH_MAIL_FROM: ${FD_AUTH_MAIL_FROM:-}
-      # Every key comes from infra/docker/.env (copy .env.example). Compose
-      # refuses to start without them; the app would refuse at boot anyway.
-      FD_AGENT_CREDENTIAL_KEY: ${FD_AGENT_CREDENTIAL_KEY:?Set FD_AGENT_CREDENTIAL_KEY in infra/docker/.env (openssl rand -base64 32)}
-      FD_AGENT_RUN_GRANT_KEY: ${FD_AGENT_RUN_GRANT_KEY:?Set FD_AGENT_RUN_GRANT_KEY in infra/docker/.env (openssl rand -base64 32)}
-      FD_AUTOMATIONS_CREDENTIAL_KEY: ${FD_AUTOMATIONS_CREDENTIAL_KEY:?Set FD_AUTOMATIONS_CREDENTIAL_KEY in infra/docker/.env (openssl rand -base64 32)}
-      FD_NOTIFICATIONS_SECRET_KEY: ${FD_NOTIFICATIONS_SECRET_KEY:?Set FD_NOTIFICATIONS_SECRET_KEY in infra/docker/.env (openssl rand -base64 32)}
-      FD_WORKFLOWS_PAYLOAD_KEY: ${FD_WORKFLOWS_PAYLOAD_KEY:?Set FD_WORKFLOWS_PAYLOAD_KEY in infra/docker/.env (openssl rand -base64 32)}
-      FD_WORKFLOWS_CURSOR_KEY: ${FD_WORKFLOWS_CURSOR_KEY:?Set FD_WORKFLOWS_CURSOR_KEY in infra/docker/.env (openssl rand -base64 32)}
-      FD_STORAGE_ENCRYPTION_KEY: ${FD_STORAGE_ENCRYPTION_KEY:?Set FD_STORAGE_ENCRYPTION_KEY in infra/docker/.env (openssl rand -base64 32)}
-      FD_CONNECTORS_SECRET_KEY: ${FD_CONNECTORS_SECRET_KEY:?Set FD_CONNECTORS_SECRET_KEY in infra/docker/.env (openssl rand -base64 32)}
-      FD_AUDIT_ANCHOR_KEY: ${FD_AUDIT_ANCHOR_KEY:?Set FD_AUDIT_ANCHOR_KEY in infra/docker/.env (openssl rand -base64 32)}
+      # start.mjs creates these once in infra/docker/.env. Existing values win.
+      FD_AGENT_CREDENTIAL_KEY: ${FD_AGENT_CREDENTIAL_KEY:?Run node infra/docker/start.mjs or set FD_AGENT_CREDENTIAL_KEY}
+      FD_AGENT_RUN_GRANT_KEY: ${FD_AGENT_RUN_GRANT_KEY:?Run node infra/docker/start.mjs or set FD_AGENT_RUN_GRANT_KEY}
+      FD_APPROVAL_GRANT_KEY: ${FD_APPROVAL_GRANT_KEY:?Run node infra/docker/start.mjs or set FD_APPROVAL_GRANT_KEY}
+      FD_AUTOMATIONS_CREDENTIAL_KEY: ${FD_AUTOMATIONS_CREDENTIAL_KEY:?Run node infra/docker/start.mjs or set FD_AUTOMATIONS_CREDENTIAL_KEY}
+      FD_NOTIFICATIONS_SECRET_KEY: ${FD_NOTIFICATIONS_SECRET_KEY:?Run node infra/docker/start.mjs or set FD_NOTIFICATIONS_SECRET_KEY}
+      FD_WORKFLOWS_PAYLOAD_KEY: ${FD_WORKFLOWS_PAYLOAD_KEY:?Run node infra/docker/start.mjs or set FD_WORKFLOWS_PAYLOAD_KEY}
+      FD_WORKFLOWS_CURSOR_KEY: ${FD_WORKFLOWS_CURSOR_KEY:?Run node infra/docker/start.mjs or set FD_WORKFLOWS_CURSOR_KEY}
+      FD_STORAGE_ENCRYPTION_KEY: ${FD_STORAGE_ENCRYPTION_KEY:?Run node infra/docker/start.mjs or set FD_STORAGE_ENCRYPTION_KEY}
+      FD_CONNECTORS_SECRET_KEY: ${FD_CONNECTORS_SECRET_KEY:?Run node infra/docker/start.mjs or set FD_CONNECTORS_SECRET_KEY}
+      FD_AUDIT_ANCHOR_KEY: ${FD_AUDIT_ANCHOR_KEY:?Run node infra/docker/start.mjs or set FD_AUDIT_ANCHOR_KEY}
+      # Previous keys are operator-managed during rotation and remain empty on a new install.
+      FD_AGENT_CREDENTIAL_KEY_PREVIOUS: ${FD_AGENT_CREDENTIAL_KEY_PREVIOUS:-}
+      FD_APPROVAL_GRANT_KEY_PREVIOUS: ${FD_APPROVAL_GRANT_KEY_PREVIOUS:-}
+      FD_AUTOMATIONS_CREDENTIAL_KEY_PREVIOUS: ${FD_AUTOMATIONS_CREDENTIAL_KEY_PREVIOUS:-}
+      FD_NOTIFICATIONS_SECRET_KEY_PREVIOUS: ${FD_NOTIFICATIONS_SECRET_KEY_PREVIOUS:-}
+      FD_WORKFLOWS_PAYLOAD_KEY_PREVIOUS: ${FD_WORKFLOWS_PAYLOAD_KEY_PREVIOUS:-}
+      FD_WORKFLOWS_CURSOR_KEY_PREVIOUS: ${FD_WORKFLOWS_CURSOR_KEY_PREVIOUS:-}
+      FD_STORAGE_ENCRYPTION_KEY_PREVIOUS: ${FD_STORAGE_ENCRYPTION_KEY_PREVIOUS:-}
+      FD_CONNECTORS_SECRET_KEY_PREVIOUS: ${FD_CONNECTORS_SECRET_KEY_PREVIOUS:-}
+      FD_AUDIT_ANCHOR_KEY_PREVIOUS: ${FD_AUDIT_ANCHOR_KEY_PREVIOUS:-}
       # Object storage. Production refuses the local adapter, so the app writes
       # to an S3-compatible bucket and encrypts every object under
       # FD_STORAGE_ENCRYPTION_KEY before it leaves the process. The named volume
@@ -105,14 +165,14 @@ services:
       # run outside production for a demonstration.
       FD_STORAGE_ADAPTER: ${FD_STORAGE_ADAPTER:-s3}
       FD_STORAGE_LOCAL_DIRECTORY: /var/lib/flowdular/storage
-      FD_STORAGE_S3_BUCKET: ${FD_STORAGE_S3_BUCKET:-}
-      FD_STORAGE_S3_REGION: ${FD_STORAGE_S3_REGION:-}
-      FD_STORAGE_S3_ENDPOINT: ${FD_STORAGE_S3_ENDPOINT:-}
-      FD_STORAGE_S3_ACCESS_KEY_ID: ${FD_STORAGE_S3_ACCESS_KEY_ID:-}
-      FD_STORAGE_S3_SECRET_ACCESS_KEY: ${FD_STORAGE_S3_SECRET_ACCESS_KEY:-}
-      FD_STORAGE_S3_FORCE_PATH_STYLE: ${FD_STORAGE_S3_FORCE_PATH_STYLE:-false}
+      FD_STORAGE_S3_BUCKET: ${FD_STORAGE_S3_BUCKET:-flowdular}
+      FD_STORAGE_S3_REGION: ${FD_STORAGE_S3_REGION:-us-east-1}
+      FD_STORAGE_S3_ENDPOINT: ${FD_STORAGE_S3_ENDPOINT-}
+      FD_STORAGE_S3_ACCESS_KEY_ID: ${FD_STORAGE_S3_ACCESS_KEY_ID:-${FD_MINIO_ROOT_USER:-flowdularlocal}}
+      FD_STORAGE_S3_SECRET_ACCESS_KEY: ${FD_STORAGE_S3_SECRET_ACCESS_KEY:-${FD_MINIO_ROOT_PASSWORD:?Run node infra/docker/start.mjs or set FD_MINIO_ROOT_PASSWORD}}
+      FD_STORAGE_S3_FORCE_PATH_STYLE: ${FD_STORAGE_S3_FORCE_PATH_STYLE:-true}
     ports:
-      - '${FD_PORT:-3000}:3000'
+      - '${FD_BIND_ADDRESS:-127.0.0.1}:${FD_PORT:-3000}:3000'
     healthcheck:
       test:
         - CMD
@@ -141,3 +201,5 @@ volumes:
   flowdular-postgres-tls:
   # Only the local adapter writes here; a production run uses the S3 bucket.
   flowdular-storage:
+  # Local S3-compatible storage; back up this volume alongside PostgreSQL.
+  flowdular-objects:

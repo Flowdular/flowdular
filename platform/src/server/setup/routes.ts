@@ -1,4 +1,12 @@
 import { validateApplicationPath } from '@flowdular/server';
+import {
+	assertPasswordPolicy,
+	AuthServiceError,
+	validateDisplayName,
+	validateEmailAddress,
+	validateWorkspaceName,
+	validateWorkspaceSlug,
+} from '@flowdular/module-auth/server';
 import { randomBytes } from 'node:crypto';
 import { ServerRoute, type Context } from '@octanejs/app-core';
 import {
@@ -15,7 +23,15 @@ import {
 	type SetupAccess,
 	type SetupSession,
 } from './access.ts';
-import { setupSecretValues, type SetupAdapters } from './adapters.ts';
+import {
+	POSTGRESQL_ADAPTER_ID,
+	setupSecretValues,
+	type SetupAdapters,
+} from './adapters.ts';
+import {
+	createPlatformDatabaseProvider,
+	databaseProviderConfigFromEnvironment,
+} from '../database.ts';
 import {
 	writeEnvironmentFile,
 	type EnvironmentWriteResult,
@@ -26,13 +42,19 @@ import {
 	type SetupPageView,
 } from './page.ts';
 import { classifySetupFailure } from './sanitize.ts';
-import { seedFirstRun, SetupSeedError, type FirstRunSeed } from './seed.ts';
+import {
+	seedFirstRun,
+	SetupSeedError,
+	type FirstRunOwner,
+	type FirstRunSeed,
+} from './seed.ts';
 
 const MAX_BODY_BYTES = 64 * 1024;
 const FIELD_PREFIX = 'field:';
 
 export interface SetupRoutesOptions {
 	readonly environment: NodeJS.ProcessEnv;
+	readonly databasePreconfigured: boolean;
 	readonly defaultApplicationPath?: string;
 	readonly webMountPaths?: readonly string[];
 	readonly workspaceRoot: string;
@@ -43,36 +65,64 @@ export interface SetupRoutesOptions {
 	readonly modulesApproximated: boolean;
 	readonly tokenFile: string | null;
 	readonly secureCookies: boolean;
+	/** Supplied by tests; production exits after the completed page requests restart. */
+	readonly restartApplication?: (exitCode: number) => void;
 }
 
-interface ReviewState {
-	readonly kind: 'review';
+interface ConnectionState {
 	readonly adapterId: string;
-	readonly input: DatabaseAdapterConnectionInput;
+	readonly input: DatabaseAdapterConnectionInput | null;
 	readonly values: Readonly<Record<string, string>>;
-	readonly probe: DatabaseAdapterProbeResult;
+	readonly probe: DatabaseAdapterProbeResult | null;
 	readonly modules: readonly ModuleCompatibility[];
+}
+
+interface DatabaseState extends ConnectionState {
+	readonly kind: 'database';
+}
+
+interface ReviewState extends ConnectionState {
+	readonly kind: 'review';
+	readonly owner: FirstRunOwner;
 }
 
 interface DoneState {
 	readonly kind: 'done';
 	readonly applicationPath: string;
 	readonly seed: FirstRunSeed;
-	readonly environment: EnvironmentWriteResult;
+	readonly environment: EnvironmentWriteResult | null;
 }
 
-type FlowState = DoneState | ReviewState;
+type FlowState = DoneState | ReviewState | DatabaseState;
 
 function flowState(session: SetupSession | null): FlowState | null {
 	const pending = session?.pending;
 	if (!pending || typeof pending !== 'object') return null;
 	const kind = (pending as { kind?: unknown }).kind;
-	return kind === 'review' || kind === 'done' ? (pending as FlowState) : null;
+	return kind === 'database' || kind === 'review' || kind === 'done'
+		? (pending as FlowState)
+		: null;
+}
+
+function canAutoRestart(
+	options: SetupRoutesOptions,
+	state: DoneState,
+): boolean {
+	return (
+		options.environment.FD_SETUP_AUTO_RESTART === 'true' &&
+		(options.databasePreconfigured ||
+			state.environment?.status === 'written' ||
+			state.environment?.status === 'unchanged')
+	);
 }
 
 function emptyView(options: SetupRoutesOptions): SetupPageView {
 	return {
 		step: 'Unlock',
+		databasePreconfigured: options.databasePreconfigured,
+		autoRestart:
+			options.databasePreconfigured &&
+			options.environment.FD_SETUP_AUTO_RESTART === 'true',
 		csrfToken: null,
 		error: null,
 		notice: null,
@@ -104,6 +154,7 @@ function page(
 		status,
 		headers: {
 			'content-type': 'text/html; charset=utf-8',
+			'x-flowdular-setup': 'first-run',
 			'cache-control': 'no-store',
 			'x-content-type-options': 'nosniff',
 			'referrer-policy': 'no-referrer',
@@ -136,7 +187,25 @@ async function readForm(request: Request): Promise<FormData | null> {
 	const declared = Number(request.headers.get('content-length') ?? '0');
 	if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) return null;
 	try {
-		return await request.formData();
+		if (!request.body) return null;
+		const reader = request.body.getReader();
+		const chunks: Uint8Array[] = [];
+		let length = 0;
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			length += value.byteLength;
+			if (length > MAX_BODY_BYTES) {
+				await reader.cancel();
+				return null;
+			}
+			chunks.push(value);
+		}
+		const contentType = request.headers.get('content-type');
+		if (!contentType) return null;
+		return await new Response(Buffer.concat(chunks), {
+			headers: { 'content-type': contentType },
+		}).formData();
 	} catch {
 		return null;
 	}
@@ -203,6 +272,19 @@ export function createSetupRoutes(
 	options: SetupRoutesOptions,
 ): readonly ServerRoute[] {
 	const base = emptyView(options);
+	let restartScheduled = false;
+	const preconfiguredState = (): DatabaseState => ({
+		kind: 'database',
+		adapterId: POSTGRESQL_ADAPTER_ID,
+		input: null,
+		values: base.values,
+		probe: null,
+		modules: compatibility(
+			options.adapters,
+			POSTGRESQL_ADAPTER_ID,
+			options.modules,
+		),
+	});
 
 	const unlockView = (
 		error: string | null,
@@ -218,6 +300,22 @@ export function createSetupRoutes(
 			...base,
 			step: 'Database',
 			csrfToken: session.csrfToken,
+			...overrides,
+		});
+
+	const workspaceView = (
+		session: SetupSession,
+		state: ConnectionState,
+		overrides: Partial<SetupPageView> = {},
+	): Response =>
+		page({
+			...base,
+			step: 'Workspace',
+			csrfToken: session.csrfToken,
+			selectedAdapterId: state.adapterId,
+			values: state.values,
+			probe: state.probe,
+			modules: state.modules,
 			...overrides,
 		});
 
@@ -241,6 +339,7 @@ export function createSetupRoutes(
 		page({
 			...base,
 			step: 'Sign in',
+			autoRestart: canAutoRestart(options, state),
 			csrfToken: session.csrfToken,
 			seed: state.seed,
 			values: { applicationPath: state.applicationPath },
@@ -255,6 +354,9 @@ export function createSetupRoutes(
 		const state = flowState(session);
 		if (state?.kind === 'done') return doneView(session, state);
 		if (state?.kind === 'review') return reviewView(session, state);
+		if (state?.kind === 'database') return workspaceView(session, state);
+		if (options.databasePreconfigured)
+			return workspaceView(session, preconfiguredState());
 		return configureView(session);
 	};
 
@@ -288,6 +390,8 @@ export function createSetupRoutes(
 		session: SetupSession,
 		form: FormData,
 	): Promise<Response> => {
+		if (options.databasePreconfigured)
+			return workspaceView(session, preconfiguredState());
 		const adapterId = formString(form, 'adapter').trim();
 		const adapter = options.adapters.get(adapterId);
 		if (!adapter) {
@@ -300,35 +404,7 @@ export function createSetupRoutes(
 			adapterId,
 			options.adapters,
 		);
-		values.applicationPath =
-			formString(form, 'applicationPath').trim() ||
-			options.environment.FD_APPLICATION_PATH ||
-			options.defaultApplicationPath ||
-			'/app';
 		const fieldErrors: Record<string, string> = {};
-		try {
-			validateApplicationPath(values.applicationPath);
-			if (
-				options.webMountPaths?.some(
-					(path) =>
-						path === values.applicationPath ||
-						path.startsWith(values.applicationPath + '/'),
-				)
-			) {
-				fieldErrors.applicationPath =
-					'This address overlaps a configured public module. Choose another backoffice address.';
-			}
-			if (
-				options.environment.FD_APPLICATION_PATH &&
-				values.applicationPath !== options.environment.FD_APPLICATION_PATH
-			) {
-				fieldErrors.applicationPath =
-					'This address is set by FD_APPLICATION_PATH. Change that environment setting before restarting setup.';
-			}
-		} catch {
-			fieldErrors.applicationPath =
-				'Use one path such as /app or /backoffice (up to 64 characters, lowercase letters, digits and hyphens). System addresses are reserved.';
-		}
 		for (const issue of adapter.descriptor.validate(input)) {
 			fieldErrors[issue.field] ??= issue.message;
 		}
@@ -342,14 +418,127 @@ export function createSetupRoutes(
 			});
 		}
 		const probe = await adapter.descriptor.probe(input);
+		if (probe.status !== 'ready') {
+			return configureView(session, {
+				selectedAdapterId: adapterId,
+				values,
+				error: probe.message ?? 'The connection could not be tested.',
+			});
+		}
 		const modules = compatibility(options.adapters, adapterId, options.modules);
-		const state: ReviewState = {
-			kind: 'review',
+		const state: DatabaseState = {
+			kind: 'database',
 			adapterId,
 			input,
-			values,
+			values: { ...values, applicationPath: base.values.applicationPath! },
 			probe,
 			modules,
+		};
+		session.pending = state;
+		return workspaceView(session, state);
+	};
+
+	const workspace = (session: SetupSession, form: FormData): Response => {
+		const pending = flowState(session);
+		const database =
+			pending?.kind === 'database' || pending?.kind === 'review'
+				? pending
+				: options.databasePreconfigured
+					? preconfiguredState()
+					: null;
+		if (!database) return configureView(session);
+		const values: Record<string, string> = {
+			...database.values,
+			workspaceName: formString(form, 'workspaceName').trim(),
+			workspaceSlug: formString(form, 'workspaceSlug').trim(),
+			ownerName: formString(form, 'ownerName').trim(),
+			ownerEmail: formString(form, 'ownerEmail').trim(),
+			applicationPath:
+				formString(form, 'applicationPath').trim() ||
+				base.values.applicationPath!,
+		};
+		const password = formString(form, 'ownerPassword');
+		const passwordConfirm = formString(form, 'ownerPasswordConfirm');
+		const fieldErrors: Record<string, string> = {};
+		const validate = (key: string, action: () => string): string => {
+			try {
+				return action();
+			} catch (error) {
+				fieldErrors[key] =
+					error instanceof AuthServiceError
+						? error.message
+						: 'This value is invalid.';
+				return values[key] ?? '';
+			}
+		};
+		values.workspaceName = validate('workspaceName', () =>
+			validateWorkspaceName(values.workspaceName!),
+		);
+		values.workspaceSlug = validate('workspaceSlug', () =>
+			validateWorkspaceSlug(values.workspaceSlug!),
+		);
+		values.ownerName = validate('ownerName', () =>
+			validateDisplayName(values.ownerName!),
+		);
+		values.ownerEmail = validate('ownerEmail', () =>
+			validateEmailAddress(values.ownerEmail!),
+		);
+		try {
+			const minimum = Number(
+				options.environment.FD_AUTH_PASSWORD_MIN_LENGTH ?? '8',
+			);
+			assertPasswordPolicy(password, minimum, values.ownerEmail);
+		} catch (error) {
+			fieldErrors.ownerPassword =
+				error instanceof AuthServiceError
+					? error.message
+					: 'Choose a valid owner password.';
+		}
+		if (password !== passwordConfirm) {
+			fieldErrors.ownerPasswordConfirm = 'Passwords do not match.';
+		}
+		try {
+			validateApplicationPath(values.applicationPath!);
+			if (
+				options.webMountPaths?.some(
+					(path) =>
+						path === values.applicationPath ||
+						path.startsWith(values.applicationPath + '/'),
+				)
+			) {
+				fieldErrors.applicationPath =
+					'This address overlaps a configured public module. Choose another backoffice address.';
+			}
+			if (
+				(options.databasePreconfigured ||
+					options.environment.FD_APPLICATION_PATH) &&
+				values.applicationPath !== base.values.applicationPath
+			) {
+				fieldErrors.applicationPath =
+					'This address is controlled by the deployment. Change FD_APPLICATION_PATH in its environment.';
+			}
+		} catch {
+			fieldErrors.applicationPath =
+				'Use one path such as /app or /backoffice (up to 64 characters, lowercase letters, digits and hyphens). System addresses are reserved.';
+		}
+		if (Object.keys(fieldErrors).length > 0) {
+			return workspaceView(session, database, {
+				values,
+				fieldErrors,
+				error: 'Some values need attention before you can continue.',
+			});
+		}
+		const state: ReviewState = {
+			...database,
+			kind: 'review',
+			values,
+			owner: {
+				workspaceName: values.workspaceName!,
+				workspaceSlug: values.workspaceSlug!,
+				ownerEmail: values.ownerEmail!,
+				ownerName: values.ownerName!,
+				ownerPassword: password,
+			},
 		};
 		session.pending = state;
 		return reviewView(session, state);
@@ -360,10 +549,10 @@ export function createSetupRoutes(
 		state: ReviewState,
 	): Promise<Response> => {
 		const adapter = options.adapters.get(state.adapterId);
-		if (!adapter) {
+		if (!options.databasePreconfigured && (!adapter || !state.input)) {
 			return reviewView(session, state, 'That database is no longer offered.');
 		}
-		if (state.probe.status !== 'ready') {
+		if (!options.databasePreconfigured && state.probe?.status !== 'ready') {
 			return reviewView(
 				session,
 				state,
@@ -377,28 +566,41 @@ export function createSetupRoutes(
 				'One or more enabled modules cannot run on this database, so nothing was applied.',
 			);
 		}
-		const secrets = setupSecretValues(state.input);
+		const secrets = [
+			...(state.input ? setupSecretValues(state.input) : []),
+			state.owner.ownerPassword,
+		];
 		let seed: FirstRunSeed;
 		try {
-			await adapter.descriptor.provision(state.input, {
-				intent: 'confirmed-first-run',
-			});
-			const provider = adapter.openProvider(state.input);
+			if (state.input) {
+				await adapter!.descriptor.provision(state.input, {
+					intent: 'confirmed-first-run',
+				});
+			}
+			const provider = state.input
+				? adapter!.openProvider(state.input)
+				: createPlatformDatabaseProvider(
+						databaseProviderConfigFromEnvironment(
+							options.environment,
+							options.workspaceRoot,
+						),
+					);
 			try {
+				await provider.check();
 				seed = await seedFirstRun(
 					provider,
 					options.environment,
 					options.workspaceRoot,
+					state.owner,
 				);
 			} finally {
 				await provider.dispose();
 			}
-			/* Readiness under the runtime role, proved after the schema exists and
-			   every pool the seed used is closed. */
-			const handle = await adapter.descriptor.connect(state.input);
-			await handle.dispose();
 		} catch (error) {
-			if (error instanceof SetupSeedError) {
+			if (
+				error instanceof SetupSeedError ||
+				error instanceof AuthServiceError
+			) {
 				return reviewView(session, state, error.message);
 			}
 			return reviewView(
@@ -413,10 +615,12 @@ export function createSetupRoutes(
 			kind: 'done',
 			applicationPath: state.values.applicationPath!,
 			seed,
-			environment: writeEnvironmentFile(options.workspaceRoot, {
-				...adapter.environment(state.input),
-				FD_APPLICATION_PATH: state.values.applicationPath!,
-			}),
+			environment: state.input
+				? writeEnvironmentFile(options.workspaceRoot, {
+						...adapter!.environment(state.input),
+						FD_APPLICATION_PATH: state.values.applicationPath!,
+					})
+				: null,
 		};
 		session.pending = done;
 		return doneView(session, done);
@@ -442,25 +646,55 @@ export function createSetupRoutes(
 			return unlockView('That form was not accepted. Unlock setup again.', 403);
 		}
 		const state = flowState(session);
-		if (state?.kind === 'done') return doneView(session, state);
+		if (state?.kind === 'done') {
+			if (step === 'restart' && canAutoRestart(options, state)) {
+				if (!restartScheduled) {
+					restartScheduled = true;
+					const exitCode =
+						options.environment.FD_SETUP_RESTART_EXIT_CODE === '75' ? 75 : 0;
+					if (options.restartApplication) options.restartApplication(exitCode);
+					else setTimeout(() => process.exit(exitCode), 250).unref();
+				}
+				return new Response(null, {
+					status: 204,
+					headers: { 'cache-control': 'no-store' },
+				});
+			}
+			return doneView(session, state);
+		}
 		if (step === 'back') {
-			session.pending = null;
-			return configureView(
-				session,
-				state?.kind === 'review'
-					? { values: state.values, selectedAdapterId: state.adapterId }
-					: {},
-			);
+			if (state?.kind === 'review') {
+				const database: DatabaseState = {
+					kind: 'database',
+					adapterId: state.adapterId,
+					input: state.input,
+					values: state.values,
+					probe: state.probe,
+					modules: state.modules,
+				};
+				session.pending = database;
+				return workspaceView(session, database);
+			}
+			if (state?.kind === 'database' && !options.databasePreconfigured) {
+				session.pending = null;
+				return configureView(session, {
+					values: state.values,
+					selectedAdapterId: state.adapterId,
+				});
+			}
+			return render(context);
 		}
 		if (step === 'configure') return configure(session, form);
+		if (step === 'workspace') return workspace(session, form);
 		if (step === 'apply' && state?.kind === 'review') {
 			return apply(session, state);
 		}
 		return render(context);
 	};
 
-	/* Only these paths exist while the platform has no database. Everything else
-	   is one redirect to the installer, because there is nothing else to serve. */
+	/* While installation has no workspace, only setup and process health are
+	   served. A configured database does not expose the application until its
+	   first owner has completed the wizard. */
 	return [
 		new ServerRoute({
 			path: '/setup',
@@ -482,7 +716,7 @@ export function createSetupRoutes(
 						error: {
 							code: 'PLATFORM_NOT_CONFIGURED',
 							message:
-								'This deployment has no database yet. Complete the first-run setup at /setup.',
+								'Complete the first-run setup at /setup before using the platform.',
 						},
 					}),
 					{

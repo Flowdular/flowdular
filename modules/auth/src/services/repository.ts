@@ -298,6 +298,7 @@ export interface AuditActorEvent extends AuditEvent {
 export interface AuthRepository {
 	isTenantSlugTaken(slug: string): Promise<boolean>;
 	findTenant(reference: string): Promise<TenantSummary | null>;
+	hasAnyTenant(): Promise<boolean>;
 	listTenants(): Promise<readonly TenantSummary[]>;
 	renameTenant(tenantId: string, name: string): Promise<TenantSummary | null>;
 	listOwnerMemberships(): Promise<

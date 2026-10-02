@@ -1223,6 +1223,11 @@ export class AuthService {
 		return this.#repository.listTenants();
 	}
 
+	/** Whether the installation has any workspace, without loading its tenants. */
+	async hasAnyTenant(): Promise<boolean> {
+		return this.#repository.hasAnyTenant();
+	}
+
 	/* Tenant lookup by identifier or workspace slug for operator tooling. */
 	async findTenant(reference: string): Promise<TenantSummary | null> {
 		const normalized = reference.trim().normalize('NFKC');

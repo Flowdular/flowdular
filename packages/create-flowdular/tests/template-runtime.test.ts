@@ -23,7 +23,7 @@ const fixtures: Record<string, string> = {
 		export const defineConfig = value => value;
 		export class RenderRoute { constructor(options) { Object.assign(this, options); } }
 	`,
-	'@flowdular/sdk/server': `export const validateApplicationPath = value => value; export const assertRouteConflicts = () => {}; export const createModuleWebRoutes = () => []; export const createApplicationRoutes = () => []; export const defineEndpoint = definition => ({ ...definition, serverRoute: { path: definition.path, methods: definition.methods, handler: definition.handler } }); export const jsonResponse = (body, status) => Response.json(body, { status }); export const serverMetrics = () => ({ setBuildVersion() {}, expose: () => 'flowdular_build_info 1\\n' }); export const createModuleMetrics = () => ({ counter() {}, histogram() {} }); export const serverTracer = () => ({ sampleRatio: 1, startSpan: () => ({ context: {}, setAttribute() {}, end() {} }), drain: () => [], stats: () => ({ buffered: 0, dropped: 0, recorded: 0 }), onSpanRecorded: () => () => {} }); export const traceConfigFromEnvironment = () => ({ exporter: 'none', url: null, headers: {}, sampleRatio: 1 }); export const createOtlpSpanExporter = () => ({ async flush() {}, stats: () => ({ exported: 0, dropped: 0, failures: 0, retries: 0 }), async dispose() {} }); export const errorSinkConfigFromEnvironment = () => ({ kind: 'none', url: null, token: null }); export const serverErrorSink = () => ({ async flush() {} }); export const createMailPort = () => ({ adapter: 'none', configured: false, async send() {}, outbox: [] }); export const mailConfigFromEnvironment = () => ({ adapter: 'none', deprecated: [] }); export const createCorsMiddleware = () => (context, next) => next(); export const createOpenApiRoutes = () => [{ path: '/api/openapi.json', methods: ['GET'], handler: () => new Response(null) }];`,
+	'@flowdular/sdk/server': `export const validateApplicationPath = value => value; export const assertRouteConflicts = () => {}; export const createModuleWebRoutes = () => []; export const createApplicationRoutes = () => []; export const defineEndpoint = definition => ({ ...definition, serverRoute: { path: definition.path, methods: definition.methods, handler: definition.handler } }); export const jsonResponse = (body, status) => Response.json(body, { status }); export const serverMetrics = () => ({ setBuildVersion() {}, expose: () => 'flowdular_build_info 1\\n' }); export const createModuleMetrics = () => ({ counter() {}, histogram() {} }); export const serverTracer = () => ({ sampleRatio: 1, startSpan: () => ({ context: {}, setAttribute() {}, end() {} }), drain: () => [], stats: () => ({ buffered: 0, dropped: 0, recorded: 0 }), onSpanRecorded: () => () => {} }); export const traceConfigFromEnvironment = () => ({ exporter: 'none', url: null, headers: {}, sampleRatio: 1 }); export const createOtlpSpanExporter = () => ({ async flush() {}, stats: () => ({ exported: 0, dropped: 0, failures: 0, retries: 0 }), async dispose() {} }); export const errorSinkConfigFromEnvironment = () => ({ kind: 'none', url: null, token: null }); export const serverErrorSink = () => ({ stats: () => ({ queued: 0 }), async flush() {} }); export const createMailPort = () => ({ adapter: 'none', configured: false, async send() {}, outbox: [] }); export const mailConfigFromEnvironment = () => ({ adapter: 'none', deprecated: [] }); export const createCorsMiddleware = () => (context, next) => next(); export const createOpenApiRoutes = () => [{ path: '/api/openapi.json', methods: ['GET'], handler: () => new Response(null) }];`,
 	'@flowdular/sdk/modules/auth/server': `
         export const principalFromContext = () => null;
 		export const isTokenPrincipal = () => false;
@@ -50,7 +50,14 @@ const fixtures: Record<string, string> = {
 	`,
 	'./src/server/database.ts': `
 		export const databaseProviderConfigFromEnvironment = () => ({});
+		export const loadPlatformEnvironmentFile = () => {};
+		export const platformDatabaseConfigured = environment => environment.FD_TEST_DATABASE_CONFIGURED !== 'false';
 		export const createPlatformDatabaseProvider = () => ({ checked: false, async check() { this.checked = true; }, async dispose() {} });
+	`,
+	'./src/server/setup/index.ts': `
+		export const clearSetupToken = () => {};
+		export const configuredDatabaseNeedsFirstRun = async environment => environment.FD_TEST_EMPTY === 'true';
+		export const createFirstRunSetup = options => ({ routes: [{ path: '/setup', methods: ['GET'], handler: () => new Response(options.databasePreconfigured ? 'database ready' : 'database needed') }] });
 	`,
 	'./src/generated/modules.server.ts': `
         export const moduleWebMounts = []; export const applicationBasePath = '/app';
@@ -212,6 +219,72 @@ it('composes the metrics route only when FD_METRICS is on', async () => {
 			});
 		expect(scraped.status).toBe(200);
 		expect(await scraped.text()).toContain('flowdular_build_info');
+	} finally {
+		await platform.dispose();
+	}
+});
+
+it('serves setup before composing modules when a generated app has no workspace', async () => {
+	const platform = await generatedPlatform();
+	try {
+		const config = await boot(platform.directory, { FD_TEST_EMPTY: 'true' });
+		expect(config.router.routes.map((route) => route.path)).toEqual([
+			'/api/health',
+			'/setup',
+		]);
+		expect(config.middlewares).toBeUndefined();
+		const setup = config.router.routes.find(
+			(route) => route.path === '/setup',
+		)!;
+		expect(
+			await (
+				await setup.handler({
+					requestId: 'setup',
+					octane: { request: new Request('http://app/setup') },
+				})
+			).text(),
+		).toBe('database ready');
+	} finally {
+		await platform.dispose();
+	}
+});
+
+it('serves setup before composing modules when a generated app has no database', async () => {
+	const platform = await generatedPlatform();
+	try {
+		const config = await boot(platform.directory, {
+			FD_TEST_DATABASE_CONFIGURED: 'false',
+		});
+		expect(config.router.routes.map((route) => route.path)).toEqual([
+			'/api/health',
+			'/setup',
+		]);
+		const setup = config.router.routes.find(
+			(route) => route.path === '/setup',
+		)!;
+		expect(
+			await (
+				await setup.handler({
+					requestId: 'setup',
+					octane: { request: new Request('http://app/setup') },
+				})
+			).text(),
+		).toBe('database needed');
+	} finally {
+		await platform.dispose();
+	}
+});
+
+it('bundles the application routes without a database URL during an image build', async () => {
+	const platform = await generatedPlatform();
+	try {
+		const config = await boot(platform.directory, {
+			FD_INTERNAL_BUILD: 'true',
+			FD_TEST_DATABASE_CONFIGURED: 'false',
+		});
+		const paths = config.router.routes.map((route) => route.path);
+		expect(paths).toContain('/api/openapi.json');
+		expect(paths).not.toContain('/setup');
 	} finally {
 		await platform.dispose();
 	}

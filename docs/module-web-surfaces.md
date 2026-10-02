@@ -140,13 +140,15 @@ in front of it, as the bundled Node server does.
 ### Backoffice address
 
 The first-run setup includes **Backoffice address**, defaulting to `/app` (or the
-installation's configured default). Choose `/backoffice` to leave `/` available
-for a storefront. Setup validates the address, includes it in the review, and
-writes `FD_APPLICATION_PATH=/backoffice` alongside the database settings. Restart
-after setup; no client rebuild is needed for this environment setting. On a
-read-only deployment setup provides the environment block to paste into the
-hosting service. If `FD_APPLICATION_PATH` already exists in the environment, it
-is authoritative; setup cannot silently replace it.
+installation's configured default). When choosing a database in the wizard, an
+operator can choose `/backoffice` to leave `/` available for a storefront. Setup
+validates the address, includes it in the review, and writes
+`FD_APPLICATION_PATH=/backoffice` alongside the database settings. Restart after
+setup; no client rebuild is needed. When the database is already configured by
+the deployment, the wizard skips that step and the deployment's
+`FD_APPLICATION_PATH` controls the address. A read-only deployment must store
+new settings in its environment before restart. Setup never echoes connection
+secrets back to the browser.
 
 For configuration managed in source control, add:
 
