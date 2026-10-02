@@ -1,4 +1,4 @@
-import { validateApplicationPath } from '@flowdular/server';
+import { validateApplicationPath } from '@flowdular/sdk/server';
 import {
 	assertPasswordPolicy,
 	AuthServiceError,
@@ -6,7 +6,7 @@ import {
 	validateEmailAddress,
 	validateWorkspaceName,
 	validateWorkspaceSlug,
-} from '@flowdular/module-auth/server';
+} from '@flowdular/sdk/modules/auth/server';
 import { randomBytes } from 'node:crypto';
 import { ServerRoute, type Context } from '@octanejs/app-core';
 import {
@@ -15,7 +15,7 @@ import {
 	type DatabaseAdapterProbeResult,
 	type DatabaseSafeConfiguration,
 	type ModuleDatabaseRequirements,
-} from '@flowdular/database';
+} from '@flowdular/sdk/database';
 import {
 	readSetupSessionCookie,
 	SETUP_CSRF_FIELD,

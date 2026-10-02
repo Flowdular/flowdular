@@ -2,7 +2,7 @@ import type {
 	DatabaseAdapterProbeResult,
 	DatabaseAdapterPublicDescriptor,
 	DatabaseConfigurationField,
-} from '@flowdular/database';
+} from '@flowdular/sdk/database';
 import { SETUP_CSRF_FIELD } from './access.ts';
 import type { EnvironmentWriteResult } from './environment.ts';
 import type { FirstRunSeed } from './seed.ts';

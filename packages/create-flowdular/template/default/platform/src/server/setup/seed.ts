@@ -1,8 +1,8 @@
-import type { DatabaseProvider } from '@flowdular/database';
+import type { DatabaseProvider } from '@flowdular/sdk/database';
 import {
 	authRuntimeOptionsFromEnvironment,
 	createAuthRuntime,
-} from '@flowdular/module-auth/server';
+} from '@flowdular/sdk/modules/auth/server';
 /* First-run provisioning uses the same audited auth service as the operator
    CLI. The operator chooses the first owner; no demo credentials are shipped. */
 

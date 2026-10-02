@@ -17,16 +17,19 @@ npm create flowdular@latest my-app
 cd my-app
 ```
 
-For this new local application, initialize demo authentication and start the development server:
+Start the development server:
 
 ```sh
-pnpm flowdular setup
 pnpm dev
 ```
 
-Open [localhost:4310](http://localhost:4310). `setup` opens an interactive wizard for a local demo, PostgreSQL settings or a configuration check. It asks before resetting the local demo database.
+The browser opens the first-run setup automatically. If it cannot open, visit
+[localhost:4310/setup](http://localhost:4310/setup). Enter the token printed in
+the terminal, then create your workspace and owner account. Embedded PostgreSQL
+is already configured. Restart `pnpm dev` when setup finishes, then sign in with
+the owner account you chose.
 
-The starter enables all nine platform modules: system, authentication, users, profile, agents, automations, workflows, their integration, and sandbox access. Local demo setup grants their declared permissions to demo owners. The example module stays available as a starting point; business modules from Official Modules are optional downloads.
+The starter enables all nine platform modules: system, authentication, users, profile, agents, automations, workflows, their integration, and sandbox access. First-run setup grants their declared permissions to the new owner. The example module stays available as a starting point; business modules from Official Modules are optional downloads.
 
 `npm create` launches the generator. The generated application uses **pnpm workspaces**. If pnpm is unavailable during installation, the generator invokes its pinned version through `npm exec`.
 

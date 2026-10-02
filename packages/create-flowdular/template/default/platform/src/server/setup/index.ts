@@ -3,7 +3,7 @@ import type { ServerRoute } from '@octanejs/app-core';
 import {
 	authRuntimeOptionsFromEnvironment,
 	createAuthRuntime,
-} from '@flowdular/module-auth/server';
+} from '@flowdular/sdk/modules/auth/server';
 import {
 	createPlatformDatabaseProvider,
 	databaseProviderConfigFromEnvironment,

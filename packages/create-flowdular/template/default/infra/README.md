@@ -11,73 +11,50 @@ background roles hold neither `SUPERUSER` nor `BYPASSRLS`, and answers 503 with
 ## Local container
 
 ```bash
-cp .env.example infra/docker/.env   # then fill in every value
-docker compose -f infra/docker/compose.yaml up --build
+node infra/docker/start.mjs
 ```
 
-Compose refuses to start while a key or a database password is empty, and the
-owning module would refuse at boot anyway. The app is published on
-`http://localhost:3000`; set `FD_PORT` to change the host port.
+The launcher creates `infra/docker/.env` with owner-only permissions, generates
+PostgreSQL passwords and platform keys once, and keeps them on later runs. It
+starts PostgreSQL, a private MinIO bucket and the app. When the database is
+empty, it opens the first-run setup in the workstation browser and prints the
+one-time setup token in the terminal. Use `--no-open` on a headless host. The
+normal address is `http://localhost:3000`; change `FD_PORT` in the Docker env
+file to use another port. The container binds to `127.0.0.1` by default. A
+generated Compose project name keeps this app's volumes separate from other
+Flowdular projects on the same machine.
 
-The build stage runs `pnpm install --frozen-lockfile`, so commit
-`pnpm-lock.yaml` before building.
+The database and object store are connected before the setup page appears, so
+the wizard starts with workspace and owner details. After confirmation, Compose
+restarts the app into the sign-in screen. AI models are optional and can be
+connected in Providers after signing in. Mail remains off until the operator
+sets `FD_AUTH_MAIL_TRANSPORT=smtp`, `FD_AUTH_SMTP_URL` and `FD_AUTH_MAIL_FROM`.
 
-Compose also starts PostgreSQL. A one-shot `postgres-tls` service generates a
-self-signed server certificate for `CN=postgres` on first run, Postgres serves
-TLS with it, and the app verifies it through `FD_DATABASE_TLS_CA_FILE` under
-`verify-full`. First cluster initialization creates three roles:
-`coreloom_migrator` owns the schema, `coreloom_runtime` holds neither
-`SUPERUSER` nor `BYPASSRLS`, so the row-level security tenant tables force
-actually binds the application, and `coreloom_background` serves the
-cross-tenant scheduler poll with no default table grant at all.
+To run Compose directly, copy `infra/docker/.env.example` to
+`infra/docker/.env`, fill every required secret, set
+`FD_AUTH_SECURE_COOKIE=false` for local HTTP, and run
+`docker compose --env-file infra/docker/.env -f infra/docker/compose.yaml up --build`.
+The setup token is in the `app` container logs. Keep that token out of URLs and
+shared logs. For remote access, configure a TLS proxy, `FD_AUTH_PUBLIC_ORIGIN`,
+`FD_BIND_ADDRESS` and secure cookies.
 
-Public sign-up is disabled. The session cookie is Secure (`__Host-` prefix)
-because the container expects TLS in front of it. For a plain-HTTP run on a
-workstation set `FD_AUTH_SECURE_COOKIE=false` in `infra/docker/.env`; do not do
-this for anything reachable from a network.
+Compose gives the PostgreSQL runtime and background roles neither `SUPERUSER`
+nor `BYPASSRLS`, and the migrator owns the schema. Its TLS certificate is
+created once and verified by the app. The image ships the bundled server and a
+small entrypoint that URL-encodes database passwords before starting it.
 
-The runtime image contains only `platform/dist` and `platform/package.json`. The
-server bundle imports node built-ins exclusively, so no `node_modules` directory
-ships with it.
+Back up the PostgreSQL data and WAL volumes, the MinIO object volume, and
+`infra/docker/.env` together. The env file holds the keys needed to decrypt
+records and objects after restore. `infra/docker/pitr.sh` can create a base
+backup and replay archived PostgreSQL WAL segments; run its `--help` before a
+restore, which requires explicit confirmation and stops the app when requested.
 
 ## Migrations on rollout
 
-Every module owns its migrations and applies them itself, inside a migration
-lease that connects as `FD_DATABASE_MIGRATOR_URL`, the first time its runtime is
-used. A rollout therefore needs no apply step: start the new image and the
-schema catches up under the schema-owning role, while requests keep running as
-the runtime role.
-
-What a rollout should do is fail before the new image serves traffic when an
-already applied migration no longer matches the code being deployed. That is the
-one-shot `migration-check` service in `infra/docker/compose.yaml`: it runs
-`flowdular migration status --json`, reports what is pending, and exits non-zero
-on a checksum mismatch. `app` starts only after it completes successfully.
-
-```bash
-docker compose -f infra/docker/compose.yaml run --rm migration-check
-```
-
-Outside compose, run the same check from a checkout with the deployment's
-`FD_DATABASE_*` values in the environment. On Kubernetes it belongs in a
-pre-upgrade Job or in the pipeline step ahead of `kubectl apply`. After the
-rollout, `flowdular migration verify` should come back clean.
-
-`flowdular migration apply` exists, but it is not part of a rollout. It takes one
-module at a time (`--module <id> --apply`; there is no `--all` flag) and the
-capability is local-only: the runner refuses it unless `FD_ENV` or `NODE_ENV` is
-`development` or `test`. Use it on a workstation against a local database:
-
-```bash
-pnpm flowdular migration status                       # pending work, per module
-pnpm flowdular migration apply --module example.core  # dry run
-pnpm flowdular migration apply --module example.core --apply
-```
-
-Repeat the last two lines for each module `migration status` reports.
-
-Applied migrations are immutable. To change schema, add a numbered migration;
-never edit one the ledger already recorded.
+Module migrations run through the migration role on first use. Applied
+migrations are immutable: add a numbered migration rather than editing one
+that is already in the ledger. Check migration status with the workspace CLI
+before a production rollout, and verify it afterwards.
 
 ## Published image
 

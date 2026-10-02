@@ -116,12 +116,10 @@ Capabilities are enabled and configured per application. Optional modules, model
 
 ## Run it on your infrastructure
 
-Flowdular supports PostgreSQL deployments with separate migration, runtime and background roles, encrypted object storage, and container or Kubernetes deployment assets. Your operators configure TLS, secret keys, mail, storage, backups and telemetry.
+Flowdular supports PostgreSQL deployments with separate migration, runtime and background roles, encrypted object storage, and container or Kubernetes deployment assets. The local Docker launcher generates persistent credentials and opens the first-run web setup. Your operators configure TLS, mail, backups and telemetry for network deployments.
 
 ```bash
-cp infra/docker/.env.example infra/docker/.env
-# Fill in the required keys and database passwords before starting.
-docker compose -f infra/docker/compose.yaml up --build
+node infra/docker/start.mjs
 ```
 
 [Deployment guide](infra/README.md) · [Operations and recovery](docs/operations.md) · [Configuration](docs/configuration.md) · [Public API](docs/public-api.md)

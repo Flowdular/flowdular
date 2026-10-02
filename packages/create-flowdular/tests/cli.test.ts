@@ -94,7 +94,7 @@ describe('nextSteps', () => {
 				packageManager: 'pnpm',
 				installed: true,
 			}),
-		).toEqual(['cd my-app', 'pnpm flowdular setup', 'pnpm dev']);
+		).toEqual(['cd my-app', 'pnpm dev']);
 		expect(
 			nextSteps({
 				directory: 'my-app',
@@ -104,14 +104,14 @@ describe('nextSteps', () => {
 		).toBe('pnpm install');
 	});
 
-	it('separates script arguments the way npm needs', () => {
+	it('uses the npm script command when npm launches the generated app', () => {
 		expect(
 			nextSteps({
 				directory: 'my-app',
 				packageManager: 'npm',
 				installed: true,
 			}),
-		).toEqual(['cd my-app', 'npm run flowdular -- setup', 'npm run dev']);
+		).toEqual(['cd my-app', 'npm run dev']);
 	});
 });
 
@@ -132,9 +132,9 @@ describe('run', () => {
 		expect(out).toContain('Created my-app in ' + join(cwd, 'my-app'));
 		expect(out).toContain('cd my-app');
 		expect(out).toContain('pnpm install');
-		expect(out).toContain('pnpm flowdular setup');
 		expect(out).toContain('pnpm dev');
-		expect(out).toContain('http://localhost:4310');
+		expect(out).toContain('http://localhost:4310/setup');
+		expect(out).toContain('choose your workspace owner');
 		expect(out).toContain('pnpm sandbox');
 		expect(out).toContain('AGENTS.md, CLAUDE.md, .ai/skills');
 		expect(

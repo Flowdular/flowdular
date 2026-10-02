@@ -7,13 +7,15 @@ example module, and nothing else you have to configure.
 
 ```bash
 pnpm install
-pnpm flowdular setup
 pnpm dev
 ```
 
-Open <http://localhost:4310> and sign in as `admin@example.com`. Quick setup is
-a destructive local reset: stop `pnpm dev` first, and never point it at a
-deployed database.
+On the first run, the server starts the setup page and `pnpm dev` opens it in
+your browser. Enter the one-time token printed in the terminal, then choose
+your workspace and owner account. The embedded database is already selected.
+If a browser cannot open automatically, visit <http://localhost:4310/setup>.
+Restart `pnpm dev` after setup, then sign in with the account you chose. Use
+`pnpm dev -- --no-open` to leave the browser alone.
 
 Local development runs on embedded PostgreSQL, so there is no database server to
 install. Data lives under `.flowdular/data`.
@@ -79,19 +81,19 @@ account access, then paste the token and the application address into the
 connect screen.
 
 ```bash
-pnpm flowdular sandbox grant --email admin@example.com --tenant operations-demo --apply
+pnpm flowdular sandbox grant --email <your-owner-email> --tenant <your-workspace-slug> --apply
 ```
 
 ## Deploy
 
 ```bash
-cp .env.example infra/docker/.env   # then fill in every value
-docker compose -f infra/docker/compose.yaml up --build
+node infra/docker/start.mjs
 ```
 
-`.env.example` lists every key the server reads in production. `infra/README.md`
-covers the container image, the PostgreSQL roles and TLS, migrations on rollout,
-and the Kubernetes base.
+The launcher creates `infra/docker/.env` with private database passwords and
+keys, starts PostgreSQL and MinIO, then opens the setup page. Enter the token
+shown in the terminal. The database step is already complete, so you start with
+the workspace owner. `infra/README.md` covers the stack and deployments.
 
 ## Commands
 

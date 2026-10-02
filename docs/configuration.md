@@ -746,7 +746,9 @@ acquires a lease from the platform provider configured above, so the
 openssl rand -base64 32
 ```
 
-For containers, copy `infra/docker/.env.example` to `infra/docker/.env` and fill
-in every empty value: every encryption key above, including the connectors
-and audit anchor keys, the object store settings and the four PostgreSQL role
-passwords. See [../infra/README.md](../infra/README.md).
+For a local Docker installation, run `node infra/docker/start.mjs`. It creates
+`infra/docker/.env` with missing secrets, starts PostgreSQL and the bundled
+object store, then opens the first-run web setup. Keep that file with database
+and object-store backups; changing its keys or passwords later does not rotate
+existing data or PostgreSQL roles. Other deployments supply these values through
+their own secret manager. See [../infra/README.md](../infra/README.md).

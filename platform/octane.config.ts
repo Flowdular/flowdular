@@ -61,6 +61,7 @@ import {
 } from './src/server/storage.ts';
 import {
 	clearSetupToken,
+	configuredDatabaseNeedsFirstRun,
 	createFirstRunSetup,
 } from './src/server/setup/index.ts';
 
@@ -100,15 +101,15 @@ const API_NOT_FOUND_ROUTES = [
 
 const workspaceRoot = resolve(import.meta.dirname, '..');
 
-/* The first-run installer and the application are alternatives, never
-   neighbours. A deployment that names a database composes the application and
-   has no reachable route that could re-point it; one that names none composes
-   only the installer, which disappears at the next start. */
-function createFirstRunConfig() {
+/* The installer and the application are alternatives. A configured database
+   with no workspace still needs the first owner, but a failed database check
+   is an outage and never opens setup against an established installation. */
+function createFirstRunConfig(databasePreconfigured = false) {
 	const setup = createFirstRunSetup({
 		applicationPath: applicationBasePath,
 		webMountPaths: moduleWebMounts.map((site) => site.path),
 		environment: process.env,
+		databasePreconfigured,
 		workspaceRoot,
 	});
 	return defineConfig({
@@ -129,7 +130,17 @@ async function createPlatformConfig() {
 	const configuredApplicationPath = validateApplicationPath(
 		process.env.FD_APPLICATION_PATH ?? applicationBasePath,
 	);
-	if (!platformDatabaseConfigured(process.env)) return createFirstRunConfig();
+	if (
+		process.env.FD_INTERNAL_BUILD !== 'true' &&
+		!platformDatabaseConfigured(process.env)
+	)
+		return createFirstRunConfig();
+	if (
+		process.env.FD_INTERNAL_BUILD !== 'true' &&
+		(await configuredDatabaseNeedsFirstRun(process.env, workspaceRoot))
+	) {
+		return createFirstRunConfig(true);
+	}
 	clearSetupToken(workspaceRoot);
 	const lifecycle = createPlatformRuntimeLifecycle();
 	/* Composed first and drained last: a trace or an error report is evidence

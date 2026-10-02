@@ -5,10 +5,39 @@ The production artifact is the Octane fullstack server built from `platform`. It
 ## Local container
 
 ```bash
-docker compose -f infra/docker/compose.yaml up --build
+node infra/docker/start.mjs
 ```
 
-Before the first start, copy `infra/docker/.env.example` to `infra/docker/.env` and fill in `FD_AGENT_CREDENTIAL_KEY`, `FD_AGENT_RUN_GRANT_KEY`, `FD_AUTOMATIONS_CREDENTIAL_KEY`, `FD_NOTIFICATIONS_SECRET_KEY`, `FD_WORKFLOWS_PAYLOAD_KEY`, `FD_WORKFLOWS_CURSOR_KEY`, `FD_STORAGE_ENCRYPTION_KEY`, `FD_CONNECTORS_SECRET_KEY` and `FD_AUDIT_ANCHOR_KEY` (`openssl rand -base64 32` each). Compose refuses to start without them. The owning modules also refuse to boot in production without them, so a missing key fails at startup rather than during the first run.
+This requires Node and Docker Compose. On the first run, the launcher creates
+`infra/docker/.env` with owner-only permissions, generates independent PostgreSQL
+passwords and encryption keys, and keeps them on later runs. It starts
+PostgreSQL, MinIO with a private bucket, and the app, then opens the setup page
+in a browser on this workstation. The setup token is printed by the app and
+shown by the launcher. `--no-open` leaves the browser alone, and `--no-build`
+reuses an image already built. A headless host prints the URL instead.
+Each new installation gets a persistent `COMPOSE_PROJECT_NAME` in `.env`, so
+separate apps have separate database and object volumes. An older `.env` keeps
+Compose's former `docker` project name and its existing volumes.
+If an older `.env` sets `FD_AUTH_SECURE_COOKIE=true` for `http://localhost`,
+the launcher asks you to change that value to `false` or use HTTPS before it
+starts the stack.
+
+The database and object store are already connected in the wizard, so setup
+starts with the workspace and owner. When setup finishes, Compose restarts the
+app into the sign-in screen. The normal local address is
+`http://localhost:3000`; set `FD_PORT` to change it. The port binds only to
+`127.0.0.1` by default. A TLS reverse proxy on another host needs an explicit
+IPv4 `FD_BIND_ADDRESS`, `FD_AUTH_PUBLIC_ORIGIN`, and `FD_AUTH_SECURE_COOKIE=true`.
+
+To use Compose without the launcher, copy `infra/docker/.env.example` to
+`infra/docker/.env`, fill every required secret, set
+`COMPOSE_PROJECT_NAME` uniquely for this app and
+`FD_AUTH_SECURE_COOKIE=false` for local HTTP, then run
+`docker compose --env-file infra/docker/.env -f infra/docker/compose.yaml up --build`. Compose refuses
+missing secrets. The setup URL and one-time token appear in the `app` container
+logs (`docker compose --env-file infra/docker/.env -f infra/docker/compose.yaml logs app`). Do not put the
+token in a URL or share the logs. Production deployments should supply managed
+secrets and TLS.
 
 Outgoing mail is off until it is configured: with `FD_AUTH_MAIL_TRANSPORT=none` a
 workspace invitation is refused and a password reset is never delivered. Set
@@ -17,8 +46,6 @@ relay URL carrying the relay password, so keep it in `.env` or the Secret, never
 in the manifest) and `FD_AUTH_MAIL_FROM`. In Kubernetes the URL comes from the
 optional `smtpUrl` entry of the `flowdular-agents` Secret.
 
-The service is available on `http://localhost:3000`. Set `FD_PORT` to change the host port.
-
 Compose also starts PostgreSQL. A one-shot `postgres-tls` service generates a
 self-signed server certificate for `CN=postgres` on first run, Postgres serves
 TLS with it, and the app verifies it through `FD_DATABASE_TLS_CA_FILE` under
@@ -26,14 +53,32 @@ TLS with it, and the app verifies it through `FD_DATABASE_TLS_CA_FILE` under
 owns the schema, `coreloom_runtime` holds neither `SUPERUSER` nor `BYPASSRLS`, so
 the row-level security tenant tables force actually binds the application, and
 `coreloom_background` serves the cross-tenant scheduler poll with no default
-table grant at all. Set `FD_POSTGRES_SUPERUSER_PASSWORD`,
-`FD_DATABASE_MIGRATOR_PASSWORD`, `FD_DATABASE_RUNTIME_PASSWORD`, and
-`FD_DATABASE_BACKGROUND_PASSWORD` in `infra/docker/.env`.
+table grant at all. The launcher creates the four PostgreSQL passwords in
+`infra/docker/.env`. Existing passwords are never rotated or replaced. If the
+PostgreSQL volume already exists, use the passwords that initialized it or
+change the roles in PostgreSQL deliberately before changing the file.
+
+The launcher creates `infra/docker/.env.lock` only while preparing the secret
+file, so parallel starts cannot save different credentials. If a launcher
+crashes and leaves the lock, verify that no other launcher is running before
+removing it. An existing AWS S3 configuration with an empty endpoint keeps that
+endpoint; only a new local installation receives the MinIO address.
 
 Every module reads and writes through the platform database provider, so the
-deployment carries one database and no per-module files. Public sign-up is disabled by default. The session cookie is Secure (`__Host-` prefix) by default because the container expects TLS in front of it. For a plain-HTTP run on a workstation set `FD_AUTH_SECURE_COOKIE=false` in `infra/docker/.env`; do not do this for anything reachable from a network.
+deployment carries one database and no per-module files. Public sign-up is
+disabled by default. The local launcher sets an HTTP-compatible session cookie;
+manual or remote deployments should set the cookie flag for their origin.
 
-The runtime image contains only `platform/dist` and `platform/package.json`. The server bundle imports node built-ins exclusively, so no `node_modules` directory ships with it.
+The MinIO objects live in the `flowdular-objects` volume. Back up that volume,
+the PostgreSQL data and WAL volumes, and `infra/docker/.env` together. The file
+contains keys needed to decrypt records and objects after restore. A database
+dump alone does not restore the object bytes or encryption keys. Re-running the
+launcher preserves existing volumes and values; deleting `.env` and generating
+new keys against an old database will make encrypted content unreadable.
+
+The runtime image contains `platform/dist`, `platform/package.json`, and a small
+entrypoint that URL-encodes PostgreSQL passwords before starting the server. No
+`node_modules` directory ships with it.
 
 ## Published image
 
@@ -80,13 +125,13 @@ What the plain `cp` archive does not do, and what to add before relying on it:
   the copy is only as durable as the volume it lands on.
 - It writes to the same host as the data directory. A disk that takes the data
   volume takes the archive with it. Copy the archive off the host (`docker
-compose cp postgres:/var/lib/postgresql/wal-archive <dir>`, or a sync job on
+compose --env-file infra/docker/.env -f infra/docker/compose.yaml cp postgres:/var/lib/postgresql/wal-archive <dir>`, or a sync job on
   the volume) on the schedule the data policy sets.
 - It never prunes. When the copy fails (a full volume, wrong permissions),
   PostgreSQL retries forever and `pg_wal` grows until the disk is full; watch
-  `docker compose logs postgres` for `archive command failed`. Prune segments
+  `docker compose --env-file infra/docker/.env -f infra/docker/compose.yaml logs postgres` for `archive command failed`. Prune segments
   older than the oldest base backup you keep with
-  `docker compose exec -u postgres postgres pg_archivecleanup /var/lib/postgresql/wal-archive <name>.backup`,
+  `docker compose --env-file infra/docker/.env -f infra/docker/compose.yaml exec -u postgres postgres pg_archivecleanup /var/lib/postgresql/wal-archive <name>.backup`,
   where `<name>.backup` is the history file the archive received when that base
   backup finished.
 - It is neither compressed nor encrypted. The archive holds every row of every
@@ -123,7 +168,7 @@ the server is on a new timeline and archives onto it, so the segments of the
 old timeline stay in the archive and a second restore to the same base is still
 possible.
 
-After the restore: `docker compose up -d app`, then `pnpm flowdular migration verify`
+After the restore: `docker compose --env-file infra/docker/.env -f infra/docker/compose.yaml up -d app`, then `pnpm flowdular migration verify`
 and `GET /api/ready`. The encryption keys are outside the database and PITR
 changes nothing about them: the keys the restored rows were written under must
 be the ones in `infra/docker/.env`.

@@ -14,7 +14,6 @@ import {
 	authRuntimeOptionsFromEnvironment,
 	createAuthRuntime,
 } from '@flowdular/module-auth/server';
-import { GREENFIELD_ACCOUNTS } from '@flowdular/module-auth/greenfield';
 import type { ModuleDatabaseRequirements } from '@flowdular/database';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -28,11 +27,21 @@ import {
 	POSTGRESQL_ADAPTER_ID,
 } from './adapters.ts';
 import { enabledDatabaseModules } from './modules.ts';
+import { renderSetupPage, type SetupPageView } from './page.ts';
 import { createSetupRoutes } from './routes.ts';
 
 const TOKEN = 'z'.repeat(43);
 const ORIGIN = 'http://127.0.0.1:4310';
 const SLOW = 180_000;
+const OWNER = {
+	workspaceName: 'Acme Finance',
+	workspaceSlug: 'acme-finance',
+	ownerName: 'Ada Owner',
+	ownerEmail: 'ada@example.test',
+	ownerPassword: 'SetupOwner987!',
+	ownerPasswordConfirm: 'SetupOwner987!',
+	applicationPath: '/app',
+};
 
 const roots: string[] = [];
 
@@ -70,10 +79,16 @@ function harness(
 	root: string,
 	modules?: readonly ModuleDatabaseRequirements[],
 	webMountPaths: readonly string[] = [],
+	setupOptions: {
+		readonly databasePreconfigured?: boolean;
+		readonly environment?: NodeJS.ProcessEnv;
+		readonly restartApplication?: () => void;
+	} = {},
 ) {
 	const enabled = enabledDatabaseModules(root);
 	const routes = createSetupRoutes({
-		environment: { NODE_ENV: 'development' },
+		environment: setupOptions.environment ?? { NODE_ENV: 'development' },
+		databasePreconfigured: setupOptions.databasePreconfigured ?? false,
 		webMountPaths,
 		workspaceRoot: root,
 		adapters: createSetupAdapters({ workspaceRoot: root, production: false }),
@@ -82,6 +97,9 @@ function harness(
 		modulesApproximated: enabled.approximated,
 		tokenFile: join(root, '.flowdular', 'setup-token'),
 		secureCookies: false,
+		...(setupOptions.restartApplication
+			? { restartApplication: setupOptions.restartApplication }
+			: {}),
 	});
 	const route = (path: string): ServerRoute =>
 		routes.find((entry) => entry.path === path)!;
@@ -115,15 +133,20 @@ async function csrfOf(response: Response): Promise<string> {
 describe('first-run routes', () => {
 	it('rejects a backoffice prefix claimed by a public module before provisioning', async () => {
 		const root = workspace();
-		const app = harness(root, undefined, ['/backoffice/blog']);
+		const app = harness(root, undefined, ['/backoffice/blog'], {
+			databasePreconfigured: true,
+			environment: {
+				NODE_ENV: 'development',
+				FD_APPLICATION_PATH: '/backoffice',
+			},
+		});
 		await app.call('/setup', { step: 'unlock', token: TOKEN });
 		const csrf = await csrfOf(await app.call('/setup'));
 		const response = await app.call('/setup', {
-			step: 'configure',
+			step: 'workspace',
 			setupCsrf: csrf,
-			adapter: PGLITE_ADAPTER_ID,
+			...OWNER,
 			applicationPath: '/backoffice',
-			[`field:${PGLITE_ADAPTER_ID}:data-directory`]: join(root, 'data'),
 		});
 		expect(await response.text()).toContain(
 			'overlaps a configured public module',
@@ -134,23 +157,43 @@ describe('first-run routes', () => {
 		'rejects invalid backoffice address %s before provisioning',
 		async (applicationPath) => {
 			const root = workspace();
-			const app = harness(root);
+			const app = harness(root, undefined, [], {
+				databasePreconfigured: true,
+			});
 			await app.call('/setup', { step: 'unlock', token: TOKEN });
 			const setup = await (await app.call('/setup')).text();
-			expect(setup).toContain('name="applicationPath" value="/app"');
+			expect(setup).toContain(
+				'name="applicationPath" type="text" value="/app"',
+			);
 			const csrf = /name="setupCsrf" value="([^"]+)"/.exec(setup)![1]!;
 			const response = await app.call('/setup', {
-				step: 'configure',
+				step: 'workspace',
 				setupCsrf: csrf,
-				adapter: PGLITE_ADAPTER_ID,
+				...OWNER,
 				applicationPath,
-				[`field:${PGLITE_ADAPTER_ID}:data-directory`]: join(root, 'data'),
 			});
 			expect(await response.text()).toContain('System addresses are reserved');
 			expect(existsSync(join(root, '.env'))).toBe(false);
-			expect(existsSync(join(root, 'data'))).toBe(false);
 		},
 	);
+	it('keeps the deployment-owned backoffice path fixed', async () => {
+		const root = workspace();
+		const app = harness(root, undefined, [], {
+			databasePreconfigured: true,
+		});
+		await app.call('/setup', { step: 'unlock', token: TOKEN });
+		const csrf = await csrfOf(await app.call('/setup'));
+		const response = await app.call('/setup', {
+			step: 'workspace',
+			setupCsrf: csrf,
+			...OWNER,
+			applicationPath: '/backoffice',
+		});
+		const html = await response.text();
+		expect(html).toContain('controlled by the deployment');
+		expect(html).not.toContain(OWNER.ownerPassword);
+		expect(existsSync(join(root, '.env'))).toBe(false);
+	});
 	it('serves the unlock step and nothing else before the token is presented', async () => {
 		const app = harness(workspace());
 
@@ -159,7 +202,7 @@ describe('first-run routes', () => {
 
 		expect(page.status).toBe(200);
 		expect(html).toContain('Unlock setup');
-		expect(html).not.toContain('Choose a database');
+		expect(html).not.toContain('Connect PostgreSQL');
 		expect(page.headers.get('cache-control')).toBe('no-store');
 		expect(page.headers.get('content-security-policy')).toContain(
 			"default-src 'none'",
@@ -223,6 +266,27 @@ describe('first-run routes', () => {
 		expect(await response.text()).toContain('Unlock setup');
 	});
 
+	it('refuses an oversized streamed form without a Content-Length header', async () => {
+		const app = harness(workspace());
+		const request = new Request(`${ORIGIN}/setup`, {
+			method: 'POST',
+			body: new URLSearchParams({
+				step: 'unlock',
+				token: TOKEN,
+				filler: 'x'.repeat(65 * 1024),
+			}),
+		});
+		expect(request.headers.get('content-length')).toBeNull();
+
+		const response = await app
+			.route('/setup')
+			.handler(createContext(request, {}));
+		expect(response.status).toBe(400);
+		expect(response.headers.get('set-cookie')).toBeNull();
+		expect(await response.text()).toContain('That request could not be read.');
+		expect(await (await app.call('/setup')).text()).toContain('Unlock setup');
+	});
+
 	it('opens the database step for the right token', async () => {
 		const app = harness(workspace());
 
@@ -235,9 +299,162 @@ describe('first-run routes', () => {
 		expect(unlocked.headers.get('set-cookie')).toContain('SameSite=Strict');
 
 		const html = await (await app.call('/setup')).text();
-		expect(html).toContain('Choose a database');
+		expect(html).toContain('Connect PostgreSQL');
 		expect(html).toContain('Embedded PostgreSQL');
 		expect(html).toContain('PostgreSQL server');
+	});
+
+	it(
+		'skips database entry when the deployment provides one and never writes its environment',
+		async () => {
+			const root = workspace();
+			const data = join(root, 'preconfigured-data');
+			let restarts = 0;
+			const app = harness(root, undefined, [], {
+				databasePreconfigured: true,
+				restartApplication: () => {
+					restarts++;
+				},
+				environment: {
+					NODE_ENV: 'development',
+					FD_DATABASE_ADAPTER: 'pglite',
+					FD_DATABASE_PGLITE_DIRECTORY: data,
+					FD_SETUP_AUTO_RESTART: 'true',
+				},
+			});
+			await app.call('/setup', { step: 'unlock', token: TOKEN });
+			const workspaceHtml = await (await app.call('/setup')).text();
+			const csrf = /name="setupCsrf" value="([^"]+)"/.exec(workspaceHtml)![1]!;
+
+			expect(workspaceHtml).toContain('Create your workspace');
+			expect(workspaceHtml).toContain('Database, configured by deployment');
+			expect(/<input[^>]*name="adapter"/.test(workspaceHtml)).toBe(false);
+			expect(
+				/<input[^>]*name="applicationPath"[^>]*value="\/app"[^>]*readonly/.test(
+					workspaceHtml,
+				),
+			).toBe(true);
+
+			const review = await app.call('/setup', {
+				step: 'workspace',
+				setupCsrf: csrf,
+				...OWNER,
+			});
+			const reviewHtml = await review.text();
+			expect(reviewHtml).toContain(
+				'PostgreSQL is configured by this deployment',
+			);
+			expect(reviewHtml).toContain('Migrate and create workspace');
+			expect(reviewHtml).not.toContain(OWNER.ownerPassword);
+
+			const done = await app.call('/setup', { step: 'apply', setupCsrf: csrf });
+			const doneHtml = await done.text();
+			expect(doneHtml).toContain('Flowdular is ready');
+			expect(doneHtml).toContain(OWNER.ownerEmail);
+			expect(doneHtml).not.toContain(OWNER.ownerPassword);
+			expect(existsSync(join(root, '.env'))).toBe(false);
+			expect(doneHtml).toContain("step:'restart'");
+			expect(restarts).toBe(0);
+			const restart = await app.call('/setup', {
+				step: 'restart',
+				setupCsrf: csrf,
+			});
+			expect(restart.status).toBe(204);
+			expect(restarts).toBe(1);
+			const repeat = await app.call('/setup', {
+				step: 'restart',
+				setupCsrf: csrf,
+			});
+			expect(repeat.status).toBe(204);
+			expect(restarts).toBe(1);
+			const forged = await app.call('/setup', {
+				step: 'restart',
+				setupCsrf: 'forged',
+			});
+			expect(forged.status).toBe(403);
+			expect(restarts).toBe(1);
+		},
+		SLOW,
+	);
+
+	it('re-renders invalid workspace input without exposing the owner password', async () => {
+		const root = workspace();
+		const app = harness(root, undefined, [], { databasePreconfigured: true });
+		await app.call('/setup', { step: 'unlock', token: TOKEN });
+		const csrf = await csrfOf(await app.call('/setup'));
+
+		const invalid = await app.call('/setup', {
+			step: 'workspace',
+			setupCsrf: csrf,
+			...OWNER,
+			workspaceSlug: 'Invalid Space',
+		});
+		const html = await invalid.text();
+		expect(html).toContain('Create your workspace');
+		expect(html).toContain('Some values need attention');
+		expect(html).not.toContain(OWNER.ownerPassword);
+		expect(existsSync(join(root, '.env'))).toBe(false);
+	});
+
+	it('rejects a mismatched owner password without echoing either value', async () => {
+		const root = workspace();
+		const app = harness(root, undefined, [], { databasePreconfigured: true });
+		await app.call('/setup', { step: 'unlock', token: TOKEN });
+		const csrf = await csrfOf(await app.call('/setup'));
+		const response = await app.call('/setup', {
+			step: 'workspace',
+			setupCsrf: csrf,
+			...OWNER,
+			ownerPasswordConfirm: 'DifferentOwner987!',
+		});
+		const html = await response.text();
+		expect(html).toContain('Passwords do not match.');
+		expect(html).not.toContain(OWNER.ownerPassword);
+		expect(html).not.toContain('DifferentOwner987!');
+		expect(existsSync(join(root, '.env'))).toBe(false);
+	});
+
+	it('shows only environment key names when a read-only deployment cannot save settings', () => {
+		const view: SetupPageView = {
+			step: 'Sign in',
+			csrfToken: null,
+			databasePreconfigured: false,
+			autoRestart: true,
+			error: null,
+			notice: null,
+			adapters: [],
+			selectedAdapterId: null,
+			fieldErrors: {},
+			values: { applicationPath: '/app' },
+			probe: null,
+			modules: [],
+			environment: {
+				status: 'read-only',
+				path: '/deployment/.env',
+				added: [],
+				kept: [],
+				block:
+					'FD_DATABASE_URL=postgresql://runtime:CANARY_SECRET@database/flowdular',
+			},
+			seed: {
+				workspace: { name: OWNER.workspaceName, slug: OWNER.workspaceSlug },
+				accounts: [
+					{
+						email: OWNER.ownerEmail,
+						displayName: OWNER.ownerName,
+						role: 'owner',
+						scopes: [],
+					},
+				],
+			},
+			modulesApproximated: false,
+			tokenFile: null,
+		};
+		const html = renderSetupPage(view, 'test-nonce');
+		expect(html).toContain('FD_DATABASE_URL');
+		expect(html).not.toContain('CANARY_SECRET');
+		expect(html).toContain('Save the connection settings');
+		expect(html).not.toContain('The app is restarting');
 	});
 
 	it('refuses a form that does not carry this session CSRF token', async () => {
@@ -275,13 +492,40 @@ describe('first-run routes', () => {
 		expect(existsSync(join(root, '.env'))).toBe(false);
 	});
 
+	it(
+		'lets the operator go back from workspace details to the database connection',
+		async () => {
+			const root = workspace();
+			const app = harness(root);
+			await app.call('/setup', { step: 'unlock', token: TOKEN });
+			const csrf = await csrfOf(await app.call('/setup'));
+			const workspaceStep = await app.call('/setup', {
+				step: 'configure',
+				setupCsrf: csrf,
+				adapter: PGLITE_ADAPTER_ID,
+				[`field:${PGLITE_ADAPTER_ID}:data-directory`]: join(root, 'data'),
+			});
+			const workspaceHtml = await workspaceStep.text();
+			expect(workspaceHtml).toContain(
+				'name="step" value="back" formnovalidate',
+			);
+
+			const back = await app.call('/setup', { step: 'back', setupCsrf: csrf });
+			const html = await back.text();
+			expect(html).toContain('Connect PostgreSQL');
+			expect(html).not.toContain('Create your workspace');
+			expect(existsSync(join(root, '.env'))).toBe(false);
+		},
+		SLOW,
+	);
+
 	it('leaves no configuration behind when the probe fails', async () => {
 		const root = workspace();
 		const app = harness(root);
 		await app.call('/setup', { step: 'unlock', token: TOKEN });
 		const csrf = await csrfOf(await app.call('/setup'));
 
-		const review = await app.call('/setup', {
+		const attempt = await app.call('/setup', {
 			step: 'configure',
 			setupCsrf: csrf,
 			adapter: POSTGRESQL_ADAPTER_ID,
@@ -297,10 +541,10 @@ describe('first-run routes', () => {
 				'background-secret',
 			[`field:${POSTGRESQL_ADAPTER_ID}:tls`]: 'disable',
 		});
-		const html = await review.text();
+		const html = await attempt.text();
 
-		expect(html).toContain('Review');
-		expect(html).not.toContain('Migrate and create the workspace');
+		expect(html).toContain('Connect PostgreSQL');
+		expect(html).not.toContain('Create your workspace');
 		expect(html).not.toContain('runtime-secret');
 		expect(html).not.toContain('postgresql://');
 		expect(existsSync(join(root, '.env'))).toBe(false);
@@ -310,7 +554,7 @@ describe('first-run routes', () => {
 			step: 'apply',
 			setupCsrf: csrf,
 		});
-		expect(await applied.text()).toContain('did not succeed');
+		expect(await applied.text()).toContain('Connect PostgreSQL');
 		expect(existsSync(join(root, '.env'))).toBe(false);
 	});
 
@@ -329,17 +573,23 @@ describe('first-run routes', () => {
 			await app.call('/setup', { step: 'unlock', token: TOKEN });
 			const csrf = await csrfOf(await app.call('/setup'));
 
-			const review = await app.call('/setup', {
+			const configured = await app.call('/setup', {
 				step: 'configure',
 				setupCsrf: csrf,
 				adapter: PGLITE_ADAPTER_ID,
 				[`field:${PGLITE_ADAPTER_ID}:data-directory`]: join(root, 'data'),
 			});
+			expect(await configured.text()).toContain('Create your workspace');
+			const review = await app.call('/setup', {
+				step: 'workspace',
+				setupCsrf: csrf,
+				...OWNER,
+			});
 			const html = await review.text();
 
 			expect(html).toContain('legacy.core');
 			expect(html).toContain('dialect');
-			expect(html).not.toContain('Migrate and create the workspace');
+			expect(html).not.toContain('Migrate and create workspace');
 
 			const applied = await app.call('/setup', {
 				step: 'apply',
@@ -352,7 +602,7 @@ describe('first-run routes', () => {
 	);
 
 	it(
-		'migrates, seeds the demo accounts, and stores the connection settings',
+		'creates the chosen workspace and owner, then stores the connection settings',
 		async () => {
 			const root = workspace();
 			const data = join(root, 'data');
@@ -360,19 +610,27 @@ describe('first-run routes', () => {
 			await app.call('/setup', { step: 'unlock', token: TOKEN });
 			const csrf = await csrfOf(await app.call('/setup'));
 
-			const review = await app.call('/setup', {
+			const configured = await app.call('/setup', {
 				step: 'configure',
-				applicationPath: '/backoffice',
 				setupCsrf: csrf,
 				adapter: PGLITE_ADAPTER_ID,
 				[`field:${PGLITE_ADAPTER_ID}:data-directory`]: data,
 			});
+			expect(await configured.text()).toContain('Create your workspace');
+			const review = await app.call('/setup', {
+				step: 'workspace',
+				setupCsrf: csrf,
+				...OWNER,
+				applicationPath: '/backoffice',
+			});
 			const reviewHtml = await review.text();
-			expect(reviewHtml).toContain('Migrate and create the workspace');
+			expect(reviewHtml).toContain('Migrate and create workspace');
 			expect(reviewHtml).toContain('auth.core');
 			expect(reviewHtml).toContain('catalog.core');
 			expect(reviewHtml).toContain('BYPASSRLS');
 			expect(reviewHtml).toContain('/backoffice');
+			expect(reviewHtml).toContain(OWNER.ownerEmail);
+			expect(reviewHtml).not.toContain(OWNER.ownerPassword);
 
 			const done = await app.call('/setup', {
 				step: 'apply',
@@ -381,11 +639,10 @@ describe('first-run routes', () => {
 			const html = await done.text();
 
 			expect(html).toContain('Flowdular is ready');
-			expect(html).toContain(GREENFIELD_ACCOUNTS.admin.email);
-			expect(html).toContain(GREENFIELD_ACCOUNTS.admin.password);
-			expect(html).toContain(GREENFIELD_ACCOUNTS.user.email);
-			expect(html).toContain(GREENFIELD_ACCOUNTS.user.password);
-			expect(html).toContain('Administration, Users');
+			expect(html).toContain(OWNER.ownerEmail);
+			expect(html).not.toContain(OWNER.ownerPassword);
+			expect(html).not.toContain('demo accounts');
+			expect(html).toContain('Providers');
 
 			const written = readFileSync(join(root, '.env'), 'utf8');
 			expect(written).toContain('FD_DATABASE_ADAPTER=pglite');
@@ -410,18 +667,15 @@ describe('first-run routes', () => {
 			try {
 				const service = await auth.service();
 				const [tenant] = await service.listTenants();
-				expect(tenant?.slug).toBe('operations-demo');
+				expect(tenant?.slug).toBe(OWNER.workspaceSlug);
 				const members = await service.listTenantMembers(tenant!.tenantId);
 				const owner = members.find(
-					(member) => member.email === GREENFIELD_ACCOUNTS.admin.email,
-				)!;
-				const member = members.find(
-					(entry) => entry.email === GREENFIELD_ACCOUNTS.user.email,
+					(member) => member.email === OWNER.ownerEmail,
 				)!;
 
+				expect(members).toHaveLength(1);
+				expect(owner.displayName).toBe(OWNER.ownerName);
 				expect([...owner.scopes].sort()).toEqual([...OWNER_SCOPES].sort());
-				expect(member.role).toBe('member');
-				expect(member.scopes.length).toBeLessThan(owner.scopes.length);
 
 				const audit = await service.queryAudit({
 					tenantId: tenant!.tenantId,
@@ -429,7 +683,6 @@ describe('first-run routes', () => {
 				});
 				const actions = audit.events.map((event) => event.action);
 				expect(actions).toContain('auth.workspace.provisioned');
-				expect(actions).toContain('users.member.created');
 				const provisioned = audit.events.find(
 					(event) => event.action === 'auth.workspace.provisioned',
 				)!;
@@ -457,6 +710,11 @@ describe('first-run routes', () => {
 				adapter: PGLITE_ADAPTER_ID,
 				[`field:${PGLITE_ADAPTER_ID}:data-directory`]: data,
 			});
+			await first.call('/setup', {
+				step: 'workspace',
+				setupCsrf: firstCsrf,
+				...OWNER,
+			});
 			expect(
 				await (
 					await first.call('/setup', { step: 'apply', setupCsrf: firstCsrf })
@@ -472,6 +730,11 @@ describe('first-run routes', () => {
 				setupCsrf: secondCsrf,
 				adapter: PGLITE_ADAPTER_ID,
 				[`field:${PGLITE_ADAPTER_ID}:data-directory`]: data,
+			});
+			await second.call('/setup', {
+				step: 'workspace',
+				setupCsrf: secondCsrf,
+				...OWNER,
 			});
 			const refused = await second.call('/setup', {
 				step: 'apply',

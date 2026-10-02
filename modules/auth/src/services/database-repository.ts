@@ -659,6 +659,13 @@ export class DatabaseAuthRepository implements AuthRepository {
 		return rows[0] ? tenantSummary(rows[0]) : null;
 	}
 
+	async hasAnyTenant(): Promise<boolean> {
+		const rows = await this.#route<{ id: string }>({
+			text: 'SELECT id FROM auth_tenants LIMIT 1',
+		});
+		return rows.length > 0;
+	}
+
 	async listTenants(): Promise<readonly TenantSummary[]> {
 		const rows = await this.#route<TenantRow>({
 			text: 'SELECT id, name, slug FROM auth_tenants ORDER BY name, id',

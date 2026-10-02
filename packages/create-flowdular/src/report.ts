@@ -32,7 +32,6 @@ export function nextSteps(input: NextStepsInput): readonly string[] {
 	return [
 		`cd ${input.directory}`,
 		...(input.installed ? [] : [`${input.packageManager} install`]),
-		runScript(input.packageManager, 'flowdular', 'setup'),
 		runScript(input.packageManager, 'dev'),
 	];
 }
@@ -43,8 +42,7 @@ export function renderNextSteps(input: NextStepsInput, color = false): string {
 	const labels = [
 		'Open your project',
 		...(input.installed ? [] : ['Install dependencies']),
-		'Choose local demo or PostgreSQL',
-		'Start your app',
+		'Start your app and first-run setup',
 	];
 	return [
 		'',
@@ -62,9 +60,8 @@ export function renderNextSteps(input: NextStepsInput, color = false): string {
 		`  ${paint('Build a module by chat', 'dim')}  ${paint(runScript(input.packageManager, 'sandbox'), 'bold')}`,
 		`  ${paint('Agent guidance', 'dim')}          AGENTS.md, CLAUDE.md, .ai/skills`,
 		'',
-		`  ${paint('Local URL', 'dim')}   ${paint(DEV_URL, 'cyan')}`,
-		`  ${paint('Demo login', 'dim')}  admin@example.com`,
-		`  ${paint('Demo account is created only with local demo setup.', 'dim')}`,
+		`  ${paint('Setup URL', 'dim')}  ${paint(`${DEV_URL}/setup`, 'cyan')}`,
+		`  ${paint('Setup opens in a browser when available. Use the printed token, then choose your workspace owner.', 'dim')}`,
 		'',
 	].join('\n');
 }
