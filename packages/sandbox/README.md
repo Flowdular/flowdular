@@ -32,8 +32,9 @@ session carries as many modules as the work touches: one turn writes in one
 module, and the whole set is previewed and delivered together.
 
 ```bash
-npx @flowdular/sandbox            # from a Flowdular workspace
-npx @flowdular/sandbox --port 4320 --workspace /path/to/workspace
+npx @flowdular/sandbox                 # creates ./flowdular when outside a project
+npx @flowdular/sandbox --connect <git-url>  # clone an existing platform repository
+npx @flowdular/sandbox --workspace /path/to/workspace
 ```
 
 The sandbox is published independently and depends on `@flowdular/sdk`. The SDK
@@ -41,8 +42,12 @@ does not include this application or the `flowdular-sandbox` launcher. Use a
 sandbox release compatible with the application's SDK version; existing SDK
 applications do not need their platform dependencies changed just to launch it.
 
-The launcher finds the workspace by walking up to `flowdular.json`, then opens
-http://127.0.0.1:4320.
+The launcher finds a workspace by walking up to `flowdular.json`. Outside a
+project it uses the matching `create-flowdular` release to generate a standalone
+application, installs it, starts the application with a local embedded database
+and serves the sandbox at http://127.0.0.1:4320. Its first Git commit is local;
+you can connect a remote later. `--connect` clones an existing Flowdular
+repository into a new directory, and `--branch` selects a branch.
 
 ## What it does
 
@@ -58,10 +63,22 @@ http://127.0.0.1:4320.
 - **Delivers as code.** Eject into `modules/` and enable it, or open a pull
   request with the gate evidence attached.
 
+The first commit of a generated app remains local until you open GitHub settings
+and review a repository setup plan. You can attach an empty existing GitHub
+repository or create a private one, then confirm its initial push. For a
+repository that already has commits, start the launcher with `--connect`.
+If a create attempt stops before GitHub confirms the result, the pending setup
+stays visible in the same dialog. You can resume it, or explicitly discard its
+local record after GitHub returns an authenticated 404. A private repository
+hidden from that account can also return 404, so check GitHub if creation may
+have succeeded. Discarding never deletes a GitHub repository.
+Module delivery as a pull request remains a separate action after the exact
+module specification is approved and its checks pass.
+
 ## Requirements
 
-Node.js 22.22.2 or newer, pnpm 11, a Flowdular workspace (a directory with
-`flowdular.json`), and a running Flowdular application to connect to.
+Node.js 22.22.2 or newer, pnpm 11 and Git. An existing Flowdular workspace or
+running application is optional for the local, first-run flow.
 
 ## Documentation
 
@@ -72,12 +89,16 @@ Node.js 22.22.2 or newer, pnpm 11, a Flowdular workspace (a directory with
 
 ## Connecting
 
-The sandbox is a client of a running Flowdular application. It never opens the
-platform database.
+The sandbox is a client of a Flowdular application. The launcher starts a local
+application and prepares a sandbox credential when it creates the workspace.
+It never opens the platform database. To connect to an application that is
+already running:
 
 1. In the application, open Administration, API tokens, and issue a token with
    `sandbox.access.use` plus the read scopes the preview should see. Add
    `sandbox.preview.data` for live data and `sandbox.modules.eject` for eject.
+   Enable token writes to record sessions, eject modules and publish the
+   application repository when requested.
 2. Paste the token and the application address into the sandbox connect screen,
    with a model provider and key when the workspace carries none.
 

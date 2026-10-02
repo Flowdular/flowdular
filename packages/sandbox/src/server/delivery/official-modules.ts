@@ -199,6 +199,7 @@ export function createOfficialModulesDeliveryTarget(): DeliveryTarget {
 				const source = modulePathOf(paths, module.directory);
 				const revision = await moduleReviewRevision(source);
 				const gates = await runDeliveryGates(context, GATES, emit);
+				await context.assertCanEject?.();
 				const run = await gitDeliveryRunner(context);
 				const recorder = createStepRecorder(emit);
 				const command = async (
@@ -403,6 +404,7 @@ export function createOfficialModulesDeliveryTarget(): DeliveryTarget {
 				}
 				if (!url) {
 					if (push !== 'true') {
+						await context.assertCanEject?.();
 						await command(
 							'fork',
 							'gh',
@@ -450,6 +452,7 @@ export function createOfficialModulesDeliveryTarget(): DeliveryTarget {
 								'The contribution branch has different source. It was preserved; review it before retrying.',
 							);
 					} else {
+						await context.assertCanEject?.();
 						await command(
 							'push',
 							'git',
@@ -469,6 +472,7 @@ export function createOfficialModulesDeliveryTarget(): DeliveryTarget {
 						body,
 						`Adds ${module.id}@${manifest.version} from the sandbox.\n\nApproved specification: ${module.targetPath}/spec/module.yaml (SHA256 ${context.session.modules[0]!.specHash}; operator approval at ${context.session.modules[0]!.specApprovedAt}).\nReviewed source revision: ${revision}.\n\nEvidence: all sandbox gates, exact-source auto-review, registry pnpm verify and pnpm release:pack --local passed. See reviews/${module.id}.json. PostgreSQL CI and maintainer review remain required before publication.\n\nNo registry index publication or application activation is performed.\n\n${marker}\n`,
 					);
+					await context.assertCanEject?.();
 					url = await command(
 						'pr',
 						'gh',

@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { cp, mkdir, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join, relative } from 'node:path';
@@ -6,6 +5,7 @@ import { GATE_IDS, type GateResult } from '../gates.ts';
 import { inspectAutoReview } from '../auto-review.ts';
 import { modulePathOf, type SessionPaths } from '../sessions.ts';
 import { SandboxSetupError } from '../workspace-root.ts';
+import { runBoundedProcess } from '../process-command.ts';
 import type {
 	DeliveryContext,
 	DeliveryEmit,
@@ -21,6 +21,7 @@ export interface CommandResult {
 export interface CommandOptions {
 	/* Replaces the inherited environment entirely when given. */
 	readonly env?: NodeJS.ProcessEnv;
+	readonly timeoutMs?: number;
 }
 
 export type CommandRunner = (
@@ -49,27 +50,33 @@ export class DeliveryError extends SandboxSetupError {
 }
 
 const OUTPUT_LIMIT = 8_000;
+const GIT_COMMAND_TIMEOUT_MS = 5 * 60_000;
+const PACKAGE_COMMAND_TIMEOUT_MS = 15 * 60_000;
 
-export const spawnCommand: CommandRunner = (command, args, cwd, options) =>
-	new Promise((resolvePromise) => {
-		const child = spawn(command, [...args], {
-			cwd,
-			env: options?.env ?? { ...process.env, FORCE_COLOR: '0' },
-			stdio: ['ignore', 'pipe', 'pipe'],
-		});
-		let output = '';
-		const append = (chunk: string) => {
-			output = (output + chunk).slice(-OUTPUT_LIMIT);
-		};
-		child.stdout.setEncoding('utf8');
-		child.stderr.setEncoding('utf8');
-		child.stdout.on('data', append);
-		child.stderr.on('data', append);
-		child.on('error', (error) =>
-			resolvePromise({ code: null, output: error.message }),
-		);
-		child.on('close', (code) => resolvePromise({ code, output }));
+export const spawnCommand: CommandRunner = async (
+	command,
+	args,
+	cwd,
+	options,
+) => {
+	const timeoutMs =
+		options?.timeoutMs ??
+		(command === 'pnpm' ? PACKAGE_COMMAND_TIMEOUT_MS : GIT_COMMAND_TIMEOUT_MS);
+	const result = await runBoundedProcess(command, args, {
+		cwd,
+		env: options?.env ?? { ...process.env, FORCE_COLOR: '0' },
+		timeoutMs,
+		outputLimit: OUTPUT_LIMIT,
 	});
+	return {
+		code: result.code,
+		output: result.timedOut
+			? `${result.output}\nCommand timed out after ${Math.ceil(timeoutMs / 1_000)} seconds.`.slice(
+					-OUTPUT_LIMIT,
+				)
+			: result.output,
+	};
+};
 
 /* Only module sources travel. Dependencies, the reference material, and the
    session's own scratch state never enter the workspace. */

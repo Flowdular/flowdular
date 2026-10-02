@@ -63,6 +63,7 @@ import {
 	GitHubSettingsModal,
 	type GitHubSettingsInput,
 } from './client/GitHubSettingsModal.tsrx';
+import { RepositorySetupModal } from './client/RepositorySetupModal.tsrx';
 import {
 	answersErrorFor,
 	createSandboxClientState,
@@ -153,6 +154,7 @@ export function App(props?: RenderRouteProps) @{
 	const [githubSettingsOpen, setGitHubSettingsOpen] = useValue(
 		sandbox.state.githubSettingsOpen,
 	);
+	const [repositorySetupOpen, setRepositorySetupOpen] = useState(false);
 	const [connecting, setConnecting] = useValue(sandbox.state.connecting);
 	const [sessionMenu, setSessionMenu] = useValue(sandbox.state.sessionMenu);
 	const [confirmDelete, setConfirmDelete] = useValue(
@@ -302,6 +304,41 @@ export function App(props?: RenderRouteProps) @{
 		return () => window.removeEventListener('message', onMessage);
 	}, []);
 
+	/* The launcher serves this page while it starts the local application and
+   prepares its credential. Retry the state until that background setup has
+   connected, so an early-opened page does not strand its user on the token
+   form. The timer is bounded by the launcher's platform-start timeout. */
+	const retryLocalConnection =
+		state?.configuration.mode === 'loopback' && !state.connection.connected &&
+			!connecting;
+	useEffect(() => {
+		if (!retryLocalConnection) return;
+		let cancelled = false;
+		let timer: ReturnType<typeof setTimeout>;
+		const deadline = Date.now() + 180_000;
+		const poll = async () => {
+			try {
+				const next = await loadSandboxState();
+				if (!cancelled) {
+					sandbox.store.act((transaction) => {
+						transaction.set(sandbox.state.state, next);
+						transaction.set(sandbox.state.sessions, next.sessions);
+					}, 'sandbox/reconnect');
+				}
+			} catch {
+				/* The connect screen keeps the last useful error. */
+			}
+			if (!cancelled && Date.now() < deadline) {
+				timer = setTimeout(() => void poll(), 3_000);
+			}
+		};
+		timer = setTimeout(() => void poll(), 3_000);
+		return () => {
+			cancelled = true;
+			clearTimeout(timer);
+		};
+	}, [retryLocalConnection, sandbox]);
+
 	/* One turn, wherever it came from: an operator message or a handoff the
    operator confirmed. Automatic handoffs are chained by the server on the
    same stream, so this browser only has to follow it. */
@@ -377,6 +414,12 @@ export function App(props?: RenderRouteProps) @{
 			if (failed.length > 0) {
 				setError(
 					t('sandbox.app.error.attachments', { failures: failed.join('; ') }),
+				);
+				return;
+			}
+			if (!created.ready) {
+				setError(
+					created.installError ?? t('sandbox.app.error.installDependencies'),
 				);
 				return;
 			}
@@ -841,10 +884,30 @@ export function App(props?: RenderRouteProps) @{
 							busy={busy}
 							error={error}
 							onSave={(input) => void saveGitHub(input)}
+							onSetupRepository={() => {
+								setGitHubSettingsOpen(false);
+								setError('');
+								setRepositorySetupOpen(true);
+							}}
 							onClose={() => {
 								setGitHubSettingsOpen(false);
 								setError('');
 							}}
+						/>
+					}
+					@if (repositorySetupOpen) {
+						<RepositorySetupModal
+							onComplete={(outcome) => {
+								setNotice(
+									`${t('sandbox.repository.success')} ${outcome.repository}`,
+								);
+								void refreshState().catch(
+									(failure) => setError(
+										message(failure, t('sandbox.app.error.state')),
+									),
+								);
+							}}
+							onClose={() => setRepositorySetupOpen(false)}
 						/>
 					}
 
@@ -852,6 +915,7 @@ export function App(props?: RenderRouteProps) @{
 						<div class="sandbox__scroll">
 							<TableLocaleContext.Provider value={tableLocale}>
 								<SessionPicker
+									onConfigureModel={() => setModelSettingsOpen(true)}
 									onDeliverySettings={() => {
 										setError('');
 										setGitHubSettingsOpen(true);

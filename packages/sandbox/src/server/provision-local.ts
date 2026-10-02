@@ -189,8 +189,18 @@ export async function collectProvisionedCredential(options: {
 	readonly platformUrl: string;
 	readonly log?: (line: string) => void;
 }): Promise<boolean> {
+	const path = join(
+		flowdularStateDirectory(options.workspaceRoot),
+		'sandbox',
+		'sandbox-credential.json',
+	);
 	const configuration = await loadSandboxConfiguration(options.workspaceRoot);
-	if (configuration.platformToken !== null) return false;
+	if (configuration.platformToken !== null) {
+		/* A prior collection may have saved the sealed token but failed to
+		   remove the plaintext inbox. Finish that cleanup on the next start. */
+		await rm(path, { force: true });
+		return false;
+	}
 	if (configuration.platformUrl !== options.platformUrl) {
 		await saveSandboxConfiguration(options.workspaceRoot, {
 			...configuration,
@@ -198,24 +208,25 @@ export async function collectProvisionedCredential(options: {
 			version: 1,
 		});
 	}
-	const path = join(
-		flowdularStateDirectory(options.workspaceRoot),
-		'sandbox',
-		'sandbox-credential.json',
-	);
 	let credential: ProvisionedCredential;
 	try {
 		credential = await readCredential(path);
 	} catch {
 		return false;
 	}
-	await rm(path, { force: true });
+	/* Keep the only copy until the local configuration has the sealed token.
+	   A failed seal or write can then be retried after the next start. */
+	const platformToken = await sealSecret(
+		options.workspaceRoot,
+		credential.token,
+	);
 	await saveSandboxConfiguration(options.workspaceRoot, {
 		...configuration,
 		platformUrl: options.platformUrl,
-		platformToken: await sealSecret(options.workspaceRoot, credential.token),
+		platformToken,
 		version: 1,
 	});
+	await rm(path, { force: true });
 	options.log?.(
 		`connected to the application as ${credential.email} with ${credential.capabilities.length} scope(s)`,
 	);

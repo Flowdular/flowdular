@@ -1175,6 +1175,7 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 				assertPlanStillCurrent(plan.modules, await planSessionModules(context));
 				await assertWorktreeDirectoryIgnored(run, root);
 				const gates = await runDeliveryGates(context, plan.gates, emit);
+				await context.assertCanEject?.();
 				const destination = pushDestination(git);
 
 				if (git.deliveryMode === 'fork') {
@@ -1196,6 +1197,7 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 							signedInOwner.toLowerCase() === git.forkOwner!.toLowerCase()
 								? []
 								: ['--org', git.forkOwner!];
+						await context.assertCanEject?.();
 						record(
 							'fork',
 							step(
@@ -1377,6 +1379,7 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 					),
 				);
 
+				await context.assertCanEject?.();
 				emit('push.started', {});
 				record(
 					'push',
@@ -1417,6 +1420,7 @@ export function createGitPullRequestDeliveryTarget(): DeliveryTarget {
 				});
 				let pullRequestUrl: string | null = null;
 				if (git.provider === 'github') {
+					await context.assertCanEject?.();
 					pullRequestUrl = await openPullRequest(
 						run,
 						worktree,

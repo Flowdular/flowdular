@@ -73,6 +73,7 @@ export function createLocalDeliveryTarget(): DeliveryTarget {
 			);
 			const { steps, record } = createStepRecorder(emit);
 			const gates = await runDeliveryGates(context, plan.gates, emit);
+			await context.assertCanEject?.();
 			const { copied, removed } = await stageModules(
 				paths,
 				context.workspaceRoot,

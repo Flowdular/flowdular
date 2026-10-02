@@ -1,37 +1,39 @@
 #!/usr/bin/env node
 import './register-types.mjs';
-import { watchSandboxReloads } from '../src/server/reload-log.ts';
-import {
-	DEFAULT_REPOSITORY,
-	BootstrapError,
-	assertBootstrapPrerequisites,
-	assertRefIsPinned,
-	assertTargetIsSafe,
-	bootstrapWorkspace,
-	directoryEntries,
-	workspaceTarget,
-} from '../src/server/bootstrap.ts';
-import { probeCommand } from '@flowdular/coding-agent';
-import {
-	platformReachable,
-	startPlatformProcess,
-} from '../src/server/platform-process.ts';
-import { collectProvisionedCredential } from '../src/server/provision-local.ts';
 import process from 'node:process';
 import { realpathSync } from 'node:fs';
-import { access } from 'node:fs/promises';
 import { readFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createServer } from 'vite';
-import {
-	createOctaneLogger,
-	createTheme,
-	formatDevEvent,
-	installOctaneConsoleBridge,
-	printReady,
-	shouldUseColor,
-} from '@flowdular/dev-console';
+
+/* The TypeScript loader must be installed before Node loads source modules.
+   Static imports are loaded first, regardless of their order above. */
+const [
+	{ watchSandboxReloads },
+	{ DEFAULT_REPOSITORY, BootstrapError, prepareWorkspace, workspaceTarget },
+	{ cloneGitWorkspace },
+	{ probeCommand },
+	{ findRunningPlatformUrl, startPlatformProcess },
+	{ collectProvisionedCredential },
+	{ createServer },
+	{
+		createOctaneLogger,
+		createTheme,
+		formatDevEvent,
+		installOctaneConsoleBridge,
+		printReady,
+		shouldUseColor,
+	},
+] = await Promise.all([
+	import('../src/server/reload-log.ts'),
+	import('../src/server/bootstrap.ts'),
+	import('../src/server/git-workspace.ts'),
+	import('@flowdular/coding-agent'),
+	import('../src/server/platform-process.ts'),
+	import('../src/server/provision-local.ts'),
+	import('vite'),
+	import('@flowdular/dev-console'),
+]);
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -55,8 +57,12 @@ export function parseSandboxArguments(argv = []) {
 		mode: 'loopback',
 		workspace: process.cwd(),
 		workspaceArgument: undefined,
+		connect: undefined,
+		branch: undefined,
 		ref: undefined,
+		refArgument: false,
 		repository: DEFAULT_REPOSITORY,
+		repositoryArgument: false,
 		bootstrap: 'auto',
 		platform: 'auto',
 		platformPort: 4310,
@@ -77,7 +83,10 @@ export function parseSandboxArguments(argv = []) {
 			const inline = argument.startsWith(`--${name}=`)
 				? argument.slice(name.length + 3)
 				: undefined;
-			if (inline !== undefined) return inline;
+			if (inline !== undefined) {
+				if (!inline) throw new Error(`--${name} requires a value.`);
+				return inline;
+			}
 			if (argument !== `--${name}`) return undefined;
 			const value = argv[index + 1];
 			if (!value || value.startsWith('--')) {
@@ -120,11 +129,23 @@ export function parseSandboxArguments(argv = []) {
 		const ref = take('ref');
 		if (ref !== undefined) {
 			options.ref = ref;
+			options.refArgument = true;
 			continue;
 		}
 		const repository = take('repository');
 		if (repository !== undefined) {
 			options.repository = repository;
+			options.repositoryArgument = true;
+			continue;
+		}
+		const connect = take('connect');
+		if (connect !== undefined) {
+			options.connect = connect;
+			continue;
+		}
+		const branch = take('branch');
+		if (branch !== undefined) {
+			options.branch = branch;
 			continue;
 		}
 		const workspace = take('workspace');
@@ -150,6 +171,19 @@ export function parseSandboxArguments(argv = []) {
 	) {
 		throw new Error('--port must be an integer between 1 and 65535.');
 	}
+	if (options.branch && !options.connect) {
+		throw new Error('--branch requires --connect.');
+	}
+	if (
+		options.connect &&
+		(options.repositoryArgument ||
+			options.refArgument ||
+			options.bootstrap !== 'auto')
+	) {
+		throw new Error(
+			'--connect cannot be combined with --repository, --ref, --bootstrap or --no-bootstrap.',
+		);
+	}
 	/* A sandbox that is not bound to a loopback interface cannot claim loopback
 	   trust, so it runs with the self-hosted rules. */
 	if (options.mode === 'loopback' && !isLoopbackHost(options.host)) {
@@ -172,8 +206,10 @@ Options:
                       (default: the nearest workspace, else ./flowdular)
   --bootstrap         Create a workspace even when one was found
   --no-bootstrap      Fail instead of creating a workspace when none is found
-  --ref <tag>         Version tag or commit to bootstrap (default: this package version)
-  --repository <url>  Repository to bootstrap from (default: Flowdular/flowdular)
+  --connect <git-url>  Clone an existing Flowdular repository into a new workspace
+  --branch <name>      Branch to clone with --connect (default: remote default)
+  --ref <tag>         Clone a pinned Flowdular repository ref (legacy)
+  --repository <url>  Clone this Flowdular repository (legacy)
   --platform          Start the application as well (default when none is serving)
   --no-platform       Never start the application; connect to a running one
   --platform-port <n> Port for the application this launcher starts (default: 4310)
@@ -233,37 +269,39 @@ async function sandboxStatus(server, workspace) {
 /* A business user arrives with an empty directory, so the sandbox either runs
    against the workspace it finds or creates one first. Refusing silently is not
    an option: the whole promise is that describing an idea needs no checkout. */
-async function resolveWorkspace(options, theme) {
-	const exists = async (path) => {
-		try {
-			await access(path);
-			return true;
-		} catch {
-			return false;
-		}
-	};
-	if (options.bootstrap !== 'never' && !(await exists(options.workspace))) {
-		const ref = options.ref ?? `v${sandboxVersion}`;
-		assertRefIsPinned(ref);
-		const target = workspaceTarget(options.workspaceArgument, 'flowdular');
-		await assertBootstrapPrerequisites(
-			async (command) => (await probeCommand(command)).available,
+async function resolveWorkspace(options) {
+	if (options.connect) {
+		const target = workspaceTarget(
+			options.workspaceArgument,
+			'flowdular',
+			process.cwd(),
 		);
-		await assertTargetIsSafe(target, exists, directoryEntries);
-		console.log(`\nNo Flowdular workspace found. Creating one in ${target}`);
-		const result = await bootstrapWorkspace({
+		console.log(`  Connecting a Git workspace in ${target}`);
+		const result = await cloneGitWorkspace({
+			repository: options.connect,
 			target,
-			ref,
-			repository: options.repository,
-			log: (line) => console.log(`  ${line}`),
+			...(options.branch ? { branch: options.branch } : {}),
 		});
 		for (const step of result.steps) console.log(`  ok ${step}`);
 		options.workspace = result.root;
+		return;
 	}
-	if (options.bootstrap === 'always' && (await exists(options.workspace)))
-		throw new Error(
-			`--bootstrap was given but ${options.workspace} is already a workspace.`,
-		);
+	const result = await prepareWorkspace(
+		{
+			cwd: process.cwd(),
+			workspaceArgument: options.workspaceArgument,
+			bootstrap: options.bootstrap,
+			ref: options.ref ?? `v${sandboxVersion}`,
+			repository: options.repository,
+			version: sandboxVersion,
+			cloneRepository: options.refArgument || options.repositoryArgument,
+		},
+		{
+			probe: async (command) => (await probeCommand(command)).available,
+			log: (line) => console.log(`  ${line}`),
+		},
+	);
+	options.workspace = result.root;
 }
 
 /* Order matters and the embedded database decides it. PGlite is single-process,
@@ -277,7 +315,7 @@ async function resolveWorkspace(options, theme) {
 async function willStartPlatform(options) {
 	if (options.platform === 'never') return false;
 	if (options.platform === 'always') return true;
-	return !(await platformReachable(`http://127.0.0.1:${options.platformPort}`));
+	return !(await findRunningPlatformUrl(options.platformPort));
 }
 
 async function collectAccess(options, platformUrl) {
@@ -299,14 +337,12 @@ async function collectAccess(options, platformUrl) {
 /* One command is the whole setup. The sandbox is a client of a running
    application, so a business user used to need a second terminal before they
    could describe anything. An application already serving is left alone. */
-async function startPlatform(options) {
+async function startPlatform(options, signal) {
 	if (options.platform === 'never') return null;
-	const url = `http://127.0.0.1:${options.platformPort}`;
-	if (options.platform !== 'always' && (await platformReachable(url)))
-		return null;
 	return await startPlatformProcess({
 		workspaceRoot: options.workspace,
 		port: options.platformPort,
+		signal,
 		quiet: true,
 		log: (line) => console.log(`  ${line}`),
 	});
@@ -326,16 +362,23 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 	   a background concern; the workspace is not. */
 	let platform = null;
 	let bringUpPlatform = async () => {};
+	const platformStartController = new AbortController();
+	let startup = Promise.resolve();
+	let closing = false;
 	try {
-		await resolveWorkspace(options, theme);
+		await resolveWorkspace(options);
 		const ownsPlatform = await willStartPlatform(options);
 		/* Set before the child is spawned: the application reads it to decide
 		   whether to prepare a credential at boot, and a child inherits the
 		   environment as it exists at spawn, not as it ends up. */
 		process.env.FD_SANDBOX_PROVISION = ownsPlatform ? 'true' : 'false';
 		bringUpPlatform = async () => {
-			platform = await startPlatform(options);
-			await collectAccess(options, `http://127.0.0.1:${options.platformPort}`);
+			platform = await startPlatform(options, platformStartController.signal);
+			if (!platformStartController.signal.aborted)
+				await collectAccess(
+					options,
+					platform?.url ?? `http://127.0.0.1:${options.platformPort}`,
+				);
 		};
 	} catch (error) {
 		restoreEarly();
@@ -361,15 +404,33 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 			server: { host: options.host, port: options.port, strictPort: true },
 		});
 		await server.listen();
+		/* Install shutdown before starting the child. Vite's status query below can
+		   take time, and a signal in that window must still stop the application. */
+		const close = async () => {
+			if (closing) return;
+			closing = true;
+			platformStartController.abort();
+			console.log(
+				`\n${formatDevEvent('process', 'Sandbox stopped.', useColor)}`,
+			);
+			await startup;
+			await server.close();
+			if (platform) await platform.stop();
+			restoreConsole();
+			process.exit(0);
+		};
+		process.once('SIGINT', () => void close());
+		process.once('SIGTERM', () => void close());
 		/* The dashboard is answering now; the application is brought up behind it
 		   and the connection settles on its own. */
-		void bringUpPlatform().catch((error) => {
-			console.log(
-				`  the application did not start: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			);
-			if (platform) void platform.stop();
+		startup = bringUpPlatform().catch(async (error) => {
+			if (!closing)
+				console.log(
+					`  the application did not start: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				);
+			if (platform) await platform.stop();
 			platform = null;
 		});
 	} catch (error) {
@@ -425,18 +486,6 @@ export async function startSandbox(argv = process.argv.slice(2)) {
 		options.verbose,
 	);
 
-	const close = async () => {
-		console.log(`\n${formatDevEvent('process', 'Sandbox stopped.', useColor)}`);
-		await server.close();
-		/* The application this launcher started belongs to this process. Leaving
-		   it running would hold a port and a database handle after the operator
-		   believed everything had stopped. */
-		if (platform) await platform.stop();
-		restoreConsole();
-		process.exit(0);
-	};
-	process.once('SIGINT', () => void close());
-	process.once('SIGTERM', () => void close());
 	return server;
 }
 

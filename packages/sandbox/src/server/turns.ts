@@ -522,7 +522,7 @@ async function installGate(
 		command: 'pnpm install (session workspace)',
 		output: result.ok
 			? `Installed the session workspace in ${result.durationMs} ms.`
-			: `The session workspace could not install the declared dependencies:\n${result.output}`,
+			: 'The session workspace could not install the declared dependencies. Check the package setup and retry.',
 	};
 }
 
@@ -620,6 +620,51 @@ export async function* runTurn(
 			brief: session.brief || message,
 			driver: driverId,
 		});
+	}
+
+	/* A session made before the first install, or one whose install failed, may
+	   reach this route through a manual retry. Finish host-owned dependency
+	   changes before taking the agent path snapshot. */
+	const initialInstall = await installGate(context, session);
+	if (initialInstall?.status === 'failed') {
+		const handoff: HandoffPlan = {
+			kind: 'blocked',
+			role: roleId,
+			roleName: role.name,
+			reason:
+				'The session dependencies could not be installed. Fix the dependency setup and retry this turn.',
+			prompt: '',
+			module: active.directory,
+		};
+		yield await appendChatEntry(context.workspaceRoot, session, {
+			kind: 'system',
+			role: roleId,
+			module: active.directory,
+			text: gateSummary(initialInstall),
+			event: {
+				type: 'error',
+				code: 'GATE_DEPENDENCIES',
+				message: initialInstall.output,
+			} as CodingAgentEvent,
+		});
+		yield await appendChatEntry(context.workspaceRoot, session, {
+			kind: 'system',
+			role: roleId,
+			module: active.directory,
+			text: handoffText(handoff),
+			handoff,
+		});
+		const updated = await updateSession(context.workspaceRoot, session.id, {
+			state: 'blocked',
+			role: roleId,
+			driver: driverId,
+		});
+		return {
+			session: updated,
+			diffs: await collectDiffs(context.workspaceRoot, updated),
+			gates: [initialInstall],
+			handoff,
+		};
 	}
 
 	await updateSession(context.workspaceRoot, session.id, {
@@ -800,6 +845,10 @@ export async function* runTurn(
 				closing = event.text;
 				closingSequence = recorded.sequence;
 			}
+			/* The CLI may time out after creating a thread but before completing
+			   the turn. Keep its ID so a manual retry can resume the draft. */
+			if (event.type === 'turn.started')
+				nextResumeId = event.resumeId ?? nextResumeId;
 			if (event.type === 'turn.completed') {
 				nextResumeId = event.resumeId ?? nextResumeId;
 				failed = event.finishReason === 'error';

@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { connect } from 'node:net';
+import { setTimeout as delay } from 'node:timers/promises';
 
 export interface PlatformProcess {
 	readonly url: string;
@@ -35,11 +36,22 @@ export async function platformReachable(
 	} catch {
 		return false;
 	}
+	const hostname = parsed.hostname.replace(/^\[(.*)\]$/, '$1');
 	return await probe(
-		parsed.hostname === 'localhost' ? '127.0.0.1' : parsed.hostname,
+		hostname === 'localhost' ? '127.0.0.1' : hostname,
 		Number(parsed.port || 80),
 		timeoutMs,
 	);
+}
+
+export async function findRunningPlatformUrl(
+	port: number,
+): Promise<string | null> {
+	for (const host of ['127.0.0.1', '[::1]']) {
+		const url = `http://${host}:${port}`;
+		if (await platformReachable(url)) return url;
+	}
+	return null;
 }
 
 /* Readiness is a socket, not a log line. The platform prints its ready block
@@ -62,6 +74,7 @@ export interface StartPlatformOptions {
 	readonly workspaceRoot: string;
 	readonly port: number;
 	readonly host?: string;
+	readonly signal?: AbortSignal;
 	readonly log?: (line: string) => void;
 	readonly onExit?: (code: number | null) => void;
 	/* The ready message is kept out of the launcher's own output; both servers
@@ -81,46 +94,114 @@ export async function startPlatformProcess(
 	options: StartPlatformOptions,
 ): Promise<PlatformProcess> {
 	const url = `http://127.0.0.1:${options.port}`;
-	if (await platformReachable(url)) {
-		options.log?.(`using the platform already serving on ${url}`);
-		return { url, stop: async () => undefined };
+	if (options.signal?.aborted) throw new PlatformStartAbortedError();
+	const existingUrl = await findRunningPlatformUrl(options.port);
+	if (existingUrl) {
+		options.log?.(`using the platform already serving on ${existingUrl}`);
+		return { url: existingUrl, stop: async () => undefined };
 	}
+	if (options.signal?.aborted) throw new PlatformStartAbortedError();
 	options.log?.('starting the platform (first run builds the database)');
 
-	const args = ['dev', '--port', String(options.port)];
-	if (options.host) args.push('--host', options.host);
+	/* Vite's localhost resolution may bind IPv6 only on some hosts while this
+	   launcher probes and connects to 127.0.0.1. Bind the address we advertise. */
+	const args = [
+		'dev',
+		'--port',
+		String(options.port),
+		'--host',
+		options.host ?? '127.0.0.1',
+	];
 	const child = spawn('pnpm', args, {
 		cwd: options.workspaceRoot,
 		env: { ...process.env, FORCE_COLOR: '0' },
-		stdio: options.quiet ? ['ignore', 'ignore', 'pipe'] : 'inherit',
+		stdio: options.quiet ? 'ignore' : 'inherit',
+		detached: process.platform !== 'win32',
 	});
-	/* Resolves when the child is gone, so stop() can wait for the port to be
-	   released instead of assuming SIGTERM was enough. */
-	const exited = new Promise<void>((resolvePromise) => {
-		child.once('exit', (code) => {
-			options.onExit?.(code);
+	let spawnError: Error | null = null;
+	const closed = new Promise<void>((resolvePromise) => {
+		child.once('error', (error) => {
+			spawnError = error;
 			resolvePromise();
 		});
+		child.once('close', () => resolvePromise());
+		child.once('exit', (code) => {
+			options.onExit?.(code);
+		});
 	});
-
-	const ready = await waitForPlatform(url, 180_000);
-	if (!ready) {
-		child.kill('SIGTERM');
-		throw new PlatformStartError(url);
+	let stopPromise: Promise<void> | null = null;
+	const stopChild = (): Promise<void> => {
+		if (stopPromise) return stopPromise;
+		stopPromise = (async () => {
+			const active = () => {
+				if (process.platform === 'win32' || !child.pid)
+					return child.exitCode === null && child.signalCode === null;
+				try {
+					process.kill(-child.pid, 0);
+					return true;
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+					throw error;
+				}
+			};
+			const kill = (signal: NodeJS.Signals) => {
+				try {
+					if (process.platform !== 'win32' && child.pid)
+						process.kill(-child.pid, signal);
+					else if (child.exitCode === null && child.signalCode === null)
+						child.kill(signal);
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+				}
+			};
+			kill('SIGTERM');
+			const deadline = Date.now() + 3_000;
+			while (active() && Date.now() < deadline) await delay(100);
+			if (active()) kill('SIGKILL');
+			const killDeadline = Date.now() + 2_000;
+			while (active() && Date.now() < killDeadline) await delay(100);
+		})();
+		return stopPromise;
+	};
+	const startup = new AbortController();
+	const abort = () => {
+		startup.abort();
+		/* Signal listeners elsewhere may exit the process before async cleanup
+		   finishes. Send SIGTERM to the owned process group synchronously. */
+		void stopChild().catch(() => undefined);
+	};
+	options.signal?.addEventListener('abort', abort, { once: true });
+	try {
+		const outcome = await Promise.race([
+			waitForPlatform(url, 180_000, startup.signal).then((ready) =>
+				ready ? 'ready' : 'timeout',
+			),
+			closed.then(() => 'exited'),
+		]);
+		if (options.signal?.aborted) {
+			await stopChild();
+			throw new PlatformStartAbortedError();
+		}
+		if (outcome !== 'ready') {
+			await stopChild();
+			throw spawnError ?? new PlatformStartError(url);
+		}
+	} finally {
+		startup.abort();
+		options.signal?.removeEventListener('abort', abort);
 	}
 	options.log?.(`platform ready on ${url}`);
 	return {
 		url,
-		stop: async () => {
-			if (!child || child.exitCode !== null) return;
-			child.kill('SIGTERM');
-			await Promise.race([
-				exited,
-				new Promise((resolvePromise) => setTimeout(resolvePromise, 3_000)),
-			]);
-			if (child.exitCode === null) child.kill('SIGKILL');
-		},
+		stop: stopChild,
 	};
+}
+
+export class PlatformStartAbortedError extends Error {
+	constructor() {
+		super('Platform startup was cancelled.');
+		this.name = 'PlatformStartAbortedError';
+	}
 }
 
 export class PlatformStartError extends Error {

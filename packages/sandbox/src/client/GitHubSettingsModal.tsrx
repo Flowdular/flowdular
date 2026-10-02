@@ -23,6 +23,7 @@ export interface GitHubSettingsModalProps {
 	readonly busy: boolean;
 	readonly error: string;
 	readonly onSave: (input: GitHubSettingsInput) => void;
+	readonly onSetupRepository: () => void;
 	readonly onClose: () => void;
 }
 
@@ -197,6 +198,17 @@ export function GitHubSettingsModal(props: GitHubSettingsModalProps) @{
 								<span>{t('sandbox.github.token.remove')}</span>
 							</label>
 						}
+					</div>
+					<div class="ui-form__section">
+						<div class="ui-form__section-head">
+							<b>{t('sandbox.repository.title')}</b>
+							<small>{t('sandbox.repository.description')}</small>
+						</div>
+						<Button
+							type="button"
+							disabled={props.busy}
+							onClick={props.onSetupRepository}
+						>{t('sandbox.repository.open')}</Button>
 					</div>
 					@if (props.error) {
 						<Alert>{props.error}</Alert>

@@ -174,12 +174,25 @@ export function spawnLineStream(options: SpawnJsonOptions): ProcessLineStream {
 		cwd: options.cwd,
 		env: options.env ?? {},
 		stdio: ['ignore', 'pipe', 'pipe'],
+		/* A new Unix process group lets cancellation reach commands started by
+		   the CLI as well as the CLI itself. Windows uses taskkill /T instead. */
+		detached: process.platform !== 'win32',
+		windowsHide: true,
 	});
+	const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
 	const stderrLimit = options.stderrLimit ?? 8_192;
 	let stderr = '';
 	let aborted = false;
 	let timedOut = false;
+	let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
 	let killTimer: ReturnType<typeof setTimeout> | undefined;
+	let closeTimer: ReturnType<typeof setTimeout> | undefined;
+	let settled = false;
+	let parentExited = false;
+	let finishStopped: (() => void) | undefined;
+	child.once('exit', () => {
+		parentExited = true;
+	});
 	child.stderr.setEncoding('utf8');
 	child.stderr.on('data', (chunk: string) => {
 		if (stderr.length < stderrLimit) {
@@ -187,31 +200,56 @@ export function spawnLineStream(options: SpawnJsonOptions): ProcessLineStream {
 		}
 	});
 
+	const cleanup = () => {
+		if (timeoutTimer) clearTimeout(timeoutTimer);
+		if (killTimer) clearTimeout(killTimer);
+		if (closeTimer) clearTimeout(closeTimer);
+		options.signal?.removeEventListener('abort', stop);
+	};
+	const killTree = (signal: 'SIGTERM' | 'SIGKILL') => {
+		if (child.pid === undefined) return;
+		if (process.platform === 'win32') {
+			if (parentExited) return;
+			/* On Windows a signal reaches only the CLI. taskkill /T follows its
+			   descendants, and /F is needed because they may ignore termination. */
+			const killer = spawn(
+				'taskkill',
+				['/PID', String(child.pid), '/T', '/F'],
+				{ stdio: 'ignore', windowsHide: true },
+			);
+			killer.on('error', () => {
+				if (!parentExited) child.kill('SIGKILL');
+			});
+			killer.unref();
+			return;
+		}
+		try {
+			process.kill(-child.pid, signal);
+		} catch {
+			/* The group may have already gone; still try the direct process. */
+			if (!parentExited) child.kill(signal);
+		}
+	};
 	const stop = () => {
 		if (aborted) return;
 		aborted = true;
-		child.kill('SIGTERM');
-		killTimer = setTimeout(() => child.kill('SIGKILL'), 2_000);
+		killTree('SIGTERM');
+		/* 'exit' can precede 'close' while a descendant still owns stdout or
+		   stderr. Keep the escalation alive until those streams close. */
+		killTimer = setTimeout(() => {
+			killTree('SIGKILL');
+		}, 2_000);
 		killTimer.unref();
-	};
-	const timer =
-		options.timeoutMs === undefined
-			? undefined
-			: setTimeout(() => {
-					if (aborted) return;
-					timedOut = true;
-					stop();
-				}, options.timeoutMs);
-	timer?.unref();
-	if (options.signal) {
-		if (options.signal.aborted) stop();
-		else options.signal.addEventListener('abort', stop, { once: true });
-	}
-
-	const cleanup = () => {
-		if (timer) clearTimeout(timer);
-		if (killTimer) clearTimeout(killTimer);
-		options.signal?.removeEventListener('abort', stop);
+		/* A detached command can retain the pipes outside our process group.
+		   Close our side so a driver turn never waits forever for that output. */
+		closeTimer = setTimeout(() => {
+			lines.close();
+			child.stdout.destroy();
+			child.stderr.destroy();
+			child.unref();
+			finishStopped?.();
+		}, 3_000);
+		closeTimer.unref();
 	};
 
 	const finished = new Promise<{
@@ -220,7 +258,15 @@ export function spawnLineStream(options: SpawnJsonOptions): ProcessLineStream {
 		aborted: boolean;
 		timedOut: boolean;
 	}>((resolvePromise, rejectPromise) => {
+		finishStopped = () => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			resolvePromise({ code: null, stderr, aborted, timedOut });
+		};
 		child.on('error', (error) => {
+			if (settled) return;
+			settled = true;
 			cleanup();
 			rejectPromise(
 				new CodingAgentError(
@@ -230,17 +276,34 @@ export function spawnLineStream(options: SpawnJsonOptions): ProcessLineStream {
 			);
 		});
 		child.on('close', (code) => {
+			if (settled) return;
+			settled = true;
+			/* A descendant can close its inherited pipes while continuing in the
+			   group. Finish cancellation before reporting the turn as stopped. */
+			if (aborted) killTree('SIGKILL');
 			cleanup();
 			resolvePromise({ code, stderr, aborted, timedOut });
 		});
 	});
+	if (options.timeoutMs !== undefined) {
+		timeoutTimer = setTimeout(() => {
+			if (aborted || settled) return;
+			timedOut = true;
+			stop();
+		}, options.timeoutMs);
+		timeoutTimer.unref();
+	}
+	if (options.signal) {
+		if (options.signal.aborted) stop();
+		else options.signal.addEventListener('abort', stop, { once: true });
+	}
 
 	/* A spawn failure rejects before the caller has drained the lines and
 	   awaited this promise; without a handler of its own that rejection is
 	   unhandled and takes the process down. */
 	finished.catch(() => undefined);
 	return {
-		lines: createInterface({ input: child.stdout, crlfDelay: Infinity }),
+		lines,
 		finished,
 	};
 }

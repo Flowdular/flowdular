@@ -1139,6 +1139,31 @@ describe('git-pr delivery', () => {
 		expect(await git(fx.root, 'status', '--porcelain')).toBe('');
 	});
 
+	it('rechecks eject authority after verification and before pushing', async () => {
+		const session = await sessionWithModules(fx.root);
+		const context = contextFor(fx.root, session, commandsFor().commands);
+		const plan = await target.plan(context);
+		let checks = 0;
+		const events: string[] = [];
+		await expect(
+			target.apply(
+				{
+					...context,
+					assertCanEject: async () => {
+						checks += 1;
+						if (checks === 2) throw new Error('eject grant revoked');
+					},
+				},
+				plan,
+				(event) => events.push(event),
+			),
+		).rejects.toThrow('eject grant revoked');
+		expect(checks).toBe(2);
+		expect(events).not.toContain('push.started');
+		expect(await remoteBranches(fx.remote)).not.toContain(plan.git!.branch);
+		expect(await exists(join(fx.root, plan.git!.worktreePath))).toBe(false);
+	});
+
 	it('fails before the commit when a step writes outside the allowed paths', async () => {
 		const session = await sessionWithModules(fx.root);
 		const context = contextFor(

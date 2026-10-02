@@ -34,6 +34,7 @@ export interface SessionPickerProps {
 	readonly sessions: readonly SandboxSession[];
 	readonly dashboard?: SandboxDashboard | undefined;
 	readonly onRefresh: () => void;
+	readonly onConfigureModel: () => void;
 	readonly onReject: (id: string) => void;
 	/* Ids of the sessions with a turn in flight; those cannot be deleted. */
 	readonly running: readonly string[];
@@ -342,6 +343,10 @@ export function SessionPicker(props: SessionPickerProps) @{
 				driver={props.driver}
 				busy={props.busy}
 				onDriver={props.onDriver}
+				onConfigureModel={() => {
+					setCreating(false);
+					props.onConfigureModel();
+				}}
 				onCreate={props.onCreate}
 			/>
 		</Drawer>

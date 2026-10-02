@@ -14,6 +14,7 @@ export interface NewSessionFormProps {
 	readonly driver: string;
 	readonly busy: boolean;
 	readonly onDriver: (driver: string) => void;
+	readonly onConfigureModel: () => void;
 	readonly onCreate: (brief: string, driver: string, attachments: readonly File[]) => void;
 }
 /* A file the operator attached before the session exists. It is uploaded to
@@ -210,5 +211,12 @@ export function NewSessionForm(props: NewSessionFormProps) @{
 		<p class="ui-note">
 			{selected ? selected.description : t('sandbox.sessions.driver.none')}
 		</p>
+		@if (!selected) {
+			<div class="ui-form__actions">
+				<Button type="button" onClick={props.onConfigureModel}>{t(
+					'sandbox.models.title',
+				)}</Button>
+			</div>
+		}
 	</form>
 }

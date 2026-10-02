@@ -136,3 +136,142 @@ describe('spawnLineStream environment', () => {
 		expect(raw).toBe('present');
 	});
 });
+
+describe('spawnLineStream cancellation', () => {
+	it('stops a command descendant that ignores SIGTERM and holds the output pipe', async () => {
+		const directory = await mkdtemp(join(tmpdir(), 'flowdular-process-tree-'));
+		const script = join(directory, 'parent.mjs');
+		const pidFile = join(directory, 'child.pid');
+		const heartbeat = join(directory, 'heartbeat');
+		await writeFile(
+			script,
+			`import { spawn } from 'node:child_process';
+import { existsSync, writeFileSync } from 'node:fs';
+const [pidFile, heartbeat] = process.argv.slice(2);
+const descendant = spawn(process.execPath, ['-e',
+  'const { writeFileSync } = require("node:fs"); ' +
+  'process.on("SIGTERM", () => {}); ' +
+  'writeFileSync(process.argv[1], String(Date.now())); ' +
+  'setInterval(() => writeFileSync(process.argv[1], String(Date.now())), 40);',
+  heartbeat], { stdio: 'inherit' });
+writeFileSync(pidFile, String(descendant.pid));
+const ready = setInterval(() => {
+  if (!existsSync(heartbeat)) return;
+  clearInterval(ready);
+  process.stdout.write('ready\\n');
+}, 10);
+setInterval(() => {}, 1000);
+`,
+		);
+
+		let descendantPid: number | undefined;
+		let stopped = false;
+		let watchdog: ReturnType<typeof setTimeout> | undefined;
+		try {
+			const controller = new AbortController();
+			const stream = spawnLineStream({
+				command: process.execPath,
+				args: [script, pidFile, heartbeat],
+				cwd: directory,
+				signal: controller.signal,
+			});
+			const lines = (async () => {
+				for await (const line of stream.lines) {
+					if (line === 'ready') controller.abort();
+				}
+			})();
+			const result = await Promise.race([
+				Promise.all([lines, stream.finished]).then(([, exit]) => exit),
+				new Promise<never>((_, reject) => {
+					watchdog = setTimeout(
+						() => reject(new Error('Cancelled process tree kept stdout open.')),
+						4_000,
+					);
+				}),
+			]);
+			expect(result.aborted).toBe(true);
+			descendantPid = Number(await readFile(pidFile, 'utf8'));
+			const stoppedAt = await readFile(heartbeat, 'utf8');
+			await new Promise((resolve) => setTimeout(resolve, 160));
+			expect(await readFile(heartbeat, 'utf8')).toBe(stoppedAt);
+			stopped = true;
+		} finally {
+			if (watchdog) clearTimeout(watchdog);
+			if (!descendantPid) {
+				try {
+					descendantPid = Number(await readFile(pidFile, 'utf8'));
+				} catch {
+					// The child may have failed before it wrote its PID.
+				}
+			}
+			if (!stopped && descendantPid) {
+				try {
+					process.kill(descendantPid, 'SIGKILL');
+				} catch {
+					// Already stopped by the process-tree cancellation.
+				}
+			}
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it('bounds the wait when a detached descendant still owns stdout', async () => {
+		const directory = await mkdtemp(join(tmpdir(), 'flowdular-detached-'));
+		const script = join(directory, 'parent.mjs');
+		const pidFile = join(directory, 'child.pid');
+		await writeFile(
+			script,
+			`import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+  detached: true,
+  stdio: 'inherit',
+});
+writeFileSync(process.argv[2], String(descendant.pid));
+process.stdout.write('ready\\n');
+setInterval(() => {}, 1000);
+`,
+		);
+		let descendantPid: number | undefined;
+		let watchdog: ReturnType<typeof setTimeout> | undefined;
+		try {
+			const controller = new AbortController();
+			const stream = spawnLineStream({
+				command: process.execPath,
+				args: [script, pidFile],
+				cwd: directory,
+				signal: controller.signal,
+			});
+			const lines = (async () => {
+				for await (const line of stream.lines) {
+					if (line === 'ready') controller.abort();
+				}
+			})();
+			const result = await Promise.race([
+				Promise.all([lines, stream.finished]).then(([, exit]) => exit),
+				new Promise<never>((_, reject) => {
+					watchdog = setTimeout(
+						() => reject(new Error('Cancelled turn did not close its stream.')),
+						4_500,
+					);
+				}),
+			]);
+			expect(result.aborted).toBe(true);
+		} finally {
+			if (watchdog) clearTimeout(watchdog);
+			try {
+				descendantPid = Number(await readFile(pidFile, 'utf8'));
+			} catch {
+				// The child may have failed before it wrote its PID.
+			}
+			if (descendantPid) {
+				try {
+					process.kill(descendantPid, 'SIGKILL');
+				} catch {
+					// Already stopped by taskkill on Windows.
+				}
+			}
+			await rm(directory, { recursive: true, force: true });
+		}
+	}, 6_000);
+});

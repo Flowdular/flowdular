@@ -12,7 +12,7 @@ import {
 } from './preview-database-host.ts';
 import type { PreviewComposition, PreviewRuntime } from './preview-runtime.ts';
 import type { SandboxSession } from './sessions.ts';
-import { resolvePreviewModules } from './preview-modules.ts';
+import { previewSdkRoot, resolvePreviewModules } from './preview-modules.ts';
 import { previewRevision } from './preview-revision.ts';
 import { sendPreviewDatabaseReply } from './preview-ipc.ts';
 
@@ -166,6 +166,7 @@ function startWorker(
 	/* The previous worker's engine holds the same data directory until it has
 	   closed, and two embedded PostgreSQL instances must never share one. */
 	drained: Promise<void> | undefined,
+	consumerSdkRoot: string | null,
 	/* Source reloads keep the session's vault and retained grants readable. */
 	keys: PreviewKeys = {
 		FD_AGENT_CREDENTIAL_KEY: randomBytes(32).toString('base64'),
@@ -184,6 +185,13 @@ function startWorker(
 		session.id,
 	);
 	const readable = new Set([sessionRoot, sandboxRoot]);
+	/* Support modules belong to the selected platform workspace. Grant both the
+	   selected path and its target when modules is a symlink. */
+	const platformModules = join(canonicalWorkspaceRoot, 'modules');
+	readable.add(platformModules);
+	if (existsSync(platformModules)) {
+		readable.add(realpathSync(platformModules));
+	}
 	// Installed packages can live in a pnpm store or an npm-exec cache, separate
 	// from the consumer. Grant dependency code, never the consumer's whole root.
 	const addDependencies = (from: string) => {
@@ -200,27 +208,17 @@ function startWorker(
 	};
 	addDependencies(sandboxRoot);
 	addDependencies(canonicalWorkspaceRoot);
-	const repositoryRoot = resolve(sandboxRoot, '../..');
-	if (join(repositoryRoot, 'packages/sandbox') === sandboxRoot) {
-		readable.add(join(repositoryRoot, 'packages'));
-		readable.add(join(repositoryRoot, 'modules'));
-		addDependencies(repositoryRoot);
-	}
-	let consumerSdkRoot: string | undefined;
+	/* The sandbox imports auth.core as a package. A linked development install
+	   resolves it outside node_modules, so grant that package's physical root.
+	   The published sandbox uses @flowdular/sdk and has no separate auth package. */
 	try {
-		const require = createRequire(
-			join(canonicalWorkspaceRoot, 'platform/package.json'),
+		const sandboxRequire = createRequire(join(sandboxRoot, 'package.json'));
+		const authModuleRoot = realpathSync(
+			dirname(sandboxRequire.resolve('@flowdular/module-auth/module.json')),
 		);
-		const sdkRoot = realpathSync(
-			dirname(require.resolve('@flowdular/sdk/package.json')),
-		);
-		consumerSdkRoot = sdkRoot;
-		readable.add(sdkRoot);
-		addDependencies(sdkRoot);
+		readable.add(authModuleRoot);
+		addDependencies(authModuleRoot);
 	} catch (error) {
-		/* A workspace nested inside another checkout resolves past the roots the
-		   host may read, and Node answers that with a denial rather than a miss;
-		   both mean this deployment has no consumer SDK to grant. */
 		const code = (error as NodeJS.ErrnoException).code;
 		if (
 			code !== 'MODULE_NOT_FOUND' &&
@@ -228,6 +226,15 @@ function startWorker(
 			code !== 'ERR_ACCESS_DENIED'
 		)
 			throw error;
+	}
+	const repositoryRoot = resolve(sandboxRoot, '../..');
+	if (join(repositoryRoot, 'packages/sandbox') === sandboxRoot) {
+		readable.add(join(repositoryRoot, 'packages'));
+		addDependencies(repositoryRoot);
+	}
+	if (consumerSdkRoot) {
+		readable.add(consumerSdkRoot);
+		addDependencies(consumerSdkRoot);
 	}
 	const writable = [
 		/* Authentication and module databases are the only persistent state a
@@ -379,6 +386,7 @@ export function createIsolatedPreviewRuntime(
 		const revision = await previewRevision(
 			await resolvePreviewModules(workspaceRoot, session),
 		);
+		const consumerSdkRoot = await previewSdkRoot(workspaceRoot);
 		signal.throwIfAborted();
 		let slot = workers.get(session.id);
 		const keys = slot?.keys;
@@ -398,6 +406,7 @@ export function createIsolatedPreviewRuntime(
 				revision,
 				startTimeoutMs,
 				draining.get(session.id),
+				consumerSdkRoot,
 				keys,
 			);
 			workers.set(session.id, slot);
