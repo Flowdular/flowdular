@@ -106,6 +106,13 @@ try {
 }
 // Exercise the same build-script policy as a normal generated-app install.
 run(['install']);
+const firstRun = spawnSync(
+	process.execPath,
+	[join(root, 'scripts/smoke-application-first-run.mjs'), consumer],
+	{ stdio: 'inherit', timeout: 90000 },
+);
+if (firstRun.status !== 0)
+	throw new Error('Fresh application sandbox provisioning failed.');
 // The packed SDK is the sandbox reference fallback for a workspace without its
 // own .ai tree, so it must carry the capability card the skills cite.
 await access(
