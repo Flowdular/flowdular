@@ -1,7 +1,7 @@
 schemaVersion: 2
 id: connectors.core
-specVersion: 0.1.12
-status: approved
+specVersion: 0.2.0
+status: draft
 name: Connectors Core
 description: Gives a workspace a governed way to call external systems through connector definitions a module or the platform ships, instances an owner configures with sealed credentials and a host allowlist, a test call, a call log without payloads, and an explicit per-instance consent that lets workflows and agents use the connector as an external action, with a generic HTTP JSON connector as the reference.
 profile: full
@@ -31,9 +31,11 @@ invariants:
   - Every outbound request is pinned to the addresses the egress check accepted, so the connection resolves nothing again and a name that answers publicly for the check and privately a moment later cannot be reached. The host name, the Host header and the TLS server name are unchanged, and the same pinning covers the OAuth2 token exchange.
   - A call is refused before the socket unless its target is https on a port the definition names, and a definition that names no port accepts 443 only. The same rule applies to the OAuth2 token URL, at save and at call.
   - The credential fingerprint an owner compares is a keyed digest under this module's own key, bound to the tenant and the instance, so holding the column reveals neither the credential nor whether two workspaces hold the same one. A cached access token is keyed by that fingerprint, so a replaced client secret can never be served from the token the previous one obtained.
-  - A connector call an unattended caller makes carries a durable idempotency key. connectors.core claims the key in connectors_call_keys before anything leaves the process and binds it to the recorded call in the same transaction as the call log row, so a replayed run answers the first call, success or failure, instead of reaching the external system twice.
+  - A connector call an unattended caller makes carries a durable idempotency key. connectors.core claims the key in connectors_call_keys before anything leaves the process and binds it to the recorded call in the same transaction as the call log row. A replay with a recorded call returns that call's safe outcome without another request; a claim with no recorded call has an uncertain outcome and never proves that the external system was untouched.
   - The caller kind of a tool call is the invocation the runtime states, an agent run or a workflow action, and never the tool's own assumption or anything in the input. connectors.core answers an agent run with allowAgents and a workflow action with allowWorkflows, in the consent gate and again in the call capability, and records that kind as the caller of the call log row.
-  - The idempotency key is claimed only once the credential is resolved, the OAuth2 token exchange included, and is bound to the recorded call only once the request was written to the socket. A refused call, and a failure raised before that point, leave the key unbound for the retry that follows the fix. Two attempts that read the same abandoned claim are answered by a retake that compares the claim time it read, so only one of them owns the key.
+  - The idempotency key is claimed only once the credential is resolved, the OAuth2 token exchange included, and is bound to the recorded call only once the request was written to the socket. A refusal or a failure observed in the same process before the request was written leaves the key unbound for a corrected retry. A process crash can occur after claim but before socket write, or after an external mutation but before call logging; the ledger cannot distinguish them. While a claim is fresh, another attempt receives CALL_IN_FLIGHT. Once it is stale with no recorded call, every later attempt receives stable CALL_OUTCOME_UNKNOWN without retaking the claim or sending another request. The unresolved claim stays tenant-bound for diagnosis until the declared key retention removes it; an original in-flight call may still bind it to a recorded result.
+  - The existing connectors.call tool and connectors.calls.v1 capability share that fail-closed key claim. The generic tool translates only a connector CALL_OUTCOME_UNKNOWN refusal into the public AgentHarnessError with the same stable code and a fixed safe message, so the agents action result and workflow receive that code instead of ACTION_EXECUTION_FAILED; consumer-owned wrappers of connectors.calls.v1 do the same. CALL_OUTCOME_UNKNOWN is a permanent outcome for automatic workflow and agent retries; each refusal writes tenant-bound audit evidence with only a digest of the key, operation identity, and safe timing, never input, output, credential, or request body. The generic connector sends no provider-side idempotency key and cannot promise automatic recovery or an exact external outcome without a recorded call. A provider-specific adapter may retry or reconcile only under its separately documented remote idempotency or readback contract.
+  - The corrected generic connectors.call workflow action declares contractVersion exactly 2. A published graph pinned to its prior version 1 is refused before invocation and must be republished with the corrected contract; neither agents.core nor workflows.core silently rebinds it. Every new workflow integration template consuming connectors.calls.v1 declares connectors.core at version ^0.2.0 so the fail-closed claim is present.
   - A template value names a resource and never carries path syntax. A value with a segment that is a single or double dot is refused before the request is built, in the escaped expansion and in the reserved one.
   - The agent tool has no server route. The harness runs it in this process, and a route under connectors.instances.read that made the credentialed call and returned the parsed body would give every member the connector itself. The run identity comes from the trusted tool context and never from a request header.
   - connectors.core declares three data classes to the platform catalogue. Calls carry a 400 day default retention, a sweep and an export; audit rows and instances are kept until a person deletes them and are exportable, with instances exported without anything of the credential but its fingerprint. The call sweep removes the idempotency keys claimed before the same cutoff, so no key is left naming a call that is gone.
@@ -205,7 +207,7 @@ entities:
         required: true
   - id: call-key
     name: Connector call idempotency key
-    description: One durable key bound to one call, claimed before anything leaves the process so a replayed unattended caller writes at most once. Swept with the call log.
+    description: One durable key claimed before egress, bound to a recorded call or retained as an unresolved claim with unknown external outcome. Swept with the call log retention.
     fields:
       - id: idempotencyKey
         type: string
@@ -345,13 +347,22 @@ settings:
 agentTools:
   - id: connectors.call
     permission: connectors.instances.read
-    description: Call an operation of a consented instance; exposed to an agent only for instances with allowAgents on, declared with risk workspace-write and admitted per call by the connectors.instance-consent gate, within the instance host allowlist and the definition port list. It declares contractVersion, an output schema, idempotency required with target-ledger protection and cooperative cancellation, so agents.core also publishes it as a workflow action. It has no server route, because the harness runs it in this process.
+    description: Call an operation of a consented instance; exposed to an agent only for instances with allowAgents on, declared with risk workspace-write and admitted per call by the connectors.instance-consent gate, within the instance host allowlist and the definition port list. It declares contractVersion 2, an output schema, idempotency required with target-ledger protection and cooperative cancellation, so agents.core also publishes it as a workflow action. It has no server route, because the harness runs it in this process.
     risk: workspace-write
 outOfScope:
   - OAuth2 authorization-code flows with a person in the loop are not offered; client credentials only.
   - Inbound calls from external systems are the automations webhook triggers, not connectors.
   - Rate limiting per external system beyond the platform timeout and size caps is the definition's concern later.
+  - Automatic reconciliation of a call with no recorded outcome is deferred to a provider-specific adapter with documented remote idempotency or readback; the generic connector does not guess whether a request reached the provider.
 decisions:
+  - id: D-CONNECTORS-UNKNOWN-CLAIM
+    question: What happens when a claimed call has no log after a process crash?
+    answer: Keep the tenant-bound claim until retention and return CALL_OUTCOME_UNKNOWN without retaking it or sending another request. A crash before the socket may also become unknown; this conservative refusal prevents a duplicate mutation when the provider did act but the log was not written.
+    decidedBy: default
+  - id: D-CONNECTORS-ACTION-VERSION
+    question: How does a workflow avoid running the older generic connector action contract after this safety correction?
+    answer: Increment connectors.call contractVersion to 2, refuse old pinned version 1 graphs, and require a new published revision after an operator reviews the change. Consumer modules declare connectors.core at version ^0.2.0.
+    decidedBy: default
   - id: D-CONNECTORS-MODULE-INSTANCE-ID
     question: How does a module find the instance it configured without a column of its own?
     answer: The instance identifier is a digest of the workspace, the module id and the module key shaped as a UUID, so the instance table needs no migration, an owner route can never mint the same identifier, and identifiers stay unique across workspaces although the column is a global primary key. The instance keeps an ordinary name, the definition label followed by the module id, so the owner sees and governs it on the Connectors screen like any other.
@@ -429,10 +440,22 @@ acceptanceScenarios:
     given: An instance whose OAuth2 token endpoint refuses the first exchange, and an instance whose host accepts no connection.
     when: An unattended caller makes the call under one durable key and retries under the same key.
     then: Neither the refused token exchange nor the failure raised before the request was written binds the key, and the retry makes the call instead of replaying an answer the external system never gave.
-  - id: CONNECTORS-KEY-RETAKE-RACE
-    given: An idempotency key whose claim was abandoned past the claim window and two attempts that read it at the same moment.
-    when: Both try to take the claim over.
-    then: Exactly one is answered claimed and makes the call, the other is answered in flight, and the ledger holds the claim time of the one that won.
+  - id: CONNECTORS-KEY-UNKNOWN-RACE
+    given: The original process stopped with an idempotency key claimed but no recorded call, the claim window elapsed, and two retries read it at the same moment.
+    when: Both try the same operation and input under that key.
+    then: Both receive CALL_OUTCOME_UNKNOWN without another external request, the original tenant-bound claim remains until retention or a late original call binds its result, and a different operation or input still receives an idempotency conflict.
+  - id: CONNECTORS-CRASH-BEFORE-LOG
+    given: A consented workflow or agent calls a mutating operation under a durable key, the provider performs the mutation, and the process stops before recordCall binds the key to a call log row.
+    when: The action worker recovers after the claim window and invokes connectors.call or connectors.calls.v1 under the same key.
+    then: The provider sees one mutation, the recovered caller receives CALL_OUTCOME_UNKNOWN with safe audit and no body, no automatic retry sends a second request, and the unresolved claim remains for diagnosis until retention; a crash before socket write may produce the same unknown refusal even though no mutation happened.
+  - id: CONNECTORS-UNKNOWN-ACTION-RESULT
+    given: A consented generic connectors.call action at contractVersion 2 encounters a stale unbound claim after an external mutation, and its workflow node has retryOn including CALL_OUTCOME_UNKNOWN.
+    when: The connector call refuses, the agents action worker settles its result, and the workflow reads that result through agents.actions.v2 getResult.
+    then: The connector tool exposes the fixed safe AgentHarnessError code CALL_OUTCOME_UNKNOWN, the agents result and node attempt retain that exact code, the workflow settles the node terminally despite retryOn, and no further socket request occurs; a consumer-owned connector wrapper preserves the same code and refusal behavior.
+  - id: CONNECTORS-GENERIC-WORKFLOW-VERSION
+    given: An older published workflow pins connectors.call contractVersion 1 and a newly deployed connector module exposes the corrected contractVersion 2.
+    when: The older run preflights and a manager creates a new draft with the current action catalogue.
+    then: The older run is refused before egress with a stable version code, the new draft pins version 2 and can publish, and neither path silently rebinds the old graph or widens its authority.
   - id: CONNECTORS-PATH-SEGMENT
     given: An operation whose path template expands a caller value as one escaped segment, and one that expands it as a whole path.
     when: The value is a single or double dot segment.
