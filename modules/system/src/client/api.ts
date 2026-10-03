@@ -1,11 +1,14 @@
 import type { ModuleCatalogPayload } from '../server/endpoints.ts';
 import type { ModuleActivationEntry } from '../domain/modules.ts';
+import type { ModuleStudioState } from '../server/module-studio.ts';
 import { t } from '@flowdular/client/i18n';
 
 export type ModuleCatalogEntry = ModuleCatalogPayload;
 
 export interface ModuleCatalog {
 	readonly modules: readonly ModuleCatalogEntry[];
+	readonly studio: ModuleStudioState;
+	readonly sandboxAvailable: boolean;
 	readonly commands: Readonly<Record<string, string>>;
 }
 

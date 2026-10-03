@@ -621,7 +621,7 @@ export { extractVariables, isVariableKey, resolveTemplate, tokenizeTemplate, val
 export type { ResolveTemplateOptions, TemplateSegment, TemplateValidation, VariableDefinition, VariableKind, VariableSource, } from './variables.ts';
 export { PLURAL_CATEGORIES, pluralFamilyIssues, requiredPluralCategories, translationKeys, } from './translations.ts';
 export type { TranslationBundleKeys } from './translations.ts';
-export type { ModuleReviewEvidence, ModuleSourceFile, ModuleArtifact, ModuleRelease, ModuleCatalog, InstalledModule, ModuleInstallLock, } from './module-distribution.ts';
+export type { ModuleReviewEvidence, ModuleSourceFile, ModuleArtifact, ModuleRelease, ModuleCatalog, InstalledModule, ModuleInstallLock, ModuleSource, ModuleChangePlan, } from './module-distribution.ts';
 export { moduleCatalogSchema, moduleArtifactSchema } from './schemas.ts';
 export { RESERVED_WEB_SEGMENTS, WEB_MOUNT_PATH, WEB_PAGE_PATH } from './web.ts';
 export { applicationBrandingFrom, brandingImageOrigins, brandingTitleSuffix, isBrandingValue, BRANDING_ASSET_URL_PATTERN, BRANDING_COLOR_PATTERN, BRANDING_DATA_ELEMENT_ID, BRANDING_DESCRIPTION_MAX, BRANDING_DESCRIPTION_PATTERN, BRANDING_NAME_MAX, BRANDING_NAME_PATTERN, BRANDING_MODULE_ID, BRANDING_NAME_PROPERTY, BRANDING_OPTIONAL_ASSET_URL_PATTERN, BRANDING_SETTING_KEYS, BRANDING_STATE_KEY, BRANDING_TITLE_MAX, BRANDING_TITLE_PATTERN, BRANDING_URL_MAX, DEFAULT_APPLICATION_BRANDING, } from './branding.ts';
@@ -676,6 +676,46 @@ export interface InstalledModule {
 export interface ModuleInstallLock {
     readonly schemaVersion: 1;
     readonly modules: readonly InstalledModule[];
+}
+export type ModuleSource = {
+    readonly kind: 'catalog';
+    readonly location: string;
+} | {
+    readonly kind: 'git';
+    readonly location: string;
+    readonly commit: string;
+    readonly catalogPath: string;
+};
+export interface ModuleChangePlan {
+    readonly schemaVersion: 1;
+    readonly id: string;
+    readonly createdAt: string;
+    readonly target: string;
+    readonly sourceName: string;
+    readonly source: ModuleSource;
+    readonly update: boolean;
+    readonly expectedLockSha256: string | null;
+    readonly expectedWorkspaceSha256: string;
+    readonly releases: readonly ModuleRelease[];
+    readonly changes: readonly {
+        readonly id: string;
+        readonly version: string;
+        readonly sha256: string;
+        readonly action: 'install' | 'update';
+        readonly dependencies: readonly string[];
+        readonly permissions: readonly string[];
+        readonly migrations: readonly {
+            path: string;
+            sha256: string;
+        }[];
+        readonly surfaces: {
+            readonly server: boolean;
+            readonly client: boolean;
+        };
+    }[];
+    readonly requiresBuild: true;
+    readonly requiresRestart: true;
+    readonly activation: 'host-cli';
 }
 
 // packages/contracts/src/schemas.ts

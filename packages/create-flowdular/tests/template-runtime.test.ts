@@ -14,7 +14,7 @@ interface BootedRoute {
 }
 
 interface BootedConfig {
-	readonly middlewares: { databases: { checked: boolean } }[];
+	readonly middlewares: { databases: { checked: boolean; root: string } }[];
 	readonly router: { readonly routes: readonly BootedRoute[] };
 }
 
@@ -49,10 +49,10 @@ const fixtures: Record<string, string> = {
 		export const openStorageReadToken = () => null;
 	`,
 	'./src/server/database.ts': `
-		export const databaseProviderConfigFromEnvironment = () => ({});
+		export const databaseProviderConfigFromEnvironment = (_environment, root) => ({ root });
 		export const loadPlatformEnvironmentFile = () => {};
 		export const platformDatabaseConfigured = environment => environment.FD_TEST_DATABASE_CONFIGURED !== 'false';
-		export const createPlatformDatabaseProvider = () => ({ checked: false, async check() { this.checked = true; }, async dispose() {} });
+		export const createPlatformDatabaseProvider = config => ({ checked: false, root: config.root, async check() { this.checked = true; }, async dispose() {} });
 	`,
 	'./src/server/setup/index.ts': `
 		export const clearSetupToken = () => {};
@@ -73,6 +73,7 @@ const fixtures: Record<string, string> = {
 async function boot(
 	directory: string,
 	environment: NodeJS.ProcessEnv = {},
+	entryDirectory = directory,
 ): Promise<BootedConfig> {
 	const bundled = await build({
 		stdin: {
@@ -85,7 +86,7 @@ async function boot(
 		platform: 'node',
 		format: 'esm',
 		define: {
-			'import.meta.dirname': JSON.stringify(directory),
+			'import.meta.dirname': JSON.stringify(entryDirectory),
 			process: '__fixtureProcess',
 		},
 		banner: {
@@ -134,6 +135,22 @@ async function generatedPlatform(): Promise<{
 		dispose: () => rm(root, { recursive: true, force: true }),
 	};
 }
+
+it('finds the generated workspace from the production bundle directory', async () => {
+	const platform = await generatedPlatform();
+	try {
+		const config = await boot(
+			platform.directory,
+			{},
+			join(platform.directory, 'dist', 'server'),
+		);
+		expect(config.middlewares[1]!.databases.root).toBe(
+			join(platform.directory, '..'),
+		);
+	} finally {
+		await platform.dispose();
+	}
+});
 
 it('boots a generated platform with one shared database provider', async () => {
 	const platform = await generatedPlatform();

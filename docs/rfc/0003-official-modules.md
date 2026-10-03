@@ -1,6 +1,6 @@
 # RFC 0003: Official module distribution
 
-Status: MVP implemented on 2026-09-10. The deployed contract is documented in [module distribution](../module-distribution.md). The sections below retain the original proposal; the MVP uses bounded JSON source bundles instead of archives, separates npm linking into enablement, and leaves scope grants to the existing auth flow. SDK publication is performed by the operator.
+Status: Superseded by [Module Studio](../module-distribution.md) on 2026-10-03. The sections below retain the original proposal and its implementation history. Module Studio replaces the special publisher and direct install commands with named sources and pinned plans.
 
 Core repository: [Flowdular/flowdular](https://github.com/Flowdular/flowdular).
 Module repository: [Flowdular/official-modules](https://github.com/Flowdular/official-modules).

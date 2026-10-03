@@ -234,7 +234,7 @@
 	},
 	"$defs": {
 		"deliveryTarget": {
-			"enum": ["workspace", "git-pr", "official-modules"]
+			"enum": ["workspace", "git-pr"]
 		},
 		"gitName": {
 			"type": "string",

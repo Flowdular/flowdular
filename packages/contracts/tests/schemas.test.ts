@@ -115,7 +115,6 @@ describe('contract schemas', () => {
 		expect(projectSchema.$defs.deliveryTarget.enum).toEqual([
 			'workspace',
 			'git-pr',
-			'official-modules',
 		]);
 		expect(Object.keys(delivery.properties.git.properties).sort()).toEqual([
 			'baseBranch',

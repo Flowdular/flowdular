@@ -1211,7 +1211,7 @@ describe('delivery configuration and policies', () => {
 			}),
 		).toEqual({
 			default: 'git-pr',
-			targets: ['workspace', 'git-pr', 'official-modules'],
+			targets: ['workspace', 'git-pr'],
 			git: {
 				remote: 'origin',
 				repository: null,
@@ -1234,6 +1234,9 @@ describe('delivery configuration and policies', () => {
 		expect(() =>
 			resolveDeliveryConfiguration({ git: { remote: '--upload-pack=x' } }),
 		).toThrow(/git.remote/);
+		expect(() =>
+			resolveDeliveryConfiguration({ targets: ['official-modules'] }),
+		).toThrow(/official-modules was removed/);
 		expect(() => resolveDeliveryConfiguration({ maxChangedFiles: 0 })).toThrow(
 			/positive integer/,
 		);

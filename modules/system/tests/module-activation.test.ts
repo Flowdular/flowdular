@@ -488,7 +488,9 @@ describe('module activation API', () => {
 				dependents: string[];
 				enabled: boolean;
 			}[];
+			sandboxAvailable: boolean;
 		};
+		expect(listed.sandboxAvailable).toBe(false);
 		expect(
 			listed.modules.find((entry) => entry.id === 'sandbox.core'),
 		).toMatchObject({

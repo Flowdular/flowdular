@@ -383,6 +383,8 @@ export type {
 	ModuleCatalog,
 	InstalledModule,
 	ModuleInstallLock,
+	ModuleSource,
+	ModuleChangePlan,
 } from './module-distribution.ts';
 
 export { moduleCatalogSchema, moduleArtifactSchema } from './schemas.ts';

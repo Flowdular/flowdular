@@ -29,7 +29,7 @@ the terminal, then create your workspace and owner account. Embedded PostgreSQL
 is already configured. Restart `pnpm dev` when setup finishes, then sign in with
 the owner account you chose.
 
-The starter enables all nine platform modules: system, authentication, users, profile, agents, automations, workflows, their integration, and sandbox access. First-run setup grants their declared permissions to the new owner. The example module stays available as a starting point; business modules from Official Modules are optional downloads.
+The starter enables all nine platform modules: system, authentication, users, profile, agents, automations, workflows, their integration, and sandbox access. First-run setup grants their declared permissions to the new owner. The example module stays available as a starting point. Module Studio can later connect a catalog, a pinned Git repository or local releases; Sandbox helps create your own modules.
 
 `npm create` launches the generator. The generated application uses **pnpm workspaces**. If pnpm is unavailable during installation, the generator invokes its pinned version through `npm exec`.
 
@@ -99,7 +99,7 @@ pnpm verify
 pnpm flowdular help
 ```
 
-Read the [module guide](https://github.com/Flowdular/flowdular/blob/main/docs/modules.md) to extend the application. Business modules from [Official Modules](https://github.com/Flowdular/official-modules) are installed as source through the CLI.
+Read the [module guide](https://github.com/Flowdular/flowdular/blob/main/docs/modules.md) to extend the application and the [Module Studio guide](https://github.com/Flowdular/flowdular/blob/main/docs/module-distribution.md) to install reviewed module source.
 
 ## Packages and support
 

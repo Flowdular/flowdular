@@ -165,7 +165,7 @@ export async function bumpModuleVersion(
 	if (await installerManaged(workspace, options.id))
 		return failure(
 			'MODULE_INSTALLER_MANAGED',
-			`${options.id} is installed from a catalog; use module update instead of bumping it locally.`,
+			`${options.id} is managed by Module Studio; create an update plan instead of bumping it locally.`,
 		);
 
 	const previous = target.manifest.version;

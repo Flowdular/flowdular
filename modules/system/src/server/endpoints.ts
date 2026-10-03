@@ -32,6 +32,7 @@ import {
 	readModuleCatalog,
 	type ModuleCatalogEntry,
 } from './module-catalog.ts';
+import { readModuleStudioState } from './module-studio.ts';
 import type { SystemRuntime } from './runtime.ts';
 
 export interface SystemRouteOptions {
@@ -303,7 +304,12 @@ export function createSystemRoutes(options: SystemRouteOptions) {
 					modules: readModuleCatalog(options.workspaceRoot).map((entry) =>
 						catalogPayload(entry, activations.get(entry.id)),
 					),
+					studio: readModuleStudioState(options.workspaceRoot),
+					sandboxAvailable: activations.get('sandbox.core')?.active === true,
 					commands: {
+						source: 'pnpm flowdular module source add <name> <catalog> --apply',
+						plan: 'pnpm flowdular module plan <id> --source <name> --apply',
+						apply: 'pnpm flowdular module apply <plan-id> --apply',
 						enable: 'pnpm flowdular module enable <id> --apply',
 						disable: 'pnpm flowdular module disable <id> --apply',
 						sync: 'pnpm flowdular module sync --apply',

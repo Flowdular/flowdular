@@ -16,10 +16,6 @@ import { distributionAssert, MAX_ARTIFACT_BYTES } from './module-artifact.ts';
 import { validators } from './validation.ts';
 import { resolveExistingInside } from './workspace.ts';
 
-export const OFFICIAL_CATALOG =
-	'https://raw.githubusercontent.com/Flowdular/official-modules/main/registry/index.json';
-const OFFICIAL_PREFIX =
-	'https://raw.githubusercontent.com/Flowdular/official-modules/';
 export interface CatalogSource {
 	readonly catalog: ModuleCatalog;
 	readonly location: string;
@@ -44,10 +40,11 @@ export async function boundedRead(
 		);
 		return result;
 	}
+	const url = new URL(location);
 	distributionAssert(
-		location.startsWith(OFFICIAL_PREFIX),
+		url.username === '' && url.password === '' && !url.search && !url.hash,
 		'MODULE_SOURCE_UNTRUSTED',
-		'Only the official HTTPS publisher is supported. Use an explicit local catalog for offline releases.',
+		'HTTPS module sources must not contain credentials, a query or a fragment.',
 	);
 	const response = await fetcher(location, {
 		redirect: 'error',
@@ -56,7 +53,7 @@ export async function boundedRead(
 	distributionAssert(
 		response.ok && response.body,
 		'MODULE_DOWNLOAD_FAILED',
-		`Official module download failed (${response.status}).`,
+		`Module download failed (${response.status}).`,
 	);
 	const reader = response.body.getReader();
 	const chunks: Uint8Array[] = [];
@@ -79,13 +76,13 @@ export async function boundedRead(
 	return Buffer.concat(chunks);
 }
 export async function loadModuleCatalog(
-	location = OFFICIAL_CATALOG,
+	location: string,
 	fetcher: typeof fetch = fetch,
 ): Promise<CatalogSource> {
 	distributionAssert(
-		location === OFFICIAL_CATALOG || !/^[a-z][a-z0-9+.-]*:/i.test(location),
+		location.startsWith('https://') || !/^[a-z][a-z0-9+.-]*:/i.test(location),
 		'MODULE_SOURCE_UNTRUSTED',
-		'Use the official catalog or an explicit local catalog path.',
+		'Use an explicit HTTPS or local catalog path.',
 	);
 	const catalog = JSON.parse(
 		(await boundedRead(location, 4 * 1024 * 1024, fetcher)).toString('utf8'),
@@ -134,14 +131,19 @@ export async function releaseLocation(
 	release: ModuleRelease,
 ): Promise<string> {
 	if (source.location.startsWith('https://')) {
-		const prefix = OFFICIAL_PREFIX + release.sourceCommit + '/';
+		const catalogUrl = new URL(source.location);
+		const artifactUrl = new URL(release.artifact);
 		distributionAssert(
-			release.artifact.startsWith(prefix) &&
-				new URL(release.artifact).href === release.artifact &&
-				!new URL(release.artifact).search &&
-				!new URL(release.artifact).hash,
+			artifactUrl.protocol === 'https:' &&
+				artifactUrl.origin === catalogUrl.origin &&
+				artifactUrl.pathname.split('/').includes(release.sourceCommit) &&
+				artifactUrl.href === release.artifact &&
+				!artifactUrl.username &&
+				!artifactUrl.password &&
+				!artifactUrl.search &&
+				!artifactUrl.hash,
 			'MODULE_SOURCE_UNTRUSTED',
-			'Release artifact must be pinned to its official source commit.',
+			'Release artifact must use the catalog origin and a path pinned to its source commit.',
 		);
 		return release.artifact;
 	}

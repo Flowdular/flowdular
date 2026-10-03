@@ -54,7 +54,7 @@ The SDK ships TypeScript and TSRX source for the Flowdular/Octane toolchain. It 
 | Development APIs                        | `@flowdular/sdk/dev-console`, `@flowdular/sdk/cli-protocol`      |
 | Bundled core modules                    | `@flowdular/sdk/modules/<name>`, including `modules/auth/server` |
 
-Business modules are distributed as source archives through [Official Modules](https://github.com/Flowdular/official-modules). Installing an archive and enabling a module are separate CLI actions.
+Business modules are installed from a configured catalog, pinned Git repository or local release through a saved Module Studio plan. Installing source and enabling a module are separate CLI actions.
 
 The coding sandbox is a separate application distributed as `@flowdular/sandbox`.
 Launch it with `npx @flowdular/sandbox` from your application directory. It depends
