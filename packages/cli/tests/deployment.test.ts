@@ -87,7 +87,12 @@ describe('deployment targets', () => {
 				runtime: string;
 				plan: string;
 				dockerfilePath: string;
-				envVars: { key: string; sync?: boolean; generateValue?: boolean }[];
+				envVars: {
+					key: string;
+					sync?: boolean;
+					generateValue?: boolean;
+					fromService?: { name: string; type: string; envVarKey: string };
+				}[];
 			}[];
 		};
 		expect(blueprint.services).toHaveLength(1);
@@ -99,13 +104,20 @@ describe('deployment targets', () => {
 			'FD_DATABASE_URL',
 			'FD_DATABASE_BACKGROUND_URL',
 			'FD_DATABASE_MIGRATOR_URL',
-			'FD_AUTH_PUBLIC_ORIGIN',
 			'FD_STORAGE_S3_SECRET_ACCESS_KEY',
 		]) {
 			expect(service.envVars.find((entry) => entry.key === key)?.sync).toBe(
 				false,
 			);
 		}
+		expect(
+			service.envVars.find((entry) => entry.key === 'FD_AUTH_PUBLIC_ORIGIN')
+				?.fromService,
+		).toEqual({
+			name: 'flowdular',
+			type: 'web',
+			envVarKey: 'RENDER_EXTERNAL_URL',
+		});
 		for (const key of [
 			'FD_AGENT_CREDENTIAL_KEY',
 			'FD_STORAGE_ENCRYPTION_KEY',
@@ -135,6 +147,11 @@ describe('deployment targets', () => {
 			expect((plan.data as { deployUrl: string }).deployUrl).toBe(
 				'https://render.com/deploy?repo=https%3A%2F%2Fgithub.com%2Fteam%2Fproject',
 			);
+			expect(
+				(
+					plan.data as { checks: { id: string; message: string }[] }
+				).checks.find((check) => check.id === 'external-services')?.message,
+			).toContain('verify-full');
 
 			execFileSync(
 				'git',

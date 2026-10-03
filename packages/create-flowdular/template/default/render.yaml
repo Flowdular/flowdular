@@ -26,7 +26,10 @@ services:
       - key: FD_DATABASE_TLS_CA
         sync: false
       - key: FD_AUTH_PUBLIC_ORIGIN
-        sync: false
+        fromService:
+          name: flowdular
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
       - key: FD_AUTH_SECURE_COOKIE
         value: 'true'
       - key: FD_AUTH_ALLOW_SIGN_UP

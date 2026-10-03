@@ -241,14 +241,16 @@ export async function deploymentPlan(
 			id: 'external-services',
 			status: 'action-required',
 			message:
-				'Provide PostgreSQL with separate runtime, background and migrator roles, verified TLS, object storage, encryption keys and backups.',
+				target === 'render'
+					? 'Provide PostgreSQL with separate runtime, background and migrator roles, verified TLS, object storage, encryption keys and backups. Render Blueprint cannot directly wire its managed Postgres internal URL because that URL does not support verify-full TLS.'
+					: 'Provide PostgreSQL with separate runtime, background and migrator roles, verified TLS, object storage, encryption keys and backups.',
 		});
 		checks.push({
 			id: 'provider-configuration',
 			status: 'action-required',
 			message:
 				target === 'render'
-					? 'Connect a repository to Render Blueprint and provide the prompted database, storage, TLS CA and public origin settings.'
+					? 'Connect a repository to Render Blueprint and provide the prompted database, storage and TLS CA settings. Render supplies the public origin.'
 					: 'Configure Kubernetes Secrets, public HTTPS origin, image and readiness probe before applying infra/kubernetes.',
 		});
 	} else {

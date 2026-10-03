@@ -10,10 +10,21 @@ interactive terminal and refuses `--json` or redirected output.
 
 The repository-root `render.yaml` is a Render Blueprint for an always-on
 container. It needs external PostgreSQL with separate runtime, background and
-migrator roles, verified TLS, S3 object storage and a public HTTPS origin.
-The Blueprint prompts for these values and generates encryption keys. Back up
-those keys separately. It uses `/api/health` during initial setup; verify
+migrator roles, verified TLS and an existing S3 bucket. The Blueprint prompts
+for the database and storage values, derives its public HTTPS origin from the
+Render service and generates encryption keys. Back up those keys separately.
+If you add a custom domain, set its HTTPS origin in `render.yaml` so the next
+Blueprint sync keeps it. It uses
+`/api/health` during initial setup; verify
 `/api/ready` after setup. See the main Flowdular deployment guide for details.
+Render Blueprints can create a database, but `fromDatabase` gives its internal
+URL, whose self-signed TLS certificate cannot satisfy Flowdular's production
+`verify-full` requirement. The Blueprint also cannot declare the three
+separate roles. Render can host MinIO, but this Blueprint does not initialize
+its bucket or wire its credentials. For a store other than AWS S3, set
+`FD_STORAGE_S3_ENDPOINT` and, if needed, `FD_STORAGE_S3_FORCE_PATH_STYLE` on
+the Render service. See the [Render Postgres connection guide](https://render.com/docs/postgresql-creating-connecting)
+and [MinIO guide](https://render.com/docs/deploy-minio).
 Vercel Functions are unavailable as a full target because their HTTP instances
 can stop while scheduled module work is due. Cloudflare's Durable Object
 Container API can keep a process alive, but Flowdular has no verified adapter

@@ -19,10 +19,11 @@ that lock.
 The [Render Blueprint](../render.yaml) is a remote persistent-process adapter.
 Connect the repository as a Blueprint after provisioning PostgreSQL with
 separate runtime, background and migrator roles, verified TLS and external S3
-storage. Render prompts for their URLs, CA, storage credentials and public HTTPS
-origin; it generates the encryption keys on first creation. Export and back up
-those keys alongside database and object backups. The Blueprint uses a paid
-always-on web plan, builds the existing Dockerfile, disables automatic deploys
+storage. Render prompts for the database URLs, CA and storage credentials,
+derives the public HTTPS origin from its web service, and generates the
+encryption keys on first creation. Export and back up those keys alongside
+database and object backups. The Blueprint uses a paid always-on web plan,
+builds the existing Dockerfile, disables automatic deploys
 and uses `/api/health` because `/api/ready` is not routed during first-run
 setup. Check `/api/ready` after setup before directing production traffic.
 Blueprint sync does not re-prompt for newly added `sync: false` secrets, so add
@@ -33,6 +34,39 @@ Render URL when the Git origin is a recognized HTTPS or SSH GitHub, GitLab or
 Bitbucket remote. That URL opens the Blueprint review; it does not bypass the
 external service and secret configuration. Render documents this
 [button flow](https://render.com/docs/deploy-to-render).
+If you add a custom domain, change `FD_AUTH_PUBLIC_ORIGIN` in your Blueprint to
+that HTTPS origin before sending users there. A later Blueprint sync can
+replace a value changed only in the Render service.
+
+This Blueprint does not create Render Postgres. Render Blueprints can create a
+database, but each definition exposes one user and `fromDatabase` supplies its
+internal URL. Flowdular requires separate runtime and migrator credentials;
+Render's internal PostgreSQL connection has a self-signed certificate and
+[does not support `verify-full`](https://render.com/docs/postgresql-creating-connecting)
+while Flowdular requires that mode in production. Referencing the same URL for
+both roles would also fail Flowdular's credential separation check. A database
+with the required roles and verified TLS must therefore be prepared before
+using this Blueprint. Render's [Blueprint reference](https://render.com/docs/blueprint-spec)
+documents the available database fields and references. Its
+[credential guide](https://render.com/docs/postgresql-credentials) explains
+that additional users are managed outside the Blueprint.
+
+The Blueprint defaults to AWS S3 for the supplied region. It does not create a
+bucket. To use another S3-compatible store, also set
+`FD_STORAGE_S3_ENDPOINT` in the Render service and
+`FD_STORAGE_S3_FORCE_PATH_STYLE=true` when that store requires path-style
+requests. Render can host [MinIO with a persistent disk](https://render.com/docs/deploy-minio),
+but a complete Flowdular Blueprint would still need a pinned MinIO image,
+private networking, bucket initialization, credential wiring, backup recovery
+and provider-level tests. Render disk snapshots are documented
+[here](https://render.com/docs/disks).
+
+The smallest path to a one-action deployment is a provider adapter that
+provisions a database, creates the separated roles under a migration-only
+credential, verifies a trusted TLS connection, provisions an S3-compatible
+bucket, and binds the resulting secrets without logging them. It must then
+exercise first-run setup, migration failure, restart and restore against a
+real Render account before the deploy action can be called one click.
 
 Vercel Functions and Cloudflare Containers are currently unavailable as
 full-platform targets. Vercel's HTTP instances scale down to zero; Flowdular
@@ -44,8 +78,6 @@ rollouts. The target registry keeps these options visible without silently
 dropping work. Vercel container support
 is documented [here](https://vercel.com/changelog/bring-your-dockerfile-to-vercel-functions)
 and Cloudflare's explicit Container API [here](https://developers.cloudflare.com/containers/api/durable-object-container/).
-Render's [Blueprint reference](https://render.com/docs/blueprint-spec) defines
-the deployment file used here.
 
 To support Vercel or Cloudflare as a complete platform:
 
