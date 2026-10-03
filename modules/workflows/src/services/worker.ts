@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type {
 	AgentActionExecutionCapabilityV2,
 	AgentRevisionExecutionCapability,
@@ -58,6 +58,24 @@ export interface WorkflowWorkerOptions {
 }
 
 const TERMINAL = new Set(['succeeded', 'failed', 'refused', 'cancelled']);
+
+function boundedActionCorrelation(raw: string, prefix: string): string {
+	/* Existing short keys remain stable for attempts already in flight. */
+	return raw.length <= 128
+		? raw
+		: `${prefix}:${createHash('sha256').update(raw).digest('hex')}`;
+}
+
+function actionSideEffectKey(
+	tenantId: string,
+	runId: string,
+	nodeId: string,
+): string {
+	return boundedActionCorrelation(
+		`${tenantId}:${runId}:${nodeId}`,
+		'workflow-action',
+	);
+}
 
 function inputSchema(node: WorkflowNodeV1): string {
 	if (node.type === 'input')
@@ -811,7 +829,11 @@ export class WorkflowWorker {
 						nodeType: node.type,
 						attempt: attemptNumber,
 						semanticGroup: `${run.id}:${node.id}`,
-						sideEffectIdempotencyKey: `${run.tenantId}:${run.id}:${node.id}`,
+						sideEffectIdempotencyKey: actionSideEffectKey(
+							run.tenantId,
+							run.id,
+							node.id,
+						),
 						input: nodeInput,
 						inputEvidence: safeWorkflowEvidence(
 							run.graph,
@@ -1490,16 +1512,36 @@ export class WorkflowWorker {
 					const controller = new AbortController();
 					let accepted;
 					try {
+						const sideEffectIdempotencyKey = actionSideEffectKey(
+							run.tenantId,
+							run.id,
+							node.id,
+						);
+						/* Keep attempt one compatible with action invocations already in
+						   flight. Later attempts are new invocations but keep the same
+						   target-side key, so an uncertain external write cannot repeat. */
+						const idempotencyKey =
+							attempt === 1
+								? sideEffectIdempotencyKey
+								: `workflow-action:${createHash('sha256')
+										.update(sideEffectIdempotencyKey)
+										.update('\u0000')
+										.update(String(attempt))
+										.digest('hex')}`;
 						accepted = await dependencies.actions.start(
 							{
 								actionId: node.action.actionId,
 								contractVersion: node.action.contractVersion,
 								input,
-								idempotencyKey: `${run.tenantId}:${run.id}:${node.id}`,
+								idempotencyKey,
+								sideEffectIdempotencyKey,
 							},
 							{
 								...childContext(run),
-								nodeRunId: `${run.id}:${node.id}:${attempt}`,
+								nodeRunId: boundedActionCorrelation(
+									`${run.id}:${node.id}:${attempt}`,
+									'workflow-node',
+								),
 								signal: controller.signal,
 							},
 						);

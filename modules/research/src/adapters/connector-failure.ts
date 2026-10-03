@@ -78,6 +78,16 @@ export function connectorCaller(
 	return caller === 'member' ? 'test' : caller;
 }
 
+/** One connector ledger key per operation and observed chain attempt. */
+export function connectorAttemptKey(
+	kind: 'search' | 'fetch',
+	recordId: string,
+	adapter: 'searxng' | 'firecrawl' | 'connector',
+	attempt: number,
+): string {
+	return `research:${kind}:${recordId}:${adapter}:${attempt}`;
+}
+
 /**
  * The module-owned instance an adapter calls, or the not configured refusal.
  * An agent or workflow call needs allowAgents here as well, so an instance

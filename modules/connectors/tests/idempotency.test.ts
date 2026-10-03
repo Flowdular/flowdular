@@ -54,6 +54,7 @@ async function fixture(tenantId = TENANT) {
 		tenantId,
 		baseUrl: testBaseUrl(server),
 		allowAgents: true,
+		allowWorkflows: true,
 	});
 	return {
 		instance,
@@ -74,6 +75,24 @@ function request(instanceId: string, idempotencyKey = KEY) {
 }
 
 describe('connector call idempotency ledger', () => {
+	it.each(['agent', 'workflow'] as const)(
+		'refuses an unkeyed %s call before provider egress',
+		async (caller) => {
+			const { instance, calls } = await fixture();
+			const before = server.requests.length;
+			const result = await calls.call({
+				...request(instance.id),
+				caller,
+				idempotencyKey: undefined,
+			});
+			expect(result).toMatchObject({
+				outcome: 'refused',
+				errorClass: 'idempotency-key-required',
+			});
+			expect(server.requests).toHaveLength(before);
+		},
+	);
+
 	it('answers the first call on a repeat instead of reaching the system again', async () => {
 		const { instance, calls, vault } = await fixture();
 		const before = server.requests.length;
@@ -202,14 +221,34 @@ describe('CONNECTORS-CRASH-BEFORE-LOG', () => {
 		const crash = vi
 			.spyOn(shared.repository, 'recordCall')
 			.mockRejectedValue(new Error('simulated crash before call record'));
+		const firstCallStartedAt = Date.now();
 		try {
-			await expect(calls.call(request(instance.id))).rejects.toThrow(
-				'simulated crash before call record',
-			);
+			await expect(calls.call(request(instance.id))).rejects.toMatchObject({
+				code: 'CALL_OUTCOME_UNKNOWN',
+			});
 		} finally {
 			crash.mockRestore();
 		}
+		const firstCallFinishedAt = Date.now();
 		expect(server.requests.length).toBe(before + 1);
+		const immediateAudit = (
+			await shared.repository.listAudit(TENANT, instance.id, 10)
+		).filter((entry) => entry.action === 'call.outcome-unknown');
+		expect(immediateAudit).toHaveLength(1);
+		const [initialEvent] = immediateAudit;
+		expect(initialEvent?.metadata.claimedAt).toBeGreaterThanOrEqual(
+			firstCallStartedAt,
+		);
+		expect(initialEvent?.metadata.claimedAt).toBeLessThanOrEqual(
+			firstCallFinishedAt,
+		);
+		expect(initialEvent?.metadata.observedAt).toBeGreaterThanOrEqual(
+			firstCallStartedAt,
+		);
+		expect(initialEvent?.metadata.observedAt).toBeLessThanOrEqual(
+			firstCallFinishedAt,
+		);
+		expect(initialEvent?.occurredAt).toBe(initialEvent?.metadata.observedAt);
 		expect(
 			await instanceService(shared.repository, vault).listCalls(
 				TENANT,
@@ -240,8 +279,10 @@ describe('CONNECTORS-CRASH-BEFORE-LOG', () => {
 		const audit = (
 			await shared.repository.listAudit(TENANT, instance.id, 10)
 		).filter((entry) => entry.action === 'call.outcome-unknown');
-		expect(audit).toHaveLength(2);
-		for (const event of audit) {
+		expect(audit).toHaveLength(3);
+		for (const event of audit.filter(
+			(entry) => entry.id !== initialEvent?.id,
+		)) {
 			expect(Object.keys(event.metadata).sort()).toEqual([
 				'claimedAt',
 				'keyDigest',
@@ -261,9 +302,49 @@ describe('CONNECTORS-CRASH-BEFORE-LOG', () => {
 			expect(JSON.stringify(event)).not.toContain(KEY);
 			expect(JSON.stringify(event)).not.toContain('/things');
 		}
+		expect(JSON.stringify(audit)).not.toContain(KEY);
+		expect(JSON.stringify(audit)).not.toContain('/things');
 		expect(
 			await shared.repository.listAudit('tenant-other', instance.id, 10),
 		).toEqual([]);
+	});
+
+	it('keeps the claim unknown when both call recording and best-effort audit fail', async () => {
+		const { instance, calls } = await fixture();
+		const before = server.requests.length;
+		const recordFailure = vi
+			.spyOn(shared.repository, 'recordCall')
+			.mockRejectedValue(new Error('provider-secret-from-record-error'));
+		const auditFailure = vi
+			.spyOn(shared.repository, 'auditUnknownCall')
+			.mockRejectedValue(new Error('provider-secret-from-audit-error'));
+		let failure: unknown;
+		try {
+			failure = await calls.call(request(instance.id)).then(
+				() => null,
+				(error: unknown) => error,
+			);
+			expect(auditFailure).toHaveBeenCalledTimes(1);
+		} finally {
+			recordFailure.mockRestore();
+			auditFailure.mockRestore();
+		}
+		expect(failure).toMatchObject({ code: 'CALL_OUTCOME_UNKNOWN' });
+		expect(String(failure)).not.toContain('provider-secret');
+		expect(server.requests.length).toBe(before + 1);
+		await shared.runtime.transaction(
+			(transaction) =>
+				transaction.execute({
+					text: `UPDATE connectors_call_keys SET claimed_at = $3
+					 WHERE tenant_id = $1 AND idempotency_key = $2`,
+					parameters: [TENANT, KEY, Date.now() - CALL_KEY_CLAIM_MS - 1_000],
+				}),
+			{ access: 'write', tenantId: TENANT },
+		);
+		await expect(calls.call(request(instance.id))).rejects.toMatchObject({
+			code: 'CALL_OUTCOME_UNKNOWN',
+		});
+		expect(server.requests.length).toBe(before + 1);
 	});
 });
 

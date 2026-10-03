@@ -11,6 +11,7 @@ import type {
 import { boundResults } from '../services/results.ts';
 import { ResearchServiceError } from '../services/service-error.ts';
 import {
+	connectorAttemptKey,
 	connectorCaller,
 	connectorCallFailure,
 	moduleInstance,
@@ -127,6 +128,12 @@ export function createSearxngAdapter(dependencies: {
 				operation: 'search',
 				input: searxngInput(input),
 				caller: connectorCaller(input.caller),
+				idempotencyKey: connectorAttemptKey(
+					'search',
+					input.queryId,
+					'searxng',
+					input.attempt,
+				),
 				...(input.callerRef === null ? {} : { callerRef: input.callerRef }),
 				...(input.signal ? { signal: input.signal } : {}),
 			});

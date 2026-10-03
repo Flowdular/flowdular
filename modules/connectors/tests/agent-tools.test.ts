@@ -386,7 +386,7 @@ describe('CONNECTORS-UNKNOWN-ACTION-RESULT', () => {
 		try {
 			await expect(
 				tool!.execute(input, workflowContext(TENANT, key)),
-			).rejects.toThrow('simulated record crash');
+			).rejects.toMatchObject({ code: 'CALL_OUTCOME_UNKNOWN' });
 		} finally {
 			crash.mockRestore();
 		}

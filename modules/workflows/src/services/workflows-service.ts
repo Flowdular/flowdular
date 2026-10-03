@@ -73,6 +73,7 @@ import {
 } from './evidence-policy.ts';
 import {
 	actionBindingDiagnostics,
+	mappingTargetDiagnostics,
 	projectSafeGraph,
 	secretSchemaValueDiagnostics,
 	type WorkflowActionInputSchema,
@@ -708,6 +709,15 @@ export class WorkflowsService {
 				'Schema value cannot be saved near a secret-marked field.',
 				400,
 				secretSchemaValues as unknown as JsonValue,
+			);
+		}
+		const unsafeTargets = mappingTargetDiagnostics(graph);
+		if (unsafeTargets.length > 0) {
+			throw new WorkflowsServiceError(
+				'WORKFLOW_MAPPING_TARGET_UNSAFE',
+				'Mapping target cannot be saved without a safe input schema.',
+				400,
+				unsafeTargets as unknown as JsonValue,
 			);
 		}
 		const unsafeBindings = actionBindingDiagnostics(

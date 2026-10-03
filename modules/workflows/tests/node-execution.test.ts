@@ -251,6 +251,13 @@ describe('every built-in node through simulation and the durable live worker', (
 		let { graph } = graphFor('gate');
 		graph = {
 			...graph,
+			schemas: {
+				...graph.schemas,
+				'workflow.data': {
+					type: 'object',
+					properties: { name: { type: 'string' } },
+				},
+			},
 			nodes: graph.nodes.map((node) =>
 				node.type === 'output'
 					? {

@@ -16,7 +16,10 @@ import {
 	type AgentToolConsentDecision,
 	type AgentToolContext,
 } from '@flowdular/harness';
-import { defineApiAgentTool } from '@flowdular/harness/tool-adapters';
+import {
+	defineApiAgentTool,
+	defineCliAgentTool,
+} from '@flowdular/harness/tool-adapters';
 import {
 	createAgentActionExecutionRuntime,
 	type AgentActionRuntime,
@@ -125,7 +128,11 @@ beforeEach(async () => {
 
 afterEach(async () => {
 	vi.restoreAllMocks();
-	for (const runtime of runtimes.splice(0)) await runtime.dispose();
+	try {
+		for (const runtime of runtimes.splice(0)) await runtime.dispose();
+	} finally {
+		vi.unstubAllEnvs();
+	}
 });
 
 afterAll(async () => {
@@ -160,6 +167,86 @@ const request = {
 	input: { instanceId: 'instance-1' },
 	idempotencyKey: 'workflow-run-consent:node-1',
 } as const;
+
+function localCliAction(execute = vi.fn(async () => ({ ok: true }))) {
+	return {
+		execute,
+		tool: defineCliAgentTool({
+			id: 'local.preview',
+			capability: { id: 'local.preview', risk: 'read', localOnly: true },
+			description: 'Preview a local capability.',
+			requiredPermissions: [PERMISSION],
+			risk: 'read',
+			idempotency: 'required',
+			cancellation: 'cooperative',
+			contractVersion: 1,
+			inputSchema: {
+				type: 'object',
+				required: ['instanceId'],
+				properties: { instanceId: { type: 'string' } },
+				additionalProperties: false,
+			},
+			outputSchema: {
+				type: 'object',
+				required: ['ok'],
+				properties: { ok: { type: 'boolean' } },
+				additionalProperties: false,
+			},
+			execute,
+		}),
+	};
+}
+
+describe('local-only CLI workflow actions', () => {
+	const localRequest = {
+		actionId: 'local.preview',
+		contractVersion: 1,
+		input: { instanceId: 'instance-1' },
+		idempotencyKey: 'workflow-local:node-1',
+	} as const;
+
+	it('keeps a complete local-only tool out of both catalogs in production', async () => {
+		vi.stubEnv('FD_ENV', 'production');
+		const { tool, execute } = localCliAction();
+		const runtime = trackedRuntime(tool, 'action-worker:local-production');
+		expect(await runtime.capability.listWorkflowActions()).toEqual([]);
+		expect(await runtime.capabilityV2.listWorkflowActions()).toEqual([]);
+		await expect(
+			runtime.capabilityV2.start(localRequest, context('workflow-local')),
+		).rejects.toMatchObject({ code: 'ACTION_VERSION_MISSING' });
+		expect(execute).not.toHaveBeenCalled();
+	});
+
+	it('refuses a queued local-only action if the worker now runs in production', async () => {
+		vi.stubEnv('FD_ENV', 'test');
+		const { tool, execute } = localCliAction();
+		const runtime = trackedRuntime(tool, 'action-worker:local-recovered');
+		expect(await runtime.capabilityV2.listWorkflowActions()).toHaveLength(1);
+		const accepted = await runtime.capabilityV2.start(
+			localRequest,
+			context('workflow-local-recovered'),
+		);
+		vi.stubEnv('FD_ENV', 'production');
+		expect(await runtime.capabilityV2.listWorkflowActions()).toEqual([]);
+		runtime.start();
+		await waitFor(
+			async () =>
+				(
+					await runtime.capabilityV2.getResult(
+						accepted.actionInvocationId,
+						context('workflow-local-recovered'),
+					)
+				)?.status === 'failed',
+		);
+		expect(
+			await runtime.capabilityV2.getResult(
+				accepted.actionInvocationId,
+				context('workflow-local-recovered'),
+			),
+		).toMatchObject({ status: 'failed', code: 'TOOL_LOCAL_ONLY' });
+		expect(execute).not.toHaveBeenCalled();
+	});
+});
 
 describe('the connector call as a workflow action', () => {
 	/* Without every one of these fields descriptor() answers null, the action is
@@ -417,7 +504,7 @@ describe('AGENTS-WORKFLOW-TEMPLATE-REJECT', () => {
 		).toBe('ACTION_SCHEMA_SECRET_VALUE');
 	});
 
-	it('keeps a safe parent default alongside an optional secret annotation', async () => {
+	it('refuses a template schema keyword outside the workflow graph subset', () => {
 		const tool = defineApiAgentTool({
 			...CONNECTORS_CALL_DECLARATION,
 			requiredPermissions: [...CONNECTORS_CALL_DECLARATION.requiredPermissions],
@@ -436,15 +523,49 @@ describe('AGENTS-WORKFLOW-TEMPLATE-REJECT', () => {
 			},
 			execute: async () => ({ ok: true }),
 		});
-		const runtime = trackedRuntime(tool, 'action-worker:safe-parent-default');
-		expect((await runtime.capabilityV2.listWorkflowActions())[0]).toMatchObject(
-			{
+		expect(registrationCode(tool)).toBe('ACTION_TEMPLATE_SCHEMA_UNSUPPORTED');
+		expect(
+			registrationCode({
+				...tool,
 				inputSchema: {
-					default: { id: 'safe-reference' },
-					properties: { token: { 'x-flowdular-secret': true } },
+					type: 'object',
+					properties: { id: { type: 'string', pattern: '^[A-Z]+$' } },
 				},
-			},
-		);
+			}),
+		).toBe('ACTION_TEMPLATE_SCHEMA_UNSUPPORTED');
+		expect(
+			registrationCode({
+				...tool,
+				inputSchema: {
+					type: 'object',
+					'x-flowdular-read-permission': 'records.read',
+				},
+			}),
+		).toBe('ACTION_TEMPLATE_SCHEMA_UNSUPPORTED');
+		expect(
+			registrationCode({
+				...tool,
+				inputSchema: {
+					type: 'object',
+					description: 'x'.repeat(17_000),
+				},
+			}),
+		).toBe('ACTION_TEMPLATE_SCHEMA_UNSUPPORTED');
+		expect(
+			registrationCode({
+				...tool,
+				outputSchema: { type: 'object', description: 'x'.repeat(17_000) },
+			}),
+		).toBe('ACTION_TEMPLATE_SCHEMA_UNSUPPORTED');
+		expect(
+			registrationCode({
+				...tool,
+				inputSchema: {
+					type: 'object',
+					properties: { selection: { enum: [{ id: 'one' }] } },
+				},
+			}),
+		).toBe('ACTION_TEMPLATE_SCHEMA_UNSUPPORTED');
 	});
 
 	it('refuses a template that requires a raw secret input', () => {

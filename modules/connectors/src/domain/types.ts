@@ -37,6 +37,7 @@ export const CONNECTOR_ERROR_CLASSES = [
 	'egress-refused',
 	'instance-disabled',
 	'consent-missing',
+	'idempotency-key-required',
 	'definition-missing',
 	'operation-unknown',
 	'invalid-input',

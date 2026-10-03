@@ -20,6 +20,7 @@ import {
 	type ConnectorCallFilters,
 	type ConnectorCallKeyClaim,
 	type ConnectorCallKeyDecision,
+	type ConnectorUnknownCallAudit,
 	type ConnectorExportCursor,
 	type ConnectorInstanceFilters,
 	type ConnectorInstanceKeyset,
@@ -372,6 +373,31 @@ function auditParameters(audit: PendingConnectorAuditEvent) {
 	];
 }
 
+function unknownCallAudit(
+	audit: ConnectorUnknownCallAudit,
+): PendingConnectorAuditEvent {
+	const metadata: Record<string, string | number> = {
+		operationId: audit.operationId,
+		observedAt: audit.observedAt,
+	};
+	if (audit.idempotencyKey !== null) {
+		metadata.keyDigest = createHash('sha256')
+			.update(audit.tenantId)
+			.update('\u0000')
+			.update(audit.idempotencyKey)
+			.digest('hex');
+	}
+	if (audit.claimedAt !== null) metadata.claimedAt = audit.claimedAt;
+	return {
+		tenantId: audit.tenantId,
+		actorId: 'system',
+		action: 'call.outcome-unknown',
+		instanceId: audit.instanceId,
+		metadata,
+		occurredAt: audit.observedAt,
+	};
+}
+
 /** A repository over a platform-owned PostgreSQL handle. */
 export class DatabaseConnectorsRepository implements ConnectorsRepository {
 	constructor(private readonly database: DatabaseHandle) {}
@@ -698,6 +724,17 @@ export class DatabaseConnectorsRepository implements ConnectorsRepository {
 		);
 	}
 
+	async auditUnknownCall(audit: ConnectorUnknownCallAudit): Promise<void> {
+		await this.database.transaction(
+			(transaction) =>
+				transaction.execute({
+					text: INSERT_AUDIT,
+					parameters: auditParameters(unknownCallAudit(audit)),
+				}),
+			{ access: 'write', tenantId: audit.tenantId },
+		);
+	}
+
 	async deleteCallsBefore(
 		tenantId: string,
 		before: number,
@@ -817,23 +854,16 @@ export class DatabaseConnectorsRepository implements ConnectorsRepository {
 					   write one safe audit row for each refusal. */
 					await transaction.execute({
 						text: INSERT_AUDIT,
-						parameters: auditParameters({
-							tenantId,
-							actorId: 'system',
-							action: 'call.outcome-unknown',
-							instanceId: claim.instanceId,
-							metadata: {
-								keyDigest: createHash('sha256')
-									.update(tenantId)
-									.update('\u0000')
-									.update(key)
-									.digest('hex'),
+						parameters: auditParameters(
+							unknownCallAudit({
+								tenantId,
+								instanceId: claim.instanceId,
 								operationId: row.operation_id,
+								idempotencyKey: key,
 								claimedAt: originalClaimedAt,
 								observedAt,
-							},
-							occurredAt: observedAt,
-						}),
+							}),
+						),
 					});
 					return { state: 'unknown' };
 				}

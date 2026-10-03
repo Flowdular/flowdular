@@ -277,6 +277,11 @@ export interface WorkflowRevision {
 				readonly targetPointer: string;
 		  }
 		| {
+				readonly code: 'WORKFLOW_MAPPING_TARGET_UNSAFE';
+				readonly nodeId: string;
+				readonly targetPointer: string;
+		  }
+		| {
 				readonly code: 'WORKFLOW_SECRET_SCHEMA_VALUE';
 				readonly schemaId: string;
 				readonly path: string;
@@ -434,6 +439,8 @@ export interface WorkflowRunSummary {
 
 export interface WorkflowPayloadEvidenceV1 {
 	readonly version: 1;
+	/** Present only when this preview passed the current schema redaction policy. */
+	readonly redactionPolicyVersion?: 2;
 	readonly state: 'available' | 'redacted' | 'truncated' | 'expired' | 'absent';
 	readonly schemaId: string;
 	readonly hash: string;

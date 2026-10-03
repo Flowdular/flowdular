@@ -165,7 +165,7 @@ export function composeModuleServer(
 					provides: ['workflows.execution.v1'],
 					requires: [
 						{ id: 'agents.run-execution.v2' },
-						{ id: 'agents.actions.v1' },
+						{ id: 'agents.actions.v2' },
 						{ id: 'notifications.publish.v1', optional: true },
 						{ id: 'approvals.requests.v1', optional: true },
 						{ id: 'agents.decisions.v1', optional: true },

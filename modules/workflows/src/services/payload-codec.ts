@@ -190,6 +190,90 @@ function schemaReason(
 	return null;
 }
 
+const OPAQUE_SCHEMA_KEYS = [
+	'allOf',
+	'anyOf',
+	'oneOf',
+	'if',
+	'then',
+	'else',
+	'not',
+	'dependentSchemas',
+	'dependencies',
+	'patternProperties',
+	'additionalProperties',
+	'unevaluatedProperties',
+	'propertyNames',
+	'contains',
+	'prefixItems',
+	'additionalItems',
+	'unevaluatedItems',
+] as const;
+const REFERENCE_SCHEMA_KEYS = ['$ref', '$dynamicRef', '$recursiveRef'] as const;
+const SCHEMA_DATA_KEYS = new Set([
+	'default',
+	'const',
+	'enum',
+	'example',
+	'examples',
+]);
+
+function restrictedSchemaDescendant(
+	value: unknown,
+	permissions: readonly string[],
+	depth = 0,
+): RedactionReason | null {
+	if (depth > 24) return 'secret';
+	if (Array.isArray(value)) {
+		for (const child of value) {
+			const reason = restrictedSchemaDescendant(child, permissions, depth + 1);
+			if (reason) return reason;
+		}
+		return null;
+	}
+	if (value === null || typeof value !== 'object') return null;
+	const schema = value as JsonSchemaV1;
+	if (REFERENCE_SCHEMA_KEYS.some((key) => key in schema)) return 'secret';
+	const reason = schemaReason(schema, permissions);
+	if (reason) return reason;
+	for (const [key, child] of Object.entries(schema)) {
+		if (SCHEMA_DATA_KEYS.has(key)) continue;
+		const childReason = restrictedSchemaDescendant(
+			child,
+			permissions,
+			depth + 1,
+		);
+		if (childReason) return childReason;
+	}
+	return null;
+}
+
+/** A graph reader has no original permission snapshot, so any restricted
+ * field or unresolved reference makes downstream evidence opaque. */
+export function schemaHasRestrictedEvidence(schema: JsonSchemaV1): boolean {
+	return restrictedSchemaDescendant(schema, []) !== null;
+}
+
+/* A composed or dynamic schema can apply a secret rule to the current value
+   without naming a direct property. Mask that whole value when a restricted
+   descendant or an unresolved reference is present. */
+function opaqueSchemaReason(
+	schema: JsonSchemaV1 | undefined,
+	permissions: readonly string[],
+): RedactionReason | null {
+	if (!schema) return null;
+	if (REFERENCE_SCHEMA_KEYS.some((key) => key in schema)) return 'secret';
+	for (const key of OPAQUE_SCHEMA_KEYS) {
+		if (!(key in schema)) continue;
+		const reason = restrictedSchemaDescendant(schema[key], permissions);
+		if (reason) return reason;
+	}
+	if (Array.isArray(schema.items)) {
+		return restrictedSchemaDescendant(schema.items, permissions);
+	}
+	return null;
+}
+
 function redact(
 	value: JsonValue,
 	schema: JsonSchemaV1 | undefined,
@@ -202,6 +286,10 @@ function redact(
 	const ownReason = schemaReason(schema, permissions);
 	if (ownReason) {
 		return { value: '[redacted]', changed: true, reason: ownReason };
+	}
+	const opaqueReason = opaqueSchemaReason(schema, permissions);
+	if (opaqueReason) {
+		return { value: '[redacted]', changed: true, reason: opaqueReason };
 	}
 	if (value === null || typeof value !== 'object') {
 		return { value, changed: false, reason: null };
@@ -245,6 +333,7 @@ export function safePayloadEvidence(
 	if (value === undefined) {
 		return {
 			version: 1,
+			redactionPolicyVersion: 2,
 			state: 'absent',
 			schemaId,
 			hash: jsonHash(null),
@@ -257,6 +346,7 @@ export function safePayloadEvidence(
 	if (originalByteSize > 8 * 1024) {
 		return {
 			version: 1,
+			redactionPolicyVersion: 2,
 			state: 'truncated',
 			schemaId,
 			hash,
@@ -268,6 +358,7 @@ export function safePayloadEvidence(
 	if (safe.changed) {
 		return {
 			version: 1,
+			redactionPolicyVersion: 2,
 			state: 'redacted',
 			schemaId,
 			hash,
@@ -278,6 +369,7 @@ export function safePayloadEvidence(
 	}
 	return {
 		version: 1,
+		redactionPolicyVersion: 2,
 		state: 'available',
 		schemaId,
 		hash,

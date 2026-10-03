@@ -89,7 +89,10 @@ export interface AgentActionExecutionCapability {
 			readonly actionId: string;
 			readonly contractVersion: number;
 			readonly input: JsonValue;
+			/** Deduplicates this one workflow attempt. */
 			readonly idempotencyKey: string;
+			/** Reused by the external tool across attempts; defaults to idempotencyKey. */
+			readonly sideEffectIdempotencyKey?: string;
 		},
 		context: AgentActionStartContext,
 	): Promise<ActionInvocationAccepted>;
@@ -163,6 +166,113 @@ function workflowSchema(
 	} catch {
 		return null;
 	}
+}
+
+const WORKFLOW_SCHEMA_KEYS = new Set([
+	'$id',
+	'title',
+	'description',
+	'type',
+	'properties',
+	'required',
+	'additionalProperties',
+	'items',
+	'enum',
+	'const',
+	'minLength',
+	'maxLength',
+	'minimum',
+	'maximum',
+	'writeOnly',
+	'x-flowdular-secret',
+	'x-coreloom-secret',
+	'x-flowdular-read-permission',
+]);
+const WORKFLOW_SCHEMA_ROOT_KEYS = new Set(
+	[...WORKFLOW_SCHEMA_KEYS].filter(
+		(key) =>
+			![
+				'writeOnly',
+				'x-flowdular-secret',
+				'x-coreloom-secret',
+				'x-flowdular-read-permission',
+			].includes(key),
+	),
+);
+
+function workflowTemplateSchemaSupported(
+	value: Readonly<Record<string, unknown>>,
+): boolean {
+	const serialized = JSON.stringify(value);
+	if (Buffer.byteLength(serialized, 'utf8') > 16 * 1024) return false;
+	const depthSupported = (entry: unknown, depth: number): boolean => {
+		if (depth > 12) return false;
+		if (Array.isArray(entry))
+			return entry.every((child) => depthSupported(child, depth + 1));
+		if (entry !== null && typeof entry === 'object')
+			return Object.values(entry).every((child) =>
+				depthSupported(child, depth + 1),
+			);
+		return true;
+	};
+	const schemaSupported = (schema: unknown, root = false): boolean => {
+		if (schema === null || typeof schema !== 'object' || Array.isArray(schema))
+			return false;
+		const record = schema as Readonly<Record<string, unknown>>;
+		const allowed = root ? WORKFLOW_SCHEMA_ROOT_KEYS : WORKFLOW_SCHEMA_KEYS;
+		if (Object.keys(record).some((key) => !allowed.has(key))) return false;
+		const supportedType = (candidate: unknown): boolean =>
+			typeof candidate === 'string' &&
+			[
+				'null',
+				'string',
+				'number',
+				'integer',
+				'boolean',
+				'array',
+				'object',
+			].includes(candidate);
+		if (
+			(record.type !== undefined &&
+				(Array.isArray(record.type)
+					? record.type.length === 0 || !record.type.every(supportedType)
+					: !supportedType(record.type))) ||
+			(record.required !== undefined &&
+				(!Array.isArray(record.required) ||
+					!record.required.every((name) => typeof name === 'string'))) ||
+			(record.additionalProperties !== undefined &&
+				typeof record.additionalProperties !== 'boolean') ||
+			(record.items !== undefined && !schemaSupported(record.items)) ||
+			(record.properties !== undefined &&
+				(record.properties === null ||
+					typeof record.properties !== 'object' ||
+					Array.isArray(record.properties) ||
+					!Object.values(record.properties).every((child) =>
+						schemaSupported(child),
+					))) ||
+			(record.enum !== undefined &&
+				(!Array.isArray(record.enum) ||
+					!record.enum.every(
+						(entry) => entry === null || typeof entry !== 'object',
+					))) ||
+			['writeOnly', 'x-flowdular-secret', 'x-coreloom-secret'].some(
+				(key) => key in record && typeof record[key] !== 'boolean',
+			) ||
+			(record['x-flowdular-read-permission'] !== undefined &&
+				typeof record['x-flowdular-read-permission'] !== 'string') ||
+			['minLength', 'maxLength'].some(
+				(key) =>
+					key in record &&
+					(!Number.isSafeInteger(record[key]) || (record[key] as number) < 0),
+			) ||
+			['minimum', 'maximum'].some(
+				(key) => key in record && typeof record[key] !== 'number',
+			)
+		)
+			return false;
+		return true;
+	};
+	return depthSupported(value, 0) && schemaSupported(value, true);
 }
 
 const SECRET_SCHEMA_MARKERS = [
@@ -580,7 +690,19 @@ function validatedWorkflowTemplate(
 	};
 }
 
+/* Match the harness and CLI runner's FD_ENV ceiling for local capabilities. */
+function localOnlyRefused(tool: AgentTool): boolean {
+	const environment =
+		process.env.FD_ENV ?? process.env.NODE_ENV ?? 'development';
+	return (
+		tool.localOnly === true &&
+		environment !== 'development' &&
+		environment !== 'test'
+	);
+}
+
 function descriptor(tool: AgentTool): VersionedActionDescriptorV2 | null {
+	if (localOnlyRefused(tool)) return null;
 	const inputSchema = workflowSchema(tool.inputSchema);
 	const outputSchema = workflowSchema(tool.outputSchema);
 	if (
@@ -629,6 +751,16 @@ function descriptor(tool: AgentTool): VersionedActionDescriptorV2 | null {
 		throw new AgentActionCapabilityError(
 			'ACTION_TEMPLATE_SECRET_INPUT',
 			'Workflow action template requires a raw secret input.',
+		);
+	}
+	if (
+		workflowTemplate &&
+		(!workflowTemplateSchemaSupported(inputSchema) ||
+			!workflowTemplateSchemaSupported(outputSchema))
+	) {
+		throw new AgentActionCapabilityError(
+			'ACTION_TEMPLATE_SCHEMA_UNSUPPORTED',
+			'Workflow action template schema exceeds the workflow schema subset or limits.',
 		);
 	}
 	return {
@@ -800,9 +932,15 @@ export function createAgentActionExecutionRuntime(
 	const workerId =
 		options.workerId ?? `agent-action-worker:${process.pid}:${randomUUID()}`;
 	const intervalMs = Math.max(1_000, Math.floor(leaseMs / 2));
-	const toolById = new Map(tools.map((tool) => [tool.id, tool]));
 	const actions = buildActionDescriptors(tools);
+	const toolById = new Map(
+		tools
+			.filter((tool) => !localOnlyRefused(tool))
+			.map((tool) => [tool.id, tool]),
+	);
 	const actionById = new Map(actions.map((action) => [action.id, action]));
+	const visibleActions = () =>
+		actions.filter((action) => !localOnlyRefused(toolById.get(action.id)!));
 	const inFlight = new Map<string, AbortController>();
 	const callerSignals = new Map<
 		string,
@@ -858,6 +996,12 @@ export function createAgentActionExecutionRuntime(
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let rejectAbort: (() => void) | undefined;
 		try {
+			if (localOnlyRefused(tool)) {
+				throw new AgentActionCapabilityError(
+					'TOOL_LOCAL_ONLY',
+					`Tool ${tool.id} is a local-only capability and cannot run in this environment.`,
+				);
+			}
 			const currentlyHeld = new Set(
 				invocation.authorizationSubject
 					? await (options.authorizeToolAccess?.({
@@ -897,7 +1041,7 @@ export function createAgentActionExecutionRuntime(
 							agentName: invocation.actor.label,
 						}
 					: {}),
-				idempotencyKey: invocation.idempotencyKey,
+				idempotencyKey: invocation.sideEffectIdempotencyKey,
 				permissions,
 				signal: controller.signal,
 			};
@@ -1159,7 +1303,7 @@ export function createAgentActionExecutionRuntime(
 	};
 
 	const capability: AgentActionExecutionCapability = {
-		listWorkflowActions: async () => actions.map(legacyDescriptor),
+		listWorkflowActions: async () => visibleActions().map(legacyDescriptor),
 		async start(request, context) {
 			if (context.signal.aborted) {
 				throw new AgentActionCapabilityError(
@@ -1185,6 +1329,13 @@ export function createAgentActionExecutionRuntime(
 				throw new AgentActionCapabilityError(
 					'ACTION_VERSION_MISSING',
 					'Action contract version is unavailable.',
+				);
+			}
+			const tool = toolById.get(action.id)!;
+			if (localOnlyRefused(tool)) {
+				throw new AgentActionCapabilityError(
+					'TOOL_LOCAL_ONLY',
+					`Tool ${tool.id} is a local-only capability and cannot run in this environment.`,
 				);
 			}
 			if (
@@ -1254,6 +1405,12 @@ export function createAgentActionExecutionRuntime(
 				8,
 				128,
 			);
+			const sideEffectIdempotencyKey = bounded(
+				request.sideEffectIdempotencyKey ?? idempotencyKey,
+				'sideEffectIdempotencyKey',
+				8,
+				128,
+			);
 			const permissions = [...new Set(context.permissionSnapshot)].sort();
 			const requestHash = createHash('sha256')
 				.update(
@@ -1266,6 +1423,11 @@ export function createAgentActionExecutionRuntime(
 						actor,
 						authorizationSubject,
 						permissions,
+						/* Preserve the original hash for v1 and already-queued v2
+						   invocations, whose external and invocation keys were equal. */
+						...(sideEffectIdempotencyKey === idempotencyKey
+							? []
+							: [sideEffectIdempotencyKey]),
 					]),
 				)
 				.digest('hex');
@@ -1289,14 +1451,14 @@ export function createAgentActionExecutionRuntime(
 			}
 			/* Refused before the invocation is persisted, so an unconsented action
 			   never occupies the queue; the worker asks again before it runs. */
-			await assertConsent(toolById.get(action.id)!, request.input, {
+			await assertConsent(tool, request.input, {
 				runId: workflowRunId,
 				tenantId,
 				requestedBy: actor.id,
 				invocation: 'workflow-action',
 				actor,
 				authorizationSubject,
-				idempotencyKey,
+				idempotencyKey: sideEffectIdempotencyKey,
 				permissions: livePermissions,
 				signal: context.signal,
 			});
@@ -1312,6 +1474,7 @@ export function createAgentActionExecutionRuntime(
 				permissionSnapshot: permissions,
 				input: request.input,
 				idempotencyKey,
+				sideEffectIdempotencyKey,
 				requestHash,
 				status: 'queued',
 				output: null,
@@ -1397,7 +1560,7 @@ export function createAgentActionExecutionRuntime(
 	};
 	const capabilityV2: AgentActionExecutionCapabilityV2 = {
 		...capability,
-		listWorkflowActions: async () => actions.map(cloneDescriptorV2),
+		listWorkflowActions: async () => visibleActions().map(cloneDescriptorV2),
 	};
 
 	return {

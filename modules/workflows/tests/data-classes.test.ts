@@ -568,117 +568,120 @@ describe('workflows.core data classes', () => {
 		expect(archive).not.toContain(SECRET);
 	});
 
-	it('redacts historical connector response evidence in run exports', async () => {
-		const database = await open();
-		await seedRun(
-			database.repository,
-			TENANT,
-			'run-connector-old',
-			ada,
-			SEPTEMBER,
-		);
-		const stored = (
-			await database.repository.exportRunsPage(TENANT, null, 2)
-		)[0]!;
-		const oldResponse = 'historical-provider-response-secret';
-		const oldEvidence: WorkflowPayloadEvidenceV1 = {
-			...evidence,
-			preview: { body: oldResponse },
-		};
-		const apparentlySafeConnectorEvidence: WorkflowPayloadEvidenceV1 = {
-			...evidence,
-			preview: {
-				callId: 'old-call',
-				outcome: 'succeeded',
-				body: null,
-				bodyOmitted: true,
-			},
-		};
-		const base = graph();
-		const connectorGraph: WorkflowGraphV1 = {
-			...base,
-			nodes: [
-				base.nodes[0]!,
-				{
-					id: 'action.call',
-					label: 'Connector',
-					type: 'action',
-					inputPorts: [{ name: 'input', schemaId: 'schema.data' }],
-					outputPorts: [{ name: 'success', schemaId: 'schema.data' }],
-					action: { actionId: 'connectors.call', contractVersion: 1 },
+	it.each(['connectors.call', 'catalog.items.create'])(
+		'WORKFLOW-CUSTOM-NODE-TRAIL redacts historical %s evidence in run exports',
+		async (actionId) => {
+			const database = await open();
+			await seedRun(
+				database.repository,
+				TENANT,
+				`run-action-old-${actionId.replace('.', '-')}`,
+				ada,
+				SEPTEMBER,
+			);
+			const stored = (
+				await database.repository.exportRunsPage(TENANT, null, 2)
+			)[0]!;
+			const oldResponse = 'historical-provider-response-secret';
+			const oldEvidence: WorkflowPayloadEvidenceV1 = {
+				...evidence,
+				preview: { body: oldResponse },
+			};
+			const apparentlySafeConnectorEvidence: WorkflowPayloadEvidenceV1 = {
+				...evidence,
+				preview: {
+					callId: 'old-call',
+					outcome: 'succeeded',
+					body: null,
+					bodyOmitted: true,
 				},
-				base.nodes[1]!,
-			],
-			edges: [
-				{
-					id: 'edge.call',
-					source: { nodeId: 'input.start', port: 'data' },
-					target: { nodeId: 'action.call', port: 'input' },
-				},
-				{
-					id: 'edge.done',
-					source: { nodeId: 'action.call', port: 'success' },
-					target: { nodeId: 'output.done', port: 'input' },
-				},
-			],
-		};
-		const inputNode = stored.nodes.find(
-			(node) => node.nodeId === 'input.start',
-		)!;
-		const actionNode = {
-			...inputNode,
-			nodeId: 'action.call',
-			attempts: inputNode.attempts.map((attempt) => ({
-				...attempt,
+			};
+			const base = graph();
+			const actionGraph: WorkflowGraphV1 = {
+				...base,
+				nodes: [
+					base.nodes[0]!,
+					{
+						id: 'action.call',
+						label: 'Connector',
+						type: 'action',
+						inputPorts: [{ name: 'input', schemaId: 'schema.data' }],
+						outputPorts: [{ name: 'success', schemaId: 'schema.data' }],
+						action: { actionId, contractVersion: 1 },
+					},
+					base.nodes[1]!,
+				],
+				edges: [
+					{
+						id: 'edge.call',
+						source: { nodeId: 'input.start', port: 'data' },
+						target: { nodeId: 'action.call', port: 'input' },
+					},
+					{
+						id: 'edge.done',
+						source: { nodeId: 'action.call', port: 'success' },
+						target: { nodeId: 'output.done', port: 'input' },
+					},
+				],
+			};
+			const inputNode = stored.nodes.find(
+				(node) => node.nodeId === 'input.start',
+			)!;
+			const actionNode = {
+				...inputNode,
 				nodeId: 'action.call',
-				nodeType: 'action' as const,
-				output: apparentlySafeConnectorEvidence,
-			})),
-		};
-		const historical = {
-			run: { ...stored.run, graph: connectorGraph },
-			nodes: [
-				...stored.nodes.map((node) =>
-					node.nodeId === 'output.done'
-						? {
-								...node,
-								attempts: inputNode.attempts.map((attempt) => ({
-									...attempt,
-									nodeId: 'output.done',
-									nodeType: 'output' as const,
-									input: oldEvidence,
-									output: oldEvidence,
-								})),
-							}
-						: node,
-				),
-				actionNode,
-			],
-			edges: stored.edges.map((edge) => ({
-				...edge,
-				sourceNodeId: 'action.call',
-				evidence: oldEvidence,
-			})),
-		};
-		const repository = {
-			exportRunsPage: async (_tenantId: string, after: unknown) =>
-				after === null ? [historical] : [],
-		} as unknown as WorkflowsRepository;
-		const declaration = workflowsDataClasses(async () => repository, 2).find(
-			(entry) => entry.key === 'runs',
-		)!;
-		const rows: Record<string, unknown>[] = [];
-		await declaration.export!({
-			tenantId: TENANT,
-			sink: {
-				write: async (row) => {
-					rows.push(row);
+				attempts: inputNode.attempts.map((attempt) => ({
+					...attempt,
+					nodeId: 'action.call',
+					nodeType: 'action' as const,
+					output: apparentlySafeConnectorEvidence,
+				})),
+			};
+			const historical = {
+				run: { ...stored.run, graph: actionGraph },
+				nodes: [
+					...stored.nodes.map((node) =>
+						node.nodeId === 'output.done'
+							? {
+									...node,
+									attempts: inputNode.attempts.map((attempt) => ({
+										...attempt,
+										nodeId: 'output.done',
+										nodeType: 'output' as const,
+										input: oldEvidence,
+										output: oldEvidence,
+									})),
+								}
+							: node,
+					),
+					actionNode,
+				],
+				edges: stored.edges.map((edge) => ({
+					...edge,
+					sourceNodeId: 'action.call',
+					evidence: oldEvidence,
+				})),
+			};
+			const repository = {
+				exportRunsPage: async (_tenantId: string, after: unknown) =>
+					after === null ? [historical] : [],
+			} as unknown as WorkflowsRepository;
+			const declaration = workflowsDataClasses(async () => repository, 2).find(
+				(entry) => entry.key === 'runs',
+			)!;
+			const rows: Record<string, unknown>[] = [];
+			await declaration.export!({
+				tenantId: TENANT,
+				sink: {
+					write: async (row) => {
+						rows.push(row);
+					},
 				},
-			},
-		});
-		expect(JSON.stringify(rows)).not.toContain(oldResponse);
-		expect(rows).toHaveLength(1);
-	});
+			});
+			expect(JSON.stringify(rows)).not.toContain(oldResponse);
+			expect(rows).toHaveLength(1);
+		},
+	);
 
 	it('exports the published workflows and not the drafts', async () => {
 		const database = await open();

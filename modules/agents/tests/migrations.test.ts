@@ -201,6 +201,62 @@ describe('agents migrations', () => {
 		);
 	});
 
+	it('backfills the stable side-effect key for action invocations queued before migration', async () => {
+		await runDatabaseMigrations(
+			lease.database,
+			'agents.core',
+			databaseMigrations.slice(0, -1),
+		);
+		await lease.database.transaction(
+			(transaction) =>
+				transaction.execute({
+					text: `INSERT INTO agent_action_invocations
+					       (id, tenant_id, workflow_run_id, node_run_id, action_id,
+					        contract_version, actor_json, permission_snapshot_json,
+					        input_json, idempotency_key, request_hash, status, attempt,
+					        queued_at)
+					       VALUES ('action-before-0028', 'tenant-a', 'run-1', 'node-1',
+					        'connectors.call', 2, '{"kind":"user","id":"owner","label":"Owner"}',
+					        '[]', '{}', 'run-1:node-1', 'old-hash', 'queued', 0, 1)`,
+				}),
+			{ access: 'write', tenantId: 'tenant-a' },
+		);
+		expect(
+			(await apply()).find(
+				(entry) => entry.id === '0028_action_side_effect_idempotency_key',
+			)?.action,
+		).toBe('applied');
+		const row = await lease.database.transaction(
+			(transaction) =>
+				transaction.query<{ side_effect_idempotency_key: string }>({
+					text: `SELECT side_effect_idempotency_key
+					       FROM agent_action_invocations WHERE tenant_id = $1 AND id = $2`,
+					parameters: ['tenant-a', 'action-before-0028'],
+				}),
+			{ access: 'read', tenantId: 'tenant-a' },
+		);
+		expect(row.rows[0]?.side_effect_idempotency_key).toBe('run-1:node-1');
+	});
+
+	it('refuses adoption of a nullable, partly applied side-effect key column', async () => {
+		await runDatabaseMigrations(
+			lease.database,
+			'agents.core',
+			databaseMigrations.slice(0, -1),
+		);
+		await lease.database.execute({
+			text: `ALTER TABLE agent_action_invocations
+			       ADD COLUMN side_effect_idempotency_key TEXT`,
+		});
+		expect((await status()).at(-1)).toMatchObject({
+			id: '0028_action_side_effect_idempotency_key',
+			state: 'partial',
+		});
+		await expect(apply()).rejects.toMatchObject({
+			code: 'PARTIAL_MIGRATION',
+		});
+	});
+
 	it('refuses adoption when reconciliation policies exist but a routing grant is missing', async () => {
 		await apply();
 		await lease.database.execute({

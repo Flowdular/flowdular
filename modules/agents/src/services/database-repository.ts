@@ -187,6 +187,7 @@ interface ActionRow {
 	permission_snapshot_json: string;
 	input_json: string;
 	idempotency_key: string;
+	side_effect_idempotency_key: string;
 	request_hash: string;
 	status: AgentActionInvocation['status'];
 	output_json: string | null;
@@ -435,6 +436,7 @@ function fromActionRow(row: ActionRow): AgentActionInvocation {
 		permissionSnapshot: stringArray(row.permission_snapshot_json),
 		input: JSON.parse(row.input_json) as JsonValue,
 		idempotencyKey: row.idempotency_key,
+		sideEffectIdempotencyKey: row.side_effect_idempotency_key,
 		requestHash: row.request_hash,
 		status: row.status,
 		output: jsonValue(row.output_json),
@@ -1073,11 +1075,11 @@ export const AGENTS_SQL: AgentsPersistenceStatements = Object.freeze({
 	enqueueAction: `INSERT INTO agent_action_invocations
 					 (id, tenant_id, workflow_run_id, node_run_id, action_id,
 					  contract_version, actor_json, authorization_subject_json, permission_snapshot_json,
-					  input_json, idempotency_key, request_hash, status, output_json,
+					  input_json, idempotency_key, side_effect_idempotency_key, request_hash, status, output_json,
 					  failure_code, attempt, queued_at, started_at, completed_at,
 					  lease_owner, lease_expires_at)
-					 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'queued', NULL, NULL,
-					  0, $13, NULL, NULL, NULL, NULL)`,
+					 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'queued', NULL, NULL,
+					  0, $14, NULL, NULL, NULL, NULL)`,
 	getAction: `SELECT * FROM agent_action_invocations
 				 WHERE tenant_id = $1 AND id = $2`,
 	findActionByIdempotencyKey: `SELECT * FROM agent_action_invocations
@@ -2641,6 +2643,7 @@ export class DatabaseAgentRepository implements AgentRepository {
 					JSON.stringify(invocation.permissionSnapshot),
 					JSON.stringify(invocation.input),
 					invocation.idempotencyKey,
+					invocation.sideEffectIdempotencyKey,
 					invocation.requestHash,
 					invocation.queuedAt,
 				]);

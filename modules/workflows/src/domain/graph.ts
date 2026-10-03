@@ -2,7 +2,10 @@ import { createHash } from 'node:crypto';
 import { TYPED_DECISION_LIMITS } from './types.ts';
 import {
 	actionBindingDiagnostics,
+	mappingTargetDiagnostics,
 	secretSchemaValueDiagnostics,
+	sourcePointerIsObject,
+	sourcePointerIsSafe,
 } from './graph-security.ts';
 import type {
 	JsonSchemaV1,
@@ -515,14 +518,36 @@ function validPointer(pointer: string): boolean {
 	);
 }
 
+const FORBIDDEN_POINTER_SEGMENTS = new Set([
+	'__proto__',
+	'constructor',
+	'prototype',
+]);
+
+function writableTargetPointer(pointer: string): boolean {
+	return (
+		validPointer(pointer) &&
+		!pointer
+			.slice(1)
+			.split('/')
+			.some((part) =>
+				FORBIDDEN_POINTER_SEGMENTS.has(
+					part.replaceAll('~1', '/').replaceAll('~0', '~'),
+				),
+			)
+	);
+}
+
 function mappingIssues(
 	mapping: WorkflowTargetMappingV1,
 	node: WorkflowNodeV1,
 	nodeIndex: ReadonlyMap<string, number>,
+	nodeById: ReadonlyMap<string, WorkflowNodeV1>,
 	graph: WorkflowGraphV1,
+	safeSource: (schemaId: string, pointer: string) => boolean,
 ): readonly WorkflowValidationIssueV1[] {
 	const issues: WorkflowValidationIssueV1[] = [];
-	if (!validPointer(mapping.targetPointer)) {
+	if (!writableTargetPointer(mapping.targetPointer)) {
 		issues.push(
 			issue('WORKFLOW_MAPPING_POINTER_INVALID', 'Target pointer is invalid.', {
 				kind: 'node',
@@ -531,6 +556,19 @@ function mappingIssues(
 		);
 	}
 	const binding = mapping.binding;
+	if (
+		mapping.targetPointer === '' &&
+		((binding.kind === 'literal' && !isRecord(binding.value)) ||
+			binding.kind === 'template')
+	) {
+		issues.push(
+			issue(
+				'WORKFLOW_MAPPING_TARGET_INVALID',
+				'A root mapping must produce an object.',
+				{ kind: 'node', nodeId: node.id },
+			),
+		);
+	}
 	if (binding.kind === 'literal') return issues;
 	const sources = binding.kind === 'path' ? [binding] : binding.variables;
 	if (
@@ -556,13 +594,14 @@ function mappingIssues(
 		}
 		const sourceIndex = nodeIndex.get(source.sourceNodeId);
 		const targetIndex = nodeIndex.get(node.id);
+		const sourcePort = nodeById
+			.get(source.sourceNodeId)
+			?.outputPorts.find((port) => port.name === source.sourcePort);
 		if (
 			sourceIndex === undefined ||
 			targetIndex === undefined ||
 			sourceIndex >= targetIndex ||
-			!graph.nodes
-				.find((entry) => entry.id === source.sourceNodeId)
-				?.outputPorts.some((port) => port.name === source.sourcePort) ||
+			!sourcePort ||
 			!isUpstream(graph, source.sourceNodeId, node.id)
 		) {
 			issues.push(
@@ -573,8 +612,62 @@ function mappingIssues(
 				),
 			);
 		}
+		if (
+			sourcePort &&
+			validPointer(source.pointer) &&
+			!safeSource(sourcePort.schemaId, source.pointer)
+		)
+			issues.push(
+				issue(
+					'WORKFLOW_MAPPING_SOURCE_UNSAFE',
+					'Mapping source is protected or its schema cannot be verified.',
+					{ kind: 'node', nodeId: node.id, path: '/mappings' },
+				),
+			);
+		if (
+			mapping.targetPointer === '' &&
+			sourcePort &&
+			validPointer(source.pointer) &&
+			!sourcePointerIsObject(graph.schemas[sourcePort.schemaId], source.pointer)
+		) {
+			issues.push(
+				issue(
+					'WORKFLOW_MAPPING_TARGET_INVALID',
+					'A root mapping source must be an object.',
+					{ kind: 'node', nodeId: node.id },
+				),
+			);
+		}
 	}
 	return issues;
+}
+
+function schemaAtTargetPointer(
+	schema: JsonSchemaV1 | undefined,
+	pointer: string,
+): JsonSchemaV1 | 'forbidden' | undefined {
+	if (!schema || !writableTargetPointer(pointer)) return undefined;
+	if (pointer === '') return schema;
+	let current: JsonSchemaV1 = schema;
+	for (const raw of pointer.slice(1).split('/')) {
+		const part = raw.replaceAll('~1', '/').replaceAll('~0', '~');
+		let child: unknown;
+		if (current.type === 'object') {
+			const properties = isRecord(current.properties)
+				? current.properties
+				: null;
+			child =
+				properties && Object.hasOwn(properties, part)
+					? properties[part]
+					: current.additionalProperties;
+			if (child === false) return 'forbidden';
+		} else if (current.type === 'array' && /^(0|[1-9][0-9]*)$/.test(part)) {
+			child = current.items;
+		}
+		if (!isRecord(child)) return undefined;
+		current = child as JsonSchemaV1;
+	}
+	return current;
 }
 
 function isUpstream(
@@ -1053,6 +1146,19 @@ export function compileWorkflowGraph(
 			),
 		);
 	}
+	for (const finding of mappingTargetDiagnostics(graph)) {
+		issues.push(
+			issue(
+				finding.code,
+				'Mapping target is protected or its schema cannot be verified.',
+				{
+					kind: 'node',
+					nodeId: finding.nodeId,
+					path: `/mappings${finding.targetPointer}`,
+				},
+			),
+		);
+	}
 
 	const edgeIds = new Set<string>();
 	const incoming = new Map<string, number>();
@@ -1187,11 +1293,48 @@ export function compileWorkflowGraph(
 	const index = new Map(
 		topological.order.map((id, position) => [id, position]),
 	);
+	const sourceSafety = new Map<string, boolean>();
+	const safeSource = (schemaId: string, pointer: string): boolean => {
+		const key = `${schemaId}\u0000${pointer}`;
+		const cached = sourceSafety.get(key);
+		if (cached !== undefined) return cached;
+		const safe = sourcePointerIsSafe(graph.schemas[schemaId], pointer);
+		sourceSafety.set(key, safe);
+		return safe;
+	};
 	for (const node of graph.nodes) {
 		if (node.type === 'gate')
 			issues.push(...validateGateExpression(node.expression, node.id));
-		for (const mapping of node.mappings ?? []) {
-			issues.push(...mappingIssues(mapping, node, index, graph));
+		for (const [mappingIndex, mapping] of (node.mappings ?? []).entries()) {
+			issues.push(
+				...mappingIssues(mapping, node, index, nodeById, graph, safeSource),
+			);
+			if (node.type === 'action' && mapping.binding.kind === 'literal') {
+				const schema = schemaAtTargetPointer(
+					graph.schemas[
+						node.inputPorts.find((port) => port.name === 'input')?.schemaId ??
+							''
+					],
+					mapping.targetPointer,
+				);
+				if (
+					schema === 'forbidden' ||
+					(schema !== undefined &&
+						validateJsonSchema(mapping.binding.value, schema).length > 0)
+				) {
+					issues.push(
+						issue(
+							'WORKFLOW_ACTION_LITERAL_INVALID',
+							'Configured action value does not match its input schema.',
+							{
+								kind: 'node',
+								nodeId: node.id,
+								path: `/mappings/${mappingIndex}`,
+							},
+						),
+					);
+				}
+			}
 			const sources =
 				mapping.binding.kind === 'path'
 					? [mapping.binding]
@@ -1253,17 +1396,19 @@ export function validateJsonSchema(
 ): readonly JsonValidationError[] {
 	const errors: JsonValidationError[] = [];
 	const type = schema.type;
-	const matches =
-		type === undefined ||
-		(type === 'null' && value === null) ||
-		(type === 'string' && typeof value === 'string') ||
-		(type === 'number' && typeof value === 'number') ||
-		(type === 'integer' &&
+	const matchesType = (expected: JsonValue): boolean =>
+		(expected === 'null' && value === null) ||
+		(expected === 'string' && typeof value === 'string') ||
+		(expected === 'number' && typeof value === 'number') ||
+		(expected === 'integer' &&
 			typeof value === 'number' &&
 			Number.isSafeInteger(value)) ||
-		(type === 'boolean' && typeof value === 'boolean') ||
-		(type === 'array' && Array.isArray(value)) ||
-		(type === 'object' && isRecord(value));
+		(expected === 'boolean' && typeof value === 'boolean') ||
+		(expected === 'array' && Array.isArray(value)) ||
+		(expected === 'object' && isRecord(value));
+	const matches =
+		type === undefined ||
+		(Array.isArray(type) ? type.some(matchesType) : matchesType(type));
 	if (!matches) return [{ path, code: 'type' }];
 	if (
 		Array.isArray(schema.enum) &&
@@ -1321,6 +1466,14 @@ export function validateJsonSchema(
 						`${path}/${name}`,
 					),
 				);
+			else if (isRecord(schema.additionalProperties))
+				errors.push(
+					...validateJsonSchema(
+						entry as JsonValue,
+						schema.additionalProperties as JsonSchemaV1,
+						`${path}/${name}`,
+					),
+				);
 			else if (schema.additionalProperties === false)
 				errors.push({ path: `${path}/${name}`, code: 'additionalProperties' });
 		}
@@ -1356,16 +1509,7 @@ function writeJsonPointer(
 	pointer: string,
 	value: JsonValue,
 ): void {
-	if (
-		!validPointer(pointer) ||
-		pointer
-			.split('/')
-			.some((part) =>
-				['__proto__', 'constructor', 'prototype'].includes(
-					part.replaceAll('~1', '/').replaceAll('~0', '~'),
-				),
-			)
-	)
+	if (!writableTargetPointer(pointer))
 		throw new Error('WORKFLOW_MAPPING_TARGET_INVALID');
 	if (pointer === '') {
 		if (value === null || typeof value !== 'object' || Array.isArray(value)) {

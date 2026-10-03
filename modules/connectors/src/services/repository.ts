@@ -64,6 +64,16 @@ export interface ConnectorCallKeyClaim {
 	readonly staleBefore: number;
 }
 
+/** Safe evidence for a call whose post-egress persistence outcome is unknown. */
+export interface ConnectorUnknownCallAudit {
+	readonly tenantId: string;
+	readonly instanceId: string;
+	readonly operationId: string;
+	readonly idempotencyKey: string | null;
+	readonly claimedAt: number | null;
+	readonly observedAt: number;
+}
+
 /**
  * `claimed` means this attempt owns the key and must make the call; `replay`
  * names the call a previous attempt already produced; `in-flight` means another
@@ -147,6 +157,8 @@ export interface ConnectorsRepository {
 	 * claimed idempotency key to it, in one write.
 	 */
 	recordCall(call: ConnectorCall, idempotencyKey: string | null): Promise<void>;
+	/** Best-effort audit after a provider request whose call record could not be confirmed. */
+	auditUnknownCall(audit: ConnectorUnknownCallAudit): Promise<void>;
 	/**
 	 * Removes at most `limit` calls older than `before`, together with the
 	 * idempotency keys claimed before it. A key is always claimed no later than

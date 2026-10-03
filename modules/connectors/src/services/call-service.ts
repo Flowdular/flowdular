@@ -105,6 +105,12 @@ interface PreparedRequest {
 	readonly body: string | null;
 }
 
+type CallRecordDraft = Omit<ConnectorCall, 'id' | 'occurredAt'> & {
+	readonly body: ConnectorJsonValue | null;
+	readonly bodyPreview: string;
+	readonly retryAfterMs: number | null;
+};
+
 class CallRefusal extends Error {
 	constructor(
 		readonly outcome: Exclude<ConnectorCallOutcome, 'succeeded'>,
@@ -547,6 +553,9 @@ export class ConnectorCallService implements ConnectorCallCapability {
 			if (!this.#admits(instance, caller)) {
 				throw new CallRefusal('refused', 'consent-missing');
 			}
+			if (caller !== 'test' && idempotencyKey === null) {
+				throw new CallRefusal('refused', 'idempotency-key-required');
+			}
 			const definition = this.#options
 				.definitions()
 				.get(instance.definitionKey);
@@ -595,25 +604,28 @@ export class ConnectorCallService implements ConnectorCallCapability {
 					requestWritten = true;
 				},
 			);
-			/* A failed call-log transaction is not a transport failure. Let it
-			   reject with the original claim untouched, so recovery never sends
-			   another provider request under the same key. */
-			return this.#record(claimed ? idempotencyKey : null, {
-				tenantId,
-				instanceId,
-				operation: operationKey,
-				caller,
-				callerRef,
-				outcome: outcome.outcome,
-				status: outcome.status,
-				errorClass: outcome.errorClass,
-				durationMs: this.#now() - started,
-				requestBytes,
-				responseBytes: outcome.responseBytes,
-				body: outcome.body,
-				bodyPreview: outcome.bodyPreview,
-				retryAfterMs: outcome.retryAfterMs,
-			});
+			/* The provider was reached. A failed call-log transaction leaves the
+			   original claim in place and has an unknown external outcome. */
+			return this.#recordPostEgress(
+				claimed ? idempotencyKey : null,
+				claimedAt,
+				{
+					tenantId,
+					instanceId,
+					operation: operationKey,
+					caller,
+					callerRef,
+					outcome: outcome.outcome,
+					status: outcome.status,
+					errorClass: outcome.errorClass,
+					durationMs: this.#now() - started,
+					requestBytes,
+					responseBytes: outcome.responseBytes,
+					body: outcome.body,
+					bodyPreview: outcome.bodyPreview,
+					retryAfterMs: outcome.retryAfterMs,
+				},
+			);
 		} catch (error) {
 			/* A ledger decision is the caller's answer, not the outcome of a call:
 			   nothing reached the network, so it must not become a log row. */
@@ -639,7 +651,7 @@ export class ConnectorCallService implements ConnectorCallCapability {
 			}
 			const bindKey =
 				claimed && requestWritten && refusal.outcome !== 'refused';
-			return await this.#record(bindKey ? idempotencyKey : null, {
+			const record: CallRecordDraft = {
 				tenantId,
 				instanceId,
 				operation: operationKey,
@@ -654,7 +666,15 @@ export class ConnectorCallService implements ConnectorCallCapability {
 				body: null,
 				bodyPreview: '',
 				retryAfterMs: null,
-			});
+			};
+			if (requestWritten) {
+				return this.#recordPostEgress(
+					bindKey ? idempotencyKey : null,
+					claimedAt,
+					record,
+				);
+			}
+			return this.#record(null, record);
 		}
 	}
 
@@ -963,13 +983,39 @@ export class ConnectorCallService implements ConnectorCallCapability {
 		};
 	}
 
+	async #recordPostEgress(
+		idempotencyKey: string | null,
+		claimedAt: number | null,
+		result: CallRecordDraft,
+	): Promise<ConnectorCallResult> {
+		try {
+			return await this.#record(idempotencyKey, result);
+		} catch {
+			const observedAt = this.#now();
+			try {
+				await this.#options.repository.auditUnknownCall({
+					tenantId: result.tenantId,
+					instanceId: result.instanceId,
+					operationId: `${result.instanceId}:${result.operation}`,
+					idempotencyKey,
+					claimedAt: idempotencyKey === null ? null : claimedAt,
+					observedAt,
+				});
+			} catch {
+				/* A broken audit store must not turn an uncertain provider call
+				   into a retryable transport error or expose the database failure. */
+			}
+			throw new ConnectorsServiceError(
+				'CALL_OUTCOME_UNKNOWN',
+				'The connector call may have reached the provider, but its result could not be recorded. Inspect the external system before another action.',
+				409,
+			);
+		}
+	}
+
 	async #record(
 		idempotencyKey: string | null,
-		result: Omit<ConnectorCall, 'id' | 'occurredAt'> & {
-			readonly body: ConnectorJsonValue | null;
-			readonly bodyPreview: string;
-			readonly retryAfterMs: number | null;
-		},
+		result: CallRecordDraft,
 	): Promise<ConnectorCallResult> {
 		const { body, bodyPreview, retryAfterMs, ...call } = result;
 		const record: ConnectorCall = {

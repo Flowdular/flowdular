@@ -8,7 +8,10 @@ import type {
 	WorkflowRunDetail,
 	WorkflowRunEventV1,
 } from '../domain/types.ts';
-import { safePayloadEvidence } from './payload-codec.ts';
+import {
+	safePayloadEvidence,
+	schemaHasRestrictedEvidence,
+} from './payload-codec.ts';
 
 type EvidenceScope =
 	| { readonly kind: 'run-input' }
@@ -40,6 +43,22 @@ interface EvidenceTaint {
 
 const taintByGraph = new WeakMap<WorkflowGraphV1, EvidenceTaint | null>();
 
+interface RestrictedEvidenceTaint {
+	readonly nodeIds: ReadonlySet<string>;
+	readonly edgeIds: ReadonlySet<string>;
+	readonly runInput: boolean;
+	readonly runOutput: boolean;
+}
+
+const restrictedByGraph = new WeakMap<
+	WorkflowGraphV1,
+	RestrictedEvidenceTaint | null
+>();
+
+function hasActionNode(graph: WorkflowGraphV1): boolean {
+	return graph.nodes.some((node) => node.type === 'action');
+}
+
 function sourceNodes(graph: WorkflowGraphV1): Map<string, string[]> {
 	const consumers = new Map<string, string[]>();
 	for (const node of graph.nodes) {
@@ -58,6 +77,59 @@ function sourceNodes(graph: WorkflowGraphV1): Map<string, string[]> {
 		}
 	}
 	return consumers;
+}
+
+function restrictedEvidenceTaint(
+	graph: WorkflowGraphV1,
+): RestrictedEvidenceTaint | null {
+	if (restrictedByGraph.has(graph)) return restrictedByGraph.get(graph) ?? null;
+	const restrictedSchemas = new Set(
+		Object.entries(graph.schemas)
+			.filter(([, schema]) => schemaHasRestrictedEvidence(schema))
+			.map(([id]) => id),
+	);
+	const starts = graph.nodes.filter((node) =>
+		[...node.inputPorts, ...node.outputPorts].some((port) =>
+			restrictedSchemas.has(port.schemaId),
+		),
+	);
+	if (starts.length === 0) {
+		restrictedByGraph.set(graph, null);
+		return null;
+	}
+	const outgoing = new Map<string, WorkflowGraphV1['edges'][number][]>();
+	for (const edge of graph.edges) {
+		const edges = outgoing.get(edge.source.nodeId) ?? [];
+		edges.push(edge);
+		outgoing.set(edge.source.nodeId, edges);
+	}
+	const mappedConsumers = sourceNodes(graph);
+	const nodeIds = new Set(starts.map((node) => node.id));
+	const edgeIds = new Set<string>();
+	const queue = [...nodeIds];
+	for (let index = 0; index < queue.length; index++) {
+		const source = queue[index]!;
+		const reach = (target: string) => {
+			if (nodeIds.has(target)) return;
+			nodeIds.add(target);
+			queue.push(target);
+		};
+		for (const edge of outgoing.get(source) ?? []) {
+			edgeIds.add(edge.id);
+			reach(edge.target.nodeId);
+		}
+		for (const target of mappedConsumers.get(source) ?? []) reach(target);
+	}
+	const taint = {
+		nodeIds,
+		edgeIds,
+		runInput: starts.some((node) => node.type === 'input'),
+		runOutput: graph.nodes.some(
+			(node) => node.type === 'output' && nodeIds.has(node.id),
+		),
+	};
+	restrictedByGraph.set(graph, taint);
+	return taint;
 }
 
 function evidenceTaint(graph: WorkflowGraphV1): EvidenceTaint | null {
@@ -162,6 +234,20 @@ export function projectWorkflowEvidence(
 	scope: EvidenceScope,
 	evidence: WorkflowPayloadEvidenceV1,
 ): WorkflowPayloadEvidenceV1 {
+	/* Older action attempts may predate schema-aware redaction. A preview
+	   without the current policy marker cannot be proved safe on read. */
+	if (hasActionNode(graph) && evidence.redactionPolicyVersion !== 2)
+		return masked(evidence);
+	const restricted = restrictedEvidenceTaint(graph);
+	if (
+		restricted &&
+		((scope.kind === 'run-input' && restricted.runInput) ||
+			(scope.kind === 'run-output' && restricted.runOutput) ||
+			(scope.kind === 'node-input' && restricted.nodeIds.has(scope.nodeId)) ||
+			(scope.kind === 'node-output' && restricted.nodeIds.has(scope.nodeId)) ||
+			(scope.kind === 'edge' && restricted.edgeIds.has(scope.edgeId)))
+	)
+		return masked(evidence);
 	const taint = evidenceTaint(graph);
 	if (!taint) return evidence;
 	if (scope.kind === 'run-input') return masked(evidence);
@@ -205,7 +291,12 @@ function projectWorkflowNodeEvidence(
 	nodes: readonly WorkflowNodeExecution[],
 	unsafeConnectorOutput: boolean,
 ): readonly WorkflowNodeExecution[] {
-	if (!evidenceTaint(graph)) return nodes;
+	if (
+		!evidenceTaint(graph) &&
+		!hasActionNode(graph) &&
+		!restrictedEvidenceTaint(graph)
+	)
+		return nodes;
 	return nodes.map((node) => ({
 		...node,
 		attempts: node.attempts.map((attempt) => ({
@@ -233,7 +324,12 @@ function projectWorkflowEdgeEvidence(
 	edges: readonly WorkflowEdgeTransfer[],
 	unsafeConnectorOutput: boolean,
 ): readonly WorkflowEdgeTransfer[] {
-	if (!evidenceTaint(graph)) return edges;
+	if (
+		!evidenceTaint(graph) &&
+		!hasActionNode(graph) &&
+		!restrictedEvidenceTaint(graph)
+	)
+		return edges;
 	return edges.map((edge) => ({
 		...edge,
 		evidence: unsafeConnectorOutput
@@ -271,25 +367,45 @@ export function projectWorkflowTraceEvidence(
 	};
 }
 
-function projectEventPayload(value: JsonValue, depth = 0): JsonValue {
+function projectEventPayload(
+	value: JsonValue,
+	maskConnector: boolean,
+	maskUnversionedAction: boolean,
+	depth = 0,
+): JsonValue {
 	if (depth > 24) return '[redacted]';
 	if (value === null || typeof value !== 'object') return value;
 	if (Array.isArray(value))
-		return value.map((entry) => projectEventPayload(entry, depth + 1));
+		return value.map((entry) =>
+			projectEventPayload(
+				entry,
+				maskConnector,
+				maskUnversionedAction,
+				depth + 1,
+			),
+		);
 	if (
 		jsonRecord(value) &&
 		value.version === 1 &&
 		typeof value.schemaId === 'string' &&
 		typeof value.hash === 'string' &&
 		typeof value.originalByteSize === 'number'
-	)
-		return masked(
-			value as unknown as WorkflowPayloadEvidenceV1,
-		) as unknown as JsonValue;
+	) {
+		const evidence = value as unknown as WorkflowPayloadEvidenceV1;
+		return (maskConnector ||
+		(maskUnversionedAction && evidence.redactionPolicyVersion !== 2)
+			? masked(evidence)
+			: evidence) as unknown as JsonValue;
+	}
 	return Object.fromEntries(
 		Object.entries(value).map(([key, entry]) => [
 			key,
-			projectEventPayload(entry, depth + 1),
+			projectEventPayload(
+				entry,
+				maskConnector,
+				maskUnversionedAction,
+				depth + 1,
+			),
 		]),
 	);
 }
@@ -298,12 +414,17 @@ export function projectWorkflowEvents(
 	graph: WorkflowGraphV1,
 	events: readonly WorkflowRunEventV1[],
 ): readonly WorkflowRunEventV1[] {
-	if (!evidenceTaint(graph)) return events;
+	const maskConnector =
+		evidenceTaint(graph) !== null || restrictedEvidenceTaint(graph) !== null;
+	const maskUnversionedAction = hasActionNode(graph);
+	if (!maskConnector && !maskUnversionedAction) return events;
 	return events.map((event) => ({
 		...event,
-		payload: projectEventPayload(event.payload) as Readonly<
-			Record<string, JsonValue>
-		>,
+		payload: projectEventPayload(
+			event.payload,
+			maskConnector,
+			maskUnversionedAction,
+		) as Readonly<Record<string, JsonValue>>,
 	}));
 }
 
@@ -311,7 +432,12 @@ export function projectWorkflowRunEvidence(
 	detail: WorkflowRunDetail,
 ): WorkflowRunDetail {
 	const graph = detail.graph;
-	if (!evidenceTaint(graph)) return detail;
+	if (
+		!evidenceTaint(graph) &&
+		!hasActionNode(graph) &&
+		!restrictedEvidenceTaint(graph)
+	)
+		return detail;
 	const trace = projectWorkflowTraceEvidence(graph, detail.nodes, detail.edges);
 	return {
 		...detail,

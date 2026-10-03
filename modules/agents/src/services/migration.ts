@@ -907,6 +907,19 @@ ALTER TABLE agent_provider_connections
   CHECK (allow_workflows IN (0, 1));
 `;
 
+/* Mirrors migrations/0028_action_side_effect_idempotency_key.up.sql byte for byte. */
+export const AGENTS_MIGRATION_0028 = `-- An action invocation is one workflow attempt. Its unique idempotency key
+-- deduplicates that attempt, while the external tool must reuse one stable key
+-- across attempts so a provider mutation is never repeated after recovery.
+ALTER TABLE agent_action_invocations
+  ADD COLUMN side_effect_idempotency_key TEXT;
+UPDATE agent_action_invocations
+SET side_effect_idempotency_key = idempotency_key
+WHERE side_effect_idempotency_key IS NULL;
+ALTER TABLE agent_action_invocations
+  ALTER COLUMN side_effect_idempotency_key SET NOT NULL;
+`;
+
 export const databaseMigrations: readonly DatabaseMigration[] = [
 	{
 		id: '0001_agents_core',
@@ -1374,6 +1387,26 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 						'agent_provider_connections',
 						'allow_workflows',
 					),
+			]),
+	},
+	{
+		id: '0028_action_side_effect_idempotency_key',
+		sql: { postgresql: AGENTS_MIGRATION_0028 },
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() =>
+					database.schema.hasColumn(
+						'agent_action_invocations',
+						'side_effect_idempotency_key',
+					),
+				async () => {
+					const result = await database.query<{ is_nullable: string }>({
+						text: `SELECT is_nullable FROM information_schema.columns
+						       WHERE table_name = 'agent_action_invocations'
+						       AND column_name = 'side_effect_idempotency_key'`,
+					});
+					return result.rows[0]?.is_nullable === 'NO';
+				},
 			]),
 	},
 ];
