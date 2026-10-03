@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseHandle, DatabaseParameter } from '@flowdular/database';
 import { integer, runDatabaseMigrations } from '@flowdular/database';
 import { keysetWhere } from '@flowdular/server';
@@ -155,15 +155,9 @@ const INSERT_CALL_KEY = `INSERT INTO connectors_call_keys
 			  claimed_at, completed_at)
 			 VALUES ($1, $2, $3, $4, $5, NULL, $6, NULL)`;
 
-/* Retaking an abandoned claim keeps the row, so the unique key still refuses a
-   second attempt that starts while this one runs. The previous claim time is
-   part of the predicate: two attempts that read the same abandoned claim both
-   reach this statement, and only the one whose read is still current may take
-   it over. The loser updates nothing and is answered as in flight. */
-const RETAKE_CALL_KEY = `UPDATE connectors_call_keys
-			 SET claimed_at = $3
-			 WHERE tenant_id = $1 AND idempotency_key = $2 AND call_id IS NULL
-			   AND claimed_at = $4`;
+const RELEASE_CALL_KEY = `DELETE FROM connectors_call_keys
+			 WHERE tenant_id = $1 AND idempotency_key = $2
+			   AND claimed_at = $3 AND call_id IS NULL`;
 
 const BIND_CALL_KEY = `UPDATE connectors_call_keys
 			 SET call_id = $3, completed_at = $4
@@ -631,6 +625,22 @@ export class DatabaseConnectorsRepository implements ConnectorsRepository {
 		}
 	}
 
+	async releaseCallKey(
+		tenantId: string,
+		key: string,
+		claimedAt: number,
+	): Promise<boolean> {
+		const released = await this.database.transaction(
+			(transaction) =>
+				transaction.execute({
+					text: RELEASE_CALL_KEY,
+					parameters: [tenantId, key, claimedAt],
+				}),
+			{ access: 'write', tenantId },
+		);
+		return released.affectedRows === 1;
+	}
+
 	async findCall(tenantId: string, id: string): Promise<ConnectorCall | null> {
 		const result = await this.database.transaction(
 			(transaction) =>
@@ -796,17 +806,36 @@ export class DatabaseConnectorsRepository implements ConnectorsRepository {
 					if (row.call_id !== null) {
 						return { state: 'replay', callId: row.call_id };
 					}
-					const claimedAt = integer(row.claimed_at, 'timestamp');
-					if (claimedAt >= claim.staleBefore) {
+					const originalClaimedAt = integer(row.claimed_at, 'timestamp');
+					if (originalClaimedAt >= claim.staleBefore) {
 						return { state: 'in-flight' };
 					}
-					const retaken = await transaction.execute({
-						text: RETAKE_CALL_KEY,
-						parameters: [tenantId, key, claim.claimedAt, claimedAt],
+					const observedAt = claim.claimedAt;
+					/* The provider may have completed a mutation after the first
+					   process sent its request. An old claim with no call row is not
+					   permission to send the request again. Keep its original time and
+					   write one safe audit row for each refusal. */
+					await transaction.execute({
+						text: INSERT_AUDIT,
+						parameters: auditParameters({
+							tenantId,
+							actorId: 'system',
+							action: 'call.outcome-unknown',
+							instanceId: claim.instanceId,
+							metadata: {
+								keyDigest: createHash('sha256')
+									.update(tenantId)
+									.update('\u0000')
+									.update(key)
+									.digest('hex'),
+								operationId: row.operation_id,
+								claimedAt: originalClaimedAt,
+								observedAt,
+							},
+							occurredAt: observedAt,
+						}),
 					});
-					return retaken.affectedRows === 0
-						? { state: 'in-flight' }
-						: { state: 'claimed' };
+					return { state: 'unknown' };
 				}
 				await transaction.execute({
 					text: INSERT_CALL_KEY,

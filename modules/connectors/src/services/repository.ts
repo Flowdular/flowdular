@@ -56,21 +56,25 @@ export type PendingConnectorAuditEvent = Omit<ConnectorAuditEvent, 'id'>;
 export interface ConnectorCallKeyClaim {
 	/** `<instanceId>:<operation>`; a key is never reused across operations. */
 	readonly operationId: string;
+	/** The owning instance, for tenant-bound audit of an unresolved claim. */
+	readonly instanceId: string;
 	readonly inputDigest: string;
 	readonly claimedAt: number;
-	/** A claim older than this was abandoned and may be taken over. */
+	/** An unbound claim older than this has an unknown external outcome. */
 	readonly staleBefore: number;
 }
 
 /**
  * `claimed` means this attempt owns the key and must make the call; `replay`
  * names the call a previous attempt already produced; `in-flight` means another
- * attempt still holds the claim; `conflict` means the key is bound to a
- * different operation or input.
+ * attempt still holds the claim; `unknown` means a stale unbound claim may
+ * already have reached the provider and cannot be retried; `conflict` means the
+ * key is bound to a different operation or input.
  */
 export type ConnectorCallKeyDecision =
 	| { readonly state: 'claimed' }
 	| { readonly state: 'in-flight' }
+	| { readonly state: 'unknown' }
 	| { readonly state: 'conflict' }
 	| { readonly state: 'replay'; readonly callId: string };
 
@@ -131,6 +135,12 @@ export interface ConnectorsRepository {
 		key: string,
 		claim: ConnectorCallKeyClaim,
 	): Promise<ConnectorCallKeyDecision>;
+	/** Releases only this attempt's unbound claim after a known prewrite failure. */
+	releaseCallKey(
+		tenantId: string,
+		key: string,
+		claimedAt: number,
+	): Promise<boolean>;
 	findCall(tenantId: string, id: string): Promise<ConnectorCall | null>;
 	/**
 	 * Appends the call, moves the instance's last call time and binds the
