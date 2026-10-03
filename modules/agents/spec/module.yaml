@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: agents.core
-specVersion: 0.14.0
+specVersion: 0.15.0
 status: approved
 name: Agentic Core
 description: Provides tenant-created and module-owned business agent definitions, tenant-scoped provider connections, reusable procedures, durable streamed execution, run history, the public run queue used by optional automation modules, and the workspace assistant a member talks to from the header through those same runs and tools.
@@ -25,6 +25,7 @@ provides:
   - agents.run-queue
   - agents.run-execution.v2
   - agents.actions.v1
+  - agents.actions.v2
   - agents.decisions.v1
 requires:
   - id: notifications.publish.v1
@@ -83,6 +84,9 @@ invariants:
   - Workflow agent nodes request an exact retained revision through agents.run-execution.v2. The request is workflow-bound, tenant-bound, idempotent, observable through persisted events, and cancellable through the same capability.
   - A structured-output run starts only when its pinned provider can guarantee the declared JSON Schema contract. The harness validates the returned JSON again before the worker settles the run.
   - Business actions exposed to workflows are explicit versioned contracts. Only read and workspace-write risks are eligible, input and output are schema checked, and every invocation is persisted before execution.
+  - agents.actions.v2 is an additive public action capability backed by the same registered tools, invocation ledger, and execution handlers as agents.actions.v1. It retains the v1 listWorkflowActions, start, getResult, and requestCancel methods and behavior while its catalogue descriptor adds optional static workflowTemplate metadata and the declared idempotency protection. agents.actions.v1 remains available with its existing descriptor for current consumers; neither capability creates a second action registry or identity space.
+  - A registered tool may declare workflowTemplate only when it has a workflow-eligible versioned action contract. The static metadata contains a label of at most 80 characters, a description of at most 240 characters, and effect local or connector-egress, with no executable code, credential, or tenant value. Invalid or duplicate metadata fails composition with a stable diagnostic. The v2 descriptor preserves bounded input and output schemas, required permissions, risk, idempotency mode and protection, timeout, cancellation policy, contract version, and the safety-significant template effect, so consumers can pin the complete execution and egress contract without reading the tool registry directly. Label and description are presentation copy and may change without a contract version bump.
+  - The v2 action catalogue preserves writeOnly, x-flowdular-secret, and legacy x-coreloom-secret annotations in both input and output schemas without including any secret value. At any nested schema field, including array items and schema alternatives, a marked secret field may not carry default, const, enum, example, or examples data; an unsafe workflow-eligible action is refused from the catalogue even without a template. A tool whose template requires a raw secret input is ineligible for workflow authoring and registration fails with a safe diagnostic. Such a tool must instead expose a nonsecret opaque reference and resolve the credential through its own tenant-bound vault, connector instance, or declared capability. An absent template with safe schemas stays eligible for the generic action editor under the existing workflow risk rules.
   - Workflow action invocations receive a trusted actor, permission snapshot, idempotency key, and AbortSignal. Secrets, raw input, and raw output never enter audit metadata.
   - Every request-time read and write runs on a tenant-scoped database handle. The worker recovery polls are the only cross-tenant reads, they run on a separate read-only role, and the module agent catalog is reconciled at boot on the schema-owner lease that runs migrations.
   - Run outcome notifications are an optional integration. When a durable run reaches a terminal state the worker resolves notifications.publish.v1 from the platform capability registry at that moment, never at composition time, and publishes the outcome keyed by the run id. notifications.core is never a declared dependency. An absent capability, a run with no person behind it, and a run a workflow owns publish nothing. A publisher failure is logged once at warning level and never changes the settled run, and a repeated terminal step reports the same outcome instead of a second notification.
@@ -309,6 +313,14 @@ acceptanceScenarios:
     given: A registered tool opts into workflow use with schemas, a positive contract version, read or workspace-write risk, required idempotency, and a cancellation policy.
     when: A workflow starts the action with a trusted actor and sufficient permission snapshot.
     then: The invocation is persisted before execution, repeated input returns the original invocation, different input conflicts, and output is schema checked before settlement.
+  - id: AGENTS-WORKFLOW-TEMPLATE-CATALOG
+    given: A module registers a workflow-eligible action with bounded schemas, permissions, idempotency protection, timeout, cancellation policy, and valid workflowTemplate metadata.
+    when: A caller lists actions through agents.actions.v2 and an existing caller lists through agents.actions.v1.
+    then: V2 returns a safe immutable descriptor with the exact optional template and full executable contract, V1 keeps its prior descriptor, and both invoke the same action identity and durable ledger; no direct tool-registry lookup or second handler is needed.
+  - id: AGENTS-WORKFLOW-TEMPLATE-REJECT
+    given: A registered action template has a duplicate identity, invalid label or effect, a required raw writeOnly or secret input, or an ineligible risk or idempotency contract; a workflow-eligible action with or without a template has a nested input or output schema field marked secret or writeOnly that contains default, const, enum, example, or examples data.
+    when: The platform composes that module and builds the workflow action catalogue.
+    then: Composition or catalogue registration fails with a stable safe diagnostic before the action can appear in a workflow, and no credential or schema-marked secret value enters the descriptor or audit trail.
   - id: AGENTS-ACTION-DENY
     given: A tool is destructive, external, incomplete, targets another tenant, lacks a required permission, or receives invalid input.
     when: A workflow attempts to list, start, observe, or cancel it.

@@ -39,6 +39,14 @@ export function pointerCatalog(
 			truncated = true;
 			return;
 		}
+		if (
+			value.writeOnly === true ||
+			value['x-flowdular-secret'] === true ||
+			value['x-coreloom-secret'] === true
+		) {
+			incomplete = true;
+			return;
+		}
 		const type =
 			typeof value.type === 'string'
 				? value.type

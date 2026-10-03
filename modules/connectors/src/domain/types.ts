@@ -171,6 +171,7 @@ export const CONNECTOR_AUDIT_ACTIONS = [
 	'instance.enabled',
 	'instance.disabled',
 	'instance.deleted',
+	'call.outcome-unknown',
 ] as const;
 export type ConnectorAuditAction = (typeof CONNECTOR_AUDIT_ACTIONS)[number];
 

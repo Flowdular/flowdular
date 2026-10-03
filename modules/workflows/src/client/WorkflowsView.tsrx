@@ -51,8 +51,10 @@ import {
 	simulateWorkflow,
 	updateWorkflowDraft,
 	validateWorkflowGraph,
+	type WorkflowActionCatalogItem,
 } from './api.ts';
 import {
+	addWorkflowActionTemplate,
 	addWorkflowNode,
 	connectWorkflowNodes,
 	moveWorkflowNode,
@@ -67,6 +69,7 @@ import {
 import { runActions } from './run-actions.ts';
 import { repairCanvasIdentifiers } from './draft-repair.ts';
 import {
+	addConnectedActionTemplate,
 	addConnectedNode,
 	type ConnectedNodeRequest,
 } from './connected-node.ts';
@@ -529,6 +532,21 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 		setSelectedEdgeId('');
 	};
 
+	const addAction = (
+		action: WorkflowActionCatalogItem,
+		request?: ConnectedNodeRequest,
+	) => {
+		if (!graph || !action.workflowTemplate) return;
+		const added =
+			request
+				? addConnectedActionTemplate(graph, action, request)
+				: addWorkflowActionTemplate(graph, action);
+		if (!added) return;
+		changeGraph(added.graph);
+		setSelectedNodeId(added.nodeId);
+		setSelectedEdgeId('');
+	};
+
 	const finishConnection = (nodeId: string, port: string) => {
 		if (!graph || !connectionSource) {
 			setNotice(t('workflows.canvas.chooseOutputFirst'));
@@ -938,6 +956,7 @@ export function WorkflowsView(props: WorkflowsViewProps) @{
 						setDirty(true);
 					}}
 					onAddNode={addNode}
+					onAddAction={addAction}
 					onReplaceGraph={changeGraph}
 					onSelectNode={(nodeId) => {
 						setSelectedNodeId(nodeId);

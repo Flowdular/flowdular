@@ -1,21 +1,24 @@
+import { randomUUID } from 'node:crypto';
 import { createPlatformCapabilityRegistry, userActor } from '@flowdular/kernel';
 import {
-	AGENT_ACTION_EXECUTION_CAPABILITY,
+	AGENT_ACTION_EXECUTION_CAPABILITY_V2,
 	AGENT_RUN_EXECUTION_CAPABILITY,
 	type ActionExecutionResult,
-	type AgentActionExecutionCapability,
+	type AgentActionExecutionCapabilityV2,
 	type AgentRevisionExecutionCapability,
 } from '@flowdular/module-agents/server';
 import { describe, expect, it } from 'vitest';
 import { WORKFLOWS_PERMISSIONS } from '../src/acl/permissions.ts';
 import type { JsonValue, WorkflowGraphV1 } from '../src/domain/types.ts';
 import { WORKFLOW_LIMITS } from '../src/domain/types.ts';
+import { workflowGraphChecksum } from '../src/domain/graph.ts';
 import {
 	assertProductionWorkflowSecrets,
 	createWorkflowsRuntime,
 } from '../src/server/runtime.ts';
 import { safePayloadEvidence } from '../src/services/payload-codec.ts';
 import { createWorkflowPayloadCodec } from '../src/services/payload-codec.ts';
+import { projectWorkflowRunEvidence } from '../src/services/evidence-policy.ts';
 import { WorkflowsService } from '../src/services/workflows-service.ts';
 import type { CreateWorkflowRunWrite } from '../src/services/repository.ts';
 import {
@@ -244,6 +247,25 @@ function actionGraph(
 	};
 }
 
+function actionGraphWithBinding(
+	binding: NonNullable<
+		Extract<WorkflowGraphV1['nodes'][number], { type: 'action' }>['mappings']
+	>[number]['binding'],
+): WorkflowGraphV1 {
+	const base = actionGraph();
+	return {
+		...base,
+		nodes: base.nodes.map((node) =>
+			node.type === 'action'
+				? {
+						...node,
+						mappings: [{ targetPointer: '/credential', binding }],
+					}
+				: node,
+		),
+	};
+}
+
 function context() {
 	return {
 		tenantId: 'tenant-a',
@@ -304,7 +326,7 @@ function dependencies(result: { current: JsonValue | null }) {
 					},
 		requestCancel: async () => true,
 	};
-	const actions: AgentActionExecutionCapability = {
+	const actions: AgentActionExecutionCapabilityV2 = {
 		listWorkflowActions: async () => [],
 		start: async () => ({ actionInvocationId: 'action-1', created: true }),
 		getResult: async () => null,
@@ -328,7 +350,7 @@ function actionDependencies(result: { current: ActionExecutionResult | null }) {
 	const actionInvocations = new Map<string, string>();
 	const startKeys: string[] = [];
 	const agent = dependencies({ current: null }).agents;
-	const actions: AgentActionExecutionCapability = {
+	const actions: AgentActionExecutionCapabilityV2 = {
 		listWorkflowActions: async () => [
 			{
 				id: 'catalog.items.create',
@@ -417,6 +439,21 @@ describe('workflow backend contracts', () => {
 			expect(JSON.stringify(evidence)).not.toContain('denied');
 		},
 	);
+
+	it('keeps secret-marked oversized evidence preview-free', () => {
+		const evidence = safePayloadEvidence(
+			{ note: 'x'.repeat(9 * 1024), token: 'private-token' },
+			'schema.large',
+			{ schema: { type: 'object' } },
+		);
+		expect(evidence).toMatchObject({
+			state: 'truncated',
+			reason: 'size-limit',
+			originalByteSize: expect.any(Number),
+		});
+		expect(evidence).not.toHaveProperty('preview');
+		expect(JSON.stringify(evidence)).not.toContain('private-token');
+	});
 
 	it('refuses production startup without both stable workflow secrets', async () => {
 		expect(() =>
@@ -664,7 +701,7 @@ describe('workflow backend contracts', () => {
 		const registry = createPlatformCapabilityRegistry();
 		const fake = dependencies({ current: null });
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
-		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, {
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, {
 			...fake.actions,
 			listWorkflowActions: () => [
 				{
@@ -739,7 +776,7 @@ describe('workflow backend contracts', () => {
 		const fake = dependencies({ current: null });
 		const registry = createPlatformCapabilityRegistry();
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
-		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, fake.actions);
 		const runtime = createWorkflowsTestRuntime({
 			capabilities: registry,
 			payloadKey: Buffer.alloc(32, 66),
@@ -760,6 +797,1257 @@ describe('workflow backend contracts', () => {
 			{ code: 'WORKFLOW_AGENT_TOOL_GRANT_NOT_ALLOWED' },
 		]);
 		await runtime.dispose();
+	});
+
+	it('WORKFLOW-CUSTOM-NODE-CONNECTOR-UNKNOWN refuses the unsafe connector action version even when it is registered', async () => {
+		const fake = actionDependencies({ current: null });
+		const registry = createPlatformCapabilityRegistry();
+		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, {
+			...fake.actions,
+			listWorkflowActions: async () =>
+				(await fake.actions.listWorkflowActions()).map((action) => ({
+					...action,
+					id: 'connectors.call',
+				})),
+		});
+		const runtime = createWorkflowsTestRuntime({
+			capabilities: registry,
+			payloadKey: Buffer.alloc(32, 60),
+			cursorKey: Buffer.alloc(32, 61),
+		});
+		try {
+			const service = await runtime.service();
+			expect(await service.listActionCatalog(context())).toEqual([]);
+			const graph: WorkflowGraphV1 = {
+				...actionGraph(),
+				nodes: actionGraph().nodes.map((node) =>
+					node.type === 'action'
+						? {
+								...node,
+								action: { actionId: 'connectors.call', contractVersion: 1 },
+							}
+						: node,
+				),
+			};
+			const report = await service.validate(graph, context());
+			expect(report.valid).toBe(false);
+			expect(report.issues).toContainEqual(
+				expect.objectContaining({ code: 'WORKFLOW_ACTION_VERSION_UNSAFE' }),
+			);
+			const created = await service.create(
+				'tenant-a',
+				{ key: 'unsafe-connector', name: 'Unsafe connector', description: '' },
+				actor,
+			);
+			await service.update(
+				'tenant-a',
+				{
+					workflowId: created.definition.id,
+					expectedRevision: 1,
+					name: 'Unsafe connector',
+					description: '',
+					graph,
+				},
+				actor,
+			);
+			await expect(
+				service.publish(
+					'tenant-a',
+					created.definition.id,
+					2,
+					actor,
+					permissions,
+				),
+			).rejects.toMatchObject({ code: 'WORKFLOW_GRAPH_INVALID' });
+		} finally {
+			await runtime.dispose();
+		}
+	});
+
+	it('WORKFLOW-CUSTOM-NODE-CONNECTOR-REPLAY maps only replay-stable connector fields', async () => {
+		const fake = actionDependencies({ current: null });
+		const registry = createPlatformCapabilityRegistry();
+		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, {
+			...fake.actions,
+			listWorkflowActions: async () =>
+				(await fake.actions.listWorkflowActions()).map((action) => ({
+					...action,
+					id: 'connectors.call',
+					contractVersion: 2,
+				})),
+		});
+		const runtime = createWorkflowsTestRuntime({
+			capabilities: registry,
+			payloadKey: Buffer.alloc(32, 72),
+			cursorKey: Buffer.alloc(32, 73),
+		});
+		try {
+			const service = await runtime.service();
+			const base = actionGraph();
+			const mapped = (pointer: string): WorkflowGraphV1 => ({
+				...base,
+				nodes: base.nodes.map((node) =>
+					node.type === 'action'
+						? {
+								...node,
+								action: { actionId: 'connectors.call', contractVersion: 2 },
+							}
+						: node.id === 'output.success'
+							? {
+									...node,
+									mappings: [
+										{
+											targetPointer: '/callId',
+											binding: {
+												kind: 'path',
+												sourceNodeId: 'action.create',
+												sourcePort: 'success',
+												pointer,
+											},
+										},
+									],
+								}
+							: node,
+				),
+			});
+			for (const pointer of ['/body', '/replayed']) {
+				expect(
+					(await service.validate(mapped(pointer), context())).issues,
+				).toContainEqual(
+					expect.objectContaining({
+						code: 'WORKFLOW_CONNECTOR_OUTPUT_UNSTABLE',
+					}),
+				);
+			}
+			for (const pointer of ['/callId', '/outcome']) {
+				expect((await service.validate(mapped(pointer), context())).valid).toBe(
+					true,
+				);
+			}
+		} finally {
+			await runtime.dispose();
+		}
+	});
+
+	it('WORKFLOW-CUSTOM-NODE-CONNECTOR-REPLAY omits provider bodies on first result and replay', async () => {
+		const output = (replayed: boolean): JsonValue => ({
+			name: 'Ada',
+			callId: 'call-1',
+			outcome: 'succeeded',
+			body: replayed ? null : { customerName: 'provider-private-person' },
+			bodyOmitted: replayed,
+			replayed,
+			durationMs: replayed ? 0 : 30,
+		});
+		const result: { current: ActionExecutionResult | null } = {
+			current: {
+				actionInvocationId: 'replaced-by-fake',
+				status: 'succeeded',
+				output: output(false),
+			},
+		};
+		const fake = actionDependencies(result);
+		const registry = createPlatformCapabilityRegistry();
+		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, {
+			...fake.actions,
+			listWorkflowActions: async () =>
+				(await fake.actions.listWorkflowActions()).map((action) => ({
+					...action,
+					id: 'connectors.call',
+					contractVersion: 2,
+				})),
+		});
+		const runtime = createWorkflowsTestRuntime({
+			capabilities: registry,
+			payloadKey: Buffer.alloc(32, 74),
+			cursorKey: Buffer.alloc(32, 75),
+			worker: { pollMs: 250, leaseMs: 1_000 },
+		});
+		try {
+			const service = await runtime.service();
+			const base = actionGraph();
+			const graph: WorkflowGraphV1 = {
+				...base,
+				nodes: base.nodes.map((node) =>
+					node.type === 'action'
+						? {
+								...node,
+								action: { actionId: 'connectors.call', contractVersion: 2 },
+							}
+						: node,
+				),
+			};
+			const created = await service.create(
+				'tenant-a',
+				{ key: 'connector-body', name: 'Connector body', description: '' },
+				actor,
+			);
+			await service.update(
+				'tenant-a',
+				{
+					workflowId: created.definition.id,
+					expectedRevision: 1,
+					name: 'Connector body',
+					description: '',
+					graph,
+				},
+				actor,
+			);
+			const scoped = [...permissions, 'catalog.items.manage'];
+			await service.publish(
+				'tenant-a',
+				created.definition.id,
+				2,
+				actor,
+				scoped,
+			);
+			runtime.start();
+			const previews: JsonValue[] = [];
+			const leakedPaths = (value: unknown, needle: string): string[] => {
+				const found: string[] = [];
+				const visit = (entry: unknown, path: string): void => {
+					if (typeof entry === 'string' && entry.includes(needle)) {
+						found.push(path);
+						return;
+					}
+					if (Array.isArray(entry)) {
+						entry.forEach((item, index) =>
+							visit(
+								item,
+								`${path}[${(item as { nodeId?: string })?.nodeId ?? index}]`,
+							),
+						);
+						return;
+					}
+					if (entry && typeof entry === 'object') {
+						for (const [key, item] of Object.entries(entry))
+							visit(item, `${path}.${key}`);
+					}
+				};
+				visit(value, 'detail');
+				return found;
+			};
+			for (const replayed of [false, true]) {
+				result.current = {
+					actionInvocationId: 'replaced-by-fake',
+					status: 'succeeded',
+					output: output(replayed),
+				};
+				const accepted = await service.enqueue(
+					{
+						workflowKey: 'connector-body',
+						input: { name: 'Ada', input: { body: 'provider-input-secret' } },
+						idempotencyKey: `connector-body:${replayed}`,
+					},
+					{ ...context(), permissionSnapshot: scoped },
+				);
+				await waitFor(
+					async () =>
+						(await service.getRun('tenant-a', accepted.runId))?.status ===
+						'succeeded',
+					4_000,
+				);
+				const detail = await service.getRunDetail('tenant-a', accepted.runId);
+				expect(JSON.stringify(detail)).not.toContain('provider-private-person');
+				expect(leakedPaths(detail, 'provider-input-secret')).toEqual([]);
+				expect(
+					leakedPaths(
+						await service.readEvents('tenant-a', accepted.runId, 0),
+						'provider-input-secret',
+					),
+				).toEqual([]);
+				const action = detail.nodes.find(
+					(node) => node.nodeId === 'action.create',
+				);
+				previews.push(action?.attempts[0]?.output.preview ?? null);
+				expect(action?.attempts[0]?.output.preview).toMatchObject({
+					callId: 'call-1',
+					outcome: 'succeeded',
+					body: null,
+					bodyOmitted: true,
+				});
+				if (!replayed) {
+					const historical = safePayloadEvidence(
+						{ body: 'historical-provider-response' },
+						'schema.data',
+					);
+					const projected = projectWorkflowRunEvidence({
+						...detail,
+						output: historical,
+						nodes: detail.nodes.map((node) => ({
+							...node,
+							attempts: node.attempts.map((attempt) => ({
+								...attempt,
+								output: historical,
+							})),
+						})),
+						edges: detail.edges.map((edge) => ({
+							...edge,
+							evidence: historical,
+						})),
+						events: detail.events.map((event) => ({
+							...event,
+							payload: {
+								...event.payload,
+								evidence: historical as unknown as JsonValue,
+							},
+						})),
+					});
+					expect(JSON.stringify(projected)).not.toContain(
+						'historical-provider-response',
+					);
+				}
+			}
+			expect((previews[0] as Record<string, unknown>)['body']).toEqual(
+				(previews[1] as Record<string, unknown>)['body'],
+			);
+			expect(
+				JSON.stringify(
+					(await (await runtime.repository()).listAudit('tenant-a', AUDIT_PAGE))
+						.items,
+				),
+			).not.toContain('provider-private-person');
+			expect(
+				JSON.stringify(
+					(await (await runtime.repository()).listAudit('tenant-a', AUDIT_PAGE))
+						.items,
+				),
+			).not.toContain('provider-input-secret');
+		} finally {
+			await runtime.dispose();
+		}
+	});
+
+	it.each(['timeout', 'cancellation', 'effect'] as const)(
+		'WORKFLOW-CUSTOM-NODE-CONTRACT-DRIFT refuses %s changes under a pinned action version',
+		async (changedField) => {
+			const fake = actionDependencies({ current: null });
+			let changed = false;
+			let renamed = false;
+			const registry = createPlatformCapabilityRegistry();
+			registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
+			registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, {
+				...fake.actions,
+				listWorkflowActions: async () =>
+					(await fake.actions.listWorkflowActions()).map((action) => ({
+						...action,
+						timeoutMs: changed && changedField === 'timeout' ? 2_000 : 1_000,
+						cancellation:
+							changed && changedField === 'cancellation'
+								? ('not-supported' as const)
+								: action.cancellation,
+						workflowTemplate: {
+							label: renamed ? 'Renamed action' : 'Create item',
+							description: 'Creates one item',
+							effect:
+								changed && changedField === 'effect'
+									? ('connector-egress' as const)
+									: ('local' as const),
+						},
+					})),
+			});
+			const runtime = createWorkflowsTestRuntime({
+				capabilities: registry,
+				payloadKey: Buffer.alloc(32, 70),
+				cursorKey: Buffer.alloc(32, 71),
+			});
+			try {
+				const service = await runtime.service();
+				const scoped = {
+					...context(),
+					permissionSnapshot: [...permissions, 'catalog.items.manage'],
+				};
+				const catalog = await service.listActionCatalog(scoped);
+				expect(catalog).toMatchObject([
+					{
+						workflowTemplate: { label: 'Create item', effect: 'local' },
+						inputSchema: schema,
+						outputSchema: schema,
+						timeoutMs: 1_000,
+						cancellation: 'cooperative',
+						descriptorDigest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+					},
+				]);
+				const descriptorDigest = (catalog[0] as { descriptorDigest: string })
+					.descriptorDigest;
+				const base = actionGraph();
+				const graph: WorkflowGraphV1 = {
+					...base,
+					nodes: base.nodes.map((node) =>
+						node.type === 'action'
+							? {
+									...node,
+									action: { ...node.action, descriptorDigest },
+								}
+							: node,
+					),
+				};
+				expect((await service.validate(graph, scoped)).valid).toBe(true);
+				expect(
+					(
+						await service.validate(
+							{
+								...graph,
+								schemas: {
+									...graph.schemas,
+									'schema.data': { type: 'object' },
+								},
+							},
+							scoped,
+						)
+					).issues,
+				).toContainEqual(
+					expect.objectContaining({ code: 'WORKFLOW_ACTION_SCHEMA_MISMATCH' }),
+				);
+				const created = await service.create(
+					'tenant-a',
+					{
+						key: `contract-${changedField}`,
+						name: 'Contract pin',
+						description: '',
+					},
+					actor,
+				);
+				await service.update(
+					'tenant-a',
+					{
+						workflowId: created.definition.id,
+						expectedRevision: 1,
+						name: 'Contract pin',
+						description: '',
+						graph,
+					},
+					actor,
+				);
+				await service.publish(
+					'tenant-a',
+					created.definition.id,
+					2,
+					actor,
+					scoped.permissionSnapshot,
+				);
+				renamed = true;
+				expect((await service.validate(graph, scoped)).valid).toBe(true);
+				changed = true;
+				const report = await service.validate(graph, scoped);
+				expect(report.issues).toContainEqual(
+					expect.objectContaining({ code: 'WORKFLOW_ACTION_CONTRACT_DRIFT' }),
+				);
+				if (changedField === 'effect') {
+					expect(report.issues).toContainEqual(
+						expect.objectContaining({
+							code: 'WORKFLOW_ACTION_IDEMPOTENCY_UNSAFE',
+						}),
+					);
+				}
+				await expect(
+					service.enqueue(
+						{
+							workflowKey: `contract-${changedField}`,
+							input: { name: 'Ada' },
+							idempotencyKey: `contract-${changedField}:1`,
+						},
+						scoped,
+					),
+				).rejects.toMatchObject({ code: 'WORKFLOW_GRAPH_INVALID' });
+				expect(fake.starts()).toBe(0);
+			} finally {
+				await runtime.dispose();
+			}
+		},
+	);
+
+	it('WORKFLOW-CUSTOM-NODE-COMPAT retains an old pinned action while a new identity is added', async () => {
+		const result: { current: ActionExecutionResult | null } = {
+			current: {
+				actionInvocationId: 'replaced-by-fake',
+				status: 'succeeded',
+				output: { name: 'Ada' },
+			},
+		};
+		const fake = actionDependencies(result);
+		let installed = ['catalog.items.old'];
+		const registry = createPlatformCapabilityRegistry();
+		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, {
+			...fake.actions,
+			listWorkflowActions: async () => {
+				const [base] = await fake.actions.listWorkflowActions();
+				return installed.map((id) => ({
+					...base!,
+					id,
+					workflowTemplate: {
+						label: id,
+						description: id,
+						effect: 'local' as const,
+					},
+				}));
+			},
+		});
+		const runtime = createWorkflowsTestRuntime({
+			capabilities: registry,
+			payloadKey: Buffer.alloc(32, 76),
+			cursorKey: Buffer.alloc(32, 77),
+			worker: { pollMs: 250, leaseMs: 1_000 },
+		});
+		try {
+			const service = await runtime.service();
+			const scoped = {
+				...context(),
+				permissionSnapshot: [...permissions, 'catalog.items.manage'],
+			};
+			const pinned = async (actionId: string): Promise<WorkflowGraphV1> => {
+				const catalog = await service.listActionCatalog(scoped);
+				const digest = (
+					catalog.find(
+						(action) => (action as { actionId: string }).actionId === actionId,
+					) as { descriptorDigest: string }
+				).descriptorDigest;
+				const base = actionGraph();
+				return {
+					...base,
+					nodes: base.nodes.map((node) =>
+						node.type === 'action'
+							? {
+									...node,
+									action: {
+										actionId,
+										contractVersion: 1,
+										descriptorDigest: digest,
+									},
+								}
+							: node,
+					),
+				};
+			};
+			const created = await service.create(
+				'tenant-a',
+				{ key: 'compatible-nodes', name: 'Compatible nodes', description: '' },
+				actor,
+			);
+			await service.update(
+				'tenant-a',
+				{
+					workflowId: created.definition.id,
+					expectedRevision: 1,
+					name: 'Compatible nodes',
+					description: '',
+					graph: await pinned('catalog.items.old'),
+				},
+				actor,
+			);
+			await service.publish(
+				'tenant-a',
+				created.definition.id,
+				2,
+				actor,
+				scoped.permissionSnapshot,
+			);
+			installed = ['catalog.items.old', 'catalog.items.new'];
+			const nextGraph = await pinned('catalog.items.new');
+			expect((await service.validate(nextGraph, scoped)).valid).toBe(true);
+			runtime.start();
+			const accepted = await service.enqueue(
+				{
+					workflowKey: 'compatible-nodes',
+					input: { name: 'Ada' },
+					idempotencyKey: 'compatible-nodes:1',
+				},
+				scoped,
+			);
+			await waitFor(
+				async () =>
+					(await service.getRun('tenant-a', accepted.runId))?.status ===
+					'succeeded',
+				4_000,
+			);
+			installed = ['catalog.items.new'];
+			await expect(
+				service.enqueue(
+					{
+						workflowKey: 'compatible-nodes',
+						input: { name: 'Ada' },
+						idempotencyKey: 'compatible-nodes:2',
+					},
+					scoped,
+				),
+			).rejects.toMatchObject({ code: 'WORKFLOW_GRAPH_INVALID' });
+			expect(fake.starts()).toBe(1);
+		} finally {
+			await runtime.dispose();
+		}
+	});
+
+	it('WORKFLOW-CUSTOM-NODE-GOLDEN repeats synthetic action paths without invoking the handler', async () => {
+		const fake = actionDependencies({ current: null });
+		const registry = createPlatformCapabilityRegistry();
+		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, {
+			...fake.actions,
+			listWorkflowActions: async () =>
+				(await fake.actions.listWorkflowActions()).map((action) => ({
+					...action,
+					workflowTemplate: {
+						label: 'Create item',
+						description: 'Creates an item',
+						effect: 'local' as const,
+					},
+				})),
+		});
+		const runtime = createWorkflowsTestRuntime({
+			capabilities: registry,
+			payloadKey: Buffer.alloc(32, 78),
+			cursorKey: Buffer.alloc(32, 79),
+		});
+		try {
+			const service = await runtime.service();
+			const scoped = {
+				...context(),
+				permissionSnapshot: [...permissions, 'catalog.items.manage'],
+			};
+			const catalog = await service.listActionCatalog(scoped);
+			const base = actionGraph();
+			const graph: WorkflowGraphV1 = {
+				...base,
+				nodes: base.nodes.map((node) =>
+					node.type === 'action'
+						? {
+								...node,
+								action: {
+									...node.action,
+									descriptorDigest: (catalog[0] as { descriptorDigest: string })
+										.descriptorDigest,
+								},
+							}
+						: node,
+				),
+			};
+			const created = await service.create(
+				'tenant-a',
+				{ key: 'golden-node', name: 'Golden node', description: '' },
+				actor,
+			);
+			await service.update(
+				'tenant-a',
+				{
+					workflowId: created.definition.id,
+					expectedRevision: 1,
+					name: 'Golden node',
+					description: '',
+					graph,
+				},
+				actor,
+			);
+			const semantic = (
+				detail: Awaited<ReturnType<typeof service.simulate>>,
+			) => ({
+				status: detail.run.status,
+				failureCode: detail.run.failureCode,
+				nodes: detail.nodes.map((node) => ({
+					nodeId: node.nodeId,
+					attempts: node.attempts.map((attempt) => ({
+						status: attempt.status,
+						outcomePort: attempt.outcomePort,
+						failureCode: attempt.failureCode,
+					})),
+				})),
+				edges: detail.edges.map((edge) => ({
+					edgeId: edge.edgeId,
+					state: edge.state,
+				})),
+			});
+			for (const fixture of [
+				{
+					nodeId: 'action.create',
+					outcomePort: 'success',
+					output: { name: 'Ada' },
+				},
+				{
+					nodeId: 'action.create',
+					outcomePort: 'failure',
+					output: { code: 'INVALID' },
+				},
+				{ nodeId: 'action.create', failureCode: 'BUSINESS_RULE' },
+			]) {
+				const request = {
+					workflowId: created.definition.id,
+					input: { name: 'Ada' },
+					fixtures: [{ ...fixture, simulatedDurationMs: 15 }],
+				};
+				const first = await service.simulate(request, scoped);
+				const second = await service.simulate(request, scoped);
+				expect(semantic(first)).toEqual(semantic(second));
+				expect(
+					first.events.some((event) => event.virtualOffsetMs !== undefined),
+				).toBe(true);
+			}
+			expect(fake.starts()).toBe(0);
+		} finally {
+			await runtime.dispose();
+		}
+	});
+
+	it.each([
+		['literal', { kind: 'literal', value: 'legacy-secret-token' }],
+		[
+			'template',
+			{ kind: 'template', template: 'legacy-secret-token', variables: [] },
+		],
+		[
+			'path',
+			{
+				kind: 'path',
+				sourceNodeId: 'input.start',
+				sourcePort: 'data',
+				pointer: '/name',
+			},
+		],
+	] as const)(
+		'WORKFLOW-CUSTOM-NODE-SECRET-DENY refuses a %s binding before draft persistence',
+		async (_kind, binding) => {
+			const fake = actionDependencies({ current: null });
+			const registry = createPlatformCapabilityRegistry();
+			registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
+			registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, {
+				...fake.actions,
+				listWorkflowActions: async () =>
+					(await fake.actions.listWorkflowActions()).map((action) => ({
+						...action,
+						inputSchema: {
+							type: 'object',
+							properties: {
+								name: { type: 'string' },
+								credential: { type: 'string', writeOnly: true },
+							},
+						},
+					})),
+			});
+			const runtime = createWorkflowsTestRuntime({
+				capabilities: registry,
+				payloadKey: Buffer.alloc(32, 64),
+				cursorKey: Buffer.alloc(32, 65),
+			});
+			try {
+				const service = await runtime.service();
+				const graph = actionGraphWithBinding(binding);
+				const report = await service.validate(graph, context());
+				expect(report.issues).toContainEqual(
+					expect.objectContaining({ code: 'WORKFLOW_ACTION_SECRET_BINDING' }),
+				);
+				const created = await service.create(
+					'tenant-a',
+					{ key: 'secret-action', name: 'Secret action', description: '' },
+					actor,
+				);
+				await expect(
+					service.update(
+						'tenant-a',
+						{
+							workflowId: created.definition.id,
+							expectedRevision: 1,
+							name: 'Secret action',
+							description: '',
+							graph,
+						},
+						actor,
+					),
+				).rejects.toMatchObject({ code: 'WORKFLOW_ACTION_SECRET_BINDING' });
+				const stored = await (
+					await runtime.repository()
+				).definitionDetail('tenant-a', created.definition.id);
+				expect(stored?.revisions).toHaveLength(1);
+				expect(JSON.stringify(stored)).not.toContain('legacy-secret-token');
+			} finally {
+				await runtime.dispose();
+			}
+		},
+	);
+
+	it.each([
+		{ additionalProperties: { type: 'string', 'x-flowdular-secret': true } },
+		{
+			patternProperties: {
+				'^credential_': { type: 'string', 'x-flowdular-secret': true },
+			},
+		},
+	])(
+		'refuses a secret-marked dynamic action input field',
+		async (dynamicFields) => {
+			const fake = actionDependencies({ current: null });
+			const registry = createPlatformCapabilityRegistry();
+			registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
+			registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, {
+				...fake.actions,
+				listWorkflowActions: async () =>
+					(await fake.actions.listWorkflowActions()).map((action) => ({
+						...action,
+						inputSchema: { type: 'object', ...dynamicFields },
+					})),
+			});
+			const runtime = createWorkflowsTestRuntime({
+				capabilities: registry,
+				payloadKey: Buffer.alloc(32, 80),
+				cursorKey: Buffer.alloc(32, 81),
+			});
+			try {
+				const base = actionGraphWithBinding({
+					kind: 'literal',
+					value: 'token',
+				});
+				const graph = {
+					...base,
+					nodes: base.nodes.map((node) =>
+						node.type === 'action'
+							? {
+									...node,
+									mappings: [
+										{
+											targetPointer: '/credential_dynamic',
+											binding: { kind: 'literal' as const, value: 'token' },
+										},
+									],
+								}
+							: node,
+					),
+				};
+				const service = await runtime.service();
+				const report = await service.validate(graph, context());
+				expect(report.issues).toContainEqual(
+					expect.objectContaining({
+						code: 'WORKFLOW_ACTION_SECRET_BINDING',
+					}),
+				);
+			} finally {
+				await runtime.dispose();
+			}
+		},
+	);
+
+	it('WORKFLOW-CUSTOM-NODE-SECRET-LEGACY projects every historical graph and refuses unsafe preflight', async () => {
+		const token = 'legacy-secret-token';
+		const fake = actionDependencies({ current: null });
+		const registry = createPlatformCapabilityRegistry();
+		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, {
+			...fake.actions,
+			listWorkflowActions: async () =>
+				(await fake.actions.listWorkflowActions()).map((action) => ({
+					...action,
+					inputSchema: {
+						type: 'object',
+						properties: {
+							name: { type: 'string' },
+							credential: { type: 'string', 'x-flowdular-secret': true },
+						},
+					},
+				})),
+		});
+		const runtime = createWorkflowsTestRuntime({
+			capabilities: registry,
+			payloadKey: Buffer.alloc(32, 68),
+			cursorKey: Buffer.alloc(32, 69),
+		});
+		try {
+			const service = await runtime.service();
+			const repository = await runtime.repository();
+			const created = await service.create(
+				'tenant-a',
+				{ key: 'legacy-secret', name: 'Legacy secret', description: '' },
+				actor,
+			);
+			const secretGraph = actionGraphWithBinding({
+				kind: 'literal',
+				value: token,
+			});
+			const legacyRevision = {
+				...created.draft,
+				id: randomUUID(),
+				revision: 2,
+				graph: secretGraph,
+				graphChecksum: workflowGraphChecksum(secretGraph),
+			};
+			await repository.saveDraft({
+				definition: { ...created.definition, currentDraftRevision: 2 },
+				revision: legacyRevision,
+				expectedRevision: 1,
+				actor,
+				origin: { kind: 'manual' },
+			});
+			const known = await service.detail('tenant-a', created.definition.id);
+			expect(JSON.stringify(known)).not.toContain(token);
+			expect(known.draft.graphDiagnostics).toContainEqual({
+				code: 'WORKFLOW_ACTION_SECRET_BINDING',
+				nodeId: 'action.create',
+				targetPointer: '/credential',
+			});
+			await repository.publish(
+				'tenant-a',
+				created.definition.id,
+				2,
+				actor,
+				{ kind: 'manual' },
+				Date.now(),
+			);
+			await expect(
+				service.enqueue(
+					{
+						workflowKey: 'legacy-secret',
+						input: { name: 'Ada' },
+						idempotencyKey: 'legacy-secret:1',
+					},
+					context(),
+				),
+			).rejects.toMatchObject({ code: 'WORKFLOW_GRAPH_INVALID' });
+			const missingGraph: WorkflowGraphV1 = {
+				...secretGraph,
+				nodes: secretGraph.nodes.map((node) =>
+					node.type === 'action'
+						? {
+								...node,
+								action: { actionId: 'missing.action', contractVersion: 1 },
+							}
+						: node,
+				),
+			};
+			await repository.saveDraft({
+				definition: {
+					...created.definition,
+					currentDraftRevision: 3,
+					publishedRevision: 2,
+				},
+				revision: {
+					...legacyRevision,
+					id: randomUUID(),
+					revision: 3,
+					graph: missingGraph,
+					graphChecksum: workflowGraphChecksum(missingGraph),
+				},
+				expectedRevision: 2,
+				actor,
+				origin: { kind: 'manual' },
+			});
+			const unknown = await service.detail('tenant-a', created.definition.id);
+			expect(JSON.stringify(unknown)).not.toContain(token);
+			expect(unknown.draft.graphDiagnostics).toContainEqual({
+				code: 'WORKFLOW_ACTION_SCHEMA_UNAVAILABLE',
+				nodeId: 'action.create',
+				targetPointer: '/credential',
+			});
+			const updated = await service.update(
+				'tenant-a',
+				{
+					workflowId: created.definition.id,
+					expectedRevision: 3,
+					name: 'Legacy secret rotated',
+					description: '',
+					graph: directGraph(),
+				},
+				actor,
+			);
+			expect(JSON.stringify(updated)).not.toContain(token);
+			const published = await service.publish(
+				'tenant-a',
+				created.definition.id,
+				4,
+				actor,
+				permissions,
+			);
+			expect(JSON.stringify(published)).not.toContain(token);
+			const oldRun = queuedLiveRun('tenant-a', randomUUID(), 'Legacy run');
+			await repository.createRun({
+				...oldRun,
+				run: {
+					...oldRun.run,
+					workflowId: created.definition.id,
+					workflowKey: 'legacy-secret',
+					workflowRevision: 2,
+					graph: secretGraph,
+					graphChecksum: workflowGraphChecksum(secretGraph),
+				},
+			});
+			const runDetail = await service.getRunDetail('tenant-a', oldRun.run.id);
+			expect(JSON.stringify(runDetail)).not.toContain(token);
+			expect(runDetail.graphDiagnostics?.[0]?.code).toBe(
+				'WORKFLOW_ACTION_SECRET_BINDING',
+			);
+		} finally {
+			await runtime.dispose();
+		}
+	});
+
+	it('redacts an old binding when its pinned graph schema is secret but the deployed descriptor no longer is', async () => {
+		const token = 'schema-snapshot-secret-token';
+		const fake = actionDependencies({ current: null });
+		const registry = createPlatformCapabilityRegistry();
+		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, {
+			...fake.actions,
+			listWorkflowActions: async () =>
+				(await fake.actions.listWorkflowActions()).map((action) => ({
+					...action,
+					inputSchema: {
+						type: 'object',
+						properties: {
+							name: { type: 'string' },
+							credential: { type: 'string' },
+						},
+					},
+				})),
+		});
+		const runtime = createWorkflowsTestRuntime({
+			capabilities: registry,
+			payloadKey: Buffer.alloc(32, 86),
+			cursorKey: Buffer.alloc(32, 87),
+		});
+		try {
+			const base = actionGraphWithBinding({ kind: 'literal', value: token });
+			const oldGraph: WorkflowGraphV1 = {
+				...base,
+				schemas: {
+					...base.schemas,
+					'schema.data': {
+						type: 'object',
+						properties: {
+							name: { type: 'string' },
+							credential: { type: 'string', writeOnly: true },
+						},
+					},
+				},
+			};
+			const service = await runtime.service();
+			const report = await service.validate(oldGraph, context());
+			expect(report.issues).toContainEqual(
+				expect.objectContaining({ code: 'WORKFLOW_ACTION_SECRET_BINDING' }),
+			);
+			const created = await service.create(
+				'tenant-a',
+				{ key: 'snapshot-secret', name: 'Snapshot secret', description: '' },
+				actor,
+			);
+			const repository = await runtime.repository();
+			await repository.saveDraft({
+				definition: { ...created.definition, currentDraftRevision: 2 },
+				revision: {
+					...created.draft,
+					id: randomUUID(),
+					revision: 2,
+					graph: oldGraph,
+					graphChecksum: workflowGraphChecksum(oldGraph),
+				},
+				expectedRevision: 1,
+				actor,
+				origin: { kind: 'manual' },
+			});
+			expect(
+				JSON.stringify(await service.detail('tenant-a', created.definition.id)),
+			).not.toContain(token);
+		} finally {
+			await runtime.dispose();
+		}
+	});
+
+	it.each([
+		{
+			patternProperties: {
+				'^credential_': { type: 'string', 'x-flowdular-secret': true },
+			},
+		},
+		{ unevaluatedProperties: { type: 'string', 'x-flowdular-secret': true } },
+	])(
+		'refuses a root binding that could include a dynamic secret field',
+		async (dynamicFields) => {
+			const fake = actionDependencies({ current: null });
+			const registry = createPlatformCapabilityRegistry();
+			registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
+			registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, {
+				...fake.actions,
+				listWorkflowActions: async () =>
+					(await fake.actions.listWorkflowActions()).map((action) => ({
+						...action,
+						inputSchema: { type: 'object', ...dynamicFields },
+					})),
+			});
+			const runtime = createWorkflowsTestRuntime({
+				capabilities: registry,
+				payloadKey: Buffer.alloc(32, 82),
+				cursorKey: Buffer.alloc(32, 83),
+			});
+			try {
+				const base = actionGraphWithBinding({
+					kind: 'literal',
+					value: { credential_one: 'token' },
+				});
+				const graph: WorkflowGraphV1 = {
+					...base,
+					nodes: base.nodes.map((node) =>
+						node.type === 'action'
+							? {
+									...node,
+									mappings: [
+										{
+											targetPointer: '',
+											binding: {
+												kind: 'literal',
+												value: { credential_one: 'token' },
+											},
+										},
+									],
+								}
+							: node,
+					),
+				};
+				const service = await runtime.service();
+				const report = await service.validate(graph, context());
+				expect(report.issues).toContainEqual(
+					expect.objectContaining({ code: 'WORKFLOW_ACTION_SECRET_BINDING' }),
+				);
+				const created = await service.create(
+					'tenant-a',
+					{
+						key: 'dynamic-secret-root',
+						name: 'Dynamic secret root',
+						description: '',
+					},
+					actor,
+				);
+				const repository = await runtime.repository();
+				await repository.saveDraft({
+					definition: { ...created.definition, currentDraftRevision: 2 },
+					revision: {
+						...created.draft,
+						id: randomUUID(),
+						revision: 2,
+						graph,
+						graphChecksum: workflowGraphChecksum(graph),
+					},
+					expectedRevision: 1,
+					actor,
+					origin: { kind: 'manual' },
+				});
+				expect(
+					JSON.stringify(
+						await service.detail('tenant-a', created.definition.id),
+					),
+				).not.toContain('token');
+			} finally {
+				await runtime.dispose();
+			}
+		},
+	);
+
+	it('refuses new secret schema values and projects ancestor defaults from legacy graph reads', async () => {
+		const token = 'legacy-schema-secret-token';
+		const base = actionGraph();
+		const secretGraph: WorkflowGraphV1 = {
+			...base,
+			schemas: {
+				...base.schemas,
+				'schema.data': {
+					type: 'object',
+					properties: {
+						name: { type: 'string' },
+						credential: {
+							type: 'string',
+							writeOnly: true,
+							example: token,
+						},
+					},
+					default: { name: 'Ada', credential: token },
+				},
+			},
+		};
+		const runtime = createWorkflowsTestRuntime({
+			payloadKey: Buffer.alloc(32, 76),
+			cursorKey: Buffer.alloc(32, 77),
+		});
+		try {
+			const service = await runtime.service();
+			const created = await service.create(
+				'tenant-a',
+				{
+					key: 'legacy-schema-secret',
+					name: 'Legacy schema secret',
+					description: '',
+				},
+				actor,
+			);
+			const report = await service.validate(secretGraph, context());
+			expect(report.issues).toContainEqual(
+				expect.objectContaining({ code: 'WORKFLOW_SECRET_SCHEMA_VALUE' }),
+			);
+			await expect(
+				service.update(
+					'tenant-a',
+					{
+						workflowId: created.definition.id,
+						expectedRevision: 1,
+						name: 'Legacy schema secret',
+						description: '',
+						graph: secretGraph,
+					},
+					actor,
+				),
+			).rejects.toMatchObject({ code: 'WORKFLOW_SECRET_SCHEMA_VALUE' });
+			const repository = await runtime.repository();
+			await repository.saveDraft({
+				definition: { ...created.definition, currentDraftRevision: 2 },
+				revision: {
+					...created.draft,
+					id: randomUUID(),
+					revision: 2,
+					graph: secretGraph,
+					graphChecksum: workflowGraphChecksum(secretGraph),
+				},
+				expectedRevision: 1,
+				actor,
+				origin: { kind: 'manual' },
+			});
+			const detail = await service.detail('tenant-a', created.definition.id);
+			expect(JSON.stringify(detail)).not.toContain(token);
+			expect(detail.draft.graphDiagnostics).toContainEqual(
+				expect.objectContaining({ code: 'WORKFLOW_SECRET_SCHEMA_VALUE' }),
+			);
+		} finally {
+			await runtime.dispose();
+		}
+	});
+
+	it('refuses a declared action field also covered by a secret pattern schema', async () => {
+		const fake = actionDependencies({ current: null });
+		const registry = createPlatformCapabilityRegistry();
+		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, {
+			...fake.actions,
+			listWorkflowActions: async () =>
+				(await fake.actions.listWorkflowActions()).map((action) => ({
+					...action,
+					inputSchema: {
+						type: 'object',
+						properties: { credential: { type: 'string' } },
+						patternProperties: {
+							'^credential$': { type: 'string', 'x-flowdular-secret': true },
+						},
+					},
+				})),
+		});
+		const runtime = createWorkflowsTestRuntime({
+			capabilities: registry,
+			payloadKey: Buffer.alloc(32, 84),
+			cursorKey: Buffer.alloc(32, 85),
+		});
+		try {
+			const graph = actionGraphWithBinding({ kind: 'literal', value: 'token' });
+			const service = await runtime.service();
+			const report = await service.validate(graph, context());
+			expect(report.issues).toContainEqual(
+				expect.objectContaining({ code: 'WORKFLOW_ACTION_SECRET_BINDING' }),
+			);
+		} finally {
+			await runtime.dispose();
+		}
 	});
 
 	it('does not append audit evidence when optimistic draft save is refused', async () => {
@@ -877,7 +2165,7 @@ describe('workflow backend contracts', () => {
 		const registry = createPlatformCapabilityRegistry();
 		const fake = dependencies({ current: null });
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
-		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, fake.actions);
 		const runtime = createWorkflowsTestRuntime({
 			capabilities: registry,
 			payloadKey: Buffer.alloc(32, 1),
@@ -939,7 +2227,7 @@ describe('workflow backend contracts', () => {
 		const fake = dependencies(result);
 		const registry = createPlatformCapabilityRegistry();
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
-		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, fake.actions);
 		const runtime = createWorkflowsTestRuntime({
 			capabilities: registry,
 			payloadKey: Buffer.alloc(32, 3),
@@ -1043,7 +2331,7 @@ describe('workflow backend contracts', () => {
 		};
 		const registry = createPlatformCapabilityRegistry();
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, refusingAgents);
-		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, base.actions);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, base.actions);
 		const runtime = createWorkflowsTestRuntime({
 			capabilities: registry,
 			payloadKey: Buffer.alloc(32, 60),
@@ -1110,7 +2398,7 @@ describe('workflow backend contracts', () => {
 		const fake = actionDependencies(actionResult);
 		const registry = createPlatformCapabilityRegistry();
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
-		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, fake.actions);
 		const runtime = createWorkflowsTestRuntime({
 			capabilities: registry,
 			payloadKey: Buffer.alloc(32, 46),
@@ -1235,7 +2523,7 @@ describe('workflow backend contracts', () => {
 		};
 		const registry = createPlatformCapabilityRegistry();
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, failingAgents);
-		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, base.actions);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, base.actions);
 		const runtime = createWorkflowsTestRuntime({
 			capabilities: registry,
 			payloadKey: Buffer.alloc(32, 48),
@@ -1321,7 +2609,7 @@ describe('workflow backend contracts', () => {
 		const fake = actionDependencies(actionResult);
 		const registry = createPlatformCapabilityRegistry();
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
-		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, fake.actions);
 		const runtime = createWorkflowsTestRuntime({
 			capabilities: registry,
 			payloadKey: Buffer.alloc(32, 56),
@@ -1389,13 +2677,95 @@ describe('workflow backend contracts', () => {
 		await runtime.dispose();
 	});
 
+	it('WORKFLOW-CUSTOM-NODE-CONNECTOR-UNKNOWN settles an uncertain call without retry', async () => {
+		const actionResult: { current: ActionExecutionResult | null } = {
+			current: {
+				actionInvocationId: 'replaced-by-fake',
+				status: 'failed',
+				code: 'CALL_OUTCOME_UNKNOWN',
+			},
+		};
+		const fake = actionDependencies(actionResult);
+		const registry = createPlatformCapabilityRegistry();
+		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, fake.actions);
+		const runtime = createWorkflowsTestRuntime({
+			capabilities: registry,
+			payloadKey: Buffer.alloc(32, 58),
+			cursorKey: Buffer.alloc(32, 59),
+			worker: { pollMs: 250, leaseMs: 1_000 },
+		});
+		try {
+			const service = await runtime.service();
+			const definition = await service.create(
+				'tenant-a',
+				{
+					key: 'connector-unknown',
+					name: 'Connector unknown',
+					description: '',
+				},
+				actor,
+			);
+			await service.update(
+				'tenant-a',
+				{
+					workflowId: definition.definition.id,
+					expectedRevision: 1,
+					name: 'Connector unknown',
+					description: '',
+					graph: actionGraph(3, ['CALL_OUTCOME_UNKNOWN']),
+				},
+				actor,
+			);
+			const executionPermissions = [...permissions, 'catalog.items.manage'];
+			await service.publish(
+				'tenant-a',
+				definition.definition.id,
+				2,
+				actor,
+				executionPermissions,
+			);
+			runtime.start();
+			const accepted = await service.enqueue(
+				{
+					workflowKey: 'connector-unknown',
+					input: { name: 'Ada' },
+					idempotencyKey: 'connector-unknown:1',
+				},
+				{ ...context(), permissionSnapshot: executionPermissions },
+			);
+			await waitFor(
+				async () =>
+					(await service.getRun('tenant-a', accepted.runId))?.status ===
+					'failed',
+				4_000,
+			);
+			const detail = await service.getRunDetail('tenant-a', accepted.runId);
+			const attempts = detail.nodes.find(
+				(node) => node.nodeId === 'action.create',
+			)?.attempts;
+			expect(attempts).toHaveLength(1);
+			expect(attempts?.[0]).toMatchObject({
+				failureCode: 'CALL_OUTCOME_UNKNOWN',
+				retryClassification: 'permanent',
+				nextAttemptAt: null,
+			});
+			expect(fake.starts()).toBe(1);
+			expect(detail.events.map((event) => event.type)).not.toContain(
+				'node.retry.scheduled',
+			);
+		} finally {
+			await runtime.dispose();
+		}
+	});
+
 	it('recovers an expired child wait after restart without enqueueing the child again', async () => {
 		const databases = createWorkflowsTestProvider();
 		const result: { current: JsonValue | null } = { current: null };
 		const fake = dependencies(result);
 		const registry = createPlatformCapabilityRegistry();
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
-		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, fake.actions);
 		const payloadKey = Buffer.alloc(32, 50);
 		const cursorKey = Buffer.alloc(32, 51);
 		const first = createWorkflowsRuntime({
@@ -1493,7 +2863,7 @@ describe('workflow backend contracts', () => {
 		const fake = dependencies(result);
 		const registry = createPlatformCapabilityRegistry();
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
-		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, fake.actions);
 		const payloadKey = Buffer.alloc(32, 62);
 		const cursorKey = Buffer.alloc(32, 63);
 		let workerNow = Date.now();
@@ -1648,7 +3018,7 @@ describe('workflow backend contracts', () => {
 						},
 		};
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, contendedAgents);
-		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, base.actions);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, base.actions);
 		const shared = {
 			databases,
 			capabilities: registry,
@@ -1758,7 +3128,7 @@ describe('workflow backend contracts', () => {
 		const fake = dependencies({ current: null });
 		const registry = createPlatformCapabilityRegistry();
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
-		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, fake.actions);
 		const database = await openWorkflowsTestRepository({
 			payloadCodec: createWorkflowPayloadCodec(Buffer.alloc(32, 52)),
 		});
@@ -1828,7 +3198,7 @@ describe('workflow backend contracts', () => {
 		const registry = createPlatformCapabilityRegistry();
 		const fake = dependencies({ current: null });
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
-		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, fake.actions);
 		const runtime = createWorkflowsTestRuntime({
 			capabilities: registry,
 			payloadKey: Buffer.alloc(32, 11),
@@ -1899,7 +3269,7 @@ describe('workflow backend contracts', () => {
 		const fake = dependencies(result);
 		const registry = createPlatformCapabilityRegistry();
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
-		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, fake.actions);
 		const runtime = createWorkflowsTestRuntime({
 			capabilities: registry,
 			payloadKey: Buffer.alloc(32, 58),
@@ -1986,7 +3356,7 @@ describe('workflow backend contracts', () => {
 		const fake = dependencies(result);
 		const registry = createPlatformCapabilityRegistry();
 		registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
-		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
+		registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, fake.actions);
 		let workerNow = Date.now();
 		const runtime = createWorkflowsTestRuntime({
 			capabilities: registry,

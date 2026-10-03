@@ -51,7 +51,14 @@ export function createServerComposition(
 	/* The sweep, the export and the erasure run here, on this module's own
 	   leases and under its own tenant transaction; the platform only holds the
 	   declaration. */
-	context.dataClasses.declare(workflowsDataClasses(() => runtime.repository()));
+	context.dataClasses.declare(
+		workflowsDataClasses(
+			() => runtime.repository(),
+			undefined,
+			(graph) =>
+				runtime.service().then((service) => service.projectGraphForRead(graph)),
+		),
+	);
 	return {
 		routes: createWorkflowsRoutes(context.auth, runtime),
 		start: () => runtime.start(),

@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createPlatformCapabilityRegistry, userActor } from '@flowdular/kernel';
 import {
-	AGENT_ACTION_EXECUTION_CAPABILITY,
+	AGENT_ACTION_EXECUTION_CAPABILITY_V2,
 	AGENT_RUN_EXECUTION_CAPABILITY,
-	type AgentActionExecutionCapability,
+	type AgentActionExecutionCapabilityV2,
 	type AgentRevisionExecutionCapability,
 } from '@flowdular/module-agents/server';
 import { WORKFLOWS_PERMISSIONS } from '../src/acl/permissions.ts';
@@ -21,7 +21,7 @@ const context = {
 	origin: { kind: 'manual' } as const,
 	permissionSnapshot: permissions,
 };
-const actions: AgentActionExecutionCapability = {
+const actions: AgentActionExecutionCapabilityV2 = {
 	listWorkflowActions: async () => [
 		{
 			id: 'test.later',
@@ -61,7 +61,7 @@ const agents: AgentRevisionExecutionCapability = {
 	requestCancel: async () => false,
 };
 const registry = createPlatformCapabilityRegistry();
-registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, actions);
+registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, actions);
 registry.register(AGENT_RUN_EXECUTION_CAPABILITY, agents);
 const runtime = createWorkflowsTestRuntime({
 	capabilities: registry,

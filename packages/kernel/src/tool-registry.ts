@@ -1,5 +1,7 @@
 /* Tools a module offers to agent runs. Modules register during composition;
    the agent runtime reads the list when it starts, after every module ran. */
+import { RegistryError } from './errors.ts';
+
 export interface PlatformToolRegistry<T = unknown, N = unknown> {
 	register(tools: readonly T[]): void;
 	list(): readonly T[];
@@ -19,7 +21,10 @@ export function createPlatformToolRegistry<
 		register(entries) {
 			for (const tool of entries) {
 				if (tools.has(tool.id) || nativeTools.has(tool.id)) {
-					throw new Error(`Agent tool ${tool.id} is already registered.`);
+					throw new RegistryError(
+						'AGENT_TOOL_DUPLICATE',
+						`Agent tool ${tool.id} is already registered.`,
+					);
 				}
 				tools.set(tool.id, tool);
 			}
@@ -29,7 +34,10 @@ export function createPlatformToolRegistry<
 		},
 		registerNative(tool) {
 			if (tools.has(tool.id) || nativeTools.has(tool.id)) {
-				throw new Error(`Agent tool ${tool.id} is already registered.`);
+				throw new RegistryError(
+					'AGENT_TOOL_DUPLICATE',
+					`Agent tool ${tool.id} is already registered.`,
+				);
 			}
 			nativeTools.set(tool.id, tool);
 		},

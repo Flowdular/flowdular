@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
 import { TYPED_DECISION_LIMITS } from './types.ts';
+import {
+	actionBindingDiagnostics,
+	secretSchemaValueDiagnostics,
+} from './graph-security.ts';
 import type {
 	JsonSchemaV1,
 	JsonValue,
@@ -44,6 +48,11 @@ export interface WorkflowReferenceCatalog {
 	): {
 		readonly available: boolean;
 		readonly requiredPermissions: readonly string[];
+		readonly inputSchema?: Readonly<Record<string, unknown>>;
+		readonly outputSchema?: Readonly<Record<string, unknown>>;
+		readonly descriptorDigest?: string;
+		readonly workflowTemplateEffect?: 'local' | 'connector-egress';
+		readonly idempotencyProtection?: 'target-ledger';
 		readonly risk?: 'read' | 'workspace-write' | 'external' | 'destructive';
 		readonly idempotency?: 'required' | 'none';
 	};
@@ -85,6 +94,42 @@ export function workflowGraphChecksum(graph: WorkflowGraphV1): string {
 		schemas: graph.schemas,
 	};
 	return `sha256:${createHash('sha256').update(canonical(semantic)).digest('hex')}`;
+}
+
+export interface WorkflowActionDescriptorDigestInput {
+	readonly id: string;
+	readonly contractVersion: number;
+	readonly inputSchema: Readonly<Record<string, unknown>>;
+	readonly outputSchema: Readonly<Record<string, unknown>>;
+	readonly requiredPermissions: readonly string[];
+	readonly risk: 'read' | 'workspace-write';
+	readonly idempotency: 'required';
+	readonly idempotencyProtection?: 'target-ledger';
+	readonly timeoutMs: number;
+	readonly cancellation: 'cooperative' | 'not-supported';
+	readonly workflowTemplate?: { readonly effect: 'local' | 'connector-egress' };
+}
+
+export function actionDescriptorDigest(
+	action: WorkflowActionDescriptorDigestInput,
+): string {
+	return `sha256:${createHash('sha256')
+		.update(
+			canonical({
+				id: action.id,
+				contractVersion: action.contractVersion,
+				inputSchema: action.inputSchema,
+				outputSchema: action.outputSchema,
+				requiredPermissions: [...new Set(action.requiredPermissions)].sort(),
+				risk: action.risk,
+				idempotency: action.idempotency,
+				idempotencyProtection: action.idempotencyProtection ?? null,
+				timeoutMs: action.timeoutMs,
+				cancellation: action.cancellation,
+				effect: action.workflowTemplate?.effect ?? null,
+			}),
+		)
+		.digest('hex')}`;
 }
 
 export function jsonHash(value: JsonValue): string {
@@ -736,6 +781,14 @@ export function compileWorkflowGraph(
 			available: true,
 		});
 	}
+	for (const finding of secretSchemaValueDiagnostics(graph)) {
+		issues.push(
+			issue(
+				finding.code,
+				'Schema example or default would disclose a secret-marked field.',
+			),
+		);
+	}
 	for (const node of graph.nodes) {
 		if (!IDENTIFIER.test(node.id))
 			issues.push(
@@ -887,10 +940,77 @@ export function compileWorkflowGraph(
 			});
 		}
 		if (node.type === 'action') {
+			if (
+				node.action.actionId === 'connectors.call' &&
+				node.action.contractVersion !== 2
+			)
+				issues.push(
+					issue(
+						'WORKFLOW_ACTION_VERSION_UNSAFE',
+						'Connector calls require the reviewed action contract version 2.',
+						{ kind: 'node', nodeId: node.id, path: '/action/contractVersion' },
+					),
+				);
 			const action = catalog?.action(
 				node.action.actionId,
 				node.action.contractVersion,
 			) ?? { available: false, requiredPermissions: [] };
+			if (node.action.descriptorDigest !== undefined) {
+				if (
+					!/^sha256:[a-f0-9]{64}$/.test(node.action.descriptorDigest) ||
+					(action.available &&
+						node.action.descriptorDigest !== action.descriptorDigest)
+				) {
+					issues.push(
+						issue(
+							'WORKFLOW_ACTION_CONTRACT_DRIFT',
+							`Action "${node.action.actionId}" no longer matches its pinned contract.`,
+							{
+								kind: 'node',
+								nodeId: node.id,
+								path: '/action/descriptorDigest',
+							},
+						),
+					);
+				}
+				const inputId = node.inputPorts.find(
+					(port) => port.name === 'input',
+				)?.schemaId;
+				const successId = node.outputPorts.find(
+					(port) => port.name === 'success',
+				)?.schemaId;
+				if (
+					(action.inputSchema &&
+						inputId &&
+						canonical(graph.schemas[inputId]) !==
+							canonical(action.inputSchema)) ||
+					(action.outputSchema &&
+						successId &&
+						canonical(graph.schemas[successId]) !==
+							canonical(action.outputSchema))
+				) {
+					issues.push(
+						issue(
+							'WORKFLOW_ACTION_SCHEMA_MISMATCH',
+							`Action "${node.action.actionId}" no longer matches its pinned port schemas.`,
+							{ kind: 'node', nodeId: node.id },
+						),
+					);
+				}
+			}
+			if (
+				action.workflowTemplateEffect === 'connector-egress' &&
+				action.risk === 'workspace-write' &&
+				action.idempotencyProtection !== 'target-ledger'
+			) {
+				issues.push(
+					issue(
+						'WORKFLOW_ACTION_IDEMPOTENCY_UNSAFE',
+						'Connector egress actions require a durable target idempotency ledger.',
+						{ kind: 'node', nodeId: node.id },
+					),
+				);
+			}
 			const available =
 				action.available &&
 				(action.risk === undefined ||
@@ -915,6 +1035,23 @@ export function compileWorkflowGraph(
 					),
 				);
 		}
+	}
+	for (const finding of actionBindingDiagnostics(
+		graph,
+		(actionId, contractVersion) =>
+			catalog?.action(actionId, contractVersion).inputSchema,
+	)) {
+		issues.push(
+			issue(
+				finding.code,
+				'Action input binding is unsafe or its schema is unavailable.',
+				{
+					kind: 'node',
+					nodeId: finding.nodeId,
+					path: `/mappings${finding.targetPointer}`,
+				},
+			),
+		);
 	}
 
 	const edgeIds = new Set<string>();
@@ -1053,8 +1190,33 @@ export function compileWorkflowGraph(
 	for (const node of graph.nodes) {
 		if (node.type === 'gate')
 			issues.push(...validateGateExpression(node.expression, node.id));
-		for (const mapping of node.mappings ?? [])
+		for (const mapping of node.mappings ?? []) {
 			issues.push(...mappingIssues(mapping, node, index, graph));
+			const sources =
+				mapping.binding.kind === 'path'
+					? [mapping.binding]
+					: mapping.binding.kind === 'template'
+						? mapping.binding.variables
+						: [];
+			if (
+				sources.some((source) => {
+					const owner = nodeById.get(source.sourceNodeId);
+					return (
+						owner?.type === 'action' &&
+						owner.action.actionId === 'connectors.call' &&
+						!['/callId', '/outcome'].includes(source.pointer)
+					);
+				})
+			) {
+				issues.push(
+					issue(
+						'WORKFLOW_CONNECTOR_OUTPUT_UNSTABLE',
+						'Connector workflow mappings may read only callId or outcome.',
+						{ kind: 'node', nodeId: node.id, path: '/mappings' },
+					),
+				);
+			}
+		}
 	}
 	for (const reference of references) {
 		if (reference.kind !== 'schema' && !reference.available)

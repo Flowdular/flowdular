@@ -165,6 +165,13 @@ export interface AgentToolConsent {
 	): Promise<AgentToolConsentDecision> | AgentToolConsentDecision;
 }
 
+/** Static palette copy for an action implemented by a module-owned tool. */
+export interface WorkflowActionTemplateMetadata {
+	readonly label: string;
+	readonly description: string;
+	readonly effect: 'local' | 'connector-egress';
+}
+
 export interface AgentTool {
 	readonly id: string;
 	readonly transport: 'api' | 'cli';
@@ -174,6 +181,7 @@ export interface AgentTool {
 	readonly inputSchema?: Readonly<Record<string, unknown>>;
 	readonly contractVersion?: number;
 	readonly outputSchema?: Readonly<Record<string, unknown>>;
+	readonly workflowTemplate?: WorkflowActionTemplateMetadata;
 	readonly risk?: 'read' | 'workspace-write' | 'external' | 'destructive';
 	/* A CLI capability the runner admits in development and test only. The
 	   harness reads FD_ENV or NODE_ENV the way the runner does and refuses it

@@ -8,6 +8,7 @@ import type {
 	WorkflowPayloadEvidenceV1,
 	WorkflowSimulationFixture,
 } from '../domain/types.ts';
+import type { WorkflowActionCatalogItem } from './api.ts';
 
 export const WORKFLOW_NODE_TYPES = [
 	'input',
@@ -23,6 +24,12 @@ export const WORKFLOW_NODE_TYPES = [
 ] as const;
 
 export type WorkflowNodeType = (typeof WORKFLOW_NODE_TYPES)[number];
+
+export function namedWorkflowActions(
+	actions: readonly WorkflowActionCatalogItem[],
+): readonly WorkflowActionCatalogItem[] {
+	return actions.filter((action) => action.workflowTemplate !== undefined);
+}
 
 export interface ConnectionProposal {
 	readonly valid: boolean;
@@ -61,6 +68,10 @@ function canonicalJson(value: unknown): string {
 			.join(',')}}`;
 	}
 	return JSON.stringify(value);
+}
+
+export function sameWorkflowSchema(left: unknown, right: unknown): boolean {
+	return canonicalJson(left) === canonicalJson(right);
 }
 
 export function workflowChangeSummary(
@@ -265,6 +276,96 @@ export function addWorkflowNode(
 	};
 }
 
+function actionSchemaId(
+	graph: WorkflowGraphV1,
+	node: Extract<WorkflowNodeV1, { readonly type: 'action' }>,
+	port: 'input' | 'success',
+): string {
+	const preferred = `${node.id}.${port}`;
+	const current = (
+		port === 'input'
+			? node.inputPorts.find((entry) => entry.name === 'input')
+			: node.outputPorts.find((entry) => entry.name === 'success')
+	)?.schemaId;
+	const shared = (id: string) =>
+		graph.nodes.some(
+			(entry) =>
+				entry.id !== node.id &&
+				[...entry.inputPorts, ...entry.outputPorts].some(
+					(candidate) => candidate.schemaId === id,
+				),
+		);
+	if (
+		current &&
+		(current === preferred || current.startsWith(`${preferred}.v`)) &&
+		!shared(current)
+	)
+		return current;
+	if (!shared(preferred)) return preferred;
+	let sequence = 2;
+	while (graph.schemas[`${preferred}.v${sequence}`]) sequence += 1;
+	return `${preferred}.v${sequence}`;
+}
+
+/** Pin the action's editable schema snapshot and executable descriptor to a draft. */
+export function bindWorkflowAction(
+	graph: WorkflowGraphV1,
+	nodeId: string,
+	action: WorkflowActionCatalogItem,
+): WorkflowGraphV1 {
+	const node = graph.nodes.find((entry) => entry.id === nodeId);
+	if (node?.type !== 'action') return graph;
+	const inputSchemaId = actionSchemaId(graph, node, 'input');
+	const outputSchemaId = actionSchemaId(graph, node, 'success');
+	const changed =
+		node.action.actionId !== action.actionId ||
+		node.action.contractVersion !== action.contractVersion ||
+		node.action.descriptorDigest !==
+			(action.workflowTemplate ? action.descriptorDigest : undefined);
+	return {
+		...graph,
+		schemas: {
+			...graph.schemas,
+			[inputSchemaId]: structuredClone(action.inputSchema),
+			[outputSchemaId]: structuredClone(action.outputSchema),
+		},
+		nodes: graph.nodes.map((current) =>
+			current.id === nodeId
+				? {
+						...node,
+						label: action.workflowTemplate?.label ?? node.label,
+						inputPorts: [{ name: 'input', schemaId: inputSchemaId }],
+						outputPorts: [
+							{ name: 'success', schemaId: outputSchemaId },
+							{ name: 'failure', schemaId: ERROR_SCHEMA },
+						],
+						action: {
+							actionId: action.actionId,
+							contractVersion: action.contractVersion,
+							...(action.workflowTemplate
+								? { descriptorDigest: action.descriptorDigest }
+								: {}),
+						},
+						...(changed ? { mappings: [] } : {}),
+					}
+				: current,
+		),
+	};
+}
+
+export function addWorkflowActionTemplate(
+	graph: WorkflowGraphV1,
+	action: WorkflowActionCatalogItem,
+): { readonly graph: WorkflowGraphV1; readonly nodeId: string } {
+	if (!action.workflowTemplate)
+		throw new Error('Workflow action has no named template.');
+	const added = addWorkflowNode(graph, 'action', action.workflowTemplate.label);
+	return {
+		...added,
+		graph: bindWorkflowAction(added.graph, added.nodeId, action),
+	};
+}
+
 export function moveWorkflowNode(
 	graph: WorkflowGraphV1,
 	nodeId: string,
@@ -301,11 +402,34 @@ export function removeWorkflowNode(
 	nodeId: string,
 ): WorkflowGraphV1 {
 	const { [nodeId]: _removed, ...layout } = graph.layout;
+	const nodes = graph.nodes.filter((node) => node.id !== nodeId);
+	const removed = graph.nodes.find((node) => node.id === nodeId);
+	const retainedSchemaIds = new Set(
+		nodes.flatMap((node) =>
+			[...node.inputPorts, ...node.outputPorts].map((port) => port.schemaId),
+		),
+	);
+	const ownedSchemaIds = new Set(
+		removed?.type === 'action'
+			? [...removed.inputPorts, ...removed.outputPorts]
+					.map((port) => port.schemaId)
+					.filter(
+						(id) =>
+							id.startsWith(`${nodeId}.input`) ||
+							id.startsWith(`${nodeId}.success`),
+					)
+			: [],
+	);
 	return {
 		...graph,
-		nodes: graph.nodes.filter((node) => node.id !== nodeId),
+		nodes,
 		edges: graph.edges.filter(
 			(edge) => edge.source.nodeId !== nodeId && edge.target.nodeId !== nodeId,
+		),
+		schemas: Object.fromEntries(
+			Object.entries(graph.schemas).filter(
+				([id]) => !ownedSchemaIds.has(id) || retainedSchemaIds.has(id),
+			),
 		),
 		layout,
 	};

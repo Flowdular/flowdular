@@ -29,6 +29,12 @@ describe('agent tool adapters', () => {
 			idempotency: 'required',
 			idempotencyProtection: 'target-ledger',
 			cancellation: 'cooperative',
+			timeoutMs: 4_000,
+			workflowTemplate: {
+				label: 'Customer lookup',
+				description: 'Find one customer.',
+				effect: 'local',
+			},
 			execute: async () => ({}),
 		});
 		expect(tool).toMatchObject({
@@ -37,6 +43,11 @@ describe('agent tool adapters', () => {
 			idempotency: 'required',
 			idempotencyProtection: 'target-ledger',
 			cancellation: 'cooperative',
+			timeoutMs: 4_000,
+			workflowTemplate: {
+				label: 'Customer lookup',
+				effect: 'local',
+			},
 			outputSchema: { type: 'object' },
 		});
 	});
@@ -54,12 +65,14 @@ describe('agent tool adapters', () => {
 			description: 'Reset local authentication data.',
 			requiredPermissions: [],
 			risk: 'destructive',
+			timeoutMs: 2_000,
 			execute: async () => undefined,
 		});
 		expect(tool).toMatchObject({
 			transport: 'cli',
 			risk: 'destructive',
 			localOnly: true,
+			timeoutMs: 2_000,
 		});
 	});
 });

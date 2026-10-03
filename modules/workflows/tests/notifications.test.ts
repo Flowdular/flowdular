@@ -8,9 +8,9 @@ import {
 	type PlatformCapabilityRegistry,
 } from '@flowdular/kernel';
 import {
-	AGENT_ACTION_EXECUTION_CAPABILITY,
+	AGENT_ACTION_EXECUTION_CAPABILITY_V2,
 	AGENT_RUN_EXECUTION_CAPABILITY,
-	type AgentActionExecutionCapability,
+	type AgentActionExecutionCapabilityV2,
 	type AgentRevisionExecutionCapability,
 } from '@flowdular/module-agents/server';
 import { WORKFLOWS_PERMISSIONS } from '../src/acl/permissions.ts';
@@ -213,7 +213,7 @@ function agentDependencies(outcome: 'succeeded' | 'failed') {
 					},
 		requestCancel: async () => true,
 	};
-	const actions: AgentActionExecutionCapability = {
+	const actions: AgentActionExecutionCapabilityV2 = {
 		listWorkflowActions: async () => [],
 		start: async () => ({ actionInvocationId: 'action-1', created: true }),
 		getResult: async () => null,
@@ -245,7 +245,7 @@ function registryWith(
 	const registry = createPlatformCapabilityRegistry();
 	const fake = agentDependencies(outcome);
 	registry.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
-	registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
+	registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, fake.actions);
 	if (publisher) registry.register(NOTIFICATIONS_PUBLISH_CAPABILITY, publisher);
 	return registry;
 }

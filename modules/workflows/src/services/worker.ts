@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type {
-	AgentActionExecutionCapability,
+	AgentActionExecutionCapabilityV2,
 	AgentRevisionExecutionCapability,
 } from '@flowdular/module-agents/server';
 import type {
+	JsonSchemaV1,
 	JsonValue,
 	WorkflowCostRollupV1,
 	WorkflowNodeExecution,
@@ -36,6 +37,7 @@ import {
 	type NotificationPublisherResolver,
 } from './notifications.ts';
 import { safePayloadEvidence } from './payload-codec.ts';
+import { safeWorkflowEvidence } from './evidence-policy.ts';
 import type { WorkflowRunRecord, WorkflowsRepository } from './repository.ts';
 
 export interface WorkflowWorkerOptions {
@@ -70,6 +72,48 @@ function outputSchema(node: WorkflowNodeV1, port: string): string {
 		node.outputPorts.find((entry) => entry.name === port)?.schemaId ??
 		'workflow.output'
 	);
+}
+
+function workflowActionOutput(
+	node: WorkflowNodeV1,
+	output: JsonValue | undefined,
+): JsonValue | undefined {
+	if (
+		node.type !== 'action' ||
+		node.action.actionId !== 'connectors.call' ||
+		output === undefined ||
+		output === null ||
+		typeof output !== 'object' ||
+		Array.isArray(output)
+	)
+		return output;
+	const {
+		body: _body,
+		bodyPreview: _bodyPreview,
+		...stable
+	} = output as Readonly<Record<string, JsonValue>>;
+	return { ...stable, body: null, bodyOmitted: true };
+}
+
+function actionInputEvidenceSchema(
+	node: WorkflowNodeV1,
+	schema: JsonSchemaV1,
+): JsonSchemaV1 {
+	if (node.type !== 'action' || node.action.actionId !== 'connectors.call')
+		return schema;
+	const properties =
+		schema.properties &&
+		typeof schema.properties === 'object' &&
+		!Array.isArray(schema.properties)
+			? schema.properties
+			: {};
+	return {
+		...schema,
+		properties: {
+			...properties,
+			input: { 'x-flowdular-secret': true },
+		},
+	};
 }
 
 function backoff(node: WorkflowNodeV1, attempt: number): number | null {
@@ -176,7 +220,7 @@ export class WorkflowWorker {
 		private readonly repository: WorkflowsRepository,
 		private readonly capabilities: () => {
 			readonly agents: AgentRevisionExecutionCapability;
-			readonly actions: AgentActionExecutionCapability;
+			readonly actions: AgentActionExecutionCapabilityV2;
 		} | null,
 		options: WorkflowWorkerOptions = {},
 	) {
@@ -400,7 +444,7 @@ export class WorkflowWorker {
 		run: WorkflowRunRecord,
 		dependencies: {
 			readonly agents: AgentRevisionExecutionCapability;
-			readonly actions: AgentActionExecutionCapability;
+			readonly actions: AgentActionExecutionCapabilityV2;
 		},
 	): Promise<void> {
 		const now = this.#now();
@@ -507,7 +551,7 @@ export class WorkflowWorker {
 
 			let childResult:
 				| Awaited<ReturnType<AgentRevisionExecutionCapability['getResult']>>
-				| Awaited<ReturnType<AgentActionExecutionCapability['getResult']>> =
+				| Awaited<ReturnType<AgentActionExecutionCapabilityV2['getResult']>> =
 				null;
 			try {
 				childResult =
@@ -633,7 +677,7 @@ export class WorkflowWorker {
 		run: WorkflowRunRecord,
 		dependencies: {
 			readonly agents: AgentRevisionExecutionCapability;
-			readonly actions: AgentActionExecutionCapability;
+			readonly actions: AgentActionExecutionCapabilityV2;
 		},
 		assertLease: () => void,
 	): Promise<void> {
@@ -769,10 +813,19 @@ export class WorkflowWorker {
 						semanticGroup: `${run.id}:${node.id}`,
 						sideEffectIdempotencyKey: `${run.tenantId}:${run.id}:${node.id}`,
 						input: nodeInput,
-						inputEvidence: safePayloadEvidence(nodeInput, schemaId, {
-							schema: run.graph.schemas[schemaId] ?? {},
-							permissionSnapshot: run.permissionSnapshot,
-						}),
+						inputEvidence: safeWorkflowEvidence(
+							run.graph,
+							{ kind: 'node-input', nodeId: node.id },
+							nodeInput,
+							schemaId,
+							{
+								schema: actionInputEvidenceSchema(
+									node,
+									run.graph.schemas[schemaId] ?? {},
+								),
+								permissionSnapshot: run.permissionSnapshot,
+							},
+						),
 						schemaId,
 						recordedAt: this.#now(),
 					},
@@ -840,7 +893,9 @@ export class WorkflowWorker {
 								? 'failure'
 								: null,
 						...(result.output === undefined ? {} : { output: result.output }),
-						outputEvidence: safePayloadEvidence(
+						outputEvidence: safeWorkflowEvidence(
+							run.graph,
+							{ kind: 'node-output', nodeId: node.id },
 							result.output,
 							outputSchema(node, 'failure'),
 							{
@@ -918,10 +973,16 @@ export class WorkflowWorker {
 					status: 'succeeded',
 					outcomePort: outcome || null,
 					output: result.output,
-					outputEvidence: safePayloadEvidence(result.output, schema, {
-						schema: run.graph.schemas[schema] ?? {},
-						permissionSnapshot: run.permissionSnapshot,
-					}),
+					outputEvidence: safeWorkflowEvidence(
+						run.graph,
+						{ kind: 'node-output', nodeId: node.id },
+						result.output,
+						schema,
+						{
+							schema: run.graph.schemas[schema] ?? {},
+							permissionSnapshot: run.permissionSnapshot,
+						},
+					),
 					schemaId: schema,
 					failureCode: null,
 					retryClassification: null,
@@ -940,10 +1001,16 @@ export class WorkflowWorker {
 					'succeeded',
 					null,
 					result.output,
-					safePayloadEvidence(result.output, schema, {
-						schema: run.graph.schemas[schema] ?? {},
-						permissionSnapshot: run.permissionSnapshot,
-					}),
+					safeWorkflowEvidence(
+						run.graph,
+						{ kind: 'run-output' },
+						result.output,
+						schema,
+						{
+							schema: run.graph.schemas[schema] ?? {},
+							permissionSnapshot: run.permissionSnapshot,
+						},
+					),
 					finalUsage(terminal),
 					finalCost(terminal),
 					this.#now(),
@@ -1052,7 +1119,7 @@ export class WorkflowWorker {
 		childObservationDeadlineAt: number | null,
 		dependencies: {
 			readonly agents: AgentRevisionExecutionCapability;
-			readonly actions: AgentActionExecutionCapability;
+			readonly actions: AgentActionExecutionCapabilityV2;
 		},
 		assertLease: () => void,
 	): Promise<{
@@ -1498,18 +1565,20 @@ export class WorkflowWorker {
 					return {
 						status: result.status,
 						outcomePort: 'failure',
-						output: result.output ?? {
+						output: workflowActionOutput(node, result.output) ?? {
 							code: result.code ?? 'ACTION_EXECUTION_FAILED',
 							actionInvocationId: id,
 						},
 						code: result.code ?? 'ACTION_EXECUTION_FAILED',
-						retryable: result.status === 'failed',
+						retryable:
+							result.status === 'failed' &&
+							result.code !== 'CALL_OUTCOME_UNKNOWN',
 					};
 				}
 				return {
 					status: 'succeeded',
 					outcomePort: 'success',
-					output: result.output ?? null,
+					output: workflowActionOutput(node, result.output) ?? null,
 				};
 			}
 		}
@@ -1666,7 +1735,9 @@ export class WorkflowWorker {
 					targetPort: edge.target.port,
 					state: emitted ? 'emitted' : 'closed',
 					reason: emitted ? null : `outcome:${selectedPort || 'none'}`,
-					evidence: safePayloadEvidence(
+					evidence: safeWorkflowEvidence(
+						run.graph,
+						{ kind: 'edge', edgeId: edge.id },
 						emitted ? output : undefined,
 						schemaId,
 						{

@@ -9,17 +9,19 @@ import {
 	it,
 	vi,
 } from 'vitest';
-import type {
-	AgentTool,
-	AgentToolAuthorizationRequest,
-	AgentToolConsentDecision,
-	AgentToolContext,
+import {
+	LocalSimulationProvider,
+	type AgentTool,
+	type AgentToolAuthorizationRequest,
+	type AgentToolConsentDecision,
+	type AgentToolContext,
 } from '@flowdular/harness';
 import { defineApiAgentTool } from '@flowdular/harness/tool-adapters';
 import {
 	createAgentActionExecutionRuntime,
 	type AgentActionRuntime,
 } from '../src/server/action-execution.ts';
+import { createAgentRuntime } from '../src/server/runtime.ts';
 import {
 	openAgentsTestDatabase,
 	type AgentsTestDatabase,
@@ -53,16 +55,17 @@ function waitFor(
 }
 
 /**
- * The declaration connectors.core registers, built through the same adapter it
- * uses. agents.core must not import connectors.core (the tool reaches this
- * runtime as data, through the harness tool registry), so the fields are
- * restated here; modules/connectors/tests/agent-tools.test.ts pins them on the
- * owning side, and a drift there fails that suite.
+ * A connector-shaped action built through the same adapter connectors.core
+ * uses. agents.core must not import connectors.core: the tool reaches this
+ * runtime through the harness registry. Its contract version and governance
+ * fields mirror the current connector action; the small schemas keep these
+ * tests focused on consent and the action ledger. The owning module tests its
+ * complete declaration.
  */
 const CONNECTORS_CALL_DECLARATION = {
 	id: 'connectors.call',
 	endpointId: 'connectors.calls.agent',
-	contractVersion: 1,
+	contractVersion: 2,
 	description: 'Call a consented connector instance.',
 	requiredPermissions: [PERMISSION],
 	risk: 'workspace-write',
@@ -153,7 +156,7 @@ function context(workflowRunId: string, nodeRunId = 'node-1') {
 
 const request = {
 	actionId: 'connectors.call',
-	contractVersion: 1,
+	contractVersion: 2,
 	input: { instanceId: 'instance-1' },
 	idempotencyKey: 'workflow-run-consent:node-1',
 } as const;
@@ -168,7 +171,7 @@ describe('the connector call as a workflow action', () => {
 		expect(await runtime.capability.listWorkflowActions()).toEqual([
 			expect.objectContaining({
 				id: 'connectors.call',
-				contractVersion: 1,
+				contractVersion: 2,
 				risk: 'workspace-write',
 				idempotency: 'required',
 				cancellation: 'cooperative',
@@ -211,6 +214,378 @@ describe('the connector call as a workflow action', () => {
 		await expect(
 			runtime.capability.start(request, context('workflow-run-unpublished')),
 		).rejects.toMatchObject({ code: expect.any(String) });
+	});
+});
+
+describe('AGENTS-WORKFLOW-TEMPLATE-CATALOG', () => {
+	it('exposes static template metadata only through v2 and shares the invocation ledger', async () => {
+		const execute = vi.fn(async () => ({ ok: true }));
+		const tool = defineApiAgentTool({
+			...CONNECTORS_CALL_DECLARATION,
+			requiredPermissions: [...CONNECTORS_CALL_DECLARATION.requiredPermissions],
+			workflowTemplate: {
+				label: 'Call service',
+				description: 'Call a consented service operation.',
+				effect: 'connector-egress',
+			},
+			execute,
+		});
+		const runtime = trackedRuntime(tool, 'action-worker:template-catalog');
+		const legacy = (await runtime.capability.listWorkflowActions())[0]!;
+		const current = (await runtime.capabilityV2.listWorkflowActions())[0]!;
+		expect(legacy).not.toHaveProperty('workflowTemplate');
+		expect(legacy).not.toHaveProperty('idempotencyProtection');
+		expect(current).toMatchObject({
+			id: legacy.id,
+			contractVersion: legacy.contractVersion,
+			timeoutMs: 1_000,
+			idempotencyProtection: 'target-ledger',
+			workflowTemplate: {
+				label: 'Call service',
+				effect: 'connector-egress',
+			},
+		});
+		(current.workflowTemplate as { label: string }).label = 'Changed by caller';
+		(current.requiredPermissions as string[]).push('unexpected.permission');
+		expect((await runtime.capabilityV2.listWorkflowActions())[0]).toMatchObject(
+			{
+				requiredPermissions: [PERMISSION],
+				workflowTemplate: { label: 'Call service' },
+			},
+		);
+		const accepted = await runtime.capabilityV2.start(
+			request,
+			context('workflow-run-template'),
+		);
+		runtime.start();
+		await waitFor(
+			async () =>
+				(
+					await runtime.capability.getResult(
+						accepted.actionInvocationId,
+						context('workflow-run-template'),
+					)
+				)?.status === 'succeeded',
+		);
+		expect(execute).toHaveBeenCalledTimes(1);
+		expect(
+			await runtime.capability.getResult(
+				accepted.actionInvocationId,
+				context('workflow-run-template'),
+			),
+		).toMatchObject({ status: 'succeeded', output: { ok: true } });
+	});
+
+	it('keeps an eligible action without a template in the generic catalogue', async () => {
+		const { tool } = consentedAction(() => ({ granted: true }));
+		const runtime = trackedRuntime(tool, 'action-worker:generic-catalog');
+		expect(await runtime.capabilityV2.listWorkflowActions()).toEqual([
+			expect.objectContaining({
+				id: 'connectors.call',
+				contractVersion: 2,
+				idempotencyProtection: 'target-ledger',
+			}),
+		]);
+		expect(
+			(await runtime.capabilityV2.listWorkflowActions())[0],
+		).not.toHaveProperty('workflowTemplate');
+	});
+});
+
+describe('AGENTS-WORKFLOW-TEMPLATE-REJECT', () => {
+	function registrationCode(tool: AgentTool): string | undefined {
+		try {
+			createAgentActionExecutionRuntime(database.repository, [tool]);
+			return undefined;
+		} catch (error) {
+			return (error as { code?: string }).code;
+		}
+	}
+
+	it('refuses a nested secret value in an output schema before catalog publication', () => {
+		const tool = defineApiAgentTool({
+			...CONNECTORS_CALL_DECLARATION,
+			requiredPermissions: [...CONNECTORS_CALL_DECLARATION.requiredPermissions],
+			outputSchema: {
+				anyOf: [
+					{ type: 'object', properties: { ok: { type: 'boolean' } } },
+					{
+						type: 'object',
+						properties: {
+							token: {
+								type: 'string',
+								'x-flowdular-secret': true,
+								example: 'secret-must-not-enter-catalog',
+							},
+						},
+					},
+				],
+			},
+			execute: async () => ({ ok: true }),
+		});
+		expect(registrationCode(tool)).toBe('ACTION_SCHEMA_SECRET_VALUE');
+		expect(
+			registrationCode({
+				...tool,
+				outputSchema: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: {
+							token: {
+								type: 'string',
+								'x-coreloom-secret': true,
+								default: 'secret-must-not-enter-catalog',
+							},
+						},
+					},
+				},
+			}),
+		).toBe('ACTION_SCHEMA_SECRET_VALUE');
+		expect(
+			registrationCode({
+				...tool,
+				outputSchema: { type: 'string', writeOnly: true, enum: [] },
+			}),
+		).toBe('ACTION_SCHEMA_SECRET_VALUE');
+	});
+
+	it('refuses secret values embedded in a parent schema example or default', () => {
+		const base = defineApiAgentTool({
+			...CONNECTORS_CALL_DECLARATION,
+			requiredPermissions: [...CONNECTORS_CALL_DECLARATION.requiredPermissions],
+			execute: async () => ({ ok: true }),
+		});
+		expect(
+			registrationCode({
+				...base,
+				outputSchema: {
+					type: 'object',
+					properties: {
+						token: { type: 'string', 'x-flowdular-secret': true },
+					},
+					default: { token: 'credential-leak' },
+				},
+			}),
+		).toBe('ACTION_SCHEMA_SECRET_VALUE');
+		expect(
+			registrationCode({
+				...base,
+				inputSchema: {
+					type: 'array',
+					items: {
+						type: 'object',
+						properties: { token: { type: 'string', writeOnly: true } },
+					},
+					examples: [[{ token: 'credential-leak' }]],
+				},
+			}),
+		).toBe('ACTION_SCHEMA_SECRET_VALUE');
+		expect(
+			registrationCode({
+				...base,
+				inputSchema: {
+					type: 'object',
+					properties: {
+						token: { type: 'string', 'x-flowdular-secret': true },
+					},
+					examples: { first: { token: 'credential-leak' } },
+				},
+			}),
+		).toBe('ACTION_SCHEMA_SECRET_VALUE');
+		expect(
+			registrationCode({
+				...base,
+				outputSchema: {
+					type: 'object',
+					properties: { token: { $ref: '#/$defs/secret' } },
+					$defs: { secret: { type: 'string', writeOnly: true } },
+					example: { token: 'credential-leak' },
+				},
+			}),
+		).toBe('ACTION_SCHEMA_SECRET_VALUE');
+		expect(
+			registrationCode({
+				...base,
+				inputSchema: {
+					type: 'array',
+					items: [{ type: 'string' }],
+					additionalItems: { type: 'string', 'x-flowdular-secret': true },
+					default: ['safe', 'credential-leak'],
+				},
+			}),
+		).toBe('ACTION_SCHEMA_SECRET_VALUE');
+	});
+
+	it('keeps a safe parent default alongside an optional secret annotation', async () => {
+		const tool = defineApiAgentTool({
+			...CONNECTORS_CALL_DECLARATION,
+			requiredPermissions: [...CONNECTORS_CALL_DECLARATION.requiredPermissions],
+			inputSchema: {
+				type: 'object',
+				properties: {
+					id: { type: 'string' },
+					token: { type: 'string', 'x-flowdular-secret': true },
+				},
+				default: { id: 'safe-reference' },
+			},
+			workflowTemplate: {
+				label: 'Safe lookup',
+				description: 'Uses an optional secret field only outside a graph.',
+				effect: 'local',
+			},
+			execute: async () => ({ ok: true }),
+		});
+		const runtime = trackedRuntime(tool, 'action-worker:safe-parent-default');
+		expect((await runtime.capabilityV2.listWorkflowActions())[0]).toMatchObject(
+			{
+				inputSchema: {
+					default: { id: 'safe-reference' },
+					properties: { token: { 'x-flowdular-secret': true } },
+				},
+			},
+		);
+	});
+
+	it('refuses a template that requires a raw secret input', () => {
+		const tool = defineApiAgentTool({
+			...CONNECTORS_CALL_DECLARATION,
+			requiredPermissions: [...CONNECTORS_CALL_DECLARATION.requiredPermissions],
+			inputSchema: {
+				type: 'object',
+				required: ['token'],
+				properties: { token: { type: 'string', writeOnly: true } },
+			},
+			workflowTemplate: {
+				label: 'Unsafe call',
+				description: 'Requires a secret from a workflow.',
+				effect: 'connector-egress',
+			},
+			execute: async () => ({ ok: true }),
+		});
+		expect(registrationCode(tool)).toBe('ACTION_TEMPLATE_SECRET_INPUT');
+	});
+
+	it('refuses a template whose allOf branch requires a secret property', () => {
+		const tool = defineApiAgentTool({
+			...CONNECTORS_CALL_DECLARATION,
+			requiredPermissions: [...CONNECTORS_CALL_DECLARATION.requiredPermissions],
+			inputSchema: {
+				type: 'object',
+				properties: {
+					token: { type: 'string', 'x-flowdular-secret': true },
+				},
+				allOf: [{ required: ['token'] }],
+			},
+			workflowTemplate: {
+				label: 'Unsafe call',
+				description: 'Requires a secret from a workflow.',
+				effect: 'connector-egress',
+			},
+			execute: async () => ({ ok: true }),
+		});
+		expect(registrationCode(tool)).toBe('ACTION_TEMPLATE_SECRET_INPUT');
+	});
+
+	it('fails closed for conditional secret requirements the tool validator cannot prove', () => {
+		const base = defineApiAgentTool({
+			...CONNECTORS_CALL_DECLARATION,
+			requiredPermissions: [...CONNECTORS_CALL_DECLARATION.requiredPermissions],
+			workflowTemplate: {
+				label: 'Conditional call',
+				description: 'Has a conditional secret input.',
+				effect: 'local',
+			},
+			execute: async () => ({ ok: true }),
+		});
+		const properties = {
+			id: { type: 'string' },
+			token: { type: 'string', 'x-flowdular-secret': true },
+		};
+		for (const conditional of [
+			{ anyOf: [{ required: ['token'] }, { required: ['id'] }] },
+			{ dependentSchemas: { id: { required: ['token'] } } },
+			{ dependentRequired: { id: ['token'] } },
+		]) {
+			expect(
+				registrationCode({
+					...base,
+					inputSchema: {
+						type: 'object',
+						properties,
+						required: ['id'],
+						...conditional,
+					},
+				}),
+			).toBe('ACTION_TEMPLATE_SECRET_SCHEMA_UNPROVEN');
+		}
+	});
+
+	it('refuses malformed metadata rather than publishing an unusable palette entry', () => {
+		const tool = defineApiAgentTool({
+			...CONNECTORS_CALL_DECLARATION,
+			requiredPermissions: [...CONNECTORS_CALL_DECLARATION.requiredPermissions],
+			workflowTemplate: {
+				label: ' ',
+				description: 'A description.',
+				effect: 'local',
+			},
+			execute: async () => ({ ok: true }),
+		});
+		expect(registrationCode(tool)).toBe('ACTION_TEMPLATE_INVALID');
+	});
+
+	it('refuses a duplicate template identity and an external-risk template', () => {
+		const tool = defineApiAgentTool({
+			...CONNECTORS_CALL_DECLARATION,
+			requiredPermissions: [...CONNECTORS_CALL_DECLARATION.requiredPermissions],
+			workflowTemplate: {
+				label: 'Call service',
+				description: 'Call a consented service operation.',
+				effect: 'connector-egress',
+			},
+			execute: async () => ({ ok: true }),
+		});
+		expect(() =>
+			createAgentActionExecutionRuntime(database.repository, [tool, tool]),
+		).toThrowError(
+			expect.objectContaining({ code: 'ACTION_TEMPLATE_DUPLICATE' }),
+		);
+		expect(registrationCode({ ...tool, risk: 'external' })).toBe(
+			'ACTION_TEMPLATE_INELIGIBLE',
+		);
+	});
+
+	it('fails platform preparation before publishing invalid template metadata', async () => {
+		const tool = defineApiAgentTool({
+			...CONNECTORS_CALL_DECLARATION,
+			requiredPermissions: [...CONNECTORS_CALL_DECLARATION.requiredPermissions],
+			workflowTemplate: {
+				label: ' ',
+				description: 'Invalid template.',
+				effect: 'local',
+			},
+			execute: async () => ({ ok: true }),
+		});
+		const runtime = createAgentRuntime({
+			databases: database.databases,
+			workerConcurrency: 1,
+			workerLeaseMs: 1_000,
+			providers: [new LocalSimulationProvider()],
+			providerHostAllowlist: new Set(),
+			providerReadinessTtlMs: 10_000,
+			providerReadinessTimeoutMs: 1_000,
+			runGrantTtlMs: 1_000,
+			environment: { NODE_ENV: 'test' },
+			tools: [tool],
+		});
+		try {
+			await expect(runtime.prepare()).rejects.toMatchObject({
+				code: 'ACTION_TEMPLATE_INVALID',
+			});
+		} finally {
+			await runtime.dispose();
+		}
 	});
 });
 
