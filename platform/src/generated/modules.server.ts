@@ -117,6 +117,7 @@ export function composeModuleServer(
 						'agents.run-queue',
 						'agents.run-execution.v2',
 						'agents.actions.v1',
+						'agents.actions.v2',
 						'agents.decisions.v1',
 					],
 					requires: [
