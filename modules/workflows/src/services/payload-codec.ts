@@ -254,6 +254,16 @@ export function safePayloadEvidence(
 	}
 	const originalByteSize = jsonByteSize(value);
 	const hash = jsonHash(value);
+	if (originalByteSize > 8 * 1024) {
+		return {
+			version: 1,
+			state: 'truncated',
+			schemaId,
+			hash,
+			originalByteSize,
+			reason: 'size-limit',
+		};
+	}
 	const safe = redact(value, policy.schema, policy.permissionSnapshot ?? []);
 	if (safe.changed) {
 		return {
@@ -264,16 +274,6 @@ export function safePayloadEvidence(
 			originalByteSize,
 			preview: safe.value,
 			reason: safe.reason ?? 'secret',
-		};
-	}
-	if (originalByteSize > 8 * 1024) {
-		return {
-			version: 1,
-			state: 'truncated',
-			schemaId,
-			hash,
-			originalByteSize,
-			reason: 'size-limit',
 		};
 	}
 	return {

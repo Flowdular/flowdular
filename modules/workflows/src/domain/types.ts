@@ -187,6 +187,7 @@ export interface WorkflowActionNodeV1 extends WorkflowNodeBaseV1 {
 	readonly action: {
 		readonly actionId: string;
 		readonly contractVersion: number;
+		readonly descriptorDigest?: string;
 	};
 }
 
@@ -267,6 +268,20 @@ export interface WorkflowRevision {
 	readonly workflowId: string;
 	readonly revision: number;
 	readonly graph: WorkflowGraphV1;
+	readonly graphDiagnostics?: readonly (
+		| {
+				readonly code:
+					| 'WORKFLOW_ACTION_SECRET_BINDING'
+					| 'WORKFLOW_ACTION_SCHEMA_UNAVAILABLE';
+				readonly nodeId: string;
+				readonly targetPointer: string;
+		  }
+		| {
+				readonly code: 'WORKFLOW_SECRET_SCHEMA_VALUE';
+				readonly schemaId: string;
+				readonly path: string;
+		  }
+	)[];
 	readonly graphChecksum: string;
 	readonly compilerVersion: 1;
 	readonly compiledOrder: readonly string[];
@@ -517,6 +532,7 @@ export interface WorkflowRunEventV1 {
 export interface WorkflowRunDetail {
 	readonly run: WorkflowRunSummary;
 	readonly graph: WorkflowGraphV1;
+	readonly graphDiagnostics?: WorkflowRevision['graphDiagnostics'];
 	readonly compiledOrder: readonly string[];
 	readonly nodes: readonly WorkflowNodeExecution[];
 	readonly edges: readonly WorkflowEdgeTransfer[];

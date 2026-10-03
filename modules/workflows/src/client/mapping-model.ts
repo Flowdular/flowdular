@@ -2,6 +2,7 @@ import type {
 	WorkflowGraphV1,
 	WorkflowTargetMappingV1,
 } from '../domain/types.ts';
+import { actionBindingDiagnostics } from '../domain/graph-security.ts';
 
 export function upstreamPorts(graph: WorkflowGraphV1, nodeId: string) {
 	const incoming = new Map<string, string[]>();
@@ -66,6 +67,17 @@ export function validateMappingInput(
 			.some((key) => ['__proto__', 'constructor', 'prototype'].includes(key))
 	)
 		return false;
+	const target = graph.nodes.find((node) => node.id === nodeId);
+	if (target?.type === 'action') {
+		const schema = graph.schemas[target.inputPorts[0]?.schemaId ?? ''];
+		if (
+			actionBindingDiagnostics(
+				{ ...graph, nodes: [{ ...target, mappings: [mapping] }] },
+				() => schema,
+			).length > 0
+		)
+			return false;
+	}
 	const binding = mapping.binding;
 	if (binding.kind === 'literal') return binding.value !== undefined;
 	if (binding.kind !== 'path' && binding.kind !== 'template') return false;
