@@ -3,6 +3,7 @@ import type {
 	AgentTool,
 	AgentToolConsent,
 	AgentToolContext,
+	WorkflowActionTemplateMetadata,
 } from './runtime.ts';
 
 interface AgentToolBase {
@@ -12,6 +13,7 @@ interface AgentToolBase {
 	readonly inputSchema?: Readonly<Record<string, unknown>>;
 	readonly contractVersion?: number;
 	readonly outputSchema?: Readonly<Record<string, unknown>>;
+	readonly workflowTemplate?: WorkflowActionTemplateMetadata;
 	readonly risk?: 'read' | 'workspace-write' | 'external' | 'destructive';
 	/* Asked per call, after input validation, by every caller that runs the
 	   tool: the harness and the workflow action runtime. */
@@ -19,6 +21,7 @@ interface AgentToolBase {
 	readonly idempotency?: 'required';
 	readonly idempotencyProtection?: 'target-ledger';
 	readonly cancellation?: 'cooperative' | 'not-supported';
+	readonly timeoutMs?: number;
 	execute(input: unknown, context: AgentToolContext): Promise<unknown>;
 }
 
@@ -58,6 +61,9 @@ export function defineApiAgentTool(
 		...(definition.outputSchema === undefined
 			? {}
 			: { outputSchema: definition.outputSchema }),
+		...(definition.workflowTemplate === undefined
+			? {}
+			: { workflowTemplate: definition.workflowTemplate }),
 		...(definition.risk === undefined ? {} : { risk: definition.risk }),
 		...(definition.consent === undefined
 			? {}
@@ -71,6 +77,9 @@ export function defineApiAgentTool(
 		...(definition.cancellation === undefined
 			? {}
 			: { cancellation: definition.cancellation }),
+		...(definition.timeoutMs === undefined
+			? {}
+			: { timeoutMs: definition.timeoutMs }),
 		...(definition.inputSchema === undefined
 			? {}
 			: { inputSchema: definition.inputSchema }),
@@ -95,6 +104,9 @@ export function defineCliAgentTool(
 		...(definition.outputSchema === undefined
 			? {}
 			: { outputSchema: definition.outputSchema }),
+		...(definition.workflowTemplate === undefined
+			? {}
+			: { workflowTemplate: definition.workflowTemplate }),
 		...(definition.risk === undefined ? {} : { risk: definition.risk }),
 		...(definition.capability.localOnly === true ? { localOnly: true } : {}),
 		...(definition.consent === undefined
@@ -109,6 +121,9 @@ export function defineCliAgentTool(
 		...(definition.cancellation === undefined
 			? {}
 			: { cancellation: definition.cancellation }),
+		...(definition.timeoutMs === undefined
+			? {}
+			: { timeoutMs: definition.timeoutMs }),
 		...(definition.inputSchema === undefined
 			? {}
 			: { inputSchema: definition.inputSchema }),
