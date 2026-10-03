@@ -1402,7 +1402,8 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 				async () => {
 					const result = await database.query<{ is_nullable: string }>({
 						text: `SELECT is_nullable FROM information_schema.columns
-						       WHERE table_name = 'agent_action_invocations'
+						       WHERE table_schema = current_schema()
+						         AND table_name = 'agent_action_invocations'
 						       AND column_name = 'side_effect_idempotency_key'`,
 					});
 					return result.rows[0]?.is_nullable === 'NO';

@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import type {
 	DatabaseAdapterLease,
@@ -255,6 +256,30 @@ describe('agents migrations', () => {
 		await expect(apply()).rejects.toMatchObject({
 			code: 'PARTIAL_MIGRATION',
 		});
+	});
+
+	it('ignores side-effect key columns in another schema when checking a pending migration', async () => {
+		await runDatabaseMigrations(
+			lease.database,
+			'agents.core',
+			databaseMigrations.slice(0, -1),
+		);
+		const otherSchema = `agents_probe_${randomBytes(8).toString('hex')}`;
+		await lease.database.execute({ text: `CREATE SCHEMA ${otherSchema}` });
+		try {
+			await lease.database.execute({
+				text: `CREATE TABLE ${otherSchema}.agent_action_invocations
+				       (side_effect_idempotency_key TEXT NOT NULL)`,
+			});
+			expect((await status()).at(-1)).toMatchObject({
+				id: '0028_action_side_effect_idempotency_key',
+				state: 'pending',
+			});
+		} finally {
+			await lease.database.execute({
+				text: `DROP SCHEMA ${otherSchema} CASCADE`,
+			});
+		}
 	});
 
 	it('refuses adoption when reconciliation policies exist but a routing grant is missing', async () => {
