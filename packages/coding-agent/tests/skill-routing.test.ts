@@ -125,6 +125,32 @@ describe('sandbox skill routing', () => {
 		).toBe('module-new');
 	});
 
+	it('routes custom workflow node requests to the workflow authoring skill', () => {
+		const context = {
+			role: 'agentic-engineer',
+			sessionKind: 'edit-module' as const,
+			blueprint: 'edit-module@1.0.0',
+			available: ['agent-tool-design', 'workflow-development'],
+		};
+		for (const task of [
+			'Create a custom node with inputs and validators.',
+			'Zbuduj własny węzeł z wejściami i walidacją.',
+			'ZBUDUJ WŁASNY WĘZEŁ Z WALIDACJĄ.',
+			'Add nodes to the canvas.',
+			'Implement workflows for order approval.',
+		]) {
+			expect(selectTaskSkill({ ...context, task }), task).toBe(
+				'workflow-development',
+			);
+		}
+		expect(
+			selectTaskSkill({
+				...context,
+				task: 'Add a Node.js script to validate agent tools.',
+			}),
+		).toBe('agent-tool-design');
+	});
+
 	it('interviews a new module and implements an approved one', () => {
 		const context = {
 			role: 'business-manager',
