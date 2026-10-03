@@ -1,0 +1,67 @@
+# Flowdular requires a persistent web process, external PostgreSQL and object storage.
+# See infra/README.md before connecting this Blueprint.
+services:
+  - type: web
+    runtime: docker
+    name: flowdular
+    plan: 1c-2g
+    dockerfilePath: ./infra/docker/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeployTrigger: 'off'
+    maxShutdownDelaySeconds: 120
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: FD_DATABASE_ADAPTER
+        value: postgresql
+      - key: FD_DATABASE_TLS
+        value: verify-full
+      - key: FD_DATABASE_URL
+        sync: false
+      - key: FD_DATABASE_BACKGROUND_URL
+        sync: false
+      - key: FD_DATABASE_MIGRATOR_URL
+        sync: false
+      - key: FD_DATABASE_TLS_CA
+        sync: false
+      - key: FD_AUTH_PUBLIC_ORIGIN
+        sync: false
+      - key: FD_AUTH_SECURE_COOKIE
+        value: 'true'
+      - key: FD_AUTH_ALLOW_SIGN_UP
+        value: 'false'
+      - key: FD_TRUST_PROXY
+        value: 'true'
+      - key: FD_STORAGE_ADAPTER
+        value: s3
+      - key: FD_STORAGE_S3_BUCKET
+        sync: false
+      - key: FD_STORAGE_S3_REGION
+        sync: false
+      - key: FD_STORAGE_S3_ACCESS_KEY_ID
+        sync: false
+      - key: FD_STORAGE_S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: FD_AGENT_CREDENTIAL_KEY
+        generateValue: true
+      - key: FD_AGENT_RUN_GRANT_KEY
+        generateValue: true
+      - key: FD_AUTH_MFA_KEY
+        generateValue: true
+      - key: FD_APPROVAL_GRANT_KEY
+        generateValue: true
+      - key: FD_AUTOMATIONS_CREDENTIAL_KEY
+        generateValue: true
+      - key: FD_NOTIFICATIONS_SECRET_KEY
+        generateValue: true
+      - key: FD_WORKFLOWS_PAYLOAD_KEY
+        generateValue: true
+      - key: FD_WORKFLOWS_CURSOR_KEY
+        generateValue: true
+      - key: FD_STORAGE_ENCRYPTION_KEY
+        generateValue: true
+      - key: FD_CONNECTORS_SECRET_KEY
+        generateValue: true
+      - key: FD_AUDIT_ANCHOR_KEY
+        generateValue: true

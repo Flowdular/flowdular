@@ -1,5 +1,26 @@
 # Deployment
 
+## Deployment targets
+
+Run `pnpm flowdular deploy targets` to inspect the target contracts and
+`pnpm flowdular deploy plan docker` before starting the local stack.
+`pnpm flowdular deploy start docker --apply` starts Docker Compose and opens
+first-run setup. It prints the setup token, so it requires a private
+interactive terminal and refuses `--json` or redirected output.
+
+The repository-root `render.yaml` is a Render Blueprint for an always-on
+container. It needs external PostgreSQL with separate runtime, background and
+migrator roles, verified TLS, S3 object storage and a public HTTPS origin.
+The Blueprint prompts for these values and generates encryption keys. Back up
+those keys separately. It uses `/api/health` during initial setup; verify
+`/api/ready` after setup. See the main Flowdular deployment guide for details.
+Vercel Functions are unavailable as a full target because their HTTP instances
+can stop while scheduled module work is due. Cloudflare's Durable Object
+Container API can keep a process alive, but Flowdular has no verified adapter
+for its restart, secret and rollout lifecycle yet. A pushed Git repository can
+use the Deploy to Render URL returned by `deploy plan render --json` after the
+external prerequisites are supplied.
+
 The production artifact is the server built from `platform`. It runs as a
 non-root user and serves two public probes from
 `platform/src/server/health.ts`: `GET /api/health` answers as soon as the

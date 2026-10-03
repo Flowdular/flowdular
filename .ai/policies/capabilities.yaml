@@ -9,6 +9,11 @@ default: deny
 
 # packages/cli/src/capabilities.ts
 core:
+  deploy.start.local:
+    command: pnpm flowdular deploy start docker --apply
+    risk: process
+    supportsDryRun: true
+    effect: runs the existing Docker Compose launcher in the operator's terminal after checking its files and Docker Compose; the launcher creates local secrets on first start and opens setup
   module.search:
     command: pnpm flowdular module search [query]
     risk: read
@@ -109,6 +114,7 @@ commandsWithoutDescriptor:
   - pnpm flowdular module enable <id> [--apply] (with --apply also runs auth.scopes.sync; result field scopes, failure code MODULE_SCOPES_SYNC_FAILED)
   - pnpm flowdular module disable <id> [--apply]
   - pnpm flowdular setup check
+  - pnpm flowdular deploy targets|plan <docker|kubernetes|render|vercel|cloudflare>
   - pnpm flowdular setup quick (alias of auth.greenfield.reset)
 
 # modules/*/src/cli/commands.json, loaded only for modules enabled in flowdular.json
