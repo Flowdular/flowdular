@@ -2,6 +2,109 @@
 
 The production artifact is the Octane fullstack server built from `platform`. It runs as a non-root user and exposes `GET /api/health` for container and orchestrator probes.
 
+## Deployment targets
+
+`pnpm flowdular deploy targets` lists the runtime contract for each target.
+`pnpm flowdular deploy plan <target> --json` returns checks without changing the
+workspace or contacting a provider. `pnpm flowdular deploy start docker --apply`
+uses the existing local launcher after a preflight. It prints the one-time setup
+token, so it requires a private interactive terminal and refuses `--json` or
+redirected output. Omitting `--apply` returns the plan. `--no-open` and
+`--no-build` pass through to the launcher. The launcher records a bounded,
+credential-free receipt in `.flowdular/deployments.json`. A concurrent start
+is refused by its lock. If a process crashes and leaves
+`.flowdular/deployment.lock`, verify no deployment is running before removing
+that lock.
+
+The [Render Blueprint](../render.yaml) is a remote persistent-process adapter.
+Connect the repository as a Blueprint after provisioning PostgreSQL with
+separate runtime, background and migrator roles, verified TLS and external S3
+storage. Render prompts for the database URLs, CA and storage credentials,
+derives the public HTTPS origin from its web service, and generates the
+encryption keys on first creation. Export and back up those keys alongside
+database and object backups. The Blueprint uses a paid always-on web plan,
+builds the existing Dockerfile, disables automatic deploys
+and uses `/api/health` because `/api/ready` is not routed during first-run
+setup. Check `/api/ready` after setup before directing production traffic.
+Blueprint sync does not re-prompt for newly added `sync: false` secrets, so add
+them in Render before syncing an existing deployment. The database and object
+store are not created by this Blueprint. After committing `render.yaml` and
+`infra/docker/Dockerfile` and pushing the current branch to `origin`,
+`deploy plan render --json` includes a Deploy to Render URL if both files pass
+Flowdular's structural checks, match the pushed branch and the origin is a
+credential-free HTTPS or SSH GitHub, GitLab or Bitbucket remote. The URL selects that branch explicitly,
+including before a feature branch is merged into the default branch. Local
+tracking refs are checked without contacting the Git provider, so confirm that
+the branch still exists and is accessible in Render. Flowdular's check does
+not replace Render's full Blueprint validation. The URL opens the Blueprint
+review and does not bypass external service and secret configuration. Render
+documents this [button flow](https://render.com/docs/deploy-to-render).
+If you add a custom domain, change `FD_AUTH_PUBLIC_ORIGIN` in your Blueprint to
+that HTTPS origin before sending users there. A later Blueprint sync can
+replace a value changed only in the Render service.
+
+This Blueprint does not create Render Postgres. Render Blueprints can create a
+database, but each definition exposes one user and `fromDatabase` supplies its
+internal URL. Flowdular requires separate runtime and migrator credentials;
+Render's internal PostgreSQL connection has a self-signed certificate and
+[does not support `verify-full`](https://render.com/docs/postgresql-creating-connecting)
+while Flowdular requires that mode in production. Referencing the same URL for
+both roles would also fail Flowdular's credential separation check. A database
+with the required roles and verified TLS must therefore be prepared before
+using this Blueprint. Render's [Blueprint reference](https://render.com/docs/blueprint-spec)
+documents the available database fields and references. Its
+[credential guide](https://render.com/docs/postgresql-credentials) explains
+that additional users are managed outside the Blueprint.
+
+The Blueprint defaults to AWS S3 for the supplied region. It does not create a
+bucket. To use another S3-compatible store, also set
+`FD_STORAGE_S3_ENDPOINT` in the Render service and
+`FD_STORAGE_S3_FORCE_PATH_STYLE=true` when that store requires path-style
+requests. Render can host [MinIO with a persistent disk](https://render.com/docs/deploy-minio),
+but a complete Flowdular Blueprint would still need a pinned MinIO image,
+private networking, bucket initialization, credential wiring, backup recovery
+and provider-level tests. Render disk snapshots are documented
+[here](https://render.com/docs/disks).
+
+The smallest path to a one-action deployment is a provider adapter that
+provisions a database, creates the separated roles under a migration-only
+credential, verifies a trusted TLS connection, provisions an S3-compatible
+bucket, and binds the resulting secrets without logging them. It must then
+exercise first-run setup, migration failure, restart and restore against a
+real Render account before the deploy action can be called one click.
+
+Vercel and Cloudflare are currently unavailable as full-platform targets.
+Vercel [Functions scale down to zero](https://vercel.com/docs/functions), and
+its [Services beta](https://vercel.com/docs/services) can package containers
+but follows the same [Function limits](https://vercel.com/docs/services/pricing).
+Flowdular starts workflow and automation workers in the application process,
+including jobs due without incoming traffic. Cloudflare supports explicit Container
+lifecycle control through Durable Objects, but this repository has no
+Cloudflare adapter verified for restart, secret injection, migrations and
+rollouts. The target registry keeps these options visible without silently
+dropping work. Cloudflare's explicit Container API is documented
+[here](https://developers.cloudflare.com/containers/api/durable-object-container/).
+
+To support Vercel or Cloudflare as a complete platform:
+
+1. For Vercel, move the module worker lifecycle out of the HTTP server into a
+   separately deployable worker with the same PostgreSQL leases and graceful
+   shutdown. Cloudflare can instead keep that process inside a managed
+   Container if its lifecycle is proven.
+2. Add a durable scheduler trigger for Vercel. For Cloudflare, manage an
+   always-running Container explicitly with Durable Object alarms and monitor
+   restarts. Run migrations before routing traffic, outside request startup.
+3. Bind the runtime, background and migrator database roles, TLS trust, object
+   storage and encryption keys through provider secrets without exposing them
+   in a build artifact or deployment log.
+4. Test idle shutdown, restart, duplicate delivery, rollout overlap and
+   migration failure against the provider runtime before enabling `deploy start`.
+
+Vercel [Functions](https://vercel.com/docs/functions) scale down to zero and
+have a bounded invocation duration. Cloudflare's [Durable Object Container API](https://developers.cloudflare.com/containers/api/durable-object-container/)
+can control startup and inactivity explicitly; that path still needs the
+provider tests above before Flowdular enables it.
+
 ## Local container
 
 ```bash

@@ -142,6 +142,15 @@ describe('scaffold', () => {
 				'utf8',
 			),
 		);
+		const renderBlueprint = await readFile(
+			join(result.directory, 'render.yaml'),
+			'utf8',
+		);
+		expect(renderBlueprint).toBe(
+			await readFile(new URL('../../../render.yaml', import.meta.url), 'utf8'),
+		);
+		expect(renderBlueprint).toContain('runtime: docker');
+		expect(renderBlueprint).toContain('key: FD_DATABASE_MIGRATOR_URL');
 
 		for (const path of [
 			'pnpm-workspace.yaml',
@@ -190,6 +199,7 @@ describe('scaffold', () => {
 			'.env.example',
 			'.dockerignore',
 			'infra/README.md',
+			'render.yaml',
 			'infra/docker/Dockerfile',
 			'infra/docker/compose.yaml',
 			'infra/docker/.env.example',
