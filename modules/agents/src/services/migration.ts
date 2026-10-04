@@ -912,10 +912,10 @@ export const AGENTS_MIGRATION_0028 = `-- An action invocation is one workflow at
 -- deduplicates that attempt, while the external tool must reuse one stable key
 -- across attempts so a provider mutation is never repeated after recovery.
 ALTER TABLE agent_action_invocations
-  ADD COLUMN side_effect_idempotency_key TEXT;
-UPDATE agent_action_invocations
-SET side_effect_idempotency_key = idempotency_key
-WHERE side_effect_idempotency_key IS NULL;
+  ADD COLUMN side_effect_idempotency_key_override TEXT;
+ALTER TABLE agent_action_invocations
+  ADD COLUMN side_effect_idempotency_key TEXT
+  GENERATED ALWAYS AS (COALESCE(side_effect_idempotency_key_override, idempotency_key)) STORED;
 ALTER TABLE agent_action_invocations
   ALTER COLUMN side_effect_idempotency_key SET NOT NULL;
 `;
@@ -1399,14 +1399,25 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 						'agent_action_invocations',
 						'side_effect_idempotency_key',
 					),
+				() =>
+					database.schema.hasColumn(
+						'agent_action_invocations',
+						'side_effect_idempotency_key_override',
+					),
 				async () => {
-					const result = await database.query<{ is_nullable: string }>({
-						text: `SELECT is_nullable FROM information_schema.columns
+					const result = await database.query<{
+						is_nullable: string;
+						is_generated: string;
+					}>({
+						text: `SELECT is_nullable, is_generated FROM information_schema.columns
 						       WHERE table_schema = current_schema()
 						         AND table_name = 'agent_action_invocations'
 						       AND column_name = 'side_effect_idempotency_key'`,
 					});
-					return result.rows[0]?.is_nullable === 'NO';
+					return (
+						result.rows[0]?.is_nullable === 'NO' &&
+						result.rows[0].is_generated === 'ALWAYS'
+					);
 				},
 			]),
 	},

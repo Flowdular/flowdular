@@ -202,7 +202,7 @@ describe('agents migrations', () => {
 		);
 	});
 
-	it('backfills the stable side-effect key for action invocations queued before migration', async () => {
+	it('derives the stable side-effect key for action invocations queued before migration', async () => {
 		await runDatabaseMigrations(
 			lease.database,
 			'agents.core',
@@ -237,6 +237,32 @@ describe('agents migrations', () => {
 			{ access: 'read', tenantId: 'tenant-a' },
 		);
 		expect(row.rows[0]?.side_effect_idempotency_key).toBe('run-1:node-1');
+		await lease.database.transaction(
+			(transaction) =>
+				transaction.execute({
+					text: `UPDATE agent_action_invocations
+					       SET side_effect_idempotency_key_override = $1
+					       WHERE tenant_id = $2 AND id = $3`,
+					parameters: [
+						'run-1:stable-side-effect',
+						'tenant-a',
+						'action-before-0028',
+					],
+				}),
+			{ access: 'write', tenantId: 'tenant-a' },
+		);
+		const override = await lease.database.transaction(
+			(transaction) =>
+				transaction.query<{ side_effect_idempotency_key: string }>({
+					text: `SELECT side_effect_idempotency_key
+					       FROM agent_action_invocations WHERE tenant_id = $1 AND id = $2`,
+					parameters: ['tenant-a', 'action-before-0028'],
+				}),
+			{ access: 'read', tenantId: 'tenant-a' },
+		);
+		expect(override.rows[0]?.side_effect_idempotency_key).toBe(
+			'run-1:stable-side-effect',
+		);
 	});
 
 	it('refuses adoption of a nullable, partly applied side-effect key column', async () => {

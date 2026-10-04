@@ -1075,7 +1075,7 @@ export const AGENTS_SQL: AgentsPersistenceStatements = Object.freeze({
 	enqueueAction: `INSERT INTO agent_action_invocations
 					 (id, tenant_id, workflow_run_id, node_run_id, action_id,
 					  contract_version, actor_json, authorization_subject_json, permission_snapshot_json,
-					  input_json, idempotency_key, side_effect_idempotency_key, request_hash, status, output_json,
+					  input_json, idempotency_key, side_effect_idempotency_key_override, request_hash, status, output_json,
 					  failure_code, attempt, queued_at, started_at, completed_at,
 					  lease_owner, lease_expires_at)
 					 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'queued', NULL, NULL,
