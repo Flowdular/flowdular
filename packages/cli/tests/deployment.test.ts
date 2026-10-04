@@ -1,4 +1,5 @@
 import {
+	access,
 	chmod,
 	mkdir,
 	mkdtemp,
@@ -77,6 +78,62 @@ describe('deployment targets', () => {
 		}
 	});
 
+	it('blocks Docker start when Compose exists but its daemon is unavailable', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'flowdular-deploy-'));
+		const binaryDirectory = await mkdtemp(join(tmpdir(), 'flowdular-bin-'));
+		const originalPath = process.env.PATH;
+		try {
+			await mkdir(join(root, 'infra/docker'), { recursive: true });
+			for (const name of [
+				'Dockerfile',
+				'compose.yaml',
+				'.env.example',
+				'start.mjs',
+			]) {
+				await writeFile(join(root, 'infra/docker', name), 'fixture');
+			}
+			const fakeDocker = join(binaryDirectory, 'docker');
+			await writeFile(
+				fakeDocker,
+				'#!/bin/sh\nif [ "$1" = "compose" ]; then exit 0; fi\nexit 1\n',
+			);
+			await chmod(fakeDocker, 0o755);
+			process.env.PATH = `${binaryDirectory}:${originalPath ?? ''}`;
+			const workspace = {
+				root,
+				configPath: join(root, 'flowdular.json'),
+				config: {},
+			};
+			const plan = await deploymentPlan(workspace, 'docker');
+			const data = plan.data as {
+				status: string;
+				checks: { id: string; status: string }[];
+			};
+			expect(
+				data.checks.find((check) => check.id === 'docker-compose')?.status,
+			).toBe('pass');
+			expect(
+				data.checks.find((check) => check.id === 'docker-daemon')?.status,
+			).toBe('action-required');
+			expect(data.status).toBe('action-required');
+			const start = await runDeployment(
+				workspace,
+				'start',
+				'docker',
+				parseArguments(['deploy', 'start', 'docker', '--apply']),
+				{ input: true, output: true, errors: true },
+			);
+			expect(start.error?.code).toBe('DEPLOY_PREFLIGHT_FAILED');
+			await expect(
+				access(join(root, '.flowdular/deployments.json')),
+			).rejects.toThrow();
+		} finally {
+			process.env.PATH = originalPath;
+			await rm(root, { recursive: true, force: true });
+			await rm(binaryDirectory, { recursive: true, force: true });
+		}
+	});
+
 	it('ships a persistent Render service in the generated project', async () => {
 		const file = new URL(
 			'../../create-flowdular/template/default/render.yaml',
@@ -128,10 +185,16 @@ describe('deployment targets', () => {
 		}
 	});
 
-	it('only offers a Render button for a credential-free Git origin', async () => {
+	it('only offers a Render button for a valid Blueprint on a pushed branch', async () => {
 		const root = await mkdtemp(join(tmpdir(), 'flowdular-render-'));
 		try {
-			execFileSync('git', ['init', '-q', root]);
+			execFileSync('git', [
+				'init',
+				'-q',
+				'-b',
+				'feat/deployment-capabilities',
+				root,
+			]);
 			await writeFile(join(root, 'render.yaml'), 'services: []\n');
 			execFileSync(
 				'git',
@@ -143,15 +206,145 @@ describe('deployment targets', () => {
 				configPath: join(root, 'flowdular.json'),
 				config: {},
 			};
+			const invalid = await deploymentPlan(workspace, 'render');
+			expect(
+				(invalid.data as { deployUrl: string | null }).deployUrl,
+			).toBeNull();
+			expect(
+				(
+					invalid.data as { checks: { id: string; status: string }[] }
+				).checks.find((check) => check.id === 'render-blueprint')?.status,
+			).toBe('action-required');
+			await writeFile(join(root, 'render.yaml'), 'services: [\n');
+			const malformed = await deploymentPlan(workspace, 'render');
+			expect(
+				(malformed.data as { deployUrl: string | null }).deployUrl,
+			).toBeNull();
+			expect(
+				(
+					malformed.data as { checks: { id: string; status: string }[] }
+				).checks.find((check) => check.id === 'render-blueprint')?.status,
+			).toBe('action-required');
+			await writeFile(
+				join(root, 'render.yaml'),
+				await readFile(
+					new URL(
+						'../../create-flowdular/template/default/render.yaml',
+						import.meta.url,
+					),
+					'utf8',
+				),
+			);
+			const missingDockerfile = await deploymentPlan(workspace, 'render');
+			expect(
+				(
+					missingDockerfile.data as { checks: { id: string; status: string }[] }
+				).checks.find((check) => check.id === 'render-blueprint')?.status,
+			).toBe('action-required');
+			await mkdir(join(root, 'infra/docker'), { recursive: true });
+			await writeFile(join(root, 'infra/docker/Dockerfile'), 'FROM node:24\n');
+			const localOnly = await deploymentPlan(workspace, 'render');
+			expect(
+				(localOnly.data as { deployUrl: string | null }).deployUrl,
+			).toBeNull();
+			execFileSync('git', ['config', 'user.email', 'test@example.test'], {
+				cwd: root,
+			});
+			execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root });
+			execFileSync('git', ['add', 'render.yaml'], { cwd: root });
+			execFileSync('git', ['commit', '-q', '-m', 'Add Render Blueprint'], {
+				cwd: root,
+			});
+			execFileSync(
+				'git',
+				[
+					'update-ref',
+					'refs/remotes/origin/feat/deployment-capabilities',
+					'HEAD',
+				],
+				{ cwd: root },
+			);
+			const untrackedDockerfile = await deploymentPlan(workspace, 'render');
+			expect(
+				(untrackedDockerfile.data as { deployUrl: string | null }).deployUrl,
+			).toBeNull();
+			execFileSync('git', ['add', 'infra/docker/Dockerfile'], { cwd: root });
+			execFileSync('git', ['commit', '-q', '-m', 'Add Dockerfile'], {
+				cwd: root,
+			});
+			execFileSync(
+				'git',
+				[
+					'update-ref',
+					'refs/remotes/origin/feat/deployment-capabilities',
+					'HEAD',
+				],
+				{ cwd: root },
+			);
 			const plan = await deploymentPlan(workspace, 'render');
 			expect((plan.data as { deployUrl: string }).deployUrl).toBe(
-				'https://render.com/deploy?repo=https%3A%2F%2Fgithub.com%2Fteam%2Fproject',
+				'https://render.com/deploy?repo=https%3A%2F%2Fgithub.com%2Fteam%2Fproject%2Ftree%2Ffeat%2Fdeployment-capabilities',
 			);
 			expect(
 				(
 					plan.data as { checks: { id: string; message: string }[] }
 				).checks.find((check) => check.id === 'external-services')?.message,
 			).toContain('verify-full');
+			await writeFile(join(root, 'infra/docker/Dockerfile'), 'FROM node:22\n');
+			const changedDockerfile = await deploymentPlan(workspace, 'render');
+			expect(
+				(changedDockerfile.data as { deployUrl: string | null }).deployUrl,
+			).toBeNull();
+			execFileSync('git', ['restore', 'infra/docker/Dockerfile'], {
+				cwd: root,
+			});
+			const generatedBlueprint = await readFile(
+				join(root, 'render.yaml'),
+				'utf8',
+			);
+			const customDomainBlueprint = generatedBlueprint.replace(
+				'fromService:\n          name: flowdular\n          type: web\n          envVarKey: RENDER_EXTERNAL_URL',
+				'value: https://flow.example.test',
+			);
+			expect(customDomainBlueprint).not.toBe(generatedBlueprint);
+			await writeFile(join(root, 'render.yaml'), customDomainBlueprint);
+			const customDomain = await deploymentPlan(workspace, 'render');
+			expect(
+				(
+					customDomain.data as { checks: { id: string; status: string }[] }
+				).checks.find((check) => check.id === 'render-blueprint')?.status,
+			).toBe('pass');
+			await writeFile(
+				join(root, 'render.yaml'),
+				generatedBlueprint.replace(
+					'fromService:\n          name: flowdular\n          type: web\n          envVarKey: RENDER_EXTERNAL_URL',
+					'value: http://flow.example.test',
+				),
+			);
+			const insecureDomain = await deploymentPlan(workspace, 'render');
+			expect(
+				(
+					insecureDomain.data as { checks: { id: string; status: string }[] }
+				).checks.find((check) => check.id === 'render-blueprint')?.status,
+			).toBe('action-required');
+			execFileSync('git', ['restore', 'render.yaml'], { cwd: root });
+			await writeFile(
+				join(root, 'render.yaml'),
+				(await readFile(join(root, 'render.yaml'), 'utf8')).replace(
+					'      - key: FD_DATABASE_MIGRATOR_URL\n        sync: false\n',
+					'',
+				),
+			);
+			const missingRole = await deploymentPlan(workspace, 'render');
+			expect(
+				(missingRole.data as { deployUrl: string | null }).deployUrl,
+			).toBeNull();
+			expect(
+				(
+					missingRole.data as { checks: { id: string; status: string }[] }
+				).checks.find((check) => check.id === 'render-blueprint')?.status,
+			).toBe('action-required');
+			execFileSync('git', ['restore', 'render.yaml'], { cwd: root });
 
 			execFileSync(
 				'git',
@@ -168,6 +361,68 @@ describe('deployment targets', () => {
 				(protectedPlan.data as { deployUrl: string | null }).deployUrl,
 			).toBeNull();
 			expect(JSON.stringify(protectedPlan.data)).not.toContain('secret');
+			execFileSync(
+				'git',
+				['remote', 'set-url', 'origin', 'git@github.com:team/project.git'],
+				{ cwd: root },
+			);
+			await writeFile(join(root, 'other.txt'), 'new commit\n');
+			execFileSync('git', ['add', 'other.txt'], { cwd: root });
+			execFileSync('git', ['commit', '-q', '-m', 'Later change'], {
+				cwd: root,
+			});
+			const unpushed = await deploymentPlan(workspace, 'render');
+			expect(
+				(unpushed.data as { deployUrl: string | null }).deployUrl,
+			).toBeNull();
+			await writeFile(join(root, 'render.yaml'), 'services: []\n');
+			const changed = await deploymentPlan(workspace, 'render');
+			expect(
+				(changed.data as { deployUrl: string | null }).deployUrl,
+			).toBeNull();
+			await rm(join(root, 'render.yaml'));
+			const missing = await deploymentPlan(workspace, 'render');
+			expect(
+				(missing.data as { deployUrl: string | null }).deployUrl,
+			).toBeNull();
+			expect(
+				(
+					missing.data as { checks: { id: string; status: string }[] }
+				).checks.find((check) => check.id === 'render-blueprint')?.status,
+			).toBe('action-required');
+			execFileSync('git', ['restore', 'render.yaml'], { cwd: root });
+			execFileSync('git', ['rm', '--cached', '-q', 'render.yaml'], {
+				cwd: root,
+			});
+			await writeFile(join(root, '.gitignore'), 'render.yaml\n');
+			execFileSync('git', ['add', '.gitignore'], { cwd: root });
+			execFileSync('git', ['commit', '-q', '-m', 'Ignore Blueprint'], {
+				cwd: root,
+			});
+			execFileSync(
+				'git',
+				[
+					'update-ref',
+					'refs/remotes/origin/feat/deployment-capabilities',
+					'HEAD',
+				],
+				{ cwd: root },
+			);
+			expect(
+				execFileSync('git', ['status', '--porcelain', '--', 'render.yaml'], {
+					cwd: root,
+					encoding: 'utf8',
+				}),
+			).toBe('');
+			const ignored = await deploymentPlan(workspace, 'render');
+			expect(
+				(ignored.data as { deployUrl: string | null }).deployUrl,
+			).toBeNull();
+			expect(
+				(
+					ignored.data as { checks: { id: string; status: string }[] }
+				).checks.find((check) => check.id === 'render-blueprint')?.status,
+			).toBe('pass');
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
@@ -215,6 +470,61 @@ describe('deployment targets', () => {
 					createdAt: expect.any(String),
 				},
 			]);
+		} finally {
+			process.env.PATH = originalPath;
+			await rm(root, { recursive: true, force: true });
+			await rm(binaryDirectory, { recursive: true, force: true });
+		}
+	});
+
+	it('records an unknown outcome and releases the lock after launcher failure', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'flowdular-deploy-'));
+		const binaryDirectory = await mkdtemp(join(tmpdir(), 'flowdular-bin-'));
+		const originalPath = process.env.PATH;
+		try {
+			await mkdir(join(root, 'infra/docker'), { recursive: true });
+			for (const name of ['Dockerfile', 'compose.yaml', '.env.example']) {
+				await writeFile(join(root, 'infra/docker', name), 'fixture');
+			}
+			const launcher = join(root, 'infra/docker/start.mjs');
+			await writeFile(launcher, 'process.exit(1)');
+			const fakeDocker = join(binaryDirectory, 'docker');
+			await writeFile(fakeDocker, '#!/bin/sh\nexit 0\n');
+			await chmod(fakeDocker, 0o755);
+			process.env.PATH = `${binaryDirectory}:${originalPath ?? ''}`;
+			const workspace = {
+				root,
+				configPath: join(root, 'flowdular.json'),
+				config: {},
+			};
+			const first = await runDeployment(
+				workspace,
+				'start',
+				'docker',
+				parseArguments(['deploy', 'start', 'docker', '--apply']),
+				{ input: true, output: true, errors: true },
+			);
+			expect(first.error?.code).toBe('DEPLOY_START_FAILED');
+			expect(first.auditId).toBeTypeOf('string');
+			const journal = JSON.parse(
+				await readFile(join(root, '.flowdular/deployments.json'), 'utf8'),
+			) as { auditId: string; outcome: string }[];
+			expect(journal[0]).toMatchObject({
+				auditId: first.auditId,
+				outcome: 'unknown',
+			});
+			await expect(
+				access(join(root, '.flowdular/deployment.lock')),
+			).rejects.toThrow();
+			await writeFile(launcher, 'process.exit(0)');
+			const retry = await runDeployment(
+				workspace,
+				'start',
+				'docker',
+				parseArguments(['deploy', 'start', 'docker', '--apply']),
+				{ input: true, output: true, errors: true },
+			);
+			expect(retry.ok).toBe(true);
 		} finally {
 			process.env.PATH = originalPath;
 			await rm(root, { recursive: true, force: true });

@@ -11,6 +11,7 @@ import {
 	writeFile,
 } from 'node:fs/promises';
 import { isAbsolute, join, relative } from 'node:path';
+import { parse as parseYaml } from 'yaml';
 import {
 	failure,
 	success,
@@ -72,7 +73,7 @@ export const deploymentAdapters: readonly DeploymentAdapter[] = [
 		backgroundJobs: 'separate-worker-required',
 		launch: 'unavailable',
 		summary:
-			'Vercel Functions stop idle instances; Flowdular workers require a persistent process.',
+			'Vercel request services have no verified persistent worker lifecycle for Flowdular background jobs.',
 	},
 	{
 		id: 'cloudflare',
@@ -168,16 +169,145 @@ function dockerAvailable(): boolean {
 	return !result.error && result.status === 0;
 }
 
-function renderDeployUrl(root: string): string | null {
-	const result = spawnSync('git', ['remote', 'get-url', 'origin'], {
+function dockerDaemonAvailable(): boolean {
+	const result = spawnSync(
+		'docker',
+		['info', '--format', '{{.ServerVersion}}'],
+		{
+			stdio: 'ignore',
+			timeout: 5000,
+		},
+	);
+	return !result.error && result.status === 0;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+async function renderBlueprintIssue(root: string): Promise<string | null> {
+	const path = 'render.yaml';
+	if (!(await workspaceFile(root, path)))
+		return 'render.yaml must be a regular file at the repository root.';
+	let blueprint: unknown;
+	try {
+		if ((await lstat(join(root, path))).size > 128 * 1024)
+			return 'render.yaml exceeds the 128 KiB preflight limit.';
+		blueprint = parseYaml(await readFile(join(root, path), 'utf8'));
+	} catch {
+		return 'render.yaml must contain valid YAML.';
+	}
+	if (!isObject(blueprint) || !Array.isArray(blueprint.services))
+		return 'render.yaml must declare a services list.';
+	const service = blueprint.services.find(
+		(entry: unknown) => isObject(entry) && entry.name === 'flowdular',
+	);
+	if (
+		!isObject(service) ||
+		service.type !== 'web' ||
+		service.runtime !== 'docker' ||
+		service.dockerfilePath !== './infra/docker/Dockerfile' ||
+		service.healthCheckPath !== '/api/health' ||
+		service.autoDeployTrigger !== 'off' ||
+		typeof service.plan !== 'string' ||
+		service.plan === 'free'
+	)
+		return 'render.yaml must define the persistent Flowdular Docker web service with a health check and manual deploys.';
+	if (!(await workspaceFile(root, 'infra/docker/Dockerfile')))
+		return 'The Render Dockerfile must be a regular file inside the repository.';
+	if (!Array.isArray(service.envVars))
+		return 'render.yaml must declare the Flowdular environment variables.';
+	const env = new Map<string, Record<string, unknown>>();
+	for (const entry of service.envVars) {
+		if (!isObject(entry) || typeof entry.key !== 'string' || env.has(entry.key))
+			return 'render.yaml has an invalid or duplicate environment variable.';
+		env.set(entry.key, entry);
+	}
+	for (const [key, value] of [
+		['NODE_ENV', 'production'],
+		['FD_DATABASE_ADAPTER', 'postgresql'],
+		['FD_DATABASE_TLS', 'verify-full'],
+		['FD_AUTH_SECURE_COOKIE', 'true'],
+		['FD_AUTH_ALLOW_SIGN_UP', 'false'],
+		['FD_TRUST_PROXY', 'true'],
+		['FD_STORAGE_ADAPTER', 's3'],
+	] as const) {
+		if (env.get(key)?.value !== value)
+			return `render.yaml must set ${key} to ${value}.`;
+	}
+	for (const key of [
+		'FD_DATABASE_URL',
+		'FD_DATABASE_BACKGROUND_URL',
+		'FD_DATABASE_MIGRATOR_URL',
+		'FD_DATABASE_TLS_CA',
+		'FD_STORAGE_S3_BUCKET',
+		'FD_STORAGE_S3_REGION',
+		'FD_STORAGE_S3_ACCESS_KEY_ID',
+		'FD_STORAGE_S3_SECRET_ACCESS_KEY',
+	]) {
+		if (env.get(key)?.sync !== false)
+			return `render.yaml must prompt for ${key}.`;
+	}
+	for (const key of [
+		'FD_AGENT_CREDENTIAL_KEY',
+		'FD_AGENT_RUN_GRANT_KEY',
+		'FD_AUTH_MFA_KEY',
+		'FD_APPROVAL_GRANT_KEY',
+		'FD_AUTOMATIONS_CREDENTIAL_KEY',
+		'FD_NOTIFICATIONS_SECRET_KEY',
+		'FD_WORKFLOWS_PAYLOAD_KEY',
+		'FD_WORKFLOWS_CURSOR_KEY',
+		'FD_STORAGE_ENCRYPTION_KEY',
+		'FD_CONNECTORS_SECRET_KEY',
+		'FD_AUDIT_ANCHOR_KEY',
+	]) {
+		if (env.get(key)?.generateValue !== true)
+			return `render.yaml must generate ${key}.`;
+	}
+	const publicOrigin = env.get('FD_AUTH_PUBLIC_ORIGIN');
+	const fromService = publicOrigin?.fromService;
+	const derivedOrigin =
+		isObject(fromService) &&
+		fromService.name === 'flowdular' &&
+		fromService.type === 'web' &&
+		fromService.envVarKey === 'RENDER_EXTERNAL_URL';
+	let customOrigin = false;
+	if (typeof publicOrigin?.value === 'string') {
+		try {
+			const url = new URL(publicOrigin.value);
+			customOrigin =
+				url.protocol === 'https:' &&
+				!url.username &&
+				!url.password &&
+				!url.search &&
+				!url.hash &&
+				url.pathname === '/';
+		} catch {
+			customOrigin = false;
+		}
+	}
+	if (
+		!(derivedOrigin && publicOrigin?.value === undefined) &&
+		!(customOrigin && publicOrigin?.fromService === undefined)
+	)
+		return 'render.yaml must set FD_AUTH_PUBLIC_ORIGIN from the Render service or to a public HTTPS origin.';
+	return null;
+}
+
+function gitOutput(root: string, args: string[]): string | null {
+	const result = spawnSync('git', args, {
 		cwd: root,
 		encoding: 'utf8',
 		stdio: ['ignore', 'pipe', 'ignore'],
 		maxBuffer: 2048,
 		timeout: 3000,
 	});
-	if (result.error || result.status !== 0) return null;
-	const remote = result.stdout.trim();
+	return result.error || result.status !== 0 ? null : result.stdout.trim();
+}
+
+function renderDeployUrl(root: string): string | null {
+	const remote = gitOutput(root, ['remote', 'get-url', 'origin']);
+	if (!remote) return null;
 	const ssh = /^git@(github\.com|gitlab\.com|bitbucket\.org):(.+)$/.exec(
 		remote,
 	);
@@ -198,7 +328,38 @@ function renderDeployUrl(root: string): string | null {
 		return null;
 	const repository = url.pathname.replace(/^\//, '').replace(/\.git$/, '');
 	if (!/^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+$/.test(repository)) return null;
-	return `https://render.com/deploy?repo=${encodeURIComponent(`https://${url.hostname}/${repository}`)}`;
+	const branch = gitOutput(root, [
+		'symbolic-ref',
+		'--quiet',
+		'--short',
+		'HEAD',
+	]);
+	if (!branch || !/^[A-Za-z0-9_.\/-]+$/.test(branch) || branch.includes('..'))
+		return null;
+	const head = gitOutput(root, ['rev-parse', '--verify', 'HEAD']);
+	const remoteHead = gitOutput(root, [
+		'rev-parse',
+		'--verify',
+		`refs/remotes/origin/${branch}`,
+	]);
+	if (!head || head !== remoteHead) return null;
+	for (const path of ['render.yaml', 'infra/docker/Dockerfile']) {
+		if (
+			gitOutput(root, ['ls-tree', '--name-only', 'HEAD', '--', path]) !== path
+		)
+			return null;
+	}
+	if (
+		gitOutput(root, [
+			'status',
+			'--porcelain',
+			'--',
+			'render.yaml',
+			'infra/docker/Dockerfile',
+		]) !== ''
+	)
+		return null;
+	return `https://render.com/deploy?repo=${encodeURIComponent(`https://${url.hostname}/${repository}/tree/${branch}`)}`;
 }
 
 export async function deploymentPlan(
@@ -222,19 +383,29 @@ export async function deploymentPlan(
 				message: path,
 			});
 		}
+		const composeAvailable = dockerAvailable();
 		checks.push({
 			id: 'docker-compose',
-			status: dockerAvailable() ? 'pass' : 'action-required',
+			status: composeAvailable ? 'pass' : 'action-required',
 			message: 'Docker Compose must be installed and runnable on this host.',
+		});
+		checks.push({
+			id: 'docker-daemon',
+			status:
+				composeAvailable && dockerDaemonAvailable()
+					? 'pass'
+					: 'action-required',
+			message: 'The Docker daemon must be running and accessible on this host.',
 		});
 	} else if (target === 'kubernetes' || target === 'render') {
 		if (target === 'render') {
+			const blueprintIssue = await renderBlueprintIssue(workspace.root);
 			checks.push({
 				id: 'render-blueprint',
-				status: (await workspaceFile(workspace.root, 'render.yaml'))
-					? 'pass'
-					: 'action-required',
-				message: 'render.yaml must be present at the repository root.',
+				status: blueprintIssue ? 'action-required' : 'pass',
+				message:
+					blueprintIssue ??
+					'render.yaml contains the Flowdular Docker service.',
 			});
 		}
 		checks.push({
@@ -242,7 +413,7 @@ export async function deploymentPlan(
 			status: 'action-required',
 			message:
 				target === 'render'
-					? 'Provide PostgreSQL with separate runtime, background and migrator roles, verified TLS, object storage, encryption keys and backups. Render Blueprint cannot directly wire its managed Postgres internal URL because that URL does not support verify-full TLS.'
+					? 'Provide PostgreSQL with separate runtime, background and migrator roles, verified TLS, object storage, and backups for data and generated keys. Render Blueprint cannot directly wire its managed Postgres internal URL because that URL does not support verify-full TLS.'
 					: 'Provide PostgreSQL with separate runtime, background and migrator roles, verified TLS, object storage, encryption keys and backups.',
 		});
 		checks.push({
@@ -258,6 +429,21 @@ export async function deploymentPlan(
 			id: 'persistent-workers',
 			status: 'unsupported',
 			message: adapter.summary,
+		});
+	}
+	const renderBlueprintValid =
+		checks.find((check) => check.id === 'render-blueprint')?.status === 'pass';
+	const deployUrl =
+		target === 'render' && renderBlueprintValid
+			? renderDeployUrl(workspace.root)
+			: null;
+	if (target === 'render' && renderBlueprintValid) {
+		checks.push({
+			id: 'render-source',
+			status: deployUrl ? 'pass' : 'action-required',
+			message: deployUrl
+				? 'The clean Blueprint and Dockerfile match the current branch recorded under origin.'
+				: 'Commit render.yaml and infra/docker/Dockerfile, then push the current branch to a credential-free Git origin before using the Deploy to Render link.',
 		});
 	}
 	return success({
@@ -277,7 +463,7 @@ export async function deploymentPlan(
 					: target === 'render'
 						? 'Connect render.yaml as a Render Blueprint after supplying external PostgreSQL and object storage.'
 						: null,
-		deployUrl: target === 'render' ? renderDeployUrl(workspace.root) : null,
+		deployUrl,
 	});
 }
 

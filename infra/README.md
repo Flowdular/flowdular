@@ -28,12 +28,17 @@ and uses `/api/health` because `/api/ready` is not routed during first-run
 setup. Check `/api/ready` after setup before directing production traffic.
 Blueprint sync does not re-prompt for newly added `sync: false` secrets, so add
 them in Render before syncing an existing deployment. The database and object
-store are not created by this Blueprint. Once `render.yaml` is pushed to the
-repository's default branch, `deploy plan render --json` includes a Deploy to
-Render URL when the Git origin is a recognized HTTPS or SSH GitHub, GitLab or
-Bitbucket remote. That URL opens the Blueprint review; it does not bypass the
-external service and secret configuration. Render documents this
-[button flow](https://render.com/docs/deploy-to-render).
+store are not created by this Blueprint. After committing `render.yaml` and
+`infra/docker/Dockerfile` and pushing the current branch to `origin`,
+`deploy plan render --json` includes a Deploy to Render URL if both files pass
+Flowdular's structural checks, match the pushed branch and the origin is a
+credential-free HTTPS or SSH GitHub, GitLab or Bitbucket remote. The URL selects that branch explicitly,
+including before a feature branch is merged into the default branch. Local
+tracking refs are checked without contacting the Git provider, so confirm that
+the branch still exists and is accessible in Render. Flowdular's check does
+not replace Render's full Blueprint validation. The URL opens the Blueprint
+review and does not bypass external service and secret configuration. Render
+documents this [button flow](https://render.com/docs/deploy-to-render).
 If you add a custom domain, change `FD_AUTH_PUBLIC_ORIGIN` in your Blueprint to
 that HTTPS origin before sending users there. A later Blueprint sync can
 replace a value changed only in the Render service.
@@ -68,16 +73,17 @@ bucket, and binds the resulting secrets without logging them. It must then
 exercise first-run setup, migration failure, restart and restore against a
 real Render account before the deploy action can be called one click.
 
-Vercel Functions and Cloudflare Containers are currently unavailable as
-full-platform targets. Vercel's HTTP instances scale down to zero; Flowdular
-starts workflow and automation workers in the application process, including
-jobs due without incoming traffic. Cloudflare supports explicit Container
+Vercel and Cloudflare are currently unavailable as full-platform targets.
+Vercel [Functions scale down to zero](https://vercel.com/docs/functions), and
+its [Services beta](https://vercel.com/docs/services) can package containers
+but follows the same [Function limits](https://vercel.com/docs/services/pricing).
+Flowdular starts workflow and automation workers in the application process,
+including jobs due without incoming traffic. Cloudflare supports explicit Container
 lifecycle control through Durable Objects, but this repository has no
 Cloudflare adapter verified for restart, secret injection, migrations and
 rollouts. The target registry keeps these options visible without silently
-dropping work. Vercel container support
-is documented [here](https://vercel.com/changelog/bring-your-dockerfile-to-vercel-functions)
-and Cloudflare's explicit Container API [here](https://developers.cloudflare.com/containers/api/durable-object-container/).
+dropping work. Cloudflare's explicit Container API is documented
+[here](https://developers.cloudflare.com/containers/api/durable-object-container/).
 
 To support Vercel or Cloudflare as a complete platform:
 

@@ -25,12 +25,18 @@ its bucket or wire its credentials. For a store other than AWS S3, set
 `FD_STORAGE_S3_ENDPOINT` and, if needed, `FD_STORAGE_S3_FORCE_PATH_STYLE` on
 the Render service. See the [Render Postgres connection guide](https://render.com/docs/postgresql-creating-connecting)
 and [MinIO guide](https://render.com/docs/deploy-minio).
-Vercel Functions are unavailable as a full target because their HTTP instances
-can stop while scheduled module work is due. Cloudflare's Durable Object
+Vercel is unavailable as a full target because its
+[Functions scale down to zero](https://vercel.com/docs/functions), while
+[Services beta](https://vercel.com/docs/services) follows Function limits and
+has no verified persistent Flowdular worker adapter. Cloudflare's Durable Object
 Container API can keep a process alive, but Flowdular has no verified adapter
-for its restart, secret and rollout lifecycle yet. A pushed Git repository can
-use the Deploy to Render URL returned by `deploy plan render --json` after the
-external prerequisites are supplied.
+for its restart, secret and rollout lifecycle yet. After committing
+`render.yaml` and `infra/docker/Dockerfile` and pushing the branch to a
+credential-free Git origin, `deploy plan render --json` returns a Deploy to
+Render URL when both files pass structural checks and match the pushed branch. The URL
+selects that branch for Render, but the external PostgreSQL, storage and secret
+prerequisites still require operator setup. Local Git tracking refs are not
+live provider validation, so confirm that Render can access the branch.
 
 The production artifact is the server built from `platform`. It runs as a
 non-root user and serves two public probes from
