@@ -1,9 +1,21 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import type { AgentToolContext } from '@flowdular/harness/runtime';
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	describe,
+	expect,
+	it,
+	vi,
+} from 'vitest';
+import {
+	AgentHarnessError,
+	type AgentToolContext,
+} from '@flowdular/harness/runtime';
 import { CONNECTORS_PERMISSIONS } from '../src/acl/permissions.ts';
 import { connectorsAgentTools } from '../src/agent/tools.ts';
 import { createConnectorsRuntime } from '../src/server/runtime.ts';
 import type { ConnectorsRuntime } from '../src/server/runtime.ts';
+import { CALL_KEY_CLAIM_MS } from '../src/services/call-service.ts';
 import {
 	openConnectorsTestDatabase,
 	type ConnectorsTestDatabase,
@@ -90,13 +102,13 @@ describe('connectors agent tool', () => {
 	/* Every field agents.core's descriptor() requires. Drop any one of them and
 	   the call stops being publishable as a workflow action, which would leave
 	   the workspace's allowWorkflows consent unreachable in production. */
-	it('declares the whole workflow action contract and the consent gate', () => {
+	it('CONNECTORS-GENERIC-WORKFLOW-VERSION declares contract 2 and the consent gate', () => {
 		const [tool] = connectorsAgentTools(runtime());
 		expect(tool).toMatchObject({
 			id: 'connectors.call',
 			transport: 'api',
 			target: 'connectors.calls.agent',
-			contractVersion: 1,
+			contractVersion: 2,
 			risk: 'workspace-write',
 			idempotency: 'required',
 			idempotencyProtection: 'target-ledger',
@@ -105,7 +117,47 @@ describe('connectors agent tool', () => {
 		});
 		expect(tool!.consent?.id).toBe('connectors.instance-consent');
 		expect(tool!.inputSchema).toMatchObject({ type: 'object' });
-		expect(tool!.outputSchema).toMatchObject({ type: 'object' });
+		expect(tool!.outputSchema).toMatchObject({
+			type: 'object',
+			properties: { body: { 'x-flowdular-secret': true } },
+		});
+	});
+
+	it('keeps provider response tokens out of connector persistence', async () => {
+		const responseToken = 'provider-response-token-0001';
+		const external = await startTestServer(() => ({
+			body: JSON.stringify({ access_token: responseToken }),
+		}));
+		try {
+			const vault = testVault();
+			const instance = await seedInstance(shared.repository, vault, {
+				tenantId: TENANT,
+				definitionKey: TEST_DEFINITION_KEY,
+				baseUrl: testBaseUrl(external),
+				allowAgents: true,
+			});
+			const [tool] = connectorsAgentTools(runtime());
+			const result = (await tool!.execute(
+				{
+					instanceId: instance.id,
+					operation: 'get',
+					input: { path: '/things' },
+				},
+				context(TENANT),
+			)) as Record<string, unknown>;
+			expect(result.body).toEqual({ access_token: responseToken });
+			expect(JSON.stringify(tool!.outputSchema)).not.toContain(responseToken);
+			const [call] = await instanceService(shared.repository, vault).listCalls(
+				TENANT,
+				{},
+				{ limit: 10 },
+			);
+			const audit = await shared.repository.listAudit(TENANT, instance.id, 10);
+			expect(JSON.stringify(call)).not.toContain(responseToken);
+			expect(JSON.stringify(audit)).not.toContain(responseToken);
+		} finally {
+			await external.close();
+		}
 	});
 
 	it('refuses to run without the durable key its ledger needs', async () => {
@@ -308,6 +360,57 @@ describe('connectors agent tool', () => {
 		} finally {
 			await large.close();
 		}
+	});
+});
+
+describe('CONNECTORS-UNKNOWN-ACTION-RESULT', () => {
+	it('exposes a stale uncertain workflow call as a safe AgentHarnessError without another request', async () => {
+		const vault = testVault();
+		const instance = await seedInstance(shared.repository, vault, {
+			tenantId: TENANT,
+			definitionKey: TEST_DEFINITION_KEY,
+			baseUrl: testBaseUrl(server),
+			allowWorkflows: true,
+		});
+		const [tool] = connectorsAgentTools(runtime());
+		const key = 'workflow-unknown-key-0001';
+		const input = {
+			instanceId: instance.id,
+			operation: 'get',
+			input: { path: '/secret-path' },
+		};
+		const before = server.requests.length;
+		const crash = vi
+			.spyOn(shared.repository, 'recordCall')
+			.mockRejectedValue(new Error('simulated record crash'));
+		try {
+			await expect(
+				tool!.execute(input, workflowContext(TENANT, key)),
+			).rejects.toMatchObject({ code: 'CALL_OUTCOME_UNKNOWN' });
+		} finally {
+			crash.mockRestore();
+		}
+		expect(server.requests.length).toBe(before + 1);
+		await shared.runtime.transaction(
+			(transaction) =>
+				transaction.execute({
+					text: `UPDATE connectors_call_keys SET claimed_at = $3
+					 WHERE tenant_id = $1 AND idempotency_key = $2`,
+					parameters: [TENANT, key, Date.now() - CALL_KEY_CLAIM_MS - 1_000],
+				}),
+			{ access: 'write', tenantId: TENANT },
+		);
+		const refusal = await tool!
+			.execute(input, workflowContext(TENANT, key))
+			.then(
+				() => null,
+				(error: unknown) => error,
+			);
+		expect(refusal).toBeInstanceOf(AgentHarnessError);
+		expect(refusal).toMatchObject({ code: 'CALL_OUTCOME_UNKNOWN' });
+		expect(String(refusal)).not.toContain(key);
+		expect(String(refusal)).not.toContain('/secret-path');
+		expect(server.requests.length).toBe(before + 1);
 	});
 });
 

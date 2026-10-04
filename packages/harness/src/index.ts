@@ -45,6 +45,7 @@ export type {
 	AgentToolContext,
 	AgentUsage,
 	JsonValue,
+	WorkflowActionTemplateMetadata,
 } from './runtime.ts';
 export { defineApiAgentTool, defineCliAgentTool } from './tool-adapters.ts';
 export type {

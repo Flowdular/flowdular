@@ -2,7 +2,11 @@ import type { ResearchResult } from '../domain/capability.ts';
 import type { ConnectorCalls } from '../services/capabilities.ts';
 import { boundResults } from '../services/results.ts';
 import { ResearchServiceError } from '../services/service-error.ts';
-import { connectorCaller, connectorCallFailure } from './connector-failure.ts';
+import {
+	connectorAttemptKey,
+	connectorCaller,
+	connectorCallFailure,
+} from './connector-failure.ts';
 import type { ResearchAdapter } from './types.ts';
 
 /**
@@ -81,6 +85,12 @@ export function createConnectorAdapter(
 				operation: 'search',
 				input: { q: input.query, limit: input.limit },
 				caller: connectorCaller(input.caller),
+				idempotencyKey: connectorAttemptKey(
+					'search',
+					input.queryId,
+					'connector',
+					input.attempt,
+				),
 				...(input.callerRef === null ? {} : { callerRef: input.callerRef }),
 				...(input.signal ? { signal: input.signal } : {}),
 			});

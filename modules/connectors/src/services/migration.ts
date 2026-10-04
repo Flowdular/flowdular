@@ -133,6 +133,14 @@ REVOKE SELECT ON connectors_instances FROM coreloom_background;
 GRANT SELECT (tenant_id, credential_key_id) ON connectors_instances TO coreloom_background;
 `;
 
+/* Mirrors migrations/0004_connectors_unknown_call_audit.up.sql byte for byte. */
+export const CONNECTORS_MIGRATION_004 = `ALTER TABLE connectors_audit
+  DROP CONSTRAINT connectors_audit_action_check;
+ALTER TABLE connectors_audit
+  ADD CONSTRAINT connectors_audit_action_check
+  CHECK (action IN ('instance.created', 'instance.updated', 'instance.consent-changed', 'instance.enabled', 'instance.disabled', 'instance.deleted', 'call.outcome-unknown'));
+`;
+
 export const databaseMigrations: readonly DatabaseMigration[] = [
 	{
 		id: '0001_connectors_core',
@@ -197,6 +205,28 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 				ELSE false END AS granted`,
 			});
 			return result.rows[0]?.granted === true ? 'complete' : 'absent';
+		},
+	},
+	{
+		id: '0004_connectors_unknown_call_audit',
+		sql: { postgresql: CONNECTORS_MIGRATION_004 },
+		/* The new action in the existing check is the only schema change. */
+		inspectExisting: async (database) => {
+			const result = await database.query<{
+				readonly table_exists: boolean;
+				readonly definition: string | null;
+			}>({
+				text: `SELECT to_regclass('connectors_audit') IS NOT NULL AS table_exists,
+				  (SELECT pg_get_constraintdef(oid) FROM pg_constraint
+				   WHERE conrelid = to_regclass('connectors_audit')
+				     AND conname = 'connectors_audit_action_check') AS definition`,
+			});
+			const row = result.rows[0];
+			if (row?.table_exists !== true) return 'absent';
+			if (row.definition?.includes('call.outcome-unknown')) return 'complete';
+			return row.definition?.includes('instance.deleted')
+				? 'absent'
+				: 'partial';
 		},
 	},
 ];

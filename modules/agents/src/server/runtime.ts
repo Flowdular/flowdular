@@ -50,7 +50,9 @@ import { AgentWorker } from '../services/worker.ts';
 import type { AgentSettingsReader } from '../settings.ts';
 import {
 	createAgentActionExecutionRuntime,
+	validateWorkflowActionCatalog,
 	type AgentActionExecutionCapability,
+	type AgentActionExecutionCapabilityV2,
 	type AgentActionRuntime,
 } from './action-execution.ts';
 import {
@@ -118,6 +120,7 @@ export interface AgentRuntime {
 	workerStatus(): Promise<AgentWorkerStatus>;
 	revisionExecution(): AgentRevisionExecutionCapability;
 	actions(): AgentActionExecutionCapability;
+	actionsV2(): AgentActionExecutionCapabilityV2;
 	prepare(): Promise<void>;
 	start(): void;
 	stop(): void;
@@ -247,6 +250,11 @@ export function createAgentRuntime(
 			: (options.moduleAgents ?? []);
 	const prepare = async () => {
 		if (disposed) throw new Error('Agent runtime is disposed.');
+		validateWorkflowActionCatalog(
+			typeof options.tools === 'function'
+				? options.tools()
+				: (options.tools ?? []),
+		);
 		preparedModuleAgents = await preflightModuleAgentDefinitions(
 			options.databases,
 			moduleAgents(),
@@ -443,6 +451,10 @@ export function createAgentRuntime(
 		await resolved();
 		return actionRuntime!.capability;
 	};
+	const currentActionsV2 = async () => {
+		await resolved();
+		return actionRuntime!.capabilityV2;
+	};
 	const actionCapability: AgentActionExecutionCapability = {
 		listWorkflowActions: async () =>
 			(await currentActions()).listWorkflowActions(),
@@ -452,6 +464,16 @@ export function createAgentRuntime(
 			(await currentActions()).getResult(id, context),
 		requestCancel: async (id, context) =>
 			(await currentActions()).requestCancel(id, context),
+	};
+	const actionCapabilityV2: AgentActionExecutionCapabilityV2 = {
+		listWorkflowActions: async () =>
+			(await currentActionsV2()).listWorkflowActions(),
+		start: async (request, context) =>
+			(await currentActionsV2()).start(request, context),
+		getResult: async (id, context) =>
+			(await currentActionsV2()).getResult(id, context),
+		requestCancel: async (id, context) =>
+			(await currentActionsV2()).requestCancel(id, context),
 	};
 	const quiesce = async () => {
 		started = false;
@@ -486,6 +508,7 @@ export function createAgentRuntime(
 		},
 		revisionExecution: () => revisionCapability,
 		actions: () => actionCapability,
+		actionsV2: () => actionCapabilityV2,
 		prepare,
 		start,
 		stop: () => {

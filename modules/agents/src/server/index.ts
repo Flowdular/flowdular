@@ -31,6 +31,7 @@ export type {
 } from './run-execution.ts';
 export {
 	AGENT_ACTION_EXECUTION_CAPABILITY,
+	AGENT_ACTION_EXECUTION_CAPABILITY_V2,
 	AgentActionCapabilityError,
 	createAgentActionExecutionRuntime,
 } from './action-execution.ts';
@@ -40,9 +41,11 @@ export type {
 	ActionInvocationAccepted,
 	AgentActionChildContext,
 	AgentActionExecutionCapability,
+	AgentActionExecutionCapabilityV2,
 	AgentActionRuntime,
 	AgentActionStartContext,
 	VersionedActionDescriptor,
+	VersionedActionDescriptorV2,
 } from './action-execution.ts';
 export { defineModuleAgentTools } from './tools.ts';
 export type { ModuleAgentTools } from './tools.ts';

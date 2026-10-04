@@ -7,6 +7,7 @@ import type {
 	WorkflowNodeExecution,
 	WorkflowNodeV1,
 } from '../domain/types.ts';
+import type { WorkflowActionCatalogItem } from './api.ts';
 import {
 	edgeCoordinates,
 	proposeWorkflowConnection,
@@ -29,6 +30,7 @@ import {
 
 export interface WorkflowCanvasProps {
 	readonly graph: WorkflowGraphV1;
+	readonly actions: readonly WorkflowActionCatalogItem[];
 	readonly selectedNodeId: string;
 	readonly selectedEdgeId: string;
 	readonly connectionSource: | {
@@ -69,6 +71,7 @@ function portTone(port: string): string {
 
 function WorkflowNodeCard(props: {
 	readonly node: WorkflowNodeV1;
+	readonly effect: 'connector-egress' | null;
 	readonly position: CanvasPoint;
 	readonly selected: boolean;
 	readonly sourcePort: string;
@@ -125,13 +128,16 @@ function WorkflowNodeCard(props: {
 				<span class="ui-cell">
 					<b>{props.node.label}</b>
 					<small>{t('workflows.nodeType.' + props.node.type)}</small>
+					@if (props.effect === 'connector-egress') {
+						<small>{t('workflows.canvas.connectorEgress')}</small>
+					}
+					@if (props.status) {
+						<Tag tone={nodeTone(props.status)} dot>{t(
+							'workflows.nodeStatus.' + props.status,
+						)}</Tag>
+					}
 				</span>
 			</button>
-			@if (props.status) {
-				<Tag tone={nodeTone(props.status)} dot>{t(
-					'workflows.nodeStatus.' + props.status,
-				)}</Tag>
-			}
 		</header>
 		<div class="workflow-node__ports">
 			<div class="workflow-node__port-list">
@@ -214,6 +220,15 @@ interface ConnectionPreview {
 }
 
 export function WorkflowCanvas(props: WorkflowCanvasProps) @{
+	const actionEffects = useMemo(
+		() => new Map(props.actions.filter((action) => action.workflowTemplate).map(
+			(action) => [
+				`${action.actionId}@${action.contractVersion}@${action.descriptorDigest}`,
+				action.workflowTemplate!.effect,
+			] as const,
+		)),
+		[props.actions],
+	);
 	const viewportRef = useRef<HTMLDivElement | null>(null);
 	const gesture = useRef<Gesture | null>(null);
 	const suppressClick = useRef(false);
@@ -741,6 +756,13 @@ export function WorkflowCanvas(props: WorkflowCanvasProps) @{
 				@for (const node of props.graph.nodes; key node.id) {
 					<WorkflowNodeCard
 						node={node}
+						effect={node.type === 'action' && node.action.descriptorDigest &&
+						actionEffects.get(
+							`${node.action.actionId}@${node.action.contractVersion}@${node.action.descriptorDigest}`,
+						) ===
+						'connector-egress'
+							? 'connector-egress'
+							: null}
 						position={positionOf(node.id)}
 						selected={props.selectedNodeId === node.id}
 						sourcePort={props.connectionSource?.nodeId === node.id

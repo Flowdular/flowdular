@@ -2,9 +2,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createPlatformCapabilityRegistry, userActor } from '@flowdular/kernel';
 import {
 	AGENT_RUN_EXECUTION_CAPABILITY,
-	AGENT_ACTION_EXECUTION_CAPABILITY,
+	AGENT_ACTION_EXECUTION_CAPABILITY_V2,
 	type AgentRevisionExecutionCapability,
-	type AgentActionExecutionCapability,
+	type AgentActionExecutionCapabilityV2,
 } from '@flowdular/module-agents/server';
 import {
 	addWorkflowNode,
@@ -80,7 +80,7 @@ const agents: AgentRevisionExecutionCapability = {
 	}),
 	requestCancel: async () => true,
 };
-const actions: AgentActionExecutionCapability = {
+const actions: AgentActionExecutionCapabilityV2 = {
 	listWorkflowActions: async () => [
 		{
 			id: 'test.echo',
@@ -111,7 +111,7 @@ const actions: AgentActionExecutionCapability = {
 	}),
 };
 registry.register(AGENT_RUN_EXECUTION_CAPABILITY, agents);
-registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, actions);
+registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, actions);
 const runtime = createWorkflowsTestRuntime({
 	capabilities: registry,
 	payloadKey: Buffer.alloc(32, 3),
@@ -251,6 +251,13 @@ describe('every built-in node through simulation and the durable live worker', (
 		let { graph } = graphFor('gate');
 		graph = {
 			...graph,
+			schemas: {
+				...graph.schemas,
+				'workflow.data': {
+					type: 'object',
+					properties: { name: { type: 'string' } },
+				},
+			},
 			nodes: graph.nodes.map((node) =>
 				node.type === 'output'
 					? {

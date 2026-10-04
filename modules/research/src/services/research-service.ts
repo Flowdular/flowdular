@@ -268,7 +268,8 @@ export class ResearchService {
 						maxAttempts: settings.limits[key].maxAttempts,
 						timeoutMs: settings.limits[key].timeoutMs,
 						breaker: true,
-						run: (signal) => chosen.search({ ...request, signal }),
+						run: (signal, attempt) =>
+							chosen.search({ ...request, queryId: id, attempt, signal }),
 						/* A read back answers evidence already kept, not results to filter. */
 						empty: (results) =>
 							(key === 'model-native' ? results : keep(results)).length === 0,
@@ -524,7 +525,13 @@ export class ResearchService {
 							steps: settings.fetchOrder.map((adapter) =>
 								adapter === 'direct'
 									? this.#directStep(url, settings)
-									: this.#firecrawlStep(url, settings, input, callerRef),
+									: this.#firecrawlStep(
+											url,
+											settings,
+											input,
+											callerRef,
+											evidenceId,
+										),
 							),
 							policy: this.#policy(settings, false),
 							health: this.#health(tenantId, settings),
@@ -1001,6 +1008,7 @@ export class ResearchService {
 		settings: ResearchSettings,
 		input: ResearchFetchInput,
 		callerRef: string | null,
+		evidenceId: string,
 	): ChainStep<ReadPage> {
 		const limits = settings.limits.firecrawl;
 		return {
@@ -1009,7 +1017,7 @@ export class ResearchService {
 			timeoutMs: limits.timeoutMs,
 			breaker: true,
 			empty: (page) => page.text.trim() === '',
-			run: async (signal) => {
+			run: async (signal, attempt) => {
 				const egress = this.#options.egress();
 				if (!egress) throw this.#egressUnavailable();
 				await this.#assertRobots(egress, url, signal, signal);
@@ -1018,6 +1026,8 @@ export class ResearchService {
 					url: url.toString(),
 					caller: oneOf(input.caller, 'caller', RESEARCH_CALLERS),
 					callerRef,
+					evidenceId,
+					attempt,
 					allowAgents: settings.allowAgents,
 					timeoutMs: limits.timeoutMs,
 					signal,

@@ -6,14 +6,15 @@ import {
 	type UserActor,
 } from '@flowdular/kernel';
 import {
-	AGENT_ACTION_EXECUTION_CAPABILITY,
+	AGENT_ACTION_EXECUTION_CAPABILITY_V2,
 	AGENT_RUN_EXECUTION_CAPABILITY,
-	type AgentActionExecutionCapability,
+	type AgentActionExecutionCapabilityV2,
 	type AgentRevisionExecutionCapability,
 	type AgentRevisionReference,
 } from '@flowdular/module-agents/server';
 import {
 	compileWorkflowGraph,
+	actionDescriptorDigest,
 	EMPTY_WORKFLOW_GRAPH,
 	jsonByteSize,
 	jsonHash,
@@ -65,7 +66,18 @@ import {
 	type WorkflowCursorKeys,
 	type WorkflowCursorPayload,
 } from './cursors.ts';
-import { safePayloadEvidence } from './payload-codec.ts';
+import {
+	projectWorkflowEvents,
+	projectWorkflowRunEvidence,
+	safeWorkflowEvidence,
+} from './evidence-policy.ts';
+import {
+	actionBindingDiagnostics,
+	mappingTargetDiagnostics,
+	projectSafeGraph,
+	secretSchemaValueDiagnostics,
+	type WorkflowActionInputSchema,
+} from '../domain/graph-security.ts';
 import type {
 	WorkflowAuditPage,
 	WorkflowKeysetPage,
@@ -216,7 +228,7 @@ export interface WorkflowsServiceOptions {
 /** Both agents.core capabilities a live path needs, resolved together. */
 interface WorkflowExecutionCapabilities {
 	readonly agents: AgentRevisionExecutionCapability;
-	readonly actions: AgentActionExecutionCapability;
+	readonly actions: AgentActionExecutionCapabilityV2;
 }
 
 function bounded(
@@ -334,9 +346,9 @@ export class WorkflowsService {
 		);
 	}
 
-	#actions(): AgentActionExecutionCapability | null {
-		return this.options.capabilities.get<AgentActionExecutionCapability>(
-			AGENT_ACTION_EXECUTION_CAPABILITY,
+	#actions(): AgentActionExecutionCapabilityV2 | null {
+		return this.options.capabilities.get<AgentActionExecutionCapabilityV2>(
+			AGENT_ACTION_EXECUTION_CAPABILITY_V2,
 		);
 	}
 
@@ -363,6 +375,12 @@ export class WorkflowsService {
 	): Promise<WorkflowReferenceCatalog> {
 		const { agents, actions } = capabilities;
 		const actionDescriptors = await actions.listWorkflowActions();
+		const actionsByVersion = new Map(
+			actionDescriptors.map(
+				(action) =>
+					[`${action.id}\u0000${action.contractVersion}`, action] as const,
+			),
+		);
 		const needsApproval = graph.nodes.some(
 			(node) => node.type === 'human-approval',
 		);
@@ -413,14 +431,22 @@ export class WorkflowsService {
 			},
 			approval: () => ({ available: approvals !== null, roleKeys }),
 			action: (actionId, contractVersion) => {
-				const action = actionDescriptors.find(
-					(entry) =>
-						entry.id === actionId && entry.contractVersion === contractVersion,
+				const action = actionsByVersion.get(
+					`${actionId}\u0000${contractVersion}`,
 				);
 				return action
 					? {
 							available: true,
 							requiredPermissions: action.requiredPermissions,
+							inputSchema: action.inputSchema,
+							outputSchema: action.outputSchema,
+							descriptorDigest: actionDescriptorDigest(action),
+							...(action.workflowTemplate
+								? { workflowTemplateEffect: action.workflowTemplate.effect }
+								: {}),
+							...(action.idempotencyProtection
+								? { idempotencyProtection: action.idempotencyProtection }
+								: {}),
 							risk: action.risk,
 							idempotency: action.idempotency,
 						}
@@ -518,6 +544,15 @@ export class WorkflowsService {
 		tenantId: string,
 		workflowId: string,
 	): Promise<WorkflowDefinitionDetail> {
+		return this.#projectDefinitionDetail(
+			await this.#storedDetail(tenantId, workflowId),
+		);
+	}
+
+	async #storedDetail(
+		tenantId: string,
+		workflowId: string,
+	): Promise<WorkflowDefinitionDetail> {
 		const detail = await this.repository.definitionDetail(
 			bounded(tenantId, 'tenantId', 1, 128),
 			bounded(workflowId, 'workflowId', 1, 128),
@@ -530,6 +565,64 @@ export class WorkflowsService {
 			);
 		}
 		return detail;
+	}
+
+	async #actionInputSchemas(): Promise<WorkflowActionInputSchema> {
+		const descriptors = (await this.#actions()?.listWorkflowActions()) ?? [];
+		const schemas = new Map(
+			descriptors.map(
+				(action) =>
+					[
+						`${action.id}\u0000${action.contractVersion}`,
+						action.inputSchema,
+					] as const,
+			),
+		);
+		return (actionId, contractVersion) =>
+			schemas.get(`${actionId}\u0000${contractVersion}`);
+	}
+
+	async projectGraphForRead(
+		graph: WorkflowGraphV1,
+	): Promise<ReturnType<typeof projectSafeGraph>> {
+		return projectSafeGraph(graph, await this.#actionInputSchemas());
+	}
+
+	async #projectDefinitionDetail(
+		detail: WorkflowDefinitionDetail,
+	): Promise<WorkflowDefinitionDetail> {
+		const schemas = await this.#actionInputSchemas();
+		const project = (revision: WorkflowRevision): WorkflowRevision => {
+			const result = projectSafeGraph(revision.graph, schemas);
+			return result.diagnostics.length === 0
+				? revision
+				: {
+						...revision,
+						graph: result.graph,
+						graphDiagnostics: result.diagnostics,
+					};
+		};
+		return {
+			...detail,
+			draft: project(detail.draft),
+			revisions: detail.revisions.map(project),
+		};
+	}
+
+	async #projectRunDetail(
+		detail: WorkflowRunDetail,
+	): Promise<WorkflowRunDetail> {
+		const projected = projectWorkflowRunEvidence(detail);
+		const result = await this.projectGraphForRead(detail.graph);
+		const run = { ...projected.run, graph: result.graph };
+		return result.diagnostics.length === 0
+			? projected
+			: {
+					...projected,
+					run,
+					graph: result.graph,
+					graphDiagnostics: result.diagnostics,
+				};
 	}
 
 	async create(
@@ -599,7 +692,7 @@ export class WorkflowsService {
 		},
 		actor: Actor,
 	): Promise<WorkflowDefinitionDetail> {
-		const current = await this.detail(tenantId, input.workflowId);
+		const current = await this.#storedDetail(tenantId, input.workflowId);
 		if (current.definition.status === 'archived') {
 			throw new WorkflowsServiceError(
 				'WORKFLOW_ARCHIVED',
@@ -609,6 +702,36 @@ export class WorkflowsService {
 		}
 		const graph = parsedGraph(input.graph);
 		const report = compileWorkflowGraph(graph);
+		const secretSchemaValues = secretSchemaValueDiagnostics(graph);
+		if (secretSchemaValues.length > 0) {
+			throw new WorkflowsServiceError(
+				'WORKFLOW_SECRET_SCHEMA_VALUE',
+				'Schema value cannot be saved near a secret-marked field.',
+				400,
+				secretSchemaValues as unknown as JsonValue,
+			);
+		}
+		const unsafeTargets = mappingTargetDiagnostics(graph);
+		if (unsafeTargets.length > 0) {
+			throw new WorkflowsServiceError(
+				'WORKFLOW_MAPPING_TARGET_UNSAFE',
+				'Mapping target cannot be saved without a safe input schema.',
+				400,
+				unsafeTargets as unknown as JsonValue,
+			);
+		}
+		const unsafeBindings = actionBindingDiagnostics(
+			graph,
+			await this.#actionInputSchemas(),
+		);
+		if (unsafeBindings.length > 0) {
+			throw new WorkflowsServiceError(
+				unsafeBindings[0]!.code,
+				'Action input mapping cannot be saved without a safe schema binding.',
+				400,
+				unsafeBindings as unknown as JsonValue,
+			);
+		}
 		if (
 			input.expectedRevision !== current.definition.currentDraftRevision ||
 			!Number.isSafeInteger(input.expectedRevision)
@@ -653,7 +776,7 @@ export class WorkflowsService {
 				409,
 			);
 		}
-		return saved;
+		return this.#projectDefinitionDetail(saved);
 	}
 
 	async validate(
@@ -686,7 +809,7 @@ export class WorkflowsService {
 				503,
 			);
 		}
-		const detail = await this.detail(tenantId, workflowId);
+		const detail = await this.#storedDetail(tenantId, workflowId);
 		if (detail.definition.currentDraftRevision !== expectedRevision) {
 			throw new WorkflowsServiceError(
 				'WORKFLOW_REVISION_CONFLICT',
@@ -731,7 +854,7 @@ export class WorkflowsService {
 				404,
 			);
 		}
-		return published;
+		return this.#projectDefinitionDetail(published);
 	}
 
 	async archive(
@@ -820,19 +943,30 @@ export class WorkflowsService {
 			.filter(
 				(action) =>
 					(action.risk === 'read' || action.risk === 'workspace-write') &&
+					(action.id !== 'connectors.call' || action.contractVersion === 2) &&
 					action.requiredPermissions.every((permission) =>
 						context.permissionSnapshot.includes(permission),
 					),
 			)
 			.map((action) => ({
 				actionId: action.id,
-				label: action.id,
-				description: action.description,
+				label: action.workflowTemplate?.label ?? action.id,
+				description: action.workflowTemplate?.description ?? action.description,
 				contractVersion: action.contractVersion,
 				risk: action.risk,
 				requiredPermissions: action.requiredPermissions,
 				inputSchema: action.inputSchema,
 				outputSchema: action.outputSchema,
+				idempotency: action.idempotency,
+				...(action.idempotencyProtection === undefined
+					? {}
+					: { idempotencyProtection: action.idempotencyProtection }),
+				timeoutMs: action.timeoutMs,
+				cancellation: action.cancellation,
+				descriptorDigest: actionDescriptorDigest(action),
+				...(action.workflowTemplate === undefined
+					? {}
+					: { workflowTemplate: action.workflowTemplate }),
 			}));
 	}
 
@@ -1018,10 +1152,16 @@ export class WorkflowsService {
 		await this.repository.createRun({
 			run,
 			input: request.input,
-			inputEvidence: safePayloadEvidence(request.input, inputSchemaId, {
-				schema: revision.graph.schemas[inputSchemaId] ?? {},
-				permissionSnapshot: trustedContext.permissionSnapshot,
-			}),
+			inputEvidence: safeWorkflowEvidence(
+				revision.graph,
+				{ kind: 'run-input' },
+				request.input,
+				inputSchemaId,
+				{
+					schema: revision.graph.schemas[inputSchemaId] ?? {},
+					permissionSnapshot: trustedContext.permissionSnapshot,
+				},
+			),
 		});
 		this.options.onRunQueued?.();
 		return {
@@ -1049,7 +1189,10 @@ export class WorkflowsService {
 				413,
 			);
 		}
-		const detail = await this.detail(context.tenantId, request.workflowId);
+		const detail = await this.#storedDetail(
+			context.tenantId,
+			request.workflowId,
+		);
 		const fixtureIds = new Set(
 			request.fixtures.map((fixture) => fixture.nodeId),
 		);
@@ -1059,7 +1202,7 @@ export class WorkflowsService {
 				'Simulation fixtures must have unique node ids.',
 			);
 		}
-		const report = compileWorkflowGraph(detail.draft.graph, {
+		const simulatedCatalog: WorkflowReferenceCatalog = {
 			agent: () => true,
 			action: () => ({
 				available: true,
@@ -1082,7 +1225,18 @@ export class WorkflowsService {
 						: [];
 				}),
 			}),
-		});
+		};
+		const capabilities = this.#executionCapabilities();
+		const report = compileWorkflowGraph(
+			detail.draft.graph,
+			capabilities
+				? await this.#referenceCatalog(
+						capabilities,
+						detail.draft.graph,
+						context,
+					)
+				: simulatedCatalog,
+		);
 		if (!report.valid) {
 			throw new WorkflowsServiceError(
 				'WORKFLOW_GRAPH_INVALID',
@@ -1147,16 +1301,24 @@ export class WorkflowsService {
 				cost: { ...PROVISIONAL_COST, state: 'not-applicable' },
 			},
 			input: request.input,
-			inputEvidence: safePayloadEvidence(request.input, inputSchemaId, {
-				...(inputSchema ? { schema: inputSchema } : {}),
-				permissionSnapshot: context.permissionSnapshot,
-			}),
+			inputEvidence: safeWorkflowEvidence(
+				detail.draft.graph,
+				{ kind: 'run-input' },
+				request.input,
+				inputSchemaId,
+				{
+					...(inputSchema ? { schema: inputSchema } : {}),
+					permissionSnapshot: context.permissionSnapshot,
+				},
+			),
 		});
-		return simulateWorkflow(
-			this.repository,
-			run,
-			request.input,
-			request.fixtures,
+		return this.#projectRunDetail(
+			await simulateWorkflow(
+				this.repository,
+				run,
+				request.input,
+				request.fixtures,
+			),
 		);
 	}
 
@@ -1228,7 +1390,7 @@ export class WorkflowsService {
 				404,
 			);
 		}
-		return detail;
+		return this.#projectRunDetail(detail);
 	}
 
 	async readEvents(
@@ -1258,11 +1420,14 @@ export class WorkflowsService {
 				409,
 			);
 		}
-		return await this.repository.readEvents(
-			tenantId,
-			runId,
-			afterSequence,
-			replayLimit,
+		return projectWorkflowEvents(
+			detail.graph,
+			await this.repository.readEvents(
+				tenantId,
+				runId,
+				afterSequence,
+				replayLimit,
+			),
 		);
 	}
 
@@ -1418,10 +1583,16 @@ export class WorkflowsService {
 				cost: PROVISIONAL_COST,
 			},
 			input,
-			inputEvidence: safePayloadEvidence(input, schemaId, {
-				schema: prior.graph.schemas[schemaId] ?? {},
-				permissionSnapshot,
-			}),
+			inputEvidence: safeWorkflowEvidence(
+				prior.graph,
+				{ kind: 'run-input' },
+				input,
+				schemaId,
+				{
+					schema: prior.graph.schemas[schemaId] ?? {},
+					permissionSnapshot,
+				},
+			),
 		});
 		this.options.onRunQueued?.();
 		return {
@@ -1471,7 +1642,7 @@ export class WorkflowsService {
 
 	executionDependencies(): {
 		readonly agents: AgentRevisionExecutionCapability;
-		readonly actions: AgentActionExecutionCapability;
+		readonly actions: AgentActionExecutionCapabilityV2;
 	} | null {
 		const agents = this.#agents();
 		const actions = this.#actions();

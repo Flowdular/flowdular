@@ -23,7 +23,7 @@ Flowdular is an agentic foundation framework: the platform is the foundation, an
 | `business-agent-design` | Ship a module-owned business agent with an exact tool ceiling, tenant binding, revisions, and access tests.           |
 | `integration-adapter`   | Add a source or sink adapter for a named service: connector, port, mapping, recorded fixture, consent, call log.      |
 | `variables`             | Variable-aware fields and templates: the `{{ }}` contract, the scope mask, server-side resolution, adding a source.   |
-| `workflow-development`  | Build, publish, invoke, simulate, and test typed durable workflows and their module integration capability.           |
+| `workflow-development`  | Build, publish, invoke, simulate, and test typed durable workflows, including module-owned custom node templates.     |
 | `release-eject-pr`      | Sandbox eject sequence, repository gates, branch and PR conventions, post-merge scope grant.                          |
 | `deploy-operate`        | Container build, production env keys, migrations at rollout, health and readiness, backup and restore, rollback.      |
 

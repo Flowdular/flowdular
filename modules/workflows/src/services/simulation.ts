@@ -14,6 +14,7 @@ import {
 	jsonByteSize,
 } from '../domain/graph.ts';
 import { safePayloadEvidence } from './payload-codec.ts';
+import { safeWorkflowEvidence } from './evidence-policy.ts';
 import type { WorkflowRunRecord, WorkflowsRepository } from './repository.ts';
 
 const NOT_APPLICABLE_USAGE: WorkflowUsageRollupV1 = {
@@ -141,10 +142,16 @@ export async function simulateWorkflow(
 			mappingError = error;
 		}
 		const inputSchemaId = schemaForInput(node);
-		const inputEvidence = safePayloadEvidence(nodeInput, inputSchemaId, {
-			schema: run.graph.schemas[inputSchemaId] ?? {},
-			permissionSnapshot: run.permissionSnapshot,
-		});
+		const inputEvidence = safeWorkflowEvidence(
+			run.graph,
+			{ kind: 'node-input', nodeId: node.id },
+			nodeInput,
+			inputSchemaId,
+			{
+				schema: run.graph.schemas[inputSchemaId] ?? {},
+				permissionSnapshot: run.permissionSnapshot,
+			},
+		);
 		const priorState = (
 			await repository.readNodeStates(run.tenantId, run.id)
 		).find((entry) => entry.nodeId === node.id);
@@ -281,10 +288,16 @@ export async function simulateWorkflow(
 		}
 
 		const outputSchemaId = schemaForOutput(node, outcomePort);
-		const outputEvidence = safePayloadEvidence(output, outputSchemaId, {
-			schema: run.graph.schemas[outputSchemaId] ?? {},
-			permissionSnapshot: run.permissionSnapshot,
-		});
+		const outputEvidence = safeWorkflowEvidence(
+			run.graph,
+			{ kind: 'node-output', nodeId: node.id },
+			output,
+			outputSchemaId,
+			{
+				schema: run.graph.schemas[outputSchemaId] ?? {},
+				permissionSnapshot: run.permissionSnapshot,
+			},
+		);
 		await repository.settleAttempt(
 			{
 				tenantId: run.tenantId,
@@ -322,7 +335,9 @@ export async function simulateWorkflow(
 			(entry) => entry.source.nodeId === node.id,
 		)) {
 			const selected = edge.source.port === outcomePort && output !== undefined;
-			const transferEvidence = safePayloadEvidence(
+			const transferEvidence = safeWorkflowEvidence(
+				run.graph,
+				{ kind: 'edge', edgeId: edge.id },
 				selected ? output : undefined,
 				schemaForOutput(node, edge.source.port),
 				{
@@ -354,7 +369,12 @@ export async function simulateWorkflow(
 	}
 
 	const succeeded = finalOutput !== undefined && terminalFailure === null;
-	const finalEvidence = safePayloadEvidence(finalOutput, 'workflow.output');
+	const finalEvidence = safeWorkflowEvidence(
+		run.graph,
+		{ kind: 'run-output' },
+		finalOutput,
+		'workflow.output',
+	);
 	await repository.settleRun(
 		run.tenantId,
 		run.id,

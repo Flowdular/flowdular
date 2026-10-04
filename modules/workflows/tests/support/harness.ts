@@ -5,9 +5,9 @@ import {
 } from '@flowdular/module-auth/server';
 import { createPlatformCapabilityRegistry } from '@flowdular/kernel';
 import {
-	AGENT_ACTION_EXECUTION_CAPABILITY,
+	AGENT_ACTION_EXECUTION_CAPABILITY_V2,
 	AGENT_RUN_EXECUTION_CAPABILITY,
-	type AgentActionExecutionCapability,
+	type AgentActionExecutionCapabilityV2,
 	type AgentRevisionExecutionCapability,
 } from '@flowdular/module-agents/server';
 import { WORKFLOWS_PERMISSIONS } from '../../src/acl/permissions.ts';
@@ -59,7 +59,7 @@ export function executionCapabilities() {
 		getResult: async () => null,
 		requestCancel: async () => false,
 	};
-	const actions: AgentActionExecutionCapability = {
+	const actions: AgentActionExecutionCapabilityV2 = {
 		listWorkflowActions: async () => [],
 		start: async () => {
 			throw new Error('No action node is expected in this test.');
@@ -71,7 +71,7 @@ export function executionCapabilities() {
 		}),
 	};
 	registry.register(AGENT_RUN_EXECUTION_CAPABILITY, agents);
-	registry.register(AGENT_ACTION_EXECUTION_CAPABILITY, actions);
+	registry.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, actions);
 	return registry;
 }
 
