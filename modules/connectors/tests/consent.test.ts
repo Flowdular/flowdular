@@ -54,6 +54,7 @@ describe('CONNECTORS-CONSENT', () => {
 				input: { path: '/things' },
 				caller,
 				callerRef: `${caller}-run-1`,
+				idempotencyKey: `${caller}-run-1`,
 			});
 
 		const before = server.requests.length;
@@ -175,6 +176,7 @@ describe('CONNECTORS-DISABLE', () => {
 		const service = instanceService(shared.repository, vault, (tenant, id) =>
 			calls.forget(tenant, id),
 		);
+		let invocation = 0;
 		const invoke = () =>
 			calls.call({
 				tenantId: TENANT,
@@ -183,6 +185,7 @@ describe('CONNECTORS-DISABLE', () => {
 				input: { path: '/things' },
 				caller: 'workflow',
 				callerRef: 'queued-run',
+				idempotencyKey: `queued-run-${++invocation}`,
 			});
 
 		expect(await invoke()).toMatchObject({ outcome: 'succeeded' });

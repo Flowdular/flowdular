@@ -54,7 +54,7 @@ export interface ChainStep<T> {
 	readonly timeoutMs: number;
 	/** Whether the circuit breaker may skip this adapter and counts its failures. */
 	readonly breaker: boolean;
-	run(signal: AbortSignal): Promise<T>;
+	run(signal: AbortSignal, attempt: number): Promise<T>;
 	empty(result: T): boolean;
 }
 
@@ -217,6 +217,7 @@ function sleep(
 
 async function bounded<T>(
 	step: ChainStep<T>,
+	attempt: number,
 	signal: AbortSignal | undefined,
 	runtime: ChainRuntime,
 ): Promise<T> {
@@ -240,7 +241,7 @@ async function bounded<T>(
 			release = () => signal.removeEventListener('abort', onAbort);
 		}
 	});
-	const running = step.run(controller.signal);
+	const running = step.run(controller.signal, attempt);
 	/* The losing side of the race settles later and must not surface as an
 	   unhandled rejection. */
 	running.catch(() => undefined);
@@ -305,7 +306,7 @@ export async function runChain<T>(input: {
 			let result: T;
 			let empty: boolean;
 			try {
-				result = await bounded(step, input.signal, runtime);
+				result = await bounded(step, attempt, input.signal, runtime);
 				empty = step.empty(result);
 			} catch (error) {
 				failure = classifyFailure(error);

@@ -1,8 +1,9 @@
 import { defineApiAgentTool } from '@flowdular/harness/tool-adapters';
-import type {
-	AgentTool,
-	AgentToolConsentDecision,
-	AgentToolContext,
+import {
+	AgentHarnessError,
+	type AgentTool,
+	type AgentToolConsentDecision,
+	type AgentToolContext,
 } from '@flowdular/harness/runtime';
 import { CONNECTORS_PERMISSIONS } from '../acl/permissions.ts';
 import type { ConnectorCaller } from '../domain/types.ts';
@@ -70,7 +71,7 @@ function consentGate(runtime: ConnectorsRuntime) {
  * publish the tool as an action, which would leave the workflow consent flag
  * unreachable however the workspace set it.
  */
-export const CONNECTORS_CALL_CONTRACT_VERSION = 1;
+export const CONNECTORS_CALL_CONTRACT_VERSION = 2;
 
 const CALL_OUTPUT_SCHEMA = {
 	type: 'object',
@@ -95,7 +96,7 @@ const CALL_OUTPUT_SCHEMA = {
 		responseBytes: { type: 'integer' },
 		bodyOmitted: { type: 'boolean' },
 		replayed: { type: 'boolean' },
-		body: {},
+		body: { 'x-flowdular-secret': true },
 	},
 } as const;
 
@@ -138,20 +139,33 @@ export function connectorsAgentTools(
 					);
 				}
 				const calls = await runtime.calls();
-				const result = await calls.call({
-					/* Tenant and run identity come from the run, never from input. */
-					tenantId: context.tenantId,
-					instanceId: String(value.instanceId ?? ''),
-					operation: String(value.operation ?? ''),
-					input:
-						value.input && typeof value.input === 'object'
-							? (value.input as Record<string, unknown>)
-							: {},
-					caller: callerOf(context),
-					callerRef: context.runId,
-					idempotencyKey: context.idempotencyKey,
-					signal: context.signal,
-				});
+				const result = await calls
+					.call({
+						/* Tenant and run identity come from the run, never from input. */
+						tenantId: context.tenantId,
+						instanceId: String(value.instanceId ?? ''),
+						operation: String(value.operation ?? ''),
+						input:
+							value.input && typeof value.input === 'object'
+								? (value.input as Record<string, unknown>)
+								: {},
+						caller: callerOf(context),
+						callerRef: context.runId,
+						idempotencyKey: context.idempotencyKey,
+						signal: context.signal,
+					})
+					.catch((error: unknown) => {
+						if (
+							error instanceof ConnectorsServiceError &&
+							error.code === 'CALL_OUTCOME_UNKNOWN'
+						) {
+							throw new AgentHarnessError(
+								'CALL_OUTCOME_UNKNOWN',
+								'The connector call outcome is unknown. Inspect the external system before another action.',
+							);
+						}
+						throw error;
+					});
 				if (result.outcome === 'refused') {
 					throw new ConnectorsServiceError(
 						'CONNECTOR_CALL_REFUSED',

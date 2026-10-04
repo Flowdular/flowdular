@@ -17,6 +17,7 @@ import type {
 import type { WorkflowNodeType, WorkflowOverlay } from './canvas-model.ts';
 import { WORKFLOW_NODE_TYPES } from './canvas-model.ts';
 import {
+	addConnectedActionTemplate,
 	addConnectedNode,
 	type ConnectedNodeRequest,
 } from './connected-node.ts';
@@ -63,6 +64,7 @@ export interface WorkflowEditorProps {
 	readonly onName: (value: string) => void;
 	readonly onDescription: (value: string) => void;
 	readonly onAddNode: (type: WorkflowNodeType, request?: ConnectedNodeRequest) => void;
+	readonly onAddAction: (action: WorkflowActionCatalogItem, request?: ConnectedNodeRequest) => void;
 	readonly onSelectNode: (nodeId: string) => void;
 	readonly onSelectEdge: (edgeId: string) => void;
 	readonly onStartConnection: (nodeId: string, port: string) => void;
@@ -113,6 +115,14 @@ export function WorkflowEditor(props: WorkflowEditorProps) @{
 		context
 			? WORKFLOW_NODE_TYPES.filter(
 					(type) => addConnectedNode(props.graph, type, type, context) !== null,
+				)
+			: [];
+	const contextActions =
+		context
+			? props.actions.filter(
+					(action) =>
+						action.workflowTemplate &&
+							addConnectedActionTemplate(props.graph, action, context) !== null,
 				)
 			: [];
 	const selectNode = (id: string) => {
@@ -227,8 +237,14 @@ export function WorkflowEditor(props: WorkflowEditorProps) @{
 				@if (paletteOpen) {
 					<WorkflowNodePalette
 						disabled={!props.canManage || inspectingRun}
+						actions={props.actions}
 						onAdd={(type) => {
 							props.onAddNode(type);
+							setPaletteOpen(false);
+							setInspectorOpen(true);
+						}}
+						onAddAction={(action) => {
+							props.onAddAction(action);
 							setPaletteOpen(false);
 							setInspectorOpen(true);
 						}}
@@ -237,6 +253,7 @@ export function WorkflowEditor(props: WorkflowEditorProps) @{
 			</div>
 			<WorkflowCanvas
 				graph={canvasGraph}
+				actions={props.actions}
 				selectedNodeId={props.selectedNode?.id ?? ''}
 				selectedEdgeId={props.selectedEdge?.id ?? ''}
 				connectionSource={props.connectionSource}
@@ -272,13 +289,19 @@ export function WorkflowEditor(props: WorkflowEditorProps) @{
 							<Icon name="x" size={14} />
 						</button>
 					</div>
-					@if (contextTypes.length) {
+					@if (contextTypes.length || contextActions.length) {
 						<WorkflowNodePalette
 							compact
 							disabled={!props.canManage || inspectingRun}
 							types={contextTypes}
+							actions={contextActions}
 							onAdd={(type) => {
 								props.onAddNode(type, context!);
+								setContext(null);
+								setInspectorOpen(true);
+							}}
+							onAddAction={(action) => {
+								props.onAddAction(action, context!);
 								setContext(null);
 								setInspectorOpen(true);
 							}}

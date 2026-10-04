@@ -5,9 +5,9 @@ import {
 	type PlatformCapabilityRegistry,
 } from '@flowdular/kernel';
 import {
-	AGENT_ACTION_EXECUTION_CAPABILITY,
+	AGENT_ACTION_EXECUTION_CAPABILITY_V2,
 	AGENT_RUN_EXECUTION_CAPABILITY,
-	type AgentActionExecutionCapability,
+	type AgentActionExecutionCapabilityV2,
 	type AgentRevisionExecutionCapability,
 } from '@flowdular/module-agents/server';
 import { WORKFLOWS_PERMISSIONS } from '../src/acl/permissions.ts';
@@ -143,7 +143,7 @@ function agentDependencies() {
 				actionInvocationId,
 				state: 'acknowledged' as const,
 			}),
-		} as unknown as AgentActionExecutionCapability,
+		} as unknown as AgentActionExecutionCapabilityV2,
 	};
 }
 
@@ -181,7 +181,7 @@ function registry(decisions?: AgentDecisions): PlatformCapabilityRegistry {
 	const value = createPlatformCapabilityRegistry();
 	const fake = agentDependencies();
 	value.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
-	value.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
+	value.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, fake.actions);
 	if (decisions) value.register(AGENT_DECISIONS_CAPABILITY, decisions);
 	return value;
 }

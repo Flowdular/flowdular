@@ -1,6 +1,7 @@
 import { t } from '@flowdular/client/i18n';
 import type {
 	CreateWorkflowDefinitionInput,
+	JsonSchemaV1,
 	JsonValue,
 	UpdateWorkflowDraftInput,
 	WorkflowCancellationResult,
@@ -45,6 +46,18 @@ export interface WorkflowActionCatalogItem {
 	readonly contractVersion: number;
 	readonly risk: 'read' | 'workspace-write';
 	readonly requiredPermissions: readonly string[];
+	readonly inputSchema: JsonSchemaV1;
+	readonly outputSchema: JsonSchemaV1;
+	readonly idempotency: 'required';
+	readonly idempotencyProtection?: 'target-ledger';
+	readonly timeoutMs: number;
+	readonly cancellation: 'cooperative' | 'not-supported';
+	readonly descriptorDigest: string;
+	readonly workflowTemplate?: {
+		readonly label: string;
+		readonly description: string;
+		readonly effect: 'local' | 'connector-egress';
+	};
 }
 
 function mutationHeaders(csrfToken: string): Record<string, string> {

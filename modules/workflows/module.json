@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "workflows.core",
 	"package": "@flowdular/module-workflows",
-	"version": "0.7.0",
+	"version": "0.8.0",
 	"profile": "full",
 	"capabilities": [
 		"api",
@@ -28,7 +28,7 @@
 		},
 		{
 			"id": "agents.core",
-			"range": "^0.14.0"
+			"range": "^0.15.0"
 		}
 	],
 	"provides": ["workflows.execution.v1"],
@@ -37,7 +37,7 @@
 			"id": "agents.run-execution.v2"
 		},
 		{
-			"id": "agents.actions.v1"
+			"id": "agents.actions.v2"
 		},
 		{
 			"id": "notifications.publish.v1",

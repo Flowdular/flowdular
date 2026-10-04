@@ -11,7 +11,9 @@ import {
 import type {
 	AgentTool,
 	AgentToolAuthorizationRequest,
+	AgentToolContext,
 } from '@flowdular/harness';
+import { AgentHarnessError } from '@flowdular/harness';
 import { defineApiAgentTool } from '@flowdular/harness/tool-adapters';
 import {
 	createAgentActionExecutionRuntime,
@@ -60,7 +62,10 @@ function waitFor(
 
 /** A complete workflow action contract, so the descriptor publishes it. */
 function action(
-	execute: (input: unknown) => Promise<{ readonly ok: boolean }>,
+	execute: (
+		input: unknown,
+		context: AgentToolContext,
+	) => Promise<{ readonly ok: boolean }>,
 ): AgentTool {
 	return defineApiAgentTool({
 		id: 'connectors.call',
@@ -149,6 +154,94 @@ afterAll(async () => {
 });
 
 describe('the action loop', () => {
+	it('replays each invocation while carrying one side-effect key across a transient retry and worker restart', async () => {
+		const sideEffectIdempotencyKey = 'workflow-run-retry:node-1';
+		const observedKeys: string[] = [];
+		let executions = 0;
+		const tool = action(async (_input, toolContext) => {
+			observedKeys.push(toolContext.idempotencyKey ?? 'missing');
+			executions++;
+			if (executions === 1) {
+				throw new AgentHarnessError(
+					'TRANSIENT_TOOL_FAILURE',
+					'The provider was unavailable before a request was sent.',
+				);
+			}
+			return { ok: true };
+		});
+		const producer = trackedRuntime(tool, 'action-worker:retry-producer');
+		const firstContext = context('workflow-run-retry', 'node-1:attempt-1');
+		const firstRequest = {
+			...request(sideEffectIdempotencyKey),
+			sideEffectIdempotencyKey,
+		};
+		const first = await producer.capabilityV2.start(firstRequest, firstContext);
+		expect(
+			await producer.capabilityV2.start(firstRequest, firstContext),
+		).toEqual({ actionInvocationId: first.actionInvocationId, created: false });
+
+		/* The producer can stop before its worker starts. The recovered worker
+		   must use the durable external key rather than reconstructing it. */
+		const recovered = trackedRuntime(tool, 'action-worker:retry-recovered');
+		recovered.start();
+		await waitFor(
+			async () =>
+				(
+					await recovered.capabilityV2.getResult(
+						first.actionInvocationId,
+						firstContext,
+					)
+				)?.status === 'failed',
+		);
+		expect(
+			await recovered.capabilityV2.getResult(
+				first.actionInvocationId,
+				firstContext,
+			),
+		).toMatchObject({ status: 'failed', code: 'TRANSIENT_TOOL_FAILURE' });
+		expect(
+			await recovered.capabilityV2.start(firstRequest, firstContext),
+		).toEqual({ actionInvocationId: first.actionInvocationId, created: false });
+		await expect(
+			recovered.capabilityV2.start(
+				{ ...firstRequest, sideEffectIdempotencyKey: 'different-side-key' },
+				firstContext,
+			),
+		).rejects.toMatchObject({ code: 'ACTION_IDEMPOTENCY_CONFLICT' });
+
+		const secondContext = context('workflow-run-retry', 'node-1:attempt-2');
+		const secondRequest = {
+			...firstRequest,
+			idempotencyKey: 'workflow-run-retry:node-1:attempt-2',
+		};
+		const second = await recovered.capabilityV2.start(
+			secondRequest,
+			secondContext,
+		);
+		expect(second).toMatchObject({ created: true });
+		expect(second.actionInvocationId).not.toBe(first.actionInvocationId);
+		expect(
+			await recovered.capabilityV2.start(secondRequest, secondContext),
+		).toEqual({
+			actionInvocationId: second.actionInvocationId,
+			created: false,
+		});
+		await waitFor(
+			async () =>
+				(
+					await recovered.capabilityV2.getResult(
+						second.actionInvocationId,
+						secondContext,
+					)
+				)?.status === 'succeeded',
+		);
+		expect(observedKeys).toEqual([
+			sideEffectIdempotencyKey,
+			sideEffectIdempotencyKey,
+		]);
+		expect(executions).toBe(2);
+	});
+
 	it('performs an invocation enqueued during a pass without waiting out the interval', async () => {
 		let release = (): void => undefined;
 		const held = new Promise<void>((resolve) => {

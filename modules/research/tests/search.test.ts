@@ -1,5 +1,6 @@
 import { relative } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { connectorAttemptKey } from '../src/adapters/connector-failure.ts';
 import type { ConnectorCalls } from '../src/services/capabilities.ts';
 import {
 	openResearchTestDatabase,
@@ -305,6 +306,9 @@ describe('research search', () => {
 				callerRef: MEMBER,
 			}),
 		]);
+		expect(
+			(requests[0] as Parameters<ConnectorCalls['call']>[0]).idempotencyKey,
+		).toBe(connectorAttemptKey('search', answer.queryId!, 'connector', 1));
 		expect(answer.results).toEqual([
 			expect.objectContaining({
 				url: 'https://search.example.org/a',
@@ -326,6 +330,7 @@ describe('research search', () => {
 		expect(requests.at(-1)).toMatchObject({
 			caller: 'agent',
 			callerRef: 'run-9',
+			idempotencyKey: expect.any(String),
 		});
 		expect(await shared.repository.listQueries(TENANT, 10, null)).toHaveLength(
 			1,
@@ -373,6 +378,58 @@ describe('research search', () => {
 				caller: 'member',
 			}),
 		).rejects.toMatchObject({ code: 'RESEARCH_ADAPTER_UNAVAILABLE' });
+	});
+
+	it('RESEARCH-CHAIN-RETRY sends a generic connector retry with a distinct attempt key', async () => {
+		const requests: Parameters<ConnectorCalls['call']>[0][] = [];
+		const recorded = new Map<
+			string,
+			Awaited<ReturnType<ConnectorCalls['call']>>
+		>();
+		const calls: ConnectorCalls = {
+			async call(request) {
+				const key = request.idempotencyKey;
+				if (!key)
+					throw new Error('Connector call is missing an idempotency key.');
+				const replay = recorded.get(key);
+				if (replay) return replay;
+				requests.push(request);
+				const failed = requests.length === 1;
+				const result = {
+					callId: `call-${requests.length}`,
+					outcome: failed ? 'failed' : 'succeeded',
+					status: failed ? 503 : 200,
+					errorClass: failed ? 'response-5xx' : null,
+					body: { results: [] },
+				} as const;
+				recorded.set(key, result);
+				return result;
+			},
+		};
+		const service = researchService({
+			repository: shared.repository,
+			settings: testSettings({
+				adapter: 'connector',
+				connectorInstanceId: 'instance-search',
+				allowAgents: true,
+			}),
+			calls,
+		});
+		const answer = await service.search({
+			tenantId: TENANT,
+			query: 'acme',
+			caller: 'agent',
+			callerRef: 'run-retry',
+		});
+		expect(answer.attempts.map(({ outcome }) => outcome)).toEqual([
+			'retryable',
+			'empty',
+		]);
+		expect(requests).toHaveLength(2);
+		expect(requests.map(({ idempotencyKey }) => idempotencyKey)).toEqual([
+			connectorAttemptKey('search', answer.queryId!, 'connector', 1),
+			connectorAttemptKey('search', answer.queryId!, 'connector', 2),
+		]);
 	});
 
 	it('RESEARCH-BUDGET refuses past the monthly budget and when metering refuses, before the adapter is called', async () => {

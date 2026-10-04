@@ -10,6 +10,7 @@ import {
 	type AgentToolAccessAuthorizer,
 	type AgentToolContext,
 	type JsonValue,
+	type WorkflowActionTemplateMetadata,
 } from '@flowdular/harness';
 import {
 	actorsEqual,
@@ -31,6 +32,7 @@ import {
 } from '../services/repository.ts';
 
 export const AGENT_ACTION_EXECUTION_CAPABILITY = 'agents.actions.v1';
+export const AGENT_ACTION_EXECUTION_CAPABILITY_V2 = 'agents.actions.v2';
 
 export interface VersionedActionDescriptor {
 	readonly id: string;
@@ -43,6 +45,11 @@ export interface VersionedActionDescriptor {
 	readonly idempotency: 'required';
 	readonly risk: 'read' | 'workspace-write';
 	readonly cancellation: 'cooperative' | 'not-supported';
+}
+
+export interface VersionedActionDescriptorV2 extends VersionedActionDescriptor {
+	readonly idempotencyProtection?: 'target-ledger';
+	readonly workflowTemplate?: WorkflowActionTemplateMetadata;
 }
 
 export interface ActionCancellationResult {
@@ -82,7 +89,10 @@ export interface AgentActionExecutionCapability {
 			readonly actionId: string;
 			readonly contractVersion: number;
 			readonly input: JsonValue;
+			/** Deduplicates this one workflow attempt. */
 			readonly idempotencyKey: string;
+			/** Reused by the external tool across attempts; defaults to idempotencyKey. */
+			readonly sideEffectIdempotencyKey?: string;
 		},
 		context: AgentActionStartContext,
 	): Promise<ActionInvocationAccepted>;
@@ -94,6 +104,11 @@ export interface AgentActionExecutionCapability {
 		actionInvocationId: string,
 		context: AgentActionChildContext,
 	): Promise<ActionCancellationResult>;
+}
+
+export interface AgentActionExecutionCapabilityV2
+	extends Omit<AgentActionExecutionCapability, 'listWorkflowActions'> {
+	listWorkflowActions(): Promise<readonly VersionedActionDescriptorV2[]>;
 }
 
 export class AgentActionCapabilityError extends Error {
@@ -108,6 +123,7 @@ export class AgentActionCapabilityError extends Error {
 
 export interface AgentActionRuntime {
 	readonly capability: AgentActionExecutionCapability;
+	readonly capabilityV2: AgentActionExecutionCapabilityV2;
 	start(): void;
 	stop(): void;
 	dispose(): Promise<void>;
@@ -152,7 +168,541 @@ function workflowSchema(
 	}
 }
 
-function descriptor(tool: AgentTool): VersionedActionDescriptor | null {
+const WORKFLOW_SCHEMA_KEYS = new Set([
+	'$id',
+	'title',
+	'description',
+	'type',
+	'properties',
+	'required',
+	'additionalProperties',
+	'items',
+	'enum',
+	'const',
+	'minLength',
+	'maxLength',
+	'minimum',
+	'maximum',
+	'writeOnly',
+	'x-flowdular-secret',
+	'x-coreloom-secret',
+	'x-flowdular-read-permission',
+]);
+const WORKFLOW_SCHEMA_ROOT_KEYS = new Set(
+	[...WORKFLOW_SCHEMA_KEYS].filter(
+		(key) =>
+			![
+				'writeOnly',
+				'x-flowdular-secret',
+				'x-coreloom-secret',
+				'x-flowdular-read-permission',
+			].includes(key),
+	),
+);
+
+function workflowTemplateSchemaSupported(
+	value: Readonly<Record<string, unknown>>,
+): boolean {
+	const serialized = JSON.stringify(value);
+	if (Buffer.byteLength(serialized, 'utf8') > 16 * 1024) return false;
+	const depthSupported = (entry: unknown, depth: number): boolean => {
+		if (depth > 12) return false;
+		if (Array.isArray(entry))
+			return entry.every((child) => depthSupported(child, depth + 1));
+		if (entry !== null && typeof entry === 'object')
+			return Object.values(entry).every((child) =>
+				depthSupported(child, depth + 1),
+			);
+		return true;
+	};
+	const schemaSupported = (schema: unknown, root = false): boolean => {
+		if (schema === null || typeof schema !== 'object' || Array.isArray(schema))
+			return false;
+		const record = schema as Readonly<Record<string, unknown>>;
+		const allowed = root ? WORKFLOW_SCHEMA_ROOT_KEYS : WORKFLOW_SCHEMA_KEYS;
+		if (Object.keys(record).some((key) => !allowed.has(key))) return false;
+		const supportedType = (candidate: unknown): boolean =>
+			typeof candidate === 'string' &&
+			[
+				'null',
+				'string',
+				'number',
+				'integer',
+				'boolean',
+				'array',
+				'object',
+			].includes(candidate);
+		if (
+			(record.type !== undefined &&
+				(Array.isArray(record.type)
+					? record.type.length === 0 || !record.type.every(supportedType)
+					: !supportedType(record.type))) ||
+			(record.required !== undefined &&
+				(!Array.isArray(record.required) ||
+					!record.required.every((name) => typeof name === 'string'))) ||
+			(record.additionalProperties !== undefined &&
+				typeof record.additionalProperties !== 'boolean') ||
+			(record.items !== undefined && !schemaSupported(record.items)) ||
+			(record.properties !== undefined &&
+				(record.properties === null ||
+					typeof record.properties !== 'object' ||
+					Array.isArray(record.properties) ||
+					!Object.values(record.properties).every((child) =>
+						schemaSupported(child),
+					))) ||
+			(record.enum !== undefined &&
+				(!Array.isArray(record.enum) ||
+					!record.enum.every(
+						(entry) => entry === null || typeof entry !== 'object',
+					))) ||
+			['writeOnly', 'x-flowdular-secret', 'x-coreloom-secret'].some(
+				(key) => key in record && typeof record[key] !== 'boolean',
+			) ||
+			(record['x-flowdular-read-permission'] !== undefined &&
+				typeof record['x-flowdular-read-permission'] !== 'string') ||
+			['minLength', 'maxLength'].some(
+				(key) =>
+					key in record &&
+					(!Number.isSafeInteger(record[key]) || (record[key] as number) < 0),
+			) ||
+			['minimum', 'maximum'].some(
+				(key) => key in record && typeof record[key] !== 'number',
+			)
+		)
+			return false;
+		return true;
+	};
+	return depthSupported(value, 0) && schemaSupported(value, true);
+}
+
+const SECRET_SCHEMA_MARKERS = [
+	'writeOnly',
+	'x-flowdular-secret',
+	'x-coreloom-secret',
+] as const;
+const SECRET_SCHEMA_VALUE_KEYS = [
+	'default',
+	'const',
+	'enum',
+	'example',
+	'examples',
+] as const;
+const SAME_INSTANCE_SCHEMA_KEYS = ['allOf'] as const;
+const OPAQUE_SECRET_SCHEMA_KEYS = [
+	'anyOf',
+	'oneOf',
+	'if',
+	'then',
+	'else',
+	'not',
+	'dependentSchemas',
+	'dependentRequired',
+	'$ref',
+	'$dynamicRef',
+	'$recursiveRef',
+] as const;
+const SCHEMA_VALUE_RELATIONSHIP_KEYS = new Set([
+	'$defs',
+	'definitions',
+	'$ref',
+	'$dynamicRef',
+	'$recursiveRef',
+	'properties',
+	'patternProperties',
+	'additionalProperties',
+	'unevaluatedProperties',
+	'items',
+	'prefixItems',
+	'additionalItems',
+	'unevaluatedItems',
+	'contains',
+	'allOf',
+	'anyOf',
+	'oneOf',
+	'if',
+	'then',
+	'else',
+	'not',
+	'dependentSchemas',
+]);
+
+function containsSecretMarker(value: unknown): boolean {
+	if (Array.isArray(value)) return value.some(containsSecretMarker);
+	if (!value || typeof value !== 'object') return false;
+	const schema = value as Record<string, unknown>;
+	if (SECRET_SCHEMA_MARKERS.some((marker) => schema[marker] === true)) {
+		return true;
+	}
+	return Object.entries(schema).some(
+		([name, child]) =>
+			!SECRET_SCHEMA_VALUE_KEYS.includes(
+				name as (typeof SECRET_SCHEMA_VALUE_KEYS)[number],
+			) && containsSecretMarker(child),
+	);
+}
+
+function containsOpaqueSecretSchema(value: unknown): boolean {
+	if (Array.isArray(value)) return value.some(containsOpaqueSecretSchema);
+	if (!value || typeof value !== 'object') return false;
+	const schema = value as Record<string, unknown>;
+	if (
+		OPAQUE_SECRET_SCHEMA_KEYS.some((key) => key in schema) &&
+		containsSecretMarker(schema)
+	) {
+		return true;
+	}
+	return Object.entries(schema).some(
+		([name, child]) =>
+			!SECRET_SCHEMA_VALUE_KEYS.includes(
+				name as (typeof SECRET_SCHEMA_VALUE_KEYS)[number],
+			) && containsOpaqueSecretSchema(child),
+	);
+}
+
+function referencedSchema(root: unknown, reference: string): unknown {
+	if (!reference.startsWith('#/')) return undefined;
+	let current = root;
+	for (const encoded of reference.slice(2).split('/')) {
+		const key = encoded.replace(/~1/g, '/').replace(/~0/g, '~');
+		if (!current || typeof current !== 'object' || Array.isArray(current)) {
+			return undefined;
+		}
+		current = (current as Record<string, unknown>)[key];
+	}
+	return current;
+}
+
+function schemaValueContainsSecret(
+	schemaValue: unknown,
+	instanceValue: unknown,
+	root: unknown,
+	depth = 0,
+): boolean {
+	if (
+		!schemaValue ||
+		typeof schemaValue !== 'object' ||
+		Array.isArray(schemaValue)
+	) {
+		return false;
+	}
+	const schema = schemaValue as Record<string, unknown>;
+	if (SECRET_SCHEMA_MARKERS.some((marker) => schema[marker] === true)) {
+		return true;
+	}
+	if (depth >= 64) return containsSecretMarker(schema);
+	for (const key of ['$ref', '$dynamicRef', '$recursiveRef'] as const) {
+		if (typeof schema[key] === 'string') {
+			const target = referencedSchema(root, schema[key]);
+			if (target === undefined) return containsSecretMarker(root);
+			if (schemaValueContainsSecret(target, instanceValue, root, depth + 1)) {
+				return true;
+			}
+		}
+	}
+	for (const key of ['allOf', 'anyOf', 'oneOf'] as const) {
+		const alternatives = schema[key];
+		if (
+			Array.isArray(alternatives) &&
+			alternatives.some((child) =>
+				schemaValueContainsSecret(child, instanceValue, root, depth + 1),
+			)
+		) {
+			return true;
+		}
+	}
+	for (const key of ['if', 'then', 'else', 'not'] as const) {
+		if (
+			schemaValueContainsSecret(schema[key], instanceValue, root, depth + 1)
+		) {
+			return true;
+		}
+	}
+	if (Array.isArray(instanceValue)) {
+		const prefixItems = schema.prefixItems;
+		for (let index = 0; index < instanceValue.length; index++) {
+			const tuple = Array.isArray(prefixItems)
+				? prefixItems
+				: Array.isArray(schema.items)
+					? schema.items
+					: null;
+			const child =
+				tuple && index < tuple.length
+					? tuple[index]
+					: Array.isArray(schema.items)
+						? schema.additionalItems
+						: schema.items;
+			if (
+				schemaValueContainsSecret(child, instanceValue[index], root, depth + 1)
+			) {
+				return true;
+			}
+			if (
+				schemaValueContainsSecret(
+					schema.unevaluatedItems,
+					instanceValue[index],
+					root,
+					depth + 1,
+				)
+			) {
+				return true;
+			}
+			if (
+				schemaValueContainsSecret(
+					schema.contains,
+					instanceValue[index],
+					root,
+					depth + 1,
+				)
+			) {
+				return true;
+			}
+		}
+	}
+	if (
+		instanceValue &&
+		typeof instanceValue === 'object' &&
+		!Array.isArray(instanceValue)
+	) {
+		const values = instanceValue as Record<string, unknown>;
+		const dependentSchemas = schema.dependentSchemas;
+		if (
+			dependentSchemas &&
+			typeof dependentSchemas === 'object' &&
+			!Array.isArray(dependentSchemas)
+		) {
+			for (const [name, childSchema] of Object.entries(dependentSchemas)) {
+				if (
+					name in values &&
+					schemaValueContainsSecret(childSchema, instanceValue, root, depth + 1)
+				) {
+					return true;
+				}
+			}
+		}
+		const properties = schema.properties;
+		const propertySchemas =
+			properties && typeof properties === 'object' && !Array.isArray(properties)
+				? (properties as Record<string, unknown>)
+				: {};
+		for (const [name, childValue] of Object.entries(values)) {
+			if (
+				schemaValueContainsSecret(
+					propertySchemas[name],
+					childValue,
+					root,
+					depth + 1,
+				)
+			) {
+				return true;
+			}
+			if (
+				!(name in propertySchemas) &&
+				schemaValueContainsSecret(
+					schema.additionalProperties,
+					childValue,
+					root,
+					depth + 1,
+				)
+			) {
+				return true;
+			}
+			if (
+				schemaValueContainsSecret(
+					schema.unevaluatedProperties,
+					childValue,
+					root,
+					depth + 1,
+				)
+			) {
+				return true;
+			}
+		}
+		if (
+			Object.keys(values).length > 0 &&
+			containsSecretMarker(schema.patternProperties)
+		) {
+			return true;
+		}
+	}
+	for (const [name, child] of Object.entries(schema)) {
+		if (
+			SCHEMA_VALUE_RELATIONSHIP_KEYS.has(name) ||
+			SECRET_SCHEMA_VALUE_KEYS.includes(
+				name as (typeof SECRET_SCHEMA_VALUE_KEYS)[number],
+			)
+		) {
+			continue;
+		}
+		if (containsSecretMarker(child)) return true;
+	}
+	return false;
+}
+
+function composedRequiredNames(
+	value: unknown,
+	names = new Set<string>(),
+): Set<string> {
+	if (Array.isArray(value)) {
+		for (const child of value) composedRequiredNames(child, names);
+		return names;
+	}
+	if (!value || typeof value !== 'object') return names;
+	const schema = value as Record<string, unknown>;
+	if (Array.isArray(schema.required)) {
+		for (const name of schema.required) {
+			if (typeof name === 'string') names.add(name);
+		}
+	}
+	for (const key of SAME_INSTANCE_SCHEMA_KEYS) {
+		composedRequiredNames(schema[key], names);
+	}
+	return names;
+}
+
+function secretSchemaIssue(
+	value: unknown,
+	required = false,
+	inheritedRequiredNames?: ReadonlySet<string>,
+	root: unknown = value,
+): 'value' | 'required-input' | null {
+	if (Array.isArray(value)) {
+		for (const child of value) {
+			const issue = secretSchemaIssue(
+				child,
+				required,
+				inheritedRequiredNames,
+				root,
+			);
+			if (issue) return issue;
+		}
+		return null;
+	}
+	if (!value || typeof value !== 'object') return null;
+	const schema = value as Record<string, unknown>;
+	const secret = SECRET_SCHEMA_MARKERS.some(
+		(marker) => schema[marker] === true,
+	);
+	if (secret && SECRET_SCHEMA_VALUE_KEYS.some((key) => key in schema)) {
+		return 'value';
+	}
+	if (
+		SECRET_SCHEMA_VALUE_KEYS.some((key) => {
+			if (!(key in schema)) return false;
+			if (
+				(key === 'enum' || key === 'examples') &&
+				!Array.isArray(schema[key])
+			) {
+				return containsSecretMarker(schema);
+			}
+			const candidates =
+				key === 'enum' || key === 'examples' ? schema[key] : [schema[key]];
+			return (
+				Array.isArray(candidates) &&
+				candidates.some((candidate) =>
+					schemaValueContainsSecret(schema, candidate, root),
+				)
+			);
+		})
+	) {
+		return 'value';
+	}
+	if (secret && required) return 'required-input';
+	const requiredNames = composedRequiredNames(schema);
+	for (const name of inheritedRequiredNames ?? []) requiredNames.add(name);
+	const properties = schema.properties;
+	if (
+		properties &&
+		typeof properties === 'object' &&
+		!Array.isArray(properties)
+	) {
+		for (const [name, child] of Object.entries(properties)) {
+			const issue = secretSchemaIssue(
+				child,
+				required && requiredNames.has(name),
+				undefined,
+				root,
+			);
+			if (issue) return issue;
+		}
+	}
+	for (const [name, child] of Object.entries(schema)) {
+		if (
+			name === 'properties' ||
+			name === 'required' ||
+			SECRET_SCHEMA_VALUE_KEYS.includes(
+				name as (typeof SECRET_SCHEMA_VALUE_KEYS)[number],
+			)
+		) {
+			continue;
+		}
+		const issue = secretSchemaIssue(
+			child,
+			required,
+			SAME_INSTANCE_SCHEMA_KEYS.includes(
+				name as (typeof SAME_INSTANCE_SCHEMA_KEYS)[number],
+			)
+				? requiredNames
+				: undefined,
+			root,
+		);
+		if (issue) return issue;
+	}
+	return null;
+}
+
+function validatedWorkflowTemplate(
+	value: unknown,
+): WorkflowActionTemplateMetadata {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		throw new AgentActionCapabilityError(
+			'ACTION_TEMPLATE_INVALID',
+			'Workflow action template metadata is invalid.',
+		);
+	}
+	const metadata = value as Record<string, unknown>;
+	const validText = (text: unknown, maximum: number): text is string =>
+		typeof text === 'string' &&
+		text.trim().length > 0 &&
+		text.length <= maximum &&
+		!text.includes('{{') &&
+		!text.includes('${') &&
+		![...text].some((character) => {
+			const point = character.codePointAt(0)!;
+			return point < 32 || point === 127;
+		});
+	if (
+		Object.keys(metadata).some(
+			(key) => key !== 'label' && key !== 'description' && key !== 'effect',
+		) ||
+		!validText(metadata.label, 80) ||
+		!validText(metadata.description, 240) ||
+		(metadata.effect !== 'local' && metadata.effect !== 'connector-egress')
+	) {
+		throw new AgentActionCapabilityError(
+			'ACTION_TEMPLATE_INVALID',
+			'Workflow action template metadata is invalid.',
+		);
+	}
+	return {
+		label: metadata.label,
+		description: metadata.description,
+		effect: metadata.effect,
+	};
+}
+
+/* Match the harness and CLI runner's FD_ENV ceiling for local capabilities. */
+function localOnlyRefused(tool: AgentTool): boolean {
+	const environment =
+		process.env.FD_ENV ?? process.env.NODE_ENV ?? 'development';
+	return (
+		tool.localOnly === true &&
+		environment !== 'development' &&
+		environment !== 'test'
+	);
+}
+
+function descriptor(tool: AgentTool): VersionedActionDescriptorV2 | null {
+	if (localOnlyRefused(tool)) return null;
 	const inputSchema = workflowSchema(tool.inputSchema);
 	const outputSchema = workflowSchema(tool.outputSchema);
 	if (
@@ -167,7 +717,51 @@ function descriptor(tool: AgentTool): VersionedActionDescriptor | null {
 		(tool.cancellation !== 'cooperative' &&
 			tool.cancellation !== 'not-supported')
 	) {
+		if (tool.workflowTemplate !== undefined) {
+			throw new AgentActionCapabilityError(
+				'ACTION_TEMPLATE_INELIGIBLE',
+				'Workflow action template requires a complete eligible action contract.',
+			);
+		}
 		return null;
+	}
+	if (
+		secretSchemaIssue(inputSchema) === 'value' ||
+		secretSchemaIssue(outputSchema) === 'value'
+	) {
+		throw new AgentActionCapabilityError(
+			'ACTION_SCHEMA_SECRET_VALUE',
+			'Workflow action schema embeds a value on a secret field.',
+		);
+	}
+	const workflowTemplate =
+		tool.workflowTemplate === undefined
+			? undefined
+			: validatedWorkflowTemplate(tool.workflowTemplate);
+	if (workflowTemplate && containsOpaqueSecretSchema(inputSchema)) {
+		throw new AgentActionCapabilityError(
+			'ACTION_TEMPLATE_SECRET_SCHEMA_UNPROVEN',
+			'Workflow action template cannot prove a complex secret input optional.',
+		);
+	}
+	if (
+		workflowTemplate &&
+		secretSchemaIssue(inputSchema, true) === 'required-input'
+	) {
+		throw new AgentActionCapabilityError(
+			'ACTION_TEMPLATE_SECRET_INPUT',
+			'Workflow action template requires a raw secret input.',
+		);
+	}
+	if (
+		workflowTemplate &&
+		(!workflowTemplateSchemaSupported(inputSchema) ||
+			!workflowTemplateSchemaSupported(outputSchema))
+	) {
+		throw new AgentActionCapabilityError(
+			'ACTION_TEMPLATE_SCHEMA_UNSUPPORTED',
+			'Workflow action template schema exceeds the workflow schema subset or limits.',
+		);
 	}
 	return {
 		id: tool.id,
@@ -180,7 +774,67 @@ function descriptor(tool: AgentTool): VersionedActionDescriptor | null {
 		idempotency: 'required',
 		risk: tool.risk,
 		cancellation: tool.cancellation,
+		...(tool.idempotencyProtection === undefined
+			? {}
+			: { idempotencyProtection: tool.idempotencyProtection }),
+		...(workflowTemplate === undefined ? {} : { workflowTemplate }),
 	};
+}
+
+function legacyDescriptor(
+	action: VersionedActionDescriptorV2,
+): VersionedActionDescriptor {
+	return {
+		id: action.id,
+		contractVersion: action.contractVersion,
+		description: action.description,
+		requiredPermissions: [...action.requiredPermissions],
+		inputSchema: structuredClone(action.inputSchema),
+		outputSchema: structuredClone(action.outputSchema),
+		timeoutMs: action.timeoutMs,
+		idempotency: action.idempotency,
+		risk: action.risk,
+		cancellation: action.cancellation,
+	};
+}
+
+function cloneDescriptorV2(
+	action: VersionedActionDescriptorV2,
+): VersionedActionDescriptorV2 {
+	return {
+		...legacyDescriptor(action),
+		...(action.idempotencyProtection === undefined
+			? {}
+			: { idempotencyProtection: action.idempotencyProtection }),
+		...(action.workflowTemplate === undefined
+			? {}
+			: { workflowTemplate: { ...action.workflowTemplate } }),
+	};
+}
+
+function buildActionDescriptors(
+	tools: readonly AgentTool[],
+): readonly VersionedActionDescriptorV2[] {
+	const actions = tools
+		.map(descriptor)
+		.filter((item): item is VersionedActionDescriptorV2 => item !== null)
+		.sort((left, right) => left.id.localeCompare(right.id));
+	for (let index = 1; index < actions.length; index++) {
+		if (actions[index - 1]!.id === actions[index]!.id) {
+			throw new AgentActionCapabilityError(
+				'ACTION_TEMPLATE_DUPLICATE',
+				'Workflow action identity is registered more than once.',
+			);
+		}
+	}
+	return actions;
+}
+
+/** Checked during platform prepare, after all modules registered their tools. */
+export function validateWorkflowActionCatalog(
+	tools: readonly AgentTool[],
+): void {
+	buildActionDescriptors(tools);
 }
 
 /**
@@ -278,12 +932,15 @@ export function createAgentActionExecutionRuntime(
 	const workerId =
 		options.workerId ?? `agent-action-worker:${process.pid}:${randomUUID()}`;
 	const intervalMs = Math.max(1_000, Math.floor(leaseMs / 2));
-	const toolById = new Map(tools.map((tool) => [tool.id, tool]));
-	const actions = tools
-		.map(descriptor)
-		.filter((item): item is VersionedActionDescriptor => item !== null)
-		.sort((left, right) => left.id.localeCompare(right.id));
+	const actions = buildActionDescriptors(tools);
+	const toolById = new Map(
+		tools
+			.filter((tool) => !localOnlyRefused(tool))
+			.map((tool) => [tool.id, tool]),
+	);
 	const actionById = new Map(actions.map((action) => [action.id, action]));
+	const visibleActions = () =>
+		actions.filter((action) => !localOnlyRefused(toolById.get(action.id)!));
 	const inFlight = new Map<string, AbortController>();
 	const callerSignals = new Map<
 		string,
@@ -339,6 +996,12 @@ export function createAgentActionExecutionRuntime(
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let rejectAbort: (() => void) | undefined;
 		try {
+			if (localOnlyRefused(tool)) {
+				throw new AgentActionCapabilityError(
+					'TOOL_LOCAL_ONLY',
+					`Tool ${tool.id} is a local-only capability and cannot run in this environment.`,
+				);
+			}
 			const currentlyHeld = new Set(
 				invocation.authorizationSubject
 					? await (options.authorizeToolAccess?.({
@@ -378,7 +1041,7 @@ export function createAgentActionExecutionRuntime(
 							agentName: invocation.actor.label,
 						}
 					: {}),
-				idempotencyKey: invocation.idempotencyKey,
+				idempotencyKey: invocation.sideEffectIdempotencyKey,
 				permissions,
 				signal: controller.signal,
 			};
@@ -640,13 +1303,7 @@ export function createAgentActionExecutionRuntime(
 	};
 
 	const capability: AgentActionExecutionCapability = {
-		listWorkflowActions: async () =>
-			actions.map((action) => ({
-				...action,
-				requiredPermissions: [...action.requiredPermissions],
-				inputSchema: structuredClone(action.inputSchema),
-				outputSchema: structuredClone(action.outputSchema),
-			})),
+		listWorkflowActions: async () => visibleActions().map(legacyDescriptor),
 		async start(request, context) {
 			if (context.signal.aborted) {
 				throw new AgentActionCapabilityError(
@@ -672,6 +1329,13 @@ export function createAgentActionExecutionRuntime(
 				throw new AgentActionCapabilityError(
 					'ACTION_VERSION_MISSING',
 					'Action contract version is unavailable.',
+				);
+			}
+			const tool = toolById.get(action.id)!;
+			if (localOnlyRefused(tool)) {
+				throw new AgentActionCapabilityError(
+					'TOOL_LOCAL_ONLY',
+					`Tool ${tool.id} is a local-only capability and cannot run in this environment.`,
 				);
 			}
 			if (
@@ -741,6 +1405,12 @@ export function createAgentActionExecutionRuntime(
 				8,
 				128,
 			);
+			const sideEffectIdempotencyKey = bounded(
+				request.sideEffectIdempotencyKey ?? idempotencyKey,
+				'sideEffectIdempotencyKey',
+				8,
+				128,
+			);
 			const permissions = [...new Set(context.permissionSnapshot)].sort();
 			const requestHash = createHash('sha256')
 				.update(
@@ -753,6 +1423,11 @@ export function createAgentActionExecutionRuntime(
 						actor,
 						authorizationSubject,
 						permissions,
+						/* Preserve the original hash for v1 and already-queued v2
+						   invocations, whose external and invocation keys were equal. */
+						...(sideEffectIdempotencyKey === idempotencyKey
+							? []
+							: [sideEffectIdempotencyKey]),
 					]),
 				)
 				.digest('hex');
@@ -776,14 +1451,14 @@ export function createAgentActionExecutionRuntime(
 			}
 			/* Refused before the invocation is persisted, so an unconsented action
 			   never occupies the queue; the worker asks again before it runs. */
-			await assertConsent(toolById.get(action.id)!, request.input, {
+			await assertConsent(tool, request.input, {
 				runId: workflowRunId,
 				tenantId,
 				requestedBy: actor.id,
 				invocation: 'workflow-action',
 				actor,
 				authorizationSubject,
-				idempotencyKey,
+				idempotencyKey: sideEffectIdempotencyKey,
 				permissions: livePermissions,
 				signal: context.signal,
 			});
@@ -799,6 +1474,7 @@ export function createAgentActionExecutionRuntime(
 				permissionSnapshot: permissions,
 				input: request.input,
 				idempotencyKey,
+				sideEffectIdempotencyKey,
 				requestHash,
 				status: 'queued',
 				output: null,
@@ -882,9 +1558,14 @@ export function createAgentActionExecutionRuntime(
 		},
 		requestCancel: cancellation,
 	};
+	const capabilityV2: AgentActionExecutionCapabilityV2 = {
+		...capability,
+		listWorkflowActions: async () => visibleActions().map(cloneDescriptorV2),
+	};
 
 	return {
 		capability,
+		capabilityV2,
 		start() {
 			if (!stopped) return;
 			stopped = false;

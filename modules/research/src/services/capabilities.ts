@@ -26,6 +26,7 @@ export interface ConnectorCalls {
 		readonly input: Readonly<Record<string, unknown>>;
 		readonly caller: 'test' | 'workflow' | 'agent';
 		readonly callerRef?: string | undefined;
+		readonly idempotencyKey?: string | undefined;
 		readonly signal?: AbortSignal | undefined;
 	}): Promise<{
 		readonly callId: string;

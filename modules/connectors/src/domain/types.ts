@@ -37,6 +37,7 @@ export const CONNECTOR_ERROR_CLASSES = [
 	'egress-refused',
 	'instance-disabled',
 	'consent-missing',
+	'idempotency-key-required',
 	'definition-missing',
 	'operation-unknown',
 	'invalid-input',
@@ -171,6 +172,7 @@ export const CONNECTOR_AUDIT_ACTIONS = [
 	'instance.enabled',
 	'instance.disabled',
 	'instance.deleted',
+	'call.outcome-unknown',
 ] as const;
 export type ConnectorAuditAction = (typeof CONNECTOR_AUDIT_ACTIONS)[number];
 

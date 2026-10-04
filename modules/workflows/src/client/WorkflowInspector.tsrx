@@ -17,6 +17,7 @@ import type {
 	WorkflowActionCatalogItem,
 	WorkflowAgentCatalogItem,
 } from './api.ts';
+import { bindWorkflowAction } from './canvas-model.ts';
 
 import { WorkflowMappingEditor } from './WorkflowMappingEditor.tsrx';
 import { WorkflowInputSchemaEditor } from './WorkflowInputSchemaEditor.tsrx';
@@ -571,10 +572,11 @@ function AgentReferenceEditor(props: {
 }
 
 function ActionReferenceEditor(props: {
+	readonly graph: WorkflowGraphV1;
 	readonly node: WorkflowActionNodeV1;
 	readonly actions: readonly WorkflowActionCatalogItem[];
 	readonly editable: boolean;
-	readonly onChange: (node: WorkflowNodeV1) => void;
+	readonly onChange: (graph: WorkflowGraphV1) => void;
 }) @{
 	<FormField
 		label={t('workflows.inspector.action')}
@@ -590,13 +592,9 @@ function ActionReferenceEditor(props: {
 						`${action.actionId}@${action.contractVersion}` ===
 							event.currentTarget.value,
 				);
-				if (selected) props.onChange({
-					...props.node,
-					action: {
-						actionId: selected.actionId,
-						contractVersion: selected.contractVersion,
-					},
-				});
+				if (selected) props.onChange(
+					bindWorkflowAction(props.graph, props.node.id, selected),
+				);
 			}}
 		>
 			<option value="">{t('workflows.inspector.chooseAction')}</option>
@@ -685,10 +683,11 @@ export function WorkflowInspector(props: WorkflowInspectorProps) @{
 				}
 				@if (props.node.type === 'action') {
 					<ActionReferenceEditor
+						graph={props.graph}
 						node={props.node}
 						actions={props.actions}
 						editable={props.editable}
-						onChange={props.onReplaceNode}
+						onChange={props.onReplaceGraph}
 					/>
 				}
 				@if (

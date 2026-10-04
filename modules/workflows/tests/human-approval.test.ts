@@ -5,9 +5,9 @@ import {
 	type PlatformCapabilityRegistry,
 } from '@flowdular/kernel';
 import {
-	AGENT_ACTION_EXECUTION_CAPABILITY,
+	AGENT_ACTION_EXECUTION_CAPABILITY_V2,
 	AGENT_RUN_EXECUTION_CAPABILITY,
-	type AgentActionExecutionCapability,
+	type AgentActionExecutionCapabilityV2,
 	type AgentRevisionExecutionCapability,
 } from '@flowdular/module-agents/server';
 import { WORKFLOWS_PERMISSIONS } from '../src/acl/permissions.ts';
@@ -116,7 +116,7 @@ function agentDependencies() {
 		getResult: async () => null,
 		requestCancel: async () => true,
 	} as unknown as AgentRevisionExecutionCapability;
-	const actions: AgentActionExecutionCapability = {
+	const actions: AgentActionExecutionCapabilityV2 = {
 		listWorkflowActions: async () => [],
 		start: async () => ({ actionInvocationId: 'action-1', created: true }),
 		getResult: async () => null,
@@ -124,7 +124,7 @@ function agentDependencies() {
 			actionInvocationId,
 			state: 'acknowledged' as const,
 		}),
-	} as unknown as AgentActionExecutionCapability;
+	} as unknown as AgentActionExecutionCapabilityV2;
 	return { agents, actions };
 }
 
@@ -210,7 +210,7 @@ function registry(approvals?: ApprovalsRequests): PlatformCapabilityRegistry {
 	const value = createPlatformCapabilityRegistry();
 	const fake = agentDependencies();
 	value.register(AGENT_RUN_EXECUTION_CAPABILITY, fake.agents);
-	value.register(AGENT_ACTION_EXECUTION_CAPABILITY, fake.actions);
+	value.register(AGENT_ACTION_EXECUTION_CAPABILITY_V2, fake.actions);
 	if (approvals) value.register(APPROVALS_REQUESTS_CAPABILITY, approvals);
 	return value;
 }
