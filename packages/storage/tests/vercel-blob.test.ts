@@ -1,6 +1,12 @@
 import { inspect } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BlobAccessError, BlobError, BlobNotFoundError } from '@vercel/blob';
+import {
+	BlobAccessError,
+	BlobError,
+	BlobNotFoundError,
+	BlobRequestAbortedError,
+	BlobServiceNotAvailable,
+} from '@vercel/blob';
 import { storageConfigFromEnvironment } from '../src/config.ts';
 import { createStoragePort } from '../src/port.ts';
 import { createVercelBlobObjectStore } from '../src/vercel-blob.ts';
@@ -130,6 +136,20 @@ describe('Vercel Blob storage adapter', () => {
 		expect(body.pulled()).toBeLessThan(4);
 	});
 
+	it('asks the service for only the prefix with a range header', async () => {
+		sdk.get.mockImplementation(async () =>
+			found(source([Buffer.from('FDS1-whole')]).stream),
+		);
+
+		await store().read(KEY, 6);
+		await store().read(KEY);
+
+		expect(sdk.get.mock.calls[0]![1]).toMatchObject({
+			headers: { range: 'bytes=0-5' },
+		});
+		expect(sdk.get.mock.calls[1]![1]).not.toHaveProperty('headers');
+	});
+
 	it('refuses a frame larger than the bound without reading it to the end', async () => {
 		const body = source(
 			Array.from({ length: 8 }, (_, index) => Buffer.alloc(40, index)),
@@ -243,6 +263,82 @@ describe('Vercel Blob storage adapter', () => {
 			expect(signal?.aborted).toBe(true);
 			expect((signal?.reason as Error).name).toBe('AbortError');
 		});
+
+		it('rejects on time while the SDK sleeps between retries and drops its late failure', async () => {
+			vi.useFakeTimers();
+			const unhandled: unknown[] = [];
+			const onUnhandled = (reason: unknown) => unhandled.push(reason);
+			process.on('unhandledRejection', onUnhandled);
+			try {
+				let signal: AbortSignal | undefined;
+				/* The SDK's retry loop: a 503 is retried after a backoff sleep the
+				   signal does not interrupt, and an abort ends it only at the next
+				   attempt. */
+				sdk.put.mockImplementation(
+					async (
+						_pathname: string,
+						_body: Buffer,
+						options: { abortSignal: AbortSignal },
+					) => {
+						signal = options.abortSignal;
+						for (const backoff of [1_000, 2_000, 4_000, 8_000, 16_000]) {
+							if (signal.aborted) throw new BlobRequestAbortedError();
+							await new Promise((resolve) => setTimeout(resolve, backoff));
+						}
+						if (signal.aborted) throw new BlobRequestAbortedError();
+						throw new BlobServiceNotAvailable();
+					},
+				);
+				let outcome: unknown;
+				const write = store()
+					.write(KEY, Buffer.from('x'))
+					.catch((error: unknown) => {
+						outcome = error;
+					});
+
+				await vi.advanceTimersByTimeAsync(30_000);
+
+				expect(outcome).toMatchObject({
+					code: 'STORAGE_UNAVAILABLE',
+					message: expect.stringContaining('within 30 s'),
+				});
+				expect(signal?.aborted).toBe(true);
+				await vi.runAllTimersAsync();
+				await write;
+				expect(unhandled).toEqual([]);
+			} finally {
+				process.off('unhandledRejection', onUnhandled);
+			}
+		});
+
+		it('rejects on time when the SDK never settles', async () => {
+			vi.useFakeTimers();
+			sdk.head.mockReturnValue(new Promise(() => undefined));
+			let outcome: unknown;
+			void store()
+				.remove(KEY)
+				.catch((error: unknown) => {
+					outcome = error;
+				});
+
+			await vi.advanceTimersByTimeAsync(30_000);
+
+			expect(outcome).toMatchObject({ code: 'STORAGE_UNAVAILABLE' });
+			expect(sdk.del).not.toHaveBeenCalled();
+		});
+
+		it('leaves no timer behind when the SDK answers first', async () => {
+			vi.useFakeTimers();
+			sdk.put.mockResolvedValue({});
+			sdk.get.mockRejectedValue(new BlobAccessError());
+
+			await store().write(KEY, Buffer.from('x'));
+			await store()
+				.read(KEY)
+				.catch(() => undefined);
+
+			expect(vi.getTimerCount()).toBe(0);
+		});
 	});
 });
 
@@ -294,5 +390,62 @@ describe('Vercel Blob adapter behind the storage port', () => {
 		expect(await collect(read!.body)).toEqual(body);
 		expect(await storage.stat(reference)).toEqual(stored);
 		await storage.dispose();
+	});
+
+	it('counts a frame written under a larger limit as refused and re-seals the rest of the batch', async () => {
+		const blobs = new Map<string, Buffer>();
+		sdk.put.mockImplementation(async (pathname: string, body: Buffer) => {
+			blobs.set(pathname, Buffer.from(body));
+			return {};
+		});
+		sdk.get.mockImplementation(async (pathname: string) => {
+			const stored = blobs.get(pathname);
+			return stored ? found(source([stored]).stream) : null;
+		});
+		const port = (limit: number, ring: ReturnType<typeof keyring>) =>
+			createStoragePort(
+				storageConfigFromEnvironment(
+					{
+						FD_STORAGE_ADAPTER: 'vercel-blob',
+						FD_STORAGE_MAX_OBJECT_BYTES: String(limit),
+						BLOB_STORE_ID: STORE_ID,
+					},
+					'/workspace',
+				),
+				{ keyring: ring },
+			);
+		const reference = (objectId: string) => ({
+			tenantId: TENANT,
+			moduleId: MODULE,
+			objectId,
+		});
+		/* The read bound leaves room for the largest header, so the frame has to
+		   exceed the lower limit by more than that. */
+		const writer = port(16_384, keyring(1));
+		await writer.put({
+			...reference('large'),
+			contentType: 'application/pdf',
+			body: Buffer.concat([Buffer.from(pdf()), Buffer.alloc(8192, 0x20)]),
+		});
+		await writer.put({
+			...reference('small'),
+			contentType: 'application/pdf',
+			body: pdf(),
+		});
+		await writer.dispose();
+		const large = blobs.get(`${TENANT}/${MODULE}/large`);
+		const rotated = port(1024, keyring(2, [1]));
+
+		const report = await rotated.reseal(
+			[reference('large'), reference('small')],
+			{ apply: true },
+		);
+
+		expect(report).toMatchObject({ stale: 2, resealed: 1, refused: 1 });
+		expect(blobs.get(`${TENANT}/${MODULE}/large`)).toEqual(large);
+		expect((await rotated.stat(reference('small')))?.keyId).toBe(
+			keyring(2).keyId,
+		);
+		await rotated.dispose();
 	});
 });

@@ -53,16 +53,31 @@ function unavailable(action: string, error: unknown): StorageError {
 	);
 }
 
-/* The SDK retries every failure but an AbortError, with backoff for minutes.
-   AbortSignal.timeout rejects with a TimeoutError, so the deadline aborts with
-   the default reason instead and the SDK gives up when it passes. */
+/* The SDK retries a failed put, head or del after backoff sleeps the signal
+   does not interrupt, so an abort alone ends a call only at its next attempt.
+   The deadline therefore settles the call itself, and the race keeps the
+   abandoned call's late outcome handled and dropped. It still aborts, with
+   the default AbortError reason, since the SDK gives up on an AbortError but
+   retries the TimeoutError of AbortSignal.timeout. */
 async function withDeadline<T>(
+	action: string,
 	run: (abortSignal: AbortSignal) => Promise<T>,
 ): Promise<T> {
 	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const deadline = new Promise<never>((_resolve, reject) => {
+		timer = setTimeout(() => {
+			reject(
+				new StorageError(
+					'STORAGE_UNAVAILABLE',
+					`The object store did not ${action} within ${REQUEST_TIMEOUT_MS / 1000} s.`,
+				),
+			);
+			controller.abort();
+		}, REQUEST_TIMEOUT_MS);
+	});
 	try {
-		return await run(controller.signal);
+		return await Promise.race([run(controller.signal), deadline]);
 	} finally {
 		clearTimeout(timer);
 	}
@@ -87,7 +102,7 @@ export function createVercelBlobObjectStore(
 	return {
 		async write(key, frame) {
 			const pathname = pathnameOf(key);
-			await withDeadline(async (abortSignal) => {
+			await withDeadline(`store ${key}`, async (abortSignal) => {
 				try {
 					await put(
 						pathname,
@@ -109,13 +124,18 @@ export function createVercelBlobObjectStore(
 		},
 		async read(key, maxBytes) {
 			const pathname = pathnameOf(key);
-			return withDeadline(async (abortSignal) => {
+			return withDeadline(`read ${key}`, async (abortSignal) => {
 				let result;
 				try {
 					result = await get(pathname, {
 						access: 'private',
 						useCache: false,
 						abortSignal,
+						/* The loop below still cancels at the prefix, for a server that
+						   answers a range request with the whole object. */
+						...(maxBytes === undefined
+							? {}
+							: { headers: { range: `bytes=0-${maxBytes - 1}` } }),
 						...credentials,
 					});
 				} catch (error) {
@@ -156,7 +176,7 @@ export function createVercelBlobObjectStore(
 		},
 		async remove(key) {
 			const pathname = pathnameOf(key);
-			return withDeadline(async (abortSignal) => {
+			return withDeadline(`delete ${key}`, async (abortSignal) => {
 				/* A Blob delete succeeds for an absent pathname, so the caller is
 				   told whether the object was there by looking first. */
 				try {
