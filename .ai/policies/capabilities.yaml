@@ -14,23 +14,28 @@ core:
     risk: process
     supportsDryRun: true
     effect: runs the existing Docker Compose launcher in the operator's terminal after checking its files and Docker Compose; the launcher creates local secrets on first start and opens setup
+  module.source:
+    command: pnpm flowdular module source add <name> <location> [--apply]
+    risk: workspace-write
+    supportsDryRun: true
+    note: host-only source configuration; sandbox agents receive no network or Git access
+  module.plan:
+    command: pnpm flowdular module plan <id[@version]> --source <name> [--apply]
+    risk: workspace-write
+    supportsDryRun: true
+    note: saves exact source, release digests and impact without executing module code
+  module.apply:
+    command: pnpm flowdular module apply <plan-id> [--apply]
+    risk: workspace-write
+    supportsDryRun: true
+    note: host-only source installation; activation and database changes remain separate
   module.search:
     command: pnpm flowdular module search [query]
     risk: read
-    note: host-only official HTTPS catalog lookup; does not grant sandbox network access
+    note: host-only configured source lookup; does not grant sandbox network access
   module.info:
     command: pnpm flowdular module info <id>
     risk: read
-  module.install:
-    command: pnpm flowdular module install <id[@version]> [--apply]
-    risk: workspace-write
-    supportsDryRun: true
-    note: host-only source installation; no scripts, activation, permissions or database changes
-  module.update:
-    command: pnpm flowdular module update <id[@version]> [--apply]
-    risk: workspace-write
-    supportsDryRun: true
-    note: rejects local edits, changed historical migrations and downgrades
   module.recover:
     command: pnpm flowdular module recover [--apply]
     risk: workspace-write

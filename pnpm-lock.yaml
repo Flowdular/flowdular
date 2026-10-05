@@ -1053,6 +1053,9 @@ importers:
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
+      jsdom:
+        specifier: 30.0.1
+        version: 30.0.1(@noble/hashes@2.4.0)
       typescript:
         specifier: 5.9.3
         version: 5.9.3

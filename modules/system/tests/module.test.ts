@@ -25,6 +25,7 @@ function systemRoutes(workspaceRoot: string) {
 		settings: auth.moduleSettings,
 		activation: memoryActivationRuntime([
 			{ id: 'system.core', version: '0.1.1', dependencies: [] },
+			{ id: 'sandbox.core', version: '0.1.1', dependencies: [] },
 		]),
 	});
 }
@@ -100,6 +101,7 @@ describe('system.core', () => {
 				permissions: unknown[];
 				platform: { server: boolean };
 			}[];
+			sandboxAvailable: boolean;
 			commands: Record<string, string>;
 		};
 		expect(body.modules.map((module) => module.id)).toEqual([
@@ -122,6 +124,7 @@ describe('system.core', () => {
 			name: 'draft.core',
 		});
 		expect(body.commands.enable).toContain('module enable');
+		expect(body.sandboxAvailable).toBe(true);
 
 		const member = createContext(request, {});
 		member.state.set('flowdular.auth.principal', {

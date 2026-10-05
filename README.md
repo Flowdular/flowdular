@@ -53,6 +53,32 @@ This short walkthrough uses actual platform screens and synthetic sample data. R
 
 Capabilities are enabled and configured per application. Model providers and external services need their own credentials and setup.
 
+## What can you build?
+
+These are examples of applications to build on Flowdular. Their industry-specific rules and screens belong in your own modules.
+
+| Your team               | An application you could build                      | Foundation you can reuse                                          |
+| :---------------------- | :-------------------------------------------------- | :---------------------------------------------------------------- |
+| Operations              | Purchasing, order tracking or an internal ERP       | Workspaces, roles, records, documents, imports and exports        |
+| Product company         | A vertical SaaS product or customer portal          | Tenant isolation, module screens, public web pages and API tokens |
+| Finance and procurement | Expense review or supplier qualification            | Approval requests, audit history, workflows and connectors        |
+| Research and case teams | Gather evidence, review a case and produce a report | Web research, document text, agents and PDF/DOCX templates        |
+
+Module Studio connects an application to a catalog, a pinned Git repository or local releases. It shows an exact change plan before installation, and Sandbox helps build your own module from an approved specification. See [module distribution](docs/module-distribution.md).
+
+## From a request to a working module
+
+```text
+Describe the work → Approve the spec → Build → Preview → Review → Deliver
+```
+
+1. **Describe the business need.** Define the records, screens, actions and permissions. Record the decisions and what is out of scope in `spec/module.yaml`.
+2. **Approve the specification.** In the sandbox, implementation is tied to the exact approved spec hash. An agent cannot approve its own work.
+3. **Build and preview.** The sandbox's specialists, or a developer in their own tools, implement the module against shared contracts and the design system. The sandbox previews it inside the application shell with an isolated database.
+4. **Review and deliver.** Run validation, types, tests, formatting and automated review. Eject the change into your workspace or deliver a branch and pull request with the gate results.
+
+The result is a module your team can read, test, change and version. [Module guide](docs/modules.md) · [Sandbox guide](docs/sandbox.md) · [Reference module](.ai/references/catalog)
+
 ## Quick start
 
 Use Node.js **22.22.2 or newer** and **pnpm 11**. The generator installs dependencies and configures an embedded PostgreSQL database for local development.

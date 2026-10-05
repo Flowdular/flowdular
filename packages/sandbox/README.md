@@ -596,37 +596,12 @@ in the session list, with the time it landed, and the platform records
 
 Delivery is a target behind one interface (`DeliveryTarget` in
 `src/server/delivery/types.ts`): `available`, `plan`, `apply`. The eject
-request names the target (`target: 'workspace' | 'git-pr' | 'official-modules'`, default from
-configuration); the plan answer lists `availableTargets` with a reason for each
-one that cannot be used here, and the screen offers the choice only when more
-than one is usable.
-
-### Contribute to Official Modules (`official-modules`)
-
-Choose **Send to Official Modules** in the eject dialog, then confirm the displayed
-repository and source scope. This target accepts one new module with a current
-human-approved specification and passing exact-source auto-review. GitHub access
-to `Flowdular/official-modules`, git, gh and pnpm are required. The repository must
-be accessible to the configured GitHub identity; private repositories remain private.
-
-The host repeats all sandbox gates, clones the registry to a temporary directory,
-refuses an existing module ID/directory, copies the reviewed source and runs the
-registry's `pnpm verify`. It records source-bound evidence, packages an immutable
-release, and opens a PR to `Flowdular/official-modules` against `main`. Contributors
-without upstream push rights use a personal fork. Only module source, its review
-and release artifact enter the commit. Credentials stay out of package-script
-environments, command arguments and PR text. The local application is not enabled
-or changed. Existing branches are never overwritten on retry; only an identical
-source tree can be reused after an interrupted PR request.
-
-The target is included in default delivery targets. Projects with an explicit
-`sandbox.delivery.targets` list must add `official-modules`. Disabling GitHub
-in sandbox settings disables this target too. SDK/CLI npm releases must exist for
-the clean registry installation; an unavailable dependency stops before any push.
-
-This action submits code for maintainer review. It does not publish the registry,
-merge the PR or bypass PostgreSQL CI. Existing registry modules and multi-module
-changes use the contributor skills and a manually prepared branch for now.
+request names `workspace` or `git-pr` (default from configuration); the plan
+answer lists `availableTargets` with a reason for each unavailable target.
+The screen offers the choice when both are usable. `git-pr` sends an approved,
+gate-checked change to the platform repository configured by the operator.
+The former `official-modules` target was removed; publishing a source catalog
+is a separate host workflow described in [Module Studio](../../docs/module-distribution.md).
 
 ### As a pull request (`git-pr`)
 

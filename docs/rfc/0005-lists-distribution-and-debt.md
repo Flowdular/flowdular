@@ -1,5 +1,8 @@
 # RFC 0005: Server-side lists, official module distribution and the recorded debt
 
+- The official module distribution items below record the 2026-09-12 decision
+  and are superseded by [Module Studio](../module-distribution.md). They are not
+  current installation or release instructions.
 - Status: accepted by the owner on 2026-09-12; first wave I1, I4, I2, I3, I6
   in that order, I7 at any point; I1, I4, the small I6 items and I7
   delivered on 2026-09-12, I2 and I3 on 2026-09-13, see

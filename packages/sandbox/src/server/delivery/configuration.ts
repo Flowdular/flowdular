@@ -30,7 +30,7 @@ export interface DeliveryConfiguration {
 
 export const DEFAULT_DELIVERY_CONFIGURATION: DeliveryConfiguration = {
 	default: 'workspace',
-	targets: ['workspace', 'git-pr', 'official-modules'],
+	targets: ['workspace', 'git-pr'],
 	git: {
 		remote: 'origin',
 		repository: null,
@@ -45,11 +45,7 @@ export const DEFAULT_DELIVERY_CONFIGURATION: DeliveryConfiguration = {
 	maxChangedFiles: null,
 };
 
-const EJECT_TARGETS: readonly EjectTarget[] = [
-	'workspace',
-	'git-pr',
-	'official-modules',
-];
+const EJECT_TARGETS: readonly EjectTarget[] = ['workspace', 'git-pr'];
 /* Remote, branch, and prefix become git arguments; a value that starts with a
    dash would be read as an option. */
 const GIT_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
@@ -101,7 +97,7 @@ export function resolveDeliveryConfiguration(
 			block.targets.length === 0 ||
 			!block.targets.every(isEjectTarget)
 		) {
-			throw invalid('targets must list workspace, git-pr or official-modules.');
+			throw invalid('targets must list workspace or git-pr.');
 		}
 		targets = [...new Set(block.targets)];
 	}

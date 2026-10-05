@@ -28,7 +28,6 @@ export interface EjectModalProps {
 const TARGET_LABELS: Readonly<Record<EjectTargetId, string>> = {
 	workspace: 'target.workspace',
 	'git-pr': 'target.gitPr',
-	'official-modules': 'target.officialModules',
 };
 
 function stepIcon(status: EjectStep['status']): string {
@@ -44,9 +43,6 @@ function others(plan: EjectPlanView): string {
 }
 
 function lead(plan: EjectPlanView): string {
-	if (plan.target === 'official-modules') return t(
-		'sandbox.eject.lead.officialModules',
-	);
 	if (plan.git) {
 		return t('sandbox.eject.lead.git', {
 			count: plan.git.changedFiles,
@@ -108,9 +104,6 @@ function moduleDetail(module: EjectPlanView['modules'][number]): string {
 }
 
 function explanation(plan: EjectPlanView): string {
-	if (plan.target === 'official-modules') return t(
-		'sandbox.eject.explanation.officialModules',
-	);
 	if (plan.git) {
 		return t('sandbox.eject.explanation.git');
 	}
@@ -156,7 +149,6 @@ export function EjectModal(props: EjectModalProps) @{
 					? 'running'
 					: 'plan';
 	const git = props.plan.git;
-	const official = props.plan.target === 'official-modules';
 	const unavailable = props.plan.availableTargets.filter(
 		(target) => !target.available,
 	);
@@ -375,7 +367,7 @@ export function EjectModal(props: EjectModalProps) @{
 									{t('sandbox.eject.step.enable', { module: module.id })}
 								</li>
 							}
-							@if (!git && !official) {
+							@if (!git) {
 								<li class="eject__step">
 									<span class="eject__step-dot"></span>
 									{t('sandbox.eject.step.grant')}
@@ -415,7 +407,7 @@ export function EjectModal(props: EjectModalProps) @{
 								</li>
 							}
 						</ul>
-						@if (newPackagesOf(props.plan).length > 0 && !git && !official) {
+						@if (newPackagesOf(props.plan).length > 0 && !git) {
 							<Alert tone="warning">{t('sandbox.eject.packagesWarning', {
 								packages: newPackagesOf(props.plan).join(', '),
 							})}</Alert>
@@ -439,7 +431,7 @@ export function EjectModal(props: EjectModalProps) @{
 								}
 							</span>
 						}
-						@if (!git && !official) {
+						@if (!git) {
 							<label class="ui-checkbox">
 								<input
 									type="checkbox"
@@ -547,13 +539,11 @@ export function EjectModal(props: EjectModalProps) @{
 							onClick={props.onConfirm}
 						>
 							<Icon name="download" size={14} />
-							{official
-								? t('sandbox.eject.target.officialModules')
-								: git
-									? git.provider === 'github'
-										? t('sandbox.eject.confirmPr')
-										: t('sandbox.eject.confirmBranch')
-									: t('sandbox.eject.confirm')}
+							{git
+								? git.provider === 'github'
+									? t('sandbox.eject.confirmPr')
+									: t('sandbox.eject.confirmBranch')
+								: t('sandbox.eject.confirm')}
 						</Button>
 					</>
 				} @else if (phase === 'running') {

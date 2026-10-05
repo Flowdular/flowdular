@@ -33,8 +33,10 @@ The executable is `flowdular`; `fd` is also available as an alias. Run commands 
 | ----------------------------------------- | ----------------------------------------------- |
 | `pnpm flowdular doctor`                   | Inspect workspace configuration and diagnostics |
 | `pnpm flowdular help`                     | List commands and supported flags               |
-| `pnpm flowdular module search`            | Browse the configured source catalog            |
-| `pnpm flowdular module install <id>`      | Preview a source installation                   |
+| `pnpm flowdular module source add`        | Configure a catalog, Git or local source        |
+| `pnpm flowdular module search`            | Browse a configured source                      |
+| `pnpm flowdular module plan <id>`         | Save a pinned installation plan                 |
+| `pnpm flowdular module apply <plan-id>`   | Install exact source from that plan             |
 | `pnpm flowdular module sync --apply`      | Regenerate application composition              |
 | `pnpm flowdular module validate --locked` | Validate modules against the installation lock  |
 
@@ -43,11 +45,15 @@ The executable is `flowdular`; `fd` is also available as an alias. Run commands 
 For a catalog containing `expenses.core`:
 
 ```sh
-# Inspect the planned source installation.
-pnpm flowdular module install expenses.core
+# Configure a source once.
+pnpm flowdular module source add team ./registry/index.json --apply
 
-# Download and unpack the module source.
-pnpm flowdular module install expenses.core --apply
+# Save and inspect the exact dependency, permission and migration plan.
+pnpm flowdular module plan expenses.core --source team --apply
+pnpm flowdular module plan show <plan-id>
+
+# Install only the pinned release in that plan.
+pnpm flowdular module apply <plan-id> --apply
 
 # Enable the module and grant its scopes in the configured application.
 pnpm flowdular module enable expenses.core --apply
@@ -56,9 +62,9 @@ pnpm flowdular module enable expenses.core --apply
 pnpm flowdular module validate --locked
 ```
 
-Source installation previews by default. Applying it writes source under `modules/`; activation is a separate step. Enabling a module updates application composition and can grant scopes against the configured database.
+Planning and installation preview by default. Applying a plan writes source under `modules/`; activation is a separate step. Enabling a module updates application composition and can grant scopes against the configured database.
 
-[Official Modules](https://github.com/Flowdular/official-modules) requires repository access while private. For an accessible local catalog, pass `--registry /absolute/path/to/index.json` to the search or install command. Catalog availability is independent of npm package installation.
+Use a local or HTTPS catalog, or a Git source pinned to a full commit. See the [Module Studio guide](https://github.com/Flowdular/flowdular/blob/main/docs/module-distribution.md) for commands and trust rules.
 
 ## Automation
 

@@ -2362,13 +2362,11 @@ export function createSandboxRoutes(
 				if (
 					requested !== null &&
 					(!projectDelivery.targets.includes(requested) ||
-						((requested === 'git-pr' || requested === 'official-modules') &&
-							githubProviderDisabled))
+						(requested === 'git-pr' && githubProviderDisabled))
 				) {
 					throw new SandboxSetupError(
 						'EJECT_TARGET_DISABLED',
-						(requested === 'git-pr' || requested === 'official-modules') &&
-						githubProviderDisabled
+						requested === 'git-pr' && githubProviderDisabled
 							? 'GitHub pull request delivery is disabled in the sandbox configuration.'
 							: `The ${requested} target is not enabled in flowdular.json sandbox.delivery.targets.`,
 					);
@@ -2415,8 +2413,7 @@ export function createSandboxRoutes(
 				const availableTargets = await Promise.all(
 					delivery.targets.map(async (id) => ({
 						id,
-						...((id === 'git-pr' || id === 'official-modules') &&
-						githubProviderDisabled
+						...(id === 'git-pr' && githubProviderDisabled
 							? {
 									available: false,
 									reason:
