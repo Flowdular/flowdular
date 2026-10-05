@@ -5,5 +5,5 @@
 -- requester and every count stay invisible to it, and every file it names is
 -- read again under the workspace that row named.
 CREATE POLICY exports_jobs_rotation_policy ON exports_jobs
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (status = 'completed');

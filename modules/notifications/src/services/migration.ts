@@ -29,8 +29,8 @@ CREATE INDEX IF NOT EXISTS notifications_inbox_member_status_idx
 ALTER TABLE notifications_inbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications_inbox FORCE ROW LEVEL SECURITY;
 CREATE POLICY notifications_inbox_tenant_policy ON notifications_inbox
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0002_notifications_preferences.up.sql byte for byte. */
@@ -49,8 +49,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS notifications_preferences_member_kind_idx
 ALTER TABLE notifications_preferences ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications_preferences FORCE ROW LEVEL SECURITY;
 CREATE POLICY notifications_preferences_tenant_policy ON notifications_preferences
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0003_notifications_webhook_subscriptions.up.sql byte for byte. */
@@ -82,8 +82,8 @@ CREATE INDEX IF NOT EXISTS notifications_webhook_subscriptions_status_idx
 ALTER TABLE notifications_webhook_subscriptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications_webhook_subscriptions FORCE ROW LEVEL SECURITY;
 CREATE POLICY notifications_webhook_subscriptions_tenant_policy ON notifications_webhook_subscriptions
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0004_notifications_deliveries.up.sql byte for byte. */
@@ -120,8 +120,8 @@ CREATE INDEX IF NOT EXISTS notifications_deliveries_retention_idx
 ALTER TABLE notifications_deliveries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications_deliveries FORCE ROW LEVEL SECURITY;
 CREATE POLICY notifications_deliveries_tenant_policy ON notifications_deliveries
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0005_notifications_delivery_routing_role.up.sql byte for byte. */
@@ -132,16 +132,16 @@ export const NOTIFICATIONS_MIGRATION_005_DELIVERY_ROUTING_ROLE = `-- The deliver
 -- the tenant the routing row named before any request leaves the process.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY notifications_deliveries_background_policy ON notifications_deliveries
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON notifications_deliveries FROM coreloom_background;
-GRANT SELECT (tenant_id, id, scheduled_for, status) ON notifications_deliveries TO coreloom_background;
+REVOKE SELECT ON notifications_deliveries FROM flowdular_background;
+GRANT SELECT (tenant_id, id, scheduled_for, status) ON notifications_deliveries TO flowdular_background;
 `;
 
 /* Mirrors migrations/0006_notifications_delivery_title.up.sql byte for byte. */
@@ -168,16 +168,16 @@ export const NOTIFICATIONS_MIGRATION_007_SECRET_ROTATION_INVENTORY = `-- The rot
 -- under the tenant that row named.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY notifications_webhook_subscriptions_background_policy ON notifications_webhook_subscriptions
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON notifications_webhook_subscriptions FROM coreloom_background;
-GRANT SELECT (tenant_id, secret_key_id) ON notifications_webhook_subscriptions TO coreloom_background;
+REVOKE SELECT ON notifications_webhook_subscriptions FROM flowdular_background;
+GRANT SELECT (tenant_id, secret_key_id) ON notifications_webhook_subscriptions TO flowdular_background;
 `;
 
 /* Mirrors migrations/0008_notifications_delivery_claim.up.sql byte for byte. */
@@ -199,7 +199,7 @@ ALTER TABLE notifications_deliveries ADD COLUMN IF NOT EXISTS claimed_at BIGINT;
 ALTER TABLE notifications_deliveries DROP CONSTRAINT IF EXISTS notifications_deliveries_status_check;
 ALTER TABLE notifications_deliveries ADD CONSTRAINT notifications_deliveries_status_check
   CHECK (status IN ('pending', 'sending', 'succeeded', 'failed', 'dead-letter'));
-GRANT SELECT (claimed_at) ON notifications_deliveries TO coreloom_background;
+GRANT SELECT (claimed_at) ON notifications_deliveries TO flowdular_background;
 `;
 
 /* Mirrors migrations/0009_notifications_kind_approvals.up.sql byte for byte. */
@@ -278,8 +278,8 @@ CREATE TABLE IF NOT EXISTS notifications_member_preferences (
 ALTER TABLE notifications_member_preferences ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications_member_preferences FORCE ROW LEVEL SECURITY;
 CREATE POLICY notifications_member_preferences_tenant_policy ON notifications_member_preferences
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- The queue carries two channels now. A webhook attempt is addressed to a
 -- subscription of the workspace, an e-mail attempt to one member, and the
@@ -411,7 +411,7 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 		inspectExisting: async (database) => {
 			const result = await database.query<{ granted: boolean }>({
 				text: `SELECT CASE WHEN to_regclass('notifications_deliveries') IS NOT NULL THEN
-				  has_column_privilege('coreloom_background', 'notifications_deliveries', 'scheduled_for', 'SELECT')
+				  has_column_privilege('flowdular_background', 'notifications_deliveries', 'scheduled_for', 'SELECT')
 				ELSE false END AS granted`,
 			});
 			return result.rows[0]?.granted === true ? 'complete' : 'absent';
@@ -433,7 +433,7 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 		inspectExisting: async (database) => {
 			const result = await database.query<{ granted: boolean }>({
 				text: `SELECT CASE WHEN to_regclass('notifications_webhook_subscriptions') IS NOT NULL THEN
-				  has_column_privilege('coreloom_background', 'notifications_webhook_subscriptions', 'secret_key_id', 'SELECT')
+				  has_column_privilege('flowdular_background', 'notifications_webhook_subscriptions', 'secret_key_id', 'SELECT')
 				ELSE false END AS granted`,
 			});
 			return result.rows[0]?.granted === true ? 'complete' : 'absent';
@@ -470,7 +470,7 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 							  WHERE attrelid = to_regclass('notifications_deliveries')
 							    AND attname = 'claimed_at' AND NOT attisdropped
 							) THEN
-							  has_column_privilege('coreloom_background', 'notifications_deliveries', 'claimed_at', 'SELECT')
+							  has_column_privilege('flowdular_background', 'notifications_deliveries', 'claimed_at', 'SELECT')
 							ELSE false END AS granted`,
 						})
 					).rows[0]?.granted === true,

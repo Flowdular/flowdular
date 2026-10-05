@@ -20,8 +20,8 @@ CREATE INDEX IF NOT EXISTS assistant_threads_member_idx
 ALTER TABLE assistant_threads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE assistant_threads FORCE ROW LEVEL SECURITY;
 CREATE POLICY assistant_threads_tenant_policy ON assistant_threads
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 CREATE TABLE IF NOT EXISTS assistant_turns (
   id TEXT PRIMARY KEY,
@@ -47,8 +47,8 @@ CREATE INDEX IF NOT EXISTS assistant_turns_run_idx
 ALTER TABLE assistant_turns ENABLE ROW LEVEL SECURITY;
 ALTER TABLE assistant_turns FORCE ROW LEVEL SECURITY;
 CREATE POLICY assistant_turns_tenant_policy ON assistant_turns
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- A thread is a subject of this module's own hash-chained trail, so the reader
 -- of an assistant action finds it beside the run it queued. Widening the check

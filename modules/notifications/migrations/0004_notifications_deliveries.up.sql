@@ -31,5 +31,5 @@ CREATE INDEX IF NOT EXISTS notifications_deliveries_retention_idx
 ALTER TABLE notifications_deliveries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications_deliveries FORCE ROW LEVEL SECURITY;
 CREATE POLICY notifications_deliveries_tenant_policy ON notifications_deliveries
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

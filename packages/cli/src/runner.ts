@@ -12,6 +12,7 @@ import {
 	recoverModuleInstall,
 } from './module-install.ts';
 import { ModuleDistributionError } from './module-artifact.ts';
+import { DatabaseMigrationError } from '@flowdular/database';
 import {
 	applyModulePlan,
 	createModulePlan,
@@ -601,9 +602,9 @@ export async function runCommand(
 				);
 			}
 			if (action === 'status') {
-				return migrationStatus(workspace, moduleFlag);
+				return await migrationStatus(workspace, moduleFlag);
 			}
-			if (action === 'verify') return migrationVerify(workspace);
+			if (action === 'verify') return await migrationVerify(workspace);
 			if (action === 'apply') {
 				if (!moduleFlag) {
 					return failure(
@@ -616,7 +617,7 @@ export async function runCommand(
 					environmentRefusal(descriptor, arguments_) ??
 					writeRefusal(descriptor, arguments_);
 				if (refused) return refused;
-				return migrationApply(
+				return await migrationApply(
 					workspace,
 					moduleFlag,
 					arguments_.flags.has('apply'),
@@ -1051,7 +1052,9 @@ export async function runCommand(
 		);
 	} catch (error) {
 		return failure(
-			error instanceof ModuleDistributionError || error instanceof RegistryError
+			error instanceof ModuleDistributionError ||
+				error instanceof RegistryError ||
+				error instanceof DatabaseMigrationError
 				? error.code
 				: 'COMMAND_FAILED',
 			error instanceof Error ? error.message : String(error),

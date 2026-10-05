@@ -124,7 +124,7 @@ describe('approvals migrations', () => {
 				await database.transaction(
 					(transaction) =>
 						transaction.query<{ allowed: boolean }>({
-							text: `SELECT has_column_privilege('coreloom_background',
+							text: `SELECT has_column_privilege('flowdular_background',
 							 'approvals_requests', $1, 'SELECT') AS allowed`,
 							parameters: [column],
 						}),

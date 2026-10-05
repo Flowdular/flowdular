@@ -191,7 +191,7 @@ test('preloader sets database URLs and then runs the requested main script', () 
 		writeFileSync(
 			script,
 			"import assert from 'node:assert/strict';\n" +
-				"assert.equal(process.env.FD_DATABASE_URL, 'postgresql://coreloom_runtime:a%2Fb@postgres:5432/flowdular');\n" +
+				"assert.equal(process.env.FD_DATABASE_URL, 'postgresql://flowdular_runtime:a%2Fb@postgres:5432/flowdular');\n" +
 				'assert.equal(process.env.FD_DATABASE_RUNTIME_PASSWORD, undefined);\n' +
 				"assert.ok(process.argv[1].endsWith('main.mjs'));\n",
 		);

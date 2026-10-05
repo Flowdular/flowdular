@@ -108,9 +108,9 @@ kubectl create secret generic flowdular-secrets \
   --from-literal=workflowsPayloadKey="$(openssl rand -base64 32)" \
   --from-literal=workflowsCursorKey="$(openssl rand -base64 32)"
 kubectl create secret generic flowdular-database \
-  --from-literal=migratorUrl='postgresql://coreloom_migrator:...@postgres:5432/flowdular' \
-  --from-literal=runtimeUrl='postgresql://coreloom_runtime:...@postgres:5432/flowdular' \
-  --from-literal=backgroundUrl='postgresql://coreloom_background:...@postgres:5432/flowdular'
+  --from-literal=migratorUrl='postgresql://flowdular_migrator:...@postgres:5432/flowdular' \
+  --from-literal=runtimeUrl='postgresql://flowdular_runtime:...@postgres:5432/flowdular' \
+  --from-literal=backgroundUrl='postgresql://flowdular_background:...@postgres:5432/flowdular'
 kubectl apply -k infra/kubernetes
 ```
 

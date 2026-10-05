@@ -946,7 +946,7 @@ describe('versioned workflow action capability', () => {
 						await owner.database.execute({
 							text: `CREATE TRIGGER fail_action_audit
 							       BEFORE INSERT ON agent_audit_events_v4
-							       FOR EACH ROW EXECUTE FUNCTION coreloom_reject_change('audit unavailable')`,
+							       FOR EACH ROW EXECUTE FUNCTION flowdular_reject_change('audit unavailable')`,
 						});
 						throw new Error('target failed');
 					},

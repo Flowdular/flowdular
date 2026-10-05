@@ -83,8 +83,8 @@ adapter change, sandbox eject, and deployment validation.
 
 Every turn runs against a real PostgreSQL, because the embedded one starts in
 process. The sandbox and the test suites use `createTestDatabaseProvider()` from
-`@flowdular/database-testing`, which brings the `coreloom_runtime` and
-`coreloom_background` roles and forced row-level security with it.
+`@flowdular/database-testing`, which brings the `flowdular_runtime` and
+`flowdular_background` roles and forced row-level security with it.
 
 A target run covers tenant A and B fixtures, operations without tenant context,
 forged cross-tenant inserts, direct row-security bypass probes, concurrent

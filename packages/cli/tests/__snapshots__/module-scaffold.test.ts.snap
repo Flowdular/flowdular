@@ -13,8 +13,8 @@ CREATE INDEX IF NOT EXISTS inventory_records_tenant_name_idx
 ALTER TABLE inventory_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE inventory_records FORCE ROW LEVEL SECURITY;
 CREATE POLICY inventory_records_tenant_policy ON inventory_records
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 "
 `;
 
@@ -370,8 +370,8 @@ CREATE INDEX IF NOT EXISTS inventory_records_tenant_name_idx
 ALTER TABLE inventory_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE inventory_records FORCE ROW LEVEL SECURITY;
 CREATE POLICY inventory_records_tenant_policy ON inventory_records
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 \`;
 
 export const databaseMigrations: readonly DatabaseMigration[] = [

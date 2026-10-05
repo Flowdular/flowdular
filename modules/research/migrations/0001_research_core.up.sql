@@ -24,8 +24,8 @@ CREATE INDEX IF NOT EXISTS research_evidence_tenant_created_by_idx
 ALTER TABLE research_evidence ENABLE ROW LEVEL SECURITY;
 ALTER TABLE research_evidence FORCE ROW LEVEL SECURITY;
 CREATE POLICY research_evidence_tenant_policy ON research_evidence
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 CREATE TABLE IF NOT EXISTS research_evidence_links (
   tenant_id TEXT NOT NULL,
@@ -41,8 +41,8 @@ CREATE INDEX IF NOT EXISTS research_evidence_links_record_idx
 ALTER TABLE research_evidence_links ENABLE ROW LEVEL SECURITY;
 ALTER TABLE research_evidence_links FORCE ROW LEVEL SECURITY;
 CREATE POLICY research_evidence_links_tenant_policy ON research_evidence_links
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- A cache of fetched text keyed by URL, read instead of the network until it
 -- expires one day after the fetch.
@@ -61,8 +61,8 @@ CREATE INDEX IF NOT EXISTS research_pages_tenant_fetched_idx
 ALTER TABLE research_pages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE research_pages FORCE ROW LEVEL SECURITY;
 CREATE POLICY research_pages_tenant_policy ON research_pages
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- One row per counted search. The monthly budget is the sum of cost_units
 -- since the first instant of the UTC month, read under a per-workspace lock.
@@ -86,8 +86,8 @@ CREATE INDEX IF NOT EXISTS research_queries_tenant_caller_ref_idx
 ALTER TABLE research_queries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE research_queries FORCE ROW LEVEL SECURITY;
 CREATE POLICY research_queries_tenant_policy ON research_queries
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 CREATE TABLE IF NOT EXISTS research_run_counters (
   tenant_id TEXT NOT NULL,
@@ -102,5 +102,5 @@ CREATE INDEX IF NOT EXISTS research_run_counters_tenant_updated_idx
 ALTER TABLE research_run_counters ENABLE ROW LEVEL SECURITY;
 ALTER TABLE research_run_counters FORCE ROW LEVEL SECURITY;
 CREATE POLICY research_run_counters_tenant_policy ON research_run_counters
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

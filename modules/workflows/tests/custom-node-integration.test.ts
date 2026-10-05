@@ -174,8 +174,8 @@ ALTER TABLE workflow_custom_business_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE workflow_custom_business_records FORCE ROW LEVEL SECURITY;
 CREATE POLICY workflow_custom_business_records_tenant_policy
   ON workflow_custom_business_records
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));`),
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));`),
 					{ access: 'write' },
 				);
 			} finally {

@@ -61,7 +61,7 @@ describe('example.core migrations', () => {
 			const sql = migration.sql.postgresql ?? '';
 			expect(sql).toContain('ENABLE ROW LEVEL SECURITY');
 			expect(sql).toContain('FORCE ROW LEVEL SECURITY');
-			expect(sql).toContain("current_setting('coreloom.tenant_id', true)");
+			expect(sql).toContain("current_setting('flowdular.tenant_id', true)");
 			expect(sql).toContain('WITH CHECK');
 		}
 	});

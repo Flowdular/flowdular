@@ -18,5 +18,5 @@ CREATE INDEX IF NOT EXISTS search_recent_queries_retention_idx
 ALTER TABLE search_recent_queries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE search_recent_queries FORCE ROW LEVEL SECURITY;
 CREATE POLICY search_recent_queries_tenant_policy ON search_recent_queries
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

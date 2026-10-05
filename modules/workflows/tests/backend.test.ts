@@ -4347,7 +4347,7 @@ describe('workflow persistence boundary', () => {
 						{ access: 'read' },
 					),
 			);
-			expect(identity.rows[0]?.role).toBe('coreloom_background');
+			expect(identity.rows[0]?.role).toBe('flowdular_background');
 
 			for (const text of [
 				'SELECT graph_json FROM workflow_runs',

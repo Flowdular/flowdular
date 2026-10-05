@@ -11,7 +11,7 @@ rules:
   - PostgreSQL only; CREATE TABLE IF NOT EXISTS
   - tenant_id TEXT NOT NULL on tenant-owned tables
   - UNIQUE and indexes start with tenant_id, indexes end with id
-  - a new tenant table enables and forces row-level security and adds a <table>_tenant_policy on current_setting('coreloom.tenant_id', true)
+  - a new tenant table enables and forces row-level security and adds a <table>_tenant_policy on current_setting('flowdular.tenant_id', true)
   - ALTER TABLE ADD COLUMN runs once through the ledger; inspectExisting detects an existing column
   - applied migration bytes are immutable; a change always gets a new number
   - inspectExisting returns complete only for every effect, absent only for none, partial for anything mixed

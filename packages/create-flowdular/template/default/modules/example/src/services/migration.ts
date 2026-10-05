@@ -16,8 +16,8 @@ CREATE INDEX IF NOT EXISTS example_notes_tenant_created_idx ON example_notes (te
 ALTER TABLE example_notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE example_notes FORCE ROW LEVEL SECURITY;
 CREATE POLICY example_notes_tenant_policy ON example_notes
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 export const databaseMigrations: readonly DatabaseMigration[] = [

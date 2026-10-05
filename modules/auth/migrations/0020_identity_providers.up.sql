@@ -34,8 +34,8 @@ CREATE INDEX IF NOT EXISTS auth_identity_providers_tenant_idx
 ALTER TABLE auth_identity_providers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_identity_providers FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_identity_providers_tenant_policy ON auth_identity_providers
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- A platform provider asserts an identity about an account before any workspace
 -- is chosen, and keeps binding without one. A tenant-owned provider asserts it
@@ -57,5 +57,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS auth_external_identities_workspace_idx
 ALTER TABLE auth_external_identities ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_external_identities FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_external_identities_tenant_policy ON auth_external_identities
-  USING (tenant_id IS NULL OR tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id IS NULL OR tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id IS NULL OR tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id IS NULL OR tenant_id = current_setting('flowdular.tenant_id', true));

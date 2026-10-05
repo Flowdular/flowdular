@@ -16,5 +16,5 @@ CREATE INDEX IF NOT EXISTS approvals_audit_request_idx
 ALTER TABLE approvals_audit ENABLE ROW LEVEL SECURITY;
 ALTER TABLE approvals_audit FORCE ROW LEVEL SECURITY;
 CREATE POLICY approvals_audit_tenant_policy ON approvals_audit
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

@@ -141,7 +141,7 @@ describe('auth migrations', () => {
 			expect(script).toContain(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY`);
 			expect(script).toContain(`CREATE POLICY ${policy} ON ${table}`);
 		}
-		expect(script).toContain("current_setting('coreloom.tenant_id', true)");
+		expect(script).toContain("current_setting('flowdular.tenant_id', true)");
 		expect(script).toContain('WITH CHECK');
 	});
 

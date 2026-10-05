@@ -35,8 +35,8 @@ CREATE INDEX IF NOT EXISTS audit_anchors_tenant_sequence_idx
 ALTER TABLE audit_anchors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_anchors FORCE ROW LEVEL SECURITY;
 CREATE POLICY audit_anchors_tenant_policy ON audit_anchors
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- A hold is a standing instruction not to remove what it covers. scope_kind
 -- names the dimension it was placed on and the nullable columns narrow it
@@ -73,8 +73,8 @@ CREATE INDEX IF NOT EXISTS audit_legal_holds_tenant_status_idx
 ALTER TABLE audit_legal_holds ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_legal_holds FORCE ROW LEVEL SECURITY;
 CREATE POLICY audit_legal_holds_tenant_policy ON audit_legal_holds
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- One data key per subject. Audit events are excluded from erasure because they
 -- are the evidence the lifecycle happened, so the subject-identifying fields of
@@ -101,8 +101,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS audit_subject_keys_tenant_subject_idx
 ALTER TABLE audit_subject_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_subject_keys FORCE ROW LEVEL SECURITY;
 CREATE POLICY audit_subject_keys_tenant_policy ON audit_subject_keys
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- An erasure is a request the running platform answers, for the same reason an
 -- export is: only the platform process holds the registrations every owning
@@ -139,8 +139,8 @@ CREATE INDEX IF NOT EXISTS audit_erasure_runs_pending_idx
 ALTER TABLE audit_erasure_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_erasure_runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY audit_erasure_runs_tenant_policy ON audit_erasure_runs
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- A sealed event keeps its actor and subject columns at a fixed marker and
 -- carries the envelope beside them. The event hash reads the envelope in the
@@ -175,18 +175,18 @@ $$;
 -- routing row named. The hashes stay invisible to it.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY audit_anchors_background_policy ON audit_anchors
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON audit_anchors FROM coreloom_background;
-GRANT SELECT (tenant_id, id, key_id) ON audit_anchors TO coreloom_background;
+REVOKE SELECT ON audit_anchors FROM flowdular_background;
+GRANT SELECT (tenant_id, id, key_id) ON audit_anchors TO flowdular_background;
 CREATE POLICY audit_erasure_runs_background_policy ON audit_erasure_runs
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON audit_erasure_runs FROM coreloom_background;
-GRANT SELECT (tenant_id, id, status, started_at) ON audit_erasure_runs TO coreloom_background;
+REVOKE SELECT ON audit_erasure_runs FROM flowdular_background;
+GRANT SELECT (tenant_id, id, status, started_at) ON audit_erasure_runs TO flowdular_background;

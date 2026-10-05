@@ -24,5 +24,5 @@ ALTER TABLE workflow_node_attempts ADD CONSTRAINT workflow_node_attempts_child_k
 -- and the run is read again under its own tenant before anything is written.
 DROP POLICY IF EXISTS workflow_node_states_background_policy ON workflow_node_states;
 CREATE POLICY workflow_node_states_background_policy ON workflow_node_states
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (status IN ('waiting-retry', 'waiting-child'));

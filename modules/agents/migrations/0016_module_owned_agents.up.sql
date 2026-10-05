@@ -1,6 +1,6 @@
 -- SQLite expresses immutability with a BEFORE trigger that aborts. PostgreSQL
 -- needs a function to raise from, shared by every immutable table here.
-CREATE OR REPLACE FUNCTION coreloom_reject_change() RETURNS trigger AS $$
+CREATE OR REPLACE FUNCTION flowdular_reject_change() RETURNS trigger AS $$
 BEGIN
   RAISE EXCEPTION '%', TG_ARGV[0];
 END;
@@ -52,17 +52,17 @@ CREATE TABLE IF NOT EXISTS agent_revision_ownership (
 );
 CREATE TRIGGER agent_revision_ownership_no_update
   BEFORE UPDATE ON agent_revision_ownership
-  FOR EACH ROW EXECUTE FUNCTION coreloom_reject_change('agent revision ownership is immutable');
+  FOR EACH ROW EXECUTE FUNCTION flowdular_reject_change('agent revision ownership is immutable');
 CREATE TRIGGER agent_revision_ownership_no_delete
   BEFORE DELETE ON agent_revision_ownership
-  FOR EACH ROW EXECUTE FUNCTION coreloom_reject_change('agent revision ownership is immutable');
+  FOR EACH ROW EXECUTE FUNCTION flowdular_reject_change('agent revision ownership is immutable');
 ALTER TABLE module_agent_bindings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE module_agent_bindings FORCE ROW LEVEL SECURITY;
 CREATE POLICY module_agent_bindings_tenant_policy ON module_agent_bindings
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE agent_revision_ownership ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_revision_ownership FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_revision_ownership_tenant_policy ON agent_revision_ownership
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

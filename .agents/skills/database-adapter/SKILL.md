@@ -88,12 +88,12 @@ PostgreSQL tenant-owned tables also use database-enforced isolation:
 
 - enable and force row-level security on the table;
 - define a policy whose `USING` and `WITH CHECK` clauses compare `tenant_id`
-  with `current_setting('coreloom.tenant_id', true)`;
+  with `current_setting('flowdular.tenant_id', true)`;
 - run application traffic under a role that is neither a superuser nor granted
   `BYPASSRLS`;
 - use a separate migration role for DDL or policy ownership when required.
 
-The adapter sets `coreloom.tenant_id` with parameterized `set_config(..., true)`
+The adapter sets `flowdular.tenant_id` with parameterized `set_config(..., true)`
 after `BEGIN` on the pinned connection. Never use an unpinned root query.
 Explicit tenant predicates remain required as defense in depth.
 
@@ -133,7 +133,7 @@ transactions without `tenantId`, fail with `TENANT_CONTEXT_REQUIRED`.
 
 Use `DatabaseMigration` and `runDatabaseMigrations` from `@flowdular/database`.
 Each migration has one immutable id and its PostgreSQL SQL. The ledger is
-`_coreloom_migrations_v2`, keyed by module namespace and migration id; its
+`_flowdular_migrations_v2`, keyed by module namespace and migration id; its
 checksum covers that exact SQL.
 
 `inspectExisting(database)` is the only pre-ledger adoption proof. Use
@@ -157,8 +157,8 @@ constant. A migration-only task uses `migration-authoring` in a separate phase.
 ## 7. Tests run on a real PostgreSQL
 
 `createTestDatabaseProvider()` from `@flowdular/database-testing` gives a suite its
-own PostgreSQL in process by default, with the same `coreloom_runtime` and
-`coreloom_background` roles and the same forced row-level security a deployment
+own PostgreSQL in process by default, with the same `flowdular_runtime` and
+`flowdular_background` roles and the same forced row-level security a deployment
 enforces. There is no server to start and no second dialect to keep green, so
 the isolation assertions run on every turn rather than behind an environment
 flag. CI selects server PostgreSQL with `FD_TEST_DATABASE_ADAPTER=postgresql`

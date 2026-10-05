@@ -13,5 +13,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS notifications_preferences_member_kind_idx
 ALTER TABLE notifications_preferences ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications_preferences FORCE ROW LEVEL SECURITY;
 CREATE POLICY notifications_preferences_tenant_policy ON notifications_preferences
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

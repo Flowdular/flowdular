@@ -268,10 +268,10 @@ This section exists because three of the gaps below are the kind that would
 normally be solved with a query across tenants, and that is not available.
 
 Three PostgreSQL roles, all `NOSUPERUSER NOBYPASSRLS`.
-`coreloom_migrator` owns the schema. `coreloom_runtime` serves requests and its
+`flowdular_migrator` owns the schema. `flowdular_runtime` serves requests and its
 adapter is constructed `tenantRequired: true`, so there is no root level
 `query()` on it at all and a transaction without a tenant id raises
-`TENANT_CONTEXT_REQUIRED`. `coreloom_background` is granted `CONNECT` and
+`TENANT_CONTEXT_REQUIRED`. `flowdular_background` is granted `CONNECT` and
 `USAGE ON SCHEMA public` and nothing else. Every table privilege it holds comes
 from an explicit per-table column grant written in a module migration.
 
@@ -286,20 +286,20 @@ and not one monetary column, is granted to that role anywhere in the tree.
 The rule the documentation states, and that PostgreSQL actually enforces, is
 that column privileges are checked inside `WHERE` clauses too. So the grant list
 is not advisory. `modules/automations/tests/module.test.ts` asserts this
-directly, first checking `current_user = 'coreloom_background'` so the test
+directly, first checking `current_user = 'flowdular_background'` so the test
 cannot pass by reading nothing, then proving that selecting `label`,
 `input_template` or `permission_snapshot_json` is refused.
 
 A naive `SELECT tenant_id, count(*) FROM expenses_claims GROUP BY tenant_id`
 fails three different ways depending on the role, and the differences matter:
 
-- On `coreloom_runtime` it cannot be issued. Root queries throw, and a
+- On `flowdular_runtime` it cannot be issued. Root queries throw, and a
   transaction needs a tenant id, at which point the policy reduces the answer to
   one group. The failure is silent and looks like a correct answer for one
   tenant.
-- On `coreloom_background` it is refused at the column level before row security
+- On `flowdular_background` it is refused at the column level before row security
   is consulted, because `expenses_claims` has no background policy and no grant.
-- On `coreloom_migrator` it runs and returns zero rows, because every tenant
+- On `flowdular_migrator` it runs and returns zero rows, because every tenant
   table declares `FORCE ROW LEVEL SECURITY`, which is exactly the clause that
   applies row security to the table owner, and the setting is unset so the
   predicate compares against NULL. This is the worst of the three, because an

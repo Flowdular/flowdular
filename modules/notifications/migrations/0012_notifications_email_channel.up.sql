@@ -14,8 +14,8 @@ CREATE TABLE IF NOT EXISTS notifications_member_preferences (
 ALTER TABLE notifications_member_preferences ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications_member_preferences FORCE ROW LEVEL SECURITY;
 CREATE POLICY notifications_member_preferences_tenant_policy ON notifications_member_preferences
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- The queue carries two channels now. A webhook attempt is addressed to a
 -- subscription of the workspace, an e-mail attempt to one member, and the

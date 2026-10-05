@@ -57,26 +57,26 @@ CREATE INDEX IF NOT EXISTS auth_sessions_expiry_idx
 ALTER TABLE auth_tenants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_tenants FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_tenants_tenant_policy ON auth_tenants
-  USING (id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (id = current_setting('coreloom.tenant_id', true));
+  USING (id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (id = current_setting('flowdular.tenant_id', true));
 
 ALTER TABLE auth_memberships ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_memberships FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_memberships_tenant_policy ON auth_memberships
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 ALTER TABLE auth_membership_scopes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_membership_scopes FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_membership_scopes_tenant_policy ON auth_membership_scopes
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 ALTER TABLE auth_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_sessions FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_sessions_tenant_policy ON auth_sessions
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- A session cookie, a workspace list and a sign-in all arrive with a key that
 -- names no workspace, so auth.core resolves the owning tenant on the read-only
@@ -86,23 +86,23 @@ CREATE POLICY auth_sessions_tenant_policy ON auth_sessions
 -- inside a WHERE clause too.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY auth_tenants_background_policy ON auth_tenants
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON auth_tenants FROM coreloom_background;
-GRANT SELECT (id, name) ON auth_tenants TO coreloom_background;
+REVOKE SELECT ON auth_tenants FROM flowdular_background;
+GRANT SELECT (id, name) ON auth_tenants TO flowdular_background;
 CREATE POLICY auth_memberships_background_policy ON auth_memberships
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON auth_memberships FROM coreloom_background;
-GRANT SELECT (account_id, tenant_id, role, created_at) ON auth_memberships TO coreloom_background;
+REVOKE SELECT ON auth_memberships FROM flowdular_background;
+GRANT SELECT (account_id, tenant_id, role, created_at) ON auth_memberships TO flowdular_background;
 CREATE POLICY auth_sessions_background_policy ON auth_sessions
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON auth_sessions FROM coreloom_background;
-GRANT SELECT (token_hash, tenant_id, account_id, expires_at) ON auth_sessions TO coreloom_background;
+REVOKE SELECT ON auth_sessions FROM flowdular_background;
+GRANT SELECT (token_hash, tenant_id, account_id, expires_at) ON auth_sessions TO flowdular_background;

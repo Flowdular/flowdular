@@ -39,8 +39,8 @@ CREATE INDEX IF NOT EXISTS documents_files_usage_idx
 ALTER TABLE documents_files ENABLE ROW LEVEL SECURITY;
 ALTER TABLE documents_files FORCE ROW LEVEL SECURITY;
 CREATE POLICY documents_files_tenant_policy ON documents_files
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0002_documents_files_page.up.sql byte for byte. */
@@ -61,16 +61,16 @@ export const DOCUMENTS_MIGRATION_003 = `-- The storage key rotation has to find 
 -- WHERE too, so \`status\` is part of the grant.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY documents_files_background_policy ON documents_files
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (status = 'stored');
-REVOKE SELECT ON documents_files FROM coreloom_background;
-GRANT SELECT (tenant_id, status) ON documents_files TO coreloom_background;
+REVOKE SELECT ON documents_files FROM flowdular_background;
+GRANT SELECT (tenant_id, status) ON documents_files TO flowdular_background;
 `;
 
 /* Mirrors migrations/0004_documents_text.up.sql byte for byte. */
@@ -102,23 +102,23 @@ CREATE INDEX IF NOT EXISTS documents_text_pending_idx
 ALTER TABLE documents_text ENABLE ROW LEVEL SECURITY;
 ALTER TABLE documents_text FORCE ROW LEVEL SECURITY;
 CREATE POLICY documents_text_tenant_policy ON documents_text
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 -- The runner finds pending work across workspaces before it knows whose it is,
 -- so the cross-tenant role reads the routing columns of pending rows and
 -- nothing else; every claim and write runs again under the workspace named.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY documents_text_background_policy ON documents_text
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (status = 'pending');
-REVOKE SELECT ON documents_text FROM coreloom_background;
-GRANT SELECT (tenant_id, document_id, status, requested_at) ON documents_text TO coreloom_background;
+REVOKE SELECT ON documents_text FROM flowdular_background;
+GRANT SELECT (tenant_id, document_id, status, requested_at) ON documents_text TO flowdular_background;
 `;
 
 /* Mirrors migrations/0005_documents_templates.up.sql byte for byte. */
@@ -198,38 +198,38 @@ CREATE INDEX IF NOT EXISTS document_renders_settled_idx
 ALTER TABLE document_templates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE document_templates FORCE ROW LEVEL SECURITY;
 CREATE POLICY document_templates_tenant_policy ON document_templates
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE document_template_versions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE document_template_versions FORCE ROW LEVEL SECURITY;
 CREATE POLICY document_template_versions_tenant_policy ON document_template_versions
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE document_renders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE document_renders FORCE ROW LEVEL SECURITY;
 CREATE POLICY document_renders_tenant_policy ON document_renders
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE document_render_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE document_render_keys FORCE ROW LEVEL SECURITY;
 CREATE POLICY document_render_keys_tenant_policy ON document_render_keys
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 -- The runner finds renders across workspaces before it knows whose they are,
 -- so the cross-tenant role reads the routing columns of queued and running
 -- renders and nothing else; every claim and write runs under the workspace.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY document_renders_background_policy ON document_renders
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (status IN ('queued', 'running'));
-REVOKE SELECT ON document_renders FROM coreloom_background;
-GRANT SELECT (id, tenant_id, status, created_at, claimed_at) ON document_renders TO coreloom_background;
+REVOKE SELECT ON document_renders FROM flowdular_background;
+GRANT SELECT (id, tenant_id, status, created_at, claimed_at) ON document_renders TO flowdular_background;
 `;
 
 export const databaseMigrations: readonly DatabaseMigration[] = [
@@ -267,7 +267,7 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 		inspectExisting: async (database) => {
 			const result = await database.query<{ granted: boolean }>({
 				text: `SELECT CASE WHEN to_regclass('documents_files') IS NOT NULL THEN
-				  has_column_privilege('coreloom_background', 'documents_files', 'status', 'SELECT')
+				  has_column_privilege('flowdular_background', 'documents_files', 'status', 'SELECT')
 				ELSE false END AS granted`,
 			});
 			return result.rows[0]?.granted === true ? 'complete' : 'absent';
@@ -287,7 +287,7 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 					async () => {
 						const result = await database.query<{ granted: boolean }>({
 							text: `SELECT CASE WHEN to_regclass('documents_text') IS NOT NULL THEN
-							  has_column_privilege('coreloom_background', 'documents_text', 'requested_at', 'SELECT')
+							  has_column_privilege('flowdular_background', 'documents_text', 'requested_at', 'SELECT')
 							ELSE false END AS granted`,
 						});
 						return result.rows[0]?.granted === true;
@@ -327,7 +327,7 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 						async () => {
 							const result = await database.query<{ granted: boolean }>({
 								text: `SELECT CASE WHEN to_regclass('document_renders') IS NOT NULL THEN
-								  has_column_privilege('coreloom_background', 'document_renders', 'claimed_at', 'SELECT')
+								  has_column_privilege('flowdular_background', 'document_renders', 'claimed_at', 'SELECT')
 								ELSE false END AS granted`,
 							});
 							return result.rows[0]?.granted === true;

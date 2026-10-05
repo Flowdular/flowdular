@@ -648,11 +648,12 @@ describe('first-run routes', () => {
 			[`field:${POSTGRESQL_ADAPTER_ID}:host`]: '127.0.0.1',
 			[`field:${POSTGRESQL_ADAPTER_ID}:port`]: '1',
 			[`field:${POSTGRESQL_ADAPTER_ID}:database`]: 'flowdular',
-			[`field:${POSTGRESQL_ADAPTER_ID}:migrator-user`]: 'coreloom_migrator',
+			[`field:${POSTGRESQL_ADAPTER_ID}:migrator-user`]: 'flowdular_migrator',
 			[`field:${POSTGRESQL_ADAPTER_ID}:migrator-password`]: 'migrator-secret',
-			[`field:${POSTGRESQL_ADAPTER_ID}:runtime-user`]: 'coreloom_runtime',
+			[`field:${POSTGRESQL_ADAPTER_ID}:runtime-user`]: 'flowdular_runtime',
 			[`field:${POSTGRESQL_ADAPTER_ID}:runtime-password`]: 'runtime-secret',
-			[`field:${POSTGRESQL_ADAPTER_ID}:background-user`]: 'coreloom_background',
+			[`field:${POSTGRESQL_ADAPTER_ID}:background-user`]:
+				'flowdular_background',
 			[`field:${POSTGRESQL_ADAPTER_ID}:background-password`]:
 				'background-secret',
 			[`field:${POSTGRESQL_ADAPTER_ID}:tls`]: 'disable',

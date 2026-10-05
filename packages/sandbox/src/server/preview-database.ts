@@ -10,8 +10,8 @@ import {
 } from '@flowdular/database';
 import { createPgliteCluster } from '@flowdular/database-pglite';
 
-const RUNTIME_ROLE = 'coreloom_runtime';
-const BACKGROUND_ROLE = 'coreloom_background';
+const RUNTIME_ROLE = 'flowdular_runtime';
+const BACKGROUND_ROLE = 'flowdular_background';
 
 /* Created before the first lease, so every table the migration lease creates is
    reachable by the runtime role without a second grant step. */

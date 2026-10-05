@@ -31,8 +31,8 @@ CREATE INDEX IF NOT EXISTS ${table}_tenant_created_idx
 ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ${table} FORCE ROW LEVEL SECURITY;
 CREATE POLICY ${table}_tenant_policy ON ${table}
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 }
 

@@ -26,8 +26,8 @@ CREATE INDEX IF NOT EXISTS connectors_instances_tenant_status_idx
 ALTER TABLE connectors_instances ENABLE ROW LEVEL SECURITY;
 ALTER TABLE connectors_instances FORCE ROW LEVEL SECURITY;
 CREATE POLICY connectors_instances_tenant_policy ON connectors_instances
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 CREATE TABLE IF NOT EXISTS connectors_calls (
   id TEXT PRIMARY KEY,
@@ -51,8 +51,8 @@ CREATE INDEX IF NOT EXISTS connectors_calls_instance_idx
 ALTER TABLE connectors_calls ENABLE ROW LEVEL SECURITY;
 ALTER TABLE connectors_calls FORCE ROW LEVEL SECURITY;
 CREATE POLICY connectors_calls_tenant_policy ON connectors_calls
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 CREATE TABLE IF NOT EXISTS connectors_audit (
   id TEXT PRIMARY KEY,
@@ -68,5 +68,5 @@ CREATE INDEX IF NOT EXISTS connectors_audit_tenant_time_idx
 ALTER TABLE connectors_audit ENABLE ROW LEVEL SECURITY;
 ALTER TABLE connectors_audit FORCE ROW LEVEL SECURITY;
 CREATE POLICY connectors_audit_tenant_policy ON connectors_audit
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

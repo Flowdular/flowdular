@@ -28,13 +28,13 @@ CREATE INDEX IF NOT EXISTS audit_export_runs_pending_idx
   ON audit_export_runs (status, started_at, tenant_id, id);
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY audit_export_runs_background_policy ON audit_export_runs
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON audit_export_runs FROM coreloom_background;
-GRANT SELECT (tenant_id, id, status, started_at) ON audit_export_runs TO coreloom_background;
+REVOKE SELECT ON audit_export_runs FROM flowdular_background;
+GRANT SELECT (tenant_id, id, status, started_at) ON audit_export_runs TO flowdular_background;

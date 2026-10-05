@@ -74,35 +74,35 @@ CREATE INDEX IF NOT EXISTS document_renders_settled_idx
 ALTER TABLE document_templates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE document_templates FORCE ROW LEVEL SECURITY;
 CREATE POLICY document_templates_tenant_policy ON document_templates
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE document_template_versions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE document_template_versions FORCE ROW LEVEL SECURITY;
 CREATE POLICY document_template_versions_tenant_policy ON document_template_versions
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE document_renders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE document_renders FORCE ROW LEVEL SECURITY;
 CREATE POLICY document_renders_tenant_policy ON document_renders
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE document_render_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE document_render_keys FORCE ROW LEVEL SECURITY;
 CREATE POLICY document_render_keys_tenant_policy ON document_render_keys
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 -- The runner finds renders across workspaces before it knows whose they are,
 -- so the cross-tenant role reads the routing columns of queued and running
 -- renders and nothing else; every claim and write runs under the workspace.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY document_renders_background_policy ON document_renders
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (status IN ('queued', 'running'));
-REVOKE SELECT ON document_renders FROM coreloom_background;
-GRANT SELECT (id, tenant_id, status, created_at, claimed_at) ON document_renders TO coreloom_background;
+REVOKE SELECT ON document_renders FROM flowdular_background;
+GRANT SELECT (id, tenant_id, status, created_at, claimed_at) ON document_renders TO flowdular_background;

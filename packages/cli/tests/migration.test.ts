@@ -20,7 +20,7 @@ const restore = new Map<string, string | undefined>();
    every command opens the provider again and expects the previous command's
    ledger to still be there. */
 beforeEach(() => {
-	workspace = mkdtempSync(join(tmpdir(), 'coreloom-migration-'));
+	workspace = mkdtempSync(join(tmpdir(), 'flowdular-migration-'));
 	for (const key of [
 		'NODE_ENV',
 		'FD_DATABASE_ADAPTER',
@@ -226,6 +226,19 @@ describe('migration apply', () => {
 			'adopted',
 			'adopted',
 		]);
+	});
+
+	it('reports a runner refusal under its own code', async () => {
+		await withMigrationDatabase((database) =>
+			database.execute({
+				text: 'CREATE TABLE profile_records (tenant_id TEXT NOT NULL)',
+			}),
+		);
+
+		const result = await apply('profile.core', '--apply');
+
+		expect(result.ok).toBe(false);
+		expect(result.error?.code).toBe('PARTIAL_MIGRATION');
 	});
 
 	it('refuses to run outside development or test', async () => {

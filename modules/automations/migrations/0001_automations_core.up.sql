@@ -62,15 +62,15 @@ CREATE INDEX IF NOT EXISTS automations_audit_tenant_time_idx
 ALTER TABLE automations_schedules ENABLE ROW LEVEL SECURITY;
 ALTER TABLE automations_schedules FORCE ROW LEVEL SECURITY;
 CREATE POLICY automations_schedules_tenant_policy ON automations_schedules
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE automations_triggers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE automations_triggers FORCE ROW LEVEL SECURITY;
 CREATE POLICY automations_triggers_tenant_policy ON automations_triggers
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE automations_audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE automations_audit_events FORCE ROW LEVEL SECURITY;
 CREATE POLICY automations_audit_events_tenant_policy ON automations_audit_events
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

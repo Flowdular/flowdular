@@ -152,14 +152,21 @@ optional `smtpUrl` entry of the `flowdular-agents` Secret.
 Compose also starts PostgreSQL. A one-shot `postgres-tls` service generates a
 self-signed server certificate for `CN=postgres` on first run, Postgres serves
 TLS with it, and the app verifies it through `FD_DATABASE_TLS_CA_FILE` under
-`verify-full`. First cluster initialization creates three roles: `coreloom_migrator`
-owns the schema, `coreloom_runtime` holds neither `SUPERUSER` nor `BYPASSRLS`, so
+`verify-full`. First cluster initialization creates three roles: `flowdular_migrator`
+owns the schema, `flowdular_runtime` holds neither `SUPERUSER` nor `BYPASSRLS`, so
 the row-level security tenant tables force actually binds the application, and
-`coreloom_background` serves the cross-tenant scheduler poll with no default
+`flowdular_background` serves the cross-tenant scheduler poll with no default
 table grant at all. The launcher creates the four PostgreSQL passwords in
 `infra/docker/.env`. Existing passwords are never rotated or replaced. If the
 PostgreSQL volume already exists, use the passwords that initialized it or
 change the roles in PostgreSQL deliberately before changing the file.
+
+A volume initialized by Flowdular 0.5 or earlier holds the roles under their
+old names, and the role script never runs again on an existing volume, so the
+app fails to sign in as `flowdular_runtime`. Flowdular 0.6 does not upgrade
+that database. Remove the volume, which deletes its data, with
+`docker compose --env-file infra/docker/.env -f infra/docker/compose.yaml down -v`
+and start again.
 
 The launcher creates `infra/docker/.env.lock` only while preparing the secret
 file, so parallel starts cannot save different credentials. If a launcher
@@ -204,9 +211,9 @@ The Kubernetes base carries no volume for application data: the deployment is st
 
 ```bash
 kubectl create secret generic flowdular-database \
-  --from-literal=migratorUrl='postgresql://coreloom_migrator:...@postgres:5432/flowdular' \
-  --from-literal=runtimeUrl='postgresql://coreloom_runtime:...@postgres:5432/flowdular' \
-  --from-literal=backgroundUrl='postgresql://coreloom_background:...@postgres:5432/flowdular'
+  --from-literal=migratorUrl='postgresql://flowdular_migrator:...@postgres:5432/flowdular' \
+  --from-literal=runtimeUrl='postgresql://flowdular_runtime:...@postgres:5432/flowdular' \
+  --from-literal=backgroundUrl='postgresql://flowdular_background:...@postgres:5432/flowdular'
 ```
 
 Scaling writers across nodes needs nothing beyond the database it already shares.

@@ -135,6 +135,43 @@ describe('adapter-aware migration runner', () => {
 		);
 	});
 
+	/* A 0.5 database holds complete-looking tables whose policies read a setting
+	   the adapter no longer sets. Adopting them would pass every inspection. */
+	it('refuses a database created before the rename without writing to it', async () => {
+		const db = await database();
+		await db.executeScript(`${CREATE_NOTES.sql.postgresql!}
+CREATE TABLE _coreloom_migrations_v2 (
+	namespace TEXT NOT NULL,
+	id TEXT NOT NULL,
+	dialect TEXT NOT NULL,
+	checksum TEXT NOT NULL,
+	applied_at BIGINT NOT NULL,
+	PRIMARY KEY (namespace, id)
+);
+INSERT INTO _coreloom_migrations_v2 VALUES ('notes.core', '0001_notes_core', 'postgresql', 'sha256:legacy', 1);
+`);
+		try {
+			for (const attempt of [
+				() => runDatabaseMigrations(db, 'notes.core', [CREATE_NOTES]),
+				() =>
+					runDatabaseMigrations(db, 'notes.core', [CREATE_NOTES, ADD_PINNED], {
+						dryRun: true,
+					}),
+				() => databaseMigrationStatus(db, 'notes.core', [CREATE_NOTES]),
+			]) {
+				await expect(attempt()).rejects.toMatchObject({
+					code: 'LEGACY_DATABASE',
+				});
+			}
+			await expect(db.schema.hasTable(DATABASE_MIGRATION_LEDGER)).resolves.toBe(
+				false,
+			);
+			await expect(db.schema.hasColumn('notes', 'pinned')).resolves.toBe(false);
+		} finally {
+			await db.executeScript('DROP TABLE _coreloom_migrations_v2;');
+		}
+	});
+
 	it('checks every recorded checksum before applying new SQL', async () => {
 		const db = await database();
 		await runDatabaseMigrations(db, 'notes.core', [CREATE_NOTES]);

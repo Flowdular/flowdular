@@ -7,13 +7,13 @@
 -- before anything about it is written.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY approvals_requests_background_policy ON approvals_requests
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON approvals_requests FROM coreloom_background;
-GRANT SELECT (tenant_id, id, expires_at, status) ON approvals_requests TO coreloom_background;
+REVOKE SELECT ON approvals_requests FROM flowdular_background;
+GRANT SELECT (tenant_id, id, expires_at, status) ON approvals_requests TO flowdular_background;

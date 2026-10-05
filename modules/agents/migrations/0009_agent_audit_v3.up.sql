@@ -21,5 +21,5 @@ CREATE INDEX IF NOT EXISTS agent_audit_v3_tenant_time_idx
 ALTER TABLE agent_audit_events_v3 ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_audit_events_v3 FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_audit_events_v3_tenant_policy ON agent_audit_events_v3
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

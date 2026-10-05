@@ -43,8 +43,8 @@ CREATE INDEX IF NOT EXISTS audit_data_classes_due_idx
 ALTER TABLE audit_data_classes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_data_classes FORCE ROW LEVEL SECURITY;
 CREATE POLICY audit_data_classes_tenant_policy ON audit_data_classes
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 CREATE TABLE IF NOT EXISTS audit_sweep_runs (
   id TEXT PRIMARY KEY,
@@ -65,8 +65,8 @@ CREATE INDEX IF NOT EXISTS audit_sweep_runs_tenant_class_time_idx
 ALTER TABLE audit_sweep_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_sweep_runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY audit_sweep_runs_tenant_policy ON audit_sweep_runs
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- row_count rather than "rows": ROWS is a PostgreSQL keyword and an unquoted
 -- column of that name would have to be quoted at every use site.
@@ -87,8 +87,8 @@ CREATE INDEX IF NOT EXISTS audit_export_runs_tenant_time_idx
 ALTER TABLE audit_export_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_export_runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY audit_export_runs_tenant_policy ON audit_export_runs
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- auth.core keeps its trail private to its own service, and it registers no
 -- public capability, so a module cannot append to it. This is audit.core's own
@@ -114,8 +114,8 @@ CREATE INDEX IF NOT EXISTS audit_events_tenant_time_idx
 ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_events FORCE ROW LEVEL SECURITY;
 CREATE POLICY audit_events_tenant_policy ON audit_events
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0002_audit_sweep_routing_role.up.sql byte for byte. */
@@ -130,16 +130,16 @@ export const AUDIT_MIGRATION_002_SWEEP_ROUTING_ROLE = `-- The retention sweep mu
 -- is due, and the loop would re-read the same never-due classes every interval.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY audit_data_classes_background_policy ON audit_data_classes
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON audit_data_classes FROM coreloom_background;
-GRANT SELECT (tenant_id, class_id, sweepable, retention_mode, retention_days, default_retention_days, last_swept_at) ON audit_data_classes TO coreloom_background;
+REVOKE SELECT ON audit_data_classes FROM flowdular_background;
+GRANT SELECT (tenant_id, class_id, sweepable, retention_mode, retention_days, default_retention_days, last_swept_at) ON audit_data_classes TO flowdular_background;
 `;
 
 /* Mirrors migrations/0003_audit_export_request.up.sql byte for byte. */
@@ -173,16 +173,16 @@ CREATE INDEX IF NOT EXISTS audit_export_runs_pending_idx
   ON audit_export_runs (status, started_at, tenant_id, id);
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY audit_export_runs_background_policy ON audit_export_runs
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON audit_export_runs FROM coreloom_background;
-GRANT SELECT (tenant_id, id, status, started_at) ON audit_export_runs TO coreloom_background;
+REVOKE SELECT ON audit_export_runs FROM flowdular_background;
+GRANT SELECT (tenant_id, id, status, started_at) ON audit_export_runs TO flowdular_background;
 `;
 
 /* Mirrors migrations/0004_audit_hold_seal_erasure.up.sql byte for byte. */
@@ -223,8 +223,8 @@ CREATE INDEX IF NOT EXISTS audit_anchors_tenant_sequence_idx
 ALTER TABLE audit_anchors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_anchors FORCE ROW LEVEL SECURITY;
 CREATE POLICY audit_anchors_tenant_policy ON audit_anchors
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- A hold is a standing instruction not to remove what it covers. scope_kind
 -- names the dimension it was placed on and the nullable columns narrow it
@@ -261,8 +261,8 @@ CREATE INDEX IF NOT EXISTS audit_legal_holds_tenant_status_idx
 ALTER TABLE audit_legal_holds ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_legal_holds FORCE ROW LEVEL SECURITY;
 CREATE POLICY audit_legal_holds_tenant_policy ON audit_legal_holds
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- One data key per subject. Audit events are excluded from erasure because they
 -- are the evidence the lifecycle happened, so the subject-identifying fields of
@@ -289,8 +289,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS audit_subject_keys_tenant_subject_idx
 ALTER TABLE audit_subject_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_subject_keys FORCE ROW LEVEL SECURITY;
 CREATE POLICY audit_subject_keys_tenant_policy ON audit_subject_keys
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- An erasure is a request the running platform answers, for the same reason an
 -- export is: only the platform process holds the registrations every owning
@@ -327,8 +327,8 @@ CREATE INDEX IF NOT EXISTS audit_erasure_runs_pending_idx
 ALTER TABLE audit_erasure_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_erasure_runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY audit_erasure_runs_tenant_policy ON audit_erasure_runs
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- A sealed event keeps its actor and subject columns at a fixed marker and
 -- carries the envelope beside them. The event hash reads the envelope in the
@@ -363,21 +363,21 @@ $$;
 -- routing row named. The hashes stay invisible to it.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY audit_anchors_background_policy ON audit_anchors
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON audit_anchors FROM coreloom_background;
-GRANT SELECT (tenant_id, id, key_id) ON audit_anchors TO coreloom_background;
+REVOKE SELECT ON audit_anchors FROM flowdular_background;
+GRANT SELECT (tenant_id, id, key_id) ON audit_anchors TO flowdular_background;
 CREATE POLICY audit_erasure_runs_background_policy ON audit_erasure_runs
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON audit_erasure_runs FROM coreloom_background;
-GRANT SELECT (tenant_id, id, status, started_at) ON audit_erasure_runs TO coreloom_background;
+REVOKE SELECT ON audit_erasure_runs FROM flowdular_background;
+GRANT SELECT (tenant_id, id, status, started_at) ON audit_erasure_runs TO flowdular_background;
 `;
 
 /* Mirrors migrations/0005_audit_event_format.up.sql byte for byte. */
@@ -568,7 +568,7 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 		inspectExisting: async (database) => {
 			const result = await database.query<{ granted: boolean }>({
 				text: `SELECT CASE WHEN to_regclass('audit_data_classes') IS NOT NULL THEN
-				  has_column_privilege('coreloom_background', 'audit_data_classes', 'last_swept_at', 'SELECT')
+				  has_column_privilege('flowdular_background', 'audit_data_classes', 'last_swept_at', 'SELECT')
 				ELSE false END AS granted`,
 			});
 			return result.rows[0]?.granted === true ? 'complete' : 'absent';

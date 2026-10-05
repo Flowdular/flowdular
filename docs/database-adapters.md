@@ -79,11 +79,11 @@ memory.
 The embedded adapter creates the same roles a deployment configures, so a local
 run enforces the isolation a deployment enforces instead of approximating it.
 
-| Role                  | Owns                                        | Constraints                                                                                 |
-| --------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `coreloom_migrator`   | The schema. Serves the `migration` purpose. | Owns every table the migrations create.                                                     |
-| `coreloom_runtime`    | Request-time reads and writes.              | No `SUPERUSER`, no `BYPASSRLS`, and every handle it lends requires a transaction tenant id. |
-| `coreloom_background` | Cross-tenant polls.                         | Read-only, and no blanket table grant.                                                      |
+| Role                   | Owns                                        | Constraints                                                                                 |
+| ---------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `flowdular_migrator`   | The schema. Serves the `migration` purpose. | Owns every table the migrations create.                                                     |
+| `flowdular_runtime`    | Request-time reads and writes.              | No `SUPERUSER`, no `BYPASSRLS`, and every handle it lends requires a transaction tenant id. |
+| `flowdular_background` | Cross-tenant polls.                         | Read-only, and no blanket table grant.                                                      |
 
 ## Leases
 
@@ -100,13 +100,13 @@ const lease = await context.databases.acquire({
 });
 ```
 
-| Purpose      | Role                  | Used for                                            |
-| ------------ | --------------------- | --------------------------------------------------- |
-| `migration`  | `coreloom_migrator`   | Applying migrations and resetting a database        |
-| `runtime`    | `coreloom_runtime`    | The deployed application                            |
-| `preview`    | `coreloom_runtime`    | A local run and the sandbox preview                 |
-| `test`       | `coreloom_runtime`    | A test suite                                        |
-| `background` | `coreloom_background` | A scheduler poll or recovery that precedes a tenant |
+| Purpose      | Role                   | Used for                                            |
+| ------------ | ---------------------- | --------------------------------------------------- |
+| `migration`  | `flowdular_migrator`   | Applying migrations and resetting a database        |
+| `runtime`    | `flowdular_runtime`    | The deployed application                            |
+| `preview`    | `flowdular_runtime`    | A local run and the sandbox preview                 |
+| `test`       | `flowdular_runtime`    | A test suite                                        |
+| `background` | `flowdular_background` | A scheduler poll or recovery that precedes a tenant |
 
 A runtime acquires its leases lazily, one per runtime, and releases them from
 composition `dispose()`. `modules/profile/src/server/runtime.ts` is the shape:
@@ -164,14 +164,14 @@ codes.
 
 Every tenant table enables and forces row-level security and carries a policy
 whose `USING` and `WITH CHECK` compare `tenant_id` with the transaction-local
-`coreloom.tenant_id` setting:
+`flowdular.tenant_id` setting:
 
 ```sql
 ALTER TABLE profile_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE profile_records FORCE ROW LEVEL SECURITY;
 CREATE POLICY profile_records_tenant_policy ON profile_records
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ```
 
 `database.transaction(body, { tenantId, access })` sets that value for the
@@ -201,7 +201,7 @@ repository.
 
 ## Migrations
 
-The ledger is `_coreloom_migrations_v2`. It carries the module namespace because
+The ledger is `_flowdular_migrations_v2`. It carries the module namespace because
 every module shares one database. Checksums cover the exact SQL, and a mismatch
 is checked before any outstanding migration runs.
 
@@ -257,7 +257,7 @@ schema.
 `migration verify` checks that every applied ledger checksum still matches, that
 every tenant table a migration leaves behind has `ENABLE ROW LEVEL SECURITY`,
 `FORCE ROW LEVEL SECURITY` and a tenant policy declared after the last statement
-that puts the table in place, that a `coreloom_background` policy grants no more
+that puts the table in place, that a `flowdular_background` policy grants no more
 than `FOR SELECT`, and that every `migrations/*.up.sql` file has a matching id in
 `databaseMigrations` and the other way round.
 
@@ -272,10 +272,10 @@ A table it may poll says so itself, in its own migration:
 
 ```sql
 CREATE POLICY <table>_background_policy ON <table>
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (<the narrowest predicate that still finds the work>);
-REVOKE SELECT ON <table> FROM coreloom_background;
-GRANT SELECT (<only the columns the poll reads>) ON <table> TO coreloom_background;
+REVOKE SELECT ON <table> FROM flowdular_background;
+GRANT SELECT (<only the columns the poll reads>) ON <table> TO flowdular_background;
 ```
 
 A table that forgets to is invisible to that role, and every column outside the

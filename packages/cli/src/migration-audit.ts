@@ -9,7 +9,9 @@ export interface MigrationAuditIssue {
 		| 'MIGRATION_SCRIPT_MISSING'
 		| 'MIGRATION_NOT_DECLARED'
 		| 'ROW_SECURITY_MISSING'
-		| 'BACKGROUND_POLICY_TOO_WIDE';
+		| 'BACKGROUND_POLICY_TOO_WIDE'
+		| 'TENANT_SETTING_UNKNOWN'
+		| 'ROLE_UNKNOWN';
 	readonly message: string;
 }
 
@@ -77,6 +79,31 @@ function tenantTables(sql: string): ReadonlySet<string> {
 		/ALTER TABLE\s+([a-z_][a-z0-9_]*)\s+RENAME TO\s+([a-z_][a-z0-9_]*)/gi,
 	)) {
 		if (found.has(match[1]!.toLowerCase())) found.add(match[2]!.toLowerCase());
+	}
+	return found;
+}
+
+function tenantSettings(body: string): ReadonlySet<string> {
+	const found = new Set<string>();
+	for (const match of body.matchAll(/'([a-z0-9_]+)\.tenant_id'/gi)) {
+		found.add(`${match[1]!.toLowerCase()}.tenant_id`);
+	}
+	return found;
+}
+
+/* Names in role position: grant, revoke and policy target lists, SET ROLE
+   and pg_roles lookups. FROM counts only inside REVOKE, where it names
+   roles; elsewhere it names tables. */
+function roleNames(body: string): ReadonlySet<string> {
+	const found = new Set<string>();
+	for (const match of body.matchAll(
+		/(?:\b(?:TO|ROLE)|\bREVOKE\b[^;]*?\bFROM)\s+([a-z_][a-z0-9_]*(?:\s*,\s*[a-z_][a-z0-9_]*)*)/gi,
+	)) {
+		for (const name of match[1]!.split(/\s*,\s*/))
+			found.add(name.toLowerCase());
+	}
+	for (const match of body.matchAll(/\brolname\s*=\s*'([a-z_][a-z0-9_]*)'/gi)) {
+		found.add(match[1]!.toLowerCase());
 	}
 	return found;
 }
@@ -179,13 +206,35 @@ export async function moduleMigrationAudit(
 				);
 			}
 		}
+		/* The adapter sets flowdular.tenant_id and nothing else, so a policy on
+		   any other setting sees no tenant: reads come back empty and every
+		   write fails its check. */
+		for (const setting of tenantSettings(body)) {
+			if (setting === 'flowdular.tenant_id') continue;
+			report(
+				'TENANT_SETTING_UNKNOWN',
+				`"${setting}" is never set; tenant policies read current_setting('flowdular.tenant_id', true).`,
+			);
+		}
+		/* Only the flowdular_* roles exist, so a script naming another one
+		   fails when applied and its background policy skips the check below. */
+		for (const name of roleNames(body)) {
+			const role = /^([a-z][a-z0-9]*)_(runtime|background|migrator)$/.exec(
+				name,
+			);
+			if (!role || role[1] === 'flowdular') continue;
+			report(
+				'ROLE_UNKNOWN',
+				`Role "${name}" does not exist; use flowdular_${role[2]}.`,
+			);
+		}
 		/* The cross-tenant role exists so a scheduler can find work. A policy that
 		   grants it anything beyond SELECT would let it act on another tenant. */
 		for (const match of body.matchAll(
 			/CREATE POLICY\s+([a-z0-9_]+)\s+ON\s+([a-z0-9_]+)([\s\S]*?);/gi,
 		)) {
 			const clause = match[3] ?? '';
-			if (!/\bTO\s+coreloom_background\b/i.test(clause)) continue;
+			if (!/\bTO\s+flowdular_background\b/i.test(clause)) continue;
 			if (!/\bFOR\s+SELECT\b/i.test(clause)) {
 				report(
 					'BACKGROUND_POLICY_TOO_WIDE',

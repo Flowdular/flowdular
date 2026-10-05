@@ -1,6 +1,6 @@
-REVOKE SELECT (tenant_id, id, status, started_at) ON audit_erasure_runs FROM coreloom_background;
+REVOKE SELECT (tenant_id, id, status, started_at) ON audit_erasure_runs FROM flowdular_background;
 DROP POLICY IF EXISTS audit_erasure_runs_background_policy ON audit_erasure_runs;
-REVOKE SELECT (tenant_id, id, key_id) ON audit_anchors FROM coreloom_background;
+REVOKE SELECT (tenant_id, id, key_id) ON audit_anchors FROM flowdular_background;
 DROP POLICY IF EXISTS audit_anchors_background_policy ON audit_anchors;
 ALTER TABLE audit_sweep_runs DROP CONSTRAINT IF EXISTS audit_sweep_runs_held_back_check;
 ALTER TABLE audit_events DROP CONSTRAINT IF EXISTS audit_events_sealed_check;

@@ -53,8 +53,8 @@ describe.each(providers)('%s provider boundaries', (_name, create) => {
 			ALTER TABLE sequence_records ENABLE ROW LEVEL SECURITY;
 			ALTER TABLE sequence_records FORCE ROW LEVEL SECURITY;
 			CREATE POLICY sequence_records_tenant_policy ON sequence_records
-				USING (tenant_id = current_setting('coreloom.tenant_id', true))
-				WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));`);
+				USING (tenant_id = current_setting('flowdular.tenant_id', true))
+				WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));`);
 			const insert = (tenantId: string) =>
 				runtime.database.transaction(
 					(tx) =>
@@ -152,7 +152,7 @@ describe.each(providers)('%s provider boundaries', (_name, create) => {
 			for (const upgrade of [false, true]) {
 				if (upgrade)
 					await migration.database.executeScript(
-						'GRANT ALL ON _coreloom_migrations_v2 TO coreloom_runtime;',
+						'GRANT ALL ON _flowdular_migrations_v2 TO flowdular_runtime;',
 					);
 				await runDatabaseMigrations(
 					migration.database,
@@ -160,10 +160,10 @@ describe.each(providers)('%s provider boundaries', (_name, create) => {
 					migrations,
 				);
 				for (const text of [
-					"UPDATE _coreloom_migrations_v2 SET checksum = 'tampered'",
-					'DELETE FROM _coreloom_migrations_v2',
-					"INSERT INTO _coreloom_migrations_v2 VALUES ('fake.core', '0001_fake', 'postgresql', 'fake', 0)",
-					'TRUNCATE _coreloom_migrations_v2',
+					"UPDATE _flowdular_migrations_v2 SET checksum = 'tampered'",
+					'DELETE FROM _flowdular_migrations_v2',
+					"INSERT INTO _flowdular_migrations_v2 VALUES ('fake.core', '0001_fake', 'postgresql', 'fake', 0)",
+					'TRUNCATE _flowdular_migrations_v2',
 				]) {
 					await expect(
 						runtime.database.transaction((tx) => tx.execute({ text }), {

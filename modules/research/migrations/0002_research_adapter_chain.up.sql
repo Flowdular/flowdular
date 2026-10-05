@@ -23,8 +23,8 @@ CREATE INDEX IF NOT EXISTS research_attempts_tenant_created_idx
 ALTER TABLE research_attempts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE research_attempts FORCE ROW LEVEL SECURITY;
 CREATE POLICY research_attempts_tenant_policy ON research_attempts
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- The circuit breaker of one adapter in one workspace. open_until is set when
 -- the consecutive failures reach the threshold, and moved forward by the one
@@ -41,8 +41,8 @@ CREATE TABLE IF NOT EXISTS research_adapter_health (
 ALTER TABLE research_adapter_health ENABLE ROW LEVEL SECURITY;
 ALTER TABLE research_adapter_health FORCE ROW LEVEL SECURITY;
 CREATE POLICY research_adapter_health_tenant_policy ON research_adapter_health
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- A query row names the adapter that answered, and the chain adds two.
 ALTER TABLE research_queries DROP CONSTRAINT IF EXISTS research_queries_adapter_check;

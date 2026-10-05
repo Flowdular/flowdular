@@ -12,24 +12,24 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<'S
 \getenv migrator_password FD_DATABASE_MIGRATOR_PASSWORD
 \getenv runtime_password FD_DATABASE_RUNTIME_PASSWORD
 \getenv background_password FD_DATABASE_BACKGROUND_PASSWORD
-CREATE ROLE coreloom_migrator LOGIN PASSWORD :'migrator_password'
+CREATE ROLE flowdular_migrator LOGIN PASSWORD :'migrator_password'
 	NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
-CREATE ROLE coreloom_runtime LOGIN PASSWORD :'runtime_password'
+CREATE ROLE flowdular_runtime LOGIN PASSWORD :'runtime_password'
 	NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
-CREATE ROLE coreloom_background LOGIN PASSWORD :'background_password'
+CREATE ROLE flowdular_background LOGIN PASSWORD :'background_password'
 	NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
 
 REVOKE CONNECT ON DATABASE :"database_name" FROM PUBLIC;
-GRANT CONNECT ON DATABASE :"database_name" TO coreloom_migrator, coreloom_runtime, coreloom_background;
+GRANT CONNECT ON DATABASE :"database_name" TO flowdular_migrator, flowdular_runtime, flowdular_background;
 
-ALTER SCHEMA public OWNER TO coreloom_migrator;
+ALTER SCHEMA public OWNER TO flowdular_migrator;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
-GRANT USAGE ON SCHEMA public TO coreloom_runtime, coreloom_background;
+GRANT USAGE ON SCHEMA public TO flowdular_runtime, flowdular_background;
 
 -- Every table the migrator creates later is reachable by the runtime role
 -- without a second grant step after each migration.
-ALTER DEFAULT PRIVILEGES FOR ROLE coreloom_migrator IN SCHEMA public
-	GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO coreloom_runtime;
-ALTER DEFAULT PRIVILEGES FOR ROLE coreloom_migrator IN SCHEMA public
-	GRANT USAGE, SELECT ON SEQUENCES TO coreloom_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE flowdular_migrator IN SCHEMA public
+	GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO flowdular_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE flowdular_migrator IN SCHEMA public
+	GRANT USAGE, SELECT ON SEQUENCES TO flowdular_runtime;
 SQL

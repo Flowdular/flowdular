@@ -95,7 +95,7 @@ export async function createPostgresTestProvider(
 	options: PostgresTestProviderOptions,
 ): Promise<DatabaseProvider> {
 	const schema =
-		options.schema ?? `coreloom_test_${randomBytes(8).toString('hex')}`;
+		options.schema ?? `flowdular_test_${randomBytes(8).toString('hex')}`;
 	assertSchemaName(schema);
 	const runtimeUrl = options.runtimeUrl ?? options.migratorUrl;
 	const statementTimeoutMs =

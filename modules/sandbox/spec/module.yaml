@@ -23,7 +23,7 @@ locales:
 invariants:
   - Persistence runs on PostgreSQL through the shared asynchronous database contract. The module receives a leased handle from platform composition, never a driver or a connection string, and writes explicit PostgreSQL SQL.
   - Migrations are declared as explicit PostgreSQL SQL; sandbox.core never rewrites placeholders or translates SQL between dialects.
-  - PostgreSQL grant, session, and audit tables enable and force row-level security with USING and WITH CHECK policies bound to transaction-local coreloom.tenant_id, and the runtime role holds neither SUPERUSER nor BYPASSRLS. Migrations use a separate lease.
+  - PostgreSQL grant, session, and audit tables enable and force row-level security with USING and WITH CHECK policies bound to transaction-local flowdular.tenant_id, and the runtime role holds neither SUPERUSER nor BYPASSRLS. Migrations use a separate lease.
   - Every access grant, session record, and audit event is owned by exactly one tenant, and every repository query receives the trusted tenant identifier.
   - The sandbox is a separate application. It never receives platform authority implicitly; it must resolve an authenticated account, the sandbox.access.use scope on the selected membership, and an active grant before it opens a session.
   - A grant is created by an authorized owner through the platform API, by the sandbox CLI capability, or by local launcher boot for an active owner of the only workspace. Every path writes the same record and audit evidence.

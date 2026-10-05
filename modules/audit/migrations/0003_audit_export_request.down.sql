@@ -1,4 +1,4 @@
-REVOKE SELECT (tenant_id, id, status, started_at) ON audit_export_runs FROM coreloom_background;
+REVOKE SELECT (tenant_id, id, status, started_at) ON audit_export_runs FROM flowdular_background;
 DROP POLICY IF EXISTS audit_export_runs_background_policy ON audit_export_runs;
 DROP INDEX IF EXISTS audit_export_runs_pending_idx;
 ALTER TABLE audit_export_runs DROP CONSTRAINT IF EXISTS audit_export_runs_dry_run_check;

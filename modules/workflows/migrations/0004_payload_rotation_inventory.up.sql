@@ -6,12 +6,12 @@
 -- row named.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY workflow_payloads_rotation_policy ON workflow_payloads
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (kind = 'execution');
-GRANT SELECT (encryption_key_id) ON workflow_payloads TO coreloom_background;
+GRANT SELECT (encryption_key_id) ON workflow_payloads TO flowdular_background;

@@ -3,4 +3,4 @@
 -- routing columns; this adds the key id and nothing else. The nonce, the tag and
 -- the ciphertext stay unreadable on this connection, and every row it re-seals
 -- is read again under the tenant that row named.
-GRANT SELECT (secret_key_id) ON automations_triggers TO coreloom_background;
+GRANT SELECT (secret_key_id) ON automations_triggers TO flowdular_background;

@@ -57,25 +57,25 @@ CREATE INDEX IF NOT EXISTS auth_mfa_challenges_expiry_idx
 ALTER TABLE auth_tenant_invitations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_tenant_invitations FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_tenant_invitations_tenant_policy ON auth_tenant_invitations
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE auth_mfa_challenges ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_mfa_challenges FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_mfa_challenges_tenant_policy ON auth_mfa_challenges
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- An invitation link and a pending multi-factor challenge name their workspace
 -- only inside the row, so the routing read runs on the background role and the
 -- acceptance that follows runs under the tenant it returned. An invitation that
 -- was already accepted and a challenge that was already spent route nothing.
 CREATE POLICY auth_tenant_invitations_background_policy ON auth_tenant_invitations
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (accepted_at IS NULL);
-REVOKE SELECT ON auth_tenant_invitations FROM coreloom_background;
-GRANT SELECT (token_hash, tenant_id, expires_at, accepted_at) ON auth_tenant_invitations TO coreloom_background;
+REVOKE SELECT ON auth_tenant_invitations FROM flowdular_background;
+GRANT SELECT (token_hash, tenant_id, expires_at, accepted_at) ON auth_tenant_invitations TO flowdular_background;
 CREATE POLICY auth_mfa_challenges_background_policy ON auth_mfa_challenges
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (used_at IS NULL);
-REVOKE SELECT ON auth_mfa_challenges FROM coreloom_background;
-GRANT SELECT (token_hash, tenant_id, account_id, expires_at, used_at) ON auth_mfa_challenges TO coreloom_background;
+REVOKE SELECT ON auth_mfa_challenges FROM flowdular_background;
+GRANT SELECT (token_hash, tenant_id, account_id, expires_at, used_at) ON auth_mfa_challenges TO flowdular_background;

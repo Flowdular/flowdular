@@ -26,5 +26,5 @@ CREATE INDEX IF NOT EXISTS notifications_webhook_subscriptions_status_idx
 ALTER TABLE notifications_webhook_subscriptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications_webhook_subscriptions FORCE ROW LEVEL SECURITY;
 CREATE POLICY notifications_webhook_subscriptions_tenant_policy ON notifications_webhook_subscriptions
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

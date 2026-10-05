@@ -46,13 +46,13 @@ not documented aspiration.
 
 Fifty-five tables across nine modules enable and force row-level security and
 carry a policy with both `USING` and `WITH CHECK` bound to
-`current_setting('coreloom.tenant_id', true)`. Every one of the fifty-five has
+`current_setting('flowdular.tenant_id', true)`. Every one of the fifty-five has
 both `ENABLE` and `FORCE`. The only predicate variation is `auth_tenants`, which
 correctly keys on `id` rather than `tenant_id`. No table that carries a
 `tenant_id` column is left uncovered.
 
 The tenant id is transaction local. `packages/database/src/postgresql.ts` issues
-`SELECT set_config('coreloom.tenant_id', $1, true)` immediately after `BEGIN`,
+`SELECT set_config('flowdular.tenant_id', $1, true)` immediately after `BEGIN`,
 with the third argument `true` meaning the setting reverts at the end of the
 transaction. A runtime adapter is constructed with `tenantRequired: true` and
 raises `TENANT_CONTEXT_REQUIRED` when a transaction opens without one.
@@ -66,9 +66,9 @@ The `access` mode on `DatabaseTransactionOptions` is only the SQL transaction
 mode, `READ ONLY` or `READ WRITE`, and defaults to `READ WRITE` when omitted.
 
 `infra/README.md` describes three roles created at cluster initialization:
-`coreloom_migrator` owns the schema, `coreloom_runtime` holds neither
+`flowdular_migrator` owns the schema, `flowdular_runtime` holds neither
 `SUPERUSER` nor `BYPASSRLS` so the forced policies actually bind it, and
-`coreloom_background` serves cross-tenant polling with no default table grant.
+`flowdular_background` serves cross-tenant polling with no default table grant.
 
 The background role is restricted by column, not just by row. Thirteen tables
 carry a `*_background_policy`, each paired with a `REVOKE SELECT` and a narrow
@@ -83,7 +83,7 @@ again under the tenant the row named.
 Two honest qualifications.
 
 Twelve tables carry no `tenant_id` at all, so they have no policy and no column
-grant, and the default privileges give `coreloom_runtime` full DML on them.
+grant, and the default privileges give `flowdular_runtime` full DML on them.
 Several are account-scoped by design and defensible: `auth_accounts` is
 deliberately cross-tenant identity, and `auth_sign_in_failures`,
 `auth_password_reset_tokens`, `auth_mfa_totp`, `auth_mfa_recovery_codes` are
@@ -98,7 +98,7 @@ it.
 
 Second, the RLS mechanism itself is undocumented. `docs/database-adapters.md`
 covers the roles and the background grant template but never states the
-`USING`/`WITH CHECK` predicate or the `coreloom.tenant_id` setting; those live
+`USING`/`WITH CHECK` predicate or the `flowdular.tenant_id` setting; those live
 only in migration SQL and in `infra/docker/postgres/10-roles.sh`. A buyer's
 reviewer reading the docs cannot find the control that is the strongest thing
 here.

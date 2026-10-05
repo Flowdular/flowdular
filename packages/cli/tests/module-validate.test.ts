@@ -13,7 +13,7 @@ const manifest: ModuleManifest & {
 	id: 'billing.core',
 	package: '@flowdular/module-billing',
 	version: '0.1.0',
-	platformApi: '^0.1.0',
+	platformApi: `^${PLATFORM_API_VERSION}`,
 	profile: 'full',
 	capabilities: ['api', 'client', 'translations'],
 	platform: { server: true, client: true },

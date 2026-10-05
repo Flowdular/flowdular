@@ -19,13 +19,58 @@ Local state lives in `.flowdular`. Flowdular 0.6 no longer reads a `.coreloom`
 state directory; a workspace that still has one starts with empty state under
 `.flowdular`.
 
-PostgreSQL role names, the migration ledger, tenant context setting, migration
-lock identity and authentication cookies retain their established identifiers.
-
 Run grants signed by the pre-rename issuer and the `x-coreloom-secret` and
 `x-coreloom-read-permission` workflow schema markers are no longer accepted.
 Mark secret fields with `x-flowdular-secret` and permission-protected fields
 with `x-flowdular-read-permission`.
+
+Authentication cookies retain their established names.
+
+## Database identifiers
+
+Flowdular 0.6 renamed every database identifier that carried the old name:
+
+| Identifier        | Before 0.6                                                     | From 0.6                                                          |
+| ----------------- | -------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Roles             | `coreloom_migrator`, `coreloom_runtime`, `coreloom_background` | `flowdular_migrator`, `flowdular_runtime`, `flowdular_background` |
+| Tenant setting    | `coreloom.tenant_id`                                           | `flowdular.tenant_id`                                             |
+| Migration ledger  | `_coreloom_migrations_v2`                                      | `_flowdular_migrations_v2`                                        |
+| Ledger lock       | `coreloom.migrations`                                          | `flowdular.migrations`                                            |
+| Advisory lock key | `coreloom-migration`                                           | `flowdular-migration`                                             |
+| Trigger function  | `coreloom_reject_change`                                       | `flowdular_reject_change`                                         |
+
+The platform API moved to 0.2.0 because the ledger and lock constants changed,
+and every module declares `"platformApi": "^0.2.0"`. A module built against
+`^0.1.x` is refused at registration.
+
+The owner made a one-time exception to the rule that applied migrations are
+immutable (decision of 2026-10-05): nobody runs Flowdular yet, so the released
+migration SQL and its `databaseMigrations` mirrors were rewritten in place, and
+there is no upgrade path. The rule itself is unchanged and applies to every
+later migration.
+
+Flowdular 0.6 refuses a database created by 0.5 or earlier with
+`LEGACY_DATABASE` before it creates its ledger or applies anything: adopting
+it would mark its tables complete while every policy reads a setting the
+adapter no longer sets. `pnpm flowdular migration verify` reports the
+script-level rule as well: a tenant policy must read
+`current_setting('flowdular.tenant_id', true)`, and only `flowdular_*` roles
+may be named.
+
+## Resetting an existing installation
+
+- Local embedded database: stop the platform and the sandbox, then delete
+  `.flowdular/data/pglite` (or the `FD_DATABASE_PGLITE_DIRECTORY` directory).
+  `pnpm flowdular setup quick --apply --confirm reset-local-auth` drops every
+  table instead and seeds the demo accounts; the old roles and trigger
+  function stay in the embedded cluster, unused. A sandbox session created before 0.6 keeps its
+  own preview database, so its preview fails with the same refusal; delete
+  the session.
+- Docker Compose: `docker compose --env-file infra/docker/.env -f infra/docker/compose.yaml down -v`
+  deletes the database volume; the next start initializes the new roles.
+- PostgreSQL server: create a new database with the `flowdular_migrator`,
+  `flowdular_runtime` and `flowdular_background` roles and point the
+  `FD_DATABASE_*_URL` values at it.
 
 ## External services
 

@@ -134,8 +134,8 @@ describe('module rules gate', () => {
 				'ALTER TABLE claims_records ENABLE ROW LEVEL SECURITY;',
 				'ALTER TABLE claims_records FORCE ROW LEVEL SECURITY;',
 				'CREATE POLICY claims_tenant ON claims_records',
-				" USING (tenant_id = current_setting('coreloom.tenant_id', true))",
-				" WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));",
+				" USING (tenant_id = current_setting('flowdular.tenant_id', true))",
+				" WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));",
 			].join('\n'),
 		);
 		const migration = await readFile(

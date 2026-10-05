@@ -30,5 +30,5 @@ CREATE INDEX IF NOT EXISTS agent_provider_connections_tenant_name_idx
 ALTER TABLE agent_provider_connections ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_provider_connections FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_provider_connections_tenant_policy ON agent_provider_connections
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

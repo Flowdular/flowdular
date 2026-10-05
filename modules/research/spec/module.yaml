@@ -1,7 +1,7 @@
 schemaVersion: 2
 id: research.core
 specVersion: 0.2.7
-status: approved
+status: in-review
 name: Research
 description: Gives agents, workflows and members a governed web search and page reader behind an ordered chain of adapters a workspace owner configures, with retries, fallback and a circuit breaker so research keeps answering when one provider fails, and keeps every result kept and every page read as citeable evidence that other modules attach to their own records.
 profile: full
@@ -42,7 +42,7 @@ locales:
   - pl
 invariants:
   - The tenant comes from the authenticated principal or the trusted run context. No request body, tool input or capability caller selects another workspace, and every statement runs inside a tenant-scoped transaction on the module's own lease with bound parameters.
-  - research_evidence, research_evidence_links, research_pages, research_queries, research_run_counters, research_attempts and research_adapter_health carry tenant_id, enable and force row-level security with USING and WITH CHECK policies bound to transaction-local coreloom.tenant_id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
+  - research_evidence, research_evidence_links, research_pages, research_queries, research_run_counters, research_attempts and research_adapter_health carry tenant_id, enable and force row-level security with USING and WITH CHECK policies bound to transaction-local flowdular.tenant_id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
   - The search adapters are model-native, searxng, firecrawl, connector and recorded. model-native is reached only by a provider inside an agent run through the native tool research.web-search; searxng calls a self-hosted SearXNG through the module-owned connectors instance of the definition research-searxng with GET /search, q, format json, pageno 1, categories general and time_range from the freshness; firecrawl calls the Firecrawl API through the module-owned instance of the definition research-firecrawl with POST /v2/search; connector calls the connectors.core instance named by research.core.connectorInstanceId with operation search and input q and limit, and maps the answer through the declared result mapping; recorded answers from the research-fixtures.json file named by research.core.recordedFixturesPath, an absolute path or one relative to the workspace root.
   - A search runs the adapters of research.core.searchOrder, comma separated keys in the owner's order, that are switched on in <key>Enabled. While searchOrder is empty the chain is the one adapter named by research.core.adapter whatever its switch says, so a workspace configured before the chain keeps working unchanged. The search answer names the adapter that produced it and every attempt made.
   - Each adapter is tried at most <key>MaxAttempts times (1 to 5, default 2), each attempt bounded by <key>TimeoutMs (1000 to 60000, default 15000). A retry waits a full jitter delay, a random share of research.core.retryBackoffMs (0 to 5000, default 500) doubled per retry and capped at 5000 milliseconds, and after a 429 the Retry-After the provider sent, capped at the same 5000. A timeout, a network failure, a 5xx, a 408 and a 429 are retryable; a 401, a 403, any other 4xx, an adapter that is not configured, NATIVE_TOOL_UNSUPPORTED and RESEARCH_ADAPTER_UNAVAILABLE outside a run are permanent and end that adapter at once. A cancelled request stops the chain.

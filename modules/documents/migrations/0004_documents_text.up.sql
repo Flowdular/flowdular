@@ -26,20 +26,20 @@ CREATE INDEX IF NOT EXISTS documents_text_pending_idx
 ALTER TABLE documents_text ENABLE ROW LEVEL SECURITY;
 ALTER TABLE documents_text FORCE ROW LEVEL SECURITY;
 CREATE POLICY documents_text_tenant_policy ON documents_text
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 -- The runner finds pending work across workspaces before it knows whose it is,
 -- so the cross-tenant role reads the routing columns of pending rows and
 -- nothing else; every claim and write runs again under the workspace named.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY documents_text_background_policy ON documents_text
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (status = 'pending');
-REVOKE SELECT ON documents_text FROM coreloom_background;
-GRANT SELECT (tenant_id, document_id, status, requested_at) ON documents_text TO coreloom_background;
+REVOKE SELECT ON documents_text FROM flowdular_background;
+GRANT SELECT (tenant_id, document_id, status, requested_at) ON documents_text TO flowdular_background;

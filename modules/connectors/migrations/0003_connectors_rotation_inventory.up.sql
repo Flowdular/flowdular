@@ -7,13 +7,13 @@
 -- part of the grant.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY connectors_instances_background_policy ON connectors_instances
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (credential_key_id IS NOT NULL);
-REVOKE SELECT ON connectors_instances FROM coreloom_background;
-GRANT SELECT (tenant_id, credential_key_id) ON connectors_instances TO coreloom_background;
+REVOKE SELECT ON connectors_instances FROM flowdular_background;
+GRANT SELECT (tenant_id, credential_key_id) ON connectors_instances TO flowdular_background;

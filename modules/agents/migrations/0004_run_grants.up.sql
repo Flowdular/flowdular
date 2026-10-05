@@ -15,5 +15,5 @@ CREATE INDEX IF NOT EXISTS agent_run_grant_expiry_idx
 ALTER TABLE agent_run_grant_uses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_run_grant_uses FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_run_grant_uses_tenant_policy ON agent_run_grant_uses
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
