@@ -39,6 +39,7 @@ export interface SetupPageView {
 	readonly seed: FirstRunSeed | null;
 	readonly modulesApproximated: boolean;
 	readonly tokenFile: string | null;
+	readonly passwordMinLength: number;
 }
 
 export function escapeHtml(value: string): string {
@@ -111,7 +112,7 @@ body{font-family:var(--font-sans);font-size:var(--text-base);color:var(--ink);ba
 .setup-help{font-size:var(--text-sm);line-height:1.5;color:var(--ink-3)}
 .setup-help--error{color:var(--danger)}
 .setup-row{display:grid;gap:12px;grid-template-columns:repeat(2,minmax(0,1fr))}
-.setup-btn{display:inline-flex;height:var(--control-h);align-items:center;justify-content:center;gap:6px;padding:0 16px;font:inherit;font-size:var(--text-md);font-weight:500;color:var(--ink);cursor:pointer;background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
+.setup-btn{display:inline-flex;height:var(--control-h);align-items:center;justify-content:center;gap:6px;padding:0 16px;font:inherit;font-size:var(--text-md);font-weight:500;color:var(--ink);text-decoration:none;cursor:pointer;background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
 .setup-btn:hover{background:var(--surface-2)}
 .setup-btn--primary{color:var(--ink-0);background:var(--primary);border-color:var(--primary)}
 .setup-btn--primary:hover{background:var(--primary-hover);border-color:var(--primary-hover)}
@@ -187,7 +188,7 @@ if(reduced.matches){draw(false);}else{frame=requestAnimationFrame(tick);}}).obse
 })();
 `;
 
-const MARK = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/><path d="M6 3v18M12 3v18M18 3v18" stroke="#c9722d" stroke-width="1.75" stroke-linecap="round" opacity=".85"/></svg>`;
+const MARK = `<svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><g fill="#ffffff"><rect x="2" y="3" width="20" height="5" rx="2.5"/><rect x="8" y="10" width="14" height="5" rx="2.5"/></g><g fill="#e08a45"><rect x="14" y="17" width="8" height="5" rx="2.5"/></g></svg>`;
 
 function steps(current: SetupStepName, databasePreconfigured: boolean): string {
 	const index = STEPS.indexOf(current);
@@ -292,6 +293,11 @@ ${steps(view.step, view.databasePreconfigured)}${alerts(view)}
 <button class="setup-btn setup-btn--primary setup-btn--block" type="submit">Test connection</button></form>`;
 }
 
+/* Mirrors auth.core's WORKSPACE_SLUG_PATTERN and its double-hyphen rule in the
+   syntax browsers compile pattern attributes with (the v flag). */
+export const WORKSPACE_SLUG_INPUT_PATTERN =
+	'(?!.*--)[a-z0-9](?:[a-z0-9\\-]{1,46}[a-z0-9])?';
+
 function workspaceField(
 	view: SetupPageView,
 	name: string,
@@ -303,6 +309,7 @@ function workspaceField(
 		readonly maxlength: number;
 		readonly spellcheck?: boolean;
 		readonly readonly?: boolean;
+		readonly pattern?: string;
 	},
 ): string {
 	const id = `setup-${name}`;
@@ -310,7 +317,7 @@ function workspaceField(
 	const type = options.type ?? 'text';
 	const value = type === 'password' ? '' : (view.values[name] ?? '');
 	return `<div class="setup-field"><label class="setup-label" for="${id}">${escapeHtml(label)}</label>
-<input class="setup-input${error ? ' setup-input--error' : ''}" id="${id}" name="${name}" type="${type}"${type === 'password' ? '' : ` value="${escapeHtml(value)}"`}${options.autocomplete ? ` autocomplete="${escapeHtml(options.autocomplete)}"` : ''}${options.spellcheck === false ? ' spellcheck="false"' : ''}${options.readonly ? ' readonly' : ''} maxlength="${options.maxlength}" required aria-describedby="${id}-help"${error ? ' aria-invalid="true"' : ''}>
+<input class="setup-input${error ? ' setup-input--error' : ''}" id="${id}" name="${name}" type="${type}"${type === 'password' ? '' : ` value="${escapeHtml(value)}"`}${options.autocomplete ? ` autocomplete="${escapeHtml(options.autocomplete)}"` : ''}${options.spellcheck === false ? ' spellcheck="false"' : ''}${options.readonly ? ' readonly' : ''}${options.pattern ? ` pattern="${escapeHtml(options.pattern)}"` : ''} maxlength="${options.maxlength}" required aria-describedby="${id}-help"${error ? ' aria-invalid="true"' : ''}>
 <p class="setup-help${error ? ' setup-help--error' : ''}" id="${id}-help"${error ? ' role="alert"' : ''}>${escapeHtml(error ?? options.hint)}</p></div>`;
 }
 
@@ -327,12 +334,12 @@ ${steps(view.step, view.databasePreconfigured)}${alerts(view)}
 ${view.databasePreconfigured ? '<p class="setup-alert setup-alert--success">PostgreSQL is already configured for this deployment.</p>' : ''}
 <form class="setup-form" method="post" action="/setup">${csrf(view)}
 ${workspaceField(view, 'workspaceName', 'Workspace name', { hint: 'The name shown to people in this workspace.', maxlength: 120 })}
-${workspaceField(view, 'workspaceSlug', 'Workspace address', { hint: '3 to 48 lowercase letters, numbers, or single hyphens.', maxlength: 48, spellcheck: false })}
+${workspaceField(view, 'workspaceSlug', 'Workspace address', { hint: '3 to 48 lowercase letters, numbers, or single hyphens.', maxlength: 48, spellcheck: false, pattern: WORKSPACE_SLUG_INPUT_PATTERN })}
 <div class="setup-row">
 ${workspaceField(view, 'ownerName', 'Your name', { hint: 'Shown on your owner account.', maxlength: 80, autocomplete: 'name' })}
 ${workspaceField(view, 'ownerEmail', 'Your email', { type: 'email', hint: 'Used to sign in.', maxlength: 254, autocomplete: 'email', spellcheck: false })}
 </div>
-${workspaceField(view, 'ownerPassword', 'Your password', { type: 'password', hint: 'Use at least 8 characters, or more if this deployment requires it. Your password will not be shown again.', maxlength: 512, autocomplete: 'new-password' })}
+${workspaceField(view, 'ownerPassword', 'Your password', { type: 'password', hint: `Use at least ${view.passwordMinLength} characters. Your password will not be shown again.`, maxlength: 512, autocomplete: 'new-password' })}
 ${workspaceField(view, 'ownerPasswordConfirm', 'Confirm your password', { type: 'password', hint: 'Re-enter the password for the owner account.', maxlength: 512, autocomplete: 'new-password' })}
 ${workspaceField(view, 'applicationPath', 'Backoffice address', { hint: view.databasePreconfigured ? 'This address is set by the deployment. Change its configuration and restart to choose another.' : 'Use /app or another path, such as /backoffice. Takes effect after restart.', maxlength: 64, spellcheck: false, readonly: view.databasePreconfigured })}
 <div class="setup-foot">${back}<button class="${nextClass}" type="submit" name="step" value="workspace">Review setup</button></div></form>`;

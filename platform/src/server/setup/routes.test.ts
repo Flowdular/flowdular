@@ -13,6 +13,7 @@ import { OWNER_SCOPES } from '@flowdular/module-auth';
 import {
 	authRuntimeOptionsFromEnvironment,
 	createAuthRuntime,
+	validateWorkspaceSlug,
 } from '@flowdular/module-auth/server';
 import type { ModuleDatabaseRequirements } from '@flowdular/database';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -27,7 +28,11 @@ import {
 	POSTGRESQL_ADAPTER_ID,
 } from './adapters.ts';
 import { enabledDatabaseModules } from './modules.ts';
-import { renderSetupPage, type SetupPageView } from './page.ts';
+import {
+	renderSetupPage,
+	WORKSPACE_SLUG_INPUT_PATTERN,
+	type SetupPageView,
+} from './page.ts';
 import { createSetupRoutes } from './routes.ts';
 
 const TOKEN = 'z'.repeat(43);
@@ -193,6 +198,72 @@ describe('first-run routes', () => {
 		expect(html).toContain('controlled by the deployment');
 		expect(html).not.toContain(OWNER.ownerPassword);
 		expect(existsSync(join(root, '.env'))).toBe(false);
+	});
+	it.each([
+		[{}, 12],
+		[{ FD_AUTH_PASSWORD_MIN_LENGTH: '16' }, 16],
+	])(
+		'asks the workspace step for the password length auth.core enforces (%o)',
+		async (environment, minimum) => {
+			const app = harness(workspace(), undefined, [], {
+				databasePreconfigured: true,
+				environment: { NODE_ENV: 'development', ...environment },
+			});
+			await app.call('/setup', { step: 'unlock', token: TOKEN });
+			const setup = await (await app.call('/setup')).text();
+			expect(setup).toContain(`Use at least ${minimum} characters.`);
+			const short = 'Qx7!vRm2#pLw9$tZ'.slice(0, minimum - 1);
+			const response = await app.call('/setup', {
+				step: 'workspace',
+				setupCsrf: /name="setupCsrf" value="([^"]+)"/.exec(setup)![1]!,
+				...OWNER,
+				ownerPassword: short,
+				ownerPasswordConfirm: short,
+			});
+			const html = await response.text();
+			expect(html).toContain(
+				`Password must contain at least ${minimum} characters.`,
+			);
+			expect(html).not.toContain('Review setup</h2>');
+		},
+	);
+	it('lets the browser refuse a workspace address auth.core would refuse', async () => {
+		const app = harness(workspace(), undefined, [], {
+			databasePreconfigured: true,
+		});
+		await app.call('/setup', { step: 'unlock', token: TOKEN });
+		const setup = await (await app.call('/setup')).text();
+		expect(setup).toMatch(
+			/id="setup-workspaceSlug" name="workspaceSlug" type="text" value="[^"]*" spellcheck="false" pattern="[^"]+"/,
+		);
+		/* Browsers compile a pattern attribute anchored and with the v flag. */
+		const browser = new RegExp(`^(?:${WORKSPACE_SLUG_INPUT_PATTERN})$`, 'v');
+		const accepts = (slug: string) => {
+			try {
+				return validateWorkspaceSlug(slug) === slug;
+			} catch {
+				return false;
+			}
+		};
+		for (const slug of [
+			'acme',
+			'acme-finance',
+			'a1b',
+			'0ps',
+			'x'.repeat(48),
+			'x'.repeat(49),
+			'ab',
+			'-acme',
+			'acme-',
+			'ac--me',
+			'acme corp',
+			'acme_corp',
+			'acme!',
+			'zażółć',
+			'<b>acme</b>',
+		]) {
+			expect(browser.test(slug), slug).toBe(accepts(slug));
+		}
 	});
 	it('serves the unlock step and nothing else before the token is presented', async () => {
 		const app = harness(workspace());
@@ -565,12 +636,32 @@ describe('first-run routes', () => {
 			},
 			modulesApproximated: false,
 			tokenFile: null,
+			passwordMinLength: 12,
 		};
 		const html = renderSetupPage(view, 'test-nonce');
 		expect(html).toContain('FD_DATABASE_URL');
 		expect(html).not.toContain('CANARY_SECRET');
 		expect(html).toContain('Save the connection settings');
 		expect(html).not.toContain('The app is restarting');
+	});
+
+	it('shows the Flowdular three-bar mark beside the brand name', async () => {
+		const html = await (await harness(workspace()).call('/setup')).text();
+		const brand =
+			/<span class="setup-brand">(<svg[\s\S]*?<\/svg>)Flowdular<\/span>/.exec(
+				html,
+			)?.[1];
+
+		expect(brand).toBeDefined();
+		expect(
+			[
+				...brand!.matchAll(
+					/<rect x="(\d+)" y="(\d+)" width="(\d+)" height="5" rx="2.5"\/>/g,
+				),
+			].map((bar) => bar.slice(1).join(',')),
+		).toEqual(['2,3,20', '8,10,14', '14,17,8']);
+		expect(brand).toContain('<g fill="#e08a45"><rect x="14" y="17"');
+		expect(brand).not.toContain('<path');
 	});
 
 	it('refuses a form that does not carry this session CSRF token', async () => {
