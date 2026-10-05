@@ -1,9 +1,9 @@
 node_modules/
 dist/
 .flowdular/
-.vercel/
-.env
-.env.*
+# vercel link appends these two lines unless they are already here verbatim.
+.vercel
+.env*
 !.env.example
 *.log
 .DS_Store

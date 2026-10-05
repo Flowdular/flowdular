@@ -50,19 +50,26 @@ Flags that matter:
 - `--cron "<expression>"` overrides the worker schedule the plan sets.
 
 A rerun resumes after any failure and never regenerates a key that the backup or
-Vercel already holds.
+Vercel already holds. If the Vercel CLI fails after it created the deployment,
+for example with `Error: fetch failed` while streaming build logs, the command
+follows that deployment on Vercel for up to 15 minutes and carries on once it
+is Ready.
 
 ## What it prints and what to back up
 
 1. Progress lines and the Vercel build output, with every secret value replaced
    by `[redacted]`.
 2. A summary: the URL, the key backup path, the plan, the worker schedule, the
-   setup address and the setup token.
+   setup address, the setup token and the file that holds it.
 3. Copy `.flowdular/deploy/vercel-<project id>.env` (mode 0600) to a password
    manager or encrypted storage off this machine. Vercel cannot show a sensitive
    value again, so this file is the only readable copy of the keys.
-4. The setup token is shown once. Vercel stores only its SHA-256 as
-   `FD_SETUP_TOKEN_SHA256`; a rerun before setup prints a new token.
+4. Until the first workspace exists, the setup token is kept in
+   `.flowdular/deploy/vercel-<project id>.setup-token` (mode 0600), written
+   before its SHA-256 is uploaded as `FD_SETUP_TOKEN_SHA256`. The command names
+   that file before it deploys and in every failure, so a failed run never loses
+   the token. A rerun before setup reuses it; the first run after setup deletes
+   the file and removes `FD_SETUP_TOKEN_SHA256` from Vercel.
 
 ## Create the first workspace
 
@@ -178,11 +185,16 @@ otherwise preview code can migrate or mutate production data.
   500 on every path means boot failed, and the log line `platform boot failed`
   names the cause, such as a missing `FD_SETUP_TOKEN_SHA256` while no workspace
   exists.
-- **The setup page refuses the token**: use the token from the latest run, since
-  each run replaces the last one. Five wrong tries lock that instance for five
-  minutes. If the page asks for the token again after a step, the request
+- **The setup page refuses the token**: use the token in
+  `.flowdular/deploy/vercel-<project id>.setup-token`, which every run before
+  setup reuses. If that file was deleted, the next run made a new token and only
+  that one works. Five wrong tries lock that instance for five minutes. If the page asks for the token again after a step, the request
   reached another Function instance, which holds its own setup session; enter the
   token again and repeat that step.
+- **`Failed to connect <owner>/<repo> to project` while linking**: harmless. The
+  command uploads this directory, so the deployment does not need Git; pushes
+  just do not deploy on their own. Connect the repository later in the
+  project's Settings, Git.
 - **Scheduled automations do not fire on Hobby**: between requests they wait
   for the next request or the daily run. Move to Pro or add an external
   scheduler (see [Hobby or Pro](#hobby-or-pro)).

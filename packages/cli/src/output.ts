@@ -91,7 +91,11 @@ export function renderOutput(
 		].join('\n');
 	}
 	if (data?.target === 'vercel' && data.status === 'deployed') {
-		const setup = data.setup as { url?: unknown; token?: unknown } | null;
+		const setup = data.setup as {
+			url?: unknown;
+			token?: unknown;
+			file?: unknown;
+		} | null;
 		return [
 			'',
 			`  ${paint('FLOWDULAR', 'bold')}  ${paint('Deployed to Vercel', 'green')}`,
@@ -105,8 +109,9 @@ export function renderOutput(
 						'',
 						`  Open         ${paint(String(setup.url), 'cyan')}`,
 						`  Setup token  ${String(setup.token)}`,
+						`  Token file   ${String(setup.file)}`,
 						'  Enter the token there to create the first workspace and its owner.',
-						'  It is shown once; running this command again issues a new one.',
+						'  A rerun reuses it; the first rerun after setup deletes the file.',
 					]
 				: []),
 			'',

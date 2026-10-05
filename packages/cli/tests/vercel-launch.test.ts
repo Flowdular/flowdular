@@ -32,7 +32,7 @@ const POOLED_URL = `postgresql://app_owner:${OWNER_PASSWORD}@ep-quiet-owl-a1b2c3
 
 /* Behaves like the Vercel CLI 62.2.0 commands the launcher drives, keeping
    Production variables in a JSON state file and logging every call with the
-   stdin it received. */
+   stdin it received and the setup token file it saw. */
 const FAKE_VERCEL = `#!/usr/bin/env node
 const fs = require('node:fs');
 const path = require('node:path');
@@ -45,6 +45,17 @@ const stdin =
 	args[0] === 'env' && (args[1] === 'add' || args[1] === 'update')
 		? fs.readFileSync(0, 'utf8')
 		: null;
+let tokenFile = null;
+try {
+	const tokenPath = path.join(
+		process.cwd(),
+		'.flowdular/deploy/vercel-' + state.projectId + '.setup-token',
+	);
+	tokenFile = {
+		mode: fs.lstatSync(tokenPath).mode & 0o777,
+		text: fs.readFileSync(tokenPath, 'utf8'),
+	};
+} catch {}
 fs.appendFileSync(
 	process.env.FAKE_VERCEL_LOG,
 	JSON.stringify({
@@ -52,6 +63,7 @@ fs.appendFileSync(
 		stdin,
 		cwd: process.cwd(),
 		linked: fs.existsSync(path.join(process.cwd(), '.vercel/project.json')),
+		tokenFile,
 	}) + '\\n',
 );
 const save = () => fs.writeFileSync(statePath, JSON.stringify(state));
@@ -121,6 +133,13 @@ if (group === 'env' && (action === 'add' || action === 'update')) {
 	save();
 	done();
 }
+if (group === 'env' && action === 'rm') {
+	if (state.envRmFails) fail('fetch failed');
+	if (!state.env[name]) fail('Environment Variable ' + name + ' was not found.');
+	delete state.env[name];
+	save();
+	done();
+}
 if (group === 'env' && action === 'pull') {
 	const lines = Object.entries(state.env).map(
 		([key, entry]) =>
@@ -158,10 +177,30 @@ if (group === 'deploy') {
 		(state.env.FD_VERCEL_PLAN?.value === 'hobby' ? '0 3 * * *' : '* * * * *');
 	if (state.hobby && !/^\\d+ \\d+ /.test(schedule))
 		fail('Hobby accounts are limited to daily cron jobs. This cron expression would run more than once per day.');
+	if (state.deployOutcome === 'lost-before-url') fail('fetch failed');
 	for (const name of ['CRON_SECRET', 'FD_SETUP_TOKEN_SHA256'])
 		if (state.env[name])
 			process.stdout.write('build: ' + name + '=' + state.env[name].value + '\\n');
-	done('https://acme-app-abc123-team.vercel.app');
+	if (tokenFile)
+		process.stdout.write('build: setup token ' + tokenFile.text.trim() + '\\n');
+	process.stdout.write('https://acme-app-abc123-team.vercel.app');
+	if (state.deployOutcome === 'lost-after-url') fail('fetch failed');
+	process.exit(0);
+}
+if (group === 'inspect' && args.includes('--json')) {
+	const readyState =
+		state.inspectStates.length > 1
+			? state.inspectStates.shift()
+			: state.inspectStates[0];
+	save();
+	process.stdout.write(
+		JSON.stringify(
+			{ id: 'dpl_fake', url: action.replace('https://', ''), target: 'production', readyState },
+			null,
+			2,
+		) + '\\n',
+	);
+	process.exit(readyState === 'ERROR' || readyState === 'CANCELED' ? 1 : 0);
 }
 process.stderr.write('unknown command ' + args.join(' ') + '\\n');
 process.exit(2);
@@ -181,6 +220,9 @@ interface FakeState {
 	neonFails: boolean;
 	neonUrl: string;
 	neonPooledUrl: string;
+	deployOutcome: 'ok' | 'lost-before-url' | 'lost-after-url';
+	inspectStates: string[];
+	envRmFails: boolean;
 }
 
 interface Invocation {
@@ -188,6 +230,7 @@ interface Invocation {
 	readonly stdin: string | null;
 	readonly cwd: string;
 	readonly linked: boolean;
+	readonly tokenFile: { mode: number; text: string } | null;
 }
 
 interface Harness {
@@ -200,8 +243,12 @@ interface Harness {
 	}[];
 	readonly fetches: { url: string; authorization: string | null }[];
 	readonly databaseUrls: URL[];
+	readonly waits: number[];
 	/* How many workspaces the deployment database holds. */
 	workspaces: number;
+	/* How many /api/ready probes answer 503 before one answers 200. */
+	unreadyProbes: number;
+	waitError: Error | null;
 	state(): Promise<FakeState>;
 	update(change: (state: FakeState) => void): Promise<void>;
 	log(): Promise<Invocation[]>;
@@ -285,6 +332,9 @@ async function harness(initial: Partial<FakeState> = {}): Promise<Harness> {
 			neonFails: false,
 			neonUrl: OWNER_URL,
 			neonPooledUrl: POOLED_URL,
+			deployOutcome: 'ok',
+			inspectStates: ['READY'],
+			envRmFails: false,
 			...initial,
 		} satisfies FakeState),
 	);
@@ -311,7 +361,10 @@ async function harness(initial: Partial<FakeState> = {}): Promise<Harness> {
 		platformCalls: [],
 		fetches: [],
 		databaseUrls: [],
+		waits: [],
 		workspaces: 0,
+		unreadyProbes: 1,
+		waitError: null,
 		state,
 		async update(change) {
 			const current = await state();
@@ -374,7 +427,9 @@ async function harness(initial: Partial<FakeState> = {}): Promise<Harness> {
 			});
 			if (url.endsWith('/api/ready')) {
 				readyProbes += 1;
-				return new Response('', { status: readyProbes < 2 ? 503 : 200 });
+				return new Response('', {
+					status: readyProbes > result.unreadyProbes ? 200 : 503,
+				});
 			}
 			const secret = (await state()).env.CRON_SECRET?.value;
 			return new Response('', {
@@ -385,7 +440,10 @@ async function harness(initial: Partial<FakeState> = {}): Promise<Harness> {
 						: 401,
 			});
 		},
-		async wait() {},
+		async wait(ms) {
+			if (result.waitError) throw result.waitError;
+			result.waits.push(ms);
+		},
 	};
 	return result;
 }
@@ -448,6 +506,9 @@ function expectNoSecret(text: string, secrets: Iterable<string>): void {
 function sha256(value: string): string {
 	return createHash('sha256').update(value, 'utf8').digest('hex');
 }
+
+const TOKEN_FILE = '.flowdular/deploy/vercel-prj_fake123.setup-token';
+const DEPLOYMENT_URL = 'https://acme-app-abc123-team.vercel.app';
 
 describe('deploy start vercel', () => {
 	it('provisions the database, keys and storage, sends secrets only through stdin and deploys', async () => {
@@ -603,6 +664,7 @@ describe('deploy start vercel', () => {
 		expectNoSecret(rendered, secrets);
 		expect(rendered).toContain('https://acme-app.vercel.app/setup');
 		expect(rendered).toContain(token);
+		expect(rendered).toContain(TOKEN_FILE);
 		expect(rendered).toContain('.flowdular/deploy/vercel-prj_fake123.env');
 
 		expect(run.platformCalls.map((call) => call.args.slice(2, 4))).toEqual([
@@ -651,16 +713,16 @@ describe('deploy start vercel', () => {
 		);
 		const backupBefore = await readFile(backupFile, 'utf8');
 		const envBefore = (await run.state()).env;
+		delete envBefore.FD_SETUP_TOKEN_SHA256;
 		await run.clearLog();
 
 		const rerun = await run.start();
 		expect(rerun.error).toBeUndefined();
 		expect(rerun.data).toMatchObject({ setup: null, generatedKeys: [] });
-		expect(
-			(await run.log())
-				.filter((entry) => commandOf(entry) !== 'deploy --prod --yes')
-				.filter((entry) => writes([entry]).length > 0),
-		).toEqual([]);
+		expect(writes(await run.log()).map(commandOf)).toEqual([
+			'env rm FD_SETUP_TOKEN_SHA256 production --yes',
+			'deploy --prod --yes',
+		]);
 		expect(await readFile(backupFile, 'utf8')).toBe(backupBefore);
 		const state = await run.state();
 		expect(state.env).toEqual(envBefore);
@@ -675,16 +737,18 @@ describe('deploy start vercel', () => {
 		).toBe(true);
 	});
 
-	it('issues a new setup token on a rerun before the first workspace exists', async () => {
+	it('reuses the saved setup token on a rerun before the first workspace exists', async () => {
 		const run = await harness();
 		const first = await run.start();
 		const before = (first.data as { setup: { token: string } }).setup.token;
+		const saved = await readFile(join(run.root, TOKEN_FILE), 'utf8');
 		await run.clearLog();
 
 		const rerun = await run.start();
 		expect(rerun.error).toBeUndefined();
 		const after = (rerun.data as { setup: { token: string } }).setup.token;
-		expect(after).not.toBe(before);
+		expect(after).toBe(before);
+		expect(await readFile(join(run.root, TOKEN_FILE), 'utf8')).toBe(saved);
 		expect((await run.state()).env.FD_SETUP_TOKEN_SHA256?.value).toBe(
 			sha256(after),
 		);
@@ -707,6 +771,218 @@ describe('deploy start vercel', () => {
 		]);
 	});
 
+	it('saves the setup token in a 0600 file before its digest leaves the machine and names the file before deploying', async () => {
+		const run = await harness();
+		const result = await run.start();
+		expect(result.error).toBeUndefined();
+		const setup = (
+			result.data as { setup: { url: string; token: string; file: string } }
+		).setup;
+		expect(setup).toMatchObject({
+			url: 'https://acme-app.vercel.app/setup',
+			file: TOKEN_FILE,
+		});
+		expect((await stat(join(run.root, TOKEN_FILE))).mode & 0o777).toBe(0o600);
+		expect(await readFile(join(run.root, TOKEN_FILE), 'utf8')).toBe(
+			`${setup.token}\n`,
+		);
+
+		const log = await run.log();
+		const upload = log.findIndex((entry) =>
+			commandOf(entry).startsWith('env add FD_SETUP_TOKEN_SHA256 production'),
+		);
+		expect(log[upload]).toMatchObject({
+			stdin: sha256(setup.token),
+			tokenFile: { mode: 0o600, text: `${setup.token}\n` },
+		});
+		expect(
+			log.findIndex((entry) => commandOf(entry) === 'deploy --prod --yes'),
+		).toBeGreaterThan(upload);
+
+		const lines = run.output.join('').split('\n');
+		expect(lines.join('\n')).not.toContain(setup.token);
+		expect(lines).toContain('build: setup token [redacted]');
+		const notice = lines.findIndex(
+			(line) => line.includes(setup.url) && line.includes(TOKEN_FILE),
+		);
+		expect(notice).toBeGreaterThanOrEqual(0);
+		expect(notice).toBeLessThan(
+			lines.findIndex((line) => line.startsWith('build: ')),
+		);
+	});
+
+	it('replaces a saved setup token that is not a token and refuses a token path that is not a file', async () => {
+		const run = await harness();
+		const first = await run.start();
+		const before = (first.data as { setup: { token: string } }).setup.token;
+		await writeFile(join(run.root, TOKEN_FILE), 'not-a-token\n');
+
+		const rerun = await run.start();
+		expect(rerun.error).toBeUndefined();
+		const after = (rerun.data as { setup: { token: string } }).setup.token;
+		expect(after).not.toBe(before);
+		expect(Buffer.from(after, 'base64url')).toHaveLength(32);
+		expect(await readFile(join(run.root, TOKEN_FILE), 'utf8')).toBe(
+			`${after}\n`,
+		);
+		expect((await run.state()).env.FD_SETUP_TOKEN_SHA256?.value).toBe(
+			sha256(after),
+		);
+
+		await rm(join(run.root, TOKEN_FILE));
+		await mkdir(join(run.root, TOKEN_FILE));
+		await run.clearLog();
+		const refused = await run.start();
+		expect(refused.error?.code).toBe('SETUP_TOKEN_INVALID');
+		expect(refused.error?.message).toContain(TOKEN_FILE);
+		expect(
+			writes(await run.log()).filter((entry) =>
+				commandOf(entry).includes('FD_SETUP_TOKEN_SHA256'),
+			),
+		).toEqual([]);
+	});
+
+	it('deletes the setup token and its digest once a workspace exists, and only warns when Vercel keeps the digest', async () => {
+		const run = await harness();
+		expect((await run.start()).ok).toBe(true);
+		run.workspaces = 1;
+		await run.clearLog();
+
+		const retired = await run.start();
+		expect(retired.error).toBeUndefined();
+		expect(retired.data).toMatchObject({ setup: null });
+		await expect(access(join(run.root, TOKEN_FILE))).rejects.toThrow();
+		expect((await run.state()).env.FD_SETUP_TOKEN_SHA256).toBeUndefined();
+		expect(
+			writes(await run.log())
+				.map(commandOf)
+				.filter((command) => command.startsWith('env ')),
+		).toEqual(['env rm FD_SETUP_TOKEN_SHA256 production --yes']);
+		expect(retired.warnings.join('\n')).not.toContain('FD_SETUP_TOKEN_SHA256');
+
+		await run.update((state) => {
+			state.env.FD_SETUP_TOKEN_SHA256 = {
+				value: sha256('spent'),
+				type: 'sensitive',
+			};
+			state.envRmFails = true;
+		});
+		const kept = await run.start();
+		expect(kept.error).toBeUndefined();
+		expect(kept.data).toMatchObject({ status: 'deployed', setup: null });
+		expect(kept.warnings.join('\n')).toContain(
+			'Removing FD_SETUP_TOKEN_SHA256 from Production failed',
+		);
+		expect((await run.state()).env.FD_SETUP_TOKEN_SHA256).toBeDefined();
+	});
+
+	it('finishes the launch when Vercel builds a deployment the local CLI lost track of', async () => {
+		const run = await harness({
+			deployOutcome: 'lost-after-url',
+			inspectStates: ['QUEUED', 'BUILDING', 'READY'],
+		});
+		const result = await run.start();
+		expect(result.error).toBeUndefined();
+		const data = result.data as {
+			setup: { token: string; file: string };
+		};
+		expect(data).toMatchObject({
+			status: 'deployed',
+			readiness: 200,
+			workerTick: 200,
+			setup: { url: 'https://acme-app.vercel.app/setup', file: TOKEN_FILE },
+		});
+		expect(renderOutput(result, false)).toContain(data.setup.token);
+		expect((await run.state()).deploys).toBe(1);
+		expect((await run.log()).map(commandOf)).toContain(
+			`inspect ${DEPLOYMENT_URL} --json`,
+		);
+		expect(run.fetches.at(-1)?.url).toBe(
+			'https://acme-app.vercel.app/api/internal/worker/tick',
+		);
+		expect(run.output.join('')).not.toContain(data.setup.token);
+	});
+
+	it.each(['ERROR', 'CANCELED'])(
+		'fails with the setup token file named when Vercel reports the deployment %s',
+		async (state) => {
+			const run = await harness({
+				deployOutcome: 'lost-after-url',
+				inspectStates: ['BUILDING', state],
+			});
+			const result = await run.start();
+			expect(result.error?.code).toBe('DEPLOY_FAILED');
+			expect(result.error?.message).toContain(DEPLOYMENT_URL);
+			expect(result.error?.message).toContain(state);
+			expect(result.error?.message).toContain(TOKEN_FILE);
+			const token = (await readFile(join(run.root, TOKEN_FILE), 'utf8')).trim();
+			expect(result.error?.message).not.toContain(token);
+			expect(run.output.join('')).not.toContain(token);
+			expect(run.fetches).toEqual([]);
+		},
+	);
+
+	it('gives up on a deployment still building after about 15 minutes', async () => {
+		const run = await harness({
+			deployOutcome: 'lost-after-url',
+			inspectStates: ['BUILDING'],
+		});
+		const result = await run.start();
+		expect(result.error?.code).toBe('DEPLOY_FAILED');
+		expect(result.error?.message).toContain(DEPLOYMENT_URL);
+		expect(result.error?.message).toContain(TOKEN_FILE);
+		const token = (await readFile(join(run.root, TOKEN_FILE), 'utf8')).trim();
+		expect(result.error?.message).not.toContain(token);
+		expect(run.output.join('')).not.toContain(token);
+		const waited = run.waits.reduce((total, ms) => total + ms, 0);
+		expect(waited).toBeGreaterThanOrEqual(14 * 60_000);
+		expect(waited).toBeLessThanOrEqual(16 * 60_000);
+		for (const ms of run.waits) {
+			expect(ms).toBeGreaterThanOrEqual(10_000);
+			expect(ms).toBeLessThanOrEqual(15_000);
+		}
+		expect(run.fetches).toEqual([]);
+	}, 120_000);
+
+	it('fails as before when the local CLI stops before Vercel creates a deployment', async () => {
+		const run = await harness({ deployOutcome: 'lost-before-url' });
+		const result = await run.start();
+		expect(result.error?.code).toBe('DEPLOY_FAILED');
+		expect(result.error?.message).toContain('vercel deploy --prod failed');
+		expect(result.error?.message).toContain(TOKEN_FILE);
+		const token = (await readFile(join(run.root, TOKEN_FILE), 'utf8')).trim();
+		expect(result.error?.message).not.toContain(token);
+		expect(
+			(await run.log()).some((entry) => commandOf(entry).startsWith('inspect')),
+		).toBe(false);
+	});
+
+	it('names the setup token file when the launch stops on an unexpected error', async () => {
+		const run = await harness({
+			deployOutcome: 'lost-after-url',
+			inspectStates: ['BUILDING'],
+		});
+		run.waitError = new Error('The terminal closed.');
+		const result = await run.start();
+		expect(result.error?.code).toBe('DEPLOY_START_FAILED');
+		expect(result.error?.message).toContain('The terminal closed.');
+		expect(result.error?.message).toContain(TOKEN_FILE);
+		const token = (await readFile(join(run.root, TOKEN_FILE), 'utf8')).trim();
+		expect(result.error?.message).not.toContain(token);
+	});
+
+	it('names the setup token file when the deployment never answers ready', async () => {
+		const run = await harness();
+		run.unreadyProbes = Number.POSITIVE_INFINITY;
+		const result = await run.start();
+		expect(result.error).toBeUndefined();
+		expect(result.data).toMatchObject({ readiness: 503, workerTick: null });
+		const warning = result.warnings.find((entry) =>
+			entry.includes('/api/ready answered 503'),
+		);
+		expect(warning).toContain(TOKEN_FILE);
+	});
+
 	it('uploads a key that only the local backup still holds', async () => {
 		const run = await harness();
 		expect((await run.start()).ok).toBe(true);
@@ -721,7 +997,7 @@ describe('deploy start vercel', () => {
 		const backup = await run.backup();
 		expect(
 			writes(await run.log()).filter((entry) =>
-				commandOf(entry).startsWith('env '),
+				/^env (add|update) /.test(commandOf(entry)),
 			),
 		).toEqual([
 			expect.objectContaining({
@@ -939,6 +1215,24 @@ describe('deploy start vercel', () => {
 		const start = await run.start();
 		expect(start.error?.code).toBe('DEPLOY_PREFLIGHT_FAILED');
 		expect(writes(await run.log())).toEqual([]);
+	});
+
+	it('ships .gitignore files that vercel link leaves untouched without ignoring .env.example', async () => {
+		for (const file of [
+			'../../../.gitignore',
+			'../../create-flowdular/template/default/_gitignore',
+		]) {
+			const lines = (
+				await readFile(new URL(file, import.meta.url), 'utf8')
+			).split('\n');
+			/* vercel link appends .vercel, and the .env.local pull it runs appends
+			   .env*, unless a line equals the entry exactly. */
+			expect(lines, file).toContain('.vercel');
+			expect(lines, file).toContain('.env*');
+			expect(lines.indexOf('!.env.example'), file).toBeGreaterThan(
+				lines.indexOf('.env*'),
+			);
+		}
 	});
 });
 

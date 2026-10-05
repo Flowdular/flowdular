@@ -52,6 +52,7 @@ const MIGRATOR_URL = 'FD_DATABASE_MIGRATOR_URL';
 const CRON_SCHEDULE = 'FD_VERCEL_CRON_SCHEDULE';
 const PLAN = 'FD_VERCEL_PLAN';
 const SETUP_TOKEN_DIGEST = 'FD_SETUP_TOKEN_SHA256';
+const SETUP_TOKEN = /^[A-Za-z0-9_-]{43}$/;
 const DAILY_CRON = '0 3 * * *';
 /* The message Vercel fails a Hobby deployment with, per its cron usage docs. */
 const HOBBY_CRON_REJECTION = /Hobby accounts are limited to daily cron jobs/i;
@@ -62,6 +63,12 @@ const CAPTURE_LIMIT = 4 * 1024 * 1024;
 const OUTPUT_TAIL_LIMIT = 64 * 1024;
 const READY_ATTEMPTS = 24;
 const READY_INTERVAL_MS = 5_000;
+/* deploy writes the deployment URL alone to a piped stdout as soon as Vercel
+   creates the deployment, before the build starts. */
+const DEPLOYMENT_URL = /^https:\/\/[A-Za-z0-9.-]+$/m;
+const INSPECT_ATTEMPTS = 60;
+const INSPECT_INTERVAL_MS = 15_000;
+const FAILED_DEPLOYMENT_STATES = new Set(['ERROR', 'CANCELED', 'BLOCKED']);
 const REQUEST_TIMEOUT_MS = 10_000;
 /* A GET tick holds the worker window open (50 seconds by default) and drains
    it before answering. */
@@ -109,6 +116,7 @@ interface LaunchContext {
 	/* Every value this run must never print, matched against forwarded output. */
 	readonly secrets: Set<string>;
 	readonly warnings: string[];
+	setupTokenFile: string | null;
 }
 
 interface VercelRun {
@@ -225,8 +233,8 @@ export function vercelLaunchSteps(options: VercelLaunchOptions): string[] {
 		'Generate the missing stable keys, CRON_SECRET and role passwords into .flowdular/deploy/vercel-<project id>.env (mode 0600) first, then add each missing Production variable through stdin.',
 		`Set ${PLAN} to the plan when it is known, which sizes the worker cron and Function duration.`,
 		'Create and connect a private Vercel Blob store unless the project has Blob credentials.',
-		`If the database has no workspace yet, generate a one-time setup token and set only its SHA-256 as ${SETUP_TOKEN_DIGEST}.`,
-		`Deploy to Production with vercel deploy --prod. If the plan is unknown and Vercel rejects the per-minute cron as Hobby, set ${PLAN}=hobby and deploy once more.`,
+		`If the database has no workspace yet, keep a one-time setup token in .flowdular/deploy/vercel-<project id>.setup-token (mode 0600), reusing the one a previous run saved, and set only its SHA-256 as ${SETUP_TOKEN_DIGEST}. Once a workspace exists, delete that file and ${SETUP_TOKEN_DIGEST}.`,
+		`Deploy to Production with vercel deploy --prod. If the plan is unknown and Vercel rejects the per-minute cron as Hobby, set ${PLAN}=hobby and deploy once more. If the CLI fails after creating the deployment, follow its state with vercel inspect --json for up to 15 minutes.`,
 		`Wait for ${options.origin ?? 'https://<project>.vercel.app'}/api/ready, send one authenticated worker tick, then print the setup address and token when the first workspace is still to be created.`,
 	];
 }
@@ -445,27 +453,39 @@ async function setProductionVariable(
 	}
 }
 
+async function readPrivateFile(
+	root: string,
+	path: string,
+	maxKiB: number,
+	code: string,
+): Promise<string | null> {
+	try {
+		const entry = await lstat(path);
+		if (!entry.isFile() || entry.size > maxKiB * 1024) {
+			throw new LaunchError(
+				code,
+				`${relative(root, path)} must be a regular file of at most ${maxKiB} KiB.`,
+			);
+		}
+		const text = await readFile(path, 'utf8');
+		await chmod(path, 0o600);
+		return text;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+		throw error;
+	}
+}
+
 async function readKeyBackup(
 	root: string,
 	project: VercelProject,
 ): Promise<KeyBackup> {
 	const path = join(root, '.flowdular/deploy', `vercel-${project.id}.env`);
 	const values = new Map<string, string>();
-	try {
-		const entry = await lstat(path);
-		if (!entry.isFile() || entry.size > 64 * 1024) {
-			throw new LaunchError(
-				'KEY_BACKUP_INVALID',
-				`${relative(root, path)} must be a regular file of at most 64 KiB.`,
-			);
-		}
-		for (const line of (await readFile(path, 'utf8')).split('\n')) {
-			const match = /^([A-Z][A-Z0-9_]*)=(\S+)$/.exec(line.replace(/\r$/, ''));
-			if (match) values.set(match[1]!, match[2]!);
-		}
-		await chmod(path, 0o600);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+	const text = await readPrivateFile(root, path, 64, 'KEY_BACKUP_INVALID');
+	for (const line of text?.split('\n') ?? []) {
+		const match = /^([A-Z][A-Z0-9_]*)=(\S+)$/.exec(line.replace(/\r$/, ''));
+		if (match) values.set(match[1]!, match[2]!);
 	}
 	return { path, values };
 }
@@ -477,7 +497,24 @@ async function writeKeyBackup(
 	project: VercelProject,
 	backup: KeyBackup,
 ): Promise<void> {
-	const directory = dirname(backup.path);
+	await writePrivateFile(
+		root,
+		backup.path,
+		[
+			`# Flowdular production keys for Vercel project ${project.name ?? project.id} (${project.id}).`,
+			'# Keep a copy off this machine. A lost or changed key makes existing data unreadable.',
+			...[...backup.values].map(([name, value]) => `${name}=${value}`),
+			'',
+		].join('\n'),
+	);
+}
+
+async function writePrivateFile(
+	root: string,
+	path: string,
+	contents: string,
+): Promise<void> {
+	const directory = dirname(path);
 	await mkdir(directory, { recursive: true, mode: 0o700 });
 	for (const path of [join(root, '.flowdular'), directory]) {
 		if (!(await lstat(path)).isDirectory()) {
@@ -488,13 +525,7 @@ async function writeKeyBackup(
 		}
 	}
 	await chmod(directory, 0o700);
-	const contents = [
-		`# Flowdular production keys for Vercel project ${project.name ?? project.id} (${project.id}).`,
-		'# Keep a copy off this machine. A lost or changed key makes existing data unreadable.',
-		...[...backup.values].map(([name, value]) => `${name}=${value}`),
-		'',
-	].join('\n');
-	const temporary = `${backup.path}.${randomUUID()}.tmp`;
+	const temporary = `${path}.${randomUUID()}.tmp`;
 	try {
 		const handle = await open(temporary, 'wx', 0o600);
 		try {
@@ -503,9 +534,63 @@ async function writeKeyBackup(
 		} finally {
 			await handle.close();
 		}
-		await rename(temporary, backup.path);
+		await rename(temporary, path);
 	} finally {
 		await rm(temporary, { force: true });
+	}
+}
+
+function setupTokenPath(root: string, project: VercelProject): string {
+	return join(root, '.flowdular/deploy', `vercel-${project.id}.setup-token`);
+}
+
+/* Saved before its digest leaves this machine: Vercel can finish a deployment
+   after the local CLI gave up, and a digest whose token is lost locks setup. */
+async function saveSetupToken(
+	context: LaunchContext,
+	project: VercelProject,
+): Promise<string> {
+	const path = setupTokenPath(context.root, project);
+	const saved = (
+		await readPrivateFile(context.root, path, 1, 'SETUP_TOKEN_INVALID')
+	)?.trim();
+	let token = saved;
+	if (!token || !SETUP_TOKEN.test(token)) {
+		token = randomBytes(32).toString('base64url');
+		await writePrivateFile(context.root, path, `${token}\n`);
+	}
+	context.setupTokenFile = relative(context.root, path);
+	return remember(context, token);
+}
+
+/* Setup is closed for good once a workspace exists, so a removal that fails
+   leaves only an unused value behind. */
+async function retireSetupToken(
+	context: LaunchContext,
+	project: VercelProject,
+	names: Set<string>,
+): Promise<void> {
+	const path = setupTokenPath(context.root, project);
+	try {
+		await rm(path, { force: true });
+	} catch {
+		context.warnings.push(
+			`${relative(context.root, path)} could not be deleted. Delete it by hand; the workspace exists, so the token it holds is spent.`,
+		);
+	}
+	if (!names.has(SETUP_TOKEN_DIGEST)) return;
+	progress(`Removing ${SETUP_TOKEN_DIGEST} now that a workspace exists`);
+	const run = await runVercel(context, [
+		'env',
+		'rm',
+		SETUP_TOKEN_DIGEST,
+		'production',
+		'--yes',
+	]);
+	if (run.status !== 0) {
+		context.warnings.push(
+			`Removing ${SETUP_TOKEN_DIGEST} from Production failed: ${lastLines(context, run)} Remove it with vercel env rm ${SETUP_TOKEN_DIGEST} production --yes.`,
+		);
 	}
 }
 
@@ -830,6 +915,55 @@ async function deployProduction(context: LaunchContext): Promise<VercelRun> {
 	return runVercel(context, ['deploy', '--prod', '--yes'], { forward: true });
 }
 
+async function deploymentState(
+	context: LaunchContext,
+	url: string,
+): Promise<string | null> {
+	const run = await runVercel(context, ['inspect', url, '--json']);
+	try {
+		const state = (JSON.parse(run.stdout) as { readyState?: unknown } | null)
+			?.readyState;
+		return typeof state === 'string' ? state : null;
+	} catch {
+		return null;
+	}
+}
+
+/* The local CLI can exit with an error after Vercel created the deployment,
+   for example when streaming its build logs fails, while the build goes on. */
+async function confirmDeployment(
+	context: LaunchContext,
+	run: VercelRun,
+): Promise<void> {
+	const url = DEPLOYMENT_URL.exec(run.stdout)?.[0];
+	if (!url) {
+		throw new LaunchError(
+			'DEPLOY_FAILED',
+			'vercel deploy --prod failed. Check its output above; rerunning this command resumes without regenerating anything.',
+		);
+	}
+	progress(
+		`vercel deploy --prod exited with code ${run.status} after creating ${url}. Following its state on Vercel.`,
+	);
+	let state: string | null = null;
+	for (let attempt = 1; attempt <= INSPECT_ATTEMPTS; attempt += 1) {
+		state = await deploymentState(context, url);
+		if (state === 'READY') return;
+		if (state !== null && FAILED_DEPLOYMENT_STATES.has(state)) {
+			throw new LaunchError(
+				'DEPLOY_FAILED',
+				`Vercel reports ${url} as ${state}. Read its build logs with vercel inspect ${url} --logs, then rerun this command.`,
+			);
+		}
+		if (attempt < INSPECT_ATTEMPTS)
+			await context.host.wait(INSPECT_INTERVAL_MS);
+	}
+	throw new LaunchError(
+		'DEPLOY_FAILED',
+		`Vercel did not report ${url} as Ready within 15 minutes (last state: ${state ?? 'unreadable'}). Follow it with vercel inspect ${url} --wait, then rerun this command.`,
+	);
+}
+
 async function waitForReady(
 	context: LaunchContext,
 	origin: string,
@@ -981,9 +1115,13 @@ async function launch(context: LaunchContext): Promise<CommandEnvelope> {
 		if (value) environment[name] = value;
 	}
 	let setupToken: string | null = null;
-	if (!(await workspaceExists(context, environment))) {
-		progress('Setting a one-time setup token for the first workspace');
-		setupToken = remember(context, randomBytes(32).toString('base64url'));
+	if (await workspaceExists(context, environment)) {
+		await retireSetupToken(context, project, names);
+	} else {
+		setupToken = await saveSetupToken(context, project);
+		progress(
+			`Setting a one-time setup token for ${origin}/setup. It is saved in ${context.setupTokenFile} until the first workspace exists.`,
+		);
 		await setProductionVariable(
 			context,
 			SETUP_TOKEN_DIGEST,
@@ -1017,12 +1155,7 @@ async function launch(context: LaunchContext): Promise<CommandEnvelope> {
 		plan = 'hobby';
 		deployed = await deployProduction(context);
 	}
-	if (deployed.status !== 0) {
-		throw new LaunchError(
-			'DEPLOY_FAILED',
-			'vercel deploy --prod failed. Check its output above; rerunning this command resumes without regenerating anything.',
-		);
-	}
+	if (deployed.status !== 0) await confirmDeployment(context, deployed);
 
 	progress(`Waiting for ${origin}/api/ready`);
 	const ready = await waitForReady(context, origin);
@@ -1033,7 +1166,7 @@ async function launch(context: LaunchContext): Promise<CommandEnvelope> {
 			: null;
 	if (ready !== 200) {
 		context.warnings.push(
-			`${origin}/api/ready answered ${ready ?? 'nothing'} within two minutes. Check the deployment logs in the Vercel dashboard, or pass --origin if the production domain differs.`,
+			`${origin}/api/ready answered ${ready ?? 'nothing'} within two minutes. Check the deployment logs in the Vercel dashboard, or pass --origin if the production domain differs.${setupTokenNote(context)}`,
 		);
 	} else if (tick !== 200) {
 		context.warnings.push(
@@ -1071,7 +1204,13 @@ async function launch(context: LaunchContext): Promise<CommandEnvelope> {
 						: plan === 'pro' || !names.has(PLAN)
 							? '* * * * *'
 							: 'project setting'),
-			setup: setupToken ? { url: `${origin}/setup`, token: setupToken } : null,
+			setup: setupToken
+				? {
+						url: `${origin}/setup`,
+						token: setupToken,
+						file: context.setupTokenFile,
+					}
+				: null,
 			keyBackup: relative(context.root, backup.path),
 			generatedKeys: generated,
 		},
@@ -1090,17 +1229,27 @@ export async function launchVercel(
 		host,
 		secrets: new Set(),
 		warnings: [],
+		setupTokenFile: null,
 	};
 	try {
 		return await launch(context);
 	} catch (error) {
 		if (error instanceof LaunchError)
-			return failure(error.code, redact(context, error.message));
+			return failure(
+				error.code,
+				`${redact(context, error.message)}${setupTokenNote(context)}`,
+			);
 		return failure(
 			'DEPLOY_START_FAILED',
-			`${redact(context, error instanceof Error ? error.message : String(error))} Rerunning this command resumes without regenerating anything.`,
+			`${redact(context, error instanceof Error ? error.message : String(error))} Rerunning this command resumes without regenerating anything.${setupTokenNote(context)}`,
 		);
 	}
+}
+
+function setupTokenNote(context: LaunchContext): string {
+	return context.setupTokenFile
+		? ` The setup token is saved in ${context.setupTokenFile}; a rerun reuses it.`
+		: '';
 }
 
 export function defaultVercelHost(): VercelLaunchHost {
