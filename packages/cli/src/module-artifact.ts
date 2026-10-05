@@ -135,11 +135,6 @@ export function validateModuleArtifact(value: unknown): ModuleArtifact {
 		'Invalid module artifact.',
 	);
 	assertModuleCompatibility(artifact.manifest);
-	distributionAssert(
-		artifact.manifest.platformApi,
-		'MODULE_PLATFORM_REQUIRED',
-		'Distributed modules must declare platformApi.',
-	);
 	const paths = new Set<string>();
 	let size = 0;
 	for (const file of artifact.files) {

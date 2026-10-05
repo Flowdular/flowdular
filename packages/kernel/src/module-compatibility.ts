@@ -4,6 +4,7 @@ import {
 	nextVersion,
 	parseVersion,
 	rangeSatisfies,
+	type Version,
 } from './version-range.ts';
 import {
 	PLATFORM_API_VERSION,
@@ -57,6 +58,35 @@ export function compareModuleVersions(left: string, right: string): number {
 	return compareVersions(second, first);
 }
 
+/* Below 1.0 every minor line may change the contract, so a range that also
+   admits an older line claims a contract this platform no longer offers: 0.2
+   renamed the secret and read-permission schema markers a 0.1 module uses.
+   The oldest version a range admits is 0.0.0, a version it names, or the patch
+   after one, so testing those candidates is exact. */
+function assertPlatformLine(
+	moduleId: string,
+	range: string,
+	platformVersion: string,
+): void {
+	const [major, minor] = parseVersion(platformVersion)!;
+	const line: Version = [major, minor, 0];
+	const candidates: Version[] = [[0, 0, 0]];
+	for (const [named] of range.matchAll(/\d+\.\d+\.\d+/g)) {
+		const version = parseVersion(named)!;
+		candidates.push(version, [version[0], version[1], version[2] + 1]);
+	}
+	const older = candidates.some(
+		(candidate) =>
+			compareVersions(candidate, line) < 0 &&
+			rangeSatisfies(candidate.join('.'), range),
+	);
+	if (!older) return;
+	throw new RegistryError(
+		'MODULE_PLATFORM_INCOMPATIBLE',
+		`${moduleId} declares platform API ${range}, which also admits versions before ${line.join('.')}; declare "^${line.join('.')}".`,
+	);
+}
+
 export function assertModuleCompatibility(
 	manifest: ModuleManifest,
 	platformVersion: string | null = PLATFORM_API_VERSION,
@@ -66,17 +96,23 @@ export function assertModuleCompatibility(
 			'MODULE_VERSION_INVALID',
 			`Invalid version for ${manifest.id}: ${manifest.version}`,
 		);
+	if (manifest.platformApi === undefined)
+		throw new RegistryError(
+			'MODULE_PLATFORM_REQUIRED',
+			`${manifest.id} declares no platformApi; add "platformApi": "^${PLATFORM_API_VERSION}".`,
+		);
 	if (
-		manifest.platformApi !== undefined &&
-		(!isValidRange(manifest.platformApi) ||
-			(platformVersion !== null &&
-				!satisfiesModuleVersion(platformVersion, manifest.platformApi)))
+		!isValidRange(manifest.platformApi) ||
+		(platformVersion !== null &&
+			!satisfiesModuleVersion(platformVersion, manifest.platformApi))
 	) {
 		throw new RegistryError(
 			'MODULE_PLATFORM_INCOMPATIBLE',
 			`${manifest.id} requires platform API ${manifest.platformApi}; available ${PLATFORM_API_VERSION}.`,
 		);
 	}
+	if (platformVersion !== null)
+		assertPlatformLine(manifest.id, manifest.platformApi, platformVersion);
 	const ids = new Set<string>();
 	for (const dependency of manifest.dependencies) {
 		if (!dependency.range.trim() || !isValidRange(dependency.range))

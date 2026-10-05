@@ -4,7 +4,6 @@ import {
 	approvalInputDigest,
 	PLATFORM_API_VERSION,
 	RegistryError,
-	satisfiesModuleVersion,
 	verifyApprovalGrant,
 } from '@flowdular/kernel';
 import {
@@ -27,6 +26,7 @@ import {
 	withModuleSource,
 } from './module-sources.ts';
 import { findModuleFiles } from './module-files.ts';
+import { platformAdmits } from './module-catalog.ts';
 import {
 	currentMounts,
 	planMount,
@@ -821,10 +821,7 @@ export async function runCommand(
 			const releases = catalog.releases
 				.map((release) => ({
 					...release,
-					compatible: satisfiesModuleVersion(
-						PLATFORM_API_VERSION,
-						release.manifest.platformApi ?? '*',
-					),
+					compatible: platformAdmits(release.manifest),
 				}))
 				.filter((release) =>
 					action === 'info'

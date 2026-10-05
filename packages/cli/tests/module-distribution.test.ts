@@ -785,6 +785,32 @@ describe('module distribution', () => {
 			),
 		).toThrow(/cycle/i);
 	});
+	/* The install gate refuses a range that also admits an older platform line,
+	   so resolution must not pick that release over one it would install. */
+	it('skips a newer release whose platform range the install gate refuses', () => {
+		const release = (m: ModuleManifest): ModuleRelease => ({
+			manifest: m,
+			artifact: 'x',
+			sha256: 'a'.repeat(64),
+			sourceCommit: 'a'.repeat(40),
+			license: 'MIT',
+		});
+		const result = resolveModuleReleases(
+			{
+				schemaVersion: 1,
+				releases: [
+					release({
+						...manifest('sample.core', '1.1.0'),
+						platformApi: '>=0.1.0',
+					}),
+					release(manifest('sample.core', '1.0.0')),
+				],
+			},
+			'sample.core',
+			[],
+		);
+		expect(result.map((entry) => entry.manifest.version)).toEqual(['1.0.0']);
+	});
 	it('resolves a required capability to its newest compatible provider', async () => {
 		const f = await fixture();
 		const release = (m: ModuleManifest): ModuleRelease => ({

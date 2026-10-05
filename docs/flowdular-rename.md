@@ -22,7 +22,10 @@ state directory; a workspace that still has one starts with empty state under
 Run grants signed by the pre-rename issuer and the `x-coreloom-secret` and
 `x-coreloom-read-permission` workflow schema markers are no longer accepted.
 Mark secret fields with `x-flowdular-secret` and permission-protected fields
-with `x-flowdular-read-permission`.
+with `x-flowdular-read-permission`. Registering an agent tool whose input or
+output schema carries any other `x-<vendor>-secret` or
+`x-<vendor>-read-permission` key fails with `AGENT_TOOL_SCHEMA_MARKER_UNKNOWN`,
+so a field still marked with the old name never reaches a workflow unprotected.
 
 Authentication, setup, sandbox and preview cookies carry the `flowdular_` prefix
 (`__Host-flowdular_session` behind HTTPS). Cookies set by 0.5 are not read, so
@@ -42,8 +45,9 @@ Flowdular 0.6 renamed every database identifier that carried the old name:
 | Trigger function  | `coreloom_reject_change`                                       | `flowdular_reject_change`                                         |
 
 The platform API moved to 0.2.0 because the ledger and lock constants changed,
-and every module declares `"platformApi": "^0.2.0"`. A module built against
-`^0.1.x` is refused at registration.
+and every module declares `"platformApi": "^0.2.0"`. A module is refused at
+registration when it declares no `platformApi` or a range that also admits a
+version before 0.2.0, such as `^0.1.0`, `*` or `>=0.1.0`.
 
 The owner made a one-time exception to the rule that applied migrations are
 immutable (decision of 2026-10-05): nobody runs Flowdular yet, so the released

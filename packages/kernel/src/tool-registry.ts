@@ -11,6 +11,73 @@ export interface PlatformToolRegistry<T = unknown, N = unknown> {
 	listNative(): readonly N[];
 }
 
+/* Only the flowdular markers protect a field: workflows and agents read no other
+   vendor's secret or read-permission key, so a field marked with one would be
+   bound into graphs and returned unredacted. Registration refuses it instead. */
+const VENDOR_MARKER = /^x-.+-(?:secret|read-permission)$/i;
+const KNOWN_MARKERS = new Set([
+	'x-flowdular-secret',
+	'x-flowdular-read-permission',
+]);
+/* Keys under these keywords are field names, and their values are schemas. */
+const SCHEMA_NAME_MAPS = new Set([
+	'properties',
+	'patternProperties',
+	'$defs',
+	'definitions',
+	'dependentSchemas',
+]);
+/* Instance data, never read as a marker. */
+const SCHEMA_DATA_KEYS = new Set([
+	'default',
+	'const',
+	'enum',
+	'example',
+	'examples',
+]);
+
+function unknownMarker(value: unknown, seen: Set<object>): string | null {
+	if (value === null || typeof value !== 'object' || seen.has(value))
+		return null;
+	seen.add(value);
+	if (Array.isArray(value)) {
+		for (const entry of value) {
+			const found = unknownMarker(entry, seen);
+			if (found) return found;
+		}
+		return null;
+	}
+	for (const [key, child] of Object.entries(value)) {
+		if (VENDOR_MARKER.test(key) && !KNOWN_MARKERS.has(key)) return key;
+		if (SCHEMA_DATA_KEYS.has(key)) continue;
+		const schemas =
+			SCHEMA_NAME_MAPS.has(key) &&
+			child !== null &&
+			typeof child === 'object' &&
+			!Array.isArray(child)
+				? Object.values(child)
+				: [child];
+		for (const schema of schemas) {
+			const found = unknownMarker(schema, seen);
+			if (found) return found;
+		}
+	}
+	return null;
+}
+
+function assertKnownMarkers(tool: { readonly id: string }): void {
+	const { inputSchema, outputSchema } = tool as {
+		readonly inputSchema?: unknown;
+		readonly outputSchema?: unknown;
+	};
+	const marker = unknownMarker([inputSchema, outputSchema], new Set());
+	if (marker)
+		throw new RegistryError(
+			'AGENT_TOOL_SCHEMA_MARKER_UNKNOWN',
+			`Agent tool ${tool.id} marks a schema field with ${marker}; only x-flowdular-secret and x-flowdular-read-permission protect a field.`,
+		);
+}
+
 export function createPlatformToolRegistry<
 	T extends { readonly id: string },
 	N extends { readonly id: string } = { readonly id: string },
@@ -26,6 +93,7 @@ export function createPlatformToolRegistry<
 						`Agent tool ${tool.id} is already registered.`,
 					);
 				}
+				assertKnownMarkers(tool);
 				tools.set(tool.id, tool);
 			}
 		},

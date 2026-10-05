@@ -222,7 +222,9 @@ dependents, which the bump command does. `module validate` reports
 `PLATFORM_API_MISSING` when a manifest lacks `platformApi`.
 
 `platformApi` is the range of the platform contract the module compiles against
-(`^0.2.0`). The contract surface is pinned in
+(`^0.2.0`). Module sync and install refuse a manifest without one, and a range
+that also admits a version before the platform's current minor line, such as
+`*` or `>=0.1.0`. The contract surface is pinned in
 `packages/kernel/platform-api.snapshot.d.ts`; a change to it without a
 `PLATFORM_API_VERSION` bump fails `pnpm verify`. `module search --compatible`
 lists only releases whose range accepts the running platform.
