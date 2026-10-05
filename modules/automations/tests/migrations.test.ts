@@ -240,26 +240,58 @@ describe('automations migrations', () => {
 		).toMatchObject({ state: 'partial' });
 	});
 
-	it('adopts the time zone table only with its background policy and grant', async () => {
+	it('keeps the applied time zone record under its tenant policy alone and adopts only that shape', async () => {
 		const database = await migrator();
 		await migrateAutomationsDatabase(database);
-		await database.transaction(
+		const policies = await database.transaction(
 			(transaction) =>
-				transaction.executeScript(`
-					DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = 'automations.core';
-					DROP POLICY automations_time_zones_background_policy ON automations_time_zones;
-				`),
-			{ access: 'write' },
+				transaction.query<{ polname: string }>({
+					text: `SELECT polname FROM pg_policy
+					 WHERE polrelid = to_regclass('automations_time_zones')`,
+				}),
+			{ access: 'read' },
 		);
-		const status = await databaseMigrationStatus(
-			database,
-			'automations.core',
-			databaseMigrations,
-		);
-		expect(status.at(-1)).toMatchObject({
-			id: '0007_automations_time_zones',
-			state: 'partial',
-		});
+		expect(policies.rows.map((row) => row.polname)).toEqual([
+			'automations_time_zones_tenant_policy',
+		]);
+
+		const adoption = async (script: string) => {
+			await database.transaction(
+				(transaction) =>
+					transaction.executeScript(`
+						DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = 'automations.core';
+						${script}
+					`),
+				{ access: 'write' },
+			);
+			const status = await databaseMigrationStatus(
+				database,
+				'automations.core',
+				databaseMigrations,
+			);
+			return status.at(-1);
+		};
+		expect(
+			await adoption(
+				'DROP POLICY automations_time_zones_tenant_policy ON automations_time_zones;',
+			),
+		).toMatchObject({ id: '0007_automations_time_zones', state: 'partial' });
+		/* The shape that held a zone of its own is not this migration. */
+		expect(
+			await adoption(`
+				DROP TABLE automations_time_zones;
+				CREATE TABLE automations_time_zones (
+				  tenant_id TEXT PRIMARY KEY,
+				  time_zone TEXT NOT NULL,
+				  changed_at BIGINT NOT NULL,
+				  applied_time_zone TEXT
+				);
+				ALTER TABLE automations_time_zones ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE automations_time_zones FORCE ROW LEVEL SECURITY;
+				CREATE POLICY automations_time_zones_tenant_policy ON automations_time_zones
+				  USING (tenant_id = current_setting('coreloom.tenant_id', true));
+			`),
+		).toMatchObject({ id: '0007_automations_time_zones', state: 'partial' });
 	});
 
 	it('reports a pending schema before anything is applied', async () => {

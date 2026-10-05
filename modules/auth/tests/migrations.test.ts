@@ -43,6 +43,7 @@ const MODULE_TABLES = [
 	'auth_external_identities',
 	'auth_identity_providers',
 	'module_settings',
+	'module_settings_changes',
 	'auth_accounts',
 	'auth_tenants',
 ].join(', ');
@@ -56,6 +57,7 @@ const TENANT_TABLES: Readonly<Record<string, string>> = {
 	auth_sessions: 'auth_sessions_tenant_policy',
 	auth_api_tokens: 'auth_api_tokens_tenant_policy',
 	module_settings: 'module_settings_tenant_policy',
+	module_settings_changes: 'module_settings_changes_tenant_policy',
 	auth_roles: 'auth_roles_tenant_policy',
 	auth_audit: 'auth_audit_tenant_policy',
 	auth_tenant_invitations: 'auth_tenant_invitations_tenant_policy',
@@ -2126,6 +2128,108 @@ describe('auth migrations', () => {
 				{ tenantId: 'tenant-a', access: 'write' },
 			),
 		).rejects.toThrow();
+	});
+
+	it('adopts the settings change log only with the background policy and grant its readers need', async () => {
+		await apply();
+		const forget = () =>
+			lease.database.execute({
+				text: `DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = 'auth.core'`,
+			});
+		const logState = async () =>
+			(await status()).find(
+				(entry) => entry.id === '0040_module_settings_changes',
+			)?.state;
+		await forget();
+		expect(await logState()).toBe('adopted');
+
+		await lease.database.execute({
+			text: 'REVOKE SELECT (changed_at) ON module_settings_changes FROM coreloom_background',
+		});
+		expect(await logState()).toBe('partial');
+		await expect(apply()).rejects.toThrow('0040_module_settings_changes');
+
+		await forget();
+		await lease.database.execute({
+			text: 'GRANT SELECT (changed_at) ON module_settings_changes TO coreloom_background',
+		});
+		await lease.database.execute({
+			text: 'DROP POLICY module_settings_changes_background_policy ON module_settings_changes',
+		});
+		expect(await logState()).toBe('partial');
+	});
+
+	/* A reader starting from the beginning of the log must find every value
+	   that was stored before the log existed. */
+	it('records one change for every value stored before the change log', async () => {
+		const logged = databaseMigrations.findIndex(
+			(migration) => migration.id === '0040_module_settings_changes',
+		);
+		expect(logged).toBeGreaterThan(0);
+		await runDatabaseMigrations(
+			lease.database,
+			'auth.core',
+			databaseMigrations.slice(0, logged),
+		);
+		const store = (tenantId: string, key: string, updatedAt: number) =>
+			lease.database.transaction(
+				(transaction) =>
+					transaction.execute({
+						text: `INSERT INTO module_settings
+						       (tenant_id, module_id, key, value_json, updated_at, updated_by)
+						       VALUES ($1, 'auth.core', $2, '"s3cret"', $3, 'account-a')`,
+						parameters: [tenantId, key, updatedAt],
+					}),
+				{ tenantId, access: 'write' },
+			);
+		await store('tenant-a', 'defaultLocale', 20);
+		await store('auth.core:platform', 'mailSmtpUrl', 10);
+
+		await apply();
+
+		const changes = (tenantId: string) =>
+			lease.database.transaction(
+				async (transaction) =>
+					(
+						await transaction.query<Record<string, unknown>>({
+							text: `SELECT revision, tenant_id, key, cleared, changed_at,
+							              changed_by, origin_tenant_id, audit_pending
+							       FROM module_settings_changes WHERE tenant_id = $1`,
+							parameters: [tenantId],
+						})
+					).rows.map((row) => ({
+						...row,
+						revision: Number(row.revision),
+						cleared: Number(row.cleared),
+						changed_at: Number(row.changed_at),
+						audit_pending: Number(row.audit_pending),
+					})),
+				{ tenantId, access: 'read' },
+			);
+		expect(await changes('auth.core:platform')).toEqual([
+			{
+				revision: 1,
+				tenant_id: 'auth.core:platform',
+				key: 'mailSmtpUrl',
+				cleared: 0,
+				changed_at: 10,
+				changed_by: 'account-a',
+				origin_tenant_id: null,
+				audit_pending: 0,
+			},
+		]);
+		expect(await changes('tenant-a')).toEqual([
+			{
+				revision: 2,
+				tenant_id: 'tenant-a',
+				key: 'defaultLocale',
+				cleared: 0,
+				changed_at: 20,
+				changed_by: 'account-a',
+				origin_tenant_id: 'tenant-a',
+				audit_pending: 0,
+			},
+		]);
 	});
 
 	it('runs clean on a second migration pass', async () => {

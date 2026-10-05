@@ -81,7 +81,7 @@ describe('audit write failures', () => {
 		});
 
 		await expect(
-			service.recordSettingsUpdate(
+			service.recordMailTest(
 				{
 					accountId: 'acc_1',
 					tenantId: 'tenant-a',
@@ -89,22 +89,14 @@ describe('audit write failures', () => {
 					role: 'owner',
 					scopes: [],
 				},
-				{
-					moduleId: 'auth.core',
-					key: 'allowSignUp',
-					tenantId: 'tenant-a',
-					cleared: false,
-					previous: false,
-					next: true,
-					actor: { accountId: 'acc_1', tenantId: 'tenant-a' },
-				},
+				{ source: 'settings', transport: 'smtp', outcome: 'sent' },
 			),
 		).resolves.toBeUndefined();
 
 		expect(counters).toEqual([
 			{
 				name: 'audit_write_failures_total',
-				labels: { action: 'settings.updated' },
+				labels: { action: 'auth.mail.tested' },
 			},
 		]);
 		expect(reports).toEqual([
@@ -112,7 +104,7 @@ describe('audit write failures', () => {
 				at: 1_000,
 				name: 'AuditWriteFailed',
 				module: 'auth.core',
-				message: 'Audit write failed for settings.updated.',
+				message: 'Audit write failed for auth.mail.tested.',
 			},
 		]);
 		expect(JSON.stringify(reports)).not.toContain('secret@example.com');

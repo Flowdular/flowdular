@@ -23,7 +23,6 @@ import {
 } from '@flowdular/module-agents/server';
 import type { PlatformServerContext } from '@flowdular/module-auth/server';
 import { AUTOMATIONS_PERMISSIONS } from '../src/acl/permissions.ts';
-import { tenantTimeZone } from '../src/domain/time-zone.ts';
 import { createServerComposition } from '../src/platform.ts';
 import {
 	AUTOMATION_EXECUTION_CAPABILITY,
@@ -326,104 +325,6 @@ describe('automations.core web and worker roles', () => {
 		await web.composition.dispose?.();
 		expect(web.composition.startWorker).toBeTypeOf('function');
 		expect(acquired).toBe(0);
-	});
-
-	it('AUTO-WORKER-TIME-ZONE applies a zone the web role accepted in a separate worker, including after a restart', async () => {
-		vi.useFakeTimers({ toFake: ['Date'] });
-		vi.setSystemTime(at('2026-09-12T00:00:00.000Z'));
-		const daily = at('2026-09-12T09:00:00.000Z');
-		const interval = at('2026-09-19T00:00:00.000Z');
-		await shared.repository.createSchedule(
-			schedule('daily', 'cron:0 9 * * *', daily),
-		);
-		await shared.repository.createSchedule(
-			schedule('interval', 'every:10080', interval),
-		);
-		const store = settingsStore();
-		const web = platformProcess(store);
-		let worker = platformProcess(store);
-		try {
-			/* The worker read the zone before the change, the way a long-lived
-			   process holds a snapshot its own settings writes never refresh. */
-			await worker.settings.prime('tenant-a');
-			await worker.composition.startWorker?.();
-			await worker.composition.stop?.();
-
-			vi.setSystemTime(at('2026-09-12T01:00:00.000Z'));
-			await web.settings.set(
-				'tenant-a',
-				TENANT_TIME_ZONE_SETTING.moduleId,
-				TENANT_TIME_ZONE_SETTING.key,
-				'Europe/Warsaw',
-				'owner-1',
-			);
-			await web.composition.stop?.();
-			expect(tenantTimeZone(worker.settings, 'tenant-a')).toBe('UTC');
-			/* The web role persisted the signal and moved nothing itself. */
-			expect(await shared.repository.getTimeZone('tenant-a')).toMatchObject({
-				timeZone: 'Europe/Warsaw',
-				appliedTimeZone: null,
-			});
-			expect(await nextRunOf('daily')).toBe(daily);
-
-			/* Before 09:00 Warsaw, 07:00 UTC, the worker's next pass has moved
-			   the cron slot; the interval keeps its next run. */
-			vi.setSystemTime(at('2026-09-12T06:59:00.000Z'));
-			await worker.composition.startWorker?.();
-			await settled(async () =>
-				expect(await nextRunOf('daily')).toBe(at('2026-09-12T07:00:00.000Z')),
-			);
-			await worker.composition.stop?.();
-			expect(await nextRunOf('interval')).toBe(interval);
-			expect(worker.keys).toEqual([]);
-
-			/* The slot after the one it fires is computed in the recorded zone,
-			   never in the UTC snapshot this worker still holds. */
-			vi.setSystemTime(at('2026-09-12T07:00:30.000Z'));
-			await worker.composition.startWorker?.();
-			await settled(async () =>
-				expect(await nextRunOf('daily')).not.toBe(
-					at('2026-09-12T07:00:00.000Z'),
-				),
-			);
-			await worker.composition.stop?.();
-			expect(worker.keys).toEqual([
-				`schedule:daily:${at('2026-09-12T07:00:00.000Z')}`,
-			]);
-			expect(await nextRunOf('daily')).toBe(at('2026-09-13T07:00:00.000Z'));
-
-			/* A second change lands while the worker is down. 09:00 Tokyo is
-			   00:00 UTC, before the pending 07:00 UTC slot, so a worker that
-			   waited for that slot to come due would skip the new one. */
-			await worker.composition.dispose?.();
-			vi.setSystemTime(at('2026-09-12T08:00:00.000Z'));
-			await web.settings.set(
-				'tenant-a',
-				TENANT_TIME_ZONE_SETTING.moduleId,
-				TENANT_TIME_ZONE_SETTING.key,
-				'Asia/Tokyo',
-				'owner-1',
-			);
-			await web.composition.stop?.();
-
-			vi.setSystemTime(at('2026-09-13T00:00:30.000Z'));
-			worker = platformProcess(store);
-			await worker.composition.startWorker?.();
-			await settled(async () =>
-				expect(await nextRunOf('daily')).toBe(at('2026-09-14T00:00:00.000Z')),
-			);
-			await worker.composition.stop?.();
-			expect(worker.keys).toEqual([
-				`schedule:daily:${at('2026-09-13T00:00:00.000Z')}`,
-			]);
-			expect(await shared.repository.getTimeZone('tenant-a')).toMatchObject({
-				timeZone: 'Asia/Tokyo',
-				appliedTimeZone: 'Asia/Tokyo',
-			});
-		} finally {
-			await web.composition.dispose?.();
-			await worker.composition.dispose?.();
-		}
 	});
 });
 

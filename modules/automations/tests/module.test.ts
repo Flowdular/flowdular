@@ -927,26 +927,23 @@ describe('automations PostgreSQL boundary', () => {
 		).rejects.toBeDefined();
 	});
 
-	it('AUTO-WORKER-TIME-ZONE shows the background role only the workspaces owing a retiming, by tenant id alone', async () => {
+	it('AUTO-TZ-DISCOVERY-NARROW keeps the applied zone record inside its tenant and away from the background role', async () => {
 		const { repository, background, runtime } = shared;
-		await repository.recordTimeZone({
+		const change = {
 			tenantId: 'tenant-a',
-			timeZone: 'Europe/Warsaw',
+			revision: 7,
 			changedAt: 10,
-		});
-		await repository.recordTimeZone({
-			tenantId: 'tenant-b',
-			timeZone: 'Asia/Tokyo',
+			appliedAt: 20,
+		};
+		expect(await repository.applyTimeZoneChange(change, () => [])).toBe(0);
+		expect(await repository.appliedTimeZone('tenant-a')).toEqual({
+			revision: 7,
 			changedAt: 10,
+			appliedAt: 20,
 		});
-		await repository.markTimeZoneApplied({
-			tenantId: 'tenant-b',
-			timeZone: 'Asia/Tokyo',
-			changedAt: 10,
-		});
-		expect(await repository.listPendingTimeZones(10)).toEqual(['tenant-a']);
+		expect(await repository.appliedTimeZone('tenant-b')).toBeNull();
 		for (const text of [
-			'SELECT time_zone FROM automations_time_zones',
+			'SELECT tenant_id FROM automations_time_zones',
 			'SELECT * FROM automations_time_zones',
 		]) {
 			await expect(
@@ -959,7 +956,7 @@ describe('automations PostgreSQL boundary', () => {
 			background.transaction(
 				(transaction) =>
 					transaction.execute({
-						text: 'UPDATE automations_time_zones SET applied_time_zone = time_zone',
+						text: 'UPDATE automations_time_zones SET applied_revision = 0',
 					}),
 				{ access: 'write' },
 			),
@@ -968,33 +965,34 @@ describe('automations PostgreSQL boundary', () => {
 			runtime.transaction(
 				(transaction) =>
 					transaction.execute({
-						text: `INSERT INTO automations_time_zones (tenant_id, time_zone, changed_at)
-						 VALUES ('tenant-b', 'UTC', 20)`,
+						text: `INSERT INTO automations_time_zones
+						 (tenant_id, applied_revision, changed_at, applied_at)
+						 VALUES ('tenant-b', 1, 1, 1)`,
 					}),
 				{ access: 'write', tenantId: 'tenant-a' },
 			),
 		).rejects.toBeDefined();
 
-		/* A change older than the stored one lands late and is dropped, and an
-		   apply for a change that has since been replaced does not land. */
-		await repository.recordTimeZone({
-			tenantId: 'tenant-a',
-			timeZone: 'UTC',
-			changedAt: 5,
-		});
-		expect(await repository.getTimeZone('tenant-a')).toEqual({
-			tenantId: 'tenant-a',
-			timeZone: 'Europe/Warsaw',
+		/* A change no newer than the applied one plans nothing and writes nothing. */
+		let planned = 0;
+		const plan = () => {
+			planned += 1;
+			return [];
+		};
+		for (const revision of [7, 6]) {
+			expect(
+				await repository.applyTimeZoneChange(
+					{ ...change, revision, appliedAt: 30 },
+					plan,
+				),
+			).toBeNull();
+		}
+		expect(planned).toBe(0);
+		expect(await repository.appliedTimeZone('tenant-a')).toEqual({
+			revision: 7,
 			changedAt: 10,
-			appliedTimeZone: null,
+			appliedAt: 20,
 		});
-		await expect(
-			repository.markTimeZoneApplied({
-				tenantId: 'tenant-a',
-				timeZone: 'Europe/Warsaw',
-				changedAt: 9,
-			}),
-		).resolves.toBe(false);
 	});
 
 	it('advances a due schedule exactly once for the slot the poll named', async () => {
