@@ -205,6 +205,12 @@ export function ModuleStudioView(props: ModuleStudioViewProps) @{
 											<code class="ui-mono">{change.sha256}</code>
 										</span>
 										<span class="ui-cell">
+											<small>{t('system.studio.installedArtifact')}</small>
+											<code class="ui-mono">
+												{installed.get(change.id) ?? t('system.value.none')}
+											</code>
+										</span>
+										<span class="ui-cell">
 											<small>{t('system.studio.dependencies')}</small>
 											<span>
 												{change.dependencies.join(', ') ||

@@ -40,6 +40,7 @@
 	"studio.source": "Pinned source",
 	"studio.planId": "Plan ID",
 	"studio.artifact": "Artifact SHA-256",
+	"studio.installedArtifact": "Installed SHA-256",
 	"studio.dependencies": "Dependencies",
 	"studio.permissions": "Permissions",
 	"studio.migrations": "Migrations",

@@ -11,5 +11,5 @@
 		"types": ["node"],
 		"plugins": [{ "name": "@tsrx/typescript-plugin" }]
 	},
-	"include": ["src/**/*", "tests/**/*.ts"]
+	"include": ["src/**/*", "tests/**/*"]
 }
