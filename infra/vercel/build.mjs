@@ -155,6 +155,11 @@ async function writeFunction(directory, runtimeRole) {
 				FD_TRUST_PROXY: 'true',
 				FD_AUTH_SECURE_COOKIE: 'true',
 				FD_DATABASE_POOL_MAX: '2',
+				/* A tick window plus this drain stays inside maxDuration, so an
+				   agent run claimed late in a window can still finish. */
+				...(runtimeRole === 'tick'
+					? { FD_AGENT_WORKER_DRAIN_MS: '180000' }
+					: {}),
 			},
 		}) + '\n',
 	);

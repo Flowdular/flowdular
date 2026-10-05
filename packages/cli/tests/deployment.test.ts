@@ -98,6 +98,7 @@ describe('deployment targets', () => {
 				),
 			) as { environment: Record<string, string> };
 			expect(workerConfig.environment.FD_RUNTIME_ROLE).toBe('tick');
+			expect(workerConfig.environment.FD_AGENT_WORKER_DRAIN_MS).toBe('180000');
 			expect(
 				await readFile(
 					join(output, 'functions/worker.func/modules/example/module.json'),
@@ -117,6 +118,9 @@ describe('deployment targets', () => {
 			expect(functionConfig.launcherType).toBe('Nodejs');
 			expect(functionConfig.environment.FD_DEPLOYMENT_TARGET).toBe('vercel');
 			expect(functionConfig.environment.FD_RUNTIME_ROLE).toBe('web');
+			expect(functionConfig.environment).not.toHaveProperty(
+				'FD_AGENT_WORKER_DRAIN_MS',
+			);
 			expect(await readFile(join(output, 'static/assets/app.js'), 'utf8')).toBe(
 				'',
 			);

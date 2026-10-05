@@ -84,8 +84,10 @@ migrate or mutate production data.
   `FD_STORAGE_MAX_OBJECT_BYTES` at or below 4194304 until uploads go directly to
   storage.
 - A tick drains its workers before it answers, within the Function's 300 second
-  limit. Work still running when a tick ends is stopped and recovered on a later
-  tick once its lease expires.
+  limit. An agent run claimed during the window gets up to 180 more seconds to
+  finish (`FD_AGENT_WORKER_DRAIN_MS`). Work still running after that is stopped
+  and starts again from its input on a later tick once its lease expires, so an
+  agent run must finish within about four minutes on Vercel.
 - `/api/ready` checks the database roles. It does not prove that ticks are
   arriving; watch the Cron Jobs page and the worker Function logs.
 - The embedded sandbox and workspace file edits are local development features
