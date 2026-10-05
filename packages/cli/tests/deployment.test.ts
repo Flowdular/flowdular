@@ -1,6 +1,7 @@
 import {
 	access,
 	chmod,
+	copyFile,
 	mkdir,
 	mkdtemp,
 	readFile,
@@ -8,10 +9,13 @@ import {
 	symlink,
 	writeFile,
 } from 'node:fs/promises';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFile, execFileSync, spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { parseArguments } from '../src/arguments.ts';
@@ -81,10 +85,25 @@ describe('deployment targets', () => {
 			expect(config).toEqual({
 				version: 3,
 				routes: [
+					{ src: '^/api/internal/worker/tick$', dest: '/worker' },
 					{ handle: 'filesystem' },
 					{ src: '/(.*)', dest: '/flowdular' },
 				],
+				crons: [{ path: '/api/internal/worker/tick', schedule: '* * * * *' }],
 			});
+			const workerConfig = JSON.parse(
+				await readFile(
+					join(output, 'functions/worker.func/.vc-config.json'),
+					'utf8',
+				),
+			) as { environment: Record<string, string> };
+			expect(workerConfig.environment.FD_RUNTIME_ROLE).toBe('tick');
+			expect(
+				await readFile(
+					join(output, 'functions/worker.func/modules/example/module.json'),
+					'utf8',
+				),
+			).toBe('{"id":"example.core"}');
 			const functionConfig = JSON.parse(
 				await readFile(join(functionRoot, '.vc-config.json'), 'utf8'),
 			) as {
@@ -97,6 +116,7 @@ describe('deployment targets', () => {
 			expect(functionConfig.handler).toBe('handler.mjs');
 			expect(functionConfig.launcherType).toBe('Nodejs');
 			expect(functionConfig.environment.FD_DEPLOYMENT_TARGET).toBe('vercel');
+			expect(functionConfig.environment.FD_RUNTIME_ROLE).toBe('web');
 			expect(await readFile(join(output, 'static/assets/app.js'), 'utf8')).toBe(
 				'',
 			);
@@ -203,6 +223,123 @@ describe('deployment targets', () => {
 		}
 	});
 
+	it('takes the cron schedule a Hobby plan allows and refuses a malformed one', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'flowdular-vercel-cron-'));
+		try {
+			await mkdir(join(root, 'platform/dist/server'), { recursive: true });
+			await mkdir(join(root, 'platform/dist/client/assets'), {
+				recursive: true,
+			});
+			await mkdir(join(root, 'modules'), { recursive: true });
+			await writeFile(join(root, 'platform/dist/server/entry.js'), '');
+			await writeFile(join(root, 'platform/package.json'), '{}');
+			await writeFile(join(root, 'flowdular.json'), '{}');
+			const build = (schedule: string) =>
+				spawnSync(
+					process.execPath,
+					[
+						new URL('../../../infra/vercel/build.mjs', import.meta.url)
+							.pathname,
+						'--package-only',
+						'--root',
+						root,
+					],
+					{
+						encoding: 'utf8',
+						env: { ...process.env, FD_VERCEL_CRON_SCHEDULE: schedule },
+					},
+				);
+			expect(build('0 3 * * *').status).toBe(0);
+			const config = JSON.parse(
+				await readFile(join(root, '.vercel/output/config.json'), 'utf8'),
+			) as { crons: { schedule: string }[] };
+			expect(config.crons).toEqual([
+				{ path: '/api/internal/worker/tick', schedule: '0 3 * * *' },
+			]);
+			const malformed = build('every minute');
+			expect(malformed.status).not.toBe(0);
+			expect(malformed.stderr).toContain(
+				'FD_VERCEL_CRON_SCHEDULE must be a five-field cron expression.',
+			);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it('kicks the worker function after a successful state change in the web role', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'flowdular-vercel-kick-'));
+		const received: {
+			method: string | undefined;
+			url: string | undefined;
+			auth: string | undefined;
+		}[] = [];
+		const server = createServer((request, response) => {
+			received.push({
+				method: request.method,
+				url: request.url,
+				auth: request.headers.authorization,
+			});
+			response.end('{}');
+		});
+		await new Promise<void>((resolve) =>
+			server.listen(0, '127.0.0.1', resolve),
+		);
+		try {
+			await mkdir(join(root, 'platform/dist/server'), { recursive: true });
+			await writeFile(
+				join(root, 'platform/dist/server/entry.js'),
+				'export const nodeHandler = (request, response) => { response.statusCode = request.status; };\n',
+			);
+			await copyFile(
+				new URL('../../../infra/vercel/handler.mjs', import.meta.url),
+				join(root, 'handler.mjs'),
+			);
+			const { port } = server.address() as AddressInfo;
+			const kicksFor = async (method: string, url: string, status: number) => {
+				const before = received.length;
+				const script = `
+					import { EventEmitter } from 'node:events';
+					const pending = [];
+					globalThis[Symbol.for('@vercel/request-context')] = {
+						get: () => ({ waitUntil: (promise) => pending.push(promise) }),
+					};
+					const { default: handler } = await import(${JSON.stringify(pathToFileURL(join(root, 'handler.mjs')).href)});
+					const response = new EventEmitter();
+					handler(${JSON.stringify({ method, url, status })}, response);
+					response.emit('close');
+					await Promise.all(pending);
+				`;
+				const run = await promisify(execFile)(
+					process.execPath,
+					['--input-type=module', '-e', script],
+					{
+						env: {
+							...process.env,
+							FD_RUNTIME_ROLE: 'web',
+							FD_AUTH_PUBLIC_ORIGIN: `http://127.0.0.1:${port}`,
+							FD_WORKER_TICK_SECRET: '',
+							CRON_SECRET: 'c'.repeat(32),
+						},
+					},
+				);
+				expect(run.stderr).toBe('');
+				return received.length - before;
+			};
+			expect(await kicksFor('GET', '/api/records', 200)).toBe(0);
+			expect(await kicksFor('POST', '/api/records', 403)).toBe(0);
+			expect(await kicksFor('POST', '/settings', 200)).toBe(0);
+			expect(await kicksFor('POST', '/api/records', 201)).toBe(1);
+			expect(received.at(-1)).toEqual({
+				method: 'POST',
+				url: '/api/internal/worker/tick',
+				auth: `Bearer ${'c'.repeat(32)}`,
+			});
+		} finally {
+			await new Promise((resolve) => server.close(resolve));
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it('returns an import link only for pushed Vercel build sources', async () => {
 		const root = await mkdtemp(join(tmpdir(), 'flowdular-vercel-plan-'));
 		try {
@@ -263,11 +400,10 @@ describe('deployment targets', () => {
 				data.checks.find((check) => check.id === 'vercel-web-artifact')?.status,
 			).toBe('pass');
 			expect(
-				data.checks.find((check) => check.id === 'companion-worker')?.status,
-			).toBe('action-required');
+				data.checks.find((check) => check.id === 'worker-schedule')?.status,
+			).toBe('pass');
 			expect(
-				data.checks.find((check) => check.id === 'web-worker-lifecycle')
-					?.status,
+				data.checks.find((check) => check.id === 'external-services')?.status,
 			).toBe('action-required');
 			await writeFile(join(root, 'vercel.json'), '{}');
 			const malformed = await deploymentPlan(workspace, 'vercel');

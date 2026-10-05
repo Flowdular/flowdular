@@ -33,12 +33,11 @@ selects that branch for Render, but the external PostgreSQL, storage and secret
 prerequisites still require operator setup. Local Git tracking refs are not
 live provider validation, so confirm that Render can access the branch.
 
-The [experimental Vercel web artifact](vercel/README.md) packages the Octane
-handler and client assets. `deploy plan vercel --json` checks its source and
-returns an import URL for a pushed branch. It is not a production target yet:
-web Function instances still start module background pollers. The platform
-needs a separate always-on worker and a split between web initialization and
-worker startup. [Vercel Functions scale down to zero](https://vercel.com/docs/functions).
+The [Vercel artifact](vercel/README.md) packages the Octane handler and client
+assets as a web Function and a worker Function. [Vercel Functions scale down to zero](https://vercel.com/docs/functions),
+so module workers run only inside ticks from Vercel Cron and from
+state-changing requests. `deploy plan vercel --json` checks its source and
+returns an import URL for a pushed branch.
 Cloudflare's Durable Object Container API can keep a process alive, but
 Flowdular has no verified adapter for its restart, secret and rollout lifecycle.
 

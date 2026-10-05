@@ -35,7 +35,7 @@ export interface DeploymentAdapter {
 		| 'managed-container';
 	readonly backgroundJobs:
 		| 'in-process'
-		| 'separate-worker-required'
+		| 'scheduled-ticks'
 		| 'lifecycle-unverified';
 	readonly launch: 'local' | 'operator' | 'unavailable';
 	readonly summary: string;
@@ -70,10 +70,10 @@ export const deploymentAdapters: readonly DeploymentAdapter[] = [
 	{
 		id: 'vercel',
 		runtime: 'request-container',
-		backgroundJobs: 'separate-worker-required',
+		backgroundJobs: 'scheduled-ticks',
 		launch: 'unavailable',
 		summary:
-			'Vercel web packaging is experimental: web Functions still start pollers, and durable jobs require a separately deployed always-on worker.',
+			'Vercel serves HTTP from a web Function and runs module workers in a worker Function that Vercel Cron and state-changing requests tick.',
 	},
 	{
 		id: 'cloudflare',
@@ -486,16 +486,10 @@ export async function deploymentPlan(
 				'Provision external PostgreSQL with runtime, background and migrator roles plus verified TLS, an S3-compatible bucket, stable encryption keys, and a completed first-run workspace. Set Vercel environment variables before import.',
 		});
 		checks.push({
-			id: 'companion-worker',
-			status: 'action-required',
+			id: 'worker-schedule',
+			status: 'pass',
 			message:
-				'Deploy the same revision as an always-on background worker on a container host with the same database, storage and keys; monitor its job recovery. Web readiness does not prove worker health.',
-		});
-		checks.push({
-			id: 'web-worker-lifecycle',
-			status: 'action-required',
-			message:
-				'The Vercel web Function still starts module background pollers. Split registry initialization from worker startup in every module before treating this as a production web target.',
+				'Vercel Cron ticks the worker Function every minute and a state-changing request ticks it at once. Set CRON_SECRET; on a Hobby plan set FD_VERCEL_CRON_SCHEDULE to a daily schedule, so scheduled automations then wait for traffic or the daily run.',
 		});
 	} else {
 		checks.push({
@@ -549,7 +543,7 @@ export async function deploymentPlan(
 					: target === 'render'
 						? 'Connect render.yaml as a Render Blueprint after supplying external PostgreSQL and object storage.'
 						: target === 'vercel'
-							? 'See infra/vercel/README.md for the experimental web artifact, worker lifecycle blocker and required companion worker.'
+							? 'See infra/vercel/README.md for the Vercel artifact, its worker ticks and the external services it needs.'
 							: null,
 		deployUrl,
 	});

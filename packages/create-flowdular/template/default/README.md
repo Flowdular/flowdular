@@ -95,10 +95,10 @@ keys, starts PostgreSQL and MinIO, then opens the setup page. Enter the token
 shown in the terminal. The database step is already complete, so you start with
 the workspace owner. `infra/README.md` covers the stack and deployments.
 
-For an isolated Vercel evaluation, run `pnpm flowdular deploy plan vercel` and
-follow `infra/vercel/README.md`. The web build is provided, but web Functions
-still start background pollers. Production use needs that lifecycle split and
-an always-on companion worker sharing the external database and object store.
+To deploy on Vercel, run `pnpm flowdular deploy plan vercel` and follow
+`infra/vercel/README.md`. It needs an external PostgreSQL database and object
+storage; module workers run in a worker Function that Vercel Cron and
+state-changing requests tick.
 
 ## Commands
 

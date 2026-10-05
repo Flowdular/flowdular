@@ -73,17 +73,14 @@ bucket, and binds the resulting secrets without logging them. It must then
 exercise first-run setup, migration failure, restart and restore against a
 real Render account before the deploy action can be called one click.
 
-The [experimental Vercel web artifact](vercel/README.md) packages Octane's Node
-handler and client assets through the Build Output API. `deploy plan vercel
+The [Vercel artifact](vercel/README.md) packages Octane's Node handler and
+client assets through the Build Output API as a web Function and a worker
+Function. [Vercel Functions scale down to zero](https://vercel.com/docs/functions),
+so module workers run only inside ticks: Vercel Cron ticks the worker Function
+every minute, and a state-changing request ticks it at once. `deploy plan vercel
 --json` checks the source files and returns a Vercel import URL for a pushed
-branch. It is not a production target yet: web Function instances still start
-module background pollers. Registry initialization must be separated from
-worker startup, then tested with the always-on companion worker before a full
-launch command can be enabled. The companion requires external PostgreSQL,
-object storage, stable keys and a completed first-run workspace.
-[Vercel Functions scale down to zero](https://vercel.com/docs/functions) and
-have a bounded invocation duration, so web traffic cannot keep scheduled work
-alive.
+branch. The deployment still needs external PostgreSQL, object storage, stable
+keys and a completed first-run workspace.
 
 Cloudflare is still unavailable as a full target. Its Durable Object
 [Container API](https://developers.cloudflare.com/containers/api/durable-object-container/)

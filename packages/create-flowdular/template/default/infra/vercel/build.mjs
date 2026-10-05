@@ -33,6 +33,16 @@ if (!packageOnly) {
 
 const output = join(root, '.vercel/output');
 const functionRoot = join(output, 'functions/flowdular.func');
+const workerFunctionRoot = join(output, 'functions/worker.func');
+const WORKER_TICK_PATH = '/api/internal/worker/tick';
+/* Vercel Hobby accepts at most one cron run a day and fails the deployment on a
+   tighter schedule; the deploy command passes the schedule the plan allows. */
+const cronSchedule = process.env.FD_VERCEL_CRON_SCHEDULE?.trim() || '* * * * *';
+if (!/^\S+( \S+){4}$/.test(cronSchedule)) {
+	throw new Error(
+		'FD_VERCEL_CRON_SCHEDULE must be a five-field cron expression.',
+	);
+}
 const staticRoot = join(output, 'static');
 const client = join(root, 'platform/dist/client');
 const server = join(root, 'platform/dist/server');
@@ -92,66 +102,78 @@ try {
 	if (error.code !== 'ENOENT') throw error;
 }
 await rm(output, { recursive: true, force: true });
-await mkdir(functionRoot, { recursive: true });
 await mkdir(staticRoot, { recursive: true });
-
-await copyTree(server, join(functionRoot, 'platform/dist/server'));
 await copyTree(join(client, 'assets'), join(staticRoot, 'assets'));
 for (const name of ['favicon.svg', 'og.png']) {
 	await copyOptional(join(client, name), join(staticRoot, name));
 }
-await copyRegular(
-	join(root, 'platform/package.json'),
-	join(functionRoot, 'platform/package.json'),
-);
-await copyRegular(
-	join(root, 'flowdular.json'),
-	join(functionRoot, 'flowdular.json'),
-);
-for (const name of [
-	'flowdular.modules.lock.json',
-	'flowdular.module-sources.json',
-]) {
-	await copyOptional(join(root, name), join(functionRoot, name));
-}
-const modulesRoot = join(root, 'modules');
-for (const entry of await readdir(modulesRoot, { withFileTypes: true })) {
-	if (!entry.isDirectory()) continue;
-	for (const name of ['module.json', 'spec/module.yaml']) {
-		await copyOptional(
-			join(modulesRoot, entry.name, name),
-			join(functionRoot, 'modules', entry.name, name),
-		);
+
+async function writeFunction(directory, runtimeRole) {
+	await mkdir(directory, { recursive: true });
+	await copyTree(server, join(directory, 'platform/dist/server'));
+	await copyRegular(
+		join(root, 'platform/package.json'),
+		join(directory, 'platform/package.json'),
+	);
+	await copyRegular(
+		join(root, 'flowdular.json'),
+		join(directory, 'flowdular.json'),
+	);
+	for (const name of [
+		'flowdular.modules.lock.json',
+		'flowdular.module-sources.json',
+	]) {
+		await copyOptional(join(root, name), join(directory, name));
 	}
+	const modulesRoot = join(root, 'modules');
+	for (const entry of await readdir(modulesRoot, { withFileTypes: true })) {
+		if (!entry.isDirectory()) continue;
+		for (const name of ['module.json', 'spec/module.yaml']) {
+			await copyOptional(
+				join(modulesRoot, entry.name, name),
+				join(directory, 'modules', entry.name, name),
+			);
+		}
+	}
+	await copyRegular(
+		join(repositoryRoot, 'infra/vercel/handler.mjs'),
+		join(directory, 'handler.mjs'),
+		repositoryRoot,
+	);
+	await writeFile(
+		join(directory, '.vc-config.json'),
+		JSON.stringify({
+			runtime: 'nodejs24.x',
+			handler: 'handler.mjs',
+			launcherType: 'Nodejs',
+			maxDuration: 300,
+			supportsResponseStreaming: true,
+			environment: {
+				NODE_ENV: 'production',
+				FD_DEPLOYMENT_TARGET: 'vercel',
+				FD_RUNTIME_ROLE: runtimeRole,
+				FD_TRUST_PROXY: 'true',
+				FD_AUTH_SECURE_COOKIE: 'true',
+				FD_DATABASE_POOL_MAX: '2',
+			},
+		}) + '\n',
+	);
 }
 
-await copyRegular(
-	join(repositoryRoot, 'infra/vercel/handler.mjs'),
-	join(functionRoot, 'handler.mjs'),
-	repositoryRoot,
-);
-await writeFile(
-	join(functionRoot, '.vc-config.json'),
-	JSON.stringify({
-		runtime: 'nodejs24.x',
-		handler: 'handler.mjs',
-		launcherType: 'Nodejs',
-		maxDuration: 300,
-		supportsResponseStreaming: true,
-		environment: {
-			NODE_ENV: 'production',
-			FD_DEPLOYMENT_TARGET: 'vercel',
-			FD_TRUST_PROXY: 'true',
-			FD_AUTH_SECURE_COOKIE: 'true',
-			FD_DATABASE_POOL_MAX: '2',
-		},
-	}) + '\n',
-);
+/* Two functions over one server build: the web function never runs a module
+   worker, and the worker function runs them only inside a tick. */
+await writeFunction(functionRoot, 'web');
+await writeFunction(workerFunctionRoot, 'tick');
 await writeFile(
 	join(output, 'config.json'),
 	JSON.stringify({
 		version: 3,
-		routes: [{ handle: 'filesystem' }, { src: '/(.*)', dest: '/flowdular' }],
+		routes: [
+			{ src: `^${WORKER_TICK_PATH}$`, dest: '/worker' },
+			{ handle: 'filesystem' },
+			{ src: '/(.*)', dest: '/flowdular' },
+		],
+		crons: [{ path: WORKER_TICK_PATH, schedule: cronSchedule }],
 	}) + '\n',
 );
 
