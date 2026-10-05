@@ -58,6 +58,7 @@ import {
 import {
 	createWorkerTickEndpoint,
 	createWorkerTicker,
+	WORKER_TICK_PATH,
 	workerTickConfigFromEnvironment,
 } from './src/server/worker-tick.ts';
 import { createPlatformObservability } from './src/server/tracing.ts';
@@ -71,6 +72,7 @@ import {
 	clearSetupToken,
 	configuredDatabaseNeedsFirstRun,
 	createFirstRunSetup,
+	createInPlaceFirstRun,
 } from './src/server/setup/index.ts';
 import { findWorkspaceRoot } from './src/server/workspace-root.ts';
 
@@ -150,16 +152,13 @@ async function createPlatformConfig() {
 			);
 		return createFirstRunConfig();
 	}
-	if (
+	/* A Vercel Function can neither restart into the application after setup
+	   nor keep a token file, so it composes the application and serves setup
+	   inside it until the first workspace exists. */
+	const needsFirstRun =
 		process.env.FD_INTERNAL_BUILD !== 'true' &&
-		(await configuredDatabaseNeedsFirstRun(process.env, workspaceRoot))
-	) {
-		if (serverless)
-			throw new Error(
-				'Finish first-run setup against the external database before deploying to Vercel.',
-			);
-		return createFirstRunConfig(true);
-	}
+		(await configuredDatabaseNeedsFirstRun(process.env, workspaceRoot));
+	if (needsFirstRun && !serverless) return createFirstRunConfig(true);
 	clearSetupToken(workspaceRoot);
 	const runtimeRole = platformRuntimeRole(process.env);
 	const workerTick =
@@ -233,6 +232,17 @@ async function createPlatformConfig() {
 		const agentDefinitions = createPlatformAgentRegistry();
 		const capabilities = createPlatformCapabilityRegistry();
 		const readinessEndpoint = createReadinessEndpoint(databases);
+		const firstRun = needsFirstRun
+			? createInPlaceFirstRun({
+					environment: process.env,
+					workspaceRoot,
+					applicationPath: configuredApplicationPath,
+					webMountPaths: moduleWebMounts.map((site) => site.path),
+					passThrough: ['/api/health', '/api/ready', WORKER_TICK_PATH],
+					workspaceExists: async () =>
+						(await authRuntime.service()).hasAnyTenant(),
+				})
+			: null;
 		const moduleCompositions = composeModuleServer({
 			environment: process.env,
 			workspaceRoot,
@@ -280,6 +290,7 @@ async function createPlatformConfig() {
 					allowOrigin: (origin) => authRuntime.apiOriginAllowed(origin),
 				}),
 				lifecycle.middleware,
+				...(firstRun ? [firstRun.middleware] : []),
 				authRuntime.middleware,
 			],
 			router: {
@@ -303,6 +314,7 @@ async function createPlatformConfig() {
 						environment: process.env,
 					}),
 					...createAuthRoutes(authRuntime),
+					...(firstRun?.routes ?? []),
 					...moduleCompositions.flatMap((composition) => composition.routes),
 					...createModuleWebRoutes({
 						modules: moduleCompositions,

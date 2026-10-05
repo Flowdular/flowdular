@@ -37,7 +37,10 @@ The [Vercel artifact](vercel/README.md) packages the Octane handler and client
 assets as a web Function and a worker Function. [Vercel Functions scale down to zero](https://vercel.com/docs/functions),
 so module workers run only inside ticks from Vercel Cron and from
 state-changing requests. `deploy plan vercel --json` checks its source and
-returns an import URL for a pushed branch.
+returns an import URL for a pushed branch. `deploy start vercel --apply`
+provisions Neon PostgreSQL, a private Blob store and the stable keys through the
+Vercel CLI, deploys to Production and prints a one-time token for creating the
+first workspace at `/setup`.
 Cloudflare's Durable Object Container API can keep a process alive, but
 Flowdular has no verified adapter for its restart, secret and rollout lifecycle.
 

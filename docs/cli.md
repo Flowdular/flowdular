@@ -50,14 +50,25 @@ flowdular setup migrate-state [--apply --confirm migrate-legacy-state]
 flowdular deploy targets                            # runtime support and launch modes
 flowdular deploy plan <target> [--json]              # read-only provider preflight
 flowdular deploy start docker [--apply]              # local Compose launch; without --apply returns plan
+flowdular deploy start vercel [--apply]              # provision and deploy to Vercel Production; without --apply returns plan
 ```
 
 `deploy start docker --apply` prints a one-time setup token, so it refuses
 `--json` and redirected output and must run in a private interactive terminal. The deployment targets are
 documented in [infra/README.md](../infra/README.md). `deploy plan vercel`
 checks the build source and links to Vercel import when the branch is pushed.
-Its external database and object storage check stays action-required, and
-`deploy start vercel --apply` does not launch yet.
+
+`deploy start vercel --apply` drives the signed-in Vercel CLI: it provisions
+Neon PostgreSQL and its roles, writes the stable keys to
+`.flowdular/deploy/vercel-<project id>.env` (mode 0600) before uploading them
+through stdin, connects a private Blob store and deploys to Production. While
+the database has no workspace it prints a one-time token for `/setup`, where the
+first workspace and owner are created in the browser; Vercel holds only the
+token's SHA-256. That gives it the same terminal rules as the Docker launch.
+`--database-url-env NAME` takes the owner URL from a variable instead of Neon;
+`--plan hobby|pro` overrides the plan read from `vercel whoami --json`;
+`--project`, `--scope`, `--origin` and `--cron` are optional. A rerun resumes
+without regenerating keys. See [infra/vercel/README.md](../infra/vercel/README.md).
 
 ### Authoring a migration
 

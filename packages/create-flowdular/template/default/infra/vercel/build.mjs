@@ -35,12 +35,36 @@ const output = join(root, '.vercel/output');
 const functionRoot = join(output, 'functions/flowdular.func');
 const workerFunctionRoot = join(output, 'functions/worker.func');
 const WORKER_TICK_PATH = '/api/internal/worker/tick';
-/* Vercel Hobby accepts at most one cron run a day and fails the deployment on a
-   tighter schedule; the deploy command passes the schedule the plan allows. */
-const cronSchedule = process.env.FD_VERCEL_CRON_SCHEDULE?.trim() || '* * * * *';
+/* Hobby runs cron at most once a day, fails a deployment with a tighter
+   schedule and caps a Function at 300 seconds; Pro and Enterprise run cron
+   every minute and allow 800. A tick's window plus the agent drain must end a
+   minute before maxDuration, or Vercel stops the Function mid-drain. */
+const PLANS = {
+	hobby: { schedule: '0 3 * * *', maxDuration: 300, agentDrainMs: 180_000 },
+	pro: { schedule: '* * * * *', maxDuration: 800, agentDrainMs: 690_000 },
+};
+const DRAIN_MARGIN_MS = 60_000;
+const planName = process.env.FD_VERCEL_PLAN?.trim() || 'pro';
+if (!Object.hasOwn(PLANS, planName)) {
+	throw new Error('FD_VERCEL_PLAN must be "hobby" or "pro".');
+}
+const plan = PLANS[planName];
+const cronSchedule =
+	process.env.FD_VERCEL_CRON_SCHEDULE?.trim() || plan.schedule;
 if (!/^\S+( \S+){4}$/.test(cronSchedule)) {
 	throw new Error(
 		'FD_VERCEL_CRON_SCHEDULE must be a five-field cron expression.',
+	);
+}
+const tickWindowMs = Number(
+	process.env.FD_WORKER_TICK_WINDOW_MS?.trim() || 50_000,
+);
+if (
+	tickWindowMs + plan.agentDrainMs + DRAIN_MARGIN_MS >
+	plan.maxDuration * 1000
+) {
+	throw new Error(
+		`FD_WORKER_TICK_WINDOW_MS leaves no time to drain agent runs within the ${plan.maxDuration} second ${planName} limit.`,
 	);
 }
 const staticRoot = join(output, 'static');
@@ -109,6 +133,7 @@ for (const name of ['favicon.svg', 'og.png']) {
 }
 
 async function writeFunction(directory, runtimeRole) {
+	const tick = runtimeRole === 'tick';
 	await mkdir(directory, { recursive: true });
 	await copyTree(server, join(directory, 'platform/dist/server'));
 	await copyRegular(
@@ -146,7 +171,7 @@ async function writeFunction(directory, runtimeRole) {
 			runtime: 'nodejs24.x',
 			handler: 'handler.mjs',
 			launcherType: 'Nodejs',
-			maxDuration: 300,
+			maxDuration: tick ? plan.maxDuration : 300,
 			supportsResponseStreaming: true,
 			environment: {
 				NODE_ENV: 'production',
@@ -155,6 +180,9 @@ async function writeFunction(directory, runtimeRole) {
 				FD_TRUST_PROXY: 'true',
 				FD_AUTH_SECURE_COOKIE: 'true',
 				FD_DATABASE_POOL_MAX: '2',
+				...(tick
+					? { FD_AGENT_WORKER_DRAIN_MS: String(plan.agentDrainMs) }
+					: {}),
 			},
 		}) + '\n',
 	);

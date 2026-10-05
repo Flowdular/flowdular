@@ -109,7 +109,7 @@ Describe the business need in the sandbox. It turns the brief into a module spec
 
 The application and its modules remain source code in your workspace. A team can review changes in Git, host the application for its users and keep its PostgreSQL data, object storage and encryption keys under its own operational control. A persistent server also keeps scheduled workflows and background jobs running between requests.
 
-This repository provides a Docker Compose launcher with PostgreSQL and MinIO, Kubernetes manifests, a Render Blueprint, and a Vercel build. Render and Vercel need prepared external PostgreSQL with separate runtime, background and migrator roles, verified TLS, and object storage. On Vercel, module workers run in a worker Function that Vercel Cron and state-changing requests tick. These remote paths still need operator setup for secrets and data services.
+This repository provides a Docker Compose launcher with PostgreSQL and MinIO, Kubernetes manifests, a Render Blueprint, and a Vercel launcher. Render needs prepared external PostgreSQL with separate runtime, background and migrator roles, verified TLS, and object storage, plus operator setup for secrets. On Vercel, `deploy start vercel --apply` provisions Neon PostgreSQL, Blob storage and the keys through the Vercel CLI, deploys, and prints a one-time token for creating the first workspace in the browser; module workers run in a worker Function that Vercel Cron and state-changing requests tick.
 
 From a Flowdular repository checkout, inspect the target before starting a local Docker stack:
 
@@ -122,7 +122,7 @@ pnpm flowdular deploy start docker --apply
 
 The start command requires a private interactive terminal because it displays the one-time setup token.
 
-For Vercel, Render and Kubernetes, follow the operator setup in the [deployment guide](infra/README.md). [Operations and recovery](docs/operations.md) · [Configuration](docs/configuration.md)
+For Vercel, run `vercel login` and then `pnpm flowdular deploy start vercel --apply` ([Vercel guide](infra/vercel/README.md)). For Render and Kubernetes, follow the operator setup in the [deployment guide](infra/README.md). [Operations and recovery](docs/operations.md) · [Configuration](docs/configuration.md)
 
 ## Contributing
 

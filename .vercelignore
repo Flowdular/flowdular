@@ -1,0 +1,10 @@
+# vercel deploy uploads whatever its built-in list and this file leave in.
+# The built-in list keeps neither .env files nor local state out, and
+# .flowdular/deploy holds the production keys.
+.env
+.env.*
+!.env.example
+.flowdular
+.octane-erp
+.coreloom
+.claude/worktrees

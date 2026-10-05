@@ -79,8 +79,10 @@ Function. [Vercel Functions scale down to zero](https://vercel.com/docs/function
 so module workers run only inside ticks: Vercel Cron ticks the worker Function
 every minute, and a state-changing request ticks it at once. `deploy plan vercel
 --json` checks the source files and returns a Vercel import URL for a pushed
-branch. The deployment still needs external PostgreSQL, object storage, stable
-keys and a completed first-run workspace.
+branch. `deploy start vercel --apply` provisions Neon PostgreSQL, a private Blob
+store and the stable keys through the Vercel CLI, deploys to Production and
+prints a one-time token for creating the first workspace at `/setup`; the import
+URL needs them set up by hand.
 
 Cloudflare is still unavailable as a full target. Its Durable Object
 [Container API](https://developers.cloudflare.com/containers/api/durable-object-container/)

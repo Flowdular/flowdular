@@ -58,6 +58,7 @@ const fixtures: Record<string, string> = {
 		export const clearSetupToken = () => {};
 		export const configuredDatabaseNeedsFirstRun = async environment => environment.FD_TEST_EMPTY === 'true';
 		export const createFirstRunSetup = options => ({ routes: [{ path: '/setup', methods: ['GET'], handler: () => new Response(options.databasePreconfigured ? 'database ready' : 'database needed') }] });
+		export const createInPlaceFirstRun = options => ({ middleware: { gate: options.passThrough }, routes: [{ path: '/setup', methods: ['GET'], handler: () => new Response('in place') }] });
 	`,
 	'./src/generated/modules.server.ts': `
         export const moduleWebMounts = []; export const applicationBasePath = '/app';
@@ -291,6 +292,24 @@ it('serves setup before composing modules when a generated app has no workspace'
 				})
 			).text(),
 		).toBe('database ready');
+	} finally {
+		await platform.dispose();
+	}
+});
+
+it('composes the application with setup in front of it when a Vercel app has no workspace', async () => {
+	const platform = await generatedPlatform();
+	try {
+		const config = await boot(platform.directory, {
+			FD_TEST_EMPTY: 'true',
+			FD_DEPLOYMENT_TARGET: 'vercel',
+		});
+		expect(config.middlewares).toContainEqual({
+			gate: ['/api/health', '/api/ready', '/api/internal/worker/tick'],
+		});
+		expect(config.router.routes.map((route) => route.path)).toEqual(
+			expect.arrayContaining(['/api/health', '/api/ready', '/setup']),
+		);
 	} finally {
 		await platform.dispose();
 	}

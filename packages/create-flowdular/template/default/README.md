@@ -95,10 +95,12 @@ keys, starts PostgreSQL and MinIO, then opens the setup page. Enter the token
 shown in the terminal. The database step is already complete, so you start with
 the workspace owner. `infra/README.md` covers the stack and deployments.
 
-To deploy on Vercel, run `pnpm flowdular deploy plan vercel` and follow
-`infra/vercel/README.md`. It needs an external PostgreSQL database and object
-storage; module workers run in a worker Function that Vercel Cron and
-state-changing requests tick.
+To deploy on Vercel, run `vercel login` and then
+`pnpm flowdular deploy start vercel --apply`. It provisions Neon PostgreSQL, a
+private Blob store and the stable keys, deploys, and prints a one-time token for
+creating the first workspace at `/setup`; `infra/vercel/README.md` walks through
+it and the manual path. Module workers run in a worker Function that Vercel Cron
+and state-changing requests tick.
 
 ## Commands
 

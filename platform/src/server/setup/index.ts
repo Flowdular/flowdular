@@ -10,8 +10,9 @@ import {
 } from '../database.ts';
 import { createSetupAccess } from './access.ts';
 import { createSetupAdapters } from './adapters.ts';
+import { createFirstRunGate, type FirstRunGate } from './gate.ts';
 import { enabledDatabaseModules } from './modules.ts';
-import { createSetupRoutes } from './routes.ts';
+import { createSetupHandler, createSetupRoutes } from './routes.ts';
 import { issueSetupToken } from './token.ts';
 
 export { clearSetupToken } from './token.ts';
@@ -116,4 +117,65 @@ export function createFirstRunSetup(
 	owner[FIRST_RUN_SYMBOL] = setup;
 	(options.log ?? console.log)(issued.banner);
 	return setup;
+}
+
+export interface InPlaceFirstRunOptions {
+	readonly environment: NodeJS.ProcessEnv;
+	readonly workspaceRoot: string;
+	readonly applicationPath: string;
+	readonly webMountPaths: readonly string[];
+	readonly passThrough: readonly string[];
+	readonly workspaceExists: () => Promise<boolean>;
+	readonly log?: (message: string) => void;
+}
+
+/**
+ * First run for a deployment that can neither restart itself nor write files,
+ * such as a Vercel Function: the composed application serves setup behind a
+ * gate until a workspace exists. The deploy command keeps the token and the
+ * deployment holds only its SHA-256, so nothing is issued or written here.
+ */
+export function createInPlaceFirstRun(
+	options: InPlaceFirstRunOptions,
+): FirstRunGate {
+	const digest = options.environment.FD_SETUP_TOKEN_SHA256?.trim();
+	if (!digest) {
+		throw new Error(
+			'The database has no workspace yet and FD_SETUP_TOKEN_SHA256 is not set. Run flowdular deploy start vercel --apply, which sets it and prints the setup token.',
+		);
+	}
+	const access = createSetupAccess({ sha256: digest });
+	const production = options.environment.NODE_ENV === 'production';
+	const adapters = createSetupAdapters({
+		workspaceRoot: options.workspaceRoot,
+		production,
+	});
+	const enabled = enabledDatabaseModules(options.workspaceRoot);
+	const gate = createFirstRunGate({
+		applicationPath: options.applicationPath,
+		passThrough: options.passThrough,
+		workspaceExists: options.workspaceExists,
+		setup: (claimed) =>
+			createSetupHandler({
+				environment: options.environment,
+				databasePreconfigured: true,
+				defaultApplicationPath: options.applicationPath,
+				webMountPaths: options.webMountPaths,
+				workspaceRoot: options.workspaceRoot,
+				adapters,
+				access,
+				modules: enabled.modules,
+				modulesApproximated: enabled.approximated,
+				tokenFile: null,
+				secureCookies:
+					options.environment.FD_AUTH_SECURE_COOKIE === 'false'
+						? false
+						: production,
+				inPlace: { onClaimed: claimed },
+			}),
+	});
+	(options.log ?? console.log)(
+		'No workspace exists yet. Open /setup and enter the setup token the deploy command printed.',
+	);
+	return gate;
 }

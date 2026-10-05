@@ -24,14 +24,12 @@ import { runCommand } from '../src/runner.ts';
 import { findNamedFiles } from '../src/validation.ts';
 
 describe('deployment targets', () => {
-	it('refuses to start a request-scoped target even when apply is supplied', async () => {
-		for (const target of ['vercel', 'cloudflare']) {
-			const result = await runCommand(
-				parseArguments(['deploy', 'start', target, '--apply']),
-			);
-			expect(result.ok).toBe(false);
-			expect(result.error?.code).toBe('DEPLOY_TARGET_UNAVAILABLE');
-		}
+	it('refuses to start a target without a verified lifecycle even when apply is supplied', async () => {
+		const result = await runCommand(
+			parseArguments(['deploy', 'start', 'cloudflare', '--apply']),
+		);
+		expect(result.ok).toBe(false);
+		expect(result.error?.code).toBe('DEPLOY_TARGET_UNAVAILABLE');
 	});
 
 	it('packages the Octane handler, client assets and module metadata for Vercel', async () => {
@@ -96,8 +94,10 @@ describe('deployment targets', () => {
 					join(output, 'functions/worker.func/.vc-config.json'),
 					'utf8',
 				),
-			) as { environment: Record<string, string> };
+			) as { maxDuration: number; environment: Record<string, string> };
 			expect(workerConfig.environment.FD_RUNTIME_ROLE).toBe('tick');
+			expect(workerConfig.maxDuration).toBe(800);
+			expect(workerConfig.environment.FD_AGENT_WORKER_DRAIN_MS).toBe('690000');
 			expect(
 				await readFile(
 					join(output, 'functions/worker.func/modules/example/module.json'),
@@ -110,9 +110,14 @@ describe('deployment targets', () => {
 				runtime: string;
 				handler: string;
 				launcherType: string;
+				maxDuration: number;
 				environment: Record<string, string>;
 			};
 			expect(functionConfig.runtime).toBe('nodejs24.x');
+			expect(functionConfig.maxDuration).toBe(300);
+			expect(
+				functionConfig.environment.FD_AGENT_WORKER_DRAIN_MS,
+			).toBeUndefined();
 			expect(functionConfig.handler).toBe('handler.mjs');
 			expect(functionConfig.launcherType).toBe('Nodejs');
 			expect(functionConfig.environment.FD_DEPLOYMENT_TARGET).toBe('vercel');
@@ -223,7 +228,7 @@ describe('deployment targets', () => {
 		}
 	});
 
-	it('takes the cron schedule a Hobby plan allows and refuses a malformed one', async () => {
+	it('fits the cron schedule and worker duration to the Vercel plan', async () => {
 		const root = await mkdtemp(join(tmpdir(), 'flowdular-vercel-cron-'));
 		try {
 			await mkdir(join(root, 'platform/dist/server'), { recursive: true });
@@ -234,7 +239,7 @@ describe('deployment targets', () => {
 			await writeFile(join(root, 'platform/dist/server/entry.js'), '');
 			await writeFile(join(root, 'platform/package.json'), '{}');
 			await writeFile(join(root, 'flowdular.json'), '{}');
-			const build = (schedule: string) =>
+			const build = (environment: Record<string, string>) =>
 				spawnSync(
 					process.execPath,
 					[
@@ -246,17 +251,54 @@ describe('deployment targets', () => {
 					],
 					{
 						encoding: 'utf8',
-						env: { ...process.env, FD_VERCEL_CRON_SCHEDULE: schedule },
+						env: {
+							...process.env,
+							FD_VERCEL_PLAN: '',
+							FD_VERCEL_CRON_SCHEDULE: '',
+							FD_WORKER_TICK_WINDOW_MS: '',
+							...environment,
+						},
 					},
 				);
-			expect(build('0 3 * * *').status).toBe(0);
-			const config = JSON.parse(
-				await readFile(join(root, '.vercel/output/config.json'), 'utf8'),
-			) as { crons: { schedule: string }[] };
-			expect(config.crons).toEqual([
+			const output = async () => ({
+				crons: (
+					JSON.parse(
+						await readFile(join(root, '.vercel/output/config.json'), 'utf8'),
+					) as { crons: { schedule: string }[] }
+				).crons,
+				worker: JSON.parse(
+					await readFile(
+						join(root, '.vercel/output/functions/worker.func/.vc-config.json'),
+						'utf8',
+					),
+				) as { maxDuration: number; environment: Record<string, string> },
+			});
+			expect(build({ FD_VERCEL_PLAN: 'hobby' }).status).toBe(0);
+			const hobby = await output();
+			expect(hobby.crons).toEqual([
 				{ path: '/api/internal/worker/tick', schedule: '0 3 * * *' },
 			]);
-			const malformed = build('every minute');
+			expect(hobby.worker.maxDuration).toBe(300);
+			expect(hobby.worker.environment.FD_AGENT_WORKER_DRAIN_MS).toBe('180000');
+			expect(
+				build({ FD_VERCEL_PLAN: 'pro', FD_VERCEL_CRON_SCHEDULE: '*/5 * * * *' })
+					.status,
+			).toBe(0);
+			expect((await output()).crons).toEqual([
+				{ path: '/api/internal/worker/tick', schedule: '*/5 * * * *' },
+			]);
+			const unknownPlan = build({ FD_VERCEL_PLAN: 'free' });
+			expect(unknownPlan.status).not.toBe(0);
+			expect(unknownPlan.stderr).toContain(
+				'FD_VERCEL_PLAN must be "hobby" or "pro".',
+			);
+			const longWindow = build({
+				FD_VERCEL_PLAN: 'hobby',
+				FD_WORKER_TICK_WINDOW_MS: '120000',
+			});
+			expect(longWindow.status).not.toBe(0);
+			expect(longWindow.stderr).toContain('300 second hobby limit');
+			const malformed = build({ FD_VERCEL_CRON_SCHEDULE: 'every minute' });
 			expect(malformed.status).not.toBe(0);
 			expect(malformed.stderr).toContain(
 				'FD_VERCEL_CRON_SCHEDULE must be a five-field cron expression.',
@@ -404,7 +446,7 @@ describe('deployment targets', () => {
 			).toBe('pass');
 			expect(
 				data.checks.find((check) => check.id === 'external-services')?.status,
-			).toBe('action-required');
+			).toBe('pass');
 			await writeFile(join(root, 'vercel.json'), '{}');
 			const malformed = await deploymentPlan(workspace, 'vercel');
 			expect(

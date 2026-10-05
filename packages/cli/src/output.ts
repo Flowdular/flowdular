@@ -90,18 +90,46 @@ export function renderOutput(
 			'',
 		].join('\n');
 	}
+	if (data?.target === 'vercel' && data.status === 'deployed') {
+		const setup = data.setup as { url?: unknown; token?: unknown } | null;
+		return [
+			'',
+			`  ${paint('FLOWDULAR', 'bold')}  ${paint('Deployed to Vercel', 'green')}`,
+			'',
+			`  URL          ${paint(String(data.url), 'cyan')}`,
+			`  Key backup   ${String(data.keyBackup)}`,
+			`  Plan         ${String(data.plan ?? 'unknown, sized for Pro')}`,
+			`  Worker cron  ${String(data.cronSchedule)}`,
+			...(setup
+				? [
+						'',
+						`  Open         ${paint(String(setup.url), 'cyan')}`,
+						`  Setup token  ${String(setup.token)}`,
+						'  Enter the token there to create the first workspace and its owner.',
+						'  It is shown once; running this command again issues a new one.',
+					]
+				: []),
+			'',
+			...envelope.warnings.map((warning) => `  ${warning}`),
+			'',
+		].join('\n');
+	}
 	if (data && Array.isArray(data.checks)) {
+		const steps = Array.isArray(data.steps)
+			? data.steps.map((step, index) => `STEP ${index + 1}  ${String(step)}`)
+			: [];
 		return decorate(
-			data.checks
-				.map((check) => {
+			[
+				...data.checks.map((check) => {
 					const value = check as {
 						status: string;
 						id: string;
 						message: string;
 					};
 					return `${value.status === 'pass' ? 'PASS' : value.status.toUpperCase()} ${value.id}  ${value.message}`;
-				})
-				.join('\n'),
+				}),
+				...steps,
+			].join('\n'),
 		);
 	}
 	if (

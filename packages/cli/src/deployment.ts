@@ -18,6 +18,16 @@ import {
 	type CommandEnvelope,
 } from '@flowdular/cli-protocol';
 import type { ParsedArguments } from './arguments.ts';
+import {
+	launchVercel,
+	supportedVercelCli,
+	vercelCliVersion,
+	vercelLaunchOptions,
+	vercelLaunchSteps,
+	VERIFIED_VERCEL_CLI,
+	type VercelLaunchHost,
+	type VercelLaunchOptions,
+} from './vercel-launch.ts';
 import type { Workspace } from './workspace.ts';
 
 export type DeploymentTarget =
@@ -37,7 +47,7 @@ export interface DeploymentAdapter {
 		| 'in-process'
 		| 'scheduled-ticks'
 		| 'lifecycle-unverified';
-	readonly launch: 'local' | 'operator' | 'unavailable';
+	readonly launch: 'local' | 'remote' | 'operator' | 'unavailable';
 	readonly summary: string;
 }
 
@@ -71,7 +81,7 @@ export const deploymentAdapters: readonly DeploymentAdapter[] = [
 		id: 'vercel',
 		runtime: 'request-container',
 		backgroundJobs: 'scheduled-ticks',
-		launch: 'unavailable',
+		launch: 'remote',
 		summary:
 			'Vercel serves HTTP from a web Function and runs module workers in a worker Function that Vercel Cron and state-changing requests tick.',
 	},
@@ -93,7 +103,7 @@ interface DeploymentCheck {
 
 interface DeploymentRecord {
 	readonly auditId: string;
-	readonly target: 'docker';
+	readonly target: 'docker' | 'vercel';
 	readonly createdAt: string;
 	readonly outcome: 'pending' | 'started' | 'unknown';
 }
@@ -408,9 +418,38 @@ async function vercelArtifactIssue(root: string): Promise<string | null> {
 	return null;
 }
 
+/* vercel deploy uploads everything its built-in list and .vercelignore leave
+   in, and the built-in list keeps neither .env files nor .flowdular out. */
+async function vercelUploadIgnoreIssue(root: string): Promise<string | null> {
+	const path = join(root, '.vercelignore');
+	if (!(await workspaceFile(root, '.vercelignore')))
+		return '.vercelignore must exist so vercel deploy does not upload .env files or the key backup under .flowdular.';
+	let patterns: Set<string>;
+	try {
+		if ((await lstat(path)).size > 16 * 1024)
+			return '.vercelignore exceeds the 16 KiB preflight limit.';
+		patterns = new Set(
+			(await readFile(path, 'utf8'))
+				.split('\n')
+				.map((line) => line.trim().replace(/^\*\*\//, '')),
+		);
+	} catch {
+		return '.vercelignore must be readable.';
+	}
+	const missing = [
+		['.env'],
+		['.env.*'],
+		['.flowdular', '.flowdular/', '/.flowdular', '/.flowdular/'],
+	].filter((accepted) => !accepted.some((pattern) => patterns.has(pattern)));
+	return missing.length > 0
+		? `.vercelignore must list ${missing.map(([pattern]) => pattern).join(', ')}.`
+		: null;
+}
+
 export async function deploymentPlan(
 	workspace: Workspace,
 	target: DeploymentTarget,
+	vercelOptions: VercelLaunchOptions = {},
 ): Promise<CommandEnvelope> {
 	const adapter = deploymentAdapters.find((entry) => entry.id === target)!;
 	const checks: DeploymentCheck[] = [];
@@ -479,17 +518,33 @@ export async function deploymentPlan(
 				artifactIssue ??
 				'Build Output API packages the Octane Node handler and static assets for Vercel.',
 		});
+		const ignoreIssue = await vercelUploadIgnoreIssue(workspace.root);
+		checks.push({
+			id: 'vercel-upload-ignore',
+			status: ignoreIssue ? 'action-required' : 'pass',
+			message:
+				ignoreIssue ??
+				'.vercelignore keeps .env files and the key backup under .flowdular out of the upload.',
+		});
+		const cliVersion = vercelCliVersion();
+		checks.push({
+			id: 'vercel-cli',
+			status: supportedVercelCli(cliVersion) ? 'pass' : 'action-required',
+			message: supportedVercelCli(cliVersion)
+				? `Vercel CLI ${cliVersion} is on PATH; deploy start vercel was verified against ${VERIFIED_VERCEL_CLI}.`
+				: `deploy start vercel needs Vercel CLI ${VERIFIED_VERCEL_CLI} or a newer release on PATH${cliVersion ? `, not ${cliVersion}` : ''}. Install it with npm i -g vercel@${VERIFIED_VERCEL_CLI}.`,
+		});
 		checks.push({
 			id: 'external-services',
-			status: 'action-required',
+			status: 'pass',
 			message:
-				'Provision external PostgreSQL with runtime, background and migrator roles plus verified TLS, an S3-compatible bucket, stable encryption keys, and a completed first-run workspace. Set Vercel environment variables before import.',
+				'deploy start vercel provisions Neon PostgreSQL with separate runtime, background and migrator roles over verified TLS, a private Vercel Blob store and the stable keys, then prints a one-time token for creating the first workspace in the browser. The import link needs them set up by hand first, as infra/vercel/README.md describes.',
 		});
 		checks.push({
 			id: 'worker-schedule',
 			status: 'pass',
 			message:
-				'Vercel Cron ticks the worker Function every minute and a state-changing request ticks it at once. Set CRON_SECRET; on a Hobby plan set FD_VERCEL_CRON_SCHEDULE to a daily schedule, so scheduled automations then wait for traffic or the daily run.',
+				'Vercel Cron ticks the worker Function every minute on Pro and a state-changing request ticks it at once. On the Hobby plan deploy start vercel sets FD_VERCEL_PLAN=hobby, which runs the cron once a day, so scheduled automations then wait for traffic or that run.',
 		});
 	} else {
 		checks.push({
@@ -526,10 +581,13 @@ export async function deploymentPlan(
 				: 'Commit the Vercel build files and push the branch to a credential-free Git origin before opening the Vercel import link.',
 		});
 	}
+	/* The import link is the alternative to deploy start, so whether its source
+	   is pushed never blocks a start. */
+	const startChecks = checks.filter((check) => check.id !== 'vercel-source');
 	return success({
 		target,
 		adapter,
-		status: checks.every((check) => check.status === 'pass')
+		status: startChecks.every((check) => check.status === 'pass')
 			? 'ready-to-start'
 			: checks.some((check) => check.status === 'unsupported')
 				? 'unsupported'
@@ -543,9 +601,10 @@ export async function deploymentPlan(
 					: target === 'render'
 						? 'Connect render.yaml as a Render Blueprint after supplying external PostgreSQL and object storage.'
 						: target === 'vercel'
-							? 'See infra/vercel/README.md for the Vercel artifact, its worker ticks and the external services it needs.'
+							? 'flowdular deploy start vercel --apply'
 							: null,
 		deployUrl,
+		...(target === 'vercel' ? { steps: vercelLaunchSteps(vercelOptions) } : {}),
 	});
 }
 
@@ -559,19 +618,27 @@ export async function runDeployment(
 		output: Boolean(process.stdout.isTTY),
 		errors: Boolean(process.stderr.isTTY),
 	},
+	vercelHost?: VercelLaunchHost,
 ): Promise<CommandEnvelope> {
 	if (action === 'targets') return success({ adapters: deploymentAdapters });
 	const adapter = deploymentAdapters.find((entry) => entry.id === target);
 	if (!adapter || !['plan', 'start'].includes(action ?? '')) {
 		return failure(
 			'USAGE_ERROR',
-			'Use deploy targets, deploy plan <docker|kubernetes|render|vercel|cloudflare>, or deploy start docker --apply.',
+			'Use deploy targets, deploy plan <docker|kubernetes|render|vercel|cloudflare>, or deploy start <docker|vercel> --apply.',
 		);
 	}
-	if (action === 'plan') return deploymentPlan(workspace, adapter.id);
+	let vercelOptions: VercelLaunchOptions = {};
+	if (adapter.id === 'vercel') {
+		const parsed = vercelLaunchOptions(arguments_);
+		if ('error' in parsed) return parsed.error;
+		vercelOptions = parsed.options;
+	}
+	if (action === 'plan')
+		return deploymentPlan(workspace, adapter.id, vercelOptions);
 	if (!arguments_.flags.has('apply'))
-		return deploymentPlan(workspace, adapter.id);
-	if (adapter.launch !== 'local') {
+		return deploymentPlan(workspace, adapter.id, vercelOptions);
+	if (adapter.launch !== 'local' && adapter.launch !== 'remote') {
 		return failure(
 			'DEPLOY_TARGET_UNAVAILABLE',
 			`${adapter.id} cannot launch a complete Flowdular deployment: ${adapter.summary}`,
@@ -580,23 +647,23 @@ export async function runDeployment(
 	if (arguments_.flags.has('json')) {
 		return failure(
 			'INTERACTIVE_OUTPUT_REQUIRED',
-			'The local launcher prints the one-time setup token. Run without --json in a private terminal.',
+			'The launcher prints a one-time setup secret. Run without --json in a private terminal.',
 		);
 	}
 	if (!terminal.input || !terminal.output || !terminal.errors) {
 		return failure(
 			'INTERACTIVE_TERMINAL_REQUIRED',
-			'The local launcher prints the one-time setup token and requires a private interactive terminal.',
+			'The launcher prints a one-time setup secret and requires a private interactive terminal.',
 		);
 	}
-	const plan = await deploymentPlan(workspace, adapter.id);
+	const plan = await deploymentPlan(workspace, adapter.id, vercelOptions);
 	if (
 		!plan.ok ||
 		(plan.data as { status: string }).status !== 'ready-to-start'
 	) {
 		return failure(
 			'DEPLOY_PREFLIGHT_FAILED',
-			'The Docker deployment preflight did not pass.',
+			`The ${adapter.id === 'vercel' ? 'Vercel' : 'Docker'} deployment preflight did not pass.`,
 			{
 				plan: plan.data,
 			},
@@ -626,17 +693,33 @@ export async function runDeployment(
 	const auditId = randomUUID();
 	const record: DeploymentRecord = {
 		auditId,
-		target: 'docker',
+		target: adapter.id === 'vercel' ? 'vercel' : 'docker',
 		createdAt: new Date().toISOString(),
 		outcome: 'pending',
 	};
 	try {
 		await recordDeployment(workspace.root, record);
-		return await launchDocker(workspace, arguments_, record);
+		return adapter.id === 'vercel'
+			? await startVercel(workspace, vercelOptions, record, vercelHost)
+			: await launchDocker(workspace, arguments_, record);
 	} finally {
 		await lock.close();
 		await rm(lockPath, { force: true });
 	}
+}
+
+async function startVercel(
+	workspace: Workspace,
+	options: VercelLaunchOptions,
+	record: DeploymentRecord,
+	host: VercelLaunchHost | undefined,
+): Promise<CommandEnvelope> {
+	const result = await launchVercel(workspace, options, host);
+	await recordDeployment(workspace.root, {
+		...record,
+		outcome: result.ok ? 'started' : 'unknown',
+	});
+	return { ...result, auditId: record.auditId };
 }
 
 async function launchDocker(
