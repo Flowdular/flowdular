@@ -118,6 +118,7 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 	const compact = useMediaQuery(SHELL_COMPACT_QUERY);
 	const [sidebarPeek, setSidebarPeek] = useState(false);
 	const [contextPeek, setContextPeek] = useState(false);
+	const [navigationCount, setNavigationCount] = useState(0);
 	const fold = shellFold({
 		narrow,
 		compact,
@@ -205,6 +206,7 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 	const navigate = (viewId: ShellView) => {
 		history.pushState(null, '', viewHref(viewId, activeWorkspaceSlug));
 		setActiveView(viewId);
+		setNavigationCount((count) => count + 1);
 		setNavigationOpen(false);
 		setCommandOpen(false);
 		setSidebarPeek(false);
@@ -225,6 +227,7 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 			route === null ? viewHref(hit.viewId, activeWorkspaceSlug) : base + route;
 		history.pushState(null, '', relative);
 		setActiveView(hit.viewId);
+		setNavigationCount((count) => count + 1);
 		setNavigationOpen(false);
 		setCommandOpen(false);
 	};
@@ -416,6 +419,7 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 				if (target) switchTenant(target.tenantId);
 			}
 			setActiveView(location.view);
+			setNavigationCount((count) => count + 1);
 		};
 		window.addEventListener('popstate', onPopState);
 		return () => window.removeEventListener('popstate', onPopState);
@@ -526,8 +530,10 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 					onSignOut={() => void props.onSignOut()}
 				/>
 				<TableLocaleContext value={tableLocale}>
+					{/* A view reads its address on mount, so every navigation
+    remounts it: its own entry and a step through history included. */}
 					<WorkspaceContent
-						key={props.identity.tenantId}
+						key={props.identity.tenantId + ':' + navigationCount}
 						activeView={effectiveView}
 						extensionView={activeExtensionView}
 						widgets={visibleWidgets}
