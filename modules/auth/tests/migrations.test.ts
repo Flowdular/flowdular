@@ -2138,7 +2138,7 @@ describe('auth migrations', () => {
 			});
 		const logState = async () =>
 			(await status()).find(
-				(entry) => entry.id === '0040_module_settings_changes',
+				(entry) => entry.id === '0041_module_settings_changes',
 			)?.state;
 		await forget();
 		expect(await logState()).toBe('adopted');
@@ -2147,7 +2147,7 @@ describe('auth migrations', () => {
 			text: 'REVOKE SELECT (changed_at) ON module_settings_changes FROM coreloom_background',
 		});
 		expect(await logState()).toBe('partial');
-		await expect(apply()).rejects.toThrow('0040_module_settings_changes');
+		await expect(apply()).rejects.toThrow('0041_module_settings_changes');
 
 		await forget();
 		await lease.database.execute({
@@ -2163,7 +2163,7 @@ describe('auth migrations', () => {
 	   that was stored before the log existed. */
 	it('records one change for every value stored before the change log', async () => {
 		const logged = databaseMigrations.findIndex(
-			(migration) => migration.id === '0040_module_settings_changes',
+			(migration) => migration.id === '0041_module_settings_changes',
 		);
 		expect(logged).toBeGreaterThan(0);
 		await runDatabaseMigrations(

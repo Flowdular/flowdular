@@ -1445,7 +1445,7 @@ WHERE builtin = 1 AND key = 'member';
 ALTER TABLE auth_roles FORCE ROW LEVEL SECURITY;
 `;
 
-export const AUTH_MIGRATION_040_MODULE_SETTINGS_CHANGES = `-- Every process served settings from a snapshot only the writing process
+export const AUTH_MIGRATION_041_MODULE_SETTINGS_CHANGES = `-- Every process served settings from a snapshot only the writing process
 -- refreshed, and the settings audit was written by a listener after the commit,
 -- so other processes kept stale values and a crash between the two lost the
 -- event. Every save or clear now appends one row here in the transaction that
@@ -1872,8 +1872,8 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 		sql: { postgresql: AUTH_MIGRATION_040_DECISIONS_SCOPES },
 	},
 	{
-		id: '0040_module_settings_changes',
-		sql: { postgresql: AUTH_MIGRATION_040_MODULE_SETTINGS_CHANGES },
+		id: '0041_module_settings_changes',
+		sql: { postgresql: AUTH_MIGRATION_041_MODULE_SETTINGS_CHANGES },
 		inspectExisting: (database) =>
 			postgresTenantTableState(
 				database,
