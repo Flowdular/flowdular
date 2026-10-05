@@ -52,7 +52,8 @@ export interface ApprovalsRuntime {
 	service(): Promise<ApprovalsService>;
 	/** The open repository, for the operations behind the declared data class. */
 	repository(): Promise<ApprovalsRepository>;
-	start(): void;
+	/** Reads the expiry interval, then starts the loop; rejects when that read fails. */
+	start(): Promise<void>;
 	stop(): void;
 	quiesce(): Promise<void>;
 	dispose(): Promise<void>;
@@ -148,29 +149,32 @@ export function createApprovalsRuntime(
 		service: resolved,
 		repository: repositoryInstance,
 		start() {
-			if (disposed) return;
+			if (disposed) return Promise.resolve();
 			/* The interval is a settings read that may have to prime the platform
-			   tenant first, so the loop starts once that read settles. */
-			starting ??= runner().then(
+			   tenant first, so the loop starts once that read settles. A failed read
+			   is not cached: the caller sees it, and the next start reads again. */
+			const pending = runner();
+			const started = pending.then(
 				(loop) => {
 					if (!disposed) loop.start();
 				},
 				(error: unknown) => {
-					jobsPromise = undefined;
-					starting = undefined;
-					console.warn('approvals.core: the expiry loop did not start.', error);
+					if (jobsPromise === pending) jobsPromise = undefined;
+					throw error;
 				},
 			);
+			starting = started;
+			return started;
 		},
 		stop: () => jobs?.stop(),
 		async quiesce() {
-			await starting;
+			await starting?.catch(() => undefined);
 			await jobs?.quiesce();
 		},
 		async dispose() {
 			if (disposed) return;
 			disposed = true;
-			await starting;
+			await starting?.catch(() => undefined);
 			await jobs?.dispose();
 			/* An open still in flight would assign its leases after this read, so
 			   settle it first; a failed open must not surface as an unhandled

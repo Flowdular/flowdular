@@ -211,6 +211,8 @@ export function createNotificationsRuntime(
 	};
 
 	const quiesce = async () => {
+		/* Every loop stops before the first drain is awaited, as in dispose. */
+		stop();
 		for (const runner of jobs ?? []) await runner.quiesce();
 	};
 
