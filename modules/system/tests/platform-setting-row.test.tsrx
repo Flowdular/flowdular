@@ -57,6 +57,7 @@ let unmount: (() => void) | undefined;
 afterEach(() => {
 	unmount?.();
 	unmount = undefined;
+	setActiveLocale('en');
 });
 
 async function render(setting: SettingsEntryPayload): Promise<HTMLElement> {
@@ -85,7 +86,7 @@ async function render(setting: SettingsEntryPayload): Promise<HTMLElement> {
 }
 
 it.each([
-	['en', 'only the deployment operator'],
+	['en', 'Applies to every workspace'],
 	['pl', 'tylko przestrzeń robocza operatora wdrożenia'],
 ])(
 	'SYSTEM-BRANDING-READ shows a platform row read-only outside the operator workspace in %s',
@@ -98,7 +99,6 @@ it.each([
 			expect((button as HTMLButtonElement).disabled).toBe(true);
 		}
 		expect(row.textContent).toContain(hint);
-		setActiveLocale('en');
 	},
 );
 

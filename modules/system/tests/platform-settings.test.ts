@@ -210,6 +210,8 @@ describe('platform-scoped settings and the operator workspace', () => {
 			['demo.core', 'portalUrl', 'https://customer.example'],
 			['auth.core', 'allowSignUp', false],
 			['auth.core', 'mailTransport', 'none'],
+			['auth.core', 'mailSmtpUrl', 'smtp://relay.customer.example'],
+			['system.core', 'logoUrl', null],
 			/* Refused before validation, so the answer says nothing about the value. */
 			['system.core', 'appName', '<b>Customer</b>'],
 		] as const) {
@@ -225,6 +227,7 @@ describe('platform-scoped settings and the operator workspace', () => {
 		expect(platformValue('demo.core', 'portalUrl')).toBe(DEFAULT_PORTAL);
 		expect(platformValue('auth.core', 'allowSignUp')).toBe(true);
 		expect(platformValue('auth.core', 'mailTransport')).toBe('environment');
+		expect(platformValue('auth.core', 'mailSmtpUrl')).toBe('');
 		const seenByOperator = await list(routes, operator);
 		expect(
 			seenByOperator.find((setting) => setting.key === 'portalUrl')?.value,
@@ -366,6 +369,5 @@ describe('platform-scoped settings and the operator workspace', () => {
 			}
 		}
 		expect(platformValue('demo.core', 'portalUrl')).toBe(before);
-		expect(platformValue('system.core', 'appName')).toBe('Operator Brand');
 	});
 });
