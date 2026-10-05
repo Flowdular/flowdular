@@ -1,4 +1,4 @@
-import type { DatabaseMigration } from '@flowdular/database';
+import type { DatabaseMigration, DatabaseSession } from '@flowdular/database';
 import {
 	migrationObjectState,
 	postgresTenantTableState,
@@ -1452,6 +1452,36 @@ CREATE UNIQUE INDEX IF NOT EXISTS auth_audit_settings_revision_idx
   WHERE settings_revision IS NOT NULL;
 `;
 
+/* Narrowed to this schema's relation through to_regclass and never deparsed:
+   a deparse over the whole catalogue reaches relations another connection is
+   dropping and fails with a cache lookup error instead of an answer. */
+async function backgroundPolicyPresent(
+	database: DatabaseSession,
+	table: string,
+	policy: string,
+): Promise<boolean> {
+	const result = await database.query<{ present: boolean }>({
+		text: `SELECT EXISTS (
+		         SELECT 1 FROM pg_policy
+		         WHERE polrelid = to_regclass('${table}') AND polname = '${policy}'
+		       ) AS present`,
+	});
+	return result.rows[0]?.present === true;
+}
+
+async function backgroundColumnGranted(
+	database: DatabaseSession,
+	table: string,
+	column: string,
+): Promise<boolean> {
+	const result = await database.query<{ granted: boolean }>({
+		text: `SELECT CASE WHEN to_regclass('${table}') IS NOT NULL THEN
+		  has_column_privilege('coreloom_background', '${table}', '${column}', 'SELECT')
+		ELSE false END AS granted`,
+	});
+	return result.rows[0]?.granted === true;
+}
+
 export const databaseMigrations: readonly DatabaseMigration[] = [
 	{
 		id: '0001_auth_core',
@@ -1789,6 +1819,18 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 						),
 					() => database.schema.hasColumn('auth_audit', 'settings_revision'),
 					() => database.schema.hasIndex('auth_audit_settings_revision_idx'),
+					() =>
+						backgroundPolicyPresent(
+							database,
+							'module_settings_changes',
+							'module_settings_changes_background_policy',
+						),
+					() =>
+						backgroundColumnGranted(
+							database,
+							'module_settings_changes',
+							'changed_at',
+						),
 				],
 			),
 	},

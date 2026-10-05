@@ -1888,6 +1888,35 @@ describe('auth migrations', () => {
 		).rejects.toThrow();
 	});
 
+	it('adopts the settings change log only with the background policy and grant its readers need', async () => {
+		await apply();
+		const forget = () =>
+			lease.database.execute({
+				text: `DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = 'auth.core'`,
+			});
+		const logState = async () =>
+			(await status()).find(
+				(entry) => entry.id === '0040_module_settings_changes',
+			)?.state;
+		await forget();
+		expect(await logState()).toBe('adopted');
+
+		await lease.database.execute({
+			text: 'REVOKE SELECT (changed_at) ON module_settings_changes FROM coreloom_background',
+		});
+		expect(await logState()).toBe('partial');
+		await expect(apply()).rejects.toThrow('0040_module_settings_changes');
+
+		await forget();
+		await lease.database.execute({
+			text: 'GRANT SELECT (changed_at) ON module_settings_changes TO coreloom_background',
+		});
+		await lease.database.execute({
+			text: 'DROP POLICY module_settings_changes_background_policy ON module_settings_changes',
+		});
+		expect(await logState()).toBe('partial');
+	});
+
 	/* A reader starting from the beginning of the log must find every value
 	   that was stored before the log existed. */
 	it('records one change for every value stored before the change log', async () => {
