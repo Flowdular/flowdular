@@ -93,13 +93,6 @@ export function resolveDeliveryConfiguration(
 	let targets = defaults.targets;
 	if (block.targets !== undefined) {
 		if (
-			Array.isArray(block.targets) &&
-			block.targets.includes('official-modules')
-		)
-			throw invalid(
-				'official-modules was removed; use git-pr for your platform repository and publish a catalog separately.',
-			);
-		if (
 			!Array.isArray(block.targets) ||
 			block.targets.length === 0 ||
 			!block.targets.every(isEjectTarget)

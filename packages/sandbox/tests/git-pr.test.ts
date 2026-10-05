@@ -1236,7 +1236,7 @@ describe('delivery configuration and policies', () => {
 		).toThrow(/git.remote/);
 		expect(() =>
 			resolveDeliveryConfiguration({ targets: ['official-modules'] }),
-		).toThrow(/official-modules was removed/);
+		).toThrow(/targets must list workspace or git-pr/);
 		expect(() => resolveDeliveryConfiguration({ maxChangedFiles: 0 })).toThrow(
 			/positive integer/,
 		);

@@ -88,14 +88,17 @@ describe('session dependency install', () => {
 				const pnpm = join(bin, 'pnpm');
 				await writeFile(pnpm, `#!${process.execPath}\n${parentScript}\n`);
 				await chmod(pnpm, 0o755);
+				// Concurrent Vitest workers can delay Node startup. Give the fixture
+				// time to write parent.pid before the timeout tests process cleanup.
+				const timeoutMs = 3_000;
 				const started = Date.now();
 				const result = await runPnpm(root, ['install'], {
-					timeoutMs: 600,
+					timeoutMs,
 					environment: { PATH: `${bin}:${process.env.PATH ?? ''}` },
 				});
 				expect(result.code).toBeNull();
 				expect(result.output).toContain('exceeded its time budget');
-				expect(Date.now() - started).toBeLessThan(5_000);
+				expect(Date.now() - started).toBeLessThan(timeoutMs + 3_000);
 				parentPid = Number(await readFile(join(root, 'parent.pid'), 'utf8'));
 				const heartbeat = join(root, 'heartbeat');
 				const before = await readFile(heartbeat, 'utf8');
