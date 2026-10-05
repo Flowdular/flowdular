@@ -137,9 +137,19 @@ describe('scaffold', () => {
 				'utf8',
 			),
 		);
+		/* Host-only modules are enabled after scaffolding when an app needs them. */
+		const optionalHostModules = new Set(['decisions.core']);
 		expect([...project.modules.enabled].sort()).toEqual(
-			[...platform.modules.enabled, 'example.core'].sort(),
+			[
+				...platform.modules.enabled.filter(
+					(moduleId: string) => !optionalHostModules.has(moduleId),
+				),
+				'example.core',
+			].sort(),
 		);
+		for (const moduleId of optionalHostModules) {
+			expect(project.modules.enabled).not.toContain(moduleId);
+		}
 		expect(project.agent).toEqual({
 			policy: '.ai/policies/capabilities.yaml',
 			modelRouting: '.ai/policies/model-routing.yaml',
