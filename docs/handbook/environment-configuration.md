@@ -202,9 +202,10 @@ Set `FD_LOG_FORMAT=json` in production so one log line is one object.
 
 The product name, document title, description, link preview image, browser
 icon, theme colour and logo are `system.core` settings, changed under
-Administration, Branding by an owner with `system.settings.manage`, and every
-change is audited. One value serves the whole deployment, including the sign-in
-screen and shared links.
+Administration, Branding by a principal with `system.settings.manage` in the
+operator workspace (`FD_OPERATOR_TENANT`), and every change is audited. One
+value serves the whole deployment, including the sign-in screen and shared
+links.
 
 An address is stored only as a path on the deployment or an https URL;
 `javascript:`, `data:` and protocol-relative values are refused on write. Every
@@ -226,7 +227,10 @@ Run in order. Each step assumes the previous one succeeded.
 5. Configure the mail relay and send one test message.
 6. Point the observability egresses at the collector.
 7. Roll out. Migrations run at rollout under the migrator role.
-8. Verify, as below.
+8. Create the operator workspace, set `FD_OPERATOR_TENANT` to its tenant id
+   (`pnpm flowdular auth workspaces` lists them) and restart. Until then no
+   workspace can change the branding or the other platform settings.
+9. Verify, as below.
 
 ## Verification
 
