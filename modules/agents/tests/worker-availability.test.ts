@@ -102,6 +102,16 @@ function waitFor(
 	});
 }
 
+/* Forced row-level security binds the owner too, so heartbeats are read and
+   seeded under the workers' sentinel tenant. */
+const asWorkers = <T>(
+	operation: (transaction: DatabaseTransaction) => Promise<T>,
+) =>
+	owner.database.transaction(operation, {
+		tenantId: AGENT_WORKER_TENANT,
+		access: 'write',
+	});
+
 const runStatus = async (tenant: string, id: string) =>
 	(await database.repository.getRun(tenant, id))?.status;
 
@@ -180,11 +190,14 @@ describe('agents.core worker availability', () => {
 
 		held.release();
 		await single.composed.stop?.();
-		const newest = (
-			await owner.database.query<{ newest: string | number }>({
-				text: 'SELECT MAX(heartbeat_at) AS newest FROM agent_worker_heartbeats',
-			})
-		).rows[0]!.newest;
+		const newest = await asWorkers(
+			async (transaction) =>
+				(
+					await transaction.query<{ newest: string | number }>({
+						text: 'SELECT MAX(heartbeat_at) AS newest FROM agent_worker_heartbeats',
+					})
+				).rows[0]!.newest,
+		);
 		offset += 31_000;
 		for (const role of [web, single]) {
 			expect(await workerStatus(role, 'tenant-a')).toMatchObject({
@@ -221,18 +234,22 @@ describe('agents.core worker availability', () => {
 
 	it('AGENTS-WORKER-AVAILABILITY removes heartbeats older than a day except the newest and keeps them out of every workspace', async () => {
 		const now = Date.now();
-		const workers = async () =>
-			(
-				await owner.database.query<{ worker_id: string }>({
-					text: 'SELECT worker_id FROM agent_worker_heartbeats ORDER BY worker_id',
-				})
-			).rows.map((row) => row.worker_id);
-		await owner.database.execute({
-			text: `INSERT INTO agent_worker_heartbeats
-			       (tenant_id, worker_id, started_at, heartbeat_at, concurrency)
-			       VALUES ($1, 'w-1', $2, $2, 1), ($1, 'w-2', $3, $3, 1)`,
-			parameters: [AGENT_WORKER_TENANT, now - 3 * DAY, now - 2 * DAY],
-		});
+		const workers = () =>
+			asWorkers(async (transaction) =>
+				(
+					await transaction.query<{ worker_id: string }>({
+						text: 'SELECT worker_id FROM agent_worker_heartbeats ORDER BY worker_id',
+					})
+				).rows.map((row) => row.worker_id),
+			);
+		await asWorkers((transaction) =>
+			transaction.execute({
+				text: `INSERT INTO agent_worker_heartbeats
+				       (tenant_id, worker_id, started_at, heartbeat_at, concurrency)
+				       VALUES ($1, 'w-1', $2, $2, 1), ($1, 'w-2', $3, $3, 1)`,
+				parameters: [AGENT_WORKER_TENANT, now - 3 * DAY, now - 2 * DAY],
+			}),
+		);
 		await database.repository.recordWorkerHeartbeat(
 			{
 				workerId: 'w-2',

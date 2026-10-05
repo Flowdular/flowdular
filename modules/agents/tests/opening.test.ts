@@ -1,4 +1,7 @@
-import type { DatabaseAdapterLease } from '@flowdular/database';
+import type {
+	DatabaseAdapterLease,
+	DatabaseTransaction,
+} from '@flowdular/database';
 import type { AgentTool } from '@flowdular/harness';
 import {
 	afterAll,
@@ -443,7 +446,7 @@ describe('agents.core opening and module agent bindings', () => {
 			const worker = await instance([next]);
 			await worker.composed.startWorker();
 			await waitFor(() => pass.mock.calls.length === 1);
-			const runId = await queueTenantRun(web, 'tenant-e');
+			const runId = await queueTenantRun(worker, 'tenant-e');
 			await waitFor(
 				async () => (await runStatus('tenant-e', runId)) === 'succeeded',
 			);
@@ -749,31 +752,51 @@ describe('agents.core module agent catalogue', () => {
 describe('agents.core revision adoption', () => {
 	/* Definitions saved before the retained revision ledger: a current
 	   revision with no retained row. */
+	/* Forced row-level security binds the owner too, so each workspace is
+	   seeded and read in its own tenant transaction. */
+	const asTenant = <T>(
+		tenantId: string,
+		operation: (transaction: DatabaseTransaction) => Promise<T>,
+	) => owner.database.transaction(operation, { tenantId, access: 'write' });
+
 	async function legacyAgents(tenants: readonly string[]) {
-		await owner.database.execute({
-			text: `INSERT INTO agent_definitions
-			       (id, tenant_id, agent_key, name, description, instructions,
-			        provider, model, allowed_tools_json, max_steps, timeout_ms,
-			        temperature_milli, status, revision, created_by, created_at,
-			        updated_by, updated_at)
-			       SELECT 'legacy-' || tenant, tenant, 'legacy', 'Legacy agent',
-			        'Saved before the ledger.', 'Answer briefly.', 'local-simulation',
-			        'deterministic-v1', '[]', 2, 5000, 0, 'active', 3, 'owner', 1,
-			        'owner', 1
-			       FROM unnest(string_to_array($1, ',')) AS tenant`,
-			parameters: [tenants.join(',')],
-		});
+		for (const tenant of tenants) {
+			await asTenant(tenant, (transaction) =>
+				transaction.execute({
+					text: `INSERT INTO agent_definitions
+					       (id, tenant_id, agent_key, name, description, instructions,
+					        provider, model, allowed_tools_json, max_steps, timeout_ms,
+					        temperature_milli, status, revision, created_by, created_at,
+					        updated_by, updated_at)
+					       VALUES ($1, $2, 'legacy', 'Legacy agent',
+					        'Saved before the ledger.', 'Answer briefly.', 'local-simulation',
+					        'deterministic-v1', '[]', 2, 5000, 0, 'active', 3, 'owner', 1,
+					        'owner', 1)`,
+					parameters: [`legacy-${tenant}`, tenant],
+				}),
+			);
+		}
 	}
 
-	async function retained(tenantPattern: string) {
-		return (
-			await owner.database.query<Record<string, unknown>>({
-				text: `SELECT tenant_id, agent_id, revision, name, instructions, retained_at
-				       FROM agent_definition_revisions WHERE tenant_id LIKE $1
-				       ORDER BY tenant_id, agent_id, revision`,
-				parameters: [tenantPattern],
-			})
-		).rows;
+	async function retained(tenants: readonly string[]) {
+		const rows: Record<string, unknown>[] = [];
+		for (const tenant of tenants) {
+			rows.push(
+				...(await asTenant(
+					tenant,
+					async (transaction) =>
+						(
+							await transaction.query<Record<string, unknown>>({
+								text: `SELECT tenant_id, agent_id, revision, name, instructions, retained_at
+								       FROM agent_definition_revisions WHERE tenant_id = $1
+								       ORDER BY agent_id, revision`,
+								parameters: [tenant],
+							})
+						).rows,
+				)),
+			);
+		}
+		return rows;
 	}
 
 	const delegated = (tenantId: string): AgentChildCapabilityContext => ({
@@ -835,7 +858,8 @@ describe('agents.core revision adoption', () => {
 			{ length: 105 },
 			(_, index) => `t-${String(index + 1).padStart(3, '0')}`,
 		);
-		await legacyAgents([...paged, 'tenant-req', 'tenant-pin', 'tenant-fail']);
+		const requesting = ['tenant-fail', 'tenant-pin', 'tenant-req'];
+		await legacyAgents([...paged, ...requesting]);
 		await owner.database.execute({
 			text: `CREATE TRIGGER fail_revision_adoption BEFORE INSERT ON agent_definition_revisions
 			FOR EACH ROW WHEN (NEW.tenant_id = 'tenant-fail')
@@ -884,7 +908,7 @@ describe('agents.core revision adoption', () => {
 						statement.tenantId !== 'tenant-pin',
 				),
 			).toEqual([]);
-			const adoptedByRequests = await retained('tenant-%');
+			const adoptedByRequests = await retained(requesting);
 
 			const worker = await instance([]);
 			await worker.composed.startWorker();
@@ -903,11 +927,11 @@ describe('agents.core revision adoption', () => {
 			);
 			expect(heartbeat).toBeGreaterThanOrEqual(0);
 			expect(heartbeat).toBeLessThan(worker.statements.indexOf(pages[0]!));
-			expect((await retained('t-%')).map((row) => row.tenant_id)).toEqual(
+			expect((await retained(paged)).map((row) => row.tenant_id)).toEqual(
 				paged,
 			);
-			expect(await retained('tenant-fail')).toEqual([]);
-			expect(await retained('tenant-%')).toEqual(adoptedByRequests);
+			expect(await retained(['tenant-fail'])).toEqual([]);
+			expect(await retained(requesting)).toEqual(adoptedByRequests);
 			const skipped = logged.mock.calls.filter((call) =>
 				/revision adoption skipped a workspace/.test(String(call[0])),
 			);
@@ -923,7 +947,7 @@ describe('agents.core revision adoption', () => {
 		await retry.composed.startWorker();
 		await waitFor(() => adopt.mock.results.length === 2);
 		expect(await adopt.mock.results[1]!.value).toBe(true);
-		expect(await retained('tenant-fail')).toHaveLength(1);
+		expect(await retained(['tenant-fail'])).toHaveLength(1);
 
 		const pass = vi.spyOn(
 			AgentService.prototype,

@@ -359,7 +359,7 @@ describe('agents migrations', () => {
 			(
 				await lease.database.query<{ forced: boolean }>({
 					text: `SELECT relforcerowsecurity AS forced FROM pg_class
-					       WHERE relname = 'agent_worker_heartbeats'`,
+					       WHERE oid = to_regclass('agent_worker_heartbeats')`,
 				})
 			).rows,
 		).toEqual([{ forced: true }]);
