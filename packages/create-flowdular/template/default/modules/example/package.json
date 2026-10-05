@@ -14,8 +14,8 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"octane": "0.1.51",
-		"segment-state": "0.2.1",
+		"octane": "0.8.0",
+		"segment-state": "0.3.0",
 		"@flowdular/sdk": "0.5.1"
 	},
 	"devDependencies": {

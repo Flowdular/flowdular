@@ -116,7 +116,8 @@ describe('module scaffolding', () => {
 				'README.md',
 			]);
 			expect(packageJson.scripts.typecheck).toContain('tsrx-tsc');
-			expect(packageJson.dependencies.octane).toBe('0.1.51');
+			expect(packageJson.dependencies.octane).toBe('0.8.0');
+			expect(packageJson.dependencies['segment-state']).toBe('0.3.0');
 
 			const tsconfig = JSON.parse(await read(ws.root, 'tsconfig.json')) as {
 				compilerOptions: { types: string[] };

@@ -32,12 +32,12 @@
 		"@flowdular/module-auth": "workspace:*",
 		"@flowdular/server": "workspace:*",
 		"@flowdular/ui": "workspace:*",
-		"octane": "0.1.51",
-		"segment-state": "0.2.1"
+		"octane": "0.8.0",
+		"segment-state": "0.3.0"
 	},
 	"devDependencies": {
 		"@flowdular/database-testing": "workspace:*",
-		"@octanejs/app-core": "0.0.47",
+		"@octanejs/app-core": "0.1.0",
 		"@tsrx/typescript-plugin": "0.3.120",
 		"@types/node": "24.13.3",
 		"typescript": "5.9.3",

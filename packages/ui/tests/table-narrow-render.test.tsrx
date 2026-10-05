@@ -106,7 +106,7 @@ describe('Table column priority', () => {
 	it('lists the columns a narrow table hides when a row expands', async () => {
 		const onSelect = vi.fn();
 		const mounted = await mount(
-			<TableLocaleContext.Provider
+			<TableLocaleContext
 				value={{
 					...DEFAULT_TABLE_LOCALE,
 					expand: 'Pokaż szczegóły',
@@ -120,7 +120,7 @@ describe('Table column priority', () => {
 					onSelect={onSelect}
 					empty={EMPTY}
 				/>
-			</TableLocaleContext.Provider>,
+			</TableLocaleContext>,
 		);
 		const toggle = () => mounted.container.querySelector(
 			'tbody tr:first-child .ui-table__toggle',

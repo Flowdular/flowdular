@@ -21,6 +21,17 @@ older stable tag reachable from the selected commit. For the first release, all
 commits are included. An explicit base must be an older reachable stable tag.
 Prerelease versions are not supported by this workflow.
 
+## Runtime compatibility
+
+This source and newly generated applications pin Octane 0.8.0 with
+`segment-state` 0.3.0. Modules using Octane must move both dependencies together;
+`segment-state` 0.3.0 accepts Octane `^0.8.0`. The matching `@octanejs` adapters
+are pinned in the workspace lockfile and generator template. Octane 0.8 renders
+context providers as `<Context value={value}>`, so modules using
+`<Context.Provider>` must update that syntax when they upgrade.
+The offline catalog under `.ai/references/catalog` remains pinned to its verified
+official artifact until a replacement artifact is published.
+
 Use **dry_run** to build and sign downloadable Actions artifacts without creating
 a Git tag or GitHub Release. Use **draft** to upload a complete release and leave
 it unpublished for inspection. Both options default to false.

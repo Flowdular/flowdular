@@ -347,9 +347,9 @@ function LeadCell(props: {
 				</button>
 			}
 			@if (props.clickable) {
-				<CellControlsContext.Provider value={false}>
+				<CellControlsContext value={false}>
 					<button class="ui-table__open" type="button">{props.content}</button>
-				</CellControlsContext.Provider>
+				</CellControlsContext>
 			} @else {
 				<span class="ui-table__lead-body">{props.content}</span>
 			}

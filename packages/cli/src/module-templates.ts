@@ -647,8 +647,8 @@ function packageJson(model: ScaffoldModel): string {
 			...(hasClient
 				? {
 						'@flowdular/ui': 'workspace:*',
-						octane: '0.1.51',
-						'segment-state': '0.2.1',
+						octane: '0.8.0',
+						'segment-state': '0.3.0',
 					}
 				: {}),
 		},

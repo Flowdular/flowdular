@@ -109,11 +109,9 @@ describe('CellTime', () => {
 			vi.setSystemTime(new Date(2026, 8, 16, 12, 0, 0));
 			const value = new Date(2026, 8, 16, 19, 39, 5);
 			const mounted = await mount(
-				<TableLocaleContext.Provider
-					value={{ ...DEFAULT_TABLE_LOCALE, locale: 'pl' }}
-				>
+				<TableLocaleContext value={{ ...DEFAULT_TABLE_LOCALE, locale: 'pl' }}>
 					<CellTime value={value.getTime()} />
-				</TableLocaleContext.Provider>,
+				</TableLocaleContext>,
 			);
 			const time = mounted.container.querySelector('time') as HTMLElement;
 			expect(time.getAttribute('datetime')).toBe(value.toISOString());
@@ -158,7 +156,7 @@ describe('CellCode', () => {
 		});
 		const onRow = vi.fn();
 		const mounted = await mount(
-			<TableLocaleContext.Provider
+			<TableLocaleContext
 				value={{
 					...DEFAULT_TABLE_LOCALE,
 					copy: 'Kopiuj',
@@ -168,7 +166,7 @@ describe('CellCode', () => {
 				<div onClick={onRow}>
 					<CellCode value={ID} />
 				</div>
-			</TableLocaleContext.Provider>,
+			</TableLocaleContext>,
 		);
 		const button = mounted.container.querySelector(
 			'.ui-cell-code__copy',
@@ -188,9 +186,9 @@ describe('CellCode', () => {
 
 	it('leaves the copy button out where a control may not nest', async () => {
 		const mounted = await mount(
-			<CellControlsContext.Provider value={false}>
+			<CellControlsContext value={false}>
 				<CellCode value={ID} />
-			</CellControlsContext.Provider>,
+			</CellControlsContext>,
 		);
 		expect(mounted.container.querySelector('button')).toBeNull();
 		mounted.unmount();
@@ -213,12 +211,10 @@ describe('CellTag, CellNumber and CellMuted', () => {
 
 	it('formats a number in the locale the table was given', async () => {
 		const mounted = await mount(
-			<TableLocaleContext.Provider
-				value={{ ...DEFAULT_TABLE_LOCALE, locale: 'en' }}
-			>
+			<TableLocaleContext value={{ ...DEFAULT_TABLE_LOCALE, locale: 'en' }}>
 				<CellNumber value={12345} />
 				<CellMuted>None</CellMuted>
-			</TableLocaleContext.Provider>,
+			</TableLocaleContext>,
 		);
 		expect(text(mounted.container.querySelector('.ui-cell-number'))).toBe(
 			'12,345',
@@ -231,12 +227,10 @@ describe('CellTag, CellNumber and CellMuted', () => {
 
 	it('shows a number that arrives formatted as it came', async () => {
 		const mounted = await mount(
-			<TableLocaleContext.Provider
-				value={{ ...DEFAULT_TABLE_LOCALE, locale: 'pl' }}
-			>
+			<TableLocaleContext value={{ ...DEFAULT_TABLE_LOCALE, locale: 'pl' }}>
 				<CellNumber value="<$0.01" options={{ style: 'percent' }} />
 				<CellNumber value="12345" />
-			</TableLocaleContext.Provider>,
+			</TableLocaleContext>,
 		);
 		const numbers = mounted.container.querySelectorAll('.ui-cell-number');
 		expect(text(numbers[0] as HTMLElement)).toBe('<$0.01');

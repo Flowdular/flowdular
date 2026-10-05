@@ -104,6 +104,30 @@ describe('scaffold', () => {
 			devDependencies: Record<string, string>;
 		};
 		expect(manifest.name).toBe('my-app');
+		const generatedPlatform = JSON.parse(
+			await readFile(join(result.directory, 'platform/package.json'), 'utf8'),
+		) as {
+			dependencies: Record<string, string>;
+			devDependencies: Record<string, string>;
+		};
+		expect(generatedPlatform.dependencies).toMatchObject({
+			'@octanejs/seo': '0.0.45',
+			'@octanejs/vite-plugin': '0.2.0',
+			octane: '0.8.0',
+		});
+		expect(generatedPlatform.devDependencies['@octanejs/app-core']).toBe(
+			'0.1.0',
+		);
+		const generatedExample = JSON.parse(
+			await readFile(
+				join(result.directory, 'modules/example/package.json'),
+				'utf8',
+			),
+		) as { dependencies: Record<string, string> };
+		expect(generatedExample.dependencies).toMatchObject({
+			octane: '0.8.0',
+			'segment-state': '0.3.0',
+		});
 		const project = JSON.parse(
 			await readFile(join(result.directory, 'flowdular.json'), 'utf8'),
 		);

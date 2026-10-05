@@ -41,14 +41,14 @@
 		"@flowdular/server": "workspace:*",
 		"@flowdular/storage": "workspace:*",
 		"@flowdular/ui": "workspace:*",
-		"@octanejs/seo": "0.0.38",
-		"@octanejs/vite-plugin": "0.1.51",
-		"octane": "0.1.51",
+		"@octanejs/seo": "0.0.45",
+		"@octanejs/vite-plugin": "0.2.0",
+		"octane": "0.8.0",
 		"pg": "8.23.0"
 	},
 	"devDependencies": {
 		"@flowdular/dev-console": "workspace:*",
-		"@octanejs/app-core": "0.0.47",
+		"@octanejs/app-core": "0.1.0",
 		"@tsrx/typescript-plugin": "0.3.120",
 		"@types/node": "24.13.3",
 		"@types/pg": "8.23.1",

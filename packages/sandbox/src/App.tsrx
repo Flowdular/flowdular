@@ -913,7 +913,7 @@ export function App(props?: RenderRouteProps) @{
 
 					@if (!activeSessionId || !view) {
 						<div class="sandbox__scroll">
-							<TableLocaleContext.Provider value={tableLocale}>
+							<TableLocaleContext value={tableLocale}>
 								<SessionPicker
 									onConfigureModel={() => setModelSettingsOpen(true)}
 									onDeliverySettings={() => {
@@ -969,7 +969,7 @@ export function App(props?: RenderRouteProps) @{
 										t('sandbox.app.error.deleteSession'),
 									)}
 								/>
-							</TableLocaleContext.Provider>
+							</TableLocaleContext>
 						</div>
 					} @else {
 						<>
