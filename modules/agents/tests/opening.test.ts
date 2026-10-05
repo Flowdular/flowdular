@@ -973,3 +973,170 @@ describe('agents.core revision adoption', () => {
 		).toEqual([]);
 	});
 });
+
+/* PGlite runs one transaction at a time, so only a server can hold one request
+   inside its transaction while another runs. CI runs this on PostgreSQL. */
+describe.runIf(process.env.FD_TEST_DATABASE_ADAPTER === 'postgresql')(
+	'agents.core binding advance under real overlap',
+	() => {
+		const LOCK_BINDING =
+			/^SELECT \* FROM module_agent_bindings WHERE tenant_id = \$1 AND agent_id = \$2 FOR UPDATE$/;
+		const AUDIT_LOCK =
+			/^SELECT pg_advisory_xact_lock\(hashtextextended\(\$1, 0\)\)$/;
+
+		function gate() {
+			let open!: () => void;
+			const opened = new Promise<void>((resolve) => {
+				open = resolve;
+			});
+			return { open, opened };
+		}
+
+		/* tenant-a holds a binding of each agent built from revision 1, and two
+		   instances serve revision 2. The first holds its tenant-a request just
+		   before it locks `heldAgent`'s binding until the second's request has
+		   finished, or has waited on the tenant's audit lock long enough for a
+		   lock cycle to form. */
+		async function overlap(
+			keys: readonly string[],
+			heldAgent: (agents: readonly ModuleAgentDefinition[]) => string,
+		) {
+			const previous = await instance(
+				keys.map((key) => ledgerAgent(1, { key })),
+			);
+			for (const key of keys) {
+				const bound = await bindAgent(
+					previous,
+					'tenant-a',
+					ledgerAgent(1, { key }).id,
+					[readTool.id],
+				);
+				expect(bound.status).toBe(200);
+			}
+			const agents = keys.map((key) => ledgerAgent(2, { key }));
+			const held = heldAgent(agents);
+			const reachedLock = gate();
+			const contenderWaits = gate();
+			const contenderSettled = gate();
+			const first = await instance(agents, {
+				beforeStatement: async (statement) => {
+					if (
+						statement.tenantId !== 'tenant-a' ||
+						!LOCK_BINDING.test(statement.text) ||
+						statement.parameters[1] !== held
+					) {
+						return;
+					}
+					reachedLock.open();
+					await Promise.race([
+						contenderSettled.opened,
+						contenderWaits.opened.then(idle),
+					]);
+				},
+			});
+			const second = await instance(agents, {
+				beforeStatement: (statement) => {
+					if (
+						statement.tenantId === 'tenant-a' &&
+						AUDIT_LOCK.test(statement.text)
+					) {
+						contenderWaits.open();
+					}
+				},
+			});
+			for (const opened of [first, second]) {
+				await listModuleAgents(opened, 'tenant-c');
+			}
+			return {
+				agents,
+				async race<T>(
+					request: (first: Instance) => Promise<T>,
+					contender: (second: Instance) => Promise<Response>,
+				): Promise<[T, Response]> {
+					const pending = request(first);
+					await reachedLock.opened;
+					const contended = contender(second);
+					void contended.then(contenderSettled.open, contenderSettled.open);
+					return Promise.all([pending, contended]);
+				},
+			};
+		}
+
+		const reconciled = async (agentId: string) =>
+			(
+				await auditActions('tenant-a', 'module-agent.definition-reconciled')
+			).filter((event) => event.subjectId === agentId);
+
+		it('AGENTS-BINDING-REFRESH-ON-REQUEST advances a stale binding once when a request reads it after another advanced it while it waited', async () => {
+			const { agents, race } = await overlap(
+				['ledger-reviewer'],
+				([agent]) => agent!.id,
+			);
+			const agent = agents[0]!;
+			const [listed, queued] = await race(
+				(first) => listModuleAgents(first, 'tenant-a'),
+				(second) => runAgent(second, 'tenant-a', agent.id),
+			);
+			expect(queued.status).toBe(202);
+			expect(
+				listed.find((candidate) => candidate.id === agent.id),
+			).toMatchObject({ revision: 2, bindingRevision: 2 });
+			expect(await binding('tenant-a', agent.id)).toMatchObject({
+				moduleDefinitionRevision: 2,
+				executableRevision: 2,
+				revision: 2,
+			});
+			expect(await reconciled(agent.id)).toHaveLength(1);
+		});
+
+		it('AGENTS-BINDING-REFRESH-ON-REQUEST advances two stale bindings in a list while a run advances one of them, without a deadlock', async () => {
+			const { agents, race } = await overlap(
+				['a-reviewer', 'b-reviewer'],
+				(served) => served[1]!.id,
+			);
+			const [first, second] = agents as [
+				ModuleAgentDefinition,
+				ModuleAgentDefinition,
+			];
+			const [listed, queued] = await race(
+				(listing) => listModuleAgents(listing, 'tenant-a'),
+				(running) => runAgent(running, 'tenant-a', second.id),
+			);
+			expect(queued.status).toBe(202);
+			for (const agent of [first, second]) {
+				expect(
+					listed.find((candidate) => candidate.id === agent.id),
+				).toMatchObject({ revision: 2, bindingRevision: 2 });
+				expect(await reconciled(agent.id)).toHaveLength(1);
+			}
+		});
+
+		it('AGENTS-BINDING-REFRESH-ON-REQUEST advances two stale bindings in a list while a save configures one of them, without a deadlock', async () => {
+			const { agents, race } = await overlap(
+				['a-reviewer', 'b-reviewer'],
+				(served) => served[1]!.id,
+			);
+			const [first, second] = agents as [
+				ModuleAgentDefinition,
+				ModuleAgentDefinition,
+			];
+			const [listed, saved] = await race(
+				(listing) => listModuleAgents(listing, 'tenant-a'),
+				(saving) => bindAgent(saving, 'tenant-a', second.id, [readTool.id], 1),
+			);
+			expect(saved.status).toBe(200);
+			for (const agent of [first, second]) {
+				expect(
+					listed.find((candidate) => candidate.id === agent.id),
+				).toMatchObject({ revision: 2, bindingRevision: 2 });
+			}
+			expect(await reconciled(first.id)).toHaveLength(1);
+			expect(await reconciled(second.id)).toEqual([]);
+			expect(
+				(await auditActions('tenant-a', 'module-agent.binding-updated')).map(
+					(event) => event.subjectId,
+				),
+			).toEqual([second.id]);
+		});
+	},
+);

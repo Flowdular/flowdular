@@ -1726,6 +1726,7 @@ export class DatabaseAgentRepository implements AgentRepository {
 		return this.#tx(tenantId, 'write', async (transaction) => {
 			const bindings = new Map<string, ModuleAgentBinding>();
 			const superseded = new Map<string, number>();
+			const behind: [ModuleAgentBinding, ModuleAgentDefinition][] = [];
 			for (const definition of [...definitions].sort(byAgentId)) {
 				/* The share lock keeps the catalogue row where it is until this
 				   transaction ends, so a binding is never advanced to a revision a
@@ -1772,19 +1773,25 @@ export class DatabaseAgentRepository implements AgentRepository {
 						row &&
 						row.module_definition_revision < definition.definitionRevision
 					) {
-						bindings.set(
-							definition.id,
-							await this.#advanceModuleAgentBinding(
-								transaction,
-								fromModuleBindingRow(row),
-								definition,
-								at,
-							),
-						);
+						behind.push([fromModuleBindingRow(row), definition]);
 						continue;
 					}
 				}
 				if (row) bindings.set(definition.id, fromModuleBindingRow(row));
+			}
+			/* An advance appends audit under the tenant's audit lock. Taking it
+			   only after every row lock is the order a save uses, so the two
+			   never wait on each other in a cycle. */
+			for (const [previous, definition] of behind) {
+				bindings.set(
+					definition.id,
+					await this.#advanceModuleAgentBinding(
+						transaction,
+						previous,
+						definition,
+						at,
+					),
+				);
 			}
 			return { bindings, superseded };
 		});

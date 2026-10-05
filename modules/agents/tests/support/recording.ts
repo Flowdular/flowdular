@@ -23,6 +23,11 @@ export interface RecordingProvider {
 }
 
 export interface RecordingHooks {
+	/* Runs before a statement reaches the database, inside its transaction, so
+	   a case can hold one transaction at a chosen point while another runs. */
+	readonly beforeStatement?: (
+		statement: RecordedStatement,
+	) => Promise<void> | void;
 	/* Runs after a transaction commits and before its caller resumes. */
 	readonly afterTransaction?: (
 		purpose: string,
@@ -63,25 +68,28 @@ export function recordingProvider(
 		options: DatabaseTransactionOptions | undefined,
 		transaction: number | undefined,
 	): S => {
-		const record = (statement: DatabaseStatement) =>
-			statements.push({
+		const record = async (statement: DatabaseStatement) => {
+			const recorded: RecordedStatement = {
 				purpose,
 				tenantId: options?.tenantId,
 				access: options?.access,
 				transaction,
 				text: statement.text.replace(/\s+/g, ' ').trim(),
 				parameters: statement.parameters ?? [],
-			});
+			};
+			statements.push(recorded);
+			await hooks.beforeStatement?.(recorded);
+		};
 		return forwarding(target, {
-			query: (statement: DatabaseStatement, ...rest: unknown[]) => {
-				record(statement);
+			query: async (statement: DatabaseStatement, ...rest: unknown[]) => {
+				await record(statement);
 				return (target.query as (...args: unknown[]) => unknown)(
 					statement,
 					...rest,
 				);
 			},
-			execute: (statement: DatabaseStatement, ...rest: unknown[]) => {
-				record(statement);
+			execute: async (statement: DatabaseStatement, ...rest: unknown[]) => {
+				await record(statement);
 				return (target.execute as (...args: unknown[]) => unknown)(
 					statement,
 					...rest,
