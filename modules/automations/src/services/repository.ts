@@ -120,9 +120,11 @@ export interface AutomationsRepository {
 		schedule: StoredAutomationSchedule,
 	): Promise<StoredAutomationSchedule>;
 	deleteSchedule(tenantId: string, scheduleId: string): Promise<boolean>;
+	/** Due schedules across workspaces by slot then id, past `after` when given. */
 	listDueSchedules(
 		now: number,
 		limit: number,
+		after?: AutomationScheduleRouting | null,
 	): Promise<readonly AutomationScheduleRouting[]>;
 	advanceSchedule(input: {
 		readonly tenantId: string;

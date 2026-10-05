@@ -622,6 +622,22 @@ export class AutomationScheduleService {
 		return await this.fire(schedule, this.now());
 	}
 
+	/**
+	 * Whether a routed slot is still due on a cron cadence, read under the
+	 * tenant the routing named, so a pass can step over a held one without
+	 * spending a claim on it.
+	 */
+	async isCronSlot(routing: AutomationScheduleRouting): Promise<boolean> {
+		const schedule = await this.repository.getSchedule(
+			routing.tenantId,
+			routing.id,
+		);
+		return (
+			schedule?.nextRunAt === routing.nextRunAt &&
+			cadenceKind(schedule.cadence) === 'cron'
+		);
+	}
+
 	private async fire(
 		schedule: StoredAutomationSchedule,
 		now: number,

@@ -345,6 +345,10 @@ const SQL = {
 	listDueSchedules: `SELECT tenant_id, id, next_run_at
 	 FROM automations_schedules WHERE enabled = 1
 	 AND next_run_at <= $1 ORDER BY next_run_at, id LIMIT $2`,
+	listDueSchedulesAfter: `SELECT tenant_id, id, next_run_at
+	 FROM automations_schedules WHERE enabled = 1
+	 AND next_run_at <= $1 AND (next_run_at, id) > ($3, $4)
+	 ORDER BY next_run_at, id LIMIT $2`,
 	advanceSchedule: `UPDATE automations_schedules SET next_run_at = $1,
 	 last_run_at = $2, last_run_id = $3, last_error = $4,
 	 updated_at = $5
@@ -528,15 +532,20 @@ export class DatabaseAutomationsRepository implements AutomationsRepository {
 	async listDueSchedules(
 		now: number,
 		limit: number,
+		after?: AutomationScheduleRouting | null,
 	): Promise<readonly AutomationScheduleRouting[]> {
 		const result = await this.handles.background.query<{
 			tenant_id: string;
 			id: string;
 			next_run_at: number | bigint | string;
-		}>({
-			text: SQL.listDueSchedules,
-			parameters: [now, limit],
-		});
+		}>(
+			after
+				? {
+						text: SQL.listDueSchedulesAfter,
+						parameters: [now, limit, after.nextRunAt, after.id],
+					}
+				: { text: SQL.listDueSchedules, parameters: [now, limit] },
+		);
 		return result.rows.map((row) => ({
 			tenantId: row.tenant_id,
 			id: row.id,

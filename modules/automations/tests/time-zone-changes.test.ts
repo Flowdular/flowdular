@@ -34,7 +34,13 @@ import { AUTOMATIONS_PERMISSIONS } from '../src/acl/permissions.ts';
 import { createServerComposition } from '../src/platform.ts';
 import { DatabaseAutomationsRepository } from '../src/services/database-repository.ts';
 import type { StoredAutomationSchedule } from '../src/services/repository.ts';
+import {
+	createAutomationScheduleRunner,
+	SCHEDULE_HELD_SKIPS,
+	SCHEDULE_POLL_PAGE,
+} from '../src/services/schedule-runner.ts';
 import { AutomationScheduleService } from '../src/services/schedule-service.ts';
+import { createTimeZoneFollower } from '../src/services/time-zone-follower.ts';
 import {
 	openAutomationsTestDatabase,
 	type AutomationsTestDatabase,
@@ -797,6 +803,113 @@ describe('workspace time zone changes through the settings change log', () => {
 			(await shared.repository.appliedTimeZone('tenant-a'))?.revision,
 		).toBe(change.revision);
 		expect(firedSlots(worker, 'hourly')).toEqual([owed]);
+	});
+
+	it('AUTO-TZ-RETIME-FAILS fires the other workspace in that pass however many held cron slots sort ahead of it', async () => {
+		const owed = Date.now() - HOUR;
+		const held = Array.from(
+			{ length: SCHEDULE_POLL_PAGE + 5 },
+			(_, index) => `tenant-b-hourly-${index}`,
+		);
+		for (const [index, id] of held.entries()) {
+			await shared.repository.createSchedule(
+				schedule('tenant-b', id, HOURLY, owed + index),
+			);
+		}
+		const behind = owed + held.length;
+		await shared.repository.createSchedule(
+			schedule('tenant-b', 'tenant-b-interval', 'every:60', behind),
+		);
+		await shared.repository.createSchedule(
+			schedule('tenant-a', 'tenant-a-hourly', HOURLY, behind),
+		);
+		const web = settingsProcess();
+		await setZone(web, 'tenant-a', KOLKATA);
+		await setZone(web, 'tenant-b', KATHMANDU);
+		const faults = failingWrites(shared.databases);
+		const worker = await workerProcess({ databases: faults.provider });
+		faults.failNext.add('tenant-b');
+
+		await runPass(worker);
+		expect(firedSlots(worker, 'tenant-a-hourly')).toEqual([behind]);
+		expect(firedSlots(worker, 'tenant-b-interval')).toEqual([behind]);
+		for (const id of held) expect(firedSlots(worker, id)).toEqual([]);
+		expect(await shared.repository.appliedTimeZone('tenant-b')).toBeNull();
+	});
+
+	it('AUTO-TZ-RETIME-FAILS fires interval schedules in a pass that could not read the change log however many cron slots it holds', async () => {
+		const owed = Date.now() - HOUR;
+		const held = Array.from(
+			{ length: SCHEDULE_POLL_PAGE + 5 },
+			(_, index) => `hourly-${index}`,
+		);
+		for (const [index, id] of held.entries()) {
+			await shared.repository.createSchedule(
+				schedule(index % 2 ? 'tenant-a' : 'tenant-b', id, HOURLY, owed + index),
+			);
+		}
+		const behind = owed + held.length;
+		await shared.repository.createSchedule(
+			schedule('tenant-a', 'interval', 'every:60', behind),
+		);
+		const worker = await workerProcess();
+		worker.logReadsFail.on = true;
+
+		await runPass(worker);
+		expect(firedSlots(worker, 'interval')).toEqual([behind]);
+		for (const id of held) expect(firedSlots(worker, id)).toEqual([]);
+	});
+
+	it('AUTO-TZ-RETIME-FAILS reaches a slot behind more held cron slots than one pass steps over by the next pass, then walks again from the oldest', async () => {
+		const owed = Date.now() - HOUR;
+		const held = SCHEDULE_HELD_SKIPS + SCHEDULE_POLL_PAGE + 5;
+		for (let index = 0; index < held; index += 1) {
+			await shared.repository.createSchedule(
+				schedule('tenant-a', `hourly-${index}`, HOURLY, owed + index),
+			);
+		}
+		await shared.repository.createSchedule(
+			schedule('tenant-b', 'interval', 'every:60', owed + held),
+		);
+		const settings = settingsProcess();
+		const { queue, keys } = runQueue();
+		const service = new AutomationScheduleService(
+			shared.repository,
+			queue,
+			Date.now,
+			undefined,
+			undefined,
+			undefined,
+			settings,
+		);
+		const logReadsFail = { on: true };
+		const runner = createAutomationScheduleRunner({
+			repository: async () => shared.repository,
+			service: async () => service,
+			timeZones: createTimeZoneFollower({
+				settings: {
+					changesAfter: async (request) => {
+						if (logReadsFail.on) throw new Error('connection lost');
+						return settings.changesAfter(request);
+					},
+				},
+				apply: (change) => service.applyTimeZoneChange(change),
+			}),
+			intervalMs: 30_000,
+		});
+
+		await runner.tick();
+		await runner.tick();
+		expect(keys).toEqual([`schedule:interval:${owed + held}`]);
+
+		logReadsFail.on = false;
+		await runner.tick();
+		expect(keys.slice(1)).toEqual(
+			Array.from(
+				{ length: SCHEDULE_POLL_PAGE },
+				(_, index) => `schedule:hourly-${index}:${owed + index}`,
+			),
+		);
 	});
 
 	it('AUTO-TZ-RESYNC reads the log from its start once the cursor expired and retimes a change older than the retention period', async () => {
