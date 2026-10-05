@@ -1,5 +1,43 @@
 # Deployment
 
+## Deployment targets
+
+Run `pnpm flowdular deploy targets` to inspect the target contracts and
+`pnpm flowdular deploy plan docker` before starting the local stack.
+`pnpm flowdular deploy start docker --apply` starts Docker Compose and opens
+first-run setup. It prints the setup token, so it requires a private
+interactive terminal and refuses `--json` or redirected output.
+
+The repository-root `render.yaml` is a Render Blueprint for an always-on
+container. It needs external PostgreSQL with separate runtime, background and
+migrator roles, verified TLS and an existing S3 bucket. The Blueprint prompts
+for the database and storage values, derives its public HTTPS origin from the
+Render service and generates encryption keys. Back up those keys separately.
+If you add a custom domain, set its HTTPS origin in `render.yaml` so the next
+Blueprint sync keeps it. It uses
+`/api/health` during initial setup; verify
+`/api/ready` after setup. See the main Flowdular deployment guide for details.
+Render Blueprints can create a database, but `fromDatabase` gives its internal
+URL, whose self-signed TLS certificate cannot satisfy Flowdular's production
+`verify-full` requirement. The Blueprint also cannot declare the three
+separate roles. Render can host MinIO, but this Blueprint does not initialize
+its bucket or wire its credentials. For a store other than AWS S3, set
+`FD_STORAGE_S3_ENDPOINT` and, if needed, `FD_STORAGE_S3_FORCE_PATH_STYLE` on
+the Render service. See the [Render Postgres connection guide](https://render.com/docs/postgresql-creating-connecting)
+and [MinIO guide](https://render.com/docs/deploy-minio).
+Vercel is unavailable as a full target because its
+[Functions scale down to zero](https://vercel.com/docs/functions), while
+[Services beta](https://vercel.com/docs/services) follows Function limits and
+has no verified persistent Flowdular worker adapter. Cloudflare's Durable Object
+Container API can keep a process alive, but Flowdular has no verified adapter
+for its restart, secret and rollout lifecycle yet. After committing
+`render.yaml` and `infra/docker/Dockerfile` and pushing the branch to a
+credential-free Git origin, `deploy plan render --json` returns a Deploy to
+Render URL when both files pass structural checks and match the pushed branch. The URL
+selects that branch for Render, but the external PostgreSQL, storage and secret
+prerequisites still require operator setup. Local Git tracking refs are not
+live provider validation, so confirm that Render can access the branch.
+
 The production artifact is the server built from `platform`. It runs as a
 non-root user and serves two public probes from
 `platform/src/server/health.ts`: `GET /api/health` answers as soon as the

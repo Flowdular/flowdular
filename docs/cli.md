@@ -47,7 +47,14 @@ flowdular database restore --input <dir> --apply --confirm restore-database
 flowdular setup check                              # alias of doctor
 flowdular setup quick [--apply --confirm reset-local-auth]
 flowdular setup migrate-state [--apply --confirm migrate-legacy-state]
+flowdular deploy targets                            # runtime support and launch modes
+flowdular deploy plan <target> [--json]              # read-only provider preflight
+flowdular deploy start docker [--apply]              # local Compose launch; without --apply returns plan
 ```
+
+`deploy start docker --apply` prints a one-time setup token, so it refuses
+`--json` and redirected output and must run in a private interactive terminal. The deployment targets are
+documented in [infra/README.md](../infra/README.md).
 
 ### Authoring a migration
 

@@ -50,6 +50,7 @@ import { createCliDatabaseProvider, databaseReset } from './database.ts';
 import { databaseBackup, databaseRestore } from './database-backup.ts';
 import { migrationScaffold } from './migration-new.ts';
 import { runDoctor } from './doctor.ts';
+import { runDeployment } from './deployment.ts';
 import {
 	loadCliCommand,
 	loadCliExtensions,
@@ -291,7 +292,7 @@ export async function runCommand(
 		if (!group || group === 'help' || arguments_.flags.has('help')) {
 			return success({
 				usage:
-					'flowdular [--root <workspace>] [--json] <doctor|capability|spec|blueprint|module|web|migration|database|setup> [action] [options]',
+					'flowdular [--root <workspace>] [--json] <doctor|capability|spec|blueprint|module|web|migration|database|setup|deploy> [action] [options]',
 				commands: [
 					'doctor',
 					'capability list|describe <id>|run <id>',
@@ -308,6 +309,7 @@ export async function runCommand(
 					'database restore --input <dir> --apply --confirm restore-database',
 					'database restore-production --input <dir> --target <database> --grant <token> --tenant <id> [--allow-key-mismatch] [--platform-url <origin>|--platform-stopped] --apply --confirm restore-database',
 					'setup (interactive)|check|quick [--apply --confirm reset-local-auth]|migrate-state [--apply --confirm migrate-legacy-state]',
+					'deploy targets|plan <docker|kubernetes|render|vercel|cloudflare>|start docker --apply [--no-open] [--no-build]',
 					...extensionCommands.map((entry) => entry.command.path.join(' ')),
 				],
 				options: [
@@ -323,6 +325,17 @@ export async function runCommand(
 				'USAGE_ERROR',
 				'Use module source add, then module plan and module apply.',
 			);
+
+		if (group === 'deploy') {
+			if (action === 'start') {
+				const descriptor = coreCapability('deploy.start.local')!;
+				const refused =
+					environmentRefusal(descriptor, arguments_) ??
+					writeRefusal(descriptor, arguments_);
+				if (refused) return refused;
+			}
+			return runDeployment(workspace, action, target, arguments_);
+		}
 
 		if (group === 'setup' && action === 'quick') {
 			const greenfield = extensionCommands.find(
@@ -423,6 +436,7 @@ export async function runCommand(
 					'database.backup': ['database', 'backup'],
 					'database.restore': ['database', 'restore'],
 					'database.restore.production': ['database', 'restore-production'],
+					'deploy.start.local': ['deploy', 'start', 'docker'],
 				};
 				const alias = aliases[target];
 				if (alias)

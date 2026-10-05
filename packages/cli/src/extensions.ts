@@ -22,6 +22,7 @@ const reservedGroups = new Set([
 	'web',
 	'migration',
 	'setup',
+	'deploy',
 ]);
 
 export interface LoadedCliCommand {

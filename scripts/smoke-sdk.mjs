@@ -102,9 +102,18 @@ for (const path of [
 	'docs/sandbox.md',
 	'specs/application.yaml',
 	'infra/docker/Dockerfile',
+	'render.yaml',
 	'.env.example',
 ])
 	await access(join(consumer, path));
+const renderBlueprint = await readFile(join(consumer, 'render.yaml'), 'utf8');
+if (renderBlueprint !== (await readFile(join(root, 'render.yaml'), 'utf8')))
+	throw new Error('Packed generator Render Blueprint differs from the source.');
+if (
+	!renderBlueprint.includes('runtime: docker') ||
+	!renderBlueprint.includes('key: FD_DATABASE_MIGRATOR_URL')
+)
+	throw new Error('Packed generator Render Blueprint is incomplete.');
 try {
 	await access(join(consumer, '.claude/settings.local.json'));
 	throw new Error('Generator copied personal Claude settings.');

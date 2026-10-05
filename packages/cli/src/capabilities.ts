@@ -2,6 +2,15 @@ import type { CapabilityDescriptor } from '@flowdular/cli-protocol';
 
 export const capabilities: readonly CapabilityDescriptor[] = [
 	{
+		id: 'deploy.start.local',
+		version: 1,
+		summary:
+			'Start the complete local Docker Compose deployment after preflight.',
+		risk: 'process',
+		requiresApprovedSpec: false,
+		supportsDryRun: true,
+	},
+	{
 		id: 'web.list',
 		version: 1,
 		summary: 'List the addresses this workspace serves module pages at.',
