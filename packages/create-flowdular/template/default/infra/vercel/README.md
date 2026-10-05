@@ -248,8 +248,12 @@ through: enable Protection Bypass for Automation so the web Function can send
 - A request or response body is capped at 4.5 MB, so keep
   `FD_STORAGE_MAX_OBJECT_BYTES` at or below 4194304 until uploads go directly to
   storage.
-- Work still running when a tick reaches its Function's limit is stopped and
-  recovered on a later tick once its lease expires.
+- A tick drains its workers before it answers, within the worker Function's
+  `maxDuration`. An agent run claimed during the window gets up to 180 more
+  seconds on Hobby and 690 on Pro to finish (`FD_AGENT_WORKER_DRAIN_MS`). Work
+  still running after that is stopped and starts again from its input on a
+  later tick once its lease expires, so an agent run must finish within about
+  four minutes on Hobby and twelve on Pro.
 - `/api/ready` checks the database roles. It does not prove that ticks are
   arriving; watch the Cron Jobs page and the worker Function logs.
 - The embedded sandbox and workspace file edits are local development features
