@@ -79,6 +79,8 @@ export interface ModuleServerComposition {
 	readonly prepare?: () => void | Promise<void>;
 	/** Runs after every module composed and declared its settings. */
 	readonly start?: () => void;
+	/** Starts background work after shared registration has completed. */
+	readonly startWorker?: () => void | Promise<void>;
 	/** Stops and drains background work before any module resource is disposed. */
 	readonly stop?: () => void | Promise<void>;
 	/** Releases repositories, workers, timers, and listeners owned by the module. */

@@ -48,6 +48,11 @@ import {
 	platformRuntimeRole,
 	startModuleWorkers,
 } from './src/server/runtime-role.ts';
+import {
+	createWorkerTickEndpoint,
+	createWorkerTicker,
+	workerTickConfigFromEnvironment,
+} from './src/server/worker-tick.ts';
 import { createPlatformObservability } from './src/server/tracing.ts';
 import {
 	createStorageKeyring,
@@ -110,6 +115,10 @@ async function createPlatformConfig() {
 	}
 	clearSetupToken(workspaceRoot);
 	const runtimeRole = platformRuntimeRole(process.env);
+	const workerTick =
+		runtimeRole === 'tick'
+			? workerTickConfigFromEnvironment(process.env)
+			: null;
 
 	/* Composed first and drained last: a trace or an error report is evidence about
    the boot that follows it, and both egresses refuse a misconfigured endpoint
@@ -187,6 +196,9 @@ async function createPlatformConfig() {
 	for (const composition of moduleCompositions) {
 		if (composition.settings) settings.declare(composition.settings);
 	}
+	const ticker = workerTick
+		? createWorkerTicker(moduleCompositions, { windowMs: workerTick.windowMs })
+		: null;
 	agentDefinitions.seal();
 	/* Sealed once every composition has run and before any start hook reads the
    catalogue, so every reader sees the declarations the modules agreed on. */
@@ -208,6 +220,7 @@ async function createPlatformConfig() {
 	const shutdown = async () => {
 		if (stopping) return;
 		stopping = true;
+		await ticker?.close();
 		for (const composition of moduleCompositions) {
 			await composition.stop?.();
 			await composition.dispose?.();
@@ -246,6 +259,9 @@ async function createPlatformConfig() {
 				}),
 				healthEndpoint.serverRoute,
 				createReadinessEndpoint(databases).serverRoute,
+				...(ticker && workerTick
+					? [createWorkerTickEndpoint(ticker, workerTick).serverRoute]
+					: []),
 				...createMetricsRoutes({ environment: process.env }),
 				/* Describes every operation the presented credential may call, built
 			   from the endpoints this application composed. */

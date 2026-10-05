@@ -23,7 +23,7 @@ const fixtures: Record<string, string> = {
 		export const defineConfig = value => value;
 		export class RenderRoute { constructor(options) { Object.assign(this, options); } }
 	`,
-	'@flowdular/sdk/server': `export const validateApplicationPath = value => value; export const assertRouteConflicts = () => {}; export const createModuleWebRoutes = () => []; export const createApplicationRoutes = () => []; export const defineEndpoint = definition => ({ ...definition, serverRoute: { path: definition.path, methods: definition.methods, handler: definition.handler } }); export const jsonResponse = (body, status) => Response.json(body, { status }); export const serverMetrics = () => ({ setBuildVersion() {}, expose: () => 'flowdular_build_info 1\\n' }); export const createModuleMetrics = () => ({ counter() {}, histogram() {} }); export const serverTracer = () => ({ sampleRatio: 1, startSpan: () => ({ context: {}, setAttribute() {}, end() {} }), drain: () => [], stats: () => ({ buffered: 0, dropped: 0, recorded: 0 }), onSpanRecorded: () => () => {} }); export const traceConfigFromEnvironment = () => ({ exporter: 'none', url: null, headers: {}, sampleRatio: 1 }); export const createOtlpSpanExporter = () => ({ async flush() {}, stats: () => ({ exported: 0, dropped: 0, failures: 0, retries: 0 }), async dispose() {} }); export const errorSinkConfigFromEnvironment = () => ({ kind: 'none', url: null, token: null }); export const serverErrorSink = () => ({ stats: () => ({ queued: 0 }), async flush() {} }); export const createMailPort = () => ({ adapter: 'none', configured: false, async send() {}, outbox: [] }); export const mailConfigFromEnvironment = () => ({ adapter: 'none', deprecated: [] }); export const createCorsMiddleware = () => (context, next) => next(); export const createOpenApiRoutes = () => [{ path: '/api/openapi.json', methods: ['GET'], handler: () => new Response(null) }];`,
+	'@flowdular/sdk/server': `export const validateApplicationPath = value => value; export const assertRouteConflicts = () => {}; export const createModuleWebRoutes = () => []; export const createApplicationRoutes = () => []; export const defineEndpoint = definition => ({ ...definition, serverRoute: { path: definition.path, methods: definition.methods, handler: definition.handler } }); export const jsonResponse = (body, status) => Response.json(body, { status }); export class HttpProblem extends Error { constructor(code, message, status) { super(message); this.code = code; this.status = status; } } export const problemResponse = error => Response.json({ error: { code: error.code, message: error.message } }, { status: error.status ?? 500 }); export const serverLogger = () => ({ error() {}, warn() {}, info() {}, debug() {} }); export const serverMetrics = () => ({ setBuildVersion() {}, expose: () => 'flowdular_build_info 1\\n' }); export const createModuleMetrics = () => ({ counter() {}, histogram() {} }); export const serverTracer = () => ({ sampleRatio: 1, startSpan: () => ({ context: {}, setAttribute() {}, end() {} }), drain: () => [], stats: () => ({ buffered: 0, dropped: 0, recorded: 0 }), onSpanRecorded: () => () => {} }); export const traceConfigFromEnvironment = () => ({ exporter: 'none', url: null, headers: {}, sampleRatio: 1 }); export const createOtlpSpanExporter = () => ({ async flush() {}, stats: () => ({ exported: 0, dropped: 0, failures: 0, retries: 0 }), async dispose() {} }); export const errorSinkConfigFromEnvironment = () => ({ kind: 'none', url: null, token: null }); export const serverErrorSink = () => ({ stats: () => ({ queued: 0 }), async flush() {} }); export const createMailPort = () => ({ adapter: 'none', configured: false, async send() {}, outbox: [] }); export const mailConfigFromEnvironment = () => ({ adapter: 'none', deprecated: [] }); export const createCorsMiddleware = () => (context, next) => next(); export const createOpenApiRoutes = () => [{ path: '/api/openapi.json', methods: ['GET'], handler: () => new Response(null) }];`,
 	'@flowdular/sdk/modules/auth/server': `
         export const principalFromContext = () => null;
 		export const isTokenPrincipal = () => false;
@@ -236,6 +236,36 @@ it('composes the metrics route only when FD_METRICS is on', async () => {
 			});
 		expect(scraped.status).toBe(200);
 		expect(await scraped.text()).toContain('flowdular_build_info');
+	} finally {
+		await platform.dispose();
+	}
+});
+
+it('serves the worker tick route only in the tick role and refuses it without a secret', async () => {
+	const platform = await generatedPlatform();
+	try {
+		const combined = await boot(platform.directory);
+		expect(combined.router.routes.map((route) => route.path)).not.toContain(
+			'/api/internal/worker/tick',
+		);
+		await expect(
+			boot(platform.directory, { FD_RUNTIME_ROLE: 'tick' }),
+		).rejects.toThrow('FD_WORKER_TICK_SECRET');
+		const secret = 's'.repeat(32);
+		const tick = await boot(platform.directory, {
+			FD_RUNTIME_ROLE: 'tick',
+			FD_WORKER_TICK_SECRET: secret,
+			FD_WORKER_TICK_WINDOW_MS: '1000',
+		});
+		const route = tick.router.routes.find(
+			(candidate) => candidate.path === '/api/internal/worker/tick',
+		);
+		expect(route).toBeDefined();
+		const denied = await route!.handler({
+			requestId: 'tick',
+			octane: { request: new Request('http://app/api/internal/worker/tick') },
+		});
+		expect(denied.status).toBe(401);
 	} finally {
 		await platform.dispose();
 	}

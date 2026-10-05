@@ -55,6 +55,11 @@ import {
 	platformRuntimeRole,
 	startModuleWorkers,
 } from './src/server/runtime-role.ts';
+import {
+	createWorkerTickEndpoint,
+	createWorkerTicker,
+	workerTickConfigFromEnvironment,
+} from './src/server/worker-tick.ts';
 import { createPlatformObservability } from './src/server/tracing.ts';
 import {
 	createStorageKeyring,
@@ -157,6 +162,10 @@ async function createPlatformConfig() {
 	}
 	clearSetupToken(workspaceRoot);
 	const runtimeRole = platformRuntimeRole(process.env);
+	const workerTick =
+		runtimeRole === 'tick'
+			? workerTickConfigFromEnvironment(process.env)
+			: null;
 	const lifecycle = createPlatformRuntimeLifecycle();
 	/* Composed first and drained last: a trace or an error report is evidence
 	   about the boot that follows it, and both egresses refuse a misconfigured
@@ -249,6 +258,14 @@ async function createPlatformConfig() {
 			if (composition.stop) lifecycle.addQuiesce(composition.stop);
 			if (composition.dispose) lifecycle.add(composition.dispose);
 		}
+		const ticker = workerTick
+			? createWorkerTicker(moduleCompositions, {
+					windowMs: workerTick.windowMs,
+				})
+			: null;
+		/* Registered after the module stops, so retirement closes the open
+		   window before those stops run again. */
+		if (ticker) lifecycle.addQuiesce(() => ticker.close());
 		agentDefinitions.seal();
 		/* Sealed here rather than in a module: every composition has run, which
 		   is exactly when the declarations are final and before any start hook
@@ -316,6 +333,9 @@ async function createPlatformConfig() {
 							};
 						},
 					}),
+					...(ticker && workerTick
+						? [createWorkerTickEndpoint(ticker, workerTick).serverRoute]
+						: []),
 					// The explicit /api fallback is more specific than the workspace
 					// params below and prevents API typos from rendering as pages.
 					...API_NOT_FOUND_ROUTES,
