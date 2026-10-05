@@ -65,7 +65,9 @@ signed artifacts, verifies their signature and hashes again, and publishes the
 four tarballs in dependency order. Each package must list this repository's
 `platform-release.yml` as an npm trusted publisher, with **Allow npm publish**
 selected. Enter `platform-release.yml` as the workflow filename in npm, not its
-full repository path. The job uses npm's GitHub OIDC identity, not a long-lived
+full repository path. Set the GitHub owner to `Flowdular` with a capital `F`,
+the repository to `flowdular`, and leave the environment name empty. npm matches
+these fields with exact case. The job uses npm's GitHub OIDC identity, not a long-lived
 npm token. Configure trusted publishing for all four packages before the next
 release; a missing trust relationship leaves the
 GitHub Release intact and fails the npm job. Rerun that failed job after fixing

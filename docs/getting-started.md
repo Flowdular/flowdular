@@ -1,6 +1,6 @@
 # Getting started
 
-Run Flowdular on your machine, seed a demo workspace, and sign in.
+Run Flowdular on your machine, create a workspace, and sign in.
 
 ## Requirements
 
@@ -19,48 +19,40 @@ pnpm flowdular doctor
 `doctor` reports workspace health (configuration, enabled modules, generated
 composition, guardrail files). Add `--json` for a machine-readable envelope.
 
-## Seed a local demo
-
-`pnpm flowdular setup` opens an interactive wizard. Choose a local demo, configure PostgreSQL, or check the existing configuration. Local initialization requires confirmation and a stopped application.
-
-For scripts and CI, `setup quick` is a destructive local reset. It prints its full plan first and
-writes only after a typed confirmation:
-
-```bash
-pnpm flowdular setup quick                                     # dry run, prints the plan
-pnpm flowdular setup quick --apply --confirm reset-local-auth  # resets and seeds
-```
-
-Stop `pnpm dev` before applying it. Quick setup is blocked outside development
-and test, and must never point at a deployed database.
-
-It creates two demo tenants (Operations Demo, Finance Demo) and two logins:
-
-| Account             | Password         | Role                       |
-| ------------------- | ---------------- | -------------------------- |
-| `admin@example.com` | `Owner!23456789` | Owner of both demo tenants |
-| `user@example.com`  | `Member!2345678` | Reduced scope member       |
-
 ## Run the platform
 
 ```bash
 pnpm dev
 ```
 
-Open `http://localhost:4310`. Vite HMR covers TSRX, TypeScript and styles. The
-launcher keeps tool warnings quiet; use `pnpm dev -- --verbose` for full
-diagnostics. `pnpm dev` runs `module sync` first, so a composition change is
-picked up without a manual step.
+On the first run, open [localhost:4310/setup](http://localhost:4310/setup).
+Enter the one-time token from the terminal, then create your
+workspace and owner account. Embedded PostgreSQL is already configured. Restart
+`pnpm dev` after setup and sign in with that account.
 
-The first visit opens the `auth.core` sign-in flow. The session lives in an
-HttpOnly cookie and carries the scopes of the selected tenant membership. On a
-clean database the sign-up wizard is available: workspace name plus a unique
-workspace id (the first URL segment, `/{workspace}/{view}`), then the
-administrator account, then an optional email confirmation step. A bookmark
-pointing at another workspace you belong to switches the session on load.
+Vite HMR covers TSRX, TypeScript and styles. The launcher keeps tool warnings
+quiet; use `pnpm dev -- --verbose` for full diagnostics. `pnpm dev` runs
+`module sync` first, so a composition change is picked up without a manual
+step. The session lives in an HttpOnly cookie and carries the scopes of the
+selected tenant membership. A bookmark pointing at another workspace you
+belong to switches the session on load.
 
 `Development` navigation is visible only to tenant owners; server permissions
 stay authoritative either way.
+
+## Optional local demo reset
+
+`pnpm flowdular setup quick` resets local authentication data and seeds two
+demo workspaces. It is for development or test databases only. Stop `pnpm dev`
+and review the dry-run plan before applying it:
+
+```bash
+pnpm flowdular setup quick                                     # dry run, prints the plan
+pnpm flowdular setup quick --apply --confirm reset-local-auth  # resets and seeds
+```
+
+The demo logins are `admin@example.com` / `Owner!23456789` (owner) and
+`user@example.com` / `Member!2345678` (member).
 
 ## Where local state lives
 
