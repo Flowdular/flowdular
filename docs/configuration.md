@@ -294,7 +294,7 @@ message was not delivered.
 | `FD_AGENT_RUN_GRANT_KEY`           | generated dev key | Base64 32-byte key signing run grants                |
 | `FD_AGENT_WORKER_CONCURRENCY`      | `2` (1 to 16)     | Parallel run workers                                 |
 | `FD_AGENT_WORKER_LEASE_MS`         | `30000`           | Run lease before recovery reclaims it                |
-| `FD_AGENT_WORKER_DRAIN_MS`         | `0` (0 to 280000) | Time a stopping worker lets claimed runs finish      |
+| `FD_AGENT_WORKER_DRAIN_MS`         | `0` (0 to 720000) | Time a stopping worker lets claimed runs finish      |
 | `FD_AGENT_PROVIDER_HOST_ALLOWLIST` | empty             | Hostnames an external provider may be called on      |
 
 Outside production the keys are generated once under `.flowdular/data`. The

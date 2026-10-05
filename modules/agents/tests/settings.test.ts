@@ -95,7 +95,7 @@ describe('agents.core module settings', () => {
 });
 
 describe('agents.core runtime options', () => {
-	it('reads FD_AGENT_WORKER_DRAIN_MS from 0 to 280000 and refuses anything else', () => {
+	it('reads FD_AGENT_WORKER_DRAIN_MS from 0 to 720000 and refuses anything else', () => {
 		const drainMs = (value?: string) =>
 			agentRuntimeOptionsFromEnvironment(
 				value === undefined ? {} : { FD_AGENT_WORKER_DRAIN_MS: value },
@@ -103,10 +103,10 @@ describe('agents.core runtime options', () => {
 		expect(drainMs()).toBe(0);
 		expect(drainMs('0')).toBe(0);
 		expect(drainMs('120000')).toBe(120_000);
-		expect(drainMs('280000')).toBe(280_000);
-		for (const invalid of ['-1', '280001', '1.5', 'soon']) {
+		expect(drainMs('720000')).toBe(720_000);
+		for (const invalid of ['-1', '720001', '1.5', 'soon']) {
 			expect(() => drainMs(invalid)).toThrow(
-				'FD_AGENT_WORKER_DRAIN_MS must be an integer between 0 and 280000.',
+				'FD_AGENT_WORKER_DRAIN_MS must be an integer between 0 and 720000.',
 			);
 		}
 	});

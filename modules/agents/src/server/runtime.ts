@@ -173,7 +173,7 @@ export function agentRuntimeOptionsFromEnvironment(
 			environment.FD_AGENT_WORKER_DRAIN_MS,
 			0,
 			0,
-			280_000,
+			720_000,
 			'FD_AGENT_WORKER_DRAIN_MS',
 		),
 		providerHostAllowlist: providerHostAllowlist(
