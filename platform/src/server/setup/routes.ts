@@ -7,6 +7,7 @@ import {
 	validateWorkspaceName,
 	validateWorkspaceSlug,
 } from '@flowdular/module-auth/server';
+import { AUTH_MODULE_SETTINGS } from '@flowdular/module-auth';
 import { randomBytes } from 'node:crypto';
 import { ServerRoute, type Context } from '@octanejs/app-core';
 import {
@@ -121,6 +122,22 @@ function canAutoRestart(
 	);
 }
 
+/* auth.core's rule for this variable: blank means the default, and a value
+   outside the setting's bounds stops startup, as auth.core does at boot. */
+function passwordMinLength(environment: NodeJS.ProcessEnv): number {
+	const { defaultValue, min, max } =
+		AUTH_MODULE_SETTINGS.settings.passwordMinLength!;
+	const value = environment.FD_AUTH_PASSWORD_MIN_LENGTH;
+	if (value === undefined || value.trim() === '') return Number(defaultValue);
+	const parsed = Number(value);
+	if (!Number.isSafeInteger(parsed) || parsed < min! || parsed > max!) {
+		throw new Error(
+			`FD_AUTH_PASSWORD_MIN_LENGTH must be an integer between ${min} and ${max}.`,
+		);
+	}
+	return parsed;
+}
+
 function emptyView(options: SetupRoutesOptions): SetupPageView {
 	return {
 		step: 'Unlock',
@@ -148,6 +165,9 @@ function emptyView(options: SetupRoutesOptions): SetupPageView {
 		seed: null,
 		modulesApproximated: options.modulesApproximated,
 		tokenFile: options.tokenFile,
+		/* auth.core creates the owner with this minimum, so the workspace step
+		   has to refuse what the final step would. */
+		passwordMinLength: passwordMinLength(options.environment),
 	};
 }
 
@@ -493,10 +513,7 @@ export function createSetupHandler(
 			validateEmailAddress(values.ownerEmail!),
 		);
 		try {
-			const minimum = Number(
-				options.environment.FD_AUTH_PASSWORD_MIN_LENGTH ?? '8',
-			);
-			assertPasswordPolicy(password, minimum, values.ownerEmail);
+			assertPasswordPolicy(password, base.passwordMinLength, values.ownerEmail);
 		} catch (error) {
 			fieldErrors.ownerPassword =
 				error instanceof AuthServiceError
