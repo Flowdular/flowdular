@@ -1806,6 +1806,20 @@ describe('agents.core web and worker roles', () => {
 		return { running, release };
 	}
 
+	it('lets a run claimed before a stop settle within FD_AGENT_WORKER_DRAIN_MS', async () => {
+		const worker = role({ FD_AGENT_WORKER_DRAIN_MS: '5000' });
+		const held = holdNextRun();
+		await worker.composed.prepare();
+		await worker.composed.startWorker();
+		const runId = await worker.enqueueRun();
+		await held.running;
+		const stopping = worker.composed.stop!();
+		await idle();
+		held.release();
+		await stopping;
+		expect(await worker.runStatus(runId)).toBe('succeeded');
+	});
+
 	it('claims no workflow action while a stop drains a run and leaves it to the next startWorker', async () => {
 		const worker = role({ FD_AGENT_WORKER_DRAIN_MS: '5000' });
 		const held = holdNextRun();

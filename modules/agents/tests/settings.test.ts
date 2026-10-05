@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { agentRuntimeOptionsFromEnvironment } from '../src/server/runtime.ts';
 import {
 	AGENTS_MODULE_SETTINGS,
 	agentSettings,
@@ -90,5 +91,23 @@ describe('agents.core module settings', () => {
 		expect([...reader.providerHostAllowlist()]).toEqual(['live.example.com']);
 		expect(reader.defaultMaxOutputTokens('tenant-a')).toBe(4_096);
 		expect(reader.defaultModel('tenant-a')).toBe('');
+	});
+});
+
+describe('agents.core runtime options', () => {
+	it('reads FD_AGENT_WORKER_DRAIN_MS from 0 to 280000 and refuses anything else', () => {
+		const drainMs = (value?: string) =>
+			agentRuntimeOptionsFromEnvironment(
+				value === undefined ? {} : { FD_AGENT_WORKER_DRAIN_MS: value },
+			).workerDrainMs;
+		expect(drainMs()).toBe(0);
+		expect(drainMs('0')).toBe(0);
+		expect(drainMs('120000')).toBe(120_000);
+		expect(drainMs('280000')).toBe(280_000);
+		for (const invalid of ['-1', '280001', '1.5', 'soon']) {
+			expect(() => drainMs(invalid)).toThrow(
+				'FD_AGENT_WORKER_DRAIN_MS must be an integer between 0 and 280000.',
+			);
+		}
 	});
 });
