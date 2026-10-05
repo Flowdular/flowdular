@@ -680,7 +680,8 @@ set `BLOB_READ_WRITE_TOKEN`. The platform refuses to start when neither is
 present. Reads bypass the Blob cache, so a re-sealed or deleted object is never
 served from an older copy. A Vercel Function accepts at most 4.5 MB of request
 or response body, so set `FD_STORAGE_MAX_OBJECT_BYTES` to at most `4194304`
-there.
+there. Lowering the limit makes an existing larger object unreadable through
+this adapter, and a key rotation leaves it sealed under its old key.
 
 A module writes through `context.storage` and never sees an adapter, a bucket or
 a path. Only these content types are stored, and the bytes are verified against

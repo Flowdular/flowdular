@@ -25,7 +25,7 @@ export interface StorageResealReport {
 	readonly resealed: number;
 	/** Objects sealed under a key id this ring does not hold; left as they are. */
 	readonly unknown: number;
-	/** Objects that failed authentication under the key they name; left as they are. */
+	/** Objects that failed authentication under the key they name, or exceed the read bound; left as they are. */
 	readonly refused: number;
 	/** References with no object behind them. */
 	readonly missing: number;
@@ -94,7 +94,21 @@ export function createStorageResealer(
 				}
 				stale += 1;
 				if (!options.apply) continue;
-				const frame = await store.read(key);
+				let frame;
+				try {
+					frame = await store.read(key);
+				} catch (error) {
+					/* A frame written under a larger FD_STORAGE_MAX_OBJECT_BYTES is
+					   left as it is, so one cannot stop the rest of the batch. */
+					if (
+						error instanceof StorageError &&
+						error.code === 'OBJECT_TOO_LARGE'
+					) {
+						refused += 1;
+						continue;
+					}
+					throw error;
+				}
 				if (!frame) {
 					missing += 1;
 					continue;
