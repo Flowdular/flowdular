@@ -130,7 +130,7 @@ export function AutomationScheduleForm(props: AutomationScheduleFormProps) @{
 							name="label"
 							defaultValue={props.schedule?.label ?? ''}
 							placeholder={t('automations.schedules.form.labelPlaceholder')}
-							minlength={2}
+							minLength={2}
 							maxLength={120}
 							required
 						/>

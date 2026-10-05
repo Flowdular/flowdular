@@ -156,7 +156,7 @@ export function NewSessionForm(props: NewSessionFormProps) @{
 				<textarea
 					class="ui-textarea"
 					aria-label={t('sandbox.sessions.brief.placeholder')}
-					minlength={8}
+					minLength={8}
 					maxLength={20000}
 					name="brief"
 					rows={4}

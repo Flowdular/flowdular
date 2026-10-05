@@ -41,7 +41,7 @@ export function WorkspaceCard(props: WorkspaceCardProps) @{
 				class="ui-input"
 				aria-label={t('auth.settings.workspace.name')}
 				value={name}
-				minlength={2}
+				minLength={2}
 				maxLength={120}
 				disabled={!props.canManage || props.busy}
 				onInput={(event) => setName(

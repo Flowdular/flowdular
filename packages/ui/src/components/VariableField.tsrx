@@ -206,7 +206,7 @@ export function VariableField(props: VariableFieldCoreProps) @{
 					rows={props.rows ?? 6}
 					required={props.required}
 					disabled={props.disabled}
-					minlength={props.minLength}
+					minLength={props.minLength}
 					maxLength={props.maxLength}
 					spellCheck={false}
 					onInput={handleInput}
@@ -225,7 +225,7 @@ export function VariableField(props: VariableFieldCoreProps) @{
 					aria-label={props.label}
 					required={props.required}
 					disabled={props.disabled}
-					minlength={props.minLength}
+					minLength={props.minLength}
 					maxLength={props.maxLength}
 					spellCheck={false}
 					onInput={handleInput}

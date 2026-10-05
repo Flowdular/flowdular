@@ -525,7 +525,7 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 					onNavigate={navigate}
 					onSignOut={() => void props.onSignOut()}
 				/>
-				<TableLocaleContext.Provider value={tableLocale}>
+				<TableLocaleContext value={tableLocale}>
 					<WorkspaceContent
 						key={props.identity.tenantId}
 						activeView={effectiveView}
@@ -534,7 +534,7 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 						tenantName={activeTenantName}
 						displayName={props.identity.displayName}
 					/>
-				</TableLocaleContext.Provider>
+				</TableLocaleContext>
 			</main>
 			@if (navigationOpen) {
 				<button

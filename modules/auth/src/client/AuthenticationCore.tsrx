@@ -432,7 +432,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 											}
 											setSlugCheck({ status: 'idle', message: '' });
 										}}
-										minlength={2}
+										minLength={2}
 										maxLength={120}
 										required
 									/>
@@ -458,7 +458,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 											setWorkspaceSlug(event.currentTarget.value.toLowerCase());
 											setSlugCheck({ status: 'idle', message: '' });
 										}}
-										minlength={3}
+										minLength={3}
 										maxLength={48}
 										required
 									/>
@@ -494,7 +494,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 										name="displayName"
 										type="text"
 										autoComplete="name"
-										minlength={2}
+										minLength={2}
 										maxLength={80}
 										required
 									/>
@@ -519,7 +519,7 @@ function AuthenticationForm(props: AuthenticationFormProps) @{
 										name="password"
 										type="password"
 										autoComplete="new-password"
-										minlength={12}
+										minLength={12}
 										required
 									/>
 								</FormField>

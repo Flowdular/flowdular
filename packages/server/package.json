@@ -10,7 +10,7 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@octanejs/app-core": "0.0.47",
+		"@octanejs/app-core": "0.1.0",
 		"@flowdular/contracts": "workspace:*",
 		"@flowdular/kernel": "workspace:*",
 		"@flowdular/database": "workspace:*",

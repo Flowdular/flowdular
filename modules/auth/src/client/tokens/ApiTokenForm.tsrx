@@ -101,7 +101,7 @@ export function ApiTokenForm(props: ApiTokenFormProps) @{
 					<input
 						class="ui-input"
 						name="label"
-						minlength={2}
+						minLength={2}
 						maxLength={80}
 						placeholder={t('auth.tokens.form.labelPlaceholder')}
 						autoFocus

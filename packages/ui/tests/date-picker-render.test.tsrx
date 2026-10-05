@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { flushSync } from 'octane';
 import { DatePicker } from '../src/components/DatePicker.tsrx';
 import type { DatePickerPreset } from '../src/components/DatePicker.tsrx';
 import { datePresetRange } from '../src/components/calendar.ts';
@@ -413,7 +414,7 @@ describe('DatePicker', () => {
 		const mounted = await mount(
 			picker({ from: '2026-09-14', to: '2026-09-14' }, () => {}),
 		);
-		trigger(mounted.container).click();
+		flushSync(() => trigger(mounted.container).click());
 		expect(
 			mounted.container.querySelector('.ui-datepicker__popover')?.getAttribute(
 				'style',

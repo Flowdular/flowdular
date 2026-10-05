@@ -66,7 +66,7 @@ export function IdentityProviderForm(props: IdentityProviderFormProps) @{
 						<input
 							class="ui-input"
 							name="key"
-							minlength={2}
+							minLength={2}
 							maxLength={64}
 							pattern="[a-z][a-z0-9-]*"
 							autoFocus

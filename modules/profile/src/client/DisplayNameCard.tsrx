@@ -36,7 +36,7 @@ export function DisplayNameCard(props: DisplayNameCardProps) @{
 					onInput={(event) => props.onDisplayNameChange(
 						event.currentTarget.value,
 					)}
-					minlength={2}
+					minLength={2}
 					maxLength={120}
 					autoComplete="name"
 					required

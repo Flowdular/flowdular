@@ -121,7 +121,7 @@ export function WebhookForm(props: WebhookFormProps) @{
 							name="name"
 							defaultValue={subscription?.name ?? ''}
 							placeholder={t('notifications.webhooks.form.namePlaceholder')}
-							minlength={2}
+							minLength={2}
 							maxLength={120}
 							disabled={!editable}
 							required
