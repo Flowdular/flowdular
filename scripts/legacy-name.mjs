@@ -20,9 +20,6 @@ const ALLOWED_TREES = [
 	// Pinned official-module release; it changes only with a new release.
 	'.ai/references/',
 ];
-// Cookie names; renamed in the next change.
-const PENDING =
-	/^(?:__Host-)?coreloom_(?:session_dev|session|oidc_state|mfa_challenge|preview_session|preview|sandbox|setup)$/;
 
 function allowed(path) {
 	return (
@@ -56,7 +53,7 @@ for (const line of git([
 	`[\\w.-]*${LEGACY_NAME}[\\w.-]*`,
 ]).split('\n')) {
 	const match = /^(.*?):(\d+):(.*)$/.exec(line);
-	if (!match || allowed(match[1]) || PENDING.test(match[3])) continue;
+	if (!match || allowed(match[1])) continue;
 	findings.push(`${match[1]}:${match[2]}: ${match[3]}`);
 }
 for (const path of git([

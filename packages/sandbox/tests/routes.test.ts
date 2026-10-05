@@ -467,7 +467,7 @@ describe('sandbox route security', () => {
 			},
 		});
 		for (const identity of ['other-account', 'other-tenant']) {
-			const headers = { cookie: `coreloom_sandbox=${identity}` };
+			const headers = { cookie: `flowdular_sandbox=${identity}` };
 			const state = (await (
 				await call('GET', '/sandbox/api/state', { headers })
 			).json()) as {
@@ -499,13 +499,13 @@ describe('sandbox route security', () => {
 			}
 			const previewResponse = await call('GET', '/api/booking/items', {
 				headers: {
-					cookie: `${headers.cookie}; coreloom_preview_session=${session.id}`,
+					cookie: `${headers.cookie}; flowdular_preview_session=${session.id}`,
 					referer: `http://127.0.0.1:4320/preview/${session.id}`,
 				},
 			});
 			expect(previewResponse.status).toBe(404);
 		}
-		const ownHeaders = { cookie: 'coreloom_sandbox=owner' };
+		const ownHeaders = { cookie: 'flowdular_sandbox=owner' };
 		expect(
 			(
 				await call('GET', `/sandbox/api/sessions/${session.id}`, {
@@ -829,7 +829,7 @@ describe('sandbox route security', () => {
 			.mockImplementation(async () => Response.json(current));
 		try {
 			const browser = await runtime.openBrowserSession('clat_test');
-			const headers = { cookie: `coreloom_sandbox=${browser.id}` };
+			const headers = { cookie: `flowdular_sandbox=${browser.id}` };
 			const patches: unknown[] = [];
 			runtime.update = async (patch) => {
 				patches.push(patch);
@@ -945,7 +945,7 @@ describe('sandbox route security', () => {
 						? await runtime.openBrowserSession('clat_test')
 						: null;
 				const headers = browser
-					? { cookie: `coreloom_sandbox=${browser.id}` }
+					? { cookie: `flowdular_sandbox=${browser.id}` }
 					: {};
 				const session = await sessionFor(root);
 				if (mode === 'self-hosted') {

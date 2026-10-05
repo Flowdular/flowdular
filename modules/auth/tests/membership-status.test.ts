@@ -237,7 +237,7 @@ describe('AUTH-MEMBERSHIP-DISABLE denials', () => {
 				'/api/auth/memberships/status',
 				{ accountId: first.accountId, status: 'disabled' },
 				{
-					cookie: `coreloom_session_dev=${memberSession.token}`,
+					cookie: `flowdular_session_dev=${memberSession.token}`,
 					'x-csrf-token': memberSession.csrfToken,
 				},
 			),
@@ -370,7 +370,7 @@ describe('AUTH-MEMBERSHIP-DISABLE denials', () => {
 				'/api/auth/memberships/status',
 				{ accountId: first.accountId, status: 'disabled' },
 				{
-					cookie: `coreloom_session_dev=${manager.token}`,
+					cookie: `flowdular_session_dev=${manager.token}`,
 					'x-csrf-token': manager.csrfToken,
 				},
 			),

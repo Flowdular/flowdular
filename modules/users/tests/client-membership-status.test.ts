@@ -58,7 +58,7 @@ async function authRuntime(): Promise<AuthRuntime> {
 		databases,
 		purpose: 'test',
 		secureCookies: false,
-		cookieName: 'coreloom_session_dev',
+		cookieName: 'flowdular_session_dev',
 		sessionTtlMs: 3_600_000,
 		sessionIdleMs: 3_600_000,
 		passwordMinLength: 12,
@@ -248,7 +248,7 @@ describe('USERS-MEMBERSHIP-STATUS membership status client', () => {
 		});
 		if ('mfaRequired' in manager) throw new Error('unexpected challenge');
 		const managerSession: Session = {
-			cookie: `coreloom_session_dev=${manager.token}`,
+			cookie: `flowdular_session_dev=${manager.token}`,
 			csrfToken: manager.csrfToken,
 			accountId: manager.principal.accountId,
 			tenantId: manager.principal.tenantId,

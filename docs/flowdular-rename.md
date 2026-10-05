@@ -24,7 +24,9 @@ Run grants signed by the pre-rename issuer and the `x-coreloom-secret` and
 Mark secret fields with `x-flowdular-secret` and permission-protected fields
 with `x-flowdular-read-permission`.
 
-Authentication cookies retain their established names.
+Authentication, setup, sandbox and preview cookies carry the `flowdular_` prefix
+(`__Host-flowdular_session` behind HTTPS). Cookies set by 0.5 are not read, so
+everyone signs in again; the browser drops the old ones when they expire.
 
 ## Database identifiers
 

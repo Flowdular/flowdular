@@ -92,7 +92,7 @@ export async function openHttpHarness(): Promise<HttpHarness> {
 		databases,
 		purpose: 'test',
 		secureCookies: false,
-		cookieName: 'coreloom_session_dev',
+		cookieName: 'flowdular_session_dev',
 		sessionTtlMs: 3_600_000,
 		sessionIdleMs: 3_600_000,
 		passwordMinLength: 12,

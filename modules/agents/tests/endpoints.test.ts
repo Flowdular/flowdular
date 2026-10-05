@@ -56,7 +56,7 @@ function principal(
 function authRuntime(session: AuthPrincipal | null): AuthRuntime {
 	return {
 		cookie: {
-			name: 'coreloom_session_dev',
+			name: 'flowdular_session_dev',
 			secure: false,
 			maxAgeSeconds: 3_600,
 		},
@@ -234,7 +234,7 @@ function composition(
 		if (
 			session &&
 			(requestInit.headers as Record<string, string> | undefined)?.cookie ===
-				`coreloom_session_dev=${SESSION_TOKEN}`
+				`flowdular_session_dev=${SESSION_TOKEN}`
 		) {
 			context.state.set(AUTH_SESSION_STATE_KEY, sessionState(session));
 		}
@@ -248,7 +248,7 @@ function composition(
 			headers: {
 				'content-type': 'application/json',
 				origin: ORIGIN,
-				cookie: `coreloom_session_dev=${SESSION_TOKEN}`,
+				cookie: `flowdular_session_dev=${SESSION_TOKEN}`,
 				'x-csrf-token': CSRF_TOKEN,
 				...headers,
 			},
@@ -409,7 +409,7 @@ describe('agents HTTP boundary', () => {
 			headers: {
 				'content-type': 'application/json',
 				origin: ORIGIN,
-				cookie: `coreloom_session_dev=${SESSION_TOKEN}`,
+				cookie: `flowdular_session_dev=${SESSION_TOKEN}`,
 			},
 			body: JSON.stringify({
 				id: archivedAgent.agent.id,
@@ -430,7 +430,7 @@ describe('agents HTTP boundary', () => {
 				headers: {
 					'content-type': 'application/json',
 					origin: ORIGIN,
-					cookie: `coreloom_session_dev=${SESSION_TOKEN}`,
+					cookie: `flowdular_session_dev=${SESSION_TOKEN}`,
 					'x-csrf-token': CSRF_TOKEN,
 				},
 				body: JSON.stringify({
@@ -556,7 +556,7 @@ describe('agents HTTP boundary', () => {
 			headers: {
 				'content-type': 'application/json',
 				origin: ORIGIN,
-				cookie: `coreloom_session_dev=${SESSION_TOKEN}`,
+				cookie: `flowdular_session_dev=${SESSION_TOKEN}`,
 				'x-csrf-token': CSRF_TOKEN,
 			},
 			body: JSON.stringify({ id: queued.run.id }),
@@ -719,7 +719,7 @@ describe('agents HTTP boundary', () => {
 			headers: {
 				'content-type': 'application/json',
 				origin: ORIGIN,
-				cookie: `coreloom_session_dev=${SESSION_TOKEN}`,
+				cookie: `flowdular_session_dev=${SESSION_TOKEN}`,
 			},
 			body: JSON.stringify(bindingBody),
 		});
@@ -733,7 +733,7 @@ describe('agents HTTP boundary', () => {
 				method: 'POST',
 				headers: {
 					'content-type': 'application/json',
-					cookie: `coreloom_session_dev=${SESSION_TOKEN}`,
+					cookie: `flowdular_session_dev=${SESSION_TOKEN}`,
 					'x-csrf-token': CSRF_TOKEN,
 				},
 				body: JSON.stringify(bindingBody),
@@ -1456,7 +1456,7 @@ describe('workspace assistant HTTP boundary', () => {
 			headers: {
 				'content-type': 'application/json',
 				origin: ORIGIN,
-				cookie: `coreloom_session_dev=${SESSION_TOKEN}`,
+				cookie: `flowdular_session_dev=${SESSION_TOKEN}`,
 			},
 			body: JSON.stringify({ message: 'No token.' }),
 		});

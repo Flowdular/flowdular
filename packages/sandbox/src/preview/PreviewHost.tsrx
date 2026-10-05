@@ -82,7 +82,7 @@ async function signInPreview(sessionId: string): Promise<{
 	readonly modules: readonly PreviewModuleInfo[];
 	readonly error: string | null;
 }> {
-	document.cookie = `coreloom_preview=${sessionId}; path=/; samesite=strict`;
+	document.cookie = `flowdular_preview=${sessionId}; path=/; samesite=strict`;
 	const info = await (await fetch(
 		'/sandbox/api/sessions/' + encodeURIComponent(sessionId) + '/preview',
 		{

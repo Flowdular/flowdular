@@ -106,7 +106,7 @@ import {
 	type TurnSubscriber as Subscriber,
 } from './turn-lifecycle.ts';
 
-const SANDBOX_COOKIE = 'coreloom_sandbox';
+const SANDBOX_COOKIE = 'flowdular_sandbox';
 /* Every sandbox mutation carries this header. A cross-site form post cannot
    set it, so together with the origin check it is the CSRF boundary. */
 export const SANDBOX_REQUEST_HEADER = 'x-flowdular-sandbox';

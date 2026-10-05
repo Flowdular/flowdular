@@ -103,7 +103,7 @@ async function memberSession(
 	);
 	const issued = await service.signIn({ email, password: OWNER_PASSWORD });
 	return {
-		cookie: `coreloom_session_dev=${issued.token}`,
+		cookie: `flowdular_session_dev=${issued.token}`,
 		csrfToken: issued.csrfToken,
 		accountId: issued.principal.accountId,
 		tenantId: issued.principal.tenantId,

@@ -45,7 +45,7 @@ function authRuntime(
 	sessions: ReadonlyMap<string, AuthPrincipal>,
 ): AuthRuntime {
 	const cookie = {
-		name: 'coreloom_session_dev',
+		name: 'flowdular_session_dev',
 		secure: false,
 		maxAgeSeconds: 3_600,
 	};
@@ -95,7 +95,7 @@ function fixture(session: AuthPrincipal | null) {
 		const { authenticated = true, ...requestInit } = init;
 		const headers = new Headers(requestInit.headers);
 		if (authenticated && session) {
-			headers.set('cookie', `coreloom_session_dev=${SESSION_TOKEN}`);
+			headers.set('cookie', `flowdular_session_dev=${SESSION_TOKEN}`);
 		} else {
 			headers.delete('cookie');
 		}
@@ -180,7 +180,7 @@ describe('REPORTS-RANGE endpoint', () => {
 		const routes = createReportsRoutes(auth, runtime);
 		const request = new Request(
 			ORIGIN + '/api/reports?from=2026-01-01&to=2026-01-31',
-			{ headers: { cookie: `coreloom_session_dev=${SESSION_TOKEN}` } },
+			{ headers: { cookie: `flowdular_session_dev=${SESSION_TOKEN}` } },
 		);
 		const context = {
 			request,

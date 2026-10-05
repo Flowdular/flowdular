@@ -874,7 +874,7 @@ describe('repository setup through the sandbox API', () => {
 				origin: 'http://127.0.0.1:4320',
 				'content-type': 'application/json',
 				...(mode === 'self-hosted'
-					? { cookie: 'coreloom_sandbox=browser-session' }
+					? { cookie: 'flowdular_sandbox=browser-session' }
 					: {}),
 			};
 			if (includeMutationHeader) headers['x-flowdular-sandbox'] = '1';
@@ -899,7 +899,7 @@ describe('repository setup through the sandbox API', () => {
 				headers: {
 					host: '127.0.0.1:4320',
 					...(mode === 'self-hosted'
-						? { cookie: 'coreloom_sandbox=browser-session' }
+						? { cookie: 'flowdular_sandbox=browser-session' }
 						: {}),
 				},
 			});

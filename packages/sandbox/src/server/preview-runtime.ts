@@ -55,7 +55,7 @@ import {
 	recordedAdapterSettings,
 } from './recorded-adapters.ts';
 
-export const PREVIEW_COOKIE = 'coreloom_preview';
+export const PREVIEW_COOKIE = 'flowdular_preview';
 const PREVIEW_TENANT = 'Preview workspace';
 const PREVIEW_SLUG = 'preview';
 const PREVIEW_EMAIL = 'preview@sandbox.local';
@@ -169,7 +169,7 @@ async function createPreviewAuth(
 	const auth = createAuthRuntime({
 		databases,
 		secureCookies: false,
-		cookieName: 'coreloom_preview_session',
+		cookieName: 'flowdular_preview_session',
 		sessionTtlMs: 12 * 60 * 60 * 1000,
 		allowSignUp: false,
 		emailConfirmation: false,

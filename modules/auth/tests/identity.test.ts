@@ -238,8 +238,8 @@ describe('Flowdular authentication identity', () => {
 			createAuthRuntime({ ...base, secureCookies: true }),
 		);
 
-		expect(development.cookie.name).toBe('coreloom_session_dev');
-		expect(production.cookie.name).toBe('__Host-coreloom_session');
+		expect(development.cookie.name).toBe('flowdular_session_dev');
+		expect(production.cookie.name).toBe('__Host-flowdular_session');
 	});
 
 	it('rejects a malformed MFA encryption key before the runtime starts', () => {
@@ -310,7 +310,9 @@ describe('Flowdular authentication identity', () => {
 		const response = await route.handler(context);
 
 		expect(response.status).toBe(302);
-		expect(response.headers.get('set-cookie')).toMatch(/^coreloom_oidc_state=/);
+		expect(response.headers.get('set-cookie')).toMatch(
+			/^flowdular_oidc_state=/,
+		);
 	});
 
 	it('rejects a modified OIDC transaction before contacting the provider and expires its cookie', async () => {
@@ -342,7 +344,7 @@ describe('Flowdular authentication identity', () => {
 		expect(result.status).toBe(401);
 		expect(fetchMock).not.toHaveBeenCalled();
 		expect(result.headers.getSetCookie()).toEqual([
-			expect.stringContaining('coreloom_oidc_state='),
+			expect.stringContaining('flowdular_oidc_state='),
 		]);
 		expect(result.headers.getSetCookie()[0]).toContain('Max-Age=0');
 	});
@@ -393,8 +395,8 @@ describe('Flowdular authentication identity', () => {
 		expect(cookies).toHaveLength(2);
 		expect(cookies).toEqual(
 			expect.arrayContaining([
-				expect.stringMatching(/^coreloom_session_dev=/),
-				expect.stringMatching(/^coreloom_oidc_state=.*Max-Age=0/),
+				expect.stringMatching(/^flowdular_session_dev=/),
+				expect.stringMatching(/^flowdular_oidc_state=.*Max-Age=0/),
 			]),
 		);
 	});
@@ -435,8 +437,8 @@ describe('Flowdular authentication identity', () => {
 		expect(cookies).toHaveLength(2);
 		expect(cookies).toEqual(
 			expect.arrayContaining([
-				expect.stringMatching(/^coreloom_mfa_challenge=/),
-				expect.stringMatching(/^coreloom_oidc_state=.*Max-Age=0/),
+				expect.stringMatching(/^flowdular_mfa_challenge=/),
+				expect.stringMatching(/^flowdular_oidc_state=.*Max-Age=0/),
 			]),
 		);
 	});

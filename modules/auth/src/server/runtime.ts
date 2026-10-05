@@ -504,8 +504,8 @@ function cookieName(options: AuthRuntimeOptions): string {
 	const configured = options.cookieName?.trim();
 	if (!configured) {
 		return options.secureCookies
-			? '__Host-coreloom_session'
-			: 'coreloom_session_dev';
+			? '__Host-flowdular_session'
+			: 'flowdular_session_dev';
 	}
 	if (!/^[A-Za-z0-9_-]{4,64}$/.test(configured)) {
 		throw new Error('Session cookie name contains unsupported characters.');

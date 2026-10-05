@@ -106,7 +106,7 @@ describe('setup access', () => {
 		expect(cookie).toContain('Secure');
 		expect(setupSessionCookie('session-value', false)).not.toContain('Secure');
 		expect(
-			readSetupSessionCookie('other=1; coreloom_setup=session-value; x=2'),
+			readSetupSessionCookie('other=1; flowdular_setup=session-value; x=2'),
 		).toBe('session-value');
 		expect(readSetupSessionCookie('other=1')).toBeNull();
 		expect(readSetupSessionCookie(null)).toBeNull();

@@ -146,7 +146,7 @@ describe('settings API', () => {
 			organizationSlug: 'example-operations',
 		});
 		owner = {
-			cookie: `coreloom_session_dev=${issued.token}`,
+			cookie: `flowdular_session_dev=${issued.token}`,
 			csrfToken: issued.csrfToken,
 			accountId: issued.principal.accountId,
 			tenantId: issued.principal.tenantId,
@@ -176,7 +176,7 @@ describe('settings API', () => {
 			password: 'workspace passphrase long',
 		});
 		member = {
-			cookie: `coreloom_session_dev=${memberSession.token}`,
+			cookie: `flowdular_session_dev=${memberSession.token}`,
 			csrfToken: memberSession.csrfToken,
 			accountId: memberSession.principal.accountId,
 			tenantId: memberSession.principal.tenantId,
@@ -191,7 +191,7 @@ describe('settings API', () => {
 			organizationSlug: 'second-operations',
 		});
 		other = {
-			cookie: `coreloom_session_dev=${otherSession.token}`,
+			cookie: `flowdular_session_dev=${otherSession.token}`,
 			csrfToken: otherSession.csrfToken,
 			accountId: otherSession.principal.accountId,
 			tenantId: otherSession.principal.tenantId,

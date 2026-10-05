@@ -97,7 +97,7 @@ describe('deployment branding', () => {
 			organizationSlug: 'example-operations',
 		});
 		owner = {
-			cookie: `coreloom_session_dev=${issued.token}`,
+			cookie: `flowdular_session_dev=${issued.token}`,
 			csrfToken: issued.csrfToken,
 			tenantId: issued.principal.tenantId,
 		};
@@ -126,7 +126,7 @@ describe('deployment branding', () => {
 			password: 'workspace passphrase long',
 		});
 		member = {
-			cookie: `coreloom_session_dev=${memberSession.token}`,
+			cookie: `flowdular_session_dev=${memberSession.token}`,
 			csrfToken: memberSession.csrfToken,
 			tenantId: memberSession.principal.tenantId,
 		};
