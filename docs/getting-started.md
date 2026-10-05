@@ -61,6 +61,7 @@ module shares one embedded PostgreSQL in `.flowdular/data/pglite`, which
 `FD_DATABASE_PGLITE_DIRECTORY` can redirect. Point `FD_DATABASE_ADAPTER` at
 `postgresql` and give it `FD_DATABASE_URL` to run against a real server instead.
 See [configuration.md](configuration.md).
+Workspaces from Flowdular 0.5 or earlier: see [flowdular-rename.md](flowdular-rename.md).
 
 ## Migrating preserved state from `.octane-erp`
 

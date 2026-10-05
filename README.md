@@ -89,7 +89,7 @@ cd my-app
 pnpm dev
 ```
 
-The browser opens the first-run setup at [localhost:4310/setup](http://localhost:4310/setup). Enter the one-time token printed in the terminal, create the workspace and owner account, then restart `pnpm dev` and sign in. The generator configures embedded PostgreSQL for local development and includes the platform modules and an example module you can extend. [Getting started](docs/getting-started.md) · [Generator guide](packages/create-flowdular/README.md)
+The browser opens the first-run setup at [localhost:4310/setup](http://localhost:4310/setup). Enter the one-time token printed in the terminal, create the workspace and owner account, then restart `pnpm dev` and sign in. The generator configures embedded PostgreSQL for local development and includes the platform modules and an example module you can extend. [Getting started](docs/getting-started.md) · [Generator guide](packages/create-flowdular/README.md) · [Upgrading from 0.5](docs/flowdular-rename.md)
 
 ## Build with the sandbox
 

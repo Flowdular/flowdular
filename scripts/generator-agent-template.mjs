@@ -81,6 +81,12 @@ async function rewrite(directory) {
 					.replace(
 						/\]\(npm-publication\.md\)/g,
 						'](https://github.com/flowdular/flowdular/blob/main/docs/npm-publication.md)',
+					)
+					// The rename guide quotes the pre-rename identifiers, which an
+					// application never carries, so it links to the core copy.
+					.replace(
+						/\]\(flowdular-rename\.md\)/g,
+						'](https://github.com/flowdular/flowdular/blob/main/docs/flowdular-rename.md)',
 					),
 			);
 		}
