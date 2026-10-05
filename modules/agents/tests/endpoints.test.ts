@@ -32,7 +32,9 @@ import {
 	AGENT_ACTION_EXECUTION_CAPABILITY_V2,
 	type AgentActionExecutionCapabilityV2,
 } from '../src/server/action-execution.ts';
+import { AgentService } from '../src/services/agent-service.ts';
 import { DatabaseAgentRepository } from '../src/services/database-repository.ts';
+import { AgentWorker } from '../src/services/worker.ts';
 import {
 	openAgentsTestDatabase,
 	type AgentsTestDatabase,
@@ -1624,6 +1626,12 @@ describe('agents.core web and worker roles', () => {
 				(await database.repository.getRun('tenant-http', id))?.status,
 			actionStatus: async (id: string) =>
 				(await database.repository.getAction('tenant-http', id))?.status,
+			workerStatus: async () =>
+				(
+					(await (await opened.call('/api/agent-runs/worker')).json()) as {
+						worker: { online: boolean; state: string };
+					}
+				).worker,
 			workerOnline: async () =>
 				(
 					(await (await opened.call('/api/agent-runs/worker')).json()) as {
@@ -1633,50 +1641,76 @@ describe('agents.core web and worker roles', () => {
 		};
 	}
 
-	it('AGENTS-WEB-WORKER-ROLE persists work in the web role and leaves reconciling and executing it to startWorker', async () => {
+	it('AGENTS-WEB-WORKER-ROLE opens on the first web request without touching a tenant binding and leaves executing work to a separate worker', async () => {
 		const reconcile = vi.spyOn(
 			DatabaseAgentRepository.prototype,
 			'reconcileModuleAgents',
 		);
+		const bindings = vi.spyOn(
+			DatabaseAgentRepository.prototype,
+			'readModuleAgentBindings',
+		);
 		const web = role();
 		await web.composed.prepare();
-		web.composed.start?.();
+		expect(reconcile).not.toHaveBeenCalled();
 		const runId = await web.enqueueRun();
 		const actionId = await web.enqueueAction('web');
+		expect(reconcile).toHaveBeenCalledTimes(1);
+		expect(bindings).not.toHaveBeenCalled();
 		expect((await moduleAgents(web.call)).map((agent) => agent.id)).toContain(
 			moduleAgent.id,
 		);
+		expect(bindings.mock.calls.map((call) => call[0])).toEqual(['tenant-http']);
 		await idle();
-		expect(reconcile).not.toHaveBeenCalled();
-		expect(await web.workerOnline()).toBe(false);
+		expect(await web.workerStatus()).toMatchObject({
+			state: 'not-seen',
+			online: false,
+		});
 		expect(await web.runStatus(runId)).toBe('queued');
 		expect(await web.actionStatus(actionId)).toBe('queued');
 		expect(web.execute).not.toHaveBeenCalled();
 
-		await web.composed.startWorker();
-		expect(reconcile).toHaveBeenCalledTimes(1);
+		const workerStart = vi.spyOn(AgentWorker.prototype, 'start');
+		const pass = vi.spyOn(
+			AgentService.prototype,
+			'advanceStaleModuleAgentBindings',
+		);
+		const worker = role();
+		await worker.composed.prepare();
+		await worker.composed.startWorker();
+		expect(reconcile).toHaveBeenCalledTimes(2);
 		expect(await web.workerOnline()).toBe(true);
+		await waitFor(() => pass.mock.calls.length === 1);
+		expect(workerStart.mock.invocationCallOrder[0]).toBeLessThan(
+			pass.mock.invocationCallOrder[0]!,
+		);
 		await waitFor(async () => (await web.runStatus(runId)) === 'succeeded');
 		await waitFor(
 			async () => (await web.actionStatus(actionId)) === 'succeeded',
 		);
-		expect(web.execute).toHaveBeenCalledTimes(1);
+		expect(worker.execute).toHaveBeenCalledTimes(1);
+		expect(web.execute).not.toHaveBeenCalled();
 	});
 
-	it('AGENTS-WORKER-START-FAILURE rejects startWorker on a failed reconciliation and leaves queued work to a later worker', async () => {
+	it('AGENTS-WORKER-START-FAILURE rejects startWorker on a failed opening and leaves queued work to a later worker', async () => {
+		const web = role();
+		await web.composed.prepare();
+		const runId = await web.enqueueRun();
+		const actionId = await web.enqueueAction('failed');
 		const failure = new Error('reconciliation refused');
 		const reconcile = vi
 			.spyOn(DatabaseAgentRepository.prototype, 'reconcileModuleAgents')
 			.mockRejectedValueOnce(failure);
 		const failed = role();
 		await failed.composed.prepare();
-		const runId = await failed.enqueueRun();
 		await expect(failed.composed.startWorker()).rejects.toBe(failure);
-		const actionId = await failed.enqueueAction('failed');
 		await idle();
-		expect(await failed.workerOnline()).toBe(false);
-		expect(await failed.runStatus(runId)).toBe('queued');
-		expect(await failed.actionStatus(actionId)).toBe('queued');
+		expect(await web.workerStatus()).toMatchObject({
+			state: 'not-seen',
+			online: false,
+		});
+		expect(await web.runStatus(runId)).toBe('queued');
+		expect(await web.actionStatus(actionId)).toBe('queued');
 		expect(failed.execute).not.toHaveBeenCalled();
 
 		const later = role();
@@ -1734,7 +1768,9 @@ describe('agents.core web and worker roles', () => {
 		await worker.composed.stop?.();
 		await worker.composed.startWorker();
 		await worker.composed.stop?.();
-		expect(await worker.workerOnline()).toBe(false);
+		/* The status reads durable heartbeats, so a stopped worker still reads
+		   online until its heartbeat ages out; the work left queued is what
+		   shows both loops stopped. */
 		const runId = await worker.enqueueRun();
 		const actionId = await worker.enqueueAction('restart');
 		await idle();

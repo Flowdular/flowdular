@@ -35,7 +35,10 @@ import {
 } from '../services/database-repository.ts';
 import type { NotificationPublisherResolver } from '../services/notifications.ts';
 import type { MeterRegistryResolver } from '../services/metering.ts';
-import type { AgentRepository } from '../services/repository.ts';
+import {
+	stableErrorCode,
+	type AgentRepository,
+} from '../services/repository.ts';
 import { AgentUsageService } from '../services/usage-service.ts';
 import {
 	DATABASE_CAPABILITY_IDS,
@@ -47,6 +50,11 @@ import {
 import { serverTracer, type Tracer } from '@flowdular/server';
 import { preflightModuleAgentDefinitions } from '../services/module-agent-preflight.ts';
 import { AgentWorker } from '../services/worker.ts';
+import {
+	DEFAULT_WORKER_FRESHNESS_MS,
+	readWorkerStatus,
+} from '../services/worker-availability.ts';
+import { normalizeModuleAgentDefinitions } from './define-agent.ts';
 import type { AgentSettingsReader } from '../settings.ts';
 import {
 	createAgentActionExecutionRuntime,
@@ -118,13 +126,16 @@ export interface AgentRuntime {
 	providerService(): Promise<AgentProviderService>;
 	assistantService(): Promise<AssistantService>;
 	usageService(): Promise<AgentUsageService>;
-	workerStatus(): Promise<AgentWorkerStatus>;
+	/* Read from the recorded heartbeats, the same in every role. */
+	workerStatus(tenantId: string): Promise<AgentWorkerStatus>;
 	revisionExecution(): AgentRevisionExecutionCapability;
 	actions(): AgentActionExecutionCapability;
 	actionsV2(): AgentActionExecutionCapabilityV2;
 	prepare(): Promise<void>;
-	/* Reconciles the module-agent catalogue into durable storage, then starts
-	   the run and workflow-action workers. Rejects with neither started. */
+	/* Awaits the opening every role makes (migrations, then the module-agent
+	   catalogue), then starts the run and workflow-action workers and rejects
+	   with neither started. The binding and revision adoption passes follow
+	   without holding it. */
 	startWorker(): Promise<void>;
 	/* startWorker without waiting for it. */
 	start(): void;
@@ -253,9 +264,11 @@ export function createAgentRuntime(
 	let servicePromise: Promise<AgentService> | undefined;
 	let actionRuntime: AgentActionRuntime | undefined;
 	let disposed = false;
-	let moduleAgentsReconciled = false;
-	/* Every stop retires the starts before it, so a start still reconciling
-	   when a stop lands leaves both workers stopped. */
+	/* Kept across openings: once nothing is owed this process never asks again. */
+	let revisionAdoptionSettled = false;
+	let passes: Promise<void> | undefined;
+	/* Every stop retires the starts before it, so a start still opening when a
+	   stop lands leaves both workers stopped. */
 	let workerGeneration = 0;
 	let preparedModuleAgents: readonly ModuleAgentDefinition[] | undefined;
 	const moduleAgents = () =>
@@ -293,8 +306,8 @@ export function createAgentRuntime(
 				'agents.core requires a platform database provider; there is no local file fallback.',
 			);
 		}
-		/* Only schema work receives the migration role. Reconciliation uses
-		   tenant-scoped runtime transactions after this lease is released. */
+		/* Only schema work receives the migration role. The catalogue is
+		   reconciled on the runtime handle after this lease is released. */
 		const migration = await options.databases.acquire({
 			namespace: 'agents.core',
 			purpose: 'migration',
@@ -325,8 +338,24 @@ export function createAgentRuntime(
 			runtime: runtimeLease.database,
 			background: backgroundLease.database,
 		});
-		await agents.adoptCurrentAgentRevisions();
+		/* No tenant binding is read or written here, so a cold start does no
+		   per-tenant work. */
+		const definitions = normalizeModuleAgentDefinitions(
+			preparedModuleAgents ?? moduleAgents(),
+		);
+		const { superseded } = await agents.reconcileModuleAgents(
+			definitions,
+			Date.now(),
+		);
+		if (
+			!revisionAdoptionSettled &&
+			!(await agents.agentRevisionAdoptionOwed())
+		) {
+			revisionAdoptionSettled = true;
+		}
 		return {
+			definitions,
+			superseded,
 			repository: agents as AgentRepository,
 			providerRepository: new DatabaseProviderRepository(
 				runtimeLease.database,
@@ -427,7 +456,7 @@ export function createAgentRuntime(
 				usageService,
 				options.meters,
 			);
-			service.serveModuleAgents(preparedModuleAgents ?? moduleAgents());
+			service.serveModuleAgents(opened.definitions, opened.superseded);
 			assistant = new AssistantService(
 				repository,
 				service,
@@ -466,18 +495,45 @@ export function createAgentRuntime(
 			await release();
 			throw error;
 		}));
+	/* Bindings no request touched and tenant-created definitions saved before
+	   the revision ledger. Neither gates readiness; both stop with the worker. */
+	const backgroundPasses = async (generation: number) => {
+		const stopped = () => disposed || generation !== workerGeneration;
+		const currentService = service;
+		const currentRepository = repository;
+		if (!currentService || !currentRepository) return;
+		try {
+			await currentService.advanceStaleModuleAgentBindings({ stopped });
+			if (
+				!revisionAdoptionSettled &&
+				!stopped() &&
+				(await currentRepository.adoptCurrentAgentRevisions({ stopped }))
+			) {
+				revisionAdoptionSettled = true;
+			}
+		} catch (error) {
+			console.error(
+				'[agents] the worker binding and adoption passes stopped early; the next worker start resumes them.',
+				stableErrorCode(error),
+			);
+		}
+	};
 	const startWorker = async () => {
 		const generation = workerGeneration;
-		const currentService = await resolved();
-		if (!moduleAgentsReconciled) {
-			await currentService.reconcileModuleAgents(
-				preparedModuleAgents ?? moduleAgents(),
-			);
-			moduleAgentsReconciled = true;
-		}
+		await resolved();
 		if (generation !== workerGeneration) return;
 		actionRuntime!.start();
 		await worker!.start();
+		if (generation !== workerGeneration) return;
+		const previous = passes;
+		const current = (async () => {
+			await previous;
+			await backgroundPasses(generation);
+		})();
+		passes = current;
+		void current.finally(() => {
+			if (passes === current) passes = undefined;
+		});
 	};
 	const revisionCapability = createAgentRevisionExecutionCapability(
 		() => resolved(),
@@ -522,6 +578,7 @@ export function createAgentRuntime(
 		stop();
 		await worker?.dispose();
 		await actionRuntime?.quiesce();
+		await passes;
 	};
 	return {
 		service: resolved,
@@ -545,9 +602,14 @@ export function createAgentRuntime(
 			await resolved();
 			return usage!;
 		},
-		workerStatus: async () => {
+		workerStatus: async (tenantId) => {
 			await resolved();
-			return worker!.status();
+			return readWorkerStatus(repository!, tenantId, {
+				now: Date.now(),
+				leaseMs: settings?.workerLeaseMs() ?? options.workerLeaseMs,
+				freshnessMs:
+					settings?.workerFreshnessMs() ?? DEFAULT_WORKER_FRESHNESS_MS,
+			});
 		},
 		revisionExecution: () => revisionCapability,
 		actions: () => actionCapability,

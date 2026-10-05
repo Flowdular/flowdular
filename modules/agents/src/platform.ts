@@ -69,8 +69,8 @@ export type AgentServerComposition = PlatformServerComposition & {
 	readonly settings: ModuleSettingsDeclaration;
 	prepare(): Promise<void>;
 	/* Called by the platform in a worker role once every module has started.
-	   Reconciliation and recovery of interrupted runs start here, never in a
-	   web role and never on the first request. */
+	   Claiming queued work and recovering interrupted runs start here, never in
+	   a web role; every role opens the module on its first request. */
 	startWorker(): Promise<void>;
 };
 

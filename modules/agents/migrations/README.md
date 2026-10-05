@@ -37,3 +37,13 @@ continue to attribute work to the actual service or business agent.
 `agent_action_invocations` under a SELECT policy of its own. The recovery polls
 have to find interrupted work before they know whose it is; every claim that
 follows runs on the tenant-scoped runtime role, under the tenant the row named.
+
+`0029` records worker heartbeats under their own sentinel tenant, which a check
+pins, so every role reads worker availability from the same durable evidence.
+A row names a worker process and its concurrency and nothing about a workspace.
+
+`0030` grants the background role the revision columns its two passes compare:
+the binding pass finds bindings behind a served module definition, and revision
+adoption finds tenant definitions whose current revision is not retained yet.
+Neither reads names, instructions or providers, and every write that follows
+runs in the tenant's own transaction.

@@ -5,6 +5,7 @@ import {
 	agentSettings,
 	agentsModuleSettingsFromEnvironment,
 } from '../src/settings.ts';
+import { workerFreshnessWindowMs } from '../src/services/worker-availability.ts';
 import translationsEn from '../translations/en.json';
 import translationsPl from '../translations/pl.json';
 
@@ -22,6 +23,7 @@ describe('agents.core module settings', () => {
 			'providerReadinessTtlMs',
 			'typedDecisionsEnabled',
 			'workerConcurrency',
+			'workerFreshnessMs',
 			'workerLeaseMs',
 		]);
 		for (const definition of Object.values(AGENTS_MODULE_SETTINGS.settings)) {
@@ -91,6 +93,39 @@ describe('agents.core module settings', () => {
 		expect([...reader.providerHostAllowlist()]).toEqual(['live.example.com']);
 		expect(reader.defaultMaxOutputTokens('tenant-a')).toBe(4_096);
 		expect(reader.defaultModel('tenant-a')).toBe('');
+	});
+});
+
+describe('agents.core worker freshness window', () => {
+	it('AGENTS-WORKER-AVAILABILITY declares workerFreshnessMs as a platform setting of 120000 between 30000 and 86400000', () => {
+		expect(AGENTS_MODULE_SETTINGS.settings.workerFreshnessMs).toMatchObject({
+			type: 'number',
+			scope: 'platform',
+			defaultValue: 120_000,
+			min: 30_000,
+			max: 86_400_000,
+		});
+		expect(agentSettings({ environment: {} }).workerFreshnessMs()).toBe(
+			120_000,
+		);
+		expect(
+			agentSettings({
+				environment: {},
+				settings: {
+					get: (tenantId: string, _moduleId: string, key: string) => {
+						expect(tenantId).toBe('');
+						return key === 'workerFreshnessMs' ? 600_000 : undefined;
+					},
+				},
+			}).workerFreshnessMs(),
+		).toBe(600_000);
+	});
+
+	it('AGENTS-WORKER-AVAILABILITY never lets the window fall below two drain intervals', () => {
+		expect(workerFreshnessWindowMs(120_000, 30_000)).toBe(120_000);
+		/* A 300000 ms lease drains every 150000 ms. */
+		expect(workerFreshnessWindowMs(120_000, 300_000)).toBe(300_000);
+		expect(workerFreshnessWindowMs(30_000, 1_000)).toBe(30_000);
 	});
 });
 

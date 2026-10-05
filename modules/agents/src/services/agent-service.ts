@@ -35,7 +35,6 @@ import type {
 	AgentRunTimeline,
 	AgentProcedure,
 	AgentProcedureSnapshot,
-	AgentWorkerStatus,
 	AuditChainVerification,
 	CreateAgentProcedureInput,
 	CreateAgentInput,
@@ -58,6 +57,9 @@ import {
 	DuplicateAgentProcedureKeyError,
 	DuplicateRunIdempotencyKeyError,
 	ModuleAgentBindingConflictError,
+	ModuleAgentRevisionSupersededError,
+	stableErrorCode,
+	type AgentBackgroundPassOptions,
 	type AgentRepository,
 } from './repository.ts';
 import type { AgentProviderService } from './provider-service.ts';
@@ -65,6 +67,11 @@ import type { AgentWorker } from './worker.ts';
 import { normalizeModuleAgentDefinitions } from '../server/define-agent.ts';
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 4_096;
+/* Tenants the worker's binding pass reads per page. */
+const BINDING_PASS_PAGE = 100;
+const SUPERSEDED = 'MODULE_AGENT_REVISION_SUPERSEDED';
+/* Once per process and agent, however many services this process opens. */
+const loggedSuperseded = new Set<string>();
 /* One page of any list this service serves; an endpoint may bound lower. */
 const MAX_LIST_PAGE = 200;
 const DEFAULT_LIST_PAGE = 50;
@@ -305,6 +312,10 @@ export interface AgentBudgetGuard {
 
 export class AgentService {
 	readonly #moduleAgents = new Map<string, ModuleAgentDefinition>();
+	/* Agent id to the higher revision the catalogue holds. This instance lists
+	   them unavailable and never writes a binding of them or runs their current
+	   revision. */
+	readonly #superseded = new Map<string, number>();
 
 	constructor(
 		private readonly repository: AgentRepository,
@@ -405,10 +416,6 @@ export class AgentService {
 		);
 	}
 
-	workerStatus(): AgentWorkerStatus {
-		return this.worker.status();
-	}
-
 	async providers(
 		tenantId: string,
 	): Promise<readonly AgentProviderConnection[]> {
@@ -449,20 +456,97 @@ export class AgentService {
 		definitions: readonly ModuleAgentDefinition[],
 	): Promise<void> {
 		const normalized = normalizeModuleAgentDefinitions(definitions);
-		await this.repository.reconcileModuleAgents(normalized, this.now());
-		this.#serveModuleAgents(normalized);
+		const { superseded } = await this.repository.reconcileModuleAgents(
+			normalized,
+			this.now(),
+		);
+		this.serveModuleAgents(normalized, superseded);
 	}
 
-	/* A web role serves the catalogue without writing it; reconciliation is
-	   the worker's. */
-	serveModuleAgents(definitions: readonly ModuleAgentDefinition[]): void {
-		this.#serveModuleAgents(normalizeModuleAgentDefinitions(definitions));
-	}
-
-	#serveModuleAgents(normalized: readonly ModuleAgentDefinition[]): void {
+	/* The opening reconciles the catalogue first and hands over what it found
+	   superseded. */
+	serveModuleAgents(
+		definitions: readonly ModuleAgentDefinition[],
+		superseded: ReadonlyMap<string, number> = new Map(),
+	): void {
 		this.#moduleAgents.clear();
-		for (const definition of normalized) {
+		this.#superseded.clear();
+		for (const definition of normalizeModuleAgentDefinitions(definitions)) {
 			this.#moduleAgents.set(definition.id, definition);
+		}
+		for (const [agentId, revision] of superseded) {
+			this.#markSuperseded(agentId, revision);
+		}
+	}
+
+	#markSuperseded(agentId: string, catalogRevision: number): void {
+		this.#superseded.set(agentId, catalogRevision);
+		if (loggedSuperseded.has(agentId)) return;
+		loggedSuperseded.add(agentId);
+		console.warn(
+			`[agents] ${SUPERSEDED}: ${agentId} is registered at revision ${this.#moduleAgents.get(agentId)?.definitionRevision} here and at ${catalogRevision} by a newer deployment. This instance lists it unavailable and neither configures nor runs it.`,
+		);
+	}
+
+	#refuseSuperseded(agentId: string): void {
+		if (!this.#superseded.has(agentId)) return;
+		throw new AgentServiceError(
+			SUPERSEDED,
+			'A newer deployment serves this module agent. Configure and run it there.',
+			409,
+		);
+	}
+
+	/* Every request that lists, reads or runs a module agent goes through
+	   here, so it never acts on a binding built from a lower revision. */
+	async #moduleAgentBindings(
+		tenantId: string,
+		definitions: readonly ModuleAgentDefinition[],
+	): Promise<ReadonlyMap<string, ModuleAgentBinding>> {
+		const read = await this.repository.readModuleAgentBindings(
+			tenantId,
+			definitions,
+			this.now(),
+		);
+		for (const [agentId, revision] of read.superseded) {
+			this.#markSuperseded(agentId, revision);
+		}
+		return read.bindings;
+	}
+
+	/* The worker's binding pass, after its execution workers start. It reads
+	   only the bindings behind a served revision and advances each through the
+	   same step a request uses. */
+	async advanceStaleModuleAgentBindings(
+		options: AgentBackgroundPassOptions = {},
+	): Promise<void> {
+		for (const definition of [...this.#moduleAgents.values()]) {
+			if (this.#superseded.has(definition.id)) continue;
+			let afterTenant = '';
+			pages: for (;;) {
+				if (options.stopped?.()) return;
+				const tenants =
+					await this.repository.listStaleModuleAgentBindingTenants(
+						definition.id,
+						definition.definitionRevision,
+						afterTenant,
+						BINDING_PASS_PAGE,
+					);
+				for (const tenantId of tenants) {
+					if (options.stopped?.()) return;
+					try {
+						await this.#moduleAgentBindings(tenantId, [definition]);
+					} catch (error) {
+						console.error(
+							`[agents] the binding pass skipped a workspace whose binding of ${definition.id} could not be advanced; its next request or the next worker start advances it.`,
+							stableErrorCode(error),
+						);
+					}
+					if (this.#superseded.has(definition.id)) break pages;
+				}
+				if (tenants.length < BINDING_PASS_PAGE) break;
+				afterTenant = tenants[tenants.length - 1]!;
+			}
 		}
 	}
 
@@ -470,15 +554,15 @@ export class AgentService {
 		tenantId: string,
 	): Promise<readonly ModuleAgentView[]> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
-		const bindings = new Map(
-			(await this.repository.listModuleAgentBindings(trustedTenantId)).map(
-				(binding) => [binding.agentId, binding] as const,
-			),
+		const definitions = [...this.#moduleAgents.values()].sort((left, right) =>
+			left.id.localeCompare(right.id),
+		);
+		const bindings = await this.#moduleAgentBindings(
+			trustedTenantId,
+			definitions,
 		);
 		const views: ModuleAgentView[] = [];
-		for (const definition of [...this.#moduleAgents.values()].sort(
-			(left, right) => left.id.localeCompare(right.id),
-		)) {
+		for (const definition of definitions) {
 			views.push(
 				await this.#moduleAgentView(
 					trustedTenantId,
@@ -504,10 +588,9 @@ export class AgentService {
 		return await this.#moduleAgentView(
 			trustedTenantId,
 			definition,
-			await this.repository.getModuleAgentBinding(
-				trustedTenantId,
+			(await this.#moduleAgentBindings(trustedTenantId, [definition])).get(
 				definition.id,
-			),
+			) ?? null,
 		);
 	}
 
@@ -526,6 +609,7 @@ export class AgentService {
 				409,
 			);
 		}
+		this.#refuseSuperseded(id);
 		if (
 			!Number.isSafeInteger(input.expectedRevision) ||
 			input.expectedRevision < 0
@@ -626,6 +710,10 @@ export class AgentService {
 					error.message,
 					409,
 				);
+			}
+			if (error instanceof ModuleAgentRevisionSupersededError) {
+				this.#markSuperseded(error.agentId, error.catalogRevision);
+				this.#refuseSuperseded(error.agentId);
 			}
 			throw error;
 		}
@@ -1146,10 +1234,11 @@ export class AgentService {
 		if (!retained || retained.status === 'draft') return null;
 		if (retained.ownership.kind === 'module') {
 			const definition = this.#moduleAgents.get(id);
-			const binding = await this.repository.getModuleAgentBinding(
-				trustedTenantId,
-				id,
-			);
+			const binding = definition
+				? ((await this.#moduleAgentBindings(trustedTenantId, [definition])).get(
+						id,
+					) ?? null)
+				: null;
 			if (
 				!definition ||
 				!binding ||
@@ -1209,11 +1298,9 @@ export class AgentService {
 				(agent) => [agent.id, agent] as const,
 			),
 		);
-		const moduleBindings = new Map(
-			(await this.repository.listModuleAgentBindings(trustedTenantId)).map(
-				(binding) => [binding.agentId, binding] as const,
-			),
-		);
+		const moduleBindings = await this.#moduleAgentBindings(trustedTenantId, [
+			...this.#moduleAgents.values(),
+		]);
 		const references = [];
 		for (const retained of await this.repository.listAgentRevisions(
 			trustedTenantId,
@@ -1395,10 +1482,11 @@ export class AgentService {
 		let currentStatus: AgentDefinition['status'];
 		if (retained.ownership.kind === 'module') {
 			const definition = this.#moduleAgents.get(agentId);
-			const binding = await this.repository.getModuleAgentBinding(
-				trustedTenantId,
-				agentId,
-			);
+			const binding = definition
+				? ((await this.#moduleAgentBindings(trustedTenantId, [definition])).get(
+						agentId,
+					) ?? null)
+				: null;
 			if (!definition || !binding) {
 				throw new AgentServiceError(
 					'AGENT_REVISION_NOT_FOUND',
@@ -2125,6 +2213,26 @@ export class AgentService {
 		definition: ModuleAgentDefinition,
 		binding: ModuleAgentBinding | null,
 	): Promise<ModuleAgentView> {
+		if (this.#superseded.has(definition.id)) {
+			return {
+				id: definition.id,
+				tenantId,
+				key: definition.key,
+				name: definition.name,
+				description: definition.description,
+				instructions: definition.instructions,
+				provider: binding?.provider ?? null,
+				model: binding?.model ?? null,
+				allowedTools: definition.allowedTools,
+				enabledTools: binding?.enabledTools ?? [],
+				limits: definition.limits,
+				status: 'unavailable',
+				revision: binding?.executableRevision ?? null,
+				bindingRevision: binding?.revision ?? null,
+				unavailableReason: `${SUPERSEDED}: a newer deployment serves this agent.`,
+				ownership: definition.ownership,
+			};
+		}
 		if (!binding) {
 			return {
 				id: definition.id,
@@ -2178,10 +2286,10 @@ export class AgentService {
 		if (tenantAgent) return tenantAgent;
 		const definition = this.#moduleAgents.get(agentId);
 		if (!definition) return null;
-		const binding = await this.repository.getModuleAgentBinding(
-			tenantId,
-			agentId,
-		);
+		const binding =
+			(await this.#moduleAgentBindings(tenantId, [definition])).get(agentId) ??
+			null;
+		this.#refuseSuperseded(agentId);
 		if (!binding) {
 			throw new AgentServiceError(
 				'MODULE_AGENT_UNCONFIGURED',
