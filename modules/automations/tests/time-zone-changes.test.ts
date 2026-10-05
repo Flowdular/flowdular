@@ -22,6 +22,7 @@ import {
 	type ModuleSettingLogEntry,
 	type ModuleSettingsRuntime,
 } from '@flowdular/kernel';
+import type { JobEvent } from '@flowdular/server';
 import {
 	AGENT_RUN_QUEUE_CAPABILITY,
 	type AgentRunQueue,
@@ -33,7 +34,10 @@ import {
 import { AUTOMATIONS_PERMISSIONS } from '../src/acl/permissions.ts';
 import { createServerComposition } from '../src/platform.ts';
 import { DatabaseAutomationsRepository } from '../src/services/database-repository.ts';
-import type { StoredAutomationSchedule } from '../src/services/repository.ts';
+import type {
+	AutomationsRepository,
+	StoredAutomationSchedule,
+} from '../src/services/repository.ts';
 import {
 	createAutomationScheduleRunner,
 	SCHEDULE_HELD_SKIPS,
@@ -387,8 +391,10 @@ let canaries = 0;
 
 /**
  * One whole scheduler pass of a stopped worker. A due interval schedule in a
- * workspace of its own is claimed after every schedule due before it, so once
- * it fired the pass has applied its zone changes and passed every older slot.
+ * workspace of its own sorts after every schedule due before it, so once it
+ * fired the pass has applied its zone changes and passed every older slot.
+ * That holds because every pass here reaches the end of the due rows, so the
+ * next one walks from the oldest again.
  */
 async function runPass(worker: WorkerProcess): Promise<void> {
 	canaries += 1;
@@ -458,6 +464,60 @@ function failingWrites(databases: DatabaseProvider): {
 		dispose: async () => undefined,
 	};
 	return { provider, failNext };
+}
+
+/** The shared repository with some of its methods replaced. */
+function repositoryWith(
+	overrides: Partial<AutomationsRepository>,
+): AutomationsRepository {
+	return new Proxy(shared.repository, {
+		get(target, property) {
+			if (Object.hasOwn(overrides, property)) {
+				return overrides[property as keyof AutomationsRepository];
+			}
+			const value = Reflect.get(target, property, target) as unknown;
+			return typeof value === 'function' ? value.bind(target) : value;
+		},
+	});
+}
+
+/**
+ * The scheduler of one worker driven a pass at a time, its zone discovery
+ * reading the change log through a settings runtime of its own. The log reads
+ * fail until the case turns them back on.
+ */
+function directScheduler(
+	repository: AutomationsRepository = shared.repository,
+) {
+	const settings = settingsProcess();
+	const { queue, keys } = runQueue();
+	const service = new AutomationScheduleService(
+		repository,
+		queue,
+		Date.now,
+		undefined,
+		undefined,
+		undefined,
+		settings,
+	);
+	const logReadsFail = { on: true };
+	const events: JobEvent[] = [];
+	const runner = createAutomationScheduleRunner({
+		repository: async () => repository,
+		service: async () => service,
+		timeZones: createTimeZoneFollower({
+			settings: {
+				changesAfter: async (request) => {
+					if (logReadsFail.on) throw new Error('connection lost');
+					return settings.changesAfter(request);
+				},
+			},
+			apply: (change) => service.applyTimeZoneChange(change),
+		}),
+		intervalMs: 30_000,
+		onEvent: (event) => events.push(event),
+	});
+	return { runner, keys, events, logReadsFail };
 }
 
 /* A web process that dies the moment its next write commits: the commit lands,
@@ -871,34 +931,22 @@ describe('workspace time zone changes through the settings change log', () => {
 		await shared.repository.createSchedule(
 			schedule('tenant-b', 'interval', 'every:60', owed + held),
 		);
-		const settings = settingsProcess();
-		const { queue, keys } = runQueue();
-		const service = new AutomationScheduleService(
-			shared.repository,
-			queue,
-			Date.now,
-			undefined,
-			undefined,
-			undefined,
-			settings,
-		);
-		const logReadsFail = { on: true };
-		const runner = createAutomationScheduleRunner({
-			repository: async () => shared.repository,
-			service: async () => service,
-			timeZones: createTimeZoneFollower({
-				settings: {
-					changesAfter: async (request) => {
-						if (logReadsFail.on) throw new Error('connection lost');
-						return settings.changesAfter(request);
-					},
+		const reads = { count: 0 };
+		const { runner, keys, logReadsFail } = directScheduler(
+			repositoryWith({
+				getSchedule: (tenantId, scheduleId) => {
+					reads.count += 1;
+					return shared.repository.getSchedule(tenantId, scheduleId);
 				},
-				apply: (change) => service.applyTimeZoneChange(change),
 			}),
-			intervalMs: 30_000,
-		});
+		);
 
 		await runner.tick();
+		/* A pass under a hold that never lifts still ends: it reads no more
+		   schedules than it steps over and claims. */
+		expect(reads.count).toBeLessThanOrEqual(
+			SCHEDULE_HELD_SKIPS + SCHEDULE_POLL_PAGE,
+		);
 		await runner.tick();
 		expect(keys).toEqual([`schedule:interval:${owed + held}`]);
 
@@ -910,6 +958,70 @@ describe('workspace time zone changes through the settings change log', () => {
 				(_, index) => `schedule:hourly-${index}:${owed + index}`,
 			),
 		);
+	});
+
+	it('AUTO-TZ-RETIME-FAILS reads zone changes again in the pass after one whose poll failed midway', async () => {
+		const owed = Date.now() - HOUR;
+		const held = SCHEDULE_POLL_PAGE + 5;
+		for (let index = 0; index < held; index += 1) {
+			await shared.repository.createSchedule(
+				schedule('tenant-a', `hourly-${index}`, HOURLY, owed + index),
+			);
+		}
+		let polls = 0;
+		const { runner, keys, logReadsFail } = directScheduler(
+			repositoryWith({
+				listDueSchedules: (...args) => {
+					polls += 1;
+					if (polls === 2) throw new Error('connection lost');
+					return shared.repository.listDueSchedules(...args);
+				},
+			}),
+		);
+
+		await runner.tick();
+		expect(keys).toEqual([]);
+
+		/* The log reads again, so the next pass holds nothing and fires the
+		   slots past the row the failed one stopped after. */
+		logReadsFail.on = false;
+		await runner.tick();
+		expect(keys).toEqual(
+			Array.from(
+				{ length: held - SCHEDULE_POLL_PAGE },
+				(_, index) =>
+					`schedule:hourly-${SCHEDULE_POLL_PAGE + index}:${owed + SCHEDULE_POLL_PAGE + index}`,
+			),
+		);
+	});
+
+	it('AUTO-TZ-RETIME-FAILS claims a held slot it cannot read, so its failure is reported and the pass goes on', async () => {
+		const owed = Date.now() - HOUR;
+		await shared.repository.createSchedule(
+			schedule('tenant-a', 'unreadable', HOURLY, owed),
+		);
+		await shared.repository.createSchedule(
+			schedule('tenant-a', 'hourly', HOURLY, owed + 1),
+		);
+		await shared.repository.createSchedule(
+			schedule('tenant-a', 'interval', 'every:60', owed + 2),
+		);
+		const { runner, keys, events } = directScheduler(
+			repositoryWith({
+				getSchedule: async (tenantId, scheduleId) => {
+					if (scheduleId === 'unreadable') {
+						throw new Error('connection lost');
+					}
+					return shared.repository.getSchedule(tenantId, scheduleId);
+				},
+			}),
+		);
+
+		await runner.tick();
+		expect(events.filter((event) => event.type === 'item-failed')).toHaveLength(
+			1,
+		);
+		expect(keys).toEqual([`schedule:interval:${owed + 2}`]);
 	});
 
 	it('AUTO-TZ-RESYNC reads the log from its start once the cursor expired and retimes a change older than the retention period', async () => {
