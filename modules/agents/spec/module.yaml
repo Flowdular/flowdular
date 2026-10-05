@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: agents.core
 specVersion: 0.15.0
-status: in-review
+status: approved
 name: Agentic Core
 description: Provides tenant-created and module-owned business agent definitions, tenant-scoped provider connections, reusable procedures, durable streamed execution, run history, the public run queue used by optional automation modules, and the workspace assistant a member talks to from the header through those same runs and tools.
 profile: full
