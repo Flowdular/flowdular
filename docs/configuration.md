@@ -11,7 +11,7 @@ deployments must set the secret keys.
 | `FD_ENV`             | `NODE_ENV`, else `development`    | Environment the CLI and destructive guards check                           |
 | `FD_PORT`            | `3000`                            | Host port published by the container                                       |
 | `FD_TRUST_PROXY`     | `false`                           | Trust `X-Forwarded-*` behind a reverse proxy                               |
-| `FD_RUNTIME_ROLE`    | `combined`                        | `combined` serves HTTP and runs module workers; `web` serves HTTP only     |
+| `FD_RUNTIME_ROLE`    | `combined`                        | `combined` serves HTTP and runs module workers; `web` or `tick`, see below |
 | `FD_CSP`             | built-in policy                   | Override the Content Security Policy                                       |
 | `FD_CSP_REPORT_ONLY` | `true` outside production         | Report CSP violations instead of enforcing them                            |
 | `FD_LOG_FORMAT`      | `json` in production, else `text` | `json` (one object per line) or `text`; see [operations.md](operations.md) |
@@ -19,9 +19,15 @@ deployments must set the secret keys.
 | `FD_METRICS`         | `false`                           | Expose `GET /api/metrics`; see [operations.md](operations.md)              |
 | `FD_METRICS_TOKEN`   | none                              | Bearer token a metrics scrape must present                                 |
 
-A `web` process never starts a module worker and never claims queued work from a
-request, so a deployment of `web` processes also needs a `combined` process on
-the same database, object storage and keys.
+A `web` process serves HTTP only: it never starts a module worker and never
+claims queued work from a request, so a deployment of `web` processes also needs
+a `combined` or a `tick` process on the same database, object storage and keys.
+A `tick` process runs the module workers only inside a tick request that
+presents `FD_WORKER_TICK_SECRET` (at least 32 characters) as a bearer token, for
+at most `FD_WORKER_TICK_WINDOW_MS` (default 50000), and drains them before it
+answers.
+A Vercel deployment works this way; see
+[infra/vercel/README.md](../infra/vercel/README.md).
 
 ## Branding
 
