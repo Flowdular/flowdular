@@ -84,4 +84,17 @@ function withWorkerKick(handler) {
 	};
 }
 
-export default withWorkerKick(nodeHandler);
+/* Vercel terminates TLS before the function, and Octane's Node adapter builds
+   every request URL as http://<host>. An absolute https target keeps the
+   origin that same-origin checks compare against. */
+function withHttpsOrigin(handler) {
+	return (request, response) => {
+		const host = request.headers?.host;
+		if (host && request.url?.startsWith('/')) {
+			request.url = `https://${host}${request.url}`;
+		}
+		return handler(request, response);
+	};
+}
+
+export default withWorkerKick(withHttpsOrigin(nodeHandler));

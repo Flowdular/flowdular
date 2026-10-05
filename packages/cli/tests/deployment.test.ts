@@ -382,6 +382,47 @@ describe('deployment targets', () => {
 		}
 	});
 
+	it('hands Octane an https request target so same-origin checks match the browser', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'flowdular-vercel-origin-'));
+		try {
+			await mkdir(join(root, 'platform/dist/server'), { recursive: true });
+			await writeFile(
+				join(root, 'platform/dist/server/entry.js'),
+				'export const nodeHandler = (request, response) => { response.url = request.url; };\n',
+			);
+			await copyFile(
+				new URL('../../../infra/vercel/handler.mjs', import.meta.url),
+				join(root, 'handler.mjs'),
+			);
+			const script = `
+				const { default: handler } = await import(${JSON.stringify(pathToFileURL(join(root, 'handler.mjs')).href)});
+				const seen = [];
+				for (const request of [
+					{ method: 'POST', url: '/api/auth/sign-in?next=%2Fapp', headers: { host: 'flowdular-test.vercel.app' } },
+					{ method: 'GET', url: '/api/health' },
+				]) {
+					const response = { once() {} };
+					handler(request, response);
+					seen.push(response.url);
+				}
+				process.stdout.write(JSON.stringify(seen));
+			`;
+			const run = await promisify(execFile)(
+				process.execPath,
+				['--input-type=module', '-e', script],
+				{ env: { ...process.env, FD_RUNTIME_ROLE: 'tick' } },
+			);
+			const [signIn, bare] = JSON.parse(run.stdout) as string[];
+			/* The base Octane's Node adapter applies to every request target. */
+			const url = new URL(signIn!, 'http://flowdular-test.vercel.app');
+			expect(url.origin).toBe('https://flowdular-test.vercel.app');
+			expect(url.pathname + url.search).toBe('/api/auth/sign-in?next=%2Fapp');
+			expect(bare).toBe('/api/health');
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it('returns an import link only for pushed Vercel build sources', async () => {
 		const root = await mkdtemp(join(tmpdir(), 'flowdular-vercel-plan-'));
 		try {
