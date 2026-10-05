@@ -7,7 +7,10 @@ import {
 	DATABASE_CAPABILITY_IDS,
 	DATABASE_DIALECT_IDS,
 } from '@flowdular/database';
-import type { PlatformVariableRegistry } from '@flowdular/kernel';
+import type {
+	ModuleSettingsRuntime,
+	PlatformVariableRegistry,
+} from '@flowdular/kernel';
 import type { AgentRunQueue } from '@flowdular/module-agents/server';
 import type { JobRunner } from '@flowdular/server';
 import {
@@ -21,6 +24,7 @@ import type {
 import type { AutomationsRepository } from '../services/repository.ts';
 import { createAutomationScheduleRunner } from '../services/schedule-runner.ts';
 import { AutomationScheduleService } from '../services/schedule-service.ts';
+import { createTimeZoneFollower } from '../services/time-zone-follower.ts';
 import {
 	secretVaultFromEnvironment,
 	type SecretVault,
@@ -42,10 +46,8 @@ export interface AutomationsRuntimeOptions {
 	readonly workspaceRoot?: string;
 	readonly secretVault?: SecretVault;
 	readonly schedulerPollMs?: number | (() => number);
-	/** Reads the workspace zone a cron slot is computed in, live per call. */
-	readonly timeZone?: (tenantId: string) => string;
-	/** Loads a workspace's settings before the scheduler reads its zone. */
-	readonly primeTenant?: (tenantId: string) => Promise<void>;
+	/** The workspace zone and its change log. Absent, every cron slot is UTC. */
+	readonly settings?: ModuleSettingsRuntime;
 	readonly repository?: AutomationsRepository;
 	readonly variables?: PlatformVariableRegistry;
 	readonly targets?: AutomationTargetRegistry;
@@ -61,13 +63,6 @@ export interface AutomationsRuntime {
 	verifyAudit(tenantId: string): Promise<AutomationAuditVerification>;
 	/** Opens the repository, for the data class operations the module owns. */
 	repository(): Promise<AutomationsRepository>;
-	/**
-	 * Records the zone this workspace changed to, which the scheduler pass
-	 * applies to its pending cron slots. The write is queued behind the previous
-	 * one and drained by `quiesce`, so the settings write that triggered it never
-	 * waits for the database.
-	 */
-	retimeSchedules(tenantId: string, timeZone: string): void;
 	start(): void;
 	stop(): void;
 	quiesce(): Promise<void>;
@@ -155,10 +150,8 @@ export function createAutomationsRuntime(
 	let schedules: AutomationScheduleService | undefined;
 	let triggers: AutomationTriggerService | undefined;
 	let jobs: JobRunner | undefined;
-	let retimeInFlight: Promise<void> = Promise.resolve();
 	let resolutionController = new AbortController();
 	let disposed = false;
-	let workerActive = false;
 	const scheduleService = async () =>
 		(schedules ??= new AutomationScheduleService(
 			await repositoryInstance(),
@@ -167,8 +160,7 @@ export function createAutomationsRuntime(
 			resolutionController.signal,
 			options.variables,
 			targets,
-			options.timeZone,
-			options.primeTenant,
+			options.settings,
 		));
 	const triggerService = async () =>
 		(triggers ??= new AutomationTriggerService(
@@ -184,36 +176,26 @@ export function createAutomationsRuntime(
 	   schedule from the next and the drain. This module keeps its cross-tenant
 	   poll, the re-read under the workspace and the slot advance. The interval is
 	   a live setting read when the loop starts, so the runner is built there
-	   rather than while the composition is assembled. */
+	   rather than while the composition is assembled. Zone changes are retimed
+	   inside the pass, so its drain covers them too. */
+	const settings = options.settings;
 	const runner = (): JobRunner =>
 		(jobs ??= createAutomationScheduleRunner({
 			repository: repositoryInstance,
 			service: scheduleService,
+			timeZones: settings
+				? createTimeZoneFollower({
+						settings,
+						apply: async (change) =>
+							(await scheduleService()).applyTimeZoneChange(change),
+					})
+				: undefined,
 			intervalMs:
 				typeof options.schedulerPollMs === 'function'
 					? options.schedulerPollMs()
 					: (options.schedulerPollMs ?? 30_000),
 		}));
-	const retimeSchedules = (tenantId: string, timeZone: string) => {
-		if (disposed) return;
-		const changedAt = Date.now();
-		retimeInFlight = retimeInFlight
-			.then(() => scheduleService())
-			.then((service) =>
-				service.recordTimeZoneChange(tenantId, timeZone, changedAt),
-			)
-			.then(() => {
-				if (workerActive) jobs?.wake();
-			})
-			.catch((error: unknown) => {
-				console.error(
-					'[automations] time zone change could not be recorded:',
-					error instanceof Error ? error.message : error,
-				);
-			});
-	};
 	const stop = () => {
-		workerActive = false;
 		jobs?.stop();
 	};
 	const quiesce = async () => {
@@ -224,7 +206,6 @@ export function createAutomationsRuntime(
 		resolutionController = new AbortController();
 		schedules = undefined;
 		await jobs?.quiesce();
-		await retimeInFlight;
 	};
 	return {
 		scheduleService,
@@ -237,10 +218,8 @@ export function createAutomationsRuntime(
 		verifyAudit: async (tenantId) =>
 			(await repositoryInstance()).verifyAuditChain(tenantId),
 		repository: repositoryInstance,
-		retimeSchedules,
 		start() {
 			if (disposed) return;
-			workerActive = true;
 			runner().start();
 		},
 		stop,

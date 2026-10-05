@@ -12,6 +12,7 @@ import type {
 	AutomationScheduleRouting,
 	AutomationsRepository,
 } from './repository.ts';
+import type { TimeZoneFollower } from './time-zone-follower.ts';
 
 /** Schedules one pass fires, and the page the cross-tenant poll answers. */
 export const SCHEDULE_POLL_PAGE = 20;
@@ -19,6 +20,8 @@ export const SCHEDULE_POLL_PAGE = 20;
 export interface AutomationScheduleRunnerOptions {
 	readonly repository: () => Promise<AutomationsRepository>;
 	readonly service: () => Promise<AutomationScheduleService>;
+	/** Applies workspace zone changes at the head of every pass. */
+	readonly timeZones?: TimeZoneFollower | undefined;
 	/** The platform setting, read once when the loop starts. */
 	readonly intervalMs: number;
 	readonly now?: (() => number) | undefined;
@@ -26,6 +29,11 @@ export interface AutomationScheduleRunnerOptions {
 	readonly onEvent?: ((event: JobEvent) => void) | undefined;
 	/** Defaults to the process tracer, which is the one `context.tracer` carries. */
 	readonly tracer?: Tracer | undefined;
+}
+
+interface ClaimedSchedule {
+	readonly routing: AutomationScheduleRouting;
+	readonly holdCron: boolean;
 }
 
 /**
@@ -42,10 +50,10 @@ export function createAutomationScheduleRunner(
 	   columns alone. It refills only once the page it filled is drained, and a
 	   page shorter than the bound means nothing further was due, so a pass reads
 	   it at most twice however many schedules it fires. */
-	let queue: AutomationScheduleRouting[] = [];
+	let queue: ClaimedSchedule[] = [];
 	let refillable = true;
 
-	return createJobRunner<AutomationScheduleRouting>({
+	return createJobRunner<ClaimedSchedule>({
 		name: 'automations.core',
 		intervalMs: options.intervalMs,
 		/* A schedule claims nothing: the next run time the advance compares and
@@ -65,37 +73,28 @@ export function createAutomationScheduleRunner(
 					refillable = true;
 					return null;
 				}
+				/* The page is also the bound on claims one pass takes, so this
+				   refill is the first claim of every pass: zone changes committed
+				   before the pass began move their workspaces' cron slots before
+				   the poll can find one due in an older zone. */
+				const hold = (await options.timeZones?.pass()) ?? (() => false);
 				const repository = await options.repository();
-				/* A recorded zone change moves its workspace's pending cron slots
-				   before the poll can find one due in the old zone. A workspace
-				   that fails here is retried by fireDue before any of its slots
-				   fires, so it cannot hold up the others. */
-				const service = await options.service();
-				for (const tenantId of await repository.listPendingTimeZones(
-					SCHEDULE_POLL_PAGE,
-				)) {
-					try {
-						await service.recordedTimeZone(tenantId);
-					} catch (error) {
-						serverLogger().error('automations.core time zone retiming failed', {
-							module: 'automations.core',
-							err: error,
-						});
-					}
-				}
 				const page = await repository.listDueSchedules(at, SCHEDULE_POLL_PAGE);
 				refillable = page.length === SCHEDULE_POLL_PAGE;
-				queue = [...page];
+				queue = page.map((routing) => ({
+					routing,
+					holdCron: hold(routing.tenantId),
+				}));
 			}
-			const routing = queue.shift();
-			if (!routing) {
+			const claimed = queue.shift();
+			if (!claimed) {
 				refillable = true;
 				return null;
 			}
-			return routing;
+			return claimed;
 		},
-		perform: async (routing) => {
-			await (await options.service()).fireDue(routing);
+		perform: async ({ routing, holdCron }) => {
+			await (await options.service()).fireDue(routing, { holdCron });
 		},
 	});
 }

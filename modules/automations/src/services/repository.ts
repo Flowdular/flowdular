@@ -46,12 +46,31 @@ export interface AutomationScheduleRouting {
 	readonly nextRunAt: number;
 }
 
-export interface AutomationTimeZoneRecord {
-	readonly tenantId: string;
-	readonly timeZone: string;
+/** The newest workspace time zone change a scheduler pass applied. */
+export interface AutomationAppliedTimeZone {
+	/** Its revision in the settings change log. */
+	readonly revision: number;
+	/** When that change committed, in database time. */
 	readonly changedAt: number;
-	/** The zone pending cron slots were last moved to; null before the first. */
-	readonly appliedTimeZone: string | null;
+	readonly appliedAt: number;
+}
+
+export interface AutomationTimeZoneChange {
+	readonly tenantId: string;
+	readonly revision: number;
+	readonly changedAt: number;
+	readonly appliedAt: number;
+}
+
+/** One pending slot a zone change moves, and the event recording it. */
+export interface AutomationScheduleRetime {
+	readonly scheduleId: string;
+	readonly expectedNextRunAt: number;
+	readonly nextRunAt: number;
+	readonly audit: Omit<
+		AutomationAuditEvent,
+		'id' | 'sequence' | 'previousHash' | 'eventHash'
+	>;
 }
 
 export type AutomationListSortKey = 'label' | 'updatedAt';
@@ -84,7 +103,7 @@ export interface AutomationListPage<Item> {
 }
 
 export interface AutomationsRepository {
-	/** Every schedule of one workspace; only `retime` walks a whole workspace. */
+	/** Every schedule of one workspace. */
 	listSchedules(tenantId: string): Promise<readonly StoredAutomationSchedule[]>;
 	listSchedulesPage(
 		tenantId: string,
@@ -114,35 +133,28 @@ export interface AutomationsRepository {
 		readonly lastRunId: string | null;
 		readonly lastError: string | null;
 	}): Promise<boolean>;
-	/** Moves a pending slot only while it still holds the value that was read. */
-	retimeSchedule(input: {
-		readonly tenantId: string;
-		readonly scheduleId: string;
-		readonly expectedNextRunAt: number;
-		readonly nextRunAt: number;
-		readonly updatedAt: number;
-	}): Promise<boolean>;
 	disableSchedule(
 		tenantId: string,
 		scheduleId: string,
 		reason: string,
 		now: number,
 	): Promise<boolean>;
-	/** Keeps the latest change: a write older than the stored one is ignored. */
-	recordTimeZone(input: {
-		readonly tenantId: string;
-		readonly timeZone: string;
-		readonly changedAt: number;
-	}): Promise<void>;
-	getTimeZone(tenantId: string): Promise<AutomationTimeZoneRecord | null>;
-	/** Cross-tenant: the workspaces whose recorded zone is not applied yet. */
-	listPendingTimeZones(limit: number): Promise<readonly string[]>;
-	/** Lands only while the row still holds the change that was applied. */
-	markTimeZoneApplied(input: {
-		readonly tenantId: string;
-		readonly timeZone: string;
-		readonly changedAt: number;
-	}): Promise<boolean>;
+	appliedTimeZone(tenantId: string): Promise<AutomationAppliedTimeZone | null>;
+	/**
+	 * Applies one zone change in one tenant transaction that first locks the
+	 * workspace's applied record. Null, with nothing written, when that record
+	 * is already at the change's revision or newer. Otherwise `plan` receives
+	 * every enabled schedule whose slot is after the change's changedAt, each
+	 * move it answers is written while the slot still holds the value read, the
+	 * moves that landed are audited, and the record takes the revision.
+	 * Answers how many moved.
+	 */
+	applyTimeZoneChange(
+		change: AutomationTimeZoneChange,
+		plan: (
+			pending: readonly StoredAutomationSchedule[],
+		) => readonly AutomationScheduleRetime[],
+	): Promise<number | null>;
 	listTriggersPage(
 		tenantId: string,
 		query: AutomationListQuery,
