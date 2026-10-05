@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .flowdular/
+.vercel/
 .env
 .env.*
 !.env.example

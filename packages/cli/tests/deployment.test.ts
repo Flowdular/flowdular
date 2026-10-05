@@ -8,14 +8,16 @@ import {
 	symlink,
 	writeFile,
 } from 'node:fs/promises';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { parseArguments } from '../src/arguments.ts';
 import { deploymentPlan, runDeployment } from '../src/deployment.ts';
 import { runCommand } from '../src/runner.ts';
+import { findNamedFiles } from '../src/validation.ts';
 
 describe('deployment targets', () => {
 	it('refuses to start a request-scoped target even when apply is supplied', async () => {
@@ -25,6 +27,274 @@ describe('deployment targets', () => {
 			);
 			expect(result.ok).toBe(false);
 			expect(result.error?.code).toBe('DEPLOY_TARGET_UNAVAILABLE');
+		}
+	});
+
+	it('packages the Octane handler, client assets and module metadata for Vercel', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'flowdular-vercel-build-'));
+		const external = await mkdtemp(
+			join(tmpdir(), 'flowdular-vercel-external-'),
+		);
+		try {
+			await mkdir(join(root, 'platform/dist/server/assets'), {
+				recursive: true,
+			});
+			await mkdir(join(root, 'platform/dist/client/assets'), {
+				recursive: true,
+			});
+			await mkdir(join(root, 'modules/example/spec'), { recursive: true });
+			await writeFile(
+				join(root, 'platform/dist/server/entry.js'),
+				'export const nodeHandler = (request, response) => response.end([process.env.NODE_ENV, process.env.FD_DEPLOYMENT_TARGET, process.env.FD_TRUST_PROXY, process.env.FD_AUTH_SECURE_COOKIE, process.env.FD_AUTH_PUBLIC_ORIGIN + request.url].join("|"));\n',
+			);
+			await writeFile(
+				join(root, 'platform/dist/server/index.html'),
+				'<html />',
+			);
+			await writeFile(join(root, 'platform/dist/server/assets/server.js'), '');
+			await writeFile(join(root, 'platform/dist/client/assets/app.js'), '');
+			await writeFile(
+				join(root, 'platform/dist/client/index.html'),
+				'<html />',
+			);
+			await writeFile(join(root, 'platform/package.json'), '{"type":"module"}');
+			await writeFile(join(root, 'flowdular.json'), '{"modules":{}}');
+			await writeFile(
+				join(root, 'modules/example/module.json'),
+				'{"id":"example.core"}',
+			);
+			await writeFile(
+				join(root, 'modules/example/spec/module.yaml'),
+				'name: Example\n',
+			);
+			execFileSync(process.execPath, [
+				new URL('../../../infra/vercel/build.mjs', import.meta.url).pathname,
+				'--package-only',
+				'--root',
+				root,
+			]);
+			const output = join(root, '.vercel/output');
+			const functionRoot = join(output, 'functions/flowdular.func');
+			const config = JSON.parse(
+				await readFile(join(output, 'config.json'), 'utf8'),
+			) as { version: number; routes: { handle?: string; dest?: string }[] };
+			expect(config).toEqual({
+				version: 3,
+				routes: [
+					{ handle: 'filesystem' },
+					{ src: '/(.*)', dest: '/flowdular' },
+				],
+			});
+			const functionConfig = JSON.parse(
+				await readFile(join(functionRoot, '.vc-config.json'), 'utf8'),
+			) as {
+				runtime: string;
+				handler: string;
+				launcherType: string;
+				environment: Record<string, string>;
+			};
+			expect(functionConfig.runtime).toBe('nodejs24.x');
+			expect(functionConfig.handler).toBe('handler.mjs');
+			expect(functionConfig.launcherType).toBe('Nodejs');
+			expect(functionConfig.environment.FD_DEPLOYMENT_TARGET).toBe('vercel');
+			expect(await readFile(join(output, 'static/assets/app.js'), 'utf8')).toBe(
+				'',
+			);
+			expect(
+				await readFile(
+					join(functionRoot, 'modules/example/spec/module.yaml'),
+					'utf8',
+				),
+			).toBe('name: Example\n');
+			expect(await findNamedFiles(root, 'module.yaml')).toEqual([
+				join(root, 'modules/example/spec/module.yaml'),
+			]);
+			await expect(access(join(output, 'static/index.html'))).rejects.toThrow();
+			await expect(
+				access(join(output, 'static/flowdular.json')),
+			).rejects.toThrow();
+			const smoke = spawnSync(
+				process.execPath,
+				[
+					'--input-type=module',
+					'-e',
+					`const { default: handler } = await import(${JSON.stringify(pathToFileURL(join(functionRoot, 'handler.mjs')).href)}); handler({ url: '/api/health' }, { end: (value) => process.stdout.write(value) });`,
+				],
+				{
+					encoding: 'utf8',
+					env: {
+						...process.env,
+						NODE_ENV: 'development',
+						FD_DEPLOYMENT_TARGET: 'local',
+						FD_TRUST_PROXY: 'false',
+						FD_AUTH_SECURE_COOKIE: 'false',
+						FD_AUTH_PUBLIC_ORIGIN: '',
+						VERCEL_URL: 'preview.vercel.app',
+					},
+				},
+			);
+			expect(smoke.status).toBe(0);
+			expect(smoke.stdout).toBe(
+				'production|vercel|true|true|https://preview.vercel.app/api/health',
+			);
+			await writeFile(join(root, 'secret.txt'), 'private');
+			await symlink(
+				join(root, 'secret.txt'),
+				join(root, 'platform/dist/server/assets/secret.txt'),
+			);
+			const unsafeBuild = spawnSync(
+				process.execPath,
+				[
+					new URL('../../../infra/vercel/build.mjs', import.meta.url).pathname,
+					'--package-only',
+					'--root',
+					root,
+				],
+				{ encoding: 'utf8' },
+			);
+			expect(unsafeBuild.status).not.toBe(0);
+			expect(unsafeBuild.stderr).toContain('must be a regular file');
+			await rm(join(root, 'platform/dist/server/assets/secret.txt'));
+			await writeFile(join(external, 'module.yaml'), 'secret: private\n');
+			await rm(join(root, 'modules/example/spec'), {
+				recursive: true,
+				force: true,
+			});
+			await symlink(external, join(root, 'modules/example/spec'), 'dir');
+			const escapedBuild = spawnSync(
+				process.execPath,
+				[
+					new URL('../../../infra/vercel/build.mjs', import.meta.url).pathname,
+					'--package-only',
+					'--root',
+					root,
+				],
+				{ encoding: 'utf8' },
+			);
+			expect(escapedBuild.status).not.toBe(0);
+			expect(escapedBuild.stderr).toContain('must stay inside');
+			await rm(join(root, 'modules/example/spec'));
+			await mkdir(join(root, 'modules/example/spec'));
+			await writeFile(
+				join(root, 'modules/example/spec/module.yaml'),
+				'name: Example\n',
+			);
+			await rm(join(root, '.vercel'), { recursive: true, force: true });
+			await writeFile(join(external, 'keep.txt'), 'keep');
+			await symlink(external, join(root, '.vercel'), 'dir');
+			const redirectedBuild = spawnSync(
+				process.execPath,
+				[
+					new URL('../../../infra/vercel/build.mjs', import.meta.url).pathname,
+					'--package-only',
+					'--root',
+					root,
+				],
+				{ encoding: 'utf8' },
+			);
+			expect(redirectedBuild.status).not.toBe(0);
+			expect(redirectedBuild.stderr).toContain(
+				'.vercel must be a directory inside the workspace',
+			);
+			expect(await readFile(join(external, 'keep.txt'), 'utf8')).toBe('keep');
+		} finally {
+			await rm(root, { recursive: true, force: true });
+			await rm(external, { recursive: true, force: true });
+		}
+	});
+
+	it('returns an import link only for pushed Vercel build sources', async () => {
+		const root = await mkdtemp(join(tmpdir(), 'flowdular-vercel-plan-'));
+		try {
+			execFileSync('git', ['init', '-q', '-b', 'feat/vercel', root]);
+			execFileSync('git', ['config', 'user.email', 'test@example.test'], {
+				cwd: root,
+			});
+			execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root });
+			execFileSync(
+				'git',
+				['remote', 'add', 'origin', 'git@github.com:team/project.git'],
+				{ cwd: root },
+			);
+			const workspace = {
+				root,
+				configPath: join(root, 'flowdular.json'),
+				config: {},
+			};
+			const missing = await deploymentPlan(workspace, 'vercel');
+			expect(
+				(missing.data as { deployUrl: string | null }).deployUrl,
+			).toBeNull();
+			await mkdir(join(root, 'infra/vercel'), { recursive: true });
+			await mkdir(join(root, 'platform'), { recursive: true });
+			await writeFile(
+				join(root, 'vercel.json'),
+				'{"framework":null,"buildCommand":"node infra/vercel/build.mjs"}',
+			);
+			for (const path of [
+				'infra/vercel/build.mjs',
+				'infra/vercel/handler.mjs',
+				'platform/package.json',
+				'platform/octane.config.ts',
+			])
+				await writeFile(join(root, path), 'fixture');
+			const local = await deploymentPlan(workspace, 'vercel');
+			expect((local.data as { deployUrl: string | null }).deployUrl).toBeNull();
+			execFileSync('git', ['add', '.'], { cwd: root });
+			execFileSync('git', ['commit', '-q', '-m', 'Add Vercel web build'], {
+				cwd: root,
+			});
+			execFileSync(
+				'git',
+				['update-ref', 'refs/remotes/origin/feat/vercel', 'HEAD'],
+				{ cwd: root },
+			);
+			const pushed = await deploymentPlan(workspace, 'vercel');
+			const data = pushed.data as {
+				status: string;
+				deployUrl: string | null;
+				checks: { id: string; status: string }[];
+			};
+			expect(data.deployUrl).toBe(
+				'https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fteam%2Fproject%2Ftree%2Ffeat%2Fvercel',
+			);
+			expect(data.status).toBe('action-required');
+			expect(
+				data.checks.find((check) => check.id === 'vercel-web-artifact')?.status,
+			).toBe('pass');
+			expect(
+				data.checks.find((check) => check.id === 'companion-worker')?.status,
+			).toBe('action-required');
+			expect(
+				data.checks.find((check) => check.id === 'web-worker-lifecycle')
+					?.status,
+			).toBe('action-required');
+			await writeFile(join(root, 'vercel.json'), '{}');
+			const malformed = await deploymentPlan(workspace, 'vercel');
+			expect(
+				(malformed.data as { deployUrl: string | null }).deployUrl,
+			).toBeNull();
+			await writeFile(
+				join(root, 'vercel.json'),
+				'{"framework":null,"buildCommand":"node infra/vercel/build.mjs"}',
+			);
+			execFileSync(
+				'git',
+				[
+					'remote',
+					'set-url',
+					'origin',
+					'https://token:secret@github.com/team/project.git',
+				],
+				{ cwd: root },
+			);
+			const protectedPlan = await deploymentPlan(workspace, 'vercel');
+			expect(
+				(protectedPlan.data as { deployUrl: string | null }).deployUrl,
+			).toBeNull();
+			expect(JSON.stringify(protectedPlan.data)).not.toContain('secret');
+		} finally {
+			await rm(root, { recursive: true, force: true });
 		}
 	});
 

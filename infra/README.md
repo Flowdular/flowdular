@@ -73,37 +73,22 @@ bucket, and binds the resulting secrets without logging them. It must then
 exercise first-run setup, migration failure, restart and restore against a
 real Render account before the deploy action can be called one click.
 
-Vercel and Cloudflare are currently unavailable as full-platform targets.
-Vercel [Functions scale down to zero](https://vercel.com/docs/functions), and
-its [Services beta](https://vercel.com/docs/services) can package containers
-but follows the same [Function limits](https://vercel.com/docs/services/pricing).
-Flowdular starts workflow and automation workers in the application process,
-including jobs due without incoming traffic. Cloudflare supports explicit Container
-lifecycle control through Durable Objects, but this repository has no
-Cloudflare adapter verified for restart, secret injection, migrations and
-rollouts. The target registry keeps these options visible without silently
-dropping work. Cloudflare's explicit Container API is documented
-[here](https://developers.cloudflare.com/containers/api/durable-object-container/).
+The [experimental Vercel web artifact](vercel/README.md) packages Octane's Node
+handler and client assets through the Build Output API. `deploy plan vercel
+--json` checks the source files and returns a Vercel import URL for a pushed
+branch. It is not a production target yet: web Function instances still start
+module background pollers. Registry initialization must be separated from
+worker startup, then tested with the always-on companion worker before a full
+launch command can be enabled. The companion requires external PostgreSQL,
+object storage, stable keys and a completed first-run workspace.
+[Vercel Functions scale down to zero](https://vercel.com/docs/functions) and
+have a bounded invocation duration, so web traffic cannot keep scheduled work
+alive.
 
-To support Vercel or Cloudflare as a complete platform:
-
-1. For Vercel, move the module worker lifecycle out of the HTTP server into a
-   separately deployable worker with the same PostgreSQL leases and graceful
-   shutdown. Cloudflare can instead keep that process inside a managed
-   Container if its lifecycle is proven.
-2. Add a durable scheduler trigger for Vercel. For Cloudflare, manage an
-   always-running Container explicitly with Durable Object alarms and monitor
-   restarts. Run migrations before routing traffic, outside request startup.
-3. Bind the runtime, background and migrator database roles, TLS trust, object
-   storage and encryption keys through provider secrets without exposing them
-   in a build artifact or deployment log.
-4. Test idle shutdown, restart, duplicate delivery, rollout overlap and
-   migration failure against the provider runtime before enabling `deploy start`.
-
-Vercel [Functions](https://vercel.com/docs/functions) scale down to zero and
-have a bounded invocation duration. Cloudflare's [Durable Object Container API](https://developers.cloudflare.com/containers/api/durable-object-container/)
-can control startup and inactivity explicitly; that path still needs the
-provider tests above before Flowdular enables it.
+Cloudflare is still unavailable as a full target. Its Durable Object
+[Container API](https://developers.cloudflare.com/containers/api/durable-object-container/)
+supports explicit lifecycle control, but this repository has no verified
+restart, secret or rollout adapter for it.
 
 ## Local container
 

@@ -54,7 +54,12 @@ flowdular deploy start docker [--apply]              # local Compose launch; wit
 
 `deploy start docker --apply` prints a one-time setup token, so it refuses
 `--json` and redirected output and must run in a private interactive terminal. The deployment targets are
-documented in [infra/README.md](../infra/README.md).
+documented in [infra/README.md](../infra/README.md). `deploy plan vercel`
+checks the web build source and links to Vercel import when the branch is pushed.
+Its database, object storage, always-on companion worker and web Function
+worker lifecycle checks remain action-required. The Vercel artifact is for
+isolated evaluation; `deploy start vercel --apply` does not perform a partial
+launch.
 
 ### Authoring a migration
 

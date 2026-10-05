@@ -124,6 +124,7 @@ async function createPlatformConfig() {
 		);
 	}
 	loadPlatformEnvironmentFile(workspaceRoot);
+	const serverless = process.env.FD_DEPLOYMENT_TARGET === 'vercel';
 	/* Every endpoint records itself as it is defined, so the API document
 	   describes this generation and not the one it replaced. */
 	serverEndpointCatalog().beginGeneration();
@@ -133,12 +134,21 @@ async function createPlatformConfig() {
 	if (
 		process.env.FD_INTERNAL_BUILD !== 'true' &&
 		!platformDatabaseConfigured(process.env)
-	)
+	) {
+		if (serverless)
+			throw new Error(
+				'Vercel requires a configured external PostgreSQL database before deployment.',
+			);
 		return createFirstRunConfig();
+	}
 	if (
 		process.env.FD_INTERNAL_BUILD !== 'true' &&
 		(await configuredDatabaseNeedsFirstRun(process.env, workspaceRoot))
 	) {
+		if (serverless)
+			throw new Error(
+				'Finish first-run setup against the external database before deploying to Vercel.',
+			);
 		return createFirstRunConfig(true);
 	}
 	clearSetupToken(workspaceRoot);

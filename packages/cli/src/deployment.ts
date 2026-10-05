@@ -73,7 +73,7 @@ export const deploymentAdapters: readonly DeploymentAdapter[] = [
 		backgroundJobs: 'separate-worker-required',
 		launch: 'unavailable',
 		summary:
-			'Vercel request services have no verified persistent worker lifecycle for Flowdular background jobs.',
+			'Vercel web packaging is experimental: web Functions still start pollers, and durable jobs require a separately deployed always-on worker.',
 	},
 	{
 		id: 'cloudflare',
@@ -305,7 +305,10 @@ function gitOutput(root: string, args: string[]): string | null {
 	return result.error || result.status !== 0 ? null : result.stdout.trim();
 }
 
-function renderDeployUrl(root: string): string | null {
+function pushedGitSource(
+	root: string,
+	requiredPaths: readonly string[],
+): string | null {
 	const remote = gitOutput(root, ['remote', 'get-url', 'origin']);
 	if (!remote) return null;
 	const ssh = /^git@(github\.com|gitlab\.com|bitbucket\.org):(.+)$/.exec(
@@ -343,23 +346,66 @@ function renderDeployUrl(root: string): string | null {
 		`refs/remotes/origin/${branch}`,
 	]);
 	if (!head || head !== remoteHead) return null;
-	for (const path of ['render.yaml', 'infra/docker/Dockerfile']) {
+	for (const path of requiredPaths) {
 		if (
 			gitOutput(root, ['ls-tree', '--name-only', 'HEAD', '--', path]) !== path
 		)
 			return null;
 	}
-	if (
-		gitOutput(root, [
-			'status',
-			'--porcelain',
-			'--',
-			'render.yaml',
-			'infra/docker/Dockerfile',
-		]) !== ''
-	)
+	if (gitOutput(root, ['status', '--porcelain', '--', ...requiredPaths]) !== '')
 		return null;
-	return `https://render.com/deploy?repo=${encodeURIComponent(`https://${url.hostname}/${repository}/tree/${branch}`)}`;
+	return `https://${url.hostname}/${repository}/tree/${branch}`;
+}
+
+function renderDeployUrl(root: string): string | null {
+	const source = pushedGitSource(root, [
+		'render.yaml',
+		'infra/docker/Dockerfile',
+	]);
+	return source
+		? `https://render.com/deploy?repo=${encodeURIComponent(source)}`
+		: null;
+}
+
+function vercelDeployUrl(root: string): string | null {
+	const source = pushedGitSource(root, [
+		'vercel.json',
+		'infra/vercel/build.mjs',
+		'infra/vercel/handler.mjs',
+		'platform/octane.config.ts',
+	]);
+	return source
+		? `https://vercel.com/new/clone?repository-url=${encodeURIComponent(source)}`
+		: null;
+}
+
+async function vercelArtifactIssue(root: string): Promise<string | null> {
+	for (const path of [
+		'vercel.json',
+		'infra/vercel/build.mjs',
+		'infra/vercel/handler.mjs',
+		'platform/package.json',
+		'platform/octane.config.ts',
+	]) {
+		if (!(await workspaceFile(root, path)))
+			return `${path} must be a regular file inside the workspace.`;
+	}
+	let config: unknown;
+	try {
+		const path = join(root, 'vercel.json');
+		if ((await lstat(path)).size > 16 * 1024)
+			return 'vercel.json exceeds the 16 KiB preflight limit.';
+		config = JSON.parse(await readFile(path, 'utf8'));
+	} catch {
+		return 'vercel.json must contain valid JSON.';
+	}
+	if (
+		!isObject(config) ||
+		config.framework !== null ||
+		config.buildCommand !== 'node infra/vercel/build.mjs'
+	)
+		return 'vercel.json must select the Flowdular Build Output API command.';
+	return null;
 }
 
 export async function deploymentPlan(
@@ -424,6 +470,33 @@ export async function deploymentPlan(
 					? 'Connect a repository to Render Blueprint and provide the prompted database, storage and TLS CA settings. Render supplies the public origin.'
 					: 'Configure Kubernetes Secrets, public HTTPS origin, image and readiness probe before applying infra/kubernetes.',
 		});
+	} else if (target === 'vercel') {
+		const artifactIssue = await vercelArtifactIssue(workspace.root);
+		checks.push({
+			id: 'vercel-web-artifact',
+			status: artifactIssue ? 'action-required' : 'pass',
+			message:
+				artifactIssue ??
+				'Build Output API packages the Octane Node handler and static assets for Vercel.',
+		});
+		checks.push({
+			id: 'external-services',
+			status: 'action-required',
+			message:
+				'Provision external PostgreSQL with runtime, background and migrator roles plus verified TLS, an S3-compatible bucket, stable encryption keys, and a completed first-run workspace. Set Vercel environment variables before import.',
+		});
+		checks.push({
+			id: 'companion-worker',
+			status: 'action-required',
+			message:
+				'Deploy the same revision as an always-on background worker on a container host with the same database, storage and keys; monitor its job recovery. Web readiness does not prove worker health.',
+		});
+		checks.push({
+			id: 'web-worker-lifecycle',
+			status: 'action-required',
+			message:
+				'The Vercel web Function still starts module background pollers. Split registry initialization from worker startup in every module before treating this as a production web target.',
+		});
 	} else {
 		checks.push({
 			id: 'persistent-workers',
@@ -436,7 +509,11 @@ export async function deploymentPlan(
 	const deployUrl =
 		target === 'render' && renderBlueprintValid
 			? renderDeployUrl(workspace.root)
-			: null;
+			: target === 'vercel' &&
+				  checks.find((check) => check.id === 'vercel-web-artifact')?.status ===
+						'pass'
+				? vercelDeployUrl(workspace.root)
+				: null;
 	if (target === 'render' && renderBlueprintValid) {
 		checks.push({
 			id: 'render-source',
@@ -444,6 +521,15 @@ export async function deploymentPlan(
 			message: deployUrl
 				? 'The clean Blueprint and Dockerfile match the current branch recorded under origin.'
 				: 'Commit render.yaml and infra/docker/Dockerfile, then push the current branch to a credential-free Git origin before using the Deploy to Render link.',
+		});
+	}
+	if (target === 'vercel') {
+		checks.push({
+			id: 'vercel-source',
+			status: deployUrl ? 'pass' : 'action-required',
+			message: deployUrl
+				? 'The Vercel build files match the current branch recorded under origin.'
+				: 'Commit the Vercel build files and push the branch to a credential-free Git origin before opening the Vercel import link.',
 		});
 	}
 	return success({
@@ -462,7 +548,9 @@ export async function deploymentPlan(
 					? 'See infra/README.md for the Kubernetes deployment procedure.'
 					: target === 'render'
 						? 'Connect render.yaml as a Render Blueprint after supplying external PostgreSQL and object storage.'
-						: null,
+						: target === 'vercel'
+							? 'See infra/vercel/README.md for the experimental web artifact, worker lifecycle blocker and required companion worker.'
+							: null,
 		deployUrl,
 	});
 }

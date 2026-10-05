@@ -15,6 +15,7 @@ platform/.generated/
 .coreloom/
 
 release-artifacts/
+.vercel/
 
 # Generated from canonical agent guidance at generator build time.
 packages/create-flowdular/agent-template/

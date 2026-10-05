@@ -86,12 +86,22 @@ function firstRunConfig(databasePreconfigured = false) {
 
 async function createPlatformConfig() {
 	loadPlatformEnvironmentFile(workspaceRoot);
-	if (!building && !platformDatabaseConfigured(process.env))
+	const serverless = process.env.FD_DEPLOYMENT_TARGET === 'vercel';
+	if (!building && !platformDatabaseConfigured(process.env)) {
+		if (serverless)
+			throw new Error(
+				'Vercel requires a configured external PostgreSQL database before deployment.',
+			);
 		return firstRunConfig();
+	}
 	if (
 		!building &&
 		(await configuredDatabaseNeedsFirstRun(process.env, workspaceRoot))
 	) {
+		if (serverless)
+			throw new Error(
+				'Finish first-run setup against the external database before deploying to Vercel.',
+			);
 		return firstRunConfig(true);
 	}
 	clearSetupToken(workspaceRoot);
