@@ -15,9 +15,11 @@ const ALLOWED = [
 	'packages/cli/tests/legacy-database.test.ts',
 	'docs/flowdular-rename.md',
 	'scripts/legacy-name.mjs',
-	// Pre-0.6 state in the old directory holds keys, so Git and Docker ignore it.
+	// Pre-0.6 state in the old directory holds keys, so Git, Docker and
+	// Vercel ignore it.
 	'.gitignore',
 	'.dockerignore',
+	'.vercelignore',
 ];
 const ALLOWED_TREES = [
 	'docs/reviews/',

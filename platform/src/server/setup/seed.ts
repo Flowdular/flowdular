@@ -118,7 +118,7 @@ export async function claimFirstRun<T>(
 		const held = lease.database.transaction(async (transaction) => {
 			const result = await transaction.query<{ claimed: boolean }>({
 				text: 'SELECT pg_try_advisory_xact_lock(hashtext($1), hashtext($2)) AS claimed',
-				parameters: ['coreloom-first-run', 'platform.setup'],
+				parameters: ['flowdular-first-run', 'platform.setup'],
 			});
 			report(result.rows[0]?.claimed === true);
 			await released;

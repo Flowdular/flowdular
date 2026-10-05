@@ -49,7 +49,7 @@ afterEach(async () => {
 
 function sessionAuth(session: AuthPrincipal): AuthRuntime {
 	const cookie = {
-		name: 'coreloom_session_dev',
+		name: 'flowdular_session_dev',
 		secure: false,
 		maxAgeSeconds: 3_600,
 	};
@@ -112,7 +112,7 @@ function compose(list: DefinedListExport): Role {
 		);
 		if (!route) throw new Error(`Route ${method} ${path} is missing.`);
 		const headers = new Headers({
-			cookie: `coreloom_session_dev=${SESSION_TOKEN}`,
+			cookie: `flowdular_session_dev=${SESSION_TOKEN}`,
 		});
 		if (method === 'POST') {
 			headers.set('content-type', 'application/json');

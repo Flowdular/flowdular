@@ -16,5 +16,5 @@ CREATE INDEX IF NOT EXISTS agent_worker_heartbeats_time_idx
 ALTER TABLE agent_worker_heartbeats ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_worker_heartbeats FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_worker_heartbeats_tenant_policy ON agent_worker_heartbeats
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

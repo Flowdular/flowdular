@@ -125,7 +125,7 @@ is Ready.
 2. Provision PostgreSQL and use the direct host, not a PgBouncer pooler: the
    platform sends statement and lock timeouts as startup parameters, which a
    pooler refuses.
-3. As the database owner, create `coreloom_runtime` and `coreloom_background`
+3. As the database owner, create `flowdular_runtime` and `flowdular_background`
    without `SUPERUSER` or `BYPASSRLS` and grant what
    `infra/docker/postgres/10-roles.sh` grants. The owner role is the migrator.
 4. Generate each stable key with `openssl rand -base64 32`, except

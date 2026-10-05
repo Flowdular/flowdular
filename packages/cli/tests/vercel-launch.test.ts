@@ -494,7 +494,7 @@ async function applicationRoles(db: PGlite) {
 			rolcanlogin: boolean;
 		}>(
 			`SELECT rolname, rolpassword, rolsuper, rolbypassrls, rolcanlogin
-			   FROM pg_authid WHERE rolname LIKE 'coreloom\\_%' ORDER BY rolname`,
+			   FROM pg_authid WHERE rolname LIKE 'flowdular\\_%' ORDER BY rolname`,
 		)
 	).rows;
 }
@@ -545,17 +545,17 @@ describe('deploy start vercel', () => {
 		const runtimePassword = backup.get('FD_DATABASE_RUNTIME_PASSWORD')!;
 		const backgroundPassword = backup.get('FD_DATABASE_BACKGROUND_PASSWORD')!;
 		expect(backup.get('FD_DATABASE_URL')).toBe(
-			`postgresql://coreloom_runtime:${runtimePassword}@${NEON_HOST}/neondb`,
+			`postgresql://flowdular_runtime:${runtimePassword}@${NEON_HOST}/neondb`,
 		);
 		expect(backup.get('FD_DATABASE_BACKGROUND_URL')).toBe(
-			`postgresql://coreloom_background:${backgroundPassword}@${NEON_HOST}/neondb`,
+			`postgresql://flowdular_background:${backgroundPassword}@${NEON_HOST}/neondb`,
 		);
 		expect(run.databaseUrls.map((url) => url.hostname)).toEqual([NEON_HOST]);
 
 		const roles = await applicationRoles(run.db);
 		expect(roles.map((role) => role.rolname)).toEqual([
-			'coreloom_background',
-			'coreloom_runtime',
+			'flowdular_background',
+			'flowdular_runtime',
 		]);
 		for (const role of roles) {
 			expect(role).toMatchObject({
@@ -1263,11 +1263,11 @@ describe('application roles', () => {
 		await db.exec('CREATE ROLE outsider LOGIN');
 		const privileges = (
 			await db.query<Record<string, boolean>>(
-				`SELECT has_table_privilege('coreloom_runtime', 'ledger', 'SELECT, INSERT, UPDATE, DELETE') AS runtime_tables,
-				        has_table_privilege('coreloom_background', 'ledger', 'SELECT') AS background_tables,
-				        has_database_privilege('coreloom_runtime', current_database(), 'CONNECT') AS runtime_connect,
-				        has_database_privilege('coreloom_background', current_database(), 'CONNECT') AS background_connect,
-				        has_schema_privilege('coreloom_background', 'public', 'USAGE') AS background_schema,
+				`SELECT has_table_privilege('flowdular_runtime', 'ledger', 'SELECT, INSERT, UPDATE, DELETE') AS runtime_tables,
+				        has_table_privilege('flowdular_background', 'ledger', 'SELECT') AS background_tables,
+				        has_database_privilege('flowdular_runtime', current_database(), 'CONNECT') AS runtime_connect,
+				        has_database_privilege('flowdular_background', current_database(), 'CONNECT') AS background_connect,
+				        has_schema_privilege('flowdular_background', 'public', 'USAGE') AS background_schema,
 				        has_database_privilege('outsider', current_database(), 'CONNECT') AS outsider_connect,
 				        has_schema_privilege('outsider', 'public', 'USAGE') AS outsider_schema`,
 			)
@@ -1318,7 +1318,7 @@ describe('application roles', () => {
 		await expect(inspectApplicationRoles(ownerSession(db))).rejects.toThrow(
 			'database owner',
 		);
-		await db.exec('RESET ROLE; CREATE ROLE coreloom_runtime LOGIN BYPASSRLS');
+		await db.exec('RESET ROLE; CREATE ROLE flowdular_runtime LOGIN BYPASSRLS');
 		await db.exec('SET ROLE app_owner');
 		await expect(inspectApplicationRoles(ownerSession(db))).rejects.toThrow(
 			'BYPASSRLS',

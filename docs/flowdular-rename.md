@@ -18,8 +18,9 @@ values; rename them in `.env` files and deployment environments.
 Local state lives in `.flowdular`. Flowdular 0.6 no longer reads a `.coreloom`
 state directory; a workspace that still has one starts with empty state under
 `.flowdular`. Delete the old directory once you no longer need its data: it
-holds the old sandbox keys and databases, and `.gitignore` and `.dockerignore`
-keep it out of commits and image builds only while they still name it.
+holds the old sandbox keys and databases, and `.gitignore`, `.dockerignore`
+and `.vercelignore` keep it out of commits, image builds and Vercel uploads
+only while they still name it.
 
 Run grants signed by the pre-rename issuer and the `x-coreloom-secret` and
 `x-coreloom-read-permission` workflow schema markers are no longer accepted.

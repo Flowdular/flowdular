@@ -337,7 +337,7 @@ describe('agents migrations', () => {
 	it('refuses adoption when the revision adoption policy exists but a background grant is missing', async () => {
 		await apply();
 		await lease.database.execute({
-			text: 'REVOKE SELECT (revision) ON agent_definition_revisions FROM coreloom_background',
+			text: 'REVOKE SELECT (revision) ON agent_definition_revisions FROM flowdular_background',
 		});
 		await lease.database.execute({
 			text: `DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = 'agents.core' AND id = '0030_agents_background_passes'`,

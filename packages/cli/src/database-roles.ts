@@ -1,8 +1,8 @@
 /* Every migration grants to these names, so they must match
    infra/docker/postgres/10-roles.sh exactly; a rename changes them here. */
 export const APPLICATION_ROLES = {
-	runtime: 'coreloom_runtime',
-	background: 'coreloom_background',
+	runtime: 'flowdular_runtime',
+	background: 'flowdular_background',
 } as const;
 
 export type ApplicationRole = keyof typeof APPLICATION_ROLES;
