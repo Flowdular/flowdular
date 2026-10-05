@@ -4,7 +4,7 @@
 	"id": "import.core",
 	"package": "@flowdular/module-import",
 	"version": "0.1.15",
-	"platformApi": "^0.1.0",
+	"platformApi": "^0.1.33",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations"],
 	"platform": {
