@@ -1,8 +1,11 @@
 import type { ModuleServerComposition } from '@flowdular/sdk/server';
 
 /* combined serves HTTP and runs every module worker in one process. web serves
-   HTTP only: its compositions start, but no worker loop, poller or wake-driven
-   claim runs there, so a host that freezes idle instances never strands work. */
+   HTTP only: its compositions start, but no module worker loop, poller or
+   wake-driven claim runs there, so a host that freezes idle instances never
+   strands work. The one loop a web process still runs is auth.core's expired
+   session sweep (auth.core.sessions), which starts with the auth service in
+   every role; freezing it only delays deleting rows every lookup ignores. */
 export type PlatformRuntimeRole = 'combined' | 'web';
 
 export function platformRuntimeRole(
