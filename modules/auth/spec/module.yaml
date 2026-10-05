@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: auth.core
-specVersion: 0.14.5
+specVersion: 0.14.6
 status: approved
 name: Authentication Core
 description: Provides tenant-aware accounts, password authentication, sessions, scopes, tenant roles, API tokens for machine clients, the module settings store, the auth audit trail, security headers, authentication screens, and server authorization middleware.
@@ -44,6 +44,8 @@ invariants:
   - The built-in owner role carries adapters.runs.read and adapters.runs.manage and the built-in member role carries neither, because a data adapter writes records of other modules and reaches other systems. Migration 0035 grants both to the owner memberships and the built-in owner role row of every workspace that already exists, lifting forced row-level security on the source and the target for the migrator.
   - The built-in owner role carries documents.templates.read and documents.templates.manage and the built-in member role carries documents.templates.read, because a member reads the workspace's document templates while editing and reverting them stays with owners. Migration 0036 grants those defaults to the owner and member memberships and the built-in role rows of every workspace that already exists, lifting forced row-level security on the source and the target for the migrator.
   - The built-in owner role and the built-in member role both carry agents.assistant.use, because the workspace assistant acts as the member who asked and never above them, and a member without the permission sees no entry point at all rather than a locked one. Migration 0037 grants it to the owner and member memberships and the built-in role rows of every workspace that already exists, lifting forced row-level security on the source and the target for the migrator.
+  - A new workspace seeds the built-in owner role row and owner membership with decisions.definitions.read, decisions.definitions.manage, decisions.invocations.manage, decisions.invocations.read, decisions.connections.manage and decisions.connections.read. Its built-in member role row and member membership receive only decisions.definitions.read and decisions.invocations.read. No other role receives decisions.invocations.manage by default; a member using a custom role may invoke only after an explicit grant of that permission. decisions.core owns the authorization of its operations and the redaction of invocation history; an auth scope grant never exposes connection credentials or unredacted input and output.
+  - Migration 0040 adds the decisions.core defaults to owner and member memberships and to their built-in role rows in every existing workspace, without duplicate grants, using the migration lease to lift forced row-level security on source and target only for the migration. It leaves custom role rows and memberships assigned to custom roles unchanged, including any explicit decisions grants they already hold; the grant operation is idempotent even though the migration ledger applies it only once.
   - auth.core declares the workspace data it keeps by age as data classes, when the platform hands it the registry. auth.core.sessions is kept for 30 days, auth.core.api-tokens and auth.core.audit-events for 400 days. Each is exportable and swept in bounded batches inside its own tenant transaction; a sweep removes only a session that already expired and a credential already revoked or expired, and no export carries a session token hash, a CSRF token or an API token hash. Memberships, membership scopes, roles, identity providers and module settings are configuration rather than swept classes.
   - An API token is a tenant-scoped machine credential bound to one membership. Only its hash is stored, the raw value is returned exactly once at creation, and it is never recoverable afterwards.
   - API token authority is the intersection of its recorded scopes with the live membership scopes at every request. Revoking a scope or disabling the membership takes effect immediately without touching the token.
@@ -122,6 +124,7 @@ dataOwnership:
   - Accounts, tenant memberships, scope grants, and hashed sessions are owned by auth.core.
   - API token identity, hashed secret, recorded scopes, expiry, revocation state, and last use are owned by auth.core.
   - Tenant roles, sign-in failure counters, module settings values, and the auth audit trail are owned by auth.core.
+  - auth.core owns default decisions.core scope grants on built-in roles and memberships; decisions.core declares its own permissions and owns decision definitions, connections and invocation records.
   - Other modules may reference account and tenant identifiers but may not write authentication tables.
 entities:
   - id: identity-provider
@@ -394,6 +397,14 @@ decisions:
     question: What identifies a provider in the sign-in URL?
     answer: A tenant-unique key; the callback path carries the workspace and the key, and the signed state cookie binds both.
     decidedBy: default
+  - id: D-DECISIONS-ACTORS
+    question: Which decisions.core permissions do owners and members receive by default?
+    answer: Owners receive all six decisions.core permissions. Members receive decisions.definitions.read and decisions.invocations.read for definitions and redacted invocation history; they receive no management, connection or invocation permission by default. Any other role may invoke only through an explicit decisions.invocations.manage grant.
+    decidedBy: user
+  - id: D-DECISIONS-MIGRATION
+    question: How are decisions.core defaults applied to workspaces that already exist?
+    answer: Auth migration 0040 adds the same defaults to existing owner and member memberships and their built-in role rows with an idempotent grant operation, preserves existing explicit grants without duplicates, and does not change custom roles or memberships assigned to them.
+    decidedBy: default
 acceptanceScenarios:
   - id: AUTH-MAIL-TEST-MESSAGE
     given: An installation whose effective mail transport is an SMTP relay, and an owner signed in with the settings management permission.
@@ -443,6 +454,18 @@ acceptanceScenarios:
     given: A workspace created before agents.core declared agents.assistant.use, with an owner, a member and a role the workspace wrote itself.
     when: The migration ledger is applied.
     then: The owner membership, the member membership and both built-in role rows carry agents.assistant.use without a duplicate of one already held, and the workspace's own role is untouched.
+  - id: AUTH-DECISIONS-NEW-WORKSPACE-SCOPES
+    given: A new workspace is created through sign-up or operator provisioning with decisions.core composed, and it gains a built-in owner and a built-in member.
+    when: Their role rows and membership scopes are seeded.
+    then: The owner role and membership carry decisions.definitions.read, decisions.definitions.manage, decisions.invocations.manage, decisions.invocations.read, decisions.connections.manage and decisions.connections.read; the member role and membership carry only decisions.definitions.read and decisions.invocations.read from decisions.core, and no custom role gains a decisions scope by default.
+  - id: AUTH-DECISIONS-EXISTING-WORKSPACE-SCOPES
+    given: Two existing workspaces each have an owner and a member, one owner already holds decisions.definitions.read, one member already holds decisions.invocations.read, and a custom role and its membership hold an explicit scope set.
+    when: Migration 0040 applies through the ledger, and its grant operation is exercised a second time in an isolated idempotency test.
+    then: Each workspace's built-in owner role and owner membership carry all six decisions.core permissions once, each built-in member role and member membership carry only decisions.definitions.read and decisions.invocations.read from decisions.core once, and the custom role and its membership retain their exact prior scope set without a cross-workspace grant.
+  - id: AUTH-DECISIONS-EXPLICIT-INVOCATION-GRANT
+    given: A built-in member has the decisions.core read defaults, and a custom role has been granted decisions.invocations.manage explicitly.
+    when: Their live memberships and API token scope intersections are resolved for a decisions.core invocation.
+    then: The built-in member and any token issued without the invocation permission lack it, while the membership assigned to the custom role holds it only if the role's explicit grant is present; neither default read scope grants connection access or an unredacted invocation payload.
   - id: AUTH-ERASE-SUBJECT
     given: Two workspaces holding sessions and API tokens of the same subject, and a second subject in the first workspace.
     when: The erasure of the first subject runs in the first workspace, once with a batch smaller than the rows it holds and again until it is done.
