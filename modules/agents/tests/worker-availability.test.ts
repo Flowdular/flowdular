@@ -25,6 +25,12 @@ import {
 	AGENT_WORKER_TENANT,
 	DatabaseAgentRepository,
 } from '../src/services/database-repository.ts';
+import type { AgentRepository } from '../src/services/repository.ts';
+import { AgentWorker } from '../src/services/worker.ts';
+import {
+	readWorkerStatus,
+	workerDrainIntervalMs,
+} from '../src/services/worker-availability.ts';
 import {
 	agentPrincipal,
 	composeAgents,
@@ -230,6 +236,73 @@ describe('agents.core worker availability', () => {
 		expect(await workerStatus(web, 'tenant-a')).toMatchObject({
 			state: 'not-seen',
 		});
+	});
+
+	it('AGENTS-WORKER-AVAILABILITY keeps a running worker online across the tick it drops while a drain is in flight', async () => {
+		vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+		const leaseMs = 300_000;
+		const interval = workerDrainIntervalMs(leaseMs);
+		const beats: number[] = [];
+		let drains = 0;
+		let finishDrain!: () => void;
+		const slowDrain = new Promise<void>((resolve) => {
+			finishDrain = resolve;
+		});
+		const repository = {
+			recordWorkerHeartbeat: async (
+				...args: Parameters<DatabaseAgentRepository['recordWorkerHeartbeat']>
+			) => {
+				await database.repository.recordWorkerHeartbeat(...args);
+				beats.push(args[0].heartbeatAt);
+			},
+			listRecoverableRuns: async () => {
+				drains += 1;
+				if (drains === 2) await slowDrain;
+				return [];
+			},
+		} as unknown as AgentRepository;
+		const worker = new AgentWorker(repository, {} as AgentHarness, {
+			workerId: 'w-slow-drain',
+			concurrency: 1,
+			leaseMs,
+		});
+		const status = (now: number) =>
+			readWorkerStatus(database.repository, 'tenant-a', {
+				now,
+				leaseMs,
+				freshnessMs: 30_000,
+			});
+		try {
+			await worker.start();
+			const startedAt = beats[0]!;
+			await waitFor(() => drains === 1);
+			vi.advanceTimersByTime(interval);
+			await waitFor(() => drains === 2 && beats.length === 2);
+			/* The drain is still in flight at the next tick, which is dropped. */
+			vi.advanceTimersByTime(interval);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			expect(drains).toBe(2);
+			finishDrain();
+			expect(beats).toEqual([startedAt, startedAt + interval]);
+			/* Just past the following tick, before its heartbeat lands, the
+			   newest heartbeat is more than two drains old. */
+			expect(await status(startedAt + 3 * interval + 50)).toMatchObject({
+				state: 'online',
+				lastHeartbeatAt: startedAt + interval,
+			});
+			vi.advanceTimersByTime(interval);
+			await waitFor(() => beats.length === 3);
+			expect(beats[2]).toBe(startedAt + 3 * interval);
+			worker.stop();
+			expect(await status(beats[2]! + 3 * interval + 1)).toMatchObject({
+				state: 'offline',
+				lastHeartbeatAt: beats[2],
+			});
+		} finally {
+			worker.stop();
+			finishDrain();
+			vi.useRealTimers();
+		}
 	});
 
 	it('AGENTS-WORKER-AVAILABILITY removes heartbeats older than a day except the newest and keeps them out of every workspace', async () => {

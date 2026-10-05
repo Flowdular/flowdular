@@ -121,10 +121,11 @@ describe('agents.core worker freshness window', () => {
 		).toBe(600_000);
 	});
 
-	it('AGENTS-WORKER-AVAILABILITY never lets the window fall below two drain intervals', () => {
+	it('AGENTS-WORKER-AVAILABILITY never lets the window fall below three drain intervals', () => {
 		expect(workerFreshnessWindowMs(120_000, 30_000)).toBe(120_000);
 		/* A 300000 ms lease drains every 150000 ms. */
-		expect(workerFreshnessWindowMs(120_000, 300_000)).toBe(300_000);
+		expect(workerFreshnessWindowMs(120_000, 300_000)).toBe(450_000);
+		expect(workerFreshnessWindowMs(30_000, 30_000)).toBe(45_000);
 		expect(workerFreshnessWindowMs(30_000, 1_000)).toBe(30_000);
 	});
 });

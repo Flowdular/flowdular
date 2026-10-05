@@ -11,12 +11,14 @@ export function workerDrainIntervalMs(leaseMs: number): number {
 	return Math.max(1_000, Math.floor(leaseMs / 2));
 }
 
-/* Never shorter than two drains, or a worker between drains reads offline. */
+/* Heartbeats can be up to two drains apart, because a tick that lands while
+   a drain is still in flight is dropped. A third keeps a running worker from
+   reading offline at that gap. */
 export function workerFreshnessWindowMs(
 	freshnessMs: number,
 	leaseMs: number,
 ): number {
-	return Math.max(freshnessMs, 2 * workerDrainIntervalMs(leaseMs));
+	return Math.max(freshnessMs, 3 * workerDrainIntervalMs(leaseMs));
 }
 
 export async function readWorkerStatus(
