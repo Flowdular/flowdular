@@ -40,10 +40,10 @@
 		"@flowdular/ui": "workspace:*",
 		"@types/sax": "1.2.7",
 		"docx": "9.5.1",
-		"octane": "0.8.0",
+		"octane": "0.9.1",
 		"pdfmake": "0.3.11",
 		"sax": "1.6.1",
-		"segment-state": "0.3.0",
+		"segment-state": "0.4.0",
 		"unpdf": "1.8.1"
 	},
 	"devDependencies": {

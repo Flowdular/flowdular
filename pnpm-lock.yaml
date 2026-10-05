@@ -47,18 +47,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
     devDependencies:
       '@flowdular/database-testing':
         specifier: workspace:*
         version: link:../../packages/database-testing
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -93,18 +93,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
     devDependencies:
       '@flowdular/database-testing':
         specifier: workspace:*
         version: link:../../packages/database-testing
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -148,18 +148,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
     devDependencies:
       '@flowdular/database-testing':
         specifier: workspace:*
         version: link:../../packages/database-testing
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -194,18 +194,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
     devDependencies:
       '@flowdular/database-testing':
         specifier: workspace:*
         version: link:../../packages/database-testing
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -243,18 +243,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
     devDependencies:
       '@flowdular/database-testing':
         specifier: workspace:*
         version: link:../../packages/database-testing
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -292,23 +292,23 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       '@octanejs/app-core':
-        specifier: 0.1.0
-        version: 0.1.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.1.1
+        version: 0.1.1(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
       '@octanejs/seo':
-        specifier: 0.0.45
-        version: 0.0.45(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.0.46
+        version: 0.0.46(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
       nodemailer:
         specifier: 10.0.6
         version: 10.0.6
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       pg:
         specifier: 8.23.0
         version: 8.23.0
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
       yaml:
         specifier: 2.9.0
         version: 2.9.0
@@ -318,7 +318,7 @@ importers:
         version: link:../../packages/database-testing
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -368,18 +368,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
     devDependencies:
       '@flowdular/database-testing':
         specifier: workspace:*
         version: link:../../packages/database-testing
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -420,18 +420,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
     devDependencies:
       '@flowdular/database-testing':
         specifier: workspace:*
         version: link:../../packages/database-testing
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -466,21 +466,21 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
     devDependencies:
       '@flowdular/database-testing':
         specifier: workspace:*
         version: link:../../packages/database-testing
       '@octanejs/app-core':
-        specifier: 0.1.0
-        version: 0.1.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.1.1
+        version: 0.1.1(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -530,8 +530,8 @@ importers:
         specifier: 9.5.1
         version: 9.5.1
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       pdfmake:
         specifier: 0.3.11
         version: 0.3.11
@@ -539,8 +539,8 @@ importers:
         specifier: 1.6.1
         version: 1.6.1
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
       unpdf:
         specifier: 1.8.1
         version: 1.8.1
@@ -550,7 +550,7 @@ importers:
         version: link:../../packages/database-testing
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -591,18 +591,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
     devDependencies:
       '@flowdular/database-testing':
         specifier: workspace:*
         version: link:../../packages/database-testing
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -643,18 +643,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
     devDependencies:
       '@flowdular/database-testing':
         specifier: workspace:*
         version: link:../../packages/database-testing
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -695,18 +695,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
     devDependencies:
       '@flowdular/database-testing':
         specifier: workspace:*
         version: link:../../packages/database-testing
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -744,18 +744,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
     devDependencies:
       '@flowdular/database-testing':
         specifier: workspace:*
         version: link:../../packages/database-testing
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -790,21 +790,21 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
     devDependencies:
       '@flowdular/database-testing':
         specifier: workspace:*
         version: link:../../packages/database-testing
       '@octanejs/app-core':
-        specifier: 0.1.0
-        version: 0.1.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.1.1
+        version: 0.1.1(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -836,11 +836,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
     devDependencies:
       '@flowdular/database':
         specifier: workspace:*
@@ -850,7 +850,7 @@ importers:
         version: link:../../packages/database-testing
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -888,18 +888,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
     devDependencies:
       '@flowdular/database-testing':
         specifier: workspace:*
         version: link:../../packages/database-testing
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -937,21 +937,21 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       '@octanejs/app-core':
-        specifier: 0.1.0
-        version: 0.1.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.1.1
+        version: 0.1.1(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
     devDependencies:
       '@flowdular/database-testing':
         specifier: workspace:*
         version: link:../../packages/database-testing
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -986,18 +986,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
     devDependencies:
       '@flowdular/database-testing':
         specifier: workspace:*
         version: link:../../packages/database-testing
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -1032,14 +1032,14 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       '@octanejs/app-core':
-        specifier: 0.1.0
-        version: 0.1.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.1.1
+        version: 0.1.1(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
       yaml:
         specifier: 2.9.0
         version: 2.9.0
@@ -1049,7 +1049,7 @@ importers:
         version: link:../../packages/database-testing
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -1090,11 +1090,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
     devDependencies:
       '@flowdular/database':
         specifier: workspace:*
@@ -1103,11 +1103,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/database-testing
       '@octanejs/app-core':
-        specifier: 0.1.0
-        version: 0.1.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.1.1
+        version: 0.1.1(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -1148,18 +1148,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ui
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
     devDependencies:
       '@flowdular/database-testing':
         specifier: workspace:*
         version: link:../../packages/database-testing
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -1281,18 +1281,18 @@ importers:
         specifier: workspace:*
         version: link:../ui
       '@octanejs/seo':
-        specifier: 0.0.45
-        version: 0.0.45(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.0.46
+        version: 0.0.46(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
     devDependencies:
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       jsdom:
         specifier: 30.0.1
         version: 30.0.1(@noble/hashes@2.4.0)
@@ -1507,20 +1507,20 @@ importers:
         specifier: workspace:*
         version: link:../ui
       '@octanejs/seo':
-        specifier: 0.0.45
-        version: 0.0.45(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.0.46
+        version: 0.0.46(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
       '@octanejs/vite-plugin':
-        specifier: 0.2.0
-        version: 0.2.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.2.1
+        version: 0.2.1(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       create-flowdular:
         specifier: workspace:0.5.1
         version: link:../create-flowdular
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       segment-state:
-        specifier: 0.3.0
-        version: 0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.4.0
+        version: 0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
       vite:
         specifier: 8.2.2
         version: 8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)
@@ -1532,11 +1532,11 @@ importers:
         specifier: workspace:*
         version: link:../database-testing
       '@octanejs/app-core':
-        specifier: 0.1.0
-        version: 0.1.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.1.1
+        version: 0.1.1(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -1564,8 +1564,8 @@ importers:
         specifier: workspace:*
         version: link:../storage
       '@octanejs/app-core':
-        specifier: 0.1.0
-        version: 0.1.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.1.1
+        version: 0.1.1(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
     devDependencies:
       '@types/node':
         specifier: 24.13.3
@@ -1605,18 +1605,18 @@ importers:
         specifier: 5.2.7
         version: 5.2.7
       '@octanejs/tanstack-table':
-        specifier: 0.1.58
-        version: 0.1.58(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.1.59
+        version: 0.1.59(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
       chart.js:
         specifier: ^4.5.1
         version: 4.5.1
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
     devDependencies:
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       jsdom:
         specifier: 30.0.1
         version: 30.0.1(@noble/hashes@2.4.0)
@@ -1717,14 +1717,14 @@ importers:
         specifier: workspace:*
         version: link:../packages/ui
       '@octanejs/seo':
-        specifier: 0.0.45
-        version: 0.0.45(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.0.46
+        version: 0.0.46(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
       '@octanejs/vite-plugin':
-        specifier: 0.2.0
-        version: 0.2.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.2.1
+        version: 0.2.1(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       octane:
-        specifier: 0.8.0
-        version: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+        specifier: 0.9.1
+        version: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       pg:
         specifier: 8.23.0
         version: 8.23.0
@@ -1733,11 +1733,11 @@ importers:
         specifier: workspace:*
         version: link:../packages/dev-console
       '@octanejs/app-core':
-        specifier: 0.1.0
-        version: 0.1.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+        specifier: 0.1.1
+        version: 0.1.1(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
       '@tsrx/typescript-plugin':
         specifier: 0.3.120
-        version: 0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
+        version: 0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -2237,36 +2237,36 @@ packages:
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
 
-  '@octanejs/app-core@0.1.0':
-    resolution: {integrity: sha512-RWGrHrZO3+CHfSCZaj4OUns4TtMdvZE9Xys0A+Fu3UWD8h/c1BiOIdzLTqgO/qAss7pMic3YZW0fJDFTvflaWQ==}
+  '@octanejs/app-core@0.1.1':
+    resolution: {integrity: sha512-lNdVbvkWKAvtrpAwh1/11vqXwdk7A1J4VwnImJU/ie0DWIhAW9V+Cu5gDo7NlTgTtW1JwORfOhinbLa765t9PA==}
     engines: {node: '>=22.22.2'}
     peerDependencies:
-      octane: ^0.8.0
+      octane: ^0.9.0
 
-  '@octanejs/seo@0.0.45':
-    resolution: {integrity: sha512-P8LDuZaVoaQorwymW/g03il4MyjtbUpgTdj4PIplMd+AlAS+/qidwZmbOb8RNf567N1ASeKz7zbKJR3TrYBxvg==}
+  '@octanejs/seo@0.0.46':
+    resolution: {integrity: sha512-jUJMxGUYan8/pbDxhA7brvGj/Jwx5nKE9GAx6S9q8/7ImT+TplHSus18bn3q4JY8pD72qwox3rStKiZto2XhJA==}
     engines: {node: '>=22.22.2'}
     peerDependencies:
-      octane: ^0.8.0
+      octane: ^0.9.0
 
-  '@octanejs/tanstack-store@0.0.55':
-    resolution: {integrity: sha512-rBwcN2RAoihSfcZZOJ9fiiCDnKth+6ebdhwaDrhbEXfKSBsC0YQxtrRFzc4WU13io8NRbif2TGhpRhOQU3hoTQ==}
+  '@octanejs/tanstack-store@0.0.56':
+    resolution: {integrity: sha512-nLUb7ncchNMMKbtiaDlj6Pvc4/BdUbb68CzJCiaXc5RKA090m0jQXYTLtwSFYXshfu3+eGZ5ATNP8S1Z4ZeL0Q==}
     engines: {node: '>=22.22.2'}
     peerDependencies:
-      octane: ^0.8.0
+      octane: ^0.9.0
 
-  '@octanejs/tanstack-table@0.1.58':
-    resolution: {integrity: sha512-mp9IcQkEvhkOHWbz05dzjkweAv58UU26IFRVbPw90UJumHJlvpbxi9oOBqtyYekSDu3k1wjoqh9Elf92vS2JGQ==}
+  '@octanejs/tanstack-table@0.1.59':
+    resolution: {integrity: sha512-pLdUphXRwvRrbZt31GxcGMhC3QThtwhCSXnAeRi1p6Rp//JlAo9ePBkM/WpE2dCztxeQaqsDR8XTBHx4NAlelA==}
     engines: {node: '>=22.22.2'}
     peerDependencies:
-      octane: ^0.8.0
+      octane: ^0.9.0
 
-  '@octanejs/vite-plugin@0.2.0':
-    resolution: {integrity: sha512-xOlJ0qxjfy3Azy/LHHPfNpp2Fyh9Cd0rXLoHdUXgtA76zZ264CjnspSvlLRlm5k9vfIicS1OgjANwRYWCwodmg==}
+  '@octanejs/vite-plugin@0.2.1':
+    resolution: {integrity: sha512-exbNeXUrAmJO5coPUE4YXT8VX2O73XSYj0wFBL+lg/XISjBvcyMVH00JDZyA1oZrkpLUGUEp8ExfnfBqibVQuw==}
     engines: {node: '>=22.22.2'}
     hasBin: true
     peerDependencies:
-      octane: ^0.8.0
+      octane: ^0.9.0
       vite: ^8.0.16
 
   '@octokit/auth-token@6.0.0':
@@ -3784,8 +3784,8 @@ packages:
     resolution: {integrity: sha512-4a+OsYv9UktOJKE+l1A4OufDgdRF9PifWj+tJnHURo/P+WOxpG4GzUFL9qCalmWauao6ogiG+QvnCovwPoyAWA==}
     engines: {node: '>=12.20.0'}
 
-  octane@0.8.0:
-    resolution: {integrity: sha512-w7RDBL3PRMNS434Ps6MmC8arNOhAAjp88xltDnMlyrLABonxf9+HMUINkEhgX3b5IUV+4ANEH8ADejmn7WfH5A==}
+  octane@0.9.1:
+    resolution: {integrity: sha512-1uNL9W6PP5eRhLH9jnieFm9Tpez0X70bnW1gBgxNO+zMMqkUiERrTA0LtAt6tLZE7E03D4iOOi9w8BHVwoXd0Q==}
     engines: {node: '>=22.22.2'}
     peerDependencies:
       react: ^19.0.0
@@ -4054,11 +4054,11 @@ packages:
     resolution: {integrity: sha512-vfD3pmTzGpufjScBh50YHKzEu2lxBWhVEHsNGoEXmCmn2hKGfeNLYMzCJpe8cD7gqX7TJluOVpBkAequ6dgMmA==}
     engines: {node: '>=4'}
 
-  segment-state@0.3.0:
-    resolution: {integrity: sha512-cHxyUbW8PAn+ViracLxicXbGN5llmTOd2v+J2mmdmVJm+5oqgFnb5LSfG7VN6bT7X60il4qY6sj+a3mrdoYA1Q==}
+  segment-state@0.4.0:
+    resolution: {integrity: sha512-nbsq5mCsAdfbpjWhnzZgpy/b/XdADWdVq7eZdsPjJezWpy4AofRzFjeeE5tr/VTwcQ9XiJT6jLXav5WMkXk+yw==}
     engines: {node: '>=22'}
     peerDependencies:
-      octane: ^0.8.0
+      octane: ^0.9.0
       react: ^19.0.0
     peerDependenciesMeta:
       octane:
@@ -4942,32 +4942,32 @@ snapshots:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.3
 
-  '@octanejs/app-core@0.1.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))':
+  '@octanejs/app-core@0.1.1(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))':
     dependencies:
       '@ripple-ts/adapter': 0.4.7
       esbuild: 0.28.2
-      octane: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+      octane: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
 
-  '@octanejs/seo@0.0.45(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))':
+  '@octanejs/seo@0.0.46(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))':
     dependencies:
-      octane: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+      octane: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
 
-  '@octanejs/tanstack-store@0.0.55(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))':
+  '@octanejs/tanstack-store@0.0.56(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))':
     dependencies:
       '@tanstack/store': 0.11.1
-      octane: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+      octane: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
 
-  '@octanejs/tanstack-table@0.1.58(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))':
+  '@octanejs/tanstack-table@0.1.59(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))':
     dependencies:
-      '@octanejs/tanstack-store': 0.0.55(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+      '@octanejs/tanstack-store': 0.0.56(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
       '@tanstack/table-core': 9.2.4
-      octane: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+      octane: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
 
-  '@octanejs/vite-plugin@0.2.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))':
+  '@octanejs/vite-plugin@0.2.1(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))':
     dependencies:
-      '@octanejs/app-core': 0.1.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
+      '@octanejs/app-core': 0.1.1(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))
       '@ripple-ts/adapter': 0.4.7
-      octane: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+      octane: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
       vite: 8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)
 
   '@octokit/auth-token@6.0.0': {}
@@ -5350,13 +5350,13 @@ snapshots:
 
   '@tsrx/runtime@0.2.4': {}
 
-  '@tsrx/typescript-plugin@0.3.120(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)':
+  '@tsrx/typescript-plugin@0.3.120(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)))(typescript@5.9.3)':
     dependencies:
       '@volar/language-core': 2.4.28
       '@volar/typescript': 2.4.28
       typescript: 5.9.3
     optionalDependencies:
-      octane: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+      octane: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
 
   '@types/chai@5.2.3':
     dependencies:
@@ -6333,7 +6333,7 @@ snapshots:
 
   obug@2.1.4: {}
 
-  octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)):
+  octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)):
     dependencies:
       '@tsrx/core': 0.4.0
       '@tsrx/oxc': 0.16.0
@@ -6670,9 +6670,9 @@ snapshots:
       extend-shallow: 2.0.1
       kind-of: 6.0.3
 
-  segment-state@0.3.0(octane@0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))):
+  segment-state@0.4.0(octane@0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))):
     optionalDependencies:
-      octane: 0.8.0(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
+      octane: 0.9.1(typescript@5.9.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
 
   send@1.2.1:
     dependencies:

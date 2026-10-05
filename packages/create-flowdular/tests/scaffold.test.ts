@@ -111,12 +111,12 @@ describe('scaffold', () => {
 			devDependencies: Record<string, string>;
 		};
 		expect(generatedPlatform.dependencies).toMatchObject({
-			'@octanejs/seo': '0.0.45',
-			'@octanejs/vite-plugin': '0.2.0',
-			octane: '0.8.0',
+			'@octanejs/seo': '0.0.46',
+			'@octanejs/vite-plugin': '0.2.1',
+			octane: '0.9.1',
 		});
 		expect(generatedPlatform.devDependencies['@octanejs/app-core']).toBe(
-			'0.1.0',
+			'0.1.1',
 		);
 		const generatedExample = JSON.parse(
 			await readFile(
@@ -125,8 +125,8 @@ describe('scaffold', () => {
 			),
 		) as { dependencies: Record<string, string> };
 		expect(generatedExample.dependencies).toMatchObject({
-			octane: '0.8.0',
-			'segment-state': '0.3.0',
+			octane: '0.9.1',
+			'segment-state': '0.4.0',
 		});
 		const project = JSON.parse(
 			await readFile(join(result.directory, 'flowdular.json'), 'utf8'),

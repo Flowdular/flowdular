@@ -23,12 +23,12 @@
 		"@flowdular/kernel": "workspace:*",
 		"@flowdular/server": "workspace:*",
 		"@flowdular/ui": "workspace:*",
-		"@octanejs/app-core": "0.1.0",
-		"@octanejs/seo": "0.0.45",
+		"@octanejs/app-core": "0.1.1",
+		"@octanejs/seo": "0.0.46",
 		"nodemailer": "10.0.6",
-		"octane": "0.8.0",
+		"octane": "0.9.1",
 		"pg": "8.23.0",
-		"segment-state": "0.3.0",
+		"segment-state": "0.4.0",
 		"yaml": "2.9.0"
 	},
 	"devDependencies": {
