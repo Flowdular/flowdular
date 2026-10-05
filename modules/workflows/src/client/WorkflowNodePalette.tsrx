@@ -1,12 +1,19 @@
 import { t } from '@flowdular/client';
 import { Icon } from '@flowdular/ui';
-import { WORKFLOW_NODE_TYPES, type WorkflowNodeType } from './canvas-model.ts';
+import type { WorkflowActionCatalogItem } from './api.ts';
+import {
+	namedWorkflowActions,
+	WORKFLOW_NODE_TYPES,
+	type WorkflowNodeType,
+} from './canvas-model.ts';
 
 export interface WorkflowNodePaletteProps {
 	readonly disabled: boolean;
 	readonly types?: readonly WorkflowNodeType[];
+	readonly actions: readonly WorkflowActionCatalogItem[];
 	readonly compact?: boolean;
 	readonly onAdd: (type: WorkflowNodeType) => void;
+	readonly onAddAction: (action: WorkflowActionCatalogItem) => void;
 }
 
 function icon(type: WorkflowNodeType): string {
@@ -29,6 +36,7 @@ export function WorkflowNodePalette(props: WorkflowNodePaletteProps) @{
 			label: t('workflows.nodeType.' + type),
 		}),
 	);
+	const templates = namedWorkflowActions(props.actions);
 
 	<aside
 		class={props.compact ? 'workflow-palette-inline' : 'workflow-palette'}
@@ -45,6 +53,35 @@ export function WorkflowNodePalette(props: WorkflowNodePaletteProps) @{
 					<Icon name={entry.icon} size={16} />
 					<span>{entry.label}</span>
 				</button>
+			}
+			@if (templates.length > 0) {
+				<>
+					<div class="workflow-palette__heading">{t(
+						'workflows.palette.templates',
+					)}</div>
+					@for (const action of templates; key action.actionId + '@' +
+						action.contractVersion) {
+						<button
+							class="workflow-palette__item workflow-palette__template"
+							type="button"
+							disabled={props.disabled}
+							onClick={() => props.onAddAction(action)}
+						>
+							<Icon name="plug" size={16} />
+							<span class="ui-cell">
+								<b>
+									{action.workflowTemplate?.label}
+								</b>
+								<small>
+									{action.workflowTemplate?.description}
+								</small>
+								@if (action.workflowTemplate?.effect === 'connector-egress') {
+									<small>{t('workflows.palette.connectorEgress')}</small>
+								}
+							</span>
+						</button>
+					}
+				</>
 			}
 		</div>
 	</aside>

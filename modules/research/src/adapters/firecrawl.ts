@@ -12,6 +12,7 @@ import type {
 import { boundResults } from '../services/results.ts';
 import { ResearchServiceError } from '../services/service-error.ts';
 import {
+	connectorAttemptKey,
 	connectorCaller,
 	connectorCallFailure,
 	moduleInstance,
@@ -160,6 +161,8 @@ export interface FirecrawlAdapter extends ResearchAdapter {
 		readonly url: string;
 		readonly caller: ResearchCaller;
 		readonly callerRef: string | null;
+		readonly evidenceId: string;
+		readonly attempt: number;
 		readonly allowAgents: boolean;
 		readonly timeoutMs: number;
 		readonly signal: AbortSignal;
@@ -176,6 +179,7 @@ export function createFirecrawlAdapter(dependencies: {
 		input: Readonly<Record<string, unknown>>,
 		caller: ResearchCaller,
 		callerRef: string | null,
+		idempotencyKey: string,
 		allowAgents: boolean,
 		signal: AbortSignal | undefined,
 	) => {
@@ -192,6 +196,7 @@ export function createFirecrawlAdapter(dependencies: {
 			operation,
 			input,
 			caller: connectorCaller(caller),
+			idempotencyKey,
 			...(callerRef === null ? {} : { callerRef }),
 			...(signal ? { signal } : {}),
 		});
@@ -219,6 +224,12 @@ export function createFirecrawlAdapter(dependencies: {
 					),
 					input.caller,
 					input.callerRef,
+					connectorAttemptKey(
+						'search',
+						input.queryId,
+						'firecrawl',
+						input.attempt,
+					),
 					input.settings.allowAgents,
 					input.signal,
 				),
@@ -239,6 +250,12 @@ export function createFirecrawlAdapter(dependencies: {
 					},
 					input.caller,
 					input.callerRef,
+					connectorAttemptKey(
+						'fetch',
+						input.evidenceId,
+						'firecrawl',
+						input.attempt,
+					),
 					input.allowAgents,
 					input.signal,
 				),

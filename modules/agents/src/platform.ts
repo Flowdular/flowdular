@@ -12,6 +12,7 @@ import { assistantAgentDefinition } from './agent/assistant.ts';
 import type { ModuleAgentDefinition } from './domain/types.ts';
 import {
 	AGENT_ACTION_EXECUTION_CAPABILITY,
+	AGENT_ACTION_EXECUTION_CAPABILITY_V2,
 	AGENT_DECISIONS_CAPABILITY,
 	AGENT_RUN_EXECUTION_CAPABILITY,
 	agentRuntimeOptionsFromEnvironment,
@@ -134,6 +135,10 @@ export function createServerComposition(
 	context.capabilities.register(
 		AGENT_ACTION_EXECUTION_CAPABILITY,
 		runtime.actions(),
+	);
+	context.capabilities.register(
+		AGENT_ACTION_EXECUTION_CAPABILITY_V2,
+		runtime.actionsV2(),
 	);
 	context.capabilities.register(
 		AGENT_DECISIONS_CAPABILITY,

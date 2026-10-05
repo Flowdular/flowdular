@@ -2139,7 +2139,7 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 				write.attempt,
 			]);
 			const retrying = write.nextAttemptAt !== null;
-			if (!retrying && prior.child_kind === 'action') {
+			if (prior.child_kind === 'action') {
 				const run = await this.#runIn(transaction, write.tenantId, write.runId);
 				if (run) {
 					const usage: WorkflowUsageRollupV1 = {

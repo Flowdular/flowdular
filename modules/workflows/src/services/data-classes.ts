@@ -5,9 +5,12 @@ import type {
 import type {
 	WorkflowDefinition,
 	WorkflowEdgeTransfer,
+	WorkflowGraphV1,
 	WorkflowNodeExecution,
 	WorkflowRevision,
 } from '../domain/types.ts';
+import { projectSafeGraph } from '../domain/graph-security.ts';
+import { projectWorkflowTraceEvidence } from './evidence-policy.ts';
 import type {
 	WorkflowDefinitionExportCursor,
 	WorkflowRunExportCursor,
@@ -48,9 +51,9 @@ export const RUN_RETENTION_DAYS = 90;
  * `definitions` is the workspace's configuration rather than history, so it is
  * kept until a person deletes it and carries no sweep; a retention pass that
  * removed a published workflow would stop the automations pointing at it. The
- * export carries the published revision of each workflow, which the module's
- * own invariants keep free of secrets: a value marked secret never enters a
- * workflow definition. A draft is not exported, because it is the editor's
+ * export carries a safe projection of the published revision. Older revisions
+ * may contain unsafe bindings, so export uses the same projection as details.
+ * A draft is not exported, because it is the editor's
  * work in progress rather than what the workspace runs.
  *
  * The repository arrives as a thunk because declaring happens while the
@@ -59,6 +62,10 @@ export const RUN_RETENTION_DAYS = 90;
 export function workflowsDataClasses(
 	repository: () => Promise<WorkflowsRepository>,
 	pageSize = EXPORT_PAGE,
+	projectGraph: (
+		graph: WorkflowGraphV1,
+	) => Promise<ReturnType<typeof projectSafeGraph>> = async (graph) =>
+		projectSafeGraph(graph, () => undefined),
 ): readonly DataClassDeclaration[] {
 	return [
 		{
@@ -102,7 +109,8 @@ export function workflowsDataClasses(
 						if (!to || at > to) to = at;
 						after = { queuedAt: run.queuedAt, id: run.id };
 						rows += 1;
-						await sink.write(runRow(run, nodes, edges));
+						const trace = projectWorkflowTraceEvidence(run.graph, nodes, edges);
+						await sink.write(runRow(run, trace.nodes, trace.edges));
 					}
 					if (page.length < pageSize) return { rows, from, to };
 				}
@@ -154,7 +162,16 @@ export function workflowsDataClasses(
 						if (!to || at > to) to = at;
 						after = { name: definition.name, id: definition.id };
 						rows += 1;
-						await sink.write(definitionRow(definition, revision));
+						const projected = await projectGraph(revision.graph);
+						await sink.write(
+							definitionRow(definition, {
+								...revision,
+								graph: projected.graph,
+								...(projected.diagnostics.length > 0
+									? { graphDiagnostics: projected.diagnostics }
+									: {}),
+							}),
+						);
 					}
 					if (page.length < pageSize) return { rows, from, to };
 				}
@@ -219,6 +236,9 @@ function definitionRow(
 		status: definition.status,
 		publishedRevision: definition.publishedRevision,
 		graph: revision.graph,
+		...(revision.graphDiagnostics
+			? { graphDiagnostics: revision.graphDiagnostics }
+			: {}),
 		graphChecksum: revision.graphChecksum,
 		compiledOrder: revision.compiledOrder,
 		publishedBy: revision.publishedBy,

@@ -1,9 +1,11 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { connectorAttemptKey } from '../src/adapters/connector-failure.ts';
 import {
 	FIRECRAWL_DEFINITION,
 	firecrawlSearchInput,
 } from '../src/adapters/firecrawl.ts';
 import { SEARXNG_DEFINITION } from '../src/adapters/searxng.ts';
+import type { ConnectorCalls } from '../src/services/capabilities.ts';
 import {
 	openResearchTestDatabase,
 	type ResearchTestDatabase,
@@ -33,7 +35,7 @@ afterAll(async () => {
 	await shared?.dispose();
 });
 
-async function configured(key: 'searxng' | 'firecrawl') {
+async function configured(key: 'searxng' | 'firecrawl', allowAgents = false) {
 	const stub = stubConnectors();
 	await stub.instances.upsertModuleInstance({
 		tenantId: TENANT,
@@ -45,11 +47,33 @@ async function configured(key: 'searxng' | 'firecrawl') {
 				? 'https://search.example.org/searxng'
 				: 'https://api.firecrawl.dev',
 		allowedHosts: [],
-		allowAgents: false,
-		allowWorkflows: false,
+		allowAgents,
+		allowWorkflows: allowAgents,
 		actor: 'owner',
 	});
 	return stub;
+}
+
+/** Model the connector ledger: a repeated key returns its first result. */
+function replayingCalls(
+	stub: Awaited<ReturnType<typeof configured>>,
+): ConnectorCalls {
+	const recorded = new Map<
+		string,
+		Awaited<ReturnType<ConnectorCalls['call']>>
+	>();
+	return {
+		async call(request) {
+			const key = request.idempotencyKey;
+			if (!key)
+				throw new Error('Connector call is missing an idempotency key.');
+			const replay = recorded.get(key);
+			if (replay) return replay;
+			const result = await stub.calls.call(request);
+			recorded.set(key, result);
+			return result;
+		},
+	};
 }
 
 describe('SearXNG adapter', () => {
@@ -215,6 +239,65 @@ describe('SearXNG adapter', () => {
 		).rejects.toMatchObject({ code: 'RESEARCH_ADAPTER_UNAVAILABLE' });
 		expect(bare.requests).toEqual([]);
 	});
+
+	it('RESEARCH-CHAIN-RETRY gives each observed SearXNG retry a new key and reuses a replayed attempt key', async () => {
+		const stub = await configured('searxng', true);
+		stub.answer(() => {
+			switch (stub.requests.length) {
+				case 1:
+					return failed(429, 0);
+				case 2:
+					return failed(503);
+				default:
+					return succeeded({ results: [] });
+			}
+		});
+		const calls = replayingCalls(stub);
+		const service = researchService({
+			repository: shared.repository,
+			settings: testSettings({
+				allowAgents: true,
+				searchOrder: ['searxng'],
+				limits: { searxng: { enabled: true, maxAttempts: 3 } },
+			}),
+			calls,
+			instances: stub.instances,
+		});
+
+		const answer = await service.search({
+			tenantId: TENANT,
+			query: 'acme',
+			caller: 'agent',
+			callerRef: 'run-retry',
+		});
+		expect(answer.attempts.map(({ outcome }) => outcome)).toEqual([
+			'retryable',
+			'retryable',
+			'empty',
+		]);
+		expect(stub.requests).toHaveLength(3);
+		expect(stub.requests.map(({ idempotencyKey }) => idempotencyKey)).toEqual(
+			[1, 2, 3].map((attempt) =>
+				connectorAttemptKey('search', answer.queryId!, 'searxng', attempt),
+			),
+		);
+		await calls.call(stub.requests[0]!);
+		expect(stub.requests).toHaveLength(3);
+		expect(connectorAttemptKey('search', answer.queryId!, 'searxng', 1)).toBe(
+			stub.requests[0]!.idempotencyKey,
+		);
+
+		await service.search({
+			tenantId: TENANT,
+			query: 'acme',
+			caller: 'agent',
+			callerRef: 'run-retry',
+		});
+		expect(stub.requests).toHaveLength(4);
+		expect(stub.requests[3]!.idempotencyKey).not.toBe(
+			stub.requests[0]!.idempotencyKey,
+		);
+	});
 });
 
 describe('Firecrawl adapter', () => {
@@ -299,6 +382,9 @@ describe('Firecrawl adapter', () => {
 				},
 			}),
 		]);
+		expect(stub.requests[0]!.idempotencyKey).toBe(
+			connectorAttemptKey('search', answer.queryId!, 'firecrawl', 1),
+		);
 		expect(answer.results).toEqual([
 			expect.objectContaining({
 				url: 'https://web.example.org/acme',
@@ -439,6 +525,64 @@ describe('Firecrawl adapter', () => {
 		expect(await shared.repository.listEvidence(TENANT, 10, null)).toHaveLength(
 			1,
 		);
+	});
+
+	it('RESEARCH-FETCH-CHAIN gives Firecrawl scrape retries distinct keys for one evidence operation', async () => {
+		const stub = await configured('firecrawl', true);
+		stub.answer(() => {
+			switch (stub.requests.length) {
+				case 1:
+					return failed(429, 0);
+				case 2:
+					return failed(503);
+				default:
+					return succeeded({
+						success: true,
+						data: {
+							markdown: '# Rendered page',
+							metadata: {
+								title: 'Rendered page',
+								url: 'https://site.example.org/page',
+								statusCode: 200,
+							},
+						},
+					});
+			}
+		});
+		const calls = replayingCalls(stub);
+		const service = researchService({
+			repository: shared.repository,
+			settings: testSettings({
+				adapter: 'model-native',
+				fetchOrder: ['firecrawl'],
+				allowAgents: true,
+				limits: { firecrawl: { maxAttempts: 3 } },
+			}),
+			calls,
+			instances: stub.instances,
+			egress: fakeEgress(),
+			transport: fakeTransport({}).transport,
+		});
+
+		const fetched = await service.fetch({
+			tenantId: TENANT,
+			url: 'https://site.example.org/page',
+			caller: 'workflow',
+			callerRef: 'flow-retry',
+		});
+		expect(stub.requests).toHaveLength(3);
+		expect(stub.requests.map(({ idempotencyKey }) => idempotencyKey)).toEqual(
+			[1, 2, 3].map((attempt) =>
+				connectorAttemptKey('fetch', fetched.evidenceId, 'firecrawl', attempt),
+			),
+		);
+		expect(
+			(await service.listAttempts(TENANT, fetched.evidenceId)).map(
+				({ outcome }) => outcome,
+			),
+		).toEqual(['retryable', 'retryable', 'ok']);
+		await calls.call(stub.requests[1]!);
+		expect(stub.requests).toHaveLength(3);
 	});
 });
 

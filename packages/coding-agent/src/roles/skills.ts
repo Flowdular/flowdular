@@ -60,6 +60,19 @@ export const ROLE_SKILLS: Readonly<Record<string, readonly string[]>> = {
    it is eligible for every role without appearing in any role's list. */
 export const ALWAYS_ELIGIBLE_SKILLS: readonly string[] = ['auto-review'];
 
+function asksForWorkflow(context: TaskSkillContext): boolean {
+	const task = context.task
+		.toLowerCase()
+		.normalize('NFD')
+		.replace(/\p{M}/gu, '')
+		.replaceAll('ł', 'l');
+	return (
+		/\b(?:workflows?|pipelines?|dag)\b/i.test(task) ||
+		/\b(?:custom|wlasn[a-z]*)\s+(?:nodes?|wez[a-z]*)\b/i.test(task) ||
+		/\bnodes?\s+(?:to|on|in)\s+(?:the\s+)?canvas\b/i.test(task)
+	);
+}
+
 export function selectTaskSkill(context: TaskSkillContext): string | null {
 	const eligible = [
 		...(ROLE_SKILLS[context.role] ?? []),
@@ -97,7 +110,7 @@ export function selectTaskSkill(context: TaskSkillContext): string | null {
 		context.sessionKind === 'new-module' ? 'module-new' : 'module-update';
 	const defaultSkill =
 		context.role === 'agentic-engineer'
-			? /\b(workflow|pipeline|dag)\b/i.test(context.task)
+			? asksForWorkflow(context)
 				? 'workflow-development'
 				: /\b(defineAgent|business agent|agent biznesowy)\b/i.test(context.task)
 					? 'business-agent-design'

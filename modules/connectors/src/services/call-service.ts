@@ -55,10 +55,8 @@ export const MAX_CACHED_TOKENS = 256;
 export const TOKEN_EXPIRY_MARGIN_MS = 30_000;
 export const MAX_TOKEN_LIFETIME_MS = 60 * 60 * 1_000;
 /**
- * How long a claimed idempotency key stays in flight before another attempt may
- * take it over. It is well past the highest call timeout the settings allow, so
- * a retake only ever follows a process that died mid-call; without it a crash
- * between the claim and the call log would block that key forever.
+ * How long a claimed idempotency key stays in flight. After that, an unbound
+ * claim is unknown because a crashed process may have reached the provider.
  */
 export const CALL_KEY_CLAIM_MS = 5 * 60_000;
 /** The longest wait a Retry-After header is reported with. */
@@ -80,6 +78,9 @@ export interface ConnectorCallLimits {
 export interface ConnectorConnectSeam {
 	readonly dial?: ((address: string) => string) | undefined;
 	readonly ca?: string | undefined;
+	/** Test-only hooks on either side of the first HTTP write attempt. */
+	readonly beforeRequestWrite?: (() => void) | undefined;
+	readonly afterBodyWrite?: ((requestFinished: boolean) => void) | undefined;
 }
 
 export interface ConnectorCallServiceOptions {
@@ -103,6 +104,12 @@ interface PreparedRequest {
 	readonly target: URL;
 	readonly body: string | null;
 }
+
+type CallRecordDraft = Omit<ConnectorCall, 'id' | 'occurredAt'> & {
+	readonly body: ConnectorJsonValue | null;
+	readonly bodyPreview: string;
+	readonly retryAfterMs: number | null;
+};
 
 class CallRefusal extends Error {
 	constructor(
@@ -347,8 +354,10 @@ function sendPinned(
 		readonly cap: number;
 		readonly signal: AbortSignal;
 		readonly ca?: string | undefined;
-		/** Called once the request has been handed to the operating system. */
+		/** Called immediately before the first HTTP write attempt. */
 		readonly onWritten?: (() => void) | undefined;
+		readonly beforeRequestWrite?: (() => void) | undefined;
+		readonly afterBodyWrite?: ((requestFinished: boolean) => void) | undefined;
 	},
 ): Promise<HttpExchange> {
 	const agent = new Agent({
@@ -378,7 +387,6 @@ function sendPinned(
 			signal: init.signal,
 		});
 		request.on('error', fail);
-		if (init.onWritten) request.on('finish', init.onWritten);
 		request.on('response', (response) => {
 			void readBounded(response, init.cap).then(
 				(payload) =>
@@ -390,8 +398,29 @@ function sendPinned(
 				fail,
 			);
 		});
-		if (init.body !== null) request.write(init.body);
-		request.end();
+		request.on('socket', (socket) => {
+			/* Node sends no HTTP bytes until write/end. Wait for a verified TLS
+			   connection so a handshake failure leaves the key free. Mark before the
+			   first write: finish comes too late to cover a partial request. */
+			socket.once('secureConnect', () => {
+				try {
+					init.beforeRequestWrite?.();
+					if (init.signal.aborted) return;
+					init.onWritten?.();
+					if (init.body !== null) {
+						request.write(init.body);
+						init.afterBodyWrite?.(request.writableFinished);
+					}
+					if (!init.signal.aborted) request.end();
+				} catch (error) {
+					request.destroy(
+						error instanceof Error
+							? error
+							: new Error('Connector write failed.'),
+					);
+				}
+			});
+		});
 	}).finally(() => agent.destroy());
 }
 
@@ -515,6 +544,7 @@ export class ConnectorCallService implements ConnectorCallCapability {
 		const started = this.#now();
 		let requestBytes = 0;
 		let claimed = false;
+		let claimedAt: number | null = null;
 		let requestWritten = false;
 		try {
 			if (instance.status !== 'active') {
@@ -522,6 +552,9 @@ export class ConnectorCallService implements ConnectorCallCapability {
 			}
 			if (!this.#admits(instance, caller)) {
 				throw new CallRefusal('refused', 'consent-missing');
+			}
+			if (caller !== 'test' && idempotencyKey === null) {
+				throw new CallRefusal('refused', 'idempotency-key-required');
 			}
 			const definition = this.#options
 				.definitions()
@@ -549,12 +582,14 @@ export class ConnectorCallService implements ConnectorCallCapability {
 			   egress rules, by a credential or by a bad input leaves the key free
 			   for the retry that follows the fix. */
 			if (idempotencyKey) {
+				claimedAt = this.#now();
 				const replay = await this.#claim(
 					tenantId,
 					instanceId,
 					operationKey,
 					input,
 					idempotencyKey,
+					claimedAt,
 				);
 				if (replay) return replay;
 				claimed = true;
@@ -569,35 +604,54 @@ export class ConnectorCallService implements ConnectorCallCapability {
 					requestWritten = true;
 				},
 			);
-			return await this.#record(claimed ? idempotencyKey : null, {
-				tenantId,
-				instanceId,
-				operation: operationKey,
-				caller,
-				callerRef,
-				outcome: outcome.outcome,
-				status: outcome.status,
-				errorClass: outcome.errorClass,
-				durationMs: this.#now() - started,
-				requestBytes,
-				responseBytes: outcome.responseBytes,
-				body: outcome.body,
-				bodyPreview: outcome.bodyPreview,
-				retryAfterMs: outcome.retryAfterMs,
-			});
+			/* The provider was reached. A failed call-log transaction leaves the
+			   original claim in place and has an unknown external outcome. */
+			return this.#recordPostEgress(
+				claimed ? idempotencyKey : null,
+				claimedAt,
+				{
+					tenantId,
+					instanceId,
+					operation: operationKey,
+					caller,
+					callerRef,
+					outcome: outcome.outcome,
+					status: outcome.status,
+					errorClass: outcome.errorClass,
+					durationMs: this.#now() - started,
+					requestBytes,
+					responseBytes: outcome.responseBytes,
+					body: outcome.body,
+					bodyPreview: outcome.bodyPreview,
+					retryAfterMs: outcome.retryAfterMs,
+				},
+			);
 		} catch (error) {
 			/* A ledger decision is the caller's answer, not the outcome of a call:
 			   nothing reached the network, so it must not become a log row. */
 			if (error instanceof ConnectorsServiceError) throw error;
 			const refusal = transportFailure(error);
-			/* The key stays bound only once the request is on the wire, because
-			   from there an answer may have been lost rather than never given. A
-			   refusal reaches no network at all, and a failure raised before the
-			   request was written leaves the external system untouched: both free
-			   the key for the retry that follows the fix. */
+			/* A failure observed before the socket write leaves the provider
+			   untouched. Release this exact claim for a corrected retry. If the
+			   process died before release, the surviving claim stays unknown. */
+			if (claimed && !requestWritten && idempotencyKey && claimedAt !== null) {
+				if (
+					!(await this.#options.repository.releaseCallKey(
+						tenantId,
+						idempotencyKey,
+						claimedAt,
+					))
+				) {
+					throw new ConnectorsServiceError(
+						'CALL_CLAIM_LOST',
+						'The connector call claim changed before it could be released.',
+						409,
+					);
+				}
+			}
 			const bindKey =
 				claimed && requestWritten && refusal.outcome !== 'refused';
-			return await this.#record(bindKey ? idempotencyKey : null, {
+			const record: CallRecordDraft = {
 				tenantId,
 				instanceId,
 				operation: operationKey,
@@ -612,16 +666,22 @@ export class ConnectorCallService implements ConnectorCallCapability {
 				body: null,
 				bodyPreview: '',
 				retryAfterMs: null,
-			});
+			};
+			if (requestWritten) {
+				return this.#recordPostEgress(
+					bindKey ? idempotencyKey : null,
+					claimedAt,
+					record,
+				);
+			}
+			return this.#record(null, record);
 		}
 	}
 
 	/**
-	 * Binds one idempotency key to one call before anything leaves the process.
-	 * A repeat of a key that already produced a call answers that call instead of
-	 * making a second one, so a workflow node replayed after a crash cannot hit
-	 * the external system twice. A recorded failure counts as a call: a
-	 * non-idempotent write whose answer was lost is never retried under its key.
+	 * Claims the key before the provider request and binds it after recording a
+	 * call. A repeat with a recorded call replays its safe outcome. A stale claim
+	 * without a call stays unknown because the provider may already have acted.
 	 */
 	async #claim(
 		tenantId: string,
@@ -629,10 +689,11 @@ export class ConnectorCallService implements ConnectorCallCapability {
 		operation: string,
 		input: Readonly<Record<string, unknown>>,
 		key: string,
+		now: number,
 	): Promise<ConnectorCallResult | null> {
-		const now = this.#now();
 		const claim = await this.#options.repository.claimCallKey(tenantId, key, {
 			operationId: `${instanceId}:${operation}`,
+			instanceId,
 			inputDigest: inputDigest(input),
 			claimedAt: now,
 			staleBefore: now - CALL_KEY_CLAIM_MS,
@@ -649,6 +710,13 @@ export class ConnectorCallService implements ConnectorCallCapability {
 			throw new ConnectorsServiceError(
 				'CALL_IN_FLIGHT',
 				'A connector call with this idempotency key is still running.',
+				409,
+			);
+		}
+		if (claim.state === 'unknown') {
+			throw new ConnectorsServiceError(
+				'CALL_OUTCOME_UNKNOWN',
+				'The prior connector call may have reached the provider. Inspect its external outcome before taking another action.',
 				409,
 			);
 		}
@@ -871,6 +939,12 @@ export class ConnectorCallService implements ConnectorCallCapability {
 				},
 				body: prepared.body,
 				onWritten,
+				...(this.#options.connect?.beforeRequestWrite === undefined
+					? {}
+					: { beforeRequestWrite: this.#options.connect.beforeRequestWrite }),
+				...(this.#options.connect?.afterBodyWrite === undefined
+					? {}
+					: { afterBodyWrite: this.#options.connect.afterBodyWrite }),
 				...(this.#options.connect?.ca === undefined
 					? {}
 					: { ca: this.#options.connect.ca }),
@@ -909,13 +983,39 @@ export class ConnectorCallService implements ConnectorCallCapability {
 		};
 	}
 
+	async #recordPostEgress(
+		idempotencyKey: string | null,
+		claimedAt: number | null,
+		result: CallRecordDraft,
+	): Promise<ConnectorCallResult> {
+		try {
+			return await this.#record(idempotencyKey, result);
+		} catch {
+			const observedAt = this.#now();
+			try {
+				await this.#options.repository.auditUnknownCall({
+					tenantId: result.tenantId,
+					instanceId: result.instanceId,
+					operationId: `${result.instanceId}:${result.operation}`,
+					idempotencyKey,
+					claimedAt: idempotencyKey === null ? null : claimedAt,
+					observedAt,
+				});
+			} catch {
+				/* A broken audit store must not turn an uncertain provider call
+				   into a retryable transport error or expose the database failure. */
+			}
+			throw new ConnectorsServiceError(
+				'CALL_OUTCOME_UNKNOWN',
+				'The connector call may have reached the provider, but its result could not be recorded. Inspect the external system before another action.',
+				409,
+			);
+		}
+	}
+
 	async #record(
 		idempotencyKey: string | null,
-		result: Omit<ConnectorCall, 'id' | 'occurredAt'> & {
-			readonly body: ConnectorJsonValue | null;
-			readonly bodyPreview: string;
-			readonly retryAfterMs: number | null;
-		},
+		result: CallRecordDraft,
 	): Promise<ConnectorCallResult> {
 		const { body, bodyPreview, retryAfterMs, ...call } = result;
 		const record: ConnectorCall = {

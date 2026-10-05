@@ -428,6 +428,7 @@ export interface AgentActionInvocation {
 	readonly permissionSnapshot: readonly string[];
 	readonly input: JsonValue;
 	readonly idempotencyKey: string;
+	readonly sideEffectIdempotencyKey: string;
 	readonly requestHash: string;
 	readonly status: AgentActionStatus;
 	readonly output: JsonValue | null;

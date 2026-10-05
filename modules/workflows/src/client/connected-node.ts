@@ -1,9 +1,12 @@
 import type { WorkflowGraphV1 } from '../domain/types.ts';
+import type { WorkflowActionCatalogItem } from './api.ts';
 import {
+	addWorkflowActionTemplate,
 	addWorkflowNode,
 	connectWorkflowNodes,
 	moveWorkflowNode,
 	proposeWorkflowConnection,
+	sameWorkflowSchema,
 	type WorkflowNodeType,
 } from './canvas-model.ts';
 import { snapPoint, type CanvasPoint } from './viewport.ts';
@@ -13,14 +16,13 @@ export interface ConnectedNodeRequest {
 	readonly source: { readonly nodeId: string; readonly port: string };
 }
 
-/** Build node and edge atomically. Invalid or stale sources never leave an orphan. */
-export function addConnectedNode(
+function connectAddedNode(
 	graph: WorkflowGraphV1,
-	type: WorkflowNodeType,
-	label: string,
+	initial: { readonly graph: WorkflowGraphV1; readonly nodeId: string },
 	request: ConnectedNodeRequest,
 ) {
-	let added = addWorkflowNode(graph, type, label);
+	let added = initial;
+	const type = added.graph.nodes.find((node) => node.id === added.nodeId)?.type;
 	// Terminal output accepts the exact source envelope, including lists and errors.
 	if (type === 'output') {
 		const schemaId = graph.nodes
@@ -68,4 +70,52 @@ export function addConnectedNode(
 			input.name,
 		),
 	};
+}
+
+/** Build node and edge atomically. Invalid or stale sources never leave an orphan. */
+export function addConnectedNode(
+	graph: WorkflowGraphV1,
+	type: WorkflowNodeType,
+	label: string,
+	request: ConnectedNodeRequest,
+) {
+	return connectAddedNode(graph, addWorkflowNode(graph, type, label), request);
+}
+
+export function addConnectedActionTemplate(
+	graph: WorkflowGraphV1,
+	action: WorkflowActionCatalogItem,
+	request: ConnectedNodeRequest,
+) {
+	const sourceSchemaId = graph.nodes
+		.find((node) => node.id === request.source.nodeId)
+		?.outputPorts.find((port) => port.name === request.source.port)?.schemaId;
+	const sourceSchema = sourceSchemaId && graph.schemas[sourceSchemaId];
+	if (!sourceSchema || !sameWorkflowSchema(sourceSchema, action.inputSchema))
+		return null;
+	const added = addWorkflowActionTemplate(graph, action);
+	const inputSchemaId = added.graph.nodes.find(
+		(node) => node.id === added.nodeId,
+	)?.inputPorts[0]?.schemaId;
+	const { [inputSchemaId ?? '']: _unused, ...schemas } = added.graph.schemas;
+	return connectAddedNode(
+		graph,
+		{
+			...added,
+			graph: {
+				...added.graph,
+				schemas:
+					inputSchemaId === sourceSchemaId ? added.graph.schemas : schemas,
+				nodes: added.graph.nodes.map((node) =>
+					node.id === added.nodeId
+						? {
+								...node,
+								inputPorts: [{ name: 'input', schemaId: sourceSchemaId }],
+							}
+						: node,
+				),
+			},
+		},
+		request,
+	);
 }

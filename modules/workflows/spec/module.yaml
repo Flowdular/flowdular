@@ -1,6 +1,6 @@
-schemaVersion: 1
+schemaVersion: 2
 id: workflows.core
-specVersion: 0.7.0
+specVersion: 0.8.0
 status: approved
 name: Agentic Workflows
 description: Builds, publishes, simulates, and executes durable tenant-scoped DAG workflows whose versioned nodes coordinate pinned agents, deterministic decisions, validated data, and registered module actions.
@@ -18,12 +18,12 @@ dependencies:
   - id: auth.core
     range: ^0.14.0
   - id: agents.core
-    range: ^0.14.0
+    range: ^0.15.0
 provides:
   - workflows.execution.v1
 requires:
   - id: agents.run-execution.v2
-  - id: agents.actions.v1
+  - id: agents.actions.v2
   - id: agents.decisions.v1
     optional: true
   - id: notifications.publish.v1
@@ -55,8 +55,18 @@ invariants:
   - Deterministic gate nodes use a versioned allowlisted logic language. Agentic judgment is represented by an explicit agent-decision node, never hidden inside a gate.
   - A validator node emits pass only for data that satisfies its pinned schema and emits bounded structured validation errors on fail.
   - A human-approval node declares its requirement in the published graph and is validated against the workspace roles at publish time; an unknown role or an absent approvals.core refuses publication with a stable code. At run time the node opens one request through approvals.requests.v1 keyed by the run and node, takes the run out of the claim queue until the request resolves or its bounded recheck falls due, resumes on approval, and fails the run with a stable code on rejection, expiry or cancellation. Whenever the run stops waiting for a pending request, whether the run is cancelled, the request's deadline passes, or the run's duration bound is reached, the request is withdrawn rather than left asking people to decide something nobody is waiting for. A simulated run approves without asking anybody. The prompt the node asks and its label are bounded at validation and publication by the limits approvals.core accepts for a request title, so a question that module would refuse fails the publish rather than the run that reaches the node.
-  - An action node invokes only a registered, versioned action contract through agents.core, under the required permissions, input schema, timeout, output bound, idempotency key, and audit boundary.
-  - Version one admits only read and workspace-write actions. External and destructive actions stay excluded from the workflow catalog, publication, and execution; the human-approval node gates a person's decision and never widens the action risk class.
+  - An action node invokes only a registered, versioned action contract through agents.actions.v2, under the required permissions, input schema, timeout, output bound, idempotency key, and audit boundary. The action catalogue and optional workflowTemplate metadata cross this public capability; workflows.core never reads the platform tool registry or creates another action registry.
+  - A module may present an eligible, versioned action as a named workflow node template by declaring optional static workflowTemplate metadata with a label of at most 80 characters, a description of at most 240 characters, and effect local or connector-egress on that same registered action. The action catalogue is the only source of executable truth; a template does not register another handler, grant a permission, or add a new graph node kind. A consumer module declaring connector-egress also declares connectors.core at ^0.2.0 and requires connectors.calls.v1, and tests connector consent and uncertain-call recovery. Invalid metadata or schemas outside the workflow schema and graph limits fail registration explicitly.
+  - Selecting a custom template creates a normal action node with the exact action identifier and contract version, its fixed input, success, and failure ports, and schemas copied from the registered action contract. The node pins a digest of the full executable agents.actions.v2 descriptor, including input and output schemas, required permissions, risk, idempotency mode and protection, timeout, cancellation policy, and the template's local or connector-egress effect; label and description are the only excluded presentation copy. Publication and live preflight refuse a mismatch. Published graphs retain that reference and their schema snapshot; changing palette copy never changes a published run. Existing generic action nodes without a template digest need no migration.
+  - A template's JSON input schema describes editable fields and is checked before live execution. The owning module's service performs any additional code-level business validation before a mutation, with a stable bounded refusal. The workflow engine validates mapped input and bounded output, and never runs module code during dry-run or simulation.
+  - No action input field marked writeOnly, x-flowdular-secret, or legacy x-coreloom-secret may receive a graph literal, template, or path binding; a template that requires such a raw field is ineligible. API creation and draft save, validation, publication, and live preflight reject the affected node and field with a stable safe code before storing or executing a new graph. The editor offers no raw-secret field control. A credential is resolved by the owning module through a tenant-bound vault, connector instance, or declared public capability; the graph stores at most a nonsecret opaque reference, never a credential value.
+  - An older stored or published graph with a schema-marked secret binding is quarantined from live execution and a single safe graph projection is applied to every graph-bearing response and export. This includes workflow detail with its draft and all revisions, update and publish responses that return that detail, run detail, simulate responses that return run detail, and published-definition data export; runs export has no graph. The projection redacts the unsafe binding or refuses the graph while retaining safe revision identity and a node and field diagnostic, never the value. A manager rotates the exposed credential and creates a new revision that binds an opaque tenant reference; the platform does not silently migrate or rebind the immutable old revision.
+  - If an older action's pinned input schema is missing or cannot prove a stored binding safe, that same projection conservatively redacts every literal value and template string of its action node, and live preflight refuses the missing reference. It never treats an absent schema as permission to expose raw graph JSON. A manager explicitly rebinds the action in a new revision; ordinary graphs whose pinned schemas prove their bindings safe keep their normal detail and export behavior.
+  - A change to a custom action's input, output, permissions, risk, idempotency, timeout, cancellation, or behaviour requires a new action identity or contract version. Because the current agents action registry keeps one version per action identifier, a module that must keep older published graphs runnable retains the old action under its old identifier and adds a distinct identifier for the new contract. Missing or incompatible references refuse publication and live preflight; saved graphs are never silently rebound.
+  - The palette offers only registered templates whose required permissions the editor holds. A live run rechecks the original permission ceiling and current authorization through agents.actions.v2, so palette visibility and a stored graph grant no new authority. A custom template that declares connector-egress visibly identifies its external effect and required workspace connector consent; the existing connectors.call action remains available in the generic action editor only with its corrected contractVersion exactly 2 and without claiming template metadata from connectors.core. An older or unreviewed connector action version is excluded from the catalog and refused by publication and live preflight.
+  - A module action may write only through its own tenant-bound service or a declared public capability of another module, never through that module's database. An integration action uses connectors.calls.v1 with caller workflow, an owner-configured connector instance and allowWorkflows consent; credentials stay in connectors.core, and the action keeps its own durable target idempotency key and audit correlation. workflows.core does not depend on connectors.core when no integration action is installed.
+  - A consumer-owned connector-egress workspace-write template declares target-ledger idempotency protection and forwards the stable workflow side-effect key to connectors.calls.v1. When a call was recorded, its declared output uses only the replay-stable call id and outcome, because replay returns no response body or preview. An unresolved claim raises the public AgentHarnessError code CALL_OUTCOME_UNKNOWN through the action worker without a call id or fabricated output. The workflow worker classifies this code as terminal before applying a node retry policy, even if retryOn names it; the same rule applies to the generic connectors.call action. A wrapper may reconcile or retry an unknown external mutation only under a separate provider contract with documented remote idempotency or readback; body-dependent output needs that provider recovery contract. No template treats an empty replay body as the original response or sends a second external request merely to reconstruct it.
+  - Version one admits read and workspace-write actions, including the existing connectors.call action whose external call is separately governed by connectors.core. Raw external and destructive actions and direct HTTP from graph configuration stay excluded from the workflow catalog, publication, and execution. A custom module action that bypasses connector consent violates the authoring contract and fails its scoped tests and review; the workflow engine does not sandbox trusted module source. The human-approval node gates a person's decision and never widens the action risk class.
   - Each live workflow run durably snapshots its workflow revision, actor, origin, permission digest, mode, input, limits, and idempotency key before enqueue returns.
   - Workflow workers claim runs with expiring leases, renew live claims, and recover queued or expired work after restart without concurrently owning the same run.
   - A node runs at most once successfully. Retries create immutable attempts and reuse a stable side-effect idempotency key so recovery cannot duplicate an agent enqueue or action mutation.
@@ -67,7 +77,9 @@ invariants:
   - Workflow run and node histories are append-only while retained. Every status transition, attempt, edge settlement, refusal, retry schedule, cancellation request or acknowledgement, ignored late result, and terminal result receives a schema-versioned ordered durable event from the formal event catalog.
   - Run status, node execution status, and immutable node-attempt technical status are separate projections. Pass or fail is a schema-bound outcome port of a technically successful decision attempt, never an execution status or error by itself.
   - A retryable attempt failure durably records its error classification, semantic attempt group, selected backoff, and next attempt time before the worker waits. Recovery schedules the next immutable attempt from that evidence and never recomputes a different delay.
-  - Run history records workflow and agent revisions, actor, origin, mode, status, duration, usage and cost, safe redacted input and output, failures, node attempts, edge evidence, and audit correlation without storing credentials or unrestricted request bodies.
+  - Run history records workflow and agent revisions, actor, origin, mode, status, duration, usage and cost, safe redacted input and output, failures, node attempts, edge evidence, and audit correlation without storing credentials or unrestricted request bodies. The existing node-attempt and edge records are the only per-node trace storage; the editor exposes every attempt with its pinned action reference, input and output evidence state, outcome, duration, stable failure code, child correlation, and safe idempotency reference, plus the edges each outcome traversed.
+  - A coding agent tests a generated node with synthetic, reviewed fixtures through the existing deterministic workflow simulation and its virtual time. Golden assertions compare semantic node attempts, edge outcomes, and stable refusal codes without requiring wall-clock equality, invoking a connector or action, or copying raw production payloads into a repository. Recording a live payload as a fixture requires explicit redaction and operator approval, and secrets never enter fixtures.
+  - The in-platform Sandbox authoring path can take a natural-language request for a custom workflow node, interview the owning business module's specification, wait for approval of its exact hash, and then generate that module's action handler, code-level validator, JSON schemas, workflowTemplate metadata, and behavior tests using a dedicated workflow-node authoring recipe. Preview and eject use the Sandbox host gates; the agent cannot approve its own spec, install code into the running server, or push a repository directly.
   - Browser connections observe persisted workflow events and never own execution. A stream resumes after reload from one run-bound sequence cursor, replays a bounded page, emits non-advancing heartbeats, and closes only after a terminal event is flushed.
   - Cancellation is durable and cooperative. It prevents new nodes, requests cancellation of an in-flight child agent or action through its public capability, records acknowledgement or non-acknowledgement, and records but never routes a result that arrives after cancellation.
   - Execution payloads and evidence previews are separate. A bounded encrypted execution payload may be retained only while execution or recovery needs it; every response, event, history row, and audit record uses a scope-filtered redacted preview with an explicit available, redacted, truncated, expired, or absent state. Secrets, provider credentials, session tokens, hidden reasoning, and values marked secret never enter workflow definitions, evidence previews, events, or audit metadata.
@@ -176,6 +188,78 @@ acceptanceScenarios:
     given: An action is unknown, version-mismatched, ungranted, input-invalid, not idempotency-capable, external, or destructive.
     when: A live node attempts it.
     then: It is denied before the action service runs and the workflow records a safe stable refusal code.
+  - id: WORKFLOW-CUSTOM-NODE-PALETTE
+    given: A deployed business module registers a read or workspace-write action with a contract version, bounded input and output schemas, and workflow palette metadata.
+    when: An authorized editor opens the workflow palette and adds that template.
+    then: The editor sees its module-owned name and input fields and saves an ordinary action node pinned to the exact action identifier and contract version, with input, success, and failure ports; no source code or executable expression enters the graph.
+  - id: WORKFLOW-CUSTOM-NODE-CATALOG-ROUNDTRIP
+    given: An eligible module action carries optional workflowTemplate metadata in its agents.actions.v2 descriptor, while another eligible action has no template.
+    when: An authorized editor requests the workflow action catalogue through the API and opens the palette.
+    then: The public descriptor's label, description, effect, action id, contract version, schemas, permissions, risk, idempotency, timeout, and cancellation reach the typed client without loss; the first action appears as a named template, the second stays in the generic action editor, and a caller using agents.actions.v1 still sees its prior response shape.
+  - id: WORKFLOW-CUSTOM-NODE-REGISTRATION
+    given: A module registers two templates with the same action identity, or a template whose action lacks an eligible risk, idempotency contract, bounded schema, or valid presentation metadata.
+    when: The platform composes the module.
+    then: Invalid registration fails with a stable diagnostic before the template appears in the palette; an existing action without template metadata remains available through the generic action editor.
+  - id: WORKFLOW-CUSTOM-NODE-VALIDATION
+    given: A custom template's configured literal input violates its structural schema, or its module service rejects a business rule before mutation.
+    when: The draft is validated and then a valid published graph receives invalid live data.
+    then: The draft issue is addressed to the node, the runtime input or service refusal has a stable bounded code, and the owning module makes no business mutation; simulation uses fixtures and never invokes its handler.
+  - id: WORKFLOW-CUSTOM-NODE-SECRET-DENY
+    given: An action input schema marks a field writeOnly, x-flowdular-secret, or legacy x-coreloom-secret, and a draft maps a token to it through a literal, template, or path binding.
+    when: A caller validates, saves, or publishes the graph, or an editor opens the template input form.
+    then: The server refuses with a safe node and field code before persisting a new graph, the UI offers no editor for that field, and the token is absent from graph_json, definition detail, run events, and audit; a nonsecret opaque tenant reference is the only graph input used to select a vault or connector credential.
+  - id: WORKFLOW-CUSTOM-NODE-SECRET-LEGACY
+    given: An older published graph already contains a schema-marked secret literal or template from before this rule.
+    when: A run preflights, a manager reads workflow detail with its draft and old revisions, updates or publishes a newer draft, reads historical run detail, simulates a draft, or exports published definitions.
+    then: The run is refused with a stable safe code, the shared projection redacts or refuses every unsafe graph in all those response and export shapes while preserving safe identity and node and field diagnostics, and a manager rotates the credential and publishes a new revision with an opaque tenant reference; the old revision is not silently migrated or rebound.
+  - id: WORKFLOW-CUSTOM-NODE-SECRET-UNKNOWN-SCHEMA
+    given: An older graph contains an action literal or template but its pinned action input schema is unavailable, alongside a normal graph whose schema proves its bindings are not secret.
+    when: A manager reads definition and run details or exports published definitions for both graphs.
+    then: The first graph's action literal and template values are redacted and its run is refused until a manager explicitly rebinds a new revision, while the second graph retains its normal safe detail and export; no missing schema causes raw binding disclosure.
+  - id: WORKFLOW-CUSTOM-NODE-AUTH
+    given: A registered custom template requires a business permission that one editor or runner lacks.
+    when: The editor lists templates or the runner reaches a published action node after its permission was withdrawn.
+    then: The unscoped editor does not see the template and the live action is refused before its handler executes, while another tenant's data remains unreachable.
+  - id: WORKFLOW-CUSTOM-NODE-COMPAT
+    given: An older published workflow pins a custom action and a deployed module introduces a new contract while retaining the old action under its old identifier.
+    when: The older run executes and a manager creates a draft with the new template.
+    then: The older run invokes its pinned action, the new draft pins the new one, and removing either action instead yields a stable missing-reference refusal without rewriting prior graph revisions or run history.
+  - id: WORKFLOW-CUSTOM-NODE-CONTRACT-DRIFT
+    given: A published custom node pins an executable action descriptor and a later deployment changes its timeout, cancellation policy, or local versus connector-egress effect under the same action id and contract version.
+    when: A live run preflights the published graph.
+    then: Its complete descriptor digest mismatch refuses execution with a stable code before the handler starts; a compatible upgrade instead registers a new contract identity and leaves the old one available while published graphs need it.
+  - id: WORKFLOW-CUSTOM-NODE-CANVAS
+    given: A custom action template has been added between input and output nodes, and one run succeeds while another takes a failure edge.
+    when: An editor opens the graph and then the run overlay.
+    then: The canvas keeps the named template, declared input, success, and failure ports, and visible edges; each overlay follows the persisted edge outcomes and the same path can be inspected after reopening the run.
+  - id: WORKFLOW-CUSTOM-NODE-MODULE-WRITE
+    given: A business module registers a custom workspace-write action backed by its own tenant-scoped service and target idempotency ledger.
+    when: A permitted workflow invokes it, recovery retries its key, and a run without the business permission tries the same node.
+    then: The first invocation writes once to that module's own records, recovery returns its first result without a second mutation, and the unscoped run is refused before service work; workflows.core never queries the business module's database.
+  - id: WORKFLOW-CUSTOM-NODE-CONNECTOR
+    given: A consumer module registers a named connector-egress action template backed by connectors.calls.v1, and a tenant owns a connector instance with a declared operation, configured credentials, and allowWorkflows consent.
+    when: The workflow invokes that template and then the owner withdraws consent before a second run.
+    then: The first call reaches the connector capability with a durable key and connector call audit, the canvas identifies connector egress from the template metadata, and the second run is refused before network work; a foreign instance, undeclared operation, or absent connector module is refused without exposing credentials.
+  - id: WORKFLOW-CUSTOM-NODE-CONNECTOR-REPLAY
+    given: A consumer-owned connector-egress workspace-write template declares target-ledger protection, forwards its workflow side-effect key to connectors.calls.v1, and exposes only call id and outcome even when the first call returned a response body.
+    when: Recovery retries the action after the connector committed the call but before the workflow settled its attempt, and the connector replay returns no body or preview.
+    then: The action produces the same declared call id and outcome, performs no second external request, does not interpret the absent body as an empty original response, and refuses reuse of the key for different input; a recorded handler fixture covers crash and replay, while a workflow simulation fixture checks routing of that stable output without invoking the handler.
+  - id: WORKFLOW-CUSTOM-NODE-CONNECTOR-UNKNOWN
+    given: A generic connectors.call contractVersion 2 or a consumer-owned connector-egress template calls a mutating operation whose provider performed the mutation before the process crashed without a recorded connector call, and the workflow retry policy includes the connector error code.
+    when: The action worker recovers after the claim window, the connector tool raises a public safe CALL_OUTCOME_UNKNOWN error, agents.actions.v2 getResult returns that code, and the workflow settles the node.
+    then: No second outbound mutation occurs, no success output or call id is invented, the node records that exact code as a terminal failed attempt with connector audit correlation and does not schedule another automatic retry despite its configured retry policy; an older generic connectors.call version 1 is refused at preflight instead of using the unsafe claim path.
+  - id: WORKFLOW-CUSTOM-NODE-TRAIL
+    given: A custom action node is retried and its success and failure branches have different edge outcomes, with one input field marked secret and one large output.
+    when: A reader with workflows.runs.read opens the run inspector before and after payload retention.
+    then: All attempts show their action identifier and contract version from the pinned graph, status, safe input and output evidence states, timing, stable error, child correlation, safe idempotency reference, and traversed edges; secret content and oversized previews are redacted or truncated, expired evidence keeps hashes and metadata, and an unscoped or foreign-tenant reader sees none of it.
+  - id: WORKFLOW-CUSTOM-NODE-GOLDEN
+    given: A coding agent generated synthetic fixtures and expected pass, fail, and refusal paths for a new custom action node.
+    when: The workflow is simulated twice with the same fixtures and virtual durations.
+    then: Both runs produce equivalent semantic node attempts and edge outcomes without invoking the module handler, connector, provider, or network; tests do not compare real timestamps or store raw production payloads, and importing a production example requires prior redaction and operator approval.
+  - id: WORKFLOW-CUSTOM-NODE-AGENT-AUTHORING
+    given: A user opens the in-platform Sandbox for a business module and asks its coding agent to create a workflow node with named input fields and validation rules.
+    when: The agent drafts the exact module spec change, the operator explicitly approves its hash, and implementation, scoped tests, deterministic simulation, preview, and eject gates pass.
+    then: The agent creates reviewed module source for a versioned action, service validator, input and output schemas, workflowTemplate metadata, and golden tests; the connected preview shows the named node and safe run trail, and after host eject and deployment the action appears in the workflow palette without editing workflow engine code or letting the agent push directly.
   - id: WORKFLOW-DATA-FLOW
     given: A node emits a payload to several compatible outgoing edges.
     when: The execution advances.
@@ -284,3 +368,87 @@ acceptanceScenarios:
     given: Two workspaces hold workflow runs of several ages with node states, edge evidence and sealed payloads, one run still working, plus published workflows and a draft, and the platform has sealed the data class registry.
     when: The platform sweeps, exports and erases the declared classes for one of them.
     then: The sweep removes only that workspace's settled runs strictly older than the cutoff and at most the batch it was given, taking their node states, attempts, edges, events and sealed payloads with them while the working run stays; the export streams that workspace's runs with their nodes and edges, its audit trail in chain order, and its published workflows without their drafts, through the sink in keyset pages with the oldest and newest record time, answers no rows and no range for a workspace that holds none, and carries no payload ciphertext; the audit trail carries no sweep and no erasure; and erasing a subject removes the runs that account is the person behind in that workspace alone, including the ones a schedule or an agent started on its behalf, reporting a full batch as truncated.
+entities:
+  - id: workflow-definition
+    name: Workflow definition
+    fields:
+      - id: key
+        type: string
+        required: true
+        unique: tenant
+        maxLength: 120
+      - id: name
+        type: string
+        required: true
+        maxLength: 160
+      - id: description
+        type: text
+        required: true
+        maxLength: 2000
+      - id: status
+        type: enum
+        required: true
+        values:
+          - active
+          - archived
+      - id: currentDraftRevision
+        type: integer
+        required: true
+      - id: publishedRevision
+        type: integer
+      - id: updatedAt
+        type: datetime
+        required: true
+screens:
+  - id: workflows
+    kind: list
+    entity: workflow-definition
+    title: Workflows
+    columns:
+      - name
+      - key
+      - currentDraftRevision
+      - publishedRevision
+      - updatedAt
+      - status
+    navigationGroup: Operations
+outOfScope:
+  - Arbitrary new graph execution kinds, custom port counts, and custom canvas renderers are deferred; a module composes existing action, gate, and validator nodes for these flows.
+  - Executing generated or pasted source code inside a workflow definition or browser session is excluded; a coding agent changes reviewed module source in a sandbox worktree and deployment makes its registered action available.
+  - A dedicated coding chat control embedded in the workflow canvas is deferred; the user starts authoring in the existing in-platform Sandbox, and Module Studio may provide another entry point after its own approval.
+  - Ready-made Slack, arbitrary-recipient e-mail, and other provider-specific actions are deferred; the corrected connectors.call contractVersion 2 remains usable through the generic action editor for a configured connector operation, while a dedicated provider or mail adapter needs its own module contract, consent, idempotency and tests.
+  - Automatic export of live input or output into repository fixtures is excluded; synthetic fixtures are the default and a live example requires explicit redaction and operator approval before recording.
+  - Runtime sandboxing of trusted module source is outside workflows.core; integration actions must use the declared connectors.calls.v1 capability and pass code review and tests instead of claiming arbitrary HTTP is a local write.
+decisions:
+  - id: D-CUSTOM-NODE-SHAPE
+    question: How are business-specific workflow nodes executed?
+    answer: Use versioned module actions with optional palette metadata and the existing workflow action runtime; custom templates keep fixed input, success, and failure ports.
+    decidedBy: user
+  - id: D-CUSTOM-NODE-VALIDATION
+    question: Where do business-specific input rules run?
+    answer: Use the declared JSON input schema for structure and the owning module service for code-level rules before mutation; dry-run and simulation do not call that service.
+    decidedBy: default
+  - id: D-CUSTOM-NODE-CATALOG
+    question: How does a workflow discover optional action template metadata?
+    answer: agents.core exposes agents.actions.v2 from its existing tool registry, retaining agents.actions.v1 for old consumers; workflows.core reads the public v2 descriptor and never resolves tools directly.
+    decidedBy: default
+  - id: D-CUSTOM-NODE-SECRETS
+    question: How are credentials supplied to a custom action?
+    answer: Graph definitions cannot bind schema-marked secret fields; an owning module resolves credentials from an opaque tenant-bound vault or connector reference, and older unsafe revisions are refused until replaced after credential rotation.
+    decidedBy: default
+  - id: D-CUSTOM-NODE-COMPAT
+    question: What happens to published graphs when a custom action changes?
+    answer: Keep the old action identifier registered beside a new identifier while old graphs need it; never rebind a pinned graph or run automatically.
+    decidedBy: default
+  - id: D-CUSTOM-NODE-AUTHORING
+    question: How does an agent create a custom node?
+    answer: The user asks the in-platform Sandbox coding agent, which follows a workflow-node authoring recipe, interviews and waits for exact spec approval, then edits module source and tests in its isolated workspace; host preview and eject deploy the action, while browser input cannot install executable code directly.
+    decidedBy: default
+  - id: D-CUSTOM-NODE-INTEGRATION
+    question: How may a custom node reach an external service or another module's records?
+    answer: Use the corrected connectors.call action at contractVersion 2 or a consumer module requiring connectors.core ^0.2.0 and connectors.calls.v1 for tenant-consented egress; an unresolved connector claim produces nonretryable CALL_OUTCOME_UNKNOWN until a provider-specific recovery contract reconciles it. Use a declared module capability and the owning service for records; keep credentials outside the graph. Direct HTTP and cross-module SQL remain unavailable.
+    decidedBy: default
+  - id: D-CUSTOM-NODE-TRACE
+    question: Where do per-node debugging evidence and golden tests live?
+    answer: Reuse persisted workflow attempts and edge events for authorized, redacted run inspection; compare synthetic simulation fixtures against semantic outcomes and require explicit redaction and approval before recording live payloads.
+    decidedBy: default

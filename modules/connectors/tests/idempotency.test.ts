@@ -1,7 +1,13 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	describe,
+	expect,
+	it,
+	vi,
+} from 'vitest';
 import { CALL_KEY_CLAIM_MS } from '../src/services/call-service.ts';
-import { DatabaseConnectorsRepository } from '../src/services/database-repository.ts';
-import { createInterleavedCallKeyDatabase } from './support/interleaved-database.ts';
 import {
 	openConnectorsTestDatabase,
 	type ConnectorsTestDatabase,
@@ -14,6 +20,7 @@ import {
 	seedInstance,
 	startTestServer,
 	testBaseUrl,
+	testConnect,
 	testResolver,
 	testVault,
 	type TestServer,
@@ -47,6 +54,7 @@ async function fixture(tenantId = TENANT) {
 		tenantId,
 		baseUrl: testBaseUrl(server),
 		allowAgents: true,
+		allowWorkflows: true,
 	});
 	return {
 		instance,
@@ -67,6 +75,24 @@ function request(instanceId: string, idempotencyKey = KEY) {
 }
 
 describe('connector call idempotency ledger', () => {
+	it.each(['agent', 'workflow'] as const)(
+		'refuses an unkeyed %s call before provider egress',
+		async (caller) => {
+			const { instance, calls } = await fixture();
+			const before = server.requests.length;
+			const result = await calls.call({
+				...request(instance.id),
+				caller,
+				idempotencyKey: undefined,
+			});
+			expect(result).toMatchObject({
+				outcome: 'refused',
+				errorClass: 'idempotency-key-required',
+			});
+			expect(server.requests).toHaveLength(before);
+		},
+	);
+
 	it('answers the first call on a repeat instead of reaching the system again', async () => {
 		const { instance, calls, vault } = await fixture();
 		const before = server.requests.length;
@@ -142,6 +168,7 @@ describe('connector call idempotency ledger', () => {
 		const { instance, calls } = await fixture();
 		const now = Date.now();
 		const claim = await shared.repository.claimCallKey(TENANT, KEY, {
+			instanceId: instance.id,
 			operationId: `${instance.id}:get`,
 			inputDigest: 'x'.repeat(64),
 			claimedAt: now,
@@ -155,21 +182,24 @@ describe('connector call idempotency ledger', () => {
 		expect(server.requests.length).toBe(before);
 	});
 
-	it('lets a later attempt take over a claim nothing finished', async () => {
+	it('refuses a later attempt under a stale claim with no recorded outcome', async () => {
 		const { instance, calls } = await fixture();
 		const stale = Date.now() - CALL_KEY_CLAIM_MS - 1_000;
 		await shared.repository.claimCallKey(TENANT, KEY, {
+			instanceId: instance.id,
 			operationId: `${instance.id}:get`,
 			inputDigest: await digestOf(instance.id, calls),
 			claimedAt: stale,
 			staleBefore: stale - CALL_KEY_CLAIM_MS,
 		});
 		const before = server.requests.length;
-		expect(await calls.call(request(instance.id))).toMatchObject({
-			outcome: 'succeeded',
-			replayed: false,
+		await expect(calls.call(request(instance.id))).rejects.toMatchObject({
+			code: 'CALL_OUTCOME_UNKNOWN',
 		});
-		expect(server.requests.length).toBe(before + 1);
+		await expect(
+			calls.call({ ...request(instance.id), input: { path: '/different' } }),
+		).rejects.toMatchObject({ code: 'CALL_IDEMPOTENCY_CONFLICT' });
+		expect(server.requests.length).toBe(before);
 	});
 
 	it('keeps one key per workspace', async () => {
@@ -184,7 +214,218 @@ describe('connector call idempotency ledger', () => {
 	});
 });
 
+describe('CONNECTORS-CRASH-BEFORE-LOG', () => {
+	it('keeps a stale unbound claim unknown after the provider acted and recordCall crashed', async () => {
+		const { instance, calls, vault } = await fixture();
+		const before = server.requests.length;
+		const crash = vi
+			.spyOn(shared.repository, 'recordCall')
+			.mockRejectedValue(new Error('simulated crash before call record'));
+		const firstCallStartedAt = Date.now();
+		try {
+			await expect(calls.call(request(instance.id))).rejects.toMatchObject({
+				code: 'CALL_OUTCOME_UNKNOWN',
+			});
+		} finally {
+			crash.mockRestore();
+		}
+		const firstCallFinishedAt = Date.now();
+		expect(server.requests.length).toBe(before + 1);
+		const immediateAudit = (
+			await shared.repository.listAudit(TENANT, instance.id, 10)
+		).filter((entry) => entry.action === 'call.outcome-unknown');
+		expect(immediateAudit).toHaveLength(1);
+		const [initialEvent] = immediateAudit;
+		expect(initialEvent?.metadata.claimedAt).toBeGreaterThanOrEqual(
+			firstCallStartedAt,
+		);
+		expect(initialEvent?.metadata.claimedAt).toBeLessThanOrEqual(
+			firstCallFinishedAt,
+		);
+		expect(initialEvent?.metadata.observedAt).toBeGreaterThanOrEqual(
+			firstCallStartedAt,
+		);
+		expect(initialEvent?.metadata.observedAt).toBeLessThanOrEqual(
+			firstCallFinishedAt,
+		);
+		expect(initialEvent?.occurredAt).toBe(initialEvent?.metadata.observedAt);
+		expect(
+			await instanceService(shared.repository, vault).listCalls(
+				TENANT,
+				{},
+				{ limit: 200 },
+			),
+		).toHaveLength(0);
+
+		const stale = Date.now() - CALL_KEY_CLAIM_MS - 1_000;
+		await shared.runtime.transaction(
+			(transaction) =>
+				transaction.execute({
+					text: `UPDATE connectors_call_keys SET claimed_at = $3
+					 WHERE tenant_id = $1 AND idempotency_key = $2`,
+					parameters: [TENANT, KEY, stale],
+				}),
+			{ access: 'write', tenantId: TENANT },
+		);
+		const refusalStartedAt = Date.now();
+		await expect(calls.call(request(instance.id))).rejects.toMatchObject({
+			code: 'CALL_OUTCOME_UNKNOWN',
+		});
+		await expect(calls.call(request(instance.id))).rejects.toMatchObject({
+			code: 'CALL_OUTCOME_UNKNOWN',
+		});
+		const refusalFinishedAt = Date.now();
+		expect(server.requests.length).toBe(before + 1);
+		const audit = (
+			await shared.repository.listAudit(TENANT, instance.id, 10)
+		).filter((entry) => entry.action === 'call.outcome-unknown');
+		expect(audit).toHaveLength(3);
+		for (const event of audit.filter(
+			(entry) => entry.id !== initialEvent?.id,
+		)) {
+			expect(Object.keys(event.metadata).sort()).toEqual([
+				'claimedAt',
+				'keyDigest',
+				'observedAt',
+				'operationId',
+			]);
+			expect(event.metadata).toMatchObject({
+				operationId: `${instance.id}:get`,
+				keyDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
+				claimedAt: stale,
+			});
+			expect(event.metadata.observedAt).toBeGreaterThanOrEqual(
+				refusalStartedAt,
+			);
+			expect(event.metadata.observedAt).toBeLessThanOrEqual(refusalFinishedAt);
+			expect(event.occurredAt).toBe(event.metadata.observedAt);
+			expect(JSON.stringify(event)).not.toContain(KEY);
+			expect(JSON.stringify(event)).not.toContain('/things');
+		}
+		expect(JSON.stringify(audit)).not.toContain(KEY);
+		expect(JSON.stringify(audit)).not.toContain('/things');
+		expect(
+			await shared.repository.listAudit('tenant-other', instance.id, 10),
+		).toEqual([]);
+	});
+
+	it('keeps the claim unknown when both call recording and best-effort audit fail', async () => {
+		const { instance, calls } = await fixture();
+		const before = server.requests.length;
+		const recordFailure = vi
+			.spyOn(shared.repository, 'recordCall')
+			.mockRejectedValue(new Error('provider-secret-from-record-error'));
+		const auditFailure = vi
+			.spyOn(shared.repository, 'auditUnknownCall')
+			.mockRejectedValue(new Error('provider-secret-from-audit-error'));
+		let failure: unknown;
+		try {
+			failure = await calls.call(request(instance.id)).then(
+				() => null,
+				(error: unknown) => error,
+			);
+			expect(auditFailure).toHaveBeenCalledTimes(1);
+		} finally {
+			recordFailure.mockRestore();
+			auditFailure.mockRestore();
+		}
+		expect(failure).toMatchObject({ code: 'CALL_OUTCOME_UNKNOWN' });
+		expect(String(failure)).not.toContain('provider-secret');
+		expect(server.requests.length).toBe(before + 1);
+		await shared.runtime.transaction(
+			(transaction) =>
+				transaction.execute({
+					text: `UPDATE connectors_call_keys SET claimed_at = $3
+					 WHERE tenant_id = $1 AND idempotency_key = $2`,
+					parameters: [TENANT, KEY, Date.now() - CALL_KEY_CLAIM_MS - 1_000],
+				}),
+			{ access: 'write', tenantId: TENANT },
+		);
+		await expect(calls.call(request(instance.id))).rejects.toMatchObject({
+			code: 'CALL_OUTCOME_UNKNOWN',
+		});
+		expect(server.requests.length).toBe(before + 1);
+	});
+});
+
 describe('CONNECTORS-KEY-BINDING', () => {
+	it('releases the key after TLS when no HTTP write was attempted', async () => {
+		const { instance, vault } = await fixture();
+		const controller = new AbortController();
+		let beforeWrites = 0;
+		const calls = callService(
+			shared.repository,
+			vault,
+			testResolver(),
+			TEST_LIMITS,
+			{
+				...testConnect(),
+				beforeRequestWrite: () => {
+					beforeWrites += 1;
+					if (beforeWrites === 1) controller.abort();
+				},
+			},
+		);
+		const before = server.requests.length;
+		const first = await calls.call({
+			...request(instance.id),
+			signal: controller.signal,
+		});
+		expect(first).toMatchObject({
+			outcome: 'failed',
+			errorClass: 'timeout',
+			replayed: false,
+		});
+		expect(server.requests.length).toBe(before);
+		const retry = await calls.call(request(instance.id));
+		expect(retry).toMatchObject({ outcome: 'succeeded', replayed: false });
+		expect(retry.callId).not.toBe(first.callId);
+		expect(server.requests.length).toBe(before + 1);
+		expect(beforeWrites).toBe(2);
+	});
+
+	it('keeps the key when a body write fails before request finish', async () => {
+		const { instance, vault } = await fixture();
+		const controller = new AbortController();
+		let bodyWrites = 0;
+		const calls = callService(
+			shared.repository,
+			vault,
+			testResolver(),
+			TEST_LIMITS,
+			{
+				...testConnect(),
+				afterBodyWrite: (requestFinished) => {
+					expect(requestFinished).toBe(false);
+					bodyWrites += 1;
+					controller.abort();
+				},
+			},
+		);
+		const input = {
+			...request(instance.id),
+			operation: 'post' as const,
+			input: { path: '/things', body: { value: 'sample' } },
+		};
+		const first = await calls.call({
+			...input,
+			signal: controller.signal,
+		});
+		expect(first).toMatchObject({
+			outcome: 'failed',
+			errorClass: 'timeout',
+			replayed: false,
+		});
+		expect(bodyWrites).toBe(1);
+		const replay = await calls.call(input);
+		expect(replay).toMatchObject({
+			callId: first.callId,
+			outcome: 'failed',
+			replayed: true,
+		});
+		expect(bodyWrites).toBe(1);
+	});
+
 	/* The token exchange is an outbound call of its own, and one that fails has
 	   told the external system nothing. A key bound to it would answer every
 	   later attempt with a call that never happened, for as long as the log
@@ -268,10 +509,8 @@ describe('CONNECTORS-KEY-BINDING', () => {
 		}
 	});
 
-	/* A failure raised before the request was written left the external system
-	   untouched, so the key must not be bound to it: once the claim goes stale a
-	   later attempt takes it over rather than replaying a call that never
-	   happened. */
+	/* A failure observed before the request was written left the external
+	   system untouched, so its claim is released for an immediate retry. */
 	it('binds no key to a call that never reached the network', async () => {
 		const vanished = await startTestServer(() => ({ body: '{}' }));
 		await vanished.close();
@@ -286,11 +525,12 @@ describe('CONNECTORS-KEY-BINDING', () => {
 			outcome: 'failed',
 			errorClass: 'network',
 		});
-		const later = Date.now() + CALL_KEY_CLAIM_MS + 1_000;
+		const later = Date.now();
 		expect(
 			await shared.repository.claimCallKey(TENANT, KEY, {
+				instanceId: instance.id,
 				operationId: `${instance.id}:get`,
-				inputDigest: await digestOf(instance.id, calls),
+				inputDigest: 'a'.repeat(64),
 				claimedAt: later,
 				staleBefore: later - CALL_KEY_CLAIM_MS,
 			}),
@@ -298,21 +538,13 @@ describe('CONNECTORS-KEY-BINDING', () => {
 	});
 });
 
-/* Two attempts that read the same abandoned claim overlap only when the engine
-   really runs them at once, which the embedded PostgreSQL of this suite never
-   does: it queues transactions on one connection, so the second reads the claim
-   time the first already committed and is answered in flight either way. The
-   interleaved handle runs both concurrently instead. */
-describe('CONNECTORS-KEY-RETAKE-RACE', () => {
+describe('CONNECTORS-KEY-UNKNOWN-RACE', () => {
 	const TENANT_RACE = 'tenant-race';
 	const RACE_KEY = 'workflow-run-9:node-1';
 
-	function claimOn(
-		repository: DatabaseConnectorsRepository,
-		claimedAt: number,
-		staleBefore: number,
-	) {
-		return repository.claimCallKey(TENANT_RACE, RACE_KEY, {
+	function claimOn(claimedAt: number, staleBefore: number) {
+		return shared.repository.claimCallKey(TENANT_RACE, RACE_KEY, {
+			instanceId: 'instance-9',
 			operationId: 'instance-9:get',
 			inputDigest: 'a'.repeat(64),
 			claimedAt,
@@ -320,27 +552,36 @@ describe('CONNECTORS-KEY-RETAKE-RACE', () => {
 		});
 	}
 
-	it('hands the key to exactly one of them', async () => {
-		const interleaved = createInterleavedCallKeyDatabase();
-		const repository = new DatabaseConnectorsRepository(interleaved.handle);
+	it('refuses both retries without changing the old claim', async () => {
 		const abandoned = 1_000;
-		expect(await claimOn(repository, abandoned, 0)).toEqual({
+		expect(await claimOn(abandoned, 0)).toEqual({
 			state: 'claimed',
 		});
 		const now = abandoned + CALL_KEY_CLAIM_MS + 1_000;
 		const answers = await Promise.all([
-			claimOn(repository, now, now - CALL_KEY_CLAIM_MS),
-			claimOn(repository, now + 1, now - CALL_KEY_CLAIM_MS),
+			claimOn(now, now - CALL_KEY_CLAIM_MS),
+			claimOn(now + 1, now - CALL_KEY_CLAIM_MS),
 		]);
-		expect(answers.filter((answer) => answer.state === 'claimed')).toHaveLength(
-			1,
+		expect(answers).toEqual([{ state: 'unknown' }, { state: 'unknown' }]);
+		const row = await shared.runtime.transaction(
+			(transaction) =>
+				transaction.query<{ claimed_at: number | bigint | string }>({
+					text: `SELECT claimed_at FROM connectors_call_keys
+					 WHERE tenant_id = $1 AND idempotency_key = $2`,
+					parameters: [TENANT_RACE, RACE_KEY],
+				}),
+			{ access: 'read', tenantId: TENANT_RACE },
 		);
+		expect(Number(row.rows[0]?.claimed_at)).toBe(abandoned);
+		const audit = await shared.repository.listAudit(
+			TENANT_RACE,
+			'instance-9',
+			10,
+		);
+		expect(audit).toHaveLength(2);
 		expect(
-			answers.filter((answer) => answer.state === 'in-flight'),
-		).toHaveLength(1);
-		/* The insert, then one retake: the attempt that lost the row wrote
-		   nothing, so the winner's claim time is still the one in the ledger. */
-		expect(interleaved.retakes).toEqual([now]);
+			audit.every((entry) => entry.action === 'call.outcome-unknown'),
+		).toBe(true);
 	});
 });
 
@@ -355,6 +596,7 @@ async function digestOf(
 		TENANT,
 		'digest-probe-key',
 		{
+			instanceId,
 			operationId: `${instanceId}:get`,
 			inputDigest: 'unused',
 			claimedAt: 0,

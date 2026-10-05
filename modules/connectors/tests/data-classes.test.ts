@@ -142,6 +142,7 @@ describe('connectors data classes', () => {
 	it('removes the idempotency keys claimed before the cutoff with the calls', async () => {
 		const stale = Date.now() - 500 * DAY_MS;
 		await shared.repository.claimCallKey('tenant-a', 'stale-key-0001', {
+			instanceId: 'instance-x',
 			operationId: 'instance-x:get',
 			inputDigest: 'a'.repeat(64),
 			claimedAt: stale,
@@ -157,6 +158,7 @@ describe('connectors data classes', () => {
 			'tenant-a',
 			'stale-key-0001',
 			{
+				instanceId: 'instance-y',
 				operationId: 'instance-y:post',
 				inputDigest: 'b'.repeat(64),
 				claimedAt: Date.now(),

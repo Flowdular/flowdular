@@ -15,7 +15,7 @@ describe('platform tool registry', () => {
 		]);
 		expect(() =>
 			registry.register([{ id: 'parties.lookup', module: 'other.core' }]),
-		).toThrow(/already registered/);
+		).toThrowError(expect.objectContaining({ code: 'AGENT_TOOL_DUPLICATE' }));
 	});
 
 	it('keeps native tools apart from invocable tools in one id space', () => {
@@ -31,9 +31,9 @@ describe('platform tool registry', () => {
 		]);
 		expect(() =>
 			registry.registerNative({ id: 'research.search', kind: 'web-search' }),
-		).toThrow(/already registered/);
-		expect(() => registry.register([{ id: 'research.web-search' }])).toThrow(
-			/already registered/,
-		);
+		).toThrowError(expect.objectContaining({ code: 'AGENT_TOOL_DUPLICATE' }));
+		expect(() =>
+			registry.register([{ id: 'research.web-search' }]),
+		).toThrowError(expect.objectContaining({ code: 'AGENT_TOOL_DUPLICATE' }));
 	});
 });
