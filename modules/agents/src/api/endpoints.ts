@@ -1043,7 +1043,12 @@ export function createAgentRoutes(auth: AuthRuntime, runtime: AgentRuntime) {
 		methods: ['GET'],
 		access: { kind: 'permission', permission: AGENT_PERMISSIONS.runsRead },
 		resolveIdentity: endpointIdentityFromContext,
-		handler: async () => jsonResponse({ worker: await runtime.workerStatus() }),
+		handler: async ({ octane }) =>
+			jsonResponse({
+				worker: await runtime.workerStatus(
+					principalFromContext(octane)!.tenantId,
+				),
+			}),
 	});
 	const streamRun = defineEndpoint({
 		id: 'agents.runs.stream',

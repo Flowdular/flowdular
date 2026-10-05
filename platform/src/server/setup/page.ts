@@ -26,6 +26,8 @@ export interface SetupPageView {
 	readonly step: SetupStepName;
 	readonly csrfToken: string | null;
 	readonly databasePreconfigured: boolean;
+	/** The application itself serves setup and needs no restart afterwards. */
+	readonly inPlace?: boolean;
 	readonly autoRestart: boolean;
 	readonly error: string | null;
 	readonly notice: string | null;
@@ -254,16 +256,20 @@ function alerts(view: SetupPageView): string {
 
 function unlockStep(view: SetupPageView): string {
 	return `<header><span class="setup-kicker">First run</span><h2>Unlock setup</h2>
-<p class="setup-card__sub">The setup token was printed in this deployment's output when it started${
-		view.tokenFile
-			? ` and written to <code>${escapeHtml(view.tokenFile)}</code>`
-			: ''
+<p class="setup-card__sub">${
+		view.inPlace
+			? 'The setup token was printed by the command that deployed this app'
+			: `The setup token was printed in this deployment's output when it started${
+					view.tokenFile
+						? ` and written to <code>${escapeHtml(view.tokenFile)}</code>`
+						: ''
+				}`
 	}. Paste it here to continue.</p></header>
 ${steps(view.step, view.databasePreconfigured)}${alerts(view)}
 <form class="setup-form" method="post" action="/setup"><input type="hidden" name="step" value="unlock">
 <div class="setup-field"><label class="setup-label" for="setup-token">Setup token</label>
 <input class="setup-input" id="setup-token" name="token" type="password" autocomplete="off" spellcheck="false" maxlength="256" required autofocus aria-describedby="setup-token-help">
-<p class="setup-help" id="setup-token-help">Restarting this deployment issues a new token.</p></div>
+<p class="setup-help" id="setup-token-help">${view.inPlace ? 'Running the deploy command again issues a new token.' : 'Restarting this deployment issues a new token.'}</p></div>
 <button class="setup-btn setup-btn--primary setup-btn--block" type="submit">Continue</button></form>`;
 }
 
@@ -368,7 +374,9 @@ function reviewStep(view: SetupPageView): string {
 <p class="setup-card__sub">${
 		blocked.length > 0
 			? 'This database cannot serve every enabled module, so it is not activated.'
-			: 'Applying creates your workspace and owner account. Enabled modules finish preparing when the app restarts.'
+			: view.inPlace
+				? 'Applying creates your workspace and owner account.'
+				: 'Applying creates your workspace and owner account. Enabled modules finish preparing when the app restarts.'
 	}</p></header>
 ${steps(view.step, view.databasePreconfigured)}${alerts(view)}
 ${
@@ -430,9 +438,11 @@ function doneStep(view: SetupPageView): string {
 		view.environment?.status === 'failed';
 	const nextStep = needsEnvironment
 		? 'Save the connection settings in this deployment, then restart it to sign in.'
-		: view.autoRestart
-			? 'The app is restarting. Wait a moment, then sign in. If it does not restart, restart the deployment.'
-			: 'Restart this deployment to leave setup and open the sign-in screen.';
+		: view.inPlace
+			? 'Sign in to start using it.'
+			: view.autoRestart
+				? 'The app is restarting. Wait a moment, then sign in. If it does not restart, restart the deployment.'
+				: 'Restart this deployment to leave setup and open the sign-in screen.';
 	return `<header><span class="setup-kicker">Sign in</span><h2>Flowdular is ready</h2>
 <p class="setup-card__sub">The workspace ${escapeHtml(seed?.workspace.name ?? '')} is ready. ${nextStep}</p></header>
 ${steps(view.step, view.databasePreconfigured)}${alerts(view)}

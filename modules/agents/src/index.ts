@@ -67,6 +67,7 @@ export type {
 	AgentRunDetail,
 	AgentStatus,
 	AgentUsageSummary,
+	AgentWorkerState,
 	AgentWorkerStatus,
 	CreateAgentInput,
 	EnqueueAgentRunInput,

@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "automations.core",
 	"package": "@flowdular/module-automations",
-	"version": "0.6.11",
+	"version": "0.6.13",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations", "cli"],
 	"platform": {
@@ -17,7 +17,7 @@
 		},
 		{
 			"id": "auth.core",
-			"range": "^0.14.0"
+			"range": "^0.14.7"
 		},
 		{
 			"id": "agents.core",
@@ -45,5 +45,5 @@
 		"catalog": "src/cli/commands.json",
 		"entry": "src/cli/index.ts"
 	},
-	"platformApi": "^0.1.0"
+	"platformApi": "^0.1.34"
 }

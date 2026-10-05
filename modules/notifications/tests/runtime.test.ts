@@ -216,6 +216,65 @@ describe('notifications runtime lifecycle', () => {
 		}
 	});
 
+	it('NOTIFICATIONS-WORKER-DRAIN stops the retention loop before quiesce waits for a delivery in flight', async () => {
+		let release = (): void => undefined;
+		const open = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let sending = 0;
+		let sweeps = 0;
+		const repository = new Proxy(shared.repository, {
+			get(target, property) {
+				const value = Reflect.get(target, property) as unknown;
+				if (property === 'listDeliveryTenants') {
+					return async (limit: number, after: string) => {
+						sweeps += 1;
+						return target.listDeliveryTenants(limit, after);
+					};
+				}
+				return typeof value === 'function' ? value.bind(target) : value;
+			},
+		});
+		const vault = new AesGcmSecretVault(Buffer.alloc(32, 0x4e));
+		const runtime = createNotificationsRuntime({
+			databases: shared.databases,
+			repository,
+			secretVault: vault,
+			deliverySettings: () => TEST_SETTINGS,
+			egressAllowlist: () => '',
+			pollIntervalMs: () => 20,
+			mail: developmentMailPort(),
+			members: async () => [],
+			hostResolver: publicResolver({ 'hooks.example': '93.184.216.34' }),
+			transport: {
+				send: async () => {
+					sending += 1;
+					await open;
+					return { status: 'succeeded', responseStatus: 200, errorClass: null };
+				},
+			},
+		});
+		try {
+			await queueOne(vault);
+			runtime.start();
+			expect(await settle(async () => sending > 0)).toBe(true);
+			expect(await settle(async () => sweeps > 0)).toBe(true);
+
+			const quiesced = runtime.quiesce();
+			const swept = sweeps;
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(sweeps - swept).toBeLessThanOrEqual(1);
+			release();
+			await quiesced;
+			expect(
+				(await (await runtime.deliveries()).list(TENANT, {}))[0]?.status,
+			).toBe('succeeded');
+		} finally {
+			release();
+			await runtime.dispose();
+		}
+	});
+
 	it('stops scheduling after stop and drains the pass in flight on quiesce', async () => {
 		let sent = 0;
 		const { vault, runtime } = runtimeWith({

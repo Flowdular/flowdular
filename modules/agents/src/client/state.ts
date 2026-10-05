@@ -126,6 +126,7 @@ export function createAgentClientState() {
 		/* Fixed per submission: a retry of the same input reuses it. */
 		playgroundKey: '',
 		worker: cell<AgentWorkerStatus | null>(null),
+		workerReadFailed: false,
 	});
 	return { store, state: store.state };
 }

@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: audit.core
-specVersion: 0.2.11
+specVersion: 0.2.12
 status: approved
 name: Audit and Data Lifecycle Core
 description: Gives a workspace one place to see what data classes the platform holds, how long each is kept, and to take everything out, through a data class registry every module declares into, one retention sweep with tenant-scoped periods, and a per-tenant export in a documented format.
@@ -23,6 +23,8 @@ locales:
   - en
   - pl
 invariants:
+  - Platform start seals the erasure registry in web and worker roles after every module has registered. Only startWorker starts the retention sweep, export-request and erasure-request pollers. Combined mode starts those pollers after the same seal, and web requests never claim their work.
+  - Stopping the worker drains all three audit pollers before the runtime releases its leases; their existing claim fences and legal-hold checks still govern resumed work.
   - Persistence runs on the shared asynchronous database contract with explicit PostgreSQL SQL; every tenant table enables and forces row-level security with USING and WITH CHECK policies bound to the transaction-local tenant id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
   - The data class registry is a platform registry handed to every module as context.dataClasses, created by the kernel and sealed by the platform after every composition ran, the same way agent definitions are; a module declares each class it owns with a stable id, a human label, the default retention in days or none, whether the class may be exported, and an owner port with two operations, sweep(tenantId, cutoff, limit) and export(tenantId, sink), executed by the owning module on its own tables. audit.core reads the sealed registry and never reads another module's database; auth.core declares its classes through the same registry handed to its runtime by the platform.
   - A module that declares no classes is listed as holding none; a class declared without a sweep operation is never swept, and a class declared without an export operation is reported in the export manifest as excluded with the declared reason.
@@ -651,6 +653,14 @@ decisions:
     answer: seal, verify, erase, secrets-rotate and holds are operator-only, risk process, a dry run without --apply, and erase also needs --confirm erase-subject.
     decidedBy: user
 acceptanceScenarios:
+  - id: AUDIT-WEB-WORKER-ROLE
+    given: The erasure registry contains operations registered by modules that composed after audit.core and an export request is persisted.
+    when: The web role starts and a separate worker role starts later.
+    then: Both roles seal the complete registry, the web role serves its routes without a sweep, export or erasure poll, and the worker role processes the request under the existing fenced claim.
+  - id: AUDIT-WORKER-DRAIN
+    given: A worker role holds an audit export or erasure claim and a retention pass is in flight.
+    when: The platform stops that worker role.
+    then: No new pass begins, all in-flight passes drain before leases are released, and unfinished claimed work is recoverable under its existing stale-claim rules.
   - id: AUDIT-REGISTRY-DECLARE
     given: auth.core, agents.core, workflows.core, automations.core and notifications.core compose after audit.core.
     when: A principal holding audit.registry.read lists the data classes.

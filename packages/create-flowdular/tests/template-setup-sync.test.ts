@@ -5,6 +5,7 @@ const setupFiles = [
 	'access.ts',
 	'adapters.ts',
 	'environment.ts',
+	'gate.ts',
 	'index.ts',
 	'modules.ts',
 	'page.ts',

@@ -52,15 +52,100 @@ export interface ModuleSettingRecord {
 	readonly updatedAt: number;
 }
 
+/** What a write hands its store, so the store records the change beside the value. */
+export interface ModuleSettingChangeContext {
+	/** The declaration the value was validated against. */
+	readonly definition: ModuleSettingDefinition;
+	/** The set() caller and the workspace the change was made from. */
+	readonly actor: {
+		readonly accountId: string;
+		readonly tenantId: string;
+	};
+}
+
+/** A committed write of a store that keeps a change log. */
+export interface ModuleSettingCommit {
+	readonly revision: number;
+}
+
+/** One change log row: which setting changed and when, never its value. */
+export interface ModuleSettingLogEntry {
+	readonly revision: number;
+	/** Storage tenant: PLATFORM_SETTINGS_TENANT for a platform-scoped setting. */
+	readonly tenantId: string;
+	readonly moduleId: string;
+	readonly key: string;
+	readonly cleared: boolean;
+	/** Database time of the change, in epoch milliseconds. */
+	readonly changedAt: number;
+}
+
+export interface ModuleSettingsLogPosition {
+	readonly revision: number;
+	/** Reads after `revision`; opaque to its holder. */
+	readonly cursor: string;
+}
+
+export interface ModuleSettingChangesRequest {
+	/** A cursor a previous read answered; null reads from the start of the log. */
+	readonly after: string | null;
+	/** 1 to MODULE_SETTINGS_CHANGES_PAGE_MAX. */
+	readonly limit: number;
+	readonly moduleId?: string;
+	/** Narrows to one key of `moduleId`. */
+	readonly key?: string;
+}
+
+export type ModuleSettingChangesPage =
+	| {
+			readonly expired: false;
+			/** Ordered by revision. */
+			readonly changes: readonly ModuleSettingLogEntry[];
+			/** Continues after this page, an empty one included. */
+			readonly cursor: string;
+			/** Whether further changes were committed when this page was read. */
+			readonly more: boolean;
+	  }
+	| {
+			/* The cursor predates the retained log. Its holder reads from the start,
+			   which always holds the newest change of every setting. */
+			readonly expired: true;
+	  };
+
+export const MODULE_SETTINGS_CHANGES_PAGE_MAX = 500;
+
+/** How long a process serves settings from its snapshot without reading the log. */
+export const MODULE_SETTINGS_STALENESS_MS = 5_000;
+
+/* Snapshot reads one revalidation keeps in flight. An expired cursor reloads
+   every held pair, thousands with a full cache, and the rest wait their turn
+   instead of queueing on the store all at once. */
+const RELOAD_CONCURRENCY = 8;
+
 /* Storage may be a database or a network, so every operation is asynchronous;
-   the runtime serves reads from a snapshot it primes per tenant. */
+   the runtime serves reads from a snapshot it primes per tenant. A store that
+   keeps a change log answers `newestRevision` and `changesAfter`, and the
+   runtime then revalidates its snapshot against it; one without (an in-memory
+   store) is served from the snapshot alone. */
 export interface ModuleSettingsStore {
 	load(
 		tenantId: string,
 		moduleId: string,
 	): Promise<Readonly<Record<string, ModuleSettingValue>>>;
-	save(record: ModuleSettingRecord): Promise<void>;
-	clear(tenantId: string, moduleId: string, key: string): Promise<void>;
+	save(
+		record: ModuleSettingRecord,
+		change?: ModuleSettingChangeContext,
+	): Promise<ModuleSettingCommit | void>;
+	clear(
+		tenantId: string,
+		moduleId: string,
+		key: string,
+		change?: ModuleSettingChangeContext,
+	): Promise<ModuleSettingCommit | void>;
+	newestRevision?(): Promise<ModuleSettingsLogPosition>;
+	changesAfter?(
+		request: ModuleSettingChangesRequest,
+	): Promise<ModuleSettingChangesPage>;
 }
 
 export interface ModuleSettingEntry {
@@ -94,6 +179,13 @@ export interface ModuleSettingChange {
 		readonly accountId: string;
 		readonly tenantId: string;
 	};
+	/** The change log revision, when the store keeps a log. */
+	readonly revision?: number;
+}
+
+export interface ModuleSettingsPrimeOptions {
+	/** A revision the caller read from the log; the prime reflects at least it. */
+	readonly revision?: number;
 }
 
 export interface ModuleSettingsRuntime {
@@ -101,11 +193,13 @@ export interface ModuleSettingsRuntime {
 	declarations(): readonly ModuleSettingsDeclaration[];
 	/**
 	 * Loads the stored values of every declared module for this tenant, and the
-	 * platform-scoped ones, into memory. Idempotent and memoised: a primed
-	 * tenant costs one lookup. `get` and `list` answer from that snapshot, so a
-	 * request path primes the tenant before it reads.
+	 * platform-scoped ones, into memory. Memoised: a primed tenant costs one
+	 * lookup. `get` and `list` answer from that snapshot, so a request path
+	 * primes the tenant before it reads. Over a store that keeps a change log, a
+	 * prime begun at time p reflects every change committed before p minus
+	 * MODULE_SETTINGS_STALENESS_MS, and fails rather than serve past that bound.
 	 */
-	prime(tenantId: string): Promise<void>;
+	prime(tenantId: string, options?: ModuleSettingsPrimeOptions): Promise<void>;
 	/** The stored value, else the declared default; throws for an unprimed tenant. */
 	get<T extends ModuleSettingValue>(
 		tenantId: string,
@@ -121,7 +215,16 @@ export interface ModuleSettingsRuntime {
 		value: ModuleSettingValue | null,
 		actor: string,
 	): Promise<void>;
+	/**
+	 * Fires in this process only, after a set() commits. A change another
+	 * process made is never announced; a consumer that must see every change,
+	 * or must survive a crash, reads `changesAfter` instead.
+	 */
 	onChange(listener: (change: ModuleSettingChange) => void): () => void;
+	/** The store's change log; refused with SETTINGS_LOG_UNAVAILABLE when it keeps none. */
+	changesAfter(
+		request: ModuleSettingChangesRequest,
+	): Promise<ModuleSettingChangesPage>;
 }
 
 export interface ModuleSettingsRuntimeOptions {
@@ -296,6 +399,37 @@ export function defineModuleSettings(
 
 type ChangeListener = (change: ModuleSettingChange) => void;
 
+/* The values one load read, and the order in which that load began. */
+interface LoadedModule {
+	readonly values: Readonly<Record<string, ModuleSettingValue>>;
+	readonly order: number;
+}
+
+interface PendingLoad {
+	readonly tenantId: string;
+	readonly moduleId: string;
+	readonly pending: Promise<void>;
+}
+
+function invalidPage(detail: string): ModuleSettingsError {
+	return new ModuleSettingsError('INVALID_SETTINGS_PAGE', detail);
+}
+
+function assertChangesRequest(request: ModuleSettingChangesRequest): void {
+	if (
+		!Number.isInteger(request.limit) ||
+		request.limit < 1 ||
+		request.limit > MODULE_SETTINGS_CHANGES_PAGE_MAX
+	) {
+		throw invalidPage(
+			`A change log page holds 1 to ${MODULE_SETTINGS_CHANGES_PAGE_MAX} changes.`,
+		);
+	}
+	if (request.key !== undefined && request.moduleId === undefined) {
+		throw invalidPage('A change log read narrowed to a key names its module.');
+	}
+}
+
 export function createModuleSettingsRuntime(
 	store: ModuleSettingsStore,
 	options: ModuleSettingsRuntimeOptions = {},
@@ -303,18 +437,34 @@ export function createModuleSettingsRuntime(
 	const now = options.now ?? Date.now;
 	const cacheLimit = options.cacheLimit ?? 512;
 	const declarations = new Map<string, ModuleSettingsDeclaration>();
-	/* Tenant, then module, to the values the store holds. Filled by prime and
-	   by set, never by a read: a read of a tenant that is not here fails. */
-	const snapshots = new Map<
-		string,
-		Map<string, Readonly<Record<string, ModuleSettingValue>>>
-	>();
-	const loads = new Map<string, Promise<void>>();
+	/* Tenant, then module, to the values the store holds. Filled by prime, by
+	   set and by revalidation, never by a read: a read of a tenant that is not
+	   here fails. */
+	const snapshots = new Map<string, Map<string, LoadedModule>>();
+	const loads = new Map<string, PendingLoad>();
 	/* The declaration generation a tenant was primed at; a module declared
 	   later makes the next prime load what is missing. */
 	const primed = new Map<string, number>();
 	let generation = 0;
 	const listeners = new Set<ChangeListener>();
+	/* Loads land out of order. A landing load replaces only a snapshot that an
+	   earlier-begun load wrote, so no read goes back past a write this process
+	   saw commit. */
+	let loadOrder = 0;
+	const log =
+		store.newestRevision && store.changesAfter
+			? {
+					newest: () => store.newestRevision!(),
+					after: (request: ModuleSettingChangesRequest) =>
+						store.changesAfter!(request),
+				}
+			: null;
+	/* Every held snapshot reflects each change up to `reflected`, and the log
+	   was last read after `cursor` by a read begun at `validatedAt`. */
+	let cursor: string | null = null;
+	let reflected = 0;
+	let validatedAt = Number.NEGATIVE_INFINITY;
+	let revalidating: Promise<void> | null = null;
 
 	const definitionOf = (
 		moduleId: string,
@@ -355,9 +505,7 @@ export function createModuleSettingsRuntime(
 		return tenantId;
 	};
 
-	const tenantSnapshot = (
-		tenantId: string,
-	): Map<string, Readonly<Record<string, ModuleSettingValue>>> => {
+	const tenantSnapshot = (tenantId: string): Map<string, LoadedModule> => {
 		let snapshot = snapshots.get(tenantId);
 		if (snapshot) return snapshot;
 		if (snapshots.size >= cacheLimit) {
@@ -373,19 +521,120 @@ export function createModuleSettingsRuntime(
 		return snapshot;
 	};
 
+	const pairKey = (tenantId: string, moduleId: string): string =>
+		`${tenantId} ${moduleId}`;
+
+	const read = (tenantId: string, moduleId: string): Promise<void> => {
+		loadOrder += 1;
+		const order = loadOrder;
+		return store.load(tenantId, moduleId).then((values) => {
+			const snapshot = tenantSnapshot(tenantId);
+			const current = snapshot.get(moduleId);
+			if (current && current.order > order) return;
+			snapshot.set(moduleId, { values, order });
+		});
+	};
+
 	const loadModule = (tenantId: string, moduleId: string): Promise<void> => {
 		if (snapshots.get(tenantId)?.has(moduleId)) return Promise.resolve();
-		const loadKey = `${tenantId} ${moduleId}`;
-		const inflight = loads.get(loadKey);
-		if (inflight) return inflight;
-		const pending = store
-			.load(tenantId, moduleId)
-			.then((values) => {
-				tenantSnapshot(tenantId).set(moduleId, values);
-			})
-			.finally(() => loads.delete(loadKey));
-		loads.set(loadKey, pending);
+		const key = pairKey(tenantId, moduleId);
+		const inflight = loads.get(key);
+		if (inflight) return inflight.pending;
+		const pending = read(tenantId, moduleId).finally(() => loads.delete(key));
+		loads.set(key, { tenantId, moduleId, pending });
 		return pending;
+	};
+
+	const readAll = async (
+		pairs: Iterable<readonly [string, string]>,
+	): Promise<void> => {
+		const queue = [...pairs];
+		const reader = async (): Promise<void> => {
+			for (let pair = queue.pop(); pair; pair = queue.pop()) {
+				await read(pair[0], pair[1]);
+			}
+		};
+		await Promise.all(
+			Array.from(
+				{ length: Math.min(RELOAD_CONCURRENCY, queue.length) },
+				reader,
+			),
+		);
+	};
+
+	const held = (tenantId: string, moduleId: string): boolean =>
+		snapshots.get(tenantId)?.has(moduleId) === true ||
+		loads.has(pairKey(tenantId, moduleId));
+
+	const reloadHeld = async (): Promise<void> => {
+		const pairs = new Map<string, readonly [string, string]>();
+		for (const [tenantId, snapshot] of snapshots) {
+			for (const moduleId of snapshot.keys()) {
+				pairs.set(pairKey(tenantId, moduleId), [tenantId, moduleId]);
+			}
+		}
+		for (const [key, load] of loads) {
+			pairs.set(key, [load.tenantId, load.moduleId]);
+		}
+		await readAll(pairs.values());
+	};
+
+	/* A held pair is read again only after the log read that named it, so the
+	   reload reflects that change; a pair first loaded later reflects it too. */
+	const revalidate = async (): Promise<void> => {
+		if (!log) return;
+		const startedAt = now();
+		const page =
+			cursor === null
+				? null
+				: await log.after({
+						after: cursor,
+						limit: MODULE_SETTINGS_CHANGES_PAGE_MAX,
+					});
+		if (page === null || page.expired || page.more) {
+			const head = await log.newest();
+			await reloadHeld();
+			cursor = head.cursor;
+			reflected = Math.max(reflected, head.revision);
+		} else {
+			const named = new Map<string, readonly [string, string]>();
+			for (const change of page.changes) {
+				if (held(change.tenantId, change.moduleId)) {
+					named.set(pairKey(change.tenantId, change.moduleId), [
+						change.tenantId,
+						change.moduleId,
+					]);
+				}
+			}
+			await readAll(named.values());
+			cursor = page.cursor;
+			reflected = Math.max(reflected, page.changes.at(-1)?.revision ?? 0);
+		}
+		validatedAt = startedAt;
+	};
+
+	const sharedRevalidation = (): Promise<void> =>
+		(revalidating ??= revalidate().finally(() => {
+			revalidating = null;
+		}));
+
+	/* A revalidation begun after `begunAt` covers any revision the caller read
+	   before it asked, so a revision still above `reflected` then is no
+	   committed change and is not waited for. One begun in the same
+	   millisecond may have read before the caller did. */
+	const covered = (begunAt: number, revision: number | undefined): boolean =>
+		cursor !== null &&
+		validatedAt >= begunAt - MODULE_SETTINGS_STALENESS_MS &&
+		(revision === undefined || reflected >= revision || validatedAt > begunAt);
+
+	const ensureFresh = async (revision: number | undefined): Promise<void> => {
+		const begunAt = now();
+		if (covered(begunAt, revision)) return;
+		if (revalidating) {
+			await revalidating;
+			if (covered(begunAt, revision)) return;
+		}
+		await sharedRevalidation();
 	};
 
 	const scopesOf = (
@@ -400,7 +649,21 @@ export function createModuleSettingsRuntime(
 		return { tenant, platform };
 	};
 
-	const prime = async (tenantId: string): Promise<void> => {
+	const prime = async (
+		tenantId: string,
+		primeOptions: ModuleSettingsPrimeOptions = {},
+	): Promise<void> => {
+		const revision = primeOptions.revision;
+		if (
+			revision !== undefined &&
+			!(Number.isSafeInteger(revision) && revision >= 0)
+		) {
+			throw new ModuleSettingsError(
+				'INVALID_SETTINGS_REVISION',
+				'A settings revision is a non-negative integer.',
+			);
+		}
+		if (log) await ensureFresh(revision);
 		const at = generation;
 		if (primed.get(tenantId) === at) {
 			const snapshot = snapshots.get(tenantId);
@@ -431,8 +694,8 @@ export function createModuleSettingsRuntime(
 		tenantId: string,
 		moduleId: string,
 	): Readonly<Record<string, ModuleSettingValue>> => {
-		const values = snapshots.get(tenantId)?.get(moduleId);
-		if (!values) {
+		const loaded = snapshots.get(tenantId)?.get(moduleId);
+		if (!loaded) {
 			throw new ModuleSettingsError(
 				'SETTINGS_NOT_PRIMED',
 				`Settings of ${moduleId} for ${
@@ -443,7 +706,7 @@ export function createModuleSettingsRuntime(
 				500,
 			);
 		}
-		return values;
+		return loaded.values;
 	};
 
 	const resolve = (
@@ -523,19 +786,25 @@ export function createModuleSettingsRuntime(
 			const previous = definition.secret
 				? null
 				: resolve(tenantId, moduleId, key, definition).value;
-			if (value === null) {
-				await store.clear(target, moduleId, key);
-			} else {
-				await store.save({
-					tenantId: target,
-					moduleId,
-					key,
-					value: next,
-					updatedBy: actor,
-					updatedAt: now(),
-				});
-			}
-			tenantSnapshot(target).set(moduleId, await store.load(target, moduleId));
+			const context: ModuleSettingChangeContext = {
+				definition,
+				actor: { accountId: actor, tenantId },
+			};
+			const commit =
+				value === null
+					? await store.clear(target, moduleId, key, context)
+					: await store.save(
+							{
+								tenantId: target,
+								moduleId,
+								key,
+								value: next,
+								updatedBy: actor,
+								updatedAt: now(),
+							},
+							context,
+						);
+			await read(target, moduleId);
 			const change: ModuleSettingChange = {
 				tenantId: target,
 				moduleId,
@@ -545,6 +814,7 @@ export function createModuleSettingsRuntime(
 				previous,
 				next: definition.secret ? null : next,
 				actor: { accountId: actor, tenantId },
+				...(commit ? { revision: commit.revision } : {}),
 			};
 			for (const listener of listeners) {
 				try {
@@ -560,6 +830,17 @@ export function createModuleSettingsRuntime(
 			return () => {
 				listeners.delete(listener);
 			};
+		},
+		async changesAfter(request) {
+			assertChangesRequest(request);
+			if (!log) {
+				throw new ModuleSettingsError(
+					'SETTINGS_LOG_UNAVAILABLE',
+					'This settings store keeps no change log.',
+					503,
+				);
+			}
+			return log.after(request);
 		},
 	};
 }

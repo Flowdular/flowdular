@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: adapters.core
-specVersion: 0.1.5
+specVersion: 0.1.6
 status: approved
 name: Data adapters
 description: Runs the source and sink adapters other modules declare in their specifications, pulling pages from another system through a consented connectors.core instance into an import port and pushing the pages of a list export back out, on the shared job runner with stored cursors, retries, resume, schedules, mappings stored as data, a dry run and a recorded mode for tests and the sandbox.
@@ -36,6 +36,8 @@ locales:
   - en
   - pl
 invariants:
+  - Platform start completes optional meter and export-list registration and seals both adapter catalogues in web and worker roles. Only startWorker starts the run and schedule pollers; an HTTP enqueue in web role persists the run without calling wake or claiming it locally. Combined mode still starts both pollers after registration and sealing.
+  - Stopping the worker stops both adapter pollers and drains in-flight passes before the runtime releases its database leases; an incomplete run remains recoverable under its existing claim and idempotency rules.
   - The tenant comes from the authenticated principal, or for a run from the run row the principal created. No request body selects another workspace, and every statement runs inside a tenant-scoped transaction on the module's own lease with bound parameters.
   - adapter_bindings, adapter_runs, adapter_run_rows and adapter_audit_events carry tenant_id, enable and force row-level security with USING and WITH CHECK policies bound to transaction-local coreloom.tenant_id, and the runtime role holds neither SUPERUSER nor BYPASSRLS. The background role reads the routing columns of queued and running runs and of enabled bindings with a schedule and nothing else.
   - A module registers the adapters its specification declares while the platform composes, sources through adapters.sources.v1 and sinks through adapters.sinks.v1, with register(moduleId, adapters). Each entry carries id, direction, label, connector, operation, port, schedule, mapping, and optionally recorded, input, items, paging, mode and batchSize. An id outside the registering module's namespace, a direction that does not match the capability, a duplicate id, a sink port outside the registering module's namespace, a malformed cron, mapping, paging or recorded fixture is refused where it is registered with ADAPTER_REGISTRATION_INVALID, and the registry is sealed when adapters.core starts, after which register throws ADAPTER_REGISTRY_SEALED.
@@ -318,6 +320,14 @@ actions:
     description: Cancel a queued or running run.
 widgets: []
 acceptanceScenarios:
+  - id: ADAPTER-WEB-WORKER-ROLE
+    given: A registered adapter has an enabled binding and web and worker processes compose the same module set.
+    when: The web role starts and an authorized request queues a run before the worker starts.
+    then: The web role serves the sealed catalogue and stores one queued run without a local claim or timer, and the worker role starts both pollers after registration and processes that run under its existing lease and consent rules.
+  - id: ADAPTER-WORKER-DRAIN
+    given: A worker role is performing an adapter run while a schedule poller is active.
+    when: The platform stops the worker role.
+    then: Both pollers stop accepting passes, their in-flight work drains before database leases are released, and an unfinished run remains eligible for fenced recovery by another worker.
   - id: ADAPTERS-REGISTRATION
     given: A registry open while the platform composes.
     when: A module registers a source and a sink, an adapter outside its namespace, a sink through the sources capability, a sink port of another module, a duplicate id, a malformed cron and a recorded fixture of another adapter, and registers again after start.

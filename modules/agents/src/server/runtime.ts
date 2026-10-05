@@ -35,7 +35,10 @@ import {
 } from '../services/database-repository.ts';
 import type { NotificationPublisherResolver } from '../services/notifications.ts';
 import type { MeterRegistryResolver } from '../services/metering.ts';
-import type { AgentRepository } from '../services/repository.ts';
+import {
+	stableErrorCode,
+	type AgentRepository,
+} from '../services/repository.ts';
 import { AgentUsageService } from '../services/usage-service.ts';
 import {
 	DATABASE_CAPABILITY_IDS,
@@ -47,6 +50,11 @@ import {
 import { serverTracer, type Tracer } from '@flowdular/server';
 import { preflightModuleAgentDefinitions } from '../services/module-agent-preflight.ts';
 import { AgentWorker } from '../services/worker.ts';
+import {
+	DEFAULT_WORKER_FRESHNESS_MS,
+	readWorkerStatus,
+} from '../services/worker-availability.ts';
+import { normalizeModuleAgentDefinitions } from './define-agent.ts';
 import type { AgentSettingsReader } from '../settings.ts';
 import {
 	createAgentActionExecutionRuntime,
@@ -63,6 +71,7 @@ import {
 export interface AgentRuntimeOptions {
 	readonly workerConcurrency: number;
 	readonly workerLeaseMs: number;
+	readonly workerDrainMs?: number;
 	readonly providers?: readonly AgentProvider[];
 	/* A function is evaluated when the harness is first built, so tools that
 	   other modules register after this runtime was created are included. */
@@ -117,11 +126,18 @@ export interface AgentRuntime {
 	providerService(): Promise<AgentProviderService>;
 	assistantService(): Promise<AssistantService>;
 	usageService(): Promise<AgentUsageService>;
-	workerStatus(): Promise<AgentWorkerStatus>;
+	/* Read from the recorded heartbeats, the same in every role. */
+	workerStatus(tenantId: string): Promise<AgentWorkerStatus>;
 	revisionExecution(): AgentRevisionExecutionCapability;
 	actions(): AgentActionExecutionCapability;
 	actionsV2(): AgentActionExecutionCapabilityV2;
 	prepare(): Promise<void>;
+	/* Awaits the opening every role makes (migrations, then the module-agent
+	   catalogue), then starts the run and workflow-action workers and rejects
+	   with neither started. The binding and revision adoption passes follow
+	   without holding it. */
+	startWorker(): Promise<void>;
+	/* startWorker without waiting for it. */
 	start(): void;
 	stop(): void;
 	quiesce(): Promise<void>;
@@ -163,6 +179,13 @@ export function agentRuntimeOptionsFromEnvironment(
 			1_000,
 			300_000,
 			'FD_AGENT_WORKER_LEASE_MS',
+		),
+		workerDrainMs: environmentInteger(
+			environment.FD_AGENT_WORKER_DRAIN_MS,
+			0,
+			0,
+			720_000,
+			'FD_AGENT_WORKER_DRAIN_MS',
 		),
 		providerHostAllowlist: providerHostAllowlist(
 			environment.FD_AGENT_PROVIDER_HOST_ALLOWLIST,
@@ -240,9 +263,13 @@ export function createAgentRuntime(
 	let leases: readonly DatabaseAdapterLease[] = [];
 	let servicePromise: Promise<AgentService> | undefined;
 	let actionRuntime: AgentActionRuntime | undefined;
-	let started = false;
 	let disposed = false;
-	let moduleAgentsReconciled = false;
+	/* Kept across openings: once nothing is owed this process never asks again. */
+	let revisionAdoptionSettled = false;
+	let passes: Promise<void> | undefined;
+	/* Every stop retires the starts before it, so a start still opening when a
+	   stop lands leaves both workers stopped. */
+	let workerGeneration = 0;
 	let preparedModuleAgents: readonly ModuleAgentDefinition[] | undefined;
 	const moduleAgents = () =>
 		typeof options.moduleAgents === 'function'
@@ -279,8 +306,8 @@ export function createAgentRuntime(
 				'agents.core requires a platform database provider; there is no local file fallback.',
 			);
 		}
-		/* Only schema work receives the migration role. Reconciliation uses
-		   tenant-scoped runtime transactions after this lease is released. */
+		/* Only schema work receives the migration role. The catalogue is
+		   reconciled on the runtime handle after this lease is released. */
 		const migration = await options.databases.acquire({
 			namespace: 'agents.core',
 			purpose: 'migration',
@@ -311,8 +338,24 @@ export function createAgentRuntime(
 			runtime: runtimeLease.database,
 			background: backgroundLease.database,
 		});
-		await agents.adoptCurrentAgentRevisions();
+		/* No tenant binding is read or written here, so a cold start does no
+		   per-tenant work. */
+		const definitions = normalizeModuleAgentDefinitions(
+			preparedModuleAgents ?? moduleAgents(),
+		);
+		const { superseded } = await agents.reconcileModuleAgents(
+			definitions,
+			Date.now(),
+		);
+		if (
+			!revisionAdoptionSettled &&
+			!(await agents.agentRevisionAdoptionOwed())
+		) {
+			revisionAdoptionSettled = true;
+		}
 		return {
+			definitions,
+			superseded,
 			repository: agents as AgentRepository,
 			providerRepository: new DatabaseProviderRepository(
 				runtimeLease.database,
@@ -393,6 +436,7 @@ export function createAgentRuntime(
 						? () => settings.workerConcurrency()
 						: options.workerConcurrency,
 					leaseMs: settings?.workerLeaseMs() ?? options.workerLeaseMs,
+					...(options.workerDrainMs ? { drainMs: options.workerDrainMs } : {}),
 					runGrantAuthority,
 					providerBroker,
 					...(options.notifications
@@ -412,6 +456,7 @@ export function createAgentRuntime(
 				usageService,
 				options.meters,
 			);
+			service.serveModuleAgents(opened.definitions, opened.superseded);
 			assistant = new AssistantService(
 				repository,
 				service,
@@ -428,19 +473,66 @@ export function createAgentRuntime(
 		}
 		return service;
 	};
-	const resolved = (): Promise<AgentService> => (servicePromise ??= create());
-	const start = () => {
-		if (started) return;
-		started = true;
-		void resolved().then(async (currentService) => {
-			if (!moduleAgentsReconciled) {
-				await currentService.reconcileModuleAgents(
-					preparedModuleAgents ?? moduleAgents(),
-				);
-				moduleAgentsReconciled = true;
+	const release = async () => {
+		await providerRepository?.close();
+		await repository?.close();
+		for (const lease of leases) await lease.release();
+		leases = [];
+		servicePromise = undefined;
+		worker = undefined;
+		actionRuntime = undefined;
+		providers = undefined;
+		assistant = undefined;
+		usage = undefined;
+		service = undefined;
+		providerRepository = undefined;
+		repository = undefined;
+	};
+	/* A failed open keeps nothing, not even its rejection, so the next caller
+	   (a later worker tick on the same composition) opens again. */
+	const resolved = (): Promise<AgentService> =>
+		(servicePromise ??= create().catch(async (error: unknown) => {
+			await release();
+			throw error;
+		}));
+	/* Bindings no request touched and tenant-created definitions saved before
+	   the revision ledger. Neither gates readiness; both stop with the worker. */
+	const backgroundPasses = async (generation: number) => {
+		const stopped = () => disposed || generation !== workerGeneration;
+		const currentService = service;
+		const currentRepository = repository;
+		if (!currentService || !currentRepository) return;
+		try {
+			await currentService.advanceStaleModuleAgentBindings({ stopped });
+			if (
+				!revisionAdoptionSettled &&
+				!stopped() &&
+				(await currentRepository.adoptCurrentAgentRevisions({ stopped }))
+			) {
+				revisionAdoptionSettled = true;
 			}
-			worker!.start();
-			actionRuntime!.start();
+		} catch (error) {
+			console.error(
+				'[agents] the worker binding and adoption passes stopped early; the next worker start resumes them.',
+				stableErrorCode(error),
+			);
+		}
+	};
+	const startWorker = async () => {
+		const generation = workerGeneration;
+		await resolved();
+		if (generation !== workerGeneration) return;
+		actionRuntime!.start();
+		await worker!.start();
+		if (generation !== workerGeneration) return;
+		const previous = passes;
+		const current = (async () => {
+			await previous;
+			await backgroundPasses(generation);
+		})();
+		passes = current;
+		void current.finally(() => {
+			if (passes === current) passes = undefined;
 		});
 	};
 	const revisionCapability = createAgentRevisionExecutionCapability(
@@ -475,10 +567,18 @@ export function createAgentRuntime(
 		requestCancel: async (id, context) =>
 			(await currentActionsV2()).requestCancel(id, context),
 	};
+	const stop = () => {
+		workerGeneration += 1;
+		worker?.stop();
+		actionRuntime?.stop();
+	};
 	const quiesce = async () => {
-		started = false;
+		/* Neither loop claims while the other drains: the run drain may last
+		   FD_AGENT_WORKER_DRAIN_MS, and an action claimed then would be aborted. */
+		stop();
 		await worker?.dispose();
-		await actionRuntime?.dispose();
+		await actionRuntime?.quiesce();
+		await passes;
 	};
 	return {
 		service: resolved,
@@ -502,38 +602,29 @@ export function createAgentRuntime(
 			await resolved();
 			return usage!;
 		},
-		workerStatus: async () => {
+		workerStatus: async (tenantId) => {
 			await resolved();
-			return worker!.status();
+			return readWorkerStatus(repository!, tenantId, {
+				now: Date.now(),
+				leaseMs: settings?.workerLeaseMs() ?? options.workerLeaseMs,
+				freshnessMs:
+					settings?.workerFreshnessMs() ?? DEFAULT_WORKER_FRESHNESS_MS,
+			});
 		},
 		revisionExecution: () => revisionCapability,
 		actions: () => actionCapability,
 		actionsV2: () => actionCapabilityV2,
 		prepare,
-		start,
-		stop: () => {
-			started = false;
-			worker?.stop();
-			actionRuntime?.stop();
-		},
+		startWorker,
+		start: () => void startWorker(),
+		stop,
 		quiesce,
 		async dispose() {
 			if (disposed) return;
 			disposed = true;
 			await quiesce();
-			await providerRepository?.close();
-			await repository?.close();
-			for (const lease of leases) await lease.release();
-			leases = [];
-			servicePromise = undefined;
-			worker = undefined;
-			actionRuntime = undefined;
-			providers = undefined;
-			assistant = undefined;
-			usage = undefined;
-			service = undefined;
-			providerRepository = undefined;
-			repository = undefined;
+			await actionRuntime?.dispose();
+			await release();
 		},
 	};
 }

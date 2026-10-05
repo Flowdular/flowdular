@@ -26,7 +26,7 @@ manifest:
       - ./server
       - ./platform
   src/platform.ts:
-    - createServerComposition(context) returns routes, optional settings (defineModuleSettings), optional start() and optional dispose()
+    - createServerComposition(context) returns routes, optional settings (defineModuleSettings), optional start() for registration only, optional startWorker() that starts every poll loop and background worker, optional stop() and optional dispose()
     - context carries auth, settings (ModuleSettingsRuntime), agentTools (PlatformToolRegistry), agentDefinitions (PlatformAgentRegistry) and capabilities (PlatformCapabilityRegistry)
 conditional:
   api:

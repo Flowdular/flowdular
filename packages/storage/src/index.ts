@@ -30,6 +30,8 @@ export type { ConfiguredStorageAdapter, StorageConfig } from './config.ts';
 export { createLocalObjectStore } from './local.ts';
 export { createS3ObjectStore } from './s3.ts';
 export type { S3ObjectStoreOptions } from './s3.ts';
+export { createVercelBlobObjectStore } from './vercel-blob.ts';
+export type { VercelBlobObjectStoreOptions } from './vercel-blob.ts';
 export { createStoragePort } from './port.ts';
 export type { ManagedStoragePort, StoragePortOptions } from './port.ts';
 export type {

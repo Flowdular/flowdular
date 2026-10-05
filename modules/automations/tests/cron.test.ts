@@ -7,6 +7,13 @@ import {
 	it,
 	vi,
 } from 'vitest';
+import { TENANT_TIME_ZONE_SETTING } from '@flowdular/contracts';
+import {
+	createModuleSettingsRuntime,
+	defineModuleSettings,
+	type ModuleSettingsStore,
+	type ModuleSettingValue,
+} from '@flowdular/kernel';
 import type { AgentRunQueue } from '@flowdular/module-agents/server';
 import type { JobRunner } from '@flowdular/server';
 import {
@@ -97,6 +104,55 @@ function scheduleRunner(
 		intervalMs: 30_000,
 		now,
 	});
+}
+
+function memoryStore(): ModuleSettingsStore {
+	const values = new Map<string, Record<string, ModuleSettingValue>>();
+	const keyOf = (tenantId: string, moduleId: string) =>
+		`${tenantId} ${moduleId}`;
+	return {
+		load: async (tenantId, moduleId) => ({
+			...values.get(keyOf(tenantId, moduleId)),
+		}),
+		save: async (record) => {
+			const key = keyOf(record.tenantId, record.moduleId);
+			values.set(key, { ...values.get(key), [record.key]: record.value });
+		},
+		clear: async (tenantId, moduleId, key) => {
+			const stored = values.get(keyOf(tenantId, moduleId));
+			if (stored) delete stored[key];
+		},
+	};
+}
+
+/* The workspace zone as system.core declares and stores it. */
+async function zoneSettings(zone: string) {
+	const settings = createModuleSettingsRuntime(memoryStore());
+	settings.declare(
+		defineModuleSettings({
+			moduleId: TENANT_TIME_ZONE_SETTING.moduleId,
+			settings: {
+				[TENANT_TIME_ZONE_SETTING.key]: {
+					type: 'string',
+					defaultValue: TENANT_TIME_ZONE_SETTING.defaultValue,
+					visibility: 'shared',
+					client: false,
+					scope: 'tenant',
+					min: 1,
+					max: 64,
+				},
+			},
+		}),
+	);
+	await settings.set(
+		'tenant-a',
+		TENANT_TIME_ZONE_SETTING.moduleId,
+		TENANT_TIME_ZONE_SETTING.key,
+		zone,
+		'owner',
+	);
+	await settings.prime('tenant-a');
+	return settings;
 }
 
 function scheduleInput(cadence: string) {
@@ -271,7 +327,7 @@ describe('cron schedules', () => {
 			undefined,
 			undefined,
 			undefined,
-			() => WARSAW,
+			await zoneSettings(WARSAW),
 		);
 		const created = await service.create(
 			'tenant-a',
@@ -306,10 +362,6 @@ describe('cron schedules', () => {
 			shared.repository,
 			queue,
 			() => now,
-			undefined,
-			undefined,
-			undefined,
-			() => 'UTC',
 		);
 		const created = await service.create(
 			'tenant-a',
@@ -345,10 +397,6 @@ describe('cron schedules', () => {
 			shared.repository,
 			queue,
 			() => now,
-			undefined,
-			undefined,
-			undefined,
-			() => 'UTC',
 		);
 		const created = await service.create(
 			'tenant-a',
@@ -382,7 +430,7 @@ describe('cron schedules', () => {
 	it('moves a pending cron slot when the workspace zone changes', async () => {
 		const { queue } = runQueue();
 		const now = at('2026-09-12T00:00:00.000Z');
-		let zone = 'UTC';
+		const settings = await zoneSettings('UTC');
 		const service = new AutomationScheduleService(
 			shared.repository,
 			queue,
@@ -390,7 +438,7 @@ describe('cron schedules', () => {
 			undefined,
 			undefined,
 			undefined,
-			() => zone,
+			settings,
 		);
 		const interval = await service.create('tenant-a', 'user-a', {
 			...scheduleInput('every:60'),
@@ -403,8 +451,15 @@ describe('cron schedules', () => {
 		);
 		expect(cron.nextRunAt).toBe(at('2026-09-12T06:00:00.000Z'));
 
-		zone = WARSAW;
-		expect(await service.retime('tenant-a')).toBe(1);
+		await settings.set(
+			'tenant-a',
+			TENANT_TIME_ZONE_SETTING.moduleId,
+			TENANT_TIME_ZONE_SETTING.key,
+			WARSAW,
+			'owner',
+		);
+		const change = { tenantId: 'tenant-a', revision: 1, changedAt: now };
+		expect(await service.applyTimeZoneChange(change)).toBe(1);
 		const schedules = (await service.list('tenant-a', FIRST_PAGE)).items;
 		expect(schedules.find((entry) => entry.id === cron.id)!.nextRunAt).toBe(
 			at('2026-09-12T04:00:00.000Z'),
@@ -418,7 +473,7 @@ describe('cron schedules', () => {
 				(event) => event.action === 'automation-schedule.retimed',
 			),
 		).toBe(true);
-		/* Re-timing the same zone twice changes nothing. */
-		expect(await service.retime('tenant-a')).toBe(0);
+		/* The same change applied again changes nothing. */
+		expect(await service.applyTimeZoneChange(change)).toBeNull();
 	});
 });

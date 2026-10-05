@@ -11,6 +11,15 @@ export const capabilities: readonly CapabilityDescriptor[] = [
 		supportsDryRun: true,
 	},
 	{
+		id: 'deploy.start.vercel',
+		version: 1,
+		summary:
+			'Provision PostgreSQL, Blob storage and keys, deploy to Vercel Production and print a one-time first-run setup token.',
+		risk: 'process',
+		requiresApprovedSpec: false,
+		supportsDryRun: true,
+	},
+	{
 		id: 'web.list',
 		version: 1,
 		summary: 'List the addresses this workspace serves module pages at.',

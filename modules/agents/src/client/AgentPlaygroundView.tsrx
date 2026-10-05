@@ -16,6 +16,7 @@ import {
 	loadAgentWorker,
 	observeAgentRun,
 } from './api.ts';
+import { workerIndicator } from './presentation.ts';
 import { RunTimeline } from './RunTimeline.tsrx';
 import { createAgentClientState } from './state.ts';
 
@@ -39,13 +40,21 @@ export function AgentPlaygroundView(props: AgentPlaygroundViewProps) @{
 		client.state.playgroundKey,
 	);
 	const [worker, setWorker] = useValue(client.state.worker);
+	const [workerReadFailed, setWorkerReadFailed] = useValue(
+		client.state.workerReadFailed,
+	);
 	const [status, setStatus] = useValue(client.state.status);
 	const [error, setError] = useValue(client.state.error);
 	const activeAgents = agents.filter((agent) => agent.status === 'active');
+	const indicator = workerIndicator(worker, workerReadFailed);
 
-	const refreshWorker = () => loadAgentWorker().then(setWorker).catch(
-		() => setWorker(null),
-	);
+	const refreshWorker = () => loadAgentWorker().then((current) => {
+		setWorker(current);
+		setWorkerReadFailed(false);
+	}).catch(() => {
+		setWorker(null);
+		setWorkerReadFailed(true);
+	});
 
 	useEffect(() => {
 		setStatus('loading');
@@ -148,26 +157,17 @@ export function AgentPlaygroundView(props: AgentPlaygroundViewProps) @{
 					<span
 						class={[
 							'playground-live',
-							worker?.online !== true && 'playground-live--offline',
+							indicator.state === 'offline' && 'playground-live--offline',
+							indicator.state === 'failed' && 'playground-live--failed',
 						]}
-						title={worker
-							? t('agents.playground.worker.slots', {
-									inFlight: worker.inFlight,
-									concurrency: worker.concurrency,
-								})
-							: t('agents.playground.worker.unavailable')}
+						data-worker-state={indicator.state}
+						title={indicator.title}
 					>
 						<i
-							class={['ui-dot', worker?.online !== true && 'ui-dot--muted']}
+							class={['ui-dot', !indicator.live && 'ui-dot--muted']}
 							aria-hidden="true"
 						></i>
-						{worker === null
-							? t('agents.playground.worker.unknown')
-							: worker.online
-								? t('agents.playground.worker.online', {
-										inFlight: worker.inFlight,
-									})
-								: t('agents.playground.worker.offline')}
+						{indicator.label}
 					</span>
 				</div>
 				<form class="ui-form" onSubmit={submit}>

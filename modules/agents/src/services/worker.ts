@@ -3,7 +3,6 @@ import { ASSISTANT_AGENT_ID } from '../agent/assistant.ts';
 import type {
 	AgentRun,
 	AgentRunExecution,
-	AgentWorkerStatus,
 	AssistantTurnOutcome,
 } from '../domain/types.ts';
 import type { AgentRepository, RecoverableRun } from './repository.ts';
@@ -15,6 +14,21 @@ import {
 import { AGENT_METERS, type MeterRegistryResolver } from './metering.ts';
 import type { AgentProviderBroker } from './provider-broker.ts';
 import type { AgentRunGrantAuthority } from './run-grant.ts';
+import {
+	WORKER_HEARTBEAT_RETENTION_MS,
+	workerDrainIntervalMs,
+} from './worker-availability.ts';
+
+/* This process's own worker. What a role reports to a person is read from the
+   recorded heartbeats instead (worker-availability.ts). */
+export interface AgentWorkerProcessStatus {
+	readonly workerId: string;
+	readonly online: boolean;
+	readonly concurrency: number;
+	readonly inFlight: number;
+	readonly leaseMs: number;
+	readonly lastDrainAt: number | null;
+}
 
 export interface AgentWorkerOptions {
 	readonly workerId: string;
@@ -22,6 +36,10 @@ export interface AgentWorkerOptions {
 	   restart. Out-of-range values fall back to the last valid one. */
 	readonly concurrency: number | (() => number);
 	readonly leaseMs: number;
+	/* How long dispose lets claimed runs settle before it aborts them. A run
+	   aborted by a shutdown restarts from its input, so a host that stops the
+	   worker on a schedule (a Vercel tick) needs room for a whole run. */
+	readonly drainMs?: number;
 	readonly runGrantAuthority?: AgentRunGrantAuthority;
 	readonly providerBroker?: AgentProviderBroker;
 	/* Resolved when a run settles. Absent, or resolving to null, means the
@@ -88,6 +106,8 @@ export class AgentWorker {
 	#draining: Promise<void> | undefined;
 	#stopped = true;
 	#lastDrainAt: number | null = null;
+	#startedAt = 0;
+	#lastHeartbeatAt: number | null = null;
 	#poll: ReturnType<typeof setInterval> | undefined;
 	#kickTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -124,13 +144,18 @@ export class AgentWorker {
 
 	async start(): Promise<void> {
 		this.#stopped = false;
+		this.#startedAt = this.#now();
+		this.#lastHeartbeatAt = null;
+		/* Recorded before start resolves, so a role reads online as soon as the
+		   platform reports this worker ready. */
+		await this.#heartbeat();
 		await this.kick();
 		if (this.#stopped || this.#poll !== undefined) return;
 		/* Interrupted runs become claimable only once their lease expires, so a
 		   periodic drain is what makes recovery happen without a new request. */
 		this.#poll = setInterval(
 			() => void this.kick(),
-			Math.max(1_000, Math.floor(this.options.leaseMs / 2)),
+			workerDrainIntervalMs(this.options.leaseMs),
 		);
 		this.#poll.unref?.();
 	}
@@ -144,11 +169,24 @@ export class AgentWorker {
 		this.#scheduled = false;
 	}
 
-	/* Terminal worker teardown. In-flight provider calls are aborted but their
-	   persisted rows stay leased for recovery by the next worker generation. */
+	/* Terminal worker teardown. In-flight provider calls still running after
+	   drainMs are aborted but their persisted rows stay leased for recovery by
+	   the next worker generation. */
 	async dispose(): Promise<void> {
 		this.stop();
 		await this.#draining;
+		const drainMs = this.options.drainMs ?? 0;
+		if (drainMs > 0 && this.#inFlight.size > 0) {
+			await new Promise<void>((resolve) => {
+				const settled = () => {
+					clearTimeout(timer);
+					this.#idleWaiters.delete(settled);
+					resolve();
+				};
+				const timer = setTimeout(settled, drainMs);
+				this.#idleWaiters.add(settled);
+			});
+		}
 		for (const controller of this.#inFlight.values()) {
 			controller.abort(SHUTDOWN);
 		}
@@ -158,7 +196,7 @@ export class AgentWorker {
 
 	/* Online means the periodic drain runs, so queued and interrupted work
 	   is picked up without a request. */
-	status(): AgentWorkerStatus {
+	status(): AgentWorkerProcessStatus {
 		return {
 			workerId: this.options.workerId,
 			online: this.#poll !== undefined && !this.#stopped,
@@ -208,9 +246,40 @@ export class AgentWorker {
 		return this.#concurrency;
 	}
 
+	/* At most once per drain interval, whether or not a slot is free and while
+	   long runs execute. A failed write never stops the drain or a run. */
+	async #heartbeat(): Promise<void> {
+		const now = this.#now();
+		if (
+			this.#lastHeartbeatAt !== null &&
+			now - this.#lastHeartbeatAt < workerDrainIntervalMs(this.options.leaseMs)
+		) {
+			return;
+		}
+		this.#lastHeartbeatAt = now;
+		try {
+			await this.repository.recordWorkerHeartbeat(
+				{
+					workerId: this.options.workerId,
+					startedAt: this.#startedAt,
+					heartbeatAt: now,
+					concurrency: this.#currentConcurrency(),
+				},
+				now - WORKER_HEARTBEAT_RETENTION_MS,
+			);
+		} catch (error) {
+			console.error(
+				'[agents] worker heartbeat could not be recorded:',
+				error instanceof Error ? error.message : error,
+			);
+		}
+	}
+
 	async #drain(): Promise<void> {
 		if (this.#stopped) return;
 		this.#lastDrainAt = this.#now();
+		await this.#heartbeat();
+		if (this.#stopped) return;
 		const slots = this.#currentConcurrency() - this.#inFlight.size;
 		if (slots <= 0) return;
 		const candidates = await this.repository.listRecoverableRuns(

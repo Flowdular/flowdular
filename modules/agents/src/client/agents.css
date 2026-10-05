@@ -212,6 +212,10 @@
 	color: var(--danger);
 }
 
+.playground-live--failed {
+	color: var(--warning);
+}
+
 .agent-empty-note {
 	margin: 0;
 	padding: 12px;

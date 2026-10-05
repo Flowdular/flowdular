@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: documents.core
-specVersion: 0.3.4
+specVersion: 0.3.5
 status: approved
 name: Documents Core
 description: Lets a workspace attach files to its records through the platform storage port, owning only the document metadata and the reference to the record, with tenant-scoped keys, encrypted bytes, size and type limits, and a scan state, so a module attaches by reference and never holds bytes, and reads the text out of a stored document or of bytes a module hands over, so agents, workflows and members can read what was uploaded, and renders PDF and DOCX documents from versioned templates a module ships and a workspace may edit, stored as attachments of the record they describe.
@@ -28,6 +28,8 @@ locales:
   - en
   - pl
 invariants:
+  - Platform start seals the registered template catalogue in web and worker roles. Only startWorker starts the text extraction and queued render pollers; their request-path wake callbacks never claim or perform queued work in web role. The existing bounded inline render remains available to an authenticated request. Combined mode starts both pollers after sealing.
+  - Stopping the worker drains both document pollers before their leases are released, leaving an unfinished queued render or extraction to the existing fenced recovery path.
   - Persistence runs on the shared asynchronous database contract with explicit PostgreSQL SQL; every tenant table enables and forces row-level security with USING and WITH CHECK policies bound to the transaction-local tenant id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
   - Bytes live only in the platform storage port under a key whose first segment is the tenant id taken from the principal; documents.core stores metadata and never a byte, and a module attaches a document to its record by reference through the public capability documents.attachments.v1, never by reading the store. The capability offers list, open and delete on that reference; open streams the decrypted bytes through documents.core's own storage access and answers nothing for a reference with no readable object behind it, an infected or deleted document included, so the storage key never leaves this module.
   - An upload is one request whose body is the file, bounded by the platform object limit, with the declared content type checked against the platform allowlist and the magic bytes before the object is stored; a refusal leaves no metadata row and no object.
@@ -581,6 +583,14 @@ decisions:
     answer: Administration, section platform, beside the other workspace configuration screens.
     decidedBy: default
 acceptanceScenarios:
+  - id: DOCUMENTS-WEB-WORKER-ROLE
+    given: A template is registered and an authorized web request queues a render too large for inline execution.
+    when: The web role starts and accepts the request before a separate worker role starts.
+    then: The web role serves the sealed template catalogue and persists the queued render without a wake-driven claim or background timer, and the worker role later performs it under the existing generation and storage rules.
+  - id: DOCUMENTS-WORKER-DRAIN
+    given: A worker role is extracting text or rendering a queued document.
+    when: The platform stops that worker role.
+    then: Both pollers stop accepting passes, in-flight work drains before leases are released, and incomplete work remains recoverable without a duplicate document.
   - id: DOCUMENTS-UPLOAD
     given: A principal holding documents.files.manage uploads a PDF under the object limit for a record reference.
     when: The upload completes.

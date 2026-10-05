@@ -62,8 +62,8 @@ export function createServerComposition(
 			   closed: a job can never be started against a target that appears
 			   afterwards. */
 			runtime.ports.seal();
-			runtime.start();
 		},
+		startWorker: () => runtime.start(),
 		stop: () => runtime.quiesce(),
 		dispose: () => runtime.dispose(),
 	};

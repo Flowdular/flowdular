@@ -27,13 +27,13 @@ export interface SessionSweepRunnerOptions {
    and a session token hash is one of them. The sweep publishes what kind of
    value was thrown and never the value itself, so the runner's own error line
    is written through this logger rather than the process one. */
-function sweepLogger(): Logger {
+export function sweepLogger(job: string = SESSION_SWEEP_JOB): Logger {
 	const logger = serverLogger();
 	return {
 		...logger,
 		error: (message, event) =>
 			logger.error(message, {
-				module: event?.module ?? SESSION_SWEEP_JOB,
+				module: event?.module ?? job,
 				fields: { error: event?.err instanceof Error ? 'Error' : 'non-error' },
 			}),
 	};

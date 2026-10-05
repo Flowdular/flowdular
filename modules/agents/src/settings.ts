@@ -8,6 +8,7 @@ import {
 } from '@flowdular/kernel';
 import { providerHostAllowlist } from './services/outbound-policy.ts';
 import { agentRuntimeOptionsFromEnvironment } from './server/runtime.ts';
+import { DEFAULT_WORKER_FRESHNESS_MS } from './services/worker-availability.ts';
 
 export const AGENTS_MODULE_ID = 'agents.core';
 
@@ -67,6 +68,20 @@ export const AGENTS_MODULE_SETTINGS = defineModuleSettings({
 			descriptionKey: 'agents.settings.workerLeaseMs.description',
 			description:
 				'How long a claimed run stays owned by a worker before another worker may recover it. Applied to new claims.',
+		},
+		workerFreshnessMs: {
+			type: 'number',
+			defaultValue: DEFAULT_WORKER_FRESHNESS_MS,
+			min: 30_000,
+			max: 86_400_000,
+			visibility: 'private',
+			client: false,
+			scope: 'platform',
+			labelKey: 'agents.settings.workerFreshnessMs.label',
+			label: 'Worker freshness window (ms)',
+			descriptionKey: 'agents.settings.workerFreshnessMs.description',
+			description:
+				"How recent a worker's heartbeat must be for the worker to count as online. Never shorter than two queue drains. When the worker runs only on a schedule, set it above the schedule's period.",
 		},
 		providerReadinessTtlMs: {
 			type: 'number',
@@ -197,6 +212,8 @@ export interface AgentSettingsReader {
 	prime(tenantId: string): Promise<void>;
 	workerConcurrency(): number;
 	workerLeaseMs(): number;
+	/** Read on every worker status request. */
+	workerFreshnessMs(): number;
 	providerReadinessTtlMs(): number;
 	providerHostAllowlist(): ReadonlySet<string>;
 	/** Read on every assistant request, never cached at boot. */
@@ -258,6 +275,12 @@ export function agentSettings(context: {
 			),
 		workerLeaseMs: () =>
 			read(PLATFORM_SETTINGS_TENANT, 'workerLeaseMs', fallback.workerLeaseMs),
+		workerFreshnessMs: () =>
+			read(
+				PLATFORM_SETTINGS_TENANT,
+				'workerFreshnessMs',
+				DEFAULT_WORKER_FRESHNESS_MS,
+			),
 		providerReadinessTtlMs: () =>
 			read(
 				PLATFORM_SETTINGS_TENANT,

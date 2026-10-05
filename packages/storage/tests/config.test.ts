@@ -79,6 +79,54 @@ describe('storageConfigFromEnvironment', () => {
 		}
 	});
 
+	it('accepts the Vercel Blob adapter in production with a connected store', () => {
+		const config = storageConfigFromEnvironment(
+			{
+				NODE_ENV: 'production',
+				FD_STORAGE_ADAPTER: 'vercel-blob',
+				FD_STORAGE_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString('base64'),
+				BLOB_STORE_ID: 'store_abc123',
+			},
+			'/workspace',
+		);
+
+		expect(config.adapter).toBe('vercel-blob');
+		expect(config.vercelBlob).toEqual({
+			storeId: 'store_abc123',
+			token: undefined,
+		});
+	});
+
+	it('takes a read-write token for the Vercel Blob adapter outside Vercel', () => {
+		const config = storageConfigFromEnvironment(
+			{
+				FD_STORAGE_ADAPTER: 'vercel-blob',
+				BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_abc123_secret',
+			},
+			'/w',
+		);
+
+		expect(config.vercelBlob).toEqual({
+			storeId: undefined,
+			token: 'vercel_blob_rw_abc123_secret',
+		});
+	});
+
+	it('refuses the Vercel Blob adapter without a store id or a token', () => {
+		expect(() =>
+			storageConfigFromEnvironment(
+				{
+					NODE_ENV: 'production',
+					FD_STORAGE_ADAPTER: 'vercel-blob',
+					FD_STORAGE_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString('base64'),
+					BLOB_STORE_ID: ' ',
+					BLOB_READ_WRITE_TOKEN: '',
+				},
+				'/w',
+			),
+		).toThrow(/BLOB_STORE_ID.*BLOB_READ_WRITE_TOKEN/);
+	});
+
 	it('refuses an object limit outside the supported range', () => {
 		for (const value of ['0', '512', 'many', String(512 * 1024 * 1024)]) {
 			expect(() =>
@@ -94,6 +142,9 @@ describe('storageConfigFromEnvironment', () => {
 		expect(() =>
 			storageConfigFromEnvironment({ FD_STORAGE_ADAPTER: 'gcs' }, '/w'),
 		).toThrow(/FD_STORAGE_ADAPTER/);
+		expect(() =>
+			storageConfigFromEnvironment({ FD_STORAGE_ADAPTER: 'gcs' }, '/w'),
+		).toThrow(/"vercel-blob"/);
 	});
 });
 

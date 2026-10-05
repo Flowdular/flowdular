@@ -139,6 +139,7 @@ export function createAuditRuntime(options: AuditRuntimeOptions): AuditRuntime {
 			await migration.release();
 		}
 		const runtimeLease = await acquire(options.purpose ?? 'runtime');
+		leases = [runtimeLease];
 		/* The sweep finds due classes across workspaces; every class it picks is
 		   read again under the workspace the routing row named. */
 		const backgroundLease = await acquire('background');
@@ -149,8 +150,16 @@ export function createAuditRuntime(options: AuditRuntimeOptions): AuditRuntime {
 		});
 	};
 
+	/* A failed open keeps nothing, not even its rejection, so the next caller
+	   (a later worker tick on the same composition) opens again. */
 	const repositoryInstance = (): Promise<AuditRepository> =>
-		(repositoryPromise ??= openRepository());
+		(repositoryPromise ??= openRepository().catch(async (error: unknown) => {
+			const held = leases;
+			leases = [];
+			repositoryPromise = undefined;
+			for (const lease of held) await lease.release();
+			throw error;
+		}));
 
 	/* audit.core declares its own ledgers into the platform registry like any
 	   other module, so the registry has no privileged entry. It names itself

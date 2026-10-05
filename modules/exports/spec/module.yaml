@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: exports.core
-specVersion: 0.2.6
+specVersion: 0.2.7
 status: approved
 name: Exports Core
 description: Exports any list endpoint that already pages with the platform keyset helpers as one CSV file, through an export job that streams the list's own pages under the requester's grants, writes an RFC 4180 file with a UTF-8 byte order mark to the storage port, bounds the result by rows and by bytes, and answers a short-lived signed read URL; the list itself stays with the module that owns it and registers a declaration through the public capability exports.lists.v1.
@@ -21,6 +21,8 @@ locales:
   - en
   - pl
 invariants:
+  - Platform start seals the export-list catalogue in web and worker roles after all owning modules have registered their lists. Only startWorker starts the export job poller; web requests persist jobs without claiming them. Combined mode starts the poller after the same seal.
+  - Stopping the worker drains the export job poller before the runtime releases its leases, and an unfinished job remains subject to its existing fenced claim and storage cleanup rules.
   - Persistence runs on the shared asynchronous database contract with explicit PostgreSQL SQL; the job table enables and forces row-level security with USING and WITH CHECK policies bound to the transaction-local tenant id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
   - An exportable list is a declaration a module registers through the public capability exports.lists.v1 while the platform composes, built with defineListExport from the server package, carrying a dotted id prefixed by the registering module id, a label, the permission the list endpoint itself requires, 1 to 64 columns of key, header and value, and the same page(principal, cursor, limit) the list endpoint already implements. Registration is sealed before the first request, so the catalogue a job was started against cannot change under it, and a declaration naming a module other than the one registering it is refused where it is declared. The same capability answers find(id), the registered declaration or null, so another module (adapters.core pushing a list to another system) pages a list through the one page function exports.core itself walks, applying the list's permission to the principal it pages under.
   - exports.core reads no other module's database. Every row it writes into a file came back from that module's own page call, under the same cursor contract, the same ordering and the same tenant predicate the list endpoint applies, so an export can never carry a row the endpoint would not have returned.
@@ -184,6 +186,14 @@ decisions:
     answer: 30 days as the data class default; the retention pass deletes the storage object and then the job row, so no file outlives the job that names it.
     decidedBy: default
 acceptanceScenarios:
+  - id: EXPORTS-WEB-WORKER-ROLE
+    given: A list is registered and an authorized principal starts an export in the web role.
+    when: The web role accepts the request before a separate worker role starts.
+    then: The web role serves the sealed list catalogue and persists a queued job without starting a poller or claiming it, and the worker role later writes the bounded CSV under the requester's existing permission snapshot.
+  - id: EXPORTS-WORKER-DRAIN
+    given: A worker role is writing an export file under a claim.
+    when: The platform stops that worker role.
+    then: Its poller starts no further pass, in-flight work drains before leases are released, and the job remains recoverable or settled under the existing claim fence.
   - id: EXPORTS-START
     given: A registered list of five rows and a principal holding exports.lists.manage and that list's own permission.
     when: The principal starts an export and the poll loop runs one pass.

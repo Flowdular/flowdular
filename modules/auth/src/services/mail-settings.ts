@@ -350,7 +350,7 @@ export function guardMailSettings(
 	return {
 		declare: (declaration) => settings.declare(declaration),
 		declarations: () => settings.declarations(),
-		prime: (tenantId) => settings.prime(tenantId),
+		prime: (tenantId, options) => settings.prime(tenantId, options),
 		get: (tenantId, moduleId, key) => settings.get(tenantId, moduleId, key),
 		list: (tenantId) => settings.list(tenantId),
 		async set(tenantId, moduleId, key, value, actor) {
@@ -363,5 +363,6 @@ export function guardMailSettings(
 			await settings.set(tenantId, moduleId, key, value, actor);
 		},
 		onChange: (listener) => settings.onChange(listener),
+		changesAfter: (request) => settings.changesAfter(request),
 	};
 }

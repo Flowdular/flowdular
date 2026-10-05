@@ -61,7 +61,7 @@ export function createServerComposition(
 	);
 	return {
 		routes: createWorkflowsRoutes(context.auth, runtime),
-		start: () => runtime.start(),
+		startWorker: () => runtime.start(),
 		stop: () => runtime.stop(),
 		dispose: () => runtime.dispose(),
 	};

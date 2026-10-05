@@ -1,6 +1,10 @@
 import { createContext } from '@octanejs/app-core';
+import { createModuleSettingsRuntime } from '@flowdular/kernel';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { createAuthenticationMiddleware } from '../src/middleware/authentication.ts';
 import { createApiTokenRateLimiter } from '../src/middleware/rate-limit.ts';
+import { createAuthSettingsStore } from '../src/services/settings-store.ts';
+import { createAuthModuleSettings } from '../src/settings.ts';
 import {
 	closeAuthTestDatabases,
 	ORIGIN,
@@ -48,7 +52,10 @@ async function workspace(defaultLimit?: number) {
 
 /* One read through the whole middleware chain, the way a served request
    reaches it. */
-function read(runtime: TestRuntime, token: string): Promise<Response> {
+function read(
+	runtime: Pick<TestRuntime, 'middleware'>,
+	token: string,
+): Promise<Response> {
 	const context = createContext(
 		new Request(`${ORIGIN}/api/catalog/items`, {
 			headers: { authorization: `Bearer ${token}` },
@@ -93,6 +100,39 @@ describe('API token rate limit', () => {
 		const token = await issue();
 		expect((await read(runtime, token)).status).toBe(200);
 		expect((await read(runtime, token)).status).toBe(429);
+	});
+
+	it('applies a default another process changed once its snapshot is past the staleness bound', async () => {
+		const { runtime, issue } = await workspace(0);
+		const token = await issue();
+		const clock = { now: 1_000_000 };
+		const elsewhere = createModuleSettingsRuntime(
+			createAuthSettingsStore(() => Promise.resolve(runtime.repository)),
+			{ now: () => clock.now },
+		);
+		elsewhere.declare(createAuthModuleSettings({ allowSignUp: true }));
+		await elsewhere.prime('');
+		const served = createAuthenticationMiddleware(
+			runtime.service,
+			runtime.cookie,
+			{
+				primeTenant: (tenantId) => elsewhere.prime(tenantId),
+				defaultRateLimit: () =>
+					elsewhere.get<number>('', 'auth.core', 'apiTokenRateLimit'),
+			},
+		);
+
+		await runtime.moduleSettings.set(
+			'',
+			'auth.core',
+			'apiTokenRateLimit',
+			1,
+			'operator',
+		);
+		clock.now += 5_001;
+
+		expect((await read({ middleware: served }, token)).status).toBe(200);
+		expect((await read({ middleware: served }, token)).status).toBe(429);
 	});
 
 	it('leaves a token unlimited when the deployment removed the ceiling', async () => {

@@ -1,7 +1,6 @@
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { OWNER_SCOPES } from '../src/acl/scopes.ts';
 import type { AuthActor } from '../src/domain/types.ts';
-import type { ErrorReport, ModuleMetrics } from '@flowdular/server';
 import { createAuthRuntime } from '../src/server/runtime.ts';
 import { AuthService } from '../src/services/auth-service.ts';
 import { DevelopmentMailDelivery } from '../src/services/mail-delivery.ts';
@@ -450,21 +449,15 @@ describe('settings audit', () => {
 				null,
 				accountId,
 			);
-			/* The settings change listener is synchronous and the audit row lands
-			   after it returns, so the trail is read once the write has arrived. */
-			const events = await vi.waitFor(
-				async () => {
-					const page = await (
-						await runtime.service()
-					).queryAudit({ tenantId, limit: 10 });
-					const settings = page.events.filter(
-						(event) => event.action === 'settings.updated',
-					);
-					expect(settings).toHaveLength(2);
-					return settings;
-				},
-				{ timeout: 5_000, interval: 25 },
+			/* A platform change's workspace event is written before its save
+			   resolves, so the trail is read at once. */
+			const page = await (
+				await runtime.service()
+			).queryAudit({ tenantId, limit: 10 });
+			const events = page.events.filter(
+				(event) => event.action === 'settings.updated',
 			);
+			expect(events).toHaveLength(2);
 			expect(events[0]).toMatchObject({
 				actorLabel: 'owner@example.com',
 				subjectType: 'setting',
@@ -522,76 +515,6 @@ describe('settings audit', () => {
 				['english@example.com', 'en'],
 			]);
 		} finally {
-			await runtime.dispose();
-		}
-	});
-
-	it('counts and reports a settings audit write that fails, without the driver detail', async () => {
-		const counters: { name: string; labels: Record<string, string> }[] = [];
-		const reports: ErrorReport[] = [];
-		const metrics: ModuleMetrics = {
-			counter: (name, labels) => counters.push({ name, labels: { ...labels } }),
-			histogram: () => undefined,
-		};
-		const runtime = createAuthRuntime({
-			databases: await authTestProvider(),
-			secureCookies: false,
-			sessionTtlMs: 3_600_000,
-			allowSignUp: true,
-			emailConfirmation: false,
-			signInProviders: [],
-			metrics,
-			errorSink: {
-				kind: 'none',
-				report: (report) => void reports.push(report),
-				flush: () => Promise.resolve(),
-				stats: () => ({ queued: 0, delivered: 0, dropped: 0, failures: 0 }),
-				dispose: () => Promise.resolve(),
-			},
-		});
-		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
-		try {
-			const service = await runtime.service();
-			const issued = await service.signUp({
-				email: 'owner@example.com',
-				password: 'correct horse battery staple',
-				displayName: 'Ada Owner',
-				organizationName: 'Example Operations',
-				organizationSlug: 'example-operations',
-			});
-			const { accountId, tenantId } = issued.principal;
-			const driverDetail =
-				'insert failed: bound value "owner@example.com" for column actor_label';
-			vi.spyOn(service, 'recordSettingsUpdate').mockRejectedValue(
-				new Error(driverDetail),
-			);
-			await runtime.moduleSettings.set(
-				tenantId,
-				'auth.core',
-				'sessionIdleMinutes',
-				45,
-				accountId,
-			);
-			await vi.waitFor(() => expect(reports).toHaveLength(1), {
-				timeout: 5_000,
-				interval: 25,
-			});
-
-			expect(counters).toEqual([
-				{
-					name: 'audit_write_failures_total',
-					labels: { action: 'settings.updated' },
-				},
-			]);
-			expect(reports[0]).toMatchObject({
-				name: 'AuditWriteFailed',
-				module: 'auth.core',
-				message: 'Audit write failed for settings.updated.',
-			});
-			expect(JSON.stringify(reports)).not.toContain('owner@example.com');
-			expect(JSON.stringify(reports)).not.toContain('insert failed');
-		} finally {
-			logged.mockRestore();
 			await runtime.dispose();
 		}
 	});

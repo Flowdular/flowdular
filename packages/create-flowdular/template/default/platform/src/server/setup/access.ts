@@ -52,10 +52,25 @@ export function generateSetupToken(): string {
 	return randomBytes(SETUP_TOKEN_BYTES).toString('base64url');
 }
 
+/** What FD_SETUP_TOKEN_SHA256 holds: the lowercase hex SHA-256 of the token
+ *  `flowdular deploy start` printed, so the token itself never reaches the host. */
+export function setupTokenDigest(token: string): string {
+	return createHash('sha256').update(token, 'utf8').digest('hex');
+}
+
 export function createSetupAccess(
-	expectedToken: string,
+	expected: string | { readonly sha256: string },
 	now: () => number = Date.now,
 ): SetupAccess {
+	if (typeof expected !== 'string' && !/^[0-9a-f]{64}$/.test(expected.sha256)) {
+		throw new Error(
+			'FD_SETUP_TOKEN_SHA256 must be the 64 character lowercase hex SHA-256 of the setup token.',
+		);
+	}
+	const expectedDigest = Buffer.from(
+		typeof expected === 'string' ? setupTokenDigest(expected) : expected.sha256,
+		'hex',
+	);
 	let failures = 0;
 	let lockedUntil = 0;
 	/* One operator installs one deployment. Holding a single session makes the
@@ -80,7 +95,10 @@ export function createSetupAccess(
 			if (
 				presented === null ||
 				presented.length === 0 ||
-				!constantTimeEquals(presented, expectedToken)
+				!timingSafeEqual(
+					createHash('sha256').update(presented, 'utf8').digest(),
+					expectedDigest,
+				)
 			) {
 				failures += 1;
 				if (failures >= MAX_TOKEN_FAILURES) {
