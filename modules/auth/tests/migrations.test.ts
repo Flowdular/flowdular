@@ -1980,7 +1980,7 @@ describe('auth migrations', () => {
 				relname: string;
 				relforcerowsecurity: boolean;
 			}>({
-				text: "SELECT relname, relforcerowsecurity FROM pg_class WHERE relname = ANY(ARRAY['auth_memberships', 'auth_membership_scopes', 'auth_roles']) ORDER BY relname",
+				text: "SELECT relation.relname, relation.relforcerowsecurity FROM pg_class AS relation JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace WHERE namespace.nspname = current_schema() AND relation.relname = ANY(ARRAY['auth_memberships', 'auth_membership_scopes', 'auth_roles']) ORDER BY relation.relname",
 			});
 			expect(force.rows).toEqual([
 				{ relname: 'auth_membership_scopes', relforcerowsecurity: true },
