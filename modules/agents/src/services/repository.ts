@@ -67,6 +67,61 @@ export class ModuleAgentBindingConflictError extends Error {
 	}
 }
 
+/* The durable catalogue holds a higher revision of the agent than this
+   instance registers, so this instance must not write or run it. */
+export class ModuleAgentRevisionSupersededError extends Error {
+	constructor(
+		readonly agentId: string,
+		readonly catalogRevision: number,
+	) {
+		super(
+			`A newer deployment registered revision ${catalogRevision} of ${agentId}.`,
+		);
+		this.name = 'ModuleAgentRevisionSupersededError';
+	}
+}
+
+/* A background pass logs a skipped tenant without naming it or quoting a
+   message that might carry its data; a driver's SQLSTATE tells faults apart. */
+export function stableErrorCode(error: unknown): string {
+	const code =
+		error && typeof error === 'object' && 'code' in error
+			? String((error as { code: unknown }).code)
+			: '';
+	return /^[A-Z0-9_]{1,64}$/.test(code) ? code : 'UNKNOWN';
+}
+
+export interface ModuleAgentCatalogReconciliation {
+	/* Agent id to the higher revision the catalogue holds. */
+	readonly superseded: ReadonlyMap<string, number>;
+}
+
+export interface ModuleAgentBindingRead {
+	readonly bindings: ReadonlyMap<string, ModuleAgentBinding>;
+	/* Agent id to the higher revision the catalogue holds. Their bindings are
+	   returned as stored, never advanced. */
+	readonly superseded: ReadonlyMap<string, number>;
+}
+
+export interface AgentWorkerHeartbeat {
+	readonly workerId: string;
+	readonly startedAt: number;
+	readonly heartbeatAt: number;
+	readonly concurrency: number;
+}
+
+export interface AgentWorkerHeartbeatSummary {
+	/* Workers whose newest heartbeat is inside the window. */
+	readonly fresh: number;
+	readonly concurrency: number;
+	readonly newestAt: number | null;
+}
+
+export interface AgentBackgroundPassOptions {
+	/* Checked between tenants; true ends the pass where it stands. */
+	readonly stopped?: () => boolean;
+}
+
 export interface RecoverableRun {
 	readonly tenantId: string;
 	readonly runId: string;
@@ -111,10 +166,39 @@ export interface AgentReadOptions {
 
 export interface AgentRepository {
 	close(): Promise<void>;
+	/* Writes only the definitions the catalogue lacks or holds at a lower
+	   revision, and never touches a tenant binding. */
 	reconcileModuleAgents(
 		definitions: readonly ModuleAgentDefinition[],
 		reconciledAt: number,
+	): Promise<ModuleAgentCatalogReconciliation>;
+	/* One tenant's bindings of the served definitions, each built from a lower
+	   definition revision advanced first, inside that tenant's transaction. */
+	readModuleAgentBindings(
+		tenantId: string,
+		definitions: readonly ModuleAgentDefinition[],
+		at: number,
+	): Promise<ModuleAgentBindingRead>;
+	/* Background role, identifiers and revisions only. */
+	listStaleModuleAgentBindingTenants(
+		agentId: string,
+		definitionRevision: number,
+		afterTenant: string,
+		limit: number,
+	): Promise<readonly string[]>;
+	/* One identifiers-only read on the background role. Requests adopt their
+	   own tenant first while it returns true. */
+	agentRevisionAdoptionOwed(): Promise<boolean>;
+	/* Adopts every owed tenant in pages; true when none is left owed. */
+	adoptCurrentAgentRevisions(
+		options?: AgentBackgroundPassOptions,
+	): Promise<boolean>;
+	recordWorkerHeartbeat(
+		heartbeat: AgentWorkerHeartbeat,
+		removeBefore: number,
 	): Promise<void>;
+	workerHeartbeats(freshAfter: number): Promise<AgentWorkerHeartbeatSummary>;
+	countRunningRuns(tenantId: string): Promise<number>;
 	listModuleAgentBindings(
 		tenantId: string,
 	): Promise<readonly ModuleAgentBinding[]>;

@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: approvals.core
-specVersion: 0.1.17
+specVersion: 0.1.18
 status: approved
 name: Approvals Core
 description: Turns a policy decision that needs a person into an approval request with named requirements, a decision record that is append-only, notifications to the people who can decide, and a workflow node that waits for the decision, so every module delegates who may decide instead of writing its own approval state machine.
@@ -20,6 +20,8 @@ locales:
   - en
   - pl
 invariants:
+  - The approval capability and authenticated routes are available after composition in web and worker roles. Only startWorker reads the expiry interval and starts the expiry poller; a web request may open or decide a request without starting that poller. Combined mode starts it as before, and worker readiness waits for its initialization.
+  - Stopping the worker drains the expiry poller before its database leases are released; an expiry that was not recorded remains eligible for the next worker pass.
   - Persistence runs on the shared asynchronous database contract with explicit PostgreSQL SQL; every tenant table enables and forces row-level security with USING and WITH CHECK policies bound to the transaction-local tenant id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
   - A module never decides an approval itself. It evaluates its policies through the kernel policy seam; when the decision reports requiresApproval, the module opens a request through the public capability approvals.requests.v1 and continues only when the request is approved.
   - A request names the subject module, the subject reference, the permission and action it gates, the requirement resolved at creation into the set of eligible deciders (members holding the named role or scope in the workspace, excluding the requester), the number of decisions needed, and the expiry; eligibility is resolved again at decision time so a member who lost the role after the request cannot decide.
@@ -273,6 +275,14 @@ decisions:
     answer: The subject reference encodes the capability id and the digest of the exact invocation input; once approved the request yields a signed grant bound to the workspace, the capability, the digest and a one hour window, which the runner takes as the --grant flag and the harness as the run's grants. The token is read through the grant operation by the subject module alone, derived on read from the row and FD_APPROVAL_GRANT_KEY rather than stored, and the issuance is written to the ledger in the approving transaction; the harness spends a grant on one call, the runner cannot record use and is bounded by the window.
     decidedBy: default
 acceptanceScenarios:
+  - id: APPROVALS-WEB-WORKER-ROLE
+    given: An approval request is open and the web and worker roles compose the same module set.
+    when: The web role serves an approval read or decision and a separate worker role starts later.
+    then: The web role does not start an expiry timer or claim expiry work, while the worker initializes the interval and expires eligible requests under the existing tenant and decision rules.
+  - id: APPROVALS-WORKER-DRAIN
+    given: A worker role is checking an expiring approval request.
+    when: The platform stops that worker role.
+    then: No further expiry pass begins, the current pass drains before leases are released, and any unrecorded expiry remains recoverable by another worker.
   - id: APPROVALS-OPEN
     given: A subject module needs a person to agree to an action on one of its records, with a role requirement and a count of 1.
     when: The module opens a request through approvals.requests.v1 for a member.

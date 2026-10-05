@@ -440,14 +440,18 @@ export interface AgentActionInvocation {
 	readonly leaseExpiresAt: number | null;
 }
 
-/* What the playground shows about the process that executes runs. */
+export type AgentWorkerState = 'online' | 'offline' | 'not-seen';
+
+/* Read from the recorded worker heartbeats, so every role answers the same. */
 export interface AgentWorkerStatus {
-	readonly workerId: string;
+	readonly state: AgentWorkerState;
 	readonly online: boolean;
+	/* Summed over the workers seen within the freshness window. */
 	readonly concurrency: number;
+	/* The asking workspace's own running runs. */
 	readonly inFlight: number;
 	readonly leaseMs: number;
-	readonly lastDrainAt: number | null;
+	readonly lastHeartbeatAt: number | null;
 }
 
 export interface AgentUsageBucket {

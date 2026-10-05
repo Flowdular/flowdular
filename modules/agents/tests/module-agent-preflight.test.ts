@@ -101,15 +101,19 @@ describe('module agent boot preflight', () => {
 		).toHaveLength(1);
 	});
 
-	it('rejects drift and downgrade using the persisted high-water revision', async () => {
+	it('AGENTS-ROLLING-OLDER-INSTANCE rejects drift but prepares a lower revision than the catalogue holds', async () => {
 		await registered(2);
 
 		await expect(
 			preflightModuleAgentDefinitions(database.databases, []),
 		).resolves.toEqual([]);
-		await expect(
-			preflightModuleAgentDefinitions(database.databases, [definition(1)]),
-		).rejects.toThrow(/MODULE_AGENT_REVISION_DOWNGRADE/);
+		/* An older deployment still serving during a rolling deploy, or one rolled
+		   back below the catalogue, is superseded when it opens, never refused. */
+		expect(
+			await preflightModuleAgentDefinitions(database.databases, [
+				definition(1),
+			]),
+		).toHaveLength(1);
 		await expect(
 			preflightModuleAgentDefinitions(database.databases, [
 				definition(2, 'Changed in place'),
@@ -135,8 +139,10 @@ describe('module agent boot preflight', () => {
 			await preflightModuleAgentDefinitions(noMigration, [definition(2)]),
 		).toHaveLength(1);
 		await expect(
-			preflightModuleAgentDefinitions(noMigration, [definition(1)]),
-		).rejects.toThrow(/MODULE_AGENT_REVISION_DOWNGRADE/);
+			preflightModuleAgentDefinitions(noMigration, [
+				definition(2, 'Changed in place'),
+			]),
+		).rejects.toThrow(/MODULE_AGENT_REVISION_DRIFT/);
 		expect(purposes).toEqual(['runtime', 'runtime']);
 	});
 
@@ -154,7 +160,7 @@ describe('module agent boot preflight', () => {
 		).toHaveLength(1);
 	});
 
-	it('keeps transactional reconciliation as a race-condition defense', async () => {
+	it('AGENTS-CATALOG-CONCURRENT leaves the catalogue at the newer revision a competing process wrote after this one prepared', async () => {
 		/* This generation passed its boot check against an empty catalog. */
 		expect(
 			await preflightModuleAgentDefinitions(database.databases, [
@@ -164,8 +170,26 @@ describe('module agent boot preflight', () => {
 		/* A competing process registered a newer revision in between. */
 		await registered(3);
 
+		const older = service();
+		await older.reconcileModuleAgents([definition(2)]);
+		expect(await older.listModuleAgents('tenant-a')).toMatchObject([
+			{
+				status: 'unavailable',
+				unavailableReason: expect.stringMatching(
+					/^MODULE_AGENT_REVISION_SUPERSEDED/,
+				),
+			},
+		]);
+		/* The newer process reads the catalogue as it left it. */
+		expect(
+			await preflightModuleAgentDefinitions(database.databases, [
+				definition(3),
+			]),
+		).toHaveLength(1);
 		await expect(
-			service().reconcileModuleAgents([definition(2)]),
-		).rejects.toThrow(/MODULE_AGENT_REVISION_DOWNGRADE/);
+			preflightModuleAgentDefinitions(database.databases, [
+				definition(3, 'Changed in place'),
+			]),
+		).rejects.toThrow(/MODULE_AGENT_REVISION_DRIFT/);
 	});
 });

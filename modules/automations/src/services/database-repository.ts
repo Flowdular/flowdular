@@ -14,7 +14,10 @@ import type {
 	AutomationListPage,
 	AutomationListQuery,
 	AutomationScheduleRouting,
+	AutomationAppliedTimeZone,
+	AutomationScheduleRetime,
 	AutomationsRepository,
+	AutomationTimeZoneChange,
 	AutomationTriggerRecord,
 	StoredAutomationSchedule,
 	StoredAutomationTrigger,
@@ -342,6 +345,10 @@ const SQL = {
 	listDueSchedules: `SELECT tenant_id, id, next_run_at
 	 FROM automations_schedules WHERE enabled = 1
 	 AND next_run_at <= $1 ORDER BY next_run_at, id LIMIT $2`,
+	listDueSchedulesAfter: `SELECT tenant_id, id, next_run_at
+	 FROM automations_schedules WHERE enabled = 1
+	 AND next_run_at <= $1 AND (next_run_at, id) > ($3, $4)
+	 ORDER BY next_run_at, id LIMIT $2`,
 	advanceSchedule: `UPDATE automations_schedules SET next_run_at = $1,
 	 last_run_at = $2, last_run_id = $3, last_error = $4,
 	 updated_at = $5
@@ -354,6 +361,20 @@ const SQL = {
 	disableSchedule: `UPDATE automations_schedules SET enabled = 0,
 	 disabled_reason = $1, updated_at = $2
 	 WHERE tenant_id = $3 AND id = $4 AND enabled = 1`,
+	appliedTimeZone: `SELECT applied_revision, changed_at, applied_at
+	 FROM automations_time_zones WHERE tenant_id = $1`,
+	/* A workspace without a record has no row to lock, so one is inserted at
+	   revision 0 first; a concurrent pass waits on that insert and then on the
+	   row lock, and finds the revision the first one recorded. */
+	ensureTimeZone: `INSERT INTO automations_time_zones
+	 (tenant_id, applied_revision, changed_at, applied_at) VALUES ($1, 0, 0, 0)
+	 ON CONFLICT (tenant_id) DO NOTHING`,
+	lockTimeZone: `SELECT applied_revision FROM automations_time_zones
+	 WHERE tenant_id = $1 FOR UPDATE`,
+	pendingAfter: `SELECT * FROM automations_schedules
+	 WHERE tenant_id = $1 AND enabled = 1 AND next_run_at > $2 ORDER BY id`,
+	recordTimeZone: `UPDATE automations_time_zones SET applied_revision = $2,
+	 changed_at = $3, applied_at = $4 WHERE tenant_id = $1`,
 	getTrigger: `SELECT * FROM automations_triggers
 	 WHERE tenant_id = $1 AND id = $2`,
 	/* Read through the cross-tenant background lease. It routes a webhook to a
@@ -511,15 +532,20 @@ export class DatabaseAutomationsRepository implements AutomationsRepository {
 	async listDueSchedules(
 		now: number,
 		limit: number,
+		after?: AutomationScheduleRouting | null,
 	): Promise<readonly AutomationScheduleRouting[]> {
 		const result = await this.handles.background.query<{
 			tenant_id: string;
 			id: string;
 			next_run_at: number | bigint | string;
-		}>({
-			text: SQL.listDueSchedules,
-			parameters: [now, limit],
-		});
+		}>(
+			after
+				? {
+						text: SQL.listDueSchedulesAfter,
+						parameters: [now, limit, after.nextRunAt, after.id],
+					}
+				: { text: SQL.listDueSchedules, parameters: [now, limit] },
+		);
 		return result.rows.map((row) => ({
 			tenantId: row.tenant_id,
 			id: row.id,
@@ -552,26 +578,6 @@ export class DatabaseAutomationsRepository implements AutomationsRepository {
 		return affected === 1;
 	}
 
-	async retimeSchedule(input: {
-		readonly tenantId: string;
-		readonly scheduleId: string;
-		readonly expectedNextRunAt: number;
-		readonly nextRunAt: number;
-		readonly updatedAt: number;
-	}): Promise<boolean> {
-		const affected = await this.#write(input.tenantId, {
-			text: SQL.retimeSchedule,
-			parameters: [
-				input.nextRunAt,
-				input.updatedAt,
-				input.tenantId,
-				input.scheduleId,
-				input.expectedNextRunAt,
-			],
-		});
-		return affected === 1;
-	}
-
 	async disableSchedule(
 		tenantId: string,
 		scheduleId: string,
@@ -583,6 +589,81 @@ export class DatabaseAutomationsRepository implements AutomationsRepository {
 			parameters: [reason, now, tenantId, scheduleId],
 		});
 		return affected === 1;
+	}
+
+	async appliedTimeZone(
+		tenantId: string,
+	): Promise<AutomationAppliedTimeZone | null> {
+		const [row] = await this.#read<{
+			applied_revision: number | bigint | string;
+			changed_at: number | bigint | string;
+			applied_at: number | bigint | string;
+		}>(tenantId, { text: SQL.appliedTimeZone, parameters: [tenantId] });
+		return row
+			? {
+					revision: integer(row.applied_revision, 'applied_revision'),
+					changedAt: integer(row.changed_at, 'changed_at'),
+					appliedAt: integer(row.applied_at, 'applied_at'),
+				}
+			: null;
+	}
+
+	async applyTimeZoneChange(
+		change: AutomationTimeZoneChange,
+		plan: (
+			pending: readonly StoredAutomationSchedule[],
+		) => readonly AutomationScheduleRetime[],
+	): Promise<number | null> {
+		return this.handles.runtime.transaction(
+			async (transaction) => {
+				await transaction.execute({
+					text: SQL.ensureTimeZone,
+					parameters: [change.tenantId],
+				});
+				const locked = await transaction.query<{
+					applied_revision: number | bigint | string;
+				}>({ text: SQL.lockTimeZone, parameters: [change.tenantId] });
+				const applied = locked.rows[0];
+				if (
+					!applied ||
+					integer(applied.applied_revision, 'applied_revision') >=
+						change.revision
+				) {
+					return null;
+				}
+				const pending = await transaction.query<ScheduleRow>({
+					text: SQL.pendingAfter,
+					parameters: [change.tenantId, change.changedAt],
+				});
+				let moved = 0;
+				for (const move of plan(pending.rows.map(schedule))) {
+					const written = await transaction.execute({
+						text: SQL.retimeSchedule,
+						parameters: [
+							move.nextRunAt,
+							change.appliedAt,
+							change.tenantId,
+							move.scheduleId,
+							move.expectedNextRunAt,
+						],
+					});
+					if (written.affectedRows !== 1) continue;
+					moved += 1;
+					await this.#appendAudit(transaction, move.audit);
+				}
+				await transaction.execute({
+					text: SQL.recordTimeZone,
+					parameters: [
+						change.tenantId,
+						change.revision,
+						change.changedAt,
+						change.appliedAt,
+					],
+				});
+				return moved;
+			},
+			{ access: 'write', tenantId: change.tenantId },
+		);
 	}
 
 	async listTriggersPage(
@@ -726,8 +807,6 @@ export class DatabaseAutomationsRepository implements AutomationsRepository {
 		});
 	}
 
-	/* The previous hash is read and the next event written inside one
-	   transaction, so two writers cannot fork the tenant chain. */
 	async appendAuditEvent(
 		event: Omit<
 			AutomationAuditEvent,
@@ -735,56 +814,66 @@ export class DatabaseAutomationsRepository implements AutomationsRepository {
 		>,
 	): Promise<AutomationAuditEvent> {
 		return this.handles.runtime.transaction(
-			async (transaction) => {
-				const latest = await transaction.query<{
-					sequence: number | bigint | string;
-					event_hash: string;
-				}>({
-					text: SQL.latestAudit,
-					parameters: [event.tenantId],
-				});
-				const previous = latest.rows[0];
-				const sequence =
-					(previous ? integer(previous.sequence, 'sequence') : 0) + 1;
-				const previousHash = previous?.event_hash ?? null;
-				const metadataJson = stableMetadata(event.metadata);
-				const created: AutomationAuditEvent = {
-					...event,
-					id: randomUUID(),
-					sequence,
-					previousHash,
-					eventHash: auditHash({
-						tenantId: event.tenantId,
-						sequence,
-						actorId: event.actorId,
-						action: event.action,
-						subjectType: event.subjectType,
-						subjectId: event.subjectId,
-						metadataJson,
-						occurredAt: event.occurredAt,
-						previousHash,
-					}),
-				};
-				await transaction.execute({
-					text: SQL.insertAudit,
-					parameters: [
-						created.id,
-						created.tenantId,
-						created.sequence,
-						created.actorId,
-						created.action,
-						created.subjectType,
-						created.subjectId,
-						metadataJson,
-						created.occurredAt,
-						created.previousHash,
-						created.eventHash,
-					],
-				});
-				return created;
-			},
+			(transaction) => this.#appendAudit(transaction, event),
 			{ access: 'write', tenantId: event.tenantId },
 		);
+	}
+
+	/* The previous hash is read and the next event written inside one
+	   transaction, so two writers cannot fork the tenant chain. */
+	async #appendAudit(
+		transaction: DatabaseTransaction,
+		event: Omit<
+			AutomationAuditEvent,
+			'id' | 'sequence' | 'previousHash' | 'eventHash'
+		>,
+	): Promise<AutomationAuditEvent> {
+		const latest = await transaction.query<{
+			sequence: number | bigint | string;
+			event_hash: string;
+		}>({
+			text: SQL.latestAudit,
+			parameters: [event.tenantId],
+		});
+		const previous = latest.rows[0];
+		const sequence =
+			(previous ? integer(previous.sequence, 'sequence') : 0) + 1;
+		const previousHash = previous?.event_hash ?? null;
+		const metadataJson = stableMetadata(event.metadata);
+		const created: AutomationAuditEvent = {
+			...event,
+			id: randomUUID(),
+			sequence,
+			previousHash,
+			eventHash: auditHash({
+				tenantId: event.tenantId,
+				sequence,
+				actorId: event.actorId,
+				action: event.action,
+				subjectType: event.subjectType,
+				subjectId: event.subjectId,
+				metadataJson,
+				occurredAt: event.occurredAt,
+				previousHash,
+			}),
+		};
+		await transaction.execute({
+			text: SQL.insertAudit,
+			parameters: [
+				created.id,
+				created.tenantId,
+				created.sequence,
+				created.actorId,
+				created.action,
+				created.subjectType,
+				created.subjectId,
+				metadataJson,
+				created.occurredAt,
+				created.previousHash,
+				created.eventHash,
+			],
+		});
+		return created;
 	}
 
 	async listAuditEvents(

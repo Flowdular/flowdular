@@ -4,6 +4,8 @@ import type {
 	AgentModelReadiness,
 	AgentRun,
 	AgentRunTrigger,
+	AgentWorkerState,
+	AgentWorkerStatus,
 } from '../domain/types.ts';
 
 const TONES: Readonly<Record<string, TagTone>> = {
@@ -142,6 +144,57 @@ export function clockLabel(value: number): string {
 		minute: '2-digit',
 		second: '2-digit',
 	}).format(value);
+}
+
+export interface WorkerIndicator {
+	readonly state: 'loading' | 'failed' | AgentWorkerState;
+	readonly label: string;
+	readonly title: string;
+	readonly live: boolean;
+}
+
+/* A failed status read is its own state: showing it as offline would tell a
+   person no worker runs when nobody knows. */
+export function workerIndicator(
+	worker: AgentWorkerStatus | null,
+	failed: boolean,
+): WorkerIndicator {
+	if (failed) {
+		return {
+			state: 'failed',
+			label: t('agents.playground.worker.failed'),
+			title: t('agents.playground.worker.unavailable'),
+			live: false,
+		};
+	}
+	if (!worker) {
+		const label = t('agents.playground.worker.unknown');
+		return { state: 'loading', label, title: label, live: false };
+	}
+	if (worker.state === 'online') {
+		return {
+			state: 'online',
+			label: t('agents.playground.worker.online', {
+				inFlight: worker.inFlight,
+			}),
+			title: t('agents.playground.worker.slots', {
+				inFlight: worker.inFlight,
+				concurrency: worker.concurrency,
+			}),
+			live: true,
+		};
+	}
+	if (worker.state === 'offline' && worker.lastHeartbeatAt !== null) {
+		const label = t('agents.playground.worker.offline', {
+			time: new Intl.DateTimeFormat(activeLocale(), {
+				dateStyle: 'medium',
+				timeStyle: 'short',
+			}).format(worker.lastHeartbeatAt),
+		});
+		return { state: 'offline', label, title: label, live: false };
+	}
+	const label = t('agents.playground.worker.notSeen');
+	return { state: 'not-seen', label, title: label, live: false };
 }
 
 /* Character counts run into the tens of thousands, so they are grouped. */

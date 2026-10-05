@@ -86,6 +86,7 @@ export function createImportRuntime(
 				},
 			});
 		const runtimeLease = await acquire(options.purpose);
+		leases = [runtimeLease];
 		/* The job poll reads across tenants; every write that follows uses the
 		   tenant carried by the routing row it returned. */
 		const backgroundLease = await acquire('background');
@@ -96,10 +97,18 @@ export function createImportRuntime(
 		});
 	};
 
+	/* A failed open keeps nothing, not even its rejection, so the next caller
+	   (a later worker tick on the same composition) opens again. */
 	const repository = (): Promise<ImportRepository> => {
 		if (disposed)
 			return Promise.reject(new Error('Import runtime is disposed.'));
-		repositoryPromise ??= openRepository();
+		repositoryPromise ??= openRepository().catch(async (error: unknown) => {
+			const held = leases;
+			leases = [];
+			repositoryPromise = undefined;
+			for (const lease of held) await lease.release();
+			throw error;
+		});
 		return repositoryPromise;
 	};
 
@@ -117,6 +126,10 @@ export function createImportRuntime(
 					maxRows: options.maxRows,
 					batchSize: options.batchSize,
 				}),
+			(error: unknown) => {
+				servicePromise = undefined;
+				throw error;
+			},
 		);
 		return servicePromise;
 	};

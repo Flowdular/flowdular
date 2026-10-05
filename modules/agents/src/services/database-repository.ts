@@ -51,8 +51,15 @@ import {
 	DuplicateActionIdempotencyKeyError,
 	DuplicateRunIdempotencyKeyError,
 	ModuleAgentBindingConflictError,
+	ModuleAgentRevisionSupersededError,
+	stableErrorCode,
+	type AgentBackgroundPassOptions,
 	type AgentReadOptions,
 	type AgentRepository,
+	type AgentWorkerHeartbeat,
+	type AgentWorkerHeartbeatSummary,
+	type ModuleAgentBindingRead,
+	type ModuleAgentCatalogReconciliation,
 	type AgentRunExportCursor,
 	type AssistantThreadExportCursor,
 	type ExportedAgentRun,
@@ -144,21 +151,61 @@ interface AgentRevisionRow {
 	module_definition_revision: number | null;
 }
 
-interface ModuleAgentDefinitionRow {
+interface ModuleAgentCatalogRow {
 	agent_id: string;
-	module_id: string;
-	agent_key: string;
-	definition_revision: number;
+	definition_revision: number | string;
 	content_hash: string;
-	name: string;
-	description: string;
-	instructions: string;
-	allowed_tools_json: string;
-	max_steps: number;
-	timeout_ms: number | string;
-	temperature_milli: number;
-	max_output_tokens: number | string;
-	registered_at: number | string;
+}
+
+/* The catalogue has no tenant column; it is read and written under this
+   sentinel tenant on the runtime handle. */
+const MODULE_AGENT_CATALOG_TENANT = '__flowdular_module_agents__';
+/* Heartbeats name a worker process and nothing about a workspace. */
+export const AGENT_WORKER_TENANT = '__flowdular_agent_workers__';
+/* Every cross-tenant pass reads at most this many tenants at a time. */
+const BACKGROUND_PAGE = 100;
+
+/* Catalogue rows are locked in this order by the writer and by every request,
+   so a request sharing two rows never waits on a writer holding the second. */
+const byAgentId = (
+	left: ModuleAgentDefinition,
+	right: ModuleAgentDefinition,
+) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
+
+/* What the catalogue owes this instance's definitions. A higher stored
+   revision supersedes the definition; the same revision with other content is
+   drift, which no deployment may serve. */
+function moduleAgentCatalogPlan(
+	definitions: readonly ModuleAgentDefinition[],
+	rows: readonly ModuleAgentCatalogRow[],
+): {
+	readonly owed: readonly {
+		readonly definition: ModuleAgentDefinition;
+		readonly stored: boolean;
+	}[];
+	readonly superseded: ReadonlyMap<string, number>;
+} {
+	const stored = new Map(rows.map((row) => [row.agent_id, row]));
+	const owed: { definition: ModuleAgentDefinition; stored: boolean }[] = [];
+	const superseded = new Map<string, number>();
+	for (const definition of [...definitions].sort(byAgentId)) {
+		const row = stored.get(definition.id);
+		if (!row) {
+			owed.push({ definition, stored: false });
+			continue;
+		}
+		const revision = integer(row.definition_revision, 'definition_revision');
+		if (revision > definition.definitionRevision) {
+			superseded.set(definition.id, revision);
+		} else if (revision < definition.definitionRevision) {
+			owed.push({ definition, stored: true });
+		} else if (row.content_hash !== moduleAgentDefinitionHash(definition)) {
+			throw new Error(
+				`MODULE_AGENT_REVISION_DRIFT: ${definition.id} changed without a definition revision bump.`,
+			);
+		}
+	}
+	return { owed, superseded };
 }
 
 interface ModuleAgentBindingRow {
@@ -723,6 +770,14 @@ const AGENT_REVISION_SELECT = `SELECT agent_definition_revisions.*,
  AND agent_revision_ownership.agent_id = agent_definition_revisions.agent_id
  AND agent_revision_ownership.revision = agent_definition_revisions.revision`;
 
+/* A tenant-created definition whose current revision has no retained row was
+   saved before the retained revision ledger existed. */
+const CURRENT_REVISION_NOT_RETAINED = `NOT EXISTS (
+  SELECT 1 FROM agent_definition_revisions
+  WHERE agent_definition_revisions.tenant_id = agent_definitions.tenant_id
+    AND agent_definition_revisions.agent_id = agent_definitions.id
+    AND agent_definition_revisions.revision = agent_definitions.revision)`;
+
 export interface AgentsPersistenceStatements {
 	readonly procedureIds: string;
 	readonly procedureSnapshots: string;
@@ -734,12 +789,21 @@ export interface AgentsPersistenceStatements {
 	readonly listAgentsForRevisionAdoption: string;
 	readonly retainModuleAgentRevision1: string;
 	readonly retainModuleAgentRevision2: string;
-	readonly reconcileModuleAgents1: string;
 	readonly reconcileModuleAgents2: string;
 	readonly reconcileModuleAgents3: string;
 	readonly reconcileModuleAgents4: string;
 	readonly reconcileModuleAgents5: string;
 	readonly reconcileModuleAgents6: string;
+	readonly readModuleAgentCatalog: string;
+	readonly shareModuleAgentCatalogRow: string;
+	readonly lockModuleAgentBinding: string;
+	readonly listStaleModuleAgentBindingTenants: string;
+	readonly agentRevisionAdoptionOwed: string;
+	readonly listTenantsOwingAgentRevisions: string;
+	readonly recordWorkerHeartbeat1: string;
+	readonly recordWorkerHeartbeat2: string;
+	readonly workerHeartbeats: string;
+	readonly countRunningRuns: string;
 	readonly listModuleAgentBindings: string;
 	readonly getModuleAgentBinding: string;
 	readonly saveModuleAgentBinding1: string;
@@ -865,6 +929,7 @@ export const AGENTS_SQL: AgentsPersistenceStatements = Object.freeze({
 				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
 	listAgentsForRevisionAdoption: `${AGENT_SELECT}
 					 WHERE agent_definitions.tenant_id = $1
+					   AND ${CURRENT_REVISION_NOT_RETAINED}
 					 ORDER BY agent_definitions.tenant_id, agent_definitions.id`,
 	retainModuleAgentRevision1: `INSERT INTO agent_definition_revisions
 				 (tenant_id, agent_id, revision, agent_key, name, description,
@@ -875,7 +940,6 @@ export const AGENTS_SQL: AgentsPersistenceStatements = Object.freeze({
 	retainModuleAgentRevision2: `INSERT INTO agent_revision_ownership
 				 (tenant_id, agent_id, revision, module_id, module_definition_revision)
 				 VALUES ($1, $2, $3, $4, $5)`,
-	reconcileModuleAgents1: `SELECT * FROM module_agent_definitions WHERE agent_id = $1`,
 	reconcileModuleAgents2: `INSERT INTO agent_definitions
 							 (id, tenant_id, agent_key, name, description, instructions,
 							  provider, model, allowed_tools_json, max_steps, timeout_ms,
@@ -907,6 +971,46 @@ export const AGENTS_SQL: AgentsPersistenceStatements = Object.freeze({
 								 module_definition_revision = $2, executable_revision = $3,
 								 revision = $4, updated_by = $5, updated_at = $6
 								 WHERE tenant_id = $7 AND agent_id = $8`,
+	readModuleAgentCatalog: `SELECT agent_id, definition_revision, content_hash
+					 FROM module_agent_definitions`,
+	shareModuleAgentCatalogRow: `SELECT agent_id, definition_revision, content_hash
+					 FROM module_agent_definitions WHERE agent_id = $1 FOR SHARE`,
+	lockModuleAgentBinding: `SELECT * FROM module_agent_bindings
+					 WHERE tenant_id = $1 AND agent_id = $2 FOR UPDATE`,
+	listStaleModuleAgentBindingTenants: `SELECT tenant_id FROM module_agent_bindings
+					 WHERE agent_id = $1 AND module_definition_revision < $2
+					   AND tenant_id > $3
+					 ORDER BY tenant_id LIMIT $4`,
+	agentRevisionAdoptionOwed: `SELECT agent_definitions.tenant_id FROM agent_definitions
+					 WHERE agent_definitions.tenant_id <> '__flowdular_module_agents__'
+					   AND ${CURRENT_REVISION_NOT_RETAINED}
+					 LIMIT 1`,
+	listTenantsOwingAgentRevisions: `SELECT DISTINCT agent_definitions.tenant_id
+					 FROM agent_definitions
+					 WHERE agent_definitions.tenant_id > $1
+					   AND agent_definitions.tenant_id <> '__flowdular_module_agents__'
+					   AND ${CURRENT_REVISION_NOT_RETAINED}
+					 ORDER BY agent_definitions.tenant_id LIMIT $2`,
+	recordWorkerHeartbeat1: `INSERT INTO agent_worker_heartbeats
+					 (tenant_id, worker_id, started_at, heartbeat_at, concurrency)
+					 VALUES ($1, $2, $3, $4, $5)
+					 ON CONFLICT (tenant_id, worker_id) DO UPDATE SET
+					  started_at = excluded.started_at,
+					  heartbeat_at = excluded.heartbeat_at,
+					  concurrency = excluded.concurrency`,
+	recordWorkerHeartbeat2: `DELETE FROM agent_worker_heartbeats
+					 WHERE tenant_id = $1 AND worker_id IN (
+					  SELECT worker_id FROM agent_worker_heartbeats
+					  WHERE tenant_id = $1 AND heartbeat_at < $2
+					    AND heartbeat_at < (SELECT MAX(heartbeat_at)
+					      FROM agent_worker_heartbeats WHERE tenant_id = $1)
+					  ORDER BY heartbeat_at, worker_id LIMIT $3)`,
+	workerHeartbeats: `SELECT COUNT(*) FILTER (WHERE heartbeat_at > $2) AS fresh,
+					 COALESCE(SUM(concurrency) FILTER (WHERE heartbeat_at > $2), 0) AS concurrency,
+					 MAX(heartbeat_at) AS newest_at
+					 FROM agent_worker_heartbeats WHERE tenant_id = $1`,
+	countRunningRuns: `SELECT COUNT(*) AS count FROM agent_runs
+					 WHERE tenant_id = $1 AND status = 'running'`,
 	listModuleAgentBindings: `SELECT * FROM module_agent_bindings WHERE tenant_id = $1
 					 ORDER BY agent_id`,
 	getModuleAgentBinding: `SELECT * FROM module_agent_bindings WHERE tenant_id = $1 AND agent_id = $2`,
@@ -1236,6 +1340,10 @@ export interface AgentsDatabaseHandles {
 
 /** A dialect-neutral repository over platform-owned database handles. */
 export class DatabaseAgentRepository implements AgentRepository {
+	/* Set by agentRevisionAdoptionOwed. While true, a request that reads or
+	   changes one tenant's retained revisions adopts that tenant first. */
+	#revisionAdoptionOwed = false;
+
 	constructor(
 		private readonly handles: AgentsDatabaseHandles,
 		private readonly readyPromise: Promise<void> = Promise.resolve(),
@@ -1402,34 +1510,63 @@ export class DatabaseAgentRepository implements AgentRepository {
 		);
 	}
 
-	async adoptCurrentAgentRevisions(): Promise<void> {
+	async agentRevisionAdoptionOwed(): Promise<boolean> {
+		const owed = await this.#crossTenant((transaction) =>
+			this.#query(transaction, AGENTS_SQL.agentRevisionAdoptionOwed, []),
+		);
+		this.#revisionAdoptionOwed = owed.length > 0;
+		return this.#revisionAdoptionOwed;
+	}
+
+	async adoptCurrentAgentRevisions(
+		options: AgentBackgroundPassOptions = {},
+	): Promise<boolean> {
 		let afterTenant = '';
+		let skipped = false;
 		for (;;) {
+			if (options.stopped?.()) return false;
 			const page = await this.#crossTenant((transaction) =>
 				this.#query<{ tenant_id: string }>(
 					transaction,
-					`SELECT DISTINCT tenant_id FROM agent_definitions
-				 WHERE tenant_id > $1 AND tenant_id <> '__flowdular_module_agents__'
-				 ORDER BY tenant_id LIMIT 100`,
-					[afterTenant],
+					AGENTS_SQL.listTenantsOwingAgentRevisions,
+					[afterTenant, BACKGROUND_PAGE],
 				),
 			);
-			if (page.length === 0) return;
-			for (const { tenant_id: tenantId } of page)
-				await this.#tx(tenantId, 'write', async (transaction) => {
-					for (const agent of await this.#agentsForRevisionAdoption(
-						transaction,
-						tenantId,
-					)) {
-						await this.#retainAgentRevision(transaction, agent, true);
-					}
-				});
+			for (const { tenant_id: tenantId } of page) {
+				if (options.stopped?.()) return false;
+				try {
+					await this.#tx(tenantId, 'write', (transaction) =>
+						this.#adoptOwedRevisions(transaction, tenantId),
+					);
+				} catch (error) {
+					skipped = true;
+					console.error(
+						'[agents] revision adoption skipped a workspace whose transaction failed; its next request or the next worker start adopts it.',
+						stableErrorCode(error),
+					);
+				}
+			}
+			if (page.length < BACKGROUND_PAGE) break;
 			afterTenant = page[page.length - 1]!.tenant_id;
+		}
+		if (!skipped) this.#revisionAdoptionOwed = false;
+		return !skipped;
+	}
+
+	/* Retains exactly what is stored, and only what is not retained yet, so a
+	   request and the worker adopting the same tenant write it once. */
+	async #adoptOwedRevisions(
+		transaction: DatabaseTransaction,
+		tenantId: string,
+	): Promise<void> {
+		for (const agent of await this.#agentsForRevisionAdoption(
+			transaction,
+			tenantId,
+		)) {
+			await this.#retainAgentRevision(transaction, agent, true);
 		}
 	}
 
-	/* Constructor-only helper. It avoids calling a public method while the
-	   repository is still adopting the pre-ledger current definitions. */
 	async #agentsForRevisionAdoption(
 		transaction: DatabaseTransaction,
 		tenantId: string,
@@ -1490,200 +1627,295 @@ export class DatabaseAgentRepository implements AgentRepository {
 	async reconcileModuleAgents(
 		definitions: readonly ModuleAgentDefinition[],
 		reconciledAt: number,
-	): Promise<void> {
-		await this.#tx(
-			'__flowdular_module_agents__',
+	): Promise<ModuleAgentCatalogReconciliation> {
+		const seen = new Set<string>();
+		for (const definition of definitions) {
+			if (seen.has(definition.id)) {
+				throw new Error(`MODULE_AGENT_DUPLICATE: ${definition.id}`);
+			}
+			seen.add(definition.id);
+		}
+		if (definitions.length === 0) return { superseded: new Map() };
+		const read = (transaction: DatabaseTransaction) =>
+			this.#query<ModuleAgentCatalogRow>(
+				transaction,
+				AGENTS_SQL.readModuleAgentCatalog,
+				[],
+			);
+		const unlocked = moduleAgentCatalogPlan(
+			definitions,
+			await this.#tx(MODULE_AGENT_CATALOG_TENANT, 'read', read),
+		);
+		if (unlocked.owed.length === 0) return { superseded: unlocked.superseded };
+		return this.#tx(
+			MODULE_AGENT_CATALOG_TENANT,
 			'write',
 			async (transaction) => {
 				await transaction.query({
 					text: "SELECT pg_advisory_xact_lock(hashtextextended('agents.core.module-catalog', 0))",
 				});
-				try {
-					const seen = new Set<string>();
-					for (const definition of definitions) {
-						if (seen.has(definition.id)) {
-							throw new Error(`MODULE_AGENT_DUPLICATE: ${definition.id}`);
-						}
-						seen.add(definition.id);
-						const contentHash = moduleAgentDefinitionHash(definition);
-						const stored = (
-							await this.#query(
-								transaction,
-								AGENTS_SQL.reconcileModuleAgents1,
-								[definition.id],
-							)
-						)[0] as unknown as ModuleAgentDefinitionRow | undefined;
-						if (stored) {
-							if (definition.definitionRevision < stored.definition_revision) {
-								throw new Error(
-									`MODULE_AGENT_REVISION_DOWNGRADE: ${definition.id} registered revision ${definition.definitionRevision} after ${stored.definition_revision}.`,
-								);
-							}
-							if (
-								definition.definitionRevision === stored.definition_revision
-							) {
-								if (contentHash !== stored.content_hash) {
-									throw new Error(
-										`MODULE_AGENT_REVISION_DRIFT: ${definition.id} changed without a definition revision bump.`,
-									);
-								}
-								continue;
-							}
-						} else {
-							/* The legacy run table references agent_definitions by id only. A
-						   retained internal parent keeps that foreign key valid across all
-						   tenant bindings without pretending the behavior is tenant-owned. */
-							await this.#exec(transaction, AGENTS_SQL.reconcileModuleAgents2, [
-								definition.id,
-								definition.id,
-								definition.name,
-								definition.description,
-								definition.instructions,
-								JSON.stringify(definition.allowedTools),
-								definition.limits.maxSteps,
-								Math.min(definition.limits.timeoutMs, 300_000),
-								Math.round(definition.limits.temperature * 1_000),
-								definition.definitionRevision,
-								`module:${definition.moduleId}`,
-								reconciledAt,
-								`module:${definition.moduleId}`,
-								reconciledAt,
-							]);
-						}
-
-						if (stored) {
-							await this.#exec(transaction, AGENTS_SQL.reconcileModuleAgents3, [
-								definition.name,
-								definition.description,
-								definition.instructions,
-								JSON.stringify(definition.allowedTools),
-								definition.limits.maxSteps,
-								Math.min(definition.limits.timeoutMs, 300_000),
-								Math.round(definition.limits.temperature * 1_000),
-								definition.definitionRevision,
-								`module:${definition.moduleId}`,
-								reconciledAt,
-								definition.id,
-							]);
-						}
-
-						await this.#exec(transaction, AGENTS_SQL.reconcileModuleAgents4, [
-							definition.id,
-							definition.moduleId,
-							definition.key,
-							definition.definitionRevision,
-							contentHash,
+				/* Another role may have written while this one waited for the lock. */
+				const plan = moduleAgentCatalogPlan(
+					definitions,
+					await read(transaction),
+				);
+				for (const { definition, stored } of plan.owed) {
+					const contentHash = moduleAgentDefinitionHash(definition);
+					if (stored) {
+						await this.#exec(transaction, AGENTS_SQL.reconcileModuleAgents3, [
 							definition.name,
 							definition.description,
 							definition.instructions,
 							JSON.stringify(definition.allowedTools),
 							definition.limits.maxSteps,
-							definition.limits.timeoutMs,
+							Math.min(definition.limits.timeoutMs, 300_000),
 							Math.round(definition.limits.temperature * 1_000),
-							definition.limits.maxOutputTokens,
+							definition.definitionRevision,
+							`module:${definition.moduleId}`,
+							reconciledAt,
+							definition.id,
+						]);
+					} else {
+						/* The legacy run table references agent_definitions by id only. A
+					   retained internal parent keeps that foreign key valid across all
+					   tenant bindings without pretending the behavior is tenant-owned. */
+						await this.#exec(transaction, AGENTS_SQL.reconcileModuleAgents2, [
+							definition.id,
+							definition.id,
+							definition.name,
+							definition.description,
+							definition.instructions,
+							JSON.stringify(definition.allowedTools),
+							definition.limits.maxSteps,
+							Math.min(definition.limits.timeoutMs, 300_000),
+							Math.round(definition.limits.temperature * 1_000),
+							definition.definitionRevision,
+							`module:${definition.moduleId}`,
+							reconciledAt,
+							`module:${definition.moduleId}`,
 							reconciledAt,
 						]);
 					}
-				} catch (error) {
-					throw error;
+					await this.#exec(transaction, AGENTS_SQL.reconcileModuleAgents4, [
+						definition.id,
+						definition.moduleId,
+						definition.key,
+						definition.definitionRevision,
+						contentHash,
+						definition.name,
+						definition.description,
+						definition.instructions,
+						JSON.stringify(definition.allowedTools),
+						definition.limits.maxSteps,
+						definition.limits.timeoutMs,
+						Math.round(definition.limits.temperature * 1_000),
+						definition.limits.maxOutputTokens,
+						reconciledAt,
+					]);
 				}
+				return { superseded: plan.superseded };
 			},
 		);
-		// Retry stale bindings even when the durable catalog already has this revision.
-		for (const definition of definitions)
-			await this.#reconcileModuleBindings(definition, reconciledAt);
 	}
 
-	async #reconcileModuleBindings(
-		definition: ModuleAgentDefinition,
-		reconciledAt: number,
-	): Promise<void> {
-		let afterTenant = '';
-		for (;;) {
-			const page = await this.#crossTenant((transaction) =>
-				this.#query<{ tenant_id: string }>(
-					transaction,
-					'SELECT tenant_id FROM module_agent_bindings WHERE agent_id = $1 AND tenant_id > $2 ORDER BY tenant_id LIMIT 100',
-					[definition.id, afterTenant],
-				),
-			);
-			if (page.length === 0) return;
-			for (const { tenant_id: tenantId } of page)
-				await this.#tx(tenantId, 'write', async (transaction) => {
-					const catalog = (
-						await this.#query<ModuleAgentDefinitionRow>(
-							transaction,
-							AGENTS_SQL.reconcileModuleAgents1 + ' FOR SHARE',
-							[definition.id],
-						)
-					)[0];
-					if (
-						catalog?.definition_revision !== definition.definitionRevision ||
-						catalog.content_hash !== moduleAgentDefinitionHash(definition)
-					) {
-						throw new Error(
-							'MODULE_AGENT_REVISION_DRIFT: catalog changed during reconciliation.',
-						);
-					}
-					const row = (
+	async readModuleAgentBindings(
+		tenantId: string,
+		definitions: readonly ModuleAgentDefinition[],
+		at: number,
+	): Promise<ModuleAgentBindingRead> {
+		return this.#tx(tenantId, 'write', async (transaction) => {
+			const bindings = new Map<string, ModuleAgentBinding>();
+			const superseded = new Map<string, number>();
+			const behind: [ModuleAgentBinding, ModuleAgentDefinition][] = [];
+			for (const definition of [...definitions].sort(byAgentId)) {
+				/* The share lock keeps the catalogue row where it is until this
+				   transaction ends, so a binding is never advanced to a revision a
+				   concurrent reconciliation is replacing. */
+				const catalog = (
+					await this.#query<ModuleAgentCatalogRow>(
+						transaction,
+						AGENTS_SQL.shareModuleAgentCatalogRow,
+						[definition.id],
+					)
+				)[0];
+				const catalogRevision = catalog
+					? integer(catalog.definition_revision, 'definition_revision')
+					: 0;
+				if (catalogRevision > definition.definitionRevision) {
+					superseded.set(definition.id, catalogRevision);
+				} else if (catalogRevision < definition.definitionRevision) {
+					throw new Error(
+						`MODULE_AGENT_CATALOG_BEHIND: ${definition.id} is served at revision ${definition.definitionRevision} and the catalogue holds ${catalogRevision}.`,
+					);
+				}
+				let row = (
+					await this.#query<ModuleAgentBindingRow>(
+						transaction,
+						AGENTS_SQL.getModuleAgentBinding,
+						[tenantId, definition.id],
+					)
+				)[0];
+				if (
+					row &&
+					!superseded.has(definition.id) &&
+					row.module_definition_revision < definition.definitionRevision
+				) {
+					/* Read again under the row lock: a concurrent request may have
+					   advanced it while this one waited. */
+					row = (
 						await this.#query<ModuleAgentBindingRow>(
 							transaction,
-							AGENTS_SQL.getModuleAgentBinding + ' FOR UPDATE',
+							AGENTS_SQL.lockModuleAgentBinding,
 							[tenantId, definition.id],
 						)
 					)[0];
 					if (
-						!row ||
-						row.module_definition_revision >= definition.definitionRevision
-					)
-						return;
-					const previous = fromModuleBindingRow(row);
-					const binding: ModuleAgentBinding = {
-						...previous,
-						enabledTools: previous.enabledTools.filter((tool) =>
-							definition.allowedTools.includes(tool),
-						),
-						moduleDefinitionRevision: definition.definitionRevision,
-						executableRevision: previous.executableRevision + 1,
-						revision: previous.revision + 1,
-						updatedBy: `module:${definition.moduleId}`,
-						updatedAt: reconciledAt,
-					};
-					await this.#exec(transaction, AGENTS_SQL.reconcileModuleAgents6, [
-						JSON.stringify(binding.enabledTools),
-						binding.moduleDefinitionRevision,
-						binding.executableRevision,
-						binding.revision,
-						binding.updatedBy,
-						binding.updatedAt,
-						binding.tenantId,
-						binding.agentId,
-					]);
-					await this.#retainModuleAgentRevision(
+						row &&
+						row.module_definition_revision < definition.definitionRevision
+					) {
+						behind.push([fromModuleBindingRow(row), definition]);
+						continue;
+					}
+				}
+				if (row) bindings.set(definition.id, fromModuleBindingRow(row));
+			}
+			/* An advance appends audit under the tenant's audit lock. Taking it
+			   only after every row lock is the order a save uses, so the two
+			   never wait on each other in a cycle. */
+			for (const [previous, definition] of behind) {
+				bindings.set(
+					definition.id,
+					await this.#advanceModuleAgentBinding(
 						transaction,
-						binding,
+						previous,
 						definition,
-					);
-					await this.#appendAuditEvent(transaction, {
-						tenantId: binding.tenantId,
-						actorId: binding.updatedBy,
-						action: 'module-agent.definition-reconciled',
-						subjectType: 'agent',
-						subjectId: definition.id,
-						metadata: {
-							moduleId: definition.moduleId,
-							previousDefinitionRevision: previous.moduleDefinitionRevision,
-							definitionRevision: definition.definitionRevision,
-							executableRevision: binding.executableRevision,
-							bindingRevision: binding.revision,
-							removedTools:
-								previous.enabledTools.length - binding.enabledTools.length,
-						},
-						occurredAt: reconciledAt,
-					});
-				});
-			afterTenant = page[page.length - 1]!.tenant_id;
-		}
+						at,
+					),
+				);
+			}
+			return { bindings, superseded };
+		});
+	}
+
+	async #advanceModuleAgentBinding(
+		transaction: DatabaseTransaction,
+		previous: ModuleAgentBinding,
+		definition: ModuleAgentDefinition,
+		at: number,
+	): Promise<ModuleAgentBinding> {
+		const binding: ModuleAgentBinding = {
+			...previous,
+			enabledTools: previous.enabledTools.filter((tool) =>
+				definition.allowedTools.includes(tool),
+			),
+			moduleDefinitionRevision: definition.definitionRevision,
+			executableRevision: previous.executableRevision + 1,
+			revision: previous.revision + 1,
+			updatedBy: `module:${definition.moduleId}`,
+			updatedAt: at,
+		};
+		await this.#exec(transaction, AGENTS_SQL.reconcileModuleAgents6, [
+			JSON.stringify(binding.enabledTools),
+			binding.moduleDefinitionRevision,
+			binding.executableRevision,
+			binding.revision,
+			binding.updatedBy,
+			binding.updatedAt,
+			binding.tenantId,
+			binding.agentId,
+		]);
+		await this.#retainModuleAgentRevision(transaction, binding, definition);
+		await this.#appendAuditEvent(transaction, {
+			tenantId: binding.tenantId,
+			actorId: binding.updatedBy,
+			action: 'module-agent.definition-reconciled',
+			subjectType: 'agent',
+			subjectId: definition.id,
+			metadata: {
+				moduleId: definition.moduleId,
+				previousDefinitionRevision: previous.moduleDefinitionRevision,
+				definitionRevision: definition.definitionRevision,
+				executableRevision: binding.executableRevision,
+				bindingRevision: binding.revision,
+				removedTools:
+					previous.enabledTools.length - binding.enabledTools.length,
+			},
+			occurredAt: at,
+		});
+		return binding;
+	}
+
+	async listStaleModuleAgentBindingTenants(
+		agentId: string,
+		definitionRevision: number,
+		afterTenant: string,
+		limit: number,
+	): Promise<readonly string[]> {
+		return (
+			await this.#crossTenant((transaction) =>
+				this.#query<{ tenant_id: string }>(
+					transaction,
+					AGENTS_SQL.listStaleModuleAgentBindingTenants,
+					[agentId, definitionRevision, afterTenant, limit],
+				),
+			)
+		).map((row) => row.tenant_id);
+	}
+
+	async recordWorkerHeartbeat(
+		heartbeat: AgentWorkerHeartbeat,
+		removeBefore: number,
+	): Promise<void> {
+		await this.#tx(AGENT_WORKER_TENANT, 'write', async (transaction) => {
+			await this.#exec(transaction, AGENTS_SQL.recordWorkerHeartbeat1, [
+				AGENT_WORKER_TENANT,
+				heartbeat.workerId,
+				heartbeat.startedAt,
+				heartbeat.heartbeatAt,
+				heartbeat.concurrency,
+			]);
+			await this.#exec(transaction, AGENTS_SQL.recordWorkerHeartbeat2, [
+				AGENT_WORKER_TENANT,
+				removeBefore,
+				BACKGROUND_PAGE,
+			]);
+		});
+	}
+
+	async workerHeartbeats(
+		freshAfter: number,
+	): Promise<AgentWorkerHeartbeatSummary> {
+		return this.#tx(AGENT_WORKER_TENANT, 'read', async (transaction) => {
+			const row = (
+				await this.#query<{
+					fresh: number | string;
+					concurrency: number | string;
+					newest_at: number | string | null;
+				}>(transaction, AGENTS_SQL.workerHeartbeats, [
+					AGENT_WORKER_TENANT,
+					freshAfter,
+				])
+			)[0]!;
+			return {
+				fresh: integer(row.fresh, 'fresh'),
+				concurrency: integer(row.concurrency, 'concurrency'),
+				newestAt:
+					row.newest_at === null ? null : integer(row.newest_at, 'newest_at'),
+			};
+		});
+	}
+
+	async countRunningRuns(tenantId: string): Promise<number> {
+		return this.#tx(tenantId, 'read', async (transaction) => {
+			const row = (
+				await this.#query<{ count: number | string }>(
+					transaction,
+					AGENTS_SQL.countRunningRuns,
+					[tenantId],
+				)
+			)[0]!;
+			return integer(row.count, 'count');
+		});
 	}
 
 	async listModuleAgentBindings(
@@ -1720,6 +1952,22 @@ export class DatabaseAgentRepository implements AgentRepository {
 		audit: PendingAgentAuditEvent,
 	): Promise<ModuleAgentBinding> {
 		return this.#tx(binding.tenantId, 'write', async (transaction) => {
+			const catalog = (
+				await this.#query<ModuleAgentCatalogRow>(
+					transaction,
+					AGENTS_SQL.shareModuleAgentCatalogRow,
+					[definition.id],
+				)
+			)[0];
+			const catalogRevision = catalog
+				? integer(catalog.definition_revision, 'definition_revision')
+				: 0;
+			if (catalogRevision > definition.definitionRevision) {
+				throw new ModuleAgentRevisionSupersededError(
+					definition.id,
+					catalogRevision,
+				);
+			}
 			try {
 				if (expectedRevision === 0) {
 					await this.#exec(transaction, AGENTS_SQL.saveModuleAgentBinding1, [
@@ -1922,7 +2170,9 @@ export class DatabaseAgentRepository implements AgentRepository {
 		agentId: string,
 		revision: number,
 	): Promise<AgentDefinitionRevision | null> {
-		return this.#tx(tenantId, 'read', async (transaction) => {
+		const adopt = this.#revisionAdoptionOwed;
+		return this.#tx(tenantId, adopt ? 'write' : 'read', async (transaction) => {
+			if (adopt) await this.#adoptOwedRevisions(transaction, tenantId);
 			const row = (
 				await this.#query(transaction, AGENTS_SQL.getAgentRevision, [
 					tenantId,
@@ -1937,7 +2187,9 @@ export class DatabaseAgentRepository implements AgentRepository {
 	async listAgentRevisions(
 		tenantId: string,
 	): Promise<readonly AgentDefinitionRevision[]> {
-		return this.#tx(tenantId, 'read', async (transaction) => {
+		const adopt = this.#revisionAdoptionOwed;
+		return this.#tx(tenantId, adopt ? 'write' : 'read', async (transaction) => {
+			if (adopt) await this.#adoptOwedRevisions(transaction, tenantId);
 			return (
 				(await this.#query(transaction, AGENTS_SQL.listAgentRevisions, [
 					tenantId,
@@ -1995,6 +2247,10 @@ export class DatabaseAgentRepository implements AgentRepository {
 
 	async updateAgent(agent: AgentDefinition): Promise<AgentDefinition> {
 		return this.#tx(agent.tenantId, 'write', async (transaction) => {
+			/* The revision this update replaces is retained before it is gone. */
+			if (this.#revisionAdoptionOwed) {
+				await this.#adoptOwedRevisions(transaction, agent.tenantId);
+			}
 			try {
 				const result = await this.#exec(transaction, AGENTS_SQL.updateAgent1, [
 					agent.key,
@@ -2041,6 +2297,9 @@ export class DatabaseAgentRepository implements AgentRepository {
 
 	async deleteAgent(tenantId: string, agentId: string): Promise<boolean> {
 		return this.#tx(tenantId, 'write', async (transaction) => {
+			if (this.#revisionAdoptionOwed) {
+				await this.#adoptOwedRevisions(transaction, tenantId);
+			}
 			return (
 				(await this.#exec(transaction, AGENTS_SQL.deleteAgent, [
 					tenantId,

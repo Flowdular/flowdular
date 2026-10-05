@@ -88,6 +88,21 @@ function policyFor(sql: string, table: string): string {
 	);
 }
 
+/* Every migration up to, and not including, the one a case starts before. */
+function migrationsBefore(id: string) {
+	const index = databaseMigrations.findIndex(
+		(migration) => migration.id === id,
+	);
+	expect(index).toBeGreaterThan(0);
+	return databaseMigrations.slice(0, index);
+}
+
+async function statusOf(id: string) {
+	return (await status()).find((entry) => entry.id === id);
+}
+
+const SIDE_EFFECT_KEY = '0028_action_side_effect_idempotency_key';
+
 describe('agents migrations', () => {
 	it('mirrors every PostgreSQL up file byte for byte', () => {
 		const files = readdirSync(migrationDirectory)
@@ -206,7 +221,7 @@ describe('agents migrations', () => {
 		await runDatabaseMigrations(
 			lease.database,
 			'agents.core',
-			databaseMigrations.slice(0, -1),
+			migrationsBefore(SIDE_EFFECT_KEY),
 		);
 		await lease.database.transaction(
 			(transaction) =>
@@ -269,14 +284,13 @@ describe('agents migrations', () => {
 		await runDatabaseMigrations(
 			lease.database,
 			'agents.core',
-			databaseMigrations.slice(0, -1),
+			migrationsBefore(SIDE_EFFECT_KEY),
 		);
 		await lease.database.execute({
 			text: `ALTER TABLE agent_action_invocations
 			       ADD COLUMN side_effect_idempotency_key TEXT`,
 		});
-		expect((await status()).at(-1)).toMatchObject({
-			id: '0028_action_side_effect_idempotency_key',
+		expect(await statusOf(SIDE_EFFECT_KEY)).toMatchObject({
 			state: 'partial',
 		});
 		await expect(apply()).rejects.toMatchObject({
@@ -288,7 +302,7 @@ describe('agents migrations', () => {
 		await runDatabaseMigrations(
 			lease.database,
 			'agents.core',
-			databaseMigrations.slice(0, -1),
+			migrationsBefore(SIDE_EFFECT_KEY),
 		);
 		const otherSchema = `agents_probe_${randomBytes(8).toString('hex')}`;
 		await lease.database.execute({ text: `CREATE SCHEMA ${otherSchema}` });
@@ -297,8 +311,7 @@ describe('agents migrations', () => {
 				text: `CREATE TABLE ${otherSchema}.agent_action_invocations
 				       (side_effect_idempotency_key TEXT NOT NULL)`,
 			});
-			expect((await status()).at(-1)).toMatchObject({
-				id: '0028_action_side_effect_idempotency_key',
+			expect(await statusOf(SIDE_EFFECT_KEY)).toMatchObject({
 				state: 'pending',
 			});
 		} finally {
@@ -317,6 +330,42 @@ describe('agents migrations', () => {
 			text: `DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = 'agents.core' AND id = '0021_agents_agent_reconciliation_role'`,
 		});
 		await expect(apply()).rejects.toMatchObject({ code: 'PARTIAL_MIGRATION' });
+	});
+
+	it('refuses adoption when the revision adoption policy exists but a background grant is missing', async () => {
+		await apply();
+		await lease.database.execute({
+			text: 'REVOKE SELECT (revision) ON agent_definition_revisions FROM coreloom_background',
+		});
+		await lease.database.execute({
+			text: `DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = 'agents.core' AND id = '0030_agents_background_passes'`,
+		});
+		await expect(apply()).rejects.toMatchObject({ code: 'PARTIAL_MIGRATION' });
+	});
+
+	it('creates the worker heartbeat table on a schema that predates it', async () => {
+		await apply();
+		await lease.database.execute({
+			text: 'DROP TABLE agent_worker_heartbeats',
+		});
+		await lease.database.execute({
+			text: `DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = 'agents.core' AND id = '0029_agents_worker_heartbeats'`,
+		});
+		expect(await statusOf('0029_agents_worker_heartbeats')).toMatchObject({
+			state: 'pending',
+		});
+		await apply();
+		expect(
+			(
+				await lease.database.query<{ forced: boolean }>({
+					text: `SELECT relforcerowsecurity AS forced FROM pg_class
+					       WHERE oid = to_regclass('agent_worker_heartbeats')`,
+				})
+			).rows,
+		).toEqual([{ forced: true }]);
+		expect(await statusOf('0029_agents_worker_heartbeats')).toMatchObject({
+			state: 'applied',
+		});
 	});
 
 	/* The standing refusal table is what keeps one refused meter out of the

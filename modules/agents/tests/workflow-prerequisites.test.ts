@@ -137,15 +137,20 @@ describe('workflow agent execution capability', () => {
 			environment: { NODE_ENV: 'test' },
 		});
 
+		const starts = vi.spyOn(AgentWorker.prototype, 'start');
 		try {
-			expect((await runtime.workerStatus()).online).toBe(false);
+			expect((await runtime.workerStatus('tenant-a')).online).toBe(false);
 			void runtime.service();
-			expect((await runtime.workerStatus()).online).toBe(false);
+			expect((await runtime.workerStatus('tenant-a')).online).toBe(false);
 			runtime.start();
-			await waitFor(async () => (await runtime.workerStatus()).online);
+			await waitFor(
+				async () => (await runtime.workerStatus('tenant-a')).online,
+			);
 			runtime.stop();
-			void runtime.providerService();
-			expect((await runtime.workerStatus()).online).toBe(false);
+			/* The status reads durable heartbeats and stays online until they age
+			   out, so the stopped worker shows in the starts instead. */
+			await runtime.providerService();
+			expect(starts).toHaveBeenCalledTimes(1);
 		} finally {
 			await runtime.dispose();
 		}

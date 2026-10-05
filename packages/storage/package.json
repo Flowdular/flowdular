@@ -10,7 +10,8 @@
 		"test": "vitest run"
 	},
 	"dependencies": {
-		"@flowdular/kernel": "workspace:*"
+		"@flowdular/kernel": "workspace:*",
+		"@vercel/blob": "2.8.0"
 	},
 	"devDependencies": {
 		"@types/node": "24.13.3",

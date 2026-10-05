@@ -151,8 +151,8 @@ export function createServerComposition(
 			/* Every module has composed and started registering by now, so the
 			   catalogue a run is queued against is complete and closed. */
 			runtime.catalogue.seal();
-			runtime.start();
 		},
+		startWorker: () => runtime.start(),
 		stop: () => runtime.quiesce(),
 		dispose: () => runtime.dispose(),
 	};

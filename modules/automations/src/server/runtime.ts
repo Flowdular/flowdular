@@ -7,7 +7,10 @@ import {
 	DATABASE_CAPABILITY_IDS,
 	DATABASE_DIALECT_IDS,
 } from '@flowdular/database';
-import type { PlatformVariableRegistry } from '@flowdular/kernel';
+import type {
+	ModuleSettingsRuntime,
+	PlatformVariableRegistry,
+} from '@flowdular/kernel';
 import type { AgentRunQueue } from '@flowdular/module-agents/server';
 import type { JobRunner } from '@flowdular/server';
 import {
@@ -21,6 +24,7 @@ import type {
 import type { AutomationsRepository } from '../services/repository.ts';
 import { createAutomationScheduleRunner } from '../services/schedule-runner.ts';
 import { AutomationScheduleService } from '../services/schedule-service.ts';
+import { createTimeZoneFollower } from '../services/time-zone-follower.ts';
 import {
 	secretVaultFromEnvironment,
 	type SecretVault,
@@ -42,10 +46,8 @@ export interface AutomationsRuntimeOptions {
 	readonly workspaceRoot?: string;
 	readonly secretVault?: SecretVault;
 	readonly schedulerPollMs?: number | (() => number);
-	/** Reads the workspace zone a cron slot is computed in, live per call. */
-	readonly timeZone?: (tenantId: string) => string;
-	/** Loads a workspace's settings before the scheduler reads its zone. */
-	readonly primeTenant?: (tenantId: string) => Promise<void>;
+	/** The workspace zone and its change log. Absent, every cron slot is UTC. */
+	readonly settings?: ModuleSettingsRuntime;
 	readonly repository?: AutomationsRepository;
 	readonly variables?: PlatformVariableRegistry;
 	readonly targets?: AutomationTargetRegistry;
@@ -61,12 +63,6 @@ export interface AutomationsRuntime {
 	verifyAudit(tenantId: string): Promise<AutomationAuditVerification>;
 	/** Opens the repository, for the data class operations the module owns. */
 	repository(): Promise<AutomationsRepository>;
-	/**
-	 * Re-times this workspace's pending cron slots after its zone changed. The
-	 * work is queued behind the previous one and drained by `quiesce`, so the
-	 * settings write that triggered it never waits for the database.
-	 */
-	retimeSchedules(tenantId: string): void;
 	start(): void;
 	stop(): void;
 	quiesce(): Promise<void>;
@@ -127,6 +123,7 @@ export function createAutomationsRuntime(
 			options.databases,
 			options.purpose ?? 'runtime',
 		);
+		leases = [runtimeLease];
 		/* The scheduler poll and the webhook lookup read across tenants; every
 		   write that follows uses the tenant carried by the row they returned. */
 		const backgroundLease = await acquire(options.databases, 'background');
@@ -136,8 +133,16 @@ export function createAutomationsRuntime(
 			background: backgroundLease.database,
 		});
 	};
+	/* A failed open keeps nothing, not even its rejection, so the next caller
+	   (a later worker tick on the same composition) opens again. */
 	const repositoryInstance = (): Promise<AutomationsRepository> =>
-		(repositoryPromise ??= openRepository());
+		(repositoryPromise ??= openRepository().catch(async (error: unknown) => {
+			const held = leases;
+			leases = [];
+			repositoryPromise = undefined;
+			for (const lease of held) await lease.release();
+			throw error;
+		}));
 	const vault =
 		options.secretVault ??
 		secretVaultFromEnvironment(environment, workspaceRoot);
@@ -145,8 +150,7 @@ export function createAutomationsRuntime(
 	let schedules: AutomationScheduleService | undefined;
 	let triggers: AutomationTriggerService | undefined;
 	let jobs: JobRunner | undefined;
-	let retimeInFlight: Promise<void> = Promise.resolve();
-	const resolutionController = new AbortController();
+	let resolutionController = new AbortController();
 	let disposed = false;
 	const scheduleService = async () =>
 		(schedules ??= new AutomationScheduleService(
@@ -156,8 +160,7 @@ export function createAutomationsRuntime(
 			resolutionController.signal,
 			options.variables,
 			targets,
-			options.timeZone,
-			options.primeTenant,
+			options.settings,
 		));
 	const triggerService = async () =>
 		(triggers ??= new AutomationTriggerService(
@@ -173,37 +176,36 @@ export function createAutomationsRuntime(
 	   schedule from the next and the drain. This module keeps its cross-tenant
 	   poll, the re-read under the workspace and the slot advance. The interval is
 	   a live setting read when the loop starts, so the runner is built there
-	   rather than while the composition is assembled. */
+	   rather than while the composition is assembled. Zone changes are retimed
+	   inside the pass, so its drain covers them too. */
+	const settings = options.settings;
 	const runner = (): JobRunner =>
 		(jobs ??= createAutomationScheduleRunner({
 			repository: repositoryInstance,
 			service: scheduleService,
+			timeZones: settings
+				? createTimeZoneFollower({
+						settings,
+						apply: async (change) =>
+							(await scheduleService()).applyTimeZoneChange(change),
+					})
+				: undefined,
 			intervalMs:
 				typeof options.schedulerPollMs === 'function'
 					? options.schedulerPollMs()
 					: (options.schedulerPollMs ?? 30_000),
 		}));
-	const retimeSchedules = (tenantId: string) => {
-		if (disposed) return;
-		retimeInFlight = retimeInFlight
-			.then(() => scheduleService())
-			.then((service) => service.retime(tenantId))
-			.then(() => undefined)
-			.catch((error: unknown) => {
-				console.error(
-					'[automations] schedule re-timing failed:',
-					error instanceof Error ? error.message : error,
-				);
-			});
-	};
 	const stop = () => {
 		jobs?.stop();
 	};
 	const quiesce = async () => {
 		stop();
 		resolutionController.abort('automations-runtime-stopped');
+		/* Work in flight keeps the aborted signal; a later start, or a request
+		   this process still serves, resolves through a service with a live one. */
+		resolutionController = new AbortController();
+		schedules = undefined;
 		await jobs?.quiesce();
-		await retimeInFlight;
 	};
 	return {
 		scheduleService,
@@ -216,7 +218,6 @@ export function createAutomationsRuntime(
 		verifyAudit: async (tenantId) =>
 			(await repositoryInstance()).verifyAuditChain(tenantId),
 		repository: repositoryInstance,
-		retimeSchedules,
 		start() {
 			if (disposed) return;
 			runner().start();

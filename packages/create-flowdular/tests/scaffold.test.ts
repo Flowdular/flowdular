@@ -232,6 +232,7 @@ describe('scaffold', () => {
 			'specs/application.yaml',
 			'.env.example',
 			'.dockerignore',
+			'.vercelignore',
 			'infra/README.md',
 			'render.yaml',
 			'infra/docker/Dockerfile',

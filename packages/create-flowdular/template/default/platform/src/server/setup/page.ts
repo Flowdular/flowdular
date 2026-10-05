@@ -26,6 +26,8 @@ export interface SetupPageView {
 	readonly step: SetupStepName;
 	readonly csrfToken: string | null;
 	readonly databasePreconfigured: boolean;
+	/** The application itself serves setup and needs no restart afterwards. */
+	readonly inPlace?: boolean;
 	readonly autoRestart: boolean;
 	readonly error: string | null;
 	readonly notice: string | null;
@@ -39,6 +41,7 @@ export interface SetupPageView {
 	readonly seed: FirstRunSeed | null;
 	readonly modulesApproximated: boolean;
 	readonly tokenFile: string | null;
+	readonly passwordMinLength: number;
 }
 
 export function escapeHtml(value: string): string {
@@ -111,7 +114,7 @@ body{font-family:var(--font-sans);font-size:var(--text-base);color:var(--ink);ba
 .setup-help{font-size:var(--text-sm);line-height:1.5;color:var(--ink-3)}
 .setup-help--error{color:var(--danger)}
 .setup-row{display:grid;gap:12px;grid-template-columns:repeat(2,minmax(0,1fr))}
-.setup-btn{display:inline-flex;height:var(--control-h);align-items:center;justify-content:center;gap:6px;padding:0 16px;font:inherit;font-size:var(--text-md);font-weight:500;color:var(--ink);cursor:pointer;background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
+.setup-btn{display:inline-flex;height:var(--control-h);align-items:center;justify-content:center;gap:6px;padding:0 16px;font:inherit;font-size:var(--text-md);font-weight:500;color:var(--ink);text-decoration:none;cursor:pointer;background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
 .setup-btn:hover{background:var(--surface-2)}
 .setup-btn--primary{color:var(--ink-0);background:var(--primary);border-color:var(--primary)}
 .setup-btn--primary:hover{background:var(--primary-hover);border-color:var(--primary-hover)}
@@ -187,7 +190,7 @@ if(reduced.matches){draw(false);}else{frame=requestAnimationFrame(tick);}}).obse
 })();
 `;
 
-const MARK = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/><path d="M6 3v18M12 3v18M18 3v18" stroke="#c9722d" stroke-width="1.75" stroke-linecap="round" opacity=".85"/></svg>`;
+const MARK = `<svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><g fill="#ffffff"><rect x="2" y="3" width="20" height="5" rx="2.5"/><rect x="8" y="10" width="14" height="5" rx="2.5"/></g><g fill="#e08a45"><rect x="14" y="17" width="8" height="5" rx="2.5"/></g></svg>`;
 
 function steps(current: SetupStepName, databasePreconfigured: boolean): string {
 	const index = STEPS.indexOf(current);
@@ -253,16 +256,20 @@ function alerts(view: SetupPageView): string {
 
 function unlockStep(view: SetupPageView): string {
 	return `<header><span class="setup-kicker">First run</span><h2>Unlock setup</h2>
-<p class="setup-card__sub">The setup token was printed in this deployment's output when it started${
-		view.tokenFile
-			? ` and written to <code>${escapeHtml(view.tokenFile)}</code>`
-			: ''
+<p class="setup-card__sub">${
+		view.inPlace
+			? 'The setup token was printed by the command that deployed this app'
+			: `The setup token was printed in this deployment's output when it started${
+					view.tokenFile
+						? ` and written to <code>${escapeHtml(view.tokenFile)}</code>`
+						: ''
+				}`
 	}. Paste it here to continue.</p></header>
 ${steps(view.step, view.databasePreconfigured)}${alerts(view)}
 <form class="setup-form" method="post" action="/setup"><input type="hidden" name="step" value="unlock">
 <div class="setup-field"><label class="setup-label" for="setup-token">Setup token</label>
 <input class="setup-input" id="setup-token" name="token" type="password" autocomplete="off" spellcheck="false" maxlength="256" required autofocus aria-describedby="setup-token-help">
-<p class="setup-help" id="setup-token-help">Restarting this deployment issues a new token.</p></div>
+<p class="setup-help" id="setup-token-help">${view.inPlace ? 'Running the deploy command again issues a new token.' : 'Restarting this deployment issues a new token.'}</p></div>
 <button class="setup-btn setup-btn--primary setup-btn--block" type="submit">Continue</button></form>`;
 }
 
@@ -292,6 +299,11 @@ ${steps(view.step, view.databasePreconfigured)}${alerts(view)}
 <button class="setup-btn setup-btn--primary setup-btn--block" type="submit">Test connection</button></form>`;
 }
 
+/* Mirrors validateWorkspaceSlug (3 to 48 characters, no double hyphen) in the
+   syntax browsers compile pattern attributes with (the v flag). */
+const WORKSPACE_SLUG_INPUT_PATTERN =
+	'(?!.*--)[a-z0-9][a-z0-9\\-]{1,46}[a-z0-9]';
+
 function workspaceField(
 	view: SetupPageView,
 	name: string,
@@ -299,10 +311,13 @@ function workspaceField(
 	options: {
 		readonly type?: 'text' | 'email' | 'password';
 		readonly autocomplete?: string;
+		readonly autocapitalize?: string;
+		readonly autocorrect?: string;
 		readonly hint: string;
 		readonly maxlength: number;
 		readonly spellcheck?: boolean;
 		readonly readonly?: boolean;
+		readonly pattern?: string;
 	},
 ): string {
 	const id = `setup-${name}`;
@@ -310,7 +325,7 @@ function workspaceField(
 	const type = options.type ?? 'text';
 	const value = type === 'password' ? '' : (view.values[name] ?? '');
 	return `<div class="setup-field"><label class="setup-label" for="${id}">${escapeHtml(label)}</label>
-<input class="setup-input${error ? ' setup-input--error' : ''}" id="${id}" name="${name}" type="${type}"${type === 'password' ? '' : ` value="${escapeHtml(value)}"`}${options.autocomplete ? ` autocomplete="${escapeHtml(options.autocomplete)}"` : ''}${options.spellcheck === false ? ' spellcheck="false"' : ''}${options.readonly ? ' readonly' : ''} maxlength="${options.maxlength}" required aria-describedby="${id}-help"${error ? ' aria-invalid="true"' : ''}>
+<input class="setup-input${error ? ' setup-input--error' : ''}" id="${id}" name="${name}" type="${type}"${type === 'password' ? '' : ` value="${escapeHtml(value)}"`}${options.autocomplete ? ` autocomplete="${escapeHtml(options.autocomplete)}"` : ''}${options.autocapitalize ? ` autocapitalize="${escapeHtml(options.autocapitalize)}"` : ''}${options.autocorrect ? ` autocorrect="${escapeHtml(options.autocorrect)}"` : ''}${options.spellcheck === false ? ' spellcheck="false"' : ''}${options.readonly ? ' readonly' : ''}${options.pattern ? ` pattern="${escapeHtml(options.pattern)}"` : ''} maxlength="${options.maxlength}" required aria-describedby="${id}-help"${error ? ' aria-invalid="true"' : ''}>
 <p class="setup-help${error ? ' setup-help--error' : ''}" id="${id}-help"${error ? ' role="alert"' : ''}>${escapeHtml(error ?? options.hint)}</p></div>`;
 }
 
@@ -327,12 +342,12 @@ ${steps(view.step, view.databasePreconfigured)}${alerts(view)}
 ${view.databasePreconfigured ? '<p class="setup-alert setup-alert--success">PostgreSQL is already configured for this deployment.</p>' : ''}
 <form class="setup-form" method="post" action="/setup">${csrf(view)}
 ${workspaceField(view, 'workspaceName', 'Workspace name', { hint: 'The name shown to people in this workspace.', maxlength: 120 })}
-${workspaceField(view, 'workspaceSlug', 'Workspace address', { hint: '3 to 48 lowercase letters, numbers, or single hyphens.', maxlength: 48, spellcheck: false })}
+${workspaceField(view, 'workspaceSlug', 'Workspace address', { hint: '3 to 48 lowercase letters, numbers, or single hyphens.', maxlength: 48, autocapitalize: 'none', autocorrect: 'off', spellcheck: false, pattern: WORKSPACE_SLUG_INPUT_PATTERN })}
 <div class="setup-row">
 ${workspaceField(view, 'ownerName', 'Your name', { hint: 'Shown on your owner account.', maxlength: 80, autocomplete: 'name' })}
 ${workspaceField(view, 'ownerEmail', 'Your email', { type: 'email', hint: 'Used to sign in.', maxlength: 254, autocomplete: 'email', spellcheck: false })}
 </div>
-${workspaceField(view, 'ownerPassword', 'Your password', { type: 'password', hint: 'Use at least 8 characters, or more if this deployment requires it. Your password will not be shown again.', maxlength: 512, autocomplete: 'new-password' })}
+${workspaceField(view, 'ownerPassword', 'Your password', { type: 'password', hint: `Use at least ${view.passwordMinLength} characters. Your password will not be shown again.`, maxlength: 512, autocomplete: 'new-password' })}
 ${workspaceField(view, 'ownerPasswordConfirm', 'Confirm your password', { type: 'password', hint: 'Re-enter the password for the owner account.', maxlength: 512, autocomplete: 'new-password' })}
 ${workspaceField(view, 'applicationPath', 'Backoffice address', { hint: view.databasePreconfigured ? 'This address is set by the deployment. Change its configuration and restart to choose another.' : 'Use /app or another path, such as /backoffice. Takes effect after restart.', maxlength: 64, spellcheck: false, readonly: view.databasePreconfigured })}
 <div class="setup-foot">${back}<button class="${nextClass}" type="submit" name="step" value="workspace">Review setup</button></div></form>`;
@@ -359,7 +374,9 @@ function reviewStep(view: SetupPageView): string {
 <p class="setup-card__sub">${
 		blocked.length > 0
 			? 'This database cannot serve every enabled module, so it is not activated.'
-			: 'Applying creates your workspace and owner account. Enabled modules finish preparing when the app restarts.'
+			: view.inPlace
+				? 'Applying creates your workspace and owner account.'
+				: 'Applying creates your workspace and owner account. Enabled modules finish preparing when the app restarts.'
 	}</p></header>
 ${steps(view.step, view.databasePreconfigured)}${alerts(view)}
 ${
@@ -421,9 +438,11 @@ function doneStep(view: SetupPageView): string {
 		view.environment?.status === 'failed';
 	const nextStep = needsEnvironment
 		? 'Save the connection settings in this deployment, then restart it to sign in.'
-		: view.autoRestart
-			? 'The app is restarting. Wait a moment, then sign in. If it does not restart, restart the deployment.'
-			: 'Restart this deployment to leave setup and open the sign-in screen.';
+		: view.inPlace
+			? 'Sign in to start using it.'
+			: view.autoRestart
+				? 'The app is restarting. Wait a moment, then sign in. If it does not restart, restart the deployment.'
+				: 'Restart this deployment to leave setup and open the sign-in screen.';
 	return `<header><span class="setup-kicker">Sign in</span><h2>Flowdular is ready</h2>
 <p class="setup-card__sub">The workspace ${escapeHtml(seed?.workspace.name ?? '')} is ready. ${nextStep}</p></header>
 ${steps(view.step, view.databasePreconfigured)}${alerts(view)}

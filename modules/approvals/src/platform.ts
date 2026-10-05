@@ -129,7 +129,7 @@ export function createServerComposition(
 	return {
 		routes: createApprovalsRoutes(context.auth, runtime),
 		settings: APPROVALS_MODULE_SETTINGS,
-		start: () => runtime.start(),
+		startWorker: () => runtime.start(),
 		stop: () => runtime.quiesce(),
 		dispose: () => runtime.dispose(),
 	};

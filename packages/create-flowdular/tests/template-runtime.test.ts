@@ -23,7 +23,7 @@ const fixtures: Record<string, string> = {
 		export const defineConfig = value => value;
 		export class RenderRoute { constructor(options) { Object.assign(this, options); } }
 	`,
-	'@flowdular/sdk/server': `export const validateApplicationPath = value => value; export const assertRouteConflicts = () => {}; export const createModuleWebRoutes = () => []; export const createApplicationRoutes = () => []; export const defineEndpoint = definition => ({ ...definition, serverRoute: { path: definition.path, methods: definition.methods, handler: definition.handler } }); export const jsonResponse = (body, status) => Response.json(body, { status }); export const serverMetrics = () => ({ setBuildVersion() {}, expose: () => 'flowdular_build_info 1\\n' }); export const createModuleMetrics = () => ({ counter() {}, histogram() {} }); export const serverTracer = () => ({ sampleRatio: 1, startSpan: () => ({ context: {}, setAttribute() {}, end() {} }), drain: () => [], stats: () => ({ buffered: 0, dropped: 0, recorded: 0 }), onSpanRecorded: () => () => {} }); export const traceConfigFromEnvironment = () => ({ exporter: 'none', url: null, headers: {}, sampleRatio: 1 }); export const createOtlpSpanExporter = () => ({ async flush() {}, stats: () => ({ exported: 0, dropped: 0, failures: 0, retries: 0 }), async dispose() {} }); export const errorSinkConfigFromEnvironment = () => ({ kind: 'none', url: null, token: null }); export const serverErrorSink = () => ({ stats: () => ({ queued: 0 }), async flush() {} }); export const createMailPort = () => ({ adapter: 'none', configured: false, async send() {}, outbox: [] }); export const mailConfigFromEnvironment = () => ({ adapter: 'none', deprecated: [] }); export const createCorsMiddleware = () => (context, next) => next(); export const createOpenApiRoutes = () => [{ path: '/api/openapi.json', methods: ['GET'], handler: () => new Response(null) }];`,
+	'@flowdular/sdk/server': `export const validateApplicationPath = value => value; export const assertRouteConflicts = () => {}; export const createModuleWebRoutes = () => []; export const createApplicationRoutes = () => []; export const defineEndpoint = definition => ({ ...definition, serverRoute: { path: definition.path, methods: definition.methods, handler: definition.handler } }); export const jsonResponse = (body, status) => Response.json(body, { status }); export class HttpProblem extends Error { constructor(code, message, status) { super(message); this.code = code; this.status = status; } } export const problemResponse = error => Response.json({ error: { code: error.code, message: error.message } }, { status: error.status ?? 500 }); export const serverLogger = () => ({ error() {}, warn() {}, info() {}, debug() {} }); export const serverMetrics = () => ({ setBuildVersion() {}, expose: () => 'flowdular_build_info 1\\n' }); export const createModuleMetrics = () => ({ counter() {}, histogram() {} }); export const serverTracer = () => ({ sampleRatio: 1, startSpan: () => ({ context: {}, setAttribute() {}, end() {} }), drain: () => [], stats: () => ({ buffered: 0, dropped: 0, recorded: 0 }), onSpanRecorded: () => () => {} }); export const traceConfigFromEnvironment = () => ({ exporter: 'none', url: null, headers: {}, sampleRatio: 1 }); export const createOtlpSpanExporter = () => ({ async flush() {}, stats: () => ({ exported: 0, dropped: 0, failures: 0, retries: 0 }), async dispose() {} }); export const errorSinkConfigFromEnvironment = () => ({ kind: 'none', url: null, token: null }); export const serverErrorSink = () => ({ stats: () => ({ queued: 0 }), async flush() {} }); export const createMailPort = () => ({ adapter: 'none', configured: false, async send() {}, outbox: [] }); export const mailConfigFromEnvironment = () => ({ adapter: 'none', deprecated: [] }); export const createCorsMiddleware = () => (context, next) => next(); export const createOpenApiRoutes = () => [{ path: '/api/openapi.json', methods: ['GET'], handler: () => new Response(null) }];`,
 	'@flowdular/sdk/modules/auth/server': `
         export const principalFromContext = () => null;
 		export const isTokenPrincipal = () => false;
@@ -58,12 +58,13 @@ const fixtures: Record<string, string> = {
 		export const clearSetupToken = () => {};
 		export const configuredDatabaseNeedsFirstRun = async environment => environment.FD_TEST_EMPTY === 'true';
 		export const createFirstRunSetup = options => ({ routes: [{ path: '/setup', methods: ['GET'], handler: () => new Response(options.databasePreconfigured ? 'database ready' : 'database needed') }] });
+		export const createInPlaceFirstRun = options => ({ middleware: { gate: options.passThrough }, routes: [{ path: '/setup', methods: ['GET'], handler: () => new Response('in place') }] });
 	`,
 	'./src/generated/modules.server.ts': `
         export const moduleWebMounts = []; export const applicationBasePath = '/app';
 		export function composeModuleServer(context) {
 			if (context.auth.middleware.databases !== context.databases) throw new Error('AUTH_DATABASE_PROVIDER_MISMATCH');
-			return [];
+			return globalThis.__fixtureCompositions ?? [];
 		}
 	`,
 };
@@ -188,6 +189,48 @@ it('boots a generated platform with one shared database provider', async () => {
 	}
 });
 
+it('stops and disposes every composition when a worker fails to start, then rethrows', async () => {
+	const platform = await generatedPlatform();
+	const calls: string[] = [];
+	const refused = new Error('worker start refused');
+	const composition = (name: string, startWorker: () => Promise<void>) => ({
+		routes: [],
+		startWorker: async () => {
+			calls.push(`${name}.startWorker`);
+			await startWorker();
+		},
+		stop: async () => {
+			calls.push(`${name}.stop`);
+		},
+		dispose: async () => {
+			calls.push(`${name}.dispose`);
+		},
+	});
+	/* The generated composition the fixture answers with; the bundled config
+	   runs in its own module, so a global is the only shared channel. */
+	Object.assign(globalThis, {
+		__fixtureCompositions: [
+			composition('started', async () => {}),
+			composition('refused', async () => {
+				throw refused;
+			}),
+		],
+	});
+	try {
+		await expect(boot(platform.directory)).rejects.toBe(refused);
+		for (const name of ['started', 'refused']) {
+			expect(calls.filter((call) => call.startsWith(`${name}.`))).toEqual([
+				`${name}.startWorker`,
+				`${name}.stop`,
+				`${name}.dispose`,
+			]);
+		}
+	} finally {
+		Reflect.deleteProperty(globalThis, '__fixtureCompositions');
+		await platform.dispose();
+	}
+});
+
 it('composes the metrics route only when FD_METRICS is on', async () => {
 	const platform = await generatedPlatform();
 	try {
@@ -241,6 +284,36 @@ it('composes the metrics route only when FD_METRICS is on', async () => {
 	}
 });
 
+it('serves the worker tick route only in the tick role and refuses it without a secret', async () => {
+	const platform = await generatedPlatform();
+	try {
+		const combined = await boot(platform.directory);
+		expect(combined.router.routes.map((route) => route.path)).not.toContain(
+			'/api/internal/worker/tick',
+		);
+		await expect(
+			boot(platform.directory, { FD_RUNTIME_ROLE: 'tick' }),
+		).rejects.toThrow('FD_WORKER_TICK_SECRET');
+		const secret = 's'.repeat(32);
+		const tick = await boot(platform.directory, {
+			FD_RUNTIME_ROLE: 'tick',
+			FD_WORKER_TICK_SECRET: secret,
+			FD_WORKER_TICK_WINDOW_MS: '1000',
+		});
+		const route = tick.router.routes.find(
+			(candidate) => candidate.path === '/api/internal/worker/tick',
+		);
+		expect(route).toBeDefined();
+		const denied = await route!.handler({
+			requestId: 'tick',
+			octane: { request: new Request('http://app/api/internal/worker/tick') },
+		});
+		expect(denied.status).toBe(401);
+	} finally {
+		await platform.dispose();
+	}
+});
+
 it('serves setup before composing modules when a generated app has no workspace', async () => {
 	const platform = await generatedPlatform();
 	try {
@@ -261,6 +334,24 @@ it('serves setup before composing modules when a generated app has no workspace'
 				})
 			).text(),
 		).toBe('database ready');
+	} finally {
+		await platform.dispose();
+	}
+});
+
+it('composes the application with setup in front of it when a Vercel app has no workspace', async () => {
+	const platform = await generatedPlatform();
+	try {
+		const config = await boot(platform.directory, {
+			FD_TEST_EMPTY: 'true',
+			FD_DEPLOYMENT_TARGET: 'vercel',
+		});
+		expect(config.middlewares).toContainEqual({
+			gate: ['/api/health', '/api/ready', '/api/internal/worker/tick'],
+		});
+		expect(config.router.routes.map((route) => route.path)).toEqual(
+			expect.arrayContaining(['/api/health', '/api/ready', '/setup']),
+		);
 	} finally {
 		await platform.dispose();
 	}

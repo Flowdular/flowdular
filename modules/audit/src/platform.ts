@@ -37,7 +37,8 @@ export function createServerComposition(
 	return {
 		routes: createAuditRoutes(context.auth, runtime),
 		settings: AUDIT_MODULE_SETTINGS,
-		start: () => runtime.start(),
+		start: () => runtime.erasure.seal(),
+		startWorker: () => runtime.start(),
 		stop: () => runtime.quiesce(),
 		dispose: () => runtime.dispose(),
 	};

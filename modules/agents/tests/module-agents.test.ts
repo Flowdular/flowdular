@@ -7,6 +7,7 @@ import {
 	describe,
 	expect,
 	it,
+	vi,
 } from 'vitest';
 import {
 	AgentHarness,
@@ -80,6 +81,7 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
+	vi.restoreAllMocks();
 	for (const worker of workers.splice(0)) await worker.dispose();
 });
 
@@ -224,12 +226,18 @@ describe('module-owned business agents', () => {
 		});
 	});
 
-	it('retains exact executable revisions and rejects code drift or downgrade', async () => {
+	it('AGENTS-MODULE-REVISION advances a binding on its first request after a higher revision, keeps the old snapshot, rejects drift and supersedes a lower revision', async () => {
 		const { repository, service } = fixture();
 		await service.reconcileModuleAgents([definition(1)]);
 		await bind(service, 'tenant-a');
 		await service.reconcileModuleAgents([definition(2, 'Catalog curator v2')]);
+		expect(
+			await repository.getModuleAgentBinding('tenant-a', definition().id),
+		).toMatchObject({ moduleDefinitionRevision: 1, executableRevision: 1 });
 
+		expect(await service.listModuleAgents('tenant-a')).toMatchObject([
+			{ status: 'active', revision: 2, name: 'Catalog curator v2' },
+		]);
 		expect(
 			await repository.getModuleAgentBinding('tenant-a', definition().id),
 		).toMatchObject({
@@ -259,9 +267,21 @@ describe('module-owned business agents', () => {
 		await expect(
 			service.reconcileModuleAgents([definition(2, 'Changed without a bump')]),
 		).rejects.toThrow(/MODULE_AGENT_REVISION_DRIFT/);
-		await expect(
-			service.reconcileModuleAgents([definition(1)]),
-		).rejects.toThrow(/MODULE_AGENT_REVISION_DOWNGRADE/);
+
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		const older = fixture().service;
+		await older.reconcileModuleAgents([definition(1)]);
+		expect(await older.listModuleAgents('tenant-a')).toMatchObject([
+			{
+				status: 'unavailable',
+				unavailableReason: expect.stringMatching(
+					/^MODULE_AGENT_REVISION_SUPERSEDED/,
+				),
+			},
+		]);
+		expect(
+			await repository.getModuleAgentBinding('tenant-a', definition().id),
+		).toMatchObject({ moduleDefinitionRevision: 2, executableRevision: 2 });
 	});
 
 	it('rolls back a binding when its audit evidence cannot be written', async () => {
@@ -291,40 +311,47 @@ describe('module-owned business agents', () => {
 		).toBeNull();
 	});
 
-	it('retries partial cross-tenant reconciliation without duplicating retained revisions', async () => {
+	it('AGENTS-WORKER-BINDING-PASS skips a failing workspace without logging it and advances it on a later pass without duplicating retained revisions', async () => {
 		const { repository, service } = fixture();
 		await service.reconcileModuleAgents([definition()]);
-		await bind(service, 'tenant-a');
-		await bind(service, 'tenant-b');
+		const tenants = ['tenant-a', 'tenant-b', 'tenant-c'];
+		for (const tenant of tenants) await bind(service, tenant);
+		const served = fixture().service;
+		await served.reconcileModuleAgents([definition(2, 'Updated curator')]);
+		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
 		await owner.database.execute({
 			text: `CREATE TRIGGER fail_reconciliation_audit BEFORE INSERT ON agent_audit_events_v4
 			FOR EACH ROW WHEN (NEW.tenant_id = 'tenant-b' AND NEW.action = 'module-agent.definition-reconciled')
 			EXECUTE FUNCTION coreloom_reject_change('reconciliation audit unavailable')`,
 		});
 		try {
-			await expect(
-				service.reconcileModuleAgents([definition(2, 'Updated curator')]),
-			).rejects.toThrow(/reconciliation audit unavailable/);
+			await served.advanceStaleModuleAgentBindings();
 		} finally {
 			await owner.database.execute({
 				text: 'DROP TRIGGER fail_reconciliation_audit ON agent_audit_events_v4',
 			});
 		}
+		expect(logged).toHaveBeenCalledTimes(1);
+		expect(String(logged.mock.calls[0]![0])).toMatch(
+			/binding pass skipped a workspace/,
+		);
+		expect(JSON.stringify(logged.mock.calls)).not.toMatch(/tenant-/);
 		expect(
-			(await repository.getModuleAgentBinding('tenant-a', definition().id))
-				?.revision,
-		).toBe(2);
-		expect(
-			(await repository.getModuleAgentBinding('tenant-b', definition().id))
-				?.revision,
-		).toBe(1);
-		await service.reconcileModuleAgents([definition(2, 'Updated curator')]);
-		await service.reconcileModuleAgents([definition(2, 'Updated curator')]);
-		for (const tenant of ['tenant-a', 'tenant-b']) {
+			await Promise.all(
+				tenants.map(
+					async (tenant) =>
+						(await repository.getModuleAgentBinding(tenant, definition().id))
+							?.moduleDefinitionRevision,
+				),
+			),
+		).toEqual([2, 1, 2]);
+
+		await served.advanceStaleModuleAgentBindings();
+		await served.advanceStaleModuleAgentBindings();
+		for (const tenant of tenants) {
 			expect(
-				(await repository.getModuleAgentBinding(tenant, definition().id))
-					?.revision,
-			).toBe(2);
+				await repository.getModuleAgentBinding(tenant, definition().id),
+			).toMatchObject({ revision: 2, moduleDefinitionRevision: 2 });
 			expect(
 				await repository.getAgentRevision(tenant, definition().id, 1),
 			).not.toBeNull();
@@ -337,9 +364,10 @@ describe('module-owned business agents', () => {
 				),
 			).toHaveLength(1);
 		}
+		expect(logged).toHaveBeenCalledTimes(1);
 	});
 
-	it('grants reconciliation only tenant routing columns, never instructions or writes', async () => {
+	it('grants the background passes only routing columns and revisions, never instructions or writes', async () => {
 		const { service } = fixture();
 		await service.reconcileModuleAgents([definition()]);
 		await bind(service, 'tenant-a');
@@ -355,11 +383,40 @@ describe('module-owned business agents', () => {
 					})
 				).rows,
 			).toEqual([{ tenant_id: 'tenant-a', agent_id: definition().id }]);
-			await expect(
-				background.database.query({
-					text: 'SELECT instructions FROM agent_definitions',
-				}),
-			).rejects.toMatchObject({ code: '42501' });
+			expect(
+				(
+					await background.database.query({
+						text: 'SELECT module_definition_revision FROM module_agent_bindings',
+					})
+				).rows,
+			).toEqual([{ module_definition_revision: 1 }]);
+			expect(
+				(
+					await background.database.query({
+						text: `SELECT tenant_id, id, revision FROM agent_definitions
+						       WHERE tenant_id = 'tenant-a'`,
+					})
+				).rows,
+			).toEqual([]);
+			expect(
+				(
+					await background.database.query({
+						text: 'SELECT tenant_id, agent_id, revision FROM agent_definition_revisions',
+					})
+				).rows,
+			).toEqual([
+				{ tenant_id: 'tenant-a', agent_id: definition().id, revision: 1 },
+			]);
+			for (const text of [
+				'SELECT instructions FROM agent_definitions',
+				'SELECT provider FROM module_agent_bindings',
+				'SELECT instructions FROM agent_definition_revisions',
+				'SELECT name FROM agent_definition_revisions',
+			]) {
+				await expect(background.database.query({ text })).rejects.toMatchObject(
+					{ code: '42501' },
+				);
+			}
 			await expect(
 				background.database.execute({
 					text: "DELETE FROM module_agent_bindings WHERE tenant_id = 'tenant-a'",

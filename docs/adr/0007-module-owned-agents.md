@@ -266,6 +266,39 @@ existing bindings in one transaction:
 - a definition absent from the sealed registry is unavailable for new work;
   retained revisions and historical runs remain untouched.
 
+Amendment (2026-10-05, `agents.core` 0.15.2): reconciliation no longer runs at
+runtime start, and a lower revision no longer fails boot.
+
+- `agents.core` opens once in every role, before its first request, capability
+  call or `startWorker()`. Opening runs its migrations, then reconciles the
+  registered definitions into the durable catalogue. When every definition
+  matches its stored revision and content hash, opening costs one catalogue read
+  and writes nothing. Otherwise it takes the advisory lock
+  `agents.core.module-catalog`, reads the catalogue again under it and writes
+  only what is still missing or behind, so roles that open together never fail
+  with a duplicate key. A failed opening fails only the request or worker start
+  that triggered it, and the next one opens again.
+- Opening never reads or writes a tenant binding. A request that lists, reads or
+  runs a module agent advances that tenant's stale binding first, inside its own
+  tenant transaction, under the binding row lock and a share lock on the
+  catalogue row, so concurrent requests advance it once. Configuring a binding
+  writes it at the served revision under the same locks. After its execution
+  workers start, the worker advances the bindings no request has touched, in
+  pages of at most 100 tenants, and logs a failing tenant without tenant data.
+  That pass never gates worker readiness.
+- Tenant-created definitions saved before the retained revision ledger are
+  adopted once. A request adopts its own tenant's owed definitions in its own
+  transaction, and the worker adopts the rest in pages after it starts.
+- An instance that registers a lower revision than the catalogue holds, such as
+  an older deployment during a rolling deploy, is superseded for that agent and
+  keeps running. It writes nothing for the agent, lists it unavailable with
+  `MODULE_AGENT_REVISION_SUPERSEDED`, refuses a binding change or a run of it
+  with status 409 and logs a warning once per process and agent. Queued runs and
+  workflow references pinned to a retained executable revision keep the
+  exact-revision contract.
+- The same revision with different content is still refused, by preparation and
+  by the opening, as `MODULE_AGENT_REVISION_DRIFT`.
+
 An old retained revision remains executable after a newer module definition is
 registered only while the owning module is still present, the selected provider
 is usable, and every required registered tool still exists. Module removal is
@@ -327,7 +360,8 @@ not change shape.
 - Business-agent definition content is immutable within one definition
   revision.
 - Duplicate ids, late registration, revision downgrade and same-revision content
-  drift fail platform boot before workers start.
+  drift fail platform boot before workers start. Since the 2026-10-05
+  amendment, a revision downgrade supersedes the agent instead.
 - Module behavior cannot be edited or deleted through tenant APIs.
 - Tenant bindings cannot enable a tool outside the code allowlist.
 - Every execution is tenant-scoped and uses the initiating Actor and trusted
