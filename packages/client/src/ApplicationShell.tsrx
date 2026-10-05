@@ -203,8 +203,12 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 		)?.name ??
 			t('shell.workspace.fallbackName');
 
-	const navigate = (viewId: ShellView) => {
-		history.pushState(null, '', viewHref(viewId, activeWorkspaceSlug));
+	const navigate = (viewId: ShellView, search = '', hash = '') => {
+		history.pushState(
+			null,
+			'',
+			viewHref(viewId, activeWorkspaceSlug) + search + hash,
+		);
 		setActiveView(viewId);
 		setNavigationCount((count) => count + 1);
 		setNavigationOpen(false);
@@ -456,7 +460,7 @@ export function ApplicationShell(props: ApplicationShellProps) @{
 			}
 			if (!reachableViews.has(location.view)) return;
 			event.preventDefault();
-			navigate(location.view);
+			navigate(location.view, url.search, url.hash);
 		};
 		document.addEventListener('click', onInternalNavigation);
 		return () => document.removeEventListener('click', onInternalNavigation);

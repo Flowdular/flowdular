@@ -160,6 +160,25 @@ it(
 	},
 );
 
+it('keeps the query string and hash of an in-workspace link', async () => {
+	const container = await renderShell('/app/acme/inbox', 'inbox');
+
+	await click(container.querySelector('.inbox-link'));
+
+	expect(window.location.pathname).toBe('/app/acme/records');
+	expect(window.location.search).toBe('?id=7');
+	expect(window.location.hash).toBe('#notes');
+	expect(screen(container)).toBe('?id=7#notes');
+
+	await click(navigationEntry(container, '/app/acme/records'));
+	await click(container.querySelector('.records-row'));
+
+	expect(window.location.pathname + window.location.search).toBe(
+		'/app/acme/records?id=9',
+	);
+	expect(screen(container)).toBe('?id=9');
+});
+
 it('steps back and forward through records of the open view', async () => {
 	const container = await renderShell('/app/acme/records?id=123', 'records');
 	await click(navigationEntry(container, '/app/acme/records'));
