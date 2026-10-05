@@ -133,6 +133,8 @@ pnpm verify      # rules, types, tests, validation and formatting
 pnpm build       # CLI smoke checks and production application build
 ```
 
+The `@flowdular/ui` layout tests render in a local Chrome or Chromium. Set `FD_CHROME` to its binary when it is not installed in the usual place.
+
 | Path                    | Purpose                                                          |
 | :---------------------- | :--------------------------------------------------------------- |
 | [`platform/`](platform) | Deployable application and module composition                    |

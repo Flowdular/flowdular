@@ -42,6 +42,11 @@ export interface ModuleClientInitializationContext {
 
 export interface ClientViewContribution {
 	readonly id: string;
+	/**
+	 * Mounted afresh on every navigation that lands on the view, including a
+	 * click on its own entry and a step back or forward, so a view that keeps a
+	 * record in its query string or hash reads `window.location` on mount.
+	 */
 	readonly render: () => OctaneNode;
 }
 
