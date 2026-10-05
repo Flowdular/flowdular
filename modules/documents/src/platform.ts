@@ -108,7 +108,8 @@ export function createServerComposition(
 			),
 		}),
 		settings: DOCUMENTS_MODULE_SETTINGS,
-		start: () => runtime.start(),
+		start: () => runtime.templates.seal(),
+		startWorker: () => runtime.start(),
 		stop: () => runtime.quiesce(),
 		dispose: () => runtime.dispose(),
 	};

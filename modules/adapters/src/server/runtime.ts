@@ -142,6 +142,7 @@ export function createAdaptersRuntime(
 		pollIntervalMs: options.pollIntervalMs,
 		now: options.now,
 	});
+	let workerActive = false;
 
 	const service = (): Promise<AdaptersService> => {
 		if (disposed) {
@@ -159,7 +160,9 @@ export function createAdaptersRuntime(
 					principal: options.principal,
 					timeZone: options.timeZone,
 					recordedAllowed: options.recordedAllowed,
-					onQueued: () => runs.wake(),
+					onQueued: () => {
+						if (workerActive) runs.wake();
+					},
 					...(options.now ? { now: options.now } : {}),
 					...options.service,
 				}),
@@ -178,19 +181,23 @@ export function createAdaptersRuntime(
 			await schedule.tick();
 		},
 		start() {
+			workerActive = true;
 			runs.start();
 			schedule.start();
 		},
 		stop() {
+			workerActive = false;
 			runs.stop();
 			schedule.stop();
 		},
 		async quiesce() {
+			workerActive = false;
 			await Promise.all([runs.quiesce(), schedule.quiesce()]);
 		},
 		async dispose() {
 			if (disposed) return;
 			disposed = true;
+			workerActive = false;
 			await Promise.all([runs.dispose(), schedule.dispose()]);
 			/* An open still in flight would assign its leases after this read, so
 			   settle it first; a failed open must not surface during teardown. */

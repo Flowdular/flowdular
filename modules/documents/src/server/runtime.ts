@@ -82,6 +82,7 @@ export function createDocumentsRuntime(
 	let textServicePromise: Promise<DocumentTextService> | undefined;
 	let templatesServicePromise: Promise<DocumentTemplatesService> | undefined;
 	const registry = new DocumentTemplateRegistry();
+	let workerActive = false;
 
 	/* Schema work runs on the migrator role and that lease is released before the
 	   runtime one is taken, so request handling never holds a schema owner. */
@@ -157,7 +158,9 @@ export function createDocumentsRuntime(
 					repository: resolved,
 					storage: options.storage,
 					ocr: options.ocr ?? null,
-					wake: () => text.wake(),
+					wake: () => {
+						if (workerActive) text.wake();
+					},
 					limits: options.textLimits,
 				}),
 		);
@@ -185,7 +188,9 @@ export function createDocumentsRuntime(
 				storage: options.storage,
 				quotaBytes: options.quotaBytes,
 				timeZone: options.timeZone ?? (() => 'UTC'),
-				wake: () => render.wake(),
+				wake: () => {
+					if (workerActive) render.wake();
+				},
 			});
 		});
 		return templatesServicePromise;
@@ -233,15 +238,18 @@ export function createDocumentsRuntime(
 		},
 		start: () => {
 			registry.seal();
+			workerActive = true;
 			text.start();
 			if (!options.repository || options.templatesRepository) render.start();
 		},
 		quiesce: async () => {
+			workerActive = false;
 			await Promise.all([text.quiesce(), render.quiesce()]);
 		},
 		async dispose() {
 			if (disposed) return;
 			disposed = true;
+			workerActive = false;
 			await Promise.all([text.dispose(), render.dispose()]);
 			/* An open still in flight would assign its leases after this read, so
 			   settle it first; a failed open must not surface as an unhandled
