@@ -46,6 +46,14 @@ export interface AutomationScheduleRouting {
 	readonly nextRunAt: number;
 }
 
+export interface AutomationTimeZoneRecord {
+	readonly tenantId: string;
+	readonly timeZone: string;
+	readonly changedAt: number;
+	/** The zone pending cron slots were last moved to; null before the first. */
+	readonly appliedTimeZone: string | null;
+}
+
 export type AutomationListSortKey = 'label' | 'updatedAt';
 
 export const AUTOMATION_LIST_SORT_KEYS: readonly AutomationListSortKey[] = [
@@ -120,6 +128,21 @@ export interface AutomationsRepository {
 		reason: string,
 		now: number,
 	): Promise<boolean>;
+	/** Keeps the latest change: a write older than the stored one is ignored. */
+	recordTimeZone(input: {
+		readonly tenantId: string;
+		readonly timeZone: string;
+		readonly changedAt: number;
+	}): Promise<void>;
+	getTimeZone(tenantId: string): Promise<AutomationTimeZoneRecord | null>;
+	/** Cross-tenant: the workspaces whose recorded zone is not applied yet. */
+	listPendingTimeZones(limit: number): Promise<readonly string[]>;
+	/** Lands only while the row still holds the change that was applied. */
+	markTimeZoneApplied(input: {
+		readonly tenantId: string;
+		readonly timeZone: string;
+		readonly changedAt: number;
+	}): Promise<boolean>;
 	listTriggersPage(
 		tenantId: string,
 		query: AutomationListQuery,

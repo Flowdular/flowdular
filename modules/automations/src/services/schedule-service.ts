@@ -239,9 +239,13 @@ export class AutomationScheduleService {
 	}
 
 	/* An interval cadence carries no zone, so it never pays for the read. */
-	private zoneFor(cadence: Cadence, tenantId: string): string {
+	private zoneFor(
+		cadence: Cadence,
+		tenantId: string,
+		recorded?: string,
+	): string {
 		return cadence.kind === 'cron'
-			? this.timeZoneOf(tenantId)
+			? (recorded ?? this.timeZoneOf(tenantId))
 			: DEFAULT_TIME_ZONE;
 	}
 
@@ -590,17 +594,19 @@ export class AutomationScheduleService {
 	 * Answers whether the slot dispatched a run.
 	 */
 	async fireDue(routing: AutomationScheduleRouting): Promise<boolean> {
+		const recordedZone = await this.recordedTimeZone(routing.tenantId);
 		const schedule = await this.repository.getSchedule(
 			routing.tenantId,
 			routing.id,
 		);
 		if (!schedule || schedule.nextRunAt !== routing.nextRunAt) return false;
-		return await this.fire(schedule, this.now());
+		return await this.fire(schedule, this.now(), recordedZone);
 	}
 
 	private async fire(
 		schedule: StoredAutomationSchedule,
 		now: number,
+		recordedZone: string | undefined,
 	): Promise<boolean> {
 		const slot = schedule.nextRunAt;
 		await this.primeTenant(schedule.tenantId);
@@ -614,7 +620,7 @@ export class AutomationScheduleService {
 				cadence,
 				slot,
 				now,
-				this.zoneFor(cadence, schedule.tenantId),
+				this.zoneFor(cadence, schedule.tenantId, recordedZone),
 			);
 		} catch (error) {
 			if (!(error instanceof InvalidCadenceError)) throw error;
@@ -753,24 +759,65 @@ export class AutomationScheduleService {
 	}
 
 	/**
-	 * Moves every pending cron slot of one workspace into the zone it now uses.
-	 * A slot already due is left alone so the fire it owes is not lost, and each
-	 * write is conditional on the slot this read saw, so a concurrent fire wins.
+	 * Records the zone a workspace changed to. The record is the signal a worker
+	 * in another process reads, so the process that accepted the change does no
+	 * scheduler work of its own.
 	 */
-	async retime(tenantId: string): Promise<number> {
+	async recordTimeZoneChange(
+		tenantId: string,
+		timeZone: string,
+		changedAt: number,
+	): Promise<void> {
+		await this.repository.recordTimeZone({
+			tenantId: bounded(tenantId, 'tenantId', 1, 128),
+			timeZone: bounded(timeZone, 'timeZone', 1, 64),
+			changedAt,
+		});
+	}
+
+	/**
+	 * The zone recorded for this workspace, after moving its pending cron slots
+	 * into it if that is still owed. It wins over this process's settings
+	 * snapshot, which can predate the change. Undefined while nothing was
+	 * recorded.
+	 */
+	async recordedTimeZone(tenantId: string): Promise<string | undefined> {
+		const record = await this.repository.getTimeZone(tenantId);
+		if (!record) return undefined;
+		if (record.appliedTimeZone !== record.timeZone) {
+			await this.retime(tenantId, record.timeZone, record.changedAt);
+			await this.repository.markTimeZoneApplied(record);
+		}
+		return record.timeZone;
+	}
+
+	/**
+	 * Moves every pending cron slot of one workspace into the zone it now uses.
+	 * A slot due by `owedUntil`, the moment the zone changed, is left alone so
+	 * the fire it owes is not lost; any other takes the first slot after that
+	 * moment, so a worker applying the change late fires it as a missed slot.
+	 * Each write is conditional on the slot this read saw, so a concurrent fire
+	 * wins.
+	 */
+	async retime(
+		tenantId: string,
+		zone?: string,
+		owedUntil?: number,
+	): Promise<number> {
 		const trustedTenantId = bounded(tenantId, 'tenantId', 1, 128);
 		const now = this.now();
-		const timeZone = this.timeZoneOf(trustedTenantId);
+		const timeZone = zone ?? this.timeZoneOf(trustedTenantId);
+		const owed = owedUntil ?? now;
 		let moved = 0;
 		for (const schedule of await this.repository.listSchedules(
 			trustedTenantId,
 		)) {
-			if (!schedule.enabled || schedule.nextRunAt <= now) continue;
+			if (!schedule.enabled || schedule.nextRunAt <= owed) continue;
 			let nextRunAt: number;
 			try {
 				const cadence = parseCadence(schedule.cadence);
 				if (cadence.kind !== 'cron') continue;
-				nextRunAt = firstCadenceSlot(cadence, now, timeZone);
+				nextRunAt = firstCadenceSlot(cadence, owed, timeZone);
 			} catch (error) {
 				/* A cadence that no longer parses is left for the fire path, which
 				   disables it with the reason on the schedule. */

@@ -15,6 +15,7 @@ import type {
 	AutomationListQuery,
 	AutomationScheduleRouting,
 	AutomationsRepository,
+	AutomationTimeZoneRecord,
 	AutomationTriggerRecord,
 	StoredAutomationSchedule,
 	StoredAutomationTrigger,
@@ -354,6 +355,20 @@ const SQL = {
 	disableSchedule: `UPDATE automations_schedules SET enabled = 0,
 	 disabled_reason = $1, updated_at = $2
 	 WHERE tenant_id = $3 AND id = $4 AND enabled = 1`,
+	recordTimeZone: `INSERT INTO automations_time_zones
+	 (tenant_id, time_zone, changed_at) VALUES ($1, $2, $3)
+	 ON CONFLICT (tenant_id) DO UPDATE SET time_zone = EXCLUDED.time_zone,
+	 changed_at = EXCLUDED.changed_at
+	 WHERE automations_time_zones.changed_at <= EXCLUDED.changed_at`,
+	getTimeZone: `SELECT tenant_id, time_zone, changed_at, applied_time_zone
+	 FROM automations_time_zones WHERE tenant_id = $1`,
+	/* Read through the cross-tenant background lease, whose policy shows only
+	   the rows still owing a retiming; the zone is read again under the tenant. */
+	listPendingTimeZones: `SELECT tenant_id FROM automations_time_zones
+	 ORDER BY tenant_id LIMIT $1`,
+	markTimeZoneApplied: `UPDATE automations_time_zones
+	 SET applied_time_zone = $1
+	 WHERE tenant_id = $2 AND time_zone = $1 AND changed_at = $3`,
 	getTrigger: `SELECT * FROM automations_triggers
 	 WHERE tenant_id = $1 AND id = $2`,
 	/* Read through the cross-tenant background lease. It routes a webhook to a
@@ -581,6 +596,56 @@ export class DatabaseAutomationsRepository implements AutomationsRepository {
 		const affected = await this.#write(tenantId, {
 			text: SQL.disableSchedule,
 			parameters: [reason, now, tenantId, scheduleId],
+		});
+		return affected === 1;
+	}
+
+	async recordTimeZone(input: {
+		readonly tenantId: string;
+		readonly timeZone: string;
+		readonly changedAt: number;
+	}): Promise<void> {
+		await this.#write(input.tenantId, {
+			text: SQL.recordTimeZone,
+			parameters: [input.tenantId, input.timeZone, input.changedAt],
+		});
+	}
+
+	async getTimeZone(
+		tenantId: string,
+	): Promise<AutomationTimeZoneRecord | null> {
+		const [row] = await this.#read<{
+			tenant_id: string;
+			time_zone: string;
+			changed_at: number | bigint | string;
+			applied_time_zone: string | null;
+		}>(tenantId, { text: SQL.getTimeZone, parameters: [tenantId] });
+		return row
+			? {
+					tenantId: row.tenant_id,
+					timeZone: row.time_zone,
+					changedAt: integer(row.changed_at, 'changed_at'),
+					appliedTimeZone: row.applied_time_zone,
+				}
+			: null;
+	}
+
+	async listPendingTimeZones(limit: number): Promise<readonly string[]> {
+		const result = await this.handles.background.query<{ tenant_id: string }>({
+			text: SQL.listPendingTimeZones,
+			parameters: [limit],
+		});
+		return result.rows.map((row) => row.tenant_id);
+	}
+
+	async markTimeZoneApplied(input: {
+		readonly tenantId: string;
+		readonly timeZone: string;
+		readonly changedAt: number;
+	}): Promise<boolean> {
+		const affected = await this.#write(input.tenantId, {
+			text: SQL.markTimeZoneApplied,
+			parameters: [input.timeZone, input.tenantId, input.changedAt],
 		});
 		return affected === 1;
 	}

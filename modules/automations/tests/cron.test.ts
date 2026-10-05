@@ -421,4 +421,44 @@ describe('cron schedules', () => {
 		/* Re-timing the same zone twice changes nothing. */
 		expect(await service.retime('tenant-a')).toBe(0);
 	});
+
+	/* The pass applies recorded changes before it polls, but one can land after
+	   that and before the fire, so the fire applies it too. */
+	it('AUTO-WORKER-TIME-ZONE moves an old-zone slot instead of firing it when the change lands mid-pass', async () => {
+		const { queue, runs } = runQueue();
+		let now = at('2026-09-12T00:00:00.000Z');
+		const service = new AutomationScheduleService(
+			shared.repository,
+			queue,
+			() => now,
+			undefined,
+			undefined,
+			undefined,
+			() => 'UTC',
+		);
+		const created = await service.create(
+			'tenant-a',
+			'user-a',
+			scheduleInput('cron:0 9 * * *'),
+		);
+		expect(created.nextRunAt).toBe(at('2026-09-12T09:00:00.000Z'));
+
+		await service.recordTimeZoneChange(
+			'tenant-a',
+			'America/New_York',
+			at('2026-09-12T08:00:00.000Z'),
+		);
+		now = at('2026-09-12T09:00:30.000Z');
+		await expect(
+			service.fireDue({
+				tenantId: 'tenant-a',
+				id: created.id,
+				nextRunAt: created.nextRunAt,
+			}),
+		).resolves.toBe(false);
+		expect(runs.size).toBe(0);
+		expect(
+			(await shared.repository.getSchedule('tenant-a', created.id))?.nextRunAt,
+		).toBe(at('2026-09-12T13:00:00.000Z'));
+	});
 });

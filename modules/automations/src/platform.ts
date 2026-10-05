@@ -82,9 +82,10 @@ export function createServerComposition(
 	context.dataClasses.declare(
 		automationsDataClasses(() => runtime.repository()),
 	);
-	/* The workspace zone is the real signal for when a cron slot lands, so a
-	   change to it moves the pending slots of that workspace at once instead of
-	   waiting for each schedule to fire in the zone it no longer uses. */
+	/* The workspace zone is the real signal for when a cron slot lands. Only the
+	   process that accepted a change hears it, so the zone it read is recorded
+	   where the worker, in this process or another, moves the pending slots of
+	   that workspace before one fires in the zone it no longer uses. */
 	const stopWatchingTimeZone = context.settings.onChange((change) => {
 		if (
 			change.moduleId !== TENANT_TIME_ZONE_MODULE_ID ||
@@ -92,12 +93,15 @@ export function createServerComposition(
 		) {
 			return;
 		}
-		runtime.retimeSchedules(change.tenantId);
+		runtime.retimeSchedules(
+			change.tenantId,
+			tenantTimeZone(context.settings, change.tenantId),
+		);
 	});
 	return {
 		routes: createAutomationsRoutes(context.auth, runtime),
 		settings: automationsModuleSettingsFromEnvironment(context.environment),
-		start: () => runtime.start(),
+		startWorker: () => runtime.start(),
 		stop: () => runtime.quiesce(),
 		dispose: async () => {
 			stopWatchingTimeZone();

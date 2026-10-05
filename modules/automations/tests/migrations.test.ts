@@ -17,6 +17,7 @@ const TENANT_TABLES = [
 	'automations_schedules',
 	'automations_triggers',
 	'automations_audit_events',
+	'automations_time_zones',
 ] as const;
 
 let providers: DatabaseProvider[] = [];
@@ -189,6 +190,7 @@ describe('automations migrations', () => {
 			['0004_automations_trigger_routing_role', 'partial'],
 			['0005_secret_rotation_inventory', 'adopted'],
 			['0006_automations_list_sort_indexes', 'adopted'],
+			['0007_automations_time_zones', 'adopted'],
 		]);
 		await expect(
 			runDatabaseMigrations(database, 'automations.core', databaseMigrations),
@@ -233,8 +235,29 @@ describe('automations migrations', () => {
 			'automations.core',
 			databaseMigrations,
 		);
+		expect(
+			status.find((entry) => entry.id === '0006_automations_list_sort_indexes'),
+		).toMatchObject({ state: 'partial' });
+	});
+
+	it('adopts the time zone table only with its background policy and grant', async () => {
+		const database = await migrator();
+		await migrateAutomationsDatabase(database);
+		await database.transaction(
+			(transaction) =>
+				transaction.executeScript(`
+					DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = 'automations.core';
+					DROP POLICY automations_time_zones_background_policy ON automations_time_zones;
+				`),
+			{ access: 'write' },
+		);
+		const status = await databaseMigrationStatus(
+			database,
+			'automations.core',
+			databaseMigrations,
+		);
 		expect(status.at(-1)).toMatchObject({
-			id: '0006_automations_list_sort_indexes',
+			id: '0007_automations_time_zones',
 			state: 'partial',
 		});
 	});
