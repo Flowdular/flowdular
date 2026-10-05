@@ -3,7 +3,7 @@
 	"schemaVersion": 1,
 	"id": "workflows.core",
 	"package": "@flowdular/module-workflows",
-	"version": "0.8.0",
+	"version": "0.8.1",
 	"profile": "full",
 	"capabilities": [
 		"api",
