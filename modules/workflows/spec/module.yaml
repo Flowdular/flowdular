@@ -1,7 +1,7 @@
 schemaVersion: 2
 id: workflows.core
-specVersion: 0.8.0
-status: approved
+specVersion: 0.8.1
+status: draft
 name: Agentic Workflows
 description: Builds, publishes, simulates, and executes durable tenant-scoped DAG workflows whose versioned nodes coordinate pinned agents, deterministic decisions, validated data, and registered module actions.
 profile: full
@@ -35,6 +35,8 @@ locales:
   - en
   - pl
 invariants:
+  - Composition registers the execution capability and authenticated routes in web and worker roles. Only startWorker initializes the run worker and starts its recovery poll; a web enqueue persists a run but its local kick never claims or executes it. Combined mode starts the same worker after composition.
+  - Stopping the worker waits for its current drain and leaves an unfinished run to the existing fenced lease and retry rules before database leases are released.
   - Every workflow definition, revision, run, node attempt, edge transfer, and event is owned by exactly one trusted tenant.
   - Version one executes directed acyclic graphs only. A graph with a cycle, unreachable node, dangling edge, incompatible port, or missing terminal output cannot be published or run.
   - A published workflow revision is immutable and content-addressed. Editing creates a new draft revision without changing prior runs or their evidence.
@@ -116,6 +118,14 @@ dataOwnership:
   - automations.core owns schedules, webhook definitions, trigger secrets, and ingress audit. A triggered workflow stores only the service actor, configuring user snapshot, origin kind, and source reference.
   - notifications.core owns inbox items, deliveries, and read state. workflows.core owns the run it reports and hands over only the run id, the outcome kind, a bounded English title and step summary, and the accountable member; it never writes or reads notification records and never receives them back.
 acceptanceScenarios:
+  - id: WORKFLOWS-WEB-WORKER-ROLE
+    given: A published workflow exists and an authorized web request enqueues a live run.
+    when: The web role accepts the request before a separate worker role starts.
+    then: The web role persists the run without a timer, claim or node execution, and the worker role later recovers and executes it under the existing pinned revision and actor rules.
+  - id: WORKFLOWS-WORKER-DRAIN
+    given: A worker role is executing a workflow node under a run claim.
+    when: The platform stops that worker role.
+    then: Its poll stops taking new runs, current execution drains before leases are released, and an unfinished run remains recoverable without duplicating a committed node effect.
   - id: WORKFLOWS-TYPED-DECISION-PASS
     given: A published graph with a typed-decision node whose pass answer is declared and whose threshold is pinned, in a workspace that turned typed decisions on and consented its decision connection.
     when: A live run reaches the node and the provider answers the pass answer above the threshold.

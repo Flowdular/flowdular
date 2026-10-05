@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: agents.core
-specVersion: 0.15.0
-status: approved
+specVersion: 0.15.1
+status: draft
 name: Agentic Core
 description: Provides tenant-created and module-owned business agent definitions, tenant-scoped provider connections, reusable procedures, durable streamed execution, run history, the public run queue used by optional automation modules, and the workspace assistant a member talks to from the header through those same runs and tools.
 profile: full
@@ -38,6 +38,8 @@ locales:
   - en
   - pl
 invariants:
+  - Preparing the composition validates the complete registered tool and module-agent catalogue in web and worker roles. Only startWorker reconciles the registered module-agent definitions into durable storage, awaits that idempotent reconciliation, and then starts the run and workflow-action workers; a web role neither reconciles nor claims queued work. Combined mode follows the same order before serving as a worker.
+  - Worker startup reports a failed reconciliation or failed worker initialization before the platform advertises worker readiness. Stopping drains both execution workers and releases their leases only after in-flight work is settled or left for the existing fenced recovery path.
   - Every agent managed by agents.core is a business agent with explicit ownership. A tenant-created definition is owned by one tenant; a module-owned definition is owned by one enabled module and receives a separate tenant-scoped execution binding. Sandbox coding specialists are outside agents.core. Every binding, run, and repository query receives the trusted tenant identifier.
   - agents.core registers the report provider agents.runs through the public capability reports.v1 at composition when reports.core is present, and continues without it when it is not. The provider answers the runs and token totals of the requested range as tiles and runs and tokens per day as series, read from the existing agent run cost rollup inside this module's own tenant transaction; it prices nothing, writes nothing and opens no other module's tables. It names itself, each tile and each line with a key of this module's own translation bundle beside the English literal, and hands the reader's time budget to that transaction so the statement is cancelled when the budget expires.
   - An enabled module may register immutable business agent behavior during platform composition with defineAgent. Its stable identity is derived from module id and agent key, its positive definition revision is supplied by the module, and malformed or duplicate identities fail platform boot before workers start.
@@ -145,6 +147,14 @@ dataOwnership:
   - metering.core owns meter declarations as recorded, day buckets and limits. agents.core owns the meters it declares, the standing refusal rows that keep one refused meter out of its trail per workspace and month, and the decision about what a refusal means for a run; it never reads or writes metering storage.
   - notifications.core owns inbox items, deliveries, and read state. agents.core owns the run it reports and hands over only the run id, the outcome kind, a bounded English title and outcome summary, and the accountable member; it never writes or reads notification records and never receives them back.
 acceptanceScenarios:
+  - id: AGENTS-WEB-WORKER-ROLE
+    given: Business modules registered agents and tools and the web and worker roles compose the same module set.
+    when: The web role prepares and accepts an authorized durable run before a separate worker role starts.
+    then: The web role validates the full catalogue and persists the run without reconciling definitions or executing it locally, while the worker reconciles definitions once and then starts both execution workers before it reports ready.
+  - id: AGENTS-WORKER-START-FAILURE
+    given: Module-agent reconciliation or worker initialization fails during worker-role startup.
+    when: The platform awaits startWorker.
+    then: Worker readiness is refused with the failure visible to the operator, no background loop is reported online, and persisted runs remain available for a later worker under their existing leases.
   - id: AGENTS-LIST
     given: Tenant-created business agents and enabled modules with module-owned business agents exist.
     when: An authorized principal lists agents.

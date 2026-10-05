@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: automations.core
-specVersion: 0.6.11
-status: approved
+specVersion: 0.6.12
+status: draft
 name: Automations Core
 description: Runs agents or published workflows without a person present, on a schedule or from a signed webhook, as a module a workspace can leave uninstalled.
 profile: full
@@ -25,6 +25,8 @@ locales:
   - en
   - pl
 invariants:
+  - Composition registers automation targets, execution capabilities and action tools in web and worker roles. Only startWorker starts the scheduler poller; a signed webhook or Run now request in web role persists its invocation without starting a scheduler pass. Combined mode starts the scheduler after the same registrations.
+  - A workspace time-zone change accepted by the web role must reach a separate worker through durable shared state, not an in-process settings callback alone. The new zone is applied to pending cron slots before one can fire using its old-zone time; interval cadences remain unchanged. Stopping the worker drains schedule and retiming work before database leases are released.
   - Automations never reads or writes another module's database; it reaches agents.core only through the agents.run-queue platform capability.
   - A workspace with automations.core disabled keeps every agent capability, including manual runs, usage accounting, and budget caps.
   - A schedule fires at most once per slot, and a slot missed while the platform was down is skipped, never replayed.
@@ -61,6 +63,14 @@ dataOwnership:
   - Automations stores an agent identifier and never copies agent definitions, skills, or provider credentials.
   - For a workflow target automations.core stores the published workflow key, the configuring user, the trusted permission snapshot, and the run correlation; workflows.core keeps the selected revision, execution payload, evidence, usage, cost, status, cancellation, and run history.
 acceptanceScenarios:
+  - id: AUTO-WEB-WORKER-ROLE
+    given: An enabled automation schedule is due and the web and worker roles compose the same module set.
+    when: The web role starts and a separate worker role starts later.
+    then: The web role serves schedule and webhook routes without a scheduler timer or claim, while the worker starts the scheduler and fires the due slot once under the existing idempotency key.
+  - id: AUTO-WORKER-TIME-ZONE
+    given: A workspace has a pending cron slot and its web role accepts a change to the workspace time zone.
+    when: A separate worker next considers that slot, including after a process restart.
+    then: The worker observes a durable retiming signal and applies the new zone before an old-zone slot can fire; interval cadences keep their next run, and no same-process callback is required.
   - id: AUTO-DATA-CLASS-EXPORT
     given: Two workspaces hold automation audit events and the platform has sealed the data class registry.
     when: The workspace export runs the automations.core.audit-events operation for one of them.

@@ -1,7 +1,7 @@
 schemaVersion: 2
 id: import.core
-specVersion: 0.1.14
-status: approved
+specVersion: 0.1.15
+status: draft
 name: Import Core
 description: Brings records into a workspace from a CSV file in bulk, through an import job with a per-row outcome, staged validation that reports every failure before anything is written, an explicit dry run, saved column mappings, and an import port each owning module implements so its own invariants and idempotency rules apply to every row.
 profile: full
@@ -22,6 +22,8 @@ locales:
   - en
   - pl
 invariants:
+  - Platform start seals the import-port catalogue in web and worker roles after all owning modules have registered their ports. Only startWorker starts the import job poller; web requests persist jobs without claiming them. Combined mode starts the poller after the same seal.
+  - Stopping the worker drains the import poller before database leases are released and leaves an unfinished job recoverable through its existing claim, cursor and natural-key rules.
   - Persistence runs on the shared asynchronous database contract with explicit PostgreSQL SQL; every tenant table enables and forces row-level security with USING and WITH CHECK policies bound to the transaction-local tenant id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
   - The source of an import is a CSV document stored through documents.core; import.core reads it through open on the documents attachment capability, naming its own owner module and the record reference the file was uploaded against, never through a storage read URL and never from the object store, and it holds no bytes of its own beyond the parsed rows of one job. A source carries the content type text/csv and no other, decided by one rule that the start request and the stage opening the file both apply, so a document refused at start is never a document a stage goes on to read.
   - An import target is an import port a module registers through the public capability import.ports.v1 with a target key, the fields it accepts (id, label, required, type), the natural key fields that make a repeat idempotent, and two operations, validate(tenantId, principal, rows) returning refusals alone, so a row it says nothing about counts as valid, and write(tenantId, principal, rows, mode) returning per-row outcomes, where a row the port says nothing about is recorded as failed with the reason PORT_SILENT instead of counted as written; import.core never writes another module's records itself.
@@ -298,6 +300,14 @@ decisions:
     answer: Through import.write.v1 with describe, validate and write, for data adapters (RFC 0006 J4). It applies the port contract of a CSV job to one caller batch and records nothing, because the caller owns the run and its outcomes.
     decidedBy: default
 acceptanceScenarios:
+  - id: IMPORT-WEB-WORKER-ROLE
+    given: An import port is registered and an authorized principal starts a valid CSV import in the web role.
+    when: The web role accepts the request before a separate worker role starts.
+    then: The web role serves the sealed port catalogue and persists one queued job without a local claim or timer, and the worker role later processes its stages under the existing tenant and target-permission rules.
+  - id: IMPORT-WORKER-DRAIN
+    given: A worker role is processing an import batch under a claim.
+    when: The platform stops that worker role.
+    then: Its poller starts no further pass, the current pass drains before leases are released, and a retry resumes from persisted outcomes without duplicating target rows.
   - id: IMPORT-START-VALIDATE
     given: A stored CSV with a header row and five rows, one missing a required field, and the users.core members port registered.
     when: A principal holding import.jobs.manage and users.members.manage starts a dry run with a mapping.
