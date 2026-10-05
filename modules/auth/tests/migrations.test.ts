@@ -2159,6 +2159,32 @@ describe('auth migrations', () => {
 		expect(await logState()).toBe('partial');
 	});
 
+	/* The change log was first recorded as 0040_module_settings_changes, before
+	   main took 0040 for the decisions grants. Such a database takes the grants
+	   and adopts the log under its new id instead of creating it again. */
+	it('adopts a change log recorded under its earlier 0040 id after the decisions grants', async () => {
+		const decisions = databaseMigrations.findIndex(
+			(migration) => migration.id === '0040_decisions_scopes',
+		);
+		const log = databaseMigrations.findIndex(
+			(migration) => migration.id === '0041_module_settings_changes',
+		);
+		expect(log).toBe(decisions + 1);
+		await runDatabaseMigrations(lease.database, 'auth.core', [
+			...databaseMigrations.slice(0, decisions),
+			{ ...databaseMigrations[log]!, id: '0040_module_settings_changes' },
+		]);
+
+		expect((await apply()).map((entry) => entry.action)).toEqual(
+			databaseMigrations.map((_, index) =>
+				index < decisions ? 'unchanged' : index === log ? 'adopted' : 'applied',
+			),
+		);
+		expect((await status()).map((entry) => entry.state)).toEqual(
+			databaseMigrations.map(() => 'applied'),
+		);
+	});
+
 	/* A reader starting from the beginning of the log must find every value
 	   that was stored before the log existed. */
 	it('records one change for every value stored before the change log', async () => {
