@@ -21,7 +21,7 @@ export function UserAccountForm(props: UserAccountFormProps) @{
 					<input
 						class="ui-input"
 						name="displayName"
-						minlength={2}
+						minLength={2}
 						maxLength={80}
 						autoFocus
 						required
@@ -47,7 +47,7 @@ export function UserAccountForm(props: UserAccountFormProps) @{
 						class="ui-input"
 						name="password"
 						type="password"
-						minlength={props.passwordMinLength}
+						minLength={props.passwordMinLength}
 						autoComplete="new-password"
 						required
 					/>

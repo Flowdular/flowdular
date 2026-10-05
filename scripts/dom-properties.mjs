@@ -12,6 +12,10 @@ import {
 
 const root = new URL('..', import.meta.url).pathname;
 const SKIP = new Set(['node_modules', 'dist', '.flowdular', '.git']);
+const PINNED_CATALOG_COPY = join(
+	root,
+	'packages/create-flowdular/agent-template/.ai/references/catalog',
+);
 
 async function tsrxFiles(directory) {
 	let entries;
@@ -22,8 +26,8 @@ async function tsrxFiles(directory) {
 	}
 	const files = [];
 	for (const entry of entries) {
-		if (SKIP.has(entry.name)) continue;
 		const path = join(directory, entry.name);
+		if (SKIP.has(entry.name) || path === PINNED_CATALOG_COPY) continue;
 		if (entry.isDirectory()) files.push(...(await tsrxFiles(path)));
 		else if (entry.name.endsWith('.tsrx')) files.push(path);
 	}

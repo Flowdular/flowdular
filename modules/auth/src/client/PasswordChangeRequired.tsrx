@@ -110,7 +110,7 @@ export function PasswordChangeRequired(props: PasswordChangeRequiredProps) @{
 							class="ui-input"
 							name="newPassword"
 							type="password"
-							minlength={props.passwordMinLength}
+							minLength={props.passwordMinLength}
 							autoComplete="new-password"
 							required
 						/>
@@ -120,7 +120,7 @@ export function PasswordChangeRequired(props: PasswordChangeRequiredProps) @{
 							class="ui-input"
 							name="confirmation"
 							type="password"
-							minlength={props.passwordMinLength}
+							minLength={props.passwordMinLength}
 							autoComplete="new-password"
 							required
 						/>

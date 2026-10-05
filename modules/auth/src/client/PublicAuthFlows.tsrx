@@ -163,7 +163,7 @@ export function ResetPasswordForm(props: PublicFlowProps) @{
 						name="password"
 						type="password"
 						autoComplete="new-password"
-						minlength={props.passwordMinLength}
+						minLength={props.passwordMinLength}
 						maxLength={1024}
 						required
 					/>
@@ -177,7 +177,7 @@ export function ResetPasswordForm(props: PublicFlowProps) @{
 						name="passwordConfirmation"
 						type="password"
 						autoComplete="new-password"
-						minlength={props.passwordMinLength}
+						minLength={props.passwordMinLength}
 						maxLength={1024}
 						required
 					/>
@@ -257,7 +257,7 @@ export function InvitationAcceptanceForm(props: PublicFlowProps) @{
 						class="ui-input"
 						name="displayName"
 						autoComplete="name"
-						minlength={2}
+						minLength={2}
 						maxLength={80}
 						required
 					/>
@@ -272,7 +272,7 @@ export function InvitationAcceptanceForm(props: PublicFlowProps) @{
 						name="password"
 						type="password"
 						autoComplete="new-password"
-						minlength={props.passwordMinLength}
+						minLength={props.passwordMinLength}
 						maxLength={1024}
 						required
 					/>

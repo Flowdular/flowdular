@@ -8,7 +8,7 @@ describe('DOM property spelling', () => {
 	it('finds lowercase properties on host elements with their lines', () => {
 		const source = [
 			'export function Form() @{',
-			'\t<input class="ui-input" maxlength={props.limit} autoComplete="off" />',
+			'\t<input class="ui-input" maxlength={props.limit} minlength={props.minimum} autoComplete="off" />',
 			"\t<div tabindex={active ? 0 : -1} onClick={() => select('a>b')}>",
 			'\t\t<textarea spellcheck={false} readonly />',
 			'\t</div>',
@@ -22,6 +22,7 @@ describe('DOM property spelling', () => {
 			]),
 		).toEqual([
 			[2, 'maxlength', 'maxLength'],
+			[2, 'minlength', 'minLength'],
 			[3, 'tabindex', 'tabIndex'],
 			[4, 'spellcheck', 'spellCheck'],
 		]);
@@ -39,9 +40,9 @@ describe('DOM property spelling', () => {
 
 	it('renames every misspelling and nothing else', () => {
 		const source =
-			'<input maxlength={120} autocomplete="email" inputmode="numeric" data-maxlength="1" />';
+			'<input maxlength={120} minlength={3} autocomplete="email" inputmode="numeric" data-maxlength="1" />';
 		expect(fixDomPropertyMisspellings(source)).toBe(
-			'<input maxLength={120} autoComplete="email" inputMode="numeric" data-maxlength="1" />',
+			'<input maxLength={120} minLength={3} autoComplete="email" inputMode="numeric" data-maxlength="1" />',
 		);
 	});
 });

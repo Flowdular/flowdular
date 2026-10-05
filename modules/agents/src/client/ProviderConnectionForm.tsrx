@@ -128,7 +128,7 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 							class="ui-input"
 							name="name"
 							defaultValue={props.provider?.name ?? ''}
-							minlength={2}
+							minLength={2}
 							maxLength={120}
 							required
 						/>
@@ -146,7 +146,7 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 							defaultValue={props.provider?.key ?? ''}
 							disabled={Boolean(props.provider)}
 							placeholder="primary-openai"
-							minlength={3}
+							minLength={3}
 							maxLength={64}
 							required={!props.provider}
 						/>
@@ -217,7 +217,7 @@ export function ProviderConnectionForm(props: ProviderConnectionFormProps) @{
 						placeholder={props.provider
 							? '••••••••'
 							: t('agents.providers.form.credentialPlaceholder')}
-						minlength={8}
+						minLength={8}
 						maxLength={16_384}
 						required={!props.provider}
 					/>

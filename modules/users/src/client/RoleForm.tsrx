@@ -67,7 +67,7 @@ export function RoleForm(props: RoleFormProps) @{
 						class="ui-input ui-mono"
 						name="key"
 						pattern="[a-z][a-z0-9-]{1,31}"
-						minlength={2}
+						minLength={2}
 						maxLength={32}
 						value={props.role?.key ?? ''}
 						disabled={editing}
@@ -79,7 +79,7 @@ export function RoleForm(props: RoleFormProps) @{
 					<input
 						class="ui-input"
 						name="name"
-						minlength={2}
+						minLength={2}
 						maxLength={60}
 						value={props.role?.name ?? ''}
 						autoFocus={editing}

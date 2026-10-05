@@ -29,6 +29,8 @@ This source and newly generated applications pin Octane 0.8.0 with
 are pinned in the workspace lockfile and generator template. Octane 0.8 renders
 context providers as `<Context value={value}>`, so modules using
 `<Context.Provider>` must update that syntax when they upgrade.
+Host elements must also use Octane's camel-case `minLength` and `enterKeyHint`
+property names; the DOM property check covers both.
 The offline catalog under `.ai/references/catalog` remains pinned to its verified
 official artifact until a replacement artifact is published.
 
