@@ -345,6 +345,41 @@ export function createServerComposition(context) {
 		runtime.dispose();
 	}, 60_000);
 
+	/* The preview's own authentication migrates first, so a pre-0.6 session
+	   database is refused while composing and the refusal crosses the worker
+	   boundary, which used to cut it to 300 characters of the host remedy. */
+	it('tells a pre-0.6 session to delete itself when composing fails', async () => {
+		const { root, session } = await previewSession(
+			[
+				'export function createServerComposition() {',
+				'  return {',
+				'    routes: [],',
+				'    prepare() {',
+				"      const message = 'This database was created by Flowdular 0.5 or earlier. ' +",
+				"        'Local embedded database: delete .flowdular/data/pglite. '.repeat(10);",
+				"      throw Object.assign(new Error(message), { code: 'LEGACY_DATABASE' });",
+				'    },',
+				'  };',
+				'}',
+				'',
+			].join('\n'),
+		);
+		const runtime = createIsolatedPreviewRuntime(root);
+		try {
+			const failure = await runtime.compose(session).then(
+				() => null,
+				(error: unknown) => error,
+			);
+			expect(failure).toBeInstanceOf(Error);
+			expect((failure as Error).message).toContain('Delete the session');
+			expect((failure as Error).message).not.toContain(
+				'.flowdular/data/pglite',
+			);
+		} finally {
+			runtime.dispose();
+		}
+	}, 60_000);
+
 	it('denies draft reads outside the session root', async () => {
 		const { root, session, modulePath } = await previewSession(
 			'export function createServerComposition() { return { routes: [] }; }\n',

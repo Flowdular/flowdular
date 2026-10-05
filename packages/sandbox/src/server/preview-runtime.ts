@@ -261,11 +261,22 @@ async function loadDraftComposition(
 			moduleScopes: [],
 			hasClient,
 			error:
-				error instanceof Error
+				previewFailureMessage(error) ??
+				(error instanceof Error
 					? `${module.id}: ${error.message.slice(0, 400)}`
-					: `The ${module.id} server composition could not be loaded.`,
+					: `The ${module.id} server composition could not be loaded.`),
 		};
 	}
+}
+
+/* A session created before 0.6 keeps its own preview database, which the
+   migration runner refuses. The runner's remedy resets the host database; the
+   preview's is to delete the session. */
+export function previewFailureMessage(error: unknown): string | null {
+	return error instanceof Error &&
+		(error as { readonly code?: unknown }).code === 'LEGACY_DATABASE'
+		? 'This sandbox session was created before Flowdular 0.6, and its preview database cannot be upgraded. Delete the session and start a new one; the application database is not affected.'
+		: null;
 }
 
 async function disposeAll(
@@ -311,9 +322,10 @@ export async function activatePreviewDrafts(
 			draft.start?.();
 		} catch (error) {
 			errors.push(
-				error instanceof Error
-					? error.message.slice(0, 400)
-					: 'A draft start hook failed.',
+				previewFailureMessage(error) ??
+					(error instanceof Error
+						? error.message.slice(0, 400)
+						: 'A draft start hook failed.'),
 			);
 		}
 	}

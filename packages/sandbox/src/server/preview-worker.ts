@@ -2,7 +2,10 @@ import { createServer } from 'node:http';
 import { createRouter, type ServerRoute } from '@octanejs/app-core';
 import { principalFromContext } from '@flowdular/module-auth/server';
 import { createRemoteDatabaseProvider } from './preview-database-proxy.ts';
-import { createInProcessPreviewRuntime } from './preview-runtime.ts';
+import {
+	createInProcessPreviewRuntime,
+	previewFailureMessage,
+} from './preview-runtime.ts';
 import type { SandboxSession } from './sessions.ts';
 
 const workspaceRoot = process.argv[2];
@@ -145,9 +148,10 @@ const server = createServer(async (incoming, outgoing) => {
 					error: {
 						code: 'PREVIEW_WORKER_FAILED',
 						message:
-							error instanceof Error
+							previewFailureMessage(error) ??
+							(error instanceof Error
 								? error.message.slice(0, 300)
-								: 'Preview worker failed.',
+								: 'Preview worker failed.'),
 					},
 				},
 				{ status: 500 },
