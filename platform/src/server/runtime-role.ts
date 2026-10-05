@@ -7,15 +7,17 @@ import type { ModuleServerComposition } from '@flowdular/server';
    session sweep (auth.core.sessions) and settings log sweep
    (auth.core.settings-log), which start with the auth service in every role;
    freezing them only delays deleting rows no lookup needs and writing a
-   platform settings event its saving process deferred. */
-export type PlatformRuntimeRole = 'combined' | 'web';
+   platform settings event its saving process deferred. tick runs the module
+   workers only inside an authenticated tick request, which drains them before
+   it answers. */
+export type PlatformRuntimeRole = 'combined' | 'web' | 'tick';
 
 export function platformRuntimeRole(
 	environment: NodeJS.ProcessEnv,
 ): PlatformRuntimeRole {
 	const role = environment.FD_RUNTIME_ROLE?.trim() || 'combined';
-	if (role !== 'combined' && role !== 'web') {
-		throw new Error('FD_RUNTIME_ROLE must be "combined" or "web".');
+	if (role !== 'combined' && role !== 'web' && role !== 'tick') {
+		throw new Error('FD_RUNTIME_ROLE must be "combined", "web" or "tick".');
 	}
 	return role;
 }
@@ -26,6 +28,6 @@ export async function startModuleWorkers(
 	compositions: readonly ModuleServerComposition[],
 	role: PlatformRuntimeRole,
 ): Promise<void> {
-	if (role === 'web') return;
+	if (role !== 'combined') return;
 	for (const composition of compositions) await composition.startWorker?.();
 }

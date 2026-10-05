@@ -27,7 +27,7 @@ install. Data lives under `.flowdular/data`.
 | `platform`        | The deployable composition root and the application shell    |
 | `modules/example` | A tenant-scoped record module: API, migration, screen, tests |
 | `specs`           | The platform spec of this application                        |
-| `infra`           | Dockerfile, compose stack and Kubernetes base                |
+| `infra`           | Docker, Kubernetes and Vercel deployment assets              |
 | `flowdular.json`  | Enabled modules and locales, owned by the CLI                |
 | `.env`            | The keys generated for this app. Never commit it             |
 | `.env.example`    | Every key a production deployment reads                      |
@@ -94,6 +94,13 @@ The launcher creates `infra/docker/.env` with private database passwords and
 keys, starts PostgreSQL and MinIO, then opens the setup page. Enter the token
 shown in the terminal. The database step is already complete, so you start with
 the workspace owner. `infra/README.md` covers the stack and deployments.
+
+To deploy on Vercel, run `vercel login` and then
+`pnpm flowdular deploy start vercel --apply`. It provisions Neon PostgreSQL, a
+private Blob store and the stable keys, deploys, and prints a one-time token for
+creating the first workspace at `/setup`; `infra/vercel/README.md` walks through
+it and the manual path. Module workers run in a worker Function that Vercel Cron
+and state-changing requests tick.
 
 ## Commands
 

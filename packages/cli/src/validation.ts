@@ -603,6 +603,7 @@ const SKIPPED_DIRECTORIES = new Set([
 	'.git',
 	'.flowdular',
 	'.coreloom',
+	'.vercel',
 	'node_modules',
 	'dist',
 ]);

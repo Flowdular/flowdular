@@ -13,11 +13,12 @@ describe('platform runtime role', () => {
 		expect(platformRuntimeRole({})).toBe('combined');
 		expect(platformRuntimeRole({ FD_RUNTIME_ROLE: ' ' })).toBe('combined');
 		expect(platformRuntimeRole({ FD_RUNTIME_ROLE: 'web' })).toBe('web');
+		expect(platformRuntimeRole({ FD_RUNTIME_ROLE: 'tick' })).toBe('tick');
 	});
 
 	it('refuses an unknown role instead of guessing one', () => {
 		expect(() => platformRuntimeRole({ FD_RUNTIME_ROLE: 'worker' })).toThrow(
-			'FD_RUNTIME_ROLE must be "combined" or "web".',
+			'FD_RUNTIME_ROLE must be "combined", "web" or "tick".',
 		);
 	});
 });
@@ -50,16 +51,18 @@ describe('module worker start', () => {
 		expect(order).toEqual(['first:start', 'first:ready', 'second']);
 	});
 
-	it('starts no worker in the web role', async () => {
+	it('starts no worker at boot in the web and tick roles', async () => {
 		let calls = 0;
-		await startModuleWorkers(
-			[
-				composition(() => {
-					calls += 1;
-				}),
-			],
-			'web',
-		);
+		for (const role of ['web', 'tick'] as const) {
+			await startModuleWorkers(
+				[
+					composition(() => {
+						calls += 1;
+					}),
+				],
+				role,
+			);
+		}
 		expect(calls).toBe(0);
 	});
 
