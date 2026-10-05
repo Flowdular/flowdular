@@ -293,10 +293,10 @@ ${steps(view.step, view.databasePreconfigured)}${alerts(view)}
 <button class="setup-btn setup-btn--primary setup-btn--block" type="submit">Test connection</button></form>`;
 }
 
-/* Mirrors auth.core's WORKSPACE_SLUG_PATTERN and its double-hyphen rule in the
+/* Mirrors validateWorkspaceSlug (3 to 48 characters, no double hyphen) in the
    syntax browsers compile pattern attributes with (the v flag). */
-export const WORKSPACE_SLUG_INPUT_PATTERN =
-	'(?!.*--)[a-z0-9](?:[a-z0-9\\-]{1,46}[a-z0-9])?';
+const WORKSPACE_SLUG_INPUT_PATTERN =
+	'(?!.*--)[a-z0-9][a-z0-9\\-]{1,46}[a-z0-9]';
 
 function workspaceField(
 	view: SetupPageView,
@@ -305,6 +305,8 @@ function workspaceField(
 	options: {
 		readonly type?: 'text' | 'email' | 'password';
 		readonly autocomplete?: string;
+		readonly autocapitalize?: string;
+		readonly autocorrect?: string;
 		readonly hint: string;
 		readonly maxlength: number;
 		readonly spellcheck?: boolean;
@@ -317,7 +319,7 @@ function workspaceField(
 	const type = options.type ?? 'text';
 	const value = type === 'password' ? '' : (view.values[name] ?? '');
 	return `<div class="setup-field"><label class="setup-label" for="${id}">${escapeHtml(label)}</label>
-<input class="setup-input${error ? ' setup-input--error' : ''}" id="${id}" name="${name}" type="${type}"${type === 'password' ? '' : ` value="${escapeHtml(value)}"`}${options.autocomplete ? ` autocomplete="${escapeHtml(options.autocomplete)}"` : ''}${options.spellcheck === false ? ' spellcheck="false"' : ''}${options.readonly ? ' readonly' : ''}${options.pattern ? ` pattern="${escapeHtml(options.pattern)}"` : ''} maxlength="${options.maxlength}" required aria-describedby="${id}-help"${error ? ' aria-invalid="true"' : ''}>
+<input class="setup-input${error ? ' setup-input--error' : ''}" id="${id}" name="${name}" type="${type}"${type === 'password' ? '' : ` value="${escapeHtml(value)}"`}${options.autocomplete ? ` autocomplete="${escapeHtml(options.autocomplete)}"` : ''}${options.autocapitalize ? ` autocapitalize="${escapeHtml(options.autocapitalize)}"` : ''}${options.autocorrect ? ` autocorrect="${escapeHtml(options.autocorrect)}"` : ''}${options.spellcheck === false ? ' spellcheck="false"' : ''}${options.readonly ? ' readonly' : ''}${options.pattern ? ` pattern="${escapeHtml(options.pattern)}"` : ''} maxlength="${options.maxlength}" required aria-describedby="${id}-help"${error ? ' aria-invalid="true"' : ''}>
 <p class="setup-help${error ? ' setup-help--error' : ''}" id="${id}-help"${error ? ' role="alert"' : ''}>${escapeHtml(error ?? options.hint)}</p></div>`;
 }
 
@@ -334,7 +336,7 @@ ${steps(view.step, view.databasePreconfigured)}${alerts(view)}
 ${view.databasePreconfigured ? '<p class="setup-alert setup-alert--success">PostgreSQL is already configured for this deployment.</p>' : ''}
 <form class="setup-form" method="post" action="/setup">${csrf(view)}
 ${workspaceField(view, 'workspaceName', 'Workspace name', { hint: 'The name shown to people in this workspace.', maxlength: 120 })}
-${workspaceField(view, 'workspaceSlug', 'Workspace address', { hint: '3 to 48 lowercase letters, numbers, or single hyphens.', maxlength: 48, spellcheck: false, pattern: WORKSPACE_SLUG_INPUT_PATTERN })}
+${workspaceField(view, 'workspaceSlug', 'Workspace address', { hint: '3 to 48 lowercase letters, numbers, or single hyphens.', maxlength: 48, autocapitalize: 'none', autocorrect: 'off', spellcheck: false, pattern: WORKSPACE_SLUG_INPUT_PATTERN })}
 <div class="setup-row">
 ${workspaceField(view, 'ownerName', 'Your name', { hint: 'Shown on your owner account.', maxlength: 80, autocomplete: 'name' })}
 ${workspaceField(view, 'ownerEmail', 'Your email', { type: 'email', hint: 'Used to sign in.', maxlength: 254, autocomplete: 'email', spellcheck: false })}

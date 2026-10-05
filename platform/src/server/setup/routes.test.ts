@@ -28,11 +28,7 @@ import {
 	POSTGRESQL_ADAPTER_ID,
 } from './adapters.ts';
 import { enabledDatabaseModules } from './modules.ts';
-import {
-	renderSetupPage,
-	WORKSPACE_SLUG_INPUT_PATTERN,
-	type SetupPageView,
-} from './page.ts';
+import { renderSetupPage, type SetupPageView } from './page.ts';
 import { createSetupRoutes } from './routes.ts';
 
 const TOKEN = 'z'.repeat(43);
@@ -201,6 +197,7 @@ describe('first-run routes', () => {
 	});
 	it.each([
 		[{}, 12],
+		[{ FD_AUTH_PASSWORD_MIN_LENGTH: '' }, 12],
 		[{ FD_AUTH_PASSWORD_MIN_LENGTH: '16' }, 16],
 	])(
 		'asks the workspace step for the password length auth.core enforces (%o)',
@@ -227,17 +224,43 @@ describe('first-run routes', () => {
 			expect(html).not.toContain('Review setup</h2>');
 		},
 	);
+	it.each(['abc', '4', '129', '12.5'])(
+		'refuses to start on FD_AUTH_PASSWORD_MIN_LENGTH=%j, as auth.core does',
+		(value) => {
+			const root = workspace();
+			const environment = {
+				NODE_ENV: 'development',
+				FD_AUTH_PASSWORD_MIN_LENGTH: value,
+			};
+			const refusal =
+				'FD_AUTH_PASSWORD_MIN_LENGTH must be an integer between 8 and 128.';
+			expect(() =>
+				authRuntimeOptionsFromEnvironment(environment, root),
+			).toThrow(refusal);
+			expect(() => harness(root, undefined, [], { environment })).toThrow(
+				refusal,
+			);
+		},
+	);
 	it('lets the browser refuse a workspace address auth.core would refuse', async () => {
 		const app = harness(workspace(), undefined, [], {
 			databasePreconfigured: true,
 		});
 		await app.call('/setup', { step: 'unlock', token: TOKEN });
 		const setup = await (await app.call('/setup')).text();
-		expect(setup).toMatch(
-			/id="setup-workspaceSlug" name="workspaceSlug" type="text" value="[^"]*" spellcheck="false" pattern="[^"]+"/,
+		const input =
+			/<input [^>]*id="setup-workspaceSlug"[^>]*>/.exec(setup)?.[0] ?? '';
+		expect(input).toContain(
+			' autocapitalize="none" autocorrect="off" spellcheck="false"',
+		);
+		expect(input).toContain(
+			String.raw` pattern="(?!.*--)[a-z0-9][a-z0-9\-]{1,46}[a-z0-9]"`,
 		);
 		/* Browsers compile a pattern attribute anchored and with the v flag. */
-		const browser = new RegExp(`^(?:${WORKSPACE_SLUG_INPUT_PATTERN})$`, 'v');
+		const browser = new RegExp(
+			`^(?:${/ pattern="([^"]+)"/.exec(input)![1]})$`,
+			'v',
+		);
 		const accepts = (slug: string) => {
 			try {
 				return validateWorkspaceSlug(slug) === slug;
@@ -253,6 +276,7 @@ describe('first-run routes', () => {
 			'x'.repeat(48),
 			'x'.repeat(49),
 			'ab',
+			'a',
 			'-acme',
 			'acme-',
 			'ac--me',

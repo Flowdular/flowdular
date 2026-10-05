@@ -117,6 +117,22 @@ function canAutoRestart(
 	);
 }
 
+/* auth.core's rule for this variable: blank means the default, and a value
+   outside the setting's bounds stops startup, as auth.core does at boot. */
+function passwordMinLength(environment: NodeJS.ProcessEnv): number {
+	const { defaultValue, min, max } =
+		AUTH_MODULE_SETTINGS.settings.passwordMinLength!;
+	const value = environment.FD_AUTH_PASSWORD_MIN_LENGTH;
+	if (value === undefined || value.trim() === '') return Number(defaultValue);
+	const parsed = Number(value);
+	if (!Number.isSafeInteger(parsed) || parsed < min! || parsed > max!) {
+		throw new Error(
+			`FD_AUTH_PASSWORD_MIN_LENGTH must be an integer between ${min} and ${max}.`,
+		);
+	}
+	return parsed;
+}
+
 function emptyView(options: SetupRoutesOptions): SetupPageView {
 	return {
 		step: 'Unlock',
@@ -144,10 +160,7 @@ function emptyView(options: SetupRoutesOptions): SetupPageView {
 		tokenFile: options.tokenFile,
 		/* auth.core creates the owner with this minimum, so the workspace step
 		   has to refuse what the final step would. */
-		passwordMinLength: Number(
-			options.environment.FD_AUTH_PASSWORD_MIN_LENGTH ??
-				AUTH_MODULE_SETTINGS.settings.passwordMinLength!.defaultValue,
-		),
+		passwordMinLength: passwordMinLength(options.environment),
 	};
 }
 
