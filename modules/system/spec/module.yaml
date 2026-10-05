@@ -1,7 +1,7 @@
 schemaVersion: 2
 id: system.core
 specVersion: 0.9.2
-status: draft
+status: approved
 name: System Core
 description: Provides the application shell, platform health, module discovery, the deployment's own branding, and the administration surface for module settings.
 profile: full
