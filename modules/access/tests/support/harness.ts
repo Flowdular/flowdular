@@ -16,7 +16,7 @@ import { authDirectory } from '../../src/services/auth-directory.ts';
 
 export const ORIGIN = 'https://erp.example';
 export const PASSWORD = 'correct horse battery staple';
-const COOKIE_NAME = 'coreloom_session_dev';
+const COOKIE_NAME = 'flowdular_session_dev';
 
 type AuthService = Awaited<ReturnType<AuthRuntime['service']>>;
 

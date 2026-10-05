@@ -18,5 +18,5 @@ CREATE TABLE IF NOT EXISTS agent_meter_refusals (
 ALTER TABLE agent_meter_refusals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_meter_refusals FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_meter_refusals_tenant_policy ON agent_meter_refusals
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

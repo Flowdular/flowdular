@@ -57,7 +57,7 @@ async function migrated(): Promise<PostgresDatabaseAdapter> {
 describe('database reset', () => {
 	it('lists the ledger and every module table in the plan', async () => {
 		await expect(databaseResetPlan(await migrated())).resolves.toEqual([
-			'_coreloom_migrations_v2',
+			'_flowdular_migrations_v2',
 			'reset_children',
 			'reset_parents',
 		]);
@@ -72,7 +72,7 @@ describe('database reset', () => {
 		).resolves.toMatchObject({
 			dialectId: 'postgresql',
 			droppedTables: [
-				'_coreloom_migrations_v2',
+				'_flowdular_migrations_v2',
 				'reset_children',
 				'reset_parents',
 			],

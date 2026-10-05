@@ -14,5 +14,5 @@ CREATE INDEX IF NOT EXISTS connectors_call_keys_tenant_claimed_idx
 ALTER TABLE connectors_call_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE connectors_call_keys FORCE ROW LEVEL SECURITY;
 CREATE POLICY connectors_call_keys_tenant_policy ON connectors_call_keys
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

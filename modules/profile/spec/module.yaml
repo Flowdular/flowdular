@@ -30,7 +30,7 @@ invariants:
   - Every profile query and mutation is scoped by both the trusted tenant identifier and authenticated principal identifier.
   - Profile persistence uses a platform-provided database handle; module code never receives a connection string, owns a production pool, or reaches another module's database.
   - Every runtime persistence operation executes inside a transaction carrying the authenticated tenant identifier, while every SQL statement also retains an explicit tenant predicate.
-  - PostgreSQL tables owned by profile.core enable and force row-level security, with USING and WITH CHECK policies bound to the transaction-local coreloom.tenant_id value.
+  - PostgreSQL tables owned by profile.core enable and force row-level security, with USING and WITH CHECK policies bound to the transaction-local flowdular.tenant_id value.
   - Migrations are declared as explicit PostgreSQL SQL; profile.core never rewrites placeholders or translates SQL between dialects.
   - Adopting the adapter migration ledger on an existing profile schema preserves every profile and language-preference row and refuses a partially present schema.
   - A personal interface language is stored by authenticated account and tenant; a preference from another account or tenant is never returned or applied.

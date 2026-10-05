@@ -9,9 +9,15 @@ import {
 	type DatabaseTransaction,
 } from './contracts.ts';
 
-export const DATABASE_MIGRATION_LEDGER = '_coreloom_migrations_v2';
+export const DATABASE_MIGRATION_LEDGER = '_flowdular_migrations_v2';
 /** The advisory lock every module migration takes before its own. */
-export const DATABASE_MIGRATION_LEDGER_LOCK = 'coreloom.migrations';
+export const DATABASE_MIGRATION_LEDGER_LOCK = 'flowdular.migrations';
+const TENANT_SETTING = 'flowdular.tenant_id';
+/* Flowdular 0.5 and earlier kept this ledger and bound row-level security to
+   other role and setting names. Such a database is refused, never adopted:
+   adoption would mark its tables complete while every policy reads a setting
+   the adapter no longer sets. */
+const LEGACY_MIGRATION_LEDGER = '_coreloom_migrations_v2';
 
 /* Line endings and surrounding blank space are editor noise; everything else,
    including whitespace inside the SQL, is part of the checksum. Changing this
@@ -53,8 +59,10 @@ interface PostgresTenantTableRow {
 
 /**
  * A PostgreSQL tenant table counts as adopted only when its row-level security
- * is enabled, forced, and carries the named policy. A table without them is
- * partial, never complete, so the runner refuses instead of trusting it.
+ * is enabled, forced, and carries the named policy, whose USING and WITH CHECK
+ * both read flowdular.tenant_id. Anything else is partial, never complete, so
+ * the runner refuses instead of trusting it: a policy on another setting would
+ * see no tenant.
  */
 export async function postgresTenantTableState(
 	database: DatabaseSession,
@@ -74,11 +82,13 @@ export async function postgresTenantTableState(
 		              EXISTS (
 		                SELECT 1 FROM pg_policy
 		                WHERE polrelid = relation.oid AND polname = $2
+		                AND strpos(lower(pg_get_expr(polqual, polrelid)), $3) > 0
+		                AND strpos(lower(pg_get_expr(polwithcheck, polrelid)), $3) > 0
 		              ) AS policy_present
 		       FROM pg_class AS relation
 		       JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
 		       WHERE namespace.nspname = current_schema() AND relation.relname = $1`,
-		parameters: [table, policy],
+		parameters: [table, policy, `'${TENANT_SETTING}'`],
 	});
 	const state = result.rows[0];
 	return state?.rls_enabled && state.rls_forced && state.policy_present
@@ -121,7 +131,8 @@ export type DatabaseMigrationErrorCode =
 	| 'DUPLICATE_MIGRATION_ID'
 	| 'APPLY_FAILED'
 	| 'PARTIAL_MIGRATION'
-	| 'WRONG_LEDGER_DIALECT';
+	| 'WRONG_LEDGER_DIALECT'
+	| 'LEGACY_DATABASE';
 
 export class DatabaseMigrationError extends Error {
 	constructor(
@@ -183,6 +194,42 @@ function sqlFor(
 
 async function ledgerExists(database: DatabaseSession): Promise<boolean> {
 	return database.schema.hasTable(DATABASE_MIGRATION_LEDGER);
+}
+
+/** A session that runs SQL text without parameters, such as a pg Client. */
+export interface SqlTextSession {
+	query(text: string): Promise<{ readonly rows: readonly object[] }>;
+}
+
+/**
+ * Throws LEGACY_DATABASE when the database was created by Flowdular 0.5 or
+ * earlier. It reads the catalog only, so a caller that provisions a database
+ * runs it before writing anything there.
+ */
+export async function assertNotLegacyDatabase(
+	session: SqlTextSession,
+): Promise<void> {
+	/* information_schema hides a table the current role holds no privilege on,
+	   and the old ledger belongs to the old migrator role; pg_class does not. */
+	const result = await session.query(`SELECT EXISTS (
+		         SELECT 1 FROM pg_class AS relation
+		         JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+		         WHERE namespace.nspname = current_schema() AND relation.relname = '${LEGACY_MIGRATION_LEDGER}'
+		       ) AS present`);
+	if (!(result.rows[0] as { readonly present?: unknown } | undefined)?.present)
+		return;
+	throw new DatabaseMigrationError(
+		'LEGACY_DATABASE',
+		'',
+		'This database was created by Flowdular 0.5 or earlier. Flowdular 0.6 renamed the database roles, the tenant setting and the migration ledger, and it does not upgrade an older database, so no table or migration record was changed. ' +
+			'Local embedded database: stop Flowdular, then delete .flowdular/data/pglite (or the FD_DATABASE_PGLITE_DIRECTORY directory) or run "pnpm flowdular setup quick --apply --confirm reset-local-auth". ' +
+			'Docker: run "docker compose --env-file infra/docker/.env -f infra/docker/compose.yaml down -v" and start again. ' +
+			'PostgreSQL server: create a new database with the flowdular_migrator, flowdular_runtime and flowdular_background roles.',
+	);
+}
+
+function textSession(database: DatabaseSession): SqlTextSession {
+	return { query: (text) => database.query({ text }) };
 }
 
 async function ledgerRows(
@@ -275,6 +322,7 @@ export async function databaseMigrationStatus(
 ): Promise<readonly DatabaseMigrationStatus[]> {
 	assertNamespace(namespace);
 	assertMigrations(migrations);
+	await assertNotLegacyDatabase(textSession(database));
 	const rows = await ledgerRows(database, namespace);
 	return Promise.all(
 		migrations.map((migration) =>
@@ -385,6 +433,7 @@ export async function runDatabaseMigrations(
 			   across modules; the namespace lock keeps the per-module contract. */
 			await transaction.acquireMigrationLock(DATABASE_MIGRATION_LEDGER_LOCK);
 			await transaction.acquireMigrationLock(namespace);
+			await assertNotLegacyDatabase(textSession(transaction));
 			await transaction.executeScript(
 				database.capabilities.sql.migrationLedgerDdl(DATABASE_MIGRATION_LEDGER),
 			);

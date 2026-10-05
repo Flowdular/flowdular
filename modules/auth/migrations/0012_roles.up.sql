@@ -13,8 +13,8 @@ CREATE TABLE IF NOT EXISTS auth_roles (
 ALTER TABLE auth_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_roles FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_roles_tenant_policy ON auth_roles
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE auth_memberships ADD COLUMN IF NOT EXISTS role_id TEXT;
 -- Built-in owner and member rows are inserted per tenant by the repository from the static scope lists.
 UPDATE auth_memberships SET role_id = tenant_id || ':' || role

@@ -116,7 +116,7 @@ describe('ADAPTERS-MIGRATIONS adapters migrations', () => {
 				transaction.query<{ table_name: string; column_name: string }>({
 					text: `SELECT table_name, column_name
 					       FROM information_schema.column_privileges
-					       WHERE grantee = 'coreloom_background'
+					       WHERE grantee = 'flowdular_background'
 					         AND table_schema = current_schema()
 					         AND table_name IN ('adapter_runs', 'adapter_bindings')
 					         AND privilege_type = 'SELECT'

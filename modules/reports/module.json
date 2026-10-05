@@ -4,7 +4,7 @@
 	"id": "reports.core",
 	"package": "@flowdular/module-reports",
 	"version": "0.1.4",
-	"platformApi": "^0.1.2",
+	"platformApi": "^0.2.0",
 	"profile": "full",
 	"capabilities": ["api", "client", "translations"],
 	"platform": {

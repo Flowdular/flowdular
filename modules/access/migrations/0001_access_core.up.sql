@@ -24,5 +24,5 @@ CREATE INDEX IF NOT EXISTS access_attestations_tenant_created_idx
 ALTER TABLE access_attestations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE access_attestations FORCE ROW LEVEL SECURITY;
 CREATE POLICY access_attestations_tenant_policy ON access_attestations
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

@@ -99,7 +99,7 @@ describe('PostgreSQL database adapter contract', () => {
 			'COMMIT',
 		]);
 		expect(client.queries[1]?.values).toEqual([
-			'coreloom-migration',
+			'flowdular-migration',
 			'catalog.core',
 		]);
 		expect(client.releases).toEqual([undefined]);
@@ -125,7 +125,7 @@ describe('PostgreSQL database adapter contract', () => {
 
 		expect(client.queries.map((query) => query.text)).toEqual([
 			'BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY',
-			"SELECT set_config('coreloom.tenant_id', $1, true)",
+			"SELECT set_config('flowdular.tenant_id', $1, true)",
 			'SELECT id FROM records WHERE tenant_id = $1',
 			'COMMIT',
 		]);

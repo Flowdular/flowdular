@@ -27,8 +27,8 @@ CREATE TABLE IF NOT EXISTS ${FIXTURE_TABLE} (
 ALTER TABLE ${FIXTURE_TABLE} ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ${FIXTURE_TABLE} FORCE ROW LEVEL SECURITY;
 CREATE POLICY ${FIXTURE_TABLE}_tenant_policy ON ${FIXTURE_TABLE}
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 const REQUIREMENTS = {

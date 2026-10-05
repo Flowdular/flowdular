@@ -349,7 +349,7 @@ describe('module activation API', () => {
 		csrfToken: string;
 		principal: { accountId: string; tenantId: string };
 	}): Session => ({
-		cookie: `coreloom_session_dev=${issued.token}`,
+		cookie: `flowdular_session_dev=${issued.token}`,
 		csrfToken: issued.csrfToken,
 		accountId: issued.principal.accountId,
 		tenantId: issued.principal.tenantId,

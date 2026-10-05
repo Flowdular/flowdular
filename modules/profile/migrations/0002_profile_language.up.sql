@@ -8,5 +8,5 @@ CREATE TABLE IF NOT EXISTS profile_language_preferences (
 ALTER TABLE profile_language_preferences ENABLE ROW LEVEL SECURITY;
 ALTER TABLE profile_language_preferences FORCE ROW LEVEL SECURITY;
 CREATE POLICY profile_language_preferences_tenant_policy ON profile_language_preferences
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

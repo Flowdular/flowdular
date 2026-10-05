@@ -248,7 +248,7 @@ class PostgresTransaction
 		await this.client.query(
 			driverQuery(
 				'SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))',
-				['coreloom-migration', namespace],
+				['flowdular-migration', namespace],
 				this.baseSignal,
 			),
 		);
@@ -404,7 +404,7 @@ export class PostgresDatabaseAdapter implements DatabaseAdapter {
 					if (options.tenantId !== undefined) {
 						await client.query(
 							driverQuery(
-								"SELECT set_config('coreloom.tenant_id', $1, true)",
+								"SELECT set_config('flowdular.tenant_id', $1, true)",
 								[options.tenantId],
 								signal,
 							),

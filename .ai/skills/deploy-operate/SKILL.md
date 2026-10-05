@@ -53,7 +53,7 @@ Set `FD_TRUST_PROXY` behind a load balancer. `FD_DATABASE_BACKGROUND_URL` gives 
 
 ## 3. Migrations at rollout
 
-Migrations are module-owned, numbered, immutable once applied, and verified by checksum against the `_coreloom_migrations_v2` ledger. The commands (`packages/cli/src/runner.ts`):
+Migrations are module-owned, numbered, immutable once applied, and verified by checksum against the `_flowdular_migrations_v2` ledger. The commands (`packages/cli/src/runner.ts`):
 
 ```bash
 pnpm flowdular migration status [--module <id>]      # what the ledger holds

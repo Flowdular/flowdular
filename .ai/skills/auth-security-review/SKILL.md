@@ -63,7 +63,7 @@ Recipe in `modules/auth/tests/endpoints.test.ts`: build the runtime with a `Data
 
 - 401 without a cookie or token.
 - 403 with a principal that lacks the permission.
-- Cross-tenant read returns an empty list (service level, on the suite's test provider under the non-bypass `coreloom_runtime` role).
+- Cross-tenant read returns an empty list (service level, on the suite's test provider under the non-bypass `flowdular_runtime` role).
 - Mutation without `x-csrf-token` returns 403 `CSRF_REJECTED`; without `origin` returns 403.
 - Each validation bound returns 400 with its code.
 

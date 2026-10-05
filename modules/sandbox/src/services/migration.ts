@@ -62,18 +62,18 @@ CREATE INDEX IF NOT EXISTS sandbox_audit_tenant_time_idx
 ALTER TABLE sandbox_access_grants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sandbox_access_grants FORCE ROW LEVEL SECURITY;
 CREATE POLICY sandbox_access_grants_tenant_policy ON sandbox_access_grants
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE sandbox_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sandbox_sessions FORCE ROW LEVEL SECURITY;
 CREATE POLICY sandbox_sessions_tenant_policy ON sandbox_sessions
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE sandbox_audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sandbox_audit_events FORCE ROW LEVEL SECURITY;
 CREATE POLICY sandbox_audit_events_tenant_policy ON sandbox_audit_events
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 export const SANDBOX_MIGRATION_002 = `-- Sessions gain an archive timestamp and two lifecycle states. The table is
@@ -111,8 +111,8 @@ CREATE INDEX IF NOT EXISTS sandbox_sessions_tenant_idx
 ALTER TABLE sandbox_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sandbox_sessions FORCE ROW LEVEL SECURITY;
 CREATE POLICY sandbox_sessions_tenant_policy ON sandbox_sessions
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 export const databaseMigrations: readonly DatabaseMigration[] = [

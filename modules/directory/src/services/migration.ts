@@ -35,8 +35,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS directory_scim_tokens_fingerprint_idx
 ALTER TABLE directory_scim_tokens ENABLE ROW LEVEL SECURITY;
 ALTER TABLE directory_scim_tokens FORCE ROW LEVEL SECURITY;
 CREATE POLICY directory_scim_tokens_tenant_policy ON directory_scim_tokens
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 CREATE TABLE IF NOT EXISTS directory_scim_users (
   id TEXT PRIMARY KEY,
@@ -59,8 +59,8 @@ CREATE INDEX IF NOT EXISTS directory_scim_users_external_idx
 ALTER TABLE directory_scim_users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE directory_scim_users FORCE ROW LEVEL SECURITY;
 CREATE POLICY directory_scim_users_tenant_policy ON directory_scim_users
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 CREATE TABLE IF NOT EXISTS directory_scim_groups (
   id TEXT PRIMARY KEY,
@@ -82,8 +82,8 @@ CREATE INDEX IF NOT EXISTS directory_scim_groups_precedence_idx
 ALTER TABLE directory_scim_groups ENABLE ROW LEVEL SECURITY;
 ALTER TABLE directory_scim_groups FORCE ROW LEVEL SECURITY;
 CREATE POLICY directory_scim_groups_tenant_policy ON directory_scim_groups
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 CREATE TABLE IF NOT EXISTS directory_scim_group_members (
   tenant_id TEXT NOT NULL,
@@ -97,8 +97,8 @@ CREATE INDEX IF NOT EXISTS directory_scim_group_members_user_idx
 ALTER TABLE directory_scim_group_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE directory_scim_group_members FORCE ROW LEVEL SECURITY;
 CREATE POLICY directory_scim_group_members_tenant_policy ON directory_scim_group_members
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- Evidence outlives the credential, so the token id is recorded without a
 -- foreign key: revoking or pruning a token never removes its trail.
@@ -120,8 +120,8 @@ CREATE INDEX IF NOT EXISTS directory_provisioning_events_time_idx
 ALTER TABLE directory_provisioning_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE directory_provisioning_events FORCE ROW LEVEL SECURITY;
 CREATE POLICY directory_provisioning_events_tenant_policy ON directory_provisioning_events
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 export const databaseMigrations: readonly DatabaseMigration[] = [

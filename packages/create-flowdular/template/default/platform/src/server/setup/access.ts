@@ -6,7 +6,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
    an operator their first credential. */
 
 export const SETUP_TOKEN_BYTES = 32;
-export const SETUP_SESSION_COOKIE = 'coreloom_setup';
+export const SETUP_SESSION_COOKIE = 'flowdular_setup';
 export const SETUP_CSRF_FIELD = 'setupCsrf';
 
 const MAX_TOKEN_FAILURES = 5;

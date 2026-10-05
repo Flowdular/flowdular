@@ -54,7 +54,7 @@ export function agentPrincipal(
 /* Session resolution is stubbed; auth.core's own suite covers it. */
 function authRuntime(): AuthRuntime {
 	return {
-		cookie: { name: 'coreloom_session_dev', secure: false, maxAgeSeconds: 60 },
+		cookie: { name: 'flowdular_session_dev', secure: false, maxAgeSeconds: 60 },
 		settings: {
 			allowSignUp: false,
 			emailConfirmation: false,
@@ -160,7 +160,7 @@ export function composeAgents(options: {
 				headers: {
 					'content-type': 'application/json',
 					origin: ORIGIN,
-					cookie: `coreloom_session_dev=${SESSION_TOKEN}`,
+					cookie: `flowdular_session_dev=${SESSION_TOKEN}`,
 					'x-csrf-token': CSRF_TOKEN,
 				},
 				body: JSON.stringify(body),

@@ -304,13 +304,13 @@ describe.skipIf(!migratorUrl)('in-place first run on PostgreSQL', () => {
 		await owner(async (client) => {
 			await client.query(`CREATE SCHEMA ${schema}`);
 			await client.query(
-				`GRANT USAGE ON SCHEMA ${schema} TO coreloom_runtime, coreloom_background`,
+				`GRANT USAGE ON SCHEMA ${schema} TO flowdular_runtime, flowdular_background`,
 			);
 			await client.query(
-				`ALTER DEFAULT PRIVILEGES IN SCHEMA ${schema} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO coreloom_runtime`,
+				`ALTER DEFAULT PRIVILEGES IN SCHEMA ${schema} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO flowdular_runtime`,
 			);
 			await client.query(
-				`ALTER DEFAULT PRIVILEGES IN SCHEMA ${schema} GRANT USAGE, SELECT ON SEQUENCES TO coreloom_runtime`,
+				`ALTER DEFAULT PRIVILEGES IN SCHEMA ${schema} GRANT USAGE, SELECT ON SEQUENCES TO flowdular_runtime`,
 			);
 		});
 	});

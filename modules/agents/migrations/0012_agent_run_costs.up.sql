@@ -28,5 +28,5 @@ ON CONFLICT DO NOTHING;
 ALTER TABLE agent_run_costs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_run_costs FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_run_costs_tenant_policy ON agent_run_costs
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

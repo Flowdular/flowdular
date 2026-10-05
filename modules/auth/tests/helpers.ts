@@ -139,7 +139,7 @@ export async function testRuntime(
 			: {}),
 	});
 	const cookie = {
-		name: 'coreloom_session_dev',
+		name: 'flowdular_session_dev',
 		secure: false,
 		maxAgeSeconds: 3600,
 	};

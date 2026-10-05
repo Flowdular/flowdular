@@ -15,8 +15,6 @@ CLAUDE.md
 .claude/agents
 .codex/agents
 
-.coreloom/
-
 release-artifacts/
 
 # Generated from a reviewed official-module artifact.

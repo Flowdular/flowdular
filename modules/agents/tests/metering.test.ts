@@ -7,6 +7,7 @@ import {
 	createModuleRegistry,
 	createPlatformAgentRegistry,
 	createPlatformCapabilityRegistry,
+	PLATFORM_API_VERSION,
 	RegistryError,
 } from '@flowdular/kernel';
 import { moduleDefinition } from '../src/index.ts';
@@ -506,6 +507,7 @@ describe('AGENTS-METERING-REQUIRED', () => {
 				tenancy: 'required',
 				locales: ['en'],
 				stability: 'experimental',
+				platformApi: `^${PLATFORM_API_VERSION}`,
 			} as ModuleManifest,
 		};
 	}

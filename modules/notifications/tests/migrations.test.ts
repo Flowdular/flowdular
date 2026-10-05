@@ -157,7 +157,7 @@ describe('notifications migrations', () => {
 				await database.transaction(
 					(transaction) =>
 						transaction.query<{ allowed: boolean }>({
-							text: `SELECT has_column_privilege('coreloom_background',
+							text: `SELECT has_column_privilege('flowdular_background',
 							 $1, $2, 'SELECT') AS allowed`,
 							parameters: [table, column],
 						}),
@@ -199,7 +199,7 @@ describe('notifications migrations', () => {
 				await database.transaction(
 					(transaction) =>
 						transaction.query<{ allowed: boolean }>({
-							text: `SELECT has_column_privilege('coreloom_background',
+							text: `SELECT has_column_privilege('flowdular_background',
 							 'notifications_webhook_subscriptions', $1, 'SELECT') AS allowed`,
 							parameters: [column],
 						}),

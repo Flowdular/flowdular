@@ -420,7 +420,7 @@ describe('agents.core opening and module agent bindings', () => {
 		await owner.database.execute({
 			text: `CREATE TRIGGER fail_binding_pass BEFORE INSERT ON agent_audit_events_v4
 			FOR EACH ROW WHEN (NEW.tenant_id = 'tenant-b' AND NEW.action = 'module-agent.definition-reconciled')
-			EXECUTE FUNCTION coreloom_reject_change('reconciliation audit unavailable')`,
+			EXECUTE FUNCTION flowdular_reject_change('reconciliation audit unavailable')`,
 		});
 		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
 		let release!: () => void;
@@ -863,7 +863,7 @@ describe('agents.core revision adoption', () => {
 		await owner.database.execute({
 			text: `CREATE TRIGGER fail_revision_adoption BEFORE INSERT ON agent_definition_revisions
 			FOR EACH ROW WHEN (NEW.tenant_id = 'tenant-fail')
-			EXECUTE FUNCTION coreloom_reject_change('adoption unavailable')`,
+			EXECUTE FUNCTION flowdular_reject_change('adoption unavailable')`,
 		});
 		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const adopt = vi.spyOn(

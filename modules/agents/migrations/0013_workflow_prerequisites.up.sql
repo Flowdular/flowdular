@@ -1,6 +1,6 @@
 -- SQLite expresses immutability with a BEFORE trigger that aborts. PostgreSQL
 -- needs a function to raise from, shared by every immutable table here.
-CREATE OR REPLACE FUNCTION coreloom_reject_change() RETURNS trigger AS $$
+CREATE OR REPLACE FUNCTION flowdular_reject_change() RETURNS trigger AS $$
 BEGIN
   RAISE EXCEPTION '%', TG_ARGV[0];
 END;
@@ -30,10 +30,10 @@ CREATE INDEX IF NOT EXISTS agent_definition_revisions_tenant_agent_idx
   ON agent_definition_revisions (tenant_id, agent_id, revision DESC);
 CREATE TRIGGER agent_definition_revisions_no_update
   BEFORE UPDATE ON agent_definition_revisions
-  FOR EACH ROW EXECUTE FUNCTION coreloom_reject_change('agent definition revisions are immutable');
+  FOR EACH ROW EXECUTE FUNCTION flowdular_reject_change('agent definition revisions are immutable');
 CREATE TRIGGER agent_definition_revisions_no_delete
   BEFORE DELETE ON agent_definition_revisions
-  FOR EACH ROW EXECUTE FUNCTION coreloom_reject_change('agent definition revisions are immutable');
+  FOR EACH ROW EXECUTE FUNCTION flowdular_reject_change('agent definition revisions are immutable');
 
 CREATE TABLE IF NOT EXISTS agent_run_contracts (
   run_id TEXT PRIMARY KEY REFERENCES agent_runs(id) ON DELETE CASCADE,
@@ -83,15 +83,15 @@ CREATE INDEX IF NOT EXISTS agent_actions_recovery_idx
 ALTER TABLE agent_definition_revisions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_definition_revisions FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_definition_revisions_tenant_policy ON agent_definition_revisions
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE agent_run_contracts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_run_contracts FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_run_contracts_tenant_policy ON agent_run_contracts
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE agent_action_invocations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_action_invocations FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_action_invocations_tenant_policy ON agent_action_invocations
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

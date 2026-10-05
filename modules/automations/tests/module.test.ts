@@ -897,7 +897,7 @@ describe('automations PostgreSQL boundary', () => {
 		);
 		/* The grants only mean something against a distinct role. A suite must
 		   actually be connected as it, or this would pass by reading nothing. */
-		expect(identity.rows[0]?.role).toBe('coreloom_background');
+		expect(identity.rows[0]?.role).toBe('flowdular_background');
 
 		for (const text of [
 			'SELECT label FROM automations_schedules',

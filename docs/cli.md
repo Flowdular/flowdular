@@ -80,7 +80,7 @@ already filled in. Replace the placeholder columns with the real schema.
 `migration verify` then checks that every applied ledger checksum still matches,
 that every tenant table a migration leaves behind has `ENABLE ROW LEVEL
 SECURITY`, `FORCE ROW LEVEL SECURITY` and a tenant policy declared after the
-last statement that puts the table in place, that a `coreloom_background` policy
+last statement that puts the table in place, that a `flowdular_background` policy
 grants no more than `FOR SELECT`, and that every `migrations/*.up.sql` file has
 a matching id in `databaseMigrations` and the other way round.
 

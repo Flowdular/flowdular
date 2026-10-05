@@ -32,5 +32,5 @@ CREATE INDEX IF NOT EXISTS sandbox_sessions_tenant_idx
 ALTER TABLE sandbox_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sandbox_sessions FORCE ROW LEVEL SECURITY;
 CREATE POLICY sandbox_sessions_tenant_policy ON sandbox_sessions
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

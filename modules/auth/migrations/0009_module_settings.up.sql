@@ -10,8 +10,8 @@ CREATE TABLE IF NOT EXISTS module_settings (
 ALTER TABLE module_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE module_settings FORCE ROW LEVEL SECURITY;
 CREATE POLICY module_settings_tenant_policy ON module_settings
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 INSERT INTO auth_membership_scopes (account_id, tenant_id, scope) SELECT account_id, tenant_id, 'system.settings.read' FROM auth_memberships WHERE role = 'owner' ON CONFLICT DO NOTHING;
 INSERT INTO auth_membership_scopes (account_id, tenant_id, scope) SELECT account_id, tenant_id, 'system.settings.manage' FROM auth_memberships WHERE role = 'owner' ON CONFLICT DO NOTHING;
 DELETE FROM auth_membership_scopes

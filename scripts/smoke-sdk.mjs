@@ -144,9 +144,7 @@ run(['flowdular', 'doctor', '--json']);
 run(['flowdular', 'blueprint', 'validate', '--all']);
 run(['flowdular', 'setup', 'quick', '--json']);
 const setupEnvironment = Object.fromEntries(
-	Object.entries(process.env).filter(
-		([key]) => !key.startsWith('FD_') && !key.startsWith('CORELOOM_'),
-	),
+	Object.entries(process.env).filter(([key]) => !key.startsWith('FD_')),
 );
 const setup = spawnSync(
 	'pnpm',

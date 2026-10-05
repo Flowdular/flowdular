@@ -4,7 +4,7 @@
 	"id": "example.core",
 	"package": "@app/module-example",
 	"version": "0.1.0",
-	"platformApi": "^0.1.0",
+	"platformApi": "^0.2.0",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations"],
 	"platform": {

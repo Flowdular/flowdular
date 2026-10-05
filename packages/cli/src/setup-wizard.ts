@@ -138,9 +138,7 @@ export async function runSetupWizard(
 		if (
 			config.adapter !== 'pglite' ||
 			process.env.FD_DATABASE_PGLITE_DIRECTORY ||
-			process.env.CORELOOM_DATABASE_PGLITE_DIRECTORY ||
-			process.env.FD_DATABASE_URL ||
-			process.env.CORELOOM_DATABASE_URL
+			process.env.FD_DATABASE_URL
 		)
 			return failure(
 				'LOCAL_DEMO_UNAVAILABLE',

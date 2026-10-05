@@ -12,14 +12,7 @@ import {
 } from '../packages/cli/src/ui-classes.ts';
 
 const root = new URL('..', import.meta.url).pathname;
-const SKIP = new Set([
-	'node_modules',
-	'dist',
-	'.flowdular',
-	'.coreloom',
-	'.git',
-	'.claude',
-]);
+const SKIP = new Set(['node_modules', 'dist', '.flowdular', '.git', '.claude']);
 
 async function filesUnder(directory, extensions) {
 	let entries;

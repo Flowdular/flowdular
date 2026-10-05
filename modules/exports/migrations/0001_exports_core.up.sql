@@ -24,5 +24,5 @@ CREATE INDEX IF NOT EXISTS exports_jobs_tenant_export_idx
 ALTER TABLE exports_jobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE exports_jobs FORCE ROW LEVEL SECURITY;
 CREATE POLICY exports_jobs_tenant_policy ON exports_jobs
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

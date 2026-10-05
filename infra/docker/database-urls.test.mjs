@@ -11,7 +11,7 @@ test('builds encoded URLs for old base64 passwords and drops raw copies', () => 
 	installDatabaseUrls(environment);
 	assert.equal(
 		environment.FD_DATABASE_URL,
-		'postgresql://coreloom_runtime:a%2Fb%2Bc%3D%40word@postgres:5432/flowdular',
+		'postgresql://flowdular_runtime:a%2Fb%2Bc%3D%40word@postgres:5432/flowdular',
 	);
 	assert.equal(
 		new URL(environment.FD_DATABASE_MIGRATOR_URL).password,

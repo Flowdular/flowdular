@@ -101,7 +101,7 @@ describe('AUTH-PROVIDER-TENANT-CRUD provider read failures', () => {
 			runtime,
 			'/api/auth/providers',
 			new Request(`${ORIGIN}/api/auth/providers`, {
-				headers: { cookie: `coreloom_session_dev=${signedIn.token}` },
+				headers: { cookie: `flowdular_session_dev=${signedIn.token}` },
 			}),
 		);
 		expect(refused.status).toBe(403);

@@ -5,13 +5,13 @@
 -- the tenant the routing row named before any request leaves the process.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY notifications_deliveries_background_policy ON notifications_deliveries
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON notifications_deliveries FROM coreloom_background;
-GRANT SELECT (tenant_id, id, scheduled_for, status) ON notifications_deliveries TO coreloom_background;
+REVOKE SELECT ON notifications_deliveries FROM flowdular_background;
+GRANT SELECT (tenant_id, id, scheduled_for, status) ON notifications_deliveries TO flowdular_background;

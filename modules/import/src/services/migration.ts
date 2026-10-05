@@ -32,8 +32,8 @@ CREATE INDEX IF NOT EXISTS import_jobs_tenant_started_idx
 ALTER TABLE import_jobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE import_jobs FORCE ROW LEVEL SECURITY;
 CREATE POLICY import_jobs_tenant_policy ON import_jobs
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 CREATE TABLE IF NOT EXISTS import_job_rows (
   id TEXT PRIMARY KEY,
@@ -49,8 +49,8 @@ CREATE TABLE IF NOT EXISTS import_job_rows (
 ALTER TABLE import_job_rows ENABLE ROW LEVEL SECURITY;
 ALTER TABLE import_job_rows FORCE ROW LEVEL SECURITY;
 CREATE POLICY import_job_rows_tenant_policy ON import_job_rows
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 CREATE TABLE IF NOT EXISTS import_mappings (
   id TEXT PRIMARY KEY,
@@ -63,8 +63,8 @@ CREATE TABLE IF NOT EXISTS import_mappings (
 ALTER TABLE import_mappings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE import_mappings FORCE ROW LEVEL SECURITY;
 CREATE POLICY import_mappings_tenant_policy ON import_mappings
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 export const IMPORT_MIGRATION_002_JOB_ROUTING_ROLE = `-- The poll loop must find queued jobs across workspaces before it knows whose
@@ -77,16 +77,16 @@ CREATE INDEX IF NOT EXISTS import_jobs_routing_idx
   ON import_jobs (status, started_at, tenant_id, id);
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY import_jobs_background_policy ON import_jobs
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (status IN ('parsing', 'writing'));
-REVOKE SELECT ON import_jobs FROM coreloom_background;
-GRANT SELECT (tenant_id, id, status, started_at) ON import_jobs TO coreloom_background;
+REVOKE SELECT ON import_jobs FROM flowdular_background;
+GRANT SELECT (tenant_id, id, status, started_at) ON import_jobs TO flowdular_background;
 `;
 
 export const IMPORT_MIGRATION_003_EXPORT_INDEX = `-- The data class export walks a workspace oldest first by (started_at, id) and
@@ -131,7 +131,7 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 		inspectExisting: async (database) => {
 			const result = await database.query<{ granted: boolean }>({
 				text: `SELECT CASE WHEN to_regclass('import_jobs') IS NOT NULL THEN
-				  has_column_privilege('coreloom_background', 'import_jobs', 'status', 'SELECT')
+				  has_column_privilege('flowdular_background', 'import_jobs', 'status', 'SELECT')
 				ELSE false END AS granted`,
 			});
 			return result.rows[0]?.granted ? 'complete' : 'absent';

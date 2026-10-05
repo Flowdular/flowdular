@@ -290,7 +290,7 @@ describe('module-owned business agents', () => {
 		await owner.database.execute({
 			text: `CREATE TRIGGER fail_module_agent_audit
 			       BEFORE INSERT ON agent_audit_events_v4
-			       FOR EACH ROW EXECUTE FUNCTION coreloom_reject_change('audit unavailable')`,
+			       FOR EACH ROW EXECUTE FUNCTION flowdular_reject_change('audit unavailable')`,
 		});
 
 		try {
@@ -322,7 +322,7 @@ describe('module-owned business agents', () => {
 		await owner.database.execute({
 			text: `CREATE TRIGGER fail_reconciliation_audit BEFORE INSERT ON agent_audit_events_v4
 			FOR EACH ROW WHEN (NEW.tenant_id = 'tenant-b' AND NEW.action = 'module-agent.definition-reconciled')
-			EXECUTE FUNCTION coreloom_reject_change('reconciliation audit unavailable')`,
+			EXECUTE FUNCTION flowdular_reject_change('reconciliation audit unavailable')`,
 		});
 		try {
 			await served.advanceStaleModuleAgentBindings();

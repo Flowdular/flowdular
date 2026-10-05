@@ -228,8 +228,7 @@ export class AgentRunGrantAuthority {
 		const value = raw as Record<string, unknown>;
 		if (
 			value.version !== 1 ||
-			(value.issuer !== GRANT_ISSUER &&
-				value.issuer !== 'coreloom-control-plane') ||
+			value.issuer !== GRANT_ISSUER ||
 			value.audience !== GRANT_AUDIENCE
 		) {
 			throw new AgentRunGrantError(

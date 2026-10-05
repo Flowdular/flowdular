@@ -866,8 +866,8 @@ CREATE INDEX IF NOT EXISTS ${index};
 ALTER TABLE ${entity.table} ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ${entity.table} FORCE ROW LEVEL SECURITY;
 CREATE POLICY ${entity.table}_tenant_policy ON ${entity.table}
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 }
 

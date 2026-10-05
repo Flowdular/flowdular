@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { RegisteredModule } from '@flowdular/contracts';
-import { createModuleRegistry, RegistryError } from '../src/index.ts';
+import {
+	createModuleRegistry,
+	PLATFORM_API_VERSION,
+	RegistryError,
+} from '../src/index.ts';
 
 function moduleOf(id: string, dependencies: string[] = []): RegisteredModule {
 	return {
@@ -18,6 +22,7 @@ function moduleOf(id: string, dependencies: string[] = []): RegisteredModule {
 			tenancy: 'required',
 			locales: ['en'],
 			stability: 'experimental',
+			platformApi: `^${PLATFORM_API_VERSION}`,
 		},
 	};
 }

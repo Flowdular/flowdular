@@ -86,7 +86,7 @@ core:
     risk: process
     localOnly: true
     supportsDryRun: true
-    effect: applies or adopts the outstanding migrations of one module against the configured PostgreSQL (embedded PGlite outside production) and writes the _coreloom_migrations_v2 ledger; without --apply it reports the plan and writes nothing
+    effect: applies or adopts the outstanding migrations of one module against the configured PostgreSQL (embedded PGlite outside production) and writes the _flowdular_migrations_v2 ledger; without --apply it reports the plan and writes nothing
   database.backup:
     command: pnpm flowdular database backup --output <dir> [--apply]
     risk: process

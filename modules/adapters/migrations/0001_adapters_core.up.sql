@@ -19,8 +19,8 @@ CREATE INDEX IF NOT EXISTS adapter_bindings_due_idx
 ALTER TABLE adapter_bindings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE adapter_bindings FORCE ROW LEVEL SECURITY;
 CREATE POLICY adapter_bindings_tenant_policy ON adapter_bindings
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- One pull or push. The claim is a lease the job runner renews; the cursor and
 -- the counts move together once per committed page, so a reclaimed run
@@ -66,8 +66,8 @@ CREATE INDEX IF NOT EXISTS adapter_runs_routing_idx
 ALTER TABLE adapter_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE adapter_runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY adapter_runs_tenant_policy ON adapter_runs
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- The outcome of one record a run handled, keyed by its index in the run so a
 -- page written again after a reclaim replaces its own rows.
@@ -86,8 +86,8 @@ CREATE TABLE IF NOT EXISTS adapter_run_rows (
 ALTER TABLE adapter_run_rows ENABLE ROW LEVEL SECURITY;
 ALTER TABLE adapter_run_rows FORCE ROW LEVEL SECURITY;
 CREATE POLICY adapter_run_rows_tenant_policy ON adapter_run_rows
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 CREATE TABLE IF NOT EXISTS adapter_audit_events (
   tenant_id TEXT NOT NULL,
@@ -105,8 +105,8 @@ CREATE INDEX IF NOT EXISTS adapter_audit_events_tenant_time_idx
 ALTER TABLE adapter_audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE adapter_audit_events FORCE ROW LEVEL SECURITY;
 CREATE POLICY adapter_audit_events_tenant_policy ON adapter_audit_events
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- The two poll loops find work across workspaces before they know whose it
 -- is, so they read routing columns alone on the background role, and every
@@ -114,18 +114,18 @@ CREATE POLICY adapter_audit_events_tenant_policy ON adapter_audit_events
 -- checks column privileges in WHERE too, so every filtered column is granted.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY adapter_runs_background_policy ON adapter_runs
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (status IN ('queued', 'running'));
-REVOKE SELECT ON adapter_runs FROM coreloom_background;
-GRANT SELECT (tenant_id, id, status, queued_at, lease_until) ON adapter_runs TO coreloom_background;
+REVOKE SELECT ON adapter_runs FROM flowdular_background;
+GRANT SELECT (tenant_id, id, status, queued_at, lease_until) ON adapter_runs TO flowdular_background;
 CREATE POLICY adapter_bindings_background_policy ON adapter_bindings
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (enabled = 1 AND next_run_at IS NOT NULL);
-REVOKE SELECT ON adapter_bindings FROM coreloom_background;
-GRANT SELECT (tenant_id, adapter_id, enabled, next_run_at) ON adapter_bindings TO coreloom_background;
+REVOKE SELECT ON adapter_bindings FROM flowdular_background;
+GRANT SELECT (tenant_id, adapter_id, enabled, next_run_at) ON adapter_bindings TO flowdular_background;

@@ -13,5 +13,5 @@ CREATE TABLE IF NOT EXISTS system_module_activations (
 ALTER TABLE system_module_activations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE system_module_activations FORCE ROW LEVEL SECURITY;
 CREATE POLICY system_module_activations_tenant_policy ON system_module_activations
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

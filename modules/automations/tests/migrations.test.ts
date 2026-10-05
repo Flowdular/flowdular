@@ -170,10 +170,10 @@ describe('automations migrations', () => {
 					DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = 'automations.core';
 					DROP POLICY automations_schedules_background_policy ON automations_schedules;
 					REVOKE SELECT (tenant_id, id, next_run_at, enabled)
-					  ON automations_schedules FROM coreloom_background;
+					  ON automations_schedules FROM flowdular_background;
 					DROP POLICY automations_triggers_background_policy ON automations_triggers;
 					REVOKE SELECT (tenant_id, id)
-					  ON automations_triggers FROM coreloom_background;
+					  ON automations_triggers FROM flowdular_background;
 				`),
 			{ access: 'write' },
 		);
@@ -289,7 +289,7 @@ describe('automations migrations', () => {
 				ALTER TABLE automations_time_zones ENABLE ROW LEVEL SECURITY;
 				ALTER TABLE automations_time_zones FORCE ROW LEVEL SECURITY;
 				CREATE POLICY automations_time_zones_tenant_policy ON automations_time_zones
-				  USING (tenant_id = current_setting('coreloom.tenant_id', true));
+				  USING (tenant_id = current_setting('flowdular.tenant_id', true));
 			`),
 		).toMatchObject({ id: '0007_automations_time_zones', state: 'partial' });
 	});

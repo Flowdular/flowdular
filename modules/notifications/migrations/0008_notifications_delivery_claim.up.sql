@@ -16,4 +16,4 @@ ALTER TABLE notifications_deliveries ADD COLUMN IF NOT EXISTS claimed_at BIGINT;
 ALTER TABLE notifications_deliveries DROP CONSTRAINT IF EXISTS notifications_deliveries_status_check;
 ALTER TABLE notifications_deliveries ADD CONSTRAINT notifications_deliveries_status_check
   CHECK (status IN ('pending', 'sending', 'succeeded', 'failed', 'dead-letter'));
-GRANT SELECT (claimed_at) ON notifications_deliveries TO coreloom_background;
+GRANT SELECT (claimed_at) ON notifications_deliveries TO flowdular_background;

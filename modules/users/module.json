@@ -49,5 +49,5 @@
 	"tenancy": "required",
 	"locales": ["en", "pl"],
 	"stability": "experimental",
-	"platformApi": "^0.1.2"
+	"platformApi": "^0.2.0"
 }

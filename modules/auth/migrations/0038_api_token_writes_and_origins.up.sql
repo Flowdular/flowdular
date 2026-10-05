@@ -14,6 +14,6 @@ ALTER TABLE auth_api_tokens ADD COLUMN IF NOT EXISTS allowed_origins_json TEXT N
 -- it from the origins its live tokens declare. That read runs on the routing
 -- role, which holds a column grant rather than a table grant; it learns which
 -- origins are registered somewhere in the deployment and no workspace data.
-GRANT SELECT (allowed_origins_json, expires_at) ON auth_api_tokens TO coreloom_background;
+GRANT SELECT (allowed_origins_json, expires_at) ON auth_api_tokens TO flowdular_background;
 CREATE INDEX IF NOT EXISTS auth_api_tokens_live_origins_idx
   ON auth_api_tokens (revoked_at, expires_at);

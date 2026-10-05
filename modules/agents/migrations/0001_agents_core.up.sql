@@ -87,20 +87,20 @@ CREATE INDEX IF NOT EXISTS agent_audit_tenant_time_idx ON agent_audit_events (te
 ALTER TABLE agent_definitions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_definitions FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_definitions_tenant_policy ON agent_definitions
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE agent_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_runs_tenant_policy ON agent_runs
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE agent_run_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_run_events FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_run_events_tenant_policy ON agent_run_events
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE agent_audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_audit_events FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_audit_events_tenant_policy ON agent_audit_events
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

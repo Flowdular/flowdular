@@ -118,14 +118,14 @@ describe('exports.core migrations', () => {
 		await migrateExportsDatabase(database);
 		for (const column of ROUTING_COLUMNS) {
 			const granted = await database.query<{ granted: boolean }>({
-				text: `SELECT has_column_privilege('coreloom_background', 'exports_jobs', $1, 'SELECT') AS granted`,
+				text: `SELECT has_column_privilege('flowdular_background', 'exports_jobs', $1, 'SELECT') AS granted`,
 				parameters: [column],
 			});
 			expect([column, granted.rows[0]?.granted]).toEqual([column, true]);
 		}
 		for (const column of HIDDEN_COLUMNS) {
 			const granted = await database.query<{ granted: boolean }>({
-				text: `SELECT has_column_privilege('coreloom_background', 'exports_jobs', $1, 'SELECT') AS granted`,
+				text: `SELECT has_column_privilege('flowdular_background', 'exports_jobs', $1, 'SELECT') AS granted`,
 				parameters: [column],
 			});
 			expect([column, granted.rows[0]?.granted]).toEqual([column, false]);

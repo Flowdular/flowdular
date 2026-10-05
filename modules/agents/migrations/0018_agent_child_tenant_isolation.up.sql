@@ -14,8 +14,8 @@ ALTER TABLE agent_definition_execution_limits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_definition_execution_limits FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_definition_execution_limits_tenant_policy
   ON agent_definition_execution_limits
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 ALTER TABLE agent_definition_output_limits ADD COLUMN tenant_id TEXT;
 UPDATE agent_definition_output_limits AS child
@@ -28,8 +28,8 @@ ALTER TABLE agent_definition_output_limits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_definition_output_limits FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_definition_output_limits_tenant_policy
   ON agent_definition_output_limits
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 ALTER TABLE agent_run_execution_limits ADD COLUMN tenant_id TEXT;
 UPDATE agent_run_execution_limits AS child
@@ -42,8 +42,8 @@ ALTER TABLE agent_run_execution_limits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_run_execution_limits FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_run_execution_limits_tenant_policy
   ON agent_run_execution_limits
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 ALTER TABLE agent_run_output_limits ADD COLUMN tenant_id TEXT;
 UPDATE agent_run_output_limits AS child
@@ -56,8 +56,8 @@ ALTER TABLE agent_run_output_limits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_run_output_limits FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_run_output_limits_tenant_policy
   ON agent_run_output_limits
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 ALTER TABLE agent_run_skill_snapshots ADD COLUMN tenant_id TEXT;
 UPDATE agent_run_skill_snapshots AS child
@@ -70,8 +70,8 @@ ALTER TABLE agent_run_skill_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_run_skill_snapshots FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_run_skill_snapshots_tenant_policy
   ON agent_run_skill_snapshots
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 ALTER TABLE agent_provider_model_readiness ADD COLUMN tenant_id TEXT;
 UPDATE agent_provider_model_readiness AS child
@@ -84,5 +84,5 @@ ALTER TABLE agent_provider_model_readiness ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_provider_model_readiness FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_provider_model_readiness_tenant_policy
   ON agent_provider_model_readiness
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

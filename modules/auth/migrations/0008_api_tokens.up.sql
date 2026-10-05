@@ -21,15 +21,15 @@ CREATE INDEX IF NOT EXISTS auth_api_tokens_tenant_idx
 ALTER TABLE auth_api_tokens ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_api_tokens FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_api_tokens_tenant_policy ON auth_api_tokens
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 -- A bearer token names no workspace. The routing read stops at the revoked
 -- flag; the scopes, label and account are read again under the tenant it named.
 CREATE POLICY auth_api_tokens_background_policy ON auth_api_tokens
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (revoked_at IS NULL);
-REVOKE SELECT ON auth_api_tokens FROM coreloom_background;
-GRANT SELECT (token_hash, tenant_id, id, revoked_at) ON auth_api_tokens TO coreloom_background;
+REVOKE SELECT ON auth_api_tokens FROM flowdular_background;
+GRANT SELECT (token_hash, tenant_id, id, revoked_at) ON auth_api_tokens TO flowdular_background;
 
 INSERT INTO auth_membership_scopes (account_id, tenant_id, scope) SELECT account_id, tenant_id, 'auth.tokens.read' FROM auth_memberships WHERE role = 'owner' ON CONFLICT DO NOTHING;
 INSERT INTO auth_membership_scopes (account_id, tenant_id, scope) SELECT account_id, tenant_id, 'auth.tokens.manage' FROM auth_memberships WHERE role = 'owner' ON CONFLICT DO NOTHING;

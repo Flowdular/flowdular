@@ -48,7 +48,7 @@ function authRuntime(
 	sessions: ReadonlyMap<string, AuthPrincipal>,
 ): AuthRuntime {
 	const cookie = {
-		name: 'coreloom_session_dev',
+		name: 'flowdular_session_dev',
 		secure: false,
 		maxAgeSeconds: 3_600,
 	};
@@ -111,7 +111,7 @@ function fixture(session: AuthPrincipal | null) {
 		const { authenticated = true, params = {}, ...requestInit } = init;
 		const headers = new Headers(requestInit.headers);
 		if (authenticated && session) {
-			headers.set('cookie', `coreloom_session_dev=${SESSION_TOKEN}`);
+			headers.set('cookie', `flowdular_session_dev=${SESSION_TOKEN}`);
 		} else {
 			headers.delete('cookie');
 		}

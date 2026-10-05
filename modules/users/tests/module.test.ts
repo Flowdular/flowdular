@@ -46,7 +46,7 @@ async function authRuntime(): Promise<AuthRuntime> {
 		databases,
 		purpose: 'test',
 		secureCookies: false,
-		cookieName: 'coreloom_session_dev',
+		cookieName: 'flowdular_session_dev',
 		sessionTtlMs: 3_600_000,
 		sessionIdleMs: 3_600_000,
 		passwordMinLength: 12,
@@ -178,7 +178,7 @@ async function signInMember(
 ): Promise<Session> {
 	const issued = await (await auth.service()).signIn({ email, password });
 	return {
-		cookie: `coreloom_session_dev=${issued.token}`,
+		cookie: `flowdular_session_dev=${issued.token}`,
 		csrfToken: issued.csrfToken,
 		accountId: issued.principal.accountId,
 		tenantId: issued.principal.tenantId,

@@ -15,8 +15,8 @@ CREATE INDEX IF NOT EXISTS profile_records_tenant_account_idx ON profile_records
 ALTER TABLE profile_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE profile_records FORCE ROW LEVEL SECURITY;
 CREATE POLICY profile_records_tenant_policy ON profile_records
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 export const PROFILE_MIGRATION_002 = `CREATE TABLE IF NOT EXISTS profile_language_preferences (
@@ -29,8 +29,8 @@ export const PROFILE_MIGRATION_002 = `CREATE TABLE IF NOT EXISTS profile_languag
 ALTER TABLE profile_language_preferences ENABLE ROW LEVEL SECURITY;
 ALTER TABLE profile_language_preferences FORCE ROW LEVEL SECURITY;
 CREATE POLICY profile_language_preferences_tenant_policy ON profile_language_preferences
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 export const databaseMigrations: readonly DatabaseMigration[] = [

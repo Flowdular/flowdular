@@ -10,11 +10,21 @@ import {
 	compareModuleVersions,
 	createModuleRegistry,
 	satisfiesModuleVersion,
-	PLATFORM_API_VERSION,
 } from '@flowdular/kernel';
 import { distributionAssert, MAX_ARTIFACT_BYTES } from './module-artifact.ts';
 import { validators } from './validation.ts';
 import { resolveExistingInside } from './workspace.ts';
+
+/* What the install gate admits, so search and resolution never offer a release
+   that installing would refuse. */
+export function platformAdmits(manifest: ModuleManifest): boolean {
+	try {
+		assertModuleCompatibility(manifest);
+		return true;
+	} catch {
+		return false;
+	}
+}
 
 export interface CatalogSource {
 	readonly catalog: ModuleCatalog;
@@ -111,11 +121,6 @@ export async function loadModuleCatalog(
 			'Invalid module release.',
 		);
 		assertModuleCompatibility(release.manifest, null);
-		distributionAssert(
-			release.manifest.platformApi,
-			'MODULE_PLATFORM_REQUIRED',
-			'Distributed modules must declare platformApi.',
-		);
 		const identity = release.manifest.id + '@' + release.manifest.version;
 		distributionAssert(
 			!identities.has(identity),
@@ -207,10 +212,7 @@ export function resolveModuleReleases(
 		];
 	}
 	function platformCompatible(candidate: ModuleRelease): boolean {
-		return satisfiesModuleVersion(
-			PLATFORM_API_VERSION,
-			candidate.manifest.platformApi!,
-		);
+		return platformAdmits(candidate.manifest);
 	}
 	let attempts = 0;
 	function search(

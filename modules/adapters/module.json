@@ -4,7 +4,7 @@
 	"id": "adapters.core",
 	"package": "@flowdular/module-adapters",
 	"version": "0.1.6",
-	"platformApi": "^0.1.33",
+	"platformApi": "^0.2.2",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations"],
 	"platform": {

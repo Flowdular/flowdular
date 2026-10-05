@@ -26,7 +26,7 @@ Migration SQL is checked in and immutable after release:
 ## 2. What the v2 runner guarantees
 
 `runDatabaseMigrations(database, namespace, databaseMigrations)` uses the
-namespaced `_coreloom_migrations_v2` ledger. A row records namespace, migration
+namespaced `_flowdular_migrations_v2` ledger. A row records namespace, migration
 id, dialect id, checksum, and applied time. The checksum covers the selected
 dialect's exact SQL.
 
@@ -76,14 +76,14 @@ Every PostgreSQL tenant table includes:
 ALTER TABLE inventory_locations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE inventory_locations FORCE ROW LEVEL SECURITY;
 CREATE POLICY inventory_locations_tenant_policy ON inventory_locations
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ```
 
 The runtime role is not a superuser and has no `BYPASSRLS`. DDL and policy
 ownership use `purpose: 'migration'`. Runtime repository calls use
 `database.transaction(operation, { tenantId, access })`; the adapter sets
-transaction-local `coreloom.tenant_id` on the pinned connection. Queries still
+transaction-local `flowdular.tenant_id` on the pinned connection. Queries still
 include `WHERE tenant_id = ...` as defense in depth.
 
 ## 6. Add one migration

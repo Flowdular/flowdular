@@ -43,24 +43,24 @@ ALTER TABLE module_settings FORCE ROW LEVEL SECURITY;
 ALTER TABLE module_settings_changes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE module_settings_changes FORCE ROW LEVEL SECURITY;
 CREATE POLICY module_settings_changes_tenant_policy ON module_settings_changes
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 -- Workers in other processes read the log across tenants. The background role
 -- sees every row through a policy of its own but only the columns that say
 -- which setting changed and when; who changed it, the workspace it came from
 -- and the audit mark stay unreadable, and it writes nothing.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY module_settings_changes_background_policy ON module_settings_changes
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE ALL ON module_settings_changes FROM coreloom_background;
-GRANT SELECT (revision, tenant_id, module_id, key, cleared, changed_at) ON module_settings_changes TO coreloom_background;
+REVOKE ALL ON module_settings_changes FROM flowdular_background;
+GRANT SELECT (revision, tenant_id, module_id, key, cleared, changed_at) ON module_settings_changes TO flowdular_background;
 -- A platform setting's event belongs to the workspace it was saved from, which
 -- a second transaction writes. The revision it carries is unique per
 -- workspace, so a retried write of the same change lands once.

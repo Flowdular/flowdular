@@ -136,7 +136,9 @@ describe('agents migrations', () => {
 				);
 				expect(sql).toContain(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY;`);
 				const policy = policyFor(sql, table);
-				expect(policy).toContain("current_setting('coreloom.tenant_id', true)");
+				expect(policy).toContain(
+					"current_setting('flowdular.tenant_id', true)",
+				);
 				expect(policy).toContain('WITH CHECK');
 			}
 		}
@@ -324,7 +326,7 @@ describe('agents migrations', () => {
 	it('refuses adoption when reconciliation policies exist but a routing grant is missing', async () => {
 		await apply();
 		await lease.database.execute({
-			text: 'REVOKE SELECT (agent_id) ON module_agent_bindings FROM coreloom_background',
+			text: 'REVOKE SELECT (agent_id) ON module_agent_bindings FROM flowdular_background',
 		});
 		await lease.database.execute({
 			text: `DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = 'agents.core' AND id = '0021_agents_agent_reconciliation_role'`,
@@ -335,7 +337,7 @@ describe('agents migrations', () => {
 	it('refuses adoption when the revision adoption policy exists but a background grant is missing', async () => {
 		await apply();
 		await lease.database.execute({
-			text: 'REVOKE SELECT (revision) ON agent_definition_revisions FROM coreloom_background',
+			text: 'REVOKE SELECT (revision) ON agent_definition_revisions FROM flowdular_background',
 		});
 		await lease.database.execute({
 			text: `DELETE FROM ${DATABASE_MIGRATION_LEDGER} WHERE namespace = 'agents.core' AND id = '0030_agents_background_passes'`,

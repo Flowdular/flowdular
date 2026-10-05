@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { DatabaseMigrationError } from '@flowdular/database';
 import { activatePreviewDrafts } from '../src/server/preview-runtime.ts';
 
 function draft(
@@ -86,5 +87,39 @@ describe('preview generation lifecycle', () => {
 			'first:dispose',
 		]);
 		expect(retireCurrent).not.toHaveBeenCalled();
+	});
+
+	/* A pre-0.6 session keeps its own preview database. The runner's refusal
+	   tells an operator to reset the host database, the wrong remedy here. */
+	it('tells a pre-0.6 session to delete itself instead of resetting the host', async () => {
+		const refusal = new DatabaseMigrationError(
+			'LEGACY_DATABASE',
+			'',
+			'This database was created by Flowdular 0.5 or earlier. ' +
+				'Local embedded database: delete .flowdular/data/pglite. '.repeat(10),
+		);
+		const errors = await activatePreviewDrafts(
+			[
+				{
+					routes: [],
+					start() {
+						throw refusal;
+					},
+				},
+				{
+					routes: [],
+					start() {
+						throw new Error('draft:failed');
+					},
+				},
+			],
+			() => undefined,
+		);
+
+		expect(errors).toHaveLength(2);
+		expect(errors[0]).toContain('Delete the session');
+		expect(errors[0]).not.toContain('.flowdular/data/pglite');
+		expect(errors[0]!.length).toBeLessThanOrEqual(400);
+		expect(errors[1]).toBe('draft:failed');
 	});
 });

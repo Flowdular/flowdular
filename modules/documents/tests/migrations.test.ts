@@ -203,7 +203,7 @@ describe('documents migrations', () => {
 			(transaction) =>
 				transaction.query<{ column_name: string; granted: boolean }>({
 					text: `SELECT column_name,
-					        has_column_privilege('coreloom_background', 'documents_text', column_name, 'SELECT') AS granted
+					        has_column_privilege('flowdular_background', 'documents_text', column_name, 'SELECT') AS granted
 					 FROM information_schema.columns
 					 WHERE table_schema = current_schema() AND table_name = 'documents_text'
 					 ORDER BY column_name`,
@@ -225,7 +225,7 @@ describe('documents migrations', () => {
 					parameters: ['documents.core', '0004_documents_text'],
 				});
 				await transaction.execute({
-					text: 'REVOKE SELECT (tenant_id, document_id, status, requested_at) ON documents_text FROM coreloom_background',
+					text: 'REVOKE SELECT (tenant_id, document_id, status, requested_at) ON documents_text FROM flowdular_background',
 				});
 			},
 			{ access: 'write' },
@@ -273,7 +273,7 @@ describe('documents migrations', () => {
 					 FROM information_schema.columns
 					 WHERE table_schema = current_schema()
 					   AND table_name IN ('document_renders', 'document_render_keys', 'document_templates', 'document_template_versions')
-					   AND has_column_privilege('coreloom_background', table_name, column_name, 'SELECT')
+					   AND has_column_privilege('flowdular_background', table_name, column_name, 'SELECT')
 					 ORDER BY table_name, column_name`,
 				}),
 			{ access: 'read' },
@@ -299,7 +299,7 @@ describe('documents migrations', () => {
 					parameters: ['documents.core', '0005_documents_templates'],
 				});
 				await transaction.execute({
-					text: 'REVOKE SELECT (id, tenant_id, status, created_at, claimed_at) ON document_renders FROM coreloom_background',
+					text: 'REVOKE SELECT (id, tenant_id, status, created_at, claimed_at) ON document_renders FROM flowdular_background',
 				});
 			},
 			{ access: 'write' },

@@ -61,7 +61,7 @@ function principal(
 
 function authRuntime(session: AuthPrincipal | null): AuthRuntime {
 	const cookie = {
-		name: 'coreloom_session_dev',
+		name: 'flowdular_session_dev',
 		secure: false,
 		maxAgeSeconds: 3_600,
 	};
@@ -108,7 +108,8 @@ function fixture(session: AuthPrincipal | null) {
 	) => {
 		const { csrf, ...requestInit } = init;
 		const headers = new Headers(requestInit.headers);
-		if (session) headers.set('cookie', `coreloom_session_dev=${SESSION_TOKEN}`);
+		if (session)
+			headers.set('cookie', `flowdular_session_dev=${SESSION_TOKEN}`);
 		if (requestInit.method === 'POST') {
 			headers.set('content-type', 'application/json');
 			headers.set('origin', ORIGIN);

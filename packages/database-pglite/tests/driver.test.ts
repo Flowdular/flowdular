@@ -17,7 +17,7 @@ afterEach(async () => {
 
 /* The runtime role is what production uses: no superuser, no BYPASSRLS. Every
    lease enters it, so forced row security binds exactly as it does on a server. */
-const BOOTSTRAP = `CREATE ROLE coreloom_runtime NOSUPERUSER NOBYPASSRLS;`;
+const BOOTSTRAP = `CREATE ROLE flowdular_runtime NOSUPERUSER NOBYPASSRLS;`;
 
 function migrator(): PostgresDatabaseAdapter {
 	const adapter = new PostgresDatabaseAdapter({
@@ -42,9 +42,9 @@ CREATE INDEX IF NOT EXISTS demo_records_tenant_created_idx
 ALTER TABLE demo_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE demo_records FORCE ROW LEVEL SECURITY;
 CREATE POLICY demo_records_tenant_policy ON demo_records
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
-GRANT SELECT, INSERT, UPDATE, DELETE ON demo_records TO coreloom_runtime;
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
+GRANT SELECT, INSERT, UPDATE, DELETE ON demo_records TO flowdular_runtime;
 `,
 		},
 		inspectExisting: (database) =>
@@ -176,7 +176,7 @@ describe('forced row-level security on the embedded build', () => {
 	async function cluster() {
 		const { createPgliteCluster } = await import('../src/driver.ts');
 		const created = createPgliteCluster({
-			bootstrap: 'CREATE ROLE coreloom_runtime NOSUPERUSER NOBYPASSRLS;',
+			bootstrap: 'CREATE ROLE flowdular_runtime NOSUPERUSER NOBYPASSRLS;',
 		});
 		const migrator = new PostgresDatabaseAdapter({ pool: created.pool() });
 		await runDatabaseMigrations(migrator, 'demo.core', migrations);
@@ -189,7 +189,7 @@ describe('forced row-level security on the embedded build', () => {
 			parameters: ['b', 'tenant-b', 'B', 1],
 		});
 		const runtime = new PostgresDatabaseAdapter({
-			pool: created.pool('coreloom_runtime'),
+			pool: created.pool('flowdular_runtime'),
 			tenantRequired: true,
 		});
 		adapters.push(migrator, runtime);
@@ -244,12 +244,12 @@ describe('forced row-level security on the embedded build', () => {
    an explicit, read-only policy on named tables, not a role that bypasses row
    security, so a reviewer can see exactly what crosses the boundary. */
 describe('cross-tenant background reads', () => {
-	const BACKGROUND_ROLE = 'coreloom_background';
+	const BACKGROUND_ROLE = 'flowdular_background';
 
 	async function cluster() {
 		const { createPgliteCluster } = await import('../src/driver.ts');
 		const created = createPgliteCluster({
-			bootstrap: `CREATE ROLE coreloom_runtime NOSUPERUSER NOBYPASSRLS;
+			bootstrap: `CREATE ROLE flowdular_runtime NOSUPERUSER NOBYPASSRLS;
 CREATE ROLE ${BACKGROUND_ROLE} NOSUPERUSER NOBYPASSRLS;`,
 		});
 		const migrator = new PostgresDatabaseAdapter({ pool: created.pool() });
@@ -267,11 +267,11 @@ ALTER TABLE due_work FORCE ROW LEVEL SECURITY;
 ALTER TABLE private_notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE private_notes FORCE ROW LEVEL SECURITY;
 CREATE POLICY due_work_tenant_policy ON due_work
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 CREATE POLICY private_notes_tenant_policy ON private_notes
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 CREATE POLICY due_work_background_policy ON due_work
   FOR SELECT TO ${BACKGROUND_ROLE} USING (true);
 GRANT SELECT ON due_work, private_notes TO ${BACKGROUND_ROLE};

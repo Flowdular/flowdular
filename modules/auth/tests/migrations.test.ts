@@ -143,7 +143,7 @@ describe('auth migrations', () => {
 			expect(script).toContain(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY`);
 			expect(script).toContain(`CREATE POLICY ${policy} ON ${table}`);
 		}
-		expect(script).toContain("current_setting('coreloom.tenant_id', true)");
+		expect(script).toContain("current_setting('flowdular.tenant_id', true)");
 		expect(script).toContain('WITH CHECK');
 	});
 
@@ -2144,14 +2144,14 @@ describe('auth migrations', () => {
 		expect(await logState()).toBe('adopted');
 
 		await lease.database.execute({
-			text: 'REVOKE SELECT (changed_at) ON module_settings_changes FROM coreloom_background',
+			text: 'REVOKE SELECT (changed_at) ON module_settings_changes FROM flowdular_background',
 		});
 		expect(await logState()).toBe('partial');
 		await expect(apply()).rejects.toThrow('0041_module_settings_changes');
 
 		await forget();
 		await lease.database.execute({
-			text: 'GRANT SELECT (changed_at) ON module_settings_changes TO coreloom_background',
+			text: 'GRANT SELECT (changed_at) ON module_settings_changes TO flowdular_background',
 		});
 		await lease.database.execute({
 			text: 'DROP POLICY module_settings_changes_background_policy ON module_settings_changes',

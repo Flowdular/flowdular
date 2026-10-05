@@ -16,8 +16,8 @@ CREATE TABLE IF NOT EXISTS metering_meters (
 ALTER TABLE metering_meters ENABLE ROW LEVEL SECURITY;
 ALTER TABLE metering_meters FORCE ROW LEVEL SECURITY;
 CREATE POLICY metering_meters_tenant_policy ON metering_meters
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- One row per meter per UTC day. The unique key is also the index every read
 -- and every accumulating write uses, so a fact costs one upsert and a month
@@ -37,8 +37,8 @@ CREATE INDEX IF NOT EXISTS metering_buckets_tenant_day_idx
 ALTER TABLE metering_buckets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE metering_buckets FORCE ROW LEVEL SECURITY;
 CREATE POLICY metering_buckets_tenant_policy ON metering_buckets
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- What makes a fact idempotent. The unique key is the whole mechanism: a
 -- repeat of a source reference inserts nothing and the bucket is left alone.
@@ -59,8 +59,8 @@ CREATE INDEX IF NOT EXISTS metering_records_tenant_day_idx
 ALTER TABLE metering_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE metering_records FORCE ROW LEVEL SECURITY;
 CREATE POLICY metering_records_tenant_policy ON metering_records
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- The operator's ceiling. No foreign key to metering_meters: a limit is set
 -- before the workspace has reported its first fact for that meter, which is
@@ -77,8 +77,8 @@ CREATE TABLE IF NOT EXISTS metering_limits (
 ALTER TABLE metering_limits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE metering_limits FORCE ROW LEVEL SECURITY;
 CREATE POLICY metering_limits_tenant_policy ON metering_limits
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- Every limit the operator set, in order, with the label the CLI derived. The
 -- limit row carries the current value; this is the evidence of how it got
@@ -97,8 +97,8 @@ CREATE INDEX IF NOT EXISTS metering_limit_events_tenant_occurred_idx
 ALTER TABLE metering_limit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE metering_limit_events FORCE ROW LEVEL SECURITY;
 CREATE POLICY metering_limit_events_tenant_policy ON metering_limit_events
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- One row per meter per month per threshold. The unique key is what makes a
 -- threshold notification happen once: the row is claimed inside the recording
@@ -115,5 +115,5 @@ CREATE TABLE IF NOT EXISTS metering_threshold_notices (
 ALTER TABLE metering_threshold_notices ENABLE ROW LEVEL SECURITY;
 ALTER TABLE metering_threshold_notices FORCE ROW LEVEL SECURITY;
 CREATE POLICY metering_threshold_notices_tenant_policy ON metering_threshold_notices
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

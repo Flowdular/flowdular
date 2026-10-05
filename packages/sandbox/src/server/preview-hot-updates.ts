@@ -22,7 +22,7 @@ export function isolatePreviewHotUpdates(
 						'\\',
 						'/',
 					);
-					if (/^(?:\.flowdular|\.coreloom)\/sandbox\/sessions\//.test(path)) {
+					if (/^\.flowdular\/sandbox\/sessions\//.test(path)) {
 						for (const environment of Object.values(
 							options.server.environments,
 						)) {

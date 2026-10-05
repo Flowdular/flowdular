@@ -39,17 +39,14 @@ async function update(file: string) {
 }
 
 describe('preview hot update isolation', () => {
-	it.each(['.flowdular', '.coreloom'])(
-		'invalidates %s draft caches without reloading the sandbox',
-		async (directory) => {
-			const result = await update(
-				`/workspace/${directory}/sandbox/sessions/session/workspace/modules/blog/src/client/View.tsrx`,
-			);
-			expect(result.send).not.toHaveBeenCalled();
-			expect(result.client.invalidateModule).toHaveBeenCalled();
-			expect(result.ssr.invalidateModule).toHaveBeenCalled();
-		},
-	);
+	it('invalidates draft caches without reloading the sandbox', async () => {
+		const result = await update(
+			'/workspace/.flowdular/sandbox/sessions/session/workspace/modules/blog/src/client/View.tsrx',
+		);
+		expect(result.send).not.toHaveBeenCalled();
+		expect(result.client.invalidateModule).toHaveBeenCalled();
+		expect(result.ssr.invalidateModule).toHaveBeenCalled();
+	});
 	it('keeps normal reloads for sandbox application code', async () => {
 		const result = await update('/workspace/packages/sandbox/src/App.tsrx');
 		expect(result.send).toHaveBeenCalledWith({ type: 'full-reload' });

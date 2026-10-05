@@ -75,7 +75,7 @@ export async function openAgentsTestDatabase(): Promise<AgentsTestDatabase> {
 					const tables = await transaction.query<{ tablename: string }>({
 						text: `SELECT tablename FROM pg_tables
 						       WHERE schemaname = current_schema()
-						         AND tablename <> '_coreloom_migrations_v2'`,
+						         AND tablename <> '_flowdular_migrations_v2'`,
 					});
 					if (tables.rows.length === 0) return;
 					await transaction.execute({

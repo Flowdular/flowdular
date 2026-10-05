@@ -35,10 +35,10 @@ CREATE TABLE IF NOT EXISTS agent_run_skill_snapshots (
 ALTER TABLE agent_skills ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_skills FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_skills_tenant_policy ON agent_skills
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE agent_skill_assignments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_skill_assignments FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_skill_assignments_tenant_policy ON agent_skill_assignments
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

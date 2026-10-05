@@ -22,5 +22,5 @@ CREATE INDEX IF NOT EXISTS notifications_inbox_member_status_idx
 ALTER TABLE notifications_inbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications_inbox FORCE ROW LEVEL SECURITY;
 CREATE POLICY notifications_inbox_tenant_policy ON notifications_inbox
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

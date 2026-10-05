@@ -30,8 +30,8 @@ CREATE INDEX IF NOT EXISTS exports_jobs_tenant_export_idx
 ALTER TABLE exports_jobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE exports_jobs FORCE ROW LEVEL SECURITY;
 CREATE POLICY exports_jobs_tenant_policy ON exports_jobs
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 export const EXPORTS_MIGRATION_002_JOB_ROUTING_ROLE = `-- The poll loop must find waiting jobs across workspaces before it knows whose
@@ -45,16 +45,16 @@ CREATE INDEX IF NOT EXISTS exports_jobs_routing_idx
   ON exports_jobs (status, started_at, tenant_id, id);
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY exports_jobs_background_policy ON exports_jobs
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (status IN ('requested', 'running'));
-REVOKE SELECT ON exports_jobs FROM coreloom_background;
-GRANT SELECT (tenant_id, id, status, started_at) ON exports_jobs TO coreloom_background;
+REVOKE SELECT ON exports_jobs FROM flowdular_background;
+GRANT SELECT (tenant_id, id, status, started_at) ON exports_jobs TO flowdular_background;
 `;
 
 /* Mirrors migrations/0003_exports_rotation_inventory.up.sql byte for byte. */
@@ -65,7 +65,7 @@ export const EXPORTS_MIGRATION_003_ROTATION_INVENTORY = `-- The storage key rota
 -- requester and every count stay invisible to it, and every file it names is
 -- read again under the workspace that row named.
 CREATE POLICY exports_jobs_rotation_policy ON exports_jobs
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (status = 'completed');
 `;
 
@@ -92,7 +92,7 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 		inspectExisting: async (database) => {
 			const result = await database.query<{ granted: boolean }>({
 				text: `SELECT CASE WHEN to_regclass('exports_jobs') IS NOT NULL THEN
-				  has_column_privilege('coreloom_background', 'exports_jobs', 'status', 'SELECT')
+				  has_column_privilege('flowdular_background', 'exports_jobs', 'status', 'SELECT')
 				ELSE false END AS granted`,
 			});
 			return result.rows[0]?.granted ? 'complete' : 'absent';

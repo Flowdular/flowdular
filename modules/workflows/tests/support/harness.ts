@@ -20,7 +20,7 @@ import { createWorkflowsTestRuntime } from './database.ts';
 export const ORIGIN = 'https://erp.example';
 export const SESSION_TOKEN = 'session-token-0001';
 export const CSRF_TOKEN = 'csrf-token-0001';
-const COOKIE_NAME = 'coreloom_session_dev';
+const COOKIE_NAME = 'flowdular_session_dev';
 
 /* Everything a browser session needs to create, publish and run a workflow
    whose graph carries no agent or action node. */

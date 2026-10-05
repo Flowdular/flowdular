@@ -7,13 +7,13 @@ CREATE INDEX IF NOT EXISTS automations_schedules_routing_idx
 -- column privileges in WHERE too, so `enabled` is part of the grant.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY automations_schedules_background_policy ON automations_schedules
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (enabled = 1);
-REVOKE SELECT ON automations_schedules FROM coreloom_background;
-GRANT SELECT (tenant_id, id, next_run_at, enabled) ON automations_schedules TO coreloom_background;
+REVOKE SELECT ON automations_schedules FROM flowdular_background;
+GRANT SELECT (tenant_id, id, next_run_at, enabled) ON automations_schedules TO flowdular_background;

@@ -32,8 +32,8 @@ CREATE INDEX IF NOT EXISTS approvals_requests_routing_idx
 ALTER TABLE approvals_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE approvals_requests FORCE ROW LEVEL SECURITY;
 CREATE POLICY approvals_requests_tenant_policy ON approvals_requests
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 -- The eligibility snapshot taken when the request opened. It decides whose
 -- inbox the request appears in, so it is a row per decider with its own index
 -- rather than a list inside the request: the screen asks "what may I decide"
@@ -49,8 +49,8 @@ CREATE INDEX IF NOT EXISTS approvals_eligible_account_idx
 ALTER TABLE approvals_eligible ENABLE ROW LEVEL SECURITY;
 ALTER TABLE approvals_eligible FORCE ROW LEVEL SECURITY;
 CREATE POLICY approvals_eligible_tenant_policy ON approvals_eligible
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 CREATE TABLE IF NOT EXISTS approvals_decisions (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
@@ -74,5 +74,5 @@ CREATE INDEX IF NOT EXISTS approvals_decisions_request_idx
 ALTER TABLE approvals_decisions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE approvals_decisions FORCE ROW LEVEL SECURITY;
 CREATE POLICY approvals_decisions_tenant_policy ON approvals_decisions
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

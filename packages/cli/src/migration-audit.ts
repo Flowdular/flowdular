@@ -1,6 +1,9 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { DatabaseMigration } from '@flowdular/database';
+import {
+	migrationIdentifierIssues,
+	type DatabaseMigration,
+} from '@flowdular/database';
 
 export interface MigrationAuditIssue {
 	readonly moduleId: string;
@@ -9,7 +12,9 @@ export interface MigrationAuditIssue {
 		| 'MIGRATION_SCRIPT_MISSING'
 		| 'MIGRATION_NOT_DECLARED'
 		| 'ROW_SECURITY_MISSING'
-		| 'BACKGROUND_POLICY_TOO_WIDE';
+		| 'BACKGROUND_POLICY_TOO_WIDE'
+		| 'TENANT_SETTING_UNKNOWN'
+		| 'ROLE_UNKNOWN';
 	readonly message: string;
 }
 
@@ -21,7 +26,7 @@ export interface MigrationAuditReport {
 
 function statementsOf(sql: string): string {
 	/* Comments must not contribute matches; the checks below read structure. */
-	return sql.replace(/--[^\n]*\n/g, '\n');
+	return sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*\n/g, '\n');
 }
 
 function tables(sql: string): ReadonlySet<string> {
@@ -179,13 +184,21 @@ export async function moduleMigrationAudit(
 				);
 			}
 		}
+		/* A background policy on another role also skips the check below. */
+		for (const issue of migrationIdentifierIssues(sql))
+			report(issue.code, issue.message);
 		/* The cross-tenant role exists so a scheduler can find work. A policy that
 		   grants it anything beyond SELECT would let it act on another tenant. */
 		for (const match of body.matchAll(
 			/CREATE POLICY\s+([a-z0-9_]+)\s+ON\s+([a-z0-9_]+)([\s\S]*?);/gi,
 		)) {
 			const clause = match[3] ?? '';
-			if (!/\bTO\s+coreloom_background\b/i.test(clause)) continue;
+			if (
+				!/\bTO\s+(?:"?[a-z_][a-z0-9_]*"?\s*,\s*)*"?flowdular_background\b/i.test(
+					clause,
+				)
+			)
+				continue;
 			if (!/\bFOR\s+SELECT\b/i.test(clause)) {
 				report(
 					'BACKGROUND_POLICY_TOO_WIDE',

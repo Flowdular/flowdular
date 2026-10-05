@@ -412,42 +412,39 @@ async function waitFor(
 }
 
 describe('workflow backend contracts', () => {
-	it.each(['flowdular', 'coreloom'])(
-		'redacts %s schema-marked secrets and permission-filtered fields before evidence persistence',
-		async (brand) => {
-			const value = {
-				name: 'Ada',
-				apiKey: 'by-name',
-				privateNote: 'hidden',
-				scoped: 'denied',
-			};
-			const evidence = safePayloadEvidence(value, 'schema.secure', {
-				schema: {
-					type: 'object',
-					properties: {
-						name: { type: 'string' },
-						privateNote: { type: 'string', [`x-${brand}-secret`]: true },
-						scoped: {
-							type: 'string',
-							[`x-${brand}-read-permission`]: 'private.read',
-						},
+	it('redacts schema-marked secrets and permission-filtered fields before evidence persistence', async () => {
+		const value = {
+			name: 'Ada',
+			apiKey: 'by-name',
+			privateNote: 'hidden',
+			scoped: 'denied',
+		};
+		const evidence = safePayloadEvidence(value, 'schema.secure', {
+			schema: {
+				type: 'object',
+				properties: {
+					name: { type: 'string' },
+					privateNote: { type: 'string', 'x-flowdular-secret': true },
+					scoped: {
+						type: 'string',
+						'x-flowdular-read-permission': 'private.read',
 					},
 				},
-				permissionSnapshot: [],
-			});
-			expect(evidence).toMatchObject({
-				state: 'redacted',
-				preview: {
-					name: 'Ada',
-					apiKey: '[redacted]',
-					privateNote: '[redacted]',
-					scoped: '[redacted]',
-				},
-			});
-			expect(JSON.stringify(evidence)).not.toContain('hidden');
-			expect(JSON.stringify(evidence)).not.toContain('denied');
-		},
-	);
+			},
+			permissionSnapshot: [],
+		});
+		expect(evidence).toMatchObject({
+			state: 'redacted',
+			preview: {
+				name: 'Ada',
+				apiKey: '[redacted]',
+				privateNote: '[redacted]',
+				scoped: '[redacted]',
+			},
+		});
+		expect(JSON.stringify(evidence)).not.toContain('hidden');
+		expect(JSON.stringify(evidence)).not.toContain('denied');
+	});
 
 	it.each([
 		[
@@ -4350,7 +4347,7 @@ describe('workflow persistence boundary', () => {
 						{ access: 'read' },
 					),
 			);
-			expect(identity.rows[0]?.role).toBe('coreloom_background');
+			expect(identity.rows[0]?.role).toBe('flowdular_background');
 
 			for (const text of [
 				'SELECT graph_json FROM workflow_runs',

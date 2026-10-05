@@ -19,8 +19,8 @@ const migrations: readonly DatabaseMigration[] = [
 ALTER TABLE notes_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notes_records FORCE ROW LEVEL SECURITY;
 CREATE POLICY notes_records_tenant_policy ON notes_records
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `,
 		},
 	},

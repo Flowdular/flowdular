@@ -13,8 +13,8 @@ import {
 } from '@flowdular/database';
 import { createPgliteCluster } from '@flowdular/database-pglite';
 
-const RUNTIME_ROLE = 'coreloom_runtime';
-const BACKGROUND_ROLE = 'coreloom_background';
+const RUNTIME_ROLE = 'flowdular_runtime';
+const BACKGROUND_ROLE = 'flowdular_background';
 
 /* The roles exist before the first migration, so a table created later is
    reachable by the runtime role through default privileges. The background role

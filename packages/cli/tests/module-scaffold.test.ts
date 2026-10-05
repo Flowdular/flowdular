@@ -187,7 +187,7 @@ describe('module scaffolding', () => {
 				'ALTER TABLE inventory_records FORCE ROW LEVEL SECURITY;',
 			);
 			expect(upSql).toContain(
-				"CREATE POLICY inventory_records_tenant_policy ON inventory_records\n  USING (tenant_id = current_setting('coreloom.tenant_id', true))\n  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));",
+				"CREATE POLICY inventory_records_tenant_policy ON inventory_records\n  USING (tenant_id = current_setting('flowdular.tenant_id', true))\n  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));",
 			);
 			/* The runner checksums the constant, so it must equal the file. */
 			expect(migration).toContain(

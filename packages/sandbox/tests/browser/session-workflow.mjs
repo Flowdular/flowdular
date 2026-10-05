@@ -5,7 +5,6 @@ const { chromium } = await import(
 );
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
@@ -431,10 +430,7 @@ async function open() {
 }
 try {
 	await open();
-	const stateDirectory = existsSync(join(repository, '.coreloom'))
-		? '.coreloom'
-		: '.flowdular';
-	const sessionsRoot = join(repository, stateDirectory, 'sandbox/sessions');
+	const sessionsRoot = join(repository, '.flowdular', 'sandbox/sessions');
 	await mkdir(sessionsRoot, { recursive: true });
 	const draftRoot = await mkdtemp(join(sessionsRoot, 'hmr-regression-'));
 	try {

@@ -46,7 +46,8 @@ Flags that matter:
 - `--database-url-env NAME` uses an existing PostgreSQL instead of Neon. Run
   `read -rs FD_OWNER_URL && export FD_OWNER_URL`, paste the owner URL (it stays
   out of shell history), then pass `--database-url-env FD_OWNER_URL`. A URL is
-  never accepted on the command line.
+  never accepted on the command line. A database created by Flowdular 0.5 or
+  earlier is refused before anything is created; use a new database.
 - `--cron "<expression>"` overrides the worker schedule the plan sets.
 
 A rerun resumes after any failure and never regenerates a key that the backup or
@@ -125,7 +126,7 @@ is Ready.
 2. Provision PostgreSQL and use the direct host, not a PgBouncer pooler: the
    platform sends statement and lock timeouts as startup parameters, which a
    pooler refuses.
-3. As the database owner, create `coreloom_runtime` and `coreloom_background`
+3. As the database owner, create `flowdular_runtime` and `flowdular_background`
    without `SUPERUSER` or `BYPASSRLS` and grant what
    `infra/docker/postgres/10-roles.sh` grants. The owner role is the migrator.
 4. Generate each stable key with `openssl rand -base64 32`, except

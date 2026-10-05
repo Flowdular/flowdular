@@ -41,7 +41,7 @@ function authRuntime(
 	sessions: ReadonlyMap<string, AuthPrincipal>,
 ): AuthRuntime {
 	const cookie = {
-		name: 'coreloom_session_dev',
+		name: 'flowdular_session_dev',
 		secure: false,
 		maxAgeSeconds: 3_600,
 	};
@@ -189,7 +189,7 @@ async function fixture(session: AuthPrincipal | null) {
 		if (authenticated && identity) {
 			headers.set(
 				'cookie',
-				`coreloom_session_dev=${as ? tokenFor(as) : SESSION_TOKEN}`,
+				`flowdular_session_dev=${as ? tokenFor(as) : SESSION_TOKEN}`,
 			);
 		} else {
 			headers.delete('cookie');
@@ -220,7 +220,7 @@ async function fixture(session: AuthPrincipal | null) {
 			headers: {
 				'content-type': 'application/json',
 				origin: ORIGIN,
-				cookie: `coreloom_session_dev=${SESSION_TOKEN}`,
+				cookie: `flowdular_session_dev=${SESSION_TOKEN}`,
 				'x-csrf-token': CSRF_TOKEN,
 				...(init.headers as Record<string, string> | undefined),
 			},

@@ -5,10 +5,7 @@ import {
 	parsePreviousKeys,
 	type Keyring,
 } from '@flowdular/kernel';
-import {
-	flowdularEnvironment,
-	flowdularStateDirectory,
-} from '@flowdular/kernel/runtime-config';
+import { flowdularStateDirectory } from '@flowdular/kernel/runtime-config';
 
 export type ConfiguredStorageAdapter = 'local' | 's3' | 'vercel-blob';
 
@@ -101,7 +98,6 @@ export function storageConfigFromEnvironment(
 	environment: NodeJS.ProcessEnv = process.env,
 	workspaceRoot = process.cwd(),
 ): StorageConfig {
-	environment = flowdularEnvironment(environment);
 	const production = environment.NODE_ENV === 'production';
 	const adapter = adapterOf(environment, production);
 	if (production && !environment[STORAGE_KEY_VARIABLE]?.trim()) {
@@ -200,7 +196,6 @@ export function createStorageKeyring(
 	environment: NodeJS.ProcessEnv = process.env,
 	workspaceRoot = process.cwd(),
 ): Keyring {
-	environment = flowdularEnvironment(environment);
 	const configured = environment[STORAGE_KEY_VARIABLE];
 	return createKeyring({
 		current: configured

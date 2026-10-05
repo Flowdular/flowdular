@@ -14,6 +14,7 @@ import {
 	type ValidationIssue,
 } from '@flowdular/contracts';
 import { createModuleRegistry, PLATFORM_API_VERSION } from '@flowdular/kernel';
+import { migrationIdentifierIssues } from '@flowdular/database';
 import {
 	findNamedFiles,
 	validateFile,
@@ -431,6 +432,22 @@ async function userInterfaceIssues(
 	return issues;
 }
 
+/* The identifier rules need no database, so a module that copied a role or the
+   tenant setting from an older release fails here, not first in a deployment. */
+async function migrationIssues(moduleRoot: string): Promise<ValidationIssue[]> {
+	const directory = join(moduleRoot, 'migrations');
+	if (!(await exists(directory))) return [];
+	const issues: ValidationIssue[] = [];
+	for (const name of (await readdir(directory))
+		.filter((entry) => entry.endsWith('.up.sql'))
+		.sort()) {
+		const sql = await readFile(join(directory, name), 'utf8');
+		for (const found of migrationIdentifierIssues(sql))
+			issues.push(issue(found.code, found.message, `migrations/${name}`));
+	}
+	return issues;
+}
+
 export async function moduleLayoutIssues(
 	moduleRoot: string,
 	manifest: PlatformManifest,
@@ -448,6 +465,7 @@ export async function moduleLayoutIssues(
 		)),
 		...(await translationIssues(moduleRoot, manifest, options.projectLocales)),
 		...(await userInterfaceIssues(moduleRoot)),
+		...(await migrationIssues(moduleRoot)),
 	];
 }
 

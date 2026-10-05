@@ -39,11 +39,7 @@ function record(value: unknown): value is Readonly<Record<string, unknown>> {
 }
 
 function markedSecret(schema: Readonly<Record<string, unknown>>): boolean {
-	return (
-		schema.writeOnly === true ||
-		schema['x-flowdular-secret'] === true ||
-		schema['x-coreloom-secret'] === true
-	);
+	return schema.writeOnly === true || schema['x-flowdular-secret'] === true;
 }
 
 const SCHEMA_VALUE_KEYS = new Set([
@@ -277,11 +273,7 @@ function opaqueSchema(value: unknown, depth = 0): boolean {
 }
 
 function protectedSource(schema: Readonly<Record<string, unknown>>): boolean {
-	return (
-		markedSecret(schema) ||
-		'x-flowdular-read-permission' in schema ||
-		'x-coreloom-read-permission' in schema
-	);
+	return markedSecret(schema) || 'x-flowdular-read-permission' in schema;
 }
 
 function ambiguousSourceSchema(

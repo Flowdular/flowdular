@@ -21,8 +21,8 @@ const TABLE = `CREATE TABLE IF NOT EXISTS draft_records (
 ALTER TABLE draft_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE draft_records FORCE ROW LEVEL SECURITY;
 CREATE POLICY draft_records_tenant_policy ON draft_records
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 describe('preview database provider', () => {

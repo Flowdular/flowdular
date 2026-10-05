@@ -69,18 +69,18 @@ CREATE INDEX IF NOT EXISTS automations_audit_tenant_time_idx
 ALTER TABLE automations_schedules ENABLE ROW LEVEL SECURITY;
 ALTER TABLE automations_schedules FORCE ROW LEVEL SECURITY;
 CREATE POLICY automations_schedules_tenant_policy ON automations_schedules
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE automations_triggers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE automations_triggers FORCE ROW LEVEL SECURITY;
 CREATE POLICY automations_triggers_tenant_policy ON automations_triggers
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE automations_audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE automations_audit_events FORCE ROW LEVEL SECURITY;
 CREATE POLICY automations_audit_events_tenant_policy ON automations_audit_events
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0002_automations_targets.up.sql byte for byte. */
@@ -133,16 +133,16 @@ export const AUTOMATIONS_MIGRATION_003_SCHEDULER_ROLE = `CREATE INDEX IF NOT EXI
 -- column privileges in WHERE too, so \`enabled\` is part of the grant.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY automations_schedules_background_policy ON automations_schedules
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (enabled = 1);
-REVOKE SELECT ON automations_schedules FROM coreloom_background;
-GRANT SELECT (tenant_id, id, next_run_at, enabled) ON automations_schedules TO coreloom_background;
+REVOKE SELECT ON automations_schedules FROM flowdular_background;
+GRANT SELECT (tenant_id, id, next_run_at, enabled) ON automations_schedules TO flowdular_background;
 `;
 
 /* Mirrors migrations/0004_automations_trigger_routing_role.up.sql byte for byte. */
@@ -154,16 +154,16 @@ export const AUTOMATIONS_MIGRATION_004_TRIGGER_ROUTING_ROLE = `CREATE INDEX IF N
 -- this returned, before anything is verified or fired.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY automations_triggers_background_policy ON automations_triggers
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON automations_triggers FROM coreloom_background;
-GRANT SELECT (tenant_id, id) ON automations_triggers TO coreloom_background;
+REVOKE SELECT ON automations_triggers FROM flowdular_background;
+GRANT SELECT (tenant_id, id) ON automations_triggers TO flowdular_background;
 `;
 
 export const AUTOMATIONS_MIGRATION_005_SECRET_ROTATION_INVENTORY = `-- The rotation command has to find the triggers still sealed with a retired key
@@ -171,7 +171,7 @@ export const AUTOMATIONS_MIGRATION_005_SECRET_ROTATION_INVENTORY = `-- The rotat
 -- routing columns; this adds the key id and nothing else. The nonce, the tag and
 -- the ciphertext stay unreadable on this connection, and every row it re-seals
 -- is read again under the tenant that row named.
-GRANT SELECT (secret_key_id) ON automations_triggers TO coreloom_background;
+GRANT SELECT (secret_key_id) ON automations_triggers TO flowdular_background;
 `;
 
 /* Mirrors migrations/0006_automations_list_sort_indexes.up.sql byte for byte. */
@@ -202,8 +202,8 @@ CREATE TABLE IF NOT EXISTS automations_time_zones (
 ALTER TABLE automations_time_zones ENABLE ROW LEVEL SECURITY;
 ALTER TABLE automations_time_zones FORCE ROW LEVEL SECURITY;
 CREATE POLICY automations_time_zones_tenant_policy ON automations_time_zones
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Narrowed to this schema's relation through to_regclass and never deparsed:
@@ -230,7 +230,7 @@ async function backgroundColumnGranted(
 ): Promise<boolean> {
 	const result = await database.query<{ granted: boolean }>({
 		text: `SELECT CASE WHEN to_regclass('${table}') IS NOT NULL THEN
-		  has_column_privilege('coreloom_background', '${table}', '${column}', 'SELECT')
+		  has_column_privilege('flowdular_background', '${table}', '${column}', 'SELECT')
 		ELSE false END AS granted`,
 	});
 	return result.rows[0]?.granted === true;
@@ -325,7 +325,7 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 		inspectExisting: async (database) => {
 			const result = await database.query<{ granted: boolean }>({
 				text: `SELECT CASE WHEN to_regclass('automations_triggers') IS NOT NULL THEN
-				  has_column_privilege('coreloom_background', 'automations_triggers', 'secret_key_id', 'SELECT')
+				  has_column_privilege('flowdular_background', 'automations_triggers', 'secret_key_id', 'SELECT')
 				ELSE false END AS granted`,
 			});
 			return result.rows[0]?.granted === true ? 'complete' : 'absent';

@@ -172,7 +172,7 @@ async function callback(
 function sessionToken(response: Response): string | null {
 	const cookie = response.headers
 		.getSetCookie()
-		.find((entry) => entry.startsWith('coreloom_session_dev='));
+		.find((entry) => entry.startsWith('flowdular_session_dev='));
 	return cookie
 		? decodeURIComponent(cookie.split(';')[0]!.split('=')[1]!)
 		: null;
@@ -264,7 +264,7 @@ describe('AUTH-SIGNIN-WORKSPACE-ROUTING', () => {
 		);
 		expect(authorization.searchParams.get('scope')).toBe('openid email');
 		expect(authorization.searchParams.get('client_id')).toBe('client-id');
-		expect(transaction.cookie).toMatch(/^coreloom_oidc_state=/);
+		expect(transaction.cookie).toMatch(/^flowdular_oidc_state=/);
 	});
 
 	it('refuses a callback whose state names another workspace', async () => {

@@ -27,5 +27,5 @@
 		"catalog": "src/cli/commands.json",
 		"entry": "src/cli/index.ts"
 	},
-	"platformApi": "^0.1.0"
+	"platformApi": "^0.2.0"
 }

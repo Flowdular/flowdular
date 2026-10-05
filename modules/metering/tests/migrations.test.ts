@@ -118,7 +118,7 @@ describe('metering migrations', () => {
 			const granted = await database.transaction(
 				(transaction) =>
 					transaction.query<{ allowed: boolean }>({
-						text: `SELECT has_table_privilege('coreloom_background', $1, 'SELECT')
+						text: `SELECT has_table_privilege('flowdular_background', $1, 'SELECT')
 						 AS allowed`,
 						parameters: [table],
 					}),

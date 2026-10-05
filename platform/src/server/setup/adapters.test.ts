@@ -13,9 +13,9 @@ function connection(overrides: Record<string, string> = {}) {
 			host: 'db.internal',
 			port: '1',
 			database: 'flowdular',
-			'migrator-user': 'coreloom_migrator',
-			'runtime-user': 'coreloom_runtime',
-			'background-user': 'coreloom_background',
+			'migrator-user': 'flowdular_migrator',
+			'runtime-user': 'flowdular_runtime',
+			'background-user': 'flowdular_background',
 			tls: 'disable',
 			...overrides,
 		},
@@ -93,7 +93,7 @@ describe('first-run adapters', () => {
 				database: 'bad name',
 				'migrator-user': 'same',
 				'runtime-user': 'same',
-				'background-user': 'coreloom_background',
+				'background-user': 'flowdular_background',
 				tls: 'sometimes',
 			},
 			secrets: { 'runtime-password': PASSWORD },
@@ -150,7 +150,7 @@ describe('first-run adapters', () => {
 		expect(result.message).not.toContain(PASSWORD);
 		expect(result.message).not.toContain('postgresql://');
 		expect(result.message).not.toContain('127.0.0.1');
-		expect(result.message).not.toContain('coreloom_runtime');
+		expect(result.message).not.toContain('flowdular_runtime');
 	});
 
 	it('builds the environment a restart needs, with every role separated', () => {
@@ -165,11 +165,11 @@ describe('first-run adapters', () => {
 
 		expect(environment).toEqual({
 			FD_DATABASE_ADAPTER: 'postgresql',
-			FD_DATABASE_URL: `postgresql://coreloom_runtime:${encodeURIComponent(PASSWORD)}@db.internal:5432/flowdular`,
+			FD_DATABASE_URL: `postgresql://flowdular_runtime:${encodeURIComponent(PASSWORD)}@db.internal:5432/flowdular`,
 			FD_DATABASE_MIGRATOR_URL:
-				'postgresql://coreloom_migrator:migrator-password@db.internal:5432/flowdular',
+				'postgresql://flowdular_migrator:migrator-password@db.internal:5432/flowdular',
 			FD_DATABASE_BACKGROUND_URL:
-				'postgresql://coreloom_background:background-password@db.internal:5432/flowdular',
+				'postgresql://flowdular_background:background-password@db.internal:5432/flowdular',
 			FD_DATABASE_TLS: 'disable',
 		});
 	});

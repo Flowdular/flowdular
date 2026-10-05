@@ -1,10 +1,12 @@
 import { createPgliteCluster } from '@flowdular/database-pglite';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
+	assertNotLegacyDatabase,
 	DATABASE_MIGRATION_LEDGER,
 	DatabaseMigrationError,
 	PostgresDatabaseAdapter,
 	databaseMigrationStatus,
+	postgresTenantTableState,
 	runDatabaseMigrations,
 	type DatabaseMigration,
 } from '@flowdular/database';
@@ -44,6 +46,30 @@ const ADD_PINNED: DatabaseMigration = {
 			: 'absent',
 };
 
+function tenantNotes(using: string, withCheck = using): string {
+	return `CREATE TABLE IF NOT EXISTS tenant_notes (
+	id TEXT PRIMARY KEY,
+	tenant_id TEXT NOT NULL
+);
+ALTER TABLE tenant_notes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_notes FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_notes_tenant_policy ON tenant_notes
+	USING (tenant_id = current_setting('${using}', true))
+	WITH CHECK (tenant_id = current_setting('${withCheck}', true));
+`;
+}
+
+const CREATE_TENANT_NOTES: DatabaseMigration = {
+	id: '0001_tenant_notes',
+	sql: { postgresql: tenantNotes('flowdular.tenant_id') },
+	inspectExisting: (database) =>
+		postgresTenantTableState(
+			database,
+			'tenant_notes',
+			'tenant_notes_tenant_policy',
+		),
+};
+
 /* One embedded PostgreSQL for the file, emptied before each case, so the two
    seconds it costs to boot are paid once. */
 const cluster = createPgliteCluster();
@@ -55,7 +81,7 @@ afterAll(async () => {
 
 async function database(): Promise<PostgresDatabaseAdapter> {
 	await adapter.executeScript(
-		`DROP TABLE IF EXISTS notes, only_postgres, ${DATABASE_MIGRATION_LEDGER} CASCADE;`,
+		`DROP TABLE IF EXISTS notes, tenant_notes, only_postgres, ${DATABASE_MIGRATION_LEDGER} CASCADE;`,
 	);
 	return adapter;
 }
@@ -133,6 +159,127 @@ describe('adapter-aware migration runner', () => {
 		await expect(db.schema.hasTable(DATABASE_MIGRATION_LEDGER)).resolves.toBe(
 			false,
 		);
+	});
+
+	/* A 0.5 database holds complete-looking tables whose policies read a setting
+	   the adapter no longer sets. Adopting them would pass every inspection. */
+	it('refuses a database created before the rename without writing to it', async () => {
+		const db = await database();
+		await db.executeScript(`${CREATE_NOTES.sql.postgresql!}
+CREATE TABLE _coreloom_migrations_v2 (
+	namespace TEXT NOT NULL,
+	id TEXT NOT NULL,
+	dialect TEXT NOT NULL,
+	checksum TEXT NOT NULL,
+	applied_at BIGINT NOT NULL,
+	PRIMARY KEY (namespace, id)
+);
+INSERT INTO _coreloom_migrations_v2 VALUES ('notes.core', '0001_notes_core', 'postgresql', 'sha256:legacy', 1);
+`);
+		try {
+			for (const attempt of [
+				() => runDatabaseMigrations(db, 'notes.core', [CREATE_NOTES]),
+				() =>
+					runDatabaseMigrations(db, 'notes.core', [CREATE_NOTES, ADD_PINNED], {
+						dryRun: true,
+					}),
+				() => databaseMigrationStatus(db, 'notes.core', [CREATE_NOTES]),
+			]) {
+				await expect(attempt()).rejects.toMatchObject({
+					code: 'LEGACY_DATABASE',
+				});
+			}
+			await expect(db.schema.hasTable(DATABASE_MIGRATION_LEDGER)).resolves.toBe(
+				false,
+			);
+			await expect(db.schema.hasColumn('notes', 'pinned')).resolves.toBe(false);
+		} finally {
+			await db.executeScript('DROP TABLE _coreloom_migrations_v2;');
+		}
+	});
+
+	/* The Vercel launcher provisions roles on a plain pg session before any
+	   migration runs, so it needs the same refusal without a migration lease. */
+	it('refuses a database created before the rename to a plain SQL text session', async () => {
+		const db = await database();
+		const session = { query: (text: string) => db.query({ text }) };
+		await expect(assertNotLegacyDatabase(session)).resolves.toBeUndefined();
+		await db.executeScript(
+			'CREATE TABLE _coreloom_migrations_v2 (namespace TEXT, id TEXT);',
+		);
+		try {
+			await expect(assertNotLegacyDatabase(session)).rejects.toMatchObject({
+				code: 'LEGACY_DATABASE',
+				message: expect.stringContaining('Flowdular 0.5 or earlier'),
+			});
+		} finally {
+			await db.executeScript('DROP TABLE _coreloom_migrations_v2;');
+		}
+	});
+
+	/* information_schema lists only tables the current role holds a privilege
+	   on, and the old ledger belongs to the old migrator role. */
+	it('refuses an old ledger the migrating role holds no privilege on', async () => {
+		const db = await database();
+		await db.executeScript(`CREATE TABLE _coreloom_migrations_v2 (
+	namespace TEXT NOT NULL,
+	id TEXT NOT NULL,
+	PRIMARY KEY (namespace, id)
+);
+REVOKE ALL ON _coreloom_migrations_v2 FROM PUBLIC;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'migration_probe') THEN
+    CREATE ROLE migration_probe NOSUPERUSER NOBYPASSRLS;
+  END IF;
+END
+$$;
+GRANT USAGE ON SCHEMA public TO migration_probe;
+`);
+		const probe = new PostgresDatabaseAdapter({
+			pool: cluster.pool('migration_probe'),
+		});
+		try {
+			await expect(
+				probe.schema.hasTable('_coreloom_migrations_v2'),
+			).resolves.toBe(false);
+			await expect(
+				databaseMigrationStatus(probe, 'notes.core', [CREATE_NOTES]),
+			).rejects.toMatchObject({ code: 'LEGACY_DATABASE' });
+		} finally {
+			await probe.dispose();
+			await db.executeScript('DROP TABLE _coreloom_migrations_v2;');
+		}
+	});
+
+	/* Dropping only the old ledger leaves tables whose policies still read the
+	   old setting. Adopting them would pass every other inspection while every
+	   policy sees no tenant. */
+	it.each([
+		['both clauses', 'coreloom.tenant_id', 'coreloom.tenant_id'],
+		['the USING clause', 'coreloom.tenant_id', 'flowdular.tenant_id'],
+		['the WITH CHECK clause', 'flowdular.tenant_id', 'coreloom.tenant_id'],
+	])(
+		'refuses to adopt a tenant table whose policy reads another setting in %s',
+		async (_label, using, withCheck) => {
+			const db = await database();
+			await db.executeScript(tenantNotes(using, withCheck));
+
+			await expect(
+				runDatabaseMigrations(db, 'notes.core', [CREATE_TENANT_NOTES]),
+			).rejects.toMatchObject({ code: 'PARTIAL_MIGRATION' });
+		},
+	);
+
+	it('adopts a tenant table whose policy reads the flowdular setting', async () => {
+		const db = await database();
+		await db.executeScript(tenantNotes('flowdular.tenant_id'));
+
+		const result = await runDatabaseMigrations(db, 'notes.core', [
+			CREATE_TENANT_NOTES,
+		]);
+
+		expect(result[0]?.action).toBe('adopted');
 	});
 
 	it('checks every recorded checksum before applying new SQL', async () => {

@@ -33,8 +33,8 @@ CREATE INDEX IF NOT EXISTS connectors_instances_tenant_status_idx
 ALTER TABLE connectors_instances ENABLE ROW LEVEL SECURITY;
 ALTER TABLE connectors_instances FORCE ROW LEVEL SECURITY;
 CREATE POLICY connectors_instances_tenant_policy ON connectors_instances
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 CREATE TABLE IF NOT EXISTS connectors_calls (
   id TEXT PRIMARY KEY,
@@ -58,8 +58,8 @@ CREATE INDEX IF NOT EXISTS connectors_calls_instance_idx
 ALTER TABLE connectors_calls ENABLE ROW LEVEL SECURITY;
 ALTER TABLE connectors_calls FORCE ROW LEVEL SECURITY;
 CREATE POLICY connectors_calls_tenant_policy ON connectors_calls
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 CREATE TABLE IF NOT EXISTS connectors_audit (
   id TEXT PRIMARY KEY,
@@ -75,8 +75,8 @@ CREATE INDEX IF NOT EXISTS connectors_audit_tenant_time_idx
 ALTER TABLE connectors_audit ENABLE ROW LEVEL SECURITY;
 ALTER TABLE connectors_audit FORCE ROW LEVEL SECURITY;
 CREATE POLICY connectors_audit_tenant_policy ON connectors_audit
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0002_connectors_call_keys.up.sql byte for byte. */
@@ -96,8 +96,8 @@ CREATE INDEX IF NOT EXISTS connectors_call_keys_tenant_claimed_idx
 ALTER TABLE connectors_call_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE connectors_call_keys FORCE ROW LEVEL SECURITY;
 CREATE POLICY connectors_call_keys_tenant_policy ON connectors_call_keys
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /** Every tenant table of one migration must be adopted, or none of it is. */
@@ -121,16 +121,16 @@ export const CONNECTORS_MIGRATION_003 = `-- The credential key rotation has to f
 -- part of the grant.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY connectors_instances_background_policy ON connectors_instances
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (credential_key_id IS NOT NULL);
-REVOKE SELECT ON connectors_instances FROM coreloom_background;
-GRANT SELECT (tenant_id, credential_key_id) ON connectors_instances TO coreloom_background;
+REVOKE SELECT ON connectors_instances FROM flowdular_background;
+GRANT SELECT (tenant_id, credential_key_id) ON connectors_instances TO flowdular_background;
 `;
 
 /* Mirrors migrations/0004_connectors_unknown_call_audit.up.sql byte for byte. */
@@ -201,7 +201,7 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 		inspectExisting: async (database) => {
 			const result = await database.query<{ granted: boolean }>({
 				text: `SELECT CASE WHEN to_regclass('connectors_instances') IS NOT NULL THEN
-				  has_column_privilege('coreloom_background', 'connectors_instances', 'credential_key_id', 'SELECT')
+				  has_column_privilege('flowdular_background', 'connectors_instances', 'credential_key_id', 'SELECT')
 				ELSE false END AS granted`,
 			});
 			return result.rows[0]?.granted === true ? 'complete' : 'absent';

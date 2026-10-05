@@ -31,5 +31,5 @@ CREATE INDEX IF NOT EXISTS documents_files_usage_idx
 ALTER TABLE documents_files ENABLE ROW LEVEL SECURITY;
 ALTER TABLE documents_files FORCE ROW LEVEL SECURITY;
 CREATE POLICY documents_files_tenant_policy ON documents_files
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

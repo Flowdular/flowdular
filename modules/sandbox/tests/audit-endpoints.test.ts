@@ -30,7 +30,7 @@ function principal(scopes: readonly string[]): AuthPrincipal {
 function authRuntime(_session: AuthPrincipal | null): AuthRuntime {
 	return {
 		cookie: {
-			name: 'coreloom_session_dev',
+			name: 'flowdular_session_dev',
 			secure: false,
 			maxAgeSeconds: 3_600,
 		},

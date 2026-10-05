@@ -19,7 +19,7 @@ locales:
   - pl
 invariants:
   - Persistence runs on the shared asynchronous database contract. The module receives a leased handle from platform composition, never a driver or a connection string, and provides explicit SQL for every dialect it declares.
-  - The PostgreSQL notes table enables and forces row-level security with USING and WITH CHECK policies bound to transaction-local coreloom.tenant_id, and the runtime role holds neither SUPERUSER nor BYPASSRLS. Migrations use a separate lease.
+  - The PostgreSQL notes table enables and forces row-level security with USING and WITH CHECK policies bound to transaction-local flowdular.tenant_id, and the runtime role holds neither SUPERUSER nor BYPASSRLS. Migrations use a separate lease.
   - Every note is owned by exactly one tenant and every query uses the trusted tenant identifier.
 permissions:
   - id: example.notes.read

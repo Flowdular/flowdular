@@ -39,8 +39,8 @@ CREATE INDEX IF NOT EXISTS approvals_requests_routing_idx
 ALTER TABLE approvals_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE approvals_requests FORCE ROW LEVEL SECURITY;
 CREATE POLICY approvals_requests_tenant_policy ON approvals_requests
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 -- The eligibility snapshot taken when the request opened. It decides whose
 -- inbox the request appears in, so it is a row per decider with its own index
 -- rather than a list inside the request: the screen asks "what may I decide"
@@ -56,8 +56,8 @@ CREATE INDEX IF NOT EXISTS approvals_eligible_account_idx
 ALTER TABLE approvals_eligible ENABLE ROW LEVEL SECURITY;
 ALTER TABLE approvals_eligible FORCE ROW LEVEL SECURITY;
 CREATE POLICY approvals_eligible_tenant_policy ON approvals_eligible
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 CREATE TABLE IF NOT EXISTS approvals_decisions (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
@@ -81,8 +81,8 @@ CREATE INDEX IF NOT EXISTS approvals_decisions_request_idx
 ALTER TABLE approvals_decisions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE approvals_decisions FORCE ROW LEVEL SECURITY;
 CREATE POLICY approvals_decisions_tenant_policy ON approvals_decisions
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0002_approvals_expiry_routing_role.up.sql byte for byte. */
@@ -95,16 +95,16 @@ export const APPROVALS_MIGRATION_002_EXPIRY_ROUTING_ROLE = `-- The expiry loop h
 -- before anything about it is written.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY approvals_requests_background_policy ON approvals_requests
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON approvals_requests FROM coreloom_background;
-GRANT SELECT (tenant_id, id, expires_at, status) ON approvals_requests TO coreloom_background;
+REVOKE SELECT ON approvals_requests FROM flowdular_background;
+GRANT SELECT (tenant_id, id, expires_at, status) ON approvals_requests TO flowdular_background;
 `;
 
 /* Mirrors migrations/0003_approvals_retention_indexes.up.sql byte for byte. */
@@ -158,8 +158,8 @@ CREATE INDEX IF NOT EXISTS approvals_audit_request_idx
 ALTER TABLE approvals_audit ENABLE ROW LEVEL SECURITY;
 ALTER TABLE approvals_audit FORCE ROW LEVEL SECURITY;
 CREATE POLICY approvals_audit_tenant_policy ON approvals_audit
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 export const databaseMigrations: readonly DatabaseMigration[] = [
@@ -214,7 +214,7 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 		inspectExisting: async (database) => {
 			const result = await database.query<{ granted: boolean }>({
 				text: `SELECT CASE WHEN to_regclass('approvals_requests') IS NOT NULL THEN
-				  has_column_privilege('coreloom_background', 'approvals_requests', 'expires_at', 'SELECT')
+				  has_column_privilege('flowdular_background', 'approvals_requests', 'expires_at', 'SELECT')
 				ELSE false END AS granted`,
 			});
 			return result.rows[0]?.granted === true ? 'complete' : 'absent';

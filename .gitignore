@@ -3,6 +3,8 @@ dist/
 # Legacy local state remains ignored because `flowdular setup migrate-state`
 # preserves the source after copying it into .flowdular/data.
 .octane-erp/
+# Pre-0.6 local state holds sandbox keys; it stays ignored until deleted.
+.coreloom/
 .flowdular/
 platform/.generated/
 # vercel link appends these two lines unless they are already here verbatim.
@@ -11,9 +13,6 @@ platform/.generated/
 !.env.example
 *.log
 .DS_Store
-
-# Existing pre-rename installations retain their private state.
-.coreloom/
 
 release-artifacts/
 

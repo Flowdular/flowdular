@@ -26,8 +26,8 @@ CREATE INDEX IF NOT EXISTS import_jobs_tenant_started_idx
 ALTER TABLE import_jobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE import_jobs FORCE ROW LEVEL SECURITY;
 CREATE POLICY import_jobs_tenant_policy ON import_jobs
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 CREATE TABLE IF NOT EXISTS import_job_rows (
   id TEXT PRIMARY KEY,
@@ -43,8 +43,8 @@ CREATE TABLE IF NOT EXISTS import_job_rows (
 ALTER TABLE import_job_rows ENABLE ROW LEVEL SECURITY;
 ALTER TABLE import_job_rows FORCE ROW LEVEL SECURITY;
 CREATE POLICY import_job_rows_tenant_policy ON import_job_rows
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 CREATE TABLE IF NOT EXISTS import_mappings (
   id TEXT PRIMARY KEY,
@@ -57,5 +57,5 @@ CREATE TABLE IF NOT EXISTS import_mappings (
 ALTER TABLE import_mappings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE import_mappings FORCE ROW LEVEL SECURITY;
 CREATE POLICY import_mappings_tenant_policy ON import_mappings
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

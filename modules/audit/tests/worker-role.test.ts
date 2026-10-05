@@ -93,7 +93,7 @@ afterEach(async () => {
 
 function sessionAuth(session: AuthPrincipal): AuthRuntime {
 	const cookie = {
-		name: 'coreloom_session_dev',
+		name: 'flowdular_session_dev',
 		secure: false,
 		maxAgeSeconds: 3_600,
 	};
@@ -167,7 +167,7 @@ function compose(owner: FakeOwnerModule, environment: NodeJS.ProcessEnv): Role {
 			);
 			if (!route) throw new Error(`Route GET ${path} is missing.`);
 			const request = new Request(ORIGIN + path, {
-				headers: { cookie: `coreloom_session_dev=${SESSION_TOKEN}` },
+				headers: { cookie: `flowdular_session_dev=${SESSION_TOKEN}` },
 			});
 			const context = {
 				request,

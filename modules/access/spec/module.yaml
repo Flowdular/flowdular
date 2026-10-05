@@ -24,7 +24,7 @@ locales:
   - pl
 invariants:
   - The tenant comes from the authenticated principal. No request input selects a workspace, and every statement runs inside a tenant-scoped transaction on the module's own lease.
-  - access_attestations enables and forces row-level security with a USING and WITH CHECK policy bound to transaction-local coreloom.tenant_id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
+  - access_attestations enables and forces row-level security with a USING and WITH CHECK policy bound to transaction-local flowdular.tenant_id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
   - Attestations are append-only. The module publishes no endpoint, service method or SQL that updates or deletes a recorded attestation.
   - The review, the diff and the activity report hold no state. They are computed per request from the auth.core read surfaces on the acting principal's workspace, and access.core never opens another module's database.
   - Summary counts on an attestation are computed by the server from the same read surfaces inside the attesting request. A count supplied by the caller is ignored.

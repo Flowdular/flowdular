@@ -1,7 +1,4 @@
-import {
-	flowdularEnvironment,
-	flowdularStateDirectory,
-} from '@flowdular/kernel/runtime-config';
+import { flowdularStateDirectory } from '@flowdular/kernel/runtime-config';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
@@ -114,8 +111,8 @@ const LEASE_DRAIN_TIMEOUT_MS = 30_000;
 const DEFAULT_LOCK_TIMEOUT_MS = 5_000;
 const DEFAULT_POOL_MAX = 10;
 const DEFAULT_POOL_MIN = 0;
-const PGLITE_RUNTIME_ROLE = 'coreloom_runtime';
-const PGLITE_BACKGROUND_ROLE = 'coreloom_background';
+const PGLITE_RUNTIME_ROLE = 'flowdular_runtime';
+const PGLITE_BACKGROUND_ROLE = 'flowdular_background';
 /* Created once, before the first lease, so every migration the migrator runs
    grants the runtime role by default privilege instead of a later step. */
 const PGLITE_BOOTSTRAP = `DO $$
@@ -272,7 +269,6 @@ export function databaseProviderConfigFromEnvironment(
 	environment: NodeJS.ProcessEnv = process.env,
 	workspaceRoot = process.cwd(),
 ): DatabaseProviderConfig {
-	environment = flowdularEnvironment(environment);
 	const production = environment.NODE_ENV === 'production';
 	const adapter = adapterEnvironment(environment, production);
 	if (adapter === 'pglite') {
@@ -607,7 +603,7 @@ export function createDatabaseProvider(
 					await checkPostgresRole(postgresBackground, 'background', timeoutMs);
 				}
 				await postgresMigrator.query(
-					{ text: 'SELECT 1 AS coreloom_database_ready' },
+					{ text: 'SELECT 1 AS flowdular_database_ready' },
 					{
 						timeoutMs:
 							config.postgresql?.queryTimeoutMs ?? DEFAULT_QUERY_TIMEOUT_MS,

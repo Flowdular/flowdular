@@ -18,12 +18,12 @@ CREATE INDEX IF NOT EXISTS demo_records_tenant_title_idx
 ALTER TABLE demo_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE demo_records FORCE ROW LEVEL SECURITY;
 CREATE POLICY demo_records_tenant_policy ON demo_records
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 beforeEach(async () => {
-	moduleDirectory = await mkdtemp(join(tmpdir(), 'coreloom-migration-audit-'));
+	moduleDirectory = await mkdtemp(join(tmpdir(), 'flowdular-migration-audit-'));
 	await mkdir(join(moduleDirectory, 'migrations'), { recursive: true });
 });
 
@@ -112,8 +112,8 @@ ALTER TABLE demo_records_v2 RENAME TO demo_records;
 ALTER TABLE demo_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE demo_records FORCE ROW LEVEL SECURITY;
 CREATE POLICY demo_records_tenant_policy ON demo_records
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `,
 		);
 
@@ -153,7 +153,7 @@ ALTER TABLE demo_records_v2 RENAME TO demo_records;
 			'0001_demo_core',
 			SQL +
 				`CREATE POLICY demo_records_background_policy ON demo_records
-  FOR SELECT TO coreloom_background USING (true);
+  FOR SELECT TO flowdular_background USING (true);
 `,
 		);
 
@@ -165,7 +165,7 @@ ALTER TABLE demo_records_v2 RENAME TO demo_records;
 			'0001_demo_core',
 			SQL +
 				`CREATE POLICY demo_records_background_policy ON demo_records
-  TO coreloom_background USING (true);
+  TO flowdular_background USING (true);
 `,
 		);
 
@@ -174,12 +174,41 @@ ALTER TABLE demo_records_v2 RENAME TO demo_records;
 		]);
 	});
 
+	it('refuses a background policy that names the role after another one', async () => {
+		await write(
+			'0001_demo_core',
+			SQL +
+				`CREATE POLICY demo_records_background_policy ON demo_records
+  TO flowdular_runtime, flowdular_background USING (true);
+`,
+		);
+
+		expect(await issues()).toMatchObject([
+			{ code: 'BACKGROUND_POLICY_TOO_WIDE' },
+		]);
+	});
+
+	it('ignores a tenant table inside a block comment', async () => {
+		await write(
+			'0001_demo_core',
+			`${SQL}/* An earlier draft:
+CREATE TABLE demo_drafts (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL
+);
+*/
+`,
+		);
+
+		await expect(issues()).resolves.toEqual([]);
+	});
+
 	it('refuses a background policy that carries a write check', async () => {
 		await write(
 			'0001_demo_core',
 			SQL +
 				`CREATE POLICY demo_records_background_policy ON demo_records
-  FOR SELECT TO coreloom_background USING (true) WITH CHECK (true);
+  FOR SELECT TO flowdular_background USING (true) WITH CHECK (true);
 `,
 		);
 
@@ -188,5 +217,54 @@ ALTER TABLE demo_records_v2 RENAME TO demo_records;
 				(issue) => issue.code === 'BACKGROUND_POLICY_TOO_WIDE',
 			),
 		).toBe(true);
+	});
+
+	/* The adapter sets only flowdular.tenant_id. A policy on any other setting
+	   reads no rows and refuses every write, and nothing else reports it before
+	   a request does. */
+	it('refuses a tenant policy on a setting the adapter never sets', async () => {
+		await write(
+			'0001_demo_core',
+			SQL.replaceAll('flowdular.tenant_id', 'legacy.tenant_id'),
+		);
+
+		expect(await issues()).toMatchObject([{ code: 'TENANT_SETTING_UNKNOWN' }]);
+	});
+
+	it.each([
+		[
+			'legacy_background',
+			'GRANT SELECT (tenant_id) ON demo_records TO flowdular_runtime, legacy_background;',
+		],
+		['legacy_runtime', 'REVOKE ALL ON demo_records FROM legacy_runtime;'],
+	])(
+		'refuses the role %s the platform never creates',
+		async (role, statement) => {
+			await write('0001_demo_core', `${SQL}${statement}\n`);
+
+			expect(await issues()).toMatchObject([
+				{ code: 'ROLE_UNKNOWN', message: expect.stringContaining(role) },
+			]);
+		},
+	);
+
+	it('reads role-shaped column names as columns', async () => {
+		await write(
+			'0001_demo_core',
+			SQL.replace(
+				'  title TEXT NOT NULL,',
+				'  title TEXT NOT NULL,\n  job_runtime BIGINT,',
+			) +
+				`GRANT SELECT (tenant_id, job_runtime) ON demo_records TO flowdular_background;
+`,
+		);
+
+		await expect(issues()).resolves.toEqual([]);
+	});
+
+	it('reads a role-shaped table name after FROM as a table', async () => {
+		await write('0001_demo_core', `${SQL}DELETE FROM job_runtime;\n`);
+
+		await expect(issues()).resolves.toEqual([]);
 	});
 });

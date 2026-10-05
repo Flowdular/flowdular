@@ -14,8 +14,8 @@ CREATE INDEX IF NOT EXISTS auth_audit_tenant_time_idx
 ALTER TABLE auth_audit ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_audit FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_audit_tenant_policy ON auth_audit
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 INSERT INTO auth_membership_scopes (account_id, tenant_id, scope) SELECT account_id, tenant_id, 'auth.audit.read' FROM auth_memberships WHERE role = 'owner' ON CONFLICT DO NOTHING;
 DELETE FROM auth_membership_scopes
 WHERE scope = 'auth.audit.read'

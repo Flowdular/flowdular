@@ -60,8 +60,8 @@ const availabilityAttempts = new AttemptLimiter(60, 60_000);
 const workspaceLookupAttempts = new AttemptLimiter(120, 60_000);
 const passwordResetEmailAttempts = new AttemptLimiter(3, 15 * 60 * 1000);
 const passwordResetAddressAttempts = new AttemptLimiter(20, 15 * 60 * 1000);
-const MFA_CHALLENGE_COOKIE = 'coreloom_mfa_challenge';
-const OIDC_STATE_COOKIE = 'coreloom_oidc_state';
+const MFA_CHALLENGE_COOKIE = 'flowdular_mfa_challenge';
+const OIDC_STATE_COOKIE = 'flowdular_oidc_state';
 
 interface OidcState {
 	readonly provider: string;

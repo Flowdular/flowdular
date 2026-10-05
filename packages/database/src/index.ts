@@ -42,6 +42,7 @@ export type {
 	DatabaseTransactionOptions,
 } from './contracts.ts';
 export {
+	assertNotLegacyDatabase,
 	DATABASE_MIGRATION_LEDGER,
 	DatabaseMigrationError,
 	databaseMigrationStatus,
@@ -49,6 +50,8 @@ export {
 	postgresTenantTableState,
 	runDatabaseMigrations,
 } from './migrations.ts';
+export { migrationIdentifierIssues } from './migration-identifiers.ts';
+export type { MigrationIdentifierIssue } from './migration-identifiers.ts';
 export {
 	createDatabaseAdapterRegistry,
 	validateDatabaseSelection,
@@ -127,4 +130,5 @@ export type {
 	DatabaseMigrationStatus,
 	ExistingMigrationState,
 	RunDatabaseMigrationsOptions,
+	SqlTextSession,
 } from './migrations.ts';

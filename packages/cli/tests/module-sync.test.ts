@@ -9,7 +9,10 @@ import { transformSync } from 'esbuild';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { ModuleManifest } from '@flowdular/contracts';
+import {
+	PLATFORM_API_VERSION,
+	type ModuleManifest,
+} from '@flowdular/contracts';
 import {
 	disableModule,
 	enableModule,
@@ -65,6 +68,7 @@ function manifest(
 		tenancy: 'required',
 		locales: ['en'],
 		stability: 'experimental',
+		platformApi: `^${PLATFORM_API_VERSION}`,
 		platform: { server: true, client: true },
 	};
 }

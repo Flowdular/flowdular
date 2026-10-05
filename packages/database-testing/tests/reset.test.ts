@@ -50,7 +50,7 @@ describe.skipIf(!migratorUrl)('PostgreSQL reset', () => {
 			});
 
 			await expect(databaseResetPlan(database)).resolves.toEqual([
-				'_coreloom_migrations_v2',
+				'_flowdular_migrations_v2',
 				'reset_children',
 				'reset_parents',
 			]);

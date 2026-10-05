@@ -238,13 +238,13 @@ describe('auth HTTP boundary', () => {
 			jsonRequest(
 				'/api/auth/mfa/challenge',
 				{ code: '123456' },
-				{ cookie: `coreloom_mfa_challenge=${'A'.repeat(43)}` },
+				{ cookie: `flowdular_mfa_challenge=${'A'.repeat(43)}` },
 			),
 		);
 
 		expect(result.status).toBe(401);
 		expect(result.headers.getSetCookie()).toEqual([
-			expect.stringMatching(/^coreloom_mfa_challenge=.*Max-Age=0/),
+			expect.stringMatching(/^flowdular_mfa_challenge=.*Max-Age=0/),
 		]);
 	});
 
@@ -264,7 +264,7 @@ describe('auth HTTP boundary', () => {
 			jsonRequest(
 				'/api/auth/mfa/challenge',
 				{ code: '123456' },
-				{ cookie: `coreloom_mfa_challenge=${'A'.repeat(43)}` },
+				{ cookie: `flowdular_mfa_challenge=${'A'.repeat(43)}` },
 			),
 		);
 		const cookies = result.headers.getSetCookie();
@@ -273,8 +273,8 @@ describe('auth HTTP boundary', () => {
 		expect(cookies).toHaveLength(2);
 		expect(cookies).toEqual(
 			expect.arrayContaining([
-				expect.stringMatching(/^coreloom_session_dev=/),
-				expect.stringMatching(/^coreloom_mfa_challenge=.*Max-Age=0/),
+				expect.stringMatching(/^flowdular_session_dev=/),
+				expect.stringMatching(/^flowdular_mfa_challenge=.*Max-Age=0/),
 			]),
 		);
 	});
@@ -524,7 +524,7 @@ describe('workspace settings', () => {
 				'/api/auth/workspace',
 				{ name: 'Hijacked' },
 				{
-					cookie: `coreloom_session_dev=${memberSession.token}`,
+					cookie: `flowdular_session_dev=${memberSession.token}`,
 					'x-csrf-token': memberSession.csrfToken,
 				},
 			),

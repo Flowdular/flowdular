@@ -4,4 +4,4 @@
 -- connection, and every row it re-seals is read again under the tenant that row
 -- named.
 GRANT SELECT (tenant_id, credential_key_id)
-  ON agent_provider_connections TO coreloom_background;
+  ON agent_provider_connections TO flowdular_background;

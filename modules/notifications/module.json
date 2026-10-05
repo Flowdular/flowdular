@@ -4,7 +4,7 @@
 	"id": "notifications.core",
 	"package": "@flowdular/module-notifications",
 	"version": "0.2.14",
-	"platformApi": "^0.1.33",
+	"platformApi": "^0.2.2",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations", "cli"],
 	"platform": {

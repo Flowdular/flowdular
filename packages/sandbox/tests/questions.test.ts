@@ -562,18 +562,6 @@ describe('a turn that asks for decisions', () => {
 		const transcript = await readFile(
 			join(root, '.flowdular', 'sandbox', 'sessions', session.id, 'chat.jsonl'),
 			'utf8',
-		).catch(() =>
-			readFile(
-				join(
-					root,
-					'.coreloom',
-					'sandbox',
-					'sessions',
-					session.id,
-					'chat.jsonl',
-				),
-				'utf8',
-			),
 		);
 		expect(transcript).toContain('questions block in this reply was ignored');
 	});

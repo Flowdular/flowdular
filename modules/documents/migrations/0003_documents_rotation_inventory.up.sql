@@ -6,13 +6,13 @@
 -- WHERE too, so `status` is part of the grant.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY documents_files_background_policy ON documents_files
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (status = 'stored');
-REVOKE SELECT ON documents_files FROM coreloom_background;
-GRANT SELECT (tenant_id, status) ON documents_files TO coreloom_background;
+REVOKE SELECT ON documents_files FROM flowdular_background;
+GRANT SELECT (tenant_id, status) ON documents_files TO flowdular_background;

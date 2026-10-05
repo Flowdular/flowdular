@@ -23,8 +23,8 @@ CREATE INDEX IF NOT EXISTS workflow_definitions_tenant_name_idx
 ALTER TABLE workflow_definitions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE workflow_definitions FORCE ROW LEVEL SECURITY;
 CREATE POLICY workflow_definitions_tenant_policy ON workflow_definitions
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 CREATE TABLE IF NOT EXISTS workflow_revisions (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
@@ -45,8 +45,8 @@ CREATE INDEX IF NOT EXISTS workflow_revisions_tenant_workflow_idx
 ALTER TABLE workflow_revisions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE workflow_revisions FORCE ROW LEVEL SECURITY;
 CREATE POLICY workflow_revisions_tenant_policy ON workflow_revisions
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 CREATE TABLE IF NOT EXISTS workflow_runs (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
@@ -90,8 +90,8 @@ CREATE INDEX IF NOT EXISTS workflow_runs_tenant_status_lease_idx
 ALTER TABLE workflow_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE workflow_runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY workflow_runs_tenant_policy ON workflow_runs
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 CREATE TABLE IF NOT EXISTS workflow_node_states (
   tenant_id TEXT NOT NULL,
   run_id TEXT NOT NULL,
@@ -110,8 +110,8 @@ CREATE INDEX IF NOT EXISTS workflow_node_states_tenant_run_idx
 ALTER TABLE workflow_node_states ENABLE ROW LEVEL SECURITY;
 ALTER TABLE workflow_node_states FORCE ROW LEVEL SECURITY;
 CREATE POLICY workflow_node_states_tenant_policy ON workflow_node_states
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 CREATE TABLE IF NOT EXISTS workflow_node_attempts (
   tenant_id TEXT NOT NULL,
   run_id TEXT NOT NULL,
@@ -143,8 +143,8 @@ CREATE INDEX IF NOT EXISTS workflow_node_attempts_tenant_run_idx
 ALTER TABLE workflow_node_attempts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE workflow_node_attempts FORCE ROW LEVEL SECURITY;
 CREATE POLICY workflow_node_attempts_tenant_policy ON workflow_node_attempts
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 CREATE TABLE IF NOT EXISTS workflow_edge_transfers (
   tenant_id TEXT NOT NULL,
   run_id TEXT NOT NULL,
@@ -167,8 +167,8 @@ CREATE INDEX IF NOT EXISTS workflow_edge_transfers_tenant_run_idx
 ALTER TABLE workflow_edge_transfers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE workflow_edge_transfers FORCE ROW LEVEL SECURITY;
 CREATE POLICY workflow_edge_transfers_tenant_policy ON workflow_edge_transfers
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 CREATE TABLE IF NOT EXISTS workflow_run_events (
   event_id TEXT PRIMARY KEY,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
@@ -186,8 +186,8 @@ CREATE INDEX IF NOT EXISTS workflow_run_events_tenant_run_idx
 ALTER TABLE workflow_run_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE workflow_run_events FORCE ROW LEVEL SECURITY;
 CREATE POLICY workflow_run_events_tenant_policy ON workflow_run_events
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 CREATE TABLE IF NOT EXISTS workflow_payloads (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
@@ -210,8 +210,8 @@ CREATE INDEX IF NOT EXISTS workflow_payloads_tenant_run_idx
 ALTER TABLE workflow_payloads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE workflow_payloads FORCE ROW LEVEL SECURITY;
 CREATE POLICY workflow_payloads_tenant_policy ON workflow_payloads
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 CREATE TABLE IF NOT EXISTS workflow_audit_events (
   tenant_id TEXT NOT NULL,
   sequence BIGINT NOT NULL CHECK (sequence >= 1),
@@ -231,8 +231,8 @@ CREATE INDEX IF NOT EXISTS workflow_audit_events_tenant_time_idx
 ALTER TABLE workflow_audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE workflow_audit_events FORCE ROW LEVEL SECURITY;
 CREATE POLICY workflow_audit_events_tenant_policy ON workflow_audit_events
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0002_workflows_authorization_subject.up.sql byte for byte. */
@@ -259,29 +259,29 @@ CREATE INDEX IF NOT EXISTS workflow_payloads_retention_idx
 -- row reads it again under the tenant that row named.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY workflow_runs_background_policy ON workflow_runs
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON workflow_runs FROM coreloom_background;
+REVOKE SELECT ON workflow_runs FROM flowdular_background;
 GRANT SELECT (tenant_id, id, mode, status, lease_expires_at, queued_at)
-  ON workflow_runs TO coreloom_background;
+  ON workflow_runs TO flowdular_background;
 CREATE POLICY workflow_node_states_background_policy ON workflow_node_states
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (status = 'waiting-retry');
-REVOKE SELECT ON workflow_node_states FROM coreloom_background;
+REVOKE SELECT ON workflow_node_states FROM flowdular_background;
 GRANT SELECT (tenant_id, run_id, status, next_attempt_at)
-  ON workflow_node_states TO coreloom_background;
+  ON workflow_node_states TO flowdular_background;
 CREATE POLICY workflow_payloads_background_policy ON workflow_payloads
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (kind = 'execution' AND expires_at IS NOT NULL);
-REVOKE SELECT ON workflow_payloads FROM coreloom_background;
+REVOKE SELECT ON workflow_payloads FROM flowdular_background;
 GRANT SELECT (tenant_id, id, run_id, kind, payload_hash, expires_at)
-  ON workflow_payloads TO coreloom_background;
+  ON workflow_payloads TO flowdular_background;
 `;
 
 const TENANT_TABLES: readonly (readonly [string, string, string])[] = [
@@ -340,15 +340,15 @@ export const WORKFLOWS_MIGRATION_004 = `-- The rotation command has to find the 
 -- row named.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY workflow_payloads_rotation_policy ON workflow_payloads
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (kind = 'execution');
-GRANT SELECT (encryption_key_id) ON workflow_payloads TO coreloom_background;
+GRANT SELECT (encryption_key_id) ON workflow_payloads TO flowdular_background;
 `;
 
 /* Mirrors migrations/0005_workflows_human_approval.up.sql byte for byte. */
@@ -378,7 +378,7 @@ ALTER TABLE workflow_node_attempts ADD CONSTRAINT workflow_node_attempts_child_k
 -- and the run is read again under its own tenant before anything is written.
 DROP POLICY IF EXISTS workflow_node_states_background_policy ON workflow_node_states;
 CREATE POLICY workflow_node_states_background_policy ON workflow_node_states
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (status IN ('waiting-retry', 'waiting-child'));
 `;
 

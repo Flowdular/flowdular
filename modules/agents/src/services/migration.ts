@@ -118,23 +118,23 @@ CREATE INDEX IF NOT EXISTS agent_audit_tenant_time_idx ON agent_audit_events (te
 ALTER TABLE agent_definitions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_definitions FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_definitions_tenant_policy ON agent_definitions
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE agent_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_runs_tenant_policy ON agent_runs
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE agent_run_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_run_events FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_run_events_tenant_policy ON agent_run_events
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE agent_audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_audit_events FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_audit_events_tenant_policy ON agent_audit_events
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0002_provider_connections.up.sql byte for byte. */
@@ -170,8 +170,8 @@ CREATE INDEX IF NOT EXISTS agent_provider_connections_tenant_name_idx
 ALTER TABLE agent_provider_connections ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_provider_connections FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_provider_connections_tenant_policy ON agent_provider_connections
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0003_resource_audit.up.sql byte for byte. */
@@ -198,8 +198,8 @@ CREATE INDEX IF NOT EXISTS agent_audit_v2_tenant_time_idx
 ALTER TABLE agent_audit_events_v2 ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_audit_events_v2 FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_audit_events_v2_tenant_policy ON agent_audit_events_v2
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0004_run_grants.up.sql byte for byte. */
@@ -220,8 +220,8 @@ CREATE INDEX IF NOT EXISTS agent_run_grant_expiry_idx
 ALTER TABLE agent_run_grant_uses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_run_grant_uses FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_run_grant_uses_tenant_policy ON agent_run_grant_uses
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0005_long_running_limits.up.sql byte for byte. */
@@ -279,13 +279,13 @@ CREATE TABLE IF NOT EXISTS agent_run_skill_snapshots (
 ALTER TABLE agent_skills ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_skills FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_skills_tenant_policy ON agent_skills
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE agent_skill_assignments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_skill_assignments FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_skill_assignments_tenant_policy ON agent_skill_assignments
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0007_model_readiness.up.sql byte for byte. */
@@ -344,8 +344,8 @@ CREATE INDEX IF NOT EXISTS agent_audit_v3_tenant_time_idx
 ALTER TABLE agent_audit_events_v3 ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_audit_events_v3 FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_audit_events_v3_tenant_policy ON agent_audit_events_v3
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0012_agent_run_costs.up.sql byte for byte. */
@@ -379,14 +379,14 @@ ON CONFLICT DO NOTHING;
 ALTER TABLE agent_run_costs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_run_costs FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_run_costs_tenant_policy ON agent_run_costs
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0013_workflow_prerequisites.up.sql byte for byte. */
 export const AGENTS_MIGRATION_013 = `-- SQLite expresses immutability with a BEFORE trigger that aborts. PostgreSQL
 -- needs a function to raise from, shared by every immutable table here.
-CREATE OR REPLACE FUNCTION coreloom_reject_change() RETURNS trigger AS $$
+CREATE OR REPLACE FUNCTION flowdular_reject_change() RETURNS trigger AS $$
 BEGIN
   RAISE EXCEPTION '%', TG_ARGV[0];
 END;
@@ -416,10 +416,10 @@ CREATE INDEX IF NOT EXISTS agent_definition_revisions_tenant_agent_idx
   ON agent_definition_revisions (tenant_id, agent_id, revision DESC);
 CREATE TRIGGER agent_definition_revisions_no_update
   BEFORE UPDATE ON agent_definition_revisions
-  FOR EACH ROW EXECUTE FUNCTION coreloom_reject_change('agent definition revisions are immutable');
+  FOR EACH ROW EXECUTE FUNCTION flowdular_reject_change('agent definition revisions are immutable');
 CREATE TRIGGER agent_definition_revisions_no_delete
   BEFORE DELETE ON agent_definition_revisions
-  FOR EACH ROW EXECUTE FUNCTION coreloom_reject_change('agent definition revisions are immutable');
+  FOR EACH ROW EXECUTE FUNCTION flowdular_reject_change('agent definition revisions are immutable');
 
 CREATE TABLE IF NOT EXISTS agent_run_contracts (
   run_id TEXT PRIMARY KEY REFERENCES agent_runs(id) ON DELETE CASCADE,
@@ -469,18 +469,18 @@ CREATE INDEX IF NOT EXISTS agent_actions_recovery_idx
 ALTER TABLE agent_definition_revisions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_definition_revisions FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_definition_revisions_tenant_policy ON agent_definition_revisions
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE agent_run_contracts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_run_contracts FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_run_contracts_tenant_policy ON agent_run_contracts
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE agent_action_invocations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_action_invocations FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_action_invocations_tenant_policy ON agent_action_invocations
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0014_agent_action_audit.up.sql byte for byte. */
@@ -507,8 +507,8 @@ CREATE INDEX IF NOT EXISTS agent_audit_v4_tenant_time_idx
 ALTER TABLE agent_audit_events_v4 ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_audit_events_v4 FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_audit_events_v4_tenant_policy ON agent_audit_events_v4
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0015_agent_run_actors.up.sql byte for byte. */
@@ -527,14 +527,14 @@ ON CONFLICT DO NOTHING;
 ALTER TABLE agent_run_actors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_run_actors FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_run_actors_tenant_policy ON agent_run_actors
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0016_module_owned_agents.up.sql byte for byte. */
 export const AGENTS_MIGRATION_016 = `-- SQLite expresses immutability with a BEFORE trigger that aborts. PostgreSQL
 -- needs a function to raise from, shared by every immutable table here.
-CREATE OR REPLACE FUNCTION coreloom_reject_change() RETURNS trigger AS $$
+CREATE OR REPLACE FUNCTION flowdular_reject_change() RETURNS trigger AS $$
 BEGIN
   RAISE EXCEPTION '%', TG_ARGV[0];
 END;
@@ -586,20 +586,20 @@ CREATE TABLE IF NOT EXISTS agent_revision_ownership (
 );
 CREATE TRIGGER agent_revision_ownership_no_update
   BEFORE UPDATE ON agent_revision_ownership
-  FOR EACH ROW EXECUTE FUNCTION coreloom_reject_change('agent revision ownership is immutable');
+  FOR EACH ROW EXECUTE FUNCTION flowdular_reject_change('agent revision ownership is immutable');
 CREATE TRIGGER agent_revision_ownership_no_delete
   BEFORE DELETE ON agent_revision_ownership
-  FOR EACH ROW EXECUTE FUNCTION coreloom_reject_change('agent revision ownership is immutable');
+  FOR EACH ROW EXECUTE FUNCTION flowdular_reject_change('agent revision ownership is immutable');
 ALTER TABLE module_agent_bindings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE module_agent_bindings FORCE ROW LEVEL SECURITY;
 CREATE POLICY module_agent_bindings_tenant_policy ON module_agent_bindings
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE agent_revision_ownership ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_revision_ownership FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_revision_ownership_tenant_policy ON agent_revision_ownership
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0017_agent_authorization_subjects.up.sql byte for byte. */
@@ -630,17 +630,17 @@ export const AGENTS_MIGRATION_019 = `-- The worker recovery polls have to find i
 -- needs and nothing else, under a policy of its own. Every claim that follows
 -- runs on the tenant-scoped runtime role, under the tenant the row named.
 CREATE POLICY agent_runs_background_policy ON agent_runs
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON agent_runs FROM coreloom_background;
+REVOKE SELECT ON agent_runs FROM flowdular_background;
 GRANT SELECT (id, tenant_id, status, queued_at, lease_expires_at)
-  ON agent_runs TO coreloom_background;
+  ON agent_runs TO flowdular_background;
 CREATE POLICY agent_action_invocations_background_policy ON agent_action_invocations
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON agent_action_invocations FROM coreloom_background;
+REVOKE SELECT ON agent_action_invocations FROM flowdular_background;
 GRANT SELECT (id, tenant_id, status, queued_at, lease_expires_at)
-  ON agent_action_invocations TO coreloom_background;
+  ON agent_action_invocations TO flowdular_background;
 `;
 
 /* Mirrors migrations/0018_agent_child_tenant_isolation.up.sql byte for byte. */
@@ -660,8 +660,8 @@ ALTER TABLE agent_definition_execution_limits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_definition_execution_limits FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_definition_execution_limits_tenant_policy
   ON agent_definition_execution_limits
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 ALTER TABLE agent_definition_output_limits ADD COLUMN tenant_id TEXT;
 UPDATE agent_definition_output_limits AS child
@@ -674,8 +674,8 @@ ALTER TABLE agent_definition_output_limits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_definition_output_limits FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_definition_output_limits_tenant_policy
   ON agent_definition_output_limits
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 ALTER TABLE agent_run_execution_limits ADD COLUMN tenant_id TEXT;
 UPDATE agent_run_execution_limits AS child
@@ -688,8 +688,8 @@ ALTER TABLE agent_run_execution_limits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_run_execution_limits FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_run_execution_limits_tenant_policy
   ON agent_run_execution_limits
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 ALTER TABLE agent_run_output_limits ADD COLUMN tenant_id TEXT;
 UPDATE agent_run_output_limits AS child
@@ -702,8 +702,8 @@ ALTER TABLE agent_run_output_limits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_run_output_limits FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_run_output_limits_tenant_policy
   ON agent_run_output_limits
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 ALTER TABLE agent_run_skill_snapshots ADD COLUMN tenant_id TEXT;
 UPDATE agent_run_skill_snapshots AS child
@@ -716,8 +716,8 @@ ALTER TABLE agent_run_skill_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_run_skill_snapshots FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_run_skill_snapshots_tenant_policy
   ON agent_run_skill_snapshots
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 ALTER TABLE agent_provider_model_readiness ADD COLUMN tenant_id TEXT;
 UPDATE agent_provider_model_readiness AS child
@@ -730,8 +730,8 @@ ALTER TABLE agent_provider_model_readiness ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_provider_model_readiness FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_provider_model_readiness_tenant_policy
   ON agent_provider_model_readiness
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0020_provider_summary_role.up.sql byte for byte. */
@@ -741,26 +741,26 @@ export const AGENTS_MIGRATION_0020 = `-- The operator status command counts prov
 -- and never sees a name, a base URL or an encrypted credential.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY agent_provider_connections_background_policy
   ON agent_provider_connections
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON agent_provider_connections FROM coreloom_background;
-GRANT SELECT (id, enabled) ON agent_provider_connections TO coreloom_background;
+REVOKE SELECT ON agent_provider_connections FROM flowdular_background;
+GRANT SELECT (id, enabled) ON agent_provider_connections TO flowdular_background;
 `;
 
 export const AGENTS_MIGRATION_0021 = `-- Discover only tenant routing keys; boot-time writes still use tenant transactions.
 CREATE POLICY agent_definitions_reconciliation_policy ON agent_definitions
-  FOR SELECT TO coreloom_background USING (true);
-GRANT SELECT (tenant_id) ON agent_definitions TO coreloom_background;
+  FOR SELECT TO flowdular_background USING (true);
+GRANT SELECT (tenant_id) ON agent_definitions TO flowdular_background;
 CREATE POLICY module_agent_bindings_reconciliation_policy ON module_agent_bindings
-  FOR SELECT TO coreloom_background USING (true);
-GRANT SELECT (tenant_id, agent_id) ON module_agent_bindings TO coreloom_background;
+  FOR SELECT TO flowdular_background USING (true);
+GRANT SELECT (tenant_id, agent_id) ON module_agent_bindings TO flowdular_background;
 `;
 
 export const AGENTS_MIGRATION_0022 = `-- The rotation command has to find the connections still sealed with a retired
@@ -769,7 +769,7 @@ export const AGENTS_MIGRATION_0022 = `-- The rotation command has to find the co
 -- connection, and every row it re-seals is read again under the tenant that row
 -- named.
 GRANT SELECT (tenant_id, credential_key_id)
-  ON agent_provider_connections TO coreloom_background;
+  ON agent_provider_connections TO flowdular_background;
 `;
 
 /* Mirrors migrations/0023_agents_retention_indexes.up.sql byte for byte. */
@@ -805,8 +805,8 @@ CREATE TABLE IF NOT EXISTS agent_meter_refusals (
 ALTER TABLE agent_meter_refusals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_meter_refusals FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_meter_refusals_tenant_policy ON agent_meter_refusals
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0025_agent_list_indexes.up.sql byte for byte. */
@@ -845,8 +845,8 @@ CREATE INDEX IF NOT EXISTS assistant_threads_member_idx
 ALTER TABLE assistant_threads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE assistant_threads FORCE ROW LEVEL SECURITY;
 CREATE POLICY assistant_threads_tenant_policy ON assistant_threads
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 CREATE TABLE IF NOT EXISTS assistant_turns (
   id TEXT PRIMARY KEY,
@@ -872,8 +872,8 @@ CREATE INDEX IF NOT EXISTS assistant_turns_run_idx
 ALTER TABLE assistant_turns ENABLE ROW LEVEL SECURITY;
 ALTER TABLE assistant_turns FORCE ROW LEVEL SECURITY;
 CREATE POLICY assistant_turns_tenant_policy ON assistant_turns
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- A thread is a subject of this module's own hash-chained trail, so the reader
 -- of an assistant action finds it beside the run it queued. Widening the check
@@ -939,8 +939,8 @@ CREATE INDEX IF NOT EXISTS agent_worker_heartbeats_time_idx
 ALTER TABLE agent_worker_heartbeats ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_worker_heartbeats FORCE ROW LEVEL SECURITY;
 CREATE POLICY agent_worker_heartbeats_tenant_policy ON agent_worker_heartbeats
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 /* Mirrors migrations/0030_agents_background_passes.up.sql byte for byte. */
@@ -950,14 +950,14 @@ export const AGENTS_MIGRATION_0030 = `-- The worker's binding pass and revision 
 -- alone, under a SELECT policy of each table's own; every write that follows
 -- runs on the tenant-scoped runtime role, under the tenant the row named.
 GRANT SELECT (module_definition_revision)
-  ON module_agent_bindings TO coreloom_background;
-GRANT SELECT (id, revision) ON agent_definitions TO coreloom_background;
+  ON module_agent_bindings TO flowdular_background;
+GRANT SELECT (id, revision) ON agent_definitions TO flowdular_background;
 CREATE POLICY agent_definition_revisions_adoption_policy
   ON agent_definition_revisions
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
 GRANT SELECT (tenant_id, agent_id, revision)
-  ON agent_definition_revisions TO coreloom_background;
+  ON agent_definition_revisions TO flowdular_background;
 -- The binding pass asks each served definition for the tenants whose binding
 -- is behind it, so the common answer, none, is one index probe.
 CREATE INDEX IF NOT EXISTS module_agent_bindings_agent_revision_idx
@@ -1341,9 +1341,9 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 					const result = await database.query<{ granted: boolean }>({
 						text: `SELECT CASE WHEN to_regclass('agent_definitions') IS NOT NULL
 						AND to_regclass('module_agent_bindings') IS NOT NULL THEN
-						  has_column_privilege('coreloom_background', 'agent_definitions', 'tenant_id', 'SELECT')
-						  AND has_column_privilege('coreloom_background', 'module_agent_bindings', 'tenant_id', 'SELECT')
-						  AND has_column_privilege('coreloom_background', 'module_agent_bindings', 'agent_id', 'SELECT')
+						  has_column_privilege('flowdular_background', 'agent_definitions', 'tenant_id', 'SELECT')
+						  AND has_column_privilege('flowdular_background', 'module_agent_bindings', 'tenant_id', 'SELECT')
+						  AND has_column_privilege('flowdular_background', 'module_agent_bindings', 'agent_id', 'SELECT')
 						ELSE false END AS granted`,
 					});
 					return result.rows[0]?.granted === true;
@@ -1360,8 +1360,8 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 				async () => {
 					const result = await database.query<{ granted: boolean }>({
 						text: `SELECT CASE WHEN to_regclass('agent_provider_connections') IS NOT NULL THEN
-						  has_column_privilege('coreloom_background', 'agent_provider_connections', 'tenant_id', 'SELECT')
-						  AND has_column_privilege('coreloom_background', 'agent_provider_connections', 'credential_key_id', 'SELECT')
+						  has_column_privilege('flowdular_background', 'agent_provider_connections', 'tenant_id', 'SELECT')
+						  AND has_column_privilege('flowdular_background', 'agent_provider_connections', 'credential_key_id', 'SELECT')
 						ELSE false END AS granted`,
 					});
 					return result.rows[0]?.granted === true;
@@ -1494,12 +1494,12 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 						text: `SELECT CASE WHEN to_regclass('module_agent_bindings') IS NOT NULL
 						AND to_regclass('agent_definitions') IS NOT NULL
 						AND to_regclass('agent_definition_revisions') IS NOT NULL THEN
-						  has_column_privilege('coreloom_background', 'module_agent_bindings', 'module_definition_revision', 'SELECT')
-						  AND has_column_privilege('coreloom_background', 'agent_definitions', 'id', 'SELECT')
-						  AND has_column_privilege('coreloom_background', 'agent_definitions', 'revision', 'SELECT')
-						  AND has_column_privilege('coreloom_background', 'agent_definition_revisions', 'tenant_id', 'SELECT')
-						  AND has_column_privilege('coreloom_background', 'agent_definition_revisions', 'agent_id', 'SELECT')
-						  AND has_column_privilege('coreloom_background', 'agent_definition_revisions', 'revision', 'SELECT')
+						  has_column_privilege('flowdular_background', 'module_agent_bindings', 'module_definition_revision', 'SELECT')
+						  AND has_column_privilege('flowdular_background', 'agent_definitions', 'id', 'SELECT')
+						  AND has_column_privilege('flowdular_background', 'agent_definitions', 'revision', 'SELECT')
+						  AND has_column_privilege('flowdular_background', 'agent_definition_revisions', 'tenant_id', 'SELECT')
+						  AND has_column_privilege('flowdular_background', 'agent_definition_revisions', 'agent_id', 'SELECT')
+						  AND has_column_privilege('flowdular_background', 'agent_definition_revisions', 'revision', 'SELECT')
 						ELSE false END AS granted`,
 					});
 					return result.rows[0]?.granted === true;

@@ -16,4 +16,4 @@ $$;
 -- A session cookie, a bearer token and an email address name no workspace, so
 -- the routing read decides which membership answers for them. A disabled
 -- membership must not be that answer, which is a column this role now reads.
-GRANT SELECT (status) ON auth_memberships TO coreloom_background;
+GRANT SELECT (status) ON auth_memberships TO flowdular_background;

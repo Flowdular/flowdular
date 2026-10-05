@@ -155,7 +155,6 @@ describe('named workflow action templates', () => {
 			properties: {
 				credential: { type: 'string', writeOnly: true },
 				apiKey: { type: 'string', 'x-flowdular-secret': true },
-				legacyToken: { type: 'string', 'x-coreloom-secret': true },
 				reference: { type: 'string' },
 			},
 			additionalProperties: false,
@@ -176,9 +175,6 @@ describe('named workflow action templates', () => {
 		).toBe(false);
 		expect(
 			validateMappingInput(mapping('/apiKey'), added.graph, added.nodeId),
-		).toBe(false);
-		expect(
-			validateMappingInput(mapping('/legacyToken'), added.graph, added.nodeId),
 		).toBe(false);
 		expect(validateMappingInput(mapping(''), added.graph, added.nodeId)).toBe(
 			false,

@@ -66,26 +66,26 @@ CREATE INDEX IF NOT EXISTS auth_sessions_expiry_idx
 ALTER TABLE auth_tenants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_tenants FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_tenants_tenant_policy ON auth_tenants
-  USING (id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (id = current_setting('coreloom.tenant_id', true));
+  USING (id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (id = current_setting('flowdular.tenant_id', true));
 
 ALTER TABLE auth_memberships ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_memberships FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_memberships_tenant_policy ON auth_memberships
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 ALTER TABLE auth_membership_scopes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_membership_scopes FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_membership_scopes_tenant_policy ON auth_membership_scopes
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 ALTER TABLE auth_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_sessions FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_sessions_tenant_policy ON auth_sessions
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- A session cookie, a workspace list and a sign-in all arrive with a key that
 -- names no workspace, so auth.core resolves the owning tenant on the read-only
@@ -95,26 +95,26 @@ CREATE POLICY auth_sessions_tenant_policy ON auth_sessions
 -- inside a WHERE clause too.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY auth_tenants_background_policy ON auth_tenants
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON auth_tenants FROM coreloom_background;
-GRANT SELECT (id, name) ON auth_tenants TO coreloom_background;
+REVOKE SELECT ON auth_tenants FROM flowdular_background;
+GRANT SELECT (id, name) ON auth_tenants TO flowdular_background;
 CREATE POLICY auth_memberships_background_policy ON auth_memberships
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON auth_memberships FROM coreloom_background;
-GRANT SELECT (account_id, tenant_id, role, created_at) ON auth_memberships TO coreloom_background;
+REVOKE SELECT ON auth_memberships FROM flowdular_background;
+GRANT SELECT (account_id, tenant_id, role, created_at) ON auth_memberships TO flowdular_background;
 CREATE POLICY auth_sessions_background_policy ON auth_sessions
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE SELECT ON auth_sessions FROM coreloom_background;
-GRANT SELECT (token_hash, tenant_id, account_id, expires_at) ON auth_sessions TO coreloom_background;
+REVOKE SELECT ON auth_sessions FROM flowdular_background;
+GRANT SELECT (token_hash, tenant_id, account_id, expires_at) ON auth_sessions TO flowdular_background;
 `;
 
 export const AUTH_MIGRATION_002 = `INSERT INTO auth_membership_scopes (account_id, tenant_id, scope)
@@ -189,7 +189,7 @@ UPDATE auth_tenants SET slug = lower(id) WHERE slug IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS auth_tenants_slug_idx ON auth_tenants(slug);
 -- A slug is how a workspace is addressed before one is entered, so the
 -- cross-tenant lookup that resolves it reads this column too.
-GRANT SELECT (slug) ON auth_tenants TO coreloom_background;
+GRANT SELECT (slug) ON auth_tenants TO flowdular_background;
 `;
 
 export const AUTH_MIGRATION_007_SANDBOX_SCOPES = `INSERT INTO auth_membership_scopes (account_id, tenant_id, scope) SELECT account_id, tenant_id, 'sandbox.access.use' FROM auth_memberships WHERE role = 'owner' ON CONFLICT DO NOTHING;
@@ -230,15 +230,15 @@ CREATE INDEX IF NOT EXISTS auth_api_tokens_tenant_idx
 ALTER TABLE auth_api_tokens ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_api_tokens FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_api_tokens_tenant_policy ON auth_api_tokens
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 -- A bearer token names no workspace. The routing read stops at the revoked
 -- flag; the scopes, label and account are read again under the tenant it named.
 CREATE POLICY auth_api_tokens_background_policy ON auth_api_tokens
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (revoked_at IS NULL);
-REVOKE SELECT ON auth_api_tokens FROM coreloom_background;
-GRANT SELECT (token_hash, tenant_id, id, revoked_at) ON auth_api_tokens TO coreloom_background;
+REVOKE SELECT ON auth_api_tokens FROM flowdular_background;
+GRANT SELECT (token_hash, tenant_id, id, revoked_at) ON auth_api_tokens TO flowdular_background;
 
 INSERT INTO auth_membership_scopes (account_id, tenant_id, scope) SELECT account_id, tenant_id, 'auth.tokens.read' FROM auth_memberships WHERE role = 'owner' ON CONFLICT DO NOTHING;
 INSERT INTO auth_membership_scopes (account_id, tenant_id, scope) SELECT account_id, tenant_id, 'auth.tokens.manage' FROM auth_memberships WHERE role = 'owner' ON CONFLICT DO NOTHING;
@@ -264,8 +264,8 @@ export const AUTH_MIGRATION_009_MODULE_SETTINGS = `CREATE TABLE IF NOT EXISTS mo
 ALTER TABLE module_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE module_settings FORCE ROW LEVEL SECURITY;
 CREATE POLICY module_settings_tenant_policy ON module_settings
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 INSERT INTO auth_membership_scopes (account_id, tenant_id, scope) SELECT account_id, tenant_id, 'system.settings.read' FROM auth_memberships WHERE role = 'owner' ON CONFLICT DO NOTHING;
 INSERT INTO auth_membership_scopes (account_id, tenant_id, scope) SELECT account_id, tenant_id, 'system.settings.manage' FROM auth_memberships WHERE role = 'owner' ON CONFLICT DO NOTHING;
 DELETE FROM auth_membership_scopes
@@ -297,7 +297,7 @@ UPDATE auth_sessions SET id = replace(gen_random_uuid()::text, '-', '') WHERE id
 CREATE UNIQUE INDEX IF NOT EXISTS auth_sessions_id_idx ON auth_sessions (id);
 -- Revoking one session of an account names it by this id and no workspace, so
 -- the cross-tenant lookup that routes it reads this column too.
-GRANT SELECT (id) ON auth_sessions TO coreloom_background;
+GRANT SELECT (id) ON auth_sessions TO flowdular_background;
 `;
 
 export const AUTH_MIGRATION_012_ROLES = `CREATE TABLE IF NOT EXISTS auth_roles (
@@ -315,8 +315,8 @@ export const AUTH_MIGRATION_012_ROLES = `CREATE TABLE IF NOT EXISTS auth_roles (
 ALTER TABLE auth_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_roles FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_roles_tenant_policy ON auth_roles
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE auth_memberships ADD COLUMN IF NOT EXISTS role_id TEXT;
 -- Built-in owner and member rows are inserted per tenant by the repository from the static scope lists.
 UPDATE auth_memberships SET role_id = tenant_id || ':' || role
@@ -349,8 +349,8 @@ CREATE INDEX IF NOT EXISTS auth_audit_tenant_time_idx
 ALTER TABLE auth_audit ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_audit FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_audit_tenant_policy ON auth_audit
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 INSERT INTO auth_membership_scopes (account_id, tenant_id, scope) SELECT account_id, tenant_id, 'auth.audit.read' FROM auth_memberships WHERE role = 'owner' ON CONFLICT DO NOTHING;
 DELETE FROM auth_membership_scopes
 WHERE scope = 'auth.audit.read'
@@ -427,28 +427,28 @@ CREATE INDEX IF NOT EXISTS auth_mfa_challenges_expiry_idx
 ALTER TABLE auth_tenant_invitations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_tenant_invitations FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_tenant_invitations_tenant_policy ON auth_tenant_invitations
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 ALTER TABLE auth_mfa_challenges ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_mfa_challenges FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_mfa_challenges_tenant_policy ON auth_mfa_challenges
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- An invitation link and a pending multi-factor challenge name their workspace
 -- only inside the row, so the routing read runs on the background role and the
 -- acceptance that follows runs under the tenant it returned. An invitation that
 -- was already accepted and a challenge that was already spent route nothing.
 CREATE POLICY auth_tenant_invitations_background_policy ON auth_tenant_invitations
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (accepted_at IS NULL);
-REVOKE SELECT ON auth_tenant_invitations FROM coreloom_background;
-GRANT SELECT (token_hash, tenant_id, expires_at, accepted_at) ON auth_tenant_invitations TO coreloom_background;
+REVOKE SELECT ON auth_tenant_invitations FROM flowdular_background;
+GRANT SELECT (token_hash, tenant_id, expires_at, accepted_at) ON auth_tenant_invitations TO flowdular_background;
 CREATE POLICY auth_mfa_challenges_background_policy ON auth_mfa_challenges
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (used_at IS NULL);
-REVOKE SELECT ON auth_mfa_challenges FROM coreloom_background;
-GRANT SELECT (token_hash, tenant_id, account_id, expires_at, used_at) ON auth_mfa_challenges TO coreloom_background;
+REVOKE SELECT ON auth_mfa_challenges FROM flowdular_background;
+GRANT SELECT (token_hash, tenant_id, account_id, expires_at, used_at) ON auth_mfa_challenges TO flowdular_background;
 `;
 
 export const AUTH_MIGRATION_016_EXTERNAL_IDENTITIES = `-- An external provider asserts an identity about an account, not about one of
@@ -592,8 +592,8 @@ CREATE INDEX IF NOT EXISTS auth_identity_providers_tenant_idx
 ALTER TABLE auth_identity_providers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_identity_providers FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_identity_providers_tenant_policy ON auth_identity_providers
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 
 -- A platform provider asserts an identity about an account before any workspace
 -- is chosen, and keeps binding without one. A tenant-owned provider asserts it
@@ -615,8 +615,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS auth_external_identities_workspace_idx
 ALTER TABLE auth_external_identities ENABLE ROW LEVEL SECURITY;
 ALTER TABLE auth_external_identities FORCE ROW LEVEL SECURITY;
 CREATE POLICY auth_external_identities_tenant_policy ON auth_external_identities
-  USING (tenant_id IS NULL OR tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id IS NULL OR tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id IS NULL OR tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id IS NULL OR tenant_id = current_setting('flowdular.tenant_id', true));
 `;
 
 export const AUTH_MIGRATION_022_AUTH_PROVIDER_SCOPES = `-- auth.core declares auth.providers.read and auth.providers.manage for the
@@ -684,7 +684,7 @@ $$;
 -- A session cookie, a bearer token and an email address name no workspace, so
 -- the routing read decides which membership answers for them. A disabled
 -- membership must not be that answer, which is a column this role now reads.
-GRANT SELECT (status) ON auth_memberships TO coreloom_background;
+GRANT SELECT (status) ON auth_memberships TO flowdular_background;
 `;
 
 export const AUTH_MIGRATION_023_ENTERPRISE_MODULE_SCOPES = `-- directory.core, audit.core, approvals.core, documents.core, metering.core,
@@ -1366,7 +1366,7 @@ ALTER TABLE auth_api_tokens ADD COLUMN IF NOT EXISTS allowed_origins_json TEXT N
 -- it from the origins its live tokens declare. That read runs on the routing
 -- role, which holds a column grant rather than a table grant; it learns which
 -- origins are registered somewhere in the deployment and no workspace data.
-GRANT SELECT (allowed_origins_json, expires_at) ON auth_api_tokens TO coreloom_background;
+GRANT SELECT (allowed_origins_json, expires_at) ON auth_api_tokens TO flowdular_background;
 CREATE INDEX IF NOT EXISTS auth_api_tokens_live_origins_idx
   ON auth_api_tokens (revoked_at, expires_at);
 `;
@@ -1490,24 +1490,24 @@ ALTER TABLE module_settings FORCE ROW LEVEL SECURITY;
 ALTER TABLE module_settings_changes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE module_settings_changes FORCE ROW LEVEL SECURITY;
 CREATE POLICY module_settings_changes_tenant_policy ON module_settings_changes
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));
 -- Workers in other processes read the log across tenants. The background role
 -- sees every row through a policy of its own but only the columns that say
 -- which setting changed and when; who changed it, the workspace it came from
 -- and the audit mark stay unreadable, and it writes nothing.
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coreloom_background') THEN
-    RAISE EXCEPTION 'The coreloom_background role must exist before this migration.';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowdular_background') THEN
+    RAISE EXCEPTION 'The flowdular_background role must exist before this migration.';
   END IF;
 END
 $$;
 CREATE POLICY module_settings_changes_background_policy ON module_settings_changes
-  FOR SELECT TO coreloom_background
+  FOR SELECT TO flowdular_background
   USING (true);
-REVOKE ALL ON module_settings_changes FROM coreloom_background;
-GRANT SELECT (revision, tenant_id, module_id, key, cleared, changed_at) ON module_settings_changes TO coreloom_background;
+REVOKE ALL ON module_settings_changes FROM flowdular_background;
+GRANT SELECT (revision, tenant_id, module_id, key, cleared, changed_at) ON module_settings_changes TO flowdular_background;
 -- A platform setting's event belongs to the workspace it was saved from, which
 -- a second transaction writes. The revision it carries is unique per
 -- workspace, so a retried write of the same change lands once.
@@ -1541,7 +1541,7 @@ async function backgroundColumnGranted(
 ): Promise<boolean> {
 	const result = await database.query<{ granted: boolean }>({
 		text: `SELECT CASE WHEN to_regclass('${table}') IS NOT NULL THEN
-		  has_column_privilege('coreloom_background', '${table}', '${column}', 'SELECT')
+		  has_column_privilege('flowdular_background', '${table}', '${column}', 'SELECT')
 		ELSE false END AS granted`,
 	});
 	return result.rows[0]?.granted === true;

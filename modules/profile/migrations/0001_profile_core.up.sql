@@ -9,5 +9,5 @@ CREATE INDEX IF NOT EXISTS profile_records_tenant_account_idx ON profile_records
 ALTER TABLE profile_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE profile_records FORCE ROW LEVEL SECURITY;
 CREATE POLICY profile_records_tenant_policy ON profile_records
-  USING (tenant_id = current_setting('coreloom.tenant_id', true))
-  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+  USING (tenant_id = current_setting('flowdular.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));

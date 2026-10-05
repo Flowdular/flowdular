@@ -54,11 +54,11 @@ describe('configured database first run', () => {
 			NODE_ENV: 'production',
 			FD_DATABASE_ADAPTER: 'postgresql',
 			FD_DATABASE_URL:
-				'postgresql://coreloom_runtime:example@127.0.0.1:1/flowdular',
+				'postgresql://flowdular_runtime:example@127.0.0.1:1/flowdular',
 			FD_DATABASE_MIGRATOR_URL:
-				'postgresql://coreloom_migrator:example@127.0.0.1:1/flowdular',
+				'postgresql://flowdular_migrator:example@127.0.0.1:1/flowdular',
 			FD_DATABASE_BACKGROUND_URL:
-				'postgresql://coreloom_background:example@127.0.0.1:1/flowdular',
+				'postgresql://flowdular_background:example@127.0.0.1:1/flowdular',
 		};
 		await expect(
 			configuredDatabaseNeedsFirstRun(environment, root),

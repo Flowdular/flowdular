@@ -614,7 +614,7 @@ The first release may use an in-memory process for local events. The outbox cont
 
 - `migrations/NNNN_<module>_<name>.up.sql` is the source and is PostgreSQL. `src/services/migration.ts` exports `databaseMigrations: readonly DatabaseMigration[]` whose `sql.postgresql` mirrors those files byte for byte, and a per-module test fails on drift.
 - `up.sql` is the only file that changes the database. `.down.sql` documents the reverse; nothing executes it.
-- The database carries one ledger, `_coreloom_migrations_v2`, keyed by module namespace and migration id so every module can share it.
+- The database carries one ledger, `_flowdular_migrations_v2`, keyed by module namespace and migration id so every module can share it.
 - The checksum is `sha256:<hex>` of the SQL with CRLF normalized to LF and the text trimmed. An applied migration is immutable: a mismatch throws before any statement runs, so it blocks startup for that module.
 - A migration whose objects already exist is **adopted**, meaning the ledger records it and the statements never run. This is what lets a database that predates the ledger keep its rows. The module states the proof itself in `inspectExisting`, which returns `complete`, `absent` or `partial`; `postgresTenantTableState` is the standard check for a tenant table, its policy and its forced row-level security.
 - A migration whose objects are only half present is refused (`PARTIAL_MIGRATION`) rather than guessed at.

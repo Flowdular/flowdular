@@ -25,7 +25,7 @@ jobs:
           cache: true
           install: false
       - run: pnpm install --frozen-lockfile
-      - run: node --test scripts/tests/platform-release.test.mjs scripts/tests/test-shards.test.mjs scripts/tests/dom-properties.test.mjs scripts/tests/ui-classes.test.mjs scripts/tests/ui-preview-args.test.mjs scripts/tests/release-versions.test.mjs scripts/tests/render-doc.test.mjs
+      - run: node --test scripts/tests/platform-release.test.mjs scripts/tests/test-shards.test.mjs scripts/tests/dom-properties.test.mjs scripts/tests/ui-classes.test.mjs scripts/tests/ui-preview-args.test.mjs scripts/tests/release-versions.test.mjs scripts/tests/render-doc.test.mjs scripts/tests/legacy-name.test.mjs
       # The suites run in the test job below, split into balanced shards.
       - run: pnpm verify:static
       - run: pnpm test:docker-launcher
@@ -81,18 +81,18 @@ jobs:
         run: |
           set -euo pipefail
           run() { psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 "$@"; }
-          run -c "CREATE ROLE coreloom_migrator LOGIN PASSWORD 'migrator' NOSUPERUSER NOBYPASSRLS"
-          run -c "CREATE ROLE coreloom_runtime LOGIN PASSWORD 'runtime' NOSUPERUSER NOBYPASSRLS"
-          run -c "CREATE ROLE coreloom_background LOGIN PASSWORD 'background' NOSUPERUSER NOBYPASSRLS"
-          run -c "CREATE DATABASE coreloom_test OWNER coreloom_migrator"
-          run -d coreloom_test -c "GRANT CONNECT ON DATABASE coreloom_test TO coreloom_runtime, coreloom_background"
-          run -d coreloom_test -c "REVOKE ALL ON SCHEMA public FROM PUBLIC"
+          run -c "CREATE ROLE flowdular_migrator LOGIN PASSWORD 'migrator' NOSUPERUSER NOBYPASSRLS"
+          run -c "CREATE ROLE flowdular_runtime LOGIN PASSWORD 'runtime' NOSUPERUSER NOBYPASSRLS"
+          run -c "CREATE ROLE flowdular_background LOGIN PASSWORD 'background' NOSUPERUSER NOBYPASSRLS"
+          run -c "CREATE DATABASE flowdular_test OWNER flowdular_migrator"
+          run -d flowdular_test -c "GRANT CONNECT ON DATABASE flowdular_test TO flowdular_runtime, flowdular_background"
+          run -d flowdular_test -c "REVOKE ALL ON SCHEMA public FROM PUBLIC"
       - name: Adapter matrix
         env:
           FD_TEST_DATABASE_ADAPTER: postgresql
-          FD_TEST_POSTGRES_URL: postgres://coreloom_migrator:migrator@127.0.0.1:5432/coreloom_test
-          FD_TEST_POSTGRES_RUNTIME_URL: postgres://coreloom_runtime:runtime@127.0.0.1:5432/coreloom_test
-          FD_TEST_POSTGRES_BACKGROUND_URL: postgres://coreloom_background:background@127.0.0.1:5432/coreloom_test
+          FD_TEST_POSTGRES_URL: postgres://flowdular_migrator:migrator@127.0.0.1:5432/flowdular_test
+          FD_TEST_POSTGRES_RUNTIME_URL: postgres://flowdular_runtime:runtime@127.0.0.1:5432/flowdular_test
+          FD_TEST_POSTGRES_BACKGROUND_URL: postgres://flowdular_background:background@127.0.0.1:5432/flowdular_test
         run: |
           pnpm --filter @flowdular/database-testing test
           pnpm --filter @flowdular/module-auth test

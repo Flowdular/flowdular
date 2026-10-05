@@ -1,4 +1,3 @@
-import { flowdularEnvironment } from '@flowdular/kernel/runtime-config';
 import process from 'node:process';
 import { resolve } from 'node:path';
 import {
@@ -48,7 +47,6 @@ export function createPlatformDatabaseProvider(
 export function platformDatabaseConfigured(
 	environment: NodeJS.ProcessEnv,
 ): boolean {
-	environment = flowdularEnvironment(environment);
 	const configured = environment.FD_DATABASE_ADAPTER?.trim();
 	const adapter =
 		configured && configured.length > 0
@@ -69,10 +67,8 @@ export function platformDatabaseConfigured(
  * first-run setup wrote earlier.
  */
 export function loadPlatformEnvironmentFile(workspaceRoot: string): void {
-	Object.assign(process.env, flowdularEnvironment(process.env));
 	try {
 		process.loadEnvFile(resolve(workspaceRoot, '.env'));
-		Object.assign(process.env, flowdularEnvironment(process.env));
 	} catch {
 		/* Absent or unreadable. The real environment is the authority either
 		   way, and a deployment that sets everything needs no file. */

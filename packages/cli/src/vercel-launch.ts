@@ -20,7 +20,11 @@ import {
 	success,
 	type CommandEnvelope,
 } from '@flowdular/cli-protocol';
-import { BACKUP_KEY_VARIABLES } from '@flowdular/database';
+import {
+	assertNotLegacyDatabase,
+	BACKUP_KEY_VARIABLES,
+	DatabaseMigrationError,
+} from '@flowdular/database';
 import type { ParsedArguments } from './arguments.ts';
 import {
 	APPLICATION_ROLES,
@@ -229,7 +233,7 @@ export function vercelLaunchSteps(options: VercelLaunchOptions): string[] {
 		options.databaseUrlEnv
 			? `Read the database owner URL from $${options.databaseUrlEnv}.`
 			: `Provision Neon PostgreSQL for Production through the Vercel Marketplace unless ${NEON_DIRECT_URL} exists, then read its owner URL through a private temporary file.`,
-		`Create the ${roles} roles without SUPERUSER or BYPASSRLS and grant them what infra/docker/postgres/10-roles.sh grants; the owner role migrates.`,
+		`Refuse a database created by Flowdular 0.5 or earlier, then create the ${roles} roles without SUPERUSER or BYPASSRLS and grant them what infra/docker/postgres/10-roles.sh grants; the owner role migrates.`,
 		'Generate the missing stable keys, CRON_SECRET and role passwords into .flowdular/deploy/vercel-<project id>.env (mode 0600) first, then add each missing Production variable through stdin.',
 		`Set ${PLAN} to the plan when it is known, which sizes the worker cron and Function duration.`,
 		'Create and connect a private Vercel Blob store unless the project has Blob credentials.',
@@ -709,11 +713,17 @@ async function provisionNeon(context: LaunchContext): Promise<void> {
 	}
 }
 
+interface OwnerDatabase {
+	readonly url: URL;
+	/* Where the URL came from, as a reader would look it up. */
+	readonly source: string;
+}
+
 async function resolveOwnerUrl(
 	context: LaunchContext,
 	backup: KeyBackup,
 	names: Set<string>,
-): Promise<URL> {
+): Promise<OwnerDatabase> {
 	const variable = context.options.databaseUrlEnv;
 	if (variable) {
 		const value = process.env[variable];
@@ -723,10 +733,17 @@ async function resolveOwnerUrl(
 				`$${variable} is empty. Export the database owner URL there.`,
 			);
 		}
-		return ownerUrl(context, value, `$${variable}`);
+		return {
+			url: ownerUrl(context, value, `$${variable}`),
+			source: `$${variable} (--database-url-env ${variable})`,
+		};
 	}
 	const known = backup.values.get(MIGRATOR_URL);
-	if (known) return ownerUrl(context, known, 'The key backup');
+	if (known)
+		return {
+			url: ownerUrl(context, known, 'The key backup'),
+			source: `${MIGRATOR_URL} in ${relative(context.root, backup.path)}`,
+		};
 	if (!names.has(NEON_DIRECT_URL)) {
 		await provisionNeon(context);
 		const refreshed = await productionEnvironmentNames(context);
@@ -744,21 +761,28 @@ async function resolveOwnerUrl(
 			`${NEON_DIRECT_URL} cannot be read back, which happens when the Neon resource allows Production only. Export the owner URL from the Neon console into a variable and pass --database-url-env NAME.`,
 		);
 	}
-	return ownerUrl(context, value, NEON_DIRECT_URL);
+	return {
+		url: ownerUrl(context, value, NEON_DIRECT_URL),
+		source: `the Production ${NEON_DIRECT_URL}`,
+	};
 }
 
 async function provisionRoles(
 	context: LaunchContext,
 	project: VercelProject,
 	backup: KeyBackup,
-	owner: URL,
+	database: OwnerDatabase,
 ): Promise<Set<string>> {
+	const owner = database.url;
 	progress(
 		`Creating the ${Object.values(APPLICATION_ROLES).join(' and ')} database roles`,
 	);
 	const session = await context.host.openDatabase(owner);
 	const changed = new Set<string>();
 	try {
+		/* Before the key backup records this URL, so a rerun does not return to
+		   the refused database. */
+		await refuseLegacyDatabase(session, database.source);
 		const existing = await inspectApplicationRoles(session);
 		const passwords = {} as Record<ApplicationRole, string>;
 		const reset: string[] = [];
@@ -796,6 +820,26 @@ async function provisionRoles(
 		await session.close();
 	}
 	return changed;
+}
+
+async function refuseLegacyDatabase(
+	session: SqlSession,
+	source: string,
+): Promise<void> {
+	try {
+		await assertNotLegacyDatabase(session);
+	} catch (error) {
+		if (
+			error instanceof DatabaseMigrationError &&
+			error.code === 'LEGACY_DATABASE'
+		) {
+			throw new LaunchError(
+				'LEGACY_DATABASE',
+				`${error.message} This launch read it from ${source} and stopped before creating roles, keys, Production variables or storage. Put the owner URL of a new database in a variable and pass --database-url-env NAME.`,
+			);
+		}
+		throw error;
+	}
 }
 
 async function connectBlobStore(
