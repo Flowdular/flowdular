@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: automations.core
 specVersion: 0.6.13
-status: approved
+status: in-review
 name: Automations Core
 description: Runs agents or published workflows without a person present, on a schedule or from a signed webhook, as a module a workspace can leave uninstalled.
 profile: full
@@ -15,7 +15,7 @@ dependencies:
   - id: system.core
     range: ^0.9.0
   - id: auth.core
-    range: ^0.14.6
+    range: ^0.14.7
   - id: agents.core
     range: ^0.15.0
   - id: workflows.core
