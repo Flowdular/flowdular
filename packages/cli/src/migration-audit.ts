@@ -26,7 +26,7 @@ export interface MigrationAuditReport {
 
 function statementsOf(sql: string): string {
 	/* Comments must not contribute matches; the checks below read structure. */
-	return sql.replace(/--[^\n]*\n/g, '\n');
+	return sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*\n/g, '\n');
 }
 
 function tables(sql: string): ReadonlySet<string> {
@@ -193,7 +193,12 @@ export async function moduleMigrationAudit(
 			/CREATE POLICY\s+([a-z0-9_]+)\s+ON\s+([a-z0-9_]+)([\s\S]*?);/gi,
 		)) {
 			const clause = match[3] ?? '';
-			if (!/\bTO\s+flowdular_background\b/i.test(clause)) continue;
+			if (
+				!/\bTO\s+(?:"?[a-z_][a-z0-9_]*"?\s*,\s*)*"?flowdular_background\b/i.test(
+					clause,
+				)
+			)
+				continue;
 			if (!/\bFOR\s+SELECT\b/i.test(clause)) {
 				report(
 					'BACKGROUND_POLICY_TOO_WIDE',

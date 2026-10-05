@@ -174,6 +174,35 @@ ALTER TABLE demo_records_v2 RENAME TO demo_records;
 		]);
 	});
 
+	it('refuses a background policy that names the role after another one', async () => {
+		await write(
+			'0001_demo_core',
+			SQL +
+				`CREATE POLICY demo_records_background_policy ON demo_records
+  TO flowdular_runtime, flowdular_background USING (true);
+`,
+		);
+
+		expect(await issues()).toMatchObject([
+			{ code: 'BACKGROUND_POLICY_TOO_WIDE' },
+		]);
+	});
+
+	it('ignores a tenant table inside a block comment', async () => {
+		await write(
+			'0001_demo_core',
+			`${SQL}/* An earlier draft:
+CREATE TABLE demo_drafts (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL
+);
+*/
+`,
+		);
+
+		await expect(issues()).resolves.toEqual([]);
+	});
+
 	it('refuses a background policy that carries a write check', async () => {
 		await write(
 			'0001_demo_core',

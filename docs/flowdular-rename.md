@@ -59,10 +59,19 @@ Flowdular 0.6 refuses a database created by 0.5 or earlier with
 `LEGACY_DATABASE` before it creates its ledger or applies anything: adopting
 it would mark its tables complete while every policy reads a setting the
 adapter no longer sets. `pnpm flowdular module validate`, the sandbox
-module-rules gate and `pnpm flowdular migration verify` report the
-script-level rule as well, without a database: a tenant policy must read
-`current_setting('flowdular.tenant_id', true)`, and only `flowdular_*` roles
-may be named.
+module-rules gate and `pnpm flowdular migration verify` also read every
+`.up.sql` script, without a database:
+
+- `TENANT_SETTING_UNKNOWN`: a `current_setting` call reads any setting other
+  than `flowdular.tenant_id`, or a string literal names another
+  `<prefix>.tenant_id`.
+- `ROLE_UNKNOWN`: a role position names a `*_runtime`, `*_background` or
+  `*_migrator` role other than the `flowdular_` one. Role positions are GRANT,
+  REVOKE, policy and OWNER TO lists, role membership grants, SET ROLE, SESSION
+  AUTHORIZATION and `rolname` comparisons; RENAME ... TO is not one.
+
+Comments and string literals are not read, except dollar-quoted bodies and
+EXECUTE strings, which PostgreSQL runs as SQL.
 
 ## Resetting an existing installation
 
