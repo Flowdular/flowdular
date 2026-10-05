@@ -927,6 +927,74 @@ describe('automations PostgreSQL boundary', () => {
 		).rejects.toBeDefined();
 	});
 
+	it('AUTO-TZ-DISCOVERY-NARROW keeps the applied zone record inside its tenant and away from the background role', async () => {
+		const { repository, background, runtime } = shared;
+		const change = {
+			tenantId: 'tenant-a',
+			revision: 7,
+			changedAt: 10,
+			appliedAt: 20,
+		};
+		expect(await repository.applyTimeZoneChange(change, () => [])).toBe(0);
+		expect(await repository.appliedTimeZone('tenant-a')).toEqual({
+			revision: 7,
+			changedAt: 10,
+			appliedAt: 20,
+		});
+		expect(await repository.appliedTimeZone('tenant-b')).toBeNull();
+		for (const text of [
+			'SELECT tenant_id FROM automations_time_zones',
+			'SELECT * FROM automations_time_zones',
+		]) {
+			await expect(
+				background.transaction((transaction) => transaction.query({ text }), {
+					access: 'read',
+				}),
+			).rejects.toBeDefined();
+		}
+		await expect(
+			background.transaction(
+				(transaction) =>
+					transaction.execute({
+						text: 'UPDATE automations_time_zones SET applied_revision = 0',
+					}),
+				{ access: 'write' },
+			),
+		).rejects.toBeDefined();
+		await expect(
+			runtime.transaction(
+				(transaction) =>
+					transaction.execute({
+						text: `INSERT INTO automations_time_zones
+						 (tenant_id, applied_revision, changed_at, applied_at)
+						 VALUES ('tenant-b', 1, 1, 1)`,
+					}),
+				{ access: 'write', tenantId: 'tenant-a' },
+			),
+		).rejects.toBeDefined();
+
+		/* A change no newer than the applied one plans nothing and writes nothing. */
+		let planned = 0;
+		const plan = () => {
+			planned += 1;
+			return [];
+		};
+		for (const revision of [7, 6]) {
+			expect(
+				await repository.applyTimeZoneChange(
+					{ ...change, revision, appliedAt: 30 },
+					plan,
+				),
+			).toBeNull();
+		}
+		expect(planned).toBe(0);
+		expect(await repository.appliedTimeZone('tenant-a')).toEqual({
+			revision: 7,
+			changedAt: 10,
+			appliedAt: 20,
+		});
+	});
+
 	it('advances a due schedule exactly once for the slot the poll named', async () => {
 		const { repository } = shared;
 		await repository.createSchedule(

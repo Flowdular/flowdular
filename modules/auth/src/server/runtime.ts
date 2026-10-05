@@ -29,11 +29,7 @@ import {
 	type ModuleMetrics,
 } from '@flowdular/server';
 import { createAuthenticationMiddleware } from '../middleware/authentication.ts';
-import {
-	AUDIT_ACTIONS,
-	AuthService,
-	type AuthPolicy,
-} from '../services/auth-service.ts';
+import { AuthService, type AuthPolicy } from '../services/auth-service.ts';
 import { authDataClasses } from '../services/data-classes.ts';
 import {
 	DatabaseAuthRepository,
@@ -53,6 +49,7 @@ import {
 import { SmtpMailDelivery } from '../services/mail-smtp.ts';
 import type { AuthRepository } from '../services/repository.ts';
 import { createSessionSweepRunner } from '../services/session-sweep-runner.ts';
+import { createSettingsLogSweepRunner } from '../services/settings-log-sweep-runner.ts';
 import { createAuthSettingsStore } from '../services/settings-store.ts';
 import type { AuthCookieConfig } from '../api/cookies.ts';
 import {
@@ -202,12 +199,6 @@ export interface AuthRuntime {
 		tenantId: string,
 		actor: Actor,
 	): Promise<readonly string[]>;
-	/**
-	 * Resolves once every settings audit row accepted so far has been written.
-	 * The kernel change listener is synchronous, so the write is started after
-	 * it returns; a caller that must observe the trail waits on this first.
-	 */
-	settingsAuditSettled(): Promise<void>;
 	/** Terminal, idempotent release used by platform HMR and process shutdown. */
 	dispose(): Promise<void>;
 }
@@ -519,6 +510,7 @@ function cookieName(options: AuthRuntimeOptions): string {
 }
 
 const EXPIRED_SESSION_SWEEP_MS = 15 * 60 * 1000;
+const SETTINGS_LOG_SWEEP_MS = 5 * 60 * 1000;
 
 const RUNTIME_REQUIREMENTS = {
 	dialectIds: [DATABASE_DIALECT_IDS.postgresql],
@@ -800,6 +792,7 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 		});
 		// Expired rows only matter for storage; the lookup already filters them.
 		sessionSweep.start();
+		settingsLogSweep.start();
 		return authService;
 	};
 	const service = (): Promise<AuthService> => {
@@ -815,51 +808,12 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 		sweep: service,
 		intervalMs: EXPIRED_SESSION_SWEEP_MS,
 	});
-	/* Settings writes are audited at the store owner, so the settings
-	   administration API in system.core needs no audit dependency. The kernel
-	   change listener is synchronous, so the audit row is written after it
-	   returns and a failure is reported instead of failing the setting. */
-	/* An accepted settings change owes an audit row. Tracking the in-flight
-	   writes is what lets disposal drain them instead of dropping them. */
-	const settingsAuditWrites = new Set<Promise<void>>();
-	const detachSettingsAudit = moduleSettings.onChange((change) => {
-		const write = (async () => {
-			const { repository } = await open();
-			const membership = await repository.findAccountMembership(
-				change.actor.accountId,
-				change.actor.tenantId,
-			);
-			await (
-				await service()
-			).recordSettingsUpdate(
-				{
-					accountId: change.actor.accountId,
-					tenantId: change.actor.tenantId,
-					email: membership?.email ?? change.actor.accountId,
-					role: membership?.role ?? '',
-					scopes: membership?.scopes ?? [],
-				},
-				change,
-			);
-		})().catch((error: unknown) => {
-			console.error(
-				`[auth.core] settings audit write failed for ${change.moduleId}.${change.key}:`,
-				error instanceof Error ? error.message : error,
-			);
-			const action =
-				change.kind === 'flag'
-					? AUDIT_ACTIONS.settingsFlagChanged
-					: AUDIT_ACTIONS.settingsUpdated;
-			options.metrics?.counter('audit_write_failures_total', { action });
-			errorSink.report({
-				at: Date.now(),
-				name: 'AuditWriteFailed',
-				module: 'auth.core',
-				message: `Audit write failed for ${action}.`,
-			});
-		});
-		settingsAuditWrites.add(write);
-		void write.finally(() => settingsAuditWrites.delete(write));
+	/* A platform change whose workspace event its saving process could not
+	   write, and change log rows past the retention period, are this loop's;
+	   it starts with the service, like the session sweep. */
+	const settingsLogSweep = createSettingsLogSweepRunner({
+		repository,
+		intervalMs: SETTINGS_LOG_SWEEP_MS,
 	});
 	const securityHeaders = createSecurityHeadersMiddleware({
 		strictTransportSecurity: options.secureCookies,
@@ -916,17 +870,13 @@ export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
 				? [...new Set(membership.scopes)].sort()
 				: [];
 		},
-		async settingsAuditSettled() {
-			await Promise.allSettled([...settingsAuditWrites]);
-		},
 		async dispose() {
 			if (disposed) return;
 			disposed = true;
-			detachSettingsAudit();
-			await Promise.allSettled([...settingsAuditWrites]);
 			/* A sweep in flight holds the lease it deletes under, so the loop is
 			   drained before anything is released. */
 			await sessionSweep.dispose();
+			await settingsLogSweep.dispose();
 			const database = opened;
 			opened = undefined;
 			servicePromise = undefined;

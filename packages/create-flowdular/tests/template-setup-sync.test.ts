@@ -5,6 +5,7 @@ const setupFiles = [
 	'access.ts',
 	'adapters.ts',
 	'environment.ts',
+	'gate.ts',
 	'index.ts',
 	'modules.ts',
 	'page.ts',
@@ -32,6 +33,7 @@ function sdkImports(source: string): string {
 			'@flowdular/module-auth/server',
 			'@flowdular/sdk/modules/auth/server',
 		)
+		.replaceAll('@flowdular/module-auth', '@flowdular/sdk/modules/auth')
 		.replaceAll('@flowdular/database', '@flowdular/sdk/database')
 		.replaceAll(
 			'@flowdular/kernel/runtime-config',

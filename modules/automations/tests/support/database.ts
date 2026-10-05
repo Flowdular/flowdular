@@ -30,6 +30,7 @@ const TENANT_TABLES = [
 	'automations_schedules',
 	'automations_triggers',
 	'automations_audit_events',
+	'automations_time_zones',
 ] as const;
 
 const REQUIREMENTS = {

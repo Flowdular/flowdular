@@ -14,6 +14,11 @@ core:
     risk: process
     supportsDryRun: true
     effect: runs the existing Docker Compose launcher in the operator's terminal after checking its files and Docker Compose; the launcher creates local secrets on first start and opens setup
+  deploy.start.vercel:
+    command: pnpm flowdular deploy start vercel --apply
+    risk: process
+    supportsDryRun: true
+    effect: drives the signed-in Vercel CLI in the operator's terminal to link the project, provision Neon PostgreSQL and its runtime and background roles, upload the stable keys from a 0600 local backup through stdin, connect a private Blob store, deploy to Production and print a one-time setup token whose SHA-256 alone is stored in Vercel
   module.source:
     command: pnpm flowdular module source add <name> <location> [--apply]
     risk: workspace-write

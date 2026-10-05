@@ -311,6 +311,7 @@ export async function runCommand(
 					'database restore-production --input <dir> --target <database> --grant <token> --tenant <id> [--allow-key-mismatch] [--platform-url <origin>|--platform-stopped] --apply --confirm restore-database',
 					'setup (interactive)|check|quick [--apply --confirm reset-local-auth]|migrate-state [--apply --confirm migrate-legacy-state]',
 					'deploy targets|plan <docker|kubernetes|render|vercel|cloudflare>|start docker --apply [--no-open] [--no-build]',
+					'deploy start vercel [--apply] [--project <name>] [--scope <team>] [--plan <hobby|pro>] [--database-url-env <NAME>] [--origin <https origin>] [--cron <expression>]',
 					...extensionCommands.map((entry) => entry.command.path.join(' ')),
 				],
 				options: [
@@ -329,7 +330,9 @@ export async function runCommand(
 
 		if (group === 'deploy') {
 			if (action === 'start') {
-				const descriptor = coreCapability('deploy.start.local')!;
+				const descriptor = coreCapability(
+					target === 'vercel' ? 'deploy.start.vercel' : 'deploy.start.local',
+				)!;
 				const refused =
 					environmentRefusal(descriptor, arguments_) ??
 					writeRefusal(descriptor, arguments_);
@@ -438,6 +441,7 @@ export async function runCommand(
 					'database.restore': ['database', 'restore'],
 					'database.restore.production': ['database', 'restore-production'],
 					'deploy.start.local': ['deploy', 'start', 'docker'],
+					'deploy.start.vercel': ['deploy', 'start', 'vercel'],
 				};
 				const alias = aliases[target];
 				if (alias)

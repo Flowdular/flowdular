@@ -69,6 +69,9 @@ export function createAuthenticationMiddleware(
 					'This API token may not be presented from this origin.',
 				);
 			}
+			/* Primed before the default ceiling is read, so a default another
+			   process changed applies within the settings staleness bound. */
+			await primeTenant?.(identity.principal.tenantId);
 			const decision = rateLimiter.consume(
 				identity.tokenId,
 				identity.rateLimitPerMinute > 0
@@ -90,7 +93,6 @@ export function createAuthenticationMiddleware(
 			context.state.set(AUTH_PRINCIPAL_STATE_KEY, identity.principal);
 			context.state.set(AUTH_TOKEN_PRINCIPAL_STATE_KEY, true);
 			context.state.set(AUTH_TOKEN_WRITES_STATE_KEY, identity.allowWrites);
-			await primeTenant?.(identity.principal.tenantId);
 			/* The caller learns what it has left from the answer it already
 			   receives, so tracking its own budget costs it no extra request. */
 			return rateHeaders(await next(), decision);

@@ -16,6 +16,9 @@ function draft(
 		start() {
 			events.push(`${name}:start`);
 		},
+		async startWorker() {
+			events.push(`${name}:worker`);
+		},
 		dispose() {
 			events.push(`${name}:dispose`);
 		},
@@ -38,7 +41,28 @@ describe('preview generation lifecycle', () => {
 			'previous:dispose',
 			'first:start',
 			'second:start',
+			'first:worker',
+			'second:worker',
 		]);
+	});
+
+	it('reports a draft worker that fails to start and still starts the rest', async () => {
+		const events: string[] = [];
+		const errors = await activatePreviewDrafts(
+			[
+				{
+					...draft('first', events),
+					async startWorker() {
+						throw new Error('first:worker failed');
+					},
+				},
+				draft('second', events),
+			],
+			() => undefined,
+		);
+
+		expect(errors).toEqual(['first:worker failed']);
+		expect(events).toContain('second:worker');
 	});
 
 	it('disposes only the candidate when a later prepare hook fails', async () => {

@@ -602,6 +602,7 @@ export function validateModuleSpec(path: string): Promise<FileValidation> {
 const SKIPPED_DIRECTORIES = new Set([
 	'.git',
 	'.flowdular',
+	'.vercel',
 	'node_modules',
 	'dist',
 ]);

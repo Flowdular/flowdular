@@ -7,6 +7,7 @@ import {
 	validateWorkspaceName,
 	validateWorkspaceSlug,
 } from '@flowdular/sdk/modules/auth/server';
+import { AUTH_MODULE_SETTINGS } from '@flowdular/sdk/modules/auth';
 import { randomBytes } from 'node:crypto';
 import { ServerRoute, type Context } from '@octanejs/app-core';
 import {
@@ -43,6 +44,7 @@ import {
 } from './page.ts';
 import { classifySetupFailure } from './sanitize.ts';
 import {
+	claimFirstRun,
 	seedFirstRun,
 	SetupSeedError,
 	type FirstRunOwner,
@@ -67,6 +69,9 @@ export interface SetupRoutesOptions {
 	readonly secureCookies: boolean;
 	/** Supplied by tests; production exits after the completed page requests restart. */
 	readonly restartApplication?: (exitCode: number) => void;
+	/** Set when setup runs inside the composed application, which serves itself
+	 *  once the first workspace exists instead of restarting. */
+	readonly inPlace?: { readonly onClaimed: () => void } | undefined;
 }
 
 interface ConnectionState {
@@ -109,6 +114,7 @@ function canAutoRestart(
 	state: DoneState,
 ): boolean {
 	return (
+		!options.inPlace &&
 		options.environment.FD_SETUP_AUTO_RESTART === 'true' &&
 		(options.databasePreconfigured ||
 			state.environment?.status === 'written' ||
@@ -116,11 +122,29 @@ function canAutoRestart(
 	);
 }
 
+/* auth.core's rule for this variable: blank means the default, and a value
+   outside the setting's bounds stops startup, as auth.core does at boot. */
+function passwordMinLength(environment: NodeJS.ProcessEnv): number {
+	const { defaultValue, min, max } =
+		AUTH_MODULE_SETTINGS.settings.passwordMinLength!;
+	const value = environment.FD_AUTH_PASSWORD_MIN_LENGTH;
+	if (value === undefined || value.trim() === '') return Number(defaultValue);
+	const parsed = Number(value);
+	if (!Number.isSafeInteger(parsed) || parsed < min! || parsed > max!) {
+		throw new Error(
+			`FD_AUTH_PASSWORD_MIN_LENGTH must be an integer between ${min} and ${max}.`,
+		);
+	}
+	return parsed;
+}
+
 function emptyView(options: SetupRoutesOptions): SetupPageView {
 	return {
 		step: 'Unlock',
 		databasePreconfigured: options.databasePreconfigured,
+		inPlace: options.inPlace !== undefined,
 		autoRestart:
+			!options.inPlace &&
 			options.databasePreconfigured &&
 			options.environment.FD_SETUP_AUTO_RESTART === 'true',
 		csrfToken: null,
@@ -141,6 +165,9 @@ function emptyView(options: SetupRoutesOptions): SetupPageView {
 		seed: null,
 		modulesApproximated: options.modulesApproximated,
 		tokenFile: options.tokenFile,
+		/* auth.core creates the owner with this minimum, so the workspace step
+		   has to refuse what the final step would. */
+		passwordMinLength: passwordMinLength(options.environment),
 	};
 }
 
@@ -268,11 +295,13 @@ function compatibility(
 	}));
 }
 
-export function createSetupRoutes(
+/** Serves GET and POST /setup. */
+export function createSetupHandler(
 	options: SetupRoutesOptions,
-): readonly ServerRoute[] {
+): (context: Context) => Promise<Response> {
 	const base = emptyView(options);
 	let restartScheduled = false;
+	let applying = false;
 	const preconfiguredState = (): DatabaseState => ({
 		kind: 'database',
 		adapterId: POSTGRESQL_ADAPTER_ID,
@@ -367,7 +396,7 @@ export function createSetupRoutes(
 		const result = options.access.open(formString(form, 'token').trim());
 		if (result.verdict === 'locked') {
 			return unlockView(
-				'Too many incorrect tokens. Setup is locked for a few minutes; restarting this deployment issues a new token.',
+				`Too many incorrect tokens. Setup is locked for a few minutes; ${options.inPlace ? 'running the deploy command again' : 'restarting this deployment'} issues a new token.`,
 				429,
 				{ 'retry-after': String(Math.ceil(result.retryAfterMs / 1000)) },
 			);
@@ -484,10 +513,7 @@ export function createSetupRoutes(
 			validateEmailAddress(values.ownerEmail!),
 		);
 		try {
-			const minimum = Number(
-				options.environment.FD_AUTH_PASSWORD_MIN_LENGTH ?? '8',
-			);
-			assertPasswordPolicy(password, minimum, values.ownerEmail);
+			assertPasswordPolicy(password, base.passwordMinLength, values.ownerEmail);
 		} catch (error) {
 			fieldErrors.ownerPassword =
 				error instanceof AuthServiceError
@@ -566,11 +592,19 @@ export function createSetupRoutes(
 				'One or more enabled modules cannot run on this database, so nothing was applied.',
 			);
 		}
+		if (applying) {
+			return reviewView(
+				session,
+				state,
+				'Setup is already being applied. Wait a moment, then reload this page.',
+			);
+		}
 		const secrets = [
 			...(state.input ? setupSecretValues(state.input) : []),
 			state.owner.ownerPassword,
 		];
 		let seed: FirstRunSeed;
+		applying = true;
 		try {
 			if (state.input) {
 				await adapter!.descriptor.provision(state.input, {
@@ -587,12 +621,19 @@ export function createSetupRoutes(
 					);
 			try {
 				await provider.check();
-				seed = await seedFirstRun(
-					provider,
-					options.environment,
-					options.workspaceRoot,
-					state.owner,
-				);
+				const provision = () =>
+					seedFirstRun(
+						provider,
+						options.environment,
+						options.workspaceRoot,
+						state.owner,
+					);
+				/* An embedded database is one connection inside this process, which
+				   the in-process guard above already serializes. */
+				seed =
+					provider.adapter === 'postgresql'
+						? await claimFirstRun(provider, provision)
+						: await provision();
 			} finally {
 				await provider.dispose();
 			}
@@ -608,7 +649,10 @@ export function createSetupRoutes(
 				state,
 				classifySetupFailure(error, secrets).message,
 			);
+		} finally {
+			applying = false;
 		}
+		options.inPlace?.onClaimed();
 		/* Configuration is stored last: an earlier failure leaves this deployment
 		   exactly as it was, still unconfigured, still on this screen. */
 		const done: DoneState = {
@@ -692,6 +736,13 @@ export function createSetupRoutes(
 		return render(context);
 	};
 
+	return async (context) =>
+		context.request.method === 'POST' ? submit(context) : render(context);
+}
+
+export function createSetupRoutes(
+	options: SetupRoutesOptions,
+): readonly ServerRoute[] {
 	/* While installation has no workspace, only setup and process health are
 	   served. A configured database does not expose the application until its
 	   first owner has completed the wizard. */
@@ -699,8 +750,7 @@ export function createSetupRoutes(
 		new ServerRoute({
 			path: '/setup',
 			methods: ['GET', 'POST'],
-			handler: (context) =>
-				context.request.method === 'POST' ? submit(context) : render(context),
+			handler: createSetupHandler(options),
 		}),
 		new ServerRoute({
 			path: '/',

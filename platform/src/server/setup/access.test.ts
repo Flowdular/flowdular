@@ -4,6 +4,7 @@ import {
 	generateSetupToken,
 	readSetupSessionCookie,
 	setupSessionCookie,
+	setupTokenDigest,
 } from './access.ts';
 
 const TOKEN = 'a'.repeat(43);
@@ -16,6 +17,20 @@ describe('setup access', () => {
 		expect(access.open('').verdict).toBe('denied');
 		expect(access.open('b'.repeat(43)).verdict).toBe('denied');
 		expect(access.open(TOKEN.slice(0, 42)).verdict).toBe('denied');
+	});
+
+	it('accepts only the token whose SHA-256 the deployment holds', () => {
+		const access = createSetupAccess({ sha256: setupTokenDigest(TOKEN) });
+
+		expect(access.open(setupTokenDigest(TOKEN)).verdict).toBe('denied');
+		expect(access.open('b'.repeat(43)).verdict).toBe('denied');
+		expect(access.open(TOKEN).verdict).toBe('granted');
+		expect(() => createSetupAccess({ sha256: 'A'.repeat(64) })).toThrow(
+			/FD_SETUP_TOKEN_SHA256/,
+		);
+		expect(() => createSetupAccess({ sha256: '' })).toThrow(
+			/FD_SETUP_TOKEN_SHA256/,
+		);
 	});
 
 	it('opens a session for the token and refuses a second cookie value', () => {

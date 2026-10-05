@@ -126,6 +126,8 @@ export interface AgentActionRuntime {
 	readonly capabilityV2: AgentActionExecutionCapabilityV2;
 	start(): void;
 	stop(): void;
+	/** Stops the loop and drains it; a later `start` resumes it. */
+	quiesce(): Promise<void>;
 	dispose(): Promise<void>;
 }
 
@@ -1568,6 +1570,13 @@ export function createAgentActionExecutionRuntime(
 		stop() {
 			stopped = true;
 			runner.stop();
+		},
+		async quiesce() {
+			this.stop();
+			for (const controller of inFlight.values()) {
+				controller.abort('worker-shutdown');
+			}
+			await runner.quiesce();
 		},
 		async dispose() {
 			this.stop();

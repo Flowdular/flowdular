@@ -149,7 +149,9 @@ export interface JobRunner {
 	 * Asks for a pass that can see work enqueued now. Idle, that is one pass. With
 	 * a pass in flight it is one follow-up pass once that pass ends, because a
 	 * pass that already found its source empty will not look again: every wake
-	 * arriving during the same pass coalesces into that single follow-up.
+	 * arriving during the same pass coalesces into that single follow-up. It
+	 * ignores `start` and `stop`, so a stopped runner still performs the pass;
+	 * only `dispose` silences it.
 	 */
 	wake(): void;
 	stop(): void;

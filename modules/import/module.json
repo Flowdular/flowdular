@@ -3,8 +3,8 @@
 	"schemaVersion": 1,
 	"id": "import.core",
 	"package": "@flowdular/module-import",
-	"version": "0.1.14",
-	"platformApi": "^0.2.0",
+	"version": "0.1.15",
+	"platformApi": "^0.2.2",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations"],
 	"platform": {

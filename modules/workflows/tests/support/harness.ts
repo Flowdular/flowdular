@@ -4,6 +4,7 @@ import {
 	type AuthRuntime,
 } from '@flowdular/module-auth/server';
 import { createPlatformCapabilityRegistry } from '@flowdular/kernel';
+import type { ModuleServerComposition } from '@flowdular/server';
 import {
 	AGENT_ACTION_EXECUTION_CAPABILITY_V2,
 	AGENT_RUN_EXECUTION_CAPABILITY,
@@ -78,7 +79,7 @@ export function executionCapabilities() {
 /* The real authentication middleware publishes the principal and the session
    the CSRF guard reads, so the routes see the same state the platform gives
    them rather than a hand-placed principal. */
-function authRuntime(session: AuthPrincipal): AuthRuntime {
+export function authRuntime(session: AuthPrincipal): AuthRuntime {
 	const cookie = { name: COOKIE_NAME, secure: false, maxAgeSeconds: 3_600 };
 	const service = {
 		resolveSession: async (token: string | null) =>
@@ -106,14 +107,17 @@ export interface MutationOptions {
 	readonly csrfToken?: string | undefined;
 }
 
-export interface HttpHarness {
-	readonly runtime: WorkflowsRuntime;
+export interface SessionClient {
 	call(path: string): Promise<Response>;
 	mutation(
 		path: string,
 		body: unknown,
 		options?: MutationOptions,
 	): Promise<Response>;
+}
+
+export interface HttpHarness extends SessionClient {
+	readonly runtime: WorkflowsRuntime;
 	dispose(): Promise<void>;
 }
 
@@ -131,7 +135,20 @@ export function openHttpHarness(
 		...options,
 	});
 	const auth = authRuntime(session);
-	const routes = createWorkflowsRoutes(auth, runtime);
+	return {
+		runtime,
+		...sessionClient(createWorkflowsRoutes(auth, runtime), auth),
+		dispose: async () => {
+			await runtime.dispose();
+		},
+	};
+}
+
+/** The same browser session in front of any set of routes, a composition's included. */
+export function sessionClient(
+	routes: ModuleServerComposition['routes'],
+	auth: AuthRuntime,
+): SessionClient {
 	const invoke = async (path: string, init: RequestInit): Promise<Response> => {
 		const method = init.method ?? 'GET';
 		const pathname = path.split('?')[0]!;
@@ -153,7 +170,6 @@ export function openHttpHarness(
 		return route.handler(context as never);
 	};
 	return {
-		runtime,
 		call: (path) => invoke(path, {}),
 		mutation: (path, body, options = {}) =>
 			invoke(path, {
@@ -165,8 +181,5 @@ export function openHttpHarness(
 				},
 				body: JSON.stringify(body),
 			}),
-		dispose: async () => {
-			await runtime.dispose();
-		},
 	};
 }

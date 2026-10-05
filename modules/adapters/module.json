@@ -3,8 +3,8 @@
 	"schemaVersion": 1,
 	"id": "adapters.core",
 	"package": "@flowdular/module-adapters",
-	"version": "0.1.5",
-	"platformApi": "^0.2.0",
+	"version": "0.1.6",
+	"platformApi": "^0.2.2",
 	"profile": "full",
 	"capabilities": ["api", "database", "client", "translations"],
 	"platform": {

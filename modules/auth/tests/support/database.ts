@@ -23,6 +23,7 @@ const TABLES = [
 	'auth_external_identities',
 	'auth_identity_providers',
 	'module_settings',
+	'module_settings_changes',
 ];
 
 export interface AuthTestDatabase {

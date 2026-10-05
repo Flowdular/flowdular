@@ -3,7 +3,6 @@ import {
 	serviceActor,
 	userActor,
 	type Actor,
-	type ModuleSettingChange,
 	type UserActor,
 } from '@flowdular/kernel';
 import { DEFAULT_APPLICATION_BRANDING } from '@flowdular/contracts';
@@ -2945,34 +2944,6 @@ export class AuthService {
 
 	async deleteExpiredSessions(): Promise<number> {
 		return this.#repository.deleteExpiredSessions(this.#now());
-	}
-
-	/**
-	 * The one audit row a committed settings change owes. A flag is recorded
-	 * under its own action with the values around the change, because an
-	 * operator reviewing a flag needs to see what it was turned to; every other
-	 * setting keeps the plain record, so no declared value ever reaches the
-	 * trail by the side door.
-	 */
-	async recordSettingsUpdate(
-		actor: AuthActor,
-		change: ModuleSettingChange,
-	): Promise<void> {
-		const flag = change.kind === 'flag';
-		await this.#audit(
-			actor.tenantId,
-			this.#actorOf(actor),
-			flag ? AUDIT_ACTIONS.settingsFlagChanged : AUDIT_ACTIONS.settingsUpdated,
-			'setting',
-			`${change.moduleId}.${change.key}`,
-			flag
-				? {
-						cleared: change.cleared,
-						previous: change.previous,
-						next: change.next,
-					}
-				: { cleared: change.cleared },
-		);
 	}
 
 	/**

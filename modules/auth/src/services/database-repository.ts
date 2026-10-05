@@ -6,11 +6,17 @@ import {
 	type DatabaseStatement,
 	type DatabaseTransaction,
 } from '@flowdular/database';
-import type {
-	ActorKind,
-	ModuleSettingRecord,
-	ModuleSettingValue,
-	UserActor,
+import {
+	ModuleSettingsError,
+	PLATFORM_SETTINGS_TENANT,
+	type ActorKind,
+	type ModuleSettingChangesPage,
+	type ModuleSettingChangesRequest,
+	type ModuleSettingLogEntry,
+	type ModuleSettingRecord,
+	type ModuleSettingsLogPosition,
+	type ModuleSettingValue,
+	type UserActor,
 } from '@flowdular/kernel';
 import { keysetWhere } from '@flowdular/server';
 import { BUILTIN_ROLES } from '../acl/scopes.ts';
@@ -50,6 +56,9 @@ import {
 	type MfaChallengeRecord,
 	type PasswordResetTokenRecord,
 	type SessionExportRecord,
+	type SettingsChangeAudit,
+	type SettingsChangeEvent,
+	type SettingsWriteResult,
 	type SignInFailureRecord,
 	type TenantInvitationRecord,
 	type TenantMember,
@@ -83,6 +92,49 @@ export const EXPIRED_SESSION_SWEEP_BATCH = 1_000;
  * carries this reserved id instead.
  */
 export const PLATFORM_SETTINGS_STORAGE_TENANT = 'auth.core:platform';
+
+/** How long a settings change stays in the log once a newer one supersedes it. */
+export const SETTINGS_CHANGES_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+/* A cursor read within this window was taken after every row the sweep may
+   remove had committed: such a row is older than the retention period, and a
+   commit never trails its clock reading by the day between the two. */
+const SETTINGS_CURSOR_LIFETIME_MS =
+	SETTINGS_CHANGES_RETENTION_MS - 24 * 60 * 60 * 1000;
+
+/* Every append holds this lock from before it draws a revision until it
+   commits, so revisions commit in the order they are drawn and a reader past
+   revision N never later finds a committed revision below N. */
+const SETTINGS_CHANGES_LOCK =
+	"SELECT pg_advisory_xact_lock(hashtextextended('auth.core.module-settings-changes', 0))";
+
+const DATABASE_NOW_MS =
+	'(extract(epoch FROM clock_timestamp()) * 1000)::bigint';
+const DATABASE_STATEMENT_MS =
+	'(extract(epoch FROM statement_timestamp()) * 1000)::bigint';
+const SUPERSEDED_SETTINGS_CHANGE = `EXISTS (
+	SELECT 1 FROM module_settings_changes n
+	WHERE n.tenant_id = c.tenant_id AND n.module_id = c.module_id
+	  AND n.key = c.key AND n.revision > c.revision)`;
+
+interface SettingsChangeRow {
+	read_at: unknown;
+	revision: unknown;
+	tenant_id: string | null;
+	module_id: string | null;
+	key: string | null;
+	cleared: unknown;
+	changed_at: unknown;
+}
+
+interface PendingSettingsChangeRow {
+	module_id: string;
+	key: string;
+	cleared: unknown;
+	changed_at: unknown;
+	changed_by: string;
+	origin_tenant_id: string | null;
+}
 
 interface ApiTokenRow {
 	id: string;
@@ -2604,53 +2656,348 @@ export class DatabaseAuthRepository implements AuthRepository {
 		);
 		const values: Record<string, ModuleSettingValue> = {};
 		for (const row of rows) {
-			const value = JSON.parse(row.value_json) as unknown;
-			if (
-				typeof value === 'string' ||
-				typeof value === 'number' ||
-				typeof value === 'boolean'
-			) {
-				values[row.key] = value;
-			}
+			const value = storedSettingValue(row.value_json);
+			if (value !== undefined) values[row.key] = value;
 		}
 		return values;
 	}
 
-	async saveSetting(record: ModuleSettingRecord): Promise<void> {
-		const storage = settingsTenant(record.tenantId);
-		await this.#exec(storage, {
-			text: `INSERT INTO module_settings
-			       (tenant_id, module_id, key, value_json, updated_at, updated_by)
-			       VALUES ($1, $2, $3, $4, $5, $6)
-			       ON CONFLICT (tenant_id, module_id, key) DO UPDATE SET
-			         value_json = excluded.value_json,
-			         updated_at = excluded.updated_at,
-			         updated_by = excluded.updated_by`,
-			parameters: [
-				storage,
-				record.moduleId,
-				record.key,
-				JSON.stringify(record.value),
-				record.updatedAt,
-				record.updatedBy,
-			],
-		});
+	async saveSetting(
+		record: ModuleSettingRecord,
+		audit: SettingsChangeAudit,
+	): Promise<SettingsWriteResult> {
+		return this.#writeSetting(
+			record.tenantId,
+			record.moduleId,
+			record.key,
+			false,
+			audit,
+			(transaction, storage) =>
+				transaction.execute({
+					text: `INSERT INTO module_settings
+					       (tenant_id, module_id, key, value_json, updated_at, updated_by)
+					       VALUES ($1, $2, $3, $4, $5, $6)
+					       ON CONFLICT (tenant_id, module_id, key) DO UPDATE SET
+					         value_json = excluded.value_json,
+					         updated_at = excluded.updated_at,
+					         updated_by = excluded.updated_by`,
+					parameters: [
+						storage,
+						record.moduleId,
+						record.key,
+						JSON.stringify(record.value),
+						record.updatedAt,
+						record.updatedBy,
+					],
+				}),
+		);
 	}
 
 	async clearSetting(
 		tenantId: string,
 		moduleId: string,
 		key: string,
-	): Promise<void> {
+		audit: SettingsChangeAudit,
+	): Promise<SettingsWriteResult> {
+		return this.#writeSetting(
+			tenantId,
+			moduleId,
+			key,
+			true,
+			audit,
+			(transaction, storage) =>
+				transaction.execute({
+					text: `DELETE FROM module_settings
+					       WHERE tenant_id = $1 AND module_id = $2 AND key = $3`,
+					parameters: [storage, moduleId, key],
+				}),
+		);
+	}
+
+	/* The value, its change row and a tenant setting's event commit together.
+	   The lock comes first, so the stored value read here is the one this write
+	   replaces and the revision drawn below commits before any later one. */
+	async #writeSetting(
+		tenantId: string,
+		moduleId: string,
+		key: string,
+		cleared: boolean,
+		audit: SettingsChangeAudit,
+		write: (
+			transaction: DatabaseTransaction,
+			storage: string,
+		) => Promise<unknown>,
+	): Promise<SettingsWriteResult> {
 		const storage = settingsTenant(tenantId);
-		await this.#exec(storage, {
-			text: `DELETE FROM module_settings
-			       WHERE tenant_id = $1 AND module_id = $2 AND key = $3`,
-			parameters: [storage, moduleId, key],
+		const platform = storage === PLATFORM_SETTINGS_STORAGE_TENANT;
+		const origin = audit.actor.tenantId === '' ? null : audit.actor.tenantId;
+		const auditPending = platform && origin !== null;
+		const revision = await this.#tx(storage, 'write', async (transaction) => {
+			await transaction.query({ text: SETTINGS_CHANGES_LOCK });
+			const stored = await transaction.query<{ value_json: string }>({
+				text: `SELECT value_json FROM module_settings
+				       WHERE tenant_id = $1 AND module_id = $2 AND key = $3`,
+				parameters: [storage, moduleId, key],
+			});
+			const previous = stored.rows[0]
+				? storedSettingValue(stored.rows[0].value_json)
+				: undefined;
+			await write(transaction, storage);
+			const appended = await transaction.query<{
+				revision: unknown;
+				changed_at: unknown;
+			}>({
+				text: `INSERT INTO module_settings_changes
+				       (tenant_id, module_id, key, cleared, changed_at, changed_by,
+				        origin_tenant_id, audit_pending)
+				       VALUES ($1, $2, $3, $4, ${DATABASE_NOW_MS}, $5, $6, $7)
+				       RETURNING revision, changed_at`,
+				parameters: [
+					storage,
+					moduleId,
+					key,
+					cleared ? 1 : 0,
+					audit.actor.accountId,
+					origin,
+					auditPending ? 1 : 0,
+				],
+			});
+			const row = appended.rows[0];
+			if (!row) throw new Error('The settings change log refused the append.');
+			const drawn = integer(row.revision, 'revision');
+			if (!platform) {
+				await this.#appendSettingsEvent(transaction, storage, {
+					revision: drawn,
+					occurredAt: integer(row.changed_at, 'changed_at'),
+					accountId: audit.actor.accountId,
+					subjectId: `${moduleId}.${key}`,
+					event: audit.event(previous),
+				});
+			}
+			return drawn;
 		});
+		return { revision, auditPending };
+	}
+
+	async #appendSettingsEvent(
+		transaction: DatabaseTransaction,
+		tenantId: string,
+		change: {
+			readonly revision: number;
+			readonly occurredAt: number;
+			readonly accountId: string;
+			readonly subjectId: string;
+			readonly event: SettingsChangeEvent;
+		},
+	): Promise<void> {
+		await transaction.execute({
+			text: `INSERT INTO auth_audit
+			       (tenant_id, actor_account_id, actor_label, actor_kind, action,
+			        subject_type, subject_id, metadata_json, occurred_at,
+			        settings_revision)
+			       SELECT $1, $2,
+			              COALESCE((SELECT a.email FROM auth_accounts a
+			                        JOIN auth_memberships m ON m.account_id = a.id
+			                        WHERE a.id = $2 AND m.tenant_id = $1), $2),
+			              'user', $3, 'setting', $4, $5, $6, $7
+			       ON CONFLICT (tenant_id, settings_revision)
+			         WHERE settings_revision IS NOT NULL DO NOTHING`,
+			parameters: [
+				tenantId,
+				change.accountId,
+				change.event.action,
+				change.subjectId,
+				JSON.stringify(change.event.metadata),
+				change.occurredAt,
+				change.revision,
+			],
+		});
+	}
+
+	async completeSettingsAudit(
+		revision: number,
+		event: (cleared: boolean) => SettingsChangeEvent,
+	): Promise<void> {
+		const rows = await this.#query<PendingSettingsChangeRow>(
+			PLATFORM_SETTINGS_STORAGE_TENANT,
+			{
+				text: `SELECT module_id, key, cleared, changed_at, changed_by,
+				              origin_tenant_id
+				       FROM module_settings_changes
+				       WHERE tenant_id = $1 AND revision = $2 AND audit_pending = 1`,
+				parameters: [PLATFORM_SETTINGS_STORAGE_TENANT, revision],
+			},
+		);
+		const row = rows[0];
+		if (!row?.origin_tenant_id) return;
+		const origin = row.origin_tenant_id;
+		await this.#tx(origin, 'write', (transaction) =>
+			this.#appendSettingsEvent(transaction, origin, {
+				revision,
+				occurredAt: integer(row.changed_at, 'changed_at'),
+				accountId: row.changed_by,
+				subjectId: `${row.module_id}.${row.key}`,
+				event: event(integer(row.cleared, 'cleared') === 1),
+			}),
+		);
+		await this.#exec(PLATFORM_SETTINGS_STORAGE_TENANT, {
+			text: `UPDATE module_settings_changes SET audit_pending = 0
+			       WHERE tenant_id = $1 AND revision = $2`,
+			parameters: [PLATFORM_SETTINGS_STORAGE_TENANT, revision],
+		});
+	}
+
+	async pendingSettingsAudits(limit: number): Promise<readonly number[]> {
+		const rows = await this.#query<{ revision: unknown }>(
+			PLATFORM_SETTINGS_STORAGE_TENANT,
+			{
+				text: `SELECT revision FROM module_settings_changes
+				       WHERE tenant_id = $1 AND audit_pending = 1
+				       ORDER BY revision LIMIT $2`,
+				parameters: [PLATFORM_SETTINGS_STORAGE_TENANT, limit],
+			},
+		);
+		return rows.map((row) => integer(row.revision, 'revision'));
+	}
+
+	async newestSettingsRevision(): Promise<ModuleSettingsLogPosition> {
+		const rows = await this.#route<{ revision: unknown; read_at: unknown }>({
+			text: `SELECT COALESCE((SELECT max(revision) FROM module_settings_changes), 0)
+			         AS revision,
+			       ${DATABASE_STATEMENT_MS} AS read_at`,
+		});
+		const row = rows[0];
+		if (!row) throw new Error('The settings change log answered nothing.');
+		const revision = integer(row.revision, 'revision');
+		return {
+			revision,
+			cursor: settingsCursor(revision, integer(row.read_at, 'read_at')),
+		};
+	}
+
+	async settingsChangesAfter(
+		request: ModuleSettingChangesRequest,
+	): Promise<ModuleSettingChangesPage> {
+		const position =
+			request.after === null ? null : readSettingsCursor(request.after);
+		const parameters: DatabaseParameter[] = [
+			position?.revision ?? 0,
+			request.limit + 1,
+		];
+		let narrowed = '';
+		if (request.moduleId !== undefined) {
+			parameters.push(request.moduleId);
+			narrowed += ` AND module_id = $${parameters.length}`;
+		}
+		if (request.key !== undefined) {
+			parameters.push(request.key);
+			narrowed += ` AND key = $${parameters.length}`;
+		}
+		/* The lateral join answers the read time even when no change follows, so
+		   an empty page still hands back a fresh cursor. */
+		const rows = await this.#route<SettingsChangeRow>({
+			text: `SELECT clock.read_at, c.revision, c.tenant_id, c.module_id, c.key,
+			              c.cleared, c.changed_at
+			       FROM (SELECT ${DATABASE_STATEMENT_MS} AS read_at) AS clock
+			       LEFT JOIN LATERAL (
+			         SELECT revision, tenant_id, module_id, key, cleared, changed_at
+			         FROM module_settings_changes
+			         WHERE revision > $1${narrowed}
+			         ORDER BY revision LIMIT $2
+			       ) AS c ON true
+			       ORDER BY c.revision`,
+			parameters,
+		});
+		const readAt = integer(rows[0]?.read_at, 'read_at');
+		if (position && readAt - position.readAt > SETTINGS_CURSOR_LIFETIME_MS) {
+			return { expired: true };
+		}
+		const changes: ModuleSettingLogEntry[] = [];
+		for (const row of rows) {
+			if (row.revision === null || changes.length === request.limit) continue;
+			changes.push({
+				revision: integer(row.revision, 'revision'),
+				tenantId:
+					row.tenant_id === PLATFORM_SETTINGS_STORAGE_TENANT
+						? PLATFORM_SETTINGS_TENANT
+						: (row.tenant_id ?? ''),
+				moduleId: row.module_id ?? '',
+				key: row.key ?? '',
+				cleared: integer(row.cleared, 'cleared') === 1,
+				changedAt: integer(row.changed_at, 'changed_at'),
+			});
+		}
+		const last = changes.at(-1)?.revision ?? position?.revision ?? 0;
+		return {
+			expired: false,
+			changes,
+			cursor: settingsCursor(last, readAt),
+			more: rows.length > request.limit,
+		};
+	}
+
+	/**
+	 * Removes change rows older than SETTINGS_CHANGES_RETENTION_MS that a newer
+	 * change of the same setting supersedes: at most `batch` in one transaction
+	 * per tenant, the rest left to the next pass. The newest row of every
+	 * setting stays whatever its age, and a row whose workspace event is still
+	 * owed stays until the event is written.
+	 */
+	async deleteSupersededSettingsChanges(batch: number): Promise<number> {
+		const tenants = await this.#route<RoutedTenantRow>({
+			text: `SELECT DISTINCT c.tenant_id FROM module_settings_changes c
+			       WHERE c.changed_at < ${DATABASE_STATEMENT_MS} - $1
+			         AND ${SUPERSEDED_SETTINGS_CHANGE}`,
+			parameters: [SETTINGS_CHANGES_RETENTION_MS],
+		});
+		let removed = 0;
+		for (const tenant of tenants) {
+			removed += await this.#exec(tenant.tenant_id, {
+				text: `DELETE FROM module_settings_changes WHERE revision IN (
+				         SELECT c.revision FROM module_settings_changes c
+				         WHERE c.tenant_id = $1 AND c.audit_pending = 0
+				           AND c.changed_at < ${DATABASE_STATEMENT_MS} - $2
+				           AND ${SUPERSEDED_SETTINGS_CHANGE}
+				         ORDER BY c.revision LIMIT $3)`,
+				parameters: [tenant.tenant_id, SETTINGS_CHANGES_RETENTION_MS, batch],
+			});
+		}
+		return removed;
 	}
 }
 
 function settingsTenant(tenantId: string): string {
 	return tenantId === '' ? PLATFORM_SETTINGS_STORAGE_TENANT : tenantId;
+}
+
+function storedSettingValue(json: string): ModuleSettingValue | undefined {
+	const value = JSON.parse(json) as unknown;
+	return typeof value === 'string' ||
+		typeof value === 'number' ||
+		typeof value === 'boolean'
+		? value
+		: undefined;
+}
+
+/** The opaque cursor of a log read up to `revision` that began at `readAt`. */
+export function settingsCursor(revision: number, readAt: number): string {
+	return Buffer.from(`${revision}:${readAt}`).toString('base64url');
+}
+
+function readSettingsCursor(cursor: string): {
+	readonly revision: number;
+	readonly readAt: number;
+} {
+	const match = /^(\d{1,16}):(\d{1,16})$/.exec(
+		Buffer.from(cursor, 'base64url').toString('utf8'),
+	);
+	const revision = Number(match?.[1]);
+	const readAt = Number(match?.[2]);
+	if (!Number.isSafeInteger(revision) || !Number.isSafeInteger(readAt)) {
+		throw new ModuleSettingsError(
+			'INVALID_SETTINGS_CURSOR',
+			'The settings change cursor is not one this store answered.',
+		);
+	}
+	return { revision, readAt };
 }

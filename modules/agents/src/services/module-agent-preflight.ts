@@ -18,7 +18,7 @@ interface StoredModuleAgentDefinition {
    sentinel tenant on the runtime handle, so the boot read uses the same one. */
 const MODULE_AGENT_CATALOG_TENANT = '__flowdular_module_agents__';
 
-/* Validate persisted revision high-water marks before HMR retires the healthy
+/* Validate persisted content hashes before HMR retires the healthy
    generation. This read is deliberately the only database work the new
    generation does up front: migrations, reconciliation, vault access, workers
    and timers still begin only after the old generation has released its
@@ -63,11 +63,9 @@ export async function preflightModuleAgentDefinitions(
 			const previous = byAgent.get(definition.id);
 			if (!previous) continue;
 			const revision = Number(previous.definition_revision);
-			if (definition.definitionRevision < revision) {
-				throw new Error(
-					`MODULE_AGENT_REVISION_DOWNGRADE: ${definition.id} registered revision ${definition.definitionRevision} after ${revision}.`,
-				);
-			}
+			/* A lower revision is an older deployment still serving, or one rolled
+			   back below the catalogue: it is superseded for that agent when it
+			   opens, never refused here. */
 			if (
 				definition.definitionRevision === revision &&
 				moduleAgentDefinitionHash(definition) !== previous.content_hash

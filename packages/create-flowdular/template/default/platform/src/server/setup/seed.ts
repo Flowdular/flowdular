@@ -30,7 +30,7 @@ export interface FirstRunSeed {
 
 export class SetupSeedError extends Error {
 	constructor(
-		readonly code: 'DATABASE_NOT_EMPTY',
+		readonly code: 'DATABASE_NOT_EMPTY' | 'SETUP_IN_PROGRESS',
 		message: string,
 	) {
 		super(message);
@@ -88,5 +88,58 @@ export async function seedFirstRun(
 		};
 	} finally {
 		await runtime.dispose();
+	}
+}
+
+/**
+ * Runs a first-run seed under a PostgreSQL advisory lock, so two processes on
+ * one database cannot both pass the empty check above and each create a first
+ * workspace. A second claimant is refused, not queued. The lock is held by its
+ * own transaction, and the seed runs outside that transaction's async context
+ * because an adapter refuses nested use from inside one.
+ */
+export async function claimFirstRun<T>(
+	databases: DatabaseProvider,
+	seed: () => Promise<T>,
+): Promise<T> {
+	const lease = await databases.acquire({
+		namespace: 'platform.setup',
+		purpose: 'migration',
+	});
+	try {
+		let release!: () => void;
+		const released = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let report!: (claimed: boolean) => void;
+		const reported = new Promise<boolean>((resolve) => {
+			report = resolve;
+		});
+		const held = lease.database.transaction(async (transaction) => {
+			const result = await transaction.query<{ claimed: boolean }>({
+				text: 'SELECT pg_try_advisory_xact_lock(hashtext($1), hashtext($2)) AS claimed',
+				parameters: ['coreloom-first-run', 'platform.setup'],
+			});
+			report(result.rows[0]?.claimed === true);
+			await released;
+		});
+		if (!(await Promise.race([reported, held.then(() => false)]))) {
+			release();
+			await held;
+			throw new SetupSeedError(
+				'SETUP_IN_PROGRESS',
+				'Another setup is creating the first workspace right now. Wait a moment, then reload this page.',
+			);
+		}
+		try {
+			return await seed();
+		} finally {
+			release();
+			/* The lock transaction writes nothing, so once the seed has settled a
+			   failure to end it cannot change the outcome. */
+			await held.catch(() => undefined);
+		}
+	} finally {
+		await lease.release();
 	}
 }

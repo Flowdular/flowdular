@@ -51,6 +51,16 @@ import {
 	prepareAndActivatePlatformRuntimeLifecycle,
 } from './src/server/lifecycle.ts';
 import { createMetricsRoutes, platformVersion } from './src/server/metrics.ts';
+import {
+	platformRuntimeRole,
+	startModuleWorkers,
+} from './src/server/runtime-role.ts';
+import {
+	createWorkerTickEndpoint,
+	createWorkerTicker,
+	WORKER_TICK_PATH,
+	workerTickConfigFromEnvironment,
+} from './src/server/worker-tick.ts';
 import { createPlatformObservability } from './src/server/tracing.ts';
 import {
 	createStorageKeyring,
@@ -62,6 +72,7 @@ import {
 	clearSetupToken,
 	configuredDatabaseNeedsFirstRun,
 	createFirstRunSetup,
+	createInPlaceFirstRun,
 } from './src/server/setup/index.ts';
 import { findWorkspaceRoot } from './src/server/workspace-root.ts';
 
@@ -124,6 +135,7 @@ async function createPlatformConfig() {
 		);
 	}
 	loadPlatformEnvironmentFile(workspaceRoot);
+	const serverless = process.env.FD_DEPLOYMENT_TARGET === 'vercel';
 	/* Every endpoint records itself as it is defined, so the API document
 	   describes this generation and not the one it replaced. */
 	serverEndpointCatalog().beginGeneration();
@@ -133,15 +145,26 @@ async function createPlatformConfig() {
 	if (
 		process.env.FD_INTERNAL_BUILD !== 'true' &&
 		!platformDatabaseConfigured(process.env)
-	)
-		return createFirstRunConfig();
-	if (
-		process.env.FD_INTERNAL_BUILD !== 'true' &&
-		(await configuredDatabaseNeedsFirstRun(process.env, workspaceRoot))
 	) {
-		return createFirstRunConfig(true);
+		if (serverless)
+			throw new Error(
+				'Vercel requires a configured external PostgreSQL database before deployment.',
+			);
+		return createFirstRunConfig();
 	}
+	/* A Vercel Function can neither restart into the application after setup
+	   nor keep a token file, so it composes the application and serves setup
+	   inside it until the first workspace exists. */
+	const needsFirstRun =
+		process.env.FD_INTERNAL_BUILD !== 'true' &&
+		(await configuredDatabaseNeedsFirstRun(process.env, workspaceRoot));
+	if (needsFirstRun && !serverless) return createFirstRunConfig(true);
 	clearSetupToken(workspaceRoot);
+	const runtimeRole = platformRuntimeRole(process.env);
+	const workerTick =
+		runtimeRole === 'tick'
+			? workerTickConfigFromEnvironment(process.env)
+			: null;
 	const lifecycle = createPlatformRuntimeLifecycle();
 	/* Composed first and drained last: a trace or an error report is evidence
 	   about the boot that follows it, and both egresses refuse a misconfigured
@@ -209,6 +232,17 @@ async function createPlatformConfig() {
 		const agentDefinitions = createPlatformAgentRegistry();
 		const capabilities = createPlatformCapabilityRegistry();
 		const readinessEndpoint = createReadinessEndpoint(databases);
+		const firstRun = needsFirstRun
+			? createInPlaceFirstRun({
+					environment: process.env,
+					workspaceRoot,
+					applicationPath: configuredApplicationPath,
+					webMountPaths: moduleWebMounts.map((site) => site.path),
+					passThrough: ['/api/health', '/api/ready', WORKER_TICK_PATH],
+					workspaceExists: async () =>
+						(await authRuntime.service()).hasAnyTenant(),
+				})
+			: null;
 		const moduleCompositions = composeModuleServer({
 			environment: process.env,
 			workspaceRoot,
@@ -234,6 +268,14 @@ async function createPlatformConfig() {
 			if (composition.stop) lifecycle.addQuiesce(composition.stop);
 			if (composition.dispose) lifecycle.add(composition.dispose);
 		}
+		const ticker = workerTick
+			? createWorkerTicker(moduleCompositions, {
+					windowMs: workerTick.windowMs,
+				})
+			: null;
+		/* Registered after the module stops, so retirement closes the open
+		   window before those stops run again. */
+		if (ticker) lifecycle.addQuiesce(() => ticker.close());
 		agentDefinitions.seal();
 		/* Sealed here rather than in a module: every composition has run, which
 		   is exactly when the declarations are final and before any start hook
@@ -248,6 +290,7 @@ async function createPlatformConfig() {
 					allowOrigin: (origin) => authRuntime.apiOriginAllowed(origin),
 				}),
 				lifecycle.middleware,
+				...(firstRun ? [firstRun.middleware] : []),
 				authRuntime.middleware,
 			],
 			router: {
@@ -271,6 +314,7 @@ async function createPlatformConfig() {
 						environment: process.env,
 					}),
 					...createAuthRoutes(authRuntime),
+					...(firstRun?.routes ?? []),
 					...moduleCompositions.flatMap((composition) => composition.routes),
 					...createModuleWebRoutes({
 						modules: moduleCompositions,
@@ -301,6 +345,9 @@ async function createPlatformConfig() {
 							};
 						},
 					}),
+					...(ticker && workerTick
+						? [createWorkerTickEndpoint(ticker, workerTick).serverRoute]
+						: []),
 					// The explicit /api fallback is more specific than the workspace
 					// params below and prevents API typos from rendering as pages.
 					...API_NOT_FOUND_ROUTES,
@@ -330,6 +377,7 @@ async function createPlatformConfig() {
 			),
 		]);
 		for (const composition of moduleCompositions) composition.start?.();
+		await startModuleWorkers(moduleCompositions, runtimeRole);
 		return config;
 	} catch (error) {
 		/* The boot failure is the one a reader needs; a cleanup failure after it

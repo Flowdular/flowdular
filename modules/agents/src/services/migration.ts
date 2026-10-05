@@ -920,6 +920,50 @@ ALTER TABLE agent_action_invocations
   ALTER COLUMN side_effect_idempotency_key SET NOT NULL;
 `;
 
+/* Mirrors migrations/0029_agents_worker_heartbeats.up.sql byte for byte. */
+export const AGENTS_MIGRATION_0029 = `-- Worker availability is read from durable evidence, so a web role answers the
+-- same as the worker it asks about. A row names one worker process, when it
+-- started, when it last drained and how many runs it may hold at once. It
+-- carries nothing about a workspace and lives under this table's own sentinel
+-- tenant, which the check pins.
+CREATE TABLE IF NOT EXISTS agent_worker_heartbeats (
+  tenant_id TEXT NOT NULL CHECK (tenant_id = '__flowdular_agent_workers__'),
+  worker_id TEXT NOT NULL,
+  started_at BIGINT NOT NULL,
+  heartbeat_at BIGINT NOT NULL,
+  concurrency INTEGER NOT NULL CHECK (concurrency BETWEEN 1 AND 16),
+  PRIMARY KEY (tenant_id, worker_id)
+);
+CREATE INDEX IF NOT EXISTS agent_worker_heartbeats_time_idx
+  ON agent_worker_heartbeats (tenant_id, heartbeat_at, worker_id);
+ALTER TABLE agent_worker_heartbeats ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_worker_heartbeats FORCE ROW LEVEL SECURITY;
+CREATE POLICY agent_worker_heartbeats_tenant_policy ON agent_worker_heartbeats
+  USING (tenant_id = current_setting('coreloom.tenant_id', true))
+  WITH CHECK (tenant_id = current_setting('coreloom.tenant_id', true));
+`;
+
+/* Mirrors migrations/0030_agents_background_passes.up.sql byte for byte. */
+export const AGENTS_MIGRATION_0030 = `-- The worker's binding pass and revision adoption pass, and the one adoption
+-- check an opening makes, have to find their work before they know whose it
+-- is. On the read-only background role they read identifiers and revisions
+-- alone, under a SELECT policy of each table's own; every write that follows
+-- runs on the tenant-scoped runtime role, under the tenant the row named.
+GRANT SELECT (module_definition_revision)
+  ON module_agent_bindings TO coreloom_background;
+GRANT SELECT (id, revision) ON agent_definitions TO coreloom_background;
+CREATE POLICY agent_definition_revisions_adoption_policy
+  ON agent_definition_revisions
+  FOR SELECT TO coreloom_background
+  USING (true);
+GRANT SELECT (tenant_id, agent_id, revision)
+  ON agent_definition_revisions TO coreloom_background;
+-- The binding pass asks each served definition for the tenants whose binding
+-- is behind it, so the common answer, none, is one index probe.
+CREATE INDEX IF NOT EXISTS module_agent_bindings_agent_revision_idx
+  ON module_agent_bindings (agent_id, module_definition_revision, tenant_id);
+`;
+
 export const databaseMigrations: readonly DatabaseMigration[] = [
 	{
 		id: '0001_agents_core',
@@ -1419,6 +1463,49 @@ export const databaseMigrations: readonly DatabaseMigration[] = [
 						result.rows[0].is_generated === 'ALWAYS'
 					);
 				},
+			]),
+	},
+	{
+		id: '0029_agents_worker_heartbeats',
+		sql: { postgresql: AGENTS_MIGRATION_0029 },
+		inspectExisting: (database) =>
+			postgresTenantTableState(
+				database,
+				'agent_worker_heartbeats',
+				'agent_worker_heartbeats_tenant_policy',
+				[],
+			),
+	},
+	{
+		id: '0030_agents_background_passes',
+		sql: { postgresql: AGENTS_MIGRATION_0030 },
+		/* Grants leave no object behind, so the policy, the column privileges and
+		   the index together prove this migration ran. */
+		inspectExisting: (database) =>
+			migrationObjectState([
+				() =>
+					policyPresent(
+						database,
+						'agent_definition_revisions',
+						'agent_definition_revisions_adoption_policy',
+					),
+				async () => {
+					const result = await database.query<{ granted: boolean }>({
+						text: `SELECT CASE WHEN to_regclass('module_agent_bindings') IS NOT NULL
+						AND to_regclass('agent_definitions') IS NOT NULL
+						AND to_regclass('agent_definition_revisions') IS NOT NULL THEN
+						  has_column_privilege('coreloom_background', 'module_agent_bindings', 'module_definition_revision', 'SELECT')
+						  AND has_column_privilege('coreloom_background', 'agent_definitions', 'id', 'SELECT')
+						  AND has_column_privilege('coreloom_background', 'agent_definitions', 'revision', 'SELECT')
+						  AND has_column_privilege('coreloom_background', 'agent_definition_revisions', 'tenant_id', 'SELECT')
+						  AND has_column_privilege('coreloom_background', 'agent_definition_revisions', 'agent_id', 'SELECT')
+						  AND has_column_privilege('coreloom_background', 'agent_definition_revisions', 'revision', 'SELECT')
+						ELSE false END AS granted`,
+					});
+					return result.rows[0]?.granted === true;
+				},
+				() =>
+					database.schema.hasIndex('module_agent_bindings_agent_revision_idx'),
 			]),
 	},
 ];

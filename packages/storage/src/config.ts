@@ -7,7 +7,7 @@ import {
 } from '@flowdular/kernel';
 import { flowdularStateDirectory } from '@flowdular/kernel/runtime-config';
 
-export type ConfiguredStorageAdapter = 'local' | 's3';
+export type ConfiguredStorageAdapter = 'local' | 's3' | 'vercel-blob';
 
 export interface StorageConfig {
 	readonly adapter: ConfiguredStorageAdapter;
@@ -21,6 +21,10 @@ export interface StorageConfig {
 		readonly accessKeyId: string;
 		readonly secretAccessKey: string;
 		readonly forcePathStyle: boolean;
+	};
+	readonly vercelBlob: {
+		readonly storeId: string | undefined;
+		readonly token: string | undefined;
 	};
 }
 
@@ -36,15 +40,17 @@ function adapterOf(
 ): ConfiguredStorageAdapter {
 	const configured = environment.FD_STORAGE_ADAPTER?.trim();
 	const adapter = configured || (production ? 's3' : 'local');
-	if (adapter !== 'local' && adapter !== 's3') {
-		throw new Error('FD_STORAGE_ADAPTER must be "local" or "s3".');
+	if (adapter !== 'local' && adapter !== 's3' && adapter !== 'vercel-blob') {
+		throw new Error(
+			'FD_STORAGE_ADAPTER must be "local", "s3" or "vercel-blob".',
+		);
 	}
 	/* The local adapter writes to the container filesystem, which no replica
 	   shares and no backup covers. Production refuses it exactly as it refuses
 	   the embedded database. */
 	if (production && adapter === 'local') {
 		throw new Error(
-			'FD_STORAGE_ADAPTER=local is refused in production; configure the S3-compatible adapter.',
+			'FD_STORAGE_ADAPTER=local is refused in production; configure the S3-compatible or the Vercel Blob adapter.',
 		);
 	}
 	return adapter;
@@ -71,6 +77,21 @@ function required(
 	if (!value)
 		throw new Error(`${name} is required by FD_STORAGE_ADAPTER=${adapter}.`);
 	return value;
+}
+
+/* On Vercel a connected store sets BLOB_STORE_ID and the SDK authenticates
+   with the deployment's OIDC token; elsewhere a read-write token stands in. */
+function vercelBlobCredentials(
+	environment: NodeJS.ProcessEnv,
+): StorageConfig['vercelBlob'] {
+	const storeId = environment.BLOB_STORE_ID?.trim() || undefined;
+	const token = environment.BLOB_READ_WRITE_TOKEN?.trim() || undefined;
+	if (!storeId && !token) {
+		throw new Error(
+			'FD_STORAGE_ADAPTER=vercel-blob requires BLOB_STORE_ID, which Vercel sets when a Blob store is connected to the project, or BLOB_READ_WRITE_TOKEN outside Vercel.',
+		);
+	}
+	return { storeId, token };
 }
 
 export function storageConfigFromEnvironment(
@@ -136,6 +157,10 @@ export function storageConfigFromEnvironment(
 						secretAccessKey: '',
 						forcePathStyle: false,
 					},
+		vercelBlob:
+			adapter === 'vercel-blob'
+				? vercelBlobCredentials(environment)
+				: { storeId: undefined, token: undefined },
 	};
 }
 

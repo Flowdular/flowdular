@@ -12,6 +12,7 @@ import {
 	createPlatformCapabilityRegistry,
 	createPlatformToolRegistry,
 	ModuleSettingsError,
+	type ModuleSettingLogEntry,
 	type ModuleSettingRecord,
 	type ModuleSettingValue,
 	type ModuleSettingsRuntime,
@@ -106,15 +107,38 @@ interface DraftModule {
 
 /* Preview settings live in memory for the life of the composition: a draft
    reads and writes them like the platform would, and nothing outlives the
-   session. Pinned values hold for every workspace and cannot be changed. */
+   session. Pinned values hold for every workspace and cannot be changed. The
+   change log keeps the newest change of each setting only, in revision order,
+   so it is bounded by the settings a session wrote and no cursor expires. */
 export function memorySettings(
 	pinned: Readonly<
 		Record<string, Readonly<Record<string, ModuleSettingValue>>>
 	> = {},
 ): ModuleSettingsRuntime {
 	const records = new Map<string, ModuleSettingRecord>();
+	const changes = new Map<string, ModuleSettingLogEntry>();
+	let revision = 0;
 	const keyOf = (tenantId: string, moduleId: string, key: string) =>
 		`${tenantId}\0${moduleId}\0${key}`;
+	const logged = (
+		tenantId: string,
+		moduleId: string,
+		key: string,
+		cleared: boolean,
+	) => {
+		revision += 1;
+		const entry = keyOf(tenantId, moduleId, key);
+		changes.delete(entry);
+		changes.set(entry, {
+			revision,
+			tenantId,
+			moduleId,
+			key,
+			cleared,
+			changedAt: Date.now(),
+		});
+		return { revision };
+	};
 	return createModuleSettingsRuntime({
 		load: async (tenantId, moduleId) => {
 			const values: Record<string, ModuleSettingValue> = {};
@@ -135,9 +159,43 @@ export function memorySettings(
 				);
 			}
 			records.set(keyOf(record.tenantId, record.moduleId, record.key), record);
+			return logged(record.tenantId, record.moduleId, record.key, false);
 		},
 		clear: async (tenantId, moduleId, key) => {
 			records.delete(keyOf(tenantId, moduleId, key));
+			return logged(tenantId, moduleId, key, true);
+		},
+		newestRevision: async () => ({ revision, cursor: String(revision) }),
+		changesAfter: async (request) => {
+			const after = request.after === null ? 0 : Number(request.after);
+			if (!Number.isSafeInteger(after) || after < 0) {
+				throw new ModuleSettingsError(
+					'INVALID_SETTINGS_CURSOR',
+					'The settings cursor was not issued by this preview.',
+				);
+			}
+			const page: ModuleSettingLogEntry[] = [];
+			let more = false;
+			for (const entry of changes.values()) {
+				if (entry.revision <= after) continue;
+				if (
+					request.moduleId !== undefined &&
+					entry.moduleId !== request.moduleId
+				)
+					continue;
+				if (request.key !== undefined && entry.key !== request.key) continue;
+				if (page.length === request.limit) {
+					more = true;
+					break;
+				}
+				page.push(entry);
+			}
+			return {
+				expired: false,
+				changes: page,
+				cursor: String(page.at(-1)?.revision ?? after),
+				more,
+			};
 		},
 	});
 }
@@ -326,6 +384,17 @@ export async function activatePreviewDrafts(
 					(error instanceof Error
 						? error.message.slice(0, 400)
 						: 'A draft start hook failed.'),
+			);
+		}
+	}
+	for (const draft of drafts) {
+		try {
+			await draft.startWorker?.();
+		} catch (error) {
+			errors.push(
+				error instanceof Error
+					? error.message.slice(0, 400)
+					: 'A draft worker failed to start.',
 			);
 		}
 	}

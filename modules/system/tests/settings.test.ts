@@ -303,9 +303,6 @@ describe('settings API', () => {
 			),
 		).toBe(120);
 
-		/* The kernel change listener is synchronous, so the audit rows land after
-		   the response. Wait for them rather than racing the write. */
-		await runtime.settingsAuditSettled();
 		const events = (
 			await (
 				await runtime.service()
@@ -469,7 +466,6 @@ describe('settings API', () => {
 			runtime.moduleSettings.get(owner.tenantId, 'demo.core', 'fastCheckout'),
 		).toBe(false);
 
-		await runtime.settingsAuditSettled();
 		const events = (
 			await (
 				await runtime.service()
@@ -514,7 +510,6 @@ describe('settings API', () => {
 		expect(
 			runtime.moduleSettings.get(owner.tenantId, 'demo.core', 'fastCheckout'),
 		).toBe(false);
-		await runtime.settingsAuditSettled();
 		expect(
 			(
 				await (

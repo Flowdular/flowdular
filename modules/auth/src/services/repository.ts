@@ -1,6 +1,9 @@
 import type {
 	ActorKind,
+	ModuleSettingChangesPage,
+	ModuleSettingChangesRequest,
 	ModuleSettingRecord,
+	ModuleSettingsLogPosition,
 	ModuleSettingValue,
 	UserActor,
 } from '@flowdular/kernel';
@@ -673,14 +676,62 @@ export interface AuthRepository {
 		accountId: string,
 		limit: number,
 	): Promise<number>;
-	/* The stored module settings of one tenant and module; the kernel
-	   ModuleSettingsStore in services/settings-store.ts is built on these three. */
+	/* The stored module settings of one tenant and module and their change log;
+	   the kernel ModuleSettingsStore in services/settings-store.ts is built on
+	   these. A write appends its change log row, and a tenant setting's audit
+	   event, in the transaction that writes the value. */
 	loadSettings(
 		tenantId: string,
 		moduleId: string,
 	): Promise<Readonly<Record<string, ModuleSettingValue>>>;
-	saveSetting(record: ModuleSettingRecord): Promise<void>;
-	clearSetting(tenantId: string, moduleId: string, key: string): Promise<void>;
+	saveSetting(
+		record: ModuleSettingRecord,
+		audit: SettingsChangeAudit,
+	): Promise<SettingsWriteResult>;
+	clearSetting(
+		tenantId: string,
+		moduleId: string,
+		key: string,
+		audit: SettingsChangeAudit,
+	): Promise<SettingsWriteResult>;
+	newestSettingsRevision(): Promise<ModuleSettingsLogPosition>;
+	settingsChangesAfter(
+		request: ModuleSettingChangesRequest,
+	): Promise<ModuleSettingChangesPage>;
+	/**
+	 * Writes the workspace event a platform setting change still owes and
+	 * clears its mark. The event is unique per revision and workspace, so a
+	 * second completion of the same change writes nothing.
+	 */
+	completeSettingsAudit(
+		revision: number,
+		event: (cleared: boolean) => SettingsChangeEvent,
+	): Promise<void>;
+	/** Platform setting changes whose workspace event is still owed, oldest first. */
+	pendingSettingsAudits(limit: number): Promise<readonly number[]>;
+	deleteSupersededSettingsChanges(batch: number): Promise<number>;
+}
+
+export interface SettingsChangeEvent {
+	readonly action: string;
+	readonly metadata: Readonly<Record<string, unknown>>;
+}
+
+/** What a settings write records beside the value, in the same transaction. */
+export interface SettingsChangeAudit {
+	/** The account that made the change and the workspace it was made from. */
+	readonly actor: {
+		readonly accountId: string;
+		readonly tenantId: string;
+	};
+	/** The event, from the value the write's transaction found stored. */
+	event(previous: ModuleSettingValue | undefined): SettingsChangeEvent;
+}
+
+export interface SettingsWriteResult {
+	readonly revision: number;
+	/** A platform setting change whose workspace event is still owed. */
+	readonly auditPending: boolean;
 }
 
 /* What a session export carries. It names no secret: a session is known by its

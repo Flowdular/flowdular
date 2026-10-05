@@ -9,6 +9,7 @@ import {
 	validateApplicationPath,
 	createMailPort,
 	mailConfigFromEnvironment,
+	serverLogger,
 } from '@flowdular/sdk/server';
 import {
 	createDataClassRegistry,
@@ -44,6 +45,16 @@ import {
 	healthEndpoint,
 } from './src/server/health.ts';
 import { createMetricsRoutes } from './src/server/metrics.ts';
+import {
+	platformRuntimeRole,
+	startModuleWorkers,
+} from './src/server/runtime-role.ts';
+import {
+	createWorkerTickEndpoint,
+	createWorkerTicker,
+	WORKER_TICK_PATH,
+	workerTickConfigFromEnvironment,
+} from './src/server/worker-tick.ts';
 import { createPlatformObservability } from './src/server/tracing.ts';
 import {
 	createStorageKeyring,
@@ -55,6 +66,7 @@ import {
 	clearSetupToken,
 	configuredDatabaseNeedsFirstRun,
 	createFirstRunSetup,
+	createInPlaceFirstRun,
 } from './src/server/setup/index.ts';
 import { findWorkspaceRoot } from './src/server/workspace-root.ts';
 
@@ -86,15 +98,27 @@ function firstRunConfig(databasePreconfigured = false) {
 
 async function createPlatformConfig() {
 	loadPlatformEnvironmentFile(workspaceRoot);
-	if (!building && !platformDatabaseConfigured(process.env))
+	const serverless = process.env.FD_DEPLOYMENT_TARGET === 'vercel';
+	if (!building && !platformDatabaseConfigured(process.env)) {
+		if (serverless)
+			throw new Error(
+				'Vercel requires a configured external PostgreSQL database before deployment.',
+			);
 		return firstRunConfig();
-	if (
-		!building &&
-		(await configuredDatabaseNeedsFirstRun(process.env, workspaceRoot))
-	) {
-		return firstRunConfig(true);
 	}
+	/* A Vercel Function can neither restart into the application after setup
+	   nor keep a token file, so it composes the application and serves setup
+	   inside it until the first workspace exists. */
+	const needsFirstRun =
+		!building &&
+		(await configuredDatabaseNeedsFirstRun(process.env, workspaceRoot));
+	if (needsFirstRun && !serverless) return firstRunConfig(true);
 	clearSetupToken(workspaceRoot);
+	const runtimeRole = platformRuntimeRole(process.env);
+	const workerTick =
+		runtimeRole === 'tick'
+			? workerTickConfigFromEnvironment(process.env)
+			: null;
 
 	/* Composed first and drained last: a trace or an error report is evidence about
    the boot that follows it, and both egresses refuse a misconfigured endpoint
@@ -148,6 +172,17 @@ async function createPlatformConfig() {
 	/* Module APIs come from the generated composition. Enable or disable modules
    with "pnpm flowdular module enable <id> --apply"; never wire them here by hand. */
 	const settings = authRuntime.moduleSettings;
+	const firstRun = needsFirstRun
+		? createInPlaceFirstRun({
+				environment: process.env,
+				workspaceRoot,
+				applicationPath: configuredApplicationPath,
+				webMountPaths: moduleWebMounts.map((site) => site.path),
+				passThrough: ['/api/health', '/api/ready', WORKER_TICK_PATH],
+				workspaceExists: async () =>
+					(await authRuntime.service()).hasAnyTenant(),
+			})
+		: null;
 	const agentDefinitions = createPlatformAgentRegistry();
 	const moduleCompositions = composeModuleServer({
 		environment: process.env,
@@ -172,26 +207,19 @@ async function createPlatformConfig() {
 	for (const composition of moduleCompositions) {
 		if (composition.settings) settings.declare(composition.settings);
 	}
+	const ticker = workerTick
+		? createWorkerTicker(moduleCompositions, { windowMs: workerTick.windowMs })
+		: null;
 	agentDefinitions.seal();
 	/* Sealed once every composition has run and before any start hook reads the
    catalogue, so every reader sees the declarations the modules agreed on. */
 	dataClasses.seal();
 
-	/* check() proves the runtime role holds neither SUPERUSER nor BYPASSRLS before
-   any module reads a row. */
-	if (!building) {
-		await databases.check();
-		/* Platform-scoped settings are read by background work before any request
-	   could prime them; a workspace is primed by the authentication middleware. */
-		await settings.prime(PLATFORM_SETTINGS_TENANT);
-		for (const composition of moduleCompositions) await composition.prepare?.();
-		for (const composition of moduleCompositions) composition.start?.();
-	}
-
 	let stopping = false;
 	const shutdown = async () => {
 		if (stopping) return;
 		stopping = true;
+		await ticker?.close();
 		for (const composition of moduleCompositions) {
 			await composition.stop?.();
 			await composition.dispose?.();
@@ -203,6 +231,32 @@ async function createPlatformConfig() {
 	   still leave with it. */
 		await observability.dispose();
 	};
+
+	/* check() proves the runtime role holds neither SUPERUSER nor BYPASSRLS before
+   any module reads a row. */
+	if (!building) {
+		try {
+			await databases.check();
+			/* Platform-scoped settings are read by background work before any request
+		   could prime them; a workspace is primed by the authentication middleware. */
+			await settings.prime(PLATFORM_SETTINGS_TENANT);
+			for (const composition of moduleCompositions)
+				await composition.prepare?.();
+			for (const composition of moduleCompositions) composition.start?.();
+			await startModuleWorkers(moduleCompositions, runtimeRole);
+		} catch (error) {
+			/* A worker that started before the failure would keep running in a
+		   process that never serves. The boot failure is the one rethrown. */
+			await shutdown().catch((cleanupError: unknown) => {
+				serverLogger().error('platform boot cleanup failed', {
+					module: 'platform',
+					err: cleanupError,
+				});
+			});
+			throw error;
+		}
+	}
+
 	// Bundling needs route declarations without background work or retained leases.
 	if (building) {
 		await shutdown();
@@ -219,6 +273,7 @@ async function createPlatformConfig() {
 			createCorsMiddleware({
 				allowOrigin: (origin) => authRuntime.apiOriginAllowed(origin),
 			}),
+			...(firstRun ? [firstRun.middleware] : []),
 			authRuntime.middleware,
 		],
 		router: {
@@ -230,6 +285,9 @@ async function createPlatformConfig() {
 				}),
 				healthEndpoint.serverRoute,
 				createReadinessEndpoint(databases).serverRoute,
+				...(ticker && workerTick
+					? [createWorkerTickEndpoint(ticker, workerTick).serverRoute]
+					: []),
 				...createMetricsRoutes({ environment: process.env }),
 				/* Describes every operation the presented credential may call, built
 			   from the endpoints this application composed. */
@@ -243,6 +301,7 @@ async function createPlatformConfig() {
 					environment: process.env,
 				}),
 				...createAuthRoutes(authRuntime),
+				...(firstRun?.routes ?? []),
 				...moduleCompositions.flatMap((composition) => composition.routes),
 				...createModuleWebRoutes({
 					modules: moduleCompositions,

@@ -25,18 +25,24 @@ its bucket or wire its credentials. For a store other than AWS S3, set
 `FD_STORAGE_S3_ENDPOINT` and, if needed, `FD_STORAGE_S3_FORCE_PATH_STYLE` on
 the Render service. See the [Render Postgres connection guide](https://render.com/docs/postgresql-creating-connecting)
 and [MinIO guide](https://render.com/docs/deploy-minio).
-Vercel is unavailable as a full target because its
-[Functions scale down to zero](https://vercel.com/docs/functions), while
-[Services beta](https://vercel.com/docs/services) follows Function limits and
-has no verified persistent Flowdular worker adapter. Cloudflare's Durable Object
-Container API can keep a process alive, but Flowdular has no verified adapter
-for its restart, secret and rollout lifecycle yet. After committing
+After committing
 `render.yaml` and `infra/docker/Dockerfile` and pushing the branch to a
 credential-free Git origin, `deploy plan render --json` returns a Deploy to
 Render URL when both files pass structural checks and match the pushed branch. The URL
 selects that branch for Render, but the external PostgreSQL, storage and secret
 prerequisites still require operator setup. Local Git tracking refs are not
 live provider validation, so confirm that Render can access the branch.
+
+The [Vercel artifact](vercel/README.md) packages the Octane handler and client
+assets as a web Function and a worker Function. [Vercel Functions scale down to zero](https://vercel.com/docs/functions),
+so module workers run only inside ticks from Vercel Cron and from
+state-changing requests. `deploy plan vercel --json` checks its source and
+returns an import URL for a pushed branch. `deploy start vercel --apply`
+provisions Neon PostgreSQL, a private Blob store and the stable keys through the
+Vercel CLI, deploys to Production and prints a one-time token for creating the
+first workspace at `/setup`.
+Cloudflare's Durable Object Container API can keep a process alive, but
+Flowdular has no verified adapter for its restart, secret and rollout lifecycle.
 
 The production artifact is the server built from `platform`. It runs as a
 non-root user and serves two public probes from

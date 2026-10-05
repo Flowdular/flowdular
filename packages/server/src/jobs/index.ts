@@ -32,6 +32,11 @@
  *    `heartbeat` the claim is held by wall clock alone, as it is today.
  * 3. Replace the runtime's `setInterval`, `inFlight`, `stop` and `quiesce` with
  *    the runner's. Keep the runtime's lease acquisition and release.
+ * 4. Start the runner from the composition's `startWorker`, never from `start`,
+ *    which a web-role process also calls, and wire `stop` to `quiesce`, so the
+ *    next `startWorker` on the same composition restarts it. `wake()` ignores
+ *    whether the runner was started, so a request path that wakes it after an
+ *    enqueue checks a flag set in `startWorker` and cleared in `stop` first.
  *
  * Per module, what stays behind (`docs/rfc/0004-platform-services.md` H2 lists
  * the three claim findings that motivate the move):

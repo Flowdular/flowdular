@@ -82,6 +82,7 @@ export function createDocumentsRuntime(
 	let textServicePromise: Promise<DocumentTextService> | undefined;
 	let templatesServicePromise: Promise<DocumentTemplatesService> | undefined;
 	const registry = new DocumentTemplateRegistry();
+	let workerActive = false;
 
 	/* Schema work runs on the migrator role and that lease is released before the
 	   runtime one is taken, so request handling never holds a schema owner. */
@@ -137,11 +138,21 @@ export function createDocumentsRuntime(
 		};
 	};
 
+	/* A failed open keeps nothing, not even its rejection, so the next caller
+	   (a later worker tick on the same composition) opens again. */
 	const repositories = () => {
 		if (disposed) {
 			return Promise.reject(new Error('Documents runtime is disposed.'));
 		}
-		repositoryPromise ??= openRepository();
+		repositoryPromise ??= openRepository().catch(async (error: unknown) => {
+			const held = leases;
+			leases = [];
+			repositoryPromise = undefined;
+			for (const lease of held) {
+				await (await lease.catch(() => null))?.release();
+			}
+			throw error;
+		});
 		return repositoryPromise;
 	};
 	const repository = async (): Promise<DocumentsRepository> =>
@@ -157,9 +168,15 @@ export function createDocumentsRuntime(
 					repository: resolved,
 					storage: options.storage,
 					ocr: options.ocr ?? null,
-					wake: () => text.wake(),
+					wake: () => {
+						if (workerActive) text.wake();
+					},
 					limits: options.textLimits,
 				}),
+			(error: unknown) => {
+				textServicePromise = undefined;
+				throw error;
+			},
 		);
 		return textServicePromise;
 	};
@@ -174,20 +191,30 @@ export function createDocumentsRuntime(
 		if (disposed) {
 			return Promise.reject(new Error('Documents runtime is disposed.'));
 		}
-		templatesServicePromise ??= repositories().then((resolved) => {
-			if (!resolved.templates) {
-				throw new Error('This documents runtime has no templates repository.');
-			}
-			return new DocumentTemplatesService({
-				registry,
-				repository: resolved.templates,
-				documents: resolved.documents,
-				storage: options.storage,
-				quotaBytes: options.quotaBytes,
-				timeZone: options.timeZone ?? (() => 'UTC'),
-				wake: () => render.wake(),
-			});
-		});
+		templatesServicePromise ??= repositories().then(
+			(resolved) => {
+				if (!resolved.templates) {
+					throw new Error(
+						'This documents runtime has no templates repository.',
+					);
+				}
+				return new DocumentTemplatesService({
+					registry,
+					repository: resolved.templates,
+					documents: resolved.documents,
+					storage: options.storage,
+					quotaBytes: options.quotaBytes,
+					timeZone: options.timeZone ?? (() => 'UTC'),
+					wake: () => {
+						if (workerActive) render.wake();
+					},
+				});
+			},
+			(error: unknown) => {
+				templatesServicePromise = undefined;
+				throw error;
+			},
+		);
 		return templatesServicePromise;
 	};
 
@@ -218,6 +245,10 @@ export function createDocumentsRuntime(
 						quotaBytes: options.quotaBytes,
 						readUrlSeconds: options.readUrlSeconds,
 					}),
+				(error: unknown) => {
+					servicePromise = undefined;
+					throw error;
+				},
 			);
 			return servicePromise;
 		},
@@ -233,15 +264,18 @@ export function createDocumentsRuntime(
 		},
 		start: () => {
 			registry.seal();
+			workerActive = true;
 			text.start();
 			if (!options.repository || options.templatesRepository) render.start();
 		},
 		quiesce: async () => {
+			workerActive = false;
 			await Promise.all([text.quiesce(), render.quiesce()]);
 		},
 		async dispose() {
 			if (disposed) return;
 			disposed = true;
+			workerActive = false;
 			await Promise.all([text.dispose(), render.dispose()]);
 			/* An open still in flight would assign its leases after this read, so
 			   settle it first; a failed open must not surface as an unhandled

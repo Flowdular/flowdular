@@ -169,7 +169,6 @@ export async function testRuntime(
 		policy,
 		clock,
 		cookie,
-		settingsAuditSettled: () => Promise.resolve(),
 		settings: {
 			get allowSignUp() {
 				return moduleSettings.get<boolean>('', 'auth.core', 'allowSignUp');
