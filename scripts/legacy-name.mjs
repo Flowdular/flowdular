@@ -9,9 +9,10 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const LEGACY_NAME = 'coreloom';
 const ALLOWED = [
-	// The refused pre-0.6 ledger and the test that proves the refusal.
+	// The refused pre-0.6 ledger and the tests that prove the refusal.
 	'packages/database/src/migrations.ts',
 	'packages/database-testing/tests/pglite-migrations.test.ts',
+	'packages/cli/tests/legacy-database.test.ts',
 	'docs/flowdular-rename.md',
 	'scripts/legacy-name.mjs',
 ];

@@ -58,9 +58,14 @@ later migration.
 Flowdular 0.6 refuses a database created by 0.5 or earlier with
 `LEGACY_DATABASE` before it creates its ledger or applies anything: adopting
 it would mark its tables complete while every policy reads a setting the
-adapter no longer sets. `pnpm flowdular module validate`, the sandbox
-module-rules gate and `pnpm flowdular migration verify` also read every
-`.up.sql` script, without a database:
+adapter no longer sets. Dropping only the old ledger does not get past this:
+adoption counts a tenant table as complete only when its policy reads
+`flowdular.tenant_id` in both USING and WITH CHECK, so the old tables are
+refused as partial.
+
+`pnpm flowdular module validate`, the sandbox module-rules gate and
+`pnpm flowdular migration verify` also read every `.up.sql` script, without a
+database:
 
 - `TENANT_SETTING_UNKNOWN`: a `current_setting` call reads any setting other
   than `flowdular.tenant_id`, or a string literal names another

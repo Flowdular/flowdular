@@ -12,6 +12,7 @@ import {
 export const DATABASE_MIGRATION_LEDGER = '_flowdular_migrations_v2';
 /** The advisory lock every module migration takes before its own. */
 export const DATABASE_MIGRATION_LEDGER_LOCK = 'flowdular.migrations';
+const TENANT_SETTING = 'flowdular.tenant_id';
 /* Flowdular 0.5 and earlier kept this ledger and bound row-level security to
    other role and setting names. Such a database is refused, never adopted:
    adoption would mark its tables complete while every policy reads a setting
@@ -58,8 +59,10 @@ interface PostgresTenantTableRow {
 
 /**
  * A PostgreSQL tenant table counts as adopted only when its row-level security
- * is enabled, forced, and carries the named policy. A table without them is
- * partial, never complete, so the runner refuses instead of trusting it.
+ * is enabled, forced, and carries the named policy, whose USING and WITH CHECK
+ * both read flowdular.tenant_id. Anything else is partial, never complete, so
+ * the runner refuses instead of trusting it: a policy on another setting would
+ * see no tenant.
  */
 export async function postgresTenantTableState(
 	database: DatabaseSession,
@@ -79,11 +82,13 @@ export async function postgresTenantTableState(
 		              EXISTS (
 		                SELECT 1 FROM pg_policy
 		                WHERE polrelid = relation.oid AND polname = $2
+		                AND strpos(lower(pg_get_expr(polqual, polrelid)), $3) > 0
+		                AND strpos(lower(pg_get_expr(polwithcheck, polrelid)), $3) > 0
 		              ) AS policy_present
 		       FROM pg_class AS relation
 		       JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
 		       WHERE namespace.nspname = current_schema() AND relation.relname = $1`,
-		parameters: [table, policy],
+		parameters: [table, policy, `'${TENANT_SETTING}'`],
 	});
 	const state = result.rows[0];
 	return state?.rls_enabled && state.rls_forced && state.policy_present
@@ -194,7 +199,17 @@ async function ledgerExists(database: DatabaseSession): Promise<boolean> {
 async function assertNotLegacyDatabase(
 	database: DatabaseSession,
 ): Promise<void> {
-	if (!(await database.schema.hasTable(LEGACY_MIGRATION_LEDGER))) return;
+	/* information_schema hides a table the current role holds no privilege on,
+	   and the old ledger belongs to the old migrator role; pg_class does not. */
+	const result = await database.query<{ readonly present: boolean }>({
+		text: `SELECT EXISTS (
+		         SELECT 1 FROM pg_class AS relation
+		         JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+		         WHERE namespace.nspname = current_schema() AND relation.relname = $1
+		       ) AS present`,
+		parameters: [LEGACY_MIGRATION_LEDGER],
+	});
+	if (!result.rows[0]?.present) return;
 	throw new DatabaseMigrationError(
 		'LEGACY_DATABASE',
 		'',
