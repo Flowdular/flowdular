@@ -44,6 +44,10 @@ import {
 	healthEndpoint,
 } from './src/server/health.ts';
 import { createMetricsRoutes } from './src/server/metrics.ts';
+import {
+	platformRuntimeRole,
+	startModuleWorkers,
+} from './src/server/runtime-role.ts';
 import { createPlatformObservability } from './src/server/tracing.ts';
 import {
 	createStorageKeyring,
@@ -95,6 +99,7 @@ async function createPlatformConfig() {
 		return firstRunConfig(true);
 	}
 	clearSetupToken(workspaceRoot);
+	const runtimeRole = platformRuntimeRole(process.env);
 
 	/* Composed first and drained last: a trace or an error report is evidence about
    the boot that follows it, and both egresses refuse a misconfigured endpoint
@@ -186,6 +191,7 @@ async function createPlatformConfig() {
 		await settings.prime(PLATFORM_SETTINGS_TENANT);
 		for (const composition of moduleCompositions) await composition.prepare?.();
 		for (const composition of moduleCompositions) composition.start?.();
+		await startModuleWorkers(moduleCompositions, runtimeRole);
 	}
 
 	let stopping = false;
