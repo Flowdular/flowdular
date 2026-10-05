@@ -62,7 +62,7 @@ it('preserves the approved specification and module identity byte for byte while
 					name: '@flowdular/module-example',
 					dependencies: {
 						'@flowdular/contracts': 'workspace:*',
-						octane: '0.8.0',
+						octane: '0.9.1',
 					},
 					devDependencies: {
 						'@flowdular/database-testing': 'workspace:*',
@@ -79,7 +79,7 @@ it('preserves the approved specification and module identity byte for byte while
 	);
 	expect(JSON.parse(files.get('package.json')!)).toEqual({
 		name: '@flowdular/module-example',
-		dependencies: { octane: '0.8.0', '@flowdular/sdk': SDK_VERSION },
+		dependencies: { octane: '0.9.1', '@flowdular/sdk': SDK_VERSION },
 		devDependencies: { vitest: '4.1.11' },
 	});
 });

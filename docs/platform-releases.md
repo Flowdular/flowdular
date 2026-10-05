@@ -23,9 +23,9 @@ Prerelease versions are not supported by this workflow.
 
 ## Runtime compatibility
 
-This source and newly generated applications pin Octane 0.8.0 with
-`segment-state` 0.3.0. Modules using Octane must move both dependencies together;
-`segment-state` 0.3.0 accepts Octane `^0.8.0`. The matching `@octanejs` adapters
+This source and newly generated applications pin Octane 0.9.1 with
+`segment-state` 0.4.0. Modules using Octane must move both dependencies together;
+`segment-state` 0.4.0 accepts Octane `^0.9.0`. The matching `@octanejs` adapters
 are pinned in the workspace lockfile and generator template. Octane 0.8 renders
 context providers as `<Context value={value}>`, so modules using
 `<Context.Provider>` must update that syntax when they upgrade.

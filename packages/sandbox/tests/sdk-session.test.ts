@@ -64,7 +64,7 @@ allowBuilds:
   esbuild: true
   tldjs: false
 minimumReleaseAgeExclude:
-  - segment-state@0.3.0
+  - segment-state@0.4.0
 overrides:
   '@flowdular/sdk': file:old-sdk.tgz
   some-library: 1.2.3
@@ -91,7 +91,7 @@ overrides:
 			packages: ['modules/*'],
 			allowUnusedPatches: true,
 			allowBuilds: { esbuild: true, tldjs: false },
-			minimumReleaseAgeExclude: ['segment-state@0.3.0'],
+			minimumReleaseAgeExclude: ['segment-state@0.4.0'],
 			overrides: {
 				'@flowdular/sdk': `link:${await realpath(sdk)}`,
 				flowdular: `link:${await realpath(cli)}`,
