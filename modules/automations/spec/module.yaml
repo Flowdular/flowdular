@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: automations.core
-specVersion: 0.6.12
+specVersion: 0.6.13
 status: approved
 name: Automations Core
 description: Runs agents or published workflows without a person present, on a schedule or from a signed webhook, as a module a workspace can leave uninstalled.
@@ -15,7 +15,7 @@ dependencies:
   - id: system.core
     range: ^0.9.0
   - id: auth.core
-    range: ^0.14.0
+    range: ^0.14.6
   - id: agents.core
     range: ^0.15.0
   - id: workflows.core
@@ -26,21 +26,23 @@ locales:
   - pl
 invariants:
   - Composition registers automation targets, execution capabilities and action tools in web and worker roles. Only startWorker starts the scheduler poller; a signed webhook or Run now request in web role persists its invocation without starting a scheduler pass. Combined mode starts the scheduler after the same registrations.
-  - A workspace time-zone change accepted by the web role must reach a separate worker through durable shared state, not an in-process settings callback alone. The new zone is applied to pending cron slots before one can fire using its old-zone time; interval cadences remain unchanged. Stopping the worker drains schedule and retiming work before database leases are released.
-  - Automations never reads or writes another module's database; it reaches agents.core only through the agents.run-queue platform capability.
+  - A workspace time zone change reaches the worker through the settings change log auth.core keeps, never through an in-process settings callback. Each scheduler pass, before it claims due schedules, reads the system.core.timeZone changes after its cursor through the kernel settings runtime; for every workspace a page names it takes that workspace's newest change on the page and, when the workspace's applied revision is older, reads the zone from settings at least as new as that change, retimes the pending cron slots with that change's changed_at and records the applied revision, all in one tenant transaction that first locks the workspace's applied record. A workspace already at that revision is skipped, so the work is idempotent and at least once, and a crash of any process at any point leaves either nothing or the whole retiming committed. A workspace whose retiming failed in a pass fires no cron slot in that pass. The cursor lives in memory as an optimisation only; a worker without one, or whose cursor the log answers expired, reads the log from its start, which holds the newest zone change of every workspace, and so resynchronises every workspace whose applied revision is older. Stopping the worker drains schedule and retiming work before database leases are released.
+  - automations_time_zones holds per workspace only the revision of the zone change it applied, that change's changed_at and when it was applied. It holds no zone and has no background policy or grant. Migration 0007 is unreleased and is rewritten in place to this shape; if it ships before this change lands, a new migration converts it instead.
+  - A workspace whose zone changed while automations.core was not composed converges to the setting like any other. The log keeps the newest change of every workspace whatever its age and records every value stored before it existed, so the first pass of a worker without a cursor retimes it, and because every slot is computed from the setting, a schedule no retained change names still takes the setting's zone at its next fire.
+  - Automations never reads or writes another module's database; it reaches agents.core only through the agents.run-queue platform capability, and reads the settings change log only through the kernel settings runtime.
   - A workspace with automations.core disabled keeps every agent capability, including manual runs, usage accounting, and budget caps.
   - A schedule fires at most once per slot, and a slot missed while the platform was down is skipped, never replayed.
   - A cadence is either every:N whole minutes from 1 to 10080, or a five field cron expression with no seconds, bounded in length, whose fields accept *, numbers, three letter month and weekday names, lists, ranges and steps. An expression the module cannot honour, including one no real date matches, is refused when it is saved with the stable code INVALID_CADENCE.
-  - A cron slot is a wall clock time in the workspace zone read from the shared system.core.timeZone setting, resolved to one UTC instant that is what the schedule stores. A wall time a daylight saving change removes is skipped, a wall time that occurs twice fires at the first of the two, and an interval cadence carries no zone and never reads one.
-  - Changing the workspace time zone moves that workspace's pending cron slots into the new zone at once, each write conditional on the slot that was read, so a slot already due keeps the fire it owes and a concurrent fire wins.
+  - A cron slot is a wall clock time in the workspace zone read from the shared system.core.timeZone setting, resolved to one UTC instant that is what the schedule stores. A wall time a daylight saving change removes is skipped, a wall time that occurs twice fires at the first of the two, and an interval cadence carries no zone and never reads one. That setting is the only source of a zone. A save, a fire and a retiming each read it from settings at least as new as the revision the workspace last applied, and automations stores no zone of its own.
+  - Changing the workspace time zone moves that workspace's pending cron slots into the new zone no later than the end of the first scheduler pass that begins after the change commits, so within one scheduler poll interval plus one pass. The 5 second settings staleness bound adds nothing to it, because the pass reads the change from the log and the zone at least as new as the change. A slot due by the change's changed_at keeps the fire it owes; any later pending slot moves to the first slot of the current zone after the latest of the change's changed_at, the schedule's last run and its last update, so a slot fired or computed after the change is never owed twice; interval cadences are untouched. Each write is conditional on the slot that was read, so a concurrent fire wins, and no cron slot fires in a zone older than every change committed before the pass that fires it began.
   - A webhook request is accepted only with a fresh, valid signature; every refusal returns one identical response and the reason goes to the audit trail alone.
   - The trigger secret is stored encrypted with the key held outside the database, and is returned in full only at creation and rotation.
   - A schedule or trigger whose agent no longer exists disables itself and records why, because a cross-module reference cannot be a foreign key.
   - Automation events are appended to a hash-chained audit trail that verifies independently of the agents trail.
   - The scheduler is the platform job runner on the automations.core poll interval setting, a platform setting with a bounded deployment default so installing the module does not add an undeclared clock policy to agents.core, claiming a bounded page of routing columns read on the background role, one schedule fired per claim, and one schedule that cannot be read or fired costing no other schedule in the pass.
   - A schedule stores its raw input template; only the queued run snapshot receives a single-pass resolved value from scope-filtered variable sources.
-  - Every request-time read and write runs on a tenant-scoped PostgreSQL handle under forced row-level security. The scheduler poll and the webhook trigger lookup are the only cross-tenant reads, they run on a separate read-only role, and that role is granted only the columns that route the work to a tenant under a policy of the table itself.
-  - A due schedule found by the cross-tenant poll, and a trigger found by the cross-tenant webhook lookup, are read again under the tenant that row named before anything acts on them, and a slot whose next run time moved in between is skipped.
+  - Every request-time read and write runs on a tenant-scoped PostgreSQL handle under forced row-level security. Exactly three reads cross tenants, all on the separate read-only background role and all answering ids and timestamps only. The scheduler poll and the webhook trigger lookup are granted only the columns that route the work to a tenant under a policy of the table itself. The time zone change discovery reads the settings change log through the kernel settings runtime and sees only the revision, workspace id, module, key, cleared flag and change time, never a value, the account that made the change or the workspace it was made from.
+  - A due schedule found by the cross-tenant poll, and a trigger found by the cross-tenant webhook lookup, are read again under the tenant that row named before anything acts on them, and a slot whose next run time moved in between is skipped. A workspace found by the time zone change discovery is retimed only inside its own tenant transaction.
   - Automations reaches workflows.core only through the public workflows.execution.v1 capability. It owns no workflow worker, execution history, revision snapshot, or workflow permission, and while that capability is absent the workflow target is unavailable, existing workflow target configuration is retained, and automatic firing is skipped with safe audit evidence.
   - A schedule or webhook can select a workflow only when the configuring user can read published workflows, execute workflow runs, and holds every permission the selected published workflow requires. The permission snapshot is captured from trusted authorization context and cannot be supplied or widened by a schedule template, webhook body, or adapter input.
   - An automatic workflow invocation runs as the automations.core service actor with the configuring user in configuredBy and the schedule or trigger as a separate origin. Run now keeps the requesting user as the workflow actor with module origin automations.core and operation schedules.run-now.
@@ -59,6 +61,7 @@ permissions:
     description: Create, update, rotate, and delete webhook triggers in the active tenant.
 dataOwnership:
   - automations.core owns schedule definitions, webhook trigger definitions, their encrypted secrets, and its own audit trail.
+  - automations.core owns, per workspace, the revision of the last time zone change it applied; the zone itself stays the system.core setting that auth.core stores, and the change log stays auth.core's.
   - agents.core keeps runs, run history, token usage, cost accounting, and budget caps, so cost protection survives with automations uninstalled.
   - Automations stores an agent identifier and never copies agent definitions, skills, or provider credentials.
   - For a workflow target automations.core stores the published workflow key, the configuring user, the trusted permission snapshot, and the run correlation; workflows.core keeps the selected revision, execution payload, evidence, usage, cost, status, cancellation, and run history.
@@ -68,9 +71,37 @@ acceptanceScenarios:
     when: The web role starts and a separate worker role starts later.
     then: The web role serves schedule and webhook routes without a scheduler timer or claim, while the worker starts the scheduler and fires the due slot once under the existing idempotency key.
   - id: AUTO-WORKER-TIME-ZONE
-    given: A workspace has a pending cron slot and its web role accepts a change to the workspace time zone.
-    when: A separate worker next considers that slot, including after a process restart.
-    then: The worker observes a durable retiming signal and applies the new zone before an old-zone slot can fire; interval cadences keep their next run, and no same-process callback is required.
+    given: A workspace has a pending cron slot and an interval schedule, and its web role accepts a change to the workspace time zone.
+    when: A separate worker runs its next pass, including after a restart that lost its cursor.
+    then: The worker reads the change from the settings change log and moves the cron slot into the new zone by the end of the first pass that began after the commit, before an old-zone slot can fire; the interval keeps its next run; no same-process callback is involved; and automations_time_zones holds the applied revision and no zone.
+  - id: AUTO-TZ-ACCEPTOR-CRASH
+    given: A worker is running and a web process accepts a workspace time zone change.
+    when: The web process dies right after the settings commit, before any listener or further statement runs.
+    then: The worker's next pass retimes the workspace's pending cron slots with the change's changed_at and records the applied revision, and no old-zone slot fires after that pass began.
+  - id: AUTO-TZ-TWO-CHANGES
+    given: The worker is stopped and a workspace holds a pending cron slot.
+    when: Two consecutive changes of that workspace's zone commit and the worker then starts.
+    then: It applies only the newest, moving the pending slot to the first slot of the latest zone after the latest change's changed_at; the intermediate zone is never applied; and the recorded revision is the latest one.
+  - id: AUTO-TZ-REPLAY
+    given: A workspace time zone change was applied and one of the moved slots has since fired.
+    when: The same change is read again by a later pass, by a second worker replica in the same pass, and by a restarted worker without a cursor.
+    then: Nothing moves, no automation-schedule.retimed event is written, the applied revision is unchanged, the two replicas serialise on the workspace's applied record, and the slot that fired is never owed again.
+  - id: AUTO-TZ-RETIME-FAILS
+    given: Two workspaces changed zone and the retiming transaction of one of them fails.
+    when: The scheduler pass continues to claim due schedules.
+    then: The failing workspace fires no cron slot in that pass and keeps its older applied revision, the other workspace is retimed and fires normally, and the next pass retries the failed workspace.
+  - id: AUTO-TZ-RESYNC
+    given: The worker's cursor is older than the change log retention, and one workspace's only zone change is older than the retention period and was never applied.
+    when: The next pass reads the log after that cursor.
+    then: The log answers expired, the worker reads the log from its start and retimes every workspace whose applied revision is older than its newest zone change, including the one whose change is older than the retention period, and leaves the others untouched.
+  - id: AUTO-TZ-NOT-COMPOSED
+    given: A workspace holds cron schedules and its zone changed while automations.core was not composed.
+    when: The module is composed again and its worker runs a first pass and later fires.
+    then: The pending cron slots move into the setting's zone in that first pass, every next slot a fire computes is in the setting's zone, and a zone recorded anywhere else is never used.
+  - id: AUTO-TZ-DISCOVERY-NARROW
+    given: Two workspaces changed zone, one also changed a secret setting, and the platform changed a setting.
+    when: The worker discovers time zone changes across tenants.
+    then: The discovery answers only the revision, workspace id, module, key, cleared flag and change time of system.core.timeZone changes, sees no value, actor or originating workspace, cannot write, and each workspace is retimed under its own tenant without touching the other's schedules.
   - id: AUTO-DATA-CLASS-EXPORT
     given: Two workspaces hold automation audit events and the platform has sealed the data class registry.
     when: The workspace export runs the automations.core.audit-events operation for one of them.

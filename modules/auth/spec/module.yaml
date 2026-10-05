@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: auth.core
-specVersion: 0.14.5
+specVersion: 0.14.6
 status: approved
 name: Authentication Core
 description: Provides tenant-aware accounts, password authentication, sessions, scopes, tenant roles, API tokens for machine clients, the module settings store, the auth audit trail, security headers, authentication screens, and server authorization middleware.
@@ -51,7 +51,7 @@ invariants:
   - An API token may declare the browser origins it can be presented from. A token that declares none is refused from every browser origin and is usable only by a server-side caller, which sends no Origin header; a token that declares some is refused from every other origin. The cross-origin preflight carries no credential, so the deployment answers it from the union of the origins its live tokens declare, read on the routing handle, and never grants credentials on a cross-origin response.
   - Issuing, listing, and revoking API tokens require a browser session with the token management scope. A machine credential cannot mint or revoke another credential, and cannot pass any auth.core mutation, so credentials, sessions, memberships, roles and identity providers stay behind a browser session whatever a token was issued with.
   - A revoked or expired API token authenticates nothing, and token lifetime is bounded to one year.
-  - An API token spends at most the requests per minute it was issued with, and a token issued with none spends the deployment default from the platform setting auth.core.apiTokenRateLimit, which an owner changes in Administration and which takes effect at the next request. A ceiling of zero removes it. The request over the ceiling is answered 429 TOKEN_RATE_LIMITED with retry-after, and every answer to a limited token carries x-ratelimit-limit, x-ratelimit-remaining and x-ratelimit-reset, so a caller tracks its own budget without a second request.
+  - An API token spends at most the requests per minute it was issued with, and a token issued with none spends the deployment default from the platform setting auth.core.apiTokenRateLimit, which an owner changes in Administration and which takes effect at the next request of the process that saved it and within the settings staleness bound in every other process. A ceiling of zero removes it. The request over the ceiling is answered 429 TOKEN_RATE_LIMITED with retry-after, and every answer to a limited token carries x-ratelimit-limit, x-ratelimit-remaining and x-ratelimit-reset, so a caller tracks its own budget without a second request.
   - The window is a fixed minute per token in each process, bounded to 4096 credentials with the oldest windows dropped first, so it is a guard against one integration running away rather than an accounting record. A deployment behind several processes admits up to the ceiling in each. Every request a token made, refused ones included, and the subset a ceiling refused are counted as auth.core module metrics, which is what an operator watches.
   - Sign-in attempts are throttled per submitted address and per trusted client address, and repeated failures lock the address for a fixed period with a stable error that never reveals whether an account exists.
   - Sign-up and sign-in errors never confirm that an email address is registered.
@@ -60,7 +60,14 @@ invariants:
   - Every tenant carries the built-in owner and member roles as rows; custom roles are tenant-scoped, grant only grantable scopes, and cannot be edited, deleted, or shadowed when built in or in use.
   - Assigning a role replaces the membership scopes with the role's scopes and keeps the role key on the membership in sync.
   - Module settings are declared by their owning module, stored per tenant (or once for the platform), validated against the declaration on every write, and secret values are never returned.
-  - Every committed module settings change appends exactly one audit event. A setting declared as a feature flag is recorded as settings.flag.changed, carrying the module, the key, the previous and next effective values and the actor; every other setting is recorded as settings.updated, carrying the module, the key, whether the value was cleared and the actor. No declared value of a non-flag setting and no secret value ever reaches the trail.
+  - Every committed module settings change appends exactly one audit event. A setting declared as a feature flag is recorded as settings.flag.changed, carrying the module, the key, the previous and next effective values and the actor; every other setting is recorded as settings.updated, carrying the module, the key, whether the value was cleared and the actor. No declared value of a non-flag setting and no secret value ever reaches the trail. The event of a tenant-scoped setting, every flag included, is written by the settings store inside the transaction that writes the value, so the value, its change log row and its event commit or fail together, and a failed audit write refuses the save with nothing stored. The previous value a flag event carries is the one that transaction read, never a process snapshot. No post-commit listener writes a settings audit event.
+  - Every settings save or clear appends, in the transaction that writes the value, one row to the change log module_settings_changes holding the revision, the storage tenant (the platform storage tenant for a platform-scoped setting), the module, the key, whether the value was cleared, the database time of the change, the account that made it and the workspace it was made from. The log never holds a value, so no secret enters it. One revision sequence serves every tenant and the platform, and an append takes one transaction-scoped lock before it draws its revision, so revisions commit in the order they are drawn and a reader that has seen revision N never later finds a committed revision below N; a refused or rolled back write leaves at most a gap. Settings writes are rare, so serialising them costs nothing a workspace notices.
+  - module_settings_changes is under forced row-level security with a USING and WITH CHECK policy on the transaction tenant, so a tenant request reads and appends its own rows only. The background role reads every tenant's rows through a FOR SELECT policy of its own and is granted only revision, tenant_id, module_id, key, cleared and changed_at, the way the other background discovery reads are narrowed; the account that made a change, the workspace it was made from and the audit mark stay unreadable on that connection, and it writes nothing.
+  - The settings store answers the newest revision, and the changes after a cursor in pages of 1 to 500 ordered by revision, optionally narrowed to one module and key, each page with the cursor to continue from; each is one indexed read on the background role. A cursor is opaque to its holder and carries its revision and the database time its read began. A cursor older than the retention period less one day is answered expired with no rows, and its holder resynchronises by reading from the start of the log, which always holds the newest change of every setting, before it continues.
+  - The change log keeps a row for 30 days and keeps the newest row of every tenant, module and key whatever its age, so pruning never hides the latest state of a setting from any reader and a reader that only needs that state is never broken by a sweep. auth.core sweeps the older rows in batches of at most 500 per tenant transaction, finding them through the background read. The migration that creates the log records one change for every value already stored, at its stored time and by its stored author, so a reader starting from the beginning sees every stored value. The log is not a declared data class, because it holds no setting value, its retention is the contract its readers rely on rather than a workspace choice, and its platform rows belong to no workspace.
+  - Every process serves settings from its snapshot for at most 5 seconds without consulting the log. A prime that finds the process last revalidated more than 5 seconds ago reads the changes after the process cursor once, shared by concurrent primes, and reloads, each under its own tenant, only the tenant and module pairs those changes name that the process holds, keeping the old values readable until the reload lands; more than one page of changes, or an expired cursor, reloads everything the process holds. A revalidation that fails fails the prime, so no read is served past the bound. The guarantee is that a read after a prime begun at time p reflects every change committed before p minus 5 seconds, in every process; the process that saved a change reflects it when the save resolves; and a prime that names a revision its caller read from the log reflects at least that revision.
+  - The kernel settings change listener stays local. It fires only in the process that saved the change, after the commit, and carries the change revision; a change another process made, including one a revalidation reloads, is never announced. A reader that needs every change reads the log, and no consequence that must survive a crash, such as an audit event or another module's durable state, may rest on a listener.
+  - A platform-scoped setting is stored under the platform storage tenant while its audit event belongs to the workspace the change was made from, and one transaction is bound to one tenant. Its change row is therefore marked audit pending in the transaction that writes the value; the saving process writes the event into that workspace and clears the mark before the save resolves, and auth.core's periodic sweep writes the event for any row it finds still marked. The event carries the change revision under a unique index per workspace, so a retried write lands once, and a crash at any point delays the event by at most one sweep interval but never loses it.
   - Email confirmation cannot be enabled without a composed mail transport.
   - Password reset and tenant invitation tokens are random, hashed at rest, short lived, single use, and never returned by HTTP APIs.
   - Operator provisioning creates a workspace, its owner and the owner scopes exactly as sign-up does, works against the deployment database, and never reads the sign-up setting.
@@ -121,7 +128,7 @@ dataOwnership:
   - auth.core owns tenant-owned identity providers, their sealed client secrets, the per-workspace external identity bindings and the per-membership status; users.core renders the membership status control and calls the auth administration port.
   - Accounts, tenant memberships, scope grants, and hashed sessions are owned by auth.core.
   - API token identity, hashed secret, recorded scopes, expiry, revocation state, and last use are owned by auth.core.
-  - Tenant roles, sign-in failure counters, module settings values, and the auth audit trail are owned by auth.core.
+  - Tenant roles, sign-in failure counters, module settings values, the module settings change log, and the auth audit trail are owned by auth.core. Another module reads the change log only through the kernel settings runtime, never the table.
   - Other modules may reference account and tenant identifiers but may not write authentication tables.
 entities:
   - id: identity-provider
@@ -394,6 +401,42 @@ decisions:
     question: What identifies a provider in the sign-in URL?
     answer: A tenant-unique key; the callback path carries the workspace and the key, and the signed state cookie binds both.
     decidedBy: default
+  - id: D-SETTINGS-AUDIT-ATOMIC
+    question: When is a settings audit event written, and what happens when that write fails?
+    answer: Inside the transaction that writes the value, for every tenant-scoped setting and every flag; a failed audit write refuses the save with nothing stored. This replaces the post-commit listener and the earlier rule that a failed audit write left the setting committed. Proposed from the 2026-10-05 direction; the owner confirms it at approval.
+    decidedBy: default
+  - id: D-SETTINGS-PLATFORM-AUDIT
+    question: How is a platform-scoped setting audited, when its value lives under the platform storage tenant and its event in the workspace the change came from?
+    answer: The change row is marked audit pending in the value's transaction, the saving process writes the workspace event and clears the mark, and the periodic sweep completes any row still marked; a unique index on the revision per workspace makes the event land once.
+    decidedBy: default
+  - id: D-SETTINGS-LOG-RETENTION
+    question: How long is the settings change log kept, and how is it pruned?
+    answer: 30 days, except the newest row of every tenant, module and key, which is kept whatever its age; swept in batches of at most 500 per tenant transaction.
+    decidedBy: default
+  - id: D-SETTINGS-LOG-CURSOR
+    question: How does a reader learn that its cursor predates the retained log?
+    answer: The cursor is opaque and carries its revision and the database time its read began; one older than the retention period less one day is answered expired, and the reader resynchronises from the start of the log. Pages hold 1 to 500 changes.
+    decidedBy: default
+  - id: D-SETTINGS-COMMIT-ORDER
+    question: How is a cursor reader kept from skipping a revision that commits after a higher one?
+    answer: Every append takes one transaction-scoped lock before drawing its revision, so revisions commit in the order they are drawn.
+    decidedBy: default
+  - id: D-SETTINGS-REVALIDATE
+    question: How stale may a process snapshot be, and what happens when revalidation fails?
+    answer: At most 5 seconds; a prime past that reads the changes after the process cursor once and reloads only the pairs they name, and a failed revalidation fails the prime instead of serving past the bound.
+    decidedBy: default
+  - id: D-SETTINGS-LISTENER
+    question: Does the kernel settings change listener also announce changes another process made?
+    answer: No. It stays local to the saving process, fires after the commit and carries the revision; remote changes are read from the log, so no listener can record a change twice.
+    decidedBy: default
+  - id: D-SETTINGS-LOG-NOT-DATA-CLASS
+    question: Is the settings change log a declared data class?
+    answer: No. It holds no setting value, its retention is the readers' contract rather than a workspace choice, and its platform rows belong to no workspace; module settings stay configuration as before.
+    decidedBy: default
+  - id: D-SETTINGS-LOG-BACKFILL
+    question: Does the log start empty?
+    answer: No. Its migration records one change per value already stored, at its stored time and by its stored author, so a reader starting from the beginning sees every stored value.
+    decidedBy: default
 acceptanceScenarios:
   - id: AUTH-MAIL-TEST-MESSAGE
     given: An installation whose effective mail transport is an SMTP relay, and an owner signed in with the settings management permission.
@@ -518,11 +561,43 @@ acceptanceScenarios:
   - id: AUTH-SETTINGS-STORE
     given: A module setting is written through the shared settings runtime by an identified actor.
     when: The value passes the declared validation and the write commits.
-    then: The value is persisted in auth.db per tenant (or once for the platform), the next read returns it, and a settings.updated audit event records the actor, the setting, and whether the value was cleared.
+    then: The value is persisted in auth.db per tenant (or once for the platform), the next read returns it, and in the same transaction one change log row records the revision, the module, the key, whether the value was cleared, the time and the actor without the value, and a settings.updated audit event records the actor, the setting, and whether the value was cleared.
   - id: AUTH-SETTINGS-FLAG-AUDIT
     given: A setting declared with kind flag is turned on or reset through the shared settings runtime by an identified actor.
-    when: The write commits.
-    then: One settings.flag.changed audit event is appended for the actor's workspace with the module, the key, the previous and next effective values and the actor, no settings.updated event is written for that change, and a failed audit write is reported without undoing the committed setting.
+    when: The write commits, and in a second attempt the audit write fails.
+    then: One settings.flag.changed audit event is appended for the actor's workspace in the transaction of the write, with the module, the key, the previous effective value that transaction read, the next effective value and the actor, and no settings.updated event is written for that change; when the audit write fails the save is refused and neither the value nor a change log row is stored.
+  - id: AUTH-SETTINGS-CRASH-AFTER-COMMIT
+    given: A process saves a tenant-scoped setting and a flag through the shared settings runtime.
+    when: The process is killed right after each commit, before the save resolves and before any listener runs.
+    then: Each value, its change log row and its audit event are all present, exactly one of each, and a second process reading the log after the revision it held sees both changes.
+  - id: AUTH-SETTINGS-PLATFORM-AUDIT
+    given: An owner of workspace A saves a platform-scoped setting.
+    when: The saving process dies after the commit and before the workspace event is written, and the periodic sweep then runs twice.
+    then: Workspace A's trail holds exactly one settings.updated event carrying that revision, the change row is no longer marked audit pending, and no other workspace receives an event.
+  - id: AUTH-SETTINGS-REVALIDATE
+    given: Two processes share one settings store and have both primed a workspace and the platform.
+    when: Process A saves a tenant-scoped value and a platform-scoped value, and process B keeps priming and reading.
+    then: A reads both at once; B serves the old values no later than 5 seconds after the commit and the new ones at its first prime after that, reloading only the changed tenant and module pairs; a prime in B naming the revision A's change received reflects it at once; and when B's revalidation read fails, B's prime fails rather than serving the old value past the bound.
+  - id: AUTH-SETTINGS-LOG-BACKGROUND
+    given: Changes of a secret setting and of an ordinary setting in two workspaces and on the platform.
+    when: The background connection reads the change log.
+    then: It sees the revision, workspace id, module, key, cleared flag and change time of every row; reading the account that made a change, the workspace it was made from or the audit mark is refused; no value of either setting exists in the log; and an insert, update or delete is refused.
+  - id: AUTH-SETTINGS-LOG-TENANT
+    given: Two workspaces each holding settings changes.
+    when: A request of workspace A reads the change log, and appends a row naming workspace B.
+    then: A sees only its own rows, the append naming B is refused by the WITH CHECK policy, and B's rows are unchanged.
+  - id: AUTH-SETTINGS-LOG-RETENTION
+    given: Change rows older than 30 days, including the only row of one key and superseded rows of another, beside recent rows, in two workspaces and on the platform.
+    when: The sweep runs with a batch smaller than the old rows and again until it is done, then a reader presents a cursor older than 29 days and then reads from the start.
+    then: Only superseded rows older than 30 days are removed, at most one batch per tenant transaction; the newest row of every key stays whatever its age; recent rows stay; the old cursor is answered expired with no rows; and the read from the start returns the newest change of every key.
+  - id: AUTH-SETTINGS-COMMIT-ORDER
+    given: Two saves of different workspaces whose transactions overlap.
+    when: A reader pages the change log while they commit.
+    then: The reader never sees the later revision before the earlier one has committed, and a cursor taken between the two commits returns the second change on its next read.
+  - id: AUTH-SETTINGS-LISTENER-LOCAL
+    given: A settings change listener registered in two processes that share one store.
+    when: Process A saves a value and process B later revalidates.
+    then: Only A's listener fires, once, carrying the revision; B reloads the value without calling its listener; and the audit trail holds exactly one event for the change.
   - id: AUTH-WORKSPACE-SETTINGS
     given: An owner with system.settings.manage on Administration > Settings.
     when: The owner renames the workspace or picks a default locale.
