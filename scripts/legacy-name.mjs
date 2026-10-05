@@ -13,6 +13,7 @@ const ALLOWED = [
 	'packages/database/src/migrations.ts',
 	'packages/database-testing/tests/pglite-migrations.test.ts',
 	'packages/cli/tests/legacy-database.test.ts',
+	'packages/cli/tests/vercel-launch.test.ts',
 	'docs/flowdular-rename.md',
 	'scripts/legacy-name.mjs',
 	// Pre-0.6 state in the old directory holds keys, so Git, Docker and

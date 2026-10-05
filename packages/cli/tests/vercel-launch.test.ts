@@ -1179,6 +1179,48 @@ describe('deploy start vercel', () => {
 		await expect(access(join(run.root, '.flowdular/deploy'))).rejects.toThrow();
 	});
 
+	/* Provisioning a 0.5 database would record its URL in the key backup and
+	   Vercel, and every later migration refuses that database. */
+	it('refuses a database created before 0.6 before provisioning anything, then launches on a new one', async () => {
+		const run = await harness();
+		process.env.FLOWDULAR_TEST_OWNER_URL = OWNER_URL;
+		cleanups.push(async () => {
+			delete process.env.FLOWDULAR_TEST_OWNER_URL;
+		});
+		await run.db.exec(
+			'CREATE TABLE _coreloom_migrations_v2 (namespace TEXT, id TEXT)',
+		);
+
+		const refused = await run.start([
+			'--database-url-env',
+			'FLOWDULAR_TEST_OWNER_URL',
+		]);
+		expect(refused.error?.code).toBe('LEGACY_DATABASE');
+		expect(refused.error?.message).toContain('Flowdular 0.5 or earlier');
+		expect(refused.error?.message).toContain(
+			'$FLOWDULAR_TEST_OWNER_URL (--database-url-env FLOWDULAR_TEST_OWNER_URL)',
+		);
+		expect(refused.error?.message).not.toContain(OWNER_PASSWORD);
+		expect(await applicationRoles(run.db)).toEqual([]);
+		await expect(access(join(run.root, '.flowdular/deploy'))).rejects.toThrow();
+		expect(
+			writes(await run.log())
+				.map(commandOf)
+				.filter((command) => !command.startsWith('link')),
+		).toEqual([]);
+		expect(run.platformCalls).toEqual([]);
+
+		await run.db.exec('DROP TABLE _coreloom_migrations_v2');
+		const launched = await run.start([
+			'--database-url-env',
+			'FLOWDULAR_TEST_OWNER_URL',
+		]);
+		expect(launched.error).toBeUndefined();
+		expect(
+			(await applicationRoles(run.db)).map((role) => role.rolname),
+		).toEqual(['flowdular_background', 'flowdular_runtime']);
+	});
+
 	it('stops at a signed-out Vercel CLI before changing anything', async () => {
 		const run = await harness({ loggedOut: true });
 		const result = await run.start();

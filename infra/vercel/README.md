@@ -46,7 +46,8 @@ Flags that matter:
 - `--database-url-env NAME` uses an existing PostgreSQL instead of Neon. Run
   `read -rs FD_OWNER_URL && export FD_OWNER_URL`, paste the owner URL (it stays
   out of shell history), then pass `--database-url-env FD_OWNER_URL`. A URL is
-  never accepted on the command line.
+  never accepted on the command line. A database created by Flowdular 0.5 or
+  earlier is refused before anything is created; use a new database.
 - `--cron "<expression>"` overrides the worker schedule the plan sets.
 
 A rerun resumes after any failure and never regenerates a key that the backup or

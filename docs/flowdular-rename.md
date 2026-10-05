@@ -47,7 +47,7 @@ Flowdular 0.6 renamed every database identifier that carried the old name:
 | Advisory lock key | `coreloom-migration`                                           | `flowdular-migration`                                             |
 | Trigger function  | `coreloom_reject_change`                                       | `flowdular_reject_change`                                         |
 
-The platform API moved to the 0.2 line (0.2.2 in Flowdular 0.6) because the
+The platform API moved to the 0.2 line (0.2.3 in Flowdular 0.6) because the
 ledger and lock constants changed, and every module declares a 0.2 range:
 `"^0.2.2"` when it starts workers or reads the settings change log,
 `"^0.2.0"` otherwise. A module is refused at
@@ -97,6 +97,10 @@ EXECUTE strings, which PostgreSQL runs as SQL.
 - PostgreSQL server: create a new database with the `flowdular_migrator`,
   `flowdular_runtime` and `flowdular_background` roles and point the
   `FD_DATABASE_*_URL` values at it.
+- Vercel: `pnpm flowdular deploy start vercel --apply` refuses a database
+  created by 0.5 or earlier before it creates roles, keys, Production variables
+  or storage. Pass `--database-url-env` naming a variable that holds the owner
+  URL of a new database.
 
 ## External services
 

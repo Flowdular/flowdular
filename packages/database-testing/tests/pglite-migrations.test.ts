@@ -1,6 +1,7 @@
 import { createPgliteCluster } from '@flowdular/database-pglite';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
+	assertNotLegacyDatabase,
 	DATABASE_MIGRATION_LEDGER,
 	DatabaseMigrationError,
 	PostgresDatabaseAdapter,
@@ -192,6 +193,25 @@ INSERT INTO _coreloom_migrations_v2 VALUES ('notes.core', '0001_notes_core', 'po
 				false,
 			);
 			await expect(db.schema.hasColumn('notes', 'pinned')).resolves.toBe(false);
+		} finally {
+			await db.executeScript('DROP TABLE _coreloom_migrations_v2;');
+		}
+	});
+
+	/* The Vercel launcher provisions roles on a plain pg session before any
+	   migration runs, so it needs the same refusal without a migration lease. */
+	it('refuses a database created before the rename to a plain SQL text session', async () => {
+		const db = await database();
+		const session = { query: (text: string) => db.query({ text }) };
+		await expect(assertNotLegacyDatabase(session)).resolves.toBeUndefined();
+		await db.executeScript(
+			'CREATE TABLE _coreloom_migrations_v2 (namespace TEXT, id TEXT);',
+		);
+		try {
+			await expect(assertNotLegacyDatabase(session)).rejects.toMatchObject({
+				code: 'LEGACY_DATABASE',
+				message: expect.stringContaining('Flowdular 0.5 or earlier'),
+			});
 		} finally {
 			await db.executeScript('DROP TABLE _coreloom_migrations_v2;');
 		}

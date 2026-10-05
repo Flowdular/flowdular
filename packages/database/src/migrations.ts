@@ -196,20 +196,28 @@ async function ledgerExists(database: DatabaseSession): Promise<boolean> {
 	return database.schema.hasTable(DATABASE_MIGRATION_LEDGER);
 }
 
-async function assertNotLegacyDatabase(
-	database: DatabaseSession,
+/** A session that runs SQL text without parameters, such as a pg Client. */
+export interface SqlTextSession {
+	query(text: string): Promise<{ readonly rows: readonly object[] }>;
+}
+
+/**
+ * Throws LEGACY_DATABASE when the database was created by Flowdular 0.5 or
+ * earlier. It reads the catalog only, so a caller that provisions a database
+ * runs it before writing anything there.
+ */
+export async function assertNotLegacyDatabase(
+	session: SqlTextSession,
 ): Promise<void> {
 	/* information_schema hides a table the current role holds no privilege on,
 	   and the old ledger belongs to the old migrator role; pg_class does not. */
-	const result = await database.query<{ readonly present: boolean }>({
-		text: `SELECT EXISTS (
+	const result = await session.query(`SELECT EXISTS (
 		         SELECT 1 FROM pg_class AS relation
 		         JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
-		         WHERE namespace.nspname = current_schema() AND relation.relname = $1
-		       ) AS present`,
-		parameters: [LEGACY_MIGRATION_LEDGER],
-	});
-	if (!result.rows[0]?.present) return;
+		         WHERE namespace.nspname = current_schema() AND relation.relname = '${LEGACY_MIGRATION_LEDGER}'
+		       ) AS present`);
+	if (!(result.rows[0] as { readonly present?: unknown } | undefined)?.present)
+		return;
 	throw new DatabaseMigrationError(
 		'LEGACY_DATABASE',
 		'',
@@ -218,6 +226,10 @@ async function assertNotLegacyDatabase(
 			'Docker: run "docker compose --env-file infra/docker/.env -f infra/docker/compose.yaml down -v" and start again. ' +
 			'PostgreSQL server: create a new database with the flowdular_migrator, flowdular_runtime and flowdular_background roles.',
 	);
+}
+
+function textSession(database: DatabaseSession): SqlTextSession {
+	return { query: (text) => database.query({ text }) };
 }
 
 async function ledgerRows(
@@ -310,7 +322,7 @@ export async function databaseMigrationStatus(
 ): Promise<readonly DatabaseMigrationStatus[]> {
 	assertNamespace(namespace);
 	assertMigrations(migrations);
-	await assertNotLegacyDatabase(database);
+	await assertNotLegacyDatabase(textSession(database));
 	const rows = await ledgerRows(database, namespace);
 	return Promise.all(
 		migrations.map((migration) =>
@@ -421,7 +433,7 @@ export async function runDatabaseMigrations(
 			   across modules; the namespace lock keeps the per-module contract. */
 			await transaction.acquireMigrationLock(DATABASE_MIGRATION_LEDGER_LOCK);
 			await transaction.acquireMigrationLock(namespace);
-			await assertNotLegacyDatabase(transaction);
+			await assertNotLegacyDatabase(textSession(transaction));
 			await transaction.executeScript(
 				database.capabilities.sql.migrationLedgerDdl(DATABASE_MIGRATION_LEDGER),
 			);

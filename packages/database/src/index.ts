@@ -42,6 +42,7 @@ export type {
 	DatabaseTransactionOptions,
 } from './contracts.ts';
 export {
+	assertNotLegacyDatabase,
 	DATABASE_MIGRATION_LEDGER,
 	DatabaseMigrationError,
 	databaseMigrationStatus,
@@ -129,4 +130,5 @@ export type {
 	DatabaseMigrationStatus,
 	ExistingMigrationState,
 	RunDatabaseMigrationsOptions,
+	SqlTextSession,
 } from './migrations.ts';
