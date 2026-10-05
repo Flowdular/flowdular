@@ -30,8 +30,7 @@ async function fixture() {
 		'# Keep this\nOTHER_SECRET=unchanged\nFD_DATABASE_ADAPTER=pglite\n',
 	);
 	for (const key of Object.keys(process.env))
-		if (key.startsWith('FD_') || key.startsWith('CORELOOM_'))
-			vi.stubEnv(key, undefined);
+		if (key.startsWith('FD_')) vi.stubEnv(key, undefined);
 	vi.stubEnv('NODE_ENV', 'development');
 	vi.stubEnv('FD_DATABASE_ADAPTER', 'pglite');
 	const calls: ParsedArguments[] = [];

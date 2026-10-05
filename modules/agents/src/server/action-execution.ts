@@ -185,7 +185,6 @@ const WORKFLOW_SCHEMA_KEYS = new Set([
 	'maximum',
 	'writeOnly',
 	'x-flowdular-secret',
-	'x-coreloom-secret',
 	'x-flowdular-read-permission',
 ]);
 const WORKFLOW_SCHEMA_ROOT_KEYS = new Set(
@@ -194,7 +193,6 @@ const WORKFLOW_SCHEMA_ROOT_KEYS = new Set(
 			![
 				'writeOnly',
 				'x-flowdular-secret',
-				'x-coreloom-secret',
 				'x-flowdular-read-permission',
 			].includes(key),
 	),
@@ -255,7 +253,7 @@ function workflowTemplateSchemaSupported(
 					!record.enum.every(
 						(entry) => entry === null || typeof entry !== 'object',
 					))) ||
-			['writeOnly', 'x-flowdular-secret', 'x-coreloom-secret'].some(
+			['writeOnly', 'x-flowdular-secret'].some(
 				(key) => key in record && typeof record[key] !== 'boolean',
 			) ||
 			(record['x-flowdular-read-permission'] !== undefined &&
@@ -275,11 +273,7 @@ function workflowTemplateSchemaSupported(
 	return depthSupported(value, 0) && schemaSupported(value, true);
 }
 
-const SECRET_SCHEMA_MARKERS = [
-	'writeOnly',
-	'x-flowdular-secret',
-	'x-coreloom-secret',
-] as const;
+const SECRET_SCHEMA_MARKERS = ['writeOnly', 'x-flowdular-secret'] as const;
 const SECRET_SCHEMA_VALUE_KEYS = [
 	'default',
 	'const',

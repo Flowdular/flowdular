@@ -39,11 +39,7 @@ export function pointerCatalog(
 			truncated = true;
 			return;
 		}
-		if (
-			value.writeOnly === true ||
-			value['x-flowdular-secret'] === true ||
-			value['x-coreloom-secret'] === true
-		) {
+		if (value.writeOnly === true || value['x-flowdular-secret'] === true) {
 			incomplete = true;
 			return;
 		}

@@ -17,9 +17,7 @@ const credentialPath = join(
 const setupTokenPath = join(root, '.flowdular', 'setup-token');
 const sandboxState = join(root, '.flowdular', 'sandbox');
 const environment = Object.fromEntries(
-	Object.entries(process.env).filter(
-		([key]) => !key.startsWith('FD_') && !key.startsWith('CORELOOM_'),
-	),
+	Object.entries(process.env).filter(([key]) => !key.startsWith('FD_')),
 );
 const socket = createServer();
 socket.listen(0, '127.0.0.1');

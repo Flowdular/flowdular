@@ -271,11 +271,6 @@ function startWorker(
 				...(consumerSdkRoot
 					? { FD_INTERNAL_SANDBOX_SDK_ROOT: consumerSdkRoot }
 					: {}),
-				FD_INTERNAL_SANDBOX_STATE_ROOT:
-					sandboxDirectory(canonicalWorkspaceRoot) ===
-					join(canonicalWorkspaceRoot, '.coreloom', 'sandbox')
-						? '.coreloom'
-						: '.flowdular',
 			},
 			stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
 			/* Database rows carry bigints, byte arrays and dates, none of which

@@ -10,26 +10,22 @@ Use `pnpm flowdular` or its short alias `pnpm fd`. Workspace configuration lives
 in `flowdular.json`. Create a new application with `npm create flowdular@latest`
 once the renamed creator has been published.
 
-Environment variable names use `FD_`. The platform and CLI also accept existing
-`CL_` values; an explicit `FD_` value takes precedence. Existing `.env` files are
-not rewritten, so credentials and custom database URLs remain intact.
+Environment variable names use `FD_`. Flowdular 0.6 no longer reads `CL_`
+values; rename them in `.env` files and deployment environments.
 
 ## Persistent data
 
-New workspaces use `.flowdular`. Existing workspaces with `.coreloom` continue
-using that directory for their database, vault keys and sandbox history. If both
-roots exist, startup refuses to select one silently. To change the directory
-name, stop all platform and sandbox processes first, keep a backup, then rename
-the complete directory. Update any explicit paths in the deployment environment.
-Stored session source snapshots retain the dependencies of their original
-revision; the rename does not rewrite historical drafts.
+Local state lives in `.flowdular`. Flowdular 0.6 no longer reads a `.coreloom`
+state directory; a workspace that still has one starts with empty state under
+`.flowdular`.
 
 PostgreSQL role names, the migration ledger, tenant context setting, migration
 lock identity and authentication cookies retain their established identifiers.
-They are persistence and security contracts, not branding. Historical SQL and its
-embedded migration definitions remain unchanged. Old signed run grants and
-`x-coreloom-*` workflow redaction rules continue to be accepted with the same
-signature, expiry and permission checks.
+
+Run grants signed by the pre-rename issuer and the `x-coreloom-secret` and
+`x-coreloom-read-permission` workflow schema markers are no longer accepted.
+Mark secret fields with `x-flowdular-secret` and permission-protected fields
+with `x-flowdular-read-permission`.
 
 ## External services
 

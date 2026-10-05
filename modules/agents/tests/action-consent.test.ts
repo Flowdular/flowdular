@@ -421,7 +421,7 @@ describe('AGENTS-WORKFLOW-TEMPLATE-REJECT', () => {
 						properties: {
 							token: {
 								type: 'string',
-								'x-coreloom-secret': true,
+								'x-flowdular-secret': true,
 								default: 'secret-must-not-enter-catalog',
 							},
 						},

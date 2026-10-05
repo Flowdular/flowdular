@@ -1,7 +1,4 @@
-import {
-	flowdularEnvironment,
-	flowdularStateDirectory,
-} from '@flowdular/kernel/runtime-config';
+import { flowdularStateDirectory } from '@flowdular/kernel/runtime-config';
 import {
 	createCipheriv,
 	createDecipheriv,
@@ -23,14 +20,9 @@ import { SandboxSetupError } from './workspace-root.ts';
 export const SANDBOX_DIRECTORY = '.flowdular/sandbox';
 
 export function sandboxDirectory(workspaceRoot: string): string {
-	// The parent selects this path before applying the worker filesystem ceiling.
-	// A worker cannot inspect sibling state roots to rediscover that selection.
-	if (process.env.FD_INTERNAL_SANDBOX_PREVIEW_WORKER === '1') {
-		const root = process.env.FD_INTERNAL_SANDBOX_STATE_ROOT;
-		if (root !== '.flowdular' && root !== '.coreloom')
-			throw new Error('Missing preview state root.');
-		return join(workspaceRoot, root, 'sandbox');
-	}
+	// The worker filesystem ceiling denies the lstat flowdularStateDirectory runs.
+	if (process.env.FD_INTERNAL_SANDBOX_PREVIEW_WORKER === '1')
+		return join(workspaceRoot, SANDBOX_DIRECTORY);
 	return join(flowdularStateDirectory(workspaceRoot), 'sandbox');
 }
 
@@ -419,7 +411,7 @@ export function assertPlatformUrl(value: string): string {
 /* The launcher decides the mode from the interface it actually bound, so a
    stored configuration can never grant loopback trust to a public listener. */
 function modeFromEnvironment(stored: SandboxRuntimeMode): SandboxRuntimeMode {
-	const value = flowdularEnvironment(process.env).FD_SANDBOX_MODE;
+	const value = process.env.FD_SANDBOX_MODE;
 	if (value === 'loopback' || value === 'self-hosted') return value;
 	return stored;
 }

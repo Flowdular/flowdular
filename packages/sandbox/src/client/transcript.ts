@@ -73,10 +73,7 @@ export function shortToolDetail(detail: string): string {
 	if (!/^(?:\/|[A-Za-z]:[\\/]|modules[\\/])/.test(detail)) return detail;
 	return detail
 		.replaceAll('\\', '/')
-		.replace(
-			/^.*?\/(?:\.flowdular|\.coreloom)\/sandbox\/sessions\/[^/]+\/workspace\//,
-			'',
-		)
+		.replace(/^.*?\/\.flowdular\/sandbox\/sessions\/[^/]+\/workspace\//, '')
 		.replace(/^modules\//, '');
 }
 

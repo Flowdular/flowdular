@@ -11,9 +11,6 @@ platform/.generated/
 *.log
 .DS_Store
 
-# Existing pre-rename installations retain their private state.
-.coreloom/
-
 release-artifacts/
 
 # Generated from canonical agent guidance at generator build time.

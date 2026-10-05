@@ -1,4 +1,3 @@
-import { flowdularEnvironment } from '@flowdular/kernel/runtime-config';
 import { loadEnvFile } from 'node:process';
 import { resolve } from 'node:path';
 import { failure, type CommandEnvelope } from '@flowdular/cli-protocol';
@@ -23,7 +22,6 @@ export async function runProgram(
 					'The workspace .env file could not be read. Refusing to select a fallback database.',
 				);
 		}
-		Object.assign(process.env, flowdularEnvironment(process.env));
 		return await runCommand(arguments_);
 	} catch (error) {
 		return failure(

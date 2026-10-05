@@ -90,10 +90,10 @@ version. The current registry keeps one version per action id, so retain the
 old id and register a distinct id when published graphs must keep running;
 label and description may change without rebinding a published graph.
 
-Graph bindings may never supply a raw secret. `writeOnly`,
-`x-flowdular-secret`, and legacy `x-coreloom-secret` apply at every schema
-depth, including array items and alternatives. A marked field cannot carry
-`default`, `const`, `enum`, `example`, or `examples` data. A template requiring
+Graph bindings may never supply a raw secret. `writeOnly` and
+`x-flowdular-secret` apply at every schema depth, including array items and
+alternatives. A marked field cannot carry `default`, `const`, `enum`,
+`example`, or `examples` data. A template requiring
 a raw secret input is ineligible. Accept a nonsecret opaque reference and let
 the owning module resolve a credential from its tenant-bound vault or a
 declared capability. Never put secret values in fixtures, graph definitions,

@@ -1,4 +1,3 @@
-import { flowdularEnvironment } from '@flowdular/kernel/runtime-config';
 import { readFile, realpath } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -14,8 +13,6 @@ import {
 	type PreviewSessionSource,
 } from './src/server/preview-modules.ts';
 import { isolatePreviewHotUpdates } from './src/server/preview-hot-updates.ts';
-
-Object.assign(process.env, flowdularEnvironment(process.env));
 
 const appRoot = dirname(fileURLToPath(import.meta.url));
 // npx installs UI dependencies beside the sandbox, outside the app/workspace.
@@ -209,7 +206,7 @@ const config = {
 				...fontDirectories,
 			],
 		},
-		watch: { ignored: ['**/.flowdular/data/**', '**/.coreloom/data/**'] },
+		watch: { ignored: ['**/.flowdular/data/**'] },
 	},
 } satisfies import('vitest/config').UserWorkspaceConfig;
 

@@ -168,22 +168,13 @@ function schemaReason(
 	schema: JsonSchemaV1 | undefined,
 	permissions: readonly string[],
 ): RedactionReason | null {
-	if (
-		schema?.writeOnly === true ||
-		schema?.['x-flowdular-secret'] === true ||
-		schema?.['x-coreloom-secret'] === true
-	) {
+	if (schema?.writeOnly === true || schema?.['x-flowdular-secret'] === true) {
 		return 'secret';
 	}
-	const requiredPermissions = [
-		schema?.['x-flowdular-read-permission'],
-		schema?.['x-coreloom-read-permission'],
-	];
+	const requiredPermission = schema?.['x-flowdular-read-permission'];
 	if (
-		requiredPermissions.some(
-			(permission) =>
-				typeof permission === 'string' && !permissions.includes(permission),
-		)
+		typeof requiredPermission === 'string' &&
+		!permissions.includes(requiredPermission)
 	) {
 		return 'scope-denied';
 	}

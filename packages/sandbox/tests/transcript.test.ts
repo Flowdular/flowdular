@@ -90,7 +90,7 @@ describe('transcript operations', () => {
 		).toBe('blog/src/api.ts');
 		expect(
 			shortToolDetail(
-				'C:\\app\\.coreloom\\sandbox\\sessions\\id\\workspace\\reference\\guide.md',
+				'C:\\app\\.flowdular\\sandbox\\sessions\\id\\workspace\\reference\\guide.md',
 			),
 		).toBe('reference/guide.md');
 		expect(shortToolDetail('pnpm test')).toBe('pnpm test');

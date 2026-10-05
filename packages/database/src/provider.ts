@@ -1,7 +1,4 @@
-import {
-	flowdularEnvironment,
-	flowdularStateDirectory,
-} from '@flowdular/kernel/runtime-config';
+import { flowdularStateDirectory } from '@flowdular/kernel/runtime-config';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
@@ -272,7 +269,6 @@ export function databaseProviderConfigFromEnvironment(
 	environment: NodeJS.ProcessEnv = process.env,
 	workspaceRoot = process.cwd(),
 ): DatabaseProviderConfig {
-	environment = flowdularEnvironment(environment);
 	const production = environment.NODE_ENV === 'production';
 	const adapter = adapterEnvironment(environment, production);
 	if (adapter === 'pglite') {

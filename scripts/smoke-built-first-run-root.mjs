@@ -36,9 +36,7 @@ const port = address.port;
 await new Promise((done) => socket.close(done));
 
 const environment = Object.fromEntries(
-	Object.entries(process.env).filter(
-		([key]) => !key.startsWith('FD_') && !key.startsWith('CORELOOM_'),
-	),
+	Object.entries(process.env).filter(([key]) => !key.startsWith('FD_')),
 );
 const child = spawn(process.execPath, ['platform/dist/server/entry.js'], {
 	cwd: workspace,

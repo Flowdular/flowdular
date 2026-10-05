@@ -31,7 +31,7 @@ export function watchSandboxReloads(
 		if (!['add', 'change', 'unlink'].includes(event)) return;
 		const normalized = path.replaceAll('\\', '/');
 		const draft = normalized.match(
-			/\/(?:\.flowdular|\.coreloom)\/sandbox\/sessions\/([^/]+)\/workspace\/modules\/([^/]+)\//,
+			/\/\.flowdular\/sandbox\/sessions\/([^/]+)\/workspace\/modules\/([^/]+)\//,
 		);
 		const local = relative(appRoot, path);
 		if (

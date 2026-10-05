@@ -6,9 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const root = resolve(process.argv[2]);
 const environment = Object.fromEntries(
-	Object.entries(process.env).filter(
-		([key]) => !key.startsWith('FD_') && !key.startsWith('CORELOOM_'),
-	),
+	Object.entries(process.env).filter(([key]) => !key.startsWith('FD_')),
 );
 const child = spawn(
 	process.execPath,
