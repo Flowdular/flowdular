@@ -58,8 +58,9 @@ later migration.
 Flowdular 0.6 refuses a database created by 0.5 or earlier with
 `LEGACY_DATABASE` before it creates its ledger or applies anything: adopting
 it would mark its tables complete while every policy reads a setting the
-adapter no longer sets. `pnpm flowdular migration verify` reports the
-script-level rule as well: a tenant policy must read
+adapter no longer sets. `pnpm flowdular module validate`, the sandbox
+module-rules gate and `pnpm flowdular migration verify` report the
+script-level rule as well, without a database: a tenant policy must read
 `current_setting('flowdular.tenant_id', true)`, and only `flowdular_*` roles
 may be named.
 

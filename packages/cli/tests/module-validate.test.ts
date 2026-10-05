@@ -1,5 +1,5 @@
 import { PLATFORM_API_VERSION } from '@flowdular/contracts';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -348,6 +348,64 @@ describe('module contract drift', () => {
 					}),
 				),
 			).not.toContain('warning:SPEC_DEPENDENCY_DRIFT');
+		} finally {
+			await dispose();
+		}
+	});
+});
+
+/* The pinned reference module still carries the pre-0.6 identifiers. A module
+   that copied them must fail validation without a database to apply them to. */
+describe('migration identifiers', () => {
+	const reference = new URL(
+		'../../../.ai/references/catalog/migrations/0001_catalog_core.up.sql',
+		import.meta.url,
+	);
+
+	it('reports a tenant setting copied from the pinned reference', async () => {
+		const { root, dispose } = await moduleRoot({
+			...complete,
+			'migrations/0001_billing_core.up.sql': await readFile(reference, 'utf8'),
+		});
+		try {
+			const issues = await moduleLayoutIssues(root, manifest);
+			expect(codes(issues)).toContain('error:TENANT_SETTING_UNKNOWN');
+			expect(
+				issues.find((issue) => issue.code === 'TENANT_SETTING_UNKNOWN')?.path,
+			).toBe('migrations/0001_billing_core.up.sql');
+		} finally {
+			await dispose();
+		}
+	});
+
+	it('reports a role the platform never creates', async () => {
+		const { root, dispose } = await moduleRoot({
+			...complete,
+			'migrations/0001_billing_core.up.sql':
+				'GRANT SELECT (tenant_id) ON billing_runs TO legacy_background;\n',
+		});
+		try {
+			expect(codes(await moduleLayoutIssues(root, manifest))).toContain(
+				'error:ROLE_UNKNOWN',
+			);
+		} finally {
+			await dispose();
+		}
+	});
+
+	it('accepts the flowdular setting and roles', async () => {
+		const { root, dispose } = await moduleRoot({
+			...complete,
+			'migrations/0001_billing_core.up.sql': [
+				'CREATE POLICY billing_runs_tenant_policy ON billing_runs',
+				"  USING (tenant_id = current_setting('flowdular.tenant_id', true))",
+				"  WITH CHECK (tenant_id = current_setting('flowdular.tenant_id', true));",
+				'GRANT SELECT (tenant_id) ON billing_runs TO flowdular_background;',
+				'',
+			].join('\n'),
+		});
+		try {
+			expect(codes(await moduleLayoutIssues(root, manifest))).toEqual([]);
 		} finally {
 			await dispose();
 		}

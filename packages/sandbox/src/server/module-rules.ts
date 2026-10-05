@@ -1,5 +1,6 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { migrationIdentifierIssues } from '@flowdular/database';
 import {
 	CONFORMANCE_CHECKS,
 	runChecks,
@@ -34,6 +35,33 @@ const IGNORED_DIRECTORIES = new Set([
 	'.git',
 	'coverage',
 ]);
+
+interface RuleOutcome {
+	readonly id: string;
+	readonly passed: boolean;
+	readonly detail: string;
+}
+
+/* A migration copied from an older release names a role or tenant setting the
+   platform no longer creates: it fails on apply, or its policy sees no tenant.
+   It runs here rather than among the evaluation checks, which stay free of
+   imports for the conformance script. */
+function migrationIdentifiers(files: ReadonlyMap<string, string>): RuleOutcome {
+	const findings: string[] = [];
+	for (const [path, text] of files) {
+		if (!path.includes('migrations/') || !path.endsWith('.up.sql')) continue;
+		for (const issue of migrationIdentifierIssues(text))
+			findings.push(`${path}: ${issue.message}`);
+	}
+	return {
+		id: 'migration-identifiers',
+		passed: findings.length === 0,
+		detail:
+			findings.length === 0
+				? 'Migrations name only the flowdular roles and tenant setting.'
+				: findings.join(' '),
+	};
+}
 
 export interface ModuleRulesReport {
 	readonly passed: boolean;
@@ -86,7 +114,10 @@ export async function checkModuleRules(input: {
 }): Promise<ModuleRulesReport> {
 	const files = new Map<string, string>();
 	await collectFiles(input.modulePath, input.modulePath, files);
-	const outcomes = runChecks(CHECKS, { files, spec: input.spec });
+	const outcomes: readonly RuleOutcome[] = [
+		...runChecks(CHECKS, { files, spec: input.spec }),
+		migrationIdentifiers(files),
+	];
 	const failures = outcomes.filter((outcome) => !outcome.passed);
 	const lines = outcomes.map(
 		(outcome) =>

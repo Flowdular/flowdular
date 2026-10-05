@@ -49,6 +49,8 @@ export {
 	postgresTenantTableState,
 	runDatabaseMigrations,
 } from './migrations.ts';
+export { migrationIdentifierIssues } from './migration-identifiers.ts';
+export type { MigrationIdentifierIssue } from './migration-identifiers.ts';
 export {
 	createDatabaseAdapterRegistry,
 	validateDatabaseSelection,
