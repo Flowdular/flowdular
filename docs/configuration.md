@@ -658,7 +658,7 @@ an object moved into another tenant's prefix does not open.
 
 | Variable                             | Default                             | Purpose                                                                      |
 | ------------------------------------ | ----------------------------------- | ---------------------------------------------------------------------------- |
-| `FD_STORAGE_ADAPTER`                 | `s3` in production, else `local`    | `local` or `s3`; `local` is refused in production                            |
+| `FD_STORAGE_ADAPTER`                 | `s3` in production, else `local`    | `local`, `s3` or `vercel-blob`; `local` is refused in production             |
 | `FD_STORAGE_LOCAL_DIRECTORY`         | `.flowdular/data/storage`           | Object directory of the local adapter                                        |
 | `FD_STORAGE_S3_BUCKET`               | none                                | Bucket name; required by the S3 adapter                                      |
 | `FD_STORAGE_S3_REGION`               | none                                | Signing region; required by the S3 adapter                                   |
@@ -666,9 +666,21 @@ an object moved into another tenant's prefix does not open.
 | `FD_STORAGE_S3_ACCESS_KEY_ID`        | none                                | Access key id; required by the S3 adapter                                    |
 | `FD_STORAGE_S3_SECRET_ACCESS_KEY`    | none                                | Secret access key; required by the S3 adapter                                |
 | `FD_STORAGE_S3_FORCE_PATH_STYLE`     | `false`                             | `<endpoint>/<bucket>/<key>` instead of a bucket subdomain                    |
+| `BLOB_STORE_ID`                      | set by Vercel                       | Blob store of the `vercel-blob` adapter, authenticated with Vercel OIDC      |
+| `BLOB_READ_WRITE_TOKEN`              | none                                | Blob read-write token for the `vercel-blob` adapter outside Vercel           |
 | `FD_STORAGE_MAX_OBJECT_BYTES`        | `26214400` (25 MiB)                 | Per-object limit, 1024 to 268435456; a stream is cut off at it               |
 | `FD_STORAGE_ENCRYPTION_KEY`          | derived dev key                     | Base64 32-byte key sealing every object and read URL; required in production |
 | `FD_STORAGE_ENCRYPTION_KEY_PREVIOUS` | empty                               | Retired object keys, comma separated, read only                              |
+
+`vercel-blob` keeps the encrypted objects in a private Vercel Blob store, so a
+Vercel deployment needs no separate bucket. Connecting a Blob store to the
+Vercel project sets `BLOB_STORE_ID`, and the SDK authenticates with the
+deployment's OIDC token, so nothing else is configured there. Outside Vercel,
+set `BLOB_READ_WRITE_TOKEN`. The platform refuses to start when neither is
+present. Reads bypass the Blob cache, so a re-sealed or deleted object is never
+served from an older copy. A Vercel Function accepts at most 4.5 MB of request
+or response body, so set `FD_STORAGE_MAX_OBJECT_BYTES` to at most `4194304`
+there.
 
 A module writes through `context.storage` and never sees an adapter, a bucket or
 a path. Only these content types are stored, and the bytes are verified against

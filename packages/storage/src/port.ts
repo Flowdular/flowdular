@@ -23,6 +23,7 @@ import {
 } from './envelope.ts';
 import { createLocalObjectStore } from './local.ts';
 import { createS3ObjectStore } from './s3.ts';
+import { createVercelBlobObjectStore } from './vercel-blob.ts';
 import { mintStorageReadToken, storageReadUrl } from './read-token.ts';
 import { createStorageResealer, type StorageResealPort } from './reseal.ts';
 import { unscannedStorageScanner, type StorageScanner } from './scanner.ts';
@@ -118,6 +119,14 @@ function objectStoreFor(
 ): ObjectStore {
 	if (config.adapter === 'local') {
 		return createLocalObjectStore(config.local.directory);
+	}
+	if (config.adapter === 'vercel-blob') {
+		/* GCM ciphertext is as long as the plaintext and the tag sits in the
+		   header, so the header prefix is the whole envelope overhead. */
+		return createVercelBlobObjectStore({
+			...config.vercelBlob,
+			maxFrameBytes: config.maxObjectBytes + STORAGE_HEADER_PREFIX_BYTES,
+		});
 	}
 	return createS3ObjectStore({
 		...config.s3,
