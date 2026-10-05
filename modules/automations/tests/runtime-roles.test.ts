@@ -426,3 +426,61 @@ describe('automations.core web and worker roles', () => {
 		}
 	});
 });
+
+/* Refuses the first background lease, which an open takes after its runtime
+   lease, and counts the releases of every runtime lease handed out. */
+function refuseFirstOpen(databases: DatabaseProvider) {
+	const acquire = databases.acquire.bind(databases);
+	const runtimeReleases: ReturnType<typeof vi.fn>[] = [];
+	let refused = 0;
+	const spy = vi
+		.spyOn(databases, 'acquire')
+		.mockImplementation(async (request) => {
+			if (request.purpose === 'background' && refused === 0) {
+				refused += 1;
+				throw new Error('background pool unavailable');
+			}
+			const lease = await acquire(request);
+			if (request.purpose === 'migration' || request.purpose === 'background')
+				return lease;
+			const release = vi.fn(() => lease.release());
+			runtimeReleases.push(release);
+			return { database: lease.database, release };
+		});
+	return {
+		runtimeReleases,
+		refused: () => refused,
+		restore: () => spy.mockRestore(),
+	};
+}
+
+describe('an automations worker whose database open failed', () => {
+	it('opens it again on the next startWorker of the same composition and released what the failed open held', async () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(at('2026-09-12T08:00:30.000Z'));
+		const slot = at('2026-09-12T08:00:00.000Z');
+		await shared.repository.createSchedule(
+			schedule('hourly', 'every:60', slot),
+		);
+		const worker = platformProcess(settingsStore());
+		const refusal = refuseFirstOpen(shared.databases);
+		try {
+			await worker.composition.startWorker?.();
+			await worker.composition.stop?.();
+			expect(refusal.refused()).toBe(1);
+			expect(refusal.runtimeReleases).toHaveLength(1);
+			expect(refusal.runtimeReleases[0]).toHaveBeenCalledTimes(1);
+			expect(await nextRunOf('hourly')).toBe(slot);
+
+			await worker.composition.startWorker?.();
+			await settled(async () =>
+				expect(await nextRunOf('hourly')).toBe(at('2026-09-12T09:00:00.000Z')),
+			);
+			await worker.composition.stop?.();
+			expect(worker.keys).toEqual([`schedule:hourly:${slot}`]);
+		} finally {
+			refusal.restore();
+			await worker.composition.dispose?.();
+		}
+	});
+});

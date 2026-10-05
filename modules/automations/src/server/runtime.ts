@@ -128,6 +128,7 @@ export function createAutomationsRuntime(
 			options.databases,
 			options.purpose ?? 'runtime',
 		);
+		leases = [runtimeLease];
 		/* The scheduler poll and the webhook lookup read across tenants; every
 		   write that follows uses the tenant carried by the row they returned. */
 		const backgroundLease = await acquire(options.databases, 'background');
@@ -137,8 +138,16 @@ export function createAutomationsRuntime(
 			background: backgroundLease.database,
 		});
 	};
+	/* A failed open keeps nothing, not even its rejection, so the next caller
+	   (a later worker tick on the same composition) opens again. */
 	const repositoryInstance = (): Promise<AutomationsRepository> =>
-		(repositoryPromise ??= openRepository());
+		(repositoryPromise ??= openRepository().catch(async (error: unknown) => {
+			const held = leases;
+			leases = [];
+			repositoryPromise = undefined;
+			for (const lease of held) await lease.release();
+			throw error;
+		}));
 	const vault =
 		options.secretVault ??
 		secretVaultFromEnvironment(environment, workspaceRoot);

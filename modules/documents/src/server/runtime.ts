@@ -138,11 +138,21 @@ export function createDocumentsRuntime(
 		};
 	};
 
+	/* A failed open keeps nothing, not even its rejection, so the next caller
+	   (a later worker tick on the same composition) opens again. */
 	const repositories = () => {
 		if (disposed) {
 			return Promise.reject(new Error('Documents runtime is disposed.'));
 		}
-		repositoryPromise ??= openRepository();
+		repositoryPromise ??= openRepository().catch(async (error: unknown) => {
+			const held = leases;
+			leases = [];
+			repositoryPromise = undefined;
+			for (const lease of held) {
+				await (await lease.catch(() => null))?.release();
+			}
+			throw error;
+		});
 		return repositoryPromise;
 	};
 	const repository = async (): Promise<DocumentsRepository> =>
@@ -163,6 +173,10 @@ export function createDocumentsRuntime(
 					},
 					limits: options.textLimits,
 				}),
+			(error: unknown) => {
+				textServicePromise = undefined;
+				throw error;
+			},
 		);
 		return textServicePromise;
 	};
@@ -177,22 +191,30 @@ export function createDocumentsRuntime(
 		if (disposed) {
 			return Promise.reject(new Error('Documents runtime is disposed.'));
 		}
-		templatesServicePromise ??= repositories().then((resolved) => {
-			if (!resolved.templates) {
-				throw new Error('This documents runtime has no templates repository.');
-			}
-			return new DocumentTemplatesService({
-				registry,
-				repository: resolved.templates,
-				documents: resolved.documents,
-				storage: options.storage,
-				quotaBytes: options.quotaBytes,
-				timeZone: options.timeZone ?? (() => 'UTC'),
-				wake: () => {
-					if (workerActive) render.wake();
-				},
-			});
-		});
+		templatesServicePromise ??= repositories().then(
+			(resolved) => {
+				if (!resolved.templates) {
+					throw new Error(
+						'This documents runtime has no templates repository.',
+					);
+				}
+				return new DocumentTemplatesService({
+					registry,
+					repository: resolved.templates,
+					documents: resolved.documents,
+					storage: options.storage,
+					quotaBytes: options.quotaBytes,
+					timeZone: options.timeZone ?? (() => 'UTC'),
+					wake: () => {
+						if (workerActive) render.wake();
+					},
+				});
+			},
+			(error: unknown) => {
+				templatesServicePromise = undefined;
+				throw error;
+			},
+		);
 		return templatesServicePromise;
 	};
 
@@ -223,6 +245,10 @@ export function createDocumentsRuntime(
 						quotaBytes: options.quotaBytes,
 						readUrlSeconds: options.readUrlSeconds,
 					}),
+				(error: unknown) => {
+					servicePromise = undefined;
+					throw error;
+				},
 			);
 			return servicePromise;
 		},

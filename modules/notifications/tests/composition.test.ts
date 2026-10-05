@@ -1,5 +1,16 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import type { DatabaseProviderRequest } from '@flowdular/database';
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	describe,
+	expect,
+	it,
+	vi,
+} from 'vitest';
+import type {
+	DatabaseProvider,
+	DatabaseProviderRequest,
+} from '@flowdular/database';
 import type { MailMessage, MailPort } from '@flowdular/server';
 import type {
 	PlatformServerComposition,
@@ -241,5 +252,73 @@ describe('notifications.core web and worker roles', () => {
 		await web.composition.dispose?.();
 		expect(web.purposes).toEqual([]);
 		expect(web.reads).toEqual([]);
+	});
+});
+
+/* Refuses the first background lease, which an open takes after its runtime
+   lease, and counts the releases of every runtime lease handed out. */
+function refuseFirstOpen(databases: DatabaseProvider) {
+	const acquire = databases.acquire.bind(databases);
+	const runtimeReleases: ReturnType<typeof vi.fn>[] = [];
+	let refused = 0;
+	const spy = vi
+		.spyOn(databases, 'acquire')
+		.mockImplementation(async (request) => {
+			if (request.purpose === 'background' && refused === 0) {
+				refused += 1;
+				throw new Error('background pool unavailable');
+			}
+			const lease = await acquire(request);
+			if (request.purpose === 'migration' || request.purpose === 'background')
+				return lease;
+			const release = vi.fn(() => lease.release());
+			runtimeReleases.push(release);
+			return { database: lease.database, release };
+		});
+	return {
+		runtimeReleases,
+		refused: () => refused,
+		restore: () => spy.mockRestore(),
+	};
+}
+
+describe('a notifications worker whose database open failed', () => {
+	it('opens it again on the next startWorker of the same composition and released what the failed open held', async () => {
+		await new NotificationsService(shared.repository).saveEmailDelivery(
+			TENANT,
+			ADA.accountId,
+			true,
+		);
+		const web = composed();
+		const worker = composed();
+		try {
+			web.composition.start?.();
+			const published = await publish(web.publisher(), 'run-reopen');
+			const refusal = refuseFirstOpen(shared.databases);
+			try {
+				worker.composition.start?.();
+				await startWorker(worker.composition);
+				await worker.composition.stop?.();
+				expect(refusal.refused()).toBe(1);
+				expect(refusal.runtimeReleases).toHaveLength(1);
+				expect(refusal.runtimeReleases[0]).toHaveBeenCalledTimes(1);
+				expect(await deliveryStatus(published.deliveryIds[0])).toBe('pending');
+
+				await startWorker(worker.composition);
+				expect(
+					await settle(
+						async () =>
+							(await deliveryStatus(published.deliveryIds[0])) === 'succeeded',
+					),
+				).toBe(true);
+			} finally {
+				refusal.restore();
+			}
+		} finally {
+			for (const role of [web, worker]) {
+				await role.composition.stop?.();
+				await role.composition.dispose?.();
+			}
+		}
 	});
 });

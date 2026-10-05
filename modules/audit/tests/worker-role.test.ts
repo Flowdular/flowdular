@@ -13,6 +13,7 @@ import {
 import {
 	BACKUP_MANIFEST_FILE,
 	BACKUP_MANIFEST_VERSION,
+	type DatabaseProvider,
 } from '@flowdular/database';
 import { createDataClassRegistry } from '@flowdular/kernel';
 import type { AuthPrincipal } from '@flowdular/module-auth';
@@ -322,6 +323,68 @@ describe('AUDIT-WORKER-DRAIN stopping a worker drains the export it holds', () =
 			expect(owner.exportCalls).toEqual([TENANT, TENANT]);
 		} finally {
 			release.resolve();
+			await worker.composition.dispose?.();
+		}
+	});
+});
+
+/* Refuses the first background lease, which an open takes after its runtime
+   lease, and counts the releases of every runtime lease handed out. */
+function refuseFirstOpen(databases: DatabaseProvider) {
+	const acquire = databases.acquire.bind(databases);
+	const runtimeReleases: ReturnType<typeof vi.fn>[] = [];
+	let refused = 0;
+	const spy = vi
+		.spyOn(databases, 'acquire')
+		.mockImplementation(async (request) => {
+			if (request.purpose === 'background' && refused === 0) {
+				refused += 1;
+				throw new Error('background pool unavailable');
+			}
+			const lease = await acquire(request);
+			if (request.purpose === 'migration' || request.purpose === 'background')
+				return lease;
+			const release = vi.fn(() => lease.release());
+			runtimeReleases.push(release);
+			return { database: lease.database, release };
+		});
+	return {
+		runtimeReleases,
+		refused: () => refused,
+		restore: () => spy.mockRestore(),
+	};
+}
+
+describe('a worker whose database open failed', () => {
+	it('opens it again on the next startWorker of the same composition and released what the failed open held', async () => {
+		const environment = await openDeployment();
+		const owner = ownerModule();
+		const worker = compose(owner, environment);
+		try {
+			const id = await requestExport(environment);
+			const refusal = refuseFirstOpen(shared.databases);
+			try {
+				worker.composition.start?.();
+				await worker.composition.startWorker?.();
+				await worker.composition.stop?.();
+				expect(refusal.refused()).toBe(1);
+				expect(refusal.runtimeReleases).toHaveLength(1);
+				expect(refusal.runtimeReleases[0]).toHaveBeenCalledTimes(1);
+				expect(await exportRun(id)).toMatchObject({
+					status: 'started',
+					archivePath: null,
+				});
+
+				await worker.composition.startWorker?.();
+				await worker.composition.stop?.();
+				expect(await exportRun(id)).toMatchObject({
+					status: 'completed',
+					reason: null,
+				});
+			} finally {
+				refusal.restore();
+			}
+		} finally {
 			await worker.composition.dispose?.();
 		}
 	});

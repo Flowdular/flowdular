@@ -128,6 +128,7 @@ export function createNotificationsRuntime(
 			await migration.release();
 		}
 		const runtimeLease = await acquire(options.purpose ?? 'runtime');
+		leases = [runtimeLease];
 		/* The delivery poll reads across tenants; every write that follows uses
 		   the tenant carried by the routing row it returned. */
 		const backgroundLease = await acquire('background');
@@ -138,8 +139,16 @@ export function createNotificationsRuntime(
 		});
 	};
 
+	/* A failed open keeps nothing, not even its rejection, so the next caller
+	   (a later worker tick on the same composition) opens again. */
 	const repositoryInstance = (): Promise<NotificationsRepository> =>
-		(repositoryPromise ??= openRepository());
+		(repositoryPromise ??= openRepository().catch(async (error: unknown) => {
+			const held = leases;
+			leases = [];
+			repositoryPromise = undefined;
+			for (const lease of held) await lease.release();
+			throw error;
+		}));
 
 	const vault =
 		options.secretVault ??

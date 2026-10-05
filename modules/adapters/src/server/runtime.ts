@@ -110,6 +110,7 @@ export function createAdaptersRuntime(
 				},
 			});
 		const runtimeLease = await acquire(options.purpose);
+		leases = [runtimeLease];
 		/* Both routing reads cross workspaces; every write that follows uses the
 		   tenant the routing row named. */
 		const backgroundLease = await acquire('background');
@@ -120,11 +121,19 @@ export function createAdaptersRuntime(
 		});
 	};
 
+	/* A failed open keeps nothing, not even its rejection, so the next caller
+	   (a later worker tick on the same composition) opens again. */
 	const repository = (): Promise<AdaptersRepository> => {
 		if (disposed) {
 			return Promise.reject(new Error('Adapters runtime is disposed.'));
 		}
-		repositoryPromise ??= openRepository();
+		repositoryPromise ??= openRepository().catch(async (error: unknown) => {
+			const held = leases;
+			leases = [];
+			repositoryPromise = undefined;
+			for (const lease of held) await lease.release();
+			throw error;
+		});
 		return repositoryPromise;
 	};
 
@@ -166,6 +175,10 @@ export function createAdaptersRuntime(
 					...(options.now ? { now: options.now } : {}),
 					...options.service,
 				}),
+			(error: unknown) => {
+				servicePromise = undefined;
+				throw error;
+			},
 		);
 		return servicePromise;
 	};

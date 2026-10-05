@@ -103,6 +103,7 @@ export function createApprovalsRuntime(
 			await migration.release();
 		}
 		const runtimeLease = await acquire(options.purpose ?? 'runtime');
+		leases = [runtimeLease];
 		/* The expiry poll reads across tenants; every write that follows uses the
 		   tenant carried by the routing row it returned. */
 		const backgroundLease = await acquire('background');
@@ -113,8 +114,16 @@ export function createApprovalsRuntime(
 		});
 	};
 
+	/* A failed open keeps nothing, not even its rejection, so the next caller
+	   (a later worker tick on the same composition) opens again. */
 	const repositoryInstance = (): Promise<ApprovalsRepository> =>
-		(repositoryPromise ??= openRepository());
+		(repositoryPromise ??= openRepository().catch(async (error: unknown) => {
+			const held = leases;
+			leases = [];
+			repositoryPromise = undefined;
+			for (const lease of held) await lease.release();
+			throw error;
+		}));
 
 	const resolved = async (): Promise<ApprovalsService> =>
 		(service ??= new ApprovalsService({

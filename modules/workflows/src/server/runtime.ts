@@ -257,6 +257,7 @@ export function createWorkflowsRuntime(
 			options.databases,
 			options.purpose ?? 'runtime',
 		);
+		leases = [runtimeLease];
 		/* The worker claim poll and payload retention read across tenants; every
 		   write that follows uses the tenant carried by the row they returned. */
 		const backgroundLease = await acquire(options.databases, 'background');
@@ -319,8 +320,16 @@ export function createWorkflowsRuntime(
 		worker.start();
 	};
 
+	/* A failed open keeps nothing, not even its rejection, so the next caller
+	   (a later worker tick on the same composition) opens again. */
 	const resolved = (): Promise<WorkflowsService> =>
-		(servicePromise ??= create());
+		(servicePromise ??= create().catch(async (error: unknown) => {
+			const held = leases;
+			leases = [];
+			servicePromise = undefined;
+			for (const lease of held) await lease.release();
+			throw error;
+		}));
 
 	return {
 		service: resolved,

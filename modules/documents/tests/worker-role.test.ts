@@ -7,6 +7,7 @@ import {
 	it,
 	vi,
 } from 'vitest';
+import type { DatabaseProvider } from '@flowdular/database';
 import type { AuthPrincipal } from '@flowdular/module-auth';
 import {
 	createAuthenticationMiddleware,
@@ -311,6 +312,97 @@ describe('DOCUMENTS-WORKER-DRAIN stopping a worker drains the render it is stori
 			release.resolve();
 			routing.mockRestore();
 			await worker.composition.dispose?.();
+		}
+	});
+});
+
+/* Refuses the first background lease, which an open takes after its runtime
+   lease, and counts the releases of every runtime lease handed out. */
+function refuseFirstOpen(databases: DatabaseProvider) {
+	const acquire = databases.acquire.bind(databases);
+	const runtimeReleases: ReturnType<typeof vi.fn>[] = [];
+	let refused = 0;
+	const spy = vi
+		.spyOn(databases, 'acquire')
+		.mockImplementation(async (request) => {
+			if (request.purpose === 'background' && refused === 0) {
+				refused += 1;
+				throw new Error('background pool unavailable');
+			}
+			const lease = await acquire(request);
+			if (request.purpose === 'migration' || request.purpose === 'background')
+				return lease;
+			const release = vi.fn(() => lease.release());
+			runtimeReleases.push(release);
+			return { database: lease.database, release };
+		});
+	return {
+		runtimeReleases,
+		refused: () => refused,
+		restore: () => spy.mockRestore(),
+	};
+}
+
+describe('a worker whose database open failed', () => {
+	it('opens it again on the next startWorker of the same composition and released what the failed open held', async () => {
+		const web = compose();
+		const worker = compose();
+		try {
+			web.composition.start?.();
+			const jobId = await queueRender(web, 'Retry');
+			const refusal = refuseFirstOpen(context.databases);
+			try {
+				worker.composition.start?.();
+				await worker.composition.startWorker?.();
+				await worker.composition.stop?.();
+				expect(refusal.refused()).toBe(1);
+				expect(refusal.runtimeReleases).toHaveLength(1);
+				expect(refusal.runtimeReleases[0]).toHaveBeenCalledTimes(1);
+				expect(await render(jobId)).toMatchObject({
+					status: 'queued',
+					attempts: 0,
+				});
+
+				await worker.composition.startWorker?.();
+				await worker.composition.stop?.();
+				expect(await render(jobId)).toMatchObject({
+					status: 'succeeded',
+					attempts: 1,
+				});
+			} finally {
+				refusal.restore();
+			}
+		} finally {
+			await web.composition.dispose?.();
+			await worker.composition.dispose?.();
+		}
+	});
+
+	it('answers the next request of the same composition after a failed open', async () => {
+		const large = await context.service().upload(TENANT, ACCOUNT, {
+			ownerModule: 'directory.core',
+			recordRef: 'party-1',
+			filename: 'large.txt',
+			contentType: 'text/plain',
+			body: textBytes(DOCUMENT_TEXT_LIMITS.inlineBytes + 1),
+		});
+		const requests: readonly ((role: Role) => Promise<Response>)[] = [
+			(role) => role.get('/api/documents'),
+			(role) => role.post('/api/documents/text', { id: large.id }),
+			(role) => role.get('/api/documents/templates'),
+		];
+		for (const request of requests) {
+			const web = compose();
+			const refusal = refuseFirstOpen(context.databases);
+			try {
+				web.composition.start?.();
+				expect((await request(web)).status).toBe(500);
+				expect(refusal.refused()).toBe(1);
+				expect((await request(web)).status).toBe(200);
+			} finally {
+				refusal.restore();
+				await web.composition.dispose?.();
+			}
 		}
 	});
 });
