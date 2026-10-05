@@ -380,13 +380,9 @@ describe('the action loop', () => {
 		runtime.start();
 
 		await waitFor(() => claims > 0);
-		await waitFor(async () => {
-			const invocation = await database.repository.getAction(
-				tenantId,
-				accepted.actionInvocationId,
-			);
-			return invocation?.status === 'queued';
-		});
+		/* A queued read can precede the database claim. Dispose drains that claim
+		   and its release before the final state is observed. */
+		await runtime.dispose();
 
 		const invocation = await database.repository.getAction(
 			tenantId,
