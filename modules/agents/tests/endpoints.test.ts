@@ -15,7 +15,7 @@ import {
 	type AuthRuntime,
 	type PlatformServerContext,
 } from '@flowdular/module-auth/server';
-import type { AgentTool } from '@flowdular/harness';
+import { AgentHarness, type AgentTool } from '@flowdular/harness';
 import { defineApiAgentTool } from '@flowdular/harness/tool-adapters';
 import {
 	createDataClassRegistry,
@@ -179,12 +179,14 @@ function sessionState(principal: AuthPrincipal) {
 function composition(
 	session: AuthPrincipal | null,
 	settingValues?: Record<string, unknown>,
+	environment: Record<string, string> = {},
 ) {
 	const registered: AgentTool[] = [];
 	const context = {
 		environment: {
 			FD_AGENT_CREDENTIAL_KEY: Buffer.alloc(32, 7).toString('base64'),
 			FD_AGENT_RUN_GRANT_KEY: Buffer.alloc(32, 8).toString('base64'),
+			...environment,
 		},
 		workspaceRoot: process.cwd(),
 		databases: database.databases,
@@ -1547,9 +1549,9 @@ describe('agents.core web and worker roles', () => {
 	/* Long enough for a started worker to claim what was just queued. */
 	const idle = () => new Promise((resolve) => setTimeout(resolve, 250));
 
-	function role() {
+	function role(environment: Record<string, string> = {}) {
 		const execute = vi.fn(async () => ({ ok: true }));
-		const opened = composition(principal(ALL_SCOPES));
+		const opened = composition(principal(ALL_SCOPES), undefined, environment);
 		Object.assign(opened.context.auth, {
 			authorizeAgentToolAccess: () => [ACTION_PERMISSION],
 		});
@@ -1777,5 +1779,54 @@ describe('agents.core web and worker roles', () => {
 		expect(await worker.workerOnline()).toBe(false);
 		expect(await worker.runStatus(runId)).toBe('queued');
 		expect(await worker.actionStatus(actionId)).toBe('queued');
+	});
+
+	/* Holds the next run inside the harness until `release` or an abort, so a
+	   stop has an in-flight run to drain. */
+	function holdNextRun() {
+		let entered!: () => void;
+		const running = new Promise<void>((resolve) => {
+			entered = resolve;
+		});
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const execute = AgentHarness.prototype.execute;
+		vi.spyOn(AgentHarness.prototype, 'execute').mockImplementationOnce(
+			async function (this: AgentHarness, ...args: Parameters<typeof execute>) {
+				entered();
+				await new Promise<void>((resolve) => {
+					void held.then(resolve);
+					args[1]?.signal?.addEventListener('abort', () => resolve());
+				});
+				return execute.apply(this, args);
+			},
+		);
+		return { running, release };
+	}
+
+	it('claims no workflow action while a stop drains a run and leaves it to the next startWorker', async () => {
+		const worker = role({ FD_AGENT_WORKER_DRAIN_MS: '5000' });
+		const held = holdNextRun();
+		await worker.composed.prepare();
+		await worker.composed.startWorker();
+		await worker.enqueueRun();
+		await held.running;
+		const stopping = worker.composed.stop!();
+		const actionId = await worker.enqueueAction('drain');
+		await idle();
+		expect(
+			await database.repository.getAction('tenant-http', actionId),
+		).toMatchObject({ status: 'queued', leaseExpiresAt: null });
+		expect(worker.execute).not.toHaveBeenCalled();
+
+		held.release();
+		await stopping;
+		await worker.composed.startWorker();
+		await waitFor(
+			async () => (await worker.actionStatus(actionId)) === 'succeeded',
+		);
+		expect(worker.execute).toHaveBeenCalledTimes(1);
 	});
 });

@@ -511,8 +511,15 @@ export function createAgentRuntime(
 		requestCancel: async (id, context) =>
 			(await currentActionsV2()).requestCancel(id, context),
 	};
-	const quiesce = async () => {
+	const stop = () => {
 		workerGeneration += 1;
+		worker?.stop();
+		actionRuntime?.stop();
+	};
+	const quiesce = async () => {
+		/* Neither loop claims while the other drains: the run drain may last
+		   FD_AGENT_WORKER_DRAIN_MS, and an action claimed then would be aborted. */
+		stop();
 		await worker?.dispose();
 		await actionRuntime?.quiesce();
 	};
@@ -548,11 +555,7 @@ export function createAgentRuntime(
 		prepare,
 		startWorker,
 		start: () => void startWorker(),
-		stop: () => {
-			workerGeneration += 1;
-			worker?.stop();
-			actionRuntime?.stop();
-		},
+		stop,
 		quiesce,
 		async dispose() {
 			if (disposed) return;
