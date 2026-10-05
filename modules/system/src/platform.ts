@@ -52,8 +52,13 @@ export function createServerComposition(
 	   runtime answers from the snapshot it primed at boot, so the read costs
 	   no lookup and an owner's change is live. */
 	installApplicationBranding(() => brandingFromSettings(context.settings));
+	const operatorTenantId = context.environment.FD_OPERATOR_TENANT?.trim();
 	return {
-		routes: createSystemRoutes({ ...context, activation: runtime }),
+		routes: createSystemRoutes({
+			...context,
+			activation: runtime,
+			...(operatorTenantId ? { operatorTenantId } : {}),
+		}),
 		settings: SYSTEM_MODULE_SETTINGS,
 		dispose: async () => {
 			installApplicationBranding(null);
