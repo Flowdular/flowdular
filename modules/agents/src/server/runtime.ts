@@ -63,6 +63,7 @@ import {
 export interface AgentRuntimeOptions {
 	readonly workerConcurrency: number;
 	readonly workerLeaseMs: number;
+	readonly workerDrainMs?: number;
 	readonly providers?: readonly AgentProvider[];
 	/* A function is evaluated when the harness is first built, so tools that
 	   other modules register after this runtime was created are included. */
@@ -122,6 +123,10 @@ export interface AgentRuntime {
 	actions(): AgentActionExecutionCapability;
 	actionsV2(): AgentActionExecutionCapabilityV2;
 	prepare(): Promise<void>;
+	/* Reconciles the module-agent catalogue into durable storage, then starts
+	   the run and workflow-action workers. Rejects with neither started. */
+	startWorker(): Promise<void>;
+	/* startWorker without waiting for it. */
 	start(): void;
 	stop(): void;
 	quiesce(): Promise<void>;
@@ -163,6 +168,13 @@ export function agentRuntimeOptionsFromEnvironment(
 			1_000,
 			300_000,
 			'FD_AGENT_WORKER_LEASE_MS',
+		),
+		workerDrainMs: environmentInteger(
+			environment.FD_AGENT_WORKER_DRAIN_MS,
+			0,
+			0,
+			280_000,
+			'FD_AGENT_WORKER_DRAIN_MS',
 		),
 		providerHostAllowlist: providerHostAllowlist(
 			environment.FD_AGENT_PROVIDER_HOST_ALLOWLIST,
@@ -240,9 +252,11 @@ export function createAgentRuntime(
 	let leases: readonly DatabaseAdapterLease[] = [];
 	let servicePromise: Promise<AgentService> | undefined;
 	let actionRuntime: AgentActionRuntime | undefined;
-	let started = false;
 	let disposed = false;
 	let moduleAgentsReconciled = false;
+	/* Every stop retires the starts before it, so a start still reconciling
+	   when a stop lands leaves both workers stopped. */
+	let workerGeneration = 0;
 	let preparedModuleAgents: readonly ModuleAgentDefinition[] | undefined;
 	const moduleAgents = () =>
 		typeof options.moduleAgents === 'function'
@@ -393,6 +407,7 @@ export function createAgentRuntime(
 						? () => settings.workerConcurrency()
 						: options.workerConcurrency,
 					leaseMs: settings?.workerLeaseMs() ?? options.workerLeaseMs,
+					...(options.workerDrainMs ? { drainMs: options.workerDrainMs } : {}),
 					runGrantAuthority,
 					providerBroker,
 					...(options.notifications
@@ -412,6 +427,7 @@ export function createAgentRuntime(
 				usageService,
 				options.meters,
 			);
+			service.serveModuleAgents(preparedModuleAgents ?? moduleAgents());
 			assistant = new AssistantService(
 				repository,
 				service,
@@ -428,20 +444,40 @@ export function createAgentRuntime(
 		}
 		return service;
 	};
-	const resolved = (): Promise<AgentService> => (servicePromise ??= create());
-	const start = () => {
-		if (started) return;
-		started = true;
-		void resolved().then(async (currentService) => {
-			if (!moduleAgentsReconciled) {
-				await currentService.reconcileModuleAgents(
-					preparedModuleAgents ?? moduleAgents(),
-				);
-				moduleAgentsReconciled = true;
-			}
-			worker!.start();
-			actionRuntime!.start();
-		});
+	const release = async () => {
+		await providerRepository?.close();
+		await repository?.close();
+		for (const lease of leases) await lease.release();
+		leases = [];
+		servicePromise = undefined;
+		worker = undefined;
+		actionRuntime = undefined;
+		providers = undefined;
+		assistant = undefined;
+		usage = undefined;
+		service = undefined;
+		providerRepository = undefined;
+		repository = undefined;
+	};
+	/* A failed open keeps nothing, not even its rejection, so the next caller
+	   (a later worker tick on the same composition) opens again. */
+	const resolved = (): Promise<AgentService> =>
+		(servicePromise ??= create().catch(async (error: unknown) => {
+			await release();
+			throw error;
+		}));
+	const startWorker = async () => {
+		const generation = workerGeneration;
+		const currentService = await resolved();
+		if (!moduleAgentsReconciled) {
+			await currentService.reconcileModuleAgents(
+				preparedModuleAgents ?? moduleAgents(),
+			);
+			moduleAgentsReconciled = true;
+		}
+		if (generation !== workerGeneration) return;
+		actionRuntime!.start();
+		await worker!.start();
 	};
 	const revisionCapability = createAgentRevisionExecutionCapability(
 		() => resolved(),
@@ -476,9 +512,9 @@ export function createAgentRuntime(
 			(await currentActionsV2()).requestCancel(id, context),
 	};
 	const quiesce = async () => {
-		started = false;
+		workerGeneration += 1;
 		await worker?.dispose();
-		await actionRuntime?.dispose();
+		await actionRuntime?.quiesce();
 	};
 	return {
 		service: resolved,
@@ -510,9 +546,10 @@ export function createAgentRuntime(
 		actions: () => actionCapability,
 		actionsV2: () => actionCapabilityV2,
 		prepare,
-		start,
+		startWorker,
+		start: () => void startWorker(),
 		stop: () => {
-			started = false;
+			workerGeneration += 1;
 			worker?.stop();
 			actionRuntime?.stop();
 		},
@@ -521,19 +558,8 @@ export function createAgentRuntime(
 			if (disposed) return;
 			disposed = true;
 			await quiesce();
-			await providerRepository?.close();
-			await repository?.close();
-			for (const lease of leases) await lease.release();
-			leases = [];
-			servicePromise = undefined;
-			worker = undefined;
-			actionRuntime = undefined;
-			providers = undefined;
-			assistant = undefined;
-			usage = undefined;
-			service = undefined;
-			providerRepository = undefined;
-			repository = undefined;
+			await actionRuntime?.dispose();
+			await release();
 		},
 	};
 }

@@ -6,6 +6,7 @@ import {
 	describe,
 	expect,
 	it,
+	vi,
 } from 'vitest';
 import type { AuthPrincipal } from '@flowdular/module-auth';
 import {
@@ -15,6 +16,7 @@ import {
 	type PlatformServerContext,
 } from '@flowdular/module-auth/server';
 import type { AgentTool } from '@flowdular/harness';
+import { defineApiAgentTool } from '@flowdular/harness/tool-adapters';
 import {
 	createDataClassRegistry,
 	createPlatformAgentRegistry,
@@ -26,6 +28,11 @@ import {
 } from '../src/platform.ts';
 import { ASSISTANT_AGENT_ID } from '../src/agent/assistant.ts';
 import { defineAgent } from '../src/server/define-agent.ts';
+import {
+	AGENT_ACTION_EXECUTION_CAPABILITY_V2,
+	type AgentActionExecutionCapabilityV2,
+} from '../src/server/action-execution.ts';
+import { DatabaseAgentRepository } from '../src/services/database-repository.ts';
 import {
 	openAgentsTestDatabase,
 	type AgentsTestDatabase,
@@ -507,7 +514,7 @@ describe('agents HTTP boundary', () => {
 
 	it('owns the trigger of a browser-enqueued run and exposes worker status', async () => {
 		const { composed, mutation, call } = composition(principal(ALL_SCOPES));
-		composed.start();
+		await composed.startWorker();
 		const agentId = await activeAgentId(mutation);
 		const queued = await mutation('/api/agent-runs', {
 			agentId,
@@ -589,7 +596,7 @@ describe('agents HTTP boundary', () => {
 	it('sees tools that other modules registered after it was composed', async () => {
 		const { composed, context, call } = composition(principal(ALL_SCOPES));
 		context.agentTools.register([readOnlyTool]);
-		composed.start();
+		await composed.startWorker();
 		const response = await call('/api/agents/context');
 		expect(response.status).toBe(200);
 		expect(await response.json()).toMatchObject({
@@ -603,7 +610,7 @@ describe('agents HTTP boundary', () => {
 		);
 		context.agentTools.register([readOnlyTool]);
 		context.agentDefinitions.register([moduleAgent]);
-		composed.start();
+		await composed.startWorker();
 		await waitFor(async () =>
 			(await moduleAgents(call)).some((agent) => agent.id === moduleAgent.id),
 		);
@@ -684,7 +691,7 @@ describe('agents HTTP boundary', () => {
 		const owner = composition(principal(ALL_SCOPES));
 		owner.context.agentTools.register([readOnlyTool]);
 		owner.context.agentDefinitions.register([moduleAgent]);
-		owner.composed.start();
+		await owner.composed.startWorker();
 		await waitFor(async () =>
 			(await moduleAgents(owner.call)).some(
 				(agent) => agent.id === moduleAgent.id,
@@ -1144,7 +1151,7 @@ describe('agents list pages', () => {
 			skills: unknown[];
 		};
 		expect(context).toMatchObject({
-			moduleAgents: [],
+			moduleAgents: [expect.objectContaining({ id: ASSISTANT_AGENT_ID })],
 			providers: expect.any(Array),
 			tools: [],
 			procedures: [],
@@ -1324,7 +1331,7 @@ describe('workspace assistant HTTP boundary', () => {
 		opened: ReturnType<typeof composition>,
 	): Promise<void> {
 		opened.context.agentTools.register([readOnlyTool]);
-		opened.composed.start();
+		await opened.composed.startWorker();
 		await waitFor(async () =>
 			(await moduleAgents(opened.call)).some(
 				(agent) => agent.id === ASSISTANT_AGENT_ID,
@@ -1527,5 +1534,248 @@ describe('workspace assistant HTTP boundary', () => {
 		expect(await other.json()).toMatchObject({
 			error: { code: 'CURSOR_INVALID' },
 		});
+	});
+});
+
+describe('agents.core web and worker roles', () => {
+	const ACTION_PERMISSION = 'parties.records.write';
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	/* Long enough for a started worker to claim what was just queued. */
+	const idle = () => new Promise((resolve) => setTimeout(resolve, 250));
+
+	function role() {
+		const execute = vi.fn(async () => ({ ok: true }));
+		const opened = composition(principal(ALL_SCOPES));
+		Object.assign(opened.context.auth, {
+			authorizeAgentToolAccess: () => [ACTION_PERMISSION],
+		});
+		opened.context.agentTools.register([
+			readOnlyTool,
+			defineApiAgentTool({
+				id: 'parties.customer.touch',
+				endpointId: 'parties.records.touch',
+				contractVersion: 1,
+				description: 'Touch one customer.',
+				requiredPermissions: [ACTION_PERMISSION],
+				risk: 'workspace-write',
+				idempotency: 'required',
+				idempotencyProtection: 'target-ledger',
+				cancellation: 'cooperative',
+				inputSchema: {
+					type: 'object',
+					required: ['id'],
+					properties: { id: { type: 'string' } },
+					additionalProperties: false,
+				},
+				outputSchema: {
+					type: 'object',
+					required: ['ok'],
+					properties: { ok: { type: 'boolean' } },
+					additionalProperties: false,
+				},
+				timeoutMs: 1_000,
+				execute,
+			}),
+		]);
+		opened.context.agentDefinitions.register([moduleAgent]);
+		const actions =
+			opened.context.capabilities.get<AgentActionExecutionCapabilityV2>(
+				AGENT_ACTION_EXECUTION_CAPABILITY_V2,
+			)!;
+		return {
+			...opened,
+			execute,
+			async enqueueRun(): Promise<string> {
+				const agentId = await activeAgentId(opened.mutation);
+				const queued = await opened.mutation('/api/agent-runs', {
+					agentId,
+					input: 'Summarize the open orders.',
+					toolGrants: [],
+				});
+				expect(queued.status).toBe(202);
+				return ((await queued.json()) as { run: { id: string } }).run.id;
+			},
+			async enqueueAction(key: string): Promise<string> {
+				const accepted = await actions.start(
+					{
+						actionId: 'parties.customer.touch',
+						contractVersion: 1,
+						input: { id: 'customer-1' },
+						idempotencyKey: `worker-role:${key}`,
+					},
+					{
+						tenantId: 'tenant-http',
+						workflowRunId: `workflow-${key}`,
+						nodeRunId: 'node-1',
+						actor: { kind: 'user', id: 'account-a', label: 'Ada' },
+						permissionSnapshot: [ACTION_PERMISSION],
+						signal: new AbortController().signal,
+					},
+				);
+				return accepted.actionInvocationId;
+			},
+			runStatus: async (id: string) =>
+				(await database.repository.getRun('tenant-http', id))?.status,
+			actionStatus: async (id: string) =>
+				(await database.repository.getAction('tenant-http', id))?.status,
+			workerOnline: async () =>
+				(
+					(await (await opened.call('/api/agent-runs/worker')).json()) as {
+						worker: { online: boolean };
+					}
+				).worker.online,
+		};
+	}
+
+	it('AGENTS-WEB-WORKER-ROLE persists work in the web role and leaves reconciling and executing it to startWorker', async () => {
+		const reconcile = vi.spyOn(
+			DatabaseAgentRepository.prototype,
+			'reconcileModuleAgents',
+		);
+		const web = role();
+		await web.composed.prepare();
+		web.composed.start?.();
+		const runId = await web.enqueueRun();
+		const actionId = await web.enqueueAction('web');
+		expect((await moduleAgents(web.call)).map((agent) => agent.id)).toContain(
+			moduleAgent.id,
+		);
+		await idle();
+		expect(reconcile).not.toHaveBeenCalled();
+		expect(await web.workerOnline()).toBe(false);
+		expect(await web.runStatus(runId)).toBe('queued');
+		expect(await web.actionStatus(actionId)).toBe('queued');
+		expect(web.execute).not.toHaveBeenCalled();
+
+		await web.composed.startWorker();
+		expect(reconcile).toHaveBeenCalledTimes(1);
+		expect(await web.workerOnline()).toBe(true);
+		await waitFor(async () => (await web.runStatus(runId)) === 'succeeded');
+		await waitFor(
+			async () => (await web.actionStatus(actionId)) === 'succeeded',
+		);
+		expect(web.execute).toHaveBeenCalledTimes(1);
+	});
+
+	it('AGENTS-WORKER-START-FAILURE rejects startWorker on a failed reconciliation and leaves queued work to a later worker', async () => {
+		const failure = new Error('reconciliation refused');
+		const reconcile = vi
+			.spyOn(DatabaseAgentRepository.prototype, 'reconcileModuleAgents')
+			.mockRejectedValueOnce(failure);
+		const failed = role();
+		await failed.composed.prepare();
+		const runId = await failed.enqueueRun();
+		await expect(failed.composed.startWorker()).rejects.toBe(failure);
+		const actionId = await failed.enqueueAction('failed');
+		await idle();
+		expect(await failed.workerOnline()).toBe(false);
+		expect(await failed.runStatus(runId)).toBe('queued');
+		expect(await failed.actionStatus(actionId)).toBe('queued');
+		expect(failed.execute).not.toHaveBeenCalled();
+
+		const later = role();
+		await later.composed.prepare();
+		await later.composed.startWorker();
+		expect(reconcile).toHaveBeenCalledTimes(2);
+		await waitFor(async () => (await later.runStatus(runId)) === 'succeeded');
+		await waitFor(
+			async () => (await later.actionStatus(actionId)) === 'succeeded',
+		);
+		expect(later.execute).toHaveBeenCalledTimes(1);
+	});
+
+	it('AGENTS-WORKER-START-FAILURE retries a failed open on the next startWorker of the same composition and releases what the failed attempt held', async () => {
+		const worker = role();
+		await worker.composed.prepare();
+		const acquire = database.databases.acquire.bind(database.databases);
+		const runtimeReleases: ReturnType<typeof vi.fn>[] = [];
+		let refuse = true;
+		vi.spyOn(database.databases, 'acquire').mockImplementation(
+			async (request) => {
+				if (refuse && request.purpose === 'background') {
+					refuse = false;
+					throw new Error('background pool unavailable');
+				}
+				const lease = await acquire(request);
+				if (request.purpose !== 'runtime') return lease;
+				const release = vi.fn(() => lease.release());
+				runtimeReleases.push(release);
+				return { database: lease.database, release };
+			},
+		);
+
+		await expect(worker.composed.startWorker()).rejects.toThrow(
+			'background pool unavailable',
+		);
+		expect(runtimeReleases).toHaveLength(1);
+		expect(runtimeReleases[0]).toHaveBeenCalledTimes(1);
+
+		await worker.composed.startWorker();
+		expect(runtimeReleases).toHaveLength(2);
+		expect(runtimeReleases[1]).not.toHaveBeenCalled();
+		expect(await worker.workerOnline()).toBe(true);
+		const runId = await worker.enqueueRun();
+		await waitFor(async () => (await worker.runStatus(runId)) === 'succeeded');
+	});
+
+	it('stops safely before startWorker and restarts both workers after a stop without reconciling again', async () => {
+		const reconcile = vi.spyOn(
+			DatabaseAgentRepository.prototype,
+			'reconcileModuleAgents',
+		);
+		const worker = role();
+		await worker.composed.prepare();
+		await worker.composed.stop?.();
+		await worker.composed.startWorker();
+		await worker.composed.stop?.();
+		expect(await worker.workerOnline()).toBe(false);
+		const runId = await worker.enqueueRun();
+		const actionId = await worker.enqueueAction('restart');
+		await idle();
+		expect(await worker.runStatus(runId)).toBe('queued');
+		expect(await worker.actionStatus(actionId)).toBe('queued');
+
+		await worker.composed.startWorker();
+		expect(reconcile).toHaveBeenCalledTimes(1);
+		expect(await worker.workerOnline()).toBe(true);
+		await waitFor(async () => (await worker.runStatus(runId)) === 'succeeded');
+		await waitFor(
+			async () => (await worker.actionStatus(actionId)) === 'succeeded',
+		);
+	});
+
+	it('leaves both workers stopped when a stop lands while startWorker reconciles', async () => {
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const reconcileModuleAgents =
+			DatabaseAgentRepository.prototype.reconcileModuleAgents;
+		const reconcile = vi
+			.spyOn(DatabaseAgentRepository.prototype, 'reconcileModuleAgents')
+			.mockImplementation(async function (
+				this: DatabaseAgentRepository,
+				...args: Parameters<typeof reconcileModuleAgents>
+			) {
+				await held;
+				return reconcileModuleAgents.apply(this, args);
+			});
+		const worker = role();
+		await worker.composed.prepare();
+		const starting = worker.composed.startWorker();
+		await waitFor(() => reconcile.mock.calls.length === 1);
+		await worker.composed.stop?.();
+		release();
+		await starting;
+		const runId = await worker.enqueueRun();
+		const actionId = await worker.enqueueAction('stopped');
+		await idle();
+		expect(await worker.workerOnline()).toBe(false);
+		expect(await worker.runStatus(runId)).toBe('queued');
+		expect(await worker.actionStatus(actionId)).toBe('queued');
 	});
 });

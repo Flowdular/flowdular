@@ -22,6 +22,10 @@ export interface AgentWorkerOptions {
 	   restart. Out-of-range values fall back to the last valid one. */
 	readonly concurrency: number | (() => number);
 	readonly leaseMs: number;
+	/* How long dispose lets claimed runs settle before it aborts them. A run
+	   aborted by a shutdown restarts from its input, so a host that stops the
+	   worker on a schedule (a Vercel tick) needs room for a whole run. */
+	readonly drainMs?: number;
 	readonly runGrantAuthority?: AgentRunGrantAuthority;
 	readonly providerBroker?: AgentProviderBroker;
 	/* Resolved when a run settles. Absent, or resolving to null, means the
@@ -144,11 +148,24 @@ export class AgentWorker {
 		this.#scheduled = false;
 	}
 
-	/* Terminal worker teardown. In-flight provider calls are aborted but their
-	   persisted rows stay leased for recovery by the next worker generation. */
+	/* Terminal worker teardown. In-flight provider calls still running after
+	   drainMs are aborted but their persisted rows stay leased for recovery by
+	   the next worker generation. */
 	async dispose(): Promise<void> {
 		this.stop();
 		await this.#draining;
+		const drainMs = this.options.drainMs ?? 0;
+		if (drainMs > 0 && this.#inFlight.size > 0) {
+			await new Promise<void>((resolve) => {
+				const settled = () => {
+					clearTimeout(timer);
+					this.#idleWaiters.delete(settled);
+					resolve();
+				};
+				const timer = setTimeout(settled, drainMs);
+				this.#idleWaiters.add(settled);
+			});
+		}
 		for (const controller of this.#inFlight.values()) {
 			controller.abort(SHUTDOWN);
 		}

@@ -131,6 +131,7 @@ function trackedWorker(
 	options: {
 		readonly workerId: string;
 		readonly leaseMs?: number;
+		readonly drainMs?: number;
 		readonly now?: () => number;
 	},
 	resolver?: AgentProviderResolver,
@@ -142,6 +143,7 @@ function trackedWorker(
 			workerId: options.workerId,
 			concurrency: 1,
 			leaseMs: options.leaseMs ?? 1_000,
+			...(options.drainMs ? { drainMs: options.drainMs } : {}),
 			...(options.now ? { now: options.now } : {}),
 		},
 		resolver,
@@ -474,6 +476,81 @@ describe('agent run recovery and lifecycle', () => {
 			release.resolve();
 			await closing;
 		}
+		expect(worker.status().inFlight).toBe(0);
+	});
+
+	it('lets a claimed run settle within the drain time instead of aborting it', async () => {
+		const repository = database.repository;
+		const entered = latch();
+		const release = latch();
+		const reasons: string[] = [];
+		const harness = new AgentHarness({
+			providers: [
+				{
+					id: 'test-provider',
+					execute: async (context) => {
+						context.signal.addEventListener('abort', () =>
+							reasons.push(String(context.signal.reason)),
+						);
+						entered.resolve();
+						await release.promise;
+						return {
+							output: 'done',
+							usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+							finishReason: 'stop',
+						};
+					},
+				},
+			],
+		});
+		const worker = trackedWorker(harness, {
+			workerId: 'worker:drain',
+			drainMs: 5_000,
+		});
+		const service = new AgentService(repository, harness, worker);
+		const agent = await activeAgent(service);
+		const queued = await service.enqueueRun(tenantId, actor, [], {
+			agentId: agent.id,
+			trigger: 'service',
+			input: 'Finish while stopping.',
+			toolGrants: [],
+		});
+		await worker.start();
+		await entered.promise;
+		const closing = worker.dispose();
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		release.resolve();
+		await closing;
+
+		expect(reasons).toEqual([]);
+		expect((await service.getRun(tenantId, queued.id)).status).toBe(
+			'succeeded',
+		);
+	});
+
+	it('aborts a claimed run that outlives the drain time', async () => {
+		const repository = database.repository;
+		const provider = abortableProvider();
+		const harness = new AgentHarness({ providers: [provider] });
+		const worker = trackedWorker(harness, {
+			workerId: 'worker:drain-expired',
+			drainMs: 100,
+		});
+		const service = new AgentService(repository, harness, worker);
+		const agent = await activeAgent(service);
+		await service.enqueueRun(tenantId, actor, [], {
+			agentId: agent.id,
+			trigger: 'service',
+			input: 'Never finish.',
+			toolGrants: [],
+		});
+		await worker.start();
+		await waitFor(() => worker.status().inFlight === 1);
+		const startedAt = Date.now();
+		await worker.dispose();
+
+		expect(Date.now() - startedAt).toBeGreaterThanOrEqual(90);
+		expect(provider.reasons).toEqual(['worker-shutdown']);
 		expect(worker.status().inFlight).toBe(0);
 	});
 

@@ -450,6 +450,16 @@ export class AgentService {
 	): Promise<void> {
 		const normalized = normalizeModuleAgentDefinitions(definitions);
 		await this.repository.reconcileModuleAgents(normalized, this.now());
+		this.#serveModuleAgents(normalized);
+	}
+
+	/* A web role serves the catalogue without writing it; reconciliation is
+	   the worker's. */
+	serveModuleAgents(definitions: readonly ModuleAgentDefinition[]): void {
+		this.#serveModuleAgents(normalizeModuleAgentDefinitions(definitions));
+	}
+
+	#serveModuleAgents(normalized: readonly ModuleAgentDefinition[]): void {
 		this.#moduleAgents.clear();
 		for (const definition of normalized) {
 			this.#moduleAgents.set(definition.id, definition);

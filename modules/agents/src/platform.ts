@@ -40,7 +40,7 @@ import {
 
 /* Business modules register tools in `context.agentTools` from their own
    compositions, some of them after this one ran. The registry is therefore
-   read when the platform calls `start()`, never at composition time. The
+   read when the platform calls `prepare()`, never at composition time. The
    field is read structurally until the composition contract carries it. */
 interface AgentToolRegistry {
 	list(): readonly AgentTool[];
@@ -68,9 +68,10 @@ function nativeToolsFromContext(
 export type AgentServerComposition = PlatformServerComposition & {
 	readonly settings: ModuleSettingsDeclaration;
 	prepare(): Promise<void>;
-	/* Called by the platform once every module is composed. Recovery of
-	   interrupted runs starts here, not on the first request. */
-	start(): void;
+	/* Called by the platform in a worker role once every module has started.
+	   Reconciliation and recovery of interrupted runs start here, never in a
+	   web role and never on the first request. */
+	startWorker(): Promise<void>;
 };
 
 export function createServerComposition(
@@ -148,7 +149,7 @@ export function createServerComposition(
 		routes: createAgentRoutes(context.auth, runtime),
 		settings: agentsModuleSettingsFromEnvironment(context.environment),
 		prepare: () => runtime.prepare(),
-		start: () => runtime.start(),
+		startWorker: () => runtime.startWorker(),
 		stop: () => runtime.quiesce(),
 		dispose: () => runtime.dispose(),
 	};

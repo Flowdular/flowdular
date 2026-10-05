@@ -11,12 +11,17 @@ deployments must set the secret keys.
 | `FD_ENV`             | `NODE_ENV`, else `development`    | Environment the CLI and destructive guards check                           |
 | `FD_PORT`            | `3000`                            | Host port published by the container                                       |
 | `FD_TRUST_PROXY`     | `false`                           | Trust `X-Forwarded-*` behind a reverse proxy                               |
+| `FD_RUNTIME_ROLE`    | `combined`                        | `combined` serves HTTP and runs module workers; `web` serves HTTP only     |
 | `FD_CSP`             | built-in policy                   | Override the Content Security Policy                                       |
 | `FD_CSP_REPORT_ONLY` | `true` outside production         | Report CSP violations instead of enforcing them                            |
 | `FD_LOG_FORMAT`      | `json` in production, else `text` | `json` (one object per line) or `text`; see [operations.md](operations.md) |
 | `FD_LOG_LEVEL`       | `info`                            | `debug`, `info`, `warn` or `error`                                         |
 | `FD_METRICS`         | `false`                           | Expose `GET /api/metrics`; see [operations.md](operations.md)              |
 | `FD_METRICS_TOKEN`   | none                              | Bearer token a metrics scrape must present                                 |
+
+A `web` process never starts a module worker and never claims queued work from a
+request, so a deployment of `web` processes also needs a `combined` process on
+the same database, object storage and keys.
 
 ## Branding
 
@@ -289,6 +294,7 @@ message was not delivered.
 | `FD_AGENT_RUN_GRANT_KEY`           | generated dev key | Base64 32-byte key signing run grants                |
 | `FD_AGENT_WORKER_CONCURRENCY`      | `2` (1 to 16)     | Parallel run workers                                 |
 | `FD_AGENT_WORKER_LEASE_MS`         | `30000`           | Run lease before recovery reclaims it                |
+| `FD_AGENT_WORKER_DRAIN_MS`         | `0` (0 to 280000) | Time a stopping worker lets claimed runs finish      |
 | `FD_AGENT_PROVIDER_HOST_ALLOWLIST` | empty             | Hostnames an external provider may be called on      |
 
 Outside production the keys are generated once under `.flowdular/data`. The
