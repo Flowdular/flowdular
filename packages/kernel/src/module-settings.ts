@@ -117,6 +117,11 @@ export const MODULE_SETTINGS_CHANGES_PAGE_MAX = 500;
 /** How long a process serves settings from its snapshot without reading the log. */
 export const MODULE_SETTINGS_STALENESS_MS = 5_000;
 
+/* Snapshot reads one revalidation keeps in flight. An expired cursor reloads
+   every held pair, thousands with a full cache, and the rest wait their turn
+   instead of queueing on the store all at once. */
+const RELOAD_CONCURRENCY = 8;
+
 /* Storage may be a database or a network, so every operation is asynchronous;
    the runtime serves reads from a snapshot it primes per tenant. A store that
    keeps a change log answers `newestRevision` and `changesAfter`, and the
@@ -540,6 +545,23 @@ export function createModuleSettingsRuntime(
 		return pending;
 	};
 
+	const readAll = async (
+		pairs: Iterable<readonly [string, string]>,
+	): Promise<void> => {
+		const queue = [...pairs];
+		const reader = async (): Promise<void> => {
+			for (let pair = queue.pop(); pair; pair = queue.pop()) {
+				await read(pair[0], pair[1]);
+			}
+		};
+		await Promise.all(
+			Array.from(
+				{ length: Math.min(RELOAD_CONCURRENCY, queue.length) },
+				reader,
+			),
+		);
+	};
+
 	const held = (tenantId: string, moduleId: string): boolean =>
 		snapshots.get(tenantId)?.has(moduleId) === true ||
 		loads.has(pairKey(tenantId, moduleId));
@@ -554,11 +576,7 @@ export function createModuleSettingsRuntime(
 		for (const [key, load] of loads) {
 			pairs.set(key, [load.tenantId, load.moduleId]);
 		}
-		await Promise.all(
-			[...pairs.values()].map(([tenantId, moduleId]) =>
-				read(tenantId, moduleId),
-			),
-		);
+		await readAll(pairs.values());
 	};
 
 	/* A held pair is read again only after the log read that named it, so the
@@ -588,11 +606,7 @@ export function createModuleSettingsRuntime(
 					]);
 				}
 			}
-			await Promise.all(
-				[...named.values()].map(([tenantId, moduleId]) =>
-					read(tenantId, moduleId),
-				),
-			);
+			await readAll(named.values());
 			cursor = page.cursor;
 			reflected = Math.max(reflected, page.changes.at(-1)?.revision ?? 0);
 		}

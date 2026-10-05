@@ -840,6 +840,46 @@ describe('module settings runtime over a change log', () => {
 		expect(shared.reads.loads).toHaveLength(5);
 	});
 
+	it('reloads every held pair after an expired cursor without loading them all at once', async () => {
+		const shared = logStore();
+		const clock = { now: 0 };
+		let inFlight = 0;
+		let peak = 0;
+		const store: ModuleSettingsStore = {
+			...shared.store,
+			async load(tenantId, moduleId) {
+				inFlight += 1;
+				peak = Math.max(peak, inFlight);
+				try {
+					await new Promise((resolve) => setTimeout(resolve, 0));
+					return await shared.store.load(tenantId, moduleId);
+				} finally {
+					inFlight -= 1;
+				}
+			},
+		};
+		const worker = process(store, clock);
+		const tenants = Array.from({ length: 40 }, (_, index) => `tenant-${index}`);
+		for (const tenantId of tenants) await worker.prime(tenantId);
+		const held = new Set(shared.reads.loads);
+		await process(shared.store, clock).set(
+			'tenant-7',
+			'other.core',
+			'pageSize',
+			70,
+			'owner',
+		);
+
+		shared.faults.expire = true;
+		shared.reads.loads.length = 0;
+		peak = 0;
+		clock.now = MODULE_SETTINGS_STALENESS_MS + 1;
+		await worker.prime('tenant-0');
+		expect(worker.get('tenant-7', 'other.core', 'pageSize')).toBe(70);
+		expect(new Set(shared.reads.loads)).toEqual(held);
+		expect(peak).toBeLessThan(tenants.length);
+	});
+
 	it('reads again a pair it loaded before its first prime', async () => {
 		const shared = logStore();
 		const clock = { now: 0 };
