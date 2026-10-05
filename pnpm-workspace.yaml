@@ -15,10 +15,10 @@ allowBuilds:
   tldjs: false
 
 minimumReleaseAgeExclude:
-  - '@octanejs/app-core@0.1.0'
-  - '@octanejs/seo@0.0.45'
-  - '@octanejs/tanstack-table@0.1.58'
-  - '@octanejs/vite-plugin@0.2.0'
-  - octane@0.8.0
-  - '@octanejs/tanstack-store@0.0.55'
-  - segment-state@0.3.0
+  - '@octanejs/app-core@0.1.1'
+  - '@octanejs/seo@0.0.46'
+  - '@octanejs/tanstack-table@0.1.59'
+  - '@octanejs/vite-plugin@0.2.1'
+  - octane@0.9.1
+  - '@octanejs/tanstack-store@0.0.56'
+  - segment-state@0.4.0
