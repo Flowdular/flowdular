@@ -1,7 +1,7 @@
 schemaVersion: 2
 id: system.core
-specVersion: 0.9.1
-status: approved
+specVersion: 0.9.2
+status: draft
 name: System Core
 description: Provides the application shell, platform health, module discovery, the deployment's own branding, and the administration surface for module settings.
 profile: full
@@ -26,6 +26,7 @@ invariants:
   - The module catalog exposed to administrators is read from workspace manifests and specifications; it never loads module code and never changes the enabled set.
   - The Modules screen reads host-authored module sources, pinned change plans and install hashes without changing the deployed application's source or enabled set. Applying a plan remains a host CLI operation followed by a build and restart.
   - Module settings are declared by their owning module, stored per tenant by auth.core, and changed only through the settings administration API served by system.core, with an audit record.
+  - A platform-scoped setting carries one value for every workspace, so the settings administration API changes it only for a principal with system.settings.manage in the operator workspace, the tenant whose id the deployment sets in FD_OPERATOR_TENANT. A principal of any other workspace reads it with the row locked, and its write is refused with 403 PLATFORM_SETTING_OPERATOR_ONLY before any validation, storing nothing and writing no audit event. While FD_OPERATOR_TENANT is unset no workspace changes a platform-scoped setting and the stored values keep applying. Tenant-scoped settings and feature flags are unaffected.
   - system.core declares the workspace time zone as a shared tenant setting, system.core.timeZone, defaulting to UTC. Only a name the runtime zone database resolves is stored, in its canonical IANA spelling, and any module that declares a dependency on system.core reads it live through the settings runtime; a value this deployment cannot resolve reads back as UTC instead of failing the reader.
   - A feature flag is a module setting declared with kind flag, which is a non-secret boolean with a declared default, a label, a description, and tenant scope, the only scope a flag may take. It is stored, read, validated and overridden exactly like any other setting, so a module reads it on the request path through the settings runtime at no cost beyond the settings read itself; system.core adds no flag store, no flag endpoint and no second write path.
   - The composed module set is CLI-owned and baked at build; a module cannot be added to a running application from the UI. system.core owns per-workspace activation of the modules the application already composes, stored in the tenant table system_module_activations under forced row-level security. A composed module without a row is active.
@@ -33,7 +34,7 @@ invariants:
   - Every activation change appends one audit event, system.module.activated or system.module.deactivated, to the auth.core trail with the module id and the actor. Repeating the current state changes nothing and writes no event.
   - Activation is enforced in three places from one per-workspace snapshot published as the public capability system.modules.v1 and memoised for at most thirty seconds per tenant, refreshed at once by a change made through this instance. defineEndpoint answers 403 MODULE_INACTIVE for an endpoint of an inactive module in the principal's workspace, required modules exempt; the application shell hides the navigation, views, widgets and command palette entries of inactive modules; the endpoint gate never reads a tenant id from the request.
   - The API screen reads the platform's own OpenAPI document and lists the operations it describes. The document is built per caller from the endpoints the running composition defined, so a module a sandbox session wrote is described as soon as it is enabled, and an operation the caller has no permission for, or of a module inactive in its workspace, is not listed. The screen reads, registers no endpoint of its own and is behind system.modules.read.
-  - system.core declares the branding of the deployment as the platform-scoped settings system.core.appName, documentTitle, description, ogImageUrl, faviconUrl, themeColor and logoUrl, each with the product's own value as its default. They carry one identity for the whole installation, so the sign-in screen, the shell and a shared link read the same value and a workspace cannot change them; only a principal with system.settings.manage can, through the settings administration API, with an audit record.
+  - system.core declares the branding of the deployment as the platform-scoped settings system.core.appName, documentTitle, description, ogImageUrl, faviconUrl, themeColor and logoUrl, each with the product's own value as its default. They carry one identity for the whole installation, so the sign-in screen, the shell and a shared link read the same value and a workspace cannot change them; only a principal with system.settings.manage in the operator workspace can, through the settings administration API, with an audit record.
   - The application document carries its branding from the server, where the route resolves the stored values once per request, hands them to the server render and emits them as one JSON data block the browser adopts on hydration, so the head, the sidebar wordmark and the boot splash never disagree and the client makes no second request to learn them. A deployment that stored nothing renders the product defaults, and an empty appName, documentTitle, description or logoUrl means the default, never an empty document title or a broken image.
   - A branding value that reaches the document head or an image source is stored only as a same-origin absolute path or an https URL, and themeColor only as a six-digit hex colour. A value that fails its declared pattern is refused when it is written, and every value is escaped where it is rendered, so a stored setting can never introduce markup or a script into the document.
 permissions:
@@ -128,11 +129,19 @@ acceptanceScenarios:
   - id: SYSTEM-SETTINGS-READ
     given: A principal with system.settings.read.
     when: The principal requests the declared settings, from a module drawer or from GET /api/settings.
-    then: Every declared setting is listed with its current tenant value, platform-scoped rows are marked as applying to all workspaces, and secret values are never returned.
+    then: Every declared setting is listed with its current tenant value, platform-scoped rows are marked as applying to all workspaces and, outside the operator workspace, locked with a reason saying only the deployment operator changes them, and secret values are never returned.
   - id: SYSTEM-SETTINGS-MANAGE
-    given: A principal with system.settings.manage changes a declared setting.
+    given: A principal with system.settings.manage changes a declared tenant setting, or a platform-scoped one from the operator workspace.
     when: The value passes the declared type, bounds, and enum validation.
-    then: The value is stored for the tenant, takes effect on the next read, and an audit event records the change.
+    then: The value is stored for the tenant, or for the deployment when the setting is platform-scoped, takes effect on the next read, and an audit event records the change.
+  - id: SYSTEM-SETTINGS-PLATFORM-OPERATOR
+    given: A deployment whose FD_OPERATOR_TENANT names workspace A, and an owner of workspace A and an owner of workspace B.
+    when: The owner of B changes a platform-scoped setting of system.core and one of another module, then the owner of A changes the same settings, and the owner of B changes a tenant setting and a feature flag of B.
+    then: The writes of B's owner to platform-scoped settings are refused with 403 PLATFORM_SETTING_OPERATOR_ONLY, nothing is stored, no audit event is written and both workspaces still read the earlier values; the writes of A's owner are stored for the deployment with one audit event each and both workspaces read them on their next read; the tenant setting and the flag of B are stored for B alone as before.
+  - id: SYSTEM-SETTINGS-PLATFORM-UNCONFIGURED
+    given: A deployment that sets no FD_OPERATOR_TENANT.
+    when: The owner of any workspace reads the settings and changes a platform-scoped setting.
+    then: Every platform-scoped row is locked, the write is refused with 403 PLATFORM_SETTING_OPERATOR_ONLY, nothing is stored, and the stored and default values keep applying.
   - id: SYSTEM-SETTINGS-VALIDATE
     given: A principal with system.settings.manage submits a value outside the declared type, bounds, or enum, or names an undeclared setting.
     when: The update is processed.
@@ -172,17 +181,17 @@ acceptanceScenarios:
   - id: SYSTEM-BRANDING-READ
     given: A principal with system.settings.read opens Administration > Branding.
     when: The screen loads.
-    then: Every branding setting is listed with its current value, a value nobody changed shows the product default, the screen states that it applies to every workspace, and every control is disabled without system.settings.manage.
+    then: Every branding setting is listed with its current value, a value nobody changed shows the product default, the screen states that it applies to every workspace, and every control is disabled without system.settings.manage, or outside the operator workspace, where each row says only the deployment operator changes it.
   - id: SYSTEM-BRANDING-MANAGE
-    given: A principal with system.settings.manage changes the name, the document title, the description, the preview image, the icon, the theme colour or the logo.
+    given: A principal with system.settings.manage in the operator workspace changes the name, the document title, the description, the preview image, the icon, the theme colour or the logo.
     when: The change is submitted and the application document is requested again.
     then: The value is stored for the deployment, one settings audit event records the module, the key, the previous and the next value and the actor, and the next document carries it in its title, its description, its social metadata, its icon, its theme colour, its sidebar wordmark and its boot splash, for every workspace and for the sign-in screen alike.
   - id: SYSTEM-BRANDING-CLEAR
-    given: A branding setting an owner changed earlier.
-    when: The owner clears it.
+    given: A branding setting an owner of the operator workspace changed earlier.
+    when: An owner of the operator workspace clears it.
     then: The stored value is removed and the product default is rendered again, with one audit event for the change.
   - id: SYSTEM-BRANDING-VALIDATE
-    given: A principal with system.settings.manage submits a name longer than its bound, a URL that is neither a same-origin absolute path nor an https URL, such as a javascript or data address or a protocol-relative one, or a theme colour that is not six hex digits.
+    given: A principal with system.settings.manage in the operator workspace submits a name longer than its bound, a URL that is neither a same-origin absolute path nor an https URL, such as a javascript or data address or a protocol-relative one, or a theme colour that is not six hex digits.
     when: The update is processed.
     then: The server refuses it with 400, the stored value is unchanged, and no document ever renders the refused value.
   - id: SYSTEM-BRANDING-ANONYMOUS
@@ -190,9 +199,9 @@ acceptanceScenarios:
     when: An anonymous visitor loads the sign-in document, or a crawler reads it for a link preview.
     then: The server-rendered head already carries the changed title, description, preview image, icon and theme colour, without a session, without a tenant and without a second request.
   - id: SYSTEM-BRANDING-DENY
-    given: A principal without system.settings.manage, or a mutation carrying an API token instead of a browser session.
+    given: A principal without system.settings.manage, a principal of a workspace other than the operator workspace, or a mutation carrying an API token instead of a browser session.
     when: The principal changes a branding setting.
-    then: The server returns 401 or 403, nothing is stored and no audit event is written.
+    then: The server returns 401 or 403, with PLATFORM_SETTING_OPERATOR_ONLY for the other workspace, nothing is stored and no audit event is written.
 screens:
   - id: branding
     kind: form
@@ -234,7 +243,7 @@ actions:
     kind: update
     risk: workspace-write
     idempotent: true
-    description: Change one branding setting of the deployment, or clear it so the product default applies again.
+    description: Change one branding setting of the deployment from the operator workspace, or clear it so the product default applies again.
   - id: set-flag
     permission: system.settings.manage
     kind: update
@@ -302,6 +311,10 @@ decisions:
     question: Which addresses may be stored?
     answer: A same-origin absolute path or an https URL, refusing javascript, data and protocol-relative addresses in the declared pattern, so the refusal happens at the write and not at the render.
     decidedBy: default
+  - id: D-PLATFORM-SETTINGS-OPERATOR
+    question: Every workspace owner holds system.settings.manage, so who may change a platform-scoped setting that every workspace reads?
+    answer: Only a principal with system.settings.manage in the operator workspace, the tenant whose id the deployment sets in FD_OPERATOR_TENANT, through the same settings administration API and screens; every other workspace sees the value locked. Deployment configuration is already the operator's channel. A new scope would be granted to every owner by auth sync-scopes, which grants whatever a specification declares, and a CLI write path would need every module's settings declaration outside the composed platform. Unset means no workspace changes a platform-scoped setting.
+    decidedBy: default
   - id: D-MODULE-ACTIVATION-SCOPE
     question: What can the administration UI change about modules?
     answer: Per-workspace activation of the modules the application already composes; adding or removing a module stays a CLI operation because the composition is baked at build.
@@ -333,6 +346,7 @@ decisions:
 outOfScope:
   - Uploading a logo or a preview image through the screen; the settings hold the address of an image the deployment already serves.
   - Branding a single workspace differently from the deployment, which would leave the sign-in screen and a shared link without an answer.
+  - More than one operator workspace, a per-account operator grant, or a CLI write path for platform-scoped settings; the operator workspace named by FD_OPERATOR_TENANT is the only writer.
   - Restyling the product beyond these values, so colour themes, fonts, custom CSS and the branding of the e-mails auth.core sends stay out.
   - Adding or removing a module from a running application through the UI; the composition is CLI-owned and baked at build.
   - Withholding the agent tools of an inactive module from a workspace, which needs a per-tenant hook in the harness tool registry.
