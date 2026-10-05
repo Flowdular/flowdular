@@ -47,8 +47,10 @@ Flowdular 0.6 renamed every database identifier that carried the old name:
 | Advisory lock key | `coreloom-migration`                                           | `flowdular-migration`                                             |
 | Trigger function  | `coreloom_reject_change`                                       | `flowdular_reject_change`                                         |
 
-The platform API moved to 0.2.0 because the ledger and lock constants changed,
-and every module declares `"platformApi": "^0.2.0"`. A module is refused at
+The platform API moved to the 0.2 line (0.2.2 in Flowdular 0.6) because the
+ledger and lock constants changed, and every module declares a 0.2 range:
+`"^0.2.2"` when it starts workers or reads the settings change log,
+`"^0.2.0"` otherwise. A module is refused at
 registration when it declares no `platformApi` or a range that also admits a
 version before 0.2.0, such as `^0.1.0`, `*` or `>=0.1.0`.
 
