@@ -21,8 +21,8 @@ vi.mock('../src/server/index.ts', async (importOriginal) => ({
 		listAuditEvents: () => Promise.resolve([]),
 		verifyAudit: () => Promise.reject(new Error('No database here.')),
 		repository: () => Promise.reject(new Error('No database here.')),
-		retimeSchedules: (tenantId: string) => {
-			stub.retimed.push(tenantId);
+		retimeSchedules: (tenantId: string, timeZone: string) => {
+			stub.retimed.push(`${tenantId} ${timeZone}`);
 		},
 		start: () => {},
 		stop: () => {},
@@ -104,9 +104,9 @@ function platform() {
 
 describe('automations.core composition', () => {
 	/* The workspace zone is the signal for when a cron slot lands, so the module
-	   that schedules on it re-times that workspace the moment the zone changes,
-	   and leaves every other workspace where it is. */
-	it('re-times the schedules of the workspace whose zone changed', async () => {
+	   that schedules on it records the zone of that workspace the moment it
+	   changes, and leaves every other workspace where it is. */
+	it('records the zone of the workspace whose zone changed', async () => {
 		stub.retimed.length = 0;
 		const { context, settings } = platform();
 		const composition = createServerComposition(context);
@@ -118,7 +118,7 @@ describe('automations.core composition', () => {
 			'Europe/Warsaw',
 			'owner',
 		);
-		expect(stub.retimed).toEqual(['tenant-a']);
+		expect(stub.retimed).toEqual(['tenant-a Europe/Warsaw']);
 
 		await settings.set(
 			'tenant-b',
@@ -134,7 +134,11 @@ describe('automations.core composition', () => {
 			null,
 			'owner',
 		);
-		expect(stub.retimed).toEqual(['tenant-a', 'tenant-b', 'tenant-a']);
+		expect(stub.retimed).toEqual([
+			'tenant-a Europe/Warsaw',
+			'tenant-b Asia/Tokyo',
+			'tenant-a UTC',
+		]);
 
 		/* A neighbouring setting of the same module is not the zone. */
 		await settings.set(
@@ -144,7 +148,11 @@ describe('automations.core composition', () => {
 			'pl',
 			'owner',
 		);
-		expect(stub.retimed).toEqual(['tenant-a', 'tenant-b', 'tenant-a']);
+		expect(stub.retimed).toEqual([
+			'tenant-a Europe/Warsaw',
+			'tenant-b Asia/Tokyo',
+			'tenant-a UTC',
+		]);
 
 		/* Disposal detaches the listener, so a settings write after it re-times
 		   nothing through a runtime that is gone. */
@@ -156,6 +164,10 @@ describe('automations.core composition', () => {
 			'Europe/Warsaw',
 			'owner',
 		);
-		expect(stub.retimed).toEqual(['tenant-a', 'tenant-b', 'tenant-a']);
+		expect(stub.retimed).toEqual([
+			'tenant-a Europe/Warsaw',
+			'tenant-b Asia/Tokyo',
+			'tenant-a UTC',
+		]);
 	});
 });

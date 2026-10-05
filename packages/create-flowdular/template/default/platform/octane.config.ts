@@ -9,6 +9,7 @@ import {
 	validateApplicationPath,
 	createMailPort,
 	mailConfigFromEnvironment,
+	serverLogger,
 } from '@flowdular/sdk/server';
 import {
 	createDataClassRegistry,
@@ -44,6 +45,10 @@ import {
 	healthEndpoint,
 } from './src/server/health.ts';
 import { createMetricsRoutes } from './src/server/metrics.ts';
+import {
+	platformRuntimeRole,
+	startModuleWorkers,
+} from './src/server/runtime-role.ts';
 import { createPlatformObservability } from './src/server/tracing.ts';
 import {
 	createStorageKeyring,
@@ -95,6 +100,7 @@ async function createPlatformConfig() {
 		return firstRunConfig(true);
 	}
 	clearSetupToken(workspaceRoot);
+	const runtimeRole = platformRuntimeRole(process.env);
 
 	/* Composed first and drained last: a trace or an error report is evidence about
    the boot that follows it, and both egresses refuse a misconfigured endpoint
@@ -177,17 +183,6 @@ async function createPlatformConfig() {
    catalogue, so every reader sees the declarations the modules agreed on. */
 	dataClasses.seal();
 
-	/* check() proves the runtime role holds neither SUPERUSER nor BYPASSRLS before
-   any module reads a row. */
-	if (!building) {
-		await databases.check();
-		/* Platform-scoped settings are read by background work before any request
-	   could prime them; a workspace is primed by the authentication middleware. */
-		await settings.prime(PLATFORM_SETTINGS_TENANT);
-		for (const composition of moduleCompositions) await composition.prepare?.();
-		for (const composition of moduleCompositions) composition.start?.();
-	}
-
 	let stopping = false;
 	const shutdown = async () => {
 		if (stopping) return;
@@ -203,6 +198,32 @@ async function createPlatformConfig() {
 	   still leave with it. */
 		await observability.dispose();
 	};
+
+	/* check() proves the runtime role holds neither SUPERUSER nor BYPASSRLS before
+   any module reads a row. */
+	if (!building) {
+		try {
+			await databases.check();
+			/* Platform-scoped settings are read by background work before any request
+		   could prime them; a workspace is primed by the authentication middleware. */
+			await settings.prime(PLATFORM_SETTINGS_TENANT);
+			for (const composition of moduleCompositions)
+				await composition.prepare?.();
+			for (const composition of moduleCompositions) composition.start?.();
+			await startModuleWorkers(moduleCompositions, runtimeRole);
+		} catch (error) {
+			/* A worker that started before the failure would keep running in a
+		   process that never serves. The boot failure is the one rethrown. */
+			await shutdown().catch((cleanupError: unknown) => {
+				serverLogger().error('platform boot cleanup failed', {
+					module: 'platform',
+					err: cleanupError,
+				});
+			});
+			throw error;
+		}
+	}
+
 	// Bundling needs route declarations without background work or retained leases.
 	if (building) {
 		await shutdown();

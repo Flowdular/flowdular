@@ -6,6 +6,7 @@ function context(environment: Readonly<Record<string, string>>) {
 	const registered: string[] = [];
 	const tools: string[] = [];
 	const classes: string[] = [];
+	let databaseCalls = 0;
 	const value = {
 		environment: { NODE_ENV: 'test', ...environment },
 		workspaceRoot: process.cwd(),
@@ -13,7 +14,10 @@ function context(environment: Readonly<Record<string, string>>) {
 		settings: {},
 		storage: {},
 		databases: {
-			acquire: () => Promise.reject(new Error('No database in this case.')),
+			acquire: () => {
+				databaseCalls += 1;
+				return Promise.reject(new Error('No database in this case.'));
+			},
 			dispose: () => Promise.resolve(),
 		},
 		agentTools: {
@@ -34,6 +38,7 @@ function context(environment: Readonly<Record<string, string>>) {
 		registered,
 		tools,
 		classes,
+		databaseCalls: () => databaseCalls,
 	};
 }
 
@@ -76,5 +81,19 @@ describe('documents composition', () => {
 		expect(composition.start).toBeTypeOf('function');
 		expect(composition.stop).toBeTypeOf('function');
 		await composition.dispose?.();
+	});
+
+	it('DOCUMENTS-WEB-WORKER-ROLE seals templates without starting queued work', async () => {
+		const composed = context({});
+		const composition = createServerComposition(composed.context);
+		try {
+			composition.start?.();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(composed.databaseCalls()).toBe(0);
+			expect(composition.startWorker).toBeTypeOf('function');
+		} finally {
+			await composition.stop?.();
+			await composition.dispose?.();
+		}
 	});
 });

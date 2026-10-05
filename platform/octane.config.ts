@@ -51,6 +51,10 @@ import {
 	prepareAndActivatePlatformRuntimeLifecycle,
 } from './src/server/lifecycle.ts';
 import { createMetricsRoutes, platformVersion } from './src/server/metrics.ts';
+import {
+	platformRuntimeRole,
+	startModuleWorkers,
+} from './src/server/runtime-role.ts';
 import { createPlatformObservability } from './src/server/tracing.ts';
 import {
 	createStorageKeyring,
@@ -142,6 +146,7 @@ async function createPlatformConfig() {
 		return createFirstRunConfig(true);
 	}
 	clearSetupToken(workspaceRoot);
+	const runtimeRole = platformRuntimeRole(process.env);
 	const lifecycle = createPlatformRuntimeLifecycle();
 	/* Composed first and drained last: a trace or an error report is evidence
 	   about the boot that follows it, and both egresses refuse a misconfigured
@@ -330,6 +335,7 @@ async function createPlatformConfig() {
 			),
 		]);
 		for (const composition of moduleCompositions) composition.start?.();
+		await startModuleWorkers(moduleCompositions, runtimeRole);
 		return config;
 	} catch (error) {
 		/* The boot failure is the one a reader needs; a cleanup failure after it

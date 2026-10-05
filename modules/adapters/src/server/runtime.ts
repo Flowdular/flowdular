@@ -110,6 +110,7 @@ export function createAdaptersRuntime(
 				},
 			});
 		const runtimeLease = await acquire(options.purpose);
+		leases = [runtimeLease];
 		/* Both routing reads cross workspaces; every write that follows uses the
 		   tenant the routing row named. */
 		const backgroundLease = await acquire('background');
@@ -120,11 +121,19 @@ export function createAdaptersRuntime(
 		});
 	};
 
+	/* A failed open keeps nothing, not even its rejection, so the next caller
+	   (a later worker tick on the same composition) opens again. */
 	const repository = (): Promise<AdaptersRepository> => {
 		if (disposed) {
 			return Promise.reject(new Error('Adapters runtime is disposed.'));
 		}
-		repositoryPromise ??= openRepository();
+		repositoryPromise ??= openRepository().catch(async (error: unknown) => {
+			const held = leases;
+			leases = [];
+			repositoryPromise = undefined;
+			for (const lease of held) await lease.release();
+			throw error;
+		});
 		return repositoryPromise;
 	};
 
@@ -142,6 +151,7 @@ export function createAdaptersRuntime(
 		pollIntervalMs: options.pollIntervalMs,
 		now: options.now,
 	});
+	let workerActive = false;
 
 	const service = (): Promise<AdaptersService> => {
 		if (disposed) {
@@ -159,10 +169,16 @@ export function createAdaptersRuntime(
 					principal: options.principal,
 					timeZone: options.timeZone,
 					recordedAllowed: options.recordedAllowed,
-					onQueued: () => runs.wake(),
+					onQueued: () => {
+						if (workerActive) runs.wake();
+					},
 					...(options.now ? { now: options.now } : {}),
 					...options.service,
 				}),
+			(error: unknown) => {
+				servicePromise = undefined;
+				throw error;
+			},
 		);
 		return servicePromise;
 	};
@@ -178,19 +194,23 @@ export function createAdaptersRuntime(
 			await schedule.tick();
 		},
 		start() {
+			workerActive = true;
 			runs.start();
 			schedule.start();
 		},
 		stop() {
+			workerActive = false;
 			runs.stop();
 			schedule.stop();
 		},
 		async quiesce() {
+			workerActive = false;
 			await Promise.all([runs.quiesce(), schedule.quiesce()]);
 		},
 		async dispose() {
 			if (disposed) return;
 			disposed = true;
+			workerActive = false;
 			await Promise.all([runs.dispose(), schedule.dispose()]);
 			/* An open still in flight would assign its leases after this read, so
 			   settle it first; a failed open must not surface during teardown. */

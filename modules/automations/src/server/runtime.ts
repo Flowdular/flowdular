@@ -62,11 +62,12 @@ export interface AutomationsRuntime {
 	/** Opens the repository, for the data class operations the module owns. */
 	repository(): Promise<AutomationsRepository>;
 	/**
-	 * Re-times this workspace's pending cron slots after its zone changed. The
-	 * work is queued behind the previous one and drained by `quiesce`, so the
-	 * settings write that triggered it never waits for the database.
+	 * Records the zone this workspace changed to, which the scheduler pass
+	 * applies to its pending cron slots. The write is queued behind the previous
+	 * one and drained by `quiesce`, so the settings write that triggered it never
+	 * waits for the database.
 	 */
-	retimeSchedules(tenantId: string): void;
+	retimeSchedules(tenantId: string, timeZone: string): void;
 	start(): void;
 	stop(): void;
 	quiesce(): Promise<void>;
@@ -127,6 +128,7 @@ export function createAutomationsRuntime(
 			options.databases,
 			options.purpose ?? 'runtime',
 		);
+		leases = [runtimeLease];
 		/* The scheduler poll and the webhook lookup read across tenants; every
 		   write that follows uses the tenant carried by the row they returned. */
 		const backgroundLease = await acquire(options.databases, 'background');
@@ -136,8 +138,16 @@ export function createAutomationsRuntime(
 			background: backgroundLease.database,
 		});
 	};
+	/* A failed open keeps nothing, not even its rejection, so the next caller
+	   (a later worker tick on the same composition) opens again. */
 	const repositoryInstance = (): Promise<AutomationsRepository> =>
-		(repositoryPromise ??= openRepository());
+		(repositoryPromise ??= openRepository().catch(async (error: unknown) => {
+			const held = leases;
+			leases = [];
+			repositoryPromise = undefined;
+			for (const lease of held) await lease.release();
+			throw error;
+		}));
 	const vault =
 		options.secretVault ??
 		secretVaultFromEnvironment(environment, workspaceRoot);
@@ -146,8 +156,9 @@ export function createAutomationsRuntime(
 	let triggers: AutomationTriggerService | undefined;
 	let jobs: JobRunner | undefined;
 	let retimeInFlight: Promise<void> = Promise.resolve();
-	const resolutionController = new AbortController();
+	let resolutionController = new AbortController();
 	let disposed = false;
+	let workerActive = false;
 	const scheduleService = async () =>
 		(schedules ??= new AutomationScheduleService(
 			await repositoryInstance(),
@@ -183,25 +194,35 @@ export function createAutomationsRuntime(
 					? options.schedulerPollMs()
 					: (options.schedulerPollMs ?? 30_000),
 		}));
-	const retimeSchedules = (tenantId: string) => {
+	const retimeSchedules = (tenantId: string, timeZone: string) => {
 		if (disposed) return;
+		const changedAt = Date.now();
 		retimeInFlight = retimeInFlight
 			.then(() => scheduleService())
-			.then((service) => service.retime(tenantId))
-			.then(() => undefined)
+			.then((service) =>
+				service.recordTimeZoneChange(tenantId, timeZone, changedAt),
+			)
+			.then(() => {
+				if (workerActive) jobs?.wake();
+			})
 			.catch((error: unknown) => {
 				console.error(
-					'[automations] schedule re-timing failed:',
+					'[automations] time zone change could not be recorded:',
 					error instanceof Error ? error.message : error,
 				);
 			});
 	};
 	const stop = () => {
+		workerActive = false;
 		jobs?.stop();
 	};
 	const quiesce = async () => {
 		stop();
 		resolutionController.abort('automations-runtime-stopped');
+		/* Work in flight keeps the aborted signal; a later start, or a request
+		   this process still serves, resolves through a service with a live one. */
+		resolutionController = new AbortController();
+		schedules = undefined;
 		await jobs?.quiesce();
 		await retimeInFlight;
 	};
@@ -219,6 +240,7 @@ export function createAutomationsRuntime(
 		retimeSchedules,
 		start() {
 			if (disposed) return;
+			workerActive = true;
 			runner().start();
 		},
 		stop,

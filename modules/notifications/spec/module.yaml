@@ -1,6 +1,6 @@
 schemaVersion: 2
 id: notifications.core
-specVersion: 0.2.13
+specVersion: 0.2.14
 status: approved
 name: Notifications Core
 description: Delivers what a person and a customer system need to hear about, as an in-app inbox per member and signed outbound webhooks per workspace with a delivery ledger, bounded retry and a dead letter an administrator can inspect and replay.
@@ -21,6 +21,8 @@ locales:
   - en
   - pl
 invariants:
+  - The publish capability and authenticated routes are available after composition in web and worker roles. Only startWorker starts delivery and retention pollers; a web publish persists the notification without locally sending mail, calling a webhook or claiming queued delivery. Combined mode starts those pollers after composition.
+  - Stopping the worker drains delivery and retention passes before database leases are released, and an unfinished delivery remains recoverable through its existing claim and idempotency rules.
   - Persistence runs on the shared asynchronous database contract with explicit PostgreSQL SQL; every tenant table enables and forces row-level security with USING and WITH CHECK policies bound to the transaction-local tenant id, and the runtime role holds neither SUPERUSER nor BYPASSRLS.
   - An inbox item is owned by exactly one tenant and addressed to exactly one member account; a member reads, marks and archives only items addressed to their own account, and the tenant id and the recipient account id come from the authenticated principal, never from request input.
   - Other modules create inbox items and webhook events only through the public capability notifications.publish.v1 registered by this module; a caller that finds the capability absent continues without notifying, and this module never reads another module's database.
@@ -632,6 +634,14 @@ decisions:
     answer: None in v1; a later phase may add a read tool over the member's inbox.
     decidedBy: default
 acceptanceScenarios:
+  - id: NOTIFICATIONS-WEB-WORKER-ROLE
+    given: A notification is published by an authorized web request and delivery is configured.
+    when: The web role persists it before a separate worker role starts.
+    then: The web role sends no mail or webhook and starts no delivery or retention timer, while the worker later delivers it once under the existing consent and idempotency rules.
+  - id: NOTIFICATIONS-WORKER-DRAIN
+    given: A worker role has claimed a delivery and a retention pass is active.
+    when: The platform stops that worker role.
+    then: Both pollers stop taking new work, current passes drain before leases are released, and unsettled delivery remains recoverable without a duplicate external effect.
   - id: NOTIFICATIONS-PUBLISH
     given: agents.core publishes an agent-run-failed event through notifications.publish.v1 with a source reference and the run's configuring member as recipient.
     when: The capability is invoked.

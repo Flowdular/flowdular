@@ -72,7 +72,7 @@ export interface WorkflowsRuntime {
 	   opens the runtime's own leases on first use, like the service does, so
 	   declaring a class at composition opens no connection. */
 	repository(): Promise<WorkflowsRepository>;
-	start(): void;
+	start(): Promise<void>;
 	stop(): void | Promise<void>;
 	dispose(): void | Promise<void>;
 }
@@ -257,6 +257,7 @@ export function createWorkflowsRuntime(
 			options.databases,
 			options.purpose ?? 'runtime',
 		);
+		leases = [runtimeLease];
 		/* The worker claim poll and payload retention read across tenants; every
 		   write that follows uses the tenant carried by the row they returned. */
 		const backgroundLease = await acquire(options.databases, 'background');
@@ -286,8 +287,14 @@ export function createWorkflowsRuntime(
 			};
 			service = new WorkflowsService(repository, serviceOptions);
 		}
+		return service;
+	};
+
+	/* Only start constructs the worker, so a process that never starts it
+	   leaves onRunQueued nothing to kick. */
+	const runWorker = (store: WorkflowsRepository): void => {
 		worker ??= new WorkflowWorker(
-			repository,
+			store,
 			() => service?.executionDependencies() ?? null,
 			{
 				...options.worker,
@@ -310,12 +317,19 @@ export function createWorkflowsRuntime(
 					capabilities.get<AgentDecisions>(AGENT_DECISIONS_CAPABILITY),
 			},
 		);
-		if (started) worker.start();
-		return service;
+		worker.start();
 	};
 
+	/* A failed open keeps nothing, not even its rejection, so the next caller
+	   (a later worker tick on the same composition) opens again. */
 	const resolved = (): Promise<WorkflowsService> =>
-		(servicePromise ??= create());
+		(servicePromise ??= create().catch(async (error: unknown) => {
+			const held = leases;
+			leases = [];
+			servicePromise = undefined;
+			for (const lease of held) await lease.release();
+			throw error;
+		}));
 
 	return {
 		service: resolved,
@@ -323,10 +337,12 @@ export function createWorkflowsRuntime(
 			await resolved();
 			return repository!;
 		},
-		start() {
+		async start() {
 			if (disposed) throw new Error('Workflows runtime is disposed.');
 			started = true;
-			void resolved().then(() => worker?.start());
+			await resolved();
+			/* A stop or dispose that arrived while the service opened wins. */
+			if (started && !disposed) runWorker(repository!);
 		},
 		stop() {
 			started = false;

@@ -78,7 +78,7 @@ export function createServerComposition(
 	return {
 		routes: createNotificationsRoutes(context.auth, runtime),
 		settings: NOTIFICATIONS_MODULE_SETTINGS,
-		start: () => runtime.start(),
+		startWorker: () => runtime.start(),
 		stop: () => runtime.quiesce(),
 		dispose: () => runtime.dispose(),
 	};

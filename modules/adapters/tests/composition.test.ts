@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createTestDatabaseProvider } from '@flowdular/database-testing';
 import type { DefinedListExport } from '@flowdular/server';
 import { moduleDefinition } from '../src/index.ts';
@@ -32,12 +32,13 @@ describe('adapters.core composition', () => {
 		]);
 	});
 
-	it('registers both registries, the data classes, the meter and the run list, and seals the catalogue at start', async () => {
+	it('ADAPTER-WEB-WORKER-ROLE seals registrations without starting a database poll in web mode', async () => {
 		const registered = new Map<string, unknown>();
 		const declared: { moduleId: string; keys: string[] }[] = [];
 		const meters: { moduleId: string; keys: string[] }[] = [];
 		const lists: { moduleId: string; ids: string[] }[] = [];
 		const databases = createTestDatabaseProvider();
+		const acquire = vi.spyOn(databases, 'acquire');
 		const composition = createServerComposition({
 			environment: { NODE_ENV: 'test' },
 			databases,
@@ -92,6 +93,9 @@ describe('adapters.core composition', () => {
 			]);
 
 			composition.start?.();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(acquire).not.toHaveBeenCalled();
+			expect(composition.startWorker).toBeTypeOf('function');
 			expect(() =>
 				sources.register('vendors.core', [
 					sourceRegistration({ id: 'vendors.core.late' }),

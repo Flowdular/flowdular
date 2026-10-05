@@ -927,6 +927,76 @@ describe('automations PostgreSQL boundary', () => {
 		).rejects.toBeDefined();
 	});
 
+	it('AUTO-WORKER-TIME-ZONE shows the background role only the workspaces owing a retiming, by tenant id alone', async () => {
+		const { repository, background, runtime } = shared;
+		await repository.recordTimeZone({
+			tenantId: 'tenant-a',
+			timeZone: 'Europe/Warsaw',
+			changedAt: 10,
+		});
+		await repository.recordTimeZone({
+			tenantId: 'tenant-b',
+			timeZone: 'Asia/Tokyo',
+			changedAt: 10,
+		});
+		await repository.markTimeZoneApplied({
+			tenantId: 'tenant-b',
+			timeZone: 'Asia/Tokyo',
+			changedAt: 10,
+		});
+		expect(await repository.listPendingTimeZones(10)).toEqual(['tenant-a']);
+		for (const text of [
+			'SELECT time_zone FROM automations_time_zones',
+			'SELECT * FROM automations_time_zones',
+		]) {
+			await expect(
+				background.transaction((transaction) => transaction.query({ text }), {
+					access: 'read',
+				}),
+			).rejects.toBeDefined();
+		}
+		await expect(
+			background.transaction(
+				(transaction) =>
+					transaction.execute({
+						text: 'UPDATE automations_time_zones SET applied_time_zone = time_zone',
+					}),
+				{ access: 'write' },
+			),
+		).rejects.toBeDefined();
+		await expect(
+			runtime.transaction(
+				(transaction) =>
+					transaction.execute({
+						text: `INSERT INTO automations_time_zones (tenant_id, time_zone, changed_at)
+						 VALUES ('tenant-b', 'UTC', 20)`,
+					}),
+				{ access: 'write', tenantId: 'tenant-a' },
+			),
+		).rejects.toBeDefined();
+
+		/* A change older than the stored one lands late and is dropped, and an
+		   apply for a change that has since been replaced does not land. */
+		await repository.recordTimeZone({
+			tenantId: 'tenant-a',
+			timeZone: 'UTC',
+			changedAt: 5,
+		});
+		expect(await repository.getTimeZone('tenant-a')).toEqual({
+			tenantId: 'tenant-a',
+			timeZone: 'Europe/Warsaw',
+			changedAt: 10,
+			appliedTimeZone: null,
+		});
+		await expect(
+			repository.markTimeZoneApplied({
+				tenantId: 'tenant-a',
+				timeZone: 'Europe/Warsaw',
+				changedAt: 9,
+			}),
+		).resolves.toBe(false);
+	});
+
 	it('advances a due schedule exactly once for the slot the poll named', async () => {
 		const { repository } = shared;
 		await repository.createSchedule(

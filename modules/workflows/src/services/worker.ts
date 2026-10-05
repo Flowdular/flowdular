@@ -287,6 +287,7 @@ export class WorkflowWorker {
 		this.#running = true;
 		try {
 			await this.repository.applyPayloadRetention(this.#now());
+			if (this.#stopped) return;
 			const now = this.#now();
 			const run = await this.repository.claimNext(
 				this.#workerId,

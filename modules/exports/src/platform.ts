@@ -57,8 +57,8 @@ export function createServerComposition(
 			   closed: a job can never be started against a list that appears
 			   afterwards. */
 			runtime.lists.seal();
-			runtime.start();
 		},
+		startWorker: () => runtime.start(),
 		stop: () => runtime.quiesce(),
 		dispose: () => runtime.dispose(),
 	};

@@ -317,6 +317,17 @@ export async function activatePreviewDrafts(
 			);
 		}
 	}
+	for (const draft of drafts) {
+		try {
+			await draft.startWorker?.();
+		} catch (error) {
+			errors.push(
+				error instanceof Error
+					? error.message.slice(0, 400)
+					: 'A draft worker failed to start.',
+			);
+		}
+	}
 	return errors;
 }
 

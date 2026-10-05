@@ -66,6 +66,23 @@ export function createAutomationScheduleRunner(
 					return null;
 				}
 				const repository = await options.repository();
+				/* A recorded zone change moves its workspace's pending cron slots
+				   before the poll can find one due in the old zone. A workspace
+				   that fails here is retried by fireDue before any of its slots
+				   fires, so it cannot hold up the others. */
+				const service = await options.service();
+				for (const tenantId of await repository.listPendingTimeZones(
+					SCHEDULE_POLL_PAGE,
+				)) {
+					try {
+						await service.recordedTimeZone(tenantId);
+					} catch (error) {
+						serverLogger().error('automations.core time zone retiming failed', {
+							module: 'automations.core',
+							err: error,
+						});
+					}
+				}
 				const page = await repository.listDueSchedules(at, SCHEDULE_POLL_PAGE);
 				refillable = page.length === SCHEDULE_POLL_PAGE;
 				queue = [...page];
