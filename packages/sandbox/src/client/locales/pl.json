@@ -40,6 +40,7 @@
 	"handoff.details": "Wiadomość specjalisty",
 	"questions.title": "Decyzje potrzebne specjaliście",
 	"questions.help": "Wybierz jedną odpowiedź na pytanie. Specjalista pracuje dalej z nimi.",
+	"questions.helpSpecification": "Wybierz jedną odpowiedź na pytanie. Odpowiedzi trafiają najpierw do zatwierdzonej specyfikacji: jeśli ją zmienią, zatwierdzasz ją ponownie, zanim specjalista będzie kontynuował.",
 	"questions.recommended": "Rekomendacja",
 	"questions.freeText": "Coś innego",
 	"questions.freeTextPlaceholder": "Wpisz własną odpowiedź",

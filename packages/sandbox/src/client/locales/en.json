@@ -38,6 +38,7 @@
 	"handoff.details": "Specialist's message",
 	"questions.title": "Decisions the specialist needs",
 	"questions.help": "Pick one answer per question. The specialist continues with them.",
+	"questions.helpSpecification": "Pick one answer per question. The answers go into the approved specification first: if they change it, you approve it again before the specialist continues.",
 	"questions.recommended": "Recommended",
 	"questions.freeText": "Something else",
 	"questions.freeTextPlaceholder": "Write your own answer",

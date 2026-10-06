@@ -41,6 +41,7 @@ import {
 import { formatSession } from './gates.ts';
 import {
 	SPEC_OWNER_ROLE,
+	answeringRole,
 	assertBrief,
 	listWorkspaceModules,
 	planWork,
@@ -215,6 +216,8 @@ export interface SandboxRouteOptions {
 	readonly installDependencies?: (
 		session: SandboxSession,
 	) => Promise<InstallResult>;
+	/* Replaces the gate processes only at the same boundary in route tests. */
+	readonly executeGates?: TurnContext['executeGates'];
 }
 
 function json(
@@ -835,6 +838,7 @@ export function createSandboxRoutes(
 		...(options.installDependencies
 			? { installDependencies: options.installDependencies }
 			: {}),
+		...(options.executeGates ? { executeGates: options.executeGates } : {}),
 	});
 
 	const publish = (channel: TurnChannel, event: string, payload: unknown) => {
@@ -2058,7 +2062,9 @@ export function createSandboxRoutes(
 
 	/* Answering the questions the last turn asked is a turn of its own: the
 	   decisions lead the request text, the operator's own words follow them, and
-	   the specialist that asked takes the turn in the module it asked about. */
+	   the turn runs in the module the questions were about. The specialist that
+	   asked takes it, unless an implementer asked: then the specification owner
+	   applies the answers first. */
 	const answerQuestions = new ServerRoute({
 		path: '/sandbox/api/sessions/:id/answers',
 		methods: ['POST'],
@@ -2090,7 +2096,7 @@ export function createSandboxRoutes(
 					const decisions = formatDecisions(resolved.decisions);
 					answered = {
 						message: note ? `${decisions}\n\n${note}` : decisions,
-						role: pending.role,
+						role: answeringRole(pending.role, runtime.roles()),
 						...(pending.module ? { module: pending.module } : {}),
 					};
 					return { pendingQuestions: null };

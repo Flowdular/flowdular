@@ -38,6 +38,23 @@ export const MAX_BLOCK_LENGTH = 8_000;
    block goes back to it with this sentence, so it never has to guess them. */
 export const QUESTIONS_LIMITS = `At most ${MAX_QUESTIONS} questions with unique ids Q-1, Q-2 and so on, each 1 to ${MAX_QUESTION_LENGTH} characters; at most ${MAX_OPTIONS} distinct options per question, each 1 to ${MAX_OPTION_LENGTH} characters; recommended is one of the options; a question without options sets allowFreeText to true; no line breaks inside a value; the whole block at most ${MAX_BLOCK_LENGTH} characters.`;
 
+/* Who owns spec/module.yaml. A question any other role asks is about something
+   the approved specification does not decide, so its answers reach this role
+   first: an answer that changes what the module must do changes the
+   specification, and the operator approves the new text before the role that
+   asked continues. */
+export const SPEC_OWNER_ROLE = 'business-manager';
+
+/* How to ask, worded from the bounds this parser enforces so the instruction
+   and the parser cannot drift apart. */
+export function questionsInstruction(role: string): string {
+	const ask = `End the reply with exactly one fenced block tagged questions holding {"questions":[{"id":"Q-1","question":"...","options":["..."],"recommended":"...","allowFreeText":true}]} and nothing after it but your handoff line. ${QUESTIONS_LIMITS} A refused block comes back to you once with the reason. The operator answers in a form and the replies arrive as a Decisions section.`;
+	if (role === SPEC_OWNER_ROLE) {
+		return `When a business decision is missing, ask the operator instead of guessing. ${ask}`;
+	}
+	return `Implement only the behaviour the approved specification states. A business decision it does not make (a new error code, field, permission, state or transition, or changed behaviour) is never yours: do not build it and do not settle it in prose. Leave that part unbuilt, finish what the specification decides, and ask the operator. ${ask} The business manager records an answer that changes the specification, and the operator approves the new text before you continue.`;
+}
+
 const QUESTION_ID = /^Q-[0-9]+$/;
 /* A question, an option and an answer each become one line of the decisions the
    answered turn reads back. A line break or a control character inside one would

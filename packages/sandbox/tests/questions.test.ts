@@ -951,15 +951,25 @@ async function sessionAwaitingAnswers(
 describe('the instruction that asks for questions', () => {
 	/* The parser refuses a block outside these bounds, so the specialist asked
 	   to write one has to read the same numbers up front. */
-	it('states the limits the parser enforces', () => {
-		const instruction = DEFAULT_AGENT_ROLES.find(
-			(role) => role.id === 'business-manager',
-		)!.instruction;
+	it('states the limits the parser enforces', async () => {
+		const root = await workspace();
+		const session = await newSession(root);
+		const seen: CodingAgentTurnRequest[] = [];
+		await drive(
+			turnContext(
+				root,
+				driverThatRecords('Noted.\n\nHANDOFF: none - done', seen),
+			),
+			session.id,
+			'Write the specification.',
+		);
+
+		const instruction = seen[0]!.systemInstruction;
 		expect(instruction).toContain(
-			`at most ${MAX_QUESTIONS} questions, each 1 to ${MAX_QUESTION_LENGTH} characters`,
+			`At most ${MAX_QUESTIONS} questions with unique ids Q-1, Q-2 and so on, each 1 to ${MAX_QUESTION_LENGTH} characters`,
 		);
 		expect(instruction).toContain(
-			`at most ${MAX_OPTIONS} options per question, each 1 to ${MAX_OPTION_LENGTH} characters`,
+			`at most ${MAX_OPTIONS} distinct options per question, each 1 to ${MAX_OPTION_LENGTH} characters`,
 		);
 		expect(instruction).toContain(`at most ${MAX_BLOCK_LENGTH} characters`);
 	});
