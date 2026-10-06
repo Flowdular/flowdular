@@ -553,23 +553,40 @@ describe('workflow HTTP boundary', () => {
 		}
 	});
 
-	/* A resume id is bound to one run. An edited id, another run's id and a
-	   list cursor are three ways of naming a position the stream never issued,
-	   and each is refused before a stream opens. */
 	/* A client closing the tab or the platform runtime retiring cancels the
 	   stream; a read already in flight then answers into a closed stream, or
 	   fails because the runtime closed its database. */
+	const disposedDatabase = async () => {
+		throw new Error('The database provider was disposed.');
+	};
 	it.each([
-		['answers with events', (read: () => Promise<unknown>) => read()],
 		[
-			'fails because the runtime closed its database',
-			async () => {
-				throw new Error('The database provider was disposed.');
+			'an event read answers with events',
+			'readEvents',
+			(read: () => Promise<unknown>) => read(),
+		],
+		[
+			'an event read fails because the runtime closed its database',
+			'readEvents',
+			disposedDatabase,
+		],
+		[
+			'a run read answers once a heartbeat is due',
+			'getRun',
+			(read: () => Promise<unknown>) => {
+				vi.useFakeTimers({ toFake: ['Date'] });
+				vi.setSystemTime(Date.now() + 15_000);
+				return read();
 			},
 		],
+		[
+			'a run read fails because the runtime closed its database',
+			'getRun',
+			disposedDatabase,
+		],
 	])(
-		'stops quietly when the observer leaves while an event read %s',
-		async (_case, settle) => {
+		'stops quietly when the observer leaves while %s',
+		async (_case, method, settle) => {
 			const runtime = createWorkflowsTestRuntime({
 				capabilities: executionCapabilities(),
 				payloadKey: Buffer.alloc(32, 33),
@@ -596,13 +613,14 @@ describe('workflow HTTP boundary', () => {
 				);
 				let release!: () => void;
 				const released = new Promise<void>((resolve) => (release = resolve));
-				/* The first read is the handler's access check; every later one is
-				   the stream's. */
+				/* The handler's access check reads events once before the stream
+				   opens; every later read is the stream's. */
+				const ungated = method === 'readEvents' ? 1 : 0;
 				const reads = vi.fn();
 				const gated = new Proxy(service, {
 					get(target, key) {
 						const value = Reflect.get(target, key, target);
-						if (key === 'readEvents') {
+						if (key === method) {
 							return async (...arguments_: unknown[]) => {
 								const read = () =>
 									(value as (...values: unknown[]) => Promise<unknown>).apply(
@@ -610,7 +628,7 @@ describe('workflow HTTP boundary', () => {
 										arguments_,
 									);
 								reads();
-								if (reads.mock.calls.length === 1) return read();
+								if (reads.mock.calls.length <= ungated) return read();
 								await released;
 								return settle(read);
 							};
@@ -636,7 +654,9 @@ describe('workflow HTTP boundary', () => {
 				expect(new TextDecoder().decode((await reader.read()).value)).toBe(
 					'retry: 1000\n\n',
 				);
-				await vi.waitFor(() => expect(reads).toHaveBeenCalledTimes(2));
+				await vi.waitFor(() =>
+					expect(reads).toHaveBeenCalledTimes(ungated + 1),
+				);
 
 				await reader.cancel();
 				release();
@@ -644,12 +664,16 @@ describe('workflow HTTP boundary', () => {
 
 				expect(unhandled).toEqual([]);
 			} finally {
+				vi.useRealTimers();
 				process.off('unhandledRejection', recordUnhandled);
 				await runtime.dispose();
 			}
 		},
 	);
 
+	/* A resume id is bound to one run. An edited id, another run's id and a
+	   list cursor are three ways of naming a position the stream never issued,
+	   and each is refused before a stream opens. */
 	it('refuses a tampered, foreign-run or list cursor as Last-Event-ID', async () => {
 		const runtime = createWorkflowsTestRuntime({
 			payloadKey: Buffer.alloc(32, 56),
