@@ -191,6 +191,12 @@ try {
 	assert.equal(signedIn.status, 200, safeLogs());
 	const session = await signedIn.json();
 	assert.equal(session.principal.email, 'sdk-owner@example.test');
+	assert.deepEqual(
+		session.principal.scopes
+			.filter((scope) => scope.startsWith('example.'))
+			.sort(),
+		['example.notes.manage', 'example.notes.read'],
+	);
 	console.log(
 		'Fresh application completes setup and then provisions sandbox access on embedded PostgreSQL.',
 	);
