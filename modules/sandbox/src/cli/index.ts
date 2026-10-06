@@ -116,18 +116,19 @@ async function accountOf(
 ) {
 	const account = await (await auth.service()).findAccountAccess(email);
 	if (!account) throw new Error(`No account exists for ${email}.`);
+	/* Resolved as every other --tenant is: a slug may spell another workspace's
+	   id, and the id match wins. */
+	const named = tenantReference
+		? await (await auth.service()).findTenant(tenantReference)
+		: null;
 	const membership = tenantReference
-		? account.tenants.find(
-				(tenant) =>
-					tenant.tenantId === tenantReference ||
-					tenant.slug === tenantReference.toLowerCase(),
-			)
+		? account.tenants.find((tenant) => tenant.tenantId === named?.tenantId)
 		: account.tenants.length === 1
 			? account.tenants[0]
 			: undefined;
 	if (!membership) {
 		throw new Error(
-			account.tenants.length === 1
+			tenantReference
 				? `${email} is not a member of "${tenantReference}".`
 				: `--tenant <slug|id> is required. ${email} belongs to: ${account.tenants
 						.map((tenant) => tenant.slug)
