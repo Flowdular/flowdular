@@ -15,6 +15,7 @@ import type {
 	AiProviderKind,
 	DecisionProviderKind,
 } from '@flowdular/ai-provider';
+import { replaceLocalFile } from './local-file.ts';
 import { SandboxSetupError } from './workspace-root.ts';
 
 export const SANDBOX_DIRECTORY = '.flowdular/sandbox';
@@ -280,23 +281,6 @@ async function readLocalFile(path: string): Promise<string> {
 	}
 }
 
-async function writeLocalFile(path: string, value: string): Promise<void> {
-	const handle = await open(
-		path,
-		constants.O_WRONLY |
-			constants.O_CREAT |
-			constants.O_TRUNC |
-			constants.O_NOFOLLOW,
-		0o600,
-	);
-	try {
-		await handle.chmod(0o600);
-		await handle.writeFile(value, 'utf8');
-	} finally {
-		await handle.close();
-	}
-}
-
 /* Secrets stay on the machine that runs the sandbox: encrypted at rest with a
    permission-restricted local key, never written to the workspace repository
    and never returned to the browser. */
@@ -312,7 +296,7 @@ async function localKey(workspaceRoot: string): Promise<Buffer> {
 	}
 	await assertSafeLocalPath(workspaceRoot, path, true);
 	const key = randomBytes(32);
-	await writeLocalFile(path, key.toString('base64'));
+	await replaceLocalFile(path, key.toString('base64'));
 	return key;
 }
 
@@ -477,7 +461,10 @@ export async function saveSandboxConfiguration(
 ): Promise<SandboxConfiguration> {
 	const path = configPath(workspaceRoot);
 	await assertSafeLocalPath(workspaceRoot, path, true);
-	await writeLocalFile(path, `${JSON.stringify(configuration, null, '\t')}\n`);
+	await replaceLocalFile(
+		path,
+		`${JSON.stringify(configuration, null, '\t')}\n`,
+	);
 	return configuration;
 }
 

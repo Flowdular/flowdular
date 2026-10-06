@@ -20,6 +20,7 @@ import {
 	sealSessionRecord,
 	verifySessionRecord,
 } from './config.ts';
+import { replaceLocalFile } from './local-file.ts';
 import type { PendingQuestions } from './questions.ts';
 import { materializeModuleGraph, materializeReference } from './reference.ts';
 import { notifySessionChanged } from './session-events.ts';
@@ -222,10 +223,7 @@ async function rotateChatLogIfLarge(path: string): Promise<void> {
 	   long session is what a rotated copy would have to protect. */
 	const raw = await readFile(path, 'utf8');
 	const lines = raw.split('\n').filter(Boolean);
-	await writeFile(path, `${lines.slice(-2_000).join('\n')}\n`, {
-		encoding: 'utf8',
-		mode: 0o600,
-	});
+	await replaceLocalFile(path, `${lines.slice(-2_000).join('\n')}\n`);
 }
 
 export interface SessionPaths {
