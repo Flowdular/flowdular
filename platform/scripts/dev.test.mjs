@@ -1,4 +1,5 @@
 import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { createServer as createHttpServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'vite';
@@ -8,6 +9,7 @@ import {
 	isClientDisconnectLog,
 	parseDevArguments,
 	shouldUseColor,
+	stopServing,
 	withShutdownDeadline,
 } from './dev.mjs';
 
@@ -67,6 +69,40 @@ describe('development launcher arguments', () => {
 		await expect(
 			withShutdownDeadline(new Promise(() => {}), 10),
 		).rejects.toThrow('shutdown exceeded 10 ms');
+	});
+
+	it('stops serving while a browser tab holds the HMR socket', async () => {
+		const temporaryRoot = await realpath(
+			await mkdtemp(join(tmpdir(), 'flowdular-platform-hmr-socket-')),
+		);
+		const httpServer = createHttpServer();
+		const server = await createServer({
+			root: temporaryRoot,
+			configFile: false,
+			logLevel: 'silent',
+			server: { middlewareMode: true, ws: { server: httpServer } },
+		});
+		await new Promise((resolveListen) =>
+			httpServer.listen(0, '127.0.0.1', resolveListen),
+		);
+		const tab = new WebSocket(
+			`ws://127.0.0.1:${httpServer.address().port}/`,
+			'vite-hmr',
+		);
+		try {
+			await new Promise((resolveOpen, rejectOpen) => {
+				tab.onopen = resolveOpen;
+				tab.onerror = () => rejectOpen(new Error('The HMR socket failed.'));
+			});
+			await expect(
+				withShutdownDeadline(stopServing(httpServer, server), 5_000),
+			).resolves.toBeUndefined();
+			expect(httpServer.listening).toBe(false);
+		} finally {
+			tab.close();
+			await server.close();
+			await rm(temporaryRoot, { recursive: true, force: true });
+		}
 	});
 
 	it('drops an HMR update when a restart replaces the environments', async () => {

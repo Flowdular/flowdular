@@ -41,6 +41,20 @@ export function withShutdownDeadline(promise, timeoutMs = SHUTDOWN_TIMEOUT_MS) {
 	return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
 }
 
+/* Stops accepting requests. An open browser tab keeps Vite's HMR socket on
+   this server, and the HTTP close waits for every socket, so the HMR sockets
+   end here rather than in Vite's own close at the end of the shutdown. */
+export function stopServing(httpServer, server) {
+	const httpClose = new Promise((resolveClose, rejectClose) => {
+		if (!httpServer.listening) {
+			resolveClose();
+			return;
+		}
+		httpServer.close((error) => (error ? rejectClose(error) : resolveClose()));
+	});
+	return Promise.all([httpClose, server.ws.close()]).then(() => undefined);
+}
+
 export function parseDevArguments(arguments_) {
 	let host = '0.0.0.0';
 	let port = 4310;
@@ -210,15 +224,7 @@ export async function startDevelopmentServer(
 	let httpClosing;
 	const closeHttpServer = () => {
 		if (httpClosing) return httpClosing;
-		httpClosing = new Promise((resolveClose, rejectClose) => {
-			if (!httpServer.listening) {
-				resolveClose();
-				return;
-			}
-			httpServer.close((error) =>
-				error ? rejectClose(error) : resolveClose(),
-			);
-		});
+		httpClosing = stopServing(httpServer, server);
 		return httpClosing;
 	};
 	const closeVite = server.close.bind(server);
