@@ -15,7 +15,11 @@ import type {
 	AiProviderKind,
 	DecisionProviderKind,
 } from '@flowdular/ai-provider';
-import { replaceLocalFile, withLocalFileLock } from './local-file.ts';
+import {
+	publishLocalFile,
+	replaceLocalFile,
+	withLocalFileLock,
+} from './local-file.ts';
 import { SandboxSetupError } from './workspace-root.ts';
 
 export const SANDBOX_DIRECTORY = '.flowdular/sandbox';
@@ -289,12 +293,17 @@ async function localKey(workspaceRoot: string): Promise<Buffer> {
 	const stored = await readLocalKey(workspaceRoot, path);
 	if (stored) return stored;
 	/* Two first uses must agree on one key: whatever one of them sealed would
-	   not open under a key the other left on disk. */
+	   not open under a key the other left on disk. The queue covers this
+	   process and the exclusive publish covers another one. */
 	return withLocalFileLock(path, async () => {
 		const created = await readLocalKey(workspaceRoot, path);
 		if (created) return created;
 		await assertSafeLocalPath(workspaceRoot, path, true);
 		const key = randomBytes(32);
+		if (await publishLocalFile(path, key.toString('base64'))) return key;
+		const published = await readLocalKey(workspaceRoot, path);
+		if (published) return published;
+		/* A key file that does not decode is replaced, as it always was. */
 		await replaceLocalFile(path, key.toString('base64'));
 		return key;
 	});

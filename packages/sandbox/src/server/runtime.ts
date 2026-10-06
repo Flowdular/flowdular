@@ -278,7 +278,12 @@ export async function createSandboxRuntime(
 					}
 					return { ...current, ...change, version: 1 };
 				},
-			);
+			).catch(async (error: unknown) => {
+				/* A refusal is decided against what is stored, which can be newer
+				   than this runtime's copy: serve what is stored, then report. */
+				await rebuild().catch(() => undefined);
+				throw error;
+			});
 			return rebuild();
 		},
 		openBrowserSession: async (token) => {
