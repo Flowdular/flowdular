@@ -127,6 +127,43 @@ describe('claude-code driver', () => {
 		},
 	);
 
+	it.each([
+		['Claude Code', createClaudeCodeDriver],
+		['Codex', createCodexDriver],
+	])(
+		'stops a %s turn at the limit the request sets and names that limit',
+		async (_name, createDriver) => {
+			const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-timeout-'));
+			const command = join(workspacePath, 'fake-cli');
+			await writeFile(
+				command,
+				`#!${process.execPath}\nsetInterval(() => {}, 1000);\n`,
+			);
+			await chmod(command, 0o755);
+			try {
+				const turn = createDriver({ command, timeoutMs: 60_000 }).run({
+					workspacePath,
+					role: 'backend-engineer',
+					systemInstruction: 'contract',
+					prompt: 'do the thing',
+					timeoutMs: 250,
+				});
+				await expect(
+					(async () => {
+						for await (const _event of turn);
+					})(),
+				).rejects.toMatchObject({
+					code: 'DRIVER_TIMEOUT',
+					message: expect.stringContaining(
+						'turn time limit of 250 milliseconds',
+					),
+				});
+			} finally {
+				await rm(workspacePath, { recursive: true, force: true });
+			}
+		},
+	);
+
 	it('reports ongoing streamed generation at most once per ten seconds', async () => {
 		const workspacePath = await mkdtemp(join(tmpdir(), 'flowdular-activity-'));
 		const command = await replayBinary([

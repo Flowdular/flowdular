@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { AiUsage } from '@flowdular/ai-provider';
 import {
 	CodingAgentError,
+	turnTimeLimitMessage,
 	type CodingAgentAvailability,
 	type CodingAgentDriver,
 	type CodingAgentEvent,
@@ -168,12 +169,14 @@ export function createClaudeCodeDriver(
 			replayHistory ? replayedPrompt(request) : request.prompt,
 		];
 
+		const timeoutMs =
+			request.timeoutMs ?? options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 		const stream = spawnLineStream({
 			command,
 			args,
 			cwd: request.workspacePath,
 			signal: request.signal,
-			timeoutMs: request.timeoutMs ?? options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+			timeoutMs,
 			env: agentEnvironment('claude-code'),
 		});
 
@@ -325,7 +328,7 @@ export function createClaudeCodeDriver(
 		if (exit.timedOut) {
 			throw new CodingAgentError(
 				'DRIVER_TIMEOUT',
-				'The coding agent exceeded the turn time limit. Review the draft before continuing.',
+				turnTimeLimitMessage(timeoutMs),
 			);
 		}
 		if (exit.aborted) {
