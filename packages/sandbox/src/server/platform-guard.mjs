@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
 
-/* platform-process.ts starts the platform through this guard. The guard leads
-   the platform's process group and holds an IPC channel to the launcher. The
+/* platform-process.ts starts the platform through this guard, and
+   process-command.ts every bounded command. The guard leads the command's
+   process group and holds an IPC channel to the launcher. The
    launcher stops the group on every path it runs; the channel covers the ones
    it never reaches (SIGKILL, SIGHUP from a closed terminal, a crash, a test
    runner torn down). The operating system closes the channel however the

@@ -1,4 +1,13 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcessByStdio } from 'node:child_process';
+import type { Readable } from 'node:stream';
+import { fileURLToPath } from 'node:url';
+
+const PROCESS_GUARD = fileURLToPath(
+	new URL('./platform-guard.mjs', import.meta.url),
+);
+/* From SIGTERM to SIGKILL, after a timeout here or in the guard once the
+   launcher is gone. */
+const STOP_GRACE_MS = 1_000;
 
 export interface ProcessCommandOptions {
 	readonly cwd: string;
@@ -15,6 +24,8 @@ export interface ProcessCommandResult {
 
 /* A command can start children of its own (pnpm and Git credential helpers do).
    On POSIX, give it a process group so a timeout stops the whole command tree.
+   The group outlives the launcher, so the guard that leads it stops it when
+   the launcher ends without doing so (SIGKILL, a closed terminal, a crash).
    Keep draining both pipes even when output is intentionally discarded. */
 export function runBoundedProcess(
 	command: string,
@@ -39,12 +50,17 @@ export function runBoundedProcess(
 		};
 		let child;
 		try {
-			child = spawn(command, [...args], {
-				cwd: options.cwd,
-				env: options.env,
-				stdio: ['ignore', 'pipe', 'pipe'],
-				detached: process.platform !== 'win32',
-			});
+			/* spawn's typed stdio tuples have no 'ipc' slot. */
+			child = spawn(
+				process.execPath,
+				[PROCESS_GUARD, String(STOP_GRACE_MS), command, ...args],
+				{
+					cwd: options.cwd,
+					env: options.env,
+					stdio: ['ipc', 'pipe', 'pipe'],
+					detached: process.platform !== 'win32',
+				},
+			) as ChildProcessByStdio<null, Readable, Readable>;
 		} catch (error) {
 			resolvePromise({
 				code: null,
@@ -62,7 +78,16 @@ export function runBoundedProcess(
 		child.stdout.on('data', append);
 		child.stderr.on('data', append);
 		const signal = (name: NodeJS.Signals) => {
-			if (process.platform !== 'win32' && child.pid !== undefined) {
+			if (process.platform === 'win32') {
+				/* No process groups: end the guard's whole tree. */
+				if (child.pid !== undefined)
+					spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+						stdio: 'ignore',
+						windowsHide: true,
+					}).once('error', () => undefined);
+				return;
+			}
+			if (child.pid !== undefined) {
 				try {
 					process.kill(-child.pid, name);
 					return;
@@ -89,6 +114,13 @@ export function runBoundedProcess(
 		const finishIfStopped = () => {
 			if (childClosed && !groupIsRunning()) finish(null);
 		};
+		/* The guard starts the command, so `spawn git ENOENT` arrives as a message. */
+		let spawnError: string | null = null;
+		child.on('message', (message) => {
+			const report = message as { type?: unknown; message?: unknown } | null;
+			if (report?.type === 'spawn-error' && typeof report.message === 'string')
+				spawnError = report.message;
+		});
 		child.on('error', (error) => {
 			append(error.message);
 			if (!timedOut) finish(null);
@@ -96,7 +128,10 @@ export function runBoundedProcess(
 		child.on('close', (code) => {
 			childClosed = true;
 			if (timedOut) finishIfStopped();
-			else finish(code);
+			else if (spawnError !== null) {
+				append(spawnError);
+				finish(null);
+			} else finish(code);
 		});
 		deadline = setTimeout(() => {
 			timedOut = true;
@@ -122,7 +157,7 @@ export function runBoundedProcess(
 					killTimer = setTimeout(waitForGroup, 25);
 				};
 				waitForGroup();
-			}, 1_000);
+			}, STOP_GRACE_MS);
 		}, options.timeoutMs);
 	});
 }
