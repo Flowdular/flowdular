@@ -390,6 +390,9 @@ async function runEventStream(
 				if (closed || request.signal.aborted) return close();
 				try {
 					const run = await (await runtime.service()).getRun(tenantId, runId);
+					/* The observer left, or the runtime retired, while the read was in
+					   flight. The stream is closed and the runtime may be closing. */
+					if (closed) return;
 					const newEvents = run.events.filter(
 						(event) => event.sequence > sequence,
 					);
@@ -406,6 +409,7 @@ async function runEventStream(
 						return close();
 					}
 				} catch (error) {
+					if (closed) return;
 					controller.enqueue(
 						encoder.encode(
 							`data: ${JSON.stringify({
