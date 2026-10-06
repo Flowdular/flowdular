@@ -5,18 +5,31 @@ import { openInChrome } from './chrome.ts';
 /* A stand-in Chrome on the same DevTools pipe, started through FD_CHROME. It
    logs every method it receives, holds its first answer until the release
    file exists, and never answers the method named in FD_FAKE_CHROME_SILENT.
-   Only the helper's timers are faked, so the budgets run in fake time while
-   the process and its pipe run for real. */
+   With FD_FAKE_CHROME_SERVICE it starts a child that writes into the profile
+   once the browser is gone, as Chrome's network and storage services do:
+   Browser.close waits for it, a SIGTERM does not. Only the helper's timers are
+   faked, so the budgets run in fake time while the processes run for real. */
 const FAKE_CHROME = String.raw`
+import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync } from 'node:fs';
 import { Socket } from 'node:net';
 const input = new Socket({ fd: 3, readable: true, writable: false });
 const output = new Socket({ fd: 4, readable: false, writable: true });
-const { FD_FAKE_CHROME_LOG: log, FD_FAKE_CHROME_RELEASE: release, FD_FAKE_CHROME_SILENT: silent } = process.env;
+const { FD_FAKE_CHROME_LOG: log, FD_FAKE_CHROME_RELEASE: release, FD_FAKE_CHROME_SILENT: silent, FD_FAKE_CHROME_SERVICE: service } = process.env;
+const profile = process.argv.find((argument) => argument.startsWith('--user-data-dir=')).slice('--user-data-dir='.length);
+appendFileSync(log, 'profile ' + profile + '\n');
+const flush = 'const { mkdirSync, writeFileSync } = require("node:fs"); process.stdin.resume().on("end", () => setTimeout(() => { mkdirSync(process.argv[1] + "/Default", { recursive: true }); writeFileSync(process.argv[1] + "/Default/Cookies", ""); }, 100));';
+const child = service ? spawn(process.execPath, ['-e', flush, profile], { stdio: ['pipe', 'ignore', 'ignore'] }) : null;
+const close = () => {
+  if (!child) process.exit(0);
+  child.once('exit', () => process.exit(0));
+  child.stdin.end();
+};
 const send = (message) => output.write(JSON.stringify(message) + '\0');
 const answer = ({ id, method }) => {
   if (method === silent) return;
-  if (method === 'Target.createTarget') send({ id, result: { targetId: 't' } });
+  if (method === 'Browser.close') close();
+  else if (method === 'Target.createTarget') send({ id, result: { targetId: 't' } });
   else if (method === 'Target.attachToTarget') send({ id, result: { sessionId: 's' } });
   else if (method === 'Runtime.evaluate') send({ id, result: { result: { value: 'ready' } } });
   else send({ id, result: {} });
@@ -81,6 +94,7 @@ async function nodeApi(): Promise<NodeApi> {
 function fakeChrome(options: {
 	readonly hold?: boolean;
 	readonly silent?: string;
+	readonly service?: boolean;
 }) {
 	const log = directory + '/methods.log';
 	const release = directory + '/release';
@@ -88,7 +102,7 @@ function fakeChrome(options: {
 	node.writeFileSync(directory + '/fake-chrome.mjs', FAKE_CHROME);
 	node.writeFileSync(
 		directory + '/fake-chrome',
-		`#!/bin/sh\nexec '${execPath}' '${directory}/fake-chrome.mjs'\n`,
+		`#!/bin/sh\nexec '${execPath}' '${directory}/fake-chrome.mjs' "$@"\n`,
 		{ mode: 0o755 },
 	);
 	for (const key of [
@@ -96,6 +110,7 @@ function fakeChrome(options: {
 		'FD_FAKE_CHROME_LOG',
 		'FD_FAKE_CHROME_RELEASE',
 		'FD_FAKE_CHROME_SILENT',
+		'FD_FAKE_CHROME_SERVICE',
 	]) {
 		saved[key] = env[key];
 	}
@@ -103,11 +118,20 @@ function fakeChrome(options: {
 	env.FD_FAKE_CHROME_LOG = log;
 	env.FD_FAKE_CHROME_RELEASE = options.hold ? release : '';
 	env.FD_FAKE_CHROME_SILENT = options.silent ?? '';
+	env.FD_FAKE_CHROME_SERVICE = options.service ? '1' : '';
 	return {
 		/** Resolves once the fake has received `method`, so its timer is armed. */
 		received: (method: string) =>
 			until(() => node.readFileSync(log, 'utf8').split('\n').includes(method)),
 		release: () => node.writeFileSync(release, ''),
+		/** The directory openInChrome made for this Chrome's profile. */
+		directory: () =>
+			node
+				.readFileSync(log, 'utf8')
+				.split('\n')
+				.find((line) => line.startsWith('profile '))!
+				.slice('profile '.length)
+				.replace(/\/profile$/, ''),
 	};
 }
 
@@ -189,4 +213,18 @@ it('still fails a call fast once Chrome has started', async () => {
 	expect(opened.error?.message).toBe(
 		'Chrome did not answer Runtime.evaluate within the 15 s call budget.',
 	);
+});
+
+it('removes the profile only after every Chrome process is done with it', async () => {
+	const chrome = fakeChrome({ service: true });
+	const opened = track(
+		openInChrome('about:blank', (page) => page.evaluate<string>('1')),
+	);
+	await until(() => opened.settled);
+	expect(opened.error).toBeUndefined();
+	const removed = chrome.directory();
+	/* A service a SIGTERM left behind writes 100 ms after the browser exits. */
+	const settledAt = Date.now();
+	await until(() => Date.now() - settledAt > 400);
+	expect(node.existsSync(removed)).toBe(false);
 });
