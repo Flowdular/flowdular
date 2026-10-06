@@ -98,10 +98,13 @@ export class PlatformClient {
 		await this.#json('POST', '/api/sandbox/sessions', input);
 	}
 
+	/* sandbox.core keeps a closed set of session states with no state for
+	   open questions, so a session waiting on answers reports what it reported
+	   before the sandbox told the two apart. */
 	async updateSessionState(sessionId: string, state: string): Promise<void> {
 		await this.#json('POST', '/api/sandbox/sessions/state', {
 			sessionId,
-			state,
+			state: state === 'awaiting-answers' ? 'awaiting-approval' : state,
 		});
 	}
 

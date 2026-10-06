@@ -354,7 +354,10 @@ dropped in silence: the transcript says why it was refused, and the specialist
 gets the reason and these limits for one repair turn. A second refusal in a row
 stops for the operator, who answers in words. A turn that asks stops for the
 answers, never for approval, and the approval route refuses a module with open
-questions (`409 QUESTIONS_PENDING`).
+questions (`409 QUESTIONS_PENDING`). Such a session is in the `awaiting-answers`
+state, so `awaiting-approval` only ever means an approval. `sandbox.core` has no
+state for open questions, so the platform record keeps `awaiting-approval` for
+it.
 
 A readable block is stored on the session as `pendingQuestions`, with the
 transcript sequence of the message that asked, the role that asked and the

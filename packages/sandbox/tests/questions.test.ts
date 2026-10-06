@@ -689,6 +689,7 @@ describe('a turn that asks for decisions', () => {
 		expect(second.handoff.reason).toContain(
 			`Every option of Q-1 must be 1 to ${MAX_OPTION_LENGTH} characters.`,
 		);
+		expect(second.session.state).toBe('awaiting-answers');
 	});
 
 	it('waits for the answers instead of offering approval of a draft that asked', async () => {
@@ -707,6 +708,8 @@ describe('a turn that asks for decisions', () => {
 
 		expect(outcome.handoff.kind).toBe('question');
 		expect(outcome.session.pendingQuestions?.questions).toHaveLength(1);
+		/* Approval is the only state that says approval. */
+		expect(outcome.session.state).toBe('awaiting-answers');
 	});
 
 	it('clears a stored question set on the next turn that asks nothing', async () => {
