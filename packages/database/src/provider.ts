@@ -75,11 +75,22 @@ export interface DatabasePostgresPoolClient {
 		readonly rowCount?: number | null;
 	}>;
 	release(error?: Error): void;
+	/** Implemented by an event-emitting driver; the provider listens for `error`. */
+	on?(event: 'error', listener: (error: Error) => void): unknown;
 }
 
 export interface DatabasePostgresPool {
 	connect(): Promise<DatabasePostgresPoolClient>;
 	end(): Promise<void>;
+	/**
+	 * Implemented by an event-emitting driver; the provider listens for `error`,
+	 * and for `connect` where the pool emits each new client before handing it out.
+	 */
+	on?(event: 'error', listener: (error: Error) => void): unknown;
+	on?(
+		event: 'connect',
+		listener: (client: DatabasePostgresPoolClient) => void,
+	): unknown;
 }
 
 export interface DatabaseProviderFactories {
@@ -405,11 +416,44 @@ export function databaseProviderConfigFromEnvironment(
 	};
 }
 
+/* Only the code and the message: node-postgres attaches the client to the
+   error, so printing the error prints its connection details and, through
+   serializers that read non-enumerable fields, the password. */
+function reportIdleConnectionError(error: Error): void {
+	const code = (error as { code?: unknown }).code;
+	console.warn(
+		`An idle pooled PostgreSQL connection failed (${
+			typeof code === 'string' ? `${code}: ` : ''
+		}${error.message}). The pool discards it and the next query opens a new one.`,
+	);
+}
+
+/* The lease holder already sees this failure: the query in flight rejects, or
+   the next one does because the client is no longer queryable, and the pool
+   discards the client on release. */
+function ignoreLeasedClientError(): void {}
+
+/* Node ends the process on an `error` event nobody listens for. node-postgres
+   emits one on the pool when the server closes an idle client (a suspended
+   compute, a failover, a restart), and on a leased client when its connection
+   drops during or between queries. One listener per client, never per lease.
+   A new client goes out with no pool listener, and a FATAL read together with
+   its ReadyForQuery is emitted before connect() resolves, so the guard goes on
+   at `connect`; the lease covers a driver that emits no such event. */
 function postgresDriverPool(pool: DatabasePostgresPool): PostgresDriverPool {
+	const guardedClients = new WeakSet<DatabasePostgresPoolClient>();
+	const guard = (client: DatabasePostgresPoolClient) => {
+		if (!client.on || guardedClients.has(client)) return;
+		guardedClients.add(client);
+		client.on('error', ignoreLeasedClientError);
+	};
+	pool.on?.('error', reportIdleConnectionError);
+	pool.on?.('connect', guard);
 	return {
 		cancellation: 'before-start',
 		async connect() {
 			const client = await pool.connect();
+			guard(client);
 			return {
 				async query({ text, values }) {
 					const result = await client.query({
