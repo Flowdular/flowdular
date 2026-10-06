@@ -79,6 +79,10 @@ export interface SandboxConfiguration {
 	   local development server or a remote deployment. */
 	readonly platformUrl: string;
 	readonly platformToken: SealedSecret | null;
+	/* Fingerprint of the sealed token the launcher collected from the platform
+	   it started. A token connected later seals differently, so the launcher
+	   never takes an operator's credential for its own. */
+	readonly launcherTokenFingerprint: string | null;
 	readonly driver: string;
 	readonly driverModel: string | null;
 	readonly previewData: PreviewDataMode;
@@ -107,6 +111,7 @@ export const DEFAULT_CONFIGURATION: SandboxConfiguration = {
 	mode: 'loopback',
 	platformUrl: 'http://localhost:4310',
 	platformToken: null,
+	launcherTokenFingerprint: null,
 	driver: 'claude-code',
 	driverModel: null,
 	previewData: 'fixtures',
@@ -378,15 +383,6 @@ export async function verifySessionRecord(
 	return a.byteLength === b.byteLength && timingSafeEqual(a, b);
 }
 
-export function isLoopbackHostname(hostname: string): boolean {
-	return (
-		hostname === 'localhost' ||
-		hostname === '::1' ||
-		hostname === '[::1]' ||
-		/^127(?:\.\d{1,3}){3}$/.test(hostname)
-	);
-}
-
 export function assertPlatformUrl(value: string): string {
 	let url: URL;
 	try {
@@ -403,7 +399,12 @@ export function assertPlatformUrl(value: string): string {
 			'The platform address must use http or https.',
 		);
 	}
-	if (url.protocol !== 'https:' && !isLoopbackHostname(url.hostname)) {
+	const loopback =
+		url.hostname === 'localhost' ||
+		url.hostname === '::1' ||
+		url.hostname === '[::1]' ||
+		/^127(?:\.\d{1,3}){3}$/.test(url.hostname);
+	if (url.protocol !== 'https:' && !loopback) {
 		throw new SandboxSetupError(
 			'INVALID_PLATFORM_URL',
 			'The platform address must use HTTPS unless it is a loopback address.',

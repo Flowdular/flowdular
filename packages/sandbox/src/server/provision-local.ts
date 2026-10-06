@@ -4,10 +4,10 @@ import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { flowdularStateDirectory } from '@flowdular/kernel/runtime-config';
 import {
-	isLoopbackHostname,
 	loadSandboxConfiguration,
 	saveSandboxConfiguration,
 	sealSecret,
+	secretFingerprint,
 } from './config.ts';
 
 export class ProvisionError extends Error {
@@ -182,10 +182,10 @@ async function readCredential(path: string): Promise<ProvisionedCredential> {
    address it resolved before any of them starts instead of after the platform
    answers, which on a first run is long after the banner.
 
-   A credential stored for a loopback address is taken to be this workspace's
-   own, collected from the platform the launcher starts, so it follows that
-   platform to the port it was started on. A remote address, or a platform the
-   launcher only connects to, keeps the connection the operator configured. */
+   A credential the launcher collected belongs to this workspace's platform,
+   so it follows the platform the launcher starts to its port. A credential
+   the operator connected, or a platform the launcher only connects to, keeps
+   the connection as configured. */
 export async function recordPlatformAddress(options: {
 	readonly workspaceRoot: string;
 	readonly platformUrl: string;
@@ -197,7 +197,8 @@ export async function recordPlatformAddress(options: {
 		configuration.platformToken !== null &&
 		!(
 			options.startedByLauncher &&
-			isLoopbackHostname(new URL(configuration.platformUrl).hostname)
+			secretFingerprint(configuration.platformToken) ===
+				configuration.launcherTokenFingerprint
 		)
 	)
 		return;
@@ -256,6 +257,7 @@ export async function collectProvisionedCredential(options: {
 		...configuration,
 		platformUrl: options.platformUrl,
 		platformToken,
+		launcherTokenFingerprint: secretFingerprint(platformToken),
 		version: 1,
 	});
 	await rm(path, { force: true });
