@@ -1,6 +1,11 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { JobRunner } from '@flowdular/server';
-import type { ApprovalRequest } from '../src/domain/types.ts';
+import {
+	ERASED_ACCOUNT_PREFIX,
+	type ApprovalRequest,
+	type ApprovalRequestWithDeciders,
+} from '../src/domain/types.ts';
+import { approvalsDataClasses } from '../src/services/data-classes.ts';
 import { createApprovalsExpiryRunner } from '../src/services/expiry-runner.ts';
 import type { NotificationPublishInput } from '../src/services/notifications.ts';
 import type { ApprovalsRepository } from '../src/services/repository.ts';
@@ -19,6 +24,7 @@ import {
 } from './support/harness.ts';
 
 const TENANT = 'tenant-a';
+const OTHER_TENANT = 'tenant-b';
 const REQUESTER = 'account-requester';
 
 let shared: ApprovalsTestDatabase;
@@ -657,6 +663,152 @@ describe('APPROVALS-CANCEL', () => {
 		await expect(
 			context.service.decide(TENANT, request.id, 'account-outsider', 'approve'),
 		).rejects.toMatchObject({ code: 'APPROVAL_NOT_FOUND' });
+	});
+});
+
+describe('APPROVALS-DECIDER', () => {
+	it('APPROVALS-DECIDER names the accounts that settled each outcome through get and the callback', async () => {
+		const context = fixture();
+		const capability = context.service.capability();
+		const heard = new Map<string, ApprovalRequestWithDeciders>();
+		const open = (subjectRef: string, decisions = 1) =>
+			capability.open(
+				openInput(context, {
+					subjectRef,
+					requirement: { roleKey: OWNER_ROLE, decisions },
+					onResolved: async (request) => {
+						heard.set(request.id, request);
+					},
+				}),
+			);
+		const single = await open('order-single');
+		const double = await open('order-double', 2);
+		const rejected = await open('order-rejected', 2);
+		const cancelled = await open('order-cancelled');
+		const expired = await open('order-expired', 2);
+
+		for (const request of [single, double, rejected, cancelled, expired]) {
+			expect(
+				(await capability.get(TENANT, request.id))?.deciderAccountIds,
+			).toEqual([]);
+		}
+
+		await context.service.decide(
+			TENANT,
+			single.id,
+			'account-bo',
+			'approve',
+			'Fine by me.',
+		);
+		/* The clock moves between decisions so ledger order is the order they
+		   were made in rather than the order of their random ids. */
+		await context.service.decide(TENANT, double.id, 'account-cy', 'approve');
+		context.clock.advance(1_000);
+		expect(
+			(await capability.get(TENANT, double.id))?.deciderAccountIds,
+		).toEqual([]);
+		await context.service.decide(TENANT, double.id, 'account-ada', 'approve');
+		await context.service.decide(TENANT, rejected.id, 'account-ada', 'approve');
+		context.clock.advance(1_000);
+		await context.service.decide(
+			TENANT,
+			rejected.id,
+			'account-bo',
+			'reject',
+			'Too expensive.',
+		);
+		await capability.cancel(TENANT, cancelled.id, REQUESTER);
+		await context.service.decide(TENANT, expired.id, 'account-ada', 'approve');
+		context.clock.advance(7 * DAY_MS + 1);
+		expect(
+			(
+				await expiry(
+					context.service,
+					shared.repository,
+					context.clock.now,
+				).tick()
+			).performed,
+		).toBe(1);
+
+		const listed = new Map(
+			(await capability.list(TENANT, { subjectModule: 'catalog.core' })).map(
+				(request) => [request.id, request],
+			),
+		);
+		for (const [request, status, deciders] of [
+			[single, 'approved', ['account-bo']],
+			[double, 'approved', ['account-cy', 'account-ada']],
+			[rejected, 'rejected', ['account-bo']],
+			[cancelled, 'cancelled', [REQUESTER]],
+			[expired, 'expired', []],
+		] as const) {
+			const read = await capability.get(TENANT, request.id);
+			const callback = heard.get(request.id);
+			expect([
+				request.subjectRef,
+				read?.status,
+				read?.deciderAccountIds,
+			]).toEqual([request.subjectRef, status, deciders]);
+			expect([request.subjectRef, callback?.deciderAccountIds]).toEqual([
+				request.subjectRef,
+				deciders,
+			]);
+			/* Account ids alone: no comment travels with them. */
+			expect(JSON.stringify([read, callback])).not.toMatch(
+				/Fine by me|Too expensive/,
+			);
+			/* A consumer that ignores the new field reads what it read before. */
+			const { deciderAccountIds, ...fields } = read!;
+			expect(deciderAccountIds).toEqual(deciders);
+			expect(fields).toEqual(listed.get(request.id));
+			expect(callback).toEqual(read);
+		}
+	});
+
+	it('APPROVALS-DECIDER answers null for the request of another workspace', async () => {
+		const context = fixture();
+		const capability = context.service.capability();
+		const foreign = await capability.open(
+			openInput(context, {
+				tenantId: OTHER_TENANT,
+				subjectRef: 'order-foreign',
+			}),
+		);
+		await context.service.decide(
+			OTHER_TENANT,
+			foreign.id,
+			'account-ada',
+			'approve',
+		);
+
+		expect(await capability.get(TENANT, foreign.id)).toBeNull();
+		expect(
+			(await capability.get(OTHER_TENANT, foreign.id))?.deciderAccountIds,
+		).toEqual(['account-ada']);
+	});
+
+	it('APPROVALS-DECIDER names the tombstone once an erasure redacted the decision', async () => {
+		const context = fixture();
+		const capability = context.service.capability();
+		const request = await capability.open(
+			openInput(context, { subjectRef: 'order-erased' }),
+		);
+		await context.service.decide(TENANT, request.id, 'account-ada', 'approve');
+
+		const requests = approvalsDataClasses(async () => shared.repository).find(
+			(entry) => entry.key === 'requests',
+		);
+		await requests!.erase!({
+			tenantId: TENANT,
+			subject: { accountId: 'account-ada' },
+			limit: 100,
+		});
+
+		const deciders = (await capability.get(TENANT, request.id))
+			?.deciderAccountIds;
+		expect(deciders).toHaveLength(1);
+		expect(deciders?.[0]).not.toBe('account-ada');
+		expect(deciders?.[0]?.startsWith(ERASED_ACCOUNT_PREFIX)).toBe(true);
 	});
 });
 

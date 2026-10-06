@@ -25,6 +25,7 @@ import {
 	type ApprovalRouting,
 	type ApprovalViewerRights,
 	type TerminalApprovalStatus,
+	withDeciders,
 } from '../domain/types.ts';
 import {
 	createApprovalCallbackRegistry,
@@ -512,7 +513,10 @@ export class ApprovalsService {
 	capability(): ApprovalsRequests {
 		return {
 			open: (input) => this.open(input),
-			get: (tenantId, id) => this.get(tenantId, id),
+			get: async (tenantId, id) => {
+				const detail = await this.detail(tenantId, id);
+				return detail ? withDeciders(detail.request, detail.decisions) : null;
+			},
 			grant: (tenantId, id, subjectModule) =>
 				this.grant(tenantId, id, subjectModule),
 			list: (tenantId, filter) => this.list(tenantId, filter),
@@ -628,7 +632,7 @@ export class ApprovalsService {
 					recipients: [result.request.requesterAccountId],
 				});
 			}
-			await this.#callbacks.run(result.request);
+			await this.#callbacks.run(withDeciders(result.request, result.decisions));
 		}
 		return { request: result.request, decisions: result.decisions };
 	}

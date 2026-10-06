@@ -133,6 +133,18 @@ export interface ApprovalRequestDetail {
 }
 
 /**
+ * A request as `approvals.requests.v1` answers it on `get` and hands it to
+ * `onResolved`. `deciderAccountIds` names the accounts whose decision rows
+ * produced the terminal state, in ledger order: every approver of an approved
+ * request, the account that rejected or cancelled it, and nobody while it is
+ * pending or once it expired. It is derived from the ledger on every read, so a
+ * decision an erasure redacted names its tombstone.
+ */
+export interface ApprovalRequestWithDeciders extends ApprovalRequest {
+	readonly deciderAccountIds: readonly string[];
+}
+
+/**
  * What the member reading a request may do with it, answered by the server so a
  * screen never has to guess at eligibility it cannot see.
  */
@@ -165,4 +177,33 @@ export function isTerminalApprovalStatus(
 	status: ApprovalStatus,
 ): status is TerminalApprovalStatus {
 	return status !== 'pending';
+}
+
+/* The ledger row that settles each terminal state. An approval recorded before
+   a rejection or an expiry decided neither, and the expiry row names nobody. */
+const SETTLING_DECISION: Record<TerminalApprovalStatus, ApprovalDecisionKind> =
+	{
+		approved: 'approve',
+		rejected: 'reject',
+		expired: 'expire',
+		cancelled: 'cancel',
+	};
+
+/** `decisions` is the request's whole ledger, in ledger order. */
+export function withDeciders(
+	request: ApprovalRequest,
+	decisions: readonly ApprovalDecision[],
+): ApprovalRequestWithDeciders {
+	if (!isTerminalApprovalStatus(request.status)) {
+		return { ...request, deciderAccountIds: [] };
+	}
+	const settling = SETTLING_DECISION[request.status];
+	return {
+		...request,
+		deciderAccountIds: decisions.flatMap((entry) =>
+			entry.decision === settling && entry.deciderAccountId !== null
+				? [entry.deciderAccountId]
+				: [],
+		),
+	};
 }

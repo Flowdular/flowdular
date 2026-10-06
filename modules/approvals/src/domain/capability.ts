@@ -1,5 +1,9 @@
 import type { ApprovalRequirement } from '@flowdular/kernel';
-import type { ApprovalRequest, ApprovalStatus } from './types.ts';
+import type {
+	ApprovalRequest,
+	ApprovalRequestWithDeciders,
+	ApprovalStatus,
+} from './types.ts';
 
 /**
  * The public cross-module surface. A subject module resolves it through
@@ -28,7 +32,7 @@ export interface OpenApprovalInput {
 	 * module that must not miss an outcome reads the request back as well.
 	 * A callback that throws is logged and never changes the recorded decision.
 	 */
-	readonly onResolved?: (request: ApprovalRequest) => Promise<void>;
+	readonly onResolved?: (request: ApprovalRequestWithDeciders) => Promise<void>;
 }
 
 export interface ApprovalRequestFilter {
@@ -49,7 +53,11 @@ export interface ApprovalsRequests {
 	 * the new callback against it rather than asking the same question twice.
 	 */
 	open(input: OpenApprovalInput): Promise<ApprovalRequest>;
-	get(tenantId: string, id: string): Promise<ApprovalRequest | null>;
+	/** The request with the accounts that decided it, read in one transaction. */
+	get(
+		tenantId: string,
+		id: string,
+	): Promise<ApprovalRequestWithDeciders | null>;
 	/**
 	 * The signed token an approved request yields while its window is open:
 	 * what the CLI runner takes as `--grant` and the harness as `grants`. Only
