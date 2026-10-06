@@ -607,6 +607,51 @@ describe('gate repair, replaying the recorded equipment session', () => {
 			}),
 		]);
 	});
+
+	it('stores the repair prompt redacted and still reads the repair turn as its instruction', async () => {
+		const { root, session, module } = await approvedSession();
+		const leaked = 'postgres://app:hunter2secret@db.internal:5432/equipment';
+		const context: TurnContext = {
+			...turnContext(root, module, scriptedDriver({})),
+			executeGates: async ({ gates }) =>
+				gates.map((id) => ({
+					id,
+					module: 'equipment',
+					status:
+						id === 'typecheck' ? ('failed' as const) : ('passed' as const),
+					durationMs: 0,
+					command: id,
+					output:
+						id === 'typecheck'
+							? `src/services/database-repository.ts(2,1): error TS2554: cannot reach ${leaked}`
+							: 'passed',
+				})),
+		};
+		const built = await drive(context, session.id, {
+			message: 'Build the equipment server.',
+			role: 'backend-engineer',
+		});
+		expect(built.handoff).toMatchObject({
+			kind: 'continue',
+			repair: true,
+			role: 'backend-engineer',
+		});
+		expect(built.handoff.prompt).toContain(leaked);
+		const stored = (await readChat(root, session)).findLast(
+			(entry) => entry.handoff,
+		)!.handoff!;
+		expect(stored.prompt).not.toContain('hunter2secret');
+		expect(stored.prompt).toContain('postgres://[redacted]@db.internal');
+
+		/* The chain sends the prompt as planned, not as stored. */
+		await follow(context, session.id, built);
+		const instruction = (await readChat(root, session)).findLast(
+			(entry) => entry.kind === 'user',
+		);
+		expect(instruction?.instruction?.gates).toEqual([
+			{ id: 'typecheck', module: 'equipment', status: 'failed' },
+		]);
+	});
 });
 
 describe('repair routing and the role write paths', () => {

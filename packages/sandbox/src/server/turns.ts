@@ -73,6 +73,7 @@ import {
 	modulePathOf,
 	readChat,
 	readSession,
+	redactText,
 	sessionPaths,
 	updateSession,
 	type ChatEntry,
@@ -652,10 +653,13 @@ export async function* runTurn(
 	const sampleDataNote = sampleDataInstruction(session.attachments);
 
 	/* The chain, and the operator's Continue button, send a handoff's own
-	   prompt: the words are the sandbox's, not the operator's. */
+	   prompt: the words are the sandbox's, not the operator's. The stored
+	   prompt is redacted and the chain sends the original. */
 	const handedOff =
 		transcript.filter((entry) => entry.handoff).at(-1)?.handoff ?? null;
-	const instructed = handedOff?.prompt.trim() === message;
+	const instructed =
+		handedOff !== null &&
+		redactText(handedOff.prompt.trim()) === redactText(message);
 	yield await appendChatEntry(context.workspaceRoot, session, {
 		kind: 'user',
 		role: roleId,
