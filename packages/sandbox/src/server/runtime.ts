@@ -21,7 +21,7 @@ import { buildDecisionAsk, type DecisionAsk } from './decisions-runtime.ts';
 import {
 	loadSandboxConfiguration,
 	openSecret,
-	saveSandboxConfiguration,
+	updateSandboxConfiguration,
 	type SandboxConfiguration,
 } from './config.ts';
 import { PlatformClient, type PlatformAuthority } from './platform-client.ts';
@@ -54,7 +54,16 @@ export interface SandboxRuntime {
 	platform(): PlatformClient | null;
 	connection(): SandboxConnection;
 	refresh(): Promise<SandboxConnection>;
-	update(patch: Partial<SandboxConfiguration>): Promise<SandboxConnection>;
+	/* A function computes the patch from the stored configuration inside the
+	   configuration queue, for a change that depends on what is stored. Null
+	   changes nothing. */
+	update(
+		patch:
+			| Partial<SandboxConfiguration>
+			| ((
+					current: SandboxConfiguration,
+			  ) => Partial<SandboxConfiguration> | null),
+	): Promise<SandboxConnection>;
 	/* The provider the workspace itself supplies, so setup asks for a key only
 	   when there is none to adopt. Never carries the credential. */
 	aiEnvironment(): AiEnvironmentSummary | null;
@@ -246,11 +255,30 @@ export async function createSandboxRuntime(
 		decisions: () => decisions,
 		refresh: rebuild,
 		update: async (patch) => {
-			configuration = await saveSandboxConfiguration(workspaceRoot, {
-				...configuration,
-				...patch,
-				version: 1,
-			});
+			/* Patch what is stored, not the copy this runtime cached at its last
+			   rebuild: the launcher saves its credential while this runtime serves. */
+			configuration = await updateSandboxConfiguration(
+				workspaceRoot,
+				(current) => {
+					const change = typeof patch === 'function' ? patch(current) : patch;
+					if (change === null) return current;
+					/* A caller may have checked an address against a cached copy
+					   that predates the launcher's credential; the stored token must
+					   never follow an address without a token of its own. */
+					if (
+						change.platformUrl !== undefined &&
+						change.platformUrl !== current.platformUrl &&
+						change.platformToken === undefined &&
+						current.platformToken !== null
+					) {
+						throw new SandboxSetupError(
+							'PLATFORM_TOKEN_REQUIRED',
+							'Changing the application address needs the API token for that application.',
+						);
+					}
+					return { ...current, ...change, version: 1 };
+				},
+			);
 			return rebuild();
 		},
 		openBrowserSession: async (token) => {

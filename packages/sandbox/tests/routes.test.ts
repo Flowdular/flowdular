@@ -689,7 +689,7 @@ describe('sandbox route security', () => {
 			root,
 			fakeDriver({ handoff: 'HANDOFF: none - done' }),
 		);
-		const patches: Record<string, unknown>[] = [];
+		const patches: unknown[] = [];
 		runtime.update = async (patch) => {
 			patches.push(patch);
 			return runtime.connection();

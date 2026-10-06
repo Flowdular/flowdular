@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { ServerRoute } from '@octanejs/app-core';
@@ -43,6 +43,7 @@ import {
 	mailConfigFromEnvironment,
 	serverTracer,
 } from '@flowdular/server';
+import { replaceLocalFile } from './local-file.ts';
 import { createIsolatedPreviewRuntime } from './preview-worker-manager.ts';
 import {
 	resolvePreviewModules,
@@ -250,10 +251,7 @@ async function createPreviewAuth(
 			password: randomBytes(24).toString('base64url'),
 		};
 		await mkdir(paths.data, { recursive: true, mode: 0o700 });
-		await writeFile(credentialPath, JSON.stringify(credentials), {
-			encoding: 'utf8',
-			mode: 0o600,
-		});
+		await replaceLocalFile(credentialPath, JSON.stringify(credentials));
 	}
 	if (!(await (await auth.service()).findAccountAccess(credentials.email))) {
 		await (

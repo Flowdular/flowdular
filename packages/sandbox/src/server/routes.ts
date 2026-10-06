@@ -1528,7 +1528,15 @@ export function createSandboxRoutes(
 					runtime.configuration().platformToken === null &&
 					assertPlatformUrl(platformUrl) !== runtime.configuration().platformUrl
 				) {
-					await runtime.update({ platformUrl: assertPlatformUrl(platformUrl) });
+					const url = assertPlatformUrl(platformUrl);
+					/* Decided again on what is stored: the launcher may have saved a
+					   credential this runtime has not reloaded, and that credential
+					   must never follow an address a caller names. */
+					await runtime.update((current) =>
+						current.platformToken === null && current.platformUrl !== url
+							? { platformUrl: url }
+							: null,
+					);
 				}
 				const session = await runtime.openBrowserSession(
 					text(value, 'token', 4_096),

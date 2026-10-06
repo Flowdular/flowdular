@@ -6,9 +6,9 @@ import { flowdularStateDirectory } from '@flowdular/kernel/runtime-config';
 import {
 	holdsLauncherCredential,
 	loadSandboxConfiguration,
-	saveSandboxConfiguration,
 	sealSecret,
 	secretFingerprint,
+	updateSandboxConfiguration,
 } from './config.ts';
 
 export class ProvisionError extends Error {
@@ -197,28 +197,29 @@ export async function recordPlatformAddress(options: {
 	readonly platformUrl: string;
 	readonly startedByLauncher: boolean;
 }): Promise<void> {
-	const configuration = await loadSandboxConfiguration(options.workspaceRoot);
-	if (configuration.platformUrl === options.platformUrl) return;
-	if (
-		configuration.platformToken !== null &&
-		!(options.startedByLauncher && holdsLauncherCredential(configuration))
-	)
-		return;
-	await saveSandboxConfiguration(options.workspaceRoot, {
-		...configuration,
-		platformUrl: options.platformUrl,
-		pendingSessionMoveFrom:
-			configuration.platformToken === null
-				? configuration.pendingSessionMoveFrom
-				: [
-						...configuration.pendingSessionMoveFrom.filter(
-							(url) =>
-								url !== configuration.platformUrl &&
-								url !== options.platformUrl,
-						),
-						configuration.platformUrl,
-					].slice(-PENDING_SESSION_MOVE_LIMIT),
-		version: 1,
+	await updateSandboxConfiguration(options.workspaceRoot, (configuration) => {
+		if (configuration.platformUrl === options.platformUrl) return configuration;
+		if (
+			configuration.platformToken !== null &&
+			!(options.startedByLauncher && holdsLauncherCredential(configuration))
+		)
+			return configuration;
+		return {
+			...configuration,
+			platformUrl: options.platformUrl,
+			pendingSessionMoveFrom:
+				configuration.platformToken === null
+					? configuration.pendingSessionMoveFrom
+					: [
+							...configuration.pendingSessionMoveFrom.filter(
+								(url) =>
+									url !== configuration.platformUrl &&
+									url !== options.platformUrl,
+							),
+							configuration.platformUrl,
+						].slice(-PENDING_SESSION_MOVE_LIMIT),
+			version: 1,
+		};
 	});
 }
 
@@ -247,12 +248,14 @@ export async function collectProvisionedCredential(options: {
 		await rm(path, { force: true });
 		return false;
 	}
+	/* Both writes check the token again: one connected since the check above
+	   keeps its address and stays, as it would have there. */
 	if (configuration.platformUrl !== options.platformUrl) {
-		await saveSandboxConfiguration(options.workspaceRoot, {
-			...configuration,
-			platformUrl: options.platformUrl,
-			version: 1,
-		});
+		await updateSandboxConfiguration(options.workspaceRoot, (current) =>
+			current.platformToken !== null
+				? current
+				: { ...current, platformUrl: options.platformUrl, version: 1 },
+		);
 	}
 	let credential: ProvisionedCredential;
 	try {
@@ -266,14 +269,21 @@ export async function collectProvisionedCredential(options: {
 		options.workspaceRoot,
 		credential.token,
 	);
-	await saveSandboxConfiguration(options.workspaceRoot, {
-		...configuration,
-		platformUrl: options.platformUrl,
-		platformToken,
-		launcherTokenFingerprint: secretFingerprint(platformToken),
-		version: 1,
-	});
+	const stored = await updateSandboxConfiguration(
+		options.workspaceRoot,
+		(current) =>
+			current.platformToken !== null
+				? current
+				: {
+						...current,
+						platformUrl: options.platformUrl,
+						platformToken,
+						launcherTokenFingerprint: secretFingerprint(platformToken),
+						version: 1,
+					},
+	);
 	await rm(path, { force: true });
+	if (stored.platformToken !== platformToken) return false;
 	options.log?.(
 		`connected to the application as ${credential.email} with ${credential.capabilities.length} scope(s)`,
 	);
