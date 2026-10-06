@@ -5187,5 +5187,79 @@ describe.skipIf(process.env.FD_TEST_DATABASE_ADAPTER !== 'postgresql')(
 				await race.dispose();
 			}
 		});
+
+		it('orders a cancellation after an edge settled beside it', async () => {
+			const race = await cancellationRace(agentGraph());
+			try {
+				let runId = '';
+				let cancellation: Promise<{ requested: boolean }> | undefined;
+				race.wrapNext('settleEdge', async (call) => {
+					/* The cancellation holds the run and has read its sequence. */
+					const hold = race.gate.holdNextWrite((text) =>
+						text.startsWith('INSERT INTO workflow_run_events'),
+					);
+					cancellation = race.service.cancel('tenant-a', runId, actor);
+					await hold.arrived;
+					const settling = call();
+					await race.gate.settledOrBlocked(settling);
+					hold.release();
+					return settling;
+				});
+				await race.runtime.start();
+				runId = await race.enqueue();
+				await waitFor(() => cancellation !== undefined);
+				await expect(cancellation).resolves.toMatchObject({ requested: true });
+				const detail = await race.settled(runId);
+				expect(detail.run.status).toBe('cancelled');
+				expect(race.enqueues()).toBe(0);
+				expect(cancelRequests(detail)).toBe(1);
+			} finally {
+				await race.dispose();
+			}
+		});
+
+		it('orders a cancellation after a node event appended beside it', async () => {
+			const race = await cancellationRace(agentGraph());
+			try {
+				await race.runtime.start();
+				const runId = await race.enqueue();
+				await waitFor(
+					async () =>
+						(await race.service.getRun('tenant-a', runId))?.status ===
+						'waiting-agent',
+				);
+				await race.runtime.stop();
+				const repository = await race.runtime.repository();
+				const hold = race.gate.holdNextWrite((text) =>
+					text.startsWith('INSERT INTO workflow_run_events'),
+				);
+				const cancellation = race.service.cancel('tenant-a', runId, actor);
+				await hold.arrived;
+				/* What withdrawing a parked approval appends while the run lives. */
+				const appending = repository.appendRunEvent(
+					'tenant-a',
+					runId,
+					'node.cancel.requested',
+					{
+						nodeId: 'agent.process',
+						attempt: 1,
+						childKind: 'agent',
+						childId: 'child-run-1',
+					},
+					Date.now(),
+				);
+				await race.gate.settledOrBlocked(appending);
+				hold.release();
+				await expect(cancellation).resolves.toMatchObject({ requested: true });
+				await expect(appending).resolves.toMatchObject({
+					type: 'node.cancel.requested',
+				});
+				const detail = await race.service.getRunDetail('tenant-a', runId);
+				expect(detail.run.status).toBe('cancel-requested');
+				expect(cancelRequests(detail)).toBe(1);
+			} finally {
+				await race.dispose();
+			}
+		});
 	},
 );

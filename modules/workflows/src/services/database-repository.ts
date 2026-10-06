@@ -975,6 +975,13 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 		recordedAt: number,
 		virtualOffsetMs?: number,
 	): Promise<WorkflowRunEventV1> {
+		/* The next sequence is read from the stream, so two transactions
+		   appending to one run side by side would read the same one and the
+		   later insert would fail: a cancellation request, or the write that
+		   records a child the worker already started. The run's row lock
+		   orders them. It is a statement of its own so that the read below sees
+		   whatever the lock waited for; most callers hold it already. */
+		await this.#query(transaction, SQL.lockRun, [tenantId, runId]);
 		const previous = (
 			await this.#query<{ sequence: Int | null }>(
 				transaction,
@@ -2049,10 +2056,6 @@ export class DatabaseWorkflowsRepository implements WorkflowsRepository {
 				runId,
 				nodeId,
 			]);
-			/* The child already exists. Without the run's lock, a cancellation
-			   appending beside this event takes the same sequence and fails this
-			   write, and the cancellation never learns of the child. */
-			await this.#query(transaction, SQL.lockRun, [tenantId, runId]);
 			if (childKind === 'agent') {
 				await this.#exec(transaction, SQL.markRunWaitingAgent, [
 					tenantId,
