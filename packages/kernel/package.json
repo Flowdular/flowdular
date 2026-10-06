@@ -5,6 +5,7 @@
 	"exports": {
 		".": "./src/index.ts",
 		"./legacy-local-state": "./src/legacy-local-state.ts",
+		"./module-manifests": "./src/module-manifests.ts",
 		"./runtime-config": "./src/runtime-config.ts"
 	},
 	"scripts": {

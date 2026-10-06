@@ -430,7 +430,7 @@ ${
 </ul></div>
 <div><p class="setup-label setup-sublabel">Enabled modules that own tables</p><ul class="setup-list">${modules || '<li><span class="setup-help">No enabled module owns database tables.</span></li>'}</ul>${
 		view.modulesApproximated
-			? '<p class="setup-note setup-note--gap">This build ships without the module manifests, so every enabled module is checked against the strictest requirements any of them can ask for.</p>'
+			? '<p class="setup-note setup-note--gap">This build ships without some module manifests, so each enabled module without one is checked against the strictest requirements any module can ask for.</p>'
 			: ''
 	}</div>
 <form class="setup-form" method="post" action="/setup">${csrf(view)}

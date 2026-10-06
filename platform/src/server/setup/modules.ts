@@ -1,10 +1,11 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
 	DATABASE_CAPABILITY_IDS,
 	DATABASE_DIALECT_IDS,
 	type ModuleDatabaseRequirements,
 } from '@flowdular/database';
+import { findModuleManifests } from '@flowdular/kernel/module-manifests';
 import projectManifest from '../../../../flowdular.json';
 
 /**
@@ -27,9 +28,10 @@ export const PLATFORM_MODULE_DATABASE_REQUIREMENTS = Object.freeze({
 export interface EnabledDatabaseModules {
 	readonly modules: readonly ModuleDatabaseRequirements[];
 	/**
-	 * True when the module manifests could not be read, so every enabled module
-	 * is treated as owning tenant-scoped tables. Over-approximating keeps the
-	 * check strict; the review screen says the list came from this fallback.
+	 * True when a module manifest could not be read, so the enabled module it
+	 * belongs to is treated as owning tenant-scoped tables. Over-approximating
+	 * keeps the check strict; the review screen says the list came from this
+	 * fallback.
 	 */
 	readonly approximated: boolean;
 }
@@ -75,9 +77,10 @@ function requirements(
 
 /**
  * The enabled modules that own database tables, in `flowdular.json` order.
- * A container image ships only `platform/dist`, so the enabled list falls back
- * to the manifest bundled at build time and, without the module manifests
- * beside it, every enabled module is assumed to own tenant-scoped tables.
+ * Manifests are found where the CLI finds them, @flowdular/sdk included. A
+ * container image ships only `platform/dist`, so the enabled list falls back
+ * to the manifest bundled at build time and an enabled module whose manifest
+ * is not beside it is assumed to own tenant-scoped tables.
  */
 export function enabledDatabaseModules(
 	workspaceRoot: string,
@@ -87,37 +90,30 @@ export function enabledDatabaseModules(
 		(projectManifest as ProjectManifest);
 	const enabled = stringList(project.modules?.enabled);
 	if (enabled.length === 0) return { modules: [], approximated: false };
-	const roots = stringList(project.modules?.roots);
-	const manifests = new Map<string, ModuleManifest>();
-	for (const root of roots.length > 0 ? roots : ['modules']) {
-		const directory = resolve(workspaceRoot, root);
-		let entries: readonly string[];
-		try {
-			entries = readdirSync(directory);
-		} catch {
-			continue;
-		}
-		for (const entry of entries) {
-			const manifest = readJson<ModuleManifest>(
-				join(directory, entry, 'module.json'),
-			);
-			if (typeof manifest?.id === 'string') {
-				manifests.set(manifest.id, manifest);
-			}
-		}
+	let paths: readonly string[] = [];
+	try {
+		paths = findModuleManifests(workspaceRoot, project.modules?.roots);
+	} catch {
+		/* Unreadable roots leave every module to the strict fallback below. */
 	}
-	if (manifests.size === 0) {
-		return {
-			modules: enabled.map((moduleId) => requirements(moduleId, true)),
-			approximated: true,
-		};
+	const manifests = new Map<string, ModuleManifest>();
+	for (const path of paths) {
+		const manifest = readJson<ModuleManifest>(path);
+		if (typeof manifest?.id === 'string') {
+			manifests.set(manifest.id, manifest);
+		}
 	}
 	const modules: ModuleDatabaseRequirements[] = [];
+	let approximated = false;
 	for (const moduleId of enabled) {
 		const manifest = manifests.get(moduleId);
-		if (!manifest) continue;
+		if (!manifest) {
+			modules.push(requirements(moduleId, true));
+			approximated = true;
+			continue;
+		}
 		if (!stringList(manifest.capabilities).includes('database')) continue;
 		modules.push(requirements(moduleId, manifest.tenancy === 'required'));
 	}
-	return { modules, approximated: false };
+	return { modules, approximated };
 }

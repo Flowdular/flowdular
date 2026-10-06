@@ -107,6 +107,79 @@ describe('enabled database modules', () => {
 		expect(enabled.modules.every((module) => module.tenantOwned)).toBe(true);
 	});
 
+	it('reads the manifests of modules @flowdular/sdk ships', () => {
+		const root = workspace({ modules: { enabled: ['a.core', 'b.core'] } }, [
+			{
+				directory: 'b',
+				manifest: {
+					id: 'b.core',
+					capabilities: ['database'],
+					tenancy: 'none',
+				},
+			},
+		]);
+		const sdk = join(root, 'platform/node_modules/@flowdular/sdk');
+		mkdirSync(join(sdk, 'modules/a'), { recursive: true });
+		writeFileSync(
+			join(root, 'platform/package.json'),
+			JSON.stringify({ dependencies: { '@flowdular/sdk': '0.6.0' } }),
+		);
+		writeFileSync(
+			join(sdk, 'package.json'),
+			JSON.stringify({
+				name: '@flowdular/sdk',
+				exports: { './modules.json': './modules.json' },
+			}),
+		);
+		writeFileSync(
+			join(sdk, 'modules.json'),
+			JSON.stringify({
+				schemaVersion: 1,
+				modules: [
+					{
+						manifest: 'modules/a/module.json',
+						import: '@flowdular/sdk/modules/a',
+					},
+				],
+			}),
+		);
+		writeFileSync(
+			join(sdk, 'modules/a/module.json'),
+			JSON.stringify({
+				id: 'a.core',
+				package: '@flowdular/module-a',
+				capabilities: ['database'],
+				tenancy: 'required',
+			}),
+		);
+
+		const enabled = enabledDatabaseModules(root);
+
+		expect(enabled.approximated).toBe(false);
+		expect(
+			enabled.modules.map((module) => [module.moduleId, module.tenantOwned]),
+		).toEqual([
+			['a.core', true],
+			['b.core', false],
+		]);
+	});
+
+	it('assumes the strictest requirements for an enabled module whose manifest is missing', () => {
+		const root = workspace({ modules: { enabled: ['a.core', 'b.core'] } }, [
+			{
+				directory: 'b',
+				manifest: { id: 'b.core', capabilities: ['client'] },
+			},
+		]);
+
+		const enabled = enabledDatabaseModules(root);
+
+		expect(enabled.approximated).toBe(true);
+		expect(
+			enabled.modules.map((module) => [module.moduleId, module.tenantOwned]),
+		).toEqual([['a.core', true]]);
+	});
+
 	it('falls back to the manifest bundled at build time', () => {
 		const root = mkdtempSync(join(tmpdir(), 'flowdular-setup-empty-'));
 		roots.push(root);
